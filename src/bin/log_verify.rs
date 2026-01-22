@@ -3,7 +3,7 @@
 //! This tool proves:
 //! - The sealed event log is hash-chained (tamper-evident)
 //! - The break-glass receipt log is hash-chained (tamper-evident)
-//! - Each entry is signed by the device key (MVP placeholder signing)
+//! - Each entry is signed by the device key (Ed25519)
 //! - Checkpoints preserve verifiability across retention pruning
 //!
 //! This is not a convenience feature.
@@ -11,10 +11,9 @@
 
 use anyhow::{anyhow, Result};
 use clap::Parser;
+use ed25519_dalek::VerifyingKey;
 use rusqlite::{Connection, Row};
-use sha2::{Digest, Sha256};
-
-use witness_kernel::{hash_entry, sign_mvp};
+use witness_kernel::{hash_entry, load_device_verifying_key, verify_entry_signature};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -26,9 +25,9 @@ struct Args {
     #[arg(long, default_value = "witness.db")]
     db: String,
 
-    /// MVP device key seed (must match witnessd)
-    #[arg(long, default_value = "devkey:mvp")]
-    device_key_seed: String,
+    /// Device key path (hex-encoded Ed25519 private key)
+    #[arg(long, env = "WITNESS_DEVICE_KEY_PATH")]
+    device_key_path: String,
 
     /// Verbose output
     #[arg(short, long)]
@@ -39,8 +38,7 @@ fn main() -> Result<()> {
     let args = Args::parse();
     let conn = Connection::open(&args.db)?;
 
-    // Derive MVP device key from seed (do not ship).
-    let device_key: [u8; 32] = Sha256::digest(args.device_key_seed.as_bytes()).into();
+    let device_key = load_device_verifying_key(&args.device_key_path)?;
 
     println!("log_verify: checking {}", args.db);
     println!();
@@ -53,14 +51,12 @@ fn main() -> Result<()> {
     if let (Some(head), Some(sig), Some(cutoff_id)) =
         (checkpoint_hash, checkpoint_sig, cutoff_event_id)
     {
-        let expected = sign_mvp(&device_key, &head);
-        if expected != sig {
-            return Err(anyhow!("checkpoint signature mismatch"));
-        }
+        verify_entry_signature(&device_key, &head, &sig)
+            .map_err(|e| anyhow!("checkpoint signature mismatch: {}", e))?;
         println!(
             "checkpoint: cutoff_event_id={}, chain_head_hash={}",
             cutoff_id,
-            hex(&head)
+            hex_bytes(&head)
         );
     } else {
         println!("checkpoint: none (genesis chain)");
@@ -86,14 +82,14 @@ fn main() -> Result<()> {
 
 fn latest_checkpoint(
     conn: &Connection,
-) -> Result<(Option<[u8; 32]>, Option<[u8; 32]>, Option<i64>)> {
+) -> Result<(Option<[u8; 32]>, Option<Vec<u8>>, Option<i64>)> {
     let mut stmt = conn.prepare(
         "SELECT chain_head_hash, signature, cutoff_event_id FROM checkpoints ORDER BY id DESC LIMIT 1",
     )?;
     let mut rows = stmt.query([])?;
     if let Some(row) = rows.next()? {
         let head = blob32(row, 0)?;
-        let sig = blob32(row, 1)?;
+        let sig: Vec<u8> = row.get(1)?;
         let cutoff_id: i64 = row.get(2)?;
         Ok((Some(head), Some(sig), Some(cutoff_id)))
     } else {
@@ -103,7 +99,7 @@ fn latest_checkpoint(
 
 fn verify_events(
     conn: &Connection,
-    device_key: &[u8; 32],
+    device_key: &VerifyingKey,
     checkpoint_head: Option<[u8; 32]>,
     verbose: bool,
 ) -> Result<()> {
@@ -120,14 +116,14 @@ fn verify_events(
         let payload: String = row.get(1)?;
         let prev_hash = blob32(row, 2)?;
         let entry_hash = blob32(row, 3)?;
-        let sig = blob32(row, 4)?;
+        let sig: Vec<u8> = row.get(4)?;
 
         if prev_hash != expected_prev {
             return Err(anyhow!(
                 "chain break at id {}: prev_hash={}, expected_prev={}",
                 id,
-                hex(&prev_hash),
-                hex(&expected_prev)
+                hex_bytes(&prev_hash),
+                hex_bytes(&expected_prev)
             ));
         }
 
@@ -136,23 +132,16 @@ fn verify_events(
             return Err(anyhow!(
                 "hash mismatch at id {}: computed={}, stored={}",
                 id,
-                hex(&computed),
-                hex(&entry_hash)
+                hex_bytes(&computed),
+                hex_bytes(&entry_hash)
             ));
         }
 
-        let expected_sig = sign_mvp(device_key, &entry_hash);
-        if expected_sig != sig {
-            return Err(anyhow!(
-                "signature mismatch at id {}: expected={}, stored={}",
-                id,
-                hex(&expected_sig),
-                hex(&sig)
-            ));
-        }
+        verify_entry_signature(device_key, &entry_hash, &sig)
+            .map_err(|e| anyhow!("signature mismatch at id {}: {}", id, e))?;
 
         if verbose {
-            println!("  event {}: hash={} OK", id, &hex(&entry_hash)[..16]);
+            println!("  event {}: hash={} OK", id, &hex_bytes(&entry_hash)[..16]);
         }
 
         expected_prev = entry_hash;
@@ -165,7 +154,7 @@ fn verify_events(
 
 fn verify_break_glass_receipts(
     conn: &Connection,
-    device_key: &[u8; 32],
+    device_key: &VerifyingKey,
     verbose: bool,
 ) -> Result<()> {
     println!("=== Break-Glass Receipts ===");
@@ -186,14 +175,14 @@ fn verify_break_glass_receipts(
         let payload: String = row.get(2)?;
         let prev_hash = blob32(row, 3)?;
         let entry_hash = blob32(row, 4)?;
-        let sig = blob32(row, 5)?;
+        let sig: Vec<u8> = row.get(5)?;
 
         if prev_hash != expected_prev {
             return Err(anyhow!(
                 "receipt chain break at id {}: prev_hash={}, expected_prev={}",
                 id,
-                hex(&prev_hash),
-                hex(&expected_prev)
+                hex_bytes(&prev_hash),
+                hex_bytes(&expected_prev)
             ));
         }
 
@@ -202,20 +191,13 @@ fn verify_break_glass_receipts(
             return Err(anyhow!(
                 "receipt hash mismatch at id {}: computed={}, stored={}",
                 id,
-                hex(&computed),
-                hex(&entry_hash)
+                hex_bytes(&computed),
+                hex_bytes(&entry_hash)
             ));
         }
 
-        let expected_sig = sign_mvp(device_key, &entry_hash);
-        if expected_sig != sig {
-            return Err(anyhow!(
-                "receipt signature mismatch at id {}: expected={}, stored={}",
-                id,
-                hex(&expected_sig),
-                hex(&sig)
-            ));
-        }
+        verify_entry_signature(device_key, &entry_hash, &sig)
+            .map_err(|e| anyhow!("receipt signature mismatch at id {}: {}", id, e))?;
 
         // Parse to count outcomes
         if let Ok(receipt) = serde_json::from_str::<witness_kernel::BreakGlassReceipt>(&payload) {
@@ -226,7 +208,11 @@ fn verify_break_glass_receipts(
         }
 
         if verbose {
-            println!("  receipt {}: hash={} OK", id, &hex(&entry_hash)[..16]);
+            println!(
+                "  receipt {}: hash={} OK",
+                id,
+                &hex_bytes(&entry_hash)[..16]
+            );
         }
 
         expected_prev = entry_hash;
@@ -269,6 +255,6 @@ fn blob32(row: &Row<'_>, idx: usize) -> Result<[u8; 32]> {
     Ok(out)
 }
 
-fn hex(b: &[u8; 32]) -> String {
+fn hex_bytes(b: &[u8]) -> String {
     b.iter().map(|x| format!("{:02x}", x)).collect()
 }

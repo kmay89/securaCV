@@ -8,7 +8,7 @@
 //! 5. Writes conforming events to the sealed log
 //! 6. Enforces retention with checkpointed pruning
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use std::time::{Duration, Instant};
 
 use witness_kernel::{
@@ -24,13 +24,17 @@ fn main() -> Result<()> {
     let ruleset_id = "ruleset:v0.1";
     let ruleset_hash = KernelConfig::ruleset_hash_from_id(ruleset_id);
 
+    let device_key_path = std::env::var("WITNESS_DEVICE_KEY_PATH").map_err(|_| {
+        anyhow!("WITNESS_DEVICE_KEY_PATH must be set to a per-device signing key file")
+    })?;
+
     let cfg = KernelConfig {
         db_path: "witness.db".to_string(),
         ruleset_id: ruleset_id.to_string(),
         ruleset_hash,
         kernel_version: kernel_version.to_string(),
         retention: Duration::from_secs(60 * 60 * 24 * 7), // 7 days
-        device_key_seed: "devkey:mvp".to_string(),
+        device_key_path,
     };
 
     let mut kernel = Kernel::open(&cfg)?;

@@ -145,9 +145,7 @@ pub struct BreakGlassToken {
 
 impl BreakGlassToken {
     pub fn authorize_mvp(_purpose: &str) -> Result<Self> {
-        Err(anyhow!(
-            "break-glass authorization is not available in MVP"
-        ))
+        Err(anyhow!("break-glass authorization is not available in MVP"))
     }
 
     pub fn test_token() -> Self {

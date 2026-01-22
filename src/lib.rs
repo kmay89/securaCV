@@ -21,6 +21,7 @@
 //! - Core types: Events, TimeBucket, ContractEnforcer, Kernel
 
 use anyhow::{anyhow, Result};
+use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use rand::RngCore;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
@@ -29,15 +30,15 @@ use std::sync::OnceLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use zeroize::Zeroize;
 
-pub mod frame;
 pub mod break_glass;
+pub mod frame;
 pub mod ingest;
 
 pub use frame::{
     Detection, DetectionResult, Detector, FrameBuffer, InferenceView, RawFrame, SizeClass,
     StubDetector, MAX_BUFFER_FRAMES, MAX_PREROLL_SECS,
 };
-pub use ingest::{RtspSource, rtsp::RtspConfig};
+pub use ingest::{rtsp::RtspConfig, RtspSource};
 
 /// -------------------- Time Buckets --------------------
 
@@ -315,8 +316,9 @@ pub struct KernelConfig {
     pub kernel_version: String,
     /// default retention; pruning will write checkpoints
     pub retention: Duration,
-    /// MVP signing seed (do not ship). In production this is a real device keypair.
-    pub device_key_seed: String,
+    /// Per-device signing key path (hex-encoded Ed25519 private key).
+    /// This is required and MUST NOT be the default dev key.
+    pub device_key_path: String,
 }
 
 impl KernelConfig {
@@ -327,14 +329,17 @@ impl KernelConfig {
 
 pub struct Kernel {
     pub conn: Connection,
-    device_key: [u8; 32],
+    device_signing_key: SigningKey,
 }
 
 impl Kernel {
     pub fn open(cfg: &KernelConfig) -> Result<Self> {
         let conn = Connection::open(&cfg.db_path)?;
-        let device_key: [u8; 32] = Sha256::digest(cfg.device_key_seed.as_bytes()).into();
-        let mut k = Self { conn, device_key };
+        let device_signing_key = load_device_signing_key(&cfg.device_key_path)?;
+        let mut k = Self {
+            conn,
+            device_signing_key,
+        };
         k.ensure_schema()?;
         Ok(k)
     }
@@ -453,7 +458,7 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         let payload_json = serde_json::to_string(ev)?;
 
         let entry_hash = hash_entry(&prev_hash, payload_json.as_bytes());
-        let signature = sign_mvp(&self.device_key, &entry_hash);
+        let signature = sign_entry(&self.device_signing_key, &entry_hash);
 
         self.conn.execute(
             r#"
@@ -523,7 +528,7 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         let payload_json = serde_json::to_string(receipt)?;
 
         let entry_hash = hash_entry(&prev_hash, payload_json.as_bytes());
-        let signature = sign_mvp(&self.device_key, &entry_hash);
+        let signature = sign_entry(&self.device_signing_key, &entry_hash);
 
         self.conn.execute(
             r#"
@@ -541,7 +546,6 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
 
         Ok(())
     }
-
 
     /// Prune events older than retention. Writes a checkpoint so chain integrity remains verifiable.
     pub fn enforce_retention_with_checkpoint(&mut self, retention: Duration) -> Result<()> {
@@ -565,7 +569,7 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         let mut head = [0u8; 32];
         head.copy_from_slice(&head_bytes);
 
-        let checkpoint_sig = sign_mvp(&self.device_key, &head);
+        let checkpoint_sig = sign_entry(&self.device_signing_key, &head);
         let created_at = now_s()? as i64;
 
         self.conn.execute(
@@ -573,12 +577,19 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
             INSERT INTO checkpoints(created_at, cutoff_event_id, chain_head_hash, signature)
             VALUES (?1, ?2, ?3, ?4)
             "#,
-            params![created_at, cutoff_id, head.to_vec(), checkpoint_sig.to_vec()],
+            params![
+                created_at,
+                cutoff_id,
+                head.to_vec(),
+                checkpoint_sig.to_vec()
+            ],
         )?;
 
         // Delete all events up to and including cutoff_id.
-        self.conn
-            .execute("DELETE FROM sealed_events WHERE id <= ?1", params![cutoff_id])?;
+        self.conn.execute(
+            "DELETE FROM sealed_events WHERE id <= ?1",
+            params![cutoff_id],
+        )?;
 
         Ok(())
     }
@@ -624,7 +635,7 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
     }
 
     pub fn device_key_for_verify_only(&self) -> [u8; 32] {
-        self.device_key
+        self.device_signing_key.verifying_key().to_bytes()
     }
 }
 
@@ -635,17 +646,75 @@ pub fn hash_entry(prev_hash: &[u8; 32], payload: &[u8]) -> [u8; 32] {
     hasher.finalize().into()
 }
 
-/// MVP signing (HMAC-like placeholder). Do not ship.
-pub fn sign_mvp(device_key: &[u8; 32], entry_hash: &[u8; 32]) -> [u8; 32] {
-    let mut hasher = Sha256::new();
-    hasher.update(device_key);
-    hasher.update(entry_hash);
-    hasher.finalize().into()
+/// Per-device signing (Ed25519).
+pub fn sign_entry(device_signing_key: &SigningKey, entry_hash: &[u8; 32]) -> [u8; 64] {
+    device_signing_key.sign(entry_hash).to_bytes()
+}
+
+pub fn verify_entry_signature(
+    device_verifying_key: &VerifyingKey,
+    entry_hash: &[u8; 32],
+    signature_bytes: &[u8],
+) -> Result<()> {
+    let signature = Signature::from_slice(signature_bytes)
+        .map_err(|e| anyhow!("invalid signature encoding: {}", e))?;
+    device_verifying_key
+        .verify(entry_hash, &signature)
+        .map_err(|e| anyhow!("signature verification failed: {}", e))
+}
+
+pub fn load_device_signing_key(device_key_path: &str) -> Result<SigningKey> {
+    let path = device_key_path.trim();
+    if path.is_empty() {
+        return Err(anyhow!(
+            "device key path must be set (refusing to start without per-device key)"
+        ));
+    }
+    if path == "devkey:mvp" {
+        return Err(anyhow!(
+            "device key path must not be devkey:mvp (refusing default key)"
+        ));
+    }
+
+    let key_hex = std::fs::read_to_string(path)
+        .map_err(|e| anyhow!("failed to read device key from {}: {}", path, e))?;
+    let key_hex = key_hex.trim();
+    if key_hex.is_empty() {
+        return Err(anyhow!(
+            "device key file {} is empty (refusing to start)",
+            path
+        ));
+    }
+    if key_hex == "devkey:mvp" {
+        return Err(anyhow!(
+            "device key file {} contains devkey:mvp (refusing default key)",
+            path
+        ));
+    }
+    let key_bytes = hex::decode(key_hex).map_err(|e| anyhow!("invalid hex in {}: {}", path, e))?;
+    if key_bytes.len() != 32 {
+        return Err(anyhow!(
+            "invalid device key length in {}: expected 32 bytes, got {}",
+            path,
+            key_bytes.len()
+        ));
+    }
+    let mut key = [0u8; 32];
+    key.copy_from_slice(&key_bytes);
+    Ok(SigningKey::from_bytes(&key))
+}
+
+pub fn load_device_verifying_key(device_key_path: &str) -> Result<VerifyingKey> {
+    Ok(load_device_signing_key(device_key_path)?.verifying_key())
 }
 
 fn blob32(bytes: Vec<u8>, context: &str) -> Result<[u8; 32]> {
     if bytes.len() != 32 {
-        return Err(anyhow!("corrupt {}: expected 32 bytes, got {}", context, bytes.len()));
+        return Err(anyhow!(
+            "corrupt {}: expected 32 bytes, got {}",
+            context,
+            bytes.len()
+        ));
     }
     let mut out = [0u8; 32];
     out.copy_from_slice(&bytes);
@@ -667,7 +736,10 @@ pub struct ModuleDescriptor {
 
 /// Runtime allowlist enforcement: the kernel MUST verify that a module is authorized
 /// to emit the event types it proposes.
-pub fn enforce_module_event_allowlist(desc: &ModuleDescriptor, cand: &CandidateEvent) -> Result<()> {
+pub fn enforce_module_event_allowlist(
+    desc: &ModuleDescriptor,
+    cand: &CandidateEvent,
+) -> Result<()> {
     if !desc.allowed_event_types.contains(&cand.event_type) {
         return Err(anyhow!(
             "conformance: module {} not authorized to emit {:?}",
@@ -807,11 +879,25 @@ mod tests {
     use super::*;
     use crate::break_glass::{Approval, QuorumPolicy, TrusteeEntry, TrusteeId, UnlockRequest};
     use ed25519_dalek::{Signer, SigningKey};
+    use rand::RngCore;
+    use std::path::PathBuf;
+
+    fn write_temp_device_key(contents: &str) -> Result<PathBuf> {
+        let mut suffix = [0u8; 8];
+        rand::thread_rng().fill_bytes(&mut suffix);
+        let mut path = std::env::temp_dir();
+        path.push(format!("pwk-device-key-{}", hex::encode(suffix)));
+        std::fs::write(&path, contents)?;
+        Ok(path)
+    }
+
+    fn valid_device_key_path() -> Result<PathBuf> {
+        write_temp_device_key(&hex::encode([9u8; 32]))
+    }
 
     fn make_break_glass_token(envelope_id: &str, ruleset_hash: [u8; 32]) -> BreakGlassToken {
         let bucket = TimeBucket::now(600).expect("time bucket");
-        let request =
-            UnlockRequest::new(envelope_id, ruleset_hash, "test-export", bucket).unwrap();
+        let request = UnlockRequest::new(envelope_id, ruleset_hash, "test-export", bucket).unwrap();
         let signing_key = SigningKey::from_bytes(&[7u8; 32]);
         let signature = signing_key.sign(&request.request_hash());
         let approval = Approval::new(
@@ -967,14 +1053,39 @@ mod tests {
     }
 
     #[test]
-    fn append_event_checked_rejects_disallowed_module_event() -> Result<()> {
+    fn kernel_refuses_default_device_key() -> Result<()> {
+        let default_key_path = write_temp_device_key("devkey:mvp")?;
         let cfg = KernelConfig {
             db_path: ":memory:".to_string(),
             ruleset_id: "ruleset:test".to_string(),
             ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
             kernel_version: "0.0.0-test".to_string(),
             retention: Duration::from_secs(60),
-            device_key_seed: "devkey:test".to_string(),
+            device_key_path: default_key_path.to_string_lossy().to_string(),
+        };
+        assert!(Kernel::open(&cfg).is_err());
+        std::fs::remove_file(&default_key_path)?;
+
+        let valid_key_path = valid_device_key_path()?;
+        let cfg_ok = KernelConfig {
+            device_key_path: valid_key_path.to_string_lossy().to_string(),
+            ..cfg
+        };
+        assert!(Kernel::open(&cfg_ok).is_ok());
+        std::fs::remove_file(&valid_key_path)?;
+        Ok(())
+    }
+
+    #[test]
+    fn append_event_checked_rejects_disallowed_module_event() -> Result<()> {
+        let device_key_path = valid_device_key_path()?;
+        let cfg = KernelConfig {
+            db_path: ":memory:".to_string(),
+            ruleset_id: "ruleset:test".to_string(),
+            ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
+            kernel_version: "0.0.0-test".to_string(),
+            retention: Duration::from_secs(60),
+            device_key_path: device_key_path.to_string_lossy().to_string(),
         };
         let mut kernel = Kernel::open(&cfg)?;
         let desc = ModuleDescriptor {
@@ -1001,22 +1112,25 @@ mod tests {
                 cfg.ruleset_hash
             )
             .is_err());
-        let event_count: i64 = kernel
-            .conn
-            .query_row("SELECT COUNT(*) FROM sealed_events", [], |row| row.get(0))?;
+        let event_count: i64 =
+            kernel
+                .conn
+                .query_row("SELECT COUNT(*) FROM sealed_events", [], |row| row.get(0))?;
         assert_eq!(event_count, 0, "disallowed events must not be appended");
+        std::fs::remove_file(device_key_path)?;
         Ok(())
     }
 
     #[test]
     fn break_glass_hash_rejects_malformed_size() -> Result<()> {
+        let device_key_path = valid_device_key_path()?;
         let cfg = KernelConfig {
             db_path: ":memory:".to_string(),
             ruleset_id: "ruleset:test".to_string(),
             ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
             kernel_version: "0.0.0-test".to_string(),
             retention: Duration::from_secs(60),
-            device_key_seed: "devkey:test".to_string(),
+            device_key_path: device_key_path.to_string_lossy().to_string(),
         };
         let mut kernel = Kernel::open(&cfg)?;
         let created_at = now_s()? as i64;
@@ -1035,18 +1149,20 @@ mod tests {
         )?;
 
         assert!(kernel.last_break_glass_hash_or_zero().is_err());
+        std::fs::remove_file(device_key_path)?;
         Ok(())
     }
 
     #[test]
     fn break_glass_prev_hash_rejects_malformed_size() -> Result<()> {
+        let device_key_path = valid_device_key_path()?;
         let cfg = KernelConfig {
             db_path: ":memory:".to_string(),
             ruleset_id: "ruleset:test".to_string(),
             ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
             kernel_version: "0.0.0-test".to_string(),
             retention: Duration::from_secs(60),
-            device_key_seed: "devkey:test".to_string(),
+            device_key_path: device_key_path.to_string_lossy().to_string(),
         };
         let mut kernel = Kernel::open(&cfg)?;
         let created_at = now_s()? as i64;
@@ -1065,6 +1181,7 @@ mod tests {
         )?;
 
         assert!(kernel.last_break_glass_hash_or_zero().is_err());
+        std::fs::remove_file(device_key_path)?;
         Ok(())
     }
 
@@ -1088,7 +1205,6 @@ mod tests {
         Ok(())
     }
 }
-
 
 // Re-exports for CLI/tools
 pub use break_glass::{

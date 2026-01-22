@@ -10,15 +10,18 @@
 use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
 use ed25519_dalek::{Signer, SigningKey};
-use sha2::{Digest, Sha256};
 
 use crate::{
-    hash_entry, sign_mvp, Approval, BreakGlass, BreakGlassOutcome, BreakGlassToken, Kernel,
-    KernelConfig, QuorumPolicy, TimeBucket, TrusteeEntry, TrusteeId, UnlockRequest,
+    hash_entry, load_device_verifying_key, verify_entry_signature, Approval, BreakGlass,
+    BreakGlassOutcome, BreakGlassToken, Kernel, KernelConfig, QuorumPolicy, TimeBucket,
+    TrusteeEntry, TrusteeId, UnlockRequest,
 };
 
 #[derive(Parser, Debug)]
-#[command(name = "break_glass", about = "Quorum-gated evidence access (Invariant V)")]
+#[command(
+    name = "break_glass",
+    about = "Quorum-gated evidence access (Invariant V)"
+)]
 struct Args {
     #[command(subcommand)]
     command: Command,
@@ -71,15 +74,17 @@ enum Command {
             help = "Write token nonce to a file (0600). Handle securely; token output is sensitive."
         )]
         output_token: Option<String>,
+        #[arg(long, env = "WITNESS_DEVICE_KEY_PATH")]
+        device_key_path: String,
     },
 
     /// List break-glass receipts
     Receipts {
         #[arg(long, default_value = "witness.db")]
         db: String,
-        /// MVP device key seed (must match witnessd)
-        #[arg(long, default_value = "devkey:mvp")]
-        device_key_seed: String,
+        /// Device key path (hex-encoded Ed25519 private key)
+        #[arg(long, env = "WITNESS_DEVICE_KEY_PATH")]
+        device_key_path: String,
         #[arg(short, long)]
         verbose: bool,
     },
@@ -111,6 +116,7 @@ pub fn run() -> Result<()> {
             threshold,
             trustees,
             output_token,
+            device_key_path,
         } => cmd_authorize(
             &envelope,
             &purpose,
@@ -120,12 +126,13 @@ pub fn run() -> Result<()> {
             threshold,
             &trustees,
             output_token.as_deref(),
+            &device_key_path,
         ),
         Command::Receipts {
             db,
-            device_key_seed,
+            device_key_path,
             verbose,
-        } => cmd_receipts(&db, &device_key_seed, verbose),
+        } => cmd_receipts(&db, &device_key_path, verbose),
     }
 }
 
@@ -139,7 +146,10 @@ fn cmd_request(envelope: &str, purpose: &str, ruleset_id: &str) -> Result<()> {
     println!("Envelope:     {}", envelope);
     println!("Purpose:      {}", purpose);
     println!("Ruleset:      {}", ruleset_id);
-    println!("Time bucket:  {} (size {}s)", bucket.start_epoch_s, bucket.size_s);
+    println!(
+        "Time bucket:  {} (size {}s)",
+        bucket.start_epoch_s, bucket.size_s
+    );
     println!("Request hash: {}", hex32(&request_hash));
     println!();
     println!("Share the request hash with trustees. Each trustee runs:");
@@ -166,11 +176,7 @@ fn cmd_approve(
     let signing_key = SigningKey::from_bytes(&signing_key_bytes);
     let signature = signing_key.sign(&request_hash);
 
-    let approval = Approval::new(
-        TrusteeId::new(trustee),
-        request_hash,
-        signature.to_vec(),
-    );
+    let approval = Approval::new(TrusteeId::new(trustee), request_hash, signature.to_vec());
     let json = serde_json::to_string_pretty(&approval)?;
     std::fs::write(output, json)?;
 
@@ -191,6 +197,7 @@ fn cmd_authorize(
     threshold: u8,
     trustees_arg: &str,
     output_token: Option<&str>,
+    device_key_path: &str,
 ) -> Result<()> {
     let trustees = parse_trustees(trustees_arg)?;
     let policy = QuorumPolicy::new(threshold, trustees)?;
@@ -226,7 +233,7 @@ fn cmd_authorize(
         ruleset_hash,
         kernel_version: env!("CARGO_PKG_VERSION").to_string(),
         retention: std::time::Duration::from_secs(60 * 60 * 24 * 7),
-        device_key_seed: "devkey:mvp".to_string(),
+        device_key_path: device_key_path.to_string(),
     };
     let mut kernel = Kernel::open(&cfg)?;
     kernel.append_break_glass_receipt(&receipt)?;
@@ -257,9 +264,9 @@ fn cmd_authorize(
     }
 }
 
-fn cmd_receipts(db_path: &str, device_key_seed: &str, verbose: bool) -> Result<()> {
+fn cmd_receipts(db_path: &str, device_key_path: &str, verbose: bool) -> Result<()> {
     let conn = rusqlite::Connection::open(db_path)?;
-    let device_key: [u8; 32] = Sha256::digest(device_key_seed.as_bytes()).into();
+    let device_key = load_device_verifying_key(device_key_path)?;
     let mut stmt = conn.prepare(
         "SELECT id, created_at, payload_json, prev_hash, entry_hash, signature FROM break_glass_receipts ORDER BY id ASC",
     )?;
@@ -278,7 +285,6 @@ fn cmd_receipts(db_path: &str, device_key_seed: &str, verbose: bool) -> Result<(
         let signature_bytes: Vec<u8> = row.get(5)?;
         let prev_hash = blob32_vec(prev_hash_bytes, "break_glass_receipts.prev_hash")?;
         let entry_hash = blob32_vec(entry_hash_bytes, "break_glass_receipts.entry_hash")?;
-        let signature = blob32_vec(signature_bytes, "break_glass_receipts.signature")?;
         let receipt: crate::BreakGlassReceipt = serde_json::from_str(&payload)?;
         let outcome = match &receipt.outcome {
             BreakGlassOutcome::Granted => "GRANTED",
@@ -304,14 +310,9 @@ fn cmd_receipts(db_path: &str, device_key_seed: &str, verbose: bool) -> Result<(
                 hex_vec(&entry_hash)
             ));
         }
-        let expected_sig = sign_mvp(&device_key, &entry_hash);
-        if expected_sig != signature {
+        if let Err(e) = verify_entry_signature(&device_key, &entry_hash, &signature_bytes) {
             status = "INVALID";
-            issues.push(format!(
-                "signature mismatch (expected={}, stored={})",
-                hex_vec(&expected_sig),
-                hex_vec(&signature)
-            ));
+            issues.push(format!("signature verification failed: {}", e));
         }
         if status == "INVALID" {
             invalid_count += 1;
@@ -332,7 +333,7 @@ fn cmd_receipts(db_path: &str, device_key_seed: &str, verbose: bool) -> Result<(
         if verbose {
             println!("  prev_hash: {}", hex_vec(&prev_hash));
             println!("  entry_hash: {}", hex_vec(&entry_hash));
-            println!("  signature: {}", hex_vec(&signature));
+            println!("  signature: {}", hex_vec(&signature_bytes));
             if let BreakGlassOutcome::Denied { reason } = &receipt.outcome {
                 println!("  reason: {}", reason);
             }
@@ -443,7 +444,11 @@ fn hex_vec(b: &[u8]) -> String {
 
 fn blob32_vec(bytes: Vec<u8>, context: &str) -> Result<[u8; 32]> {
     if bytes.len() != 32 {
-        return Err(anyhow!("corrupt {}: expected 32 bytes, got {}", context, bytes.len()));
+        return Err(anyhow!(
+            "corrupt {}: expected 32 bytes, got {}",
+            context,
+            bytes.len()
+        ));
     }
     let mut out = [0u8; 32];
     out.copy_from_slice(&bytes);
