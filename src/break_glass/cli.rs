@@ -239,8 +239,7 @@ fn cmd_authorize_with_bucket(args: AuthorizeArgs<'_>) -> Result<()> {
         .ok_or_else(|| anyhow!("break-glass quorum policy is not configured"))?
         .clone();
 
-    let request =
-        UnlockRequest::new(args.envelope, ruleset_hash, args.purpose, args.bucket)?;
+    let request = UnlockRequest::new(args.envelope, ruleset_hash, args.purpose, args.bucket)?;
 
     let mut approvals: Vec<Approval> = Vec::new();
     for file in args
@@ -261,8 +260,7 @@ fn cmd_authorize_with_bucket(args: AuthorizeArgs<'_>) -> Result<()> {
     println!("Policy:    {}-of-{}", policy.n, policy.m);
     println!("Approvals: {}", approvals.len());
 
-    let (result, receipt) =
-        BreakGlass::authorize(&policy, &request, &approvals, args.bucket);
+    let (result, receipt) = BreakGlass::authorize(&policy, &request, &approvals, args.bucket);
 
     // Log receipt regardless of outcome
     kernel.append_break_glass_receipt(&receipt, &approvals)?;
