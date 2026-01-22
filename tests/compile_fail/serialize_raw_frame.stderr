@@ -1,0 +1,7 @@
+error[E0277]: the trait bound `RawFrame: Serialize` is not satisfied
+  --> tests/compile_fail/serialize_raw_frame.rs:6:10
+   |
+6  | #[derive(Serialize)]
+   |          ^^^^^^^^^ the trait `Serialize` is not implemented for `RawFrame`
+   |
+   = note: this error originates in the derive macro `Serialize` (in Nightly builds, run with -Z macro-backtrace for more info)
