@@ -18,6 +18,13 @@ use witness_kernel::{
     approvals_commitment, device_public_key_from_db, hash_entry, verify_entry_signature, Approval,
 };
 
+#[derive(Clone, Copy, Debug)]
+struct CheckpointData {
+    chain_head_hash: Option<[u8; 32]>,
+    signature: Option<[u8; 64]>,
+    cutoff_event_id: Option<i64>,
+}
+
 #[derive(Parser, Debug)]
 #[command(
     name = "log_verify",
@@ -56,10 +63,13 @@ fn main() -> Result<()> {
     // === Sealed Events ===
     println!("=== Sealed Events ===");
 
-    let (checkpoint_hash, checkpoint_sig, cutoff_event_id) = latest_checkpoint(&conn)?;
+    let checkpoint = latest_checkpoint(&conn)?;
 
-    if let (Some(head), Some(sig), Some(cutoff_id)) =
-        (checkpoint_hash, checkpoint_sig, cutoff_event_id)
+    if let (Some(head), Some(sig), Some(cutoff_id)) = (
+        checkpoint.chain_head_hash,
+        checkpoint.signature,
+        checkpoint.cutoff_event_id,
+    )
     {
         if verify_entry_signature(&verifying_key, &head, &sig).is_err() {
             return Err(anyhow!("checkpoint signature mismatch"));
@@ -81,7 +91,7 @@ fn main() -> Result<()> {
         }
     }
 
-    verify_events(&conn, &verifying_key, checkpoint_hash, args.verbose)?;
+    verify_events(&conn, &verifying_key, checkpoint.chain_head_hash, args.verbose)?;
     println!();
 
     // === Break-Glass Receipts ===
@@ -125,9 +135,7 @@ fn verifying_key_from_hex(hex_str: &str) -> Result<VerifyingKey> {
     VerifyingKey::from_bytes(&key_bytes).map_err(|e| anyhow!("invalid public key bytes: {}", e))
 }
 
-fn latest_checkpoint(
-    conn: &Connection,
-) -> Result<(Option<[u8; 32]>, Option<[u8; 64]>, Option<i64>)> {
+fn latest_checkpoint(conn: &Connection) -> Result<CheckpointData> {
     let mut stmt = conn.prepare(
         "SELECT chain_head_hash, signature, cutoff_event_id FROM checkpoints ORDER BY id DESC LIMIT 1",
     )?;
@@ -136,9 +144,17 @@ fn latest_checkpoint(
         let head = blob32(row, 0)?;
         let sig = blob64(row, 1)?;
         let cutoff_id: i64 = row.get(2)?;
-        Ok((Some(head), Some(sig), Some(cutoff_id)))
+        Ok(CheckpointData {
+            chain_head_hash: Some(head),
+            signature: Some(sig),
+            cutoff_event_id: Some(cutoff_id),
+        })
     } else {
-        Ok((None, None, None))
+        Ok(CheckpointData {
+            chain_head_hash: None,
+            signature: None,
+            cutoff_event_id: None,
+        })
     }
 }
 
@@ -389,8 +405,8 @@ mod tests {
 
         let conn = Connection::open(&db_path)?;
         let verifying_key = load_verifying_key(&conn, Some(&public_key_hex), None)?;
-        let (checkpoint_hash, _, _) = latest_checkpoint(&conn)?;
-        verify_events(&conn, &verifying_key, checkpoint_hash, false)?;
+        let checkpoint = latest_checkpoint(&conn)?;
+        verify_events(&conn, &verifying_key, checkpoint.chain_head_hash, false)?;
         verify_break_glass_receipts(&conn, &verifying_key, false)?;
 
         let _ = std::fs::remove_file(&db_path);
@@ -441,8 +457,8 @@ mod tests {
 
         let conn = Connection::open(&db_path)?;
         let verifying_key = load_verifying_key(&conn, Some(&public_key_hex), None)?;
-        let (checkpoint_hash, _, _) = latest_checkpoint(&conn)?;
-        let result = verify_events(&conn, &verifying_key, checkpoint_hash, false);
+        let checkpoint = latest_checkpoint(&conn)?;
+        let result = verify_events(&conn, &verifying_key, checkpoint.chain_head_hash, false);
         assert!(result.is_err());
 
         let _ = std::fs::remove_file(&db_path);
