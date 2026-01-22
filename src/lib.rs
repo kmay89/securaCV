@@ -481,16 +481,21 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         Ok(ev)
     }
 
-fn last_break_glass_hash_or_zero(&self) -> Result<Vec<u8>> {
+fn last_break_glass_hash_or_zero(&self) -> Result<[u8; 32]> {
     let mut stmt = self.conn.prepare(
         "SELECT entry_hash FROM break_glass_receipts ORDER BY id DESC LIMIT 1"
     )?;
     let mut rows = stmt.query([])?;
     if let Some(row) = rows.next()? {
         let h: Vec<u8> = row.get(0)?;
-        Ok(h)
+        if h.len() != 32 {
+            return Err(anyhow!("corrupt break glass log: entry_hash size"));
+        }
+        let mut hash = [0u8; 32];
+        hash.copy_from_slice(&h);
+        Ok(hash)
     } else {
-        Ok(vec![0u8; 32])
+        Ok([0u8; 32])
     }
 }
 
@@ -510,7 +515,7 @@ pub fn append_break_glass_receipt(&mut self, receipt: &crate::break_glass::Break
         params![
             created_at,
             payload_json,
-            prev_hash,
+            prev_hash.to_vec(),
             entry_hash.to_vec(),
             signature.to_vec(),
         ],
@@ -920,6 +925,36 @@ mod tests {
                 cfg.ruleset_hash
             )
             .is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn break_glass_hash_rejects_malformed_size() -> Result<()> {
+        let cfg = KernelConfig {
+            db_path: ":memory:".to_string(),
+            ruleset_id: "ruleset:test".to_string(),
+            ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
+            kernel_version: "0.0.0-test".to_string(),
+            retention: Duration::from_secs(60),
+            device_key_seed: "devkey:test".to_string(),
+        };
+        let mut kernel = Kernel::open(&cfg)?;
+        let created_at = now_s()? as i64;
+        kernel.conn.execute(
+            r#"
+            INSERT INTO break_glass_receipts(created_at, payload_json, prev_hash, entry_hash, signature)
+            VALUES (?1, ?2, ?3, ?4, ?5)
+            "#,
+            params![
+                created_at,
+                "{}",
+                vec![0u8; 32],
+                vec![1u8; 31],
+                vec![2u8; 32],
+            ],
+        )?;
+
+        assert!(kernel.last_break_glass_hash_or_zero().is_err());
         Ok(())
     }
 
