@@ -10,11 +10,12 @@
 use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
 use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
+use std::io::Write;
 
 use crate::{
-    approvals_commitment, device_public_key_from_db, hash_entry, verify_entry_signature, Approval,
-    BreakGlass, BreakGlassOutcome, BreakGlassToken, BreakGlassTokenFile, Kernel, KernelConfig,
-    TimeBucket, TrusteeId, UnlockRequest, Vault, VaultConfig,
+    approvals_commitment, break_glass::BreakGlassTokenFile, device_public_key_from_db, hash_entry,
+    verify_entry_signature, Approval, BreakGlass, BreakGlassOutcome, BreakGlassToken, Kernel,
+    KernelConfig, TimeBucket, TrusteeId, UnlockRequest, Vault, VaultConfig,
 };
 
 #[derive(Parser, Debug)]
@@ -287,7 +288,7 @@ fn cmd_authorize_with_bucket(args: AuthorizeArgs<'_>) -> Result<()> {
     kernel.log_break_glass_receipt(&receipt, &approvals)?;
 
     match result {
-        Ok(mut token) => {
+        Ok(token) => {
             for line in granted_lines(&receipt, &token) {
                 println!("{line}");
             }
