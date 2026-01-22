@@ -1,6 +1,7 @@
 //! Core break-glass types (no CLI).
 
 use anyhow::{anyhow, Result};
+use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -20,11 +21,17 @@ impl TrusteeId {
 pub struct QuorumPolicy {
     pub n: u8,
     pub m: u8,
-    pub trustees: Vec<TrusteeId>,
+    pub trustees: Vec<TrusteeEntry>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TrusteeEntry {
+    pub id: TrusteeId,
+    pub public_key: [u8; 32],
 }
 
 impl QuorumPolicy {
-    pub fn new(threshold: u8, trustees: Vec<TrusteeId>) -> Result<Self> {
+    pub fn new(threshold: u8, trustees: Vec<TrusteeEntry>) -> Result<Self> {
         if threshold == 0 {
             return Err(anyhow!("quorum threshold must be > 0"));
         }
@@ -37,12 +44,14 @@ impl QuorumPolicy {
         }
         let mut uniq = std::collections::HashSet::new();
         for t in &trustees {
-            if t.0.is_empty() {
+            if t.id.0.is_empty() {
                 return Err(anyhow!("trustee id cannot be empty"));
             }
-            if !uniq.insert(t.0.clone()) {
-                return Err(anyhow!("duplicate trustee id: {}", t.0));
+            if !uniq.insert(t.id.0.clone()) {
+                return Err(anyhow!("duplicate trustee id: {}", t.id.0));
             }
+            VerifyingKey::from_bytes(&t.public_key)
+                .map_err(|_| anyhow!("invalid public key for trustee {}", t.id.0))?;
         }
         Ok(Self {
             n: threshold,
@@ -180,14 +189,20 @@ impl BreakGlass {
             if approval.request_hash != request_hash {
                 continue;
             }
-            if approval.signature.is_empty() {
-                continue;
-            }
-            if !policy
+            let Some(trustee) = policy
                 .trustees
                 .iter()
-                .any(|t| t.0 == approval.trustee.0)
-            {
+                .find(|t| t.id.0 == approval.trustee.0)
+            else {
+                continue;
+            };
+            let Ok(public_key) = VerifyingKey::from_bytes(&trustee.public_key) else {
+                continue;
+            };
+            let Ok(signature) = Signature::from_slice(&approval.signature) else {
+                continue;
+            };
+            if public_key.verify(&request_hash, &signature).is_err() {
                 continue;
             }
             if approved.insert(approval.trustee.0.clone()) {
@@ -260,6 +275,7 @@ impl BreakGlass {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ed25519_dalek::{Signer, SigningKey};
 
     #[test]
     fn core_types_round_trip() {
@@ -268,8 +284,21 @@ mod tests {
             size_s: 600,
         };
         let request = UnlockRequest::new("vault:1", [1u8; 32], "incident", bucket).unwrap();
-        let approval = Approval::new(TrusteeId::new("alice"), request.request_hash(), vec![1, 2, 3]);
-        let policy = QuorumPolicy::new(1, vec![TrusteeId::new("alice")]).unwrap();
+        let signing_key = SigningKey::from_bytes(&[1u8; 32]);
+        let signature = signing_key.sign(&request.request_hash());
+        let approval = Approval::new(
+            TrusteeId::new("alice"),
+            request.request_hash(),
+            signature.to_vec(),
+        );
+        let policy = QuorumPolicy::new(
+            1,
+            vec![TrusteeEntry {
+                id: TrusteeId::new("alice"),
+                public_key: signing_key.verifying_key().to_bytes(),
+            }],
+        )
+        .unwrap();
         let (result, receipt) = BreakGlass::authorize(&policy, &request, &[approval], bucket);
         assert!(result.is_ok());
 
@@ -298,5 +327,61 @@ mod tests {
         let json = serde_json::to_string(&receipt).unwrap();
         let round_trip: BreakGlassReceipt = serde_json::from_str(&json).unwrap();
         assert_eq!(round_trip.vault_envelope_id, "vault:min");
+    }
+
+    #[test]
+    fn invalid_signature_does_not_count_toward_quorum() {
+        let bucket = TimeBucket {
+            start_epoch_s: 0,
+            size_s: 600,
+        };
+        let request = UnlockRequest::new("vault:2", [2u8; 32], "incident", bucket).unwrap();
+        let signing_key = SigningKey::from_bytes(&[3u8; 32]);
+        let other_key = SigningKey::from_bytes(&[4u8; 32]);
+        let signature = other_key.sign(&request.request_hash());
+        let approval = Approval::new(
+            TrusteeId::new("alice"),
+            request.request_hash(),
+            signature.to_vec(),
+        );
+        let policy = QuorumPolicy::new(
+            1,
+            vec![TrusteeEntry {
+                id: TrusteeId::new("alice"),
+                public_key: signing_key.verifying_key().to_bytes(),
+            }],
+        )
+        .unwrap();
+        let (result, receipt) = BreakGlass::authorize(&policy, &request, &[approval], bucket);
+        assert!(result.is_err());
+        assert!(matches!(receipt.outcome, BreakGlassOutcome::Denied { .. }));
+        assert!(receipt.trustees_used.is_empty());
+    }
+
+    #[test]
+    fn valid_signature_counts_toward_quorum() {
+        let bucket = TimeBucket {
+            start_epoch_s: 0,
+            size_s: 600,
+        };
+        let request = UnlockRequest::new("vault:3", [3u8; 32], "incident", bucket).unwrap();
+        let signing_key = SigningKey::from_bytes(&[5u8; 32]);
+        let signature = signing_key.sign(&request.request_hash());
+        let approval = Approval::new(
+            TrusteeId::new("alice"),
+            request.request_hash(),
+            signature.to_vec(),
+        );
+        let policy = QuorumPolicy::new(
+            1,
+            vec![TrusteeEntry {
+                id: TrusteeId::new("alice"),
+                public_key: signing_key.verifying_key().to_bytes(),
+            }],
+        )
+        .unwrap();
+        let (result, receipt) = BreakGlass::authorize(&policy, &request, &[approval], bucket);
+        assert!(result.is_ok());
+        assert_eq!(receipt.trustees_used.len(), 1);
     }
 }

@@ -1035,4 +1035,7 @@ mod tests {
 
 
 // Re-exports for CLI/tools
-pub use break_glass::{Approval, BreakGlass, BreakGlassOutcome, BreakGlassReceipt, BreakGlassToken, QuorumPolicy, TrusteeId, UnlockRequest};
+pub use break_glass::{
+    Approval, BreakGlass, BreakGlassOutcome, BreakGlassReceipt, BreakGlassToken, QuorumPolicy,
+    TrusteeEntry, TrusteeId, UnlockRequest,
+};

@@ -2,18 +2,18 @@
 //!
 //! Implements Invariant V (Break-Glass by Quorum).
 //!
-//! MVP notes:
-//! - Trustee signatures are placeholders (non-empty), not real Ed25519.
+//! Notes:
+//! - Trustee approvals are signed with local Ed25519 keys.
 //! - This CLI demonstrates authorization + receipt logging.
 //! - Vault decryption is not implemented here.
 
 use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
-use sha2::{Digest, Sha256};
+use ed25519_dalek::{Signer, SigningKey};
 
 use crate::{
     Approval, BreakGlass, BreakGlassOutcome, Kernel, KernelConfig, QuorumPolicy, TimeBucket,
-    TrusteeId, UnlockRequest,
+    TrusteeEntry, TrusteeId, UnlockRequest,
 };
 
 #[derive(Parser, Debug)]
@@ -37,12 +37,14 @@ enum Command {
         ruleset_id: String,
     },
 
-    /// Create an approval file for a request hash (MVP placeholder signature)
+    /// Create an approval file for a request hash (Ed25519 signature)
     Approve {
         #[arg(long)]
         request_hash: String,
         #[arg(long)]
         trustee: String,
+        #[arg(long)]
+        signing_key: String,
         #[arg(long)]
         output: String,
     },
@@ -61,7 +63,7 @@ enum Command {
         ruleset_id: String,
         #[arg(long, default_value_t = 2)]
         threshold: u8,
-        #[arg(long, default_value = "alice,bob,carol")]
+        #[arg(long, help = "Comma-separated <id>:<pubkey-hex> entries")]
         trustees: String,
     },
 
@@ -88,8 +90,9 @@ pub fn run() -> Result<()> {
         Command::Approve {
             request_hash,
             trustee,
+            signing_key,
             output,
-        } => cmd_approve(&request_hash, &trustee, &output),
+        } => cmd_approve(&request_hash, &trustee, &signing_key, &output),
         Command::Authorize {
             envelope,
             purpose,
@@ -126,30 +129,41 @@ fn cmd_request(envelope: &str, purpose: &str, ruleset_id: &str) -> Result<()> {
     println!();
     println!("Share the request hash with trustees. Each trustee runs:");
     println!(
-        "  break_glass approve --request-hash {} --trustee <name> --output <name>.approval",
+        "  break_glass approve --request-hash {} --trustee <name> --signing-key <hex-key-file> --output <name>.approval",
         hex32(&request_hash)
     );
+    println!("Collect trustee public keys and pass them to authorize as:");
+    println!("  --trustees <name>:<pubkey-hex>,<name>:<pubkey-hex>");
     Ok(())
 }
 
-fn cmd_approve(request_hash_hex: &str, trustee: &str, output: &str) -> Result<()> {
+fn cmd_approve(
+    request_hash_hex: &str,
+    trustee: &str,
+    signing_key_path: &str,
+    output: &str,
+) -> Result<()> {
     let request_hash = parse_hex32(request_hash_hex)?;
 
-    // MVP placeholder: deterministic non-empty "signature"
-    let sig = Sha256::digest(
-        format!(
-            "mvp:{}:{:x}",
-            trustee,
-            u64::from_le_bytes(request_hash[0..8].try_into().unwrap())
-        )
-        .as_bytes(),
-    );
+    let signing_key_hex = std::fs::read_to_string(signing_key_path)
+        .map_err(|e| anyhow!("failed to read signing key {}: {}", signing_key_path, e))?;
+    let signing_key_bytes = parse_hex32(signing_key_hex.trim())?;
+    let signing_key = SigningKey::from_bytes(&signing_key_bytes);
+    let signature = signing_key.sign(&request_hash);
 
-    let approval = Approval::new(TrusteeId::new(trustee), request_hash, sig.to_vec());
+    let approval = Approval::new(
+        TrusteeId::new(trustee),
+        request_hash,
+        signature.to_vec(),
+    );
     let json = serde_json::to_string_pretty(&approval)?;
     std::fs::write(output, json)?;
 
     println!("Approval written to: {}", output);
+    println!(
+        "Trustee public key: {}",
+        hex32(&signing_key.verifying_key().to_bytes())
+    );
     Ok(())
 }
 
@@ -162,7 +176,7 @@ fn cmd_authorize(
     threshold: u8,
     trustees_arg: &str,
 ) -> Result<()> {
-    let trustees: Vec<TrusteeId> = trustees_arg.split(',').map(|s| TrusteeId::new(s)).collect();
+    let trustees = parse_trustees(trustees_arg)?;
     let policy = QuorumPolicy::new(threshold, trustees)?;
 
     let bucket = TimeBucket::now_10min()?;
@@ -269,6 +283,24 @@ fn cmd_receipts(db_path: &str, verbose: bool) -> Result<()> {
     }
     println!("Total: {}", n);
     Ok(())
+}
+
+fn parse_trustees(s: &str) -> Result<Vec<TrusteeEntry>> {
+    let mut trustees = Vec::new();
+    for entry in s.split(',').map(|v| v.trim()).filter(|v| !v.is_empty()) {
+        let (id, key_hex) = entry
+            .split_once(':')
+            .ok_or_else(|| anyhow!("trustee entry must be <id>:<pubkey-hex>"))?;
+        let public_key = parse_hex32(key_hex.trim())?;
+        trustees.push(TrusteeEntry {
+            id: TrusteeId::new(id),
+            public_key,
+        });
+    }
+    if trustees.is_empty() {
+        return Err(anyhow!("no trustees provided"));
+    }
+    Ok(trustees)
 }
 
 fn parse_hex32(s: &str) -> Result<[u8; 32]> {
