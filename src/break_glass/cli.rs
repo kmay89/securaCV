@@ -642,16 +642,18 @@ mod tests {
         let approval_path = temp_dir.join("bob.approval");
         std::fs::write(&approval_path, serde_json::to_string(&approval)?)?;
 
-        let result = cmd_authorize_with_bucket(
-            "vault:1",
-            "audit",
-            approval_path.to_string_lossy().as_ref(),
-            cfg.db_path.as_str(),
+        let approval_arg = approval_path.to_string_lossy();
+        let args = AuthorizeArgs {
+            envelope: "vault:1",
+            purpose: "audit",
+            approvals_arg: approval_arg.as_ref(),
+            db_path: cfg.db_path.as_str(),
             ruleset_id,
-            cfg.device_key_seed.as_str(),
-            None,
+            device_key_seed: cfg.device_key_seed.as_str(),
+            output_token: None,
             bucket,
-        );
+        };
+        let result = cmd_authorize_with_bucket(args);
         let err = result.expect_err("authorization should be denied");
         assert!(err.to_string().contains("unrecognized trustee approvals"));
         Ok(())
