@@ -14,7 +14,7 @@ use clap::Parser;
 use ed25519_dalek::VerifyingKey;
 use rusqlite::{Connection, Row};
 
-use witness_kernel::{hash_entry, verify_entry_signature, verifying_key_from_seed};
+use witness_kernel::{device_public_key_from_db, hash_entry, verify_entry_signature};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -26,9 +26,13 @@ struct Args {
     #[arg(long, default_value = "witness.db")]
     db: String,
 
-    /// Device key seed (must match witnessd)
-    #[arg(long, env = "DEVICE_KEY_SEED")]
-    device_key_seed: String,
+    /// Device public key (hex-encoded Ed25519 verifying key)
+    #[arg(long, value_name = "HEX", conflicts_with = "public_key_file")]
+    public_key: Option<String>,
+
+    /// Path to file containing hex-encoded device public key
+    #[arg(long, value_name = "PATH", conflicts_with = "public_key")]
+    public_key_file: Option<String>,
 
     /// Verbose output
     #[arg(short, long)]
@@ -38,8 +42,11 @@ struct Args {
 fn main() -> Result<()> {
     let args = Args::parse();
     let conn = Connection::open(&args.db)?;
-
-    let verifying_key = verifying_key_from_seed(&args.device_key_seed)?;
+    let verifying_key = load_verifying_key(
+        &conn,
+        args.public_key.as_deref(),
+        args.public_key_file.as_deref(),
+    )?;
 
     println!("log_verify: checking {}", args.db);
     println!();
@@ -80,6 +87,40 @@ fn main() -> Result<()> {
 
     println!("OK: all chains verified.");
     Ok(())
+}
+
+fn load_verifying_key(
+    conn: &Connection,
+    public_key_hex: Option<&str>,
+    public_key_file: Option<&str>,
+) -> Result<VerifyingKey> {
+    if let Some(hex) = public_key_hex {
+        return verifying_key_from_hex(hex);
+    }
+    if let Some(path) = public_key_file {
+        let key_hex = std::fs::read_to_string(path)
+            .map_err(|e| anyhow!("failed to read public key file {}: {}", path, e))?;
+        return verifying_key_from_hex(key_hex.trim());
+    }
+    device_public_key_from_db(conn).map_err(|e| {
+        anyhow!(
+            "{} (provide --public-key or --public-key-file if the database has no key)",
+            e
+        )
+    })
+}
+
+fn verifying_key_from_hex(hex_str: &str) -> Result<VerifyingKey> {
+    let bytes = hex::decode(hex_str.trim()).map_err(|e| anyhow!("invalid hex: {}", e))?;
+    let mut key_bytes = [0u8; 32];
+    if bytes.len() != 32 {
+        return Err(anyhow!(
+            "invalid public key length: expected 32 bytes, got {}",
+            bytes.len()
+        ));
+    }
+    key_bytes.copy_from_slice(&bytes);
+    VerifyingKey::from_bytes(&key_bytes).map_err(|e| anyhow!("invalid public key bytes: {}", e))
 }
 
 fn latest_checkpoint(
@@ -279,4 +320,92 @@ fn hex(b: &[u8; 32]) -> String {
 
 fn hex64(b: &[u8; 64]) -> String {
     b.iter().map(|x| format!("{:02x}", x)).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+    use witness_kernel::{
+        CandidateEvent, EventType, Kernel, KernelConfig, ModuleDescriptor, TimeBucket,
+    };
+
+    fn temp_db_path() -> PathBuf {
+        let mut path = std::env::temp_dir();
+        let suffix: u64 = rand::random();
+        path.push(format!("log_verify_test_{}.db", suffix));
+        path
+    }
+
+    fn write_test_event(kernel: &mut Kernel) -> Result<()> {
+        let module = ModuleDescriptor {
+            id: "test-module",
+            allowed_event_types: &[EventType::BoundaryCrossingObjectLarge],
+        };
+        let cand = CandidateEvent {
+            event_type: EventType::BoundaryCrossingObjectLarge,
+            time_bucket: TimeBucket::now(600)?,
+            zone_id: "zone:test".to_string(),
+            confidence: 0.9,
+            correlation_token: None,
+        };
+        kernel.append_event_checked(
+            &module,
+            cand,
+            env!("CARGO_PKG_VERSION"),
+            "ruleset:test",
+            KernelConfig::ruleset_hash_from_id("ruleset:test"),
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn log_verify_succeeds_with_public_key() -> Result<()> {
+        let db_path = temp_db_path();
+        let mut kernel = Kernel::open(&KernelConfig {
+            db_path: db_path.to_string_lossy().to_string(),
+            ruleset_id: "ruleset:test".to_string(),
+            ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
+            kernel_version: env!("CARGO_PKG_VERSION").to_string(),
+            retention: std::time::Duration::from_secs(60),
+            device_key_seed: "devkey:test".to_string(),
+        })?;
+        write_test_event(&mut kernel)?;
+        let public_key_hex = hex::encode(kernel.device_key_for_verify_only());
+        drop(kernel);
+
+        let conn = Connection::open(&db_path)?;
+        let verifying_key = load_verifying_key(&conn, Some(&public_key_hex), None)?;
+        let (checkpoint_hash, _, _) = latest_checkpoint(&conn)?;
+        verify_events(&conn, &verifying_key, checkpoint_hash, false)?;
+        verify_break_glass_receipts(&conn, &verifying_key, false)?;
+
+        let _ = std::fs::remove_file(&db_path);
+        Ok(())
+    }
+
+    #[test]
+    fn log_verify_fails_without_public_key() -> Result<()> {
+        let db_path = temp_db_path();
+        let mut kernel = Kernel::open(&KernelConfig {
+            db_path: db_path.to_string_lossy().to_string(),
+            ruleset_id: "ruleset:test".to_string(),
+            ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
+            kernel_version: env!("CARGO_PKG_VERSION").to_string(),
+            retention: std::time::Duration::from_secs(60),
+            device_key_seed: "devkey:test".to_string(),
+        })?;
+        write_test_event(&mut kernel)?;
+        kernel
+            .conn
+            .execute("DELETE FROM device_metadata WHERE id = 1", [])?;
+        drop(kernel);
+
+        let conn = Connection::open(&db_path)?;
+        let result = load_verifying_key(&conn, None, None);
+        assert!(result.is_err());
+
+        let _ = std::fs::remove_file(&db_path);
+        Ok(())
+    }
 }

@@ -20,7 +20,11 @@ cargo run --bin log_verify -- --db witness.db
 
 Options:
 - `--db <path>`: path to SQLite DB (default `witness.db`)
-- `--device-key-seed <seed>`: Required; must match witnessd seed (Ed25519 key derivation)
+- `--public-key <hex>`: hex-encoded device Ed25519 verifying key
+- `--public-key-file <path>`: path to file containing the hex-encoded device public key
+
+If neither `--public-key` nor `--public-key-file` is provided, `log_verify` will read the
+device public key from the local database metadata table.
 
 ## What it checks
 1) If a checkpoint exists, verify its signature.
@@ -31,6 +35,6 @@ Options:
 3) Report success/failure.
 
 ## Future work
-- Support key rotation and explicit public-key provisioning for verification.
+- Support key rotation and explicit public-key rollover rules.
 - Support multiple checkpoints and archived compacted segments.
 - Provide a JSON report suitable for audits and city procurement verification.

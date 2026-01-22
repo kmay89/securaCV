@@ -23,7 +23,7 @@
 use anyhow::{anyhow, Result};
 use ed25519_dalek::{Signer, SigningKey, Verifier, VerifyingKey};
 use rand::RngCore;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::sync::OnceLock;
@@ -342,6 +342,7 @@ impl Kernel {
             break_glass_policy: None,
         };
         k.ensure_schema()?;
+        k.ensure_device_public_key()?;
         k.load_break_glass_policy()?;
         Ok(k)
     }
@@ -382,6 +383,11 @@ impl Kernel {
               policy_json TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS device_metadata (
+              id INTEGER PRIMARY KEY CHECK (id = 1),
+              public_key BLOB NOT NULL
+            );
+
 CREATE TABLE IF NOT EXISTS conformance_alarms (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               created_at INTEGER NOT NULL,
@@ -392,6 +398,39 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
             CREATE INDEX IF NOT EXISTS idx_events_created ON sealed_events(created_at);
             CREATE INDEX IF NOT EXISTS idx_receipts_created ON break_glass_receipts(created_at);
             "#,
+        )?;
+        Ok(())
+    }
+
+    fn ensure_device_public_key(&mut self) -> Result<()> {
+        let key_bytes = self.device_key_for_verify_only();
+        let existing: Option<Vec<u8>> = self
+            .conn
+            .query_row(
+                "SELECT public_key FROM device_metadata WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        if let Some(bytes) = existing {
+            if bytes.len() != 32 {
+                return Err(anyhow!(
+                    "corrupt device_metadata.public_key: expected 32 bytes, got {}",
+                    bytes.len()
+                ));
+            }
+            if bytes.as_slice() != key_bytes.as_slice() {
+                return Err(anyhow!(
+                    "device public key mismatch: existing key does not match DEVICE_KEY_SEED"
+                ));
+            }
+            return Ok(());
+        }
+
+        self.conn.execute(
+            "INSERT INTO device_metadata (id, public_key) VALUES (1, ?1)",
+            params![key_bytes.to_vec()],
         )?;
         Ok(())
     }
@@ -702,6 +741,34 @@ pub fn signing_key_from_seed(seed: &str) -> Result<SigningKey> {
 
 pub fn verifying_key_from_seed(seed: &str) -> Result<VerifyingKey> {
     Ok(signing_key_from_seed(seed)?.verifying_key())
+}
+
+fn verifying_key_from_bytes(bytes: &[u8]) -> Result<VerifyingKey> {
+    if bytes.len() != 32 {
+        return Err(anyhow!(
+            "invalid verifying key bytes: expected 32 bytes, got {}",
+            bytes.len()
+        ));
+    }
+    let mut key_bytes = [0u8; 32];
+    key_bytes.copy_from_slice(bytes);
+    VerifyingKey::from_bytes(&key_bytes).map_err(|e| anyhow!("invalid verifying key bytes: {}", e))
+}
+
+pub fn device_public_key_from_db(conn: &Connection) -> Result<VerifyingKey> {
+    let bytes: Vec<u8> = conn
+        .query_row(
+            "SELECT public_key FROM device_metadata WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => {
+                anyhow!("device public key not found in database")
+            }
+            _ => anyhow!("failed to read device public key from database: {}", e),
+        })?;
+    verifying_key_from_bytes(&bytes)
 }
 
 pub fn sign_entry(signing_key: &SigningKey, entry_hash: &[u8; 32]) -> [u8; 64] {
@@ -1126,7 +1193,7 @@ mod tests {
             retention: Duration::from_secs(60),
             device_key_seed: "devkey:test".to_string(),
         };
-        let mut kernel = Kernel::open(&cfg)?;
+        let kernel = Kernel::open(&cfg)?;
         let created_at = now_s()? as i64;
         kernel.conn.execute(
             r#"
@@ -1156,7 +1223,7 @@ mod tests {
             retention: Duration::from_secs(60),
             device_key_seed: "devkey:test".to_string(),
         };
-        let mut kernel = Kernel::open(&cfg)?;
+        let kernel = Kernel::open(&cfg)?;
         let created_at = now_s()? as i64;
         kernel.conn.execute(
             r#"
