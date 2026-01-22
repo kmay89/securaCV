@@ -10,10 +10,11 @@
 use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
 use ed25519_dalek::{Signer, SigningKey};
+use sha2::{Digest, Sha256};
 
 use crate::{
-    Approval, BreakGlass, BreakGlassOutcome, BreakGlassToken, Kernel, KernelConfig, QuorumPolicy,
-    TimeBucket, TrusteeEntry, TrusteeId, UnlockRequest,
+    hash_entry, sign_mvp, Approval, BreakGlass, BreakGlassOutcome, BreakGlassToken, Kernel,
+    KernelConfig, QuorumPolicy, TimeBucket, TrusteeEntry, TrusteeId, UnlockRequest,
 };
 
 #[derive(Parser, Debug)]
@@ -76,6 +77,9 @@ enum Command {
     Receipts {
         #[arg(long, default_value = "witness.db")]
         db: String,
+        /// MVP device key seed (must match witnessd)
+        #[arg(long, default_value = "devkey:mvp")]
+        device_key_seed: String,
         #[arg(short, long)]
         verbose: bool,
     },
@@ -117,7 +121,11 @@ pub fn run() -> Result<()> {
             &trustees,
             output_token.as_deref(),
         ),
-        Command::Receipts { db, verbose } => cmd_receipts(&db, verbose),
+        Command::Receipts {
+            db,
+            device_key_seed,
+            verbose,
+        } => cmd_receipts(&db, &device_key_seed, verbose),
     }
 }
 
@@ -249,27 +257,67 @@ fn cmd_authorize(
     }
 }
 
-fn cmd_receipts(db_path: &str, verbose: bool) -> Result<()> {
+fn cmd_receipts(db_path: &str, device_key_seed: &str, verbose: bool) -> Result<()> {
     let conn = rusqlite::Connection::open(db_path)?;
+    let device_key: [u8; 32] = Sha256::digest(device_key_seed.as_bytes()).into();
     let mut stmt = conn.prepare(
-        "SELECT id, created_at, payload_json, entry_hash FROM break_glass_receipts ORDER BY id ASC",
+        "SELECT id, created_at, payload_json, prev_hash, entry_hash, signature FROM break_glass_receipts ORDER BY id ASC",
     )?;
     let mut rows = stmt.query([])?;
 
     println!("=== Break-Glass Receipts ===");
     let mut n = 0usize;
+    let mut expected_prev = [0u8; 32];
+    let mut invalid_count = 0usize;
     while let Some(row) = rows.next()? {
         let id: i64 = row.get(0)?;
         let created_at: i64 = row.get(1)?;
         let payload: String = row.get(2)?;
-        let entry_hash: Vec<u8> = row.get(3)?;
+        let prev_hash_bytes: Vec<u8> = row.get(3)?;
+        let entry_hash_bytes: Vec<u8> = row.get(4)?;
+        let signature_bytes: Vec<u8> = row.get(5)?;
+        let prev_hash = blob32_vec(prev_hash_bytes, "break_glass_receipts.prev_hash")?;
+        let entry_hash = blob32_vec(entry_hash_bytes, "break_glass_receipts.entry_hash")?;
+        let signature = blob32_vec(signature_bytes, "break_glass_receipts.signature")?;
         let receipt: crate::BreakGlassReceipt = serde_json::from_str(&payload)?;
         let outcome = match &receipt.outcome {
             BreakGlassOutcome::Granted => "GRANTED",
             BreakGlassOutcome::Denied { .. } => "DENIED",
         };
+
+        let mut status = "VALID";
+        let mut issues = Vec::new();
+        if prev_hash != expected_prev {
+            status = "INVALID";
+            issues.push(format!(
+                "prev_hash mismatch (stored={}, expected={})",
+                hex_vec(&prev_hash),
+                hex_vec(&expected_prev)
+            ));
+        }
+        let computed = hash_entry(&expected_prev, payload.as_bytes());
+        if computed != entry_hash {
+            status = "INVALID";
+            issues.push(format!(
+                "entry_hash mismatch (computed={}, stored={})",
+                hex_vec(&computed),
+                hex_vec(&entry_hash)
+            ));
+        }
+        let expected_sig = sign_mvp(&device_key, &entry_hash);
+        if expected_sig != signature {
+            status = "INVALID";
+            issues.push(format!(
+                "signature mismatch (expected={}, stored={})",
+                hex_vec(&expected_sig),
+                hex_vec(&signature)
+            ));
+        }
+        if status == "INVALID" {
+            invalid_count += 1;
+        }
         println!(
-            "#{} @{}: {} envelope={} trustees={:?}",
+            "#{} @{}: {} envelope={} trustees={:?} [{}]",
             id,
             created_at,
             outcome,
@@ -278,17 +326,37 @@ fn cmd_receipts(db_path: &str, verbose: bool) -> Result<()> {
                 .trustees_used
                 .iter()
                 .map(|t| t.0.clone())
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>(),
+            status
         );
         if verbose {
+            println!("  prev_hash: {}", hex_vec(&prev_hash));
             println!("  entry_hash: {}", hex_vec(&entry_hash));
+            println!("  signature: {}", hex_vec(&signature));
             if let BreakGlassOutcome::Denied { reason } = &receipt.outcome {
                 println!("  reason: {}", reason);
             }
+            if !issues.is_empty() {
+                for issue in issues {
+                    println!("  verification: {}", issue);
+                }
+            }
+        } else if !issues.is_empty() {
+            for issue in issues {
+                println!("  verification: {}", issue);
+            }
         }
+        expected_prev = entry_hash;
         n += 1;
     }
     println!("Total: {}", n);
+    if invalid_count > 0 {
+        return Err(anyhow!(
+            "receipt verification failed for {} entr{} (run log_verify for full audit)",
+            invalid_count,
+            if invalid_count == 1 { "y" } else { "ies" }
+        ));
+    }
     Ok(())
 }
 
@@ -371,6 +439,15 @@ fn hex32(b: &[u8; 32]) -> String {
 
 fn hex_vec(b: &[u8]) -> String {
     b.iter().map(|x| format!("{:02x}", x)).collect()
+}
+
+fn blob32_vec(bytes: Vec<u8>, context: &str) -> Result<[u8; 32]> {
+    if bytes.len() != 32 {
+        return Err(anyhow!("corrupt {}: expected 32 bytes, got {}", context, bytes.len()));
+    }
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&bytes);
+    Ok(out)
 }
 
 #[cfg(test)]
