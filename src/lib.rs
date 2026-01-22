@@ -816,6 +816,21 @@ mod tests {
     }
 
     #[test]
+    fn conformance_rejects_token_with_oversized_bucket() {
+        let cand = CandidateEvent {
+            event_type: EventType::BoundaryCrossingObjectLarge,
+            time_bucket: TimeBucket {
+                start_epoch_s: 0,
+                size_s: 901,
+            },
+            zone_id: "zone:test".to_string(),
+            confidence: 0.5,
+            correlation_token: Some([0u8; 32]),
+        };
+        assert!(ContractEnforcer::enforce(cand).is_err());
+    }
+
+    #[test]
     fn tokens_rotate_and_are_not_comparable_across_buckets() -> Result<()> {
         let mut mgr = BucketKeyManager::new();
         let b1 = TimeBucket {
