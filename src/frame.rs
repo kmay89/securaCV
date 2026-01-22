@@ -260,7 +260,11 @@ impl Detector for StubDetector {
             motion_detected: motion,
             detections: vec![],
             confidence: if motion { 0.85 } else { 0.0 },
-            size_class: if motion { SizeClass::Large } else { SizeClass::Unknown },
+            size_class: if motion {
+                SizeClass::Large
+            } else {
+                SizeClass::Unknown
+            },
         }
     }
 }
@@ -392,8 +396,7 @@ mod tests {
 
     fn make_break_glass_token(envelope_id: &str, ruleset_hash: [u8; 32]) -> BreakGlassToken {
         let bucket = TimeBucket::now(600).expect("time bucket");
-        let request =
-            UnlockRequest::new(envelope_id, ruleset_hash, "test-export", bucket).unwrap();
+        let request = UnlockRequest::new(envelope_id, ruleset_hash, "test-export", bucket).unwrap();
         let signing_key = SigningKey::from_bytes(&[7u8; 32]);
         let signature = signing_key.sign(&request.request_hash());
         let approval = Approval::new(

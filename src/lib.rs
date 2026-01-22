@@ -21,7 +21,7 @@
 //! - Core types: Events, TimeBucket, ContractEnforcer, Kernel
 
 use anyhow::{anyhow, Result};
-use ed25519_dalek::{Signer, Verifier, SigningKey, VerifyingKey};
+use ed25519_dalek::{Signer, SigningKey, Verifier, VerifyingKey};
 use rand::RngCore;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
@@ -30,15 +30,15 @@ use std::sync::OnceLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use zeroize::Zeroize;
 
-pub mod frame;
 pub mod break_glass;
+pub mod frame;
 pub mod ingest;
 
 pub use frame::{
     Detection, DetectionResult, Detector, FrameBuffer, InferenceView, RawFrame, SizeClass,
     StubDetector, MAX_BUFFER_FRAMES, MAX_PREROLL_SECS,
 };
-pub use ingest::{RtspSource, rtsp::RtspConfig};
+pub use ingest::{rtsp::RtspConfig, RtspSource};
 
 /// -------------------- Time Buckets --------------------
 
@@ -329,14 +329,20 @@ impl KernelConfig {
 pub struct Kernel {
     pub conn: Connection,
     device_key: SigningKey,
+    break_glass_policy: Option<crate::break_glass::QuorumPolicy>,
 }
 
 impl Kernel {
     pub fn open(cfg: &KernelConfig) -> Result<Self> {
         let conn = Connection::open(&cfg.db_path)?;
         let device_key = signing_key_from_seed(&cfg.device_key_seed)?;
-        let mut k = Self { conn, device_key };
+        let mut k = Self {
+            conn,
+            device_key,
+            break_glass_policy: None,
+        };
         k.ensure_schema()?;
+        k.load_break_glass_policy()?;
         Ok(k)
     }
 
@@ -370,6 +376,11 @@ impl Kernel {
   entry_hash BLOB NOT NULL,
   signature BLOB NOT NULL
 );
+
+            CREATE TABLE IF NOT EXISTS break_glass_policy (
+              id INTEGER PRIMARY KEY CHECK (id = 1),
+              policy_json TEXT NOT NULL
+            );
 
 CREATE TABLE IF NOT EXISTS conformance_alarms (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -543,6 +554,38 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         Ok(())
     }
 
+    pub fn set_break_glass_policy(
+        &mut self,
+        policy: &crate::break_glass::QuorumPolicy,
+    ) -> Result<()> {
+        let json = serde_json::to_string(policy)?;
+        self.conn.execute(
+            "INSERT OR REPLACE INTO break_glass_policy (id, policy_json) VALUES (1, ?1)",
+            params![json],
+        )?;
+        self.break_glass_policy = Some(policy.clone());
+        Ok(())
+    }
+
+    pub fn break_glass_policy(&self) -> Option<&crate::break_glass::QuorumPolicy> {
+        self.break_glass_policy.as_ref()
+    }
+
+    fn load_break_glass_policy(&mut self) -> Result<()> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT policy_json FROM break_glass_policy WHERE id = 1")?;
+        let mut rows = stmt.query([])?;
+        if let Some(row) = rows.next()? {
+            let policy_json: String = row.get(0)?;
+            let stored: crate::break_glass::QuorumPolicy = serde_json::from_str(&policy_json)?;
+            let policy = crate::break_glass::QuorumPolicy::new(stored.n, stored.trustees)?;
+            self.break_glass_policy = Some(policy);
+        } else {
+            self.break_glass_policy = None;
+        }
+        Ok(())
+    }
 
     /// Prune events older than retention. Writes a checkpoint so chain integrity remains verifiable.
     pub fn enforce_retention_with_checkpoint(&mut self, retention: Duration) -> Result<()> {
@@ -574,12 +617,19 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
             INSERT INTO checkpoints(created_at, cutoff_event_id, chain_head_hash, signature)
             VALUES (?1, ?2, ?3, ?4)
             "#,
-            params![created_at, cutoff_id, head.to_vec(), checkpoint_sig.to_vec()],
+            params![
+                created_at,
+                cutoff_id,
+                head.to_vec(),
+                checkpoint_sig.to_vec()
+            ],
         )?;
 
         // Delete all events up to and including cutoff_id.
-        self.conn
-            .execute("DELETE FROM sealed_events WHERE id <= ?1", params![cutoff_id])?;
+        self.conn.execute(
+            "DELETE FROM sealed_events WHERE id <= ?1",
+            params![cutoff_id],
+        )?;
 
         Ok(())
     }
@@ -671,7 +721,11 @@ pub fn verify_entry_signature(
 
 fn blob32(bytes: Vec<u8>, context: &str) -> Result<[u8; 32]> {
     if bytes.len() != 32 {
-        return Err(anyhow!("corrupt {}: expected 32 bytes, got {}", context, bytes.len()));
+        return Err(anyhow!(
+            "corrupt {}: expected 32 bytes, got {}",
+            context,
+            bytes.len()
+        ));
     }
     let mut out = [0u8; 32];
     out.copy_from_slice(&bytes);
@@ -693,7 +747,10 @@ pub struct ModuleDescriptor {
 
 /// Runtime allowlist enforcement: the kernel MUST verify that a module is authorized
 /// to emit the event types it proposes.
-pub fn enforce_module_event_allowlist(desc: &ModuleDescriptor, cand: &CandidateEvent) -> Result<()> {
+pub fn enforce_module_event_allowlist(
+    desc: &ModuleDescriptor,
+    cand: &CandidateEvent,
+) -> Result<()> {
     if !desc.allowed_event_types.contains(&cand.event_type) {
         return Err(anyhow!(
             "conformance: module {} not authorized to emit {:?}",
@@ -836,8 +893,7 @@ mod tests {
 
     fn make_break_glass_token(envelope_id: &str, ruleset_hash: [u8; 32]) -> BreakGlassToken {
         let bucket = TimeBucket::now(600).expect("time bucket");
-        let request =
-            UnlockRequest::new(envelope_id, ruleset_hash, "test-export", bucket).unwrap();
+        let request = UnlockRequest::new(envelope_id, ruleset_hash, "test-export", bucket).unwrap();
         let signing_key = SigningKey::from_bytes(&[7u8; 32]);
         let signature = signing_key.sign(&request.request_hash());
         let approval = Approval::new(
@@ -1052,9 +1108,10 @@ mod tests {
                 cfg.ruleset_hash
             )
             .is_err());
-        let event_count: i64 = kernel
-            .conn
-            .query_row("SELECT COUNT(*) FROM sealed_events", [], |row| row.get(0))?;
+        let event_count: i64 =
+            kernel
+                .conn
+                .query_row("SELECT COUNT(*) FROM sealed_events", [], |row| row.get(0))?;
         assert_eq!(event_count, 0, "disallowed events must not be appended");
         Ok(())
     }
@@ -1139,7 +1196,6 @@ mod tests {
         Ok(())
     }
 }
-
 
 // Re-exports for CLI/tools
 pub use break_glass::{

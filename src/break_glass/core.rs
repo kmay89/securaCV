@@ -145,9 +145,7 @@ pub struct BreakGlassToken {
 
 impl BreakGlassToken {
     pub fn authorize_mvp(_purpose: &str) -> Result<Self> {
-        Err(anyhow!(
-            "break-glass authorization is not available in MVP"
-        ))
+        Err(anyhow!("break-glass authorization is not available in MVP"))
     }
 
     pub fn token_nonce(&self) -> [u8; 32] {
@@ -215,6 +213,7 @@ impl BreakGlass {
         now_bucket: TimeBucket,
     ) -> (Result<BreakGlassToken>, BreakGlassReceipt) {
         let mut trustees_used = Vec::new();
+        let mut unknown_trustees = std::collections::BTreeSet::new();
         let request_hash = request.request_hash();
         let mut approved = std::collections::HashSet::new();
 
@@ -227,6 +226,7 @@ impl BreakGlass {
                 .iter()
                 .find(|t| t.id.0 == approval.trustee.0)
             else {
+                unknown_trustees.insert(approval.trustee.0.clone());
                 continue;
             };
             let Ok(public_key) = VerifyingKey::from_bytes(&trustee.public_key) else {
@@ -243,7 +243,18 @@ impl BreakGlass {
             }
         }
 
-        let outcome = if trustees_used.len() >= policy.n as usize {
+        let outcome = if !unknown_trustees.is_empty() {
+            BreakGlassOutcome::Denied {
+                reason: format!(
+                    "unrecognized trustee approvals: {}",
+                    unknown_trustees
+                        .iter()
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            }
+        } else if trustees_used.len() >= policy.n as usize {
             BreakGlassOutcome::Granted
         } else {
             BreakGlassOutcome::Denied {
