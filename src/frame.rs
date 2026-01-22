@@ -272,16 +272,15 @@ impl Detector for StubDetector {
 // ----------------------------------------------------------------------------
 // BreakGlassToken: Proof of quorum authorization
 // ----------------------------------------------------------------------------
-
-/// A token proving that break-glass authorization has been granted.
-///
-/// This token is:
-/// - Created only by the quorum authorization system
-/// - Required to export raw media from the vault
-/// - Logged immutably upon creation
-/// - Single-use (consumed on export)
-///
-/// In MVP, this is a placeholder. Production requires real quorum logic.
+// A token proving that break-glass authorization has been granted.
+//
+// This token is:
+// - Created only by the quorum authorization system
+// - Required to export raw media from the vault
+// - Logged immutably upon creation
+// - Single-use (consumed on export)
+//
+// In MVP, this is a placeholder. Production requires real quorum logic.
 
 // ----------------------------------------------------------------------------
 // FrameBuffer: Bounded ring buffer for pre-roll
