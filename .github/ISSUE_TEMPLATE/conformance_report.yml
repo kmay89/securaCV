@@ -1,0 +1,32 @@
+name: "Conformance Report"
+description: "Report invariant or event contract drift."
+title: "[Conformance] "
+labels:
+  - "conformance"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form to report drift between implementation and the invariants or event contract.
+  - type: input
+    id: invariant_or_contract
+    attributes:
+      label: Invariant or contract reference
+      description: Which invariant or event contract clause is impacted?
+      placeholder: "e.g., spec/event_contract.md §2.1"
+    validations:
+      required: true
+  - type: textarea
+    id: observed_behavior
+    attributes:
+      label: Observed behavior
+      description: Describe the behavior that appears to violate the invariant or contract.
+    validations:
+      required: true
+  - type: textarea
+    id: expected_behavior
+    attributes:
+      label: Expected behavior
+      description: Describe the behavior that should occur to remain conformant.
+    validations:
+      required: true

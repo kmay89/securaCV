@@ -1,0 +1,36 @@
+name: "Security Report"
+description: "Report invariant violations or security regressions."
+title: "[Security] "
+labels:
+  - "security"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form to report invariant violations, bypasses, or security regressions.
+        Provide the minimum detail needed to reproduce the issue.
+  - type: input
+    id: invariant_violated
+    attributes:
+      label: Invariant violated
+      description: Which invariant or enforcement point is violated?
+      placeholder: "e.g., spec/invariants.md §3.2 ReprocessGuard"
+    validations:
+      required: true
+  - type: textarea
+    id: repro_steps
+    attributes:
+      label: Reproduction steps
+      description: Provide a minimal reproduction (commands, inputs, or test case).
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected_vs_actual
+    attributes:
+      label: Expected vs actual behavior
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true

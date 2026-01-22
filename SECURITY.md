@@ -20,6 +20,9 @@ Please report it with:
 - The invariant you believe is violated
 - Whether the failure is compile-time or runtime
 
+Use the GitHub issue form for structured reports:
+- [Security Report](.github/ISSUE_TEMPLATE/security_report.yml)
+
 ## Non-goals
 
 The following are explicitly out of scope:
