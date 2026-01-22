@@ -373,6 +373,7 @@ impl Kernel {
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   created_at INTEGER NOT NULL,
   payload_json TEXT NOT NULL,
+  approvals_json TEXT NOT NULL DEFAULT '[]',
   prev_hash BLOB NOT NULL,
   entry_hash BLOB NOT NULL,
   signature BLOB NOT NULL
@@ -399,6 +400,29 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
             CREATE INDEX IF NOT EXISTS idx_receipts_created ON break_glass_receipts(created_at);
             "#,
         )?;
+        self.ensure_break_glass_receipts_columns()?;
+        Ok(())
+    }
+
+    fn ensure_break_glass_receipts_columns(&mut self) -> Result<()> {
+        let mut stmt = self
+            .conn
+            .prepare("PRAGMA table_info(break_glass_receipts)")?;
+        let mut rows = stmt.query([])?;
+        let mut has_approvals_json = false;
+        while let Some(row) = rows.next()? {
+            let name: String = row.get(1)?;
+            if name == "approvals_json" {
+                has_approvals_json = true;
+                break;
+            }
+        }
+        if !has_approvals_json {
+            self.conn.execute(
+                "ALTER TABLE break_glass_receipts ADD COLUMN approvals_json TEXT NOT NULL DEFAULT '[]'",
+                [],
+            )?;
+        }
         Ok(())
     }
 
@@ -568,22 +592,25 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
     pub fn append_break_glass_receipt(
         &mut self,
         receipt: &crate::break_glass::BreakGlassReceipt,
+        approvals: &[crate::break_glass::Approval],
     ) -> Result<()> {
         let created_at = now_s()? as i64;
         let prev_hash = self.last_break_glass_hash_or_zero()?;
         let payload_json = serde_json::to_string(receipt)?;
+        let approvals_json = serde_json::to_string(approvals)?;
 
         let entry_hash = hash_entry(&prev_hash, payload_json.as_bytes());
         let signature = sign_entry(&self.device_key, &entry_hash);
 
         self.conn.execute(
             r#"
-            INSERT INTO break_glass_receipts(created_at, payload_json, prev_hash, entry_hash, signature)
-            VALUES (?1, ?2, ?3, ?4, ?5)
+            INSERT INTO break_glass_receipts(created_at, payload_json, approvals_json, prev_hash, entry_hash, signature)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
             "#,
             params![
                 created_at,
                 payload_json,
+                approvals_json,
                 prev_hash.to_vec(),
                 entry_hash.to_vec(),
                 signature.to_vec(),
@@ -1266,6 +1293,6 @@ mod tests {
 
 // Re-exports for CLI/tools
 pub use break_glass::{
-    Approval, BreakGlass, BreakGlassOutcome, BreakGlassReceipt, BreakGlassToken, QuorumPolicy,
-    TrusteeEntry, TrusteeId, UnlockRequest,
+    approvals_commitment, Approval, BreakGlass, BreakGlassOutcome, BreakGlassReceipt,
+    BreakGlassToken, QuorumPolicy, TrusteeEntry, TrusteeId, UnlockRequest,
 };

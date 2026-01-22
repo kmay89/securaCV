@@ -14,7 +14,9 @@ use clap::Parser;
 use ed25519_dalek::VerifyingKey;
 use rusqlite::{Connection, Row};
 
-use witness_kernel::{device_public_key_from_db, hash_entry, verify_entry_signature};
+use witness_kernel::{
+    approvals_commitment, device_public_key_from_db, hash_entry, verify_entry_signature, Approval,
+};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -208,7 +210,7 @@ fn verify_break_glass_receipts(
     println!("=== Break-Glass Receipts ===");
 
     let mut stmt = conn.prepare(
-        "SELECT id, created_at, payload_json, prev_hash, entry_hash, signature FROM break_glass_receipts ORDER BY id ASC",
+        "SELECT id, created_at, payload_json, approvals_json, prev_hash, entry_hash, signature FROM break_glass_receipts ORDER BY id ASC",
     )?;
 
     let mut rows = stmt.query([])?;
@@ -221,9 +223,10 @@ fn verify_break_glass_receipts(
         let id: i64 = row.get(0)?;
         let _created_at: i64 = row.get(1)?;
         let payload: String = row.get(2)?;
-        let prev_hash = blob32(row, 3)?;
-        let entry_hash = blob32(row, 4)?;
-        let sig = blob64(row, 5)?;
+        let approvals_json: String = row.get(3)?;
+        let prev_hash = blob32(row, 4)?;
+        let entry_hash = blob32(row, 5)?;
+        let sig = blob64(row, 6)?;
 
         if prev_hash != expected_prev {
             return Err(anyhow!(
@@ -252,12 +255,20 @@ fn verify_break_glass_receipts(
             ));
         }
 
-        // Parse to count outcomes
-        if let Ok(receipt) = serde_json::from_str::<witness_kernel::BreakGlassReceipt>(&payload) {
-            match receipt.outcome {
-                witness_kernel::BreakGlassOutcome::Granted => granted += 1,
-                witness_kernel::BreakGlassOutcome::Denied { .. } => denied += 1,
-            }
+        let receipt: witness_kernel::BreakGlassReceipt = serde_json::from_str(&payload)?;
+        match receipt.outcome {
+            witness_kernel::BreakGlassOutcome::Granted => granted += 1,
+            witness_kernel::BreakGlassOutcome::Denied { .. } => denied += 1,
+        }
+        let approvals: Vec<Approval> = serde_json::from_str(&approvals_json)?;
+        let commitment = approvals_commitment(&approvals);
+        if commitment != receipt.approvals_commitment {
+            return Err(anyhow!(
+                "receipt approvals commitment mismatch at id {}: stored={}, expected={}",
+                id,
+                hex(&receipt.approvals_commitment),
+                hex(&commitment)
+            ));
         }
 
         if verbose {
@@ -325,9 +336,11 @@ fn hex64(b: &[u8; 64]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ed25519_dalek::{Signer, SigningKey};
     use std::path::PathBuf;
     use witness_kernel::{
-        CandidateEvent, EventType, Kernel, KernelConfig, ModuleDescriptor, TimeBucket,
+        Approval, BreakGlass, CandidateEvent, EventType, Kernel, KernelConfig, ModuleDescriptor,
+        QuorumPolicy, TimeBucket, TrusteeEntry, TrusteeId, UnlockRequest,
     };
 
     fn temp_db_path() -> PathBuf {
@@ -403,6 +416,53 @@ mod tests {
 
         let conn = Connection::open(&db_path)?;
         let result = load_verifying_key(&conn, None, None);
+        assert!(result.is_err());
+
+        let _ = std::fs::remove_file(&db_path);
+        Ok(())
+    }
+
+    #[test]
+    fn log_verify_rejects_tampered_break_glass_approvals() -> Result<()> {
+        let db_path = temp_db_path();
+        let mut kernel = Kernel::open(&KernelConfig {
+            db_path: db_path.to_string_lossy().to_string(),
+            ruleset_id: "ruleset:test".to_string(),
+            ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
+            kernel_version: env!("CARGO_PKG_VERSION").to_string(),
+            retention: std::time::Duration::from_secs(60),
+            device_key_seed: "devkey:test".to_string(),
+        })?;
+
+        let bucket = TimeBucket::now(600)?;
+        let request = UnlockRequest::new("vault:1", [9u8; 32], "audit", bucket)?;
+        let signing_key = SigningKey::from_bytes(&[3u8; 32]);
+        let signature = signing_key.sign(&request.request_hash());
+        let approval = Approval::new(
+            TrusteeId::new("alice"),
+            request.request_hash(),
+            signature.to_vec(),
+        );
+        let policy = QuorumPolicy::new(
+            1,
+            vec![TrusteeEntry {
+                id: TrusteeId::new("alice"),
+                public_key: signing_key.verifying_key().to_bytes(),
+            }],
+        )?;
+        let (_, receipt) = BreakGlass::authorize(&policy, &request, &[approval.clone()], bucket);
+        kernel.append_break_glass_receipt(&receipt, &[approval.clone()])?;
+
+        kernel
+            .conn
+            .execute("UPDATE break_glass_receipts SET approvals_json = '[]'", [])?;
+
+        let public_key_hex = hex::encode(kernel.device_key_for_verify_only());
+        drop(kernel);
+
+        let conn = Connection::open(&db_path)?;
+        let verifying_key = load_verifying_key(&conn, Some(&public_key_hex), None)?;
+        let result = verify_break_glass_receipts(&conn, &verifying_key, false);
         assert!(result.is_err());
 
         let _ = std::fs::remove_file(&db_path);

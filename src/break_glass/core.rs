@@ -118,6 +118,33 @@ impl Approval {
     }
 }
 
+fn canonical_approval_bytes(approval: &Approval) -> Vec<u8> {
+    let mut out =
+        Vec::with_capacity(4 + approval.trustee.0.len() + 32 + 4 + approval.signature.len());
+    let trustee_bytes = approval.trustee.0.as_bytes();
+    out.extend_from_slice(&(trustee_bytes.len() as u32).to_le_bytes());
+    out.extend_from_slice(trustee_bytes);
+    out.extend_from_slice(&approval.request_hash);
+    out.extend_from_slice(&(approval.signature.len() as u32).to_le_bytes());
+    out.extend_from_slice(&approval.signature);
+    out
+}
+
+pub fn approvals_commitment(approvals: &[Approval]) -> [u8; 32] {
+    let mut entries: Vec<Vec<u8>> = approvals.iter().map(canonical_approval_bytes).collect();
+    entries.sort();
+    let mut hasher = Sha256::new();
+    for entry in entries {
+        hasher.update((entry.len() as u32).to_le_bytes());
+        hasher.update(entry);
+    }
+    hasher.finalize().into()
+}
+
+fn empty_approvals_commitment() -> [u8; 32] {
+    approvals_commitment(&[])
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum BreakGlassOutcome {
     Granted,
@@ -131,6 +158,8 @@ pub struct BreakGlassReceipt {
     pub ruleset_hash: [u8; 32],
     pub time_bucket: TimeBucket,
     pub trustees_used: Vec<TrusteeId>,
+    #[serde(default = "empty_approvals_commitment")]
+    pub approvals_commitment: [u8; 32],
     pub outcome: BreakGlassOutcome,
 }
 
@@ -266,12 +295,14 @@ impl BreakGlass {
             }
         };
 
+        let approvals_commitment = approvals_commitment(approvals);
         let receipt = BreakGlassReceipt {
             vault_envelope_id: request.vault_envelope_id.clone(),
             request_hash,
             ruleset_hash: request.ruleset_hash,
             time_bucket: now_bucket,
             trustees_used: trustees_used.clone(),
+            approvals_commitment,
             outcome: outcome.clone(),
         };
 
@@ -364,6 +395,7 @@ mod tests {
             ruleset_hash: [1u8; 32],
             time_bucket: bucket,
             trustees_used: vec![],
+            approvals_commitment: approvals_commitment(&[]),
             outcome: BreakGlassOutcome::Denied {
                 reason: "test".to_string(),
             },
