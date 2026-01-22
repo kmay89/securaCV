@@ -24,7 +24,7 @@ Options:
 - `--public-key-file <path>`: path to file containing the hex-encoded device public key
 
 If neither `--public-key` nor `--public-key-file` is provided, `log_verify` will read the
-device public key from the local database metadata table.
+device public key from the local database metadata table (`device_metadata.public_key`).
 
 ## What it checks
 1) If a checkpoint exists, verify its signature.

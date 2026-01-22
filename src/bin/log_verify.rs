@@ -423,6 +423,33 @@ mod tests {
     }
 
     #[test]
+    fn log_verify_fails_with_mismatched_public_key() -> Result<()> {
+        let db_path = temp_db_path();
+        let mut kernel = Kernel::open(&KernelConfig {
+            db_path: db_path.to_string_lossy().to_string(),
+            ruleset_id: "ruleset:test".to_string(),
+            ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
+            kernel_version: env!("CARGO_PKG_VERSION").to_string(),
+            retention: std::time::Duration::from_secs(60),
+            device_key_seed: "devkey:test".to_string(),
+        })?;
+        write_test_event(&mut kernel)?;
+        drop(kernel);
+
+        let wrong_signing_key = SigningKey::from_bytes(&[42u8; 32]);
+        let public_key_hex = hex::encode(wrong_signing_key.verifying_key().to_bytes());
+
+        let conn = Connection::open(&db_path)?;
+        let verifying_key = load_verifying_key(&conn, Some(&public_key_hex), None)?;
+        let (checkpoint_hash, _, _) = latest_checkpoint(&conn)?;
+        let result = verify_events(&conn, &verifying_key, checkpoint_hash, false);
+        assert!(result.is_err());
+
+        let _ = std::fs::remove_file(&db_path);
+        Ok(())
+    }
+
+    #[test]
     fn log_verify_rejects_tampered_break_glass_approvals() -> Result<()> {
         let db_path = temp_db_path();
         let mut kernel = Kernel::open(&KernelConfig {
