@@ -1,3 +1,8 @@
 # Spec documents
 
-(Place spec documents here: architecture.md, invariants.md, event_contract.md, threat_model.md)
+Canonical specification documents:
+
+- `spec/invariants.md`
+- `spec/event_contract.md`
+- `spec/threat_model.md`
+- `kernel/architecture.md`
