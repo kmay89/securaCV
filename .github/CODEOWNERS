@@ -1,0 +1,4 @@
+# Constitutional areas require maintainer review.
+/spec/ @securaCV/maintainers
+/kernel/ @securaCV/maintainers
+/src/ @securaCV/maintainers
