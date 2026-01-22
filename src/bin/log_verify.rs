@@ -50,7 +50,9 @@ fn main() -> Result<()> {
 
     let (checkpoint_hash, checkpoint_sig, cutoff_event_id) = latest_checkpoint(&conn)?;
 
-    if let Some((head, sig, cutoff_id)) = (checkpoint_hash, checkpoint_sig, cutoff_event_id) {
+    if let (Some(head), Some(sig), Some(cutoff_id)) =
+        (checkpoint_hash, checkpoint_sig, cutoff_event_id)
+    {
         let expected = sign_mvp(&device_key, &head);
         if expected != sig {
             return Err(anyhow!("checkpoint signature mismatch"));
