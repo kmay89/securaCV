@@ -624,6 +624,14 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         Ok(())
     }
 
+    pub fn log_break_glass_receipt(
+        &mut self,
+        receipt: &crate::break_glass::BreakGlassReceipt,
+        approvals: &[crate::break_glass::Approval],
+    ) -> Result<()> {
+        self.append_break_glass_receipt(receipt, approvals)
+    }
+
     pub fn set_break_glass_policy(
         &mut self,
         policy: &crate::break_glass::QuorumPolicy,

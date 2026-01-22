@@ -232,6 +232,57 @@ impl BreakGlassToken {
     }
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BreakGlassTokenFile {
+    pub token_nonce: String,
+    pub expires_bucket: TimeBucket,
+    pub vault_envelope_id: String,
+    pub ruleset_hash: String,
+}
+
+impl BreakGlassTokenFile {
+    pub fn from_token(token: &BreakGlassToken) -> Self {
+        Self {
+            token_nonce: hex::encode(token.token_nonce()),
+            expires_bucket: token.expires_bucket(),
+            vault_envelope_id: token.vault_envelope_id().to_string(),
+            ruleset_hash: hex::encode(token.ruleset_hash()),
+        }
+    }
+
+    pub fn into_token(self) -> Result<BreakGlassToken> {
+        if self.vault_envelope_id.trim().is_empty() {
+            return Err(anyhow!("token file missing vault envelope id"));
+        }
+        let token_nonce = parse_hex32(&self.token_nonce, "token_nonce")?;
+        if token_nonce == [0u8; 32] {
+            return Err(anyhow!("token nonce cannot be zero"));
+        }
+        let ruleset_hash = parse_hex32(&self.ruleset_hash, "ruleset_hash")?;
+        Ok(BreakGlassToken {
+            token_nonce,
+            expires_bucket: self.expires_bucket,
+            vault_envelope_id: self.vault_envelope_id,
+            ruleset_hash,
+            consumed: false,
+        })
+    }
+}
+
+fn parse_hex32(value: &str, label: &str) -> Result<[u8; 32]> {
+    let bytes = hex::decode(value.trim()).map_err(|e| anyhow!("invalid {}: {}", label, e))?;
+    if bytes.len() != 32 {
+        return Err(anyhow!(
+            "invalid {} length: expected 32 bytes, got {}",
+            label,
+            bytes.len()
+        ));
+    }
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&bytes);
+    Ok(out)
+}
+
 pub struct BreakGlass;
 
 impl BreakGlass {

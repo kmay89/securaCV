@@ -12,8 +12,9 @@ use anyhow::{anyhow, Result};
 use std::time::{Duration, Instant};
 
 use witness_kernel::{
-    BucketKeyManager, CapabilityBoundaryRuntime, FrameBuffer, Kernel, KernelConfig, Module,
-    ModuleDescriptor, RtspConfig, RtspSource, TimeBucket, ZoneCrossingModule,
+    BreakGlassTokenFile, BucketKeyManager, CapabilityBoundaryRuntime, FrameBuffer, Kernel,
+    KernelConfig, ModuleDescriptor, RtspConfig, RtspSource, TimeBucket, Vault, VaultConfig,
+    ZoneCrossingModule,
 };
 
 fn main() -> Result<()> {
@@ -36,6 +37,10 @@ fn main() -> Result<()> {
     };
 
     let mut kernel = Kernel::open(&cfg)?;
+
+    let mut vault = Vault::new(VaultConfig::default())?;
+    // Optional break-glass seal path (requires BREAK_GLASS_SEAL_TOKEN with a token JSON).
+    let mut seal_token = load_seal_token()?;
 
     // Configure RTSP source (synthetic for MVP)
     let rtsp_config = RtspConfig {
@@ -123,6 +128,27 @@ fn main() -> Result<()> {
                 ev.confidence,
                 ev.correlation_token.is_some()
             );
+
+            if ev.event_type == witness_kernel::EventType::BoundaryCrossingObjectLarge {
+                if let Some(token) = seal_token.as_mut() {
+                    match seal_latest_frame(&mut vault, &mut frame_buffer, token, cfg.ruleset_hash)
+                    {
+                        Ok(Some(envelope_id)) => {
+                            log::warn!(
+                                "vault sealed for envelope {} (break-glass token consumed)",
+                                envelope_id
+                            );
+                            seal_token = None;
+                        }
+                        Ok(None) => {
+                            log::warn!("vault seal skipped: no buffered frame available");
+                        }
+                        Err(e) => {
+                            log::error!("vault seal failed: {}", e);
+                        }
+                    }
+                }
+            }
         }
 
         // Periodic retention enforcement with checkpoint
@@ -141,4 +167,43 @@ fn main() -> Result<()> {
         // Target ~10 fps (100ms between frames)
         std::thread::sleep(Duration::from_millis(100));
     }
+}
+
+fn load_seal_token() -> Result<Option<witness_kernel::BreakGlassToken>> {
+    let token_path = match std::env::var("BREAK_GLASS_SEAL_TOKEN") {
+        Ok(path) => path,
+        Err(_) => return Ok(None),
+    };
+    let json = std::fs::read_to_string(&token_path).map_err(|e| {
+        anyhow!(
+            "failed to read BREAK_GLASS_SEAL_TOKEN {}: {}",
+            token_path,
+            e
+        )
+    })?;
+    let token_file: BreakGlassTokenFile =
+        serde_json::from_str(&json).map_err(|e| anyhow!("invalid token file: {}", e))?;
+    let token = token_file.into_token()?;
+    Ok(Some(token))
+}
+
+fn seal_latest_frame(
+    vault: &mut Vault,
+    frame_buffer: &mut FrameBuffer,
+    token: &mut witness_kernel::BreakGlassToken,
+    ruleset_hash: [u8; 32],
+) -> Result<Option<String>> {
+    if token.ruleset_hash() != ruleset_hash {
+        return Err(anyhow!(
+            "break-glass token ruleset hash mismatch (token={}, expected={})",
+            hex::encode(token.ruleset_hash()),
+            hex::encode(ruleset_hash)
+        ));
+    }
+    let Some(frame) = frame_buffer.drain_for_vault(token).next() else {
+        return Ok(None);
+    };
+    let envelope_id = token.vault_envelope_id().to_string();
+    vault.seal_frame(&envelope_id, token, ruleset_hash, frame)?;
+    Ok(Some(envelope_id))
 }
