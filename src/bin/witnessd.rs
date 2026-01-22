@@ -12,9 +12,9 @@ use anyhow::{anyhow, Result};
 use std::time::{Duration, Instant};
 
 use witness_kernel::{
-    BreakGlassTokenFile, BucketKeyManager, CapabilityBoundaryRuntime, FrameBuffer, Kernel,
-    KernelConfig, ModuleDescriptor, RtspConfig, RtspSource, TimeBucket, Vault, VaultConfig,
-    ZoneCrossingModule,
+    break_glass::BreakGlassTokenFile, BucketKeyManager, CapabilityBoundaryRuntime, FrameBuffer,
+    Kernel, KernelConfig, Module, ModuleDescriptor, RtspConfig, RtspSource, TimeBucket, Vault,
+    VaultConfig, ZoneCrossingModule,
 };
 
 fn main() -> Result<()> {
