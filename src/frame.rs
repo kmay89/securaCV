@@ -9,7 +9,7 @@
 //! The ONLY path to raw bytes is `RawMediaBoundary::export_for_vault()` which requires
 //! a `BreakGlassToken`. Normal operation cannot extract raw media.
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use sha2::{Digest, Sha256};
 use std::collections::VecDeque;
 use std::time::Instant;
@@ -97,7 +97,7 @@ impl RawFrame {
     /// This is the ONLY path to raw bytes. If you don't have a token, you can't call this.
     /// In normal operation, no token exists, so this path is unreachable.
     pub fn export_for_vault(
-        self,
+        mut self,
         token: &mut BreakGlassToken,
         envelope_id: &str,
         expected_ruleset_hash: [u8; 32],
@@ -105,7 +105,9 @@ impl RawFrame {
         let now_bucket = TimeBucket::now(600)?;
         BreakGlass::assert_token_valid(token, envelope_id, expected_ruleset_hash, now_bucket)?;
         token.consume()?;
-        Ok(self.data)
+        let mut data = Vec::new();
+        std::mem::swap(&mut data, &mut self.data);
+        Ok(data)
     }
 }
 

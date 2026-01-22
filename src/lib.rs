@@ -574,14 +574,23 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         expected_ruleset_hash: [u8; 32],
         limit: usize,
     ) -> Result<Vec<Event>> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT payload_json FROM sealed_events ORDER BY id ASC LIMIT ?1")?;
-        let mut rows = stmt.query(params![limit as i64])?;
+        let payloads = {
+            let mut stmt = self
+                .conn
+                .prepare("SELECT payload_json FROM sealed_events ORDER BY id ASC LIMIT ?1")?;
+            let mut rows = stmt.query(params![limit as i64])?;
+            let mut payloads = Vec::new();
 
-        let mut out = Vec::new();
-        while let Some(row) = rows.next()? {
-            let payload: String = row.get(0)?;
+            while let Some(row) = rows.next()? {
+                let payload: String = row.get(0)?;
+                payloads.push(payload);
+            }
+
+            payloads
+        };
+
+        let mut out = Vec::with_capacity(payloads.len());
+        for payload in payloads {
             let ev: Event = serde_json::from_str(&payload)?;
 
             if let Err(e) =
