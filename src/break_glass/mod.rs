@@ -6,6 +6,6 @@ pub mod cli;
 
 pub use cli::run;
 pub use core::{
-    Approval, BreakGlass, BreakGlassOutcome, BreakGlassReceipt, BreakGlassToken, QuorumPolicy,
-    TrusteeEntry, TrusteeId, UnlockRequest,
+    approvals_commitment, Approval, BreakGlass, BreakGlassOutcome, BreakGlassReceipt,
+    BreakGlassToken, QuorumPolicy, TrusteeEntry, TrusteeId, UnlockRequest,
 };
