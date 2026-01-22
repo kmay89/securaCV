@@ -12,9 +12,8 @@ use anyhow::Result;
 use std::time::{Duration, Instant};
 
 use witness_kernel::{
-    BucketKeyManager, ContractEnforcer, FrameBuffer, Kernel, KernelConfig, Module,
-    ModuleDescriptor, RtspConfig, RtspSource, TimeBucket, ZoneCrossingModule,
-    enforce_module_event_allowlist,
+    BucketKeyManager, FrameBuffer, Kernel, KernelConfig, Module, ModuleDescriptor, RtspConfig,
+    RtspSource, TimeBucket, ZoneCrossingModule,
 };
 
 fn main() -> Result<()> {
@@ -96,26 +95,19 @@ fn main() -> Result<()> {
         let candidates = module.process(&view, bucket, &token_mgr)?;
 
         for cand in candidates {
-            // Enforce module allowlist FIRST
-            if let Err(e) = enforce_module_event_allowlist(&module_desc, &cand) {
-                log::warn!("module allowlist violation: {}", e);
-                kernel.log_alarm("CONFORMANCE_MODULE_ALLOWLIST", &format!("{}", e))?;
-                continue;
-            }
-
-            // Enforce event contract
-            let ev = match ContractEnforcer::enforce(cand) {
+            let ev = match kernel.append_event_checked(
+                &module_desc,
+                cand,
+                &cfg.kernel_version,
+                &cfg.ruleset_id,
+                cfg.ruleset_hash,
+            ) {
                 Ok(ev) => ev,
                 Err(e) => {
-                    log::warn!("contract violation: {}", e);
-                    kernel.log_alarm("CONFORMANCE_CONTRACT_REJECT", &format!("{}", e))?;
+                    log::warn!("event rejected: {}", e);
                     continue;
                 }
             };
-
-            // Bind to kernel/ruleset and append to sealed log
-            let ev = ev.bind(&cfg.kernel_version, &cfg.ruleset_id, cfg.ruleset_hash);
-            kernel.append_event(&ev)?;
 
             event_count += 1;
             log::info!(

@@ -455,6 +455,32 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         Ok(())
     }
 
+    pub fn append_event_checked(
+        &mut self,
+        module_desc: &ModuleDescriptor,
+        cand: CandidateEvent,
+        kernel_version: &str,
+        ruleset_id: &str,
+        ruleset_hash: [u8; 32],
+    ) -> Result<Event> {
+        if let Err(e) = enforce_module_event_allowlist(module_desc, &cand) {
+            self.log_alarm("CONFORMANCE_MODULE_ALLOWLIST", &format!("{}", e))?;
+            return Err(e);
+        }
+
+        let ev = match ContractEnforcer::enforce(cand) {
+            Ok(ev) => ev,
+            Err(e) => {
+                self.log_alarm("CONFORMANCE_CONTRACT_REJECT", &format!("{}", e))?;
+                return Err(e);
+            }
+        };
+
+        let ev = ev.bind(kernel_version, ruleset_id, ruleset_hash);
+        self.append_event(&ev)?;
+        Ok(ev)
+    }
+
 fn last_break_glass_hash_or_zero(&self) -> Result<Vec<u8>> {
     let mut stmt = self.conn.prepare(
         "SELECT entry_hash FROM break_glass_receipts ORDER BY id DESC LIMIT 1"
@@ -857,6 +883,44 @@ mod tests {
         };
 
         assert!(enforce_module_event_allowlist(&desc, &cand).is_err());
+    }
+
+    #[test]
+    fn append_event_checked_rejects_disallowed_module_event() -> Result<()> {
+        let cfg = KernelConfig {
+            db_path: ":memory:".to_string(),
+            ruleset_id: "ruleset:test".to_string(),
+            ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
+            kernel_version: "0.0.0-test".to_string(),
+            retention: Duration::from_secs(60),
+            device_key_seed: "devkey:test".to_string(),
+        };
+        let mut kernel = Kernel::open(&cfg)?;
+        let desc = ModuleDescriptor {
+            id: "test_module",
+            allowed_event_types: &[],
+        };
+        let cand = CandidateEvent {
+            event_type: EventType::BoundaryCrossingObjectLarge,
+            time_bucket: TimeBucket {
+                start_epoch_s: 0,
+                size_s: 600,
+            },
+            zone_id: "zone:test".to_string(),
+            confidence: 0.5,
+            correlation_token: None,
+        };
+
+        assert!(kernel
+            .append_event_checked(
+                &desc,
+                cand,
+                &cfg.kernel_version,
+                &cfg.ruleset_id,
+                cfg.ruleset_hash
+            )
+            .is_err());
+        Ok(())
     }
 
     #[test]
