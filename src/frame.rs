@@ -373,6 +373,7 @@ impl Drop for FrameBuffer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::break_glass::{Approval, QuorumPolicy, TrusteeId, UnlockRequest};
 
     fn make_test_frame(data: &[u8]) -> RawFrame {
         let bucket = TimeBucket {
@@ -381,6 +382,16 @@ mod tests {
         };
         let features: [u8; 32] = Sha256::digest(data).into();
         RawFrame::new(data.to_vec(), 640, 480, bucket, features)
+    }
+
+    fn make_break_glass_token(envelope_id: &str, ruleset_hash: [u8; 32]) -> BreakGlassToken {
+        let bucket = TimeBucket::now(600).expect("time bucket");
+        let request =
+            UnlockRequest::new(envelope_id, ruleset_hash, "test-export", bucket).unwrap();
+        let approval = Approval::new(TrusteeId::new("alice"), request.request_hash(), vec![1]);
+        let policy = QuorumPolicy::new(1, vec![TrusteeId::new("alice")]).unwrap();
+        let (result, _receipt) = BreakGlass::authorize(&policy, &request, &[approval], bucket);
+        result.expect("break-glass token")
     }
 
     #[test]
@@ -406,9 +417,13 @@ mod tests {
     fn frame_export_requires_token() {
         let frame = make_test_frame(b"test pixels");
 
-        // With a test token, export succeeds
-        let token = BreakGlassToken::test_token();
-        let bytes = frame.export_for_vault(&token).unwrap();
+        // With a break-glass token, export succeeds
+        let envelope_id = "test-envelope";
+        let ruleset_hash = [7u8; 32];
+        let mut token = make_break_glass_token(envelope_id, ruleset_hash);
+        let bytes = frame
+            .export_for_vault(&mut token, envelope_id, ruleset_hash)
+            .unwrap();
         assert_eq!(bytes, b"test pixels");
     }
 
