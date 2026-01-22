@@ -430,7 +430,7 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         }
     }
 
-    pub fn append_event(&mut self, ev: &Event) -> Result<()> {
+    fn append_event(&mut self, ev: &Event) -> Result<()> {
         let created_at = now_s()? as i64;
         let prev_hash = self.last_event_hash_or_checkpoint_head()?;
         let payload_json = serde_json::to_string(ev)?;
@@ -950,6 +950,10 @@ mod tests {
                 cfg.ruleset_hash
             )
             .is_err());
+        let event_count: i64 = kernel
+            .conn
+            .query_row("SELECT COUNT(*) FROM sealed_events", [], |row| row.get(0))?;
+        assert_eq!(event_count, 0, "disallowed events must not be appended");
         Ok(())
     }
 
