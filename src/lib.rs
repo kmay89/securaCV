@@ -21,6 +21,7 @@
 //! - Core types: Events, TimeBucket, ContractEnforcer, Kernel
 
 use anyhow::{anyhow, Result};
+use ed25519_dalek::{Signer, Verifier, SigningKey, VerifyingKey};
 use rand::RngCore;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
@@ -315,7 +316,7 @@ pub struct KernelConfig {
     pub kernel_version: String,
     /// default retention; pruning will write checkpoints
     pub retention: Duration,
-    /// MVP signing seed (do not ship). In production this is a real device keypair.
+    /// Device signing seed (required at runtime; must not be the MVP placeholder).
     pub device_key_seed: String,
 }
 
@@ -327,13 +328,13 @@ impl KernelConfig {
 
 pub struct Kernel {
     pub conn: Connection,
-    device_key: [u8; 32],
+    device_key: SigningKey,
 }
 
 impl Kernel {
     pub fn open(cfg: &KernelConfig) -> Result<Self> {
         let conn = Connection::open(&cfg.db_path)?;
-        let device_key: [u8; 32] = Sha256::digest(cfg.device_key_seed.as_bytes()).into();
+        let device_key = signing_key_from_seed(&cfg.device_key_seed)?;
         let mut k = Self { conn, device_key };
         k.ensure_schema()?;
         Ok(k)
@@ -453,7 +454,7 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         let payload_json = serde_json::to_string(ev)?;
 
         let entry_hash = hash_entry(&prev_hash, payload_json.as_bytes());
-        let signature = sign_mvp(&self.device_key, &entry_hash);
+        let signature = sign_entry(&self.device_key, &entry_hash);
 
         self.conn.execute(
             r#"
@@ -523,7 +524,7 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         let payload_json = serde_json::to_string(receipt)?;
 
         let entry_hash = hash_entry(&prev_hash, payload_json.as_bytes());
-        let signature = sign_mvp(&self.device_key, &entry_hash);
+        let signature = sign_entry(&self.device_key, &entry_hash);
 
         self.conn.execute(
             r#"
@@ -565,7 +566,7 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         let mut head = [0u8; 32];
         head.copy_from_slice(&head_bytes);
 
-        let checkpoint_sig = sign_mvp(&self.device_key, &head);
+        let checkpoint_sig = sign_entry(&self.device_key, &head);
         let created_at = now_s()? as i64;
 
         self.conn.execute(
@@ -624,7 +625,7 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
     }
 
     pub fn device_key_for_verify_only(&self) -> [u8; 32] {
-        self.device_key
+        self.device_key.verifying_key().to_bytes()
     }
 }
 
@@ -635,12 +636,37 @@ pub fn hash_entry(prev_hash: &[u8; 32], payload: &[u8]) -> [u8; 32] {
     hasher.finalize().into()
 }
 
-/// MVP signing (HMAC-like placeholder). Do not ship.
-pub fn sign_mvp(device_key: &[u8; 32], entry_hash: &[u8; 32]) -> [u8; 32] {
+pub fn signing_key_from_seed(seed: &str) -> Result<SigningKey> {
+    let trimmed = seed.trim();
+    if trimmed.is_empty() {
+        return Err(anyhow!("device_key_seed is required"));
+    }
+    if trimmed == "devkey:mvp" {
+        return Err(anyhow!("device_key_seed must not use MVP placeholder"));
+    }
     let mut hasher = Sha256::new();
-    hasher.update(device_key);
-    hasher.update(entry_hash);
-    hasher.finalize().into()
+    hasher.update(trimmed.as_bytes());
+    let digest: [u8; 32] = hasher.finalize().into();
+    Ok(SigningKey::from_bytes(&digest))
+}
+
+pub fn verifying_key_from_seed(seed: &str) -> Result<VerifyingKey> {
+    Ok(signing_key_from_seed(seed)?.verifying_key())
+}
+
+pub fn sign_entry(signing_key: &SigningKey, entry_hash: &[u8; 32]) -> [u8; 64] {
+    signing_key.sign(entry_hash).to_bytes()
+}
+
+pub fn verify_entry_signature(
+    verifying_key: &VerifyingKey,
+    entry_hash: &[u8; 32],
+    signature: &[u8; 64],
+) -> Result<()> {
+    let sig = ed25519_dalek::Signature::from_bytes(signature);
+    verifying_key
+        .verify(entry_hash, &sig)
+        .map_err(|e| anyhow!("signature verification failed: {}", e))
 }
 
 fn blob32(bytes: Vec<u8>, context: &str) -> Result<[u8; 32]> {
@@ -967,6 +993,31 @@ mod tests {
     }
 
     #[test]
+    fn device_key_seed_rejects_mvp_placeholder() {
+        let cfg = KernelConfig {
+            db_path: ":memory:".to_string(),
+            ruleset_id: "ruleset:test".to_string(),
+            ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
+            kernel_version: "0.0.0-test".to_string(),
+            retention: Duration::from_secs(60),
+            device_key_seed: "devkey:mvp".to_string(),
+        };
+
+        assert!(Kernel::open(&cfg).is_err());
+    }
+
+    #[test]
+    fn device_key_seed_accepts_and_signs() -> Result<()> {
+        let seed = "devkey:test";
+        let signing_key = signing_key_from_seed(seed)?;
+        let verifying_key = verifying_key_from_seed(seed)?;
+        let entry_hash = [7u8; 32];
+        let signature = sign_entry(&signing_key, &entry_hash);
+        verify_entry_signature(&verifying_key, &entry_hash, &signature)?;
+        Ok(())
+    }
+
+    #[test]
     fn append_event_checked_rejects_disallowed_module_event() -> Result<()> {
         let cfg = KernelConfig {
             db_path: ":memory:".to_string(),
@@ -1030,7 +1081,7 @@ mod tests {
                 "{}",
                 vec![0u8; 32],
                 vec![1u8; 31],
-                vec![2u8; 32],
+                vec![2u8; 64],
             ],
         )?;
 
@@ -1060,7 +1111,7 @@ mod tests {
                 "{}",
                 vec![0u8; 31],
                 vec![1u8; 32],
-                vec![2u8; 32],
+                vec![2u8; 64],
             ],
         )?;
 
