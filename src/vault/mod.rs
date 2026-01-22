@@ -59,8 +59,12 @@ impl Vault {
             return Err(anyhow!("vault envelope already exists"));
         }
 
-        let mut clear_bytes =
-            RawMediaBoundary::export_for_vault(raw_bytes, token, envelope_id, expected_ruleset_hash)?;
+        let mut clear_bytes = RawMediaBoundary::export_for_vault(
+            raw_bytes,
+            token,
+            envelope_id,
+            expected_ruleset_hash,
+        )?;
         let envelope = Envelope::seal(envelope_id, expected_ruleset_hash, &clear_bytes)?;
         clear_bytes.zeroize();
 
@@ -87,12 +91,7 @@ impl Vault {
         envelope.validate(envelope_id, expected_ruleset_hash)?;
 
         let mut empty = Vec::new();
-        RawMediaBoundary::export_for_vault(
-            &mut empty,
-            token,
-            envelope_id,
-            expected_ruleset_hash,
-        )?;
+        RawMediaBoundary::export_for_vault(&mut empty, token, envelope_id, expected_ruleset_hash)?;
 
         Ok(envelope.decrypt())
     }
@@ -120,11 +119,7 @@ struct Envelope {
 }
 
 impl Envelope {
-    fn seal(
-        envelope_id: &str,
-        ruleset_hash: [u8; 32],
-        clear: &[u8],
-    ) -> Result<Self> {
+    fn seal(envelope_id: &str, ruleset_hash: [u8; 32], clear: &[u8]) -> Result<Self> {
         let mut nonce = [0u8; 32];
         rand::thread_rng().fill_bytes(&mut nonce);
         let key = derive_ephemeral_key(&ruleset_hash, &nonce);
@@ -256,7 +251,9 @@ fn read_file(path: &Path) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::break_glass::{Approval, BreakGlass, QuorumPolicy, TrusteeEntry, TrusteeId, UnlockRequest};
+    use crate::break_glass::{
+        Approval, BreakGlass, QuorumPolicy, TrusteeEntry, TrusteeId, UnlockRequest,
+    };
     use ed25519_dalek::{Signer, SigningKey};
     use std::fs;
 
