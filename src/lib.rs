@@ -33,12 +33,14 @@ use zeroize::Zeroize;
 pub mod break_glass;
 pub mod frame;
 pub mod ingest;
+pub mod vault;
 
 pub use frame::{
     Detection, DetectionResult, Detector, FrameBuffer, InferenceView, RawFrame, SizeClass,
     StubDetector, MAX_BUFFER_FRAMES, MAX_PREROLL_SECS,
 };
 pub use ingest::{rtsp::RtspConfig, RtspSource};
+pub use vault::{Vault, VaultConfig};
 
 /// -------------------- Time Buckets --------------------
 
