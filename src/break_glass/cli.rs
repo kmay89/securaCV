@@ -13,12 +13,14 @@ use ed25519_dalek::{Signer, SigningKey};
 
 use crate::{
     hash_entry, verify_entry_signature, verifying_key_from_seed, Approval, BreakGlass,
-    BreakGlassOutcome, BreakGlassToken, Kernel, KernelConfig, QuorumPolicy, TimeBucket,
-    TrusteeEntry, TrusteeId, UnlockRequest,
+    BreakGlassOutcome, BreakGlassToken, Kernel, KernelConfig, TimeBucket, TrusteeId, UnlockRequest,
 };
 
 #[derive(Parser, Debug)]
-#[command(name = "break_glass", about = "Quorum-gated evidence access (Invariant V)")]
+#[command(
+    name = "break_glass",
+    about = "Quorum-gated evidence access (Invariant V)"
+)]
 struct Args {
     #[command(subcommand)]
     command: Command,
@@ -62,10 +64,6 @@ enum Command {
         db: String,
         #[arg(long, default_value = "ruleset:v0.3.0")]
         ruleset_id: String,
-        #[arg(long, default_value_t = 2)]
-        threshold: u8,
-        #[arg(long, help = "Comma-separated <id>:<pubkey-hex> entries")]
-        trustees: String,
         /// Device key seed (must match witnessd)
         #[arg(long, env = "DEVICE_KEY_SEED")]
         device_key_seed: String,
@@ -111,8 +109,6 @@ pub fn run() -> Result<()> {
             approvals,
             db,
             ruleset_id,
-            threshold,
-            trustees,
             device_key_seed,
             output_token,
         } => cmd_authorize(
@@ -121,8 +117,6 @@ pub fn run() -> Result<()> {
             &approvals,
             &db,
             &ruleset_id,
-            threshold,
-            &trustees,
             &device_key_seed,
             output_token.as_deref(),
         ),
@@ -144,7 +138,10 @@ fn cmd_request(envelope: &str, purpose: &str, ruleset_id: &str) -> Result<()> {
     println!("Envelope:     {}", envelope);
     println!("Purpose:      {}", purpose);
     println!("Ruleset:      {}", ruleset_id);
-    println!("Time bucket:  {} (size {}s)", bucket.start_epoch_s, bucket.size_s);
+    println!(
+        "Time bucket:  {} (size {}s)",
+        bucket.start_epoch_s, bucket.size_s
+    );
     println!("Request hash: {}", hex32(&request_hash));
     println!();
     println!("Share the request hash with trustees. Each trustee runs:");
@@ -152,8 +149,7 @@ fn cmd_request(envelope: &str, purpose: &str, ruleset_id: &str) -> Result<()> {
         "  break_glass approve --request-hash {} --trustee <name> --signing-key <hex-key-file> --output <name>.approval",
         hex32(&request_hash)
     );
-    println!("Collect trustee public keys and pass them to authorize as:");
-    println!("  --trustees <name>:<pubkey-hex>,<name>:<pubkey-hex>");
+    println!("Trustee roster is loaded from the canonical policy in the kernel database.");
     Ok(())
 }
 
@@ -171,11 +167,7 @@ fn cmd_approve(
     let signing_key = SigningKey::from_bytes(&signing_key_bytes);
     let signature = signing_key.sign(&request_hash);
 
-    let approval = Approval::new(
-        TrusteeId::new(trustee),
-        request_hash,
-        signature.to_vec(),
-    );
+    let approval = Approval::new(TrusteeId::new(trustee), request_hash, signature.to_vec());
     let json = serde_json::to_string_pretty(&approval)?;
     std::fs::write(output, json)?;
 
@@ -193,16 +185,47 @@ fn cmd_authorize(
     approvals_arg: &str,
     db_path: &str,
     ruleset_id: &str,
-    threshold: u8,
-    trustees_arg: &str,
     device_key_seed: &str,
     output_token: Option<&str>,
 ) -> Result<()> {
-    let trustees = parse_trustees(trustees_arg)?;
-    let policy = QuorumPolicy::new(threshold, trustees)?;
-
     let bucket = TimeBucket::now_10min()?;
+    cmd_authorize_with_bucket(
+        envelope,
+        purpose,
+        approvals_arg,
+        db_path,
+        ruleset_id,
+        device_key_seed,
+        output_token,
+        bucket,
+    )
+}
+
+fn cmd_authorize_with_bucket(
+    envelope: &str,
+    purpose: &str,
+    approvals_arg: &str,
+    db_path: &str,
+    ruleset_id: &str,
+    device_key_seed: &str,
+    output_token: Option<&str>,
+    bucket: TimeBucket,
+) -> Result<()> {
     let ruleset_hash = KernelConfig::ruleset_hash_from_id(ruleset_id);
+    let cfg = KernelConfig {
+        db_path: db_path.to_string(),
+        ruleset_id: ruleset_id.to_string(),
+        ruleset_hash,
+        kernel_version: env!("CARGO_PKG_VERSION").to_string(),
+        retention: std::time::Duration::from_secs(60 * 60 * 24 * 7),
+        device_key_seed: device_key_seed.to_string(),
+    };
+    let mut kernel = Kernel::open(&cfg)?;
+    let policy = kernel
+        .break_glass_policy()
+        .ok_or_else(|| anyhow!("break-glass quorum policy is not configured"))?
+        .clone();
+
     let request = UnlockRequest::new(envelope, ruleset_hash, purpose, bucket)?;
 
     let mut approvals: Vec<Approval> = Vec::new();
@@ -226,15 +249,6 @@ fn cmd_authorize(
     let (result, receipt) = BreakGlass::authorize(&policy, &request, &approvals, bucket);
 
     // Log receipt regardless of outcome
-    let cfg = KernelConfig {
-        db_path: db_path.to_string(),
-        ruleset_id: ruleset_id.to_string(),
-        ruleset_hash,
-        kernel_version: env!("CARGO_PKG_VERSION").to_string(),
-        retention: std::time::Duration::from_secs(60 * 60 * 24 * 7),
-        device_key_seed: device_key_seed.to_string(),
-    };
-    let mut kernel = Kernel::open(&cfg)?;
     kernel.append_break_glass_receipt(&receipt)?;
 
     match result {
@@ -364,24 +378,6 @@ fn cmd_receipts(db_path: &str, device_key_seed: &str, verbose: bool) -> Result<(
     Ok(())
 }
 
-fn parse_trustees(s: &str) -> Result<Vec<TrusteeEntry>> {
-    let mut trustees = Vec::new();
-    for entry in s.split(',').map(|v| v.trim()).filter(|v| !v.is_empty()) {
-        let (id, key_hex) = entry
-            .split_once(':')
-            .ok_or_else(|| anyhow!("trustee entry must be <id>:<pubkey-hex>"))?;
-        let public_key = parse_hex32(key_hex.trim())?;
-        trustees.push(TrusteeEntry {
-            id: TrusteeId::new(id),
-            public_key,
-        });
-    }
-    if trustees.is_empty() {
-        return Err(anyhow!("no trustees provided"));
-    }
-    Ok(trustees)
-}
-
 fn granted_lines(receipt: &crate::BreakGlassReceipt, token: &BreakGlassToken) -> Vec<String> {
     let expires_bucket = token.expires_bucket();
     vec![
@@ -453,7 +449,11 @@ fn hex_vec64(b: &[u8; 64]) -> String {
 
 fn blob32_vec(bytes: Vec<u8>, context: &str) -> Result<[u8; 32]> {
     if bytes.len() != 32 {
-        return Err(anyhow!("corrupt {}: expected 32 bytes, got {}", context, bytes.len()));
+        return Err(anyhow!(
+            "corrupt {}: expected 32 bytes, got {}",
+            context,
+            bytes.len()
+        ));
     }
     let mut out = [0u8; 32];
     out.copy_from_slice(&bytes);
@@ -462,7 +462,11 @@ fn blob32_vec(bytes: Vec<u8>, context: &str) -> Result<[u8; 32]> {
 
 fn blob64_vec(bytes: Vec<u8>, context: &str) -> Result<[u8; 64]> {
     if bytes.len() != 64 {
-        return Err(anyhow!("corrupt {}: expected 64 bytes, got {}", context, bytes.len()));
+        return Err(anyhow!(
+            "corrupt {}: expected 64 bytes, got {}",
+            context,
+            bytes.len()
+        ));
     }
     let mut out = [0u8; 64];
     out.copy_from_slice(&bytes);
@@ -472,6 +476,8 @@ fn blob64_vec(bytes: Vec<u8>, context: &str) -> Result<[u8; 64]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ed25519_dalek::SigningKey;
+    use std::time::Duration;
 
     #[test]
     fn granted_lines_do_not_include_token_nonce() {
@@ -521,5 +527,61 @@ mod tests {
         assert_eq!(token.ruleset_hash(), [3u8; 32]);
         assert_eq!(token.token_nonce(), [9u8; 32]);
         assert_eq!(token.expires_bucket().start_epoch_s, 1234);
+    }
+
+    #[test]
+    fn authorize_rejects_unknown_trustee_from_db_policy() -> Result<()> {
+        let temp_dir =
+            std::env::temp_dir().join(format!("secura_break_glass_{}", rand::random::<u64>()));
+        std::fs::create_dir_all(&temp_dir)?;
+        let db_path = temp_dir.join("witness.db");
+
+        let ruleset_id = "ruleset:test";
+        let ruleset_hash = KernelConfig::ruleset_hash_from_id(ruleset_id);
+        let cfg = KernelConfig {
+            db_path: db_path.to_string_lossy().to_string(),
+            ruleset_id: ruleset_id.to_string(),
+            ruleset_hash,
+            kernel_version: "test".to_string(),
+            retention: Duration::from_secs(60),
+            device_key_seed: "devkey:test".to_string(),
+        };
+        let mut kernel = Kernel::open(&cfg)?;
+
+        let alice_key = SigningKey::from_bytes(&[1u8; 32]);
+        let policy = crate::break_glass::QuorumPolicy::new(
+            1,
+            vec![crate::break_glass::TrusteeEntry {
+                id: TrusteeId::new("alice"),
+                public_key: alice_key.verifying_key().to_bytes(),
+            }],
+        )?;
+        kernel.set_break_glass_policy(&policy)?;
+
+        let bucket = TimeBucket::now_10min()?;
+        let request = UnlockRequest::new("vault:1", ruleset_hash, "audit", bucket)?;
+        let bob_key = SigningKey::from_bytes(&[2u8; 32]);
+        let signature = bob_key.sign(&request.request_hash());
+        let approval = Approval::new(
+            TrusteeId::new("bob"),
+            request.request_hash(),
+            signature.to_vec(),
+        );
+        let approval_path = temp_dir.join("bob.approval");
+        std::fs::write(&approval_path, serde_json::to_string(&approval)?)?;
+
+        let result = cmd_authorize_with_bucket(
+            "vault:1",
+            "audit",
+            approval_path.to_string_lossy().as_ref(),
+            cfg.db_path.as_str(),
+            ruleset_id,
+            cfg.device_key_seed.as_str(),
+            None,
+            bucket,
+        );
+        let err = result.expect_err("authorization should be denied");
+        assert!(err.to_string().contains("unrecognized trustee approvals"));
+        Ok(())
     }
 }
