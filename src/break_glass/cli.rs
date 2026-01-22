@@ -413,7 +413,6 @@ fn write_token_to_file(path: &str, token: &BreakGlassToken) -> Result<()> {
             .mode(0o600)
             .open(path)?;
         file.write_all(payload.as_bytes())?;
-        return Ok(());
     }
 
     #[cfg(not(unix))]
