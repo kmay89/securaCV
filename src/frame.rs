@@ -376,7 +376,9 @@ impl Drop for FrameBuffer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::break_glass::{Approval, QuorumPolicy, TrusteeEntry, TrusteeId, UnlockRequest};
+    use crate::break_glass::{
+        Approval, BreakGlass, QuorumPolicy, TrusteeEntry, TrusteeId, UnlockRequest,
+    };
     use ed25519_dalek::{Signer, SigningKey};
 
     fn make_test_frame(data: &[u8]) -> RawFrame {
