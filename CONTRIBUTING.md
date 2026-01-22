@@ -86,6 +86,12 @@ Every non-trivial PR **must** include:
 
 PRs without these will not be reviewed.
 
+## Issue Templates
+
+When reporting regressions or drift, use the structured issue forms:
+- [Security Report](.github/ISSUE_TEMPLATE/security_report.yml)
+- [Conformance Report](.github/ISSUE_TEMPLATE/conformance_report.yml)
+
 ---
 
 ## Tests Are Not Optional
