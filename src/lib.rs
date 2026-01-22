@@ -34,8 +34,8 @@ pub mod break_glass;
 pub mod ingest;
 
 pub use frame::{
-    BreakGlassToken, Detection, DetectionResult, Detector, FrameBuffer, InferenceView, RawFrame,
-    SizeClass, StubDetector, MAX_BUFFER_FRAMES, MAX_PREROLL_SECS,
+    Detection, DetectionResult, Detector, FrameBuffer, InferenceView, RawFrame, SizeClass,
+    StubDetector, MAX_BUFFER_FRAMES, MAX_PREROLL_SECS,
 };
 pub use ingest::{RtspSource, rtsp::RtspConfig};
 
@@ -481,48 +481,49 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         Ok(ev)
     }
 
-fn last_break_glass_hash_or_zero(&self) -> Result<[u8; 32]> {
-    let mut stmt = self.conn.prepare(
-        "SELECT entry_hash FROM break_glass_receipts ORDER BY id DESC LIMIT 1"
-    )?;
-    let mut rows = stmt.query([])?;
-    if let Some(row) = rows.next()? {
-        let h: Vec<u8> = row.get(0)?;
-        if h.len() != 32 {
-            return Err(anyhow!("corrupt break glass log: entry_hash size"));
+    fn last_break_glass_hash_or_zero(&self) -> Result<[u8; 32]> {
+        let mut stmt = self.conn.prepare(
+            "SELECT prev_hash, entry_hash FROM break_glass_receipts ORDER BY id DESC LIMIT 1",
+        )?;
+        let mut rows = stmt.query([])?;
+        if let Some(row) = rows.next()? {
+            let prev_bytes: Vec<u8> = row.get(0)?;
+            let entry_bytes: Vec<u8> = row.get(1)?;
+            let _prev_hash = blob32(prev_bytes, "break_glass_receipts.prev_hash")?;
+            let entry_hash = blob32(entry_bytes, "break_glass_receipts.entry_hash")?;
+            Ok(entry_hash)
+        } else {
+            Ok([0u8; 32])
         }
-        let mut hash = [0u8; 32];
-        hash.copy_from_slice(&h);
-        Ok(hash)
-    } else {
-        Ok([0u8; 32])
     }
-}
 
-pub fn append_break_glass_receipt(&mut self, receipt: &crate::break_glass::BreakGlassReceipt) -> Result<()> {
-    let created_at = now_s()? as i64;
-    let prev_hash = self.last_break_glass_hash_or_zero()?;
-    let payload_json = serde_json::to_string(receipt)?;
+    pub fn append_break_glass_receipt(
+        &mut self,
+        receipt: &crate::break_glass::BreakGlassReceipt,
+    ) -> Result<()> {
+        let created_at = now_s()? as i64;
+        let prev_hash = self.last_break_glass_hash_or_zero()?;
+        let payload_json = serde_json::to_string(receipt)?;
 
-    let entry_hash = hash_entry(&prev_hash, payload_json.as_bytes());
-    let signature = sign_mvp(&self.device_key, &entry_hash);
+        let entry_hash = hash_entry(&prev_hash, payload_json.as_bytes());
+        let signature = sign_mvp(&self.device_key, &entry_hash);
 
-    self.conn.execute(
-        r#"
-        INSERT INTO break_glass_receipts(created_at, payload_json, prev_hash, entry_hash, signature)
-        VALUES (?1, ?2, ?3, ?4, ?5)
-        "#,
-        params![
-            created_at,
-            payload_json,
-            prev_hash.to_vec(),
-            entry_hash.to_vec(),
-            signature.to_vec(),
-        ],
-    )?;
+        self.conn.execute(
+            r#"
+            INSERT INTO break_glass_receipts(created_at, payload_json, prev_hash, entry_hash, signature)
+            VALUES (?1, ?2, ?3, ?4, ?5)
+            "#,
+            params![
+                created_at,
+                payload_json,
+                prev_hash.to_vec(),
+                entry_hash.to_vec(),
+                signature.to_vec(),
+            ],
+        )?;
 
-    Ok(())
-}
+        Ok(())
+    }
 
 
     /// Prune events older than retention. Writes a checkpoint so chain integrity remains verifiable.
@@ -614,6 +615,15 @@ pub fn sign_mvp(device_key: &[u8; 32], entry_hash: &[u8; 32]) -> [u8; 32] {
     hasher.update(device_key);
     hasher.update(entry_hash);
     hasher.finalize().into()
+}
+
+fn blob32(bytes: Vec<u8>, context: &str) -> Result<[u8; 32]> {
+    if bytes.len() != 32 {
+        return Err(anyhow!("corrupt {}: expected 32 bytes, got {}", context, bytes.len()));
+    }
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&bytes);
+    Ok(out)
 }
 
 fn now_s() -> Result<u64> {
@@ -965,6 +975,36 @@ mod tests {
                 "{}",
                 vec![0u8; 32],
                 vec![1u8; 31],
+                vec![2u8; 32],
+            ],
+        )?;
+
+        assert!(kernel.last_break_glass_hash_or_zero().is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn break_glass_prev_hash_rejects_malformed_size() -> Result<()> {
+        let cfg = KernelConfig {
+            db_path: ":memory:".to_string(),
+            ruleset_id: "ruleset:test".to_string(),
+            ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
+            kernel_version: "0.0.0-test".to_string(),
+            retention: Duration::from_secs(60),
+            device_key_seed: "devkey:test".to_string(),
+        };
+        let mut kernel = Kernel::open(&cfg)?;
+        let created_at = now_s()? as i64;
+        kernel.conn.execute(
+            r#"
+            INSERT INTO break_glass_receipts(created_at, payload_json, prev_hash, entry_hash, signature)
+            VALUES (?1, ?2, ?3, ?4, ?5)
+            "#,
+            params![
+                created_at,
+                "{}",
+                vec![0u8; 31],
+                vec![1u8; 32],
                 vec![2u8; 32],
             ],
         )?;

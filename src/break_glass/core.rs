@@ -277,4 +277,26 @@ mod tests {
         let round_trip: BreakGlassReceipt = serde_json::from_str(&json).unwrap();
         assert_eq!(round_trip.vault_envelope_id, "vault:1");
     }
+
+    #[test]
+    fn receipt_serialization_minimal() {
+        let bucket = TimeBucket {
+            start_epoch_s: 0,
+            size_s: 600,
+        };
+        let receipt = BreakGlassReceipt {
+            vault_envelope_id: "vault:min".to_string(),
+            request_hash: [0u8; 32],
+            ruleset_hash: [1u8; 32],
+            time_bucket: bucket,
+            trustees_used: vec![],
+            outcome: BreakGlassOutcome::Denied {
+                reason: "test".to_string(),
+            },
+        };
+
+        let json = serde_json::to_string(&receipt).unwrap();
+        let round_trip: BreakGlassReceipt = serde_json::from_str(&json).unwrap();
+        assert_eq!(round_trip.vault_envelope_id, "vault:min");
+    }
 }
