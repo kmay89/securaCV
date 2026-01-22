@@ -6,8 +6,8 @@
 //! - `InferenceView`: Restricted view that modules receive. Can run inference, cannot export bytes.
 //! - `FrameBuffer`: Bounded ring buffer for pre-roll (vault sealing only).
 //!
-//! The ONLY path to raw bytes is `RawMediaBoundary::export_for_vault()` which requires
-//! a `BreakGlassToken`. Normal operation cannot extract raw media.
+//! The ONLY path to raw bytes is `RawMediaBoundary::export_for_vault()`, which enforces
+//! break-glass validation before vault sealing. Normal operation cannot extract raw media.
 
 use anyhow::Result;
 use sha2::{Digest, Sha256};
@@ -15,7 +15,7 @@ use std::collections::VecDeque;
 use std::time::Instant;
 use zeroize::Zeroize;
 
-use crate::{break_glass::{BreakGlass, BreakGlassToken}, RawMediaBoundary, TimeBucket};
+use crate::{break_glass::BreakGlassToken, RawMediaBoundary, TimeBucket};
 
 /// Build-time maximum pre-roll duration in seconds.
 /// This is a hard cap on how much raw media can be buffered for vault sealing.
@@ -96,18 +96,19 @@ impl RawFrame {
     ///
     /// This is the ONLY path to raw bytes. If you don't have a token, you can't call this.
     /// In normal operation, no token exists, so this path is unreachable.
+    /// `RawMediaBoundary::export_for_vault` enforces token validity and consumption.
     pub fn export_for_vault(
         mut self,
         token: &mut BreakGlassToken,
         envelope_id: &str,
         expected_ruleset_hash: [u8; 32],
     ) -> Result<Vec<u8>> {
-        let now_bucket = TimeBucket::now(600)?;
-        BreakGlass::assert_token_valid(token, envelope_id, expected_ruleset_hash, now_bucket)?;
-        token.consume()?;
-        let mut data = Vec::new();
-        std::mem::swap(&mut data, &mut self.data);
-        Ok(data)
+        RawMediaBoundary::export_for_vault(
+            &mut self.data,
+            token,
+            envelope_id,
+            expected_ruleset_hash,
+        )
     }
 }
 

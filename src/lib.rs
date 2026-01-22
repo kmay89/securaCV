@@ -286,6 +286,23 @@ impl RawMediaBoundary {
             "conformance: raw media export denied by RawMediaBoundary"
         ))
     }
+
+    pub fn export_for_vault(
+        data: &mut Vec<u8>,
+        token: &mut break_glass::BreakGlassToken,
+        envelope_id: &str,
+        expected_ruleset_hash: [u8; 32],
+    ) -> Result<Vec<u8>> {
+        let now_bucket = TimeBucket::now(600)?;
+        break_glass::BreakGlass::assert_token_valid(
+            token,
+            envelope_id,
+            expected_ruleset_hash,
+            now_bucket,
+        )?;
+        token.consume()?;
+        Ok(std::mem::take(data))
+    }
 }
 
 /// -------------------- Sealed Log --------------------
@@ -788,6 +805,31 @@ pub struct Frame {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::break_glass::{Approval, QuorumPolicy, TrusteeEntry, TrusteeId, UnlockRequest};
+    use ed25519_dalek::{Signer, SigningKey};
+
+    fn make_break_glass_token(envelope_id: &str, ruleset_hash: [u8; 32]) -> BreakGlassToken {
+        let bucket = TimeBucket::now(600).expect("time bucket");
+        let request =
+            UnlockRequest::new(envelope_id, ruleset_hash, "test-export", bucket).unwrap();
+        let signing_key = SigningKey::from_bytes(&[7u8; 32]);
+        let signature = signing_key.sign(&request.request_hash());
+        let approval = Approval::new(
+            TrusteeId::new("alice"),
+            request.request_hash(),
+            signature.to_vec(),
+        );
+        let policy = QuorumPolicy::new(
+            1,
+            vec![TrusteeEntry {
+                id: TrusteeId::new("alice"),
+                public_key: signing_key.verifying_key().to_bytes(),
+            }],
+        )
+        .unwrap();
+        let (result, _receipt) = BreakGlass::authorize(&policy, &request, &[approval], bucket);
+        result.expect("break-glass token")
+    }
 
     #[test]
     fn conformance_rejects_precise_time() {
@@ -1030,6 +1072,20 @@ mod tests {
     fn raw_media_boundary_denies_export() {
         let result: Result<Vec<u8>> = RawMediaBoundary::deny_export("test");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn raw_media_boundary_exports_for_vault() -> Result<()> {
+        let envelope_id = "test-envelope";
+        let ruleset_hash = [7u8; 32];
+        let mut token = make_break_glass_token(envelope_id, ruleset_hash);
+        let mut data = b"vault bytes".to_vec();
+
+        let bytes =
+            RawMediaBoundary::export_for_vault(&mut data, &mut token, envelope_id, ruleset_hash)?;
+        assert_eq!(bytes, b"vault bytes");
+        assert!(data.is_empty());
+        Ok(())
     }
 }
 
