@@ -18,6 +18,8 @@ use witness_kernel::{
     approvals_commitment, device_public_key_from_db, hash_entry, verify_entry_signature, Approval,
 };
 
+type CheckpointInfo = (Option<[u8; 32]>, Option<[u8; 64]>, Option<i64>);
+
 #[derive(Parser, Debug)]
 #[command(
     name = "log_verify",
@@ -125,9 +127,7 @@ fn verifying_key_from_hex(hex_str: &str) -> Result<VerifyingKey> {
     VerifyingKey::from_bytes(&key_bytes).map_err(|e| anyhow!("invalid public key bytes: {}", e))
 }
 
-fn latest_checkpoint(
-    conn: &Connection,
-) -> Result<(Option<[u8; 32]>, Option<[u8; 64]>, Option<i64>)> {
+fn latest_checkpoint(conn: &Connection) -> Result<CheckpointInfo> {
     let mut stmt = conn.prepare(
         "SELECT chain_head_hash, signature, cutoff_event_id FROM checkpoints ORDER BY id DESC LIMIT 1",
     )?;
