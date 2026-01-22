@@ -1,0 +1,2110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Privacy-first video infrastructure that outputs motion events without face recognition, cross-camera tracking, or single-user export. Open source.">
+  <meta name="theme-color" content="#2563eb">
+  <meta property="og:title" content="Witness Kernel — SecuraCV">
+  <meta property="og:description" content="Video infrastructure that detects events, not people. No face recognition. No tracking. Multi-party approval required for export.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://securacv.com/witness-kernel">
+  <title>Witness Kernel — SecuraCV</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' stop-color='%232563eb'/%3E%3Cstop offset='100%25' stop-color='%231e40af'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='6' fill='url(%23g)'/%3E%3Cpath d='M21 9c0-2.5-2-4-5-4-3.5 0-6 2-6 5 0 2 1.2 3.2 3.5 4.2l4.5 1.8c2 .8 3 1.8 3 3.5 0 2.5-2 4.5-5 4.5-2.5 0-4.5-1-5-3' stroke='white' stroke-width='2.5' stroke-linecap='round' fill='none'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #fafafa;
+      --bg-alt: #f4f4f5;
+      --bg-code: #09090b;
+      --surface: #ffffff;
+      --border: #e4e4e7;
+      --border-strong: #d4d4d8;
+      --text: #09090b;
+      --text-secondary: #52525b;
+      --text-muted: #a1a1aa;
+      --brand: #2563eb;
+      --brand-dark: #1d4ed8;
+      --brand-darker: #1e40af;
+      --brand-light: #eff6ff;
+      --brand-glow: rgba(37, 99, 235, 0.5);
+      --success: #059669;
+      --success-bg: #ecfdf5;
+      --caution: #d97706;
+      --caution-bg: #fffbeb;
+      --danger: #dc2626;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html {
+      scroll-behavior: smooth;
+      scroll-padding-top: 80px;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      font-size: 15px;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      overflow-x: hidden;
+    }
+
+    ::selection { background: var(--brand); color: white; }
+
+    /* Focus states for accessibility */
+    :focus-visible {
+      outline: 2px solid var(--brand);
+      outline-offset: 2px;
+    }
+
+    a:focus-visible,
+    button:focus-visible {
+      outline: 2px solid var(--brand);
+      outline-offset: 2px;
+      border-radius: 4px;
+    }
+
+    /* Custom cursor */
+    .cursor {
+      position: fixed;
+      width: 20px;
+      height: 20px;
+      border: 1.5px solid var(--brand);
+      border-radius: 50%;
+      pointer-events: none;
+      z-index: 9998;
+      transition: width 0.2s ease, height 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+      transform: translate(-50%, -50%);
+      opacity: 0;
+      will-change: transform;
+    }
+
+    .cursor.visible {
+      opacity: 1;
+    }
+
+    .cursor.hovering {
+      width: 48px;
+      height: 48px;
+      border-color: var(--brand);
+      background: rgba(37, 99, 235, 0.06);
+      mix-blend-mode: normal;
+    }
+
+    .cursor.clicking {
+      width: 16px;
+      height: 16px;
+      background: rgba(37, 99, 235, 0.15);
+    }
+
+    .cursor-dot {
+      position: fixed;
+      width: 6px;
+      height: 6px;
+      background: var(--brand);
+      border-radius: 50%;
+      pointer-events: none;
+      z-index: 9999;
+      transform: translate(-50%, -50%);
+      opacity: 0;
+      will-change: transform;
+    }
+
+    .cursor-dot.visible {
+      opacity: 1;
+    }
+
+    .cursor-dot.clicking {
+      transform: translate(-50%, -50%) scale(0.6);
+    }
+
+    /* Hide custom cursor on touch devices */
+    @media (hover: none) and (pointer: coarse) {
+      .cursor, .cursor-dot { display: none; }
+    }
+
+    /* Logo 3D tilt and shine effect */
+    .logo-mark {
+      --shine-x: 50%;
+      --shine-y: 50%;
+      width: 36px;
+      height: 36px;
+      background: linear-gradient(135deg, var(--brand) 0%, var(--brand-darker) 100%);
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 4px 12px var(--brand-glow);
+      transition: box-shadow 0.3s ease;
+      position: relative;
+      overflow: hidden;
+      transform-style: preserve-3d;
+    }
+
+    .logo-mark::before {
+      content: '';
+      position: absolute;
+      width: 100%;
+      height: 100%;
+      top: 0;
+      left: 0;
+      background: radial-gradient(
+        circle at var(--shine-x, 50%) var(--shine-y, 50%),
+        rgba(255, 255, 255, 0.4) 0%,
+        rgba(255, 255, 255, 0) 60%
+      );
+      opacity: 0;
+      transition: opacity 0.3s ease;
+      pointer-events: none;
+      z-index: 5;
+    }
+
+    .logo:hover .logo-mark::before {
+      opacity: 1;
+    }
+
+    .logo-mark::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(
+        105deg,
+        transparent 40%,
+        rgba(255, 255, 255, 0.4) 45%,
+        rgba(255, 255, 255, 0.6) 50%,
+        rgba(255, 255, 255, 0.4) 55%,
+        transparent 60%
+      );
+      opacity: 0;
+      transition: opacity 0.3s ease;
+      pointer-events: none;
+      transform: translateX(-100%);
+      z-index: 6;
+    }
+
+    .logo:hover .logo-mark::after {
+      opacity: 1;
+      animation: logoShine 0.8s ease forwards;
+    }
+
+    @keyframes logoShine {
+      to {
+        transform: translateX(100%);
+      }
+    }
+
+    .logo:hover .logo-mark {
+      box-shadow:
+        0 8px 32px var(--brand-glow),
+        0 0 20px rgba(37, 99, 235, 0.3);
+    }
+
+    /* Reduced motion */
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+      }
+      html { scroll-behavior: auto; }
+    }
+
+    /* Page loader */
+    .page-loader {
+      position: fixed;
+      inset: 0;
+      background: white;
+      z-index: 9999;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: opacity 0.5s ease, visibility 0.5s ease;
+    }
+
+    .page-loader.hidden {
+      opacity: 0;
+      visibility: hidden;
+    }
+
+    .loader-logo {
+      width: 48px;
+      height: 48px;
+      animation: logoFloat 1.5s ease-in-out infinite;
+    }
+
+    @keyframes logoFloat {
+      0%, 100% { transform: translateY(0) scale(1); }
+      50% { transform: translateY(-10px) scale(1.05); }
+    }
+
+    /* Smooth reveal animations */
+    .reveal {
+      opacity: 0;
+      transform: translateY(40px);
+      transition: opacity 0.8s cubic-bezier(0.16, 1, 0.3, 1),
+                  transform 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .reveal.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .reveal-delay-1 { transition-delay: 0.1s; }
+    .reveal-delay-2 { transition-delay: 0.2s; }
+    .reveal-delay-3 { transition-delay: 0.3s; }
+    .reveal-delay-4 { transition-delay: 0.4s; }
+
+    /* Text reveal animation */
+    .text-reveal {
+      overflow: hidden;
+      display: inline-block;
+    }
+
+    .text-reveal-inner {
+      display: inline-block;
+      transform: translateY(100%);
+      transition: transform 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .text-reveal.visible .text-reveal-inner {
+      transform: translateY(0);
+    }
+
+    /* Header */
+    header {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 100;
+      padding: 0 24px;
+      transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    header.scrolled {
+      background: rgba(255, 255, 255, 0.8);
+      backdrop-filter: blur(20px) saturate(180%);
+      -webkit-backdrop-filter: blur(20px) saturate(180%);
+      border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+    }
+
+    .header-inner {
+      max-width: 1200px;
+      margin: 0 auto;
+      height: 72px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      text-decoration: none;
+      color: var(--text);
+    }
+
+    .logo-mark svg { width: 22px; height: 22px; position: relative; z-index: 2; }
+
+    .logo-text {
+      font-weight: 600;
+      font-size: 1rem;
+      letter-spacing: -0.02em;
+    }
+
+    .logo-text span {
+      color: var(--text-muted);
+      font-weight: 400;
+      margin-left: 2px;
+    }
+
+    nav { display: flex; align-items: center; gap: 4px; }
+
+    nav a {
+      padding: 10px 16px;
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      text-decoration: none;
+      border-radius: 8px;
+      transition: all 0.2s ease;
+      position: relative;
+    }
+
+    nav a::after {
+      content: '';
+      position: absolute;
+      bottom: 6px;
+      left: 16px;
+      right: 16px;
+      height: 2px;
+      background: var(--brand);
+      transform: scaleX(0);
+      transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    nav a:hover { color: var(--text); }
+    nav a:hover::after { transform: scaleX(1); }
+
+    nav .btn-nav {
+      background: var(--text);
+      color: white;
+      margin-left: 8px;
+      padding: 10px 20px;
+      border-radius: 10px;
+      font-weight: 500;
+      transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+
+    nav .btn-nav::after { display: none; }
+
+    nav .btn-nav:hover {
+      background: #333;
+      transform: translateY(-2px);
+      box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+    }
+
+    main { padding-top: 72px; }
+
+    /* Hero Section */
+    .hero {
+      min-height: calc(100vh - 72px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 80px 24px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    /* Animated gradient mesh background */
+    .hero-bg {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+    }
+
+    .gradient-orb {
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(80px);
+      opacity: 0.5;
+      animation: orbFloat 20s ease-in-out infinite;
+    }
+
+    .gradient-orb-1 {
+      width: 600px;
+      height: 600px;
+      background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
+      top: -200px;
+      right: -100px;
+      animation-delay: 0s;
+    }
+
+    .gradient-orb-2 {
+      width: 500px;
+      height: 500px;
+      background: linear-gradient(135deg, #e0e7ff 0%, #c7d2fe 100%);
+      bottom: -150px;
+      left: -100px;
+      animation-delay: -7s;
+    }
+
+    .gradient-orb-3 {
+      width: 400px;
+      height: 400px;
+      background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      animation-delay: -14s;
+      opacity: 0.3;
+    }
+
+    @keyframes orbFloat {
+      0%, 100% { transform: translate(0, 0) scale(1); }
+      25% { transform: translate(30px, -30px) scale(1.05); }
+      50% { transform: translate(-20px, 20px) scale(0.95); }
+      75% { transform: translate(-30px, -20px) scale(1.02); }
+    }
+
+    /* Grid pattern overlay */
+    .hero-grid {
+      position: absolute;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(0,0,0,0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0,0,0,0.03) 1px, transparent 1px);
+      background-size: 60px 60px;
+      mask-image: radial-gradient(ellipse at center, black 0%, transparent 70%);
+      -webkit-mask-image: radial-gradient(ellipse at center, black 0%, transparent 70%);
+    }
+
+    .hero-content {
+      max-width: 900px;
+      text-align: center;
+      position: relative;
+      z-index: 1;
+    }
+
+    .hero-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 16px;
+      background: rgba(217, 119, 6, 0.1);
+      border: 1px solid rgba(217, 119, 6, 0.2);
+      border-radius: 100px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--caution);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 32px;
+      backdrop-filter: blur(10px);
+    }
+
+    .badge-dot {
+      width: 8px;
+      height: 8px;
+      background: var(--caution);
+      border-radius: 50%;
+      animation: badgePulse 2s ease-in-out infinite;
+    }
+
+    @keyframes badgePulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.5; transform: scale(0.8); }
+    }
+
+    h1 {
+      font-size: clamp(3rem, 8vw, 5rem);
+      font-weight: 700;
+      letter-spacing: -0.04em;
+      line-height: 1.05;
+      margin-bottom: 24px;
+    }
+
+    h1 .line {
+      display: block;
+      overflow: hidden;
+    }
+
+    h1 .line-inner {
+      display: block;
+      transform: translateY(100%);
+      animation: lineReveal 1s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+
+    h1 .line:nth-child(2) .line-inner {
+      animation-delay: 0.15s;
+    }
+
+    @keyframes lineReveal {
+      to { transform: translateY(0); }
+    }
+
+    h1 .highlight {
+      background: linear-gradient(135deg, var(--brand) 0%, var(--brand-darker) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      position: relative;
+    }
+
+    /* Animated underline for highlight */
+    h1 .highlight::after {
+      content: '';
+      position: absolute;
+      bottom: 0.05em;
+      left: 0;
+      width: 100%;
+      height: 0.08em;
+      background: linear-gradient(135deg, var(--brand) 0%, var(--brand-darker) 100%);
+      transform: scaleX(0);
+      transform-origin: left;
+      animation: underlineReveal 0.8s cubic-bezier(0.16, 1, 0.3, 1) 0.8s forwards;
+      border-radius: 4px;
+    }
+
+    @keyframes underlineReveal {
+      to { transform: scaleX(1); }
+    }
+
+    .hero-description {
+      font-size: 1.25rem;
+      color: var(--text-secondary);
+      max-width: 600px;
+      margin: 0 auto 40px;
+      line-height: 1.7;
+      opacity: 0;
+      animation: fadeUp 0.8s cubic-bezier(0.16, 1, 0.3, 1) 0.4s forwards;
+    }
+
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(20px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .hero-cta {
+      display: flex;
+      gap: 16px;
+      justify-content: center;
+      flex-wrap: wrap;
+      opacity: 0;
+      animation: fadeUp 0.8s cubic-bezier(0.16, 1, 0.3, 1) 0.6s forwards;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 16px 28px;
+      font-size: 15px;
+      font-weight: 600;
+      text-decoration: none;
+      border-radius: 14px;
+      transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+      border: none;
+      cursor: pointer;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--brand) 0%, var(--brand-darker) 100%);
+      color: white;
+      box-shadow: 0 4px 16px var(--brand-glow),
+                  inset 0 1px 0 rgba(255,255,255,0.2);
+    }
+
+    .btn-primary::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: -100%;
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(
+        90deg,
+        transparent 0%,
+        rgba(255, 255, 255, 0.15) 50%,
+        transparent 100%
+      );
+      transition: none;
+    }
+
+    .btn-primary:hover::before {
+      animation: btnShimmer 0.75s ease forwards;
+    }
+
+    @keyframes btnShimmer {
+      to {
+        left: 100%;
+      }
+    }
+
+    .btn-primary::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(135deg, rgba(255,255,255,0.15) 0%, transparent 50%);
+      opacity: 0;
+      transition: opacity 0.3s ease;
+    }
+
+    .btn-primary:hover {
+      transform: translateY(-3px);
+      box-shadow: 0 8px 32px var(--brand-glow),
+                  inset 0 1px 0 rgba(255,255,255,0.2);
+    }
+
+    .btn-primary:hover::after { opacity: 1; }
+
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.8);
+      color: var(--text);
+      border: 1px solid var(--border);
+      backdrop-filter: blur(10px);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+    }
+
+    .btn-secondary:hover {
+      background: white;
+      border-color: var(--border-strong);
+      transform: translateY(-3px);
+      box-shadow: 0 8px 24px rgba(0,0,0,0.08);
+    }
+
+    .btn svg { width: 18px; height: 18px; transition: transform 0.3s ease; }
+    .btn:hover svg { transform: translateX(3px); }
+
+    /* Scroll indicator */
+    .scroll-indicator {
+      position: absolute;
+      bottom: 40px;
+      left: 50%;
+      transform: translateX(-50%);
+      opacity: 0;
+      animation: fadeUp 0.8s cubic-bezier(0.16, 1, 0.3, 1) 1s forwards;
+      transition: opacity 0.4s ease;
+    }
+
+    .scroll-mouse {
+      width: 26px;
+      height: 40px;
+      border: 2px solid var(--border-strong);
+      border-radius: 13px;
+      position: relative;
+    }
+
+    .scroll-wheel {
+      width: 4px;
+      height: 8px;
+      background: var(--text-muted);
+      border-radius: 2px;
+      position: absolute;
+      top: 8px;
+      left: 50%;
+      transform: translateX(-50%);
+      animation: scrollWheel 2s ease-in-out infinite;
+    }
+
+    @keyframes scrollWheel {
+      0%, 100% { opacity: 1; transform: translateX(-50%) translateY(0); }
+      50% { opacity: 0.3; transform: translateX(-50%) translateY(12px); }
+    }
+
+    /* Differentiator Section */
+    .diff-section {
+      padding: 120px 24px;
+      background: var(--bg-code);
+      color: white;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .diff-bg {
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(ellipse at 30% 20%, rgba(37, 99, 235, 0.15) 0%, transparent 50%),
+        radial-gradient(ellipse at 70% 80%, rgba(99, 102, 241, 0.1) 0%, transparent 50%);
+    }
+
+    .diff-inner {
+      max-width: 1100px;
+      margin: 0 auto;
+      position: relative;
+      z-index: 1;
+    }
+
+    .diff-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 80px;
+      align-items: center;
+    }
+
+    @media (max-width: 900px) {
+      .diff-grid { grid-template-columns: 1fr; gap: 48px; }
+    }
+
+    .diff-text h2 {
+      font-size: 2.5rem;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      margin-bottom: 20px;
+      color: white;
+    }
+
+    .diff-text p {
+      font-size: 1.125rem;
+      color: rgba(255,255,255,0.6);
+      line-height: 1.7;
+    }
+
+    .diff-cards {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .diff-card {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 20px 24px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 16px;
+      transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+      cursor: default;
+    }
+
+    .diff-card:hover {
+      background: rgba(255,255,255,0.06);
+      border-color: rgba(255,255,255,0.1);
+      transform: translateX(8px);
+    }
+
+    .diff-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      transition: all 0.3s ease;
+    }
+
+    .diff-card:hover .diff-icon {
+      transform: scale(1.1);
+    }
+
+    .diff-icon.yes {
+      background: rgba(5, 150, 105, 0.2);
+      color: #34d399;
+    }
+
+    .diff-icon.no {
+      background: rgba(239, 68, 68, 0.2);
+      color: #f87171;
+    }
+
+    .diff-icon svg { width: 24px; height: 24px; }
+
+    .diff-card-text h4 {
+      font-size: 1rem;
+      font-weight: 600;
+      color: white;
+      margin-bottom: 4px;
+    }
+
+    .diff-card-text p {
+      font-size: 0.875rem;
+      color: rgba(255,255,255,0.5);
+      margin: 0;
+    }
+
+    /* Sections */
+    section {
+      padding: 120px 24px;
+    }
+
+    .section-inner { max-width: 800px; margin: 0 auto; }
+    .section-wide { max-width: 1000px; margin: 0 auto; }
+    .section-wider { max-width: 1200px; margin: 0 auto; }
+
+    .section-header {
+      text-align: center;
+      margin-bottom: 64px;
+    }
+
+    .section-label {
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--brand);
+      margin-bottom: 16px;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .section-label::before,
+    .section-label::after {
+      content: '';
+      width: 24px;
+      height: 1px;
+      background: var(--brand);
+      opacity: 0.3;
+    }
+
+    h2 {
+      font-size: 2.5rem;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      margin-bottom: 16px;
+    }
+
+    .section-header p {
+      font-size: 1.125rem;
+      color: var(--text-secondary);
+      max-width: 500px;
+      margin: 0 auto;
+    }
+
+    /* Feature Cards */
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 24px;
+    }
+
+    @media (max-width: 900px) {
+      .features-grid { grid-template-columns: 1fr; }
+    }
+
+    .feature-card {
+      padding: 32px;
+      background: white;
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .feature-card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 3px;
+      background: linear-gradient(90deg, var(--brand), var(--brand-darker));
+      transform: scaleX(0);
+      transform-origin: left;
+      transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .feature-card:hover {
+      transform: translateY(-8px);
+      box-shadow: 0 24px 48px rgba(0,0,0,0.08);
+      border-color: transparent;
+    }
+
+    .feature-card:hover::before {
+      transform: scaleX(1);
+    }
+
+    .feature-icon {
+      width: 56px;
+      height: 56px;
+      background: var(--brand-light);
+      border-radius: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 24px;
+      color: var(--brand);
+      transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .feature-card:hover .feature-icon {
+      transform: scale(1.1) rotate(-5deg);
+      background: linear-gradient(135deg, var(--brand) 0%, var(--brand-darker) 100%);
+      color: white;
+      box-shadow: 0 8px 24px var(--brand-glow);
+    }
+
+    .feature-icon svg { width: 28px; height: 28px; }
+
+    .feature-card h3 {
+      font-size: 1.125rem;
+      font-weight: 600;
+      margin-bottom: 12px;
+    }
+
+    .feature-card p {
+      font-size: 0.95rem;
+      color: var(--text-secondary);
+      line-height: 1.6;
+    }
+
+    /* Comparison Section */
+    .compare-section {
+      background: linear-gradient(180deg, var(--bg-alt) 0%, var(--bg) 100%);
+    }
+
+    .compare-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 24px;
+    }
+
+    @media (max-width: 1000px) {
+      .compare-grid { grid-template-columns: 1fr; max-width: 400px; margin: 0 auto; }
+    }
+
+    .compare-card {
+      background: white;
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      overflow: hidden;
+      transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .compare-card:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 16px 40px rgba(0,0,0,0.08);
+    }
+
+    .compare-card.featured {
+      border: 2px solid var(--brand);
+      box-shadow: 0 8px 32px var(--brand-glow);
+      transform: scale(1.02);
+    }
+
+    .compare-card.featured:hover {
+      transform: scale(1.02) translateY(-4px);
+    }
+
+    .compare-header {
+      padding: 28px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .compare-card.featured .compare-header {
+      background: linear-gradient(135deg, var(--brand-light) 0%, rgba(219, 234, 254, 0.5) 100%);
+    }
+
+    .compare-logo {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .compare-logo-icon {
+      width: 44px;
+      height: 44px;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.5rem;
+      transition: transform 0.3s ease;
+    }
+
+    .compare-card:hover .compare-logo-icon {
+      transform: rotate(-5deg) scale(1.1);
+    }
+
+    .compare-logo-icon.apple { background: #f5f5f7; }
+    .compare-logo-icon.frigate { background: #1a365d; color: white; font-size: 1rem; font-weight: 700; }
+    .compare-logo-icon.witness {
+      background: linear-gradient(135deg, var(--brand) 0%, var(--brand-darker) 100%);
+      box-shadow: 0 4px 12px var(--brand-glow);
+    }
+
+    .compare-logo h3 {
+      font-size: 1.125rem;
+      font-weight: 600;
+    }
+
+    .compare-header > p {
+      font-size: 0.875rem;
+      color: var(--text-muted);
+    }
+
+    .compare-body {
+      padding: 24px 28px;
+    }
+
+    .compare-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 14px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.9rem;
+    }
+
+    .compare-row:last-child { border-bottom: none; }
+
+    .compare-row .label { color: var(--text-secondary); }
+
+    .compare-row .value {
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .compare-row .value.yes { color: var(--success); }
+    .compare-row .value.no { color: var(--danger); }
+    .compare-row .value.partial { color: var(--caution); }
+
+    .value-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    .compare-row .value.neutral { color: var(--text); }
+    .compare-row .value.neutral .value-dot { display: none; }
+
+    .compare-note {
+      margin-top: 20px;
+      padding: 16px;
+      background: var(--bg-alt);
+      border-radius: 12px;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+
+    .compare-card.featured .compare-note {
+      background: var(--brand-light);
+      color: var(--brand-dark);
+    }
+
+    /* Philosophy callout */
+    .philosophy {
+      margin-top: 48px;
+      padding: 32px;
+      background: white;
+      border-radius: 20px;
+      border: 1px solid var(--border);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .philosophy::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      width: 4px;
+      background: linear-gradient(180deg, var(--brand) 0%, var(--brand-darker) 100%);
+    }
+
+    .philosophy h4 {
+      font-size: 1.125rem;
+      font-weight: 600;
+      margin-bottom: 12px;
+    }
+
+    .philosophy p {
+      font-size: 1rem;
+      color: var(--text-secondary);
+      line-height: 1.7;
+    }
+
+    /* Constraints Section */
+    .constraints-section {
+      background: var(--bg-alt);
+    }
+
+    .constraints-list {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .constraint-item {
+      display: grid;
+      grid-template-columns: 56px 1fr;
+      gap: 24px;
+      padding: 28px;
+      background: white;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+      align-items: start;
+    }
+
+    .constraint-item:hover {
+      transform: translateX(8px);
+      box-shadow: 0 8px 32px rgba(0,0,0,0.06);
+      border-color: var(--brand);
+    }
+
+    .constraint-num {
+      width: 56px;
+      height: 56px;
+      background: linear-gradient(135deg, var(--brand-light) 0%, white 100%);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: var(--brand);
+      transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .constraint-item:hover .constraint-num {
+      background: linear-gradient(135deg, var(--brand) 0%, var(--brand-darker) 100%);
+      color: white;
+      transform: rotate(-5deg) scale(1.05);
+      box-shadow: 0 8px 24px var(--brand-glow);
+    }
+
+    .constraint-content h4 {
+      font-size: 1.125rem;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+
+    .constraint-content p {
+      font-size: 0.95rem;
+      color: var(--text-secondary);
+      line-height: 1.6;
+    }
+
+    .constraint-content code {
+      font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+      font-size: 0.85rem;
+      background: var(--bg-alt);
+      padding: 2px 8px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      color: var(--brand);
+    }
+
+    /* Architecture */
+    .arch-block {
+      margin-top: 48px;
+      padding: 32px;
+      background: var(--bg-code);
+      border-radius: 20px;
+      overflow-x: auto;
+      position: relative;
+    }
+
+    .arch-label {
+      position: absolute;
+      top: 16px;
+      right: 20px;
+      font-family: 'SF Mono', Monaco, monospace;
+      font-size: 11px;
+      letter-spacing: 0.1em;
+      color: rgba(255,255,255,0.3);
+      text-transform: uppercase;
+    }
+
+    .arch-block pre {
+      font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+      font-size: 14px;
+      line-height: 1.7;
+      color: rgba(255,255,255,0.7);
+      margin: 0;
+    }
+
+    .arch-block .hl { color: #4ade80; }
+    .arch-block .accent { color: #60a5fa; }
+    .arch-block .dim { color: rgba(255,255,255,0.35); }
+
+    /* Verify Steps */
+    .verify-steps {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .verify-step {
+      display: flex;
+      gap: 20px;
+      padding: 24px;
+      background: white;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .verify-step:hover {
+      transform: translateX(8px);
+      box-shadow: 0 8px 32px rgba(0,0,0,0.06);
+    }
+
+    .step-num {
+      width: 36px;
+      height: 36px;
+      background: var(--text);
+      color: white;
+      border-radius: 10px;
+      font-size: 14px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .step-content h4 {
+      font-size: 1rem;
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+
+    .step-content p {
+      font-size: 0.9rem;
+      color: var(--text-secondary);
+    }
+
+    .code-block {
+      margin-top: 12px;
+      padding: 14px 18px;
+      background: var(--bg-code);
+      border-radius: 10px;
+      overflow-x: auto;
+    }
+
+    .code-block code {
+      font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+      font-size: 13px;
+      color: rgba(255,255,255,0.8);
+    }
+
+    /* Status Section */
+    .status-section {
+      background: white;
+    }
+
+    .status-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 16px;
+    }
+
+    @media (max-width: 600px) {
+      .status-grid { grid-template-columns: 1fr; }
+    }
+
+    .status-item {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 20px 24px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .status-item:hover {
+      transform: translateX(4px);
+      border-color: var(--border-strong);
+    }
+
+    .status-icon {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      font-weight: 600;
+      flex-shrink: 0;
+    }
+
+    .status-icon.done { background: var(--success); color: white; }
+    .status-icon.wip { background: var(--caution-bg); color: var(--caution); border: 2px solid var(--caution); }
+    .status-icon.planned { background: var(--bg-alt); color: var(--text-muted); border: 2px solid var(--border); }
+
+    .status-item h4 {
+      font-size: 0.95rem;
+      font-weight: 500;
+    }
+
+    /* CTA Section */
+    .cta-section {
+      background: linear-gradient(135deg, var(--brand) 0%, var(--brand-darker) 100%);
+      text-align: center;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .cta-bg {
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(ellipse at 20% 50%, rgba(255,255,255,0.1) 0%, transparent 50%),
+        radial-gradient(ellipse at 80% 50%, rgba(255,255,255,0.08) 0%, transparent 50%);
+    }
+
+    .cta-content {
+      position: relative;
+      z-index: 1;
+    }
+
+    .cta-section h2 {
+      color: white;
+      font-size: 2.5rem;
+      margin-bottom: 16px;
+    }
+
+    .cta-section p {
+      color: rgba(255,255,255,0.8);
+      font-size: 1.125rem;
+      margin-bottom: 32px;
+    }
+
+    .cta-section .btn-secondary {
+      background: white;
+      color: var(--brand);
+      border: none;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.1);
+    }
+
+    .cta-section .btn-secondary:hover {
+      background: rgba(255,255,255,0.95);
+      transform: translateY(-3px);
+      box-shadow: 0 8px 32px rgba(0,0,0,0.15);
+    }
+
+    /* Footer */
+    footer {
+      padding: 48px 24px;
+      background: var(--bg-alt);
+      border-top: 1px solid var(--border);
+    }
+
+    .footer-inner {
+      max-width: 800px;
+      margin: 0 auto;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 24px;
+    }
+
+    .footer-brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .footer-brand .logo-mark {
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+    }
+
+    .footer-brand .logo-mark svg { width: 16px; height: 16px; }
+
+    .footer-brand span {
+      font-weight: 600;
+      font-size: 0.95rem;
+    }
+
+    .footer-links {
+      display: flex;
+      gap: 32px;
+    }
+
+    .footer-links a {
+      font-size: 0.9rem;
+      color: var(--text-secondary);
+      text-decoration: none;
+      transition: color 0.2s ease;
+    }
+
+    .footer-links a:hover { color: var(--text); }
+
+    .footer-note {
+      width: 100%;
+      text-align: center;
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      margin-top: 32px;
+      padding-top: 32px;
+      border-top: 1px solid var(--border);
+    }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+      h1 { font-size: 2.5rem; }
+      h2 { font-size: 2rem; }
+      section { padding: 80px 20px; }
+      .hero { padding: 60px 20px; min-height: auto; }
+      .diff-text h2 { font-size: 2rem; }
+      nav a:not(.btn-nav) { display: none; }
+      .constraint-item { grid-template-columns: 1fr; gap: 16px; }
+      .constraint-num { width: 44px; height: 44px; font-size: 1rem; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Custom cursor -->
+  <div class="cursor"></div>
+  <div class="cursor-dot"></div>
+
+  <!-- Page Loader -->
+  <div class="page-loader">
+    <svg class="loader-logo" viewBox="0 0 32 32" fill="none">
+      <rect width="32" height="32" rx="8" fill="url(#loader-grad)"/>
+      <path d="M21 9c0-2.5-2-4-5-4-3.5 0-6 2-6 5 0 2 1.2 3.2 3.5 4.2l4.5 1.8c2 .8 3 1.8 3 3.5 0 2.5-2 4.5-5 4.5-2.5 0-4.5-1-5-3" stroke="white" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+      <defs>
+        <linearGradient id="loader-grad" x1="0" y1="0" x2="32" y2="32">
+          <stop offset="0%" stop-color="#2563eb"/>
+          <stop offset="100%" stop-color="#1e40af"/>
+        </linearGradient>
+      </defs>
+    </svg>
+  </div>
+
+  <header>
+    <div class="header-inner">
+      <a href="https://securacv.com" class="logo">
+        <div class="logo-mark">
+          <svg viewBox="0 0 32 32" fill="none">
+            <path d="M21 9c0-2.5-2-4-5-4-3.5 0-6 2-6 5 0 2 1.2 3.2 3.5 4.2l4.5 1.8c2 .8 3 1.8 3 3.5 0 2.5-2 4.5-5 4.5-2.5 0-4.5-1-5-3" stroke="white" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+          </svg>
+        </div>
+        <span class="logo-text">SecuraCV <span>/ witness-kernel</span></span>
+      </a>
+      <nav>
+        <a href="#how">How It Works</a>
+        <a href="#compare">Compare</a>
+        <a href="#status">Status</a>
+        <a href="https://github.com/securacv/witness-kernel" class="btn-nav">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <!-- Hero -->
+    <section class="hero">
+      <div class="hero-bg">
+        <div class="gradient-orb gradient-orb-1"></div>
+        <div class="gradient-orb gradient-orb-2"></div>
+        <div class="gradient-orb gradient-orb-3"></div>
+      </div>
+      <div class="hero-grid"></div>
+
+      <div class="hero-content">
+        <div class="hero-badge">
+          <span class="badge-dot"></span>
+          Prototype
+        </div>
+
+        <h1>
+          <span class="line"><span class="line-inner">Detect events.</span></span>
+          <span class="line"><span class="line-inner"><span class="highlight">Not people.</span></span></span>
+        </h1>
+
+        <p class="hero-description">
+          Video infrastructure that outputs motion events — without the ability to identify faces, track individuals, or export footage without multi-party approval.
+        </p>
+
+        <div class="hero-cta">
+          <a href="https://github.com/securacv/witness-kernel" class="btn btn-primary">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>
+            View Source
+          </a>
+          <a href="#how" class="btn btn-secondary">
+            How It Works
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          </a>
+        </div>
+      </div>
+
+      <div class="scroll-indicator">
+        <div class="scroll-mouse">
+          <div class="scroll-wheel"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Differentiator -->
+    <section class="diff-section">
+      <div class="diff-bg"></div>
+      <div class="diff-inner">
+        <div class="diff-grid">
+          <div class="diff-text reveal">
+            <h2>What makes this different</h2>
+            <p>Most camera software can be configured for privacy. This one lacks the code to violate it. The capability doesn't exist to disable.</p>
+          </div>
+          <div class="diff-cards">
+            <div class="diff-card reveal reveal-delay-1">
+              <div class="diff-icon yes">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg>
+              </div>
+              <div class="diff-card-text">
+                <h4>Motion & boundary events</h4>
+                <p>Logs "movement in zone A"</p>
+              </div>
+            </div>
+            <div class="diff-card reveal reveal-delay-2">
+              <div class="diff-icon no">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6L6 18M6 6l12 12"/></svg>
+              </div>
+              <div class="diff-card-text">
+                <h4>Face recognition</h4>
+                <p>No code exists for this</p>
+              </div>
+            </div>
+            <div class="diff-card reveal reveal-delay-3">
+              <div class="diff-icon no">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6L6 18M6 6l12 12"/></svg>
+              </div>
+              <div class="diff-card-text">
+                <h4>Cross-camera tracking</h4>
+                <p>No code exists for this</p>
+              </div>
+            </div>
+            <div class="diff-card reveal reveal-delay-4">
+              <div class="diff-icon no">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6L6 18M6 6l12 12"/></svg>
+              </div>
+              <div class="diff-card-text">
+                <h4>Single-person export</h4>
+                <p>Requires N-of-M quorum</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Features -->
+    <section>
+      <div class="section-wide">
+        <div class="section-header reveal">
+          <div class="section-label">Overview</div>
+          <h2>Three design constraints</h2>
+          <p>Every decision serves one goal: produce useful security events without creating a surveillance substrate.</p>
+        </div>
+
+        <div class="features-grid">
+          <div class="feature-card reveal reveal-delay-1">
+            <div class="feature-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+            </div>
+            <h3>Event-based output</h3>
+            <p>Sealed log of discrete events. No continuous video export API.</p>
+          </div>
+          <div class="feature-card reveal reveal-delay-2">
+            <div class="feature-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+            </div>
+            <h3>No biometric code</h3>
+            <p>Face, plate, gait recognition absent from codebase. Not disabled — missing.</p>
+          </div>
+          <div class="feature-card reveal reveal-delay-3">
+            <div class="feature-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            </div>
+            <h3>Quorum export</h3>
+            <p>Raw footage requires N-of-M trustee approval. No single-actor extraction.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Comparison -->
+    <section id="compare" class="compare-section">
+      <div class="section-wider">
+        <div class="section-header reveal">
+          <div class="section-label">Compare</div>
+          <h2>How it differs from existing solutions</h2>
+          <p>Different tools, different goals. Here's where witness-kernel fits.</p>
+        </div>
+
+        <div class="compare-grid">
+          <div class="compare-card reveal reveal-delay-1">
+            <div class="compare-header">
+              <div class="compare-logo">
+                <div class="compare-logo-icon apple">🏠</div>
+                <h3>HomeKit Secure Video</h3>
+              </div>
+              <p>Consumer cloud video with E2E encryption</p>
+            </div>
+            <div class="compare-body">
+              <div class="compare-row">
+                <span class="label">Face recognition</span>
+                <span class="value yes"><span class="value-dot"></span>Yes</span>
+              </div>
+              <div class="compare-row">
+                <span class="label">Object detection</span>
+                <span class="value yes"><span class="value-dot"></span>Yes</span>
+              </div>
+              <div class="compare-row">
+                <span class="label">Video export</span>
+                <span class="value neutral">Single user</span>
+              </div>
+              <div class="compare-row">
+                <span class="label">Hash-chained log</span>
+                <span class="value no"><span class="value-dot"></span>No</span>
+              </div>
+              <div class="compare-row">
+                <span class="label">Open source</span>
+                <span class="value no"><span class="value-dot"></span>No</span>
+              </div>
+              <div class="compare-note">
+                Strong encryption, but identifies faces. Any account holder can export clips.
+              </div>
+            </div>
+          </div>
+
+          <div class="compare-card reveal reveal-delay-2">
+            <div class="compare-header">
+              <div class="compare-logo">
+                <div class="compare-logo-icon frigate">F</div>
+                <h3>Frigate NVR</h3>
+              </div>
+              <p>Open-source local NVR for Home Assistant</p>
+            </div>
+            <div class="compare-body">
+              <div class="compare-row">
+                <span class="label">Face recognition</span>
+                <span class="value partial"><span class="value-dot"></span>Via add-ons</span>
+              </div>
+              <div class="compare-row">
+                <span class="label">Object detection</span>
+                <span class="value yes"><span class="value-dot"></span>Yes</span>
+              </div>
+              <div class="compare-row">
+                <span class="label">Video export</span>
+                <span class="value neutral">Single user</span>
+              </div>
+              <div class="compare-row">
+                <span class="label">Hash-chained log</span>
+                <span class="value no"><span class="value-dot"></span>No</span>
+              </div>
+              <div class="compare-row">
+                <span class="label">Open source</span>
+                <span class="value yes"><span class="value-dot"></span>Yes</span>
+              </div>
+              <div class="compare-note">
+                Excellent local-first NVR. Anyone with access can export full video.
+              </div>
+            </div>
+          </div>
+
+          <div class="compare-card featured reveal reveal-delay-3">
+            <div class="compare-header">
+              <div class="compare-logo">
+                <div class="compare-logo-icon witness">
+                  <svg viewBox="0 0 32 32" fill="none" width="22" height="22">
+                    <path d="M21 9c0-2.5-2-4-5-4-3.5 0-6 2-6 5 0 2 1.2 3.2 3.5 4.2l4.5 1.8c2 .8 3 1.8 3 3.5 0 2.5-2 4.5-5 4.5-2.5 0-4.5-1-5-3" stroke="white" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+                  </svg>
+                </div>
+                <h3>witness-kernel</h3>
+              </div>
+              <p>Event-only output, no tracking capability</p>
+            </div>
+            <div class="compare-body">
+              <div class="compare-row">
+                <span class="label">Face recognition</span>
+                <span class="value no"><span class="value-dot"></span>No code</span>
+              </div>
+              <div class="compare-row">
+                <span class="label">Object detection</span>
+                <span class="value yes"><span class="value-dot"></span>Yes</span>
+              </div>
+              <div class="compare-row">
+                <span class="label">Video export</span>
+                <span class="value neutral">Quorum only</span>
+              </div>
+              <div class="compare-row">
+                <span class="label">Hash-chained log</span>
+                <span class="value yes"><span class="value-dot"></span>Yes</span>
+              </div>
+              <div class="compare-row">
+                <span class="label">Open source</span>
+                <span class="value yes"><span class="value-dot"></span>Yes</span>
+              </div>
+              <div class="compare-note">
+                Intentionally limited. Cannot identify people without multi-party approval.
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="philosophy reveal">
+          <h4>Different goals, not better or worse</h4>
+          <p>HomeKit and Frigate are excellent at what they do. If you need face recognition, plate reading, or easy video export — use them. Witness-kernel exists for cases where those capabilities are liabilities, not features.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- How It Works -->
+    <section id="how" class="constraints-section">
+      <div class="section-inner">
+        <div class="section-header reveal">
+          <div class="section-label">How It Works</div>
+          <h2>Enforced constraints</h2>
+        </div>
+
+        <div class="constraints-list">
+          <div class="constraint-item reveal">
+            <div class="constraint-num">I</div>
+            <div class="constraint-content">
+              <h4>Private frame data</h4>
+              <p><code>RawFrame.data</code> has no public accessor. Modules receive <code>InferenceView</code> only.</p>
+            </div>
+          </div>
+          <div class="constraint-item reveal reveal-delay-1">
+            <div class="constraint-num">II</div>
+            <div class="constraint-content">
+              <h4>Token-gated export</h4>
+              <p><code>export_for_vault()</code> requires <code>BreakGlassToken</code> from quorum authorization.</p>
+            </div>
+          </div>
+          <div class="constraint-item reveal reveal-delay-2">
+            <div class="constraint-num">III</div>
+            <div class="constraint-content">
+              <h4>Coarsened timestamps</h4>
+              <p>10-minute buckets at capture. Precise timestamps not stored.</p>
+            </div>
+          </div>
+          <div class="constraint-item reveal reveal-delay-3">
+            <div class="constraint-num">IV</div>
+            <div class="constraint-content">
+              <h4>Hash-chained log</h4>
+              <p>Each event includes hash of previous. Tampering breaks verification.</p>
+            </div>
+          </div>
+          <div class="constraint-item reveal reveal-delay-4">
+            <div class="constraint-num">V</div>
+            <div class="constraint-content">
+              <h4>Single-use tokens</h4>
+              <p>Break-glass tokens are envelope-bound, consumed on use, expire within bucket.</p>
+            </div>
+          </div>
+          <div class="constraint-item reveal">
+            <div class="constraint-num">VI</div>
+            <div class="constraint-content">
+              <h4>Forward-only rulesets</h4>
+              <p><code>ReprocessGuard</code> blocks new rules on historical data.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Architecture -->
+    <section>
+      <div class="section-inner">
+        <div class="section-header reveal">
+          <div class="section-label">Architecture</div>
+          <h2>Data flow</h2>
+        </div>
+
+        <div class="arch-block reveal">
+          <div class="arch-label">Data Flow</div>
+<pre><span class="accent">Camera</span> ──▶ <span class="accent">RawFrame</span> ──▶ <span class="accent">InferenceView</span> ──▶ <span class="accent">Module</span> ──▶ <span class="accent">SealedEvent</span>
+            <span class="dim">(private)</span>    <span class="dim">(no pixels)</span>               <span class="dim">(hash-chained)</span>
+               │
+               ▼
+         <span class="accent">FrameBuffer</span> ──▶ <span class="hl">BreakGlass</span> ──▶ <span class="accent">VaultEnvelope</span>
+           <span class="dim">(30s max)</span>       <span class="dim">(N-of-M)</span>       <span class="dim">(if authorized)</span></pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- Verify -->
+    <section id="verify">
+      <div class="section-inner">
+        <div class="section-header reveal">
+          <div class="section-label">Verification</div>
+          <h2>Check the code</h2>
+        </div>
+
+        <div class="verify-steps">
+          <div class="verify-step reveal">
+            <div class="step-num">1</div>
+            <div class="step-content">
+              <h4>Verify log integrity</h4>
+              <p>Confirm hash chain and signatures.</p>
+              <div class="code-block">
+                <code>cargo run --bin log_verify -- --db witness.db</code>
+              </div>
+            </div>
+          </div>
+          <div class="verify-step reveal reveal-delay-1">
+            <div class="step-num">2</div>
+            <div class="step-content">
+              <h4>Verify byte isolation</h4>
+              <p><code>src/frame.rs</code>: <code>data: Vec&lt;u8&gt;</code> is private, no accessor.</p>
+            </div>
+          </div>
+          <div class="verify-step reveal reveal-delay-2">
+            <div class="step-num">3</div>
+            <div class="step-content">
+              <h4>Verify quorum logic</h4>
+              <p><code>src/break_glass.rs</code>: <code>authorize()</code> counts approvals before issuing token.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Status -->
+    <section id="status" class="status-section">
+      <div class="section-inner">
+        <div class="section-header reveal">
+          <div class="section-label">Status</div>
+          <h2>Implementation</h2>
+        </div>
+
+        <div class="status-grid">
+          <div class="status-item reveal">
+            <div class="status-icon done">✓</div>
+            <h4>Frame isolation types</h4>
+          </div>
+          <div class="status-item reveal reveal-delay-1">
+            <div class="status-icon done">✓</div>
+            <h4>Hash-chained event log</h4>
+          </div>
+          <div class="status-item reveal reveal-delay-1">
+            <div class="status-icon done">✓</div>
+            <h4>Break-glass quorum</h4>
+          </div>
+          <div class="status-item reveal reveal-delay-2">
+            <div class="status-icon done">✓</div>
+            <h4>Event contract enforcement</h4>
+          </div>
+          <div class="status-item reveal reveal-delay-2">
+            <div class="status-icon wip">◐</div>
+            <h4>Cryptographic signatures</h4>
+          </div>
+          <div class="status-item reveal reveal-delay-3">
+            <div class="status-icon wip">◐</div>
+            <h4>RTSP video ingestion</h4>
+          </div>
+          <div class="status-item reveal reveal-delay-3">
+            <div class="status-icon planned">○</div>
+            <h4>WASM module sandboxing</h4>
+          </div>
+          <div class="status-item reveal reveal-delay-4">
+            <div class="status-icon planned">○</div>
+            <h4>Encrypted vault envelopes</h4>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- CTA -->
+    <section class="cta-section">
+      <div class="cta-bg"></div>
+      <div class="cta-content reveal">
+        <h2>Read the source</h2>
+        <p>Every claim on this page can be verified by inspecting the code.</p>
+        <a href="https://github.com/securacv/witness-kernel" class="btn btn-secondary">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>
+          View on GitHub
+        </a>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="footer-inner">
+      <div class="footer-brand">
+        <div class="logo-mark">
+          <svg viewBox="0 0 32 32" fill="none">
+            <path d="M21 9c0-2.5-2-4-5-4-3.5 0-6 2-6 5 0 2 1.2 3.2 3.5 4.2l4.5 1.8c2 .8 3 1.8 3 3.5 0 2.5-2 4.5-5 4.5-2.5 0-4.5-1-5-3" stroke="white" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+          </svg>
+        </div>
+        <span>SecuraCV</span>
+      </div>
+      <div class="footer-links">
+        <a href="https://github.com/securacv/witness-kernel">GitHub</a>
+        <a href="https://securacv.com/docs">Docs</a>
+        <a href="https://securacv.com/contact">Contact</a>
+      </div>
+      <div class="footer-note">Prototype software. Read the source before trusting claims.</div>
+    </div>
+  </footer>
+
+  <script>
+    // Page loader
+    window.addEventListener('load', () => {
+      setTimeout(() => {
+        document.querySelector('.page-loader').classList.add('hidden');
+      }, 600);
+    });
+
+    // Header scroll effect
+    const header = document.querySelector('header');
+
+    window.addEventListener('scroll', () => {
+      if (window.pageYOffset > 50) {
+        header.classList.add('scrolled');
+      } else {
+        header.classList.remove('scrolled');
+      }
+    }, { passive: true });
+
+    // Scroll reveal with Intersection Observer
+    const revealElements = document.querySelectorAll('.reveal');
+
+    const revealObserver = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          entry.target.classList.add('visible');
+        }
+      });
+    }, {
+      threshold: 0.1,
+      rootMargin: '0px 0px -60px 0px'
+    });
+
+    revealElements.forEach(el => revealObserver.observe(el));
+
+    // Smooth parallax for gradient orbs
+    let ticking = false;
+
+    window.addEventListener('scroll', () => {
+      if (!ticking) {
+        requestAnimationFrame(() => {
+          const scrolled = window.pageYOffset;
+          const orbs = document.querySelectorAll('.gradient-orb');
+
+          orbs.forEach((orb, i) => {
+            const speed = 0.03 + (i * 0.015);
+            orb.style.transform = `translateY(${scrolled * speed}px)`;
+          });
+
+          ticking = false;
+        });
+        ticking = true;
+      }
+    }, { passive: true });
+
+    // Hide scroll indicator on scroll
+    const scrollIndicator = document.querySelector('.scroll-indicator');
+
+    window.addEventListener('scroll', () => {
+      if (window.pageYOffset > 100) {
+        scrollIndicator.style.opacity = '0';
+        scrollIndicator.style.pointerEvents = 'none';
+      } else {
+        scrollIndicator.style.opacity = '1';
+        scrollIndicator.style.pointerEvents = 'auto';
+      }
+    }, { passive: true });
+
+    // Smooth scroll for anchor links
+    document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+      anchor.addEventListener('click', function (e) {
+        e.preventDefault();
+        const target = document.querySelector(this.getAttribute('href'));
+        if (target) {
+          target.scrollIntoView({
+            behavior: 'smooth',
+            block: 'start'
+          });
+        }
+      });
+    });
+
+    // Custom cursor with smooth lag effect
+    const cursor = document.querySelector('.cursor');
+    const cursorDot = document.querySelector('.cursor-dot');
+    let cursorVisible = false;
+    let mouseX = 0, mouseY = 0;
+    let cursorX = 0, cursorY = 0;
+
+    // Only enable custom cursor on devices with fine pointer
+    const hasFinePointer = window.matchMedia('(pointer: fine)').matches;
+
+    if (hasFinePointer) {
+      // Track mouse position
+      document.addEventListener('mousemove', (e) => {
+        if (!cursorVisible) {
+          cursor.classList.add('visible');
+          cursorDot.classList.add('visible');
+          cursorVisible = true;
+        }
+
+        mouseX = e.clientX;
+        mouseY = e.clientY;
+
+        // Dot follows directly
+        cursorDot.style.left = mouseX + 'px';
+        cursorDot.style.top = mouseY + 'px';
+      });
+
+      // Smooth animation loop for outer ring
+      function animateCursor() {
+        // Ease towards mouse position
+        cursorX += (mouseX - cursorX) * 0.15;
+        cursorY += (mouseY - cursorY) * 0.15;
+
+        cursor.style.left = cursorX + 'px';
+        cursor.style.top = cursorY + 'px';
+
+        requestAnimationFrame(animateCursor);
+      }
+      animateCursor();
+
+      document.addEventListener('mousedown', () => {
+        cursor.classList.add('clicking');
+        cursorDot.classList.add('clicking');
+      });
+
+      document.addEventListener('mouseup', () => {
+        cursor.classList.remove('clicking');
+        cursorDot.classList.remove('clicking');
+      });
+
+      document.addEventListener('mouseleave', () => {
+        cursor.classList.remove('visible');
+        cursorDot.classList.remove('visible');
+        cursorVisible = false;
+      });
+
+      // Hover effect on interactive elements
+      const interactiveElements = document.querySelectorAll('a, button, .btn, .card, .feature-card, .compare-card, .diff-card, .constraint-item, .status-item, .verify-step');
+
+      interactiveElements.forEach(el => {
+        el.addEventListener('mouseenter', () => {
+          cursor.classList.add('hovering');
+        });
+        el.addEventListener('mouseleave', () => {
+          cursor.classList.remove('hovering');
+        });
+      });
+    }
+
+    // Logo 3D tilt effect with dynamic shine
+    const logoMark = document.querySelector('.logo-mark');
+    const logo = document.querySelector('.logo');
+
+    if (logo && logoMark) {
+      logo.addEventListener('mousemove', (e) => {
+        const rect = logoMark.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+
+        const centerX = rect.width / 2;
+        const centerY = rect.height / 2;
+
+        // Calculate rotation
+        const rotateX = (y - centerY) / 2.5;
+        const rotateY = (centerX - x) / 2.5;
+
+        // Apply transform
+        logoMark.style.transform = `perspective(500px) rotateX(${rotateX}deg) rotateY(${rotateY}deg) scale(1.08)`;
+
+        // Move the shine spotlight to follow mouse
+        const percentX = (x / rect.width) * 100;
+        const percentY = (y / rect.height) * 100;
+        logoMark.style.setProperty('--shine-x', `${percentX}%`);
+        logoMark.style.setProperty('--shine-y', `${percentY}%`);
+      });
+
+      logo.addEventListener('mouseleave', () => {
+        logoMark.style.transform = 'perspective(500px) rotateX(0deg) rotateY(0deg) scale(1)';
+        logoMark.style.setProperty('--shine-x', '50%');
+        logoMark.style.setProperty('--shine-y', '50%');
+      });
+    }
+  </script>
+
+</body>
+</html>
