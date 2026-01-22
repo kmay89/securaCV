@@ -1,5 +1,5 @@
 error[E0616]: field `frame` of struct `InferenceView` is private
-  --> tests/compile_fail/inference_view_private_frame.rs:7:23
-   |
-7  |     let _frame = view.frame;
-   |                       ^^^^^ private field
+ --> tests/compile_fail/inference_view_private_frame.rs:7:23
+  |
+7 |     let _frame = view.frame;
+  |                       ^^^^^ private field
