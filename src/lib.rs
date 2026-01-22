@@ -33,6 +33,7 @@ use zeroize::Zeroize;
 pub mod break_glass;
 pub mod frame;
 pub mod ingest;
+pub mod module_runtime;
 pub mod vault;
 
 pub use frame::{
@@ -40,6 +41,7 @@ pub use frame::{
     StubDetector, MAX_BUFFER_FRAMES, MAX_PREROLL_SECS,
 };
 pub use ingest::{rtsp::RtspConfig, RtspSource};
+pub use module_runtime::{CapabilityBoundaryRuntime, ModuleCapability};
 pub use vault::{Vault, VaultConfig};
 
 // -------------------- Time Buckets --------------------
@@ -839,6 +841,7 @@ fn now_s() -> Result<u64> {
 pub struct ModuleDescriptor {
     pub id: &'static str,
     pub allowed_event_types: &'static [EventType],
+    pub requested_capabilities: &'static [ModuleCapability],
 }
 
 /// Runtime allowlist enforcement: the kernel MUST verify that a module is authorized
@@ -903,6 +906,7 @@ impl Module for ZoneCrossingModule {
         ModuleDescriptor {
             id: "zone_crossing",
             allowed_event_types: ZONE_CROSSING_ALLOWED,
+            requested_capabilities: &[],
         }
     }
 
@@ -1128,6 +1132,7 @@ mod tests {
         let desc = ModuleDescriptor {
             id: "test_module",
             allowed_event_types: &[],
+            requested_capabilities: &[],
         };
 
         let cand = CandidateEvent {
@@ -1183,6 +1188,7 @@ mod tests {
         let desc = ModuleDescriptor {
             id: "test_module",
             allowed_event_types: &[],
+            requested_capabilities: &[],
         };
         let cand = CandidateEvent {
             event_type: EventType::BoundaryCrossingObjectLarge,

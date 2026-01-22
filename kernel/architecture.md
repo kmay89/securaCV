@@ -130,6 +130,10 @@ Modules MUST NOT:
 
 All module output MUST pass through the Event Contract Enforcer.
 
+Enforcement point: `module_runtime::CapabilityBoundaryRuntime` validates module descriptors
+before execution and refuses any module that requests filesystem or network access. This is the
+explicit capability boundary for untrusted modules until a hardened OS sandbox is wired in.
+
 ### 3.3 External tools (least trusted)
 External components (UI, dashboard, CLI, integrations) are untrusted:
 - They can request event streams.

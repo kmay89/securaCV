@@ -354,6 +354,7 @@ mod tests {
         let module = ModuleDescriptor {
             id: "test-module",
             allowed_event_types: &[EventType::BoundaryCrossingObjectLarge],
+            requested_capabilities: &[],
         };
         let cand = CandidateEvent {
             event_type: EventType::BoundaryCrossingObjectLarge,
