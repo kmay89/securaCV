@@ -9,10 +9,10 @@
 
 use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
-use ed25519_dalek::{Signer, SigningKey};
+use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 
 use crate::{
-    hash_entry, verify_entry_signature, verifying_key_from_seed, Approval, BreakGlass,
+    device_public_key_from_db, hash_entry, verify_entry_signature, Approval, BreakGlass,
     BreakGlassOutcome, BreakGlassToken, Kernel, KernelConfig, TimeBucket, TrusteeId, UnlockRequest,
 };
 
@@ -78,9 +78,12 @@ enum Command {
     Receipts {
         #[arg(long, default_value = "witness.db")]
         db: String,
-        /// Device key seed (must match witnessd)
-        #[arg(long, env = "DEVICE_KEY_SEED")]
-        device_key_seed: String,
+        /// Device public key (hex-encoded Ed25519 verifying key)
+        #[arg(long, value_name = "HEX", conflicts_with = "public_key_file")]
+        public_key: Option<String>,
+        /// Path to file containing hex-encoded device public key
+        #[arg(long, value_name = "PATH", conflicts_with = "public_key")]
+        public_key_file: Option<String>,
         #[arg(short, long)]
         verbose: bool,
     },
@@ -122,9 +125,15 @@ pub fn run() -> Result<()> {
         ),
         Command::Receipts {
             db,
-            device_key_seed,
+            public_key,
+            public_key_file,
             verbose,
-        } => cmd_receipts(&db, &device_key_seed, verbose),
+        } => cmd_receipts(
+            &db,
+            public_key.as_deref(),
+            public_key_file.as_deref(),
+            verbose,
+        ),
     }
 }
 
@@ -277,9 +286,14 @@ fn cmd_authorize_with_bucket(
     }
 }
 
-fn cmd_receipts(db_path: &str, device_key_seed: &str, verbose: bool) -> Result<()> {
+fn cmd_receipts(
+    db_path: &str,
+    public_key_hex: Option<&str>,
+    public_key_file: Option<&str>,
+    verbose: bool,
+) -> Result<()> {
     let conn = rusqlite::Connection::open(db_path)?;
-    let verifying_key = verifying_key_from_seed(device_key_seed)?;
+    let verifying_key = load_verifying_key(&conn, public_key_hex, public_key_file)?;
     let mut stmt = conn.prepare(
         "SELECT id, created_at, payload_json, prev_hash, entry_hash, signature FROM break_glass_receipts ORDER BY id ASC",
     )?;
@@ -423,6 +437,40 @@ fn write_token_to_file(path: &str, token: &BreakGlassToken) -> Result<()> {
         std::fs::write(path, payload)?;
     }
     Ok(())
+}
+
+fn load_verifying_key(
+    conn: &rusqlite::Connection,
+    public_key_hex: Option<&str>,
+    public_key_file: Option<&str>,
+) -> Result<VerifyingKey> {
+    if let Some(hex) = public_key_hex {
+        return verifying_key_from_hex(hex);
+    }
+    if let Some(path) = public_key_file {
+        let key_hex = std::fs::read_to_string(path)
+            .map_err(|e| anyhow!("failed to read public key file {}: {}", path, e))?;
+        return verifying_key_from_hex(key_hex.trim());
+    }
+    device_public_key_from_db(conn).map_err(|e| {
+        anyhow!(
+            "{} (provide --public-key or --public-key-file if the database has no key)",
+            e
+        )
+    })
+}
+
+fn verifying_key_from_hex(hex_str: &str) -> Result<VerifyingKey> {
+    let bytes = hex::decode(hex_str.trim()).map_err(|e| anyhow!("invalid hex: {}", e))?;
+    let mut key_bytes = [0u8; 32];
+    if bytes.len() != 32 {
+        return Err(anyhow!(
+            "invalid public key length: expected 32 bytes, got {}",
+            bytes.len()
+        ));
+    }
+    key_bytes.copy_from_slice(&bytes);
+    VerifyingKey::from_bytes(&key_bytes).map_err(|e| anyhow!("invalid public key bytes: {}", e))
 }
 
 fn parse_hex32(s: &str) -> Result<[u8; 32]> {
