@@ -134,12 +134,12 @@ pub struct BreakGlassReceipt {
     pub outcome: BreakGlassOutcome,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug)]
 pub struct BreakGlassToken {
-    pub token_nonce: [u8; 32],
-    pub expires_bucket: TimeBucket,
-    pub vault_envelope_id: String,
-    pub ruleset_hash: [u8; 32],
+    token_nonce: [u8; 32],
+    expires_bucket: TimeBucket,
+    vault_envelope_id: String,
+    ruleset_hash: [u8; 32],
     consumed: bool,
 }
 
@@ -150,6 +150,23 @@ impl BreakGlassToken {
         ))
     }
 
+    pub fn token_nonce(&self) -> [u8; 32] {
+        self.token_nonce
+    }
+
+    pub fn expires_bucket(&self) -> TimeBucket {
+        self.expires_bucket
+    }
+
+    pub fn vault_envelope_id(&self) -> &str {
+        &self.vault_envelope_id
+    }
+
+    pub fn ruleset_hash(&self) -> [u8; 32] {
+        self.ruleset_hash
+    }
+
+    #[cfg(test)]
     pub fn test_token() -> Self {
         Self {
             token_nonce: [0u8; 32],
@@ -159,6 +176,22 @@ impl BreakGlassToken {
             },
             vault_envelope_id: "test-envelope".to_string(),
             ruleset_hash: [0u8; 32],
+            consumed: false,
+        }
+    }
+
+    #[cfg(test)]
+    pub fn test_token_with(
+        token_nonce: [u8; 32],
+        expires_bucket: TimeBucket,
+        vault_envelope_id: impl Into<String>,
+        ruleset_hash: [u8; 32],
+    ) -> Self {
+        Self {
+            token_nonce,
+            expires_bucket,
+            vault_envelope_id: vault_envelope_id.into(),
+            ruleset_hash,
             consumed: false,
         }
     }
@@ -257,14 +290,15 @@ impl BreakGlass {
         if token.consumed {
             return Err(anyhow!("break-glass token already consumed"));
         }
-        if token.vault_envelope_id != envelope_id {
+        if token.vault_envelope_id() != envelope_id {
             return Err(anyhow!("break-glass token envelope mismatch"));
         }
-        if token.ruleset_hash != expected_ruleset_hash {
+        if token.ruleset_hash() != expected_ruleset_hash {
             return Err(anyhow!("break-glass token ruleset mismatch"));
         }
-        if token.expires_bucket.start_epoch_s != now_bucket.start_epoch_s
-            || token.expires_bucket.size_s != now_bucket.size_s
+        let expires_bucket = token.expires_bucket();
+        if expires_bucket.start_epoch_s != now_bucket.start_epoch_s
+            || expires_bucket.size_s != now_bucket.size_s
         {
             return Err(anyhow!("break-glass token expired"));
         }

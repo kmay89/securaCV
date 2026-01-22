@@ -379,9 +379,10 @@ fn parse_trustees(s: &str) -> Result<Vec<TrusteeEntry>> {
 }
 
 fn granted_lines(receipt: &crate::BreakGlassReceipt, token: &BreakGlassToken) -> Vec<String> {
+    let expires_bucket = token.expires_bucket();
     vec![
         "GRANTED".to_string(),
-        format!("Expires:     bucket {}", token.expires_bucket.start_epoch_s),
+        format!("Expires:     bucket {}", expires_bucket.start_epoch_s),
         format!(
             "Trustees:    {:?}",
             receipt
@@ -396,10 +397,12 @@ fn granted_lines(receipt: &crate::BreakGlassReceipt, token: &BreakGlassToken) ->
 fn write_token_to_file(path: &str, token: &BreakGlassToken) -> Result<()> {
     use std::io::Write;
 
+    let expires_bucket = token.expires_bucket();
+    let token_nonce = token.token_nonce();
     let payload = format!(
         "{{\"token_nonce\":\"{}\",\"expires_bucket\":{}}}\n",
-        hex32(&token.token_nonce),
-        token.expires_bucket.start_epoch_s
+        hex32(&token_nonce),
+        expires_bucket.start_epoch_s
     );
 
     #[cfg(unix)]
@@ -466,17 +469,40 @@ mod tests {
             trustees_used: vec![TrusteeId::new("trustee")],
             outcome: BreakGlassOutcome::Granted,
         };
-        let mut token = BreakGlassToken::test_token();
-        token.token_nonce = [1u8; 32];
-        token.expires_bucket = TimeBucket {
-            start_epoch_s: 1234,
-            size_s: 600,
-        };
-        token.vault_envelope_id = "env".to_string();
-        token.ruleset_hash = [3u8; 32];
+        let token = BreakGlassToken::test_token_with(
+            [1u8; 32],
+            TimeBucket {
+                start_epoch_s: 1234,
+                size_s: 600,
+            },
+            "env",
+            [3u8; 32],
+        );
+        let token_nonce = token.token_nonce();
+        let expires_bucket = token.expires_bucket();
+        assert_eq!(expires_bucket.start_epoch_s, 1234);
+        assert_eq!(expires_bucket.size_s, 600);
 
         let output = granted_lines(&receipt, &token).join("\n");
         assert!(!output.contains("Token nonce"));
-        assert!(!output.contains(&hex32(&token.token_nonce)));
+        assert!(!output.contains(&hex32(&token_nonce)));
+    }
+
+    #[test]
+    fn test_token_matches_expected_fields() {
+        let token = BreakGlassToken::test_token_with(
+            [9u8; 32],
+            TimeBucket {
+                start_epoch_s: 1234,
+                size_s: 600,
+            },
+            "env",
+            [3u8; 32],
+        );
+
+        assert_eq!(token.vault_envelope_id(), "env");
+        assert_eq!(token.ruleset_hash(), [3u8; 32]);
+        assert_eq!(token.token_nonce(), [9u8; 32]);
+        assert_eq!(token.expires_bucket().start_epoch_s, 1234);
     }
 }
