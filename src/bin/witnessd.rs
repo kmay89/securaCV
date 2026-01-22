@@ -12,8 +12,8 @@ use anyhow::{anyhow, Result};
 use std::time::{Duration, Instant};
 
 use witness_kernel::{
-    BucketKeyManager, FrameBuffer, Kernel, KernelConfig, Module, ModuleDescriptor, RtspConfig,
-    RtspSource, TimeBucket, ZoneCrossingModule,
+    BucketKeyManager, CapabilityBoundaryRuntime, FrameBuffer, Kernel, KernelConfig, Module,
+    ModuleDescriptor, RtspConfig, RtspSource, TimeBucket, ZoneCrossingModule,
 };
 
 fn main() -> Result<()> {
@@ -53,6 +53,8 @@ fn main() -> Result<()> {
     // Detection module
     let mut module = ZoneCrossingModule::new("zone:front_boundary").with_tokens(true);
     let module_desc: ModuleDescriptor = module.descriptor();
+    let runtime = CapabilityBoundaryRuntime::new();
+    runtime.validate_descriptor(&module_desc)?;
 
     // Bucket key manager (rotates per time bucket)
     let mut token_mgr = BucketKeyManager::new();
