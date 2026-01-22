@@ -76,6 +76,9 @@ Raw media may exist only:
 - in an in-memory frame buffer inside `witnessd`, and/or
 - inside the Evidence Vault as encrypted envelopes, and only when triggered by an allowed event type.
 
+Vault envelopes are persisted locally under a fixed path (default `vault/envelopes/`).
+The vault does not expose raw bytes without a valid break-glass token.
+
 Raw media MUST NOT be:
 - written to disk in normal operation,
 - exposed via API,
@@ -169,6 +172,10 @@ Enforced by:
 - vault key material is threshold-protected
 - decrypt requires N-of-M trustee approvals
 - every attempt logged and receipted
+
+Threat assumption: the vault is local-only storage. Protecting the host filesystem
+and trustee quorum process remains mandatory, because possession of the vault
+files alone does not grant access without break-glass authorization.
 
 ### Invariant VI — No Retroactive Capability Expansion
 Enforced by:
