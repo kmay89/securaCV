@@ -329,6 +329,9 @@ impl BreakGlass {
         expected_ruleset_hash: [u8; 32],
         now_bucket: TimeBucket,
     ) -> Result<()> {
+        if token.token_nonce() == [0u8; 32] {
+            return Err(anyhow!("break-glass token nonce invalid"));
+        }
         if token.consumed {
             return Err(anyhow!("break-glass token already consumed"));
         }
