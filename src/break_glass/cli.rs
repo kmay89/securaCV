@@ -12,8 +12,8 @@ use clap::{Parser, Subcommand};
 use ed25519_dalek::{Signer, SigningKey};
 
 use crate::{
-    Approval, BreakGlass, BreakGlassOutcome, Kernel, KernelConfig, QuorumPolicy, TimeBucket,
-    TrusteeEntry, TrusteeId, UnlockRequest,
+    Approval, BreakGlass, BreakGlassOutcome, BreakGlassToken, Kernel, KernelConfig, QuorumPolicy,
+    TimeBucket, TrusteeEntry, TrusteeId, UnlockRequest,
 };
 
 #[derive(Parser, Debug)]
@@ -49,7 +49,7 @@ enum Command {
         output: String,
     },
 
-    /// Authorize unlock using collected approval files
+    /// Authorize unlock using collected approval files (token output is sensitive)
     Authorize {
         #[arg(long)]
         envelope: String,
@@ -65,6 +65,11 @@ enum Command {
         threshold: u8,
         #[arg(long, help = "Comma-separated <id>:<pubkey-hex> entries")]
         trustees: String,
+        #[arg(
+            long,
+            help = "Write token nonce to a file (0600). Handle securely; token output is sensitive."
+        )]
+        output_token: Option<String>,
     },
 
     /// List break-glass receipts
@@ -101,6 +106,7 @@ pub fn run() -> Result<()> {
             ruleset_id,
             threshold,
             trustees,
+            output_token,
         } => cmd_authorize(
             &envelope,
             &purpose,
@@ -109,6 +115,7 @@ pub fn run() -> Result<()> {
             &ruleset_id,
             threshold,
             &trustees,
+            output_token.as_deref(),
         ),
         Command::Receipts { db, verbose } => cmd_receipts(&db, verbose),
     }
@@ -175,6 +182,7 @@ fn cmd_authorize(
     ruleset_id: &str,
     threshold: u8,
     trustees_arg: &str,
+    output_token: Option<&str>,
 ) -> Result<()> {
     let trustees = parse_trustees(trustees_arg)?;
     let policy = QuorumPolicy::new(threshold, trustees)?;
@@ -217,17 +225,16 @@ fn cmd_authorize(
 
     match result {
         Ok(mut token) => {
-            println!("GRANTED");
-            println!("Token nonce: {}", hex32(&token.token_nonce));
-            println!("Expires:     bucket {}", token.expires_bucket.start_epoch_s);
-            println!(
-                "Trustees:    {:?}",
-                receipt
-                    .trustees_used
-                    .iter()
-                    .map(|t| t.0.clone())
-                    .collect::<Vec<_>>()
-            );
+            for line in granted_lines(&receipt, &token) {
+                println!("{line}");
+            }
+            if let Some(path) = output_token {
+                write_token_to_file(path, &token)?;
+                eprintln!(
+                    "WARNING: Token nonce written to {}. Treat this file as highly sensitive.",
+                    path
+                );
+            }
             // Demonstrate single-use consume path (no vault wired here)
             token.consume()?;
             Ok(())
@@ -303,6 +310,51 @@ fn parse_trustees(s: &str) -> Result<Vec<TrusteeEntry>> {
     Ok(trustees)
 }
 
+fn granted_lines(receipt: &crate::BreakGlassReceipt, token: &BreakGlassToken) -> Vec<String> {
+    vec![
+        "GRANTED".to_string(),
+        format!("Expires:     bucket {}", token.expires_bucket.start_epoch_s),
+        format!(
+            "Trustees:    {:?}",
+            receipt
+                .trustees_used
+                .iter()
+                .map(|t| t.0.clone())
+                .collect::<Vec<_>>()
+        ),
+    ]
+}
+
+fn write_token_to_file(path: &str, token: &BreakGlassToken) -> Result<()> {
+    use std::io::Write;
+
+    let payload = format!(
+        "{{\"token_nonce\":\"{}\",\"expires_bucket\":{}}}\n",
+        hex32(&token.token_nonce),
+        token.expires_bucket.start_epoch_s
+    );
+
+    #[cfg(unix)]
+    {
+        use std::fs::OpenOptions;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)?;
+        file.write_all(payload.as_bytes())?;
+        return Ok(());
+    }
+
+    #[cfg(not(unix))]
+    {
+        std::fs::write(path, payload)?;
+    }
+    Ok(())
+}
+
 fn parse_hex32(s: &str) -> Result<[u8; 32]> {
     let b = hex::decode(s).map_err(|e| anyhow!("invalid hex: {}", e))?;
     if b.len() != 32 {
@@ -319,4 +371,36 @@ fn hex32(b: &[u8; 32]) -> String {
 
 fn hex_vec(b: &[u8]) -> String {
     b.iter().map(|x| format!("{:02x}", x)).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn granted_lines_do_not_include_token_nonce() {
+        let receipt = crate::BreakGlassReceipt {
+            vault_envelope_id: "env".to_string(),
+            request_hash: [2u8; 32],
+            ruleset_hash: [3u8; 32],
+            time_bucket: TimeBucket {
+                start_epoch_s: 1234,
+                size_s: 600,
+            },
+            trustees_used: vec![TrusteeId::new("trustee")],
+            outcome: BreakGlassOutcome::Granted,
+        };
+        let mut token = BreakGlassToken::test_token();
+        token.token_nonce = [1u8; 32];
+        token.expires_bucket = TimeBucket {
+            start_epoch_s: 1234,
+            size_s: 600,
+        };
+        token.vault_envelope_id = "env".to_string();
+        token.ruleset_hash = [3u8; 32];
+
+        let output = granted_lines(&receipt, &token).join("\n");
+        assert!(!output.contains("Token nonce"));
+        assert!(!output.contains(&hex32(&token.token_nonce)));
+    }
 }
