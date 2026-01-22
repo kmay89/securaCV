@@ -42,7 +42,7 @@ pub use frame::{
 pub use ingest::{rtsp::RtspConfig, RtspSource};
 pub use vault::{Vault, VaultConfig};
 
-/// -------------------- Time Buckets --------------------
+// -------------------- Time Buckets --------------------
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TimeBucket {
@@ -68,7 +68,7 @@ impl TimeBucket {
     }
 }
 
-/// -------------------- Event Types --------------------
+// -------------------- Event Types --------------------
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum EventType {
@@ -76,7 +76,7 @@ pub enum EventType {
     BoundaryCrossingObjectSmall,
 }
 
-/// -------------------- Events --------------------
+// -------------------- Events --------------------
 
 /// Candidate events are untrusted outputs from modules.
 /// They contain only fields allowed by the Event Contract.
@@ -111,7 +111,7 @@ impl Event {
     }
 }
 
-/// -------------------- Zone ID Discipline --------------------
+// -------------------- Zone ID Discipline --------------------
 
 /// A conforming zone_id MUST be a local identifier, not an encoded location.
 /// We enforce a positive allowlist pattern to avoid trivial bypasses.
@@ -133,7 +133,7 @@ pub fn validate_zone_id(zone_id: &str) -> Result<()> {
     Ok(())
 }
 
-/// -------------------- Contract Enforcer --------------------
+// -------------------- Contract Enforcer --------------------
 
 pub struct ContractEnforcer;
 
@@ -172,7 +172,7 @@ impl ContractEnforcer {
     }
 }
 
-/// -------------------- Ephemeral Correlation Token Keys --------------------
+// -------------------- Ephemeral Correlation Token Keys --------------------
 
 /// BucketKeyManager maintains a per-time-bucket secret used to derive correlation tokens.
 /// Keys are *randomly generated* per bucket and *destroyed* when the bucket changes.
@@ -215,7 +215,7 @@ impl BucketKeyManager {
             return Err(anyhow!("conformance: bucket key not initialized"));
         }
         let mut hasher = Sha256::new();
-        hasher.update(&self.key);
+        hasher.update(self.key);
         hasher.update(features_hash);
         Ok(hasher.finalize().into())
     }
@@ -239,7 +239,7 @@ impl Drop for BucketKeyManager {
     }
 }
 
-/// -------------------- Reprocess Guard (Invariant VI) --------------------
+// -------------------- Reprocess Guard (Invariant VI) --------------------
 
 #[derive(Clone, Debug)]
 pub struct AuditableError {
@@ -275,7 +275,7 @@ impl ReprocessGuard {
     }
 }
 
-/// -------------------- RawMediaBoundary (Pattern) --------------------
+// -------------------- RawMediaBoundary (Pattern) --------------------
 
 /// Raw media must never cross the kernel boundary in normal operation.
 /// This struct exists as a *single choke point* for any future export/serialization path.
@@ -308,7 +308,7 @@ impl RawMediaBoundary {
     }
 }
 
-/// -------------------- Sealed Log --------------------
+// -------------------- Sealed Log --------------------
 
 #[derive(Clone, Debug)]
 pub struct KernelConfig {
@@ -832,7 +832,7 @@ fn now_s() -> Result<u64> {
     Ok(SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs())
 }
 
-/// -------------------- Modules --------------------
+// -------------------- Modules --------------------
 
 /// Module metadata used for runtime authorization checks.
 #[derive(Clone, Debug)]

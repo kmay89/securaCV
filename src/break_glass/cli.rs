@@ -189,6 +189,17 @@ fn cmd_approve(
     Ok(())
 }
 
+struct AuthorizeArgs<'a> {
+    envelope: &'a str,
+    purpose: &'a str,
+    approvals_arg: &'a str,
+    db_path: &'a str,
+    ruleset_id: &'a str,
+    device_key_seed: &'a str,
+    output_token: Option<&'a str>,
+    bucket: TimeBucket,
+}
+
 fn cmd_authorize(
     envelope: &str,
     purpose: &str,
@@ -199,7 +210,7 @@ fn cmd_authorize(
     output_token: Option<&str>,
 ) -> Result<()> {
     let bucket = TimeBucket::now_10min()?;
-    cmd_authorize_with_bucket(
+    let args = AuthorizeArgs {
         envelope,
         purpose,
         approvals_arg,
@@ -208,27 +219,19 @@ fn cmd_authorize(
         device_key_seed,
         output_token,
         bucket,
-    )
+    };
+    cmd_authorize_with_bucket(args)
 }
 
-fn cmd_authorize_with_bucket(
-    envelope: &str,
-    purpose: &str,
-    approvals_arg: &str,
-    db_path: &str,
-    ruleset_id: &str,
-    device_key_seed: &str,
-    output_token: Option<&str>,
-    bucket: TimeBucket,
-) -> Result<()> {
-    let ruleset_hash = KernelConfig::ruleset_hash_from_id(ruleset_id);
+fn cmd_authorize_with_bucket(args: AuthorizeArgs<'_>) -> Result<()> {
+    let ruleset_hash = KernelConfig::ruleset_hash_from_id(args.ruleset_id);
     let cfg = KernelConfig {
-        db_path: db_path.to_string(),
-        ruleset_id: ruleset_id.to_string(),
+        db_path: args.db_path.to_string(),
+        ruleset_id: args.ruleset_id.to_string(),
         ruleset_hash,
         kernel_version: env!("CARGO_PKG_VERSION").to_string(),
         retention: std::time::Duration::from_secs(60 * 60 * 24 * 7),
-        device_key_seed: device_key_seed.to_string(),
+        device_key_seed: args.device_key_seed.to_string(),
     };
     let mut kernel = Kernel::open(&cfg)?;
     let policy = kernel
@@ -236,10 +239,12 @@ fn cmd_authorize_with_bucket(
         .ok_or_else(|| anyhow!("break-glass quorum policy is not configured"))?
         .clone();
 
-    let request = UnlockRequest::new(envelope, ruleset_hash, purpose, bucket)?;
+    let request =
+        UnlockRequest::new(args.envelope, ruleset_hash, args.purpose, args.bucket)?;
 
     let mut approvals: Vec<Approval> = Vec::new();
-    for file in approvals_arg
+    for file in args
+        .approvals_arg
         .split(',')
         .map(|s| s.trim())
         .filter(|s| !s.is_empty())
@@ -252,11 +257,12 @@ fn cmd_authorize_with_bucket(
     }
 
     println!("=== Break-Glass Authorization ===");
-    println!("Envelope:  {}", envelope);
+    println!("Envelope:  {}", args.envelope);
     println!("Policy:    {}-of-{}", policy.n, policy.m);
     println!("Approvals: {}", approvals.len());
 
-    let (result, receipt) = BreakGlass::authorize(&policy, &request, &approvals, bucket);
+    let (result, receipt) =
+        BreakGlass::authorize(&policy, &request, &approvals, args.bucket);
 
     // Log receipt regardless of outcome
     kernel.append_break_glass_receipt(&receipt, &approvals)?;
@@ -266,7 +272,7 @@ fn cmd_authorize_with_bucket(
             for line in granted_lines(&receipt, &token) {
                 println!("{line}");
             }
-            if let Some(path) = output_token {
+            if let Some(path) = args.output_token {
                 write_token_to_file(path, &token)?;
                 eprintln!(
                     "WARNING: Token nonce written to {}. Treat this file as highly sensitive.",

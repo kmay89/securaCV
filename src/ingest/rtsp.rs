@@ -119,7 +119,7 @@ impl RtspSource {
         let pixel_count = (self.config.width * self.config.height * 3) as usize; // RGB
 
         // Change scene state occasionally to simulate motion
-        if self.frame_count % 50 == 0 {
+        if self.frame_count.is_multiple_of(50) {
             self.scene_state = self.scene_state.wrapping_add(1);
         }
 
