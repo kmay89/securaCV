@@ -1,5 +1,5 @@
 error[E0616]: field `data` of struct `RawFrame` is private
-  --> tests/compile_fail/raw_frame_private_data.rs:6:24
-   |
-6  |     let _bytes = frame.data;
-   |                        ^^^^ private field
+ --> tests/compile_fail/raw_frame_private_data.rs:6:24
+  |
+6 |     let _bytes = frame.data;
+  |                        ^^^^ private field
