@@ -375,7 +375,8 @@ impl Drop for FrameBuffer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::break_glass::{Approval, QuorumPolicy, TrusteeId, UnlockRequest};
+    use crate::break_glass::{Approval, QuorumPolicy, TrusteeEntry, TrusteeId, UnlockRequest};
+    use ed25519_dalek::{Signer, SigningKey};
 
     fn make_test_frame(data: &[u8]) -> RawFrame {
         let bucket = TimeBucket {
@@ -390,8 +391,21 @@ mod tests {
         let bucket = TimeBucket::now(600).expect("time bucket");
         let request =
             UnlockRequest::new(envelope_id, ruleset_hash, "test-export", bucket).unwrap();
-        let approval = Approval::new(TrusteeId::new("alice"), request.request_hash(), vec![1]);
-        let policy = QuorumPolicy::new(1, vec![TrusteeId::new("alice")]).unwrap();
+        let signing_key = SigningKey::from_bytes(&[7u8; 32]);
+        let signature = signing_key.sign(&request.request_hash());
+        let approval = Approval::new(
+            TrusteeId::new("alice"),
+            request.request_hash(),
+            signature.to_vec(),
+        );
+        let policy = QuorumPolicy::new(
+            1,
+            vec![TrusteeEntry {
+                id: TrusteeId::new("alice"),
+                public_key: signing_key.verifying_key().to_bytes(),
+            }],
+        )
+        .unwrap();
         let (result, _receipt) = BreakGlass::authorize(&policy, &request, &[approval], bucket);
         result.expect("break-glass token")
     }
