@@ -11,7 +11,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use zeroize::Zeroize;
 
-use crate::{break_glass::BreakGlassToken, RawMediaBoundary};
+use crate::{break_glass::BreakGlassToken, RawFrame, RawMediaBoundary};
 
 /// Fixed local vault path to satisfy invariant requirements.
 pub const DEFAULT_VAULT_PATH: &str = "vault/envelopes";
@@ -52,30 +52,24 @@ impl Vault {
         expected_ruleset_hash: [u8; 32],
         raw_bytes: &mut Vec<u8>,
     ) -> Result<EnvelopeMetadata> {
-        let sanitized = sanitize_envelope_id(envelope_id)?;
-        let envelope_path = self.envelope_path(&sanitized);
-
-        if envelope_path.exists() {
-            return Err(anyhow!("vault envelope already exists"));
-        }
-
         let mut clear_bytes = RawMediaBoundary::export_for_vault(
             raw_bytes,
             token,
             envelope_id,
             expected_ruleset_hash,
         )?;
-        let envelope = Envelope::seal(envelope_id, expected_ruleset_hash, &clear_bytes)?;
-        clear_bytes.zeroize();
+        self.seal_bytes(envelope_id, expected_ruleset_hash, &mut clear_bytes)
+    }
 
-        let encoded = envelope.encode()?;
-        write_atomic(&envelope_path, &encoded)?;
-
-        Ok(EnvelopeMetadata {
-            envelope_id: envelope_id.to_string(),
-            ruleset_hash: expected_ruleset_hash,
-            ciphertext_len: envelope.ciphertext.len(),
-        })
+    pub fn seal_frame(
+        &self,
+        envelope_id: &str,
+        token: &mut BreakGlassToken,
+        expected_ruleset_hash: [u8; 32],
+        frame: RawFrame,
+    ) -> Result<EnvelopeMetadata> {
+        let mut clear_bytes = frame.export_for_vault(token, envelope_id, expected_ruleset_hash)?;
+        self.seal_bytes(envelope_id, expected_ruleset_hash, &mut clear_bytes)
     }
 
     pub fn unseal(
@@ -100,6 +94,32 @@ impl Vault {
         let mut path = self.root.clone();
         path.push(format!("{}.vault", envelope_id));
         path
+    }
+
+    fn seal_bytes(
+        &self,
+        envelope_id: &str,
+        expected_ruleset_hash: [u8; 32],
+        clear_bytes: &mut Vec<u8>,
+    ) -> Result<EnvelopeMetadata> {
+        let sanitized = sanitize_envelope_id(envelope_id)?;
+        let envelope_path = self.envelope_path(&sanitized);
+
+        if envelope_path.exists() {
+            return Err(anyhow!("vault envelope already exists"));
+        }
+
+        let envelope = Envelope::seal(envelope_id, expected_ruleset_hash, clear_bytes)?;
+        clear_bytes.zeroize();
+
+        let encoded = envelope.encode()?;
+        write_atomic(&envelope_path, &encoded)?;
+
+        Ok(EnvelopeMetadata {
+            envelope_id: envelope_id.to_string(),
+            ruleset_hash: expected_ruleset_hash,
+            ciphertext_len: envelope.ciphertext.len(),
+        })
     }
 }
 
@@ -187,7 +207,7 @@ impl Envelope {
     }
 }
 
-fn sanitize_envelope_id(envelope_id: &str) -> Result<String> {
+pub(crate) fn sanitize_envelope_id(envelope_id: &str) -> Result<String> {
     let trimmed = envelope_id.trim();
     if trimmed.is_empty() {
         return Err(anyhow!("vault envelope id cannot be empty"));
@@ -254,7 +274,9 @@ mod tests {
     use crate::break_glass::{
         Approval, BreakGlass, QuorumPolicy, TrusteeEntry, TrusteeId, UnlockRequest,
     };
+    use crate::TimeBucket;
     use ed25519_dalek::{Signer, SigningKey};
+    use sha2::{Digest, Sha256};
     use std::fs;
 
     fn make_break_glass_token(envelope_id: &str, ruleset_hash: [u8; 32]) -> BreakGlassToken {
@@ -277,6 +299,15 @@ mod tests {
         .unwrap();
         let (result, _receipt) = BreakGlass::authorize(&policy, &request, &[approval], bucket);
         result.expect("break-glass token")
+    }
+
+    fn make_raw_frame(data: &[u8]) -> RawFrame {
+        let bucket = TimeBucket {
+            start_epoch_s: 0,
+            size_s: 600,
+        };
+        let features: [u8; 32] = Sha256::digest(data).into();
+        RawFrame::new(data.to_vec(), 640, 480, bucket, features)
     }
 
     #[test]
@@ -361,6 +392,48 @@ mod tests {
         entries.sort_by_key(|entry| entry.path());
         assert_eq!(entries.len(), 1);
         assert!(entries[0].path().ends_with("incident-4.vault"));
+        Ok(())
+    }
+
+    #[test]
+    fn vault_unseal_rejects_expired_token() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::new(VaultConfig {
+            local_path: temp_dir.path().join("vault"),
+        })?;
+        let envelope_id = "incident-5";
+        let ruleset_hash = [5u8; 32];
+        let mut token = make_break_glass_token(envelope_id, ruleset_hash);
+        let mut raw = b"raw bytes".to_vec();
+        vault.seal(envelope_id, &mut token, ruleset_hash, &mut raw)?;
+
+        let mut expired = BreakGlassToken::test_token_with(
+            [9u8; 32],
+            TimeBucket {
+                start_epoch_s: 0,
+                size_s: 600,
+            },
+            envelope_id,
+            ruleset_hash,
+        );
+        assert!(vault
+            .unseal(envelope_id, &mut expired, ruleset_hash)
+            .is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn vault_seal_frame_uses_break_glass_token() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::new(VaultConfig {
+            local_path: temp_dir.path().join("vault"),
+        })?;
+        let envelope_id = "incident-6";
+        let ruleset_hash = [6u8; 32];
+        let mut token = make_break_glass_token(envelope_id, ruleset_hash);
+        let frame = make_raw_frame(b"raw bytes");
+        let meta = vault.seal_frame(envelope_id, &mut token, ruleset_hash, frame)?;
+        assert_eq!(meta.ciphertext_len, b"raw bytes".len());
         Ok(())
     }
 }

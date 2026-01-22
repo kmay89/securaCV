@@ -10,11 +10,12 @@
 use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
 use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
+use std::io::Write;
 
 use crate::{
-    approvals_commitment, device_public_key_from_db, hash_entry, verify_entry_signature, Approval,
-    BreakGlass, BreakGlassOutcome, BreakGlassToken, Kernel, KernelConfig, TimeBucket, TrusteeId,
-    UnlockRequest,
+    approvals_commitment, break_glass::BreakGlassTokenFile, device_public_key_from_db, hash_entry,
+    verify_entry_signature, Approval, BreakGlass, BreakGlassOutcome, BreakGlassToken, Kernel,
+    KernelConfig, TimeBucket, TrusteeId, UnlockRequest, Vault, VaultConfig,
 };
 
 #[derive(Parser, Debug)]
@@ -88,6 +89,20 @@ enum Command {
         #[arg(short, long)]
         verbose: bool,
     },
+
+    /// Unseal a vault envelope using a valid break-glass token
+    Unseal {
+        #[arg(long)]
+        envelope: String,
+        #[arg(long)]
+        token: String,
+        #[arg(long, default_value = "ruleset:v0.3.0")]
+        ruleset_id: String,
+        #[arg(long, default_value = "vault/envelopes")]
+        vault_path: String,
+        #[arg(long, default_value = "vault/unsealed")]
+        output_dir: String,
+    },
 }
 
 pub fn run() -> Result<()> {
@@ -135,6 +150,13 @@ pub fn run() -> Result<()> {
             public_key_file.as_deref(),
             verbose,
         ),
+        Command::Unseal {
+            envelope,
+            token,
+            ruleset_id,
+            vault_path,
+            output_dir,
+        } => cmd_unseal(&envelope, &token, &ruleset_id, &vault_path, &output_dir),
     }
 }
 
@@ -263,10 +285,10 @@ fn cmd_authorize_with_bucket(args: AuthorizeArgs<'_>) -> Result<()> {
     let (result, receipt) = BreakGlass::authorize(&policy, &request, &approvals, args.bucket);
 
     // Log receipt regardless of outcome
-    kernel.append_break_glass_receipt(&receipt, &approvals)?;
+    kernel.log_break_glass_receipt(&receipt, &approvals)?;
 
     match result {
-        Ok(mut token) => {
+        Ok(token) => {
             for line in granted_lines(&receipt, &token) {
                 println!("{line}");
             }
@@ -277,8 +299,6 @@ fn cmd_authorize_with_bucket(args: AuthorizeArgs<'_>) -> Result<()> {
                     path
                 );
             }
-            // Demonstrate single-use consume path (no vault wired here)
-            token.consume()?;
             Ok(())
         }
         Err(e) => {
@@ -434,13 +454,8 @@ fn granted_lines(receipt: &crate::BreakGlassReceipt, token: &BreakGlassToken) ->
 fn write_token_to_file(path: &str, token: &BreakGlassToken) -> Result<()> {
     use std::io::Write;
 
-    let expires_bucket = token.expires_bucket();
-    let token_nonce = token.token_nonce();
-    let payload = format!(
-        "{{\"token_nonce\":\"{}\",\"expires_bucket\":{}}}\n",
-        hex32(&token_nonce),
-        expires_bucket.start_epoch_s
-    );
+    let token_file = BreakGlassTokenFile::from_token(token);
+    let payload = format!("{}\n", serde_json::to_string_pretty(&token_file)?);
 
     #[cfg(unix)]
     {
@@ -459,6 +474,70 @@ fn write_token_to_file(path: &str, token: &BreakGlassToken) -> Result<()> {
     {
         std::fs::write(path, payload)?;
     }
+    Ok(())
+}
+
+fn read_token_from_file(path: &str) -> Result<BreakGlassTokenFile> {
+    let json = std::fs::read_to_string(path)
+        .map_err(|e| anyhow!("failed to read token file {}: {}", path, e))?;
+    let token_file: BreakGlassTokenFile =
+        serde_json::from_str(&json).map_err(|e| anyhow!("invalid token file: {}", e))?;
+    Ok(token_file)
+}
+
+fn cmd_unseal(
+    envelope: &str,
+    token_path: &str,
+    ruleset_id: &str,
+    vault_path: &str,
+    output_dir: &str,
+) -> Result<()> {
+    let token_file = read_token_from_file(token_path)?;
+    if token_file.vault_envelope_id != envelope {
+        return Err(anyhow!(
+            "token envelope id mismatch (token={}, requested={})",
+            token_file.vault_envelope_id,
+            envelope
+        ));
+    }
+    let ruleset_hash = KernelConfig::ruleset_hash_from_id(ruleset_id);
+    if token_file.ruleset_hash != hex::encode(ruleset_hash) {
+        return Err(anyhow!(
+            "token ruleset hash mismatch (token={}, expected={})",
+            token_file.ruleset_hash,
+            hex::encode(ruleset_hash)
+        ));
+    }
+    let mut token = token_file.into_token()?;
+    let vault = Vault::new(VaultConfig {
+        local_path: vault_path.into(),
+    })?;
+    let clear = vault.unseal(envelope, &mut token, ruleset_hash)?;
+
+    let sanitized = crate::vault::sanitize_envelope_id(envelope)?;
+    let output_dir_path = std::path::Path::new(output_dir);
+    std::fs::create_dir_all(output_dir_path)?;
+    let output_path = output_dir_path.join(format!("{}.raw", sanitized));
+
+    #[cfg(unix)]
+    {
+        use std::fs::OpenOptions;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&output_path)?;
+        file.write_all(&clear)?;
+    }
+
+    #[cfg(not(unix))]
+    {
+        std::fs::write(&output_path, &clear)?;
+    }
+
+    println!("Unsealed envelope written to {}", output_path.display());
     Ok(())
 }
 
