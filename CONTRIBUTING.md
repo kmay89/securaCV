@@ -96,6 +96,11 @@ If your change adds behavior, it must add a test that proves:
 
 Tests that only cover the happy path are insufficient.
 
+CI enforces formatting and linting. Before submitting, run:
+
+- `cargo fmt --check`
+- `cargo clippy -- -D warnings`
+
 ---
 
 ## Cleverness Warning
