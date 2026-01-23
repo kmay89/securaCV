@@ -24,13 +24,15 @@ indicatif = { path = "vendor/indicatif" }
 gstreamer = { version = "0.23", optional = true }
 gstreamer-app = { version = "0.23", optional = true }
 gstreamer-video = { version = "0.23", optional = true }
-libc = "0.2"
-libseccomp = "0.3"
-libseccomp-sys = { version = "0.3", features = ["bundled"] }
 
 [dev-dependencies]
 trybuild = "1.0.89"
 tempfile = "3.10"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+libseccomp = "0.3"
+libseccomp-sys = "0.3"
 
 [features]
 rtsp-gstreamer = ["gstreamer", "gstreamer-app", "gstreamer-video"]

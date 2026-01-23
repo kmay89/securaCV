@@ -16,6 +16,8 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+    - name: Install libseccomp
+      run: sudo apt-get update && sudo apt-get install -y libseccomp-dev
     - name: Rustfmt
       run: cargo fmt --check
     - name: Clippy
