@@ -30,6 +30,7 @@ use std::sync::OnceLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use zeroize::Zeroize;
 
+pub mod api;
 pub mod break_glass;
 pub mod frame;
 pub mod ingest;
@@ -949,6 +950,17 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         let artifact = self.export_events_sequential_unchecked(expected_ruleset_hash, options)?;
         token.consume()?;
         Ok(artifact)
+    }
+
+    /// Export events sequentially for local-only API access (no break-glass).
+    /// The caller must enforce capability-token access control.
+    pub fn export_events_for_api(
+        &mut self,
+        expected_ruleset_hash: [u8; 32],
+        options: ExportOptions,
+    ) -> Result<ExportArtifact> {
+        Self::validate_export_options(&options)?;
+        self.export_events_sequential_unchecked(expected_ruleset_hash, options)
     }
 
     pub fn export_events_bundle_authorized(
