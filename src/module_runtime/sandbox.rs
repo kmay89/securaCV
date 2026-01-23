@@ -161,13 +161,12 @@ mod linux {
         }
 
         let deny_errno = SECCOMP_RET_ERRNO | EPERM;
-        let mut filters = Vec::new();
-
-        filters.push(stmt(BPF_LD | BPF_W | BPF_ABS, ARCH_OFFSET));
-        filters.push(jump(BPF_JMP | BPF_JEQ | BPF_K, AUDIT_ARCH_X86_64, 1, 0));
-        filters.push(stmt(BPF_RET | BPF_K, SECCOMP_RET_KILL));
-
-        filters.push(stmt(BPF_LD | BPF_W | BPF_ABS, SYSCALL_NR_OFFSET));
+        let mut filters = vec![
+            stmt(BPF_LD | BPF_W | BPF_ABS, ARCH_OFFSET),
+            jump(BPF_JMP | BPF_JEQ | BPF_K, AUDIT_ARCH_X86_64, 1, 0),
+            stmt(BPF_RET | BPF_K, SECCOMP_RET_KILL),
+            stmt(BPF_LD | BPF_W | BPF_ABS, SYSCALL_NR_OFFSET),
+        ];
 
         let deny_syscalls = [
             SYS_OPEN,
