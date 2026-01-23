@@ -132,8 +132,13 @@ fn main() -> Result<()> {
 
             if ev.event_type == witness_kernel::EventType::BoundaryCrossingObjectLarge {
                 if let Some(token) = seal_token.as_mut() {
-                    match seal_latest_frame(&mut vault, &mut frame_buffer, token, cfg.ruleset_hash)
-                    {
+                    match seal_latest_frame(
+                        &mut vault,
+                        &mut frame_buffer,
+                        token,
+                        cfg.ruleset_hash,
+                        &kernel,
+                    ) {
                         Ok(Some(envelope_id)) => {
                             log::warn!(
                                 "vault sealed for envelope {} (break-glass token consumed)",
@@ -204,6 +209,7 @@ fn seal_latest_frame(
     frame_buffer: &mut FrameBuffer,
     token: &mut witness_kernel::BreakGlassToken,
     ruleset_hash: [u8; 32],
+    kernel: &Kernel,
 ) -> Result<Option<String>> {
     if token.ruleset_hash() != ruleset_hash {
         return Err(anyhow!(
@@ -216,6 +222,14 @@ fn seal_latest_frame(
         return Ok(None);
     };
     let envelope_id = token.vault_envelope_id().to_string();
-    vault.seal_frame(&envelope_id, token, ruleset_hash, frame)?;
+    let verifying_key = kernel.device_verifying_key();
+    vault.seal_frame(
+        &envelope_id,
+        token,
+        ruleset_hash,
+        frame,
+        &verifying_key,
+        |hash| kernel.break_glass_receipt_outcome(hash),
+    )?;
     Ok(Some(envelope_id))
 }

@@ -17,7 +17,8 @@ use zeroize::Zeroize;
 #[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
-use crate::{break_glass::BreakGlassToken, RawFrame, RawMediaBoundary};
+use crate::{break_glass::BreakGlassToken, BreakGlassOutcome, RawFrame, RawMediaBoundary};
+use ed25519_dalek::VerifyingKey;
 
 /// Fixed local vault path to satisfy invariant requirements.
 pub const DEFAULT_VAULT_PATH: &str = "vault/envelopes";
@@ -60,12 +61,16 @@ impl Vault {
         token: &mut BreakGlassToken,
         expected_ruleset_hash: [u8; 32],
         raw_bytes: &mut Vec<u8>,
+        verifying_key: &VerifyingKey,
+        receipt_lookup: impl FnOnce(&[u8; 32]) -> Result<BreakGlassOutcome>,
     ) -> Result<EnvelopeMetadata> {
         let mut clear_bytes = RawMediaBoundary::export_for_vault(
             raw_bytes,
             token,
             envelope_id,
             expected_ruleset_hash,
+            verifying_key,
+            receipt_lookup,
         )?;
         self.seal_bytes(envelope_id, expected_ruleset_hash, &mut clear_bytes)
     }
@@ -76,8 +81,16 @@ impl Vault {
         token: &mut BreakGlassToken,
         expected_ruleset_hash: [u8; 32],
         frame: RawFrame,
+        verifying_key: &VerifyingKey,
+        receipt_lookup: impl FnOnce(&[u8; 32]) -> Result<BreakGlassOutcome>,
     ) -> Result<EnvelopeMetadata> {
-        let mut clear_bytes = frame.export_for_vault(token, envelope_id, expected_ruleset_hash)?;
+        let mut clear_bytes = frame.export_for_vault(
+            token,
+            envelope_id,
+            expected_ruleset_hash,
+            verifying_key,
+            receipt_lookup,
+        )?;
         self.seal_bytes(envelope_id, expected_ruleset_hash, &mut clear_bytes)
     }
 
@@ -86,6 +99,8 @@ impl Vault {
         envelope_id: &str,
         token: &mut BreakGlassToken,
         expected_ruleset_hash: [u8; 32],
+        verifying_key: &VerifyingKey,
+        receipt_lookup: impl FnOnce(&[u8; 32]) -> Result<BreakGlassOutcome>,
     ) -> Result<Vec<u8>> {
         let sanitized = sanitize_envelope_id(envelope_id)?;
         let envelope_path = self.envelope_path(&sanitized);
@@ -94,7 +109,14 @@ impl Vault {
         envelope.validate(envelope_id, expected_ruleset_hash)?;
 
         let mut empty = Vec::new();
-        RawMediaBoundary::export_for_vault(&mut empty, token, envelope_id, expected_ruleset_hash)?;
+        RawMediaBoundary::export_for_vault(
+            &mut empty,
+            token,
+            envelope_id,
+            expected_ruleset_hash,
+            verifying_key,
+            receipt_lookup,
+        )?;
 
         envelope.decrypt(&self.master_key)
     }
@@ -377,11 +399,14 @@ mod tests {
         Approval, BreakGlass, QuorumPolicy, TrusteeEntry, TrusteeId, UnlockRequest,
     };
     use crate::TimeBucket;
-    use ed25519_dalek::{Signer, SigningKey};
+    use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
     use sha2::{Digest, Sha256};
     use std::fs;
 
-    fn make_break_glass_token(envelope_id: &str, ruleset_hash: [u8; 32]) -> BreakGlassToken {
+    fn make_break_glass_token(
+        envelope_id: &str,
+        ruleset_hash: [u8; 32],
+    ) -> (BreakGlassToken, VerifyingKey, [u8; 32]) {
         let bucket = crate::TimeBucket::now(600).expect("time bucket");
         let request = UnlockRequest::new(envelope_id, ruleset_hash, "test-export", bucket).unwrap();
         let signing_key = SigningKey::from_bytes(&[7u8; 32]);
@@ -400,7 +425,13 @@ mod tests {
         )
         .unwrap();
         let (result, _receipt) = BreakGlass::authorize(&policy, &request, &[approval], bucket);
-        result.expect("break-glass token")
+        let mut token = result.expect("break-glass token");
+        let device_signing_key = SigningKey::from_bytes(&[9u8; 32]);
+        let receipt_hash = [8u8; 32];
+        token
+            .attach_receipt_signature(receipt_hash, &device_signing_key)
+            .expect("attach receipt signature");
+        (token, device_signing_key.verifying_key(), receipt_hash)
     }
 
     fn make_raw_frame(data: &[u8]) -> RawFrame {
@@ -420,9 +451,22 @@ mod tests {
         })?;
         let envelope_id = "incident-1";
         let ruleset_hash = [1u8; 32];
-        let mut token = make_break_glass_token(envelope_id, ruleset_hash);
+        let (mut token, verifying_key, receipt_hash) =
+            make_break_glass_token(envelope_id, ruleset_hash);
         let mut raw = b"raw bytes".to_vec();
-        let meta = vault.seal(envelope_id, &mut token, ruleset_hash, &mut raw)?;
+        let meta = vault.seal(
+            envelope_id,
+            &mut token,
+            ruleset_hash,
+            &mut raw,
+            &verifying_key,
+            |hash| {
+                if hash != &receipt_hash {
+                    return Err(anyhow!("unexpected receipt hash"));
+                }
+                Ok(BreakGlassOutcome::Granted)
+            },
+        )?;
         assert_eq!(meta.ciphertext_len, b"raw bytes".len());
         assert!(raw.is_empty());
         Ok(())
@@ -444,7 +488,16 @@ mod tests {
         );
         let mut raw = b"raw bytes".to_vec();
         assert!(vault
-            .seal(envelope_id, &mut token, ruleset_hash, &mut raw)
+            .seal(
+                envelope_id,
+                &mut token,
+                ruleset_hash,
+                &mut raw,
+                &SigningKey::from_bytes(&[4u8; 32]).verifying_key(),
+                |_| Ok(BreakGlassOutcome::Denied {
+                    reason: "invalid".to_string(),
+                }),
+            )
             .is_err());
         Ok(())
     }
@@ -457,9 +510,22 @@ mod tests {
         })?;
         let envelope_id = "incident-3";
         let ruleset_hash = [3u8; 32];
-        let mut token = make_break_glass_token(envelope_id, ruleset_hash);
+        let (mut token, verifying_key, receipt_hash) =
+            make_break_glass_token(envelope_id, ruleset_hash);
         let mut raw = b"raw bytes".to_vec();
-        vault.seal(envelope_id, &mut token, ruleset_hash, &mut raw)?;
+        vault.seal(
+            envelope_id,
+            &mut token,
+            ruleset_hash,
+            &mut raw,
+            &verifying_key,
+            |hash| {
+                if hash != &receipt_hash {
+                    return Err(anyhow!("unexpected receipt hash"));
+                }
+                Ok(BreakGlassOutcome::Granted)
+            },
+        )?;
 
         let mut invalid = BreakGlassToken::test_token_with(
             [0u8; 32],
@@ -468,11 +534,29 @@ mod tests {
             ruleset_hash,
         );
         assert!(vault
-            .unseal(envelope_id, &mut invalid, ruleset_hash)
+            .unseal(
+                envelope_id,
+                &mut invalid,
+                ruleset_hash,
+                &verifying_key,
+                |_| Ok(BreakGlassOutcome::Granted),
+            )
             .is_err());
 
-        let mut valid = make_break_glass_token(envelope_id, ruleset_hash);
-        let clear = vault.unseal(envelope_id, &mut valid, ruleset_hash)?;
+        let (mut valid, verifying_key, receipt_hash) =
+            make_break_glass_token(envelope_id, ruleset_hash);
+        let clear = vault.unseal(
+            envelope_id,
+            &mut valid,
+            ruleset_hash,
+            &verifying_key,
+            |hash| {
+                if hash != &receipt_hash {
+                    return Err(anyhow!("unexpected receipt hash"));
+                }
+                Ok(BreakGlassOutcome::Granted)
+            },
+        )?;
         assert_eq!(clear, b"raw bytes");
         Ok(())
     }
@@ -486,9 +570,22 @@ mod tests {
         })?;
         let envelope_id = "incident-4";
         let ruleset_hash = [4u8; 32];
-        let mut token = make_break_glass_token(envelope_id, ruleset_hash);
+        let (mut token, verifying_key, receipt_hash) =
+            make_break_glass_token(envelope_id, ruleset_hash);
         let mut raw = b"raw bytes".to_vec();
-        vault.seal(envelope_id, &mut token, ruleset_hash, &mut raw)?;
+        vault.seal(
+            envelope_id,
+            &mut token,
+            ruleset_hash,
+            &mut raw,
+            &verifying_key,
+            |hash| {
+                if hash != &receipt_hash {
+                    return Err(anyhow!("unexpected receipt hash"));
+                }
+                Ok(BreakGlassOutcome::Granted)
+            },
+        )?;
 
         let mut entries = fs::read_dir(vault_root)?.collect::<Result<Vec<_>, _>>()?;
         entries.sort_by_key(|entry| entry.path());
@@ -507,9 +604,22 @@ mod tests {
         })?;
         let envelope_id = "incident-5";
         let ruleset_hash = [5u8; 32];
-        let mut token = make_break_glass_token(envelope_id, ruleset_hash);
+        let (mut token, verifying_key, receipt_hash) =
+            make_break_glass_token(envelope_id, ruleset_hash);
         let mut raw = b"raw bytes".to_vec();
-        vault.seal(envelope_id, &mut token, ruleset_hash, &mut raw)?;
+        vault.seal(
+            envelope_id,
+            &mut token,
+            ruleset_hash,
+            &mut raw,
+            &verifying_key,
+            |hash| {
+                if hash != &receipt_hash {
+                    return Err(anyhow!("unexpected receipt hash"));
+                }
+                Ok(BreakGlassOutcome::Granted)
+            },
+        )?;
 
         let mut expired = BreakGlassToken::test_token_with(
             [9u8; 32],
@@ -521,7 +631,13 @@ mod tests {
             ruleset_hash,
         );
         assert!(vault
-            .unseal(envelope_id, &mut expired, ruleset_hash)
+            .unseal(
+                envelope_id,
+                &mut expired,
+                ruleset_hash,
+                &verifying_key,
+                |_| Ok(BreakGlassOutcome::Granted),
+            )
             .is_err());
         Ok(())
     }
@@ -534,9 +650,22 @@ mod tests {
         })?;
         let envelope_id = "incident-6";
         let ruleset_hash = [6u8; 32];
-        let mut token = make_break_glass_token(envelope_id, ruleset_hash);
+        let (mut token, verifying_key, receipt_hash) =
+            make_break_glass_token(envelope_id, ruleset_hash);
         let frame = make_raw_frame(b"raw bytes");
-        let meta = vault.seal_frame(envelope_id, &mut token, ruleset_hash, frame)?;
+        let meta = vault.seal_frame(
+            envelope_id,
+            &mut token,
+            ruleset_hash,
+            frame,
+            &verifying_key,
+            |hash| {
+                if hash != &receipt_hash {
+                    return Err(anyhow!("unexpected receipt hash"));
+                }
+                Ok(BreakGlassOutcome::Granted)
+            },
+        )?;
         assert_eq!(meta.ciphertext_len, b"raw bytes".len());
         Ok(())
     }

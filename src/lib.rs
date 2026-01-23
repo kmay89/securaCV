@@ -345,6 +345,8 @@ impl RawMediaBoundary {
         token: &mut break_glass::BreakGlassToken,
         envelope_id: &str,
         expected_ruleset_hash: [u8; 32],
+        verifying_key: &VerifyingKey,
+        receipt_lookup: impl FnOnce(&[u8; 32]) -> Result<break_glass::BreakGlassOutcome>,
     ) -> Result<Vec<u8>> {
         let now_bucket = TimeBucket::now(600)?;
         break_glass::BreakGlass::assert_token_valid(
@@ -352,6 +354,8 @@ impl RawMediaBoundary {
             envelope_id,
             expected_ruleset_hash,
             now_bucket,
+            verifying_key,
+            receipt_lookup,
         )?;
         token.consume()?;
         Ok(std::mem::take(data))
@@ -646,7 +650,7 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         &mut self,
         receipt: &crate::break_glass::BreakGlassReceipt,
         approvals: &[crate::break_glass::Approval],
-    ) -> Result<()> {
+    ) -> Result<[u8; 32]> {
         let created_at = now_s()? as i64;
         let prev_hash = self.last_break_glass_hash_or_zero()?;
         let payload_json = serde_json::to_string(receipt)?;
@@ -670,14 +674,14 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
             ],
         )?;
 
-        Ok(())
+        Ok(entry_hash)
     }
 
     pub fn log_break_glass_receipt(
         &mut self,
         receipt: &crate::break_glass::BreakGlassReceipt,
         approvals: &[crate::break_glass::Approval],
-    ) -> Result<()> {
+    ) -> Result<[u8; 32]> {
         self.append_break_glass_receipt(receipt, approvals)
     }
 
@@ -908,6 +912,37 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
     pub fn device_key_for_verify_only(&self) -> [u8; 32] {
         self.device_key.verifying_key().to_bytes()
     }
+
+    pub fn device_verifying_key(&self) -> VerifyingKey {
+        self.device_key.verifying_key()
+    }
+
+    pub fn sign_break_glass_token(
+        &self,
+        token: &mut break_glass::BreakGlassToken,
+        receipt_entry_hash: [u8; 32],
+    ) -> Result<()> {
+        let outcome = break_glass_receipt_outcome_for_verifier(
+            &self.conn,
+            &self.device_verifying_key(),
+            &receipt_entry_hash,
+        )?;
+        if !matches!(outcome, break_glass::BreakGlassOutcome::Granted) {
+            return Err(anyhow!("cannot sign break-glass token for denied receipt"));
+        }
+        token.attach_receipt_signature(receipt_entry_hash, &self.device_key)
+    }
+
+    pub fn break_glass_receipt_outcome(
+        &self,
+        receipt_entry_hash: &[u8; 32],
+    ) -> Result<break_glass::BreakGlassOutcome> {
+        break_glass_receipt_outcome_for_verifier(
+            &self.conn,
+            &self.device_verifying_key(),
+            receipt_entry_hash,
+        )
+    }
 }
 
 pub fn hash_entry(prev_hash: &[u8; 32], payload: &[u8]) -> [u8; 32] {
@@ -991,8 +1026,58 @@ fn blob32(bytes: Vec<u8>, context: &str) -> Result<[u8; 32]> {
     Ok(out)
 }
 
+fn blob64(bytes: Vec<u8>, context: &str) -> Result<[u8; 64]> {
+    if bytes.len() != 64 {
+        return Err(anyhow!(
+            "corrupt {}: expected 64 bytes, got {}",
+            context,
+            bytes.len()
+        ));
+    }
+    let mut out = [0u8; 64];
+    out.copy_from_slice(&bytes);
+    Ok(out)
+}
+
 fn now_s() -> Result<u64> {
     Ok(SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs())
+}
+
+pub fn break_glass_receipt_outcome_for_verifier(
+    conn: &Connection,
+    verifying_key: &VerifyingKey,
+    receipt_entry_hash: &[u8; 32],
+) -> Result<break_glass::BreakGlassOutcome> {
+    let mut stmt = conn.prepare(
+        "SELECT payload_json, prev_hash, entry_hash, signature FROM break_glass_receipts WHERE entry_hash = ?1 LIMIT 1",
+    )?;
+    let row = stmt
+        .query_row(params![receipt_entry_hash.to_vec()], |row| {
+            let payload: String = row.get(0)?;
+            let prev_hash: Vec<u8> = row.get(1)?;
+            let entry_hash: Vec<u8> = row.get(2)?;
+            let signature: Vec<u8> = row.get(3)?;
+            Ok((payload, prev_hash, entry_hash, signature))
+        })
+        .optional()?;
+
+    let Some((payload, prev_hash, entry_hash, signature)) = row else {
+        return Err(anyhow!("break-glass receipt not found for token"));
+    };
+
+    let prev_hash = blob32(prev_hash, "break_glass_receipts.prev_hash")?;
+    let entry_hash = blob32(entry_hash, "break_glass_receipts.entry_hash")?;
+    if &entry_hash != receipt_entry_hash {
+        return Err(anyhow!("break-glass receipt hash mismatch"));
+    }
+    let computed = hash_entry(&prev_hash, payload.as_bytes());
+    if computed != entry_hash {
+        return Err(anyhow!("break-glass receipt hash invalid"));
+    }
+    let signature = blob64(signature, "break_glass_receipts.signature")?;
+    verify_entry_signature(verifying_key, &entry_hash, &signature)?;
+    let receipt: break_glass::BreakGlassReceipt = serde_json::from_str(&payload)?;
+    Ok(receipt.outcome)
 }
 
 fn jitter_time_bucket(bucket: TimeBucket, jitter_s: u64, jitter_step_s: u64) -> Result<TimeBucket> {
@@ -1179,7 +1264,10 @@ mod tests {
     use crate::break_glass::{Approval, QuorumPolicy, TrusteeEntry, TrusteeId, UnlockRequest};
     use ed25519_dalek::{Signer, SigningKey};
 
-    fn make_break_glass_token(envelope_id: &str, ruleset_hash: [u8; 32]) -> BreakGlassToken {
+    fn make_break_glass_token(
+        envelope_id: &str,
+        ruleset_hash: [u8; 32],
+    ) -> (BreakGlassToken, VerifyingKey, [u8; 32]) {
         let bucket = TimeBucket::now(600).expect("time bucket");
         let request = UnlockRequest::new(envelope_id, ruleset_hash, "test-export", bucket).unwrap();
         let signing_key = SigningKey::from_bytes(&[7u8; 32]);
@@ -1198,7 +1286,13 @@ mod tests {
         )
         .unwrap();
         let (result, _receipt) = BreakGlass::authorize(&policy, &request, &[approval], bucket);
-        result.expect("break-glass token")
+        let mut token = result.expect("break-glass token");
+        let device_signing_key = SigningKey::from_bytes(&[9u8; 32]);
+        let receipt_hash = [8u8; 32];
+        token
+            .attach_receipt_signature(receipt_hash, &device_signing_key)
+            .expect("attach receipt signature");
+        (token, device_signing_key.verifying_key(), receipt_hash)
     }
 
     #[test]
@@ -1580,11 +1674,21 @@ mod tests {
     fn raw_media_boundary_exports_for_vault() -> Result<()> {
         let envelope_id = "test-envelope";
         let ruleset_hash = [7u8; 32];
-        let mut token = make_break_glass_token(envelope_id, ruleset_hash);
+        let (mut token, verifying_key, receipt_hash) =
+            make_break_glass_token(envelope_id, ruleset_hash);
         let mut data = b"vault bytes".to_vec();
 
-        let bytes =
-            RawMediaBoundary::export_for_vault(&mut data, &mut token, envelope_id, ruleset_hash)?;
+        let bytes = RawMediaBoundary::export_for_vault(
+            &mut data,
+            &mut token,
+            envelope_id,
+            ruleset_hash,
+            &verifying_key,
+            |hash| {
+                assert_eq!(hash, &receipt_hash);
+                Ok(BreakGlassOutcome::Granted)
+            },
+        )?;
         assert_eq!(bytes, b"vault bytes");
         assert!(data.is_empty());
         Ok(())
