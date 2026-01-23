@@ -187,12 +187,16 @@ Enforced by:
 Threat assumption: the vault is local-only storage. Protecting the host filesystem
 and trustee quorum process remains mandatory, because possession of the vault
 files alone does not grant access without break-glass authorization.
+Vault confidentiality MUST rely on separate, device-local key material or
+quorum-derived secrets; vault envelopes are never secured by identifiers alone.
 
 ### Invariant VI — No Retroactive Capability Expansion
 Enforced by:
 - each log entry binds `ruleset_id` + `kernel_version` + `ruleset_hash`
 - kernel refuses to run new modules against old sealed entries
 - any attempt to reprocess sealed logs under new rules MUST fail audibly and verifiably
+`ruleset_hash` is an identifier for the active ruleset, not a secret, and MUST
+NOT be treated as protective key material.
 
 ### Invariant VII — Non-Queryability by Design
 Enforced by:
