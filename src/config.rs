@@ -96,10 +96,11 @@ impl WitnessdConfig {
             .as_ref()
             .and_then(|api| api.addr.clone())
             .unwrap_or_else(|| DEFAULT_API_ADDR.to_string());
-        let api_token_path = file
-            .api
-            .and_then(|api| api.token_path)
-            .or_else(|| std::env::var("WITNESS_API_TOKEN_PATH").ok().map(PathBuf::from));
+        let api_token_path = file.api.and_then(|api| api.token_path).or_else(|| {
+            std::env::var("WITNESS_API_TOKEN_PATH")
+                .ok()
+                .map(PathBuf::from)
+        });
         let rtsp = RtspSettings {
             url: file
                 .rtsp
@@ -200,13 +201,8 @@ impl WitnessdConfig {
 }
 
 fn read_config_file(path: &Path) -> Result<WitnessdConfigFile> {
-    let raw = std::fs::read_to_string(path).map_err(|e| {
-        anyhow!(
-            "failed to read config file {}: {}",
-            path.display(),
-            e
-        )
-    })?;
+    let raw = std::fs::read_to_string(path)
+        .map_err(|e| anyhow!("failed to read config file {}: {}", path.display(), e))?;
     let cfg = serde_json::from_str(&raw)
         .map_err(|e| anyhow!("invalid config file {}: {}", path.display(), e))?;
     Ok(cfg)

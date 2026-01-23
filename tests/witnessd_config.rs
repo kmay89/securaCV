@@ -68,7 +68,10 @@ fn loads_config_from_file_and_env_overrides() {
     assert_eq!(cfg.rtsp.width, 800);
     assert_eq!(cfg.rtsp.height, 600);
     assert_eq!(cfg.zones.module_zone_id, "zone:rear_gate");
-    assert_eq!(cfg.zones.sensitive_zones, vec!["zone:front_boundary", "zone:loading_bay"]);
+    assert_eq!(
+        cfg.zones.sensitive_zones,
+        vec!["zone:front_boundary", "zone:loading_bay"]
+    );
     assert_eq!(cfg.retention.as_secs(), 86400);
 
     clear_env();
