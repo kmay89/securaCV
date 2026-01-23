@@ -14,7 +14,9 @@
 //! - Forward raw frames over network
 //! - Retain frames beyond handoff to FrameBuffer
 
-use anyhow::{Context, Result};
+#[cfg(feature = "rtsp-gstreamer")]
+use anyhow::Context;
+use anyhow::Result;
 use sha2::{Digest, Sha256};
 use std::time::{Duration, Instant};
 
@@ -54,6 +56,7 @@ pub struct RtspSource {
 
 enum RtspBackend {
     Synthetic(SyntheticRtspSource),
+    #[cfg(feature = "rtsp-gstreamer")]
     Gstreamer(GstreamerRtspSource),
 }
 
@@ -64,9 +67,16 @@ impl RtspSource {
                 backend: RtspBackend::Synthetic(SyntheticRtspSource::new(config)),
             })
         } else {
-            Ok(Self {
-                backend: RtspBackend::Gstreamer(GstreamerRtspSource::new(config)?),
-            })
+            #[cfg(feature = "rtsp-gstreamer")]
+            {
+                Ok(Self {
+                    backend: RtspBackend::Gstreamer(GstreamerRtspSource::new(config)?),
+                })
+            }
+            #[cfg(not(feature = "rtsp-gstreamer"))]
+            {
+                anyhow::bail!("RTSP requires the rtsp-gstreamer feature")
+            }
         }
     }
 
@@ -74,6 +84,7 @@ impl RtspSource {
     pub fn connect(&mut self) -> Result<()> {
         match &mut self.backend {
             RtspBackend::Synthetic(source) => source.connect(),
+            #[cfg(feature = "rtsp-gstreamer")]
             RtspBackend::Gstreamer(source) => source.connect(),
         }
     }
@@ -90,6 +101,7 @@ impl RtspSource {
     pub fn next_frame(&mut self) -> Result<RawFrame> {
         match &mut self.backend {
             RtspBackend::Synthetic(source) => source.next_frame(),
+            #[cfg(feature = "rtsp-gstreamer")]
             RtspBackend::Gstreamer(source) => source.next_frame(),
         }
     }
@@ -98,6 +110,7 @@ impl RtspSource {
     pub fn is_healthy(&self) -> bool {
         match &self.backend {
             RtspBackend::Synthetic(source) => source.is_healthy(),
+            #[cfg(feature = "rtsp-gstreamer")]
             RtspBackend::Gstreamer(source) => source.is_healthy(),
         }
     }
@@ -106,6 +119,7 @@ impl RtspSource {
     pub fn stats(&self) -> RtspStats {
         match &self.backend {
             RtspBackend::Synthetic(source) => source.stats(),
+            #[cfg(feature = "rtsp-gstreamer")]
             RtspBackend::Gstreamer(source) => source.stats(),
         }
     }
@@ -207,6 +221,7 @@ impl SyntheticRtspSource {
 // Production RTSP source using GStreamer
 // ----------------------------------------------------------------------------
 
+#[cfg(feature = "rtsp-gstreamer")]
 struct GstreamerRtspSource {
     config: RtspConfig,
     pipeline: gstreamer::Pipeline,
@@ -217,6 +232,7 @@ struct GstreamerRtspSource {
     last_error: Option<String>,
 }
 
+#[cfg(feature = "rtsp-gstreamer")]
 impl GstreamerRtspSource {
     /// Create a new GStreamer RTSP source.
     ///
@@ -359,6 +375,7 @@ impl GstreamerRtspSource {
     }
 }
 
+#[cfg(feature = "rtsp-gstreamer")]
 fn sample_to_pixels(sample: &gstreamer::Sample) -> Result<(Vec<u8>, u32, u32)> {
     let buffer = sample.buffer().context("RTSP sample missing buffer")?;
     let caps = sample.caps().context("RTSP sample missing caps")?;

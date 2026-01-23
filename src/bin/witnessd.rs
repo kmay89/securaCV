@@ -44,7 +44,7 @@ fn main() -> Result<()> {
 
     // Configure RTSP source
     let rtsp_config = RtspConfig {
-        url: "rtsp://synthetic/front_camera".to_string(),
+        url: "stub://front_camera".to_string(),
         target_fps: 10,
         width: 640,
         height: 480,

@@ -42,5 +42,6 @@ in `RtspConfig` and the kernel will produce `RawFrame` values without writing
 frames to disk. Time coarsening and non-invertible feature hashing happen at
 capture time, and `RtspSource::is_healthy()` reports stream health.
 
-GStreamer dependencies are required at runtime for real RTSP streams. The
-`stub://` scheme keeps the synthetic source for tests and local development.
+GStreamer support is gated behind the `rtsp-gstreamer` feature and requires
+system GStreamer dependencies at runtime for real RTSP streams. The `stub://`
+scheme keeps the synthetic source for tests and local development.

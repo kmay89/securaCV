@@ -19,13 +19,16 @@ log = "0.4"
 env_logger = "0.11"
 hex = "0.4"
 ed25519-dalek = "2.1"
-gstreamer = "0.23"
-gstreamer-app = "0.23"
-gstreamer-video = "0.23"
+gstreamer = { version = "0.23", optional = true }
+gstreamer-app = { version = "0.23", optional = true }
+gstreamer-video = { version = "0.23", optional = true }
 
 [dev-dependencies]
 trybuild = "1.0.89"
 tempfile = "3.10"
+
+[features]
+rtsp-gstreamer = ["gstreamer", "gstreamer-app", "gstreamer-video"]
 
 [[bin]]
 name = "witnessd"
