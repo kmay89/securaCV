@@ -102,9 +102,7 @@ fn main() -> Result<()> {
         bundle_hash_in_export_receipts(&conn, &bundle_hash)?
     };
     if !found {
-        return Err(anyhow!(
-            "TAMPER: bundle hash not found in export receipts"
-        ));
+        return Err(anyhow!("TAMPER: bundle hash not found in export receipts"));
     }
 
     println!("OK: export bundle hash verified.");
@@ -112,8 +110,7 @@ fn main() -> Result<()> {
 }
 
 fn bundle_hash_in_export_receipts(conn: &Connection, bundle_hash: &[u8; 32]) -> Result<bool> {
-    let mut stmt =
-        conn.prepare("SELECT payload_json FROM export_receipts ORDER BY id ASC")?;
+    let mut stmt = conn.prepare("SELECT payload_json FROM export_receipts ORDER BY id ASC")?;
     let mut rows = stmt.query([])?;
     while let Some(row) = rows.next()? {
         let payload: String = row.get(0)?;

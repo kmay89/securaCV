@@ -318,8 +318,7 @@ fn verify_demo(db_path: &str, export_bundle_bytes: &[u8]) -> Result<()> {
     let artifact: ExportArtifact = serde_json::from_slice(export_bundle_bytes)?;
     let artifact_bytes = serde_json::to_vec(&artifact)?;
     let artifact_hash: [u8; 32] = Sha256::digest(&artifact_bytes).into();
-    let mut stmt =
-        conn.prepare("SELECT payload_json FROM export_receipts ORDER BY id ASC")?;
+    let mut stmt = conn.prepare("SELECT payload_json FROM export_receipts ORDER BY id ASC")?;
     let mut rows = stmt.query([])?;
     while let Some(row) = rows.next()? {
         let payload: String = row.get(0)?;
@@ -328,7 +327,5 @@ fn verify_demo(db_path: &str, export_bundle_bytes: &[u8]) -> Result<()> {
             return Ok(());
         }
     }
-    Err(anyhow!(
-        "export artifact hash not found in export receipts"
-    ))
+    Err(anyhow!("export artifact hash not found in export receipts"))
 }
