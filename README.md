@@ -34,3 +34,14 @@ DEVICE_KEY_SEED=devkey:your-seed \
 
 `export_events` emits a single JSON artifact with batched buckets, applying
 default jitter and batching unless overridden by CLI flags.
+
+## RTSP ingestion (GStreamer)
+
+`witnessd` uses GStreamer to decode RTSP streams in-memory. Configure an RTSP URL
+in `RtspConfig` and the kernel will produce `RawFrame` values without writing
+frames to disk. Time coarsening and non-invertible feature hashing happen at
+capture time, and `RtspSource::is_healthy()` reports stream health.
+
+GStreamer support is gated behind the `rtsp-gstreamer` feature and requires
+system GStreamer dependencies at runtime for real RTSP streams. The `stub://`
+scheme keeps the synthetic source for tests and local development.
