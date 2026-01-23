@@ -2,9 +2,6 @@
 //!
 //! This module provides `RtspSource` for ingesting frames from IP cameras via RTSP.
 //!
-//! MVP: This is a stub that generates synthetic frames for testing.
-//! Production: Would use gstreamer or ffmpeg bindings for real RTSP decode.
-//!
 //! The RTSP source is responsible for:
 //! - Connecting to camera streams
 //! - Decoding video frames
@@ -17,8 +14,9 @@
 //! - Forward raw frames over network
 //! - Retain frames beyond handoff to FrameBuffer
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
+use std::time::{Duration, Instant};
 
 use crate::frame::RawFrame;
 use crate::TimeBucket;
@@ -49,32 +47,35 @@ impl Default for RtspConfig {
 
 /// RTSP frame source.
 ///
-/// MVP: Generates synthetic frames for testing.
-/// Production: Would decode actual RTSP streams.
+/// Uses GStreamer for real RTSP decode, with a synthetic fallback for `stub://` URLs.
 pub struct RtspSource {
-    config: RtspConfig,
-    frame_count: u64,
-    /// Simulated "scene" state for synthetic motion detection.
-    scene_state: u8,
+    backend: RtspBackend,
+}
+
+enum RtspBackend {
+    Synthetic(SyntheticRtspSource),
+    Gstreamer(GstreamerRtspSource),
 }
 
 impl RtspSource {
-    pub fn new(config: RtspConfig) -> Self {
-        Self {
-            config,
-            frame_count: 0,
-            scene_state: 0,
+    pub fn new(config: RtspConfig) -> Result<Self> {
+        if config.url.starts_with("stub://") {
+            Ok(Self {
+                backend: RtspBackend::Synthetic(SyntheticRtspSource::new(config)),
+            })
+        } else {
+            Ok(Self {
+                backend: RtspBackend::Gstreamer(GstreamerRtspSource::new(config)?),
+            })
         }
     }
 
     /// Connect to the RTSP stream.
-    ///
-    /// MVP: No-op (synthetic frames don't need connection).
-    /// Production: Would establish RTSP session.
     pub fn connect(&mut self) -> Result<()> {
-        // MVP: synthetic source is always "connected"
-        log::info!("RtspSource: connected to {} (synthetic)", self.config.url);
-        Ok(())
+        match &mut self.backend {
+            RtspBackend::Synthetic(source) => source.connect(),
+            RtspBackend::Gstreamer(source) => source.connect(),
+        }
     }
 
     /// Capture the next frame.
@@ -87,19 +88,75 @@ impl RtspSource {
     ///
     /// The returned `RawFrame` has private pixel data that modules cannot access directly.
     pub fn next_frame(&mut self) -> Result<RawFrame> {
+        match &mut self.backend {
+            RtspBackend::Synthetic(source) => source.next_frame(),
+            RtspBackend::Gstreamer(source) => source.next_frame(),
+        }
+    }
+
+    /// Check if the source is healthy.
+    pub fn is_healthy(&self) -> bool {
+        match &self.backend {
+            RtspBackend::Synthetic(source) => source.is_healthy(),
+            RtspBackend::Gstreamer(source) => source.is_healthy(),
+        }
+    }
+
+    /// Get frame statistics.
+    pub fn stats(&self) -> RtspStats {
+        match &self.backend {
+            RtspBackend::Synthetic(source) => source.stats(),
+            RtspBackend::Gstreamer(source) => source.stats(),
+        }
+    }
+}
+
+/// Statistics for an RTSP source.
+#[derive(Clone, Debug)]
+pub struct RtspStats {
+    pub frames_captured: u64,
+    pub url: String,
+}
+
+// ----------------------------------------------------------------------------
+// Synthetic source (stub://) for tests
+// ----------------------------------------------------------------------------
+
+struct SyntheticRtspSource {
+    config: RtspConfig,
+    frame_count: u64,
+    /// Simulated "scene" state for synthetic motion detection.
+    scene_state: u8,
+}
+
+impl SyntheticRtspSource {
+    fn new(config: RtspConfig) -> Self {
+        Self {
+            config,
+            frame_count: 0,
+            scene_state: 0,
+        }
+    }
+
+    /// Connect to the RTSP stream.
+    ///
+    /// Synthetic sources are always "connected".
+    fn connect(&mut self) -> Result<()> {
+        log::info!("RtspSource: connected to {} (synthetic)", self.config.url);
+        Ok(())
+    }
+
+    fn next_frame(&mut self) -> Result<RawFrame> {
         self.frame_count += 1;
 
         // Coarsen timestamp at capture time (10-minute buckets)
         let timestamp_bucket = TimeBucket::now_10min()?;
 
         // Generate synthetic pixel data
-        // In production, this would be actual decoded pixels
         let pixels = self.generate_synthetic_pixels();
 
         // Compute non-invertible feature hash
-        // In production, this would derive from color histograms, motion vectors, etc.
-        // NOT from identity-bearing features like faces or plates.
-        let features_hash = self.compute_features_hash(&pixels);
+        let features_hash = compute_features_hash(&pixels, self.frame_count);
 
         Ok(RawFrame::new(
             pixels,
@@ -134,47 +191,11 @@ impl RtspSource {
         pixels
     }
 
-    /// Compute non-invertible feature hash from pixels.
-    ///
-    /// This hash is used for correlation tokens and MUST NOT:
-    /// - Be invertible back to pixel data
-    /// - Contain identity-bearing information (faces, plates, etc.)
-    /// - Be stable across long time windows
-    ///
-    /// In production, this would derive from:
-    /// - Color histograms (coarse)
-    /// - Motion vector magnitudes (not directions)
-    /// - Texture energy (not structure)
-    ///
-    /// For MVP, we use a simple hash with added noise to prevent stability.
-    fn compute_features_hash(&self, pixels: &[u8]) -> [u8; 32] {
-        let mut hasher = Sha256::new();
-
-        // Coarse color histogram (very lossy)
-        let mut histogram = [0u32; 8]; // 8 bins
-        for &p in pixels.iter().step_by(100) {
-            // Sample every 100th pixel
-            histogram[(p / 32) as usize] += 1;
-        }
-        for count in &histogram {
-            hasher.update(count.to_le_bytes());
-        }
-
-        // Add frame-local noise to prevent cross-frame stability
-        hasher.update(self.frame_count.to_le_bytes());
-        hasher.update(rand::random::<u64>().to_le_bytes());
-
-        hasher.finalize().into()
-    }
-
-    /// Check if the source is healthy.
-    pub fn is_healthy(&self) -> bool {
-        // MVP: synthetic source is always healthy
+    fn is_healthy(&self) -> bool {
         true
     }
 
-    /// Get frame statistics.
-    pub fn stats(&self) -> RtspStats {
+    fn stats(&self) -> RtspStats {
         RtspStats {
             frames_captured: self.frame_count,
             url: self.config.url.clone(),
@@ -182,39 +203,222 @@ impl RtspSource {
     }
 }
 
-/// Statistics for an RTSP source.
-#[derive(Clone, Debug)]
-pub struct RtspStats {
-    pub frames_captured: u64,
-    pub url: String,
-}
-
 // ----------------------------------------------------------------------------
-// Placeholder for production RTSP (gstreamer/ffmpeg)
+// Production RTSP source using GStreamer
 // ----------------------------------------------------------------------------
 
-/// Production RTSP source using GStreamer.
-///
-/// NOT IMPLEMENTED in MVP. This is a placeholder showing the intended interface.
-#[allow(dead_code)]
-pub struct GstreamerRtspSource {
-    // Would contain:
-    // - GStreamer pipeline
-    // - Appsink for frame extraction
-    // - Decoder state
+struct GstreamerRtspSource {
+    config: RtspConfig,
+    pipeline: gstreamer::Pipeline,
+    appsink: gstreamer_app::AppSink,
+    frame_count: u64,
+    last_frame_at: Option<Instant>,
+    connected_at: Option<Instant>,
+    last_error: Option<String>,
 }
 
-#[allow(dead_code)]
 impl GstreamerRtspSource {
     /// Create a new GStreamer RTSP source.
     ///
-    /// Production implementation would:
+    /// Production implementation:
     /// 1. Build GStreamer pipeline: rtspsrc ! decodebin ! videoconvert ! appsink
     /// 2. Configure appsink for RGB output
     /// 3. Handle reconnection on stream errors
-    pub fn new(_config: RtspConfig) -> Result<Self> {
-        anyhow::bail!("GStreamer RTSP not implemented in MVP")
+    fn new(config: RtspConfig) -> Result<Self> {
+        gstreamer::init().context("initialize gstreamer")?;
+
+        let pipeline_description = format!(
+            "rtspsrc location={} latency=0 ! decodebin ! videoconvert ! video/x-raw,format=RGB ! \
+             appsink name=appsink sync=false max-buffers=1 drop=true",
+            config.url
+        );
+        let pipeline = gstreamer::parse_launch(&pipeline_description)
+            .context("build RTSP pipeline")?
+            .downcast::<gstreamer::Pipeline>()
+            .map_err(|_| anyhow::anyhow!("RTSP pipeline is not a Pipeline"))?;
+
+        let appsink = pipeline
+            .by_name("appsink")
+            .context("appsink element missing from pipeline")?
+            .downcast::<gstreamer_app::AppSink>()
+            .map_err(|_| anyhow::anyhow!("appsink element has unexpected type"))?;
+
+        let caps = gstreamer::Caps::builder("video/x-raw")
+            .field("format", "RGB")
+            .build();
+        appsink.set_caps(Some(&caps));
+        appsink.set_max_buffers(1);
+        appsink.set_drop(true);
+        appsink.set_sync(false);
+
+        Ok(Self {
+            config,
+            pipeline,
+            appsink,
+            frame_count: 0,
+            last_frame_at: None,
+            connected_at: None,
+            last_error: None,
+        })
     }
+
+    fn connect(&mut self) -> Result<()> {
+        self.pipeline
+            .set_state(gstreamer::State::Playing)
+            .context("set RTSP pipeline to Playing")?;
+        self.connected_at = Some(Instant::now());
+        log::info!("RtspSource: connected to {}", self.config.url);
+        Ok(())
+    }
+
+    fn next_frame(&mut self) -> Result<RawFrame> {
+        self.poll_bus();
+
+        let timeout = self.frame_timeout();
+        let sample = self
+            .appsink
+            .try_pull_sample(timeout)
+            .context("pull RTSP sample")?
+            .ok_or_else(|| anyhow::anyhow!("RTSP stream stalled"))?;
+
+        let (pixels, width, height) = sample_to_pixels(&sample)?;
+
+        self.frame_count += 1;
+        self.last_frame_at = Some(Instant::now());
+
+        let timestamp_bucket = TimeBucket::now_10min()?;
+        let features_hash = compute_features_hash(&pixels, self.frame_count);
+
+        Ok(RawFrame::new(
+            pixels,
+            width,
+            height,
+            timestamp_bucket,
+            features_hash,
+        ))
+    }
+
+    fn is_healthy(&self) -> bool {
+        if self.last_error.is_some() {
+            return false;
+        }
+        let Some(connected_at) = self.connected_at else {
+            return false;
+        };
+        let Some(last_frame_at) = self.last_frame_at else {
+            return connected_at.elapsed() <= Duration::from_secs(5);
+        };
+        last_frame_at.elapsed() <= self.health_grace()
+    }
+
+    fn stats(&self) -> RtspStats {
+        RtspStats {
+            frames_captured: self.frame_count,
+            url: self.config.url.clone(),
+        }
+    }
+
+    fn frame_timeout(&self) -> Duration {
+        let base_ms = if self.config.target_fps == 0 {
+            500
+        } else {
+            (1000 / self.config.target_fps).saturating_mul(4)
+        };
+        Duration::from_millis(base_ms.max(500) as u64)
+    }
+
+    fn health_grace(&self) -> Duration {
+        let base_ms = if self.config.target_fps == 0 {
+            2_000
+        } else {
+            (1000 / self.config.target_fps).saturating_mul(6)
+        };
+        Duration::from_millis(base_ms.max(2_000) as u64)
+    }
+
+    fn poll_bus(&mut self) {
+        let Some(bus) = self.pipeline.bus() else {
+            return;
+        };
+        while let Some(message) = bus.timed_pop(Duration::from_millis(0)) {
+            use gstreamer::MessageView;
+            match message.view() {
+                MessageView::Error(err) => {
+                    self.last_error = Some(format!(
+                        "gstreamer error from {:?}: {}",
+                        err.src().map(|s| s.path_string()),
+                        err.error()
+                    ));
+                }
+                MessageView::Eos(..) => {
+                    self.last_error = Some("gstreamer reached EOS".to_string());
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+fn sample_to_pixels(sample: &gstreamer::Sample) -> Result<(Vec<u8>, u32, u32)> {
+    let buffer = sample.buffer().context("RTSP sample missing buffer")?;
+    let caps = sample.caps().context("RTSP sample missing caps")?;
+    let info =
+        gstreamer_video::VideoInfo::from_caps(caps).context("parse RTSP caps as video info")?;
+
+    let width = info.width() as u32;
+    let height = info.height() as u32;
+    let row_bytes = (width as usize) * 3;
+    let stride = info.stride(0) as usize;
+
+    let map = buffer.map_readable().context("map RTSP buffer")?;
+    let data = map.as_slice();
+
+    if stride == row_bytes {
+        return Ok((data.to_vec(), width, height));
+    }
+
+    let mut pixels = Vec::with_capacity(row_bytes * height as usize);
+    for row in 0..height as usize {
+        let start = row * stride;
+        let end = start + row_bytes;
+        pixels.extend_from_slice(
+            data.get(start..end)
+                .context("RTSP buffer row is out of bounds")?,
+        );
+    }
+
+    Ok((pixels, width, height))
+}
+
+/// Compute non-invertible feature hash from pixels.
+///
+/// This hash is used for correlation tokens and MUST NOT:
+/// - Be invertible back to pixel data
+/// - Contain identity-bearing information (faces, plates, etc.)
+/// - Be stable across long time windows
+///
+/// In production, this would derive from:
+/// - Color histograms (coarse)
+/// - Motion vector magnitudes (not directions)
+/// - Texture energy (not structure)
+fn compute_features_hash(pixels: &[u8], frame_count: u64) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+
+    // Coarse color histogram (very lossy)
+    let mut histogram = [0u32; 8]; // 8 bins
+    for &p in pixels.iter().step_by(100) {
+        // Sample every 100th pixel
+        histogram[(p / 32) as usize] += 1;
+    }
+    for count in &histogram {
+        hasher.update(count.to_le_bytes());
+    }
+
+    // Add frame-local noise to prevent cross-frame stability
+    hasher.update(frame_count.to_le_bytes());
+    hasher.update(rand::random::<u64>().to_le_bytes());
+
+    hasher.finalize().into()
 }
 
 // ----------------------------------------------------------------------------
@@ -225,10 +429,19 @@ impl GstreamerRtspSource {
 mod tests {
     use super::*;
 
+    fn stub_config() -> RtspConfig {
+        RtspConfig {
+            url: "stub://test".to_string(),
+            target_fps: 10,
+            width: 640,
+            height: 480,
+        }
+    }
+
     #[test]
     fn rtsp_source_produces_frames() -> Result<()> {
-        let config = RtspConfig::default();
-        let mut source = RtspSource::new(config);
+        let config = stub_config();
+        let mut source = RtspSource::new(config)?;
         source.connect()?;
 
         let frame = source.next_frame()?;
@@ -240,8 +453,8 @@ mod tests {
 
     #[test]
     fn rtsp_source_frames_have_coarse_timestamps() -> Result<()> {
-        let config = RtspConfig::default();
-        let mut source = RtspSource::new(config);
+        let config = stub_config();
+        let mut source = RtspSource::new(config)?;
         source.connect()?;
 
         let frame = source.next_frame()?;
@@ -254,8 +467,8 @@ mod tests {
 
     #[test]
     fn rtsp_source_feature_hashes_are_not_stable() -> Result<()> {
-        let config = RtspConfig::default();
-        let mut source = RtspSource::new(config);
+        let config = stub_config();
+        let mut source = RtspSource::new(config)?;
         source.connect()?;
 
         // Capture two frames

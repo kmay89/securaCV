@@ -1147,7 +1147,7 @@ impl StubFrameSource {
             height: 480,
         };
         Self {
-            source: RtspSource::new(config),
+            source: RtspSource::new(config).expect("stub RTSP source"),
         }
     }
 

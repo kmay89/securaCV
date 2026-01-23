@@ -42,14 +42,14 @@ fn main() -> Result<()> {
     // Optional break-glass seal path (requires BREAK_GLASS_SEAL_TOKEN with a token JSON).
     let mut seal_token = load_seal_token()?;
 
-    // Configure RTSP source (synthetic for MVP)
+    // Configure RTSP source
     let rtsp_config = RtspConfig {
         url: "rtsp://synthetic/front_camera".to_string(),
         target_fps: 10,
         width: 640,
         height: 480,
     };
-    let mut source = RtspSource::new(rtsp_config);
+    let mut source = RtspSource::new(rtsp_config)?;
     source.connect()?;
 
     // Frame buffer for pre-roll (vault sealing, not accessible without break-glass)
@@ -65,6 +65,7 @@ fn main() -> Result<()> {
     let mut token_mgr = BucketKeyManager::new();
 
     let mut last_prune = Instant::now();
+    let mut last_health_log = Instant::now();
     let mut event_count = 0u64;
 
     log::info!("witnessd running. writing to {}", cfg.db_path);
@@ -149,6 +150,17 @@ fn main() -> Result<()> {
                     }
                 }
             }
+        }
+
+        if last_health_log.elapsed() >= Duration::from_secs(5) {
+            let stats = source.stats();
+            log::info!(
+                "rtsp health={} frames={} url={}",
+                source.is_healthy(),
+                stats.frames_captured,
+                stats.url
+            );
+            last_health_log = Instant::now();
         }
 
         // Periodic retention enforcement with checkpoint
