@@ -81,6 +81,9 @@ By design, the system:
 - No single actor, credential, or process can unilaterally access sealed evidence.
 - The kernel MUST support quorum-based authorization (e.g., N-of-M trustees).
 - Each break-glass event MUST be logged immutably and be externally verifiable.
+Vault confidentiality MUST rely on distinct, device-local key material or
+quorum-derived secrets; identifiers are never treated as protective key
+material.
 
 ---
 
@@ -91,6 +94,8 @@ By design, the system:
 - Events and evidence are permanently bound to the ruleset active at time of creation.
 - A kernel upgrade MAY introduce new modules or claims, but MUST NOT reinterpret or reprocess previously sealed logs.
 - Any attempt to reprocess sealed logs under new rules MUST be treated as a conformance violation and MUST fail with an auditable error.
+`ruleset_hash` is an identifier for the active ruleset, not a secret, and MUST
+NOT be treated as protective key material.
 
 ---
 
