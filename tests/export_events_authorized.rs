@@ -3,7 +3,7 @@ use ed25519_dalek::{Signer, SigningKey};
 use witness_kernel::{
     verify_export_bundle, Approval, BreakGlass, CandidateEvent, EventType, ExportOptions, Kernel,
     KernelConfig, ModuleDescriptor, QuorumPolicy, TimeBucket, TrusteeEntry, TrusteeId,
-    UnlockRequest, EXPORT_EVENTS_ENVELOPE_ID,
+    UnlockRequest, ZonePolicy, EXPORT_EVENTS_ENVELOPE_ID,
 };
 
 fn add_test_event(kernel: &mut Kernel, cfg: &KernelConfig) -> Result<()> {
@@ -67,6 +67,7 @@ fn export_fails_without_valid_token() -> Result<()> {
         kernel_version: "0.0.0-test".to_string(),
         retention: std::time::Duration::from_secs(60),
         device_key_seed: "devkey:test".to_string(),
+        zone_policy: ZonePolicy::default(),
     };
     let mut kernel = Kernel::open(&cfg)?;
     let bucket = TimeBucket::now(600)?;
@@ -89,6 +90,7 @@ fn export_succeeds_with_break_glass_token() -> Result<()> {
         kernel_version: "0.0.0-test".to_string(),
         retention: std::time::Duration::from_secs(60),
         device_key_seed: "devkey:test".to_string(),
+        zone_policy: ZonePolicy::default(),
     };
     let mut kernel = Kernel::open(&cfg)?;
     add_test_event(&mut kernel, &cfg)?;
@@ -126,6 +128,7 @@ fn export_bundle_verifies_and_detects_tampering() -> Result<()> {
         kernel_version: "0.0.0-test".to_string(),
         retention: std::time::Duration::from_secs(60),
         device_key_seed: "devkey:test".to_string(),
+        zone_policy: ZonePolicy::default(),
     };
     let mut kernel = Kernel::open(&cfg)?;
     add_test_event(&mut kernel, &cfg)?;

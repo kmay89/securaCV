@@ -4,7 +4,7 @@ use anyhow::{anyhow, Result};
 use clap::Parser;
 use std::time::Duration;
 use witness_kernel::break_glass::BreakGlassTokenFile;
-use witness_kernel::{ExportOptions, Kernel, KernelConfig};
+use witness_kernel::{ExportOptions, Kernel, KernelConfig, ZonePolicy};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
@@ -46,6 +46,7 @@ fn main() -> Result<()> {
         kernel_version: env!("CARGO_PKG_VERSION").to_string(),
         retention: Duration::from_secs(60 * 60 * 24 * 7),
         device_key_seed: args.device_key_seed.trim().to_string(),
+        zone_policy: ZonePolicy::default(),
     };
 
     if cfg.device_key_seed.is_empty() {

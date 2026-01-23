@@ -210,6 +210,36 @@ pub fn validate_zone_id(zone_id: &str) -> Result<()> {
     Ok(())
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ZonePolicy {
+    pub sensitive_zones: Vec<String>,
+}
+
+impl ZonePolicy {
+    pub fn new(sensitive_zones: Vec<String>) -> Result<Self> {
+        let policy = Self { sensitive_zones };
+        policy.normalized()
+    }
+
+    pub fn normalized(&self) -> Result<Self> {
+        for zone in &self.sensitive_zones {
+            validate_zone_id(zone)?;
+        }
+        Ok(Self {
+            sensitive_zones: self
+                .sensitive_zones
+                .iter()
+                .map(|zone| zone.to_lowercase())
+                .collect(),
+        })
+    }
+
+    pub fn is_sensitive(&self, zone_id: &str) -> bool {
+        let zone_id = zone_id.to_lowercase();
+        self.sensitive_zones.iter().any(|zone| zone == &zone_id)
+    }
+}
+
 // -------------------- Contract Enforcer --------------------
 
 pub struct ContractEnforcer;
@@ -401,6 +431,8 @@ pub struct KernelConfig {
     pub retention: Duration,
     /// Device signing seed (required at runtime; must not be the MVP placeholder).
     pub device_key_seed: String,
+    /// Zone policy for suppressing sensitive areas.
+    pub zone_policy: ZonePolicy,
 }
 
 impl KernelConfig {
@@ -413,16 +445,19 @@ pub struct Kernel {
     pub conn: Connection,
     device_key: SigningKey,
     break_glass_policy: Option<crate::break_glass::QuorumPolicy>,
+    zone_policy: ZonePolicy,
 }
 
 impl Kernel {
     pub fn open(cfg: &KernelConfig) -> Result<Self> {
         let conn = Connection::open(&cfg.db_path)?;
         let device_key = signing_key_from_seed(&cfg.device_key_seed)?;
+        let zone_policy = cfg.zone_policy.normalized()?;
         let mut k = Self {
             conn,
             device_key,
             break_glass_policy: None,
+            zone_policy,
         };
         k.ensure_schema()?;
         k.ensure_device_public_key()?;
@@ -661,6 +696,12 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
                 return Err(e);
             }
         };
+
+        if self.zone_policy.is_sensitive(&ev.zone_id) {
+            let err = anyhow!("conformance: sensitive zone rejected by policy");
+            self.log_alarm("CONFORMANCE_ZONE_POLICY_REJECT", &format!("{}", err))?;
+            return Err(err);
+        }
 
         let ev = ev.bind(kernel_version, ruleset_id, ruleset_hash);
         self.append_event(&ev)?;
@@ -1598,6 +1639,7 @@ mod tests {
             kernel_version: "0.0.0-test".to_string(),
             retention: Duration::from_secs(60),
             device_key_seed: "devkey:test".to_string(),
+            zone_policy: ZonePolicy::default(),
         };
         let mut kernel = Kernel::open(&cfg)?;
         let desc = ModuleDescriptor {
@@ -1657,6 +1699,7 @@ mod tests {
             kernel_version: "0.0.0-test".to_string(),
             retention: Duration::from_secs(60),
             device_key_seed: "devkey:test".to_string(),
+            zone_policy: ZonePolicy::default(),
         };
         let mut kernel = Kernel::open(&cfg)?;
         let desc = ModuleDescriptor {
@@ -1748,6 +1791,7 @@ mod tests {
             kernel_version: "0.0.0-test".to_string(),
             retention: Duration::from_secs(60),
             device_key_seed: "devkey:mvp".to_string(),
+            zone_policy: ZonePolicy::default(),
         };
 
         assert!(Kernel::open(&cfg).is_err());
@@ -1773,6 +1817,7 @@ mod tests {
             kernel_version: "0.0.0-test".to_string(),
             retention: Duration::from_secs(60),
             device_key_seed: "devkey:test".to_string(),
+            zone_policy: ZonePolicy::default(),
         };
         let mut kernel = Kernel::open(&cfg)?;
         let desc = ModuleDescriptor {
@@ -1809,6 +1854,107 @@ mod tests {
     }
 
     #[test]
+    fn zone_policy_rejects_sensitive_zone() -> Result<()> {
+        let cfg = KernelConfig {
+            db_path: ":memory:".to_string(),
+            ruleset_id: "ruleset:test".to_string(),
+            ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
+            kernel_version: "0.0.0-test".to_string(),
+            retention: Duration::from_secs(60),
+            device_key_seed: "devkey:test".to_string(),
+            zone_policy: ZonePolicy::new(vec!["zone:private".to_string()])?,
+        };
+        let mut kernel = Kernel::open(&cfg)?;
+        let desc = ModuleDescriptor {
+            id: "test_module",
+            allowed_event_types: &[EventType::BoundaryCrossingObjectLarge],
+            requested_capabilities: &[],
+        };
+        let cand = CandidateEvent {
+            event_type: EventType::BoundaryCrossingObjectLarge,
+            time_bucket: TimeBucket {
+                start_epoch_s: 0,
+                size_s: 600,
+            },
+            zone_id: "zone:private".to_string(),
+            confidence: 0.5,
+            correlation_token: None,
+        };
+
+        assert!(kernel
+            .append_event_checked(
+                &desc,
+                cand,
+                &cfg.kernel_version,
+                &cfg.ruleset_id,
+                cfg.ruleset_hash
+            )
+            .is_err());
+        let event_count: i64 =
+            kernel
+                .conn
+                .query_row("SELECT COUNT(*) FROM sealed_events", [], |row| row.get(0))?;
+        let alarm_count: i64 = kernel.conn.query_row(
+            "SELECT COUNT(*) FROM conformance_alarms WHERE code = 'CONFORMANCE_ZONE_POLICY_REJECT'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(event_count, 0);
+        assert_eq!(alarm_count, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn zone_policy_allows_non_sensitive_zone() -> Result<()> {
+        let cfg = KernelConfig {
+            db_path: ":memory:".to_string(),
+            ruleset_id: "ruleset:test".to_string(),
+            ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
+            kernel_version: "0.0.0-test".to_string(),
+            retention: Duration::from_secs(60),
+            device_key_seed: "devkey:test".to_string(),
+            zone_policy: ZonePolicy::new(vec!["zone:private".to_string()])?,
+        };
+        let mut kernel = Kernel::open(&cfg)?;
+        let desc = ModuleDescriptor {
+            id: "test_module",
+            allowed_event_types: &[EventType::BoundaryCrossingObjectLarge],
+            requested_capabilities: &[],
+        };
+        let cand = CandidateEvent {
+            event_type: EventType::BoundaryCrossingObjectLarge,
+            time_bucket: TimeBucket {
+                start_epoch_s: 0,
+                size_s: 600,
+            },
+            zone_id: "zone:public".to_string(),
+            confidence: 0.5,
+            correlation_token: None,
+        };
+
+        kernel.append_event_checked(
+            &desc,
+            cand,
+            &cfg.kernel_version,
+            &cfg.ruleset_id,
+            cfg.ruleset_hash,
+        )?;
+        let event_count: i64 =
+            kernel
+                .conn
+                .query_row("SELECT COUNT(*) FROM sealed_events", [], |row| row.get(0))?;
+        let alarm_count: i64 =
+            kernel
+                .conn
+                .query_row("SELECT COUNT(*) FROM conformance_alarms", [], |row| {
+                    row.get(0)
+                })?;
+        assert_eq!(event_count, 1);
+        assert_eq!(alarm_count, 0);
+        Ok(())
+    }
+
+    #[test]
     fn break_glass_hash_rejects_malformed_size() -> Result<()> {
         let cfg = KernelConfig {
             db_path: ":memory:".to_string(),
@@ -1817,6 +1963,7 @@ mod tests {
             kernel_version: "0.0.0-test".to_string(),
             retention: Duration::from_secs(60),
             device_key_seed: "devkey:test".to_string(),
+            zone_policy: ZonePolicy::default(),
         };
         let kernel = Kernel::open(&cfg)?;
         let created_at = now_s()? as i64;
@@ -1847,6 +1994,7 @@ mod tests {
             kernel_version: "0.0.0-test".to_string(),
             retention: Duration::from_secs(60),
             device_key_seed: "devkey:test".to_string(),
+            zone_policy: ZonePolicy::default(),
         };
         let kernel = Kernel::open(&cfg)?;
         let created_at = now_s()? as i64;

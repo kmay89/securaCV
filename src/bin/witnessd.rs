@@ -17,6 +17,7 @@ use witness_kernel::{
     break_glass::BreakGlassTokenFile,
     BucketKeyManager, CapabilityBoundaryRuntime, FrameBuffer, Kernel, KernelConfig, Module,
     ModuleDescriptor, RtspConfig, RtspSource, TimeBucket, Vault, VaultConfig, ZoneCrossingModule,
+    ZonePolicy,
 };
 
 fn main() -> Result<()> {
@@ -36,6 +37,7 @@ fn main() -> Result<()> {
         kernel_version: kernel_version.to_string(),
         retention: Duration::from_secs(60 * 60 * 24 * 7), // 7 days
         device_key_seed,
+        zone_policy: ZonePolicy::default(),
     };
 
     let mut kernel = Kernel::open(&cfg)?;
