@@ -3,7 +3,7 @@ use ed25519_dalek::{Signer, SigningKey};
 use witness_kernel::{
     Approval, BreakGlass, BreakGlassToken, CandidateEvent, EventType, ExportOptions, Kernel,
     KernelConfig, ModuleDescriptor, QuorumPolicy, TimeBucket, TrusteeEntry, TrusteeId,
-    UnlockRequest, EXPORT_EVENTS_ENVELOPE_ID,
+    UnlockRequest, ZonePolicy, EXPORT_EVENTS_ENVELOPE_ID,
 };
 
 fn main() -> Result<()> {
@@ -17,6 +17,7 @@ fn main() -> Result<()> {
         kernel_version: env!("CARGO_PKG_VERSION").to_string(),
         retention: std::time::Duration::from_secs(60),
         device_key_seed: "devkey:ci-conformance".to_string(),
+        zone_policy: ZonePolicy::default(),
     })?;
 
     let module = ModuleDescriptor {
