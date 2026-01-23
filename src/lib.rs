@@ -169,6 +169,9 @@ impl Default for ExportOptions {
     }
 }
 
+/// Break-glass envelope identifier reserved for event export authorization.
+pub const EXPORT_EVENTS_ENVELOPE_ID: &str = "export:events";
+
 // -------------------- Zone ID Discipline --------------------
 
 /// A conforming zone_id MUST be a local identifier, not an encoded location.
@@ -868,12 +871,7 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         Ok(out)
     }
 
-    /// Export events sequentially, grouped into coarse time buckets with batching and jitter.
-    pub fn export_events_sequential(
-        &mut self,
-        expected_ruleset_hash: [u8; 32],
-        options: ExportOptions,
-    ) -> Result<ExportArtifact> {
+    fn validate_export_options(options: &ExportOptions) -> Result<()> {
         if options.max_events_per_batch == 0 {
             return Err(anyhow!("export max_events_per_batch must be >= 1"));
         }
@@ -883,6 +881,38 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         if options.jitter_s > 0 && options.jitter_step_s > options.jitter_s {
             return Err(anyhow!("export jitter_step_s cannot exceed jitter_s"));
         }
+        Ok(())
+    }
+
+    /// Export events sequentially with break-glass authorization.
+    pub fn export_events_authorized(
+        &mut self,
+        expected_ruleset_hash: [u8; 32],
+        options: ExportOptions,
+        token: &mut break_glass::BreakGlassToken,
+    ) -> Result<ExportArtifact> {
+        Self::validate_export_options(&options)?;
+        let now_bucket = TimeBucket::now(600)?;
+        break_glass::BreakGlass::assert_token_valid(
+            token,
+            EXPORT_EVENTS_ENVELOPE_ID,
+            expected_ruleset_hash,
+            now_bucket,
+            &self.device_verifying_key(),
+            |hash| self.break_glass_receipt_outcome(hash),
+        )?;
+        let artifact = self.export_events_sequential_unchecked(expected_ruleset_hash, options)?;
+        token.consume()?;
+        Ok(artifact)
+    }
+
+    /// Export events sequentially, grouped into coarse time buckets with batching and jitter.
+    fn export_events_sequential_unchecked(
+        &mut self,
+        expected_ruleset_hash: [u8; 32],
+        options: ExportOptions,
+    ) -> Result<ExportArtifact> {
+        Self::validate_export_options(&options)?;
 
         let payloads = {
             let mut stmt = self
@@ -1494,7 +1524,7 @@ mod tests {
             cfg.ruleset_hash,
         )?;
 
-        let artifact = kernel.export_events_sequential(
+        let artifact = kernel.export_events_sequential_unchecked(
             cfg.ruleset_hash,
             ExportOptions {
                 jitter_s: 0,
