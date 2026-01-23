@@ -101,7 +101,7 @@ fn main() -> Result<()> {
         let view = frame_ref.inference_view();
 
         // Run module inference
-        let candidates = module.process(&view, bucket, &token_mgr)?;
+        let candidates = runtime.execute_sandboxed(&mut module, &view, bucket, &token_mgr)?;
 
         for cand in candidates {
             let ev = match kernel.append_event_checked(

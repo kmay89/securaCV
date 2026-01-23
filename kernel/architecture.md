@@ -131,8 +131,15 @@ Modules MUST NOT:
 All module output MUST pass through the Event Contract Enforcer.
 
 Enforcement point: `module_runtime::CapabilityBoundaryRuntime` validates module descriptors
-before execution and refuses any module that requests filesystem or network access. This is the
-explicit capability boundary for untrusted modules until a hardened OS sandbox is wired in.
+before execution and refuses any module that requests filesystem or network access. Modules are
+executed in a hardened sandbox boundary that applies a seccomp filter to deny filesystem and
+network syscalls (open/openat, socket/connect, and related path or socket APIs). The sandbox is
+non-optional: if the platform cannot apply the filter, module execution fails closed.
+
+Sandbox boundary: `module_runtime::sandbox::run_in_sandbox` forks a short-lived worker process
+for each module invocation and installs the syscall denylist before running module inference.
+The child process is the untrusted boundary; it can read frames via the restricted inference
+interface, but it cannot access the filesystem or network even if it attempts to do so.
 
 ### 3.3 External tools (least trusted)
 External components (UI, dashboard, CLI, integrations) are untrusted:
