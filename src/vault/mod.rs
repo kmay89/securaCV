@@ -492,8 +492,10 @@ mod tests {
 
         let mut entries = fs::read_dir(vault_root)?.collect::<Result<Vec<_>, _>>()?;
         entries.sort_by_key(|entry| entry.path());
-        assert_eq!(entries.len(), 1);
-        assert!(entries[0].path().ends_with("incident-4.vault"));
+        assert_eq!(entries.len(), 2);
+        let paths: Vec<_> = entries.iter().map(|entry| entry.path()).collect();
+        assert!(paths.iter().any(|path| path.ends_with("incident-4.vault")));
+        assert!(paths.iter().any(|path| path.ends_with("master.key")));
         Ok(())
     }
 
