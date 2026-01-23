@@ -68,3 +68,8 @@ capture time, and `RtspSource::is_healthy()` reports stream health.
 GStreamer support is gated behind the `rtsp-gstreamer` feature and requires
 system GStreamer dependencies at runtime for real RTSP streams. The `stub://`
 scheme keeps the synthetic source for tests and local development.
+
+## Container deployment
+
+See `docs/container.md` for building and running the containerized `witnessd`
+artifact with RTSP configuration and Event API-only exposure.
