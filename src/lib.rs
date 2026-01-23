@@ -236,9 +236,7 @@ impl ZonePolicy {
 
     pub fn is_sensitive(&self, zone_id: &str) -> bool {
         let zone_id = zone_id.to_lowercase();
-        self.sensitive_zones
-            .iter()
-            .any(|zone| zone == &zone_id)
+        self.sensitive_zones.iter().any(|zone| zone == &zone_id)
     }
 }
 
@@ -1956,7 +1954,9 @@ mod tests {
         let alarm_count: i64 =
             kernel
                 .conn
-                .query_row("SELECT COUNT(*) FROM conformance_alarms", [], |row| row.get(0))?;
+                .query_row("SELECT COUNT(*) FROM conformance_alarms", [], |row| {
+                    row.get(0)
+                })?;
         assert_eq!(event_count, 1);
         assert_eq!(alarm_count, 0);
         Ok(())
