@@ -82,7 +82,7 @@ pub enum EventType {
 
 /// Candidate events are untrusted outputs from modules.
 /// They contain only fields allowed by the Event Contract.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CandidateEvent {
     pub event_type: EventType,
     pub time_bucket: TimeBucket,

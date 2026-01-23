@@ -3,10 +3,15 @@
 //! This module defines the capability boundary for untrusted modules.
 //! Modules must declare requested capabilities up front and the runtime
 //! MUST refuse any module that asks for filesystem or network access.
+//!
+//! Runtime execution is isolated behind a hardened sandbox boundary that
+//! denies filesystem and network syscalls even if a module attempts them.
 
 use anyhow::{anyhow, Result};
 
-use crate::ModuleDescriptor;
+use crate::{BucketKeyManager, CandidateEvent, InferenceView, Module, ModuleDescriptor, TimeBucket};
+
+mod sandbox;
 
 /// Capabilities a module may request.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -34,6 +39,17 @@ impl CapabilityBoundaryRuntime {
             ));
         }
         Ok(())
+    }
+
+    /// Execute a module inside the hardened sandbox boundary.
+    pub fn execute_sandboxed<M: Module>(
+        &self,
+        module: &mut M,
+        view: &InferenceView<'_>,
+        bucket: TimeBucket,
+        token_mgr: &BucketKeyManager,
+    ) -> Result<Vec<CandidateEvent>> {
+        sandbox::run_in_sandbox(|| module.process(view, bucket, token_mgr))
     }
 }
 
