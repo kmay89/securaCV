@@ -16,6 +16,16 @@ integrity with:
 cargo run --bin log_verify -- --db demo_witness.db
 ```
 
+### Tamper demo
+
+```bash
+cargo run --bin demo
+cargo run --bin log_verify -- --db demo_witness.db
+cargo run --bin export_verify -- --db demo_witness.db --bundle demo_out/export_bundle.json
+printf "\n" >> demo_out/export_bundle.json
+cargo run --bin export_verify -- --db demo_witness.db --bundle demo_out/export_bundle.json  # should FAIL
+```
+
 Next: for a real RTSP stream, see the RTSP ingestion section below.
 
 ## Documentation

@@ -12,11 +12,10 @@
 
 use anyhow::{anyhow, Result};
 use clap::Parser;
-use ed25519_dalek::VerifyingKey;
 use rusqlite::Connection;
 use std::io::IsTerminal;
 
-use witness_kernel::{device_public_key_from_db, verify, verify_entry_signature};
+use witness_kernel::{verify, verify_entry_signature, verify_helpers};
 
 #[path = "../ui.rs"]
 mod ui;
@@ -58,7 +57,7 @@ fn main() -> Result<()> {
     };
     let verifying_key = {
         let _stage = ui.stage("Load verifying key");
-        load_verifying_key(
+        verify_helpers::load_verifying_key(
             &conn,
             args.public_key.as_deref(),
             args.public_key_file.as_deref(),
@@ -85,7 +84,7 @@ fn main() -> Result<()> {
             println!(
                 "checkpoint: cutoff_event_id={}, chain_head_hash={}",
                 cutoff_id,
-                hex(&head)
+                verify_helpers::hex32(&head)
             );
         } else {
             println!("checkpoint: none (genesis chain)");
@@ -110,7 +109,11 @@ fn main() -> Result<()> {
             checkpoint.chain_head_hash,
             |id, entry_hash| {
                 if args.verbose {
-                    println!("  event {}: hash={} OK", id, &hex(&entry_hash)[..16]);
+                    println!(
+                        "  event {}: hash={} OK",
+                        id,
+                        &verify_helpers::hex32(&entry_hash)[..16]
+                    );
                 }
             },
         )?;
@@ -129,7 +132,11 @@ fn main() -> Result<()> {
             policy.as_ref(),
             |id, entry_hash| {
                 if args.verbose {
-                    println!("  receipt {}: hash={} OK", id, &hex(&entry_hash)[..16]);
+                    println!(
+                        "  receipt {}: hash={} OK",
+                        id,
+                        &verify_helpers::hex32(&entry_hash)[..16]
+                    );
                 }
             },
         )?;
@@ -147,7 +154,11 @@ fn main() -> Result<()> {
         let count =
             verify::verify_export_receipts_with(&conn, &verifying_key, |id, entry_hash| {
                 if args.verbose {
-                    println!("  receipt {}: hash={} OK", id, &hex(&entry_hash)[..16]);
+                    println!(
+                        "  receipt {}: hash={} OK",
+                        id,
+                        &verify_helpers::hex32(&entry_hash)[..16]
+                    );
                 }
             })?;
         println!("verified {} export receipt entries", count);
@@ -157,47 +168,10 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn load_verifying_key(
-    conn: &Connection,
-    public_key_hex: Option<&str>,
-    public_key_file: Option<&str>,
-) -> Result<VerifyingKey> {
-    if let Some(hex) = public_key_hex {
-        return verifying_key_from_hex(hex);
-    }
-    if let Some(path) = public_key_file {
-        let key_hex = std::fs::read_to_string(path)
-            .map_err(|e| anyhow!("failed to read public key file {}: {}", path, e))?;
-        return verifying_key_from_hex(key_hex.trim());
-    }
-    device_public_key_from_db(conn).map_err(|e| {
-        anyhow!(
-            "{} (provide --public-key or --public-key-file if the database has no key)",
-            e
-        )
-    })
-}
-
-fn verifying_key_from_hex(hex_str: &str) -> Result<VerifyingKey> {
-    let bytes = hex::decode(hex_str.trim()).map_err(|e| anyhow!("invalid hex: {}", e))?;
-    let mut key_bytes = [0u8; 32];
-    if bytes.len() != 32 {
-        return Err(anyhow!(
-            "invalid public key length: expected 32 bytes, got {}",
-            bytes.len()
-        ));
-    }
-    key_bytes.copy_from_slice(&bytes);
-    VerifyingKey::from_bytes(&key_bytes).map_err(|e| anyhow!("invalid public key bytes: {}", e))
-}
-
-fn hex(b: &[u8; 32]) -> String {
-    b.iter().map(|x| format!("{:02x}", x)).collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::verify_helpers::load_verifying_key;
     use ed25519_dalek::{Signer, SigningKey};
     use std::path::PathBuf;
     use witness_kernel::{
