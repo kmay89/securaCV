@@ -57,3 +57,7 @@ path = "src/bin/export_events.rs"
 [[bin]]
 name = "demo"
 path = "src/bin/demo.rs"
+
+[[bin]]
+name = "export_verify"
+path = "src/bin/export_verify.rs"

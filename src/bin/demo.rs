@@ -15,9 +15,9 @@ use witness_kernel::vault::DEFAULT_VAULT_PATH;
 use witness_kernel::verify;
 use witness_kernel::{
     break_glass_receipt_outcome_for_verifier, device_public_key_from_db, verify_entry_signature,
-    verify_export_bundle, CandidateEvent, CapabilityBoundaryRuntime, EventType, ExportOptions,
-    Kernel, KernelConfig, Module, RtspConfig, RtspSource, TimeBucket, Vault, VaultConfig,
-    ZoneCrossingModule, ZonePolicy, EXPORT_EVENTS_ENVELOPE_ID,
+    verify_export_bundle, CandidateEvent, CapabilityBoundaryRuntime, EventType, ExportArtifact,
+    ExportOptions, ExportReceipt, Kernel, KernelConfig, Module, RtspConfig, RtspSource, TimeBucket,
+    Vault, VaultConfig, ZoneCrossingModule, ZonePolicy, EXPORT_EVENTS_ENVELOPE_ID,
 };
 
 const DEFAULT_DB_PATH: &str = "demo_witness.db";
@@ -218,8 +218,10 @@ fn main() -> Result<()> {
         let options = ExportOptions::default();
         let bundle =
             kernel.export_events_bundle_authorized(ruleset_hash, options, &mut export_token)?;
-        export_bundle_bytes = Some(serde_json::to_vec(&bundle)?);
-        fs::write(&export_path, export_bundle_bytes.as_ref().unwrap())
+        let bundle_bytes = serde_json::to_vec(&bundle)?;
+        let artifact_bytes = serde_json::to_vec(&bundle.artifact)?;
+        export_bundle_bytes = Some(bundle_bytes);
+        fs::write(&export_path, &artifact_bytes)
             .with_context(|| format!("writing export bundle to {}", export_path.display()))?;
     }
 
@@ -306,7 +308,27 @@ fn verify_demo(db_path: &str, export_bundle_bytes: &[u8]) -> Result<()> {
     verify::verify_break_glass_receipts_with(&conn, &verifying_key, policy.as_ref(), |_, _| {})?;
     verify::verify_export_receipts_with(&conn, &verifying_key, |_, _| {})?;
 
-    let export_bundle: witness_kernel::ExportBundle = serde_json::from_slice(export_bundle_bytes)?;
-    verify_export_bundle(&export_bundle)?;
-    Ok(())
+    if let Ok(export_bundle) =
+        serde_json::from_slice::<witness_kernel::ExportBundle>(export_bundle_bytes)
+    {
+        verify_export_bundle(&export_bundle)?;
+        return Ok(());
+    }
+
+    let artifact: ExportArtifact = serde_json::from_slice(export_bundle_bytes)?;
+    let artifact_bytes = serde_json::to_vec(&artifact)?;
+    let artifact_hash: [u8; 32] = Sha256::digest(&artifact_bytes).into();
+    let mut stmt =
+        conn.prepare("SELECT payload_json FROM export_receipts ORDER BY id ASC")?;
+    let mut rows = stmt.query([])?;
+    while let Some(row) = rows.next()? {
+        let payload: String = row.get(0)?;
+        let receipt: ExportReceipt = serde_json::from_str(&payload)?;
+        if receipt.artifact_hash == artifact_hash {
+            return Ok(());
+        }
+    }
+    Err(anyhow!(
+        "export artifact hash not found in export receipts"
+    ))
 }
