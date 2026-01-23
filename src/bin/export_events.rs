@@ -3,6 +3,7 @@
 use anyhow::{anyhow, Result};
 use clap::Parser;
 use std::time::Duration;
+use witness_kernel::break_glass::BreakGlassTokenFile;
 use witness_kernel::{ExportOptions, Kernel, KernelConfig};
 
 #[derive(Parser, Debug)]
@@ -20,6 +21,9 @@ struct Args {
     /// Output file path for the export artifact.
     #[arg(long, default_value = "witness_export.json")]
     output: String,
+    /// Path to a break-glass token file authorizing export.
+    #[arg(long)]
+    break_glass_token: String,
     /// Maximum events per export batch.
     #[arg(long, default_value_t = 50)]
     max_events_per_batch: usize,
@@ -49,12 +53,22 @@ fn main() -> Result<()> {
     }
 
     let mut kernel = Kernel::open(&cfg)?;
+    let token_json = std::fs::read_to_string(&args.break_glass_token).map_err(|e| {
+        anyhow!(
+            "failed to read token file {}: {}",
+            args.break_glass_token,
+            e
+        )
+    })?;
+    let token_file: BreakGlassTokenFile =
+        serde_json::from_str(&token_json).map_err(|e| anyhow!("invalid token file: {}", e))?;
+    let mut token = token_file.into_token()?;
     let options = ExportOptions {
         max_events_per_batch: args.max_events_per_batch,
         jitter_s: args.jitter_s,
         jitter_step_s: args.jitter_step_s,
     };
-    let artifact = kernel.export_events_sequential(cfg.ruleset_hash, options)?;
+    let artifact = kernel.export_events_authorized(cfg.ruleset_hash, options, &mut token)?;
     let json = serde_json::to_vec(&artifact)?;
     std::fs::write(&args.output, json)?;
     println!("export written to {}", args.output);
