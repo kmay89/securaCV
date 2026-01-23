@@ -15,9 +15,9 @@ use witness_kernel::vault::DEFAULT_VAULT_PATH;
 use witness_kernel::verify;
 use witness_kernel::{
     break_glass_receipt_outcome_for_verifier, device_public_key_from_db, verify_entry_signature,
-    verify_export_bundle, CapabilityBoundaryRuntime, ExportOptions, Kernel, KernelConfig, Module,
-    RtspConfig, RtspSource, TimeBucket, Vault, VaultConfig, ZoneCrossingModule, ZonePolicy,
-    EXPORT_EVENTS_ENVELOPE_ID,
+    verify_export_bundle, CandidateEvent, CapabilityBoundaryRuntime, EventType, ExportOptions,
+    Kernel, KernelConfig, Module, RtspConfig, RtspSource, TimeBucket, Vault, VaultConfig,
+    ZoneCrossingModule, ZonePolicy, EXPORT_EVENTS_ENVELOPE_ID,
 };
 
 const DEFAULT_DB_PATH: &str = "demo_witness.db";
@@ -110,6 +110,7 @@ fn main() -> Result<()> {
     let total_frames = args.seconds.saturating_mul(args.fps as u64);
 
     let mut event_count = 0u64;
+    let mut candidates_total: u64 = 0;
     let mut vault_sealed = false;
     let mut export_bundle_bytes: Option<Vec<u8>> = None;
 
@@ -163,6 +164,7 @@ fn main() -> Result<()> {
             token_mgr.rotate_if_needed(bucket);
             let view = frame.inference_view();
             let candidates = runtime.execute_sandboxed(&mut module, &view, bucket, &token_mgr)?;
+            candidates_total += candidates.len() as u64;
             for cand in candidates {
                 let _ev = kernel.append_event_checked(
                     &module_desc,
@@ -191,6 +193,27 @@ fn main() -> Result<()> {
             }
         }
 
+        if candidates_total == 0 {
+            let fallback = CandidateEvent {
+                event_type: EventType::BoundaryCrossingObjectLarge,
+                time_bucket: now_bucket,
+                zone_id: DEFAULT_ZONE_ID.to_string(),
+                confidence: 0.5,
+                correlation_token: None,
+            };
+            let _ev = kernel.append_event_checked(
+                &module_desc,
+                fallback,
+                &cfg.kernel_version,
+                &cfg.ruleset_id,
+                cfg.ruleset_hash,
+            )?;
+            event_count += 1;
+            eprintln!(
+                "demo: module produced 0 candidates; wrote 1 fallback event to validate pipeline"
+            );
+        }
+
         stage("export events");
         let options = ExportOptions::default();
         let bundle =
@@ -208,6 +231,8 @@ fn main() -> Result<()> {
     let verify_result = verify_demo(&cfg.db_path, export_bundle_bytes.as_ref().unwrap());
 
     println!("demo summary:");
+    println!("  frames processed: {}", total_frames);
+    println!("  candidates produced: {}", candidates_total);
     println!("  events written: {}", event_count);
     println!("  log db: {}", cfg.db_path);
     println!("  vault path: {}", vault_path.display());
