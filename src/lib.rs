@@ -1385,9 +1385,12 @@ mod tests {
             cfg.ruleset_hash,
         )?;
 
-        let created_at: i64 = kernel
-            .conn
-            .query_row("SELECT created_at FROM sealed_events LIMIT 1", [], |row| row.get(0))?;
+        let created_at: i64 =
+            kernel
+                .conn
+                .query_row("SELECT created_at FROM sealed_events LIMIT 1", [], |row| {
+                    row.get(0)
+                })?;
         assert_eq!(created_at, i64::try_from(bucket_start).unwrap());
         Ok(())
     }
