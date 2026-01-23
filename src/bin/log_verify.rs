@@ -15,11 +15,10 @@ use clap::Parser;
 use rusqlite::Connection;
 use std::io::IsTerminal;
 
-use witness_kernel::{verify, verify_entry_signature};
+use witness_kernel::{verify, verify_entry_signature, verify_helpers};
 
 #[path = "../ui.rs"]
 mod ui;
-mod verify_helpers;
 
 #[derive(Parser, Debug)]
 #[command(

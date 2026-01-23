@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use ed25519_dalek::VerifyingKey;
 use rusqlite::Connection;
 
-use witness_kernel::device_public_key_from_db;
+use crate::device_public_key_from_db;
 
 pub fn load_verifying_key(
     conn: &Connection,

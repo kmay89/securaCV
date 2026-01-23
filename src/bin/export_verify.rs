@@ -13,11 +13,10 @@ use rusqlite::Connection;
 use sha2::{Digest, Sha256};
 use std::io::IsTerminal;
 
-use witness_kernel::{verify, ExportReceipt};
+use witness_kernel::{verify, verify_helpers, ExportReceipt};
 
 #[path = "../ui.rs"]
 mod ui;
-mod verify_helpers;
 
 #[derive(Parser, Debug)]
 #[command(

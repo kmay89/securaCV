@@ -1260,6 +1260,8 @@ pub fn verify_export_bundle(bundle: &ExportBundle) -> Result<()> {
     Ok(())
 }
 
+pub mod verify_helpers;
+
 fn blob32(bytes: Vec<u8>, context: &str) -> Result<[u8; 32]> {
     if bytes.len() != 32 {
         return Err(anyhow!(
