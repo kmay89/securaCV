@@ -255,7 +255,8 @@ fn issue_break_glass_token(
         signature.to_vec(),
     );
     let approvals = std::slice::from_ref(&approval);
-    let (result, receipt) = BreakGlass::authorize(ctx.policy, &request, approvals, request.bucket);
+    let (result, receipt) =
+        BreakGlass::authorize(ctx.policy, &request, approvals, request.time_bucket);
     let mut token = result?;
     let receipt_hash = kernel.log_break_glass_receipt(&receipt, approvals)?;
     kernel.sign_break_glass_token(&mut token, receipt_hash)?;
