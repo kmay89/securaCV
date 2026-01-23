@@ -25,6 +25,19 @@ const DEFAULT_RULESET_ID: &str = "ruleset:demo";
 const DEFAULT_ZONE_ID: &str = "zone:demo";
 const DEFAULT_VAULT_ENVELOPE_ID: &str = "demo-vault";
 
+struct BreakGlassContext<'a> {
+    policy: &'a QuorumPolicy,
+    trustee_key: &'a SigningKey,
+    trustee_id: &'a TrusteeId,
+}
+
+struct BreakGlassRequest<'a> {
+    envelope_id: &'a str,
+    ruleset_hash: [u8; 32],
+    reason: &'a str,
+    bucket: TimeBucket,
+}
+
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
 struct Args {
@@ -117,25 +130,30 @@ fn main() -> Result<()> {
         let mut token_mgr = witness_kernel::BucketKeyManager::new();
 
         let now_bucket = TimeBucket::now(600)?;
+        let ctx = BreakGlassContext {
+            policy: &policy,
+            trustee_key: &trustee_key,
+            trustee_id: &trustee_id,
+        };
         let mut vault_token = issue_break_glass_token(
             &mut kernel,
-            &policy,
-            &trustee_key,
-            &trustee_id,
-            DEFAULT_VAULT_ENVELOPE_ID,
-            ruleset_hash,
-            "demo-vault-seal",
-            now_bucket,
+            &ctx,
+            BreakGlassRequest {
+                envelope_id: DEFAULT_VAULT_ENVELOPE_ID,
+                ruleset_hash,
+                reason: "demo-vault-seal",
+                bucket: now_bucket,
+            },
         )?;
         let mut export_token = issue_break_glass_token(
             &mut kernel,
-            &policy,
-            &trustee_key,
-            &trustee_id,
-            EXPORT_EVENTS_ENVELOPE_ID,
-            ruleset_hash,
-            "demo-export",
-            now_bucket,
+            &ctx,
+            BreakGlassRequest {
+                envelope_id: EXPORT_EVENTS_ENVELOPE_ID,
+                ruleset_hash,
+                reason: "demo-export",
+                bucket: now_bucket,
+            },
         )?;
         let verifying_key = kernel.device_verifying_key();
 
@@ -221,24 +239,25 @@ fn derive_trustee_key(seed: Option<u64>) -> SigningKey {
 
 fn issue_break_glass_token(
     kernel: &mut Kernel,
-    policy: &QuorumPolicy,
-    trustee_key: &SigningKey,
-    trustee_id: &TrusteeId,
-    envelope_id: &str,
-    ruleset_hash: [u8; 32],
-    reason: &str,
-    bucket: TimeBucket,
+    ctx: &BreakGlassContext<'_>,
+    request: BreakGlassRequest<'_>,
 ) -> Result<BreakGlassToken> {
-    let request = UnlockRequest::new(envelope_id, ruleset_hash, reason, bucket)?;
-    let signature = trustee_key.sign(&request.request_hash());
+    let request = UnlockRequest::new(
+        request.envelope_id,
+        request.ruleset_hash,
+        request.reason,
+        request.bucket,
+    )?;
+    let signature = ctx.trustee_key.sign(&request.request_hash());
     let approval = Approval::new(
-        trustee_id.clone(),
+        ctx.trustee_id.clone(),
         request.request_hash(),
         signature.to_vec(),
     );
-    let (result, receipt) = BreakGlass::authorize(policy, &request, &[approval.clone()], bucket);
+    let approvals = std::slice::from_ref(&approval);
+    let (result, receipt) = BreakGlass::authorize(ctx.policy, &request, approvals, request.bucket);
     let mut token = result?;
-    let receipt_hash = kernel.log_break_glass_receipt(&receipt, &[approval])?;
+    let receipt_hash = kernel.log_break_glass_receipt(&receipt, approvals)?;
     kernel.sign_break_glass_token(&mut token, receipt_hash)?;
     Ok(token)
 }
