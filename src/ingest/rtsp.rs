@@ -18,6 +18,7 @@
 use anyhow::Context;
 use anyhow::Result;
 use sha2::{Digest, Sha256};
+#[cfg(feature = "rtsp-gstreamer")]
 use std::time::{Duration, Instant};
 
 use crate::frame::RawFrame;
