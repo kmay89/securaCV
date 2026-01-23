@@ -23,6 +23,27 @@ The device Ed25519 **verifying key** is stored locally in the witness database a
 explicit key via `--public-key` / `--public-key-file` as documented in
 `log_verify_README.md`.
 
+## Break-glass policy management
+
+The break-glass CLI stores the quorum policy in the kernel database so
+`break_glass authorize` can evaluate approvals against a persistent trustee
+roster. Manage the policy with `break_glass policy` subcommands:
+
+```bash
+DEVICE_KEY_SEED=devkey:your-seed \
+  cargo run --bin break_glass -- policy set \
+  --threshold 2 \
+  --trustee alice:0123... \
+  --trustee bob:4567... \
+  --db witness.db
+
+DEVICE_KEY_SEED=devkey:your-seed \
+  cargo run --bin break_glass -- policy show --db witness.db
+```
+
+Trustee entries use the format `id:HEX_PUBLIC_KEY`, where the public key is the
+hex-encoded 32-byte Ed25519 verifying key.
+
 ## Event export
 
 Use the sequential export tool to write a local artifact with coarse time buckets

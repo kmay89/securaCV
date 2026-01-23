@@ -106,6 +106,43 @@ enum Command {
         #[arg(long, default_value = "vault/unsealed")]
         output_dir: String,
     },
+
+    /// Manage break-glass quorum policy stored in the kernel database
+    Policy {
+        #[command(subcommand)]
+        command: PolicyCommand,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum PolicyCommand {
+    /// Store a quorum policy in the kernel database
+    Set {
+        /// Quorum threshold (n)
+        #[arg(long)]
+        threshold: u8,
+        /// Trustee entry in the format "id:HEX_PUBLIC_KEY"
+        #[arg(long = "trustee", value_name = "ID:HEX", action = clap::ArgAction::Append)]
+        trustees: Vec<String>,
+        #[arg(long, default_value = "witness.db")]
+        db: String,
+        #[arg(long, default_value = "ruleset:v0.3.0")]
+        ruleset_id: String,
+        /// Device key seed (must match witnessd)
+        #[arg(long, env = "DEVICE_KEY_SEED")]
+        device_key_seed: String,
+    },
+
+    /// Print the stored quorum policy
+    Show {
+        #[arg(long, default_value = "witness.db")]
+        db: String,
+        #[arg(long, default_value = "ruleset:v0.3.0")]
+        ruleset_id: String,
+        /// Device key seed (must match witnessd)
+        #[arg(long, env = "DEVICE_KEY_SEED")]
+        device_key_seed: String,
+    },
 }
 
 pub fn run() -> Result<()> {
@@ -168,6 +205,26 @@ pub fn run() -> Result<()> {
             &vault_path,
             &output_dir,
         ),
+        Command::Policy { command } => match command {
+            PolicyCommand::Set {
+                threshold,
+                trustees,
+                db,
+                ruleset_id,
+                device_key_seed,
+            } => cmd_policy_set(
+                threshold,
+                &trustees,
+                &db,
+                &ruleset_id,
+                &device_key_seed,
+            ),
+            PolicyCommand::Show {
+                db,
+                ruleset_id,
+                device_key_seed,
+            } => cmd_policy_show(&db, &ruleset_id, &device_key_seed),
+        },
     }
 }
 
@@ -257,22 +314,19 @@ fn cmd_authorize(
 }
 
 fn cmd_authorize_with_bucket(args: AuthorizeArgs<'_>) -> Result<()> {
-    let ruleset_hash = KernelConfig::ruleset_hash_from_id(args.ruleset_id);
-    let cfg = KernelConfig {
-        db_path: args.db_path.to_string(),
-        ruleset_id: args.ruleset_id.to_string(),
-        ruleset_hash,
-        kernel_version: env!("CARGO_PKG_VERSION").to_string(),
-        retention: std::time::Duration::from_secs(60 * 60 * 24 * 7),
-        device_key_seed: args.device_key_seed.to_string(),
-    };
+    let cfg = kernel_config(args.db_path, args.ruleset_id, args.device_key_seed);
     let mut kernel = Kernel::open(&cfg)?;
     let policy = kernel
         .break_glass_policy()
         .ok_or_else(|| anyhow!("break-glass quorum policy is not configured"))?
         .clone();
 
-    let request = UnlockRequest::new(args.envelope, ruleset_hash, args.purpose, args.bucket)?;
+    let request = UnlockRequest::new(
+        args.envelope,
+        cfg.ruleset_hash,
+        args.purpose,
+        args.bucket,
+    )?;
 
     let mut approvals: Vec<Approval> = Vec::new();
     for file in args
@@ -321,6 +375,40 @@ fn cmd_authorize_with_bucket(args: AuthorizeArgs<'_>) -> Result<()> {
             Err(e)
         }
     }
+}
+
+fn cmd_policy_set(
+    threshold: u8,
+    trustees: &[String],
+    db_path: &str,
+    ruleset_id: &str,
+    device_key_seed: &str,
+) -> Result<()> {
+    let entries = trustees
+        .iter()
+        .map(|entry| parse_trustee_entry(entry))
+        .collect::<Result<Vec<_>>>()?;
+    let policy = crate::break_glass::QuorumPolicy::new(threshold, entries)?;
+
+    let cfg = kernel_config(db_path, ruleset_id, device_key_seed);
+    let mut kernel = Kernel::open(&cfg)?;
+    kernel.set_break_glass_policy(&policy)?;
+
+    println!("Stored break-glass policy: {}-of-{}", policy.n, policy.m);
+    for trustee in &policy.trustees {
+        println!("  trustee {} {}", trustee.id.0, hex_vec(&trustee.public_key));
+    }
+    Ok(())
+}
+
+fn cmd_policy_show(db_path: &str, ruleset_id: &str, device_key_seed: &str) -> Result<()> {
+    let cfg = kernel_config(db_path, ruleset_id, device_key_seed);
+    let kernel = Kernel::open(&cfg)?;
+    let policy = kernel
+        .break_glass_policy()
+        .ok_or_else(|| anyhow!("break-glass quorum policy is not configured"))?;
+    println!("{}", serde_json::to_string_pretty(policy)?);
+    Ok(())
 }
 
 fn cmd_receipts(
@@ -592,6 +680,37 @@ fn verifying_key_from_hex(hex_str: &str) -> Result<VerifyingKey> {
     VerifyingKey::from_bytes(&key_bytes).map_err(|e| anyhow!("invalid public key bytes: {}", e))
 }
 
+fn parse_trustee_entry(entry: &str) -> Result<crate::break_glass::TrusteeEntry> {
+    let (id, hex_key) = entry
+        .split_once(':')
+        .ok_or_else(|| anyhow!("invalid trustee entry {} (expected id:hex)", entry))?;
+    let bytes = hex::decode(hex_key.trim()).map_err(|e| anyhow!("invalid trustee key: {}", e))?;
+    if bytes.len() != 32 {
+        return Err(anyhow!(
+            "invalid trustee key length: expected 32 bytes, got {}",
+            bytes.len()
+        ));
+    }
+    let mut public_key = [0u8; 32];
+    public_key.copy_from_slice(&bytes);
+    Ok(crate::break_glass::TrusteeEntry {
+        id: TrusteeId::new(id),
+        public_key,
+    })
+}
+
+fn kernel_config(db_path: &str, ruleset_id: &str, device_key_seed: &str) -> KernelConfig {
+    let ruleset_hash = KernelConfig::ruleset_hash_from_id(ruleset_id);
+    KernelConfig {
+        db_path: db_path.to_string(),
+        ruleset_id: ruleset_id.to_string(),
+        ruleset_hash,
+        kernel_version: env!("CARGO_PKG_VERSION").to_string(),
+        retention: std::time::Duration::from_secs(60 * 60 * 24 * 7),
+        device_key_seed: device_key_seed.to_string(),
+    }
+}
+
 fn parse_hex32(s: &str) -> Result<[u8; 32]> {
     let b = hex::decode(s).map_err(|e| anyhow!("invalid hex: {}", e))?;
     if b.len() != 32 {
@@ -644,6 +763,7 @@ fn blob64_vec(bytes: Vec<u8>, context: &str) -> Result<[u8; 64]> {
 mod tests {
     use super::*;
     use ed25519_dalek::SigningKey;
+    use hex::encode as hex_encode;
     use std::time::Duration;
 
     #[test]
@@ -752,6 +872,67 @@ mod tests {
         let result = cmd_authorize_with_bucket(args);
         let err = result.expect_err("authorization should be denied");
         assert!(err.to_string().contains("unrecognized trustee approvals"));
+        Ok(())
+    }
+
+    #[test]
+    fn policy_persists_and_authorize_uses_stored_policy() -> Result<()> {
+        let temp_dir =
+            std::env::temp_dir().join(format!("secura_break_glass_policy_{}", rand::random::<u64>()));
+        std::fs::create_dir_all(&temp_dir)?;
+        let db_path = temp_dir.join("witness.db");
+
+        let ruleset_id = "ruleset:test";
+        let device_key_seed = "devkey:test";
+        let trustee_key = SigningKey::from_bytes(&[7u8; 32]);
+        let trustee_entry = format!(
+            "alice:{}",
+            hex_encode(trustee_key.verifying_key().to_bytes())
+        );
+
+        cmd_policy_set(
+            1,
+            &[trustee_entry.clone()],
+            &db_path.to_string_lossy(),
+            ruleset_id,
+            device_key_seed,
+        )?;
+
+        let cfg = kernel_config(&db_path.to_string_lossy(), ruleset_id, device_key_seed);
+        let kernel = Kernel::open(&cfg)?;
+        let policy = kernel
+            .break_glass_policy()
+            .expect("policy should be loaded from db");
+        assert_eq!(policy.n, 1);
+        assert_eq!(policy.m, 1);
+        assert_eq!(policy.trustees[0].id.0, "alice");
+
+        let bucket = TimeBucket {
+            start_epoch_s: 1234,
+            size_s: 600,
+        };
+        let request = UnlockRequest::new("vault:1", cfg.ruleset_hash, "audit", bucket)?;
+        let signature = trustee_key.sign(&request.request_hash());
+        let approval = Approval::new(
+            TrusteeId::new("alice"),
+            request.request_hash(),
+            signature.to_vec(),
+        );
+        let approval_path = temp_dir.join("alice.approval");
+        std::fs::write(&approval_path, serde_json::to_string(&approval)?)?;
+
+        let approval_arg = approval_path.to_string_lossy();
+        let args = AuthorizeArgs {
+            envelope: "vault:1",
+            purpose: "audit",
+            approvals_arg: approval_arg.as_ref(),
+            db_path: cfg.db_path.as_str(),
+            ruleset_id,
+            device_key_seed,
+            output_token: None,
+            bucket,
+        };
+        cmd_authorize_with_bucket(args)?;
         Ok(())
     }
 }
