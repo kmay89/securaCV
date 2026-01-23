@@ -102,12 +102,16 @@ impl RawFrame {
         token: &mut BreakGlassToken,
         envelope_id: &str,
         expected_ruleset_hash: [u8; 32],
+        verifying_key: &ed25519_dalek::VerifyingKey,
+        receipt_lookup: impl FnOnce(&[u8; 32]) -> Result<crate::BreakGlassOutcome>,
     ) -> Result<Vec<u8>> {
         RawMediaBoundary::export_for_vault(
             &mut self.data,
             token,
             envelope_id,
             expected_ruleset_hash,
+            verifying_key,
+            receipt_lookup,
         )
     }
 }
@@ -382,6 +386,7 @@ mod tests {
     use crate::break_glass::{
         Approval, BreakGlass, QuorumPolicy, TrusteeEntry, TrusteeId, UnlockRequest,
     };
+    use crate::BreakGlassOutcome;
     use ed25519_dalek::{Signer, SigningKey};
 
     fn make_test_frame(data: &[u8]) -> RawFrame {
@@ -393,7 +398,10 @@ mod tests {
         RawFrame::new(data.to_vec(), 640, 480, bucket, features)
     }
 
-    fn make_break_glass_token(envelope_id: &str, ruleset_hash: [u8; 32]) -> BreakGlassToken {
+    fn make_break_glass_token(
+        envelope_id: &str,
+        ruleset_hash: [u8; 32],
+    ) -> (BreakGlassToken, ed25519_dalek::VerifyingKey, [u8; 32]) {
         let bucket = TimeBucket::now(600).expect("time bucket");
         let request = UnlockRequest::new(envelope_id, ruleset_hash, "test-export", bucket).unwrap();
         let signing_key = SigningKey::from_bytes(&[7u8; 32]);
@@ -412,7 +420,13 @@ mod tests {
         )
         .unwrap();
         let (result, _receipt) = BreakGlass::authorize(&policy, &request, &[approval], bucket);
-        result.expect("break-glass token")
+        let mut token = result.expect("break-glass token");
+        let device_signing_key = SigningKey::from_bytes(&[9u8; 32]);
+        let receipt_hash = [8u8; 32];
+        token
+            .attach_receipt_signature(receipt_hash, &device_signing_key)
+            .expect("attach receipt signature");
+        (token, device_signing_key.verifying_key(), receipt_hash)
     }
 
     #[test]
@@ -441,9 +455,19 @@ mod tests {
         // With a break-glass token, export succeeds
         let envelope_id = "test-envelope";
         let ruleset_hash = [7u8; 32];
-        let mut token = make_break_glass_token(envelope_id, ruleset_hash);
+        let (mut token, verifying_key, receipt_hash) =
+            make_break_glass_token(envelope_id, ruleset_hash);
         let bytes = frame
-            .export_for_vault(&mut token, envelope_id, ruleset_hash)
+            .export_for_vault(
+                &mut token,
+                envelope_id,
+                ruleset_hash,
+                &verifying_key,
+                |hash| {
+                    assert_eq!(hash, &receipt_hash);
+                    Ok(BreakGlassOutcome::Granted)
+                },
+            )
             .unwrap();
         assert_eq!(bytes, b"test pixels");
     }

@@ -1,12 +1,12 @@
 //! Core break-glass types (no CLI).
 
 use anyhow::{anyhow, Result};
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, SigningKey, Verifier, VerifyingKey};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::TimeBucket;
+use crate::{sign_entry, verify_entry_signature, TimeBucket};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct TrusteeId(pub String);
@@ -169,6 +169,8 @@ pub struct BreakGlassToken {
     expires_bucket: TimeBucket,
     vault_envelope_id: String,
     ruleset_hash: [u8; 32],
+    receipt_entry_hash: [u8; 32],
+    device_signature: [u8; 64],
     consumed: bool,
 }
 
@@ -193,6 +195,51 @@ impl BreakGlassToken {
         self.ruleset_hash
     }
 
+    pub fn receipt_entry_hash(&self) -> [u8; 32] {
+        self.receipt_entry_hash
+    }
+
+    pub fn device_signature(&self) -> [u8; 64] {
+        self.device_signature
+    }
+
+    pub fn attach_receipt_signature(
+        &mut self,
+        receipt_entry_hash: [u8; 32],
+        signing_key: &SigningKey,
+    ) -> Result<()> {
+        if receipt_entry_hash == [0u8; 32] {
+            return Err(anyhow!("break-glass receipt hash cannot be zero"));
+        }
+        self.receipt_entry_hash = receipt_entry_hash;
+        let signing_hash = token_signing_hash(
+            self.token_nonce,
+            &self.vault_envelope_id,
+            self.ruleset_hash,
+            self.expires_bucket,
+            self.receipt_entry_hash,
+        );
+        self.device_signature = sign_entry(signing_key, &signing_hash);
+        Ok(())
+    }
+
+    pub fn verify_signature(&self, verifying_key: &VerifyingKey) -> Result<()> {
+        if self.receipt_entry_hash == [0u8; 32] {
+            return Err(anyhow!("break-glass receipt hash missing"));
+        }
+        if self.device_signature == [0u8; 64] {
+            return Err(anyhow!("break-glass token signature missing"));
+        }
+        let signing_hash = token_signing_hash(
+            self.token_nonce,
+            &self.vault_envelope_id,
+            self.ruleset_hash,
+            self.expires_bucket,
+            self.receipt_entry_hash,
+        );
+        verify_entry_signature(verifying_key, &signing_hash, &self.device_signature)
+    }
+
     #[cfg(test)]
     pub fn test_token() -> Self {
         Self {
@@ -203,6 +250,8 @@ impl BreakGlassToken {
             },
             vault_envelope_id: "test-envelope".to_string(),
             ruleset_hash: [0u8; 32],
+            receipt_entry_hash: [0u8; 32],
+            device_signature: [0u8; 64],
             consumed: false,
         }
     }
@@ -219,6 +268,8 @@ impl BreakGlassToken {
             expires_bucket,
             vault_envelope_id: vault_envelope_id.into(),
             ruleset_hash,
+            receipt_entry_hash: [0u8; 32],
+            device_signature: [0u8; 64],
             consumed: false,
         }
     }
@@ -238,6 +289,8 @@ pub struct BreakGlassTokenFile {
     pub expires_bucket: TimeBucket,
     pub vault_envelope_id: String,
     pub ruleset_hash: String,
+    pub receipt_entry_hash: String,
+    pub device_signature: String,
 }
 
 impl BreakGlassTokenFile {
@@ -247,6 +300,8 @@ impl BreakGlassTokenFile {
             expires_bucket: token.expires_bucket(),
             vault_envelope_id: token.vault_envelope_id().to_string(),
             ruleset_hash: hex::encode(token.ruleset_hash()),
+            receipt_entry_hash: hex::encode(token.receipt_entry_hash()),
+            device_signature: hex::encode(token.device_signature()),
         }
     }
 
@@ -259,11 +314,21 @@ impl BreakGlassTokenFile {
             return Err(anyhow!("token nonce cannot be zero"));
         }
         let ruleset_hash = parse_hex32(&self.ruleset_hash, "ruleset_hash")?;
+        let receipt_entry_hash = parse_hex32(&self.receipt_entry_hash, "receipt_entry_hash")?;
+        if receipt_entry_hash == [0u8; 32] {
+            return Err(anyhow!("receipt_entry_hash cannot be zero"));
+        }
+        let device_signature = parse_hex64(&self.device_signature, "device_signature")?;
+        if device_signature == [0u8; 64] {
+            return Err(anyhow!("device_signature cannot be zero"));
+        }
         Ok(BreakGlassToken {
             token_nonce,
             expires_bucket: self.expires_bucket,
             vault_envelope_id: self.vault_envelope_id,
             ruleset_hash,
+            receipt_entry_hash,
+            device_signature,
             consumed: false,
         })
     }
@@ -281,6 +346,39 @@ fn parse_hex32(value: &str, label: &str) -> Result<[u8; 32]> {
     let mut out = [0u8; 32];
     out.copy_from_slice(&bytes);
     Ok(out)
+}
+
+fn parse_hex64(value: &str, label: &str) -> Result<[u8; 64]> {
+    let bytes = hex::decode(value.trim()).map_err(|e| anyhow!("invalid {}: {}", label, e))?;
+    if bytes.len() != 64 {
+        return Err(anyhow!(
+            "invalid {} length: expected 64 bytes, got {}",
+            label,
+            bytes.len()
+        ));
+    }
+    let mut out = [0u8; 64];
+    out.copy_from_slice(&bytes);
+    Ok(out)
+}
+
+fn token_signing_hash(
+    token_nonce: [u8; 32],
+    vault_envelope_id: &str,
+    ruleset_hash: [u8; 32],
+    expires_bucket: TimeBucket,
+    receipt_entry_hash: [u8; 32],
+) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(token_nonce);
+    hasher.update(expires_bucket.start_epoch_s.to_le_bytes());
+    hasher.update(expires_bucket.size_s.to_le_bytes());
+    let envelope_bytes = vault_envelope_id.as_bytes();
+    hasher.update((envelope_bytes.len() as u32).to_le_bytes());
+    hasher.update(envelope_bytes);
+    hasher.update(ruleset_hash);
+    hasher.update(receipt_entry_hash);
+    hasher.finalize().into()
 }
 
 pub struct BreakGlass;
@@ -366,6 +464,8 @@ impl BreakGlass {
                     expires_bucket: now_bucket,
                     vault_envelope_id: request.vault_envelope_id.clone(),
                     ruleset_hash: request.ruleset_hash,
+                    receipt_entry_hash: [0u8; 32],
+                    device_signature: [0u8; 64],
                     consumed: false,
                 };
                 (Ok(token), receipt)
@@ -379,6 +479,8 @@ impl BreakGlass {
         envelope_id: &str,
         expected_ruleset_hash: [u8; 32],
         now_bucket: TimeBucket,
+        verifying_key: &VerifyingKey,
+        receipt_lookup: impl FnOnce(&[u8; 32]) -> Result<BreakGlassOutcome>,
     ) -> Result<()> {
         if token.token_nonce() == [0u8; 32] {
             return Err(anyhow!("break-glass token nonce invalid"));
@@ -398,7 +500,13 @@ impl BreakGlass {
         {
             return Err(anyhow!("break-glass token expired"));
         }
-        Ok(())
+        token.verify_signature(verifying_key)?;
+        match receipt_lookup(&token.receipt_entry_hash())? {
+            BreakGlassOutcome::Granted => Ok(()),
+            BreakGlassOutcome::Denied { reason } => {
+                Err(anyhow!("break-glass receipt not granted: {}", reason))
+            }
+        }
     }
 }
 
@@ -514,5 +622,52 @@ mod tests {
         let (result, receipt) = BreakGlass::authorize(&policy, &request, &[approval], bucket);
         assert!(result.is_ok());
         assert_eq!(receipt.trustees_used.len(), 1);
+    }
+
+    #[test]
+    fn forged_token_file_rejected_by_signature_check() {
+        let bucket = TimeBucket {
+            start_epoch_s: 0,
+            size_s: 600,
+        };
+        let request = UnlockRequest::new("vault:4", [4u8; 32], "incident", bucket).unwrap();
+        let signing_key = SigningKey::from_bytes(&[6u8; 32]);
+        let signature = signing_key.sign(&request.request_hash());
+        let approval = Approval::new(
+            TrusteeId::new("alice"),
+            request.request_hash(),
+            signature.to_vec(),
+        );
+        let policy = QuorumPolicy::new(
+            1,
+            vec![TrusteeEntry {
+                id: TrusteeId::new("alice"),
+                public_key: signing_key.verifying_key().to_bytes(),
+            }],
+        )
+        .unwrap();
+        let (result, _receipt) = BreakGlass::authorize(&policy, &request, &[approval], bucket);
+        let mut token = result.expect("token");
+
+        let device_signing_key = SigningKey::from_bytes(&[9u8; 32]);
+        let receipt_hash = [8u8; 32];
+        token
+            .attach_receipt_signature(receipt_hash, &device_signing_key)
+            .unwrap();
+
+        let mut token_file = BreakGlassTokenFile::from_token(&token);
+        token_file.device_signature = hex::encode([1u8; 64]);
+        let forged = token_file.into_token().unwrap();
+
+        let verifying_key = device_signing_key.verifying_key();
+        let result = BreakGlass::assert_token_valid(
+            &forged,
+            "vault:4",
+            [4u8; 32],
+            bucket,
+            &verifying_key,
+            |_| Ok(BreakGlassOutcome::Granted),
+        );
+        assert!(result.is_err());
     }
 }

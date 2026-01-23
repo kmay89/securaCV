@@ -479,7 +479,7 @@ mod tests {
             }],
         )?;
         let (_, receipt) = BreakGlass::authorize(&policy, &request, &[approval.clone()], bucket);
-        kernel.append_break_glass_receipt(&receipt, &[approval.clone()])?;
+        let _entry_hash = kernel.append_break_glass_receipt(&receipt, &[approval.clone()])?;
 
         kernel
             .conn

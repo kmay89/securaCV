@@ -13,7 +13,8 @@ use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 use std::io::Write;
 
 use crate::{
-    approvals_commitment, break_glass::BreakGlassTokenFile, device_public_key_from_db, hash_entry,
+    approvals_commitment, break_glass::BreakGlassTokenFile,
+    break_glass_receipt_outcome_for_verifier, device_public_key_from_db, hash_entry,
     verify_entry_signature, Approval, BreakGlass, BreakGlassOutcome, BreakGlassToken, Kernel,
     KernelConfig, TimeBucket, TrusteeId, UnlockRequest, Vault, VaultConfig,
 };
@@ -96,6 +97,8 @@ enum Command {
         envelope: String,
         #[arg(long)]
         token: String,
+        #[arg(long, default_value = "witness.db")]
+        db: String,
         #[arg(long, default_value = "ruleset:v0.3.0")]
         ruleset_id: String,
         #[arg(long, default_value = "vault/envelopes")]
@@ -153,10 +156,18 @@ pub fn run() -> Result<()> {
         Command::Unseal {
             envelope,
             token,
+            db,
             ruleset_id,
             vault_path,
             output_dir,
-        } => cmd_unseal(&envelope, &token, &ruleset_id, &vault_path, &output_dir),
+        } => cmd_unseal(
+            &envelope,
+            &token,
+            &db,
+            &ruleset_id,
+            &vault_path,
+            &output_dir,
+        ),
     }
 }
 
@@ -285,10 +296,11 @@ fn cmd_authorize_with_bucket(args: AuthorizeArgs<'_>) -> Result<()> {
     let (result, receipt) = BreakGlass::authorize(&policy, &request, &approvals, args.bucket);
 
     // Log receipt regardless of outcome
-    kernel.log_break_glass_receipt(&receipt, &approvals)?;
+    let receipt_entry_hash = kernel.log_break_glass_receipt(&receipt, &approvals)?;
 
     match result {
-        Ok(token) => {
+        Ok(mut token) => {
+            kernel.sign_break_glass_token(&mut token, receipt_entry_hash)?;
             for line in granted_lines(&receipt, &token) {
                 println!("{line}");
             }
@@ -488,6 +500,7 @@ fn read_token_from_file(path: &str) -> Result<BreakGlassTokenFile> {
 fn cmd_unseal(
     envelope: &str,
     token_path: &str,
+    db_path: &str,
     ruleset_id: &str,
     vault_path: &str,
     output_dir: &str,
@@ -512,7 +525,11 @@ fn cmd_unseal(
     let vault = Vault::new(VaultConfig {
         local_path: vault_path.into(),
     })?;
-    let clear = vault.unseal(envelope, &mut token, ruleset_hash)?;
+    let conn = rusqlite::Connection::open(db_path)?;
+    let verifying_key = device_public_key_from_db(&conn)?;
+    let clear = vault.unseal(envelope, &mut token, ruleset_hash, &verifying_key, |hash| {
+        break_glass_receipt_outcome_for_verifier(&conn, &verifying_key, hash)
+    })?;
 
     let sanitized = crate::vault::sanitize_envelope_id(envelope)?;
     let output_dir_path = std::path::Path::new(output_dir);
