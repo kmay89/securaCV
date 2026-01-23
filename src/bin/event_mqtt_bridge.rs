@@ -159,7 +159,10 @@ fn parse_loopback_socket_addr(value: &str) -> Result<std::net::SocketAddr> {
     }
     if let Some(port) = value.strip_prefix("localhost:") {
         let port: u16 = port.parse().context("invalid port")?;
-        return Ok(std::net::SocketAddr::new(IpAddr::from([127, 0, 0, 1]), port));
+        return Ok(std::net::SocketAddr::new(
+            IpAddr::from([127, 0, 0, 1]),
+            port,
+        ));
     }
     Err(anyhow!("unsupported api address {}", value))
 }
@@ -295,8 +298,7 @@ mod tests {
         };
 
         let payload = serialize_event_payload(&event).expect("serialize payload");
-        let value: serde_json::Value =
-            serde_json::from_slice(&payload).expect("parse payload");
+        let value: serde_json::Value = serde_json::from_slice(&payload).expect("parse payload");
 
         let obj = value.as_object().expect("payload should be object");
         assert!(!obj.contains_key("correlation_token"));
