@@ -55,7 +55,7 @@ fn main() -> Result<()> {
         jitter_step_s: args.jitter_step_s,
     };
     let artifact = kernel.export_events_sequential(cfg.ruleset_hash, options)?;
-    let json = serde_json::to_string_pretty(&artifact)?;
+    let json = serde_json::to_vec(&artifact)?;
     std::fs::write(&args.output, json)?;
     println!("export written to {}", args.output);
     Ok(())

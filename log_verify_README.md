@@ -6,6 +6,7 @@ This directory documents the external verifier tool `log_verify`.
 `log_verify` is an **external** checker that proves:
 - the sealed event log is hash-chained (tamper-evident)
 - the break-glass receipt log is hash-chained (tamper-evident)
+- the export receipt log is hash-chained (tamper-evident)
 - each entry is signed by the device key (Ed25519)
 - checkpoints preserve verifiability across retention pruning
 
@@ -41,6 +42,13 @@ For break-glass receipts, `log_verify`:
    - recompute `entry_hash = SHA256(prev_hash || payload_json)`
    - verify the Ed25519 signature over `entry_hash`
    - verify the approvals commitment matches the stored approvals JSON
+2) Report success/failure.
+
+For export receipts, `log_verify`:
+1) Iterates `export_receipts` in ascending id:
+   - verify each `prev_hash` matches the running expected chain head
+   - recompute `entry_hash = SHA256(prev_hash || payload_json)`
+   - verify the Ed25519 signature over `entry_hash`
 2) Report success/failure.
 
 ## Future work
