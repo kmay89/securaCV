@@ -24,9 +24,7 @@ where
     #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
     {
         let _ = f;
-        Err(anyhow!(
-            "conformance: sandbox unavailable on this platform"
-        ))
+        Err(anyhow!("conformance: sandbox unavailable on this platform"))
     }
 }
 
@@ -125,8 +123,13 @@ mod linux {
     }
 
     extern "C" {
-        fn prctl(option: c_int, arg2: c_ulong, arg3: c_ulong, arg4: c_ulong, arg5: c_ulong)
-            -> c_int;
+        fn prctl(
+            option: c_int,
+            arg2: c_ulong,
+            arg3: c_ulong,
+            arg4: c_ulong,
+            arg5: c_ulong,
+        ) -> c_int;
         fn syscall(num: c_long, ...) -> c_long;
         fn fork() -> c_int;
         fn waitpid(pid: c_int, status: *mut c_int, options: c_int) -> c_int;
@@ -138,7 +141,12 @@ mod linux {
     }
 
     fn stmt(code: c_ushort, k: c_uint) -> SockFilter {
-        SockFilter { code, jt: 0, jf: 0, k }
+        SockFilter {
+            code,
+            jt: 0,
+            jf: 0,
+            k,
+        }
     }
 
     fn jump(code: c_ushort, k: c_uint, jt: c_uchar, jf: c_uchar) -> SockFilter {
@@ -156,12 +164,7 @@ mod linux {
         let mut filters = Vec::new();
 
         filters.push(stmt(BPF_LD | BPF_W | BPF_ABS, ARCH_OFFSET));
-        filters.push(jump(
-            BPF_JMP | BPF_JEQ | BPF_K,
-            AUDIT_ARCH_X86_64,
-            1,
-            0,
-        ));
+        filters.push(jump(BPF_JMP | BPF_JEQ | BPF_K, AUDIT_ARCH_X86_64, 1, 0));
         filters.push(stmt(BPF_RET | BPF_K, SECCOMP_RET_KILL));
 
         filters.push(stmt(BPF_LD | BPF_W | BPF_ABS, SYSCALL_NR_OFFSET));
@@ -296,8 +299,7 @@ mod linux {
         let mut fds = [0; 2];
         let rc = unsafe { pipe(fds.as_mut_ptr()) };
         if rc != 0 {
-            return Err(anyhow!(std::io::Error::last_os_error()))
-                .context("sandbox: pipe failed");
+            return Err(anyhow!(std::io::Error::last_os_error())).context("sandbox: pipe failed");
         }
 
         let pid = unsafe { fork() };

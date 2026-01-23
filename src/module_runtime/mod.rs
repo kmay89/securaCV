@@ -9,7 +9,9 @@
 
 use anyhow::{anyhow, Result};
 
-use crate::{BucketKeyManager, CandidateEvent, InferenceView, Module, ModuleDescriptor, TimeBucket};
+use crate::{
+    BucketKeyManager, CandidateEvent, InferenceView, Module, ModuleDescriptor, TimeBucket,
+};
 
 mod sandbox;
 
