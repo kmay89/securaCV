@@ -9,7 +9,7 @@
 
 use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
-use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
+use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use std::io::Write;
 
 use crate::{
@@ -412,6 +412,7 @@ fn cmd_receipts(
 ) -> Result<()> {
     let conn = rusqlite::Connection::open(db_path)?;
     let verifying_key = load_verifying_key(&conn, public_key_hex, public_key_file)?;
+    let policy = load_break_glass_policy(&conn)?;
     let mut stmt = conn.prepare(
         "SELECT id, created_at, payload_json, approvals_json, prev_hash, entry_hash, signature FROM break_glass_receipts ORDER BY id ASC",
     )?;
@@ -422,6 +423,9 @@ fn cmd_receipts(
     let mut expected_prev = [0u8; 32];
     let mut invalid_count = 0usize;
     while let Some(row) = rows.next()? {
+        let policy = policy
+            .as_ref()
+            .ok_or_else(|| anyhow!("break-glass quorum policy is not configured"))?;
         let id: i64 = row.get(0)?;
         let created_at: i64 = row.get(1)?;
         let payload: String = row.get(2)?;
@@ -474,6 +478,10 @@ fn cmd_receipts(
                         hex_vec(&receipt.approvals_commitment),
                         hex_vec(&commitment)
                     ));
+                }
+                if let Err(err) = verify_approvals_against_policy(policy, &receipt, &approvals) {
+                    status = "INVALID";
+                    issues.push(format!("approvals invalid: {}", err));
                 }
             }
             Err(e) => {
@@ -658,6 +666,49 @@ fn load_verifying_key(
             e
         )
     })
+}
+
+fn load_break_glass_policy(
+    conn: &rusqlite::Connection,
+) -> Result<Option<crate::break_glass::QuorumPolicy>> {
+    let mut stmt = conn.prepare("SELECT policy_json FROM break_glass_policy WHERE id = 1")?;
+    let mut rows = stmt.query([])?;
+    if let Some(row) = rows.next()? {
+        let policy_json: String = row.get(0)?;
+        let stored: crate::break_glass::QuorumPolicy = serde_json::from_str(&policy_json)?;
+        let policy = crate::break_glass::QuorumPolicy::new(stored.n, stored.trustees)?;
+        Ok(Some(policy))
+    } else {
+        Ok(None)
+    }
+}
+
+fn verify_approvals_against_policy(
+    policy: &crate::break_glass::QuorumPolicy,
+    receipt: &crate::BreakGlassReceipt,
+    approvals: &[Approval],
+) -> Result<()> {
+    for approval in approvals {
+        if approval.request_hash != receipt.request_hash {
+            return Err(anyhow!(
+                "approval request_hash mismatch for trustee {}",
+                approval.trustee.0
+            ));
+        }
+        let trustee = policy
+            .trustees
+            .iter()
+            .find(|t| t.id.0 == approval.trustee.0)
+            .ok_or_else(|| anyhow!("unknown trustee approval: {}", approval.trustee.0))?;
+        let verifying_key = VerifyingKey::from_bytes(&trustee.public_key)
+            .map_err(|_| anyhow!("invalid public key for trustee {}", trustee.id.0))?;
+        let signature = Signature::from_slice(&approval.signature)
+            .map_err(|_| anyhow!("invalid signature bytes for trustee {}", trustee.id.0))?;
+        verifying_key
+            .verify(&approval.request_hash, &signature)
+            .map_err(|_| anyhow!("invalid signature for trustee {}", trustee.id.0))?;
+    }
+    Ok(())
 }
 
 fn verifying_key_from_hex(hex_str: &str) -> Result<VerifyingKey> {

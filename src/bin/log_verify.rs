@@ -12,11 +12,12 @@
 
 use anyhow::{anyhow, Result};
 use clap::Parser;
-use ed25519_dalek::VerifyingKey;
+use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use rusqlite::{Connection, Row};
 
 use witness_kernel::{
     approvals_commitment, device_public_key_from_db, hash_entry, verify_entry_signature, Approval,
+    QuorumPolicy,
 };
 
 type CheckpointInfo = (Option<[u8; 32]>, Option<[u8; 64]>, Option<i64>);
@@ -214,6 +215,7 @@ fn verify_break_glass_receipts(
 ) -> Result<()> {
     println!("=== Break-Glass Receipts ===");
 
+    let policy = load_break_glass_policy(conn)?;
     let mut stmt = conn.prepare(
         "SELECT id, created_at, payload_json, approvals_json, prev_hash, entry_hash, signature FROM break_glass_receipts ORDER BY id ASC",
     )?;
@@ -225,6 +227,9 @@ fn verify_break_glass_receipts(
     let mut denied = 0u64;
 
     while let Some(row) = rows.next()? {
+        let policy = policy
+            .as_ref()
+            .ok_or_else(|| anyhow!("break-glass quorum policy is not configured"))?;
         let id: i64 = row.get(0)?;
         let _created_at: i64 = row.get(1)?;
         let payload: String = row.get(2)?;
@@ -275,6 +280,7 @@ fn verify_break_glass_receipts(
                 hex(&commitment)
             ));
         }
+        verify_approvals_against_policy(policy, &receipt, &approvals)?;
 
         if verbose {
             println!("  receipt {}: hash={} OK", id, &hex(&entry_hash)[..16]);
@@ -288,6 +294,47 @@ fn verify_break_glass_receipts(
         "verified {} receipt entries ({} granted, {} denied)",
         count, granted, denied
     );
+    Ok(())
+}
+
+fn load_break_glass_policy(conn: &Connection) -> Result<Option<QuorumPolicy>> {
+    let mut stmt = conn.prepare("SELECT policy_json FROM break_glass_policy WHERE id = 1")?;
+    let mut rows = stmt.query([])?;
+    if let Some(row) = rows.next()? {
+        let policy_json: String = row.get(0)?;
+        let stored: QuorumPolicy = serde_json::from_str(&policy_json)?;
+        let policy = QuorumPolicy::new(stored.n, stored.trustees)?;
+        Ok(Some(policy))
+    } else {
+        Ok(None)
+    }
+}
+
+fn verify_approvals_against_policy(
+    policy: &QuorumPolicy,
+    receipt: &witness_kernel::BreakGlassReceipt,
+    approvals: &[Approval],
+) -> Result<()> {
+    for approval in approvals {
+        if approval.request_hash != receipt.request_hash {
+            return Err(anyhow!(
+                "approval request_hash mismatch for trustee {}",
+                approval.trustee.0
+            ));
+        }
+        let trustee = policy
+            .trustees
+            .iter()
+            .find(|t| t.id.0 == approval.trustee.0)
+            .ok_or_else(|| anyhow!("unknown trustee approval: {}", approval.trustee.0))?;
+        let verifying_key = VerifyingKey::from_bytes(&trustee.public_key)
+            .map_err(|_| anyhow!("invalid public key for trustee {}", trustee.id.0))?;
+        let signature = Signature::from_slice(&approval.signature)
+            .map_err(|_| anyhow!("invalid signature bytes for trustee {}", trustee.id.0))?;
+        verifying_key
+            .verify(&approval.request_hash, &signature)
+            .map_err(|_| anyhow!("invalid signature for trustee {}", trustee.id.0))?;
+    }
     Ok(())
 }
 
@@ -558,6 +605,100 @@ mod tests {
         kernel
             .conn
             .execute("UPDATE break_glass_receipts SET approvals_json = '[]'", [])?;
+
+        let public_key_hex = hex::encode(kernel.device_key_for_verify_only());
+        drop(kernel);
+
+        let conn = Connection::open(&db_path)?;
+        let verifying_key = load_verifying_key(&conn, Some(&public_key_hex), None)?;
+        let result = verify_break_glass_receipts(&conn, &verifying_key, false);
+        assert!(result.is_err());
+
+        let _ = std::fs::remove_file(&db_path);
+        Ok(())
+    }
+
+    #[test]
+    fn log_verify_rejects_unknown_trustee_approvals() -> Result<()> {
+        let db_path = temp_db_path();
+        let mut kernel = Kernel::open(&KernelConfig {
+            db_path: db_path.to_string_lossy().to_string(),
+            ruleset_id: "ruleset:test".to_string(),
+            ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
+            kernel_version: env!("CARGO_PKG_VERSION").to_string(),
+            retention: std::time::Duration::from_secs(60),
+            device_key_seed: "devkey:test".to_string(),
+            zone_policy: ZonePolicy::default(),
+        })?;
+
+        let alice_key = SigningKey::from_bytes(&[11u8; 32]);
+        let policy = QuorumPolicy::new(
+            1,
+            vec![TrusteeEntry {
+                id: TrusteeId::new("alice"),
+                public_key: alice_key.verifying_key().to_bytes(),
+            }],
+        )?;
+        kernel.set_break_glass_policy(&policy)?;
+
+        let bucket = TimeBucket::now(600)?;
+        let request = UnlockRequest::new("vault:1", [9u8; 32], "audit", bucket)?;
+        let bob_key = SigningKey::from_bytes(&[12u8; 32]);
+        let bob_signature = bob_key.sign(&request.request_hash());
+        let approval = Approval::new(
+            TrusteeId::new("bob"),
+            request.request_hash(),
+            bob_signature.to_vec(),
+        );
+        let (_, receipt) = BreakGlass::authorize(&policy, &request, &[approval.clone()], bucket);
+        let _entry_hash = kernel.append_break_glass_receipt(&receipt, &[approval])?;
+
+        let public_key_hex = hex::encode(kernel.device_key_for_verify_only());
+        drop(kernel);
+
+        let conn = Connection::open(&db_path)?;
+        let verifying_key = load_verifying_key(&conn, Some(&public_key_hex), None)?;
+        let result = verify_break_glass_receipts(&conn, &verifying_key, false);
+        assert!(result.is_err());
+
+        let _ = std::fs::remove_file(&db_path);
+        Ok(())
+    }
+
+    #[test]
+    fn log_verify_rejects_invalid_trustee_signature() -> Result<()> {
+        let db_path = temp_db_path();
+        let mut kernel = Kernel::open(&KernelConfig {
+            db_path: db_path.to_string_lossy().to_string(),
+            ruleset_id: "ruleset:test".to_string(),
+            ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
+            kernel_version: env!("CARGO_PKG_VERSION").to_string(),
+            retention: std::time::Duration::from_secs(60),
+            device_key_seed: "devkey:test".to_string(),
+            zone_policy: ZonePolicy::default(),
+        })?;
+
+        let alice_key = SigningKey::from_bytes(&[21u8; 32]);
+        let policy = QuorumPolicy::new(
+            1,
+            vec![TrusteeEntry {
+                id: TrusteeId::new("alice"),
+                public_key: alice_key.verifying_key().to_bytes(),
+            }],
+        )?;
+        kernel.set_break_glass_policy(&policy)?;
+
+        let bucket = TimeBucket::now(600)?;
+        let request = UnlockRequest::new("vault:1", [9u8; 32], "audit", bucket)?;
+        let wrong_key = SigningKey::from_bytes(&[22u8; 32]);
+        let bad_signature = wrong_key.sign(&request.request_hash());
+        let approval = Approval::new(
+            TrusteeId::new("alice"),
+            request.request_hash(),
+            bad_signature.to_vec(),
+        );
+        let (_, receipt) = BreakGlass::authorize(&policy, &request, &[approval.clone()], bucket);
+        let _entry_hash = kernel.append_break_glass_receipt(&receipt, &[approval])?;
 
         let public_key_hex = hex::encode(kernel.device_key_for_verify_only());
         drop(kernel);
