@@ -144,6 +144,14 @@ pub struct ExportArtifact {
     pub jitter_step_s: u64,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ExportReceipt {
+    pub time_bucket: TimeBucket,
+    pub ruleset_hash: [u8; 32],
+    pub batch_size: usize,
+    pub artifact_hash: [u8; 32],
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct ExportOptions {
     pub max_events_per_batch: usize,
@@ -440,6 +448,15 @@ impl Kernel {
               policy_json TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS export_receipts (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              created_at INTEGER NOT NULL,
+              payload_json TEXT NOT NULL,
+              prev_hash BLOB NOT NULL,
+              entry_hash BLOB NOT NULL,
+              signature BLOB NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS device_metadata (
               id INTEGER PRIMARY KEY CHECK (id = 1),
               public_key BLOB NOT NULL
@@ -454,6 +471,7 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
 
             CREATE INDEX IF NOT EXISTS idx_events_created ON sealed_events(created_at);
             CREATE INDEX IF NOT EXISTS idx_receipts_created ON break_glass_receipts(created_at);
+            CREATE INDEX IF NOT EXISTS idx_export_receipts_created ON export_receipts(created_at);
             "#,
         )?;
         self.ensure_break_glass_receipts_columns()?;
@@ -646,6 +664,22 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         }
     }
 
+    fn last_export_receipt_hash_or_zero(&self) -> Result<[u8; 32]> {
+        let mut stmt = self.conn.prepare(
+            "SELECT prev_hash, entry_hash FROM export_receipts ORDER BY id DESC LIMIT 1",
+        )?;
+        let mut rows = stmt.query([])?;
+        if let Some(row) = rows.next()? {
+            let prev_bytes: Vec<u8> = row.get(0)?;
+            let entry_bytes: Vec<u8> = row.get(1)?;
+            let _prev_hash = blob32(prev_bytes, "export_receipts.prev_hash")?;
+            let entry_hash = blob32(entry_bytes, "export_receipts.entry_hash")?;
+            Ok(entry_hash)
+        } else {
+            Ok([0u8; 32])
+        }
+    }
+
     pub fn append_break_glass_receipt(
         &mut self,
         receipt: &crate::break_glass::BreakGlassReceipt,
@@ -677,12 +711,41 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         Ok(entry_hash)
     }
 
+    pub fn append_export_receipt(&mut self, receipt: &ExportReceipt) -> Result<[u8; 32]> {
+        let created_at = now_s()? as i64;
+        let prev_hash = self.last_export_receipt_hash_or_zero()?;
+        let payload_json = serde_json::to_string(receipt)?;
+
+        let entry_hash = hash_entry(&prev_hash, payload_json.as_bytes());
+        let signature = sign_entry(&self.device_key, &entry_hash);
+
+        self.conn.execute(
+            r#"
+            INSERT INTO export_receipts(created_at, payload_json, prev_hash, entry_hash, signature)
+            VALUES (?1, ?2, ?3, ?4, ?5)
+            "#,
+            params![
+                created_at,
+                payload_json,
+                prev_hash.to_vec(),
+                entry_hash.to_vec(),
+                signature.to_vec(),
+            ],
+        )?;
+
+        Ok(entry_hash)
+    }
+
     pub fn log_break_glass_receipt(
         &mut self,
         receipt: &crate::break_glass::BreakGlassReceipt,
         approvals: &[crate::break_glass::Approval],
     ) -> Result<[u8; 32]> {
         self.append_break_glass_receipt(receipt, approvals)
+    }
+
+    pub fn log_export_receipt(&mut self, receipt: &ExportReceipt) -> Result<[u8; 32]> {
+        self.append_export_receipt(receipt)
     }
 
     pub fn set_break_glass_policy(
@@ -901,12 +964,24 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
             batches.push(current);
         }
 
-        Ok(ExportArtifact {
+        let artifact = ExportArtifact {
             batches,
             max_events_per_batch: options.max_events_per_batch,
             jitter_s: options.jitter_s,
             jitter_step_s: options.jitter_step_s,
-        })
+        };
+
+        let artifact_bytes = serde_json::to_vec(&artifact)?;
+        let artifact_hash: [u8; 32] = Sha256::digest(&artifact_bytes).into();
+        let receipt = ExportReceipt {
+            time_bucket: TimeBucket::now_10min()?,
+            ruleset_hash: expected_ruleset_hash,
+            batch_size: options.max_events_per_batch,
+            artifact_hash,
+        };
+        self.log_export_receipt(&receipt)?;
+
+        Ok(artifact)
     }
 
     pub fn device_key_for_verify_only(&self) -> [u8; 32] {

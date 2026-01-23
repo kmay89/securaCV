@@ -3,6 +3,7 @@
 //! This tool proves:
 //! - The sealed event log is hash-chained (tamper-evident)
 //! - The break-glass receipt log is hash-chained (tamper-evident)
+//! - The export receipt log is hash-chained (tamper-evident)
 //! - Each entry is signed by the device key (Ed25519)
 //! - Checkpoints preserve verifiability across retention pruning
 //!
@@ -88,6 +89,10 @@ fn main() -> Result<()> {
 
     // === Break-Glass Receipts ===
     verify_break_glass_receipts(&conn, &verifying_key, args.verbose)?;
+    println!();
+
+    // === Export Receipts ===
+    verify_export_receipts(&conn, &verifying_key, args.verbose)?;
 
     println!("OK: all chains verified.");
     Ok(())
@@ -286,6 +291,70 @@ fn verify_break_glass_receipts(
     Ok(())
 }
 
+fn verify_export_receipts(
+    conn: &Connection,
+    verifying_key: &VerifyingKey,
+    verbose: bool,
+) -> Result<()> {
+    println!("=== Export Receipts ===");
+
+    let mut stmt = conn.prepare(
+        "SELECT id, created_at, payload_json, prev_hash, entry_hash, signature FROM export_receipts ORDER BY id ASC",
+    )?;
+
+    let mut rows = stmt.query([])?;
+    let mut expected_prev = [0u8; 32]; // genesis
+    let mut count = 0u64;
+
+    while let Some(row) = rows.next()? {
+        let id: i64 = row.get(0)?;
+        let _created_at: i64 = row.get(1)?;
+        let payload: String = row.get(2)?;
+        let prev_hash = blob32(row, 3)?;
+        let entry_hash = blob32(row, 4)?;
+        let sig = blob64(row, 5)?;
+
+        if prev_hash != expected_prev {
+            return Err(anyhow!(
+                "export receipt chain break at id {}: prev_hash={}, expected_prev={}",
+                id,
+                hex(&prev_hash),
+                hex(&expected_prev)
+            ));
+        }
+
+        let computed = hash_entry(&expected_prev, payload.as_bytes());
+        if computed != entry_hash {
+            return Err(anyhow!(
+                "export receipt hash mismatch at id {}: computed={}, stored={}",
+                id,
+                hex(&computed),
+                hex(&entry_hash)
+            ));
+        }
+
+        if verify_entry_signature(verifying_key, &entry_hash, &sig).is_err() {
+            return Err(anyhow!(
+                "export receipt signature mismatch at id {}: stored={}",
+                id,
+                hex64(&sig)
+            ));
+        }
+
+        let _receipt: witness_kernel::ExportReceipt = serde_json::from_str(&payload)?;
+
+        if verbose {
+            println!("  receipt {}: hash={} OK", id, &hex(&entry_hash)[..16]);
+        }
+
+        expected_prev = entry_hash;
+        count += 1;
+    }
+
+    println!("verified {} export receipt entries", count);
+    Ok(())
+}
+
 fn count_alarms(conn: &Connection) -> Result<i64> {
     let mut stmt = conn.prepare("SELECT COUNT(*) FROM conformance_alarms")?;
     let count: i64 = stmt.query_row([], |row| row.get(0))?;
@@ -393,6 +462,7 @@ mod tests {
         let (checkpoint_hash, _, _) = latest_checkpoint(&conn)?;
         verify_events(&conn, &verifying_key, checkpoint_hash, false)?;
         verify_break_glass_receipts(&conn, &verifying_key, false)?;
+        verify_export_receipts(&conn, &verifying_key, false)?;
 
         let _ = std::fs::remove_file(&db_path);
         Ok(())
