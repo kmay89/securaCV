@@ -3,7 +3,7 @@
 use anyhow::{anyhow, Context, Result};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use std::os::raw::{c_int, c_long, c_uchar, c_uint, c_ulong, c_ushort, c_void};
+use std::os::raw::{c_int, c_void};
 
 #[derive(Debug, Serialize, Deserialize)]
 enum SandboxResponse<T> {
@@ -16,121 +16,81 @@ where
     T: Serialize + DeserializeOwned,
     F: FnOnce() -> Result<T>,
 {
-    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    #[cfg(target_os = "linux")]
     {
         linux::run_in_sandbox(f)
     }
 
-    #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+    #[cfg(not(target_os = "linux"))]
     {
         let _ = f;
         Err(anyhow!("conformance: sandbox unavailable on this platform"))
     }
 }
 
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[cfg(target_os = "linux")]
 mod linux {
     use super::*;
+    use libseccomp::{ScmpAction, ScmpFilterContext, ScmpSyscall};
 
-    const EPERM: c_uint = 1;
-    const PR_SET_NO_NEW_PRIVS: c_int = 38;
-    const SECCOMP_SET_MODE_FILTER: c_uint = 1;
-    const SECCOMP_RET_ALLOW: c_uint = 0x7fff_0000;
-    const SECCOMP_RET_ERRNO: c_uint = 0x0005_0000;
-    const SECCOMP_RET_KILL: c_uint = 0x0000_0000;
-    const AUDIT_ARCH_X86_64: c_uint = 0xc000_003e;
-    const SYS_SECCOMP: c_long = 317;
-
-    const BPF_LD: c_ushort = 0x00;
-    const BPF_W: c_ushort = 0x00;
-    const BPF_ABS: c_ushort = 0x20;
-    const BPF_JMP: c_ushort = 0x05;
-    const BPF_JEQ: c_ushort = 0x10;
-    const BPF_K: c_ushort = 0x00;
-    const BPF_RET: c_ushort = 0x06;
-
-    const SYSCALL_NR_OFFSET: c_uint = 0;
-    const ARCH_OFFSET: c_uint = 4;
-
-    const SYS_OPEN: c_uint = 2;
-    const SYS_CREAT: c_uint = 85;
-    const SYS_UNLINK: c_uint = 87;
-    const SYS_RENAME: c_uint = 82;
-    const SYS_MKDIR: c_uint = 83;
-    const SYS_RMDIR: c_uint = 84;
-    const SYS_LINK: c_uint = 86;
-    const SYS_SYMLINK: c_uint = 88;
-    const SYS_READLINK: c_uint = 89;
-    const SYS_CHDIR: c_uint = 80;
-    const SYS_FCHDIR: c_uint = 81;
-    const SYS_CHMOD: c_uint = 90;
-    const SYS_FCHMOD: c_uint = 91;
-    const SYS_CHOWN: c_uint = 92;
-    const SYS_FCHOWN: c_uint = 93;
-    const SYS_LCHOWN: c_uint = 94;
-    const SYS_TRUNCATE: c_uint = 76;
-    const SYS_FTRUNCATE: c_uint = 77;
-    const SYS_STAT: c_uint = 4;
-    const SYS_LSTAT: c_uint = 6;
-    const SYS_FSTAT: c_uint = 5;
-    const SYS_ACCESS: c_uint = 21;
-    const SYS_GETDENTS: c_uint = 78;
-    const SYS_GETDENTS64: c_uint = 217;
-    const SYS_OPENAT: c_uint = 257;
-    const SYS_OPENAT2: c_uint = 437;
-    const SYS_UNLINKAT: c_uint = 263;
-    const SYS_RENAMEAT: c_uint = 264;
-    const SYS_RENAMEAT2: c_uint = 316;
-    const SYS_MKDIRAT: c_uint = 258;
-    const SYS_LINKAT: c_uint = 265;
-    const SYS_SYMLINKAT: c_uint = 266;
-    const SYS_READLINKAT: c_uint = 267;
-    const SYS_FCHMODAT: c_uint = 268;
-    const SYS_FCHOWNAT: c_uint = 260;
-    const SYS_NEWFSTATAT: c_uint = 262;
-    const SYS_FACCESSAT: c_uint = 269;
-    const SYS_FACCESSAT2: c_uint = 439;
-
-    const SYS_SOCKET: c_uint = 41;
-    const SYS_CONNECT: c_uint = 42;
-    const SYS_ACCEPT: c_uint = 43;
-    const SYS_ACCEPT4: c_uint = 288;
-    const SYS_BIND: c_uint = 49;
-    const SYS_LISTEN: c_uint = 50;
-    const SYS_SENDTO: c_uint = 44;
-    const SYS_RECVFROM: c_uint = 45;
-    const SYS_SENDMSG: c_uint = 46;
-    const SYS_RECVMSG: c_uint = 47;
-    const SYS_SHUTDOWN: c_uint = 48;
-    const SYS_GETSOCKNAME: c_uint = 51;
-    const SYS_GETPEERNAME: c_uint = 52;
-    const SYS_SOCKETPAIR: c_uint = 53;
-    const SYS_SETSOCKOPT: c_uint = 54;
-    const SYS_GETSOCKOPT: c_uint = 55;
-
-    #[repr(C)]
-    struct SockFilter {
-        code: c_ushort,
-        jt: c_uchar,
-        jf: c_uchar,
-        k: c_uint,
-    }
-
-    #[repr(C)]
-    struct SockFprog {
-        len: c_ushort,
-        filter: *const SockFilter,
-    }
+    const DENY_SYSCALLS: &[&str] = &[
+        "open",
+        "openat",
+        "openat2",
+        "creat",
+        "unlink",
+        "unlinkat",
+        "rename",
+        "renameat",
+        "renameat2",
+        "mkdir",
+        "mkdirat",
+        "rmdir",
+        "link",
+        "linkat",
+        "symlink",
+        "symlinkat",
+        "readlink",
+        "readlinkat",
+        "chdir",
+        "fchdir",
+        "chmod",
+        "fchmod",
+        "fchmodat",
+        "chown",
+        "fchown",
+        "fchownat",
+        "lchown",
+        "truncate",
+        "ftruncate",
+        "stat",
+        "lstat",
+        "fstat",
+        "newfstatat",
+        "access",
+        "faccessat",
+        "faccessat2",
+        "getdents",
+        "getdents64",
+        "socket",
+        "connect",
+        "accept",
+        "accept4",
+        "bind",
+        "listen",
+        "sendto",
+        "recvfrom",
+        "sendmsg",
+        "recvmsg",
+        "shutdown",
+        "getsockname",
+        "getpeername",
+        "socketpair",
+        "setsockopt",
+        "getsockopt",
+    ];
 
     extern "C" {
-        fn prctl(
-            option: c_int,
-            arg2: c_ulong,
-            arg3: c_ulong,
-            arg4: c_ulong,
-            arg5: c_ulong,
-        ) -> c_int;
-        fn syscall(num: c_long, ...) -> c_long;
         fn fork() -> c_int;
         fn waitpid(pid: c_int, status: *mut c_int, options: c_int) -> c_int;
         fn pipe(fds: *mut c_int) -> c_int;
@@ -140,116 +100,26 @@ mod linux {
         fn _exit(status: c_int) -> !;
     }
 
-    fn stmt(code: c_ushort, k: c_uint) -> SockFilter {
-        SockFilter {
-            code,
-            jt: 0,
-            jf: 0,
-            k,
-        }
-    }
-
-    fn jump(code: c_ushort, k: c_uint, jt: c_uchar, jf: c_uchar) -> SockFilter {
-        SockFilter { code, jt, jf, k }
-    }
-
     fn install_filter() -> Result<()> {
-        let rc = unsafe { prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) };
+        let rc = unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) };
         if rc != 0 {
             return Err(anyhow!(std::io::Error::last_os_error()))
                 .context("sandbox: PR_SET_NO_NEW_PRIVS failed");
         }
 
-        let deny_errno = SECCOMP_RET_ERRNO | EPERM;
-        let mut filters = vec![
-            stmt(BPF_LD | BPF_W | BPF_ABS, ARCH_OFFSET),
-            jump(BPF_JMP | BPF_JEQ | BPF_K, AUDIT_ARCH_X86_64, 1, 0),
-            stmt(BPF_RET | BPF_K, SECCOMP_RET_KILL),
-            stmt(BPF_LD | BPF_W | BPF_ABS, SYSCALL_NR_OFFSET),
-        ];
-
-        let deny_syscalls = [
-            SYS_OPEN,
-            SYS_OPENAT,
-            SYS_OPENAT2,
-            SYS_CREAT,
-            SYS_UNLINK,
-            SYS_UNLINKAT,
-            SYS_RENAME,
-            SYS_RENAMEAT,
-            SYS_RENAMEAT2,
-            SYS_MKDIR,
-            SYS_MKDIRAT,
-            SYS_RMDIR,
-            SYS_LINK,
-            SYS_LINKAT,
-            SYS_SYMLINK,
-            SYS_SYMLINKAT,
-            SYS_READLINK,
-            SYS_READLINKAT,
-            SYS_CHDIR,
-            SYS_FCHDIR,
-            SYS_CHMOD,
-            SYS_FCHMOD,
-            SYS_FCHMODAT,
-            SYS_CHOWN,
-            SYS_FCHOWN,
-            SYS_FCHOWNAT,
-            SYS_LCHOWN,
-            SYS_TRUNCATE,
-            SYS_FTRUNCATE,
-            SYS_STAT,
-            SYS_LSTAT,
-            SYS_FSTAT,
-            SYS_NEWFSTATAT,
-            SYS_ACCESS,
-            SYS_FACCESSAT,
-            SYS_FACCESSAT2,
-            SYS_GETDENTS,
-            SYS_GETDENTS64,
-            SYS_SOCKET,
-            SYS_CONNECT,
-            SYS_ACCEPT,
-            SYS_ACCEPT4,
-            SYS_BIND,
-            SYS_LISTEN,
-            SYS_SENDTO,
-            SYS_RECVFROM,
-            SYS_SENDMSG,
-            SYS_RECVMSG,
-            SYS_SHUTDOWN,
-            SYS_GETSOCKNAME,
-            SYS_GETPEERNAME,
-            SYS_SOCKETPAIR,
-            SYS_SETSOCKOPT,
-            SYS_GETSOCKOPT,
-        ];
-
-        for syscall in deny_syscalls {
-            filters.push(jump(BPF_JMP | BPF_JEQ | BPF_K, syscall, 0, 1));
-            filters.push(stmt(BPF_RET | BPF_K, deny_errno));
+        // libseccomp provides portable syscall-name mapping for aarch64/x86_64,
+        // avoiding hardcoded syscall numbers while preserving the same denylist.
+        let mut ctx =
+            ScmpFilterContext::new_filter(ScmpAction::Allow).context("sandbox: seccomp init")?;
+        for name in DENY_SYSCALLS {
+            let syscall = ScmpSyscall::from_name(name)
+                .with_context(|| format!("sandbox: unknown syscall name {name}"))?;
+            ctx.add_rule(ScmpAction::Errno(libc::EPERM), syscall)
+                .with_context(|| format!("sandbox: failed to deny {name}"))?;
         }
-
-        filters.push(stmt(BPF_RET | BPF_K, SECCOMP_RET_ALLOW));
-
-        let prog = SockFprog {
-            len: filters.len() as c_ushort,
-            filter: filters.as_ptr(),
-        };
-
-        let rc = unsafe {
-            syscall(
-                SYS_SECCOMP,
-                SECCOMP_SET_MODE_FILTER as c_uint,
-                0u32,
-                &prog as *const SockFprog,
-            )
-        };
-
-        if rc != 0 {
-            return Err(anyhow!(std::io::Error::last_os_error()))
-                .context("sandbox: seccomp syscall failed");
-        }
+        // The prior filter killed on arch mismatch; libseccomp binds the filter
+        // to the native architecture, preserving intent without hardcoding AUDIT_ARCH_*.
+        ctx.load().context("sandbox: seccomp load failed")?;
 
         Ok(())
     }
@@ -352,7 +222,7 @@ mod linux {
 mod tests {
     use super::*;
 
-    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    #[cfg(target_os = "linux")]
     #[test]
     fn sandbox_blocks_filesystem_access() {
         let result = run_in_sandbox(|| {
@@ -364,7 +234,7 @@ mod tests {
         assert_eq!(result, Some(1));
     }
 
-    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    #[cfg(target_os = "linux")]
     #[test]
     fn sandbox_blocks_network_access() {
         let result = run_in_sandbox(|| {
@@ -376,7 +246,7 @@ mod tests {
         assert_eq!(result, Some(1));
     }
 
-    #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+    #[cfg(not(target_os = "linux"))]
     #[test]
     fn sandbox_unavailable_is_a_conformance_error() {
         let err = run_in_sandbox(|| Ok(())).expect_err("sandbox should be unavailable");
