@@ -575,7 +575,8 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
     }
 
     fn append_event(&mut self, ev: &Event) -> Result<()> {
-        let created_at = now_s()? as i64;
+        let created_at = i64::try_from(ev.time_bucket.start_epoch_s)
+            .map_err(|_| anyhow!("time bucket start exceeds i64 range"))?;
         let prev_hash = self.last_event_hash_or_checkpoint_head()?;
         let payload_json = serde_json::to_string(ev)?;
 
@@ -1346,6 +1347,51 @@ mod tests {
         assert!(!contains_key(&value, "created_at"));
         assert!(!contains_key(&value, "timestamp"));
         assert!(!contains_key(&value, "correlation_token"));
+        Ok(())
+    }
+
+    #[test]
+    fn sealed_event_created_at_matches_time_bucket_start() -> Result<()> {
+        let cfg = KernelConfig {
+            db_path: ":memory:".to_string(),
+            ruleset_id: "ruleset:test".to_string(),
+            ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
+            kernel_version: "0.0.0-test".to_string(),
+            retention: Duration::from_secs(60),
+            device_key_seed: "devkey:test".to_string(),
+        };
+        let mut kernel = Kernel::open(&cfg)?;
+        let desc = ModuleDescriptor {
+            id: "test_module",
+            allowed_event_types: &[EventType::BoundaryCrossingObjectLarge],
+            requested_capabilities: &[],
+        };
+        let bucket_start = 1_200u64;
+        let cand = CandidateEvent {
+            event_type: EventType::BoundaryCrossingObjectLarge,
+            time_bucket: TimeBucket {
+                start_epoch_s: bucket_start,
+                size_s: 600,
+            },
+            zone_id: "zone:test".to_string(),
+            confidence: 0.5,
+            correlation_token: None,
+        };
+        kernel.append_event_checked(
+            &desc,
+            cand,
+            &cfg.kernel_version,
+            &cfg.ruleset_id,
+            cfg.ruleset_hash,
+        )?;
+
+        let created_at: i64 =
+            kernel
+                .conn
+                .query_row("SELECT created_at FROM sealed_events LIMIT 1", [], |row| {
+                    row.get(0)
+                })?;
+        assert_eq!(created_at, i64::try_from(bucket_start).unwrap());
         Ok(())
     }
 
