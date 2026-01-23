@@ -113,6 +113,54 @@ impl Event {
     }
 }
 
+/// Exported events omit correlation tokens to avoid identity-like fields.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ExportEvent {
+    pub event_type: EventType,
+    pub time_bucket: TimeBucket,
+    pub zone_id: String,
+    pub confidence: f32,
+    pub kernel_version: String,
+    pub ruleset_id: String,
+    pub ruleset_hash: [u8; 32],
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ExportBucket {
+    pub time_bucket: TimeBucket,
+    pub events: Vec<ExportEvent>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ExportBatch {
+    pub buckets: Vec<ExportBucket>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ExportArtifact {
+    pub batches: Vec<ExportBatch>,
+    pub max_events_per_batch: usize,
+    pub jitter_s: u64,
+    pub jitter_step_s: u64,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct ExportOptions {
+    pub max_events_per_batch: usize,
+    pub jitter_s: u64,
+    pub jitter_step_s: u64,
+}
+
+impl Default for ExportOptions {
+    fn default() -> Self {
+        Self {
+            max_events_per_batch: 50,
+            jitter_s: 120,
+            jitter_step_s: 60,
+        }
+    }
+}
+
 // -------------------- Zone ID Discipline --------------------
 
 /// A conforming zone_id MUST be a local identifier, not an encoded location.
@@ -752,6 +800,110 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         Ok(out)
     }
 
+    /// Export events sequentially, grouped into coarse time buckets with batching and jitter.
+    pub fn export_events_sequential(
+        &mut self,
+        expected_ruleset_hash: [u8; 32],
+        options: ExportOptions,
+    ) -> Result<ExportArtifact> {
+        if options.max_events_per_batch == 0 {
+            return Err(anyhow!("export max_events_per_batch must be >= 1"));
+        }
+        if options.jitter_step_s == 0 {
+            return Err(anyhow!("export jitter_step_s must be >= 1"));
+        }
+        if options.jitter_s > 0 && options.jitter_step_s > options.jitter_s {
+            return Err(anyhow!("export jitter_step_s cannot exceed jitter_s"));
+        }
+
+        let payloads = {
+            let mut stmt = self
+                .conn
+                .prepare("SELECT payload_json FROM sealed_events ORDER BY id ASC")?;
+            let mut rows = stmt.query([])?;
+            let mut payloads = Vec::new();
+
+            while let Some(row) = rows.next()? {
+                let payload: String = row.get(0)?;
+                payloads.push(payload);
+            }
+
+            payloads
+        };
+
+        let mut buckets: Vec<ExportBucket> = Vec::new();
+        let mut bucket_index: std::collections::BTreeMap<(u64, u32), usize> =
+            std::collections::BTreeMap::new();
+
+        for payload in payloads {
+            let ev: Event = serde_json::from_str(&payload)?;
+
+            if let Err(e) =
+                ReprocessGuard::assert_same_ruleset(expected_ruleset_hash, ev.ruleset_hash)
+            {
+                self.log_alarm("CONFORMANCE_REPROCESS_VIOLATION", &format!("{}", e))?;
+                return Err(e);
+            }
+
+            let key = (ev.time_bucket.start_epoch_s, ev.time_bucket.size_s);
+            let idx = if let Some(existing) = bucket_index.get(&key) {
+                *existing
+            } else {
+                let jittered_bucket =
+                    jitter_time_bucket(ev.time_bucket, options.jitter_s, options.jitter_step_s)?;
+                buckets.push(ExportBucket {
+                    time_bucket: jittered_bucket,
+                    events: Vec::new(),
+                });
+                let idx = buckets.len() - 1;
+                bucket_index.insert(key, idx);
+                idx
+            };
+            let export_event = ExportEvent {
+                event_type: ev.event_type,
+                time_bucket: buckets[idx].time_bucket,
+                zone_id: ev.zone_id,
+                confidence: ev.confidence,
+                kernel_version: ev.kernel_version,
+                ruleset_id: ev.ruleset_id,
+                ruleset_hash: ev.ruleset_hash,
+            };
+            buckets[idx].events.push(export_event);
+        }
+
+        let mut batches = Vec::new();
+        let mut current = ExportBatch {
+            buckets: Vec::new(),
+        };
+        let mut current_events = 0usize;
+
+        for bucket in buckets {
+            let bucket_events = bucket.events.len();
+            if !current.buckets.is_empty()
+                && current_events + bucket_events > options.max_events_per_batch
+            {
+                batches.push(current);
+                current = ExportBatch {
+                    buckets: Vec::new(),
+                };
+                current_events = 0;
+            }
+            current_events += bucket_events;
+            current.buckets.push(bucket);
+        }
+
+        if !current.buckets.is_empty() {
+            batches.push(current);
+        }
+
+        Ok(ExportArtifact {
+            batches,
+            max_events_per_batch: options.max_events_per_batch,
+            jitter_s: options.jitter_s,
+            jitter_step_s: options.jitter_step_s,
+        })
+    }
+
     pub fn device_key_for_verify_only(&self) -> [u8; 32] {
         self.device_key.verifying_key().to_bytes()
     }
@@ -840,6 +992,33 @@ fn blob32(bytes: Vec<u8>, context: &str) -> Result<[u8; 32]> {
 
 fn now_s() -> Result<u64> {
     Ok(SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs())
+}
+
+fn jitter_time_bucket(bucket: TimeBucket, jitter_s: u64, jitter_step_s: u64) -> Result<TimeBucket> {
+    if jitter_s == 0 {
+        return Ok(bucket);
+    }
+
+    let steps = (jitter_s / jitter_step_s) as i64;
+    if steps == 0 {
+        return Ok(bucket);
+    }
+
+    let span = (steps * 2 + 1) as u64;
+    let mut rng = rand::rngs::OsRng;
+    let choice = (rng.next_u64() % span) as i64 - steps;
+    let offset = choice * jitter_step_s as i64;
+    let start = if offset.is_negative() {
+        let offset_abs = (-offset) as u64;
+        bucket.start_epoch_s.saturating_sub(offset_abs)
+    } else {
+        bucket.start_epoch_s.saturating_add(offset as u64)
+    };
+
+    Ok(TimeBucket {
+        start_epoch_s: start,
+        size_s: bucket.size_s,
+    })
 }
 
 // -------------------- Modules --------------------
@@ -1108,6 +1287,65 @@ mod tests {
             t1, t2,
             "tokens must not match across buckets for same features"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn export_omits_precise_timestamps_and_identity_fields() -> Result<()> {
+        let cfg = KernelConfig {
+            db_path: ":memory:".to_string(),
+            ruleset_id: "ruleset:test".to_string(),
+            ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
+            kernel_version: "0.0.0-test".to_string(),
+            retention: Duration::from_secs(60),
+            device_key_seed: "devkey:test".to_string(),
+        };
+        let mut kernel = Kernel::open(&cfg)?;
+        let desc = ModuleDescriptor {
+            id: "test_module",
+            allowed_event_types: &[EventType::BoundaryCrossingObjectLarge],
+            requested_capabilities: &[],
+        };
+        let cand = CandidateEvent {
+            event_type: EventType::BoundaryCrossingObjectLarge,
+            time_bucket: TimeBucket {
+                start_epoch_s: 0,
+                size_s: 600,
+            },
+            zone_id: "zone:test".to_string(),
+            confidence: 0.5,
+            correlation_token: Some([1u8; 32]),
+        };
+        kernel.append_event_checked(
+            &desc,
+            cand,
+            &cfg.kernel_version,
+            &cfg.ruleset_id,
+            cfg.ruleset_hash,
+        )?;
+
+        let artifact = kernel.export_events_sequential(
+            cfg.ruleset_hash,
+            ExportOptions {
+                jitter_s: 0,
+                ..ExportOptions::default()
+            },
+        )?;
+        let value = serde_json::to_value(&artifact)?;
+
+        fn contains_key(value: &serde_json::Value, key: &str) -> bool {
+            match value {
+                serde_json::Value::Object(map) => {
+                    map.iter().any(|(k, v)| k == key || contains_key(v, key))
+                }
+                serde_json::Value::Array(items) => items.iter().any(|v| contains_key(v, key)),
+                _ => false,
+            }
+        }
+
+        assert!(!contains_key(&value, "created_at"));
+        assert!(!contains_key(&value, "timestamp"));
+        assert!(!contains_key(&value, "correlation_token"));
         Ok(())
     }
 
