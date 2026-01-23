@@ -10,7 +10,7 @@ Core library and tools for the Privacy Witness Kernel (PWK).
   * `spec/threat_model.md`
   * `kernel/architecture.md`
 * Other docs should link to the canonical specifications rather than duplicate them.
-* Vault confidentiality requirements (device-local or quorum-derived secrets; identifiers are not secrets) are defined in `kernel/architecture.md`.
+* See `kernel/architecture.md` for the canonical vault confidentiality policy and ruleset identifier guidance.
 * Contribution guidance is in `CONTRIBUTING.md`.
 * Security policy is in `SECURITY.md`.
 * Release notes are in `CHANGELOG.md`.
