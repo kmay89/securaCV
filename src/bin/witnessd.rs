@@ -9,12 +9,14 @@
 //! 6. Enforces retention with checkpointed pruning
 
 use anyhow::{anyhow, Result};
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use witness_kernel::{
-    break_glass::BreakGlassTokenFile, BucketKeyManager, CapabilityBoundaryRuntime, FrameBuffer,
-    Kernel, KernelConfig, Module, ModuleDescriptor, RtspConfig, RtspSource, TimeBucket, Vault,
-    VaultConfig, ZoneCrossingModule,
+    api::{ApiConfig, ApiServer},
+    break_glass::BreakGlassTokenFile,
+    BucketKeyManager, CapabilityBoundaryRuntime, FrameBuffer, Kernel, KernelConfig, Module,
+    ModuleDescriptor, RtspConfig, RtspSource, TimeBucket, Vault, VaultConfig, ZoneCrossingModule,
 };
 
 fn main() -> Result<()> {
@@ -37,6 +39,26 @@ fn main() -> Result<()> {
     };
 
     let mut kernel = Kernel::open(&cfg)?;
+
+    let api_addr = std::env::var("WITNESS_API_ADDR").unwrap_or_else(|_| "127.0.0.1:8799".into());
+    let api_token_path = std::env::var("WITNESS_API_TOKEN_PATH")
+        .ok()
+        .map(PathBuf::from);
+    let api_config = ApiConfig {
+        addr: api_addr,
+        token_path: api_token_path,
+        ..ApiConfig::default()
+    };
+    let api_handle = ApiServer::new(api_config, cfg.clone()).spawn()?;
+    log::info!("event api listening on {}", api_handle.addr);
+    if let Some(path) = &api_handle.token_path {
+        log::info!("event api capability token written to {}", path.display());
+    } else {
+        log::warn!(
+            "event api capability token (handle securely): {}",
+            api_handle.token
+        );
+    }
 
     let mut vault = Vault::new(VaultConfig::default())?;
     // Optional break-glass seal path (requires BREAK_GLASS_SEAL_TOKEN with a token JSON).
