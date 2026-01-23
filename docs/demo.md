@@ -1,24 +1,35 @@
-# End-to-End Demo
+# Demo: end-to-end witness loop
 
-This demo walks the kernel through a full flow:
+## Purpose
 
-- synthetic frames/events
-- sealed log + vault
-- export bundle
-- verification
-- concise summary
+The demo exercises a complete, local witness loop: synthetic frames/events are
+recorded, the log and vault are sealed, an export bundle is produced, and the
+results are verified. It is meant as a stable “hello world” path for the
+Privacy Witness Kernel without changing any invariants.
 
-## Run the demo
+## Commands
+
+1) Run the demo:
 
 ```bash
 cargo run --bin demo
 ```
 
-Optional overrides:
+2) Verify the log independently:
 
 ```bash
-cargo run --bin demo -- --seconds 2 --fps 5
-cargo run --bin demo -- --vault ./vault_demo --out ./demo_out --seed 42
+cargo run --bin log_verify -- --db demo_witness.db
+```
+
+3) Optional (not needed for the demo): export from the DB with `export_events`
+if you already have a break-glass token:
+
+```bash
+DEVICE_KEY_SEED=devkey:demo \
+  cargo run --bin export_events -- \
+  --db-path demo_witness.db \
+  --break-glass-token /path/to/break_glass.token \
+  --output demo_out/export_bundle.json
 ```
 
 ## Expected artifacts
@@ -26,16 +37,19 @@ cargo run --bin demo -- --vault ./vault_demo --out ./demo_out --seed 42
 After a successful run you should see:
 
 - `./demo_witness.db` (sealed log + receipts)
-- `./vault/envelopes/` (or `--vault` path)
+- `./vault/envelopes/` (or your `--vault` path)
 - `./demo_out/export_bundle.json` (export bundle)
 
-## Verify independently
+Example summary output (values may vary):
 
-```bash
-cargo run --bin log_verify -- --db demo_witness.db
 ```
-
-You should see `OK: all chains verified.` at the end.
+demo summary:
+  events written: 42
+  log db: demo_witness.db
+  vault path: vault/envelopes
+  export bundle: demo_out/export_bundle.json
+  verify: OK
+```
 
 ## Tamper test (manual)
 
@@ -60,3 +74,13 @@ cargo run --bin demo -- --seconds 0 --fps 1
 ```
 
 The demo should report `verify: FAIL` and exit non-zero.
+
+## Troubleshooting
+
+- If you see permission errors, choose a writable `--vault` or `--out` path.
+- If verification fails unexpectedly, ensure you are using the original
+  `demo_out/export_bundle.json` and `demo_witness.db` from the same run.
+- If `demo_out/export_bundle.json` is missing, rerun the demo to regenerate it.
+- If you need deterministic artifacts for debugging, pass `--seed`.
+- For real RTSP streams, ensure GStreamer dependencies are installed and use the
+  `rtsp-gstreamer` feature (see README).
