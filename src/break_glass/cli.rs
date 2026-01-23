@@ -212,13 +212,7 @@ pub fn run() -> Result<()> {
                 db,
                 ruleset_id,
                 device_key_seed,
-            } => cmd_policy_set(
-                threshold,
-                &trustees,
-                &db,
-                &ruleset_id,
-                &device_key_seed,
-            ),
+            } => cmd_policy_set(threshold, &trustees, &db, &ruleset_id, &device_key_seed),
             PolicyCommand::Show {
                 db,
                 ruleset_id,
@@ -321,12 +315,7 @@ fn cmd_authorize_with_bucket(args: AuthorizeArgs<'_>) -> Result<()> {
         .ok_or_else(|| anyhow!("break-glass quorum policy is not configured"))?
         .clone();
 
-    let request = UnlockRequest::new(
-        args.envelope,
-        cfg.ruleset_hash,
-        args.purpose,
-        args.bucket,
-    )?;
+    let request = UnlockRequest::new(args.envelope, cfg.ruleset_hash, args.purpose, args.bucket)?;
 
     let mut approvals: Vec<Approval> = Vec::new();
     for file in args
@@ -396,7 +385,11 @@ fn cmd_policy_set(
 
     println!("Stored break-glass policy: {}-of-{}", policy.n, policy.m);
     for trustee in &policy.trustees {
-        println!("  trustee {} {}", trustee.id.0, hex_vec(&trustee.public_key));
+        println!(
+            "  trustee {} {}",
+            trustee.id.0,
+            hex_vec(&trustee.public_key)
+        );
     }
     Ok(())
 }
@@ -877,8 +870,10 @@ mod tests {
 
     #[test]
     fn policy_persists_and_authorize_uses_stored_policy() -> Result<()> {
-        let temp_dir =
-            std::env::temp_dir().join(format!("secura_break_glass_policy_{}", rand::random::<u64>()));
+        let temp_dir = std::env::temp_dir().join(format!(
+            "secura_break_glass_policy_{}",
+            rand::random::<u64>()
+        ));
         std::fs::create_dir_all(&temp_dir)?;
         let db_path = temp_dir.join("witness.db");
 
