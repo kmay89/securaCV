@@ -2,6 +2,22 @@
 
 Core library and tools for the Privacy Witness Kernel (PWK).
 
+## Quickstart: run the demo
+
+```bash
+cargo run --bin demo
+```
+
+This demo writes artifacts to `./demo_witness.db`, `./demo_out/export_bundle.json`, and the
+vault directory at `./vault/envelopes` (unless you override `--out` / `--vault`). Verify the log
+integrity with:
+
+```bash
+cargo run --bin log_verify -- --db demo_witness.db
+```
+
+Next: for a real RTSP stream, see the RTSP ingestion section below.
+
 ## Documentation
 
 * Canonical specifications:
