@@ -25,7 +25,7 @@ gstreamer = { version = "0.23", optional = true }
 gstreamer-app = { version = "0.23", optional = true }
 gstreamer-video = { version = "0.23", optional = true }
 libc = "0.2"
-libseccomp = "0.3"
+libseccomp = { version = "0.3", default-features = false, features = ["bundled"] }
 
 [dev-dependencies]
 trybuild = "1.0.89"
