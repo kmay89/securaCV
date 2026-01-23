@@ -9,6 +9,7 @@
 //! 6. Enforces retention with checkpointed pruning
 
 use anyhow::{anyhow, Result};
+use std::io::IsTerminal;
 use std::time::{Duration, Instant};
 
 use witness_kernel::{
@@ -19,14 +20,24 @@ use witness_kernel::{
     ZonePolicy,
 };
 
+#[path = "../ui.rs"]
+mod ui;
+
 fn main() -> Result<()> {
     // Initialize logging (simple stderr for MVP)
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    let ui_flag = parse_ui_flag();
+    let is_tty = std::io::stderr().is_terminal();
+    let stdout_is_tty = std::io::stdout().is_terminal();
+    let ui = ui::Ui::from_args(ui_flag.as_deref(), is_tty, !stdout_is_tty);
 
     let kernel_version = env!("CARGO_PKG_VERSION");
     let device_key_seed =
         std::env::var("DEVICE_KEY_SEED").map_err(|_| anyhow!("DEVICE_KEY_SEED must be set"))?;
-    let config = witness_kernel::config::WitnessdConfig::load()?;
+    let config = {
+        let _stage = ui.stage("Load configuration");
+        witness_kernel::config::WitnessdConfig::load()?
+    };
     let ruleset_hash = KernelConfig::ruleset_hash_from_id(&config.ruleset_id);
 
     let cfg = KernelConfig {
@@ -39,14 +50,20 @@ fn main() -> Result<()> {
         zone_policy: ZonePolicy::new(config.zones.sensitive_zones.clone())?,
     };
 
-    let mut kernel = Kernel::open(&cfg)?;
+    let mut kernel = {
+        let _stage = ui.stage("Open kernel");
+        Kernel::open(&cfg)?
+    };
 
     let api_config = ApiConfig {
         addr: config.api_addr.clone(),
         token_path: config.api_token_path.clone(),
         ..ApiConfig::default()
     };
-    let api_handle = ApiServer::new(api_config, cfg.clone()).spawn()?;
+    let api_handle = {
+        let _stage = ui.stage("Start event API");
+        ApiServer::new(api_config, cfg.clone()).spawn()?
+    };
     log::info!("event api listening on {}", api_handle.addr);
     if let Some(path) = &api_handle.token_path {
         log::info!("event api capability token written to {}", path.display());
@@ -57,7 +74,10 @@ fn main() -> Result<()> {
         );
     }
 
-    let mut vault = Vault::new(VaultConfig::default())?;
+    let mut vault = {
+        let _stage = ui.stage("Initialize vault");
+        Vault::new(VaultConfig::default())?
+    };
     // Optional break-glass seal path (requires BREAK_GLASS_SEAL_TOKEN with a token JSON).
     let mut seal_token = load_seal_token()?;
 
@@ -68,17 +88,27 @@ fn main() -> Result<()> {
         width: config.rtsp.width,
         height: config.rtsp.height,
     };
-    let mut source = RtspSource::new(rtsp_config)?;
-    source.connect()?;
+    let mut source = {
+        let _stage = ui.stage("Configure RTSP source");
+        RtspSource::new(rtsp_config)?
+    };
+    {
+        let _stage = ui.stage("Connect RTSP source");
+        source.connect()?;
+    }
 
     // Frame buffer for pre-roll (vault sealing, not accessible without break-glass)
     let mut frame_buffer = FrameBuffer::new();
 
     // Detection module
-    let mut module = ZoneCrossingModule::new(&config.zones.module_zone_id).with_tokens(true);
-    let module_desc: ModuleDescriptor = module.descriptor();
-    let runtime = CapabilityBoundaryRuntime::new();
-    runtime.validate_descriptor(&module_desc)?;
+    let (mut module, module_desc, runtime) = {
+        let _stage = ui.stage("Initialize detection module");
+        let module = ZoneCrossingModule::new(&config.zones.module_zone_id).with_tokens(true);
+        let module_desc: ModuleDescriptor = module.descriptor();
+        let runtime = CapabilityBoundaryRuntime::new();
+        runtime.validate_descriptor(&module_desc)?;
+        (module, module_desc, runtime)
+    };
 
     // Bucket key manager (rotates per time bucket)
     let mut token_mgr = BucketKeyManager::new();
@@ -251,4 +281,19 @@ fn seal_latest_frame(
         |hash| kernel.break_glass_receipt_outcome(hash),
     )?;
     Ok(Some(envelope_id))
+}
+
+fn parse_ui_flag() -> Option<String> {
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        if let Some(value) = arg.strip_prefix("--ui=") {
+            return Some(value.to_string());
+        }
+        if arg == "--ui" {
+            if let Some(value) = args.next() {
+                return Some(value);
+            }
+        }
+    }
+    None
 }

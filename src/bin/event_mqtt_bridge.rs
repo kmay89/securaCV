@@ -2,11 +2,15 @@
 
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
+use std::io::IsTerminal;
 use std::io::{Read, Write};
 use std::net::{IpAddr, TcpStream};
 use std::path::PathBuf;
 use std::time::Duration;
 use witness_kernel::{ExportArtifact, ExportEvent};
+
+#[path = "../ui.rs"]
+mod ui;
 
 const BRIDGE_NAME: &str = "event_mqtt_bridge";
 const EVENTS_PATH: &str = "/events";
@@ -32,31 +36,46 @@ struct Args {
     /// MQTT client identifier.
     #[arg(long, env = "MQTT_CLIENT_ID", default_value = BRIDGE_NAME)]
     mqtt_client_id: String,
+    /// UI mode for stderr progress (auto|plain|pretty)
+    #[arg(long, default_value = "auto", value_name = "MODE")]
+    ui: String,
 }
 
 fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let args = Args::parse();
+    let is_tty = std::io::stderr().is_terminal();
+    let stdout_is_tty = std::io::stdout().is_terminal();
+    let ui = ui::Ui::from_args(Some(&args.ui), is_tty, !stdout_is_tty);
 
     let api_addr = parse_loopback_socket_addr(&args.api_addr)
         .with_context(|| "api addr must be loopback-only")?;
     let (broker_host, broker_port) = parse_loopback_host_port(&args.mqtt_broker_addr)?;
-    let token = load_token(args.api_token_path, args.api_token)?;
+    let token = {
+        let _stage = ui.stage("Load capability token");
+        load_token(args.api_token_path, args.api_token)?
+    };
 
-    let artifact = fetch_export_artifact(api_addr, &token)?;
+    let artifact = {
+        let _stage = ui.stage("Fetch export artifact");
+        fetch_export_artifact(api_addr, &token)?
+    };
     let events = flatten_export_events(&artifact);
     if events.is_empty() {
         log::info!("no events to publish");
         return Ok(());
     }
 
-    publish_events(
-        &args.mqtt_client_id,
-        &broker_host,
-        broker_port,
-        &args.mqtt_topic,
-        &events,
-    )?;
+    {
+        let _stage = ui.stage("Publish events");
+        publish_events(
+            &args.mqtt_client_id,
+            &broker_host,
+            broker_port,
+            &args.mqtt_topic,
+            &events,
+        )?;
+    }
 
     Ok(())
 }
