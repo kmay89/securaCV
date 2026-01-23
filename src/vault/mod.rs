@@ -118,7 +118,12 @@ impl Vault {
             return Err(anyhow!("vault envelope already exists"));
         }
 
-        let envelope = Envelope::seal(envelope_id, expected_ruleset_hash, clear_bytes, &self.master_key)?;
+        let envelope = Envelope::seal(
+            envelope_id,
+            expected_ruleset_hash,
+            clear_bytes,
+            &self.master_key,
+        )?;
         clear_bytes.zeroize();
 
         let encoded = envelope.encode()?;
@@ -164,7 +169,13 @@ impl Envelope {
         let mut nonce = [0u8; 12];
         rand::thread_rng().fill_bytes(&mut nonce);
         let mut ciphertext = clear.to_vec();
-        let tag = encrypt_in_place(master_key, envelope_id, &ruleset_hash, &nonce, &mut ciphertext)?;
+        let tag = encrypt_in_place(
+            master_key,
+            envelope_id,
+            &ruleset_hash,
+            &nonce,
+            &mut ciphertext,
+        )?;
 
         Ok(Self {
             envelope_id: envelope_id.to_string(),
