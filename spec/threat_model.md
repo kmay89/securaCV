@@ -63,6 +63,13 @@ Mitigations:
 - Event export batching (multiple events MAY be exported together to prevent single-event timing analysis)
 - No cross-device comparability
 
+### 2.6 Host Compromise (Root/Admin Access)
+Threat:
+- An attacker controls the operating system, hardware, or runtime environment.
+
+Mitigations:
+- **Out of scope.** See `docs/root_paradox.md` for explicit limitations.
+
 ---
 
 ## 3. Non-Goals
