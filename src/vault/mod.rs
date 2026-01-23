@@ -4,12 +4,18 @@
 //! enforces break-glass gating for raw media export.
 
 use anyhow::{anyhow, Result};
+use chacha20poly1305::{
+    aead::{AeadInPlace, KeyInit},
+    ChaCha20Poly1305, Key, Nonce, Tag,
+};
 use rand::RngCore;
-use sha2::{Digest, Sha256};
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use zeroize::Zeroize;
+
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
 use crate::{break_glass::BreakGlassToken, RawFrame, RawMediaBoundary};
 
@@ -31,13 +37,16 @@ impl Default for VaultConfig {
 
 pub struct Vault {
     root: PathBuf,
+    master_key: [u8; 32],
 }
 
 impl Vault {
     pub fn new(cfg: VaultConfig) -> Result<Self> {
         fs::create_dir_all(&cfg.local_path)?;
+        let master_key = load_or_create_master_key(&cfg.local_path)?;
         Ok(Self {
             root: cfg.local_path,
+            master_key,
         })
     }
 
@@ -87,7 +96,7 @@ impl Vault {
         let mut empty = Vec::new();
         RawMediaBoundary::export_for_vault(&mut empty, token, envelope_id, expected_ruleset_hash)?;
 
-        Ok(envelope.decrypt())
+        envelope.decrypt(&self.master_key)
     }
 
     fn envelope_path(&self, envelope_id: &str) -> PathBuf {
@@ -109,7 +118,12 @@ impl Vault {
             return Err(anyhow!("vault envelope already exists"));
         }
 
-        let envelope = Envelope::seal(envelope_id, expected_ruleset_hash, clear_bytes)?;
+        let envelope = Envelope::seal(
+            envelope_id,
+            expected_ruleset_hash,
+            clear_bytes,
+            &self.master_key,
+        )?;
         clear_bytes.zeroize();
 
         let encoded = envelope.encode()?;
@@ -120,6 +134,12 @@ impl Vault {
             ruleset_hash: expected_ruleset_hash,
             ciphertext_len: envelope.ciphertext.len(),
         })
+    }
+}
+
+impl Drop for Vault {
+    fn drop(&mut self) {
+        self.master_key.zeroize();
     }
 }
 
@@ -134,31 +154,49 @@ pub struct EnvelopeMetadata {
 struct Envelope {
     envelope_id: String,
     ruleset_hash: [u8; 32],
-    nonce: [u8; 32],
+    nonce: [u8; 12],
+    tag: [u8; 16],
     ciphertext: Vec<u8>,
 }
 
 impl Envelope {
-    fn seal(envelope_id: &str, ruleset_hash: [u8; 32], clear: &[u8]) -> Result<Self> {
-        let mut nonce = [0u8; 32];
+    fn seal(
+        envelope_id: &str,
+        ruleset_hash: [u8; 32],
+        clear: &[u8],
+        master_key: &[u8; 32],
+    ) -> Result<Self> {
+        let mut nonce = [0u8; 12];
         rand::thread_rng().fill_bytes(&mut nonce);
-        let key = derive_ephemeral_key(&ruleset_hash, &nonce);
         let mut ciphertext = clear.to_vec();
-        xor_cipher(&mut ciphertext, &key);
+        let tag = encrypt_in_place(
+            master_key,
+            envelope_id,
+            &ruleset_hash,
+            &nonce,
+            &mut ciphertext,
+        )?;
 
         Ok(Self {
             envelope_id: envelope_id.to_string(),
             ruleset_hash,
             nonce,
+            tag,
             ciphertext,
         })
     }
 
-    fn decrypt(&self) -> Vec<u8> {
-        let key = derive_ephemeral_key(&self.ruleset_hash, &self.nonce);
+    fn decrypt(&self, master_key: &[u8; 32]) -> Result<Vec<u8>> {
         let mut clear = self.ciphertext.clone();
-        xor_cipher(&mut clear, &key);
-        clear
+        decrypt_in_place(
+            master_key,
+            &self.envelope_id,
+            &self.ruleset_hash,
+            &self.nonce,
+            &self.tag,
+            &mut clear,
+        )?;
+        Ok(clear)
     }
 
     fn validate(&self, envelope_id: &str, ruleset_hash: [u8; 32]) -> Result<()> {
@@ -178,6 +216,7 @@ impl Envelope {
         out.extend_from_slice(id_bytes);
         out.extend_from_slice(&self.ruleset_hash);
         out.extend_from_slice(&self.nonce);
+        out.extend_from_slice(&self.tag);
         out.extend_from_slice(&(self.ciphertext.len() as u32).to_le_bytes());
         out.extend_from_slice(&self.ciphertext);
         Ok(out)
@@ -193,15 +232,19 @@ impl Envelope {
         let ruleset_hash_bytes = read_slice(bytes, &mut cursor, 32)?;
         let mut ruleset_hash = [0u8; 32];
         ruleset_hash.copy_from_slice(ruleset_hash_bytes);
-        let nonce_bytes = read_slice(bytes, &mut cursor, 32)?;
-        let mut nonce = [0u8; 32];
+        let nonce_bytes = read_slice(bytes, &mut cursor, 12)?;
+        let mut nonce = [0u8; 12];
         nonce.copy_from_slice(nonce_bytes);
+        let tag_bytes = read_slice(bytes, &mut cursor, 16)?;
+        let mut tag = [0u8; 16];
+        tag.copy_from_slice(tag_bytes);
         let ct_len = read_u32(bytes, &mut cursor)? as usize;
         let ciphertext = read_slice(bytes, &mut cursor, ct_len)?.to_vec();
         Ok(Self {
             envelope_id,
             ruleset_hash,
             nonce,
+            tag,
             ciphertext,
         })
     }
@@ -223,16 +266,75 @@ pub(crate) fn sanitize_envelope_id(envelope_id: &str) -> Result<String> {
     Ok(trimmed.to_string())
 }
 
-fn derive_ephemeral_key(ruleset_hash: &[u8; 32], nonce: &[u8; 32]) -> [u8; 32] {
-    let mut hasher = Sha256::new();
-    hasher.update(ruleset_hash);
-    hasher.update(nonce);
-    hasher.finalize().into()
+fn envelope_aad(envelope_id: &str, ruleset_hash: &[u8; 32]) -> Vec<u8> {
+    let mut aad = Vec::with_capacity(envelope_id.len() + ruleset_hash.len());
+    aad.extend_from_slice(envelope_id.as_bytes());
+    aad.extend_from_slice(ruleset_hash);
+    aad
 }
 
-fn xor_cipher(data: &mut [u8], key: &[u8; 32]) {
-    for (idx, byte) in data.iter_mut().enumerate() {
-        *byte ^= key[idx % key.len()];
+fn encrypt_in_place(
+    master_key: &[u8; 32],
+    envelope_id: &str,
+    ruleset_hash: &[u8; 32],
+    nonce: &[u8; 12],
+    buffer: &mut [u8],
+) -> Result<[u8; 16]> {
+    let cipher = ChaCha20Poly1305::new(Key::from_slice(master_key));
+    let aad = envelope_aad(envelope_id, ruleset_hash);
+    let tag = cipher
+        .encrypt_in_place_detached(Nonce::from_slice(nonce), &aad, buffer)
+        .map_err(|_| anyhow!("vault encryption failed"))?;
+    Ok(tag.into())
+}
+
+fn decrypt_in_place(
+    master_key: &[u8; 32],
+    envelope_id: &str,
+    ruleset_hash: &[u8; 32],
+    nonce: &[u8; 12],
+    tag: &[u8; 16],
+    buffer: &mut [u8],
+) -> Result<()> {
+    let cipher = ChaCha20Poly1305::new(Key::from_slice(master_key));
+    let aad = envelope_aad(envelope_id, ruleset_hash);
+    let tag = Tag::from_slice(tag);
+    cipher
+        .decrypt_in_place_detached(Nonce::from_slice(nonce), &aad, buffer, tag)
+        .map_err(|_| anyhow!("vault decryption failed"))?;
+    Ok(())
+}
+
+fn load_or_create_master_key(root: &Path) -> Result<[u8; 32]> {
+    let key_path = root.join("master.key");
+    if key_path.exists() {
+        let bytes = read_file(&key_path)?;
+        if bytes.len() != 32 {
+            return Err(anyhow!("vault master key length mismatch"));
+        }
+        #[cfg(unix)]
+        {
+            let mode = fs::metadata(&key_path)?.permissions().mode() & 0o777;
+            if mode != 0o600 {
+                fs::set_permissions(&key_path, fs::Permissions::from_mode(0o600))?;
+            }
+        }
+        let mut key = [0u8; 32];
+        key.copy_from_slice(&bytes);
+        Ok(key)
+    } else {
+        let mut key = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut key);
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            options.mode(0o600);
+        }
+        let mut file = options.open(&key_path)?;
+        file.write_all(&key)?;
+        file.sync_all()?;
+        Ok(key)
     }
 }
 
@@ -390,8 +492,10 @@ mod tests {
 
         let mut entries = fs::read_dir(vault_root)?.collect::<Result<Vec<_>, _>>()?;
         entries.sort_by_key(|entry| entry.path());
-        assert_eq!(entries.len(), 1);
-        assert!(entries[0].path().ends_with("incident-4.vault"));
+        assert_eq!(entries.len(), 2);
+        let paths: Vec<_> = entries.iter().map(|entry| entry.path()).collect();
+        assert!(paths.iter().any(|path| path.ends_with("incident-4.vault")));
+        assert!(paths.iter().any(|path| path.ends_with("master.key")));
         Ok(())
     }
 
@@ -434,6 +538,28 @@ mod tests {
         let frame = make_raw_frame(b"raw bytes");
         let meta = vault.seal_frame(envelope_id, &mut token, ruleset_hash, frame)?;
         assert_eq!(meta.ciphertext_len, b"raw bytes".len());
+        Ok(())
+    }
+
+    #[test]
+    fn envelope_rejects_wrong_key_or_tag() -> Result<()> {
+        let master_key = [9u8; 32];
+        let envelope = Envelope::seal("incident-7", [7u8; 32], b"raw bytes", &master_key)?;
+        let wrong_key = [10u8; 32];
+        assert!(envelope.decrypt(&wrong_key).is_err());
+
+        let mut tampered = envelope.clone();
+        tampered.tag[0] ^= 0b1010_1010;
+        assert!(tampered.decrypt(&master_key).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn envelope_ciphertext_is_not_plaintext() -> Result<()> {
+        let master_key = [11u8; 32];
+        let clear = b"raw bytes";
+        let envelope = Envelope::seal("incident-8", [8u8; 32], clear, &master_key)?;
+        assert_ne!(envelope.ciphertext, clear);
         Ok(())
     }
 }
