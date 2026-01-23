@@ -1,9 +1,9 @@
 use anyhow::Result;
 use ed25519_dalek::{Signer, SigningKey};
 use witness_kernel::{
-    Approval, BreakGlass, CandidateEvent, EventType, ExportOptions, Kernel, KernelConfig,
-    ModuleDescriptor, QuorumPolicy, TimeBucket, TrusteeEntry, TrusteeId, UnlockRequest,
-    EXPORT_EVENTS_ENVELOPE_ID,
+    verify_export_bundle, Approval, BreakGlass, CandidateEvent, EventType, ExportOptions, Kernel,
+    KernelConfig, ModuleDescriptor, QuorumPolicy, TimeBucket, TrusteeEntry, TrusteeId,
+    UnlockRequest, EXPORT_EVENTS_ENVELOPE_ID,
 };
 
 fn add_test_event(kernel: &mut Kernel, cfg: &KernelConfig) -> Result<()> {
@@ -114,5 +114,41 @@ fn export_succeeds_with_break_glass_token() -> Result<()> {
         .conn
         .query_row("SELECT COUNT(*) FROM export_receipts", [], |row| row.get(0))?;
     assert_eq!(count, 1);
+    Ok(())
+}
+
+#[test]
+fn export_bundle_verifies_and_detects_tampering() -> Result<()> {
+    let cfg = KernelConfig {
+        db_path: ":memory:".to_string(),
+        ruleset_id: "ruleset:test".to_string(),
+        ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
+        kernel_version: "0.0.0-test".to_string(),
+        retention: std::time::Duration::from_secs(60),
+        device_key_seed: "devkey:test".to_string(),
+    };
+    let mut kernel = Kernel::open(&cfg)?;
+    add_test_event(&mut kernel, &cfg)?;
+
+    let bucket = TimeBucket::now(600)?;
+    let (request, approval, policy) = authorize_export(&cfg, bucket)?;
+    let (result, receipt) = BreakGlass::authorize(&policy, &request, &[approval.clone()], bucket);
+    let mut token = result.expect("token");
+    let receipt_entry_hash = kernel.log_break_glass_receipt(&receipt, &[approval])?;
+    kernel.sign_break_glass_token(&mut token, receipt_entry_hash)?;
+
+    let bundle = kernel.export_events_bundle_authorized(
+        cfg.ruleset_hash,
+        ExportOptions {
+            jitter_s: 0,
+            ..ExportOptions::default()
+        },
+        &mut token,
+    )?;
+    verify_export_bundle(&bundle)?;
+
+    let mut tampered = bundle.clone();
+    tampered.artifact.batches.clear();
+    assert!(verify_export_bundle(&tampered).is_err());
     Ok(())
 }

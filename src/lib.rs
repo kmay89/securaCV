@@ -152,6 +152,21 @@ pub struct ExportReceipt {
     pub artifact_hash: [u8; 32],
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ExportReceiptEntry {
+    pub receipt: ExportReceipt,
+    pub prev_hash: [u8; 32],
+    pub entry_hash: [u8; 32],
+    pub signature: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ExportBundle {
+    pub artifact: ExportArtifact,
+    pub receipt_entry: ExportReceiptEntry,
+    pub device_public_key: [u8; 32],
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct ExportOptions {
     pub max_events_per_batch: usize,
@@ -751,6 +766,36 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         self.append_export_receipt(receipt)
     }
 
+    pub fn latest_export_receipt_entry(&self) -> Result<ExportReceiptEntry> {
+        let mut stmt = self.conn.prepare(
+            "SELECT payload_json, prev_hash, entry_hash, signature FROM export_receipts ORDER BY id DESC LIMIT 1",
+        )?;
+        let row = stmt
+            .query_row([], |row| {
+                let payload: String = row.get(0)?;
+                let prev_hash: Vec<u8> = row.get(1)?;
+                let entry_hash: Vec<u8> = row.get(2)?;
+                let signature: Vec<u8> = row.get(3)?;
+                Ok((payload, prev_hash, entry_hash, signature))
+            })
+            .optional()?;
+
+        let Some((payload, prev_hash, entry_hash, signature)) = row else {
+            return Err(anyhow!("export receipt not found"));
+        };
+
+        let prev_hash = blob32(prev_hash, "export_receipts.prev_hash")?;
+        let entry_hash = blob32(entry_hash, "export_receipts.entry_hash")?;
+        let signature = blob64(signature, "export_receipts.signature")?;
+        let receipt: ExportReceipt = serde_json::from_str(&payload)?;
+        Ok(ExportReceiptEntry {
+            receipt,
+            prev_hash,
+            entry_hash,
+            signature: signature.to_vec(),
+        })
+    }
+
     pub fn set_break_glass_policy(
         &mut self,
         policy: &crate::break_glass::QuorumPolicy,
@@ -904,6 +949,28 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         let artifact = self.export_events_sequential_unchecked(expected_ruleset_hash, options)?;
         token.consume()?;
         Ok(artifact)
+    }
+
+    pub fn export_events_bundle_authorized(
+        &mut self,
+        expected_ruleset_hash: [u8; 32],
+        options: ExportOptions,
+        token: &mut break_glass::BreakGlassToken,
+    ) -> Result<ExportBundle> {
+        let artifact = self.export_events_authorized(expected_ruleset_hash, options, token)?;
+        let receipt_entry = self.latest_export_receipt_entry()?;
+        let artifact_bytes = serde_json::to_vec(&artifact)?;
+        let artifact_hash: [u8; 32] = Sha256::digest(&artifact_bytes).into();
+        if artifact_hash != receipt_entry.receipt.artifact_hash {
+            return Err(anyhow!(
+                "export receipt artifact hash mismatch: receipt does not match export"
+            ));
+        }
+        Ok(ExportBundle {
+            artifact,
+            receipt_entry,
+            device_public_key: self.device_key_for_verify_only(),
+        })
     }
 
     /// Export events sequentially, grouped into coarse time buckets with batching and jitter.
@@ -1116,6 +1183,26 @@ pub fn verify_entry_signature(
     verifying_key
         .verify(entry_hash, &sig)
         .map_err(|e| anyhow!("signature verification failed: {}", e))
+}
+
+pub fn verify_export_bundle(bundle: &ExportBundle) -> Result<()> {
+    let verifying_key = verifying_key_from_bytes(&bundle.device_public_key)?;
+    let payload_json = serde_json::to_string(&bundle.receipt_entry.receipt)?;
+    let computed_entry_hash = hash_entry(&bundle.receipt_entry.prev_hash, payload_json.as_bytes());
+    if computed_entry_hash != bundle.receipt_entry.entry_hash {
+        return Err(anyhow!("export receipt entry hash mismatch"));
+    }
+    let signature = blob64(
+        bundle.receipt_entry.signature.clone(),
+        "export_bundle.signature",
+    )?;
+    verify_entry_signature(&verifying_key, &bundle.receipt_entry.entry_hash, &signature)?;
+    let artifact_bytes = serde_json::to_vec(&bundle.artifact)?;
+    let artifact_hash: [u8; 32] = Sha256::digest(&artifact_bytes).into();
+    if artifact_hash != bundle.receipt_entry.receipt.artifact_hash {
+        return Err(anyhow!("export artifact hash mismatch"));
+    }
+    Ok(())
 }
 
 fn blob32(bytes: Vec<u8>, context: &str) -> Result<[u8; 32]> {

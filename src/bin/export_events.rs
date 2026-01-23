@@ -1,4 +1,4 @@
-//! export_events - sequential event export to a local artifact
+//! export_events - sequential event export bundle to a local artifact
 
 use anyhow::{anyhow, Result};
 use clap::Parser;
@@ -68,9 +68,9 @@ fn main() -> Result<()> {
         jitter_s: args.jitter_s,
         jitter_step_s: args.jitter_step_s,
     };
-    let artifact = kernel.export_events_authorized(cfg.ruleset_hash, options, &mut token)?;
-    let json = serde_json::to_vec(&artifact)?;
+    let bundle = kernel.export_events_bundle_authorized(cfg.ruleset_hash, options, &mut token)?;
+    let json = serde_json::to_vec(&bundle)?;
     std::fs::write(&args.output, json)?;
-    println!("export written to {}", args.output);
+    println!("export bundle written to {}", args.output);
     Ok(())
 }
