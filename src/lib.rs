@@ -32,6 +32,7 @@ use zeroize::Zeroize;
 
 pub mod api;
 pub mod break_glass;
+pub mod config;
 pub mod frame;
 pub mod ingest;
 pub mod module_runtime;
