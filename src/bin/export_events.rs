@@ -2,9 +2,13 @@
 
 use anyhow::{anyhow, Result};
 use clap::Parser;
+use std::io::IsTerminal;
 use std::time::Duration;
 use witness_kernel::break_glass::BreakGlassTokenFile;
 use witness_kernel::{ExportOptions, Kernel, KernelConfig, ZonePolicy};
+
+#[path = "../ui.rs"]
+mod ui;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
@@ -33,10 +37,16 @@ struct Args {
     /// Jitter step in seconds (granularity of jitter).
     #[arg(long, default_value_t = 60)]
     jitter_step_s: u64,
+    /// UI mode for stderr progress (auto|plain|pretty)
+    #[arg(long, default_value = "auto", value_name = "MODE")]
+    ui: String,
 }
 
 fn main() -> Result<()> {
     let args = Args::parse();
+    let is_tty = std::io::stderr().is_terminal();
+    let stdout_is_tty = std::io::stdout().is_terminal();
+    let ui = ui::Ui::from_args(Some(&args.ui), is_tty, !stdout_is_tty);
     let ruleset_hash = KernelConfig::ruleset_hash_from_id(&args.ruleset_id);
 
     let cfg = KernelConfig {
@@ -53,25 +63,37 @@ fn main() -> Result<()> {
         return Err(anyhow!("DEVICE_KEY_SEED must be set"));
     }
 
-    let mut kernel = Kernel::open(&cfg)?;
-    let token_json = std::fs::read_to_string(&args.break_glass_token).map_err(|e| {
-        anyhow!(
-            "failed to read token file {}: {}",
-            args.break_glass_token,
-            e
-        )
-    })?;
-    let token_file: BreakGlassTokenFile =
-        serde_json::from_str(&token_json).map_err(|e| anyhow!("invalid token file: {}", e))?;
-    let mut token = token_file.into_token()?;
+    let mut kernel = {
+        let _stage = ui.stage("Open kernel");
+        Kernel::open(&cfg)?
+    };
+    let mut token = {
+        let _stage = ui.stage("Load break-glass token");
+        let token_json = std::fs::read_to_string(&args.break_glass_token).map_err(|e| {
+            anyhow!(
+                "failed to read token file {}: {}",
+                args.break_glass_token,
+                e
+            )
+        })?;
+        let token_file: BreakGlassTokenFile =
+            serde_json::from_str(&token_json).map_err(|e| anyhow!("invalid token file: {}", e))?;
+        token_file.into_token()?
+    };
     let options = ExportOptions {
         max_events_per_batch: args.max_events_per_batch,
         jitter_s: args.jitter_s,
         jitter_step_s: args.jitter_step_s,
     };
-    let bundle = kernel.export_events_bundle_authorized(cfg.ruleset_hash, options, &mut token)?;
+    let bundle = {
+        let _stage = ui.stage("Export events");
+        kernel.export_events_bundle_authorized(cfg.ruleset_hash, options, &mut token)?
+    };
     let json = serde_json::to_vec(&bundle)?;
-    std::fs::write(&args.output, json)?;
+    {
+        let _stage = ui.stage("Write export bundle");
+        std::fs::write(&args.output, json)?;
+    }
     println!("export bundle written to {}", args.output);
     Ok(())
 }

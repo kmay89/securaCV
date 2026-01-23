@@ -10,6 +10,7 @@
 use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use std::io::IsTerminal;
 use std::io::Write;
 
 use crate::{
@@ -19,6 +20,9 @@ use crate::{
     KernelConfig, TimeBucket, TrusteeId, UnlockRequest, Vault, VaultConfig, ZonePolicy,
 };
 
+#[path = "../ui.rs"]
+mod ui;
+
 #[derive(Parser, Debug)]
 #[command(
     name = "break_glass",
@@ -27,6 +31,9 @@ use crate::{
 struct Args {
     #[command(subcommand)]
     command: Command,
+    /// UI mode for stderr progress (auto|plain|pretty)
+    #[arg(long, default_value = "auto", value_name = "MODE")]
+    ui: String,
 }
 
 #[derive(Subcommand, Debug)]
@@ -148,6 +155,16 @@ enum PolicyCommand {
 pub fn run() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let args = Args::parse();
+    let is_tty = std::io::stderr().is_terminal();
+    let stdout_is_tty = std::io::stdout().is_terminal();
+    let disable_pretty = !stdout_is_tty
+        || matches!(
+            args.command,
+            Command::Policy {
+                command: PolicyCommand::Show { .. }
+            }
+        );
+    let ui = ui::Ui::from_args(Some(&args.ui), is_tty, disable_pretty);
 
     match args.command {
         Command::Request {
@@ -155,13 +172,19 @@ pub fn run() -> Result<()> {
             purpose,
             db: _,
             ruleset_id,
-        } => cmd_request(&envelope, &purpose, &ruleset_id),
+        } => {
+            let _stage = ui.stage("Create unlock request");
+            cmd_request(&envelope, &purpose, &ruleset_id)
+        }
         Command::Approve {
             request_hash,
             trustee,
             signing_key,
             output,
-        } => cmd_approve(&request_hash, &trustee, &signing_key, &output),
+        } => {
+            let _stage = ui.stage("Sign approval");
+            cmd_approve(&request_hash, &trustee, &signing_key, &output)
+        }
         Command::Authorize {
             envelope,
             purpose,
@@ -170,26 +193,32 @@ pub fn run() -> Result<()> {
             ruleset_id,
             device_key_seed,
             output_token,
-        } => cmd_authorize(
-            &envelope,
-            &purpose,
-            &approvals,
-            &db,
-            &ruleset_id,
-            &device_key_seed,
-            output_token.as_deref(),
-        ),
+        } => {
+            let _stage = ui.stage("Authorize break-glass");
+            cmd_authorize(
+                &envelope,
+                &purpose,
+                &approvals,
+                &db,
+                &ruleset_id,
+                &device_key_seed,
+                output_token.as_deref(),
+            )
+        }
         Command::Receipts {
             db,
             public_key,
             public_key_file,
             verbose,
-        } => cmd_receipts(
-            &db,
-            public_key.as_deref(),
-            public_key_file.as_deref(),
-            verbose,
-        ),
+        } => {
+            let _stage = ui.stage("Verify receipts");
+            cmd_receipts(
+                &db,
+                public_key.as_deref(),
+                public_key_file.as_deref(),
+                verbose,
+            )
+        }
         Command::Unseal {
             envelope,
             token,
@@ -197,14 +226,17 @@ pub fn run() -> Result<()> {
             ruleset_id,
             vault_path,
             output_dir,
-        } => cmd_unseal(
-            &envelope,
-            &token,
-            &db,
-            &ruleset_id,
-            &vault_path,
-            &output_dir,
-        ),
+        } => {
+            let _stage = ui.stage("Unseal envelope");
+            cmd_unseal(
+                &envelope,
+                &token,
+                &db,
+                &ruleset_id,
+                &vault_path,
+                &output_dir,
+            )
+        }
         Command::Policy { command } => match command {
             PolicyCommand::Set {
                 threshold,
@@ -212,12 +244,18 @@ pub fn run() -> Result<()> {
                 db,
                 ruleset_id,
                 device_key_seed,
-            } => cmd_policy_set(threshold, &trustees, &db, &ruleset_id, &device_key_seed),
+            } => {
+                let _stage = ui.stage("Set quorum policy");
+                cmd_policy_set(threshold, &trustees, &db, &ruleset_id, &device_key_seed)
+            }
             PolicyCommand::Show {
                 db,
                 ruleset_id,
                 device_key_seed,
-            } => cmd_policy_show(&db, &ruleset_id, &device_key_seed),
+            } => {
+                let _stage = ui.stage("Show quorum policy");
+                cmd_policy_show(&db, &ruleset_id, &device_key_seed)
+            }
         },
     }
 }

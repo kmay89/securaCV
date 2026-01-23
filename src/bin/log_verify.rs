@@ -14,11 +14,15 @@ use anyhow::{anyhow, Result};
 use clap::Parser;
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use rusqlite::{Connection, Row};
+use std::io::IsTerminal;
 
 use witness_kernel::{
     approvals_commitment, device_public_key_from_db, hash_entry, verify_entry_signature, Approval,
     QuorumPolicy,
 };
+
+#[path = "../ui.rs"]
+mod ui;
 
 type CheckpointInfo = (Option<[u8; 32]>, Option<[u8; 64]>, Option<i64>);
 
@@ -43,16 +47,28 @@ struct Args {
     /// Verbose output
     #[arg(short, long)]
     verbose: bool,
+    /// UI mode for stderr progress (auto|plain|pretty)
+    #[arg(long, default_value = "auto", value_name = "MODE")]
+    ui: String,
 }
 
 fn main() -> Result<()> {
     let args = Args::parse();
-    let conn = Connection::open(&args.db)?;
-    let verifying_key = load_verifying_key(
-        &conn,
-        args.public_key.as_deref(),
-        args.public_key_file.as_deref(),
-    )?;
+    let is_tty = std::io::stderr().is_terminal();
+    let stdout_is_tty = std::io::stdout().is_terminal();
+    let ui = ui::Ui::from_args(Some(&args.ui), is_tty, !stdout_is_tty);
+    let conn = {
+        let _stage = ui.stage("Open database");
+        Connection::open(&args.db)?
+    };
+    let verifying_key = {
+        let _stage = ui.stage("Load verifying key");
+        load_verifying_key(
+            &conn,
+            args.public_key.as_deref(),
+            args.public_key_file.as_deref(),
+        )?
+    };
 
     println!("log_verify: checking {}", args.db);
     println!();
@@ -60,40 +76,49 @@ fn main() -> Result<()> {
     // === Sealed Events ===
     println!("=== Sealed Events ===");
 
-    let (checkpoint_hash, checkpoint_sig, cutoff_event_id) = latest_checkpoint(&conn)?;
-
-    if let (Some(head), Some(sig), Some(cutoff_id)) =
-        (checkpoint_hash, checkpoint_sig, cutoff_event_id)
     {
-        if verify_entry_signature(&verifying_key, &head, &sig).is_err() {
-            return Err(anyhow!("checkpoint signature mismatch"));
-        }
-        println!(
-            "checkpoint: cutoff_event_id={}, chain_head_hash={}",
-            cutoff_id,
-            hex(&head)
-        );
-    } else {
-        println!("checkpoint: none (genesis chain)");
-    }
+        let _stage = ui.stage("Verify sealed events");
+        let (checkpoint_hash, checkpoint_sig, cutoff_event_id) = latest_checkpoint(&conn)?;
 
-    let alarm_count = count_alarms(&conn)?;
-    if alarm_count > 0 {
-        println!("WARNING: {} conformance alarms recorded", alarm_count);
-        if args.verbose {
-            print_alarms(&conn)?;
+        if let (Some(head), Some(sig), Some(cutoff_id)) =
+            (checkpoint_hash, checkpoint_sig, cutoff_event_id)
+        {
+            if verify_entry_signature(&verifying_key, &head, &sig).is_err() {
+                return Err(anyhow!("checkpoint signature mismatch"));
+            }
+            println!(
+                "checkpoint: cutoff_event_id={}, chain_head_hash={}",
+                cutoff_id,
+                hex(&head)
+            );
+        } else {
+            println!("checkpoint: none (genesis chain)");
         }
-    }
 
-    verify_events(&conn, &verifying_key, checkpoint_hash, args.verbose)?;
+        let alarm_count = count_alarms(&conn)?;
+        if alarm_count > 0 {
+            println!("WARNING: {} conformance alarms recorded", alarm_count);
+            if args.verbose {
+                print_alarms(&conn)?;
+            }
+        }
+
+        verify_events(&conn, &verifying_key, checkpoint_hash, args.verbose)?;
+    };
     println!();
 
     // === Break-Glass Receipts ===
-    verify_break_glass_receipts(&conn, &verifying_key, args.verbose)?;
+    {
+        let _stage = ui.stage("Verify break-glass receipts");
+        verify_break_glass_receipts(&conn, &verifying_key, args.verbose)?;
+    }
     println!();
 
     // === Export Receipts ===
-    verify_export_receipts(&conn, &verifying_key, args.verbose)?;
+    {
+        let _stage = ui.stage("Verify export receipts");
+        verify_export_receipts(&conn, &verifying_key, args.verbose)?;
+    }
 
     println!("OK: all chains verified.");
     Ok(())
