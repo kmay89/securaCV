@@ -409,7 +409,7 @@ mod tests {
     use std::path::PathBuf;
     use witness_kernel::{
         Approval, BreakGlass, CandidateEvent, EventType, Kernel, KernelConfig, ModuleDescriptor,
-        QuorumPolicy, TimeBucket, TrusteeEntry, TrusteeId, UnlockRequest,
+        QuorumPolicy, TimeBucket, TrusteeEntry, TrusteeId, UnlockRequest, ZonePolicy,
     };
 
     fn temp_db_path() -> PathBuf {
@@ -452,6 +452,7 @@ mod tests {
             kernel_version: env!("CARGO_PKG_VERSION").to_string(),
             retention: std::time::Duration::from_secs(60),
             device_key_seed: "devkey:test".to_string(),
+            zone_policy: ZonePolicy::default(),
         })?;
         write_test_event(&mut kernel)?;
         let public_key_hex = hex::encode(kernel.device_key_for_verify_only());
@@ -478,6 +479,7 @@ mod tests {
             kernel_version: env!("CARGO_PKG_VERSION").to_string(),
             retention: std::time::Duration::from_secs(60),
             device_key_seed: "devkey:test".to_string(),
+            zone_policy: ZonePolicy::default(),
         })?;
         write_test_event(&mut kernel)?;
         kernel
@@ -503,6 +505,7 @@ mod tests {
             kernel_version: env!("CARGO_PKG_VERSION").to_string(),
             retention: std::time::Duration::from_secs(60),
             device_key_seed: "devkey:test".to_string(),
+            zone_policy: ZonePolicy::default(),
         })?;
         write_test_event(&mut kernel)?;
         drop(kernel);
@@ -530,6 +533,7 @@ mod tests {
             kernel_version: env!("CARGO_PKG_VERSION").to_string(),
             retention: std::time::Duration::from_secs(60),
             device_key_seed: "devkey:test".to_string(),
+            zone_policy: ZonePolicy::default(),
         })?;
 
         let bucket = TimeBucket::now(600)?;
