@@ -43,6 +43,8 @@ Recommended defaults:
 - Buckets MAY include random jitter when exported
 - Export artifacts MUST preserve bucketed time (no precise timestamps) and SHOULD be batched.
 
+Conformance note: bucket size and export jitter parameters are **conformance-critical**. They MUST NOT be narrowed (e.g., smaller buckets or reduced jitter) without a ruleset change. The defaults defined in `TimeBucket::now_10min` and `ExportOptions::default` are normative baselines for conformance.
+
 ---
 
 ## 4. Spatial Granularity
