@@ -1,9 +1,9 @@
 use anyhow::{anyhow, Result};
 use ed25519_dalek::{Signer, SigningKey};
 use witness_kernel::{
-    Approval, BreakGlass, BreakGlassToken, CandidateEvent, EventType, ExportOptions,
-    EXPORT_EVENTS_ENVELOPE_ID, Kernel, KernelConfig, ModuleDescriptor, QuorumPolicy, TimeBucket,
-    TrusteeEntry, TrusteeId, UnlockRequest,
+    Approval, BreakGlass, BreakGlassToken, CandidateEvent, EventType, ExportOptions, Kernel,
+    KernelConfig, ModuleDescriptor, QuorumPolicy, TimeBucket, TrusteeEntry, TrusteeId,
+    UnlockRequest, EXPORT_EVENTS_ENVELOPE_ID,
 };
 
 fn main() -> Result<()> {
