@@ -67,8 +67,10 @@ fn main() -> Result<()> {
     let mut seal_token = load_seal_token()?;
 
     // Configure RTSP source
+    let rtsp_url =
+        std::env::var("WITNESS_RTSP_URL").unwrap_or_else(|_| "stub://front_camera".into());
     let rtsp_config = RtspConfig {
-        url: "stub://front_camera".to_string(),
+        url: rtsp_url,
         target_fps: 10,
         width: 640,
         height: 480,
