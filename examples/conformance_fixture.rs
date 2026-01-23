@@ -1,8 +1,9 @@
 use anyhow::{anyhow, Result};
 use ed25519_dalek::{Signer, SigningKey};
 use witness_kernel::{
-    Approval, BreakGlass, CandidateEvent, EventType, ExportOptions, Kernel, KernelConfig,
-    ModuleDescriptor, QuorumPolicy, TimeBucket, TrusteeEntry, TrusteeId, UnlockRequest,
+    Approval, BreakGlass, BreakGlassToken, CandidateEvent, EventType, ExportOptions, Kernel,
+    KernelConfig, ModuleDescriptor, QuorumPolicy, TimeBucket, TrusteeEntry, TrusteeId,
+    UnlockRequest, EXPORT_EVENTS_ENVELOPE_ID,
 };
 
 fn main() -> Result<()> {
@@ -38,23 +39,24 @@ fn main() -> Result<()> {
         ruleset_hash,
     )?;
 
-    seed_break_glass(&mut kernel)?;
+    let mut token = seed_break_glass(&mut kernel, ruleset_hash)?;
 
-    let _artifact = kernel.export_events_sequential(
+    let _artifact = kernel.export_events_authorized(
         ruleset_hash,
         ExportOptions {
             max_events_per_batch: 1,
             jitter_s: 0,
             jitter_step_s: 1,
         },
+        &mut token,
     )?;
 
     Ok(())
 }
 
-fn seed_break_glass(kernel: &mut Kernel) -> Result<()> {
+fn seed_break_glass(kernel: &mut Kernel, ruleset_hash: [u8; 32]) -> Result<BreakGlassToken> {
     let bucket = TimeBucket::now(600)?;
-    let request = UnlockRequest::new("vault:1", [9u8; 32], "audit", bucket)?;
+    let request = UnlockRequest::new(EXPORT_EVENTS_ENVELOPE_ID, ruleset_hash, "audit", bucket)?;
     let signing_key = SigningKey::from_bytes(&[3u8; 32]);
     let signature = signing_key.sign(&request.request_hash());
     let approval = Approval::new(
@@ -69,9 +71,11 @@ fn seed_break_glass(kernel: &mut Kernel) -> Result<()> {
             public_key: signing_key.verifying_key().to_bytes(),
         }],
     )?;
-    let (_, receipt) = BreakGlass::authorize(&policy, &request, &[approval.clone()], bucket);
-    kernel.append_break_glass_receipt(&receipt, &[approval])?;
-    Ok(())
+    let (result, receipt) = BreakGlass::authorize(&policy, &request, &[approval.clone()], bucket);
+    let mut token = result?;
+    let receipt_entry_hash = kernel.log_break_glass_receipt(&receipt, &[approval])?;
+    kernel.sign_break_glass_token(&mut token, receipt_entry_hash)?;
+    Ok(token)
 }
 
 fn parse_arg(flag: &str) -> Result<String> {
