@@ -12,19 +12,14 @@
 
 use anyhow::{anyhow, Result};
 use clap::Parser;
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
-use rusqlite::{Connection, Row};
+use ed25519_dalek::VerifyingKey;
+use rusqlite::Connection;
 use std::io::IsTerminal;
 
-use witness_kernel::{
-    approvals_commitment, device_public_key_from_db, hash_entry, verify_entry_signature, Approval,
-    QuorumPolicy,
-};
+use witness_kernel::{device_public_key_from_db, verify, verify_entry_signature};
 
 #[path = "../ui.rs"]
 mod ui;
-
-type CheckpointInfo = (Option<[u8; 32]>, Option<[u8; 64]>, Option<i64>);
 
 #[derive(Parser, Debug)]
 #[command(
@@ -78,11 +73,12 @@ fn main() -> Result<()> {
 
     {
         let _stage = ui.stage("Verify sealed events");
-        let (checkpoint_hash, checkpoint_sig, cutoff_event_id) = latest_checkpoint(&conn)?;
-
-        if let (Some(head), Some(sig), Some(cutoff_id)) =
-            (checkpoint_hash, checkpoint_sig, cutoff_event_id)
-        {
+        let checkpoint = verify::latest_checkpoint(&conn)?;
+        if let (Some(head), Some(sig), Some(cutoff_id)) = (
+            checkpoint.chain_head_hash,
+            checkpoint.signature,
+            checkpoint.cutoff_event_id,
+        ) {
             if verify_entry_signature(&verifying_key, &head, &sig).is_err() {
                 return Err(anyhow!("checkpoint signature mismatch"));
             }
@@ -95,29 +91,66 @@ fn main() -> Result<()> {
             println!("checkpoint: none (genesis chain)");
         }
 
-        let alarm_count = count_alarms(&conn)?;
+        let alarm_count = verify::count_alarms(&conn)?;
         if alarm_count > 0 {
             println!("WARNING: {} conformance alarms recorded", alarm_count);
             if args.verbose {
-                print_alarms(&conn)?;
+                for alarm in verify::load_alarms(&conn)? {
+                    println!(
+                        "  ALARM @{}: {} - {}",
+                        alarm.created_at, alarm.code, alarm.message
+                    );
+                }
             }
         }
 
-        verify_events(&conn, &verifying_key, checkpoint_hash, args.verbose)?;
+        let count = verify::verify_events_with(
+            &conn,
+            &verifying_key,
+            checkpoint.chain_head_hash,
+            |id, entry_hash| {
+                if args.verbose {
+                    println!("  event {}: hash={} OK", id, &hex(&entry_hash)[..16]);
+                }
+            },
+        )?;
+        println!("verified {} event entries", count);
     };
     println!();
 
     // === Break-Glass Receipts ===
     {
         let _stage = ui.stage("Verify break-glass receipts");
-        verify_break_glass_receipts(&conn, &verifying_key, args.verbose)?;
+        println!("=== Break-Glass Receipts ===");
+        let policy = verify::load_break_glass_policy(&conn)?;
+        let counts = verify::verify_break_glass_receipts_with(
+            &conn,
+            &verifying_key,
+            policy.as_ref(),
+            |id, entry_hash| {
+                if args.verbose {
+                    println!("  receipt {}: hash={} OK", id, &hex(&entry_hash)[..16]);
+                }
+            },
+        )?;
+        println!(
+            "verified {} receipt entries ({} granted, {} denied)",
+            counts.total, counts.granted, counts.denied
+        );
     }
     println!();
 
     // === Export Receipts ===
     {
         let _stage = ui.stage("Verify export receipts");
-        verify_export_receipts(&conn, &verifying_key, args.verbose)?;
+        println!("=== Export Receipts ===");
+        let count =
+            verify::verify_export_receipts_with(&conn, &verifying_key, |id, entry_hash| {
+                if args.verbose {
+                    println!("  receipt {}: hash={} OK", id, &hex(&entry_hash)[..16]);
+                }
+            })?;
+        println!("verified {} export receipt entries", count);
     }
 
     println!("OK: all chains verified.");
@@ -158,319 +191,7 @@ fn verifying_key_from_hex(hex_str: &str) -> Result<VerifyingKey> {
     VerifyingKey::from_bytes(&key_bytes).map_err(|e| anyhow!("invalid public key bytes: {}", e))
 }
 
-fn latest_checkpoint(conn: &Connection) -> Result<CheckpointInfo> {
-    let mut stmt = conn.prepare(
-        "SELECT chain_head_hash, signature, cutoff_event_id FROM checkpoints ORDER BY id DESC LIMIT 1",
-    )?;
-    let mut rows = stmt.query([])?;
-    if let Some(row) = rows.next()? {
-        let head = blob32(row, 0)?;
-        let sig = blob64(row, 1)?;
-        let cutoff_id: i64 = row.get(2)?;
-        Ok((Some(head), Some(sig), Some(cutoff_id)))
-    } else {
-        Ok((None, None, None))
-    }
-}
-
-fn verify_events(
-    conn: &Connection,
-    verifying_key: &VerifyingKey,
-    checkpoint_head: Option<[u8; 32]>,
-    verbose: bool,
-) -> Result<()> {
-    let mut stmt = conn.prepare(
-        "SELECT id, payload_json, prev_hash, entry_hash, signature FROM sealed_events ORDER BY id ASC",
-    )?;
-
-    let mut rows = stmt.query([])?;
-    let mut expected_prev: [u8; 32] = checkpoint_head.unwrap_or([0u8; 32]);
-    let mut count = 0u64;
-
-    while let Some(row) = rows.next()? {
-        let id: i64 = row.get(0)?;
-        let payload: String = row.get(1)?;
-        let prev_hash = blob32(row, 2)?;
-        let entry_hash = blob32(row, 3)?;
-        let sig = blob64(row, 4)?;
-
-        if prev_hash != expected_prev {
-            return Err(anyhow!(
-                "chain break at id {}: prev_hash={}, expected_prev={}",
-                id,
-                hex(&prev_hash),
-                hex(&expected_prev)
-            ));
-        }
-
-        let computed = hash_entry(&prev_hash, payload.as_bytes());
-        if computed != entry_hash {
-            return Err(anyhow!(
-                "hash mismatch at id {}: computed={}, stored={}",
-                id,
-                hex(&computed),
-                hex(&entry_hash)
-            ));
-        }
-
-        if verify_entry_signature(verifying_key, &entry_hash, &sig).is_err() {
-            return Err(anyhow!(
-                "signature mismatch at id {}: stored={}",
-                id,
-                hex64(&sig)
-            ));
-        }
-
-        if verbose {
-            println!("  event {}: hash={} OK", id, &hex(&entry_hash)[..16]);
-        }
-
-        expected_prev = entry_hash;
-        count += 1;
-    }
-
-    println!("verified {} event entries", count);
-    Ok(())
-}
-
-fn verify_break_glass_receipts(
-    conn: &Connection,
-    verifying_key: &VerifyingKey,
-    verbose: bool,
-) -> Result<()> {
-    println!("=== Break-Glass Receipts ===");
-
-    let policy = load_break_glass_policy(conn)?;
-    let mut stmt = conn.prepare(
-        "SELECT id, created_at, payload_json, approvals_json, prev_hash, entry_hash, signature FROM break_glass_receipts ORDER BY id ASC",
-    )?;
-
-    let mut rows = stmt.query([])?;
-    let mut expected_prev = [0u8; 32]; // genesis
-    let mut count = 0u64;
-    let mut granted = 0u64;
-    let mut denied = 0u64;
-
-    while let Some(row) = rows.next()? {
-        let policy = policy
-            .as_ref()
-            .ok_or_else(|| anyhow!("break-glass quorum policy is not configured"))?;
-        let id: i64 = row.get(0)?;
-        let _created_at: i64 = row.get(1)?;
-        let payload: String = row.get(2)?;
-        let approvals_json: String = row.get(3)?;
-        let prev_hash = blob32(row, 4)?;
-        let entry_hash = blob32(row, 5)?;
-        let sig = blob64(row, 6)?;
-
-        if prev_hash != expected_prev {
-            return Err(anyhow!(
-                "receipt chain break at id {}: prev_hash={}, expected_prev={}",
-                id,
-                hex(&prev_hash),
-                hex(&expected_prev)
-            ));
-        }
-
-        let computed = hash_entry(&expected_prev, payload.as_bytes());
-        if computed != entry_hash {
-            return Err(anyhow!(
-                "receipt hash mismatch at id {}: computed={}, stored={}",
-                id,
-                hex(&computed),
-                hex(&entry_hash)
-            ));
-        }
-
-        if verify_entry_signature(verifying_key, &entry_hash, &sig).is_err() {
-            return Err(anyhow!(
-                "receipt signature mismatch at id {}: stored={}",
-                id,
-                hex64(&sig)
-            ));
-        }
-
-        let receipt: witness_kernel::BreakGlassReceipt = serde_json::from_str(&payload)?;
-        match receipt.outcome {
-            witness_kernel::BreakGlassOutcome::Granted => granted += 1,
-            witness_kernel::BreakGlassOutcome::Denied { .. } => denied += 1,
-        }
-        let approvals: Vec<Approval> = serde_json::from_str(&approvals_json)?;
-        let commitment = approvals_commitment(&approvals);
-        if commitment != receipt.approvals_commitment {
-            return Err(anyhow!(
-                "receipt approvals commitment mismatch at id {}: stored={}, expected={}",
-                id,
-                hex(&receipt.approvals_commitment),
-                hex(&commitment)
-            ));
-        }
-        verify_approvals_against_policy(policy, &receipt, &approvals)?;
-
-        if verbose {
-            println!("  receipt {}: hash={} OK", id, &hex(&entry_hash)[..16]);
-        }
-
-        expected_prev = entry_hash;
-        count += 1;
-    }
-
-    println!(
-        "verified {} receipt entries ({} granted, {} denied)",
-        count, granted, denied
-    );
-    Ok(())
-}
-
-fn load_break_glass_policy(conn: &Connection) -> Result<Option<QuorumPolicy>> {
-    let mut stmt = conn.prepare("SELECT policy_json FROM break_glass_policy WHERE id = 1")?;
-    let mut rows = stmt.query([])?;
-    if let Some(row) = rows.next()? {
-        let policy_json: String = row.get(0)?;
-        let stored: QuorumPolicy = serde_json::from_str(&policy_json)?;
-        let policy = QuorumPolicy::new(stored.n, stored.trustees)?;
-        Ok(Some(policy))
-    } else {
-        Ok(None)
-    }
-}
-
-fn verify_approvals_against_policy(
-    policy: &QuorumPolicy,
-    receipt: &witness_kernel::BreakGlassReceipt,
-    approvals: &[Approval],
-) -> Result<()> {
-    for approval in approvals {
-        if approval.request_hash != receipt.request_hash {
-            return Err(anyhow!(
-                "approval request_hash mismatch for trustee {}",
-                approval.trustee.0
-            ));
-        }
-        let trustee = policy
-            .trustees
-            .iter()
-            .find(|t| t.id.0 == approval.trustee.0)
-            .ok_or_else(|| anyhow!("unknown trustee approval: {}", approval.trustee.0))?;
-        let verifying_key = VerifyingKey::from_bytes(&trustee.public_key)
-            .map_err(|_| anyhow!("invalid public key for trustee {}", trustee.id.0))?;
-        let signature = Signature::from_slice(&approval.signature)
-            .map_err(|_| anyhow!("invalid signature bytes for trustee {}", trustee.id.0))?;
-        verifying_key
-            .verify(&approval.request_hash, &signature)
-            .map_err(|_| anyhow!("invalid signature for trustee {}", trustee.id.0))?;
-    }
-    Ok(())
-}
-
-fn verify_export_receipts(
-    conn: &Connection,
-    verifying_key: &VerifyingKey,
-    verbose: bool,
-) -> Result<()> {
-    println!("=== Export Receipts ===");
-
-    let mut stmt = conn.prepare(
-        "SELECT id, created_at, payload_json, prev_hash, entry_hash, signature FROM export_receipts ORDER BY id ASC",
-    )?;
-
-    let mut rows = stmt.query([])?;
-    let mut expected_prev = [0u8; 32]; // genesis
-    let mut count = 0u64;
-
-    while let Some(row) = rows.next()? {
-        let id: i64 = row.get(0)?;
-        let _created_at: i64 = row.get(1)?;
-        let payload: String = row.get(2)?;
-        let prev_hash = blob32(row, 3)?;
-        let entry_hash = blob32(row, 4)?;
-        let sig = blob64(row, 5)?;
-
-        if prev_hash != expected_prev {
-            return Err(anyhow!(
-                "export receipt chain break at id {}: prev_hash={}, expected_prev={}",
-                id,
-                hex(&prev_hash),
-                hex(&expected_prev)
-            ));
-        }
-
-        let computed = hash_entry(&expected_prev, payload.as_bytes());
-        if computed != entry_hash {
-            return Err(anyhow!(
-                "export receipt hash mismatch at id {}: computed={}, stored={}",
-                id,
-                hex(&computed),
-                hex(&entry_hash)
-            ));
-        }
-
-        if verify_entry_signature(verifying_key, &entry_hash, &sig).is_err() {
-            return Err(anyhow!(
-                "export receipt signature mismatch at id {}: stored={}",
-                id,
-                hex64(&sig)
-            ));
-        }
-
-        let _receipt: witness_kernel::ExportReceipt = serde_json::from_str(&payload)?;
-
-        if verbose {
-            println!("  receipt {}: hash={} OK", id, &hex(&entry_hash)[..16]);
-        }
-
-        expected_prev = entry_hash;
-        count += 1;
-    }
-
-    println!("verified {} export receipt entries", count);
-    Ok(())
-}
-
-fn count_alarms(conn: &Connection) -> Result<i64> {
-    let mut stmt = conn.prepare("SELECT COUNT(*) FROM conformance_alarms")?;
-    let count: i64 = stmt.query_row([], |row| row.get(0))?;
-    Ok(count)
-}
-
-fn print_alarms(conn: &Connection) -> Result<()> {
-    let mut stmt =
-        conn.prepare("SELECT created_at, code, message FROM conformance_alarms ORDER BY id ASC")?;
-    let mut rows = stmt.query([])?;
-    while let Some(row) = rows.next()? {
-        let created_at: i64 = row.get(0)?;
-        let code: String = row.get(1)?;
-        let message: String = row.get(2)?;
-        println!("  ALARM @{}: {} - {}", created_at, code, message);
-    }
-    Ok(())
-}
-
-fn blob32(row: &Row<'_>, idx: usize) -> Result<[u8; 32]> {
-    let bytes: Vec<u8> = row.get(idx)?;
-    if bytes.len() != 32 {
-        return Err(anyhow!("expected 32-byte blob at col {}", idx));
-    }
-    let mut out = [0u8; 32];
-    out.copy_from_slice(&bytes);
-    Ok(out)
-}
-
-fn blob64(row: &Row<'_>, idx: usize) -> Result<[u8; 64]> {
-    let bytes: Vec<u8> = row.get(idx)?;
-    if bytes.len() != 64 {
-        return Err(anyhow!("expected 64-byte blob at col {}", idx));
-    }
-    let mut out = [0u8; 64];
-    out.copy_from_slice(&bytes);
-    Ok(out)
-}
-
 fn hex(b: &[u8; 32]) -> String {
-    b.iter().map(|x| format!("{:02x}", x)).collect()
-}
-
-fn hex64(b: &[u8; 64]) -> String {
     b.iter().map(|x| format!("{:02x}", x)).collect()
 }
 
@@ -532,10 +253,16 @@ mod tests {
 
         let conn = Connection::open(&db_path)?;
         let verifying_key = load_verifying_key(&conn, Some(&public_key_hex), None)?;
-        let (checkpoint_hash, _, _) = latest_checkpoint(&conn)?;
-        verify_events(&conn, &verifying_key, checkpoint_hash, false)?;
-        verify_break_glass_receipts(&conn, &verifying_key, false)?;
-        verify_export_receipts(&conn, &verifying_key, false)?;
+        let checkpoint = verify::latest_checkpoint(&conn)?;
+        verify::verify_events_with(&conn, &verifying_key, checkpoint.chain_head_hash, |_, _| {})?;
+        let policy = verify::load_break_glass_policy(&conn)?;
+        verify::verify_break_glass_receipts_with(
+            &conn,
+            &verifying_key,
+            policy.as_ref(),
+            |_, _| {},
+        )?;
+        verify::verify_export_receipts_with(&conn, &verifying_key, |_, _| {})?;
 
         let _ = std::fs::remove_file(&db_path);
         Ok(())
@@ -587,8 +314,13 @@ mod tests {
 
         let conn = Connection::open(&db_path)?;
         let verifying_key = load_verifying_key(&conn, Some(&public_key_hex), None)?;
-        let (checkpoint_hash, _, _) = latest_checkpoint(&conn)?;
-        let result = verify_events(&conn, &verifying_key, checkpoint_hash, false);
+        let checkpoint = verify::latest_checkpoint(&conn)?;
+        let result = verify::verify_events_with(
+            &conn,
+            &verifying_key,
+            checkpoint.chain_head_hash,
+            |_, _| {},
+        );
         assert!(result.is_err());
 
         let _ = std::fs::remove_file(&db_path);
@@ -636,7 +368,13 @@ mod tests {
 
         let conn = Connection::open(&db_path)?;
         let verifying_key = load_verifying_key(&conn, Some(&public_key_hex), None)?;
-        let result = verify_break_glass_receipts(&conn, &verifying_key, false);
+        let policy = verify::load_break_glass_policy(&conn)?;
+        let result = verify::verify_break_glass_receipts_with(
+            &conn,
+            &verifying_key,
+            policy.as_ref(),
+            |_, _| {},
+        );
         assert!(result.is_err());
 
         let _ = std::fs::remove_file(&db_path);
@@ -683,7 +421,13 @@ mod tests {
 
         let conn = Connection::open(&db_path)?;
         let verifying_key = load_verifying_key(&conn, Some(&public_key_hex), None)?;
-        let result = verify_break_glass_receipts(&conn, &verifying_key, false);
+        let policy = verify::load_break_glass_policy(&conn)?;
+        let result = verify::verify_break_glass_receipts_with(
+            &conn,
+            &verifying_key,
+            policy.as_ref(),
+            |_, _| {},
+        );
         assert!(result.is_err());
 
         let _ = std::fs::remove_file(&db_path);
@@ -730,7 +474,13 @@ mod tests {
 
         let conn = Connection::open(&db_path)?;
         let verifying_key = load_verifying_key(&conn, Some(&public_key_hex), None)?;
-        let result = verify_break_glass_receipts(&conn, &verifying_key, false);
+        let policy = verify::load_break_glass_policy(&conn)?;
+        let result = verify::verify_break_glass_receipts_with(
+            &conn,
+            &verifying_key,
+            policy.as_ref(),
+            |_, _| {},
+        );
         assert!(result.is_err());
 
         let _ = std::fs::remove_file(&db_path);
