@@ -48,3 +48,7 @@ path = "src/bin/break_glass.rs"
 [[bin]]
 name = "export_events"
 path = "src/bin/export_events.rs"
+
+[[bin]]
+name = "demo"
+path = "src/bin/demo.rs"

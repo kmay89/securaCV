@@ -37,6 +37,7 @@ pub mod frame;
 pub mod ingest;
 pub mod module_runtime;
 pub mod vault;
+pub mod verify;
 
 pub use frame::{
     Detection, DetectionResult, Detector, FrameBuffer, InferenceView, RawFrame, SizeClass,
