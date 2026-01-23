@@ -41,6 +41,7 @@ Recommended defaults:
 - Minimum bucket: 5 minutes
 - Typical bucket: 10–15 minutes
 - Buckets MAY include random jitter when exported
+- Export artifacts MUST preserve bucketed time (no precise timestamps) and SHOULD be batched.
 
 ---
 

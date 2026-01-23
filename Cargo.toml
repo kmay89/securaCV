@@ -36,3 +36,7 @@ path = "src/bin/log_verify.rs"
 [[bin]]
 name = "break_glass"
 path = "src/bin/break_glass.rs"
+
+[[bin]]
+name = "export_events"
+path = "src/bin/export_events.rs"

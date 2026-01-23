@@ -21,3 +21,16 @@ The device Ed25519 **verifying key** is stored locally in the witness database a
 `log_verify` read this public key from the database by default, or accept an
 explicit key via `--public-key` / `--public-key-file` as documented in
 `log_verify_README.md`.
+
+## Event export
+
+Use the sequential export tool to write a local artifact with coarse time buckets
+and batched events (no precise timestamps or identity selectors).
+
+```bash
+DEVICE_KEY_SEED=devkey:your-seed \
+  cargo run --bin export_events -- --db-path witness.db --output witness_export.json
+```
+
+`export_events` emits a single JSON artifact with batched buckets, applying
+default jitter and batching unless overridden by CLI flags.
