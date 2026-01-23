@@ -9,7 +9,6 @@
 //! 6. Enforces retention with checkpointed pruning
 
 use anyhow::{anyhow, Result};
-use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use witness_kernel::{
@@ -25,30 +24,26 @@ fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     let kernel_version = env!("CARGO_PKG_VERSION");
-    let ruleset_id = "ruleset:v0.1";
-    let ruleset_hash = KernelConfig::ruleset_hash_from_id(ruleset_id);
     let device_key_seed =
         std::env::var("DEVICE_KEY_SEED").map_err(|_| anyhow!("DEVICE_KEY_SEED must be set"))?;
+    let config = witness_kernel::config::WitnessdConfig::load()?;
+    let ruleset_hash = KernelConfig::ruleset_hash_from_id(&config.ruleset_id);
 
     let cfg = KernelConfig {
-        db_path: "witness.db".to_string(),
-        ruleset_id: ruleset_id.to_string(),
+        db_path: config.db_path.clone(),
+        ruleset_id: config.ruleset_id.clone(),
         ruleset_hash,
         kernel_version: kernel_version.to_string(),
-        retention: Duration::from_secs(60 * 60 * 24 * 7), // 7 days
+        retention: config.retention,
         device_key_seed,
-        zone_policy: ZonePolicy::default(),
+        zone_policy: ZonePolicy::new(config.zones.sensitive_zones.clone())?,
     };
 
     let mut kernel = Kernel::open(&cfg)?;
 
-    let api_addr = std::env::var("WITNESS_API_ADDR").unwrap_or_else(|_| "127.0.0.1:8799".into());
-    let api_token_path = std::env::var("WITNESS_API_TOKEN_PATH")
-        .ok()
-        .map(PathBuf::from);
     let api_config = ApiConfig {
-        addr: api_addr,
-        token_path: api_token_path,
+        addr: config.api_addr.clone(),
+        token_path: config.api_token_path.clone(),
         ..ApiConfig::default()
     };
     let api_handle = ApiServer::new(api_config, cfg.clone()).spawn()?;
@@ -67,13 +62,11 @@ fn main() -> Result<()> {
     let mut seal_token = load_seal_token()?;
 
     // Configure RTSP source
-    let rtsp_url =
-        std::env::var("WITNESS_RTSP_URL").unwrap_or_else(|_| "stub://front_camera".into());
     let rtsp_config = RtspConfig {
-        url: rtsp_url,
-        target_fps: 10,
-        width: 640,
-        height: 480,
+        url: config.rtsp.url.clone(),
+        target_fps: config.rtsp.target_fps,
+        width: config.rtsp.width,
+        height: config.rtsp.height,
     };
     let mut source = RtspSource::new(rtsp_config)?;
     source.connect()?;
@@ -82,7 +75,7 @@ fn main() -> Result<()> {
     let mut frame_buffer = FrameBuffer::new();
 
     // Detection module
-    let mut module = ZoneCrossingModule::new("zone:front_boundary").with_tokens(true);
+    let mut module = ZoneCrossingModule::new(&config.zones.module_zone_id).with_tokens(true);
     let module_desc: ModuleDescriptor = module.descriptor();
     let runtime = CapabilityBoundaryRuntime::new();
     runtime.validate_descriptor(&module_desc)?;
