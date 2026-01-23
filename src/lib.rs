@@ -210,7 +210,7 @@ pub fn validate_zone_id(zone_id: &str) -> Result<()> {
     Ok(())
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ZonePolicy {
     pub sensitive_zones: Vec<String>,
 }
@@ -237,14 +237,6 @@ impl ZonePolicy {
     pub fn is_sensitive(&self, zone_id: &str) -> bool {
         let zone_id = zone_id.to_lowercase();
         self.sensitive_zones.iter().any(|zone| zone == &zone_id)
-    }
-}
-
-impl Default for ZonePolicy {
-    fn default() -> Self {
-        Self {
-            sensitive_zones: Vec::new(),
-        }
     }
 }
 
