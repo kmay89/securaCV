@@ -396,7 +396,8 @@ fn read_file(path: &Path) -> Result<Vec<u8>> {
 mod tests {
     use super::*;
     use crate::break_glass::{
-        Approval, BreakGlass, QuorumPolicy, TrusteeEntry, TrusteeId, UnlockRequest,
+        Approval, BreakGlass, BreakGlassOutcome, BreakGlassTokenFile, QuorumPolicy, TrusteeEntry,
+        TrusteeId, UnlockRequest,
     };
     use crate::TimeBucket;
     use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
@@ -558,6 +559,53 @@ mod tests {
             },
         )?;
         assert_eq!(clear, b"raw bytes");
+        Ok(())
+    }
+
+    #[test]
+    fn vault_unseal_rejects_forged_token_file() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::new(VaultConfig {
+            local_path: temp_dir.path().join("vault"),
+        })?;
+        let envelope_id = "incident-forged";
+        let ruleset_hash = [10u8; 32];
+        let (mut seal_token, verifying_key, receipt_hash) =
+            make_break_glass_token(envelope_id, ruleset_hash);
+        let mut raw = b"raw bytes".to_vec();
+        vault.seal(
+            envelope_id,
+            &mut seal_token,
+            ruleset_hash,
+            &mut raw,
+            &verifying_key,
+            |hash| {
+                if hash != &receipt_hash {
+                    return Err(anyhow!("unexpected receipt hash"));
+                }
+                Ok(BreakGlassOutcome::Granted)
+            },
+        )?;
+
+        let (token, verifying_key, receipt_hash) =
+            make_break_glass_token(envelope_id, ruleset_hash);
+        let mut token_file = BreakGlassTokenFile::from_token(&token)?;
+        token_file.device_signature = hex::encode([1u8; 64]);
+        let mut forged = token_file.into_token()?;
+
+        let result = vault.unseal(
+            envelope_id,
+            &mut forged,
+            ruleset_hash,
+            &verifying_key,
+            |hash| {
+                if hash != &receipt_hash {
+                    return Err(anyhow!("unexpected receipt hash"));
+                }
+                Ok(BreakGlassOutcome::Granted)
+            },
+        );
+        assert!(result.is_err());
         Ok(())
     }
 

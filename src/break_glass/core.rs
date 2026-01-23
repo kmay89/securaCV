@@ -294,15 +294,21 @@ pub struct BreakGlassTokenFile {
 }
 
 impl BreakGlassTokenFile {
-    pub fn from_token(token: &BreakGlassToken) -> Self {
-        Self {
+    pub fn from_token(token: &BreakGlassToken) -> Result<Self> {
+        if token.receipt_entry_hash() == [0u8; 32] {
+            return Err(anyhow!("break-glass token missing receipt hash"));
+        }
+        if token.device_signature() == [0u8; 64] {
+            return Err(anyhow!("break-glass token missing device signature"));
+        }
+        Ok(Self {
             token_nonce: hex::encode(token.token_nonce()),
             expires_bucket: token.expires_bucket(),
             vault_envelope_id: token.vault_envelope_id().to_string(),
             ruleset_hash: hex::encode(token.ruleset_hash()),
             receipt_entry_hash: hex::encode(token.receipt_entry_hash()),
             device_signature: hex::encode(token.device_signature()),
-        }
+        })
     }
 
     pub fn into_token(self) -> Result<BreakGlassToken> {
@@ -655,7 +661,7 @@ mod tests {
             .attach_receipt_signature(receipt_hash, &device_signing_key)
             .unwrap();
 
-        let mut token_file = BreakGlassTokenFile::from_token(&token);
+        let mut token_file = BreakGlassTokenFile::from_token(&token).unwrap();
         token_file.device_signature = hex::encode([1u8; 64]);
         let forged = token_file.into_token().unwrap();
 

@@ -466,7 +466,7 @@ fn granted_lines(receipt: &crate::BreakGlassReceipt, token: &BreakGlassToken) ->
 fn write_token_to_file(path: &str, token: &BreakGlassToken) -> Result<()> {
     use std::io::Write;
 
-    let token_file = BreakGlassTokenFile::from_token(token);
+    let token_file = BreakGlassTokenFile::from_token(token)?;
     let payload = format!("{}\n", serde_json::to_string_pretty(&token_file)?);
 
     #[cfg(unix)]
