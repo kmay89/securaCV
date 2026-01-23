@@ -106,6 +106,7 @@ CI enforces formatting and linting. Before submitting, run:
 
 - `cargo fmt --check`
 - `cargo clippy -- -D warnings`
+- `scripts/ci/conformance.sh`
 
 ---
 
