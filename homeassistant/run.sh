@@ -114,23 +114,26 @@ start_mqtt_publisher() {
     local DEVICE_ID
     DEVICE_ID="pwk_${DEVICE_KEY_SEED:0:8}"
 
-    # Build command
-    local MQTT_CMD="/usr/local/bin/event_mqtt_bridge"
-    MQTT_CMD="$MQTT_CMD --daemon"
-    MQTT_CMD="$MQTT_CMD --allow-remote-mqtt"
-    MQTT_CMD="$MQTT_CMD --mqtt-broker-addr $PUBLISH_HOST:$PUBLISH_PORT"
-    MQTT_CMD="$MQTT_CMD --mqtt-topic-prefix $PUBLISH_PREFIX"
-    MQTT_CMD="$MQTT_CMD --ha-discovery-prefix $DISCOVERY_PREFIX"
-    MQTT_CMD="$MQTT_CMD --ha-device-id $DEVICE_ID"
-    MQTT_CMD="$MQTT_CMD --api-token-path $TOKEN_FILE"
-    MQTT_CMD="$MQTT_CMD --poll-interval 30"
+    # Build command using array for safe argument handling
+    local MQTT_CMD_ARRAY
+    MQTT_CMD_ARRAY=(
+        "/usr/local/bin/event_mqtt_bridge"
+        --daemon
+        --allow-remote-mqtt
+        --mqtt-broker-addr "$PUBLISH_HOST:$PUBLISH_PORT"
+        --mqtt-topic-prefix "$PUBLISH_PREFIX"
+        --ha-discovery-prefix "$DISCOVERY_PREFIX"
+        --ha-device-id "$DEVICE_ID"
+        --api-token-path "$TOKEN_FILE"
+        --poll-interval 30
+    )
 
     if [ -n "$PUBLISH_USER" ]; then
-        MQTT_CMD="$MQTT_CMD --mqtt-username $PUBLISH_USER"
+        MQTT_CMD_ARRAY+=(--mqtt-username "$PUBLISH_USER")
     fi
 
     if [ -n "$PUBLISH_PASS" ]; then
-        MQTT_CMD="$MQTT_CMD --mqtt-password $PUBLISH_PASS"
+        MQTT_CMD_ARRAY+=(--mqtt-password "$PUBLISH_PASS")
     fi
 
     bashio::log.info "MQTT Publisher: $PUBLISH_HOST:$PUBLISH_PORT"
@@ -139,7 +142,7 @@ start_mqtt_publisher() {
     bashio::log.info "  Device ID: $DEVICE_ID"
 
     # Start in background
-    $MQTT_CMD &
+    "${MQTT_CMD_ARRAY[@]}" &
     bashio::log.info "MQTT publisher started (PID: $!)"
 }
 
@@ -183,33 +186,35 @@ if [ "$MODE" = "frigate" ]; then
     bashio::log.info "Labels: ${FRIGATE_LABELS:-default}"
     bashio::log.info "MQTT Auth: $([ -n "$MQTT_USER" ] && echo "enabled" || echo "disabled")"
 
-    # Build frigate_bridge command
+    # Build frigate_bridge command using array for safe argument handling
     # Note: --allow-remote-mqtt is safe in HA because:
     # 1. The MQTT broker (core-mosquitto) is a trusted HA component
     # 2. All event data is still sanitized before logging
     # 3. No raw media ever flows through this path
-    CMD="/usr/local/bin/frigate_bridge"
-    CMD="$CMD --allow-remote-mqtt"
-    CMD="$CMD --mqtt-broker-addr $MQTT_HOST:$MQTT_PORT"
-    CMD="$CMD --frigate-topic $MQTT_TOPIC"
-    CMD="$CMD --db-path $DB_PATH"
-    CMD="$CMD --bucket-size-secs $BUCKET_SECS"
-    CMD="$CMD --min-confidence $MIN_CONFIDENCE"
+    CMD_ARRAY=(
+        "/usr/local/bin/frigate_bridge"
+        --allow-remote-mqtt
+        --mqtt-broker-addr "$MQTT_HOST:$MQTT_PORT"
+        --frigate-topic "$MQTT_TOPIC"
+        --db-path "$DB_PATH"
+        --bucket-size-secs "$BUCKET_SECS"
+        --min-confidence "$MIN_CONFIDENCE"
+    )
 
     if [ -n "$MQTT_USER" ]; then
-        CMD="$CMD --mqtt-username $MQTT_USER"
+        CMD_ARRAY+=(--mqtt-username "$MQTT_USER")
     fi
 
     if [ -n "$MQTT_PASS" ]; then
-        CMD="$CMD --mqtt-password $MQTT_PASS"
+        CMD_ARRAY+=(--mqtt-password "$MQTT_PASS")
     fi
 
     if [ -n "$FRIGATE_CAMERAS" ]; then
-        CMD="$CMD --cameras $FRIGATE_CAMERAS"
+        CMD_ARRAY+=(--cameras "$FRIGATE_CAMERAS")
     fi
 
     if [ -n "$FRIGATE_LABELS" ]; then
-        CMD="$CMD --labels $FRIGATE_LABELS"
+        CMD_ARRAY+=(--labels "$FRIGATE_LABELS")
     fi
 
     # Start MQTT publisher in background if enabled (for HA Discovery)
@@ -223,7 +228,7 @@ if [ "$MODE" = "frigate" ]; then
     fi
 
     bashio::log.info "Starting frigate_bridge..."
-    exec $CMD
+    exec "${CMD_ARRAY[@]}"
 
 # ============================================================================
 # STANDALONE MODE (Direct RTSP)
