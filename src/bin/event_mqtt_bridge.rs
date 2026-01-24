@@ -445,7 +445,7 @@ fn run_daemon(
                         let json = serde_json::to_vec(&payload)?;
                         mqtt_publish_qos1(&mut conn, &state_topic, &json, true)?;
 
-                        last_bucket_seen = Some(last.time_bucket.clone());
+                        last_bucket_seen = Some(last.time_bucket);
                     }
 
                     log::info!("Published {} new events", new_events.len());
