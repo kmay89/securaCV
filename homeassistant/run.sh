@@ -3,12 +3,16 @@
 # Supports two modes:
 # - standalone: Process RTSP streams directly
 # - frigate: Subscribe to Frigate MQTT events for detection
+#
+# Both modes can optionally publish events to MQTT with HA Discovery for
+# automatic entity creation in Home Assistant.
 
 set -e
 
 CONFIG_FILE="/config/witness_config.json"
 DB_PATH="/config/witness.db"
 VAULT_PATH="/share/witness_vault"
+TOKEN_FILE="/config/api_token"
 
 # Log startup
 bashio::log.info "Starting Privacy Witness Kernel add-on..."
@@ -19,6 +23,12 @@ RETENTION_DAYS=$(bashio::config 'retention_days')
 TIME_BUCKET_MIN=$(bashio::config 'time_bucket_minutes')
 LOG_LEVEL=$(bashio::config 'log_level')
 MODE=$(bashio::config 'mode')
+
+# MQTT publishing configuration
+MQTT_PUBLISH_ENABLED="false"
+if bashio::config.has_value 'mqtt_publish.enabled'; then
+    MQTT_PUBLISH_ENABLED=$(bashio::config 'mqtt_publish.enabled')
+fi
 
 # Validate device key seed
 if [ -z "$DEVICE_KEY_SEED" ] || [ "$DEVICE_KEY_SEED" = "devkey:mvp" ]; then
@@ -47,6 +57,93 @@ bashio::log.info "Retention: $RETENTION_DAYS days"
 bashio::log.info "Time bucket: $TIME_BUCKET_MIN minutes"
 
 # ============================================================================
+# Function to start MQTT publishing daemon (if enabled)
+# ============================================================================
+start_mqtt_publisher() {
+    if [ "$MQTT_PUBLISH_ENABLED" != "true" ]; then
+        return
+    fi
+
+    bashio::log.info "Starting MQTT event publisher with HA Discovery..."
+
+    # Read MQTT publish configuration
+    local PUBLISH_HOST PUBLISH_PORT PUBLISH_USER PUBLISH_PASS PUBLISH_PREFIX DISCOVERY_PREFIX
+
+    if bashio::config.has_value 'mqtt_publish.host'; then
+        PUBLISH_HOST=$(bashio::config 'mqtt_publish.host')
+    else
+        PUBLISH_HOST="core-mosquitto"
+    fi
+
+    if bashio::config.has_value 'mqtt_publish.port'; then
+        PUBLISH_PORT=$(bashio::config 'mqtt_publish.port')
+    else
+        PUBLISH_PORT="1883"
+    fi
+
+    if bashio::config.has_value 'mqtt_publish.username'; then
+        PUBLISH_USER=$(bashio::config 'mqtt_publish.username')
+    fi
+
+    if bashio::config.has_value 'mqtt_publish.password'; then
+        PUBLISH_PASS=$(bashio::config 'mqtt_publish.password')
+    fi
+
+    if bashio::config.has_value 'mqtt_publish.topic_prefix'; then
+        PUBLISH_PREFIX=$(bashio::config 'mqtt_publish.topic_prefix')
+    else
+        PUBLISH_PREFIX="witness"
+    fi
+
+    if bashio::config.has_value 'mqtt_publish.discovery_prefix'; then
+        DISCOVERY_PREFIX=$(bashio::config 'mqtt_publish.discovery_prefix')
+    else
+        DISCOVERY_PREFIX="homeassistant"
+    fi
+
+    # Wait for API to be ready
+    bashio::log.info "Waiting for witness API..."
+    for i in $(seq 1 30); do
+        if curl -sf http://127.0.0.1:8799/health > /dev/null 2>&1; then
+            break
+        fi
+        sleep 1
+    done
+
+    # Generate device ID from key seed
+    local DEVICE_ID
+    DEVICE_ID="pwk_${DEVICE_KEY_SEED:0:8}"
+
+    # Build command
+    local MQTT_CMD="/usr/local/bin/event_mqtt_bridge"
+    MQTT_CMD="$MQTT_CMD --daemon"
+    MQTT_CMD="$MQTT_CMD --allow-remote-mqtt"
+    MQTT_CMD="$MQTT_CMD --mqtt-broker-addr $PUBLISH_HOST:$PUBLISH_PORT"
+    MQTT_CMD="$MQTT_CMD --mqtt-topic-prefix $PUBLISH_PREFIX"
+    MQTT_CMD="$MQTT_CMD --ha-discovery-prefix $DISCOVERY_PREFIX"
+    MQTT_CMD="$MQTT_CMD --ha-device-id $DEVICE_ID"
+    MQTT_CMD="$MQTT_CMD --api-token-path $TOKEN_FILE"
+    MQTT_CMD="$MQTT_CMD --poll-interval 30"
+
+    if [ -n "$PUBLISH_USER" ]; then
+        MQTT_CMD="$MQTT_CMD --mqtt-username $PUBLISH_USER"
+    fi
+
+    if [ -n "$PUBLISH_PASS" ]; then
+        MQTT_CMD="$MQTT_CMD --mqtt-password $PUBLISH_PASS"
+    fi
+
+    bashio::log.info "MQTT Publisher: $PUBLISH_HOST:$PUBLISH_PORT"
+    bashio::log.info "  Topic prefix: $PUBLISH_PREFIX"
+    bashio::log.info "  Discovery prefix: $DISCOVERY_PREFIX"
+    bashio::log.info "  Device ID: $DEVICE_ID"
+
+    # Start in background
+    $MQTT_CMD &
+    bashio::log.info "MQTT publisher started (PID: $!)"
+}
+
+# ============================================================================
 # FRIGATE MODE
 # ============================================================================
 if [ "$MODE" = "frigate" ]; then
@@ -57,6 +154,16 @@ if [ "$MODE" = "frigate" ]; then
     MQTT_PORT=$(bashio::config 'frigate.mqtt_port')
     MQTT_TOPIC=$(bashio::config 'frigate.mqtt_topic')
     MIN_CONFIDENCE=$(bashio::config 'frigate.min_confidence')
+
+    # MQTT authentication (optional)
+    MQTT_USER=""
+    MQTT_PASS=""
+    if bashio::config.has_value 'frigate.mqtt_username'; then
+        MQTT_USER=$(bashio::config 'frigate.mqtt_username')
+    fi
+    if bashio::config.has_value 'frigate.mqtt_password'; then
+        MQTT_PASS=$(bashio::config 'frigate.mqtt_password')
+    fi
 
     # Get cameras and labels as comma-separated strings
     FRIGATE_CAMERAS=""
@@ -74,6 +181,7 @@ if [ "$MODE" = "frigate" ]; then
     bashio::log.info "Min Confidence: $MIN_CONFIDENCE"
     bashio::log.info "Cameras: ${FRIGATE_CAMERAS:-all}"
     bashio::log.info "Labels: ${FRIGATE_LABELS:-default}"
+    bashio::log.info "MQTT Auth: $([ -n "$MQTT_USER" ] && echo "enabled" || echo "disabled")"
 
     # Build frigate_bridge command
     # Note: --allow-remote-mqtt is safe in HA because:
@@ -88,12 +196,30 @@ if [ "$MODE" = "frigate" ]; then
     CMD="$CMD --bucket-size-secs $BUCKET_SECS"
     CMD="$CMD --min-confidence $MIN_CONFIDENCE"
 
+    if [ -n "$MQTT_USER" ]; then
+        CMD="$CMD --mqtt-username $MQTT_USER"
+    fi
+
+    if [ -n "$MQTT_PASS" ]; then
+        CMD="$CMD --mqtt-password $MQTT_PASS"
+    fi
+
     if [ -n "$FRIGATE_CAMERAS" ]; then
         CMD="$CMD --cameras $FRIGATE_CAMERAS"
     fi
 
     if [ -n "$FRIGATE_LABELS" ]; then
         CMD="$CMD --labels $FRIGATE_LABELS"
+    fi
+
+    # Start MQTT publisher in background if enabled (for HA Discovery)
+    # Note: In Frigate mode, we run witnessd API in background for the publisher
+    if [ "$MQTT_PUBLISH_ENABLED" = "true" ]; then
+        bashio::log.info "MQTT publishing enabled - starting witnessd API in background..."
+        /usr/local/bin/witnessd &
+        WITNESSD_PID=$!
+        sleep 2
+        start_mqtt_publisher
     fi
 
     bashio::log.info "Starting frigate_bridge..."
@@ -196,6 +322,16 @@ else
 EOF
 
     bashio::log.info "Configuration written to $CONFIG_FILE"
+
+    # Start MQTT publisher in background if enabled (for HA Discovery)
+    if [ "$MQTT_PUBLISH_ENABLED" = "true" ]; then
+        (
+            # Wait for witnessd to start, then launch publisher
+            sleep 5
+            start_mqtt_publisher
+        ) &
+    fi
+
     bashio::log.info "Starting witnessd..."
     exec /usr/local/bin/witnessd
 fi

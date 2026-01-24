@@ -66,3 +66,7 @@ path = "src/bin/export_verify.rs"
 [[bin]]
 name = "frigate_bridge"
 path = "src/bin/frigate_bridge.rs"
+
+[[bin]]
+name = "event_mqtt_bridge"
+path = "src/bin/event_mqtt_bridge.rs"

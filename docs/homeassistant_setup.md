@@ -56,6 +56,8 @@ device_key_seed: "your-64-char-key"
 frigate:
   mqtt_host: "core-mosquitto"
   min_confidence: 0.5
+mqtt_publish:
+  enabled: true  # Auto-create sensors in HA
 ```
 
 **For standalone users:**
@@ -63,6 +65,8 @@ frigate:
 mode: "standalone"
 device_key_seed: "your-64-char-key"
 go2rtc_discovery: true
+mqtt_publish:
+  enabled: true  # Auto-create sensors in HA
 ```
 
 ### Step 4: Start
@@ -183,9 +187,91 @@ go2rtc_url: "http://frigate:1984"
 
 ---
 
-## Creating Home Assistant Sensors
+## MQTT Discovery (Automatic Sensors)
 
-The add-on exposes an Event API on port 8799. You can create sensors to track events.
+PWK supports **Home Assistant MQTT Discovery**, which automatically creates sensors without any manual configuration.
+
+### Enable MQTT Publishing
+
+```yaml
+mqtt_publish:
+  enabled: true
+  host: "core-mosquitto"    # HA's built-in MQTT broker
+  port: 1883
+  username: ""              # Optional: MQTT auth
+  password: ""
+  topic_prefix: "witness"   # State topics: witness/zone/*/event
+  discovery_prefix: "homeassistant"  # HA discovery prefix
+```
+
+### Auto-Created Entities
+
+When enabled, PWK automatically creates these entities for each zone:
+
+| Entity | Type | Description |
+|--------|------|-------------|
+| `sensor.pwk_<zone>_events` | Sensor | Total event count (state_class: total_increasing) |
+| `binary_sensor.pwk_<zone>_motion` | Binary Sensor | Motion detected (auto-off after 10 min) |
+| `sensor.pwk_last_event` | Sensor | Most recent event with full attributes |
+
+### Entity Attributes
+
+The `sensor.pwk_last_event` entity includes these attributes:
+
+```yaml
+event_type: "BoundaryCrossingObjectLarge"
+zone_id: "zone:front_door"
+time_bucket_start: 1706140800
+time_bucket_size: 600
+confidence: 0.85
+timestamp: 1706140823
+```
+
+### Availability Tracking
+
+PWK publishes to `witness/status` with Last Will Testament (LWT):
+- **Online**: PWK is running and publishing events
+- **Offline**: PWK has disconnected (set automatically by MQTT broker)
+
+All entities use this availability topic, so they show "unavailable" when PWK is offline.
+
+### MQTT Topics Published
+
+| Topic | Payload | Retained |
+|-------|---------|----------|
+| `witness/status` | `online` / `offline` | Yes |
+| `witness/last_event` | JSON event details | Yes |
+| `witness/zone/<name>/count` | Event count integer | Yes |
+| `witness/zone/<name>/motion` | `ON` | No |
+| `witness/zone/<name>/event` | Full event JSON | No |
+| `witness/events` | All events (firehose) | No |
+
+### Example Automation with MQTT Sensors
+
+```yaml
+# automations.yaml
+automation:
+  - alias: "Notify on Front Door Motion"
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.pwk_front_door_motion
+        to: "on"
+    action:
+      - service: notify.mobile_app
+        data:
+          title: "Motion Detected"
+          message: >
+            Motion at front door.
+            Confidence: {{ state_attr('sensor.pwk_last_event', 'confidence') }}
+```
+
+---
+
+## Manual Sensors (Alternative)
+
+If you prefer not to use MQTT Discovery, you can create sensors manually using the REST API.
+
+The add-on exposes an Event API on port 8799.
 
 ### REST Sensor (Basic)
 

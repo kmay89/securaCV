@@ -35,6 +35,8 @@ options:
     mqtt_host: "core-mosquitto"
     mqtt_port: 1883
     mqtt_topic: "frigate/events"
+    mqtt_username: ""
+    mqtt_password: ""
     min_confidence: 0.5
     cameras: []
     labels: ["person", "car", "dog", "cat"]
@@ -43,6 +45,17 @@ options:
   cameras: []
   go2rtc_discovery: true
   go2rtc_url: "http://homeassistant.local:1984"
+
+  # MQTT event publishing with Home Assistant Discovery
+  # When enabled, PWK automatically creates sensors in Home Assistant
+  mqtt_publish:
+    enabled: false
+    host: "core-mosquitto"
+    port: 1883
+    username: ""
+    password: ""
+    topic_prefix: "witness"
+    discovery_prefix: "homeassistant"
 
   # Common settings
   device_key_seed: ""
@@ -56,6 +69,8 @@ schema:
     mqtt_host: str?
     mqtt_port: int(1,65535)?
     mqtt_topic: str?
+    mqtt_username: str?
+    mqtt_password: password?
     min_confidence: float(0,1)?
     cameras: list(str)?
     labels: list(str)?
@@ -69,6 +84,14 @@ schema:
       enabled: bool?
   go2rtc_discovery: bool
   go2rtc_url: url?
+  mqtt_publish:
+    enabled: bool?
+    host: str?
+    port: int(1,65535)?
+    username: str?
+    password: password?
+    topic_prefix: str?
+    discovery_prefix: str?
   device_key_seed: str
   retention_days: int(1,365)
   time_bucket_minutes: int(5,60)
