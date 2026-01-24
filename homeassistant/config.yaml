@@ -1,0 +1,86 @@
+# Privacy Witness Kernel - Home Assistant Add-on Configuration
+# https://github.com/kmay89/securaCV
+
+name: "Privacy Witness Kernel"
+description: "Privacy-preserving video surveillance that produces claims, not recordings"
+version: "0.3.1"
+slug: "privacy_witness_kernel"
+url: "https://github.com/kmay89/securaCV"
+arch:
+  - amd64
+  - aarch64
+init: false
+homeassistant_api: true
+hassio_api: true
+
+# Network configuration
+ports:
+  8799/tcp: 8799  # Event API (loopback by default, exposed for HA integration)
+ports_description:
+  8799/tcp: "Event API for retrieving privacy-preserving event claims"
+
+# Persistent storage
+map:
+  - config:rw      # For witness.db and configuration
+  - share:rw       # For vault storage
+  - ssl:ro         # For camera certificates if needed
+
+# Add-on options (configurable via HA UI)
+options:
+  # Mode: "standalone" (process RTSP directly) or "frigate" (subscribe to Frigate events)
+  mode: "standalone"
+
+  # Frigate integration settings (used when mode=frigate)
+  frigate:
+    mqtt_host: "core-mosquitto"
+    mqtt_port: 1883
+    mqtt_topic: "frigate/events"
+    min_confidence: 0.5
+    cameras: []
+    labels: ["person", "car", "dog", "cat"]
+
+  # Direct camera settings (used when mode=standalone)
+  cameras: []
+  go2rtc_discovery: true
+  go2rtc_url: "http://homeassistant.local:1984"
+
+  # Common settings
+  device_key_seed: ""
+  retention_days: 7
+  time_bucket_minutes: 10
+  log_level: "info"
+
+schema:
+  mode: list(standalone|frigate)
+  frigate:
+    mqtt_host: str?
+    mqtt_port: int(1,65535)?
+    mqtt_topic: str?
+    min_confidence: float(0,1)?
+    cameras: list(str)?
+    labels: list(str)?
+  cameras:
+    - name: str
+      url: str
+      zone_id: str?
+      fps: int(1,30)?
+      width: int(320,3840)?
+      height: int(240,2160)?
+      enabled: bool?
+  go2rtc_discovery: bool
+  go2rtc_url: url?
+  device_key_seed: str
+  retention_days: int(1,365)
+  time_bucket_minutes: int(5,60)
+  log_level: list(debug|info|warn|error)
+
+# Environment variables passed to the add-on
+environment:
+  RUST_LOG: "info"
+
+# Startup configuration
+startup: services
+boot: auto
+
+# Security options
+apparmor: true

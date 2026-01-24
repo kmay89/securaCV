@@ -203,8 +203,26 @@ impl WitnessdConfig {
 fn read_config_file(path: &Path) -> Result<WitnessdConfigFile> {
     let raw = std::fs::read_to_string(path)
         .map_err(|e| anyhow!("failed to read config file {}: {}", path.display(), e))?;
-    let cfg = serde_json::from_str(&raw)
-        .map_err(|e| anyhow!("invalid config file {}: {}", path.display(), e))?;
+
+    // Detect format by extension or content
+    let cfg = if path.extension().map(|e| e == "toml").unwrap_or(false) {
+        toml::from_str(&raw)
+            .map_err(|e| anyhow!("invalid TOML config file {}: {}", path.display(), e))?
+    } else if path.extension().map(|e| e == "json").unwrap_or(false) {
+        serde_json::from_str(&raw)
+            .map_err(|e| anyhow!("invalid JSON config file {}: {}", path.display(), e))?
+    } else {
+        // Try JSON first, then TOML
+        serde_json::from_str(&raw).or_else(|_| {
+            toml::from_str(&raw).map_err(|e| {
+                anyhow!(
+                    "invalid config file {} (tried JSON and TOML): {}",
+                    path.display(),
+                    e
+                )
+            })
+        })?
+    };
     Ok(cfg)
 }
 

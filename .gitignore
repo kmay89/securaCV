@@ -1,0 +1,28 @@
+# Rust build artifacts
+/target/
+**/*.rs.bk
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local development
+*.db
+*.db-journal
+/vault/
+demo_out/
+demo_witness.db
+
+# Secrets (never commit these)
+*.pem
+*.key
+api_token
+.env
+.env.local

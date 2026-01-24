@@ -84,7 +84,53 @@ DEVICE_KEY_SEED=devkey:your-seed \
 `export_events` emits a single JSON artifact with batched buckets, applying
 default jitter and batching unless overridden by CLI flags.
 
-## RTSP ingestion (GStreamer)
+## Home Assistant Integration
+
+Run the Privacy Witness Kernel as a Home Assistant add-on for easy camera integration:
+
+1. Add the repository: `https://github.com/kmay89/securaCV`
+2. Install "Privacy Witness Kernel" from the add-on store
+3. Configure your cameras (auto-discovers from go2rtc/Frigate)
+
+See `docs/homeassistant_setup.md` for the full guide.
+
+## RTSP Camera Setup
+
+### Quick Start with Real Cameras
+
+1. Install GStreamer dependencies:
+   ```bash
+   # Ubuntu/Debian
+   sudo apt-get install libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+       gstreamer1.0-plugins-good gstreamer1.0-plugins-bad libseccomp-dev
+   ```
+
+2. Build with RTSP support:
+   ```bash
+   cargo build --release --features rtsp-gstreamer
+   ```
+
+3. Configure your camera (create `witness.toml`):
+   ```toml
+   [rtsp]
+   url = "rtsp://admin:password@192.168.1.100:554/stream1"
+   target_fps = 10
+   width = 640
+   height = 480
+
+   [zones]
+   module_zone_id = "zone:front_door"
+   ```
+
+4. Run:
+   ```bash
+   export DEVICE_KEY_SEED=$(openssl rand -hex 32)
+   WITNESS_CONFIG=witness.toml cargo run --release --features rtsp-gstreamer --bin witnessd
+   ```
+
+See `docs/rtsp_setup.md` for camera URL patterns, troubleshooting, and advanced configuration.
+
+### RTSP Architecture
 
 `witnessd` uses GStreamer to decode RTSP streams in-memory. Configure an RTSP URL
 in `RtspConfig` and the kernel will produce `RawFrame` values without writing
