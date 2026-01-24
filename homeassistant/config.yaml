@@ -27,15 +27,38 @@ map:
 
 # Add-on options (configurable via HA UI)
 options:
+  # Mode: "standalone" (process RTSP directly) or "frigate" (subscribe to Frigate events)
+  mode: "standalone"
+
+  # Frigate integration settings (used when mode=frigate)
+  frigate:
+    mqtt_host: "core-mosquitto"
+    mqtt_port: 1883
+    mqtt_topic: "frigate/events"
+    min_confidence: 0.5
+    cameras: []
+    labels: ["person", "car", "dog", "cat"]
+
+  # Direct camera settings (used when mode=standalone)
   cameras: []
   go2rtc_discovery: true
   go2rtc_url: "http://homeassistant.local:1984"
+
+  # Common settings
   device_key_seed: ""
   retention_days: 7
   time_bucket_minutes: 10
   log_level: "info"
 
 schema:
+  mode: list(standalone|frigate)
+  frigate:
+    mqtt_host: str?
+    mqtt_port: int(1,65535)?
+    mqtt_topic: str?
+    min_confidence: float(0,1)?
+    cameras: list(str)?
+    labels: list(str)?
   cameras:
     - name: str
       url: str

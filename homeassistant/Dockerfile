@@ -36,6 +36,7 @@ RUN apk add --no-cache \
 
 # Copy binaries
 COPY --from=builder /build/target/release/witnessd /usr/local/bin/
+COPY --from=builder /build/target/release/frigate_bridge /usr/local/bin/
 COPY --from=builder /build/target/release/break_glass /usr/local/bin/
 COPY --from=builder /build/target/release/log_verify /usr/local/bin/
 COPY --from=builder /build/target/release/export_events /usr/local/bin/
