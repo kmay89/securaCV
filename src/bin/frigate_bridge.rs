@@ -25,7 +25,11 @@ use witness_kernel::{
 const BRIDGE_NAME: &str = "frigate_bridge";
 
 #[derive(Parser, Debug)]
-#[command(author, version, about = "Bridge Frigate events to Privacy Witness Kernel")]
+#[command(
+    author,
+    version,
+    about = "Bridge Frigate events to Privacy Witness Kernel"
+)]
 struct Args {
     /// MQTT broker address.
     /// By default, only loopback addresses are allowed for security.
@@ -39,6 +43,15 @@ struct Args {
     /// This does NOT weaken privacy guarantees - events are still sanitized.
     #[arg(long, env = "ALLOW_REMOTE_MQTT")]
     allow_remote_mqtt: bool,
+
+    /// MQTT username for authentication.
+    /// Required if your broker (like HA Mosquitto) requires authentication.
+    #[arg(long, env = "MQTT_USERNAME")]
+    mqtt_username: Option<String>,
+
+    /// MQTT password for authentication.
+    #[arg(long, env = "MQTT_PASSWORD")]
+    mqtt_password: Option<String>,
 
     /// Frigate MQTT topic to subscribe to.
     #[arg(long, env = "FRIGATE_MQTT_TOPIC", default_value = "frigate/events")]
@@ -75,9 +88,21 @@ struct Args {
     labels: Option<String>,
 }
 
-/// Frigate event from MQTT (simplified - we only extract what we need).
+/// Frigate event from MQTT - handles the nested before/after format.
+/// Frigate publishes: { "before": {...}, "after": {...}, "type": "new"|"update"|"end" }
 #[derive(Debug, Deserialize)]
-struct FrigateEvent {
+struct FrigateEventWrapper {
+    /// The "after" state contains current detection info
+    after: Option<FrigateEventData>,
+
+    /// Event type: "new", "update", or "end"
+    #[serde(rename = "type")]
+    event_type: Option<String>,
+}
+
+/// Inner event data from Frigate (the "after" section).
+#[derive(Debug, Deserialize)]
+struct FrigateEventData {
     /// Event ID (will be stripped - not logged)
     #[allow(dead_code)]
     id: Option<String>,
@@ -95,12 +120,6 @@ struct FrigateEvent {
     /// Top score seen for this object (use this if available)
     top_score: Option<f64>,
 
-    /// Event start time (will be coarsened)
-    start_time: Option<f64>,
-
-    /// Event end time (used to determine if event ended)
-    end_time: Option<f64>,
-
     /// Current zones the object is in (use first if available)
     #[serde(default)]
     current_zones: Vec<String>,
@@ -108,7 +127,6 @@ struct FrigateEvent {
     /// Whether this is a false positive (skip if true)
     #[serde(default)]
     false_positive: bool,
-
     // Fields we intentionally ignore for privacy:
     // - thumbnail: raw image data
     // - snapshot: raw image data
@@ -117,6 +135,8 @@ struct FrigateEvent {
     // - stationary: tracking state
     // - motionless_count: tracking state
     // - position_changes: movement tracking
+    // - start_time: precise timestamp (we coarsen to buckets)
+    // - end_time: precise timestamp
 }
 
 /// Frigate review event (alternative topic for confirmations).
@@ -235,7 +255,12 @@ fn main() -> Result<()> {
     };
 
     // Connect to MQTT and subscribe
-    let mut stream = connect_mqtt(&args.mqtt_broker_addr, &args.mqtt_client_id)?;
+    let mut stream = connect_mqtt(
+        &args.mqtt_broker_addr,
+        &args.mqtt_client_id,
+        args.mqtt_username.as_deref(),
+        args.mqtt_password.as_deref(),
+    )?;
     subscribe_mqtt(&mut stream, &args.frigate_topic)?;
     log::info!("Subscribed to {}", args.frigate_topic);
 
@@ -268,7 +293,12 @@ fn main() -> Result<()> {
             Err(e) => {
                 log::error!("MQTT read error: {}. Reconnecting...", e);
                 std::thread::sleep(Duration::from_secs(5));
-                stream = connect_mqtt(&args.mqtt_broker_addr, &args.mqtt_client_id)?;
+                stream = connect_mqtt(
+                    &args.mqtt_broker_addr,
+                    &args.mqtt_client_id,
+                    args.mqtt_username.as_deref(),
+                    args.mqtt_password.as_deref(),
+                )?;
                 subscribe_mqtt(&mut stream, &args.frigate_topic)?;
             }
         }
@@ -311,7 +341,11 @@ fn process_message(
 
     // Filter by confidence
     if confidence < min_confidence {
-        log::debug!("Skipping low confidence: {} < {}", confidence, min_confidence);
+        log::debug!(
+            "Skipping low confidence: {} < {}",
+            confidence,
+            min_confidence
+        );
         return Ok(());
     }
 
@@ -381,8 +415,22 @@ fn process_message(
 }
 
 fn parse_frigate_event(payload: &[u8]) -> Result<(String, String, f64, Vec<String>)> {
-    let event: FrigateEvent =
+    // Frigate publishes events in nested format: { "before": {...}, "after": {...} }
+    let wrapper: FrigateEventWrapper =
         serde_json::from_slice(payload).context("parse Frigate event JSON")?;
+
+    // Only process "new" events (not "update" or "end")
+    // This prevents duplicate logging for the same detection
+    match wrapper.event_type.as_deref() {
+        Some("new") => {}
+        Some("end") => return Err(anyhow!("event ended, already processed")),
+        Some("update") => return Err(anyhow!("update event, already processed")),
+        _ => {} // Accept if no type specified (backward compat)
+    }
+
+    let event = wrapper
+        .after
+        .ok_or_else(|| anyhow!("missing 'after' section in event"))?;
 
     if event.false_positive {
         return Err(anyhow!("false positive event"));
@@ -426,7 +474,13 @@ fn map_label_to_event_type(label: &str) -> EventType {
 fn sanitize_zone_name(name: &str) -> String {
     name.to_lowercase()
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '_' || c == '-' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
         .take(64)
         .collect()
 }
@@ -449,7 +503,12 @@ fn validate_loopback_addr(addr: &str) -> Result<()> {
     ))
 }
 
-fn connect_mqtt(addr: &str, client_id: &str) -> Result<TcpStream> {
+fn connect_mqtt(
+    addr: &str,
+    client_id: &str,
+    username: Option<&str>,
+    password: Option<&str>,
+) -> Result<TcpStream> {
     let addr = addr.strip_prefix("mqtt://").unwrap_or(addr);
     let mut stream = TcpStream::connect(addr).context("connect to MQTT broker")?;
     stream.set_read_timeout(Some(Duration::from_secs(30)))?;
@@ -457,12 +516,28 @@ fn connect_mqtt(addr: &str, client_id: &str) -> Result<TcpStream> {
     // MQTT CONNECT packet
     let mut variable = Vec::new();
     encode_string(&mut variable, "MQTT");
-    variable.push(0x04); // Protocol level
-    variable.push(0x02); // Clean session
-    variable.extend_from_slice(&60u16.to_be_bytes()); // Keep alive
+    variable.push(0x04); // Protocol level (MQTT 3.1.1)
 
+    // Connect flags: clean session + username/password if provided
+    let mut connect_flags = 0x02u8; // Clean session
+    if username.is_some() {
+        connect_flags |= 0x80; // Username flag
+    }
+    if password.is_some() {
+        connect_flags |= 0x40; // Password flag
+    }
+    variable.push(connect_flags);
+    variable.extend_from_slice(&60u16.to_be_bytes()); // Keep alive (60s)
+
+    // Payload: client_id, then optional username/password
     let mut payload = Vec::new();
     encode_string(&mut payload, client_id);
+    if let Some(user) = username {
+        encode_string(&mut payload, user);
+    }
+    if let Some(pass) = password {
+        encode_string(&mut payload, pass);
+    }
 
     let remaining = variable.len() + payload.len();
     let mut packet = vec![0x10];
@@ -475,10 +550,21 @@ fn connect_mqtt(addr: &str, client_id: &str) -> Result<TcpStream> {
     let mut connack = [0u8; 4];
     stream.read_exact(&mut connack)?;
     if connack[0] != 0x20 || connack[3] != 0x00 {
-        return Err(anyhow!("MQTT connection rejected"));
+        let reason = match connack[3] {
+            0x01 => "unacceptable protocol version",
+            0x02 => "identifier rejected",
+            0x03 => "server unavailable",
+            0x04 => "bad username or password",
+            0x05 => "not authorized",
+            _ => "unknown error",
+        };
+        return Err(anyhow!("MQTT connection rejected: {}", reason));
     }
 
-    log::info!("Connected to MQTT broker");
+    log::info!(
+        "Connected to MQTT broker (authenticated: {})",
+        username.is_some()
+    );
     Ok(stream)
 }
 

@@ -214,8 +214,13 @@ fn read_config_file(path: &Path) -> Result<WitnessdConfigFile> {
     } else {
         // Try JSON first, then TOML
         serde_json::from_str(&raw).or_else(|_| {
-            toml::from_str(&raw)
-                .map_err(|e| anyhow!("invalid config file {} (tried JSON and TOML): {}", path.display(), e))
+            toml::from_str(&raw).map_err(|e| {
+                anyhow!(
+                    "invalid config file {} (tried JSON and TOML): {}",
+                    path.display(),
+                    e
+                )
+            })
         })?
     };
     Ok(cfg)
