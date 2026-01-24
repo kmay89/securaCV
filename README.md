@@ -91,8 +91,45 @@ Run the Privacy Witness Kernel as a Home Assistant add-on for easy camera integr
 1. Add the repository: `https://github.com/kmay89/securaCV`
 2. Install "Privacy Witness Kernel" from the add-on store
 3. Configure your cameras (auto-discovers from go2rtc/Frigate)
+4. Enable MQTT Discovery for automatic sensor creation
 
-See `docs/homeassistant_setup.md` for the full guide.
+### MQTT Discovery (Auto-Sensors)
+
+PWK supports **Home Assistant MQTT Discovery** for automatic entity creation:
+
+```yaml
+# Add-on configuration
+mqtt_publish:
+  enabled: true
+  host: "core-mosquitto"
+```
+
+This automatically creates these entities for each zone:
+- `sensor.pwk_<zone>_events` - Event count (state_class: total_increasing)
+- `binary_sensor.pwk_<zone>_motion` - Motion state (auto-off after 10 min)
+- `sensor.pwk_last_event` - Most recent event with full attributes
+
+Features:
+- **QoS 1** for reliable message delivery
+- **Last Will Testament** for availability tracking
+- **Retained messages** for state persistence across HA restarts
+
+### Frigate Integration
+
+For users with Frigate NVR:
+
+```yaml
+mode: "frigate"
+frigate:
+  mqtt_host: "core-mosquitto"
+  mqtt_username: ""  # Optional MQTT auth
+  mqtt_password: ""
+  min_confidence: 0.5
+mqtt_publish:
+  enabled: true  # Enable HA Discovery
+```
+
+See `docs/homeassistant_setup.md` for the full guide and `docs/frigate_integration.md` for Frigate-specific setup.
 
 ## RTSP Camera Setup
 

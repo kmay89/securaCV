@@ -35,9 +35,15 @@ frigate:
   mqtt_host: "core-mosquitto"   # HA's built-in broker
   mqtt_port: 1883
   mqtt_topic: "frigate/events"
+  mqtt_username: ""             # Optional: MQTT authentication
+  mqtt_password: ""
   min_confidence: 0.5           # Ignore low-confidence detections
   cameras: []                   # Empty = all cameras
   labels: ["person", "car", "dog", "cat"]
+
+# Enable MQTT publishing for automatic HA sensor creation
+mqtt_publish:
+  enabled: true
 
 # How long to keep privacy-preserving events
 retention_days: 30
@@ -68,12 +74,29 @@ Frigate publishes:                    PWK logs:
 │ timestamp: 1706140823.4 │    →     │ time_bucket: 1706140800 │
 │ camera: "front_door"    │    →     │ zone_id: "zone:front_d" │
 │ label: "person"         │    →     │ event_type: Large       │
+│ sub_label: "ups"        │    →     │ (category only)         │
 │ score: 0.92             │    →     │ confidence: 0.92        │
 │ box: [100,200,300,400]  │    →     │ (removed)               │
 │ thumbnail: "base64..."  │    →     │ (removed)               │
-│ zones: ["porch"]        │    →     │ zone_id: "zone:porch"   │
+│ current_zones: ["yard"] │    →     │ zone_id: "zone:porch"   │
+│ entered_zones: ["porch"]│    →     │ (uses entered_zones)    │
+│ has_clip: true          │    →     │ (not logged)            │
+│ has_snapshot: true      │    →     │ (not logged)            │
 └─────────────────────────┘          └─────────────────────────┘
 ```
+
+### Frigate Fields Parsed
+
+| Field | Usage |
+|-------|-------|
+| `camera` | Maps to zone_id if no zones specified |
+| `label` | Maps to EventType (person→Large, car→Large, etc.) |
+| `sub_label` | Logged for categorization but not exposed |
+| `score`/`top_score` | Uses top_score if available |
+| `current_zones` | Used for zone_id (fallback) |
+| `entered_zones` | Preferred for zone_id (more complete) |
+| `false_positive` | Events marked false_positive are skipped |
+| `has_clip`/`has_snapshot` | Logged for debugging, not stored |
 
 ### Invariant Compliance
 
@@ -120,9 +143,29 @@ The frigate_bridge is classified as an **external tool** per `kernel/architectur
 | `frigate.mqtt_host` | `core-mosquitto` | MQTT broker hostname |
 | `frigate.mqtt_port` | `1883` | MQTT broker port |
 | `frigate.mqtt_topic` | `frigate/events` | Frigate event topic |
+| `frigate.mqtt_username` | (empty) | MQTT authentication username |
+| `frigate.mqtt_password` | (empty) | MQTT authentication password |
 | `frigate.min_confidence` | `0.5` | Minimum detection confidence |
 | `frigate.cameras` | `[]` (all) | Camera names to process |
 | `frigate.labels` | `[person,car,dog,cat]` | Object types to process |
+
+### MQTT Publishing Options (HA Discovery)
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `mqtt_publish.enabled` | `false` | Enable MQTT publishing to HA |
+| `mqtt_publish.host` | `core-mosquitto` | MQTT broker for publishing |
+| `mqtt_publish.port` | `1883` | MQTT port |
+| `mqtt_publish.username` | (empty) | MQTT auth username |
+| `mqtt_publish.password` | (empty) | MQTT auth password |
+| `mqtt_publish.topic_prefix` | `witness` | Prefix for state topics |
+| `mqtt_publish.discovery_prefix` | `homeassistant` | HA discovery prefix |
+
+When `mqtt_publish.enabled` is `true`, PWK will:
+1. Publish HA MQTT Discovery configs for automatic entity creation
+2. Create sensors for each zone (event count, motion state)
+3. Publish availability status with LWT (Last Will Testament)
+4. Use QoS 1 for reliable message delivery
 
 ### Standalone CLI Usage
 
@@ -140,8 +183,29 @@ cargo run --bin frigate_bridge -- \
 cargo run --bin frigate_bridge -- \
   --allow-remote-mqtt \
   --mqtt-broker-addr core-mosquitto:1883 \
+  --mqtt-username homeassistant \
+  --mqtt-password your_password \
   --frigate-topic frigate/events \
   --db-path witness.db
+```
+
+### Publish Events to HA with MQTT Discovery
+
+```bash
+# One-shot mode (publish current events)
+cargo run --bin event_mqtt_bridge -- \
+  --allow-remote-mqtt \
+  --mqtt-broker-addr core-mosquitto:1883 \
+  --api-token-path /config/api_token
+
+# Daemon mode (continuous publishing)
+cargo run --bin event_mqtt_bridge -- \
+  --daemon \
+  --allow-remote-mqtt \
+  --mqtt-broker-addr core-mosquitto:1883 \
+  --ha-discovery-prefix homeassistant \
+  --mqtt-topic-prefix witness \
+  --api-token-path /config/api_token
 ```
 
 ---

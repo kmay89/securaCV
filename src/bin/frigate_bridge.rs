@@ -113,6 +113,10 @@ struct FrigateEventData {
     /// Object label (person, car, dog, etc.)
     label: String,
 
+    /// Sub-label for more specific classification (e.g., "amazon" for package)
+    #[serde(default)]
+    sub_label: Option<String>,
+
     /// Detection confidence (0.0-1.0)
     #[serde(default)]
     score: f64,
@@ -124,9 +128,21 @@ struct FrigateEventData {
     #[serde(default)]
     current_zones: Vec<String>,
 
+    /// All zones the object has entered during tracking
+    #[serde(default)]
+    entered_zones: Vec<String>,
+
     /// Whether this is a false positive (skip if true)
     #[serde(default)]
     false_positive: bool,
+
+    /// Whether a clip is available for this event
+    #[serde(default)]
+    has_clip: bool,
+
+    /// Whether a snapshot is available for this event
+    #[serde(default)]
+    has_snapshot: bool,
     // Fields we intentionally ignore for privacy:
     // - thumbnail: raw image data
     // - snapshot: raw image data
@@ -437,7 +453,31 @@ fn parse_frigate_event(payload: &[u8]) -> Result<(String, String, f64, Vec<Strin
     }
 
     let confidence = event.top_score.unwrap_or(event.score);
-    Ok((event.camera, event.label, confidence, event.current_zones))
+
+    // Combine sub_label with label if present (e.g., "package:amazon")
+    let label = match &event.sub_label {
+        Some(sub) if !sub.is_empty() => format!("{}:{}", event.label, sub),
+        _ => event.label.clone(),
+    };
+
+    // Prefer entered_zones over current_zones for more complete zone coverage
+    let zones = if !event.entered_zones.is_empty() {
+        event.entered_zones.clone()
+    } else {
+        event.current_zones.clone()
+    };
+
+    log::debug!(
+        "Frigate event: camera={}, label={}, conf={:.2}, zones={:?}, has_clip={}, has_snapshot={}",
+        event.camera,
+        label,
+        confidence,
+        zones,
+        event.has_clip,
+        event.has_snapshot
+    );
+
+    Ok((event.camera, label, confidence, zones))
 }
 
 fn parse_review_event(payload: &[u8]) -> Result<(String, String, f64, Vec<String>)> {
@@ -461,7 +501,10 @@ fn parse_review_event(payload: &[u8]) -> Result<(String, String, f64, Vec<String
 }
 
 fn map_label_to_event_type(label: &str) -> EventType {
-    match label.to_lowercase().as_str() {
+    // Handle sub_label format (e.g., "package:amazon" -> use "package")
+    let base_label = label.split(':').next().unwrap_or(label);
+
+    match base_label.to_lowercase().as_str() {
         "person" | "face" => EventType::BoundaryCrossingObjectLarge,
         "car" | "truck" | "bus" | "motorcycle" => EventType::BoundaryCrossingObjectLarge,
         "dog" | "cat" | "bird" | "animal" => EventType::BoundaryCrossingObjectSmall,
