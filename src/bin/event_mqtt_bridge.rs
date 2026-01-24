@@ -34,7 +34,11 @@ const PAYLOAD_ONLINE: &str = "online";
 const PAYLOAD_OFFLINE: &str = "offline";
 
 #[derive(Parser, Debug)]
-#[command(author, version, about = "Publish PWK events to MQTT with Home Assistant Discovery")]
+#[command(
+    author,
+    version,
+    about = "Publish PWK events to MQTT with Home Assistant Discovery"
+)]
 struct Args {
     /// Loopback API address for witnessd.
     #[arg(long, env = "WITNESS_API_ADDR", default_value = "127.0.0.1:8799")]
@@ -286,7 +290,12 @@ fn run_oneshot(
     };
 
     // Publish availability online
-    mqtt_publish_qos1(&mut conn, availability_topic, PAYLOAD_ONLINE.as_bytes(), true)?;
+    mqtt_publish_qos1(
+        &mut conn,
+        availability_topic,
+        PAYLOAD_ONLINE.as_bytes(),
+        true,
+    )?;
 
     if !args.no_discovery {
         let _stage = ui.stage("Publish HA discovery configs");
@@ -320,7 +329,10 @@ fn run_daemon(
     availability_topic: &str,
     ui: &ui::Ui,
 ) -> Result<()> {
-    log::info!("Starting daemon mode (poll interval: {}s)", args.poll_interval);
+    log::info!(
+        "Starting daemon mode (poll interval: {}s)",
+        args.poll_interval
+    );
 
     let mut conn = {
         let _stage = ui.stage("Connect to MQTT broker");
@@ -334,7 +346,12 @@ fn run_daemon(
     };
 
     // Publish availability online (retained)
-    mqtt_publish_qos1(&mut conn, availability_topic, PAYLOAD_ONLINE.as_bytes(), true)?;
+    mqtt_publish_qos1(
+        &mut conn,
+        availability_topic,
+        PAYLOAD_ONLINE.as_bytes(),
+        true,
+    )?;
     log::info!("Published online status to {}", availability_topic);
 
     let mut discovered_zones: HashSet<String> = HashSet::new();
@@ -453,7 +470,10 @@ fn publish_discovery_configs(
     events: &[ExportEvent],
 ) -> Result<()> {
     // Collect unique zones
-    let zones: HashSet<String> = events.iter().map(|e| extract_zone_name(&e.zone_id)).collect();
+    let zones: HashSet<String> = events
+        .iter()
+        .map(|e| extract_zone_name(&e.zone_id))
+        .collect();
 
     // Publish discovery for each zone
     for zone in &zones {
@@ -485,7 +505,10 @@ fn publish_discovery_configs(
         device: device_info.clone(),
     };
 
-    let config_topic = format!("{}/sensor/{}/last_event/config", discovery_prefix, device_id);
+    let config_topic = format!(
+        "{}/sensor/{}/last_event/config",
+        discovery_prefix, device_id
+    );
     let config_json = serde_json::to_vec(&last_event_config)?;
     mqtt_publish_qos1(conn, &config_topic, &config_json, true)?;
 
@@ -621,10 +644,7 @@ fn publish_single_event(
 }
 
 fn extract_zone_name(zone_id: &str) -> String {
-    zone_id
-        .strip_prefix("zone:")
-        .unwrap_or(zone_id)
-        .to_string()
+    zone_id.strip_prefix("zone:").unwrap_or(zone_id).to_string()
 }
 
 fn sanitize_for_id(s: &str) -> String {
@@ -755,7 +775,7 @@ fn connect_mqtt(
     let mut connect_flags = 0x02u8; // Clean session
     connect_flags |= 0x04; // Will flag
     connect_flags |= 0x20; // Will retain
-    // Will QoS = 1 (bits 3-4 = 01)
+                           // Will QoS = 1 (bits 3-4 = 01)
     connect_flags |= 0x08;
     if username.is_some() {
         connect_flags |= 0x80; // Username flag
