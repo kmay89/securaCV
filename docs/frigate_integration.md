@@ -1,281 +1,259 @@
 # Frigate NVR Integration
 
-The Privacy Witness Kernel can integrate with [Frigate NVR](https://frigate.video) to leverage its excellent ML-based object detection while adding a privacy-preserving event log.
+This guide explains how to integrate the Privacy Witness Kernel with [Frigate NVR](https://frigate.video) for Home Assistant users.
 
-## How It Works
+## Why Use Both?
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         Frigate NVR                                  │
-│  ┌──────────┐   ┌──────────────┐   ┌───────────────┐               │
-│  │  Camera  │──▶│  Detection   │──▶│  MQTT Events  │               │
-│  │  Streams │   │  (TensorFlow)│   │  (detailed)   │               │
-│  └──────────┘   └──────────────┘   └───────┬───────┘               │
-└─────────────────────────────────────────────┼───────────────────────┘
-                                              │
-                                              ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                   Privacy Witness Kernel                             │
-│  ┌──────────────────────────────────────────────────────────────┐   │
-│  │                    frigate_bridge                             │   │
-│  │  ┌─────────────┐   ┌─────────────┐   ┌──────────────────┐   │   │
-│  │  │ Subscribe   │──▶│  Sanitize   │──▶│  Sealed Log      │   │   │
-│  │  │ MQTT Events │   │  - Strip ID │   │  (privacy-safe)  │   │   │
-│  │  └─────────────┘   │  - Coarsen  │   └──────────────────┘   │   │
-│  │                    │    time     │                           │   │
-│  │                    └─────────────┘                           │   │
-│  └──────────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────────┘
-```
+| System | Strengths | Limitations |
+|--------|-----------|-------------|
+| **Frigate** | Excellent ML detection (TensorFlow, Coral TPU), real-time alerts, recordings | Stores full recordings, detailed object tracking |
+| **PWK** | Privacy-preserving logging, tamper-evident, no raw video export | Simpler detection (without Frigate) |
 
-### What Gets Stripped (Privacy Sanitization)
-
-| Frigate Data | PWK Handling |
-|--------------|--------------|
-| Object tracking ID | **Removed** - no cross-event correlation |
-| Precise timestamp | **Coarsened** - 10-minute buckets |
-| Bounding box coordinates | **Removed** - no position tracking |
-| Thumbnail/snapshot | **Removed** - no raw images |
-| Camera coordinates | **Removed** - zone ID only |
-| Top score | **Kept** as confidence |
-| Object label | **Kept** as event type |
-| Zone name | **Kept** as zone_id |
-
-### What Gets Logged
-
-```json
-{
-  "event_type": "BoundaryCrossingObjectLarge",
-  "zone_id": "zone:front_door",
-  "time_bucket": { "start_epoch_s": 1706140800, "size_s": 600 },
-  "confidence": 0.85
-}
-```
+**Together**: Use Frigate's superior detection, but log events through PWK for privacy-preserving long-term storage.
 
 ---
 
-## Setup Options
+## Quick Start (Home Assistant)
 
-### Option 1: Home Assistant Add-on (Recommended)
+### 1. Install the Add-on
 
-1. Install the Privacy Witness Kernel add-on
-2. Set mode to `frigate`:
+1. Go to **Settings → Add-ons → Add-on Store**
+2. Add repository: `https://github.com/kmay89/securaCV`
+3. Install "Privacy Witness Kernel"
+
+### 2. Configure for Frigate
 
 ```yaml
+# Mode: Use Frigate's detection instead of processing RTSP directly
 mode: "frigate"
-device_key_seed: "your-64-char-hex-key"
 
+# Your unique device key (generate with: openssl rand -hex 32)
+device_key_seed: "your-64-character-hex-key-here"
+
+# Frigate MQTT settings (defaults work for most HA setups)
 frigate:
-  mqtt_host: "core-mosquitto"
+  mqtt_host: "core-mosquitto"   # HA's built-in broker
   mqtt_port: 1883
   mqtt_topic: "frigate/events"
-  min_confidence: 0.5
-  cameras: []  # Empty = all cameras
+  min_confidence: 0.5           # Ignore low-confidence detections
+  cameras: []                   # Empty = all cameras
   labels: ["person", "car", "dog", "cat"]
+
+# How long to keep privacy-preserving events
+retention_days: 30
 ```
 
-3. Start the add-on
+### 3. Start the Add-on
 
-### Option 2: Standalone frigate_bridge
+That's it! The add-on will:
+1. Subscribe to Frigate's MQTT events
+2. Strip identity data (object IDs, coordinates, thumbnails)
+3. Coarsen timestamps to 10-minute buckets
+4. Write sanitized events to the sealed log
 
-```bash
-# Generate device key
-export DEVICE_KEY_SEED=$(openssl rand -hex 32)
+---
 
-# Run the Frigate bridge
-cargo run --bin frigate_bridge -- \
-  --mqtt-broker-addr 127.0.0.1:1883 \
-  --frigate-topic frigate/events \
-  --db-path witness.db \
-  --min-confidence 0.5
+## Architectural Validity
+
+**Question**: Does this integration violate PWK's privacy invariants?
+
+**Answer**: No. Here's why:
+
+### What the frigate_bridge Does
+
 ```
+Frigate publishes:                    PWK logs:
+┌─────────────────────────┐          ┌─────────────────────────┐
+│ id: "abc123"            │    →     │ (removed)               │
+│ timestamp: 1706140823.4 │    →     │ time_bucket: 1706140800 │
+│ camera: "front_door"    │    →     │ zone_id: "zone:front_d" │
+│ label: "person"         │    →     │ event_type: Large       │
+│ score: 0.92             │    →     │ confidence: 0.92        │
+│ box: [100,200,300,400]  │    →     │ (removed)               │
+│ thumbnail: "base64..."  │    →     │ (removed)               │
+│ zones: ["porch"]        │    →     │ zone_id: "zone:porch"   │
+└─────────────────────────┘          └─────────────────────────┘
+```
+
+### Invariant Compliance
+
+| Invariant | How It's Enforced |
+|-----------|-------------------|
+| **I. No Raw Export** | frigate_bridge never receives raw video - only MQTT event metadata |
+| **II. No Identity** | Object tracking IDs are stripped; only category labels kept |
+| **III. Metadata Min** | Timestamps coarsened to 10-minute buckets |
+| **IV. Local Ownership** | Sealed log stored locally on HA device |
+| **V. Break-Glass** | Vault access still requires quorum (unchanged) |
+| **VI. No Retroactive** | Events bound to ruleset at creation |
+| **VII. Non-Queryable** | No bulk search interfaces added |
+
+### Trust Boundary
+
+The frigate_bridge is classified as an **external tool** per `kernel/architecture.md` §3.3:
+- It cannot access raw media (Frigate doesn't publish it to MQTT)
+- It cannot bypass Contract Enforcement (`append_event_checked` validates all events)
+- It cannot access the sealed log directly (uses kernel API)
+
+---
+
+## When to Use Frigate Mode vs Standalone
+
+### Use Frigate Mode When:
+- You already have Frigate set up
+- You want better detection accuracy (Coral TPU, TensorFlow)
+- You want real-time alerts AND privacy-preserving long-term logging
+- You want to reduce Frigate's recording retention but keep event history
+
+### Use Standalone Mode When:
+- You don't have Frigate
+- You want a simpler setup with just cameras
+- You want complete independence from other systems
 
 ---
 
 ## Configuration Reference
 
-### frigate_bridge Options
+### Add-on Options (frigate mode)
 
-| Option | Env Variable | Default | Description |
-|--------|--------------|---------|-------------|
-| `--mqtt-broker-addr` | `MQTT_BROKER_ADDR` | `127.0.0.1:1883` | MQTT broker address (must be loopback) |
-| `--frigate-topic` | `FRIGATE_MQTT_TOPIC` | `frigate/events` | Frigate MQTT topic |
-| `--db-path` | `WITNESS_DB_PATH` | `witness.db` | Path to witness database |
-| `--ruleset-id` | `WITNESS_RULESET_ID` | `ruleset:frigate_v1` | Ruleset identifier |
-| `--bucket-size-secs` | `WITNESS_BUCKET_SIZE` | `600` | Time bucket size (seconds) |
-| `--min-confidence` | `FRIGATE_MIN_CONFIDENCE` | `0.5` | Minimum detection confidence |
-| `--cameras` | `FRIGATE_CAMERAS` | (all) | Comma-separated camera names |
-| `--labels` | `FRIGATE_LABELS` | (default set) | Comma-separated object labels |
+| Option | Default | Description |
+|--------|---------|-------------|
+| `frigate.mqtt_host` | `core-mosquitto` | MQTT broker hostname |
+| `frigate.mqtt_port` | `1883` | MQTT broker port |
+| `frigate.mqtt_topic` | `frigate/events` | Frigate event topic |
+| `frigate.min_confidence` | `0.5` | Minimum detection confidence |
+| `frigate.cameras` | `[]` (all) | Camera names to process |
+| `frigate.labels` | `[person,car,dog,cat]` | Object types to process |
 
-### Supported Labels
+### Standalone CLI Usage
 
-Default labels that are processed:
-- `person` → `BoundaryCrossingObjectLarge`
-- `car`, `truck`, `bus`, `motorcycle` → `BoundaryCrossingObjectLarge`
-- `dog`, `cat`, `bird` → `BoundaryCrossingObjectSmall`
-- `bicycle` → `BoundaryCrossingObjectSmall`
-
----
-
-## MQTT Topics
-
-### frigate/events (Recommended)
-
-Frigate publishes detailed events here. The bridge extracts:
-- Camera name → zone_id
-- Object label → event_type
-- Top score → confidence
-- Current zones → zone_id (if defined)
-
-### frigate/reviews (Alternative)
-
-For users who want to process only confirmed detections:
 ```bash
---frigate-topic frigate/reviews
+# Generate device key
+export DEVICE_KEY_SEED=$(openssl rand -hex 32)
+
+# Run with Frigate (loopback MQTT)
+cargo run --bin frigate_bridge -- \
+  --mqtt-broker-addr 127.0.0.1:1883 \
+  --frigate-topic frigate/events \
+  --db-path witness.db
+
+# For HA addon (non-loopback MQTT) - explicitly allow
+cargo run --bin frigate_bridge -- \
+  --allow-remote-mqtt \
+  --mqtt-broker-addr core-mosquitto:1883 \
+  --frigate-topic frigate/events \
+  --db-path witness.db
 ```
 
 ---
 
-## Privacy Comparison
+## Example: Privacy-First Setup
 
-| Feature | Frigate Alone | Frigate + PWK |
-|---------|---------------|---------------|
-| Real-time detection | Yes | Yes (via Frigate) |
-| Object tracking | Yes (with IDs) | No (stripped) |
-| Precise timestamps | Yes | No (10-min buckets) |
-| Searchable recordings | Yes | No |
-| Face/plate detection | Possible | Blocked |
-| Long-term event log | No | Yes (sealed, signed) |
-| Tamper evidence | No | Yes (cryptographic) |
-| Break-glass access | No | Yes (quorum) |
+Here's how to configure Frigate + PWK for maximum privacy:
 
----
-
-## Architecture Benefits
-
-### 1. Separation of Concerns
-- **Frigate**: Optimized for real-time detection with GPU acceleration
-- **PWK**: Optimized for privacy-preserving long-term logging
-
-### 2. Best of Both Worlds
-- Get Frigate's excellent TensorFlow/Coral detection
-- Add PWK's privacy guarantees and tamper-evident logging
-
-### 3. Frigate Recordings Are Optional
-- With PWK, you can set Frigate's retention to very short (or disable recordings)
-- PWK provides the long-term "witness" layer without raw video
-
-### 4. Auditability
-- All events are cryptographically signed
-- Retention is automatically enforced
-- Break-glass access requires quorum approval
-
----
-
-## Example: Frigate + PWK Setup
-
-### Frigate Configuration (frigate.yml)
+### Frigate Config (frigate.yml)
 
 ```yaml
 mqtt:
   enabled: true
   host: core-mosquitto
-  port: 1883
-  topic_prefix: frigate
 
 cameras:
   front_door:
     ffmpeg:
       inputs:
-        - path: rtsp://admin:password@192.168.1.100:554/stream1
-          roles: [detect]
-    detect:
-      enabled: true
-      width: 1280
-      height: 720
-    zones:
-      front_porch:
-        coordinates: 0,720,400,720,400,0,0,0
-
-  driveway:
-    ffmpeg:
-      inputs:
-        - path: rtsp://admin:password@192.168.1.101:554/stream1
+        - path: rtsp://admin:pass@192.168.1.100:554/stream
           roles: [detect]
     detect:
       enabled: true
 
-# Minimal recording retention (PWK handles long-term)
+# Minimal recording - just for real-time viewing
 record:
   enabled: true
   retain:
-    days: 1  # Keep raw video for only 1 day
+    days: 1  # Delete raw video after 1 day
+
+# Disable snapshots to reduce stored data
+snapshots:
+  enabled: false
 ```
 
-### PWK Add-on Configuration
+### PWK Add-on Config
 
 ```yaml
 mode: "frigate"
-device_key_seed: "abc123..."  # Your generated key
-
+device_key_seed: "..."
 frigate:
-  mqtt_host: "core-mosquitto"
-  mqtt_port: 1883
-  mqtt_topic: "frigate/events"
   min_confidence: 0.6
-  cameras: ["front_door", "driveway"]
-  labels: ["person", "car", "dog"]
-
-retention_days: 30  # Keep privacy-preserving events for 30 days
-time_bucket_minutes: 10
+  labels: ["person", "car"]  # Only track these
+retention_days: 90  # Keep events for 90 days
 ```
+
+**Result**:
+- Frigate handles detection and 1-day video retention
+- PWK keeps privacy-preserving event log for 90 days
+- No long-term raw video storage
+- No object tracking IDs in long-term storage
 
 ---
 
 ## Troubleshooting
 
-### No Events Being Logged
+### Events Not Appearing
 
-1. **Check Frigate is publishing to MQTT:**
-   ```bash
-   mosquitto_sub -h localhost -t "frigate/#" -v
+1. **Check Frigate MQTT is enabled**:
+   ```yaml
+   # frigate.yml
+   mqtt:
+     enabled: true
    ```
 
-2. **Check bridge is running:**
+2. **Verify MQTT connectivity**:
    ```bash
-   # In HA add-on logs
-   # Or standalone:
-   RUST_LOG=debug cargo run --bin frigate_bridge -- ...
+   mosquitto_sub -h core-mosquitto -t "frigate/events" -v
    ```
+   You should see events when objects are detected.
 
-3. **Verify camera names match:**
-   - Frigate camera names are case-sensitive
-   - `--cameras front_door` won't match `Front_Door`
+3. **Check add-on logs**:
+   Go to **Settings → Add-ons → Privacy Witness Kernel → Logs**
 
-### MQTT Connection Refused
+### "MQTT broker must be loopback"
 
-1. Ensure MQTT broker is running
-2. For HA, use `core-mosquitto` as the host
-3. Verify port is correct (default: 1883)
+This error occurs when running frigate_bridge standalone without `--allow-remote-mqtt`. Either:
+- Use `--allow-remote-mqtt` flag for trusted networks
+- Or run MQTT broker on localhost
 
-### Low Confidence Events Not Appearing
+### Low Detection Rate
 
-- Check `--min-confidence` setting
-- Frigate's `min_score` in detect config affects what gets published
+- Check `min_confidence` - lower it to catch more events
+- Verify camera names match Frigate's config exactly
 
 ---
 
-## Security Notes
+## Security Considerations
 
-1. **MQTT must be loopback-only** - The bridge refuses non-loopback connections
-2. **Frigate credentials are never stored** - PWK only receives sanitized events
-3. **Object IDs are never logged** - No cross-event correlation possible
-4. **Thumbnails/snapshots are ignored** - Raw image data never enters PWK
+### Why `--allow-remote-mqtt` is Safe in HA
+
+The `--allow-remote-mqtt` flag is needed because HA runs services in separate containers. This is safe because:
+
+1. **No raw media flows through MQTT** - Only sanitized event metadata
+2. **Events are still validated** - Contract Enforcer rejects non-conforming events
+3. **HA network is trusted** - All containers run on the same host
+4. **No new attack surface** - The data received is already public to any HA addon
+
+### What's NOT Sent to PWK
+
+Even with Frigate integration, PWK never receives:
+- Video frames or thumbnails
+- Object bounding boxes or positions
+- Face embeddings or license plates
+- Object tracking trajectories
+- Precise timestamps
 
 ---
 
-## Next Steps
+## Further Reading
 
-- [Home Assistant Integration](homeassistant_setup.md) - Full HA setup guide
-- [Event Verification](../spec/verification.md) - Verify event integrity
-- [Break-Glass Access](../spec/break_glass.md) - Emergency access procedures
+- [Home Assistant Setup](homeassistant_setup.md) - Full HA guide
+- [RTSP Camera Setup](rtsp_setup.md) - Standalone mode with cameras
+- [Invariants Specification](../spec/invariants.md) - Privacy guarantees
+- [Architecture](../kernel/architecture.md) - System design

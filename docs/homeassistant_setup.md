@@ -1,30 +1,77 @@
 # Home Assistant Integration Guide
 
-The Privacy Witness Kernel can run as a Home Assistant add-on, providing privacy-preserving event detection for your existing camera setup.
+The Privacy Witness Kernel runs as a Home Assistant add-on, providing privacy-preserving event logging for your cameras.
 
-## Overview
+## Choose Your Mode
+
+| Mode | Best For | How It Works |
+|------|----------|--------------|
+| **frigate** | Users with Frigate NVR | Subscribe to Frigate's MQTT events |
+| **standalone** | Users without Frigate | Process RTSP streams directly |
+
+### Frigate Mode (Recommended if you use Frigate)
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     Home Assistant                           │
-├─────────────────────────────────────────────────────────────┤
-│  ┌─────────────┐    ┌─────────────┐    ┌─────────────────┐  │
-│  │   go2rtc    │───▶│   PWK       │───▶│  HA Sensors     │  │
-│  │  (streams)  │    │  (add-on)   │    │  (events)       │  │
-│  └─────────────┘    └─────────────┘    └─────────────────┘  │
-│         ▲                                                    │
-│         │                                                    │
-│  ┌──────┴──────┐                                            │
-│  │   Cameras   │                                            │
-│  └─────────────┘                                            │
-└─────────────────────────────────────────────────────────────┘
+Cameras → Frigate (detection) → MQTT → PWK (privacy logging)
 ```
 
-The add-on:
-- Discovers cameras from go2rtc automatically
-- Produces privacy-preserving event claims (no raw video export)
-- Stores all data locally on your Home Assistant instance
-- Exposes events via a local API for HA integration
+- Uses Frigate's superior ML detection (Coral TPU, TensorFlow)
+- PWK receives event notifications, not video
+- Best accuracy, minimal resource usage
+
+### Standalone Mode
+
+```
+Cameras → go2rtc → PWK (detection + logging)
+```
+
+- PWK processes camera streams directly
+- Simpler setup without Frigate
+- Built-in motion detection
+
+---
+
+## Quick Start
+
+### Step 1: Install
+
+1. Go to **Settings → Add-ons → Add-on Store**
+2. Click ⋮ → **Repositories** → Add: `https://github.com/kmay89/securaCV`
+3. Install "Privacy Witness Kernel"
+
+### Step 2: Generate Device Key
+
+```bash
+openssl rand -hex 32
+```
+
+Save this key - it protects your event signatures.
+
+### Step 3: Configure
+
+**For Frigate users:**
+```yaml
+mode: "frigate"
+device_key_seed: "your-64-char-key"
+frigate:
+  mqtt_host: "core-mosquitto"
+  min_confidence: 0.5
+```
+
+**For standalone users:**
+```yaml
+mode: "standalone"
+device_key_seed: "your-64-char-key"
+go2rtc_discovery: true
+```
+
+### Step 4: Start
+
+Click **Start**. Check logs for any errors.
+
+---
+
+## Detailed Configuration
 
 ---
 

@@ -76,7 +76,12 @@ if [ "$MODE" = "frigate" ]; then
     bashio::log.info "Labels: ${FRIGATE_LABELS:-default}"
 
     # Build frigate_bridge command
+    # Note: --allow-remote-mqtt is safe in HA because:
+    # 1. The MQTT broker (core-mosquitto) is a trusted HA component
+    # 2. All event data is still sanitized before logging
+    # 3. No raw media ever flows through this path
     CMD="/usr/local/bin/frigate_bridge"
+    CMD="$CMD --allow-remote-mqtt"
     CMD="$CMD --mqtt-broker-addr $MQTT_HOST:$MQTT_PORT"
     CMD="$CMD --frigate-topic $MQTT_TOPIC"
     CMD="$CMD --db-path $DB_PATH"

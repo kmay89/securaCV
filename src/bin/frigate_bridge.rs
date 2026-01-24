@@ -27,9 +27,18 @@ const BRIDGE_NAME: &str = "frigate_bridge";
 #[derive(Parser, Debug)]
 #[command(author, version, about = "Bridge Frigate events to Privacy Witness Kernel")]
 struct Args {
-    /// MQTT broker address (must be loopback for security).
+    /// MQTT broker address.
+    /// By default, only loopback addresses are allowed for security.
+    /// Use --allow-remote-mqtt for trusted local network (e.g., Home Assistant).
     #[arg(long, env = "MQTT_BROKER_ADDR", default_value = "127.0.0.1:1883")]
     mqtt_broker_addr: String,
+
+    /// Allow non-loopback MQTT connections.
+    /// ONLY use this in trusted environments like Home Assistant where the
+    /// MQTT broker (e.g., core-mosquitto) runs on a separate container.
+    /// This does NOT weaken privacy guarantees - events are still sanitized.
+    #[arg(long, env = "ALLOW_REMOTE_MQTT")]
+    allow_remote_mqtt: bool,
 
     /// Frigate MQTT topic to subscribe to.
     #[arg(long, env = "FRIGATE_MQTT_TOPIC", default_value = "frigate/events")]
@@ -147,8 +156,12 @@ fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let args = Args::parse();
 
-    // Validate broker is loopback
-    validate_loopback_addr(&args.mqtt_broker_addr)?;
+    // Validate broker address
+    if !args.allow_remote_mqtt {
+        validate_loopback_addr(&args.mqtt_broker_addr)?;
+    } else {
+        log::warn!("Remote MQTT enabled - ensure broker is in a trusted network");
+    }
 
     // Parse allowed cameras and labels
     let allowed_cameras: Option<Vec<String>> = args.cameras.as_ref().map(|s| {
