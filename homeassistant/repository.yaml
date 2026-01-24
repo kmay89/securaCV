@@ -1,0 +1,6 @@
+# Home Assistant Add-on Repository Configuration
+# Add this repository to Home Assistant to install the Privacy Witness Kernel add-on
+
+name: "Privacy Witness Kernel"
+url: "https://github.com/kmay89/securaCV"
+maintainer: "kmay89"
