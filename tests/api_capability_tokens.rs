@@ -5,7 +5,8 @@ use std::net::TcpStream;
 use tempfile::tempdir;
 use witness_kernel::api::{ApiConfig, ApiServer};
 use witness_kernel::{
-    CandidateEvent, EventType, Kernel, KernelConfig, ModuleDescriptor, TimeBucket, ZonePolicy,
+    CandidateEvent, EventType, Kernel, KernelConfig, ModuleDescriptor, RulesetConformance,
+    TimeBucket, ZonePolicy,
 };
 
 fn add_test_event(kernel: &mut Kernel, cfg: &KernelConfig) -> Result<()> {
@@ -60,6 +61,7 @@ fn api_rejects_missing_token() -> Result<()> {
         ruleset_id: "ruleset:test".to_string(),
         ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
         kernel_version: "0.0.0-test".to_string(),
+        ruleset_conformance: RulesetConformance::default(),
         retention: std::time::Duration::from_secs(60),
         device_key_seed: "devkey:test".to_string(),
         zone_policy: ZonePolicy::default(),
@@ -93,6 +95,7 @@ fn api_returns_export_events_without_identifiers() -> Result<()> {
         ruleset_id: "ruleset:test".to_string(),
         ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
         kernel_version: "0.0.0-test".to_string(),
+        ruleset_conformance: RulesetConformance::default(),
         retention: std::time::Duration::from_secs(60),
         device_key_seed: "devkey:test".to_string(),
         zone_policy: ZonePolicy::default(),

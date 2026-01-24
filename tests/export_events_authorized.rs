@@ -2,8 +2,8 @@ use anyhow::Result;
 use ed25519_dalek::{Signer, SigningKey};
 use witness_kernel::{
     verify_export_bundle, Approval, BreakGlass, CandidateEvent, EventType, ExportOptions, Kernel,
-    KernelConfig, ModuleDescriptor, QuorumPolicy, TimeBucket, TrusteeEntry, TrusteeId,
-    UnlockRequest, ZonePolicy, EXPORT_EVENTS_ENVELOPE_ID,
+    KernelConfig, ModuleDescriptor, QuorumPolicy, RulesetConformance, TimeBucket, TrusteeEntry,
+    TrusteeId, UnlockRequest, ZonePolicy, EXPORT_EVENTS_ENVELOPE_ID,
 };
 
 fn add_test_event(kernel: &mut Kernel, cfg: &KernelConfig) -> Result<()> {
@@ -65,6 +65,7 @@ fn export_fails_without_valid_token() -> Result<()> {
         ruleset_id: "ruleset:test".to_string(),
         ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
         kernel_version: "0.0.0-test".to_string(),
+        ruleset_conformance: RulesetConformance::default(),
         retention: std::time::Duration::from_secs(60),
         device_key_seed: "devkey:test".to_string(),
         zone_policy: ZonePolicy::default(),
@@ -88,6 +89,7 @@ fn export_succeeds_with_break_glass_token() -> Result<()> {
         ruleset_id: "ruleset:test".to_string(),
         ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
         kernel_version: "0.0.0-test".to_string(),
+        ruleset_conformance: RulesetConformance::default(),
         retention: std::time::Duration::from_secs(60),
         device_key_seed: "devkey:test".to_string(),
         zone_policy: ZonePolicy::default(),
@@ -102,14 +104,8 @@ fn export_succeeds_with_break_glass_token() -> Result<()> {
     let receipt_entry_hash = kernel.log_break_glass_receipt(&receipt, &[approval])?;
     kernel.sign_break_glass_token(&mut token, receipt_entry_hash)?;
 
-    let artifact = kernel.export_events_authorized(
-        cfg.ruleset_hash,
-        ExportOptions {
-            jitter_s: 0,
-            ..ExportOptions::default()
-        },
-        &mut token,
-    )?;
+    let artifact =
+        kernel.export_events_authorized(cfg.ruleset_hash, ExportOptions::default(), &mut token)?;
     assert!(!artifact.batches.is_empty());
 
     let count: i64 = kernel
@@ -126,6 +122,7 @@ fn export_bundle_verifies_and_detects_tampering() -> Result<()> {
         ruleset_id: "ruleset:test".to_string(),
         ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
         kernel_version: "0.0.0-test".to_string(),
+        ruleset_conformance: RulesetConformance::default(),
         retention: std::time::Duration::from_secs(60),
         device_key_seed: "devkey:test".to_string(),
         zone_policy: ZonePolicy::default(),
@@ -142,10 +139,7 @@ fn export_bundle_verifies_and_detects_tampering() -> Result<()> {
 
     let bundle = kernel.export_events_bundle_authorized(
         cfg.ruleset_hash,
-        ExportOptions {
-            jitter_s: 0,
-            ..ExportOptions::default()
-        },
+        ExportOptions::default(),
         &mut token,
     )?;
     verify_export_bundle(&bundle)?;

@@ -5,7 +5,7 @@ use clap::Parser;
 use std::io::IsTerminal;
 use std::time::Duration;
 use witness_kernel::break_glass::BreakGlassTokenFile;
-use witness_kernel::{ExportOptions, Kernel, KernelConfig, ZonePolicy};
+use witness_kernel::{ExportOptions, Kernel, KernelConfig, RulesetConformance, ZonePolicy};
 
 #[path = "../ui.rs"]
 mod ui;
@@ -54,6 +54,7 @@ fn main() -> Result<()> {
         ruleset_id: args.ruleset_id,
         ruleset_hash,
         kernel_version: env!("CARGO_PKG_VERSION").to_string(),
+        ruleset_conformance: RulesetConformance::default(),
         retention: Duration::from_secs(60 * 60 * 24 * 7),
         device_key_seed: args.device_key_seed.trim().to_string(),
         zone_policy: ZonePolicy::default(),
@@ -85,6 +86,8 @@ fn main() -> Result<()> {
         jitter_s: args.jitter_s,
         jitter_step_s: args.jitter_step_s,
     };
+    cfg.ruleset_conformance
+        .validate_export_options(&options, &cfg.ruleset_id)?;
     let bundle = {
         let _stage = ui.stage("Export events");
         kernel.export_events_bundle_authorized(cfg.ruleset_hash, options, &mut token)?

@@ -2,8 +2,8 @@ use anyhow::{anyhow, Result};
 use ed25519_dalek::{Signer, SigningKey};
 use witness_kernel::{
     Approval, BreakGlass, BreakGlassToken, CandidateEvent, EventType, ExportOptions, Kernel,
-    KernelConfig, ModuleDescriptor, QuorumPolicy, TimeBucket, TrusteeEntry, TrusteeId,
-    UnlockRequest, ZonePolicy, EXPORT_EVENTS_ENVELOPE_ID,
+    KernelConfig, ModuleDescriptor, QuorumPolicy, RulesetConformance, TimeBucket, TrusteeEntry,
+    TrusteeId, UnlockRequest, ZonePolicy, EXPORT_EVENTS_ENVELOPE_ID,
 };
 
 fn main() -> Result<()> {
@@ -15,6 +15,7 @@ fn main() -> Result<()> {
         ruleset_id: ruleset_id.clone(),
         ruleset_hash,
         kernel_version: env!("CARGO_PKG_VERSION").to_string(),
+        ruleset_conformance: RulesetConformance::default(),
         retention: std::time::Duration::from_secs(60),
         device_key_seed: "devkey:ci-conformance".to_string(),
         zone_policy: ZonePolicy::default(),
@@ -46,8 +47,7 @@ fn main() -> Result<()> {
         ruleset_hash,
         ExportOptions {
             max_events_per_batch: 1,
-            jitter_s: 0,
-            jitter_step_s: 1,
+            ..ExportOptions::default()
         },
         &mut token,
     )?;

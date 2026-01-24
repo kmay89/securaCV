@@ -247,15 +247,23 @@ impl ZonePolicy {
 pub struct ContractEnforcer;
 
 impl ContractEnforcer {
-    pub fn enforce(c: CandidateEvent) -> Result<Event> {
+    pub fn enforce(
+        c: CandidateEvent,
+        conformance: &RulesetConformance,
+        ruleset_id: &str,
+    ) -> Result<Event> {
         // Confidence bounds
         if !(0.0..=1.0).contains(&c.confidence) {
             return Err(anyhow!("conformance: confidence out of bounds"));
         }
 
-        // Time bucket granularity: minimum 5 minutes (300s)
-        if c.time_bucket.size_s < 300 {
-            return Err(anyhow!("conformance: time bucket too precise"));
+        let min_bucket_s = conformance.effective_min_bucket_s();
+        if c.time_bucket.size_s < min_bucket_s {
+            return Err(anyhow!(
+                "conformance: time bucket too precise for ruleset {} (min {}s)",
+                ruleset_id,
+                min_bucket_s
+            ));
         }
 
         // Zone discipline (positive allowlist)
@@ -421,6 +429,121 @@ impl RawMediaBoundary {
     }
 }
 
+// -------------------- Ruleset Conformance --------------------
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RulesetConformance {
+    pub min_bucket_s: u32,
+    pub min_jitter_s: u64,
+    pub min_jitter_step_s: u64,
+    pub allow_narrower_time_bucket: bool,
+    pub allow_narrower_export_jitter: bool,
+}
+
+impl RulesetConformance {
+    pub const BASELINE_MIN_BUCKET_S: u32 = 600;
+    pub const BASELINE_MIN_JITTER_S: u64 = 120;
+    pub const BASELINE_MIN_JITTER_STEP_S: u64 = 60;
+
+    pub fn validate(&self, ruleset_id: &str) -> Result<()> {
+        if self.min_bucket_s == 0 {
+            return Err(anyhow!(
+                "ruleset {}: min_bucket_s must be >= 1",
+                ruleset_id
+            ));
+        }
+        if self.min_jitter_step_s == 0 {
+            return Err(anyhow!(
+                "ruleset {}: min_jitter_step_s must be >= 1",
+                ruleset_id
+            ));
+        }
+        if !self.allow_narrower_time_bucket && self.min_bucket_s < Self::BASELINE_MIN_BUCKET_S {
+            return Err(anyhow!(
+                "ruleset {}: min_bucket_s below {}s requires allow_narrower_time_bucket",
+                ruleset_id,
+                Self::BASELINE_MIN_BUCKET_S
+            ));
+        }
+        if !self.allow_narrower_export_jitter && self.min_jitter_s < Self::BASELINE_MIN_JITTER_S {
+            return Err(anyhow!(
+                "ruleset {}: min_jitter_s below {}s requires allow_narrower_export_jitter",
+                ruleset_id,
+                Self::BASELINE_MIN_JITTER_S
+            ));
+        }
+        if !self.allow_narrower_export_jitter
+            && self.min_jitter_step_s < Self::BASELINE_MIN_JITTER_STEP_S
+        {
+            return Err(anyhow!(
+                "ruleset {}: min_jitter_step_s below {}s requires allow_narrower_export_jitter",
+                ruleset_id,
+                Self::BASELINE_MIN_JITTER_STEP_S
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn effective_min_bucket_s(&self) -> u32 {
+        if self.allow_narrower_time_bucket {
+            self.min_bucket_s
+        } else {
+            self.min_bucket_s.max(Self::BASELINE_MIN_BUCKET_S)
+        }
+    }
+
+    pub fn effective_min_jitter_s(&self) -> u64 {
+        if self.allow_narrower_export_jitter {
+            self.min_jitter_s
+        } else {
+            self.min_jitter_s.max(Self::BASELINE_MIN_JITTER_S)
+        }
+    }
+
+    pub fn effective_min_jitter_step_s(&self) -> u64 {
+        if self.allow_narrower_export_jitter {
+            self.min_jitter_step_s
+        } else {
+            self.min_jitter_step_s
+                .max(Self::BASELINE_MIN_JITTER_STEP_S)
+        }
+    }
+
+    pub fn validate_export_options(&self, options: &ExportOptions, ruleset_id: &str) -> Result<()> {
+        let min_jitter_s = self.effective_min_jitter_s();
+        if options.jitter_s < min_jitter_s {
+            return Err(anyhow!(
+                "export jitter_s {} below ruleset {} minimum {}s",
+                options.jitter_s,
+                ruleset_id,
+                min_jitter_s
+            ));
+        }
+        let min_jitter_step_s = self.effective_min_jitter_step_s();
+        if options.jitter_step_s < min_jitter_step_s {
+            return Err(anyhow!(
+                "export jitter_step_s {} below ruleset {} minimum {}s",
+                options.jitter_step_s,
+                ruleset_id,
+                min_jitter_step_s
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl Default for RulesetConformance {
+    fn default() -> Self {
+        Self {
+            min_bucket_s: Self::BASELINE_MIN_BUCKET_S,
+            min_jitter_s: Self::BASELINE_MIN_JITTER_S,
+            min_jitter_step_s: Self::BASELINE_MIN_JITTER_STEP_S,
+            allow_narrower_time_bucket: false,
+            allow_narrower_export_jitter: false,
+        }
+    }
+}
+
 // -------------------- Sealed Log --------------------
 
 #[derive(Clone, Debug)]
@@ -429,6 +552,7 @@ pub struct KernelConfig {
     pub ruleset_id: String,
     pub ruleset_hash: [u8; 32],
     pub kernel_version: String,
+    pub ruleset_conformance: RulesetConformance,
     /// default retention; pruning will write checkpoints
     pub retention: Duration,
     /// Device signing seed (required at runtime; must not be the MVP placeholder).
@@ -448,10 +572,13 @@ pub struct Kernel {
     device_key: SigningKey,
     break_glass_policy: Option<crate::break_glass::QuorumPolicy>,
     zone_policy: ZonePolicy,
+    ruleset_conformance: RulesetConformance,
+    ruleset_id: String,
 }
 
 impl Kernel {
     pub fn open(cfg: &KernelConfig) -> Result<Self> {
+        cfg.ruleset_conformance.validate(&cfg.ruleset_id)?;
         let conn = Connection::open(&cfg.db_path)?;
         let device_key = signing_key_from_seed(&cfg.device_key_seed)?;
         let zone_policy = cfg.zone_policy.normalized()?;
@@ -460,6 +587,8 @@ impl Kernel {
             device_key,
             break_glass_policy: None,
             zone_policy,
+            ruleset_conformance: cfg.ruleset_conformance.clone(),
+            ruleset_id: cfg.ruleset_id.clone(),
         };
         k.ensure_schema()?;
         k.ensure_device_public_key()?;
@@ -691,7 +820,7 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
             return Err(e);
         }
 
-        let ev = match ContractEnforcer::enforce(cand) {
+        let ev = match ContractEnforcer::enforce(cand, &self.ruleset_conformance, ruleset_id) {
             Ok(ev) => ev,
             Err(e) => {
                 self.log_alarm("CONFORMANCE_CONTRACT_REJECT", &format!("{}", e))?;
@@ -960,7 +1089,7 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         Ok(out)
     }
 
-    fn validate_export_options(options: &ExportOptions) -> Result<()> {
+    fn validate_export_options(&self, options: &ExportOptions) -> Result<()> {
         if options.max_events_per_batch == 0 {
             return Err(anyhow!("export max_events_per_batch must be >= 1"));
         }
@@ -970,6 +1099,8 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         if options.jitter_s > 0 && options.jitter_step_s > options.jitter_s {
             return Err(anyhow!("export jitter_step_s cannot exceed jitter_s"));
         }
+        self.ruleset_conformance
+            .validate_export_options(options, &self.ruleset_id)?;
         Ok(())
     }
 
@@ -980,7 +1111,7 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         options: ExportOptions,
         token: &mut break_glass::BreakGlassToken,
     ) -> Result<ExportArtifact> {
-        Self::validate_export_options(&options)?;
+        self.validate_export_options(&options)?;
         let now_bucket = TimeBucket::now(600)?;
         break_glass::BreakGlass::assert_token_valid(
             token,
@@ -1002,7 +1133,7 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         expected_ruleset_hash: [u8; 32],
         options: ExportOptions,
     ) -> Result<ExportArtifact> {
-        Self::validate_export_options(&options)?;
+        self.validate_export_options(&options)?;
         self.export_events_sequential_unchecked(expected_ruleset_hash, options)
     }
 
@@ -1034,7 +1165,7 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         expected_ruleset_hash: [u8; 32],
         options: ExportOptions,
     ) -> Result<ExportArtifact> {
-        Self::validate_export_options(&options)?;
+        self.validate_export_options(&options)?;
 
         let payloads = {
             let mut stmt = self
@@ -1546,6 +1677,7 @@ mod tests {
 
     #[test]
     fn conformance_rejects_precise_time() {
+        let conformance = RulesetConformance::default();
         let cand = CandidateEvent {
             event_type: EventType::BoundaryCrossingObjectLarge,
             time_bucket: TimeBucket {
@@ -1556,11 +1688,12 @@ mod tests {
             confidence: 0.5,
             correlation_token: None,
         };
-        assert!(ContractEnforcer::enforce(cand).is_err());
+        assert!(ContractEnforcer::enforce(cand, &conformance, "ruleset:test").is_err());
     }
 
     #[test]
     fn conformance_rejects_zone_id_outside_allowlist() {
+        let conformance = RulesetConformance::default();
         let cand = CandidateEvent {
             event_type: EventType::BoundaryCrossingObjectLarge,
             time_bucket: TimeBucket {
@@ -1571,11 +1704,12 @@ mod tests {
             confidence: 0.5,
             correlation_token: None,
         };
-        assert!(ContractEnforcer::enforce(cand).is_err());
+        assert!(ContractEnforcer::enforce(cand, &conformance, "ruleset:test").is_err());
     }
 
     #[test]
     fn conformance_rejects_confidence_out_of_bounds() {
+        let conformance = RulesetConformance::default();
         let cand = CandidateEvent {
             event_type: EventType::BoundaryCrossingObjectLarge,
             time_bucket: TimeBucket {
@@ -1586,11 +1720,12 @@ mod tests {
             confidence: 1.5,
             correlation_token: None,
         };
-        assert!(ContractEnforcer::enforce(cand).is_err());
+        assert!(ContractEnforcer::enforce(cand, &conformance, "ruleset:test").is_err());
     }
 
     #[test]
     fn conformance_rejects_token_with_oversized_bucket() {
+        let conformance = RulesetConformance::default();
         let cand = CandidateEvent {
             event_type: EventType::BoundaryCrossingObjectLarge,
             time_bucket: TimeBucket {
@@ -1601,7 +1736,77 @@ mod tests {
             confidence: 0.5,
             correlation_token: Some([0u8; 32]),
         };
-        assert!(ContractEnforcer::enforce(cand).is_err());
+        assert!(ContractEnforcer::enforce(cand, &conformance, "ruleset:test").is_err());
+    }
+
+    #[test]
+    fn default_ruleset_rejects_bucket_below_baseline() {
+        let conformance = RulesetConformance::default();
+        let cand = CandidateEvent {
+            event_type: EventType::BoundaryCrossingObjectLarge,
+            time_bucket: TimeBucket {
+                start_epoch_s: 0,
+                size_s: 599,
+            },
+            zone_id: "zone:test".to_string(),
+            confidence: 0.5,
+            correlation_token: None,
+        };
+        assert!(ContractEnforcer::enforce(cand, &conformance, "ruleset:test").is_err());
+    }
+
+    #[test]
+    fn default_ruleset_rejects_export_jitter_below_baseline() {
+        let conformance = RulesetConformance::default();
+        let mut options = ExportOptions::default();
+        options.jitter_s = 119;
+        assert!(conformance
+            .validate_export_options(&options, "ruleset:test")
+            .is_err());
+        options.jitter_s = 120;
+        options.jitter_step_s = 59;
+        assert!(conformance
+            .validate_export_options(&options, "ruleset:test")
+            .is_err());
+    }
+
+    #[test]
+    fn ruleset_allows_narrower_values_when_explicitly_configured() {
+        let disallowed = RulesetConformance {
+            min_bucket_s: 300,
+            min_jitter_s: 30,
+            min_jitter_step_s: 10,
+            allow_narrower_time_bucket: false,
+            allow_narrower_export_jitter: false,
+        };
+        assert!(disallowed.validate("ruleset:narrow").is_err());
+
+        let conformance = RulesetConformance {
+            min_bucket_s: 300,
+            min_jitter_s: 30,
+            min_jitter_step_s: 10,
+            allow_narrower_time_bucket: true,
+            allow_narrower_export_jitter: true,
+        };
+        assert!(conformance.validate("ruleset:narrow").is_ok());
+        let cand = CandidateEvent {
+            event_type: EventType::BoundaryCrossingObjectLarge,
+            time_bucket: TimeBucket {
+                start_epoch_s: 0,
+                size_s: 300,
+            },
+            zone_id: "zone:test".to_string(),
+            confidence: 0.5,
+            correlation_token: None,
+        };
+        assert!(ContractEnforcer::enforce(cand, &conformance, "ruleset:narrow").is_ok());
+
+        let mut options = ExportOptions::default();
+        options.jitter_s = 30;
+        options.jitter_step_s = 10;
+        assert!(conformance
+            .validate_export_options(&options, "ruleset:narrow")
+            .is_ok());
     }
 
     #[test]
@@ -1641,6 +1846,7 @@ mod tests {
             ruleset_id: "ruleset:test".to_string(),
             ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
             kernel_version: "0.0.0-test".to_string(),
+            ruleset_conformance: RulesetConformance::default(),
             retention: Duration::from_secs(60),
             device_key_seed: "devkey:test".to_string(),
             zone_policy: ZonePolicy::default(),
@@ -1669,13 +1875,8 @@ mod tests {
             cfg.ruleset_hash,
         )?;
 
-        let artifact = kernel.export_events_sequential_unchecked(
-            cfg.ruleset_hash,
-            ExportOptions {
-                jitter_s: 0,
-                ..ExportOptions::default()
-            },
-        )?;
+        let artifact =
+            kernel.export_events_sequential_unchecked(cfg.ruleset_hash, ExportOptions::default())?;
         let value = serde_json::to_value(&artifact)?;
 
         fn contains_key(value: &serde_json::Value, key: &str) -> bool {
@@ -1701,6 +1902,7 @@ mod tests {
             ruleset_id: "ruleset:test".to_string(),
             ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
             kernel_version: "0.0.0-test".to_string(),
+            ruleset_conformance: RulesetConformance::default(),
             retention: Duration::from_secs(60),
             device_key_seed: "devkey:test".to_string(),
             zone_policy: ZonePolicy::default(),
@@ -1793,6 +1995,7 @@ mod tests {
             ruleset_id: "ruleset:test".to_string(),
             ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
             kernel_version: "0.0.0-test".to_string(),
+            ruleset_conformance: RulesetConformance::default(),
             retention: Duration::from_secs(60),
             device_key_seed: "devkey:mvp".to_string(),
             zone_policy: ZonePolicy::default(),
@@ -1819,6 +2022,7 @@ mod tests {
             ruleset_id: "ruleset:test".to_string(),
             ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
             kernel_version: "0.0.0-test".to_string(),
+            ruleset_conformance: RulesetConformance::default(),
             retention: Duration::from_secs(60),
             device_key_seed: "devkey:test".to_string(),
             zone_policy: ZonePolicy::default(),
@@ -1864,6 +2068,7 @@ mod tests {
             ruleset_id: "ruleset:test".to_string(),
             ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
             kernel_version: "0.0.0-test".to_string(),
+            ruleset_conformance: RulesetConformance::default(),
             retention: Duration::from_secs(60),
             device_key_seed: "devkey:test".to_string(),
             zone_policy: ZonePolicy::new(vec!["zone:private".to_string()])?,
@@ -1915,6 +2120,7 @@ mod tests {
             ruleset_id: "ruleset:test".to_string(),
             ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
             kernel_version: "0.0.0-test".to_string(),
+            ruleset_conformance: RulesetConformance::default(),
             retention: Duration::from_secs(60),
             device_key_seed: "devkey:test".to_string(),
             zone_policy: ZonePolicy::new(vec!["zone:private".to_string()])?,
@@ -1965,6 +2171,7 @@ mod tests {
             ruleset_id: "ruleset:test".to_string(),
             ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
             kernel_version: "0.0.0-test".to_string(),
+            ruleset_conformance: RulesetConformance::default(),
             retention: Duration::from_secs(60),
             device_key_seed: "devkey:test".to_string(),
             zone_policy: ZonePolicy::default(),
@@ -1996,6 +2203,7 @@ mod tests {
             ruleset_id: "ruleset:test".to_string(),
             ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
             kernel_version: "0.0.0-test".to_string(),
+            ruleset_conformance: RulesetConformance::default(),
             retention: Duration::from_secs(60),
             device_key_seed: "devkey:test".to_string(),
             zone_policy: ZonePolicy::default(),

@@ -176,7 +176,8 @@ mod tests {
     use std::path::PathBuf;
     use witness_kernel::{
         Approval, BreakGlass, CandidateEvent, EventType, Kernel, KernelConfig, ModuleDescriptor,
-        QuorumPolicy, TimeBucket, TrusteeEntry, TrusteeId, UnlockRequest, ZonePolicy,
+        QuorumPolicy, RulesetConformance, TimeBucket, TrusteeEntry, TrusteeId, UnlockRequest,
+        ZonePolicy,
     };
 
     fn temp_db_path() -> PathBuf {
@@ -217,6 +218,7 @@ mod tests {
             ruleset_id: "ruleset:test".to_string(),
             ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
             kernel_version: env!("CARGO_PKG_VERSION").to_string(),
+            ruleset_conformance: RulesetConformance::default(),
             retention: std::time::Duration::from_secs(60),
             device_key_seed: "devkey:test".to_string(),
             zone_policy: ZonePolicy::default(),
@@ -250,6 +252,7 @@ mod tests {
             ruleset_id: "ruleset:test".to_string(),
             ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
             kernel_version: env!("CARGO_PKG_VERSION").to_string(),
+            ruleset_conformance: RulesetConformance::default(),
             retention: std::time::Duration::from_secs(60),
             device_key_seed: "devkey:test".to_string(),
             zone_policy: ZonePolicy::default(),
@@ -276,6 +279,7 @@ mod tests {
             ruleset_id: "ruleset:test".to_string(),
             ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
             kernel_version: env!("CARGO_PKG_VERSION").to_string(),
+            ruleset_conformance: RulesetConformance::default(),
             retention: std::time::Duration::from_secs(60),
             device_key_seed: "devkey:test".to_string(),
             zone_policy: ZonePolicy::default(),
@@ -309,6 +313,7 @@ mod tests {
             ruleset_id: "ruleset:test".to_string(),
             ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
             kernel_version: env!("CARGO_PKG_VERSION").to_string(),
+            ruleset_conformance: RulesetConformance::default(),
             retention: std::time::Duration::from_secs(60),
             device_key_seed: "devkey:test".to_string(),
             zone_policy: ZonePolicy::default(),
@@ -363,6 +368,7 @@ mod tests {
             ruleset_id: "ruleset:test".to_string(),
             ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
             kernel_version: env!("CARGO_PKG_VERSION").to_string(),
+            ruleset_conformance: RulesetConformance::default(),
             retention: std::time::Duration::from_secs(60),
             device_key_seed: "devkey:test".to_string(),
             zone_policy: ZonePolicy::default(),
@@ -416,6 +422,7 @@ mod tests {
             ruleset_id: "ruleset:test".to_string(),
             ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
             kernel_version: env!("CARGO_PKG_VERSION").to_string(),
+            ruleset_conformance: RulesetConformance::default(),
             retention: std::time::Duration::from_secs(60),
             device_key_seed: "devkey:test".to_string(),
             zone_policy: ZonePolicy::default(),

@@ -16,8 +16,9 @@ use witness_kernel::verify;
 use witness_kernel::{
     break_glass_receipt_outcome_for_verifier, device_public_key_from_db, verify_entry_signature,
     verify_export_bundle, CandidateEvent, CapabilityBoundaryRuntime, EventType, ExportArtifact,
-    ExportOptions, ExportReceipt, Kernel, KernelConfig, Module, RtspConfig, RtspSource, TimeBucket,
-    Vault, VaultConfig, ZoneCrossingModule, ZonePolicy, EXPORT_EVENTS_ENVELOPE_ID,
+    ExportOptions, ExportReceipt, Kernel, KernelConfig, Module, RtspConfig, RtspSource,
+    RulesetConformance, TimeBucket, Vault, VaultConfig, ZoneCrossingModule, ZonePolicy,
+    EXPORT_EVENTS_ENVELOPE_ID,
 };
 
 const DEFAULT_DB_PATH: &str = "demo_witness.db";
@@ -85,6 +86,7 @@ fn main() -> Result<()> {
         ruleset_id: DEFAULT_RULESET_ID.to_string(),
         ruleset_hash,
         kernel_version: env!("CARGO_PKG_VERSION").to_string(),
+        ruleset_conformance: RulesetConformance::default(),
         retention: Duration::from_secs(60 * 60 * 24 * 7),
         device_key_seed,
         zone_policy: ZonePolicy::default(),

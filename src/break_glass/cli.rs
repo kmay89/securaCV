@@ -17,7 +17,8 @@ use crate::{
     approvals_commitment, break_glass::BreakGlassTokenFile,
     break_glass_receipt_outcome_for_verifier, device_public_key_from_db, hash_entry,
     verify_entry_signature, Approval, BreakGlass, BreakGlassOutcome, BreakGlassToken, Kernel,
-    KernelConfig, TimeBucket, TrusteeId, UnlockRequest, Vault, VaultConfig, ZonePolicy,
+    KernelConfig, RulesetConformance, TimeBucket, TrusteeId, UnlockRequest, Vault, VaultConfig,
+    ZonePolicy,
 };
 
 #[path = "../ui.rs"]
@@ -788,6 +789,7 @@ fn kernel_config(db_path: &str, ruleset_id: &str, device_key_seed: &str) -> Kern
         ruleset_id: ruleset_id.to_string(),
         ruleset_hash,
         kernel_version: env!("CARGO_PKG_VERSION").to_string(),
+        ruleset_conformance: RulesetConformance::default(),
         retention: std::time::Duration::from_secs(60 * 60 * 24 * 7),
         device_key_seed: device_key_seed.to_string(),
         zone_policy: ZonePolicy::default(),
@@ -914,6 +916,7 @@ mod tests {
             ruleset_id: ruleset_id.to_string(),
             ruleset_hash,
             kernel_version: "test".to_string(),
+            ruleset_conformance: RulesetConformance::default(),
             retention: Duration::from_secs(60),
             device_key_seed: "devkey:test".to_string(),
             zone_policy: ZonePolicy::default(),

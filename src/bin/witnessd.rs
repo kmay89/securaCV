@@ -16,8 +16,8 @@ use witness_kernel::{
     api::{ApiConfig, ApiServer},
     break_glass::BreakGlassTokenFile,
     BucketKeyManager, CapabilityBoundaryRuntime, FrameBuffer, Kernel, KernelConfig, Module,
-    ModuleDescriptor, RtspConfig, RtspSource, TimeBucket, Vault, VaultConfig, ZoneCrossingModule,
-    ZonePolicy,
+    ModuleDescriptor, RulesetConformance, RtspConfig, RtspSource, TimeBucket, Vault, VaultConfig,
+    ZoneCrossingModule, ZonePolicy,
 };
 
 #[path = "../ui.rs"]
@@ -45,6 +45,7 @@ fn main() -> Result<()> {
         ruleset_id: config.ruleset_id.clone(),
         ruleset_hash,
         kernel_version: kernel_version.to_string(),
+        ruleset_conformance: RulesetConformance::default(),
         retention: config.retention,
         device_key_seed,
         zone_policy: ZonePolicy::new(config.zones.sensitive_zones.clone())?,

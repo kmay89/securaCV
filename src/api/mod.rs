@@ -107,6 +107,10 @@ impl ApiServer {
         if !addr.ip().is_loopback() {
             return Err(anyhow!("api must bind to loopback address"));
         }
+        self.kernel_cfg.ruleset_conformance.validate_export_options(
+            &self.cfg.export_options,
+            &self.kernel_cfg.ruleset_id,
+        )?;
         let listener = TcpListener::bind(addr)?;
         let addr = listener.local_addr()?;
         if !addr.ip().is_loopback() {
