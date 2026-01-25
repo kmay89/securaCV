@@ -26,7 +26,11 @@ struct Args {
     db_path: String,
 
     /// Ruleset identifier for logged events.
-    #[arg(long, env = "WITNESS_RULESET_ID", default_value = "ruleset:grove_vision2_v1")]
+    #[arg(
+        long,
+        env = "WITNESS_RULESET_ID",
+        default_value = "ruleset:grove_vision2_v1"
+    )]
     ruleset_id: String,
 }
 

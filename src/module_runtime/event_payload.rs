@@ -6,7 +6,11 @@ use crate::{CandidateEvent, EventType, TimeBucket};
 const ROOT_FIELDS: [&str; 4] = ["event_type", "time_bucket", "zone_id", "confidence"];
 const BUCKET_FIELDS: [&str; 2] = ["start_epoch_s", "size_s"];
 
-fn ensure_allowed_fields(context: &str, obj: &serde_json::Map<String, Value>, allowed: &[&str]) -> Result<()> {
+fn ensure_allowed_fields(
+    context: &str,
+    obj: &serde_json::Map<String, Value>,
+    allowed: &[&str],
+) -> Result<()> {
     let extras: Vec<String> = obj
         .keys()
         .filter(|key| !allowed.contains(&key.as_str()))
@@ -81,10 +85,10 @@ pub fn parse_event_payload(payload: &Value) -> Result<CandidateEvent> {
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("conformance: zone_id must be a string"))?
         .to_string();
-    let confidence = obj
-        .get("confidence")
-        .and_then(Value::as_f64)
-        .ok_or_else(|| anyhow!("conformance: confidence must be a number"))? as f32;
+    let confidence =
+        obj.get("confidence")
+            .and_then(Value::as_f64)
+            .ok_or_else(|| anyhow!("conformance: confidence must be a number"))? as f32;
 
     Ok(CandidateEvent {
         event_type,
