@@ -1,0 +1,9 @@
+{
+  "domain": "secura_cv",
+  "name": "SecuraCV",
+  "config_flow": true,
+  "documentation": "https://github.com/kmay89/securaCV",
+  "issue_tracker": "https://github.com/kmay89/securaCV/issues",
+  "version": "0.1.0",
+  "iot_class": "local_polling"
+}
