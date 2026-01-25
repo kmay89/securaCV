@@ -40,7 +40,7 @@ A conventional camera system:
 - records pixels,
 - stores files,
 - allows deletion, editing, or loss,
-- provides no intrinsic guarantee of completeness or integrity.
+- and provides no intrinsic guarantee of completeness or integrity.
 
 This is sufficient for:
 - convenience,
