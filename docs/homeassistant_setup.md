@@ -19,6 +19,15 @@ Cameras → Frigate (detection) → MQTT → PWK (privacy logging)
 - PWK receives event notifications, not video
 - Best accuracy, minimal resource usage
 
+#### Frigate + MQTT Configuration Checklist
+
+- [ ] **Mode set to frigate**: `mode: "frigate"` is configured in the add-on options.
+- [ ] **Frigate MQTT broker details match**: `frigate.mqtt_host`, `frigate.mqtt_port`, `frigate.mqtt_username`, and `frigate.mqtt_password` match the broker that Frigate uses.
+- [ ] **Frigate event topic is correct**: `frigate.mqtt_topic` matches Frigate’s configured event topic (default `frigate/events`).
+- [ ] **Home Assistant MQTT publish settings are aligned**: if you enable `mqtt_publish.enabled`, ensure `mqtt_publish.host`, `mqtt_publish.port`, `mqtt_publish.username`, and `mqtt_publish.password` match the same broker.
+- [ ] **Topic + discovery prefixes are consistent**: `mqtt_publish.topic_prefix` is the prefix you expect for PWK events, and `mqtt_publish.discovery_prefix` matches Home Assistant’s discovery prefix (default `homeassistant`).
+- [ ] **Required add-on options are filled**: `device_key_seed` is set, and any Frigate-specific options (`frigate.cameras`, `frigate.labels`, `frigate.min_confidence`) are configured as needed.
+
 ### Standalone Mode
 
 ```
