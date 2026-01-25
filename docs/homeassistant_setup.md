@@ -1,6 +1,6 @@
 # Home Assistant Integration Guide
 
-The Privacy Witness Kernel runs as a Home Assistant add-on, providing privacy-preserving event logging for your cameras.
+Install the SecuraCV Home Assistant integration via HACS, then connect it to a running Privacy Witness Kernel instance (add-on, Docker, or another host).
 
 ## Choose Your Mode
 
@@ -40,15 +40,29 @@ Cameras → go2rtc → PWK (detection + logging)
 
 ---
 
-## Quick Start
+## Quick Start (HACS + Kernel)
 
-### Step 1: Install
+### Step 1: Install the HACS Integration
 
+1. Open **HACS → Integrations**
+2. Click **⋮ → Custom repositories**
+3. Add `https://github.com/kmay89/securaCV` as an **Integration**
+4. Install **SecuraCV** and restart Home Assistant when prompted
+
+### Step 2: Run the Kernel
+
+Choose one runtime option and configure it in either **frigate** or **standalone** mode:
+
+**Option A: Home Assistant add-on (custom repository)**
 1. Go to **Settings → Add-ons → Add-on Store**
-2. Click ⋮ → **Repositories** → Add: `https://github.com/kmay89/securaCV`
-3. Install "Privacy Witness Kernel"
+2. Click **⋮ → Repositories** → Add: `https://github.com/kmay89/securaCV`
+3. Install **Privacy Witness Kernel**
 
-### Step 2: Generate Device Key
+**Option B: Docker / another host**
+1. Run the kernel using your preferred deployment method
+2. Ensure the Event API is reachable from Home Assistant
+
+### Step 3: Generate a Device Key (Kernel)
 
 ```bash
 openssl rand -hex 32
@@ -56,7 +70,7 @@ openssl rand -hex 32
 
 Save this key - it protects your event signatures.
 
-### Step 3: Configure
+### Step 4: Configure the Kernel
 
 **For Frigate users:**
 ```yaml
@@ -66,7 +80,7 @@ frigate:
   mqtt_host: "core-mosquitto"
   min_confidence: 0.5
 mqtt_publish:
-  enabled: true  # Auto-create sensors in HA
+  enabled: true  # Optional: HA MQTT discovery
 ```
 
 **For standalone users:**
@@ -75,81 +89,27 @@ mode: "standalone"
 device_key_seed: "your-64-char-key"
 go2rtc_discovery: true
 mqtt_publish:
-  enabled: true  # Auto-create sensors in HA
+  enabled: true  # Optional: HA MQTT discovery
 ```
 
-### Step 4: Start
-
-Click **Start**. Check logs for any errors.
-
----
-
-## Distribution & HACS Roadmap
-
-### Current Distribution
-
-The integration is currently distributed as a **Home Assistant add-on** from this repository (custom add-on repo URL). This add-on runs the Privacy Witness Kernel as a separate service with its own configuration and lifecycle.
-
-### Planned HACS Integration (Scope)
-
-Planned HACS support is intentionally minimal:
-- **Config flow + entities only** (MQTT/REST entities surfaced in HA)
-- **No new data fields** and no expansion of event schema
-- No change to privacy guarantees or retention behavior
-
-### HACS vs Add-on (Quick Comparison)
-
-| Aspect | Add-on (today) | HACS (planned) |
-|--------|----------------|----------------|
-| Runs the kernel service | ✅ Yes | ❌ No (frontend/config only) |
-| Configuration location | Add-on config UI | HA config flow |
-| Entities in HA | ✅ Yes (via MQTT/REST) | ✅ Yes (same entities) |
-| Data schema changes | ❌ Not allowed | ❌ Not planned |
-
----
-
-## Detailed Configuration
-
----
-
-## HACS Installation (Integration Only)
-
-> **Important:** The HACS integration does **not** run the kernel. It relies on the existing add-on and MQTT setup described above to supply event data.
-
-### Step 1: Add the Repository to HACS
-
-1. Open **HACS → Integrations**
-2. Click **⋮ → Custom repositories**
-3. Add the repository URL: `https://github.com/kmay89/securaCV`
-4. Select **Integration** as the category and click **Add**
-
-### Step 2: Install the Integration
-
-1. In HACS, search for **Privacy Witness Kernel**
-2. Click **Download** and follow the prompts
-3. Restart Home Assistant when asked
-
-### Step 3: Configure the Integration
+### Step 5: Add the Integration
 
 1. Go to **Settings → Devices & Services**
-2. Click **Add Integration** and choose **Privacy Witness Kernel**
-3. Provide the MQTT connection details that match your add-on setup
-
-### Minimal Configuration Example
-
-```yaml
-# configuration.yaml (minimal integration settings)
-privacy_witness_kernel:
-  mqtt_host: "core-mosquitto"
-  mqtt_port: 1883
-  mqtt_topic_prefix: "witness"
-```
+2. Click **Add Integration** and select **SecuraCV**
+3. Provide the Event API URL and token from your kernel instance (MQTT is optional)
 
 ---
 
-## Installation
+## Distribution
 
-### Option 1: Add-on Repository (Recommended)
+- **HACS integration (current):** install the SecuraCV integration in Home Assistant.
+- **Kernel runtime:** run the Privacy Witness Kernel as an add-on, container, or service. The integration connects to its Event API.
+
+---
+
+## Kernel Installation (Optional Add-on)
+
+### Option 1: Add-on Repository
 
 1. In Home Assistant, go to **Settings → Add-ons → Add-on Store**
 2. Click the menu (⋮) → **Repositories**
@@ -395,7 +355,7 @@ The Event API is available at `http://localhost:8799` (or your configured port).
 
 ### Authentication
 
-The API uses capability tokens. The token is written to `/config/api_token` when the add-on starts.
+The API uses capability tokens. The token is written to `/config/api_token` when the add-on starts. If you run the kernel elsewhere, use the token path or secrets location configured for that deployment.
 
 ```bash
 # Read the token

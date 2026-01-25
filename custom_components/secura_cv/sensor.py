@@ -1,6 +1,7 @@
 """Sensors for SecuraCV."""
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from homeassistant.components.sensor import SensorEntity
@@ -14,7 +15,7 @@ from . import DOMAIN, SecuraCvCoordinator
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
-    async_add_entities,
+    async_add_entities: "Callable[[list[SensorEntity]], None]",
 ) -> None:
     """Set up SecuraCV sensors based on a config entry."""
     coordinator: SecuraCvCoordinator = hass.data[DOMAIN][entry.entry_id]
@@ -33,19 +34,14 @@ class SecuraCvLatestEventSensor(CoordinatorEntity[SecuraCvCoordinator], SensorEn
 
     @property
     def native_value(self) -> str | None:
-        event = self.coordinator.data.get("latest_event")
-        if not event:
-            return None
-        event_type = event.get("event_type")
-        return str(event_type) if event_type is not None else None
+        if event := self.coordinator.data.get("latest_event"):
+            return event.get("event_type")
+        return None
 
     @property
     def extra_state_attributes(self) -> dict[str, Any] | None:
-        event = self.coordinator.data.get("latest_event")
-        if not event:
+        if not (event := self.coordinator.data.get("latest_event")):
             return None
-        attrs: dict[str, Any] = {}
-        for key in ("zone_id", "time_bucket", "confidence"):
-            if key in event:
-                attrs[key] = event[key]
+        keys = ("zone_id", "time_bucket", "confidence")
+        attrs = {key: event[key] for key in keys if key in event}
         return attrs or None
