@@ -235,15 +235,11 @@ fn handle_connection(
 
     let artifact = kernel.export_events_for_api(expected_ruleset_hash, cfg.export_options)?;
     if request.path == "/events/latest" {
-        let latest = latest_event(&artifact);
-        match latest {
-            Some(event) => {
-                let payload = serde_json::to_vec(event)?;
-                write_response(&mut stream, 200, "application/json", &payload)?;
-            }
-            None => {
-                write_json_response(&mut stream, 404, r#"{"error":"no_events"}"#)?;
-            }
+        if let Some(event) = latest_event(&artifact) {
+            let payload = serde_json::to_vec(event)?;
+            write_response(&mut stream, 200, "application/json", &payload)?;
+        } else {
+            write_json_response(&mut stream, 404, r#"{"error":"no_events"}"#)?;
         }
         return Ok(());
     }
@@ -377,13 +373,10 @@ fn parse_hex32(value: &str) -> Result<[u8; 32]> {
 }
 
 fn latest_event(artifact: &crate::ExportArtifact) -> Option<&crate::ExportEvent> {
-    let mut latest = None;
-    for batch in &artifact.batches {
-        for bucket in &batch.buckets {
-            for event in &bucket.events {
-                latest = Some(event);
-            }
-        }
-    }
-    latest
+    artifact
+        .batches
+        .iter()
+        .flat_map(|batch| &batch.buckets)
+        .flat_map(|bucket| &bucket.events)
+        .last()
 }

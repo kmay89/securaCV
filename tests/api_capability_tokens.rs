@@ -34,6 +34,18 @@ fn add_test_event(kernel: &mut Kernel, cfg: &KernelConfig) -> Result<()> {
     Ok(())
 }
 
+fn kernel_config(db_path: &std::path::Path) -> KernelConfig {
+    KernelConfig {
+        db_path: db_path.to_string_lossy().to_string(),
+        ruleset_id: "ruleset:test".to_string(),
+        ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
+        kernel_version: "0.0.0-test".to_string(),
+        retention: std::time::Duration::from_secs(60),
+        device_key_seed: "devkey:test".to_string(),
+        zone_policy: ZonePolicy::default(),
+    }
+}
+
 fn contains_key(value: &Value, key: &str) -> bool {
     match value {
         Value::Object(map) => map.iter().any(|(k, v)| k == key || contains_key(v, key)),
@@ -55,15 +67,7 @@ fn read_response(stream: &mut TcpStream) -> Result<(String, String)> {
 fn api_rejects_missing_token() -> Result<()> {
     let dir = tempdir()?;
     let db_path = dir.path().join("witness.db");
-    let cfg = KernelConfig {
-        db_path: db_path.to_string_lossy().to_string(),
-        ruleset_id: "ruleset:test".to_string(),
-        ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
-        kernel_version: "0.0.0-test".to_string(),
-        retention: std::time::Duration::from_secs(60),
-        device_key_seed: "devkey:test".to_string(),
-        zone_policy: ZonePolicy::default(),
-    };
+    let cfg = kernel_config(&db_path);
     let mut kernel = Kernel::open(&cfg)?;
     add_test_event(&mut kernel, &cfg)?;
     drop(kernel);
@@ -88,15 +92,7 @@ fn api_rejects_missing_token() -> Result<()> {
 fn api_returns_export_events_without_identifiers() -> Result<()> {
     let dir = tempdir()?;
     let db_path = dir.path().join("witness.db");
-    let cfg = KernelConfig {
-        db_path: db_path.to_string_lossy().to_string(),
-        ruleset_id: "ruleset:test".to_string(),
-        ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
-        kernel_version: "0.0.0-test".to_string(),
-        retention: std::time::Duration::from_secs(60),
-        device_key_seed: "devkey:test".to_string(),
-        zone_policy: ZonePolicy::default(),
-    };
+    let cfg = kernel_config(&db_path);
     let mut kernel = Kernel::open(&cfg)?;
     add_test_event(&mut kernel, &cfg)?;
     drop(kernel);
@@ -120,6 +116,88 @@ fn api_returns_export_events_without_identifiers() -> Result<()> {
     assert!(!contains_key(&value, "correlation_token"));
     assert!(!contains_key(&value, "created_at"));
     assert!(!contains_key(&value, "event_id"));
+
+    api_handle.stop()?;
+    Ok(())
+}
+
+#[test]
+fn api_health_endpoint_is_public() -> Result<()> {
+    let dir = tempdir()?;
+    let db_path = dir.path().join("witness.db");
+    let cfg = kernel_config(&db_path);
+    let _kernel = Kernel::open(&cfg)?;
+
+    let api_config = ApiConfig {
+        addr: "127.0.0.1:0".to_string(),
+        ..ApiConfig::default()
+    };
+    let api_handle = ApiServer::new(api_config, cfg.clone()).spawn()?;
+
+    let mut stream = TcpStream::connect(api_handle.addr)?;
+    let request = "GET /health HTTP/1.1\r\nHost: localhost\r\n\r\n";
+    stream.write_all(request.as_bytes())?;
+    let (headers, body) = read_response(&mut stream)?;
+    assert!(headers.contains("200 OK"));
+    assert!(body.contains(r#""status":"ok""#));
+
+    api_handle.stop()?;
+    Ok(())
+}
+
+#[test]
+fn api_latest_event_endpoint_returns_event() -> Result<()> {
+    let dir = tempdir()?;
+    let db_path = dir.path().join("witness.db");
+    let cfg = kernel_config(&db_path);
+    let mut kernel = Kernel::open(&cfg)?;
+    add_test_event(&mut kernel, &cfg)?;
+    drop(kernel);
+
+    let api_config = ApiConfig {
+        addr: "127.0.0.1:0".to_string(),
+        ..ApiConfig::default()
+    };
+    let api_handle = ApiServer::new(api_config, cfg.clone()).spawn()?;
+    let token = api_handle.token.clone();
+
+    let mut stream = TcpStream::connect(api_handle.addr)?;
+    let request = format!(
+        "GET /events/latest HTTP/1.1\r\nHost: localhost\r\nX-Witness-Token: {token}\r\n\r\n"
+    );
+    stream.write_all(request.as_bytes())?;
+    let (headers, body) = read_response(&mut stream)?;
+    assert!(headers.contains("200 OK"));
+
+    let value: Value = serde_json::from_str(&body)?;
+    assert!(value.get("event_type").is_some());
+
+    api_handle.stop()?;
+    Ok(())
+}
+
+#[test]
+fn api_latest_event_endpoint_returns_not_found_when_empty() -> Result<()> {
+    let dir = tempdir()?;
+    let db_path = dir.path().join("witness.db");
+    let cfg = kernel_config(&db_path);
+    let _kernel = Kernel::open(&cfg)?;
+
+    let api_config = ApiConfig {
+        addr: "127.0.0.1:0".to_string(),
+        ..ApiConfig::default()
+    };
+    let api_handle = ApiServer::new(api_config, cfg.clone()).spawn()?;
+    let token = api_handle.token.clone();
+
+    let mut stream = TcpStream::connect(api_handle.addr)?;
+    let request = format!(
+        "GET /events/latest HTTP/1.1\r\nHost: localhost\r\nX-Witness-Token: {token}\r\n\r\n"
+    );
+    stream.write_all(request.as_bytes())?;
+    let (headers, body) = read_response(&mut stream)?;
+    assert!(headers.contains("404 Not Found"));
+    assert!(body.contains(r#""error":"no_events""#));
 
     api_handle.stop()?;
     Ok(())
