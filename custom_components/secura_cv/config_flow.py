@@ -12,7 +12,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from . import DOMAIN, SecuraCvApi, SecuraCvApiAuthError, SecuraCvApiError
 
-DEFAULT_URL = "http://localhost:8799"
+DEFAULT_URL = "http://privacy_witness_kernel:8799"
 
 
 class CannotConnect(Exception):
