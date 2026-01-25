@@ -6,7 +6,9 @@ This guide covers connecting the Privacy Witness Kernel to real IP cameras via R
 
 ### Build Requirements
 
-For real RTSP support, you need GStreamer installed and the `rtsp-gstreamer` feature enabled.
+For real RTSP support, you need either GStreamer or FFmpeg installed and the
+matching cargo feature enabled. Both backends keep frames in memory, coarsen
+timestamps at capture time, and compute non-invertible feature hashes at capture time.
 
 **Ubuntu/Debian:**
 ```bash
@@ -16,6 +18,16 @@ sudo apt-get install -y \
     gstreamer1.0-plugins-good \
     gstreamer1.0-plugins-bad \
     gstreamer1.0-plugins-ugly \
+    libseccomp-dev
+```
+
+**Ubuntu/Debian (FFmpeg backend):**
+```bash
+sudo apt-get install -y \
+    libavcodec-dev \
+    libavformat-dev \
+    libavutil-dev \
+    libswscale-dev \
     libseccomp-dev
 ```
 
@@ -29,15 +41,33 @@ sudo dnf install -y \
     libseccomp-devel
 ```
 
+**Fedora/RHEL (FFmpeg backend):**
+```bash
+sudo dnf install -y \
+    ffmpeg-devel \
+    libseccomp-devel
+```
+
 **macOS (without sandbox - for development only):**
 ```bash
 brew install gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad gst-plugins-ugly
+```
+
+**macOS (FFmpeg backend):**
+```bash
+brew install ffmpeg
 ```
 
 ### Build with RTSP Support
 
 ```bash
 cargo build --release --features rtsp-gstreamer
+```
+
+or
+
+```bash
+cargo build --release --features rtsp-ffmpeg
 ```
 
 ---
@@ -120,6 +150,7 @@ url = "rtsp://admin:password123@192.168.1.100:554/Streaming/Channels/101"
 target_fps = 10
 width = 1920
 height = 1080
+backend = "auto" # auto, gstreamer, ffmpeg
 
 [zones]
 module_zone_id = "zone:front_door"
@@ -132,11 +163,15 @@ export DEVICE_KEY_SEED=$(openssl rand -hex 32)
 WITNESS_CONFIG=witness.toml cargo run --release --features rtsp-gstreamer --bin witnessd
 ```
 
+`auto` prefers GStreamer when both `rtsp-gstreamer` and `rtsp-ffmpeg` are enabled,
+and falls back to FFmpeg when only that feature is available.
+
 ### Environment Variable Configuration
 
 ```bash
 export DEVICE_KEY_SEED=$(openssl rand -hex 32)
 export WITNESS_RTSP_URL="rtsp://admin:password@192.168.1.100:554/stream"
+export WITNESS_RTSP_BACKEND="auto" # auto, gstreamer, ffmpeg
 export WITNESS_ZONE_ID="zone:driveway"
 
 cargo run --release --features rtsp-gstreamer --bin witnessd
@@ -198,7 +233,7 @@ rtsp://admin:P%40ss%3Aword@192.168.1.100:554/stream
 
 ### Digest Auth
 
-GStreamer handles digest authentication automatically when using basic auth format.
+GStreamer and FFmpeg handle digest authentication automatically when using basic auth format.
 
 ---
 
@@ -250,11 +285,17 @@ GStreamer handles digest authentication automatically when using basic auth form
    target_fps = 5
    ```
 
-### "RTSP requires the rtsp-gstreamer feature"
+### "RTSP requires the rtsp-gstreamer or rtsp-ffmpeg feature"
 
-You need to build with GStreamer support:
+You need to build with a supported RTSP backend:
 ```bash
 cargo build --release --features rtsp-gstreamer
+```
+
+or
+
+```bash
+cargo build --release --features rtsp-ffmpeg
 ```
 
 ---

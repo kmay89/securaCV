@@ -44,6 +44,7 @@ url = "stub://front_camera"  # Change to your RTSP URL
 target_fps = 10              # Frames per second to process
 width = 640                  # Frame width
 height = 480                 # Frame height
+backend = "auto"             # "auto", "gstreamer", or "ffmpeg"
 
 # V4L2 Camera Configuration (local /dev/video* devices)
 #
@@ -84,6 +85,7 @@ seconds = 604800  # 7 days
 #   WITNESS_CONFIG      - Path to this config file
 #   WITNESS_INGEST_BACKEND - Ingest backend ("rtsp" or "v4l2")
 #   WITNESS_RTSP_URL    - Override rtsp.url
+#   WITNESS_RTSP_BACKEND - Override rtsp.backend ("auto", "gstreamer", "ffmpeg")
 #   WITNESS_V4L2_DEVICE - Override v4l2.device
 #   WITNESS_ZONE_ID     - Override zones.module_zone_id
 #   WITNESS_SENSITIVE_ZONES - Comma-separated list of sensitive zones

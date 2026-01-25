@@ -11,6 +11,7 @@ const DEFAULT_RTSP_URL: &str = "stub://front_camera";
 const DEFAULT_RTSP_FPS: u32 = 10;
 const DEFAULT_RTSP_WIDTH: u32 = 640;
 const DEFAULT_RTSP_HEIGHT: u32 = 480;
+const DEFAULT_RTSP_BACKEND: &str = "auto";
 const DEFAULT_V4L2_DEVICE: &str = "/dev/video0";
 const DEFAULT_V4L2_FPS: u32 = 10;
 const DEFAULT_V4L2_WIDTH: u32 = 640;
@@ -64,6 +65,7 @@ struct RtspConfigFile {
     target_fps: Option<u32>,
     width: Option<u32>,
     height: Option<u32>,
+    backend: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -114,6 +116,14 @@ pub struct RtspSettings {
     pub target_fps: u32,
     pub width: u32,
     pub height: u32,
+    pub backend: RtspBackendPreference,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RtspBackendPreference {
+    Auto,
+    Gstreamer,
+    Ffmpeg,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -189,6 +199,12 @@ impl WitnessdConfig {
                 file.rtsp.as_ref().and_then(|rtsp| rtsp.height),
                 DEFAULT_RTSP_HEIGHT,
             ),
+            backend: RtspBackendPreference::parse(
+                file.rtsp
+                    .as_ref()
+                    .and_then(|rtsp| rtsp.backend.as_deref())
+                    .unwrap_or(DEFAULT_RTSP_BACKEND),
+            )?,
         };
         let v4l2 = V4l2Settings {
             device: config_string(
@@ -258,6 +274,11 @@ impl WitnessdConfig {
                 self.rtsp.url = url;
             }
         }
+        if let Ok(backend) = std::env::var("WITNESS_RTSP_BACKEND") {
+            if !backend.trim().is_empty() {
+                self.rtsp.backend = RtspBackendPreference::parse(&backend)?;
+            }
+        }
         if let Ok(device) = std::env::var("WITNESS_V4L2_DEVICE") {
             if !device.trim().is_empty() {
                 self.v4l2.device = device;
@@ -307,6 +328,20 @@ impl IngestBackend {
             "v4l2" => Ok(Self::V4l2),
             other => Err(anyhow!(
                 "unsupported ingest backend '{}'; expected 'rtsp' or 'v4l2'",
+                other
+            )),
+        }
+    }
+}
+
+impl RtspBackendPreference {
+    fn parse(raw: &str) -> Result<Self> {
+        match raw.trim().to_lowercase().as_str() {
+            "auto" => Ok(Self::Auto),
+            "gstreamer" => Ok(Self::Gstreamer),
+            "ffmpeg" => Ok(Self::Ffmpeg),
+            other => Err(anyhow!(
+                "unsupported rtsp backend '{}'; expected 'auto', 'gstreamer', or 'ffmpeg'",
                 other
             )),
         }

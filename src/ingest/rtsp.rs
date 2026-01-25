@@ -14,15 +14,18 @@
 //! - Forward raw frames over network
 //! - Retain frames beyond handoff to FrameBuffer
 
+use anyhow::Result;
 #[cfg(feature = "rtsp-gstreamer")]
 use anyhow::Context;
-use anyhow::Result;
 #[cfg(feature = "rtsp-gstreamer")]
 use std::time::{Duration, Instant};
 
 use super::compute_features_hash;
+use crate::config::RtspBackendPreference;
 use crate::frame::RawFrame;
 use crate::TimeBucket;
+#[cfg(feature = "rtsp-ffmpeg")]
+use super::rtsp_ffmpeg::FfmpegRtspSource;
 
 /// Configuration for an RTSP source.
 #[derive(Clone, Debug)]
@@ -35,6 +38,8 @@ pub struct RtspConfig {
     pub width: u32,
     /// Frame height (for synthetic frames in MVP).
     pub height: u32,
+    /// RTSP decoder backend selection.
+    pub backend: RtspBackendPreference,
 }
 
 impl Default for RtspConfig {
@@ -44,13 +49,14 @@ impl Default for RtspConfig {
             target_fps: 10,
             width: 640,
             height: 480,
+            backend: RtspBackendPreference::Auto,
         }
     }
 }
 
 /// RTSP frame source.
 ///
-/// Uses GStreamer for real RTSP decode, with a synthetic fallback for `stub://` URLs.
+/// Uses GStreamer or FFmpeg for real RTSP decode, with a synthetic fallback for `stub://` URLs.
 pub struct RtspSource {
     backend: RtspBackend,
 }
@@ -59,6 +65,8 @@ enum RtspBackend {
     Synthetic(SyntheticRtspSource),
     #[cfg(feature = "rtsp-gstreamer")]
     Gstreamer(GstreamerRtspSource),
+    #[cfg(feature = "rtsp-ffmpeg")]
+    Ffmpeg(FfmpegRtspSource),
 }
 
 impl RtspSource {
@@ -68,15 +76,51 @@ impl RtspSource {
                 backend: RtspBackend::Synthetic(SyntheticRtspSource::new(config)),
             })
         } else {
-            #[cfg(feature = "rtsp-gstreamer")]
-            {
-                Ok(Self {
-                    backend: RtspBackend::Gstreamer(GstreamerRtspSource::new(config)?),
-                })
-            }
-            #[cfg(not(feature = "rtsp-gstreamer"))]
-            {
-                anyhow::bail!("RTSP requires the rtsp-gstreamer feature")
+            match config.backend {
+                RtspBackendPreference::Auto => {
+                    #[cfg(feature = "rtsp-gstreamer")]
+                    {
+                        return Ok(Self {
+                            backend: RtspBackend::Gstreamer(GstreamerRtspSource::new(config)?),
+                        });
+                    }
+                    #[cfg(all(feature = "rtsp-ffmpeg", not(feature = "rtsp-gstreamer")))]
+                    {
+                        return Ok(Self {
+                            backend: RtspBackend::Ffmpeg(FfmpegRtspSource::new(config)?),
+                        });
+                    }
+                    #[cfg(not(any(feature = "rtsp-gstreamer", feature = "rtsp-ffmpeg")))]
+                    {
+                        anyhow::bail!(
+                            "RTSP requires the rtsp-gstreamer or rtsp-ffmpeg feature"
+                        )
+                    }
+                }
+                RtspBackendPreference::Gstreamer => {
+                    #[cfg(feature = "rtsp-gstreamer")]
+                    {
+                        Ok(Self {
+                            backend: RtspBackend::Gstreamer(GstreamerRtspSource::new(config)?),
+                        })
+                    }
+                    #[cfg(not(feature = "rtsp-gstreamer"))]
+                    {
+                        anyhow::bail!("RTSP backend 'gstreamer' requires the rtsp-gstreamer feature")
+                    }
+                }
+                RtspBackendPreference::Ffmpeg => {
+                    #[cfg(feature = "rtsp-ffmpeg")]
+                    {
+                        Ok(Self {
+                            backend: RtspBackend::Ffmpeg(FfmpegRtspSource::new(config)?),
+                        })
+                    }
+                    #[cfg(not(feature = "rtsp-ffmpeg"))]
+                    {
+                        anyhow::bail!("RTSP backend 'ffmpeg' requires the rtsp-ffmpeg feature")
+                    }
+                }
             }
         }
     }
@@ -87,6 +131,8 @@ impl RtspSource {
             RtspBackend::Synthetic(source) => source.connect(),
             #[cfg(feature = "rtsp-gstreamer")]
             RtspBackend::Gstreamer(source) => source.connect(),
+            #[cfg(feature = "rtsp-ffmpeg")]
+            RtspBackend::Ffmpeg(source) => source.connect(),
         }
     }
 
@@ -104,6 +150,8 @@ impl RtspSource {
             RtspBackend::Synthetic(source) => source.next_frame(),
             #[cfg(feature = "rtsp-gstreamer")]
             RtspBackend::Gstreamer(source) => source.next_frame(),
+            #[cfg(feature = "rtsp-ffmpeg")]
+            RtspBackend::Ffmpeg(source) => source.next_frame(),
         }
     }
 
@@ -113,6 +161,8 @@ impl RtspSource {
             RtspBackend::Synthetic(source) => source.is_healthy(),
             #[cfg(feature = "rtsp-gstreamer")]
             RtspBackend::Gstreamer(source) => source.is_healthy(),
+            #[cfg(feature = "rtsp-ffmpeg")]
+            RtspBackend::Ffmpeg(source) => source.is_healthy(),
         }
     }
 
@@ -122,6 +172,8 @@ impl RtspSource {
             RtspBackend::Synthetic(source) => source.stats(),
             #[cfg(feature = "rtsp-gstreamer")]
             RtspBackend::Gstreamer(source) => source.stats(),
+            #[cfg(feature = "rtsp-ffmpeg")]
+            RtspBackend::Ffmpeg(source) => source.stats(),
         }
     }
 }
@@ -422,6 +474,7 @@ mod tests {
             target_fps: 10,
             width: 640,
             height: 480,
+            backend: RtspBackendPreference::Auto,
         }
     }
 

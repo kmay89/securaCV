@@ -138,16 +138,27 @@ For a combined Home Assistant + Frigate MQTT walkthrough, see `docs/integrations
 
 ### Quick Start with Real Cameras
 
-1. Install GStreamer dependencies:
+1. Install RTSP dependencies (GStreamer or FFmpeg):
    ```bash
    # Ubuntu/Debian
    sudo apt-get install libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
        gstreamer1.0-plugins-good gstreamer1.0-plugins-bad libseccomp-dev
    ```
 
+   ```bash
+   # Ubuntu/Debian (FFmpeg backend)
+   sudo apt-get install libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libseccomp-dev
+   ```
+
 2. Build with RTSP support:
    ```bash
    cargo build --release --features rtsp-gstreamer
+   ```
+
+   or
+
+   ```bash
+   cargo build --release --features rtsp-ffmpeg
    ```
 
 3. Configure your camera (create `witness.toml`):
@@ -157,12 +168,13 @@ For a combined Home Assistant + Frigate MQTT walkthrough, see `docs/integrations
    target_fps = 10
    width = 640
    height = 480
+   backend = "auto" # auto, gstreamer, ffmpeg
 
    [zones]
    module_zone_id = "zone:front_door"
    ```
 
-4. Run:
+4. Run (matching the backend feature you built):
    ```bash
    export DEVICE_KEY_SEED=$(openssl rand -hex 32)
    WITNESS_CONFIG=witness.toml cargo run --release --features rtsp-gstreamer --bin witnessd
@@ -172,14 +184,18 @@ See `docs/rtsp_setup.md` for camera URL patterns, troubleshooting, and advanced 
 
 ### RTSP Architecture
 
-`witnessd` uses GStreamer to decode RTSP streams in-memory. Configure an RTSP URL
+`witnessd` uses GStreamer or FFmpeg to decode RTSP streams in-memory. Configure an RTSP URL
 in `RtspConfig` and the kernel will produce `RawFrame` values without writing
 frames to disk. Time coarsening and non-invertible feature hashing happen at
 capture time, and `RtspSource::is_healthy()` reports stream health.
 
-GStreamer support is gated behind the `rtsp-gstreamer` feature and requires
-system GStreamer dependencies at runtime for real RTSP streams. The `stub://`
-scheme keeps the synthetic source for tests and local development.
+GStreamer support is gated behind the `rtsp-gstreamer` feature; FFmpeg support
+is gated behind `rtsp-ffmpeg`. The `stub://` scheme keeps the synthetic source
+for tests and local development.
+
+Select a backend with `rtsp.backend = "auto|gstreamer|ffmpeg"` in `witness.toml`
+or the `WITNESS_RTSP_BACKEND` environment variable. `auto` prefers GStreamer
+when both features are available.
 
 ## V4L2 Camera Setup (USB / local devices)
 

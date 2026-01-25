@@ -18,6 +18,8 @@
 
 mod features;
 pub mod rtsp;
+#[cfg(feature = "rtsp-ffmpeg")]
+pub(crate) mod rtsp_ffmpeg;
 #[cfg(feature = "ingest-v4l2")]
 pub mod v4l2;
 
