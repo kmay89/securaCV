@@ -230,17 +230,12 @@ impl SealedLogStore for SqliteSealedLogStore {
 struct InMemorySealedEventEntry {
     created_at: i64,
     payload_json: String,
-    prev_hash: [u8; 32],
     entry_hash: [u8; 32],
-    signature: [u8; 64],
 }
 
 #[derive(Clone, Debug)]
 struct InMemoryCheckpointEntry {
-    created_at: i64,
-    cutoff_event_id: usize,
     chain_head_hash: [u8; 32],
-    signature: [u8; 64],
 }
 
 #[derive(Clone, Debug, Default)]
@@ -271,20 +266,16 @@ impl InMemorySealedLogStore {
 }
 
 impl SealedLogStore for InMemorySealedLogStore {
-    fn append_event(&mut self, ev: &Event, signing_key: &SigningKey) -> Result<()> {
+    fn append_event(&mut self, ev: &Event, _signing_key: &SigningKey) -> Result<()> {
         let created_at = i64::try_from(ev.time_bucket.start_epoch_s)
             .map_err(|_| anyhow!("time bucket start exceeds i64 range"))?;
         let prev_hash = self.last_event_hash_or_checkpoint_head()?;
         let payload_json = serde_json::to_string(ev)?;
         let entry_hash = hash_entry(&prev_hash, payload_json.as_bytes());
-        let signature = sign_entry(signing_key, &entry_hash);
-
         self.events.push(InMemorySealedEventEntry {
             created_at,
             payload_json,
-            prev_hash,
             entry_hash,
-            signature,
         });
         Ok(())
     }
@@ -292,7 +283,7 @@ impl SealedLogStore for InMemorySealedLogStore {
     fn enforce_retention_with_checkpoint(
         &mut self,
         retention: Duration,
-        signing_key: &SigningKey,
+        _signing_key: &SigningKey,
     ) -> Result<()> {
         let now = now_s()? as i64;
         let cutoff = now - retention.as_secs() as i64;
@@ -306,14 +297,8 @@ impl SealedLogStore for InMemorySealedLogStore {
         };
 
         let head = self.events[cutoff_index].entry_hash;
-        let checkpoint_sig = sign_entry(signing_key, &head);
-        let created_at = now_s()? as i64;
-
         self.checkpoints.push(InMemoryCheckpointEntry {
-            created_at,
-            cutoff_event_id: cutoff_index + 1,
             chain_head_hash: head,
-            signature: checkpoint_sig,
         });
 
         self.events.drain(..=cutoff_index);
