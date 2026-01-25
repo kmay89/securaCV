@@ -370,8 +370,9 @@ automation:
 ## API Reference
 
 The Event API is available at `http://privacy_witness_kernel:8799` when running
-as a Home Assistant add-on (or your configured port). If the kernel runs
-elsewhere, replace the hostname with the reachable IP/DNS name for that host.
+as a Home Assistant add-on (or your configured port), as this hostname is
+automatically resolved by the Supervisor. If the kernel runs elsewhere, replace
+the hostname with the reachable IP/DNS name for that host.
 
 ### Authentication
 
