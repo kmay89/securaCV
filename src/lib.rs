@@ -44,6 +44,8 @@ pub use frame::{
     StubDetector, MAX_BUFFER_FRAMES, MAX_PREROLL_SECS,
 };
 pub use ingest::{rtsp::RtspConfig, RtspSource};
+#[cfg(feature = "ingest-v4l2")]
+pub use ingest::{v4l2::V4l2Config, V4l2Source};
 pub use module_runtime::{CapabilityBoundaryRuntime, ModuleCapability};
 pub use vault::{Vault, VaultConfig};
 
