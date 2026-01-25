@@ -18,6 +18,7 @@ Cameras → Frigate (detection) → MQTT → PWK (privacy logging)
 - Uses Frigate's superior ML detection (Coral TPU, TensorFlow)
 - PWK receives event notifications, not video
 - Best accuracy, minimal resource usage
+- The add-on always starts the Event API service in Frigate mode, even if MQTT publishing is disabled
 
 #### Frigate + MQTT Configuration Checklist
 
