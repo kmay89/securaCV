@@ -169,7 +169,7 @@ When `mqtt_publish.enabled` is `true`, PWK will:
 3. Publish availability status with LWT (Last Will Testament)
 4. Use QoS 1 for reliable message delivery
 
-**Follow-up task (if TLS or MQTT v5 is required):** swap the bridges to a standard MQTT client library that supports TLS and MQTT v5 while preserving existing privacy guarantees (do not introduce any new privacy metadata).
+**Follow-up task (if TLS or MQTT v5 is required):** Replace the custom MQTT implementation in the bridges with a standard client library that supports TLS and MQTT v5, while preserving existing privacy guarantees (i.e., do not introduce any new privacy metadata).
 
 ### Standalone CLI Usage
 
