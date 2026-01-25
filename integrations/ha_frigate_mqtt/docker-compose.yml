@@ -1,0 +1,71 @@
+version: "3.9"
+
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: ha-mosquitto
+    volumes:
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto_data:/mosquitto/data
+    ports:
+      - "1883:1883"
+
+  frigate:
+    image: ghcr.io/blakeblackshear/frigate:stable
+    container_name: ha-frigate
+    depends_on:
+      - mosquitto
+    shm_size: "256mb"
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./frigate.yml:/config/config.yml:ro
+      - frigate_media:/media/frigate
+
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:stable
+    container_name: ha-core
+    depends_on:
+      - mosquitto
+    ports:
+      - "8123:8123"
+    volumes:
+      - homeassistant_config:/config
+
+  securacv:
+    build:
+      context: ../..
+      dockerfile: homeassistant/Dockerfile
+    image: securacv-ha-frigate:local
+    container_name: ha-securacv
+    depends_on:
+      - mosquitto
+      - frigate
+    working_dir: /data
+    environment:
+      DEVICE_KEY_SEED: ${DEVICE_KEY_SEED}
+      WITNESS_API_TOKEN_PATH: /data/api_token
+      MQTT_BROKER_ADDR: mosquitto:1883
+      FRIGATE_MQTT_TOPIC: frigate/events
+      HA_DISCOVERY_PREFIX: homeassistant
+      MQTT_TOPIC_PREFIX: witness
+      ALLOW_REMOTE_MQTT: "true"
+      DAEMON_MODE: "true"
+    volumes:
+      - securacv_data:/data
+    entrypoint: ["/bin/sh", "-c"]
+    command: >-
+      set -eu;
+      witness_api &
+      until [ -f "$WITNESS_API_TOKEN_PATH" ]; do
+        sleep 1;
+      done;
+      frigate_bridge --db-path /data/witness.db &
+      event_mqtt_bridge --daemon --api-token-path "$WITNESS_API_TOKEN_PATH" &
+      wait
+
+volumes:
+  mosquitto_data:
+  frigate_media:
+  homeassistant_config:
+  securacv_data:
