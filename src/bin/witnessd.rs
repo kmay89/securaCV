@@ -267,7 +267,9 @@ impl IngestSource {
                 }
                 #[cfg(not(feature = "ingest-v4l2"))]
                 {
-                    Err(anyhow!("v4l2 ingestion requires the ingest-v4l2 feature"))
+                    Err(anyhow!(
+                        "v4l2 ingestion requires the ingest-v4l2 feature"
+                    ))
                 }
             }
         }
