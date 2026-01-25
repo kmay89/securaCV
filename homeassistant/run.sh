@@ -307,7 +307,7 @@ else
   "db_path": "$DB_PATH",
   "ruleset_id": "ruleset:homeassistant_v1",
   "api": {
-    "addr": "0.0.0.0:8799",
+    "addr": "127.0.0.1:8799",
     "token_path": "/config/api_token"
   },
   "rtsp": {

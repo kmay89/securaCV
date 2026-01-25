@@ -103,14 +103,15 @@ impl ApiServer {
     }
 
     pub fn spawn(self) -> Result<ApiHandle> {
-        let addr: SocketAddr = self.cfg.addr.parse()?;
-        if !addr.ip().is_loopback() {
-            return Err(anyhow!("api must bind to loopback address"));
-        }
-        let listener = TcpListener::bind(addr)?;
+        let configured_addr: SocketAddr = self.cfg.addr.parse()?;
+        let listener = TcpListener::bind(configured_addr)?;
         let addr = listener.local_addr()?;
-        if !addr.ip().is_loopback() {
-            return Err(anyhow!("api must bind to loopback address"));
+        if configured_addr.ip().is_loopback() && !addr.ip().is_loopback() {
+            return Err(anyhow!(
+                "api configured for loopback address '{}', but bound to non-loopback address '{}'",
+                configured_addr,
+                addr
+            ));
         }
         listener.set_nonblocking(true)?;
 
@@ -181,7 +182,8 @@ fn handle_connection(
     expected_ruleset_hash: [u8; 32],
 ) -> Result<()> {
     let peer = stream.peer_addr()?;
-    if !peer.ip().is_loopback() {
+    let local = stream.local_addr()?;
+    if local.ip().is_loopback() && !peer.ip().is_loopback() {
         write_json_response(&mut stream, 403, r#"{"error":"forbidden"}"#)?;
         return Ok(());
     }
