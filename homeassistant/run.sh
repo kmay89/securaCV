@@ -66,7 +66,7 @@ write_frigate_api_config() {
   "ruleset_id": "ruleset:frigate_v1",
   "api": {
     "addr": "127.0.0.1:8799",
-    "token_path": "/config/api_token"
+    "token_path": "$TOKEN_FILE"
   },
   "retention": {
     "seconds": $RETENTION_SECS
@@ -328,7 +328,7 @@ else
   "ruleset_id": "ruleset:homeassistant_v1",
   "api": {
     "addr": "127.0.0.1:8799",
-    "token_path": "/config/api_token"
+    "token_path": "$TOKEN_FILE"
   },
   "rtsp": {
     "url": "$CAMERA_URL",

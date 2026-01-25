@@ -6,7 +6,7 @@
 //! 3. Does NOT ingest RTSP streams
 
 use anyhow::{anyhow, Result};
-use std::time::Duration;
+use std::sync::mpsc;
 
 use witness_kernel::{
     api::{ApiConfig, ApiServer},
@@ -19,7 +19,7 @@ fn main() -> Result<()> {
     let kernel_version = env!("CARGO_PKG_VERSION");
     let device_key_seed =
         std::env::var("DEVICE_KEY_SEED").map_err(|_| anyhow!("DEVICE_KEY_SEED must be set"))?;
-    let config = witness_kernel::config::WitnessdConfig::load()?;
+    let config = witness_kernel::config::WitnessApiConfig::load()?;
     let ruleset_hash = KernelConfig::ruleset_hash_from_id(&config.ruleset_id);
 
     let cfg = KernelConfig {
@@ -29,7 +29,7 @@ fn main() -> Result<()> {
         kernel_version: kernel_version.to_string(),
         retention: config.retention,
         device_key_seed,
-        zone_policy: ZonePolicy::new(config.zones.sensitive_zones.clone())?,
+        zone_policy: ZonePolicy::new(config.sensitive_zones.clone())?,
     };
 
     let api_config = ApiConfig {
@@ -49,7 +49,16 @@ fn main() -> Result<()> {
     }
     log::info!("witness_api running. serving {}", cfg.db_path);
 
-    loop {
-        std::thread::sleep(Duration::from_secs(60));
-    }
+    let (tx, rx) = mpsc::channel();
+    ctrlc::set_handler(move || {
+        let _ = tx.send(());
+    })
+    .expect("error setting Ctrl-C handler");
+
+    log::info!("witness_api waiting for shutdown signal (Ctrl-C)...");
+    let _ = rx.recv();
+    log::info!("shutdown signal received, stopping API server...");
+    api_handle.stop()?;
+
+    Ok(())
 }

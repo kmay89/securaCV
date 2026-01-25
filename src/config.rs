@@ -24,6 +24,15 @@ struct WitnessdConfigFile {
 }
 
 #[derive(Debug, Deserialize, Default)]
+struct WitnessApiConfigFile {
+    db_path: Option<String>,
+    ruleset_id: Option<String>,
+    api: Option<ApiConfigFile>,
+    zones: Option<ZoneConfigFile>,
+    retention: Option<RetentionConfigFile>,
+}
+
+#[derive(Debug, Deserialize, Default)]
 struct ApiConfigFile {
     addr: Option<String>,
     token_path: Option<PathBuf>,
@@ -56,6 +65,16 @@ pub struct WitnessdConfig {
     pub api_token_path: Option<PathBuf>,
     pub rtsp: RtspSettings,
     pub zones: ZoneSettings,
+    pub retention: Duration,
+}
+
+#[derive(Debug, Clone)]
+pub struct WitnessApiConfig {
+    pub db_path: String,
+    pub ruleset_id: String,
+    pub api_addr: String,
+    pub api_token_path: Option<PathBuf>,
+    pub sensitive_zones: Vec<String>,
     pub retention: Duration,
 }
 
@@ -200,6 +219,90 @@ impl WitnessdConfig {
     }
 }
 
+impl WitnessApiConfig {
+    pub fn load() -> Result<Self> {
+        let config_path = std::env::var("WITNESS_CONFIG").ok();
+        let file_cfg = match config_path.as_deref() {
+            Some(path) => Some(read_api_config_file(Path::new(path))?),
+            None => None,
+        };
+        let mut cfg = Self::from_file(file_cfg.unwrap_or_default())?;
+        cfg.apply_env()?;
+        cfg.validate()?;
+        Ok(cfg)
+    }
+
+    fn from_file(file: WitnessApiConfigFile) -> Result<Self> {
+        let db_path = file.db_path.unwrap_or_else(|| DEFAULT_DB_PATH.to_string());
+        let ruleset_id = file
+            .ruleset_id
+            .unwrap_or_else(|| DEFAULT_RULESET_ID.to_string());
+        let api_addr = file
+            .api
+            .as_ref()
+            .and_then(|api| api.addr.clone())
+            .unwrap_or_else(|| DEFAULT_API_ADDR.to_string());
+        let api_token_path = file.api.and_then(|api| api.token_path).or_else(|| {
+            std::env::var("WITNESS_API_TOKEN_PATH")
+                .ok()
+                .map(PathBuf::from)
+        });
+        let sensitive_zones = file
+            .zones
+            .and_then(|zones| zones.sensitive)
+            .unwrap_or_default();
+        let retention = Duration::from_secs(
+            file.retention
+                .and_then(|retention| retention.seconds)
+                .unwrap_or(DEFAULT_RETENTION_SECS),
+        );
+        Ok(Self {
+            db_path,
+            ruleset_id,
+            api_addr,
+            api_token_path,
+            sensitive_zones,
+            retention,
+        })
+    }
+
+    fn apply_env(&mut self) -> Result<()> {
+        if let Ok(addr) = std::env::var("WITNESS_API_ADDR") {
+            if !addr.trim().is_empty() {
+                self.api_addr = addr;
+            }
+        }
+        if let Ok(path) = std::env::var("WITNESS_API_TOKEN_PATH") {
+            if !path.trim().is_empty() {
+                self.api_token_path = Some(PathBuf::from(path));
+            }
+        }
+        if let Ok(zones) = std::env::var("WITNESS_SENSITIVE_ZONES") {
+            let parsed = split_csv(&zones);
+            if !parsed.is_empty() {
+                self.sensitive_zones = parsed;
+            }
+        }
+        if let Ok(retention) = std::env::var("WITNESS_RETENTION_SECS") {
+            let seconds: u64 = retention.parse().map_err(|_| {
+                anyhow!("WITNESS_RETENTION_SECS must be an integer number of seconds")
+            })?;
+            self.retention = Duration::from_secs(seconds);
+        }
+        Ok(())
+    }
+
+    fn validate(&mut self) -> Result<()> {
+        let policy = crate::ZonePolicy::new(self.sensitive_zones.clone())?;
+        self.sensitive_zones = policy.sensitive_zones;
+
+        if self.retention.as_secs() == 0 {
+            return Err(anyhow!("retention must be greater than zero"));
+        }
+        Ok(())
+    }
+}
+
 fn read_config_file(path: &Path) -> Result<WitnessdConfigFile> {
     let raw = std::fs::read_to_string(path)
         .map_err(|e| anyhow!("failed to read config file {}: {}", path.display(), e))?;
@@ -213,6 +316,30 @@ fn read_config_file(path: &Path) -> Result<WitnessdConfigFile> {
             .map_err(|e| anyhow!("invalid JSON config file {}: {}", path.display(), e))?
     } else {
         // Try JSON first, then TOML
+        serde_json::from_str(&raw).or_else(|_| {
+            toml::from_str(&raw).map_err(|e| {
+                anyhow!(
+                    "invalid config file {} (tried JSON and TOML): {}",
+                    path.display(),
+                    e
+                )
+            })
+        })?
+    };
+    Ok(cfg)
+}
+
+fn read_api_config_file(path: &Path) -> Result<WitnessApiConfigFile> {
+    let raw = std::fs::read_to_string(path)
+        .map_err(|e| anyhow!("failed to read config file {}: {}", path.display(), e))?;
+
+    let cfg = if path.extension().map(|e| e == "toml").unwrap_or(false) {
+        toml::from_str(&raw)
+            .map_err(|e| anyhow!("invalid TOML config file {}: {}", path.display(), e))?
+    } else if path.extension().map(|e| e == "json").unwrap_or(false) {
+        serde_json::from_str(&raw)
+            .map_err(|e| anyhow!("invalid JSON config file {}: {}", path.display(), e))?
+    } else {
         serde_json::from_str(&raw).or_else(|_| {
             toml::from_str(&raw).map_err(|e| {
                 anyhow!(
