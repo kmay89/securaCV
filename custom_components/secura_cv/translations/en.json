@@ -1,0 +1,19 @@
+{
+  "config": {
+    "flow_title": "SecuraCV",
+    "step": {
+      "user": {
+        "title": "Connect to SecuraCV",
+        "description": "Enter the connection details for your SecuraCV instance.",
+        "data": {
+          "url": "URL",
+          "token": "Token"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect.",
+      "invalid_auth": "Invalid authentication."
+    }
+  }
+}
