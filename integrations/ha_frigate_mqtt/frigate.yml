@@ -1,0 +1,28 @@
+mqtt:
+  host: mosquitto
+  port: 1883
+  topic_prefix: frigate
+  client_id: frigate
+
+record:
+  enabled: false
+
+snapshots:
+  enabled: false
+
+detectors:
+  cpu:
+    type: cpu
+
+cameras:
+  demo:
+    ffmpeg:
+      inputs:
+        - path: rtsp://127.0.0.1:8554/demo
+          roles:
+            - detect
+    detect:
+      enabled: true
+      width: 640
+      height: 360
+      fps: 5
