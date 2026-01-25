@@ -3,7 +3,7 @@ use ed25519_dalek::SigningKey;
 use rusqlite::{params, Connection};
 use std::time::Duration;
 
-use crate::{hash_entry, now_s, sign_entry, Event, ReprocessGuard};
+use crate::{hash_entry, now_s, open_db_connection, sign_entry, Event, ReprocessGuard};
 
 pub trait SealedLogStore {
     fn append_event(&mut self, ev: &Event, signing_key: &SigningKey) -> Result<()>;
@@ -28,7 +28,7 @@ pub struct SqliteSealedLogStore {
 
 impl SqliteSealedLogStore {
     pub fn open(db_path: &str) -> Result<Self> {
-        let conn = Connection::open(db_path)?;
+        let conn = open_db_connection(db_path)?;
         let mut store = Self { conn };
         store.ensure_schema()?;
         Ok(store)

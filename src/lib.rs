@@ -23,7 +23,7 @@
 use anyhow::{anyhow, Result};
 use ed25519_dalek::{Signer, SigningKey, Verifier, VerifyingKey};
 use rand::RngCore;
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::sync::OnceLock;
@@ -50,6 +50,27 @@ pub use ingest::{v4l2::V4l2Config, V4l2Source};
 pub use module_runtime::{CapabilityBoundaryRuntime, ModuleCapability};
 pub use storage::{InMemorySealedLogStore, SealedLogStore, SqliteSealedLogStore};
 pub use vault::{FilesystemVaultStore, Vault, VaultConfig, VaultStore};
+
+fn shared_memory_uri() -> String {
+    let mut bytes = [0u8; 8];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    format!(
+        "file:witness_kernel_{:x}?mode=memory&cache=shared",
+        u64::from_le_bytes(bytes)
+    )
+}
+
+pub(crate) fn open_db_connection(db_path: &str) -> Result<Connection> {
+    if db_path.starts_with("file:") {
+        return Ok(Connection::open_with_flags(
+            db_path,
+            OpenFlags::SQLITE_OPEN_READ_WRITE
+                | OpenFlags::SQLITE_OPEN_CREATE
+                | OpenFlags::SQLITE_OPEN_URI,
+        )?);
+    }
+    Ok(Connection::open(db_path)?)
+}
 
 // -------------------- Time Buckets --------------------
 
@@ -457,8 +478,13 @@ pub struct Kernel {
 
 impl Kernel {
     pub fn open(cfg: &KernelConfig) -> Result<Self> {
-        let conn = Connection::open(&cfg.db_path)?;
-        let sealed_log = Box::new(SqliteSealedLogStore::open(&cfg.db_path)?);
+        let db_path = if cfg.db_path == ":memory:" {
+            shared_memory_uri()
+        } else {
+            cfg.db_path.clone()
+        };
+        let conn = open_db_connection(&db_path)?;
+        let sealed_log = Box::new(SqliteSealedLogStore::open(&db_path)?);
         let device_key = signing_key_from_seed(&cfg.device_key_seed)?;
         let zone_policy = cfg.zone_policy.normalized()?;
         let mut k = Self {
@@ -478,7 +504,7 @@ impl Kernel {
         cfg: &KernelConfig,
         sealed_log: Box<dyn SealedLogStore>,
     ) -> Result<Self> {
-        let conn = Connection::open(&cfg.db_path)?;
+        let conn = open_db_connection(&cfg.db_path)?;
         let device_key = signing_key_from_seed(&cfg.device_key_seed)?;
         let zone_policy = cfg.zone_policy.normalized()?;
         let mut k = Self {
