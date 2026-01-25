@@ -352,67 +352,60 @@ mod tests {
         std::fs::write(path, contents).expect("write temp config");
     }
 
+    fn assert_reads_config(filename: &str, contents: &str, expected: TestConfig) {
+        let dir = tempdir().expect("temp dir");
+        let path = dir.path().join(filename);
+        write_file(&path, contents);
+
+        let cfg: TestConfig = read_config_file(&path).expect("read config");
+        assert_eq!(cfg, expected);
+    }
+
     #[test]
     fn reads_toml_config_by_extension() {
-        let dir = tempdir().expect("temp dir");
-        let path = dir.path().join("config.toml");
-        write_file(&path, "name = \"alpha\"\ncount = 3\n");
-
-        let cfg: TestConfig = read_config_file(&path).expect("read toml config");
-        assert_eq!(
-            cfg,
+        assert_reads_config(
+            "config.toml",
+            "name = \"alpha\"\ncount = 3\n",
             TestConfig {
                 name: "alpha".to_string(),
-                count: 3
-            }
+                count: 3,
+            },
         );
     }
 
     #[test]
     fn reads_json_config_by_extension() {
-        let dir = tempdir().expect("temp dir");
-        let path = dir.path().join("config.json");
-        write_file(&path, r#"{"name":"beta","count":7}"#);
-
-        let cfg: TestConfig = read_config_file(&path).expect("read json config");
-        assert_eq!(
-            cfg,
+        assert_reads_config(
+            "config.json",
+            r#"{"name":"beta","count":7}"#,
             TestConfig {
                 name: "beta".to_string(),
-                count: 7
-            }
+                count: 7,
+            },
         );
     }
 
     #[test]
     fn auto_detects_toml_without_extension() {
-        let dir = tempdir().expect("temp dir");
-        let path = dir.path().join("config");
-        write_file(&path, "name = \"gamma\"\ncount = 11\n");
-
-        let cfg: TestConfig = read_config_file(&path).expect("read toml config");
-        assert_eq!(
-            cfg,
+        assert_reads_config(
+            "config",
+            "name = \"gamma\"\ncount = 11\n",
             TestConfig {
                 name: "gamma".to_string(),
-                count: 11
-            }
+                count: 11,
+            },
         );
     }
 
     #[test]
     fn auto_detects_json_without_extension() {
-        let dir = tempdir().expect("temp dir");
-        let path = dir.path().join("config");
-        write_file(&path, r#"{"name":"delta","count":13}"#);
-
-        let cfg: TestConfig = read_config_file(&path).expect("read json config");
-        assert_eq!(
-            cfg,
+        assert_reads_config(
+            "config",
+            r#"{"name":"delta","count":13}"#,
             TestConfig {
                 name: "delta".to_string(),
-                count: 13
-            }
+                count: 13,
+            },
         );
     }
 
