@@ -379,7 +379,6 @@ impl DeviceV4l2Source {
         };
         Duration::from_millis(base_ms.max(2_000) as u64)
     }
-
 }
 
 fn should_skip_connect(state_present: bool, is_healthy: bool) -> bool {
