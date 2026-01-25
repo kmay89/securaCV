@@ -335,3 +335,97 @@ fn split_csv(value: &str) -> Vec<String> {
         .map(|entry| entry.to_string())
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::read_config_file;
+    use serde::Deserialize;
+    use tempfile::tempdir;
+
+    #[derive(Debug, Deserialize, PartialEq)]
+    struct TestConfig {
+        name: String,
+        count: u32,
+    }
+
+    fn write_file(path: &std::path::Path, contents: &str) {
+        std::fs::write(path, contents).expect("write temp config");
+    }
+
+    #[test]
+    fn reads_toml_config_by_extension() {
+        let dir = tempdir().expect("temp dir");
+        let path = dir.path().join("config.toml");
+        write_file(&path, "name = \"alpha\"\ncount = 3\n");
+
+        let cfg: TestConfig = read_config_file(&path).expect("read toml config");
+        assert_eq!(
+            cfg,
+            TestConfig {
+                name: "alpha".to_string(),
+                count: 3
+            }
+        );
+    }
+
+    #[test]
+    fn reads_json_config_by_extension() {
+        let dir = tempdir().expect("temp dir");
+        let path = dir.path().join("config.json");
+        write_file(&path, r#"{"name":"beta","count":7}"#);
+
+        let cfg: TestConfig = read_config_file(&path).expect("read json config");
+        assert_eq!(
+            cfg,
+            TestConfig {
+                name: "beta".to_string(),
+                count: 7
+            }
+        );
+    }
+
+    #[test]
+    fn auto_detects_toml_without_extension() {
+        let dir = tempdir().expect("temp dir");
+        let path = dir.path().join("config");
+        write_file(&path, "name = \"gamma\"\ncount = 11\n");
+
+        let cfg: TestConfig = read_config_file(&path).expect("read toml config");
+        assert_eq!(
+            cfg,
+            TestConfig {
+                name: "gamma".to_string(),
+                count: 11
+            }
+        );
+    }
+
+    #[test]
+    fn auto_detects_json_without_extension() {
+        let dir = tempdir().expect("temp dir");
+        let path = dir.path().join("config");
+        write_file(&path, r#"{"name":"delta","count":13}"#);
+
+        let cfg: TestConfig = read_config_file(&path).expect("read json config");
+        assert_eq!(
+            cfg,
+            TestConfig {
+                name: "delta".to_string(),
+                count: 13
+            }
+        );
+    }
+
+    #[test]
+    fn reports_errors_when_parsing_fails_for_both_formats() {
+        let dir = tempdir().expect("temp dir");
+        let path = dir.path().join("config");
+        write_file(&path, "{not: json");
+
+        let err = read_config_file::<TestConfig>(&path).expect_err("parse should fail");
+        let message = err.to_string();
+        assert!(message.contains("invalid config file"));
+        assert!(message.contains("json error"));
+        assert!(message.contains("toml error"));
+    }
+}
