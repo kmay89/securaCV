@@ -82,9 +82,11 @@ unseal path.
 
 ```bash
 cargo run --bin break_glass -- unseal \
-  --envelope vault/envelopes/<envelope_id>.json \
+  --envelope <envelope_id> \
   --token /path/to/break_glass.token \
   --db witness.db \
+  --ruleset-id ruleset:v0.3.0 \
+  --vault-path vault/envelopes \
   --output-dir vault/unsealed
 ```
 
