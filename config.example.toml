@@ -69,6 +69,8 @@ height = 480
 #
 [esp32]
 url = "http://127.0.0.1:81/stream"
+# Seeed XIAO Vision AI / Grove Vision AI V2 defaults:
+#   http://<device-ip>:81/stream  (some firmware uses :80/stream or /capture)
 target_fps = 10
 
 # Zone Configuration
