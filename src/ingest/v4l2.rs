@@ -246,12 +246,20 @@ impl DeviceV4l2Source {
         use v4l::buffer::Type;
         use v4l::video::Capture;
 
-        if self.state.is_some() {
+        let has_state = self.state.is_some();
+        if !Self::should_reconnect(has_state, self.is_healthy()) {
             log::debug!(
-                "V4l2Source: already connected to {}",
+                "V4l2Source: already connected and healthy to {}",
                 self.config.device
             );
             return Ok(());
+        }
+        if has_state {
+            log::info!(
+                "V4l2Source: unhealthy connection, reconnecting to {}",
+                self.config.device
+            );
+            self.state = None;
         }
 
         let mut device = v4l::Device::with_path(&self.config.device)
@@ -365,6 +373,10 @@ impl DeviceV4l2Source {
         };
         Duration::from_millis(base_ms.max(2_000) as u64)
     }
+
+    fn should_reconnect(has_state: bool, is_healthy: bool) -> bool {
+        !has_state || !is_healthy
+    }
 }
 
 // ----------------------------------------------------------------------------
@@ -432,5 +444,21 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    #[test]
+    fn v4l2_device_reconnects_when_unhealthy() {
+        assert!(
+            DeviceV4l2Source::should_reconnect(true, false),
+            "unhealthy connections should attempt to reconnect"
+        );
+        assert!(
+            !DeviceV4l2Source::should_reconnect(true, true),
+            "healthy connections should skip reconnect"
+        );
+        assert!(
+            DeviceV4l2Source::should_reconnect(false, true),
+            "missing state should reconnect regardless of health"
+        );
     }
 }
