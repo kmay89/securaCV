@@ -161,11 +161,15 @@ The frigate_bridge is classified as an **external tool** per `kernel/architectur
 | `mqtt_publish.topic_prefix` | `witness` | Prefix for state topics |
 | `mqtt_publish.discovery_prefix` | `homeassistant` | HA discovery prefix |
 
+**MQTT protocol note:** The current bridges use MQTT v3.1.1 over an unencrypted TCP connection; TLS is not yet supported.
+
 When `mqtt_publish.enabled` is `true`, PWK will:
 1. Publish HA MQTT Discovery configs for automatic entity creation
 2. Create sensors for each zone (event count, motion state)
 3. Publish availability status with LWT (Last Will Testament)
 4. Use QoS 1 for reliable message delivery
+
+**Follow-up task (if TLS or MQTT v5 is required):** Replace the custom MQTT implementation in the bridges with a standard client library that supports TLS and MQTT v5, while preserving existing privacy guarantees (i.e., do not introduce any new privacy metadata).
 
 ### Standalone CLI Usage
 
