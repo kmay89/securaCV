@@ -1,6 +1,6 @@
 # Failure Semantics (Fail-Closed)
 
-The witnessing kernel is **fail-closed**: when a safety or integrity invariant is threatened, the system must stop producing conforming evidence and emit explicit failure events instead. This matches the existing invariant language that serialization and invariant enforcement must “fail closed.”
+The witnessing kernel is **fail-closed**: when a safety or integrity invariant is threatened, the system must stop producing conforming evidence and emit explicit failure events instead. This matches the existing invariant language that serialization and invariant enforcement must “fail closed” (see `spec/invariants.md`).
 
 ## Required Failure Events
 
