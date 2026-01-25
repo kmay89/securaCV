@@ -44,9 +44,9 @@ pub use frame::{
     Detection, DetectionResult, Detector, FrameBuffer, InferenceView, RawFrame, SizeClass,
     StubDetector, MAX_BUFFER_FRAMES, MAX_PREROLL_SECS,
 };
-pub use ingest::{rtsp::RtspConfig, RtspSource};
 #[cfg(feature = "ingest-esp32")]
 pub use ingest::{esp32::Esp32Config, Esp32Source};
+pub use ingest::{rtsp::RtspConfig, RtspSource};
 #[cfg(feature = "ingest-v4l2")]
 pub use ingest::{v4l2::V4l2Config, V4l2Source};
 pub use module_runtime::{CapabilityBoundaryRuntime, ModuleCapability};
