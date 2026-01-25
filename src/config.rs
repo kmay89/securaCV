@@ -6,10 +6,15 @@ use std::time::Duration;
 const DEFAULT_DB_PATH: &str = "witness.db";
 const DEFAULT_RULESET_ID: &str = "ruleset:v0.1";
 const DEFAULT_API_ADDR: &str = "127.0.0.1:8799";
+const DEFAULT_INGEST_BACKEND: &str = "rtsp";
 const DEFAULT_RTSP_URL: &str = "stub://front_camera";
 const DEFAULT_RTSP_FPS: u32 = 10;
 const DEFAULT_RTSP_WIDTH: u32 = 640;
 const DEFAULT_RTSP_HEIGHT: u32 = 480;
+const DEFAULT_V4L2_DEVICE: &str = "/dev/video0";
+const DEFAULT_V4L2_FPS: u32 = 10;
+const DEFAULT_V4L2_WIDTH: u32 = 640;
+const DEFAULT_V4L2_HEIGHT: u32 = 480;
 const DEFAULT_RETENTION_SECS: u64 = 60 * 60 * 24 * 7;
 const DEFAULT_MODULE_ZONE_ID: &str = "zone:front_boundary";
 
@@ -18,7 +23,9 @@ struct WitnessdConfigFile {
     db_path: Option<String>,
     ruleset_id: Option<String>,
     api: Option<ApiConfigFile>,
+    ingest: Option<IngestConfigFile>,
     rtsp: Option<RtspConfigFile>,
+    v4l2: Option<V4l2ConfigFile>,
     zones: Option<ZoneConfigFile>,
     retention: Option<RetentionConfigFile>,
 }
@@ -39,8 +46,21 @@ struct ApiConfigFile {
 }
 
 #[derive(Debug, Deserialize, Default)]
+struct IngestConfigFile {
+    backend: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
 struct RtspConfigFile {
     url: Option<String>,
+    target_fps: Option<u32>,
+    width: Option<u32>,
+    height: Option<u32>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct V4l2ConfigFile {
+    device: Option<String>,
     target_fps: Option<u32>,
     width: Option<u32>,
     height: Option<u32>,
@@ -63,7 +83,9 @@ pub struct WitnessdConfig {
     pub ruleset_id: String,
     pub api_addr: String,
     pub api_token_path: Option<PathBuf>,
+    pub ingest: IngestSettings,
     pub rtsp: RtspSettings,
+    pub v4l2: V4l2Settings,
     pub zones: ZoneSettings,
     pub retention: Duration,
 }
@@ -81,6 +103,25 @@ pub struct WitnessApiConfig {
 #[derive(Debug, Clone)]
 pub struct RtspSettings {
     pub url: String,
+    pub target_fps: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IngestBackend {
+    Rtsp,
+    V4l2,
+}
+
+#[derive(Debug, Clone)]
+pub struct IngestSettings {
+    pub backend: IngestBackend,
+}
+
+#[derive(Debug, Clone)]
+pub struct V4l2Settings {
+    pub device: String,
     pub target_fps: u32,
     pub width: u32,
     pub height: u32,
@@ -116,6 +157,13 @@ impl WitnessdConfig {
             .and_then(|api| api.addr.clone())
             .unwrap_or_else(|| DEFAULT_API_ADDR.to_string());
         let api_token_path = file.api.and_then(|api| api.token_path);
+        let ingest_backend = file
+            .ingest
+            .and_then(|ingest| ingest.backend)
+            .unwrap_or_else(|| DEFAULT_INGEST_BACKEND.to_string());
+        let ingest = IngestSettings {
+            backend: IngestBackend::parse(&ingest_backend)?,
+        };
         let rtsp = RtspSettings {
             url: file
                 .rtsp
@@ -138,6 +186,28 @@ impl WitnessdConfig {
                 .and_then(|rtsp| rtsp.height)
                 .unwrap_or(DEFAULT_RTSP_HEIGHT),
         };
+        let v4l2 = V4l2Settings {
+            device: file
+                .v4l2
+                .as_ref()
+                .and_then(|v4l2| v4l2.device.clone())
+                .unwrap_or_else(|| DEFAULT_V4L2_DEVICE.to_string()),
+            target_fps: file
+                .v4l2
+                .as_ref()
+                .and_then(|v4l2| v4l2.target_fps)
+                .unwrap_or(DEFAULT_V4L2_FPS),
+            width: file
+                .v4l2
+                .as_ref()
+                .and_then(|v4l2| v4l2.width)
+                .unwrap_or(DEFAULT_V4L2_WIDTH),
+            height: file
+                .v4l2
+                .as_ref()
+                .and_then(|v4l2| v4l2.height)
+                .unwrap_or(DEFAULT_V4L2_HEIGHT),
+        };
         let zones = ZoneSettings {
             module_zone_id: file
                 .zones
@@ -159,7 +229,9 @@ impl WitnessdConfig {
             ruleset_id,
             api_addr,
             api_token_path,
+            ingest,
             rtsp,
+            v4l2,
             zones,
             retention,
         })
@@ -176,9 +248,19 @@ impl WitnessdConfig {
                 self.api_token_path = Some(PathBuf::from(path));
             }
         }
+        if let Ok(backend) = std::env::var("WITNESS_INGEST_BACKEND") {
+            if !backend.trim().is_empty() {
+                self.ingest.backend = IngestBackend::parse(&backend)?;
+            }
+        }
         if let Ok(url) = std::env::var("WITNESS_RTSP_URL") {
             if !url.trim().is_empty() {
                 self.rtsp.url = url;
+            }
+        }
+        if let Ok(device) = std::env::var("WITNESS_V4L2_DEVICE") {
+            if !device.trim().is_empty() {
+                self.v4l2.device = device;
             }
         }
         if let Ok(zone_id) = std::env::var("WITNESS_ZONE_ID") {
@@ -211,7 +293,23 @@ impl WitnessdConfig {
         if self.retention.as_secs() == 0 {
             return Err(anyhow!("retention must be greater than zero"));
         }
+        if self.v4l2.device.trim().is_empty() {
+            return Err(anyhow!("v4l2.device must not be empty"));
+        }
         Ok(())
+    }
+}
+
+impl IngestBackend {
+    fn parse(raw: &str) -> Result<Self> {
+        match raw.trim().to_lowercase().as_str() {
+            "rtsp" => Ok(Self::Rtsp),
+            "v4l2" => Ok(Self::V4l2),
+            other => Err(anyhow!(
+                "unsupported ingest backend '{}'; expected 'rtsp' or 'v4l2'",
+                other
+            )),
+        }
     }
 }
 
