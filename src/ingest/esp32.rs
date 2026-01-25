@@ -158,9 +158,10 @@ impl HttpEsp32Source {
     }
 
     fn next_frame(&mut self) -> Result<RawFrame> {
-        let stream = self.stream.as_mut().ok_or_else(|| {
-            anyhow!("esp32 http source not connected; call connect() first")
-        })?;
+        let stream = self
+            .stream
+            .as_mut()
+            .ok_or_else(|| anyhow!("esp32 http source not connected; call connect() first"))?;
         let min_interval = frame_interval(self.config.target_fps);
         loop {
             let jpeg_bytes = match stream {
@@ -262,7 +263,9 @@ struct UdpEsp32Source {
 
 impl UdpEsp32Source {
     fn new(config: Esp32Config, url: Url) -> Result<Self> {
-        let host = url.host_str().ok_or_else(|| anyhow!("udp url missing host"))?;
+        let host = url
+            .host_str()
+            .ok_or_else(|| anyhow!("udp url missing host"))?;
         let port = url.port().ok_or_else(|| anyhow!("udp url missing port"))?;
         let bind_addr = format!("{}:{}", host, port);
         Ok(Self {

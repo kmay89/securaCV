@@ -17,18 +17,18 @@
 //! - Transmit raw frames over network
 //! - Log raw frame content
 
-mod features;
 #[cfg(feature = "ingest-esp32")]
 pub mod esp32;
+mod features;
 pub mod rtsp;
 #[cfg(feature = "rtsp-ffmpeg")]
 pub(crate) mod rtsp_ffmpeg;
 #[cfg(feature = "ingest-v4l2")]
 pub mod v4l2;
 
-pub(crate) use features::compute_features_hash;
 #[cfg(feature = "ingest-esp32")]
 pub use esp32::Esp32Source;
+pub(crate) use features::compute_features_hash;
 pub use rtsp::RtspSource;
 #[cfg(feature = "ingest-v4l2")]
 pub use v4l2::V4l2Source;
