@@ -19,6 +19,8 @@ use witness_kernel::{
     ModuleDescriptor, RtspConfig, RtspSource, TimeBucket, Vault, VaultConfig, ZoneCrossingModule,
     ZonePolicy,
 };
+#[cfg(feature = "ingest-esp32")]
+use witness_kernel::{Esp32Config, Esp32Source};
 #[cfg(feature = "ingest-v4l2")]
 use witness_kernel::{V4l2Config, V4l2Source};
 
@@ -238,6 +240,8 @@ struct IngestStats {
 
 enum IngestSource {
     Rtsp(RtspSource),
+    #[cfg(feature = "ingest-esp32")]
+    Esp32(Esp32Source),
     #[cfg(feature = "ingest-v4l2")]
     V4l2(V4l2Source),
 }
@@ -255,6 +259,7 @@ impl IngestSource {
                 };
                 Ok(Self::Rtsp(RtspSource::new(rtsp_config)?))
             }
+            witness_kernel::config::IngestBackend::Esp32 => build_esp32_source(config),
             witness_kernel::config::IngestBackend::V4l2 => build_v4l2_source(config),
         }
     }
@@ -262,6 +267,8 @@ impl IngestSource {
     fn connect(&mut self) -> Result<()> {
         match self {
             IngestSource::Rtsp(source) => source.connect(),
+            #[cfg(feature = "ingest-esp32")]
+            IngestSource::Esp32(source) => source.connect(),
             #[cfg(feature = "ingest-v4l2")]
             IngestSource::V4l2(source) => source.connect(),
         }
@@ -270,6 +277,8 @@ impl IngestSource {
     fn next_frame(&mut self) -> Result<witness_kernel::RawFrame> {
         match self {
             IngestSource::Rtsp(source) => source.next_frame(),
+            #[cfg(feature = "ingest-esp32")]
+            IngestSource::Esp32(source) => source.next_frame(),
             #[cfg(feature = "ingest-v4l2")]
             IngestSource::V4l2(source) => source.next_frame(),
         }
@@ -278,6 +287,8 @@ impl IngestSource {
     fn is_healthy(&self) -> bool {
         match self {
             IngestSource::Rtsp(source) => source.is_healthy(),
+            #[cfg(feature = "ingest-esp32")]
+            IngestSource::Esp32(source) => source.is_healthy(),
             #[cfg(feature = "ingest-v4l2")]
             IngestSource::V4l2(source) => source.is_healthy(),
         }
@@ -292,6 +303,14 @@ impl IngestSource {
                     source: stats.url,
                 }
             }
+            #[cfg(feature = "ingest-esp32")]
+            IngestSource::Esp32(source) => {
+                let stats = source.stats();
+                IngestStats {
+                    frames_captured: stats.frames_captured,
+                    source: stats.source,
+                }
+            }
             #[cfg(feature = "ingest-v4l2")]
             IngestSource::V4l2(source) => {
                 let stats = source.stats();
@@ -301,6 +320,22 @@ impl IngestSource {
                 }
             }
         }
+    }
+}
+
+fn build_esp32_source(config: &witness_kernel::config::WitnessdConfig) -> Result<IngestSource> {
+    #[cfg(feature = "ingest-esp32")]
+    {
+        let esp32_config = Esp32Config {
+            url: config.esp32.url.clone(),
+            target_fps: config.esp32.target_fps,
+        };
+        Ok(IngestSource::Esp32(Esp32Source::new(esp32_config)?))
+    }
+    #[cfg(not(feature = "ingest-esp32"))]
+    {
+        let _ = config;
+        Err(anyhow!("esp32 ingestion requires the ingest-esp32 feature"))
     }
 }
 

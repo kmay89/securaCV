@@ -23,6 +23,9 @@ hex = "0.4"
 ed25519-dalek = "2.1"
 ctrlc = "3.4"
 indicatif = { path = "vendor/indicatif" }
+image = { version = "0.25", default-features = false, features = ["jpeg"], optional = true }
+ureq = { version = "2.9", optional = true }
+url = { version = "2.5", optional = true }
 gstreamer = { version = "0.23", optional = true }
 gstreamer-app = { version = "0.23", optional = true }
 gstreamer-video = { version = "0.23", optional = true }
@@ -42,6 +45,7 @@ libseccomp-sys = "0.3"
 [features]
 rtsp-gstreamer = ["gstreamer", "gstreamer-app", "gstreamer-video"]
 rtsp-ffmpeg = ["ffmpeg-next"]
+ingest-esp32 = ["image", "ureq", "url"]
 ingest-v4l2 = ["v4l", "ouroboros"]
 
 [[bin]]

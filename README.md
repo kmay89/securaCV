@@ -253,6 +253,36 @@ See `docs/v4l2_setup.md` for more details, including stub devices and invariants
 `RawFrame` values with coarsened time buckets and non-invertible feature hashes.
 The V4L2 backend never writes raw frames to disk and never exposes them over the network.
 
+## ESP32-S3 Camera Setup (HTTP MJPEG/JPEG or UDP RTP)
+
+### Quick Start with ESP32-S3
+
+1. Build with ESP32-S3 support:
+   ```bash
+   cargo build --release --features ingest-esp32
+   ```
+
+2. Configure your ESP32-S3 stream (create `witness.toml`):
+   ```toml
+   [ingest]
+   backend = "esp32"
+
+   [esp32]
+   url = "http://192.168.1.50:81/stream"
+   target_fps = 10
+
+   [zones]
+   module_zone_id = "zone:front_door"
+   ```
+
+3. Run:
+   ```bash
+   export DEVICE_KEY_SEED=$(openssl rand -hex 32)
+   WITNESS_CONFIG=witness.toml cargo run --release --features ingest-esp32 --bin witnessd
+   ```
+
+See `docs/esp32_s3_setup.md` for supported ESP32-S3 URL patterns and RTP expectations.
+
 ## Container deployment
 
 See `docs/container.md` for building and running the containerized `witnessd`
