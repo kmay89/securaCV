@@ -309,7 +309,12 @@ automation:
 
 If you prefer not to use MQTT Discovery, you can create sensors manually using the REST API.
 
-The add-on exposes an Event API on port 8799.
+The add-on exposes an Event API on port 8799. When Home Assistant is running
+alongside the add-on, use the add-on hostname (its slug) so HA can reach it over
+the Supervisor network. The default slug for this repository is
+`privacy_witness_kernel`, which results in `http://privacy_witness_kernel:8799`.
+You can confirm the hostname in **Settings → Add-ons → Privacy Witness Kernel →
+Info**, where Home Assistant lists the add-on hostname/slug.
 
 ### REST Sensor (Basic)
 
@@ -318,7 +323,7 @@ The add-on exposes an Event API on port 8799.
 sensor:
   - platform: rest
     name: "PWK Last Event"
-    resource: http://localhost:8799/events/latest
+    resource: http://privacy_witness_kernel:8799/events/latest
     headers:
       Authorization: Bearer YOUR_API_TOKEN
     value_template: "{{ value_json.event_type }}"
@@ -364,7 +369,10 @@ automation:
 
 ## API Reference
 
-The Event API is available at `http://localhost:8799` (or your configured port).
+The Event API is available at `http://privacy_witness_kernel:8799` when Home
+Assistant and the add-on are on the same host (or your configured port). If the
+kernel runs elsewhere, replace the hostname with the reachable IP/DNS name for
+that host.
 
 ### Authentication
 
@@ -376,7 +384,7 @@ The `/health` endpoint is unauthenticated and only reachable on the local loopba
 TOKEN=$(cat /config/api_token)
 
 # Make authenticated requests
-curl -H "Authorization: Bearer $TOKEN" http://localhost:8799/events
+curl -H "Authorization: Bearer $TOKEN" http://privacy_witness_kernel:8799/events
 ```
 
 ### Endpoints
