@@ -2,7 +2,7 @@
 //!
 //! This module provides different sources for raw frames:
 //! - RTSP streams (IP cameras)
-//! - USB/V4L2 devices (future)
+//! - USB/V4L2 devices (feature: ingest-v4l2)
 //! - Stub source (testing)
 //!
 //! All sources produce `RawFrame` instances that flow into the frame buffer.
@@ -17,5 +17,9 @@
 //! - Log raw frame content
 
 pub mod rtsp;
+#[cfg(feature = "ingest-v4l2")]
+pub mod v4l2;
 
 pub use rtsp::RtspSource;
+#[cfg(feature = "ingest-v4l2")]
+pub use v4l2::V4l2Source;

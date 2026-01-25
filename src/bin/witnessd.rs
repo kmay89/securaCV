@@ -19,6 +19,8 @@ use witness_kernel::{
     ModuleDescriptor, RtspConfig, RtspSource, TimeBucket, Vault, VaultConfig, ZoneCrossingModule,
     ZonePolicy,
 };
+#[cfg(feature = "ingest-v4l2")]
+use witness_kernel::{V4l2Config, V4l2Source};
 
 #[path = "../ui.rs"]
 mod ui;
@@ -81,19 +83,13 @@ fn main() -> Result<()> {
     // Optional break-glass seal path (requires BREAK_GLASS_SEAL_TOKEN with a token JSON).
     let mut seal_token = load_seal_token()?;
 
-    // Configure RTSP source
-    let rtsp_config = RtspConfig {
-        url: config.rtsp.url.clone(),
-        target_fps: config.rtsp.target_fps,
-        width: config.rtsp.width,
-        height: config.rtsp.height,
-    };
+    // Configure ingestion source
     let mut source = {
-        let _stage = ui.stage("Configure RTSP source");
-        RtspSource::new(rtsp_config)?
+        let _stage = ui.stage("Configure ingest source");
+        IngestSource::new(&config)?
     };
     {
-        let _stage = ui.stage("Connect RTSP source");
+        let _stage = ui.stage("Connect ingest source");
         source.connect()?;
     }
 
@@ -209,10 +205,10 @@ fn main() -> Result<()> {
         if last_health_log.elapsed() >= Duration::from_secs(5) {
             let stats = source.stats();
             log::info!(
-                "rtsp health={} frames={} url={}",
+                "ingest health={} frames={} source={}",
                 source.is_healthy(),
                 stats.frames_captured,
-                stats.url
+                stats.source
             );
             last_health_log = Instant::now();
         }
@@ -232,6 +228,95 @@ fn main() -> Result<()> {
 
         // Target ~10 fps (100ms between frames)
         std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+struct IngestStats {
+    frames_captured: u64,
+    source: String,
+}
+
+enum IngestSource {
+    Rtsp(RtspSource),
+    #[cfg(feature = "ingest-v4l2")]
+    V4l2(V4l2Source),
+}
+
+impl IngestSource {
+    fn new(config: &witness_kernel::config::WitnessdConfig) -> Result<Self> {
+        match config.ingest.backend {
+            witness_kernel::config::IngestBackend::Rtsp => {
+                let rtsp_config = RtspConfig {
+                    url: config.rtsp.url.clone(),
+                    target_fps: config.rtsp.target_fps,
+                    width: config.rtsp.width,
+                    height: config.rtsp.height,
+                };
+                Ok(Self::Rtsp(RtspSource::new(rtsp_config)?))
+            }
+            witness_kernel::config::IngestBackend::V4l2 => {
+                #[cfg(feature = "ingest-v4l2")]
+                {
+                    let v4l2_config = V4l2Config {
+                        device: config.v4l2.device.clone(),
+                        target_fps: config.v4l2.target_fps,
+                        width: config.v4l2.width,
+                        height: config.v4l2.height,
+                    };
+                    Ok(Self::V4l2(V4l2Source::new(v4l2_config)?))
+                }
+                #[cfg(not(feature = "ingest-v4l2"))]
+                {
+                    Err(anyhow!(
+                        "v4l2 ingestion requires the ingest-v4l2 feature"
+                    ))
+                }
+            }
+        }
+    }
+
+    fn connect(&mut self) -> Result<()> {
+        match self {
+            IngestSource::Rtsp(source) => source.connect(),
+            #[cfg(feature = "ingest-v4l2")]
+            IngestSource::V4l2(source) => source.connect(),
+        }
+    }
+
+    fn next_frame(&mut self) -> Result<witness_kernel::RawFrame> {
+        match self {
+            IngestSource::Rtsp(source) => source.next_frame(),
+            #[cfg(feature = "ingest-v4l2")]
+            IngestSource::V4l2(source) => source.next_frame(),
+        }
+    }
+
+    fn is_healthy(&self) -> bool {
+        match self {
+            IngestSource::Rtsp(source) => source.is_healthy(),
+            #[cfg(feature = "ingest-v4l2")]
+            IngestSource::V4l2(source) => source.is_healthy(),
+        }
+    }
+
+    fn stats(&self) -> IngestStats {
+        match self {
+            IngestSource::Rtsp(source) => {
+                let stats = source.stats();
+                IngestStats {
+                    frames_captured: stats.frames_captured,
+                    source: stats.url,
+                }
+            }
+            #[cfg(feature = "ingest-v4l2")]
+            IngestSource::V4l2(source) => {
+                let stats = source.stats();
+                IngestStats {
+                    frames_captured: stats.frames_captured,
+                    source: stats.device,
+                }
+            }
+        }
     }
 }
 

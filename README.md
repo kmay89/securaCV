@@ -26,7 +26,7 @@ printf "\n" >> demo_out/export_bundle.json
 cargo run --bin export_verify -- --db demo_witness.db --bundle demo_out/export_bundle.json  # should FAIL
 ```
 
-Next: for a real RTSP stream, see the RTSP ingestion section below.
+Next: for a real RTSP stream or a local V4L2 device, see the ingestion sections below.
 
 ## Documentation
 
@@ -180,6 +180,44 @@ capture time, and `RtspSource::is_healthy()` reports stream health.
 GStreamer support is gated behind the `rtsp-gstreamer` feature and requires
 system GStreamer dependencies at runtime for real RTSP streams. The `stub://`
 scheme keeps the synthetic source for tests and local development.
+
+## V4L2 Camera Setup (USB / local devices)
+
+### Quick Start with Local Devices
+
+1. Build with V4L2 support:
+   ```bash
+   cargo build --release --features ingest-v4l2
+   ```
+
+2. Configure your device (create `witness.toml`):
+   ```toml
+   [ingest]
+   backend = "v4l2"
+
+   [v4l2]
+   device = "/dev/video0"
+   target_fps = 10
+   width = 640
+   height = 480
+
+   [zones]
+   module_zone_id = "zone:front_door"
+   ```
+
+3. Run:
+   ```bash
+   export DEVICE_KEY_SEED=$(openssl rand -hex 32)
+   WITNESS_CONFIG=witness.toml cargo run --release --features ingest-v4l2 --bin witnessd
+   ```
+
+See `docs/v4l2_setup.md` for more details, including stub devices and invariants.
+
+### V4L2 Architecture
+
+`witnessd` captures frames from local `/dev/video*` devices in-memory and produces
+`RawFrame` values with coarsened time buckets and non-invertible feature hashes.
+The V4L2 backend never writes raw frames to disk and never exposes them over the network.
 
 ## Container deployment
 
