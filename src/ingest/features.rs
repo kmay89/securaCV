@@ -16,7 +16,7 @@ pub(crate) fn compute_features_hash(pixels: &[u8], frame_count: u64) -> [u8; 32]
 
     // Coarse color histogram (very lossy)
     let mut histogram = [0u32; 8]; // 8 bins
-    for &p in pixels.iter().step_by(100) {
+    for &p in pixels.iter().step_by(300) {
         // Sample every 100th pixel
         histogram[(p / 32) as usize] += 1;
     }
