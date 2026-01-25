@@ -176,6 +176,8 @@ It asserts a narrower, essential claim:
 
 ## 9. Non-Goals
 
+SecuraCV is a witnessing layer for autonomous systems, not a vision system.
+
 SecuraCV is explicitly **not**:
 - a surveillance platform,
 - a behavioral monitoring system,
