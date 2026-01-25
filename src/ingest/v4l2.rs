@@ -260,6 +260,13 @@ impl DeviceV4l2Source {
             );
             self.state = None;
         }
+        if self.state.is_some() {
+            log::info!(
+                "V4l2Source: unhealthy connection, attempting to reconnect to {}",
+                self.config.device
+            );
+            self.state = None;
+        }
 
         let mut device = v4l::Device::with_path(&self.config.device)
             .with_context(|| format!("open v4l2 device {}", self.config.device))?;
@@ -373,6 +380,10 @@ impl DeviceV4l2Source {
         Duration::from_millis(base_ms.max(2_000) as u64)
     }
 
+}
+
+fn should_skip_connect(state_present: bool, is_healthy: bool) -> bool {
+    state_present && is_healthy
 }
 
 // ----------------------------------------------------------------------------
