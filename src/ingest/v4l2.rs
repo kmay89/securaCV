@@ -15,9 +15,10 @@
 //! - Retain frames beyond handoff to FrameBuffer
 
 use anyhow::{Context, Result};
-use sha2::{Digest, Sha256};
+use ouroboros::self_referencing;
 use std::time::{Duration, Instant};
 
+use super::compute_features_hash;
 use crate::frame::RawFrame;
 use crate::TimeBucket;
 
@@ -179,7 +180,7 @@ impl SyntheticV4l2Source {
         let pixel_count = (self.config.width * self.config.height * 3) as usize; // RGB
 
         // Change scene state occasionally to simulate motion
-        if self.frame_count.is_multiple_of(50) {
+        if self.frame_count % 50 == 0 {
             self.scene_state = self.scene_state.wrapping_add(1);
         }
 
@@ -212,7 +213,7 @@ impl SyntheticV4l2Source {
 
 struct DeviceV4l2Source {
     config: V4l2Config,
-    device: v4l::Device,
+    state: Option<DeviceV4l2State>,
     frame_count: u64,
     last_frame_at: Option<Instant>,
     last_error: Option<String>,
@@ -220,15 +221,21 @@ struct DeviceV4l2Source {
     active_height: u32,
 }
 
+#[self_referencing]
+struct DeviceV4l2State {
+    device: v4l::Device,
+    #[borrows(mut device)]
+    #[covariant]
+    stream: v4l::prelude::MmapStream<'this, v4l::Device>,
+}
+
 impl DeviceV4l2Source {
     fn new(config: V4l2Config) -> Result<Self> {
-        let device = v4l::Device::with_path(&config.device)
-            .with_context(|| format!("open v4l2 device {}", config.device))?;
         Ok(Self {
             active_width: config.width,
             active_height: config.height,
             config,
-            device,
+            state: None,
             frame_count: 0,
             last_frame_at: None,
             last_error: None,
@@ -236,14 +243,17 @@ impl DeviceV4l2Source {
     }
 
     fn connect(&mut self) -> Result<()> {
+        use v4l::buffer::Type;
         use v4l::video::Capture;
 
-        let mut format = self.device.format().context("read v4l2 format")?;
+        let mut device = v4l::Device::with_path(&self.config.device)
+            .with_context(|| format!("open v4l2 device {}", self.config.device))?;
+        let mut format = device.format().context("read v4l2 format")?;
         format.width = self.config.width;
         format.height = self.config.height;
         format.fourcc = v4l::FourCC::new(b"RGB3");
 
-        let format = match self.device.set_format(&format) {
+        let format = match device.set_format(&format) {
             Ok(format) => format,
             Err(err) => {
                 log::warn!(
@@ -251,7 +261,7 @@ impl DeviceV4l2Source {
                     self.config.device,
                     err
                 );
-                self.device
+                device
                     .format()
                     .context("read v4l2 format after set failure")?
             }
@@ -259,7 +269,7 @@ impl DeviceV4l2Source {
 
         if self.config.target_fps > 0 {
             let params = v4l::video::capture::Parameters::with_fps(self.config.target_fps);
-            if let Err(err) = self.device.set_params(&params) {
+            if let Err(err) = device.set_params(&params) {
                 log::warn!(
                     "V4l2Source: failed to set fps on {}: {}",
                     self.config.device,
@@ -270,6 +280,21 @@ impl DeviceV4l2Source {
 
         self.active_width = format.width;
         self.active_height = format.height;
+        self.last_error = None;
+
+        let state = DeviceV4l2StateBuilder {
+            device,
+            stream_builder: |device| {
+                v4l::prelude::MmapStream::with_buffers(device, Type::VideoCapture, 4)
+                    .map_err(|err| anyhow::Error::new(err).context("create v4l2 buffer stream"))
+            },
+        }
+        .try_build()
+        .map_err(|err| {
+            self.last_error = Some(err.to_string());
+            err
+        })?;
+        self.state = Some(state);
 
         log::info!(
             "V4l2Source: connected to {} ({}x{})",
@@ -281,19 +306,15 @@ impl DeviceV4l2Source {
     }
 
     fn next_frame(&mut self) -> Result<RawFrame> {
-        use v4l::buffer::Type;
         use v4l::io::traits::CaptureStream;
-        use v4l::prelude::MmapStream;
 
-        let mut stream =
-            MmapStream::with_buffers(&mut self.device, Type::VideoCapture, 4).map_err(|err| {
+        let state = self.state.as_mut().context("v4l2 device not connected")?;
+        let (buf, _meta) = state
+            .with_mut(|fields| fields.stream.next())
+            .map_err(|err| {
                 self.last_error = Some(err.to_string());
-                anyhow::Error::new(err).context("create v4l2 buffer stream")
+                anyhow::Error::new(err).context("capture v4l2 frame")
             })?;
-        let (buf, _meta) = stream.next().map_err(|err| {
-            self.last_error = Some(err.to_string());
-            anyhow::Error::new(err).context("capture v4l2 frame")
-        })?;
 
         self.frame_count += 1;
         self.last_frame_at = Some(Instant::now());
@@ -317,7 +338,7 @@ impl DeviceV4l2Source {
         let Some(last_frame_at) = self.last_frame_at else {
             return true;
         };
-        last_frame_at.elapsed() <= Duration::from_secs(2)
+        last_frame_at.elapsed() <= self.health_grace()
     }
 
     fn stats(&self) -> V4l2Stats {
@@ -326,37 +347,15 @@ impl DeviceV4l2Source {
             device: self.config.device.clone(),
         }
     }
-}
 
-/// Compute non-invertible feature hash from pixels.
-///
-/// This hash is used for correlation tokens and MUST NOT:
-/// - Be invertible back to pixel data
-/// - Contain identity-bearing information (faces, plates, etc.)
-/// - Be stable across long time windows
-///
-/// In production, this would derive from:
-/// - Color histograms (coarse)
-/// - Motion vector magnitudes (not directions)
-/// - Texture energy (not structure)
-fn compute_features_hash(pixels: &[u8], frame_count: u64) -> [u8; 32] {
-    let mut hasher = Sha256::new();
-
-    // Coarse color histogram (very lossy)
-    let mut histogram = [0u32; 8]; // 8 bins
-    for &p in pixels.iter().step_by(100) {
-        // Sample every 100th pixel
-        histogram[(p / 32) as usize] += 1;
+    fn health_grace(&self) -> Duration {
+        let base_ms = if self.config.target_fps == 0 {
+            2_000
+        } else {
+            (1000 / self.config.target_fps).saturating_mul(6)
+        };
+        Duration::from_millis(base_ms.max(2_000) as u64)
     }
-    for count in &histogram {
-        hasher.update(count.to_le_bytes());
-    }
-
-    // Add frame-local noise to prevent cross-frame stability
-    hasher.update(frame_count.to_le_bytes());
-    hasher.update(rand::random::<u64>().to_le_bytes());
-
-    hasher.finalize().into()
 }
 
 // ----------------------------------------------------------------------------

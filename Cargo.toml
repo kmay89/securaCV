@@ -27,6 +27,7 @@ gstreamer = { version = "0.23", optional = true }
 gstreamer-app = { version = "0.23", optional = true }
 gstreamer-video = { version = "0.23", optional = true }
 v4l = { version = "0.14", optional = true }
+ouroboros = { version = "0.18", optional = true }
 
 [dev-dependencies]
 trybuild = "1.0.89"
@@ -39,7 +40,7 @@ libseccomp-sys = "0.3"
 
 [features]
 rtsp-gstreamer = ["gstreamer", "gstreamer-app", "gstreamer-video"]
-ingest-v4l2 = ["v4l"]
+ingest-v4l2 = ["v4l", "ouroboros"]
 
 [[bin]]
 name = "witnessd"
