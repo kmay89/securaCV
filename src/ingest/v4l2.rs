@@ -246,12 +246,19 @@ impl DeviceV4l2Source {
         use v4l::buffer::Type;
         use v4l::video::Capture;
 
-        if self.state.is_some() {
+        if should_skip_connect(self.state.is_some(), self.is_healthy()) {
             log::debug!(
-                "V4l2Source: already connected to {}",
+                "V4l2Source: already connected and healthy to {}",
                 self.config.device
             );
             return Ok(());
+        }
+        if self.state.is_some() {
+            log::info!(
+                "V4l2Source: unhealthy connection, attempting to reconnect to {}",
+                self.config.device
+            );
+            self.state = None;
         }
 
         let mut device = v4l::Device::with_path(&self.config.device)
@@ -367,6 +374,10 @@ impl DeviceV4l2Source {
     }
 }
 
+fn should_skip_connect(state_present: bool, is_healthy: bool) -> bool {
+    state_present && is_healthy
+}
+
 // ----------------------------------------------------------------------------
 // Tests
 // ----------------------------------------------------------------------------
@@ -432,5 +443,12 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    #[test]
+    fn v4l2_source_does_not_skip_reconnect_when_unhealthy() {
+        assert!(should_skip_connect(true, true));
+        assert!(!should_skip_connect(true, false));
+        assert!(!should_skip_connect(false, true));
     }
 }
