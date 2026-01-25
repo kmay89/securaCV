@@ -36,12 +36,120 @@ impl Default for VaultConfig {
     }
 }
 
+pub trait VaultStore: Send + Sync {
+    fn root(&self) -> Option<&Path>;
+
+    fn seal(
+        &self,
+        envelope_id: &str,
+        token: &mut BreakGlassToken,
+        expected_ruleset_hash: [u8; 32],
+        raw_bytes: &mut Vec<u8>,
+        verifying_key: &VerifyingKey,
+        receipt_lookup: impl FnOnce(&[u8; 32]) -> Result<BreakGlassOutcome>,
+    ) -> Result<EnvelopeMetadata>;
+
+    fn seal_frame(
+        &self,
+        envelope_id: &str,
+        token: &mut BreakGlassToken,
+        expected_ruleset_hash: [u8; 32],
+        frame: RawFrame,
+        verifying_key: &VerifyingKey,
+        receipt_lookup: impl FnOnce(&[u8; 32]) -> Result<BreakGlassOutcome>,
+    ) -> Result<EnvelopeMetadata>;
+
+    fn unseal(
+        &self,
+        envelope_id: &str,
+        token: &mut BreakGlassToken,
+        expected_ruleset_hash: [u8; 32],
+        verifying_key: &VerifyingKey,
+        receipt_lookup: impl FnOnce(&[u8; 32]) -> Result<BreakGlassOutcome>,
+    ) -> Result<Vec<u8>>;
+}
+
 pub struct Vault {
+    store: Box<dyn VaultStore>,
+}
+
+impl Vault {
+    pub fn new(cfg: VaultConfig) -> Result<Self> {
+        Ok(Self {
+            store: Box::new(FilesystemVaultStore::new(cfg)?),
+        })
+    }
+
+    pub fn with_store(store: Box<dyn VaultStore>) -> Self {
+        Self { store }
+    }
+
+    pub fn root(&self) -> Option<&Path> {
+        self.store.root()
+    }
+
+    pub fn seal(
+        &self,
+        envelope_id: &str,
+        token: &mut BreakGlassToken,
+        expected_ruleset_hash: [u8; 32],
+        raw_bytes: &mut Vec<u8>,
+        verifying_key: &VerifyingKey,
+        receipt_lookup: impl FnOnce(&[u8; 32]) -> Result<BreakGlassOutcome>,
+    ) -> Result<EnvelopeMetadata> {
+        self.store.seal(
+            envelope_id,
+            token,
+            expected_ruleset_hash,
+            raw_bytes,
+            verifying_key,
+            receipt_lookup,
+        )
+    }
+
+    pub fn seal_frame(
+        &self,
+        envelope_id: &str,
+        token: &mut BreakGlassToken,
+        expected_ruleset_hash: [u8; 32],
+        frame: RawFrame,
+        verifying_key: &VerifyingKey,
+        receipt_lookup: impl FnOnce(&[u8; 32]) -> Result<BreakGlassOutcome>,
+    ) -> Result<EnvelopeMetadata> {
+        self.store.seal_frame(
+            envelope_id,
+            token,
+            expected_ruleset_hash,
+            frame,
+            verifying_key,
+            receipt_lookup,
+        )
+    }
+
+    pub fn unseal(
+        &self,
+        envelope_id: &str,
+        token: &mut BreakGlassToken,
+        expected_ruleset_hash: [u8; 32],
+        verifying_key: &VerifyingKey,
+        receipt_lookup: impl FnOnce(&[u8; 32]) -> Result<BreakGlassOutcome>,
+    ) -> Result<Vec<u8>> {
+        self.store.unseal(
+            envelope_id,
+            token,
+            expected_ruleset_hash,
+            verifying_key,
+            receipt_lookup,
+        )
+    }
+}
+
+pub struct FilesystemVaultStore {
     root: PathBuf,
     master_key: [u8; 32],
 }
 
-impl Vault {
+impl FilesystemVaultStore {
     pub fn new(cfg: VaultConfig) -> Result<Self> {
         fs::create_dir_all(&cfg.local_path)?;
         let master_key = load_or_create_master_key(&cfg.local_path)?;
@@ -51,11 +159,7 @@ impl Vault {
         })
     }
 
-    pub fn root(&self) -> &Path {
-        &self.root
-    }
-
-    pub fn seal(
+    fn seal_impl(
         &self,
         envelope_id: &str,
         token: &mut BreakGlassToken,
@@ -75,7 +179,7 @@ impl Vault {
         self.seal_bytes(envelope_id, expected_ruleset_hash, &mut clear_bytes)
     }
 
-    pub fn seal_frame(
+    fn seal_frame_impl(
         &self,
         envelope_id: &str,
         token: &mut BreakGlassToken,
@@ -94,7 +198,7 @@ impl Vault {
         self.seal_bytes(envelope_id, expected_ruleset_hash, &mut clear_bytes)
     }
 
-    pub fn unseal(
+    fn unseal_impl(
         &self,
         envelope_id: &str,
         token: &mut BreakGlassToken,
@@ -159,7 +263,68 @@ impl Vault {
     }
 }
 
-impl Drop for Vault {
+impl VaultStore for FilesystemVaultStore {
+    fn root(&self) -> Option<&Path> {
+        Some(&self.root)
+    }
+
+    fn seal(
+        &self,
+        envelope_id: &str,
+        token: &mut BreakGlassToken,
+        expected_ruleset_hash: [u8; 32],
+        raw_bytes: &mut Vec<u8>,
+        verifying_key: &VerifyingKey,
+        receipt_lookup: impl FnOnce(&[u8; 32]) -> Result<BreakGlassOutcome>,
+    ) -> Result<EnvelopeMetadata> {
+        self.seal_impl(
+            envelope_id,
+            token,
+            expected_ruleset_hash,
+            raw_bytes,
+            verifying_key,
+            receipt_lookup,
+        )
+    }
+
+    fn seal_frame(
+        &self,
+        envelope_id: &str,
+        token: &mut BreakGlassToken,
+        expected_ruleset_hash: [u8; 32],
+        frame: RawFrame,
+        verifying_key: &VerifyingKey,
+        receipt_lookup: impl FnOnce(&[u8; 32]) -> Result<BreakGlassOutcome>,
+    ) -> Result<EnvelopeMetadata> {
+        self.seal_frame_impl(
+            envelope_id,
+            token,
+            expected_ruleset_hash,
+            frame,
+            verifying_key,
+            receipt_lookup,
+        )
+    }
+
+    fn unseal(
+        &self,
+        envelope_id: &str,
+        token: &mut BreakGlassToken,
+        expected_ruleset_hash: [u8; 32],
+        verifying_key: &VerifyingKey,
+        receipt_lookup: impl FnOnce(&[u8; 32]) -> Result<BreakGlassOutcome>,
+    ) -> Result<Vec<u8>> {
+        self.unseal_impl(
+            envelope_id,
+            token,
+            expected_ruleset_hash,
+            verifying_key,
+            receipt_lookup,
+        )
+    }
+}
+
+impl Drop for FilesystemVaultStore {
     fn drop(&mut self) {
         self.master_key.zeroize();
     }

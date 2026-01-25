@@ -36,6 +36,7 @@ pub mod config;
 pub mod frame;
 pub mod ingest;
 pub mod module_runtime;
+pub mod storage;
 pub mod vault;
 pub mod verify;
 
@@ -47,7 +48,8 @@ pub use ingest::{rtsp::RtspConfig, RtspSource};
 #[cfg(feature = "ingest-v4l2")]
 pub use ingest::{v4l2::V4l2Config, V4l2Source};
 pub use module_runtime::{CapabilityBoundaryRuntime, ModuleCapability};
-pub use vault::{Vault, VaultConfig};
+pub use storage::{InMemorySealedLogStore, SealedLogStore, SqliteSealedLogStore};
+pub use vault::{FilesystemVaultStore, Vault, VaultConfig, VaultStore};
 
 // -------------------- Time Buckets --------------------
 
@@ -447,6 +449,7 @@ impl KernelConfig {
 
 pub struct Kernel {
     pub conn: Connection,
+    sealed_log: Box<dyn SealedLogStore>,
     device_key: SigningKey,
     break_glass_policy: Option<crate::break_glass::QuorumPolicy>,
     zone_policy: ZonePolicy,
@@ -455,10 +458,32 @@ pub struct Kernel {
 impl Kernel {
     pub fn open(cfg: &KernelConfig) -> Result<Self> {
         let conn = Connection::open(&cfg.db_path)?;
+        let sealed_log = Box::new(SqliteSealedLogStore::open(&cfg.db_path)?);
         let device_key = signing_key_from_seed(&cfg.device_key_seed)?;
         let zone_policy = cfg.zone_policy.normalized()?;
         let mut k = Self {
             conn,
+            sealed_log,
+            device_key,
+            break_glass_policy: None,
+            zone_policy,
+        };
+        k.ensure_schema()?;
+        k.ensure_device_public_key()?;
+        k.load_break_glass_policy()?;
+        Ok(k)
+    }
+
+    pub fn open_with_sealed_log(
+        cfg: &KernelConfig,
+        sealed_log: Box<dyn SealedLogStore>,
+    ) -> Result<Self> {
+        let conn = Connection::open(&cfg.db_path)?;
+        let device_key = signing_key_from_seed(&cfg.device_key_seed)?;
+        let zone_policy = cfg.zone_policy.normalized()?;
+        let mut k = Self {
+            conn,
+            sealed_log,
             device_key,
             break_glass_policy: None,
             zone_policy,
@@ -655,29 +680,7 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
     }
 
     fn append_event(&mut self, ev: &Event) -> Result<()> {
-        let created_at = i64::try_from(ev.time_bucket.start_epoch_s)
-            .map_err(|_| anyhow!("time bucket start exceeds i64 range"))?;
-        let prev_hash = self.last_event_hash_or_checkpoint_head()?;
-        let payload_json = serde_json::to_string(ev)?;
-
-        let entry_hash = hash_entry(&prev_hash, payload_json.as_bytes());
-        let signature = sign_entry(&self.device_key, &entry_hash);
-
-        self.conn.execute(
-            r#"
-            INSERT INTO sealed_events(created_at, payload_json, prev_hash, entry_hash, signature)
-            VALUES (?1, ?2, ?3, ?4, ?5)
-            "#,
-            params![
-                created_at,
-                payload_json,
-                prev_hash.to_vec(),
-                entry_hash.to_vec(),
-                signature.to_vec()
-            ],
-        )?;
-
-        Ok(())
+        self.sealed_log.append_event(ev, &self.device_key)
     }
 
     pub fn append_event_checked(
@@ -877,49 +880,8 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
 
     /// Prune events older than retention. Writes a checkpoint so chain integrity remains verifiable.
     pub fn enforce_retention_with_checkpoint(&mut self, retention: Duration) -> Result<()> {
-        let now = now_s()? as i64;
-        let cutoff = now - retention.as_secs() as i64;
-
-        // Find the last event id strictly older than cutoff.
-        let mut stmt = self.conn.prepare(
-            "SELECT id, entry_hash FROM sealed_events WHERE created_at < ?1 ORDER BY id DESC LIMIT 1",
-        )?;
-        let mut rows = stmt.query(params![cutoff])?;
-        let Some(row) = rows.next()? else {
-            return Ok(()); // nothing to prune
-        };
-
-        let cutoff_id: i64 = row.get(0)?;
-        let head_bytes: Vec<u8> = row.get(1)?;
-        if head_bytes.len() != 32 {
-            return Err(anyhow!("corrupt sealed log: entry_hash size"));
-        }
-        let mut head = [0u8; 32];
-        head.copy_from_slice(&head_bytes);
-
-        let checkpoint_sig = sign_entry(&self.device_key, &head);
-        let created_at = now_s()? as i64;
-
-        self.conn.execute(
-            r#"
-            INSERT INTO checkpoints(created_at, cutoff_event_id, chain_head_hash, signature)
-            VALUES (?1, ?2, ?3, ?4)
-            "#,
-            params![
-                created_at,
-                cutoff_id,
-                head.to_vec(),
-                checkpoint_sig.to_vec()
-            ],
-        )?;
-
-        // Delete all events up to and including cutoff_id.
-        self.conn.execute(
-            "DELETE FROM sealed_events WHERE id <= ?1",
-            params![cutoff_id],
-        )?;
-
-        Ok(())
+        self.sealed_log
+            .enforce_retention_with_checkpoint(retention, &self.device_key)
     }
 
     /// Read events from the sealed log for review or export.
@@ -930,36 +892,9 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         expected_ruleset_hash: [u8; 32],
         limit: usize,
     ) -> Result<Vec<Event>> {
-        let payloads = {
-            let mut stmt = self
-                .conn
-                .prepare("SELECT payload_json FROM sealed_events ORDER BY id ASC LIMIT ?1")?;
-            let mut rows = stmt.query(params![limit as i64])?;
-            let mut payloads = Vec::new();
-
-            while let Some(row) = rows.next()? {
-                let payload: String = row.get(0)?;
-                payloads.push(payload);
-            }
-
-            payloads
-        };
-
-        let mut out = Vec::with_capacity(payloads.len());
-        for payload in payloads {
-            let ev: Event = serde_json::from_str(&payload)?;
-
-            if let Err(e) =
-                ReprocessGuard::assert_same_ruleset(expected_ruleset_hash, ev.ruleset_hash)
-            {
-                // Must fail audibly and verifiably: log alarm then return error.
-                self.log_alarm("CONFORMANCE_REPROCESS_VIOLATION", &format!("{}", e))?;
-                return Err(e);
-            }
-
-            out.push(ev);
-        }
-        Ok(out)
+        let mut alarm = |code: &str, message: &str| self.log_alarm(code, message);
+        self.sealed_log
+            .read_events_ruleset_bound(expected_ruleset_hash, limit, &mut alarm)
     }
 
     fn validate_export_options(options: &ExportOptions) -> Result<()> {
