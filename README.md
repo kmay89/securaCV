@@ -37,6 +37,7 @@ Next: for a real RTSP stream, see the RTSP ingestion section below.
   * `kernel/architecture.md`
 * Other docs should link to the canonical specifications rather than duplicate them.
 * Host-compromise limitations are documented in `docs/root_paradox.md`.
+* Rationale for tamper-evident perception is in `docs/why_witnessing_matters.md`.
 * See `kernel/architecture.md` for the canonical vault confidentiality policy and ruleset identifier guidance.
 * Contribution guidance is in `CONTRIBUTING.md`.
 * Security policy is in `SECURITY.md`.
