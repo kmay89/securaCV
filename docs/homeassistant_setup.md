@@ -58,6 +58,9 @@ Choose one runtime option and configure it in either **frigate** or **standalone
 2. Click **⋮ → Repositories** → Add: `https://github.com/kmay89/securaCV`
 3. Install **Privacy Witness Kernel**
 
+### Step 2: Configure
+
+First, generate a device key. This is required for the kernel configuration.
 **Option B: Docker / another host**
 1. Run the kernel using your preferred deployment method
 2. Ensure the Event API is reachable from Home Assistant
@@ -92,6 +95,11 @@ mqtt_publish:
   enabled: true  # Optional: HA MQTT discovery
 ```
 
+### Step 3: Start
+
+Click **Start**. Check logs for any errors.
+
+---
 ### Step 5: Add the Integration
 
 1. Go to **Settings → Devices & Services**
