@@ -251,6 +251,7 @@ impl IngestSource {
                     target_fps: config.rtsp.target_fps,
                     width: config.rtsp.width,
                     height: config.rtsp.height,
+                    backend: config.rtsp.backend,
                 };
                 Ok(Self::Rtsp(RtspSource::new(rtsp_config)?))
             }
