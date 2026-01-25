@@ -285,8 +285,8 @@ impl DeviceV4l2Source {
         use v4l::io::traits::CaptureStream;
         use v4l::prelude::MmapStream;
 
-        let mut stream =
-            MmapStream::with_buffers(&mut self.device, Type::VideoCapture, 4).map_err(|err| {
+        let mut stream = MmapStream::with_buffers(&mut self.device, Type::VideoCapture, 4)
+            .map_err(|err| {
                 self.last_error = Some(err.to_string());
                 anyhow::Error::new(err).context("create v4l2 buffer stream")
             })?;
