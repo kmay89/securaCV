@@ -246,6 +246,14 @@ impl DeviceV4l2Source {
         use v4l::buffer::Type;
         use v4l::video::Capture;
 
+        if self.state.is_some() {
+            log::debug!(
+                "V4l2Source: already connected to {}",
+                self.config.device
+            );
+            return Ok(());
+        }
+
         let mut device = v4l::Device::with_path(&self.config.device)
             .with_context(|| format!("open v4l2 device {}", self.config.device))?;
         let mut format = device.format().context("read v4l2 format")?;
@@ -285,6 +293,7 @@ impl DeviceV4l2Source {
         let state = DeviceV4l2StateBuilder {
             device,
             stream_builder: |device| {
+                // Create the stream once during connect to avoid per-frame setup.
                 v4l::prelude::MmapStream::with_buffers(device, Type::VideoCapture, 4)
                     .map_err(|err| anyhow::Error::new(err).context("create v4l2 buffer stream"))
             },
