@@ -246,15 +246,14 @@ impl DeviceV4l2Source {
         use v4l::buffer::Type;
         use v4l::video::Capture;
 
-        let has_state = self.state.is_some();
-        if !Self::should_reconnect(has_state, self.is_healthy()) {
-            log::debug!(
-                "V4l2Source: already connected and healthy to {}",
-                self.config.device
-            );
-            return Ok(());
-        }
-        if has_state {
+        if let Some(_) = &self.state {
+            if self.is_healthy() {
+                log::debug!(
+                    "V4l2Source: already connected and healthy to {}",
+                    self.config.device
+                );
+                return Ok(());
+            }
             log::info!(
                 "V4l2Source: unhealthy connection, reconnecting to {}",
                 self.config.device
@@ -448,17 +447,20 @@ mod tests {
 
     #[test]
     fn v4l2_device_reconnects_when_unhealthy() {
-        assert!(
-            DeviceV4l2Source::should_reconnect(true, false),
-            "unhealthy connections should attempt to reconnect"
-        );
-        assert!(
-            !DeviceV4l2Source::should_reconnect(true, true),
-            "healthy connections should skip reconnect"
-        );
-        assert!(
-            DeviceV4l2Source::should_reconnect(false, true),
-            "missing state should reconnect regardless of health"
-        );
+        let cases = [
+            (true, false, true, "unhealthy connections should attempt to reconnect"),
+            (true, true, false, "healthy connections should skip reconnect"),
+            (false, true, true, "missing state should reconnect regardless of health"),
+            (false, false, true, "missing state and unhealthy should also reconnect"),
+        ];
+
+        for &(has_state, is_healthy, expected, desc) in &cases {
+            assert_eq!(
+                DeviceV4l2Source::should_reconnect(has_state, is_healthy),
+                expected,
+                "Failed on case: {}",
+                desc
+            );
+        }
     }
 }
