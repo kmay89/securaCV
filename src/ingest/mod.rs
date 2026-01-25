@@ -16,10 +16,12 @@
 //! - Transmit raw frames over network
 //! - Log raw frame content
 
+mod features;
 pub mod rtsp;
 #[cfg(feature = "ingest-v4l2")]
 pub mod v4l2;
 
+pub(crate) use features::compute_features_hash;
 pub use rtsp::RtspSource;
 #[cfg(feature = "ingest-v4l2")]
 pub use v4l2::V4l2Source;

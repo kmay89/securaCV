@@ -254,22 +254,7 @@ impl IngestSource {
                 };
                 Ok(Self::Rtsp(RtspSource::new(rtsp_config)?))
             }
-            witness_kernel::config::IngestBackend::V4l2 => {
-                #[cfg(feature = "ingest-v4l2")]
-                {
-                    let v4l2_config = V4l2Config {
-                        device: config.v4l2.device.clone(),
-                        target_fps: config.v4l2.target_fps,
-                        width: config.v4l2.width,
-                        height: config.v4l2.height,
-                    };
-                    Ok(Self::V4l2(V4l2Source::new(v4l2_config)?))
-                }
-                #[cfg(not(feature = "ingest-v4l2"))]
-                {
-                    Err(anyhow!("v4l2 ingestion requires the ingest-v4l2 feature"))
-                }
-            }
+            witness_kernel::config::IngestBackend::V4l2 => build_v4l2_source(config),
         }
     }
 
@@ -315,6 +300,23 @@ impl IngestSource {
                 }
             }
         }
+    }
+}
+
+fn build_v4l2_source(config: &witness_kernel::config::WitnessdConfig) -> Result<IngestSource> {
+    #[cfg(feature = "ingest-v4l2")]
+    {
+        let v4l2_config = V4l2Config {
+            device: config.v4l2.device.clone(),
+            target_fps: config.v4l2.target_fps,
+            width: config.v4l2.width,
+            height: config.v4l2.height,
+        };
+        Ok(IngestSource::V4l2(V4l2Source::new(v4l2_config)?))
+    }
+    #[cfg(not(feature = "ingest-v4l2"))]
+    {
+        Err(anyhow!("v4l2 ingestion requires the ingest-v4l2 feature"))
     }
 }
 

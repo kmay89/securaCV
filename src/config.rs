@@ -18,6 +18,14 @@ const DEFAULT_V4L2_HEIGHT: u32 = 480;
 const DEFAULT_RETENTION_SECS: u64 = 60 * 60 * 24 * 7;
 const DEFAULT_MODULE_ZONE_ID: &str = "zone:front_boundary";
 
+fn config_string(value: Option<String>, default: &str) -> String {
+    value.unwrap_or_else(|| default.to_string())
+}
+
+fn config_u32(value: Option<u32>, default: u32) -> u32 {
+    value.unwrap_or(default)
+}
+
 #[derive(Debug, Deserialize, Default)]
 struct WitnessdConfigFile {
     db_path: Option<String>,
@@ -165,48 +173,40 @@ impl WitnessdConfig {
             backend: IngestBackend::parse(&ingest_backend)?,
         };
         let rtsp = RtspSettings {
-            url: file
-                .rtsp
-                .as_ref()
-                .and_then(|rtsp| rtsp.url.clone())
-                .unwrap_or_else(|| DEFAULT_RTSP_URL.to_string()),
-            target_fps: file
-                .rtsp
-                .as_ref()
-                .and_then(|rtsp| rtsp.target_fps)
-                .unwrap_or(DEFAULT_RTSP_FPS),
-            width: file
-                .rtsp
-                .as_ref()
-                .and_then(|rtsp| rtsp.width)
-                .unwrap_or(DEFAULT_RTSP_WIDTH),
-            height: file
-                .rtsp
-                .as_ref()
-                .and_then(|rtsp| rtsp.height)
-                .unwrap_or(DEFAULT_RTSP_HEIGHT),
+            url: config_string(
+                file.rtsp.as_ref().and_then(|rtsp| rtsp.url.clone()),
+                DEFAULT_RTSP_URL,
+            ),
+            target_fps: config_u32(
+                file.rtsp.as_ref().and_then(|rtsp| rtsp.target_fps),
+                DEFAULT_RTSP_FPS,
+            ),
+            width: config_u32(
+                file.rtsp.as_ref().and_then(|rtsp| rtsp.width),
+                DEFAULT_RTSP_WIDTH,
+            ),
+            height: config_u32(
+                file.rtsp.as_ref().and_then(|rtsp| rtsp.height),
+                DEFAULT_RTSP_HEIGHT,
+            ),
         };
         let v4l2 = V4l2Settings {
-            device: file
-                .v4l2
-                .as_ref()
-                .and_then(|v4l2| v4l2.device.clone())
-                .unwrap_or_else(|| DEFAULT_V4L2_DEVICE.to_string()),
-            target_fps: file
-                .v4l2
-                .as_ref()
-                .and_then(|v4l2| v4l2.target_fps)
-                .unwrap_or(DEFAULT_V4L2_FPS),
-            width: file
-                .v4l2
-                .as_ref()
-                .and_then(|v4l2| v4l2.width)
-                .unwrap_or(DEFAULT_V4L2_WIDTH),
-            height: file
-                .v4l2
-                .as_ref()
-                .and_then(|v4l2| v4l2.height)
-                .unwrap_or(DEFAULT_V4L2_HEIGHT),
+            device: config_string(
+                file.v4l2.as_ref().and_then(|v4l2| v4l2.device.clone()),
+                DEFAULT_V4L2_DEVICE,
+            ),
+            target_fps: config_u32(
+                file.v4l2.as_ref().and_then(|v4l2| v4l2.target_fps),
+                DEFAULT_V4L2_FPS,
+            ),
+            width: config_u32(
+                file.v4l2.as_ref().and_then(|v4l2| v4l2.width),
+                DEFAULT_V4L2_WIDTH,
+            ),
+            height: config_u32(
+                file.v4l2.as_ref().and_then(|v4l2| v4l2.height),
+                DEFAULT_V4L2_HEIGHT,
+            ),
         };
         let zones = ZoneSettings {
             module_zone_id: file
