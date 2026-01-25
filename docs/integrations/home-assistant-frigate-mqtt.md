@@ -155,7 +155,7 @@ From the repository root (or wherever your verification script lives), run:
     - Confirm you can see Frigate events in **Developer Tools → MQTT**.
     - Verify the PWK MQTT publish settings match the broker and prefixes in `docs/homeassistant_setup.md` and `docs/frigate_integration.md`.
 
-12. **Frigate + PWK integration works but still logs are empty**
+12. **Frigate + PWK integration works but the PWK sealed log is empty**
     - Confirm the PWK database path and permissions for the add-on/container.
     - Use the `log_verify` tool described in `log_verify_README.md` if you need integrity checks.
 
