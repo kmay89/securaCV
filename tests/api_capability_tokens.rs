@@ -99,7 +99,9 @@ impl TestApi {
 impl Drop for TestApi {
     fn drop(&mut self) {
         if let Some(handle) = self.api_handle.take() {
-            handle.stop().expect("failed to stop API server");
+            if let Err(err) = handle.stop() {
+                eprintln!("Failed to stop API server: {err}");
+            }
         }
     }
 }
