@@ -69,18 +69,20 @@ pub trait VaultStore: Send + Sync {
     ) -> Result<Vec<u8>>;
 }
 
-pub struct Vault {
-    store: Box<dyn VaultStore>,
+pub struct Vault<S: VaultStore = FilesystemVaultStore> {
+    store: S,
 }
 
-impl Vault {
+impl Vault<FilesystemVaultStore> {
     pub fn new(cfg: VaultConfig) -> Result<Self> {
         Ok(Self {
-            store: Box::new(FilesystemVaultStore::new(cfg)?),
+            store: FilesystemVaultStore::new(cfg)?,
         })
     }
+}
 
-    pub fn with_store(store: Box<dyn VaultStore>) -> Self {
+impl<S: VaultStore> Vault<S> {
+    pub fn with_store(store: S) -> Self {
         Self { store }
     }
 

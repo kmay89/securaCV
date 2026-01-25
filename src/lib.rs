@@ -617,8 +617,12 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
     }
 
     pub fn log_alarm(&mut self, code: &str, message: &str) -> Result<()> {
+        Self::log_alarm_with_conn(&mut self.conn, code, message)
+    }
+
+    fn log_alarm_with_conn(conn: &mut Connection, code: &str, message: &str) -> Result<()> {
         let created_at = now_s()? as i64;
-        self.conn.execute(
+        conn.execute(
             "INSERT INTO conformance_alarms(created_at, code, message) VALUES (?1, ?2, ?3)",
             params![created_at, code, message],
         )?;
@@ -892,9 +896,12 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         expected_ruleset_hash: [u8; 32],
         limit: usize,
     ) -> Result<Vec<Event>> {
-        let mut alarm = |code: &str, message: &str| self.log_alarm(code, message);
-        self.sealed_log
-            .read_events_ruleset_bound(expected_ruleset_hash, limit, &mut alarm)
+        let conn = &mut self.conn;
+        let mut alarm = |code: &str, message: &str| {
+            Self::log_alarm_with_conn(conn, code, message)
+        };
+        let sealed_log = &mut self.sealed_log;
+        sealed_log.read_events_ruleset_bound(expected_ruleset_hash, limit, &mut alarm)
     }
 
     fn validate_export_options(options: &ExportOptions) -> Result<()> {

@@ -1,7 +1,6 @@
 use anyhow::{anyhow, Result};
 use ed25519_dalek::SigningKey;
 use rusqlite::{params, Connection};
-use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 use crate::{hash_entry, now_s, sign_entry, Event, ReprocessGuard};
@@ -227,7 +226,7 @@ impl SealedLogStore for SqliteSealedLogStore {
     }
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug)]
 struct InMemorySealedEventEntry {
     created_at: i64,
     payload_json: String,
@@ -236,7 +235,7 @@ struct InMemorySealedEventEntry {
     signature: [u8; 64],
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug)]
 struct InMemoryCheckpointEntry {
     created_at: i64,
     cutoff_event_id: usize,
