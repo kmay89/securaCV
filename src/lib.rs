@@ -897,9 +897,7 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         limit: usize,
     ) -> Result<Vec<Event>> {
         let conn = &mut self.conn;
-        let mut alarm = |code: &str, message: &str| {
-            Self::log_alarm_with_conn(conn, code, message)
-        };
+        let mut alarm = |code: &str, message: &str| Self::log_alarm_with_conn(conn, code, message);
         let sealed_log = &mut self.sealed_log;
         sealed_log.read_events_ruleset_bound(expected_ruleset_hash, limit, &mut alarm)
     }
