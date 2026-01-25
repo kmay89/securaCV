@@ -506,9 +506,11 @@ impl Kernel {
     ) -> Result<Self> {
         if cfg.db_path == ":memory:" {
             return Err(anyhow!(
-                "Using ':memory:' with `open_with_sealed_log` is ambiguous and not supported. \
-                 For shared in-memory databases, call `shared_memory_uri()` \
-                 and pass it explicitly in `KernelConfig::db_path`."
+                concat!(
+                    "Using ':memory:' with `open_with_sealed_log` is ambiguous and not supported. ",
+                    "For shared in-memory databases, call `shared_memory_uri()` ",
+                    "and pass it explicitly in `KernelConfig::db_path`."
+                )
             ));
         }
         let conn = open_db_connection(&cfg.db_path)?;
@@ -1800,10 +1802,12 @@ mod tests {
             zone_policy: ZonePolicy::default(),
         };
         let sealed_log = Box::new(InMemorySealedLogStore::default());
-        let err = Kernel::open_with_sealed_log(&cfg, sealed_log).expect_err("expected error");
+        let err = Kernel::open_with_sealed_log(&cfg, sealed_log)
+            .err()
+            .expect("expected error");
         let message = err.to_string();
-        assert!(message.contains("open_with_sealed_log"));
-        assert!(message.contains("shared_memory_uri"));
+        let expected_message = "Using ':memory:' with `open_with_sealed_log` is ambiguous and not supported. For shared in-memory databases, call `shared_memory_uri()` and pass it explicitly in `KernelConfig::db_path`.";
+        assert_eq!(message, expected_message);
     }
 
     #[test]
