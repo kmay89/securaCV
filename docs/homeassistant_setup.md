@@ -75,6 +75,30 @@ Click **Start**. Check logs for any errors.
 
 ---
 
+## Distribution & HACS Roadmap
+
+### Current Distribution
+
+The integration is currently distributed as a **Home Assistant add-on** from this repository (custom add-on repo URL). This add-on runs the Privacy Witness Kernel as a separate service with its own configuration and lifecycle.
+
+### Planned HACS Integration (Scope)
+
+Planned HACS support is intentionally minimal:
+- **Config flow + entities only** (MQTT/REST entities surfaced in HA)
+- **No new data fields** and no expansion of event schema
+- No change to privacy guarantees or retention behavior
+
+### HACS vs Add-on (Quick Comparison)
+
+| Aspect | Add-on (today) | HACS (planned) |
+|--------|----------------|----------------|
+| Runs the kernel service | ✅ Yes | ❌ No (frontend/config only) |
+| Configuration location | Add-on config UI | HA config flow |
+| Entities in HA | ✅ Yes (via MQTT/REST) | ✅ Yes (same entities) |
+| Data schema changes | ❌ Not allowed | ❌ Not planned |
+
+---
+
 ## Detailed Configuration
 
 ---
