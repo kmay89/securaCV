@@ -48,15 +48,15 @@ Cameras → go2rtc → PWK (detection + logging)
 2. Click ⋮ → **Repositories** → Add: `https://github.com/kmay89/securaCV`
 3. Install "Privacy Witness Kernel"
 
-### Step 2: Generate Device Key
+### Step 2: Configure
+
+First, generate a device key. This is required for the kernel configuration.
 
 ```bash
 openssl rand -hex 32
 ```
 
 Save this key - it protects your event signatures.
-
-### Step 3: Configure
 
 **For Frigate users:**
 ```yaml
@@ -78,7 +78,7 @@ mqtt_publish:
   enabled: true  # Auto-create sensors in HA
 ```
 
-### Step 4: Start
+### Step 3: Start
 
 Click **Start**. Check logs for any errors.
 
