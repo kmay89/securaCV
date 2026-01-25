@@ -352,13 +352,13 @@ mod tests {
         std::fs::write(path, contents).expect("write temp config");
     }
 
-    fn assert_reads_config(filename: &str, contents: &str, expected: TestConfig) {
+    fn assert_reads_config(filename: &str, contents: &str, expected: &TestConfig) {
         let dir = tempdir().expect("temp dir");
         let path = dir.path().join(filename);
         write_file(&path, contents);
 
         let cfg: TestConfig = read_config_file(&path).expect("read config");
-        assert_eq!(cfg, expected);
+        assert_eq!(&cfg, expected);
     }
 
     #[test]
@@ -366,7 +366,7 @@ mod tests {
         assert_reads_config(
             "config.toml",
             "name = \"alpha\"\ncount = 3\n",
-            TestConfig {
+            &TestConfig {
                 name: "alpha".to_string(),
                 count: 3,
             },
@@ -378,7 +378,7 @@ mod tests {
         assert_reads_config(
             "config.json",
             r#"{"name":"beta","count":7}"#,
-            TestConfig {
+            &TestConfig {
                 name: "beta".to_string(),
                 count: 7,
             },
@@ -390,7 +390,7 @@ mod tests {
         assert_reads_config(
             "config",
             "name = \"gamma\"\ncount = 11\n",
-            TestConfig {
+            &TestConfig {
                 name: "gamma".to_string(),
                 count: 11,
             },
@@ -402,7 +402,7 @@ mod tests {
         assert_reads_config(
             "config",
             r#"{"name":"delta","count":13}"#,
-            TestConfig {
+            &TestConfig {
                 name: "delta".to_string(),
                 count: 13,
             },
