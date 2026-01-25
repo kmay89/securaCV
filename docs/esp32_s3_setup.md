@@ -5,6 +5,9 @@ stream MJPEG/JPEG over HTTP or JPEG over RTP/UDP. The ESP32 ingestion backend ru
 entirely in-memory and preserves the same invariants as RTSP/V4L2 ingestion: timestamp
 coarsening, non-invertible feature hashing, and zero raw-frame persistence.
 
+For Seeed XIAO Vision AI devices, see the dedicated guide:
+[`docs/seeed_xiao_vision_ai_setup.md`](seeed_xiao_vision_ai_setup.md).
+
 ## Build with ESP32-S3 Support
 
 The ESP32-S3 backend is gated behind the `ingest-esp32` feature:
