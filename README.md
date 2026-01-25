@@ -72,6 +72,22 @@ DEVICE_KEY_SEED=devkey:your-seed \
 Trustee entries use the format `id:HEX_PUBLIC_KEY`, where the public key is the
 hex-encoded 32-byte Ed25519 verifying key.
 
+## Break-glass unseal workflow
+
+After trustees approve a request and you run `break_glass authorize`, you can
+unseal an envelope with `break_glass unseal`. The unseal command writes the
+clear envelope to `--output-dir` (default: `vault/unsealed`) so operators can
+locate the recovered payload explicitly rather than assuming the CLI lacks an
+unseal path.
+
+```bash
+cargo run --bin break_glass -- unseal \
+  --envelope vault/envelopes/<envelope_id>.json \
+  --token /path/to/break_glass.token \
+  --db witness.db \
+  --output-dir vault/unsealed
+```
+
 ## Event export
 
 Use the sequential export tool to write a local artifact with coarse time buckets

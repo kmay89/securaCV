@@ -5,7 +5,8 @@
 //! Notes:
 //! - Trustee approvals are signed with local Ed25519 keys.
 //! - This CLI demonstrates authorization + receipt logging.
-//! - Vault decryption is not implemented here.
+//! - Vault unsealing is implemented via `break_glass unseal` and writes clear
+//!   envelopes to the specified output directory.
 
 use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
