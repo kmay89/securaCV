@@ -373,9 +373,6 @@ impl DeviceV4l2Source {
         Duration::from_millis(base_ms.max(2_000) as u64)
     }
 
-    fn should_reconnect(has_state: bool, is_healthy: bool) -> bool {
-        !has_state || !is_healthy
-    }
 }
 
 // ----------------------------------------------------------------------------
@@ -385,6 +382,10 @@ impl DeviceV4l2Source {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn should_reconnect(has_state: bool, is_healthy: bool) -> bool {
+        !has_state || !is_healthy
+    }
 
     fn stub_config() -> V4l2Config {
         V4l2Config {
@@ -456,7 +457,7 @@ mod tests {
 
         for &(has_state, is_healthy, expected, desc) in &cases {
             assert_eq!(
-                DeviceV4l2Source::should_reconnect(has_state, is_healthy),
+                should_reconnect(has_state, is_healthy),
                 expected,
                 "Failed on case: {}",
                 desc
