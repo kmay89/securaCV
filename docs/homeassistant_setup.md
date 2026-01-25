@@ -58,6 +58,7 @@ Choose one runtime option and configure it in either **frigate** or **standalone
 2. Click **⋮ → Repositories** → Add: `https://github.com/kmay89/securaCV`
 3. Install **Privacy Witness Kernel**
 
+
 ### Step 2: Configure
 
 First, generate a device key. This is required for the kernel configuration.
