@@ -1,10 +1,8 @@
 """Config flow for SecuraCV."""
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
-import aiohttp
 import voluptuous as vol
 
 from homeassistant import config_entries
@@ -12,7 +10,7 @@ from homeassistant.const import CONF_TOKEN, CONF_URL
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from . import DOMAIN
+from . import DOMAIN, SecuraCvApi, SecuraCvApiAuthError, SecuraCvApiError
 
 DEFAULT_URL = "http://localhost:8799"
 
@@ -27,16 +25,12 @@ class InvalidAuth(Exception):
 
 async def _async_validate_input(hass: HomeAssistant, data: dict[str, Any]) -> None:
     session = async_get_clientsession(hass)
-    url = f"{data[CONF_URL].rstrip('/')}/events"
-    headers = {"Authorization": f"Bearer {data[CONF_TOKEN]}"}
+    api = SecuraCvApi(data[CONF_URL], data[CONF_TOKEN], session)
     try:
-        async with session.get(url, headers=headers, timeout=10) as resp:
-            if resp.status == 401:
-                raise InvalidAuth
-            if resp.status != 200:
-                raise CannotConnect
-            await resp.json()
-    except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+        await api.async_get_events()
+    except SecuraCvApiAuthError as err:
+        raise InvalidAuth from err
+    except SecuraCvApiError as err:
         raise CannotConnect from err
 
 

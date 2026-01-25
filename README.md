@@ -86,12 +86,12 @@ default jitter and batching unless overridden by CLI flags.
 
 ## Home Assistant Integration
 
-Run the Privacy Witness Kernel as a Home Assistant add-on for easy camera integration:
+Install the Home Assistant integration through HACS, then point it at a running Privacy Witness Kernel:
 
-1. Add the repository: `https://github.com/kmay89/securaCV`
-2. Install "Privacy Witness Kernel" from the add-on store
-3. Configure your cameras (auto-discovers from go2rtc/Frigate)
-4. Enable MQTT Discovery for automatic sensor creation
+1. In **HACS → Integrations**, add `https://github.com/kmay89/securaCV` as a custom repository.
+2. Install **SecuraCV** and restart Home Assistant when prompted.
+3. Run the kernel (Home Assistant add-on, Docker, or another host) and note its Event API URL + token.
+4. In **Settings → Devices & Services**, add the **SecuraCV** integration and provide the URL + token.
 
 ### MQTT Discovery (Auto-Sensors)
 
