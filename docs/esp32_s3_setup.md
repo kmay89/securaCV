@@ -8,6 +8,15 @@ coarsening, non-invertible feature hashing, and zero raw-frame persistence.
 For Seeed XIAO Vision AI devices, see the dedicated guide:
 [`docs/seeed_xiao_vision_ai_setup.md`](seeed_xiao_vision_ai_setup.md).
 
+## Required Stream Outputs
+
+The ingest backend only accepts HTTP MJPEG/JPEG (`/stream` or `/capture`) or UDP RTP/JPEG
+streams. The Arduino/Seeed SDK is recommended when it reliably exposes MJPEG `/stream`
+or JPEG `/capture` endpoints. ESPHome is viable only if it can serve MJPEG or JPEG
+snapshots over HTTP at a stable endpoint; otherwise it will not work with the current
+ingest backend. Other SDKs are acceptable if they provide the same stream outputs without
+adding extra metadata or persistence.
+
 ## Build with ESP32-S3 Support
 
 The ESP32-S3 backend is gated behind the `ingest-esp32` feature:
