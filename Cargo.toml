@@ -70,3 +70,7 @@ path = "src/bin/frigate_bridge.rs"
 [[bin]]
 name = "event_mqtt_bridge"
 path = "src/bin/event_mqtt_bridge.rs"
+
+[[bin]]
+name = "witness_api"
+path = "src/bin/witness_api.rs"

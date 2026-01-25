@@ -57,6 +57,25 @@ bashio::log.info "Retention: $RETENTION_DAYS days"
 bashio::log.info "Time bucket: $TIME_BUCKET_MIN minutes"
 
 # ============================================================================
+# Function to write API config for Frigate mode
+# ============================================================================
+write_frigate_api_config() {
+    cat > "$CONFIG_FILE" << EOF
+{
+  "db_path": "$DB_PATH",
+  "ruleset_id": "ruleset:frigate_v1",
+  "api": {
+    "addr": "127.0.0.1:8799",
+    "token_path": "/config/api_token"
+  },
+  "retention": {
+    "seconds": $RETENTION_SECS
+  }
+}
+EOF
+}
+
+# ============================================================================
 # Function to start MQTT publishing daemon (if enabled)
 # ============================================================================
 start_mqtt_publisher() {
@@ -217,13 +236,14 @@ if [ "$MODE" = "frigate" ]; then
         CMD_ARRAY+=(--labels "$FRIGATE_LABELS")
     fi
 
+    bashio::log.info "Starting witness API service for Frigate mode..."
+    write_frigate_api_config
+    /usr/local/bin/witness_api &
+    WITNESS_API_PID=$!
+    bashio::log.info "Witness API started (PID: $WITNESS_API_PID)"
+
     # Start MQTT publisher in background if enabled (for HA Discovery)
-    # Note: In Frigate mode, we run witnessd API in background for the publisher
     if [ "$MQTT_PUBLISH_ENABLED" = "true" ]; then
-        bashio::log.info "MQTT publishing enabled - starting witnessd API in background..."
-        /usr/local/bin/witnessd &
-        WITNESSD_PID=$!
-        sleep 2
         start_mqtt_publisher
     fi
 
