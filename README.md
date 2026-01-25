@@ -132,6 +132,8 @@ mqtt_publish:
 
 See `docs/homeassistant_setup.md` for the full guide and `docs/frigate_integration.md` for Frigate-specific setup.
 
+For a combined Home Assistant + Frigate MQTT walkthrough, see `docs/integrations/home-assistant-frigate-mqtt.md`.
+
 ## RTSP Camera Setup
 
 ### Quick Start with Real Cameras
