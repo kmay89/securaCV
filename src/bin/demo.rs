@@ -121,6 +121,7 @@ fn main() -> Result<()> {
             target_fps: args.fps,
             width: 320,
             height: 240,
+            backend: witness_kernel::config::RtspBackendPreference::Auto,
         })?;
         source.connect()?;
 

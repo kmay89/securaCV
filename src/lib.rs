@@ -1482,6 +1482,7 @@ impl StubFrameSource {
             target_fps: 10,
             width: 640,
             height: 480,
+            backend: crate::config::RtspBackendPreference::Auto,
         };
         Self {
             source: RtspSource::new(config).expect("stub RTSP source"),
