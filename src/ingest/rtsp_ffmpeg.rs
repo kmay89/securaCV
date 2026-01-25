@@ -29,15 +29,15 @@ pub(crate) struct FfmpegRtspSource {
 impl FfmpegRtspSource {
     pub(crate) fn new(config: RtspConfig) -> Result<Self> {
         ffmpeg::init().context("initialize ffmpeg")?;
-        let mut input = ffmpeg::format::input(&config.url).context("open RTSP input with ffmpeg")?;
+        let mut input =
+            ffmpeg::format::input(&config.url).context("open RTSP input with ffmpeg")?;
         let input_stream = input
             .streams()
             .best(ffmpeg::media::Type::Video)
             .ok_or_else(|| anyhow::anyhow!("RTSP stream has no video track"))?;
         let stream_index = input_stream.index();
-        let context =
-            ffmpeg::codec::context::Context::from_parameters(input_stream.parameters())
-                .context("load video decoder parameters")?;
+        let context = ffmpeg::codec::context::Context::from_parameters(input_stream.parameters())
+            .context("load video decoder parameters")?;
         let decoder = context
             .decoder()
             .video()

@@ -14,18 +14,18 @@
 //! - Forward raw frames over network
 //! - Retain frames beyond handoff to FrameBuffer
 
-use anyhow::Result;
 #[cfg(feature = "rtsp-gstreamer")]
 use anyhow::Context;
+use anyhow::Result;
 #[cfg(feature = "rtsp-gstreamer")]
 use std::time::{Duration, Instant};
 
 use super::compute_features_hash;
+#[cfg(feature = "rtsp-ffmpeg")]
+use super::rtsp_ffmpeg::FfmpegRtspSource;
 use crate::config::RtspBackendPreference;
 use crate::frame::RawFrame;
 use crate::TimeBucket;
-#[cfg(feature = "rtsp-ffmpeg")]
-use super::rtsp_ffmpeg::FfmpegRtspSource;
 
 /// Configuration for an RTSP source.
 #[derive(Clone, Debug)]
@@ -92,9 +92,7 @@ impl RtspSource {
                     }
                     #[cfg(not(any(feature = "rtsp-gstreamer", feature = "rtsp-ffmpeg")))]
                     {
-                        anyhow::bail!(
-                            "RTSP requires the rtsp-gstreamer or rtsp-ffmpeg feature"
-                        )
+                        anyhow::bail!("RTSP requires the rtsp-gstreamer or rtsp-ffmpeg feature")
                     }
                 }
                 RtspBackendPreference::Gstreamer => {
@@ -106,7 +104,9 @@ impl RtspSource {
                     }
                     #[cfg(not(feature = "rtsp-gstreamer"))]
                     {
-                        anyhow::bail!("RTSP backend 'gstreamer' requires the rtsp-gstreamer feature")
+                        anyhow::bail!(
+                            "RTSP backend 'gstreamer' requires the rtsp-gstreamer feature"
+                        )
                     }
                 }
                 RtspBackendPreference::Ffmpeg => {
