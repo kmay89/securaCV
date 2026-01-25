@@ -14,6 +14,7 @@ use crate::{
 };
 
 mod sandbox;
+pub mod event_payload;
 
 /// Capabilities a module may request.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
