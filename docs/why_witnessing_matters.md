@@ -67,11 +67,11 @@ Existing domains already demonstrate the failure pattern:
 - Autonomous vehicle crash data
 
 Common outcomes:
-- missing footage,
-- corrupted logs,
-- ambiguous timestamps,
-- unverifiable reconstructions,
-- disputes resolved by authority rather than evidence.
+- missing footage
+- corrupted logs
+- ambiguous timestamps
+- unverifiable reconstructions
+- disputes resolved by authority rather than evidence
 
 As autonomy increases, the cost of this failure mode increases.
 
