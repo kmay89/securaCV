@@ -258,14 +258,17 @@ When enabled, PWK automatically creates these entities for each zone:
 ### Entity Attributes
 
 The `sensor.pwk_last_event` entity includes these attributes:
+Time is reported as a coarse `time_bucket` (typically 10–15 minutes), not a precise timestamp.
 
 ```yaml
 event_type: "BoundaryCrossingObjectLarge"
 zone_id: "zone:front_door"
-time_bucket_start: 1706140800
-time_bucket_size: 600
+time_bucket:
+  start_epoch_s: 1706140800
+  size_s: 600
 confidence: 0.85
-timestamp: 1706140823
+kernel_version: "0.4.2"
+ruleset_id: "baseline"
 ```
 
 ### Availability Tracking
@@ -336,7 +339,6 @@ sensor:
       - confidence
       - kernel_version
       - ruleset_id
-      - ruleset_hash
     scan_interval: 30
 ```
 
@@ -410,13 +412,7 @@ curl -H "Authorization: Bearer $TOKEN" http://privacy_witness_kernel:8799/events
   "zone_id": "zone:front_door",
   "confidence": 0.85,
   "kernel_version": "0.4.2",
-  "ruleset_id": "baseline",
-  "ruleset_hash": [
-    82, 61, 246, 25, 47, 152, 76, 214,
-    4, 226, 250, 67, 101, 120, 80, 92,
-    136, 120, 119, 233, 6, 59, 58, 247,
-    84, 147, 197, 19, 100, 114, 94, 18
-  ]
+  "ruleset_id": "baseline"
 }
 ```
 
@@ -442,13 +438,7 @@ curl -H "Authorization: Bearer $TOKEN" http://privacy_witness_kernel:8799/events
               "zone_id": "zone:front_door",
               "confidence": 0.85,
               "kernel_version": "0.4.2",
-              "ruleset_id": "baseline",
-              "ruleset_hash": [
-                82, 61, 246, 25, 47, 152, 76, 214,
-                4, 226, 250, 67, 101, 120, 80, 92,
-                136, 120, 119, 233, 6, 59, 58, 247,
-                84, 147, 197, 19, 100, 114, 94, 18
-              ]
+              "ruleset_id": "baseline"
             }
           ]
         }
