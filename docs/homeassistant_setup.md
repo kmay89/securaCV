@@ -30,7 +30,7 @@ Cameras → Frigate (detection) → MQTT → PWK (privacy logging)
 - [ ] **Required add-on options from the Configuration tab are configured**: `device_key_seed` is set, `mode` is still `frigate`, and any Frigate-specific options (`frigate.cameras`, `frigate.labels`, `frigate.min_confidence`) are configured as needed.
 - [ ] **MQTT transport expectations are understood**: the current bridges speak MQTT 3.1.1 over TCP with no TLS support.
 
-**Follow-up task**: if you require TLS or MQTT v5, swap in a standard MQTT client library that supports TLS, ensuring the bridge still avoids introducing new privacy metadata.
+**Follow-up task**: If you require TLS or MQTT v5, the bridge code must be modified to use a standard MQTT client library that supports these features. When making this change, ensure the bridge still avoids introducing new privacy metadata.
 
 ### Standalone Mode
 
