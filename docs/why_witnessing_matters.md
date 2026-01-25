@@ -45,7 +45,7 @@ A conventional camera system:
 This is sufficient for:
 - convenience,
 - monitoring,
-- analytics.
+- and analytics.
 
 It is **not sufficient** for:
 - accountability,
