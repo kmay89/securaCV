@@ -13,6 +13,15 @@ The ESP32 ingestion backend supports only the following modes:
 These are the same modes documented for the ESP32-S3 backend. No other transport or
 codec is supported in this repository.
 
+## Event-only mode (Grove Vision AI V2)
+
+If you want a **strict event-only** pipeline (no raw frame transport), use the
+`grove_vision2_ingest` binary with a device that emits contract-compliant JSON
+over serial. See the cat litter box demo for a full example and firmware
+sketches:
+
+- [`docs/litterbox_witness_demo.md`](litterbox_witness_demo.md)
+
 ## Vendor resources
 
 Use the vendor-provided resources for firmware and hardware references:
