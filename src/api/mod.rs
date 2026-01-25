@@ -107,7 +107,7 @@ impl ApiServer {
         let listener = TcpListener::bind(configured_addr)?;
         let addr = listener.local_addr()?;
         if configured_addr.ip().is_loopback() && !addr.ip().is_loopback() {
-            return Err(anyhow!("api must bind to loopback address"));
+            return Err(anyhow!("api configured for loopback address '{}', but bound to non-loopback address '{}'", configured_addr, addr));
         }
         listener.set_nonblocking(true)?;
 
