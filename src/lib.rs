@@ -53,7 +53,7 @@ pub use module_runtime::{CapabilityBoundaryRuntime, ModuleCapability};
 pub use storage::{InMemorySealedLogStore, SealedLogStore, SqliteSealedLogStore};
 pub use vault::{FilesystemVaultStore, Vault, VaultConfig, VaultStore};
 
-fn shared_memory_uri() -> String {
+pub fn shared_memory_uri() -> String {
     let mut bytes = [0u8; 8];
     rand::thread_rng().fill_bytes(&mut bytes);
     format!(
@@ -508,9 +508,9 @@ impl Kernel {
     ) -> Result<Self> {
         if cfg.db_path == ":memory:" {
             return Err(anyhow!(
-                "Using ':memory:' with `open_with_sealed_log` is ambiguous and not supported. \
-                 For shared in-memory databases, please create a shared memory URI \
-                 and pass it explicitly in `KernelConfig`."
+                "Using ':memory:' with `open_with_sealed_log` is ambiguous and not supported. "
+                "For shared in-memory databases, call `shared_memory_uri()` "
+                "and pass it explicitly in `KernelConfig::db_path`."
             ));
         }
         let conn = open_db_connection(&cfg.db_path)?;
@@ -1788,6 +1788,26 @@ mod tests {
         let signature = sign_entry(&signing_key, &entry_hash);
         verify_entry_signature(&verifying_key, &entry_hash, &signature)?;
         Ok(())
+    }
+
+    #[test]
+    fn open_with_sealed_log_rejects_memory_path() {
+        let cfg = KernelConfig {
+            db_path: ":memory:".to_string(),
+            ruleset_id: "ruleset:test".to_string(),
+            ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
+            kernel_version: "0.0.0-test".to_string(),
+            retention: Duration::from_secs(60),
+            device_key_seed: "devkey:test".to_string(),
+            zone_policy: ZonePolicy::default(),
+        };
+        let sealed_log = Box::new(InMemorySealedLogStore::default());
+        let err = Kernel::open_with_sealed_log(&cfg, sealed_log)
+            .err()
+            .expect("expected error");
+        let message = err.to_string();
+        let expected_message = "Using ':memory:' with `open_with_sealed_log` is ambiguous and not supported. For shared in-memory databases, call `shared_memory_uri()` and pass it explicitly in `KernelConfig::db_path`.";
+        assert_eq!(message, expected_message);
     }
 
     #[test]
