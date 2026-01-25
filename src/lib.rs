@@ -505,11 +505,11 @@ impl Kernel {
         sealed_log: Box<dyn SealedLogStore>,
     ) -> Result<Self> {
         if cfg.db_path == ":memory:" {
-            return Err(anyhow!(concat!(
-                "Using ':memory:' with `open_with_sealed_log` is ambiguous and not supported. ",
-                "For shared in-memory databases, call `shared_memory_uri()` ",
+            return Err(anyhow!(
+                "Using ':memory:' with `open_with_sealed_log` is ambiguous and not supported. "
+                "For shared in-memory databases, call `shared_memory_uri()` "
                 "and pass it explicitly in `KernelConfig::db_path`."
-            )));
+            ));
         }
         let conn = open_db_connection(&cfg.db_path)?;
         let device_key = signing_key_from_seed(&cfg.device_key_seed)?;
