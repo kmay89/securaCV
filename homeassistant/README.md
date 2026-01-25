@@ -27,6 +27,28 @@ Privacy-preserving video surveillance that produces **claims, not recordings**.
 - **Cryptographically signed** - tamper-evident event log
 - **Configurable retention** - automatic cleanup of old events
 
+## Distribution & HACS Roadmap
+
+### Current Distribution
+
+This integration is currently shipped as a **Home Assistant add-on** from this repository (custom add-on repo URL). The add-on runs the Privacy Witness Kernel as a separate service.
+
+### Planned HACS Integration (Scope)
+
+HACS support is intentionally limited:
+- **Config flow + entities only**
+- **No new data fields** and no expansion of the event schema
+- No change to privacy guarantees or retention behavior
+
+### HACS vs Add-on (Quick Comparison)
+
+| Aspect | Add-on (today) | HACS (planned) |
+|--------|----------------|----------------|
+| Runs the kernel service | ✅ Yes | ❌ No (frontend/config only) |
+| Configuration location | Add-on config UI | HA config flow |
+| Entities in HA | ✅ Yes (via MQTT/REST) | ✅ Yes (same entities) |
+| Data schema changes | ❌ Not allowed | ❌ Not planned |
+
 ## What Events Look Like
 
 ```json
