@@ -115,11 +115,7 @@ impl WitnessdConfig {
             .as_ref()
             .and_then(|api| api.addr.clone())
             .unwrap_or_else(|| DEFAULT_API_ADDR.to_string());
-        let api_token_path = file.api.and_then(|api| api.token_path).or_else(|| {
-            std::env::var("WITNESS_API_TOKEN_PATH")
-                .ok()
-                .map(PathBuf::from)
-        });
+        let api_token_path = file.api.and_then(|api| api.token_path);
         let rtsp = RtspSettings {
             url: file
                 .rtsp
@@ -223,7 +219,7 @@ impl WitnessApiConfig {
     pub fn load() -> Result<Self> {
         let config_path = std::env::var("WITNESS_CONFIG").ok();
         let file_cfg = match config_path.as_deref() {
-            Some(path) => Some(read_api_config_file(Path::new(path))?),
+            Some(path) => Some(read_config_file::<WitnessApiConfigFile>(Path::new(path))?),
             None => None,
         };
         let mut cfg = Self::from_file(file_cfg.unwrap_or_default())?;
@@ -242,11 +238,7 @@ impl WitnessApiConfig {
             .as_ref()
             .and_then(|api| api.addr.clone())
             .unwrap_or_else(|| DEFAULT_API_ADDR.to_string());
-        let api_token_path = file.api.and_then(|api| api.token_path).or_else(|| {
-            std::env::var("WITNESS_API_TOKEN_PATH")
-                .ok()
-                .map(PathBuf::from)
-        });
+        let api_token_path = file.api.and_then(|api| api.token_path);
         let sensitive_zones = file
             .zones
             .and_then(|zones| zones.sensitive)
@@ -303,33 +295,10 @@ impl WitnessApiConfig {
     }
 }
 
-fn read_config_file(path: &Path) -> Result<WitnessdConfigFile> {
-    let raw = std::fs::read_to_string(path)
-        .map_err(|e| anyhow!("failed to read config file {}: {}", path.display(), e))?;
-
-    // Detect format by extension or content
-    let cfg = if path.extension().map(|e| e == "toml").unwrap_or(false) {
-        toml::from_str(&raw)
-            .map_err(|e| anyhow!("invalid TOML config file {}: {}", path.display(), e))?
-    } else if path.extension().map(|e| e == "json").unwrap_or(false) {
-        serde_json::from_str(&raw)
-            .map_err(|e| anyhow!("invalid JSON config file {}: {}", path.display(), e))?
-    } else {
-        // Try JSON first, then TOML
-        serde_json::from_str(&raw).or_else(|_| {
-            toml::from_str(&raw).map_err(|e| {
-                anyhow!(
-                    "invalid config file {} (tried JSON and TOML): {}",
-                    path.display(),
-                    e
-                )
-            })
-        })?
-    };
-    Ok(cfg)
-}
-
-fn read_api_config_file(path: &Path) -> Result<WitnessApiConfigFile> {
+fn read_config_file<T>(path: &Path) -> Result<T>
+where
+    T: for<'de> Deserialize<'de>,
+{
     let raw = std::fs::read_to_string(path)
         .map_err(|e| anyhow!("failed to read config file {}: {}", path.display(), e))?;
 
@@ -340,15 +309,20 @@ fn read_api_config_file(path: &Path) -> Result<WitnessApiConfigFile> {
         serde_json::from_str(&raw)
             .map_err(|e| anyhow!("invalid JSON config file {}: {}", path.display(), e))?
     } else {
-        serde_json::from_str(&raw).or_else(|_| {
-            toml::from_str(&raw).map_err(|e| {
-                anyhow!(
-                    "invalid config file {} (tried JSON and TOML): {}",
-                    path.display(),
-                    e
-                )
-            })
-        })?
+        match serde_json::from_str(&raw) {
+            Ok(cfg) => cfg,
+            Err(json_err) => match toml::from_str(&raw) {
+                Ok(cfg) => cfg,
+                Err(toml_err) => {
+                    return Err(anyhow!(
+                        "invalid config file {} (tried JSON and TOML): json error: {}; toml error: {}",
+                        path.display(),
+                        json_err,
+                        toml_err
+                    ));
+                }
+            },
+        }
     };
     Ok(cfg)
 }
