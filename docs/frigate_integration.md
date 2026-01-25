@@ -161,7 +161,7 @@ The frigate_bridge is classified as an **external tool** per `kernel/architectur
 | `mqtt_publish.topic_prefix` | `witness` | Prefix for state topics |
 | `mqtt_publish.discovery_prefix` | `homeassistant` | HA discovery prefix |
 
-**MQTT protocol note:** the current bridges speak MQTT 3.1.1 over plain TCP only; TLS is not supported yet.
+**MQTT protocol note:** The current bridges use MQTT v3.1.1 over an unencrypted TCP connection; TLS is not yet supported.
 
 When `mqtt_publish.enabled` is `true`, PWK will:
 1. Publish HA MQTT Discovery configs for automatic entity creation
