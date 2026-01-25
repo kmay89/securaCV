@@ -316,6 +316,7 @@ fn build_v4l2_source(config: &witness_kernel::config::WitnessdConfig) -> Result<
     }
     #[cfg(not(feature = "ingest-v4l2"))]
     {
+        let _ = config;
         Err(anyhow!("v4l2 ingestion requires the ingest-v4l2 feature"))
     }
 }
