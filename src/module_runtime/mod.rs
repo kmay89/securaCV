@@ -13,8 +13,8 @@ use crate::{
     BucketKeyManager, CandidateEvent, InferenceView, Module, ModuleDescriptor, TimeBucket,
 };
 
-mod sandbox;
 pub mod event_payload;
+mod sandbox;
 
 /// Capabilities a module may request.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
