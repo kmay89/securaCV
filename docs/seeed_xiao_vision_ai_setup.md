@@ -26,8 +26,8 @@ sketches:
 
 Use the vendor-provided resources for firmware and hardware references:
 
-- Firmware repository: **<USER-PROVIDED-FIRMWARE-REPO-URL>**
-- Datasheet: **<USER-PROVIDED-DATASHEET-URL>**
+- Firmware repository: **https://github.com/HimaxWiseEyePlus/Seeed_Grove_Vision_AI_Module_V2**
+- Datasheet: **https://files.seeedstudio.com/wiki/grove-vision-ai-v2/HX6538_datasheet.pdf**
 
 ## Flash firmware and enable streaming
 
