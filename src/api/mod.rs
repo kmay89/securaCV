@@ -193,9 +193,16 @@ fn handle_connection(
         write_json_response(&mut stream, 405, r#"{"error":"method_not_allowed"}"#)?;
         return Ok(());
     }
-    if request.path != "/events" {
-        write_json_response(&mut stream, 404, r#"{"error":"not_found"}"#)?;
-        return Ok(());
+    match request.path.as_str() {
+        "/health" => {
+            write_json_response(&mut stream, 200, r#"{"status":"ok"}"#)?;
+            return Ok(());
+        }
+        "/events" | "/events/latest" => {}
+        _ => {
+            write_json_response(&mut stream, 404, r#"{"error":"not_found"}"#)?;
+            return Ok(());
+        }
     }
 
     let token = match request.token() {
@@ -227,6 +234,20 @@ fn handle_connection(
     }
 
     let artifact = kernel.export_events_for_api(expected_ruleset_hash, cfg.export_options)?;
+    if request.path == "/events/latest" {
+        let latest = latest_event(&artifact);
+        match latest {
+            Some(event) => {
+                let payload = serde_json::to_vec(event)?;
+                write_response(&mut stream, 200, "application/json", &payload)?;
+            }
+            None => {
+                write_json_response(&mut stream, 404, r#"{"error":"no_events"}"#)?;
+            }
+        }
+        return Ok(());
+    }
+
     let payload = serde_json::to_vec(&artifact)?;
     write_response(&mut stream, 200, "application/json", &payload)?;
     Ok(())
@@ -353,4 +374,16 @@ fn parse_hex32(value: &str) -> Result<[u8; 32]> {
     let mut out = [0u8; 32];
     out.copy_from_slice(&bytes);
     Ok(out)
+}
+
+fn latest_event(artifact: &crate::ExportArtifact) -> Option<&crate::ExportEvent> {
+    let mut latest = None;
+    for batch in &artifact.batches {
+        for bucket in &batch.buckets {
+            for event in &bucket.events {
+                latest = Some(event);
+            }
+        }
+    }
+    latest
 }

@@ -325,6 +325,9 @@ sensor:
       - zone_id
       - time_bucket
       - confidence
+      - kernel_version
+      - ruleset_id
+      - ruleset_hash
     scan_interval: 30
 ```
 
@@ -365,6 +368,7 @@ The Event API is available at `http://localhost:8799` (or your configured port).
 ### Authentication
 
 The API uses capability tokens. The token is written to `/config/api_token` when the add-on starts. If you run the kernel elsewhere, use the token path or secrets location configured for that deployment.
+The `/health` endpoint is unauthenticated and only reachable on the local loopback interface.
 
 ```bash
 # Read the token
@@ -378,22 +382,78 @@ curl -H "Authorization: Bearer $TOKEN" http://localhost:8799/events
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/events` | GET | List recent events (paginated) |
-| `/events/latest` | GET | Get the most recent event |
+| `/events` | GET | Export events as batched buckets |
+| `/events/latest` | GET | Get the most recent event (single event JSON) |
 | `/health` | GET | Check daemon health |
 
-### Event Schema
+### `/events/latest` Response (Event)
 
 ```json
 {
   "event_type": "BoundaryCrossingObjectLarge",
-  "zone_id": "zone:front_door",
   "time_bucket": {
     "start_epoch_s": 1706140800,
     "size_s": 600
   },
+  "zone_id": "zone:front_door",
   "confidence": 0.85,
-  "correlation_token": null
+  "kernel_version": "0.4.2",
+  "ruleset_id": "baseline",
+  "ruleset_hash": [
+    82, 61, 246, 25, 47, 152, 76, 214,
+    4, 226, 250, 67, 101, 120, 80, 92,
+    136, 120, 119, 233, 6, 59, 58, 247,
+    84, 147, 197, 19, 100, 114, 94, 18
+  ]
+}
+```
+
+### `/events` Response (Export Artifact)
+
+```json
+{
+  "batches": [
+    {
+      "buckets": [
+        {
+          "time_bucket": {
+            "start_epoch_s": 1706140800,
+            "size_s": 600
+          },
+          "events": [
+            {
+              "event_type": "BoundaryCrossingObjectLarge",
+              "time_bucket": {
+                "start_epoch_s": 1706140800,
+                "size_s": 600
+              },
+              "zone_id": "zone:front_door",
+              "confidence": 0.85,
+              "kernel_version": "0.4.2",
+              "ruleset_id": "baseline",
+              "ruleset_hash": [
+                82, 61, 246, 25, 47, 152, 76, 214,
+                4, 226, 250, 67, 101, 120, 80, 92,
+                136, 120, 119, 233, 6, 59, 58, 247,
+                84, 147, 197, 19, 100, 114, 94, 18
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "max_events_per_batch": 50,
+  "jitter_s": 120,
+  "jitter_step_s": 60
+}
+```
+
+### `/health` Response
+
+```json
+{
+  "status": "ok"
 }
 ```
 
