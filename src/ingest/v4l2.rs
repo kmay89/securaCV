@@ -246,12 +246,19 @@ impl DeviceV4l2Source {
         use v4l::buffer::Type;
         use v4l::video::Capture;
 
-        if should_skip_connect(self.state.is_some(), self.is_healthy()) {
-            log::debug!(
-                "V4l2Source: already connected and healthy to {}",
+        if let Some(_) = &self.state {
+            if self.is_healthy() {
+                log::debug!(
+                    "V4l2Source: already connected and healthy to {}",
+                    self.config.device
+                );
+                return Ok(());
+            }
+            log::info!(
+                "V4l2Source: unhealthy connection, reconnecting to {}",
                 self.config.device
             );
-            return Ok(());
+            self.state = None;
         }
         if self.state.is_some() {
             log::info!(
@@ -372,6 +379,7 @@ impl DeviceV4l2Source {
         };
         Duration::from_millis(base_ms.max(2_000) as u64)
     }
+
 }
 
 fn should_skip_connect(state_present: bool, is_healthy: bool) -> bool {
@@ -385,6 +393,10 @@ fn should_skip_connect(state_present: bool, is_healthy: bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn should_reconnect(has_state: bool, is_healthy: bool) -> bool {
+        !has_state || !is_healthy
+    }
 
     fn stub_config() -> V4l2Config {
         V4l2Config {
@@ -446,9 +458,41 @@ mod tests {
     }
 
     #[test]
-    fn v4l2_source_does_not_skip_reconnect_when_unhealthy() {
-        assert!(should_skip_connect(true, true));
-        assert!(!should_skip_connect(true, false));
-        assert!(!should_skip_connect(false, true));
+    fn v4l2_device_reconnects_when_unhealthy() {
+        let cases = [
+            (
+                true,
+                false,
+                true,
+                "unhealthy connections should attempt to reconnect",
+            ),
+            (
+                true,
+                true,
+                false,
+                "healthy connections should skip reconnect",
+            ),
+            (
+                false,
+                true,
+                true,
+                "missing state should reconnect regardless of health",
+            ),
+            (
+                false,
+                false,
+                true,
+                "missing state and unhealthy should also reconnect",
+            ),
+        ];
+
+        for &(has_state, is_healthy, expected, desc) in &cases {
+            assert_eq!(
+                should_reconnect(has_state, is_healthy),
+                expected,
+                "Failed on case: {}",
+                desc
+            );
+        }
     }
 }
