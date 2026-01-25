@@ -15,7 +15,7 @@ ruleset_id = "ruleset:v1.0"
 addr = "127.0.0.1:8799"    # Loopback only by default for security
 # token_path = "/run/witness/api_token"  # Optional: write token to file
 
-# Ingest backend selection ("rtsp" or "v4l2")
+# Ingest backend selection ("rtsp", "v4l2", or "esp32")
 [ingest]
 backend = "rtsp"
 
@@ -57,6 +57,20 @@ target_fps = 10
 width = 640
 height = 480
 
+# ESP32-S3 Camera Configuration (HTTP MJPEG/JPEG or UDP RTP)
+#
+# Common ESP32-S3 defaults:
+#   MJPEG stream:  http://<camera-ip>:81/stream
+#   JPEG snapshot: http://<camera-ip>/capture
+#   JPEG snapshot: http://<camera-ip>/jpg
+#
+# For UDP RTP, bind a local port for incoming packets:
+#   url = "udp://0.0.0.0:5004"
+#
+[esp32]
+url = "http://127.0.0.1:81/stream"
+target_fps = 10
+
 # Zone Configuration
 #
 # Zones are logical areas being monitored. Events are tagged with zone IDs.
@@ -83,10 +97,12 @@ seconds = 604800  # 7 days
 #
 # Optional:
 #   WITNESS_CONFIG      - Path to this config file
-#   WITNESS_INGEST_BACKEND - Ingest backend ("rtsp" or "v4l2")
+#   WITNESS_INGEST_BACKEND - Ingest backend ("rtsp", "v4l2", or "esp32")
 #   WITNESS_RTSP_URL    - Override rtsp.url
 #   WITNESS_RTSP_BACKEND - Override rtsp.backend ("auto", "gstreamer", "ffmpeg")
 #   WITNESS_V4L2_DEVICE - Override v4l2.device
+#   WITNESS_ESP32_URL   - Override esp32.url
+#   WITNESS_ESP32_FPS   - Override esp32.target_fps
 #   WITNESS_ZONE_ID     - Override zones.module_zone_id
 #   WITNESS_SENSITIVE_ZONES - Comma-separated list of sensitive zones
 #   WITNESS_API_ADDR    - Override api.addr

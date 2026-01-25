@@ -16,6 +16,8 @@ const DEFAULT_V4L2_DEVICE: &str = "/dev/video0";
 const DEFAULT_V4L2_FPS: u32 = 10;
 const DEFAULT_V4L2_WIDTH: u32 = 640;
 const DEFAULT_V4L2_HEIGHT: u32 = 480;
+const DEFAULT_ESP32_URL: &str = "http://127.0.0.1:81/stream";
+const DEFAULT_ESP32_FPS: u32 = 10;
 const DEFAULT_RETENTION_SECS: u64 = 60 * 60 * 24 * 7;
 const DEFAULT_MODULE_ZONE_ID: &str = "zone:front_boundary";
 
@@ -35,6 +37,7 @@ struct WitnessdConfigFile {
     ingest: Option<IngestConfigFile>,
     rtsp: Option<RtspConfigFile>,
     v4l2: Option<V4l2ConfigFile>,
+    esp32: Option<Esp32ConfigFile>,
     zones: Option<ZoneConfigFile>,
     retention: Option<RetentionConfigFile>,
 }
@@ -77,6 +80,12 @@ struct V4l2ConfigFile {
 }
 
 #[derive(Debug, Deserialize, Default)]
+struct Esp32ConfigFile {
+    url: Option<String>,
+    target_fps: Option<u32>,
+}
+
+#[derive(Debug, Deserialize, Default)]
 struct ZoneConfigFile {
     module_zone_id: Option<String>,
     sensitive: Option<Vec<String>>,
@@ -96,6 +105,7 @@ pub struct WitnessdConfig {
     pub ingest: IngestSettings,
     pub rtsp: RtspSettings,
     pub v4l2: V4l2Settings,
+    pub esp32: Esp32Settings,
     pub zones: ZoneSettings,
     pub retention: Duration,
 }
@@ -130,6 +140,7 @@ pub enum RtspBackendPreference {
 pub enum IngestBackend {
     Rtsp,
     V4l2,
+    Esp32,
 }
 
 #[derive(Debug, Clone)]
@@ -143,6 +154,12 @@ pub struct V4l2Settings {
     pub target_fps: u32,
     pub width: u32,
     pub height: u32,
+}
+
+#[derive(Debug, Clone)]
+pub struct Esp32Settings {
+    pub url: String,
+    pub target_fps: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -224,6 +241,16 @@ impl WitnessdConfig {
                 DEFAULT_V4L2_HEIGHT,
             ),
         };
+        let esp32 = Esp32Settings {
+            url: config_string(
+                file.esp32.as_ref().and_then(|esp32| esp32.url.clone()),
+                DEFAULT_ESP32_URL,
+            ),
+            target_fps: config_u32(
+                file.esp32.as_ref().and_then(|esp32| esp32.target_fps),
+                DEFAULT_ESP32_FPS,
+            ),
+        };
         let zones = ZoneSettings {
             module_zone_id: file
                 .zones
@@ -248,6 +275,7 @@ impl WitnessdConfig {
             ingest,
             rtsp,
             v4l2,
+            esp32,
             zones,
             retention,
         })
@@ -284,6 +312,19 @@ impl WitnessdConfig {
                 self.v4l2.device = device;
             }
         }
+        if let Ok(url) = std::env::var("WITNESS_ESP32_URL") {
+            if !url.trim().is_empty() {
+                self.esp32.url = url;
+            }
+        }
+        if let Ok(fps) = std::env::var("WITNESS_ESP32_FPS") {
+            if !fps.trim().is_empty() {
+                let parsed: u32 = fps
+                    .parse()
+                    .map_err(|_| anyhow!("WITNESS_ESP32_FPS must be an integer"))?;
+                self.esp32.target_fps = parsed;
+            }
+        }
         if let Ok(zone_id) = std::env::var("WITNESS_ZONE_ID") {
             if !zone_id.trim().is_empty() {
                 self.zones.module_zone_id = zone_id;
@@ -314,8 +355,18 @@ impl WitnessdConfig {
         if self.retention.as_secs() == 0 {
             return Err(anyhow!("retention must be greater than zero"));
         }
-        if self.v4l2.device.trim().is_empty() {
-            return Err(anyhow!("v4l2.device must not be empty"));
+        match self.ingest.backend {
+            IngestBackend::V4l2 => {
+                if self.v4l2.device.trim().is_empty() {
+                    return Err(anyhow!("v4l2.device must not be empty"));
+                }
+            }
+            IngestBackend::Esp32 => {
+                if self.esp32.url.trim().is_empty() {
+                    return Err(anyhow!("esp32.url must not be empty"));
+                }
+            }
+            IngestBackend::Rtsp => {}
         }
         Ok(())
     }
@@ -326,8 +377,9 @@ impl IngestBackend {
         match raw.trim().to_lowercase().as_str() {
             "rtsp" => Ok(Self::Rtsp),
             "v4l2" => Ok(Self::V4l2),
+            "esp32" => Ok(Self::Esp32),
             other => Err(anyhow!(
-                "unsupported ingest backend '{}'; expected 'rtsp' or 'v4l2'",
+                "unsupported ingest backend '{}'; expected 'rtsp', 'v4l2', or 'esp32'",
                 other
             )),
         }

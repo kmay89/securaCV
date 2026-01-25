@@ -3,6 +3,7 @@
 //! This module provides different sources for raw frames:
 //! - RTSP streams (IP cameras)
 //! - USB/V4L2 devices (feature: ingest-v4l2)
+//! - ESP32-S3 HTTP/UDP streams (feature: ingest-esp32)
 //! - Stub source (testing)
 //!
 //! All sources produce `RawFrame` instances that flow into the frame buffer.
@@ -17,6 +18,8 @@
 //! - Log raw frame content
 
 mod features;
+#[cfg(feature = "ingest-esp32")]
+pub mod esp32;
 pub mod rtsp;
 #[cfg(feature = "rtsp-ffmpeg")]
 pub(crate) mod rtsp_ffmpeg;
@@ -24,6 +27,8 @@ pub(crate) mod rtsp_ffmpeg;
 pub mod v4l2;
 
 pub(crate) use features::compute_features_hash;
+#[cfg(feature = "ingest-esp32")]
+pub use esp32::Esp32Source;
 pub use rtsp::RtspSource;
 #[cfg(feature = "ingest-v4l2")]
 pub use v4l2::V4l2Source;
