@@ -34,9 +34,9 @@ class SecuraCvLatestEventSensor(CoordinatorEntity[SecuraCvCoordinator], SensorEn
 
     @property
     def native_value(self) -> str | None:
-        event = self.coordinator.data.get("latest_event")
-        if event and (event_type := event.get("event_type")) is not None:
-            return str(event_type)
+        if event := self.coordinator.data.get("latest_event"):
+            if (event_type := event.get("event_type")) is not None:
+                return str(event_type)
         return None
 
     @property
