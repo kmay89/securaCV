@@ -110,6 +110,19 @@ CI enforces formatting and linting. Before submitting, run:
 
 ---
 
+## Release Process (HACS)
+
+HACS validation requires the Git tag version to match the integration manifest.
+Before creating a release:
+
+1. Update `custom_components/secura_cv/manifest.json` `"version"` to the new release version.
+2. Add a matching entry to `CHANGELOG.md` for the same version.
+3. Create a Git tag that **exactly** matches the manifest version (for example, `0.1.0` if the manifest says `0.1.0`).
+
+If the tag and manifest diverge, HACS will fail validation. Keep them aligned.
+
+---
+
 ## Cleverness Warning
 
 Many systems fail because of “reasonable” ideas like:
