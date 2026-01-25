@@ -449,10 +449,30 @@ mod tests {
     #[test]
     fn v4l2_device_reconnects_when_unhealthy() {
         let cases = [
-            (true, false, true, "unhealthy connections should attempt to reconnect"),
-            (true, true, false, "healthy connections should skip reconnect"),
-            (false, true, true, "missing state should reconnect regardless of health"),
-            (false, false, true, "missing state and unhealthy should also reconnect"),
+            (
+                true,
+                false,
+                true,
+                "unhealthy connections should attempt to reconnect",
+            ),
+            (
+                true,
+                true,
+                false,
+                "healthy connections should skip reconnect",
+            ),
+            (
+                false,
+                true,
+                true,
+                "missing state should reconnect regardless of health",
+            ),
+            (
+                false,
+                false,
+                true,
+                "missing state and unhealthy should also reconnect",
+            ),
         ];
 
         for &(has_state, is_healthy, expected, desc) in &cases {
