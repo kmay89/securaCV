@@ -405,8 +405,7 @@ impl WitnessdConfig {
                         "file.path uses stub:// which is only allowed for local dev/test builds"
                     ));
                 }
-                if self.file.path.contains("://") && !self.file.path.trim().starts_with("stub://")
-                {
+                if self.file.path.contains("://") && !self.file.path.trim().starts_with("stub://") {
                     return Err(anyhow!(
                         "file.path must be a local filesystem path (no URL schemes)"
                     ));
