@@ -381,14 +381,14 @@ the hostname with the reachable IP/DNS name for that host.
 
 ### Authentication
 
-The API uses capability tokens. The token is written to `/config/api_token` when the add-on starts. If you run the kernel elsewhere, use the token path or secrets location configured for that deployment.
-The `/health` endpoint is unauthenticated and only reachable on the local loopback interface.
+The API uses short-lived capability tokens as **Bearer** credentials. The token is written to `/config/api_token` when the add-on starts and rotates every 10 minutes; read it from the configured token file whenever you need to authenticate. If you run the kernel elsewhere, use the token path or secrets location configured for that deployment.
+The `/health` endpoint is unauthenticated and only reachable on the local loopback interface. Query-string tokens are rejected—send the token only in the `Authorization: Bearer` header.
 
 ```bash
 # Read the token
 TOKEN=$(cat /config/api_token)
 
-# Make authenticated requests
+# Make authenticated requests (Bearer token only)
 curl -H "Authorization: Bearer $TOKEN" http://privacy_witness_kernel:8799/events
 ```
 

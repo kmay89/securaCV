@@ -205,7 +205,16 @@ fn handle_connection(
         }
     }
 
-    let token = match request.token() {
+    if request.has_query_token() {
+        write_json_response(
+            &mut stream,
+            400,
+            r#"{"error":"token_query_param_not_allowed"}"#,
+        )?;
+        return Ok(());
+    }
+
+    let token = match request.bearer_token() {
         Some(token) => token,
         None => {
             write_json_response(&mut stream, 401, r#"{"error":"missing_token"}"#)?;
@@ -328,26 +337,27 @@ struct HttpRequest {
 }
 
 impl HttpRequest {
-    fn token(&self) -> Option<String> {
-        if let Some(value) = self.headers.get("x-witness-token") {
-            return Some(value.trim().to_string());
-        }
+    fn bearer_token(&self) -> Option<String> {
         if let Some(value) = self.headers.get("authorization") {
             let parts: Vec<&str> = value.split_whitespace().collect();
             if parts.len() == 2 && parts[0].eq_ignore_ascii_case("bearer") {
                 return Some(parts[1].to_string());
             }
         }
+        None
+    }
+
+    fn has_query_token(&self) -> bool {
         if let Some(query) = self.raw_path.split('?').nth(1) {
             for pair in query.split('&') {
-                if let Some((k, v)) = pair.split_once('=') {
+                if let Some((k, _)) = pair.split_once('=') {
                     if k == "token" {
-                        return Some(v.to_string());
+                        return true;
                     }
                 }
             }
         }
-        None
+        false
     }
 }
 
