@@ -96,10 +96,7 @@ impl TractBackend {
         let scores = output
             .to_array_view::<f32>()
             .context("model output tensor was not f32")?;
-        let max_score = scores
-            .iter()
-            .cloned()
-            .fold(f32::NEG_INFINITY, f32::max);
+        let max_score = scores.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
         if max_score.is_finite() {
             Ok(max_score)
         } else {
