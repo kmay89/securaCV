@@ -7,6 +7,7 @@
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
 use std::io::{self, BufRead};
+use std::path::Path;
 use std::time::Duration;
 
 use witness_kernel::module_runtime::event_payload;
@@ -32,6 +33,14 @@ struct Args {
         default_value = "ruleset:grove_vision2_v1"
     )]
     ruleset_id: String,
+
+    /// Optional serial device path to read directly (reconnects on disconnect).
+    #[arg(long, env = "WITNESS_SERIAL_DEVICE")]
+    serial_device: Option<String>,
+
+    /// Delay between reconnect attempts when using --serial-device.
+    #[arg(long, env = "WITNESS_RECONNECT_DELAY_SECS", default_value = "2")]
+    reconnect_delay_secs: u64,
 }
 
 fn main() -> Result<()> {
@@ -62,9 +71,61 @@ fn main() -> Result<()> {
         requested_capabilities: &[],
     };
 
-    let stdin = io::stdin();
-    for line in stdin.lock().lines() {
-        let line = line.context("failed to read stdin")?;
+    if let Some(serial_device) = args.serial_device.as_deref() {
+        let reconnect_delay = Duration::from_secs(args.reconnect_delay_secs);
+        let device_path = Path::new(serial_device);
+        loop {
+            match std::fs::File::open(device_path)
+                .with_context(|| format!("failed to open serial device {}", device_path.display()))
+            {
+                Ok(file) => {
+                    let reader = io::BufReader::new(file);
+                    if let Err(err) = ingest_lines(
+                        reader,
+                        &mut kernel,
+                        &cfg,
+                        &module_desc,
+                        &format!("serial:{}", device_path.display()),
+                    ) {
+                        log::warn!("Serial input ended: {}", err);
+                    } else {
+                        log::warn!("Serial input ended (EOF)");
+                    }
+                }
+                Err(err) => {
+                    log::warn!("Serial device unavailable: {}", err);
+                }
+            }
+
+            log::info!(
+                "Reconnecting to serial device in {}s",
+                reconnect_delay.as_secs()
+            );
+            std::thread::sleep(reconnect_delay);
+        }
+    } else {
+        let stdin = io::stdin();
+        ingest_lines(
+            stdin.lock(),
+            &mut kernel,
+            &cfg,
+            &module_desc,
+            "stdin",
+        )?;
+    }
+
+    Ok(())
+}
+
+fn ingest_lines<R: BufRead>(
+    reader: R,
+    kernel: &mut Kernel,
+    cfg: &KernelConfig,
+    module_desc: &ModuleDescriptor,
+    source: &str,
+) -> Result<()> {
+    for line in reader.lines() {
+        let line = line.with_context(|| format!("failed to read {}", source))?;
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
@@ -93,7 +154,7 @@ fn main() -> Result<()> {
         };
 
         if let Err(err) = kernel.append_event_checked(
-            &module_desc,
+            module_desc,
             candidate,
             &cfg.kernel_version,
             &cfg.ruleset_id,
