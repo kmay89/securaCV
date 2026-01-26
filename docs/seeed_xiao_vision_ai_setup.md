@@ -31,6 +31,84 @@ Serial disconnect handling for event-only mode:
   stays up, logs the disconnect, and retries until the device reappears. Prefer
   `/dev/serial/by-id/...` if you want a stable device path across reconnects.
 
+## Event-only ingest smoke test (JSON → DB → alarms)
+
+This short walkthrough demonstrates: (a) the device emits contract-compliant JSON,
+(b) `grove_vision2_ingest` appends events to the DB, and (c) conformance alarms are
+recorded for invalid payloads. The commands below use a throwaway DB file and stdin
+to keep the sequence self-contained.
+
+### 1) Confirm the device emits contract-compliant JSON
+
+With the device connected over USB (adjust the tty path and baud rate to match your
+firmware), grab a single line of JSON:
+
+```bash
+stty -F /dev/ttyACM0 115200 raw -echo
+timeout 2s cat /dev/ttyACM0 | head -n 1
+```
+
+Expected output (shape must match the contract; values will vary):
+
+```
+{"event_type":"boundary_crossing_object_large","time_bucket":{"start_epoch_s":1700000000,"size_s":600},"zone_id":"zone:entry","confidence":0.82}
+```
+
+### 2) Ingest a valid event and verify it landed in the DB
+
+```bash
+printf '%s\n' \
+  '{"event_type":"boundary_crossing_object_large","time_bucket":{"start_epoch_s":1700000000,"size_s":600},"zone_id":"zone:entry","confidence":0.82}' \
+  | DEVICE_KEY_SEED=devkey:demo cargo run --bin grove_vision2_ingest -- \
+    --db-path demo_grove.db
+```
+
+Expected output:
+
+```
+INFO  grove_vision2_ingest > Grove Vision 2 event appended
+```
+
+Confirm a sealed event was written:
+
+```bash
+sqlite3 demo_grove.db "SELECT COUNT(*) FROM sealed_events;"
+```
+
+Expected output:
+
+```
+1
+```
+
+### 3) Send an invalid payload and confirm a conformance alarm
+
+```bash
+printf '%s\n' \
+  '{"event_type":"boundary_crossing_object_small","time_bucket":{"start_epoch_s":1700000000,"size_s":600},"zone_id":"zone:entry","confidence":0.3,"extra":"nope"}' \
+  | DEVICE_KEY_SEED=devkey:demo cargo run --bin grove_vision2_ingest -- \
+    --db-path demo_grove.db
+```
+
+Expected output:
+
+```
+(no “event appended” line)
+```
+
+Now query the alarm table:
+
+```bash
+sqlite3 demo_grove.db \
+  "SELECT code, message FROM conformance_alarms ORDER BY id DESC LIMIT 1;"
+```
+
+Expected output:
+
+```
+CONFORMANCE_GROVE_VISION2_INPUT_REJECT|conformance: grove_vision2 payload contains extra fields: extra
+```
+
 ## Vendor resources
 
 Use the vendor-provided resources for firmware and hardware references:
