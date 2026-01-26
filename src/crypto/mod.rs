@@ -84,10 +84,7 @@ fn read_seed_file(path: &Path) -> Result<Option<String>> {
         .map_err(|e| anyhow!("failed to read device key seed {}: {}", path.display(), e))?;
     let trimmed = contents.trim();
     if trimmed.is_empty() {
-        return Err(anyhow!(
-            "device key seed file {} is empty",
-            path.display()
-        ));
+        return Err(anyhow!("device key seed file {} is empty", path.display()));
     }
     Ok(Some(trimmed.to_string()))
 }
