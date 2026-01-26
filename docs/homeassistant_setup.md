@@ -245,6 +245,17 @@ mqtt_publish:
   discovery_prefix: "homeassistant"  # HA discovery prefix
 ```
 
+#### TLS Settings (Optional)
+
+If your broker requires TLS, enable it via the bridge environment (or CLI flags):
+
+| Environment Variable | Description |
+|---|---|
+| `MQTT_USE_TLS` | Enable TLS (required for `mqtts://` brokers) |
+| `MQTT_TLS_CA_PATH` | Path to PEM-encoded CA certificate |
+| `MQTT_TLS_CLIENT_CERT_PATH` | Path to PEM-encoded client certificate (mutual TLS) |
+| `MQTT_TLS_CLIENT_KEY_PATH` | Path to PEM-encoded client private key (mutual TLS) |
+
 ### Auto-Created Entities
 
 When enabled, PWK automatically creates these entities for each zone:

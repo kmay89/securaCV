@@ -13,10 +13,12 @@
 
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
+use rumqttc::v5::{mqttbytes::QoS, Client, Connection, Event, MqttOptions};
+use rumqttc::Transport;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
-use std::io::IsTerminal;
 use std::io::{Read, Write};
+use std::io::IsTerminal;
 use std::net::{IpAddr, TcpStream};
 use std::path::PathBuf;
 use std::time::Duration;
@@ -68,6 +70,22 @@ struct Args {
     /// MQTT password for authentication.
     #[arg(long, env = "MQTT_PASSWORD")]
     mqtt_password: Option<String>,
+
+    /// Enable TLS for MQTT (required for mqtts:// brokers).
+    #[arg(long, env = "MQTT_USE_TLS")]
+    mqtt_use_tls: bool,
+
+    /// Path to a PEM-encoded CA certificate to trust for MQTT TLS.
+    #[arg(long, env = "MQTT_TLS_CA_PATH")]
+    mqtt_tls_ca_path: Option<PathBuf>,
+
+    /// Path to a PEM-encoded client certificate for MQTT TLS.
+    #[arg(long, env = "MQTT_TLS_CLIENT_CERT_PATH")]
+    mqtt_tls_client_cert_path: Option<PathBuf>,
+
+    /// Path to a PEM-encoded client private key for MQTT TLS.
+    #[arg(long, env = "MQTT_TLS_CLIENT_KEY_PATH")]
+    mqtt_tls_client_key_path: Option<PathBuf>,
 
     /// Home Assistant MQTT discovery prefix.
     #[arg(long, env = "HA_DISCOVERY_PREFIX", default_value = DEFAULT_DISCOVERY_PREFIX)]
@@ -173,26 +191,37 @@ struct ZoneState {
     last_event_time: u64,
 }
 
-/// MQTT connection with protocol support.
-struct MqttConnection {
-    stream: TcpStream,
-    packet_id: u16,
+struct MqttRuntime {
+    client: Client,
+    connection_handle: Option<std::thread::JoinHandle<()>>,
 }
 
-impl MqttConnection {
-    fn new(stream: TcpStream) -> Self {
+impl MqttRuntime {
+    fn new(client: Client, mut connection: Connection) -> Self {
+        let handle = std::thread::spawn(move || {
+            for event in connection.iter() {
+                match event {
+                    Ok(Event::Incoming(_)) | Ok(Event::Outgoing(_)) => {}
+                    Err(e) => {
+                        log::warn!("MQTT connection error: {}", e);
+                        break;
+                    }
+                }
+            }
+        });
+
         Self {
-            stream,
-            packet_id: 0,
+            client,
+            connection_handle: Some(handle),
         }
     }
 
-    fn next_packet_id(&mut self) -> u16 {
-        self.packet_id = self.packet_id.wrapping_add(1);
-        if self.packet_id == 0 {
-            self.packet_id = 1;
+    fn disconnect(mut self) -> Result<()> {
+        self.client.disconnect()?;
+        if let Some(handle) = self.connection_handle.take() {
+            let _ = handle.join();
         }
-        self.packet_id
+        Ok(())
     }
 }
 
@@ -206,9 +235,15 @@ fn main() -> Result<()> {
     // Validate addresses
     let api_addr = parse_loopback_socket_addr(&args.api_addr)
         .with_context(|| "api addr must be loopback-only")?;
+    let mqtt_endpoint = parse_mqtt_endpoint(&args.mqtt_broker_addr, args.mqtt_use_tls)?;
+    let tls_materials = load_tls_materials(
+        args.mqtt_tls_ca_path.as_ref(),
+        args.mqtt_tls_client_cert_path.as_ref(),
+        args.mqtt_tls_client_key_path.as_ref(),
+    )?;
 
     if !args.allow_remote_mqtt {
-        validate_loopback_addr(&args.mqtt_broker_addr)?;
+        validate_loopback_addr(&mqtt_endpoint, &args.mqtt_broker_addr)?;
     } else {
         log::warn!("Remote MQTT enabled - ensure broker is in a trusted network");
     }
@@ -239,6 +274,8 @@ fn main() -> Result<()> {
         run_daemon(
             &args,
             api_addr,
+            &mqtt_endpoint,
+            &tls_materials,
             &token,
             &device_id,
             &device_info,
@@ -249,6 +286,8 @@ fn main() -> Result<()> {
         run_oneshot(
             &args,
             api_addr,
+            &mqtt_endpoint,
+            &tls_materials,
             &token,
             &device_id,
             &device_info,
@@ -261,6 +300,8 @@ fn main() -> Result<()> {
 fn run_oneshot(
     args: &Args,
     api_addr: std::net::SocketAddr,
+    mqtt_endpoint: &MqttEndpoint,
+    tls_materials: &TlsMaterials,
     token: &str,
     device_id: &str,
     device_info: &HaDeviceInfo,
@@ -278,10 +319,11 @@ fn run_oneshot(
         return Ok(());
     }
 
-    let mut conn = {
+    let conn = {
         let _stage = ui.stage("Connect to MQTT broker");
         connect_mqtt(
-            &args.mqtt_broker_addr,
+            mqtt_endpoint,
+            tls_materials,
             &args.mqtt_client_id,
             args.mqtt_username.as_deref(),
             args.mqtt_password.as_deref(),
@@ -291,7 +333,7 @@ fn run_oneshot(
 
     // Publish availability online
     mqtt_publish_qos1(
-        &mut conn,
+        &conn.client,
         availability_topic,
         PAYLOAD_ONLINE.as_bytes(),
         true,
@@ -300,7 +342,7 @@ fn run_oneshot(
     if !args.no_discovery {
         let _stage = ui.stage("Publish HA discovery configs");
         publish_discovery_configs(
-            &mut conn,
+            &conn.client,
             &args.ha_discovery_prefix,
             &args.mqtt_topic_prefix,
             availability_topic,
@@ -312,10 +354,10 @@ fn run_oneshot(
 
     {
         let _stage = ui.stage("Publish events");
-        publish_events(&mut conn, &args.mqtt_topic_prefix, &events)?;
+        publish_events(&conn.client, &args.mqtt_topic_prefix, &events)?;
     }
 
-    mqtt_disconnect(&mut conn)?;
+    conn.disconnect()?;
     log::info!("Published {} events", events.len());
     Ok(())
 }
@@ -323,6 +365,8 @@ fn run_oneshot(
 fn run_daemon(
     args: &Args,
     api_addr: std::net::SocketAddr,
+    mqtt_endpoint: &MqttEndpoint,
+    tls_materials: &TlsMaterials,
     token: &str,
     device_id: &str,
     device_info: &HaDeviceInfo,
@@ -334,10 +378,11 @@ fn run_daemon(
         args.poll_interval
     );
 
-    let mut conn = {
+    let conn = {
         let _stage = ui.stage("Connect to MQTT broker");
         connect_mqtt(
-            &args.mqtt_broker_addr,
+            mqtt_endpoint,
+            tls_materials,
             &args.mqtt_client_id,
             args.mqtt_username.as_deref(),
             args.mqtt_password.as_deref(),
@@ -347,7 +392,7 @@ fn run_daemon(
 
     // Publish availability online (retained)
     mqtt_publish_qos1(
-        &mut conn,
+        &conn.client,
         availability_topic,
         PAYLOAD_ONLINE.as_bytes(),
         true,
@@ -385,7 +430,7 @@ fn run_daemon(
                             let zone = extract_zone_name(&event.zone_id);
                             if !discovered_zones.contains(&zone) {
                                 publish_zone_discovery(
-                                    &mut conn,
+                                    &conn.client,
                                     &args.ha_discovery_prefix,
                                     &args.mqtt_topic_prefix,
                                     availability_topic,
@@ -411,12 +456,12 @@ fn run_daemon(
                             .unwrap_or(0);
 
                         // Publish event
-                        publish_single_event(&mut conn, &args.mqtt_topic_prefix, event, &zone)?;
+                        publish_single_event(&conn.client, &args.mqtt_topic_prefix, event, &zone)?;
 
                         // Publish zone count
                         let count_topic = format!("{}/zone/{}/count", args.mqtt_topic_prefix, zone);
                         mqtt_publish_qos1(
-                            &mut conn,
+                            &conn.client,
                             &count_topic,
                             state.event_count.to_string().as_bytes(),
                             true,
@@ -425,7 +470,7 @@ fn run_daemon(
                         // Trigger motion sensor
                         let motion_topic =
                             format!("{}/zone/{}/motion", args.mqtt_topic_prefix, zone);
-                        mqtt_publish_qos1(&mut conn, &motion_topic, b"ON", false)?;
+                        mqtt_publish_qos1(&conn.client, &motion_topic, b"ON", false)?;
                     }
 
                     // Update last event state
@@ -443,7 +488,7 @@ fn run_daemon(
                                 .unwrap_or(0),
                         };
                         let json = serde_json::to_vec(&payload)?;
-                        mqtt_publish_qos1(&mut conn, &state_topic, &json, true)?;
+                        mqtt_publish_qos1(&conn.client, &state_topic, &json, true)?;
 
                         last_bucket_seen = Some(last.time_bucket);
                     }
@@ -461,7 +506,7 @@ fn run_daemon(
 }
 
 fn publish_discovery_configs(
-    conn: &mut MqttConnection,
+    client: &Client,
     discovery_prefix: &str,
     state_prefix: &str,
     availability_topic: &str,
@@ -478,7 +523,7 @@ fn publish_discovery_configs(
     // Publish discovery for each zone
     for zone in &zones {
         publish_zone_discovery(
-            conn,
+            client,
             discovery_prefix,
             state_prefix,
             availability_topic,
@@ -510,7 +555,7 @@ fn publish_discovery_configs(
         discovery_prefix, device_id
     );
     let config_json = serde_json::to_vec(&last_event_config)?;
-    mqtt_publish_qos1(conn, &config_topic, &config_json, true)?;
+    mqtt_publish_qos1(client, &config_topic, &config_json, true)?;
 
     log::info!(
         "Published HA discovery for {} zones + last_event sensor",
@@ -520,7 +565,7 @@ fn publish_discovery_configs(
 }
 
 fn publish_zone_discovery(
-    conn: &mut MqttConnection,
+    client: &Client,
     discovery_prefix: &str,
     state_prefix: &str,
     availability_topic: &str,
@@ -552,7 +597,7 @@ fn publish_zone_discovery(
         discovery_prefix, device_id, zone_clean
     );
     let config_json = serde_json::to_vec(&count_config)?;
-    mqtt_publish_qos1(conn, &config_topic, &config_json, true)?;
+    mqtt_publish_qos1(client, &config_topic, &config_json, true)?;
 
     // Motion binary sensor
     let motion_config = HaBinarySensorConfig {
@@ -574,14 +619,14 @@ fn publish_zone_discovery(
         discovery_prefix, device_id, zone_clean
     );
     let config_json = serde_json::to_vec(&motion_config)?;
-    mqtt_publish_qos1(conn, &config_topic, &config_json, true)?;
+    mqtt_publish_qos1(client, &config_topic, &config_json, true)?;
 
     log::debug!("Published HA discovery for zone: {}", zone);
     Ok(())
 }
 
 fn publish_events(
-    conn: &mut MqttConnection,
+    client: &Client,
     topic_prefix: &str,
     events: &[ExportEvent],
 ) -> Result<()> {
@@ -591,17 +636,17 @@ fn publish_events(
         let zone = extract_zone_name(&event.zone_id);
         *zone_counts.entry(zone.clone()).or_default() += 1;
 
-        publish_single_event(conn, topic_prefix, event, &zone)?;
+        publish_single_event(client, topic_prefix, event, &zone)?;
     }
 
     // Publish final counts (retained)
     for (zone, count) in &zone_counts {
         let count_topic = format!("{}/zone/{}/count", topic_prefix, zone);
-        mqtt_publish_qos1(conn, &count_topic, count.to_string().as_bytes(), true)?;
+        mqtt_publish_qos1(client, &count_topic, count.to_string().as_bytes(), true)?;
 
         // Trigger motion
         let motion_topic = format!("{}/zone/{}/motion", topic_prefix, zone);
-        mqtt_publish_qos1(conn, &motion_topic, b"ON", false)?;
+        mqtt_publish_qos1(client, &motion_topic, b"ON", false)?;
     }
 
     // Publish last event (retained)
@@ -619,14 +664,14 @@ fn publish_events(
                 .unwrap_or(0),
         };
         let json = serde_json::to_vec(&payload)?;
-        mqtt_publish_qos1(conn, &state_topic, &json, true)?;
+        mqtt_publish_qos1(client, &state_topic, &json, true)?;
     }
 
     Ok(())
 }
 
 fn publish_single_event(
-    conn: &mut MqttConnection,
+    client: &Client,
     topic_prefix: &str,
     event: &ExportEvent,
     zone: &str,
@@ -634,11 +679,11 @@ fn publish_single_event(
     // Publish to zone-specific topic
     let topic = format!("{}/zone/{}/event", topic_prefix, zone);
     let payload = serde_json::to_vec(event)?;
-    mqtt_publish_qos1(conn, &topic, &payload, false)?;
+    mqtt_publish_qos1(client, &topic, &payload, false)?;
 
     // Publish to firehose topic
     let firehose_topic = format!("{}/events", topic_prefix);
-    mqtt_publish_qos1(conn, &firehose_topic, &payload, false)?;
+    mqtt_publish_qos1(client, &firehose_topic, &payload, false)?;
 
     Ok(())
 }
@@ -719,24 +764,6 @@ fn flatten_export_events(artifact: &ExportArtifact) -> Vec<ExportEvent> {
     events
 }
 
-fn validate_loopback_addr(addr: &str) -> Result<()> {
-    let addr = addr.strip_prefix("mqtt://").unwrap_or(addr);
-    if let Some((host, _)) = addr.rsplit_once(':') {
-        if host == "localhost" || host == "127.0.0.1" || host == "::1" {
-            return Ok(());
-        }
-        if let Ok(ip) = host.parse::<std::net::IpAddr>() {
-            if ip.is_loopback() {
-                return Ok(());
-            }
-        }
-    }
-    Err(anyhow!(
-        "MQTT broker must be loopback for security: {} (use --allow-remote-mqtt to override)",
-        addr
-    ))
-}
-
 fn parse_loopback_socket_addr(value: &str) -> Result<std::net::SocketAddr> {
     if let Ok(addr) = value.parse::<std::net::SocketAddr>() {
         if addr.ip().is_loopback() {
@@ -754,147 +781,171 @@ fn parse_loopback_socket_addr(value: &str) -> Result<std::net::SocketAddr> {
     Err(anyhow!("unsupported api address {}", value))
 }
 
+#[derive(Clone, Debug)]
+struct MqttEndpoint {
+    host: String,
+    port: u16,
+    use_tls: bool,
+}
+
+#[derive(Clone, Debug, Default)]
+struct TlsMaterials {
+    ca: Option<Vec<u8>>,
+    client_auth: Option<(Vec<u8>, Vec<u8>)>,
+}
+
+fn parse_mqtt_endpoint(addr: &str, tls_override: bool) -> Result<MqttEndpoint> {
+    let mut use_tls = tls_override;
+    let mut remainder = addr.trim();
+
+    if let Some((scheme, rest)) = remainder.split_once("://") {
+        match scheme {
+            "mqtt" | "tcp" => {}
+            "mqtts" | "ssl" => use_tls = true,
+            other => return Err(anyhow!("unsupported MQTT scheme: {}", other)),
+        }
+        remainder = rest;
+    }
+
+    let (host, port) = split_host_port(remainder)?;
+    Ok(MqttEndpoint {
+        host,
+        port,
+        use_tls,
+    })
+}
+
+fn split_host_port(addr: &str) -> Result<(String, u16)> {
+    if let Some(rest) = addr.strip_prefix('[') {
+        let (host, rest) = rest
+            .split_once(']')
+            .ok_or_else(|| anyhow!("invalid MQTT address: {}", addr))?;
+        let port = rest
+            .strip_prefix(':')
+            .ok_or_else(|| anyhow!("missing MQTT port in {}", addr))?;
+        let port: u16 = port.parse().context("invalid MQTT port")?;
+        return Ok((host.to_string(), port));
+    }
+
+    let (host, port) = addr
+        .rsplit_once(':')
+        .ok_or_else(|| anyhow!("missing MQTT port in {}", addr))?;
+    let port: u16 = port.parse().context("invalid MQTT port")?;
+    Ok((host.to_string(), port))
+}
+
+fn validate_loopback_addr(endpoint: &MqttEndpoint, original: &str) -> Result<()> {
+    let host = endpoint.host.as_str();
+    if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+        return Ok(());
+    }
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        if ip.is_loopback() {
+            return Ok(());
+        }
+    }
+    Err(anyhow!(
+        "MQTT broker must be loopback for security: {} (use --allow-remote-mqtt to override)",
+        original
+    ))
+}
+
+fn load_tls_materials(
+    ca_path: Option<&PathBuf>,
+    client_cert_path: Option<&PathBuf>,
+    client_key_path: Option<&PathBuf>,
+) -> Result<TlsMaterials> {
+    let ca = match ca_path {
+        Some(path) => Some(
+            std::fs::read(path)
+                .with_context(|| format!("failed to read MQTT TLS CA {}", path.display()))?,
+        ),
+        None => None,
+    };
+
+    let client_auth = match (client_cert_path, client_key_path) {
+        (Some(cert_path), Some(key_path)) => {
+            let cert = std::fs::read(cert_path).with_context(|| {
+                format!(
+                    "failed to read MQTT TLS client cert {}",
+                    cert_path.display()
+                )
+            })?;
+            let key = std::fs::read(key_path).with_context(|| {
+                format!(
+                    "failed to read MQTT TLS client key {}",
+                    key_path.display()
+                )
+            })?;
+            Some((cert, key))
+        }
+        (None, None) => None,
+        _ => {
+            return Err(anyhow!(
+                "MQTT TLS client cert and key must be provided together"
+            ))
+        }
+    };
+
+    Ok(TlsMaterials { ca, client_auth })
+}
+
+fn build_transport(endpoint: &MqttEndpoint, tls: &TlsMaterials) -> Result<Transport> {
+    if !endpoint.use_tls {
+        if tls.ca.is_some() || tls.client_auth.is_some() {
+            return Err(anyhow!(
+                "MQTT TLS materials provided but TLS is disabled (use --mqtt-use-tls or mqtts://)"
+            ));
+        }
+        return Ok(Transport::tcp());
+    }
+
+    if tls.ca.is_none() && tls.client_auth.is_none() {
+        return Ok(Transport::tls_with_default_config());
+    }
+
+    let ca = tls.ca.clone().ok_or_else(|| {
+        anyhow!("MQTT TLS CA certificate is required when providing client certificates")
+    })?;
+    Ok(Transport::tls(ca, tls.client_auth.clone(), None))
+}
+
 fn connect_mqtt(
-    addr: &str,
+    endpoint: &MqttEndpoint,
+    tls: &TlsMaterials,
     client_id: &str,
     username: Option<&str>,
     password: Option<&str>,
     will_topic: &str,
-) -> Result<MqttConnection> {
-    let addr = addr.strip_prefix("mqtt://").unwrap_or(addr);
-    let mut stream = TcpStream::connect(addr).context("connect to MQTT broker")?;
-    stream.set_read_timeout(Some(Duration::from_secs(30)))?;
-    stream.set_write_timeout(Some(Duration::from_secs(10)))?;
-
-    // Build CONNECT packet with LWT
-    let mut variable = Vec::new();
-    encode_string(&mut variable, "MQTT");
-    variable.push(0x04); // Protocol level (MQTT 3.1.1)
-
-    // Connect flags: clean session + will + will retain + optional auth
-    let mut connect_flags = 0x02u8; // Clean session
-    connect_flags |= 0x04; // Will flag
-    connect_flags |= 0x20; // Will retain
-                           // Will QoS = 1 (bits 3-4 = 01)
-    connect_flags |= 0x08;
-    if username.is_some() {
-        connect_flags |= 0x80; // Username flag
-    }
-    if password.is_some() {
-        connect_flags |= 0x40; // Password flag
-    }
-    variable.push(connect_flags);
-    variable.extend_from_slice(&60u16.to_be_bytes()); // Keep alive (60s)
-
-    // Payload: client_id, will topic, will message, optional auth
-    let mut payload = Vec::new();
-    encode_string(&mut payload, client_id);
-    encode_string(&mut payload, will_topic);
-    encode_string(&mut payload, PAYLOAD_OFFLINE);
+) -> Result<MqttRuntime> {
+    let mut options = MqttOptions::new(client_id, &endpoint.host, endpoint.port);
+    options.set_keep_alive(Duration::from_secs(60));
+    options.set_clean_start(true);
     if let Some(user) = username {
-        encode_string(&mut payload, user);
+        options.set_credentials(user, password.unwrap_or_default());
     }
-    if let Some(pass) = password {
-        encode_string(&mut payload, pass);
-    }
-
-    let remaining = variable.len() + payload.len();
-    let mut packet = vec![0x10];
-    encode_remaining_length(&mut packet, remaining);
-    packet.extend_from_slice(&variable);
-    packet.extend_from_slice(&payload);
-    stream.write_all(&packet)?;
-
-    // Read CONNACK
-    let mut connack = [0u8; 4];
-    stream.read_exact(&mut connack)?;
-    if connack[0] != 0x20 || connack[3] != 0x00 {
-        let reason = match connack[3] {
-            0x01 => "unacceptable protocol version",
-            0x02 => "identifier rejected",
-            0x03 => "server unavailable",
-            0x04 => "bad username or password",
-            0x05 => "not authorized",
-            _ => "unknown error",
-        };
-        return Err(anyhow!("MQTT connection rejected: {}", reason));
-    }
-
-    log::info!(
-        "Connected to MQTT broker (LWT: {}, auth: {})",
+    let will = rumqttc::v5::mqttbytes::v5::LastWill::new(
         will_topic,
+        PAYLOAD_OFFLINE.as_bytes().to_vec(),
+        QoS::AtLeastOnce,
+        true,
+        None,
+    );
+    options.set_last_will(will);
+    options.set_transport(build_transport(endpoint, tls)?);
+
+    let (client, connection) = Client::new(options, 10);
+    log::info!(
+        "Connected to MQTT broker (TLS: {}, auth: {})",
+        endpoint.use_tls,
         username.is_some()
     );
-    Ok(MqttConnection::new(stream))
+    Ok(MqttRuntime::new(client, connection))
 }
 
-fn mqtt_publish_qos1(
-    conn: &mut MqttConnection,
-    topic: &str,
-    payload: &[u8],
-    retain: bool,
-) -> Result<()> {
-    let packet_id = conn.next_packet_id();
-
-    let mut variable = Vec::new();
-    encode_string(&mut variable, topic);
-    variable.extend_from_slice(&packet_id.to_be_bytes());
-
-    let remaining_len = variable.len() + payload.len();
-
-    // PUBLISH with QoS 1 (0x32) + retain flag if set
-    let mut header = 0x32u8; // PUBLISH + QoS 1
-    if retain {
-        header |= 0x01;
-    }
-
-    let mut packet = vec![header];
-    encode_remaining_length(&mut packet, remaining_len);
-    packet.extend_from_slice(&variable);
-    packet.extend_from_slice(payload);
-    conn.stream.write_all(&packet)?;
-
-    // Wait for PUBACK
-    let mut puback = [0u8; 4];
-    conn.stream.read_exact(&mut puback)?;
-    if puback[0] != 0x40 {
-        return Err(anyhow!("expected PUBACK, got 0x{:02x}", puback[0]));
-    }
-    let ack_id = u16::from_be_bytes([puback[2], puback[3]]);
-    if ack_id != packet_id {
-        return Err(anyhow!(
-            "PUBACK packet ID mismatch: expected {}, got {}",
-            packet_id,
-            ack_id
-        ));
-    }
-
+fn mqtt_publish_qos1(client: &Client, topic: &str, payload: &[u8], retain: bool) -> Result<()> {
+    client.publish(topic, QoS::AtLeastOnce, retain, payload.to_vec())?;
     Ok(())
-}
-
-fn mqtt_disconnect(conn: &mut MqttConnection) -> Result<()> {
-    conn.stream.write_all(&[0xE0, 0x00])?;
-    Ok(())
-}
-
-fn encode_string(out: &mut Vec<u8>, value: &str) {
-    let len = value.len() as u16;
-    out.extend_from_slice(&len.to_be_bytes());
-    out.extend_from_slice(value.as_bytes());
-}
-
-fn encode_remaining_length(out: &mut Vec<u8>, mut value: usize) {
-    loop {
-        let mut encoded = (value % 128) as u8;
-        value /= 128;
-        if value > 0 {
-            encoded |= 0x80;
-        }
-        out.push(encoded);
-        if value == 0 {
-            break;
-        }
-    }
 }
 
 #[cfg(test)]
@@ -965,14 +1016,18 @@ mod tests {
 
     #[test]
     fn broker_rejects_non_loopback_without_flag() {
-        let err = validate_loopback_addr("192.168.1.10:1883").unwrap_err();
+        let endpoint = parse_mqtt_endpoint("192.168.1.10:1883", false).expect("endpoint");
+        let err = validate_loopback_addr(&endpoint, "192.168.1.10:1883").unwrap_err();
         assert!(format!("{err}").contains("loopback"));
     }
 
     #[test]
     fn broker_accepts_loopback_hosts() {
-        assert!(validate_loopback_addr("127.0.0.1:1883").is_ok());
-        assert!(validate_loopback_addr("localhost:1883").is_ok());
-        assert!(validate_loopback_addr("::1:1883").is_ok());
+        let endpoint = parse_mqtt_endpoint("127.0.0.1:1883", false).expect("endpoint");
+        assert!(validate_loopback_addr(&endpoint, "127.0.0.1:1883").is_ok());
+        let endpoint = parse_mqtt_endpoint("localhost:1883", false).expect("endpoint");
+        assert!(validate_loopback_addr(&endpoint, "localhost:1883").is_ok());
+        let endpoint = parse_mqtt_endpoint("::1:1883", false).expect("endpoint");
+        assert!(validate_loopback_addr(&endpoint, "::1:1883").is_ok());
     }
 }
