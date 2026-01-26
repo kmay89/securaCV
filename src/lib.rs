@@ -21,7 +21,7 @@
 //! - Core types: Events, TimeBucket, ContractEnforcer, Kernel
 
 use anyhow::{anyhow, Result};
-use ed25519_dalek::{Signer, SigningKey, Verifier, VerifyingKey};
+use ed25519_dalek::{SigningKey, VerifyingKey};
 use rand::RngCore;
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -36,6 +36,7 @@ pub mod config;
 pub mod detect;
 pub mod frame;
 pub mod ingest;
+pub mod log;
 pub mod module_runtime;
 pub mod storage;
 pub mod vault;
@@ -52,6 +53,7 @@ pub use ingest::{esp32::Esp32Config, Esp32Source};
 pub use ingest::{rtsp::RtspConfig, RtspSource};
 #[cfg(feature = "ingest-v4l2")]
 pub use ingest::{v4l2::V4l2Config, V4l2Source};
+pub use log::{hash_entry, sign_entry, verify_entry_signature};
 pub use module_runtime::{CapabilityBoundaryRuntime, ModuleCapability};
 pub use storage::{InMemorySealedLogStore, SealedLogStore, SqliteSealedLogStore};
 pub use vault::{FilesystemVaultStore, Vault, VaultConfig, VaultStore};
@@ -1152,13 +1154,6 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
     }
 }
 
-pub fn hash_entry(prev_hash: &[u8; 32], payload: &[u8]) -> [u8; 32] {
-    let mut hasher = Sha256::new();
-    hasher.update(prev_hash);
-    hasher.update(payload);
-    hasher.finalize().into()
-}
-
 pub fn signing_key_from_seed(seed: &str) -> Result<SigningKey> {
     let trimmed = seed.trim();
     if trimmed.is_empty() {
@@ -1203,21 +1198,6 @@ pub fn device_public_key_from_db(conn: &Connection) -> Result<VerifyingKey> {
             _ => anyhow!("failed to read device public key from database: {}", e),
         })?;
     verifying_key_from_bytes(&bytes)
-}
-
-pub fn sign_entry(signing_key: &SigningKey, entry_hash: &[u8; 32]) -> [u8; 64] {
-    signing_key.sign(entry_hash).to_bytes()
-}
-
-pub fn verify_entry_signature(
-    verifying_key: &VerifyingKey,
-    entry_hash: &[u8; 32],
-    signature: &[u8; 64],
-) -> Result<()> {
-    let sig = ed25519_dalek::Signature::from_bytes(signature);
-    verifying_key
-        .verify(entry_hash, &sig)
-        .map_err(|e| anyhow!("signature verification failed: {}", e))
 }
 
 pub fn verify_export_bundle(bundle: &ExportBundle) -> Result<()> {
