@@ -74,11 +74,34 @@ hex-encoded 32-byte Ed25519 verifying key.
 
 ## Break-glass unseal workflow
 
-After trustees approve a request and you run `break_glass authorize`, you can
-unseal an envelope with `break_glass unseal`. The unseal command writes the
-clear envelope to `--output-dir` (default: `vault/unsealed`) so operators can
-locate the recovered payload explicitly rather than assuming the CLI lacks an
-unseal path.
+Create an unlock request, gather trustee approvals, and authorize the request
+before unsealing. The authorization step logs a receipt (granted or denied) and
+issues a sensitive token file via `--output-token`. Use that token to unseal the
+envelope. The unseal command writes the clear envelope to `--output-dir`
+(default: `vault/unsealed`) so operators can locate the recovered payload
+explicitly rather than assuming the CLI lacks an unseal path.
+
+```bash
+cargo run --bin break_glass -- request \
+  --envelope <envelope_id> \
+  --purpose "incident response" \
+  --ruleset-id ruleset:v0.3.0
+
+cargo run --bin break_glass -- approve \
+  --request-hash <request_hash> \
+  --trustee alice \
+  --signing-key /path/to/alice.signing.key \
+  --output alice.approval
+
+DEVICE_KEY_SEED=devkey:your-seed \
+  cargo run --bin break_glass -- authorize \
+  --envelope <envelope_id> \
+  --purpose "incident response" \
+  --approvals alice.approval,bob.approval \
+  --db witness.db \
+  --ruleset-id ruleset:v0.3.0 \
+  --output-token /path/to/break_glass.token
+```
 
 ```bash
 cargo run --bin break_glass -- unseal \
