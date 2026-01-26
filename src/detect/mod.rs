@@ -8,4 +8,4 @@ pub use backend::{DetectionCapability, DetectorBackend};
 pub use backends::TractBackend;
 pub use backends::{CpuBackend, StubBackend};
 pub use registry::BackendRegistry;
-pub use result::{Detection, DetectionResult, SizeClass};
+pub use result::{Detection, DetectionResult, ObjectClass, SizeClass};

@@ -18,6 +18,17 @@ pub struct Detection {
     pub w: f32,
     pub h: f32,
     pub confidence: f32,
+    pub class: ObjectClass,
+}
+
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ObjectClass {
+    Person,
+    Vehicle,
+    Animal,
+    Package,
+    Unknown,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
