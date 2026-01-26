@@ -354,7 +354,10 @@ fn build_demo_source(args: &Args) -> Result<(DemoSource, String)> {
         height: DEMO_FRAME_HEIGHT,
         backend: witness_kernel::config::RtspBackendPreference::Auto,
     })?;
-    Ok((DemoSource::Rtsp(source), "synthetic (stub://demo)".to_string()))
+    Ok((
+        DemoSource::Rtsp(source),
+        "synthetic (stub://demo)".to_string(),
+    ))
 }
 
 fn register_tract_backend(registry: &mut BackendRegistry, args: &Args) -> Result<()> {
