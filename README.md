@@ -109,8 +109,8 @@ Install the Home Assistant integration through HACS, then point it at a running 
 
 1. In **HACS → Integrations**, add `https://github.com/kmay89/securaCV` as a custom repository.
 2. Install **SecuraCV** and restart Home Assistant when prompted.
-3. Run the kernel (Home Assistant add-on, Docker, or another host) and note its Event API URL + token.
-4. In **Settings → Devices & Services**, add the **SecuraCV** integration and provide the URL + token.
+3. Run the kernel (Home Assistant add-on, Docker, or another host) and read the Event API token from the configured token file.
+4. In **Settings → Devices & Services**, add the **SecuraCV** integration and provide the URL + token (sent as a Bearer token header; do not place tokens in URLs).
 
 ### MQTT Discovery (Auto-Sensors)
 
