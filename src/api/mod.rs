@@ -344,6 +344,11 @@ impl HttpRequest {
                 return Some(parts[1].to_string());
             }
         }
+        if let Some(value) = self.headers.get("x-witness-token") {
+            if !value.is_empty() {
+                return Some(value.to_string());
+            }
+        }
         None
     }
 
