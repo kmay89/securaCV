@@ -1,6 +1,6 @@
 //! log_verify - External verifier for PWK sealed log integrity
 //!
-//! This tool proves:
+//! This tool verifies:
 //! - The sealed event log is hash-chained (tamper-evident)
 //! - The break-glass receipt log is hash-chained (tamper-evident)
 //! - The export receipt log is hash-chained (tamper-evident)
@@ -8,14 +8,14 @@
 //! - Checkpoints preserve verifiability across retention pruning
 //!
 //! This is not a convenience feature.
-//! It is a core anti-erosion mechanism: integrity must be provable without trusting the runtime.
+//! It is a core anti-erosion mechanism: integrity must be verifiable without trusting the runtime.
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use clap::Parser;
 use rusqlite::Connection;
 use std::io::IsTerminal;
 
-use witness_kernel::{verify, verify_entry_signature, verify_helpers};
+use witness_kernel::{verify, verify_helpers};
 
 #[path = "../ui.rs"]
 mod ui;
@@ -73,14 +73,12 @@ fn main() -> Result<()> {
     {
         let _stage = ui.stage("Verify sealed events");
         let checkpoint = verify::latest_checkpoint(&conn)?;
-        if let (Some(head), Some(sig), Some(cutoff_id)) = (
+        verify::verify_checkpoint_signature(&verifying_key, &checkpoint)?;
+        if let (Some(head), Some(_sig), Some(cutoff_id)) = (
             checkpoint.chain_head_hash,
             checkpoint.signature,
             checkpoint.cutoff_event_id,
         ) {
-            if verify_entry_signature(&verifying_key, &head, &sig).is_err() {
-                return Err(anyhow!("checkpoint signature mismatch"));
-            }
             println!(
                 "checkpoint: cutoff_event_id={}, chain_head_hash={}",
                 cutoff_id,
