@@ -659,10 +659,7 @@ fn load_tls_materials(
                 )
             })?;
             let key = std::fs::read(key_path).with_context(|| {
-                format!(
-                    "failed to read MQTT TLS client key {}",
-                    key_path.display()
-                )
+                format!("failed to read MQTT TLS client key {}", key_path.display())
             })?;
             Some((cert, key))
         }

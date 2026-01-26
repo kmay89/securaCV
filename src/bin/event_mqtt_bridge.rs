@@ -17,8 +17,8 @@ use rumqttc::v5::{mqttbytes::QoS, Client, Connection, Event, MqttOptions};
 use rumqttc::Transport;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
-use std::io::{Read, Write};
 use std::io::IsTerminal;
+use std::io::{Read, Write};
 use std::net::{IpAddr, TcpStream};
 use std::path::PathBuf;
 use std::time::Duration;
@@ -625,11 +625,7 @@ fn publish_zone_discovery(
     Ok(())
 }
 
-fn publish_events(
-    client: &Client,
-    topic_prefix: &str,
-    events: &[ExportEvent],
-) -> Result<()> {
+fn publish_events(client: &Client, topic_prefix: &str, events: &[ExportEvent]) -> Result<()> {
     let mut zone_counts: HashMap<String, u64> = HashMap::new();
 
     for event in events {
@@ -872,10 +868,7 @@ fn load_tls_materials(
                 )
             })?;
             let key = std::fs::read(key_path).with_context(|| {
-                format!(
-                    "failed to read MQTT TLS client key {}",
-                    key_path.display()
-                )
+                format!("failed to read MQTT TLS client key {}", key_path.display())
             })?;
             Some((cert, key))
         }
