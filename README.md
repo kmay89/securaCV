@@ -43,6 +43,10 @@ Next: for a real RTSP stream or a local V4L2 device, see the ingestion sections 
 * Security policy is in `SECURITY.md`.
 * Release notes are in `CHANGELOG.md`.
 
+## Release Gate (v1 Tagging)
+
+Before tagging any v1 release, the Home Assistant + Frigate MQTT pipeline must be verified end-to-end. Complete the v1 verification checklist in `docs/integrations/home-assistant-frigate-mqtt.md` and ensure `integrations/ha_frigate_mqtt/verify_pipeline.sh` succeeds with exit code `0` against a live stack. A v1 tag is blocked until this verification passes.
+
 ## Device public key location
 
 The device Ed25519 **verifying key** is stored locally in the witness database at
