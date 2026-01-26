@@ -109,6 +109,36 @@ printf '%s\n' '{"event_type":"boundary_crossing_object_small","time_bucket":{"st
 Look for conformance rejection in stdout/stderr. You can also confirm the alarm
 with `sqlite3` (table `conformance_alarms`) or via the `log_verify` warnings.
 
+## Verify Log Integrity
+
+Run `log_verify` against the demo DB. It defaults to `witness.db`, but this uses
+`WITNESS_DB_PATH` if you set it:
+
+```bash
+cargo run --release --bin log_verify -- --db "${WITNESS_DB_PATH:-witness.db}"
+```
+
+Expected success output (counts may vary):
+
+```text
+log_verify: checking witness.db
+
+=== Sealed Events ===
+checkpoint: none (genesis chain)
+verified 1 event entries
+
+=== Break-Glass Receipts ===
+verified 0 receipt entries (0 granted, 0 denied)
+
+=== Export Receipts ===
+verified 0 export receipt entries
+OK: all chains verified.
+```
+
+Troubleshooting: if you see an error like `device public key not found in database
+(provide --public-key or --public-key-file if the database has no key)`, pass the
+device public key explicitly (e.g., `--public-key <hex>` or `--public-key-file <path>`).
+
 ## Disconnect/Reconnect
 
 `grove_vision2_ingest` exits on stdin EOF and does not attempt to reconnect to
