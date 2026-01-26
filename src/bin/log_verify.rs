@@ -302,6 +302,41 @@ mod tests {
     }
 
     #[test]
+    fn log_verify_rejects_tampered_event_payload() -> Result<()> {
+        let db_path = temp_db_path();
+        let mut kernel = Kernel::open(&KernelConfig {
+            db_path: db_path.to_string_lossy().to_string(),
+            ruleset_id: "ruleset:test".to_string(),
+            ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
+            kernel_version: env!("CARGO_PKG_VERSION").to_string(),
+            retention: std::time::Duration::from_secs(60),
+            device_key_seed: "devkey:test".to_string(),
+            zone_policy: ZonePolicy::default(),
+        })?;
+        write_test_event(&mut kernel)?;
+        kernel.conn.execute(
+            "UPDATE sealed_events SET payload_json = '{\"tampered\":true}' WHERE id = 1",
+            [],
+        )?;
+        let public_key_hex = hex::encode(kernel.device_key_for_verify_only());
+        drop(kernel);
+
+        let conn = Connection::open(&db_path)?;
+        let verifying_key = load_verifying_key(&conn, Some(&public_key_hex), None)?;
+        let checkpoint = verify::latest_checkpoint(&conn)?;
+        let result = verify::verify_events_with(
+            &conn,
+            &verifying_key,
+            checkpoint.chain_head_hash,
+            |_, _| {},
+        );
+        assert!(result.is_err());
+
+        let _ = std::fs::remove_file(&db_path);
+        Ok(())
+    }
+
+    #[test]
     fn log_verify_rejects_tampered_break_glass_approvals() -> Result<()> {
         let db_path = temp_db_path();
         let mut kernel = Kernel::open(&KernelConfig {
