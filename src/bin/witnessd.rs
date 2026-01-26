@@ -15,9 +15,10 @@ use std::time::{Duration, Instant};
 use witness_kernel::{
     api::{ApiConfig, ApiServer},
     break_glass::BreakGlassTokenFile,
+    detect::{BackendRegistry, CpuBackend, StubBackend},
     BackendSelection, BucketKeyManager, CapabilityBoundaryRuntime, DeviceCapabilities, FrameBuffer,
-    Kernel, KernelConfig, Module, ModuleDescriptor, RtspConfig, RtspSource, TimeBucket, Vault,
-    VaultConfig, ZoneCrossingModule, ZonePolicy,
+    InferenceBackend, Kernel, KernelConfig, Module, ModuleDescriptor, RtspConfig, RtspSource,
+    TimeBucket, Vault, VaultConfig, ZoneCrossingModule, ZonePolicy,
 };
 #[cfg(feature = "ingest-esp32")]
 use witness_kernel::{Esp32Config, Esp32Source};
@@ -99,7 +100,7 @@ fn main() -> Result<()> {
     let mut frame_buffer = FrameBuffer::new();
 
     // Detection module
-    let (mut module, module_desc, runtime) = {
+    let (mut module, module_desc, runtime, registry) = {
         let _stage = ui.stage("Initialize detection module");
         let capabilities = DeviceCapabilities::cpu_only();
         let module = ZoneCrossingModule::with_backend_selection(
@@ -111,7 +112,17 @@ fn main() -> Result<()> {
         let module_desc: ModuleDescriptor = module.descriptor();
         let runtime = CapabilityBoundaryRuntime::new();
         runtime.validate_descriptor(&module_desc)?;
-        (module, module_desc, runtime)
+        let mut registry = BackendRegistry::new();
+        registry.register(StubBackend::new());
+        registry.register(CpuBackend::new());
+        match module.backend() {
+            InferenceBackend::Stub => registry.set_default("stub")?,
+            InferenceBackend::Cpu => registry.set_default("cpu")?,
+            InferenceBackend::Accelerator => {
+                return Err(anyhow!("accelerator backend requested but not available"));
+            }
+        }
+        (module, module_desc, runtime, registry)
     };
 
     // Bucket key manager (rotates per time bucket)
@@ -155,7 +166,8 @@ fn main() -> Result<()> {
         let view = frame_ref.inference_view();
 
         // Run module inference
-        let candidates = runtime.execute_sandboxed(&mut module, &view, bucket, &token_mgr)?;
+        let candidates =
+            runtime.execute_sandboxed(&mut module, &view, bucket, &token_mgr, &registry)?;
 
         for cand in candidates {
             let ev = match kernel.append_event_checked(

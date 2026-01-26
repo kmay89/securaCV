@@ -1389,6 +1389,7 @@ pub trait Module {
         view: &InferenceView<'_>,
         bucket: TimeBucket,
         token_mgr: &BucketKeyManager,
+        registry: &detect::BackendRegistry,
     ) -> Result<Vec<CandidateEvent>>;
 }
 
@@ -1397,7 +1398,6 @@ pub struct ZoneCrossingModule {
     zone_id: String,
     emit_token: bool,
     backend: InferenceBackend,
-    detector: DetectorBackend,
 }
 
 const ZONE_CROSSING_ALLOWED: &[EventType] = &[
@@ -1429,12 +1429,10 @@ impl ZoneCrossingModule {
             supported_backends: ZONE_CROSSING_BACKENDS,
         };
         let backend = select_module_backend(&desc, selection, capabilities)?;
-        let detector = DetectorBackend::for_backend(backend)?;
         Ok(Self {
             zone_id: zone_id.to_string(),
             emit_token: false,
             backend,
-            detector,
         })
     }
 
@@ -1463,9 +1461,10 @@ impl Module for ZoneCrossingModule {
         view: &InferenceView<'_>,
         bucket: TimeBucket,
         token_mgr: &BucketKeyManager,
+        registry: &detect::BackendRegistry,
     ) -> Result<Vec<CandidateEvent>> {
         // Run detection on the inference view (cannot access raw bytes)
-        let result = view.run_detector(&mut self.detector);
+        let result = view.run_detector(registry)?;
 
         if result.motion_detected {
             let token = if self.emit_token {
