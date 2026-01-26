@@ -283,6 +283,53 @@ See `docs/v4l2_setup.md` for more details, including stub devices and invariants
 `RawFrame` values with coarsened time buckets and non-invertible feature hashes.
 The V4L2 backend never writes raw frames to disk and never exposes them over the network.
 
+## Tract (ONNX) backend
+
+The tract backend enables local ONNX inference for object detection. It is
+feature-gated (`backend-tract`) and requires a **local** model file. It only
+supports RTSP or V4L2 ingest because those provide explicit width/height.
+
+### Recommended small model (Apache-2.0)
+
+Download the ONNX Model Zoo `ssdlite_mobilenet_v2_12` model deterministically:
+
+```bash
+mkdir -p vendor/models
+curl -L \
+  https://github.com/onnx/models/raw/main/vision/object_detection_segmentation/ssdlite_mobilenet_v2/model/ssdlite_mobilenet_v2_12.onnx \
+  -o vendor/models/ssdlite_mobilenet_v2_12.onnx
+echo "ad6303f1ca2c3dcc0d86a87c36892be9b97b02a0105faa5cc3cfae79a2b11a31  vendor/models/ssdlite_mobilenet_v2_12.onnx" | sha256sum -c -
+```
+
+### Required config/CLI fields
+
+**Config (witness.toml):**
+
+```toml
+[detect]
+backend = "tract"
+tract_model = "vendor/models/ssdlite_mobilenet_v2_12.onnx"
+
+[rtsp]
+width = 320
+height = 320
+# OR, for V4L2:
+[v4l2]
+width = 320
+height = 320
+```
+
+**Environment overrides:**
+
+- `WITNESS_DETECT_BACKEND=tract`
+- `WITNESS_TRACT_MODEL=/absolute/path/to/model.onnx`
+
+**Input size requirement:** `tract` expects frame dimensions to match the model
+input. Set `rtsp.width/height` or `v4l2.width/height` to the model input size.
+
+**Thresholds:** the tract backend currently uses a fixed confidence threshold of
+`0.5` (no CLI/config override yet).
+
 ## ESP32-S3 Camera Setup (HTTP MJPEG/JPEG or UDP RTP)
 
 ### Quick Start with ESP32-S3
