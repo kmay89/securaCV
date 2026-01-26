@@ -161,33 +161,18 @@ used for break-glass and export auditing.
 
 ## Break-glass retrieval (overview)
 
-For the formal process and CLI details, see `spec/break_glass.md` and the
-`break_glass` CLI implementation (`src/break_glass/cli.rs`).
-
-Checklist:
-
-1. Set quorum policy.
-2. Create an unlock request.
-3. Collect approvals.
-4. Issue a token.
-5. Verify receipt.
-6. Unseal/export.
-
-Raw media access remains gated and auditable throughout this flow.
-
-## Break-glass retrieval (overview)
-
 See the formal protocol in [`spec/break_glass.md`](../spec/break_glass.md) and the
 `break_glass` CLI implementation in [`src/break_glass/cli.rs`](../src/break_glass/cli.rs).
 
-Checklist (high-level):
+Checklist (Arduino/XIAO demo, policy → request → approve → authorize flow):
 
-1. Set quorum policy.
-2. Create an unlock request.
-3. Collect approvals.
-4. Issue the token.
-5. Verify the receipt.
-6. Unseal/export the evidence.
+1. Set quorum policy for the demo device (`break_glass policy set ...`).
+2. Create an unlock request against the Arduino demo database (for example,
+   `break_glass request --db "${WITNESS_DB_PATH:-witness.db}" ...`).
+3. Collect approvals from trustees (`break_glass approve ...`).
+4. Authorize and emit the token file (`break_glass authorize --output-token ...`).
+5. Verify the break-glass receipts recorded in the demo DB (`cargo run --release --bin log_verify -- --db "${WITNESS_DB_PATH:-witness.db}"`).
+6. Unseal/export evidence with the token (`break_glass unseal ...` / `export_events ...`).
 
 Raw media access remains gated and auditable throughout this flow.
 
