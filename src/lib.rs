@@ -17,7 +17,7 @@
 //! # Module Structure
 //!
 //! - `frame`: Raw media isolation (RawFrame, InferenceView, FrameBuffer)
-//! - `ingest`: Frame sources (RTSP, USB)
+//! - `ingest`: Frame sources (RTSP, USB, local files)
 //! - Core types: Events, TimeBucket, ContractEnforcer, Kernel
 
 use anyhow::{anyhow, Result};
@@ -51,6 +51,7 @@ pub use frame::{
 };
 #[cfg(feature = "ingest-esp32")]
 pub use ingest::{esp32::Esp32Config, Esp32Source};
+pub use ingest::{file::FileConfig, FileSource};
 pub use ingest::{rtsp::RtspConfig, RtspSource};
 #[cfg(feature = "ingest-v4l2")]
 pub use ingest::{v4l2::V4l2Config, V4l2Source};

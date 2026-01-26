@@ -12,6 +12,8 @@ const DEFAULT_RTSP_FPS: u32 = 10;
 const DEFAULT_RTSP_WIDTH: u32 = 640;
 const DEFAULT_RTSP_HEIGHT: u32 = 480;
 const DEFAULT_RTSP_BACKEND: &str = "auto";
+const DEFAULT_FILE_PATH: &str = "";
+const DEFAULT_FILE_FPS: u32 = 10;
 const DEFAULT_V4L2_DEVICE: &str = "/dev/video0";
 const DEFAULT_V4L2_FPS: u32 = 10;
 const DEFAULT_V4L2_WIDTH: u32 = 640;
@@ -36,6 +38,7 @@ struct WitnessdConfigFile {
     api: Option<ApiConfigFile>,
     ingest: Option<IngestConfigFile>,
     rtsp: Option<RtspConfigFile>,
+    file: Option<FileConfigFile>,
     v4l2: Option<V4l2ConfigFile>,
     esp32: Option<Esp32ConfigFile>,
     zones: Option<ZoneConfigFile>,
@@ -72,6 +75,12 @@ struct RtspConfigFile {
 }
 
 #[derive(Debug, Deserialize, Default)]
+struct FileConfigFile {
+    path: Option<String>,
+    target_fps: Option<u32>,
+}
+
+#[derive(Debug, Deserialize, Default)]
 struct V4l2ConfigFile {
     device: Option<String>,
     target_fps: Option<u32>,
@@ -104,6 +113,7 @@ pub struct WitnessdConfig {
     pub api_token_path: Option<PathBuf>,
     pub ingest: IngestSettings,
     pub rtsp: RtspSettings,
+    pub file: FileSettings,
     pub v4l2: V4l2Settings,
     pub esp32: Esp32Settings,
     pub zones: ZoneSettings,
@@ -138,6 +148,7 @@ pub enum RtspBackendPreference {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IngestBackend {
+    File,
     Rtsp,
     V4l2,
     Esp32,
@@ -146,6 +157,12 @@ pub enum IngestBackend {
 #[derive(Debug, Clone)]
 pub struct IngestSettings {
     pub backend: IngestBackend,
+}
+
+#[derive(Debug, Clone)]
+pub struct FileSettings {
+    pub path: String,
+    pub target_fps: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -223,6 +240,16 @@ impl WitnessdConfig {
                     .unwrap_or(DEFAULT_RTSP_BACKEND),
             )?,
         };
+        let file_source = FileSettings {
+            path: config_string(
+                file.file.as_ref().and_then(|file| file.path.clone()),
+                DEFAULT_FILE_PATH,
+            ),
+            target_fps: config_u32(
+                file.file.as_ref().and_then(|file| file.target_fps),
+                DEFAULT_FILE_FPS,
+            ),
+        };
         let v4l2 = V4l2Settings {
             device: config_string(
                 file.v4l2.as_ref().and_then(|v4l2| v4l2.device.clone()),
@@ -274,6 +301,7 @@ impl WitnessdConfig {
             api_token_path,
             ingest,
             rtsp,
+            file: file_source,
             v4l2,
             esp32,
             zones,
@@ -295,6 +323,18 @@ impl WitnessdConfig {
         if let Ok(backend) = std::env::var("WITNESS_INGEST_BACKEND") {
             if !backend.trim().is_empty() {
                 self.ingest.backend = IngestBackend::parse(&backend)?;
+            }
+        }
+        if let Ok(path) = std::env::var("WITNESS_FILE_PATH") {
+            if !path.trim().is_empty() {
+                self.file.path = path;
+            }
+        }
+        if let Ok(fps) = std::env::var("WITNESS_FILE_FPS") {
+            if !fps.trim().is_empty() {
+                self.file.target_fps = fps
+                    .parse()
+                    .map_err(|_| anyhow!("WITNESS_FILE_FPS must be an integer"))?;
             }
         }
         if let Ok(url) = std::env::var("WITNESS_RTSP_URL") {
@@ -356,6 +396,22 @@ impl WitnessdConfig {
             return Err(anyhow!("retention must be greater than zero"));
         }
         match self.ingest.backend {
+            IngestBackend::File => {
+                if self.file.path.trim().is_empty() {
+                    return Err(anyhow!("file.path must not be empty"));
+                }
+                if self.file.path.trim().starts_with("stub://") && !stub_urls_allowed() {
+                    return Err(anyhow!(
+                        "file.path uses stub:// which is only allowed for local dev/test builds"
+                    ));
+                }
+                if self.file.path.contains("://") && !self.file.path.trim().starts_with("stub://")
+                {
+                    return Err(anyhow!(
+                        "file.path must be a local filesystem path (no URL schemes)"
+                    ));
+                }
+            }
             IngestBackend::V4l2 => {
                 if self.v4l2.device.trim().is_empty() {
                     return Err(anyhow!("v4l2.device must not be empty"));
@@ -388,11 +444,12 @@ fn stub_urls_allowed() -> bool {
 impl IngestBackend {
     fn parse(raw: &str) -> Result<Self> {
         match raw.trim().to_lowercase().as_str() {
+            "file" => Ok(Self::File),
             "rtsp" => Ok(Self::Rtsp),
             "v4l2" => Ok(Self::V4l2),
             "esp32" => Ok(Self::Esp32),
             other => Err(anyhow!(
-                "unsupported ingest backend '{}'; expected 'rtsp', 'v4l2', or 'esp32'",
+                "unsupported ingest backend '{}'; expected 'file', 'rtsp', 'v4l2', or 'esp32'",
                 other
             )),
         }

@@ -1,7 +1,7 @@
 //! witnessd - Privacy Witness Kernel daemon
 //!
 //! This daemon:
-//! 1. Ingests frames from configured sources (RTSP, USB, etc.)
+//! 1. Ingests frames from configured sources (local files, RTSP, USB, etc.)
 //! 2. Buffers frames in a bounded ring buffer (for potential vault sealing)
 //! 3. Runs detection modules on InferenceView (restricted, no raw bytes)
 //! 4. Enforces contract and module allowlist
@@ -16,9 +16,9 @@ use witness_kernel::{
     api::{ApiConfig, ApiServer},
     break_glass::BreakGlassTokenFile,
     detect::{BackendRegistry, CpuBackend, StubBackend},
-    BackendSelection, BucketKeyManager, CapabilityBoundaryRuntime, DeviceCapabilities, FrameBuffer,
-    InferenceBackend, Kernel, KernelConfig, Module, ModuleDescriptor, RtspConfig, RtspSource,
-    TimeBucket, Vault, VaultConfig, ZoneCrossingModule, ZonePolicy,
+    BackendSelection, BucketKeyManager, CapabilityBoundaryRuntime, DeviceCapabilities, FileConfig,
+    FileSource, FrameBuffer, InferenceBackend, Kernel, KernelConfig, Module, ModuleDescriptor,
+    RtspConfig, RtspSource, TimeBucket, Vault, VaultConfig, ZoneCrossingModule, ZonePolicy,
 };
 #[cfg(feature = "ingest-esp32")]
 use witness_kernel::{Esp32Config, Esp32Source};
@@ -260,6 +260,7 @@ struct IngestStats {
 }
 
 enum IngestSource {
+    File(FileSource),
     Rtsp(RtspSource),
     #[cfg(feature = "ingest-esp32")]
     Esp32(Esp32Source),
@@ -270,6 +271,13 @@ enum IngestSource {
 impl IngestSource {
     fn new(config: &witness_kernel::config::WitnessdConfig) -> Result<Self> {
         match config.ingest.backend {
+            witness_kernel::config::IngestBackend::File => {
+                let file_config = FileConfig {
+                    path: config.file.path.clone(),
+                    target_fps: config.file.target_fps,
+                };
+                Ok(Self::File(FileSource::new(file_config)?))
+            }
             witness_kernel::config::IngestBackend::Rtsp => {
                 let rtsp_config = RtspConfig {
                     url: config.rtsp.url.clone(),
@@ -287,6 +295,7 @@ impl IngestSource {
 
     fn connect(&mut self) -> Result<()> {
         match self {
+            IngestSource::File(source) => source.connect(),
             IngestSource::Rtsp(source) => source.connect(),
             #[cfg(feature = "ingest-esp32")]
             IngestSource::Esp32(source) => source.connect(),
@@ -297,6 +306,7 @@ impl IngestSource {
 
     fn next_frame(&mut self) -> Result<witness_kernel::RawFrame> {
         match self {
+            IngestSource::File(source) => source.next_frame(),
             IngestSource::Rtsp(source) => source.next_frame(),
             #[cfg(feature = "ingest-esp32")]
             IngestSource::Esp32(source) => source.next_frame(),
@@ -307,6 +317,7 @@ impl IngestSource {
 
     fn is_healthy(&self) -> bool {
         match self {
+            IngestSource::File(source) => source.is_healthy(),
             IngestSource::Rtsp(source) => source.is_healthy(),
             #[cfg(feature = "ingest-esp32")]
             IngestSource::Esp32(source) => source.is_healthy(),
@@ -317,6 +328,13 @@ impl IngestSource {
 
     fn stats(&self) -> IngestStats {
         match self {
+            IngestSource::File(source) => {
+                let stats = source.stats();
+                IngestStats {
+                    frames_captured: stats.frames_captured,
+                    source: stats.path,
+                }
+            }
             IngestSource::Rtsp(source) => {
                 let stats = source.stats();
                 IngestStats {
