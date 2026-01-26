@@ -56,7 +56,7 @@ Run the ingest binary and pipe serial JSON into it:
 
 ```bash
 # Example for a USB serial device on Linux.
-# Replace /dev/ttyACM0 with your actual device path.
+# Replace /dev/ttyACM0 with your actual device path (prefer /dev/serial/by-id/* if available).
 # The device must output one JSON object per line.
 
 stty -F /dev/ttyACM0 115200
@@ -196,7 +196,14 @@ Raw media access remains gated and auditable throughout this flow.
 `grove_vision2_ingest` exits on stdin EOF. When using `--serial-device`, it
 reconnects on disconnect with a simple retry loop instead of exiting.
 
-Minimal restart procedure:
+Expected behavior on link loss:
+
+- **`cat` pipeline**: when the USB serial link drops, `cat` receives EOF,
+  `grove_vision2_ingest` exits, and no events are ingested until you restart it.
+- **`--serial-device` mode**: the ingest process logs the disconnect, sleeps for
+  `WITNESS_RECONNECT_DELAY_SECS`, and reopens the device until it reappears.
+
+Minimal restart procedure (manual pipeline):
 
 ```bash
 stty -F /dev/ttyACM0 115200
@@ -205,13 +212,18 @@ stdbuf -oL cat /dev/ttyACM0 | \
   cargo run --release --bin grove_vision2_ingest
 ```
 
-For unattended deployments, you can either rely on the built-in reconnect loop
-or use a supervisor (systemd, runit, etc.) to restart the pipeline on exit.
+Operational steps for a USB disconnect:
 
-Expected behavior on link loss: when the USB serial link drops, `cat` receives
-EOF, `grove_vision2_ingest` exits, and no events are ingested until you restart
-the pipeline. When running with `--serial-device`, the ingest process logs the
-disconnect, waits, and reopens the device until it returns.
+1. Unplug/replug the device (or power-cycle the board).
+2. Confirm the device path has returned (prefer stable paths):
+   - `ls -l /dev/serial/by-id/` (stable, recommended), or
+   - `ls /dev/ttyACM*` (fallback).
+3. Restart the pipeline using the correct path.
+
+If the device path changes after reconnect, restart with the new path (or switch
+to the stable `/dev/serial/by-id/...` symlink). For unattended deployments, rely
+on the built-in reconnect loop (`--serial-device`) or use a supervisor
+(systemd, runit, etc.) to restart the pipeline on exit.
 
 ## Firmware sketches
 
