@@ -28,9 +28,7 @@ impl DetectorBackend for CpuBackend {
     fn detect(&mut self, pixels: &[u8], _width: u32, _height: u32) -> Result<DetectionResult> {
         let current_hash: [u8; 32] = Sha256::digest(pixels).into();
 
-        let motion = self
-            .last_hash
-            .is_some_and(|prev| prev != current_hash);
+        let motion = self.last_hash.is_some_and(|prev| prev != current_hash);
 
         self.last_hash = Some(current_hash);
 
