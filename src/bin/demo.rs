@@ -29,7 +29,7 @@ const DEFAULT_RULESET_ID: &str = "ruleset:demo";
 const DEFAULT_ZONE_ID: &str = "zone:demo";
 const DEFAULT_VAULT_ENVELOPE_ID: &str = "demo-vault";
 const DEMO_FRAME_WIDTH: u32 = 320;
-const DEMO_FRAME_HEIGHT: u32 = 240;
+const DEMO_FRAME_HEIGHT: u32 = 320;
 
 struct BreakGlassContext<'a> {
     policy: &'a QuorumPolicy,

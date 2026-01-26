@@ -33,6 +33,38 @@ DEVICE_KEY_SEED=devkey:demo \
   --output demo_out/export_bundle.json
 ```
 
+## Tract backend demo (ONNX, optional)
+
+The tract backend requires a **local** ONNX model and a build with the
+`backend-tract` feature enabled.
+
+1) Download the recommended model (Apache-2.0 licensed, small/CPU-friendly):
+
+```bash
+mkdir -p vendor/models
+curl -L \
+  https://github.com/onnx/models/raw/main/vision/object_detection_segmentation/ssdlite_mobilenet_v2/model/ssdlite_mobilenet_v2_12.onnx \
+  -o vendor/models/ssdlite_mobilenet_v2_12.onnx
+echo "ad6303f1ca2c3dcc0d86a87c36892be9b97b02a0105faa5cc3cfae79a2b11a31  vendor/models/ssdlite_mobilenet_v2_12.onnx" | sha256sum -c -
+```
+
+2) Run the demo with the tract backend:
+
+```bash
+cargo run --features backend-tract --bin demo -- \
+  --backend tract \
+  --tract-model vendor/models/ssdlite_mobilenet_v2_12.onnx
+```
+
+**Exact CLI fields required for tract in the demo:**
+
+- `--backend tract` (select the backend)
+- `--tract-model <path>` (local ONNX model path)
+- **Input size**: the demo feeds frames at **320x320**; the model must accept
+  `1x3x320x320` RGB inputs.
+- **Thresholds**: the tract backend uses a fixed confidence threshold of **0.5**
+  (not configurable via CLI today).
+
 ## Expected artifacts
 
 After a successful run you should see:
