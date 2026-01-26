@@ -81,6 +81,13 @@ See:
 - `examples/firmware/esp32c3_grove_vision_ai_v2_litterbox/esp32c3_grove_vision_ai_v2_litterbox.ino`
 - `examples/firmware/grove_vision_ai_v2_litterbox_firmware/grove_vision_ai_v2_litterbox_firmware.ino`
 
+**Time sync requirement (ESP32C3):** the bridge firmware requires Wi‑Fi to reach
+an NTP server and set the system clock **before it will emit events**. If NTP
+fails or Wi‑Fi is unavailable, you will see **no events**. Troubleshooting options
+that stay within the event contract include: setting the time bucket locally in
+firmware, or sourcing time from the host serial bridge and deriving buckets there
+—without adding any new metadata fields.
+
 ### Wiring
 
 Connect the XIAO ESP32C3 UART pins to the Grove Vision AI V2 UART pins as follows:
