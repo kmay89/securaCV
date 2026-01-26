@@ -41,10 +41,11 @@ pub mod storage;
 pub mod vault;
 pub mod verify;
 
+pub use detect::{Detection, DetectionResult, SizeClass};
 pub use frame::{
-    select_inference_backend, BackendSelection, CpuDetector, Detection, DetectionResult, Detector,
-    DetectorBackend, DeviceCapabilities, FrameBuffer, InferenceBackend, InferenceView, RawFrame,
-    SizeClass, StubDetector, MAX_BUFFER_FRAMES, MAX_PREROLL_SECS,
+    select_inference_backend, BackendSelection, CpuDetector, Detector, DetectorBackend,
+    DeviceCapabilities, FrameBuffer, InferenceBackend, InferenceView, RawFrame, StubDetector,
+    MAX_BUFFER_FRAMES, MAX_PREROLL_SECS,
 };
 #[cfg(feature = "ingest-esp32")]
 pub use ingest::{esp32::Esp32Config, Esp32Source};

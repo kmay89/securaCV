@@ -15,7 +15,11 @@ use std::collections::VecDeque;
 use std::time::Instant;
 use zeroize::Zeroize;
 
-use crate::{break_glass::BreakGlassToken, RawMediaBoundary, TimeBucket};
+use crate::{
+    break_glass::BreakGlassToken,
+    detect::{DetectionResult, SizeClass},
+    RawMediaBoundary, TimeBucket,
+};
 
 /// Build-time maximum pre-roll duration in seconds.
 /// This is a hard cap on how much raw media can be buffered for vault sealing.
@@ -182,36 +186,6 @@ impl<'a> InferenceView<'a> {
 // ----------------------------------------------------------------------------
 // Detector trait: how modules run inference
 // ----------------------------------------------------------------------------
-
-/// Result of running detection on a frame.
-#[derive(Clone, Debug, Default)]
-pub struct DetectionResult {
-    /// Did we detect motion/presence?
-    pub motion_detected: bool,
-    /// Bounding boxes (normalized 0..1 coordinates).
-    pub detections: Vec<Detection>,
-    /// Confidence of primary detection.
-    pub confidence: f32,
-    /// Size class (large/small object).
-    pub size_class: SizeClass,
-}
-
-#[derive(Clone, Debug)]
-pub struct Detection {
-    pub x: f32,
-    pub y: f32,
-    pub w: f32,
-    pub h: f32,
-    pub confidence: f32,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum SizeClass {
-    #[default]
-    Unknown,
-    Small,
-    Large,
-}
 
 // ----------------------------------------------------------------------------
 // Inference backend selection
