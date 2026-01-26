@@ -15,9 +15,10 @@ use witness_kernel::vault::DEFAULT_VAULT_PATH;
 use witness_kernel::verify;
 use witness_kernel::{
     break_glass_receipt_outcome_for_verifier, device_public_key_from_db, verify_entry_signature,
-    verify_export_bundle, CandidateEvent, CapabilityBoundaryRuntime, EventType, ExportArtifact,
-    ExportOptions, ExportReceipt, Kernel, KernelConfig, Module, RtspConfig, RtspSource, TimeBucket,
-    Vault, VaultConfig, ZoneCrossingModule, ZonePolicy, EXPORT_EVENTS_ENVELOPE_ID,
+    verify_export_bundle, BackendSelection, CandidateEvent, CapabilityBoundaryRuntime,
+    DeviceCapabilities, EventType, ExportArtifact, ExportOptions, ExportReceipt, Kernel,
+    KernelConfig, Module, RtspConfig, RtspSource, TimeBucket, Vault, VaultConfig,
+    ZoneCrossingModule, ZonePolicy, EXPORT_EVENTS_ENVELOPE_ID,
 };
 
 const DEFAULT_DB_PATH: &str = "demo_witness.db";
@@ -125,7 +126,13 @@ fn main() -> Result<()> {
         })?;
         source.connect()?;
 
-        let mut module = ZoneCrossingModule::new(DEFAULT_ZONE_ID).with_tokens(false);
+        let capabilities = DeviceCapabilities::cpu_only();
+        let mut module = ZoneCrossingModule::with_backend_selection(
+            DEFAULT_ZONE_ID,
+            BackendSelection::Auto,
+            &capabilities,
+        )?
+        .with_tokens(false);
         let module_desc = module.descriptor();
         let runtime = CapabilityBoundaryRuntime::new();
         runtime.validate_descriptor(&module_desc)?;

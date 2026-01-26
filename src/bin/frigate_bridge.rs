@@ -20,7 +20,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use witness_kernel::{
-    CandidateEvent, EventType, Kernel, KernelConfig, ModuleDescriptor, TimeBucket, ZonePolicy,
+    CandidateEvent, EventType, InferenceBackend, Kernel, KernelConfig, ModuleDescriptor,
+    TimeBucket, ZonePolicy,
 };
 
 const BRIDGE_NAME: &str = "frigate_bridge";
@@ -297,6 +298,7 @@ fn main() -> Result<()> {
             EventType::BoundaryCrossingObjectLarge,
         ],
         requested_capabilities: &[],
+        supported_backends: &[InferenceBackend::Stub],
     };
 
     // Connect to MQTT and subscribe

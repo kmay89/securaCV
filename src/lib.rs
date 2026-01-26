@@ -41,8 +41,9 @@ pub mod vault;
 pub mod verify;
 
 pub use frame::{
-    Detection, DetectionResult, Detector, FrameBuffer, InferenceView, RawFrame, SizeClass,
-    StubDetector, MAX_BUFFER_FRAMES, MAX_PREROLL_SECS,
+    select_inference_backend, BackendSelection, CpuDetector, Detection, DetectionResult, Detector,
+    DetectorBackend, DeviceCapabilities, FrameBuffer, InferenceBackend, InferenceView, RawFrame,
+    SizeClass, StubDetector, MAX_BUFFER_FRAMES, MAX_PREROLL_SECS,
 };
 #[cfg(feature = "ingest-esp32")]
 pub use ingest::{esp32::Esp32Config, Esp32Source};
@@ -1341,6 +1342,7 @@ pub struct ModuleDescriptor {
     pub id: &'static str,
     pub allowed_event_types: &'static [EventType],
     pub requested_capabilities: &'static [ModuleCapability],
+    pub supported_backends: &'static [InferenceBackend],
 }
 
 /// Runtime allowlist enforcement: the kernel MUST verify that a module is authorized
@@ -1357,6 +1359,21 @@ pub fn enforce_module_event_allowlist(
         ));
     }
     Ok(())
+}
+
+/// Select an inference backend for a module based on device capabilities.
+pub fn select_module_backend(
+    desc: &ModuleDescriptor,
+    selection: BackendSelection,
+    capabilities: &DeviceCapabilities,
+) -> Result<InferenceBackend> {
+    select_inference_backend(selection, capabilities, desc.supported_backends).map_err(|err| {
+        anyhow!(
+            "conformance: module {} cannot select backend: {}",
+            desc.id,
+            err
+        )
+    })
 }
 
 /// Trait for detection modules that process frames.
@@ -1377,26 +1394,55 @@ pub trait Module {
 pub struct ZoneCrossingModule {
     zone_id: String,
     emit_token: bool,
-    detector: StubDetector,
+    backend: InferenceBackend,
+    detector: DetectorBackend,
 }
 
 const ZONE_CROSSING_ALLOWED: &[EventType] = &[
     EventType::BoundaryCrossingObjectLarge,
     EventType::BoundaryCrossingObjectSmall,
 ];
+const ZONE_CROSSING_BACKENDS: &[InferenceBackend] =
+    &[InferenceBackend::Cpu, InferenceBackend::Stub];
 
 impl ZoneCrossingModule {
     pub fn new(zone_id: &str) -> Self {
-        Self {
+        Self::with_backend_selection(
+            zone_id,
+            BackendSelection::Require(InferenceBackend::Stub),
+            &DeviceCapabilities::stub_only(),
+        )
+        .expect("stub backend available")
+    }
+
+    pub fn with_backend_selection(
+        zone_id: &str,
+        selection: BackendSelection,
+        capabilities: &DeviceCapabilities,
+    ) -> Result<Self> {
+        let desc = ModuleDescriptor {
+            id: "zone_crossing",
+            allowed_event_types: ZONE_CROSSING_ALLOWED,
+            requested_capabilities: &[],
+            supported_backends: ZONE_CROSSING_BACKENDS,
+        };
+        let backend = select_module_backend(&desc, selection, capabilities)?;
+        let detector = DetectorBackend::for_backend(backend)?;
+        Ok(Self {
             zone_id: zone_id.to_string(),
             emit_token: false,
-            detector: StubDetector::new(),
-        }
+            backend,
+            detector,
+        })
     }
 
     pub fn with_tokens(mut self, enabled: bool) -> Self {
         self.emit_token = enabled;
         self
+    }
+
+    pub fn backend(&self) -> InferenceBackend {
+        self.backend
     }
 }
 
@@ -1406,6 +1452,7 @@ impl Module for ZoneCrossingModule {
             id: "zone_crossing",
             allowed_event_types: ZONE_CROSSING_ALLOWED,
             requested_capabilities: &[],
+            supported_backends: ZONE_CROSSING_BACKENDS,
         }
     }
 
@@ -1628,6 +1675,7 @@ mod tests {
             id: "test_module",
             allowed_event_types: &[EventType::BoundaryCrossingObjectLarge],
             requested_capabilities: &[],
+            supported_backends: &[InferenceBackend::Stub],
         };
         let cand = CandidateEvent {
             event_type: EventType::BoundaryCrossingObjectLarge,
@@ -1688,6 +1736,7 @@ mod tests {
             id: "test_module",
             allowed_event_types: &[EventType::BoundaryCrossingObjectLarge],
             requested_capabilities: &[],
+            supported_backends: &[InferenceBackend::Stub],
         };
         let bucket_start = 1_200u64;
         let cand = CandidateEvent {
@@ -1748,6 +1797,7 @@ mod tests {
             id: "test_module",
             allowed_event_types: &[],
             requested_capabilities: &[],
+            supported_backends: &[InferenceBackend::Stub],
         };
 
         let cand = CandidateEvent {
@@ -1826,6 +1876,7 @@ mod tests {
             id: "test_module",
             allowed_event_types: &[],
             requested_capabilities: &[],
+            supported_backends: &[InferenceBackend::Stub],
         };
         let cand = CandidateEvent {
             event_type: EventType::BoundaryCrossingObjectLarge,
@@ -1871,6 +1922,7 @@ mod tests {
             id: "test_module",
             allowed_event_types: &[EventType::BoundaryCrossingObjectLarge],
             requested_capabilities: &[],
+            supported_backends: &[InferenceBackend::Stub],
         };
         let cand = CandidateEvent {
             event_type: EventType::BoundaryCrossingObjectLarge,
@@ -1922,6 +1974,7 @@ mod tests {
             id: "test_module",
             allowed_event_types: &[EventType::BoundaryCrossingObjectLarge],
             requested_capabilities: &[],
+            supported_backends: &[InferenceBackend::Stub],
         };
         let cand = CandidateEvent {
             event_type: EventType::BoundaryCrossingObjectLarge,

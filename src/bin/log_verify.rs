@@ -175,8 +175,9 @@ mod tests {
     use ed25519_dalek::{Signer, SigningKey};
     use std::path::PathBuf;
     use witness_kernel::{
-        Approval, BreakGlass, CandidateEvent, EventType, Kernel, KernelConfig, ModuleDescriptor,
-        QuorumPolicy, TimeBucket, TrusteeEntry, TrusteeId, UnlockRequest, ZonePolicy,
+        Approval, BreakGlass, CandidateEvent, EventType, InferenceBackend, Kernel, KernelConfig,
+        ModuleDescriptor, QuorumPolicy, TimeBucket, TrusteeEntry, TrusteeId, UnlockRequest,
+        ZonePolicy,
     };
 
     fn temp_db_path() -> PathBuf {
@@ -191,6 +192,7 @@ mod tests {
             id: "test-module",
             allowed_event_types: &[EventType::BoundaryCrossingObjectLarge],
             requested_capabilities: &[],
+            supported_backends: &[InferenceBackend::Stub],
         };
         let cand = CandidateEvent {
             event_type: EventType::BoundaryCrossingObjectLarge,

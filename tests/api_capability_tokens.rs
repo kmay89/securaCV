@@ -5,7 +5,8 @@ use std::net::TcpStream;
 use tempfile::tempdir;
 use witness_kernel::api::{ApiConfig, ApiHandle, ApiServer};
 use witness_kernel::{
-    CandidateEvent, EventType, Kernel, KernelConfig, ModuleDescriptor, TimeBucket, ZonePolicy,
+    CandidateEvent, EventType, InferenceBackend, Kernel, KernelConfig, ModuleDescriptor,
+    TimeBucket, ZonePolicy,
 };
 
 fn add_test_event(kernel: &mut Kernel, cfg: &KernelConfig) -> Result<()> {
@@ -13,6 +14,7 @@ fn add_test_event(kernel: &mut Kernel, cfg: &KernelConfig) -> Result<()> {
         id: "test_module",
         allowed_event_types: &[EventType::BoundaryCrossingObjectLarge],
         requested_capabilities: &[],
+        supported_backends: &[InferenceBackend::Stub],
     };
     let cand = CandidateEvent {
         event_type: EventType::BoundaryCrossingObjectLarge,
