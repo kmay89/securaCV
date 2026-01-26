@@ -121,7 +121,33 @@ From the repository root (or wherever your verification script lives), run:
 
 ---
 
-## 7) Troubleshooting (Common Issues)
+## 7) V1 Verification Checklist
+
+Use this checklist to validate the v1 Home Assistant + Frigate MQTT integration end-to-end. It combines the operational walkthrough above with the hands-on checklist in `integrations/ha_frigate_mqtt/TASKS.md`.
+
+- [ ] **Prerequisites confirmed**
+  - [ ] Docker Engine + Docker Compose v2 installed (`docker --version`, `docker compose version`).
+  - [ ] Ports 1883 (MQTT), 5000 (Frigate UI), and 8123 (Home Assistant) are free.
+  - [ ] `integrations/ha_frigate_mqtt` contains `docker-compose.yml`, `frigate.yml`, `mosquitto.conf`, `verify_pipeline.sh`.
+- [ ] **Bring-up and service health**
+  - [ ] `docker compose up -d` succeeds from `integrations/ha_frigate_mqtt`.
+  - [ ] `docker compose ps` shows `mosquitto`, `frigate`, `homeassistant` running.
+  - [ ] `docker compose logs -f --tail=50` shows Mosquitto running, Frigate starting, HA initialized.
+- [ ] **Home Assistant UI validation**
+  - [ ] MQTT integration added in **Settings → Devices & Services** with broker host/port.
+  - [ ] (Optional) Frigate integration added pointing at `http://frigate:5000` or `http://localhost:5000`.
+  - [ ] Developer Tools → MQTT shows `frigate/events` publishing detections.
+  - [ ] If PWK MQTT publishing is enabled, `witness/#` and `homeassistant/#` show discovery/state messages.
+- [ ] **Pipeline verification**
+  - [ ] `./verify_pipeline.sh` exits `0` and reports MQTT reachable, Frigate publishing, HA receiving events.
+  - [ ] Topics observed include `frigate/events`, `frigate/<camera_name>/events`, `frigate/<camera_name>/snapshot`.
+- [ ] **Cleanup (if needed)**
+  - [ ] `docker compose down` cleanly stops containers.
+  - [ ] `docker compose down -v` removes volumes for a clean reset.
+
+---
+
+## 8) Troubleshooting (Common Issues)
 
 1. **MQTT integration fails to connect in HA**
    - Verify the broker host/port and credentials match Frigate and PWK settings.
@@ -172,7 +198,7 @@ From the repository root (or wherever your verification script lives), run:
 
 ---
 
-## 8) Next Steps
+## 9) Next Steps
 
 - Review and align your configuration with the authoritative setup docs:
   - `docs/homeassistant_setup.md` (install + add-on config)
