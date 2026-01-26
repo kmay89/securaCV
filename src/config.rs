@@ -301,14 +301,15 @@ impl WitnessdConfig {
                 DEFAULT_ESP32_FPS,
             ),
         };
+        let detect_config = file.detect.unwrap_or_default();
         let detect = DetectSettings {
             backend: DetectBackendPreference::parse(
-                file.detect
-                    .as_ref()
-                    .and_then(|detect| detect.backend.as_deref())
+                detect_config
+                    .backend
+                    .as_deref()
                     .unwrap_or(DEFAULT_DETECT_BACKEND),
             )?,
-            tract_model: file.detect.and_then(|detect| detect.tract_model),
+            tract_model: detect_config.tract_model,
         };
         let zones = ZoneSettings {
             module_zone_id: file
@@ -662,7 +663,7 @@ fn split_csv(value: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::read_config_file;
+    use super::*;
     use serde::Deserialize;
     use tempfile::tempdir;
 
@@ -718,6 +719,39 @@ mod tests {
                 name: "gamma".to_string(),
                 count: 11,
             },
+        );
+    }
+
+    #[test]
+    fn detect_config_defaults_to_auto() {
+        let config =
+            WitnessdConfig::from_file(WitnessdConfigFile::default()).expect("config should parse");
+        assert_eq!(config.detect.backend, DetectBackendPreference::Auto);
+        assert!(config.detect.tract_model.is_none());
+    }
+
+    #[test]
+    fn detect_config_accepts_tract_model() {
+        let mut file = WitnessdConfigFile::default();
+        file.detect = Some(DetectConfigFile {
+            backend: Some("tract".to_string()),
+            tract_model: Some(PathBuf::from("/tmp/model.onnx")),
+        });
+        file.ingest = Some(IngestConfigFile {
+            backend: Some("rtsp".to_string()),
+        });
+        file.rtsp = Some(RtspConfigFile {
+            url: Some("rtsp://example.com/stream".to_string()),
+            target_fps: Some(DEFAULT_RTSP_FPS),
+            width: Some(DEFAULT_RTSP_WIDTH),
+            height: Some(DEFAULT_RTSP_HEIGHT),
+            backend: Some(DEFAULT_RTSP_BACKEND.to_string()),
+        });
+        let config = WitnessdConfig::from_file(file).expect("config should parse");
+        assert_eq!(config.detect.backend, DetectBackendPreference::Tract);
+        assert_eq!(
+            config.detect.tract_model,
+            Some(PathBuf::from("/tmp/model.onnx"))
         );
     }
 

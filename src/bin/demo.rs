@@ -150,7 +150,7 @@ fn main() -> Result<()> {
             DetectorBackendChoice::Auto => BackendSelection::Auto,
             DetectorBackendChoice::Stub => BackendSelection::Require(InferenceBackend::Stub),
             DetectorBackendChoice::Cpu => BackendSelection::Require(InferenceBackend::Cpu),
-            DetectorBackendChoice::Tract => BackendSelection::Require(InferenceBackend::Cpu),
+            DetectorBackendChoice::Tract => BackendSelection::Require(InferenceBackend::Tract),
         };
         let mut module = ZoneCrossingModule::with_backend_selection(
             DEFAULT_ZONE_ID,

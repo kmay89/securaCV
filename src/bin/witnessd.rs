@@ -113,7 +113,7 @@ fn main() -> Result<()> {
             DetectBackendPreference::Auto => BackendSelection::Auto,
             DetectBackendPreference::Stub => BackendSelection::Require(InferenceBackend::Stub),
             DetectBackendPreference::Cpu => BackendSelection::Require(InferenceBackend::Cpu),
-            DetectBackendPreference::Tract => BackendSelection::Require(InferenceBackend::Cpu),
+            DetectBackendPreference::Tract => BackendSelection::Require(InferenceBackend::Tract),
         };
         let module = ZoneCrossingModule::with_backend_selection(
             &config.zones.module_zone_id,
@@ -499,6 +499,7 @@ fn register_tract_backend(
     }
 }
 
+#[cfg(feature = "backend-tract")]
 fn tract_input_dimensions(config: &witness_kernel::config::WitnessdConfig) -> Result<(u32, u32)> {
     match config.ingest.backend {
         witness_kernel::config::IngestBackend::Rtsp => {
