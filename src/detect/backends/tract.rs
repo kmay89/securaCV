@@ -169,9 +169,11 @@ impl TractBackend {
                 continue;
             }
             let class_id = chunk[5].round() as i64;
-            if let Some((x, y, w, h)) =
-                self.normalize_box([chunk[0], chunk[1], chunk[2], chunk[3]], frame_width, frame_height)?
-            {
+            if let Some((x, y, w, h)) = self.normalize_box(
+                [chunk[0], chunk[1], chunk[2], chunk[3]],
+                frame_width,
+                frame_height,
+            )? {
                 detections.push(Detection {
                     x,
                     y,
@@ -382,10 +384,7 @@ impl TractBackend {
     }
 
     fn size_class_for(detections: &[Detection]) -> SizeClass {
-        let max_area = detections
-            .iter()
-            .map(|d| d.w * d.h)
-            .fold(0.0_f32, f32::max);
+        let max_area = detections.iter().map(|d| d.w * d.h).fold(0.0_f32, f32::max);
         if max_area == 0.0 {
             SizeClass::Unknown
         } else if max_area >= LARGE_AREA_THRESHOLD {
