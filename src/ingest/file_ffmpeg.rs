@@ -28,8 +28,8 @@ pub(crate) struct FfmpegFileSource {
 impl FfmpegFileSource {
     pub(crate) fn new(config: FileConfig) -> Result<Self> {
         ffmpeg::init().context("initialize ffmpeg")?;
-        let mut input =
-            ffmpeg::format::input(&config.path).context("open file input with ffmpeg")?;
+        let mut input = ffmpeg::format::input(&config.path)
+            .with_context(|| format!("failed to open file input '{}' with ffmpeg", config.path))?;
         let input_stream = input
             .streams()
             .best(ffmpeg::media::Type::Video)
@@ -73,7 +73,7 @@ impl FfmpegFileSource {
     }
 
     pub(crate) fn next_frame(&mut self) -> Result<RawFrame> {
-        self.poll_timeout();
+        self.poll_timeout()?;
 
         let mut decoded = ffmpeg::frame::Video::empty();
         let mut rgb_frame = ffmpeg::frame::Video::empty();
@@ -151,12 +151,14 @@ impl FfmpegFileSource {
         Duration::from_millis(base_ms.max(2_000) as u64)
     }
 
-    fn poll_timeout(&mut self) {
+    fn poll_timeout(&mut self) -> Result<()> {
         if let Some(last_frame_at) = self.last_frame_at {
             if last_frame_at.elapsed() > self.frame_timeout() {
                 self.last_error = Some("file ingestion stalled".to_string());
+                anyhow::bail!("file ingestion stalled");
             }
         }
+        Ok(())
     }
 }
 
