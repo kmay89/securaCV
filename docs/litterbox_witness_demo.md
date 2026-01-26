@@ -217,6 +217,17 @@ See:
 - `examples/firmware/esp32c3_grove_vision_ai_v2_litterbox/esp32c3_grove_vision_ai_v2_litterbox.ino`
 - `examples/firmware/grove_vision_ai_v2_litterbox_firmware/grove_vision_ai_v2_litterbox_firmware.ino`
 
+**Wi‑Fi credentials:** before flashing the ESP32C3 bridge, copy
+`examples/firmware/esp32c3_grove_vision_ai_v2_litterbox/secrets.example.h` to
+`secrets.h` and fill in your SSID/password.
+
+**AT response format:** the Grove Vision AI V2 firmware must answer `AT+INFER?`
+with a single line like `cat:<score>` (for example, `cat:0.82`). The ESP32C3
+bridge parses this in `vision_get_cat_presence` in
+`examples/firmware/esp32c3_grove_vision_ai_v2_litterbox/esp32c3_grove_vision_ai_v2_litterbox.ino`.
+If your Grove firmware emits a different string, update that parser—do not add
+new event fields.
+
 ## Arduino IDE 1.8.19 setup (boards + libraries)
 
 Use Arduino IDE **1.8.19** for both sketches. Keep the serial output clean on the
@@ -264,11 +275,12 @@ Vision AI V2 module. Do **not** add extra serial prints to the ESP32C3 bridge,
 since its output must remain JSON-only for conformance.
 
 **Time sync requirement (ESP32C3):** the bridge firmware requires Wi‑Fi to reach
-an NTP server and set the system clock **before it will emit events**. If NTP
-fails or Wi‑Fi is unavailable, you will see **no events**. Troubleshooting options
-that stay within the event contract include: setting the time bucket locally in
-firmware, or sourcing time from the host serial bridge and deriving buckets there
-—without adding any new metadata fields.
+an NTP server and set the system clock **before it will emit events**—no events
+are emitted until sync completes. If NTP fails or Wi‑Fi is unavailable, you will
+see **no events**. Troubleshooting options that stay within the event contract
+include: setting the time bucket locally in firmware, or sourcing time from the
+host serial bridge and deriving buckets there—without adding any new metadata
+fields.
 
 ### Wiring
 
