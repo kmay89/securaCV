@@ -17,10 +17,10 @@
 #include <WiFi.h>
 #include <time.h>
 
-// ====== USER CONFIG ======
-static const char* WIFI_SSID = "YOUR_WIFI";
-static const char* WIFI_PASS = "YOUR_PASS";
+// WiFi credentials live in secrets.h (copy secrets.example.h -> secrets.h).
+#include "secrets.h"
 
+// ====== USER CONFIG ======
 static const char* ZONE_ID = "zone:litterbox";
 static const char* EVENT_TYPE = "boundary_crossing_object_small";
 static const uint32_t BUCKET_SIZE_S = 600;  // 10 minutes (conformance baseline)
