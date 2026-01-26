@@ -357,3 +357,72 @@ fn blob64(row: &Row<'_>, idx: usize) -> Result<[u8; 64]> {
     out.copy_from_slice(&bytes);
     Ok(out)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ed25519_dalek::{Signer, SigningKey};
+
+    #[test]
+    fn verify_checkpoint_signature_accepts_genesis() -> Result<()> {
+        let signing_key = SigningKey::from_bytes(&[7u8; 32]);
+        let verifying_key = signing_key.verifying_key();
+        let checkpoint = CheckpointInfo {
+            chain_head_hash: None,
+            signature: None,
+            cutoff_event_id: None,
+        };
+
+        verify_checkpoint_signature(&verifying_key, &checkpoint)?;
+        Ok(())
+    }
+
+    #[test]
+    fn verify_checkpoint_signature_accepts_valid_signature() -> Result<()> {
+        let signing_key = SigningKey::from_bytes(&[9u8; 32]);
+        let verifying_key = signing_key.verifying_key();
+        let head = [1u8; 32];
+        let signature = signing_key.sign(&head).to_bytes();
+        let checkpoint = CheckpointInfo {
+            chain_head_hash: Some(head),
+            signature: Some(signature),
+            cutoff_event_id: Some(42),
+        };
+
+        verify_checkpoint_signature(&verifying_key, &checkpoint)?;
+        Ok(())
+    }
+
+    #[test]
+    fn verify_checkpoint_signature_rejects_invalid_signature() -> Result<()> {
+        let signing_key = SigningKey::from_bytes(&[11u8; 32]);
+        let verifying_key = signing_key.verifying_key();
+        let head = [2u8; 32];
+        let mut signature = signing_key.sign(&head).to_bytes();
+        signature[0] ^= 0xff;
+        let checkpoint = CheckpointInfo {
+            chain_head_hash: Some(head),
+            signature: Some(signature),
+            cutoff_event_id: Some(7),
+        };
+
+        let result = verify_checkpoint_signature(&verifying_key, &checkpoint);
+        assert!(result.is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn verify_checkpoint_signature_rejects_partial_checkpoint() -> Result<()> {
+        let signing_key = SigningKey::from_bytes(&[13u8; 32]);
+        let verifying_key = signing_key.verifying_key();
+        let checkpoint = CheckpointInfo {
+            chain_head_hash: Some([3u8; 32]),
+            signature: None,
+            cutoff_event_id: Some(1),
+        };
+
+        let result = verify_checkpoint_signature(&verifying_key, &checkpoint);
+        assert!(result.is_err());
+        Ok(())
+    }
+}
