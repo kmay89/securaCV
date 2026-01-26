@@ -111,7 +111,7 @@ with `sqlite3` (table `conformance_alarms`) or via the `log_verify` warnings.
 
 ## Verify Log Integrity
 
-Run `log_verify` against the demo DB. It defaults to `witness.db`, but this uses
+Run `log_verify` against the demo DB. It defaults to `witness.db`, but uses
 `WITNESS_DB_PATH` if you set it:
 
 ```bash
@@ -137,7 +137,8 @@ OK: all chains verified.
 
 Troubleshooting: if you see an error like `device public key not found in database
 (provide --public-key or --public-key-file if the database has no key)`, pass the
-device public key explicitly (e.g., `--public-key <hex>` or `--public-key-file <path>`).
+device public key explicitly (for example, `--public-key <hex>` or
+`--public-key-file <path>`).
 
 ## Disconnect/Reconnect
 
