@@ -33,6 +33,7 @@ gstreamer-video = { version = "0.23", optional = true }
 ffmpeg-next = { version = "6.0", optional = true }
 v4l = { version = "0.14", optional = true }
 ouroboros = { version = "0.18", optional = true }
+tract-onnx = { version = "0.21", optional = true }
 
 [dev-dependencies]
 trybuild = "1.0.89"
@@ -49,6 +50,7 @@ rtsp-ffmpeg = ["ffmpeg-next"]
 ingest-esp32 = ["image", "ureq", "url"]
 ingest-v4l2 = ["v4l", "ouroboros"]
 stub-frame-source = []
+backend-tract = ["tract-onnx"]
 
 [[bin]]
 name = "witnessd"
