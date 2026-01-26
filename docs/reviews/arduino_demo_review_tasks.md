@@ -26,7 +26,9 @@ Arduino/XIAO litterbox demo review.
      creating an unlock request and verifying the resulting receipts.
 5. **Document database storage expectations for the demo**
    - Note the default DB path, how to override it, and where to look for receipts
-     after ingestion.
+     after ingestion. Covered in
+     `docs/seeed_xiao_vision_ai_setup.md` (see "Database path defaults and
+     receipts").
 6. **Add firmware configuration prerequisites**
    - Document required Wi‑Fi/NTP setup, expected AT response format, and the
      minimal changes needed if the Grove Vision AI V2 firmware output differs.

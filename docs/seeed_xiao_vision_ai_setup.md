@@ -69,6 +69,17 @@ Expected output:
 INFO  grove_vision2_ingest > Grove Vision 2 event appended
 ```
 
+### Database path defaults and receipts
+
+`grove_vision2_ingest` writes to `witness.db` by default. Override the location
+with either `--db-path <path>` or `WITNESS_DB_PATH=<path>` (the flag wins if both
+are set).
+
+Receipts are stored in the same SQLite database alongside sealed events. After
+ingestion, look in the `break_glass_receipts` and `export_receipts` tables (or
+use `log_verify`) to confirm receipt entries when a break-glass unlock or export
+occurs.
+
 Confirm a sealed event was written:
 
 ```bash
