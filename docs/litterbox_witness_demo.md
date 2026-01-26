@@ -140,6 +140,22 @@ Troubleshooting: if you see an error like `device public key not found in databa
 device public key explicitly (for example, `--public-key <hex>` or
 `--public-key-file <path>`).
 
+## Break-glass retrieval (overview)
+
+For the formal process and CLI details, see `spec/break_glass.md` and the
+`break_glass` CLI implementation (`src/break_glass/cli.rs`).
+
+Checklist:
+
+1. Set quorum policy.
+2. Create an unlock request.
+3. Collect approvals.
+4. Issue a token.
+5. Verify receipt.
+6. Unseal/export.
+
+Raw media access remains gated and auditable throughout this flow.
+
 ## Disconnect/Reconnect
 
 `grove_vision2_ingest` exits on stdin EOF and does not attempt to reconnect to
