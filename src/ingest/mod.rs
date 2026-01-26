@@ -24,6 +24,7 @@
 #[cfg(feature = "ingest-esp32")]
 pub mod esp32;
 mod features;
+mod normalize;
 pub mod file;
 #[cfg(feature = "ingest-file-ffmpeg")]
 pub(crate) mod file_ffmpeg;

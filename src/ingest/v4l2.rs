@@ -14,11 +14,11 @@
 //! - Forward raw frames over network
 //! - Retain frames beyond handoff to FrameBuffer
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use ouroboros::self_referencing;
 use std::time::{Duration, Instant};
 
-use super::compute_features_hash;
+use super::{compute_features_hash, normalize::normalize_to_rgb, normalize::PixelFormat};
 use crate::frame::RawFrame;
 use crate::TimeBucket;
 
@@ -219,6 +219,7 @@ struct DeviceV4l2Source {
     last_error: Option<String>,
     active_width: u32,
     active_height: u32,
+    active_format: PixelFormat,
 }
 
 #[self_referencing]
@@ -234,6 +235,7 @@ impl DeviceV4l2Source {
         Ok(Self {
             active_width: config.width,
             active_height: config.height,
+            active_format: PixelFormat::Rgb24,
             config,
             state: None,
             frame_count: 0,
@@ -302,6 +304,15 @@ impl DeviceV4l2Source {
 
         self.active_width = format.width;
         self.active_height = format.height;
+        self.active_format = match format.fourcc {
+            fourcc if fourcc == v4l::FourCC::new(b"RGB3") => PixelFormat::Rgb24,
+            fourcc if fourcc == v4l::FourCC::new(b"NV12") => PixelFormat::Nv12,
+            other => {
+                let fourcc = String::from_utf8_lossy(&other.repr).to_string();
+                self.last_error = Some(format!("unsupported v4l2 pixel format {}", fourcc));
+                return Err(anyhow!("unsupported v4l2 pixel format {}", fourcc));
+            }
+        };
         self.last_error = None;
 
         let state = DeviceV4l2StateBuilder {
@@ -343,10 +354,15 @@ impl DeviceV4l2Source {
         self.last_frame_at = Some(Instant::now());
 
         let timestamp_bucket = TimeBucket::now_10min()?;
-        let features_hash = compute_features_hash(buf, self.frame_count);
+        let rgb = normalize_to_rgb(buf, self.active_width, self.active_height, self.active_format)
+            .map_err(|err| {
+                self.last_error = Some(err.to_string());
+                err
+            })?;
+        let features_hash = compute_features_hash(&rgb, self.frame_count);
 
         Ok(RawFrame::new(
-            buf.to_vec(),
+            rgb,
             self.active_width,
             self.active_height,
             timestamp_bucket,
