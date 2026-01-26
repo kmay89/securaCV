@@ -18,6 +18,9 @@ Arduino/XIAO litterbox demo review.
 3. **Add cryptographic log verification steps for the Arduino demo DB**
    - Include explicit `log_verify` steps tailored to the litterbox demo path,
      with expected outcomes and troubleshooting notes.
+   - Covered in `docs/litterbox_witness_demo.md` and
+     `docs/seeed_xiao_vision_ai_setup.md` (demo DB paths, expected output, and
+     troubleshooting guidance).
 4. **Clarify break-glass unlock and export retrieval flow for the demo**
    - Link to the break-glass docs with a short, Arduino-specific checklist for
      creating an unlock request and verifying the resulting receipts.
