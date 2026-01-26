@@ -40,6 +40,17 @@ This guide assumes you will keep the same MQTT broker and topic values across Fr
 
 For exact configuration fields (topics, credentials, mode, device key, and MQTT publish settings), use the reference in `docs/homeassistant_setup.md` and `docs/frigate_integration.md` to avoid configuration drift.
 
+### TLS Configuration (Optional)
+
+If your MQTT broker requires TLS, enable TLS for the bridges and provide certificates as needed:
+
+| Environment Variable | Description |
+|---|---|
+| `MQTT_USE_TLS` | Enable TLS (required for `mqtts://` brokers) |
+| `MQTT_TLS_CA_PATH` | Path to PEM-encoded CA certificate |
+| `MQTT_TLS_CLIENT_CERT_PATH` | Path to PEM-encoded client certificate (mutual TLS) |
+| `MQTT_TLS_CLIENT_KEY_PATH` | Path to PEM-encoded client private key (mutual TLS) |
+
 ---
 
 ## 4) Quickstart Commands

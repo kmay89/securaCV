@@ -161,15 +161,24 @@ The frigate_bridge is classified as an **external tool** per `kernel/architectur
 | `mqtt_publish.topic_prefix` | `witness` | Prefix for state topics |
 | `mqtt_publish.discovery_prefix` | `homeassistant` | HA discovery prefix |
 
-**MQTT protocol note:** The current bridges use MQTT v3.1.1 over an unencrypted TCP connection; TLS is not yet supported.
+### MQTT TLS Options (Bridges)
+
+Both `frigate_bridge` (subscribe) and `event_mqtt_bridge` (publish) support **MQTT v5** and TLS.
+Use a `mqtts://` broker address or set `MQTT_USE_TLS=1` to enable TLS, then configure certificates
+as needed:
+
+| Environment Variable | Description |
+|---|---|
+| `MQTT_USE_TLS` | Enable TLS (required for `mqtts://` brokers) |
+| `MQTT_TLS_CA_PATH` | Path to PEM-encoded CA certificate |
+| `MQTT_TLS_CLIENT_CERT_PATH` | Path to PEM-encoded client certificate (mutual TLS) |
+| `MQTT_TLS_CLIENT_KEY_PATH` | Path to PEM-encoded client private key (mutual TLS) |
 
 When `mqtt_publish.enabled` is `true`, PWK will:
 1. Publish HA MQTT Discovery configs for automatic entity creation
 2. Create sensors for each zone (event count, motion state)
 3. Publish availability status with LWT (Last Will Testament)
 4. Use QoS 1 for reliable message delivery
-
-**Follow-up task (if TLS or MQTT v5 is required):** Replace the custom MQTT implementation in the bridges with a standard client library that supports TLS and MQTT v5, while preserving existing privacy guarantees (i.e., do not introduce any new privacy metadata).
 
 ### Standalone CLI Usage
 
@@ -191,6 +200,15 @@ cargo run --bin frigate_bridge -- \
   --mqtt-password your_password \
   --frigate-topic frigate/events \
   --db-path witness.db
+
+# TLS example (mqtts:// broker with custom CA)
+cargo run --bin frigate_bridge -- \
+  --allow-remote-mqtt \
+  --mqtt-broker-addr mqtts://core-mosquitto:8883 \
+  --mqtt-use-tls \
+  --mqtt-tls-ca-path /config/mqtt/ca.pem \
+  --frigate-topic frigate/events \
+  --db-path witness.db
 ```
 
 ### Publish Events to HA with MQTT Discovery
@@ -209,6 +227,17 @@ cargo run --bin event_mqtt_bridge -- \
   --mqtt-broker-addr core-mosquitto:1883 \
   --ha-discovery-prefix homeassistant \
   --mqtt-topic-prefix witness \
+  --api-token-path /config/api_token
+
+# TLS example (mqtts:// broker with mutual TLS)
+cargo run --bin event_mqtt_bridge -- \
+  --daemon \
+  --allow-remote-mqtt \
+  --mqtt-broker-addr mqtts://core-mosquitto:8883 \
+  --mqtt-use-tls \
+  --mqtt-tls-ca-path /config/mqtt/ca.pem \
+  --mqtt-tls-client-cert-path /config/mqtt/client.crt \
+  --mqtt-tls-client-key-path /config/mqtt/client.key \
   --api-token-path /config/api_token
 ```
 

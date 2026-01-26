@@ -12,10 +12,11 @@
 
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
+use rumqttc::v5::{mqttbytes::QoS, Client, Connection, Event, Incoming, MqttOptions};
+use rumqttc::Transport;
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::io::{Read, Write};
-use std::net::TcpStream;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use witness_kernel::{
@@ -52,6 +53,22 @@ struct Args {
     /// MQTT password for authentication.
     #[arg(long, env = "MQTT_PASSWORD")]
     mqtt_password: Option<String>,
+
+    /// Enable TLS for MQTT (required for mqtts:// brokers).
+    #[arg(long, env = "MQTT_USE_TLS")]
+    mqtt_use_tls: bool,
+
+    /// Path to a PEM-encoded CA certificate to trust for MQTT TLS.
+    #[arg(long, env = "MQTT_TLS_CA_PATH")]
+    mqtt_tls_ca_path: Option<PathBuf>,
+
+    /// Path to a PEM-encoded client certificate for MQTT TLS.
+    #[arg(long, env = "MQTT_TLS_CLIENT_CERT_PATH")]
+    mqtt_tls_client_cert_path: Option<PathBuf>,
+
+    /// Path to a PEM-encoded client private key for MQTT TLS.
+    #[arg(long, env = "MQTT_TLS_CLIENT_KEY_PATH")]
+    mqtt_tls_client_key_path: Option<PathBuf>,
 
     /// Frigate MQTT topic to subscribe to.
     #[arg(long, env = "FRIGATE_MQTT_TOPIC", default_value = "frigate/events")]
@@ -192,9 +209,16 @@ fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let args = Args::parse();
 
+    let mqtt_endpoint = parse_mqtt_endpoint(&args.mqtt_broker_addr, args.mqtt_use_tls)?;
+    let tls_materials = load_tls_materials(
+        args.mqtt_tls_ca_path.as_ref(),
+        args.mqtt_tls_client_cert_path.as_ref(),
+        args.mqtt_tls_client_key_path.as_ref(),
+    )?;
+
     // Validate broker address
     if !args.allow_remote_mqtt {
-        validate_loopback_addr(&args.mqtt_broker_addr)?;
+        validate_loopback_addr(&mqtt_endpoint, &args.mqtt_broker_addr)?;
     } else {
         log::warn!("Remote MQTT enabled - ensure broker is in a trusted network");
     }
@@ -229,7 +253,12 @@ fn main() -> Result<()> {
         });
 
     log::info!("Frigate bridge starting");
-    log::info!("  MQTT broker: {}", args.mqtt_broker_addr);
+    log::info!(
+        "  MQTT broker: {}:{} (TLS: {})",
+        mqtt_endpoint.host,
+        mqtt_endpoint.port,
+        mqtt_endpoint.use_tls
+    );
     log::info!("  Frigate topic: {}", args.frigate_topic);
     log::info!("  Database: {}", args.db_path);
     log::info!("  Min confidence: {}", args.min_confidence);
@@ -271,53 +300,64 @@ fn main() -> Result<()> {
     };
 
     // Connect to MQTT and subscribe
-    let mut stream = connect_mqtt(
-        &args.mqtt_broker_addr,
-        &args.mqtt_client_id,
-        args.mqtt_username.as_deref(),
-        args.mqtt_password.as_deref(),
-    )?;
-    subscribe_mqtt(&mut stream, &args.frigate_topic)?;
-    log::info!("Subscribed to {}", args.frigate_topic);
-
     // Event deduplication (by camera+label within same bucket)
     let mut recent_events: HashMap<String, u64> = HashMap::new();
 
     // Main loop - process MQTT messages
     loop {
-        match read_mqtt_publish(&mut stream) {
-            Ok(Some((topic, payload))) => {
-                if let Err(e) = process_message(
-                    &topic,
-                    &payload,
-                    &mut kernel,
-                    &module_desc,
-                    &cfg,
-                    &allowed_cameras,
-                    &allowed_labels,
-                    args.min_confidence,
-                    args.bucket_size_secs,
-                    &mut recent_events,
-                ) {
-                    log::warn!("Failed to process message: {}", e);
+        let (client, mut connection) = connect_mqtt(
+            &mqtt_endpoint,
+            &tls_materials,
+            &args.mqtt_client_id,
+            args.mqtt_username.as_deref(),
+            args.mqtt_password.as_deref(),
+        )?;
+        client.subscribe(&args.frigate_topic, QoS::AtMostOnce)?;
+        log::info!("Subscribed to {}", args.frigate_topic);
+
+        let mut should_reconnect = false;
+        for event in connection.iter() {
+            match event {
+                Ok(Event::Incoming(Incoming::Publish(publish))) => {
+                    let topic = match std::str::from_utf8(&publish.topic) {
+                        Ok(topic) => topic.to_string(),
+                        Err(e) => {
+                            log::warn!("Skipping publish with invalid topic: {}", e);
+                            continue;
+                        }
+                    };
+                    let payload = publish.payload.to_vec();
+                    if let Err(e) = process_message(
+                        &topic,
+                        &payload,
+                        &mut kernel,
+                        &module_desc,
+                        &cfg,
+                        &allowed_cameras,
+                        &allowed_labels,
+                        args.min_confidence,
+                        args.bucket_size_secs,
+                        &mut recent_events,
+                    ) {
+                        log::warn!("Failed to process message: {}", e);
+                    }
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    log::error!("MQTT connection error: {}. Reconnecting...", e);
+                    should_reconnect = true;
+                    break;
                 }
             }
-            Ok(None) => {
-                // No message, sleep briefly
-                std::thread::sleep(Duration::from_millis(100));
-            }
-            Err(e) => {
-                log::error!("MQTT read error: {}. Reconnecting...", e);
-                std::thread::sleep(Duration::from_secs(5));
-                stream = connect_mqtt(
-                    &args.mqtt_broker_addr,
-                    &args.mqtt_client_id,
-                    args.mqtt_username.as_deref(),
-                    args.mqtt_password.as_deref(),
-                )?;
-                subscribe_mqtt(&mut stream, &args.frigate_topic)?;
-            }
         }
+
+        if should_reconnect {
+            std::thread::sleep(Duration::from_secs(5));
+            continue;
+        }
+
+        log::warn!("MQTT connection closed. Reconnecting...");
+        std::thread::sleep(Duration::from_secs(5));
     }
 }
 
@@ -528,184 +568,155 @@ fn sanitize_zone_name(name: &str) -> String {
         .collect()
 }
 
-fn validate_loopback_addr(addr: &str) -> Result<()> {
-    let addr = addr.strip_prefix("mqtt://").unwrap_or(addr);
-    if let Some((host, _)) = addr.rsplit_once(':') {
-        if host == "localhost" || host == "127.0.0.1" || host == "::1" {
-            return Ok(());
+#[derive(Clone, Debug)]
+struct MqttEndpoint {
+    host: String,
+    port: u16,
+    use_tls: bool,
+}
+
+#[derive(Clone, Debug, Default)]
+struct TlsMaterials {
+    ca: Option<Vec<u8>>,
+    client_auth: Option<(Vec<u8>, Vec<u8>)>,
+}
+
+fn parse_mqtt_endpoint(addr: &str, tls_override: bool) -> Result<MqttEndpoint> {
+    let mut use_tls = tls_override;
+    let mut remainder = addr.trim();
+
+    if let Some((scheme, rest)) = remainder.split_once("://") {
+        match scheme {
+            "mqtt" | "tcp" => {}
+            "mqtts" | "ssl" => use_tls = true,
+            other => return Err(anyhow!("unsupported MQTT scheme: {}", other)),
         }
-        if let Ok(ip) = host.parse::<std::net::IpAddr>() {
-            if ip.is_loopback() {
-                return Ok(());
-            }
+        remainder = rest;
+    }
+
+    let (host, port) = split_host_port(remainder)?;
+    Ok(MqttEndpoint {
+        host,
+        port,
+        use_tls,
+    })
+}
+
+fn split_host_port(addr: &str) -> Result<(String, u16)> {
+    if let Some(rest) = addr.strip_prefix('[') {
+        let (host, rest) = rest
+            .split_once(']')
+            .ok_or_else(|| anyhow!("invalid MQTT address: {}", addr))?;
+        let port = rest
+            .strip_prefix(':')
+            .ok_or_else(|| anyhow!("missing MQTT port in {}", addr))?;
+        let port: u16 = port.parse().context("invalid MQTT port")?;
+        return Ok((host.to_string(), port));
+    }
+
+    let (host, port) = addr
+        .rsplit_once(':')
+        .ok_or_else(|| anyhow!("missing MQTT port in {}", addr))?;
+    let port: u16 = port.parse().context("invalid MQTT port")?;
+    Ok((host.to_string(), port))
+}
+
+fn validate_loopback_addr(endpoint: &MqttEndpoint, original: &str) -> Result<()> {
+    let host = endpoint.host.as_str();
+    if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+        return Ok(());
+    }
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        if ip.is_loopback() {
+            return Ok(());
         }
     }
     Err(anyhow!(
         "MQTT broker must be loopback for security: {}",
-        addr
+        original
     ))
 }
 
+fn load_tls_materials(
+    ca_path: Option<&PathBuf>,
+    client_cert_path: Option<&PathBuf>,
+    client_key_path: Option<&PathBuf>,
+) -> Result<TlsMaterials> {
+    let ca = match ca_path {
+        Some(path) => Some(
+            std::fs::read(path)
+                .with_context(|| format!("failed to read MQTT TLS CA {}", path.display()))?,
+        ),
+        None => None,
+    };
+
+    let client_auth = match (client_cert_path, client_key_path) {
+        (Some(cert_path), Some(key_path)) => {
+            let cert = std::fs::read(cert_path).with_context(|| {
+                format!(
+                    "failed to read MQTT TLS client cert {}",
+                    cert_path.display()
+                )
+            })?;
+            let key = std::fs::read(key_path).with_context(|| {
+                format!(
+                    "failed to read MQTT TLS client key {}",
+                    key_path.display()
+                )
+            })?;
+            Some((cert, key))
+        }
+        (None, None) => None,
+        _ => {
+            return Err(anyhow!(
+                "MQTT TLS client cert and key must be provided together"
+            ))
+        }
+    };
+
+    Ok(TlsMaterials { ca, client_auth })
+}
+
+fn build_transport(endpoint: &MqttEndpoint, tls: &TlsMaterials) -> Result<Transport> {
+    if !endpoint.use_tls {
+        if tls.ca.is_some() || tls.client_auth.is_some() {
+            return Err(anyhow!(
+                "MQTT TLS materials provided but TLS is disabled (use --mqtt-use-tls or mqtts://)"
+            ));
+        }
+        return Ok(Transport::tcp());
+    }
+
+    if tls.ca.is_none() && tls.client_auth.is_none() {
+        return Ok(Transport::tls_with_default_config());
+    }
+
+    let ca = tls.ca.clone().ok_or_else(|| {
+        anyhow!("MQTT TLS CA certificate is required when providing client certificates")
+    })?;
+    Ok(Transport::tls(ca, tls.client_auth.clone(), None))
+}
+
 fn connect_mqtt(
-    addr: &str,
+    endpoint: &MqttEndpoint,
+    tls: &TlsMaterials,
     client_id: &str,
     username: Option<&str>,
     password: Option<&str>,
-) -> Result<TcpStream> {
-    let addr = addr.strip_prefix("mqtt://").unwrap_or(addr);
-    let mut stream = TcpStream::connect(addr).context("connect to MQTT broker")?;
-    stream.set_read_timeout(Some(Duration::from_secs(30)))?;
-
-    // MQTT CONNECT packet
-    let mut variable = Vec::new();
-    encode_string(&mut variable, "MQTT");
-    variable.push(0x04); // Protocol level (MQTT 3.1.1)
-
-    // Connect flags: clean session + username/password if provided
-    let mut connect_flags = 0x02u8; // Clean session
-    if username.is_some() {
-        connect_flags |= 0x80; // Username flag
-    }
-    if password.is_some() {
-        connect_flags |= 0x40; // Password flag
-    }
-    variable.push(connect_flags);
-    variable.extend_from_slice(&60u16.to_be_bytes()); // Keep alive (60s)
-
-    // Payload: client_id, then optional username/password
-    let mut payload = Vec::new();
-    encode_string(&mut payload, client_id);
+) -> Result<(Client, Connection)> {
+    let mut options = MqttOptions::new(client_id, &endpoint.host, endpoint.port);
+    options.set_keep_alive(Duration::from_secs(60));
+    options.set_clean_start(true);
     if let Some(user) = username {
-        encode_string(&mut payload, user);
+        options.set_credentials(user, password.unwrap_or_default());
     }
-    if let Some(pass) = password {
-        encode_string(&mut payload, pass);
-    }
+    options.set_transport(build_transport(endpoint, tls)?);
 
-    let remaining = variable.len() + payload.len();
-    let mut packet = vec![0x10];
-    encode_remaining_length(&mut packet, remaining);
-    packet.extend_from_slice(&variable);
-    packet.extend_from_slice(&payload);
-    stream.write_all(&packet)?;
-
-    // Read CONNACK
-    let mut connack = [0u8; 4];
-    stream.read_exact(&mut connack)?;
-    if connack[0] != 0x20 || connack[3] != 0x00 {
-        let reason = match connack[3] {
-            0x01 => "unacceptable protocol version",
-            0x02 => "identifier rejected",
-            0x03 => "server unavailable",
-            0x04 => "bad username or password",
-            0x05 => "not authorized",
-            _ => "unknown error",
-        };
-        return Err(anyhow!("MQTT connection rejected: {}", reason));
-    }
-
+    let (client, connection) = Client::new(options, 10);
     log::info!(
-        "Connected to MQTT broker (authenticated: {})",
+        "Connected to MQTT broker (TLS: {}, auth: {})",
+        endpoint.use_tls,
         username.is_some()
     );
-    Ok(stream)
-}
-
-fn subscribe_mqtt(stream: &mut TcpStream, topic: &str) -> Result<()> {
-    let mut variable = Vec::new();
-    variable.extend_from_slice(&1u16.to_be_bytes()); // Packet ID
-
-    let mut payload = Vec::new();
-    encode_string(&mut payload, topic);
-    payload.push(0x00); // QoS 0
-
-    let remaining = variable.len() + payload.len();
-    let mut packet = vec![0x82];
-    encode_remaining_length(&mut packet, remaining);
-    packet.extend_from_slice(&variable);
-    packet.extend_from_slice(&payload);
-    stream.write_all(&packet)?;
-
-    // Read SUBACK
-    let mut suback = [0u8; 5];
-    stream.read_exact(&mut suback)?;
-    if suback[0] != 0x90 {
-        return Err(anyhow!("MQTT subscribe failed"));
-    }
-
-    Ok(())
-}
-
-fn read_mqtt_publish(stream: &mut TcpStream) -> Result<Option<(String, Vec<u8>)>> {
-    let mut header = [0u8; 1];
-    match stream.read_exact(&mut header) {
-        Ok(_) => {}
-        Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => return Ok(None),
-        Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => return Ok(None),
-        Err(e) => return Err(e.into()),
-    }
-
-    // Handle PINGREQ
-    if header[0] == 0xC0 {
-        let mut len = [0u8; 1];
-        stream.read_exact(&mut len)?;
-        // Send PINGRESP
-        stream.write_all(&[0xD0, 0x00])?;
-        return Ok(None);
-    }
-
-    // Only handle PUBLISH
-    if header[0] & 0xF0 != 0x30 {
-        // Skip other packet types
-        let remaining = read_remaining_length(stream)?;
-        let mut discard = vec![0u8; remaining];
-        stream.read_exact(&mut discard)?;
-        return Ok(None);
-    }
-
-    let remaining = read_remaining_length(stream)?;
-    let mut data = vec![0u8; remaining];
-    stream.read_exact(&mut data)?;
-
-    // Parse topic
-    let topic_len = u16::from_be_bytes([data[0], data[1]]) as usize;
-    let topic = String::from_utf8_lossy(&data[2..2 + topic_len]).to_string();
-    let payload = data[2 + topic_len..].to_vec();
-
-    Ok(Some((topic, payload)))
-}
-
-fn read_remaining_length(stream: &mut TcpStream) -> Result<usize> {
-    let mut value = 0usize;
-    let mut multiplier = 1usize;
-    loop {
-        let mut byte = [0u8; 1];
-        stream.read_exact(&mut byte)?;
-        value += (byte[0] & 0x7F) as usize * multiplier;
-        multiplier *= 128;
-        if byte[0] & 0x80 == 0 {
-            break;
-        }
-    }
-    Ok(value)
-}
-
-fn encode_string(out: &mut Vec<u8>, value: &str) {
-    let len = value.len() as u16;
-    out.extend_from_slice(&len.to_be_bytes());
-    out.extend_from_slice(value.as_bytes());
-}
-
-fn encode_remaining_length(out: &mut Vec<u8>, mut value: usize) {
-    loop {
-        let mut byte = (value % 128) as u8;
-        value /= 128;
-        if value > 0 {
-            byte |= 0x80;
-        }
-        out.push(byte);
-        if value == 0 {
-            break;
-        }
-    }
+    Ok((client, connection))
 }
