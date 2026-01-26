@@ -24,10 +24,10 @@
 #[cfg(feature = "ingest-esp32")]
 pub mod esp32;
 mod features;
-mod normalize;
 pub mod file;
 #[cfg(feature = "ingest-file-ffmpeg")]
 pub(crate) mod file_ffmpeg;
+mod normalize;
 pub mod rtsp;
 #[cfg(feature = "rtsp-ffmpeg")]
 pub(crate) mod rtsp_ffmpeg;

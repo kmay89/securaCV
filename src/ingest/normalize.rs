@@ -17,7 +17,8 @@ pub(crate) fn normalize_to_rgb(
             let expected = width
                 .checked_mul(height)
                 .and_then(|v| v.checked_mul(3))
-                .ok_or_else(|| anyhow!("RGB frame dimensions overflow"))? as usize;
+                .ok_or_else(|| anyhow!("RGB frame dimensions overflow"))?
+                as usize;
             if pixels.len() != expected {
                 return Err(anyhow!(
                     "RGB frame length mismatch: expected {}, got {}",

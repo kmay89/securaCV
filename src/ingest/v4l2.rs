@@ -354,11 +354,16 @@ impl DeviceV4l2Source {
         self.last_frame_at = Some(Instant::now());
 
         let timestamp_bucket = TimeBucket::now_10min()?;
-        let rgb = normalize_to_rgb(buf, self.active_width, self.active_height, self.active_format)
-            .map_err(|err| {
-                self.last_error = Some(err.to_string());
-                err
-            })?;
+        let rgb = normalize_to_rgb(
+            buf,
+            self.active_width,
+            self.active_height,
+            self.active_format,
+        )
+        .map_err(|err| {
+            self.last_error = Some(err.to_string());
+            err
+        })?;
         let features_hash = compute_features_hash(&rgb, self.frame_count);
 
         Ok(RawFrame::new(
