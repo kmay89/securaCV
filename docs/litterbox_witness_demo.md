@@ -67,6 +67,29 @@ stdbuf -oL cat /dev/ttyACM0 | \
 
 Any non-conforming payloads are rejected and logged as conformance alarms.
 
+## Disconnect/Reconnect
+
+`grove_vision2_ingest` exits on stdin EOF and does not attempt to reconnect to
+serial devices. If the USB serial link drops, the pipeline will terminate and
+the ingest process will stop.
+
+Minimal restart procedure:
+
+```bash
+stty -F /dev/ttyACM0 115200
+stdbuf -oL cat /dev/ttyACM0 | \
+  DEVICE_KEY_SEED="local-demo-seed" \
+  cargo run --release --bin grove_vision2_ingest
+```
+
+For unattended deployments, use a supervisor (systemd, runit, etc.) to restart
+the pipeline on exit.
+
+Expected behavior on link loss: when the USB serial link drops, `cat` receives
+EOF, `grove_vision2_ingest` exits, and no events are ingested until you restart
+the pipeline. When the link returns, the device may resume emitting events, but
+the host side must be restarted to receive them.
+
 ## Firmware sketches
 
 Two sketches are provided to keep the demo aligned with the PWK contract:
