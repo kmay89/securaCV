@@ -105,13 +105,7 @@ fn main() -> Result<()> {
         }
     } else {
         let stdin = io::stdin();
-        ingest_lines(
-            stdin.lock(),
-            &mut kernel,
-            &cfg,
-            &module_desc,
-            "stdin",
-        )?;
+        ingest_lines(stdin.lock(), &mut kernel, &cfg, &module_desc, "stdin")?;
     }
 
     Ok(())
