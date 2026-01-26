@@ -7,8 +7,8 @@
 //! 4. Supports both one-shot and daemon modes
 //!
 //! Entities created in Home Assistant:
-//! - sensor.pwk_<zone>_events: Event count per zone
-//! - binary_sensor.pwk_<zone>_motion: Motion state per zone
+//! - `sensor.pwk_<zone>_events`: Event count per zone
+//! - `binary_sensor.pwk_<zone>_motion`: Motion state per zone
 //! - sensor.pwk_last_event: Most recent event details
 
 use anyhow::{anyhow, Context, Result};

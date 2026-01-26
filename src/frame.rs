@@ -17,7 +17,7 @@ use zeroize::Zeroize;
 
 use crate::{
     break_glass::BreakGlassToken,
-    detect::{DetectionResult, SizeClass},
+    detect::{BackendRegistry, DetectionResult, SizeClass},
     RawMediaBoundary, TimeBucket,
 };
 
@@ -165,16 +165,21 @@ impl<'a> InferenceView<'a> {
         self.frame.features_hash
     }
 
-    /// Run a detector on this frame. The detector receives pixels via internal callback.
+    /// Run detection on this frame via the registry's default backend.
     ///
-    /// The detector trait is designed so that:
-    /// - Pixels flow IN to the detector
-    /// - Only non-extractive results (detections) flow OUT
-    /// - The detector cannot store/export raw bytes
-    pub fn run_detector<D: Detector>(&self, detector: &mut D) -> DetectionResult {
-        // Detector receives raw bytes via internal-only callback.
-        // The callback signature prevents the detector from capturing the slice.
-        detector.detect_internal(&self.frame.data, self.frame.width, self.frame.height)
+    /// # Audit Boundary
+    ///
+    /// This forwards raw pixels to the configured backend. The backend API defines an
+    /// audit boundary, not a security boundary; implementations MUST be manually audited
+    /// to ensure they do not store or export raw bytes.
+    pub fn run_detector(&self, registry: &BackendRegistry) -> Result<DetectionResult> {
+        let backend = registry
+            .default_backend()
+            .ok_or_else(|| anyhow!("no default detector backend registered"))?;
+        let mut guard = backend
+            .lock()
+            .map_err(|_| anyhow!("default backend lock poisoned"))?;
+        guard.detect(&self.frame.data, self.frame.width, self.frame.height)
     }
 
     /// Attempt to export raw bytes. This MUST fail in normal operation.

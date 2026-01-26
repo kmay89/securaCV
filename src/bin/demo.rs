@@ -16,10 +16,11 @@ use witness_kernel::verify;
 use witness_kernel::{
     break_glass_receipt_outcome_for_verifier, device_public_key_from_db, verify_entry_signature,
     verify_export_bundle, BackendSelection, CandidateEvent, CapabilityBoundaryRuntime,
-    DeviceCapabilities, EventType, ExportArtifact, ExportOptions, ExportReceipt, Kernel,
-    KernelConfig, Module, RtspConfig, RtspSource, TimeBucket, Vault, VaultConfig,
+    DeviceCapabilities, EventType, ExportArtifact, ExportOptions, ExportReceipt, InferenceBackend,
+    Kernel, KernelConfig, Module, RtspConfig, RtspSource, TimeBucket, Vault, VaultConfig,
     ZoneCrossingModule, ZonePolicy, EXPORT_EVENTS_ENVELOPE_ID,
 };
+use witness_kernel::detect::{BackendRegistry, CpuBackend, StubBackend};
 
 const DEFAULT_DB_PATH: &str = "demo_witness.db";
 const DEFAULT_RULESET_ID: &str = "ruleset:demo";
@@ -136,6 +137,16 @@ fn main() -> Result<()> {
         let module_desc = module.descriptor();
         let runtime = CapabilityBoundaryRuntime::new();
         runtime.validate_descriptor(&module_desc)?;
+        let mut registry = BackendRegistry::new();
+        registry.register(StubBackend::new());
+        registry.register(CpuBackend::new());
+        match module.backend() {
+            InferenceBackend::Stub => registry.set_default("stub")?,
+            InferenceBackend::Cpu => registry.set_default("cpu")?,
+            InferenceBackend::Accelerator => {
+                return Err(anyhow!("accelerator backend requested but not available"));
+            }
+        }
         let mut token_mgr = witness_kernel::BucketKeyManager::new();
 
         let now_bucket = TimeBucket::now(600)?;
@@ -171,7 +182,8 @@ fn main() -> Result<()> {
             let bucket = frame.timestamp_bucket;
             token_mgr.rotate_if_needed(bucket);
             let view = frame.inference_view();
-            let candidates = runtime.execute_sandboxed(&mut module, &view, bucket, &token_mgr)?;
+            let candidates =
+                runtime.execute_sandboxed(&mut module, &view, bucket, &token_mgr, &registry)?;
             candidates_total += candidates.len() as u64;
             for cand in candidates {
                 let _ev = kernel.append_event_checked(

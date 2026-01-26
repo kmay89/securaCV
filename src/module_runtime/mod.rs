@@ -10,7 +10,8 @@
 use anyhow::{anyhow, Result};
 
 use crate::{
-    BucketKeyManager, CandidateEvent, InferenceView, Module, ModuleDescriptor, TimeBucket,
+    detect::BackendRegistry, BucketKeyManager, CandidateEvent, InferenceView, Module,
+    ModuleDescriptor, TimeBucket,
 };
 
 pub mod event_payload;
@@ -51,8 +52,9 @@ impl CapabilityBoundaryRuntime {
         view: &InferenceView<'_>,
         bucket: TimeBucket,
         token_mgr: &BucketKeyManager,
+        registry: &BackendRegistry,
     ) -> Result<Vec<CandidateEvent>> {
-        sandbox::run_in_sandbox(|| module.process(view, bucket, token_mgr))
+        sandbox::run_in_sandbox(|| module.process(view, bucket, token_mgr, registry))
     }
 }
 

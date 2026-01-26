@@ -4,21 +4,21 @@ use sha2::{Digest, Sha256};
 use crate::detect::backend::{DetectionCapability, DetectorBackend};
 use crate::detect::result::{DetectionResult, SizeClass};
 
-/// Stub backend for testing. Uses pixel hashing to detect motion.
+/// CPU backend for motion detection.
 #[derive(Default)]
-pub struct StubBackend {
+pub struct CpuBackend {
     last_hash: Option<[u8; 32]>,
 }
 
-impl StubBackend {
+impl CpuBackend {
     pub fn new() -> Self {
         Self::default()
     }
 }
 
-impl DetectorBackend for StubBackend {
+impl DetectorBackend for CpuBackend {
     fn name(&self) -> &'static str {
-        "stub"
+        "cpu"
     }
 
     fn supports(&self, capability: DetectionCapability) -> bool {
@@ -53,8 +53,8 @@ mod tests {
     use crate::detect::backend::DetectorBackend;
 
     #[test]
-    fn stub_backend_detects_motion() {
-        let mut backend = StubBackend::default();
+    fn cpu_backend_detects_motion() {
+        let mut backend = CpuBackend::default();
 
         let r1 = backend.detect(b"frame1", 10, 10).unwrap();
         assert!(!r1.motion_detected);
