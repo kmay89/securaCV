@@ -74,9 +74,10 @@ hex-encoded 32-byte Ed25519 verifying key.
 
 ## Break-glass unseal workflow
 
-Create an unlock request, gather trustee approvals, and authorize the request
-before unsealing. The authorization step logs a receipt (granted or denied) and
-issues a sensitive token file via `--output-token`. Use that token to unseal the
+Ensure a quorum policy is stored first (`break_glass policy set`). Then create an
+unlock request, gather trustee approvals, and authorize the request before
+unsealing. The authorization step logs a receipt (granted or denied) and issues
+a sensitive token file via `--output-token`. Use that token to unseal the
 envelope. The unseal command writes the clear envelope to `--output-dir`
 (default: `vault/unsealed`) so operators can locate the recovered payload
 explicitly rather than assuming the CLI lacks an unseal path.

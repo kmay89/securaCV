@@ -175,8 +175,11 @@ pub struct BreakGlassToken {
 }
 
 impl BreakGlassToken {
+    #[deprecated(note = "use BreakGlass::authorize with quorum policy and approvals")]
     pub fn authorize_mvp(_purpose: &str) -> Result<Self> {
-        Err(anyhow!("break-glass authorization is not available in MVP"))
+        Err(anyhow!(
+            "break-glass requires quorum approvals; use BreakGlass::authorize"
+        ))
     }
 
     pub fn token_nonce(&self) -> [u8; 32] {

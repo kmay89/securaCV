@@ -22,7 +22,8 @@ cargo run --bin log_verify -- --db demo_witness.db
 ```
 
 3) Optional (not needed for the demo): export from the DB with `export_events`
-if you already have a break-glass token:
+if you already have a break-glass token (issued via the policy → request →
+approve → authorize flow):
 
 ```bash
 DEVICE_KEY_SEED=devkey:demo \

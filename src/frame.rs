@@ -284,7 +284,7 @@ impl Detector for StubDetector {
 // - Logged immutably upon creation
 // - Single-use (consumed on export)
 //
-// In MVP, this is a placeholder. Production requires real quorum logic.
+// Authorization requires quorum logic via break-glass receipts and approvals.
 
 // ----------------------------------------------------------------------------
 // FrameBuffer: Bounded ring buffer for pre-roll
@@ -470,12 +470,6 @@ mod tests {
             )
             .unwrap();
         assert_eq!(bytes, b"test pixels");
-    }
-
-    #[test]
-    fn break_glass_token_not_available_in_mvp() {
-        // In MVP, you cannot authorize break-glass
-        assert!(BreakGlassToken::authorize_mvp("test").is_err());
     }
 
     #[test]
