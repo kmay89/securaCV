@@ -30,7 +30,7 @@ height = 480
 module_zone_id = "zone:front_door"
 ```
 
-For testing without a physical camera, use the synthetic stub source:
+For testing without a physical camera (local dev/test only), use the synthetic stub source:
 
 ```toml
 [v4l2]

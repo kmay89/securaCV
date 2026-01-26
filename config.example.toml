@@ -36,11 +36,11 @@ backend = "rtsp"
 # For go2rtc proxy (recommended for Home Assistant):
 #   url = "rtsp://localhost:8554/front_camera"
 #
-# For testing without a camera:
+# For testing without a camera (local dev only):
 #   url = "stub://test"  # Generates synthetic frames
 #
 [rtsp]
-url = "stub://front_camera"  # Change to your RTSP URL
+url = "rtsp://username:password@192.168.1.100:554/stream1"
 target_fps = 10              # Frames per second to process
 width = 640                  # Frame width
 height = 480                 # Frame height

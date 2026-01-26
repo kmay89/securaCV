@@ -7,7 +7,7 @@ const DEFAULT_DB_PATH: &str = "witness.db";
 const DEFAULT_RULESET_ID: &str = "ruleset:v0.1";
 const DEFAULT_API_ADDR: &str = "127.0.0.1:8799";
 const DEFAULT_INGEST_BACKEND: &str = "rtsp";
-const DEFAULT_RTSP_URL: &str = "stub://front_camera";
+const DEFAULT_RTSP_URL: &str = "";
 const DEFAULT_RTSP_FPS: u32 = 10;
 const DEFAULT_RTSP_WIDTH: u32 = 640;
 const DEFAULT_RTSP_HEIGHT: u32 = 480;
@@ -366,10 +366,23 @@ impl WitnessdConfig {
                     return Err(anyhow!("esp32.url must not be empty"));
                 }
             }
-            IngestBackend::Rtsp => {}
+            IngestBackend::Rtsp => {
+                if self.rtsp.url.trim().is_empty() {
+                    return Err(anyhow!("rtsp.url must not be empty"));
+                }
+                if self.rtsp.url.trim().starts_with("stub://") && !stub_urls_allowed() {
+                    return Err(anyhow!(
+                        "rtsp.url uses stub:// which is only allowed for local dev/test builds"
+                    ));
+                }
+            }
         }
         Ok(())
     }
+}
+
+fn stub_urls_allowed() -> bool {
+    cfg!(test) || cfg!(debug_assertions)
 }
 
 impl IngestBackend {
