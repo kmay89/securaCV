@@ -27,6 +27,8 @@ mod features;
 pub mod file;
 #[cfg(feature = "ingest-file-ffmpeg")]
 pub(crate) mod file_ffmpeg;
+#[cfg(feature = "ingest-v4l2")]
+mod normalize;
 pub mod rtsp;
 #[cfg(feature = "rtsp-ffmpeg")]
 pub(crate) mod rtsp_ffmpeg;
