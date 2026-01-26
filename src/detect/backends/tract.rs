@@ -9,6 +9,7 @@ use crate::detect::backend::{DetectionCapability, DetectorBackend};
 use crate::detect::result::{Detection, DetectionResult, ObjectClass, SizeClass};
 
 const LARGE_AREA_THRESHOLD: f32 = 0.2;
+const ABSOLUTE_COORD_THRESHOLD: f32 = 1.5;
 
 /// Tract-based backend for ONNX inference.
 ///
@@ -129,12 +130,11 @@ impl TractBackend {
         frame_height: u32,
     ) -> Result<Vec<Detection>> {
         let shape = output.shape();
-        let data: Vec<f32> = output
+        let data = output
             .to_array_view::<f32>()
             .context("combined output tensor was not f32")?
-            .iter()
-            .copied()
-            .collect();
+            .as_slice()
+            .ok_or_else(|| anyhow!("combined output tensor is not contiguous"))?;
 
         let (rows, cols) = match shape {
             [1, n, 6] => (*n, 6),
@@ -146,10 +146,6 @@ impl TractBackend {
                 ))
             }
         };
-
-        if cols != 6 {
-            return Err(anyhow!("combined output tensor must have 6 columns"));
-        }
 
         if data.len() != rows.saturating_mul(cols) {
             return Err(anyhow!(
@@ -236,12 +232,11 @@ impl TractBackend {
 
     fn extract_boxes(output: &Tensor) -> Result<Vec<[f32; 4]>> {
         let shape = output.shape();
-        let data: Vec<f32> = output
+        let data = output
             .to_array_view::<f32>()
             .context("boxes tensor was not f32")?
-            .iter()
-            .copied()
-            .collect();
+            .as_slice()
+            .ok_or_else(|| anyhow!("boxes tensor is not contiguous"))?;
         let rows = match shape {
             [1, n, 4] => *n,
             [n, 4] => *n,
@@ -268,12 +263,11 @@ impl TractBackend {
 
     fn extract_scores(output: &Tensor) -> Result<Vec<f32>> {
         let shape = output.shape();
-        let data: Vec<f32> = output
+        let data = output
             .to_array_view::<f32>()
             .context("scores tensor was not f32")?
-            .iter()
-            .copied()
-            .collect();
+            .as_slice()
+            .ok_or_else(|| anyhow!("scores tensor is not contiguous"))?;
         let len = match shape {
             [1, n] => *n,
             [n] => *n,
@@ -292,7 +286,7 @@ impl TractBackend {
                 len
             ));
         }
-        Ok(data)
+        Ok(data.to_vec())
     }
 
     fn extract_class_ids(output: &Tensor) -> Result<Vec<i64>> {
@@ -310,31 +304,35 @@ impl TractBackend {
         };
 
         if let Ok(view) = output.to_array_view::<i64>() {
-            let data: Vec<i64> = view.iter().copied().collect();
+            let data = view
+                .as_slice()
+                .ok_or_else(|| anyhow!("class tensor (i64) is not contiguous"))?;
             if data.len() != len {
                 return Err(anyhow!(
-                    "class tensor has {} values, expected {}",
+                    "class tensor (i64) has {} values, expected {}",
                     data.len(),
                     len
                 ));
             }
-            return Ok(data);
+            Ok(data.to_vec())
+        } else if let Ok(view) = output.to_array_view::<f32>() {
+            let data = view
+                .as_slice()
+                .ok_or_else(|| anyhow!("class tensor (f32) is not contiguous"))?;
+            if data.len() != len {
+                return Err(anyhow!(
+                    "class tensor (f32) has {} values, expected {}",
+                    data.len(),
+                    len
+                ));
+            }
+            Ok(data.iter().map(|v| v.round() as i64).collect())
+        } else {
+            Err(anyhow!(
+                "class tensor must be i64 or f32, but was {:?}",
+                output.datum_type()
+            ))
         }
-
-        let data: Vec<f32> = output
-            .to_array_view::<f32>()
-            .context("class tensor must be i64 or f32")?
-            .iter()
-            .copied()
-            .collect();
-        if data.len() != len {
-            return Err(anyhow!(
-                "class tensor has {} values, expected {}",
-                data.len(),
-                len
-            ));
-        }
-        Ok(data.into_iter().map(|v| v.round() as i64).collect())
     }
 
     fn normalize_box(
@@ -347,7 +345,7 @@ impl TractBackend {
             return Err(anyhow!("box coordinates were not finite"));
         }
 
-        let absolute = raw.iter().any(|v| *v > 1.5);
+        let absolute = raw.iter().any(|v| *v > ABSOLUTE_COORD_THRESHOLD);
         let (mut x1, mut y1, mut x2, mut y2) = (raw[0], raw[1], raw[2], raw[3]);
         if absolute {
             let width = frame_width as f32;
