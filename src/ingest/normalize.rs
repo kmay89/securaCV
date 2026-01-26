@@ -51,28 +51,38 @@ fn nv12_to_rgb(pixels: &[u8], width: u32, height: u32) -> Result<Vec<u8>> {
 
     let mut rgb = vec![0u8; y_plane * 3];
     for j in 0..h {
-        for i in 0..w {
-            let y = pixels[j * w + i] as f32;
-            let uv_index = y_plane + (j / 2) * w + (i / 2) * 2;
-            let u = pixels[uv_index] as f32 - 128.0;
-            let v = pixels[uv_index + 1] as f32 - 128.0;
+        let row_offset = j * w;
+        let uv_row = y_plane + (j / 2) * w;
+        for i in (0..w).step_by(2) {
+            let uv_index = uv_row + i;
+            let u = pixels[uv_index] as i32 - 128;
+            let v = pixels[uv_index + 1] as i32 - 128;
 
-            let r = y + 1.402_f32 * v;
-            let g = y - 0.344_136_f32 * u - 0.714_136_f32 * v;
-            let b = y + 1.772_f32 * u;
+            let r_add = (1436 * v) / 1024;
+            let g_add = (-352 * u - 731 * v) / 1024;
+            let b_add = (1815 * u) / 1024;
 
-            let offset = (j * w + i) * 3;
-            rgb[offset] = clamp_to_u8(r);
-            rgb[offset + 1] = clamp_to_u8(g);
-            rgb[offset + 2] = clamp_to_u8(b);
+            let y1 = pixels[row_offset + i] as i32;
+            let offset1 = (row_offset + i) * 3;
+            rgb[offset1] = clamp_to_u8_i32(y1 + r_add);
+            rgb[offset1 + 1] = clamp_to_u8_i32(y1 + g_add);
+            rgb[offset1 + 2] = clamp_to_u8_i32(y1 + b_add);
+
+            if i + 1 < w {
+                let y2 = pixels[row_offset + i + 1] as i32;
+                let offset2 = (row_offset + i + 1) * 3;
+                rgb[offset2] = clamp_to_u8_i32(y2 + r_add);
+                rgb[offset2 + 1] = clamp_to_u8_i32(y2 + g_add);
+                rgb[offset2 + 2] = clamp_to_u8_i32(y2 + b_add);
+            }
         }
     }
 
     Ok(rgb)
 }
 
-fn clamp_to_u8(value: f32) -> u8 {
-    value.round().clamp(0.0, 255.0) as u8
+fn clamp_to_u8_i32(value: i32) -> u8 {
+    value.clamp(0, 255) as u8
 }
 
 #[cfg(test)]

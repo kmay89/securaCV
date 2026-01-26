@@ -304,11 +304,11 @@ impl DeviceV4l2Source {
 
         self.active_width = format.width;
         self.active_height = format.height;
-        self.active_format = match format.fourcc {
-            fourcc if fourcc == v4l::FourCC::new(b"RGB3") => PixelFormat::Rgb24,
-            fourcc if fourcc == v4l::FourCC::new(b"NV12") => PixelFormat::Nv12,
-            other => {
-                let fourcc = String::from_utf8_lossy(&other.repr).to_string();
+        self.active_format = match format.fourcc.repr {
+            [b'R', b'G', b'B', b'3'] => PixelFormat::Rgb24,
+            [b'N', b'V', b'1', b'2'] => PixelFormat::Nv12,
+            other_repr => {
+                let fourcc = String::from_utf8_lossy(&other_repr).to_string();
                 self.last_error = Some(format!("unsupported v4l2 pixel format {}", fourcc));
                 return Err(anyhow!("unsupported v4l2 pixel format {}", fourcc));
             }
