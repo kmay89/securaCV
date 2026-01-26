@@ -79,9 +79,9 @@ void loop() {
   }
 
   if (line.equalsIgnoreCase("AT")) {
-    Serial.println("OK");
+    Serial.println("OK - Grove Vision AI V2 ready. Try: AT+INFER?");
     return;
   }
 
-  Serial.println("ERROR");
+  Serial.println("ERROR: Unknown command. Use 'AT' or 'AT+INFER?' (115200 baud, newline).");
 }

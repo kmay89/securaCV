@@ -109,6 +109,36 @@ printf '%s\n' '{"event_type":"boundary_crossing_object_small","time_bucket":{"st
 Look for conformance rejection in stdout/stderr. You can also confirm the alarm
 with `sqlite3` (table `conformance_alarms`) or via the `log_verify` warnings.
 
+## Verify Log Integrity
+
+Run `log_verify` against the demo DB. It defaults to `witness.db`, but this uses
+`WITNESS_DB_PATH` if you set it:
+
+```bash
+cargo run --release --bin log_verify -- --db "${WITNESS_DB_PATH:-witness.db}"
+```
+
+Expected success output (counts may vary):
+
+```text
+log_verify: checking witness.db
+
+=== Sealed Events ===
+checkpoint: none (genesis chain)
+verified 1 event entries
+
+=== Break-Glass Receipts ===
+verified 0 receipt entries (0 granted, 0 denied)
+
+=== Export Receipts ===
+verified 0 export receipt entries
+OK: all chains verified.
+```
+
+Troubleshooting: if you see an error like `device public key not found in database
+(provide --public-key or --public-key-file if the database has no key)`, pass the
+device public key explicitly (e.g., `--public-key <hex>` or `--public-key-file <path>`).
+
 ## Disconnect/Reconnect
 
 `grove_vision2_ingest` exits on stdin EOF and does not attempt to reconnect to
@@ -145,6 +175,52 @@ See:
 
 - `examples/firmware/esp32c3_grove_vision_ai_v2_litterbox/esp32c3_grove_vision_ai_v2_litterbox.ino`
 - `examples/firmware/grove_vision_ai_v2_litterbox_firmware/grove_vision_ai_v2_litterbox_firmware.ino`
+
+## Arduino IDE 1.8.19 setup (boards + libraries)
+
+Use Arduino IDE **1.8.19** for both sketches. Keep the serial output clean on the
+ESP32C3 bridge (it must emit only JSON for `grove_vision2_ingest`).
+
+### Install board support packages
+
+1. Open **File → Preferences** and add the following to **Additional Boards Manager URLs**:
+   - **ESP32 by Espressif Systems**: `https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json`
+   - **Seeed boards** (for Grove Vision AI V2): use the board package URL listed in the
+     Seeed documentation for Grove Vision AI V2.
+2. Open **Tools → Board → Boards Manager** and install:
+   - **esp32** by *Espressif Systems* (for the XIAO ESP32C3 bridge).
+   - The **Seeed Grove Vision AI V2** board package (exact name may vary; follow the
+     Seeed board list shown after adding their URL).
+
+### Install required libraries
+
+Open **Sketch → Include Library → Manage Libraries** and install:
+
+- **Seeed Arduino SSCMA** (needed by the Grove Vision AI V2 firmware).
+
+### Board settings (recommended defaults)
+
+**XIAO ESP32C3 bridge (`esp32c3_grove_vision_ai_v2_litterbox.ino`)**
+
+- **Board**: *XIAO_ESP32C3* (or the closest XIAO ESP32C3 entry from the Espressif package).
+- **USB CDC On Boot**: **Enabled** (for reliable serial output).
+- **Flash Size**: **4MB** (default).
+- **Partition Scheme**: **Default**.
+- **Upload Speed**: **921600** (or the fastest stable value on your system).
+
+**Grove Vision AI V2 module (`grove_vision_ai_v2_litterbox_firmware.ino`)**
+
+- **Board**: *Grove Vision AI V2* (from the Seeed board package).
+- Keep other options at **defaults** unless Seeed’s documentation requires changes.
+
+### Serial Monitor settings
+
+- **Baud**: **115200**
+- **Line ending**: **Newline**
+
+Use `AT` or `AT+INFER?` in the Serial Monitor when talking directly to the Grove
+Vision AI V2 module. Do **not** add extra serial prints to the ESP32C3 bridge,
+since its output must remain JSON-only for conformance.
 
 **Time sync requirement (ESP32C3):** the bridge firmware requires Wi‑Fi to reach
 an NTP server and set the system clock **before it will emit events**. If NTP
