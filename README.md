@@ -237,7 +237,9 @@ capture time, and `RtspSource::is_healthy()` reports stream health.
 
 GStreamer support is gated behind the `rtsp-gstreamer` feature; FFmpeg support
 is gated behind `rtsp-ffmpeg`. The `stub://` scheme keeps the synthetic source
-for tests and local development only; release builds reject it.
+for tests and local development only; release builds reject it. The legacy
+`StubFrameSource` helper is only compiled for tests or when the
+`stub-frame-source` feature is enabled.
 
 Select a backend with `rtsp.backend = "auto|gstreamer|ffmpeg"` in `witness.toml`
 or the `WITNESS_RTSP_BACKEND` environment variable. `auto` prefers GStreamer

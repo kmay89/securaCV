@@ -1492,11 +1492,13 @@ impl Module for ZoneCrossingModule {
 
 // -------------------- Legacy stub for compatibility --------------------
 
-/// Legacy stub frame source (for tests that don't need full RTSP).
+/// Legacy stub frame source (for tests or dev/demo builds that don't need full RTSP).
+#[cfg(any(test, feature = "stub-frame-source"))]
 pub struct StubFrameSource {
     source: RtspSource,
 }
 
+#[cfg(any(test, feature = "stub-frame-source"))]
 impl StubFrameSource {
     pub fn new() -> Self {
         let config = RtspConfig {
@@ -1516,6 +1518,7 @@ impl StubFrameSource {
     }
 }
 
+#[cfg(any(test, feature = "stub-frame-source"))]
 impl Default for StubFrameSource {
     fn default() -> Self {
         Self::new()
