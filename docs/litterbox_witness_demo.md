@@ -67,6 +67,48 @@ stdbuf -oL cat /dev/ttyACM0 | \
 
 Any non-conforming payloads are rejected and logged as conformance alarms.
 
+## Smoke Test
+
+Use this to confirm ingestion and conformance enforcement without changing
+device firmware.
+
+### Known-good event (append to DB)
+
+**Option A: manual pipe (no device needed)**
+
+```bash
+printf '%s\n' '{"event_type":"boundary_crossing_object_small","time_bucket":{"start_epoch_s":1730000400,"size_s":600},"zone_id":"zone:litterbox","confidence":0.82}' | \
+  DEVICE_KEY_SEED="local-demo-seed" \
+  cargo run --release --bin grove_vision2_ingest
+```
+
+**Option B: device serial (device running, ingest already started)**
+
+```bash
+printf '%s\n' '{"event_type":"boundary_crossing_object_small","time_bucket":{"start_epoch_s":1730000400,"size_s":600},"zone_id":"zone:litterbox","confidence":0.82}' > /dev/ttyACM0
+```
+
+You should see an ingest log line on stdout/stderr confirming an accepted event.
+Confirm the new entry in the DB with `sqlite3` or `log_verify`, for example:
+
+```bash
+sqlite3 witness.db "select id, created_at from sealed_events order by id desc limit 1;"
+cargo run --release --bin log_verify -- --db witness.db
+```
+
+### Invalid payload (conformance rejection)
+
+Send an event with an extra field (should be rejected and logged as a conformance alarm):
+
+```bash
+printf '%s\n' '{"event_type":"boundary_crossing_object_small","time_bucket":{"start_epoch_s":1730000400,"size_s":600},"zone_id":"zone:litterbox","confidence":0.82,"device_id":"forbidden"}' | \
+  DEVICE_KEY_SEED="local-demo-seed" \
+  cargo run --release --bin grove_vision2_ingest
+```
+
+Look for conformance rejection in stdout/stderr. You can also confirm the alarm
+with `sqlite3` (table `conformance_alarms`) or via the `log_verify` warnings.
+
 ## Disconnect/Reconnect
 
 `grove_vision2_ingest` exits on stdin EOF and does not attempt to reconnect to
