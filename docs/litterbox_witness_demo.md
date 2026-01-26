@@ -140,6 +140,14 @@ Troubleshooting: if you see an error like `device public key not found in databa
 device public key explicitly (for example, `--public-key <hex>` or
 `--public-key-file <path>`).
 
+## Storage
+
+The ingest and verification tooling store data in a local SQLite database at
+`witness.db` by default. Set `WITNESS_DB_PATH` to override the location.
+
+That database contains the sealed events tables as well as the receipts tables
+used for break-glass and export auditing.
+
 ## Break-glass retrieval (overview)
 
 For the formal process and CLI details, see `spec/break_glass.md` and the
