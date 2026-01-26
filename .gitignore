@@ -26,3 +26,4 @@ demo_witness.db
 api_token
 .env
 .env.local
+secrets.h
