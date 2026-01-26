@@ -8,6 +8,9 @@ Arduino/XIAO litterbox demo review.
 1. **Document serial disconnect/reconnect handling**
    - Add guidance on how to restart the serial ingestion pipeline when the USB
      device drops, and clarify expected behavior on EOF/reconnect.
+   - Covered in `docs/litterbox_witness_demo.md` and
+     `docs/seeed_xiao_vision_ai_setup.md` (EOF behavior, reconnect loop, and
+     stable device paths).
 2. **Add an event-ingest smoke-test walkthrough**
    - Provide a minimal, repeatable sequence that shows: (a) the device emits
      contract-compliant JSON, (b) `grove_vision2_ingest` writes to the DB, and

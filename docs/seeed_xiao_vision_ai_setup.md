@@ -22,6 +22,15 @@ sketches:
 
 - [`docs/litterbox_witness_demo.md`](litterbox_witness_demo.md)
 
+Serial disconnect handling for event-only mode:
+
+- When ingesting via `cat ... | grove_vision2_ingest`, a USB disconnect produces
+  EOF, the ingest process exits, and you must restart it after the device
+  returns.
+- When using `grove_vision2_ingest --serial-device /dev/ttyACM0`, the process
+  stays up, logs the disconnect, and retries until the device reappears. Prefer
+  `/dev/serial/by-id/...` if you want a stable device path across reconnects.
+
 ## Vendor resources
 
 Use the vendor-provided resources for firmware and hardware references:
