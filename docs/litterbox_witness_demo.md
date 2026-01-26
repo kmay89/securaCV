@@ -224,16 +224,36 @@ See:
 - `examples/firmware/esp32c3_grove_vision_ai_v2_litterbox/esp32c3_grove_vision_ai_v2_litterbox.ino`
 - `examples/firmware/grove_vision_ai_v2_litterbox_firmware/grove_vision_ai_v2_litterbox_firmware.ino`
 
+For the broader review checklist that this documentation aligns with, see
+[`docs/reviews/arduino_demo_review_tasks.md`](reviews/arduino_demo_review_tasks.md).
+
 **Wi‑Fi credentials:** before flashing the ESP32C3 bridge, copy
 `examples/firmware/esp32c3_grove_vision_ai_v2_litterbox/secrets.example.h` to
 `secrets.h` and fill in your SSID/password.
 
+**Wi‑Fi + NTP requirements (ESP32C3 bridge):**
+
+- The bridge must associate to Wi‑Fi **and** reach NTP before it will emit any
+  events. It uses `configTime(0, 0, "pool.ntp.org", "time.nist.gov")`, so DNS
+  resolution and outbound UDP 123 must be allowed.
+- If Wi‑Fi is unavailable or NTP is blocked, you will see **no JSON output** on
+  the serial port.
+- Keep the time source privacy-preserving: do **not** add new identifiers or
+  metadata fields; only the time bucket fields may be populated.
+
 **AT response format:** the Grove Vision AI V2 firmware must answer `AT+INFER?`
-with a single line like `cat:<score>` (for example, `cat:0.82`). The ESP32C3
+with a **single line** like `cat:<score>` (for example, `cat:0.82`). The ESP32C3
 bridge parses this in `vision_get_cat_presence` in
 `examples/firmware/esp32c3_grove_vision_ai_v2_litterbox/esp32c3_grove_vision_ai_v2_litterbox.ino`.
-If your Grove firmware emits a different string, update that parser—do not add
-new event fields.
+
+**Minimal changes if firmware output differs:**
+
+- Update the AT command string in `vision_send_cmd_readline` **only if** your
+  firmware uses a different query (keep it a single request/response line).
+- Adjust the parsing logic in `vision_get_cat_presence` to extract the score
+  from your device’s response (e.g., change the `cat:` label or delimiter).
+- Do **not** add new event fields, metadata, or IDs; keep output JSON strictly
+  limited to `event_type`, `time_bucket`, `zone_id`, and `confidence`.
 
 ## Arduino IDE 1.8.19 setup (boards + libraries)
 
