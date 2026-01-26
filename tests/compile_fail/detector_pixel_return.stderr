@@ -2,10 +2,10 @@ error[E0308]: mismatched types
  --> tests/compile_fail/detector_pixel_return.rs:9:16
   |
 7 |     fn detect_internal(&mut self, pixels: &[u8], _width: u32, _height: u32) -> DetectionResult {
-  |                                                                                --------------- expected `witness_kernel::DetectionResult` because of return type
+  |                                                                                --------------- expected `DetectionResult` because of return type
 8 |         // Attempt to return/cloned pixel bytes should be rejected by the type system.
 9 |         return pixels.to_vec();
   |                ^^^^^^^^^^^^^^^ expected `DetectionResult`, found `Vec<u8>`
   |
-  = note: expected struct `witness_kernel::DetectionResult`
+  = note: expected struct `DetectionResult`
              found struct `Vec<u8>`
