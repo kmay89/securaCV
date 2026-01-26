@@ -81,6 +81,20 @@ See:
 - `examples/firmware/esp32c3_grove_vision_ai_v2_litterbox/esp32c3_grove_vision_ai_v2_litterbox.ino`
 - `examples/firmware/grove_vision_ai_v2_litterbox_firmware/grove_vision_ai_v2_litterbox_firmware.ino`
 
+### Wiring
+
+Connect the XIAO ESP32C3 UART pins to the Grove Vision AI V2 UART pins as follows:
+
+- **XIAO ESP32C3 GPIO6 (RX)** ← **Grove Vision AI V2 TX**
+- **XIAO ESP32C3 GPIO7 (TX)** → **Grove Vision AI V2 RX**
+- **GND ↔ GND** (common ground)
+
+Both boards use **3.3V UART logic**. Do not connect 5V TTL UART signals directly; level
+shift if your setup introduces 5V logic. The ESP32C3 sketch defines these pins as
+`VISION_RX` and `VISION_TX` in
+`examples/firmware/esp32c3_grove_vision_ai_v2_litterbox/esp32c3_grove_vision_ai_v2_litterbox.ino`
+so you can reconcile the wiring with the code.
+
 ## Why this is privacy-preserving
 
 - **No raw media export**: the device never transmits frames.
