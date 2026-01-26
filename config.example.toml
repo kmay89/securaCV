@@ -83,6 +83,15 @@ url = "http://127.0.0.1:81/stream"
 #   http://<device-ip>:81/stream  (some firmware uses :80/stream or /capture)
 target_fps = 10
 
+# Detection Backend Configuration
+#
+# backend = "auto" (uses module auto selection), "stub", "cpu", or "tract"
+# tract requires the backend-tract feature and a local ONNX model path.
+#
+[detect]
+backend = "auto"
+# tract_model = "/var/lib/witness/model.onnx"
+
 # Zone Configuration
 #
 # Zones are logical areas being monitored. Events are tagged with zone IDs.
@@ -117,6 +126,8 @@ seconds = 604800  # 7 days
 #   WITNESS_V4L2_DEVICE - Override v4l2.device
 #   WITNESS_ESP32_URL   - Override esp32.url
 #   WITNESS_ESP32_FPS   - Override esp32.target_fps
+#   WITNESS_DETECT_BACKEND - Override detect.backend ("auto", "stub", "cpu", "tract")
+#   WITNESS_TRACT_MODEL - Override detect.tract_model (local ONNX model path)
 #   WITNESS_ZONE_ID     - Override zones.module_zone_id
 #   WITNESS_SENSITIVE_ZONES - Comma-separated list of sensitive zones
 #   WITNESS_API_ADDR    - Override api.addr

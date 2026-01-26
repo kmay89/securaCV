@@ -24,6 +24,9 @@ use witness_kernel::{
 use witness_kernel::{Esp32Config, Esp32Source};
 #[cfg(feature = "ingest-v4l2")]
 use witness_kernel::{V4l2Config, V4l2Source};
+#[cfg(feature = "backend-tract")]
+use witness_kernel::detect::TractBackend;
+use witness_kernel::config::DetectBackendPreference;
 
 #[path = "../ui.rs"]
 mod ui;
@@ -106,9 +109,15 @@ fn main() -> Result<()> {
     let (mut module, module_desc, runtime, registry) = {
         let _stage = ui.stage("Initialize detection module");
         let capabilities = DeviceCapabilities::cpu_only();
+        let backend_selection = match config.detect.backend {
+            DetectBackendPreference::Auto => BackendSelection::Auto,
+            DetectBackendPreference::Stub => BackendSelection::Require(InferenceBackend::Stub),
+            DetectBackendPreference::Cpu => BackendSelection::Require(InferenceBackend::Cpu),
+            DetectBackendPreference::Tract => BackendSelection::Require(InferenceBackend::Cpu),
+        };
         let module = ZoneCrossingModule::with_backend_selection(
             &config.zones.module_zone_id,
-            BackendSelection::Auto,
+            backend_selection,
             &capabilities,
         )?
         .with_tokens(true);
@@ -118,11 +127,16 @@ fn main() -> Result<()> {
         let mut registry = BackendRegistry::new();
         registry.register(StubBackend::new());
         registry.register(CpuBackend::new());
-        match module.backend() {
-            InferenceBackend::Stub => registry.set_default("stub")?,
-            InferenceBackend::Cpu => registry.set_default("cpu")?,
-            InferenceBackend::Accelerator => {
-                return Err(anyhow!("accelerator backend requested but not available"));
+        if config.detect.backend == DetectBackendPreference::Tract {
+            register_tract_backend(&mut registry, &config)?;
+            registry.set_default("tract")?;
+        } else {
+            match module.backend() {
+                InferenceBackend::Stub => registry.set_default("stub")?,
+                InferenceBackend::Cpu => registry.set_default("cpu")?,
+                InferenceBackend::Accelerator => {
+                    return Err(anyhow!("accelerator backend requested but not available"));
+                }
             }
         }
         (module, module_desc, runtime, registry)
@@ -457,4 +471,47 @@ fn parse_ui_flag() -> Option<String> {
         }
     }
     None
+}
+
+fn register_tract_backend(
+    registry: &mut BackendRegistry,
+    config: &witness_kernel::config::WitnessdConfig,
+) -> Result<()> {
+    #[cfg(feature = "backend-tract")]
+    {
+        let (width, height) = tract_input_dimensions(config)?;
+        let model_path = config
+            .detect
+            .tract_model
+            .as_ref()
+            .ok_or_else(|| anyhow!("detect.tract_model must be set for tract backend"))?;
+        let backend = TractBackend::new(model_path, width, height)?;
+        registry.register(backend);
+        return Ok(());
+    }
+    #[cfg(not(feature = "backend-tract"))]
+    {
+        let _ = registry;
+        let _ = config;
+        Err(anyhow!(
+            "detect.backend=tract requires the backend-tract feature"
+        ))
+    }
+}
+
+fn tract_input_dimensions(
+    config: &witness_kernel::config::WitnessdConfig,
+) -> Result<(u32, u32)> {
+    match config.ingest.backend {
+        witness_kernel::config::IngestBackend::Rtsp => {
+            Ok((config.rtsp.width, config.rtsp.height))
+        }
+        witness_kernel::config::IngestBackend::V4l2 => {
+            Ok((config.v4l2.width, config.v4l2.height))
+        }
+        witness_kernel::config::IngestBackend::File
+        | witness_kernel::config::IngestBackend::Esp32 => Err(anyhow!(
+            "tract backend requires ingest width/height; use rtsp/v4l2 or add a backend with fixed dimensions"
+        )),
+    }
 }

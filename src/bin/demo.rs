@@ -1,7 +1,7 @@
 //! demo - end-to-end synthetic run for the Privacy Witness Kernel
 
 use anyhow::{anyhow, Context, Result};
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use ed25519_dalek::{Signer, SigningKey};
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -21,11 +21,15 @@ use witness_kernel::{
     Kernel, KernelConfig, Module, RtspConfig, RtspSource, TimeBucket, Vault, VaultConfig,
     ZoneCrossingModule, ZonePolicy, EXPORT_EVENTS_ENVELOPE_ID,
 };
+#[cfg(feature = "backend-tract")]
+use witness_kernel::detect::TractBackend;
 
 const DEFAULT_DB_PATH: &str = "demo_witness.db";
 const DEFAULT_RULESET_ID: &str = "ruleset:demo";
 const DEFAULT_ZONE_ID: &str = "zone:demo";
 const DEFAULT_VAULT_ENVELOPE_ID: &str = "demo-vault";
+const DEMO_FRAME_WIDTH: u32 = 320;
+const DEMO_FRAME_HEIGHT: u32 = 240;
 
 struct BreakGlassContext<'a> {
     policy: &'a QuorumPolicy,
@@ -58,6 +62,20 @@ struct Args {
     /// Optional deterministic seed for demo artifacts.
     #[arg(long)]
     seed: Option<u64>,
+    /// Detector backend selection ("auto", "stub", "cpu", or "tract").
+    #[arg(long, value_enum, default_value_t = DetectorBackendChoice::Auto)]
+    detector_backend: DetectorBackendChoice,
+    /// Path to ONNX model for the tract backend.
+    #[arg(long)]
+    tract_model: Option<PathBuf>,
+}
+
+#[derive(Copy, Clone, Debug, ValueEnum, PartialEq, Eq)]
+enum DetectorBackendChoice {
+    Auto,
+    Stub,
+    Cpu,
+    Tract,
 }
 
 fn main() -> Result<()> {
@@ -121,16 +139,22 @@ fn main() -> Result<()> {
         let mut source = RtspSource::new(RtspConfig {
             url: "stub://demo".to_string(),
             target_fps: args.fps,
-            width: 320,
-            height: 240,
+            width: DEMO_FRAME_WIDTH,
+            height: DEMO_FRAME_HEIGHT,
             backend: witness_kernel::config::RtspBackendPreference::Auto,
         })?;
         source.connect()?;
 
         let capabilities = DeviceCapabilities::cpu_only();
+        let backend_selection = match args.detector_backend {
+            DetectorBackendChoice::Auto => BackendSelection::Auto,
+            DetectorBackendChoice::Stub => BackendSelection::Require(InferenceBackend::Stub),
+            DetectorBackendChoice::Cpu => BackendSelection::Require(InferenceBackend::Cpu),
+            DetectorBackendChoice::Tract => BackendSelection::Require(InferenceBackend::Cpu),
+        };
         let mut module = ZoneCrossingModule::with_backend_selection(
             DEFAULT_ZONE_ID,
-            BackendSelection::Auto,
+            backend_selection,
             &capabilities,
         )?
         .with_tokens(false);
@@ -140,11 +164,16 @@ fn main() -> Result<()> {
         let mut registry = BackendRegistry::new();
         registry.register(StubBackend::new());
         registry.register(CpuBackend::new());
-        match module.backend() {
-            InferenceBackend::Stub => registry.set_default("stub")?,
-            InferenceBackend::Cpu => registry.set_default("cpu")?,
-            InferenceBackend::Accelerator => {
-                return Err(anyhow!("accelerator backend requested but not available"));
+        if args.detector_backend == DetectorBackendChoice::Tract {
+            register_tract_backend(&mut registry, &args)?;
+            registry.set_default("tract")?;
+        } else {
+            match module.backend() {
+                InferenceBackend::Stub => registry.set_default("stub")?,
+                InferenceBackend::Cpu => registry.set_default("cpu")?,
+                InferenceBackend::Accelerator => {
+                    return Err(anyhow!("accelerator backend requested but not available"));
+                }
             }
         }
         let mut token_mgr = witness_kernel::BucketKeyManager::new();
@@ -268,6 +297,27 @@ fn main() -> Result<()> {
     println!("  ls -la {}", out_dir.display());
 
     verify_result
+}
+
+fn register_tract_backend(registry: &mut BackendRegistry, args: &Args) -> Result<()> {
+    #[cfg(feature = "backend-tract")]
+    {
+        let model_path = args
+            .tract_model
+            .as_ref()
+            .ok_or_else(|| anyhow!("--tract-model is required for tract backend"))?;
+        let backend = TractBackend::new(model_path, DEMO_FRAME_WIDTH, DEMO_FRAME_HEIGHT)?;
+        registry.register(backend);
+        return Ok(());
+    }
+    #[cfg(not(feature = "backend-tract"))]
+    {
+        let _ = registry;
+        let _ = args;
+        Err(anyhow!(
+            "tract backend requires the backend-tract feature"
+        ))
+    }
 }
 
 fn stage(msg: &str) {

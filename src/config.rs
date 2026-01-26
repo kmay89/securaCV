@@ -22,6 +22,7 @@ const DEFAULT_ESP32_URL: &str = "http://127.0.0.1:81/stream";
 const DEFAULT_ESP32_FPS: u32 = 10;
 const DEFAULT_RETENTION_SECS: u64 = 60 * 60 * 24 * 7;
 const DEFAULT_MODULE_ZONE_ID: &str = "zone:front_boundary";
+const DEFAULT_DETECT_BACKEND: &str = "auto";
 
 fn config_string(value: Option<String>, default: &str) -> String {
     value.unwrap_or_else(|| default.to_string())
@@ -41,6 +42,7 @@ struct WitnessdConfigFile {
     file: Option<FileConfigFile>,
     v4l2: Option<V4l2ConfigFile>,
     esp32: Option<Esp32ConfigFile>,
+    detect: Option<DetectConfigFile>,
     zones: Option<ZoneConfigFile>,
     retention: Option<RetentionConfigFile>,
 }
@@ -95,6 +97,12 @@ struct Esp32ConfigFile {
 }
 
 #[derive(Debug, Deserialize, Default)]
+struct DetectConfigFile {
+    backend: Option<String>,
+    tract_model: Option<PathBuf>,
+}
+
+#[derive(Debug, Deserialize, Default)]
 struct ZoneConfigFile {
     module_zone_id: Option<String>,
     sensitive: Option<Vec<String>>,
@@ -116,6 +124,7 @@ pub struct WitnessdConfig {
     pub file: FileSettings,
     pub v4l2: V4l2Settings,
     pub esp32: Esp32Settings,
+    pub detect: DetectSettings,
     pub zones: ZoneSettings,
     pub retention: Duration,
 }
@@ -177,6 +186,20 @@ pub struct V4l2Settings {
 pub struct Esp32Settings {
     pub url: String,
     pub target_fps: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DetectBackendPreference {
+    Auto,
+    Stub,
+    Cpu,
+    Tract,
+}
+
+#[derive(Debug, Clone)]
+pub struct DetectSettings {
+    pub backend: DetectBackendPreference,
+    pub tract_model: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -278,6 +301,15 @@ impl WitnessdConfig {
                 DEFAULT_ESP32_FPS,
             ),
         };
+        let detect = DetectSettings {
+            backend: DetectBackendPreference::parse(
+                file.detect
+                    .as_ref()
+                    .and_then(|detect| detect.backend.as_deref())
+                    .unwrap_or(DEFAULT_DETECT_BACKEND),
+            )?,
+            tract_model: file.detect.and_then(|detect| detect.tract_model),
+        };
         let zones = ZoneSettings {
             module_zone_id: file
                 .zones
@@ -304,6 +336,7 @@ impl WitnessdConfig {
             file: file_source,
             v4l2,
             esp32,
+            detect,
             zones,
             retention,
         })
@@ -365,6 +398,16 @@ impl WitnessdConfig {
                 self.esp32.target_fps = parsed;
             }
         }
+        if let Ok(backend) = std::env::var("WITNESS_DETECT_BACKEND") {
+            if !backend.trim().is_empty() {
+                self.detect.backend = DetectBackendPreference::parse(&backend)?;
+            }
+        }
+        if let Ok(path) = std::env::var("WITNESS_TRACT_MODEL") {
+            if !path.trim().is_empty() {
+                self.detect.tract_model = Some(PathBuf::from(path));
+            }
+        }
         if let Ok(zone_id) = std::env::var("WITNESS_ZONE_ID") {
             if !zone_id.trim().is_empty() {
                 self.zones.module_zone_id = zone_id;
@@ -394,6 +437,18 @@ impl WitnessdConfig {
 
         if self.retention.as_secs() == 0 {
             return Err(anyhow!("retention must be greater than zero"));
+        }
+        if self.detect.backend == DetectBackendPreference::Tract {
+            let Some(path) = &self.detect.tract_model else {
+                return Err(anyhow!(
+                    "detect.backend=tract requires detect.tract_model to be set"
+                ));
+            };
+            if path.as_os_str().is_empty() {
+                return Err(anyhow!(
+                    "detect.tract_model must not be empty when detect.backend=tract"
+                ));
+            }
         }
         match self.ingest.backend {
             IngestBackend::File => {
@@ -449,6 +504,21 @@ impl IngestBackend {
             "esp32" => Ok(Self::Esp32),
             other => Err(anyhow!(
                 "unsupported ingest backend '{}'; expected 'file', 'rtsp', 'v4l2', or 'esp32'",
+                other
+            )),
+        }
+    }
+}
+
+impl DetectBackendPreference {
+    fn parse(raw: &str) -> Result<Self> {
+        match raw.trim().to_lowercase().as_str() {
+            "auto" => Ok(Self::Auto),
+            "stub" => Ok(Self::Stub),
+            "cpu" => Ok(Self::Cpu),
+            "tract" => Ok(Self::Tract),
+            other => Err(anyhow!(
+                "unsupported detect backend '{}'; expected 'auto', 'stub', 'cpu', or 'tract'",
                 other
             )),
         }
