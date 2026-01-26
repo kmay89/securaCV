@@ -111,7 +111,7 @@ with `sqlite3` (table `conformance_alarms`) or via the `log_verify` warnings.
 
 ## Verify Log Integrity
 
-Run `log_verify` against the demo DB. It defaults to `witness.db`, but this uses
+Run `log_verify` against the demo DB. It defaults to `witness.db`, but uses
 `WITNESS_DB_PATH` if you set it:
 
 ```bash
@@ -137,7 +137,24 @@ OK: all chains verified.
 
 Troubleshooting: if you see an error like `device public key not found in database
 (provide --public-key or --public-key-file if the database has no key)`, pass the
-device public key explicitly (e.g., `--public-key <hex>` or `--public-key-file <path>`).
+device public key explicitly (for example, `--public-key <hex>` or
+`--public-key-file <path>`).
+
+## Break-glass retrieval (overview)
+
+For the formal process and CLI details, see `spec/break_glass.md` and the
+`break_glass` CLI implementation (`src/break_glass/cli.rs`).
+
+Checklist:
+
+1. Set quorum policy.
+2. Create an unlock request.
+3. Collect approvals.
+4. Issue a token.
+5. Verify receipt.
+6. Unseal/export.
+
+Raw media access remains gated and auditable throughout this flow.
 
 ## Break-glass retrieval (overview)
 
