@@ -109,6 +109,39 @@ Expected output:
 CONFORMANCE_GROVE_VISION2_INPUT_REJECT|conformance: grove_vision2 payload contains extra fields: extra
 ```
 
+### 4) Verify log integrity for the demo DB
+
+Run `log_verify` against the Arduino demo database path used above
+(`demo_grove.db`):
+
+```bash
+cargo run --bin log_verify -- --db demo_grove.db
+```
+
+Expected output (counts may vary):
+
+```
+log_verify: checking demo_grove.db
+
+=== Sealed Events ===
+checkpoint: none (genesis chain)
+verified 1 event entries
+
+=== Break-Glass Receipts ===
+verified 0 receipt entries (0 granted, 0 denied)
+
+=== Export Receipts ===
+verified 0 export receipt entries
+OK: all chains verified.
+```
+
+Troubleshooting:
+
+- If you see `device public key not found in database`, pass the device key with
+  `--public-key <hex>` or `--public-key-file <path>`.
+- If `demo_grove.db` does not exist, re-run the ingest step above with
+  `--db-path demo_grove.db` to create it.
+
 ## Vendor resources
 
 Use the vendor-provided resources for firmware and hardware references:
