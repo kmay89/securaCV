@@ -1,9 +1,9 @@
 use anyhow::Result;
 use ed25519_dalek::{Signer, SigningKey};
 use witness_kernel::{
-    verify_export_bundle, Approval, BreakGlass, CandidateEvent, EventType, ExportOptions, Kernel,
-    KernelConfig, ModuleDescriptor, QuorumPolicy, TimeBucket, TrusteeEntry, TrusteeId,
-    UnlockRequest, ZonePolicy, EXPORT_EVENTS_ENVELOPE_ID,
+    verify_export_bundle, Approval, BreakGlass, CandidateEvent, EventType, ExportOptions,
+    InferenceBackend, Kernel, KernelConfig, ModuleDescriptor, QuorumPolicy, TimeBucket,
+    TrusteeEntry, TrusteeId, UnlockRequest, ZonePolicy, EXPORT_EVENTS_ENVELOPE_ID,
 };
 
 fn add_test_event(kernel: &mut Kernel, cfg: &KernelConfig) -> Result<()> {
@@ -11,6 +11,7 @@ fn add_test_event(kernel: &mut Kernel, cfg: &KernelConfig) -> Result<()> {
         id: "test_module",
         allowed_event_types: &[EventType::BoundaryCrossingObjectLarge],
         requested_capabilities: &[],
+        supported_backends: &[InferenceBackend::Stub],
     };
     let cand = CandidateEvent {
         event_type: EventType::BoundaryCrossingObjectLarge,

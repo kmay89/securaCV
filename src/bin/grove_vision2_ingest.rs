@@ -11,7 +11,9 @@ use std::path::Path;
 use std::time::Duration;
 
 use witness_kernel::module_runtime::event_payload;
-use witness_kernel::{EventType, Kernel, KernelConfig, ModuleDescriptor, ZonePolicy};
+use witness_kernel::{
+    EventType, InferenceBackend, Kernel, KernelConfig, ModuleDescriptor, ZonePolicy,
+};
 
 const INGEST_NAME: &str = "grove_vision2_ingest";
 
@@ -69,6 +71,7 @@ fn main() -> Result<()> {
             EventType::BoundaryCrossingObjectSmall,
         ],
         requested_capabilities: &[],
+        supported_backends: &[InferenceBackend::Stub],
     };
 
     if let Some(serial_device) = args.serial_device.as_deref() {

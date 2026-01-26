@@ -69,6 +69,7 @@ mod tests {
             id: "test_fs",
             allowed_event_types: &[EventType::BoundaryCrossingObjectLarge],
             requested_capabilities: &[ModuleCapability::Filesystem],
+            supported_backends: &[crate::InferenceBackend::Stub],
         };
         assert!(runtime.validate_descriptor(&fs_desc).is_err());
 
@@ -76,6 +77,7 @@ mod tests {
             id: "test_net",
             allowed_event_types: &[EventType::BoundaryCrossingObjectLarge],
             requested_capabilities: &[ModuleCapability::Network],
+            supported_backends: &[crate::InferenceBackend::Stub],
         };
         assert!(runtime.validate_descriptor(&net_desc).is_err());
     }

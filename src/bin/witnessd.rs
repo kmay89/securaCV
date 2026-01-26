@@ -15,9 +15,9 @@ use std::time::{Duration, Instant};
 use witness_kernel::{
     api::{ApiConfig, ApiServer},
     break_glass::BreakGlassTokenFile,
-    BucketKeyManager, CapabilityBoundaryRuntime, FrameBuffer, Kernel, KernelConfig, Module,
-    ModuleDescriptor, RtspConfig, RtspSource, TimeBucket, Vault, VaultConfig, ZoneCrossingModule,
-    ZonePolicy,
+    BackendSelection, BucketKeyManager, CapabilityBoundaryRuntime, DeviceCapabilities, FrameBuffer,
+    Kernel, KernelConfig, Module, ModuleDescriptor, RtspConfig, RtspSource, TimeBucket, Vault,
+    VaultConfig, ZoneCrossingModule, ZonePolicy,
 };
 #[cfg(feature = "ingest-esp32")]
 use witness_kernel::{Esp32Config, Esp32Source};
@@ -101,7 +101,13 @@ fn main() -> Result<()> {
     // Detection module
     let (mut module, module_desc, runtime) = {
         let _stage = ui.stage("Initialize detection module");
-        let module = ZoneCrossingModule::new(&config.zones.module_zone_id).with_tokens(true);
+        let capabilities = DeviceCapabilities::cpu_only();
+        let module = ZoneCrossingModule::with_backend_selection(
+            &config.zones.module_zone_id,
+            BackendSelection::Auto,
+            &capabilities,
+        )?
+        .with_tokens(true);
         let module_desc: ModuleDescriptor = module.descriptor();
         let runtime = CapabilityBoundaryRuntime::new();
         runtime.validate_descriptor(&module_desc)?;

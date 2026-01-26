@@ -9,7 +9,7 @@
 //! The ONLY path to raw bytes is `RawMediaBoundary::export_for_vault()`, which enforces
 //! break-glass validation before vault sealing. Normal operation cannot extract raw media.
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use sha2::{Digest, Sha256};
 use std::collections::VecDeque;
 use std::time::Instant;
@@ -213,6 +213,99 @@ pub enum SizeClass {
     Large,
 }
 
+// ----------------------------------------------------------------------------
+// Inference backend selection
+// ----------------------------------------------------------------------------
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InferenceBackend {
+    Stub,
+    Cpu,
+    Accelerator,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BackendSelection {
+    Auto,
+    Require(InferenceBackend),
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DeviceCapabilities {
+    pub stub: bool,
+    pub cpu: bool,
+    pub accelerator: bool,
+}
+
+impl DeviceCapabilities {
+    pub const fn stub_only() -> Self {
+        Self {
+            stub: true,
+            cpu: false,
+            accelerator: false,
+        }
+    }
+
+    pub const fn cpu_only() -> Self {
+        Self {
+            stub: false,
+            cpu: true,
+            accelerator: false,
+        }
+    }
+
+    pub const fn cpu_with_accelerator() -> Self {
+        Self {
+            stub: false,
+            cpu: true,
+            accelerator: true,
+        }
+    }
+
+    pub fn supports(&self, backend: InferenceBackend) -> bool {
+        match backend {
+            InferenceBackend::Stub => self.stub,
+            InferenceBackend::Cpu => self.cpu,
+            InferenceBackend::Accelerator => self.accelerator,
+        }
+    }
+}
+
+pub fn select_inference_backend(
+    selection: BackendSelection,
+    capabilities: &DeviceCapabilities,
+    supported: &[InferenceBackend],
+) -> Result<InferenceBackend> {
+    let available = |backend| capabilities.supports(backend) && supported.contains(&backend);
+
+    match selection {
+        BackendSelection::Require(backend) => {
+            if available(backend) {
+                Ok(backend)
+            } else {
+                Err(anyhow!(
+                    "requested inference backend {:?} is not supported on this device",
+                    backend
+                ))
+            }
+        }
+        BackendSelection::Auto => {
+            for backend in [
+                InferenceBackend::Accelerator,
+                InferenceBackend::Cpu,
+                InferenceBackend::Stub,
+            ] {
+                if available(backend) {
+                    return Ok(backend);
+                }
+            }
+            Err(anyhow!(
+                "no supported inference backend available for this device"
+            ))
+        }
+    }
+}
+
 /// Detector trait for running inference on frames.
 ///
 /// The `detect_internal` method receives raw bytes but:
@@ -269,6 +362,65 @@ impl Detector for StubDetector {
             } else {
                 SizeClass::Unknown
             },
+        }
+    }
+}
+
+/// CPU detector that uses the same non-extractive primitives as the stub backend.
+pub struct CpuDetector {
+    inner: StubDetector,
+}
+
+impl CpuDetector {
+    pub fn new() -> Self {
+        Self {
+            inner: StubDetector::new(),
+        }
+    }
+}
+
+impl Default for CpuDetector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Detector for CpuDetector {
+    fn detect_internal(&mut self, pixels: &[u8], width: u32, height: u32) -> DetectionResult {
+        self.inner.detect_internal(pixels, width, height)
+    }
+}
+
+/// Backend-aware detector wrapper.
+pub enum DetectorBackend {
+    Stub(StubDetector),
+    Cpu(CpuDetector),
+}
+
+impl DetectorBackend {
+    pub fn for_backend(backend: InferenceBackend) -> Result<Self> {
+        match backend {
+            InferenceBackend::Stub => Ok(Self::Stub(StubDetector::new())),
+            InferenceBackend::Cpu => Ok(Self::Cpu(CpuDetector::new())),
+            InferenceBackend::Accelerator => {
+                Err(anyhow!("accelerator backend requested but not available"))
+            }
+        }
+    }
+
+    pub fn backend(&self) -> InferenceBackend {
+        match self {
+            Self::Stub(_) => InferenceBackend::Stub,
+            Self::Cpu(_) => InferenceBackend::Cpu,
+        }
+    }
+}
+
+impl Detector for DetectorBackend {
+    fn detect_internal(&mut self, pixels: &[u8], width: u32, height: u32) -> DetectionResult {
+        match self {
+            Self::Stub(detector) => detector.detect_internal(pixels, width, height),
+            Self::Cpu(detector) => detector.detect_internal(pixels, width, height),
         }
     }
 }
@@ -501,5 +653,26 @@ mod tests {
         // Third frame: same as second = no motion
         let r3 = detector.detect_internal(b"frame2", 10, 10);
         assert!(!r3.motion_detected);
+    }
+
+    #[test]
+    fn backend_selection_requires_supported_backend() {
+        let capabilities = DeviceCapabilities::cpu_only();
+        let supported = &[InferenceBackend::Cpu, InferenceBackend::Stub];
+
+        let selected = select_inference_backend(BackendSelection::Auto, &capabilities, supported)
+            .expect("backend selected");
+        assert_eq!(selected, InferenceBackend::Cpu);
+
+        let err = select_inference_backend(
+            BackendSelection::Require(InferenceBackend::Accelerator),
+            &capabilities,
+            supported,
+        )
+        .expect_err("accelerator not supported");
+        assert!(
+            err.to_string().contains("requested inference backend"),
+            "expected fail-closed error"
+        );
     }
 }
