@@ -21,6 +21,24 @@ cargo run --bin demo
 cargo run --bin log_verify -- --db demo_witness.db
 ```
 
+## Real input (file or RTSP)
+
+Use these when you want to drive the demo from a real video source.
+
+**Local file ingest (requires `ingest-file-ffmpeg` feature):**
+
+```bash
+cargo run --features ingest-file-ffmpeg --bin demo -- \
+  --file /path/to/video.mp4
+```
+
+**RTSP ingest (requires `rtsp-gstreamer` or `rtsp-ffmpeg` feature):**
+
+```bash
+cargo run --features rtsp-gstreamer --bin demo -- \
+  --rtsp rtsp://user:pass@camera.example/stream
+```
+
 3) Optional (not needed for the demo): export from the DB with `export_events`
 if you already have a break-glass token (issued via the policy → request →
 approve → authorize flow):
@@ -77,6 +95,7 @@ Example summary output (values may vary):
 
 ```
 demo summary:
+  input: synthetic (stub://demo)
   events written: 42
   log db: demo_witness.db
   vault path: vault/envelopes

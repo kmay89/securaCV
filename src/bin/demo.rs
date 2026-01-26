@@ -19,9 +19,9 @@ use witness_kernel::verify;
 use witness_kernel::{
     break_glass_receipt_outcome_for_verifier, device_public_key_from_db, verify_entry_signature,
     verify_export_bundle, BackendSelection, CandidateEvent, CapabilityBoundaryRuntime,
-    DeviceCapabilities, EventType, ExportArtifact, ExportOptions, ExportReceipt, InferenceBackend,
-    Kernel, KernelConfig, Module, RtspConfig, RtspSource, TimeBucket, Vault, VaultConfig,
-    ZoneCrossingModule, ZonePolicy, EXPORT_EVENTS_ENVELOPE_ID,
+    DeviceCapabilities, EventType, ExportArtifact, ExportOptions, ExportReceipt, FileConfig,
+    FileSource, InferenceBackend, Kernel, KernelConfig, Module, RtspConfig, RtspSource, TimeBucket,
+    Vault, VaultConfig, ZoneCrossingModule, ZonePolicy, EXPORT_EVENTS_ENVELOPE_ID,
 };
 
 const DEFAULT_DB_PATH: &str = "demo_witness.db";
@@ -59,6 +59,12 @@ struct Args {
     /// Output directory for export bundle.
     #[arg(long, default_value = "demo_out")]
     out: String,
+    /// Local file path for ingest (requires ingest-file-ffmpeg feature).
+    #[arg(long, conflicts_with = "rtsp")]
+    file: Option<String>,
+    /// RTSP URL for ingest (requires rtsp-gstreamer or rtsp-ffmpeg feature).
+    #[arg(long, conflicts_with = "file")]
+    rtsp: Option<String>,
     /// Optional deterministic seed for demo artifacts.
     #[arg(long)]
     seed: Option<u64>,
@@ -76,6 +82,27 @@ enum DetectorBackendChoice {
     Stub,
     Cpu,
     Tract,
+}
+
+enum DemoSource {
+    File(FileSource),
+    Rtsp(RtspSource),
+}
+
+impl DemoSource {
+    fn connect(&mut self) -> Result<()> {
+        match self {
+            DemoSource::File(source) => source.connect(),
+            DemoSource::Rtsp(source) => source.connect(),
+        }
+    }
+
+    fn next_frame(&mut self) -> Result<witness_kernel::RawFrame> {
+        match self {
+            DemoSource::File(source) => source.next_frame(),
+            DemoSource::Rtsp(source) => source.next_frame(),
+        }
+    }
 }
 
 fn main() -> Result<()> {
@@ -133,16 +160,15 @@ fn main() -> Result<()> {
     let mut candidates_total: u64 = 0;
     let mut vault_sealed = false;
     let mut export_bundle_bytes: Option<Vec<u8>> = None;
+    let mut input_summary = "verify-only (no new frames)".to_string();
 
     if total_frames > 0 {
-        stage("generate synthetic frames + events");
-        let mut source = RtspSource::new(RtspConfig {
-            url: "stub://demo".to_string(),
-            target_fps: args.fps,
-            width: DEMO_FRAME_WIDTH,
-            height: DEMO_FRAME_HEIGHT,
-            backend: witness_kernel::config::RtspBackendPreference::Auto,
-        })?;
+        let (mut source, source_summary) = build_demo_source(&args)?;
+        input_summary = source_summary.clone();
+        stage(&format!(
+            "ingest frames + events (input: {})",
+            source_summary
+        ));
         source.connect()?;
 
         let capabilities = DeviceCapabilities::cpu_only();
@@ -283,6 +309,7 @@ fn main() -> Result<()> {
     let verify_result = verify_demo(&cfg.db_path, export_bundle_bytes.as_ref().unwrap());
 
     println!("demo summary:");
+    println!("  input: {}", input_summary);
     println!("  frames processed: {}", total_frames);
     println!("  candidates produced: {}", candidates_total);
     println!("  events written: {}", event_count);
@@ -298,6 +325,39 @@ fn main() -> Result<()> {
     println!("  ls -la {}", out_dir.display());
 
     verify_result
+}
+
+fn build_demo_source(args: &Args) -> Result<(DemoSource, String)> {
+    if let Some(path) = args.file.as_ref() {
+        let source = FileSource::new(FileConfig {
+            path: path.clone(),
+            target_fps: args.fps,
+        })?;
+        return Ok((DemoSource::File(source), format!("file: {}", path)));
+    }
+
+    if let Some(url) = args.rtsp.as_ref() {
+        let source = RtspSource::new(RtspConfig {
+            url: url.clone(),
+            target_fps: args.fps,
+            width: DEMO_FRAME_WIDTH,
+            height: DEMO_FRAME_HEIGHT,
+            backend: witness_kernel::config::RtspBackendPreference::Auto,
+        })?;
+        return Ok((DemoSource::Rtsp(source), format!("rtsp: {}", url)));
+    }
+
+    let source = RtspSource::new(RtspConfig {
+        url: "stub://demo".to_string(),
+        target_fps: args.fps,
+        width: DEMO_FRAME_WIDTH,
+        height: DEMO_FRAME_HEIGHT,
+        backend: witness_kernel::config::RtspBackendPreference::Auto,
+    })?;
+    Ok((
+        DemoSource::Rtsp(source),
+        "synthetic (stub://demo)".to_string(),
+    ))
 }
 
 fn register_tract_backend(registry: &mut BackendRegistry, args: &Args) -> Result<()> {
