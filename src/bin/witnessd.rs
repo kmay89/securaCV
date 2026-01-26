@@ -134,6 +134,7 @@ fn main() -> Result<()> {
             match module.backend() {
                 InferenceBackend::Stub => registry.set_default("stub")?,
                 InferenceBackend::Cpu => registry.set_default("cpu")?,
+                InferenceBackend::Tract => registry.set_default("tract")?,
                 InferenceBackend::Accelerator => {
                     return Err(anyhow!("accelerator backend requested but not available"));
                 }
