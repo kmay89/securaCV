@@ -483,6 +483,12 @@ In emergency situations (e.g., law enforcement request with warrant), raw frames
 2. A specific time window
 3. Immutable audit logging
 
+Operationally, the flow is:
+1. Create a request (`break_glass request`) and share the request hash
+2. Trustees sign approvals (`break_glass approve`)
+3. Authorize and emit a token file (`break_glass authorize --output-token ...`)
+4. Unseal with the token (`break_glass unseal`)
+
 See [Break-Glass Documentation](../spec/break_glass.md) for details.
 
 ---
