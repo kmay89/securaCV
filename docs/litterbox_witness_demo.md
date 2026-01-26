@@ -167,6 +167,125 @@ shift if your setup introduces 5V logic. The ESP32C3 sketch defines these pins a
 `examples/firmware/esp32c3_grove_vision_ai_v2_litterbox/esp32c3_grove_vision_ai_v2_litterbox.ino`
 so you can reconcile the wiring with the code.
 
+## Step-by-step demo setup (non-technical friendly)
+
+This section walks you through **connecting, flashing, and running** the two boards
+for the demo. Read it once end-to-end, then follow the steps in order.
+
+### What you need
+
+- **XIAO ESP32C3** (USB-C)
+- **Grove Vision AI V2** (USB-C)
+- **3x jumper wires** (RX, TX, GND)
+- **USB-C data cables** for each board
+- A computer with the Arduino IDE installed
+
+> **SD card note:** this demo does **not** use an SD card. You do not need to
+> insert or format one.
+
+### 1) Install Arduino support
+
+1. Install the **Arduino IDE** (from arduino.cc).
+2. In the Arduino IDE, open **Boards Manager** and install:
+   - **ESP32 by Espressif Systems** (for the XIAO ESP32C3)
+3. Open **Library Manager** and install:
+   - **Seeed Arduino SSCMA** (for Grove Vision AI V2)
+
+### 2) Flash the Grove Vision AI V2 firmware (sensor board)
+
+1. Plug the **Grove Vision AI V2** into USB.
+2. Open the sketch:
+   `examples/firmware/grove_vision_ai_v2_litterbox_firmware/grove_vision_ai_v2_litterbox_firmware.ino`
+3. In **Tools → Board**, select the Grove Vision AI V2 board (or the closest
+   Seeed/XIAO-compatible target your IDE lists).
+4. In **Tools → Port**, pick the port for the Grove Vision AI V2.
+5. Click **Upload**.
+
+**If upload fails:** press **RESET** once, then try Upload again. If it still
+fails, hold **BOOT**, tap **RESET**, then release **BOOT** and retry Upload.
+
+### 3) Prepare Wi‑Fi credentials for the ESP32C3
+
+1. In `examples/firmware/esp32c3_grove_vision_ai_v2_litterbox/`, copy
+   `secrets.example.h` to `secrets.h`.
+2. Open `secrets.h` and enter your Wi‑Fi **SSID** and **password**.
+
+> **Wi‑Fi placement:** for reliable time sync, place the ESP32C3 within normal
+> Wi‑Fi range of your access point (ideally the same room). Avoid metal enclosures
+> or stacking the boards behind a PC tower.
+
+### 4) Flash the XIAO ESP32C3 firmware (bridge board)
+
+1. Plug the **XIAO ESP32C3** into USB.
+2. Open the sketch:
+   `examples/firmware/esp32c3_grove_vision_ai_v2_litterbox/esp32c3_grove_vision_ai_v2_litterbox.ino`
+3. In **Tools → Board**, select **Seeed XIAO ESP32C3**.
+4. In **Tools → Port**, choose the ESP32C3 port.
+5. Click **Upload**.
+
+**If upload fails:** hold **BOOT**, tap **RESET**, release **BOOT**, then retry
+Upload. This forces the ESP32C3 into bootloader mode.
+
+### 5) Wire the boards together (UART)
+
+With both boards **unplugged**, connect the UART pins as follows:
+
+- **ESP32C3 GPIO6 (RX)** ← **Grove Vision AI V2 TX**
+- **ESP32C3 GPIO7 (TX)** → **Grove Vision AI V2 RX**
+- **GND ↔ GND**
+
+Then plug both boards back into USB power.
+
+### 6) Confirm the device is running
+
+1. Open **Tools → Serial Monitor** for the ESP32C3.
+2. Set baud to **115200**.
+3. You should see **one JSON line per event** when the cat/no‑cat state changes.
+
+> **Important:** the ingest pipeline expects **only JSON lines**. The firmware
+> must not print extra status logs on the same serial port or conformance checks
+> will reject the stream.
+
+### 6a) Checking Wi‑Fi status (IP address / signal strength)
+
+To keep the event contract strict, the firmware **does not** print Wi‑Fi
+diagnostics on the serial port. Use one of these non-invasive options instead:
+
+- **Router admin page:** look for the ESP32C3 in the client list to see its
+  **IP address** and **signal strength (RSSI)** if your router exposes it.
+- **Phone Wi‑Fi analyzer apps:** verify signal strength near the installation
+  spot before placing the device.
+
+If Wi‑Fi or NTP is failing, the ESP32C3 will **not** emit events. Fix Wi‑Fi
+coverage and power-cycle the board.
+
+### 7) Run the host ingest
+
+Once you see valid JSON events in the serial monitor, close it and run:
+
+```bash
+stty -F /dev/ttyACM0 115200
+stdbuf -oL cat /dev/ttyACM0 | \
+  DEVICE_KEY_SEED="local-demo-seed" \
+  cargo run --release --bin grove_vision2_ingest
+```
+
+Replace `/dev/ttyACM0` with your actual device path.
+
+### 8) Power and placement tips
+
+- Keep both boards powered by USB throughout the demo.
+- Place the Grove Vision AI V2 where it can see the litter box, with stable
+  lighting and minimal reflections.
+- Keep the ESP32C3 within **reliable Wi‑Fi range** so it can reach NTP and
+  emit events.
+
+### 9) Reset/boot quick guide
+
+- **Normal restart:** press **RESET** once.
+- **Bootloader mode (for flashing):** hold **BOOT**, tap **RESET**, then release
+  **BOOT**.
+
 ## Why this is privacy-preserving
 
 - **No raw media export**: the device never transmits frames.
