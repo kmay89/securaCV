@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{anyhow, Result};
 
-use crate::frame::DetectionResult;
+use crate::detect::result::DetectionResult;
 
 use super::backend::{DetectionCapability, DetectorBackend};
 
