@@ -67,6 +67,17 @@ stdbuf -oL cat /dev/ttyACM0 | \
 
 Any non-conforming payloads are rejected and logged as conformance alarms.
 
+Alternatively, use the built-in serial reconnect loop. This mode opens the
+serial device directly and retries if it disconnects:
+
+```bash
+DEVICE_KEY_SEED="local-demo-seed" \
+  cargo run --release --bin grove_vision2_ingest -- \
+  --serial-device /dev/ttyACM0
+```
+
+Set `WITNESS_RECONNECT_DELAY_SECS` to control the retry delay (default: 2s).
+
 ## Smoke Test
 
 Use this to confirm ingestion and conformance enforcement without changing
@@ -182,9 +193,8 @@ Raw media access remains gated and auditable throughout this flow.
 
 ## Disconnect/Reconnect
 
-`grove_vision2_ingest` exits on stdin EOF and does not attempt to reconnect to
-serial devices. If the USB serial link drops, the pipeline will terminate and
-the ingest process will stop.
+`grove_vision2_ingest` exits on stdin EOF. When using `--serial-device`, it
+reconnects on disconnect with a simple retry loop instead of exiting.
 
 Minimal restart procedure:
 
@@ -195,13 +205,13 @@ stdbuf -oL cat /dev/ttyACM0 | \
   cargo run --release --bin grove_vision2_ingest
 ```
 
-For unattended deployments, use a supervisor (systemd, runit, etc.) to restart
-the pipeline on exit.
+For unattended deployments, you can either rely on the built-in reconnect loop
+or use a supervisor (systemd, runit, etc.) to restart the pipeline on exit.
 
 Expected behavior on link loss: when the USB serial link drops, `cat` receives
 EOF, `grove_vision2_ingest` exits, and no events are ingested until you restart
-the pipeline. When the link returns, the device may resume emitting events, but
-the host side must be restarted to receive them.
+the pipeline. When running with `--serial-device`, the ingest process logs the
+disconnect, waits, and reopens the device until it returns.
 
 ## Firmware sketches
 
