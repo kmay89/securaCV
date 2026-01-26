@@ -163,7 +163,7 @@ impl SyntheticFileSource {
 
     fn generate_synthetic_pixels(&mut self) -> Vec<u8> {
         let pixel_count = (640 * 480 * 3) as usize;
-        if self.frame_count % 50 == 0 {
+        if self.frame_count.is_multiple_of(50) {
             self.scene_state = self.scene_state.wrapping_add(1);
         }
         let mut pixels = vec![0u8; pixel_count];
