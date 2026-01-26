@@ -83,6 +83,9 @@ pub(crate) fn open_db_connection(db_path: &str) -> Result<Connection> {
 
 // -------------------- Time Buckets --------------------
 
+const TEN_MINUTES_S: u32 = 600;
+const FIFTEEN_MINUTES_S: u32 = 900;
+
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TimeBucket {
     /// start of bucket in seconds since epoch (coarse)
@@ -103,7 +106,19 @@ impl TimeBucket {
     }
 
     pub fn now_10min() -> Result<Self> {
-        Self::now(600)
+        Self::now(TEN_MINUTES_S)
+    }
+
+    pub fn coarsen_to(self, bucket_size_s: u32) -> Result<Self> {
+        if bucket_size_s == 0 {
+            return Err(anyhow!("time bucket size must be > 0"));
+        }
+        let size = bucket_size_s as u64;
+        let start = (self.start_epoch_s / size) * size;
+        Ok(TimeBucket {
+            start_epoch_s: start,
+            size_s: bucket_size_s,
+        })
     }
 }
 
@@ -287,16 +302,14 @@ impl ContractEnforcer {
             return Err(anyhow!("conformance: confidence out of bounds"));
         }
 
-        // Time bucket granularity: minimum 5 minutes (300s)
-        if c.time_bucket.size_s < 300 {
-            return Err(anyhow!("conformance: time bucket too precise"));
-        }
+        // Coarsen timestamps to 10-minute buckets before logging.
+        let time_bucket = c.time_bucket.coarsen_to(TEN_MINUTES_S)?;
 
         // Zone discipline (positive allowlist)
         validate_zone_id(&c.zone_id)?;
 
         // Correlation token constraint: only with <= 15 minute buckets
-        if c.correlation_token.is_some() && c.time_bucket.size_s > 900 {
+        if c.correlation_token.is_some() && c.time_bucket.size_s > FIFTEEN_MINUTES_S {
             return Err(anyhow!(
                 "conformance: correlation token with oversized bucket"
             ));
@@ -304,7 +317,7 @@ impl ContractEnforcer {
 
         Ok(Event {
             event_type: c.event_type,
-            time_bucket: c.time_bucket,
+            time_bucket,
             zone_id: c.zone_id,
             confidence: c.confidence,
             correlation_token: c.correlation_token,
@@ -1524,6 +1537,20 @@ mod tests {
     use crate::break_glass::{Approval, QuorumPolicy, TrusteeEntry, TrusteeId, UnlockRequest};
     use ed25519_dalek::{Signer, SigningKey};
 
+    fn setup_test_kernel() -> Result<(Kernel, KernelConfig)> {
+        let cfg = KernelConfig {
+            db_path: ":memory:".to_string(),
+            ruleset_id: "ruleset:test".to_string(),
+            ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
+            kernel_version: "0.0.0-test".to_string(),
+            retention: Duration::from_secs(60),
+            device_key_seed: "devkey:test".to_string(),
+            zone_policy: ZonePolicy::default(),
+        };
+        let kernel = Kernel::open(&cfg)?;
+        Ok((kernel, cfg))
+    }
+
     fn make_break_glass_token(
         envelope_id: &str,
         ruleset_hash: [u8; 32],
@@ -1556,18 +1583,20 @@ mod tests {
     }
 
     #[test]
-    fn conformance_rejects_precise_time() {
+    fn conformance_coarsens_precise_time() {
         let cand = CandidateEvent {
             event_type: EventType::BoundaryCrossingObjectLarge,
             time_bucket: TimeBucket {
-                start_epoch_s: 0,
+                start_epoch_s: 601,
                 size_s: 60,
             },
             zone_id: "zone:test".to_string(),
             confidence: 0.5,
             correlation_token: None,
         };
-        assert!(ContractEnforcer::enforce(cand).is_err());
+        let ev = ContractEnforcer::enforce(cand).expect("coarsened event");
+        assert_eq!(ev.time_bucket.size_s, TEN_MINUTES_S);
+        assert_eq!(ev.time_bucket.start_epoch_s, TEN_MINUTES_S as u64);
     }
 
     #[test]
@@ -1606,7 +1635,7 @@ mod tests {
             event_type: EventType::BoundaryCrossingObjectLarge,
             time_bucket: TimeBucket {
                 start_epoch_s: 0,
-                size_s: 901,
+                size_s: 3600,
             },
             zone_id: "zone:test".to_string(),
             confidence: 0.5,
@@ -1647,16 +1676,7 @@ mod tests {
 
     #[test]
     fn export_omits_precise_timestamps_and_identity_fields() -> Result<()> {
-        let cfg = KernelConfig {
-            db_path: ":memory:".to_string(),
-            ruleset_id: "ruleset:test".to_string(),
-            ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
-            kernel_version: "0.0.0-test".to_string(),
-            retention: Duration::from_secs(60),
-            device_key_seed: "devkey:test".to_string(),
-            zone_policy: ZonePolicy::default(),
-        };
-        let mut kernel = Kernel::open(&cfg)?;
+        let (mut kernel, cfg) = setup_test_kernel()?;
         let desc = ModuleDescriptor {
             id: "test_module",
             allowed_event_types: &[EventType::BoundaryCrossingObjectLarge],
@@ -1667,7 +1687,7 @@ mod tests {
             event_type: EventType::BoundaryCrossingObjectLarge,
             time_bucket: TimeBucket {
                 start_epoch_s: 0,
-                size_s: 600,
+                size_s: TEN_MINUTES_S,
             },
             zone_id: "zone:test".to_string(),
             confidence: 0.5,
@@ -1708,16 +1728,7 @@ mod tests {
 
     #[test]
     fn sealed_event_created_at_matches_time_bucket_start() -> Result<()> {
-        let cfg = KernelConfig {
-            db_path: ":memory:".to_string(),
-            ruleset_id: "ruleset:test".to_string(),
-            ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
-            kernel_version: "0.0.0-test".to_string(),
-            retention: Duration::from_secs(60),
-            device_key_seed: "devkey:test".to_string(),
-            zone_policy: ZonePolicy::default(),
-        };
-        let mut kernel = Kernel::open(&cfg)?;
+        let (mut kernel, cfg) = setup_test_kernel()?;
         let desc = ModuleDescriptor {
             id: "test_module",
             allowed_event_types: &[EventType::BoundaryCrossingObjectLarge],
@@ -1729,7 +1740,7 @@ mod tests {
             event_type: EventType::BoundaryCrossingObjectLarge,
             time_bucket: TimeBucket {
                 start_epoch_s: bucket_start,
-                size_s: 600,
+                size_s: TEN_MINUTES_S,
             },
             zone_id: "zone:test".to_string(),
             confidence: 0.5,
@@ -1750,6 +1761,43 @@ mod tests {
                     row.get(0)
                 })?;
         assert_eq!(created_at, i64::try_from(bucket_start).unwrap());
+        Ok(())
+    }
+
+    #[test]
+    fn append_event_checked_coarsens_time_bucket_before_log_write() -> Result<()> {
+        let (mut kernel, cfg) = setup_test_kernel()?;
+        let desc = ModuleDescriptor {
+            id: "test_module",
+            allowed_event_types: &[EventType::BoundaryCrossingObjectLarge],
+            requested_capabilities: &[],
+            supported_backends: &[InferenceBackend::Stub],
+        };
+        let cand = CandidateEvent {
+            event_type: EventType::BoundaryCrossingObjectLarge,
+            time_bucket: TimeBucket {
+                start_epoch_s: 901,
+                size_s: 60,
+            },
+            zone_id: "zone:test".to_string(),
+            confidence: 0.5,
+            correlation_token: None,
+        };
+        kernel.append_event_checked(
+            &desc,
+            cand,
+            &cfg.kernel_version,
+            &cfg.ruleset_id,
+            cfg.ruleset_hash,
+        )?;
+
+        let created_at: i64 =
+            kernel
+                .conn
+                .query_row("SELECT created_at FROM sealed_events LIMIT 1", [], |row| {
+                    row.get(0)
+                })?;
+        assert_eq!(created_at, i64::from(TEN_MINUTES_S));
         Ok(())
     }
 
