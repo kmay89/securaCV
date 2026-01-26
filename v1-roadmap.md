@@ -18,7 +18,7 @@ Both required for v1. CV flexibility without real crypto is just a detection pip
 | Event contract | ✅ Works | Allowlist enforced |
 | Break-glass structure | ✅ Works | Policy storage + approval flow |
 | Detection | ⚠️ Hardcoded | Only `StubDetector`, no model flexibility |
-| Signatures | ⚠️ Placeholder | HMAC, not Ed25519 |
+| Signatures | ✅ Works | Ed25519 signatures on log + `log_verify` checks |
 | Vault encryption | ⚠️ Placeholder | Structure exists, not wired |
 | RTSP ingestion | ⚠️ Stub | Synthetic frames only |
 | Backend sandboxing | ❌ Missing | Backends run with full privileges |
@@ -60,11 +60,15 @@ v1 is "minimally credible," not feature complete:
 
 Rationale: Signed log is easier to demonstrate end-to-end without designing envelope formats and media storage semantics. Vault structure remains present but inactive for v1.
 
+**Remaining crypto gaps to close:**
+- Device key handling is still seed-derived from config, not hardware-backed or rotated.
+- Vault encryption remains unwired (structure only).
+
 | Step | Deliverable | Est. Effort |
 |------|-------------|-------------|
-| B1 | Replace HMAC with Ed25519 for log signing | 3-5 days |
-| B2 | Device key generation + secure storage | 3-5 days |
-| B3 | `log_verify` validates Ed25519 signatures | 2-3 days |
+| B1 | **Done:** Ed25519 log signing in kernel + CLI paths | ✅ |
+| B2 | Device key generation + secure storage (replace seed-derived key) | 3-5 days |
+| B3 | **Done:** `log_verify` validates Ed25519 signatures | ✅ |
 | B4 | Tampering demo (modify log, verify fails) | 1-2 days |
 
 **Total:** ~2-3 weeks
