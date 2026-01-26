@@ -29,7 +29,7 @@ docker run --rm \
 
 Required:
 - `DEVICE_KEY_SEED`: device key seed (must be consistent with break-glass and tooling)
-- `WITNESS_RTSP_URL`: RTSP URL for the ingestion source (or `stub://` for dev)
+- `WITNESS_RTSP_URL`: RTSP URL for the ingestion source (`stub://` is for local dev/test only)
 
 Optional:
 - `WITNESS_API_ADDR`: Event API bind address (default in container: `0.0.0.0:8799`)
