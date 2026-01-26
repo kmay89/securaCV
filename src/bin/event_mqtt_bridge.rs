@@ -270,47 +270,41 @@ fn main() -> Result<()> {
 
     let availability_topic = format!("{}/{}", args.mqtt_topic_prefix, AVAILABILITY_TOPIC_SUFFIX);
 
+    let run_ctx = RunContext {
+        args: &args,
+        api_addr,
+        mqtt_endpoint: &mqtt_endpoint,
+        tls_materials: &tls_materials,
+        token: &token,
+        device_id: &device_id,
+        device_info: &device_info,
+        availability_topic: &availability_topic,
+        ui: &ui,
+    };
+
     if args.daemon {
-        run_daemon(
-            &args,
-            api_addr,
-            &mqtt_endpoint,
-            &tls_materials,
-            &token,
-            &device_id,
-            &device_info,
-            &availability_topic,
-            &ui,
-        )
+        run_daemon(&run_ctx)
     } else {
-        run_oneshot(
-            &args,
-            api_addr,
-            &mqtt_endpoint,
-            &tls_materials,
-            &token,
-            &device_id,
-            &device_info,
-            &availability_topic,
-            &ui,
-        )
+        run_oneshot(&run_ctx)
     }
 }
 
-fn run_oneshot(
-    args: &Args,
+struct RunContext<'a> {
+    args: &'a Args,
     api_addr: std::net::SocketAddr,
-    mqtt_endpoint: &MqttEndpoint,
-    tls_materials: &TlsMaterials,
-    token: &str,
-    device_id: &str,
-    device_info: &HaDeviceInfo,
-    availability_topic: &str,
-    ui: &ui::Ui,
-) -> Result<()> {
+    mqtt_endpoint: &'a MqttEndpoint,
+    tls_materials: &'a TlsMaterials,
+    token: &'a str,
+    device_id: &'a str,
+    device_info: &'a HaDeviceInfo,
+    availability_topic: &'a str,
+    ui: &'a ui::Ui,
+}
+
+fn run_oneshot(ctx: &RunContext<'_>) -> Result<()> {
     let artifact = {
-        let _stage = ui.stage("Fetch export artifact");
-        fetch_export_artifact(api_addr, token)?
+        let _stage = ctx.ui.stage("Fetch export artifact");
+        fetch_export_artifact(ctx.api_addr, ctx.token)?
     };
 
     let events = flatten_export_events(&artifact);
@@ -320,41 +314,41 @@ fn run_oneshot(
     }
 
     let conn = {
-        let _stage = ui.stage("Connect to MQTT broker");
+        let _stage = ctx.ui.stage("Connect to MQTT broker");
         connect_mqtt(
-            mqtt_endpoint,
-            tls_materials,
-            &args.mqtt_client_id,
-            args.mqtt_username.as_deref(),
-            args.mqtt_password.as_deref(),
-            availability_topic,
+            ctx.mqtt_endpoint,
+            ctx.tls_materials,
+            &ctx.args.mqtt_client_id,
+            ctx.args.mqtt_username.as_deref(),
+            ctx.args.mqtt_password.as_deref(),
+            ctx.availability_topic,
         )?
     };
 
     // Publish availability online
     mqtt_publish_qos1(
         &conn.client,
-        availability_topic,
+        ctx.availability_topic,
         PAYLOAD_ONLINE.as_bytes(),
         true,
     )?;
 
-    if !args.no_discovery {
-        let _stage = ui.stage("Publish HA discovery configs");
+    if !ctx.args.no_discovery {
+        let _stage = ctx.ui.stage("Publish HA discovery configs");
         publish_discovery_configs(
             &conn.client,
-            &args.ha_discovery_prefix,
-            &args.mqtt_topic_prefix,
-            availability_topic,
-            device_id,
-            device_info,
+            &ctx.args.ha_discovery_prefix,
+            &ctx.args.mqtt_topic_prefix,
+            ctx.availability_topic,
+            ctx.device_id,
+            ctx.device_info,
             &events,
         )?;
     }
 
     {
-        let _stage = ui.stage("Publish events");
-        publish_events(&conn.client, &args.mqtt_topic_prefix, &events)?;
+        let _stage = ctx.ui.stage("Publish events");
+        publish_events(&conn.client, &ctx.args.mqtt_topic_prefix, &events)?;
     }
 
     conn.disconnect()?;
@@ -362,49 +356,39 @@ fn run_oneshot(
     Ok(())
 }
 
-fn run_daemon(
-    args: &Args,
-    api_addr: std::net::SocketAddr,
-    mqtt_endpoint: &MqttEndpoint,
-    tls_materials: &TlsMaterials,
-    token: &str,
-    device_id: &str,
-    device_info: &HaDeviceInfo,
-    availability_topic: &str,
-    ui: &ui::Ui,
-) -> Result<()> {
+fn run_daemon(ctx: &RunContext<'_>) -> Result<()> {
     log::info!(
         "Starting daemon mode (poll interval: {}s)",
-        args.poll_interval
+        ctx.args.poll_interval
     );
 
     let conn = {
-        let _stage = ui.stage("Connect to MQTT broker");
+        let _stage = ctx.ui.stage("Connect to MQTT broker");
         connect_mqtt(
-            mqtt_endpoint,
-            tls_materials,
-            &args.mqtt_client_id,
-            args.mqtt_username.as_deref(),
-            args.mqtt_password.as_deref(),
-            availability_topic,
+            ctx.mqtt_endpoint,
+            ctx.tls_materials,
+            &ctx.args.mqtt_client_id,
+            ctx.args.mqtt_username.as_deref(),
+            ctx.args.mqtt_password.as_deref(),
+            ctx.availability_topic,
         )?
     };
 
     // Publish availability online (retained)
     mqtt_publish_qos1(
         &conn.client,
-        availability_topic,
+        ctx.availability_topic,
         PAYLOAD_ONLINE.as_bytes(),
         true,
     )?;
-    log::info!("Published online status to {}", availability_topic);
+    log::info!("Published online status to {}", ctx.availability_topic);
 
     let mut discovered_zones: HashSet<String> = HashSet::new();
     let mut zone_states: HashMap<String, ZoneState> = HashMap::new();
     let mut last_bucket_seen: Option<TimeBucket> = None;
 
     loop {
-        match fetch_export_artifact(api_addr, token) {
+        match fetch_export_artifact(ctx.api_addr, ctx.token) {
             Ok(artifact) => {
                 let events = flatten_export_events(&artifact);
 
@@ -425,17 +409,17 @@ fn run_daemon(
 
                 if !new_events.is_empty() {
                     // Discover new zones
-                    if !args.no_discovery {
+                    if !ctx.args.no_discovery {
                         for event in &new_events {
                             let zone = extract_zone_name(&event.zone_id);
                             if !discovered_zones.contains(&zone) {
                                 publish_zone_discovery(
                                     &conn.client,
-                                    &args.ha_discovery_prefix,
-                                    &args.mqtt_topic_prefix,
-                                    availability_topic,
-                                    device_id,
-                                    device_info,
+                                    &ctx.args.ha_discovery_prefix,
+                                    &ctx.args.mqtt_topic_prefix,
+                                    ctx.availability_topic,
+                                    ctx.device_id,
+                                    ctx.device_info,
                                     &zone,
                                 )?;
                                 discovered_zones.insert(zone);
@@ -456,10 +440,16 @@ fn run_daemon(
                             .unwrap_or(0);
 
                         // Publish event
-                        publish_single_event(&conn.client, &args.mqtt_topic_prefix, event, &zone)?;
+                        publish_single_event(
+                            &conn.client,
+                            &ctx.args.mqtt_topic_prefix,
+                            event,
+                            &zone,
+                        )?;
 
                         // Publish zone count
-                        let count_topic = format!("{}/zone/{}/count", args.mqtt_topic_prefix, zone);
+                        let count_topic =
+                            format!("{}/zone/{}/count", ctx.args.mqtt_topic_prefix, zone);
                         mqtt_publish_qos1(
                             &conn.client,
                             &count_topic,
@@ -469,13 +459,13 @@ fn run_daemon(
 
                         // Trigger motion sensor
                         let motion_topic =
-                            format!("{}/zone/{}/motion", args.mqtt_topic_prefix, zone);
+                            format!("{}/zone/{}/motion", ctx.args.mqtt_topic_prefix, zone);
                         mqtt_publish_qos1(&conn.client, &motion_topic, b"ON", false)?;
                     }
 
                     // Update last event state
                     if let Some(last) = new_events.last() {
-                        let state_topic = format!("{}/last_event", args.mqtt_topic_prefix);
+                        let state_topic = format!("{}/last_event", ctx.args.mqtt_topic_prefix);
                         let payload = EventStatePayload {
                             event_type: format!("{:?}", last.event_type),
                             zone_id: last.zone_id.clone(),
@@ -501,7 +491,7 @@ fn run_daemon(
             }
         }
 
-        std::thread::sleep(Duration::from_secs(args.poll_interval));
+        std::thread::sleep(Duration::from_secs(ctx.args.poll_interval));
     }
 }
 
