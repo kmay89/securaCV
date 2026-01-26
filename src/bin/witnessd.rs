@@ -12,9 +12,12 @@ use anyhow::{anyhow, Result};
 use std::io::IsTerminal;
 use std::time::{Duration, Instant};
 
+#[cfg(feature = "backend-tract")]
+use witness_kernel::detect::TractBackend;
 use witness_kernel::{
     api::{ApiConfig, ApiServer},
     break_glass::BreakGlassTokenFile,
+    config::DetectBackendPreference,
     detect::{BackendRegistry, CpuBackend, StubBackend},
     BackendSelection, BucketKeyManager, CapabilityBoundaryRuntime, DeviceCapabilities, FileConfig,
     FileSource, FrameBuffer, InferenceBackend, Kernel, KernelConfig, Module, ModuleDescriptor,
@@ -24,9 +27,6 @@ use witness_kernel::{
 use witness_kernel::{Esp32Config, Esp32Source};
 #[cfg(feature = "ingest-v4l2")]
 use witness_kernel::{V4l2Config, V4l2Source};
-#[cfg(feature = "backend-tract")]
-use witness_kernel::detect::TractBackend;
-use witness_kernel::config::DetectBackendPreference;
 
 #[path = "../ui.rs"]
 mod ui;
@@ -499,9 +499,7 @@ fn register_tract_backend(
     }
 }
 
-fn tract_input_dimensions(
-    config: &witness_kernel::config::WitnessdConfig,
-) -> Result<(u32, u32)> {
+fn tract_input_dimensions(config: &witness_kernel::config::WitnessdConfig) -> Result<(u32, u32)> {
     match config.ingest.backend {
         witness_kernel::config::IngestBackend::Rtsp => {
             Ok((config.rtsp.width, config.rtsp.height))

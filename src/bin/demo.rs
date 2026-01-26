@@ -11,6 +11,8 @@ use std::time::Duration;
 use witness_kernel::break_glass::{
     Approval, BreakGlass, BreakGlassToken, QuorumPolicy, TrusteeEntry, TrusteeId, UnlockRequest,
 };
+#[cfg(feature = "backend-tract")]
+use witness_kernel::detect::TractBackend;
 use witness_kernel::detect::{BackendRegistry, CpuBackend, StubBackend};
 use witness_kernel::vault::DEFAULT_VAULT_PATH;
 use witness_kernel::verify;
@@ -21,8 +23,6 @@ use witness_kernel::{
     Kernel, KernelConfig, Module, RtspConfig, RtspSource, TimeBucket, Vault, VaultConfig,
     ZoneCrossingModule, ZonePolicy, EXPORT_EVENTS_ENVELOPE_ID,
 };
-#[cfg(feature = "backend-tract")]
-use witness_kernel::detect::TractBackend;
 
 const DEFAULT_DB_PATH: &str = "demo_witness.db";
 const DEFAULT_RULESET_ID: &str = "ruleset:demo";
@@ -314,9 +314,7 @@ fn register_tract_backend(registry: &mut BackendRegistry, args: &Args) -> Result
     {
         let _ = registry;
         let _ = args;
-        Err(anyhow!(
-            "tract backend requires the backend-tract feature"
-        ))
+        Err(anyhow!("tract backend requires the backend-tract feature"))
     }
 }
 
