@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use crate::detect::result::DetectionResult;
+use crate::frame::DetectionResult;
 
 /// Detection capabilities supported by backends.
 ///
