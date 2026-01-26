@@ -28,6 +28,24 @@ pub struct BreakGlassReceiptCounts {
     pub denied: u64,
 }
 
+pub fn verify_checkpoint_signature(
+    verifying_key: &VerifyingKey,
+    checkpoint: &CheckpointInfo,
+) -> Result<()> {
+    match (
+        checkpoint.chain_head_hash,
+        checkpoint.signature,
+        checkpoint.cutoff_event_id,
+    ) {
+        (None, None, None) => Ok(()),
+        (Some(head), Some(sig), Some(_)) => verify_entry_signature(verifying_key, &head, &sig)
+            .map_err(|e| anyhow!("checkpoint signature verification failed: {}", e)),
+        _ => Err(anyhow!(
+            "checkpoint is partially populated; integrity verification cannot proceed"
+        )),
+    }
+}
+
 pub fn latest_checkpoint(conn: &Connection) -> Result<CheckpointInfo> {
     let mut stmt = conn.prepare(
         "SELECT chain_head_hash, signature, cutoff_event_id FROM checkpoints ORDER BY id DESC LIMIT 1",
@@ -111,7 +129,7 @@ where
 
         if prev_hash != expected_prev {
             return Err(anyhow!(
-                "chain break at id {}: prev_hash={}, expected_prev={}",
+                "integrity check failed at id {}: prev_hash={}, expected_prev={}",
                 id,
                 hex::encode(prev_hash),
                 hex::encode(expected_prev)
@@ -121,7 +139,7 @@ where
         let computed = hash_entry(&expected_prev, payload.as_bytes());
         if computed != entry_hash {
             return Err(anyhow!(
-                "hash mismatch at id {}: computed={}, stored={}",
+                "integrity check failed at id {}: computed_hash={}, stored_hash={}",
                 id,
                 hex::encode(computed),
                 hex::encode(entry_hash)
@@ -130,7 +148,7 @@ where
 
         if verify_entry_signature(verifying_key, &entry_hash, &sig).is_err() {
             return Err(anyhow!(
-                "signature mismatch at id {}: stored={}",
+                "integrity check failed at id {}: signature mismatch (stored={})",
                 id,
                 hex::encode(sig)
             ));
@@ -177,7 +195,7 @@ where
 
         if prev_hash != expected_prev {
             return Err(anyhow!(
-                "receipt chain break at id {}: prev_hash={}, expected_prev={}",
+                "integrity check failed at receipt id {}: prev_hash={}, expected_prev={}",
                 id,
                 hex::encode(prev_hash),
                 hex::encode(expected_prev)
@@ -187,7 +205,7 @@ where
         let computed = hash_entry(&expected_prev, payload.as_bytes());
         if computed != entry_hash {
             return Err(anyhow!(
-                "receipt hash mismatch at id {}: computed={}, stored={}",
+                "integrity check failed at receipt id {}: computed_hash={}, stored_hash={}",
                 id,
                 hex::encode(computed),
                 hex::encode(entry_hash)
@@ -196,7 +214,7 @@ where
 
         if verify_entry_signature(verifying_key, &entry_hash, &sig).is_err() {
             return Err(anyhow!(
-                "receipt signature mismatch at id {}: stored={}",
+                "integrity check failed at receipt id {}: signature mismatch (stored={})",
                 id,
                 hex::encode(sig)
             ));
@@ -211,7 +229,7 @@ where
         let commitment = approvals_commitment(&approvals);
         if commitment != receipt.approvals_commitment {
             return Err(anyhow!(
-                "receipt approvals commitment mismatch at id {}: stored={}, expected={}",
+                "integrity check failed at receipt id {}: stored_commitment={}, expected_commitment={}",
                 id,
                 hex::encode(receipt.approvals_commitment),
                 hex::encode(commitment)
@@ -258,7 +276,7 @@ where
 
         if prev_hash != expected_prev {
             return Err(anyhow!(
-                "receipt chain break at id {}: prev_hash={}, expected_prev={}",
+                "integrity check failed at receipt id {}: prev_hash={}, expected_prev={}",
                 id,
                 hex::encode(prev_hash),
                 hex::encode(expected_prev)
@@ -268,7 +286,7 @@ where
         let computed = hash_entry(&expected_prev, payload.as_bytes());
         if computed != entry_hash {
             return Err(anyhow!(
-                "receipt hash mismatch at id {}: computed={}, stored={}",
+                "integrity check failed at receipt id {}: computed_hash={}, stored_hash={}",
                 id,
                 hex::encode(computed),
                 hex::encode(entry_hash)
@@ -277,7 +295,7 @@ where
 
         if verify_entry_signature(verifying_key, &entry_hash, &sig).is_err() {
             return Err(anyhow!(
-                "receipt signature mismatch at id {}: stored={}",
+                "integrity check failed at receipt id {}: signature mismatch (stored={})",
                 id,
                 hex::encode(sig)
             ));
