@@ -171,18 +171,34 @@ mod tests {
     use super::*;
     use crate::verify_helpers::load_verifying_key;
     use ed25519_dalek::{Signer, SigningKey};
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use witness_kernel::{
         Approval, BreakGlass, CandidateEvent, EventType, InferenceBackend, Kernel, KernelConfig,
         ModuleDescriptor, QuorumPolicy, TimeBucket, TrusteeEntry, TrusteeId, UnlockRequest,
         ZonePolicy,
     };
 
-    fn temp_db_path() -> PathBuf {
-        let mut path = std::env::temp_dir();
-        let suffix: u64 = rand::random();
-        path.push(format!("log_verify_test_{}.db", suffix));
-        path
+    struct TempDb {
+        path: PathBuf,
+    }
+
+    impl TempDb {
+        fn new() -> Self {
+            let mut path = std::env::temp_dir();
+            let suffix: u64 = rand::random();
+            path.push(format!("log_verify_test_{}.db", suffix));
+            Self { path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TempDb {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.path);
+        }
     }
 
     fn write_test_event(kernel: &mut Kernel) -> Result<()> {
@@ -211,9 +227,9 @@ mod tests {
 
     #[test]
     fn log_verify_succeeds_with_public_key() -> Result<()> {
-        let db_path = temp_db_path();
+        let db = TempDb::new();
         let mut kernel = Kernel::open(&KernelConfig {
-            db_path: db_path.to_string_lossy().to_string(),
+            db_path: db.path().to_string_lossy().to_string(),
             ruleset_id: "ruleset:test".to_string(),
             ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
             kernel_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -225,7 +241,7 @@ mod tests {
         let public_key_hex = hex::encode(kernel.device_key_for_verify_only());
         drop(kernel);
 
-        let conn = Connection::open(&db_path)?;
+        let conn = Connection::open(db.path())?;
         let verifying_key = load_verifying_key(&conn, Some(&public_key_hex), None)?;
         let checkpoint = verify::latest_checkpoint(&conn)?;
         verify::verify_events_with(&conn, &verifying_key, checkpoint.chain_head_hash, |_, _| {})?;
@@ -238,15 +254,14 @@ mod tests {
         )?;
         verify::verify_export_receipts_with(&conn, &verifying_key, |_, _| {})?;
 
-        let _ = std::fs::remove_file(&db_path);
         Ok(())
     }
 
     #[test]
     fn log_verify_fails_without_public_key() -> Result<()> {
-        let db_path = temp_db_path();
+        let db = TempDb::new();
         let mut kernel = Kernel::open(&KernelConfig {
-            db_path: db_path.to_string_lossy().to_string(),
+            db_path: db.path().to_string_lossy().to_string(),
             ruleset_id: "ruleset:test".to_string(),
             ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
             kernel_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -260,19 +275,18 @@ mod tests {
             .execute("DELETE FROM device_metadata WHERE id = 1", [])?;
         drop(kernel);
 
-        let conn = Connection::open(&db_path)?;
+        let conn = Connection::open(db.path())?;
         let result = load_verifying_key(&conn, None, None);
         assert!(result.is_err());
 
-        let _ = std::fs::remove_file(&db_path);
         Ok(())
     }
 
     #[test]
     fn log_verify_fails_with_mismatched_public_key() -> Result<()> {
-        let db_path = temp_db_path();
+        let db = TempDb::new();
         let mut kernel = Kernel::open(&KernelConfig {
-            db_path: db_path.to_string_lossy().to_string(),
+            db_path: db.path().to_string_lossy().to_string(),
             ruleset_id: "ruleset:test".to_string(),
             ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
             kernel_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -286,7 +300,7 @@ mod tests {
         let wrong_signing_key = SigningKey::from_bytes(&[42u8; 32]);
         let public_key_hex = hex::encode(wrong_signing_key.verifying_key().to_bytes());
 
-        let conn = Connection::open(&db_path)?;
+        let conn = Connection::open(db.path())?;
         let verifying_key = load_verifying_key(&conn, Some(&public_key_hex), None)?;
         let checkpoint = verify::latest_checkpoint(&conn)?;
         let result = verify::verify_events_with(
@@ -297,15 +311,14 @@ mod tests {
         );
         assert!(result.is_err());
 
-        let _ = std::fs::remove_file(&db_path);
         Ok(())
     }
 
     #[test]
     fn log_verify_rejects_tampered_event_payload() -> Result<()> {
-        let db_path = temp_db_path();
+        let db = TempDb::new();
         let mut kernel = Kernel::open(&KernelConfig {
-            db_path: db_path.to_string_lossy().to_string(),
+            db_path: db.path().to_string_lossy().to_string(),
             ruleset_id: "ruleset:test".to_string(),
             ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
             kernel_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -321,7 +334,7 @@ mod tests {
         let public_key_hex = hex::encode(kernel.device_key_for_verify_only());
         drop(kernel);
 
-        let conn = Connection::open(&db_path)?;
+        let conn = Connection::open(db.path())?;
         let verifying_key = load_verifying_key(&conn, Some(&public_key_hex), None)?;
         let checkpoint = verify::latest_checkpoint(&conn)?;
         let result = verify::verify_events_with(
@@ -332,15 +345,14 @@ mod tests {
         );
         assert!(result.is_err());
 
-        let _ = std::fs::remove_file(&db_path);
         Ok(())
     }
 
     #[test]
     fn log_verify_rejects_tampered_break_glass_approvals() -> Result<()> {
-        let db_path = temp_db_path();
+        let db = TempDb::new();
         let mut kernel = Kernel::open(&KernelConfig {
-            db_path: db_path.to_string_lossy().to_string(),
+            db_path: db.path().to_string_lossy().to_string(),
             ruleset_id: "ruleset:test".to_string(),
             ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
             kernel_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -375,7 +387,7 @@ mod tests {
         let public_key_hex = hex::encode(kernel.device_key_for_verify_only());
         drop(kernel);
 
-        let conn = Connection::open(&db_path)?;
+        let conn = Connection::open(db.path())?;
         let verifying_key = load_verifying_key(&conn, Some(&public_key_hex), None)?;
         let policy = verify::load_break_glass_policy(&conn)?;
         let result = verify::verify_break_glass_receipts_with(
@@ -386,15 +398,14 @@ mod tests {
         );
         assert!(result.is_err());
 
-        let _ = std::fs::remove_file(&db_path);
         Ok(())
     }
 
     #[test]
     fn log_verify_rejects_unknown_trustee_approvals() -> Result<()> {
-        let db_path = temp_db_path();
+        let db = TempDb::new();
         let mut kernel = Kernel::open(&KernelConfig {
-            db_path: db_path.to_string_lossy().to_string(),
+            db_path: db.path().to_string_lossy().to_string(),
             ruleset_id: "ruleset:test".to_string(),
             ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
             kernel_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -428,7 +439,7 @@ mod tests {
         let public_key_hex = hex::encode(kernel.device_key_for_verify_only());
         drop(kernel);
 
-        let conn = Connection::open(&db_path)?;
+        let conn = Connection::open(db.path())?;
         let verifying_key = load_verifying_key(&conn, Some(&public_key_hex), None)?;
         let policy = verify::load_break_glass_policy(&conn)?;
         let result = verify::verify_break_glass_receipts_with(
@@ -439,15 +450,14 @@ mod tests {
         );
         assert!(result.is_err());
 
-        let _ = std::fs::remove_file(&db_path);
         Ok(())
     }
 
     #[test]
     fn log_verify_rejects_invalid_trustee_signature() -> Result<()> {
-        let db_path = temp_db_path();
+        let db = TempDb::new();
         let mut kernel = Kernel::open(&KernelConfig {
-            db_path: db_path.to_string_lossy().to_string(),
+            db_path: db.path().to_string_lossy().to_string(),
             ruleset_id: "ruleset:test".to_string(),
             ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
             kernel_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -481,7 +491,7 @@ mod tests {
         let public_key_hex = hex::encode(kernel.device_key_for_verify_only());
         drop(kernel);
 
-        let conn = Connection::open(&db_path)?;
+        let conn = Connection::open(db.path())?;
         let verifying_key = load_verifying_key(&conn, Some(&public_key_hex), None)?;
         let policy = verify::load_break_glass_policy(&conn)?;
         let result = verify::verify_break_glass_receipts_with(
@@ -492,7 +502,6 @@ mod tests {
         );
         assert!(result.is_err());
 
-        let _ = std::fs::remove_file(&db_path);
         Ok(())
     }
 }
