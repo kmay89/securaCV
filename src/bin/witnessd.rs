@@ -37,11 +37,14 @@ fn main() -> Result<()> {
     let ui = ui::Ui::from_args(ui_flag.as_deref(), is_tty, !stdout_is_tty);
 
     let kernel_version = env!("CARGO_PKG_VERSION");
-    let device_key_seed =
-        std::env::var("DEVICE_KEY_SEED").map_err(|_| anyhow!("DEVICE_KEY_SEED must be set"))?;
     let config = {
         let _stage = ui.stage("Load configuration");
         witness_kernel::config::WitnessdConfig::load()?
+    };
+    let device_key_seed = {
+        let provided_seed = std::env::var("DEVICE_KEY_SEED").ok();
+        let key_path = witness_kernel::crypto::device_key_path_for_db(&config.db_path)?;
+        witness_kernel::crypto::load_or_create_device_seed(&key_path, provided_seed.as_deref())?
     };
     let ruleset_hash = KernelConfig::ruleset_hash_from_id(&config.ruleset_id);
 
