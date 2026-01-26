@@ -1399,8 +1399,11 @@ const ZONE_CROSSING_ALLOWED: &[EventType] = &[
     EventType::BoundaryCrossingObjectLarge,
     EventType::BoundaryCrossingObjectSmall,
 ];
-const ZONE_CROSSING_BACKENDS: &[InferenceBackend] =
-    &[InferenceBackend::Cpu, InferenceBackend::Stub];
+const ZONE_CROSSING_BACKENDS: &[InferenceBackend] = &[
+    InferenceBackend::Cpu,
+    InferenceBackend::Tract,
+    InferenceBackend::Stub,
+];
 
 impl ZoneCrossingModule {
     pub fn new(zone_id: &str) -> Self {

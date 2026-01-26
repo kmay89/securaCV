@@ -200,6 +200,7 @@ impl<'a> InferenceView<'a> {
 pub enum InferenceBackend {
     Stub,
     Cpu,
+    Tract,
     Accelerator,
 }
 
@@ -245,6 +246,7 @@ impl DeviceCapabilities {
         match backend {
             InferenceBackend::Stub => self.stub,
             InferenceBackend::Cpu => self.cpu,
+            InferenceBackend::Tract => self.cpu,
             InferenceBackend::Accelerator => self.accelerator,
         }
     }
@@ -272,6 +274,7 @@ pub fn select_inference_backend(
             for backend in [
                 InferenceBackend::Accelerator,
                 InferenceBackend::Cpu,
+                InferenceBackend::Tract,
                 InferenceBackend::Stub,
             ] {
                 if available(backend) {
@@ -381,6 +384,9 @@ impl DetectorBackend {
         match backend {
             InferenceBackend::Stub => Ok(Self::Stub(StubDetector::new())),
             InferenceBackend::Cpu => Ok(Self::Cpu(CpuDetector::new())),
+            InferenceBackend::Tract => Err(anyhow!(
+                "tract backend is only available via the backend registry"
+            )),
             InferenceBackend::Accelerator => {
                 Err(anyhow!("accelerator backend requested but not available"))
             }
@@ -637,7 +643,11 @@ mod tests {
     #[test]
     fn backend_selection_requires_supported_backend() {
         let capabilities = DeviceCapabilities::cpu_only();
-        let supported = &[InferenceBackend::Cpu, InferenceBackend::Stub];
+        let supported = &[
+            InferenceBackend::Cpu,
+            InferenceBackend::Tract,
+            InferenceBackend::Stub,
+        ];
 
         let selected = select_inference_backend(BackendSelection::Auto, &capabilities, supported)
             .expect("backend selected");
@@ -653,5 +663,19 @@ mod tests {
             err.to_string().contains("requested inference backend"),
             "expected fail-closed error"
         );
+    }
+
+    #[test]
+    fn backend_selection_supports_tract_when_cpu_available() {
+        let capabilities = DeviceCapabilities::cpu_only();
+        let supported = &[InferenceBackend::Tract];
+
+        let selected = select_inference_backend(
+            BackendSelection::Require(InferenceBackend::Tract),
+            &capabilities,
+            supported,
+        )
+        .expect("tract backend selected");
+        assert_eq!(selected, InferenceBackend::Tract);
     }
 }
