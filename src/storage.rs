@@ -3,10 +3,10 @@ use ed25519_dalek::SigningKey;
 use rusqlite::{params, Connection};
 use std::time::Duration;
 
-use crate::{hash_entry, now_s, open_db_connection, sign_entry, Event, ReprocessGuard};
+use crate::{hash_entry, now_s, open_db_connection, sign_entry, ReprocessGuard, SealedLogRecord};
 
 pub trait SealedLogStore {
-    fn append_event(&mut self, ev: &Event, signing_key: &SigningKey) -> Result<()>;
+    fn append_record(&mut self, record: &SealedLogRecord, signing_key: &SigningKey) -> Result<()>;
 
     fn enforce_retention_with_checkpoint(
         &mut self,
@@ -19,7 +19,7 @@ pub trait SealedLogStore {
         expected_ruleset_hash: [u8; 32],
         limit: usize,
         log_alarm: &mut dyn FnMut(&str, &str) -> Result<()>,
-    ) -> Result<Vec<Event>>;
+    ) -> Result<Vec<SealedLogRecord>>;
 }
 
 pub struct SqliteSealedLogStore {
@@ -114,11 +114,11 @@ impl SqliteSealedLogStore {
 }
 
 impl SealedLogStore for SqliteSealedLogStore {
-    fn append_event(&mut self, ev: &Event, signing_key: &SigningKey) -> Result<()> {
-        let created_at = i64::try_from(ev.time_bucket.start_epoch_s)
+    fn append_record(&mut self, record: &SealedLogRecord, signing_key: &SigningKey) -> Result<()> {
+        let created_at = i64::try_from(record.time_bucket().start_epoch_s)
             .map_err(|_| anyhow!("time bucket start exceeds i64 range"))?;
         let prev_hash = self.last_event_hash_or_checkpoint_head()?;
-        let payload_json = serde_json::to_string(ev)?;
+        let payload_json = serde_json::to_string(record)?;
 
         let entry_hash = hash_entry(&prev_hash, payload_json.as_bytes());
         let signature = sign_entry(signing_key, &entry_hash);
@@ -193,7 +193,7 @@ impl SealedLogStore for SqliteSealedLogStore {
         expected_ruleset_hash: [u8; 32],
         limit: usize,
         log_alarm: &mut dyn FnMut(&str, &str) -> Result<()>,
-    ) -> Result<Vec<Event>> {
+    ) -> Result<Vec<SealedLogRecord>> {
         let payloads = {
             let mut stmt = self
                 .conn
@@ -211,16 +211,16 @@ impl SealedLogStore for SqliteSealedLogStore {
 
         let mut out = Vec::with_capacity(payloads.len());
         for payload in payloads {
-            let ev: Event = serde_json::from_str(&payload)?;
+            let record: SealedLogRecord = serde_json::from_str(&payload)?;
 
             if let Err(e) =
-                ReprocessGuard::assert_same_ruleset(expected_ruleset_hash, ev.ruleset_hash)
+                ReprocessGuard::assert_same_ruleset(expected_ruleset_hash, record.ruleset_hash())
             {
                 log_alarm("CONFORMANCE_REPROCESS_VIOLATION", &format!("{}", e))?;
                 return Err(e);
             }
 
-            out.push(ev);
+            out.push(record);
         }
         Ok(out)
     }
@@ -266,11 +266,11 @@ impl InMemorySealedLogStore {
 }
 
 impl SealedLogStore for InMemorySealedLogStore {
-    fn append_event(&mut self, ev: &Event, _signing_key: &SigningKey) -> Result<()> {
-        let created_at = i64::try_from(ev.time_bucket.start_epoch_s)
+    fn append_record(&mut self, record: &SealedLogRecord, _signing_key: &SigningKey) -> Result<()> {
+        let created_at = i64::try_from(record.time_bucket().start_epoch_s)
             .map_err(|_| anyhow!("time bucket start exceeds i64 range"))?;
         let prev_hash = self.last_event_hash_or_checkpoint_head()?;
-        let payload_json = serde_json::to_string(ev)?;
+        let payload_json = serde_json::to_string(record)?;
         let entry_hash = hash_entry(&prev_hash, payload_json.as_bytes());
         self.events.push(InMemorySealedEventEntry {
             created_at,
@@ -310,7 +310,7 @@ impl SealedLogStore for InMemorySealedLogStore {
         expected_ruleset_hash: [u8; 32],
         limit: usize,
         log_alarm: &mut dyn FnMut(&str, &str) -> Result<()>,
-    ) -> Result<Vec<Event>> {
+    ) -> Result<Vec<SealedLogRecord>> {
         let payloads = self
             .events
             .iter()
@@ -320,16 +320,16 @@ impl SealedLogStore for InMemorySealedLogStore {
 
         let mut out = Vec::with_capacity(payloads.len());
         for payload in payloads {
-            let ev: Event = serde_json::from_str(&payload)?;
+            let record: SealedLogRecord = serde_json::from_str(&payload)?;
 
             if let Err(e) =
-                ReprocessGuard::assert_same_ruleset(expected_ruleset_hash, ev.ruleset_hash)
+                ReprocessGuard::assert_same_ruleset(expected_ruleset_hash, record.ruleset_hash())
             {
                 log_alarm("CONFORMANCE_REPROCESS_VIOLATION", &format!("{}", e))?;
                 return Err(e);
             }
 
-            out.push(ev);
+            out.push(record);
         }
         Ok(out)
     }
