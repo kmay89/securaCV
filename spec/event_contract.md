@@ -53,8 +53,8 @@ and MUST adhere to the same bucket granularity as `time_bucket`.
 
 `replication_status` is a boolean or enum marker that indicates export visibility:
 
-- **Boolean form**: `replicated: true | false`
-- **Enum form**: `replication_status: local_only | replicated | unknown`
+- **Boolean form**: `replication_status: true | false`
+- **Enum form**: `replication_status: "local_only" | "replicated" | "unknown"`
 
 Derivation guidance:
 - The marker SHOULD be derived from export/bridge state (e.g., MQTT bridge connectivity,
@@ -62,7 +62,8 @@ Derivation guidance:
 - `replication_status` MUST NOT be used as a proxy for delivery confirmation, recipient identity,
   or audience size.
 - Implementations MUST NOT encode raw timestamps or identifiers in this field.
-- If status cannot be determined, use `unknown` (enum form) or omit the field.
+- If status cannot be determined, it MUST be handled as follows: if using the enum form, the
+  value MUST be `unknown`; if using the boolean form, the field MUST be omitted.
 
 ### 2.1.2 Offline Interval Records
 
