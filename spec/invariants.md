@@ -36,6 +36,9 @@ The goal of these invariants is to ensure that a witness system cannot evolve—
 - Raw media MUST be discarded immediately after processing unless explicitly sealed.
 - The kernel MUST NOT expose APIs that stream, mirror, or replay raw media externally.
 - Any subsystem capable of raw media storage MUST be isolated behind break-glass gating.
+- Derived artifacts that are reversible or approximately reversible to raw media
+  (e.g., feature maps, embeddings, high-resolution masks) MUST be treated as raw
+  media for the purposes of this invariant.
 
 ### 3.1 Pre-Event Buffering (Transient Only)
 
@@ -75,6 +78,8 @@ By design, the system:
 - Cannot emit absolute location data in event records.
 - Cannot emit stable device identifiers in shared telemetry.
 - Cannot vary network behavior in proportion to event occurrence unless explicitly configured for cover traffic.
+In the absence of explicit cover traffic configuration, the system SHOULD batch
+and delay exports to reduce event-correlated network signals.
 
 ---
 
@@ -95,6 +100,8 @@ By design, the system:
 - No single actor, credential, or process can unilaterally access sealed evidence.
 - The kernel MUST support quorum-based authorization (e.g., N-of-M trustees).
 - Each break-glass event MUST be logged immutably and be externally verifiable.
+Quorum approvals MUST originate from independently controlled principals or
+devices.
 Vault confidentiality MUST rely on distinct, device-local key material or
 quorum-derived secrets; identifiers are never treated as protective key
 material.
