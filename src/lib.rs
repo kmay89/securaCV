@@ -850,7 +850,7 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
                 self.log_alarm("CONFORMANCE_CONTRACT_REJECT", &format!("{}", e))?;
                 let failure = FailureEvent {
                     failure_type: FailureType::GapMissingData,
-                    time_bucket: TimeBucket::now_10min()?,
+                    time_bucket: Self::coarsen_or_now(cand.time_bucket)?,
                     details: Some(format!("CONFORMANCE_CONTRACT_REJECT: {}", e)),
                     kernel_version: "UNBOUND".to_string(),
                     ruleset_id: "UNBOUND".to_string(),
