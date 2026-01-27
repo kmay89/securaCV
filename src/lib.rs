@@ -130,6 +130,18 @@ pub enum EventType {
     BoundaryCrossingObjectSmall,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub enum FailureType {
+    StorageFull,
+    StorageWriteFailed,
+    CryptoFailure,
+    ClockSkew,
+    SensorDisagreement,
+    PowerLoss,
+    FirmwareIntegrity,
+    GapMissingData,
+}
+
 // -------------------- Events --------------------
 
 /// Candidate events are untrusted outputs from modules.
@@ -165,6 +177,50 @@ impl Event {
     }
 }
 
+/// Explicit failure/gap artifacts recorded in the sealed log.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FailureEvent {
+    pub failure_type: FailureType,
+    pub time_bucket: TimeBucket,
+    pub details: Option<String>,
+    pub kernel_version: String,
+    pub ruleset_id: String,
+    pub ruleset_hash: [u8; 32],
+}
+
+impl FailureEvent {
+    pub fn bind(mut self, kernel_version: &str, ruleset_id: &str, ruleset_hash: [u8; 32]) -> Self {
+        self.kernel_version = kernel_version.to_string();
+        self.ruleset_id = ruleset_id.to_string();
+        self.ruleset_hash = ruleset_hash;
+        self
+    }
+}
+
+/// Sealed log records include normal events and explicit failure/gap artifacts.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum SealedLogRecord {
+    Event(Event),
+    Failure(FailureEvent),
+}
+
+impl SealedLogRecord {
+    pub fn time_bucket(&self) -> TimeBucket {
+        match self {
+            SealedLogRecord::Event(ev) => ev.time_bucket,
+            SealedLogRecord::Failure(ev) => ev.time_bucket,
+        }
+    }
+
+    pub fn ruleset_hash(&self) -> [u8; 32] {
+        match self {
+            SealedLogRecord::Event(ev) => ev.ruleset_hash,
+            SealedLogRecord::Failure(ev) => ev.ruleset_hash,
+        }
+    }
+}
+
 /// Exported events omit correlation tokens to avoid identity-like fields.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ExportEvent {
@@ -178,9 +234,20 @@ pub struct ExportEvent {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ExportFailureEvent {
+    pub failure_type: FailureType,
+    pub time_bucket: TimeBucket,
+    pub details: Option<String>,
+    pub kernel_version: String,
+    pub ruleset_id: String,
+    pub ruleset_hash: [u8; 32],
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ExportBucket {
     pub time_bucket: TimeBucket,
     pub events: Vec<ExportEvent>,
+    pub failures: Vec<ExportFailureEvent>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -739,7 +806,19 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
     }
 
     fn append_event(&mut self, ev: &Event) -> Result<()> {
-        self.sealed_log.append_event(ev, &self.device_key)
+        let record = SealedLogRecord::Event(ev.clone());
+        self.sealed_log.append_record(&record, &self.device_key)
+    }
+
+    fn append_failure(&mut self, failure: &FailureEvent) -> Result<()> {
+        let record = SealedLogRecord::Failure(failure.clone());
+        self.sealed_log.append_record(&record, &self.device_key)
+    }
+
+    fn coarsen_or_now(bucket: TimeBucket) -> Result<TimeBucket> {
+        bucket
+            .coarsen_to(TEN_MINUTES_S)
+            .or_else(|_| TimeBucket::now_10min())
     }
 
     pub fn append_event_checked(
@@ -752,6 +831,16 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
     ) -> Result<Event> {
         if let Err(e) = enforce_module_event_allowlist(module_desc, &cand) {
             self.log_alarm("CONFORMANCE_MODULE_ALLOWLIST", &format!("{}", e))?;
+            let failure = FailureEvent {
+                failure_type: FailureType::GapMissingData,
+                time_bucket: Self::coarsen_or_now(cand.time_bucket)?,
+                details: Some(format!("CONFORMANCE_MODULE_ALLOWLIST: {}", e)),
+                kernel_version: "UNBOUND".to_string(),
+                ruleset_id: "UNBOUND".to_string(),
+                ruleset_hash: [0u8; 32],
+            }
+            .bind(kernel_version, ruleset_id, ruleset_hash);
+            self.append_failure(&failure)?;
             return Err(e);
         }
 
@@ -759,6 +848,16 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
             Ok(ev) => ev,
             Err(e) => {
                 self.log_alarm("CONFORMANCE_CONTRACT_REJECT", &format!("{}", e))?;
+                let failure = FailureEvent {
+                    failure_type: FailureType::GapMissingData,
+                    time_bucket: Self::coarsen_or_now(cand.time_bucket)?,
+                    details: Some(format!("CONFORMANCE_CONTRACT_REJECT: {}", e)),
+                    kernel_version: "UNBOUND".to_string(),
+                    ruleset_id: "UNBOUND".to_string(),
+                    ruleset_hash: [0u8; 32],
+                }
+                .bind(kernel_version, ruleset_id, ruleset_hash);
+                self.append_failure(&failure)?;
                 return Err(e);
             }
         };
@@ -766,12 +865,45 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         if self.zone_policy.is_sensitive(&ev.zone_id) {
             let err = anyhow!("conformance: sensitive zone rejected by policy");
             self.log_alarm("CONFORMANCE_ZONE_POLICY_REJECT", &format!("{}", err))?;
+            let failure = FailureEvent {
+                failure_type: FailureType::GapMissingData,
+                time_bucket: ev.time_bucket,
+                details: Some(format!("CONFORMANCE_ZONE_POLICY_REJECT: {}", err)),
+                kernel_version: "UNBOUND".to_string(),
+                ruleset_id: "UNBOUND".to_string(),
+                ruleset_hash: [0u8; 32],
+            }
+            .bind(kernel_version, ruleset_id, ruleset_hash);
+            self.append_failure(&failure)?;
             return Err(err);
         }
 
         let ev = ev.bind(kernel_version, ruleset_id, ruleset_hash);
         self.append_event(&ev)?;
         Ok(ev)
+    }
+
+    pub fn append_failure_event(
+        &mut self,
+        failure_type: FailureType,
+        time_bucket: TimeBucket,
+        details: Option<String>,
+        kernel_version: &str,
+        ruleset_id: &str,
+        ruleset_hash: [u8; 32],
+    ) -> Result<FailureEvent> {
+        let time_bucket = time_bucket.coarsen_to(TEN_MINUTES_S)?;
+        let failure = FailureEvent {
+            failure_type,
+            time_bucket,
+            details,
+            kernel_version: "UNBOUND".to_string(),
+            ruleset_id: "UNBOUND".to_string(),
+            ruleset_hash: [0u8; 32],
+        }
+        .bind(kernel_version, ruleset_id, ruleset_hash);
+        self.append_failure(&failure)?;
+        Ok(failure)
     }
 
     fn last_break_glass_hash_or_zero(&self) -> Result<[u8; 32]> {
@@ -950,7 +1082,7 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         &mut self,
         expected_ruleset_hash: [u8; 32],
         limit: usize,
-    ) -> Result<Vec<Event>> {
+    ) -> Result<Vec<SealedLogRecord>> {
         let conn = &mut self.conn;
         let mut alarm = |code: &str, message: &str| Self::log_alarm_with_conn(conn, code, message);
         let sealed_log = &mut self.sealed_log;
@@ -1053,39 +1185,56 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
             std::collections::BTreeMap::new();
 
         for payload in payloads {
-            let ev: Event = serde_json::from_str(&payload)?;
+            let record: SealedLogRecord = serde_json::from_str(&payload)?;
 
             if let Err(e) =
-                ReprocessGuard::assert_same_ruleset(expected_ruleset_hash, ev.ruleset_hash)
+                ReprocessGuard::assert_same_ruleset(expected_ruleset_hash, record.ruleset_hash())
             {
                 self.log_alarm("CONFORMANCE_REPROCESS_VIOLATION", &format!("{}", e))?;
                 return Err(e);
             }
 
-            let key = (ev.time_bucket.start_epoch_s, ev.time_bucket.size_s);
+            let record_bucket = record.time_bucket();
+            let key = (record_bucket.start_epoch_s, record_bucket.size_s);
             let idx = if let Some(existing) = bucket_index.get(&key) {
                 *existing
             } else {
                 let jittered_bucket =
-                    jitter_time_bucket(ev.time_bucket, options.jitter_s, options.jitter_step_s)?;
+                    jitter_time_bucket(record_bucket, options.jitter_s, options.jitter_step_s)?;
                 buckets.push(ExportBucket {
                     time_bucket: jittered_bucket,
                     events: Vec::new(),
+                    failures: Vec::new(),
                 });
                 let idx = buckets.len() - 1;
                 bucket_index.insert(key, idx);
                 idx
             };
-            let export_event = ExportEvent {
-                event_type: ev.event_type,
-                time_bucket: buckets[idx].time_bucket,
-                zone_id: ev.zone_id,
-                confidence: ev.confidence,
-                kernel_version: ev.kernel_version,
-                ruleset_id: ev.ruleset_id,
-                ruleset_hash: ev.ruleset_hash,
-            };
-            buckets[idx].events.push(export_event);
+            match record {
+                SealedLogRecord::Event(ev) => {
+                    let export_event = ExportEvent {
+                        event_type: ev.event_type,
+                        time_bucket: buckets[idx].time_bucket,
+                        zone_id: ev.zone_id,
+                        confidence: ev.confidence,
+                        kernel_version: ev.kernel_version,
+                        ruleset_id: ev.ruleset_id,
+                        ruleset_hash: ev.ruleset_hash,
+                    };
+                    buckets[idx].events.push(export_event);
+                }
+                SealedLogRecord::Failure(ev) => {
+                    let export_failure = ExportFailureEvent {
+                        failure_type: ev.failure_type,
+                        time_bucket: buckets[idx].time_bucket,
+                        details: ev.details,
+                        kernel_version: ev.kernel_version,
+                        ruleset_id: ev.ruleset_id,
+                        ruleset_hash: ev.ruleset_hash,
+                    };
+                    buckets[idx].failures.push(export_failure);
+                }
+            }
         }
 
         let mut batches = Vec::new();
@@ -1095,7 +1244,7 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         let mut current_events = 0usize;
 
         for bucket in buckets {
-            let bucket_events = bucket.events.len();
+            let bucket_events = bucket.events.len() + bucket.failures.len();
             if !current.buckets.is_empty()
                 && current_events + bucket_events > options.max_events_per_batch
             {
@@ -1939,7 +2088,22 @@ mod tests {
             kernel
                 .conn
                 .query_row("SELECT COUNT(*) FROM sealed_events", [], |row| row.get(0))?;
-        assert_eq!(event_count, 0, "disallowed events must not be appended");
+        assert_eq!(
+            event_count, 1,
+            "disallowed events must emit explicit failure records"
+        );
+        let payload: String = kernel.conn.query_row(
+            "SELECT payload_json FROM sealed_events LIMIT 1",
+            [],
+            |row| row.get(0),
+        )?;
+        let record: SealedLogRecord = serde_json::from_str(&payload)?;
+        match record {
+            SealedLogRecord::Failure(ev) => {
+                assert_eq!(ev.failure_type, FailureType::GapMissingData)
+            }
+            _ => panic!("expected failure record for disallowed module event"),
+        }
         Ok(())
     }
 
@@ -1990,7 +2154,7 @@ mod tests {
             [],
             |row| row.get(0),
         )?;
-        assert_eq!(event_count, 0);
+        assert_eq!(event_count, 1);
         assert_eq!(alarm_count, 1);
         Ok(())
     }
@@ -2043,6 +2207,39 @@ mod tests {
                 })?;
         assert_eq!(event_count, 1);
         assert_eq!(alarm_count, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn export_includes_failure_records() -> Result<()> {
+        let (mut kernel, cfg) = setup_test_kernel()?;
+        kernel.append_failure_event(
+            FailureType::StorageFull,
+            TimeBucket {
+                start_epoch_s: 0,
+                size_s: TEN_MINUTES_S,
+            },
+            Some("storage full".to_string()),
+            &cfg.kernel_version,
+            &cfg.ruleset_id,
+            cfg.ruleset_hash,
+        )?;
+
+        let artifact = kernel.export_events_sequential_unchecked(
+            cfg.ruleset_hash,
+            ExportOptions {
+                jitter_s: 0,
+                ..ExportOptions::default()
+            },
+        )?;
+        let failures: Vec<&ExportFailureEvent> = artifact
+            .batches
+            .iter()
+            .flat_map(|batch| &batch.buckets)
+            .flat_map(|bucket| &bucket.failures)
+            .collect();
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures[0].failure_type, FailureType::StorageFull);
         Ok(())
     }
 
