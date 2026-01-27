@@ -3,8 +3,9 @@ use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use rusqlite::{Connection, Row};
 
 use crate::{
-    approvals_commitment, hash_entry, verify_entry_signature, Approval, BreakGlassOutcome,
-    BreakGlassReceipt, QuorumPolicy,
+    approvals_commitment,
+    crypto::policy::{verify_entry_signature_with_policy, SignaturePolicy},
+    hash_entry, Approval, BreakGlassOutcome, BreakGlassReceipt, QuorumPolicy,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -31,6 +32,7 @@ pub struct BreakGlassReceiptCounts {
 pub fn verify_checkpoint_signature(
     verifying_key: &VerifyingKey,
     checkpoint: &CheckpointInfo,
+    signature_policy: SignaturePolicy,
 ) -> Result<()> {
     match (
         checkpoint.chain_head_hash,
@@ -38,8 +40,14 @@ pub fn verify_checkpoint_signature(
         checkpoint.cutoff_event_id,
     ) {
         (None, None, None) => Ok(()),
-        (Some(head), Some(sig), Some(_)) => verify_entry_signature(verifying_key, &head, &sig)
-            .map_err(|e| anyhow!("checkpoint signature verification failed: {}", e)),
+        (Some(head), Some(sig), Some(_)) => verify_entry_signature_with_policy(
+            signature_policy,
+            verifying_key,
+            &head,
+            &sig,
+            None,
+        )
+        .map_err(|e| anyhow!("checkpoint signature verification failed: {}", e)),
         _ => Err(anyhow!(
             "checkpoint is partially populated; integrity verification cannot proceed"
         )),
@@ -107,6 +115,7 @@ pub fn verify_events_with<F>(
     conn: &Connection,
     verifying_key: &VerifyingKey,
     checkpoint_head: Option<[u8; 32]>,
+    signature_policy: SignaturePolicy,
     mut on_event: F,
 ) -> Result<u64>
 where
@@ -146,7 +155,15 @@ where
             ));
         }
 
-        if verify_entry_signature(verifying_key, &entry_hash, &sig).is_err() {
+        if verify_entry_signature_with_policy(
+            signature_policy,
+            verifying_key,
+            &entry_hash,
+            &sig,
+            None,
+        )
+        .is_err()
+        {
             return Err(anyhow!(
                 "integrity check failed at id {}: signature mismatch (stored={})",
                 id,
@@ -167,6 +184,7 @@ pub fn verify_break_glass_receipts_with<F>(
     conn: &Connection,
     verifying_key: &VerifyingKey,
     policy: Option<&QuorumPolicy>,
+    signature_policy: SignaturePolicy,
     mut on_receipt: F,
 ) -> Result<BreakGlassReceiptCounts>
 where
@@ -212,7 +230,15 @@ where
             ));
         }
 
-        if verify_entry_signature(verifying_key, &entry_hash, &sig).is_err() {
+        if verify_entry_signature_with_policy(
+            signature_policy,
+            verifying_key,
+            &entry_hash,
+            &sig,
+            None,
+        )
+        .is_err()
+        {
             return Err(anyhow!(
                 "integrity check failed at receipt id {}: signature mismatch (stored={})",
                 id,
@@ -253,6 +279,7 @@ where
 pub fn verify_export_receipts_with<F>(
     conn: &Connection,
     verifying_key: &VerifyingKey,
+    signature_policy: SignaturePolicy,
     mut on_receipt: F,
 ) -> Result<u64>
 where
@@ -293,7 +320,15 @@ where
             ));
         }
 
-        if verify_entry_signature(verifying_key, &entry_hash, &sig).is_err() {
+        if verify_entry_signature_with_policy(
+            signature_policy,
+            verifying_key,
+            &entry_hash,
+            &sig,
+            None,
+        )
+        .is_err()
+        {
             return Err(anyhow!(
                 "integrity check failed at receipt id {}: signature mismatch (stored={})",
                 id,
@@ -373,7 +408,7 @@ mod tests {
             cutoff_event_id: None,
         };
 
-        verify_checkpoint_signature(&verifying_key, &checkpoint)?;
+        verify_checkpoint_signature(&verifying_key, &checkpoint, SignaturePolicy::default())?;
         Ok(())
     }
 
@@ -389,7 +424,7 @@ mod tests {
             cutoff_event_id: Some(42),
         };
 
-        verify_checkpoint_signature(&verifying_key, &checkpoint)?;
+        verify_checkpoint_signature(&verifying_key, &checkpoint, SignaturePolicy::default())?;
         Ok(())
     }
 
@@ -406,7 +441,8 @@ mod tests {
             cutoff_event_id: Some(7),
         };
 
-        let result = verify_checkpoint_signature(&verifying_key, &checkpoint);
+        let result =
+            verify_checkpoint_signature(&verifying_key, &checkpoint, SignaturePolicy::default());
         assert!(result.is_err());
         Ok(())
     }
@@ -421,7 +457,8 @@ mod tests {
             cutoff_event_id: Some(1),
         };
 
-        let result = verify_checkpoint_signature(&verifying_key, &checkpoint);
+        let result =
+            verify_checkpoint_signature(&verifying_key, &checkpoint, SignaturePolicy::default());
         assert!(result.is_err());
         Ok(())
     }

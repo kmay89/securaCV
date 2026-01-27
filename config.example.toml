@@ -109,6 +109,21 @@ sensitive = ["zone:front_boundary"]  # Zones that trigger vault sealing
 [retention]
 seconds = 604800  # 7 days
 
+# Cryptography policy (PQC readiness)
+#
+# crypto_mode: "classical" (default), "pq", or "hybrid"
+# policy: "ed25519-only" (default), "dual-optional", or "dual-required"
+# tls_mode: "classic-tls" (default) or "hybrid-pq-tls"
+#
+[vault]
+crypto_mode = "classical"
+
+[signatures]
+policy = "ed25519-only"
+
+[transport]
+tls_mode = "classic-tls"
+
 # =============================================================================
 # ENVIRONMENT VARIABLES (alternative to config file)
 # =============================================================================
@@ -133,6 +148,9 @@ seconds = 604800  # 7 days
 #   WITNESS_API_ADDR    - Override api.addr
 #   WITNESS_API_TOKEN_PATH - Override api.token_path
 #   WITNESS_RETENTION_SECS - Override retention.seconds
+#   WITNESS_VAULT_CRYPTO_MODE - Override vault.crypto_mode
+#   WITNESS_SIGNATURE_POLICY - Override signatures.policy
+#   WITNESS_TRANSPORT_TLS_MODE - Override transport.tls_mode
 #
 # =============================================================================
 

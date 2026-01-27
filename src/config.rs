@@ -3,6 +3,8 @@ use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use crate::crypto::policy::{CryptoMode, SignaturePolicy, TransportPolicy};
+
 const DEFAULT_DB_PATH: &str = "witness.db";
 const DEFAULT_RULESET_ID: &str = "ruleset:v0.1";
 const DEFAULT_API_ADDR: &str = "127.0.0.1:8799";
@@ -45,6 +47,9 @@ struct WitnessdConfigFile {
     detect: Option<DetectConfigFile>,
     zones: Option<ZoneConfigFile>,
     retention: Option<RetentionConfigFile>,
+    vault: Option<VaultConfigFile>,
+    signatures: Option<SignatureConfigFile>,
+    transport: Option<TransportConfigFile>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -113,6 +118,21 @@ struct RetentionConfigFile {
     seconds: Option<u64>,
 }
 
+#[derive(Debug, Deserialize, Default)]
+struct VaultConfigFile {
+    crypto_mode: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct SignatureConfigFile {
+    policy: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct TransportConfigFile {
+    tls_mode: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct WitnessdConfig {
     pub db_path: String,
@@ -127,6 +147,9 @@ pub struct WitnessdConfig {
     pub detect: DetectSettings,
     pub zones: ZoneSettings,
     pub retention: Duration,
+    pub vault_crypto_mode: CryptoMode,
+    pub signature_policy: SignaturePolicy,
+    pub transport_tls_mode: TransportPolicy,
 }
 
 #[derive(Debug, Clone)]
@@ -327,6 +350,27 @@ impl WitnessdConfig {
                 .and_then(|retention| retention.seconds)
                 .unwrap_or(DEFAULT_RETENTION_SECS),
         );
+        let vault_crypto_mode = file
+            .vault
+            .as_ref()
+            .and_then(|vault| vault.crypto_mode.as_deref())
+            .map(CryptoMode::parse)
+            .transpose()?
+            .unwrap_or_default();
+        let signature_policy = file
+            .signatures
+            .as_ref()
+            .and_then(|signatures| signatures.policy.as_deref())
+            .map(SignaturePolicy::parse)
+            .transpose()?
+            .unwrap_or_default();
+        let transport_tls_mode = file
+            .transport
+            .as_ref()
+            .and_then(|transport| transport.tls_mode.as_deref())
+            .map(TransportPolicy::parse)
+            .transpose()?
+            .unwrap_or_default();
         Ok(Self {
             db_path,
             ruleset_id,
@@ -340,6 +384,9 @@ impl WitnessdConfig {
             detect,
             zones,
             retention,
+            vault_crypto_mode,
+            signature_policy,
+            transport_tls_mode,
         })
     }
 
@@ -425,6 +472,21 @@ impl WitnessdConfig {
                 anyhow!("WITNESS_RETENTION_SECS must be an integer number of seconds")
             })?;
             self.retention = Duration::from_secs(seconds);
+        }
+        if let Ok(mode) = std::env::var("WITNESS_VAULT_CRYPTO_MODE") {
+            if !mode.trim().is_empty() {
+                self.vault_crypto_mode = CryptoMode::parse(&mode)?;
+            }
+        }
+        if let Ok(policy) = std::env::var("WITNESS_SIGNATURE_POLICY") {
+            if !policy.trim().is_empty() {
+                self.signature_policy = SignaturePolicy::parse(&policy)?;
+            }
+        }
+        if let Ok(mode) = std::env::var("WITNESS_TRANSPORT_TLS_MODE") {
+            if !mode.trim().is_empty() {
+                self.transport_tls_mode = TransportPolicy::parse(&mode)?;
+            }
         }
         Ok(())
     }

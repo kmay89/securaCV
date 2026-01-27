@@ -652,6 +652,7 @@ fn cmd_unseal(
     let mut token = token_file.into_token()?;
     let vault = Vault::new(VaultConfig {
         local_path: vault_path.into(),
+        ..VaultConfig::default()
     })?;
     let conn = rusqlite::Connection::open(db_path)?;
     let verifying_key = device_public_key_from_db(&conn)?;

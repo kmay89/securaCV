@@ -13,7 +13,9 @@ use rusqlite::Connection;
 use sha2::{Digest, Sha256};
 use std::io::IsTerminal;
 
-use witness_kernel::{verify, verify_helpers, ExportReceipt};
+use witness_kernel::{
+    crypto::policy::SignaturePolicy, verify, verify_helpers, ExportReceipt,
+};
 
 #[path = "../ui.rs"]
 mod ui;
@@ -46,6 +48,15 @@ struct Args {
     /// UI mode for stderr progress (auto|plain|pretty)
     #[arg(long, default_value = "auto", value_name = "MODE")]
     ui: String,
+
+    /// Signature verification policy (ed25519-only, dual-optional, dual-required)
+    #[arg(
+        long,
+        env = "WITNESS_SIGNATURE_POLICY",
+        default_value = "ed25519-only",
+        value_name = "POLICY"
+    )]
+    signature_policy: String,
 }
 
 fn main() -> Result<()> {
@@ -66,14 +77,18 @@ fn main() -> Result<()> {
             args.public_key_file.as_deref(),
         )?
     };
+    let signature_policy = SignaturePolicy::parse(&args.signature_policy)?;
 
     println!("export_verify: checking {}", args.bundle);
     println!();
 
     {
         let _stage = ui.stage("Verify export receipts");
-        let count =
-            verify::verify_export_receipts_with(&conn, &verifying_key, |id, entry_hash| {
+        let count = verify::verify_export_receipts_with(
+            &conn,
+            &verifying_key,
+            signature_policy,
+            |id, entry_hash| {
                 if args.verbose {
                     println!(
                         "  receipt {}: hash={} OK",
@@ -81,7 +96,8 @@ fn main() -> Result<()> {
                         &verify_helpers::hex32(&entry_hash)[..16]
                     );
                 }
-            })?;
+            },
+        )?;
         println!("verified {} export receipt entries", count);
     }
     println!();

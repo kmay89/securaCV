@@ -15,7 +15,9 @@ use clap::Parser;
 use rusqlite::Connection;
 use std::io::IsTerminal;
 
-use witness_kernel::{verify, verify_helpers};
+use witness_kernel::{
+    crypto::policy::SignaturePolicy, verify, verify_helpers,
+};
 
 #[path = "../ui.rs"]
 mod ui;
@@ -44,6 +46,15 @@ struct Args {
     /// UI mode for stderr progress (auto|plain|pretty)
     #[arg(long, default_value = "auto", value_name = "MODE")]
     ui: String,
+
+    /// Signature verification policy (ed25519-only, dual-optional, dual-required)
+    #[arg(
+        long,
+        env = "WITNESS_SIGNATURE_POLICY",
+        default_value = "ed25519-only",
+        value_name = "POLICY"
+    )]
+    signature_policy: String,
 }
 
 fn main() -> Result<()> {
@@ -63,6 +74,7 @@ fn main() -> Result<()> {
             args.public_key_file.as_deref(),
         )?
     };
+    let signature_policy = SignaturePolicy::parse(&args.signature_policy)?;
 
     println!("log_verify: checking {}", args.db);
     println!();
@@ -73,7 +85,7 @@ fn main() -> Result<()> {
     {
         let _stage = ui.stage("Verify sealed events");
         let checkpoint = verify::latest_checkpoint(&conn)?;
-        verify::verify_checkpoint_signature(&verifying_key, &checkpoint)?;
+        verify::verify_checkpoint_signature(&verifying_key, &checkpoint, signature_policy)?;
         if let (Some(head), Some(_sig), Some(cutoff_id)) = (
             checkpoint.chain_head_hash,
             checkpoint.signature,
@@ -105,6 +117,7 @@ fn main() -> Result<()> {
             &conn,
             &verifying_key,
             checkpoint.chain_head_hash,
+            signature_policy,
             |id, entry_hash| {
                 if args.verbose {
                     println!(
@@ -128,6 +141,7 @@ fn main() -> Result<()> {
             &conn,
             &verifying_key,
             policy.as_ref(),
+            signature_policy,
             |id, entry_hash| {
                 if args.verbose {
                     println!(
@@ -149,8 +163,11 @@ fn main() -> Result<()> {
     {
         let _stage = ui.stage("Verify export receipts");
         println!("=== Export Receipts ===");
-        let count =
-            verify::verify_export_receipts_with(&conn, &verifying_key, |id, entry_hash| {
+        let count = verify::verify_export_receipts_with(
+            &conn,
+            &verifying_key,
+            signature_policy,
+            |id, entry_hash| {
                 if args.verbose {
                     println!(
                         "  receipt {}: hash={} OK",
@@ -158,7 +175,8 @@ fn main() -> Result<()> {
                         &verify_helpers::hex32(&entry_hash)[..16]
                     );
                 }
-            })?;
+            },
+        )?;
         println!("verified {} export receipt entries", count);
     }
 
@@ -244,15 +262,27 @@ mod tests {
         let conn = Connection::open(db.path())?;
         let verifying_key = load_verifying_key(&conn, Some(&public_key_hex), None)?;
         let checkpoint = verify::latest_checkpoint(&conn)?;
-        verify::verify_events_with(&conn, &verifying_key, checkpoint.chain_head_hash, |_, _| {})?;
+        verify::verify_events_with(
+            &conn,
+            &verifying_key,
+            checkpoint.chain_head_hash,
+            SignaturePolicy::default(),
+            |_, _| {},
+        )?;
         let policy = verify::load_break_glass_policy(&conn)?;
         verify::verify_break_glass_receipts_with(
             &conn,
             &verifying_key,
             policy.as_ref(),
+            SignaturePolicy::default(),
             |_, _| {},
         )?;
-        verify::verify_export_receipts_with(&conn, &verifying_key, |_, _| {})?;
+        verify::verify_export_receipts_with(
+            &conn,
+            &verifying_key,
+            SignaturePolicy::default(),
+            |_, _| {},
+        )?;
 
         Ok(())
     }
@@ -307,6 +337,7 @@ mod tests {
             &conn,
             &verifying_key,
             checkpoint.chain_head_hash,
+            SignaturePolicy::default(),
             |_, _| {},
         );
         assert!(result.is_err());
@@ -341,6 +372,7 @@ mod tests {
             &conn,
             &verifying_key,
             checkpoint.chain_head_hash,
+            SignaturePolicy::default(),
             |_, _| {},
         );
         assert!(result.is_err());
@@ -394,6 +426,7 @@ mod tests {
             &conn,
             &verifying_key,
             policy.as_ref(),
+            SignaturePolicy::default(),
             |_, _| {},
         );
         assert!(result.is_err());
@@ -446,6 +479,7 @@ mod tests {
             &conn,
             &verifying_key,
             policy.as_ref(),
+            SignaturePolicy::default(),
             |_, _| {},
         );
         assert!(result.is_err());
@@ -498,6 +532,7 @@ mod tests {
             &conn,
             &verifying_key,
             policy.as_ref(),
+            SignaturePolicy::default(),
             |_, _| {},
         );
         assert!(result.is_err());
