@@ -269,17 +269,16 @@ When enabled, PWK automatically creates these entities for each zone:
 ### Entity Attributes
 
 The `sensor.pwk_last_event` entity includes these attributes:
-Time is reported as a coarse `time_bucket` (typically 10–15 minutes), not a precise timestamp.
+Time is reported as coarse buckets (typically 10 minutes), not precise timestamps.
 
 ```yaml
 event_type: "BoundaryCrossingObjectLarge"
 zone_id: "zone:front_door"
-time_bucket:
-  start_epoch_s: 1706140800
-  size_s: 600
+time_bucket_start: 1706140800
+time_bucket_size: 600
 confidence: 0.85
-kernel_version: "0.4.2"
-ruleset_id: "baseline"
+published_bucket_start: 1706141400
+published_bucket_size: 600
 ```
 
 ### Availability Tracking

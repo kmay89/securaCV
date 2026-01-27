@@ -181,7 +181,8 @@ struct EventStatePayload {
     time_bucket_start: u64,
     time_bucket_size: u32,
     confidence: f32,
-    timestamp: u64, // When we published this
+    published_bucket_start: u64,
+    published_bucket_size: u32,
 }
 
 /// Zone state for tracking event counts.
@@ -466,17 +467,7 @@ fn run_daemon(ctx: &RunContext<'_>) -> Result<()> {
                     // Update last event state
                     if let Some(last) = new_events.last() {
                         let state_topic = format!("{}/last_event", ctx.args.mqtt_topic_prefix);
-                        let payload = EventStatePayload {
-                            event_type: format!("{:?}", last.event_type),
-                            zone_id: last.zone_id.clone(),
-                            time_bucket_start: last.time_bucket.start_epoch_s,
-                            time_bucket_size: last.time_bucket.size_s,
-                            confidence: last.confidence,
-                            timestamp: std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .map(|d| d.as_secs())
-                                .unwrap_or(0),
-                        };
+                        let payload = build_event_state_payload(last)?;
                         let json = serde_json::to_vec(&payload)?;
                         mqtt_publish_qos1(&conn.client, &state_topic, &json, true)?;
 
@@ -638,17 +629,7 @@ fn publish_events(client: &Client, topic_prefix: &str, events: &[ExportEvent]) -
     // Publish last event (retained)
     if let Some(last) = events.last() {
         let state_topic = format!("{}/last_event", topic_prefix);
-        let payload = EventStatePayload {
-            event_type: format!("{:?}", last.event_type),
-            zone_id: last.zone_id.clone(),
-            time_bucket_start: last.time_bucket.start_epoch_s,
-            time_bucket_size: last.time_bucket.size_s,
-            confidence: last.confidence,
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0),
-        };
+        let payload = build_event_state_payload(last)?;
         let json = serde_json::to_vec(&payload)?;
         mqtt_publish_qos1(client, &state_topic, &json, true)?;
     }
@@ -672,6 +653,19 @@ fn publish_single_event(
     mqtt_publish_qos1(client, &firehose_topic, &payload, false)?;
 
     Ok(())
+}
+
+fn build_event_state_payload(event: &ExportEvent) -> Result<EventStatePayload> {
+    let published_bucket = TimeBucket::now_10min()?;
+    Ok(EventStatePayload {
+        event_type: format!("{:?}", event.event_type),
+        zone_id: event.zone_id.clone(),
+        time_bucket_start: event.time_bucket.start_epoch_s,
+        time_bucket_size: event.time_bucket.size_s,
+        confidence: event.confidence,
+        published_bucket_start: published_bucket.start_epoch_s,
+        published_bucket_size: published_bucket.size_s,
+    })
 }
 
 fn extract_zone_name(zone_id: &str) -> String {
@@ -943,7 +937,8 @@ mod tests {
             time_bucket_start: 1_700_000_000,
             time_bucket_size: 600,
             confidence: 0.9,
-            timestamp: 1_700_000_100,
+            published_bucket_start: 1_700_000_200,
+            published_bucket_size: 600,
         };
 
         let json = serde_json::to_string(&payload).expect("serialize");
