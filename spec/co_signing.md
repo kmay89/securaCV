@@ -42,8 +42,9 @@ created_bucket: <iso-8601, 10-min>
 - `event_seq`: Sequential event index within the log.
 - `event_hash`: Hash of the event record as stored in the sealed log.
 - `ruleset_hash`: Ruleset identifier active at event creation time.
-- `created_bucket`: Coarsened timestamp bucket, aligned with metadata
-  minimization rules.
+- `created_bucket`: Coarsened ISO-8601 timestamp for the event's creation,
+  truncated to a 10-minute boundary (e.g., `2026-01-20T12:34:56Z` becomes
+  `2026-01-20T12:30:00Z`).
 
 **Notes:**
 - All fields are ASCII, newline-delimited, and MUST appear in the order shown.
@@ -58,7 +59,10 @@ break-glass quorum thresholds.
   to mark an event as “endorsed.”
 - Endorsements counted toward a threshold MUST originate from independently
   controlled keys. Multiple endorsements from the same principal or
-  administrative domain MUST NOT be counted separately.
+  administrative domain MUST NOT be counted separately. An administrative
+  domain is a deployment-defined trust grouping (e.g., keys issued under the
+  same org-scoped CA, keys bound to the same operator account, or keys labeled
+  with the same domain identifier in local policy configuration).
 - Endorsements MAY be collected over time and remain valid as long as the event
   record is unchanged.
 - Endorsement thresholds do **not** authorize evidence vault access or any
@@ -84,7 +88,7 @@ remain logically distinct from the event itself.
   - Endorsement message (canonical form as above)
   - Endorser public key identifier
   - Signature bytes
-  - Endorsement timestamp bucket (coarsened)
+  - Endorsement creation timestamp bucket (coarsened, time of signature)
 - **Indexing:** The log may maintain an internal index mapping event hashes to
   endorsement records, but must remain local and non-queryable externally.
 - **Retention:** Co-signatures follow the same retention policy as the event
