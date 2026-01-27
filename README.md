@@ -1,6 +1,6 @@
 # SecuraCV
 
-https://github.com/kmay89/securaCV/blob/main/docs/securaCV_logo_animation-2.gif
+https://github.com/kmay89/securaCV/blob/main/docs/securacv_logo_animation-2.gif
 
 
 ---
