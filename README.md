@@ -1,3 +1,11 @@
+# SecuraCV
+
+https://github.com/kmay89/securaCV/blob/main/securacv-logo_animation.mp4
+
+---
+
+**SecuraCV** is a privacy-preserving computer-vision witness system. 
+
 # Witness Kernel
 
 Core library and tools for the Privacy Witness Kernel (PWK).
