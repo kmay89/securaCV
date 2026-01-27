@@ -26,8 +26,10 @@ publish/subscribe), the peer verification flow should remain the same:
 2. **Resolve local trust anchor.** The adapter looks up the public key in the local trust store
    (e.g., a local file or database of accepted device keys). No remote lookup is allowed.
 3. **Verify signatures.** The adapter verifies that messages/events are signed by the private
-   key corresponding to the presented public key. The transport endpoint (host/port/client ID)
-   is treated as untrusted metadata.
+   key corresponding to the presented public key. Signed payloads MUST include replay
+   protection (e.g., nonce, sequence number, or sufficiently granular timestamp) and adapters
+   MUST reject replays. The transport endpoint (host/port/client ID) is treated as untrusted
+   metadata.
 4. **Bind session metadata.** The adapter may record a local-only mapping of the current
    transport endpoint to the verified identity for audit/debugging, but the mapping must not
    become an identity source of truth.
@@ -44,9 +46,11 @@ break identity: the key remains the root of trust, and the trust anchor stays lo
   cloud-based identity providers are allowed.
 * **Local-only trust anchors.** The only source of trust is local configuration (files or
   embedded policy) and locally stored approved public keys.
-* **Identity keys are long-lived.** Rotation applies only to protocol-level aliases or gossip
-  identifiers and MUST NOT change the underlying device public key without explicit
-  re-provisioning.
+* **Identity keys are long-lived.** The device's primary Ed25519 public key is considered
+  stable. Rotation of this key is a heavyweight operation requiring explicit re-provisioning
+  (e.g., in response to a suspected key compromise). Lighter-weight rotation applies only to
+  protocol-level aliases or gossip identifiers and MUST NOT change the underlying device
+  public key.
 * **Capability tokens are not identity.** Tokens grant permission only; possession of a valid
   token MUST NOT be treated as proof of device identity.
 
