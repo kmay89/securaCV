@@ -9,6 +9,7 @@ This document defines the **only permissible output** of a conforming Privacy Wi
 
 Events are *claims*, not recordings.
 They assert that something meaningful occurred without revealing identity, trajectory, or continuous behavior.
+Events are not intended to support replay, reconstruction, or simulation of past behavior.
 
 ---
 
@@ -24,12 +25,67 @@ Each event MUST contain:
 - `kernel_version`
 - `ruleset_id`
 
+Each event MAY contain:
+- `replication_status` (enum or boolean marker; see §2.1)
+
 Each event MUST NOT contain:
 - Raw sensor data
 - Precise timestamps
 - Absolute coordinates
 - Stable identifiers
 - Free-form text fields
+
+Additional constraints:
+- `confidence` MUST represent the kernel’s internal assessment of rule satisfaction, not a
+  probability of real-world truth.
+- `correlation_token`, if present, MUST be short-lived, non-stable, and MUST NOT be usable to
+  reconstruct sequences across multiple time buckets.
+
+---
+
+## 2.1 Export Replication & Offline Markers (Normative)
+
+Export artifacts MAY include minimal replication metadata to indicate whether an event was
+broadcast/replicated beyond the local system. These markers MUST NOT disclose raw timestamps
+and MUST adhere to the same bucket granularity as `time_bucket`.
+
+### 2.1.1 Replication Status
+
+`replication_status` is a boolean or enum marker that indicates export visibility:
+
+- **Boolean form**: `replication_status: true | false`
+- **Enum form**: `replication_status: "local_only" | "replicated" | "unknown"`
+
+Derivation guidance:
+- The marker SHOULD be derived from export/bridge state (e.g., MQTT bridge connectivity,
+  replication queue success, or outbound delivery acknowledgement).
+- `replication_status` MUST NOT be used as a proxy for delivery confirmation, recipient identity,
+  or audience size.
+- Implementations MUST NOT encode raw timestamps or identifiers in this field.
+- If status cannot be determined, it MUST be handled as follows: if using the enum form, the
+  value MUST be `unknown`; if using the boolean form, the field MUST be omitted.
+
+### 2.1.2 Offline Interval Records
+
+Export artifacts MAY include `offline_intervals`, a list of local-only operation windows that
+indicate the system was unable to broadcast/replicate events.
+
+Each interval MUST be expressed as coarse buckets, not raw timestamps, for example:
+
+```json
+{
+  "offline_intervals": [
+    { "start_bucket": "2026-01-20T10:00Z", "end_bucket": "2026-01-20T10:10Z" }
+  ]
+}
+```
+
+Constraints:
+- `start_bucket` and `end_bucket` MUST be bucketed (same granularity as §3).
+- Intervals MUST NOT imply precise outage times; buckets MAY include jitter in export.
+- Intervals SHOULD be derived from bridge status signals (e.g., MQTT disconnected, outbound
+  queue paused, or replication pipeline unhealthy).
+- Interval records MUST NOT include network identifiers, broker addresses, or per-message IDs.
 
 ---
 
