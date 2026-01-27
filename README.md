@@ -1,6 +1,7 @@
 # SecuraCV
 
-https://github.com/kmay89/securaCV/blob/main/docs/securacv_logo_animation-2.gif
+![SecuraCV logo animation](docs/securacv_logo_animation-2.gif)
+
 
 
 ---
