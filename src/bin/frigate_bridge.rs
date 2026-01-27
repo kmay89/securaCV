@@ -20,6 +20,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use witness_kernel::{
+    crypto::policy::{enforce_transport_policy, TransportPolicy},
     CandidateEvent, EventType, InferenceBackend, Kernel, KernelConfig, ModuleDescriptor,
     TimeBucket, ZonePolicy,
 };
@@ -104,6 +105,15 @@ struct Args {
     /// If empty, processes: person, car, dog, cat, bird, bicycle, motorcycle.
     #[arg(long, env = "FRIGATE_LABELS")]
     labels: Option<String>,
+
+    /// Transport TLS mode (classic-tls or hybrid-pq-tls).
+    #[arg(
+        long,
+        env = "WITNESS_TRANSPORT_TLS_MODE",
+        default_value = "classic-tls",
+        value_name = "MODE"
+    )]
+    tls_mode: String,
 }
 
 /// Frigate event from MQTT - handles the nested before/after format.
@@ -209,6 +219,7 @@ struct FrigateReviewData {
 fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let args = Args::parse();
+    let transport_policy = TransportPolicy::parse(&args.tls_mode)?;
 
     let mqtt_endpoint = parse_mqtt_endpoint(&args.mqtt_broker_addr, args.mqtt_use_tls)?;
     let tls_materials = load_tls_materials(
@@ -310,6 +321,7 @@ fn main() -> Result<()> {
         let (client, mut connection) = connect_mqtt(
             &mqtt_endpoint,
             &tls_materials,
+            transport_policy,
             &args.mqtt_client_id,
             args.mqtt_username.as_deref(),
             args.mqtt_password.as_deref(),
@@ -676,7 +688,12 @@ fn load_tls_materials(
     Ok(TlsMaterials { ca, client_auth })
 }
 
-fn build_transport(endpoint: &MqttEndpoint, tls: &TlsMaterials) -> Result<Transport> {
+fn build_transport(
+    endpoint: &MqttEndpoint,
+    tls: &TlsMaterials,
+    policy: TransportPolicy,
+) -> Result<Transport> {
+    enforce_transport_policy(policy, endpoint.use_tls)?;
     if !endpoint.use_tls {
         if tls.ca.is_some() || tls.client_auth.is_some() {
             return Err(anyhow!(
@@ -699,6 +716,7 @@ fn build_transport(endpoint: &MqttEndpoint, tls: &TlsMaterials) -> Result<Transp
 fn connect_mqtt(
     endpoint: &MqttEndpoint,
     tls: &TlsMaterials,
+    policy: TransportPolicy,
     client_id: &str,
     username: Option<&str>,
     password: Option<&str>,
@@ -709,7 +727,7 @@ fn connect_mqtt(
     if let Some(user) = username {
         options.set_credentials(user, password.unwrap_or_default());
     }
-    options.set_transport(build_transport(endpoint, tls)?);
+    options.set_transport(build_transport(endpoint, tls, policy)?);
 
     let (client, connection) = Client::new(options, 10);
     log::info!(

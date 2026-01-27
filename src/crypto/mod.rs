@@ -5,6 +5,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use zeroize::Zeroize;
 
+pub mod policy;
+
 /// Resolve the device seed file path based on a SQLite database path.
 pub fn device_key_path_for_db(db_path: &str) -> Result<PathBuf> {
     if db_path == ":memory:" {

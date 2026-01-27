@@ -22,7 +22,10 @@ use std::io::{Read, Write};
 use std::net::{IpAddr, TcpStream};
 use std::path::PathBuf;
 use std::time::Duration;
-use witness_kernel::{ExportArtifact, ExportEvent, TimeBucket};
+use witness_kernel::{
+    crypto::policy::{enforce_transport_policy, TransportPolicy},
+    ExportArtifact, ExportEvent, TimeBucket,
+};
 
 #[path = "../ui.rs"]
 mod ui;
@@ -118,6 +121,15 @@ struct Args {
     /// UI mode for stderr progress (auto|plain|pretty).
     #[arg(long, default_value = "auto", value_name = "MODE")]
     ui: String,
+
+    /// Transport TLS mode (classic-tls or hybrid-pq-tls).
+    #[arg(
+        long,
+        env = "WITNESS_TRANSPORT_TLS_MODE",
+        default_value = "classic-tls",
+        value_name = "MODE"
+    )]
+    tls_mode: String,
 }
 
 /// Home Assistant MQTT Discovery config for a sensor.
@@ -232,6 +244,7 @@ fn main() -> Result<()> {
     let is_tty = std::io::stderr().is_terminal();
     let stdout_is_tty = std::io::stdout().is_terminal();
     let ui = ui::Ui::from_args(Some(&args.ui), is_tty, !stdout_is_tty);
+    let transport_policy = TransportPolicy::parse(&args.tls_mode)?;
 
     // Validate addresses
     let api_addr = parse_loopback_socket_addr(&args.api_addr)
@@ -276,6 +289,7 @@ fn main() -> Result<()> {
         api_addr,
         mqtt_endpoint: &mqtt_endpoint,
         tls_materials: &tls_materials,
+        transport_policy,
         token: &token,
         device_id: &device_id,
         device_info: &device_info,
@@ -295,6 +309,7 @@ struct RunContext<'a> {
     api_addr: std::net::SocketAddr,
     mqtt_endpoint: &'a MqttEndpoint,
     tls_materials: &'a TlsMaterials,
+    transport_policy: TransportPolicy,
     token: &'a str,
     device_id: &'a str,
     device_info: &'a HaDeviceInfo,
@@ -319,6 +334,7 @@ fn run_oneshot(ctx: &RunContext<'_>) -> Result<()> {
         connect_mqtt(
             ctx.mqtt_endpoint,
             ctx.tls_materials,
+            ctx.transport_policy,
             &ctx.args.mqtt_client_id,
             ctx.args.mqtt_username.as_deref(),
             ctx.args.mqtt_password.as_deref(),
@@ -368,6 +384,7 @@ fn run_daemon(ctx: &RunContext<'_>) -> Result<()> {
         connect_mqtt(
             ctx.mqtt_endpoint,
             ctx.tls_materials,
+            ctx.transport_policy,
             &ctx.args.mqtt_client_id,
             ctx.args.mqtt_username.as_deref(),
             ctx.args.mqtt_password.as_deref(),
@@ -867,7 +884,12 @@ fn load_tls_materials(
     Ok(TlsMaterials { ca, client_auth })
 }
 
-fn build_transport(endpoint: &MqttEndpoint, tls: &TlsMaterials) -> Result<Transport> {
+fn build_transport(
+    endpoint: &MqttEndpoint,
+    tls: &TlsMaterials,
+    policy: TransportPolicy,
+) -> Result<Transport> {
+    enforce_transport_policy(policy, endpoint.use_tls)?;
     if !endpoint.use_tls {
         if tls.ca.is_some() || tls.client_auth.is_some() {
             return Err(anyhow!(
@@ -890,6 +912,7 @@ fn build_transport(endpoint: &MqttEndpoint, tls: &TlsMaterials) -> Result<Transp
 fn connect_mqtt(
     endpoint: &MqttEndpoint,
     tls: &TlsMaterials,
+    policy: TransportPolicy,
     client_id: &str,
     username: Option<&str>,
     password: Option<&str>,
@@ -909,7 +932,7 @@ fn connect_mqtt(
         None,
     );
     options.set_last_will(will);
-    options.set_transport(build_transport(endpoint, tls)?);
+    options.set_transport(build_transport(endpoint, tls, policy)?);
 
     let (client, connection) = Client::new(options, 10);
     log::info!(

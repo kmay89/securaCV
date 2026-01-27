@@ -87,7 +87,10 @@ fn main() -> Result<()> {
 
     let mut vault = {
         let _stage = ui.stage("Initialize vault");
-        Vault::new(VaultConfig::default())?
+        Vault::new(VaultConfig {
+            crypto_mode: config.vault_crypto_mode,
+            ..VaultConfig::default()
+        })?
     };
     // Optional break-glass seal path (requires BREAK_GLASS_SEAL_TOKEN with a token JSON).
     let mut seal_token = load_seal_token()?;

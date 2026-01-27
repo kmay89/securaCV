@@ -17,11 +17,13 @@ use witness_kernel::detect::{BackendRegistry, CpuBackend, StubBackend};
 use witness_kernel::vault::DEFAULT_VAULT_PATH;
 use witness_kernel::verify;
 use witness_kernel::{
-    break_glass_receipt_outcome_for_verifier, device_public_key_from_db, verify_entry_signature,
-    verify_export_bundle, BackendSelection, CandidateEvent, CapabilityBoundaryRuntime,
-    DeviceCapabilities, EventType, ExportArtifact, ExportOptions, ExportReceipt, FileConfig,
-    FileSource, InferenceBackend, Kernel, KernelConfig, Module, RtspConfig, RtspSource, TimeBucket,
-    Vault, VaultConfig, ZoneCrossingModule, ZonePolicy, EXPORT_EVENTS_ENVELOPE_ID,
+    break_glass_receipt_outcome_for_verifier,
+    crypto::policy::{verify_entry_signature_with_policy, SignaturePolicy},
+    device_public_key_from_db, verify_export_bundle, BackendSelection, CandidateEvent,
+    CapabilityBoundaryRuntime, DeviceCapabilities, EventType, ExportArtifact, ExportOptions,
+    ExportReceipt, FileConfig, FileSource, InferenceBackend, Kernel, KernelConfig, Module,
+    RtspConfig, RtspSource, TimeBucket, Vault, VaultConfig, ZoneCrossingModule, ZonePolicy,
+    EXPORT_EVENTS_ENVELOPE_ID,
 };
 
 const DEFAULT_DB_PATH: &str = "demo_witness.db";
@@ -140,6 +142,7 @@ fn main() -> Result<()> {
     let mut kernel = Kernel::open(&cfg)?;
     let vault = Vault::new(VaultConfig {
         local_path: vault_path.clone(),
+        ..VaultConfig::default()
     })?;
 
     let trustee_key = derive_trustee_key(args.seed);
@@ -428,14 +431,37 @@ fn verify_demo(db_path: &str, export_bundle_bytes: &[u8]) -> Result<()> {
     let verifying_key = device_public_key_from_db(&conn)?;
     let checkpoint = verify::latest_checkpoint(&conn)?;
     if let (Some(head), Some(sig)) = (checkpoint.chain_head_hash, checkpoint.signature) {
-        verify_entry_signature(&verifying_key, &head, &sig)
-            .context("checkpoint signature mismatch")?;
+        verify_entry_signature_with_policy(
+            SignaturePolicy::default(),
+            &verifying_key,
+            &head,
+            &sig,
+            None,
+        )
+        .context("checkpoint signature mismatch")?;
     }
 
-    verify::verify_events_with(&conn, &verifying_key, checkpoint.chain_head_hash, |_, _| {})?;
+    verify::verify_events_with(
+        &conn,
+        &verifying_key,
+        checkpoint.chain_head_hash,
+        SignaturePolicy::default(),
+        |_, _| {},
+    )?;
     let policy = verify::load_break_glass_policy(&conn)?;
-    verify::verify_break_glass_receipts_with(&conn, &verifying_key, policy.as_ref(), |_, _| {})?;
-    verify::verify_export_receipts_with(&conn, &verifying_key, |_, _| {})?;
+    verify::verify_break_glass_receipts_with(
+        &conn,
+        &verifying_key,
+        policy.as_ref(),
+        SignaturePolicy::default(),
+        |_, _| {},
+    )?;
+    verify::verify_export_receipts_with(
+        &conn,
+        &verifying_key,
+        SignaturePolicy::default(),
+        |_, _| {},
+    )?;
 
     if let Ok(export_bundle) =
         serde_json::from_slice::<witness_kernel::ExportBundle>(export_bundle_bytes)

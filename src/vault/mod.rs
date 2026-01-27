@@ -17,7 +17,11 @@ use zeroize::Zeroize;
 #[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
-use crate::{break_glass::BreakGlassToken, BreakGlassOutcome, RawFrame, RawMediaBoundary};
+use crate::{
+    break_glass::BreakGlassToken,
+    crypto::policy::{ensure_vault_crypto_mode, CryptoMode},
+    BreakGlassOutcome, RawFrame, RawMediaBoundary,
+};
 use ed25519_dalek::VerifyingKey;
 
 /// Fixed local vault path to satisfy invariant requirements.
@@ -26,12 +30,14 @@ pub const DEFAULT_VAULT_PATH: &str = "vault/envelopes";
 #[derive(Clone, Debug)]
 pub struct VaultConfig {
     pub local_path: PathBuf,
+    pub crypto_mode: CryptoMode,
 }
 
 impl Default for VaultConfig {
     fn default() -> Self {
         Self {
             local_path: PathBuf::from(DEFAULT_VAULT_PATH),
+            crypto_mode: CryptoMode::default(),
         }
     }
 }
@@ -154,6 +160,7 @@ pub struct FilesystemVaultStore {
 impl FilesystemVaultStore {
     pub fn new(cfg: VaultConfig) -> Result<Self> {
         fs::create_dir_all(&cfg.local_path)?;
+        ensure_vault_crypto_mode(cfg.crypto_mode)?;
         let master_key = load_or_create_master_key(&cfg.local_path)?;
         Ok(Self {
             root: cfg.local_path,
@@ -616,6 +623,7 @@ mod tests {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::new(VaultConfig {
             local_path: temp_dir.path().join("vault"),
+            ..VaultConfig::default()
         })?;
         let envelope_id = "incident-1";
         let ruleset_hash = [1u8; 32];
@@ -645,6 +653,7 @@ mod tests {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::new(VaultConfig {
             local_path: temp_dir.path().join("vault"),
+            ..VaultConfig::default()
         })?;
         let envelope_id = "incident-2";
         let ruleset_hash = [2u8; 32];
@@ -675,6 +684,7 @@ mod tests {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::new(VaultConfig {
             local_path: temp_dir.path().join("vault"),
+            ..VaultConfig::default()
         })?;
         let envelope_id = "incident-3";
         let ruleset_hash = [3u8; 32];
@@ -734,6 +744,7 @@ mod tests {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::new(VaultConfig {
             local_path: temp_dir.path().join("vault"),
+            ..VaultConfig::default()
         })?;
         let envelope_id = "incident-forged";
         let ruleset_hash = [10u8; 32];
@@ -782,6 +793,7 @@ mod tests {
         let vault_root = temp_dir.path().join("vault");
         let vault = Vault::new(VaultConfig {
             local_path: vault_root.clone(),
+            ..VaultConfig::default()
         })?;
         let envelope_id = "incident-4";
         let ruleset_hash = [4u8; 32];
@@ -816,6 +828,7 @@ mod tests {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::new(VaultConfig {
             local_path: temp_dir.path().join("vault"),
+            ..VaultConfig::default()
         })?;
         let envelope_id = "incident-5";
         let ruleset_hash = [5u8; 32];
@@ -862,6 +875,7 @@ mod tests {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::new(VaultConfig {
             local_path: temp_dir.path().join("vault"),
+            ..VaultConfig::default()
         })?;
         let envelope_id = "incident-6";
         let ruleset_hash = [6u8; 32];
