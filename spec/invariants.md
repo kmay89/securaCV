@@ -37,6 +37,20 @@ The goal of these invariants is to ensure that a witness system cannot evolve—
 - The kernel MUST NOT expose APIs that stream, mirror, or replay raw media externally.
 - Any subsystem capable of raw media storage MUST be isolated behind break-glass gating.
 
+### 3.1 Pre-Event Buffering (Transient Only)
+
+Pre-event raw media exists only as a short-lived, in-memory ring buffer used for
+vault sealing. It is not part of the event log and is never exported without
+break-glass authorization.
+
+- **Buffer lifetime:** The pre-roll buffer is bounded by a build-time maximum
+  duration and frame count; older frames are evicted once limits are reached.
+- **Zeroization/discard:** Evicted or dropped frames must be immediately
+  discarded and zeroized in memory to minimize exposure windows.
+- **Audit expectations:** There MUST NOT be any non-break-glass export path for
+  pre-event frames. Buffer drains for sealing must require a valid break-glass
+  token, and ingestion components must not retain frames after handoff.
+
 ---
 
 ## 4. Invariant II — No Identity Substrate
