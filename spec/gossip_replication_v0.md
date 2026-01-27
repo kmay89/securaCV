@@ -1,6 +1,6 @@
 # Gossip Replication Protocol v0 (Event Claims Only)
 Status: Draft v0.1
-Intended Status: Informative but Binding
+Intended Status: Normative
 Last Updated: 2026-01-20
 
 ## 1. Purpose and Scope
@@ -28,7 +28,7 @@ No additional claim fields are allowed. In particular, **no raw media, no precis
 event_hash = SHA-256(prev_hash || payload_json_bytes)
 ```
 
-where `prev_hash` is the previous sealed-log hash (32 bytes) and `payload_json_bytes` is the canonical JSON byte sequence stored in the sealed log entry. This is the same hash used by the kernel’s sealed-log chain (see `hash_entry` in the kernel log module).
+where `prev_hash` is the previous sealed-log hash (32 bytes) and `payload_json_bytes` is the canonical JSON byte sequence (RFC 8785) stored in the sealed log entry. This is the same hash used by the kernel’s sealed-log chain (see `hash_entry` in the kernel log module).
 
 ### Canonical Signing Input (with Domain Separation)
 
@@ -42,7 +42,7 @@ SIGNING_INPUT =
   device_key_id
 ```
 
-Encoding MUST be deterministic and specified by the wire format (Section 3). Implementations MUST reject claims that do not match the canonical encoding.
+Encoding MUST be deterministic and specified by the wire format (Section 3). For signing, each component MUST be serialized to its canonical byte representation before concatenation (e.g., `event_hash` as 32 raw bytes, `time_bucket` as canonical CBOR-encoded uint, and `device_key_id` as its canonical CBOR byte string). Implementations MUST reject claims that do not match the canonical encoding.
 
 ### Privacy Note: `device_key_id` Rotation
 
@@ -67,6 +67,21 @@ All messages MUST be encoded as **deterministic CBOR** with the following envelo
 }
 ```
 
+CDDL (RFC 8610) form:
+
+```
+claim_announcement = {
+  protocol_version: 0,
+  message_type: "claim_announcement",
+  claim: {
+    event_hash: bstr .size 32,
+    time_bucket: uint,
+    device_key_id: bstr .size (1..16),
+    signature: bstr .size 64
+  }
+}
+```
+
 Rules:
 - CBOR encoding MUST use canonical (deterministic) ordering.
 - `event_hash` is 32 bytes (SHA-256).
@@ -86,7 +101,7 @@ The only v0 message type is `claim_announcement`, which advertises possession of
 
 Peers authenticate using existing **device Ed25519 keys**. The transport MUST:
 
-1. Validate the peer’s device key against the local device key registry (which maps rotating `device_key_id` values to active device keys).
+1. Validate the peer’s device key against the local device key registry (which maps rotating `device_key_id` values to active device keys). Registry provisioning and synchronization are out of scope for this document and MUST be managed via a separate, secure process.
 2. Require a proof-of-possession (e.g., a signed nonce) during session establishment.
 3. Bind the authenticated device identity to the connection context.
 
