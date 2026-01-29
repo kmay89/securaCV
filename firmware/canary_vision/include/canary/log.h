@@ -1,20 +1,20 @@
 #pragma once
+
 #include <Arduino.h>
+#include <stdint.h>
 
 namespace canary {
 
 static inline uint32_t ms_now() { return millis(); }
 
-// Central place to choose the debug port
+// Pick a serial port that exists across ESP32 variants / CI compiles.
+// - Most Arduino-ESP32 builds provide Serial.
+// - If not, fall back to Serial1.
 static inline HardwareSerial& dbg_serial() {
-#if defined(ARDUINO_ARCH_ESP32)
-  #if defined(Serial0)
-    return Serial0;
-  #else
-    return Serial;
-  #endif
-#else
+#ifdef Serial
   return Serial;
+#else
+  return Serial1;
 #endif
 }
 
@@ -33,9 +33,3 @@ static inline void log_kv(const char* tag, const char* k, const char* v) {
 }
 
 } // namespace canary
-
-// ---- Backwards-compatible global wrappers ----
-// (So existing code can keep calling log_line(), ms_now(), etc.)
-static inline uint32_t ms_now() { return canary::ms_now(); }
-static inline void log_line(const char* tag, const char* msg) { canary::log_line(tag, msg); }
-static inline void log_kv(const char* tag, const char* k, const char* v) { canary::log_kv(tag, k, v); }
