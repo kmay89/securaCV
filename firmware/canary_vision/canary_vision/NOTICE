@@ -1,0 +1,12 @@
+SecuraCV Canary Vision Firmware
+Copyright (c) 2026 Errer Labs / SecuraCV
+
+errerlabs.com | securacv.com
+GitHub: https://github.com/kmay89/securaCV
+
+This firmware is designed to publish privacy-preserving semantic signals
+(e.g., presence/dwell/interaction likelihood) and to avoid raw video
+retention by default.
+
+Any use intended to bypass, disable, or weaken privacy-preserving behavior
+described in the SecuraCV documentation is contrary to the project’s purpose.
