@@ -11,8 +11,8 @@ public:
   uint32_t stable_enter_ms() const { return stable_enter_ms_; }
 
 private:
-  Voxel cur_{-1,-1,0,0};
-  Voxel stable_{-1,-1,0,0};
+  Voxel cur_{255, 255, 0, 0};
+  Voxel stable_{255, 255, 0, 0};
   uint8_t stable_frames_=0;
   uint32_t stable_enter_ms_=0;
 };
