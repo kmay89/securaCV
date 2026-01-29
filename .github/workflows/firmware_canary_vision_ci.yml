@@ -47,17 +47,8 @@ jobs:
 
       - name: Provide CI secrets header (build-only)
         run: |
-          mkdir -p secrets
-          cat > secrets/secrets.h <<'EOF'
-          #pragma once
-          // CI-only placeholder. Do NOT use on real hardware.
-          #define WIFI_SSID "ci"
-          #define WIFI_PASS "ci"
-          #define MQTT_HOST "127.0.0.1"
-          #define MQTT_PORT 1883
-          #define MQTT_USER nullptr
-          #define MQTT_PASS nullptr
-          EOF
+          cp secrets/secrets.example.h secrets/secrets.h
+
 
       - name: PlatformIO build
         run: |
