@@ -1,34 +1,41 @@
+// src/net/mqtt_mgr.cpp
 #include "canary/net/mqtt_mgr.h"
-#include "canary/config.h"
-#include "canary/log.h"
+
+#include <Arduino.h>
+#include <cstring>
 
 #include <WiFi.h>
 #include <PubSubClient.h>
 
+#include "canary/config.h"
+#include "canary/log.h"
+#include "canary/ha/ha_discovery.h"
+
+// Prefer local dev secrets if present; otherwise use CI stub.
+// IMPORTANT: the CI header must live at: include/secrets/secrets.ci.h
 #if __has_include("secrets/secrets.h")
   #include "secrets/secrets.h"
 #else
   #include "secrets.ci.h"
 #endif
 
-
-#include "canary/ha/ha_discovery.h"
-
 namespace canary::net {
 
 static WiFiClient wifiClient;
 static PubSubClient mqtt(wifiClient);
 static Topics g_topics{};
-static bool discovery_done=false;
+static bool discovery_done = false;
 
 static bool publish_checked(const char* tag, const char* topic, const char* payload, bool retain) {
-  bool ok = mqtt.publish(topic, payload, retain);
+  const bool ok = mqtt.publish(topic, payload, retain);
+
   log_header(tag);
-  Serial.printf("%s => %s (retain=%s len=%u)\n",
-                topic,
-                ok ? "OK" : "FAIL",
-                retain ? "true" : "false",
-                (unsigned)strlen(payload));
+  // NEVER call Serial directly in libs here; use dbg_serial() so CI/targets can swap it.
+  canary::dbg_serial().printf("%s => %s (retain=%s len=%u)\n",
+                              topic,
+                              ok ? "OK" : "FAIL",
+                              retain ? "true" : "false",
+                              (unsigned)strlen(payload));
   return ok;
 }
 
@@ -45,68 +52,65 @@ void mqtt_loop() { mqtt.loop(); }
 void publish_status_retained(const Topics& topics, const char* status) {
   char msg[256];
   snprintf(msg, sizeof(msg),
-    "{"
-      "\"device_id\":\"%s\","
-      "\"device_type\":\"%s\","
-      "\"status\":\"%s\","
-      "\"ip\":\"%s\","
-      "\"ts_ms\":%lu"
-    "}",
-    DEVICE_ID, DEVICE_TYPE, status,
-    WiFi.localIP().toString().c_str(),
-    (unsigned long)ms_now()
-  );
+           "{"
+           "\"device_id\":\"%s\","
+           "\"device_type\":\"%s\","
+           "\"status\":\"%s\","
+           "\"ip\":\"%s\","
+           "\"ts_ms\":%lu"
+           "}",
+           DEVICE_ID, DEVICE_TYPE, status,
+           WiFi.localIP().toString().c_str(),
+           (unsigned long)ms_now());
   publish_checked("STATUS", topics.status, msg, true);
 }
 
 void publish_heartbeat(const Topics& topics, const StateSnapshot& s) {
   char msg[256];
   snprintf(msg, sizeof(msg),
-    "{"
-      "\"device_id\":\"%s\","
-      "\"device_type\":\"%s\","
-      "\"status\":\"online\","
-      "\"presence\":%s,"
-      "\"dwelling\":%s,"
-      "\"ts_ms\":%lu"
-    "}",
-    DEVICE_ID, DEVICE_TYPE,
-    s.presence ? "true" : "false",
-    s.dwelling ? "true" : "false",
-    (unsigned long)ms_now()
-  );
+           "{"
+           "\"device_id\":\"%s\","
+           "\"device_type\":\"%s\","
+           "\"status\":\"online\","
+           "\"presence\":%s,"
+           "\"dwelling\":%s,"
+           "\"ts_ms\":%lu"
+           "}",
+           DEVICE_ID, DEVICE_TYPE,
+           s.presence ? "true" : "false",
+           s.dwelling ? "true" : "false",
+           (unsigned long)ms_now());
   publish_checked("HEART", topics.status, msg, true);
 }
 
 void publish_state_retained(const Topics& topics, const StateSnapshot& s) {
   char msg[768];
   snprintf(msg, sizeof(msg),
-    "{"
-      "\"device_id\":\"%s\","
-      "\"device_type\":\"%s\","
-      "\"presence\":%s,"
-      "\"dwelling\":%s,"
-      "\"presence_ms\":%lu,"
-      "\"dwell_ms\":%lu,"
-      "\"confidence\":%d,"
-      "\"voxel\":{\"rows\":%u,\"cols\":%u,\"r\":%d,\"c\":%d},"
-      "\"bbox\":{\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d},"
-      "\"last_event\":\"%s\","
-      "\"uptime_s\":%lu,"
-      "\"ts_ms\":%lu"
-    "}",
-    DEVICE_ID, DEVICE_TYPE,
-    s.presence ? "true" : "false",
-    s.dwelling ? "true" : "false",
-    (unsigned long)s.presence_ms,
-    (unsigned long)s.dwell_ms,
-    (int)s.confidence,
-    (unsigned)s.voxel.rows, (unsigned)s.voxel.cols, s.voxel.r, s.voxel.c,
-    s.bbox.x, s.bbox.y, s.bbox.w, s.bbox.h,
-    s.last_event ? s.last_event : "boot",
-    (unsigned long)s.uptime_s,
-    (unsigned long)s.ts_ms
-  );
+           "{"
+           "\"device_id\":\"%s\","
+           "\"device_type\":\"%s\","
+           "\"presence\":%s,"
+           "\"dwelling\":%s,"
+           "\"presence_ms\":%lu,"
+           "\"dwell_ms\":%lu,"
+           "\"confidence\":%d,"
+           "\"voxel\":{\"rows\":%u,\"cols\":%u,\"r\":%d,\"c\":%d},"
+           "\"bbox\":{\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d},"
+           "\"last_event\":\"%s\","
+           "\"uptime_s\":%lu,"
+           "\"ts_ms\":%lu"
+           "}",
+           DEVICE_ID, DEVICE_TYPE,
+           s.presence ? "true" : "false",
+           s.dwelling ? "true" : "false",
+           (unsigned long)s.presence_ms,
+           (unsigned long)s.dwell_ms,
+           (int)s.confidence,
+           (unsigned)s.voxel.rows, (unsigned)s.voxel.cols, s.voxel.r, s.voxel.c,
+           s.bbox.x, s.bbox.y, s.bbox.w, s.bbox.h,
+           s.last_event ? s.last_event : "boot",
+           (unsigned long)s.uptime_s,
+           (unsigned long)s.ts_ms);
 
   publish_checked("STATE", topics.state, msg, true);
 }
@@ -124,22 +128,21 @@ void ha_discovery_publish_once(const Topics& topics) {
 void mqtt_reconnect_blocking() {
   char lwtPayload[160];
   snprintf(lwtPayload, sizeof(lwtPayload),
-    "{"
-      "\"device_id\":\"%s\","
-      "\"device_type\":\"%s\","
-      "\"status\":\"offline\","
-      "\"ts_ms\":0"
-    "}",
-    DEVICE_ID, DEVICE_TYPE
-  );
+           "{"
+           "\"device_id\":\"%s\","
+           "\"device_type\":\"%s\","
+           "\"status\":\"offline\","
+           "\"ts_ms\":0"
+           "}",
+           DEVICE_ID, DEVICE_TYPE);
 
   while (!mqtt.connected()) {
     String clientId = String("securacv-") + DEVICE_ID + "-" + String((uint32_t)ESP.getEfuseMac(), HEX);
 
     log_header("MQTT");
-    Serial.printf("Connecting %s:%u as %s ...\n", MQTT_HOST, MQTT_PORT, clientId.c_str());
+    canary::dbg_serial().printf("Connecting %s:%u as %s ...\n", MQTT_HOST, MQTT_PORT, clientId.c_str());
 
-    bool ok=false;
+    bool ok = false;
     if (MQTT_USER != nullptr && MQTT_PASS != nullptr) {
       ok = mqtt.connect(clientId.c_str(), MQTT_USER, MQTT_PASS, g_topics.status, 1, true, lwtPayload);
     } else {
@@ -148,7 +151,7 @@ void mqtt_reconnect_blocking() {
 
     if (!ok) {
       log_header("MQTT");
-      Serial.printf("Connect FAIL rc=%d. Retry 1s\n", mqtt.state());
+      canary::dbg_serial().printf("Connect FAIL rc=%d. Retry 1s\n", mqtt.state());
       delay(1000);
     }
   }
@@ -158,4 +161,4 @@ void mqtt_reconnect_blocking() {
   ha_discovery_publish_once(g_topics);
 }
 
-} // namespace
+} // namespace canary::net
