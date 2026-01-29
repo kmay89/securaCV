@@ -16,7 +16,7 @@ static constexpr int SCORE_MIN     = 70;       // 0–100
 static constexpr uint32_t LOST_TIMEOUT_MS = 1500;
 
 // Dwell
-static constexpr uint32_t DWELL_START_MS      = 10'000;
+static constexpr uint32_t DWELL_START_MS      = 10000;
 static constexpr uint32_t DWELL_END_GRACE_MS  = 0;
 
 // Interaction heuristic
