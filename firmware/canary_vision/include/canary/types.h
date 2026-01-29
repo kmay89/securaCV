@@ -7,9 +7,16 @@ struct BBox {
 };
 
 struct Voxel {
-  int r=-1, c=-1;
-  uint8_t rows=0, cols=0;
+  uint8_t x = 0;
+  uint8_t y = 0;
+  uint8_t w = 0;
+  uint8_t h = 0;
+
+  constexpr Voxel() = default;
+  constexpr Voxel(uint8_t x_, uint8_t y_, uint8_t w_, uint8_t h_)
+    : x(x_), y(y_), w(w_), h(h_) {}
 };
+
 
 struct VisionSample {
   bool person_now=false;
