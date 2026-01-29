@@ -25,7 +25,7 @@ void wifi_init_or_reboot() {
   while (WiFi.status() != WL_CONNECTED) {
     delay(300);
     Serial.print(".");
-    if (ms_now() - start > 30'000) {
+    if ((canary::ms_now() - start) > 30000UL) {
       Serial.println();
       log_line("WIFI", "Timeout. Rebooting...");
       delay(200);
