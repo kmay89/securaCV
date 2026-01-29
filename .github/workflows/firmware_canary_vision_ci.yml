@@ -1,0 +1,65 @@
+name: Firmware CI (Canary Vision)
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - "firmware/canary_vision/**"
+      - ".github/workflows/firmware_canary_vision_ci.yml"
+  pull_request:
+    paths:
+      - "firmware/canary_vision/**"
+      - ".github/workflows/firmware_canary_vision_ci.yml"
+
+concurrency:
+  group: firmware-canary-vision-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: firmware/canary_vision
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+          key: ${{ runner.os }}-pio-${{ hashFiles('firmware/canary_vision/platformio.ini') }}
+          restore-keys: |
+            ${{ runner.os }}-pio-
+
+      - name: Install PlatformIO
+        run: |
+          python -m pip install --upgrade pip
+          pip install --upgrade platformio
+
+      - name: Provide CI secrets header (build-only)
+        run: |
+          mkdir -p secrets
+          cat > secrets/secrets.h <<'EOF'
+          #pragma once
+          // CI-only placeholder. Do NOT use on real hardware.
+          #define WIFI_SSID "ci"
+          #define WIFI_PASS "ci"
+          #define MQTT_HOST "127.0.0.1"
+          #define MQTT_PORT 1883
+          #define MQTT_USER nullptr
+          #define MQTT_PASS nullptr
+          EOF
+
+      - name: PlatformIO build
+        run: |
+          pio run
+
