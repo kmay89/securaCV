@@ -5,7 +5,13 @@
 #include <WiFi.h>
 #include <PubSubClient.h>
 
-#include "secrets/secrets.h"
+#if __has_include("secrets/secrets.h")
+  #include "secrets/secrets.h"
+#else
+  #include "secrets/secrets.ci.h"
+#endif
+
+
 #include "canary/ha/ha_discovery.h"
 
 namespace canary::net {
