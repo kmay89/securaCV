@@ -1,5 +1,6 @@
 #pragma once
 #include <stdint.h>
+#include <cstddef>
 
 // -------------------- Identity --------------------
 static constexpr const char* DEVICE_TYPE = "canary_vision";
