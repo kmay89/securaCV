@@ -53,6 +53,13 @@ Next: for a real RTSP stream or a local V4L2 device, see the ingestion sections 
 * Security policy is in `SECURITY.md`.
 * Release notes are in `CHANGELOG.md`.
 
+## Firmware
+
+Device firmware lives under `firmware/`.
+
+- **Canary Vision (ESP32-C3 + Grove Vision AI V2)**: `firmware/canary_vision/`  
+  PlatformIO project that publishes privacy-preserving semantic events and Home Assistant MQTT discovery.
+
 ## Release Gate (v1 Tagging)
 
 Before tagging any v1 release, the Home Assistant + Frigate MQTT pipeline must be verified end-to-end. Complete the v1 verification checklist in `docs/integrations/home-assistant-frigate-mqtt.md` and ensure `integrations/ha_frigate_mqtt/verify_pipeline.sh` succeeds with exit code `0` against a live stack. A v1 tag is blocked until this verification passes.
