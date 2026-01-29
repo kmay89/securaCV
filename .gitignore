@@ -27,3 +27,23 @@ api_token
 .env
 .env.local
 secrets.h
+# =============================== 
+# Firmware secrets (DO NOT COMMIT)
+# ===============================
+
+# Common secret headers
+secrets.h
+secret.h
+
+# PlatformIO / Arduino secret variants
+**/secrets.h
+**/secret.h
+**/secrets/*.h
+
+# PlatformIO local config
+platformio_override.ini
+
+# Environment / credential files
+.env
+.env.*
+~
