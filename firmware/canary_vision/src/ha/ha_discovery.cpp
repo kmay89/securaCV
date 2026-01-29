@@ -2,7 +2,7 @@
 #include "canary/config.h"
 #include "canary/version.h"
 #include "canary/log.h"
-#include "arduino.h"
+#include "Arduino.h"
 
 
 namespace canary::ha {
