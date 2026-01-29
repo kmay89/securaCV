@@ -8,38 +8,44 @@
 namespace canary::vision {
 
 static SSCMA AI;
-static bool g_inited=false;
+static bool g_inited = false;
 
 static bool pick_best_person_box(BBox& out) {
-  bool found=false;
-  int best=-1;
+  bool found = false;
+  int best = -1;
 
   auto& boxes = AI.boxes();
-  for (int i=0;i<boxes.size();i++) {
+  for (int i = 0; i < boxes.size(); i++) {
     const auto& b = boxes[i];
     if (b.target != PERSON_TARGET) continue;
     if (b.score < SCORE_MIN) continue;
     if (b.score > best) {
       best = b.score;
-      out.x=b.x; out.y=b.y; out.w=b.w; out.h=b.h; out.score=b.score;
-      found=true;
+      out.x = b.x;
+      out.y = b.y;
+      out.w = b.w;
+      out.h = b.h;
+      out.score = b.score;
+      found = true;
     }
   }
   return found;
 }
 
 static void bbox_to_voxel(const BBox& bb, Voxel& v) {
-  const int cx = bb.x + (bb.w/2);
-  const int cy = bb.y + (bb.h/2);
+  const int cx = bb.x + (bb.w / 2);
+  const int cy = bb.y + (bb.h / 2);
 
-  const int cols = (VOXEL_COLS==0) ? 1 : VOXEL_COLS;
-  const int rows = (VOXEL_ROWS==0) ? 1 : VOXEL_ROWS;
+  const int cols = (VOXEL_COLS == 0) ? 1 : VOXEL_COLS;
+  const int rows = (VOXEL_ROWS == 0) ? 1 : VOXEL_ROWS;
 
   int c = (cx * cols) / FRAME_W;
   int r = (cy * rows) / FRAME_H;
 
-  if (c<0) c=0; if (c>(cols-1)) c=cols-1;
-  if (r<0) r=0; if (r>(rows-1)) r=rows-1;
+  if (c < 0) c = 0;
+  if (c > (cols - 1)) c = cols - 1;
+  if (r < 0) r = 0;
+  if (r > (rows - 1)) r = rows - 1;
 
   v.cols = (uint8_t)cols;
   v.rows = (uint8_t)rows;
@@ -53,8 +59,9 @@ void init() {
   delay(250);
 
   log_header("I2C");
-  Serial.printf("Grove Vision AI ID=%d\n", (int)AI.ID());
-  g_inited=true;
+  canary::dbg_serial().printf("Grove Vision AI ID=%d\n", (int)AI.ID());
+
+  g_inited = true;
 }
 
 bool sample(VisionSample& out) {
@@ -75,4 +82,4 @@ bool sample(VisionSample& out) {
   return true;
 }
 
-} // namespace
+} // namespace canary::vision
