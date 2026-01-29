@@ -6,8 +6,10 @@
 #if __has_include("secrets/secrets.h")
   #include "secrets/secrets.h"
 #else
-  #include "secrets/secrets.ci.h"
+  #include "secrets.ci.h"
 #endif
+
+
 
 
 namespace canary::net {
