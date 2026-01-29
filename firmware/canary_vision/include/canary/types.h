@@ -7,15 +7,23 @@ struct BBox {
 };
 
 struct Voxel {
-  uint8_t x = 0;
-  uint8_t y = 0;
-  uint8_t w = 0;
-  uint8_t h = 0;
+  int r;
+  int c;
+  uint8_t rows;
+  uint8_t cols;
 
-  constexpr Voxel() = default;
-  constexpr Voxel(uint8_t x_, uint8_t y_, uint8_t w_, uint8_t h_)
-    : x(x_), y(y_), w(w_), h(h_) {}
+  // Default: invalid / unset
+  constexpr Voxel() : r(-1), c(-1), rows(0), cols(0) {}
+
+  // Explicit constructor (robust: no aggregate-init surprises)
+  constexpr Voxel(int r_, int c_, uint8_t rows_, uint8_t cols_)
+      : r(r_), c(c_), rows(rows_), cols(cols_) {}
+
+  static constexpr Voxel Invalid() { return Voxel(); }
+
+  constexpr bool valid() const { return (r >= 0) && (c >= 0) && (rows > 0) && (cols > 0); }
 };
+
 
 
 struct VisionSample {
