@@ -105,7 +105,7 @@ static void publish_event_json(const char* event_name, const char* reason, uint3
 }
 
 void setup() {
-  Serial.begin(115200);
+  canary::dbg_serial().begin(115200);
   delay(600);
 
   TOPICS = build_topics();
