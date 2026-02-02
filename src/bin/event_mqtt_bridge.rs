@@ -244,7 +244,7 @@ fn main() -> Result<()> {
     let api_addr = parse_loopback_socket_addr(&args.api_addr)
         .with_context(|| "api addr must be loopback-only")?;
     let mqtt_endpoint = parse_mqtt_endpoint(&args.mqtt_broker_addr, args.mqtt_use_tls)?;
-    let tls_backend = TlsBackend::from_str(&args.mqtt_tls_backend)?;
+    let tls_backend: TlsBackend = args.mqtt_tls_backend.parse()?;
     tls_backend.validate_feature_support()?;
     let tls_materials = TlsMaterials::load(
         args.mqtt_tls_ca_path.as_ref(),

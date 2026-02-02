@@ -16,9 +16,10 @@
 //! let transport = config.build_transport(&endpoint)?;
 //! ```
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use rumqttc::Transport;
 use std::path::PathBuf;
+use std::str::FromStr;
 
 /// TLS backend selection for MQTT connections.
 ///
@@ -37,9 +38,10 @@ pub enum TlsBackend {
     HybridPq,
 }
 
-impl TlsBackend {
-    /// Parse backend from string (CLI/config value).
-    pub fn from_str(s: &str) -> Result<Self> {
+impl FromStr for TlsBackend {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self> {
         match s.to_lowercase().as_str() {
             "classic" | "rustls" | "default" => Ok(Self::Classic),
             "hybrid_pq" | "hybridpq" | "pq" | "hybrid" => Ok(Self::HybridPq),
@@ -49,7 +51,9 @@ impl TlsBackend {
             )),
         }
     }
+}
 
+impl TlsBackend {
     /// Check if this backend requires the pqc-tls feature.
     pub fn requires_pqc_feature(&self) -> bool {
         matches!(self, Self::HybridPq)
@@ -105,28 +109,26 @@ impl TlsMaterials {
         client_cert_path: Option<&PathBuf>,
         client_key_path: Option<&PathBuf>,
     ) -> Result<Self> {
-        let ca =
-            match ca_path {
-                Some(path) => Some(std::fs::read(path).map_err(|e| {
-                    anyhow!("failed to read MQTT TLS CA '{}': {}", path.display(), e)
-                })?),
-                None => None,
-            };
+        let ca = match ca_path {
+            Some(path) => Some(
+                std::fs::read(path)
+                    .with_context(|| format!("failed to read MQTT TLS CA '{}'", path.display()))?,
+            ),
+            None => None,
+        };
 
         let client_auth = match (client_cert_path, client_key_path) {
             (Some(cert_path), Some(key_path)) => {
-                let cert = std::fs::read(cert_path).map_err(|e| {
-                    anyhow!(
-                        "failed to read MQTT TLS client cert '{}': {}",
-                        cert_path.display(),
-                        e
+                let cert = std::fs::read(cert_path).with_context(|| {
+                    format!(
+                        "failed to read MQTT TLS client cert '{}'",
+                        cert_path.display()
                     )
                 })?;
-                let key = std::fs::read(key_path).map_err(|e| {
-                    anyhow!(
-                        "failed to read MQTT TLS client key '{}': {}",
-                        key_path.display(),
-                        e
+                let key = std::fs::read(key_path).with_context(|| {
+                    format!(
+                        "failed to read MQTT TLS client key '{}'",
+                        key_path.display()
                     )
                 })?;
                 Some((cert, key))
@@ -223,10 +225,10 @@ impl TlsConfig {
         let mut root_store = rustls::RootCertStore::empty();
 
         if let Some(ca_bytes) = &self.materials.ca {
-            // Parse PEM certificates
+            // Parse PEM certificates - fail loudly on any parse error
             let certs = rustls_pemfile::certs(&mut ca_bytes.as_slice())
-                .filter_map(|r| r.ok())
-                .collect::<Vec<_>>();
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| anyhow!("failed to parse CA certificate from PEM: {}", e))?;
             for cert in certs {
                 root_store
                     .add(cert)
@@ -244,11 +246,25 @@ impl TlsConfig {
             ..aws_lc_rs::default_provider()
         };
 
-        let config = ClientConfig::builder_with_provider(Arc::new(provider))
+        let builder = ClientConfig::builder_with_provider(Arc::new(provider))
             .with_safe_default_protocol_versions()
             .map_err(|e| anyhow!("failed to configure TLS versions: {}", e))?
-            .with_root_certificates(root_store)
-            .with_no_client_auth();
+            .with_root_certificates(root_store);
+
+        // Configure client authentication (mTLS) if provided
+        let config = if let Some((cert_bytes, key_bytes)) = &self.materials.client_auth {
+            let certs = rustls_pemfile::certs(&mut cert_bytes.as_slice())
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| anyhow!("failed to parse client certificate from PEM: {}", e))?;
+            let key = rustls_pemfile::private_key(&mut key_bytes.as_slice())
+                .map_err(|e| anyhow!("failed to parse private key from PEM: {}", e))?
+                .ok_or_else(|| anyhow!("no private key found in PEM file"))?;
+            builder
+                .with_client_auth_cert(certs, key)
+                .map_err(|e| anyhow!("failed to configure TLS client auth: {}", e))?
+        } else {
+            builder.with_no_client_auth()
+        };
 
         ::log::info!("TLS configured with hybrid PQ key exchange (X25519Kyber768Draft00)");
 
@@ -308,7 +324,9 @@ fn split_host_port(addr: &str) -> Result<(String, u16)> {
         let port = rest
             .strip_prefix(':')
             .ok_or_else(|| anyhow!("missing MQTT port in {}", addr))?;
-        let port: u16 = port.parse().map_err(|_| anyhow!("invalid MQTT port"))?;
+        let port: u16 = port
+            .parse()
+            .with_context(|| format!("invalid MQTT port in {}", addr))?;
         return Ok((host.to_string(), port));
     }
 
@@ -316,7 +334,9 @@ fn split_host_port(addr: &str) -> Result<(String, u16)> {
     let (host, port) = addr
         .rsplit_once(':')
         .ok_or_else(|| anyhow!("missing MQTT port in {}", addr))?;
-    let port: u16 = port.parse().map_err(|_| anyhow!("invalid MQTT port"))?;
+    let port: u16 = port
+        .parse()
+        .with_context(|| format!("invalid MQTT port in {}", addr))?;
     Ok((host.to_string(), port))
 }
 
@@ -344,16 +364,16 @@ mod tests {
     #[test]
     fn backend_from_str_classic() {
         assert_eq!(
-            TlsBackend::from_str("classic").unwrap(),
+            "classic".parse::<TlsBackend>().unwrap(),
             TlsBackend::Classic
         );
-        assert_eq!(TlsBackend::from_str("rustls").unwrap(), TlsBackend::Classic);
+        assert_eq!("rustls".parse::<TlsBackend>().unwrap(), TlsBackend::Classic);
         assert_eq!(
-            TlsBackend::from_str("default").unwrap(),
+            "default".parse::<TlsBackend>().unwrap(),
             TlsBackend::Classic
         );
         assert_eq!(
-            TlsBackend::from_str("CLASSIC").unwrap(),
+            "CLASSIC".parse::<TlsBackend>().unwrap(),
             TlsBackend::Classic
         );
     }
@@ -361,28 +381,28 @@ mod tests {
     #[test]
     fn backend_from_str_hybrid_pq() {
         assert_eq!(
-            TlsBackend::from_str("hybrid_pq").unwrap(),
+            "hybrid_pq".parse::<TlsBackend>().unwrap(),
             TlsBackend::HybridPq
         );
         assert_eq!(
-            TlsBackend::from_str("hybridpq").unwrap(),
+            "hybridpq".parse::<TlsBackend>().unwrap(),
             TlsBackend::HybridPq
         );
-        assert_eq!(TlsBackend::from_str("pq").unwrap(), TlsBackend::HybridPq);
+        assert_eq!("pq".parse::<TlsBackend>().unwrap(), TlsBackend::HybridPq);
         assert_eq!(
-            TlsBackend::from_str("hybrid").unwrap(),
+            "hybrid".parse::<TlsBackend>().unwrap(),
             TlsBackend::HybridPq
         );
         assert_eq!(
-            TlsBackend::from_str("HYBRID_PQ").unwrap(),
+            "HYBRID_PQ".parse::<TlsBackend>().unwrap(),
             TlsBackend::HybridPq
         );
     }
 
     #[test]
     fn backend_from_str_invalid() {
-        assert!(TlsBackend::from_str("unknown").is_err());
-        assert!(TlsBackend::from_str("").is_err());
+        assert!("unknown".parse::<TlsBackend>().is_err());
+        assert!("".parse::<TlsBackend>().is_err());
     }
 
     #[test]
