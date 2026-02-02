@@ -459,7 +459,8 @@ static void print_time_block();
 static void print_gps_block();
 static void print_help();
 static bool create_witness_record(const uint8_t* payload, size_t len, RecordType type, WitnessRecord* out);
-static void log_health(LogLevel level, LogCategory category, const char* message, const char* detail = nullptr);
+// log_health is declared extern in health_log.h for use by other modules
+void log_health(LogLevel level, LogCategory category, const char* message, const char* detail = nullptr);
 
 // WiFi provisioning
 static bool wifi_load_credentials();

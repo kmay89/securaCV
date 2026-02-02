@@ -23,7 +23,6 @@
 #define SECURACV_BLUETOOTH_CHANNEL_H
 
 #include <Arduino.h>
-#include "log_level.h"
 
 namespace bluetooth_channel {
 
