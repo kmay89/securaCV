@@ -205,16 +205,14 @@ pub fn verify_with_domain(
     let pq_result = verify_pq_signature(&signing_hash, signatures, pq_public_key);
 
     match mode {
-        SignatureMode::Compat => {
-            match (ed_result, pq_result) {
-                (Ok(_), _) | (_, Ok(_)) => Ok(()),
-                (Err(ed_err), Err(pq_err)) => Err(anyhow!(
-                    "signature verification failed: ed25519_error={}, pq_error={}",
-                    ed_err,
-                    pq_err
-                )),
-            }
-        }
+        SignatureMode::Compat => match (ed_result, pq_result) {
+            (Ok(_), _) | (_, Ok(_)) => Ok(()),
+            (Err(ed_err), Err(pq_err)) => Err(anyhow!(
+                "signature verification failed: ed25519_error={}, pq_error={}",
+                ed_err,
+                pq_err
+            )),
+        },
         SignatureMode::Strict => {
             ed_result?;
             pq_result?;
