@@ -12,7 +12,7 @@ Before adding or restructuring firmware work, read the canonical architecture gu
 
 ### Canary Vision (ESP32-C3 + Grove Vision AI V2)
 
-Path: `firmware/canary_vision/`
+Path: `firmware/projects/canary-vision/`
 
 Purpose:
 - Publishes semantic events like `presence_started`, `dwell_started`, `interaction_likely`
@@ -43,7 +43,7 @@ Prereqs:
 From the repo root:
 
 ```bash
-cd firmware/canary_vision
+cd firmware/projects/canary-vision
 pio run
 pio run -t upload
 pio device monitor -b 115200
