@@ -632,6 +632,9 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       <button class="nav-btn" data-panel="opera">
         Opera<span class="count" id="operaAlertCount" style="display:none">0</span>
       </button>
+      <button class="nav-btn" data-panel="community">
+        Community<span class="count" id="chirpCount" style="display:none">0</span>
+      </button>
       <button class="nav-btn" data-panel="logs">
         Logs<span class="count" id="logsCount" style="display:none">0</span>
       </button>
@@ -956,6 +959,179 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       </div>
     </div>
 
+    <!-- Community Panel (Chirp Channel) -->
+    <div class="panel" id="panel-community">
+      <!-- Chirp Status Card -->
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Community Witness Network</div>
+            <div class="card-subtitle" id="chirpSubtitle">Anonymous community alerts</div>
+          </div>
+          <div class="badge info" id="chirpBadge">
+            <span class="badge-dot"></span>
+            <span id="chirpState">Disabled</span>
+          </div>
+        </div>
+
+        <div class="stats-grid">
+          <div class="stat-item">
+            <div class="stat-label">Your Session</div>
+            <div class="stat-value" id="chirpSessionEmoji" style="font-size:1.5rem;">--</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-label">Nearby Devices</div>
+            <div class="stat-value" id="chirpNearbyCount">0</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-label">Recent Chirps</div>
+            <div class="stat-value" id="chirpRecentCount">0</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-label">Cooldown</div>
+            <div class="stat-value" id="chirpCooldown" style="font-size:0.9rem;">Ready</div>
+          </div>
+        </div>
+
+        <!-- Enable/Disable Toggle -->
+        <div style="margin-top:1rem;padding:0.75rem;background:rgba(0,0,0,0.2);border-radius:8px;display:flex;align-items:center;justify-content:space-between;">
+          <div>
+            <strong style="font-size:0.85rem;">Enable Chirp Channel</strong>
+            <p style="font-size:0.75rem;color:var(--muted);margin:0;">Anonymous community alerts (new identity each session)</p>
+          </div>
+          <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;">
+            <input type="checkbox" id="chirpEnabled" onchange="toggleChirpEnabled()">
+            <span style="font-size:0.85rem;color:var(--muted);">Enabled</span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Send Chirp Card -->
+      <div class="card" id="chirpSendCard" style="display:none;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Share with Community</div>
+            <div class="card-subtitle">Send a soft alert to nearby devices</div>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">What's happening?</label>
+          <select class="form-input" id="chirpCategory">
+            <option value="activity">Unusual activity</option>
+            <option value="utility">Utility issue (power, water, internet)</option>
+            <option value="safety">Safety concern</option>
+            <option value="community">Community notice</option>
+            <option value="all_clear">All clear (de-escalation)</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">How urgent?</label>
+          <div style="display:flex;gap:0.5rem;">
+            <label style="flex:1;padding:0.5rem;background:rgba(99,179,237,0.15);border:1px solid var(--border);border-radius:6px;cursor:pointer;text-align:center;">
+              <input type="radio" name="chirpUrgency" value="info" checked style="display:none;">
+              <span style="color:#63b3ed;font-size:0.85rem;">Info</span>
+            </label>
+            <label style="flex:1;padding:0.5rem;background:rgba(244,185,66,0.15);border:1px solid var(--border);border-radius:6px;cursor:pointer;text-align:center;">
+              <input type="radio" name="chirpUrgency" value="caution" style="display:none;">
+              <span style="color:#f4b942;font-size:0.85rem;">Caution</span>
+            </label>
+            <label style="flex:1;padding:0.5rem;background:rgba(230,126,34,0.15);border:1px solid var(--border);border-radius:6px;cursor:pointer;text-align:center;">
+              <input type="radio" name="chirpUrgency" value="urgent" style="display:none;">
+              <span style="color:#e67e22;font-size:0.85rem;">Urgent</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Brief message (optional, 64 chars max)</label>
+          <input type="text" class="form-input" id="chirpMessage" maxlength="64" placeholder="e.g., someone checking car doors">
+        </div>
+
+        <p style="font-size:0.75rem;color:var(--muted);margin-bottom:1rem;" id="chirpNearbyHint">
+          This will notify approximately <strong id="chirpNearbyEstimate">0</strong> nearby devices.
+        </p>
+
+        <button class="btn btn-primary" id="chirpSendBtn" onclick="sendChirp()" style="width:100%;">
+          Send Chirp
+        </button>
+        <p id="chirpCooldownHint" style="font-size:0.75rem;color:var(--warning);margin-top:0.5rem;display:none;text-align:center;">
+          Please wait before sending another chirp
+        </p>
+      </div>
+
+      <!-- Recent Chirps Card -->
+      <div class="card" id="chirpRecentCard">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Community Activity</div>
+            <div class="card-subtitle">Recent alerts from your area</div>
+          </div>
+          <button class="btn btn-ghost btn-sm" onclick="refreshChirps()">Refresh</button>
+        </div>
+        <div id="chirpList" class="log-list">
+          <div class="empty-state">
+            <div class="empty-icon">🐦</div>
+            <p>No community alerts</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Mute Controls Card -->
+      <div class="card" id="chirpMuteCard" style="display:none;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Mute Controls</div>
+            <div class="card-subtitle">Temporarily pause community alerts</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+          <button class="btn btn-secondary" onclick="muteChirps(15)">Mute 15m</button>
+          <button class="btn btn-secondary" onclick="muteChirps(30)">Mute 30m</button>
+          <button class="btn btn-secondary" onclick="muteChirps(60)">Mute 1h</button>
+          <button class="btn btn-secondary" onclick="muteChirps(120)">Mute 2h</button>
+          <button class="btn btn-ghost" onclick="unmuteChirps()" id="chirpUnmuteBtn" style="display:none;">Unmute</button>
+        </div>
+        <p id="chirpMuteStatus" style="font-size:0.75rem;color:var(--muted);margin-top:0.5rem;"></p>
+      </div>
+
+      <!-- Chirp Settings Card -->
+      <div class="card" id="chirpSettingsCard" style="display:none;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Chirp Settings</div>
+            <div class="card-subtitle">Customize your experience</div>
+          </div>
+        </div>
+        <div style="margin-bottom:1rem;">
+          <label style="display:flex;align-items:center;gap:0.75rem;cursor:pointer;">
+            <input type="checkbox" id="chirpRelayEnabled" checked onchange="updateChirpSettings()">
+            <div>
+              <strong style="font-size:0.85rem;">Relay others' chirps</strong>
+              <p style="font-size:0.75rem;color:var(--muted);margin:0;">Help extend range by forwarding chirps</p>
+            </div>
+          </label>
+        </div>
+        <div>
+          <label class="form-label">Minimum urgency to show</label>
+          <select class="form-input" id="chirpUrgencyFilter" onchange="updateChirpSettings()">
+            <option value="info">All (Info and above)</option>
+            <option value="caution">Caution and above</option>
+            <option value="urgent">Urgent only</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Philosophy Note -->
+      <div class="card" style="background:linear-gradient(135deg,rgba(79,209,197,0.1) 0%,rgba(99,179,237,0.1) 100%);">
+        <p style="font-size:0.8rem;color:var(--muted);margin:0;text-align:center;">
+          <strong>Safety in numbers, not surveillance.</strong><br>
+          No video. No tracking. No permanent records. Just neighbors helping neighbors.
+        </p>
+      </div>
+    </div>
+
     <!-- Logs Panel -->
     <div class="panel" id="panel-logs">
       <div class="card">
@@ -1189,6 +1365,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       else if (panel === 'witness') loadWitness();
       else if (panel === 'peek') refreshPeekStatus();
       else if (panel === 'opera') refreshOpera();
+      else if (panel === 'community') refreshChirpStatus();
 
       // Stop peek stream when leaving peek panel
       if (panel !== 'peek' && peekActive) {
@@ -2159,6 +2336,236 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     });
 
     // ══════════════════════════════════════════════════════════════════
+    // CHIRP CHANNEL (Community Witness Network)
+    // ══════════════════════════════════════════════════════════════════
+
+    let chirpState = null;
+
+    async function refreshChirpStatus() {
+      const data = await api('/api/chirp');
+      if (!data.state) return;
+
+      chirpState = data;
+
+      // Update stats
+      document.getElementById('chirpSessionEmoji').textContent = data.session_emoji || '--';
+      document.getElementById('chirpNearbyCount').textContent = data.nearby_count || 0;
+      document.getElementById('chirpRecentCount').textContent = data.recent_chirps || 0;
+      document.getElementById('chirpNearbyEstimate').textContent = data.nearby_count || 0;
+
+      // Cooldown display
+      const cooldownEl = document.getElementById('chirpCooldown');
+      if (data.cooldown_remaining_sec > 0) {
+        const mins = Math.floor(data.cooldown_remaining_sec / 60);
+        const secs = data.cooldown_remaining_sec % 60;
+        cooldownEl.textContent = `${mins}:${secs.toString().padStart(2, '0')}`;
+        document.getElementById('chirpSendBtn').disabled = true;
+        document.getElementById('chirpCooldownHint').style.display = 'block';
+      } else {
+        cooldownEl.textContent = 'Ready';
+        document.getElementById('chirpSendBtn').disabled = false;
+        document.getElementById('chirpCooldownHint').style.display = 'none';
+      }
+
+      // Update badge
+      const badge = document.getElementById('chirpBadge');
+      const stateText = document.getElementById('chirpState');
+      const enabled = data.state !== 'disabled';
+
+      document.getElementById('chirpEnabled').checked = enabled;
+
+      if (data.state === 'active') {
+        badge.className = 'badge success';
+        stateText.textContent = 'Active';
+        document.getElementById('chirpSubtitle').textContent =
+          `${data.nearby_count} device(s) nearby`;
+      } else if (data.state === 'muted') {
+        badge.className = 'badge warning';
+        stateText.textContent = 'Muted';
+        document.getElementById('chirpSubtitle').textContent =
+          `Muted for ${Math.ceil(data.mute_remaining_sec / 60)} min`;
+      } else if (data.state === 'cooldown') {
+        badge.className = 'badge info';
+        stateText.textContent = 'Cooldown';
+        document.getElementById('chirpSubtitle').textContent =
+          'Please wait before sending again';
+      } else if (data.state === 'listening') {
+        badge.className = 'badge info';
+        stateText.textContent = 'Listening';
+        document.getElementById('chirpSubtitle').textContent =
+          'Receiving community alerts';
+      } else {
+        badge.className = 'badge info';
+        stateText.textContent = 'Disabled';
+        document.getElementById('chirpSubtitle').textContent =
+          'Enable to join community network';
+      }
+
+      // Show/hide cards based on state
+      document.getElementById('chirpSendCard').style.display = enabled ? 'block' : 'none';
+      document.getElementById('chirpMuteCard').style.display = enabled ? 'block' : 'none';
+      document.getElementById('chirpSettingsCard').style.display = enabled ? 'block' : 'none';
+
+      // Mute button state
+      if (data.muted) {
+        document.getElementById('chirpUnmuteBtn').style.display = 'inline-flex';
+        document.getElementById('chirpMuteStatus').textContent =
+          `Muted for ${Math.ceil(data.mute_remaining_sec / 60)} more minutes`;
+      } else {
+        document.getElementById('chirpUnmuteBtn').style.display = 'none';
+        document.getElementById('chirpMuteStatus').textContent = '';
+      }
+
+      // Settings
+      document.getElementById('chirpRelayEnabled').checked = data.relay_enabled !== false;
+
+      // Chirp count badge in nav
+      const chirpCountBadge = document.getElementById('chirpCount');
+      if (data.recent_chirps > 0) {
+        chirpCountBadge.textContent = data.recent_chirps;
+        chirpCountBadge.style.display = 'inline-flex';
+      } else {
+        chirpCountBadge.style.display = 'none';
+      }
+
+      // Load recent chirps
+      loadChirps();
+    }
+
+    async function loadChirps() {
+      const data = await api('/api/chirp/recent');
+      const list = document.getElementById('chirpList');
+
+      if (!data.chirps || data.chirps.length === 0) {
+        list.innerHTML = '<div class="empty-state"><div class="empty-icon">🐦</div><p>No community alerts</p></div>';
+        return;
+      }
+
+      list.innerHTML = data.chirps.map(chirp => {
+        const urgencyColor = chirp.urgency === 'urgent' ? '#e67e22' :
+                            chirp.urgency === 'caution' ? '#f4b942' : '#63b3ed';
+        const urgencyBg = chirp.urgency === 'urgent' ? 'rgba(230,126,34,0.15)' :
+                         chirp.urgency === 'caution' ? 'rgba(244,185,66,0.15)' : 'rgba(99,179,237,0.15)';
+        const categoryIcon = chirp.category === 'safety' ? '⚠️' :
+                            chirp.category === 'utility' ? '⚡' :
+                            chirp.category === 'community' ? '📢' :
+                            chirp.category === 'all_clear' ? '✅' : '👁️';
+
+        return `
+          <div class="log-item" style="border-left-color:${urgencyColor};">
+            <div style="font-size:1.5rem;min-width:2rem;text-align:center;">${categoryIcon}</div>
+            <div class="log-content">
+              <div class="log-message">
+                <span style="opacity:0.8;">${chirp.emoji}</span> shared:
+                <span style="background:${urgencyBg};color:${urgencyColor};padding:0.1rem 0.3rem;border-radius:3px;font-size:0.75rem;">${chirp.urgency}</span>
+              </div>
+              ${chirp.message ? `<div class="log-detail">"${escapeHtml(chirp.message)}"</div>` : ''}
+              <div class="log-meta">
+                ${chirp.category} · ${formatChirpAge(chirp.age_sec)} ago · ${chirp.hop_count} hop(s) · ${chirp.ack_count} ack(s)
+                ${chirp.relayed ? ' · relayed' : ''}
+              </div>
+            </div>
+            <div class="log-actions">
+              <button class="btn btn-ghost btn-sm" onclick="ackChirp('${chirp.nonce}', 'confirmed')" title="I see it too">👁️</button>
+              <button class="btn btn-ghost btn-sm" onclick="dismissChirp('${chirp.nonce}')" title="Dismiss">✕</button>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function formatChirpAge(sec) {
+      if (sec < 60) return sec + 's';
+      if (sec < 3600) return Math.floor(sec / 60) + 'm';
+      return Math.floor(sec / 3600) + 'h';
+    }
+
+    function refreshChirps() {
+      loadChirps();
+    }
+
+    async function toggleChirpEnabled() {
+      const enabled = document.getElementById('chirpEnabled').checked;
+      const endpoint = enabled ? '/api/chirp/enable' : '/api/chirp/disable';
+      const data = await api(endpoint, 'POST');
+
+      if (!data.success) {
+        alert('Failed to toggle chirp channel: ' + (data.error || 'Unknown error'));
+        document.getElementById('chirpEnabled').checked = !enabled;
+      }
+
+      refreshChirpStatus();
+    }
+
+    async function sendChirp() {
+      const category = document.getElementById('chirpCategory').value;
+      const urgency = document.querySelector('input[name="chirpUrgency"]:checked').value;
+      const message = document.getElementById('chirpMessage').value.trim();
+
+      const confirmMsg = urgency === 'urgent' ?
+        'Send URGENT alert to nearby devices? This should only be used for important safety concerns.' :
+        'Send this alert to nearby devices?';
+
+      if (!confirm(confirmMsg)) return;
+
+      const data = await api('/api/chirp/send', 'POST', {
+        category,
+        urgency,
+        message,
+        ttl_minutes: 15
+      });
+
+      if (data.success) {
+        document.getElementById('chirpMessage').value = '';
+        alert('Chirp sent to community!');
+      } else {
+        alert('Failed to send chirp: ' + (data.message || data.error || 'Unknown error'));
+      }
+
+      refreshChirpStatus();
+    }
+
+    async function ackChirp(nonce, type) {
+      await api('/api/chirp/ack', 'POST', { nonce, type });
+      loadChirps();
+    }
+
+    async function dismissChirp(nonce) {
+      await api('/api/chirp/dismiss', 'POST', { nonce });
+      loadChirps();
+    }
+
+    async function muteChirps(minutes) {
+      const data = await api('/api/chirp/mute', 'POST', { duration_minutes: minutes });
+      if (!data.success) {
+        alert('Failed to mute: ' + (data.error || 'Unknown error'));
+      }
+      refreshChirpStatus();
+    }
+
+    async function unmuteChirps() {
+      await api('/api/chirp/unmute', 'POST');
+      refreshChirpStatus();
+    }
+
+    async function updateChirpSettings() {
+      const relay_enabled = document.getElementById('chirpRelayEnabled').checked;
+      const urgency_filter = document.getElementById('chirpUrgencyFilter').value;
+
+      await api('/api/chirp/settings', 'POST', { relay_enabled, urgency_filter });
+    }
+
+    // Urgency radio button styling
+    document.querySelectorAll('input[name="chirpUrgency"]').forEach(radio => {
+      radio.addEventListener('change', function() {
+        document.querySelectorAll('input[name="chirpUrgency"]').forEach(r => {
+          r.parentElement.style.borderColor = 'var(--border)';
+        });
+        this.parentElement.style.borderColor = 'var(--accent)';
+      });
+    });
+
+    // ══════════════════════════════════════════════════════════════════
     // Initialize
     // ══════════════════════════════════════════════════════════════════
 
@@ -2166,6 +2573,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     loadChain();
     loadWifiStatus();
     refreshOpera();
+    refreshChirpStatus();
     updateResolutionUI();
     setInterval(refreshStatus, 2000);
     setInterval(loadWifiStatus, 5000);
@@ -2173,6 +2581,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       if (currentPanel === 'logs') loadLogs();
       else if (currentPanel === 'witness') loadWitness();
       else if (currentPanel === 'opera') refreshOpera();
+      else if (currentPanel === 'community') refreshChirpStatus();
     }, 5000);
   </script>
 </body>

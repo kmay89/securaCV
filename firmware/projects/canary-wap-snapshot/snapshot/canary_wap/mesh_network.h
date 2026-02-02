@@ -450,4 +450,348 @@ void get_message_stats(uint32_t* sent, uint32_t* received, uint32_t* errors);
 
 } // namespace mesh_network
 
+// ════════════════════════════════════════════════════════════════════════════
+// CHIRP CHANNEL — Anonymous Community Witness Network
+// ════════════════════════════════════════════════════════════════════════════
+//
+// Chirp Channel is an OPTIONAL anonymous mesh for community alerts.
+// Key differences from Opera:
+//   - Ephemeral identity (new each session, no tracking)
+//   - Human-in-the-loop (no automated broadcasts)
+//   - Soft witness alerts (calm, not alarming)
+//   - No history retained (privacy-first)
+//   - 3-hop max range (neighborhood, not city)
+//
+// Philosophy: "Safety in numbers, not surveillance"
+// See spec/chirp_channel_v0.md for full specification.
+// ════════════════════════════════════════════════════════════════════════════
+
+namespace chirp_channel {
+
+// Protocol constants
+static const uint8_t PROTOCOL_VERSION = 0;
+static const uint8_t CHIRP_MAGIC = 0xC4;           // Message identifier
+static const uint8_t CHIRP_CHANNEL = 6;            // WiFi channel (separate from Opera)
+static const size_t MAX_MESSAGE_LEN = 64;          // Max chirp message length
+static const size_t MAX_RECENT_CHIRPS = 16;        // Stored chirps
+static const size_t MAX_NONCE_CACHE = 100;         // Deduplication cache
+static const size_t MAX_NEARBY_CACHE = 32;         // Nearby device cache
+static const size_t SESSION_ID_SIZE = 8;           // Ephemeral session ID
+static const size_t EMOJI_DISPLAY_SIZE = 13;       // "🐦🌳⭐" + null
+
+// Timing (milliseconds)
+static const uint32_t PRESENCE_INTERVAL_MS = 60000;    // Send presence every 60s
+static const uint32_t CHIRP_COOLDOWN_MS = 300000;      // 5 min between chirps
+static const uint32_t CHIRP_TTL_MS = 300000;           // Messages valid for 5 min
+static const uint32_t NEARBY_TIMEOUT_MS = 180000;      // Nearby stale after 3 min
+static const uint32_t DEFAULT_DISPLAY_MS = 1800000;    // Display chirps for 30 min
+
+// Rate limits
+static const uint8_t MAX_RELAYS_PER_MINUTE = 10;
+static const uint8_t MAX_HOP_COUNT = 3;
+
+// ────────────────────────────────────────────────────────────────────────────
+// ENUMS
+// ────────────────────────────────────────────────────────────────────────────
+
+// Chirp channel state
+enum ChirpState : uint8_t {
+  CHIRP_DISABLED = 0,      // Feature disabled (default)
+  CHIRP_INITIALIZING,      // Generating session identity
+  CHIRP_LISTENING,         // Receiving chirps, passive mode
+  CHIRP_ACTIVE,            // Full participation
+  CHIRP_MUTED,             // Temporarily ignoring chirps
+  CHIRP_COOLDOWN           // Rate limited after sending
+};
+
+// Chirp message types
+enum ChirpMsgType : uint8_t {
+  CHIRP_MSG_PRESENCE = 0,  // Discovery beacon
+  CHIRP_MSG_WITNESS,       // Soft alert (main message type)
+  CHIRP_MSG_ACK,           // Optional acknowledgment
+  CHIRP_MSG_MUTE           // Temporary opt-out broadcast
+};
+
+// Chirp categories (what's happening)
+enum ChirpCategory : uint8_t {
+  CHIRP_CAT_ACTIVITY = 0,  // Unusual activity observed
+  CHIRP_CAT_UTILITY,       // Power outage, water, internet
+  CHIRP_CAT_SAFETY,        // Fire, medical, urgent safety
+  CHIRP_CAT_COMMUNITY,     // Lost pet, event, general notice
+  CHIRP_CAT_ALL_CLEAR      // Situation resolved, de-escalation
+};
+
+// Chirp urgency (how important)
+enum ChirpUrgency : uint8_t {
+  CHIRP_URG_INFO = 0,      // FYI, no action needed (blue)
+  CHIRP_URG_CAUTION,       // Heads up, be aware (yellow)
+  CHIRP_URG_URGENT         // Important, pay attention (orange, NOT red)
+};
+
+// Acknowledgment types
+enum ChirpAckType : uint8_t {
+  CHIRP_ACK_SEEN = 0,      // Device received the chirp
+  CHIRP_ACK_CONFIRMED,     // Human confirms they also see this
+  CHIRP_ACK_RESOLVED       // Situation is resolved
+};
+
+// ────────────────────────────────────────────────────────────────────────────
+// TYPES
+// ────────────────────────────────────────────────────────────────────────────
+
+// Ephemeral session identity (regenerated each enable/reboot)
+struct ChirpSession {
+  uint8_t session_id[SESSION_ID_SIZE];
+  uint8_t session_pubkey[32];
+  uint8_t session_privkey[32];
+  char emoji_display[EMOJI_DISPLAY_SIZE];       // "🐦🌳⭐"
+  uint32_t created_ms;
+  bool valid;
+};
+
+// Chirp channel status
+struct ChirpStatus {
+  ChirpState state;
+  char session_emoji[EMOJI_DISPLAY_SIZE];
+  uint8_t nearby_count;                         // Anonymous count only
+  uint8_t recent_chirp_count;
+  uint32_t last_chirp_sent_ms;                  // 0 if never
+  uint32_t cooldown_remaining_ms;
+  bool relay_enabled;
+  bool muted;
+  uint32_t mute_remaining_ms;
+};
+
+// Nearby device (anonymous, just presence)
+struct NearbyDevice {
+  uint8_t session_id[SESSION_ID_SIZE];
+  char emoji[EMOJI_DISPLAY_SIZE];
+  uint32_t last_seen_ms;
+  int8_t rssi;
+  bool listening;                               // Is accepting chirps
+};
+
+// Received chirp
+struct ReceivedChirp {
+  uint8_t sender_session[SESSION_ID_SIZE];
+  char sender_emoji[EMOJI_DISPLAY_SIZE];
+  ChirpCategory category;
+  ChirpUrgency urgency;
+  char message[MAX_MESSAGE_LEN + 1];
+  uint8_t hop_count;
+  uint32_t received_ms;
+  uint32_t timestamp;                           // Original send time
+  uint8_t nonce[8];
+  uint8_t ack_count;                            // How many acks seen
+  bool relayed;                                 // Did we relay this
+  bool dismissed;                               // User dismissed
+};
+
+// Outgoing chirp (for send queue)
+struct OutgoingChirp {
+  ChirpCategory category;
+  ChirpUrgency urgency;
+  char message[MAX_MESSAGE_LEN + 1];
+  uint8_t ttl_minutes;
+};
+
+// ────────────────────────────────────────────────────────────────────────────
+// MESSAGE STRUCTURES (Wire Format)
+// ────────────────────────────────────────────────────────────────────────────
+
+// Common header for all chirp messages
+struct ChirpHeader {
+  uint8_t magic;                                // CHIRP_MAGIC (0xC4)
+  uint8_t version;                              // Protocol version
+  uint8_t msg_type;                             // ChirpMsgType
+  uint8_t session_id[SESSION_ID_SIZE];
+  uint8_t hop_count;
+  uint32_t timestamp;                           // Unix timestamp (seconds)
+  uint8_t nonce[8];                             // Random for dedup
+};
+
+// Presence beacon payload
+struct ChirpPresencePayload {
+  char emoji[EMOJI_DISPLAY_SIZE];
+  uint8_t listening;                            // bool
+  uint8_t last_chirp_age_min;                   // 255 = never
+};
+
+// Witness payload (the main alert)
+struct ChirpWitnessPayload {
+  uint8_t category;                             // ChirpCategory
+  uint8_t urgency;                              // ChirpUrgency
+  uint8_t confirm_count;                        // How many humans confirmed
+  uint8_t ttl_minutes;
+  uint8_t msg_len;
+  char message[MAX_MESSAGE_LEN];                // NOT null-terminated in wire format
+  uint8_t signature[64];                        // Ed25519 session signature
+};
+
+// Acknowledgment payload
+struct ChirpAckPayload {
+  uint8_t original_nonce[8];
+  uint8_t ack_type;                             // ChirpAckType
+};
+
+// Mute broadcast payload
+struct ChirpMutePayload {
+  uint8_t duration_minutes;                     // 15, 30, 60, or 120
+  uint8_t reason;                               // 0=busy, 1=sleeping, 2=away, 255=none
+};
+
+// ────────────────────────────────────────────────────────────────────────────
+// CALLBACKS
+// ────────────────────────────────────────────────────────────────────────────
+
+// Callback when chirp is received
+typedef void (*ChirpReceivedCallback)(const ReceivedChirp* chirp);
+
+// Callback when nearby count changes
+typedef void (*NearbyChangedCallback)(uint8_t nearby_count);
+
+// Callback when state changes
+typedef void (*ChirpStateCallback)(ChirpState old_state, ChirpState new_state);
+
+// ────────────────────────────────────────────────────────────────────────────
+// FUNCTIONS
+// ────────────────────────────────────────────────────────────────────────────
+
+// ──────────────────────────────────────────────────────────────────────────
+// Initialization
+// ──────────────────────────────────────────────────────────────────────────
+
+// Initialize chirp channel (call once at boot, does NOT enable)
+bool init();
+
+// Shutdown chirp channel
+void deinit();
+
+// Enable chirp channel (generates new session identity)
+bool enable();
+
+// Disable chirp channel (discards session identity)
+void disable();
+
+// Check if enabled
+bool is_enabled();
+
+// ──────────────────────────────────────────────────────────────────────────
+// Main loop
+// ──────────────────────────────────────────────────────────────────────────
+
+// Call from main loop to process messages
+void update();
+
+// ──────────────────────────────────────────────────────────────────────────
+// Status
+// ──────────────────────────────────────────────────────────────────────────
+
+// Get current chirp channel status
+ChirpStatus get_status();
+
+// Get state name as string
+const char* state_name(ChirpState state);
+
+// Get category name as string
+const char* category_name(ChirpCategory category);
+
+// Get urgency name as string
+const char* urgency_name(ChirpUrgency urgency);
+
+// Check if active and can receive chirps
+bool is_active();
+
+// Check if can send chirp (not in cooldown)
+bool can_send_chirp();
+
+// ──────────────────────────────────────────────────────────────────────────
+// Sending chirps (HUMAN-IN-THE-LOOP)
+// ──────────────────────────────────────────────────────────────────────────
+
+// Send a chirp to the community
+// IMPORTANT: This should only be called after human confirmation!
+// Returns false if rate-limited or disabled
+bool send_chirp(ChirpCategory category, ChirpUrgency urgency,
+                const char* message, uint8_t ttl_minutes = 15);
+
+// Send an all-clear (de-escalation)
+bool send_all_clear(const char* message = nullptr);
+
+// ──────────────────────────────────────────────────────────────────────────
+// Receiving chirps
+// ──────────────────────────────────────────────────────────────────────────
+
+// Get recent chirps (returns count)
+const ReceivedChirp* get_recent_chirps(size_t* count);
+
+// Acknowledge a chirp (optional)
+bool acknowledge_chirp(const uint8_t* nonce, ChirpAckType ack_type);
+
+// Dismiss a chirp from display
+bool dismiss_chirp(const uint8_t* nonce);
+
+// Clear all recent chirps
+void clear_chirps();
+
+// ──────────────────────────────────────────────────────────────────────────
+// Nearby devices (anonymous)
+// ──────────────────────────────────────────────────────────────────────────
+
+// Get count of nearby chirp-enabled devices
+uint8_t get_nearby_count();
+
+// Get nearby devices (anonymous info only)
+const NearbyDevice* get_nearby_devices(size_t* count);
+
+// ──────────────────────────────────────────────────────────────────────────
+// Mute control
+// ──────────────────────────────────────────────────────────────────────────
+
+// Mute chirps for duration (15, 30, 60, or 120 minutes)
+bool mute(uint8_t duration_minutes);
+
+// Unmute chirps
+void unmute();
+
+// Check if muted
+bool is_muted();
+
+// ──────────────────────────────────────────────────────────────────────────
+// Settings
+// ──────────────────────────────────────────────────────────────────────────
+
+// Enable/disable relaying other chirps
+void set_relay_enabled(bool enabled);
+bool is_relay_enabled();
+
+// Set minimum urgency to display (filters lower urgency)
+void set_urgency_filter(ChirpUrgency min_urgency);
+ChirpUrgency get_urgency_filter();
+
+// ──────────────────────────────────────────────────────────────────────────
+// Callbacks
+// ──────────────────────────────────────────────────────────────────────────
+
+// Set callback for received chirps
+void set_chirp_callback(ChirpReceivedCallback callback);
+
+// Set callback for nearby count changes
+void set_nearby_callback(NearbyChangedCallback callback);
+
+// Set callback for state changes
+void set_state_callback(ChirpStateCallback callback);
+
+// ──────────────────────────────────────────────────────────────────────────
+// Session info (for display)
+// ──────────────────────────────────────────────────────────────────────────
+
+// Get current session emoji (e.g., "🐦🌳⭐")
+const char* get_session_emoji();
+
+// Get session ID (for debugging only)
+const uint8_t* get_session_id();
+
+} // namespace chirp_channel
+
 #endif // SECURACV_MESH_NETWORK_H

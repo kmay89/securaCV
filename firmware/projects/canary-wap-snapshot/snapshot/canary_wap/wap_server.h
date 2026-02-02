@@ -125,6 +125,19 @@ struct RateLimitEntry {
  * POST /api/mesh/leave      - Leave current opera
  * POST /api/mesh/remove     - Remove peer from opera
  * POST /api/mesh/name       - Set opera name
+ *
+ * Chirp Channel (Community Witness Network) Endpoints:
+ * GET  /api/chirp            - Chirp channel status
+ * GET  /api/chirp/nearby     - Count of nearby chirp devices
+ * GET  /api/chirp/recent     - Recent community chirps (last 30 min)
+ * POST /api/chirp/enable     - Enable chirp channel
+ * POST /api/chirp/disable    - Disable chirp channel
+ * POST /api/chirp/send       - Send chirp (requires human confirmation)
+ * POST /api/chirp/ack        - Acknowledge a chirp
+ * POST /api/chirp/dismiss    - Dismiss a chirp from display
+ * POST /api/chirp/mute       - Mute for duration (15/30/60/120 min)
+ * POST /api/chirp/unmute     - Unmute chirps
+ * POST /api/chirp/settings   - Update chirp settings (relay, filter)
  */
 
 // ════════════════════════════════════════════════════════════════════════════
