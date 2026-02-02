@@ -36,18 +36,30 @@ pub struct TrusteeEntry {
 
 impl QuorumPolicy {
     pub fn new(threshold: u8, trustees: Vec<TrusteeEntry>) -> Result<Self> {
-        if threshold == 0 {
+        let policy = Self {
+            n: threshold,
+            m: trustees.len() as u8,
+            trustees,
+            vault: VaultPolicy::default(),
+        };
+        policy.validate()?;
+        Ok(policy)
+    }
+
+    /// Validates a QuorumPolicy, typically after deserialization.
+    /// Returns Ok(()) if valid, or an error describing the validation failure.
+    pub fn validate(&self) -> Result<()> {
+        if self.n == 0 {
             return Err(anyhow!("quorum threshold must be > 0"));
         }
-        let m = trustees.len();
-        if m == 0 {
+        if self.trustees.is_empty() {
             return Err(anyhow!("quorum must include at least one trustee"));
         }
-        if threshold as usize > m {
+        if self.n as usize > self.trustees.len() {
             return Err(anyhow!("quorum threshold exceeds trustee count"));
         }
         let mut uniq = std::collections::HashSet::new();
-        for t in &trustees {
+        for t in &self.trustees {
             if t.id.0.is_empty() {
                 return Err(anyhow!("trustee id cannot be empty"));
             }
@@ -57,12 +69,7 @@ impl QuorumPolicy {
             VerifyingKey::from_bytes(&t.public_key)
                 .map_err(|_| anyhow!("invalid public key for trustee {}", t.id.0))?;
         }
-        Ok(Self {
-            n: threshold,
-            m: m as u8,
-            trustees,
-            vault: VaultPolicy::default(),
-        })
+        Ok(())
     }
 }
 

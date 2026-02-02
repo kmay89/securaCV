@@ -731,9 +731,8 @@ fn load_break_glass_policy(
     let mut rows = stmt.query([])?;
     if let Some(row) = rows.next()? {
         let policy_json: String = row.get(0)?;
-        let stored: crate::break_glass::QuorumPolicy = serde_json::from_str(&policy_json)?;
-        let mut policy = crate::break_glass::QuorumPolicy::new(stored.n, stored.trustees)?;
-        policy.vault = stored.vault;
+        let policy: crate::break_glass::QuorumPolicy = serde_json::from_str(&policy_json)?;
+        policy.validate()?;
         Ok(Some(policy))
     } else {
         Ok(None)
