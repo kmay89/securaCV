@@ -2577,7 +2577,7 @@ static void start_http_server() {
   config.server_port = 80;
   config.uri_match_fn = httpd_uri_match_wildcard;
   config.stack_size = 8192;  // Increased stack for camera streaming
-  config.max_uri_handlers = 32;  // Increased for WiFi provisioning endpoints
+  config.max_uri_handlers = 64;  // Increased for all features (base=19, camera=6, mesh=12, bluetooth=23)
   
   if (httpd_start(&g_http_server, &config) != ESP_OK) {
     log_health(LOG_LEVEL_ERROR, LOG_CAT_NETWORK, "HTTP server start failed", nullptr);
