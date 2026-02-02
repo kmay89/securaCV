@@ -2079,28 +2079,43 @@ static esp_err_t handle_wifi_status(httpd_req_t* req) {
 static esp_err_t handle_wifi_scan(httpd_req_t* req) {
   g_health.http_requests++;
 
-  if (g_wifi_scan_in_progress) {
+  // Check if async scan is complete
+  int16_t scanResult = WiFi.scanComplete();
+
+  if (scanResult == WIFI_SCAN_RUNNING) {
+    // Scan still in progress - tell client to poll again
     StaticJsonDocument<64> doc;
-    doc["ok"] = false;
-    doc["error"] = "Scan already in progress";
+    doc["ok"] = true;
+    doc["scanning"] = true;
     String response;
     serializeJson(doc, response);
     return http_send_json(req, response.c_str());
   }
 
-  g_wifi_scan_in_progress = true;
-  g_wifi_status.state = WIFI_PROV_SCANNING;
+  if (scanResult == WIFI_SCAN_FAILED || (!g_wifi_scan_in_progress && scanResult < 0)) {
+    // No scan running - start async scan (non-blocking)
+    g_wifi_scan_in_progress = true;
+    g_wifi_status.state = WIFI_PROV_SCANNING;
+    WiFi.scanNetworks(true, false, false, 300);  // async=true
 
-  // Perform synchronous scan (max 10 seconds)
-  int n = WiFi.scanNetworks(false, false, false, 300);
+    StaticJsonDocument<64> doc;
+    doc["ok"] = true;
+    doc["scanning"] = true;
+    String response;
+    serializeJson(doc, response);
+    return http_send_json(req, response.c_str());
+  }
 
+  // Scan complete - return results
   g_wifi_scan_in_progress = false;
   if (g_wifi_status.state == WIFI_PROV_SCANNING) {
     g_wifi_status.state = g_wifi_creds.configured ? WIFI_PROV_IDLE : WIFI_PROV_AP_ONLY;
   }
 
+  int n = scanResult;
   DynamicJsonDocument doc(2048);
   doc["ok"] = true;
+  doc["scanning"] = false;
   doc["count"] = n;
 
   JsonArray networks = doc.createNestedArray("networks");
@@ -2270,38 +2285,16 @@ static esp_err_t handle_wifi_reconnect(httpd_req_t* req) {
   return http_send_json(req, response.c_str());
 }
 
-// Captive portal handler for iOS/Android detection
+// Captive portal handler for iOS/Android/Windows detection
+// This handler is registered for specific captive portal detection URIs only.
+// Always redirect to main UI to trigger the captive portal popup.
 static esp_err_t handle_captive_portal(httpd_req_t* req) {
   g_health.http_requests++;
 
-  // Check common captive portal detection URLs and redirect to main UI
-  const char* uri = req->uri;
-
-  // iOS/macOS captive portal detection
-  if (strstr(uri, "hotspot-detect") || strstr(uri, "captive.apple.com")) {
-    httpd_resp_set_status(req, "302 Found");
-    httpd_resp_set_hdr(req, "Location", "http://canary.local/");
-    httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
-    return httpd_resp_send(req, NULL, 0);
-  }
-
-  // Android captive portal detection
-  if (strstr(uri, "generate_204") || strstr(uri, "connectivitycheck")) {
-    httpd_resp_set_status(req, "302 Found");
-    httpd_resp_set_hdr(req, "Location", "http://canary.local/");
-    httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
-    return httpd_resp_send(req, NULL, 0);
-  }
-
-  // Windows captive portal detection
-  if (strstr(uri, "ncsi.txt") || strstr(uri, "connecttest.txt")) {
-    httpd_resp_set_status(req, "302 Found");
-    httpd_resp_set_hdr(req, "Location", "http://canary.local/");
-    return httpd_resp_send(req, NULL, 0);
-  }
-
-  // Default: serve the UI
-  return handle_ui(req);
+  httpd_resp_set_status(req, "302 Found");
+  httpd_resp_set_hdr(req, "Location", "http://canary.local/");
+  httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
+  return httpd_resp_send(req, NULL, 0);
 }
 
 // ════════════════════════════════════════════════════════════════════════════

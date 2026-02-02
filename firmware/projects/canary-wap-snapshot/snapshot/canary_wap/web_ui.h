@@ -1601,13 +1601,28 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       btn.textContent = 'Scanning...';
       select.innerHTML = '<option value="">Scanning...</option>';
 
-      const data = await api('/api/wifi/scan');
+      // Poll for async scan completion (non-blocking on device)
+      let data;
+      let attempts = 0;
+      const maxAttempts = 20;  // Max 10 seconds (500ms * 20)
+
+      while (attempts < maxAttempts) {
+        data = await api('/api/wifi/scan');
+        if (!data.ok || !data.scanning) break;
+        await new Promise(r => setTimeout(r, 500));
+        attempts++;
+      }
 
       btn.disabled = false;
       btn.textContent = 'Scan';
 
       if (!data.ok) {
         select.innerHTML = '<option value="">Scan failed - try again</option>';
+        return;
+      }
+
+      if (data.scanning) {
+        select.innerHTML = '<option value="">Scan timed out - try again</option>';
         return;
       }
 
