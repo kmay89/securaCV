@@ -11,6 +11,7 @@
 
 #include <Arduino.h>
 #include <Preferences.h>
+#include <cstddef>  // For std::nullptr_t
 
 // ════════════════════════════════════════════════════════════════════════════
 // NVS NAMESPACES (centralized definitions)
@@ -49,9 +50,19 @@ public:
     return s_instance;
   }
 
-  // Open NVS in read-write mode. Returns true on success.
+  // Open NVS session. Returns true on success.
+  // If already open in a compatible mode, returns true without reopening.
+  // If write mode is requested but session is open in read-only mode, reopens.
   bool begin(bool readOnly = false) {
-    if (m_open) return true;  // Already open
+    if (m_open) {
+      // If write is requested but we are in read-only mode, reopen
+      if (m_readOnly && !readOnly) {
+        m_prefs.end();
+        m_open = false;  // Force reopen
+      } else {
+        return true;  // Already open in compatible mode
+      }
+    }
     m_open = m_prefs.begin(NVS_MAIN_NS, readOnly);
     m_readOnly = readOnly;
     return m_open;
@@ -220,6 +231,9 @@ public:
   explicit NvsSession(bool readOnly) : m_open(false) {
     m_open = m_prefs.begin(NVS_CHIRP_NS, readOnly);
   }
+
+  // Prevent ambiguity with nullptr (nullptr could match both const char* and bool)
+  explicit NvsSession(std::nullptr_t) = delete;
 
   // Automatically close on destruction
   ~NvsSession() {
