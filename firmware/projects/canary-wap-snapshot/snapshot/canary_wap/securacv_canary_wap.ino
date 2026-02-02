@@ -99,7 +99,7 @@
 #define FEATURE_WATCHDOG      1   // Enable hardware watchdog
 #define FEATURE_STATE_LOG     1   // Log state transitions
 #define FEATURE_MESH_NETWORK  1   // Enable mesh network (opera)
-#define FEATURE_BLUETOOTH     1   // Enable Bluetooth Low Energy
+#define FEATURE_BLUETOOTH     0   // Enable Bluetooth Low Energy (requires NimBLE-Arduino library)
 
 #define DEBUG_NMEA            0   // Print raw NMEA sentences
 #define DEBUG_CBOR            0   // Print CBOR hex dump

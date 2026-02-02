@@ -4,7 +4,18 @@
  *
  * BLE (Bluetooth Low Energy) implementation using ESP32 NimBLE stack.
  * Provides secure local connectivity for mobile app integration.
+ *
+ * NOTE: Requires NimBLE-Arduino library. If not available, this entire
+ * file compiles to empty (guarded by FEATURE_BLUETOOTH).
  */
+
+// Feature flag - disable Bluetooth if NimBLE library is not installed
+// To enable: install NimBLE-Arduino from Arduino Library Manager and set to 1
+#ifndef FEATURE_BLUETOOTH
+#define FEATURE_BLUETOOTH 0
+#endif
+
+#if FEATURE_BLUETOOTH
 
 #include "bluetooth_channel.h"
 #include "nvs_store.h"
@@ -1063,3 +1074,5 @@ const char* pairing_state_name(PairingState state) {
 }
 
 } // namespace bluetooth_channel
+
+#endif // FEATURE_BLUETOOTH

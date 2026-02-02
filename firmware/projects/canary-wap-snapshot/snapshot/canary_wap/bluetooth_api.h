@@ -5,10 +5,20 @@
  * Enables mobile app connectivity and device management.
  *
  * All handlers follow the same pattern as other API handlers.
+ *
+ * NOTE: Requires NimBLE-Arduino library. Set FEATURE_BLUETOOTH=0 to disable.
  */
 
 #ifndef SECURACV_BLUETOOTH_API_H
 #define SECURACV_BLUETOOTH_API_H
+
+// Feature flag - disable Bluetooth if NimBLE library is not installed
+// To enable: install NimBLE-Arduino from Arduino Library Manager and set to 1
+#ifndef FEATURE_BLUETOOTH
+#define FEATURE_BLUETOOTH 0
+#endif
+
+#if FEATURE_BLUETOOTH
 
 #include "esp_http_server.h"
 #include "bluetooth_channel.h"
@@ -566,5 +576,7 @@ inline void register_routes(httpd_handle_t server) {
 }
 
 } // namespace bluetooth_api
+
+#endif // FEATURE_BLUETOOTH
 
 #endif // SECURACV_BLUETOOTH_API_H

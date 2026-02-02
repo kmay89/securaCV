@@ -17,10 +17,20 @@
  * - Scan for nearby BLE devices
  * - Connection status monitoring
  * - Device name configuration
+ *
+ * NOTE: Requires NimBLE-Arduino library. Set FEATURE_BLUETOOTH=0 to disable.
  */
 
 #ifndef SECURACV_BLUETOOTH_CHANNEL_H
 #define SECURACV_BLUETOOTH_CHANNEL_H
+
+// Feature flag - disable Bluetooth if NimBLE library is not installed
+// To enable: install NimBLE-Arduino from Arduino Library Manager and set to 1
+#ifndef FEATURE_BLUETOOTH
+#define FEATURE_BLUETOOTH 0
+#endif
+
+#if FEATURE_BLUETOOTH
 
 #include <Arduino.h>
 #include "log_level.h"
@@ -276,5 +286,7 @@ const char* security_level_name(SecurityLevel level);
 const char* pairing_state_name(PairingState state);
 
 } // namespace bluetooth_channel
+
+#endif // FEATURE_BLUETOOTH
 
 #endif // SECURACV_BLUETOOTH_CHANNEL_H
