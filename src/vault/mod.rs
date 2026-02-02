@@ -4,10 +4,6 @@
 //! enforces break-glass gating for raw media export.
 
 use anyhow::{anyhow, Result};
-use chacha20poly1305::{
-    aead::{AeadInPlace, KeyInit},
-    ChaCha20Poly1305, Key, Nonce, Tag,
-};
 use rand::RngCore;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
@@ -20,18 +16,26 @@ use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use crate::{break_glass::BreakGlassToken, BreakGlassOutcome, RawFrame, RawMediaBoundary};
 use ed25519_dalek::VerifyingKey;
 
+pub mod crypto;
+mod format;
+
+use crate::vault::crypto::{decrypt_v1, decrypt_v2, seal_v2, KemKeypair, VaultCryptoMode};
+use crate::vault::format::VaultEnvelope;
+
 /// Fixed local vault path to satisfy invariant requirements.
 pub const DEFAULT_VAULT_PATH: &str = "vault/envelopes";
 
 #[derive(Clone, Debug)]
 pub struct VaultConfig {
     pub local_path: PathBuf,
+    pub crypto_mode: VaultCryptoMode,
 }
 
 impl Default for VaultConfig {
     fn default() -> Self {
         Self {
             local_path: PathBuf::from(DEFAULT_VAULT_PATH),
+            crypto_mode: VaultCryptoMode::Classical,
         }
     }
 }
@@ -149,15 +153,20 @@ impl<S: VaultStore> Vault<S> {
 pub struct FilesystemVaultStore {
     root: PathBuf,
     master_key: [u8; 32],
+    crypto_mode: VaultCryptoMode,
+    kem_keypair: Option<KemKeypair>,
 }
 
 impl FilesystemVaultStore {
     pub fn new(cfg: VaultConfig) -> Result<Self> {
         fs::create_dir_all(&cfg.local_path)?;
         let master_key = load_or_create_master_key(&cfg.local_path)?;
+        let kem_keypair = load_or_create_kem_keypair(&cfg.local_path, cfg.crypto_mode)?;
         Ok(Self {
             root: cfg.local_path,
             master_key,
+            crypto_mode: cfg.crypto_mode,
+            kem_keypair,
         })
     }
 
@@ -211,7 +220,7 @@ impl FilesystemVaultStore {
         let sanitized = sanitize_envelope_id(envelope_id)?;
         let envelope_path = self.envelope_path(&sanitized);
         let encoded = read_file(&envelope_path)?;
-        let envelope = Envelope::decode(&encoded)?;
+        let envelope = VaultEnvelope::decode(&encoded)?;
         envelope.validate(envelope_id, expected_ruleset_hash)?;
 
         let mut empty = Vec::new();
@@ -224,7 +233,12 @@ impl FilesystemVaultStore {
             receipt_lookup,
         )?;
 
-        envelope.decrypt(&self.master_key)
+        match envelope {
+            VaultEnvelope::V1(envelope) => decrypt_v1(&envelope, &self.master_key),
+            VaultEnvelope::V2(envelope) => {
+                decrypt_v2(&envelope, &self.master_key, self.kem_keypair.as_ref())
+            }
+        }
     }
 
     fn envelope_path(&self, envelope_id: &str) -> PathBuf {
@@ -246,12 +260,14 @@ impl FilesystemVaultStore {
             return Err(anyhow!("vault envelope already exists"));
         }
 
-        let envelope = Envelope::seal(
+        let envelope = VaultEnvelope::V2(seal_v2(
             envelope_id,
             expected_ruleset_hash,
             clear_bytes,
+            self.crypto_mode,
             &self.master_key,
-        )?;
+            self.kem_keypair.as_ref(),
+        )?);
         clear_bytes.zeroize();
 
         let encoded = envelope.encode()?;
@@ -260,7 +276,7 @@ impl FilesystemVaultStore {
         Ok(EnvelopeMetadata {
             envelope_id: envelope_id.to_string(),
             ruleset_hash: expected_ruleset_hash,
-            ciphertext_len: envelope.ciphertext.len(),
+            ciphertext_len: envelope.ciphertext_len(),
         })
     }
 }
@@ -339,106 +355,6 @@ pub struct EnvelopeMetadata {
     pub ciphertext_len: usize,
 }
 
-#[derive(Clone, Debug)]
-struct Envelope {
-    envelope_id: String,
-    ruleset_hash: [u8; 32],
-    nonce: [u8; 12],
-    tag: [u8; 16],
-    ciphertext: Vec<u8>,
-}
-
-impl Envelope {
-    fn seal(
-        envelope_id: &str,
-        ruleset_hash: [u8; 32],
-        clear: &[u8],
-        master_key: &[u8; 32],
-    ) -> Result<Self> {
-        let mut nonce = [0u8; 12];
-        rand::thread_rng().fill_bytes(&mut nonce);
-        let mut ciphertext = clear.to_vec();
-        let tag = encrypt_in_place(
-            master_key,
-            envelope_id,
-            &ruleset_hash,
-            &nonce,
-            &mut ciphertext,
-        )?;
-
-        Ok(Self {
-            envelope_id: envelope_id.to_string(),
-            ruleset_hash,
-            nonce,
-            tag,
-            ciphertext,
-        })
-    }
-
-    fn decrypt(&self, master_key: &[u8; 32]) -> Result<Vec<u8>> {
-        let mut clear = self.ciphertext.clone();
-        decrypt_in_place(
-            master_key,
-            &self.envelope_id,
-            &self.ruleset_hash,
-            &self.nonce,
-            &self.tag,
-            &mut clear,
-        )?;
-        Ok(clear)
-    }
-
-    fn validate(&self, envelope_id: &str, ruleset_hash: [u8; 32]) -> Result<()> {
-        if self.envelope_id != envelope_id {
-            return Err(anyhow!("vault envelope id mismatch"));
-        }
-        if self.ruleset_hash != ruleset_hash {
-            return Err(anyhow!("vault envelope ruleset mismatch"));
-        }
-        Ok(())
-    }
-
-    fn encode(&self) -> Result<Vec<u8>> {
-        let mut out = Vec::new();
-        let id_bytes = self.envelope_id.as_bytes();
-        out.extend_from_slice(&(id_bytes.len() as u32).to_le_bytes());
-        out.extend_from_slice(id_bytes);
-        out.extend_from_slice(&self.ruleset_hash);
-        out.extend_from_slice(&self.nonce);
-        out.extend_from_slice(&self.tag);
-        out.extend_from_slice(&(self.ciphertext.len() as u32).to_le_bytes());
-        out.extend_from_slice(&self.ciphertext);
-        Ok(out)
-    }
-
-    fn decode(bytes: &[u8]) -> Result<Self> {
-        let mut cursor = 0usize;
-        let id_len = read_u32(bytes, &mut cursor)? as usize;
-        let id_bytes = read_slice(bytes, &mut cursor, id_len)?;
-        let envelope_id = std::str::from_utf8(id_bytes)
-            .map_err(|_| anyhow!("invalid envelope id encoding"))?
-            .to_string();
-        let ruleset_hash_bytes = read_slice(bytes, &mut cursor, 32)?;
-        let mut ruleset_hash = [0u8; 32];
-        ruleset_hash.copy_from_slice(ruleset_hash_bytes);
-        let nonce_bytes = read_slice(bytes, &mut cursor, 12)?;
-        let mut nonce = [0u8; 12];
-        nonce.copy_from_slice(nonce_bytes);
-        let tag_bytes = read_slice(bytes, &mut cursor, 16)?;
-        let mut tag = [0u8; 16];
-        tag.copy_from_slice(tag_bytes);
-        let ct_len = read_u32(bytes, &mut cursor)? as usize;
-        let ciphertext = read_slice(bytes, &mut cursor, ct_len)?.to_vec();
-        Ok(Self {
-            envelope_id,
-            ruleset_hash,
-            nonce,
-            tag,
-            ciphertext,
-        })
-    }
-}
-
 pub(crate) fn sanitize_envelope_id(envelope_id: &str) -> Result<String> {
     let trimmed = envelope_id.trim();
     if trimmed.is_empty() {
@@ -453,45 +369,6 @@ pub(crate) fn sanitize_envelope_id(envelope_id: &str) -> Result<String> {
         ));
     }
     Ok(trimmed.to_string())
-}
-
-fn envelope_aad(envelope_id: &str, ruleset_hash: &[u8; 32]) -> Vec<u8> {
-    let mut aad = Vec::with_capacity(envelope_id.len() + ruleset_hash.len());
-    aad.extend_from_slice(envelope_id.as_bytes());
-    aad.extend_from_slice(ruleset_hash);
-    aad
-}
-
-fn encrypt_in_place(
-    master_key: &[u8; 32],
-    envelope_id: &str,
-    ruleset_hash: &[u8; 32],
-    nonce: &[u8; 12],
-    buffer: &mut [u8],
-) -> Result<[u8; 16]> {
-    let cipher = ChaCha20Poly1305::new(Key::from_slice(master_key));
-    let aad = envelope_aad(envelope_id, ruleset_hash);
-    let tag = cipher
-        .encrypt_in_place_detached(Nonce::from_slice(nonce), &aad, buffer)
-        .map_err(|_| anyhow!("vault encryption failed"))?;
-    Ok(tag.into())
-}
-
-fn decrypt_in_place(
-    master_key: &[u8; 32],
-    envelope_id: &str,
-    ruleset_hash: &[u8; 32],
-    nonce: &[u8; 12],
-    tag: &[u8; 16],
-    buffer: &mut [u8],
-) -> Result<()> {
-    let cipher = ChaCha20Poly1305::new(Key::from_slice(master_key));
-    let aad = envelope_aad(envelope_id, ruleset_hash);
-    let tag = Tag::from_slice(tag);
-    cipher
-        .decrypt_in_place_detached(Nonce::from_slice(nonce), &aad, buffer, tag)
-        .map_err(|_| anyhow!("vault decryption failed"))?;
-    Ok(())
 }
 
 fn load_or_create_master_key(root: &Path) -> Result<[u8; 32]> {
@@ -527,11 +404,73 @@ fn load_or_create_master_key(root: &Path) -> Result<[u8; 32]> {
     }
 }
 
+fn load_or_create_kem_keypair(
+    root: &Path,
+    crypto_mode: VaultCryptoMode,
+) -> Result<Option<KemKeypair>> {
+    let key_path = root.join("kem-mlkem768.key");
+    if key_path.exists() {
+        #[cfg(not(feature = "pqc-vault"))]
+        {
+            return Err(anyhow!(
+                "vault KEM keypair found but pqc-vault feature is disabled"
+            ));
+        }
+        #[cfg(feature = "pqc-vault")]
+        {
+            let bytes = read_file(&key_path)?;
+            let mut cursor = 0usize;
+            let public_len = read_u32(&bytes, &mut cursor)? as usize;
+            let public_bytes = read_slice(&bytes, &mut cursor, public_len)?;
+            let secret_len = read_u32(&bytes, &mut cursor)? as usize;
+            let secret_bytes = read_slice(&bytes, &mut cursor, secret_len)?;
+            let keypair = KemKeypair::from_bytes(public_bytes, secret_bytes)?;
+            return Ok(Some(keypair));
+        }
+    }
+
+    if matches!(crypto_mode, VaultCryptoMode::Pq | VaultCryptoMode::Hybrid) {
+        #[cfg(not(feature = "pqc-vault"))]
+        {
+            return Err(anyhow!(
+                "vault crypto mode {} requires pqc-vault feature",
+                crypto_mode
+            ));
+        }
+        #[cfg(feature = "pqc-vault")]
+        {
+            let keypair = KemKeypair::generate();
+            let mut encoded = Vec::new();
+            let public = keypair.public_bytes();
+            let secret = keypair.secret_bytes();
+            encoded.extend_from_slice(&(public.len() as u32).to_le_bytes());
+            encoded.extend_from_slice(&public);
+            encoded.extend_from_slice(&(secret.len() as u32).to_le_bytes());
+            encoded.extend_from_slice(&secret);
+
+            let mut options = OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                options.mode(0o600);
+            }
+            let mut file = options.open(&key_path)?;
+            file.write_all(&encoded)?;
+            file.sync_all()?;
+            return Ok(Some(keypair));
+        }
+    }
+
+    Ok(None)
+}
+
+#[cfg(feature = "pqc-vault")]
 fn read_u32(bytes: &[u8], cursor: &mut usize) -> Result<u32> {
     let slice = read_slice(bytes, cursor, 4)?;
     Ok(u32::from_le_bytes([slice[0], slice[1], slice[2], slice[3]]))
 }
 
+#[cfg(feature = "pqc-vault")]
 fn read_slice<'a>(bytes: &'a [u8], cursor: &mut usize, len: usize) -> Result<&'a [u8]> {
     if *cursor + len > bytes.len() {
         return Err(anyhow!("invalid envelope encoding"));
@@ -562,6 +501,7 @@ fn read_file(path: &Path) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::vault::crypto::VaultCryptoMode;
     use crate::break_glass::{
         Approval, BreakGlass, BreakGlassOutcome, BreakGlassTokenFile, QuorumPolicy, TrusteeEntry,
         TrusteeId, UnlockRequest,
@@ -616,6 +556,7 @@ mod tests {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::new(VaultConfig {
             local_path: temp_dir.path().join("vault"),
+            ..VaultConfig::default()
         })?;
         let envelope_id = "incident-1";
         let ruleset_hash = [1u8; 32];
@@ -645,6 +586,7 @@ mod tests {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::new(VaultConfig {
             local_path: temp_dir.path().join("vault"),
+            ..VaultConfig::default()
         })?;
         let envelope_id = "incident-2";
         let ruleset_hash = [2u8; 32];
@@ -675,6 +617,7 @@ mod tests {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::new(VaultConfig {
             local_path: temp_dir.path().join("vault"),
+            ..VaultConfig::default()
         })?;
         let envelope_id = "incident-3";
         let ruleset_hash = [3u8; 32];
@@ -734,6 +677,7 @@ mod tests {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::new(VaultConfig {
             local_path: temp_dir.path().join("vault"),
+            ..VaultConfig::default()
         })?;
         let envelope_id = "incident-forged";
         let ruleset_hash = [10u8; 32];
@@ -782,6 +726,7 @@ mod tests {
         let vault_root = temp_dir.path().join("vault");
         let vault = Vault::new(VaultConfig {
             local_path: vault_root.clone(),
+            ..VaultConfig::default()
         })?;
         let envelope_id = "incident-4";
         let ruleset_hash = [4u8; 32];
@@ -816,6 +761,7 @@ mod tests {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::new(VaultConfig {
             local_path: temp_dir.path().join("vault"),
+            ..VaultConfig::default()
         })?;
         let envelope_id = "incident-5";
         let ruleset_hash = [5u8; 32];
@@ -862,6 +808,7 @@ mod tests {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::new(VaultConfig {
             local_path: temp_dir.path().join("vault"),
+            ..VaultConfig::default()
         })?;
         let envelope_id = "incident-6";
         let ruleset_hash = [6u8; 32];
@@ -888,13 +835,22 @@ mod tests {
     #[test]
     fn envelope_rejects_wrong_key_or_tag() -> Result<()> {
         let master_key = [9u8; 32];
-        let envelope = Envelope::seal("incident-7", [7u8; 32], b"raw bytes", &master_key)?;
+        let envelope = seal_v2(
+            "incident-7",
+            [7u8; 32],
+            b"raw bytes",
+            VaultCryptoMode::Classical,
+            &master_key,
+            None,
+        )?;
         let wrong_key = [10u8; 32];
-        assert!(envelope.decrypt(&wrong_key).is_err());
+        assert!(decrypt_v2(&envelope, &wrong_key, None).is_err());
 
         let mut tampered = envelope.clone();
-        tampered.tag[0] ^= 0b1010_1010;
-        assert!(tampered.decrypt(&master_key).is_err());
+        if let Some(last) = tampered.ciphertext.last_mut() {
+            *last ^= 0b1010_1010;
+        }
+        assert!(decrypt_v2(&tampered, &master_key, None).is_err());
         Ok(())
     }
 
@@ -902,7 +858,14 @@ mod tests {
     fn envelope_ciphertext_is_not_plaintext() -> Result<()> {
         let master_key = [11u8; 32];
         let clear = b"raw bytes";
-        let envelope = Envelope::seal("incident-8", [8u8; 32], clear, &master_key)?;
+        let envelope = seal_v2(
+            "incident-8",
+            [8u8; 32],
+            clear,
+            VaultCryptoMode::Classical,
+            &master_key,
+            None,
+        )?;
         assert_ne!(envelope.ciphertext, clear);
         Ok(())
     }

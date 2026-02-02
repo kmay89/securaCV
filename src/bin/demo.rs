@@ -138,11 +138,6 @@ fn main() -> Result<()> {
         zone_policy: ZonePolicy::default(),
     };
 
-    let mut kernel = Kernel::open(&cfg)?;
-    let vault = Vault::new(VaultConfig {
-        local_path: vault_path.clone(),
-    })?;
-
     let trustee_key = derive_trustee_key(args.seed);
     let trustee_id = TrusteeId::new("demo-trustee");
     let policy = QuorumPolicy::new(
@@ -152,7 +147,13 @@ fn main() -> Result<()> {
             public_key: trustee_key.verifying_key().to_bytes(),
         }],
     )?;
+    let mut kernel = Kernel::open(&cfg)?;
     kernel.set_break_glass_policy(&policy)?;
+
+    let vault = Vault::new(VaultConfig {
+        local_path: vault_path.clone(),
+        crypto_mode: policy.vault.crypto_mode,
+    })?;
 
     let export_path = out_dir.join("export_bundle.json");
     let total_frames = args.seconds.saturating_mul(args.fps as u64);

@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::crypto::signatures::{sign_ed25519_only, verify_ed25519_only, DOMAIN_BREAK_GLASS_TOKEN};
+use crate::vault::crypto::VaultCryptoMode;
 use crate::TimeBucket;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -23,6 +24,8 @@ pub struct QuorumPolicy {
     pub n: u8,
     pub m: u8,
     pub trustees: Vec<TrusteeEntry>,
+    #[serde(default)]
+    pub vault: VaultPolicy,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -58,7 +61,22 @@ impl QuorumPolicy {
             n: threshold,
             m: m as u8,
             trustees,
+            vault: VaultPolicy::default(),
         })
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct VaultPolicy {
+    #[serde(default)]
+    pub crypto_mode: VaultCryptoMode,
+}
+
+impl Default for VaultPolicy {
+    fn default() -> Self {
+        Self {
+            crypto_mode: VaultCryptoMode::Classical,
+        }
     }
 }
 
