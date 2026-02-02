@@ -17,6 +17,7 @@ Before writing or modifying code, you **must** read:
 2. `kernel/architecture.md`
 3. `spec/threat_model.md`
 4. `SECURITY.md`
+5. `firmware/ARCHITECTURE.md` (if touching anything under `firmware/`)
 
 If a proposed change conflicts with any of these, it will not be accepted.
 

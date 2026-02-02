@@ -2,6 +2,12 @@
 
 This directory contains firmware projects for SecuraCV hardware nodes (ESP32, etc.). Each firmware project is designed to publish **privacy-preserving semantic telemetry** (events + state), not raw video.
 
+## Architecture (Required)
+
+Before adding or restructuring firmware work, read the canonical architecture guide:
+
+- `firmware/ARCHITECTURE.md`
+
 ## Projects
 
 ### Canary Vision (ESP32-C3 + Grove Vision AI V2)
