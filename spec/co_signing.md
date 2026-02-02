@@ -2,7 +2,7 @@
 Status: Draft v0.1
 Intended Status: Design Note
 Author: The Witness Project
-Last Updated: 2026-01-20
+Last Updated: 2026-02-02
 
 ## 1. Purpose
 
@@ -35,6 +35,8 @@ event_seq: <u64>
 event_hash: <hex>
 ruleset_hash: <hex>
 created_bucket: <iso-8601, 10-min>
+endorsement_created_bucket: <iso-8601, 10-min>
+endorser_domain_id: <utf8-string>
 ```
 
 **Field definitions:**
@@ -43,8 +45,29 @@ created_bucket: <iso-8601, 10-min>
 - `event_hash`: Hash of the event record as stored in the sealed log.
 - `ruleset_hash`: Ruleset identifier active at event creation time.
 - `created_bucket`: Coarsened ISO-8601 timestamp for the event's creation,
-  truncated to a 10-minute boundary (e.g., `2026-01-20T12:34:56Z` becomes
-  `2026-01-20T12:30:00Z`).
+  truncated to a 10-minute UTC boundary. Truncation is performed by flooring
+  the minute component to the nearest multiple of 10 and zeroing seconds.
+
+  **Example:** An event created at `2026-01-20T12:34:56Z` yields
+  `created_bucket: 2026-01-20T12:30:00Z`. An event at `2026-01-20T12:09:59Z`
+  yields `created_bucket: 2026-01-20T12:00:00Z`.
+
+  This bucketing provides deterministic matching across endorsers while
+  limiting timestamp precision for privacy.
+- `endorsement_created_bucket`: Coarsened ISO-8601 timestamp for when the
+  endorsement signature was created, truncated to a 10-minute UTC boundary
+  using the same algorithm as `created_bucket`. This field captures when
+  the endorser signed, distinct from when the original event was created.
+
+  **Example:** An endorser signing at `2026-01-21T09:47:22Z` yields
+  `endorsement_created_bucket: 2026-01-21T09:40:00Z`.
+- `endorser_domain_id`: A local trust-store label identifying the
+  administrative domain of the endorser. This is a UTF-8 string configured
+  in the local trust store, used for threshold counting (see Section 4).
+  Only one endorsement per `endorser_domain_id` counts toward a threshold.
+
+  **Example:** `endorser_domain_id: acme-corp-legal` or
+  `endorser_domain_id: external-auditor-firmA`.
 
 **Notes:**
 - All fields are ASCII, newline-delimited, and MUST appear in the order shown.
@@ -58,11 +81,23 @@ break-glass quorum thresholds.
 - A co-signing threshold defines how many independent endorsements are required
   to mark an event as “endorsed.”
 - Endorsements counted toward a threshold MUST originate from independently
-  controlled keys. Multiple endorsements from the same principal or
-  administrative domain MUST NOT be counted separately. An administrative
-  domain is a deployment-defined trust grouping (e.g., keys issued under the
-  same org-scoped CA, keys bound to the same operator account, or keys labeled
-  with the same domain identifier in local policy configuration).
+  controlled keys. **One endorsement per `endorser_domain_id` counts toward
+  the threshold.** Multiple endorsements from the same principal or
+  administrative domain MUST NOT be counted separately.
+- An administrative domain is identified by the `endorser_domain_id` field,
+  which is a local trust-store label configured by the deployment operator.
+  Domain assignment is purely local configuration—**there is no CA inference,
+  no remote directory lookup, and no automatic domain derivation from
+  certificate fields.** The operator explicitly labels each trusted endorser
+  key with a domain identifier in their local trust store.
+
+  **Example configurations:**
+  - Keys from the same organization's legal team: `endorser_domain_id: acme-legal`
+  - Keys from an external audit firm: `endorser_domain_id: external-auditor-pwc`
+  - Keys from a compliance department: `endorser_domain_id: compliance-internal`
+
+  If two endorser keys share the same `endorser_domain_id`, only the first
+  valid endorsement from that domain counts toward the threshold.
 - Endorsements MAY be collected over time and remain valid as long as the event
   record is unchanged.
 - Endorsement thresholds do **not** authorize evidence vault access or any
@@ -85,10 +120,11 @@ remain logically distinct from the event itself.
 - **No mutation:** Existing event records MUST NOT be rewritten or re-hashed when
   co-signatures are added.
 - **Binding:** Each co-signature record stores:
-  - Endorsement message (canonical form as above)
+  - Endorsement message (canonical form as above, including `endorsement_created_bucket`
+    and `endorser_domain_id`)
   - Endorser public key identifier
   - Signature bytes
-  - Endorsement creation timestamp bucket (coarsened, time of signature)
+  - Endorser domain identifier (for threshold counting, as labeled in local trust store)
 - **Indexing:** The log may maintain an internal index mapping event hashes to
   endorsement records, but must remain local and non-queryable externally.
 - **Retention:** Co-signatures follow the same retention policy as the event
