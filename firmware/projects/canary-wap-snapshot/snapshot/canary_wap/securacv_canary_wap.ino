@@ -95,7 +95,7 @@
 #define FEATURE_TAMPER_GPIO   0   // Enable tamper detection pin
 #define FEATURE_WATCHDOG      1   // Enable hardware watchdog
 #define FEATURE_STATE_LOG     1   // Log state transitions
-#define FEATURE_MESH_NETWORK  1   // Enable mesh network (flock)
+#define FEATURE_MESH_NETWORK  1   // Enable mesh network (opera)
 
 #define DEBUG_NMEA            0   // Print raw NMEA sentences
 #define DEBUG_CBOR            0   // Print CBOR hex dump
@@ -2055,16 +2055,16 @@ static esp_err_t handle_mesh_status(httpd_req_t* req) {
   g_health.http_requests++;
 
   mesh_network::MeshStatus status = mesh_network::get_status();
-  const mesh_network::FlockConfig* config = mesh_network::get_flock_config();
+  const mesh_network::OperaConfig* config = mesh_network::get_opera_config();
   const mesh_network::PairingSession* pairing = mesh_network::get_pairing_session();
 
   StaticJsonDocument<512> doc;
   doc["ok"] = true;
   doc["state"] = mesh_network::state_name(status.state);
   doc["enabled"] = mesh_network::is_enabled();
-  doc["has_flock"] = mesh_network::has_flock();
-  doc["flock_id"] = status.flock_id_hex;
-  doc["flock_name"] = config->flock_name;
+  doc["has_opera"] = mesh_network::has_opera();
+  doc["opera_id"] = status.opera_id_hex;
+  doc["opera_name"] = config->opera_name;
   doc["peers_total"] = status.peers_total;
   doc["peers_online"] = status.peers_online;
   doc["peers_offline"] = status.peers_offline;
@@ -2096,7 +2096,7 @@ static esp_err_t handle_mesh_peers(httpd_req_t* req) {
 
   JsonArray peers = doc.createNestedArray("peers");
   for (uint8_t i = 0; i < count; i++) {
-    const mesh_network::FlockPeer* peer = mesh_network::get_peer(i);
+    const mesh_network::OperaPeer* peer = mesh_network::get_peer(i);
     if (!peer) continue;
 
     JsonObject p = peers.createNestedObject();
@@ -2183,13 +2183,13 @@ static esp_err_t handle_mesh_pair_start(httpd_req_t* req) {
   int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
   buf[ret > 0 ? ret : 0] = '\0';
 
-  const char* flock_name = nullptr;
+  const char* opera_name = nullptr;
   StaticJsonDocument<128> body;
   if (ret > 0 && deserializeJson(body, buf) == DeserializationError::Ok) {
-    flock_name = body["name"] | (const char*)nullptr;
+    opera_name = body["name"] | (const char*)nullptr;
   }
 
-  if (mesh_network::start_pairing_initiator(flock_name)) {
+  if (mesh_network::start_pairing_initiator(opera_name)) {
     log_health(LOG_LEVEL_INFO, LOG_CAT_MESH, "Pairing started (initiator)", nullptr);
     return http_send_json(req, "{\"ok\":true}");
   }
@@ -2226,8 +2226,8 @@ static esp_err_t handle_mesh_pair_cancel(httpd_req_t* req) {
 static esp_err_t handle_mesh_leave(httpd_req_t* req) {
   g_health.http_requests++;
 
-  if (mesh_network::leave_flock()) {
-    log_health(LOG_LEVEL_WARNING, LOG_CAT_MESH, "Left flock", nullptr);
+  if (mesh_network::leave_opera()) {
+    log_health(LOG_LEVEL_WARNING, LOG_CAT_MESH, "Left opera", nullptr);
     return http_send_json(req, "{\"ok\":true}");
   }
   return http_send_error(req, 400, "leave_failed");
@@ -2283,8 +2283,8 @@ static esp_err_t handle_mesh_name(httpd_req_t* req) {
     return http_send_error(req, 400, "invalid_name");
   }
 
-  if (mesh_network::set_flock_name(name)) {
-    log_health(LOG_LEVEL_INFO, LOG_CAT_MESH, "Flock name changed", name);
+  if (mesh_network::set_opera_name(name)) {
+    log_health(LOG_LEVEL_INFO, LOG_CAT_MESH, "Opera name changed", name);
     return http_send_json(req, "{\"ok\":true}");
   }
   return http_send_error(req, 400, "rename_failed");
@@ -2647,7 +2647,7 @@ static void start_http_server() {
 #endif
 
 #if FEATURE_MESH_NETWORK
-  // Mesh network (flock) endpoints
+  // Mesh network (opera) endpoints
   httpd_uri_t mesh_status = { .uri = "/api/mesh", .method = HTTP_GET, .handler = handle_mesh_status };
   httpd_register_uri_handler(g_http_server, &mesh_status);
 
@@ -3232,9 +3232,9 @@ void setup() {
   }
   #endif
 
-  // Initialize mesh network (flock)
+  // Initialize mesh network (opera)
   #if FEATURE_MESH_NETWORK
-  Serial.println("[..] Initializing mesh network (flock)...");
+  Serial.println("[..] Initializing mesh network (opera)...");
   if (mesh_network::init(g_device.privkey, g_device.pubkey, g_device.device_id)) {
     Serial.println("[OK] Mesh network initialized");
     log_health(LOG_LEVEL_INFO, LOG_CAT_MESH, "Mesh network initialized", nullptr);
@@ -3245,10 +3245,10 @@ void setup() {
       char detail[80];
       snprintf(detail, sizeof(detail), "From %s: %s",
                alert->sender_name, alert->detail);
-      log_health((LogLevel)alert->severity, LOG_CAT_MESH, "Flock alert received", detail);
+      log_health((LogLevel)alert->severity, LOG_CAT_MESH, "Opera alert received", detail);
     });
 
-    mesh_network::set_peer_state_callback([](const mesh_network::FlockPeer* peer,
+    mesh_network::set_peer_state_callback([](const mesh_network::OperaPeer* peer,
                                              mesh_network::PeerState old_state,
                                              mesh_network::PeerState new_state) {
       char detail[80];

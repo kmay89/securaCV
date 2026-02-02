@@ -629,8 +629,8 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     <nav>
       <button class="nav-btn active" data-panel="status">Status</button>
       <button class="nav-btn" data-panel="peek">Peek</button>
-      <button class="nav-btn" data-panel="flock">
-        Flock<span class="count" id="flockAlertCount" style="display:none">0</span>
+      <button class="nav-btn" data-panel="opera">
+        Opera<span class="count" id="operaAlertCount" style="display:none">0</span>
       </button>
       <button class="nav-btn" data-panel="logs">
         Logs<span class="count" id="logsCount" style="display:none">0</span>
@@ -817,27 +817,27 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       </div>
     </div>
 
-    <!-- Flock Panel (Mesh Network) -->
-    <div class="panel" id="panel-flock">
+    <!-- Opera Panel (Mesh Network) -->
+    <div class="panel" id="panel-opera">
       <div class="card">
         <div class="card-header">
           <div>
-            <div class="card-title">Flock Network</div>
-            <div class="card-subtitle" id="flockSubtitle">Mesh network status</div>
+            <div class="card-title">Opera Network</div>
+            <div class="card-subtitle" id="operaSubtitle">Mesh network status</div>
           </div>
-          <div class="badge info" id="flockBadge">
+          <div class="badge info" id="operaBadge">
             <span class="badge-dot"></span>
-            <span id="flockState">Loading...</span>
+            <span id="operaState">Loading...</span>
           </div>
         </div>
         <div class="stats-grid">
           <div class="stat-item">
             <div class="stat-label">Status</div>
-            <div class="stat-value" id="flockStatus" style="font-size:0.9rem;">--</div>
+            <div class="stat-value" id="operaStatus" style="font-size:0.9rem;">--</div>
           </div>
           <div class="stat-item">
-            <div class="stat-label">Flock ID</div>
-            <div class="stat-value" id="flockId" style="font-size:0.75rem;word-break:break-all;">--</div>
+            <div class="stat-label">Opera ID</div>
+            <div class="stat-value" id="operaId" style="font-size:0.75rem;word-break:break-all;">--</div>
           </div>
           <div class="stat-item">
             <div class="stat-label">Peers Online</div>
@@ -851,32 +851,32 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       </div>
 
       <!-- Peers Grid -->
-      <div class="card" id="flockPeersCard">
+      <div class="card" id="operaPeersCard">
         <div class="card-header">
           <div>
-            <div class="card-title">Flock Members</div>
-            <div class="card-subtitle" id="peersSubtitle">Devices in your flock</div>
+            <div class="card-title">Opera Members</div>
+            <div class="card-subtitle" id="peersSubtitle">Devices in your opera</div>
           </div>
-          <button class="btn btn-ghost btn-sm" onclick="refreshFlock()">Refresh</button>
+          <button class="btn btn-ghost btn-sm" onclick="refreshOpera()">Refresh</button>
         </div>
         <div id="peersList" class="log-list">
           <div class="empty-state">
             <div class="empty-icon">🐦</div>
-            <p>No flock configured</p>
+            <p>No opera configured</p>
           </div>
         </div>
       </div>
 
-      <!-- Flock Alerts -->
-      <div class="card" id="flockAlertsCard">
+      <!-- Opera Alerts -->
+      <div class="card" id="operaAlertsCard">
         <div class="card-header">
           <div>
-            <div class="card-title">Flock Alerts</div>
+            <div class="card-title">Opera Alerts</div>
             <div class="card-subtitle">Alerts from other canaries</div>
           </div>
-          <button class="btn btn-ghost btn-sm" onclick="clearFlockAlerts()">Clear</button>
+          <button class="btn btn-ghost btn-sm" onclick="clearOperaAlerts()">Clear</button>
         </div>
-        <div id="flockAlertsList" class="log-list">
+        <div id="operaAlertsList" class="log-list">
           <div class="empty-state">
             <div class="empty-icon">✓</div>
             <p>No alerts</p>
@@ -884,44 +884,44 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         </div>
       </div>
 
-      <!-- Flock Controls -->
+      <!-- Opera Controls -->
       <div class="card">
         <div class="card-header">
           <div>
-            <div class="card-title">Flock Management</div>
-            <div class="card-subtitle">Create, join, or leave flock</div>
+            <div class="card-title">Opera Management</div>
+            <div class="card-subtitle">Create, join, or leave opera</div>
           </div>
         </div>
 
-        <!-- No Flock State -->
-        <div id="flockNoFlock">
+        <!-- No Opera State -->
+        <div id="operaNoOpera">
           <p style="color:var(--muted);margin-bottom:1rem;font-size:0.85rem;">
-            Create a new flock or join an existing one. Flock members protect each other
+            Create a new opera or join an existing one. Opera members protect each other
             by broadcasting alerts when tampered with or losing power.
           </p>
           <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
-            <button class="btn btn-primary" onclick="startPairing('init')">Create Flock</button>
-            <button class="btn btn-secondary" onclick="startPairing('join')">Join Flock</button>
+            <button class="btn btn-primary" onclick="startPairing('init')">Create Opera</button>
+            <button class="btn btn-secondary" onclick="startPairing('join')">Join Opera</button>
           </div>
         </div>
 
-        <!-- Has Flock State -->
-        <div id="flockHasFlock" style="display:none;">
+        <!-- Has Opera State -->
+        <div id="operaHasOpera" style="display:none;">
           <div class="form-group">
-            <label class="form-label">Flock Name</label>
+            <label class="form-label">Opera Name</label>
             <div style="display:flex;gap:0.5rem;">
-              <input type="text" class="form-input" id="flockNameInput" placeholder="My Flock" style="flex:1;">
-              <button class="btn btn-secondary" onclick="saveFlockName()">Save</button>
+              <input type="text" class="form-input" id="operaNameInput" placeholder="My Opera" style="flex:1;">
+              <button class="btn btn-secondary" onclick="saveOperaName()">Save</button>
             </div>
           </div>
           <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:1rem;">
             <button class="btn btn-primary" onclick="startPairing('init')">Add Device</button>
-            <button class="btn btn-danger" onclick="leaveFlock()">Leave Flock</button>
+            <button class="btn btn-danger" onclick="leaveOpera()">Leave Opera</button>
           </div>
         </div>
 
         <!-- Pairing State -->
-        <div id="flockPairing" style="display:none;">
+        <div id="operaPairing" style="display:none;">
           <div style="text-align:center;padding:1rem;">
             <div class="spinner" style="margin:0 auto 1rem;"></div>
             <p id="pairingStatus" style="color:var(--muted);margin-bottom:1rem;">Searching for devices...</p>
@@ -950,7 +950,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           </label>
         </div>
         <p style="font-size:0.8rem;color:var(--muted);margin:0;">
-          When enabled, this device will communicate with other canaries in your flock
+          When enabled, this device will communicate with other canaries in your opera
           using ESP-NOW (direct radio) and WiFi. Disable to operate independently.
         </p>
       </div>
@@ -1188,7 +1188,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       if (panel === 'logs') loadLogs();
       else if (panel === 'witness') loadWitness();
       else if (panel === 'peek') refreshPeekStatus();
-      else if (panel === 'flock') refreshFlock();
+      else if (panel === 'opera') refreshOpera();
 
       // Stop peek stream when leaving peek panel
       if (panel !== 'peek' && peekActive) {
@@ -1672,46 +1672,46 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     // FLOCK (MESH NETWORK)
     // ══════════════════════════════════════════════════════════════════
 
-    let flockState = null;
+    let operaState = null;
     let pairingPollingInterval = null;
 
-    async function refreshFlock() {
+    async function refreshOpera() {
       const data = await api('/api/mesh');
       if (!data.ok) return;
 
-      flockState = data;
+      operaState = data;
 
       // Update stats
-      document.getElementById('flockStatus').textContent = data.state || 'DISABLED';
-      document.getElementById('flockId').textContent = data.flock_id ? data.flock_id.substring(0, 16) + '...' : '--';
+      document.getElementById('operaStatus').textContent = data.state || 'DISABLED';
+      document.getElementById('operaId').textContent = data.opera_id ? data.opera_id.substring(0, 16) + '...' : '--';
       document.getElementById('peersOnline').textContent = data.peers_online || 0;
       document.getElementById('peersTotal').textContent = data.peers_total || 0;
       document.getElementById('alertsReceived').textContent = data.alerts_received || 0;
 
       // Update badge
-      const badge = document.getElementById('flockBadge');
-      const stateText = document.getElementById('flockState');
+      const badge = document.getElementById('operaBadge');
+      const stateText = document.getElementById('operaState');
 
       if (data.state === 'ACTIVE') {
         badge.className = 'badge success';
         stateText.textContent = 'Active';
-        document.getElementById('flockSubtitle').textContent = data.peers_online + ' peer(s) online';
+        document.getElementById('operaSubtitle').textContent = data.peers_online + ' peer(s) online';
       } else if (data.state === 'CONNECTING') {
         badge.className = 'badge warning';
         stateText.textContent = 'Connecting';
-        document.getElementById('flockSubtitle').textContent = 'Searching for flock members...';
+        document.getElementById('operaSubtitle').textContent = 'Searching for opera members...';
       } else if (data.state === 'NO_FLOCK') {
         badge.className = 'badge info';
-        stateText.textContent = 'No Flock';
-        document.getElementById('flockSubtitle').textContent = 'Create or join a flock to get started';
+        stateText.textContent = 'No Opera';
+        document.getElementById('operaSubtitle').textContent = 'Create or join a opera to get started';
       } else if (data.state === 'DISABLED') {
         badge.className = 'badge info';
         stateText.textContent = 'Disabled';
-        document.getElementById('flockSubtitle').textContent = 'Mesh networking is disabled';
+        document.getElementById('operaSubtitle').textContent = 'Mesh networking is disabled';
       } else if (data.state && data.state.startsWith('PAIRING')) {
         badge.className = 'badge warning';
         stateText.textContent = 'Pairing';
-        document.getElementById('flockSubtitle').textContent = 'Pairing in progress...';
+        document.getElementById('operaSubtitle').textContent = 'Pairing in progress...';
       } else {
         badge.className = 'badge info';
         stateText.textContent = data.state || 'Unknown';
@@ -1720,28 +1720,28 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       // Update enabled checkbox
       document.getElementById('meshEnabled').checked = data.enabled !== false;
 
-      // Show/hide flock states
-      const hasFlock = data.has_flock || (data.peers_total > 0);
+      // Show/hide opera states
+      const hasOpera = data.has_opera || (data.peers_total > 0);
       const isPairing = data.state && data.state.startsWith('PAIRING');
 
-      document.getElementById('flockNoFlock').style.display = (!hasFlock && !isPairing) ? 'block' : 'none';
-      document.getElementById('flockHasFlock').style.display = (hasFlock && !isPairing) ? 'block' : 'none';
-      document.getElementById('flockPairing').style.display = isPairing ? 'block' : 'none';
+      document.getElementById('operaNoOpera').style.display = (!hasOpera && !isPairing) ? 'block' : 'none';
+      document.getElementById('operaHasOpera').style.display = (hasOpera && !isPairing) ? 'block' : 'none';
+      document.getElementById('operaPairing').style.display = isPairing ? 'block' : 'none';
 
-      if (hasFlock && data.flock_name) {
-        document.getElementById('flockNameInput').value = data.flock_name;
+      if (hasOpera && data.opera_name) {
+        document.getElementById('operaNameInput').value = data.opera_name;
       }
 
       // Load peers
-      if (hasFlock) {
+      if (hasOpera) {
         loadPeers();
       }
 
       // Load alerts
-      loadFlockAlerts();
+      loadOperaAlerts();
 
       // Alert count badge in nav
-      const alertCount = document.getElementById('flockAlertCount');
+      const alertCount = document.getElementById('operaAlertCount');
       const unreadAlerts = data.alerts_received || 0;
       if (unreadAlerts > 0) {
         alertCount.textContent = unreadAlerts;
@@ -1756,11 +1756,11 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       const list = document.getElementById('peersList');
 
       if (!data.ok || !data.peers || data.peers.length === 0) {
-        list.innerHTML = '<div class="empty-state"><div class="empty-icon">🐦</div><p>No peers in flock</p></div>';
+        list.innerHTML = '<div class="empty-state"><div class="empty-icon">🐦</div><p>No peers in opera</p></div>';
         return;
       }
 
-      document.getElementById('peersSubtitle').textContent = data.peers.length + ' device(s) in flock';
+      document.getElementById('peersSubtitle').textContent = data.peers.length + ' device(s) in opera';
 
       list.innerHTML = data.peers.map(peer => {
         const stateClass = peer.state === 'CONNECTED' ? 'success' :
@@ -1780,19 +1780,19 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
               <div class="log-meta">${peer.state} · ${peer.rssi ? peer.rssi + ' dBm' : '--'} · ${peer.last_seen_sec ? peer.last_seen_sec + 's ago' : 'never'}</div>
             </div>
             <div class="log-actions">
-              <button class="btn btn-ghost btn-sm" onclick="removePeer('${peer.fingerprint}')" title="Remove from flock">✕</button>
+              <button class="btn btn-ghost btn-sm" onclick="removePeer('${peer.fingerprint}')" title="Remove from opera">✕</button>
             </div>
           </div>
         `;
       }).join('');
     }
 
-    async function loadFlockAlerts() {
+    async function loadOperaAlerts() {
       const data = await api('/api/mesh/alerts');
-      const list = document.getElementById('flockAlertsList');
+      const list = document.getElementById('operaAlertsList');
 
       if (!data.ok || !data.alerts || data.alerts.length === 0) {
-        list.innerHTML = '<div class="empty-state"><div class="empty-icon">✓</div><p>No alerts from flock</p></div>';
+        list.innerHTML = '<div class="empty-state"><div class="empty-icon">✓</div><p>No alerts from opera</p></div>';
         return;
       }
 
@@ -1820,11 +1820,11 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         return;
       }
 
-      document.getElementById('flockNoFlock').style.display = 'none';
-      document.getElementById('flockHasFlock').style.display = 'none';
-      document.getElementById('flockPairing').style.display = 'block';
+      document.getElementById('operaNoOpera').style.display = 'none';
+      document.getElementById('operaHasOpera').style.display = 'none';
+      document.getElementById('operaPairing').style.display = 'block';
       document.getElementById('pairingStatus').textContent = mode === 'init' ?
-        'Waiting for another device to join...' : 'Searching for flock to join...';
+        'Waiting for another device to join...' : 'Searching for opera to join...';
       document.getElementById('pairingCode').style.display = 'none';
       document.getElementById('pairingConfirmBtn').style.display = 'none';
 
@@ -1848,14 +1848,14 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         } else if (data.state === 'ACTIVE' || data.state === 'CONNECTING') {
           // Pairing complete
           stopPairingPolling();
-          refreshFlock();
+          refreshOpera();
           if (data.state === 'ACTIVE') {
-            alert('Successfully joined flock!');
+            alert('Successfully joined opera!');
           }
         } else if (data.state === 'NO_FLOCK' || data.state === 'DISABLED') {
           // Pairing cancelled or failed
           stopPairingPolling();
-          refreshFlock();
+          refreshOpera();
         }
       }, 1000);
     }
@@ -1879,36 +1879,36 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     async function cancelPairing() {
       stopPairingPolling();
       await api('/api/mesh/pair/cancel', 'POST');
-      refreshFlock();
+      refreshOpera();
     }
 
-    async function saveFlockName() {
-      const name = document.getElementById('flockNameInput').value.trim();
+    async function saveOperaName() {
+      const name = document.getElementById('operaNameInput').value.trim();
       if (!name) {
-        alert('Please enter a flock name');
+        alert('Please enter a opera name');
         return;
       }
       const data = await api('/api/mesh/name', 'POST', { name });
       if (data.ok) {
-        refreshFlock();
+        refreshOpera();
       } else {
         alert('Failed to save name: ' + (data.error || 'Unknown error'));
       }
     }
 
-    async function leaveFlock() {
-      if (!confirm('Leave this flock? You will need to re-pair to rejoin.')) return;
+    async function leaveOpera() {
+      if (!confirm('Leave this opera? You will need to re-pair to rejoin.')) return;
 
       const data = await api('/api/mesh/leave', 'POST');
       if (data.ok) {
-        refreshFlock();
+        refreshOpera();
       } else {
-        alert('Failed to leave flock: ' + (data.error || 'Unknown error'));
+        alert('Failed to leave opera: ' + (data.error || 'Unknown error'));
       }
     }
 
     async function removePeer(fingerprint) {
-      if (!confirm('Remove this device from the flock?')) return;
+      if (!confirm('Remove this device from the opera?')) return;
 
       const data = await api('/api/mesh/remove', 'POST', { fingerprint });
       if (data.ok) {
@@ -1925,12 +1925,12 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         alert('Failed to toggle mesh: ' + (data.error || 'Unknown error'));
         document.getElementById('meshEnabled').checked = !enabled;
       }
-      refreshFlock();
+      refreshOpera();
     }
 
-    async function clearFlockAlerts() {
+    async function clearOperaAlerts() {
       await api('/api/mesh/alerts', 'DELETE');
-      loadFlockAlerts();
+      loadOperaAlerts();
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -2165,14 +2165,14 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     refreshStatus();
     loadChain();
     loadWifiStatus();
-    refreshFlock();
+    refreshOpera();
     updateResolutionUI();
     setInterval(refreshStatus, 2000);
     setInterval(loadWifiStatus, 5000);
     setInterval(() => {
       if (currentPanel === 'logs') loadLogs();
       else if (currentPanel === 'witness') loadWitness();
-      else if (currentPanel === 'flock') refreshFlock();
+      else if (currentPanel === 'opera') refreshOpera();
     }, 5000);
   </script>
 </body>

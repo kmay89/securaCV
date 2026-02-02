@@ -7,7 +7,7 @@
  * - Log management and acknowledgment
  * - Configuration
  * - Export functionality
- * - Mesh network (flock) management
+ * - Mesh network (opera) management
  *
  * Security considerations:
  * - AP mode only (no internet connection required)
@@ -113,18 +113,18 @@ struct RateLimitEntry {
  *
  * POST /api/reboot          - Reboot device
  *
- * Mesh Network (Flock) Endpoints:
- * GET  /api/mesh            - Mesh status and flock info
- * GET  /api/mesh/peers      - List flock peers with status
- * GET  /api/mesh/alerts     - Recent alerts from flock
+ * Mesh Network (Opera) Endpoints:
+ * GET  /api/mesh            - Mesh status and opera info
+ * GET  /api/mesh/peers      - List opera peers with status
+ * GET  /api/mesh/alerts     - Recent alerts from opera
  * POST /api/mesh/enable     - Enable/disable mesh networking
  * POST /api/mesh/pair/start - Start pairing (initiator mode)
  * POST /api/mesh/pair/join  - Start pairing (joiner mode)
  * POST /api/mesh/pair/confirm - Confirm pairing code
  * POST /api/mesh/pair/cancel  - Cancel ongoing pairing
- * POST /api/mesh/leave      - Leave current flock
- * POST /api/mesh/remove     - Remove peer from flock
- * POST /api/mesh/name       - Set flock name
+ * POST /api/mesh/leave      - Leave current opera
+ * POST /api/mesh/remove     - Remove peer from opera
+ * POST /api/mesh/name       - Set opera name
  */
 
 // ════════════════════════════════════════════════════════════════════════════

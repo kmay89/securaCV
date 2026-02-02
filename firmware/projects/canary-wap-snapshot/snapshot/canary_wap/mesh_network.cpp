@@ -2,7 +2,7 @@
  * SecuraCV Canary — Mesh Network Implementation
  * Version 0.1.0
  *
- * Implements the Flock Protocol for secure peer-to-peer mesh networking.
+ * Implements the Opera Protocol for secure peer-to-peer mesh networking.
  * Uses ESP-NOW for primary transport with Ed25519 authentication.
  */
 
@@ -27,7 +27,7 @@ namespace mesh_network {
 // DOMAIN SEPARATION STRINGS
 // ════════════════════════════════════════════════════════════════════════════
 
-static const char* DOMAIN_FLOCK_ID = "securacv:flock:id:v0";
+static const char* DOMAIN_FLOCK_ID = "securacv:opera:id:v0";
 static const char* DOMAIN_AUTH = "securacv:mesh:auth:v0";
 static const char* DOMAIN_SESSION = "securacv:mesh:session:v0";
 static const char* DOMAIN_MESSAGE = "securacv:mesh:message:v0";
@@ -39,9 +39,9 @@ static const char* DOMAIN_PAIR_CONFIRM = "securacv:pair:confirm:v0";
 
 static const char* NVS_NS = "mesh";
 static const char* NVS_ENABLED = "enabled";
-static const char* NVS_FLOCK_ID = "flock_id";
-static const char* NVS_FLOCK_SECRET = "flock_sec";
-static const char* NVS_FLOCK_NAME = "flock_name";
+static const char* NVS_FLOCK_ID = "opera_id";
+static const char* NVS_FLOCK_SECRET = "opera_sec";
+static const char* NVS_FLOCK_NAME = "opera_name";
 static const char* NVS_PEER_COUNT = "peer_cnt";
 static const char* NVS_PEER_PREFIX = "peer_";   // peer_0, peer_1, etc.
 
@@ -58,9 +58,9 @@ static const uint8_t* g_device_pubkey = nullptr;
 static uint8_t g_device_fingerprint[FINGERPRINT_SIZE];
 static char g_device_name[MAX_PEER_NAME_LEN + 1];
 
-// Flock state
-static FlockConfig g_flock_config;
-static FlockPeer g_peers[MAX_FLOCK_SIZE];
+// Opera state
+static OperaConfig g_opera_config;
+static OperaPeer g_peers[MAX_FLOCK_SIZE];
 static uint8_t g_peer_count = 0;
 
 // Mesh state
@@ -104,7 +104,7 @@ static volatile bool g_rx_pending = false;
 // ════════════════════════════════════════════════════════════════════════════
 
 static void compute_fingerprint(const uint8_t* pubkey, uint8_t* fp_out);
-static void compute_flock_id(const uint8_t* secret, uint8_t* id_out);
+static void compute_opera_id(const uint8_t* secret, uint8_t* id_out);
 static bool derive_session_key(const uint8_t* local_priv, const uint8_t* peer_pub, uint8_t* key_out);
 static bool encrypt_message(const uint8_t* key, const uint8_t* plaintext, size_t len,
                            uint8_t* ciphertext, uint8_t* nonce_out, uint8_t* tag_out);
@@ -112,27 +112,27 @@ static bool decrypt_message(const uint8_t* key, const uint8_t* ciphertext, size_
                            const uint8_t* nonce, const uint8_t* tag, uint8_t* plaintext);
 static bool sign_message(const uint8_t* privkey, const uint8_t* data, size_t len, uint8_t* sig_out);
 static bool verify_signature(const uint8_t* pubkey, const uint8_t* data, size_t len, const uint8_t* sig);
-static void update_peer_state(FlockPeer* peer, PeerState new_state);
-static FlockPeer* find_peer_by_mac(const uint8_t* mac);
-static FlockPeer* find_peer_by_fingerprint(const uint8_t* fp);
+static void update_peer_state(OperaPeer* peer, PeerState new_state);
+static OperaPeer* find_peer_by_mac(const uint8_t* mac);
+static OperaPeer* find_peer_by_fingerprint(const uint8_t* fp);
 static bool add_peer(const uint8_t* pubkey, const uint8_t* mac, const char* name);
 static bool send_raw_message(const uint8_t* mac, const uint8_t* data, size_t len);
-static bool send_to_peer(FlockPeer* peer, MessageType type, const uint8_t* payload, size_t len);
+static bool send_to_peer(OperaPeer* peer, MessageType type, const uint8_t* payload, size_t len);
 static bool broadcast_message(MessageType type, const uint8_t* payload, size_t len);
 static void handle_received_message(const uint8_t* mac, const uint8_t* data, size_t len);
-static void handle_heartbeat(FlockPeer* peer, const uint8_t* payload);
+static void handle_heartbeat(OperaPeer* peer, const uint8_t* payload);
 static void handle_auth_challenge(const uint8_t* mac, const uint8_t* payload);
-static void handle_auth_response(FlockPeer* peer, const uint8_t* payload);
-static void handle_tamper_alert(FlockPeer* peer, const uint8_t* payload);
-static void handle_power_alert(FlockPeer* peer, const uint8_t* payload);
-static void handle_offline_imminent(FlockPeer* peer, const uint8_t* payload);
+static void handle_auth_response(OperaPeer* peer, const uint8_t* payload);
+static void handle_tamper_alert(OperaPeer* peer, const uint8_t* payload);
+static void handle_power_alert(OperaPeer* peer, const uint8_t* payload);
+static void handle_offline_imminent(OperaPeer* peer, const uint8_t* payload);
 static void handle_pair_discover(const uint8_t* mac, const uint8_t* payload);
 static void handle_pair_offer(const uint8_t* mac, const uint8_t* payload);
 static void handle_pair_accept(const uint8_t* mac, const uint8_t* payload);
 static void handle_pair_confirm(const uint8_t* mac, const uint8_t* payload);
 static void handle_pair_complete(const uint8_t* mac, const uint8_t* payload);
-static bool persist_flock_config();
-static bool load_flock_config();
+static bool persist_opera_config();
+static bool load_opera_config();
 static bool persist_peers();
 static bool load_peers();
 static void store_alert(const MeshAlert* alert);
@@ -177,7 +177,7 @@ static void compute_fingerprint(const uint8_t* pubkey, uint8_t* fp_out) {
   memcpy(fp_out, hash, FINGERPRINT_SIZE);
 }
 
-static void compute_flock_id(const uint8_t* secret, uint8_t* id_out) {
+static void compute_opera_id(const uint8_t* secret, uint8_t* id_out) {
   uint8_t hash[32];
   sha256_domain(DOMAIN_FLOCK_ID, secret, FLOCK_SECRET_SIZE, hash);
   memcpy(id_out, hash, FLOCK_ID_SIZE);
@@ -254,7 +254,7 @@ static bool verify_signature(const uint8_t* pubkey, const uint8_t* data, size_t 
 // PEER MANAGEMENT
 // ════════════════════════════════════════════════════════════════════════════
 
-static void update_peer_state(FlockPeer* peer, PeerState new_state) {
+static void update_peer_state(OperaPeer* peer, PeerState new_state) {
   if (peer->state == new_state) return;
 
   PeerState old_state = peer->state;
@@ -265,7 +265,7 @@ static void update_peer_state(FlockPeer* peer, PeerState new_state) {
   }
 }
 
-static FlockPeer* find_peer_by_mac(const uint8_t* mac) {
+static OperaPeer* find_peer_by_mac(const uint8_t* mac) {
   for (uint8_t i = 0; i < g_peer_count; i++) {
     if (memcmp(g_peers[i].mac_addr, mac, 6) == 0) {
       return &g_peers[i];
@@ -274,7 +274,7 @@ static FlockPeer* find_peer_by_mac(const uint8_t* mac) {
   return nullptr;
 }
 
-static FlockPeer* find_peer_by_fingerprint(const uint8_t* fp) {
+static OperaPeer* find_peer_by_fingerprint(const uint8_t* fp) {
   for (uint8_t i = 0; i < g_peer_count; i++) {
     if (memcmp(g_peers[i].fingerprint, fp, FINGERPRINT_SIZE) == 0) {
       return &g_peers[i];
@@ -288,8 +288,8 @@ static bool add_peer(const uint8_t* pubkey, const uint8_t* mac, const char* name
     return false;
   }
 
-  FlockPeer* peer = &g_peers[g_peer_count];
-  memset(peer, 0, sizeof(FlockPeer));
+  OperaPeer* peer = &g_peers[g_peer_count];
+  memset(peer, 0, sizeof(OperaPeer));
 
   memcpy(peer->pubkey, pubkey, PUBKEY_SIZE);
   compute_fingerprint(pubkey, peer->fingerprint);
@@ -338,8 +338,8 @@ static bool send_raw_message(const uint8_t* mac, const uint8_t* data, size_t len
   return false;
 }
 
-static bool send_to_peer(FlockPeer* peer, MessageType type, const uint8_t* payload, size_t payload_len) {
-  if (!peer || !g_flock_config.configured) {
+static bool send_to_peer(OperaPeer* peer, MessageType type, const uint8_t* payload, size_t payload_len) {
+  if (!peer || !g_opera_config.configured) {
     return false;
   }
 
@@ -350,7 +350,7 @@ static bool send_to_peer(FlockPeer* peer, MessageType type, const uint8_t* paylo
   // Header
   msg[offset++] = PROTOCOL_VERSION;
   msg[offset++] = (uint8_t)type;
-  memcpy(msg + offset, g_flock_config.flock_id, FLOCK_ID_SIZE);
+  memcpy(msg + offset, g_opera_config.opera_id, FLOCK_ID_SIZE);
   offset += FLOCK_ID_SIZE;
   memcpy(msg + offset, g_device_fingerprint, FINGERPRINT_SIZE);
   offset += FINGERPRINT_SIZE;
@@ -417,7 +417,7 @@ static void handle_received_message(const uint8_t* mac, const uint8_t* data, siz
 
   MessageType msg_type = (MessageType)data[offset++];
 
-  const uint8_t* flock_id = data + offset;
+  const uint8_t* opera_id = data + offset;
   offset += FLOCK_ID_SIZE;
 
   const uint8_t* sender_fp = data + offset;
@@ -436,7 +436,7 @@ static void handle_received_message(const uint8_t* mac, const uint8_t* data, siz
   size_t payload_len = len - offset - SIGNATURE_SIZE;
   const uint8_t* signature = data + len - SIGNATURE_SIZE;
 
-  // Pairing messages don't require flock membership
+  // Pairing messages don't require opera membership
   if (msg_type >= MSG_PAIR_DISCOVER && msg_type <= MSG_PAIR_COMPLETE) {
     switch (msg_type) {
       case MSG_PAIR_DISCOVER:
@@ -460,19 +460,19 @@ static void handle_received_message(const uint8_t* mac, const uint8_t* data, siz
     return;
   }
 
-  // Verify flock membership for non-pairing messages
-  if (!g_flock_config.configured) {
-    return;  // No flock, ignore regular messages
+  // Verify opera membership for non-pairing messages
+  if (!g_opera_config.configured) {
+    return;  // No opera, ignore regular messages
   }
 
-  if (memcmp(flock_id, g_flock_config.flock_id, FLOCK_ID_SIZE) != 0) {
-    return;  // Different flock, ignore (prevents neighbor interference)
+  if (memcmp(opera_id, g_opera_config.opera_id, FLOCK_ID_SIZE) != 0) {
+    return;  // Different opera, ignore (prevents neighbor interference)
   }
 
   // Find peer by fingerprint
-  FlockPeer* peer = find_peer_by_fingerprint(sender_fp);
+  OperaPeer* peer = find_peer_by_fingerprint(sender_fp);
   if (!peer) {
-    // Unknown peer claiming to be in our flock - security violation
+    // Unknown peer claiming to be in our opera - security violation
     g_auth_failures++;
     return;
   }
@@ -543,7 +543,7 @@ static void handle_received_message(const uint8_t* mac, const uint8_t* data, siz
   }
 }
 
-static void handle_heartbeat(FlockPeer* peer, const uint8_t* payload) {
+static void handle_heartbeat(OperaPeer* peer, const uint8_t* payload) {
   if (!peer) return;
 
   const HeartbeatPayload* hb = (const HeartbeatPayload*)payload;
@@ -558,8 +558,8 @@ static void handle_auth_challenge(const uint8_t* mac, const uint8_t* payload) {
   // Someone is trying to authenticate with us
   const AuthChallengePayload* challenge = (const AuthChallengePayload*)payload;
 
-  // Verify they're in our flock
-  FlockPeer* peer = nullptr;
+  // Verify they're in our opera
+  OperaPeer* peer = nullptr;
   for (uint8_t i = 0; i < g_peer_count; i++) {
     if (memcmp(g_peers[i].pubkey, challenge->pubkey, PUBKEY_SIZE) == 0) {
       peer = &g_peers[i];
@@ -578,7 +578,7 @@ static void handle_auth_challenge(const uint8_t* mac, const uint8_t* payload) {
   // Sign the challenge nonce with domain separation
   uint8_t sign_input[AUTH_CHALLENGE_SIZE + FLOCK_ID_SIZE];
   memcpy(sign_input, challenge->nonce, AUTH_CHALLENGE_SIZE);
-  memcpy(sign_input + AUTH_CHALLENGE_SIZE, g_flock_config.flock_id, FLOCK_ID_SIZE);
+  memcpy(sign_input + AUTH_CHALLENGE_SIZE, g_opera_config.opera_id, FLOCK_ID_SIZE);
 
   uint8_t hash[32];
   sha256_domain(DOMAIN_AUTH, sign_input, sizeof(sign_input), hash);
@@ -586,9 +586,9 @@ static void handle_auth_challenge(const uint8_t* mac, const uint8_t* payload) {
 
   memcpy(response.pubkey, g_device_pubkey, PUBKEY_SIZE);
 
-  // Sign flock_id as proof of membership
-  sha256_domain(DOMAIN_AUTH, g_flock_config.flock_id, FLOCK_ID_SIZE, hash);
-  Ed25519::sign(response.flock_proof, g_device_privkey, g_device_pubkey, hash, 32);
+  // Sign opera_id as proof of membership
+  sha256_domain(DOMAIN_AUTH, g_opera_config.opera_id, FLOCK_ID_SIZE, hash);
+  Ed25519::sign(response.opera_proof, g_device_privkey, g_device_pubkey, hash, 32);
 
   // Derive session key
   derive_session_key(g_device_privkey, peer->pubkey, peer->session_key);
@@ -598,7 +598,7 @@ static void handle_auth_challenge(const uint8_t* mac, const uint8_t* payload) {
   send_to_peer(peer, MSG_AUTH_RESPONSE, (uint8_t*)&response, sizeof(response));
 }
 
-static void handle_auth_response(FlockPeer* peer, const uint8_t* payload) {
+static void handle_auth_response(OperaPeer* peer, const uint8_t* payload) {
   if (!peer) return;
 
   const AuthResponsePayload* response = (const AuthResponsePayload*)payload;
@@ -609,10 +609,10 @@ static void handle_auth_response(FlockPeer* peer, const uint8_t* payload) {
     return;
   }
 
-  // Verify flock proof
+  // Verify opera proof
   uint8_t hash[32];
-  sha256_domain(DOMAIN_AUTH, g_flock_config.flock_id, FLOCK_ID_SIZE, hash);
-  if (!Ed25519::verify(response->flock_proof, peer->pubkey, hash, 32)) {
+  sha256_domain(DOMAIN_AUTH, g_opera_config.opera_id, FLOCK_ID_SIZE, hash);
+  if (!Ed25519::verify(response->opera_proof, peer->pubkey, hash, 32)) {
     g_auth_failures++;
     return;
   }
@@ -627,7 +627,7 @@ static void handle_auth_response(FlockPeer* peer, const uint8_t* payload) {
   send_to_peer(peer, MSG_AUTH_COMPLETE, nullptr, 0);
 }
 
-static void handle_tamper_alert(FlockPeer* peer, const uint8_t* payload) {
+static void handle_tamper_alert(OperaPeer* peer, const uint8_t* payload) {
   if (!peer) return;
 
   const TamperAlertPayload* alert = (const TamperAlertPayload*)payload;
@@ -654,7 +654,7 @@ static void handle_tamper_alert(FlockPeer* peer, const uint8_t* payload) {
   }
 }
 
-static void handle_power_alert(FlockPeer* peer, const uint8_t* payload) {
+static void handle_power_alert(OperaPeer* peer, const uint8_t* payload) {
   if (!peer) return;
 
   const PowerAlertPayload* alert = (const PowerAlertPayload*)payload;
@@ -681,7 +681,7 @@ static void handle_power_alert(FlockPeer* peer, const uint8_t* payload) {
   }
 }
 
-static void handle_offline_imminent(FlockPeer* peer, const uint8_t* payload) {
+static void handle_offline_imminent(OperaPeer* peer, const uint8_t* payload) {
   if (!peer) return;
 
   const OfflineImminentPayload* alert = (const OfflineImminentPayload*)payload;
@@ -738,8 +738,8 @@ static void handle_pair_discover(const uint8_t* mac, const uint8_t* payload) {
     PairOfferPayload offer;
     memcpy(offer.ephemeral_pubkey, g_pairing.ephemeral_pubkey, PUBKEY_SIZE);
     memcpy(offer.device_pubkey, g_device_pubkey, PUBKEY_SIZE);
-    strncpy(offer.flock_name, g_flock_config.flock_name, MAX_FLOCK_NAME_LEN);
-    offer.flock_member_count = g_peer_count;
+    strncpy(offer.opera_name, g_opera_config.opera_name, MAX_FLOCK_NAME_LEN);
+    offer.opera_member_count = g_peer_count;
 
     // Register temporary peer for sending
     esp_now_peer_info_t peer_info = {};
@@ -778,8 +778,8 @@ static void handle_pair_offer(const uint8_t* mac, const uint8_t* payload) {
   PairOfferPayload accept;  // Reuse structure
   memcpy(accept.ephemeral_pubkey, g_pairing.ephemeral_pubkey, PUBKEY_SIZE);
   memcpy(accept.device_pubkey, g_device_pubkey, PUBKEY_SIZE);
-  strncpy(accept.flock_name, g_device_name, MAX_FLOCK_NAME_LEN);
-  accept.flock_member_count = 0;
+  strncpy(accept.opera_name, g_device_name, MAX_FLOCK_NAME_LEN);
+  accept.opera_member_count = 0;
 
   esp_now_peer_info_t peer_info = {};
   memcpy(peer_info.peer_addr, mac, 6);
@@ -840,21 +840,21 @@ static void handle_pair_confirm(const uint8_t* mac, const uint8_t* payload) {
     return;
   }
 
-  // If we're initiator, send the flock secret
+  // If we're initiator, send the opera secret
   if (g_pairing.role == PAIR_ROLE_INITIATOR) {
     PairCompletePayload complete;
 
-    // Encrypt flock secret with session key
+    // Encrypt opera secret with session key
     uint8_t nonce[NONCE_SIZE];
     uint8_t tag[16];
-    encrypt_message(g_pairing.session_key, g_flock_config.flock_secret, FLOCK_SECRET_SIZE,
+    encrypt_message(g_pairing.session_key, g_opera_config.opera_secret, FLOCK_SECRET_SIZE,
                    complete.encrypted_secret, nonce, tag);
     memcpy(complete.nonce, nonce, NONCE_SIZE);
     memcpy(complete.encrypted_secret + FLOCK_SECRET_SIZE, tag, 16);
 
     send_raw_message(g_pairing.peer_mac, (uint8_t*)&complete, sizeof(complete));
 
-    // Add joiner to our flock
+    // Add joiner to our opera
     add_peer(g_pairing.peer_pubkey, g_pairing.peer_mac, "New Device");
     persist_peers();
 
@@ -873,28 +873,28 @@ static void handle_pair_complete(const uint8_t* mac, const uint8_t* payload) {
 
   const PairCompletePayload* complete = (const PairCompletePayload*)payload;
 
-  // Decrypt flock secret
-  uint8_t flock_secret[FLOCK_SECRET_SIZE];
+  // Decrypt opera secret
+  uint8_t opera_secret[FLOCK_SECRET_SIZE];
   const uint8_t* tag = complete->encrypted_secret + FLOCK_SECRET_SIZE;
 
   if (!decrypt_message(g_pairing.session_key, complete->encrypted_secret, FLOCK_SECRET_SIZE,
-                       complete->nonce, tag, flock_secret)) {
+                       complete->nonce, tag, opera_secret)) {
     cancel_pairing();
     return;
   }
 
-  // Initialize our flock config
-  memcpy(g_flock_config.flock_secret, flock_secret, FLOCK_SECRET_SIZE);
-  compute_flock_id(flock_secret, g_flock_config.flock_id);
-  g_flock_config.configured = true;
-  g_flock_config.enabled = true;
-  strncpy(g_flock_config.flock_name, "My Flock", MAX_FLOCK_NAME_LEN);
+  // Initialize our opera config
+  memcpy(g_opera_config.opera_secret, opera_secret, FLOCK_SECRET_SIZE);
+  compute_opera_id(opera_secret, g_opera_config.opera_id);
+  g_opera_config.configured = true;
+  g_opera_config.enabled = true;
+  strncpy(g_opera_config.opera_name, "My Opera", MAX_FLOCK_NAME_LEN);
 
   // Add initiator as first peer
-  add_peer(g_pairing.peer_pubkey, g_pairing.peer_mac, "Flock Creator");
+  add_peer(g_pairing.peer_pubkey, g_pairing.peer_mac, "Opera Creator");
 
   // Persist
-  persist_flock_config();
+  persist_opera_config();
   persist_peers();
 
   // Clear sensitive pairing data
@@ -911,32 +911,32 @@ static void handle_pair_complete(const uint8_t* mac, const uint8_t* payload) {
 // PERSISTENCE
 // ════════════════════════════════════════════════════════════════════════════
 
-static bool persist_flock_config() {
+static bool persist_opera_config() {
   g_prefs.begin(NVS_NS, false);
-  g_prefs.putBool(NVS_ENABLED, g_flock_config.enabled);
-  g_prefs.putBytes(NVS_FLOCK_ID, g_flock_config.flock_id, FLOCK_ID_SIZE);
-  g_prefs.putBytes(NVS_FLOCK_SECRET, g_flock_config.flock_secret, FLOCK_SECRET_SIZE);
-  g_prefs.putString(NVS_FLOCK_NAME, g_flock_config.flock_name);
+  g_prefs.putBool(NVS_ENABLED, g_opera_config.enabled);
+  g_prefs.putBytes(NVS_FLOCK_ID, g_opera_config.opera_id, FLOCK_ID_SIZE);
+  g_prefs.putBytes(NVS_FLOCK_SECRET, g_opera_config.opera_secret, FLOCK_SECRET_SIZE);
+  g_prefs.putString(NVS_FLOCK_NAME, g_opera_config.opera_name);
   g_prefs.end();
   return true;
 }
 
-static bool load_flock_config() {
+static bool load_opera_config() {
   g_prefs.begin(NVS_NS, true);
 
-  g_flock_config.enabled = g_prefs.getBool(NVS_ENABLED, false);
+  g_opera_config.enabled = g_prefs.getBool(NVS_ENABLED, false);
 
-  size_t id_len = g_prefs.getBytes(NVS_FLOCK_ID, g_flock_config.flock_id, FLOCK_ID_SIZE);
-  size_t secret_len = g_prefs.getBytes(NVS_FLOCK_SECRET, g_flock_config.flock_secret, FLOCK_SECRET_SIZE);
+  size_t id_len = g_prefs.getBytes(NVS_FLOCK_ID, g_opera_config.opera_id, FLOCK_ID_SIZE);
+  size_t secret_len = g_prefs.getBytes(NVS_FLOCK_SECRET, g_opera_config.opera_secret, FLOCK_SECRET_SIZE);
 
   String name = g_prefs.getString(NVS_FLOCK_NAME, "");
-  strncpy(g_flock_config.flock_name, name.c_str(), MAX_FLOCK_NAME_LEN);
-  g_flock_config.flock_name[MAX_FLOCK_NAME_LEN] = '\0';
+  strncpy(g_opera_config.opera_name, name.c_str(), MAX_FLOCK_NAME_LEN);
+  g_opera_config.opera_name[MAX_FLOCK_NAME_LEN] = '\0';
 
-  g_flock_config.configured = (id_len == FLOCK_ID_SIZE && secret_len == FLOCK_SECRET_SIZE);
+  g_opera_config.configured = (id_len == FLOCK_ID_SIZE && secret_len == FLOCK_SECRET_SIZE);
 
   g_prefs.end();
-  return g_flock_config.configured;
+  return g_opera_config.configured;
 }
 
 static bool persist_peers() {
@@ -1032,17 +1032,17 @@ bool init(const uint8_t* device_privkey, const uint8_t* device_pubkey, const cha
   g_espnow_initialized = true;
 
   // Load persisted config
-  load_flock_config();
-  if (g_flock_config.configured) {
+  load_opera_config();
+  if (g_opera_config.configured) {
     load_peers();
   }
 
   g_start_time_ms = millis();
   g_initialized = true;
 
-  if (g_flock_config.enabled && g_flock_config.configured) {
+  if (g_opera_config.enabled && g_opera_config.configured) {
     g_mesh_state = MESH_CONNECTING;
-  } else if (g_flock_config.enabled) {
+  } else if (g_opera_config.enabled) {
     g_mesh_state = MESH_NO_FLOCK;
   } else {
     g_mesh_state = MESH_DISABLED;
@@ -1064,11 +1064,11 @@ void deinit() {
 }
 
 void set_enabled(bool enabled) {
-  g_flock_config.enabled = enabled;
-  persist_flock_config();
+  g_opera_config.enabled = enabled;
+  persist_opera_config();
 
   if (enabled) {
-    if (g_flock_config.configured) {
+    if (g_opera_config.configured) {
       g_mesh_state = MESH_CONNECTING;
     } else {
       g_mesh_state = MESH_NO_FLOCK;
@@ -1079,7 +1079,7 @@ void set_enabled(bool enabled) {
 }
 
 bool is_enabled() {
-  return g_flock_config.enabled;
+  return g_opera_config.enabled;
 }
 
 void update() {
@@ -1114,7 +1114,7 @@ void update() {
 
     bool any_online = false;
     for (uint8_t i = 0; i < g_peer_count; i++) {
-      FlockPeer* peer = &g_peers[i];
+      OperaPeer* peer = &g_peers[i];
       uint32_t since_seen = now - peer->last_seen_ms;
 
       if (peer->state == PEER_CONNECTED || peer->state == PEER_ALERT) {
@@ -1189,11 +1189,11 @@ MeshStatus get_status() {
   status.uptime_ms = millis() - g_start_time_ms;
   status.last_heartbeat_ms = g_last_heartbeat_ms;
 
-  // Format flock ID as hex
+  // Format opera ID as hex
   for (size_t i = 0; i < FLOCK_ID_SIZE; i++) {
-    sprintf(status.flock_id_hex + i * 2, "%02x", g_flock_config.flock_id[i]);
+    sprintf(status.opera_id_hex + i * 2, "%02x", g_opera_config.opera_id[i]);
   }
-  status.flock_id_hex[FLOCK_ID_SIZE * 2] = '\0';
+  status.opera_id_hex[FLOCK_ID_SIZE * 2] = '\0';
 
   return status;
 }
@@ -1247,20 +1247,20 @@ bool is_active() {
   return g_mesh_state == MESH_ACTIVE;
 }
 
-bool has_flock() {
-  return g_flock_config.configured;
+bool has_opera() {
+  return g_opera_config.configured;
 }
 
 uint8_t get_peer_count() {
   return g_peer_count;
 }
 
-const FlockPeer* get_peer(uint8_t index) {
+const OperaPeer* get_peer(uint8_t index) {
   if (index >= g_peer_count) return nullptr;
   return &g_peers[index];
 }
 
-const FlockPeer* get_peer_by_fingerprint(const uint8_t* fingerprint) {
+const OperaPeer* get_peer_by_fingerprint(const uint8_t* fingerprint) {
   return find_peer_by_fingerprint(fingerprint);
 }
 
@@ -1293,22 +1293,22 @@ bool remove_peer(const uint8_t* fingerprint) {
   return false;
 }
 
-const FlockConfig* get_flock_config() {
-  return &g_flock_config;
+const OperaConfig* get_opera_config() {
+  return &g_opera_config;
 }
 
-bool set_flock_name(const char* name) {
-  strncpy(g_flock_config.flock_name, name, MAX_FLOCK_NAME_LEN);
-  g_flock_config.flock_name[MAX_FLOCK_NAME_LEN] = '\0';
-  return persist_flock_config();
+bool set_opera_name(const char* name) {
+  strncpy(g_opera_config.opera_name, name, MAX_FLOCK_NAME_LEN);
+  g_opera_config.opera_name[MAX_FLOCK_NAME_LEN] = '\0';
+  return persist_opera_config();
 }
 
-bool leave_flock() {
+bool leave_opera() {
   // Broadcast leave message to peers
   broadcast_message(MSG_LEAVE_FLOCK, nullptr, 0);
 
-  // Clear flock config
-  memset(&g_flock_config, 0, sizeof(g_flock_config));
+  // Clear opera config
+  memset(&g_opera_config, 0, sizeof(g_opera_config));
 
   // Remove all peers
   for (uint8_t i = 0; i < g_peer_count; i++) {
@@ -1317,14 +1317,14 @@ bool leave_flock() {
   g_peer_count = 0;
 
   // Persist
-  persist_flock_config();
+  persist_opera_config();
   persist_peers();
 
   g_mesh_state = MESH_NO_FLOCK;
   return true;
 }
 
-bool start_pairing_initiator(const char* flock_name) {
+bool start_pairing_initiator(const char* opera_name) {
   if (g_mesh_state == MESH_PAIRING_INIT || g_mesh_state == MESH_PAIRING_JOIN) {
     return false;  // Already pairing
   }
@@ -1333,21 +1333,21 @@ bool start_pairing_initiator(const char* flock_name) {
   g_pairing.role = PAIR_ROLE_INITIATOR;
   g_pairing.started_ms = millis();
 
-  // Create new flock if we don't have one
-  if (!g_flock_config.configured) {
-    esp_fill_random(g_flock_config.flock_secret, FLOCK_SECRET_SIZE);
-    compute_flock_id(g_flock_config.flock_secret, g_flock_config.flock_id);
-    g_flock_config.configured = true;
-    g_flock_config.enabled = true;
+  // Create new opera if we don't have one
+  if (!g_opera_config.configured) {
+    esp_fill_random(g_opera_config.opera_secret, FLOCK_SECRET_SIZE);
+    compute_opera_id(g_opera_config.opera_secret, g_opera_config.opera_id);
+    g_opera_config.configured = true;
+    g_opera_config.enabled = true;
 
-    if (flock_name) {
-      strncpy(g_flock_config.flock_name, flock_name, MAX_FLOCK_NAME_LEN);
+    if (opera_name) {
+      strncpy(g_opera_config.opera_name, opera_name, MAX_FLOCK_NAME_LEN);
     } else {
-      strcpy(g_flock_config.flock_name, "My Canary Flock");
+      strcpy(g_opera_config.opera_name, "My Canary Opera");
     }
-    g_flock_config.flock_name[MAX_FLOCK_NAME_LEN] = '\0';
+    g_opera_config.opera_name[MAX_FLOCK_NAME_LEN] = '\0';
 
-    persist_flock_config();
+    persist_opera_config();
   }
 
   g_mesh_state = MESH_PAIRING_INIT;
@@ -1370,7 +1370,7 @@ bool start_pairing_joiner() {
 void cancel_pairing() {
   memset(&g_pairing, 0, sizeof(g_pairing));
 
-  if (g_flock_config.configured) {
+  if (g_opera_config.configured) {
     g_mesh_state = g_peer_count > 0 ? MESH_CONNECTING : MESH_NO_FLOCK;
   } else {
     g_mesh_state = MESH_NO_FLOCK;
@@ -1444,7 +1444,7 @@ bool broadcast_power_alert(AlertType type, uint16_t voltage_mv, uint16_t estimat
 
 bool broadcast_offline_imminent(AlertType reason, uint32_t final_seq, const uint8_t* final_chain_hash) {
   // This is a critical message - try to send even if not fully active
-  if (!g_flock_config.configured) {
+  if (!g_opera_config.configured) {
     return false;
   }
 
@@ -1489,7 +1489,7 @@ void set_pairing_callback(PairingCallback callback) {
 }
 
 void send_heartbeat() {
-  if (!g_flock_config.configured) return;
+  if (!g_opera_config.configured) return;
 
   HeartbeatPayload payload;
   payload.status = 0;  // Online

@@ -1,4 +1,4 @@
-# Canary Mesh Network Protocol v0 (Flock Protocol)
+# Canary Mesh Network Protocol v0 (Opera Protocol)
 
 Status: Draft v0.1
 Intended Status: Normative
@@ -6,12 +6,12 @@ Last Updated: 2026-02-02
 
 ## 1. Purpose and Scope
 
-This specification defines a secure mesh network protocol for SecuraCV Canary devices, enabling a "flock" of canaries to communicate and protect each other. When one canary is tampered with or loses power, it broadcasts alerts to its flock members, providing redundant evidence of security events.
+This specification defines a secure mesh network protocol for SecuraCV Canary devices, enabling an "opera" of canaries to communicate and protect each other. When one canary is tampered with or loses power, it broadcasts alerts to its opera members, providing redundant evidence of security events.
 
 ### 1.1 Design Goals
 
 1. **Mutual Protection**: Canaries alert each other of tamper/power events before going offline
-2. **Network Isolation**: Separate flocks for different owners (your devices vs neighbor's devices)
+2. **Network Isolation**: Separate operas for different owners (your devices vs neighbor's devices)
 3. **Anti-Spoofing**: Cryptographic authentication prevents unauthorized devices from joining
 4. **Privacy Preservation**: Minimal metadata exposure, no raw media transmission
 5. **Resilience**: Works with WiFi, ESP-NOW, or BLE; survives partial network failures
@@ -25,16 +25,16 @@ This specification defines a secure mesh network protocol for SecuraCV Canary de
 
 ## 2. Network Architecture
 
-### 2.1 Flock Model
+### 2.1 Opera Model
 
-A **flock** is a group of canaries that trust each other and share alerts. Each flock has:
+A **opera** is a group of canaries that trust each other and share alerts. Each opera has:
 
-- **Flock ID**: 16-byte cryptographic identifier derived from the flock secret
-- **Flock Secret**: 32-byte shared secret established during pairing
+- **Opera ID**: 16-byte cryptographic identifier derived from the opera secret
+- **Opera Secret**: 32-byte shared secret established during pairing
 - **Members**: List of authenticated device public keys
 
 ```
-FlockID = SHA-256("securacv:flock:id:v0" || flock_secret)[0:16]
+OperaID = SHA-256("securacv:opera:id:v0" || opera_secret)[0:16]
 ```
 
 ### 2.2 Transport Layers
@@ -49,10 +49,10 @@ Each transport provides the same logical message interface.
 
 ### 2.3 Network Topology
 
-- **Fully Connected Mesh**: Every device maintains connections to all flock members
+- **Fully Connected Mesh**: Every device maintains connections to all opera members
 - **Hop Limit**: Maximum 3 hops for relayed messages (prevents amplification)
 - **Heartbeat**: Devices ping every 30 seconds to maintain presence
-- **Max Flock Size**: 16 devices (prevents resource exhaustion)
+- **Max Opera Size**: 16 devices (prevents resource exhaustion)
 
 ## 3. Security Model
 
@@ -62,13 +62,13 @@ Devices authenticate using their Ed25519 device keys (same keys used for witness
 
 ```
 challenge = random_bytes(32)
-response = Ed25519_Sign(device_privkey, "securacv:mesh:auth:v0" || challenge || flock_id)
+response = Ed25519_Sign(device_privkey, "securacv:mesh:auth:v0" || challenge || opera_id)
 ```
 
 Authentication flow:
 1. Initiator sends `AUTH_CHALLENGE` with random 32-byte nonce
 2. Responder signs nonce with device key, returns `AUTH_RESPONSE`
-3. Initiator verifies signature against known flock member public key
+3. Initiator verifies signature against known opera member public key
 4. Both parties derive session key using X25519 ECDH
 
 ### 3.2 Session Encryption
@@ -91,12 +91,12 @@ ciphertext = ChaCha20-Poly1305(message_key, nonce, plaintext)
 - **Timestamp Validation**: Messages rejected if >5 minutes old
 - **Nonce Tracking**: Last 64 nonces cached to detect replays
 
-### 3.4 Flock Isolation
+### 3.4 Opera Isolation
 
-Devices MUST verify flock membership before accepting messages:
+Devices MUST verify opera membership before accepting messages:
 
-1. Verify sender's public key is in local flock member list
-2. Verify flock ID matches local flock
+1. Verify sender's public key is in local opera member list
+2. Verify opera ID matches local opera
 3. Reject messages from unknown devices (prevents neighbor interference)
 
 ## 4. Message Types
@@ -108,7 +108,7 @@ All messages use deterministic CBOR encoding:
 ```cddl
 mesh_message = {
   version: 0,
-  flock_id: bstr .size 16,
+  opera_id: bstr .size 16,
   sender_fp: bstr .size 8,      ; Sender's pubkey fingerprint
   msg_type: tstr,
   counter: uint,
@@ -146,7 +146,7 @@ Complete authentication:
 auth_response_payload = {
   challenge_sig: bstr .size 64,
   pubkey: bstr .size 32,
-  flock_proof: bstr .size 64     ; Signs flock_id with device key
+  opera_proof: bstr .size 64     ; Signs opera_id with device key
 }
 ```
 
@@ -186,7 +186,7 @@ offline_imminent_payload = {
 ### 4.4 Sync Messages
 
 #### PEER_LIST
-Share known flock members:
+Share known opera members:
 ```cddl
 peer_list_payload = {
   peers: [* peer_entry]
@@ -202,17 +202,17 @@ peer_entry = {
 
 ### 5.1 Overview
 
-Pairing adds a new device to an existing flock (or creates a new flock). The process requires physical proximity and user confirmation to prevent unauthorized joins.
+Pairing adds a new device to an existing opera (or creates a new opera). The process requires physical proximity and user confirmation to prevent unauthorized joins.
 
 ### 5.2 Pairing Flow
 
-1. **Initiator** (existing flock member) enters "pairing mode" via UI
-2. **Joiner** (new device) enters "join flock" mode via UI
+1. **Initiator** (existing opera member) enters "pairing mode" via UI
+2. **Joiner** (new device) enters "join opera" mode via UI
 3. Devices discover each other via ESP-NOW broadcast or WiFi scan
 4. **Visual Verification**: Both devices display 6-digit code derived from session
 5. User confirms codes match on both devices
-6. Flock secret is securely transferred to joiner
-7. Joiner's public key is added to all flock members
+6. Opera secret is securely transferred to joiner
+7. Joiner's public key is added to all opera members
 
 ### 5.3 Pairing Security
 
@@ -224,19 +224,19 @@ display_code = decimal(confirmation_code) % 1000000  ; 6 digits
 
 After confirmation:
 ```
-encrypted_flock_secret = ChaCha20-Poly1305(
+encrypted_opera_secret = ChaCha20-Poly1305(
   pairing_session_key,
   nonce,
-  flock_secret || flock_member_list
+  opera_secret || opera_member_list
 )
 ```
 
-### 5.4 Creating a New Flock
+### 5.4 Creating a New Opera
 
-If no flock exists, the first device generates:
+If no opera exists, the first device generates:
 ```
-flock_secret = random_bytes(32)
-flock_id = SHA-256("securacv:flock:id:v0" || flock_secret)[0:16]
+opera_secret = random_bytes(32)
+opera_id = SHA-256("securacv:opera:id:v0" || opera_secret)[0:16]
 ```
 
 ## 6. Alert Propagation
@@ -247,7 +247,7 @@ When a canary detects a critical event:
 
 1. Immediately broadcast `TAMPER_ALERT` or `POWER_ALERT` to all peers
 2. If power is failing, broadcast `OFFLINE_IMMINENT` as final message
-3. Messages are relayed by other flock members (max 3 hops)
+3. Messages are relayed by other opera members (max 3 hops)
 4. Receiving devices store alert in local log with sender attribution
 
 ### 6.2 Alert Priority
@@ -272,9 +272,9 @@ Received alerts are stored in the health log with:
 
 ```
 MESH_DISABLED      → Feature disabled
-MESH_INITIALIZING  → Loading flock config, starting transports
-MESH_NO_FLOCK      → No flock configured, awaiting pairing
-MESH_CONNECTING    → Attempting to reach flock members
+MESH_INITIALIZING  → Loading opera config, starting transports
+MESH_NO_FLOCK      → No opera configured, awaiting pairing
+MESH_CONNECTING    → Attempting to reach opera members
 MESH_ACTIVE        → Connected to one or more peers
 MESH_PAIRING       → In pairing mode (initiator or joiner)
 MESH_ERROR         → Fatal error, requires restart
@@ -304,8 +304,8 @@ PEER_ALERT         → Received alert from this peer
 | `/api/mesh/pair/join` | POST | Enter join mode (joiner) |
 | `/api/mesh/pair/confirm` | POST | Confirm pairing code |
 | `/api/mesh/pair/cancel` | POST | Cancel pairing |
-| `/api/mesh/leave` | POST | Leave current flock |
-| `/api/mesh/remove/:fp` | POST | Remove peer from flock |
+| `/api/mesh/leave` | POST | Leave current opera |
+| `/api/mesh/remove/:fp` | POST | Remove peer from opera |
 
 ### 8.2 Response Formats
 
@@ -313,8 +313,8 @@ PEER_ALERT         → Received alert from this peer
 // GET /api/mesh
 {
   "state": "ACTIVE",
-  "flock_id": "a1b2c3d4e5f6...",
-  "flock_name": "Home Canaries",
+  "opera_id": "a1b2c3d4e5f6...",
+  "opera_name": "Home Canaries",
   "peer_count": 3,
   "peers_online": 2,
   "peers_offline": 1,
@@ -341,11 +341,11 @@ PEER_ALERT         → Received alert from this peer
 
 ### 9.1 Mesh Panel
 
-The web UI MUST include a "Flock" panel showing:
+The web UI MUST include a "Opera" panel showing:
 
-1. **Flock Status**: Active/Inactive, flock name, member count
+1. **Opera Status**: Active/Inactive, opera name, member count
 2. **Peer Grid**: Visual representation of each peer with status indicator
-3. **Alert Feed**: Recent alerts from flock members
+3. **Alert Feed**: Recent alerts from opera members
 4. **Pairing Controls**: Buttons to start/join pairing, confirmation dialog
 
 ### 9.2 Status Indicators
@@ -382,24 +382,24 @@ The web UI MUST include a "Flock" panel showing:
 
 ### 11.1 Threats Mitigated
 
-1. **Neighbor Interference**: Flock ID isolation prevents cross-talk
+1. **Neighbor Interference**: Opera ID isolation prevents cross-talk
 2. **Replay Attacks**: Message counters and timestamp validation
 3. **Spoofing**: Ed25519 signatures on all messages
 4. **Eavesdropping**: ChaCha20-Poly1305 encryption
 5. **Man-in-the-Middle**: Visual confirmation codes during pairing
-6. **Resource Exhaustion**: Max flock size, rate limiting
+6. **Resource Exhaustion**: Max opera size, rate limiting
 
 ### 11.2 Threats Not Mitigated
 
-1. **Physical Compromise**: Attacker with device access can extract flock secret
+1. **Physical Compromise**: Attacker with device access can extract opera secret
 2. **Targeted Jamming**: Radio-level attacks can block communication
-3. **Social Engineering**: User may accept malicious device into flock
+3. **Social Engineering**: User may accept malicious device into opera
 
 ### 11.3 Failure Modes
 
 1. **Single Device Offline**: Other devices continue normally
 2. **All Peers Offline**: Device operates independently, alerts queued
-3. **Flock Secret Compromise**: Must create new flock, re-pair all devices
+3. **Opera Secret Compromise**: Must create new opera, re-pair all devices
 
 ## 12. Implementation Notes
 
@@ -412,8 +412,8 @@ uint8_t BROADCAST_ADDR[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 // ESP-NOW channel (matches WiFi AP channel)
 #define ESPNOW_CHANNEL 1
 
-// Encryption uses ESP-NOW PMK + LMK derived from flock secret
-// PMK (Primary Master Key): flock_secret[0:16]
+// Encryption uses ESP-NOW PMK + LMK derived from opera secret
+// PMK (Primary Master Key): opera_secret[0:16]
 // LMK (Local Master Key): device-specific, derived per peer
 ```
 
@@ -432,9 +432,9 @@ Canaries MUST detect imminent power loss and broadcast alerts:
 NVS Key          | Size    | Description
 -----------------|---------|---------------------------
 mesh_enabled     | 1 byte  | Feature flag
-mesh_flock_id    | 16 bytes| Current flock ID
-mesh_flock_secret| 32 bytes| Flock encryption secret
-mesh_flock_name  | 32 bytes| User-friendly flock name
+mesh_opera_id    | 16 bytes| Current opera ID
+mesh_opera_secret| 32 bytes| Opera encryption secret
+mesh_opera_name  | 32 bytes| User-friendly opera name
 mesh_peers       | 1024 B  | Serialized peer list
 mesh_peer_count  | 1 byte  | Number of peers
 ```
@@ -445,10 +445,10 @@ An implementation conforms to this specification if it:
 
 1. Implements all REQUIRED message types (HEARTBEAT, AUTH_*, TAMPER_ALERT, POWER_ALERT, OFFLINE_IMMINENT)
 2. Validates all signatures before accepting messages
-3. Enforces flock isolation (rejects messages from non-members)
+3. Enforces opera isolation (rejects messages from non-members)
 4. Implements visual confirmation codes for pairing
 5. Stores received alerts in the health log
-6. Respects resource constraints (max flock size, message limits)
+6. Respects resource constraints (max opera size, message limits)
 
 ## 14. Changelog
 

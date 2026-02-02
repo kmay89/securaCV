@@ -1,5 +1,5 @@
 /*
- * SecuraCV Canary — Mesh Network (Flock Protocol)
+ * SecuraCV Canary — Mesh Network (Opera Protocol)
  * Version 0.1.0
  *
  * Secure peer-to-peer mesh network for canary devices.
@@ -8,7 +8,7 @@
  * Security Properties:
  * - Ed25519 device key authentication
  * - ChaCha20-Poly1305 encrypted messages
- * - Flock isolation (prevents neighbor interference)
+ * - Opera isolation (prevents neighbor interference)
  * - Visual pairing confirmation codes
  * - Replay prevention with monotonic counters
  *
@@ -32,9 +32,9 @@ namespace mesh_network {
 static const uint8_t PROTOCOL_VERSION = 0;
 
 // Network limits
-static const size_t MAX_FLOCK_SIZE = 16;           // Maximum peers in a flock
+static const size_t MAX_FLOCK_SIZE = 16;           // Maximum peers in a opera
 static const size_t MAX_PEER_NAME_LEN = 24;        // Max device name length
-static const size_t MAX_FLOCK_NAME_LEN = 32;       // Max flock name length
+static const size_t MAX_FLOCK_NAME_LEN = 32;       // Max opera name length
 static const size_t MAX_MESSAGE_SIZE = 250;        // ESP-NOW limit
 static const size_t MAX_ALERT_HISTORY = 32;        // Stored alerts
 
@@ -70,8 +70,8 @@ static const uint8_t BROADCAST_ADDR[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 enum MeshState : uint8_t {
   MESH_DISABLED = 0,       // Feature disabled
   MESH_INITIALIZING,       // Loading config, starting transports
-  MESH_NO_FLOCK,           // No flock configured, awaiting pairing
-  MESH_CONNECTING,         // Attempting to reach flock members
+  MESH_NO_FLOCK,           // No opera configured, awaiting pairing
+  MESH_CONNECTING,         // Attempting to reach opera members
   MESH_ACTIVE,             // Connected to one or more peers
   MESH_PAIRING_INIT,       // Pairing mode - initiator
   MESH_PAIRING_JOIN,       // Pairing mode - joiner
@@ -88,7 +88,7 @@ enum PeerState : uint8_t {
   PEER_STALE,              // No heartbeat for 90s
   PEER_OFFLINE,            // No heartbeat for 5min
   PEER_ALERT,              // Received alert from this peer
-  PEER_REMOVED             // Removed from flock
+  PEER_REMOVED             // Removed from opera
 };
 
 // Message types
@@ -127,7 +127,7 @@ enum AlertType : uint8_t {
 // Pairing role
 enum PairingRole : uint8_t {
   PAIR_ROLE_NONE = 0,
-  PAIR_ROLE_INITIATOR,     // Existing flock member
+  PAIR_ROLE_INITIATOR,     // Existing opera member
   PAIR_ROLE_JOINER         // New device joining
 };
 
@@ -136,7 +136,7 @@ enum PairingRole : uint8_t {
 // ════════════════════════════════════════════════════════════════════════════
 
 // Peer information
-struct FlockPeer {
+struct OperaPeer {
   uint8_t pubkey[PUBKEY_SIZE];              // Device public key
   uint8_t fingerprint[FINGERPRINT_SIZE];    // Key fingerprint
   uint8_t mac_addr[6];                      // ESP-NOW MAC address
@@ -152,13 +152,13 @@ struct FlockPeer {
   bool session_established;                 // Session key derived
 };
 
-// Flock configuration (persisted to NVS)
-struct FlockConfig {
+// Opera configuration (persisted to NVS)
+struct OperaConfig {
   bool enabled;
-  bool configured;                          // Has flock been set up
-  uint8_t flock_id[FLOCK_ID_SIZE];
-  uint8_t flock_secret[FLOCK_SECRET_SIZE];
-  char flock_name[MAX_FLOCK_NAME_LEN + 1];
+  bool configured;                          // Has opera been set up
+  uint8_t opera_id[FLOCK_ID_SIZE];
+  uint8_t opera_secret[FLOCK_SECRET_SIZE];
+  char opera_name[MAX_FLOCK_NAME_LEN + 1];
   uint8_t peer_count;
   // Peer pubkeys stored separately
 };
@@ -178,7 +178,7 @@ struct MeshStatus {
   uint32_t auth_failures;
   uint32_t uptime_ms;
   uint32_t last_heartbeat_ms;
-  char flock_id_hex[FLOCK_ID_SIZE * 2 + 1];
+  char opera_id_hex[FLOCK_ID_SIZE * 2 + 1];
 };
 
 // Pairing session state
@@ -214,7 +214,7 @@ struct MeshAlert {
 struct MessageHeader {
   uint8_t version;
   uint8_t msg_type;
-  uint8_t flock_id[FLOCK_ID_SIZE];
+  uint8_t opera_id[FLOCK_ID_SIZE];
   uint8_t sender_fp[FINGERPRINT_SIZE];
   uint64_t counter;
   uint32_t timestamp;
@@ -238,7 +238,7 @@ struct AuthChallengePayload {
 struct AuthResponsePayload {
   uint8_t challenge_sig[SIGNATURE_SIZE];
   uint8_t pubkey[PUBKEY_SIZE];
-  uint8_t flock_proof[SIGNATURE_SIZE];      // Signs flock_id
+  uint8_t opera_proof[SIGNATURE_SIZE];      // Signs opera_id
 };
 
 // Tamper alert payload
@@ -274,8 +274,8 @@ struct PairDiscoverPayload {
 struct PairOfferPayload {
   uint8_t ephemeral_pubkey[PUBKEY_SIZE];
   uint8_t device_pubkey[PUBKEY_SIZE];
-  char flock_name[MAX_FLOCK_NAME_LEN + 1];
-  uint8_t flock_member_count;
+  char opera_name[MAX_FLOCK_NAME_LEN + 1];
+  uint8_t opera_member_count;
 };
 
 // Pairing confirmation (after code verified)
@@ -283,7 +283,7 @@ struct PairConfirmPayload {
   uint8_t confirmation_hash[32];            // Proves both saw same code
 };
 
-// Pairing complete (sends encrypted flock secret)
+// Pairing complete (sends encrypted opera secret)
 struct PairCompletePayload {
   uint8_t encrypted_secret[FLOCK_SECRET_SIZE + 16];  // ChaCha20-Poly1305
   uint8_t nonce[NONCE_SIZE];
@@ -297,7 +297,7 @@ struct PairCompletePayload {
 typedef void (*AlertCallback)(const MeshAlert* alert);
 
 // Callback when peer state changes
-typedef void (*PeerStateCallback)(const FlockPeer* peer, PeerState old_state, PeerState new_state);
+typedef void (*PeerStateCallback)(const OperaPeer* peer, PeerState old_state, PeerState new_state);
 
 // Callback when pairing state changes
 typedef void (*PairingCallback)(PairingRole role, uint32_t confirmation_code, bool success);
@@ -349,8 +349,8 @@ const char* alert_type_name(AlertType type);
 // Check if mesh is active and connected
 bool is_active();
 
-// Check if we're in a flock
-bool has_flock();
+// Check if we're in a opera
+bool has_opera();
 
 // ──────────────────────────────────────────────────────────────────────────
 // Peer management
@@ -360,38 +360,38 @@ bool has_flock();
 uint8_t get_peer_count();
 
 // Get peer by index (0 to peer_count-1)
-const FlockPeer* get_peer(uint8_t index);
+const OperaPeer* get_peer(uint8_t index);
 
 // Get peer by fingerprint
-const FlockPeer* get_peer_by_fingerprint(const uint8_t* fingerprint);
+const OperaPeer* get_peer_by_fingerprint(const uint8_t* fingerprint);
 
 // Get online peer count
 uint8_t get_online_peer_count();
 
-// Remove peer from flock (requires re-keying)
+// Remove peer from opera (requires re-keying)
 bool remove_peer(const uint8_t* fingerprint);
 
 // ──────────────────────────────────────────────────────────────────────────
-// Flock management
+// Opera management
 // ──────────────────────────────────────────────────────────────────────────
 
-// Get flock configuration
-const FlockConfig* get_flock_config();
+// Get opera configuration
+const OperaConfig* get_opera_config();
 
-// Set flock name
-bool set_flock_name(const char* name);
+// Set opera name
+bool set_opera_name(const char* name);
 
-// Leave current flock
-bool leave_flock();
+// Leave current opera
+bool leave_opera();
 
 // ──────────────────────────────────────────────────────────────────────────
 // Pairing
 // ──────────────────────────────────────────────────────────────────────────
 
-// Start pairing as initiator (existing flock member or creating new flock)
-bool start_pairing_initiator(const char* flock_name = nullptr);
+// Start pairing as initiator (existing opera member or creating new opera)
+bool start_pairing_initiator(const char* opera_name = nullptr);
 
-// Start pairing as joiner (joining existing flock)
+// Start pairing as joiner (joining existing opera)
 bool start_pairing_joiner();
 
 // Cancel ongoing pairing
