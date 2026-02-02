@@ -84,10 +84,25 @@ Each build environment **must** bind exactly:
 - One core entrypoint from `common/`
 
 ### `projects/` — Thin Wrappers
+Projects are **product-level wrappers**: they define the user-facing firmware
+package (name, versioning, distribution assets) and **select** which build
+environment to use. Projects **do not** define toolchains or pin maps; they
+reference them.
+
 Projects should be thin “composition layers” that tie together:
-- A board definition
-- A configuration
-- A build environment
+- A board definition (via the selected environment)
+- A configuration (via the selected environment)
+- A build environment (toolchain + target + bindings)
+
+Example structure:
+
+```
+projects/
+  <project_id>/
+    README.md               # Product intent + supported targets
+    envs/                   # Links or references to envs/
+    assets/                 # Optional packaging metadata
+```
 
 Projects **must not** re-implement core logic. If you need new behavior, add it
 to `common/` and reference it.
