@@ -23,11 +23,17 @@
 #ifdef LOG_LEVEL_INFO
 #undef LOG_LEVEL_INFO
 #endif
+#ifdef LOG_LEVEL_NOTICE
+#undef LOG_LEVEL_NOTICE
+#endif
 #ifdef LOG_LEVEL_WARNING
 #undef LOG_LEVEL_WARNING
 #endif
 #ifdef LOG_LEVEL_ERROR
 #undef LOG_LEVEL_ERROR
+#endif
+#ifdef LOG_LEVEL_CRITICAL
+#undef LOG_LEVEL_CRITICAL
 #endif
 
 #include "health_log.h"
@@ -113,7 +119,7 @@ static void save_paired_devices();
 static void update_status_characteristic();
 static void handle_inactivity_timeout();
 static void handle_scan_timeout();
-static DeviceType detect_device_type(NimBLEAdvertisedDevice* device);
+static DeviceType detect_device_type(const NimBLEAdvertisedDevice* device);
 
 // ════════════════════════════════════════════════════════════════════════════
 // BLE CALLBACKS
@@ -122,7 +128,7 @@ static DeviceType detect_device_type(NimBLEAdvertisedDevice* device);
 class ServerCallbacks : public NimBLEServerCallbacks {
   void onConnect(NimBLEServer* server, NimBLEConnInfo& connInfo) override {
     g_connection.connected = true;
-    memcpy(g_connection.address, connInfo.getAddress().getNative(), BLE_ADDRESS_LENGTH);
+    memcpy(g_connection.address, connInfo.getAddress().getBase()->val, BLE_ADDRESS_LENGTH);
 
     NimBLEAddress addr(connInfo.getAddress());
     strncpy(g_connection.name, addr.toString().c_str(), MAX_DEVICE_NAME_LEN);
@@ -192,7 +198,7 @@ class ServerCallbacks : public NimBLEServerCallbacks {
         // Add to paired devices
         bool found = false;
         for (size_t i = 0; i < g_paired_count; i++) {
-          if (memcmp(g_paired_devices[i].address, connInfo.getAddress().getNative(), BLE_ADDRESS_LENGTH) == 0) {
+          if (memcmp(g_paired_devices[i].address, connInfo.getAddress().getBase()->val, BLE_ADDRESS_LENGTH) == 0) {
             g_paired_devices[i].last_connected_ms = millis();
             g_paired_devices[i].connection_count++;
             g_paired_devices[i].security = SEC_BONDED;
@@ -203,7 +209,7 @@ class ServerCallbacks : public NimBLEServerCallbacks {
 
         if (!found && g_paired_count < MAX_PAIRED_DEVICES) {
           PairedDevice* dev = &g_paired_devices[g_paired_count++];
-          memcpy(dev->address, connInfo.getAddress().getNative(), BLE_ADDRESS_LENGTH);
+          memcpy(dev->address, connInfo.getAddress().getBase()->val, BLE_ADDRESS_LENGTH);
           dev->address_type = connInfo.getAddress().getType();
           strncpy(dev->name, g_connection.name, MAX_DEVICE_NAME_LEN);
           dev->name[MAX_DEVICE_NAME_LEN] = '\0';
@@ -232,29 +238,27 @@ class ServerCallbacks : public NimBLEServerCallbacks {
     }
   }
 
-  uint32_t onPassKeyRequest() override {
-    // Generate random 6-digit PIN
-    g_pairing.pin_code = esp_random() % 900000 + 100000;
+  void onPassKeyDisplay(NimBLEConnInfo& connInfo, uint32_t passkey) override {
+    // NimBLE 2.x provides the passkey to display
+    g_pairing.pin_code = passkey;
     g_pairing.state = PAIR_PIN_DISPLAYED;
     g_pairing.pin_displayed = true;
 
     char pin_str[16];
-    snprintf(pin_str, sizeof(pin_str), "%06lu", g_pairing.pin_code);
+    snprintf(pin_str, sizeof(pin_str), "%06lu", (unsigned long)passkey);
     log_health(LOG_LEVEL_NOTICE, LOG_CAT_BLUETOOTH, "Pairing PIN displayed", pin_str);
 
     if (g_pair_callback) {
       g_pair_callback(&g_pairing);
     }
-
-    return g_pairing.pin_code;
   }
 
-  bool onConfirmPIN(uint32_t pin) override {
+  void onConfirmPasskey(NimBLEConnInfo& connInfo, uint32_t passkey) override {
     g_pairing.state = PAIR_CONFIRMING;
-    g_pairing.pin_code = pin;
+    g_pairing.pin_code = passkey;
 
     char pin_str[16];
-    snprintf(pin_str, sizeof(pin_str), "%06lu", pin);
+    snprintf(pin_str, sizeof(pin_str), "%06lu", (unsigned long)passkey);
     log_health(LOG_LEVEL_NOTICE, LOG_CAT_BLUETOOTH, "Confirm pairing PIN", pin_str);
 
     if (g_pair_callback) {
@@ -262,7 +266,7 @@ class ServerCallbacks : public NimBLEServerCallbacks {
     }
 
     // Auto-confirm for now - in production, wait for user confirmation
-    return true;
+    NimBLEDevice::injectConfirmPasskey(connInfo, true);
   }
 };
 
@@ -285,10 +289,10 @@ class CharacteristicCallbacks : public NimBLECharacteristicCallbacks {
 };
 
 class ScanCallbacks : public NimBLEScanCallbacks {
-  void onResult(NimBLEAdvertisedDevice* device) override {
+  void onResult(const NimBLEAdvertisedDevice* device) override {
     // Check if already in list
     for (size_t i = 0; i < g_scanned_count; i++) {
-      if (memcmp(g_scanned_devices[i].address, device->getAddress().getNative(), BLE_ADDRESS_LENGTH) == 0) {
+      if (memcmp(g_scanned_devices[i].address, device->getAddress().getBase()->val, BLE_ADDRESS_LENGTH) == 0) {
         // Update existing entry
         g_scanned_devices[i].rssi = device->getRSSI();
         g_scanned_devices[i].last_seen_ms = millis();
@@ -299,7 +303,7 @@ class ScanCallbacks : public NimBLEScanCallbacks {
     // Add new device
     if (g_scanned_count < MAX_SCANNED_DEVICES) {
       ScannedDevice* entry = &g_scanned_devices[g_scanned_count++];
-      memcpy(entry->address, device->getAddress().getNative(), BLE_ADDRESS_LENGTH);
+      memcpy(entry->address, device->getAddress().getBase()->val, BLE_ADDRESS_LENGTH);
 
       if (device->haveName()) {
         strncpy(entry->name, device->getName().c_str(), MAX_DEVICE_NAME_LEN);
@@ -320,7 +324,7 @@ class ScanCallbacks : public NimBLEScanCallbacks {
     }
   }
 
-  void onScanEnd(NimBLEScanResults results) override {
+  void onScanEnd(const NimBLEScanResults& results, int reason) override {
     g_scanning = false;
     set_state(g_connection.connected ? BT_CONNECTED : BT_IDLE);
     log_health(LOG_LEVEL_INFO, LOG_CAT_BLUETOOTH, "BLE scan complete",
@@ -449,7 +453,7 @@ static void handle_scan_timeout() {
   }
 }
 
-static DeviceType detect_device_type(NimBLEAdvertisedDevice* device) {
+static DeviceType detect_device_type(const NimBLEAdvertisedDevice* device) {
   // Check for SecuraCV service first
   if (device->isAdvertisingService(NimBLEUUID(SERVICE_UUID))) {
     return DEV_SECURACV;
