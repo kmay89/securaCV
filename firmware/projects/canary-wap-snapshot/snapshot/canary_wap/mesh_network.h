@@ -477,7 +477,7 @@ static const size_t MAX_RECENT_CHIRPS = 16;        // Stored chirps
 static const size_t MAX_NONCE_CACHE = 100;         // Deduplication cache
 static const size_t MAX_NEARBY_CACHE = 32;         // Nearby device cache
 static const size_t SESSION_ID_SIZE = 8;           // Ephemeral session ID
-static const size_t EMOJI_DISPLAY_SIZE = 13;       // "🐦🌳⭐" + null
+static const size_t EMOJI_DISPLAY_SIZE = 19;       // 3 emojis (up to 6 bytes each) + null
 
 // Timing (milliseconds)
 static const uint32_t PRESENCE_INTERVAL_MS = 60000;    // Send presence every 60s

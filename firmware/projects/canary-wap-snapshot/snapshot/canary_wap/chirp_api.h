@@ -64,11 +64,11 @@ inline esp_err_t handle_chirp_nearby(httpd_req_t* req) {
   size_t count;
   const chirp_channel::NearbyDevice* devices = chirp_channel::get_nearby_devices(&count);
 
-  StaticJsonDocument<1024> doc;
+  StaticJsonDocument<3072> doc;
   doc["count"] = count;
 
   JsonArray arr = doc.createNestedArray("devices");
-  for (size_t i = 0; i < count && i < 16; i++) {
+  for (size_t i = 0; i < count && i < chirp_channel::MAX_NEARBY_CACHE; i++) {
     JsonObject dev = arr.createNestedObject();
     dev["emoji"] = devices[i].emoji;
     dev["age_sec"] = (millis() - devices[i].last_seen_ms) / 1000;
@@ -76,7 +76,7 @@ inline esp_err_t handle_chirp_nearby(httpd_req_t* req) {
     dev["listening"] = devices[i].listening;
   }
 
-  char buffer[1024];
+  char buffer[3072];
   serializeJson(doc, buffer);
 
   httpd_resp_set_type(req, "application/json");
@@ -380,6 +380,12 @@ inline esp_err_t handle_chirp_ack(httpd_req_t* req) {
   const char* nonce_hex = input["nonce"] | "";
   const char* ack_type_str = input["type"] | "seen";
 
+  // Validate nonce hex length
+  if (strlen(nonce_hex) != 16) {
+    httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid nonce format (expected 16 hex chars)");
+    return ESP_FAIL;
+  }
+
   // Parse nonce from hex
   uint8_t nonce[8];
   for (int i = 0; i < 8; i++) {
@@ -422,6 +428,12 @@ inline esp_err_t handle_chirp_dismiss(httpd_req_t* req) {
   }
 
   const char* nonce_hex = input["nonce"] | "";
+
+  // Validate nonce hex length
+  if (strlen(nonce_hex) != 16) {
+    httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid nonce format (expected 16 hex chars)");
+    return ESP_FAIL;
+  }
 
   uint8_t nonce[8];
   for (int i = 0; i < 8; i++) {
@@ -555,6 +567,12 @@ inline esp_err_t handle_chirp_confirm(httpd_req_t* req) {
   }
 
   const char* nonce_hex = input["nonce"] | "";
+
+  // Validate nonce hex length
+  if (strlen(nonce_hex) != 16) {
+    httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid nonce format (expected 16 hex chars)");
+    return ESP_FAIL;
+  }
 
   uint8_t nonce[8];
   for (int i = 0; i < 8; i++) {

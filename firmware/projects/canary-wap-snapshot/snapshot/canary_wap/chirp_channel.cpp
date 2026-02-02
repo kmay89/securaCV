@@ -245,11 +245,17 @@ static void generate_session_identity() {
 
 static void generate_emoji_string(const uint8_t* session_id, char* emoji_out) {
   // Use first 3 nibbles to select 3 emojis
-  emoji_out[0] = '\0';
+  // Each emoji can be up to 6 bytes, so max size is 3*6+1=19 bytes
+  size_t pos = 0;
   for (int i = 0; i < 3; i++) {
     uint8_t idx = session_id[i] % 16;
-    strcat(emoji_out, EMOJI_SET[idx]);
+    size_t emoji_len = strlen(EMOJI_SET[idx]);
+    if (pos + emoji_len < EMOJI_DISPLAY_SIZE) {
+      memcpy(emoji_out + pos, EMOJI_SET[idx], emoji_len);
+      pos += emoji_len;
+    }
   }
+  emoji_out[pos] = '\0';
 }
 
 // ════════════════════════════════════════════════════════════════════════════
