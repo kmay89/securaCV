@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Result};
 use rusqlite::{params, Connection};
+use std::collections::HashSet;
 use std::time::Duration;
 
 use crate::crypto::signatures::{SignatureKeys, DOMAIN_CHECKPOINT, DOMAIN_SEALED_LOG_ENTRY};
@@ -63,36 +64,16 @@ impl SqliteSealedLogStore {
             CREATE INDEX IF NOT EXISTS idx_events_created ON sealed_events(created_at);
             "#,
         )?;
-        self.ensure_signature_columns("sealed_events")?;
-        self.ensure_signature_columns("checkpoints")?;
-        Ok(())
-    }
-
-    fn ensure_signature_columns(&mut self, table: &str) -> Result<()> {
-        let mut stmt = self.conn.prepare(&format!("PRAGMA table_info({})", table))?;
-        let mut rows = stmt.query([])?;
-        let mut has_pq_signature = false;
-        let mut has_pq_scheme = false;
-        while let Some(row) = rows.next()? {
-            let name: String = row.get(1)?;
-            if name == "pq_signature" {
-                has_pq_signature = true;
-            } else if name == "pq_scheme" {
-                has_pq_scheme = true;
-            }
-        }
-        if !has_pq_signature {
-            self.conn.execute(
-                &format!("ALTER TABLE {} ADD COLUMN pq_signature BLOB", table),
-                [],
-            )?;
-        }
-        if !has_pq_scheme {
-            self.conn.execute(
-                &format!("ALTER TABLE {} ADD COLUMN pq_scheme TEXT", table),
-                [],
-            )?;
-        }
+        ensure_columns(
+            &self.conn,
+            "sealed_events",
+            &[("pq_signature", "BLOB"), ("pq_scheme", "TEXT")],
+        )?;
+        ensure_columns(
+            &self.conn,
+            "checkpoints",
+            &[("pq_signature", "BLOB"), ("pq_scheme", "TEXT")],
+        )?;
         Ok(())
     }
 
@@ -145,6 +126,32 @@ impl SqliteSealedLogStore {
             self.last_chain_head()
         }
     }
+}
+
+pub fn ensure_columns(
+    conn: &Connection,
+    table: &str,
+    columns_to_add: &[(&str, &str)],
+) -> Result<()> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({})", table))?;
+    let existing_columns: HashSet<String> = stmt
+        .query_map([], |row| row.get(1))?
+        .collect::<std::result::Result<Vec<String>, _>>()?
+        .into_iter()
+        .collect();
+
+    for (column, column_type) in columns_to_add {
+        if !existing_columns.contains(*column) {
+            conn.execute(
+                &format!(
+                    "ALTER TABLE {} ADD COLUMN {} {}",
+                    table, column, column_type
+                ),
+                [],
+            )?;
+        }
+    }
+    Ok(())
 }
 
 impl SealedLogStore for SqliteSealedLogStore {

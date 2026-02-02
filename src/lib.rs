@@ -34,6 +34,7 @@ use crate::crypto::signatures::{
     PqPublicKey, SignatureKeys, SignatureMode, SignatureSet, DOMAIN_BREAK_GLASS_RECEIPT,
     DOMAIN_EXPORT_RECEIPT,
 };
+use crate::storage::ensure_columns;
 
 #[cfg(feature = "pqc-signatures")]
 use crate::crypto::signatures::PqKeypair;
@@ -723,10 +724,26 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
             "#,
         )?;
         self.ensure_break_glass_receipts_columns()?;
-        self.ensure_signature_columns("sealed_events")?;
-        self.ensure_signature_columns("checkpoints")?;
-        self.ensure_signature_columns("break_glass_receipts")?;
-        self.ensure_signature_columns("export_receipts")?;
+        ensure_columns(
+            &self.conn,
+            "sealed_events",
+            &[("pq_signature", "BLOB"), ("pq_scheme", "TEXT")],
+        )?;
+        ensure_columns(
+            &self.conn,
+            "checkpoints",
+            &[("pq_signature", "BLOB"), ("pq_scheme", "TEXT")],
+        )?;
+        ensure_columns(
+            &self.conn,
+            "break_glass_receipts",
+            &[("pq_signature", "BLOB"), ("pq_scheme", "TEXT")],
+        )?;
+        ensure_columns(
+            &self.conn,
+            "export_receipts",
+            &[("pq_signature", "BLOB"), ("pq_scheme", "TEXT")],
+        )?;
         self.ensure_device_metadata_columns()?;
         Ok(())
     }
@@ -753,62 +770,12 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         Ok(())
     }
 
-    fn ensure_signature_columns(&mut self, table: &str) -> Result<()> {
-        let mut stmt = self
-            .conn
-            .prepare(&format!("PRAGMA table_info({})", table))?;
-        let mut rows = stmt.query([])?;
-        let mut has_pq_signature = false;
-        let mut has_pq_scheme = false;
-        while let Some(row) = rows.next()? {
-            let name: String = row.get(1)?;
-            if name == "pq_signature" {
-                has_pq_signature = true;
-            } else if name == "pq_scheme" {
-                has_pq_scheme = true;
-            }
-        }
-        if !has_pq_signature {
-            self.conn.execute(
-                &format!("ALTER TABLE {} ADD COLUMN pq_signature BLOB", table),
-                [],
-            )?;
-        }
-        if !has_pq_scheme {
-            self.conn.execute(
-                &format!("ALTER TABLE {} ADD COLUMN pq_scheme TEXT", table),
-                [],
-            )?;
-        }
-        Ok(())
-    }
-
     fn ensure_device_metadata_columns(&mut self) -> Result<()> {
-        let mut stmt = self.conn.prepare("PRAGMA table_info(device_metadata)")?;
-        let mut rows = stmt.query([])?;
-        let mut has_pq_public_key = false;
-        let mut has_pq_secret_key = false;
-        while let Some(row) = rows.next()? {
-            let name: String = row.get(1)?;
-            if name == "pq_public_key" {
-                has_pq_public_key = true;
-            } else if name == "pq_secret_key" {
-                has_pq_secret_key = true;
-            }
-        }
-        if !has_pq_public_key {
-            self.conn.execute(
-                "ALTER TABLE device_metadata ADD COLUMN pq_public_key BLOB",
-                [],
-            )?;
-        }
-        if !has_pq_secret_key {
-            self.conn.execute(
-                "ALTER TABLE device_metadata ADD COLUMN pq_secret_key BLOB",
-                [],
-            )?;
-        }
-        Ok(())
+        ensure_columns(
+            &self.conn,
+            "device_metadata",
+            &[("pq_public_key", "BLOB"), ("pq_secret_key", "BLOB")],
+        )
     }
 
     fn ensure_device_public_key(&mut self) -> Result<()> {
