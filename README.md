@@ -57,7 +57,7 @@ Next: for a real RTSP stream or a local V4L2 device, see the ingestion sections 
 
 Device firmware lives under `firmware/`.
 
-- **Canary Vision (ESP32-C3 + Grove Vision AI V2)**: `firmware/canary_vision/`  
+- **Canary Vision (ESP32-C3 + Grove Vision AI V2)**: `firmware/projects/canary-vision/`  
   PlatformIO project that publishes privacy-preserving semantic events and Home Assistant MQTT discovery.
 
 ## Release Gate (v1 Tagging)

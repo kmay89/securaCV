@@ -2,11 +2,17 @@
 
 This directory contains firmware projects for SecuraCV hardware nodes (ESP32, etc.). Each firmware project is designed to publish **privacy-preserving semantic telemetry** (events + state), not raw video.
 
+## Architecture (Required)
+
+Before adding or restructuring firmware work, read the canonical architecture guide:
+
+- `firmware/ARCHITECTURE.md`
+
 ## Projects
 
 ### Canary Vision (ESP32-C3 + Grove Vision AI V2)
 
-Path: `firmware/canary_vision/`
+Path: `firmware/projects/canary-vision/`
 
 Purpose:
 - Publishes semantic events like `presence_started`, `dwell_started`, `interaction_likely`
@@ -37,7 +43,7 @@ Prereqs:
 From the repo root:
 
 ```bash
-cd firmware/canary_vision
+cd firmware/projects/canary-vision
 pio run
 pio run -t upload
 pio device monitor -b 115200
