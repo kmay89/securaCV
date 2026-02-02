@@ -19,6 +19,33 @@
 // ════════════════════════════════════════════════════════════════════════════
 
 static const char* NVS_CHIRP_NS = "chirp";
+static const char* NVS_SECURACV_NS = "securacv";
+
+// ════════════════════════════════════════════════════════════════════════════
+// GLOBAL PREFERENCES INSTANCE (shared across modules)
+// ════════════════════════════════════════════════════════════════════════════
+
+// Global Preferences object for modules that need direct access
+extern Preferences g_prefs;
+
+// ════════════════════════════════════════════════════════════════════════════
+// LEGACY NVS FUNCTIONS (for backward compatibility with bluetooth_channel)
+// ════════════════════════════════════════════════════════════════════════════
+
+// Open NVS in read-write mode (uses securacv namespace)
+inline bool nvs_open_rw() {
+  return g_prefs.begin(NVS_SECURACV_NS, false);
+}
+
+// Open NVS in read-only mode (uses securacv namespace)
+inline bool nvs_open_ro() {
+  return g_prefs.begin(NVS_SECURACV_NS, true);
+}
+
+// Close NVS
+inline void nvs_close() {
+  g_prefs.end();
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 // RAII NVS SESSION CLASS
