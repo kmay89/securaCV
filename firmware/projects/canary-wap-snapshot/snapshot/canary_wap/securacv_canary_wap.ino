@@ -84,6 +84,8 @@
 #include "wap_server.h"
 #include "web_ui.h"
 #include "mesh_network.h"
+#include "bluetooth_channel.h"
+#include "bluetooth_api.h"
 
 // ════════════════════════════════════════════════════════════════════════════
 // COMPILE-TIME FEATURE FLAGS
@@ -97,6 +99,7 @@
 #define FEATURE_WATCHDOG      1   // Enable hardware watchdog
 #define FEATURE_STATE_LOG     1   // Log state transitions
 #define FEATURE_MESH_NETWORK  1   // Enable mesh network (opera)
+#define FEATURE_BLUETOOTH     1   // Enable Bluetooth Low Energy
 
 #define DEBUG_NMEA            0   // Print raw NMEA sentences
 #define DEBUG_CBOR            0   // Print CBOR hex dump
@@ -2701,6 +2704,11 @@ static void start_http_server() {
   httpd_register_uri_handler(g_http_server, &mesh_name);
 #endif
 
+#if FEATURE_BLUETOOTH
+  // Bluetooth endpoints
+  bluetooth_api::register_routes(g_http_server);
+#endif
+
   log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "HTTP server started", "port 80");
 }
 
@@ -3279,6 +3287,17 @@ void setup() {
   }
   #endif
 
+  // Initialize Bluetooth
+  #if FEATURE_BLUETOOTH
+  Serial.println("[..] Initializing Bluetooth Low Energy...");
+  if (bluetooth_channel::init()) {
+    Serial.println("[OK] Bluetooth initialized");
+    log_health(LOG_LEVEL_INFO, LOG_CAT_BLUETOOTH, "Bluetooth initialized", nullptr);
+  } else {
+    Serial.println("[WARN] Bluetooth init failed");
+  }
+  #endif
+
   // Initialize GNSS
   Serial.println();
   Serial.printf("[..] GNSS: %u baud, RX=GPIO%d, TX=GPIO%d\n", GPS_BAUD, GPS_RX_GPIO, GPS_TX_GPIO);
@@ -3379,6 +3398,11 @@ void loop() {
   // Update mesh network
   #if FEATURE_MESH_NETWORK
   mesh_network::update();
+  #endif
+
+  // Update Bluetooth
+  #if FEATURE_BLUETOOTH
+  bluetooth_channel::update();
   #endif
 
   // Create witness records at interval

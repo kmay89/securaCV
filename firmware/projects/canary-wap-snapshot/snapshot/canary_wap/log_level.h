@@ -37,7 +37,8 @@ enum LogCategory : uint8_t {
   LOG_CAT_SENSOR     = 6,   // PIR, tamper, environmental
   LOG_CAT_USER       = 7,   // User actions (config changes, acknowledgments)
   LOG_CAT_WITNESS    = 8,   // Witness record creation
-  LOG_CAT_MESH       = 9    // Mesh network (flock) operations
+  LOG_CAT_MESH       = 9,   // Mesh network (flock) operations
+  LOG_CAT_BLUETOOTH  = 10   // Bluetooth Low Energy operations
 };
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -85,17 +86,18 @@ inline const char* log_level_name_short(LogLevel level) {
 
 inline const char* log_category_name(LogCategory cat) {
   switch (cat) {
-    case LOG_CAT_SYSTEM:   return "SYSTEM";
-    case LOG_CAT_CRYPTO:   return "CRYPTO";
-    case LOG_CAT_CHAIN:    return "CHAIN";
-    case LOG_CAT_GPS:      return "GPS";
-    case LOG_CAT_STORAGE:  return "STORAGE";
-    case LOG_CAT_NETWORK:  return "NETWORK";
-    case LOG_CAT_SENSOR:   return "SENSOR";
-    case LOG_CAT_USER:     return "USER";
-    case LOG_CAT_WITNESS:  return "WITNESS";
-    case LOG_CAT_MESH:     return "MESH";
-    default:               return "???";
+    case LOG_CAT_SYSTEM:    return "SYSTEM";
+    case LOG_CAT_CRYPTO:    return "CRYPTO";
+    case LOG_CAT_CHAIN:     return "CHAIN";
+    case LOG_CAT_GPS:       return "GPS";
+    case LOG_CAT_STORAGE:   return "STORAGE";
+    case LOG_CAT_NETWORK:   return "NETWORK";
+    case LOG_CAT_SENSOR:    return "SENSOR";
+    case LOG_CAT_USER:      return "USER";
+    case LOG_CAT_WITNESS:   return "WITNESS";
+    case LOG_CAT_MESH:      return "MESH";
+    case LOG_CAT_BLUETOOTH: return "BLUETOOTH";
+    default:                return "???";
   }
 }
 

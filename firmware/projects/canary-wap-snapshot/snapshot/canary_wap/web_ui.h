@@ -621,6 +621,10 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           <span class="badge-dot"></span>
           <span id="cameraStatus">CAM</span>
         </div>
+        <div class="badge info" id="btBadge">
+          <span class="badge-dot"></span>
+          <span id="btStatus">BT</span>
+        </div>
       </div>
     </div>
   </header>
@@ -640,6 +644,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       </button>
       <button class="nav-btn" data-panel="witness">Witness</button>
       <button class="nav-btn" data-panel="settings">Settings</button>
+      <button class="nav-btn" data-panel="bluetooth">Bluetooth</button>
     </nav>
 
     <!-- Status Panel -->
@@ -1360,6 +1365,233 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         </div>
       </div>
     </div>
+
+    <!-- Bluetooth Panel -->
+    <div class="panel" id="panel-bluetooth">
+      <!-- Status Card -->
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Bluetooth Status</div>
+            <div class="card-subtitle" id="btSubtitle">BLE connectivity status</div>
+          </div>
+          <div class="badge info" id="btStateBadge">
+            <span class="badge-dot"></span>
+            <span id="btStateText">Loading...</span>
+          </div>
+        </div>
+        <div class="stats-grid">
+          <div class="stat-item">
+            <div class="stat-label">State</div>
+            <div class="stat-value" style="font-size:0.9rem;" id="btStateVal">--</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-label">Device Name</div>
+            <div class="stat-value" style="font-size:0.8rem;" id="btDeviceName">--</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-label">Address</div>
+            <div class="stat-value" style="font-size:0.7rem;" id="btLocalAddr">--</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-label">TX Power</div>
+            <div class="stat-value" id="btTxPower">--<span class="stat-unit">dBm</span></div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-label">Paired Devices</div>
+            <div class="stat-value" id="btPairedCount">0</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-label">Connections</div>
+            <div class="stat-value" id="btTotalConns">0</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:1rem;">
+          <label class="toggle-label" style="display:flex;align-items:center;gap:0.5rem;">
+            <input type="checkbox" id="btEnabled" onchange="toggleBtEnabled()">
+            <span>Bluetooth Enabled</span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Connection Card -->
+      <div class="card" id="btConnCard" style="display:none;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Current Connection</div>
+            <div class="card-subtitle">Connected device info</div>
+          </div>
+          <button class="btn btn-danger btn-sm" onclick="btDisconnect()">Disconnect</button>
+        </div>
+        <div class="stats-grid">
+          <div class="stat-item">
+            <div class="stat-label">Device</div>
+            <div class="stat-value" style="font-size:0.8rem;" id="btConnName">--</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-label">Address</div>
+            <div class="stat-value" style="font-size:0.7rem;" id="btConnAddr">--</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-label">Security</div>
+            <div class="stat-value" style="font-size:0.9rem;" id="btConnSecurity">--</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-label">Connected</div>
+            <div class="stat-value" id="btConnTime">--</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-label">Sent</div>
+            <div class="stat-value" id="btConnSent">0<span class="stat-unit">B</span></div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-label">Received</div>
+            <div class="stat-value" id="btConnRecv">0<span class="stat-unit">B</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Pairing Card -->
+      <div class="card" id="btPairingCard" style="display:none;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Pairing In Progress</div>
+            <div class="card-subtitle" id="btPairingSubtitle">Waiting for device...</div>
+          </div>
+        </div>
+        <div id="btPairingContent">
+          <div class="stat-item" style="text-align:center;padding:2rem;">
+            <div class="stat-label">Pairing PIN</div>
+            <div class="stat-value" style="font-size:2.5rem;letter-spacing:0.5rem;color:var(--accent);" id="btPairingPin">------</div>
+            <p style="font-size:0.8rem;color:var(--muted);margin-top:1rem;">Enter this PIN on the connecting device</p>
+          </div>
+        </div>
+        <div style="display:flex;gap:0.5rem;margin-top:1rem;">
+          <button class="btn btn-secondary" onclick="btCancelPairing()">Cancel Pairing</button>
+        </div>
+      </div>
+
+      <!-- Advertising & Scanning Controls -->
+      <div class="card" id="btControlsCard">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Controls</div>
+            <div class="card-subtitle">Advertising and scanning</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+          <button class="btn btn-primary" id="btAdvBtn" onclick="toggleBtAdvertising()">Start Advertising</button>
+          <button class="btn btn-secondary" id="btPairBtn" onclick="btStartPairing()">Start Pairing</button>
+          <button class="btn btn-secondary" id="btScanBtn" onclick="btStartScan()">Scan for Devices</button>
+        </div>
+        <div style="margin-top:1rem;">
+          <label class="toggle-label" style="display:flex;align-items:center;gap:0.5rem;">
+            <input type="checkbox" id="btAutoAdv" onchange="saveBtSettings()">
+            <span>Auto-advertise on boot</span>
+          </label>
+          <label class="toggle-label" style="display:flex;align-items:center;gap:0.5rem;margin-top:0.5rem;">
+            <input type="checkbox" id="btAllowPairing" onchange="saveBtSettings()">
+            <span>Allow new pairings</span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Scan Results Card -->
+      <div class="card" id="btScanCard" style="display:none;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Scan Results</div>
+            <div class="card-subtitle" id="btScanSubtitle">Nearby BLE devices</div>
+          </div>
+          <div style="display:flex;gap:0.5rem;">
+            <button class="btn btn-secondary btn-sm" onclick="btRefreshScan()">Refresh</button>
+            <button class="btn btn-ghost btn-sm" onclick="btClearScan()">Clear</button>
+          </div>
+        </div>
+        <div class="log-list" id="btScanList" style="max-height:300px;overflow-y:auto;">
+          <div class="loading"><div class="spinner"></div></div>
+        </div>
+      </div>
+
+      <!-- Paired Devices Card -->
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Paired Devices</div>
+            <div class="card-subtitle" id="btPairedSubtitle">Trusted connections</div>
+          </div>
+          <button class="btn btn-danger btn-sm" onclick="btClearAllPaired()">Clear All</button>
+        </div>
+        <div class="log-list" id="btPairedList" style="max-height:300px;overflow-y:auto;">
+          <p style="color:var(--muted);font-size:0.85rem;text-align:center;padding:1rem;">No paired devices</p>
+        </div>
+      </div>
+
+      <!-- Settings Card -->
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Bluetooth Settings</div>
+            <div class="card-subtitle">Configure BLE parameters</div>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Device Name</label>
+          <div style="display:flex;gap:0.5rem;">
+            <input type="text" class="form-input" id="btNameInput" placeholder="SecuraCV-Canary" style="flex:1;">
+            <button class="btn btn-secondary" onclick="btSetName()">Set</button>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">TX Power (dBm)</label>
+          <div style="display:flex;gap:0.5rem;align-items:center;">
+            <input type="range" id="btPowerSlider" min="-12" max="9" step="3" value="3" style="flex:1;" onchange="updatePowerDisplay()">
+            <span id="btPowerDisplay" style="min-width:50px;text-align:right;">+3 dBm</span>
+          </div>
+          <button class="btn btn-secondary btn-sm" onclick="btSetPower()" style="margin-top:0.5rem;">Apply Power</button>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Inactivity Timeout</label>
+          <select class="form-input" id="btTimeoutSelect" onchange="saveBtSettings()">
+            <option value="0">Never disconnect</option>
+            <option value="60">1 minute</option>
+            <option value="300" selected>5 minutes</option>
+            <option value="600">10 minutes</option>
+            <option value="1800">30 minutes</option>
+          </select>
+        </div>
+        <div style="margin-top:1rem;">
+          <label class="toggle-label" style="display:flex;align-items:center;gap:0.5rem;">
+            <input type="checkbox" id="btRequirePin" checked onchange="saveBtSettings()">
+            <span>Require PIN for pairing</span>
+          </label>
+          <label class="toggle-label" style="display:flex;align-items:center;gap:0.5rem;margin-top:0.5rem;">
+            <input type="checkbox" id="btNotifyConnect" checked onchange="saveBtSettings()">
+            <span>Log connection events</span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Info Card -->
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">About Bluetooth</div>
+            <div class="card-subtitle">How BLE works on this device</div>
+          </div>
+        </div>
+        <p style="font-size:0.85rem;color:var(--muted);line-height:1.6;">
+          <strong>Bluetooth Low Energy (BLE)</strong> allows your phone or tablet to connect
+          directly to this device for local monitoring and control. The device broadcasts its
+          presence when advertising is enabled, and paired devices can reconnect automatically.
+        </p>
+        <p style="font-size:0.85rem;color:var(--muted);line-height:1.6;margin-top:0.75rem;">
+          <strong>Security:</strong> All connections use encrypted communication. Pairing requires
+          PIN confirmation to prevent unauthorized access. Paired devices are stored securely and
+          can be managed from this panel.
+        </p>
+      </div>
+    </div>
   </div>
 
   <!-- Acknowledgment Modal -->
@@ -1416,6 +1648,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       else if (panel === 'peek') refreshPeekStatus();
       else if (panel === 'opera') refreshOpera();
       else if (panel === 'community') refreshChirpStatus();
+      else if (panel === 'bluetooth') { refreshBtStatus(); loadBtPairedDevices(); }
 
       // Stop peek stream when leaving peek panel
       if (panel !== 'peek' && peekActive) {
@@ -2658,6 +2891,380 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     });
 
     // ══════════════════════════════════════════════════════════════════
+    // BLUETOOTH
+    // ══════════════════════════════════════════════════════════════════
+
+    let btState = null;
+    let btScanning = false;
+
+    async function refreshBtStatus() {
+      const data = await api('/api/bluetooth');
+      if (!data.state) return;
+
+      btState = data;
+
+      // Update status display
+      document.getElementById('btStateVal').textContent = data.state;
+      document.getElementById('btDeviceName').textContent = data.device_name || '--';
+      document.getElementById('btLocalAddr').textContent = data.local_address || '--';
+      document.getElementById('btTxPower').innerHTML = (data.tx_power >= 0 ? '+' : '') + data.tx_power + '<span class="stat-unit">dBm</span>';
+      document.getElementById('btPairedCount').textContent = data.paired_count || 0;
+      document.getElementById('btTotalConns').textContent = data.stats?.total_connections || 0;
+
+      // Update enabled checkbox
+      document.getElementById('btEnabled').checked = data.enabled;
+
+      // Update header badge
+      const btBadge = document.getElementById('btBadge');
+      const btStatus = document.getElementById('btStatus');
+      if (data.connected) {
+        btBadge.className = 'badge success';
+        btStatus.textContent = 'Connected';
+      } else if (data.advertising) {
+        btBadge.className = 'badge info';
+        btStatus.textContent = 'Advertising';
+      } else if (data.enabled) {
+        btBadge.className = 'badge info';
+        btStatus.textContent = 'BT On';
+      } else {
+        btBadge.className = 'badge info';
+        btStatus.textContent = 'BT Off';
+      }
+
+      // Update state badge
+      const stateBadge = document.getElementById('btStateBadge');
+      const stateText = document.getElementById('btStateText');
+      stateText.textContent = data.state.charAt(0).toUpperCase() + data.state.slice(1);
+
+      if (data.state === 'connected') {
+        stateBadge.className = 'badge success';
+        document.getElementById('btSubtitle').textContent = 'Device connected';
+      } else if (data.state === 'advertising') {
+        stateBadge.className = 'badge info';
+        document.getElementById('btSubtitle').textContent = 'Waiting for connections';
+      } else if (data.state === 'scanning') {
+        stateBadge.className = 'badge info';
+        document.getElementById('btSubtitle').textContent = 'Scanning for devices';
+      } else if (data.state === 'pairing') {
+        stateBadge.className = 'badge warning';
+        document.getElementById('btSubtitle').textContent = 'Pairing in progress';
+      } else if (data.state === 'disabled') {
+        stateBadge.className = 'badge info';
+        document.getElementById('btSubtitle').textContent = 'Bluetooth is disabled';
+      } else {
+        stateBadge.className = 'badge info';
+        document.getElementById('btSubtitle').textContent = 'BLE connectivity status';
+      }
+
+      // Update advertising button
+      const advBtn = document.getElementById('btAdvBtn');
+      if (data.advertising) {
+        advBtn.textContent = 'Stop Advertising';
+        advBtn.className = 'btn btn-danger';
+      } else {
+        advBtn.textContent = 'Start Advertising';
+        advBtn.className = 'btn btn-primary';
+      }
+
+      // Update connection card
+      const connCard = document.getElementById('btConnCard');
+      if (data.connected && data.connection) {
+        connCard.style.display = 'block';
+        document.getElementById('btConnName').textContent = data.connection.name || '--';
+        document.getElementById('btConnAddr').textContent = data.connection.address || '--';
+        document.getElementById('btConnSecurity').textContent = data.connection.security || '--';
+        document.getElementById('btConnTime').textContent = formatDuration(data.connection.connected_sec || 0);
+        document.getElementById('btConnSent').innerHTML = formatBytes(data.connection.bytes_sent || 0);
+        document.getElementById('btConnRecv').innerHTML = formatBytes(data.connection.bytes_received || 0);
+      } else {
+        connCard.style.display = 'none';
+      }
+
+      // Update pairing card
+      const pairingCard = document.getElementById('btPairingCard');
+      if (data.pairing && data.pairing.state !== 'none') {
+        pairingCard.style.display = 'block';
+        if (data.pairing.pin) {
+          document.getElementById('btPairingPin').textContent = String(data.pairing.pin).padStart(6, '0');
+          document.getElementById('btPairingSubtitle').textContent = 'Enter PIN on connecting device';
+        } else {
+          document.getElementById('btPairingPin').textContent = '------';
+          document.getElementById('btPairingSubtitle').textContent = 'Waiting for device...';
+        }
+      } else {
+        pairingCard.style.display = 'none';
+      }
+
+      // Load settings into form
+      document.getElementById('btNameInput').placeholder = data.device_name || 'SecuraCV-Canary';
+      document.getElementById('btPowerSlider').value = data.tx_power || 3;
+      updatePowerDisplay();
+    }
+
+    async function loadBtSettings() {
+      const data = await api('/api/bluetooth/settings');
+      if (!data.enabled === undefined) return;
+
+      document.getElementById('btAutoAdv').checked = data.auto_advertise;
+      document.getElementById('btAllowPairing').checked = data.allow_pairing;
+      document.getElementById('btRequirePin').checked = data.require_pin;
+      document.getElementById('btNotifyConnect').checked = data.notify_on_connect;
+      document.getElementById('btTimeoutSelect').value = data.inactivity_timeout_sec || 300;
+    }
+
+    async function saveBtSettings() {
+      const settings = {
+        auto_advertise: document.getElementById('btAutoAdv').checked,
+        allow_pairing: document.getElementById('btAllowPairing').checked,
+        require_pin: document.getElementById('btRequirePin').checked,
+        notify_on_connect: document.getElementById('btNotifyConnect').checked,
+        inactivity_timeout_sec: parseInt(document.getElementById('btTimeoutSelect').value)
+      };
+
+      await api('/api/bluetooth/settings', 'POST', settings);
+    }
+
+    async function toggleBtEnabled() {
+      const enabled = document.getElementById('btEnabled').checked;
+      const endpoint = enabled ? '/api/bluetooth/enable' : '/api/bluetooth/disable';
+      const data = await api(endpoint, 'POST');
+      if (!data.success) {
+        alert('Failed: ' + (data.error || 'Unknown error'));
+        document.getElementById('btEnabled').checked = !enabled;
+      }
+      refreshBtStatus();
+    }
+
+    async function toggleBtAdvertising() {
+      const isAdv = btState && btState.advertising;
+      const endpoint = isAdv ? '/api/bluetooth/advertise/stop' : '/api/bluetooth/advertise/start';
+      const data = await api(endpoint, 'POST');
+      if (!data.success) {
+        alert('Failed: ' + (data.error || 'Unknown error'));
+      }
+      refreshBtStatus();
+    }
+
+    async function btStartPairing() {
+      const data = await api('/api/bluetooth/pair/start', 'POST');
+      if (!data.success) {
+        alert('Failed to start pairing: ' + (data.error || 'Unknown error'));
+      }
+      refreshBtStatus();
+    }
+
+    async function btCancelPairing() {
+      await api('/api/bluetooth/pair/cancel', 'POST');
+      refreshBtStatus();
+    }
+
+    async function btDisconnect() {
+      const data = await api('/api/bluetooth/disconnect', 'POST');
+      if (!data.success) {
+        alert('Failed to disconnect: ' + (data.error || 'Unknown error'));
+      }
+      refreshBtStatus();
+    }
+
+    async function btStartScan() {
+      const btn = document.getElementById('btScanBtn');
+      btn.disabled = true;
+      btn.textContent = 'Scanning...';
+
+      document.getElementById('btScanCard').style.display = 'block';
+      document.getElementById('btScanList').innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+
+      const data = await api('/api/bluetooth/scan/start', 'POST', { duration_sec: 10 });
+      if (!data.success) {
+        alert('Failed to start scan: ' + (data.error || 'Unknown error'));
+        btn.disabled = false;
+        btn.textContent = 'Scan for Devices';
+        return;
+      }
+
+      btScanning = true;
+
+      // Poll for results
+      const pollInterval = setInterval(async () => {
+        const results = await api('/api/bluetooth/scan/results');
+        if (results.devices) {
+          renderScanResults(results.devices);
+        }
+        if (!results.scanning) {
+          clearInterval(pollInterval);
+          btScanning = false;
+          btn.disabled = false;
+          btn.textContent = 'Scan for Devices';
+        }
+      }, 1000);
+
+      // Timeout fallback
+      setTimeout(() => {
+        if (btScanning) {
+          clearInterval(pollInterval);
+          btScanning = false;
+          btn.disabled = false;
+          btn.textContent = 'Scan for Devices';
+        }
+      }, 15000);
+    }
+
+    function renderScanResults(devices) {
+      const list = document.getElementById('btScanList');
+      document.getElementById('btScanSubtitle').textContent = devices.length + ' device(s) found';
+
+      if (devices.length === 0) {
+        list.innerHTML = '<p style="color:var(--muted);font-size:0.85rem;text-align:center;padding:1rem;">No devices found</p>';
+        return;
+      }
+
+      let html = '';
+      devices.forEach(dev => {
+        const typeIcon = dev.type === 'phone' ? '📱' :
+                        dev.type === 'tablet' ? '📱' :
+                        dev.type === 'computer' ? '💻' :
+                        dev.type === 'wearable' ? '⌚' :
+                        dev.is_securacv ? '🔒' : '📶';
+        const rssiColor = dev.rssi >= -60 ? 'var(--success)' :
+                         dev.rssi >= -80 ? 'var(--warning)' : 'var(--danger)';
+
+        html += '<div class="log-item" style="padding:0.75rem;">';
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;">';
+        html += '<div>';
+        html += '<span style="font-size:1.2rem;margin-right:0.5rem;">' + typeIcon + '</span>';
+        html += '<strong>' + (dev.name || 'Unknown Device') + '</strong>';
+        if (dev.is_securacv) {
+          html += ' <span class="badge success" style="font-size:0.65rem;">SecuraCV</span>';
+        }
+        html += '<div style="font-size:0.75rem;color:var(--muted);">' + dev.address + '</div>';
+        html += '</div>';
+        html += '<div style="text-align:right;">';
+        html += '<div style="color:' + rssiColor + ';font-weight:600;">' + dev.rssi + ' dBm</div>';
+        html += '<div style="font-size:0.7rem;color:var(--muted);">' + dev.type + '</div>';
+        html += '</div>';
+        html += '</div>';
+        html += '</div>';
+      });
+
+      list.innerHTML = html;
+    }
+
+    async function btRefreshScan() {
+      const results = await api('/api/bluetooth/scan/results');
+      if (results.devices) {
+        renderScanResults(results.devices);
+      }
+    }
+
+    async function btClearScan() {
+      await api('/api/bluetooth/scan/results', 'DELETE');
+      document.getElementById('btScanCard').style.display = 'none';
+    }
+
+    async function loadBtPairedDevices() {
+      const data = await api('/api/bluetooth/paired');
+      if (!data.devices) return;
+
+      const list = document.getElementById('btPairedList');
+      document.getElementById('btPairedSubtitle').textContent = data.count + ' paired device(s)';
+
+      if (data.devices.length === 0) {
+        list.innerHTML = '<p style="color:var(--muted);font-size:0.85rem;text-align:center;padding:1rem;">No paired devices</p>';
+        return;
+      }
+
+      let html = '';
+      data.devices.forEach(dev => {
+        const trustBadge = dev.trusted ? '<span class="badge success" style="font-size:0.6rem;">Trusted</span>' : '';
+        const blockBadge = dev.blocked ? '<span class="badge danger" style="font-size:0.6rem;">Blocked</span>' : '';
+
+        html += '<div class="log-item" style="padding:0.75rem;">';
+        html += '<div style="display:flex;justify-content:space-between;align-items:start;">';
+        html += '<div>';
+        html += '<strong>' + (dev.name || 'Unknown') + '</strong> ' + trustBadge + blockBadge;
+        html += '<div style="font-size:0.75rem;color:var(--muted);">' + dev.address + '</div>';
+        html += '<div style="font-size:0.7rem;color:var(--muted);">Security: ' + dev.security + ' | Connections: ' + dev.connection_count + '</div>';
+        html += '</div>';
+        html += '<div style="display:flex;gap:0.25rem;">';
+        html += '<button class="btn btn-ghost btn-sm" onclick="btToggleTrust(\'' + dev.address + '\', ' + !dev.trusted + ')">' + (dev.trusted ? 'Untrust' : 'Trust') + '</button>';
+        html += '<button class="btn btn-danger btn-sm" onclick="btRemovePaired(\'' + dev.address + '\')">Remove</button>';
+        html += '</div>';
+        html += '</div>';
+        html += '</div>';
+      });
+
+      list.innerHTML = html;
+    }
+
+    async function btRemovePaired(address) {
+      if (!confirm('Remove this paired device?')) return;
+      const data = await api('/api/bluetooth/paired', 'DELETE', { address });
+      if (!data.success) {
+        alert('Failed: ' + (data.error || 'Unknown error'));
+      }
+      loadBtPairedDevices();
+    }
+
+    async function btClearAllPaired() {
+      if (!confirm('Remove ALL paired devices? This cannot be undone.')) return;
+      const data = await api('/api/bluetooth/paired/all', 'DELETE');
+      if (!data.success) {
+        alert('Failed: ' + (data.error || 'Unknown error'));
+      }
+      loadBtPairedDevices();
+    }
+
+    async function btToggleTrust(address, trusted) {
+      await api('/api/bluetooth/paired/trust', 'POST', { address, trusted });
+      loadBtPairedDevices();
+    }
+
+    async function btSetName() {
+      const name = document.getElementById('btNameInput').value.trim();
+      if (!name) {
+        alert('Please enter a device name');
+        return;
+      }
+      const data = await api('/api/bluetooth/name', 'POST', { name });
+      if (data.success) {
+        alert('Device name updated. Restart Bluetooth to apply.');
+        refreshBtStatus();
+      } else {
+        alert('Failed: ' + (data.error || 'Unknown error'));
+      }
+    }
+
+    function updatePowerDisplay() {
+      const power = parseInt(document.getElementById('btPowerSlider').value);
+      const display = document.getElementById('btPowerDisplay');
+      display.textContent = (power >= 0 ? '+' : '') + power + ' dBm';
+    }
+
+    async function btSetPower() {
+      const power = parseInt(document.getElementById('btPowerSlider').value);
+      const data = await api('/api/bluetooth/power', 'POST', { power });
+      if (data.success) {
+        refreshBtStatus();
+      } else {
+        alert('Failed: ' + (data.error || 'Unknown error'));
+      }
+    }
+
+    function formatDuration(seconds) {
+      if (seconds < 60) return seconds + 's';
+      if (seconds < 3600) return Math.floor(seconds / 60) + 'm ' + (seconds % 60) + 's';
+      const hours = Math.floor(seconds / 3600);
+      const mins = Math.floor((seconds % 3600) / 60);
+      return hours + 'h ' + mins + 'm';
+    }
+
+    function formatBytes(bytes) {
+      if (bytes < 1024) return bytes + '<span class="stat-unit">B</span>';
+      if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + '<span class="stat-unit">KB</span>';
+      return (bytes / (1024 * 1024)).toFixed(1) + '<span class="stat-unit">MB</span>';
+    }
+
+    // ══════════════════════════════════════════════════════════════════
     // Initialize
     // ══════════════════════════════════════════════════════════════════
 
@@ -2666,6 +3273,9 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     loadWifiStatus();
     refreshOpera();
     refreshChirpStatus();
+    refreshBtStatus();
+    loadBtSettings();
+    loadBtPairedDevices();
     updateResolutionUI();
     setInterval(refreshStatus, 2000);
     setInterval(loadWifiStatus, 5000);
@@ -2674,6 +3284,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       else if (currentPanel === 'witness') loadWitness();
       else if (currentPanel === 'opera') refreshOpera();
       else if (currentPanel === 'community') refreshChirpStatus();
+      else if (currentPanel === 'bluetooth') refreshBtStatus();
     }, 5000);
   </script>
 </body>
