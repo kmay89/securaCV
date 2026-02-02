@@ -6,9 +6,7 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::crypto::signatures::{
-    sign_ed25519_only, verify_ed25519_only, DOMAIN_BREAK_GLASS_TOKEN,
-};
+use crate::crypto::signatures::{sign_ed25519_only, verify_ed25519_only, DOMAIN_BREAK_GLASS_TOKEN};
 use crate::TimeBucket;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]

@@ -14,13 +14,13 @@ use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use std::io::IsTerminal;
 use std::io::Write;
 
+use crate::crypto::signatures::{SignatureMode, SignatureSet, DOMAIN_BREAK_GLASS_RECEIPT};
 use crate::{
     approvals_commitment, break_glass::BreakGlassTokenFile,
     break_glass_receipt_outcome_for_verifier, device_public_key_from_db, hash_entry,
     verify_entry_signature, Approval, BreakGlass, BreakGlassOutcome, BreakGlassToken, Kernel,
     KernelConfig, TimeBucket, TrusteeId, UnlockRequest, Vault, VaultConfig, ZonePolicy,
 };
-use crate::crypto::signatures::{SignatureMode, SignatureSet, DOMAIN_BREAK_GLASS_RECEIPT};
 
 #[path = "../ui.rs"]
 mod ui;

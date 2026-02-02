@@ -32,5 +32,12 @@ pub fn verify_entry_signature(
     pq_public_key: Option<&PqPublicKey>,
     domain: &str,
 ) -> Result<()> {
-    verify_with_domain(domain, verifying_key, entry_hash, signatures, mode, pq_public_key)
+    verify_with_domain(
+        domain,
+        verifying_key,
+        entry_hash,
+        signatures,
+        mode,
+        pq_public_key,
+    )
 }

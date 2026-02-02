@@ -192,22 +192,21 @@ fn main() -> Result<()> {
     {
         let _stage = ui.stage("Verify export receipts");
         println!("=== Export Receipts ===");
-        let count =
-            verify::verify_export_receipts_with(
-                &conn,
-                &verifying_key,
-                signature_mode,
-                pq_verifying_key.as_ref(),
-                |id, entry_hash| {
-                    if args.verbose {
-                        println!(
-                            "  receipt {}: hash={} OK",
-                            id,
-                            &verify_helpers::hex32(&entry_hash)[..16]
-                        );
-                    }
-                },
-            )?;
+        let count = verify::verify_export_receipts_with(
+            &conn,
+            &verifying_key,
+            signature_mode,
+            pq_verifying_key.as_ref(),
+            |id, entry_hash| {
+                if args.verbose {
+                    println!(
+                        "  receipt {}: hash={} OK",
+                        id,
+                        &verify_helpers::hex32(&entry_hash)[..16]
+                    );
+                }
+            },
+        )?;
         println!("verified {} export receipt entries", count);
     }
 

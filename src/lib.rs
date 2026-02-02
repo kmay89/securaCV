@@ -1072,8 +1072,11 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
 
         let entry_hash = hash_entry(&prev_hash, payload_json.as_bytes());
         let key_material = self.signature_key_material();
-        let signature_set =
-            sign_entry(&key_material.signature_keys(), &entry_hash, DOMAIN_BREAK_GLASS_RECEIPT)?;
+        let signature_set = sign_entry(
+            &key_material.signature_keys(),
+            &entry_hash,
+            DOMAIN_BREAK_GLASS_RECEIPT,
+        )?;
         let pq_signature = signature_set
             .pq_signature
             .as_ref()
@@ -1119,8 +1122,11 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
 
         let entry_hash = hash_entry(&prev_hash, payload_json.as_bytes());
         let key_material = self.signature_key_material();
-        let signature_set =
-            sign_entry(&key_material.signature_keys(), &entry_hash, DOMAIN_EXPORT_RECEIPT)?;
+        let signature_set = sign_entry(
+            &key_material.signature_keys(),
+            &entry_hash,
+            DOMAIN_EXPORT_RECEIPT,
+        )?;
         let pq_signature = signature_set
             .pq_signature
             .as_ref()
@@ -1181,7 +1187,14 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
                 let signature: Vec<u8> = row.get(3)?;
                 let pq_signature: Option<Vec<u8>> = row.get(4)?;
                 let pq_scheme: Option<String> = row.get(5)?;
-                Ok((payload, prev_hash, entry_hash, signature, pq_signature, pq_scheme))
+                Ok((
+                    payload,
+                    prev_hash,
+                    entry_hash,
+                    signature,
+                    pq_signature,
+                    pq_scheme,
+                ))
             })
             .optional()?;
 
@@ -1457,7 +1470,10 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
     pub fn device_pq_public_key_for_verify_only(&self) -> Option<Vec<u8>> {
         #[cfg(feature = "pqc-signatures")]
         {
-            return self.device_pq_key.as_ref().map(|key| key.public_key_bytes());
+            return self
+                .device_pq_key
+                .as_ref()
+                .map(|key| key.public_key_bytes());
         }
         #[cfg(not(feature = "pqc-signatures"))]
         {
@@ -1529,8 +1545,7 @@ fn verifying_key_from_bytes(bytes: &[u8]) -> Result<VerifyingKey> {
 
 #[cfg(feature = "pqc-signatures")]
 fn pq_public_key_from_bytes(bytes: &[u8]) -> Result<PqPublicKey> {
-    PqPublicKey::from_bytes(bytes)
-        .map_err(|e| anyhow!("invalid pq public key bytes: {}", e))
+    PqPublicKey::from_bytes(bytes).map_err(|e| anyhow!("invalid pq public key bytes: {}", e))
 }
 
 #[cfg(not(feature = "pqc-signatures"))]
@@ -1635,7 +1650,14 @@ pub fn break_glass_receipt_outcome_for_verifier(
             let signature: Vec<u8> = row.get(3)?;
             let pq_signature: Option<Vec<u8>> = row.get(4)?;
             let pq_scheme: Option<String> = row.get(5)?;
-            Ok((payload, prev_hash, entry_hash, signature, pq_signature, pq_scheme))
+            Ok((
+                payload,
+                prev_hash,
+                entry_hash,
+                signature,
+                pq_signature,
+                pq_scheme,
+            ))
         })
         .optional()?;
 

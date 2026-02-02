@@ -11,6 +11,7 @@ use std::time::Duration;
 use witness_kernel::break_glass::{
     Approval, BreakGlass, BreakGlassToken, QuorumPolicy, TrusteeEntry, TrusteeId, UnlockRequest,
 };
+use witness_kernel::crypto::signatures::{SignatureMode, DOMAIN_CHECKPOINT};
 #[cfg(feature = "backend-tract")]
 use witness_kernel::detect::TractBackend;
 use witness_kernel::detect::{BackendRegistry, CpuBackend, StubBackend};
@@ -23,7 +24,6 @@ use witness_kernel::{
     FileSource, InferenceBackend, Kernel, KernelConfig, Module, RtspConfig, RtspSource, TimeBucket,
     Vault, VaultConfig, ZoneCrossingModule, ZonePolicy, EXPORT_EVENTS_ENVELOPE_ID,
 };
-use witness_kernel::crypto::signatures::{SignatureMode, DOMAIN_CHECKPOINT};
 
 const DEFAULT_DB_PATH: &str = "demo_witness.db";
 const DEFAULT_RULESET_ID: &str = "ruleset:demo";

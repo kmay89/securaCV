@@ -2,13 +2,13 @@ use anyhow::{anyhow, Result};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use rusqlite::{Connection, Row};
 
-use crate::{
-    approvals_commitment, hash_entry, verify_entry_signature, Approval, BreakGlassOutcome,
-    BreakGlassReceipt, QuorumPolicy,
-};
 use crate::crypto::signatures::{
     PqPublicKey, SignatureMode, SignatureSet, DOMAIN_BREAK_GLASS_RECEIPT, DOMAIN_CHECKPOINT,
     DOMAIN_EXPORT_RECEIPT, DOMAIN_SEALED_LOG_ENTRY,
+};
+use crate::{
+    approvals_commitment, hash_entry, verify_entry_signature, Approval, BreakGlassOutcome,
+    BreakGlassReceipt, QuorumPolicy,
 };
 
 #[derive(Debug, Clone)]
@@ -44,17 +44,15 @@ pub fn verify_checkpoint_signature(
         checkpoint.cutoff_event_id,
     ) {
         (None, None, None) => Ok(()),
-        (Some(head), Some(sig), Some(_)) => {
-            verify_entry_signature(
-                verifying_key,
-                &head,
-                sig,
-                mode,
-                pq_public_key,
-                DOMAIN_CHECKPOINT,
-            )
-            .map_err(|e| anyhow!("checkpoint signature verification failed: {}", e))
-        }
+        (Some(head), Some(sig), Some(_)) => verify_entry_signature(
+            verifying_key,
+            &head,
+            sig,
+            mode,
+            pq_public_key,
+            DOMAIN_CHECKPOINT,
+        )
+        .map_err(|e| anyhow!("checkpoint signature verification failed: {}", e)),
         _ => Err(anyhow!(
             "checkpoint is partially populated; integrity verification cannot proceed"
         )),
@@ -411,9 +409,9 @@ fn blob32(row: &Row<'_>, idx: usize) -> Result<[u8; 32]> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ed25519_dalek::SigningKey;
-    use crate::sign_entry;
     use crate::crypto::signatures::SignatureKeys;
+    use crate::sign_entry;
+    use ed25519_dalek::SigningKey;
 
     #[test]
     fn verify_checkpoint_signature_accepts_genesis() -> Result<()> {
@@ -450,7 +448,8 @@ mod tests {
         let signing_key = SigningKey::from_bytes(&[11u8; 32]);
         let verifying_key = signing_key.verifying_key();
         let head = [2u8; 32];
-        let mut signature = sign_entry(&SignatureKeys::new(&signing_key), &head, DOMAIN_CHECKPOINT)?;
+        let mut signature =
+            sign_entry(&SignatureKeys::new(&signing_key), &head, DOMAIN_CHECKPOINT)?;
         signature.ed25519_signature[0] ^= 0xff;
         let checkpoint = CheckpointInfo {
             chain_head_hash: Some(head),
@@ -458,7 +457,8 @@ mod tests {
             cutoff_event_id: Some(7),
         };
 
-        let result = verify_checkpoint_signature(&verifying_key, &checkpoint, SignatureMode::Compat, None);
+        let result =
+            verify_checkpoint_signature(&verifying_key, &checkpoint, SignatureMode::Compat, None);
         assert!(result.is_err());
         Ok(())
     }
@@ -473,7 +473,8 @@ mod tests {
             cutoff_event_id: Some(1),
         };
 
-        let result = verify_checkpoint_signature(&verifying_key, &checkpoint, SignatureMode::Compat, None);
+        let result =
+            verify_checkpoint_signature(&verifying_key, &checkpoint, SignatureMode::Compat, None);
         assert!(result.is_err());
         Ok(())
     }

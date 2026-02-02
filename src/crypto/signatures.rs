@@ -68,14 +68,10 @@ impl SignatureSet {
             }),
             (None, None) => None,
             (Some(_), None) => {
-                return Err(anyhow!(
-                    "pq signature present without scheme identifier"
-                ))
+                return Err(anyhow!("pq signature present without scheme identifier"))
             }
             (None, Some(_)) => {
-                return Err(anyhow!(
-                    "pq scheme identifier present without signature"
-                ))
+                return Err(anyhow!("pq scheme identifier present without signature"))
             }
         };
         Ok(Self {
@@ -98,7 +94,9 @@ impl SignatureSet {
     }
 
     pub fn pq_signature_bytes(&self) -> Option<&[u8]> {
-        self.pq_signature.as_ref().map(|sig| sig.signature.as_slice())
+        self.pq_signature
+            .as_ref()
+            .map(|sig| sig.signature.as_slice())
     }
 
     pub fn pq_scheme_id(&self) -> Option<&str> {
@@ -199,7 +197,9 @@ pub fn verify_with_domain(
     let signing_hash = domain_separated_hash(domain, entry_hash);
     let ed_result = verify_ed25519(verifying_key, &signing_hash, signatures);
     let ed_result = match (mode, ed_result) {
-        (SignatureMode::Compat, Err(err)) => verify_ed25519_legacy(verifying_key, entry_hash, signatures).map_err(|_| err),
+        (SignatureMode::Compat, Err(err)) => {
+            verify_ed25519_legacy(verifying_key, entry_hash, signatures).map_err(|_| err)
+        }
         (_, result) => result,
     };
     let pq_result = verify_pq_signature(&signing_hash, signatures, pq_public_key);
@@ -316,8 +316,7 @@ fn verify_pq_signature(
 
     #[cfg(feature = "pqc-signatures")]
     {
-        let public_key =
-            pq_public_key.ok_or_else(|| anyhow!("pq public key is required"))?;
+        let public_key = pq_public_key.ok_or_else(|| anyhow!("pq public key is required"))?;
         let detached = DetachedSignature::from_bytes(&signature.signature)
             .map_err(|e| anyhow!("invalid pq signature bytes: {}", e))?;
         dilithium2::verify_detached_signature(&detached, signing_hash, public_key)
