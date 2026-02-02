@@ -50,6 +50,32 @@ If your MQTT broker requires TLS, enable TLS for the bridges and provide certifi
 | `MQTT_TLS_CA_PATH` | Path to PEM-encoded CA certificate |
 | `MQTT_TLS_CLIENT_CERT_PATH` | Path to PEM-encoded client certificate (mutual TLS) |
 | `MQTT_TLS_CLIENT_KEY_PATH` | Path to PEM-encoded client private key (mutual TLS) |
+| `MQTT_TLS_BACKEND` | TLS backend: `classic` (default) or `hybrid_pq` (post-quantum) |
+
+### Hybrid Post-Quantum TLS (Optional)
+
+For forward secrecy against future quantum computers, SecuraCV supports hybrid PQ TLS using X25519Kyber768Draft00 key exchange. This combines classical X25519 with ML-KEM (Kyber768) for defense-in-depth.
+
+**Requirements:**
+- Compile with `--features pqc-tls` to enable hybrid PQ support
+- Use a PQ-capable MQTT broker (e.g., OQS-enabled Mosquitto)
+- Set `MQTT_TLS_BACKEND=hybrid_pq`
+
+**Compatibility Notes:**
+- Home Assistant's built-in Mosquitto (`core-mosquitto`) uses **classic TLS only**
+- If your broker doesn't support PQ key exchange, the handshake will fall back to classical X25519
+- Classic mode (`MQTT_TLS_BACKEND=classic`) is fully compatible with all standard MQTT brokers
+
+**Example:**
+```bash
+# Classic TLS (default, HA-compatible)
+MQTT_USE_TLS=true MQTT_TLS_BACKEND=classic ./frigate_bridge
+
+# Hybrid PQ TLS (requires pqc-tls feature and PQ-capable broker)
+MQTT_USE_TLS=true MQTT_TLS_BACKEND=hybrid_pq ./frigate_bridge
+```
+
+If `hybrid_pq` is selected but the `pqc-tls` feature is not compiled in, the bridge will exit with a clear error message explaining the required build flag.
 
 ---
 
