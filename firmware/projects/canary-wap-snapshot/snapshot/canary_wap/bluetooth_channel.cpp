@@ -47,8 +47,8 @@ static BluetoothSettings g_settings = {
 };
 
 // Connection state
-static ConnectionInfo g_connection = {0};
-static PairingSession g_pairing = {0};
+static ConnectionInfo g_connection = {};
+static PairingSession g_pairing = {};
 
 // Paired devices
 static PairedDevice g_paired_devices[MAX_PAIRED_DEVICES];
@@ -899,7 +899,7 @@ bool set_tx_power(int8_t power) {
 }
 
 BluetoothStatus get_status() {
-  BluetoothStatus status = {0};
+  BluetoothStatus status = {};
 
   status.state = g_state;
   status.enabled = g_settings.enabled;
