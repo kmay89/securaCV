@@ -81,6 +81,7 @@
 #include "log_level.h"
 #include "health_log.h"
 #include "sd_storage.h"
+#include "nvs_store.h"
 #include "wap_server.h"
 #include "web_ui.h"
 #include "mesh_network.h"
