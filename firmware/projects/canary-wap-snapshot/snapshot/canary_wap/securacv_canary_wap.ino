@@ -82,6 +82,7 @@
 #include "sd_storage.h"
 #include "wap_server.h"
 #include "web_ui.h"
+#include "mesh_network.h"
 
 // ════════════════════════════════════════════════════════════════════════════
 // COMPILE-TIME FEATURE FLAGS
@@ -94,6 +95,7 @@
 #define FEATURE_TAMPER_GPIO   0   // Enable tamper detection pin
 #define FEATURE_WATCHDOG      1   // Enable hardware watchdog
 #define FEATURE_STATE_LOG     1   // Log state transitions
+#define FEATURE_MESH_NETWORK  1   // Enable mesh network (flock)
 
 #define DEBUG_NMEA            0   // Print raw NMEA sentences
 #define DEBUG_CBOR            0   // Print CBOR hex dump
@@ -2044,6 +2046,253 @@ static esp_err_t handle_peek_resolution(httpd_req_t* req) {
 #endif // FEATURE_CAMERA_PEEK
 
 // ════════════════════════════════════════════════════════════════════════════
+// MESH NETWORK (FLOCK) API HANDLERS
+// ════════════════════════════════════════════════════════════════════════════
+
+#if FEATURE_MESH_NETWORK
+
+static esp_err_t handle_mesh_status(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  mesh_network::MeshStatus status = mesh_network::get_status();
+  const mesh_network::FlockConfig* config = mesh_network::get_flock_config();
+  const mesh_network::PairingSession* pairing = mesh_network::get_pairing_session();
+
+  StaticJsonDocument<512> doc;
+  doc["ok"] = true;
+  doc["state"] = mesh_network::state_name(status.state);
+  doc["enabled"] = mesh_network::is_enabled();
+  doc["has_flock"] = mesh_network::has_flock();
+  doc["flock_id"] = status.flock_id_hex;
+  doc["flock_name"] = config->flock_name;
+  doc["peers_total"] = status.peers_total;
+  doc["peers_online"] = status.peers_online;
+  doc["peers_offline"] = status.peers_offline;
+  doc["peers_stale"] = status.peers_stale;
+  doc["messages_sent"] = status.messages_sent;
+  doc["messages_received"] = status.messages_received;
+  doc["alerts_sent"] = status.alerts_sent;
+  doc["alerts_received"] = status.alerts_received;
+  doc["auth_failures"] = status.auth_failures;
+  doc["uptime_ms"] = status.uptime_ms;
+
+  // Include pairing code if in pairing confirm state
+  if (status.state == mesh_network::MESH_PAIRING_CONFIRM && pairing->code_displayed) {
+    doc["pairing_code"] = pairing->confirmation_code;
+  }
+
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+static esp_err_t handle_mesh_peers(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  uint8_t count = mesh_network::get_peer_count();
+  DynamicJsonDocument doc(2048);
+  doc["ok"] = true;
+  doc["count"] = count;
+
+  JsonArray peers = doc.createNestedArray("peers");
+  for (uint8_t i = 0; i < count; i++) {
+    const mesh_network::FlockPeer* peer = mesh_network::get_peer(i);
+    if (!peer) continue;
+
+    JsonObject p = peers.createNestedObject();
+    p["name"] = peer->name;
+
+    char fp_hex[17];
+    for (int j = 0; j < 8; j++) {
+      sprintf(fp_hex + j * 2, "%02X", peer->fingerprint[j]);
+    }
+    p["fingerprint"] = fp_hex;
+
+    p["state"] = mesh_network::peer_state_name(peer->state);
+    p["rssi"] = peer->rssi;
+    p["alerts_received"] = peer->alerts_received;
+
+    if (peer->last_seen_ms > 0) {
+      p["last_seen_sec"] = (millis() - peer->last_seen_ms) / 1000;
+    }
+  }
+
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+static esp_err_t handle_mesh_alerts(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  size_t count = 0;
+  const mesh_network::MeshAlert* alerts = mesh_network::get_alerts(&count);
+
+  DynamicJsonDocument doc(2048);
+  doc["ok"] = true;
+  doc["count"] = count;
+
+  JsonArray arr = doc.createNestedArray("alerts");
+  for (size_t i = 0; i < count; i++) {
+    const mesh_network::MeshAlert* alert = &alerts[i];
+    JsonObject a = arr.createNestedObject();
+
+    a["timestamp_ms"] = alert->timestamp_ms;
+    a["type"] = mesh_network::alert_type_name(alert->type);
+    a["severity"] = (int)alert->severity;
+    a["sender_name"] = alert->sender_name;
+    a["detail"] = alert->detail;
+    a["witness_seq"] = alert->witness_seq;
+  }
+
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+static esp_err_t handle_mesh_alerts_clear(httpd_req_t* req) {
+  g_health.http_requests++;
+  mesh_network::clear_alerts();
+  return http_send_json(req, "{\"ok\":true}");
+}
+
+static esp_err_t handle_mesh_enable(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  char buf[64];
+  int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
+  if (ret <= 0) return http_send_error(req, 400, "invalid_body");
+  buf[ret] = '\0';
+
+  StaticJsonDocument<64> body;
+  if (deserializeJson(body, buf) != DeserializationError::Ok) {
+    return http_send_error(req, 400, "invalid_json");
+  }
+
+  bool enabled = body["enabled"] | false;
+  mesh_network::set_enabled(enabled);
+  log_health(LOG_LEVEL_INFO, LOG_CAT_MESH, enabled ? "Mesh enabled" : "Mesh disabled", nullptr);
+
+  return http_send_json(req, "{\"ok\":true}");
+}
+
+static esp_err_t handle_mesh_pair_start(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  char buf[128];
+  int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
+  buf[ret > 0 ? ret : 0] = '\0';
+
+  const char* flock_name = nullptr;
+  StaticJsonDocument<128> body;
+  if (ret > 0 && deserializeJson(body, buf) == DeserializationError::Ok) {
+    flock_name = body["name"] | (const char*)nullptr;
+  }
+
+  if (mesh_network::start_pairing_initiator(flock_name)) {
+    log_health(LOG_LEVEL_INFO, LOG_CAT_MESH, "Pairing started (initiator)", nullptr);
+    return http_send_json(req, "{\"ok\":true}");
+  }
+  return http_send_error(req, 400, "pairing_failed");
+}
+
+static esp_err_t handle_mesh_pair_join(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  if (mesh_network::start_pairing_joiner()) {
+    log_health(LOG_LEVEL_INFO, LOG_CAT_MESH, "Pairing started (joiner)", nullptr);
+    return http_send_json(req, "{\"ok\":true}");
+  }
+  return http_send_error(req, 400, "pairing_failed");
+}
+
+static esp_err_t handle_mesh_pair_confirm(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  if (mesh_network::confirm_pairing()) {
+    log_health(LOG_LEVEL_INFO, LOG_CAT_MESH, "Pairing confirmed", nullptr);
+    return http_send_json(req, "{\"ok\":true}");
+  }
+  return http_send_error(req, 400, "confirm_failed");
+}
+
+static esp_err_t handle_mesh_pair_cancel(httpd_req_t* req) {
+  g_health.http_requests++;
+  mesh_network::cancel_pairing();
+  log_health(LOG_LEVEL_INFO, LOG_CAT_MESH, "Pairing cancelled", nullptr);
+  return http_send_json(req, "{\"ok\":true}");
+}
+
+static esp_err_t handle_mesh_leave(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  if (mesh_network::leave_flock()) {
+    log_health(LOG_LEVEL_WARNING, LOG_CAT_MESH, "Left flock", nullptr);
+    return http_send_json(req, "{\"ok\":true}");
+  }
+  return http_send_error(req, 400, "leave_failed");
+}
+
+static esp_err_t handle_mesh_remove(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  char buf[64];
+  int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
+  if (ret <= 0) return http_send_error(req, 400, "invalid_body");
+  buf[ret] = '\0';
+
+  StaticJsonDocument<64> body;
+  if (deserializeJson(body, buf) != DeserializationError::Ok) {
+    return http_send_error(req, 400, "invalid_json");
+  }
+
+  const char* fp_hex = body["fingerprint"] | "";
+  if (strlen(fp_hex) != 16) {
+    return http_send_error(req, 400, "invalid_fingerprint");
+  }
+
+  // Parse hex fingerprint
+  uint8_t fp[8];
+  for (int i = 0; i < 8; i++) {
+    char byte_hex[3] = { fp_hex[i*2], fp_hex[i*2+1], 0 };
+    fp[i] = (uint8_t)strtol(byte_hex, nullptr, 16);
+  }
+
+  if (mesh_network::remove_peer(fp)) {
+    log_health(LOG_LEVEL_WARNING, LOG_CAT_MESH, "Peer removed", fp_hex);
+    return http_send_json(req, "{\"ok\":true}");
+  }
+  return http_send_error(req, 400, "remove_failed");
+}
+
+static esp_err_t handle_mesh_name(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  char buf[128];
+  int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
+  if (ret <= 0) return http_send_error(req, 400, "invalid_body");
+  buf[ret] = '\0';
+
+  StaticJsonDocument<128> body;
+  if (deserializeJson(body, buf) != DeserializationError::Ok) {
+    return http_send_error(req, 400, "invalid_json");
+  }
+
+  const char* name = body["name"] | "";
+  if (strlen(name) == 0 || strlen(name) > 31) {
+    return http_send_error(req, 400, "invalid_name");
+  }
+
+  if (mesh_network::set_flock_name(name)) {
+    log_health(LOG_LEVEL_INFO, LOG_CAT_MESH, "Flock name changed", name);
+    return http_send_json(req, "{\"ok\":true}");
+  }
+  return http_send_error(req, 400, "rename_failed");
+}
+
+#endif // FEATURE_MESH_NETWORK
+
+// ════════════════════════════════════════════════════════════════════════════
 // WIFI PROVISIONING API HANDLERS
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -2396,7 +2645,46 @@ static void start_http_server() {
   httpd_uri_t peek_resolution = { .uri = "/api/peek/resolution", .method = HTTP_POST, .handler = handle_peek_resolution };
   httpd_register_uri_handler(g_http_server, &peek_resolution);
 #endif
-  
+
+#if FEATURE_MESH_NETWORK
+  // Mesh network (flock) endpoints
+  httpd_uri_t mesh_status = { .uri = "/api/mesh", .method = HTTP_GET, .handler = handle_mesh_status };
+  httpd_register_uri_handler(g_http_server, &mesh_status);
+
+  httpd_uri_t mesh_peers = { .uri = "/api/mesh/peers", .method = HTTP_GET, .handler = handle_mesh_peers };
+  httpd_register_uri_handler(g_http_server, &mesh_peers);
+
+  httpd_uri_t mesh_alerts = { .uri = "/api/mesh/alerts", .method = HTTP_GET, .handler = handle_mesh_alerts };
+  httpd_register_uri_handler(g_http_server, &mesh_alerts);
+
+  httpd_uri_t mesh_alerts_clear = { .uri = "/api/mesh/alerts", .method = HTTP_DELETE, .handler = handle_mesh_alerts_clear };
+  httpd_register_uri_handler(g_http_server, &mesh_alerts_clear);
+
+  httpd_uri_t mesh_enable = { .uri = "/api/mesh/enable", .method = HTTP_POST, .handler = handle_mesh_enable };
+  httpd_register_uri_handler(g_http_server, &mesh_enable);
+
+  httpd_uri_t mesh_pair_start = { .uri = "/api/mesh/pair/start", .method = HTTP_POST, .handler = handle_mesh_pair_start };
+  httpd_register_uri_handler(g_http_server, &mesh_pair_start);
+
+  httpd_uri_t mesh_pair_join = { .uri = "/api/mesh/pair/join", .method = HTTP_POST, .handler = handle_mesh_pair_join };
+  httpd_register_uri_handler(g_http_server, &mesh_pair_join);
+
+  httpd_uri_t mesh_pair_confirm = { .uri = "/api/mesh/pair/confirm", .method = HTTP_POST, .handler = handle_mesh_pair_confirm };
+  httpd_register_uri_handler(g_http_server, &mesh_pair_confirm);
+
+  httpd_uri_t mesh_pair_cancel = { .uri = "/api/mesh/pair/cancel", .method = HTTP_POST, .handler = handle_mesh_pair_cancel };
+  httpd_register_uri_handler(g_http_server, &mesh_pair_cancel);
+
+  httpd_uri_t mesh_leave = { .uri = "/api/mesh/leave", .method = HTTP_POST, .handler = handle_mesh_leave };
+  httpd_register_uri_handler(g_http_server, &mesh_leave);
+
+  httpd_uri_t mesh_remove = { .uri = "/api/mesh/remove", .method = HTTP_POST, .handler = handle_mesh_remove };
+  httpd_register_uri_handler(g_http_server, &mesh_remove);
+
+  httpd_uri_t mesh_name = { .uri = "/api/mesh/name", .method = HTTP_POST, .handler = handle_mesh_name };
+  httpd_register_uri_handler(g_http_server, &mesh_name);
+#endif
+
   log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "HTTP server started", "port 80");
 }
 
@@ -2943,7 +3231,38 @@ void setup() {
     Serial.println("[WARN] Camera init failed - peek disabled");
   }
   #endif
-  
+
+  // Initialize mesh network (flock)
+  #if FEATURE_MESH_NETWORK
+  Serial.println("[..] Initializing mesh network (flock)...");
+  if (mesh_network::init(g_device.privkey, g_device.pubkey, g_device.device_id)) {
+    Serial.println("[OK] Mesh network initialized");
+    log_health(LOG_LEVEL_INFO, LOG_CAT_MESH, "Mesh network initialized", nullptr);
+
+    // Set up mesh callbacks
+    mesh_network::set_alert_callback([](const mesh_network::MeshAlert* alert) {
+      // Log received alerts from other canaries
+      char detail[80];
+      snprintf(detail, sizeof(detail), "From %s: %s",
+               alert->sender_name, alert->detail);
+      log_health((LogLevel)alert->severity, LOG_CAT_MESH, "Flock alert received", detail);
+    });
+
+    mesh_network::set_peer_state_callback([](const mesh_network::FlockPeer* peer,
+                                             mesh_network::PeerState old_state,
+                                             mesh_network::PeerState new_state) {
+      char detail[80];
+      snprintf(detail, sizeof(detail), "%s: %s -> %s",
+               peer->name,
+               mesh_network::peer_state_name(old_state),
+               mesh_network::peer_state_name(new_state));
+      log_health(LOG_LEVEL_INFO, LOG_CAT_MESH, "Peer state changed", detail);
+    });
+  } else {
+    Serial.println("[WARN] Mesh network init failed");
+  }
+  #endif
+
   // Initialize GNSS
   Serial.println();
   Serial.printf("[..] GNSS: %u baud, RX=GPIO%d, TX=GPIO%d\n", GPS_BAUD, GPS_RX_GPIO, GPS_TX_GPIO);
@@ -3040,6 +3359,11 @@ void loop() {
 
   // Check WiFi connection periodically
   wifi_check_connection();
+
+  // Update mesh network
+  #if FEATURE_MESH_NETWORK
+  mesh_network::update();
+  #endif
 
   // Create witness records at interval
   if (now - g_last_record_ms >= RECORD_INTERVAL_MS) {
