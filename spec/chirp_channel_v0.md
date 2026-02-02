@@ -118,71 +118,84 @@ Assume attackers who want to:
 - Drive-by attack (show up, spam, leave)
 - Desensitize users with false alarms (cry wolf)
 
-### 2.5.2 Defense: Structured Messages (No Free Text)
+### 2.5.2 Philosophy: Witness Authority, Not Neighbors
 
-**Critical Design Decision**: Messages use **predefined templates**, not free-form text.
+**Critical Design Principle**: This system exists to **witness power**, not to surveil people.
 
-Instead of:
-```
-message: "someone checking car doors"  // Attacker sends slurs here
-```
+**What this is NOT**:
+- Neighborhood watch (leads to racial profiling)
+- "Suspicious person" reporting (weaponizes neighbors)
+- Ring doorbell culture (surveillance capitalism)
+- Policing each other
 
-We use:
-```
-template_id: ACTIVITY_VEHICLE_SUSPICIOUS
-detail_slot: null  // Optional, constrained
-```
+**What this IS**:
+- Community smoke alarm for serious emergencies
+- Collective witness when authority arrives unexpectedly
+- Mutual aid coordination during crises
+- "Hey, something big is happening, stay safe"
+
+### 2.5.3 Defense: Structured Messages (Emergency-Focused)
+
+**Critical Design Decision**: Messages use **predefined templates** focused on **emergencies and authority presence**, not individual behavior.
 
 **Message Templates** (exhaustive list):
 
 | Category | Template ID | Display Text |
 |----------|-------------|--------------|
-| **Activity** | | |
-| | `ACT_PERSON_UNFAMILIAR` | "unfamiliar person in area" |
-| | `ACT_PERSON_CHECKING_DOORS` | "someone checking doors" |
-| | `ACT_PERSON_LOOKING_IN_CARS` | "someone looking in vehicles" |
-| | `ACT_VEHICLE_UNFAMILIAR` | "unfamiliar vehicle in area" |
-| | `ACT_VEHICLE_CIRCLING` | "vehicle circling repeatedly" |
-| | `ACT_VEHICLE_PARKED_LONG` | "vehicle parked unusually long" |
-| | `ACT_NOISE_LOUD` | "loud noise heard" |
-| | `ACT_NOISE_ALARM` | "alarm sounding" |
-| | `ACT_ANIMAL_LOOSE` | "animal loose in area" |
-| | `ACT_OTHER` | "unusual activity" |
-| **Utility** | | |
-| | `UTL_POWER_OUT` | "power outage in area" |
-| | `UTL_WATER_ISSUE` | "water issue reported" |
-| | `UTL_INTERNET_DOWN` | "internet outage" |
-| | `UTL_GAS_SMELL` | "gas smell reported" |
-| | `UTL_ROAD_BLOCKED` | "road blocked or closed" |
-| **Safety** | | |
-| | `SAF_FIRE_SMOKE` | "fire or smoke observed" |
-| | `SAF_MEDICAL_NEED` | "medical assistance needed" |
-| | `SAF_HAZARD_ROAD` | "road hazard" |
-| | `SAF_HAZARD_OTHER` | "safety hazard" |
-| | `SAF_WEATHER_SEVERE` | "severe weather warning" |
-| **Community** | | |
-| | `COM_LOST_PET` | "lost pet in area" |
-| | `COM_FOUND_PET` | "found pet" |
-| | `COM_PACKAGE_DELIVERED` | "package at door" |
-| | `COM_GATHERING` | "community gathering" |
-| | `COM_CONSTRUCTION` | "construction activity" |
+| **Authority Presence** | | |
+| | `AUTH_POLICE_ACTIVITY` | "police activity in area" |
+| | `AUTH_HEAVY_RESPONSE` | "heavy law enforcement response" |
+| | `AUTH_ROAD_BLOCKED_LE` | "road blocked by law enforcement" |
+| | `AUTH_HELICOPTER` | "helicopter circling area" |
+| | `AUTH_FEDERAL_PRESENCE` | "federal agents in area" |
+| **Infrastructure** | | |
+| | `INFRA_POWER_OUT` | "power outage" |
+| | `INFRA_WATER_ISSUE` | "water service disruption" |
+| | `INFRA_GAS_SMELL` | "gas smell - evacuate?" |
+| | `INFRA_INTERNET_DOWN` | "internet outage in area" |
+| | `INFRA_ROAD_CLOSED` | "road closed or blocked" |
+| **Emergency** | | |
+| | `EMERG_FIRE_VISIBLE` | "fire or smoke visible" |
+| | `EMERG_MEDICAL_SCENE` | "medical emergency scene" |
+| | `EMERG_MULTIPLE_AMBULANCE` | "multiple ambulances responding" |
+| | `EMERG_EVACUATION` | "evacuation in progress" |
+| | `EMERG_SHELTER_IN_PLACE` | "shelter in place advisory" |
+| **Weather** | | |
+| | `WX_SEVERE_WARNING` | "severe weather warning" |
+| | `WX_TORNADO` | "tornado warning" |
+| | `WX_FLOOD` | "flooding reported" |
+| | `WX_LIGHTNING_CLOSE` | "dangerous lightning nearby" |
+| **Mutual Aid** | | |
+| | `AID_WELFARE_CHECK` | "neighbor may need help" |
+| | `AID_SUPPLIES_NEEDED` | "supplies needed in area" |
+| | `AID_OFFERING_HELP` | "offering assistance" |
 | **All Clear** | | |
 | | `CLR_RESOLVED` | "situation resolved" |
+| | `CLR_SAFE` | "area appears safe now" |
 | | `CLR_FALSE_ALARM` | "false alarm" |
-| | `CLR_NORMAL` | "all clear, back to normal" |
 
-**Why This Works**:
-- Cannot send slurs, threats, or offensive content
-- Cannot craft panic-inducing custom messages
-- Messages are localizable (can display in user's language)
-- Harder to abuse when vocabulary is fixed
-- Still covers 95% of legitimate use cases
+**What's deliberately MISSING** (and why):
 
-**Optional Detail Slot** (heavily constrained):
-- Only for specific templates that need it
-- `COM_LOST_PET`: Allows "[dog/cat/bird/other]" selection
-- `ACT_VEHICLE_*`: Allows "[color]" from predefined list
-- NO free text entry ever
+| Excluded Template | Why Excluded |
+|-------------------|--------------|
+| "Suspicious person" | Racial profiling vector |
+| "Unfamiliar vehicle" | Leads to harassment |
+| "Someone at door" | Normal activity |
+| "Person taking photos" | Legal activity, often targeted at minorities |
+| "Loitering" | Criminalization of existence |
+| "Unknown person in area" | Everyone was unknown once |
+
+**The Test**: Before adding any template, ask:
+1. Could this be used to target someone based on race/appearance?
+2. Is this about an individual's behavior or a community emergency?
+3. Would sending this make the community safer or more paranoid?
+
+If the answer to #1 is "yes" or #2 is "individual" or #3 is "paranoid" - **don't add it**.
+
+**Detail Slots** (minimal, factual):
+- `AUTH_*`: Optional "[many vehicles]" indicator
+- `EMERG_*`: Optional "[ongoing]" or "[contained]" status
+- NO descriptions of people. Ever.
 
 ### 2.5.3 Defense: Witness Requirement (Sybil Resistance)
 

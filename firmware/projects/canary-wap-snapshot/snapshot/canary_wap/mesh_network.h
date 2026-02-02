@@ -529,75 +529,86 @@ enum ChirpMsgType : uint8_t {
   CHIRP_MSG_MUTE           // Temporary opt-out broadcast
 };
 
-// Chirp categories (what's happening)
+// Chirp categories (what's happening) — Emergency-focused
 enum ChirpCategory : uint8_t {
-  CHIRP_CAT_ACTIVITY = 0,  // Unusual activity observed
-  CHIRP_CAT_UTILITY,       // Power outage, water, internet
-  CHIRP_CAT_SAFETY,        // Fire, medical, urgent safety
-  CHIRP_CAT_COMMUNITY,     // Lost pet, event, general notice
-  CHIRP_CAT_ALL_CLEAR      // Situation resolved, de-escalation
+  CHIRP_CAT_AUTHORITY = 0, // Law enforcement / government presence
+  CHIRP_CAT_INFRA,         // Infrastructure failures
+  CHIRP_CAT_EMERGENCY,     // Fire, medical, immediate danger
+  CHIRP_CAT_WEATHER,       // Environmental threats
+  CHIRP_CAT_MUTUAL_AID,    // Community helping community
+  CHIRP_CAT_ALL_CLEAR      // De-escalation, situation resolved
 };
 
-// Message templates (NO FREE TEXT - abuse prevention)
-// These are the ONLY messages that can be sent
+// ════════════════════════════════════════════════════════════════════════════
+// MESSAGE TEMPLATES — Emergency-focused, NOT surveillance
+//
+// Philosophy: "Witness authority, not neighbors"
+// - NO "suspicious person" templates (racial profiling vector)
+// - NO "unfamiliar vehicle" templates (harassment enabler)
+// - NO descriptions of individuals EVER
+// - ONLY emergencies, authority presence, infrastructure, mutual aid
+// ════════════════════════════════════════════════════════════════════════════
+
 enum ChirpTemplate : uint8_t {
-  // Activity templates (0x00-0x1F)
-  TPL_ACT_PERSON_UNFAMILIAR    = 0x00,  // "unfamiliar person in area"
-  TPL_ACT_PERSON_CHECKING_DOORS= 0x01,  // "someone checking doors"
-  TPL_ACT_PERSON_LOOKING_CARS  = 0x02,  // "someone looking in vehicles"
-  TPL_ACT_VEHICLE_UNFAMILIAR   = 0x03,  // "unfamiliar vehicle in area"
-  TPL_ACT_VEHICLE_CIRCLING     = 0x04,  // "vehicle circling repeatedly"
-  TPL_ACT_VEHICLE_PARKED_LONG  = 0x05,  // "vehicle parked unusually long"
-  TPL_ACT_NOISE_LOUD           = 0x06,  // "loud noise heard"
-  TPL_ACT_NOISE_ALARM          = 0x07,  // "alarm sounding"
-  TPL_ACT_ANIMAL_LOOSE         = 0x08,  // "animal loose in area"
-  TPL_ACT_OTHER                = 0x09,  // "unusual activity"
+  // Authority Presence (0x00-0x0F) — When power shows up
+  TPL_AUTH_POLICE_ACTIVITY     = 0x00,  // "police activity in area"
+  TPL_AUTH_HEAVY_RESPONSE      = 0x01,  // "heavy law enforcement response"
+  TPL_AUTH_ROAD_BLOCKED_LE     = 0x02,  // "road blocked by law enforcement"
+  TPL_AUTH_HELICOPTER          = 0x03,  // "helicopter circling area"
+  TPL_AUTH_FEDERAL_PRESENCE    = 0x04,  // "federal agents in area"
 
-  // Utility templates (0x20-0x3F)
-  TPL_UTL_POWER_OUT            = 0x20,  // "power outage in area"
-  TPL_UTL_WATER_ISSUE          = 0x21,  // "water issue reported"
-  TPL_UTL_INTERNET_DOWN        = 0x22,  // "internet outage"
-  TPL_UTL_GAS_SMELL            = 0x23,  // "gas smell reported"
-  TPL_UTL_ROAD_BLOCKED         = 0x24,  // "road blocked or closed"
+  // Infrastructure (0x10-0x1F) — Systems failing
+  TPL_INFRA_POWER_OUT          = 0x10,  // "power outage"
+  TPL_INFRA_WATER_ISSUE        = 0x11,  // "water service disruption"
+  TPL_INFRA_GAS_SMELL          = 0x12,  // "gas smell - evacuate?"
+  TPL_INFRA_INTERNET_DOWN      = 0x13,  // "internet outage in area"
+  TPL_INFRA_ROAD_CLOSED        = 0x14,  // "road closed or blocked"
 
-  // Safety templates (0x40-0x5F)
-  TPL_SAF_FIRE_SMOKE           = 0x40,  // "fire or smoke observed"
-  TPL_SAF_MEDICAL_NEED         = 0x41,  // "medical assistance needed"
-  TPL_SAF_HAZARD_ROAD          = 0x42,  // "road hazard"
-  TPL_SAF_HAZARD_OTHER         = 0x43,  // "safety hazard"
-  TPL_SAF_WEATHER_SEVERE       = 0x44,  // "severe weather warning"
+  // Emergency (0x20-0x2F) — Immediate danger
+  TPL_EMERG_FIRE_VISIBLE       = 0x20,  // "fire or smoke visible"
+  TPL_EMERG_MEDICAL_SCENE      = 0x21,  // "medical emergency scene"
+  TPL_EMERG_MULTIPLE_AMBULANCE = 0x22,  // "multiple ambulances responding"
+  TPL_EMERG_EVACUATION         = 0x23,  // "evacuation in progress"
+  TPL_EMERG_SHELTER_IN_PLACE   = 0x24,  // "shelter in place advisory"
 
-  // Community templates (0x60-0x7F)
-  TPL_COM_LOST_PET             = 0x60,  // "lost pet in area"
-  TPL_COM_FOUND_PET            = 0x61,  // "found pet"
-  TPL_COM_PACKAGE_DELIVERED    = 0x62,  // "package at door"
-  TPL_COM_GATHERING            = 0x63,  // "community gathering"
-  TPL_COM_CONSTRUCTION         = 0x64,  // "construction activity"
+  // Weather (0x30-0x3F) — Environmental threats
+  TPL_WX_SEVERE_WARNING        = 0x30,  // "severe weather warning"
+  TPL_WX_TORNADO               = 0x31,  // "tornado warning"
+  TPL_WX_FLOOD                 = 0x32,  // "flooding reported"
+  TPL_WX_LIGHTNING_CLOSE       = 0x33,  // "dangerous lightning nearby"
 
-  // All-clear templates (0x80-0x9F)
+  // Mutual Aid (0x40-0x4F) — Community support
+  TPL_AID_WELFARE_CHECK        = 0x40,  // "neighbor may need help"
+  TPL_AID_SUPPLIES_NEEDED      = 0x41,  // "supplies needed in area"
+  TPL_AID_OFFERING_HELP        = 0x42,  // "offering assistance"
+
+  // All Clear (0x80-0x8F) — De-escalation
   TPL_CLR_RESOLVED             = 0x80,  // "situation resolved"
-  TPL_CLR_FALSE_ALARM          = 0x81,  // "false alarm"
-  TPL_CLR_NORMAL               = 0x82,  // "all clear, back to normal"
+  TPL_CLR_SAFE                 = 0x81,  // "area appears safe now"
+  TPL_CLR_FALSE_ALARM          = 0x82,  // "false alarm"
 
   TPL_INVALID                  = 0xFF
 };
 
-// Detail slot options (constrained choices, NO free text)
+// Detail slots — Minimal, factual, NO people descriptions
 enum ChirpDetailSlot : uint8_t {
   DETAIL_NONE = 0,
-  // Pet types (for TPL_COM_LOST_PET, TPL_COM_FOUND_PET)
-  DETAIL_PET_DOG = 1,
-  DETAIL_PET_CAT = 2,
-  DETAIL_PET_BIRD = 3,
-  DETAIL_PET_OTHER = 4,
-  // Vehicle colors (for TPL_ACT_VEHICLE_*)
-  DETAIL_COLOR_WHITE = 10,
-  DETAIL_COLOR_BLACK = 11,
-  DETAIL_COLOR_SILVER = 12,
-  DETAIL_COLOR_RED = 13,
-  DETAIL_COLOR_BLUE = 14,
-  DETAIL_COLOR_GREEN = 15,
-  DETAIL_COLOR_OTHER = 16
+
+  // Scale indicators (for AUTH_*)
+  DETAIL_SCALE_FEW = 1,           // "few vehicles"
+  DETAIL_SCALE_MANY = 2,          // "many vehicles"
+  DETAIL_SCALE_MASSIVE = 3,       // "massive response"
+
+  // Status indicators (for EMERG_*)
+  DETAIL_STATUS_ONGOING = 10,     // "ongoing"
+  DETAIL_STATUS_CONTAINED = 11,   // "contained"
+  DETAIL_STATUS_SPREADING = 12,   // "spreading"
+
+  // Direction (general)
+  DETAIL_DIR_NORTH = 20,
+  DETAIL_DIR_SOUTH = 21,
+  DETAIL_DIR_EAST = 22,
+  DETAIL_DIR_WEST = 23
 };
 
 // Chirp urgency (how important)

@@ -1006,23 +1006,68 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         </div>
       </div>
 
-      <!-- Send Chirp Card -->
+      <!-- Send Chirp Card — Template-based (NO free text) -->
       <div class="card" id="chirpSendCard" style="display:none;">
         <div class="card-header">
           <div>
             <div class="card-title">Share with Community</div>
-            <div class="card-subtitle">Send a soft alert to nearby devices</div>
+            <div class="card-subtitle">Structured alerts — witness events, not people</div>
           </div>
         </div>
 
         <div class="form-group">
-          <label class="form-label">What's happening?</label>
-          <select class="form-input" id="chirpCategory">
-            <option value="activity">Unusual activity</option>
-            <option value="utility">Utility issue (power, water, internet)</option>
-            <option value="safety">Safety concern</option>
-            <option value="community">Community notice</option>
-            <option value="all_clear">All clear (de-escalation)</option>
+          <label class="form-label">What are you witnessing?</label>
+          <select class="form-input" id="chirpTemplate" onchange="updateChirpPreview()">
+            <optgroup label="Authority Presence">
+              <option value="0">🚔 police activity in area</option>
+              <option value="1">🚨 heavy law enforcement response</option>
+              <option value="2">🚧 road blocked by law enforcement</option>
+              <option value="3">🚁 helicopter circling area</option>
+              <option value="4">🏛️ federal agents in area</option>
+            </optgroup>
+            <optgroup label="Infrastructure">
+              <option value="16">⚡ power outage</option>
+              <option value="17">💧 water service disruption</option>
+              <option value="18">🔥 gas smell - evacuate?</option>
+              <option value="19">📶 internet outage in area</option>
+              <option value="20">🚧 road closed or blocked</option>
+            </optgroup>
+            <optgroup label="Emergency">
+              <option value="32">🔥 fire or smoke visible</option>
+              <option value="33">🚑 medical emergency scene</option>
+              <option value="34">🚑🚑 multiple ambulances responding</option>
+              <option value="35">📢 evacuation in progress</option>
+              <option value="36">🏠 shelter in place advisory</option>
+            </optgroup>
+            <optgroup label="Weather">
+              <option value="48">⛈️ severe weather warning</option>
+              <option value="49">🌪️ tornado warning</option>
+              <option value="50">🌊 flooding reported</option>
+              <option value="51">⚡ dangerous lightning nearby</option>
+            </optgroup>
+            <optgroup label="Mutual Aid">
+              <option value="64">🤝 neighbor may need help</option>
+              <option value="65">📦 supplies needed in area</option>
+              <option value="66">🙋 offering assistance</option>
+            </optgroup>
+            <optgroup label="All Clear">
+              <option value="128">✅ situation resolved</option>
+              <option value="129">✅ area appears safe now</option>
+              <option value="130">❌ false alarm</option>
+            </optgroup>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Optional detail</label>
+          <select class="form-input" id="chirpDetail">
+            <option value="0">(none)</option>
+            <option value="1">few vehicles</option>
+            <option value="2">many vehicles</option>
+            <option value="3">massive response</option>
+            <option value="10">ongoing</option>
+            <option value="11">contained</option>
+            <option value="12">spreading</option>
           </select>
         </div>
 
@@ -1044,13 +1089,15 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           </div>
         </div>
 
-        <div class="form-group">
-          <label class="form-label">Brief message (optional, 64 chars max)</label>
-          <input type="text" class="form-input" id="chirpMessage" maxlength="64" placeholder="e.g., someone checking car doors">
+        <div id="chirpPreview" style="background:var(--surface);padding:0.75rem;border-radius:6px;margin-bottom:1rem;font-size:0.85rem;">
+          <strong>Preview:</strong> <span id="chirpPreviewText">🚔 police activity in area</span>
         </div>
 
-        <p style="font-size:0.75rem;color:var(--muted);margin-bottom:1rem;" id="chirpNearbyHint">
+        <p style="font-size:0.75rem;color:var(--muted);margin-bottom:0.5rem;" id="chirpNearbyHint">
           This will notify approximately <strong id="chirpNearbyEstimate">0</strong> nearby devices.
+        </p>
+        <p style="font-size:0.7rem;color:var(--muted);margin-bottom:1rem;">
+          ⚠️ Requires 2 neighbor confirmations before spreading. No free text — privacy by design.
         </p>
 
         <button class="btn btn-primary" id="chirpSendBtn" onclick="sendChirp()" style="width:100%;">
@@ -1058,6 +1105,9 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         </button>
         <p id="chirpCooldownHint" style="font-size:0.75rem;color:var(--warning);margin-top:0.5rem;display:none;text-align:center;">
           Please wait before sending another chirp
+        </p>
+        <p id="chirpPresenceHint" style="font-size:0.75rem;color:var(--muted);margin-top:0.5rem;display:none;text-align:center;">
+          Must be active for 10 minutes before sending
         </p>
       </div>
 
@@ -2353,18 +2403,29 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       document.getElementById('chirpRecentCount').textContent = data.recent_chirps || 0;
       document.getElementById('chirpNearbyEstimate').textContent = data.nearby_count || 0;
 
-      // Cooldown display
+      // Cooldown display with tier info
       const cooldownEl = document.getElementById('chirpCooldown');
-      if (data.cooldown_remaining_sec > 0) {
+      const presenceHint = document.getElementById('chirpPresenceHint');
+      const cooldownHint = document.getElementById('chirpCooldownHint');
+
+      // Check if presence requirement is met
+      if (!data.presence_met) {
+        cooldownEl.textContent = 'Warming up...';
+        document.getElementById('chirpSendBtn').disabled = true;
+        presenceHint.style.display = 'block';
+        cooldownHint.style.display = 'none';
+      } else if (data.cooldown_remaining_sec > 0) {
         const mins = Math.floor(data.cooldown_remaining_sec / 60);
         const secs = data.cooldown_remaining_sec % 60;
-        cooldownEl.textContent = `${mins}:${secs.toString().padStart(2, '0')}`;
+        cooldownEl.textContent = `${mins}:${secs.toString().padStart(2, '0')} (tier ${data.cooldown_tier || 1})`;
         document.getElementById('chirpSendBtn').disabled = true;
-        document.getElementById('chirpCooldownHint').style.display = 'block';
+        cooldownHint.style.display = 'block';
+        presenceHint.style.display = 'none';
       } else {
-        cooldownEl.textContent = 'Ready';
+        cooldownEl.textContent = data.cooldown_tier > 0 ? `Ready (tier ${data.cooldown_tier})` : 'Ready';
         document.getElementById('chirpSendBtn').disabled = false;
-        document.getElementById('chirpCooldownHint').style.display = 'none';
+        cooldownHint.style.display = 'none';
+        presenceHint.style.display = 'none';
       }
 
       // Update badge
@@ -2446,27 +2507,32 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
                             chirp.urgency === 'caution' ? '#f4b942' : '#63b3ed';
         const urgencyBg = chirp.urgency === 'urgent' ? 'rgba(230,126,34,0.15)' :
                          chirp.urgency === 'caution' ? 'rgba(244,185,66,0.15)' : 'rgba(99,179,237,0.15)';
-        const categoryIcon = chirp.category === 'safety' ? '⚠️' :
-                            chirp.category === 'utility' ? '⚡' :
-                            chirp.category === 'community' ? '📢' :
+        const categoryIcon = chirp.category === 'authority' ? '🚔' :
+                            chirp.category === 'infrastructure' ? '⚡' :
+                            chirp.category === 'emergency' ? '🚨' :
+                            chirp.category === 'weather' ? '⛈️' :
+                            chirp.category === 'mutual_aid' ? '🤝' :
                             chirp.category === 'all_clear' ? '✅' : '👁️';
+        const validationBadge = chirp.validated ? '' :
+                               `<span style="background:rgba(244,185,66,0.2);color:#f4b942;padding:0.1rem 0.3rem;border-radius:3px;font-size:0.65rem;margin-left:0.3rem;">awaiting confirmation (${chirp.confirm_count || 0}/2)</span>`;
 
         return `
-          <div class="log-item" style="border-left-color:${urgencyColor};">
+          <div class="log-item" style="border-left-color:${urgencyColor};${chirp.suppressed ? 'opacity:0.5;' : ''}">
             <div style="font-size:1.5rem;min-width:2rem;text-align:center;">${categoryIcon}</div>
             <div class="log-content">
               <div class="log-message">
-                <span style="opacity:0.8;">${chirp.emoji}</span> shared:
+                <span style="opacity:0.8;">${chirp.emoji}</span> witnessed:
                 <span style="background:${urgencyBg};color:${urgencyColor};padding:0.1rem 0.3rem;border-radius:3px;font-size:0.75rem;">${chirp.urgency}</span>
+                ${validationBadge}
               </div>
-              ${chirp.message ? `<div class="log-detail">"${escapeHtml(chirp.message)}"</div>` : ''}
+              <div class="log-detail" style="font-weight:500;">${escapeHtml(chirp.template_text || 'unknown alert')}${chirp.detail ? ' — ' + escapeHtml(chirp.detail) : ''}</div>
               <div class="log-meta">
-                ${chirp.category} · ${formatChirpAge(chirp.age_sec)} ago · ${chirp.hop_count} hop(s) · ${chirp.ack_count} ack(s)
-                ${chirp.relayed ? ' · relayed' : ''}
+                ${chirp.category} · ${formatChirpAge(chirp.age_sec)} ago · ${chirp.hop_count} hop(s) · ${chirp.confirm_count || 0} confirm(s)
+                ${chirp.relayed ? ' · relayed' : ''}${chirp.suppressed ? ' · suppressed' : ''}
               </div>
             </div>
             <div class="log-actions">
-              <button class="btn btn-ghost btn-sm" onclick="ackChirp('${chirp.nonce}', 'confirmed')" title="I see it too">👁️</button>
+              ${!chirp.validated ? `<button class="btn btn-ghost btn-sm" onclick="confirmChirp('${chirp.nonce}')" title="I see this too">👁️ Confirm</button>` : ''}
               <button class="btn btn-ghost btn-sm" onclick="dismissChirp('${chirp.nonce}')" title="Dismiss">✕</button>
             </div>
           </div>
@@ -2497,37 +2563,50 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       refreshChirpStatus();
     }
 
+    function updateChirpPreview() {
+      const select = document.getElementById('chirpTemplate');
+      const text = select.options[select.selectedIndex].text;
+      document.getElementById('chirpPreviewText').textContent = text;
+    }
+
     async function sendChirp() {
-      const category = document.getElementById('chirpCategory').value;
+      const template_id = parseInt(document.getElementById('chirpTemplate').value);
+      const detail = parseInt(document.getElementById('chirpDetail').value);
       const urgency = document.querySelector('input[name="chirpUrgency"]:checked').value;
-      const message = document.getElementById('chirpMessage').value.trim();
+
+      const templateText = document.getElementById('chirpTemplate').options[
+        document.getElementById('chirpTemplate').selectedIndex
+      ].text;
 
       const confirmMsg = urgency === 'urgent' ?
-        'Send URGENT alert to nearby devices? This should only be used for important safety concerns.' :
-        'Send this alert to nearby devices?';
+        `Send URGENT alert: "${templateText}"?\n\nThis requires 2 neighbor confirmations before spreading.` :
+        `Send alert: "${templateText}"?\n\nThis requires 2 neighbor confirmations before spreading.`;
 
       if (!confirm(confirmMsg)) return;
 
       const data = await api('/api/chirp/send', 'POST', {
-        category,
+        template_id,
+        detail,
         urgency,
-        message,
         ttl_minutes: 15
       });
 
       if (data.success) {
-        document.getElementById('chirpMessage').value = '';
-        alert('Chirp sent to community!');
+        alert('Alert sent! Waiting for neighbor confirmations before it spreads.');
       } else {
-        alert('Failed to send chirp: ' + (data.message || data.error || 'Unknown error'));
+        alert('Failed to send: ' + (data.message || data.error || 'Unknown error'));
       }
 
       refreshChirpStatus();
     }
 
-    async function ackChirp(nonce, type) {
-      await api('/api/chirp/ack', 'POST', { nonce, type });
-      loadChirps();
+    async function confirmChirp(nonce) {
+      // Human witness confirmation - "I see this too"
+      const data = await api('/api/chirp/confirm', 'POST', { nonce });
+      if (data.success) {
+        // Reload chirps to show updated confirmation count
+        loadChirps();
+      }
     }
 
     async function dismissChirp(nonce) {

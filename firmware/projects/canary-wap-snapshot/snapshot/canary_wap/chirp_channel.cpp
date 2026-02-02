@@ -1,16 +1,20 @@
 /*
  * SecuraCV Canary — Chirp Channel (Anonymous Community Witness Network)
- * Version 0.1.0
+ * Version 0.2.0
  *
  * Privacy-first community alert system with ephemeral identities.
  * "Safety in numbers, not surveillance"
+ * "Witness authority, not neighbors"
  *
  * Key Properties:
  * - Ephemeral session identity (new each enable/reboot)
  * - Human-in-the-loop (no automated broadcasts)
+ * - STRUCTURED TEMPLATES ONLY (no free text - abuse prevention)
  * - 3-hop max range (neighborhood only)
  * - No persistent history
- * - Rate limited (prevents spam/hysteria)
+ * - Escalating cooldowns (prevents spam/hysteria)
+ * - Witness confirmation requirement (2 needed before relay)
+ * - Community suppress voting (50% dismiss = suppress)
  *
  * See spec/chirp_channel_v0.md for full specification.
  */
@@ -23,6 +27,7 @@
 #include <WiFi.h>
 #include <mbedtls/sha256.h>
 #include <Ed25519.h>
+#include <time.h>
 
 // ════════════════════════════════════════════════════════════════════════════
 // INTERNAL STATE
@@ -39,8 +44,11 @@ static bool g_initialized = false;
 static bool g_relay_enabled = true;
 static ChirpUrgency g_urgency_filter = CHIRP_URG_INFO;
 
+// Cooldown tracking (escalating)
+static CooldownState g_cooldown;
+static uint32_t g_session_start_ms = 0;  // For presence requirement
+
 // Rate limiting
-static uint32_t g_last_chirp_sent_ms = 0;
 static uint32_t g_last_presence_ms = 0;
 static uint8_t g_relays_this_minute = 0;
 static uint32_t g_relay_minute_start = 0;
@@ -83,6 +91,78 @@ static const char* EMOJI_SET[16] = {
 };
 
 // ════════════════════════════════════════════════════════════════════════════
+// TEMPLATE TEXT LOOKUP TABLES
+// Emergency-focused templates — "Witness authority, not neighbors"
+// ════════════════════════════════════════════════════════════════════════════
+
+struct TemplateEntry {
+  ChirpTemplate id;
+  const char* text;
+  ChirpCategory category;
+  bool night_allowed;  // Can be sent during night mode
+};
+
+static const TemplateEntry TEMPLATE_TABLE[] = {
+  // Authority Presence — When power shows up
+  { TPL_AUTH_POLICE_ACTIVITY,     "police activity in area",       CHIRP_CAT_AUTHORITY, true },
+  { TPL_AUTH_HEAVY_RESPONSE,      "heavy law enforcement response", CHIRP_CAT_AUTHORITY, true },
+  { TPL_AUTH_ROAD_BLOCKED_LE,     "road blocked by law enforcement", CHIRP_CAT_AUTHORITY, true },
+  { TPL_AUTH_HELICOPTER,          "helicopter circling area",       CHIRP_CAT_AUTHORITY, true },
+  { TPL_AUTH_FEDERAL_PRESENCE,    "federal agents in area",         CHIRP_CAT_AUTHORITY, true },
+
+  // Infrastructure — Systems failing
+  { TPL_INFRA_POWER_OUT,          "power outage",                   CHIRP_CAT_INFRA, true },
+  { TPL_INFRA_WATER_ISSUE,        "water service disruption",       CHIRP_CAT_INFRA, true },
+  { TPL_INFRA_GAS_SMELL,          "gas smell - evacuate?",          CHIRP_CAT_INFRA, true },
+  { TPL_INFRA_INTERNET_DOWN,      "internet outage in area",        CHIRP_CAT_INFRA, false },
+  { TPL_INFRA_ROAD_CLOSED,        "road closed or blocked",         CHIRP_CAT_INFRA, false },
+
+  // Emergency — Immediate danger
+  { TPL_EMERG_FIRE_VISIBLE,       "fire or smoke visible",          CHIRP_CAT_EMERGENCY, true },
+  { TPL_EMERG_MEDICAL_SCENE,      "medical emergency scene",        CHIRP_CAT_EMERGENCY, true },
+  { TPL_EMERG_MULTIPLE_AMBULANCE, "multiple ambulances responding", CHIRP_CAT_EMERGENCY, true },
+  { TPL_EMERG_EVACUATION,         "evacuation in progress",         CHIRP_CAT_EMERGENCY, true },
+  { TPL_EMERG_SHELTER_IN_PLACE,   "shelter in place advisory",      CHIRP_CAT_EMERGENCY, true },
+
+  // Weather — Environmental threats
+  { TPL_WX_SEVERE_WARNING,        "severe weather warning",         CHIRP_CAT_WEATHER, true },
+  { TPL_WX_TORNADO,               "tornado warning",                CHIRP_CAT_WEATHER, true },
+  { TPL_WX_FLOOD,                 "flooding reported",              CHIRP_CAT_WEATHER, true },
+  { TPL_WX_LIGHTNING_CLOSE,       "dangerous lightning nearby",     CHIRP_CAT_WEATHER, true },
+
+  // Mutual Aid — Community support
+  { TPL_AID_WELFARE_CHECK,        "neighbor may need help",         CHIRP_CAT_MUTUAL_AID, false },
+  { TPL_AID_SUPPLIES_NEEDED,      "supplies needed in area",        CHIRP_CAT_MUTUAL_AID, false },
+  { TPL_AID_OFFERING_HELP,        "offering assistance",            CHIRP_CAT_MUTUAL_AID, false },
+
+  // All Clear — De-escalation
+  { TPL_CLR_RESOLVED,             "situation resolved",             CHIRP_CAT_ALL_CLEAR, true },
+  { TPL_CLR_SAFE,                 "area appears safe now",          CHIRP_CAT_ALL_CLEAR, true },
+  { TPL_CLR_FALSE_ALARM,          "false alarm",                    CHIRP_CAT_ALL_CLEAR, true },
+};
+static const size_t TEMPLATE_COUNT = sizeof(TEMPLATE_TABLE) / sizeof(TEMPLATE_TABLE[0]);
+
+struct DetailEntry {
+  ChirpDetailSlot id;
+  const char* text;
+};
+
+static const DetailEntry DETAIL_TABLE[] = {
+  { DETAIL_NONE,             "" },
+  { DETAIL_SCALE_FEW,        "few vehicles" },
+  { DETAIL_SCALE_MANY,       "many vehicles" },
+  { DETAIL_SCALE_MASSIVE,    "massive response" },
+  { DETAIL_STATUS_ONGOING,   "ongoing" },
+  { DETAIL_STATUS_CONTAINED, "contained" },
+  { DETAIL_STATUS_SPREADING, "spreading" },
+  { DETAIL_DIR_NORTH,        "north" },
+  { DETAIL_DIR_SOUTH,        "south" },
+  { DETAIL_DIR_EAST,         "east" },
+  { DETAIL_DIR_WEST,         "west" },
+};
+static const size_t DETAIL_COUNT = sizeof(DETAIL_TABLE) / sizeof(DETAIL_TABLE[0]);
+
+// ════════════════════════════════════════════════════════════════════════════
 // FORWARD DECLARATIONS
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -97,12 +177,15 @@ static void handle_presence(const uint8_t* data, size_t len, int8_t rssi);
 static void handle_witness(const uint8_t* data, size_t len, int8_t rssi);
 static void handle_ack(const uint8_t* data, size_t len);
 static void handle_mute(const uint8_t* data, size_t len);
-static void relay_chirp(const uint8_t* data, size_t len);
+static void relay_chirp(const ReceivedChirp* chirp);
 static void prune_stale_nearby();
 static void prune_old_chirps();
 static void load_settings();
 static void save_settings();
 static void on_espnow_recv(const uint8_t* mac, const uint8_t* data, int len);
+static const TemplateEntry* find_template(ChirpTemplate id);
+static ChirpCategory template_to_category(ChirpTemplate id);
+static uint32_t get_cooldown_for_tier(uint8_t tier);
 
 // ════════════════════════════════════════════════════════════════════════════
 // STATE MANAGEMENT
@@ -167,6 +250,50 @@ static void generate_emoji_string(const uint8_t* session_id, char* emoji_out) {
     uint8_t idx = session_id[i] % 16;
     strcat(emoji_out, EMOJI_SET[idx]);
   }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// TEMPLATE HELPERS
+// ════════════════════════════════════════════════════════════════════════════
+
+static const TemplateEntry* find_template(ChirpTemplate id) {
+  for (size_t i = 0; i < TEMPLATE_COUNT; i++) {
+    if (TEMPLATE_TABLE[i].id == id) {
+      return &TEMPLATE_TABLE[i];
+    }
+  }
+  return nullptr;
+}
+
+static ChirpCategory template_to_category(ChirpTemplate id) {
+  const TemplateEntry* entry = find_template(id);
+  if (entry) return entry->category;
+  return CHIRP_CAT_ALL_CLEAR;  // Default
+}
+
+static uint32_t get_cooldown_for_tier(uint8_t tier) {
+  switch (tier) {
+    case 1: return COOLDOWN_TIER_1_MS;
+    case 2: return COOLDOWN_TIER_2_MS;
+    case 3: return COOLDOWN_TIER_3_MS;
+    default: return COOLDOWN_TIER_4_MS;
+  }
+}
+
+static void reset_cooldown_if_stale() {
+  uint32_t now = millis();
+  if (g_cooldown.first_chirp_today_ms > 0 &&
+      now - g_cooldown.first_chirp_today_ms > COOLDOWN_RESET_MS) {
+    // 24h passed since first chirp, reset tiers
+    g_cooldown.chirps_sent_today = 0;
+    g_cooldown.first_chirp_today_ms = 0;
+    g_cooldown.last_chirp_ms = 0;
+  }
+}
+
+static bool is_template_night_allowed(ChirpTemplate id) {
+  const TemplateEntry* entry = find_template(id);
+  return entry ? entry->night_allowed : false;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -285,6 +412,7 @@ static void handle_presence(const uint8_t* data, size_t len, int8_t rssi) {
 }
 
 static void handle_witness(const uint8_t* data, size_t len, int8_t rssi) {
+  (void)rssi;  // Could be used for signal strength filtering in future
   if (len < sizeof(ChirpHeader) + sizeof(ChirpWitnessPayload)) return;
 
   const ChirpHeader* hdr = (const ChirpHeader*)data;
@@ -317,27 +445,42 @@ static void handle_witness(const uint8_t* data, size_t len, int8_t rssi) {
     return;
   }
 
+  // Extract template from wire format:
+  // - msg_len byte holds template_id (ChirpTemplate)
+  // - message[0] holds detail slot (ChirpDetailSlot)
+  ChirpTemplate template_id = (ChirpTemplate)payload->msg_len;
+  ChirpDetailSlot detail_slot = (ChirpDetailSlot)payload->message[0];
+
+  // Validate template exists
+  if (!find_template(template_id)) {
+    return;  // Invalid/unknown template - reject
+  }
+
   // Store the chirp
   if (g_recent_chirp_count < MAX_RECENT_CHIRPS) {
     ReceivedChirp* chirp = &g_recent_chirps[g_recent_chirp_count++];
 
     memcpy(chirp->sender_session, hdr->session_id, SESSION_ID_SIZE);
     generate_emoji_string(hdr->session_id, chirp->sender_emoji);
-    chirp->category = (ChirpCategory)payload->category;
+    chirp->template_id = template_id;
+    chirp->detail = detail_slot;
     chirp->urgency = (ChirpUrgency)payload->urgency;
-
-    size_t msg_len = payload->msg_len;
-    if (msg_len > MAX_MESSAGE_LEN) msg_len = MAX_MESSAGE_LEN;
-    memcpy(chirp->message, payload->message, msg_len);
-    chirp->message[msg_len] = '\0';
-
     chirp->hop_count = hdr->hop_count;
     chirp->received_ms = millis();
     chirp->timestamp = hdr->timestamp;
     memcpy(chirp->nonce, hdr->nonce, 8);
-    chirp->ack_count = payload->confirm_count;
+    chirp->confirm_count = payload->confirm_count;
+    chirp->dismiss_count = 0;
     chirp->relayed = false;
     chirp->dismissed = false;
+    chirp->suppressed = false;
+
+    // Determine if validated (has enough witness confirmations)
+    // Safety templates only need 1, others need CONFIRMATIONS_REQUIRED
+    ChirpCategory cat = template_to_category(template_id);
+    uint8_t needed = (cat == CHIRP_CAT_EMERGENCY || cat == CHIRP_CAT_WEATHER)
+                     ? CONFIRMATIONS_SAFETY : CONFIRMATIONS_REQUIRED;
+    chirp->validated = (payload->confirm_count >= needed);
 
     // Notify callback
     if (g_chirp_callback) {
@@ -345,30 +488,57 @@ static void handle_witness(const uint8_t* data, size_t len, int8_t rssi) {
     }
 
     // Log reception
-    char detail[64];
-    snprintf(detail, sizeof(detail), "chirp received: %s %s",
-             category_name(chirp->category), urgency_name(chirp->urgency));
-    health_log(LOG_LEVEL_INFO, LOG_CAT_NETWORK, detail);
-  }
+    const char* tpl_text = get_template_text(template_id);
+    char log_detail[80];
+    snprintf(log_detail, sizeof(log_detail), "chirp: %s (%d confirms, hop %d)",
+             tpl_text, payload->confirm_count, hdr->hop_count);
+    health_log(LOG_LEVEL_INFO, LOG_CAT_NETWORK, log_detail);
 
-  // Relay if enabled and under hop limit
-  if (g_relay_enabled && hdr->hop_count < MAX_HOP_COUNT) {
-    relay_chirp(data, len);
+    // Only relay if validated and under hop limit
+    if (g_relay_enabled && chirp->validated && hdr->hop_count < MAX_HOP_COUNT) {
+      relay_chirp(chirp);
+    }
   }
 }
 
 static void handle_ack(const uint8_t* data, size_t len) {
   if (len < sizeof(ChirpHeader) + sizeof(ChirpAckPayload)) return;
 
+  const ChirpHeader* hdr = (const ChirpHeader*)data;
   const ChirpAckPayload* payload = (const ChirpAckPayload*)(data + sizeof(ChirpHeader));
 
   // Find the chirp being acknowledged
   for (size_t i = 0; i < g_recent_chirp_count; i++) {
     if (memcmp(g_recent_chirps[i].nonce, payload->original_nonce, 8) == 0) {
-      g_recent_chirps[i].ack_count++;
+      ReceivedChirp* chirp = &g_recent_chirps[i];
+
+      if (payload->ack_type == CHIRP_ACK_CONFIRMED) {
+        // Human witness confirmation - increment count
+        chirp->confirm_count++;
+
+        // Check if now validated and can relay
+        ChirpCategory cat = template_to_category(chirp->template_id);
+        uint8_t needed = (cat == CHIRP_CAT_EMERGENCY || cat == CHIRP_CAT_WEATHER)
+                         ? CONFIRMATIONS_SAFETY : CONFIRMATIONS_REQUIRED;
+
+        if (!chirp->validated && chirp->confirm_count >= needed) {
+          chirp->validated = true;
+          // Relay now that it's validated
+          if (g_relay_enabled && !chirp->relayed && chirp->hop_count < MAX_HOP_COUNT) {
+            relay_chirp(chirp);
+          }
+        }
+      } else if (payload->ack_type == CHIRP_ACK_SEEN) {
+        // Device saw it - track for presence
+      } else if (payload->ack_type == CHIRP_ACK_RESOLVED) {
+        // User says resolved - treat as de-escalation
+        chirp->dismissed = true;
+      }
       break;
     }
   }
+
+  (void)hdr;  // Could validate sender
 }
 
 static void handle_mute(const uint8_t* data, size_t len) {
@@ -377,7 +547,9 @@ static void handle_mute(const uint8_t* data, size_t len) {
   (void)len;
 }
 
-static void relay_chirp(const uint8_t* data, size_t len) {
+static void relay_chirp(const ReceivedChirp* chirp) {
+  if (!chirp) return;
+
   // Rate limit relays
   uint32_t now = millis();
   if (now - g_relay_minute_start > 60000) {
@@ -389,24 +561,41 @@ static void relay_chirp(const uint8_t* data, size_t len) {
     return;  // Rate limited
   }
 
-  // Copy and increment hop count
-  uint8_t relay_buf[256];
-  if (len > sizeof(relay_buf)) return;
+  // Build relay message with incremented hop count
+  uint8_t buf[sizeof(ChirpHeader) + sizeof(ChirpWitnessPayload)];
+  ChirpHeader* hdr = (ChirpHeader*)buf;
+  ChirpWitnessPayload* payload = (ChirpWitnessPayload*)(buf + sizeof(ChirpHeader));
 
-  memcpy(relay_buf, data, len);
-  ChirpHeader* hdr = (ChirpHeader*)relay_buf;
-  hdr->hop_count++;
+  hdr->magic = CHIRP_MAGIC;
+  hdr->version = PROTOCOL_VERSION;
+  hdr->msg_type = CHIRP_MSG_WITNESS;
+  memcpy(hdr->session_id, chirp->sender_session, SESSION_ID_SIZE);  // Keep original sender
+  hdr->hop_count = chirp->hop_count + 1;
+  hdr->timestamp = chirp->timestamp;  // Keep original timestamp
+  memcpy(hdr->nonce, chirp->nonce, 8);  // Keep original nonce for dedup
 
-  broadcast_message(relay_buf, len);
+  // Encode template in wire format
+  payload->category = (uint8_t)template_to_category(chirp->template_id);
+  payload->urgency = (uint8_t)chirp->urgency;
+  payload->confirm_count = chirp->confirm_count;  // Include confirmation count
+  payload->ttl_minutes = 15;  // Default TTL
+  payload->msg_len = (uint8_t)chirp->template_id;  // Template ID in msg_len
+  payload->message[0] = (uint8_t)chirp->detail;    // Detail slot in message[0]
+  memset(payload->message + 1, 0, MAX_MESSAGE_LEN - 1);
+  memset(payload->signature, 0, 64);  // Note: Relay doesn't re-sign
+
+  broadcast_message(buf, sizeof(buf));
   g_relays_this_minute++;
 
   // Mark chirp as relayed
   for (size_t i = 0; i < g_recent_chirp_count; i++) {
-    if (memcmp(g_recent_chirps[i].nonce, hdr->nonce, 8) == 0) {
+    if (memcmp(g_recent_chirps[i].nonce, chirp->nonce, 8) == 0) {
       g_recent_chirps[i].relayed = true;
       break;
     }
   }
+
+  health_log(LOG_LEVEL_DEBUG, LOG_CAT_NETWORK, "chirp: relayed");
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -559,6 +748,12 @@ bool enable() {
     // May already be initialized by mesh_network
   }
 
+  // Reset cooldown tracking for new session
+  memset(&g_cooldown, 0, sizeof(g_cooldown));
+
+  // Track session start time for presence requirement
+  g_session_start_ms = millis();
+
   set_state(CHIRP_ACTIVE);
 
   // Send initial presence
@@ -589,6 +784,9 @@ void update() {
 
   uint32_t now = millis();
 
+  // Check 24h cooldown reset
+  reset_cooldown_if_stale();
+
   // Check mute timeout
   if (g_muted && now >= g_mute_until_ms) {
     g_muted = false;
@@ -597,9 +795,10 @@ void update() {
     }
   }
 
-  // Check cooldown timeout
+  // Check escalating cooldown timeout
   if (g_state == CHIRP_COOLDOWN) {
-    if (now - g_last_chirp_sent_ms >= CHIRP_COOLDOWN_MS) {
+    uint32_t cooldown_ms = get_cooldown_for_tier(g_cooldown.chirps_sent_today);
+    if (now - g_cooldown.last_chirp_ms >= cooldown_ms) {
       set_state(CHIRP_ACTIVE);
     }
   }
@@ -625,12 +824,13 @@ ChirpStatus get_status() {
   strncpy(status.session_emoji, g_session.emoji_display, EMOJI_DISPLAY_SIZE);
   status.nearby_count = (uint8_t)g_nearby_count;
   status.recent_chirp_count = (uint8_t)g_recent_chirp_count;
-  status.last_chirp_sent_ms = g_last_chirp_sent_ms;
+  status.last_chirp_sent_ms = g_cooldown.last_chirp_ms;
 
-  if (g_state == CHIRP_COOLDOWN && g_last_chirp_sent_ms > 0) {
-    uint32_t elapsed = millis() - g_last_chirp_sent_ms;
-    if (elapsed < CHIRP_COOLDOWN_MS) {
-      status.cooldown_remaining_ms = CHIRP_COOLDOWN_MS - elapsed;
+  if (g_state == CHIRP_COOLDOWN && g_cooldown.last_chirp_ms > 0) {
+    uint32_t cooldown_ms = get_cooldown_for_tier(g_cooldown.chirps_sent_today);
+    uint32_t elapsed = millis() - g_cooldown.last_chirp_ms;
+    if (elapsed < cooldown_ms) {
+      status.cooldown_remaining_ms = cooldown_ms - elapsed;
     } else {
       status.cooldown_remaining_ms = 0;
     }
@@ -664,12 +864,13 @@ const char* state_name(ChirpState state) {
 
 const char* category_name(ChirpCategory category) {
   switch (category) {
-    case CHIRP_CAT_ACTIVITY:  return "activity";
-    case CHIRP_CAT_UTILITY:   return "utility";
-    case CHIRP_CAT_SAFETY:    return "safety";
-    case CHIRP_CAT_COMMUNITY: return "community";
-    case CHIRP_CAT_ALL_CLEAR: return "all_clear";
-    default:                  return "unknown";
+    case CHIRP_CAT_AUTHORITY:   return "authority";
+    case CHIRP_CAT_INFRA:       return "infrastructure";
+    case CHIRP_CAT_EMERGENCY:   return "emergency";
+    case CHIRP_CAT_WEATHER:     return "weather";
+    case CHIRP_CAT_MUTUAL_AID:  return "mutual_aid";
+    case CHIRP_CAT_ALL_CLEAR:   return "all_clear";
+    default:                    return "unknown";
   }
 }
 
@@ -686,16 +887,93 @@ bool is_active() {
   return g_state == CHIRP_ACTIVE || g_state == CHIRP_LISTENING;
 }
 
+bool has_presence_requirement() {
+  // Must be active for PRESENCE_REQUIRED_MS before can send
+  if (g_session_start_ms == 0) return false;
+  return (millis() - g_session_start_ms) >= PRESENCE_REQUIRED_MS;
+}
+
 bool can_send_chirp() {
   if (g_state == CHIRP_DISABLED || g_state == CHIRP_COOLDOWN) {
+    return false;
+  }
+  // Presence requirement: must be active for 10 minutes first
+  if (!has_presence_requirement()) {
     return false;
   }
   return true;
 }
 
-bool send_chirp(ChirpCategory category, ChirpUrgency urgency,
-                const char* message, uint8_t ttl_minutes) {
+bool is_night_mode() {
+  // Check if current hour is during night mode (22:00-06:00)
+  time_t now = time(nullptr);
+  struct tm* tm_info = localtime(&now);
+  if (tm_info) {
+    int hour = tm_info->tm_hour;
+    return (hour >= NIGHT_START_HOUR || hour < NIGHT_END_HOUR);
+  }
+  return false;  // If time unknown, assume day
+}
+
+bool is_valid_template(ChirpTemplate template_id) {
+  return find_template(template_id) != nullptr;
+}
+
+const char* get_template_text(ChirpTemplate template_id) {
+  const TemplateEntry* entry = find_template(template_id);
+  return entry ? entry->text : "unknown alert";
+}
+
+const char* get_detail_text(ChirpDetailSlot detail) {
+  for (size_t i = 0; i < DETAIL_COUNT; i++) {
+    if (DETAIL_TABLE[i].id == detail) {
+      return DETAIL_TABLE[i].text;
+    }
+  }
+  return "";
+}
+
+uint8_t get_cooldown_tier() {
+  if (g_cooldown.chirps_sent_today == 0) return 0;
+  if (g_cooldown.chirps_sent_today >= 4) return 4;
+  return g_cooldown.chirps_sent_today;
+}
+
+uint32_t get_cooldown_remaining_ms() {
+  if (g_state != CHIRP_COOLDOWN) return 0;
+  uint32_t cooldown_ms = get_cooldown_for_tier(g_cooldown.chirps_sent_today);
+  uint32_t elapsed = millis() - g_cooldown.last_chirp_ms;
+  if (elapsed >= cooldown_ms) return 0;
+  return cooldown_ms - elapsed;
+}
+
+const char* get_validation_status(const ReceivedChirp* chirp) {
+  if (!chirp) return "unknown";
+  if (chirp->suppressed) return "suppressed";
+  if (chirp->validated) return "validated";
+  ChirpCategory cat = template_to_category(chirp->template_id);
+  uint8_t needed = (cat == CHIRP_CAT_EMERGENCY || cat == CHIRP_CAT_WEATHER)
+                   ? CONFIRMATIONS_SAFETY : CONFIRMATIONS_REQUIRED;
+  if (chirp->confirm_count < needed) return "awaiting_confirmation";
+  return "validated";
+}
+
+bool send_chirp(ChirpTemplate template_id, ChirpUrgency urgency,
+                ChirpDetailSlot detail, uint8_t ttl_minutes) {
   if (!can_send_chirp()) {
+    return false;
+  }
+
+  // Validate template
+  const TemplateEntry* entry = find_template(template_id);
+  if (!entry) {
+    health_log(LOG_LEVEL_WARNING, LOG_CAT_NETWORK, "chirp: invalid template");
+    return false;
+  }
+
+  // Night mode restriction
+  if (is_night_mode() && !entry->night_allowed) {
+    health_log(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "chirp: template not allowed at night");
     return false;
   }
 
@@ -713,20 +991,14 @@ bool send_chirp(ChirpCategory category, ChirpUrgency urgency,
   hdr->timestamp = (uint32_t)(millis() / 1000);
   esp_fill_random(hdr->nonce, 8);
 
-  // Fill payload
-  payload->category = (uint8_t)category;
+  // Fill payload with template-based format
+  payload->category = (uint8_t)entry->category;
   payload->urgency = (uint8_t)urgency;
   payload->confirm_count = 1;  // We're the first confirmer
   payload->ttl_minutes = ttl_minutes;
-
-  if (message && message[0]) {
-    size_t msg_len = strlen(message);
-    if (msg_len > MAX_MESSAGE_LEN) msg_len = MAX_MESSAGE_LEN;
-    payload->msg_len = (uint8_t)msg_len;
-    memcpy(payload->message, message, msg_len);
-  } else {
-    payload->msg_len = 0;
-  }
+  payload->msg_len = (uint8_t)template_id;  // Template ID in msg_len field
+  payload->message[0] = (uint8_t)detail;     // Detail slot in message[0]
+  memset(payload->message + 1, 0, MAX_MESSAGE_LEN - 1);
 
   // Sign the message with session key
   uint8_t sign_input[128];
@@ -737,6 +1009,8 @@ bool send_chirp(ChirpCategory category, ChirpUrgency urgency,
   sign_len += 8;
   sign_input[sign_len++] = payload->category;
   sign_input[sign_len++] = payload->urgency;
+  sign_input[sign_len++] = (uint8_t)template_id;
+  sign_input[sign_len++] = (uint8_t)detail;
 
   Ed25519::sign(payload->signature, g_session.session_privkey,
                 g_session.session_pubkey, sign_input, sign_len);
@@ -744,22 +1018,33 @@ bool send_chirp(ChirpCategory category, ChirpUrgency urgency,
   // Broadcast
   broadcast_message(buf, sizeof(buf));
 
-  // Update state
-  g_last_chirp_sent_ms = millis();
+  // Update cooldown tracking
+  uint32_t now = millis();
+  if (g_cooldown.chirps_sent_today == 0) {
+    g_cooldown.first_chirp_today_ms = now;
+  }
+  g_cooldown.chirps_sent_today++;
+  g_cooldown.last_chirp_ms = now;
   cache_nonce(hdr->nonce);  // Don't process our own chirp
   set_state(CHIRP_COOLDOWN);
 
   // Log
-  char detail[64];
-  snprintf(detail, sizeof(detail), "chirp sent: %s %s",
-           category_name(category), urgency_name(urgency));
-  health_log(LOG_LEVEL_INFO, LOG_CAT_NETWORK, detail);
+  char log_detail[96];
+  snprintf(log_detail, sizeof(log_detail), "chirp sent: %s (%s, tier %d)",
+           entry->text, urgency_name(urgency), g_cooldown.chirps_sent_today);
+  health_log(LOG_LEVEL_INFO, LOG_CAT_NETWORK, log_detail);
 
   return true;
 }
 
-bool send_all_clear(const char* message) {
-  return send_chirp(CHIRP_CAT_ALL_CLEAR, CHIRP_URG_INFO, message, 15);
+bool send_all_clear(ChirpTemplate clear_type) {
+  // Validate it's actually an all-clear template
+  if (clear_type != TPL_CLR_RESOLVED &&
+      clear_type != TPL_CLR_SAFE &&
+      clear_type != TPL_CLR_FALSE_ALARM) {
+    clear_type = TPL_CLR_RESOLVED;  // Default to resolved
+  }
+  return send_chirp(clear_type, CHIRP_URG_INFO, DETAIL_NONE, 15);
 }
 
 const ReceivedChirp* get_recent_chirps(size_t* count) {
@@ -767,7 +1052,51 @@ const ReceivedChirp* get_recent_chirps(size_t* count) {
   return g_recent_chirps;
 }
 
-bool acknowledge_chirp(const uint8_t* nonce, ChirpAckType ack_type) {
+const ReceivedChirp* get_pending_chirps(size_t* count) {
+  // Return chirps that are not yet validated (awaiting confirmation)
+  static ReceivedChirp pending[MAX_RECENT_CHIRPS];
+  size_t pending_count = 0;
+
+  for (size_t i = 0; i < g_recent_chirp_count; i++) {
+    if (!g_recent_chirps[i].validated && !g_recent_chirps[i].dismissed) {
+      pending[pending_count++] = g_recent_chirps[i];
+    }
+  }
+
+  if (count) *count = pending_count;
+  return pending;
+}
+
+bool confirm_chirp(const uint8_t* nonce) {
+  // Find the chirp and add our witness confirmation
+  for (size_t i = 0; i < g_recent_chirp_count; i++) {
+    if (memcmp(g_recent_chirps[i].nonce, nonce, 8) == 0) {
+      // Send a confirmation acknowledgment
+      uint8_t buf[sizeof(ChirpHeader) + sizeof(ChirpAckPayload)];
+      ChirpHeader* hdr = (ChirpHeader*)buf;
+      ChirpAckPayload* payload = (ChirpAckPayload*)(buf + sizeof(ChirpHeader));
+
+      hdr->magic = CHIRP_MAGIC;
+      hdr->version = PROTOCOL_VERSION;
+      hdr->msg_type = CHIRP_MSG_ACK;
+      memcpy(hdr->session_id, g_session.session_id, SESSION_ID_SIZE);
+      hdr->hop_count = 0;
+      hdr->timestamp = (uint32_t)(millis() / 1000);
+      esp_fill_random(hdr->nonce, 8);
+
+      memcpy(payload->original_nonce, nonce, 8);
+      payload->ack_type = (uint8_t)CHIRP_ACK_CONFIRMED;
+
+      broadcast_message(buf, sizeof(buf));
+
+      health_log(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "chirp: confirmed witness");
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool acknowledge_chirp(const uint8_t* nonce, ChirpAckType ack_type) {
   // Build ACK message
   uint8_t buf[sizeof(ChirpHeader) + sizeof(ChirpAckPayload)];
   ChirpHeader* hdr = (ChirpHeader*)buf;
