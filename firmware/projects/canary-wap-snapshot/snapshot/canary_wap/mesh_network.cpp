@@ -226,7 +226,10 @@ static bool encrypt_message(const uint8_t* key, const uint8_t* plaintext, size_t
   esp_fill_random(nonce_out, NONCE_SIZE);
 
   ChaChaPoly chachapoly;
-  chachapoly.setKey(key, 32);
+  if (!chachapoly.setKey(key, 32)) {
+    chachapoly.clear();
+    return false;
+  }
   chachapoly.setIV(nonce_out, NONCE_SIZE);
   chachapoly.encrypt(ciphertext, plaintext, len);
   chachapoly.computeTag(tag_out, 16);
@@ -238,7 +241,10 @@ static bool encrypt_message(const uint8_t* key, const uint8_t* plaintext, size_t
 static bool decrypt_message(const uint8_t* key, const uint8_t* ciphertext, size_t len,
                            const uint8_t* nonce, const uint8_t* tag, uint8_t* plaintext) {
   ChaChaPoly chachapoly;
-  chachapoly.setKey(key, 32);
+  if (!chachapoly.setKey(key, 32)) {
+    chachapoly.clear();
+    return false;
+  }
   chachapoly.setIV(nonce, NONCE_SIZE);
   chachapoly.decrypt(plaintext, ciphertext, len);
 
