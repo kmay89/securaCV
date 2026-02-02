@@ -806,7 +806,8 @@ bool remove_paired_device(const uint8_t* address) {
       memset(&g_paired_devices[g_paired_count], 0, sizeof(PairedDevice));
 
       // Remove from NimBLE bond storage
-      NimBLEDevice::deleteBond(NimBLEAddress(address));
+      // NimBLE 2.x requires address type as second parameter
+      NimBLEDevice::deleteBond(NimBLEAddress(address, BLE_ADDR_PUBLIC));
 
       save_paired_devices();
       log_health(LOG_LEVEL_INFO, LOG_CAT_BLUETOOTH, "Paired device removed", nullptr);
