@@ -481,14 +481,31 @@ static const size_t EMOJI_DISPLAY_SIZE = 13;       // "🐦🌳⭐" + null
 
 // Timing (milliseconds)
 static const uint32_t PRESENCE_INTERVAL_MS = 60000;    // Send presence every 60s
-static const uint32_t CHIRP_COOLDOWN_MS = 300000;      // 5 min between chirps
 static const uint32_t CHIRP_TTL_MS = 300000;           // Messages valid for 5 min
 static const uint32_t NEARBY_TIMEOUT_MS = 180000;      // Nearby stale after 3 min
 static const uint32_t DEFAULT_DISPLAY_MS = 1800000;    // Display chirps for 30 min
+static const uint32_t PRESENCE_REQUIRED_MS = 600000;   // 10 min presence before can send
+
+// Escalating cooldowns (abuse prevention)
+static const uint32_t COOLDOWN_TIER_1_MS = 300000;     // 5 min after 1st chirp
+static const uint32_t COOLDOWN_TIER_2_MS = 900000;     // 15 min after 2nd chirp
+static const uint32_t COOLDOWN_TIER_3_MS = 3600000;    // 1 hour after 3rd chirp
+static const uint32_t COOLDOWN_TIER_4_MS = 14400000;   // 4 hours after 4th+ chirp
+static const uint32_t COOLDOWN_RESET_MS = 86400000;    // Reset tiers after 24h no chirps
 
 // Rate limits
 static const uint8_t MAX_RELAYS_PER_MINUTE = 10;
 static const uint8_t MAX_HOP_COUNT = 3;
+static const uint8_t CONFIRMATIONS_REQUIRED = 2;       // Need 2 witnesses before relay
+static const uint8_t CONFIRMATIONS_SAFETY = 1;         // Safety templates need only 1
+
+// Night mode (restricted hours)
+static const uint8_t NIGHT_START_HOUR = 22;            // 10 PM
+static const uint8_t NIGHT_END_HOUR = 6;               // 6 AM
+
+// Community mute threshold
+static const uint8_t SUPPRESS_THRESHOLD_PERCENT = 50;  // >50% dismiss = suppress
+static const uint32_t SUPPRESS_WINDOW_MS = 120000;     // Within 2 minutes
 
 // ────────────────────────────────────────────────────────────────────────────
 // ENUMS
@@ -519,6 +536,68 @@ enum ChirpCategory : uint8_t {
   CHIRP_CAT_SAFETY,        // Fire, medical, urgent safety
   CHIRP_CAT_COMMUNITY,     // Lost pet, event, general notice
   CHIRP_CAT_ALL_CLEAR      // Situation resolved, de-escalation
+};
+
+// Message templates (NO FREE TEXT - abuse prevention)
+// These are the ONLY messages that can be sent
+enum ChirpTemplate : uint8_t {
+  // Activity templates (0x00-0x1F)
+  TPL_ACT_PERSON_UNFAMILIAR    = 0x00,  // "unfamiliar person in area"
+  TPL_ACT_PERSON_CHECKING_DOORS= 0x01,  // "someone checking doors"
+  TPL_ACT_PERSON_LOOKING_CARS  = 0x02,  // "someone looking in vehicles"
+  TPL_ACT_VEHICLE_UNFAMILIAR   = 0x03,  // "unfamiliar vehicle in area"
+  TPL_ACT_VEHICLE_CIRCLING     = 0x04,  // "vehicle circling repeatedly"
+  TPL_ACT_VEHICLE_PARKED_LONG  = 0x05,  // "vehicle parked unusually long"
+  TPL_ACT_NOISE_LOUD           = 0x06,  // "loud noise heard"
+  TPL_ACT_NOISE_ALARM          = 0x07,  // "alarm sounding"
+  TPL_ACT_ANIMAL_LOOSE         = 0x08,  // "animal loose in area"
+  TPL_ACT_OTHER                = 0x09,  // "unusual activity"
+
+  // Utility templates (0x20-0x3F)
+  TPL_UTL_POWER_OUT            = 0x20,  // "power outage in area"
+  TPL_UTL_WATER_ISSUE          = 0x21,  // "water issue reported"
+  TPL_UTL_INTERNET_DOWN        = 0x22,  // "internet outage"
+  TPL_UTL_GAS_SMELL            = 0x23,  // "gas smell reported"
+  TPL_UTL_ROAD_BLOCKED         = 0x24,  // "road blocked or closed"
+
+  // Safety templates (0x40-0x5F)
+  TPL_SAF_FIRE_SMOKE           = 0x40,  // "fire or smoke observed"
+  TPL_SAF_MEDICAL_NEED         = 0x41,  // "medical assistance needed"
+  TPL_SAF_HAZARD_ROAD          = 0x42,  // "road hazard"
+  TPL_SAF_HAZARD_OTHER         = 0x43,  // "safety hazard"
+  TPL_SAF_WEATHER_SEVERE       = 0x44,  // "severe weather warning"
+
+  // Community templates (0x60-0x7F)
+  TPL_COM_LOST_PET             = 0x60,  // "lost pet in area"
+  TPL_COM_FOUND_PET            = 0x61,  // "found pet"
+  TPL_COM_PACKAGE_DELIVERED    = 0x62,  // "package at door"
+  TPL_COM_GATHERING            = 0x63,  // "community gathering"
+  TPL_COM_CONSTRUCTION         = 0x64,  // "construction activity"
+
+  // All-clear templates (0x80-0x9F)
+  TPL_CLR_RESOLVED             = 0x80,  // "situation resolved"
+  TPL_CLR_FALSE_ALARM          = 0x81,  // "false alarm"
+  TPL_CLR_NORMAL               = 0x82,  // "all clear, back to normal"
+
+  TPL_INVALID                  = 0xFF
+};
+
+// Detail slot options (constrained choices, NO free text)
+enum ChirpDetailSlot : uint8_t {
+  DETAIL_NONE = 0,
+  // Pet types (for TPL_COM_LOST_PET, TPL_COM_FOUND_PET)
+  DETAIL_PET_DOG = 1,
+  DETAIL_PET_CAT = 2,
+  DETAIL_PET_BIRD = 3,
+  DETAIL_PET_OTHER = 4,
+  // Vehicle colors (for TPL_ACT_VEHICLE_*)
+  DETAIL_COLOR_WHITE = 10,
+  DETAIL_COLOR_BLACK = 11,
+  DETAIL_COLOR_SILVER = 12,
+  DETAIL_COLOR_RED = 13,
+  DETAIL_COLOR_BLUE = 14,
+  DETAIL_COLOR_GREEN = 15,
+  DETAIL_COLOR_OTHER = 16
 };
 
 // Chirp urgency (how important)
@@ -575,24 +654,34 @@ struct NearbyDevice {
 struct ReceivedChirp {
   uint8_t sender_session[SESSION_ID_SIZE];
   char sender_emoji[EMOJI_DISPLAY_SIZE];
-  ChirpCategory category;
+  ChirpTemplate template_id;                    // Structured message (no free text)
+  ChirpDetailSlot detail;                       // Optional constrained detail
   ChirpUrgency urgency;
-  char message[MAX_MESSAGE_LEN + 1];
   uint8_t hop_count;
   uint32_t received_ms;
   uint32_t timestamp;                           // Original send time
   uint8_t nonce[8];
-  uint8_t ack_count;                            // How many acks seen
+  uint8_t confirm_count;                        // Independent witnesses
+  uint8_t dismiss_count;                        // Dismissals for suppress voting
+  bool validated;                               // Has enough confirmations to relay
+  bool suppressed;                              // Community voted to suppress
   bool relayed;                                 // Did we relay this
-  bool dismissed;                               // User dismissed
+  bool dismissed;                               // User dismissed locally
 };
 
 // Outgoing chirp (for send queue)
 struct OutgoingChirp {
-  ChirpCategory category;
+  ChirpTemplate template_id;                    // What happened (structured)
+  ChirpDetailSlot detail;                       // Optional detail
   ChirpUrgency urgency;
-  char message[MAX_MESSAGE_LEN + 1];
   uint8_t ttl_minutes;
+};
+
+// Cooldown tracking (escalating)
+struct CooldownState {
+  uint8_t chirps_sent_today;                    // Resets after 24h
+  uint32_t last_chirp_ms;                       // For tier calculation
+  uint32_t first_chirp_today_ms;                // For 24h reset
 };
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -709,14 +798,35 @@ bool can_send_chirp();
 // Sending chirps (HUMAN-IN-THE-LOOP)
 // ──────────────────────────────────────────────────────────────────────────
 
-// Send a chirp to the community
+// Send a chirp to the community using structured templates (NO FREE TEXT)
 // IMPORTANT: This should only be called after human confirmation!
-// Returns false if rate-limited or disabled
-bool send_chirp(ChirpCategory category, ChirpUrgency urgency,
-                const char* message, uint8_t ttl_minutes = 15);
+// Returns false if rate-limited, disabled, or presence requirement not met
+bool send_chirp(ChirpTemplate template_id, ChirpUrgency urgency,
+                ChirpDetailSlot detail = DETAIL_NONE, uint8_t ttl_minutes = 15);
 
 // Send an all-clear (de-escalation)
-bool send_all_clear(const char* message = nullptr);
+bool send_all_clear(ChirpTemplate clear_type = TPL_CLR_RESOLVED);
+
+// Check if presence requirement is met (10 min)
+bool has_presence_requirement();
+
+// Get current cooldown tier (1-4)
+uint8_t get_cooldown_tier();
+
+// Get cooldown remaining for current tier
+uint32_t get_cooldown_remaining_ms();
+
+// Get template display text (for UI)
+const char* get_template_text(ChirpTemplate template_id);
+
+// Get detail display text (for UI)
+const char* get_detail_text(ChirpDetailSlot detail);
+
+// Validate template ID
+bool is_valid_template(ChirpTemplate template_id);
+
+// Check if currently in night mode (restricted)
+bool is_night_mode();
 
 // ──────────────────────────────────────────────────────────────────────────
 // Receiving chirps
@@ -725,14 +835,21 @@ bool send_all_clear(const char* message = nullptr);
 // Get recent chirps (returns count)
 const ReceivedChirp* get_recent_chirps(size_t* count);
 
-// Acknowledge a chirp (optional)
-bool acknowledge_chirp(const uint8_t* nonce, ChirpAckType ack_type);
+// Get pending chirps (unvalidated, awaiting confirmation)
+const ReceivedChirp* get_pending_chirps(size_t* count);
 
-// Dismiss a chirp from display
+// Confirm a chirp ("I see this too") - adds witness count
+// If enough confirmations, chirp becomes validated and relays
+bool confirm_chirp(const uint8_t* nonce);
+
+// Dismiss a chirp from display (contributes to suppress voting)
 bool dismiss_chirp(const uint8_t* nonce);
 
 // Clear all recent chirps
 void clear_chirps();
+
+// Get validation status text
+const char* get_validation_status(const ReceivedChirp* chirp);
 
 // ──────────────────────────────────────────────────────────────────────────
 // Nearby devices (anonymous)

@@ -106,6 +106,210 @@ display = emoji_set[session_id[0]] + emoji_set[session_id[1]] + emoji_set[sessio
 // Example: "🐦🌳⭐" - easy to remember, hard to track
 ```
 
+## 2.5 Abuse Prevention Design
+
+### 2.5.1 Threat Model
+
+Assume attackers who want to:
+- Flood with spam to make the system unusable
+- Send offensive/disgusting content
+- Create false panic ("gunman!" when there's none)
+- Coordinate attacks with multiple devices
+- Drive-by attack (show up, spam, leave)
+- Desensitize users with false alarms (cry wolf)
+
+### 2.5.2 Defense: Structured Messages (No Free Text)
+
+**Critical Design Decision**: Messages use **predefined templates**, not free-form text.
+
+Instead of:
+```
+message: "someone checking car doors"  // Attacker sends slurs here
+```
+
+We use:
+```
+template_id: ACTIVITY_VEHICLE_SUSPICIOUS
+detail_slot: null  // Optional, constrained
+```
+
+**Message Templates** (exhaustive list):
+
+| Category | Template ID | Display Text |
+|----------|-------------|--------------|
+| **Activity** | | |
+| | `ACT_PERSON_UNFAMILIAR` | "unfamiliar person in area" |
+| | `ACT_PERSON_CHECKING_DOORS` | "someone checking doors" |
+| | `ACT_PERSON_LOOKING_IN_CARS` | "someone looking in vehicles" |
+| | `ACT_VEHICLE_UNFAMILIAR` | "unfamiliar vehicle in area" |
+| | `ACT_VEHICLE_CIRCLING` | "vehicle circling repeatedly" |
+| | `ACT_VEHICLE_PARKED_LONG` | "vehicle parked unusually long" |
+| | `ACT_NOISE_LOUD` | "loud noise heard" |
+| | `ACT_NOISE_ALARM` | "alarm sounding" |
+| | `ACT_ANIMAL_LOOSE` | "animal loose in area" |
+| | `ACT_OTHER` | "unusual activity" |
+| **Utility** | | |
+| | `UTL_POWER_OUT` | "power outage in area" |
+| | `UTL_WATER_ISSUE` | "water issue reported" |
+| | `UTL_INTERNET_DOWN` | "internet outage" |
+| | `UTL_GAS_SMELL` | "gas smell reported" |
+| | `UTL_ROAD_BLOCKED` | "road blocked or closed" |
+| **Safety** | | |
+| | `SAF_FIRE_SMOKE` | "fire or smoke observed" |
+| | `SAF_MEDICAL_NEED` | "medical assistance needed" |
+| | `SAF_HAZARD_ROAD` | "road hazard" |
+| | `SAF_HAZARD_OTHER` | "safety hazard" |
+| | `SAF_WEATHER_SEVERE` | "severe weather warning" |
+| **Community** | | |
+| | `COM_LOST_PET` | "lost pet in area" |
+| | `COM_FOUND_PET` | "found pet" |
+| | `COM_PACKAGE_DELIVERED` | "package at door" |
+| | `COM_GATHERING` | "community gathering" |
+| | `COM_CONSTRUCTION` | "construction activity" |
+| **All Clear** | | |
+| | `CLR_RESOLVED` | "situation resolved" |
+| | `CLR_FALSE_ALARM` | "false alarm" |
+| | `CLR_NORMAL` | "all clear, back to normal" |
+
+**Why This Works**:
+- Cannot send slurs, threats, or offensive content
+- Cannot craft panic-inducing custom messages
+- Messages are localizable (can display in user's language)
+- Harder to abuse when vocabulary is fixed
+- Still covers 95% of legitimate use cases
+
+**Optional Detail Slot** (heavily constrained):
+- Only for specific templates that need it
+- `COM_LOST_PET`: Allows "[dog/cat/bird/other]" selection
+- `ACT_VEHICLE_*`: Allows "[color]" from predefined list
+- NO free text entry ever
+
+### 2.5.3 Defense: Witness Requirement (Sybil Resistance)
+
+**Key Insight**: A single device should not be able to broadcast to the neighborhood alone.
+
+**Rule**: Chirps only propagate beyond hop 0 after **2 independent confirmations**.
+
+```
+Device A sends chirp (hop 0) ──broadcast──→
+  Device B sees same thing, confirms ──→ (1 confirmation)
+  Device C sees same thing, confirms ──→ (2 confirmations)
+  NOW the chirp propagates to hop 1+ ──relay──→
+```
+
+**Confirmation Flow**:
+1. Original chirp broadcasts locally (hop 0, ~250m range)
+2. Nearby devices see it in their "pending" feed
+3. If a human on device B also witnesses the event, they tap "I see this too"
+4. After 2 confirmations, the chirp becomes "validated" and relays propagate it
+5. Unvalidated chirps expire after 5 minutes
+
+**Why This Works**:
+- Single bad actor can only reach ~250m (hop 0)
+- Coordinated attack needs 3+ devices in same area, all lying
+- False alarms get filtered by community validation
+- Real events naturally get confirmed by multiple witnesses
+- "Witness the witness" - collective truth
+
+**Exception**: `SAF_*` (safety) templates require only 1 confirmation for faster propagation, but get automatic escalating cooldown (see below).
+
+### 2.5.4 Defense: Escalating Cooldowns
+
+Instead of fixed 5-minute cooldown:
+
+```
+Chirp 1: 5 minute cooldown
+Chirp 2: 15 minute cooldown
+Chirp 3: 1 hour cooldown
+Chirp 4+: 4 hour cooldown
+
+Reset: 24 hours of no chirps
+```
+
+**Why This Works**:
+- First chirp is easy (legitimate use)
+- Spammer hits diminishing returns fast
+- Max 4-5 chirps per day per device
+- Legitimate users rarely need >2 chirps/day
+
+### 2.5.5 Defense: Presence Requirement (Anti-Drive-By)
+
+Devices must broadcast presence for **10 minutes** before they can send chirps.
+
+```
+New device joins area:
+  t=0: Start broadcasting presence
+  t=0-10min: Can receive chirps, cannot send
+  t=10min+: Can send chirps
+
+Device leaves and returns:
+  Must re-establish 10-minute presence
+```
+
+**Why This Works**:
+- Drive-by spammer can't immediately attack
+- Encourages devices to be stable community members
+- Attacker would need to "camp" for 10 min before each attack
+- Presence beacons are passive (don't require human)
+
+### 2.5.6 Defense: Community Mute Propagation
+
+If multiple devices quickly mute/dismiss a chirp, propagate a "suppress" signal:
+
+```
+Chirp arrives at 10 devices:
+  - 7 devices dismiss within 60 seconds
+  - Automatic "suppress vote" propagates
+  - Other devices auto-dismiss this chirp
+  - Chirp's confirmation count goes negative
+  - Chirp stops propagating
+```
+
+**Threshold**: If >50% of recipients dismiss within 2 minutes, suppress propagates.
+
+**Why This Works**:
+- Community self-moderates without central authority
+- Bad content gets filtered organically
+- Privacy preserved (no identity in suppress vote)
+- Legitimate content won't get mass-dismissed
+
+### 2.5.7 Defense: Time-Based Restrictions
+
+Different rules at different times:
+
+| Time | Restrictions |
+|------|--------------|
+| 6am-10pm | Normal operation |
+| 10pm-6am | Safety templates only, requires 2 confirmations |
+
+**Why This Works**:
+- Night-time attacks (when people are sleeping) are limited
+- Legitimate late-night alerts (fire, medical) still work
+- Reduces "prank" window
+
+### 2.5.8 Summary: Abuse Prevention Stack
+
+```
+Layer 1: Structured templates (no offensive content possible)
+Layer 2: Witness requirement (no solo broadcast)
+Layer 3: Escalating cooldowns (diminishing spam returns)
+Layer 4: Presence requirement (no drive-by)
+Layer 5: Community mute (organic moderation)
+Layer 6: Time restrictions (reduced night attacks)
+```
+
+**Threat Actor Analysis**:
+
+| Attack | Blocked By |
+|--------|------------|
+| Spam flooding | Escalating cooldowns (max ~5/day) |
+| Offensive text | Structured templates (impossible) |
+| False "gunman" | No such template exists |
+| Coordinated spam | Witness requirement (need 3+ liars) |
+| Drive-by attack | 10-min presence requirement |
+| Cry wolf | Community mute + escalating cooldowns |
+| Night harassment | Time restrictions |
+
 ## 3. Message Types
 
 ### 3.1 Common Header
