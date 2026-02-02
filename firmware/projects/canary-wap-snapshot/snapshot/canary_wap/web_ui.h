@@ -1432,10 +1432,18 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       }
       try {
         const res = await fetch(API_BASE + endpoint, opts);
-        return await res.json();
+        const text = await res.text();
+        try {
+          return JSON.parse(text);
+        } catch (parseErr) {
+          console.error('JSON parse error:', parseErr, 'Response:', text);
+          // Truncate error to avoid huge HTML error pages in alerts
+          const errMsg = res.ok ? 'Invalid response format' : (text || 'Request failed');
+          return { ok: false, success: false, error: errMsg.length > 100 ? errMsg.slice(0, 100) + '...' : errMsg };
+        }
       } catch (e) {
         console.error('API error:', e);
-        return { ok: false, error: e.message };
+        return { ok: false, success: false, error: 'Network error' };
       }
     }
 
@@ -1531,19 +1539,22 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       };
       
       stream.onerror = (e) => {
+        // Only show error if stream was supposed to be active (not intentionally stopped)
+        if (!peekActive) {
+          console.log('Stream stopped (intentional)');
+          return;
+        }
         console.error('Stream error:', e);
         status.textContent = 'Stream error';
         btn.disabled = false;
-        
-        // Check if we should retry
-        if (peekActive) {
-          setTimeout(() => {
-            if (peekActive) {
-              console.log('Retrying stream...');
-              stream.src = API_BASE + '/api/peek/stream?t=' + Date.now();
-            }
-          }, 2000);
-        }
+
+        // Retry after delay
+        setTimeout(() => {
+          if (peekActive) {
+            console.log('Retrying stream...');
+            stream.src = API_BASE + '/api/peek/stream?t=' + Date.now();
+          }
+        }, 2000);
       };
       
       // Optimistically update UI
@@ -1554,14 +1565,16 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     
     async function stopPeek() {
       const stream = document.getElementById('peekStream');
-      
-      // Clear the stream source first
+
+      // Set peekActive false BEFORE clearing src to prevent onerror from showing error
+      peekActive = false;
+
+      // Clear the stream source (this triggers onerror, but peekActive is false so it won't show error)
       stream.src = '';
-      
+
       // Tell server to stop
       await api('/api/peek/stop', 'POST');
-      
-      peekActive = false;
+
       updatePeekUI();
     }
     
