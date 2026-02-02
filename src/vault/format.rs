@@ -26,10 +26,12 @@ impl VaultEnvelope {
         }
     }
 
+    /// Returns the plaintext length (ciphertext without the authentication tag).
     pub fn ciphertext_len(&self) -> usize {
         match self {
             VaultEnvelope::V1(envelope) => envelope.ciphertext.len(),
-            VaultEnvelope::V2(envelope) => envelope.ciphertext.len(),
+            // V2 stores ciphertext + 16-byte tag together, so subtract tag size
+            VaultEnvelope::V2(envelope) => envelope.ciphertext.len().saturating_sub(16),
         }
     }
 
