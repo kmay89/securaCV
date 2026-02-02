@@ -371,7 +371,10 @@ fn encrypt_in_place(
     buffer: &mut [u8],
 ) -> Result<[u8; 16]> {
     let cipher = ChaCha20Poly1305::new(Key::from_slice(master_key));
-    let aad = encode_aad(envelope_id, ruleset_hash);
+    // V1 AAD format: envelope_id || ruleset_hash (no length prefix for backward compatibility)
+    let mut aad = Vec::with_capacity(envelope_id.len() + ruleset_hash.len());
+    aad.extend_from_slice(envelope_id.as_bytes());
+    aad.extend_from_slice(ruleset_hash);
     let tag = cipher
         .encrypt_in_place_detached(Nonce::from_slice(nonce), &aad, buffer)
         .map_err(|_| anyhow!("vault encryption failed"))?;
@@ -387,7 +390,10 @@ fn decrypt_in_place(
     buffer: &mut [u8],
 ) -> Result<()> {
     let cipher = ChaCha20Poly1305::new(Key::from_slice(master_key));
-    let aad = encode_aad(envelope_id, ruleset_hash);
+    // V1 AAD format: envelope_id || ruleset_hash (no length prefix for backward compatibility)
+    let mut aad = Vec::with_capacity(envelope_id.len() + ruleset_hash.len());
+    aad.extend_from_slice(envelope_id.as_bytes());
+    aad.extend_from_slice(ruleset_hash);
     let tag = Tag::from_slice(tag);
     cipher
         .decrypt_in_place_detached(Nonce::from_slice(nonce), &aad, buffer, tag)
