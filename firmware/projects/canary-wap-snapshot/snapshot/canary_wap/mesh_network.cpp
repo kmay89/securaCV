@@ -19,8 +19,7 @@
 #include <Curve25519.h>
 #include <mbedtls/sha256.h>
 #include <mbedtls/hkdf.h>
-#include <mbedtls/chacha20.h>
-#include <mbedtls/chachapoly.h>
+#include <ChaChaPoly.h>
 
 namespace mesh_network {
 
@@ -226,36 +225,34 @@ static bool encrypt_message(const uint8_t* key, const uint8_t* plaintext, size_t
   // Generate random nonce
   esp_fill_random(nonce_out, NONCE_SIZE);
 
-  mbedtls_chachapoly_context ctx;
-  mbedtls_chachapoly_init(&ctx);
-
-  int ret = mbedtls_chachapoly_setkey(&ctx, key);
-  if (ret != 0) {
-    mbedtls_chachapoly_free(&ctx);
+  ChaChaPoly chachapoly;
+  if (!chachapoly.setKey(key, 32)) {
+    chachapoly.clear();
     return false;
   }
+  chachapoly.setIV(nonce_out, NONCE_SIZE);
+  chachapoly.encrypt(ciphertext, plaintext, len);
+  chachapoly.computeTag(tag_out, 16);
+  chachapoly.clear();
 
-  ret = mbedtls_chachapoly_encrypt_and_tag(&ctx, len, nonce_out, nullptr, 0,
-                                            plaintext, ciphertext, tag_out);
-  mbedtls_chachapoly_free(&ctx);
-  return ret == 0;
+  return true;
 }
 
 static bool decrypt_message(const uint8_t* key, const uint8_t* ciphertext, size_t len,
                            const uint8_t* nonce, const uint8_t* tag, uint8_t* plaintext) {
-  mbedtls_chachapoly_context ctx;
-  mbedtls_chachapoly_init(&ctx);
-
-  int ret = mbedtls_chachapoly_setkey(&ctx, key);
-  if (ret != 0) {
-    mbedtls_chachapoly_free(&ctx);
+  ChaChaPoly chachapoly;
+  if (!chachapoly.setKey(key, 32)) {
+    chachapoly.clear();
     return false;
   }
+  chachapoly.setIV(nonce, NONCE_SIZE);
+  chachapoly.decrypt(plaintext, ciphertext, len);
 
-  ret = mbedtls_chachapoly_auth_decrypt(&ctx, len, nonce, nullptr, 0,
-                                         tag, ciphertext, plaintext);
-  mbedtls_chachapoly_free(&ctx);
-  return ret == 0;
+  // Verify authentication tag
+  bool valid = chachapoly.checkTag(tag, 16);
+  chachapoly.clear();
+
+  return valid;
 }
 
 static bool sign_message(const uint8_t* privkey, const uint8_t* data, size_t len, uint8_t* sig_out) {
