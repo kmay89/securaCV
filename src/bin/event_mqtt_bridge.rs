@@ -774,7 +774,6 @@ fn parse_loopback_socket_addr(value: &str) -> Result<std::net::SocketAddr> {
     Err(anyhow!("unsupported api address {}", value))
 }
 
-
 fn connect_mqtt(
     endpoint: &MqttEndpoint,
     tls_config: &TlsConfig,

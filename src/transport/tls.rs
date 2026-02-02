@@ -105,12 +105,13 @@ impl TlsMaterials {
         client_cert_path: Option<&PathBuf>,
         client_key_path: Option<&PathBuf>,
     ) -> Result<Self> {
-        let ca = match ca_path {
-            Some(path) => Some(std::fs::read(path).map_err(|e| {
-                anyhow!("failed to read MQTT TLS CA '{}': {}", path.display(), e)
-            })?),
-            None => None,
-        };
+        let ca =
+            match ca_path {
+                Some(path) => Some(std::fs::read(path).map_err(|e| {
+                    anyhow!("failed to read MQTT TLS CA '{}': {}", path.display(), e)
+                })?),
+                None => None,
+            };
 
         let client_auth = match (client_cert_path, client_key_path) {
             (Some(cert_path), Some(key_path)) => {
@@ -132,14 +133,10 @@ impl TlsMaterials {
             }
             (None, None) => None,
             (Some(_), None) => {
-                return Err(anyhow!(
-                    "MQTT TLS client certificate provided without key"
-                ))
+                return Err(anyhow!("MQTT TLS client certificate provided without key"))
             }
             (None, Some(_)) => {
-                return Err(anyhow!(
-                    "MQTT TLS client key provided without certificate"
-                ))
+                return Err(anyhow!("MQTT TLS client key provided without certificate"))
             }
         };
 
@@ -256,9 +253,9 @@ impl TlsConfig {
         ::log::info!("TLS configured with hybrid PQ key exchange (X25519Kyber768Draft00)");
 
         // rumqttc accepts a custom rustls ClientConfig
-        Ok(Transport::tls_with_config(rumqttc::TlsConfiguration::Rustls(
-            Arc::new(config),
-        )))
+        Ok(Transport::tls_with_config(
+            rumqttc::TlsConfiguration::Rustls(Arc::new(config)),
+        ))
     }
 
     /// Build hybrid PQ TLS transport (stub when feature disabled).
@@ -346,10 +343,19 @@ mod tests {
 
     #[test]
     fn backend_from_str_classic() {
-        assert_eq!(TlsBackend::from_str("classic").unwrap(), TlsBackend::Classic);
+        assert_eq!(
+            TlsBackend::from_str("classic").unwrap(),
+            TlsBackend::Classic
+        );
         assert_eq!(TlsBackend::from_str("rustls").unwrap(), TlsBackend::Classic);
-        assert_eq!(TlsBackend::from_str("default").unwrap(), TlsBackend::Classic);
-        assert_eq!(TlsBackend::from_str("CLASSIC").unwrap(), TlsBackend::Classic);
+        assert_eq!(
+            TlsBackend::from_str("default").unwrap(),
+            TlsBackend::Classic
+        );
+        assert_eq!(
+            TlsBackend::from_str("CLASSIC").unwrap(),
+            TlsBackend::Classic
+        );
     }
 
     #[test]
@@ -358,9 +364,15 @@ mod tests {
             TlsBackend::from_str("hybrid_pq").unwrap(),
             TlsBackend::HybridPq
         );
-        assert_eq!(TlsBackend::from_str("hybridpq").unwrap(), TlsBackend::HybridPq);
+        assert_eq!(
+            TlsBackend::from_str("hybridpq").unwrap(),
+            TlsBackend::HybridPq
+        );
         assert_eq!(TlsBackend::from_str("pq").unwrap(), TlsBackend::HybridPq);
-        assert_eq!(TlsBackend::from_str("hybrid").unwrap(), TlsBackend::HybridPq);
+        assert_eq!(
+            TlsBackend::from_str("hybrid").unwrap(),
+            TlsBackend::HybridPq
+        );
         assert_eq!(
             TlsBackend::from_str("HYBRID_PQ").unwrap(),
             TlsBackend::HybridPq
@@ -437,16 +449,10 @@ mod tests {
     #[test]
     fn tls_materials_requires_both_cert_and_key() {
         use std::path::PathBuf;
-        let cert_only = TlsMaterials::load(
-            None,
-            Some(&PathBuf::from("/nonexistent/cert.pem")),
-            None,
-        );
+        let cert_only =
+            TlsMaterials::load(None, Some(&PathBuf::from("/nonexistent/cert.pem")), None);
         assert!(cert_only.is_err());
-        assert!(cert_only
-            .unwrap_err()
-            .to_string()
-            .contains("without key"));
+        assert!(cert_only.unwrap_err().to_string().contains("without key"));
     }
 
     #[test]
