@@ -204,6 +204,7 @@ class ServerCallbacks : public NimBLEServerCallbacks {
         if (!found && g_paired_count < MAX_PAIRED_DEVICES) {
           PairedDevice* dev = &g_paired_devices[g_paired_count++];
           memcpy(dev->address, connInfo.getAddress().getNative(), BLE_ADDRESS_LENGTH);
+          dev->address_type = connInfo.getAddress().getType();
           strncpy(dev->name, g_connection.name, MAX_DEVICE_NAME_LEN);
           dev->name[MAX_DEVICE_NAME_LEN] = '\0';
           dev->paired_timestamp = millis() / 1000;
@@ -544,7 +545,8 @@ bool init() {
   g_advertising = NimBLEDevice::getAdvertising();
   g_advertising->addServiceUUID(SERVICE_UUID);
   g_advertising->setScanResponse(true);
-  g_advertising->setMinPreferred(0x06);
+  // Note: setMinPreferred() not available in NimBLE 2.x; connection params
+  // are managed internally by NimBLE
 
   // Set up scanner
   g_scanner = NimBLEDevice::getScan();
@@ -798,6 +800,9 @@ const PairedDevice* get_paired_devices(size_t* count) {
 bool remove_paired_device(const uint8_t* address) {
   for (size_t i = 0; i < g_paired_count; i++) {
     if (memcmp(g_paired_devices[i].address, address, BLE_ADDRESS_LENGTH) == 0) {
+      // Store address type before removing from our list
+      uint8_t addr_type = g_paired_devices[i].address_type;
+
       // Shift remaining devices
       for (size_t j = i; j < g_paired_count - 1; j++) {
         g_paired_devices[j] = g_paired_devices[j + 1];
@@ -805,8 +810,8 @@ bool remove_paired_device(const uint8_t* address) {
       g_paired_count--;
       memset(&g_paired_devices[g_paired_count], 0, sizeof(PairedDevice));
 
-      // Remove from NimBLE bond storage
-      NimBLEDevice::deleteBond(NimBLEAddress(address));
+      // Remove from NimBLE bond storage using stored address type
+      NimBLEDevice::deleteBond(NimBLEAddress(address, addr_type));
 
       save_paired_devices();
       log_health(LOG_LEVEL_INFO, LOG_CAT_BLUETOOTH, "Paired device removed", nullptr);

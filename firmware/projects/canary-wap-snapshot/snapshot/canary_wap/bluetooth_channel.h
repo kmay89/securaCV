@@ -105,7 +105,8 @@ enum PairingState : uint8_t {
 
 // Paired device record
 struct PairedDevice {
-  uint8_t address[BLE_ADDRESS_LENGTH];                       // MAC address
+  uint8_t address[BLE_ADDRESS_LENGTH];      // MAC address
+  uint8_t address_type;                     // BLE address type (public/random)
   char name[MAX_DEVICE_NAME_LEN + 1];       // Device name
   uint32_t paired_timestamp;                // When paired (epoch)
   uint32_t last_connected_ms;               // Last connection time
