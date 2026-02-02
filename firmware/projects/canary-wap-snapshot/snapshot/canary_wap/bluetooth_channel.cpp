@@ -8,13 +8,29 @@
 
 #include "bluetooth_channel.h"
 #include "nvs_store.h"
-#include "health_log.h"
 
+// NimBLE headers must come before health_log.h to allow #undef of conflicting macros
 #include <NimBLEDevice.h>
 #include <NimBLEServer.h>
 #include <NimBLEUtils.h>
 #include <NimBLEAdvertising.h>
 #include <NimBLEScan.h>
+
+// Undefine NimBLE's log level macros that conflict with our LogLevel enum
+#ifdef LOG_LEVEL_DEBUG
+#undef LOG_LEVEL_DEBUG
+#endif
+#ifdef LOG_LEVEL_INFO
+#undef LOG_LEVEL_INFO
+#endif
+#ifdef LOG_LEVEL_WARNING
+#undef LOG_LEVEL_WARNING
+#endif
+#ifdef LOG_LEVEL_ERROR
+#undef LOG_LEVEL_ERROR
+#endif
+
+#include "health_log.h"
 
 namespace bluetooth_channel {
 
