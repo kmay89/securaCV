@@ -165,7 +165,7 @@ tamper_alert_payload = {
 
 #### POWER_ALERT
 Broadcast on power loss detection:
-```cldl
+```cddl
 power_alert_payload = {
   alert_type: "power_loss" / "low_voltage" / "battery_critical",
   voltage_mv: uint / null,
@@ -271,24 +271,28 @@ Received alerts are stored in the health log with:
 ### 7.1 Mesh States
 
 ```
-MESH_DISABLED      → Feature disabled
-MESH_INITIALIZING  → Loading opera config, starting transports
-MESH_NO_FLOCK      → No opera configured, awaiting pairing
-MESH_CONNECTING    → Attempting to reach opera members
-MESH_ACTIVE        → Connected to one or more peers
-MESH_PAIRING       → In pairing mode (initiator or joiner)
-MESH_ERROR         → Fatal error, requires restart
+MESH_DISABLED        → Feature disabled
+MESH_INITIALIZING    → Loading opera config, starting transports
+MESH_NO_FLOCK        → No opera configured, awaiting pairing
+MESH_CONNECTING      → Attempting to reach opera members
+MESH_ACTIVE          → Connected to one or more peers
+MESH_PAIRING_INIT    → In pairing mode as initiator (existing member)
+MESH_PAIRING_JOIN    → In pairing mode as joiner (new device)
+MESH_PAIRING_CONFIRM → Awaiting user confirmation of pairing code
+MESH_ERROR           → Fatal error, requires restart
 ```
 
 ### 7.2 Peer States
 
 ```
-PEER_UNKNOWN       → Never contacted
-PEER_AUTHENTICATING → Auth in progress
-PEER_CONNECTED     → Authenticated and communicating
-PEER_STALE         → No heartbeat for 90 seconds
-PEER_OFFLINE       → No heartbeat for 5 minutes
-PEER_ALERT         → Received alert from this peer
+PEER_UNKNOWN        → Never contacted
+PEER_DISCOVERED     → Found via broadcast, not yet authenticated
+PEER_AUTHENTICATING → Auth handshake in progress
+PEER_CONNECTED      → Authenticated and actively communicating
+PEER_STALE          → No heartbeat for 90 seconds
+PEER_OFFLINE        → No heartbeat for 5 minutes
+PEER_ALERT          → Received alert from this peer
+PEER_REMOVED        → Removed from opera (pending deletion)
 ```
 
 ## 8. API Endpoints

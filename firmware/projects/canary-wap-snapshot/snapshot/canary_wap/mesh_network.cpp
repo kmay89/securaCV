@@ -16,12 +16,19 @@
 #include <WiFi.h>
 #include <Crypto.h>
 #include <Ed25519.h>
+#include <Curve25519.h>
 #include <mbedtls/sha256.h>
 #include <mbedtls/hkdf.h>
 #include <mbedtls/chacha20.h>
 #include <mbedtls/chachapoly.h>
 
 namespace mesh_network {
+
+// ════════════════════════════════════════════════════════════════════════════
+// CONSTANTS
+// ════════════════════════════════════════════════════════════════════════════
+
+const uint8_t BROADCAST_ADDR[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
 // ════════════════════════════════════════════════════════════════════════════
 // DOMAIN SEPARATION STRINGS
@@ -60,7 +67,7 @@ static char g_device_name[MAX_PEER_NAME_LEN + 1];
 
 // Opera state
 static OperaConfig g_opera_config;
-static OperaPeer g_peers[MAX_FLOCK_SIZE];
+static OperaPeer g_peers[MAX_OPERA_SIZE];
 static uint8_t g_peer_count = 0;
 
 // Mesh state
@@ -97,6 +104,7 @@ static PairingCallback g_pairing_callback = nullptr;
 static uint8_t g_rx_buffer[MAX_MESSAGE_SIZE];
 static size_t g_rx_len = 0;
 static uint8_t g_rx_mac[6];
+static int8_t g_rx_rssi = 0;
 static volatile bool g_rx_pending = false;
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -154,6 +162,7 @@ static void espnow_recv_cb(const esp_now_recv_info_t* info, const uint8_t* data,
   memcpy(g_rx_mac, info->src_addr, 6);
   memcpy(g_rx_buffer, data, len);
   g_rx_len = len;
+  g_rx_rssi = info->rx_ctrl->rssi;  // Store actual RSSI from ESP-NOW
   g_rx_pending = true;
 }
 
@@ -179,24 +188,36 @@ static void compute_fingerprint(const uint8_t* pubkey, uint8_t* fp_out) {
 
 static void compute_opera_id(const uint8_t* secret, uint8_t* id_out) {
   uint8_t hash[32];
-  sha256_domain(DOMAIN_FLOCK_ID, secret, FLOCK_SECRET_SIZE, hash);
-  memcpy(id_out, hash, FLOCK_ID_SIZE);
+  sha256_domain(DOMAIN_FLOCK_ID, secret, OPERA_SECRET_SIZE, hash);
+  memcpy(id_out, hash, OPERA_ID_SIZE);
 }
 
 static bool derive_session_key(const uint8_t* local_priv, const uint8_t* peer_pub, uint8_t* key_out) {
-  // Use Ed25519 keys for X25519 ECDH (convert Ed25519 to Curve25519)
-  // For simplicity, we derive session key directly from shared data
-  uint8_t shared[64];
-  memcpy(shared, local_priv, 32);
-  memcpy(shared + 32, peer_pub, 32);
+  // Perform X25519 ECDH key exchange
+  // Note: Ed25519 keys must be converted to Curve25519 for X25519
+  // The Crypto library's Curve25519 does this conversion internally
 
-  uint8_t derived[32];
-  sha256_domain(DOMAIN_SESSION, shared, 64, derived);
-  memcpy(key_out, derived, SESSION_KEY_SIZE);
+  uint8_t shared_secret[32];
+
+  // Perform X25519 scalar multiplication: shared = local_priv * peer_pub
+  // Curve25519::eval() computes the Diffie-Hellman shared secret
+  if (!Curve25519::eval(shared_secret, local_priv, peer_pub)) {
+    memset(shared_secret, 0, sizeof(shared_secret));
+    return false;
+  }
+
+  // Derive session key using HKDF-SHA256 for proper key derivation
+  const mbedtls_md_info_t* md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+  int ret = mbedtls_hkdf(md,
+                         nullptr, 0,  // No salt
+                         shared_secret, sizeof(shared_secret),
+                         (const uint8_t*)DOMAIN_SESSION, strlen(DOMAIN_SESSION),
+                         key_out, SESSION_KEY_SIZE);
 
   // Clear sensitive data
-  memset(shared, 0, sizeof(shared));
-  return true;
+  memset(shared_secret, 0, sizeof(shared_secret));
+
+  return ret == 0;
 }
 
 static bool encrypt_message(const uint8_t* key, const uint8_t* plaintext, size_t len,
@@ -284,7 +305,7 @@ static OperaPeer* find_peer_by_fingerprint(const uint8_t* fp) {
 }
 
 static bool add_peer(const uint8_t* pubkey, const uint8_t* mac, const char* name) {
-  if (g_peer_count >= MAX_FLOCK_SIZE) {
+  if (g_peer_count >= MAX_OPERA_SIZE) {
     return false;
   }
 
@@ -350,8 +371,8 @@ static bool send_to_peer(OperaPeer* peer, MessageType type, const uint8_t* paylo
   // Header
   msg[offset++] = PROTOCOL_VERSION;
   msg[offset++] = (uint8_t)type;
-  memcpy(msg + offset, g_opera_config.opera_id, FLOCK_ID_SIZE);
-  offset += FLOCK_ID_SIZE;
+  memcpy(msg + offset, g_opera_config.opera_id, OPERA_ID_SIZE);
+  offset += OPERA_ID_SIZE;
   memcpy(msg + offset, g_device_fingerprint, FINGERPRINT_SIZE);
   offset += FINGERPRINT_SIZE;
 
@@ -418,7 +439,7 @@ static void handle_received_message(const uint8_t* mac, const uint8_t* data, siz
   MessageType msg_type = (MessageType)data[offset++];
 
   const uint8_t* opera_id = data + offset;
-  offset += FLOCK_ID_SIZE;
+  offset += OPERA_ID_SIZE;
 
   const uint8_t* sender_fp = data + offset;
   offset += FINGERPRINT_SIZE;
@@ -465,7 +486,7 @@ static void handle_received_message(const uint8_t* mac, const uint8_t* data, siz
     return;  // No opera, ignore regular messages
   }
 
-  if (memcmp(opera_id, g_opera_config.opera_id, FLOCK_ID_SIZE) != 0) {
+  if (memcmp(opera_id, g_opera_config.opera_id, OPERA_ID_SIZE) != 0) {
     return;  // Different opera, ignore (prevents neighbor interference)
   }
 
@@ -510,7 +531,7 @@ static void handle_received_message(const uint8_t* mac, const uint8_t* data, siz
 
   // Update peer state
   peer->last_seen_ms = millis();
-  peer->rssi = -50;  // TODO: Get actual RSSI from ESP-NOW
+  peer->rssi = g_rx_rssi;  // Actual RSSI from ESP-NOW callback
 
   if (peer->state == PEER_STALE || peer->state == PEER_OFFLINE || peer->state == PEER_UNKNOWN) {
     update_peer_state(peer, PEER_CONNECTED);
@@ -576,9 +597,9 @@ static void handle_auth_challenge(const uint8_t* mac, const uint8_t* payload) {
   AuthResponsePayload response;
 
   // Sign the challenge nonce with domain separation
-  uint8_t sign_input[AUTH_CHALLENGE_SIZE + FLOCK_ID_SIZE];
+  uint8_t sign_input[AUTH_CHALLENGE_SIZE + OPERA_ID_SIZE];
   memcpy(sign_input, challenge->nonce, AUTH_CHALLENGE_SIZE);
-  memcpy(sign_input + AUTH_CHALLENGE_SIZE, g_opera_config.opera_id, FLOCK_ID_SIZE);
+  memcpy(sign_input + AUTH_CHALLENGE_SIZE, g_opera_config.opera_id, OPERA_ID_SIZE);
 
   uint8_t hash[32];
   sha256_domain(DOMAIN_AUTH, sign_input, sizeof(sign_input), hash);
@@ -587,7 +608,7 @@ static void handle_auth_challenge(const uint8_t* mac, const uint8_t* payload) {
   memcpy(response.pubkey, g_device_pubkey, PUBKEY_SIZE);
 
   // Sign opera_id as proof of membership
-  sha256_domain(DOMAIN_AUTH, g_opera_config.opera_id, FLOCK_ID_SIZE, hash);
+  sha256_domain(DOMAIN_AUTH, g_opera_config.opera_id, OPERA_ID_SIZE, hash);
   Ed25519::sign(response.opera_proof, g_device_privkey, g_device_pubkey, hash, 32);
 
   // Derive session key
@@ -611,7 +632,7 @@ static void handle_auth_response(OperaPeer* peer, const uint8_t* payload) {
 
   // Verify opera proof
   uint8_t hash[32];
-  sha256_domain(DOMAIN_AUTH, g_opera_config.opera_id, FLOCK_ID_SIZE, hash);
+  sha256_domain(DOMAIN_AUTH, g_opera_config.opera_id, OPERA_ID_SIZE, hash);
   if (!Ed25519::verify(response->opera_proof, peer->pubkey, hash, 32)) {
     g_auth_failures++;
     return;
@@ -738,7 +759,7 @@ static void handle_pair_discover(const uint8_t* mac, const uint8_t* payload) {
     PairOfferPayload offer;
     memcpy(offer.ephemeral_pubkey, g_pairing.ephemeral_pubkey, PUBKEY_SIZE);
     memcpy(offer.device_pubkey, g_device_pubkey, PUBKEY_SIZE);
-    strncpy(offer.opera_name, g_opera_config.opera_name, MAX_FLOCK_NAME_LEN);
+    strncpy(offer.opera_name, g_opera_config.opera_name, MAX_OPERA_NAME_LEN);
     offer.opera_member_count = g_peer_count;
 
     // Register temporary peer for sending
@@ -778,7 +799,7 @@ static void handle_pair_offer(const uint8_t* mac, const uint8_t* payload) {
   PairOfferPayload accept;  // Reuse structure
   memcpy(accept.ephemeral_pubkey, g_pairing.ephemeral_pubkey, PUBKEY_SIZE);
   memcpy(accept.device_pubkey, g_device_pubkey, PUBKEY_SIZE);
-  strncpy(accept.opera_name, g_device_name, MAX_FLOCK_NAME_LEN);
+  strncpy(accept.opera_name, g_device_name, MAX_OPERA_NAME_LEN);
   accept.opera_member_count = 0;
 
   esp_now_peer_info_t peer_info = {};
@@ -847,10 +868,10 @@ static void handle_pair_confirm(const uint8_t* mac, const uint8_t* payload) {
     // Encrypt opera secret with session key
     uint8_t nonce[NONCE_SIZE];
     uint8_t tag[16];
-    encrypt_message(g_pairing.session_key, g_opera_config.opera_secret, FLOCK_SECRET_SIZE,
+    encrypt_message(g_pairing.session_key, g_opera_config.opera_secret, OPERA_SECRET_SIZE,
                    complete.encrypted_secret, nonce, tag);
     memcpy(complete.nonce, nonce, NONCE_SIZE);
-    memcpy(complete.encrypted_secret + FLOCK_SECRET_SIZE, tag, 16);
+    memcpy(complete.encrypted_secret + OPERA_SECRET_SIZE, tag, 16);
 
     send_raw_message(g_pairing.peer_mac, (uint8_t*)&complete, sizeof(complete));
 
@@ -874,21 +895,21 @@ static void handle_pair_complete(const uint8_t* mac, const uint8_t* payload) {
   const PairCompletePayload* complete = (const PairCompletePayload*)payload;
 
   // Decrypt opera secret
-  uint8_t opera_secret[FLOCK_SECRET_SIZE];
-  const uint8_t* tag = complete->encrypted_secret + FLOCK_SECRET_SIZE;
+  uint8_t opera_secret[OPERA_SECRET_SIZE];
+  const uint8_t* tag = complete->encrypted_secret + OPERA_SECRET_SIZE;
 
-  if (!decrypt_message(g_pairing.session_key, complete->encrypted_secret, FLOCK_SECRET_SIZE,
+  if (!decrypt_message(g_pairing.session_key, complete->encrypted_secret, OPERA_SECRET_SIZE,
                        complete->nonce, tag, opera_secret)) {
     cancel_pairing();
     return;
   }
 
   // Initialize our opera config
-  memcpy(g_opera_config.opera_secret, opera_secret, FLOCK_SECRET_SIZE);
+  memcpy(g_opera_config.opera_secret, opera_secret, OPERA_SECRET_SIZE);
   compute_opera_id(opera_secret, g_opera_config.opera_id);
   g_opera_config.configured = true;
   g_opera_config.enabled = true;
-  strncpy(g_opera_config.opera_name, "My Opera", MAX_FLOCK_NAME_LEN);
+  strncpy(g_opera_config.opera_name, "My Opera", MAX_OPERA_NAME_LEN);
 
   // Add initiator as first peer
   add_peer(g_pairing.peer_pubkey, g_pairing.peer_mac, "Opera Creator");
@@ -914,8 +935,8 @@ static void handle_pair_complete(const uint8_t* mac, const uint8_t* payload) {
 static bool persist_opera_config() {
   g_prefs.begin(NVS_NS, false);
   g_prefs.putBool(NVS_ENABLED, g_opera_config.enabled);
-  g_prefs.putBytes(NVS_FLOCK_ID, g_opera_config.opera_id, FLOCK_ID_SIZE);
-  g_prefs.putBytes(NVS_FLOCK_SECRET, g_opera_config.opera_secret, FLOCK_SECRET_SIZE);
+  g_prefs.putBytes(NVS_FLOCK_ID, g_opera_config.opera_id, OPERA_ID_SIZE);
+  g_prefs.putBytes(NVS_FLOCK_SECRET, g_opera_config.opera_secret, OPERA_SECRET_SIZE);
   g_prefs.putString(NVS_FLOCK_NAME, g_opera_config.opera_name);
   g_prefs.end();
   return true;
@@ -926,14 +947,14 @@ static bool load_opera_config() {
 
   g_opera_config.enabled = g_prefs.getBool(NVS_ENABLED, false);
 
-  size_t id_len = g_prefs.getBytes(NVS_FLOCK_ID, g_opera_config.opera_id, FLOCK_ID_SIZE);
-  size_t secret_len = g_prefs.getBytes(NVS_FLOCK_SECRET, g_opera_config.opera_secret, FLOCK_SECRET_SIZE);
+  size_t id_len = g_prefs.getBytes(NVS_FLOCK_ID, g_opera_config.opera_id, OPERA_ID_SIZE);
+  size_t secret_len = g_prefs.getBytes(NVS_FLOCK_SECRET, g_opera_config.opera_secret, OPERA_SECRET_SIZE);
 
   String name = g_prefs.getString(NVS_FLOCK_NAME, "");
-  strncpy(g_opera_config.opera_name, name.c_str(), MAX_FLOCK_NAME_LEN);
-  g_opera_config.opera_name[MAX_FLOCK_NAME_LEN] = '\0';
+  strncpy(g_opera_config.opera_name, name.c_str(), MAX_OPERA_NAME_LEN);
+  g_opera_config.opera_name[MAX_OPERA_NAME_LEN] = '\0';
 
-  g_opera_config.configured = (id_len == FLOCK_ID_SIZE && secret_len == FLOCK_SECRET_SIZE);
+  g_opera_config.configured = (id_len == OPERA_ID_SIZE && secret_len == OPERA_SECRET_SIZE);
 
   g_prefs.end();
   return g_opera_config.configured;
@@ -964,8 +985,8 @@ static bool load_peers() {
   g_prefs.begin(NVS_NS, true);
   g_peer_count = g_prefs.getUChar(NVS_PEER_COUNT, 0);
 
-  if (g_peer_count > MAX_FLOCK_SIZE) {
-    g_peer_count = MAX_FLOCK_SIZE;
+  if (g_peer_count > MAX_OPERA_SIZE) {
+    g_peer_count = MAX_OPERA_SIZE;
   }
 
   for (uint8_t i = 0; i < g_peer_count; i++) {
@@ -1190,10 +1211,10 @@ MeshStatus get_status() {
   status.last_heartbeat_ms = g_last_heartbeat_ms;
 
   // Format opera ID as hex
-  for (size_t i = 0; i < FLOCK_ID_SIZE; i++) {
+  for (size_t i = 0; i < OPERA_ID_SIZE; i++) {
     sprintf(status.opera_id_hex + i * 2, "%02x", g_opera_config.opera_id[i]);
   }
-  status.opera_id_hex[FLOCK_ID_SIZE * 2] = '\0';
+  status.opera_id_hex[OPERA_ID_SIZE * 2] = '\0';
 
   return status;
 }
@@ -1298,14 +1319,14 @@ const OperaConfig* get_opera_config() {
 }
 
 bool set_opera_name(const char* name) {
-  strncpy(g_opera_config.opera_name, name, MAX_FLOCK_NAME_LEN);
-  g_opera_config.opera_name[MAX_FLOCK_NAME_LEN] = '\0';
+  strncpy(g_opera_config.opera_name, name, MAX_OPERA_NAME_LEN);
+  g_opera_config.opera_name[MAX_OPERA_NAME_LEN] = '\0';
   return persist_opera_config();
 }
 
 bool leave_opera() {
   // Broadcast leave message to peers
-  broadcast_message(MSG_LEAVE_FLOCK, nullptr, 0);
+  broadcast_message(MSG_LEAVE_OPERA, nullptr, 0);
 
   // Clear opera config
   memset(&g_opera_config, 0, sizeof(g_opera_config));
@@ -1335,17 +1356,17 @@ bool start_pairing_initiator(const char* opera_name) {
 
   // Create new opera if we don't have one
   if (!g_opera_config.configured) {
-    esp_fill_random(g_opera_config.opera_secret, FLOCK_SECRET_SIZE);
+    esp_fill_random(g_opera_config.opera_secret, OPERA_SECRET_SIZE);
     compute_opera_id(g_opera_config.opera_secret, g_opera_config.opera_id);
     g_opera_config.configured = true;
     g_opera_config.enabled = true;
 
     if (opera_name) {
-      strncpy(g_opera_config.opera_name, opera_name, MAX_FLOCK_NAME_LEN);
+      strncpy(g_opera_config.opera_name, opera_name, MAX_OPERA_NAME_LEN);
     } else {
       strcpy(g_opera_config.opera_name, "My Canary Opera");
     }
-    g_opera_config.opera_name[MAX_FLOCK_NAME_LEN] = '\0';
+    g_opera_config.opera_name[MAX_OPERA_NAME_LEN] = '\0';
 
     persist_opera_config();
   }

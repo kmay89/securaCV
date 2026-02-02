@@ -1703,7 +1703,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       } else if (data.state === 'NO_FLOCK') {
         badge.className = 'badge info';
         stateText.textContent = 'No Opera';
-        document.getElementById('operaSubtitle').textContent = 'Create or join a opera to get started';
+        document.getElementById('operaSubtitle').textContent = 'Create or join an opera to get started';
       } else if (data.state === 'DISABLED') {
         badge.className = 'badge info';
         stateText.textContent = 'Disabled';
@@ -1885,7 +1885,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     async function saveOperaName() {
       const name = document.getElementById('operaNameInput').value.trim();
       if (!name) {
-        alert('Please enter a opera name');
+        alert('Please enter an opera name');
         return;
       }
       const data = await api('/api/mesh/name', 'POST', { name });

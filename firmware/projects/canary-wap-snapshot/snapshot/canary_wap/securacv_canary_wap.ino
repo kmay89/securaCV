@@ -2279,7 +2279,7 @@ static esp_err_t handle_mesh_name(httpd_req_t* req) {
   }
 
   const char* name = body["name"] | "";
-  if (strlen(name) == 0 || strlen(name) > 31) {
+  if (strlen(name) == 0 || strlen(name) > mesh_network::MAX_OPERA_NAME_LEN) {
     return http_send_error(req, 400, "invalid_name");
   }
 

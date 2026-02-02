@@ -32,9 +32,9 @@ namespace mesh_network {
 static const uint8_t PROTOCOL_VERSION = 0;
 
 // Network limits
-static const size_t MAX_FLOCK_SIZE = 16;           // Maximum peers in a opera
+static const size_t MAX_OPERA_SIZE = 16;           // Maximum peers in an opera
 static const size_t MAX_PEER_NAME_LEN = 24;        // Max device name length
-static const size_t MAX_FLOCK_NAME_LEN = 32;       // Max opera name length
+static const size_t MAX_OPERA_NAME_LEN = 32;       // Max opera name length
 static const size_t MAX_MESSAGE_SIZE = 250;        // ESP-NOW limit
 static const size_t MAX_ALERT_HISTORY = 32;        // Stored alerts
 
@@ -48,8 +48,8 @@ static const uint32_t RECONNECT_INTERVAL_MS = 5000;    // Reconnect attempt inte
 static const uint32_t MESSAGE_TTL_MS = 300000;         // Message validity (5min)
 
 // Crypto sizes
-static const size_t FLOCK_ID_SIZE = 16;
-static const size_t FLOCK_SECRET_SIZE = 32;
+static const size_t OPERA_ID_SIZE = 16;
+static const size_t OPERA_SECRET_SIZE = 32;
 static const size_t PUBKEY_SIZE = 32;
 static const size_t PRIVKEY_SIZE = 32;
 static const size_t SIGNATURE_SIZE = 64;
@@ -60,7 +60,7 @@ static const size_t AUTH_CHALLENGE_SIZE = 32;
 
 // ESP-NOW configuration
 static const uint8_t ESPNOW_CHANNEL = 1;
-static const uint8_t BROADCAST_ADDR[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+extern const uint8_t BROADCAST_ADDR[6];
 
 // ════════════════════════════════════════════════════════════════════════════
 // ENUMS
@@ -106,7 +106,7 @@ enum MessageType : uint8_t {
   MSG_PAIR_ACCEPT,
   MSG_PAIR_CONFIRM,
   MSG_PAIR_COMPLETE,
-  MSG_LEAVE_FLOCK,
+  MSG_LEAVE_OPERA,
   MSG_ENCRYPTED            // Encrypted payload wrapper
 };
 
@@ -156,9 +156,9 @@ struct OperaPeer {
 struct OperaConfig {
   bool enabled;
   bool configured;                          // Has opera been set up
-  uint8_t opera_id[FLOCK_ID_SIZE];
-  uint8_t opera_secret[FLOCK_SECRET_SIZE];
-  char opera_name[MAX_FLOCK_NAME_LEN + 1];
+  uint8_t opera_id[OPERA_ID_SIZE];
+  uint8_t opera_secret[OPERA_SECRET_SIZE];
+  char opera_name[MAX_OPERA_NAME_LEN + 1];
   uint8_t peer_count;
   // Peer pubkeys stored separately
 };
@@ -178,7 +178,7 @@ struct MeshStatus {
   uint32_t auth_failures;
   uint32_t uptime_ms;
   uint32_t last_heartbeat_ms;
-  char opera_id_hex[FLOCK_ID_SIZE * 2 + 1];
+  char opera_id_hex[OPERA_ID_SIZE * 2 + 1];
 };
 
 // Pairing session state
@@ -214,7 +214,7 @@ struct MeshAlert {
 struct MessageHeader {
   uint8_t version;
   uint8_t msg_type;
-  uint8_t opera_id[FLOCK_ID_SIZE];
+  uint8_t opera_id[OPERA_ID_SIZE];
   uint8_t sender_fp[FINGERPRINT_SIZE];
   uint64_t counter;
   uint32_t timestamp;
@@ -274,7 +274,7 @@ struct PairDiscoverPayload {
 struct PairOfferPayload {
   uint8_t ephemeral_pubkey[PUBKEY_SIZE];
   uint8_t device_pubkey[PUBKEY_SIZE];
-  char opera_name[MAX_FLOCK_NAME_LEN + 1];
+  char opera_name[MAX_OPERA_NAME_LEN + 1];
   uint8_t opera_member_count;
 };
 
@@ -285,7 +285,7 @@ struct PairConfirmPayload {
 
 // Pairing complete (sends encrypted opera secret)
 struct PairCompletePayload {
-  uint8_t encrypted_secret[FLOCK_SECRET_SIZE + 16];  // ChaCha20-Poly1305
+  uint8_t encrypted_secret[OPERA_SECRET_SIZE + 16];  // ChaCha20-Poly1305
   uint8_t nonce[NONCE_SIZE];
 };
 
