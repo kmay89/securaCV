@@ -146,6 +146,8 @@ inline esp_err_t handle_chirp_enable(httpd_req_t* req) {
   doc["success"] = success;
   if (success) {
     doc["session_emoji"] = chirp_channel::get_session_emoji();
+  } else {
+    doc["error"] = "Failed to enable chirp channel";
   }
 
   char buffer[128];
