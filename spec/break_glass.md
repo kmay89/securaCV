@@ -39,6 +39,15 @@ Each trustee entry is `id:HEX_PUBLIC_KEY`, where the public key is the
 hex-encoded 32-byte Ed25519 verifying key. The policy is required by
 `break_glass authorize` and by receipt verification (`break_glass receipts`).
 
+The policy also carries **vault crypto settings**. `vault.crypto_mode` controls
+how v2 vault envelopes protect their per-object DEK:
+
+- `classical`: master-key wrap only
+- `pq`: ML-KEM (FIPS 203) encapsulation + KDF-derived DEK
+- `hybrid`: both classical wrap and ML-KEM
+
+If `vault.crypto_mode` is omitted, it defaults to `classical`.
+
 ## Request creation
 
 An unlock request binds the envelope id, ruleset hash, purpose, and a 10-minute

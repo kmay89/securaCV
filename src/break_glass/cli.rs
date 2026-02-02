@@ -663,10 +663,14 @@ fn cmd_unseal(
         ));
     }
     let mut token = token_file.into_token()?;
+    let conn = rusqlite::Connection::open(db_path)?;
+    let crypto_mode = load_break_glass_policy(&conn)?
+        .map(|policy| policy.vault.crypto_mode)
+        .unwrap_or_default();
     let vault = Vault::new(VaultConfig {
         local_path: vault_path.into(),
+        crypto_mode,
     })?;
-    let conn = rusqlite::Connection::open(db_path)?;
     let verifying_key = device_public_key_from_db(&conn)?;
     let clear = vault.unseal(envelope, &mut token, ruleset_hash, &verifying_key, |hash| {
         break_glass_receipt_outcome_for_verifier(&conn, &verifying_key, hash)
@@ -727,8 +731,8 @@ fn load_break_glass_policy(
     let mut rows = stmt.query([])?;
     if let Some(row) = rows.next()? {
         let policy_json: String = row.get(0)?;
-        let stored: crate::break_glass::QuorumPolicy = serde_json::from_str(&policy_json)?;
-        let policy = crate::break_glass::QuorumPolicy::new(stored.n, stored.trustees)?;
+        let policy: crate::break_glass::QuorumPolicy = serde_json::from_str(&policy_json)?;
+        policy.validate()?;
         Ok(Some(policy))
     } else {
         Ok(None)

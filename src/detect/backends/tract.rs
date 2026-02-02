@@ -16,7 +16,7 @@ const ABSOLUTE_COORD_THRESHOLD: f32 = 1.5;
 /// This backend loads a local model file and performs inference on RGB frames.
 /// It does not perform any network I/O or write to disk beyond model loading.
 pub struct TractBackend {
-    model: SimplePlan<TypedFact, Box<dyn TypedOp>>,
+    model: TypedSimplePlan<TypedModel>,
     width: u32,
     height: u32,
     confidence_threshold: f32,
@@ -105,7 +105,7 @@ impl TractBackend {
 
     fn extract_detections(
         &self,
-        outputs: TVec<Tensor>,
+        outputs: TVec<TValue>,
         frame_width: u32,
         frame_height: u32,
     ) -> Result<Vec<Detection>> {
@@ -125,14 +125,15 @@ impl TractBackend {
 
     fn parse_combined_output(
         &self,
-        output: &Tensor,
+        output: &TValue,
         frame_width: u32,
         frame_height: u32,
     ) -> Result<Vec<Detection>> {
         let shape = output.shape();
-        let data = output
+        let view = output
             .to_array_view::<f32>()
-            .context("combined output tensor was not f32")?
+            .context("combined output tensor was not f32")?;
+        let data = view
             .as_slice()
             .ok_or_else(|| anyhow!("combined output tensor is not contiguous"))?;
 
@@ -186,7 +187,7 @@ impl TractBackend {
 
     fn parse_separate_outputs(
         &self,
-        outputs: &TVec<Tensor>,
+        outputs: &TVec<TValue>,
         frame_width: u32,
         frame_height: u32,
     ) -> Result<Vec<Detection>> {
@@ -230,11 +231,12 @@ impl TractBackend {
         Ok(detections)
     }
 
-    fn extract_boxes(output: &Tensor) -> Result<Vec<[f32; 4]>> {
+    fn extract_boxes(output: &TValue) -> Result<Vec<[f32; 4]>> {
         let shape = output.shape();
-        let data = output
+        let view = output
             .to_array_view::<f32>()
-            .context("boxes tensor was not f32")?
+            .context("boxes tensor was not f32")?;
+        let data = view
             .as_slice()
             .ok_or_else(|| anyhow!("boxes tensor is not contiguous"))?;
         let rows = match shape {
@@ -261,11 +263,12 @@ impl TractBackend {
             .collect())
     }
 
-    fn extract_scores(output: &Tensor) -> Result<Vec<f32>> {
+    fn extract_scores(output: &TValue) -> Result<Vec<f32>> {
         let shape = output.shape();
-        let data = output
+        let view = output
             .to_array_view::<f32>()
-            .context("scores tensor was not f32")?
+            .context("scores tensor was not f32")?;
+        let data = view
             .as_slice()
             .ok_or_else(|| anyhow!("scores tensor is not contiguous"))?;
         let len = match shape {
@@ -289,7 +292,7 @@ impl TractBackend {
         Ok(data.to_vec())
     }
 
-    fn extract_class_ids(output: &Tensor) -> Result<Vec<i64>> {
+    fn extract_class_ids(output: &TValue) -> Result<Vec<i64>> {
         let shape = output.shape();
         let len = match shape {
             [1, n] => *n,
@@ -410,9 +413,10 @@ impl DetectorBackend for TractBackend {
         let input = self.build_input(pixels, width, height)?;
         let outputs = self
             .model
-            .run(tvec!(input))
+            .run(tvec!(input.into()))
             .context("ONNX inference failed")?;
         let detections = self.extract_detections(outputs, width, height)?;
+        let size_class = Self::size_class_for(&detections);
         let confidence = detections
             .iter()
             .map(|d| d.confidence)
@@ -422,7 +426,7 @@ impl DetectorBackend for TractBackend {
             motion_detected: confidence >= self.confidence_threshold,
             detections,
             confidence,
-            size_class: Self::size_class_for(&detections),
+            size_class,
         })
     }
 }

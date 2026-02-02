@@ -47,6 +47,17 @@ This document describes how evidence moves through the Privacy Witness Kernel (P
 
 **Ties to existing concepts:** Evidence Vault; Break-glass quorum; Break-glass receipts.
 
+## 7) Vault envelopes (v2 format + crypto modes)
+
+- Vault envelopes use a **versioned header**. v2 carries the AEAD and KEM metadata alongside the sealed payload:
+  `version`, `aead_alg`, `nonce`, `aad`, `ciphertext`, `kem_alg`, `kem_ct`, `kdf_info`, and optional `classical_wrap`.
+- The **AAD encodes the envelope id and ruleset hash** (no precise timestamps or global identifiers are introduced).
+- Each envelope uses a **per-object DEK**. The payload is AEAD-encrypted, and the DEK is protected by:
+  - **classical**: local master-key wrap (`classical_wrap`)
+  - **pq**: ML-KEM (FIPS 203) encapsulation + KDF-derived DEK
+  - **hybrid**: both, enabling classical or PQ recovery
+- The policy stored in the kernel database selects the mode via `vault.crypto_mode`.
+
 ---
 
 ## What Is *Not* Recorded

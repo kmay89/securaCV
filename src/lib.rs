@@ -71,6 +71,7 @@ pub use ingest::{v4l2::V4l2Config, V4l2Source};
 pub use log::{hash_entry, sign_entry, verify_entry_signature};
 pub use module_runtime::{CapabilityBoundaryRuntime, ModuleCapability};
 pub use storage::{InMemorySealedLogStore, SealedLogStore, SqliteSealedLogStore};
+pub use vault::crypto::VaultCryptoMode;
 pub use vault::{FilesystemVaultStore, Vault, VaultConfig, VaultStore};
 
 pub fn shared_memory_uri() -> String {
@@ -1238,8 +1239,8 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         let mut rows = stmt.query([])?;
         if let Some(row) = rows.next()? {
             let policy_json: String = row.get(0)?;
-            let stored: crate::break_glass::QuorumPolicy = serde_json::from_str(&policy_json)?;
-            let policy = crate::break_glass::QuorumPolicy::new(stored.n, stored.trustees)?;
+            let policy: crate::break_glass::QuorumPolicy = serde_json::from_str(&policy_json)?;
+            policy.validate()?;
             self.break_glass_policy = Some(policy);
         } else {
             self.break_glass_policy = None;

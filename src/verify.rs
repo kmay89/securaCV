@@ -111,8 +111,8 @@ pub fn load_break_glass_policy(conn: &Connection) -> Result<Option<QuorumPolicy>
     let mut rows = stmt.query([])?;
     if let Some(row) = rows.next()? {
         let policy_json: String = row.get(0)?;
-        let stored: QuorumPolicy = serde_json::from_str(&policy_json)?;
-        let policy = QuorumPolicy::new(stored.n, stored.trustees)?;
+        let policy: QuorumPolicy = serde_json::from_str(&policy_json)?;
+        policy.validate()?;
         Ok(Some(policy))
     } else {
         Ok(None)

@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::crypto::signatures::{sign_ed25519_only, verify_ed25519_only, DOMAIN_BREAK_GLASS_TOKEN};
+use crate::vault::crypto::VaultCryptoMode;
 use crate::TimeBucket;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -23,6 +24,8 @@ pub struct QuorumPolicy {
     pub n: u8,
     pub m: u8,
     pub trustees: Vec<TrusteeEntry>,
+    #[serde(default)]
+    pub vault: VaultPolicy,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -33,18 +36,30 @@ pub struct TrusteeEntry {
 
 impl QuorumPolicy {
     pub fn new(threshold: u8, trustees: Vec<TrusteeEntry>) -> Result<Self> {
-        if threshold == 0 {
+        let policy = Self {
+            n: threshold,
+            m: trustees.len() as u8,
+            trustees,
+            vault: VaultPolicy::default(),
+        };
+        policy.validate()?;
+        Ok(policy)
+    }
+
+    /// Validates a QuorumPolicy, typically after deserialization.
+    /// Returns Ok(()) if valid, or an error describing the validation failure.
+    pub fn validate(&self) -> Result<()> {
+        if self.n == 0 {
             return Err(anyhow!("quorum threshold must be > 0"));
         }
-        let m = trustees.len();
-        if m == 0 {
+        if self.trustees.is_empty() {
             return Err(anyhow!("quorum must include at least one trustee"));
         }
-        if threshold as usize > m {
+        if self.n as usize > self.trustees.len() {
             return Err(anyhow!("quorum threshold exceeds trustee count"));
         }
         let mut uniq = std::collections::HashSet::new();
-        for t in &trustees {
+        for t in &self.trustees {
             if t.id.0.is_empty() {
                 return Err(anyhow!("trustee id cannot be empty"));
             }
@@ -54,11 +69,21 @@ impl QuorumPolicy {
             VerifyingKey::from_bytes(&t.public_key)
                 .map_err(|_| anyhow!("invalid public key for trustee {}", t.id.0))?;
         }
-        Ok(Self {
-            n: threshold,
-            m: m as u8,
-            trustees,
-        })
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct VaultPolicy {
+    #[serde(default)]
+    pub crypto_mode: VaultCryptoMode,
+}
+
+impl Default for VaultPolicy {
+    fn default() -> Self {
+        Self {
+            crypto_mode: VaultCryptoMode::Classical,
+        }
     }
 }
 
