@@ -1074,7 +1074,7 @@ static bool verify_record_signature(const WitnessRecord* rec) {
 // HEALTH LOGGING
 // ════════════════════════════════════════════════════════════════════════════
 
-static void log_health(LogLevel level, LogCategory category, const char* message, const char* detail) {
+void log_health(LogLevel level, LogCategory category, const char* message, const char* detail) {
   // Skip DEBUG by default
   if (level < LOG_LEVEL_INFO) return;
   

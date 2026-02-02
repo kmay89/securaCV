@@ -37,4 +37,18 @@
  */
 void health_log(LogLevel level, LogCategory category, const char* message);
 
+/*
+ * Log a health/diagnostic event with optional detail.
+ *
+ * @param level    Severity level (see log_level.h)
+ * @param category Event category (see log_level.h)
+ * @param message  Human-readable message describing the event
+ * @param detail   Optional additional detail (can be nullptr)
+ *
+ * Example usage:
+ *   log_health(LOG_LEVEL_INFO, LOG_CAT_BLUETOOTH, "BLE connected", "AA:BB:CC:DD:EE:FF");
+ *   log_health(LOG_LEVEL_WARNING, LOG_CAT_BLUETOOTH, "Pairing timeout", nullptr);
+ */
+void log_health(LogLevel level, LogCategory category, const char* message, const char* detail);
+
 #endif // SECURACV_HEALTH_LOG_H
