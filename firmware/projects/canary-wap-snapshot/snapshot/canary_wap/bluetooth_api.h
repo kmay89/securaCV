@@ -102,15 +102,12 @@ inline esp_err_t handle_bluetooth_status(httpd_req_t* req) {
   stats["advertising_time_sec"] = status.advertising_time_ms / 1000;
   stats["connected_time_sec"] = status.connected_time_ms / 1000;
 
-  char* buffer = (char*)malloc(2048);
-  if (!buffer) {
+  String buffer;
+  if (!buffer.reserve(2048)) {
     return send_error(req, "Memory allocation failed");
   }
-
-  serializeJson(doc, buffer, 2048);
-  esp_err_t ret = send_json_response(req, buffer);
-  free(buffer);
-  return ret;
+  serializeJson(doc, buffer);
+  return send_json_response(req, buffer.c_str());
 }
 
 // POST /api/bluetooth/enable - Enable Bluetooth
@@ -201,15 +198,12 @@ inline esp_err_t handle_bluetooth_scan_results(httpd_req_t* req) {
     dev["age_sec"] = (millis() - devices[i].last_seen_ms) / 1000;
   }
 
-  char* buffer = (char*)malloc(4096);
-  if (!buffer) {
+  String buffer;
+  if (!buffer.reserve(4096)) {
     return send_error(req, "Memory allocation failed");
   }
-
-  serializeJson(doc, buffer, 4096);
-  esp_err_t ret = send_json_response(req, buffer);
-  free(buffer);
-  return ret;
+  serializeJson(doc, buffer);
+  return send_json_response(req, buffer.c_str());
 }
 
 // DELETE /api/bluetooth/scan/results - Clear scan results
@@ -289,15 +283,12 @@ inline esp_err_t handle_bluetooth_paired_list(httpd_req_t* req) {
     dev["blocked"] = devices[i].blocked;
   }
 
-  char* buffer = (char*)malloc(2048);
-  if (!buffer) {
+  String buffer;
+  if (!buffer.reserve(2048)) {
     return send_error(req, "Memory allocation failed");
   }
-
-  serializeJson(doc, buffer, 2048);
-  esp_err_t ret = send_json_response(req, buffer);
-  free(buffer);
-  return ret;
+  serializeJson(doc, buffer);
+  return send_json_response(req, buffer.c_str());
 }
 
 // DELETE /api/bluetooth/paired - Remove a paired device
@@ -534,194 +525,44 @@ inline esp_err_t handle_bluetooth_power_set(httpd_req_t* req) {
 // ROUTE REGISTRATION
 // ════════════════════════════════════════════════════════════════════════════
 
+// Helper to reduce boilerplate in route registration
+static inline void register_api_handler(httpd_handle_t server, const char* uri,
+                                        httpd_method_t method,
+                                        esp_err_t (*handler)(httpd_req_t*)) {
+  httpd_uri_t route = { .uri = uri, .method = method, .handler = handler, .user_ctx = nullptr };
+  httpd_register_uri_handler(server, &route);
+}
+
 // Call this to register all Bluetooth API routes with the HTTP server
 inline void register_routes(httpd_handle_t server) {
   // GET endpoints
-  httpd_uri_t bt_status = {
-    .uri = "/api/bluetooth",
-    .method = HTTP_GET,
-    .handler = handle_bluetooth_status,
-    .user_ctx = nullptr
-  };
-  httpd_register_uri_handler(server, &bt_status);
-
-  httpd_uri_t bt_scan_results = {
-    .uri = "/api/bluetooth/scan/results",
-    .method = HTTP_GET,
-    .handler = handle_bluetooth_scan_results,
-    .user_ctx = nullptr
-  };
-  httpd_register_uri_handler(server, &bt_scan_results);
-
-  httpd_uri_t bt_paired_list = {
-    .uri = "/api/bluetooth/paired",
-    .method = HTTP_GET,
-    .handler = handle_bluetooth_paired_list,
-    .user_ctx = nullptr
-  };
-  httpd_register_uri_handler(server, &bt_paired_list);
-
-  httpd_uri_t bt_settings_get = {
-    .uri = "/api/bluetooth/settings",
-    .method = HTTP_GET,
-    .handler = handle_bluetooth_settings_get,
-    .user_ctx = nullptr
-  };
-  httpd_register_uri_handler(server, &bt_settings_get);
+  register_api_handler(server, "/api/bluetooth", HTTP_GET, handle_bluetooth_status);
+  register_api_handler(server, "/api/bluetooth/scan/results", HTTP_GET, handle_bluetooth_scan_results);
+  register_api_handler(server, "/api/bluetooth/paired", HTTP_GET, handle_bluetooth_paired_list);
+  register_api_handler(server, "/api/bluetooth/settings", HTTP_GET, handle_bluetooth_settings_get);
 
   // POST endpoints
-  httpd_uri_t bt_enable = {
-    .uri = "/api/bluetooth/enable",
-    .method = HTTP_POST,
-    .handler = handle_bluetooth_enable,
-    .user_ctx = nullptr
-  };
-  httpd_register_uri_handler(server, &bt_enable);
-
-  httpd_uri_t bt_disable = {
-    .uri = "/api/bluetooth/disable",
-    .method = HTTP_POST,
-    .handler = handle_bluetooth_disable,
-    .user_ctx = nullptr
-  };
-  httpd_register_uri_handler(server, &bt_disable);
-
-  httpd_uri_t bt_adv_start = {
-    .uri = "/api/bluetooth/advertise/start",
-    .method = HTTP_POST,
-    .handler = handle_bluetooth_advertise_start,
-    .user_ctx = nullptr
-  };
-  httpd_register_uri_handler(server, &bt_adv_start);
-
-  httpd_uri_t bt_adv_stop = {
-    .uri = "/api/bluetooth/advertise/stop",
-    .method = HTTP_POST,
-    .handler = handle_bluetooth_advertise_stop,
-    .user_ctx = nullptr
-  };
-  httpd_register_uri_handler(server, &bt_adv_stop);
-
-  httpd_uri_t bt_scan_start = {
-    .uri = "/api/bluetooth/scan/start",
-    .method = HTTP_POST,
-    .handler = handle_bluetooth_scan_start,
-    .user_ctx = nullptr
-  };
-  httpd_register_uri_handler(server, &bt_scan_start);
-
-  httpd_uri_t bt_scan_stop = {
-    .uri = "/api/bluetooth/scan/stop",
-    .method = HTTP_POST,
-    .handler = handle_bluetooth_scan_stop,
-    .user_ctx = nullptr
-  };
-  httpd_register_uri_handler(server, &bt_scan_stop);
-
-  httpd_uri_t bt_pair_start = {
-    .uri = "/api/bluetooth/pair/start",
-    .method = HTTP_POST,
-    .handler = handle_bluetooth_pair_start,
-    .user_ctx = nullptr
-  };
-  httpd_register_uri_handler(server, &bt_pair_start);
-
-  httpd_uri_t bt_pair_cancel = {
-    .uri = "/api/bluetooth/pair/cancel",
-    .method = HTTP_POST,
-    .handler = handle_bluetooth_pair_cancel,
-    .user_ctx = nullptr
-  };
-  httpd_register_uri_handler(server, &bt_pair_cancel);
-
-  httpd_uri_t bt_pair_confirm = {
-    .uri = "/api/bluetooth/pair/confirm",
-    .method = HTTP_POST,
-    .handler = handle_bluetooth_pair_confirm,
-    .user_ctx = nullptr
-  };
-  httpd_register_uri_handler(server, &bt_pair_confirm);
-
-  httpd_uri_t bt_pair_reject = {
-    .uri = "/api/bluetooth/pair/reject",
-    .method = HTTP_POST,
-    .handler = handle_bluetooth_pair_reject,
-    .user_ctx = nullptr
-  };
-  httpd_register_uri_handler(server, &bt_pair_reject);
-
-  httpd_uri_t bt_disconnect = {
-    .uri = "/api/bluetooth/disconnect",
-    .method = HTTP_POST,
-    .handler = handle_bluetooth_disconnect,
-    .user_ctx = nullptr
-  };
-  httpd_register_uri_handler(server, &bt_disconnect);
-
-  httpd_uri_t bt_settings_set = {
-    .uri = "/api/bluetooth/settings",
-    .method = HTTP_POST,
-    .handler = handle_bluetooth_settings_set,
-    .user_ctx = nullptr
-  };
-  httpd_register_uri_handler(server, &bt_settings_set);
-
-  httpd_uri_t bt_name_set = {
-    .uri = "/api/bluetooth/name",
-    .method = HTTP_POST,
-    .handler = handle_bluetooth_name_set,
-    .user_ctx = nullptr
-  };
-  httpd_register_uri_handler(server, &bt_name_set);
-
-  httpd_uri_t bt_power_set = {
-    .uri = "/api/bluetooth/power",
-    .method = HTTP_POST,
-    .handler = handle_bluetooth_power_set,
-    .user_ctx = nullptr
-  };
-  httpd_register_uri_handler(server, &bt_power_set);
-
-  httpd_uri_t bt_paired_trust = {
-    .uri = "/api/bluetooth/paired/trust",
-    .method = HTTP_POST,
-    .handler = handle_bluetooth_paired_trust,
-    .user_ctx = nullptr
-  };
-  httpd_register_uri_handler(server, &bt_paired_trust);
-
-  httpd_uri_t bt_paired_block = {
-    .uri = "/api/bluetooth/paired/block",
-    .method = HTTP_POST,
-    .handler = handle_bluetooth_paired_block,
-    .user_ctx = nullptr
-  };
-  httpd_register_uri_handler(server, &bt_paired_block);
+  register_api_handler(server, "/api/bluetooth/enable", HTTP_POST, handle_bluetooth_enable);
+  register_api_handler(server, "/api/bluetooth/disable", HTTP_POST, handle_bluetooth_disable);
+  register_api_handler(server, "/api/bluetooth/advertise/start", HTTP_POST, handle_bluetooth_advertise_start);
+  register_api_handler(server, "/api/bluetooth/advertise/stop", HTTP_POST, handle_bluetooth_advertise_stop);
+  register_api_handler(server, "/api/bluetooth/scan/start", HTTP_POST, handle_bluetooth_scan_start);
+  register_api_handler(server, "/api/bluetooth/scan/stop", HTTP_POST, handle_bluetooth_scan_stop);
+  register_api_handler(server, "/api/bluetooth/pair/start", HTTP_POST, handle_bluetooth_pair_start);
+  register_api_handler(server, "/api/bluetooth/pair/cancel", HTTP_POST, handle_bluetooth_pair_cancel);
+  register_api_handler(server, "/api/bluetooth/pair/confirm", HTTP_POST, handle_bluetooth_pair_confirm);
+  register_api_handler(server, "/api/bluetooth/pair/reject", HTTP_POST, handle_bluetooth_pair_reject);
+  register_api_handler(server, "/api/bluetooth/disconnect", HTTP_POST, handle_bluetooth_disconnect);
+  register_api_handler(server, "/api/bluetooth/settings", HTTP_POST, handle_bluetooth_settings_set);
+  register_api_handler(server, "/api/bluetooth/name", HTTP_POST, handle_bluetooth_name_set);
+  register_api_handler(server, "/api/bluetooth/power", HTTP_POST, handle_bluetooth_power_set);
+  register_api_handler(server, "/api/bluetooth/paired/trust", HTTP_POST, handle_bluetooth_paired_trust);
+  register_api_handler(server, "/api/bluetooth/paired/block", HTTP_POST, handle_bluetooth_paired_block);
 
   // DELETE endpoints
-  httpd_uri_t bt_scan_clear = {
-    .uri = "/api/bluetooth/scan/results",
-    .method = HTTP_DELETE,
-    .handler = handle_bluetooth_scan_clear,
-    .user_ctx = nullptr
-  };
-  httpd_register_uri_handler(server, &bt_scan_clear);
-
-  httpd_uri_t bt_paired_remove = {
-    .uri = "/api/bluetooth/paired",
-    .method = HTTP_DELETE,
-    .handler = handle_bluetooth_paired_remove,
-    .user_ctx = nullptr
-  };
-  httpd_register_uri_handler(server, &bt_paired_remove);
-
-  httpd_uri_t bt_paired_clear = {
-    .uri = "/api/bluetooth/paired/all",
-    .method = HTTP_DELETE,
-    .handler = handle_bluetooth_paired_clear,
-    .user_ctx = nullptr
-  };
-  httpd_register_uri_handler(server, &bt_paired_clear);
+  register_api_handler(server, "/api/bluetooth/scan/results", HTTP_DELETE, handle_bluetooth_scan_clear);
+  register_api_handler(server, "/api/bluetooth/paired", HTTP_DELETE, handle_bluetooth_paired_remove);
+  register_api_handler(server, "/api/bluetooth/paired/all", HTTP_DELETE, handle_bluetooth_paired_clear);
 }
 
 } // namespace bluetooth_api

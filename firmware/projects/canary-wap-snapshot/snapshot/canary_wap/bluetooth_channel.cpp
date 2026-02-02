@@ -106,7 +106,7 @@ static DeviceType detect_device_type(NimBLEAdvertisedDevice* device);
 class ServerCallbacks : public NimBLEServerCallbacks {
   void onConnect(NimBLEServer* server, NimBLEConnInfo& connInfo) override {
     g_connection.connected = true;
-    memcpy(g_connection.address, connInfo.getAddress().getNative(), 6);
+    memcpy(g_connection.address, connInfo.getAddress().getNative(), BLE_ADDRESS_LENGTH);
 
     NimBLEAddress addr(connInfo.getAddress());
     strncpy(g_connection.name, addr.toString().c_str(), MAX_DEVICE_NAME_LEN);
@@ -176,7 +176,7 @@ class ServerCallbacks : public NimBLEServerCallbacks {
         // Add to paired devices
         bool found = false;
         for (size_t i = 0; i < g_paired_count; i++) {
-          if (memcmp(g_paired_devices[i].address, connInfo.getAddress().getNative(), 6) == 0) {
+          if (memcmp(g_paired_devices[i].address, connInfo.getAddress().getNative(), BLE_ADDRESS_LENGTH) == 0) {
             g_paired_devices[i].last_connected_ms = millis();
             g_paired_devices[i].connection_count++;
             g_paired_devices[i].security = SEC_BONDED;
@@ -187,7 +187,7 @@ class ServerCallbacks : public NimBLEServerCallbacks {
 
         if (!found && g_paired_count < MAX_PAIRED_DEVICES) {
           PairedDevice* dev = &g_paired_devices[g_paired_count++];
-          memcpy(dev->address, connInfo.getAddress().getNative(), 6);
+          memcpy(dev->address, connInfo.getAddress().getNative(), BLE_ADDRESS_LENGTH);
           strncpy(dev->name, g_connection.name, MAX_DEVICE_NAME_LEN);
           dev->name[MAX_DEVICE_NAME_LEN] = '\0';
           dev->paired_timestamp = millis() / 1000;
@@ -271,7 +271,7 @@ class ScanCallbacks : public NimBLEScanCallbacks {
   void onResult(NimBLEAdvertisedDevice* device) override {
     // Check if already in list
     for (size_t i = 0; i < g_scanned_count; i++) {
-      if (memcmp(g_scanned_devices[i].address, device->getAddress().getNative(), 6) == 0) {
+      if (memcmp(g_scanned_devices[i].address, device->getAddress().getNative(), BLE_ADDRESS_LENGTH) == 0) {
         // Update existing entry
         g_scanned_devices[i].rssi = device->getRSSI();
         g_scanned_devices[i].last_seen_ms = millis();
@@ -282,7 +282,7 @@ class ScanCallbacks : public NimBLEScanCallbacks {
     // Add new device
     if (g_scanned_count < MAX_SCANNED_DEVICES) {
       ScannedDevice* entry = &g_scanned_devices[g_scanned_count++];
-      memcpy(entry->address, device->getAddress().getNative(), 6);
+      memcpy(entry->address, device->getAddress().getNative(), BLE_ADDRESS_LENGTH);
 
       if (device->haveName()) {
         strncpy(entry->name, device->getName().c_str(), MAX_DEVICE_NAME_LEN);
@@ -781,7 +781,7 @@ const PairedDevice* get_paired_devices(size_t* count) {
 
 bool remove_paired_device(const uint8_t* address) {
   for (size_t i = 0; i < g_paired_count; i++) {
-    if (memcmp(g_paired_devices[i].address, address, 6) == 0) {
+    if (memcmp(g_paired_devices[i].address, address, BLE_ADDRESS_LENGTH) == 0) {
       // Shift remaining devices
       for (size_t j = i; j < g_paired_count - 1; j++) {
         g_paired_devices[j] = g_paired_devices[j + 1];
@@ -818,7 +818,7 @@ bool clear_all_paired_devices() {
 
 bool set_device_trusted(const uint8_t* address, bool trusted) {
   for (size_t i = 0; i < g_paired_count; i++) {
-    if (memcmp(g_paired_devices[i].address, address, 6) == 0) {
+    if (memcmp(g_paired_devices[i].address, address, BLE_ADDRESS_LENGTH) == 0) {
       g_paired_devices[i].trusted = trusted;
       save_paired_devices();
       return true;
@@ -829,7 +829,7 @@ bool set_device_trusted(const uint8_t* address, bool trusted) {
 
 bool set_device_blocked(const uint8_t* address, bool blocked) {
   for (size_t i = 0; i < g_paired_count; i++) {
-    if (memcmp(g_paired_devices[i].address, address, 6) == 0) {
+    if (memcmp(g_paired_devices[i].address, address, BLE_ADDRESS_LENGTH) == 0) {
       g_paired_devices[i].blocked = blocked;
       save_paired_devices();
       return true;
@@ -1007,8 +1007,8 @@ void update() {
 // ════════════════════════════════════════════════════════════════════════════
 
 void format_address(const uint8_t* addr, char* out) {
-  sprintf(out, "%02X:%02X:%02X:%02X:%02X:%02X",
-          addr[0], addr[1], addr[2], addr[3], addr[4], addr[5]);
+  snprintf(out, BLE_ADDRESS_STR_LEN, "%02X:%02X:%02X:%02X:%02X:%02X",
+           addr[0], addr[1], addr[2], addr[3], addr[4], addr[5]);
 }
 
 bool parse_address(const char* str, uint8_t* out) {

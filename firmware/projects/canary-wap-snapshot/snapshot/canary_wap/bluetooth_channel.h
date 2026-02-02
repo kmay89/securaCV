@@ -32,6 +32,8 @@ namespace bluetooth_channel {
 // ════════════════════════════════════════════════════════════════════════════
 
 // BLE limits
+static const size_t BLE_ADDRESS_LENGTH = 6;       // Bluetooth MAC address length
+static const size_t BLE_ADDRESS_STR_LEN = 18;     // "XX:XX:XX:XX:XX:XX\0"
 static const size_t MAX_PAIRED_DEVICES = 8;
 static const size_t MAX_SCANNED_DEVICES = 16;
 static const size_t MAX_DEVICE_NAME_LEN = 32;
@@ -104,7 +106,7 @@ enum PairingState : uint8_t {
 
 // Paired device record
 struct PairedDevice {
-  uint8_t address[6];                       // MAC address
+  uint8_t address[BLE_ADDRESS_LENGTH];                       // MAC address
   char name[MAX_DEVICE_NAME_LEN + 1];       // Device name
   uint32_t paired_timestamp;                // When paired (epoch)
   uint32_t last_connected_ms;               // Last connection time
@@ -116,7 +118,7 @@ struct PairedDevice {
 
 // Scanned device entry
 struct ScannedDevice {
-  uint8_t address[6];                       // MAC address
+  uint8_t address[BLE_ADDRESS_LENGTH];                       // MAC address
   char name[MAX_DEVICE_NAME_LEN + 1];       // Device name (if available)
   int8_t rssi;                              // Signal strength
   DeviceType type;                          // Detected device type
@@ -128,7 +130,7 @@ struct ScannedDevice {
 // Current connection info
 struct ConnectionInfo {
   bool connected;
-  uint8_t address[6];
+  uint8_t address[BLE_ADDRESS_LENGTH];
   char name[MAX_DEVICE_NAME_LEN + 1];
   int8_t rssi;
   SecurityLevel security;
