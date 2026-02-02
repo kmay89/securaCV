@@ -49,6 +49,15 @@ Home Assistant discovery topics:
 - `homeassistant/sensor/<device_id>/last_event/config`
 - `homeassistant/sensor/<device_id>/uptime/config`
 
+### Canary WAP Snapshot (Arduino demo)
+
+Path: `firmware/projects/canary-wap-snapshot/`
+
+Purpose:
+- Preserves a working Arduino sketch as a frozen snapshot
+- Not wired into any build system (reference only)
+- Used as the baseline for migrating into the required firmware architecture
+
 ## Build & Flash (PlatformIO)
 
 Prereqs:
