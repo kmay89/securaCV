@@ -240,7 +240,12 @@ class ServerCallbacks : public NimBLEServerCallbacks {
 
   uint32_t onPassKeyDisplay() override {
     // NimBLE 2.x: Return passkey to display (generate random 6-digit)
-    uint32_t passkey = esp_random() % 1000000;
+    // Use rejection sampling to avoid modulo bias
+    uint32_t passkey;
+    do {
+      passkey = esp_random();
+    } while (passkey >= (UINT32_MAX - (UINT32_MAX % 1000000)));
+    passkey %= 1000000;
     g_pairing.pin_code = passkey;
     g_pairing.state = PAIR_PIN_DISPLAYED;
     g_pairing.pin_displayed = true;
