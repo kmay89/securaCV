@@ -67,7 +67,7 @@ endorser_domain_id: <utf8-string>
   Only one endorsement per `endorser_domain_id` counts toward a threshold.
 
   **Example:** `endorser_domain_id: acme-corp-legal` or
-  `endorser_domain_id: external-auditor-firmA`.
+  `endorser_domain_id: external-auditor-pwc`.
 
 **Notes:**
 - All fields are ASCII, newline-delimited, and MUST appear in the order shown.
@@ -96,8 +96,12 @@ break-glass quorum thresholds.
   - Keys from an external audit firm: `endorser_domain_id: external-auditor-pwc`
   - Keys from a compliance department: `endorser_domain_id: compliance-internal`
 
-  If two endorser keys share the same `endorser_domain_id`, only the first
-  valid endorsement from that domain counts toward the threshold.
+  If two endorser keys share the same `endorser_domain_id`, only one
+  endorsement from that domain counts toward the threshold. To ensure
+  deterministic counting across implementations, the selected endorsement
+  is the one with the lexicographically smallest `(endorsement_created_bucket,
+  signature_bytes)` tuple. This ordering guarantees consistent threshold
+  evaluation regardless of processing order.
 - Endorsements MAY be collected over time and remain valid as long as the event
   record is unchanged.
 - Endorsement thresholds do **not** authorize evidence vault access or any
@@ -124,7 +128,10 @@ remain logically distinct from the event itself.
     and `endorser_domain_id`)
   - Endorser public key identifier
   - Signature bytes
-  - Endorser domain identifier (for threshold counting, as labeled in local trust store)
+
+  Note: The `endorser_domain_id` used for threshold counting MUST be extracted
+  from the signed endorsement message, not stored separately. This prevents
+  inconsistencies between signed and unsigned copies.
 - **Indexing:** The log may maintain an internal index mapping event hashes to
   endorsement records, but must remain local and non-queryable externally.
 - **Retention:** Co-signatures follow the same retention policy as the event
