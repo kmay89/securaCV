@@ -1112,8 +1112,8 @@ static void log_health(LogLevel level, LogCategory category, const char* message
 
 // Public wrapper for external modules (e.g., chirp_channel.cpp)
 // This function is declared in health_log.h
-void health_log(LogLevel level, LogCategory category, const char* detail) {
-  log_health(level, category, detail, nullptr);
+void health_log(LogLevel level, LogCategory category, const char* message) {
+  log_health(level, category, message, nullptr);
 }
 
 static bool acknowledge_log_entry(uint32_t log_seq, AckStatus new_status, const char* reason) {

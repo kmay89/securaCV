@@ -25,7 +25,7 @@
  *
  * @param level    Severity level (see log_level.h)
  * @param category Event category (see log_level.h)
- * @param detail   Human-readable message describing the event
+ * @param message  Human-readable message describing the event
  *
  * Events at LOG_LEVEL_DEBUG are typically not stored.
  * Events at LOG_LEVEL_WARNING and above may require user acknowledgment.
@@ -35,6 +35,6 @@
  *   health_log(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "chirp: new session");
  *   health_log(LOG_LEVEL_WARNING, LOG_CAT_CRYPTO, "key derivation slow");
  */
-void health_log(LogLevel level, LogCategory category, const char* detail);
+void health_log(LogLevel level, LogCategory category, const char* message);
 
 #endif // SECURACV_HEALTH_LOG_H
