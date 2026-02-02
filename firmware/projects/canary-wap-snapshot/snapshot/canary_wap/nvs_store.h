@@ -1,11 +1,9 @@
 /*
- * SecuraCV Canary — NVS Storage Wrapper
+ * SecuraCV Canary — NVS Storage Manager
  *
- * Simple wrapper functions for ESP32 NVS (Non-Volatile Storage)
- * using the Arduino Preferences library.
- *
- * Uses RAII pattern to efficiently batch multiple NVS operations
- * under a single open/close cycle.
+ * Encapsulated NVS (Non-Volatile Storage) access using the Arduino Preferences
+ * library. Provides both a singleton manager for the main namespace and an
+ * RAII session class for module-specific namespaces.
  */
 
 #ifndef SECURACV_NVS_STORE_H
@@ -15,48 +13,196 @@
 #include <Preferences.h>
 
 // ════════════════════════════════════════════════════════════════════════════
-// NVS NAMESPACE
+// NVS NAMESPACES (centralized definitions)
 // ════════════════════════════════════════════════════════════════════════════
 
+// Main namespace for core device settings (keys, WiFi, Bluetooth, etc.)
+static const char* NVS_MAIN_NS = "securacv";
+
+// Chirp channel namespace
 static const char* NVS_CHIRP_NS = "chirp";
-static const char* NVS_SECURACV_NS = "securacv";
+
+// Mesh network namespace
+static const char* NVS_MESH_NS = "mesh";
 
 // ════════════════════════════════════════════════════════════════════════════
-// GLOBAL PREFERENCES INSTANCE (shared across modules)
+// NVS MANAGER SINGLETON
 // ════════════════════════════════════════════════════════════════════════════
 
-// Global Preferences object for modules that need direct access
-extern Preferences g_prefs;
+/*
+ * NvsManager provides encapsulated access to the main NVS namespace.
+ * Use this singleton for all operations on the "securacv" namespace instead
+ * of directly accessing a global Preferences object.
+ *
+ * Example usage:
+ *   NvsManager& nvs = NvsManager::instance();
+ *   if (nvs.begin(false)) {  // Open for read-write
+ *     nvs.putBool("key", true);
+ *     nvs.end();
+ *   }
+ */
+class NvsManager {
+public:
+  // Get the singleton instance
+  static NvsManager& instance() {
+    static NvsManager s_instance;
+    return s_instance;
+  }
+
+  // Open NVS in read-write mode. Returns true on success.
+  bool begin(bool readOnly = false) {
+    if (m_open) return true;  // Already open
+    m_open = m_prefs.begin(NVS_MAIN_NS, readOnly);
+    m_readOnly = readOnly;
+    return m_open;
+  }
+
+  // Open NVS in read-only mode (convenience wrapper)
+  bool beginReadOnly() { return begin(true); }
+
+  // Open NVS in read-write mode (convenience wrapper)
+  bool beginReadWrite() { return begin(false); }
+
+  // Close NVS session
+  void end() {
+    if (m_open) {
+      m_prefs.end();
+      m_open = false;
+    }
+  }
+
+  // Check if NVS is currently open
+  bool isOpen() const { return m_open; }
+
+  // Check if opened in read-only mode
+  bool isReadOnly() const { return m_readOnly; }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Boolean operations
+  // ──────────────────────────────────────────────────────────────────────────
+  bool getBool(const char* key, bool defaultValue = false) {
+    return m_prefs.getBool(key, defaultValue);
+  }
+
+  size_t putBool(const char* key, bool value) {
+    return m_prefs.putBool(key, value);
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Integer operations
+  // ──────────────────────────────────────────────────────────────────────────
+  uint8_t getUChar(const char* key, uint8_t defaultValue = 0) {
+    return m_prefs.getUChar(key, defaultValue);
+  }
+
+  size_t putUChar(const char* key, uint8_t value) {
+    return m_prefs.putUChar(key, value);
+  }
+
+  int8_t getChar(const char* key, int8_t defaultValue = 0) {
+    return m_prefs.getChar(key, defaultValue);
+  }
+
+  size_t putChar(const char* key, int8_t value) {
+    return m_prefs.putChar(key, value);
+  }
+
+  uint32_t getUInt(const char* key, uint32_t defaultValue = 0) {
+    return m_prefs.getUInt(key, defaultValue);
+  }
+
+  size_t putUInt(const char* key, uint32_t value) {
+    return m_prefs.putUInt(key, value);
+  }
+
+  unsigned long getULong(const char* key, unsigned long defaultValue = 0) {
+    return m_prefs.getULong(key, defaultValue);
+  }
+
+  size_t putULong(const char* key, unsigned long value) {
+    return m_prefs.putULong(key, value);
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Byte array operations
+  // ──────────────────────────────────────────────────────────────────────────
+  size_t getBytesLength(const char* key) {
+    return m_prefs.getBytesLength(key);
+  }
+
+  size_t getBytes(const char* key, void* buf, size_t maxLen) {
+    return m_prefs.getBytes(key, buf, maxLen);
+  }
+
+  size_t putBytes(const char* key, const void* value, size_t len) {
+    return m_prefs.putBytes(key, value, len);
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Key management
+  // ──────────────────────────────────────────────────────────────────────────
+  bool isKey(const char* key) {
+    return m_prefs.isKey(key);
+  }
+
+  bool remove(const char* key) {
+    return m_prefs.remove(key);
+  }
+
+  bool clear() {
+    return m_prefs.clear();
+  }
+
+  // Prevent copying
+  NvsManager(const NvsManager&) = delete;
+  NvsManager& operator=(const NvsManager&) = delete;
+
+private:
+  NvsManager() : m_open(false), m_readOnly(false) {}
+  ~NvsManager() { end(); }
+
+  Preferences m_prefs;
+  bool m_open;
+  bool m_readOnly;
+};
 
 // ════════════════════════════════════════════════════════════════════════════
-// LEGACY NVS FUNCTIONS (for backward compatibility with bluetooth_channel)
+// LEGACY COMPATIBILITY FUNCTIONS
 // ════════════════════════════════════════════════════════════════════════════
 
-// Open NVS in read-write mode (uses securacv namespace)
+/*
+ * These inline functions provide backward compatibility for code that
+ * previously used the global g_prefs object directly. They delegate to
+ * the NvsManager singleton.
+ */
+
+// Open NVS in read-write mode (uses main namespace)
 inline bool nvs_open_rw() {
-  return g_prefs.begin(NVS_SECURACV_NS, false);
+  return NvsManager::instance().beginReadWrite();
 }
 
-// Open NVS in read-only mode (uses securacv namespace)
+// Open NVS in read-only mode (uses main namespace)
 inline bool nvs_open_ro() {
-  return g_prefs.begin(NVS_SECURACV_NS, true);
+  return NvsManager::instance().beginReadOnly();
 }
 
 // Close NVS
 inline void nvs_close() {
-  g_prefs.end();
+  NvsManager::instance().end();
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// RAII NVS SESSION CLASS
+// RAII NVS SESSION CLASS (for module-specific namespaces)
 // ════════════════════════════════════════════════════════════════════════════
 
 /*
- * NvsSession provides RAII-based NVS access for efficient batched operations.
+ * NvsSession provides RAII-based NVS access for module-specific namespaces.
+ * Unlike NvsManager, this creates a separate Preferences instance for
+ * namespace isolation.
  *
  * Example usage:
  *   {
- *     NvsSession nvs(false);  // Open for read-write
+ *     NvsSession nvs(NVS_CHIRP_NS, false);  // Open chirp namespace for read-write
  *     if (nvs.isOpen()) {
  *       nvs.setU8("key1", 42);
  *       nvs.setU8("key2", 100);
@@ -65,8 +211,13 @@ inline void nvs_close() {
  */
 class NvsSession {
 public:
-  // Open NVS partition. readOnly=true for read-only access.
-  explicit NvsSession(bool readOnly = true) : m_open(false) {
+  // Open NVS partition with specified namespace. readOnly=true for read-only access.
+  explicit NvsSession(const char* ns = NVS_CHIRP_NS, bool readOnly = true) : m_open(false) {
+    m_open = m_prefs.begin(ns, readOnly);
+  }
+
+  // Legacy constructor for backward compatibility (uses chirp namespace)
+  explicit NvsSession(bool readOnly) : m_open(false) {
     m_open = m_prefs.begin(NVS_CHIRP_NS, readOnly);
   }
 
@@ -127,46 +278,46 @@ private:
 };
 
 // ════════════════════════════════════════════════════════════════════════════
-// CONVENIENCE FUNCTIONS (for single operations)
+// CONVENIENCE FUNCTIONS (for single operations on chirp namespace)
 // ════════════════════════════════════════════════════════════════════════════
 
-// Get a uint8_t value from NVS
+// Get a uint8_t value from NVS (chirp namespace)
 // Returns true if key exists and value was read successfully
 inline bool nvs_get_u8(const char* key, uint8_t* out_val) {
-  NvsSession nvs(true);
+  NvsSession nvs(NVS_CHIRP_NS, true);
   return nvs.getU8(key, out_val);
 }
 
-// Set a uint8_t value in NVS
+// Set a uint8_t value in NVS (chirp namespace)
 // Returns true if write was successful
 inline bool nvs_set_u8(const char* key, uint8_t val) {
-  NvsSession nvs(false);
+  NvsSession nvs(NVS_CHIRP_NS, false);
   return nvs.setU8(key, val);
 }
 
-// Get a uint32_t value from NVS
+// Get a uint32_t value from NVS (chirp namespace)
 // Returns true if key exists and value was read successfully
 inline bool nvs_get_u32(const char* key, uint32_t* out_val) {
-  NvsSession nvs(true);
+  NvsSession nvs(NVS_CHIRP_NS, true);
   return nvs.getU32(key, out_val);
 }
 
-// Set a uint32_t value in NVS
+// Set a uint32_t value in NVS (chirp namespace)
 // Returns true if write was successful
 inline bool nvs_set_u32(const char* key, uint32_t val) {
-  NvsSession nvs(false);
+  NvsSession nvs(NVS_CHIRP_NS, false);
   return nvs.setU32(key, val);
 }
 
-// Check if a key exists in NVS
+// Check if a key exists in NVS (chirp namespace)
 inline bool nvs_has_key(const char* key) {
-  NvsSession nvs(true);
+  NvsSession nvs(NVS_CHIRP_NS, true);
   return nvs.hasKey(key);
 }
 
-// Remove a key from NVS
+// Remove a key from NVS (chirp namespace)
 inline bool nvs_remove(const char* key) {
-  NvsSession nvs(false);
+  NvsSession nvs(NVS_CHIRP_NS, false);
   return nvs.remove(key);
 }
 

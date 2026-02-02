@@ -207,7 +207,7 @@ static const uint32_t STATE_HYSTERESIS_MS    = 2000;
 // NVS PERSISTENCE
 // ════════════════════════════════════════════════════════════════════════════
 
-static const char* NVS_NS           = "securacv";
+// NVS namespace is defined in nvs_store.h as NVS_MAIN_NS
 static const char* NVS_KEY_PRIV     = "privkey";
 static const char* NVS_KEY_SEQ      = "seq";
 static const char* NVS_KEY_BOOTS    = "boots";
@@ -401,7 +401,7 @@ static uint32_t       g_state_entered_ms = 0;
 static uint32_t       g_pending_state_ms = 0;
 static WitnessRecord  g_last_record;
 static SystemHealth   g_health;
-Preferences    g_prefs;  // Non-static for external access from bluetooth_channel
+// NVS access is now encapsulated in NvsManager singleton (see nvs_store.h)
 
 static RingBuffer<2048> g_gps_rb;
 static char g_line_buf[256];
@@ -633,64 +633,61 @@ static void sha256_domain(const char* domain, const uint8_t* data, size_t n, uin
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// NVS PERSISTENCE
+// NVS PERSISTENCE (using NvsManager singleton from nvs_store.h)
 // ════════════════════════════════════════════════════════════════════════════
 
-static bool nvs_open_rw() {
-  return g_prefs.begin(NVS_NS, false);
-}
-
-static bool nvs_open_ro() {
-  return g_prefs.begin(NVS_NS, true);
-}
-
-static void nvs_close() {
-  g_prefs.end();
-}
+// Note: nvs_open_rw(), nvs_open_ro(), and nvs_close() are now provided
+// by nvs_store.h as inline functions that delegate to NvsManager::instance()
 
 static bool nvs_load_key(uint8_t priv[32]) {
-  if (!nvs_open_ro()) return false;
-  size_t n = g_prefs.getBytesLength(NVS_KEY_PRIV);
-  if (n != 32) { nvs_close(); return false; }
-  g_prefs.getBytes(NVS_KEY_PRIV, priv, 32);
-  nvs_close();
+  NvsManager& nvs = NvsManager::instance();
+  if (!nvs.beginReadOnly()) return false;
+  size_t n = nvs.getBytesLength(NVS_KEY_PRIV);
+  if (n != 32) { nvs.end(); return false; }
+  nvs.getBytes(NVS_KEY_PRIV, priv, 32);
+  nvs.end();
   return true;
 }
 
 static bool nvs_store_key(const uint8_t priv[32]) {
-  if (!nvs_open_rw()) return false;
-  g_prefs.putBytes(NVS_KEY_PRIV, priv, 32);
-  nvs_close();
+  NvsManager& nvs = NvsManager::instance();
+  if (!nvs.beginReadWrite()) return false;
+  nvs.putBytes(NVS_KEY_PRIV, priv, 32);
+  nvs.end();
   return true;
 }
 
 static uint32_t nvs_load_u32(const char* key, uint32_t def = 0) {
-  if (!nvs_open_ro()) return def;
-  uint32_t v = g_prefs.getUInt(key, def);
-  nvs_close();
+  NvsManager& nvs = NvsManager::instance();
+  if (!nvs.beginReadOnly()) return def;
+  uint32_t v = nvs.getUInt(key, def);
+  nvs.end();
   return v;
 }
 
 static bool nvs_store_u32(const char* key, uint32_t val) {
-  if (!nvs_open_rw()) return false;
-  g_prefs.putUInt(key, val);
-  nvs_close();
+  NvsManager& nvs = NvsManager::instance();
+  if (!nvs.beginReadWrite()) return false;
+  nvs.putUInt(key, val);
+  nvs.end();
   return true;
 }
 
 static bool nvs_load_bytes(const char* key, uint8_t* out, size_t len) {
-  if (!nvs_open_ro()) return false;
-  size_t n = g_prefs.getBytesLength(key);
-  if (n != len) { nvs_close(); return false; }
-  g_prefs.getBytes(key, out, len);
-  nvs_close();
+  NvsManager& nvs = NvsManager::instance();
+  if (!nvs.beginReadOnly()) return false;
+  size_t n = nvs.getBytesLength(key);
+  if (n != len) { nvs.end(); return false; }
+  nvs.getBytes(key, out, len);
+  nvs.end();
   return true;
 }
 
 static bool nvs_store_bytes(const char* key, const uint8_t* data, size_t len) {
-  if (!nvs_open_rw()) return false;
-  g_prefs.putBytes(key, data, len);
-  nvs_close();
+  NvsManager& nvs = NvsManager::instance();
+  if (!nvs.beginReadWrite()) return false;
+  nvs.putBytes(key, data, len);
+  nvs.end();
   return true;
 }
 
@@ -2491,9 +2488,10 @@ static esp_err_t handle_wifi_disconnect(httpd_req_t* req) {
   g_wifi_status.state = WIFI_PROV_AP_ONLY;
 
   // Update NVS
-  if (nvs_open_rw()) {
-    g_prefs.putBool(NVS_KEY_WIFI_EN, false);
-    nvs_close();
+  NvsManager& nvs = NvsManager::instance();
+  if (nvs.beginReadWrite()) {
+    nvs.putBool(NVS_KEY_WIFI_EN, false);
+    nvs.end();
   }
 
   log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "WiFi disconnected", nullptr);
@@ -2537,9 +2535,12 @@ static esp_err_t handle_wifi_reconnect(httpd_req_t* req) {
   g_wifi_creds.enabled = true;
 
   // Update NVS
-  if (nvs_open_rw()) {
-    g_prefs.putBool(NVS_KEY_WIFI_EN, true);
-    nvs_close();
+  {
+    NvsManager& nvs = NvsManager::instance();
+    if (nvs.beginReadWrite()) {
+      nvs.putBool(NVS_KEY_WIFI_EN, true);
+      nvs.end();
+    }
   }
 
   wifi_connect_to_home();
@@ -2732,35 +2733,37 @@ static const char* wifi_state_name(WiFiProvState s) {
 static bool wifi_load_credentials() {
   memset(&g_wifi_creds, 0, sizeof(g_wifi_creds));
 
-  if (!nvs_open_ro()) return false;
+  NvsManager& nvs = NvsManager::instance();
+  if (!nvs.beginReadOnly()) return false;
 
-  size_t ssid_len = g_prefs.getBytesLength(NVS_KEY_WIFI_SSID);
+  size_t ssid_len = nvs.getBytesLength(NVS_KEY_WIFI_SSID);
   if (ssid_len > 0 && ssid_len <= 32) {
-    g_prefs.getBytes(NVS_KEY_WIFI_SSID, g_wifi_creds.ssid, ssid_len);
+    nvs.getBytes(NVS_KEY_WIFI_SSID, g_wifi_creds.ssid, ssid_len);
     g_wifi_creds.ssid[ssid_len] = '\0';
 
-    size_t pass_len = g_prefs.getBytesLength(NVS_KEY_WIFI_PASS);
+    size_t pass_len = nvs.getBytesLength(NVS_KEY_WIFI_PASS);
     if (pass_len > 0 && pass_len <= 64) {
-      g_prefs.getBytes(NVS_KEY_WIFI_PASS, g_wifi_creds.password, pass_len);
+      nvs.getBytes(NVS_KEY_WIFI_PASS, g_wifi_creds.password, pass_len);
       g_wifi_creds.password[pass_len] = '\0';
     }
 
-    g_wifi_creds.enabled = g_prefs.getBool(NVS_KEY_WIFI_EN, true);
+    g_wifi_creds.enabled = nvs.getBool(NVS_KEY_WIFI_EN, true);
     g_wifi_creds.configured = (strlen(g_wifi_creds.ssid) > 0);
   }
 
-  nvs_close();
+  nvs.end();
   return g_wifi_creds.configured;
 }
 
 static bool wifi_save_credentials() {
-  if (!nvs_open_rw()) return false;
+  NvsManager& nvs = NvsManager::instance();
+  if (!nvs.beginReadWrite()) return false;
 
-  g_prefs.putBytes(NVS_KEY_WIFI_SSID, g_wifi_creds.ssid, strlen(g_wifi_creds.ssid));
-  g_prefs.putBytes(NVS_KEY_WIFI_PASS, g_wifi_creds.password, strlen(g_wifi_creds.password));
-  g_prefs.putBool(NVS_KEY_WIFI_EN, g_wifi_creds.enabled);
+  nvs.putBytes(NVS_KEY_WIFI_SSID, g_wifi_creds.ssid, strlen(g_wifi_creds.ssid));
+  nvs.putBytes(NVS_KEY_WIFI_PASS, g_wifi_creds.password, strlen(g_wifi_creds.password));
+  nvs.putBool(NVS_KEY_WIFI_EN, g_wifi_creds.enabled);
 
-  nvs_close();
+  nvs.end();
   g_wifi_creds.configured = true;
 
   log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "WiFi credentials saved", g_wifi_creds.ssid);
@@ -2768,13 +2771,14 @@ static bool wifi_save_credentials() {
 }
 
 static bool wifi_clear_credentials() {
-  if (!nvs_open_rw()) return false;
+  NvsManager& nvs = NvsManager::instance();
+  if (!nvs.beginReadWrite()) return false;
 
-  g_prefs.remove(NVS_KEY_WIFI_SSID);
-  g_prefs.remove(NVS_KEY_WIFI_PASS);
-  g_prefs.remove(NVS_KEY_WIFI_EN);
+  nvs.remove(NVS_KEY_WIFI_SSID);
+  nvs.remove(NVS_KEY_WIFI_PASS);
+  nvs.remove(NVS_KEY_WIFI_EN);
 
-  nvs_close();
+  nvs.end();
 
   memset(&g_wifi_creds, 0, sizeof(g_wifi_creds));
   g_wifi_status.state = WIFI_PROV_AP_ONLY;
