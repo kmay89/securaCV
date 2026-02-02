@@ -1003,7 +1003,7 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         }
 
         let ev = ev.bind(kernel_version, ruleset_id, ruleset_hash);
-        self.append_event(&ev)?;
+        self.append_event_with_failure_semantics(&ev, kernel_version, ruleset_id, ruleset_hash)?;
         Ok(ev)
     }
 
@@ -1028,6 +1028,158 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         .bind(kernel_version, ruleset_id, ruleset_hash);
         self.append_failure(&failure)?;
         Ok(failure)
+    }
+
+    /// Attempts to record a failure event with graceful degradation.
+    ///
+    /// When the primary storage fails, this method:
+    /// 1. Tries to record the failure event to the sealed log
+    /// 2. If that fails, logs an alarm to the conformance_alarms table
+    /// 3. If that also fails, logs to stderr as a last resort
+    ///
+    /// This implements the fail-closed auditability guarantee from failure_semantics.md:
+    /// failure conditions must produce explicit failure events, not silent gaps.
+    fn try_record_failure_best_effort(
+        &mut self,
+        failure_type: FailureType,
+        details: Option<String>,
+        kernel_version: &str,
+        ruleset_id: &str,
+        ruleset_hash: [u8; 32],
+    ) {
+        let time_bucket = match TimeBucket::now_10min() {
+            Ok(tb) => tb,
+            Err(e) => {
+                eprintln!(
+                    "[FAILURE_SEMANTICS] Cannot get time bucket for {:?}: {}",
+                    failure_type, e
+                );
+                return;
+            }
+        };
+
+        let failure = FailureEvent {
+            failure_type: failure_type.clone(),
+            time_bucket,
+            details: details.clone(),
+            kernel_version: "UNBOUND".to_string(),
+            ruleset_id: "UNBOUND".to_string(),
+            ruleset_hash: [0u8; 32],
+        }
+        .bind(kernel_version, ruleset_id, ruleset_hash);
+
+        // Try to record to sealed log
+        if let Err(e) = self.append_failure(&failure) {
+            // Sealed log write failed, try alarm table
+            let alarm_msg = format!(
+                "{:?}: {} (sealed log write failed: {})",
+                failure_type,
+                details.as_deref().unwrap_or("no details"),
+                e
+            );
+
+            if let Err(alarm_err) = self.log_alarm("FAILURE_EVENT_DEGRADED", &alarm_msg) {
+                // Even alarm table failed, last resort: stderr
+                eprintln!(
+                    "[FAILURE_SEMANTICS] {:?}: {} (both sealed log and alarm failed: {}, {})",
+                    failure_type,
+                    details.as_deref().unwrap_or("no details"),
+                    e,
+                    alarm_err
+                );
+            }
+        }
+    }
+
+    /// Classifies an error as crypto-related based on error message patterns.
+    fn is_crypto_error(err: &anyhow::Error) -> bool {
+        let msg = err.to_string().to_lowercase();
+        msg.contains("signature")
+            || msg.contains("signing")
+            || msg.contains("verification")
+            || msg.contains("crypto")
+            || msg.contains("key")
+            || msg.contains("decrypt")
+            || msg.contains("encrypt")
+    }
+
+    /// Reports a storage write failure per failure_semantics.md.
+    ///
+    /// Call this when a storage operation fails to ensure explicit failure events
+    /// are recorded for auditability.
+    pub fn report_storage_failure(
+        &mut self,
+        details: &str,
+        kernel_version: &str,
+        ruleset_id: &str,
+        ruleset_hash: [u8; 32],
+    ) {
+        self.try_record_failure_best_effort(
+            FailureType::StorageWriteFailed,
+            Some(details.to_string()),
+            kernel_version,
+            ruleset_id,
+            ruleset_hash,
+        );
+    }
+
+    /// Reports a cryptographic failure per failure_semantics.md.
+    ///
+    /// Call this when a cryptographic operation (signing, verification, key loading) fails
+    /// to ensure explicit failure events are recorded for auditability.
+    pub fn report_crypto_failure(
+        &mut self,
+        details: &str,
+        kernel_version: &str,
+        ruleset_id: &str,
+        ruleset_hash: [u8; 32],
+    ) {
+        self.try_record_failure_best_effort(
+            FailureType::CryptoFailure,
+            Some(details.to_string()),
+            kernel_version,
+            ruleset_id,
+            ruleset_hash,
+        );
+    }
+
+    /// Appends an event to the sealed log, emitting failure events on error.
+    ///
+    /// This is the fail-closed wrapper around `append_event` that ensures storage
+    /// and crypto failures are explicitly recorded per failure_semantics.md.
+    pub fn append_event_with_failure_semantics(
+        &mut self,
+        ev: &Event,
+        kernel_version: &str,
+        ruleset_id: &str,
+        ruleset_hash: [u8; 32],
+    ) -> Result<()> {
+        match self.append_event(ev) {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                let (failure_type, alarm_code) = if Self::is_crypto_error(&e) {
+                    (FailureType::CryptoFailure, "CRYPTO_FAILURE")
+                } else {
+                    (FailureType::StorageWriteFailed, "STORAGE_WRITE_FAILED")
+                };
+
+                let details = format!("append_event failed: {}", e);
+
+                // Log alarm first (simpler write, more likely to succeed)
+                let _ = self.log_alarm(alarm_code, &details);
+
+                // Try to record failure event
+                self.try_record_failure_best_effort(
+                    failure_type,
+                    Some(details),
+                    kernel_version,
+                    ruleset_id,
+                    ruleset_hash,
+                );
+
+                Err(e)
+            }
+        }
     }
 
     fn last_break_glass_hash_or_zero(&self) -> Result<[u8; 32]> {
@@ -2579,6 +2731,100 @@ mod tests {
         )?;
         assert_eq!(bytes, b"vault bytes");
         assert!(data.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn is_crypto_error_classifies_errors_correctly() {
+        // Crypto-related errors should be detected
+        let crypto_err = anyhow::anyhow!("signature verification failed");
+        assert!(Kernel::is_crypto_error(&crypto_err));
+
+        let signing_err = anyhow::anyhow!("signing operation failed");
+        assert!(Kernel::is_crypto_error(&signing_err));
+
+        let key_err = anyhow::anyhow!("invalid key format");
+        assert!(Kernel::is_crypto_error(&key_err));
+
+        // Non-crypto errors should not be detected as crypto errors
+        let storage_err = anyhow::anyhow!("database write failed");
+        assert!(!Kernel::is_crypto_error(&storage_err));
+
+        let generic_err = anyhow::anyhow!("operation failed");
+        assert!(!Kernel::is_crypto_error(&generic_err));
+    }
+
+    #[test]
+    fn report_storage_failure_records_alarm() -> Result<()> {
+        let (mut kernel, cfg) = setup_test_kernel()?;
+
+        // Report a storage failure
+        kernel.report_storage_failure(
+            "test storage failure",
+            &cfg.kernel_version,
+            &cfg.ruleset_id,
+            cfg.ruleset_hash,
+        );
+
+        // Verify failure event was recorded in sealed log
+        let artifact = kernel.export_events_sequential_unchecked(
+            cfg.ruleset_hash,
+            ExportOptions {
+                jitter_s: 0,
+                ..ExportOptions::default()
+            },
+        )?;
+        let failures: Vec<&ExportFailureEvent> = artifact
+            .batches
+            .iter()
+            .flat_map(|batch| &batch.buckets)
+            .flat_map(|bucket| &bucket.failures)
+            .collect();
+
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures[0].failure_type, FailureType::StorageWriteFailed);
+        assert!(failures[0]
+            .details
+            .as_ref()
+            .unwrap()
+            .contains("test storage failure"));
+        Ok(())
+    }
+
+    #[test]
+    fn report_crypto_failure_records_alarm() -> Result<()> {
+        let (mut kernel, cfg) = setup_test_kernel()?;
+
+        // Report a crypto failure
+        kernel.report_crypto_failure(
+            "test crypto failure",
+            &cfg.kernel_version,
+            &cfg.ruleset_id,
+            cfg.ruleset_hash,
+        );
+
+        // Verify failure event was recorded in sealed log
+        let artifact = kernel.export_events_sequential_unchecked(
+            cfg.ruleset_hash,
+            ExportOptions {
+                jitter_s: 0,
+                ..ExportOptions::default()
+            },
+        )?;
+        let failures: Vec<&ExportFailureEvent> = artifact
+            .batches
+            .iter()
+            .flat_map(|batch| &batch.buckets)
+            .flat_map(|bucket| &bucket.failures)
+            .collect();
+
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures[0].failure_type, FailureType::CryptoFailure);
+        assert!(failures[0]
+            .details
+            .as_ref()
+            .unwrap()
+            .contains("test crypto failure"));
         Ok(())
     }
 }
