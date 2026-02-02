@@ -544,9 +544,9 @@ bool init() {
   // Set up advertising
   g_advertising = NimBLEDevice::getAdvertising();
   g_advertising->addServiceUUID(SERVICE_UUID);
-  g_advertising->setScanResponse(true);
-  // Note: setMinPreferred() not available in NimBLE 2.x; connection params
-  // are managed internally by NimBLE
+  // Note: setScanResponse(bool) is deprecated in NimBLE 2.x
+  // Scan response is automatically enabled when service UUIDs are added
+  // Connection params are managed internally by NimBLE
 
   // Set up scanner
   g_scanner = NimBLEDevice::getScan();

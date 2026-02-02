@@ -401,7 +401,7 @@ static uint32_t       g_state_entered_ms = 0;
 static uint32_t       g_pending_state_ms = 0;
 static WitnessRecord  g_last_record;
 static SystemHealth   g_health;
-static Preferences    g_prefs;
+Preferences    g_prefs;  // Non-static for external access from bluetooth_channel
 
 static RingBuffer<2048> g_gps_rb;
 static char g_line_buf[256];
