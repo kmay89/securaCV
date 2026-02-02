@@ -629,6 +629,9 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     <nav>
       <button class="nav-btn active" data-panel="status">Status</button>
       <button class="nav-btn" data-panel="peek">Peek</button>
+      <button class="nav-btn" data-panel="opera">
+        Opera<span class="count" id="operaAlertCount" style="display:none">0</span>
+      </button>
       <button class="nav-btn" data-panel="logs">
         Logs<span class="count" id="logsCount" style="display:none">0</span>
       </button>
@@ -811,6 +814,145 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           <div class="form-label">Snapshot</div>
           <img id="snapshotImg" style="max-width:100%;border-radius:8px;border:1px solid var(--border);" alt="Snapshot">
         </div>
+      </div>
+    </div>
+
+    <!-- Opera Panel (Mesh Network) -->
+    <div class="panel" id="panel-opera">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Opera Network</div>
+            <div class="card-subtitle" id="operaSubtitle">Mesh network status</div>
+          </div>
+          <div class="badge info" id="operaBadge">
+            <span class="badge-dot"></span>
+            <span id="operaState">Loading...</span>
+          </div>
+        </div>
+        <div class="stats-grid">
+          <div class="stat-item">
+            <div class="stat-label">Status</div>
+            <div class="stat-value" id="operaStatus" style="font-size:0.9rem;">--</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-label">Opera ID</div>
+            <div class="stat-value" id="operaId" style="font-size:0.75rem;word-break:break-all;">--</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-label">Peers Online</div>
+            <div class="stat-value"><span id="peersOnline">0</span> / <span id="peersTotal">0</span></div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-label">Alerts</div>
+            <div class="stat-value"><span id="alertsReceived">0</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Peers Grid -->
+      <div class="card" id="operaPeersCard">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Opera Members</div>
+            <div class="card-subtitle" id="peersSubtitle">Devices in your opera</div>
+          </div>
+          <button class="btn btn-ghost btn-sm" onclick="refreshOpera()">Refresh</button>
+        </div>
+        <div id="peersList" class="log-list">
+          <div class="empty-state">
+            <div class="empty-icon">🐦</div>
+            <p>No opera configured</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Opera Alerts -->
+      <div class="card" id="operaAlertsCard">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Opera Alerts</div>
+            <div class="card-subtitle">Alerts from other canaries</div>
+          </div>
+          <button class="btn btn-ghost btn-sm" onclick="clearOperaAlerts()">Clear</button>
+        </div>
+        <div id="operaAlertsList" class="log-list">
+          <div class="empty-state">
+            <div class="empty-icon">✓</div>
+            <p>No alerts</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Opera Controls -->
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Opera Management</div>
+            <div class="card-subtitle">Create, join, or leave opera</div>
+          </div>
+        </div>
+
+        <!-- No Opera State -->
+        <div id="operaNoOpera">
+          <p style="color:var(--muted);margin-bottom:1rem;font-size:0.85rem;">
+            Create a new opera or join an existing one. Opera members protect each other
+            by broadcasting alerts when tampered with or losing power.
+          </p>
+          <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+            <button class="btn btn-primary" onclick="startPairing('init')">Create Opera</button>
+            <button class="btn btn-secondary" onclick="startPairing('join')">Join Opera</button>
+          </div>
+        </div>
+
+        <!-- Has Opera State -->
+        <div id="operaHasOpera" style="display:none;">
+          <div class="form-group">
+            <label class="form-label">Opera Name</label>
+            <div style="display:flex;gap:0.5rem;">
+              <input type="text" class="form-input" id="operaNameInput" placeholder="My Opera" style="flex:1;">
+              <button class="btn btn-secondary" onclick="saveOperaName()">Save</button>
+            </div>
+          </div>
+          <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:1rem;">
+            <button class="btn btn-primary" onclick="startPairing('init')">Add Device</button>
+            <button class="btn btn-danger" onclick="leaveOpera()">Leave Opera</button>
+          </div>
+        </div>
+
+        <!-- Pairing State -->
+        <div id="operaPairing" style="display:none;">
+          <div style="text-align:center;padding:1rem;">
+            <div class="spinner" style="margin:0 auto 1rem;"></div>
+            <p id="pairingStatus" style="color:var(--muted);margin-bottom:1rem;">Searching for devices...</p>
+            <div id="pairingCode" style="display:none;margin-bottom:1rem;">
+              <p style="font-size:0.85rem;color:var(--muted);margin-bottom:0.5rem;">Confirm this code matches on both devices:</p>
+              <div style="font-family:var(--mono);font-size:2rem;font-weight:bold;color:var(--accent);letter-spacing:0.2em;" id="pairingCodeValue">------</div>
+            </div>
+            <div style="display:flex;gap:0.5rem;justify-content:center;">
+              <button class="btn btn-primary" id="pairingConfirmBtn" onclick="confirmPairing()" style="display:none;">Confirm Match</button>
+              <button class="btn btn-secondary" onclick="cancelPairing()">Cancel</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Mesh Enable Toggle -->
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Mesh Network</div>
+            <div class="card-subtitle">Enable or disable mesh networking</div>
+          </div>
+          <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;">
+            <input type="checkbox" id="meshEnabled" onchange="toggleMeshEnabled()">
+            <span style="font-size:0.85rem;color:var(--muted);">Enabled</span>
+          </label>
+        </div>
+        <p style="font-size:0.8rem;color:var(--muted);margin:0;">
+          When enabled, this device will communicate with other canaries in your opera
+          using ESP-NOW (direct radio) and WiFi. Disable to operate independently.
+        </p>
       </div>
     </div>
 
@@ -1042,11 +1184,12 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
       document.getElementById(`panel-${panel}`).classList.add('active');
       currentPanel = panel;
-      
+
       if (panel === 'logs') loadLogs();
       else if (panel === 'witness') loadWitness();
       else if (panel === 'peek') refreshPeekStatus();
-      
+      else if (panel === 'opera') refreshOpera();
+
       // Stop peek stream when leaving peek panel
       if (panel !== 'peek' && peekActive) {
         stopPeek();
@@ -1526,6 +1669,271 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     }
 
     // ══════════════════════════════════════════════════════════════════
+    // FLOCK (MESH NETWORK)
+    // ══════════════════════════════════════════════════════════════════
+
+    let operaState = null;
+    let pairingPollingInterval = null;
+
+    async function refreshOpera() {
+      const data = await api('/api/mesh');
+      if (!data.ok) return;
+
+      operaState = data;
+
+      // Update stats
+      document.getElementById('operaStatus').textContent = data.state || 'DISABLED';
+      document.getElementById('operaId').textContent = data.opera_id ? data.opera_id.substring(0, 16) + '...' : '--';
+      document.getElementById('peersOnline').textContent = data.peers_online || 0;
+      document.getElementById('peersTotal').textContent = data.peers_total || 0;
+      document.getElementById('alertsReceived').textContent = data.alerts_received || 0;
+
+      // Update badge
+      const badge = document.getElementById('operaBadge');
+      const stateText = document.getElementById('operaState');
+
+      if (data.state === 'ACTIVE') {
+        badge.className = 'badge success';
+        stateText.textContent = 'Active';
+        document.getElementById('operaSubtitle').textContent = data.peers_online + ' peer(s) online';
+      } else if (data.state === 'CONNECTING') {
+        badge.className = 'badge warning';
+        stateText.textContent = 'Connecting';
+        document.getElementById('operaSubtitle').textContent = 'Searching for opera members...';
+      } else if (data.state === 'NO_FLOCK') {
+        badge.className = 'badge info';
+        stateText.textContent = 'No Opera';
+        document.getElementById('operaSubtitle').textContent = 'Create or join an opera to get started';
+      } else if (data.state === 'DISABLED') {
+        badge.className = 'badge info';
+        stateText.textContent = 'Disabled';
+        document.getElementById('operaSubtitle').textContent = 'Mesh networking is disabled';
+      } else if (data.state && data.state.startsWith('PAIRING')) {
+        badge.className = 'badge warning';
+        stateText.textContent = 'Pairing';
+        document.getElementById('operaSubtitle').textContent = 'Pairing in progress...';
+      } else {
+        badge.className = 'badge info';
+        stateText.textContent = data.state || 'Unknown';
+      }
+
+      // Update enabled checkbox
+      document.getElementById('meshEnabled').checked = data.enabled !== false;
+
+      // Show/hide opera states
+      const hasOpera = data.has_opera || (data.peers_total > 0);
+      const isPairing = data.state && data.state.startsWith('PAIRING');
+
+      document.getElementById('operaNoOpera').style.display = (!hasOpera && !isPairing) ? 'block' : 'none';
+      document.getElementById('operaHasOpera').style.display = (hasOpera && !isPairing) ? 'block' : 'none';
+      document.getElementById('operaPairing').style.display = isPairing ? 'block' : 'none';
+
+      if (hasOpera && data.opera_name) {
+        document.getElementById('operaNameInput').value = data.opera_name;
+      }
+
+      // Load peers
+      if (hasOpera) {
+        loadPeers();
+      }
+
+      // Load alerts
+      loadOperaAlerts();
+
+      // Alert count badge in nav
+      const alertCount = document.getElementById('operaAlertCount');
+      const unreadAlerts = data.alerts_received || 0;
+      if (unreadAlerts > 0) {
+        alertCount.textContent = unreadAlerts;
+        alertCount.style.display = 'inline-flex';
+      } else {
+        alertCount.style.display = 'none';
+      }
+    }
+
+    async function loadPeers() {
+      const data = await api('/api/mesh/peers');
+      const list = document.getElementById('peersList');
+
+      if (!data.ok || !data.peers || data.peers.length === 0) {
+        list.innerHTML = '<div class="empty-state"><div class="empty-icon">🐦</div><p>No peers in opera</p></div>';
+        return;
+      }
+
+      document.getElementById('peersSubtitle').textContent = data.peers.length + ' device(s) in opera';
+
+      list.innerHTML = data.peers.map(peer => {
+        const stateClass = peer.state === 'CONNECTED' ? 'success' :
+                          peer.state === 'STALE' ? 'warning' :
+                          peer.state === 'ALERT' ? 'danger' : 'info';
+        const stateIcon = peer.state === 'CONNECTED' ? '🟢' :
+                         peer.state === 'STALE' ? '🟡' :
+                         peer.state === 'ALERT' ? '🔴' :
+                         peer.state === 'OFFLINE' ? '⚫' : '⚪';
+
+        return `
+          <div class="log-item ${peer.state === 'ALERT' ? 'critical' : ''}">
+            <div style="font-size:1.5rem;">${stateIcon}</div>
+            <div class="log-content">
+              <div class="log-message">${escapeHtml(peer.name || 'Unknown Device')}</div>
+              <div class="log-detail">FP: ${peer.fingerprint || '--'}</div>
+              <div class="log-meta">${peer.state} · ${peer.rssi ? peer.rssi + ' dBm' : '--'} · ${peer.last_seen_sec ? peer.last_seen_sec + 's ago' : 'never'}</div>
+            </div>
+            <div class="log-actions">
+              <button class="btn btn-ghost btn-sm" onclick="removePeer('${peer.fingerprint}')" title="Remove from opera">✕</button>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    async function loadOperaAlerts() {
+      const data = await api('/api/mesh/alerts');
+      const list = document.getElementById('operaAlertsList');
+
+      if (!data.ok || !data.alerts || data.alerts.length === 0) {
+        list.innerHTML = '<div class="empty-state"><div class="empty-icon">✓</div><p>No alerts from opera</p></div>';
+        return;
+      }
+
+      list.innerHTML = data.alerts.map(alert => {
+        const levelClass = alert.severity >= 6 ? 'critical' : alert.severity >= 4 ? 'error' : 'warning';
+        return `
+          <div class="log-item ${levelClass}">
+            <div class="log-level ${levelClass}">${alert.type || 'ALERT'}</div>
+            <div class="log-content">
+              <div class="log-message">From: ${escapeHtml(alert.sender_name || 'Unknown')}</div>
+              <div class="log-detail">${escapeHtml(alert.detail || '')}</div>
+              <div class="log-meta">${formatTimestamp(alert.timestamp_ms)}</div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    async function startPairing(mode) {
+      const endpoint = mode === 'init' ? '/api/mesh/pair/start' : '/api/mesh/pair/join';
+      const data = await api(endpoint, 'POST');
+
+      if (!data.ok) {
+        alert('Failed to start pairing: ' + (data.error || 'Unknown error'));
+        return;
+      }
+
+      document.getElementById('operaNoOpera').style.display = 'none';
+      document.getElementById('operaHasOpera').style.display = 'none';
+      document.getElementById('operaPairing').style.display = 'block';
+      document.getElementById('pairingStatus').textContent = mode === 'init' ?
+        'Waiting for another device to join...' : 'Searching for opera to join...';
+      document.getElementById('pairingCode').style.display = 'none';
+      document.getElementById('pairingConfirmBtn').style.display = 'none';
+
+      // Start polling for pairing status
+      startPairingPolling();
+    }
+
+    function startPairingPolling() {
+      if (pairingPollingInterval) clearInterval(pairingPollingInterval);
+
+      pairingPollingInterval = setInterval(async () => {
+        const data = await api('/api/mesh');
+        if (!data.ok) return;
+
+        if (data.state === 'PAIRING_CONFIRM' && data.pairing_code) {
+          // Show confirmation code
+          document.getElementById('pairingStatus').textContent = 'Verify the code matches on both devices:';
+          document.getElementById('pairingCodeValue').textContent = String(data.pairing_code).padStart(6, '0');
+          document.getElementById('pairingCode').style.display = 'block';
+          document.getElementById('pairingConfirmBtn').style.display = 'inline-flex';
+        } else if (data.state === 'ACTIVE' || data.state === 'CONNECTING') {
+          // Pairing complete
+          stopPairingPolling();
+          refreshOpera();
+          if (data.state === 'ACTIVE') {
+            alert('Successfully joined opera!');
+          }
+        } else if (data.state === 'NO_FLOCK' || data.state === 'DISABLED') {
+          // Pairing cancelled or failed
+          stopPairingPolling();
+          refreshOpera();
+        }
+      }, 1000);
+    }
+
+    function stopPairingPolling() {
+      if (pairingPollingInterval) {
+        clearInterval(pairingPollingInterval);
+        pairingPollingInterval = null;
+      }
+    }
+
+    async function confirmPairing() {
+      const data = await api('/api/mesh/pair/confirm', 'POST');
+      if (!data.ok) {
+        alert('Pairing confirmation failed: ' + (data.error || 'Unknown error'));
+      }
+      document.getElementById('pairingStatus').textContent = 'Completing pairing...';
+      document.getElementById('pairingConfirmBtn').style.display = 'none';
+    }
+
+    async function cancelPairing() {
+      stopPairingPolling();
+      await api('/api/mesh/pair/cancel', 'POST');
+      refreshOpera();
+    }
+
+    async function saveOperaName() {
+      const name = document.getElementById('operaNameInput').value.trim();
+      if (!name) {
+        alert('Please enter an opera name');
+        return;
+      }
+      const data = await api('/api/mesh/name', 'POST', { name });
+      if (data.ok) {
+        refreshOpera();
+      } else {
+        alert('Failed to save name: ' + (data.error || 'Unknown error'));
+      }
+    }
+
+    async function leaveOpera() {
+      if (!confirm('Leave this opera? You will need to re-pair to rejoin.')) return;
+
+      const data = await api('/api/mesh/leave', 'POST');
+      if (data.ok) {
+        refreshOpera();
+      } else {
+        alert('Failed to leave opera: ' + (data.error || 'Unknown error'));
+      }
+    }
+
+    async function removePeer(fingerprint) {
+      if (!confirm('Remove this device from the opera?')) return;
+
+      const data = await api('/api/mesh/remove', 'POST', { fingerprint });
+      if (data.ok) {
+        loadPeers();
+      } else {
+        alert('Failed to remove peer: ' + (data.error || 'Unknown error'));
+      }
+    }
+
+    async function toggleMeshEnabled() {
+      const enabled = document.getElementById('meshEnabled').checked;
+      const data = await api('/api/mesh/enable', 'POST', { enabled });
+      if (!data.ok) {
+        alert('Failed to toggle mesh: ' + (data.error || 'Unknown error'));
+        document.getElementById('meshEnabled').checked = !enabled;
+      }
+      refreshOpera();
+    }
+
+    async function clearOperaAlerts() {
+      await api('/api/mesh/alerts', 'DELETE');
+      loadOperaAlerts();
+    }
+
+    // ══════════════════════════════════════════════════════════════════
     // WIFI PROVISIONING
     // ══════════════════════════════════════════════════════════════════
 
@@ -1757,12 +2165,14 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     refreshStatus();
     loadChain();
     loadWifiStatus();
+    refreshOpera();
     updateResolutionUI();
     setInterval(refreshStatus, 2000);
     setInterval(loadWifiStatus, 5000);
     setInterval(() => {
       if (currentPanel === 'logs') loadLogs();
       else if (currentPanel === 'witness') loadWitness();
+      else if (currentPanel === 'opera') refreshOpera();
     }, 5000);
   </script>
 </body>

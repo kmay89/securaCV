@@ -1,19 +1,21 @@
 /*
  * SecuraCV Canary — WiFi Access Point & HTTP Server
- * 
+ *
  * Provides local-only access for:
  * - Device health monitoring
  * - Witness record review
  * - Log management and acknowledgment
  * - Configuration
  * - Export functionality
- * 
+ * - Mesh network (opera) management
+ *
  * Security considerations:
  * - AP mode only (no internet connection required)
  * - WPA2-PSK encryption
  * - No sensitive data in URLs (POST for actions)
  * - CORS restricted to same-origin
  * - Rate limiting on sensitive endpoints
+ * - Mesh pairing requires physical confirmation
  */
 
 #ifndef SECURACV_WAP_SERVER_H
@@ -84,32 +86,45 @@ struct RateLimitEntry {
 
 /*
  * REST API Endpoints:
- * 
+ *
  * GET  /                    - Dashboard UI (HTML)
  * GET  /api/status          - Device status JSON
  * GET  /api/health          - System health metrics
  * GET  /api/identity        - Device identity (public key, fingerprint)
  * GET  /api/chain           - Chain state (head hash, sequence)
- * 
+ *
  * GET  /api/witness         - List witness records (paginated)
  * GET  /api/witness/:seq    - Get specific witness record
  * GET  /api/witness/stats   - Witness statistics
- * 
+ *
  * GET  /api/logs            - List health logs (paginated, filterable)
  * GET  /api/logs/unacked    - List unacknowledged logs
  * POST /api/logs/:seq/ack   - Acknowledge a log entry
  * POST /api/logs/ack-all    - Acknowledge all logs up to level
- * 
+ *
  * GET  /api/gps             - Current GPS status
  * GET  /api/time            - Time synchronization status
- * 
+ *
  * POST /api/export          - Create export bundle
  * GET  /api/export/download - Download export bundle
- * 
+ *
  * GET  /api/config          - Get current configuration
  * POST /api/config          - Update configuration
- * 
+ *
  * POST /api/reboot          - Reboot device
+ *
+ * Mesh Network (Opera) Endpoints:
+ * GET  /api/mesh            - Mesh status and opera info
+ * GET  /api/mesh/peers      - List opera peers with status
+ * GET  /api/mesh/alerts     - Recent alerts from opera
+ * POST /api/mesh/enable     - Enable/disable mesh networking
+ * POST /api/mesh/pair/start - Start pairing (initiator mode)
+ * POST /api/mesh/pair/join  - Start pairing (joiner mode)
+ * POST /api/mesh/pair/confirm - Confirm pairing code
+ * POST /api/mesh/pair/cancel  - Cancel ongoing pairing
+ * POST /api/mesh/leave      - Leave current opera
+ * POST /api/mesh/remove     - Remove peer from opera
+ * POST /api/mesh/name       - Set opera name
  */
 
 // ════════════════════════════════════════════════════════════════════════════
