@@ -238,7 +238,7 @@ class ServerCallbacks : public NimBLEServerCallbacks {
     }
   }
 
-  void onPassKeyDisplay(NimBLEConnInfo& connInfo, uint32_t passkey) override {
+  void onPassKeyDisplay(NimBLEConnInfo& /*connInfo*/, uint32_t passkey) override {
     // NimBLE 2.x provides the passkey to display
     g_pairing.pin_code = passkey;
     g_pairing.state = PAIR_PIN_DISPLAYED;
@@ -324,7 +324,7 @@ class ScanCallbacks : public NimBLEScanCallbacks {
     }
   }
 
-  void onScanEnd(const NimBLEScanResults& results, int reason) override {
+  void onScanEnd(const NimBLEScanResults& /*results*/, int /*reason*/) override {
     g_scanning = false;
     set_state(g_connection.connected ? BT_CONNECTED : BT_IDLE);
     log_health(LOG_LEVEL_INFO, LOG_CAT_BLUETOOTH, "BLE scan complete",
