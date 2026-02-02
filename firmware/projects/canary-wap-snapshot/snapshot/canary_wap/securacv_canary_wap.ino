@@ -2577,7 +2577,14 @@ static void start_http_server() {
   config.server_port = 80;
   config.uri_match_fn = httpd_uri_match_wildcard;
   config.stack_size = 8192;  // Increased stack for camera streaming
-  config.max_uri_handlers = 64;  // Increased for all features (base=19, camera=6, mesh=12, bluetooth=23)
+
+  // Calculate max URI handlers based on feature usage
+  const int base_handlers = 19;       // UI, API, WiFi provisioning, captive portal
+  const int camera_handlers = 6;      // Camera peek endpoints
+  const int mesh_handlers = 12;       // Mesh network endpoints
+  const int bluetooth_handlers = 23;  // Bluetooth API endpoints
+  const int handler_headroom = 4;     // Reserve for future additions
+  config.max_uri_handlers = base_handlers + camera_handlers + mesh_handlers + bluetooth_handlers + handler_headroom;
   
   if (httpd_start(&g_http_server, &config) != ESP_OK) {
     log_health(LOG_LEVEL_ERROR, LOG_CAT_NETWORK, "HTTP server start failed", nullptr);
