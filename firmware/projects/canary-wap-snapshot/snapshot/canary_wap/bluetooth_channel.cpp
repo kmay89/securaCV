@@ -353,64 +353,60 @@ static void set_state(BluetoothState new_state) {
 // ════════════════════════════════════════════════════════════════════════════
 
 static void load_settings() {
-  if (!nvs_open_ro()) return;
+  NvsManager& nvs = NvsManager::instance();
+  if (!nvs.beginReadOnly()) return;
 
-  extern Preferences g_prefs;
+  g_settings.enabled = nvs.getBool(NVS_KEY_BT_ENABLED, false);
+  g_settings.auto_advertise = nvs.getBool(NVS_KEY_BT_AUTO_ADV, true);
+  g_settings.allow_pairing = nvs.getBool(NVS_KEY_BT_ALLOW_PAIR, true);
+  g_settings.require_pin = nvs.getBool(NVS_KEY_BT_REQ_PIN, true);
+  g_settings.tx_power = nvs.getChar(NVS_KEY_BT_TX_PWR, 3);
+  g_settings.inactivity_timeout_ms = nvs.getULong(NVS_KEY_BT_TIMEOUT, INACTIVITY_TIMEOUT_MS);
 
-  g_settings.enabled = g_prefs.getBool(NVS_KEY_BT_ENABLED, false);
-  g_settings.auto_advertise = g_prefs.getBool(NVS_KEY_BT_AUTO_ADV, true);
-  g_settings.allow_pairing = g_prefs.getBool(NVS_KEY_BT_ALLOW_PAIR, true);
-  g_settings.require_pin = g_prefs.getBool(NVS_KEY_BT_REQ_PIN, true);
-  g_settings.tx_power = g_prefs.getChar(NVS_KEY_BT_TX_PWR, 3);
-  g_settings.inactivity_timeout_ms = g_prefs.getULong(NVS_KEY_BT_TIMEOUT, INACTIVITY_TIMEOUT_MS);
-
-  size_t name_len = g_prefs.getBytesLength(NVS_KEY_BT_NAME);
+  size_t name_len = nvs.getBytesLength(NVS_KEY_BT_NAME);
   if (name_len > 0 && name_len <= MAX_DEVICE_NAME_LEN) {
-    g_prefs.getBytes(NVS_KEY_BT_NAME, g_settings.device_name, name_len);
+    nvs.getBytes(NVS_KEY_BT_NAME, g_settings.device_name, name_len);
     g_settings.device_name[name_len] = '\0';
   }
 
-  nvs_close();
+  nvs.end();
 }
 
 static void save_settings() {
-  if (!nvs_open_rw()) return;
+  NvsManager& nvs = NvsManager::instance();
+  if (!nvs.beginReadWrite()) return;
 
-  extern Preferences g_prefs;
+  nvs.putBool(NVS_KEY_BT_ENABLED, g_settings.enabled);
+  nvs.putBool(NVS_KEY_BT_AUTO_ADV, g_settings.auto_advertise);
+  nvs.putBool(NVS_KEY_BT_ALLOW_PAIR, g_settings.allow_pairing);
+  nvs.putBool(NVS_KEY_BT_REQ_PIN, g_settings.require_pin);
+  nvs.putChar(NVS_KEY_BT_TX_PWR, g_settings.tx_power);
+  nvs.putULong(NVS_KEY_BT_TIMEOUT, g_settings.inactivity_timeout_ms);
+  nvs.putBytes(NVS_KEY_BT_NAME, g_settings.device_name, strlen(g_settings.device_name));
 
-  g_prefs.putBool(NVS_KEY_BT_ENABLED, g_settings.enabled);
-  g_prefs.putBool(NVS_KEY_BT_AUTO_ADV, g_settings.auto_advertise);
-  g_prefs.putBool(NVS_KEY_BT_ALLOW_PAIR, g_settings.allow_pairing);
-  g_prefs.putBool(NVS_KEY_BT_REQ_PIN, g_settings.require_pin);
-  g_prefs.putChar(NVS_KEY_BT_TX_PWR, g_settings.tx_power);
-  g_prefs.putULong(NVS_KEY_BT_TIMEOUT, g_settings.inactivity_timeout_ms);
-  g_prefs.putBytes(NVS_KEY_BT_NAME, g_settings.device_name, strlen(g_settings.device_name));
-
-  nvs_close();
+  nvs.end();
 }
 
 static void load_paired_devices() {
-  if (!nvs_open_ro()) return;
+  NvsManager& nvs = NvsManager::instance();
+  if (!nvs.beginReadOnly()) return;
 
-  extern Preferences g_prefs;
-
-  size_t data_len = g_prefs.getBytesLength(NVS_KEY_BT_PAIRED);
+  size_t data_len = nvs.getBytesLength(NVS_KEY_BT_PAIRED);
   if (data_len > 0 && data_len <= sizeof(g_paired_devices)) {
-    g_prefs.getBytes(NVS_KEY_BT_PAIRED, g_paired_devices, data_len);
+    nvs.getBytes(NVS_KEY_BT_PAIRED, g_paired_devices, data_len);
     g_paired_count = data_len / sizeof(PairedDevice);
   }
 
-  nvs_close();
+  nvs.end();
 }
 
 static void save_paired_devices() {
-  if (!nvs_open_rw()) return;
+  NvsManager& nvs = NvsManager::instance();
+  if (!nvs.beginReadWrite()) return;
 
-  extern Preferences g_prefs;
+  nvs.putBytes(NVS_KEY_BT_PAIRED, g_paired_devices, g_paired_count * sizeof(PairedDevice));
 
-  g_prefs.putBytes(NVS_KEY_BT_PAIRED, g_paired_devices, g_paired_count * sizeof(PairedDevice));
-
-  nvs_close();
+  nvs.end();
 }
 
 // ════════════════════════════════════════════════════════════════════════════
