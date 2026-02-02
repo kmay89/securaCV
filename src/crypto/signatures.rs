@@ -206,14 +206,13 @@ pub fn verify_with_domain(
 
     match mode {
         SignatureMode::Compat => {
-            if ed_result.is_ok() || pq_result.is_ok() {
-                Ok(())
-            } else {
-                Err(anyhow!(
+            match (ed_result, pq_result) {
+                (Ok(_), _) | (_, Ok(_)) => Ok(()),
+                (Err(ed_err), Err(pq_err)) => Err(anyhow!(
                     "signature verification failed: ed25519_error={}, pq_error={}",
-                    ed_result.unwrap_err(),
-                    pq_result.unwrap_err()
-                ))
+                    ed_err,
+                    pq_err
+                )),
             }
         }
         SignatureMode::Strict => {
