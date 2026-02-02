@@ -208,6 +208,9 @@ static const char* NVS_KEY_BOOTS    = "boots";
 static const char* NVS_KEY_CHAIN    = "chain";
 static const char* NVS_KEY_TAMPER   = "tamper";
 static const char* NVS_KEY_LOGSEQ   = "logseq";
+static const char* NVS_KEY_WIFI_SSID = "wifi_ssid";
+static const char* NVS_KEY_WIFI_PASS = "wifi_pass";
+static const char* NVS_KEY_WIFI_EN   = "wifi_en";
 
 // ════════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -232,6 +235,35 @@ enum GpsFixMode : uint8_t {
   FIX_MODE_NONE = 1,
   FIX_MODE_2D   = 2,
   FIX_MODE_3D   = 3
+};
+
+enum WiFiProvState : uint8_t {
+  WIFI_PROV_IDLE         = 0,  // Not attempting connection
+  WIFI_PROV_SCANNING     = 1,  // Scanning for networks
+  WIFI_PROV_CONNECTING   = 2,  // Attempting to connect
+  WIFI_PROV_CONNECTED    = 3,  // Connected to home WiFi
+  WIFI_PROV_FAILED       = 4,  // Connection failed
+  WIFI_PROV_AP_ONLY      = 5   // AP mode only (no home WiFi configured)
+};
+
+struct WiFiCredentials {
+  char ssid[33];              // Max 32 chars + null
+  char password[65];          // Max 64 chars + null
+  bool enabled;               // Whether to attempt connection
+  bool configured;            // Whether credentials are stored
+};
+
+struct WiFiStatus {
+  WiFiProvState state;
+  bool ap_active;
+  bool sta_connected;
+  int8_t rssi;
+  char sta_ip[16];
+  char ap_ip[16];
+  uint8_t ap_clients;
+  uint32_t connect_attempts;
+  uint32_t last_connect_ms;
+  uint32_t connected_since_ms;
 };
 
 struct GnssFix {
@@ -381,6 +413,13 @@ static bool g_sd_mounted = false;
 // HTTP server
 static httpd_handle_t g_http_server = nullptr;
 
+// WiFi provisioning state
+static WiFiCredentials g_wifi_creds;
+static WiFiStatus g_wifi_status;
+static bool g_wifi_scan_in_progress = false;
+static const uint32_t WIFI_CONNECT_TIMEOUT_MS = 15000;
+static const uint32_t WIFI_RECONNECT_INTERVAL_MS = 30000;
+
 // Camera state
 #if FEATURE_CAMERA_PEEK
 static bool g_camera_initialized = false;
@@ -415,6 +454,15 @@ static void print_gps_block();
 static void print_help();
 static bool create_witness_record(const uint8_t* payload, size_t len, RecordType type, WitnessRecord* out);
 static void log_health(LogLevel level, LogCategory category, const char* message, const char* detail = nullptr);
+
+// WiFi provisioning
+static bool wifi_load_credentials();
+static bool wifi_save_credentials();
+static bool wifi_clear_credentials();
+static void wifi_init_provisioning();
+static void wifi_connect_to_home();
+static void wifi_check_connection();
+static const char* wifi_state_name(WiFiProvState s);
 
 // ════════════════════════════════════════════════════════════════════════════
 // UTILITY FUNCTIONS
@@ -1996,6 +2044,267 @@ static esp_err_t handle_peek_resolution(httpd_req_t* req) {
 #endif // FEATURE_CAMERA_PEEK
 
 // ════════════════════════════════════════════════════════════════════════════
+// WIFI PROVISIONING API HANDLERS
+// ════════════════════════════════════════════════════════════════════════════
+
+static esp_err_t handle_wifi_status(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  wifi_update_status();
+
+  StaticJsonDocument<512> doc;
+  doc["ok"] = true;
+  doc["state"] = wifi_state_name(g_wifi_status.state);
+  doc["ap_active"] = g_wifi_status.ap_active;
+  doc["ap_ssid"] = g_device.ap_ssid;
+  doc["ap_ip"] = g_wifi_status.ap_ip;
+  doc["ap_clients"] = g_wifi_status.ap_clients;
+  doc["sta_connected"] = g_wifi_status.sta_connected;
+  doc["sta_ssid"] = g_wifi_creds.configured ? g_wifi_creds.ssid : "";
+  doc["sta_ip"] = g_wifi_status.sta_ip;
+  doc["rssi"] = g_wifi_status.rssi;
+  doc["configured"] = g_wifi_creds.configured;
+  doc["enabled"] = g_wifi_creds.enabled;
+  doc["connect_attempts"] = g_wifi_status.connect_attempts;
+
+  if (g_wifi_status.sta_connected && g_wifi_status.connected_since_ms > 0) {
+    doc["connected_sec"] = (millis() - g_wifi_status.connected_since_ms) / 1000;
+  }
+
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+static esp_err_t handle_wifi_scan(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  if (g_wifi_scan_in_progress) {
+    StaticJsonDocument<64> doc;
+    doc["ok"] = false;
+    doc["error"] = "Scan already in progress";
+    String response;
+    serializeJson(doc, response);
+    return http_send_json(req, response.c_str());
+  }
+
+  g_wifi_scan_in_progress = true;
+  g_wifi_status.state = WIFI_PROV_SCANNING;
+
+  // Perform synchronous scan (max 10 seconds)
+  int n = WiFi.scanNetworks(false, false, false, 300);
+
+  g_wifi_scan_in_progress = false;
+  if (g_wifi_status.state == WIFI_PROV_SCANNING) {
+    g_wifi_status.state = g_wifi_creds.configured ? WIFI_PROV_IDLE : WIFI_PROV_AP_ONLY;
+  }
+
+  DynamicJsonDocument doc(2048);
+  doc["ok"] = true;
+  doc["count"] = n;
+
+  JsonArray networks = doc.createNestedArray("networks");
+
+  for (int i = 0; i < n && i < 20; i++) {
+    JsonObject net = networks.createNestedObject();
+    net["ssid"] = WiFi.SSID(i);
+    net["rssi"] = WiFi.RSSI(i);
+    net["channel"] = WiFi.channel(i);
+
+    wifi_auth_mode_t authMode = WiFi.encryptionType(i);
+    const char* security = "open";
+    if (authMode == WIFI_AUTH_WPA_PSK) security = "wpa";
+    else if (authMode == WIFI_AUTH_WPA2_PSK) security = "wpa2";
+    else if (authMode == WIFI_AUTH_WPA_WPA2_PSK) security = "wpa/wpa2";
+    else if (authMode == WIFI_AUTH_WPA3_PSK) security = "wpa3";
+    else if (authMode == WIFI_AUTH_WPA2_WPA3_PSK) security = "wpa2/wpa3";
+    else if (authMode != WIFI_AUTH_OPEN) security = "other";
+    net["security"] = security;
+  }
+
+  WiFi.scanDelete();
+
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+static esp_err_t handle_wifi_connect(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  // Read body
+  char content[256] = {0};
+  int ret = httpd_req_recv(req, content, sizeof(content) - 1);
+
+  if (ret <= 0) {
+    StaticJsonDocument<64> doc;
+    doc["ok"] = false;
+    doc["error"] = "No body";
+    String response;
+    serializeJson(doc, response);
+    return http_send_json(req, response.c_str());
+  }
+
+  StaticJsonDocument<256> body;
+  if (deserializeJson(body, content) != DeserializationError::Ok) {
+    StaticJsonDocument<64> doc;
+    doc["ok"] = false;
+    doc["error"] = "Invalid JSON";
+    String response;
+    serializeJson(doc, response);
+    return http_send_json(req, response.c_str());
+  }
+
+  const char* ssid = body["ssid"] | "";
+  const char* password = body["password"] | "";
+
+  if (strlen(ssid) == 0 || strlen(ssid) > 32) {
+    StaticJsonDocument<64> doc;
+    doc["ok"] = false;
+    doc["error"] = "Invalid SSID (1-32 chars required)";
+    String response;
+    serializeJson(doc, response);
+    return http_send_json(req, response.c_str());
+  }
+
+  if (strlen(password) > 64) {
+    StaticJsonDocument<64> doc;
+    doc["ok"] = false;
+    doc["error"] = "Password too long (max 64 chars)";
+    String response;
+    serializeJson(doc, response);
+    return http_send_json(req, response.c_str());
+  }
+
+  // Save credentials
+  strncpy(g_wifi_creds.ssid, ssid, sizeof(g_wifi_creds.ssid) - 1);
+  g_wifi_creds.ssid[sizeof(g_wifi_creds.ssid) - 1] = '\0';
+  strncpy(g_wifi_creds.password, password, sizeof(g_wifi_creds.password) - 1);
+  g_wifi_creds.password[sizeof(g_wifi_creds.password) - 1] = '\0';
+  g_wifi_creds.enabled = true;
+  g_wifi_creds.configured = true;
+
+  wifi_save_credentials();
+
+  // Attempt connection
+  wifi_connect_to_home();
+
+  StaticJsonDocument<128> doc;
+  doc["ok"] = true;
+  doc["message"] = "Credentials saved, attempting connection";
+  doc["ssid"] = g_wifi_creds.ssid;
+
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+static esp_err_t handle_wifi_disconnect(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  WiFi.disconnect(false);
+  g_wifi_creds.enabled = false;
+  g_wifi_status.state = WIFI_PROV_AP_ONLY;
+
+  // Update NVS
+  if (nvs_open_rw()) {
+    g_prefs.putBool(NVS_KEY_WIFI_EN, false);
+    nvs_close();
+  }
+
+  log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "WiFi disconnected", nullptr);
+
+  StaticJsonDocument<64> doc;
+  doc["ok"] = true;
+  doc["message"] = "Disconnected from home WiFi";
+
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+static esp_err_t handle_wifi_forget(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  WiFi.disconnect(true);
+  wifi_clear_credentials();
+
+  StaticJsonDocument<64> doc;
+  doc["ok"] = true;
+  doc["message"] = "WiFi credentials forgotten";
+
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+static esp_err_t handle_wifi_reconnect(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  if (!g_wifi_creds.configured) {
+    StaticJsonDocument<64> doc;
+    doc["ok"] = false;
+    doc["error"] = "No WiFi credentials configured";
+    String response;
+    serializeJson(doc, response);
+    return http_send_json(req, response.c_str());
+  }
+
+  g_wifi_creds.enabled = true;
+
+  // Update NVS
+  if (nvs_open_rw()) {
+    g_prefs.putBool(NVS_KEY_WIFI_EN, true);
+    nvs_close();
+  }
+
+  wifi_connect_to_home();
+
+  StaticJsonDocument<128> doc;
+  doc["ok"] = true;
+  doc["message"] = "Attempting to reconnect";
+  doc["ssid"] = g_wifi_creds.ssid;
+
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+// Captive portal handler for iOS/Android detection
+static esp_err_t handle_captive_portal(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  // Check common captive portal detection URLs and redirect to main UI
+  const char* uri = req->uri;
+
+  // iOS/macOS captive portal detection
+  if (strstr(uri, "hotspot-detect") || strstr(uri, "captive.apple.com")) {
+    httpd_resp_set_status(req, "302 Found");
+    httpd_resp_set_hdr(req, "Location", "http://canary.local/");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
+    return httpd_resp_send(req, NULL, 0);
+  }
+
+  // Android captive portal detection
+  if (strstr(uri, "generate_204") || strstr(uri, "connectivitycheck")) {
+    httpd_resp_set_status(req, "302 Found");
+    httpd_resp_set_hdr(req, "Location", "http://canary.local/");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
+    return httpd_resp_send(req, NULL, 0);
+  }
+
+  // Windows captive portal detection
+  if (strstr(uri, "ncsi.txt") || strstr(uri, "connecttest.txt")) {
+    httpd_resp_set_status(req, "302 Found");
+    httpd_resp_set_hdr(req, "Location", "http://canary.local/");
+    return httpd_resp_send(req, NULL, 0);
+  }
+
+  // Default: serve the UI
+  return handle_ui(req);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // HTTP SERVER SETUP
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -2004,7 +2313,7 @@ static void start_http_server() {
   config.server_port = 80;
   config.uri_match_fn = httpd_uri_match_wildcard;
   config.stack_size = 8192;  // Increased stack for camera streaming
-  config.max_uri_handlers = 20;
+  config.max_uri_handlers = 32;  // Increased for WiFi provisioning endpoints
   
   if (httpd_start(&g_http_server, &config) != ESP_OK) {
     log_health(LOG_LEVEL_ERROR, LOG_CAT_NETWORK, "HTTP server start failed", nullptr);
@@ -2042,7 +2351,36 @@ static void start_http_server() {
   
   httpd_uri_t reboot = { .uri = "/api/reboot", .method = HTTP_POST, .handler = handle_reboot };
   httpd_register_uri_handler(g_http_server, &reboot);
-  
+
+  // WiFi provisioning endpoints
+  httpd_uri_t wifi_status = { .uri = "/api/wifi", .method = HTTP_GET, .handler = handle_wifi_status };
+  httpd_register_uri_handler(g_http_server, &wifi_status);
+
+  httpd_uri_t wifi_scan = { .uri = "/api/wifi/scan", .method = HTTP_GET, .handler = handle_wifi_scan };
+  httpd_register_uri_handler(g_http_server, &wifi_scan);
+
+  httpd_uri_t wifi_connect = { .uri = "/api/wifi/connect", .method = HTTP_POST, .handler = handle_wifi_connect };
+  httpd_register_uri_handler(g_http_server, &wifi_connect);
+
+  httpd_uri_t wifi_disconnect = { .uri = "/api/wifi/disconnect", .method = HTTP_POST, .handler = handle_wifi_disconnect };
+  httpd_register_uri_handler(g_http_server, &wifi_disconnect);
+
+  httpd_uri_t wifi_forget = { .uri = "/api/wifi/forget", .method = HTTP_POST, .handler = handle_wifi_forget };
+  httpd_register_uri_handler(g_http_server, &wifi_forget);
+
+  httpd_uri_t wifi_reconnect = { .uri = "/api/wifi/reconnect", .method = HTTP_POST, .handler = handle_wifi_reconnect };
+  httpd_register_uri_handler(g_http_server, &wifi_reconnect);
+
+  // Captive portal detection URLs (for iOS/Android automatic redirect)
+  httpd_uri_t captive1 = { .uri = "/hotspot-detect.html", .method = HTTP_GET, .handler = handle_captive_portal };
+  httpd_register_uri_handler(g_http_server, &captive1);
+
+  httpd_uri_t captive2 = { .uri = "/generate_204", .method = HTTP_GET, .handler = handle_captive_portal };
+  httpd_register_uri_handler(g_http_server, &captive2);
+
+  httpd_uri_t captive3 = { .uri = "/connecttest.txt", .method = HTTP_GET, .handler = handle_captive_portal };
+  httpd_register_uri_handler(g_http_server, &captive3);
+
 #if FEATURE_CAMERA_PEEK
   // Camera peek endpoints (for positioning/setup only - no recording)
   // NEW: Start endpoint to explicitly activate streaming
@@ -2070,36 +2408,210 @@ static void start_http_server() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// WIFI ACCESS POINT
+// WIFI PROVISIONING
 // ════════════════════════════════════════════════════════════════════════════
 
-static bool start_wifi_ap() {
-  WiFi.mode(WIFI_AP);
-  
-  bool success = WiFi.softAP(g_device.ap_ssid, AP_PASSWORD_DEFAULT, AP_CHANNEL, false, AP_MAX_CLIENTS);
-  
-  if (!success) {
-    log_health(LOG_LEVEL_ERROR, LOG_CAT_NETWORK, "WiFi AP start failed", nullptr);
-    return false;
+static const char* wifi_state_name(WiFiProvState s) {
+  switch (s) {
+    case WIFI_PROV_IDLE:       return "idle";
+    case WIFI_PROV_SCANNING:   return "scanning";
+    case WIFI_PROV_CONNECTING: return "connecting";
+    case WIFI_PROV_CONNECTED:  return "connected";
+    case WIFI_PROV_FAILED:     return "failed";
+    case WIFI_PROV_AP_ONLY:    return "ap_only";
+    default:                   return "unknown";
   }
-  
-  IPAddress ip = WiFi.softAPIP();
-  char ip_str[16];
-  snprintf(ip_str, sizeof(ip_str), "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
-  
+}
+
+static bool wifi_load_credentials() {
+  memset(&g_wifi_creds, 0, sizeof(g_wifi_creds));
+
+  if (!nvs_open_ro()) return false;
+
+  size_t ssid_len = g_prefs.getBytesLength(NVS_KEY_WIFI_SSID);
+  if (ssid_len > 0 && ssid_len <= 32) {
+    g_prefs.getBytes(NVS_KEY_WIFI_SSID, g_wifi_creds.ssid, ssid_len);
+    g_wifi_creds.ssid[ssid_len] = '\0';
+
+    size_t pass_len = g_prefs.getBytesLength(NVS_KEY_WIFI_PASS);
+    if (pass_len > 0 && pass_len <= 64) {
+      g_prefs.getBytes(NVS_KEY_WIFI_PASS, g_wifi_creds.password, pass_len);
+      g_wifi_creds.password[pass_len] = '\0';
+    }
+
+    g_wifi_creds.enabled = g_prefs.getBool(NVS_KEY_WIFI_EN, true);
+    g_wifi_creds.configured = (strlen(g_wifi_creds.ssid) > 0);
+  }
+
+  nvs_close();
+  return g_wifi_creds.configured;
+}
+
+static bool wifi_save_credentials() {
+  if (!nvs_open_rw()) return false;
+
+  g_prefs.putBytes(NVS_KEY_WIFI_SSID, g_wifi_creds.ssid, strlen(g_wifi_creds.ssid));
+  g_prefs.putBytes(NVS_KEY_WIFI_PASS, g_wifi_creds.password, strlen(g_wifi_creds.password));
+  g_prefs.putBool(NVS_KEY_WIFI_EN, g_wifi_creds.enabled);
+
+  nvs_close();
+  g_wifi_creds.configured = true;
+
+  log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "WiFi credentials saved", g_wifi_creds.ssid);
+  return true;
+}
+
+static bool wifi_clear_credentials() {
+  if (!nvs_open_rw()) return false;
+
+  g_prefs.remove(NVS_KEY_WIFI_SSID);
+  g_prefs.remove(NVS_KEY_WIFI_PASS);
+  g_prefs.remove(NVS_KEY_WIFI_EN);
+
+  nvs_close();
+
+  memset(&g_wifi_creds, 0, sizeof(g_wifi_creds));
+  g_wifi_status.state = WIFI_PROV_AP_ONLY;
+
+  log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "WiFi credentials cleared", nullptr);
+  return true;
+}
+
+static void wifi_update_status() {
+  g_wifi_status.ap_active = (WiFi.getMode() & WIFI_AP) != 0;
+  g_wifi_status.sta_connected = WiFi.isConnected();
+  g_wifi_status.ap_clients = WiFi.softAPgetStationNum();
+
+  if (g_wifi_status.sta_connected) {
+    g_wifi_status.rssi = WiFi.RSSI();
+    IPAddress ip = WiFi.localIP();
+    snprintf(g_wifi_status.sta_ip, sizeof(g_wifi_status.sta_ip),
+             "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
+  } else {
+    g_wifi_status.rssi = 0;
+    g_wifi_status.sta_ip[0] = '\0';
+  }
+
+  IPAddress apip = WiFi.softAPIP();
+  snprintf(g_wifi_status.ap_ip, sizeof(g_wifi_status.ap_ip),
+           "%d.%d.%d.%d", apip[0], apip[1], apip[2], apip[3]);
+}
+
+static void wifi_connect_to_home() {
+  if (!g_wifi_creds.configured || !g_wifi_creds.enabled) {
+    g_wifi_status.state = WIFI_PROV_AP_ONLY;
+    return;
+  }
+
+  if (strlen(g_wifi_creds.ssid) == 0) {
+    g_wifi_status.state = WIFI_PROV_AP_ONLY;
+    return;
+  }
+
+  g_wifi_status.state = WIFI_PROV_CONNECTING;
+  g_wifi_status.connect_attempts++;
+  g_wifi_status.last_connect_ms = millis();
+
+  char msg[64];
+  snprintf(msg, sizeof(msg), "Connecting to: %s", g_wifi_creds.ssid);
+  log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, msg, nullptr);
+
+  // Start connection (non-blocking)
+  WiFi.begin(g_wifi_creds.ssid, g_wifi_creds.password);
+}
+
+static void wifi_check_connection() {
+  uint32_t now = millis();
+
+  // Update status
+  wifi_update_status();
+
+  // Handle state transitions
+  switch (g_wifi_status.state) {
+    case WIFI_PROV_CONNECTING:
+      if (WiFi.isConnected()) {
+        g_wifi_status.state = WIFI_PROV_CONNECTED;
+        g_wifi_status.connected_since_ms = now;
+
+        char msg[80];
+        snprintf(msg, sizeof(msg), "Connected to %s", g_wifi_creds.ssid);
+        log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, msg, g_wifi_status.sta_ip);
+      } else if (now - g_wifi_status.last_connect_ms > WIFI_CONNECT_TIMEOUT_MS) {
+        g_wifi_status.state = WIFI_PROV_FAILED;
+        log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK, "WiFi connection timeout", g_wifi_creds.ssid);
+      }
+      break;
+
+    case WIFI_PROV_CONNECTED:
+      if (!WiFi.isConnected()) {
+        g_wifi_status.state = WIFI_PROV_FAILED;
+        log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK, "WiFi connection lost", nullptr);
+      }
+      break;
+
+    case WIFI_PROV_FAILED:
+      // Attempt reconnection periodically
+      if (g_wifi_creds.configured && g_wifi_creds.enabled &&
+          now - g_wifi_status.last_connect_ms > WIFI_RECONNECT_INTERVAL_MS) {
+        wifi_connect_to_home();
+      }
+      break;
+
+    case WIFI_PROV_AP_ONLY:
+    case WIFI_PROV_IDLE:
+    case WIFI_PROV_SCANNING:
+      // No action needed
+      break;
+  }
+}
+
+static void wifi_init_provisioning() {
+  memset(&g_wifi_status, 0, sizeof(g_wifi_status));
+
+  // Load saved credentials
+  bool has_creds = wifi_load_credentials();
+
+  // Always use AP+STA mode for provisioning capability
+  WiFi.mode(WIFI_AP_STA);
+
+  // Start Access Point
+  bool ap_ok = WiFi.softAP(g_device.ap_ssid, AP_PASSWORD_DEFAULT, AP_CHANNEL, false, AP_MAX_CLIENTS);
+
+  if (!ap_ok) {
+    log_health(LOG_LEVEL_ERROR, LOG_CAT_NETWORK, "WiFi AP start failed", nullptr);
+    return;
+  }
+
+  g_wifi_status.ap_active = true;
   g_health.wifi_active = true;
-  
+
+  IPAddress ip = WiFi.softAPIP();
+  snprintf(g_wifi_status.ap_ip, sizeof(g_wifi_status.ap_ip),
+           "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
+
   char msg[64];
   snprintf(msg, sizeof(msg), "AP: %s", g_device.ap_ssid);
-  log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, msg, ip_str);
-  
+  log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, msg, g_wifi_status.ap_ip);
+
   // Start mDNS
   if (MDNS.begin("canary")) {
     MDNS.addService("http", "tcp", 80);
     log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "mDNS started", "canary.local");
   }
-  
-  return true;
+
+  // Attempt to connect to home WiFi if configured
+  if (has_creds && g_wifi_creds.enabled) {
+    wifi_connect_to_home();
+  } else {
+    g_wifi_status.state = WIFI_PROV_AP_ONLY;
+    log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "AP-only mode", "No home WiFi configured");
+  }
+}
+
+// Legacy function for compatibility
+static bool start_wifi_ap() {
+  wifi_init_provisioning();
+  return g_wifi_status.ap_active;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -2532,7 +3044,10 @@ void loop() {
   if (g_health.free_heap < g_health.min_heap) {
     g_health.min_heap = g_health.free_heap;
   }
-  
+
+  // Check WiFi connection periodically
+  wifi_check_connection();
+
   // Create witness records at interval
   if (now - g_last_record_ms >= RECORD_INTERVAL_MS) {
     g_last_record_ms = now;

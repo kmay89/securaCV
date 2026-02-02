@@ -852,6 +852,94 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
     <!-- Settings Panel -->
     <div class="panel" id="panel-settings">
+      <!-- WiFi Configuration Card -->
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">WiFi Configuration</div>
+            <div class="card-subtitle" id="wifiSubtitle">Connect to your home network</div>
+          </div>
+          <div class="badge info" id="wifiBadge">
+            <span class="badge-dot"></span>
+            <span id="wifiState">Checking...</span>
+          </div>
+        </div>
+
+        <!-- WiFi Status -->
+        <div id="wifiStatusSection" style="margin-bottom:1rem;">
+          <div class="stats-grid">
+            <div class="stat-item">
+              <div class="stat-label">Device AP</div>
+              <div class="stat-value" style="font-size:0.9rem;" id="wifiApSsid">--</div>
+            </div>
+            <div class="stat-item">
+              <div class="stat-label">AP IP</div>
+              <div class="stat-value" style="font-size:0.9rem;" id="wifiApIp">--</div>
+            </div>
+            <div class="stat-item">
+              <div class="stat-label">Home WiFi</div>
+              <div class="stat-value" style="font-size:0.9rem;" id="wifiStaSsid">Not configured</div>
+            </div>
+            <div class="stat-item">
+              <div class="stat-label">Home IP</div>
+              <div class="stat-value" style="font-size:0.9rem;" id="wifiStaIp">--</div>
+            </div>
+          </div>
+          <div id="wifiRssiBar" style="margin-top:0.75rem;display:none;">
+            <div class="stat-label">Signal Strength</div>
+            <div style="display:flex;align-items:center;gap:0.5rem;">
+              <div style="flex:1;height:8px;background:rgba(0,0,0,0.3);border-radius:4px;overflow:hidden;">
+                <div id="wifiRssiLevel" style="height:100%;background:var(--success);width:0%;transition:width 0.3s;"></div>
+              </div>
+              <span id="wifiRssiValue" style="font-size:0.75rem;color:var(--muted);">-- dBm</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- WiFi Setup Form (hidden when connected) -->
+        <div id="wifiSetupSection">
+          <div class="form-group">
+            <label class="form-label">Home WiFi Network</label>
+            <div style="display:flex;gap:0.5rem;">
+              <select class="form-input" id="wifiSsidSelect" style="flex:1;">
+                <option value="">-- Select network or type below --</option>
+              </select>
+              <button class="btn btn-secondary" onclick="scanWifi()" id="wifiScanBtn">Scan</button>
+            </div>
+            <input type="text" class="form-input" id="wifiSsidInput" placeholder="Or enter SSID manually" style="margin-top:0.5rem;">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Password</label>
+            <div style="position:relative;">
+              <input type="password" class="form-input" id="wifiPassword" placeholder="WiFi password">
+              <button type="button" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--muted);cursor:pointer;font-size:0.9rem;" onclick="togglePasswordVisibility()">Show</button>
+            </div>
+          </div>
+          <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+            <button class="btn btn-primary" onclick="connectWifi()" id="wifiConnectBtn">Connect</button>
+            <button class="btn btn-secondary" onclick="disconnectWifi()" id="wifiDisconnectBtn" style="display:none;">Disconnect</button>
+            <button class="btn btn-danger" onclick="forgetWifi()" id="wifiForgetBtn" style="display:none;">Forget Network</button>
+          </div>
+        </div>
+
+        <!-- Connection Progress -->
+        <div id="wifiProgress" style="display:none;margin-top:1rem;">
+          <div style="display:flex;align-items:center;gap:0.75rem;">
+            <div class="spinner"></div>
+            <span id="wifiProgressText" style="color:var(--muted);">Connecting...</span>
+          </div>
+        </div>
+
+        <!-- Help Text -->
+        <div style="margin-top:1rem;padding:0.75rem;background:rgba(0,0,0,0.2);border-radius:8px;">
+          <p style="font-size:0.8rem;color:var(--muted);margin:0;">
+            <strong>Setup Guide:</strong> Connect your phone/computer to the device's AP network first.
+            Then select your home WiFi and enter the password. The device will connect to both networks
+            simultaneously so you can continue monitoring while connected to your home WiFi.
+          </p>
+        </div>
+      </div>
+
       <div class="card">
         <div class="card-header">
           <div>
@@ -1437,11 +1525,226 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       return div.innerHTML;
     }
 
+    // ══════════════════════════════════════════════════════════════════
+    // WIFI PROVISIONING
+    // ══════════════════════════════════════════════════════════════════
+
+    let wifiState = null;
+    let wifiPollingInterval = null;
+
+    async function loadWifiStatus() {
+      const data = await api('/api/wifi');
+      if (!data.ok) return;
+
+      wifiState = data;
+
+      // Update UI elements
+      document.getElementById('wifiApSsid').textContent = data.ap_ssid || '--';
+      document.getElementById('wifiApIp').textContent = data.ap_ip || '--';
+      document.getElementById('wifiStaSsid').textContent = data.configured ? data.sta_ssid : 'Not configured';
+      document.getElementById('wifiStaIp').textContent = data.sta_connected ? data.sta_ip : '--';
+
+      // Update badge
+      const badge = document.getElementById('wifiBadge');
+      const state = document.getElementById('wifiState');
+
+      if (data.sta_connected) {
+        badge.className = 'badge success';
+        state.textContent = 'Connected';
+        document.getElementById('wifiSubtitle').textContent = 'Connected to home network';
+      } else if (data.state === 'connecting') {
+        badge.className = 'badge warning';
+        state.textContent = 'Connecting...';
+        document.getElementById('wifiSubtitle').textContent = 'Attempting to connect...';
+      } else if (data.state === 'failed') {
+        badge.className = 'badge danger';
+        state.textContent = 'Failed';
+        document.getElementById('wifiSubtitle').textContent = 'Connection failed - check credentials';
+      } else if (data.configured) {
+        badge.className = 'badge info';
+        state.textContent = 'Disconnected';
+        document.getElementById('wifiSubtitle').textContent = 'Home WiFi configured but not connected';
+      } else {
+        badge.className = 'badge info';
+        state.textContent = 'AP Only';
+        document.getElementById('wifiSubtitle').textContent = 'Connect to your home network';
+      }
+
+      // RSSI bar
+      const rssiBar = document.getElementById('wifiRssiBar');
+      if (data.sta_connected && data.rssi) {
+        rssiBar.style.display = 'block';
+        // RSSI typically ranges from -30 (excellent) to -90 (poor)
+        const rssiPercent = Math.max(0, Math.min(100, (data.rssi + 90) * 1.67));
+        document.getElementById('wifiRssiLevel').style.width = rssiPercent + '%';
+        document.getElementById('wifiRssiLevel').style.background =
+          rssiPercent > 60 ? 'var(--success)' : rssiPercent > 30 ? 'var(--warning)' : 'var(--danger)';
+        document.getElementById('wifiRssiValue').textContent = data.rssi + ' dBm';
+      } else {
+        rssiBar.style.display = 'none';
+      }
+
+      // Show/hide buttons
+      document.getElementById('wifiConnectBtn').style.display = data.sta_connected ? 'none' : 'inline-flex';
+      document.getElementById('wifiDisconnectBtn').style.display = data.sta_connected ? 'inline-flex' : 'none';
+      document.getElementById('wifiForgetBtn').style.display = data.configured ? 'inline-flex' : 'none';
+
+      // Show progress if connecting
+      document.getElementById('wifiProgress').style.display = data.state === 'connecting' ? 'block' : 'none';
+    }
+
+    async function scanWifi() {
+      const btn = document.getElementById('wifiScanBtn');
+      const select = document.getElementById('wifiSsidSelect');
+
+      btn.disabled = true;
+      btn.textContent = 'Scanning...';
+      select.innerHTML = '<option value="">Scanning...</option>';
+
+      const data = await api('/api/wifi/scan');
+
+      btn.disabled = false;
+      btn.textContent = 'Scan';
+
+      if (!data.ok) {
+        select.innerHTML = '<option value="">Scan failed - try again</option>';
+        return;
+      }
+
+      select.innerHTML = '<option value="">-- Select network --</option>';
+
+      if (data.networks && data.networks.length > 0) {
+        // Sort by signal strength
+        data.networks.sort((a, b) => b.rssi - a.rssi);
+
+        for (const net of data.networks) {
+          if (!net.ssid) continue;
+          const signal = net.rssi > -50 ? '████' : net.rssi > -60 ? '███░' : net.rssi > -70 ? '██░░' : '█░░░';
+          const opt = document.createElement('option');
+          opt.value = net.ssid;
+          opt.textContent = `${net.ssid} (${signal} ${net.security})`;
+          select.appendChild(opt);
+        }
+      } else {
+        select.innerHTML = '<option value="">No networks found</option>';
+      }
+    }
+
+    function togglePasswordVisibility() {
+      const input = document.getElementById('wifiPassword');
+      const btn = event.target;
+      if (input.type === 'password') {
+        input.type = 'text';
+        btn.textContent = 'Hide';
+      } else {
+        input.type = 'password';
+        btn.textContent = 'Show';
+      }
+    }
+
+    async function connectWifi() {
+      const selectSsid = document.getElementById('wifiSsidSelect').value;
+      const inputSsid = document.getElementById('wifiSsidInput').value.trim();
+      const ssid = inputSsid || selectSsid;
+      const password = document.getElementById('wifiPassword').value;
+
+      if (!ssid) {
+        alert('Please select or enter a WiFi network name');
+        return;
+      }
+
+      document.getElementById('wifiProgress').style.display = 'block';
+      document.getElementById('wifiProgressText').textContent = 'Saving credentials and connecting...';
+      document.getElementById('wifiConnectBtn').disabled = true;
+
+      const data = await api('/api/wifi/connect', 'POST', { ssid, password });
+
+      document.getElementById('wifiConnectBtn').disabled = false;
+
+      if (!data.ok) {
+        document.getElementById('wifiProgress').style.display = 'none';
+        alert('Failed to save credentials: ' + (data.error || 'Unknown error'));
+        return;
+      }
+
+      // Start polling for connection status
+      document.getElementById('wifiProgressText').textContent = 'Connecting to ' + ssid + '...';
+      startWifiPolling();
+    }
+
+    async function disconnectWifi() {
+      if (!confirm('Disconnect from home WiFi? The AP will remain active.')) return;
+
+      const data = await api('/api/wifi/disconnect', 'POST');
+      if (data.ok) {
+        loadWifiStatus();
+      } else {
+        alert('Failed to disconnect: ' + (data.error || 'Unknown error'));
+      }
+    }
+
+    async function forgetWifi() {
+      if (!confirm('Forget saved WiFi credentials? You will need to re-enter them to reconnect.')) return;
+
+      const data = await api('/api/wifi/forget', 'POST');
+      if (data.ok) {
+        document.getElementById('wifiSsidInput').value = '';
+        document.getElementById('wifiPassword').value = '';
+        loadWifiStatus();
+      } else {
+        alert('Failed to forget credentials: ' + (data.error || 'Unknown error'));
+      }
+    }
+
+    function startWifiPolling() {
+      if (wifiPollingInterval) clearInterval(wifiPollingInterval);
+
+      let pollCount = 0;
+      wifiPollingInterval = setInterval(async () => {
+        await loadWifiStatus();
+        pollCount++;
+
+        // Check if connected or failed
+        if (wifiState) {
+          if (wifiState.sta_connected) {
+            stopWifiPolling();
+            document.getElementById('wifiProgress').style.display = 'none';
+            alert('Successfully connected to ' + wifiState.sta_ssid + '!\n\nIP: ' + wifiState.sta_ip);
+          } else if (wifiState.state === 'failed' || pollCount > 20) {
+            stopWifiPolling();
+            document.getElementById('wifiProgress').style.display = 'none';
+            if (pollCount > 20) {
+              alert('Connection timeout. Please check your credentials and try again.');
+            }
+          }
+        }
+      }, 1000);
+    }
+
+    function stopWifiPolling() {
+      if (wifiPollingInterval) {
+        clearInterval(wifiPollingInterval);
+        wifiPollingInterval = null;
+      }
+    }
+
+    // SSID select -> input sync
+    document.getElementById('wifiSsidSelect').addEventListener('change', function() {
+      if (this.value) {
+        document.getElementById('wifiSsidInput').value = this.value;
+      }
+    });
+
+    // ══════════════════════════════════════════════════════════════════
     // Initialize
+    // ══════════════════════════════════════════════════════════════════
+
     refreshStatus();
     loadChain();
+    loadWifiStatus();
     updateResolutionUI();
     setInterval(refreshStatus, 2000);
+    setInterval(loadWifiStatus, 5000);
     setInterval(() => {
       if (currentPanel === 'logs') loadLogs();
       else if (currentPanel === 'witness') loadWitness();
