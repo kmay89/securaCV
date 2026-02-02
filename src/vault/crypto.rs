@@ -265,13 +265,32 @@ fn recover_dek(
     master_key: &[u8; 32],
     kem_keypair: Option<&KemKeypair>,
 ) -> Result<[u8; 32]> {
+    // Try KEM decapsulation for PQ/Hybrid envelopes
     if envelope.kem_alg == KEM_ALG_ML_KEM_768 {
-        let kem_keypair = kem_keypair
-            .ok_or_else(|| anyhow!("vault KEM keypair missing for PQ envelope"))?;
-        let shared_secret = kem_decapsulate(kem_keypair, &envelope.kem_ct)?;
-        return Ok(kdf_dek(&shared_secret, &envelope.kdf_info));
+        let kem_result = kem_keypair
+            .ok_or_else(|| anyhow!("vault KEM keypair missing for PQ envelope"))
+            .and_then(|kp| kem_decapsulate(kp, &envelope.kem_ct));
+
+        match kem_result {
+            Ok(shared_secret) => {
+                return Ok(kdf_dek(&shared_secret, &envelope.kdf_info));
+            }
+            Err(kem_err) => {
+                // In hybrid mode, fall back to classical unwrap if KEM fails
+                if let Some(wrap) = &envelope.classical_wrap {
+                    log::warn!(
+                        "KEM decapsulation failed, falling back to classical unwrap: {}",
+                        kem_err
+                    );
+                    return unwrap_dek(master_key, &envelope.aad, wrap);
+                }
+                // Pure PQ mode with no fallback
+                return Err(kem_err);
+            }
+        }
     }
 
+    // Classical-only envelope
     if let Some(wrap) = &envelope.classical_wrap {
         return unwrap_dek(master_key, &envelope.aad, wrap);
     }
@@ -311,17 +330,20 @@ fn wrap_dek(
 }
 
 fn unwrap_dek(master_key: &[u8; 32], aad: &[u8], wrap: &[u8]) -> Result<[u8; 32]> {
-    if wrap.len() < 12 + 16 + 32 {
-        return Err(anyhow!("vault classical wrap truncated"));
+    // Wrap format: 12-byte nonce + 16-byte tag + 32-byte encrypted DEK = 60 bytes
+    const WRAP_LEN: usize = 12 + 16 + 32;
+    if wrap.len() != WRAP_LEN {
+        return Err(anyhow!(
+            "vault classical wrap invalid length: expected {} bytes, got {}",
+            WRAP_LEN,
+            wrap.len()
+        ));
     }
     let nonce = &wrap[..12];
     let tag = &wrap[12..28];
     let mut ciphertext = wrap[28..].to_vec();
     let wrap_aad = wrap_aad_from_aad(aad);
     decrypt_payload(master_key, nonce, &wrap_aad, &mut ciphertext, tag)?;
-    if ciphertext.len() != 32 {
-        return Err(anyhow!("vault DEK length mismatch"));
-    }
     let mut dek = [0u8; 32];
     dek.copy_from_slice(&ciphertext);
     Ok(dek)
