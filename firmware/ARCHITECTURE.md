@@ -36,7 +36,7 @@ firmware/
 - Protocol logic
 - Event formats
 - Business rules
-- Shared drivers that do not embed pin mappings
+- Shared drivers and HAL adapters that do not embed pin mappings
 
 **Must not contain** board pin mappings, linker scripts, or board-specific
 peripherals.
@@ -54,6 +54,12 @@ boards/
 
 **Must contain** pin maps and any strictly board-specific information.  
 **Must not contain** app logic or configuration flags.
+
+**Variant mapping rule:** The `variants/` directory is a board-internal detail.
+Build environments reference a board by `boards/<board_id>` and may select a
+variant through board metadata or environment-level parameters. Variant-specific
+data must remain under the board directory and must not be referenced directly
+by `configs/` or `common/` code.
 
 ### `configs/` — App or Product Configurations
 One directory per configuration target, grouped by app or product:

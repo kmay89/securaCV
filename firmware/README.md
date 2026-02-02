@@ -1,12 +1,29 @@
 # SecuraCV Firmware
 
-This directory contains firmware projects for SecuraCV hardware nodes (ESP32, etc.). Each firmware project is designed to publish **privacy-preserving semantic telemetry** (events + state), not raw video.
+This directory contains firmware projects for SecuraCV hardware nodes (ESP32, etc.). Each firmware project publishes **privacy-preserving semantic telemetry** (events + state), not raw video.
 
-## Architecture (Required)
+## Architecture (Required, Normative)
 
 Before adding or restructuring firmware work, read the canonical architecture guide:
 
 - `firmware/ARCHITECTURE.md`
+
+This guide is **normative** for the `firmware/` subtree. If another document
+conflicts, the architecture guide takes precedence.
+
+### Required Layout (Summary)
+
+```
+firmware/
+  common/     # Board-agnostic core logic
+  boards/     # Board definitions and pin maps
+  configs/    # App/product configurations
+  envs/       # Build environments (toolchains + bindings)
+  projects/   # Thin product wrappers
+```
+
+Key rule: **composition happens only in `envs/` and `projects/`**. Core logic
+never imports boards or configs.
 
 ## Projects
 
@@ -47,19 +64,21 @@ cd firmware/projects/canary-vision
 pio run
 pio run -t upload
 pio device monitor -b 115200
+```
 
-Secrets
-Firmware projects must keep secrets local.
+## Secrets (Never Commit)
 
-########Do not commit:
+Keep secrets local only:
+- WiFi SSID/password
+- MQTT credentials
+- API tokens / private keys
 
-WiFi SSID/password
-MQTT credentials
-API tokens / private keys
+This repo’s `.gitignore` and the firmware project’s `.gitignore` are configured
+to prevent secret commits by default.
 
-This repo’s .gitignore and the firmware project’s .gitignore are configured to prevent secret commits by default.
-Notes
+## Troubleshooting
+
 If Home Assistant does not auto-discover entities, verify:
-MQTT integration is configured with discovery enabled
-broker allows retained messages
-device publishes discovery topics under the homeassistant/ prefix
+- MQTT integration is configured with discovery enabled
+- Broker allows retained messages
+- Device publishes discovery topics under the `homeassistant/` prefix
