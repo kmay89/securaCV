@@ -1437,7 +1437,9 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           return JSON.parse(text);
         } catch (parseErr) {
           console.error('JSON parse error:', parseErr, 'Response:', text);
-          return { ok: false, success: false, error: res.ok ? 'Invalid response format' : text || 'Request failed' };
+          // Truncate error to avoid huge HTML error pages in alerts
+          const errMsg = res.ok ? 'Invalid response format' : (text || 'Request failed');
+          return { ok: false, success: false, error: errMsg.length > 100 ? errMsg.slice(0, 100) + '...' : errMsg };
         }
       } catch (e) {
         console.error('API error:', e);
