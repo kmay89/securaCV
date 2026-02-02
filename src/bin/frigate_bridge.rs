@@ -13,12 +13,14 @@
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
 use rumqttc::v5::{mqttbytes::QoS, Client, Connection, Event, Incoming, MqttOptions};
-use rumqttc::Transport;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use witness_kernel::transport::{
+    parse_mqtt_endpoint, validate_loopback_addr, MqttEndpoint, TlsBackend, TlsConfig, TlsMaterials,
+};
 use witness_kernel::{
     CandidateEvent, EventType, InferenceBackend, Kernel, KernelConfig, ModuleDescriptor,
     TimeBucket, ZonePolicy,
@@ -70,6 +72,11 @@ struct Args {
     /// Path to a PEM-encoded client private key for MQTT TLS.
     #[arg(long, env = "MQTT_TLS_CLIENT_KEY_PATH")]
     mqtt_tls_client_key_path: Option<PathBuf>,
+
+    /// TLS backend: 'classic' (default) or 'hybrid_pq' (post-quantum).
+    /// hybrid_pq requires the pqc-tls feature and a PQ-capable MQTT broker.
+    #[arg(long, env = "MQTT_TLS_BACKEND", default_value = "classic")]
+    mqtt_tls_backend: String,
 
     /// Frigate MQTT topic to subscribe to.
     #[arg(long, env = "FRIGATE_MQTT_TOPIC", default_value = "frigate/events")]
@@ -211,11 +218,17 @@ fn main() -> Result<()> {
     let args = Args::parse();
 
     let mqtt_endpoint = parse_mqtt_endpoint(&args.mqtt_broker_addr, args.mqtt_use_tls)?;
-    let tls_materials = load_tls_materials(
+    let tls_backend = TlsBackend::from_str(&args.mqtt_tls_backend)?;
+    tls_backend.validate_feature_support()?;
+    let tls_materials = TlsMaterials::load(
         args.mqtt_tls_ca_path.as_ref(),
         args.mqtt_tls_client_cert_path.as_ref(),
         args.mqtt_tls_client_key_path.as_ref(),
     )?;
+    let tls_config = TlsConfig {
+        backend: tls_backend,
+        materials: tls_materials,
+    };
 
     // Validate broker address
     if !args.allow_remote_mqtt {
@@ -309,7 +322,7 @@ fn main() -> Result<()> {
     loop {
         let (client, mut connection) = connect_mqtt(
             &mqtt_endpoint,
-            &tls_materials,
+            &tls_config,
             &args.mqtt_client_id,
             args.mqtt_username.as_deref(),
             args.mqtt_password.as_deref(),
@@ -570,135 +583,9 @@ fn sanitize_zone_name(name: &str) -> String {
         .collect()
 }
 
-#[derive(Clone, Debug)]
-struct MqttEndpoint {
-    host: String,
-    port: u16,
-    use_tls: bool,
-}
-
-#[derive(Clone, Debug, Default)]
-struct TlsMaterials {
-    ca: Option<Vec<u8>>,
-    client_auth: Option<(Vec<u8>, Vec<u8>)>,
-}
-
-fn parse_mqtt_endpoint(addr: &str, tls_override: bool) -> Result<MqttEndpoint> {
-    let mut use_tls = tls_override;
-    let mut remainder = addr.trim();
-
-    if let Some((scheme, rest)) = remainder.split_once("://") {
-        match scheme {
-            "mqtt" | "tcp" => {}
-            "mqtts" | "ssl" => use_tls = true,
-            other => return Err(anyhow!("unsupported MQTT scheme: {}", other)),
-        }
-        remainder = rest;
-    }
-
-    let (host, port) = split_host_port(remainder)?;
-    Ok(MqttEndpoint {
-        host,
-        port,
-        use_tls,
-    })
-}
-
-fn split_host_port(addr: &str) -> Result<(String, u16)> {
-    if let Some(rest) = addr.strip_prefix('[') {
-        let (host, rest) = rest
-            .split_once(']')
-            .ok_or_else(|| anyhow!("invalid MQTT address: {}", addr))?;
-        let port = rest
-            .strip_prefix(':')
-            .ok_or_else(|| anyhow!("missing MQTT port in {}", addr))?;
-        let port: u16 = port.parse().context("invalid MQTT port")?;
-        return Ok((host.to_string(), port));
-    }
-
-    let (host, port) = addr
-        .rsplit_once(':')
-        .ok_or_else(|| anyhow!("missing MQTT port in {}", addr))?;
-    let port: u16 = port.parse().context("invalid MQTT port")?;
-    Ok((host.to_string(), port))
-}
-
-fn validate_loopback_addr(endpoint: &MqttEndpoint, original: &str) -> Result<()> {
-    let host = endpoint.host.as_str();
-    if host == "localhost" || host == "127.0.0.1" || host == "::1" {
-        return Ok(());
-    }
-    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
-        if ip.is_loopback() {
-            return Ok(());
-        }
-    }
-    Err(anyhow!(
-        "MQTT broker must be loopback for security: {}",
-        original
-    ))
-}
-
-fn load_tls_materials(
-    ca_path: Option<&PathBuf>,
-    client_cert_path: Option<&PathBuf>,
-    client_key_path: Option<&PathBuf>,
-) -> Result<TlsMaterials> {
-    let ca = match ca_path {
-        Some(path) => Some(
-            std::fs::read(path)
-                .with_context(|| format!("failed to read MQTT TLS CA {}", path.display()))?,
-        ),
-        None => None,
-    };
-
-    let client_auth = match (client_cert_path, client_key_path) {
-        (Some(cert_path), Some(key_path)) => {
-            let cert = std::fs::read(cert_path).with_context(|| {
-                format!(
-                    "failed to read MQTT TLS client cert {}",
-                    cert_path.display()
-                )
-            })?;
-            let key = std::fs::read(key_path).with_context(|| {
-                format!("failed to read MQTT TLS client key {}", key_path.display())
-            })?;
-            Some((cert, key))
-        }
-        (None, None) => None,
-        _ => {
-            return Err(anyhow!(
-                "MQTT TLS client cert and key must be provided together"
-            ))
-        }
-    };
-
-    Ok(TlsMaterials { ca, client_auth })
-}
-
-fn build_transport(endpoint: &MqttEndpoint, tls: &TlsMaterials) -> Result<Transport> {
-    if !endpoint.use_tls {
-        if tls.ca.is_some() || tls.client_auth.is_some() {
-            return Err(anyhow!(
-                "MQTT TLS materials provided but TLS is disabled (use --mqtt-use-tls or mqtts://)"
-            ));
-        }
-        return Ok(Transport::tcp());
-    }
-
-    if tls.ca.is_none() && tls.client_auth.is_none() {
-        return Ok(Transport::tls_with_default_config());
-    }
-
-    let ca = tls.ca.clone().ok_or_else(|| {
-        anyhow!("MQTT TLS CA certificate is required when providing client certificates")
-    })?;
-    Ok(Transport::tls(ca, tls.client_auth.clone(), None))
-}
-
 fn connect_mqtt(
     endpoint: &MqttEndpoint,
-    tls: &TlsMaterials,
+    tls_config: &TlsConfig,
     client_id: &str,
     username: Option<&str>,
     password: Option<&str>,
@@ -709,12 +596,13 @@ fn connect_mqtt(
     if let Some(user) = username {
         options.set_credentials(user, password.unwrap_or_default());
     }
-    options.set_transport(build_transport(endpoint, tls)?);
+    options.set_transport(tls_config.build_transport(endpoint)?);
 
     let (client, connection) = Client::new(options, 10);
     log::info!(
-        "Connected to MQTT broker (TLS: {}, auth: {})",
+        "Connected to MQTT broker (TLS: {}, backend: {}, auth: {})",
         endpoint.use_tls,
+        tls_config.backend,
         username.is_some()
     );
     Ok((client, connection))
