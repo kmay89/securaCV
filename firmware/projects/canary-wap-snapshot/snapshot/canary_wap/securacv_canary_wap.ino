@@ -1411,6 +1411,15 @@ static esp_err_t http_send_json(httpd_req_t* req, const char* json) {
   return httpd_resp_send(req, json, HTTPD_RESP_USE_STRLEN);
 }
 
+static esp_err_t http_send_error(httpd_req_t* req, int status_code, const char* error_code) {
+  httpd_resp_set_status(req, status_code == 400 ? "400 Bad Request" :
+                              status_code == 404 ? "404 Not Found" :
+                              status_code == 500 ? "500 Internal Server Error" : "400 Bad Request");
+  char response[128];
+  snprintf(response, sizeof(response), "{\"ok\":false,\"error\":\"%s\"}", error_code);
+  return http_send_json(req, response);
+}
+
 static esp_err_t handle_ui(httpd_req_t* req) {
   g_health.http_requests++;
   httpd_resp_set_type(req, "text/html");

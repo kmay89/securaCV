@@ -149,7 +149,8 @@ static void store_alert(const MeshAlert* alert);
 // ESP-NOW CALLBACKS
 // ════════════════════════════════════════════════════════════════════════════
 
-static void espnow_send_cb(const uint8_t* mac, esp_now_send_status_t status) {
+static void espnow_send_cb(const wifi_tx_info_t* info, esp_now_send_status_t status) {
+  (void)info;  // Unused - MAC available in info->peer_addr if needed
   if (status != ESP_NOW_SEND_SUCCESS) {
     g_message_errors++;
   }
