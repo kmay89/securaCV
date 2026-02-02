@@ -50,6 +50,7 @@ static uint32_t g_session_start_ms = 0;  // For presence requirement
 
 // Rate limiting
 static uint32_t g_last_presence_ms = 0;
+static uint32_t g_last_chirp_sent_ms = 0;
 static uint8_t g_relays_this_minute = 0;
 static uint32_t g_relay_minute_start = 0;
 
@@ -1031,6 +1032,7 @@ bool send_chirp(ChirpTemplate template_id, ChirpUrgency urgency,
   }
   g_cooldown.chirps_sent_today++;
   g_cooldown.last_chirp_ms = now;
+  g_last_chirp_sent_ms = now;
   cache_nonce(hdr->nonce);  // Don't process our own chirp
   set_state(CHIRP_COOLDOWN);
 
