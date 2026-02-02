@@ -11,10 +11,11 @@
 //! It is a core anti-erosion mechanism: integrity must be verifiable without trusting the runtime.
 
 use anyhow::Result;
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use rusqlite::Connection;
 use std::io::IsTerminal;
 
+use witness_kernel::crypto::signatures::SignatureMode;
 use witness_kernel::{verify, verify_helpers};
 
 #[path = "../ui.rs"]
@@ -44,10 +45,35 @@ struct Args {
     /// UI mode for stderr progress (auto|plain|pretty)
     #[arg(long, default_value = "auto", value_name = "MODE")]
     ui: String,
+    /// Signature verification mode (compat = Ed25519 OR PQ, strict = Ed25519 AND PQ)
+    #[arg(long, value_enum, default_value = "compat")]
+    sig_mode: SignatureModeArg,
+    /// PQ public key (hex-encoded)
+    #[arg(long, value_name = "HEX", conflicts_with = "pq_public_key_file")]
+    pq_public_key: Option<String>,
+    /// Path to file containing PQ public key (hex-encoded)
+    #[arg(long, value_name = "PATH", conflicts_with = "pq_public_key")]
+    pq_public_key_file: Option<String>,
+}
+
+#[derive(ValueEnum, Clone, Debug)]
+enum SignatureModeArg {
+    Compat,
+    Strict,
+}
+
+impl From<SignatureModeArg> for SignatureMode {
+    fn from(value: SignatureModeArg) -> Self {
+        match value {
+            SignatureModeArg::Compat => SignatureMode::Compat,
+            SignatureModeArg::Strict => SignatureMode::Strict,
+        }
+    }
 }
 
 fn main() -> Result<()> {
     let args = Args::parse();
+    let signature_mode: SignatureMode = args.sig_mode.into();
     let is_tty = std::io::stderr().is_terminal();
     let stdout_is_tty = std::io::stdout().is_terminal();
     let ui = ui::Ui::from_args(Some(&args.ui), is_tty, !stdout_is_tty);
@@ -63,6 +89,14 @@ fn main() -> Result<()> {
             args.public_key_file.as_deref(),
         )?
     };
+    let pq_verifying_key = {
+        let _stage = ui.stage("Load PQ verifying key (optional)");
+        verify_helpers::load_pq_verifying_key(
+            &conn,
+            args.pq_public_key.as_deref(),
+            args.pq_public_key_file.as_deref(),
+        )?
+    };
 
     println!("log_verify: checking {}", args.db);
     println!();
@@ -73,10 +107,15 @@ fn main() -> Result<()> {
     {
         let _stage = ui.stage("Verify sealed events");
         let checkpoint = verify::latest_checkpoint(&conn)?;
-        verify::verify_checkpoint_signature(&verifying_key, &checkpoint)?;
+        verify::verify_checkpoint_signature(
+            &verifying_key,
+            &checkpoint,
+            signature_mode,
+            pq_verifying_key.as_ref(),
+        )?;
         if let (Some(head), Some(_sig), Some(cutoff_id)) = (
             checkpoint.chain_head_hash,
-            checkpoint.signature,
+            checkpoint.signatures.as_ref(),
             checkpoint.cutoff_event_id,
         ) {
             println!(
@@ -105,6 +144,8 @@ fn main() -> Result<()> {
             &conn,
             &verifying_key,
             checkpoint.chain_head_hash,
+            signature_mode,
+            pq_verifying_key.as_ref(),
             |id, entry_hash| {
                 if args.verbose {
                     println!(
@@ -128,6 +169,8 @@ fn main() -> Result<()> {
             &conn,
             &verifying_key,
             policy.as_ref(),
+            signature_mode,
+            pq_verifying_key.as_ref(),
             |id, entry_hash| {
                 if args.verbose {
                     println!(
@@ -150,15 +193,21 @@ fn main() -> Result<()> {
         let _stage = ui.stage("Verify export receipts");
         println!("=== Export Receipts ===");
         let count =
-            verify::verify_export_receipts_with(&conn, &verifying_key, |id, entry_hash| {
-                if args.verbose {
-                    println!(
-                        "  receipt {}: hash={} OK",
-                        id,
-                        &verify_helpers::hex32(&entry_hash)[..16]
-                    );
-                }
-            })?;
+            verify::verify_export_receipts_with(
+                &conn,
+                &verifying_key,
+                signature_mode,
+                pq_verifying_key.as_ref(),
+                |id, entry_hash| {
+                    if args.verbose {
+                        println!(
+                            "  receipt {}: hash={} OK",
+                            id,
+                            &verify_helpers::hex32(&entry_hash)[..16]
+                        );
+                    }
+                },
+            )?;
         println!("verified {} export receipt entries", count);
     }
 
@@ -172,6 +221,7 @@ mod tests {
     use crate::verify_helpers::load_verifying_key;
     use ed25519_dalek::{Signer, SigningKey};
     use std::path::{Path, PathBuf};
+    use witness_kernel::crypto::signatures::SignatureMode;
     use witness_kernel::{
         Approval, BreakGlass, CandidateEvent, EventType, InferenceBackend, Kernel, KernelConfig,
         ModuleDescriptor, QuorumPolicy, TimeBucket, TrusteeEntry, TrusteeId, UnlockRequest,
@@ -244,15 +294,30 @@ mod tests {
         let conn = Connection::open(db.path())?;
         let verifying_key = load_verifying_key(&conn, Some(&public_key_hex), None)?;
         let checkpoint = verify::latest_checkpoint(&conn)?;
-        verify::verify_events_with(&conn, &verifying_key, checkpoint.chain_head_hash, |_, _| {})?;
+        verify::verify_events_with(
+            &conn,
+            &verifying_key,
+            checkpoint.chain_head_hash,
+            SignatureMode::Compat,
+            None,
+            |_, _| {},
+        )?;
         let policy = verify::load_break_glass_policy(&conn)?;
         verify::verify_break_glass_receipts_with(
             &conn,
             &verifying_key,
             policy.as_ref(),
+            SignatureMode::Compat,
+            None,
             |_, _| {},
         )?;
-        verify::verify_export_receipts_with(&conn, &verifying_key, |_, _| {})?;
+        verify::verify_export_receipts_with(
+            &conn,
+            &verifying_key,
+            SignatureMode::Compat,
+            None,
+            |_, _| {},
+        )?;
 
         Ok(())
     }
@@ -307,6 +372,8 @@ mod tests {
             &conn,
             &verifying_key,
             checkpoint.chain_head_hash,
+            SignatureMode::Compat,
+            None,
             |_, _| {},
         );
         assert!(result.is_err());
@@ -341,6 +408,8 @@ mod tests {
             &conn,
             &verifying_key,
             checkpoint.chain_head_hash,
+            SignatureMode::Compat,
+            None,
             |_, _| {},
         );
         assert!(result.is_err());
@@ -394,6 +463,8 @@ mod tests {
             &conn,
             &verifying_key,
             policy.as_ref(),
+            SignatureMode::Compat,
+            None,
             |_, _| {},
         );
         assert!(result.is_err());
@@ -446,6 +517,8 @@ mod tests {
             &conn,
             &verifying_key,
             policy.as_ref(),
+            SignatureMode::Compat,
+            None,
             |_, _| {},
         );
         assert!(result.is_err());
@@ -498,6 +571,8 @@ mod tests {
             &conn,
             &verifying_key,
             policy.as_ref(),
+            SignatureMode::Compat,
+            None,
             |_, _| {},
         );
         assert!(result.is_err());

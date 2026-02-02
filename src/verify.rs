@@ -6,11 +6,15 @@ use crate::{
     approvals_commitment, hash_entry, verify_entry_signature, Approval, BreakGlassOutcome,
     BreakGlassReceipt, QuorumPolicy,
 };
+use crate::crypto::signatures::{
+    PqPublicKey, SignatureMode, SignatureSet, DOMAIN_BREAK_GLASS_RECEIPT, DOMAIN_CHECKPOINT,
+    DOMAIN_EXPORT_RECEIPT, DOMAIN_SEALED_LOG_ENTRY,
+};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct CheckpointInfo {
     pub chain_head_hash: Option<[u8; 32]>,
-    pub signature: Option<[u8; 64]>,
+    pub signatures: Option<SignatureSet>,
     pub cutoff_event_id: Option<i64>,
 }
 
@@ -31,15 +35,26 @@ pub struct BreakGlassReceiptCounts {
 pub fn verify_checkpoint_signature(
     verifying_key: &VerifyingKey,
     checkpoint: &CheckpointInfo,
+    mode: SignatureMode,
+    pq_public_key: Option<&PqPublicKey>,
 ) -> Result<()> {
     match (
         checkpoint.chain_head_hash,
-        checkpoint.signature,
+        checkpoint.signatures.as_ref(),
         checkpoint.cutoff_event_id,
     ) {
         (None, None, None) => Ok(()),
-        (Some(head), Some(sig), Some(_)) => verify_entry_signature(verifying_key, &head, &sig)
-            .map_err(|e| anyhow!("checkpoint signature verification failed: {}", e)),
+        (Some(head), Some(sig), Some(_)) => {
+            verify_entry_signature(
+                verifying_key,
+                &head,
+                sig,
+                mode,
+                pq_public_key,
+                DOMAIN_CHECKPOINT,
+            )
+            .map_err(|e| anyhow!("checkpoint signature verification failed: {}", e))
+        }
         _ => Err(anyhow!(
             "checkpoint is partially populated; integrity verification cannot proceed"
         )),
@@ -48,22 +63,25 @@ pub fn verify_checkpoint_signature(
 
 pub fn latest_checkpoint(conn: &Connection) -> Result<CheckpointInfo> {
     let mut stmt = conn.prepare(
-        "SELECT chain_head_hash, signature, cutoff_event_id FROM checkpoints ORDER BY id DESC LIMIT 1",
+        "SELECT chain_head_hash, signature, pq_signature, pq_scheme, cutoff_event_id FROM checkpoints ORDER BY id DESC LIMIT 1",
     )?;
     let mut rows = stmt.query([])?;
     if let Some(row) = rows.next()? {
         let head = blob32(row, 0)?;
-        let sig = blob64(row, 1)?;
-        let cutoff_event_id: i64 = row.get(2)?;
+        let signature: Vec<u8> = row.get(1)?;
+        let pq_signature: Option<Vec<u8>> = row.get(2)?;
+        let pq_scheme: Option<String> = row.get(3)?;
+        let signature_set = SignatureSet::from_storage(&signature, pq_signature, pq_scheme)?;
+        let cutoff_event_id: i64 = row.get(4)?;
         Ok(CheckpointInfo {
             chain_head_hash: Some(head),
-            signature: Some(sig),
+            signatures: Some(signature_set),
             cutoff_event_id: Some(cutoff_event_id),
         })
     } else {
         Ok(CheckpointInfo {
             chain_head_hash: None,
-            signature: None,
+            signatures: None,
             cutoff_event_id: None,
         })
     }
@@ -107,13 +125,15 @@ pub fn verify_events_with<F>(
     conn: &Connection,
     verifying_key: &VerifyingKey,
     checkpoint_head: Option<[u8; 32]>,
+    mode: SignatureMode,
+    pq_public_key: Option<&PqPublicKey>,
     mut on_event: F,
 ) -> Result<u64>
 where
     F: FnMut(i64, [u8; 32]),
 {
     let mut stmt = conn.prepare(
-        "SELECT id, payload_json, prev_hash, entry_hash, signature FROM sealed_events ORDER BY id ASC",
+        "SELECT id, payload_json, prev_hash, entry_hash, signature, pq_signature, pq_scheme FROM sealed_events ORDER BY id ASC",
     )?;
 
     let mut rows = stmt.query([])?;
@@ -125,7 +145,10 @@ where
         let payload: String = row.get(1)?;
         let prev_hash = blob32(row, 2)?;
         let entry_hash = blob32(row, 3)?;
-        let sig = blob64(row, 4)?;
+        let signature: Vec<u8> = row.get(4)?;
+        let pq_signature: Option<Vec<u8>> = row.get(5)?;
+        let pq_scheme: Option<String> = row.get(6)?;
+        let signature_set = SignatureSet::from_storage(&signature, pq_signature, pq_scheme)?;
 
         if prev_hash != expected_prev {
             return Err(anyhow!(
@@ -146,11 +169,20 @@ where
             ));
         }
 
-        if verify_entry_signature(verifying_key, &entry_hash, &sig).is_err() {
+        if verify_entry_signature(
+            verifying_key,
+            &entry_hash,
+            &signature_set,
+            mode,
+            pq_public_key,
+            DOMAIN_SEALED_LOG_ENTRY,
+        )
+        .is_err()
+        {
             return Err(anyhow!(
                 "integrity check failed at id {}: signature mismatch (stored={})",
                 id,
-                hex::encode(sig)
+                hex::encode(signature_set.ed25519_signature)
             ));
         }
 
@@ -167,13 +199,15 @@ pub fn verify_break_glass_receipts_with<F>(
     conn: &Connection,
     verifying_key: &VerifyingKey,
     policy: Option<&QuorumPolicy>,
+    mode: SignatureMode,
+    pq_public_key: Option<&PqPublicKey>,
     mut on_receipt: F,
 ) -> Result<BreakGlassReceiptCounts>
 where
     F: FnMut(i64, [u8; 32]),
 {
     let mut stmt = conn.prepare(
-        "SELECT id, created_at, payload_json, approvals_json, prev_hash, entry_hash, signature FROM break_glass_receipts ORDER BY id ASC",
+        "SELECT id, created_at, payload_json, approvals_json, prev_hash, entry_hash, signature, pq_signature, pq_scheme FROM break_glass_receipts ORDER BY id ASC",
     )?;
 
     let mut rows = stmt.query([])?;
@@ -191,7 +225,10 @@ where
         let approvals_json: String = row.get(3)?;
         let prev_hash = blob32(row, 4)?;
         let entry_hash = blob32(row, 5)?;
-        let sig = blob64(row, 6)?;
+        let signature: Vec<u8> = row.get(6)?;
+        let pq_signature: Option<Vec<u8>> = row.get(7)?;
+        let pq_scheme: Option<String> = row.get(8)?;
+        let signature_set = SignatureSet::from_storage(&signature, pq_signature, pq_scheme)?;
 
         if prev_hash != expected_prev {
             return Err(anyhow!(
@@ -212,11 +249,20 @@ where
             ));
         }
 
-        if verify_entry_signature(verifying_key, &entry_hash, &sig).is_err() {
+        if verify_entry_signature(
+            verifying_key,
+            &entry_hash,
+            &signature_set,
+            mode,
+            pq_public_key,
+            DOMAIN_BREAK_GLASS_RECEIPT,
+        )
+        .is_err()
+        {
             return Err(anyhow!(
                 "integrity check failed at receipt id {}: signature mismatch (stored={})",
                 id,
-                hex::encode(sig)
+                hex::encode(signature_set.ed25519_signature)
             ));
         }
 
@@ -253,13 +299,15 @@ where
 pub fn verify_export_receipts_with<F>(
     conn: &Connection,
     verifying_key: &VerifyingKey,
+    mode: SignatureMode,
+    pq_public_key: Option<&PqPublicKey>,
     mut on_receipt: F,
 ) -> Result<u64>
 where
     F: FnMut(i64, [u8; 32]),
 {
     let mut stmt = conn.prepare(
-        "SELECT id, created_at, payload_json, prev_hash, entry_hash, signature FROM export_receipts ORDER BY id ASC",
+        "SELECT id, created_at, payload_json, prev_hash, entry_hash, signature, pq_signature, pq_scheme FROM export_receipts ORDER BY id ASC",
     )?;
 
     let mut rows = stmt.query([])?;
@@ -272,7 +320,10 @@ where
         let payload: String = row.get(2)?;
         let prev_hash = blob32(row, 3)?;
         let entry_hash = blob32(row, 4)?;
-        let sig = blob64(row, 5)?;
+        let signature: Vec<u8> = row.get(5)?;
+        let pq_signature: Option<Vec<u8>> = row.get(6)?;
+        let pq_scheme: Option<String> = row.get(7)?;
+        let signature_set = SignatureSet::from_storage(&signature, pq_signature, pq_scheme)?;
 
         if prev_hash != expected_prev {
             return Err(anyhow!(
@@ -293,11 +344,20 @@ where
             ));
         }
 
-        if verify_entry_signature(verifying_key, &entry_hash, &sig).is_err() {
+        if verify_entry_signature(
+            verifying_key,
+            &entry_hash,
+            &signature_set,
+            mode,
+            pq_public_key,
+            DOMAIN_EXPORT_RECEIPT,
+        )
+        .is_err()
+        {
             return Err(anyhow!(
                 "integrity check failed at receipt id {}: signature mismatch (stored={})",
                 id,
-                hex::encode(sig)
+                hex::encode(signature_set.ed25519_signature)
             ));
         }
 
@@ -348,20 +408,12 @@ fn blob32(row: &Row<'_>, idx: usize) -> Result<[u8; 32]> {
     Ok(out)
 }
 
-fn blob64(row: &Row<'_>, idx: usize) -> Result<[u8; 64]> {
-    let bytes: Vec<u8> = row.get(idx)?;
-    if bytes.len() != 64 {
-        return Err(anyhow!("expected 64-byte blob at col {}", idx));
-    }
-    let mut out = [0u8; 64];
-    out.copy_from_slice(&bytes);
-    Ok(out)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ed25519_dalek::{Signer, SigningKey};
+    use ed25519_dalek::SigningKey;
+    use crate::sign_entry;
+    use crate::crypto::signatures::SignatureKeys;
 
     #[test]
     fn verify_checkpoint_signature_accepts_genesis() -> Result<()> {
@@ -369,11 +421,11 @@ mod tests {
         let verifying_key = signing_key.verifying_key();
         let checkpoint = CheckpointInfo {
             chain_head_hash: None,
-            signature: None,
+            signatures: None,
             cutoff_event_id: None,
         };
 
-        verify_checkpoint_signature(&verifying_key, &checkpoint)?;
+        verify_checkpoint_signature(&verifying_key, &checkpoint, SignatureMode::Compat, None)?;
         Ok(())
     }
 
@@ -382,14 +434,14 @@ mod tests {
         let signing_key = SigningKey::from_bytes(&[9u8; 32]);
         let verifying_key = signing_key.verifying_key();
         let head = [1u8; 32];
-        let signature = signing_key.sign(&head).to_bytes();
+        let signature = sign_entry(&SignatureKeys::new(&signing_key), &head, DOMAIN_CHECKPOINT)?;
         let checkpoint = CheckpointInfo {
             chain_head_hash: Some(head),
-            signature: Some(signature),
+            signatures: Some(signature),
             cutoff_event_id: Some(42),
         };
 
-        verify_checkpoint_signature(&verifying_key, &checkpoint)?;
+        verify_checkpoint_signature(&verifying_key, &checkpoint, SignatureMode::Compat, None)?;
         Ok(())
     }
 
@@ -398,15 +450,15 @@ mod tests {
         let signing_key = SigningKey::from_bytes(&[11u8; 32]);
         let verifying_key = signing_key.verifying_key();
         let head = [2u8; 32];
-        let mut signature = signing_key.sign(&head).to_bytes();
-        signature[0] ^= 0xff;
+        let mut signature = sign_entry(&SignatureKeys::new(&signing_key), &head, DOMAIN_CHECKPOINT)?;
+        signature.ed25519_signature[0] ^= 0xff;
         let checkpoint = CheckpointInfo {
             chain_head_hash: Some(head),
-            signature: Some(signature),
+            signatures: Some(signature),
             cutoff_event_id: Some(7),
         };
 
-        let result = verify_checkpoint_signature(&verifying_key, &checkpoint);
+        let result = verify_checkpoint_signature(&verifying_key, &checkpoint, SignatureMode::Compat, None);
         assert!(result.is_err());
         Ok(())
     }
@@ -417,11 +469,11 @@ mod tests {
         let verifying_key = signing_key.verifying_key();
         let checkpoint = CheckpointInfo {
             chain_head_hash: Some([3u8; 32]),
-            signature: None,
+            signatures: None,
             cutoff_event_id: Some(1),
         };
 
-        let result = verify_checkpoint_signature(&verifying_key, &checkpoint);
+        let result = verify_checkpoint_signature(&verifying_key, &checkpoint, SignatureMode::Compat, None);
         assert!(result.is_err());
         Ok(())
     }

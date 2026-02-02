@@ -8,11 +8,12 @@
 //! It does not attempt to reserialize or canonicalize JSON: raw file bytes are hashed.
 
 use anyhow::{anyhow, Result};
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use rusqlite::Connection;
 use sha2::{Digest, Sha256};
 use std::io::IsTerminal;
 
+use witness_kernel::crypto::signatures::SignatureMode;
 use witness_kernel::{verify, verify_helpers, ExportReceipt};
 
 #[path = "../ui.rs"]
@@ -46,10 +47,35 @@ struct Args {
     /// UI mode for stderr progress (auto|plain|pretty)
     #[arg(long, default_value = "auto", value_name = "MODE")]
     ui: String,
+    /// Signature verification mode (compat = Ed25519 OR PQ, strict = Ed25519 AND PQ)
+    #[arg(long, value_enum, default_value = "compat")]
+    sig_mode: SignatureModeArg,
+    /// PQ public key (hex-encoded)
+    #[arg(long, value_name = "HEX", conflicts_with = "pq_public_key_file")]
+    pq_public_key: Option<String>,
+    /// Path to file containing PQ public key (hex-encoded)
+    #[arg(long, value_name = "PATH", conflicts_with = "pq_public_key")]
+    pq_public_key_file: Option<String>,
+}
+
+#[derive(ValueEnum, Clone, Debug)]
+enum SignatureModeArg {
+    Compat,
+    Strict,
+}
+
+impl From<SignatureModeArg> for SignatureMode {
+    fn from(value: SignatureModeArg) -> Self {
+        match value {
+            SignatureModeArg::Compat => SignatureMode::Compat,
+            SignatureModeArg::Strict => SignatureMode::Strict,
+        }
+    }
 }
 
 fn main() -> Result<()> {
     let args = Args::parse();
+    let signature_mode: SignatureMode = args.sig_mode.into();
     let is_tty = std::io::stderr().is_terminal();
     let stdout_is_tty = std::io::stdout().is_terminal();
     let ui = ui::Ui::from_args(Some(&args.ui), is_tty, !stdout_is_tty);
@@ -66,14 +92,26 @@ fn main() -> Result<()> {
             args.public_key_file.as_deref(),
         )?
     };
+    let pq_verifying_key = {
+        let _stage = ui.stage("Load PQ verifying key (optional)");
+        verify_helpers::load_pq_verifying_key(
+            &conn,
+            args.pq_public_key.as_deref(),
+            args.pq_public_key_file.as_deref(),
+        )?
+    };
 
     println!("export_verify: checking {}", args.bundle);
     println!();
 
     {
         let _stage = ui.stage("Verify export receipts");
-        let count =
-            verify::verify_export_receipts_with(&conn, &verifying_key, |id, entry_hash| {
+        let count = verify::verify_export_receipts_with(
+            &conn,
+            &verifying_key,
+            signature_mode,
+            pq_verifying_key.as_ref(),
+            |id, entry_hash| {
                 if args.verbose {
                     println!(
                         "  receipt {}: hash={} OK",
@@ -81,7 +119,8 @@ fn main() -> Result<()> {
                         &verify_helpers::hex32(&entry_hash)[..16]
                     );
                 }
-            })?;
+            },
+        )?;
         println!("verified {} export receipt entries", count);
     }
     println!();

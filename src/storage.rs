@@ -1,17 +1,21 @@
 use anyhow::{anyhow, Result};
-use ed25519_dalek::SigningKey;
 use rusqlite::{params, Connection};
 use std::time::Duration;
 
+use crate::crypto::signatures::{SignatureKeys, DOMAIN_CHECKPOINT, DOMAIN_SEALED_LOG_ENTRY};
 use crate::{hash_entry, now_s, open_db_connection, sign_entry, ReprocessGuard, SealedLogRecord};
 
 pub trait SealedLogStore {
-    fn append_record(&mut self, record: &SealedLogRecord, signing_key: &SigningKey) -> Result<()>;
+    fn append_record(
+        &mut self,
+        record: &SealedLogRecord,
+        signature_keys: &SignatureKeys<'_>,
+    ) -> Result<()>;
 
     fn enforce_retention_with_checkpoint(
         &mut self,
         retention: Duration,
-        signing_key: &SigningKey,
+        signature_keys: &SignatureKeys<'_>,
     ) -> Result<()>;
 
     fn read_events_ruleset_bound(
@@ -59,6 +63,36 @@ impl SqliteSealedLogStore {
             CREATE INDEX IF NOT EXISTS idx_events_created ON sealed_events(created_at);
             "#,
         )?;
+        self.ensure_signature_columns("sealed_events")?;
+        self.ensure_signature_columns("checkpoints")?;
+        Ok(())
+    }
+
+    fn ensure_signature_columns(&mut self, table: &str) -> Result<()> {
+        let mut stmt = self.conn.prepare(&format!("PRAGMA table_info({})", table))?;
+        let mut rows = stmt.query([])?;
+        let mut has_pq_signature = false;
+        let mut has_pq_scheme = false;
+        while let Some(row) = rows.next()? {
+            let name: String = row.get(1)?;
+            if name == "pq_signature" {
+                has_pq_signature = true;
+            } else if name == "pq_scheme" {
+                has_pq_scheme = true;
+            }
+        }
+        if !has_pq_signature {
+            self.conn.execute(
+                &format!("ALTER TABLE {} ADD COLUMN pq_signature BLOB", table),
+                [],
+            )?;
+        }
+        if !has_pq_scheme {
+            self.conn.execute(
+                &format!("ALTER TABLE {} ADD COLUMN pq_scheme TEXT", table),
+                [],
+            )?;
+        }
         Ok(())
     }
 
@@ -114,26 +148,48 @@ impl SqliteSealedLogStore {
 }
 
 impl SealedLogStore for SqliteSealedLogStore {
-    fn append_record(&mut self, record: &SealedLogRecord, signing_key: &SigningKey) -> Result<()> {
+    fn append_record(
+        &mut self,
+        record: &SealedLogRecord,
+        signature_keys: &SignatureKeys<'_>,
+    ) -> Result<()> {
         let created_at = i64::try_from(record.time_bucket().start_epoch_s)
             .map_err(|_| anyhow!("time bucket start exceeds i64 range"))?;
         let prev_hash = self.last_event_hash_or_checkpoint_head()?;
         let payload_json = serde_json::to_string(record)?;
 
         let entry_hash = hash_entry(&prev_hash, payload_json.as_bytes());
-        let signature = sign_entry(signing_key, &entry_hash);
+        let signature_set = sign_entry(signature_keys, &entry_hash, DOMAIN_SEALED_LOG_ENTRY)?;
+        let pq_signature = signature_set
+            .pq_signature
+            .as_ref()
+            .map(|sig| sig.signature.clone());
+        let pq_scheme = signature_set
+            .pq_signature
+            .as_ref()
+            .map(|sig| sig.scheme_id.clone());
 
         self.conn.execute(
             r#"
-            INSERT INTO sealed_events(created_at, payload_json, prev_hash, entry_hash, signature)
-            VALUES (?1, ?2, ?3, ?4, ?5)
+            INSERT INTO sealed_events(
+                created_at,
+                payload_json,
+                prev_hash,
+                entry_hash,
+                signature,
+                pq_signature,
+                pq_scheme
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
             "#,
             params![
                 created_at,
                 payload_json,
                 prev_hash.to_vec(),
                 entry_hash.to_vec(),
-                signature.to_vec()
+                signature_set.ed25519_signature,
+                pq_signature,
+                pq_scheme
             ],
         )?;
 
@@ -143,7 +199,7 @@ impl SealedLogStore for SqliteSealedLogStore {
     fn enforce_retention_with_checkpoint(
         &mut self,
         retention: Duration,
-        signing_key: &SigningKey,
+        signature_keys: &SignatureKeys<'_>,
     ) -> Result<()> {
         let now = now_s()? as i64;
         let cutoff = now - retention.as_secs() as i64;
@@ -164,19 +220,36 @@ impl SealedLogStore for SqliteSealedLogStore {
         let mut head = [0u8; 32];
         head.copy_from_slice(&head_bytes);
 
-        let checkpoint_sig = sign_entry(signing_key, &head);
+        let checkpoint_sig = sign_entry(signature_keys, &head, DOMAIN_CHECKPOINT)?;
+        let checkpoint_pq_signature = checkpoint_sig
+            .pq_signature
+            .as_ref()
+            .map(|sig| sig.signature.clone());
+        let checkpoint_pq_scheme = checkpoint_sig
+            .pq_signature
+            .as_ref()
+            .map(|sig| sig.scheme_id.clone());
         let created_at = now_s()? as i64;
 
         self.conn.execute(
             r#"
-            INSERT INTO checkpoints(created_at, cutoff_event_id, chain_head_hash, signature)
-            VALUES (?1, ?2, ?3, ?4)
+            INSERT INTO checkpoints(
+                created_at,
+                cutoff_event_id,
+                chain_head_hash,
+                signature,
+                pq_signature,
+                pq_scheme
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
             "#,
             params![
                 created_at,
                 cutoff_id,
                 head.to_vec(),
-                checkpoint_sig.to_vec()
+                checkpoint_sig.ed25519_signature,
+                checkpoint_pq_signature,
+                checkpoint_pq_scheme
             ],
         )?;
 
@@ -266,7 +339,11 @@ impl InMemorySealedLogStore {
 }
 
 impl SealedLogStore for InMemorySealedLogStore {
-    fn append_record(&mut self, record: &SealedLogRecord, _signing_key: &SigningKey) -> Result<()> {
+    fn append_record(
+        &mut self,
+        record: &SealedLogRecord,
+        _signature_keys: &SignatureKeys<'_>,
+    ) -> Result<()> {
         let created_at = i64::try_from(record.time_bucket().start_epoch_s)
             .map_err(|_| anyhow!("time bucket start exceeds i64 range"))?;
         let prev_hash = self.last_event_hash_or_checkpoint_head()?;
@@ -283,7 +360,7 @@ impl SealedLogStore for InMemorySealedLogStore {
     fn enforce_retention_with_checkpoint(
         &mut self,
         retention: Duration,
-        _signing_key: &SigningKey,
+        _signature_keys: &SignatureKeys<'_>,
     ) -> Result<()> {
         let now = now_s()? as i64;
         let cutoff = now - retention.as_secs() as i64;

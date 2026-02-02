@@ -6,7 +6,10 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::{sign_entry, verify_entry_signature, TimeBucket};
+use crate::crypto::signatures::{
+    sign_ed25519_only, verify_ed25519_only, DOMAIN_BREAK_GLASS_TOKEN,
+};
+use crate::TimeBucket;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct TrusteeId(pub String);
@@ -222,7 +225,8 @@ impl BreakGlassToken {
             self.expires_bucket,
             self.receipt_entry_hash,
         );
-        self.device_signature = sign_entry(signing_key, &signing_hash);
+        self.device_signature =
+            sign_ed25519_only(DOMAIN_BREAK_GLASS_TOKEN, signing_key, &signing_hash);
         Ok(())
     }
 
@@ -240,7 +244,12 @@ impl BreakGlassToken {
             self.expires_bucket,
             self.receipt_entry_hash,
         );
-        verify_entry_signature(verifying_key, &signing_hash, &self.device_signature)
+        verify_ed25519_only(
+            DOMAIN_BREAK_GLASS_TOKEN,
+            verifying_key,
+            &signing_hash,
+            &self.device_signature,
+        )
     }
 
     #[cfg(test)]
