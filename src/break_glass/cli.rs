@@ -14,6 +14,7 @@ use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use std::io::IsTerminal;
 use std::io::Write;
 
+use crate::crypto::signatures::{SignatureMode, SignatureSet, DOMAIN_BREAK_GLASS_RECEIPT};
 use crate::{
     approvals_commitment, break_glass::BreakGlassTokenFile,
     break_glass_receipt_outcome_for_verifier, device_public_key_from_db, hash_entry,
@@ -453,7 +454,7 @@ fn cmd_receipts(
     let verifying_key = load_verifying_key(&conn, public_key_hex, public_key_file)?;
     let policy = load_break_glass_policy(&conn)?;
     let mut stmt = conn.prepare(
-        "SELECT id, created_at, payload_json, approvals_json, prev_hash, entry_hash, signature FROM break_glass_receipts ORDER BY id ASC",
+        "SELECT id, created_at, payload_json, approvals_json, prev_hash, entry_hash, signature, pq_signature, pq_scheme FROM break_glass_receipts ORDER BY id ASC",
     )?;
     let mut rows = stmt.query([])?;
 
@@ -472,9 +473,12 @@ fn cmd_receipts(
         let prev_hash_bytes: Vec<u8> = row.get(4)?;
         let entry_hash_bytes: Vec<u8> = row.get(5)?;
         let signature_bytes: Vec<u8> = row.get(6)?;
+        let pq_signature: Option<Vec<u8>> = row.get(7)?;
+        let pq_scheme: Option<String> = row.get(8)?;
         let prev_hash = blob32_vec(prev_hash_bytes, "break_glass_receipts.prev_hash")?;
         let entry_hash = blob32_vec(entry_hash_bytes, "break_glass_receipts.entry_hash")?;
-        let signature = blob64_vec(signature_bytes, "break_glass_receipts.signature")?;
+        let signature_set = SignatureSet::from_storage(&signature_bytes, pq_signature, pq_scheme)?;
+        let signature = signature_set.ed25519_signature_array()?;
         let receipt: crate::BreakGlassReceipt = serde_json::from_str(&payload)?;
         let outcome = match &receipt.outcome {
             BreakGlassOutcome::Granted => "GRANTED",
@@ -500,7 +504,16 @@ fn cmd_receipts(
                 hex_vec(&entry_hash)
             ));
         }
-        if verify_entry_signature(&verifying_key, &entry_hash, &signature).is_err() {
+        if verify_entry_signature(
+            &verifying_key,
+            &entry_hash,
+            &signature_set,
+            SignatureMode::Compat,
+            None,
+            DOMAIN_BREAK_GLASS_RECEIPT,
+        )
+        .is_err()
+        {
             status = "INVALID";
             issues.push(format!(
                 "signature mismatch (stored={})",
@@ -826,19 +839,6 @@ fn blob32_vec(bytes: Vec<u8>, context: &str) -> Result<[u8; 32]> {
         ));
     }
     let mut out = [0u8; 32];
-    out.copy_from_slice(&bytes);
-    Ok(out)
-}
-
-fn blob64_vec(bytes: Vec<u8>, context: &str) -> Result<[u8; 64]> {
-    if bytes.len() != 64 {
-        return Err(anyhow!(
-            "corrupt {}: expected 64 bytes, got {}",
-            context,
-            bytes.len()
-        ));
-    }
-    let mut out = [0u8; 64];
     out.copy_from_slice(&bytes);
     Ok(out)
 }

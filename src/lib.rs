@@ -30,6 +30,19 @@ use std::sync::OnceLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use zeroize::Zeroize;
 
+use crate::crypto::signatures::{
+    PqPublicKey, SignatureKeys, SignatureMode, SignatureSet, DOMAIN_BREAK_GLASS_RECEIPT,
+    DOMAIN_EXPORT_RECEIPT,
+};
+use crate::storage::ensure_columns;
+
+#[cfg(feature = "pqc-signatures")]
+use crate::crypto::signatures::PqKeypair;
+#[cfg(feature = "pqc-signatures")]
+use crate::crypto::signatures::PqSecretKey;
+#[cfg(feature = "pqc-signatures")]
+use pqcrypto_traits::sign::PublicKey as PqPublicKeyTrait;
+
 pub mod api;
 pub mod break_glass;
 pub mod config;
@@ -276,7 +289,7 @@ pub struct ExportReceiptEntry {
     pub receipt: ExportReceipt,
     pub prev_hash: [u8; 32],
     pub entry_hash: [u8; 32],
-    pub signature: Vec<u8>,
+    pub signatures: SignatureSet,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -284,6 +297,8 @@ pub struct ExportBundle {
     pub artifact: ExportArtifact,
     pub receipt_entry: ExportReceiptEntry,
     pub device_public_key: [u8; 32],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pq_public_key: Option<Vec<u8>>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -561,8 +576,29 @@ pub struct Kernel {
     pub conn: Connection,
     sealed_log: Box<dyn SealedLogStore>,
     device_key: SigningKey,
+    #[cfg(feature = "pqc-signatures")]
+    device_pq_key: Option<PqKeypair>,
     break_glass_policy: Option<crate::break_glass::QuorumPolicy>,
     zone_policy: ZonePolicy,
+}
+
+struct SignatureKeyMaterial {
+    device_key: SigningKey,
+    #[cfg(feature = "pqc-signatures")]
+    pq_secret_key: Option<PqSecretKey>,
+}
+
+impl SignatureKeyMaterial {
+    fn signature_keys(&self) -> SignatureKeys<'_> {
+        #[cfg(feature = "pqc-signatures")]
+        {
+            return SignatureKeys::with_pq(&self.device_key, self.pq_secret_key.as_ref());
+        }
+        #[cfg(not(feature = "pqc-signatures"))]
+        {
+            SignatureKeys::new(&self.device_key)
+        }
+    }
 }
 
 impl Kernel {
@@ -580,11 +616,15 @@ impl Kernel {
             conn,
             sealed_log,
             device_key,
+            #[cfg(feature = "pqc-signatures")]
+            device_pq_key: None,
             break_glass_policy: None,
             zone_policy,
         };
         k.ensure_schema()?;
         k.ensure_device_public_key()?;
+        #[cfg(feature = "pqc-signatures")]
+        k.ensure_device_pq_keys()?;
         k.load_break_glass_policy()?;
         Ok(k)
     }
@@ -607,11 +647,15 @@ impl Kernel {
             conn,
             sealed_log,
             device_key,
+            #[cfg(feature = "pqc-signatures")]
+            device_pq_key: None,
             break_glass_policy: None,
             zone_policy,
         };
         k.ensure_schema()?;
         k.ensure_device_public_key()?;
+        #[cfg(feature = "pqc-signatures")]
+        k.ensure_device_pq_keys()?;
         k.load_break_glass_policy()?;
         Ok(k)
     }
@@ -680,6 +724,27 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
             "#,
         )?;
         self.ensure_break_glass_receipts_columns()?;
+        ensure_columns(
+            &self.conn,
+            "sealed_events",
+            &[("pq_signature", "BLOB"), ("pq_scheme", "TEXT")],
+        )?;
+        ensure_columns(
+            &self.conn,
+            "checkpoints",
+            &[("pq_signature", "BLOB"), ("pq_scheme", "TEXT")],
+        )?;
+        ensure_columns(
+            &self.conn,
+            "break_glass_receipts",
+            &[("pq_signature", "BLOB"), ("pq_scheme", "TEXT")],
+        )?;
+        ensure_columns(
+            &self.conn,
+            "export_receipts",
+            &[("pq_signature", "BLOB"), ("pq_scheme", "TEXT")],
+        )?;
+        self.ensure_device_metadata_columns()?;
         Ok(())
     }
 
@@ -703,6 +768,14 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
             )?;
         }
         Ok(())
+    }
+
+    fn ensure_device_metadata_columns(&mut self) -> Result<()> {
+        ensure_columns(
+            &self.conn,
+            "device_metadata",
+            &[("pq_public_key", "BLOB"), ("pq_secret_key", "BLOB")],
+        )
     }
 
     fn ensure_device_public_key(&mut self) -> Result<()> {
@@ -736,6 +809,50 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
             params![key_bytes.to_vec()],
         )?;
         Ok(())
+    }
+
+    #[cfg(feature = "pqc-signatures")]
+    fn ensure_device_pq_keys(&mut self) -> Result<()> {
+        let row: Option<(Option<Vec<u8>>, Option<Vec<u8>>)> = self
+            .conn
+            .query_row(
+                "SELECT pq_public_key, pq_secret_key FROM device_metadata WHERE id = 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+
+        if let Some((Some(public_key), Some(secret_key))) = row {
+            let keypair = PqKeypair::from_bytes(&public_key, &secret_key)?;
+            self.device_pq_key = Some(keypair);
+            return Ok(());
+        }
+
+        let keypair = PqKeypair::generate();
+        let public_key = keypair.public_key_bytes();
+        let secret_key = keypair.secret_key_bytes();
+        self.conn.execute(
+            "UPDATE device_metadata SET pq_public_key = ?1, pq_secret_key = ?2 WHERE id = 1",
+            params![public_key, secret_key],
+        )?;
+        self.device_pq_key = Some(keypair);
+        Ok(())
+    }
+
+    fn signature_key_material(&self) -> SignatureKeyMaterial {
+        #[cfg(feature = "pqc-signatures")]
+        {
+            return SignatureKeyMaterial {
+                device_key: self.device_key.clone(),
+                pq_secret_key: self.device_pq_key.as_ref().map(|key| key.secret_key),
+            };
+        }
+        #[cfg(not(feature = "pqc-signatures"))]
+        {
+            SignatureKeyMaterial {
+                device_key: self.device_key.clone(),
+            }
+        }
     }
 
     pub fn log_alarm(&mut self, code: &str, message: &str) -> Result<()> {
@@ -807,12 +924,16 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
 
     fn append_event(&mut self, ev: &Event) -> Result<()> {
         let record = SealedLogRecord::Event(ev.clone());
-        self.sealed_log.append_record(&record, &self.device_key)
+        let key_material = self.signature_key_material();
+        let signature_keys = key_material.signature_keys();
+        self.sealed_log.append_record(&record, &signature_keys)
     }
 
     fn append_failure(&mut self, failure: &FailureEvent) -> Result<()> {
         let record = SealedLogRecord::Failure(failure.clone());
-        self.sealed_log.append_record(&record, &self.device_key)
+        let key_material = self.signature_key_material();
+        let signature_keys = key_material.signature_keys();
+        self.sealed_log.append_record(&record, &signature_keys)
     }
 
     fn coarsen_or_now(bucket: TimeBucket) -> Result<TimeBucket> {
@@ -950,12 +1071,34 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         let approvals_json = serde_json::to_string(approvals)?;
 
         let entry_hash = hash_entry(&prev_hash, payload_json.as_bytes());
-        let signature = sign_entry(&self.device_key, &entry_hash);
+        let key_material = self.signature_key_material();
+        let signature_set = sign_entry(
+            &key_material.signature_keys(),
+            &entry_hash,
+            DOMAIN_BREAK_GLASS_RECEIPT,
+        )?;
+        let pq_signature = signature_set
+            .pq_signature
+            .as_ref()
+            .map(|sig| sig.signature.clone());
+        let pq_scheme = signature_set
+            .pq_signature
+            .as_ref()
+            .map(|sig| sig.scheme_id.clone());
 
         self.conn.execute(
             r#"
-            INSERT INTO break_glass_receipts(created_at, payload_json, approvals_json, prev_hash, entry_hash, signature)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            INSERT INTO break_glass_receipts(
+                created_at,
+                payload_json,
+                approvals_json,
+                prev_hash,
+                entry_hash,
+                signature,
+                pq_signature,
+                pq_scheme
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
             "#,
             params![
                 created_at,
@@ -963,7 +1106,9 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
                 approvals_json,
                 prev_hash.to_vec(),
                 entry_hash.to_vec(),
-                signature.to_vec(),
+                signature_set.ed25519_signature,
+                pq_signature,
+                pq_scheme,
             ],
         )?;
 
@@ -976,19 +1121,42 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         let payload_json = serde_json::to_string(receipt)?;
 
         let entry_hash = hash_entry(&prev_hash, payload_json.as_bytes());
-        let signature = sign_entry(&self.device_key, &entry_hash);
+        let key_material = self.signature_key_material();
+        let signature_set = sign_entry(
+            &key_material.signature_keys(),
+            &entry_hash,
+            DOMAIN_EXPORT_RECEIPT,
+        )?;
+        let pq_signature = signature_set
+            .pq_signature
+            .as_ref()
+            .map(|sig| sig.signature.clone());
+        let pq_scheme = signature_set
+            .pq_signature
+            .as_ref()
+            .map(|sig| sig.scheme_id.clone());
 
         self.conn.execute(
             r#"
-            INSERT INTO export_receipts(created_at, payload_json, prev_hash, entry_hash, signature)
-            VALUES (?1, ?2, ?3, ?4, ?5)
+            INSERT INTO export_receipts(
+                created_at,
+                payload_json,
+                prev_hash,
+                entry_hash,
+                signature,
+                pq_signature,
+                pq_scheme
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
             "#,
             params![
                 created_at,
                 payload_json,
                 prev_hash.to_vec(),
                 entry_hash.to_vec(),
-                signature.to_vec(),
+                signature_set.ed25519_signature,
+                pq_signature,
+                pq_scheme,
             ],
         )?;
 
@@ -1009,7 +1177,7 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
 
     pub fn latest_export_receipt_entry(&self) -> Result<ExportReceiptEntry> {
         let mut stmt = self.conn.prepare(
-            "SELECT payload_json, prev_hash, entry_hash, signature FROM export_receipts ORDER BY id DESC LIMIT 1",
+            "SELECT payload_json, prev_hash, entry_hash, signature, pq_signature, pq_scheme FROM export_receipts ORDER BY id DESC LIMIT 1",
         )?;
         let row = stmt
             .query_row([], |row| {
@@ -1017,23 +1185,32 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
                 let prev_hash: Vec<u8> = row.get(1)?;
                 let entry_hash: Vec<u8> = row.get(2)?;
                 let signature: Vec<u8> = row.get(3)?;
-                Ok((payload, prev_hash, entry_hash, signature))
+                let pq_signature: Option<Vec<u8>> = row.get(4)?;
+                let pq_scheme: Option<String> = row.get(5)?;
+                Ok((
+                    payload,
+                    prev_hash,
+                    entry_hash,
+                    signature,
+                    pq_signature,
+                    pq_scheme,
+                ))
             })
             .optional()?;
 
-        let Some((payload, prev_hash, entry_hash, signature)) = row else {
+        let Some((payload, prev_hash, entry_hash, signature, pq_signature, pq_scheme)) = row else {
             return Err(anyhow!("export receipt not found"));
         };
 
         let prev_hash = blob32(prev_hash, "export_receipts.prev_hash")?;
         let entry_hash = blob32(entry_hash, "export_receipts.entry_hash")?;
-        let signature = blob64(signature, "export_receipts.signature")?;
+        let signature_set = SignatureSet::from_storage(&signature, pq_signature, pq_scheme)?;
         let receipt: ExportReceipt = serde_json::from_str(&payload)?;
         Ok(ExportReceiptEntry {
             receipt,
             prev_hash,
             entry_hash,
-            signature: signature.to_vec(),
+            signatures: signature_set,
         })
     }
 
@@ -1072,8 +1249,10 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
 
     /// Prune events older than retention. Writes a checkpoint so chain integrity remains verifiable.
     pub fn enforce_retention_with_checkpoint(&mut self, retention: Duration) -> Result<()> {
+        let key_material = self.signature_key_material();
+        let signature_keys = key_material.signature_keys();
         self.sealed_log
-            .enforce_retention_with_checkpoint(retention, &self.device_key)
+            .enforce_retention_with_checkpoint(retention, &signature_keys)
     }
 
     /// Read events from the sealed log for review or export.
@@ -1155,6 +1334,7 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
             artifact,
             receipt_entry,
             device_public_key: self.device_key_for_verify_only(),
+            pq_public_key: self.device_pq_public_key_for_verify_only(),
         })
     }
 
@@ -1287,6 +1467,20 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         self.device_key.verifying_key().to_bytes()
     }
 
+    pub fn device_pq_public_key_for_verify_only(&self) -> Option<Vec<u8>> {
+        #[cfg(feature = "pqc-signatures")]
+        {
+            return self
+                .device_pq_key
+                .as_ref()
+                .map(|key| key.public_key_bytes());
+        }
+        #[cfg(not(feature = "pqc-signatures"))]
+        {
+            None
+        }
+    }
+
     pub fn device_verifying_key(&self) -> VerifyingKey {
         self.device_key.verifying_key()
     }
@@ -1349,6 +1543,18 @@ fn verifying_key_from_bytes(bytes: &[u8]) -> Result<VerifyingKey> {
     VerifyingKey::from_bytes(&key_bytes).map_err(|e| anyhow!("invalid verifying key bytes: {}", e))
 }
 
+#[cfg(feature = "pqc-signatures")]
+fn pq_public_key_from_bytes(bytes: &[u8]) -> Result<PqPublicKey> {
+    PqPublicKey::from_bytes(bytes).map_err(|e| anyhow!("invalid pq public key bytes: {}", e))
+}
+
+#[cfg(not(feature = "pqc-signatures"))]
+fn pq_public_key_from_bytes(_bytes: &[u8]) -> Result<PqPublicKey> {
+    Err(anyhow!(
+        "pq public key parsing not available (pqc-signatures feature disabled)"
+    ))
+}
+
 pub fn device_public_key_from_db(conn: &Connection) -> Result<VerifyingKey> {
     let bytes: Vec<u8> = conn
         .query_row(
@@ -1365,6 +1571,23 @@ pub fn device_public_key_from_db(conn: &Connection) -> Result<VerifyingKey> {
     verifying_key_from_bytes(&bytes)
 }
 
+#[cfg(feature = "pqc-signatures")]
+pub fn device_pq_public_key_from_db(conn: &Connection) -> Result<PqPublicKey> {
+    let bytes: Vec<u8> = conn
+        .query_row(
+            "SELECT pq_public_key FROM device_metadata WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => {
+                anyhow!("pq public key not found in database")
+            }
+            _ => anyhow!("failed to read pq public key from database: {}", e),
+        })?;
+    pq_public_key_from_bytes(&bytes)
+}
+
 pub fn verify_export_bundle(bundle: &ExportBundle) -> Result<()> {
     let verifying_key = verifying_key_from_bytes(&bundle.device_public_key)?;
     let payload_json = serde_json::to_string(&bundle.receipt_entry.receipt)?;
@@ -1372,11 +1595,18 @@ pub fn verify_export_bundle(bundle: &ExportBundle) -> Result<()> {
     if computed_entry_hash != bundle.receipt_entry.entry_hash {
         return Err(anyhow!("export receipt entry hash mismatch"));
     }
-    let signature = blob64(
-        bundle.receipt_entry.signature.clone(),
-        "export_bundle.signature",
+    let pq_public_key = bundle
+        .pq_public_key
+        .as_ref()
+        .and_then(|bytes| pq_public_key_from_bytes(bytes).ok());
+    verify_entry_signature(
+        &verifying_key,
+        &bundle.receipt_entry.entry_hash,
+        &bundle.receipt_entry.signatures,
+        SignatureMode::Compat,
+        pq_public_key.as_ref(),
+        DOMAIN_EXPORT_RECEIPT,
     )?;
-    verify_entry_signature(&verifying_key, &bundle.receipt_entry.entry_hash, &signature)?;
     let artifact_bytes = serde_json::to_vec(&bundle.artifact)?;
     let artifact_hash: [u8; 32] = Sha256::digest(&artifact_bytes).into();
     if artifact_hash != bundle.receipt_entry.receipt.artifact_hash {
@@ -1400,19 +1630,6 @@ fn blob32(bytes: Vec<u8>, context: &str) -> Result<[u8; 32]> {
     Ok(out)
 }
 
-fn blob64(bytes: Vec<u8>, context: &str) -> Result<[u8; 64]> {
-    if bytes.len() != 64 {
-        return Err(anyhow!(
-            "corrupt {}: expected 64 bytes, got {}",
-            context,
-            bytes.len()
-        ));
-    }
-    let mut out = [0u8; 64];
-    out.copy_from_slice(&bytes);
-    Ok(out)
-}
-
 fn now_s() -> Result<u64> {
     Ok(SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs())
 }
@@ -1423,7 +1640,7 @@ pub fn break_glass_receipt_outcome_for_verifier(
     receipt_entry_hash: &[u8; 32],
 ) -> Result<break_glass::BreakGlassOutcome> {
     let mut stmt = conn.prepare(
-        "SELECT payload_json, prev_hash, entry_hash, signature FROM break_glass_receipts WHERE entry_hash = ?1 LIMIT 1",
+        "SELECT payload_json, prev_hash, entry_hash, signature, pq_signature, pq_scheme FROM break_glass_receipts WHERE entry_hash = ?1 LIMIT 1",
     )?;
     let row = stmt
         .query_row(params![receipt_entry_hash.to_vec()], |row| {
@@ -1431,11 +1648,20 @@ pub fn break_glass_receipt_outcome_for_verifier(
             let prev_hash: Vec<u8> = row.get(1)?;
             let entry_hash: Vec<u8> = row.get(2)?;
             let signature: Vec<u8> = row.get(3)?;
-            Ok((payload, prev_hash, entry_hash, signature))
+            let pq_signature: Option<Vec<u8>> = row.get(4)?;
+            let pq_scheme: Option<String> = row.get(5)?;
+            Ok((
+                payload,
+                prev_hash,
+                entry_hash,
+                signature,
+                pq_signature,
+                pq_scheme,
+            ))
         })
         .optional()?;
 
-    let Some((payload, prev_hash, entry_hash, signature)) = row else {
+    let Some((payload, prev_hash, entry_hash, signature, pq_signature, pq_scheme)) = row else {
         return Err(anyhow!("break-glass receipt not found for token"));
     };
 
@@ -1448,8 +1674,15 @@ pub fn break_glass_receipt_outcome_for_verifier(
     if computed != entry_hash {
         return Err(anyhow!("break-glass receipt hash invalid"));
     }
-    let signature = blob64(signature, "break_glass_receipts.signature")?;
-    verify_entry_signature(verifying_key, &entry_hash, &signature)?;
+    let signature_set = SignatureSet::from_storage(&signature, pq_signature, pq_scheme)?;
+    verify_entry_signature(
+        verifying_key,
+        &entry_hash,
+        &signature_set,
+        SignatureMode::Compat,
+        None,
+        DOMAIN_BREAK_GLASS_RECEIPT,
+    )?;
     let receipt: break_glass::BreakGlassReceipt = serde_json::from_str(&payload)?;
     Ok(receipt.outcome)
 }
@@ -2022,8 +2255,19 @@ mod tests {
         let signing_key = signing_key_from_seed(seed)?;
         let verifying_key = verifying_key_from_seed(seed)?;
         let entry_hash = [7u8; 32];
-        let signature = sign_entry(&signing_key, &entry_hash);
-        verify_entry_signature(&verifying_key, &entry_hash, &signature)?;
+        let signature = sign_entry(
+            &SignatureKeys::new(&signing_key),
+            &entry_hash,
+            crate::crypto::signatures::DOMAIN_SEALED_LOG_ENTRY,
+        )?;
+        verify_entry_signature(
+            &verifying_key,
+            &entry_hash,
+            &signature,
+            SignatureMode::Compat,
+            None,
+            crate::crypto::signatures::DOMAIN_SEALED_LOG_ENTRY,
+        )?;
         Ok(())
     }
 

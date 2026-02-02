@@ -11,6 +11,7 @@ use std::time::Duration;
 use witness_kernel::break_glass::{
     Approval, BreakGlass, BreakGlassToken, QuorumPolicy, TrusteeEntry, TrusteeId, UnlockRequest,
 };
+use witness_kernel::crypto::signatures::{SignatureMode, DOMAIN_CHECKPOINT};
 #[cfg(feature = "backend-tract")]
 use witness_kernel::detect::TractBackend;
 use witness_kernel::detect::{BackendRegistry, CpuBackend, StubBackend};
@@ -427,15 +428,42 @@ fn verify_demo(db_path: &str, export_bundle_bytes: &[u8]) -> Result<()> {
     let conn = rusqlite::Connection::open(db_path)?;
     let verifying_key = device_public_key_from_db(&conn)?;
     let checkpoint = verify::latest_checkpoint(&conn)?;
-    if let (Some(head), Some(sig)) = (checkpoint.chain_head_hash, checkpoint.signature) {
-        verify_entry_signature(&verifying_key, &head, &sig)
-            .context("checkpoint signature mismatch")?;
+    if let (Some(head), Some(sig)) = (checkpoint.chain_head_hash, checkpoint.signatures.as_ref()) {
+        verify_entry_signature(
+            &verifying_key,
+            &head,
+            sig,
+            SignatureMode::Compat,
+            None,
+            DOMAIN_CHECKPOINT,
+        )
+        .context("checkpoint signature mismatch")?;
     }
 
-    verify::verify_events_with(&conn, &verifying_key, checkpoint.chain_head_hash, |_, _| {})?;
+    verify::verify_events_with(
+        &conn,
+        &verifying_key,
+        checkpoint.chain_head_hash,
+        SignatureMode::Compat,
+        None,
+        |_, _| {},
+    )?;
     let policy = verify::load_break_glass_policy(&conn)?;
-    verify::verify_break_glass_receipts_with(&conn, &verifying_key, policy.as_ref(), |_, _| {})?;
-    verify::verify_export_receipts_with(&conn, &verifying_key, |_, _| {})?;
+    verify::verify_break_glass_receipts_with(
+        &conn,
+        &verifying_key,
+        policy.as_ref(),
+        SignatureMode::Compat,
+        None,
+        |_, _| {},
+    )?;
+    verify::verify_export_receipts_with(
+        &conn,
+        &verifying_key,
+        SignatureMode::Compat,
+        None,
+        |_, _| {},
+    )?;
 
     if let Ok(export_bundle) =
         serde_json::from_slice::<witness_kernel::ExportBundle>(export_bundle_bytes)
