@@ -55,11 +55,11 @@ boards/
 **Must contain** pin maps and any strictly board-specific information.  
 **Must not contain** app logic or configuration flags.
 
-**Variant mapping rule:** `variants/` is a board-internal detail. Build
-environments reference a board by `boards/<board_id>` and may select a variant
-through board metadata or env-level parameters, but variant-specific data must
-remain under the board directory and must not be referenced directly by configs
-or common code.
+**Variant mapping rule:** The `variants/` directory is a board-internal detail.
+Build environments reference a board by `boards/<board_id>` and may select a
+variant through board metadata or environment-level parameters. Variant-specific
+data must remain under the board directory and must not be referenced directly
+by `configs/` or `common/` code.
 
 ### `configs/` — App or Product Configurations
 One directory per configuration target, grouped by app or product:

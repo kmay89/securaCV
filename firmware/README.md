@@ -76,7 +76,7 @@ Keep secrets local only:
 This repo’s `.gitignore` and the firmware project’s `.gitignore` are configured
 to prevent secret commits by default.
 
-## Notes
+## Troubleshooting
 
 If Home Assistant does not auto-discover entities, verify:
 - MQTT integration is configured with discovery enabled
