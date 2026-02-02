@@ -79,6 +79,7 @@
 #include "esp_camera.h"
 
 #include "log_level.h"
+#include "health_log.h"
 #include "sd_storage.h"
 #include "wap_server.h"
 #include "web_ui.h"
@@ -1107,6 +1108,12 @@ static void log_health(LogLevel level, LogCategory category, const char* message
     Serial.printf(" | %s", detail);
   }
   Serial.println();
+}
+
+// Public wrapper for external modules (e.g., chirp_channel.cpp)
+// This function is declared in health_log.h
+void health_log(LogLevel level, LogCategory category, const char* detail) {
+  log_health(level, category, detail, nullptr);
 }
 
 static bool acknowledge_log_entry(uint32_t log_seq, AckStatus new_status, const char* reason) {
