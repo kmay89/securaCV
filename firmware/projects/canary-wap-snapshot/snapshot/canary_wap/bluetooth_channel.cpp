@@ -238,8 +238,14 @@ class ServerCallbacks : public NimBLEServerCallbacks {
     }
   }
 
-  void onPassKeyDisplay(NimBLEConnInfo& /*connInfo*/, uint32_t passkey) override {
-    // NimBLE 2.x provides the passkey to display
+  uint32_t onPassKeyDisplay() override {
+    // NimBLE 2.x: Return passkey to display (generate random 6-digit)
+    // Use rejection sampling to avoid modulo bias
+    uint32_t passkey;
+    do {
+      passkey = esp_random();
+    } while (passkey >= (UINT32_MAX - (UINT32_MAX % 1000000)));
+    passkey %= 1000000;
     g_pairing.pin_code = passkey;
     g_pairing.state = PAIR_PIN_DISPLAYED;
     g_pairing.pin_displayed = true;
@@ -251,14 +257,15 @@ class ServerCallbacks : public NimBLEServerCallbacks {
     if (g_pair_callback) {
       g_pair_callback(&g_pairing);
     }
+    return passkey;
   }
 
-  void onConfirmPasskey(NimBLEConnInfo& connInfo, uint32_t passkey) override {
+  void onConfirmPassKey(NimBLEConnInfo& connInfo, uint32_t pin) override {
     g_pairing.state = PAIR_CONFIRMING;
-    g_pairing.pin_code = passkey;
+    g_pairing.pin_code = pin;
 
     char pin_str[16];
-    snprintf(pin_str, sizeof(pin_str), "%06lu", (unsigned long)passkey);
+    snprintf(pin_str, sizeof(pin_str), "%06lu", (unsigned long)pin);
     log_health(LOG_LEVEL_NOTICE, LOG_CAT_BLUETOOTH, "Confirm pairing PIN", pin_str);
 
     if (g_pair_callback) {
