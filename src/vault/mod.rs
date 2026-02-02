@@ -501,11 +501,11 @@ fn read_file(path: &Path) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vault::crypto::VaultCryptoMode;
     use crate::break_glass::{
         Approval, BreakGlass, BreakGlassOutcome, BreakGlassTokenFile, QuorumPolicy, TrusteeEntry,
         TrusteeId, UnlockRequest,
     };
+    use crate::vault::crypto::VaultCryptoMode;
     use crate::TimeBucket;
     use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
     use sha2::{Digest, Sha256};

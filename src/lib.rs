@@ -71,8 +71,8 @@ pub use ingest::{v4l2::V4l2Config, V4l2Source};
 pub use log::{hash_entry, sign_entry, verify_entry_signature};
 pub use module_runtime::{CapabilityBoundaryRuntime, ModuleCapability};
 pub use storage::{InMemorySealedLogStore, SealedLogStore, SqliteSealedLogStore};
-pub use vault::{FilesystemVaultStore, Vault, VaultConfig, VaultStore};
 pub use vault::crypto::VaultCryptoMode;
+pub use vault::{FilesystemVaultStore, Vault, VaultConfig, VaultStore};
 
 pub fn shared_memory_uri() -> String {
     let mut bytes = [0u8; 8];

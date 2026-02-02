@@ -39,7 +39,6 @@ impl VaultEnvelope {
             VaultEnvelope::V2(envelope) => envelope.validate(envelope_id, ruleset_hash),
         }
     }
-
 }
 
 #[derive(Clone, Debug)]

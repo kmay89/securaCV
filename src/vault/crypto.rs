@@ -86,7 +86,13 @@ pub fn seal_v1(
     let mut nonce = [0u8; 12];
     rand::thread_rng().fill_bytes(&mut nonce);
     let mut ciphertext = clear.to_vec();
-    let tag = encrypt_in_place(master_key, envelope_id, &ruleset_hash, &nonce, &mut ciphertext)?;
+    let tag = encrypt_in_place(
+        master_key,
+        envelope_id,
+        &ruleset_hash,
+        &nonce,
+        &mut ciphertext,
+    )?;
 
     Ok(EnvelopeV1::new(
         envelope_id.to_string(),
@@ -119,13 +125,7 @@ pub fn seal_v2(
     kem_keypair: Option<&KemKeypair>,
 ) -> Result<EnvelopeV2> {
     let aad = encode_aad(envelope_id, &ruleset_hash);
-    let derived = derive_dek(
-        envelope_id,
-        &ruleset_hash,
-        mode,
-        master_key,
-        kem_keypair,
-    )?;
+    let derived = derive_dek(envelope_id, &ruleset_hash, mode, master_key, kem_keypair)?;
 
     let mut nonce = vec![0u8; 12];
     rand::thread_rng().fill_bytes(&mut nonce);
@@ -238,8 +238,8 @@ fn derive_dek(
             })
         }
         VaultCryptoMode::Pq | VaultCryptoMode::Hybrid => {
-            let kem_keypair = kem_keypair
-                .ok_or_else(|| anyhow!("vault KEM keypair missing for PQ mode"))?;
+            let kem_keypair =
+                kem_keypair.ok_or_else(|| anyhow!("vault KEM keypair missing for PQ mode"))?;
             let (kem_ct, shared_secret) = kem_encapsulate(kem_keypair)?;
             let mut kdf_info = vec![0u8; 32];
             rand::thread_rng().fill_bytes(&mut kdf_info);
