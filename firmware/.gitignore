@@ -1,1 +1,21 @@
-firmware/build/
+# Generated build output
+build/
+
+# PlatformIO
+.pio/
+
+# IDE files
+.vscode/
+*.code-workspace
+
+# Secrets
+secrets.h
+**/secrets/secrets.h
+
+# macOS
+.DS_Store
+
+# Temporary
+*.tmp
+*.swp
+*~
