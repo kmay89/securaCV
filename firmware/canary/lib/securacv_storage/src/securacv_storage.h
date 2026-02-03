@@ -29,9 +29,9 @@ struct SDStatus {
   uint64_t total_bytes;
   uint64_t used_bytes;
   uint64_t free_bytes;
-  uint32_t witness_count;
-  uint32_t health_count;
-  uint32_t unacked_count;
+  uint32_t witness_count;   // TODO: Implement file counting in getStatus()
+  uint32_t health_count;    // TODO: Implement file counting in getStatus()
+  uint32_t unacked_count;   // TODO: Implement acknowledgment tracking
   uint32_t last_write_ms;
   uint32_t write_errors;
   uint32_t read_errors;

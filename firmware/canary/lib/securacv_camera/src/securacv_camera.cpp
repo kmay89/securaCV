@@ -6,7 +6,6 @@
  */
 
 #include "securacv_camera.h"
-#include "securacv_witness.h"
 
 #if FEATURE_CAMERA_PEEK
 

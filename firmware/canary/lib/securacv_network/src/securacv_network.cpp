@@ -279,7 +279,7 @@ bool NetworkManager::startHttpServer() {
   config.server_port = 80;
   config.uri_match_fn = httpd_uri_match_wildcard;
   config.stack_size = 8192;
-  config.max_uri_handlers = 40;
+  config.max_uri_handlers = 16;
 
   if (httpd_start(&m_http_server, &config) != ESP_OK) {
     log_health(LOG_LEVEL_ERROR, LOG_CAT_NETWORK, "HTTP server start failed", nullptr);

@@ -6,7 +6,6 @@
  */
 
 #include "securacv_gps.h"
-#include "securacv_witness.h"
 #include <string.h>
 #include <stdlib.h>
 
@@ -48,7 +47,8 @@ float knots_to_kmh(float knots) {
 
 GpsManager::GpsManager()
   : m_serial(nullptr), m_rb_head(0), m_rb_tail(0), m_rb_count(0),
-    m_line_len(0), m_sentence_count(0) {
+    m_line_len(0), m_sentence_count(0), m_checksum_errors(0), m_first_fix_ms(0),
+    m_gga_count(0), m_rmc_count(0), m_gsa_count(0), m_gsv_count(0), m_vtg_count(0) {
   memset(&m_fix, 0, sizeof(m_fix));
   m_fix.hdop = 99.9;
   m_fix.pdop = 99.9;
@@ -132,25 +132,50 @@ static char* get_field(char* s, int field) {
   return p;
 }
 
+// Validate NMEA checksum (XOR of all chars between $ and *)
+static bool validate_nmea_checksum(const char* line) {
+  if (line[0] != '$') return false;
+
+  const char* star = strchr(line, '*');
+  if (!star || star - line < 2) return false;
+
+  // Calculate XOR checksum of characters between $ and *
+  uint8_t calc = 0;
+  for (const char* p = line + 1; p < star; p++) {
+    calc ^= (uint8_t)*p;
+  }
+
+  // Parse expected checksum (2 hex digits after *)
+  if (strlen(star) < 3) return false;
+  char hex[3] = { star[1], star[2], '\0' };
+  uint8_t expected = (uint8_t)strtoul(hex, nullptr, 16);
+
+  return calc == expected;
+}
+
 void GpsManager::parseNmea(char* line) {
   m_sentence_count++;
-  SystemHealth& health = witness_get_health();
-  health.gps_sentences++;
 
   #if DEBUG_NMEA
   Serial.println(line);
   #endif
 
-  // Verify checksum
+  // Verify sentence format
   if (line[0] != '$') return;
   char* star = strchr(line, '*');
   if (!star) return;
+
+  // Validate checksum for data integrity
+  if (!validate_nmea_checksum(line)) {
+    m_checksum_errors++;
+    return;
+  }
 
   // Parse sentence type
   char* type = line + 3;  // Skip $XX
 
   if (strncmp(type, "GGA", 3) == 0) {
-    health.gga_count++;
+    m_gga_count++;
     char* lat_str = get_field(line, 2);
     char* lat_dir = get_field(line, 3);
     char* lon_str = get_field(line, 4);
@@ -187,12 +212,12 @@ void GpsManager::parseNmea(char* line) {
     m_fix.last_gga_ms = millis();
     m_fix.last_update_ms = millis();
 
-    if (m_fix.valid && health.gps_lock_ms == 0) {
-      health.gps_lock_ms = millis();
+    if (m_fix.valid && m_first_fix_ms == 0) {
+      m_first_fix_ms = millis();
     }
   }
   else if (strncmp(type, "RMC", 3) == 0) {
-    health.rmc_count++;
+    m_rmc_count++;
     char* time_str = get_field(line, 1);
     char* speed = get_field(line, 7);
     char* course = get_field(line, 8);
@@ -230,7 +255,7 @@ void GpsManager::parseNmea(char* line) {
     m_fix.last_rmc_ms = millis();
   }
   else if (strncmp(type, "GSA", 3) == 0) {
-    health.gsa_count++;
+    m_gsa_count++;
     char* mode = get_field(line, 2);
     char* pdop = get_field(line, 15);
     char* hdop = get_field(line, 16);
@@ -245,14 +270,14 @@ void GpsManager::parseNmea(char* line) {
     m_fix.last_gsa_ms = millis();
   }
   else if (strncmp(type, "GSV", 3) == 0) {
-    health.gsv_count++;
+    m_gsv_count++;
     char* siv = get_field(line, 3);
     if (siv && *siv) {
       m_fix.sats_in_view = parse_int(siv, 0);
     }
   }
   else if (strncmp(type, "VTG", 3) == 0) {
-    health.vtg_count++;
+    m_vtg_count++;
     char* course = get_field(line, 1);
     char* speed_kmh = get_field(line, 7);
     if (course && *course) {

@@ -86,6 +86,13 @@ public:
 
   // Statistics
   uint32_t getSentenceCount() const { return m_sentence_count; }
+  uint32_t getChecksumErrors() const { return m_checksum_errors; }
+  uint32_t getFirstFixMs() const { return m_first_fix_ms; }
+  uint32_t getGgaCount() const { return m_gga_count; }
+  uint32_t getRmcCount() const { return m_rmc_count; }
+  uint32_t getGsaCount() const { return m_gsa_count; }
+  uint32_t getGsvCount() const { return m_gsv_count; }
+  uint32_t getVtgCount() const { return m_vtg_count; }
 
 private:
   void parseNmea(char* line);
@@ -106,7 +113,15 @@ private:
   char m_line_buf[256];
   size_t m_line_len;
 
+  // Statistics (queryable by application for health reporting)
   uint32_t m_sentence_count;
+  uint32_t m_checksum_errors;
+  uint32_t m_first_fix_ms;
+  uint32_t m_gga_count;
+  uint32_t m_rmc_count;
+  uint32_t m_gsa_count;
+  uint32_t m_gsv_count;
+  uint32_t m_vtg_count;
 };
 
 // ════════════════════════════════════════════════════════════════════════════

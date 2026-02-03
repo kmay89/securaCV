@@ -37,8 +37,7 @@
 // GLOBALS
 // ════════════════════════════════════════════════════════════════════════════
 
-static DeviceState g_device_state = STATE_NO_FIX;
-static uint32_t g_state_entered_ms = 0;
+static GpsManager s_gps;
 static uint32_t g_last_record_ms = 0;
 
 // Serial command helpers
@@ -51,7 +50,7 @@ static void print_status();
 // ════════════════════════════════════════════════════════════════════════════
 
 static void serial_wait_for_cdc(uint32_t timeout_ms) {
-#if USB_CDC_ON_BOOT
+#if defined(USB_CDC_ON_BOOT) && USB_CDC_ON_BOOT
   uint32_t start = millis();
   while (!Serial && (millis() - start < timeout_ms)) {
     delay(10);
@@ -71,19 +70,14 @@ void setup() {
 
   print_banner();
 
-  // Initialize crypto and device identity
-  NvsManager& nvs = nvs_get_instance();
-  if (!nvs.begin()) {
-    Serial.println("[!!] NVS initialization failed - HALTING");
-    while (true) { delay(1000); }
-  }
-
-  if (!nvs.provisionDevice()) {
+  // Provision device identity (keys, chain state)
+  if (!witness_provision_device()) {
     Serial.println("[!!] Device provisioning failed - HALTING");
     while (true) { delay(1000); }
   }
 
-  Serial.printf("[OK] Device ID: %s\n", nvs.getDeviceId());
+  DeviceIdentity& device = witness_get_device();
+  Serial.printf("[OK] Device ID: %s\n", device.device_id);
 
   pinMode(BOOT_BUTTON_GPIO, INPUT_PULLUP);
 
@@ -108,8 +102,10 @@ void setup() {
   Serial.println("[..] Initializing SD card storage...");
   if (storage_init(nullptr)) {
     Serial.println("[OK] SD card ready for witness records");
+    witness_get_health().sd_healthy = true;
   } else {
     Serial.println("[WARN] SD card not available - records will not persist");
+    witness_get_health().sd_healthy = false;
   }
 #endif
 
@@ -117,7 +113,7 @@ void setup() {
 #if FEATURE_WIFI_AP
   Serial.println("[..] Starting WiFi Access Point...");
   NetworkManager& net = network_get_instance();
-  if (net.beginAP()) {
+  if (net.begin(device.ap_ssid, AP_PASSWORD_DEFAULT)) {
     Serial.println("[OK] WiFi AP active");
 #if FEATURE_HTTP_SERVER
     Serial.println("[..] Starting HTTP server...");
@@ -140,24 +136,26 @@ void setup() {
 
   // Initialize GPS
   Serial.println();
-  Serial.printf("[..] GNSS: %u baud, RX=GPIO%d, TX=GPIO%d\n", GPS_BAUD, GPS_RX_GPIO, GPS_TX_GPIO);
-  GpsManager& gps = gps_get_instance();
-  gps.begin(GPS_BAUD, GPS_RX_GPIO, GPS_TX_GPIO);
-
-  // Initialize witness chain
-  WitnessChain& chain = witness_get_chain();
-  chain.begin(nvs.getPrivateKey(), nvs.getPublicKey());
+  Serial.printf("[..] GNSS: %u baud, RX=GPIO%d, TX=GPIO%d\n", GPS_BAUD, GPS_RX_PIN, GPS_TX_PIN);
+  s_gps.begin(Serial1, GPS_BAUD, GPS_RX_PIN, GPS_TX_PIN);
 
   // Create boot attestation record
   Serial.println("[..] Creating boot attestation record...");
-  if (chain.createBootAttestation()) {
-    Serial.printf("[OK] Boot attestation: seq=%u\n", chain.getSequence());
+  uint8_t boot_payload[64];
+  CborWriter cbor(boot_payload, sizeof(boot_payload));
+  cbor.write_map(3);
+  cbor.write_text("type"); cbor.write_text("boot");
+  cbor.write_text("boot"); cbor.write_uint(device.boot_count);
+  cbor.write_text("ver"); cbor.write_text(FIRMWARE_VERSION);
+
+  WitnessRecord boot_rec;
+  if (witness_create_record(boot_payload, cbor.size(), RECORD_BOOT_ATTESTATION, &boot_rec)) {
+    Serial.printf("[OK] Boot attestation: seq=%u\n", boot_rec.seq);
   }
 
   // Log boot event
-  witness_log_health(LOG_LEVEL_INFO, LOG_CAT_SYSTEM, "Device boot complete", FIRMWARE_VERSION);
+  log_health(LOG_LEVEL_INFO, LOG_CAT_SYSTEM, "Device boot complete", FIRMWARE_VERSION);
 
-  g_state_entered_ms = millis();
   g_last_record_ms = millis();
 
   // Print ready banner
@@ -165,12 +163,12 @@ void setup() {
   Serial.println("╔══════════════════════════════════════════════════════════════╗");
   Serial.println("║               WITNESS DEVICE READY                           ║");
   Serial.println("╠══════════════════════════════════════════════════════════════╣");
-  Serial.printf("║  Device ID  : %-45s  ║\n", nvs.getDeviceId());
+  Serial.printf("║  Device ID  : %-45s  ║\n", device.device_id);
 #if FEATURE_WIFI_AP
   NetworkManager& network = network_get_instance();
-  Serial.printf("║  WiFi AP    : %-45s  ║\n", network.getSSID());
+  Serial.printf("║  WiFi AP    : %-45s  ║\n", device.ap_ssid);
   Serial.printf("║  Password   : %-45s  ║\n", AP_PASSWORD_DEFAULT);
-  Serial.printf("║  Dashboard  : http://%-39s  ║\n", network.getIP().toString().c_str());
+  Serial.printf("║  Dashboard  : http://%-39s  ║\n", network.getStatus().ap_ip);
   Serial.println("║  mDNS       : http://canary.local                             ║");
 #endif
   Serial.println("╠══════════════════════════════════════════════════════════════╣");
@@ -208,35 +206,32 @@ void loop() {
   }
 
   // Update GPS
-  GpsManager& gps = gps_get_instance();
-  gps.update();
+  s_gps.update();
 
-  // Update device state based on GPS fix
-  DeviceState new_state = g_device_state;
-  if (gps.hasFix()) {
-    if (gps.isMoving(MOVING_SPEED_THRESHOLD)) {
-      new_state = STATE_MOVING;
-    } else {
-      new_state = STATE_STATIONARY;
-    }
-  } else {
-    new_state = STATE_NO_FIX;
-  }
-
-  if (new_state != g_device_state) {
-    g_device_state = new_state;
-    g_state_entered_ms = millis();
-  }
+  // Update state machine
+  const GnssFix& fix = s_gps.getFix();
+  witness_update_state(fix.valid, fix.last_update_ms, s_gps.getSpeedMps());
 
   // Update health metrics
-  HealthMetrics& health = witness_get_health();
+  SystemHealth& health = witness_get_health();
   uint32_t now = millis();
   health.uptime_sec = now / 1000;
   health.free_heap = ESP.getFreeHeap();
-  if (health.free_heap < health.min_heap) {
+  if (health.free_heap < health.min_heap || health.min_heap == 0) {
     health.min_heap = health.free_heap;
   }
-  health.gps_healthy = gps.hasFix();
+  health.gps_healthy = fix.valid;
+
+  // Sync GPS stats to health
+  health.gps_sentences = s_gps.getSentenceCount();
+  health.gga_count = s_gps.getGgaCount();
+  health.rmc_count = s_gps.getRmcCount();
+  health.gsa_count = s_gps.getGsaCount();
+  health.gsv_count = s_gps.getGsvCount();
+  health.vtg_count = s_gps.getVtgCount();
+  if (s_gps.getFirstFixMs() > 0 && health.gps_lock_ms == 0) {
+    health.gps_lock_ms = s_gps.getFirstFixMs();
+  }
 
 #if FEATURE_WIFI_AP
   // Check WiFi connection periodically
@@ -247,11 +242,23 @@ void loop() {
   if (now - g_last_record_ms >= RECORD_INTERVAL_MS) {
     g_last_record_ms = now;
 
-    WitnessChain& chain = witness_get_chain();
-    const GpsFix& fix = gps.getFix();
+    // Build witness event payload
+    uint8_t payload[256];
+    CborWriter cbor(payload, sizeof(payload));
 
-    if (chain.createWitnessEvent(fix, g_device_state)) {
-      // Record created successfully
+    FixState state = witness_get_state();
+
+    cbor.write_map(7);
+    cbor.write_text("state"); cbor.write_text(state_name_short(state));
+    cbor.write_text("fix"); cbor.write_bool(fix.valid);
+    cbor.write_text("lat"); cbor.write_float(fix.lat);
+    cbor.write_text("lon"); cbor.write_float(fix.lon);
+    cbor.write_text("alt"); cbor.write_float(fix.altitude_m);
+    cbor.write_text("spd"); cbor.write_float(fix.speed_kmh);
+    cbor.write_text("sats"); cbor.write_uint(fix.satellites);
+
+    WitnessRecord rec;
+    if (witness_create_record(payload, cbor.size(), RECORD_WITNESS_EVENT, &rec)) {
       health.records_created++;
 
       // Print status every 20 records
@@ -259,7 +266,7 @@ void loop() {
         print_status();
       }
     } else {
-      witness_log_health(LOG_LEVEL_ERROR, LOG_CAT_WITNESS, "Record creation failed", nullptr);
+      log_health(LOG_LEVEL_ERROR, LOG_CAT_WITNESS, "Record creation failed", nullptr);
     }
   }
 }
@@ -287,12 +294,11 @@ static void handle_serial_commands() {
 
     case 'i':
     case 'I': {
-      NvsManager& nvs = nvs_get_instance();
+      DeviceIdentity& device = witness_get_device();
       Serial.println("\n=== Identity ===");
-      Serial.printf("  Device ID: %s\n", nvs.getDeviceId());
+      Serial.printf("  Device ID: %s\n", device.device_id);
       Serial.print("  Public Key: ");
-      const uint8_t* pk = nvs.getPublicKey();
-      for (int i = 0; i < 32; i++) Serial.printf("%02x", pk[i]);
+      for (int i = 0; i < 32; i++) Serial.printf("%02x", device.pubkey[i]);
       Serial.println("\n");
       break;
     }
@@ -304,17 +310,18 @@ static void handle_serial_commands() {
 
     case 'g':
     case 'G': {
-      GpsManager& gps = gps_get_instance();
-      const GpsFix& fix = gps.getFix();
+      const GnssFix& fix = s_gps.getFix();
       Serial.println("\n=== GPS ===");
       Serial.printf("  Fix: %s\n", fix.valid ? "Yes" : "No");
       if (fix.valid) {
         Serial.printf("  Lat: %.6f\n", fix.lat);
         Serial.printf("  Lon: %.6f\n", fix.lon);
-        Serial.printf("  Alt: %.1f m\n", fix.alt_m);
+        Serial.printf("  Alt: %.1f m\n", fix.altitude_m);
         Serial.printf("  Speed: %.1f km/h\n", fix.speed_kmh);
-        Serial.printf("  Sats: %u\n", fix.sats);
+        Serial.printf("  Sats: %u\n", fix.satellites);
       }
+      Serial.printf("  Sentences: %u (errors: %u)\n",
+                    s_gps.getSentenceCount(), s_gps.getChecksumErrors());
       Serial.println();
       break;
     }
@@ -344,23 +351,22 @@ static void print_banner() {
 }
 
 static void print_status() {
-  HealthMetrics& health = witness_get_health();
-  GpsManager& gps = gps_get_instance();
-  WitnessChain& chain = witness_get_chain();
+  SystemHealth& health = witness_get_health();
+  DeviceIdentity& device = witness_get_device();
+  const GnssFix& fix = s_gps.getFix();
 
   Serial.println("\n=== Status ===");
   Serial.printf("  Uptime: %us\n", health.uptime_sec);
   Serial.printf("  Free heap: %u bytes\n", health.free_heap);
   Serial.printf("  Min heap: %u bytes\n", health.min_heap);
-  Serial.printf("  Records: %u (seq: %u)\n", health.records_created, chain.getSequence());
+  Serial.printf("  Records: %u (seq: %u)\n", health.records_created, device.seq);
 
-  const char* state_names[] = {"NO_FIX", "STATIONARY", "MOVING"};
-  Serial.printf("  State: %s\n", state_names[g_device_state]);
+  FixState state = witness_get_state();
+  Serial.printf("  State: %s\n", state_name(state));
 
   Serial.printf("  GPS: %s", health.gps_healthy ? "OK" : "No fix");
   if (health.gps_healthy) {
-    const GpsFix& fix = gps.getFix();
-    Serial.printf(" (%.4f, %.4f, %u sats)", fix.lat, fix.lon, fix.sats);
+    Serial.printf(" (%.4f, %.4f, %u sats)", fix.lat, fix.lon, fix.satellites);
   }
   Serial.println();
 
@@ -369,7 +375,7 @@ static void print_status() {
 #endif
 
 #if FEATURE_WIFI_AP
-  Serial.printf("  WiFi: %s\n", health.wifi_healthy ? "OK" : "Down");
+  Serial.printf("  WiFi: %s\n", health.wifi_active ? "OK" : "Down");
 #endif
 
   Serial.println();

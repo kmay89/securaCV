@@ -6,7 +6,6 @@
  */
 
 #include "securacv_storage.h"
-#include "securacv_witness.h"
 
 #if FEATURE_SD_STORAGE
 
@@ -41,13 +40,11 @@ bool StorageManager::begin(SPIClass* spi) {
     // Try slower speed
     if (!SD.begin(SD_CS_PIN, *m_spi, SD_SPI_SLOW)) {
       m_mounted = false;
-      witness_get_health().sd_healthy = false;
       return false;
     }
   }
 
   m_mounted = true;
-  witness_get_health().sd_healthy = true;
 
   // Create directories
   ensureDirectories();
