@@ -23,7 +23,7 @@ use witness_kernel::transport::{
 };
 use witness_kernel::{
     CandidateEvent, EventType, InferenceBackend, Kernel, KernelConfig, ModuleDescriptor,
-    TimeBucket, ZonePolicy,
+    TimeBucket, ZonePolicy, MIN_BUCKET_SIZE_S,
 };
 
 const BRIDGE_NAME: &str = "frigate_bridge";
@@ -94,7 +94,8 @@ struct Args {
     #[arg(long, env = "WITNESS_RULESET_ID", default_value = "ruleset:frigate_v1")]
     ruleset_id: String,
 
-    /// Time bucket size in seconds (default: 10 minutes).
+    /// Time bucket size in seconds (default: 10 minutes, minimum: 5 minutes per spec).
+    /// Per spec/event_contract.md §3: bucket size is conformance-critical and MUST be >= 300.
     #[arg(long, env = "WITNESS_BUCKET_SIZE", default_value_t = 600)]
     bucket_size_secs: u64,
 
@@ -237,6 +238,15 @@ fn main() -> Result<()> {
         log::warn!("Remote MQTT enabled - ensure broker is in a trusted network");
     }
 
+    // Validate bucket size per spec/event_contract.md §3
+    if args.bucket_size_secs < MIN_BUCKET_SIZE_S as u64 {
+        return Err(anyhow!(
+            "bucket size {} seconds is below minimum {} seconds (5 minutes) per spec/event_contract.md §3",
+            args.bucket_size_secs,
+            MIN_BUCKET_SIZE_S
+        ));
+    }
+
     // Parse allowed cameras and labels
     let allowed_cameras: Option<Vec<String>> = args.cameras.as_ref().map(|s| {
         s.split(',')
@@ -318,17 +328,52 @@ fn main() -> Result<()> {
     // Event deduplication (by camera+label within same bucket)
     let mut recent_events: HashMap<String, u64> = HashMap::new();
 
-    // Main loop - process MQTT messages
+    // Exponential backoff state for reconnection
+    const INITIAL_BACKOFF_SECS: u64 = 2;
+    const MAX_BACKOFF_SECS: u64 = 60;
+    let mut backoff_secs = INITIAL_BACKOFF_SECS;
+
+    // Main loop - process MQTT messages with automatic reconnection
     loop {
-        let (client, mut connection) = connect_mqtt(
+        let connect_result = connect_mqtt(
             &mqtt_endpoint,
             &tls_config,
             &args.mqtt_client_id,
             args.mqtt_username.as_deref(),
             args.mqtt_password.as_deref(),
-        )?;
-        client.subscribe(&args.frigate_topic, QoS::AtMostOnce)?;
-        log::info!("Subscribed to {}", args.frigate_topic);
+        );
+
+        let (client, mut connection) = match connect_result {
+            Ok((c, conn)) => {
+                // Reset backoff on successful connection
+                backoff_secs = INITIAL_BACKOFF_SECS;
+                (c, conn)
+            }
+            Err(e) => {
+                log::error!(
+                    "Failed to connect to MQTT broker: {}. Retrying in {} seconds...",
+                    e,
+                    backoff_secs
+                );
+                std::thread::sleep(Duration::from_secs(backoff_secs));
+                backoff_secs = std::cmp::min(backoff_secs * 2, MAX_BACKOFF_SECS);
+                continue;
+            }
+        };
+
+        // Subscribe with QoS 1 (AtLeastOnce) for reliable message delivery
+        if let Err(e) = client.subscribe(&args.frigate_topic, QoS::AtLeastOnce) {
+            log::error!(
+                "Failed to subscribe to {}: {}. Retrying in {} seconds...",
+                args.frigate_topic,
+                e,
+                backoff_secs
+            );
+            std::thread::sleep(Duration::from_secs(backoff_secs));
+            backoff_secs = std::cmp::min(backoff_secs * 2, MAX_BACKOFF_SECS);
+            continue;
+        }
+        log::info!("Subscribed to {} (QoS 1)", args.frigate_topic);
 
         let mut should_reconnect = false;
         for event in connection.iter() {
@@ -367,12 +412,18 @@ fn main() -> Result<()> {
         }
 
         if should_reconnect {
-            std::thread::sleep(Duration::from_secs(5));
+            log::info!(
+                "Attempting reconnection with {} second backoff...",
+                backoff_secs
+            );
+            std::thread::sleep(Duration::from_secs(backoff_secs));
+            backoff_secs = std::cmp::min(backoff_secs * 2, MAX_BACKOFF_SECS);
             continue;
         }
 
-        log::warn!("MQTT connection closed. Reconnecting...");
-        std::thread::sleep(Duration::from_secs(5));
+        log::warn!("MQTT connection closed unexpectedly. Reconnecting...");
+        std::thread::sleep(Duration::from_secs(backoff_secs));
+        backoff_secs = std::cmp::min(backoff_secs * 2, MAX_BACKOFF_SECS);
     }
 }
 
