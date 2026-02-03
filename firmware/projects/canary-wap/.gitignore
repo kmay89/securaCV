@@ -1,0 +1,20 @@
+# PlatformIO build directory
+.pio/
+
+# IDE files
+.vscode/
+*.code-workspace
+
+# Secrets (never commit!)
+secrets/secrets.h
+
+# Local configuration overrides
+config_local.h
+
+# macOS
+.DS_Store
+
+# Temporary files
+*.tmp
+*.swp
+*~
