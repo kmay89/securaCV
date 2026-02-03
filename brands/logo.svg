@@ -1,28 +1,57 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 180" width="560" height="180">
-  <!-- Shield icon (smaller version) -->
-  <g transform="translate(20, 10) scale(0.625)">
-    <path d="M128 8 L240 48 L240 128 C240 192 128 248 128 248 C128 248 16 192 16 128 L16 48 Z"
-          fill="#1a5f7a" stroke="#0d3d4d" stroke-width="4"/>
-    <path d="M128 24 L224 58 L224 128 C224 182 128 230 128 230 C128 230 32 182 32 128 L32 58 Z"
-          fill="#2d7d9a"/>
-    <ellipse cx="128" cy="120" rx="56" ry="36" fill="#ffffff" opacity="0.95"/>
-    <circle cx="128" cy="120" r="24" fill="#0d3d4d"/>
-    <circle cx="128" cy="120" r="12" fill="#1a5f7a"/>
-    <circle cx="134" cy="114" r="5" fill="#ffffff" opacity="0.8"/>
-    <rect x="88" y="168" width="24" height="16" rx="4" fill="#ffffff" opacity="0.9"/>
-    <rect x="116" y="168" width="24" height="16" rx="4" fill="#ffffff" opacity="0.9"/>
-    <rect x="144" y="168" width="24" height="16" rx="4" fill="#ffffff" opacity="0.9"/>
-    <rect x="110" y="173" width="8" height="6" fill="#2d7d9a"/>
-    <rect x="138" y="173" width="8" height="6" fill="#2d7d9a"/>
+  <!-- SecuraCV Logo with Canary Mascot -->
+
+  <!-- Canary mascot (scaled down) -->
+  <g transform="translate(15, 10) scale(0.58)">
+    <!-- Body -->
+    <ellipse cx="128" cy="145" rx="75" ry="85" fill="#FFD500"/>
+
+    <!-- Head -->
+    <circle cx="128" cy="75" r="60" fill="#FFD500"/>
+
+    <!-- White belly -->
+    <ellipse cx="128" cy="165" rx="45" ry="55" fill="#FFFFFF"/>
+
+    <!-- Left eye white -->
+    <ellipse cx="105" cy="70" rx="18" ry="20" fill="#FFFFFF"/>
+    <!-- Left eye black -->
+    <ellipse cx="108" cy="72" rx="10" ry="12" fill="#18181B"/>
+    <!-- Left eye highlight -->
+    <circle cx="112" cy="68" r="4" fill="#FFFFFF"/>
+
+    <!-- Right eye white -->
+    <ellipse cx="151" cy="70" rx="18" ry="20" fill="#FFFFFF"/>
+    <!-- Right eye black -->
+    <ellipse cx="148" cy="72" rx="10" ry="12" fill="#18181B"/>
+    <!-- Right eye highlight -->
+    <circle cx="152" cy="68" r="4" fill="#FFFFFF"/>
+
+    <!-- Beak -->
+    <path d="M128 88 L118 102 L128 98 L138 102 Z" fill="#FFA000"/>
+
+    <!-- Left wing -->
+    <ellipse cx="65" cy="140" rx="25" ry="40" fill="#E6C000" transform="rotate(-15 65 140)"/>
+
+    <!-- Right wing -->
+    <ellipse cx="191" cy="140" rx="25" ry="40" fill="#E6C000" transform="rotate(15 191 140)"/>
+
+    <!-- Left foot -->
+    <path d="M100 220 L90 240 M100 220 L100 243 M100 220 L110 240" stroke="#FFA000" stroke-width="6" stroke-linecap="round" fill="none"/>
+
+    <!-- Right foot -->
+    <path d="M156 220 L146 240 M156 220 L156 243 M156 220 L166 240" stroke="#FFA000" stroke-width="6" stroke-linecap="round" fill="none"/>
+
+    <!-- Head tuft -->
+    <ellipse cx="128" cy="22" rx="8" ry="10" fill="#FFD500"/>
   </g>
 
   <!-- SecuraCV text -->
-  <text x="195" y="115" font-family="Arial, Helvetica, sans-serif" font-size="72" font-weight="bold" fill="#1a5f7a">
-    Secura<tspan fill="#0d3d4d">CV</tspan>
+  <text x="195" y="105" font-family="Arial, Helvetica, sans-serif" font-size="64" font-weight="bold" fill="#FFD500">
+    Secura<tspan fill="#FFA000">CV</tspan>
   </text>
 
   <!-- Tagline -->
-  <text x="197" y="148" font-family="Arial, Helvetica, sans-serif" font-size="18" fill="#5a5a5a">
+  <text x="197" y="138" font-family="Arial, Helvetica, sans-serif" font-size="18" fill="#FFFFFF">
     Privacy Witness System
   </text>
 </svg>
