@@ -4,6 +4,22 @@ use crate::vault::crypto::decode_aad;
 
 const V2_MAGIC: &[u8; 4] = b"VLT2";
 
+/// Maximum allowed envelope ID length (same as vault/mod.rs).
+const MAX_ENVELOPE_ID_LEN: usize = 128;
+
+/// Maximum allowed ciphertext size (1 GiB) to prevent memory exhaustion.
+/// This is generous for evidence storage but prevents DoS attacks.
+const MAX_CIPHERTEXT_LEN: usize = 1024 * 1024 * 1024;
+
+/// Maximum allowed AAD size (1 KiB) - AAD contains envelope_id + ruleset_hash.
+const MAX_AAD_LEN: usize = 1024;
+
+/// Maximum allowed KEM ciphertext size (8 KiB) - sufficient for ML-KEM-768.
+const MAX_KEM_CT_LEN: usize = 8 * 1024;
+
+/// Maximum allowed algorithm identifier length.
+const MAX_ALG_LEN: usize = 64;
+
 #[derive(Clone, Debug)]
 pub enum VaultEnvelope {
     V1(EnvelopeV1),
@@ -95,6 +111,13 @@ impl EnvelopeV1 {
     fn decode(bytes: &[u8]) -> Result<Self> {
         let mut cursor = 0usize;
         let id_len = read_u32(bytes, &mut cursor)? as usize;
+        if id_len > MAX_ENVELOPE_ID_LEN {
+            return Err(anyhow!(
+                "envelope id length {} exceeds maximum {}",
+                id_len,
+                MAX_ENVELOPE_ID_LEN
+            ));
+        }
         let id_bytes = read_slice(bytes, &mut cursor, id_len)?;
         let envelope_id = std::str::from_utf8(id_bytes)
             .map_err(|_| anyhow!("invalid envelope id encoding"))?
@@ -109,6 +132,13 @@ impl EnvelopeV1 {
         let mut tag = [0u8; 16];
         tag.copy_from_slice(tag_bytes);
         let ct_len = read_u32(bytes, &mut cursor)? as usize;
+        if ct_len > MAX_CIPHERTEXT_LEN {
+            return Err(anyhow!(
+                "ciphertext length {} exceeds maximum {}",
+                ct_len,
+                MAX_CIPHERTEXT_LEN
+            ));
+        }
         let ciphertext = read_slice(bytes, &mut cursor, ct_len)?.to_vec();
         Ok(Self {
             envelope_id,
@@ -180,16 +210,16 @@ impl EnvelopeV2 {
         if version != 2 {
             return Err(anyhow!("unsupported vault envelope version"));
         }
-        let aead_alg = read_string(bytes, &mut cursor)?;
-        let nonce = read_vec(bytes, &mut cursor)?;
-        let aad = read_vec(bytes, &mut cursor)?;
-        let ciphertext = read_vec(bytes, &mut cursor)?;
-        let kem_alg = read_string(bytes, &mut cursor)?;
-        let kem_ct = read_vec(bytes, &mut cursor)?;
-        let kdf_info = read_vec(bytes, &mut cursor)?;
+        let aead_alg = read_string_bounded(bytes, &mut cursor, MAX_ALG_LEN)?;
+        let nonce = read_vec_bounded(bytes, &mut cursor, 32)?; // Max 32 bytes for any nonce
+        let aad = read_vec_bounded(bytes, &mut cursor, MAX_AAD_LEN)?;
+        let ciphertext = read_vec_bounded(bytes, &mut cursor, MAX_CIPHERTEXT_LEN)?;
+        let kem_alg = read_string_bounded(bytes, &mut cursor, MAX_ALG_LEN)?;
+        let kem_ct = read_vec_bounded(bytes, &mut cursor, MAX_KEM_CT_LEN)?;
+        let kdf_info = read_vec_bounded(bytes, &mut cursor, 64)?; // Max 64 bytes for KDF info
         let has_wrap = read_u8(bytes, &mut cursor)?;
         let classical_wrap = if has_wrap == 1 {
-            Some(read_vec(bytes, &mut cursor)?)
+            Some(read_vec_bounded(bytes, &mut cursor, 128)?) // Max 128 bytes for wrap
         } else {
             None
         };
@@ -230,14 +260,28 @@ pub(crate) fn read_slice<'a>(bytes: &'a [u8], cursor: &mut usize, len: usize) ->
     Ok(out)
 }
 
-fn read_vec(bytes: &[u8], cursor: &mut usize) -> Result<Vec<u8>> {
+fn read_vec_bounded(bytes: &[u8], cursor: &mut usize, max_len: usize) -> Result<Vec<u8>> {
     let len = read_u32(bytes, cursor)? as usize;
+    if len > max_len {
+        return Err(anyhow!(
+            "field length {} exceeds maximum allowed {}",
+            len,
+            max_len
+        ));
+    }
     let slice = read_slice(bytes, cursor, len)?;
     Ok(slice.to_vec())
 }
 
-fn read_string(bytes: &[u8], cursor: &mut usize) -> Result<String> {
+fn read_string_bounded(bytes: &[u8], cursor: &mut usize, max_len: usize) -> Result<String> {
     let len = read_u32(bytes, cursor)? as usize;
+    if len > max_len {
+        return Err(anyhow!(
+            "string length {} exceeds maximum allowed {}",
+            len,
+            max_len
+        ));
+    }
     let slice = read_slice(bytes, cursor, len)?;
     let s = std::str::from_utf8(slice).map_err(|_| anyhow!("invalid envelope encoding"))?;
     Ok(s.to_string())
@@ -246,4 +290,141 @@ fn read_string(bytes: &[u8], cursor: &mut usize) -> Result<String> {
 fn write_bytes(out: &mut Vec<u8>, bytes: &[u8]) {
     out.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
     out.extend_from_slice(bytes);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn envelope_v1_rejects_oversized_envelope_id() {
+        // Craft a malicious V1 envelope with an oversized ID length
+        let mut malicious = Vec::new();
+        // Write an envelope ID length that exceeds the maximum
+        let oversized_len = (MAX_ENVELOPE_ID_LEN + 100) as u32;
+        malicious.extend_from_slice(&oversized_len.to_le_bytes());
+        // Add dummy data for the ID
+        malicious.extend_from_slice(&vec![b'a'; MAX_ENVELOPE_ID_LEN + 100]);
+        // Add ruleset hash (32 bytes)
+        malicious.extend_from_slice(&[0u8; 32]);
+        // Add nonce (12 bytes)
+        malicious.extend_from_slice(&[0u8; 12]);
+        // Add tag (16 bytes)
+        malicious.extend_from_slice(&[0u8; 16]);
+        // Add ciphertext length and data
+        malicious.extend_from_slice(&10u32.to_le_bytes());
+        malicious.extend_from_slice(&[0u8; 10]);
+
+        let result = EnvelopeV1::decode(&malicious);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("exceeds maximum"));
+    }
+
+    #[test]
+    fn envelope_v1_rejects_oversized_ciphertext() {
+        // Craft a malicious V1 envelope with an oversized ciphertext length
+        let mut malicious = Vec::new();
+        // Write valid envelope ID
+        let id = b"valid-id";
+        malicious.extend_from_slice(&(id.len() as u32).to_le_bytes());
+        malicious.extend_from_slice(id);
+        // Add ruleset hash (32 bytes)
+        malicious.extend_from_slice(&[0u8; 32]);
+        // Add nonce (12 bytes)
+        malicious.extend_from_slice(&[0u8; 12]);
+        // Add tag (16 bytes)
+        malicious.extend_from_slice(&[0u8; 16]);
+        // Write a ciphertext length that exceeds the maximum
+        let oversized_len = (MAX_CIPHERTEXT_LEN + 1) as u32;
+        malicious.extend_from_slice(&oversized_len.to_le_bytes());
+        // We don't need actual data - the length check should fail first
+
+        let result = EnvelopeV1::decode(&malicious);
+        assert!(result.is_err());
+        // Could fail on length check or on bounds check - both are acceptable
+    }
+
+    #[test]
+    fn envelope_v2_rejects_oversized_fields() {
+        // Craft a malicious V2 envelope with oversized algorithm string
+        let mut malicious = Vec::new();
+        malicious.extend_from_slice(V2_MAGIC);
+        malicious.push(2); // version
+        // Write an algorithm length that exceeds the maximum
+        let oversized_len = (MAX_ALG_LEN + 100) as u32;
+        malicious.extend_from_slice(&oversized_len.to_le_bytes());
+        malicious.extend_from_slice(&vec![b'a'; MAX_ALG_LEN + 100]);
+
+        let result = EnvelopeV2::decode(&malicious);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("exceeds maximum"));
+    }
+
+    #[test]
+    fn envelope_v2_rejects_oversized_aad() {
+        // Craft a malicious V2 envelope with oversized AAD
+        let mut malicious = Vec::new();
+        malicious.extend_from_slice(V2_MAGIC);
+        malicious.push(2); // version
+        // Valid algorithm
+        write_bytes(&mut malicious, b"ChaCha20-Poly1305");
+        // Valid nonce
+        write_bytes(&mut malicious, &[0u8; 12]);
+        // Oversized AAD
+        let oversized_len = (MAX_AAD_LEN + 100) as u32;
+        malicious.extend_from_slice(&oversized_len.to_le_bytes());
+        malicious.extend_from_slice(&vec![0u8; MAX_AAD_LEN + 100]);
+
+        let result = EnvelopeV2::decode(&malicious);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("exceeds maximum"));
+    }
+
+    #[test]
+    fn envelope_v2_rejects_invalid_version() {
+        let mut malicious = Vec::new();
+        malicious.extend_from_slice(V2_MAGIC);
+        malicious.push(99); // invalid version
+
+        let result = EnvelopeV2::decode(&malicious);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("unsupported vault envelope version"));
+    }
+
+    #[test]
+    fn envelope_decode_rejects_truncated_input() {
+        // Test various truncated inputs
+        let too_short = vec![0u8; 3];
+        assert!(VaultEnvelope::decode(&too_short).is_err());
+
+        let v2_header_only = V2_MAGIC.to_vec();
+        assert!(VaultEnvelope::decode(&v2_header_only).is_err());
+    }
+
+    #[test]
+    fn envelope_round_trip_works() {
+        let v1 = EnvelopeV1::new(
+            "test-envelope".to_string(),
+            [1u8; 32],
+            [2u8; 12],
+            [3u8; 16],
+            vec![4u8; 100],
+        );
+        let encoded = v1.encode().unwrap();
+        let decoded = EnvelopeV1::decode(&encoded).unwrap();
+        assert_eq!(decoded.envelope_id, "test-envelope");
+        assert_eq!(decoded.ciphertext.len(), 100);
+    }
 }
