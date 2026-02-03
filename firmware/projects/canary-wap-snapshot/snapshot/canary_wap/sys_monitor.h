@@ -17,6 +17,8 @@
 #define SECURACV_SYS_MONITOR_H
 
 #include <Arduino.h>
+#include <esp_mac.h>
+#include <esp_system.h>
 #include "log_level.h"
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -454,15 +456,25 @@ const char* format_uptime(uint32_t seconds, char* buf, size_t buf_size) {
 
 // ────────────────────────────────────────────────────────────────────────────
 
+// Convert Celsius to Fahrenheit
+inline float celsius_to_fahrenheit(float c) {
+  return (c * 9.0f / 5.0f) + 32.0f;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+
 void print_status_line() {
   char heap_str[16], psram_str[16], uptime_str[16];
 
   format_bytes(g_sys_metrics.heap_free, heap_str, sizeof(heap_str));
   format_uptime(g_sys_metrics.uptime_sec, uptime_str, sizeof(uptime_str));
 
-  Serial.printf("[SYS] %s | Temp: %.1fC [%s] | Heap: %s | ",
+  float temp_f = celsius_to_fahrenheit(g_sys_metrics.temp_celsius);
+
+  Serial.printf("[SYS] %s | Temp: %.1fC/%.1fF [%s] | Heap: %s | ",
                 uptime_str,
                 g_sys_metrics.temp_celsius,
+                temp_f,
                 temp_state_name(g_sys_metrics.temp_state),
                 heap_str);
 
@@ -476,81 +488,231 @@ void print_status_line() {
 
 // ────────────────────────────────────────────────────────────────────────────
 
-void print_status() {
-  char buf1[16], buf2[16], buf3[16];
+// Build a visual temperature meter bar
+// Range: -10C to 100C mapped to 40 characters
+static void print_temp_meter(float temp_c) {
+  const int meter_width = 50;
+  const float min_temp = -10.0f;
+  const float max_temp = 100.0f;
 
-  Serial.println();
-  Serial.println("+---------------------------------------------------------+");
-  Serial.println("|              SYSTEM MONITOR                             |");
-  Serial.println("+---------------------------------------------------------+");
+  // Calculate position (0 to meter_width)
+  int pos = (int)((temp_c - min_temp) / (max_temp - min_temp) * meter_width);
+  if (pos < 0) pos = 0;
+  if (pos > meter_width) pos = meter_width;
 
-  // Chip Info
-  Serial.println("| CHIP INFO                                               |");
-  Serial.println("|  ----------------------------------------------------- |");
-  Serial.printf("|  Model       : %-40s |\n", g_sys_metrics.chip_model);
-  Serial.printf("|  Revision    : %u                                        |\n", g_sys_metrics.chip_revision);
-  Serial.printf("|  Cores       : %u @ %u MHz                               |\n",
-                g_sys_metrics.chip_cores, g_sys_metrics.cpu_freq_mhz);
-  Serial.printf("|  Flash       : %-40s |\n", format_bytes(g_sys_metrics.flash_size, buf1, sizeof(buf1)));
+  // Zone boundaries (in character positions)
+  int cold_crit_pos = (int)((TEMP_COLD_CRITICAL - min_temp) / (max_temp - min_temp) * meter_width);
+  int cold_warn_pos = (int)((TEMP_COLD_WARNING - min_temp) / (max_temp - min_temp) * meter_width);
+  int hot_warn_pos = (int)((TEMP_HOT_WARNING - min_temp) / (max_temp - min_temp) * meter_width);
+  int hot_crit_pos = (int)((TEMP_HOT_CRITICAL - min_temp) / (max_temp - min_temp) * meter_width);
 
-  // Temperature
-  Serial.println("|                                                         |");
-  Serial.println("| TEMPERATURE (Chip Internal)                             |");
-  Serial.println("|  ----------------------------------------------------- |");
-  Serial.printf("|  Current     : %.1f C                                   |\n", g_sys_metrics.temp_celsius);
-  Serial.printf("|  State       : %-40s |\n", temp_state_name(g_sys_metrics.temp_state));
-  Serial.printf("|  Min/Max     : %.1f C / %.1f C                          |\n",
-                g_sys_metrics.temp_min, g_sys_metrics.temp_max);
-  Serial.printf("|  Average     : %.1f C (EMA)                             |\n", g_sys_metrics.temp_avg);
-  Serial.printf("|  Readings    : %u                                       |\n", g_sys_metrics.temp_readings);
+  Serial.print("  -10C                                                      100C\n");
+  Serial.print("   |                                                          |\n");
+  Serial.print("   [");
 
-  // Alert thresholds
-  Serial.println("|                                                         |");
-  Serial.println("| ALERT THRESHOLDS                                        |");
-  Serial.println("|  ----------------------------------------------------- |");
-  Serial.printf("|  Cold Warn   : < %.1f C                                 |\n", TEMP_COLD_WARNING);
-  Serial.printf("|  Cold Crit   : < %.1f C                                 |\n", TEMP_COLD_CRITICAL);
-  Serial.printf("|  Hot Warn    : > %.1f C                                |\n", TEMP_HOT_WARNING);
-  Serial.printf("|  Hot Crit    : > %.1f C                                |\n", TEMP_HOT_CRITICAL);
-  Serial.printf("|  Cold Alerts : %u                                       |\n", g_sys_metrics.cold_alerts);
-  Serial.printf("|  Hot Alerts  : %u                                       |\n", g_sys_metrics.hot_alerts);
+  for (int i = 0; i < meter_width; i++) {
+    char c;
+    if (i < cold_crit_pos) {
+      c = '!';  // Critical cold zone
+    } else if (i < cold_warn_pos) {
+      c = '*';  // Warning cold zone
+    } else if (i < hot_warn_pos) {
+      c = '-';  // Normal zone
+    } else if (i < hot_crit_pos) {
+      c = '*';  // Warning hot zone
+    } else {
+      c = '!';  // Critical hot zone
+    }
 
-  // Memory
-  Serial.println("|                                                         |");
-  Serial.println("| MEMORY                                                  |");
-  Serial.println("|  ----------------------------------------------------- |");
-  Serial.printf("|  Heap Total  : %-40s |\n", format_bytes(g_sys_metrics.heap_total, buf1, sizeof(buf1)));
-  Serial.printf("|  Heap Free   : %-40s |\n", format_bytes(g_sys_metrics.heap_free, buf1, sizeof(buf1)));
-  Serial.printf("|  Heap Min    : %-40s |\n", format_bytes(g_sys_metrics.heap_min_free, buf1, sizeof(buf1)));
-  Serial.printf("|  Largest Blk : %-40s |\n", format_bytes(g_sys_metrics.heap_largest_block, buf1, sizeof(buf1)));
-
-  float heap_pct = (float)(g_sys_metrics.heap_total - g_sys_metrics.heap_free) / g_sys_metrics.heap_total * 100.0f;
-  Serial.printf("|  Heap Used   : %.1f%%                                   |\n", heap_pct);
-
-  if (g_sys_metrics.psram_available) {
-    Serial.println("|                                                         |");
-    Serial.println("| PSRAM (External)                                        |");
-    Serial.println("|  ----------------------------------------------------- |");
-    Serial.printf("|  PSRAM Total : %-40s |\n", format_bytes(g_sys_metrics.psram_total, buf1, sizeof(buf1)));
-    Serial.printf("|  PSRAM Free  : %-40s |\n", format_bytes(g_sys_metrics.psram_free, buf1, sizeof(buf1)));
-    Serial.printf("|  PSRAM Min   : %-40s |\n", format_bytes(g_sys_metrics.psram_min_free, buf1, sizeof(buf1)));
-
-    float psram_pct = (float)(g_sys_metrics.psram_total - g_sys_metrics.psram_free) / g_sys_metrics.psram_total * 100.0f;
-    Serial.printf("|  PSRAM Used  : %.1f%%                                  |\n", psram_pct);
-  } else {
-    Serial.println("|                                                         |");
-    Serial.println("| PSRAM: Not available                                    |");
+    if (i == pos) {
+      Serial.print('#');  // Current temperature marker
+    } else {
+      Serial.print(c);
+    }
   }
 
-  // Uptime
-  Serial.println("|                                                         |");
-  Serial.printf("| Uptime: %-47s |\n", format_uptime(g_sys_metrics.uptime_sec, buf1, sizeof(buf1)));
+  Serial.println("]");
+  Serial.println("   |!!**|----------- NORMAL -----------|****!!!!!|");
+  Serial.println("   CRIT WARN                            WARN CRIT");
+  Serial.println("   COLD COLD                            HOT  HOT");
+}
 
-  // Humidity note
-  Serial.println("|                                                         |");
-  Serial.println("| Note: ESP32-S3 has no built-in humidity sensor.         |");
-  Serial.println("| External sensor (DHT22/BME280) required for humidity.   |");
-  Serial.println("+---------------------------------------------------------+");
+// ────────────────────────────────────────────────────────────────────────────
+
+// Print a memory bar
+static void print_memory_bar(const char* label, uint32_t used, uint32_t total, int bar_width = 30) {
+  float pct = (float)used / total * 100.0f;
+  int filled = (int)(pct / 100.0f * bar_width);
+  if (filled > bar_width) filled = bar_width;
+
+  char used_str[16], total_str[16];
+  format_bytes(used, used_str, sizeof(used_str));
+  format_bytes(total, total_str, sizeof(total_str));
+
+  Serial.printf("  %-8s [", label);
+  for (int i = 0; i < bar_width; i++) {
+    Serial.print(i < filled ? '#' : '-');
+  }
+  Serial.printf("] %5.1f%% (%s / %s)\n", pct, used_str, total_str);
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+
+void print_status() {
+  char buf1[32], buf2[32];
+
+  float temp_c = g_sys_metrics.temp_celsius;
+  float temp_f = celsius_to_fahrenheit(temp_c);
+  float temp_min_f = celsius_to_fahrenheit(g_sys_metrics.temp_min);
+  float temp_max_f = celsius_to_fahrenheit(g_sys_metrics.temp_max);
+  float temp_avg_f = celsius_to_fahrenheit(g_sys_metrics.temp_avg);
+
+  Serial.println();
+  Serial.println("================================================================================");
+  Serial.println("                        SYSTEM MONITOR - ESP32-S3                              ");
+  Serial.println("================================================================================");
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // DEVICE INFORMATION
+  // ─────────────────────────────────────────────────────────────────────────
+  Serial.println();
+  Serial.println("--- DEVICE INFORMATION --------------------------------------------------------");
+
+  Serial.printf("  Chip Model     : %s (rev %u)\n", g_sys_metrics.chip_model, g_sys_metrics.chip_revision);
+  Serial.printf("  CPU            : %u cores @ %u MHz\n", g_sys_metrics.chip_cores, g_sys_metrics.cpu_freq_mhz);
+  Serial.printf("  Flash Size     : %s\n", format_bytes(g_sys_metrics.flash_size, buf1, sizeof(buf1)));
+  Serial.printf("  SDK Version    : %s\n", ESP.getSdkVersion());
+  Serial.printf("  Sketch Size    : %s\n", format_bytes(ESP.getSketchSize(), buf1, sizeof(buf1)));
+  Serial.printf("  Sketch MD5     : %s\n", ESP.getSketchMD5().c_str());
+
+  // MAC Address
+  uint8_t mac[6];
+  esp_efuse_mac_get_default(mac);
+  Serial.printf("  MAC Address    : %02X:%02X:%02X:%02X:%02X:%02X\n",
+                mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+
+  Serial.printf("  Chip ID        : %llX\n", ESP.getEfuseMac());
+  Serial.printf("  Flash Mode     : %s\n",
+    ESP.getFlashChipMode() == FM_QIO ? "QIO" :
+    ESP.getFlashChipMode() == FM_QOUT ? "QOUT" :
+    ESP.getFlashChipMode() == FM_DIO ? "DIO" :
+    ESP.getFlashChipMode() == FM_DOUT ? "DOUT" : "Unknown");
+  Serial.printf("  Flash Speed    : %u MHz\n", ESP.getFlashChipSpeed() / 1000000);
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // TEMPERATURE
+  // ─────────────────────────────────────────────────────────────────────────
+  Serial.println();
+  Serial.println("--- TEMPERATURE (Internal Chip Sensor) ----------------------------------------");
+  Serial.println();
+
+  // Current temperature with big display
+  Serial.printf("  CURRENT:  %.1f C  /  %.1f F    [%s]\n",
+                temp_c, temp_f, temp_state_name(g_sys_metrics.temp_state));
+  Serial.println();
+
+  // Visual meter
+  print_temp_meter(temp_c);
+
+  Serial.println();
+  Serial.printf("  Session Min  : %6.1f C  / %6.1f F\n", g_sys_metrics.temp_min, temp_min_f);
+  Serial.printf("  Session Max  : %6.1f C  / %6.1f F\n", g_sys_metrics.temp_max, temp_max_f);
+  Serial.printf("  Average (EMA): %6.1f C  / %6.1f F\n", g_sys_metrics.temp_avg, temp_avg_f);
+  Serial.printf("  Readings     : %u\n", g_sys_metrics.temp_readings);
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // TEMPERATURE ZONES REFERENCE
+  // ─────────────────────────────────────────────────────────────────────────
+  Serial.println();
+  Serial.println("  TEMPERATURE ZONES:");
+  Serial.println("  +-------------+------------------+------------------+------------------------+");
+  Serial.println("  | Zone        | Celsius          | Fahrenheit       | Status                 |");
+  Serial.println("  +-------------+------------------+------------------+------------------------+");
+  Serial.printf("  | CRIT COLD   | < %5.1f C        | < %5.1f F        | DANGER - May damage!   |\n",
+                TEMP_COLD_CRITICAL, celsius_to_fahrenheit(TEMP_COLD_CRITICAL));
+  Serial.printf("  | WARN COLD   | %5.1f - %4.1f C  | %5.1f - %5.1f F | Caution - Too cold     |\n",
+                TEMP_COLD_CRITICAL, TEMP_COLD_WARNING,
+                celsius_to_fahrenheit(TEMP_COLD_CRITICAL), celsius_to_fahrenheit(TEMP_COLD_WARNING));
+  Serial.printf("  | NORMAL      | %5.1f - %4.1f C  | %5.1f - %5.1f F | OK - Optimal range     |\n",
+                TEMP_COLD_WARNING, TEMP_HOT_WARNING,
+                celsius_to_fahrenheit(TEMP_COLD_WARNING), celsius_to_fahrenheit(TEMP_HOT_WARNING));
+  Serial.printf("  | WARN HOT    | %5.1f - %4.1f C  | %5.1f - %5.1f F | Caution - Getting hot  |\n",
+                TEMP_HOT_WARNING, TEMP_HOT_CRITICAL,
+                celsius_to_fahrenheit(TEMP_HOT_WARNING), celsius_to_fahrenheit(TEMP_HOT_CRITICAL));
+  Serial.printf("  | CRIT HOT    | > %5.1f C        | > %5.1f F        | DANGER - Throttle/halt |\n",
+                TEMP_HOT_CRITICAL, celsius_to_fahrenheit(TEMP_HOT_CRITICAL));
+  Serial.println("  +-------------+------------------+------------------+------------------------+");
+
+  Serial.println();
+  Serial.printf("  Alert History: %u cold alerts, %u hot alerts\n",
+                g_sys_metrics.cold_alerts, g_sys_metrics.hot_alerts);
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // MEMORY
+  // ─────────────────────────────────────────────────────────────────────────
+  Serial.println();
+  Serial.println("--- MEMORY --------------------------------------------------------------------");
+  Serial.println();
+
+  // Internal Heap
+  Serial.println("  INTERNAL HEAP (SRAM):");
+  uint32_t heap_used = g_sys_metrics.heap_total - g_sys_metrics.heap_free;
+  print_memory_bar("Used", heap_used, g_sys_metrics.heap_total);
+  Serial.printf("  Free Now     : %s\n", format_bytes(g_sys_metrics.heap_free, buf1, sizeof(buf1)));
+  Serial.printf("  Min Free Ever: %s (high water mark)\n", format_bytes(g_sys_metrics.heap_min_free, buf1, sizeof(buf1)));
+  Serial.printf("  Largest Block: %s (max single allocation)\n", format_bytes(g_sys_metrics.heap_largest_block, buf1, sizeof(buf1)));
+
+  // PSRAM
+  Serial.println();
+  if (g_sys_metrics.psram_available) {
+    Serial.println("  PSRAM (External SPI RAM):");
+    uint32_t psram_used = g_sys_metrics.psram_total - g_sys_metrics.psram_free;
+    print_memory_bar("Used", psram_used, g_sys_metrics.psram_total);
+    Serial.printf("  Free Now     : %s\n", format_bytes(g_sys_metrics.psram_free, buf1, sizeof(buf1)));
+    Serial.printf("  Min Free Ever: %s\n", format_bytes(g_sys_metrics.psram_min_free, buf1, sizeof(buf1)));
+  } else {
+    Serial.println("  PSRAM: Not detected or not enabled");
+  }
+
+  // Sketch memory
+  Serial.println();
+  Serial.println("  FLASH PROGRAM MEMORY:");
+  uint32_t sketch_used = ESP.getSketchSize();
+  uint32_t sketch_total = ESP.getFreeSketchSpace() + sketch_used;
+  print_memory_bar("Used", sketch_used, sketch_total);
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // RUNTIME
+  // ─────────────────────────────────────────────────────────────────────────
+  Serial.println();
+  Serial.println("--- RUNTIME -------------------------------------------------------------------");
+  Serial.printf("  Uptime       : %s (%u seconds)\n",
+                format_uptime(g_sys_metrics.uptime_sec, buf1, sizeof(buf1)),
+                g_sys_metrics.uptime_sec);
+  Serial.printf("  CPU Cycles   : %llu\n", (unsigned long long)ESP.getCycleCount());
+  Serial.printf("  Reset Reason : %s\n",
+    esp_reset_reason() == ESP_RST_POWERON ? "Power-on" :
+    esp_reset_reason() == ESP_RST_EXT ? "External" :
+    esp_reset_reason() == ESP_RST_SW ? "Software" :
+    esp_reset_reason() == ESP_RST_PANIC ? "Panic" :
+    esp_reset_reason() == ESP_RST_INT_WDT ? "Interrupt WDT" :
+    esp_reset_reason() == ESP_RST_TASK_WDT ? "Task WDT" :
+    esp_reset_reason() == ESP_RST_WDT ? "Other WDT" :
+    esp_reset_reason() == ESP_RST_DEEPSLEEP ? "Deep Sleep" :
+    esp_reset_reason() == ESP_RST_BROWNOUT ? "Brownout" :
+    esp_reset_reason() == ESP_RST_SDIO ? "SDIO" : "Unknown");
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // NOTES
+  // ─────────────────────────────────────────────────────────────────────────
+  Serial.println();
+  Serial.println("--- NOTES ---------------------------------------------------------------------");
+  Serial.println("  * Temperature is chip internal (die temp), typically 10-20C above ambient");
+  Serial.println("  * ESP32-S3 has NO built-in humidity sensor");
+  Serial.println("  * For humidity, add external sensor: DHT22, BME280, SHT31, etc.");
+  Serial.println("  * PSRAM extends available RAM via external SPI chip (8MB on XIAO Sense)");
+  Serial.println();
+  Serial.println("================================================================================");
   Serial.println();
 }
 
@@ -562,49 +724,73 @@ size_t get_json(char* buf, size_t buf_size) {
 
   float heap_pct = (float)(g_sys_metrics.heap_total - g_sys_metrics.heap_free) / g_sys_metrics.heap_total * 100.0f;
 
+  // Get MAC address
+  uint8_t mac[6];
+  esp_efuse_mac_get_default(mac);
+  char mac_str[18];
+  snprintf(mac_str, sizeof(mac_str), "%02X:%02X:%02X:%02X:%02X:%02X",
+           mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+
+  // Calculate Fahrenheit values
+  float temp_f = celsius_to_fahrenheit(g_sys_metrics.temp_celsius);
+  float temp_min_f = celsius_to_fahrenheit(g_sys_metrics.temp_min);
+  float temp_max_f = celsius_to_fahrenheit(g_sys_metrics.temp_max);
+  float temp_avg_f = celsius_to_fahrenheit(g_sys_metrics.temp_avg);
+
   int len = snprintf(buf, buf_size,
     "{"
     "\"temperature\":{"
-      "\"current\":%.1f,"
-      "\"min\":%.1f,"
-      "\"max\":%.1f,"
-      "\"avg\":%.1f,"
+      "\"celsius\":{\"current\":%.1f,\"min\":%.1f,\"max\":%.1f,\"avg\":%.1f},"
+      "\"fahrenheit\":{\"current\":%.1f,\"min\":%.1f,\"max\":%.1f,\"avg\":%.1f},"
       "\"state\":\"%s\","
       "\"alert_active\":%s,"
       "\"thresholds\":{"
-        "\"cold_warn\":%.1f,"
-        "\"cold_crit\":%.1f,"
-        "\"hot_warn\":%.1f,"
-        "\"hot_crit\":%.1f"
+        "\"cold_warn_c\":%.1f,\"cold_warn_f\":%.1f,"
+        "\"cold_crit_c\":%.1f,\"cold_crit_f\":%.1f,"
+        "\"hot_warn_c\":%.1f,\"hot_warn_f\":%.1f,"
+        "\"hot_crit_c\":%.1f,\"hot_crit_f\":%.1f"
       "},"
-      "\"alerts\":{\"cold\":%u,\"hot\":%u}"
+      "\"alerts\":{\"cold\":%u,\"hot\":%u},"
+      "\"readings\":%u"
     "},"
     "\"memory\":{"
       "\"heap\":{\"total\":%u,\"free\":%u,\"min_free\":%u,\"largest_block\":%u,\"used_pct\":%.1f},"
-      "\"psram\":{\"available\":%s,\"total\":%u,\"free\":%u,\"min_free\":%u}"
+      "\"psram\":{\"available\":%s,\"total\":%u,\"free\":%u,\"min_free\":%u},"
+      "\"sketch\":{\"size\":%u,\"free\":%u}"
     "},"
-    "\"chip\":{"
+    "\"device\":{"
       "\"model\":\"%s\","
       "\"revision\":%u,"
       "\"cores\":%u,"
       "\"freq_mhz\":%u,"
-      "\"flash\":%u"
+      "\"flash_size\":%u,"
+      "\"flash_speed_mhz\":%u,"
+      "\"mac\":\"%s\","
+      "\"chip_id\":\"%llX\","
+      "\"sdk_version\":\"%s\","
+      "\"reset_reason\":\"%s\""
     "},"
     "\"uptime\":{\"seconds\":%u,\"formatted\":\"%s\"},"
     "\"humidity_available\":false"
     "}",
+    // Celsius
     g_sys_metrics.temp_celsius,
     g_sys_metrics.temp_min,
     g_sys_metrics.temp_max,
     g_sys_metrics.temp_avg,
+    // Fahrenheit
+    temp_f, temp_min_f, temp_max_f, temp_avg_f,
     temp_state_name(g_sys_metrics.temp_state),
     g_sys_metrics.alert_active ? "true" : "false",
-    TEMP_COLD_WARNING,
-    TEMP_COLD_CRITICAL,
-    TEMP_HOT_WARNING,
-    TEMP_HOT_CRITICAL,
+    // Thresholds C and F
+    TEMP_COLD_WARNING, celsius_to_fahrenheit(TEMP_COLD_WARNING),
+    TEMP_COLD_CRITICAL, celsius_to_fahrenheit(TEMP_COLD_CRITICAL),
+    TEMP_HOT_WARNING, celsius_to_fahrenheit(TEMP_HOT_WARNING),
+    TEMP_HOT_CRITICAL, celsius_to_fahrenheit(TEMP_HOT_CRITICAL),
     g_sys_metrics.cold_alerts,
     g_sys_metrics.hot_alerts,
+    g_sys_metrics.temp_readings,
+    // Memory
     g_sys_metrics.heap_total,
     g_sys_metrics.heap_free,
     g_sys_metrics.heap_min_free,
@@ -614,11 +800,24 @@ size_t get_json(char* buf, size_t buf_size) {
     g_sys_metrics.psram_total,
     g_sys_metrics.psram_free,
     g_sys_metrics.psram_min_free,
+    ESP.getSketchSize(),
+    ESP.getFreeSketchSpace(),
+    // Device
     g_sys_metrics.chip_model,
     g_sys_metrics.chip_revision,
     g_sys_metrics.chip_cores,
     g_sys_metrics.cpu_freq_mhz,
     g_sys_metrics.flash_size,
+    ESP.getFlashChipSpeed() / 1000000,
+    mac_str,
+    (unsigned long long)ESP.getEfuseMac(),
+    ESP.getSdkVersion(),
+    esp_reset_reason() == ESP_RST_POWERON ? "power_on" :
+    esp_reset_reason() == ESP_RST_SW ? "software" :
+    esp_reset_reason() == ESP_RST_PANIC ? "panic" :
+    esp_reset_reason() == ESP_RST_WDT ? "watchdog" :
+    esp_reset_reason() == ESP_RST_BROWNOUT ? "brownout" : "other",
+    // Uptime
     g_sys_metrics.uptime_sec,
     uptime_str
   );

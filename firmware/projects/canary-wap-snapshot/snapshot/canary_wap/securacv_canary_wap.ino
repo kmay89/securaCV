@@ -1504,8 +1504,8 @@ static esp_err_t handle_status(httpd_req_t* req) {
 static esp_err_t handle_system_metrics(httpd_req_t* req) {
   g_health.http_requests++;
 
-  // Use the sys_monitor JSON generator
-  char buf[1024];
+  // Use the sys_monitor JSON generator (larger buffer for full device info + F/C temps)
+  char buf[2048];
   size_t len = sys_monitor::get_json(buf, sizeof(buf));
 
   if (len == 0) {
