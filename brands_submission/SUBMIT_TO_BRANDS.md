@@ -8,8 +8,8 @@ This folder contains the brand assets ready for submission to the [home-assistan
 |------|-----------|-------------|
 | `icon.png` | 256x256 | Square icon (standard resolution) |
 | `icon@2x.png` | 512x512 | Square icon (high DPI) |
-| `logo.png` | 255x258 | Logo (standard resolution) |
-| `logo@2x.png` | 511x517 | Logo (high DPI) |
+| `logo.png` | 256x256 | Logo (standard resolution) |
+| `logo@2x.png` | 512x512 | Logo (high DPI) |
 
 All images are PNG format with RGBA transparency.
 
@@ -56,8 +56,8 @@ gh pr create --title "Add SecuraCV custom integration brand" --body "Adds brand 
 ## Assets Added
 - icon.png (256x256)
 - icon@2x.png (512x512)
-- logo.png (255x258)
-- logo@2x.png (511x517)
+- logo.png (256x256)
+- logo@2x.png (512x512)
 
 All images meet the [brand requirements](https://github.com/home-assistant/brands#readme)."
 ```
@@ -67,8 +67,8 @@ All images meet the [brand requirements](https://github.com/home-assistant/brand
 - [x] Icons are square (1:1 aspect ratio)
 - [x] icon.png is 256x256 pixels
 - [x] icon@2x.png is 512x512 pixels
-- [x] logo.png shortest side is 128-256 pixels
-- [x] logo@2x.png shortest side is 256-512 pixels
+- [x] logo.png is 256x256 pixels
+- [x] logo@2x.png is 512x512 pixels
 - [x] All images are PNG format
 - [x] All images have transparency
 - [x] No Home Assistant branded images used
