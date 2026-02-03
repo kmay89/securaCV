@@ -97,7 +97,11 @@ pub(crate) fn open_db_connection(db_path: &str) -> Result<Connection> {
 }
 
 // -------------------- Time Buckets --------------------
+// Per spec/event_contract.md §3: minimum bucket 5 minutes, typical 10-15 minutes.
+// These parameters are conformance-critical and MUST NOT be narrowed.
 
+/// Minimum allowed bucket size per spec/event_contract.md §3 (5 minutes).
+pub const MIN_BUCKET_SIZE_S: u32 = 300;
 const TEN_MINUTES_S: u32 = 600;
 const FIFTEEN_MINUTES_S: u32 = 900;
 
@@ -110,7 +114,29 @@ pub struct TimeBucket {
 }
 
 impl TimeBucket {
+    /// Validate that the bucket size meets the minimum requirement.
+    ///
+    /// # Errors
+    /// Returns an error if `bucket_size_s` is less than `MIN_BUCKET_SIZE_S` (300 seconds)
+    /// per spec/event_contract.md §3: "Minimum bucket: 5 minutes".
+    pub fn validate_bucket_size(bucket_size_s: u32) -> Result<()> {
+        if bucket_size_s < MIN_BUCKET_SIZE_S {
+            return Err(anyhow!(
+                "time bucket size {} is below minimum {} seconds (5 minutes) per spec/event_contract.md §3",
+                bucket_size_s,
+                MIN_BUCKET_SIZE_S
+            ));
+        }
+        Ok(())
+    }
+
+    /// Create a time bucket for the current time with the given bucket size.
+    ///
+    /// # Errors
+    /// Returns an error if `bucket_size_s` is less than `MIN_BUCKET_SIZE_S` (300 seconds)
+    /// per spec/event_contract.md §3: "Minimum bucket: 5 minutes".
     pub fn now(bucket_size_s: u32) -> Result<Self> {
+        Self::validate_bucket_size(bucket_size_s)?;
         let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
         let size = bucket_size_s as u64;
         let start = (now / size) * size;
@@ -124,10 +150,9 @@ impl TimeBucket {
         Self::now(TEN_MINUTES_S)
     }
 
+    /// Coarsen to a larger bucket. The target bucket size must be >= MIN_BUCKET_SIZE_S.
     pub fn coarsen_to(self, bucket_size_s: u32) -> Result<Self> {
-        if bucket_size_s == 0 {
-            return Err(anyhow!("time bucket size must be > 0"));
-        }
+        Self::validate_bucket_size(bucket_size_s)?;
         let size = bucket_size_s as u64;
         let start = (self.start_epoch_s / size) * size;
         Ok(TimeBucket {
