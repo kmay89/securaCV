@@ -1,0 +1,149 @@
+# SecuraCV Canary OTA - Default SDK Configuration
+# This file sets default values for ESP-IDF sdkconfig options.
+# These can be overridden in sdkconfig or via menuconfig.
+
+# ============================================================================
+# Partition Table
+# ============================================================================
+
+# Use custom partition table for OTA dual-partition scheme
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_PARTITION_TABLE_OFFSET=0x8000
+
+# ============================================================================
+# Bootloader
+# ============================================================================
+
+# Enable app rollback support (required for OTA validation)
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
+# Log level for bootloader
+CONFIG_BOOTLOADER_LOG_LEVEL_INFO=y
+
+# ============================================================================
+# Serial Flasher
+# ============================================================================
+
+# Flash size: 8MB (XIAO ESP32-S3)
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="8MB"
+
+# Flash mode: QIO for best performance
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+
+# ============================================================================
+# ESP System Settings
+# ============================================================================
+
+# CPU frequency
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ=240
+
+# ============================================================================
+# PSRAM Configuration (XIAO ESP32-S3 has 8MB PSRAM)
+# ============================================================================
+
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_BOOT_INIT=y
+CONFIG_SPIRAM_USE_MALLOC=y
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384
+
+# ============================================================================
+# WiFi Configuration
+# ============================================================================
+
+# Placeholder WiFi credentials - CHANGE THESE for your network!
+# Or use: pio run -t menuconfig -> Example Configuration
+CONFIG_ESP_WIFI_SSID="YOUR_WIFI_SSID"
+CONFIG_ESP_WIFI_PASSWORD="YOUR_WIFI_PASSWORD"
+
+# WiFi settings
+CONFIG_ESP_WIFI_AUTH_WPA2_PSK=y
+
+# WiFi buffer settings
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=10
+CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=32
+CONFIG_ESP_WIFI_TX_BUFFER_TYPE=1
+CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM=32
+
+# ============================================================================
+# HTTP Client
+# ============================================================================
+
+# Enable HTTPS support
+CONFIG_ESP_HTTP_CLIENT_ENABLE_HTTPS=y
+
+# ============================================================================
+# TLS/SSL (mbedTLS)
+# ============================================================================
+
+# Increase TLS buffer for large certificates
+CONFIG_MBEDTLS_SSL_MAX_CONTENT_LEN=16384
+
+# Enable certificate verification
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
+
+# ============================================================================
+# Logging
+# ============================================================================
+
+# Default log level: INFO
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+CONFIG_LOG_DEFAULT_LEVEL=3
+
+# Maximum log level that can be set at runtime
+CONFIG_LOG_MAXIMUM_LEVEL_VERBOSE=y
+CONFIG_LOG_MAXIMUM_LEVEL=5
+
+# Add color to log output
+CONFIG_LOG_COLORS=y
+
+# ============================================================================
+# FreeRTOS
+# ============================================================================
+
+# Tick rate
+CONFIG_FREERTOS_HZ=1000
+
+# Timer task stack size (increased for OTA)
+CONFIG_FREERTOS_TIMER_TASK_STACK_DEPTH=4096
+
+# Enable FreeRTOS stats
+CONFIG_FREERTOS_USE_TRACE_FACILITY=y
+CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=y
+
+# ============================================================================
+# Heap Memory
+# ============================================================================
+
+# Enable heap poisoning for debugging
+CONFIG_HEAP_POISONING_LIGHT=y
+
+# ============================================================================
+# OTA Configuration
+# ============================================================================
+
+# Verify OTA image on first boot
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
+# ============================================================================
+# Compiler Options
+# ============================================================================
+
+# Optimization level
+CONFIG_COMPILER_OPTIMIZATION_SIZE=y
+
+# Stack protection
+CONFIG_COMPILER_STACK_CHECK_MODE_NORM=y
+CONFIG_COMPILER_STACK_CHECK=y
+
+# ============================================================================
+# NVS
+# ============================================================================
+
+# Enable NVS encryption support (for Phase 3)
+CONFIG_NVS_ENCRYPTION=y

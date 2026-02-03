@@ -1,0 +1,79 @@
+menu "SecuraCV OTA Configuration"
+
+    config SECURACV_OTA_MANIFEST_URL
+        string "Firmware manifest URL"
+        default "https://operacanary.com/api/v1/firmware/manifest.json"
+        help
+            HTTPS URL to the firmware manifest JSON file.
+            The manifest contains version, download URL, and SHA256 hash
+            of the available firmware update.
+
+    config SECURACV_OTA_CHECK_INTERVAL_HOURS
+        int "Automatic check interval (hours)"
+        default 24
+        range 1 168
+        help
+            How often to automatically check for firmware updates.
+            Default is 24 hours. Range is 1 hour to 1 week (168 hours).
+            Set to 0 to disable automatic checking (Phase 2 feature).
+
+    config SECURACV_OTA_AUTO_INSTALL
+        bool "Automatically install updates"
+        default y
+        help
+            If enabled, minor and patch version updates are installed
+            automatically after successful download and verification.
+            If disabled, updates are downloaded but user must trigger
+            the install (via MQTT command or web portal).
+
+    config SECURACV_OTA_AUTO_REBOOT
+        bool "Automatically reboot after OTA"
+        default y
+        help
+            If enabled, the device will automatically reboot after
+            a successful OTA update. If disabled, the application
+            must call esp_restart() to apply the update.
+
+    config SECURACV_OTA_TASK_STACK_SIZE
+        int "OTA task stack size"
+        default 8192
+        range 4096 16384
+        help
+            Stack size in bytes for the OTA task. The OTA task handles
+            HTTPS connections which require significant stack space.
+            Increase if you see stack overflow errors.
+
+    config SECURACV_OTA_HTTP_TIMEOUT_MS
+        int "HTTP request timeout (ms)"
+        default 30000
+        range 5000 120000
+        help
+            Timeout in milliseconds for HTTP requests to the manifest
+            and firmware download servers. Increase for slow networks.
+
+    config SECURACV_OTA_DOWNLOAD_BUFFER_SIZE
+        int "Download buffer size (bytes)"
+        default 4096
+        range 1024 16384
+        help
+            Size of the buffer used for downloading firmware chunks.
+            Larger buffers may improve download speed but use more RAM.
+
+    config SECURACV_OTA_SKIP_CERT_VERIFY
+        bool "Skip TLS certificate verification (INSECURE)"
+        default n
+        help
+            WARNING: This is for development/testing only!
+            If enabled, the OTA client will not verify the TLS
+            certificate of the manifest or firmware download servers.
+            NEVER enable this in production firmware.
+
+    config SECURACV_OTA_ENABLE_SIGNATURE_VERIFY
+        bool "Enable firmware signature verification"
+        default n
+        help
+            If enabled, downloaded firmware must have a valid Ed25519
+            signature. The public key is embedded in the firmware.
+            This is a Phase 3 feature - not yet implemented.
+
+endmenu
