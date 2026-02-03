@@ -48,11 +48,14 @@ This folder contains brand assets for the SecuraCV integration ready for submiss
 
 ## Brand Design
 
-The SecuraCV brand represents:
-- **Shield**: Security and protection
-- **Eye**: Witness/observation capability
-- **Chain links**: Hash chain integrity (blockchain-style verification)
-- **Color palette**: Deep teal (#1a5f7a, #2d7d9a) for trust and security
+The SecuraCV brand features the **Canary mascot** - a friendly yellow canary with a notepad, representing:
+- **Canary**: The "canary in the coal mine" - an early warning witness that documents events
+- **Notepad**: Recording and witnessing capability - documenting what happens
+- **Bright yellow**: Visibility, alertness, and approachability
+- **Friendly expression**: Privacy-respecting, non-threatening surveillance alternative
+
+The canary mascot embodies the project's core mission: being a trustworthy witness that
+documents events for accountability while respecting privacy.
 
 ## After PR is Merged
 
@@ -78,4 +81,10 @@ Once your brands PR is merged to home-assistant/brands:
 
 ## Source Files
 
-The `icon.svg` and `logo.svg` files are the source vectors if you need to modify the design.
+- `logo_main.png` - The master canary mascot image (1024x1024)
+- `generate_brand_assets.py` - Script to regenerate all sizes from the source image
+
+To regenerate the brand assets after modifying the source:
+```bash
+python3 generate_brand_assets.py logo_main.png
+```
