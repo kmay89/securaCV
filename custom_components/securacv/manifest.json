@@ -4,6 +4,7 @@
   "after_dependencies": ["mqtt"],
   "codeowners": ["@kmay89"],
   "config_flow": true,
+  "dependencies": [],
   "documentation": "https://github.com/kmay89/securaCV",
   "integration_type": "hub",
   "iot_class": "local_polling",
