@@ -19,25 +19,29 @@
 # rustc-wrapper = "sccache"
 
 # ════════════════════════════════════════════════════════════════════════════
-# LINKER OPTIMIZATION
+# LINKER OPTIMIZATION (Optional - uncomment if tools are installed)
 # ════════════════════════════════════════════════════════════════════════════
 
 # Use mold linker for faster linking (Linux)
 # Install: sudo apt install mold
-[target.x86_64-unknown-linux-gnu]
-linker = "clang"
-rustflags = ["-C", "link-arg=-fuse-ld=mold", "-C", "target-cpu=native"]
+# Uncomment for ~2x faster linking on local dev machines:
+# [target.x86_64-unknown-linux-gnu]
+# linker = "clang"
+# rustflags = ["-C", "link-arg=-fuse-ld=mold", "-C", "target-cpu=native"]
 
 # Use lld linker on macOS
-[target.x86_64-apple-darwin]
-rustflags = ["-C", "link-arg=-fuse-ld=lld", "-C", "target-cpu=native"]
+# Install: brew install llvm
+# Uncomment for faster linking on local dev machines:
+# [target.x86_64-apple-darwin]
+# rustflags = ["-C", "link-arg=-fuse-ld=lld", "-C", "target-cpu=native"]
 
-[target.aarch64-apple-darwin]
-rustflags = ["-C", "link-arg=-fuse-ld=lld", "-C", "target-cpu=native"]
+# [target.aarch64-apple-darwin]
+# rustflags = ["-C", "link-arg=-fuse-ld=lld", "-C", "target-cpu=native"]
 
 # Windows with lld-link
-[target.x86_64-pc-windows-msvc]
-linker = "lld-link"
+# Uncomment if lld-link is installed:
+# [target.x86_64-pc-windows-msvc]
+# linker = "lld-link"
 
 # ════════════════════════════════════════════════════════════════════════════
 # PROFILE SETTINGS
