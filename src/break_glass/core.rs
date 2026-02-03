@@ -19,6 +19,14 @@ impl TrusteeId {
     }
 }
 
+/// Maximum number of trustees allowed in a quorum policy.
+/// This prevents DoS via excessive policy size.
+pub const MAX_TRUSTEES: usize = 32;
+
+/// Maximum number of approvals that can be submitted per authorization request.
+/// This prevents DoS via excessive approval processing.
+pub const MAX_APPROVALS: usize = 64;
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct QuorumPolicy {
     pub n: u8,
@@ -54,6 +62,13 @@ impl QuorumPolicy {
         }
         if self.trustees.is_empty() {
             return Err(anyhow!("quorum must include at least one trustee"));
+        }
+        if self.trustees.len() > MAX_TRUSTEES {
+            return Err(anyhow!(
+                "quorum trustee count {} exceeds maximum {}",
+                self.trustees.len(),
+                MAX_TRUSTEES
+            ));
         }
         if self.n as usize > self.trustees.len() {
             return Err(anyhow!("quorum threshold exceeds trustee count"));
@@ -431,6 +446,33 @@ impl BreakGlass {
         approvals: &[Approval],
         now_bucket: TimeBucket,
     ) -> (Result<BreakGlassToken>, BreakGlassReceipt) {
+        // Validate approval count to prevent DoS via excessive approval processing
+        if approvals.len() > MAX_APPROVALS {
+            let receipt = BreakGlassReceipt {
+                vault_envelope_id: request.vault_envelope_id.clone(),
+                request_hash: request.request_hash(),
+                ruleset_hash: request.ruleset_hash,
+                time_bucket: now_bucket,
+                trustees_used: vec![],
+                approvals_commitment: approvals_commitment(approvals),
+                outcome: BreakGlassOutcome::Denied {
+                    reason: format!(
+                        "approval count {} exceeds maximum {}",
+                        approvals.len(),
+                        MAX_APPROVALS
+                    ),
+                },
+            };
+            return (
+                Err(anyhow!(
+                    "approval count {} exceeds maximum {}",
+                    approvals.len(),
+                    MAX_APPROVALS
+                )),
+                receipt,
+            );
+        }
+
         let mut trustees_used = Vec::new();
         let mut unknown_trustees = std::collections::BTreeSet::new();
         let request_hash = request.request_hash();
@@ -710,5 +752,163 @@ mod tests {
             |_| Ok(BreakGlassOutcome::Granted),
         );
         assert!(result.is_err());
+    }
+
+    // ==================== Security Edge Case Tests ====================
+
+    #[test]
+    fn quorum_policy_rejects_excessive_trustees() {
+        let trustees: Vec<TrusteeEntry> = (0..MAX_TRUSTEES + 1)
+            .map(|i| {
+                let seed = [i as u8; 32];
+                let signing_key = SigningKey::from_bytes(&seed);
+                TrusteeEntry {
+                    id: TrusteeId::new(&format!("trustee-{}", i)),
+                    public_key: signing_key.verifying_key().to_bytes(),
+                }
+            })
+            .collect();
+
+        let result = QuorumPolicy::new(1, trustees);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("exceeds maximum"));
+    }
+
+    #[test]
+    fn quorum_policy_accepts_max_trustees() {
+        let trustees: Vec<TrusteeEntry> = (0..MAX_TRUSTEES)
+            .map(|i| {
+                let seed = [i as u8; 32];
+                let signing_key = SigningKey::from_bytes(&seed);
+                TrusteeEntry {
+                    id: TrusteeId::new(&format!("trustee-{}", i)),
+                    public_key: signing_key.verifying_key().to_bytes(),
+                }
+            })
+            .collect();
+
+        let result = QuorumPolicy::new(1, trustees);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn authorize_rejects_excessive_approvals() {
+        let bucket = TimeBucket {
+            start_epoch_s: 0,
+            size_s: 600,
+        };
+        let request = UnlockRequest::new("vault:excess", [99u8; 32], "incident", bucket).unwrap();
+        let signing_key = SigningKey::from_bytes(&[1u8; 32]);
+        let policy = QuorumPolicy::new(
+            1,
+            vec![TrusteeEntry {
+                id: TrusteeId::new("alice"),
+                public_key: signing_key.verifying_key().to_bytes(),
+            }],
+        )
+        .unwrap();
+
+        // Create more approvals than the maximum allowed
+        let fake_approvals: Vec<Approval> = (0..MAX_APPROVALS + 1)
+            .map(|_| Approval::new(TrusteeId::new("fake"), [0u8; 32], vec![0u8; 64]))
+            .collect();
+
+        let (result, receipt) = BreakGlass::authorize(&policy, &request, &fake_approvals, bucket);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("exceeds maximum"));
+        assert!(matches!(receipt.outcome, BreakGlassOutcome::Denied { .. }));
+    }
+
+    #[test]
+    fn duplicate_trustee_approvals_only_count_once() {
+        let bucket = TimeBucket {
+            start_epoch_s: 0,
+            size_s: 600,
+        };
+        let request = UnlockRequest::new("vault:dup", [5u8; 32], "incident", bucket).unwrap();
+        let signing_key = SigningKey::from_bytes(&[7u8; 32]);
+        let signature = signing_key.sign(&request.request_hash());
+
+        // Same trustee signs twice
+        let approval1 = Approval::new(
+            TrusteeId::new("alice"),
+            request.request_hash(),
+            signature.to_vec(),
+        );
+        let approval2 = Approval::new(
+            TrusteeId::new("alice"),
+            request.request_hash(),
+            signature.to_vec(),
+        );
+
+        // Require 2 trustees but only 1 trustee in policy
+        let policy = QuorumPolicy::new(
+            2,
+            vec![
+                TrusteeEntry {
+                    id: TrusteeId::new("alice"),
+                    public_key: signing_key.verifying_key().to_bytes(),
+                },
+                TrusteeEntry {
+                    id: TrusteeId::new("bob"),
+                    public_key: SigningKey::from_bytes(&[8u8; 32])
+                        .verifying_key()
+                        .to_bytes(),
+                },
+            ],
+        )
+        .unwrap();
+
+        let (result, receipt) =
+            BreakGlass::authorize(&policy, &request, &[approval1, approval2], bucket);
+        // Should fail because alice can only count once
+        assert!(result.is_err());
+        assert!(matches!(receipt.outcome, BreakGlassOutcome::Denied { .. }));
+        // Alice should only appear once in trustees_used
+        assert_eq!(
+            receipt
+                .trustees_used
+                .iter()
+                .filter(|t| t.0 == "alice")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn token_consumed_flag_prevents_reuse() {
+        let bucket = TimeBucket {
+            start_epoch_s: 0,
+            size_s: 600,
+        };
+        let request = UnlockRequest::new("vault:consume", [10u8; 32], "incident", bucket).unwrap();
+        let signing_key = SigningKey::from_bytes(&[11u8; 32]);
+        let signature = signing_key.sign(&request.request_hash());
+        let approval = Approval::new(
+            TrusteeId::new("alice"),
+            request.request_hash(),
+            signature.to_vec(),
+        );
+        let policy = QuorumPolicy::new(
+            1,
+            vec![TrusteeEntry {
+                id: TrusteeId::new("alice"),
+                public_key: signing_key.verifying_key().to_bytes(),
+            }],
+        )
+        .unwrap();
+        let (result, _receipt) = BreakGlass::authorize(&policy, &request, &[approval], bucket);
+        let mut token = result.expect("token");
+
+        let device_signing_key = SigningKey::from_bytes(&[12u8; 32]);
+        let receipt_hash = [13u8; 32];
+        token
+            .attach_receipt_signature(receipt_hash, &device_signing_key)
+            .expect("attach receipt signature");
+
+        // First consume should succeed
+        assert!(token.consume().is_ok());
+        // Second consume should fail (token already consumed)
+        assert!(token.consume().is_err());
     }
 }

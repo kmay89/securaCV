@@ -116,6 +116,15 @@ pub fn decrypt_v1(envelope: &EnvelopeV1, master_key: &[u8; 32]) -> Result<Vec<u8
     Ok(clear)
 }
 
+/// RAII guard to ensure DEK is zeroized on drop, including error paths.
+struct DekGuard([u8; 32]);
+
+impl Drop for DekGuard {
+    fn drop(&mut self) {
+        self.0.zeroize();
+    }
+}
+
 pub fn seal_v2(
     envelope_id: &str,
     ruleset_hash: [u8; 32],
@@ -127,16 +136,18 @@ pub fn seal_v2(
     let aad = encode_aad(envelope_id, &ruleset_hash);
     let derived = derive_dek(envelope_id, &ruleset_hash, mode, master_key, kem_keypair)?;
 
+    // Wrap DEK in guard to ensure zeroization on all paths including errors
+    let dek_guard = DekGuard(derived.dek);
+
     let mut nonce = vec![0u8; 12];
     rand::thread_rng().fill_bytes(&mut nonce);
     let mut ciphertext = clear.to_vec();
-    let tag = encrypt_payload(&derived.dek, &nonce, &aad, &mut ciphertext)?;
+    let tag = encrypt_payload(&dek_guard.0, &nonce, &aad, &mut ciphertext)?;
 
     let mut final_ciphertext = ciphertext;
     final_ciphertext.extend_from_slice(&tag);
 
-    let mut dek = derived.dek;
-    dek.zeroize();
+    // dek_guard will be dropped and zeroized here
 
     Ok(EnvelopeV2 {
         version: 2,
@@ -158,17 +169,21 @@ pub fn decrypt_v2(
 ) -> Result<Vec<u8>> {
     let aad = envelope.aad.clone();
     let dek = recover_dek(envelope, master_key, kem_keypair)?;
+
+    // Wrap DEK in guard to ensure zeroization on all paths including errors
+    let dek_guard = DekGuard(dek);
+
     if envelope.ciphertext.len() < 16 {
+        // dek_guard will be dropped and zeroized here
         return Err(anyhow!("vault ciphertext truncated"));
     }
     let tag_offset = envelope.ciphertext.len() - 16;
     let mut ciphertext = envelope.ciphertext[..tag_offset].to_vec();
     let tag = &envelope.ciphertext[tag_offset..];
 
-    decrypt_payload(&dek, &envelope.nonce, &aad, &mut ciphertext, tag)?;
+    decrypt_payload(&dek_guard.0, &envelope.nonce, &aad, &mut ciphertext, tag)?;
 
-    let mut dek = dek;
-    dek.zeroize();
+    // dek_guard will be dropped and zeroized here
 
     Ok(ciphertext)
 }

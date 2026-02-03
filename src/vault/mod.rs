@@ -355,10 +355,20 @@ pub struct EnvelopeMetadata {
     pub ciphertext_len: usize,
 }
 
+/// Maximum allowed envelope ID length to prevent DoS via memory exhaustion.
+/// 128 bytes is sufficient for any reasonable identifier scheme.
+pub const MAX_ENVELOPE_ID_LEN: usize = 128;
+
 pub(crate) fn sanitize_envelope_id(envelope_id: &str) -> Result<String> {
     let trimmed = envelope_id.trim();
     if trimmed.is_empty() {
         return Err(anyhow!("vault envelope id cannot be empty"));
+    }
+    if trimmed.len() > MAX_ENVELOPE_ID_LEN {
+        return Err(anyhow!(
+            "vault envelope id exceeds maximum length of {} bytes",
+            MAX_ENVELOPE_ID_LEN
+        ));
     }
     if !trimmed
         .chars()
@@ -483,11 +493,19 @@ fn read_slice<'a>(bytes: &'a [u8], cursor: &mut usize, len: usize) -> Result<&'a
 fn write_atomic(path: &Path, data: &[u8]) -> Result<()> {
     let tmp_path = path.with_extension("tmp");
     {
+        #[cfg(unix)]
+        let mut file = {
+            let mut options = OpenOptions::new();
+            options.write(true).create(true).truncate(true).mode(0o600);
+            options.open(&tmp_path)?
+        };
+        #[cfg(not(unix))]
         let mut file = File::create(&tmp_path)?;
+
         file.write_all(data)?;
         file.sync_all()?;
     }
-    fs::rename(tmp_path, path)?;
+    fs::rename(&tmp_path, path)?;
     Ok(())
 }
 
@@ -868,5 +886,46 @@ mod tests {
         )?;
         assert_ne!(envelope.ciphertext, clear);
         Ok(())
+    }
+
+    // ==================== Security Edge Case Tests ====================
+
+    #[test]
+    fn envelope_id_rejects_oversized_input() {
+        // Create an envelope ID that exceeds the maximum length
+        let oversized_id = "a".repeat(MAX_ENVELOPE_ID_LEN + 1);
+        let result = sanitize_envelope_id(&oversized_id);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("exceeds maximum length"));
+    }
+
+    #[test]
+    fn envelope_id_accepts_max_length() {
+        // Create an envelope ID at exactly the maximum length
+        let max_len_id = "a".repeat(MAX_ENVELOPE_ID_LEN);
+        let result = sanitize_envelope_id(&max_len_id);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn envelope_id_rejects_empty() {
+        let result = sanitize_envelope_id("");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("cannot be empty"));
+    }
+
+    #[test]
+    fn envelope_id_rejects_invalid_characters() {
+        // Test uppercase rejection
+        assert!(sanitize_envelope_id("UPPER").is_err());
+        // Test whitespace rejection
+        assert!(sanitize_envelope_id("has space").is_err());
+        // Test special character rejection
+        assert!(sanitize_envelope_id("has/slash").is_err());
+        // Test valid characters are accepted
+        assert!(sanitize_envelope_id("valid-envelope_id-123").is_ok());
     }
 }
