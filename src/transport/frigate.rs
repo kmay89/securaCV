@@ -243,7 +243,10 @@ mod tests {
         let payload = r#"{"after": {"camera": "x", "label": "y"}, "type": "update"}"#;
         let result = parse_frigate_event(payload.as_bytes());
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("already processed"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("already processed"));
     }
 
     #[test]
