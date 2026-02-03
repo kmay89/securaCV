@@ -10,16 +10,16 @@
 //! This allows users to leverage Frigate's excellent ML detection while
 //! maintaining PWK's privacy guarantees for long-term event storage.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use clap::Parser;
 use rumqttc::v5::{mqttbytes::QoS, Client, Connection, Event, Incoming, MqttOptions};
-use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
 use witness_kernel::transport::{
-    parse_mqtt_endpoint, validate_loopback_addr, MqttEndpoint, TlsBackend, TlsConfig, TlsMaterials,
+    map_label_to_event_type, parse_frigate_event, parse_mqtt_endpoint, parse_review_event,
+    sanitize_zone_name, validate_loopback_addr, MqttEndpoint, TlsBackend, TlsConfig, TlsMaterials,
 };
 use witness_kernel::{
     CandidateEvent, EventType, InferenceBackend, Kernel, KernelConfig, ModuleDescriptor,
@@ -27,6 +27,35 @@ use witness_kernel::{
 };
 
 const BRIDGE_NAME: &str = "frigate_bridge";
+
+/// Exponential backoff helper for MQTT reconnection.
+struct ExponentialBackoff {
+    current_secs: u64,
+}
+
+impl ExponentialBackoff {
+    const INITIAL_SECS: u64 = 2;
+    const MAX_SECS: u64 = 60;
+
+    fn new() -> Self {
+        Self {
+            current_secs: Self::INITIAL_SECS,
+        }
+    }
+
+    fn current(&self) -> u64 {
+        self.current_secs
+    }
+
+    fn reset(&mut self) {
+        self.current_secs = Self::INITIAL_SECS;
+    }
+
+    fn wait_and_increment(&mut self) {
+        std::thread::sleep(Duration::from_secs(self.current_secs));
+        self.current_secs = std::cmp::min(self.current_secs * 2, Self::MAX_SECS);
+    }
+}
 
 #[derive(Parser, Debug)]
 #[command(
@@ -112,106 +141,6 @@ struct Args {
     /// If empty, processes: person, car, dog, cat, bird, bicycle, motorcycle.
     #[arg(long, env = "FRIGATE_LABELS")]
     labels: Option<String>,
-}
-
-/// Frigate event from MQTT - handles the nested before/after format.
-/// Frigate publishes: { "before": {...}, "after": {...}, "type": "new"|"update"|"end" }
-#[derive(Debug, Deserialize)]
-struct FrigateEventWrapper {
-    /// The "after" state contains current detection info
-    after: Option<FrigateEventData>,
-
-    /// Event type: "new", "update", or "end"
-    #[serde(rename = "type")]
-    event_type: Option<String>,
-}
-
-/// Inner event data from Frigate (the "after" section).
-#[derive(Debug, Deserialize)]
-struct FrigateEventData {
-    /// Event ID (will be stripped - not logged)
-    #[allow(dead_code)]
-    id: Option<String>,
-
-    /// Camera name (mapped to zone_id)
-    camera: String,
-
-    /// Object label (person, car, dog, etc.)
-    label: String,
-
-    /// Sub-label for more specific classification (e.g., "amazon" for package)
-    #[serde(default)]
-    sub_label: Option<String>,
-
-    /// Detection confidence (0.0-1.0)
-    #[serde(default)]
-    score: f64,
-
-    /// Top score seen for this object (use this if available)
-    top_score: Option<f64>,
-
-    /// Current zones the object is in (use first if available)
-    #[serde(default)]
-    current_zones: Vec<String>,
-
-    /// All zones the object has entered during tracking
-    #[serde(default)]
-    entered_zones: Vec<String>,
-
-    /// Whether this is a false positive (skip if true)
-    #[serde(default)]
-    false_positive: bool,
-
-    /// Whether a clip is available for this event
-    #[serde(default)]
-    has_clip: bool,
-
-    /// Whether a snapshot is available for this event
-    #[serde(default)]
-    has_snapshot: bool,
-    // Fields we intentionally ignore for privacy:
-    // - thumbnail: raw image data
-    // - snapshot: raw image data
-    // - box: precise bounding box coordinates
-    // - region: detection region
-    // - stationary: tracking state
-    // - motionless_count: tracking state
-    // - position_changes: movement tracking
-    // - start_time: precise timestamp (we coarsen to buckets)
-    // - end_time: precise timestamp
-}
-
-/// Frigate review event (alternative topic for confirmations).
-#[derive(Debug, Deserialize)]
-struct FrigateReview {
-    /// Type: "new", "update", or "end"
-    #[serde(rename = "type")]
-    review_type: Option<String>,
-
-    /// Review ID
-    #[allow(dead_code)]
-    id: Option<String>,
-
-    /// Camera name
-    camera: String,
-
-    /// Detection data
-    data: Option<FrigateReviewData>,
-}
-
-#[derive(Debug, Deserialize)]
-struct FrigateReviewData {
-    /// Object detections in this review
-    #[serde(default)]
-    objects: Vec<String>,
-
-    /// Detection scores by object type
-    #[serde(default)]
-    score: Option<f64>,
-
-    /// Zones involved
-    #[serde(default)]
-    zones: Vec<String>,
 }
 
 fn main() -> Result<()> {
@@ -328,10 +257,8 @@ fn main() -> Result<()> {
     // Event deduplication (by camera+label within same bucket)
     let mut recent_events: HashMap<String, u64> = HashMap::new();
 
-    // Exponential backoff state for reconnection
-    const INITIAL_BACKOFF_SECS: u64 = 2;
-    const MAX_BACKOFF_SECS: u64 = 60;
-    let mut backoff_secs = INITIAL_BACKOFF_SECS;
+    // Exponential backoff for reconnection
+    let mut backoff = ExponentialBackoff::new();
 
     // Main loop - process MQTT messages with automatic reconnection
     loop {
@@ -345,18 +272,16 @@ fn main() -> Result<()> {
 
         let (client, mut connection) = match connect_result {
             Ok((c, conn)) => {
-                // Reset backoff on successful connection
-                backoff_secs = INITIAL_BACKOFF_SECS;
+                backoff.reset();
                 (c, conn)
             }
             Err(e) => {
                 log::error!(
                     "Failed to connect to MQTT broker: {}. Retrying in {} seconds...",
                     e,
-                    backoff_secs
+                    backoff.current()
                 );
-                std::thread::sleep(Duration::from_secs(backoff_secs));
-                backoff_secs = std::cmp::min(backoff_secs * 2, MAX_BACKOFF_SECS);
+                backoff.wait_and_increment();
                 continue;
             }
         };
@@ -367,10 +292,9 @@ fn main() -> Result<()> {
                 "Failed to subscribe to {}: {}. Retrying in {} seconds...",
                 args.frigate_topic,
                 e,
-                backoff_secs
+                backoff.current()
             );
-            std::thread::sleep(Duration::from_secs(backoff_secs));
-            backoff_secs = std::cmp::min(backoff_secs * 2, MAX_BACKOFF_SECS);
+            backoff.wait_and_increment();
             continue;
         }
         log::info!("Subscribed to {} (QoS 1)", args.frigate_topic);
@@ -414,16 +338,14 @@ fn main() -> Result<()> {
         if should_reconnect {
             log::info!(
                 "Attempting reconnection with {} second backoff...",
-                backoff_secs
+                backoff.current()
             );
-            std::thread::sleep(Duration::from_secs(backoff_secs));
-            backoff_secs = std::cmp::min(backoff_secs * 2, MAX_BACKOFF_SECS);
+            backoff.wait_and_increment();
             continue;
         }
 
         log::warn!("MQTT connection closed unexpectedly. Reconnecting...");
-        std::thread::sleep(Duration::from_secs(backoff_secs));
-        backoff_secs = std::cmp::min(backoff_secs * 2, MAX_BACKOFF_SECS);
+        backoff.wait_and_increment();
     }
 }
 
@@ -441,11 +363,15 @@ fn process_message(
     recent_events: &mut HashMap<String, u64>,
 ) -> Result<()> {
     // Try to parse as event or review
-    let (camera, label, confidence, zones) = if topic.contains("/reviews") {
+    let parsed = if topic.contains("/reviews") {
         parse_review_event(payload)?
     } else {
         parse_frigate_event(payload)?
     };
+    let camera = parsed.camera;
+    let label = parsed.label;
+    let confidence = parsed.confidence;
+    let zones = parsed.zones;
 
     // Filter by camera
     if let Some(allowed) = allowed_cameras {
@@ -534,104 +460,6 @@ fn process_message(
     }
 
     Ok(())
-}
-
-fn parse_frigate_event(payload: &[u8]) -> Result<(String, String, f64, Vec<String>)> {
-    // Frigate publishes events in nested format: { "before": {...}, "after": {...} }
-    let wrapper: FrigateEventWrapper =
-        serde_json::from_slice(payload).context("parse Frigate event JSON")?;
-
-    // Only process "new" events (not "update" or "end")
-    // This prevents duplicate logging for the same detection
-    match wrapper.event_type.as_deref() {
-        Some("new") => {}
-        Some("end") => return Err(anyhow!("event ended, already processed")),
-        Some("update") => return Err(anyhow!("update event, already processed")),
-        _ => {} // Accept if no type specified (backward compat)
-    }
-
-    let event = wrapper
-        .after
-        .ok_or_else(|| anyhow!("missing 'after' section in event"))?;
-
-    if event.false_positive {
-        return Err(anyhow!("false positive event"));
-    }
-
-    let confidence = event.top_score.unwrap_or(event.score);
-
-    // Combine sub_label with label if present (e.g., "package:amazon")
-    let label = match &event.sub_label {
-        Some(sub) if !sub.is_empty() => format!("{}:{}", event.label, sub),
-        _ => event.label.clone(),
-    };
-
-    // Prefer entered_zones over current_zones for more complete zone coverage
-    let zones = if !event.entered_zones.is_empty() {
-        event.entered_zones.clone()
-    } else {
-        event.current_zones.clone()
-    };
-
-    log::debug!(
-        "Frigate event: camera={}, label={}, conf={:.2}, zones={:?}, has_clip={}, has_snapshot={}",
-        event.camera,
-        label,
-        confidence,
-        zones,
-        event.has_clip,
-        event.has_snapshot
-    );
-
-    Ok((event.camera, label, confidence, zones))
-}
-
-fn parse_review_event(payload: &[u8]) -> Result<(String, String, f64, Vec<String>)> {
-    let review: FrigateReview =
-        serde_json::from_slice(payload).context("parse Frigate review JSON")?;
-
-    // Only process "new" reviews
-    if review.review_type.as_deref() != Some("new") {
-        return Err(anyhow!("not a new review"));
-    }
-
-    let data = review.data.ok_or_else(|| anyhow!("no review data"))?;
-    let label = data
-        .objects
-        .first()
-        .cloned()
-        .unwrap_or_else(|| "unknown".to_string());
-    let confidence = data.score.unwrap_or(0.5);
-
-    Ok((review.camera, label, confidence, data.zones))
-}
-
-fn map_label_to_event_type(label: &str) -> EventType {
-    // Handle sub_label format (e.g., "package:amazon" -> use "package")
-    let base_label = label.split(':').next().unwrap_or(label);
-
-    match base_label.to_lowercase().as_str() {
-        "person" | "face" => EventType::BoundaryCrossingObjectLarge,
-        "car" | "truck" | "bus" | "motorcycle" => EventType::BoundaryCrossingObjectLarge,
-        "dog" | "cat" | "bird" | "animal" => EventType::BoundaryCrossingObjectSmall,
-        "bicycle" | "skateboard" => EventType::BoundaryCrossingObjectSmall,
-        "package" | "box" => EventType::BoundaryCrossingObjectSmall,
-        _ => EventType::BoundaryCrossingObjectSmall,
-    }
-}
-
-fn sanitize_zone_name(name: &str) -> String {
-    name.to_lowercase()
-        .chars()
-        .map(|c| {
-            if c.is_alphanumeric() || c == '_' || c == '-' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .take(64)
-        .collect()
 }
 
 fn connect_mqtt(

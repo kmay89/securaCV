@@ -8,6 +8,9 @@
 //! 5. Duplicate events in same bucket are deduplicated
 
 use std::time::Duration;
+use witness_kernel::transport::{
+    map_label_to_event_type, parse_frigate_event, parse_review_event, sanitize_zone_name,
+};
 use witness_kernel::{
     CandidateEvent, EventType, ExportOptions, InferenceBackend, Kernel, KernelConfig,
     ModuleDescriptor, TimeBucket, ZonePolicy, MIN_BUCKET_SIZE_S,
@@ -198,111 +201,25 @@ fn time_bucket_validate_bucket_size_works() {
 
 // ==================== Frigate Field Mapping Tests ====================
 
-/// Parse Frigate event JSON into components (camera, label, confidence, zones)
-fn parse_frigate_event(payload: &[u8]) -> anyhow::Result<(String, String, f64, Vec<String>)> {
-    #[derive(serde::Deserialize)]
-    struct FrigateEventWrapper {
-        after: Option<FrigateEventData>,
-        #[serde(rename = "type")]
-        event_type: Option<String>,
-    }
-
-    #[derive(serde::Deserialize)]
-    struct FrigateEventData {
-        camera: String,
-        label: String,
-        #[serde(default)]
-        sub_label: Option<String>,
-        #[serde(default)]
-        score: f64,
-        top_score: Option<f64>,
-        #[serde(default)]
-        current_zones: Vec<String>,
-        #[serde(default)]
-        entered_zones: Vec<String>,
-        #[serde(default)]
-        false_positive: bool,
-    }
-
-    let wrapper: FrigateEventWrapper =
-        serde_json::from_slice(payload).map_err(|e| anyhow::anyhow!("parse error: {}", e))?;
-
-    match wrapper.event_type.as_deref() {
-        Some("new") => {}
-        Some("end") => return Err(anyhow::anyhow!("event ended, already processed")),
-        Some("update") => return Err(anyhow::anyhow!("update event, already processed")),
-        _ => {}
-    }
-
-    let event = wrapper
-        .after
-        .ok_or_else(|| anyhow::anyhow!("missing 'after' section"))?;
-
-    if event.false_positive {
-        return Err(anyhow::anyhow!("false positive event"));
-    }
-
-    let confidence = event.top_score.unwrap_or(event.score);
-    let label = match &event.sub_label {
-        Some(sub) if !sub.is_empty() => format!("{}:{}", event.label, sub),
-        _ => event.label.clone(),
-    };
-
-    let zones = if !event.entered_zones.is_empty() {
-        event.entered_zones.clone()
-    } else {
-        event.current_zones.clone()
-    };
-
-    Ok((event.camera, label, confidence, zones))
-}
-
-fn map_label_to_event_type(label: &str) -> EventType {
-    let base_label = label.split(':').next().unwrap_or(label);
-    match base_label.to_lowercase().as_str() {
-        "person" | "face" => EventType::BoundaryCrossingObjectLarge,
-        "car" | "truck" | "bus" | "motorcycle" => EventType::BoundaryCrossingObjectLarge,
-        "dog" | "cat" | "bird" | "animal" => EventType::BoundaryCrossingObjectSmall,
-        "bicycle" | "skateboard" => EventType::BoundaryCrossingObjectSmall,
-        "package" | "box" => EventType::BoundaryCrossingObjectSmall,
-        _ => EventType::BoundaryCrossingObjectSmall,
-    }
-}
-
-fn sanitize_zone_name(name: &str) -> String {
-    name.to_lowercase()
-        .chars()
-        .map(|c| {
-            if c.is_alphanumeric() || c == '_' || c == '-' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .take(64)
-        .collect()
-}
-
 #[test]
 fn frigate_event_parsing_new_event_succeeds() {
     let result = parse_frigate_event(FRIGATE_EVENT_NEW.as_bytes());
     assert!(result.is_ok());
 
-    let (camera, label, confidence, zones) = result.unwrap();
-    assert_eq!(camera, "front_door");
-    assert_eq!(label, "person");
+    let event = result.unwrap();
+    assert_eq!(event.camera, "front_door");
+    assert_eq!(event.label, "person");
     // Should use top_score (0.92) not score (0.75)
-    assert!((confidence - 0.92).abs() < 0.001);
+    assert!((event.confidence - 0.92).abs() < 0.001);
     // Should prefer entered_zones over current_zones
-    assert_eq!(zones, vec!["driveway", "porch"]);
+    assert_eq!(event.zones, vec!["driveway", "porch"]);
 }
 
 #[test]
 fn frigate_event_parsing_uses_top_score_when_available() {
-    let result = parse_frigate_event(FRIGATE_EVENT_NEW.as_bytes()).unwrap();
-    let (_camera, _label, confidence, _zones) = result;
+    let event = parse_frigate_event(FRIGATE_EVENT_NEW.as_bytes()).unwrap();
     // top_score is 0.92, score is 0.75 - should use top_score
-    assert!((confidence - 0.92).abs() < 0.001);
+    assert!((event.confidence - 0.92).abs() < 0.001);
 }
 
 #[test]
@@ -310,11 +227,11 @@ fn frigate_event_parsing_car_event() {
     let result = parse_frigate_event(FRIGATE_EVENT_CAR.as_bytes());
     assert!(result.is_ok());
 
-    let (camera, label, confidence, zones) = result.unwrap();
-    assert_eq!(camera, "driveway_cam");
-    assert_eq!(label, "car");
-    assert!((confidence - 0.95).abs() < 0.001);
-    assert_eq!(zones, vec!["street", "driveway"]);
+    let event = result.unwrap();
+    assert_eq!(event.camera, "driveway_cam");
+    assert_eq!(event.label, "car");
+    assert!((event.confidence - 0.95).abs() < 0.001);
+    assert_eq!(event.zones, vec!["street", "driveway"]);
 }
 
 #[test]
@@ -449,14 +366,13 @@ fn kernel_accepts_frigate_event_and_produces_sealed_log() {
     let desc = make_module_descriptor();
 
     // Parse and convert a Frigate event
-    let (camera, label, confidence, zones) =
-        parse_frigate_event(FRIGATE_EVENT_NEW.as_bytes()).expect("parse event");
+    let parsed = parse_frigate_event(FRIGATE_EVENT_NEW.as_bytes()).expect("parse event");
 
-    let event_type = map_label_to_event_type(&label);
-    let zone_id = if let Some(zone) = zones.first() {
+    let event_type = map_label_to_event_type(&parsed.label);
+    let zone_id = if let Some(zone) = parsed.zones.first() {
         format!("zone:{}", sanitize_zone_name(zone))
     } else {
-        format!("zone:{}", sanitize_zone_name(&camera))
+        format!("zone:{}", sanitize_zone_name(&parsed.camera))
     };
 
     let bucket = TimeBucket::now(600).expect("time bucket");
@@ -464,7 +380,7 @@ fn kernel_accepts_frigate_event_and_produces_sealed_log() {
         event_type,
         time_bucket: bucket,
         zone_id: zone_id.clone(),
-        confidence: confidence as f32,
+        confidence: parsed.confidence as f32,
         correlation_token: None, // Frigate IDs are stripped
     };
 
@@ -603,29 +519,12 @@ fn frigate_events_use_coarsened_timestamps_only() {
 
 #[test]
 fn frigate_review_event_parsing() {
-    #[derive(serde::Deserialize)]
-    struct FrigateReview {
-        #[serde(rename = "type")]
-        review_type: Option<String>,
-        camera: String,
-        data: Option<FrigateReviewData>,
-    }
+    let result = parse_review_event(FRIGATE_REVIEW_NEW.as_bytes());
+    assert!(result.is_ok());
 
-    #[derive(serde::Deserialize)]
-    struct FrigateReviewData {
-        #[serde(default)]
-        objects: Vec<String>,
-        score: Option<f64>,
-        #[serde(default)]
-        zones: Vec<String>,
-    }
-
-    let review: FrigateReview = serde_json::from_str(FRIGATE_REVIEW_NEW).expect("parse review");
-
-    assert_eq!(review.review_type.as_deref(), Some("new"));
-    assert_eq!(review.camera, "garage");
-    let data = review.data.unwrap();
-    assert_eq!(data.objects, vec!["motorcycle"]);
-    assert!((data.score.unwrap() - 0.85).abs() < 0.001);
-    assert_eq!(data.zones, vec!["garage_zone"]);
+    let event = result.unwrap();
+    assert_eq!(event.camera, "garage");
+    assert_eq!(event.label, "motorcycle");
+    assert!((event.confidence - 0.85).abs() < 0.001);
+    assert_eq!(event.zones, vec!["garage_zone"]);
 }
