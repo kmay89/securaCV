@@ -1,34 +1,42 @@
 {
   "config": {
+    "flow_title": "SecuraCV",
     "step": {
       "user": {
-        "title": "SecuraCV Setup",
-        "description": "Configure your SecuraCV Privacy Witness Kernel integration.\n\nEnter the MQTT topic prefix used by your Canary devices. The default is 'securacv' which subscribes to topics like securacv/{device_id}/events.",
+        "title": "Connect to SecuraCV",
+        "description": "Enter the connection details for your SecuraCV Privacy Witness Kernel instance.\n\nThe kernel runs as a Home Assistant add-on, Docker container, or standalone service.",
         "data": {
+          "url": "Kernel URL",
+          "token": "API Token",
+          "enable_mqtt": "Enable MQTT for Canary devices",
           "mqtt_prefix": "MQTT Topic Prefix"
         },
         "data_description": {
-          "mqtt_prefix": "The MQTT topic prefix your Canary devices publish to (default: securacv)"
+          "url": "URL of the Privacy Witness Kernel Event API (e.g., http://privacy_witness_kernel:8799)",
+          "token": "Bearer token from the kernel's api_token file",
+          "enable_mqtt": "Subscribe to MQTT topics for real-time Canary device updates",
+          "mqtt_prefix": "MQTT topic prefix for Canary devices (default: securacv)"
         }
       }
     },
     "error": {
-      "invalid_mqtt_prefix": "Invalid MQTT topic prefix. Use only alphanumeric characters, underscores, and forward slashes."
+      "cannot_connect": "Cannot connect to the Privacy Witness Kernel. Check the URL and ensure the kernel is running.",
+      "invalid_auth": "Invalid API token. Read the token from the kernel's api_token file."
     },
     "abort": {
-      "already_configured": "This MQTT prefix is already configured."
+      "already_configured": "This kernel is already configured."
     }
   },
   "entity": {
     "sensor": {
+      "last_event": {
+        "name": "Last Event"
+      },
       "witness_count": {
         "name": "Witness Count"
       },
       "chain_length": {
         "name": "Chain Length"
-      },
-      "last_event": {
-        "name": "Last Event"
       },
       "health_status": {
         "name": "Health"
@@ -38,6 +46,9 @@
       }
     },
     "binary_sensor": {
+      "kernel_online": {
+        "name": "Kernel Online"
+      },
       "online": {
         "name": "Online"
       },

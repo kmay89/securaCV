@@ -11,18 +11,22 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import CONF_URL
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
     DOMAIN,
     CONF_MQTT_PREFIX,
+    CONF_ENABLE_MQTT,
     TOPIC_COUNTS,
     TOPIC_CHAIN,
     TOPIC_EVENTS,
     TOPIC_HEALTH,
     MANUFACTURER,
+    MODEL_KERNEL,
     MODEL_CANARY,
 )
 
@@ -35,7 +39,30 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up SecuraCV sensors from a config entry."""
-    prefix = entry.data.get(CONF_MQTT_PREFIX, "securacv")
+    entry_data = hass.data[DOMAIN][entry.entry_id]
+    coordinator = entry_data["coordinator"]
+
+    # Always add the kernel sensor (HTTP-based)
+    entities: list[SensorEntity] = [
+        SecuraCVKernelLastEventSensor(coordinator, entry),
+    ]
+    async_add_entities(entities)
+
+    # Optionally set up MQTT-based Canary sensors
+    enable_mqtt = entry.data.get(CONF_ENABLE_MQTT, False)
+    mqtt_prefix = entry.data.get(CONF_MQTT_PREFIX)
+
+    if enable_mqtt and mqtt_prefix:
+        await _setup_mqtt_sensors(hass, entry, mqtt_prefix, async_add_entities)
+
+
+async def _setup_mqtt_sensors(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    prefix: str,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    """Set up MQTT-based sensors for Canary devices."""
     entities_added: dict[str, set[str]] = {}
 
     @callback
@@ -56,28 +83,28 @@ async def async_setup_entry(
         if topic_type == TOPIC_COUNTS and "counts" not in entities_added[device_id]:
             entities_added[device_id].add("counts")
             new_entities.append(
-                SecuraCVWitnessCountSensor(prefix, device_id, entry)
+                SecuraCVCanaryWitnessCountSensor(prefix, device_id, entry)
             )
 
         if topic_type == TOPIC_CHAIN and "chain" not in entities_added[device_id]:
             entities_added[device_id].add("chain")
             new_entities.append(
-                SecuraCVChainLengthSensor(prefix, device_id, entry)
+                SecuraCVCanaryChainLengthSensor(prefix, device_id, entry)
             )
 
         if topic_type == TOPIC_EVENTS and "events" not in entities_added[device_id]:
             entities_added[device_id].add("events")
             new_entities.append(
-                SecuraCVLastEventSensor(prefix, device_id, entry)
+                SecuraCVCanaryLastEventSensor(prefix, device_id, entry)
             )
 
         if topic_type == TOPIC_HEALTH and "health" not in entities_added[device_id]:
             entities_added[device_id].add("health")
             new_entities.append(
-                SecuraCVHealthSensor(prefix, device_id, entry)
+                SecuraCVCanaryHealthSensor(prefix, device_id, entry)
             )
             new_entities.append(
-                SecuraCVGPSSensor(prefix, device_id, entry)
+                SecuraCVCanaryGPSSensor(prefix, device_id, entry)
             )
 
         if new_entities:
@@ -92,8 +119,58 @@ async def async_setup_entry(
         )
 
 
-class SecuraCVSensorBase(SensorEntity):
-    """Base class for SecuraCV sensors."""
+# =============================================================================
+# Kernel Sensors (HTTP API-based)
+# =============================================================================
+
+class SecuraCVKernelLastEventSensor(CoordinatorEntity, SensorEntity):
+    """Sensor for latest event from the Privacy Witness Kernel (HTTP API)."""
+
+    _attr_name = "SecuraCV Last Event"
+    _attr_icon = "mdi:shield-eye"
+    _attr_has_entity_name = True
+
+    def __init__(self, coordinator, entry: ConfigEntry) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator)
+        self._entry = entry
+        self._attr_unique_id = f"{DOMAIN}_{entry.entry_id}_latest_event"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return device info for the kernel."""
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._entry.data[CONF_URL])},
+            manufacturer=MANUFACTURER,
+            model=MODEL_KERNEL,
+            name="SecuraCV Privacy Witness Kernel",
+            configuration_url=self._entry.data[CONF_URL],
+        )
+
+    @property
+    def native_value(self) -> str | None:
+        """Return the event type."""
+        if event := self.coordinator.data.get("latest_event"):
+            if (event_type := event.get("event_type")) is not None:
+                return str(event_type)
+        return None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        """Return additional event attributes."""
+        if not (event := self.coordinator.data.get("latest_event")):
+            return None
+        keys = ("zone_id", "time_bucket", "confidence", "kernel_version", "ruleset_id")
+        attrs = {key: event[key] for key in keys if key in event}
+        return attrs or None
+
+
+# =============================================================================
+# Canary Sensors (MQTT-based)
+# =============================================================================
+
+class SecuraCVCanarySensorBase(SensorEntity):
+    """Base class for SecuraCV Canary sensors (MQTT-based)."""
 
     _attr_has_entity_name = True
 
@@ -108,22 +185,22 @@ class SecuraCVSensorBase(SensorEntity):
         """Initialize the sensor."""
         self._prefix = prefix
         self._device_id = device_id
-        self._attr_unique_id = f"{DOMAIN}_{device_id}_{key}"
+        self._attr_unique_id = f"{DOMAIN}_canary_{device_id}_{key}"
         self._attr_name = name_suffix
 
     @property
     def device_info(self) -> DeviceInfo:
         """Return device info."""
         return DeviceInfo(
-            identifiers={(DOMAIN, self._device_id)},
+            identifiers={(DOMAIN, f"canary_{self._device_id}")},
             manufacturer=MANUFACTURER,
             model=MODEL_CANARY,
             name=f"SecuraCV Canary {self._device_id}",
         )
 
 
-class SecuraCVWitnessCountSensor(SecuraCVSensorBase):
-    """Sensor for total witness record count."""
+class SecuraCVCanaryWitnessCountSensor(SecuraCVCanarySensorBase):
+    """Sensor for total witness record count from a Canary device."""
 
     _attr_icon = "mdi:counter"
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
@@ -155,8 +232,8 @@ class SecuraCVWitnessCountSensor(SecuraCVSensorBase):
         self.async_write_ha_state()
 
 
-class SecuraCVChainLengthSensor(SecuraCVSensorBase):
-    """Sensor for hash chain length."""
+class SecuraCVCanaryChainLengthSensor(SecuraCVCanarySensorBase):
+    """Sensor for hash chain length from a Canary device."""
 
     _attr_icon = "mdi:link-variant"
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
@@ -189,8 +266,8 @@ class SecuraCVChainLengthSensor(SecuraCVSensorBase):
         self.async_write_ha_state()
 
 
-class SecuraCVLastEventSensor(SecuraCVSensorBase):
-    """Sensor for last witness event."""
+class SecuraCVCanaryLastEventSensor(SecuraCVCanarySensorBase):
+    """Sensor for last witness event from a Canary device."""
 
     _attr_icon = "mdi:eye-outline"
 
@@ -223,8 +300,8 @@ class SecuraCVLastEventSensor(SecuraCVSensorBase):
         self.async_write_ha_state()
 
 
-class SecuraCVHealthSensor(SecuraCVSensorBase):
-    """Sensor for device health status."""
+class SecuraCVCanaryHealthSensor(SecuraCVCanarySensorBase):
+    """Sensor for device health status from a Canary device."""
 
     _attr_icon = "mdi:heart-pulse"
 
@@ -245,7 +322,6 @@ class SecuraCVHealthSensor(SecuraCVSensorBase):
         """Handle health message."""
         try:
             data = json.loads(msg.payload)
-            # Overall status from key health indicators
             battery = data.get("battery", 100)
             memory_free = data.get("memory_free", 0)
 
@@ -268,8 +344,8 @@ class SecuraCVHealthSensor(SecuraCVSensorBase):
         self.async_write_ha_state()
 
 
-class SecuraCVGPSSensor(SecuraCVSensorBase):
-    """Sensor for GPS fix status."""
+class SecuraCVCanaryGPSSensor(SecuraCVCanarySensorBase):
+    """Sensor for GPS fix status from a Canary device."""
 
     _attr_icon = "mdi:crosshairs-gps"
 

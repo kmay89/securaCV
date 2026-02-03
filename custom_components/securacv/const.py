@@ -4,6 +4,7 @@ DOMAIN = "securacv"
 
 # Config keys
 CONF_MQTT_PREFIX = "mqtt_prefix"
+CONF_ENABLE_MQTT = "enable_mqtt"
 
 # MQTT Topics (relative to prefix/{device_id}/)
 TOPIC_STATUS = "status"
@@ -30,4 +31,9 @@ ATTR_FIRMWARE_VERSION = "firmware_version"
 
 # Device info
 MANUFACTURER = "ERRERlabs"
+MODEL_KERNEL = "Privacy Witness Kernel"
 MODEL_CANARY = "SecuraCV Canary"
+
+# Default values
+DEFAULT_KERNEL_URL = "http://privacy_witness_kernel:8799"
+DEFAULT_MQTT_PREFIX = "securacv"

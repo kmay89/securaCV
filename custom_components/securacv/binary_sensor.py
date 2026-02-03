@@ -10,17 +10,21 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
 )
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import CONF_URL
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
     DOMAIN,
     CONF_MQTT_PREFIX,
+    CONF_ENABLE_MQTT,
     TOPIC_STATUS,
     TOPIC_CHAIN,
     TOPIC_HEALTH,
     MANUFACTURER,
+    MODEL_KERNEL,
     MODEL_CANARY,
 )
 
@@ -33,7 +37,30 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up SecuraCV binary sensors from a config entry."""
-    prefix = entry.data.get(CONF_MQTT_PREFIX, "securacv")
+    entry_data = hass.data[DOMAIN][entry.entry_id]
+    coordinator = entry_data["coordinator"]
+
+    # Add kernel connectivity sensor (HTTP-based)
+    entities: list[BinarySensorEntity] = [
+        SecuraCVKernelOnlineSensor(coordinator, entry),
+    ]
+    async_add_entities(entities)
+
+    # Optionally set up MQTT-based Canary binary sensors
+    enable_mqtt = entry.data.get(CONF_ENABLE_MQTT, False)
+    mqtt_prefix = entry.data.get(CONF_MQTT_PREFIX)
+
+    if enable_mqtt and mqtt_prefix:
+        await _setup_mqtt_binary_sensors(hass, entry, mqtt_prefix, async_add_entities)
+
+
+async def _setup_mqtt_binary_sensors(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    prefix: str,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    """Set up MQTT-based binary sensors for Canary devices."""
     entities_added: dict[str, set[str]] = {}
 
     @callback
@@ -54,19 +81,19 @@ async def async_setup_entry(
         if topic_type == TOPIC_STATUS and "online" not in entities_added[device_id]:
             entities_added[device_id].add("online")
             new_entities.append(
-                SecuraCVOnlineSensor(prefix, device_id, entry)
+                SecuraCVCanaryOnlineSensor(prefix, device_id, entry)
             )
 
         if topic_type == TOPIC_CHAIN and "chain_valid" not in entities_added[device_id]:
             entities_added[device_id].add("chain_valid")
             new_entities.append(
-                SecuraCVChainValidSensor(prefix, device_id, entry)
+                SecuraCVCanaryChainValidSensor(prefix, device_id, entry)
             )
 
         if topic_type == TOPIC_HEALTH and "tamper" not in entities_added[device_id]:
             entities_added[device_id].add("tamper")
             new_entities.append(
-                SecuraCVTamperSensor(prefix, device_id, entry)
+                SecuraCVCanaryTamperSensor(prefix, device_id, entry)
             )
 
         if new_entities:
@@ -81,8 +108,48 @@ async def async_setup_entry(
         )
 
 
-class SecuraCVBinarySensorBase(BinarySensorEntity):
-    """Base class for SecuraCV binary sensors."""
+# =============================================================================
+# Kernel Binary Sensors (HTTP API-based)
+# =============================================================================
+
+class SecuraCVKernelOnlineSensor(CoordinatorEntity, BinarySensorEntity):
+    """Binary sensor for kernel connectivity status."""
+
+    _attr_name = "SecuraCV Kernel Online"
+    _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+    _attr_icon = "mdi:server-network"
+    _attr_has_entity_name = True
+
+    def __init__(self, coordinator, entry: ConfigEntry) -> None:
+        """Initialize."""
+        super().__init__(coordinator)
+        self._entry = entry
+        self._attr_unique_id = f"{DOMAIN}_{entry.entry_id}_kernel_online"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return device info for the kernel."""
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._entry.data[CONF_URL])},
+            manufacturer=MANUFACTURER,
+            model=MODEL_KERNEL,
+            name="SecuraCV Privacy Witness Kernel",
+            configuration_url=self._entry.data[CONF_URL],
+        )
+
+    @property
+    def is_on(self) -> bool:
+        """Return True if the kernel is reachable."""
+        # If we have data, the kernel is online
+        return self.coordinator.last_update_success
+
+
+# =============================================================================
+# Canary Binary Sensors (MQTT-based)
+# =============================================================================
+
+class SecuraCVCanaryBinarySensorBase(BinarySensorEntity):
+    """Base class for SecuraCV Canary binary sensors."""
 
     _attr_has_entity_name = True
 
@@ -97,22 +164,22 @@ class SecuraCVBinarySensorBase(BinarySensorEntity):
         """Initialize."""
         self._prefix = prefix
         self._device_id = device_id
-        self._attr_unique_id = f"{DOMAIN}_{device_id}_{key}"
+        self._attr_unique_id = f"{DOMAIN}_canary_{device_id}_{key}"
         self._attr_name = name_suffix
 
     @property
     def device_info(self) -> DeviceInfo:
         """Return device info."""
         return DeviceInfo(
-            identifiers={(DOMAIN, self._device_id)},
+            identifiers={(DOMAIN, f"canary_{self._device_id}")},
             manufacturer=MANUFACTURER,
             model=MODEL_CANARY,
             name=f"SecuraCV Canary {self._device_id}",
         )
 
 
-class SecuraCVOnlineSensor(SecuraCVBinarySensorBase):
-    """Binary sensor for device online/offline status."""
+class SecuraCVCanaryOnlineSensor(SecuraCVCanaryBinarySensorBase):
+    """Binary sensor for Canary device online/offline status."""
 
     _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
     _attr_icon = "mdi:access-point-network"
@@ -138,7 +205,7 @@ class SecuraCVOnlineSensor(SecuraCVBinarySensorBase):
         self.async_write_ha_state()
 
 
-class SecuraCVChainValidSensor(SecuraCVBinarySensorBase):
+class SecuraCVCanaryChainValidSensor(SecuraCVCanaryBinarySensorBase):
     """Binary sensor for hash chain integrity."""
 
     _attr_icon = "mdi:shield-check"
@@ -161,7 +228,6 @@ class SecuraCVChainValidSensor(SecuraCVBinarySensorBase):
         """Handle chain message."""
         try:
             data = json.loads(msg.payload)
-            # Chain is valid if explicitly stated, or if no error is present
             valid = data.get("valid", data.get("integrity", True))
             self._attr_is_on = bool(valid)
             self._attr_extra_state_attributes = {
@@ -174,7 +240,7 @@ class SecuraCVChainValidSensor(SecuraCVBinarySensorBase):
         self.async_write_ha_state()
 
 
-class SecuraCVTamperSensor(SecuraCVBinarySensorBase):
+class SecuraCVCanaryTamperSensor(SecuraCVCanaryBinarySensorBase):
     """Binary sensor for tamper detection."""
 
     _attr_device_class = BinarySensorDeviceClass.TAMPER
