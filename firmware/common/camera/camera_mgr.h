@@ -3,8 +3,12 @@
  * @brief Camera management and MJPEG streaming
  *
  * Provides camera initialization, capture, and HTTP streaming
- * for the OV2640 camera module. Supports MJPEG streaming for
+ * for ESP32 camera modules. Supports MJPEG streaming for
  * real-time preview ("peek") functionality.
+ *
+ * Architecture note: This module is board-agnostic. Board-specific
+ * camera configuration (pin mappings) must be provided by the caller
+ * from the project layer.
  *
  * Privacy note: Camera is used for witness event capture only.
  * No raw video is stored - only coarse state is recorded.
@@ -57,6 +61,9 @@ typedef enum {
 
 /**
  * @brief Camera frame buffer
+ *
+ * Note: The _fb field is opaque and used internally to track the
+ * ESP camera framebuffer for proper release.
  */
 typedef struct {
     uint8_t* data;              // Frame data
@@ -65,6 +72,7 @@ typedef struct {
     size_t height;              // Frame height
     cam_format_t format;        // Pixel format
     uint32_t timestamp_ms;      // Capture timestamp
+    void* _fb;                  // Internal: ESP camera framebuffer pointer
 } cam_frame_t;
 
 /**
@@ -83,9 +91,35 @@ typedef struct {
 } cam_status_t;
 
 /**
+ * @brief Camera pin configuration (board-specific)
+ *
+ * This must be provided by the project layer based on the target board.
+ */
+typedef struct {
+    int8_t pin_pwdn;
+    int8_t pin_reset;
+    int8_t pin_xclk;
+    int8_t pin_sccb_sda;
+    int8_t pin_sccb_scl;
+    int8_t pin_d7;
+    int8_t pin_d6;
+    int8_t pin_d5;
+    int8_t pin_d4;
+    int8_t pin_d3;
+    int8_t pin_d2;
+    int8_t pin_d1;
+    int8_t pin_d0;
+    int8_t pin_vsync;
+    int8_t pin_href;
+    int8_t pin_pclk;
+    uint32_t xclk_freq_hz;      // Typically 20000000 (20MHz)
+} cam_pins_t;
+
+/**
  * @brief Camera configuration
  */
 typedef struct {
+    cam_pins_t pins;            // Board-specific pin configuration
     cam_resolution_t resolution;
     cam_format_t format;
     uint8_t jpeg_quality;       // 0-63 (lower = better quality)
@@ -93,23 +127,18 @@ typedef struct {
     bool use_psram;             // Use PSRAM for frame buffers
 } cam_config_t;
 
-// Default configuration
-#define CAM_CONFIG_DEFAULT { \
-    .resolution = CAM_RESOLUTION_VGA, \
-    .format = CAM_FORMAT_JPEG, \
-    .jpeg_quality = CAM_JPEG_QUALITY_DEFAULT, \
-    .fb_count = CAM_FB_COUNT_DEFAULT, \
-    .use_psram = true, \
-}
-
 // ============================================================================
 // INITIALIZATION
 // ============================================================================
 
 /**
  * @brief Initialize camera module
- * @param config Configuration (NULL for defaults)
- * @return RESULT_OK on success
+ *
+ * The caller must provide a complete configuration including board-specific
+ * pin mappings. This ensures the common module remains board-agnostic.
+ *
+ * @param config Configuration with pin mappings (required)
+ * @return RESULT_OK on success, RESULT_INVALID_ARG if config is NULL
  */
 result_t cam_init(const cam_config_t* config);
 
@@ -142,13 +171,16 @@ result_t cam_get_status(cam_status_t* status);
  * @return RESULT_OK on success
  *
  * Note: The returned frame must be released with cam_release_frame()
- * when no longer needed.
+ * when no longer needed to avoid memory leaks.
  */
 result_t cam_capture(cam_frame_t* frame);
 
 /**
  * @brief Release a captured frame
  * @param frame Frame to release
+ *
+ * This function returns the frame buffer to the camera driver.
+ * Failure to call this will exhaust the frame buffer pool.
  */
 void cam_release_frame(cam_frame_t* frame);
 
@@ -250,20 +282,12 @@ result_t cam_register_http_endpoints(void);
 #include "esp_timer.h"
 #include "../hal/hal.h"
 
-// Include board-specific camera pins
-#include "pins.h"
-
-#if HAS_CAMERA
-#include "camera.h"
-#endif
-
 // Module state
 static struct {
     bool initialized;
     bool streaming;
     cam_config_t config;
     cam_status_t status;
-    uint32_t capture_start_ms;
     uint32_t total_capture_time_ms;
 } g_cam = {0};
 
@@ -284,34 +308,45 @@ static const struct {
 };
 
 result_t cam_init(const cam_config_t* config) {
-#if !HAS_CAMERA
-    return RESULT_NOT_SUPPORTED;
-#else
+    if (!config) {
+        return RESULT_INVALID_ARG;
+    }
+
     if (g_cam.initialized) {
         return RESULT_OK;
     }
 
-    // Use defaults if no config provided
-    if (config) {
-        g_cam.config = *config;
-    } else {
-        cam_config_t def = CAM_CONFIG_DEFAULT;
-        g_cam.config = def;
-    }
+    // Store configuration
+    g_cam.config = *config;
 
-    // Get board-specific camera configuration
-    camera_config_t cam_cfg = xiao_esp32s3_camera_config();
-
-    // Apply user settings
-    cam_cfg.frame_size = g_res_table[g_cam.config.resolution].esp_size;
-    cam_cfg.jpeg_quality = g_cam.config.jpeg_quality;
-    cam_cfg.fb_count = g_cam.config.fb_count;
-
-    if (g_cam.config.use_psram) {
-        cam_cfg.fb_location = CAMERA_FB_IN_PSRAM;
-    } else {
-        cam_cfg.fb_location = CAMERA_FB_IN_DRAM;
-    }
+    // Build ESP camera configuration from provided pin mappings
+    camera_config_t cam_cfg = {
+        .pin_pwdn = config->pins.pin_pwdn,
+        .pin_reset = config->pins.pin_reset,
+        .pin_xclk = config->pins.pin_xclk,
+        .pin_sccb_sda = config->pins.pin_sccb_sda,
+        .pin_sccb_scl = config->pins.pin_sccb_scl,
+        .pin_d7 = config->pins.pin_d7,
+        .pin_d6 = config->pins.pin_d6,
+        .pin_d5 = config->pins.pin_d5,
+        .pin_d4 = config->pins.pin_d4,
+        .pin_d3 = config->pins.pin_d3,
+        .pin_d2 = config->pins.pin_d2,
+        .pin_d1 = config->pins.pin_d1,
+        .pin_d0 = config->pins.pin_d0,
+        .pin_vsync = config->pins.pin_vsync,
+        .pin_href = config->pins.pin_href,
+        .pin_pclk = config->pins.pin_pclk,
+        .xclk_freq_hz = config->pins.xclk_freq_hz,
+        .ledc_timer = LEDC_TIMER_0,
+        .ledc_channel = LEDC_CHANNEL_0,
+        .pixel_format = PIXFORMAT_JPEG,
+        .frame_size = g_res_table[config->resolution].esp_size,
+        .jpeg_quality = config->jpeg_quality,
+        .fb_count = config->fb_count,
+        .fb_location = config->use_psram ? CAMERA_FB_IN_PSRAM : CAMERA_FB_IN_DRAM,
+        .grab_mode = CAMERA_GRAB_WHEN_EMPTY,
+    };
 
     // Initialize camera
     esp_err_t err = esp_camera_init(&cam_cfg);
@@ -322,19 +357,15 @@ result_t cam_init(const cam_config_t* config) {
 
     g_cam.initialized = true;
     g_cam.status.initialized = true;
-    g_cam.status.resolution = g_cam.config.resolution;
-    g_cam.status.format = g_cam.config.format;
-    g_cam.status.jpeg_quality = g_cam.config.jpeg_quality;
+    g_cam.status.resolution = config->resolution;
+    g_cam.status.format = config->format;
+    g_cam.status.jpeg_quality = config->jpeg_quality;
 
-    LOG_I("Camera initialized: %s", cam_resolution_name(g_cam.config.resolution));
+    LOG_I("Camera initialized: %s", cam_resolution_name(config->resolution));
     return RESULT_OK;
-#endif
 }
 
 result_t cam_deinit(void) {
-#if !HAS_CAMERA
-    return RESULT_NOT_SUPPORTED;
-#else
     if (!g_cam.initialized) {
         return RESULT_OK;
     }
@@ -346,7 +377,6 @@ result_t cam_deinit(void) {
     g_cam.status.initialized = false;
 
     return RESULT_OK;
-#endif
 }
 
 bool cam_is_initialized(void) {
@@ -360,12 +390,13 @@ result_t cam_get_status(cam_status_t* status) {
 }
 
 result_t cam_capture(cam_frame_t* frame) {
-#if !HAS_CAMERA
-    return RESULT_NOT_SUPPORTED;
-#else
     if (!g_cam.initialized || !frame) {
         return RESULT_INVALID_STATE;
     }
+
+    // Clear frame first
+    frame->data = NULL;
+    frame->_fb = NULL;
 
     uint32_t start = hal_millis();
 
@@ -380,37 +411,29 @@ result_t cam_capture(cam_frame_t* frame) {
     g_cam.status.last_capture_ms = hal_millis();
     g_cam.status.avg_capture_time_ms = g_cam.total_capture_time_ms / g_cam.status.frames_captured;
 
-    // Fill output frame
+    // Fill output frame and store fb pointer for release
     frame->data = fb->buf;
     frame->len = fb->len;
     frame->width = fb->width;
     frame->height = fb->height;
     frame->format = CAM_FORMAT_JPEG;
     frame->timestamp_ms = hal_millis();
+    frame->_fb = fb;  // Store for cam_release_frame
 
     return RESULT_OK;
-#endif
 }
 
 void cam_release_frame(cam_frame_t* frame) {
-#if HAS_CAMERA
-    if (frame && frame->data) {
-        // The ESP camera API uses its own frame buffer management
-        // We need to get the fb pointer back to release it
-        camera_fb_t* fb = esp_camera_fb_get();
-        if (fb) {
-            esp_camera_fb_return(fb);
-        }
+    if (frame && frame->_fb) {
+        // Return the framebuffer to the camera driver
+        esp_camera_fb_return((camera_fb_t*)frame->_fb);
+        frame->_fb = NULL;
         frame->data = NULL;
         frame->len = 0;
     }
-#endif
 }
 
 result_t cam_set_resolution(cam_resolution_t resolution) {
-#if !HAS_CAMERA
-    return RESULT_NOT_SUPPORTED;
-#else
     if (!g_cam.initialized) {
         return RESULT_INVALID_STATE;
     }
@@ -432,13 +455,9 @@ result_t cam_set_resolution(cam_resolution_t resolution) {
     g_cam.status.resolution = resolution;
 
     return RESULT_OK;
-#endif
 }
 
 result_t cam_set_quality(uint8_t quality) {
-#if !HAS_CAMERA
-    return RESULT_NOT_SUPPORTED;
-#else
     if (!g_cam.initialized) {
         return RESULT_INVALID_STATE;
     }
@@ -460,7 +479,6 @@ result_t cam_set_quality(uint8_t quality) {
     g_cam.status.jpeg_quality = quality;
 
     return RESULT_OK;
-#endif
 }
 
 const char* cam_resolution_name(cam_resolution_t res) {
@@ -516,9 +534,6 @@ result_t cam_stream_get_frame(cam_frame_t* frame) {
 
     return res;
 }
-
-// HTTP endpoint handlers would be implemented here
-// when http_server.h integration is enabled
 
 result_t cam_register_http_endpoints(void) {
     // This will be called from main.cpp to register peek endpoints

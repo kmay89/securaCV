@@ -122,23 +122,16 @@ endif
 # ============================================================================
 
 secrets:
-	@mkdir -p secrets
-	@if [ ! -f secrets/secrets.example.h ]; then \
-		echo '/**' > secrets/secrets.example.h; \
-		echo ' * @file secrets.h' >> secrets/secrets.example.h; \
-		echo ' * @brief Secret credentials (NEVER commit!)' >> secrets/secrets.example.h; \
-		echo ' */' >> secrets/secrets.example.h; \
-		echo '' >> secrets/secrets.example.h; \
-		echo '#pragma once' >> secrets/secrets.example.h; \
-		echo '' >> secrets/secrets.example.h; \
-		echo '#define WIFI_SSID           "your-wifi-ssid"' >> secrets/secrets.example.h; \
-		echo '#define WIFI_PASSWORD       "your-wifi-password"' >> secrets/secrets.example.h; \
-		echo '#define MQTT_BROKER         "192.168.1.100"' >> secrets/secrets.example.h; \
-		echo '#define MQTT_PORT           1883' >> secrets/secrets.example.h; \
-	fi
 	@if [ ! -f secrets/secrets.h ]; then \
-		cp secrets/secrets.example.h secrets/secrets.h; \
-		echo "Created secrets/secrets.h - please edit with your credentials"; \
+		if [ -f secrets/secrets.example.h ]; then \
+			cp secrets/secrets.example.h secrets/secrets.h; \
+			echo "Created secrets/secrets.h from template"; \
+			echo "IMPORTANT: Edit secrets/secrets.h with your credentials"; \
+			echo "           Change the default AP password before deployment!"; \
+		else \
+			echo "Error: secrets/secrets.example.h not found"; \
+			exit 1; \
+		fi \
 	else \
 		echo "secrets/secrets.h already exists"; \
 	fi

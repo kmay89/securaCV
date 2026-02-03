@@ -33,7 +33,10 @@ make upload
 make monitor
 ```
 
-Connect to WiFi **SecuraCV-XXXX** (password: `witness2026`) → http://192.168.4.1
+Connect to WiFi **SecuraCV-XXXX** → http://192.168.4.1
+
+> **Security Note:** The default AP password is for development only.
+> See `secrets/secrets.example.h` for configuration.
 
 ### Canary Vision
 

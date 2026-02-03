@@ -45,22 +45,15 @@ run: upload monitor
 # ============================================================================
 
 secrets:
-	@mkdir -p secrets
 	@if [ ! -f secrets/secrets.h ]; then \
-		echo '/**' > secrets/secrets.h; \
-		echo ' * @file secrets.h' >> secrets/secrets.h; \
-		echo ' * @brief Secret credentials (NEVER commit!)' >> secrets/secrets.h; \
-		echo ' */' >> secrets/secrets.h; \
-		echo '' >> secrets/secrets.h; \
-		echo '#pragma once' >> secrets/secrets.h; \
-		echo '' >> secrets/secrets.h; \
-		echo '#define WIFI_SSID       "your-wifi-ssid"' >> secrets/secrets.h; \
-		echo '#define WIFI_PASSWORD   "your-wifi-password"' >> secrets/secrets.h; \
-		echo '#define MQTT_BROKER     "192.168.1.100"' >> secrets/secrets.h; \
-		echo '#define MQTT_PORT       1883' >> secrets/secrets.h; \
-		echo '#define MQTT_USER       ""' >> secrets/secrets.h; \
-		echo '#define MQTT_PASSWORD   ""' >> secrets/secrets.h; \
-		echo "Created secrets/secrets.h - please edit with your credentials"; \
+		if [ -f secrets/secrets.example.h ]; then \
+			cp secrets/secrets.example.h secrets/secrets.h; \
+			echo "Created secrets/secrets.h from template"; \
+			echo "IMPORTANT: Edit secrets/secrets.h with your credentials"; \
+		else \
+			echo "Error: secrets/secrets.example.h not found"; \
+			exit 1; \
+		fi \
 	else \
 		echo "secrets/secrets.h already exists"; \
 	fi

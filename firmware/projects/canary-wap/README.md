@@ -79,7 +79,8 @@ make monitor
 
 ### 3. Connect to Your Device
 
-1. Connect to WiFi: **SecuraCV-XXXX** (password: `witness2026`)
+1. Connect to WiFi: **SecuraCV-XXXX**
+   > **Security:** Default password is for development only. Run `make secrets` and edit `secrets/secrets.h` to set a custom password before deployment.
 2. Open browser: http://192.168.4.1
 3. View live device status on the web dashboard
 

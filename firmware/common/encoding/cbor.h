@@ -94,9 +94,12 @@ static inline void cbor_write_byte(cbor_writer_t* w, uint8_t b) {
 }
 
 static inline void cbor_write_bytes(cbor_writer_t* w, const uint8_t* data, size_t len) {
-    for (size_t i = 0; i < len && !w->error; i++) {
-        cbor_write_byte(w, data[i]);
+    if (w->pos + len > w->cap) {
+        w->error = true;
+        return;
     }
+    memcpy(w->buf + w->pos, data, len);
+    w->pos += len;
 }
 
 static inline void cbor_write_type_value(cbor_writer_t* w, uint8_t major, uint64_t val) {
