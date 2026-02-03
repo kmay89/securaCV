@@ -3347,10 +3347,18 @@ void setup() {
   #if FEATURE_SYS_MONITOR
   Serial.println("[..] Initializing system monitor...");
   sys_monitor::init();
-  Serial.printf("[OK] System monitor: %.1fC, Heap: %uKB, PSRAM: %s\n",
-                sys_monitor::g_sys_metrics.temp_celsius,
-                sys_monitor::g_sys_metrics.heap_free / 1024,
-                sys_monitor::g_sys_metrics.psram_available ? "8MB" : "N/A");
+  {
+    char psram_str[16];
+    if (sys_monitor::g_sys_metrics.psram_available) {
+      sys_monitor::format_bytes(sys_monitor::g_sys_metrics.psram_total, psram_str, sizeof(psram_str));
+    } else {
+      strcpy(psram_str, "N/A");
+    }
+    Serial.printf("[OK] System monitor: %.1fC, Heap: %uKB, PSRAM: %s\n",
+                  sys_monitor::g_sys_metrics.temp_celsius,
+                  sys_monitor::g_sys_metrics.heap_free / 1024,
+                  psram_str);
+  }
   log_health(LOG_LEVEL_INFO, LOG_CAT_SYSTEM, "System monitor initialized", nullptr);
   #endif
 

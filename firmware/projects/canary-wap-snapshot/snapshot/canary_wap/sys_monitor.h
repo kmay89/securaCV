@@ -223,9 +223,9 @@ void init() {
   g_sys_metrics.chip_revision = ESP.getChipRevision();
   g_sys_metrics.chip_cores = ESP.getChipCores();
 
-  // Get chip model
+  // Get chip model (use snprintf for guaranteed null-termination)
   const char* model = ESP.getChipModel();
-  strncpy(g_sys_metrics.chip_model, model ? model : "ESP32-S3", sizeof(g_sys_metrics.chip_model) - 1);
+  snprintf(g_sys_metrics.chip_model, sizeof(g_sys_metrics.chip_model), "%s", model ? model : "ESP32-S3");
 
   // Get heap info
   g_sys_metrics.heap_total = ESP.getHeapSize();
@@ -722,7 +722,10 @@ size_t get_json(char* buf, size_t buf_size) {
   char uptime_str[16];
   format_uptime(g_sys_metrics.uptime_sec, uptime_str, sizeof(uptime_str));
 
-  float heap_pct = (float)(g_sys_metrics.heap_total - g_sys_metrics.heap_free) / g_sys_metrics.heap_total * 100.0f;
+  // Guard against division by zero
+  float heap_pct = g_sys_metrics.heap_total > 0
+    ? (float)(g_sys_metrics.heap_total - g_sys_metrics.heap_free) / g_sys_metrics.heap_total * 100.0f
+    : 0.0f;
 
   // Get MAC address
   uint8_t mac[6];
@@ -813,10 +816,15 @@ size_t get_json(char* buf, size_t buf_size) {
     (unsigned long long)ESP.getEfuseMac(),
     ESP.getSdkVersion(),
     esp_reset_reason() == ESP_RST_POWERON ? "power_on" :
+    esp_reset_reason() == ESP_RST_EXT ? "external" :
     esp_reset_reason() == ESP_RST_SW ? "software" :
     esp_reset_reason() == ESP_RST_PANIC ? "panic" :
-    esp_reset_reason() == ESP_RST_WDT ? "watchdog" :
-    esp_reset_reason() == ESP_RST_BROWNOUT ? "brownout" : "other",
+    esp_reset_reason() == ESP_RST_INT_WDT ? "interrupt_wdt" :
+    esp_reset_reason() == ESP_RST_TASK_WDT ? "task_wdt" :
+    esp_reset_reason() == ESP_RST_WDT ? "other_wdt" :
+    esp_reset_reason() == ESP_RST_DEEPSLEEP ? "deep_sleep" :
+    esp_reset_reason() == ESP_RST_BROWNOUT ? "brownout" :
+    esp_reset_reason() == ESP_RST_SDIO ? "sdio" : "unknown",
     // Uptime
     g_sys_metrics.uptime_sec,
     uptime_str
