@@ -92,6 +92,12 @@ inline void log(LogLevel level, LogCategory category, const char* message) {
   ::health_log(level, category, message);
 }
 
+// Log function wrapper with detail
+// Delegates to the global log_health() function
+inline void log(LogLevel level, LogCategory category, const char* message, const char* detail) {
+  ::log_health(level, category, message, detail);
+}
+
 } // namespace health_log
 
 #endif // SECURACV_HEALTH_LOG_H

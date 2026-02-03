@@ -370,18 +370,16 @@ inline bool set_u32(const char* key, uint32_t val) {
 inline bool get_blob(const char* key, void* buf, size_t len) {
   NvsManager& nvs = NvsManager::instance();
   if (!nvs.begin(true)) return false;
-  if (!nvs.isKey(key)) {
-    nvs.end();
-    return false;
+  bool success = false;
+  if (nvs.isKey(key)) {
+    size_t stored_len = nvs.getBytesLength(key);
+    if (stored_len == len) {
+      size_t read = nvs.getBytes(key, buf, len);
+      success = (read == len);
+    }
   }
-  size_t stored_len = nvs.getBytesLength(key);
-  if (stored_len != len) {
-    nvs.end();
-    return false;
-  }
-  size_t read = nvs.getBytes(key, buf, len);
   nvs.end();
-  return read == len;
+  return success;
 }
 
 // Set a blob (byte array) in NVS
