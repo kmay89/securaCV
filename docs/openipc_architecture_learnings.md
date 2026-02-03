@@ -305,8 +305,9 @@ typedef struct {
     // Firmware
     char firmware_version[16]; // Semver: "1.2.0"
     char firmware_hash[65];    // SHA256 of firmware binary
+    char ota_key_fingerprint[17]; // 8-byte hex fingerprint of trusted OTA signing key
     uint32_t build_timestamp;  // Compile time
-    char build_flags[128];     // Active feature flags
+    char build_flags[256];     // Active feature flags (comma-separated)
 
     // Chain state
     uint32_t chain_epoch;      // Increments on chain break
@@ -317,6 +318,11 @@ typedef struct {
 
 This manifest gets included in every `BOOT_ATTESTATION` record and is available via
 the dashboard API at `/api/manifest`.
+
+**Note on firmware_hash:** The `firmware_hash` should be computed at boot time by
+reading the application partition directly from flash. This provides a stronger
+guarantee against post-build tampering compared to a hash embedded at build time,
+which could be modified along with the firmware itself.
 
 ---
 
