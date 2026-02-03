@@ -1,0 +1,146 @@
+# SecuraCV Canary OTA - Production SDK Configuration
+# This file extends sdkconfig.defaults with security hardening for production builds.
+
+# ============================================================================
+# Inherit all defaults
+# ============================================================================
+
+# Note: PlatformIO merges this with sdkconfig.defaults, so we only need to
+# specify overrides and additions here.
+
+# ============================================================================
+# Partition Table
+# ============================================================================
+
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_PARTITION_TABLE_OFFSET=0x8000
+
+# ============================================================================
+# Bootloader - Production Security
+# ============================================================================
+
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
+# Bootloader log level: Warning only in production
+CONFIG_BOOTLOADER_LOG_LEVEL_WARN=y
+CONFIG_BOOTLOADER_LOG_LEVEL=2
+
+# ============================================================================
+# Serial Flasher
+# ============================================================================
+
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="8MB"
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+
+# ============================================================================
+# ESP System Settings
+# ============================================================================
+
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ=240
+
+# ============================================================================
+# PSRAM Configuration
+# ============================================================================
+
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_BOOT_INIT=y
+CONFIG_SPIRAM_USE_MALLOC=y
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384
+
+# ============================================================================
+# WiFi Configuration - Placeholder (override via NVS in production)
+# ============================================================================
+
+CONFIG_ESP_WIFI_SSID=""
+CONFIG_ESP_WIFI_PASSWORD=""
+CONFIG_ESP_WIFI_AUTH_WPA2_PSK=y
+
+# ============================================================================
+# HTTP Client
+# ============================================================================
+
+CONFIG_ESP_HTTP_CLIENT_ENABLE_HTTPS=y
+
+# ============================================================================
+# TLS/SSL (mbedTLS) - Production Security
+# ============================================================================
+
+CONFIG_MBEDTLS_SSL_MAX_CONTENT_LEN=16384
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
+
+# Disable insecure ciphers
+CONFIG_MBEDTLS_SSL_PROTO_TLS1=n
+CONFIG_MBEDTLS_SSL_PROTO_TLS1_1=n
+
+# ============================================================================
+# Logging - Reduced for Production
+# ============================================================================
+
+# Default log level: Warning (less verbose than dev)
+CONFIG_LOG_DEFAULT_LEVEL_WARN=y
+CONFIG_LOG_DEFAULT_LEVEL=2
+
+# Maximum log level (can be increased at runtime if needed)
+CONFIG_LOG_MAXIMUM_LEVEL_INFO=y
+CONFIG_LOG_MAXIMUM_LEVEL=3
+
+# Disable color output for production logs
+CONFIG_LOG_COLORS=n
+
+# ============================================================================
+# FreeRTOS
+# ============================================================================
+
+CONFIG_FREERTOS_HZ=1000
+CONFIG_FREERTOS_TIMER_TASK_STACK_DEPTH=4096
+
+# Disable debug features in production
+CONFIG_FREERTOS_USE_TRACE_FACILITY=n
+CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=n
+
+# ============================================================================
+# Heap Memory - Production
+# ============================================================================
+
+# Disable heap poisoning in production for performance
+CONFIG_HEAP_POISONING_DISABLED=y
+
+# ============================================================================
+# Compiler Options - Production Optimization
+# ============================================================================
+
+# Optimize for size
+CONFIG_COMPILER_OPTIMIZATION_SIZE=y
+
+# Stack protection enabled
+CONFIG_COMPILER_STACK_CHECK_MODE_NORM=y
+CONFIG_COMPILER_STACK_CHECK=y
+
+# ============================================================================
+# NVS
+# ============================================================================
+
+CONFIG_NVS_ENCRYPTION=y
+
+# ============================================================================
+# Security Features - Phase 3 Preparation
+# ============================================================================
+
+# Note: Secure Boot and Flash Encryption will be enabled in Phase 3
+# CONFIG_SECURE_BOOT=y
+# CONFIG_SECURE_BOOT_V2_ENABLED=y
+# CONFIG_SECURE_FLASH_ENC_ENABLED=y
+
+# ============================================================================
+# Watchdog
+# ============================================================================
+
+# Enable task watchdog in production
+CONFIG_ESP_TASK_WDT=y
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=30

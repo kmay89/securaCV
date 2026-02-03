@@ -1,0 +1,23 @@
+# SecuraCV Canary OTA Partition Table
+# For XIAO ESP32-S3 with 8MB Flash
+#
+# Partition layout:
+#   - nvs: Device identity, chain state, WiFi credentials (survives OTA)
+#   - otadata: Boot selector for A/B partitions
+#   - phy_init: WiFi/BT calibration data
+#   - factory: Recovery firmware (known-good minimal build)
+#   - ota_0: Primary application slot (A)
+#   - ota_1: Secondary application slot (B) for OTA updates
+#   - witness_log: Append-only tamper-evident log storage (survives OTA)
+#
+# Total: 8MB = 0x800000
+# Reserved at end for potential future use
+#
+# Name,      Type, SubType,  Offset,    Size,     Flags
+nvs,         data, nvs,      0x9000,    0x6000,
+otadata,     data, ota,      0xf000,    0x2000,
+phy_init,    data, phy,      0x11000,   0x1000,
+factory,     app,  factory,  0x20000,   0x180000,
+ota_0,       app,  ota_0,    0x1A0000,  0x180000,
+ota_1,       app,  ota_1,    0x320000,  0x180000,
+witness_log, data, 0x80,     0x4A0000,  0x160000,
