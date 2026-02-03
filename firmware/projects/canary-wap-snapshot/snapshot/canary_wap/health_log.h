@@ -52,39 +52,41 @@ void health_log(LogLevel level, LogCategory category, const char* message);
 void log_health(LogLevel level, LogCategory category, const char* message, const char* detail);
 
 // ════════════════════════════════════════════════════════════════════════════
-// HEALTH_LOG NAMESPACE (for RF presence and other modules)
+// HEALTH_LOGGING NAMESPACE (for RF presence and other modules)
 // ════════════════════════════════════════════════════════════════════════════
 
 /*
  * Namespace-based interface for health logging.
  * Provides a unified API consistent with other module conventions.
+ * Note: Named health_logging (not health_log) to avoid conflict with the
+ * global health_log() function.
  */
-namespace health_log {
+namespace health_logging {
 
 // Re-export log level constants for namespace-qualified access
-constexpr LogLevel LOG_LEVEL_DEBUG    = ::LOG_LEVEL_DEBUG;
-constexpr LogLevel LOG_LEVEL_INFO     = ::LOG_LEVEL_INFO;
-constexpr LogLevel LOG_LEVEL_NOTICE   = ::LOG_LEVEL_NOTICE;
-constexpr LogLevel LOG_LEVEL_WARN     = ::LOG_LEVEL_WARNING;  // Alias for consistency
-constexpr LogLevel LOG_LEVEL_WARNING  = ::LOG_LEVEL_WARNING;
-constexpr LogLevel LOG_LEVEL_ERROR    = ::LOG_LEVEL_ERROR;
-constexpr LogLevel LOG_LEVEL_CRITICAL = ::LOG_LEVEL_CRITICAL;
-constexpr LogLevel LOG_LEVEL_ALERT    = ::LOG_LEVEL_ALERT;
-constexpr LogLevel LOG_LEVEL_TAMPER   = ::LOG_LEVEL_TAMPER;
+// Note: LOG_LEVEL_WARN alias removed to avoid conflict with NimBLE's macro
+constexpr LogLevel LEVEL_DEBUG    = ::LOG_LEVEL_DEBUG;
+constexpr LogLevel LEVEL_INFO     = ::LOG_LEVEL_INFO;
+constexpr LogLevel LEVEL_NOTICE   = ::LOG_LEVEL_NOTICE;
+constexpr LogLevel LEVEL_WARNING  = ::LOG_LEVEL_WARNING;
+constexpr LogLevel LEVEL_ERROR    = ::LOG_LEVEL_ERROR;
+constexpr LogLevel LEVEL_CRITICAL = ::LOG_LEVEL_CRITICAL;
+constexpr LogLevel LEVEL_ALERT    = ::LOG_LEVEL_ALERT;
+constexpr LogLevel LEVEL_TAMPER   = ::LOG_LEVEL_TAMPER;
 
 // Re-export log category constants for namespace-qualified access
-constexpr LogCategory LOG_CAT_SYSTEM    = ::LOG_CAT_SYSTEM;
-constexpr LogCategory LOG_CAT_CRYPTO    = ::LOG_CAT_CRYPTO;
-constexpr LogCategory LOG_CAT_CHAIN     = ::LOG_CAT_CHAIN;
-constexpr LogCategory LOG_CAT_GPS       = ::LOG_CAT_GPS;
-constexpr LogCategory LOG_CAT_STORAGE   = ::LOG_CAT_STORAGE;
-constexpr LogCategory LOG_CAT_NETWORK   = ::LOG_CAT_NETWORK;
-constexpr LogCategory LOG_CAT_SENSOR    = ::LOG_CAT_SENSOR;
-constexpr LogCategory LOG_CAT_USER      = ::LOG_CAT_USER;
-constexpr LogCategory LOG_CAT_WITNESS   = ::LOG_CAT_WITNESS;
-constexpr LogCategory LOG_CAT_MESH      = ::LOG_CAT_MESH;
-constexpr LogCategory LOG_CAT_BLUETOOTH = ::LOG_CAT_BLUETOOTH;
-constexpr LogCategory LOG_CAT_RF        = ::LOG_CAT_RF;
+constexpr LogCategory CAT_SYSTEM    = ::LOG_CAT_SYSTEM;
+constexpr LogCategory CAT_CRYPTO    = ::LOG_CAT_CRYPTO;
+constexpr LogCategory CAT_CHAIN     = ::LOG_CAT_CHAIN;
+constexpr LogCategory CAT_GPS       = ::LOG_CAT_GPS;
+constexpr LogCategory CAT_STORAGE   = ::LOG_CAT_STORAGE;
+constexpr LogCategory CAT_NETWORK   = ::LOG_CAT_NETWORK;
+constexpr LogCategory CAT_SENSOR    = ::LOG_CAT_SENSOR;
+constexpr LogCategory CAT_USER      = ::LOG_CAT_USER;
+constexpr LogCategory CAT_WITNESS   = ::LOG_CAT_WITNESS;
+constexpr LogCategory CAT_MESH      = ::LOG_CAT_MESH;
+constexpr LogCategory CAT_BLUETOOTH = ::LOG_CAT_BLUETOOTH;
+constexpr LogCategory CAT_RF        = ::LOG_CAT_RF;
 
 // Log function wrapper
 // Delegates to the global health_log() function
@@ -98,6 +100,6 @@ inline void log(LogLevel level, LogCategory category, const char* message, const
   ::log_health(level, category, message, detail);
 }
 
-} // namespace health_log
+} // namespace health_logging
 
 #endif // SECURACV_HEALTH_LOG_H
