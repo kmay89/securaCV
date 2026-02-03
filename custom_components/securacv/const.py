@@ -228,6 +228,14 @@ DEFAULT_KERNEL_URL = "http://privacy_witness_kernel:8799"
 DEFAULT_MQTT_PREFIX = "securacv"
 
 # =============================================================================
+# Health Thresholds
+# =============================================================================
+CRITICAL_MEMORY_THRESHOLD_BYTES = 10000  # < 10KB free heap = critical
+WARNING_MEMORY_THRESHOLD_BYTES = 1024    # < 1KB free = warning in health sensor
+CRITICAL_BATTERY_THRESHOLD_PERCENT = 10  # < 10% battery = critical
+WARNING_BATTERY_THRESHOLD_PERCENT = 25   # < 25% battery = warning
+
+# =============================================================================
 # SCQCS - Secure Coded Witness Squawk System (Future)
 # Audio-based last-gasp communication when all other transports fail
 # =============================================================================

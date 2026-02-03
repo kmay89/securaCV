@@ -28,6 +28,9 @@ from .const import (
     MANUFACTURER,
     MODEL_KERNEL,
     MODEL_CANARY,
+    CRITICAL_BATTERY_THRESHOLD_PERCENT,
+    WARNING_BATTERY_THRESHOLD_PERCENT,
+    WARNING_MEMORY_THRESHOLD_BYTES,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -296,7 +299,8 @@ class SecuraCVCanaryLastEventSensor(SecuraCVCanarySensorBase):
                 "signed": data.get("signed", False),
             }
         except (json.JSONDecodeError, TypeError):
-            self._attr_native_value = str(msg.payload)[:255]
+            payload = msg.payload.decode(errors="ignore") if isinstance(msg.payload, bytes) else str(msg.payload)
+            self._attr_native_value = payload[:255]
         self.async_write_ha_state()
 
 
@@ -325,9 +329,9 @@ class SecuraCVCanaryHealthSensor(SecuraCVCanarySensorBase):
             battery = data.get("battery", 100)
             memory_free = data.get("memory_free", 0)
 
-            if battery < 10 or memory_free < 1024:
+            if battery < CRITICAL_BATTERY_THRESHOLD_PERCENT or memory_free < WARNING_MEMORY_THRESHOLD_BYTES:
                 self._attr_native_value = "critical"
-            elif battery < 25:
+            elif battery < WARNING_BATTERY_THRESHOLD_PERCENT:
                 self._attr_native_value = "warning"
             else:
                 self._attr_native_value = "healthy"

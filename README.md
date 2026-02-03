@@ -202,16 +202,16 @@ Each tamper type gets its own binary sensor for targeted automations:
 
 | Threat | Sensor | Trigger |
 |--------|--------|---------|
-| Power Loss | `tamper_power_loss` | Power removed / brownout detected |
-| SD Removed | `tamper_sd_remove` | Storage card physically removed |
-| SD Error | `tamper_sd_error` | Storage write failures |
-| GPS Jamming | `tamper_gps_jamming` | GPS signal lost or jammed |
-| Motion | `tamper_motion` | Unexpected movement detected |
-| Enclosure | `tamper_enclosure` | Physical enclosure opened |
-| GPIO | `tamper_gpio` | Tamper detection pin triggered |
-| Watchdog | `tamper_watchdog` | System hang / timeout |
-| Reboot | `tamper_unexpected_reboot` | Unexpected device restart |
-| Memory | `tamper_memory_critical` | Critical memory exhaustion |
+| Power Loss | `binary_sensor.securacv_{device}_tamper_power_loss` | Power removed / brownout detected |
+| SD Removed | `binary_sensor.securacv_{device}_tamper_sd_remove` | Storage card physically removed |
+| SD Error | `binary_sensor.securacv_{device}_tamper_sd_error` | Storage write failures |
+| GPS Jamming | `binary_sensor.securacv_{device}_tamper_gps_jamming` | GPS signal lost or jammed |
+| Motion | `binary_sensor.securacv_{device}_tamper_motion` | Unexpected movement detected |
+| Enclosure | `binary_sensor.securacv_{device}_tamper_enclosure` | Physical enclosure opened |
+| GPIO | `binary_sensor.securacv_{device}_tamper_gpio` | Tamper detection pin triggered |
+| Watchdog | `binary_sensor.securacv_{device}_tamper_watchdog` | System hang / timeout |
+| Reboot | `binary_sensor.securacv_{device}_tamper_unexpected_reboot` | Unexpected device restart |
+| Memory | `binary_sensor.securacv_{device}_tamper_memory_critical` | Critical memory exhaustion |
 
 ### Entities Created
 

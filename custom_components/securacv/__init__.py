@@ -122,22 +122,6 @@ class SecuraCVApi:
             return {"status": "offline"}
 
 
-def _select_latest_event(payload: dict[str, Any]) -> dict[str, Any] | None:
-    """Extract the latest event from a batched export payload."""
-    all_events = (
-        event
-        for batch in payload.get("batches", [])
-        for bucket in batch.get("buckets", [])
-        for event in bucket.get("events", [])
-    )
-
-    def _start_epoch(event: dict[str, Any]) -> int:
-        start = event.get("time_bucket", {}).get("start_epoch_s")
-        return start if isinstance(start, int) else -1
-
-    return max(all_events, key=_start_epoch, default=None)
-
-
 class SecuraCVCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Coordinator for SecuraCV data updates via HTTP API."""
 
@@ -154,10 +138,10 @@ class SecuraCVCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from the kernel API."""
         try:
-            payload = await self.api.async_get_events()
+            latest_event = await self.api.async_get_latest_event()
         except SecuraCVApiError as err:
             raise UpdateFailed(str(err)) from err
-        return {"latest_event": _select_latest_event(payload)}
+        return {"latest_event": latest_event}
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -252,12 +236,16 @@ def _async_device_status_received(hass: HomeAssistant, entry: ConfigEntry):
             return
 
         device_id = parts[-2]
-        entry_data = hass.data[DOMAIN].get(entry.entry_id, {})
-        devices = entry_data.get("devices", {})
+        entry_data = hass.data[DOMAIN].get(entry.entry_id)
+        if not entry_data:
+            return
+
+        devices = entry_data["devices"]
+        status_payload = msg.payload.decode() if isinstance(msg.payload, bytes) else str(msg.payload)
 
         if device_id not in devices:
             _LOGGER.info("Discovered SecuraCV Canary device: %s", device_id)
-            devices[device_id] = {"status": msg.payload}
+            devices[device_id] = {"status": status_payload}
 
             # Register Canary in device registry
             dev_registry = dr.async_get(hass)
@@ -269,6 +257,6 @@ def _async_device_status_received(hass: HomeAssistant, entry: ConfigEntry):
                 name=f"SecuraCV Canary {device_id}",
             )
         else:
-            devices[device_id]["status"] = msg.payload
+            devices[device_id]["status"] = status_payload
 
     return _callback

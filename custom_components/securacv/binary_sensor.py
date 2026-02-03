@@ -54,6 +54,8 @@ from .const import (
     TRANSPORT_BLE,
     TRANSPORT_MESH,
     TRANSPORT_CHIRP,
+    # Thresholds
+    CRITICAL_MEMORY_THRESHOLD_BYTES,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -272,8 +274,8 @@ class SecuraCVCanaryOnlineSensor(SecuraCVCanaryBinarySensorBase):
     @callback
     def _handle_message(self, msg: mqtt.ReceiveMessage) -> None:
         """Handle status message."""
-        payload = str(msg.payload).lower().strip()
-        self._attr_is_on = payload in ("online", "1", "true", "connected")
+        payload = msg.payload.decode() if isinstance(msg.payload, bytes) else str(msg.payload)
+        self._attr_is_on = payload.lower().strip() in ("online", "1", "true", "connected")
         self.async_write_ha_state()
 
 
@@ -440,7 +442,7 @@ class SecuraCVCanaryTamperTypeSensor(SecuraCVCanaryBinarySensorBase):
                 is_triggered = tamper_data.get("motion", False) or data.get("unexpected_motion", False)
             elif self._tamper_type == TAMPER_MEMORY:
                 free_heap = data.get("free_heap", 100000)
-                is_triggered = free_heap < 10000  # Critical if < 10KB
+                is_triggered = free_heap < CRITICAL_MEMORY_THRESHOLD_BYTES
             elif self._tamper_type == TAMPER_WATCHDOG:
                 is_triggered = data.get("watchdog_triggered", False)
             elif self._tamper_type == TAMPER_GPIO:
