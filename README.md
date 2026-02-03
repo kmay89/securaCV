@@ -1,5 +1,8 @@
 # SecuraCV
 
+[![HACS Badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
+[![Validate with HACS](https://github.com/kmay89/securaCV/actions/workflows/validate.yml/badge.svg)](https://github.com/kmay89/securaCV/actions/workflows/validate.yml)
+
 ![SecuraCV logo animation](docs/securacv_logo_animation-2.gif)
 
 
@@ -150,12 +153,89 @@ default jitter and batching unless overridden by CLI flags.
 
 ## Home Assistant Integration
 
-Install the Home Assistant integration through HACS, then point it at a running Privacy Witness Kernel:
+SecuraCV integrates with Home Assistant through two connection methods:
 
-1. In **HACS → Integrations**, add `https://github.com/kmay89/securaCV` as a custom repository.
-2. Install **SecuraCV** and restart Home Assistant when prompted.
-3. Run the kernel (Home Assistant add-on, Docker, or another host) and read the Event API token from the configured token file.
-4. In **Settings → Devices & Services**, add the **SecuraCV** integration and provide the URL + token (sent as a Bearer token header; do not place tokens in URLs).
+1. **HTTP API** (required) - Connects to the Privacy Witness Kernel for vault storage, event queries, and management
+2. **MQTT** (optional) - Real-time updates from Canary devices for multi-transport resilience
+
+The integration surfaces semantic witness events, hash chain integrity, and device health - never raw video or identity data. Privacy by design.
+
+### Requirements
+
+- Home Assistant 2024.4.1 or later
+- SecuraCV Privacy Witness Kernel running (Docker, add-on, or standalone)
+- MQTT broker (optional, for Canary device real-time updates)
+
+### HACS Installation (Recommended)
+
+1. Open HACS in your Home Assistant instance
+2. Click the three dots menu → **Custom repositories**
+3. Add `https://github.com/kmay89/securaCV` as an **Integration**
+4. Search for "SecuraCV" and install
+5. Restart Home Assistant
+6. Go to **Settings → Devices & Services → Add Integration → SecuraCV**
+7. Enter kernel URL and API token (required)
+8. Optionally enable MQTT for Canary device discovery
+
+### Manual Installation
+
+Copy `custom_components/securacv/` to your Home Assistant `config/custom_components/` directory and restart.
+
+### Multi-Transport Resilience Architecture
+
+Canary devices are designed to get witness data OUT by any means necessary before being silenced. The integration surfaces which communication paths are alive:
+
+| Transport | Description | Sensor |
+|-----------|-------------|--------|
+| WiFi AP | Direct access point mode | `binary_sensor.securacv_{device}_transport_wifi_ap` |
+| WiFi Station | Connection to home network | `binary_sensor.securacv_{device}_transport_wifi_sta` |
+| MQTT | Broker-based messaging | `binary_sensor.securacv_{device}_transport_mqtt` |
+| Bluetooth | BLE direct connection | `binary_sensor.securacv_{device}_transport_ble` |
+| Mesh (Opera) | Ed25519 authenticated peer network | `binary_sensor.securacv_{device}_mesh_connected` |
+| Chirp | Community alert network (ephemeral IDs) | `binary_sensor.securacv_{device}_chirp_active` |
+| LoRa | Long-range radio (future) | - |
+| SCQCS | Audio squawk alerts (future) | - |
+
+### Tamper Detection
+
+Each tamper type gets its own binary sensor for targeted automations:
+
+| Threat | Sensor | Trigger |
+|--------|--------|---------|
+| Power Loss | `binary_sensor.securacv_{device}_tamper_power_loss` | Power removed / brownout detected |
+| SD Removed | `binary_sensor.securacv_{device}_tamper_sd_remove` | Storage card physically removed |
+| SD Error | `binary_sensor.securacv_{device}_tamper_sd_error` | Storage write failures |
+| GPS Jamming | `binary_sensor.securacv_{device}_tamper_gps_jamming` | GPS signal lost or jammed |
+| Motion | `binary_sensor.securacv_{device}_tamper_motion` | Unexpected movement detected |
+| Enclosure | `binary_sensor.securacv_{device}_tamper_enclosure` | Physical enclosure opened |
+| GPIO | `binary_sensor.securacv_{device}_tamper_gpio` | Tamper detection pin triggered |
+| Watchdog | `binary_sensor.securacv_{device}_tamper_watchdog` | System hang / timeout |
+| Reboot | `binary_sensor.securacv_{device}_tamper_unexpected_reboot` | Unexpected device restart |
+| Memory | `binary_sensor.securacv_{device}_tamper_memory_critical` | Critical memory exhaustion |
+
+### Entities Created
+
+**Kernel Sensors (HTTP-based):**
+- `sensor.securacv_last_event` - Latest event from the kernel
+- `binary_sensor.securacv_kernel_online` - Kernel connectivity
+
+**Canary Sensors (MQTT-based, when enabled):**
+- `sensor.securacv_{device}_witness_count` - Total witness records
+- `sensor.securacv_{device}_chain_length` - Hash chain length
+- `sensor.securacv_{device}_last_event` - Last event type + timestamp
+- `sensor.securacv_{device}_health_status` - Device health status
+- `sensor.securacv_{device}_gps_fix` - GPS fix status
+
+**Canary Binary Sensors:**
+- `binary_sensor.securacv_{device}_online` - Device connectivity (MQTT LWT)
+- `binary_sensor.securacv_{device}_chain_valid` - Hash chain integrity
+- `binary_sensor.securacv_{device}_tamper` - General tamper detection
+- Plus individual tamper type sensors (see above)
+- Plus transport health sensors (see above)
+
+**Services:**
+- `securacv.export_chain` - Export tamper-evident witness chain
+- `securacv.verify_chain` - Verify Ed25519 signatures and hash chain integrity
 
 ### MQTT Discovery (Auto-Sensors)
 

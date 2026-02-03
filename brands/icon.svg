@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!-- Background shield shape -->
+  <path d="M128 8 L240 48 L240 128 C240 192 128 248 128 248 C128 248 16 192 16 128 L16 48 Z"
+        fill="#1a5f7a" stroke="#0d3d4d" stroke-width="4"/>
+
+  <!-- Inner shield highlight -->
+  <path d="M128 24 L224 58 L224 128 C224 182 128 230 128 230 C128 230 32 182 32 128 L32 58 Z"
+        fill="#2d7d9a"/>
+
+  <!-- Eye symbol (witness) -->
+  <ellipse cx="128" cy="120" rx="56" ry="36" fill="#ffffff" opacity="0.95"/>
+  <circle cx="128" cy="120" r="24" fill="#0d3d4d"/>
+  <circle cx="128" cy="120" r="12" fill="#1a5f7a"/>
+  <circle cx="134" cy="114" r="5" fill="#ffffff" opacity="0.8"/>
+
+  <!-- Chain links below eye (blockchain/hash chain) -->
+  <rect x="88" y="168" width="24" height="16" rx="4" fill="#ffffff" opacity="0.9"/>
+  <rect x="116" y="168" width="24" height="16" rx="4" fill="#ffffff" opacity="0.9"/>
+  <rect x="144" y="168" width="24" height="16" rx="4" fill="#ffffff" opacity="0.9"/>
+
+  <!-- Link connectors -->
+  <rect x="110" y="173" width="8" height="6" fill="#2d7d9a"/>
+  <rect x="138" y="173" width="8" height="6" fill="#2d7d9a"/>
+</svg>

@@ -1,0 +1,31 @@
+export_chain:
+  name: Export Witness Chain
+  description: >-
+    Export the tamper-evident witness chain from a SecuraCV Canary device.
+    The chain contains Ed25519-signed, hash-linked witness records that
+    form a cryptographic proof of all observed events.
+  target:
+    entity:
+      integration: securacv
+  fields:
+    format:
+      name: Export Format
+      description: The format to export the chain in
+      required: false
+      default: json
+      example: json
+      selector:
+        select:
+          options:
+            - json
+            - pwk_bundle
+
+verify_chain:
+  name: Verify Chain Integrity
+  description: >-
+    Verify Ed25519 signatures and hash chain integrity for a SecuraCV
+    Canary device. Returns whether the entire witness chain is intact
+    and untampered.
+  target:
+    entity:
+      integration: securacv
