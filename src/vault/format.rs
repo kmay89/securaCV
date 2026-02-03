@@ -317,10 +317,7 @@ mod tests {
 
         let result = EnvelopeV1::decode(&malicious);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("exceeds maximum"));
+        assert!(result.unwrap_err().to_string().contains("exceeds maximum"));
     }
 
     #[test]
@@ -353,17 +350,14 @@ mod tests {
         let mut malicious = Vec::new();
         malicious.extend_from_slice(V2_MAGIC);
         malicious.push(2); // version
-        // Write an algorithm length that exceeds the maximum
+                           // Write an algorithm length that exceeds the maximum
         let oversized_len = (MAX_ALG_LEN + 100) as u32;
         malicious.extend_from_slice(&oversized_len.to_le_bytes());
         malicious.extend_from_slice(&vec![b'a'; MAX_ALG_LEN + 100]);
 
         let result = EnvelopeV2::decode(&malicious);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("exceeds maximum"));
+        assert!(result.unwrap_err().to_string().contains("exceeds maximum"));
     }
 
     #[test]
@@ -372,7 +366,7 @@ mod tests {
         let mut malicious = Vec::new();
         malicious.extend_from_slice(V2_MAGIC);
         malicious.push(2); // version
-        // Valid algorithm
+                           // Valid algorithm
         write_bytes(&mut malicious, b"ChaCha20-Poly1305");
         // Valid nonce
         write_bytes(&mut malicious, &[0u8; 12]);
@@ -383,10 +377,7 @@ mod tests {
 
         let result = EnvelopeV2::decode(&malicious);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("exceeds maximum"));
+        assert!(result.unwrap_err().to_string().contains("exceeds maximum"));
     }
 
     #[test]

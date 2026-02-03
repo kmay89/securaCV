@@ -771,10 +771,7 @@ mod tests {
 
         let result = QuorumPolicy::new(1, trustees);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("exceeds maximum"));
+        assert!(result.unwrap_err().to_string().contains("exceeds maximum"));
     }
 
     #[test]
@@ -818,10 +815,7 @@ mod tests {
 
         let (result, receipt) = BreakGlass::authorize(&policy, &request, &fake_approvals, bucket);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("exceeds maximum"));
+        assert!(result.unwrap_err().to_string().contains("exceeds maximum"));
         assert!(matches!(receipt.outcome, BreakGlassOutcome::Denied { .. }));
     }
 
