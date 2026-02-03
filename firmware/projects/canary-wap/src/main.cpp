@@ -57,6 +57,10 @@
 #include "rf_presence/rf_presence.h"
 #endif
 
+#if FEATURE_CHIRP
+#include "chirp/chirp_channel.h"
+#endif
+
 #include "witness/witness_chain.h"
 
 // ============================================================================
@@ -172,6 +176,11 @@ void loop() {
     // Process RF presence
     #if FEATURE_RF_PRESENCE
     rf_presence_process();
+    #endif
+
+    // Process chirp channel
+    #if FEATURE_CHIRP
+    chirp_process();
     #endif
 
     // Feed watchdog
@@ -366,6 +375,18 @@ static void app_init_network() {
     if (rf_presence_init(&rf_cfg) == RESULT_OK) {
         rf_presence_start();
         LOG_I("RF presence detection started");
+    }
+    #endif
+
+    // Initialize chirp channel
+    #if FEATURE_CHIRP
+    chirp_config_t chirp_cfg = CHIRP_CONFIG_DEFAULT;
+    chirp_cfg.auto_relay = CONFIG_CHIRP_AUTO_RELAY;
+    chirp_cfg.min_urgency = (chirp_urgency_t)CONFIG_CHIRP_MIN_URGENCY;
+
+    if (chirp_init(&chirp_cfg) == RESULT_OK) {
+        LOG_I("Chirp channel initialized");
+        g_health.chirp_active = true;
     }
     #endif
 

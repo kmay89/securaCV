@@ -34,6 +34,14 @@ common/
 │   └── bluetooth_mgr.h
 ├── rf_presence/    # Privacy-preserving RF presence
 │   └── rf_presence.h
+├── chirp/          # Community witness network
+│   └── chirp_channel.h
+├── health/         # Health logging with categories
+│   └── health_log.h
+├── camera/         # Camera management
+│   └── camera_mgr.h
+├── encoding/       # Data encoding
+│   └── cbor.h
 └── web/            # HTTP server and UI
     ├── http_server.h
     └── web_ui.h

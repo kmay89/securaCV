@@ -34,6 +34,7 @@
 #define FEATURE_BLUETOOTH           1   // Enable Bluetooth Low Energy
 #define FEATURE_RF_PRESENCE         1   // Enable RF presence detection
 #define FEATURE_GNSS                1   // Enable GPS/GNSS
+#define FEATURE_CHIRP               1   // Enable Chirp community witness network
 
 // ============================================================================
 // DEBUG FLAGS
@@ -59,6 +60,9 @@
 #endif
 #ifndef DEBUG_BLE
 #define DEBUG_BLE                   0   // Print BLE details
+#endif
+#ifndef DEBUG_CHIRP
+#define DEBUG_CHIRP                 0   // Print chirp channel details
 #endif
 
 // ============================================================================
@@ -143,6 +147,13 @@
 
 #define CONFIG_SD_SPI_FREQ_FAST         4000000
 #define CONFIG_SD_SPI_FREQ_SLOW         1000000
+
+// ============================================================================
+// CHIRP CHANNEL CONFIGURATION
+// ============================================================================
+
+#define CONFIG_CHIRP_AUTO_RELAY         1       // Auto-relay validated chirps
+#define CONFIG_CHIRP_MIN_URGENCY        0       // Minimum urgency (0=info)
 
 // ============================================================================
 // SERIAL/USB CONFIGURATION
