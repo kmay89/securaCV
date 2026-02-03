@@ -40,7 +40,8 @@ enum LogCategory : uint8_t {
   LOG_CAT_USER       = 7,   // User actions (config changes, acknowledgments)
   LOG_CAT_WITNESS    = 8,   // Witness record creation
   LOG_CAT_MESH       = 9,   // Mesh network (flock) operations
-  LOG_CAT_BLUETOOTH  = 10   // Bluetooth Low Energy operations
+  LOG_CAT_BLUETOOTH  = 10,  // Bluetooth Low Energy operations
+  LOG_CAT_RF         = 11   // RF presence detection operations
 };
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -99,6 +100,7 @@ inline const char* log_category_name(LogCategory cat) {
     case LOG_CAT_WITNESS:   return "WITNESS";
     case LOG_CAT_MESH:      return "MESH";
     case LOG_CAT_BLUETOOTH: return "BLUETOOTH";
+    case LOG_CAT_RF:        return "RF";
     default:                return "???";
   }
 }
