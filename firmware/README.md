@@ -11,15 +11,34 @@ Before adding or restructuring firmware work, read the canonical architecture gu
 This guide is **normative** for the `firmware/` subtree. If another document
 conflicts, the architecture guide takes precedence.
 
-### Required Layout (Summary)
+### Required Layout
 
 ```
 firmware/
-  common/     # Board-agnostic core logic
-  boards/     # Board definitions and pin maps
-  configs/    # App/product configurations
-  envs/       # Build environments (toolchains + bindings)
-  projects/   # Thin product wrappers
+├── ARCHITECTURE.md     # Normative architecture document
+├── README.md           # This file
+├── boards/             # Board definitions and pin maps
+│   ├── xiao-esp32s3-sense/  # XIAO ESP32-S3 Sense
+│   └── esp32-c3/            # ESP32-C3 DevKit
+├── common/             # Board-agnostic core logic
+│   ├── core/           # Types, logging, utilities
+│   ├── hal/            # Hardware abstraction layer
+│   ├── witness/        # Witness chain management
+│   ├── gnss/           # GPS/GNSS parsing
+│   ├── storage/        # NVS and SD storage
+│   ├── network/        # Mesh networking
+│   ├── bluetooth/      # BLE management
+│   ├── rf_presence/    # Privacy-preserving RF detection
+│   └── web/            # HTTP server and Web UI
+├── configs/            # App/product configurations
+│   ├── canary-wap/     # WAP device configs
+│   └── canary-vision/  # Vision device configs
+├── envs/               # Build environments
+│   └── platformio/     # PlatformIO configurations
+└── projects/           # Product wrappers
+    ├── canary-wap/     # WAP witness device
+    ├── canary-vision/  # Vision AI presence detector
+    └── canary-wap-snapshot/  # Legacy reference
 ```
 
 Key rule: **composition happens only in `envs/` and `projects/`**. Core logic
@@ -27,19 +46,39 @@ never imports boards or configs.
 
 ## Projects
 
+### Canary WAP (ESP32-S3 + GPS + SD + Mesh)
+
+Path: `firmware/projects/canary-wap/`
+
+Full-featured Wireless Access Point witness device with:
+- Ed25519 signed, hash-chained witness records
+- GPS/GNSS location tracking with time coarsening
+- SD card append-only storage
+- WiFi AP for local monitoring
+- HTTP REST API and Web UI
+- Opera protocol mesh networking
+- Bluetooth pairing and configuration
+- Privacy-preserving RF presence detection
+
+Build configurations:
+- `canary-wap-default` - Full-featured
+- `canary-wap-mobile` - Power-optimized for battery
+- `canary-wap-debug` - Verbose logging
+
 ### Canary Vision (ESP32-C3 + Grove Vision AI V2)
 
 Path: `firmware/projects/canary-vision/`
 
-Purpose:
-- Publishes semantic events like `presence_started`, `dwell_started`, `interaction_likely`
-- Publishes retained state snapshots for Home Assistant
-- Publishes **MQTT Discovery** config so Home Assistant auto-registers entities
+Vision AI presence detection with:
+- Person detection using SSCMA
+- Presence/dwelling state machine
+- MQTT publishing to Home Assistant
+- Auto-discovery for HA integration
 
-Key topics (by default):
+Key MQTT topics:
 - `securacv/<device_id>/events`  (non-retained JSON)
 - `securacv/<device_id>/state`   (retained JSON snapshot)
-- `securacv/<device_id>/status`  (retained JSON status: online/offline)
+- `securacv/<device_id>/status`  (retained JSON status)
 
 Home Assistant discovery topics:
 - `homeassistant/binary_sensor/<device_id>/presence/config`
@@ -49,14 +88,14 @@ Home Assistant discovery topics:
 - `homeassistant/sensor/<device_id>/last_event/config`
 - `homeassistant/sensor/<device_id>/uptime/config`
 
-### Canary WAP Snapshot (Arduino demo)
+### Canary WAP Snapshot (Legacy Reference)
 
 Path: `firmware/projects/canary-wap-snapshot/`
 
 Purpose:
 - Preserves a working Arduino sketch as a frozen snapshot
-- Not wired into any build system (reference only)
-- Used as the baseline for migrating into the required firmware architecture
+- Reference implementation for WAP features
+- Historical baseline (do not modify)
 
 ## Build & Flash (PlatformIO)
 
