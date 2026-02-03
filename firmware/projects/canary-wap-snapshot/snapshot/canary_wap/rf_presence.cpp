@@ -115,7 +115,7 @@ static RfPresenceSettings s_settings = {
 static bool regenerate_device_secret() {
   esp_fill_random(s_device_secret, sizeof(s_device_secret));
   if (!nvs_store::set_blob("rf_secret", s_device_secret, sizeof(s_device_secret))) {
-    health_log::log(health_log::LOG_LEVEL_ERROR, health_log::LOG_CAT_RF,
+    health_logging::log(health_logging::LEVEL_ERROR, health_logging::CAT_RF,
       "Failed to persist device secret");
     return false;
   }
@@ -159,7 +159,7 @@ static uint32_t derive_session_token(const uint8_t* mac_address) {
   // Validate hash operation succeeded
   if (ret != 0) {
     secure_wipe(input, sizeof(input));
-    health_log::log(health_log::LOG_LEVEL_ERROR, health_log::LOG_CAT_RF,
+    health_logging::logf(health_logging::LEVEL_ERROR, health_logging::CAT_RF,
       "SHA256 failed with error %d", ret);
     return 0;
   }
@@ -410,7 +410,7 @@ static void transition_to(RfState new_state, uint32_t now_ms) {
   s_last_transition_ms = now_ms;  // Track for rate limiting
 
   // Log transition
-  health_log::log(health_log::LOG_LEVEL_INFO, health_log::LOG_CAT_RF,
+  health_logging::logf(health_logging::LEVEL_INFO, health_logging::CAT_RF,
     "RF FSM: %s -> %s", state_name(old_state), state_name(new_state));
 }
 
@@ -534,7 +534,7 @@ bool init() {
 
   // Validate secret is not all zeros (would indicate uninitialized state)
   if (!validate_device_secret()) {
-    health_log::log(health_log::LOG_LEVEL_ERROR, health_log::LOG_CAT_RF,
+    health_logging::log(health_logging::LEVEL_ERROR, health_logging::CAT_RF,
       "Device secret is invalid (all zeros), regenerating");
     regenerate_device_secret();
   }
@@ -557,7 +557,7 @@ bool init() {
         stored.min_presence_count <= MAX_PRESENCE_COUNT_SETTING) {
       s_settings = stored;
     } else {
-      health_log::log(health_log::LOG_LEVEL_WARN, health_log::LOG_CAT_RF,
+      health_logging::log(health_logging::LEVEL_WARNING, health_logging::CAT_RF,
         "Stored settings invalid, using defaults");
     }
   }
@@ -588,7 +588,7 @@ bool init() {
   s_initialized = true;
   s_enabled = s_settings.enabled;
 
-  health_log::log(health_log::LOG_LEVEL_INFO, health_log::LOG_CAT_RF,
+  health_logging::logf(health_logging::LEVEL_INFO, health_logging::CAT_RF,
     "RF Presence initialized, epoch=%u", s_session_epoch);
 
   return true;
@@ -612,7 +612,7 @@ void deinit() {
   s_initialized = false;
   s_enabled = false;
 
-  health_log::log(health_log::LOG_LEVEL_INFO, health_log::LOG_CAT_RF,
+  health_logging::log(health_logging::LEVEL_INFO, health_logging::CAT_RF,
     "RF Presence deinitialized");
 }
 
@@ -745,7 +745,7 @@ void rotate_session() {
   // Reset last event to prevent cross-session correlation
   s_last_event = "session_rotated";
 
-  health_log::log(health_log::LOG_LEVEL_INFO, health_log::LOG_CAT_RF,
+  health_logging::logf(health_logging::LEVEL_INFO, health_logging::CAT_RF,
     "Session rotated, new epoch=%u", s_session_epoch);
 }
 
@@ -846,7 +846,7 @@ bool conformance_check_token_rotation() {
   uint32_t token_before = derive_session_token(test_mac);
   if (token_before == 0) {
     // Token derivation failed
-    health_log::log(health_log::LOG_LEVEL_ERROR, health_log::LOG_CAT_RF,
+    health_logging::log(health_logging::LEVEL_ERROR, health_logging::CAT_RF,
       "Conformance: token derivation failed before rotation");
     return false;
   }
@@ -857,7 +857,7 @@ bool conformance_check_token_rotation() {
   // Generate token after rotation with same MAC
   uint32_t token_after = derive_session_token(test_mac);
   if (token_after == 0) {
-    health_log::log(health_log::LOG_LEVEL_ERROR, health_log::LOG_CAT_RF,
+    health_logging::log(health_logging::LEVEL_ERROR, health_logging::CAT_RF,
       "Conformance: token derivation failed after rotation");
     return false;
   }
@@ -868,15 +868,15 @@ bool conformance_check_token_rotation() {
   bool tokens_cleared = (s_token_count == 0);  // rotation should clear token map
 
   if (!epoch_incremented) {
-    health_log::log(health_log::LOG_LEVEL_ERROR, health_log::LOG_CAT_RF,
+    health_logging::logf(health_logging::LEVEL_ERROR, health_logging::CAT_RF,
       "Conformance: epoch did not increment (was %u, now %u)", old_epoch, s_session_epoch);
   }
   if (!tokens_differ) {
-    health_log::log(health_log::LOG_LEVEL_ERROR, health_log::LOG_CAT_RF,
+    health_logging::logf(health_logging::LEVEL_ERROR, health_logging::CAT_RF,
       "Conformance: tokens match after rotation (both %u)", token_before);
   }
   if (!tokens_cleared) {
-    health_log::log(health_log::LOG_LEVEL_ERROR, health_log::LOG_CAT_RF,
+    health_logging::logf(health_logging::LEVEL_ERROR, health_logging::CAT_RF,
       "Conformance: token map not cleared (had %u, now %u)", old_token_count, s_token_count);
   }
 
@@ -893,7 +893,7 @@ bool conformance_check_aggregate_only() {
 
     // Device count should be within reasonable bounds (0-255, practically 0-50)
     if (obs.ble_device_count > 100) {
-      health_log::log(health_log::LOG_LEVEL_WARN, health_log::LOG_CAT_RF,
+      health_logging::logf(health_logging::LEVEL_WARNING, health_logging::CAT_RF,
         "Conformance: suspicious device count %u in observation", obs.ble_device_count);
       // Not a failure - could be legitimate dense environment
     }
@@ -901,7 +901,7 @@ bool conformance_check_aggregate_only() {
     // RSSI should be within valid range (-127 to 0 for BLE)
     if (obs.ble_rssi_max > 0 || obs.ble_rssi_max < -100) {
       if (obs.ble_device_count > 0) {  // Only check if devices were present
-        health_log::log(health_log::LOG_LEVEL_WARN, health_log::LOG_CAT_RF,
+        health_logging::logf(health_logging::LEVEL_WARNING, health_logging::CAT_RF,
           "Conformance: suspicious RSSI max %d in observation", obs.ble_rssi_max);
       }
     }
@@ -921,7 +921,7 @@ bool conformance_check_secure_wipe() {
   // Verify all bytes are zero
   for (size_t i = 0; i < sizeof(test_buffer); i++) {
     if (test_buffer[i] != 0) {
-      health_log::log(health_log::LOG_LEVEL_ERROR, health_log::LOG_CAT_RF,
+      health_logging::logf(health_logging::LEVEL_ERROR, health_logging::CAT_RF,
         "Conformance: secure_wipe failed at byte %u (value 0x%02X)", i, test_buffer[i]);
       return false;
     }
