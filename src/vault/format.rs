@@ -20,6 +20,15 @@ const MAX_KEM_CT_LEN: usize = 8 * 1024;
 /// Maximum allowed algorithm identifier length.
 const MAX_ALG_LEN: usize = 64;
 
+/// Maximum allowed nonce size.
+const MAX_NONCE_LEN: usize = 32;
+
+/// Maximum allowed KDF info size.
+const MAX_KDF_INFO_LEN: usize = 64;
+
+/// Maximum allowed classical key wrap size.
+const MAX_CLASSICAL_WRAP_LEN: usize = 128;
+
 #[derive(Clone, Debug)]
 pub enum VaultEnvelope {
     V1(EnvelopeV1),
@@ -211,15 +220,19 @@ impl EnvelopeV2 {
             return Err(anyhow!("unsupported vault envelope version"));
         }
         let aead_alg = read_string_bounded(bytes, &mut cursor, MAX_ALG_LEN)?;
-        let nonce = read_vec_bounded(bytes, &mut cursor, 32)?; // Max 32 bytes for any nonce
+        let nonce = read_vec_bounded(bytes, &mut cursor, MAX_NONCE_LEN)?;
         let aad = read_vec_bounded(bytes, &mut cursor, MAX_AAD_LEN)?;
         let ciphertext = read_vec_bounded(bytes, &mut cursor, MAX_CIPHERTEXT_LEN)?;
         let kem_alg = read_string_bounded(bytes, &mut cursor, MAX_ALG_LEN)?;
         let kem_ct = read_vec_bounded(bytes, &mut cursor, MAX_KEM_CT_LEN)?;
-        let kdf_info = read_vec_bounded(bytes, &mut cursor, 64)?; // Max 64 bytes for KDF info
+        let kdf_info = read_vec_bounded(bytes, &mut cursor, MAX_KDF_INFO_LEN)?;
         let has_wrap = read_u8(bytes, &mut cursor)?;
         let classical_wrap = if has_wrap == 1 {
-            Some(read_vec_bounded(bytes, &mut cursor, 128)?) // Max 128 bytes for wrap
+            Some(read_vec_bounded(
+                bytes,
+                &mut cursor,
+                MAX_CLASSICAL_WRAP_LEN,
+            )?)
         } else {
             None
         };
