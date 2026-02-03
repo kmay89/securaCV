@@ -87,6 +87,7 @@
 #include "mesh_network.h"
 #include "bluetooth_channel.h"
 #include "bluetooth_api.h"
+#include "sys_monitor.h"
 
 // ════════════════════════════════════════════════════════════════════════════
 // COMPILE-TIME FEATURE FLAGS
@@ -101,6 +102,7 @@
 #define FEATURE_STATE_LOG     1   // Log state transitions
 #define FEATURE_MESH_NETWORK  1   // Enable mesh network (opera)
 #define FEATURE_BLUETOOTH     1   // Enable Bluetooth Low Energy
+#define FEATURE_SYS_MONITOR   1   // Enable system monitoring (temp, heap, PSRAM)
 
 #define DEBUG_NMEA            0   // Print raw NMEA sentences
 #define DEBUG_CBOR            0   // Print CBOR hex dump
@@ -1498,9 +1500,25 @@ static esp_err_t handle_status(httpd_req_t* req) {
   return http_send_json(req, response.c_str());
 }
 
+#if FEATURE_SYS_MONITOR
+static esp_err_t handle_system_metrics(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  // Use the sys_monitor JSON generator (larger buffer for full device info + F/C temps)
+  char buf[2048];
+  size_t len = sys_monitor::get_json(buf, sizeof(buf));
+
+  if (len == 0) {
+    return http_send_json(req, "{\"ok\":false,\"error\":\"Failed to generate metrics\"}");
+  }
+
+  return http_send_json(req, buf);
+}
+#endif
+
 static esp_err_t handle_chain(httpd_req_t* req) {
   g_health.http_requests++;
-  
+
   StaticJsonDocument<512> doc;
   doc["ok"] = true;
   
@@ -2598,7 +2616,12 @@ static void start_http_server() {
   // API endpoints
   httpd_uri_t status = { .uri = "/api/status", .method = HTTP_GET, .handler = handle_status };
   httpd_register_uri_handler(g_http_server, &status);
-  
+
+#if FEATURE_SYS_MONITOR
+  httpd_uri_t sys_metrics = { .uri = "/api/system", .method = HTTP_GET, .handler = handle_system_metrics };
+  httpd_register_uri_handler(g_http_server, &sys_metrics);
+#endif
+
   httpd_uri_t chain = { .uri = "/api/chain", .method = HTTP_GET, .handler = handle_chain };
   httpd_register_uri_handler(g_http_server, &chain);
   
@@ -3135,6 +3158,8 @@ static void print_help() {
   Serial.println("│ g     : Show GPS details            │");
   Serial.println("│ w     : Show WiFi AP info           │");
   Serial.println("│ c     : Show camera status          │");
+  Serial.println("│ m     : Show system monitor         │");
+  Serial.println("│         (temp, heap, PSRAM)         │");
   Serial.println("└─────────────────────────────────────┘");
 }
 
@@ -3174,6 +3199,13 @@ static void handle_serial_commands() {
         Serial.printf("Resolution: %s (%d)\n", framesize_name(g_peek_framesize), (int)g_peek_framesize);
         #else
         Serial.println("Camera not enabled");
+        #endif
+        break;
+      case 'm':
+        #if FEATURE_SYS_MONITOR
+        sys_monitor::print_status();
+        #else
+        Serial.println("System monitor not enabled");
         #endif
         break;
       case '\r':
@@ -3311,6 +3343,25 @@ void setup() {
   }
   #endif
 
+  // Initialize System Monitor
+  #if FEATURE_SYS_MONITOR
+  Serial.println("[..] Initializing system monitor...");
+  sys_monitor::init();
+  {
+    char psram_str[16];
+    if (sys_monitor::g_sys_metrics.psram_available) {
+      sys_monitor::format_bytes(sys_monitor::g_sys_metrics.psram_total, psram_str, sizeof(psram_str));
+    } else {
+      strcpy(psram_str, "N/A");
+    }
+    Serial.printf("[OK] System monitor: %.1fC, Heap: %uKB, PSRAM: %s\n",
+                  sys_monitor::g_sys_metrics.temp_celsius,
+                  sys_monitor::g_sys_metrics.heap_free / 1024,
+                  psram_str);
+  }
+  log_health(LOG_LEVEL_INFO, LOG_CAT_SYSTEM, "System monitor initialized", nullptr);
+  #endif
+
   // Initialize GNSS
   Serial.println();
   Serial.printf("[..] GNSS: %u baud, RX=GPIO%d, TX=GPIO%d\n", GPS_BAUD, GPS_RX_GPIO, GPS_TX_GPIO);
@@ -3342,7 +3393,7 @@ void setup() {
   Serial.println("║  mDNS       : http://canary.local                             ║");
   #endif
   Serial.println("╠══════════════════════════════════════════════════════════════╣");
-  Serial.println("║  Commands: h=help, i=identity, s=status, t=time, g=gps, c=cam║");
+  Serial.println("║  Commands: h=help i=identity s=status t=time g=gps c=cam m=sys║");
   Serial.println("║  Hold BOOT button 1.2s to print all info                     ║");
   Serial.println("╚══════════════════════════════════════════════════════════════╝");
   Serial.println();
@@ -3416,6 +3467,11 @@ void loop() {
   // Update Bluetooth
   #if FEATURE_BLUETOOTH
   bluetooth_channel::update();
+  #endif
+
+  // Update system monitor (temp, heap, alerts)
+  #if FEATURE_SYS_MONITOR
+  sys_monitor::update(log_health);
   #endif
 
   // Create witness records at interval
