@@ -221,9 +221,10 @@ Check serial output for failed self-test name. Common causes:
 
 ### SHA256 Mismatch
 
-Regenerate manifest with correct firmware binary:
+Regenerate manifest with the correct firmware binary:
 ```bash
-python tools/mock_ota_server.py generate firmware.bin 1.1.0
+cd tools
+python mock_ota_server.py generate ../.pio/build/dev/firmware.bin 1.1.0
 ```
 
 ## Next Steps (Phase 2+)

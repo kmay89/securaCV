@@ -54,7 +54,7 @@ static const char *TAG = "securacv_ota";
 #define OTA_TASK_NAME           "ota_task"
 
 #define MAX_SELF_TESTS          16
-#define HTTP_BUFFER_SIZE        1024
+#define HTTP_BUFFER_SIZE        4096  // Large enough for manifest JSON with release notes
 #define SHA256_DIGEST_LENGTH    32
 
 // ============================================================================

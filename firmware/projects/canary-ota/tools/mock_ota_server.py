@@ -40,7 +40,7 @@ import hashlib
 import sys
 import os
 import argparse
-from pathlib import Path
+import functools
 from datetime import datetime
 
 # Default settings
@@ -232,16 +232,16 @@ def run_server(port: int = DEFAULT_PORT,
         print(f"Run: python {sys.argv[0]} generate <firmware.bin> [version]")
         print()
 
-    # Change to serving directory
-    os.chdir(directory)
-
     # Create SSL context
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(cert_path, key_path)
 
+    # Create handler with directory argument (avoids os.chdir side effects)
+    handler_class = functools.partial(OTARequestHandler, directory=directory)
+
     # Create and configure server
     server_address = ('0.0.0.0', port)
-    httpd = http.server.HTTPServer(server_address, OTARequestHandler)
+    httpd = http.server.HTTPServer(server_address, handler_class)
     httpd.socket = context.wrap_socket(httpd.socket, server_side=True)
 
     print(f"{Colors.GREEN}Server running on:{Colors.END}")
