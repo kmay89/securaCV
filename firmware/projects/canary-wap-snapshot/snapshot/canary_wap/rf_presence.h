@@ -236,18 +236,41 @@ static const uint8_t POWER_FLAG_LOAD_SPIKE = 0x04;
 // ════════════════════════════════════════════════════════════════════════════
 
 // These functions support conformance testing per spec section 10
+// All conformance checks log failures to health_log for diagnostics
 
 // Verify no MAC addresses in persistent storage
+// Checks struct sizes and scans token map for suspicious patterns
 bool conformance_check_no_mac_storage();
 
 // Verify session tokens rotate correctly
+// WARNING: This test has a side effect - it rotates the session!
+// Only call when you want to actually rotate, or in isolated test mode
 bool conformance_check_token_rotation();
 
 // Verify observation buffer contains only aggregates
+// Scans observations for values outside expected ranges
 bool conformance_check_aggregate_only();
+
+// Verify secure memory wiping is functioning
+// Tests that secure_wipe actually zeros memory
+bool conformance_check_secure_wipe();
 
 // Get session epoch (for rotation testing)
 uint32_t get_session_epoch();
+
+// ════════════════════════════════════════════════════════════════════════════
+// SETTINGS BOUNDS (for API validation)
+// ════════════════════════════════════════════════════════════════════════════
+
+// Minimum and maximum values for configurable settings
+static const uint32_t MIN_PRESENCE_THRESHOLD_MS = 1000;    // 1 second
+static const uint32_t MAX_PRESENCE_THRESHOLD_MS = 300000;  // 5 minutes
+static const uint32_t MIN_DWELL_THRESHOLD_MS = 5000;       // 5 seconds
+static const uint32_t MAX_DWELL_THRESHOLD_MS = 600000;     // 10 minutes
+static const uint32_t MIN_LOST_TIMEOUT_MS = 5000;          // 5 seconds
+static const uint32_t MAX_LOST_TIMEOUT_MS = 300000;        // 5 minutes
+static const uint8_t  MIN_PRESENCE_COUNT_SETTING = 1;
+static const uint8_t  MAX_PRESENCE_COUNT_SETTING = 50;
 
 } // namespace rf_presence
 
