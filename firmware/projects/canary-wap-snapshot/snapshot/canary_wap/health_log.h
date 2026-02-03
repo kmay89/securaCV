@@ -14,6 +14,8 @@
 #define SECURACV_HEALTH_LOG_H
 
 #include <Arduino.h>
+#include <cstdarg>
+#include <cstdio>
 #include "log_level.h"
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -98,6 +100,18 @@ inline void log(LogLevel level, LogCategory category, const char* message) {
 // Delegates to the global log_health() function
 inline void log(LogLevel level, LogCategory category, const char* message, const char* detail) {
   ::log_health(level, category, message, detail);
+}
+
+// Variadic log function for printf-style formatted messages
+// Uses a stack buffer to format the message before logging
+// Buffer size of 128 matches health_log_entry_t.message in common/health/health_log.h
+inline void logf(LogLevel level, LogCategory category, const char* fmt, ...) {
+  char buffer[128];
+  va_list args;
+  va_start(args, fmt);
+  vsnprintf(buffer, sizeof(buffer), fmt, args);
+  va_end(args);
+  ::health_log(level, category, buffer);
 }
 
 } // namespace health_logging
