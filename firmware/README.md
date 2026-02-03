@@ -97,21 +97,72 @@ Purpose:
 - Reference implementation for WAP features
 - Historical baseline (do not modify)
 
-## Build & Flash (PlatformIO)
+## Quick Start
 
-Prereqs:
-- PlatformIO installed (VS Code extension or CLI)
-- A configured `secrets/secrets.h` file (never committed)
+### Option 1: Arduino IDE (Easiest)
 
-### Using PlatformIO CLI
-
-From the repo root:
+Generate an Arduino-compatible sketch and open in Arduino IDE:
 
 ```bash
-cd firmware/projects/canary-vision
-pio run
-pio run -t upload
+cd firmware
+
+# Build for Canary WAP (full-featured)
+make arduino APP=canary-wap CONFIG=default
+
+# Build for Canary WAP (power-optimized)
+make arduino APP=canary-wap CONFIG=mobile
+
+# Build for Canary Vision
+make arduino APP=canary-vision CONFIG=default
+```
+
+This creates a ready-to-use sketch in `build/arduino/<name>/`. Open the `.ino`
+file in Arduino IDE, configure your board, and upload.
+
+**Arduino IDE Setup:**
+
+1. Install ESP32 board support:
+   - Preferences > Additional Board URLs:
+     `https://espressif.github.io/arduino-esp32/package_esp32_index.json`
+   - Board Manager > Install "esp32 by Espressif Systems"
+
+2. Select board:
+   - Canary WAP: `XIAO_ESP32S3`
+   - Canary Vision: `ESP32C3 Dev Module`
+
+3. Install libraries (Library Manager):
+   - ArduinoJson
+   - NimBLE-Arduino
+   - TinyGPSPlus
+
+### Option 2: PlatformIO (Recommended for Development)
+
+```bash
+cd firmware
+
+# Build
+make pio-build APP=canary-wap CONFIG=default
+
+# Build and upload
+make pio-upload APP=canary-wap CONFIG=default
+
+# Serial monitor
+make pio-monitor APP=canary-wap
+```
+
+Or use PlatformIO directly:
+
+```bash
+cd firmware/projects/canary-wap
+pio run -e canary-wap-default
+pio run -e canary-wap-default -t upload
 pio device monitor -b 115200
+```
+
+### List Available Configurations
+
+```bash
+make list-configs
 ```
 
 ## Secrets (Never Commit)
