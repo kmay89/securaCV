@@ -1,0 +1,52 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "SecuraCV Setup",
+        "description": "Configure your SecuraCV Privacy Witness Kernel integration.\n\nEnter the MQTT topic prefix used by your Canary devices. The default is 'securacv' which subscribes to topics like securacv/{device_id}/events.",
+        "data": {
+          "mqtt_prefix": "MQTT Topic Prefix"
+        },
+        "data_description": {
+          "mqtt_prefix": "The MQTT topic prefix your Canary devices publish to (default: securacv)"
+        }
+      }
+    },
+    "error": {
+      "invalid_mqtt_prefix": "Invalid MQTT topic prefix. Use only alphanumeric characters, underscores, and forward slashes."
+    },
+    "abort": {
+      "already_configured": "This MQTT prefix is already configured."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "witness_count": {
+        "name": "Witness Count"
+      },
+      "chain_length": {
+        "name": "Chain Length"
+      },
+      "last_event": {
+        "name": "Last Event"
+      },
+      "health_status": {
+        "name": "Health"
+      },
+      "gps_fix": {
+        "name": "GPS Fix"
+      }
+    },
+    "binary_sensor": {
+      "online": {
+        "name": "Online"
+      },
+      "chain_valid": {
+        "name": "Chain Valid"
+      },
+      "tamper": {
+        "name": "Tamper"
+      }
+    }
+  }
+}

@@ -1,5 +1,8 @@
 # SecuraCV
 
+[![HACS Badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
+[![Validate with HACS](https://github.com/kmay89/securaCV/actions/workflows/validate.yml/badge.svg)](https://github.com/kmay89/securaCV/actions/workflows/validate.yml)
+
 ![SecuraCV logo animation](docs/securacv_logo_animation-2.gif)
 
 
@@ -150,12 +153,45 @@ default jitter and batching unless overridden by CLI flags.
 
 ## Home Assistant Integration
 
-Install the Home Assistant integration through HACS, then point it at a running Privacy Witness Kernel:
+SecuraCV integrates with Home Assistant via MQTT. The integration surfaces semantic witness events, hash chain integrity, and device health from your Canary devices - never raw video or identity data. Privacy by design.
 
-1. In **HACS → Integrations**, add `https://github.com/kmay89/securaCV` as a custom repository.
-2. Install **SecuraCV** and restart Home Assistant when prompted.
-3. Run the kernel (Home Assistant add-on, Docker, or another host) and read the Event API token from the configured token file.
-4. In **Settings → Devices & Services**, add the **SecuraCV** integration and provide the URL + token (sent as a Bearer token header; do not place tokens in URLs).
+### Requirements
+
+- Home Assistant 2024.4.1 or later
+- MQTT integration configured and connected to your MQTT broker
+- SecuraCV Canary device(s) publishing to the configured MQTT prefix
+
+### HACS Installation (Recommended)
+
+1. Open HACS in your Home Assistant instance
+2. Click the three dots menu → **Custom repositories**
+3. Add `https://github.com/kmay89/securaCV` as an **Integration**
+4. Search for "SecuraCV" and install
+5. Restart Home Assistant
+6. Go to **Settings → Devices & Services → Add Integration → SecuraCV**
+7. Enter your MQTT topic prefix (default: `securacv`)
+
+### Manual Installation
+
+Copy `custom_components/securacv/` to your Home Assistant `config/custom_components/` directory and restart.
+
+### Entities Created
+
+**Sensors:**
+- `sensor.securacv_{device}_witness_count` - Total witness records
+- `sensor.securacv_{device}_chain_length` - Hash chain length
+- `sensor.securacv_{device}_last_event` - Last event type + timestamp
+- `sensor.securacv_{device}_health_status` - Device health status
+- `sensor.securacv_{device}_gps_fix` - GPS fix status
+
+**Binary Sensors:**
+- `binary_sensor.securacv_{device}_online` - Device connectivity (MQTT LWT)
+- `binary_sensor.securacv_{device}_chain_valid` - Hash chain integrity
+- `binary_sensor.securacv_{device}_tamper` - Tamper detection
+
+**Services:**
+- `securacv.export_chain` - Export tamper-evident witness chain
+- `securacv.verify_chain` - Verify Ed25519 signatures and hash chain integrity
 
 ### MQTT Discovery (Auto-Sensors)
 
