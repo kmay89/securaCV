@@ -40,6 +40,8 @@ secret.h
 **/secrets.h
 **/secret.h
 **/secrets/*.h
+# But allow example templates
+!**/secrets/*.example.h
 
 # PlatformIO local config
 platformio_override.ini
