@@ -1,0 +1,19 @@
+{
+    "name": "securacv_webui",
+    "version": "2.1.0",
+    "description": "SecuraCV dashboard HTML/CSS/JS as PROGMEM strings",
+    "keywords": ["securacv", "webui", "dashboard", "html"],
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/kmay89/securaCV.git"
+    },
+    "authors": [
+        {
+            "name": "Karl May",
+            "email": "karl@errerlabs.com"
+        }
+    ],
+    "license": "Apache-2.0",
+    "frameworks": "arduino",
+    "platforms": "espressif32"
+}

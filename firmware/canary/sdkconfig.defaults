@@ -1,0 +1,46 @@
+# ═══════════════════════════════════════════════════════════════
+# SecuraCV Canary — ESP-IDF sdkconfig overrides
+# Trim unused components to reduce compile time and binary size
+# ═══════════════════════════════════════════════════════════════
+
+# ── Disable Bluetooth (HUGE compile time savings) ─────────────
+# Re-enable in platformio.ini for builds that need it
+CONFIG_BT_ENABLED=n
+CONFIG_BLUEDROID_ENABLED=n
+CONFIG_BLE_MESH=n
+
+# ── Disable unused network protocols ──────────────────────────
+CONFIG_LWIP_PPP_SUPPORT=n
+CONFIG_LWIP_SNTP_MAX_SERVERS=1
+CONFIG_ESP_WIFI_SOFTAP_SAE_SUPPORT=n
+CONFIG_ESP_WIFI_ENTERPRISE_SUPPORT=n
+CONFIG_WIFI_PROV_SCAN_MAX_ENTRIES=0
+
+# ── Compiler: fastest compile for dev ─────────────────────────
+# (overridden per-environment in platformio.ini)
+CONFIG_COMPILER_OPTIMIZATION_DEBUG=y
+CONFIG_COMPILER_OPTIMIZATION_ASSERTIONS_ENABLE=y
+
+# ── Disable LTO for dev (dramatically faster link) ────────────
+# Re-enable for release builds if needed
+# CONFIG_LTO_ENABLED is not set
+
+# ── Stack/heap reasonable defaults ────────────────────────────
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=4096
+
+# ── Camera: keep PSRAM enabled ────────────────────────────────
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+
+# ── mDNS: keep enabled (canary.local) ─────────────────────────
+CONFIG_MDNS_MAX_SERVICES=4
+
+# ── Partition table: use custom OTA partitions ─────────────────
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_ota.csv"
+
+# ── HTTP server stack for streaming ───────────────────────────
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
+CONFIG_HTTPD_MAX_URI_LEN=512

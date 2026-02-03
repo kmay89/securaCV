@@ -1,0 +1,22 @@
+{
+    "name": "securacv_crypto",
+    "version": "2.1.0",
+    "description": "SecuraCV cryptographic primitives - Ed25519, SHA256 hash chain, CBOR encoding",
+    "keywords": ["securacv", "ed25519", "hash-chain", "privacy", "cbor"],
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/kmay89/securaCV.git"
+    },
+    "authors": [
+        {
+            "name": "Karl May",
+            "email": "karl@errerlabs.com"
+        }
+    ],
+    "license": "Apache-2.0",
+    "dependencies": {
+        "rweather/Crypto": "^0.4.0"
+    },
+    "frameworks": "arduino",
+    "platforms": "espressif32"
+}

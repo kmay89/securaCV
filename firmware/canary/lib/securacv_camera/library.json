@@ -1,0 +1,19 @@
+{
+    "name": "securacv_camera",
+    "version": "2.1.0",
+    "description": "SecuraCV camera - initialization, MJPEG streaming, and peek/preview",
+    "keywords": ["securacv", "camera", "mjpeg", "esp32-cam"],
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/kmay89/securaCV.git"
+    },
+    "authors": [
+        {
+            "name": "Karl May",
+            "email": "karl@errerlabs.com"
+        }
+    ],
+    "license": "Apache-2.0",
+    "frameworks": "arduino",
+    "platforms": "espressif32"
+}

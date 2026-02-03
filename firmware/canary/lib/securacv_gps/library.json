@@ -1,0 +1,19 @@
+{
+    "name": "securacv_gps",
+    "version": "2.1.0",
+    "description": "SecuraCV L76K GNSS - NMEA parsing and fix management",
+    "keywords": ["securacv", "gps", "gnss", "nmea", "l76k"],
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/kmay89/securaCV.git"
+    },
+    "authors": [
+        {
+            "name": "Karl May",
+            "email": "karl@errerlabs.com"
+        }
+    ],
+    "license": "Apache-2.0",
+    "frameworks": "arduino",
+    "platforms": "espressif32"
+}
