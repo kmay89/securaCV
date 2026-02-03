@@ -1,0 +1,22 @@
+{
+    "name": "securacv_network",
+    "version": "2.1.0",
+    "description": "SecuraCV WiFi AP, mDNS, HTTP server, and OTA receiver",
+    "keywords": ["securacv", "wifi", "http", "ota", "mdns"],
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/kmay89/securaCV.git"
+    },
+    "authors": [
+        {
+            "name": "Karl May",
+            "email": "karl@errerlabs.com"
+        }
+    ],
+    "license": "Apache-2.0",
+    "dependencies": {
+        "bblanchon/ArduinoJson": "^7.0.0"
+    },
+    "frameworks": "arduino",
+    "platforms": "espressif32"
+}

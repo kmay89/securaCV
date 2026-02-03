@@ -1,0 +1,97 @@
+# SecuraCV Rust Kernel Build Configuration
+#
+# Optimizes build times with sccache and incremental compilation.
+#
+# sccache installation:
+#   cargo install sccache
+#   export RUSTC_WRAPPER=sccache
+#
+# Copyright (c) 2026 ERRERlabs / Karl May
+# License: Apache-2.0
+
+# ════════════════════════════════════════════════════════════════════════════
+# COMPILER WRAPPER (sccache)
+# ════════════════════════════════════════════════════════════════════════════
+
+# Use sccache for compilation caching if available
+# Set RUSTC_WRAPPER environment variable or uncomment below:
+# [build]
+# rustc-wrapper = "sccache"
+
+# ════════════════════════════════════════════════════════════════════════════
+# LINKER OPTIMIZATION
+# ════════════════════════════════════════════════════════════════════════════
+
+# Use mold linker for faster linking (Linux)
+# Install: sudo apt install mold
+[target.x86_64-unknown-linux-gnu]
+linker = "clang"
+rustflags = ["-C", "link-arg=-fuse-ld=mold", "-C", "target-cpu=native"]
+
+# Use lld linker on macOS
+[target.x86_64-apple-darwin]
+rustflags = ["-C", "link-arg=-fuse-ld=lld", "-C", "target-cpu=native"]
+
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "link-arg=-fuse-ld=lld", "-C", "target-cpu=native"]
+
+# Windows with lld-link
+[target.x86_64-pc-windows-msvc]
+linker = "lld-link"
+
+# ════════════════════════════════════════════════════════════════════════════
+# PROFILE SETTINGS
+# ════════════════════════════════════════════════════════════════════════════
+
+# Development profile: fast compilation, minimal optimization
+[profile.dev]
+opt-level = 0
+debug = true
+incremental = true
+codegen-units = 256
+
+# Fast check builds
+[profile.dev.package."*"]
+opt-level = 0
+
+# Release profile: maximum optimization
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+panic = "abort"
+
+# ════════════════════════════════════════════════════════════════════════════
+# ENVIRONMENT HINTS
+# ════════════════════════════════════════════════════════════════════════════
+
+[env]
+# Uncomment to enable sccache stats
+# SCCACHE_ERROR_LOG = "/tmp/sccache.log"
+# SCCACHE_LOG = "debug"
+
+# ════════════════════════════════════════════════════════════════════════════
+# NETWORK SETTINGS
+# ════════════════════════════════════════════════════════════════════════════
+
+[net]
+retry = 3
+git-fetch-with-cli = true
+
+# ════════════════════════════════════════════════════════════════════════════
+# ALIAS COMMANDS
+# ════════════════════════════════════════════════════════════════════════════
+
+[alias]
+br = "build --release"
+tr = "test --release"
+rr = "run --release"
+
+# Quick check without full build
+c = "check"
+cc = "clippy -- -D warnings"
+
+# Build all binaries
+ba = "build --bins"
+bar = "build --bins --release"

@@ -1,0 +1,19 @@
+{
+    "name": "securacv_storage",
+    "version": "2.1.0",
+    "description": "SecuraCV SD card storage - append-only logs and export bundles",
+    "keywords": ["securacv", "storage", "sd-card", "logging"],
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/kmay89/securaCV.git"
+    },
+    "authors": [
+        {
+            "name": "Karl May",
+            "email": "karl@errerlabs.com"
+        }
+    ],
+    "license": "Apache-2.0",
+    "frameworks": "arduino",
+    "platforms": "espressif32"
+}
