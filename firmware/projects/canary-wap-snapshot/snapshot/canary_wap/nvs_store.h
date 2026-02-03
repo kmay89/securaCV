@@ -335,4 +335,63 @@ inline bool nvs_remove(const char* key) {
   return nvs.remove(key);
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// NVS_STORE NAMESPACE (for RF presence and other modules)
+// ════════════════════════════════════════════════════════════════════════════
+
+/*
+ * Namespace-based convenience functions for NVS operations.
+ * These use the main "securacv" namespace via NvsManager singleton.
+ */
+namespace nvs_store {
+
+// Get a uint32_t value from NVS
+// Returns the value if key exists, otherwise returns default_val
+inline uint32_t get_u32(const char* key, uint32_t default_val) {
+  NvsManager& nvs = NvsManager::instance();
+  if (!nvs.begin(true)) return default_val;
+  uint32_t val = nvs.getUInt(key, default_val);
+  nvs.end();
+  return val;
+}
+
+// Set a uint32_t value in NVS
+// Returns true on success
+inline bool set_u32(const char* key, uint32_t val) {
+  NvsManager& nvs = NvsManager::instance();
+  if (!nvs.begin(false)) return false;
+  size_t written = nvs.putUInt(key, val);
+  nvs.end();
+  return written == sizeof(uint32_t);
+}
+
+// Get a blob (byte array) from NVS
+// Returns true if key exists and data was read successfully
+inline bool get_blob(const char* key, void* buf, size_t len) {
+  NvsManager& nvs = NvsManager::instance();
+  if (!nvs.begin(true)) return false;
+  bool success = false;
+  if (nvs.isKey(key)) {
+    size_t stored_len = nvs.getBytesLength(key);
+    if (stored_len == len) {
+      size_t read = nvs.getBytes(key, buf, len);
+      success = (read == len);
+    }
+  }
+  nvs.end();
+  return success;
+}
+
+// Set a blob (byte array) in NVS
+// Returns true on success
+inline bool set_blob(const char* key, const void* buf, size_t len) {
+  NvsManager& nvs = NvsManager::instance();
+  if (!nvs.begin(false)) return false;
+  size_t written = nvs.putBytes(key, buf, len);
+  nvs.end();
+  return written == len;
+}
+
+} // namespace nvs_store
+
 #endif // SECURACV_NVS_STORE_H
