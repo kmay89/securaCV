@@ -77,13 +77,21 @@ typedef enum {
 // HEALTH LOG ENTRY
 // ============================================================================
 
+/**
+ * @brief Health log entry structure
+ *
+ * IMPLEMENTATION NOTE: The message and detail fields use fixed-size buffers.
+ * All implementations MUST use safe string functions (snprintf, strlcpy) to
+ * prevent buffer overflows. The health_logf() implementation must truncate
+ * formatted output to fit within these bounds.
+ */
 typedef struct {
     uint32_t sequence;
     uint32_t timestamp_ms;
     health_log_level_t level;
     health_log_category_t category;
-    char message[128];
-    char detail[64];
+    char message[128];          // Max 127 chars + null (use snprintf)
+    char detail[64];            // Max 63 chars + null (use snprintf)
     health_ack_status_t ack_status;
 } health_log_entry_t;
 
@@ -187,7 +195,7 @@ uint32_t health_log_unacked_count(void);
  * @param offset Starting offset
  * @return Number of entries returned
  */
-int health_log_get(
+size_t health_log_get(
     health_log_entry_t* entries,
     size_t max_entries,
     uint32_t offset
@@ -200,7 +208,7 @@ int health_log_get(
  * @param max_entries Maximum to return
  * @return Number of entries returned
  */
-int health_log_get_by_category(
+size_t health_log_get_by_category(
     health_log_category_t category,
     health_log_entry_t* entries,
     size_t max_entries
@@ -213,7 +221,7 @@ int health_log_get_by_category(
  * @param max_entries Maximum to return
  * @return Number of entries returned
  */
-int health_log_get_by_level(
+size_t health_log_get_by_level(
     health_log_level_t min_level,
     health_log_entry_t* entries,
     size_t max_entries

@@ -33,27 +33,27 @@ extern "C" {
 // ============================================================================
 
 #define CHIRP_SESSION_ID_SIZE       8       // Session identifier size
-#define CHIRP_EMOJI_DISPLAY_SIZE    20      // Max emoji string (3 x 6 bytes + null)
+#define CHIRP_EMOJI_DISPLAY_SIZE    20      // Max display string for 3 multi-byte emoji characters + null terminator
 #define CHIRP_NONCE_SIZE            8       // Message nonce size
 #define CHIRP_MAX_RECENT            32      // Recent chirps to track
 #define CHIRP_MAX_NEARBY            16      // Nearby devices to track
 #define CHIRP_MAX_NONCE_CACHE       64      // Nonces to deduplicate
 #define CHIRP_MAX_HOPS              3       // Maximum relay hops
 
-// Timing constants (milliseconds)
-#define CHIRP_PRESENCE_INTERVAL_MS  15000   // Presence beacon interval
-#define CHIRP_PRESENCE_TIMEOUT_MS   45000   // Nearby device timeout
-#define CHIRP_RECENT_TTL_MS         1800000 // 30 min: chirp visibility
-#define CHIRP_RELAY_DELAY_MIN_MS    2000    // Min delay before relay
-#define CHIRP_RELAY_DELAY_MAX_MS    8000    // Max delay before relay
-#define CHIRP_PRESENCE_REQ_MS       600000  // 10 min: required before sending
+// Timing constants (milliseconds) - using calculated values for clarity
+#define CHIRP_PRESENCE_INTERVAL_MS  (15 * 1000)           // Presence beacon interval
+#define CHIRP_PRESENCE_TIMEOUT_MS   (45 * 1000)           // Nearby device timeout
+#define CHIRP_RECENT_TTL_MS         (30 * 60 * 1000)      // 30 min: chirp visibility
+#define CHIRP_RELAY_DELAY_MIN_MS    (2 * 1000)            // Min delay before relay
+#define CHIRP_RELAY_DELAY_MAX_MS    (8 * 1000)            // Max delay before relay
+#define CHIRP_PRESENCE_REQ_MS       (10 * 60 * 1000)      // 10 min: required before sending
 
-// Cooldown tiers (escalating)
-#define CHIRP_COOLDOWN_TIER1_MS     30000   // 30 sec: first chirp
-#define CHIRP_COOLDOWN_TIER2_MS     300000  // 5 min: 2nd chirp
-#define CHIRP_COOLDOWN_TIER3_MS     1800000 // 30 min: 3rd chirp
-#define CHIRP_COOLDOWN_TIER4_MS     3600000 // 60 min: 4th+ chirp
-#define CHIRP_COOLDOWN_RESET_MS     86400000 // 24 hr: reset tiers
+// Cooldown tiers (escalating) - using calculated values for clarity
+#define CHIRP_COOLDOWN_TIER1_MS     (30 * 1000)           // 30 sec: first chirp
+#define CHIRP_COOLDOWN_TIER2_MS     (5 * 60 * 1000)       // 5 min: 2nd chirp
+#define CHIRP_COOLDOWN_TIER3_MS     (30 * 60 * 1000)      // 30 min: 3rd chirp
+#define CHIRP_COOLDOWN_TIER4_MS     (60 * 60 * 1000)      // 60 min: 4th+ chirp
+#define CHIRP_COOLDOWN_RESET_MS     (24 * 60 * 60 * 1000) // 24 hr: reset tiers
 
 // ============================================================================
 // ENUMS
@@ -161,6 +161,16 @@ typedef enum {
     CHIRP_ACK_CONFIRMED,        // Confirming I also witness this
     CHIRP_ACK_RESOLVED,         // Situation resolved
 } chirp_ack_type_t;
+
+/**
+ * @brief Allowed mute durations for type safety
+ */
+typedef enum {
+    CHIRP_MUTE_15_MINS = 15,
+    CHIRP_MUTE_30_MINS = 30,
+    CHIRP_MUTE_60_MINS = 60,
+    CHIRP_MUTE_120_MINS = 120,
+} chirp_mute_duration_t;
 
 // ============================================================================
 // DATA STRUCTURES
@@ -400,7 +410,7 @@ result_t chirp_send_all_clear(chirp_template_t clear_type);
  * @param max_chirps Maximum to return
  * @return Number of chirps returned
  */
-int chirp_get_recent(chirp_received_t* chirps, size_t max_chirps);
+size_t chirp_get_recent(chirp_received_t* chirps, size_t max_chirps);
 
 /**
  * @brief Get nearby devices
@@ -408,7 +418,7 @@ int chirp_get_recent(chirp_received_t* chirps, size_t max_chirps);
  * @param max_nearby Maximum to return
  * @return Number of devices returned
  */
-int chirp_get_nearby(chirp_nearby_t* nearby, size_t max_nearby);
+size_t chirp_get_nearby(chirp_nearby_t* nearby, size_t max_nearby);
 
 /**
  * @brief Confirm a chirp (I also witness this)
@@ -435,10 +445,10 @@ void chirp_clear_all(void);
 
 /**
  * @brief Mute chirps for duration
- * @param duration_minutes Duration (15, 30, 60, or 120)
+ * @param duration Mute duration (use chirp_mute_duration_t values)
  * @return RESULT_OK on success
  */
-result_t chirp_mute(uint8_t duration_minutes);
+result_t chirp_mute(chirp_mute_duration_t duration);
 
 /**
  * @brief Unmute chirps
