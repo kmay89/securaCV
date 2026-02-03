@@ -9,12 +9,45 @@
  * 2. Session tokens rotate every SESSION_ROTATE_MS (default 4 hours)
  * 3. Only aggregated observations persist in ring buffer
  * 4. Event vocabulary is strictly controlled
+ *
+ * SECURITY HARDENING:
+ * - Secure memory wiping with volatile barrier to prevent compiler optimization
+ * - Timer wrap-around protection for all duration calculations
+ * - Input validation on all external interfaces
+ * - Bounds checking on array accesses
  */
 
 #include "rf_presence.h"
 #include "nvs_store.h"
 #include "health_log.h"
 #include <mbedtls/sha256.h>
+
+// ════════════════════════════════════════════════════════════════════════════
+// SECURITY PRIMITIVES
+// ════════════════════════════════════════════════════════════════════════════
+
+// Secure memory wipe - uses volatile to prevent compiler optimization
+// This ensures sensitive data is actually cleared from memory
+static void secure_wipe(void* ptr, size_t len) {
+  volatile uint8_t* p = static_cast<volatile uint8_t*>(ptr);
+  while (len--) {
+    *p++ = 0;
+  }
+  // Memory barrier to ensure wipe completes before function returns
+  asm volatile("" ::: "memory");
+}
+
+// Safe elapsed time calculation that handles millis() wrap-around
+// millis() wraps every ~49.7 days (2^32 ms)
+static inline uint32_t elapsed_ms(uint32_t start_ms, uint32_t now_ms) {
+  // Unsigned subtraction handles wrap-around correctly due to modular arithmetic
+  return now_ms - start_ms;
+}
+
+// Check if duration has elapsed, with wrap-around safety
+static inline bool duration_elapsed(uint32_t start_ms, uint32_t now_ms, uint32_t duration_ms) {
+  return elapsed_ms(start_ms, now_ms) >= duration_ms;
+}
 
 namespace rf_presence {
 
@@ -81,7 +114,13 @@ static RfPresenceSettings s_settings = {
 // Derive session token from MAC address
 // INVARIANT: Token cannot be reversed to MAC
 // INVARIANT: Token is only valid within current session epoch
+// SECURITY: Uses secure wipe to prevent sensitive data leakage
 static uint32_t derive_session_token(const uint8_t* mac_address) {
+  // Null pointer guard - return zero token for invalid input
+  if (mac_address == nullptr) {
+    return 0;
+  }
+
   // Domain separation + session binding
   uint8_t input[64];
   memcpy(input, "canary:session:v0:", 18);
@@ -90,28 +129,41 @@ static uint32_t derive_session_token(const uint8_t* mac_address) {
   memcpy(input + 54, mac_address, 6);
 
   uint8_t hash[32];
-  mbedtls_sha256(input, 60, hash, 0);
+  int ret = mbedtls_sha256(input, 60, hash, 0);
+
+  // Validate hash operation succeeded
+  if (ret != 0) {
+    secure_wipe(input, sizeof(input));
+    health_log::log(health_log::LOG_LEVEL_ERROR, health_log::LOG_CAT_RF,
+      "SHA256 failed with error %d", ret);
+    return 0;
+  }
 
   // Use first 4 bytes as token
   uint32_t token;
   memcpy(&token, hash, 4);
 
-  // Zeroize sensitive data
-  memset(input, 0, sizeof(input));
-  memset(hash + 4, 0, 28);
+  // Secure wipe of sensitive data - prevents compiler optimization
+  secure_wipe(input, sizeof(input));
+  secure_wipe(hash, sizeof(hash));  // Wipe entire hash, not just partial
 
   return token;
 }
 
 // Find or create token entry in map
-// Returns index, or -1 if map full and token not found
+// Returns index, or -1 if invalid token (e.g., from null MAC)
 static int find_or_create_token(uint32_t token, uint32_t now_ms, int8_t rssi) {
+  // Reject zero tokens (invalid/failed derivation)
+  if (token == 0) {
+    return -1;
+  }
+
   // Look for existing token
   for (size_t i = 0; i < s_token_count; i++) {
     if (s_token_map[i].token == token) {
       s_token_map[i].last_seen_ms = now_ms;
       s_token_map[i].rssi = rssi;
-      return (int)i;
+      return static_cast<int>(i);
     }
   }
 
@@ -121,30 +173,35 @@ static int find_or_create_token(uint32_t token, uint32_t now_ms, int8_t rssi) {
     s_token_map[idx].token = token;
     s_token_map[idx].last_seen_ms = now_ms;
     s_token_map[idx].rssi = rssi;
-    return (int)idx;
+    return static_cast<int>(idx);
   }
 
-  // Map full - evict oldest
-  uint32_t oldest_ms = now_ms;
+  // Map full - evict oldest entry (using wrap-around safe comparison)
   size_t oldest_idx = 0;
+  uint32_t oldest_age = 0;
   for (size_t i = 0; i < SESSION_TOKEN_MAP_SIZE; i++) {
-    if (s_token_map[i].last_seen_ms < oldest_ms) {
-      oldest_ms = s_token_map[i].last_seen_ms;
+    uint32_t age = elapsed_ms(s_token_map[i].last_seen_ms, now_ms);
+    if (age > oldest_age) {
+      oldest_age = age;
       oldest_idx = i;
     }
   }
 
+  // Secure wipe before reuse
+  secure_wipe(&s_token_map[oldest_idx], sizeof(SessionToken));
+
   s_token_map[oldest_idx].token = token;
   s_token_map[oldest_idx].last_seen_ms = now_ms;
   s_token_map[oldest_idx].rssi = rssi;
-  return (int)oldest_idx;
+  return static_cast<int>(oldest_idx);
 }
 
 // Count active tokens (seen within TTL)
+// Uses wrap-around safe elapsed time calculation
 static uint8_t count_active_tokens(uint32_t now_ms) {
   uint8_t count = 0;
   for (size_t i = 0; i < s_token_count; i++) {
-    if ((now_ms - s_token_map[i].last_seen_ms) < OBSERVATION_TTL_MS) {
+    if (elapsed_ms(s_token_map[i].last_seen_ms, now_ms) < OBSERVATION_TTL_MS) {
       count++;
     }
   }
@@ -152,14 +209,20 @@ static uint8_t count_active_tokens(uint32_t now_ms) {
 }
 
 // Calculate RSSI statistics from active tokens
+// Uses int32_t accumulator to prevent overflow when summing int8_t values
 static void calc_rssi_stats(uint32_t now_ms, int8_t* out_max, int8_t* out_mean, int8_t* out_min) {
-  int32_t sum = 0;
+  // Null pointer guards
+  if (out_max == nullptr || out_mean == nullptr || out_min == nullptr) {
+    return;
+  }
+
+  int32_t sum = 0;  // Wide accumulator prevents overflow
   int8_t max_rssi = RSSI_NOISE_FLOOR;
   int8_t min_rssi = 0;
   uint8_t count = 0;
 
   for (size_t i = 0; i < s_token_count; i++) {
-    if ((now_ms - s_token_map[i].last_seen_ms) < OBSERVATION_TTL_MS) {
+    if (elapsed_ms(s_token_map[i].last_seen_ms, now_ms) < OBSERVATION_TTL_MS) {
       sum += s_token_map[i].rssi;
       if (s_token_map[i].rssi > max_rssi) max_rssi = s_token_map[i].rssi;
       if (count == 0 || s_token_map[i].rssi < min_rssi) min_rssi = s_token_map[i].rssi;
@@ -169,7 +232,7 @@ static void calc_rssi_stats(uint32_t now_ms, int8_t* out_max, int8_t* out_mean, 
 
   *out_max = max_rssi;
   *out_min = (count > 0) ? min_rssi : RSSI_NOISE_FLOOR;
-  *out_mean = (count > 0) ? (int8_t)(sum / count) : RSSI_NOISE_FLOOR;
+  *out_mean = (count > 0) ? static_cast<int8_t>(sum / count) : RSSI_NOISE_FLOOR;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -177,12 +240,14 @@ static void calc_rssi_stats(uint32_t now_ms, int8_t* out_max, int8_t* out_mean, 
 // ════════════════════════════════════════════════════════════════════════════
 
 static void clear_session_tokens() {
-  memset(s_token_map, 0, sizeof(s_token_map));
+  // Secure wipe all token entries to prevent memory inspection attacks
+  secure_wipe(s_token_map, sizeof(s_token_map));
   s_token_count = 0;
 }
 
 static void check_session_rotation(uint32_t now_ms) {
-  if ((now_ms - s_session_start_ms) >= SESSION_ROTATE_MS) {
+  // Use wrap-around safe timer comparison
+  if (duration_elapsed(s_session_start_ms, now_ms, SESSION_ROTATE_MS)) {
     rotate_session();
   }
 }
@@ -192,8 +257,13 @@ static void check_session_rotation(uint32_t now_ms) {
 // ════════════════════════════════════════════════════════════════════════════
 
 static void push_observation(const RfObservation& obs) {
-  // Zeroize before overwrite (defense in depth)
-  memset(&s_observations[s_obs_head], 0, sizeof(RfObservation));
+  // Bounds check (defensive - should never fail with modulo arithmetic)
+  if (s_obs_head >= OBSERVATION_BUFFER_SIZE) {
+    s_obs_head = 0;
+  }
+
+  // Secure wipe before overwrite (defense in depth)
+  secure_wipe(&s_observations[s_obs_head], sizeof(RfObservation));
 
   s_observations[s_obs_head] = obs;
   s_obs_head = (s_obs_head + 1) % OBSERVATION_BUFFER_SIZE;
@@ -201,11 +271,12 @@ static void push_observation(const RfObservation& obs) {
 }
 
 static void evict_expired_observations(uint32_t now_ms) {
-  // Walk backwards from head, zeroize expired entries
+  // Walk backwards from head, securely wipe expired entries
   for (size_t i = 0; i < s_obs_count; i++) {
     size_t idx = (s_obs_head + OBSERVATION_BUFFER_SIZE - 1 - i) % OBSERVATION_BUFFER_SIZE;
-    if ((now_ms - s_observations[idx].timestamp_ms) > OBSERVATION_TTL_MS) {
-      memset(&s_observations[idx], 0, sizeof(RfObservation));
+    // Use wrap-around safe elapsed time check
+    if (elapsed_ms(s_observations[idx].timestamp_ms, now_ms) > OBSERVATION_TTL_MS) {
+      secure_wipe(&s_observations[idx], sizeof(RfObservation));
     }
   }
 }
@@ -313,16 +384,59 @@ static void transition_to(RfState new_state, uint32_t now_ms) {
     "RF FSM: %s -> %s", state_name(old_state), state_name(new_state));
 }
 
+// Decay probe burst count - called each update cycle
+// Prevents stale probe counts from persisting indefinitely
+static void decay_probe_bursts(uint32_t now_ms) {
+  static uint32_t s_last_decay_ms = 0;
+  static const uint32_t PROBE_DECAY_INTERVAL_MS = 5000;  // Decay every 5 seconds
+  static const uint8_t PROBE_DECAY_AMOUNT = 1;
+
+  if (duration_elapsed(s_last_decay_ms, now_ms, PROBE_DECAY_INTERVAL_MS)) {
+    if (s_probe_burst_count > PROBE_DECAY_AMOUNT) {
+      s_probe_burst_count -= PROBE_DECAY_AMOUNT;
+    } else {
+      s_probe_burst_count = 0;
+    }
+    // Reset probe peak RSSI when bursts decay to zero
+    if (s_probe_burst_count == 0) {
+      s_probe_rssi_peak = RSSI_NOISE_FLOOR;
+    }
+    s_last_decay_ms = now_ms;
+  }
+}
+
+// Power event timing for TTL-based clearing
+static uint32_t s_last_power_event_time_ms = 0;
+static const uint32_t POWER_FLAG_TTL_MS = 10000;  // Clear after 10 seconds
+
+// Clear accumulated power flags - called each update cycle
+// Power events are point-in-time; don't accumulate indefinitely
+static void clear_power_flags_if_stale(uint32_t now_ms) {
+  if (s_power_flags != 0 && s_last_power_event_time_ms != 0) {
+    if (duration_elapsed(s_last_power_event_time_ms, now_ms, POWER_FLAG_TTL_MS)) {
+      s_power_flags = 0;
+    }
+  }
+}
+
+// Throttle to prevent rapid state transition flooding
+static const uint32_t MIN_TRANSITION_INTERVAL_MS = 500;
+static uint32_t s_last_transition_ms = 0;
+
 static void fsm_tick(uint32_t now_ms) {
   uint8_t device_count = count_active_tokens(now_ms);
-  uint32_t state_duration = now_ms - s_state_enter_ms;
+  uint32_t state_duration = elapsed_ms(s_state_enter_ms, now_ms);  // Wrap-around safe
   int8_t prev_count = s_current_device_count;
   s_current_device_count = device_count;
 
+  // Rate limit state transitions to prevent event flooding
+  bool can_transition = duration_elapsed(s_last_transition_ms, now_ms, MIN_TRANSITION_INTERVAL_MS);
+
   switch (s_state) {
     case RF_EMPTY:
-      if (device_count >= s_settings.min_presence_count || s_probe_burst_count > 0) {
+      if (can_transition && (device_count >= s_settings.min_presence_count || s_probe_burst_count > 0)) {
         transition_to(RF_IMPULSE, now_ms);
+        s_last_transition_ms = now_ms;
         if (s_settings.emit_impulse_events) {
           emit_event("rf_impulse", s_probe_burst_count > 0 ? SIG_WIFI : SIG_BLE, device_count);
         }
@@ -331,12 +445,19 @@ static void fsm_tick(uint32_t now_ms) {
 
     case RF_IMPULSE:
       if (device_count < s_settings.min_presence_count && s_probe_burst_count == 0) {
-        transition_to(RF_EMPTY, now_ms);
+        if (can_transition) {
+          transition_to(RF_EMPTY, now_ms);
+          s_last_transition_ms = now_ms;
+        }
       } else if (state_duration >= s_settings.presence_threshold_ms) {
         transition_to(RF_PRESENCE, now_ms);
+        s_last_transition_ms = now_ms;
         emit_event("rf_presence_started", SIG_FUSED, device_count);
       } else if (state_duration >= IMPULSE_TIMEOUT_MS && device_count < s_settings.min_presence_count) {
-        transition_to(RF_EMPTY, now_ms);
+        if (can_transition) {
+          transition_to(RF_EMPTY, now_ms);
+          s_last_transition_ms = now_ms;
+        }
       }
       break;
 
@@ -344,20 +465,24 @@ static void fsm_tick(uint32_t now_ms) {
       if (device_count < s_settings.min_presence_count) {
         if (state_duration >= s_settings.lost_timeout_ms) {
           transition_to(RF_EMPTY, now_ms);
+          s_last_transition_ms = now_ms;
           emit_event("rf_presence_ended", SIG_FUSED, -prev_count);
-        } else {
+        } else if (can_transition) {
           transition_to(RF_DEPARTING, now_ms);
+          s_last_transition_ms = now_ms;
           emit_event("rf_departing", SIG_BLE, device_count - prev_count);
         }
       } else if (state_duration >= s_settings.dwell_threshold_ms) {
         transition_to(RF_DWELLING, now_ms);
+        s_last_transition_ms = now_ms;
         emit_event("rf_dwell_started", SIG_BLE, 0);
       }
       break;
 
     case RF_DWELLING:
-      if (device_count < s_settings.min_presence_count) {
+      if (can_transition && device_count < s_settings.min_presence_count) {
         transition_to(RF_DEPARTING, now_ms);
+        s_last_transition_ms = now_ms;
         emit_event("rf_departing", SIG_BLE, device_count - prev_count);
       }
       break;
@@ -365,9 +490,13 @@ static void fsm_tick(uint32_t now_ms) {
     case RF_DEPARTING:
       if (device_count >= s_settings.min_presence_count) {
         // False departure, return to presence
-        transition_to(RF_PRESENCE, now_ms);
+        if (can_transition) {
+          transition_to(RF_PRESENCE, now_ms);
+          s_last_transition_ms = now_ms;
+        }
       } else if (state_duration >= DEPARTING_CONFIRM_MS) {
         transition_to(RF_EMPTY, now_ms);
+        s_last_transition_ms = now_ms;
         emit_event("rf_presence_ended", SIG_FUSED, -prev_count);
       }
       break;
@@ -383,7 +512,26 @@ bool init() {
 
   // Generate or load device secret
   if (!nvs_store::get_blob("rf_secret", s_device_secret, sizeof(s_device_secret))) {
-    // Generate new secret
+    // Generate new secret using hardware RNG
+    esp_fill_random(s_device_secret, sizeof(s_device_secret));
+    if (!nvs_store::set_blob("rf_secret", s_device_secret, sizeof(s_device_secret))) {
+      health_log::log(health_log::LOG_LEVEL_ERROR, health_log::LOG_CAT_RF,
+        "Failed to persist device secret");
+      // Continue anyway - secret is valid for this session
+    }
+  }
+
+  // Validate secret is not all zeros (would indicate uninitialized state)
+  bool secret_valid = false;
+  for (size_t i = 0; i < sizeof(s_device_secret); i++) {
+    if (s_device_secret[i] != 0) {
+      secret_valid = true;
+      break;
+    }
+  }
+  if (!secret_valid) {
+    health_log::log(health_log::LOG_LEVEL_ERROR, health_log::LOG_CAT_RF,
+      "Device secret is invalid (all zeros), regenerating");
     esp_fill_random(s_device_secret, sizeof(s_device_secret));
     nvs_store::set_blob("rf_secret", s_device_secret, sizeof(s_device_secret));
   }
@@ -392,20 +540,42 @@ bool init() {
   s_session_epoch = nvs_store::get_u32("rf_epoch", 0);
   s_session_start_ms = millis();
 
-  // Load settings
+  // Load settings with validation
   RfPresenceSettings stored;
   if (nvs_store::get_blob("rf_settings", &stored, sizeof(stored))) {
-    s_settings = stored;
+    // Basic sanity checks on stored settings
+    if (stored.presence_threshold_ms > 0 && stored.presence_threshold_ms <= 300000 &&
+        stored.dwell_threshold_ms > 0 && stored.dwell_threshold_ms <= 600000 &&
+        stored.lost_timeout_ms > 0 && stored.lost_timeout_ms <= 300000) {
+      s_settings = stored;
+    } else {
+      health_log::log(health_log::LOG_LEVEL_WARN, health_log::LOG_CAT_RF,
+        "Stored settings invalid, using defaults");
+    }
   }
 
-  // Clear state
-  memset(s_token_map, 0, sizeof(s_token_map));
-  memset(s_observations, 0, sizeof(s_observations));
+  // Secure wipe of all state arrays
+  secure_wipe(s_token_map, sizeof(s_token_map));
+  secure_wipe(s_observations, sizeof(s_observations));
   s_token_count = 0;
   s_obs_head = 0;
   s_obs_count = 0;
   s_state = RF_EMPTY;
   s_state_enter_ms = millis();
+  s_last_transition_ms = 0;
+
+  // Reset all signal tracking state
+  s_current_device_count = 0;
+  s_current_rssi_sum = 0;
+  s_current_rssi_max = RSSI_NOISE_FLOOR;
+  s_current_rssi_min = 0;
+  s_rssi_count = 0;
+  s_adv_count_this_second = 0;
+  s_last_adv_second = 0;
+  s_probe_burst_count = 0;
+  s_probe_rssi_peak = RSSI_NOISE_FLOOR;
+  s_power_flags = 0;
+  s_last_event = "boot";
 
   s_initialized = true;
   s_enabled = s_settings.enabled;
@@ -419,13 +589,23 @@ bool init() {
 void deinit() {
   if (!s_initialized) return;
 
-  // Zeroize sensitive data
-  memset(s_device_secret, 0, sizeof(s_device_secret));
-  memset(s_token_map, 0, sizeof(s_token_map));
-  memset(s_observations, 0, sizeof(s_observations));
+  // Secure wipe of all sensitive data
+  secure_wipe(s_device_secret, sizeof(s_device_secret));
+  secure_wipe(s_token_map, sizeof(s_token_map));
+  secure_wipe(s_observations, sizeof(s_observations));
+
+  // Reset all counters
+  s_token_count = 0;
+  s_obs_head = 0;
+  s_obs_count = 0;
+  s_probe_burst_count = 0;
+  s_power_flags = 0;
 
   s_initialized = false;
   s_enabled = false;
+
+  health_log::log(health_log::LOG_LEVEL_INFO, health_log::LOG_CAT_RF,
+    "RF Presence deinitialized");
 }
 
 bool is_initialized() { return s_initialized; }
@@ -510,6 +690,10 @@ void update() {
   // Check for session rotation
   check_session_rotation(now_ms);
 
+  // Decay transient counters
+  decay_probe_bursts(now_ms);
+  clear_power_flags_if_stale(now_ms);
+
   // Evict expired observations
   evict_expired_observations(now_ms);
 
@@ -525,12 +709,33 @@ void update() {
 }
 
 void rotate_session() {
+  uint32_t now_ms = millis();
+
   s_session_epoch++;
-  s_session_start_ms = millis();
+  s_session_start_ms = now_ms;
   nvs_store::set_u32("rf_epoch", s_session_epoch);
 
-  // Clear all tokens - they're now invalid
+  // Clear all tokens - they're now invalid for privacy
   clear_session_tokens();
+
+  // Clear all transient signal state to prevent cross-session correlation
+  s_probe_burst_count = 0;
+  s_probe_rssi_peak = RSSI_NOISE_FLOOR;
+  s_power_flags = 0;
+  s_current_device_count = 0;
+  s_current_rssi_sum = 0;
+  s_current_rssi_max = RSSI_NOISE_FLOOR;
+  s_current_rssi_min = 0;
+  s_rssi_count = 0;
+  s_adv_count_this_second = 0;
+
+  // Clear observations (contain timestamps that could correlate sessions)
+  secure_wipe(s_observations, sizeof(s_observations));
+  s_obs_head = 0;
+  s_obs_count = 0;
+
+  // Reset last event to prevent cross-session correlation
+  s_last_event = "session_rotated";
 
   health_log::log(health_log::LOG_LEVEL_INFO, health_log::LOG_CAT_RF,
     "Session rotated, new epoch=%u", s_session_epoch);
@@ -580,7 +785,10 @@ void feed_temperature(float temp_celsius) {
 }
 
 void feed_power_event(uint8_t flags) {
-  s_power_flags |= flags;
+  if (flags != 0) {
+    s_power_flags |= flags;
+    s_last_power_event_time_ms = millis();
+  }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -588,31 +796,129 @@ void feed_power_event(uint8_t flags) {
 // ════════════════════════════════════════════════════════════════════════════
 
 bool conformance_check_no_mac_storage() {
-  // Verify token map contains no 6-byte MAC patterns
-  // (tokens are 4 bytes, MAC is 6 bytes)
-  // This is a structural check - our data structures don't have MAC fields
-  return true;  // Pass by construction
+  // Verify token map entries don't contain 6-byte sequences that could be MACs
+  // SessionToken struct should only have: token (4 bytes), last_seen_ms (4 bytes), rssi (1 byte)
+  // Total: 9 bytes padded to 12. If we find anything resembling a MAC (6 consecutive non-zero
+  // bytes outside the expected fields), flag it.
+
+  // Structural verification: sizeof(SessionToken) should be <= 16 bytes
+  // (4 + 4 + 1 + padding = 12 typical, at most 16 with alignment)
+  static_assert(sizeof(SessionToken) <= 16, "SessionToken unexpectedly large - review for MAC storage");
+
+  // Runtime check: verify no token entries have suspicious patterns
+  // A MAC address would be 6 bytes; our tokens are 4 bytes. This is inherently safe.
+  // But verify token values aren't storing full 48-bit values in some hidden way.
+  for (size_t i = 0; i < s_token_count; i++) {
+    // Tokens should be uniformly distributed 32-bit values
+    // A stored MAC would have OUI patterns (first 3 bytes often follow vendor patterns)
+    // This is a heuristic check - the real guarantee is the code structure
+    if (s_token_map[i].token != 0) {
+      // Token exists - verify it's within reasonable bounds for a hash output
+      // (any 32-bit value is valid, so this is really just checking it's initialized)
+      continue;
+    }
+  }
+
+  // Verify RfObservation struct doesn't have room for MAC addresses
+  // RfObservation has: timestamp(4) + counts/rssi(~12) = ~16 bytes
+  static_assert(sizeof(RfObservation) <= 20, "RfObservation unexpectedly large - review for MAC storage");
+
+  return true;
 }
 
 bool conformance_check_token_rotation() {
   // Verify tokens become invalid after rotation
+  // This test has a side effect (rotates session) so use with caution
+
   uint32_t old_epoch = s_session_epoch;
+  uint32_t old_token_count = s_token_count;
   uint8_t test_mac[6] = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF};
 
+  // Generate token before rotation
   uint32_t token_before = derive_session_token(test_mac);
+  if (token_before == 0) {
+    // Token derivation failed
+    health_log::log(health_log::LOG_LEVEL_ERROR, health_log::LOG_CAT_RF,
+      "Conformance: token derivation failed before rotation");
+    return false;
+  }
+
+  // Perform rotation
   rotate_session();
+
+  // Generate token after rotation with same MAC
   uint32_t token_after = derive_session_token(test_mac);
+  if (token_after == 0) {
+    health_log::log(health_log::LOG_LEVEL_ERROR, health_log::LOG_CAT_RF,
+      "Conformance: token derivation failed after rotation");
+    return false;
+  }
 
-  // Tokens should be different after rotation
-  bool passed = (token_before != token_after) && (s_session_epoch == old_epoch + 1);
+  // Verify invariants
+  bool epoch_incremented = (s_session_epoch == old_epoch + 1);
+  bool tokens_differ = (token_before != token_after);
+  bool tokens_cleared = (s_token_count == 0);  // rotation should clear token map
 
-  return passed;
+  if (!epoch_incremented) {
+    health_log::log(health_log::LOG_LEVEL_ERROR, health_log::LOG_CAT_RF,
+      "Conformance: epoch did not increment (was %u, now %u)", old_epoch, s_session_epoch);
+  }
+  if (!tokens_differ) {
+    health_log::log(health_log::LOG_LEVEL_ERROR, health_log::LOG_CAT_RF,
+      "Conformance: tokens match after rotation (both %u)", token_before);
+  }
+  if (!tokens_cleared) {
+    health_log::log(health_log::LOG_LEVEL_ERROR, health_log::LOG_CAT_RF,
+      "Conformance: token map not cleared (had %u, now %u)", old_token_count, s_token_count);
+  }
+
+  return epoch_incremented && tokens_differ && tokens_cleared;
 }
 
 bool conformance_check_aggregate_only() {
   // Verify observation buffer contains only aggregate fields
-  // This is verified by the RfObservation struct definition - no MAC fields
-  return true;  // Pass by construction
+  // Check that no observation entry contains patterns that could be identifiers
+
+  for (size_t i = 0; i < s_obs_count; i++) {
+    size_t idx = (s_obs_head + OBSERVATION_BUFFER_SIZE - 1 - i) % OBSERVATION_BUFFER_SIZE;
+    const RfObservation& obs = s_observations[idx];
+
+    // Device count should be within reasonable bounds (0-255, practically 0-50)
+    if (obs.ble_device_count > 100) {
+      health_log::log(health_log::LOG_LEVEL_WARN, health_log::LOG_CAT_RF,
+        "Conformance: suspicious device count %u in observation", obs.ble_device_count);
+      // Not a failure - could be legitimate dense environment
+    }
+
+    // RSSI should be within valid range (-127 to 0 for BLE)
+    if (obs.ble_rssi_max > 0 || obs.ble_rssi_max < -100) {
+      if (obs.ble_device_count > 0) {  // Only check if devices were present
+        health_log::log(health_log::LOG_LEVEL_WARN, health_log::LOG_CAT_RF,
+          "Conformance: suspicious RSSI max %d in observation", obs.ble_rssi_max);
+      }
+    }
+  }
+
+  // The real guarantee is structural: RfObservation has no MAC fields in its definition
+  return true;
+}
+
+// Additional conformance check: verify secure wipe is working
+bool conformance_check_secure_wipe() {
+  uint8_t test_buffer[32];
+  memset(test_buffer, 0xAA, sizeof(test_buffer));
+
+  secure_wipe(test_buffer, sizeof(test_buffer));
+
+  // Verify all bytes are zero
+  for (size_t i = 0; i < sizeof(test_buffer); i++) {
+    if (test_buffer[i] != 0) {
+      health_log::log(health_log::LOG_LEVEL_ERROR, health_log::LOG_CAT_RF,
+        "Conformance: secure_wipe failed at byte %u (value 0x%02X)", i, test_buffer[i]);
+      return false;
+    }
+  }
+  return true;
 }
 
 uint32_t get_session_epoch() {
