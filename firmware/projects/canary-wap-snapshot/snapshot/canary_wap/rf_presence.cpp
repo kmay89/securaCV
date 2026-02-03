@@ -108,6 +108,31 @@ static RfPresenceSettings s_settings = {
 };
 
 // ════════════════════════════════════════════════════════════════════════════
+// PRIVATE HELPERS — SECRET MANAGEMENT
+// ════════════════════════════════════════════════════════════════════════════
+
+// Generate new device secret using hardware RNG and persist to NVS
+static bool regenerate_device_secret() {
+  esp_fill_random(s_device_secret, sizeof(s_device_secret));
+  if (!nvs_store::set_blob("rf_secret", s_device_secret, sizeof(s_device_secret))) {
+    health_log::log(health_log::LOG_LEVEL_ERROR, health_log::LOG_CAT_RF,
+      "Failed to persist device secret");
+    return false;
+  }
+  return true;
+}
+
+// Validate secret is not all zeros (would indicate uninitialized state)
+static bool validate_device_secret() {
+  for (size_t i = 0; i < sizeof(s_device_secret); i++) {
+    if (s_device_secret[i] != 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // PRIVATE HELPERS — TOKEN DERIVATION (PRIVACY BARRIER)
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -374,10 +399,15 @@ static void emit_event(const char* event_name, SignalSource sig, int8_t count_de
 // PRIVATE HELPERS — FSM TRANSITIONS
 // ════════════════════════════════════════════════════════════════════════════
 
+// Throttle to prevent rapid state transition flooding
+static const uint32_t MIN_TRANSITION_INTERVAL_MS = 500;
+static uint32_t s_last_transition_ms = 0;
+
 static void transition_to(RfState new_state, uint32_t now_ms) {
   RfState old_state = s_state;
   s_state = new_state;
   s_state_enter_ms = now_ms;
+  s_last_transition_ms = now_ms;  // Track for rate limiting
 
   // Log transition
   health_log::log(health_log::LOG_LEVEL_INFO, health_log::LOG_CAT_RF,
@@ -419,10 +449,6 @@ static void clear_power_flags_if_stale(uint32_t now_ms) {
   }
 }
 
-// Throttle to prevent rapid state transition flooding
-static const uint32_t MIN_TRANSITION_INTERVAL_MS = 500;
-static uint32_t s_last_transition_ms = 0;
-
 static void fsm_tick(uint32_t now_ms) {
   uint8_t device_count = count_active_tokens(now_ms);
   uint32_t state_duration = elapsed_ms(s_state_enter_ms, now_ms);  // Wrap-around safe
@@ -436,7 +462,6 @@ static void fsm_tick(uint32_t now_ms) {
     case RF_EMPTY:
       if (can_transition && (device_count >= s_settings.min_presence_count || s_probe_burst_count > 0)) {
         transition_to(RF_IMPULSE, now_ms);
-        s_last_transition_ms = now_ms;
         if (s_settings.emit_impulse_events) {
           emit_event("rf_impulse", s_probe_burst_count > 0 ? SIG_WIFI : SIG_BLE, device_count);
         }
@@ -447,16 +472,13 @@ static void fsm_tick(uint32_t now_ms) {
       if (device_count < s_settings.min_presence_count && s_probe_burst_count == 0) {
         if (can_transition) {
           transition_to(RF_EMPTY, now_ms);
-          s_last_transition_ms = now_ms;
         }
       } else if (state_duration >= s_settings.presence_threshold_ms) {
         transition_to(RF_PRESENCE, now_ms);
-        s_last_transition_ms = now_ms;
         emit_event("rf_presence_started", SIG_FUSED, device_count);
       } else if (state_duration >= IMPULSE_TIMEOUT_MS && device_count < s_settings.min_presence_count) {
         if (can_transition) {
           transition_to(RF_EMPTY, now_ms);
-          s_last_transition_ms = now_ms;
         }
       }
       break;
@@ -465,16 +487,13 @@ static void fsm_tick(uint32_t now_ms) {
       if (device_count < s_settings.min_presence_count) {
         if (state_duration >= s_settings.lost_timeout_ms) {
           transition_to(RF_EMPTY, now_ms);
-          s_last_transition_ms = now_ms;
           emit_event("rf_presence_ended", SIG_FUSED, -prev_count);
         } else if (can_transition) {
           transition_to(RF_DEPARTING, now_ms);
-          s_last_transition_ms = now_ms;
           emit_event("rf_departing", SIG_BLE, device_count - prev_count);
         }
       } else if (state_duration >= s_settings.dwell_threshold_ms) {
         transition_to(RF_DWELLING, now_ms);
-        s_last_transition_ms = now_ms;
         emit_event("rf_dwell_started", SIG_BLE, 0);
       }
       break;
@@ -482,7 +501,6 @@ static void fsm_tick(uint32_t now_ms) {
     case RF_DWELLING:
       if (can_transition && device_count < s_settings.min_presence_count) {
         transition_to(RF_DEPARTING, now_ms);
-        s_last_transition_ms = now_ms;
         emit_event("rf_departing", SIG_BLE, device_count - prev_count);
       }
       break;
@@ -492,11 +510,9 @@ static void fsm_tick(uint32_t now_ms) {
         // False departure, return to presence
         if (can_transition) {
           transition_to(RF_PRESENCE, now_ms);
-          s_last_transition_ms = now_ms;
         }
       } else if (state_duration >= DEPARTING_CONFIRM_MS) {
         transition_to(RF_EMPTY, now_ms);
-        s_last_transition_ms = now_ms;
         emit_event("rf_presence_ended", SIG_FUSED, -prev_count);
       }
       break;
@@ -512,41 +528,33 @@ bool init() {
 
   // Generate or load device secret
   if (!nvs_store::get_blob("rf_secret", s_device_secret, sizeof(s_device_secret))) {
-    // Generate new secret using hardware RNG
-    esp_fill_random(s_device_secret, sizeof(s_device_secret));
-    if (!nvs_store::set_blob("rf_secret", s_device_secret, sizeof(s_device_secret))) {
-      health_log::log(health_log::LOG_LEVEL_ERROR, health_log::LOG_CAT_RF,
-        "Failed to persist device secret");
-      // Continue anyway - secret is valid for this session
-    }
+    // No stored secret - generate new one
+    regenerate_device_secret();
   }
 
   // Validate secret is not all zeros (would indicate uninitialized state)
-  bool secret_valid = false;
-  for (size_t i = 0; i < sizeof(s_device_secret); i++) {
-    if (s_device_secret[i] != 0) {
-      secret_valid = true;
-      break;
-    }
-  }
-  if (!secret_valid) {
+  if (!validate_device_secret()) {
     health_log::log(health_log::LOG_LEVEL_ERROR, health_log::LOG_CAT_RF,
       "Device secret is invalid (all zeros), regenerating");
-    esp_fill_random(s_device_secret, sizeof(s_device_secret));
-    nvs_store::set_blob("rf_secret", s_device_secret, sizeof(s_device_secret));
+    regenerate_device_secret();
   }
 
   // Load session epoch
   s_session_epoch = nvs_store::get_u32("rf_epoch", 0);
   s_session_start_ms = millis();
 
-  // Load settings with validation
+  // Load settings with validation using named bounds constants
   RfPresenceSettings stored;
   if (nvs_store::get_blob("rf_settings", &stored, sizeof(stored))) {
-    // Basic sanity checks on stored settings
-    if (stored.presence_threshold_ms > 0 && stored.presence_threshold_ms <= 300000 &&
-        stored.dwell_threshold_ms > 0 && stored.dwell_threshold_ms <= 600000 &&
-        stored.lost_timeout_ms > 0 && stored.lost_timeout_ms <= 300000) {
+    // Validate settings against defined bounds
+    if (stored.presence_threshold_ms >= MIN_PRESENCE_THRESHOLD_MS &&
+        stored.presence_threshold_ms <= MAX_PRESENCE_THRESHOLD_MS &&
+        stored.dwell_threshold_ms >= MIN_DWELL_THRESHOLD_MS &&
+        stored.dwell_threshold_ms <= MAX_DWELL_THRESHOLD_MS &&
+        stored.lost_timeout_ms >= MIN_LOST_TIMEOUT_MS &&
+        stored.lost_timeout_ms <= MAX_LOST_TIMEOUT_MS &&
+        stored.min_presence_count >= MIN_PRESENCE_COUNT_SETTING &&
+        stored.min_presence_count <= MAX_PRESENCE_COUNT_SETTING) {
       s_settings = stored;
     } else {
       health_log::log(health_log::LOG_LEVEL_WARN, health_log::LOG_CAT_RF,
