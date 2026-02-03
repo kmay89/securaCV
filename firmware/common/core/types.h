@@ -232,12 +232,16 @@ typedef struct {
     uint32_t mesh_messages_sent;
     uint32_t mesh_messages_recv;
     uint32_t ble_connections;
+    uint32_t chirp_sent;
+    uint32_t chirp_recv;
+    uint32_t logs_stored;
     bool gps_healthy;
     bool crypto_healthy;
     bool sd_healthy;
     bool wifi_active;
     bool ble_active;
     bool mesh_active;
+    bool chirp_active;
 } system_health_t;
 
 // ============================================================================
