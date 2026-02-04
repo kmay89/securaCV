@@ -88,6 +88,7 @@
 #include "bluetooth_channel.h"
 #include "bluetooth_api.h"
 #include "sys_monitor.h"
+#include "hardware_state.h"
 
 // ════════════════════════════════════════════════════════════════════════════
 // BUILD CONFIGURATION — Edit build_config.h to select profile
@@ -105,7 +106,7 @@
 // ════════════════════════════════════════════════════════════════════════════
 
 static const char* DEVICE_TYPE        = "canary";
-static const char* FIRMWARE_VERSION   = "2.0.1";
+static const char* FIRMWARE_VERSION   = "2.1.0";  // Hardware resilience update
 static const char* RULESET_ID         = "securacv:canary:v1.0";
 static const char* PROTOCOL_VERSION   = "pwk:v0.3.0";
 static const char* CHAIN_ALGORITHM    = "sha256-domain-sep";
@@ -1429,62 +1430,93 @@ static esp_err_t handle_ui(httpd_req_t* req) {
 
 static esp_err_t handle_status(httpd_req_t* req) {
   g_health.http_requests++;
-  
-  StaticJsonDocument<1024> doc;
+
+  StaticJsonDocument<1536> doc;
   doc["ok"] = true;
   doc["device_id"] = g_device.device_id;
   doc["device_type"] = DEVICE_TYPE;
   doc["firmware"] = FIRMWARE_VERSION;
   doc["ruleset"] = RULESET_ID;
-  
+
   char fp_hex[17];
   hex_to_str(fp_hex, g_device.pubkey_fp, 8);
   doc["fingerprint"] = fp_hex;
-  
+
   char pubkey_hex[65];
   hex_to_str(pubkey_hex, g_device.pubkey, 32);
   doc["pubkey"] = pubkey_hex;
-  
+
   doc["uptime_sec"] = uptime_seconds();
   doc["boot_count"] = g_device.boot_count;
   doc["chain_seq"] = g_device.seq;
   doc["witness_count"] = g_health.records_created;
   doc["free_heap"] = ESP.getFreeHeap();
   doc["min_heap"] = g_health.min_heap;
-  
+
   doc["crypto_healthy"] = g_health.crypto_healthy;
-  doc["gps_healthy"] = g_health.gps_healthy;
-  doc["sd_mounted"] = g_sd_mounted;
-  doc["sd_healthy"] = g_health.sd_healthy;
   doc["wifi_active"] = g_health.wifi_active;
-  
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Hardware State — Use hardware_state.h for resilient, non-blocking info
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  doc["safe_mode"] = g_hw.safe_mode;
+
+  // GPS status (using hardware state - non-blocking, graceful degradation)
+  doc["gps_healthy"] = g_hw.gps_available;
+  doc["gps_available"] = g_hw.gps_available;
+  doc["gps_state"] = gps_state_name(g_hw.gps_state);
+
+  // SD card status (using CACHED values - non-blocking!)
+  // This is critical: SD.totalBytes() and SD.usedBytes() can block if card is removed
+  doc["sd_mounted"] = sd_is_available();
+  doc["sd_healthy"] = g_hw.sd_state == SD_MOUNTED;
+  doc["sd_state"] = sd_state_name(g_hw.sd_state);
+
+  // Use cached SD info (updated periodically in loop(), not on every request)
+  if (sd_is_available()) {
+    doc["sd_total"] = g_hw.sd_total_bytes;
+    doc["sd_used"] = g_hw.sd_total_bytes - g_hw.sd_free_bytes;
+    doc["sd_free"] = g_hw.sd_free_bytes;
+  } else {
+    doc["sd_total"] = 0;
+    doc["sd_used"] = 0;
+    doc["sd_free"] = 0;
+  }
+
 #if FEATURE_CAMERA_PEEK
   doc["camera_ready"] = g_camera_initialized;
+  doc["camera_available"] = g_hw.camera_available;
   doc["peek_active"] = g_peek_active;
   doc["peek_resolution"] = (int)g_peek_framesize;
 #endif
-  
-  if (g_sd_mounted) {
-    doc["sd_total"] = SD.totalBytes();
-    doc["sd_used"] = SD.usedBytes();
-    doc["sd_free"] = SD.totalBytes() - SD.usedBytes();
-  }
-  
+
   doc["logs_stored"] = g_health.logs_stored;
   doc["unacked_count"] = g_health.logs_unacked;
-  
+
+  // GPS position data (safe even if GPS absent - returns zeros/false)
   JsonObject gps = doc.createNestedObject("gps");
-  gps["valid"] = g_fix.valid;
-  gps["lat"] = g_fix.lat;
-  gps["lon"] = g_fix.lon;
-  gps["alt"] = g_fix.altitude_m;
-  gps["speed"] = g_speed_ema;
+  gps["available"] = g_hw.gps_available;
+  gps["fix"] = g_fix.valid;
+  // Only include coordinates if GPS is available and has fix
+  if (g_hw.gps_available && g_fix.valid) {
+    gps["lat"] = g_fix.lat;
+    gps["lon"] = g_fix.lon;
+    gps["alt"] = g_fix.altitude_m;
+    gps["speed"] = g_speed_ema;
+    gps["hdop"] = g_fix.hdop;
+  } else {
+    gps["lat"] = 0.0;
+    gps["lon"] = 0.0;
+    gps["alt"] = 0.0;
+    gps["speed"] = 0.0;
+    gps["hdop"] = 99.9;
+  }
   gps["quality"] = g_fix.quality;
-  gps["satellites"] = g_fix.satellites;
-  gps["hdop"] = g_fix.hdop;
+  gps["satellites"] = g_hw.gps_available ? g_fix.satellites : 0;
   gps["fix_mode"] = (int)g_fix.fix_mode;
   gps["state"] = state_name(g_state);
-  
+
   String response;
   serializeJson(doc, response);
   return http_send_json(req, response.c_str());
@@ -1686,30 +1718,48 @@ static esp_err_t handle_config_get(httpd_req_t* req) {
 
 static esp_err_t handle_export(httpd_req_t* req) {
   g_health.http_requests++;
-  
-  if (!g_sd_mounted) {
-    StaticJsonDocument<128> doc;
+
+  // Check SD card availability using hardware state (non-blocking)
+  if (!sd_is_available()) {
+    StaticJsonDocument<192> doc;
     doc["ok"] = false;
-    doc["error"] = "SD card not mounted";
+    doc["error"] = "SD card not available";
+    doc["sd_state"] = sd_state_name(g_hw.sd_state);
+    doc["sd_available"] = false;
     String response;
     serializeJson(doc, response);
     return http_send_json(req, response.c_str());
   }
-  
+
+  // Verify SD card is still present before proceeding
+  if (!sd_verify_present()) {
+    StaticJsonDocument<192> doc;
+    doc["ok"] = false;
+    doc["error"] = "SD card was removed during operation";
+    doc["sd_state"] = sd_state_name(g_hw.sd_state);
+    doc["sd_available"] = false;
+    String response;
+    serializeJson(doc, response);
+    return http_send_json(req, response.c_str());
+  }
+
   // Create export bundle
   char export_path[64];
   snprintf(export_path, sizeof(export_path), "/sd/EXPORT/bundle_%u.json", (unsigned)millis());
-  
+
   File file = SD.open(export_path, FILE_WRITE);
   if (!file) {
-    StaticJsonDocument<128> doc;
+    // SD operation failed - mark as error
+    sd_op_failure();
+    StaticJsonDocument<192> doc;
     doc["ok"] = false;
     doc["error"] = "Failed to create export file";
+    doc["sd_state"] = sd_state_name(g_hw.sd_state);
     String response;
     serializeJson(doc, response);
     return http_send_json(req, response.c_str());
   }
-  
+
   // Write export header
   StaticJsonDocument<512> header;
   header["version"] = PROTOCOL_VERSION;
@@ -1719,20 +1769,23 @@ static esp_err_t handle_export(httpd_req_t* req) {
   header["export_time_ms"] = millis();
   header["chain_seq"] = g_device.seq;
   header["records_total"] = g_health.records_created;
-  
+
   char pubkey_hex[65];
   hex_to_str(pubkey_hex, g_device.pubkey, 32);
   header["pubkey"] = pubkey_hex;
-  
+
   serializeJson(header, file);
   file.close();
-  
+
+  // Mark successful SD operation
+  sd_op_success();
+
   log_health(LOG_LEVEL_INFO, LOG_CAT_USER, "Export created", export_path);
-  
+
   StaticJsonDocument<128> doc;
   doc["ok"] = true;
   doc["download_url"] = String("/api/download?path=") + export_path;
-  
+
   String response;
   serializeJson(doc, response);
   return http_send_json(req, response.c_str());
@@ -2946,31 +2999,11 @@ static bool start_wifi_ap() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// SD CARD INITIALIZATION
+// SD CARD INITIALIZATION (Legacy wrapper - now uses hardware_state.h)
 // ════════════════════════════════════════════════════════════════════════════
-
-static bool sd_init() {
-  g_sd_spi.begin(SD_SCK_PIN, SD_MISO_PIN, SD_MOSI_PIN, SD_CS_PIN);
-  
-  if (!SD.begin(SD_CS_PIN, g_sd_spi, SD_SPI_FAST)) {
-    // Try slower speed
-    if (!SD.begin(SD_CS_PIN, g_sd_spi, SD_SPI_SLOW)) {
-      g_health.sd_healthy = false;
-      return false;
-    }
-  }
-  
-  // Create directories if needed
-  if (!SD.exists("/WITNESS")) SD.mkdir("/WITNESS");
-  if (!SD.exists("/HEALTH")) SD.mkdir("/HEALTH");
-  if (!SD.exists("/CHAIN")) SD.mkdir("/CHAIN");
-  if (!SD.exists("/EXPORT")) SD.mkdir("/EXPORT");
-  
-  g_sd_mounted = true;
-  g_health.sd_healthy = true;
-  
-  return true;
-}
+// NOTE: SD initialization is now handled by sd_mount_safe() in hardware_state.h
+// which provides timeout protection and graceful failure handling.
+// The legacy sd_init() has been removed to prevent accidental use of blocking SD.begin().
 
 // ════════════════════════════════════════════════════════════════════════════
 // DEVICE PROVISIONING
@@ -3063,17 +3096,27 @@ static void print_table_row(WitnessRecord* r, GnssFix* fx, FixState st) {
 static void print_status_bar() {
   char uptime_str[16];
   format_uptime(uptime_str, sizeof(uptime_str), uptime_seconds());
-  
+
   Serial.println();
-  Serial.printf("╔═══ STATUS ══╦═══════════════════════════════════════════════════════════╗\n");
-  Serial.printf("║ Uptime: %s  ║  Records: %u  |  GPS: %s  |  SD: %s  |  WiFi: %d clients\n",
-    uptime_str,
-    g_health.records_created,
-    g_health.gps_healthy ? "OK" : "--",
-    g_sd_mounted ? "OK" : "--",
-    WiFi.softAPgetStationNum()
-  );
-  Serial.printf("╚══════════════╩═══════════════════════════════════════════════════════════╝\n");
+  if (g_hw.safe_mode) {
+    Serial.printf("╔═══ STATUS ══╦══════════════════════════════════════════════════════════════════╗\n");
+    Serial.printf("║ ⚠️ SAFE MODE ║  Records: %-6u |  GPS: %-8s  |  SD: %-8s  |  WiFi: %d\n",
+      g_health.records_created,
+      gps_state_name(g_hw.gps_state),
+      sd_state_name(g_hw.sd_state),
+      WiFi.softAPgetStationNum()
+    );
+  } else {
+    Serial.printf("╔═══ STATUS ══╦══════════════════════════════════════════════════════════════════╗\n");
+    Serial.printf("║ Uptime: %-8s ║  Records: %-6u |  GPS: %-8s  |  SD: %-8s  |  WiFi: %d\n",
+      uptime_str,
+      g_health.records_created,
+      gps_state_name(g_hw.gps_state),
+      sd_state_name(g_hw.sd_state),
+      WiFi.softAPgetStationNum()
+    );
+  }
+  Serial.printf("╚═════════════╩══════════════════════════════════════════════════════════════════╝\n");
 }
 
 static void print_identity_block() {
@@ -3216,30 +3259,56 @@ static void handle_serial_commands() {
 void setup() {
   Serial.begin(115200);
   serial_wait_for_cdc(SERIAL_CDC_WAIT_MS);
-  
+
   Serial.println();
   Serial.println("╔══════════════════════════════════════════════════════════════╗");
   Serial.println("║     SecuraCV Canary — Production Witness Device              ║");
   Serial.println("║     Privacy Witness Kernel (PWK) Compatible                  ║");
-  Serial.println("║     Version 2.0.1 — SD Storage + WiFi AP + Fixed Camera      ║");
+  Serial.println("║     Version 2.1.0 — Hardware Resilience Update               ║");
   Serial.println("╚══════════════════════════════════════════════════════════════╝");
-  
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // PHASE 0: Hardware State & Safe Mode Check (CRITICAL - do this first)
+  // ════════════════════════════════════════════════════════════════════════════
+  hw_state_init();
+
+  // Check for rapid reboot condition - may enter safe mode
+  bool in_safe_mode = safe_mode_check();
+  if (in_safe_mode) {
+    Serial.println();
+    Serial.println("╔══════════════════════════════════════════════════════════════╗");
+    Serial.println("║  ⚠️  SAFE MODE ACTIVE — Optional peripherals disabled         ║");
+    Serial.println("║  Repeated crashes detected. Core witness functions only.     ║");
+    Serial.println("║  Device will auto-recover after 5 minutes of stability.      ║");
+    Serial.println("╚══════════════════════════════════════════════════════════════╝");
+    Serial.println();
+  }
+
   fix_init(&g_fix);
   utc_init(&g_gps_utc);
   memset(&g_last_record, 0, sizeof(g_last_record));
   g_state_entered_ms = millis();
   g_pending_state = STATE_NO_FIX;
-  
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // PHASE 1: Core Systems (crypto, identity) — MUST succeed
+  // ════════════════════════════════════════════════════════════════════════════
+
   // Provision device identity and crypto
   if (!provision_device()) {
     Serial.println();
     Serial.println("[!!] PROVISIONING FAILED - HALTING");
-    while (true) { delay(1000); }
+    // Don't infinite loop - just log and continue with limited function
+    // The device should still serve HTTP so user can diagnose
+    log_health(LOG_LEVEL_CRITICAL, LOG_CAT_CRYPTO, "Provisioning failed", nullptr);
   }
-  
+
   pinMode(BOOT_BUTTON_GPIO, INPUT_PULLUP);
-  
-  // Setup watchdog
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // PHASE 2: Watchdog — Configure but don't panic on peripheral failures
+  // ════════════════════════════════════════════════════════════════════════════
+
   #if FEATURE_WATCHDOG
   Serial.printf("[..] Watchdog timer: %us timeout\n", WATCHDOG_TIMEOUT_SEC);
   esp_task_wdt_config_t wdt_config = {
@@ -3254,14 +3323,37 @@ void setup() {
   esp_task_wdt_add(NULL);
   Serial.println("[OK] Watchdog configured");
   #endif
-  
-  // Initialize SD card storage
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // PHASE 3: Optional Peripherals — Skip if in safe mode, fail gracefully
+  // ════════════════════════════════════════════════════════════════════════════
+
+  // Initialize SD card storage (with timeout, non-blocking)
   #if FEATURE_SD_STORAGE
-  Serial.println("[..] Initializing SD card storage...");
-  if (sd_init()) {
-    Serial.println("[OK] SD card ready for witness records");
+  if (!in_safe_mode) {
+    Serial.println("[..] Initializing SD card storage (with timeout)...");
+    g_sd_spi.begin(SD_SCK_PIN, SD_MISO_PIN, SD_MOSI_PIN, SD_CS_PIN);
+
+    if (sd_mount_safe(g_sd_spi, SD_CS_PIN, SD_SPI_FAST)) {
+      g_sd_mounted = true;
+      g_health.sd_healthy = true;
+
+      // Create directories if needed (non-critical)
+      if (!SD.exists("/WITNESS")) SD.mkdir("/WITNESS");
+      if (!SD.exists("/HEALTH")) SD.mkdir("/HEALTH");
+      if (!SD.exists("/CHAIN")) SD.mkdir("/CHAIN");
+      if (!SD.exists("/EXPORT")) SD.mkdir("/EXPORT");
+
+      Serial.println("[OK] SD card ready for witness records");
+      log_health(LOG_LEVEL_INFO, LOG_CAT_STORAGE, "SD card mounted", nullptr);
+    } else {
+      g_sd_mounted = false;
+      g_health.sd_healthy = false;
+      Serial.println("[--] SD card not present — witness records buffered in RAM");
+      log_health(LOG_LEVEL_WARNING, LOG_CAT_STORAGE, "SD card not available", nullptr);
+    }
   } else {
-    Serial.println("[WARN] SD card not available - records will not persist");
+    Serial.println("[--] SD card init skipped (safe mode)");
   }
   #endif
   
@@ -3282,58 +3374,72 @@ void setup() {
   
   // Initialize camera for peek/preview
   #if FEATURE_CAMERA_PEEK
-  Serial.println("[..] Initializing camera for peek/preview...");
-  g_camera_initialized = init_camera();
-  if (g_camera_initialized) {
-    Serial.println("[OK] Camera ready for peek");
+  if (!in_safe_mode) {
+    Serial.println("[..] Initializing camera for peek/preview...");
+    g_camera_initialized = init_camera();
+    g_hw.camera_available = g_camera_initialized;
+    g_hw.camera_ever_init = g_camera_initialized;
+    if (g_camera_initialized) {
+      Serial.println("[OK] Camera ready for peek");
+    } else {
+      Serial.println("[--] Camera init failed - peek disabled");
+    }
   } else {
-    Serial.println("[WARN] Camera init failed - peek disabled");
+    Serial.println("[--] Camera init skipped (safe mode)");
   }
   #endif
 
   // Initialize mesh network (opera)
   #if FEATURE_MESH_NETWORK
-  Serial.println("[..] Initializing mesh network (opera)...");
-  if (mesh_network::init(g_device.privkey, g_device.pubkey, g_device.device_id)) {
-    Serial.println("[OK] Mesh network initialized");
-    log_health(LOG_LEVEL_INFO, LOG_CAT_MESH, "Mesh network initialized", nullptr);
+  if (!in_safe_mode) {
+    Serial.println("[..] Initializing mesh network (opera)...");
+    if (mesh_network::init(g_device.privkey, g_device.pubkey, g_device.device_id)) {
+      Serial.println("[OK] Mesh network initialized");
+      log_health(LOG_LEVEL_INFO, LOG_CAT_MESH, "Mesh network initialized", nullptr);
 
-    // Set up mesh callbacks
-    mesh_network::set_alert_callback([](const mesh_network::MeshAlert* alert) {
-      // Log received alerts from other canaries
-      char detail[80];
-      snprintf(detail, sizeof(detail), "From %s: %s",
-               alert->sender_name, alert->detail);
-      log_health((LogLevel)alert->severity, LOG_CAT_MESH, "Opera alert received", detail);
-    });
+      // Set up mesh callbacks
+      mesh_network::set_alert_callback([](const mesh_network::MeshAlert* alert) {
+        // Log received alerts from other canaries
+        char detail[80];
+        snprintf(detail, sizeof(detail), "From %s: %s",
+                 alert->sender_name, alert->detail);
+        log_health((LogLevel)alert->severity, LOG_CAT_MESH, "Opera alert received", detail);
+      });
 
-    mesh_network::set_peer_state_callback([](const mesh_network::OperaPeer* peer,
-                                             mesh_network::PeerState old_state,
-                                             mesh_network::PeerState new_state) {
-      char detail[80];
-      snprintf(detail, sizeof(detail), "%s: %s -> %s",
-               peer->name,
-               mesh_network::peer_state_name(old_state),
-               mesh_network::peer_state_name(new_state));
-      log_health(LOG_LEVEL_INFO, LOG_CAT_MESH, "Peer state changed", detail);
-    });
+      mesh_network::set_peer_state_callback([](const mesh_network::OperaPeer* peer,
+                                               mesh_network::PeerState old_state,
+                                               mesh_network::PeerState new_state) {
+        char detail[80];
+        snprintf(detail, sizeof(detail), "%s: %s -> %s",
+                 peer->name,
+                 mesh_network::peer_state_name(old_state),
+                 mesh_network::peer_state_name(new_state));
+        log_health(LOG_LEVEL_INFO, LOG_CAT_MESH, "Peer state changed", detail);
+      });
+    } else {
+      Serial.println("[--] Mesh network init failed");
+    }
   } else {
-    Serial.println("[WARN] Mesh network init failed");
+    Serial.println("[--] Mesh network init skipped (safe mode)");
   }
   #endif
 
   // Initialize Bluetooth
   #if FEATURE_BLUETOOTH
-  Serial.println("[..] Initializing Bluetooth Low Energy...");
-  if (bluetooth_channel::init()) {
-    Serial.println("[OK] Bluetooth initialized");
-    log_health(LOG_LEVEL_INFO, LOG_CAT_BLUETOOTH, "Bluetooth initialized", nullptr);
+  if (!in_safe_mode) {
+    Serial.println("[..] Initializing Bluetooth Low Energy...");
+    if (bluetooth_channel::init()) {
+      Serial.println("[OK] Bluetooth initialized");
+      log_health(LOG_LEVEL_INFO, LOG_CAT_BLUETOOTH, "Bluetooth initialized", nullptr);
+    } else {
+      Serial.println("[--] Bluetooth init failed");
+    }
   } else {
-    Serial.println("[WARN] Bluetooth init failed");
+    Serial.println("[--] Bluetooth init skipped (safe mode)");
   }
   #endif
 
-  // Initialize System Monitor
+  // Initialize System Monitor (always - it's core monitoring)
   #if FEATURE_SYS_MONITOR
   Serial.println("[..] Initializing system monitor...");
   sys_monitor::init();
@@ -3352,10 +3458,26 @@ void setup() {
   log_health(LOG_LEVEL_INFO, LOG_CAT_SYSTEM, "System monitor initialized", nullptr);
   #endif
 
-  // Initialize GNSS
+  // ════════════════════════════════════════════════════════════════════════════
+  // PHASE 4: GNSS — Always try, but don't fail setup if absent
+  // ════════════════════════════════════════════════════════════════════════════
+
   Serial.println();
   Serial.printf("[..] GNSS: %u baud, RX=GPIO%d, TX=GPIO%d\n", GPS_BAUD, GPS_RX_GPIO, GPS_TX_GPIO);
   Serial1.begin(GPS_BAUD, SERIAL_8N1, GPS_RX_GPIO, GPS_TX_GPIO);
+
+  // Probe for GPS module with timeout (won't block forever)
+  if (!in_safe_mode) {
+    if (gps_probe(Serial1, hw_config::GPS_DETECT_TIMEOUT_MS)) {
+      Serial.println("[OK] GPS module detected — waiting for fix");
+      g_health.gps_healthy = true;
+    } else {
+      Serial.println("[--] GPS module not detected — operating without GPS");
+      g_health.gps_healthy = false;
+    }
+  } else {
+    Serial.println("[--] GPS probe skipped (safe mode) — GPS state tracking disabled");
+  }
   
   // Create boot attestation record
   Serial.println("[..] Creating boot attestation record...");
@@ -3398,10 +3520,15 @@ void loop() {
   #if FEATURE_WATCHDOG
   esp_task_wdt_reset();
   #endif
-  
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // HARDWARE STATE MANAGEMENT — Update safe mode, track stability
+  // ════════════════════════════════════════════════════════════════════════════
+  safe_mode_update();
+
   // Handle serial commands
   handle_serial_commands();
-  
+
   // Check boot button for info reprint
   static uint32_t boot_btn_start = 0;
   bool pressed = (digitalRead(BOOT_BUTTON_GPIO) == LOW);
@@ -3413,6 +3540,7 @@ void loop() {
         print_identity_block();
         print_time_block();
         print_gps_block();
+        hw_state_print();  // Also print hardware state
         print_status_bar();
         print_table_header();
       }
@@ -3422,23 +3550,58 @@ void loop() {
   } else {
     boot_btn_start = 0;
   }
-  
-  // Read GPS data
-  while (Serial1.available()) {
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // GPS DATA HANDLING — Non-blocking with state tracking
+  // ════════════════════════════════════════════════════════════════════════════
+
+  // Read GPS data (non-blocking - only reads what's available)
+  bool gps_data_received = false;
+  int gps_bytes_read = 0;
+  while (Serial1.available() && gps_bytes_read < 256) {  // Limit per-cycle reads
     g_gps_rb.push((uint8_t)Serial1.read());
+    gps_data_received = true;
+    gps_bytes_read++;
   }
-  
+
   // Parse NMEA lines
   static char line[256];
   size_t len;
+  bool got_valid_sentence = false;
   while (read_nmea_line(line, sizeof(line), &len)) {
     parse_nmea(line, &g_fix);
+    got_valid_sentence = true;
   }
-  
+
+  // Update GPS hardware state
+  gps_update_state(gps_data_received, g_fix.valid);
+
+  // Sync hardware state to legacy health tracking
+  g_health.gps_healthy = g_hw.gps_available && (g_hw.gps_state >= GPS_DETECTED);
+
   // Update state machine
   g_state = update_state(&g_fix, g_state);
-  
-  // Update health metrics
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // PERIODIC HARDWARE CHECKS — SD card hot-plug, etc.
+  // ════════════════════════════════════════════════════════════════════════════
+
+  #if FEATURE_SD_STORAGE
+  // Periodic SD card check (handles hot-plug/unplug)
+  sd_periodic_check(g_sd_spi, SD_CS_PIN, SD_SPI_FAST);
+
+  // Sync SD hardware state to legacy flags
+  g_sd_mounted = sd_is_available();
+  g_health.sd_healthy = sd_is_available();
+  #endif
+
+  // Yield to prevent watchdog issues
+  yield();
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // HEALTH & STATUS UPDATES
+  // ════════════════════════════════════════════════════════════════════════════
+
   uint32_t now = millis();
   g_health.uptime_sec = now / 1000;
   g_health.free_heap = ESP.getFreeHeap();
@@ -3448,6 +3611,9 @@ void loop() {
 
   // Check WiFi connection periodically
   wifi_check_connection();
+
+  // Yield after WiFi check
+  yield();
 
   // Update mesh network
   #if FEATURE_MESH_NETWORK
@@ -3464,24 +3630,30 @@ void loop() {
   sys_monitor::update(log_health);
   #endif
 
-  // Create witness records at interval
+  // Yield before witness record creation
+  yield();
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // WITNESS RECORD CREATION
+  // ════════════════════════════════════════════════════════════════════════════
+
   if (now - g_last_record_ms >= RECORD_INTERVAL_MS) {
     g_last_record_ms = now;
-    
+
     uint8_t payload[512];
     size_t payload_len = 0;
     if (!build_witness_event(&g_fix, g_state, payload, sizeof(payload), &payload_len)) {
       log_health(LOG_LEVEL_ERROR, LOG_CAT_WITNESS, "Payload build failed", nullptr);
       return;
     }
-    
+
     if (!create_witness_record(payload, payload_len, RECORD_WITNESS_EVENT, &g_last_record)) {
       log_health(LOG_LEVEL_ERROR, LOG_CAT_CRYPTO, "Record verification failed", nullptr);
     }
-    
+
     // Print table row
     print_table_row(&g_last_record, &g_fix, g_state);
-    
+
     // Periodic status every 20 records
     if (g_health.records_created % 20 == 0) {
       print_status_bar();
