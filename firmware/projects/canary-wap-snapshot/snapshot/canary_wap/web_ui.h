@@ -244,6 +244,70 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     .stat-value { font-size: 1.25rem; font-weight: 600; font-family: var(--mono); }
     .stat-unit { font-size: 0.75rem; color: var(--muted); margin-left: 0.25rem; }
 
+    /* System Health Card */
+    .health-section { margin-bottom: 1rem; }
+    .health-section-label { margin-bottom: 0.5rem; }
+    .health-temp-display {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      padding: 0.75rem;
+      background: rgba(0,0,0,0.2);
+      border-radius: 8px;
+    }
+    .health-temp-value {
+      font-size: 2rem;
+      font-weight: 600;
+      font-family: var(--mono);
+    }
+    .health-temp-unit {
+      font-size: 1rem;
+      color: var(--muted);
+    }
+    .health-temp-secondary {
+      font-size: 0.75rem;
+      color: var(--muted);
+      margin-top: 0.25rem;
+    }
+    .health-temp-bar-container { margin-top: 0.5rem; }
+    .health-temp-bar-labels {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.65rem;
+      color: var(--muted);
+      margin-bottom: 0.25rem;
+    }
+    .health-temp-bar {
+      height: 8px;
+      background: linear-gradient(to right,#63b3ed 0%,#63b3ed 5%,#68d391 5%,#68d391 65%,#f6ad55 65%,#f6ad55 80%,#fc8181 80%);
+      border-radius: 4px;
+      position: relative;
+    }
+    .health-temp-marker {
+      position: absolute;
+      top: -2px;
+      width: 4px;
+      height: 12px;
+      background: white;
+      border-radius: 2px;
+      transform: translateX(-50%);
+      left: 50%;
+    }
+    .health-memory-bar {
+      height: 4px;
+      background: rgba(255,255,255,0.1);
+      border-radius: 2px;
+      margin-top: 0.25rem;
+    }
+    .health-memory-bar-fill {
+      height: 100%;
+      background: var(--accent);
+      border-radius: 2px;
+      width: 0%;
+      transition: width 0.3s, background 0.3s;
+    }
+    .health-memory-bar-fill.psram { background: var(--info); }
+
     /* Identity Grid */
     .identity-grid { display: grid; gap: 0.5rem; }
     .identity-row {
@@ -606,39 +670,39 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           <button class="btn btn-ghost btn-sm" onclick="refreshSystemHealth()">↻ Refresh</button>
         </div>
         <!-- Temperature Section -->
-        <div style="margin-bottom:1rem;">
-          <div class="stat-label" style="margin-bottom:0.5rem;">TEMPERATURE</div>
-          <div style="display:flex;align-items:center;gap:1rem;padding:0.75rem;background:rgba(0,0,0,0.2);border-radius:8px;">
+        <div class="health-section">
+          <div class="stat-label health-section-label">TEMPERATURE</div>
+          <div class="health-temp-display">
             <div style="flex:1;">
-              <div style="font-size:2rem;font-weight:600;font-family:var(--mono);">
-                <span id="sysTemp">--</span><span style="font-size:1rem;color:var(--muted);">°C</span>
-                <span style="font-size:1rem;color:var(--muted);margin-left:0.5rem;">(<span id="sysTempF">--</span>°F)</span>
+              <div class="health-temp-value">
+                <span id="sysTemp">--</span><span class="health-temp-unit">°C</span>
+                <span class="health-temp-unit" style="margin-left:0.5rem;">(<span id="sysTempF">--</span>°F)</span>
               </div>
-              <div style="font-size:0.75rem;color:var(--muted);margin-top:0.25rem;">
+              <div class="health-temp-secondary">
                 Min: <span id="sysTempMin">--</span>°C · Max: <span id="sysTempMax">--</span>°C · Avg: <span id="sysTempAvg">--</span>°C
               </div>
             </div>
             <div id="sysTempState" class="badge info"><span class="badge-dot"></span><span id="sysTempStateText">--</span></div>
           </div>
           <!-- Temperature Bar -->
-          <div style="margin-top:0.5rem;">
-            <div style="display:flex;justify-content:space-between;font-size:0.65rem;color:var(--muted);margin-bottom:0.25rem;">
+          <div class="health-temp-bar-container">
+            <div class="health-temp-bar-labels">
               <span>0°C</span><span>COLD</span><span>NORMAL</span><span>HOT</span><span>100°C</span>
             </div>
-            <div style="height:8px;background:linear-gradient(to right,#63b3ed 0%,#63b3ed 5%,#68d391 5%,#68d391 65%,#f6ad55 65%,#f6ad55 80%,#fc8181 80%);border-radius:4px;position:relative;">
-              <div id="sysTempMarker" style="position:absolute;top:-2px;width:4px;height:12px;background:white;border-radius:2px;transform:translateX(-50%);left:50%;"></div>
+            <div class="health-temp-bar">
+              <div id="sysTempMarker" class="health-temp-marker"></div>
             </div>
           </div>
         </div>
         <!-- Memory Section -->
-        <div style="margin-bottom:1rem;">
-          <div class="stat-label" style="margin-bottom:0.5rem;">MEMORY</div>
+        <div class="health-section">
+          <div class="stat-label health-section-label">MEMORY</div>
           <div class="stats-grid">
             <div class="stat-item">
               <div class="stat-label">Heap Used</div>
               <div class="stat-value"><span id="sysHeapPct">0</span><span class="stat-unit">%</span></div>
-              <div style="height:4px;background:rgba(255,255,255,0.1);border-radius:2px;margin-top:0.25rem;">
-                <div id="sysHeapBar" style="height:100%;background:var(--accent);border-radius:2px;width:0%;"></div>
+              <div class="health-memory-bar">
+                <div id="sysHeapBar" class="health-memory-bar-fill"></div>
               </div>
             </div>
             <div class="stat-item">
@@ -648,8 +712,8 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
             <div class="stat-item">
               <div class="stat-label">PSRAM Used</div>
               <div class="stat-value"><span id="sysPsramPct">--</span><span class="stat-unit">%</span></div>
-              <div style="height:4px;background:rgba(255,255,255,0.1);border-radius:2px;margin-top:0.25rem;">
-                <div id="sysPsramBar" style="height:100%;background:var(--info);border-radius:2px;width:0%;"></div>
+              <div class="health-memory-bar">
+                <div id="sysPsramBar" class="health-memory-bar-fill psram"></div>
               </div>
             </div>
             <div class="stat-item">
@@ -660,7 +724,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         </div>
         <!-- CPU/Device Info Section -->
         <div>
-          <div class="stat-label" style="margin-bottom:0.5rem;">DEVICE INFO</div>
+          <div class="stat-label health-section-label">DEVICE INFO</div>
           <div class="identity-grid">
             <div class="identity-row">
               <span class="identity-label">Chip</span>
@@ -1621,6 +1685,20 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       if (typeof data.camera_ready !== 'undefined') cameraReady = data.camera_ready;
     }
 
+    // Helper function to get temperature badge class based on state
+    function getTempBadgeClass(state) {
+      if (state.includes('CRIT')) return 'badge danger';
+      if (state.includes('WARN')) return 'badge warning';
+      return 'badge success';
+    }
+
+    // Helper function to get memory bar color based on usage percentage
+    function getMemoryBarColor(pct, isDefault = 'var(--accent)') {
+      if (pct > 85) return 'var(--danger)';
+      if (pct > 70) return 'var(--warning)';
+      return isDefault;
+    }
+
     async function refreshSystemHealth() {
       const data = await api('/api/system');
       if (!data.temperature) return;
@@ -1633,60 +1711,44 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       document.getElementById('sysTempMax').textContent = temp.max?.toFixed(1) || '--';
       document.getElementById('sysTempAvg').textContent = temp.avg?.toFixed(1) || '--';
 
-      // Temperature state badge
+      // Temperature state badge (using helper function)
       const state = data.temperature.state || 'NORMAL';
-      const stateBadge = document.getElementById('sysTempState');
-      const stateText = document.getElementById('sysTempStateText');
-      stateText.textContent = state;
-      if (state === 'HOT-CRIT' || state === 'COLD-CRIT') {
-        stateBadge.className = 'badge danger';
-      } else if (state === 'HOT-WARN' || state === 'COLD-WARN') {
-        stateBadge.className = 'badge warning';
-      } else {
-        stateBadge.className = 'badge success';
-      }
+      document.getElementById('sysTempStateText').textContent = state;
+      document.getElementById('sysTempState').className = getTempBadgeClass(state);
 
       // Temperature marker position (0-100°C range)
       const markerPct = Math.max(0, Math.min(100, temp.current || 50));
       document.getElementById('sysTempMarker').style.left = markerPct + '%';
 
-      // Header temperature badge
-      const tempBadge = document.getElementById('tempBadge');
+      // Header temperature badge (using helper function)
       document.getElementById('tempStatus').textContent = (temp.current?.toFixed(0) || '--') + '°C';
-      if (state === 'HOT-CRIT' || state === 'COLD-CRIT') {
-        tempBadge.className = 'badge danger';
-      } else if (state === 'HOT-WARN' || state === 'COLD-WARN') {
-        tempBadge.className = 'badge warning';
-      } else {
-        tempBadge.className = 'badge success';
-      }
+      document.getElementById('tempBadge').className = getTempBadgeClass(state);
 
       // Memory - Heap
       if (data.memory?.heap) {
         const heap = data.memory.heap;
         const heapPct = heap.used_pct?.toFixed(0) || 0;
         document.getElementById('sysHeapPct').textContent = heapPct;
-        document.getElementById('sysHeapBar').style.width = heapPct + '%';
-        document.getElementById('sysHeapFree').textContent = Math.round((heap.free || 0) / 1024);
-
-        // Color based on usage
         const heapBar = document.getElementById('sysHeapBar');
-        if (heapPct > 85) heapBar.style.background = 'var(--danger)';
-        else if (heapPct > 70) heapBar.style.background = 'var(--warning)';
-        else heapBar.style.background = 'var(--accent)';
+        heapBar.style.width = heapPct + '%';
+        heapBar.style.background = getMemoryBarColor(heapPct, 'var(--accent)');
+        document.getElementById('sysHeapFree').textContent = Math.round((heap.free || 0) / 1024);
       }
 
-      // Memory - PSRAM
+      // Memory - PSRAM (with color-coding for consistency)
       if (data.memory?.psram?.available) {
         const psram = data.memory.psram;
         const psramUsed = psram.total - psram.free;
         const psramPct = psram.total > 0 ? ((psramUsed / psram.total) * 100).toFixed(0) : 0;
         document.getElementById('sysPsramPct').textContent = psramPct;
-        document.getElementById('sysPsramBar').style.width = psramPct + '%';
+        const psramBar = document.getElementById('sysPsramBar');
+        psramBar.style.width = psramPct + '%';
+        psramBar.style.background = getMemoryBarColor(psramPct, 'var(--info)');
         document.getElementById('sysPsramFree').textContent = (psram.free / (1024 * 1024)).toFixed(1);
       } else {
         document.getElementById('sysPsramPct').textContent = 'N/A';
         document.getElementById('sysPsramFree').textContent = '--';
+        document.getElementById('sysPsramBar').style.width = '0%';
       }
 
       // Device Info
