@@ -23,6 +23,11 @@
 // #define BUILD_PROFILE_DEV       // Development: + WiFi + HTTP + SD (~90s)
 #define BUILD_PROFILE_FULL      // Full features: + Camera + Mesh + BLE (~150s)
 
+// Sanity check: exactly one profile must be selected
+#if (defined(BUILD_PROFILE_MINIMAL) + defined(BUILD_PROFILE_DEV) + defined(BUILD_PROFILE_FULL)) != 1
+  #error "Exactly one build profile must be selected in build_config.h."
+#endif
+
 // ════════════════════════════════════════════════════════════════════════════
 // PROFILE DEFINITIONS — Do not edit below unless customizing
 // ════════════════════════════════════════════════════════════════════════════
@@ -92,8 +97,6 @@
   #define DEBUG_VERIFY          0
   #define DEBUG_HTTP            0
 
-#else
-  #error "No build profile selected! Edit build_config.h and uncomment one profile."
 #endif
 
 // ════════════════════════════════════════════════════════════════════════════
