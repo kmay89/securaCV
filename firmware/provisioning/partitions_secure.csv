@@ -1,0 +1,37 @@
+# ═══════════════════════════════════════════════════════════════
+# SecuraCV Canary — Secure Partition Table
+# ═══════════════════════════════════════════════════════════════
+#
+# This partition table is designed for production devices with:
+# - OTA A/B slots for reliable firmware updates
+# - NVS encryption key storage
+# - Encrypted flags on sensitive partitions
+#
+# Partition sizes (4MB flash total):
+#   nvs:       20KB  (0x5000)  - Device settings, Ed25519 keys
+#   otadata:    8KB  (0x2000)  - OTA boot state
+#   app0:     1.9MB (0x1E0000) - Primary app slot
+#   app1:     1.9MB (0x1E0000) - Secondary app slot (OTA)
+#   nvs_keys:  4KB  (0x1000)   - NVS encryption keys
+#   spiffs:  188KB  (0x2F000)  - Filesystem (config files)
+#
+# Security notes:
+# - 'encrypted' flag marks partitions for flash encryption
+# - nvs partition stores device Ed25519 keypair (sensitive!)
+# - nvs_keys stores NVS encryption key (derived from eFuse)
+# - spiffs may contain configuration (encrypt for safety)
+#
+# Phase 1 (development):
+#   Encrypted flags are ignored (flash encryption not enabled)
+#
+# Phase 2 (production):
+#   Encrypted flags are enforced after eFuse burn
+#
+# ═══════════════════════════════════════════════════════════════
+# Name,    Type, SubType,  Offset,   Size,     Flags
+nvs,       data, nvs,      0x9000,   0x5000,   encrypted
+otadata,   data, ota,      0xe000,   0x2000,
+app0,      app,  ota_0,    0x10000,  0x1E0000,
+app1,      app,  ota_1,    0x1F0000, 0x1E0000,
+nvs_keys,  data, nvs_keys, 0x3D0000, 0x1000,   encrypted
+spiffs,    data, spiffs,   0x3D1000, 0x2F000,  encrypted

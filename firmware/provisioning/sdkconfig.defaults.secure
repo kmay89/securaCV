@@ -1,0 +1,153 @@
+# ═══════════════════════════════════════════════════════════════
+# SecuraCV Canary — Secure ESP-IDF Configuration
+# ═══════════════════════════════════════════════════════════════
+#
+# This configuration file prepares the firmware for production
+# security features. It is designed for PHASE 2 provisioning.
+#
+# IMPORTANT: Secure Boot and Flash Encryption are PREPARED but
+# NOT ENABLED by default. Enable them only when ready for
+# irreversible production lockdown.
+#
+# To enable full security (Phase 2):
+# 1. Uncomment the Secure Boot and Flash Encryption sections below
+# 2. Generate keys with: ./generate_keys.sh
+# 3. Build with: pio run -e secure
+# 4. Provision with: ./provision_canary.sh --phase 2
+#
+# ═══════════════════════════════════════════════════════════════
+
+# ─────────────────────────────────────────────────────────────────
+# BLUETOOTH: DISABLED BY DESIGN
+# ─────────────────────────────────────────────────────────────────
+# No proprietary BT binary blobs = eliminates CVE-2025-27840 class
+# of attacks (hidden HCI commands). This is a SECURITY FEATURE.
+# ─────────────────────────────────────────────────────────────────
+CONFIG_BT_ENABLED=n
+CONFIG_BLUEDROID_ENABLED=n
+CONFIG_BLE_MESH=n
+
+# ─────────────────────────────────────────────────────────────────
+# SECURE BOOT V2 (Phase 2 - Currently DISABLED for development)
+# ─────────────────────────────────────────────────────────────────
+# Uncomment these lines for production lockdown:
+#
+# CONFIG_SECURE_BOOT=y
+# CONFIG_SECURE_BOOT_V2_ENABLED=y
+# CONFIG_SECURE_BOOT_SIGNING_KEY="keys/secure_boot_signing_key.pem"
+# CONFIG_SECURE_BOOT_VERIFICATION_KEY="keys/secure_boot_signing_key.pub"
+#
+# Anti-rollback (prevents downgrade attacks):
+# CONFIG_BOOTLOADER_APP_ANTI_ROLLBACK=y
+# CONFIG_BOOTLOADER_APP_SECURE_VERSION=1
+#
+# ─────────────────────────────────────────────────────────────────
+
+# ─────────────────────────────────────────────────────────────────
+# FLASH ENCRYPTION (Phase 2 - Currently DISABLED for development)
+# ─────────────────────────────────────────────────────────────────
+# Uncomment these lines for production lockdown:
+#
+# CONFIG_SECURE_FLASH_ENC_ENABLED=y
+# CONFIG_SECURE_FLASH_ENCRYPTION_MODE_RELEASE=y
+#
+# Note: Development mode (CONFIG_SECURE_FLASH_ENCRYPTION_MODE_DEVELOPMENT)
+# allows re-flashing but is less secure. Use RELEASE for production.
+#
+# ─────────────────────────────────────────────────────────────────
+
+# ─────────────────────────────────────────────────────────────────
+# NVS ENCRYPTION (Protects stored keys and settings)
+# ─────────────────────────────────────────────────────────────────
+# This can be enabled independently of flash encryption for Phase 1.
+# It encrypts NVS partition contents using a key stored in eFuse.
+#
+CONFIG_NVS_ENCRYPTION=y
+
+# ─────────────────────────────────────────────────────────────────
+# JTAG CONFIGURATION
+# ─────────────────────────────────────────────────────────────────
+# For development (Phase 1): JTAG remains enabled for debugging
+# For production (Phase 2): JTAG is disabled via eFuse burning
+#
+# The eFuse burning is done by provision_canary.sh, not here.
+# These settings just configure the default behavior.
+#
+# Note: Once JTAG eFuse is burned, these settings have no effect.
+#
+# ─────────────────────────────────────────────────────────────────
+
+# ─────────────────────────────────────────────────────────────────
+# COMPILER OPTIMIZATION
+# ─────────────────────────────────────────────────────────────────
+# Size optimization for production builds
+CONFIG_COMPILER_OPTIMIZATION_SIZE=y
+CONFIG_COMPILER_OPTIMIZATION_ASSERTIONS_DISABLE=y
+
+# ─────────────────────────────────────────────────────────────────
+# DISABLE UNUSED NETWORK PROTOCOLS
+# ─────────────────────────────────────────────────────────────────
+CONFIG_LWIP_PPP_SUPPORT=n
+CONFIG_LWIP_SNTP_MAX_SERVERS=1
+CONFIG_ESP_WIFI_SOFTAP_SAE_SUPPORT=n
+CONFIG_ESP_WIFI_ENTERPRISE_SUPPORT=n
+CONFIG_WIFI_PROV_SCAN_MAX_ENTRIES=0
+
+# ─────────────────────────────────────────────────────────────────
+# STACK/HEAP CONFIGURATION
+# ─────────────────────────────────────────────────────────────────
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=4096
+
+# ─────────────────────────────────────────────────────────────────
+# PSRAM (Required for camera frame buffer)
+# ─────────────────────────────────────────────────────────────────
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+
+# ─────────────────────────────────────────────────────────────────
+# mDNS (for canary.local discovery)
+# ─────────────────────────────────────────────────────────────────
+CONFIG_MDNS_MAX_SERVICES=4
+
+# ─────────────────────────────────────────────────────────────────
+# PARTITION TABLE
+# ─────────────────────────────────────────────────────────────────
+# Use secure partition table with encrypted flags
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_secure.csv"
+
+# ─────────────────────────────────────────────────────────────────
+# HTTP SERVER
+# ─────────────────────────────────────────────────────────────────
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
+CONFIG_HTTPD_MAX_URI_LEN=512
+
+# ─────────────────────────────────────────────────────────────────
+# WATCHDOG (Production safety)
+# ─────────────────────────────────────────────────────────────────
+CONFIG_ESP_TASK_WDT=y
+CONFIG_ESP_TASK_WDT_PANIC=y
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=10
+
+# ─────────────────────────────────────────────────────────────────
+# BROWNOUT DETECTION
+# ─────────────────────────────────────────────────────────────────
+CONFIG_ESP_BROWNOUT_DET=y
+CONFIG_ESP_BROWNOUT_DET_LVL_SEL_7=y
+
+# ─────────────────────────────────────────────────────────────────
+# LOGGING (Minimal for production)
+# ─────────────────────────────────────────────────────────────────
+CONFIG_LOG_DEFAULT_LEVEL_ERROR=y
+CONFIG_LOG_MAXIMUM_LEVEL_ERROR=y
+
+# ─────────────────────────────────────────────────────────────────
+# BOOTLOADER
+# ─────────────────────────────────────────────────────────────────
+# Compiler optimization for bootloader
+CONFIG_BOOTLOADER_COMPILER_OPTIMIZATION_SIZE=y
+
+# Bootloader app image checksum verification (enabled by default)
+# For production, ensure this remains enabled: CONFIG_BOOTLOADER_APP_TEST=y
