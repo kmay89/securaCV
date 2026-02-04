@@ -1,0 +1,21 @@
+# ═══════════════════════════════════════════════════════════════
+# SecuraCV Provisioning — Git Ignore
+# ═══════════════════════════════════════════════════════════════
+# SECURITY: Never commit keys or device manifests to version control
+
+# Cryptographic keys (KEEP SECRET)
+keys/
+*.pem
+*.pub
+*.bin
+
+# Fleet manifest (may contain device identifiers)
+fleet_manifest.json
+
+# Backup files
+*.bak
+*.backup
+
+# Temporary files
+*.tmp
+*.log
