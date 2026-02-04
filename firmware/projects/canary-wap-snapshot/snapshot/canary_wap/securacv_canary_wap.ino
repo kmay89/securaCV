@@ -90,25 +90,15 @@
 #include "sys_monitor.h"
 
 // ════════════════════════════════════════════════════════════════════════════
-// COMPILE-TIME FEATURE FLAGS
+// BUILD CONFIGURATION — Edit build_config.h to select profile
+// ════════════════════════════════════════════════════════════════════════════
+// Build profiles (edit build_config.h to switch):
+//   MINIMAL - Fastest build (~45s): crypto + GPS only
+//   DEV     - Development (~90s):   + WiFi + HTTP + SD
+//   FULL    - All features (~150s): + Camera + Mesh + BLE
 // ════════════════════════════════════════════════════════════════════════════
 
-#define FEATURE_SD_STORAGE    1   // Enable SD card storage
-#define FEATURE_WIFI_AP       1   // Enable WiFi Access Point
-#define FEATURE_HTTP_SERVER   1   // Enable HTTP API server
-#define FEATURE_CAMERA_PEEK   1   // Enable camera peek/preview
-#define FEATURE_TAMPER_GPIO   0   // Enable tamper detection pin
-#define FEATURE_WATCHDOG      1   // Enable hardware watchdog
-#define FEATURE_STATE_LOG     1   // Log state transitions
-#define FEATURE_MESH_NETWORK  1   // Enable mesh network (opera)
-#define FEATURE_BLUETOOTH     1   // Enable Bluetooth Low Energy
-#define FEATURE_SYS_MONITOR   1   // Enable system monitoring (temp, heap, PSRAM)
-
-#define DEBUG_NMEA            0   // Print raw NMEA sentences
-#define DEBUG_CBOR            0   // Print CBOR hex dump
-#define DEBUG_CHAIN           0   // Print full chain operations
-#define DEBUG_VERIFY          0   // Print signature verification details
-#define DEBUG_HTTP            0   // Print HTTP request details
+#include "build_config.h"
 
 // ════════════════════════════════════════════════════════════════════════════
 // VERSION & PROTOCOL (must match PWK expectations)
