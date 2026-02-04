@@ -149,5 +149,5 @@ CONFIG_LOG_MAXIMUM_LEVEL_ERROR=y
 # Compiler optimization for bootloader
 CONFIG_BOOTLOADER_COMPILER_OPTIMIZATION_SIZE=y
 
-# Skip bootloader validation of app (for development)
-# Enable for production: CONFIG_BOOTLOADER_APP_TEST=n
+# Bootloader app image checksum verification (enabled by default)
+# For production, ensure this remains enabled: CONFIG_BOOTLOADER_APP_TEST=y

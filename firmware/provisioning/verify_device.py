@@ -88,7 +88,7 @@ SECURITY_EFUSES = {
 
 def run_espefuse(port: str, command: list[str]) -> tuple[int, str, str]:
     """Run espefuse.py with given command and return (returncode, stdout, stderr)."""
-    cmd = ["python", "-m", "espefuse", "--port", port] + command
+    cmd = ["python3", "-m", "espefuse", "--port", port] + command
     try:
         result = subprocess.run(
             cmd,

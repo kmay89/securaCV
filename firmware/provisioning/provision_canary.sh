@@ -243,7 +243,7 @@ burn_flash_encryption_key() {
 
     if [[ "${DRY_RUN}" == "true" ]]; then
         echo "  [DRY-RUN] Would burn flash encryption key from: ${KEYS_DIR}/flash_encryption_key.bin"
-        echo "  [DRY-RUN] Command: python3 -m espefuse --port ${PORT} burn_key BLOCK_KEY0 ${KEYS_DIR}/flash_encryption_key.bin XTS_AES_128_KEY"
+        echo "  [DRY-RUN] Command: python3 -m espefuse --port ${PORT} burn_key BLOCK_KEY0 ${KEYS_DIR}/flash_encryption_key.bin XTS_AES_256_KEY"
         echo ""
         print_warning "[DRY-RUN] This operation is IRREVERSIBLE in production"
         return 0
@@ -257,7 +257,7 @@ burn_flash_encryption_key() {
     fi
 
     python3 -m espefuse --port "${PORT}" burn_key BLOCK_KEY0 \
-        "${KEYS_DIR}/flash_encryption_key.bin" XTS_AES_128_KEY
+        "${KEYS_DIR}/flash_encryption_key.bin" XTS_AES_256_KEY
 
     print_success "Flash encryption key burned"
 }
@@ -303,7 +303,12 @@ burn_security_efuses() {
 
     for efuse in "${EFUSES_TO_BURN[@]}"; do
         echo "  Burning ${efuse}..."
-        python3 -m espefuse --port "${PORT}" burn_efuse "${efuse}" --do-not-confirm
+        if [[ "${efuse}" == "SOFT_DIS_JTAG" ]]; then
+            # SOFT_DIS_JTAG is a 3-bit field; value 7 disables all software JTAG sources
+            python3 -m espefuse --port "${PORT}" burn_efuse "${efuse}" 7 --do-not-confirm
+        else
+            python3 -m espefuse --port "${PORT}" burn_efuse "${efuse}" --do-not-confirm
+        fi
     done
 
     print_success "Security eFuses burned"

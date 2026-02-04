@@ -164,18 +164,18 @@ check_existing_keys() {
 generate_signing_key() {
     echo "Generating RSA-3072 signing key..."
 
-    openssl genrsa -out "${KEYS_DIR}/secure_boot_signing_key.pem" 3072 2>/dev/null
+    openssl genrsa -out "${KEYS_DIR}/secure_boot_signing_key.pem" 3072
 
     # Extract public key
     openssl rsa -in "${KEYS_DIR}/secure_boot_signing_key.pem" \
-        -pubout -out "${KEYS_DIR}/secure_boot_signing_key.pub" 2>/dev/null
+        -pubout -out "${KEYS_DIR}/secure_boot_signing_key.pub"
 
     # Set restrictive permissions
     chmod 600 "${KEYS_DIR}/secure_boot_signing_key.pem"
     chmod 644 "${KEYS_DIR}/secure_boot_signing_key.pub"
 
     # Calculate fingerprint
-    FINGERPRINT=$(openssl rsa -in "${KEYS_DIR}/secure_boot_signing_key.pem" -pubout -outform DER 2>/dev/null | \
+    FINGERPRINT=$(openssl rsa -in "${KEYS_DIR}/secure_boot_signing_key.pem" -pubout -outform DER | \
         openssl dgst -sha256 -binary | head -c 8 | xxd -p)
 
     print_success "Signing key generated (fingerprint: ${FINGERPRINT})"
@@ -188,7 +188,7 @@ generate_flash_encryption_key() {
     echo "Generating XTS-AES-256 flash encryption key..."
 
     # ESP32-S3 uses 256-bit key for XTS-AES
-    dd if="${RANDOM_SOURCE}" of="${KEYS_DIR}/flash_encryption_key.bin" bs=32 count=1 2>/dev/null
+    dd if="${RANDOM_SOURCE}" of="${KEYS_DIR}/flash_encryption_key.bin" bs=32 count=1
 
     # Set restrictive permissions
     chmod 600 "${KEYS_DIR}/flash_encryption_key.bin"
@@ -205,7 +205,7 @@ generate_flash_encryption_key() {
 generate_inventory() {
     echo "Generating key inventory..."
 
-    SIGNING_FINGERPRINT=$(openssl rsa -in "${KEYS_DIR}/secure_boot_signing_key.pem" -pubout -outform DER 2>/dev/null | \
+    SIGNING_FINGERPRINT=$(openssl rsa -in "${KEYS_DIR}/secure_boot_signing_key.pem" -pubout -outform DER | \
         openssl dgst -sha256 -binary | head -c 8 | xxd -p)
     ENCRYPTION_KEY_HASH=$(sha256sum "${KEYS_DIR}/flash_encryption_key.bin" | awk '{print $1}')
 

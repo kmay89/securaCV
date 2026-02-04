@@ -63,11 +63,11 @@ def add_device(
     for device in manifest["devices"]:
         if device["mac"].lower() == mac.lower():
             print(f"Device with MAC {mac} already exists. Updating...")
-            device["fingerprint"] = fingerprint or device.get("fingerprint")
-            device["chip_id"] = chip_id or device.get("chip_id")
+            device["fingerprint"] = fingerprint if fingerprint is not None else device.get("fingerprint")
+            device["chip_id"] = chip_id if chip_id is not None else device.get("chip_id")
             device["phase"] = phase
-            device["location"] = location or device.get("location")
-            device["notes"] = notes or device.get("notes")
+            device["location"] = location if location is not None else device.get("location")
+            device["notes"] = notes if notes is not None else device.get("notes")
             device["updated_at"] = datetime.now().isoformat()
             save_manifest(manifest)
             return device

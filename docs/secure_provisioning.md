@@ -169,10 +169,10 @@ idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults.secure" build
 
 ```bash
 # ALWAYS dry-run first to preview what will happen
-./provision_canary.sh --port /dev/ttyACM0 --dry-run
+./provision_canary.sh --port /dev/ttyACM0 --phase 2 --dry-run
 
 # Review output carefully, then execute for real:
-./provision_canary.sh --port /dev/ttyACM0
+./provision_canary.sh --port /dev/ttyACM0 --phase 2
 
 # This will:
 # 1. Verify device is virgin
@@ -204,7 +204,7 @@ python verify_device.py --port /dev/ttyACM0 --expect-locked
 | `JTAG_DISABLE` | 0 | 1 | Permanently disables JTAG |
 | `FLASH_CRYPT_CONFIG` | 0 | 0xF | Full flash encryption |
 | `SECURE_BOOT_AGGRESSIVE_REVOKE` | 0 | 1 | Aggressive key revocation |
-| `SOFT_DIS_JTAG` | 0 | 1 | Software JTAG disable |
+| `SOFT_DIS_JTAG` | 0 | 7 | Software JTAG disable (3-bit field) |
 
 ---
 
