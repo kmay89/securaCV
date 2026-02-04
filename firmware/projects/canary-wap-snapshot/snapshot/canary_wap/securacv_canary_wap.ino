@@ -3459,14 +3459,16 @@ void setup() {
   #endif
 
   // ════════════════════════════════════════════════════════════════════════════
-  // PHASE 4: GNSS — Always try, but don't fail setup if absent
+  // PHASE 4: GNSS — Initialize serial, probe only if not in safe mode
+  // In safe mode, GPS probing is skipped to avoid potential hangs from
+  // misbehaving peripherals that may have caused the reboot loop.
   // ════════════════════════════════════════════════════════════════════════════
 
   Serial.println();
   Serial.printf("[..] GNSS: %u baud, RX=GPIO%d, TX=GPIO%d\n", GPS_BAUD, GPS_RX_GPIO, GPS_TX_GPIO);
   Serial1.begin(GPS_BAUD, SERIAL_8N1, GPS_RX_GPIO, GPS_TX_GPIO);
 
-  // Probe for GPS module with timeout (won't block forever)
+  // Probe for GPS module with timeout (skipped in safe mode)
   if (!in_safe_mode) {
     if (gps_probe(Serial1, hw_config::GPS_DETECT_TIMEOUT_MS)) {
       Serial.println("[OK] GPS module detected — waiting for fix");

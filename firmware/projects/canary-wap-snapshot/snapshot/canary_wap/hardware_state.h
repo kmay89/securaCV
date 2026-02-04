@@ -448,7 +448,9 @@ mount_success:
 
   // Cache card info (only do this once on mount, not on every request)
   g_hw.sd_total_bytes = SD.totalBytes();
-  g_hw.sd_free_bytes = SD.totalBytes() - SD.usedBytes();
+  uint64_t used = SD.usedBytes();
+  // Protect against wraparound if filesystem is corrupted
+  g_hw.sd_free_bytes = (g_hw.sd_total_bytes > used) ? (g_hw.sd_total_bytes - used) : 0;
 
   Serial.printf(" mounted (%llu MB, %llu MB free)\n",
                 g_hw.sd_total_bytes / (1024*1024),
@@ -559,33 +561,16 @@ bool safe_mode_check() {
   // Read previous safe mode flag
   g_hw.safe_mode = g_hw_nvs.getBool(hw_config::NVS_SAFE_MODE, false);
 
-  // Get stored boot times (up to 8 recent boot timestamps)
-  uint32_t boot_times[8] = {0};
-  size_t stored_size = g_hw_nvs.getBytes(hw_config::NVS_BOOT_TIMES, boot_times, sizeof(boot_times));
-
-  uint32_t now = millis();  // Will be small since we just booted
-  uint32_t now_sec = esp_timer_get_time() / 1000000;  // Actual time since boot in seconds
-
-  // Count recent boots in window (stored as relative to previous boot)
-  // This is tricky because millis() resets on reboot
-  // We use a simple approach: store just the boot count that increments with each boot
-  // and timestamps relative to a base
-
-  // Simpler approach: just track rapid reboot count
+  // To detect rapid reboots without a real-time clock, we increment a counter
+  // in NVS on each boot. This counter is reset to zero in `safe_mode_update()`
+  // after the device has been stable for SAFE_MODE_WINDOW_MS.
   uint8_t rapid_count = g_hw_nvs.getUChar("rapid_count", 0);
-  uint32_t last_boot_ms = g_hw_nvs.getULong("last_boot", 0);
-
-  // If last boot was very recent (within window), increment count
-  // We can't easily track real time without RTC, so use boot count heuristic
-  // If the device boots again within ~60s, the millis() will be small
-  // Since we can't persist real time, we increment count and clear after sustained uptime
 
   rapid_count++;
   g_hw.rapid_boot_count = rapid_count;
 
   // Store updated count
   g_hw_nvs.putUChar("rapid_count", rapid_count);
-  g_hw_nvs.putULong("last_boot", now);
 
   g_hw_nvs.end();
 
