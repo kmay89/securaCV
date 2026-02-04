@@ -1,0 +1,28 @@
+# SecuraCV Provisioning — Git Ignore
+# ERRERlabs
+
+# Cryptographic keys — NEVER commit
+keys/*.pem
+keys/*.bin
+keys/*.key
+
+# Provisioning logs (contain device identifiers)
+logs/*.log
+logs/manifests/*.json
+
+# Build artifacts
+firmware/
+build/
+.pio/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Python
+__pycache__/
+*.pyc
+.venv/

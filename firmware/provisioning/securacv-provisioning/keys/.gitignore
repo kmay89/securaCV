@@ -1,0 +1,5 @@
+# NEVER commit cryptographic keys to version control
+*.pem
+*.bin
+*.key
+!.gitignore

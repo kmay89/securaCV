@@ -1,0 +1,121 @@
+# ============================================================================
+# SecuraCV Canary — Secure Build Configuration (sdkconfig.defaults.secure)
+# ERRERlabs
+#
+# Apply these settings on top of your base sdkconfig for production builds.
+# These can be merged via:
+#   cp sdkconfig.defaults.secure sdkconfig.defaults
+#   idf.py reconfigure
+#
+# Or for PlatformIO, add to platformio.ini:
+#   build_flags =
+#       -DCONFIG_SECURE_BOOT=1
+#       ... (see notes below)
+#
+# WARNING: Once a device is flashed with these settings and eFuses are burned,
+# the device is PERMANENTLY locked to this security configuration.
+# ============================================================================
+
+# ── Secure Boot v2 ─────────────────────────────────────────────────────────
+
+# Enable Secure Boot v2 (RSA-3072 based)
+CONFIG_SECURE_BOOT=y
+CONFIG_SECURE_BOOT_V2_ENABLED=y
+
+# Sign binaries during build (set path to your signing key)
+CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT=
+CONFIG_SECURE_SIGNED_ON_BOOT=y
+CONFIG_SECURE_SIGNED_APPS=y
+CONFIG_SECURE_SIGNED_ON_UPDATE=y
+CONFIG_SECURE_SIGNED_APPS_RSA_SCHEME=y
+CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES=y
+
+# IMPORTANT: Set this to your actual key path
+# CONFIG_SECURE_BOOT_SIGNING_KEY="keys/secure_boot_signing_key_0.pem"
+
+# ── Flash Encryption ───────────────────────────────────────────────────────
+
+# Enable Flash Encryption
+CONFIG_SECURE_FLASH_ENC_ENABLED=y
+
+# RELEASE mode — this is permanent. Development mode allows re-flashing.
+# For production Canary devices, use RELEASE.
+# For development, change to CONFIG_SECURE_FLASH_ENCRYPTION_MODE_DEVELOPMENT=y
+CONFIG_SECURE_FLASH_ENCRYPTION_MODE_RELEASE=y
+
+# Encrypt all partitions marked as "encrypted" in partition table
+CONFIG_SECURE_FLASH_CHECK_ENC_EN_IN_APP=y
+
+# ── JTAG & Debug Interfaces ───────────────────────────────────────────────
+
+# Disable JTAG in software (eFuse burn happens during provisioning)
+CONFIG_SECURE_DISABLE_ROM_DL_MODE=
+CONFIG_SECURE_ENABLE_SECURE_ROM_DL_MODE=y
+
+# ── UART Download Mode ─────────────────────────────────────────────────────
+
+# Switch to secure UART download mode (not fully disabled, allows recovery)
+# For maximum security, use CONFIG_SECURE_DISABLE_ROM_DL_MODE=y instead
+CONFIG_SECURE_ENABLE_SECURE_ROM_DL_MODE=y
+
+# ── Bluetooth — DISABLED ───────────────────────────────────────────────────
+
+# The safest Bluetooth stack is the one that doesn't exist.
+# Disabling BT removes all proprietary binary blobs from the firmware,
+# eliminates the entire HCI attack surface (CVE-2025-27840 class),
+# and reduces firmware size.
+CONFIG_BT_ENABLED=
+CONFIG_BT_NIMBLE_ENABLED=
+CONFIG_BT_BLUEDROID_ENABLED=
+
+# ── WiFi Configuration ─────────────────────────────────────────────────────
+
+# WiFi remains enabled (needed for Canary AP mode)
+CONFIG_ESP_WIFI_ENABLED=y
+
+# Disable WiFi station mode scanning if not needed
+# (Canary operates as AP only for local access)
+# CONFIG_ESP_WIFI_STA_DISCONNECTED_PM_ENABLE=
+
+# ── NVS Encryption ─────────────────────────────────────────────────────────
+
+# Encrypt NVS partition (stores WiFi credentials, device config)
+CONFIG_NVS_ENCRYPTION=y
+
+# ── Anti-Rollback Protection ──────────────────────────────────────────────
+
+# Prevent downgrade attacks via OTA
+CONFIG_BOOTLOADER_APP_ANTI_ROLLBACK=y
+CONFIG_BOOTLOADER_APP_SECURE_VERSION=1
+
+# ── Bootloader Settings ───────────────────────────────────────────────────
+
+# Reduce bootloader log verbosity in production
+CONFIG_BOOTLOADER_LOG_LEVEL_WARN=y
+CONFIG_BOOTLOADER_LOG_LEVEL=2
+
+# Watchdog timer during boot
+CONFIG_BOOTLOADER_WDT_ENABLE=y
+CONFIG_BOOTLOADER_WDT_TIME_MS=9000
+
+# ── Application Security ──────────────────────────────────────────────────
+
+# Stack canary for buffer overflow detection
+CONFIG_COMPILER_STACK_CHECK_MODE_STRONG=y
+CONFIG_COMPILER_STACK_CHECK=y
+
+# Brownout detector (prevents unstable voltage attacks)
+CONFIG_ESP_BROWNOUT_DET=y
+CONFIG_ESP_BROWNOUT_DET_LVL_SEL_7=y
+
+# ── Partition Table ────────────────────────────────────────────────────────
+
+# Use custom encrypted partition table
+# CONFIG_PARTITION_TABLE_CUSTOM=y
+# CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_encrypted.csv"
+
+# ── OTA Configuration ─────────────────────────────────────────────────────
+
+# OTA updates must be signed with the same key
+CONFIG_OTA_ALLOW_HTTP=
+# CONFIG_ESP_HTTPS_OTA_ALLOW_HTTP=  # Force HTTPS for OTA

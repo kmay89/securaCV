@@ -1,0 +1,14 @@
+# SecuraCV Canary — Secure Partition Table
+# ERRERlabs
+#
+# Partitions marked with 'encrypted' flag are automatically encrypted
+# when flash encryption is enabled.
+#
+# Name,       Type, SubType,  Offset,   Size,     Flags
+nvs,          data, nvs,      0x9000,   0x6000,   encrypted
+otadata,      data, ota,      0xf000,   0x2000,
+phy_init,     data, phy,      0x11000,  0x1000,
+ota_0,        app,  ota_0,    0x20000,  0x1E0000, encrypted
+ota_1,        app,  ota_1,    0x200000, 0x1E0000, encrypted
+nvs_keys,     data, nvs_keys, 0x3E0000, 0x1000,   encrypted
+canary_data,  data, fat,      0x3E1000, 0x1F000,  encrypted
