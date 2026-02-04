@@ -1,11 +1,15 @@
 /*
  * SecuraCV Canary — Web UI
- * Version 3.0.0 — Cleaned up navigation, added RF Presence, improved documentation
+ * Version 3.1.0 — Added device health dashboard with thermals, PSRAM, CPU monitoring
  *
  * Professional dashboard for device monitoring, log review, and management.
  * Embedded as PROGMEM string for flash storage efficiency.
  *
  * Navigation: Status | Camera | Community | Records | Settings
+ *
+ * Copyright (c) 2024-2025 SecuraCV Project Contributors
+ * Licensed under the MIT License
+ * SPDX-License-Identifier: MIT
  */
 
 #ifndef SECURACV_WEB_UI_H
@@ -239,6 +243,70 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     }
     .stat-value { font-size: 1.25rem; font-weight: 600; font-family: var(--mono); }
     .stat-unit { font-size: 0.75rem; color: var(--muted); margin-left: 0.25rem; }
+
+    /* System Health Card */
+    .health-section { margin-bottom: 1rem; }
+    .health-section-label { margin-bottom: 0.5rem; }
+    .health-temp-display {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      padding: 0.75rem;
+      background: rgba(0,0,0,0.2);
+      border-radius: 8px;
+    }
+    .health-temp-value {
+      font-size: 2rem;
+      font-weight: 600;
+      font-family: var(--mono);
+    }
+    .health-temp-unit {
+      font-size: 1rem;
+      color: var(--muted);
+    }
+    .health-temp-secondary {
+      font-size: 0.75rem;
+      color: var(--muted);
+      margin-top: 0.25rem;
+    }
+    .health-temp-bar-container { margin-top: 0.5rem; }
+    .health-temp-bar-labels {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.65rem;
+      color: var(--muted);
+      margin-bottom: 0.25rem;
+    }
+    .health-temp-bar {
+      height: 8px;
+      background: linear-gradient(to right,#63b3ed 0%,#63b3ed 5%,#68d391 5%,#68d391 65%,#f6ad55 65%,#f6ad55 80%,#fc8181 80%);
+      border-radius: 4px;
+      position: relative;
+    }
+    .health-temp-marker {
+      position: absolute;
+      top: -2px;
+      width: 4px;
+      height: 12px;
+      background: white;
+      border-radius: 2px;
+      transform: translateX(-50%);
+      left: 50%;
+    }
+    .health-memory-bar {
+      height: 4px;
+      background: rgba(255,255,255,0.1);
+      border-radius: 2px;
+      margin-top: 0.25rem;
+    }
+    .health-memory-bar-fill {
+      height: 100%;
+      background: var(--accent);
+      border-radius: 2px;
+      width: 0%;
+      transition: width 0.3s, background 0.3s;
+    }
+    .health-memory-bar-fill.psram { background: var(--info); }
 
     /* Identity Grid */
     .identity-grid { display: grid; gap: 0.5rem; }
@@ -525,7 +593,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
   <header>
     <div class="header-content">
       <div class="brand">
-        <div class="brand-icon">🔒</div>
+        <div class="brand-icon">🐥</div>
         <div>
           <h1>SecuraCV Canary</h1>
           <span id="deviceId">Loading...</span>
@@ -533,6 +601,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       </div>
       <div class="status-badges">
         <div class="badge success" id="chainBadge"><span class="badge-dot"></span><span>Chain OK</span></div>
+        <div class="badge info" id="tempBadge"><span class="badge-dot"></span><span id="tempStatus">--°C</span></div>
         <div class="badge info" id="gpsBadge"><span class="badge-dot"></span><span id="gpsStatus">GPS</span></div>
         <div class="badge success" id="sdBadge"><span class="badge-dot"></span><span>SD OK</span></div>
         <div class="badge info" id="rfBadge"><span class="badge-dot"></span><span id="rfStatus">RF</span></div>
@@ -591,6 +660,100 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         </div>
       </div>
 
+      <!-- System Health Card (Temperature, Memory, CPU) -->
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">System Health</div>
+            <div class="card-subtitle">Temperature, memory, and CPU metrics</div>
+          </div>
+          <button class="btn btn-ghost btn-sm" onclick="refreshSystemHealth()">↻ Refresh</button>
+        </div>
+        <!-- Temperature Section -->
+        <div class="health-section">
+          <div class="stat-label health-section-label">TEMPERATURE</div>
+          <div class="health-temp-display">
+            <div style="flex:1;">
+              <div class="health-temp-value">
+                <span id="sysTemp">--</span><span class="health-temp-unit">°C</span>
+                <span class="health-temp-unit" style="margin-left:0.5rem;">(<span id="sysTempF">--</span>°F)</span>
+              </div>
+              <div class="health-temp-secondary">
+                Min: <span id="sysTempMin">--</span>°C · Max: <span id="sysTempMax">--</span>°C · Avg: <span id="sysTempAvg">--</span>°C
+              </div>
+            </div>
+            <div id="sysTempState" class="badge info"><span class="badge-dot"></span><span id="sysTempStateText">--</span></div>
+          </div>
+          <!-- Temperature Bar -->
+          <div class="health-temp-bar-container">
+            <div class="health-temp-bar-labels">
+              <span>0°C</span><span>COLD</span><span>NORMAL</span><span>HOT</span><span>100°C</span>
+            </div>
+            <div class="health-temp-bar">
+              <div id="sysTempMarker" class="health-temp-marker"></div>
+            </div>
+          </div>
+        </div>
+        <!-- Memory Section -->
+        <div class="health-section">
+          <div class="stat-label health-section-label">MEMORY</div>
+          <div class="stats-grid">
+            <div class="stat-item">
+              <div class="stat-label">Heap Used</div>
+              <div class="stat-value"><span id="sysHeapPct">0</span><span class="stat-unit">%</span></div>
+              <div class="health-memory-bar">
+                <div id="sysHeapBar" class="health-memory-bar-fill"></div>
+              </div>
+            </div>
+            <div class="stat-item">
+              <div class="stat-label">Heap Free</div>
+              <div class="stat-value"><span id="sysHeapFree">0</span><span class="stat-unit">KB</span></div>
+            </div>
+            <div class="stat-item">
+              <div class="stat-label">PSRAM Used</div>
+              <div class="stat-value"><span id="sysPsramPct">--</span><span class="stat-unit">%</span></div>
+              <div class="health-memory-bar">
+                <div id="sysPsramBar" class="health-memory-bar-fill psram"></div>
+              </div>
+            </div>
+            <div class="stat-item">
+              <div class="stat-label">PSRAM Free</div>
+              <div class="stat-value"><span id="sysPsramFree">--</span><span class="stat-unit">MB</span></div>
+            </div>
+          </div>
+        </div>
+        <!-- CPU/Device Info Section -->
+        <div>
+          <div class="stat-label health-section-label">DEVICE INFO</div>
+          <div class="identity-grid">
+            <div class="identity-row">
+              <span class="identity-label">Chip</span>
+              <span class="identity-value" id="sysChip">--</span>
+            </div>
+            <div class="identity-row">
+              <span class="identity-label">CPU</span>
+              <span class="identity-value"><span id="sysCores">--</span> cores @ <span id="sysFreq">--</span> MHz</span>
+            </div>
+            <div class="identity-row">
+              <span class="identity-label">Flash</span>
+              <span class="identity-value"><span id="sysFlash">--</span> MB</span>
+            </div>
+            <div class="identity-row">
+              <span class="identity-label">Sketch</span>
+              <span class="identity-value"><span id="sysSketch">--</span> KB used</span>
+            </div>
+            <div class="identity-row">
+              <span class="identity-label">MAC</span>
+              <span class="identity-value" id="sysMac">--</span>
+            </div>
+            <div class="identity-row">
+              <span class="identity-label">Reset</span>
+              <span class="identity-value" id="sysReset">--</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Device Identity Card -->
       <div class="card">
         <div class="card-header">
@@ -610,7 +773,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           </div>
           <div class="identity-row">
             <span class="identity-label">Firmware</span>
-            <span class="identity-value" id="firmware">3.0.0</span>
+            <span class="identity-value" id="firmware">3.1.0</span>
           </div>
         </div>
       </div>
@@ -1371,6 +1534,25 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         </div>
       </div>
     </div>
+
+    <!-- Production Footer -->
+    <footer style="margin-top:2rem;padding:1.5rem;border-top:1px solid var(--border);text-align:center;">
+      <div style="display:flex;align-items:center;justify-content:center;gap:0.5rem;margin-bottom:0.75rem;">
+        <span style="font-size:1.25rem;">🐥</span>
+        <span style="font-weight:600;font-size:0.9rem;">SecuraCV Canary</span>
+        <span style="color:var(--muted);font-size:0.75rem;">v3.1.0</span>
+      </div>
+      <p style="font-size:0.7rem;color:var(--muted);margin-bottom:0.5rem;">
+        Privacy-first witness device for accountability without surveillance.
+      </p>
+      <p style="font-size:0.65rem;color:var(--muted);margin-bottom:0.5rem;">
+        © 2024-2025 SecuraCV Project Contributors. Licensed under MIT License.
+      </p>
+      <div style="font-size:0.6rem;color:var(--muted);opacity:0.7;">
+        <p>This device records semantic events, not continuous video. No cloud storage.</p>
+        <p style="margin-top:0.25rem;">For support and documentation: <a href="https://github.com/securacv" style="color:var(--accent);">github.com/securacv</a></p>
+      </div>
+    </footer>
   </div>
 
   <!-- Acknowledgment Modal -->
@@ -1501,6 +1683,85 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       document.getElementById('sdUsed').textContent = Math.round((data.sd_used || 0) / (1024 * 1024));
 
       if (typeof data.camera_ready !== 'undefined') cameraReady = data.camera_ready;
+    }
+
+    // Helper function to get temperature badge class based on state
+    function getTempBadgeClass(state) {
+      if (state.includes('CRIT')) return 'badge danger';
+      if (state.includes('WARN')) return 'badge warning';
+      return 'badge success';
+    }
+
+    // Helper function to get memory bar color based on usage percentage
+    function getMemoryBarColor(pct, isDefault = 'var(--accent)') {
+      if (pct > 85) return 'var(--danger)';
+      if (pct > 70) return 'var(--warning)';
+      return isDefault;
+    }
+
+    async function refreshSystemHealth() {
+      const data = await api('/api/system');
+      if (!data.temperature) return;
+
+      // Temperature
+      const temp = data.temperature.celsius;
+      document.getElementById('sysTemp').textContent = temp.current?.toFixed(1) || '--';
+      document.getElementById('sysTempF').textContent = data.temperature.fahrenheit?.current?.toFixed(1) || '--';
+      document.getElementById('sysTempMin').textContent = temp.min?.toFixed(1) || '--';
+      document.getElementById('sysTempMax').textContent = temp.max?.toFixed(1) || '--';
+      document.getElementById('sysTempAvg').textContent = temp.avg?.toFixed(1) || '--';
+
+      // Temperature state badge (using helper function)
+      const state = data.temperature.state || 'NORMAL';
+      document.getElementById('sysTempStateText').textContent = state;
+      document.getElementById('sysTempState').className = getTempBadgeClass(state);
+
+      // Temperature marker position (0-100°C range)
+      const markerPct = Math.max(0, Math.min(100, temp.current || 50));
+      document.getElementById('sysTempMarker').style.left = markerPct + '%';
+
+      // Header temperature badge (using helper function)
+      document.getElementById('tempStatus').textContent = (temp.current?.toFixed(0) || '--') + '°C';
+      document.getElementById('tempBadge').className = getTempBadgeClass(state);
+
+      // Memory - Heap
+      if (data.memory?.heap) {
+        const heap = data.memory.heap;
+        const heapPct = heap.used_pct?.toFixed(0) || 0;
+        document.getElementById('sysHeapPct').textContent = heapPct;
+        const heapBar = document.getElementById('sysHeapBar');
+        heapBar.style.width = heapPct + '%';
+        heapBar.style.background = getMemoryBarColor(heapPct, 'var(--accent)');
+        document.getElementById('sysHeapFree').textContent = Math.round((heap.free || 0) / 1024);
+      }
+
+      // Memory - PSRAM (with color-coding for consistency)
+      if (data.memory?.psram?.available) {
+        const psram = data.memory.psram;
+        const psramUsed = psram.total - psram.free;
+        const psramPct = psram.total > 0 ? ((psramUsed / psram.total) * 100).toFixed(0) : 0;
+        document.getElementById('sysPsramPct').textContent = psramPct;
+        const psramBar = document.getElementById('sysPsramBar');
+        psramBar.style.width = psramPct + '%';
+        psramBar.style.background = getMemoryBarColor(psramPct, 'var(--info)');
+        document.getElementById('sysPsramFree').textContent = (psram.free / (1024 * 1024)).toFixed(1);
+      } else {
+        document.getElementById('sysPsramPct').textContent = 'N/A';
+        document.getElementById('sysPsramFree').textContent = '--';
+        document.getElementById('sysPsramBar').style.width = '0%';
+      }
+
+      // Device Info
+      if (data.device) {
+        const dev = data.device;
+        document.getElementById('sysChip').textContent = (dev.model || 'ESP32') + ' rev ' + (dev.revision || '?');
+        document.getElementById('sysCores').textContent = dev.cores || '--';
+        document.getElementById('sysFreq').textContent = dev.freq_mhz || '--';
+        document.getElementById('sysFlash').textContent = ((dev.flash_size || 0) / (1024 * 1024)).toFixed(0);
+        document.getElementById('sysSketch').textContent = Math.round((data.memory?.sketch?.size || 0) / 1024);
+        document.getElementById('sysMac').textContent = dev.mac || '--';
+        document.getElementById('sysReset').textContent = (dev.reset_reason || 'unknown').replace(/_/g, ' ');
+      }
     }
 
     async function refreshRfStatus() {
@@ -2155,6 +2416,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     // INIT
     // ══════════════════════════════════════════════════════════════════
     refreshStatus();
+    refreshSystemHealth();
     loadChain();
     refreshRfStatus();
     loadWifiStatus();
@@ -2166,6 +2428,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     updateResolutionUI();
 
     setInterval(refreshStatus, 2000);
+    setInterval(refreshSystemHealth, 5000);
     setInterval(refreshRfStatus, 3000);
     setInterval(loadWifiStatus, 5000);
     setInterval(() => {
