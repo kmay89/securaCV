@@ -2668,11 +2668,14 @@ static esp_err_t handle_ble_chirp_send(httpd_req_t* req) {
 
   if (content_len > 0) {
     content[content_len] = '\0';
-    // Simple string matching for type field
-    if (strstr(content, "\"heartbeat\"")) chirpType = CHIRP_HEARTBEAT;
-    else if (strstr(content, "\"tamper\"")) chirpType = CHIRP_TAMPER;
-    else if (strstr(content, "\"witness\"")) chirpType = CHIRP_WITNESS;
-    else if (strstr(content, "\"boot\"")) chirpType = CHIRP_BOOT;
+    StaticJsonDocument<64> doc;
+    if (deserializeJson(doc, content) == DeserializationError::Ok) {
+      const char* typeStr = doc["type"] | "";
+      if (strcmp(typeStr, "heartbeat") == 0) chirpType = CHIRP_HEARTBEAT;
+      else if (strcmp(typeStr, "tamper") == 0) chirpType = CHIRP_TAMPER;
+      else if (strcmp(typeStr, "witness") == 0) chirpType = CHIRP_WITNESS;
+      else if (strcmp(typeStr, "boot") == 0) chirpType = CHIRP_BOOT;
+    }
   }
 
   // Rate limit check

@@ -9,7 +9,7 @@
  * - Rate limited: max 1 chirp per 10 seconds
  * - Automatic heartbeat every 5 minutes
  * - Chirp types: ALERT, HEARTBEAT, TAMPER, WITNESS, BOOT
- * - Mode switching: temporarily overrides Opera advertising for chirp broadcast
+ * - Non-blocking: chirp starts advertising, update() restores Opera after 2s
  *
  * Privacy:
  * - Uses truncated witness chain hash (proves integrity, not content)
@@ -29,14 +29,26 @@
 namespace ble_chirp {
 
 // ════════════════════════════════════════════════════════════════
+// CHIRP BROADCAST DURATION
+// ════════════════════════════════════════════════════════════════
+#define CHIRP_BROADCAST_DURATION_MS  2000  // Broadcast chirp for 2 seconds
+
+// ════════════════════════════════════════════════════════════════
 // STATE
 // ════════════════════════════════════════════════════════════════
 
+// Non-blocking chirp state machine
+enum ChirpState : uint8_t {
+    CHIRP_IDLE        = 0,  // No chirp in progress
+    CHIRP_BROADCASTING = 1, // Chirp advertising active, waiting for duration
+};
+
+static ChirpState g_chirpState = CHIRP_IDLE;
 static uint32_t g_chirpsSent = 0;
 static unsigned long g_lastChirpMs = 0;
 static unsigned long g_lastHeartbeatMs = 0;
+static unsigned long g_chirpStartMs = 0;  // When current chirp broadcast started
 static ChirpType g_lastChirpType = CHIRP_BOOT;
-static bool g_chirpInProgress = false;
 
 // External references (set during init)
 static uint8_t* g_chainHead = nullptr;     // Current chain head hash (32 bytes)
@@ -80,6 +92,24 @@ static void buildChirpPayload(ChirpType type, uint8_t* payload, size_t* len) {
 }
 
 // ════════════════════════════════════════════════════════════════
+// RESTORE OPERA ADVERTISING (internal)
+// ════════════════════════════════════════════════════════════════
+
+static void restoreOperaAdvertising() {
+    NimBLEAdvertising* pAdvertising = NimBLEDevice::getAdvertising();
+    if (!pAdvertising) return;
+
+    pAdvertising->stop();
+
+    // Restore Opera service advertising
+    NimBLEAdvertisementData restoreData;
+    restoreData.setCompleteServices(NimBLEUUID(SCV_SERVICE_UUID));
+    pAdvertising->setAdvertisementData(restoreData);
+    pAdvertising->setName(NimBLEDevice::getAddress().toString().c_str());
+    pAdvertising->start();
+}
+
+// ════════════════════════════════════════════════════════════════
 // PUBLIC API
 // ════════════════════════════════════════════════════════════════
 
@@ -106,8 +136,8 @@ static bool init(const char* deviceIdHash, uint8_t* chainHead) {
     return true;
 }
 
-// Send a chirp broadcast
-// Returns true if chirp was sent, false if rate-limited or error
+// Start a chirp broadcast (non-blocking)
+// Returns true if chirp was started, false if rate-limited or already in progress
 static bool sendChirp(ChirpType type) {
     unsigned long now = millis();
 
@@ -117,9 +147,8 @@ static bool sendChirp(ChirpType type) {
         return false;
     }
 
-    // Prevent re-entrant chirps
-    if (g_chirpInProgress) return false;
-    g_chirpInProgress = true;
+    // Prevent overlapping chirps
+    if (g_chirpState != CHIRP_IDLE) return false;
 
     // Build payload
     uint8_t payload[CHIRP_PAYLOAD_SIZE];
@@ -134,37 +163,40 @@ static bool sendChirp(ChirpType type) {
     memcpy(&mfgData[2], payload, payloadLen);
 
     NimBLEAdvertising* pAdvertising = NimBLEDevice::getAdvertising();
-    if (pAdvertising) {
-        // Stop current advertising
-        pAdvertising->stop();
+    if (!pAdvertising) return false;
 
-        // Set manufacturer data for chirp
-        NimBLEAdvertisementData advData;
-        advData.setManufacturerData(std::string((char*)mfgData, payloadLen + 2));
-        advData.setName(NimBLEDevice::getAddress().toString().c_str());
-        pAdvertising->setAdvertisementData(advData);
+    // Stop current advertising
+    pAdvertising->stop();
 
-        // Broadcast for 2 seconds
-        pAdvertising->start();
-        delay(2000);
-        pAdvertising->stop();
+    // Set manufacturer data for chirp
+    NimBLEAdvertisementData advData;
+    advData.setManufacturerData(std::string((char*)mfgData, payloadLen + 2));
+    advData.setName(NimBLEDevice::getAddress().toString().c_str());
+    pAdvertising->setAdvertisementData(advData);
 
-        // Restore Opera advertising (reset advertisement data)
-        NimBLEAdvertisementData restoreData;
-        restoreData.setCompleteServices(NimBLEUUID(SCV_SERVICE_UUID));
-        pAdvertising->setAdvertisementData(restoreData);
-        pAdvertising->setName(NimBLEDevice::getAddress().toString().c_str());
-        pAdvertising->start();
+    // Start chirp broadcast (non-blocking — update() will stop it after duration)
+    pAdvertising->start();
 
-        g_chirpsSent++;
-        g_lastChirpMs = now;
-        g_lastChirpType = type;
+    g_chirpState = CHIRP_BROADCASTING;
+    g_chirpStartMs = now;
+    g_chirpsSent++;
+    g_lastChirpMs = now;
+    g_lastChirpType = type;
 
-        Serial.printf("[BLE] Chirp sent: %s (#%u)\n", chirpTypeName(type), g_chirpsSent);
-    }
-
-    g_chirpInProgress = false;
+    Serial.printf("[BLE] Chirp started: %s (#%u)\n", chirpTypeName(type), g_chirpsSent);
     return true;
+}
+
+// Non-blocking update — call from loop() to manage chirp state transitions
+// Restores Opera advertising after chirp broadcast duration expires
+static void update() {
+    if (g_chirpState == CHIRP_BROADCASTING) {
+        if ((millis() - g_chirpStartMs) >= CHIRP_BROADCAST_DURATION_MS) {
+            restoreOperaAdvertising();
+            g_chirpState = CHIRP_IDLE;
+            Serial.println("[BLE] Chirp broadcast complete, Opera restored");
+        }
+    }
 }
 
 // Check if heartbeat chirp is due — call from loop()
@@ -189,6 +221,10 @@ static bool isRateLimited() {
     return (millis() - g_lastChirpMs) < CHIRP_MIN_INTERVAL_MS;
 }
 
+static bool isBroadcasting() {
+    return g_chirpState == CHIRP_BROADCASTING;
+}
+
 } // namespace ble_chirp
 
 #else // !FEATURE_BLE || !FEATURE_BLE_CHIRP
@@ -196,10 +232,12 @@ static bool isRateLimited() {
 namespace ble_chirp {
     static inline bool init(const char*, uint8_t*) { return false; }
     static inline bool sendChirp(uint8_t) { return false; }
+    static inline void update() {}
     static inline void heartbeatCheck() {}
     static inline uint32_t getChirpsSent() { return 0; }
     static inline uint8_t getLastChirpType() { return 0; }
     static inline bool isRateLimited() { return false; }
+    static inline bool isBroadcasting() { return false; }
 }
 
 #endif // FEATURE_BLE && FEATURE_BLE_CHIRP

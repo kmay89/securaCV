@@ -159,19 +159,11 @@ class NearbyScanCallbacks : public NimBLEScanCallbacks {
                     if (name.startsWith(BLE_DEVICE_NAME_PREFIX) && name.length() >= 8) {
                         name.substring(4, 8).toCharArray(prefix, 5);
                     } else {
-                        // Use last 4 hex of MAC as fallback prefix
-                        NimBLEAddress addr = advertisedDevice->getAddress();
-                        String addrStr = addr.toString().c_str();
-                        int addrLen = addrStr.length();
-                        if (addrLen >= 5) {
-                            // Last 2 bytes of MAC → 4 hex chars (without colons)
-                            char c1 = addrStr.charAt(addrLen - 5);
-                            char c2 = addrStr.charAt(addrLen - 4);
-                            char c3 = addrStr.charAt(addrLen - 2);
-                            char c4 = addrStr.charAt(addrLen - 1);
-                            prefix[0] = c1; prefix[1] = c2;
-                            prefix[2] = c3; prefix[3] = c4;
-                        }
+                        // No valid device ID prefix available — treat as non-Canary
+                        // (We never use MAC addresses as identifiers for privacy)
+                        g_nonCanaryCount++;
+                        xSemaphoreGive(g_nearbyMutex);
+                        return;
                     }
                 }
                 prefix[4] = '\0';
@@ -366,7 +358,7 @@ static String buildNearbyJson() {
             // Chain hash prefix as hex
             char hashHex[17];
             for (int j = 0; j < 8; j++) {
-                sprintf(hashHex + j * 2, "%02x", g_nearbyCanaries[i].chainHashPrefix[j]);
+                snprintf(hashHex + j * 2, 3, "%02x", g_nearbyCanaries[i].chainHashPrefix[j]);
             }
             hashHex[16] = '\0';
 

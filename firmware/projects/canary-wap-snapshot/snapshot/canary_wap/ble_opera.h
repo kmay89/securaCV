@@ -149,7 +149,7 @@ static void updateWitnessCharacteristic() {
     char hashHex[17] = {0};
     if (g_chainHead) {
         for (int i = 0; i < 8; i++) {
-            sprintf(hashHex + i * 2, "%02x", g_chainHead[i]);
+            snprintf(hashHex + i * 2, 3, "%02x", g_chainHead[i]);
         }
     }
 

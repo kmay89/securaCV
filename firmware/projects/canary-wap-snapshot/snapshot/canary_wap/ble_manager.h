@@ -22,6 +22,7 @@
 #if FEATURE_BLE
 
 #include <NimBLEDevice.h>
+#include <ArduinoJson.h>
 #include "ble_opera.h"
 #include "ble_chirp.h"
 #include "ble_nearby.h"
@@ -194,6 +195,13 @@ static void chirpHeartbeatCheck() {
 static void update() {
     if (!g_ble_available) return;
 
+    #if FEATURE_BLE_CHIRP
+    // Process non-blocking chirp state machine (restores Opera after broadcast)
+    if (g_chirp_active) {
+        ble_chirp::update();
+    }
+    #endif
+
     #if FEATURE_BLE_OPERA
     // Periodically update characteristic values
     static unsigned long lastOperaUpdate = 0;
@@ -210,45 +218,33 @@ static void update() {
 
 // Build /api/ble/status JSON
 static String statusJson() {
-    String json = "{";
-    json += "\"ble_enabled\":true,";
-    json += "\"ble_available\":";
-    json += g_ble_available ? "true" : "false";
+    StaticJsonDocument<384> doc;
+    doc["ble_enabled"] = true;
+    doc["ble_available"] = g_ble_available;
 
     // Opera status
-    json += ",\"opera\":{\"active\":";
-    json += g_opera_active ? "true" : "false";
-    json += ",\"connections_total\":";
-    json += String(ble_opera::getConnectionsTotal());
-    json += ",\"connected_now\":";
-    json += String(ble_opera::getConnectedNow());
-    json += ",\"device_name\":\"";
-    json += ble_opera::getDeviceName();
-    json += "\"}";
+    JsonObject opera = doc.createNestedObject("opera");
+    opera["active"] = g_opera_active;
+    opera["connections_total"] = ble_opera::getConnectionsTotal();
+    opera["connected_now"] = ble_opera::getConnectedNow();
+    opera["device_name"] = ble_opera::getDeviceName();
 
     // Chirp status
-    json += ",\"chirp\":{\"active\":";
-    json += g_chirp_active ? "true" : "false";
-    json += ",\"sent\":";
-    json += String(ble_chirp::getChirpsSent());
-    json += ",\"received\":";
-    json += String(ble_nearby::getChirpsReceived());
-    json += ",\"last_sent_type\":\"";
-    json += chirpTypeName(ble_chirp::getLastChirpType());
-    json += "\"}";
+    JsonObject chirp = doc.createNestedObject("chirp");
+    chirp["active"] = g_chirp_active;
+    chirp["sent"] = ble_chirp::getChirpsSent();
+    chirp["received"] = ble_nearby::getChirpsReceived();
+    chirp["last_sent_type"] = chirpTypeName(ble_chirp::getLastChirpType());
 
     // Nearby status
-    json += ",\"nearby\":{\"active\":";
-    json += g_nearby_active ? "true" : "false";
-    json += ",\"canary_count\":";
-    json += String(ble_nearby::activeCanaryCount());
-    json += ",\"non_canary_count\":";
-    json += String(ble_nearby::getNonCanaryCount());
-    json += ",\"scan_active\":";
-    json += ble_nearby::isScanActive() ? "true" : "false";
-    json += "}";
+    JsonObject nearby = doc.createNestedObject("nearby");
+    nearby["active"] = g_nearby_active;
+    nearby["canary_count"] = ble_nearby::activeCanaryCount();
+    nearby["non_canary_count"] = ble_nearby::getNonCanaryCount();
+    nearby["scan_active"] = ble_nearby::isScanActive();
 
-    json += "}";
+    String json;
+    serializeJson(doc, json);
     return json;
 }
 
