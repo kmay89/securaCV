@@ -1,0 +1,19 @@
+{
+  "name": "canary-vision-device-api",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Canary Vision device API reference server",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.0"
+  },
+  "devDependencies": {
+    "tweetnacl": "^1.0.3"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
