@@ -80,7 +80,8 @@ function createApp(options = {}) {
 // Run as standalone server
 if (require.main === module) {
   const port = process.env.PORT || 3000;
-  const { app, state } = createApp({ devMode: true });
+  const dataDir = process.env.CANARY_DATA_DIR || path.join(__dirname, '..', '.data');
+  const { app, state } = createApp({ devMode: true, deviceOverrides: { keyDir: dataDir } });
   app.listen(port, () => {
     console.log(`Canary Vision device-api listening on http://localhost:${port}`);
     console.log('Dev mode enabled (localhost allowed in Host validation)');

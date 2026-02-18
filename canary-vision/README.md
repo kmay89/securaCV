@@ -58,7 +58,7 @@ canary-vision/
     index.html
     app.js
     styles.css
-    manifest.json
+    app.webmanifest
   tests/
     helpers/
       start-server.js   # Test server bootstrap

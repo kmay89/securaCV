@@ -39,7 +39,7 @@ Every `/api/*` request requires a valid `X-Canary-Token` header. Tokens follow t
 - Missing token returns `401 token_required`.
 - Invalid token returns `401 token_invalid`.
 - Token comparison uses `crypto.timingSafeEqual` to prevent timing side-channels. When lengths differ, a dummy comparison against the expected token is still performed to avoid leaking length information.
-- Static files (`/`, `/app.js`, `/styles.css`, `/manifest.json`) are served without authentication so the SPA can load before the user enters a token.
+- Static files (`/`, `/app.js`, `/styles.css`, `/app.webmanifest`) are served without authentication so the SPA can load before the user enters a token.
 
 **Test:** `tests/security/auth.test.js`
 
@@ -155,7 +155,7 @@ All responses (including static files) include:
 |--------|-------|
 | `X-Content-Type-Options` | `nosniff` |
 | `X-Frame-Options` | `DENY` |
-| `Content-Security-Policy` | `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' http://*.local http://192.168.* http://10.* http://172.16-31.*` |
+| `Content-Security-Policy` | `default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' http://*.local http://192.168.* http://10.* http://172.16-31.*` |
 | `Cache-Control` | `no-store` |
 | `Referrer-Policy` | `no-referrer` |
 

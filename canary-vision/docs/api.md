@@ -14,7 +14,7 @@ Every `/api/*` request must include the `X-Canary-Token` header. Tokens are per-
 X-Canary-Token: cv_a3f7_8b2e4f1a9c3d7e0b5f2a8c4d6e1b3a7f
 ```
 
-Static files (`/`, `/app.js`, `/styles.css`, `/manifest.json`) do **not** require authentication.
+Static files (`/`, `/app.js`, `/styles.css`, `/app.webmanifest`) do **not** require authentication.
 
 Token comparison uses `crypto.timingSafeEqual` to prevent timing attacks.
 

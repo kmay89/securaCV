@@ -70,8 +70,8 @@ describe('D1: Mandatory API Token', () => {
     });
     assert.equal(cssRes.status, 200);
 
-    // GET /manifest.json
-    const manifestRes = await request(server.url + '/manifest.json', {
+    // GET /app.webmanifest
+    const manifestRes = await request(server.url + '/app.webmanifest', {
       headers: { Host: '127.0.0.1' },
     });
     assert.equal(manifestRes.status, 200);

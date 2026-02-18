@@ -161,7 +161,7 @@ httpd_resp_set_hdr(req, "X-Frame-Options", "DENY");
 httpd_resp_set_hdr(req, "Cache-Control", "no-store");
 httpd_resp_set_hdr(req, "Referrer-Policy", "no-referrer");
 httpd_resp_set_hdr(req, "Content-Security-Policy",
-    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+    "default-src 'self'; script-src 'self'; style-src 'self'; "
     "img-src 'self' data:; connect-src 'self' http://*.local http://192.168.* "
     "http://10.* http://172.16.* ... http://172.31.*");
 ```
@@ -207,7 +207,7 @@ mdns_query_ptr("_securacv", "_tcp", 3000, 16, &results);
 
 ## SPA Hosting
 
-Store the SPA files (`index.html`, `app.js`, `styles.css`, `manifest.json`) in a SPIFFS or LittleFS partition. Serve them from the root path before the auth middleware runs.
+Store the SPA files (`index.html`, `app.js`, `styles.css`, `app.webmanifest`) in a SPIFFS or LittleFS partition. Serve them from the root path before the auth middleware runs.
 
 Partition table entry:
 

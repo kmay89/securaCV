@@ -1,6 +1,8 @@
 'use strict';
 
 const crypto = require('node:crypto');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const DEVICE = {
   device_id: 'canary-a3f7',
@@ -67,6 +69,27 @@ function generateToken(deviceId) {
   return 'cv_' + suffix + '_' + crypto.randomBytes(18).toString('hex');
 }
 
+function loadOrGenerateKeypair(keyDir) {
+  if (keyDir) {
+    const privPath = path.join(keyDir, 'ed25519.key');
+    const pubPath = path.join(keyDir, 'ed25519.pub');
+    try {
+      const privateKey = crypto.createPrivateKey(fs.readFileSync(privPath));
+      const publicKey = crypto.createPublicKey(fs.readFileSync(pubPath));
+      return { publicKey, privateKey };
+    } catch {
+      // Key files don't exist yet — generate and persist
+      const pair = crypto.generateKeyPairSync('ed25519');
+      fs.mkdirSync(keyDir, { recursive: true });
+      fs.writeFileSync(privPath, pair.privateKey.export({ type: 'pkcs8', format: 'pem' }), { mode: 0o600 });
+      fs.writeFileSync(pubPath, pair.publicKey.export({ type: 'spki', format: 'pem' }));
+      return pair;
+    }
+  }
+  // No keyDir: ephemeral keys (tests / in-memory only)
+  return crypto.generateKeyPairSync('ed25519');
+}
+
 function createDeviceState(overrides = {}) {
   const device = { ...DEVICE, ...overrides };
 
@@ -75,10 +98,10 @@ function createDeviceState(overrides = {}) {
     device.api_token = process.env.CANARY_TOKEN || generateToken(device.device_id);
   }
 
-  // Generate Ed25519 keypair for witness signing
-  // NOTE: Production firmware should persist this keypair across reboots
-  // (e.g. in NVS on ESP32) so the witness chain remains externally verifiable.
-  const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
+  // Load or generate Ed25519 keypair for witness signing.
+  // When keyDir is provided, persists the keypair to disk so the witness
+  // chain remains externally verifiable across restarts.
+  const { publicKey, privateKey } = loadOrGenerateKeypair(overrides.keyDir);
 
   const startTime = Date.now();
 
