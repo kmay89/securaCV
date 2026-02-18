@@ -15,14 +15,14 @@
 // ════════════════════════════════════════════════════════════════════════════
 
 enum LogLevel : uint8_t {
-  LOG_LEVEL_DEBUG    = 0,   // Verbose debugging (not stored by default)
-  LOG_LEVEL_INFO     = 1,   // Normal operational events
-  LOG_LEVEL_NOTICE   = 2,   // Notable but expected events
-  LOG_LEVEL_WARNING  = 3,   // Potential issues requiring attention
-  LOG_LEVEL_ERROR    = 4,   // Errors requiring review
-  LOG_LEVEL_CRITICAL = 5,   // Critical failures affecting operation
-  LOG_LEVEL_ALERT    = 6,   // Immediate action required
-  LOG_LEVEL_TAMPER   = 7    // Security/integrity events (highest priority)
+  SCV_LOG_DEBUG    = 0,   // Verbose debugging (not stored by default)
+  SCV_LOG_INFO     = 1,   // Normal operational events
+  SCV_LOG_NOTICE   = 2,   // Notable but expected events
+  SCV_LOG_WARNING  = 3,   // Potential issues requiring attention
+  SCV_LOG_ERROR    = 4,   // Errors requiring review
+  SCV_LOG_CRITICAL = 5,   // Critical failures affecting operation
+  SCV_LOG_ALERT    = 6,   // Immediate action required
+  SCV_LOG_TAMPER   = 7    // Security/integrity events (highest priority)
 };
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -30,18 +30,18 @@ enum LogLevel : uint8_t {
 // ════════════════════════════════════════════════════════════════════════════
 
 enum LogCategory : uint8_t {
-  LOG_CAT_SYSTEM     = 0,   // Boot, shutdown, watchdog
-  LOG_CAT_CRYPTO     = 1,   // Key generation, signing, verification
-  LOG_CAT_CHAIN      = 2,   // Hash chain operations
-  LOG_CAT_GPS        = 3,   // GNSS fix, satellites, time sync
-  LOG_CAT_STORAGE    = 4,   // SD card, NVS operations
-  LOG_CAT_NETWORK    = 5,   // WiFi, HTTP server
-  LOG_CAT_SENSOR     = 6,   // PIR, tamper, environmental
-  LOG_CAT_USER       = 7,   // User actions (config changes, acknowledgments)
-  LOG_CAT_WITNESS    = 8,   // Witness record creation
-  LOG_CAT_MESH       = 9,   // Mesh network (flock) operations
-  LOG_CAT_BLUETOOTH  = 10,  // Bluetooth Low Energy operations
-  LOG_CAT_RF         = 11   // RF presence detection operations
+  SCV_CAT_SYSTEM     = 0,   // Boot, shutdown, watchdog
+  SCV_CAT_CRYPTO     = 1,   // Key generation, signing, verification
+  SCV_CAT_CHAIN      = 2,   // Hash chain operations
+  SCV_CAT_GPS        = 3,   // GNSS fix, satellites, time sync
+  SCV_CAT_STORAGE    = 4,   // SD card, NVS operations
+  SCV_CAT_NETWORK    = 5,   // WiFi, HTTP server
+  SCV_CAT_SENSOR     = 6,   // PIR, tamper, environmental
+  SCV_CAT_USER       = 7,   // User actions (config changes, acknowledgments)
+  SCV_CAT_WITNESS    = 8,   // Witness record creation
+  SCV_CAT_MESH       = 9,   // Mesh network (flock) operations
+  SCV_CAT_BLUETOOTH  = 10,  // Bluetooth Low Energy operations
+  SCV_CAT_RF         = 11   // RF presence detection operations
 };
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -61,46 +61,46 @@ enum AckStatus : uint8_t {
 
 inline const char* log_level_name(LogLevel level) {
   switch (level) {
-    case LOG_LEVEL_DEBUG:    return "DEBUG";
-    case LOG_LEVEL_INFO:     return "INFO";
-    case LOG_LEVEL_NOTICE:   return "NOTICE";
-    case LOG_LEVEL_WARNING:  return "WARN";
-    case LOG_LEVEL_ERROR:    return "ERROR";
-    case LOG_LEVEL_CRITICAL: return "CRIT";
-    case LOG_LEVEL_ALERT:    return "ALERT";
-    case LOG_LEVEL_TAMPER:   return "TAMPER";
-    default:                 return "???";
+    case SCV_LOG_DEBUG:    return "DEBUG";
+    case SCV_LOG_INFO:     return "INFO";
+    case SCV_LOG_NOTICE:   return "NOTICE";
+    case SCV_LOG_WARNING:  return "WARN";
+    case SCV_LOG_ERROR:    return "ERROR";
+    case SCV_LOG_CRITICAL: return "CRIT";
+    case SCV_LOG_ALERT:    return "ALERT";
+    case SCV_LOG_TAMPER:   return "TAMPER";
+    default:               return "???";
   }
 }
 
 inline const char* log_level_name_short(LogLevel level) {
   switch (level) {
-    case LOG_LEVEL_DEBUG:    return "DBG";
-    case LOG_LEVEL_INFO:     return "INF";
-    case LOG_LEVEL_NOTICE:   return "NTC";
-    case LOG_LEVEL_WARNING:  return "WRN";
-    case LOG_LEVEL_ERROR:    return "ERR";
-    case LOG_LEVEL_CRITICAL: return "CRT";
-    case LOG_LEVEL_ALERT:    return "ALT";
-    case LOG_LEVEL_TAMPER:   return "TMP";
-    default:                 return "???";
+    case SCV_LOG_DEBUG:    return "DBG";
+    case SCV_LOG_INFO:     return "INF";
+    case SCV_LOG_NOTICE:   return "NTC";
+    case SCV_LOG_WARNING:  return "WRN";
+    case SCV_LOG_ERROR:    return "ERR";
+    case SCV_LOG_CRITICAL: return "CRT";
+    case SCV_LOG_ALERT:    return "ALT";
+    case SCV_LOG_TAMPER:   return "TMP";
+    default:               return "???";
   }
 }
 
 inline const char* log_category_name(LogCategory cat) {
   switch (cat) {
-    case LOG_CAT_SYSTEM:    return "SYSTEM";
-    case LOG_CAT_CRYPTO:    return "CRYPTO";
-    case LOG_CAT_CHAIN:     return "CHAIN";
-    case LOG_CAT_GPS:       return "GPS";
-    case LOG_CAT_STORAGE:   return "STORAGE";
-    case LOG_CAT_NETWORK:   return "NETWORK";
-    case LOG_CAT_SENSOR:    return "SENSOR";
-    case LOG_CAT_USER:      return "USER";
-    case LOG_CAT_WITNESS:   return "WITNESS";
-    case LOG_CAT_MESH:      return "MESH";
-    case LOG_CAT_BLUETOOTH: return "BLUETOOTH";
-    case LOG_CAT_RF:        return "RF";
+    case SCV_CAT_SYSTEM:    return "SYSTEM";
+    case SCV_CAT_CRYPTO:    return "CRYPTO";
+    case SCV_CAT_CHAIN:     return "CHAIN";
+    case SCV_CAT_GPS:       return "GPS";
+    case SCV_CAT_STORAGE:   return "STORAGE";
+    case SCV_CAT_NETWORK:   return "NETWORK";
+    case SCV_CAT_SENSOR:    return "SENSOR";
+    case SCV_CAT_USER:      return "USER";
+    case SCV_CAT_WITNESS:   return "WITNESS";
+    case SCV_CAT_MESH:      return "MESH";
+    case SCV_CAT_BLUETOOTH: return "BLUETOOTH";
+    case SCV_CAT_RF:        return "RF";
     default:                return "???";
   }
 }
@@ -117,12 +117,12 @@ inline const char* ack_status_name(AckStatus status) {
 
 // Determine if a log level requires user attention
 inline bool log_level_requires_attention(LogLevel level) {
-  return level >= LOG_LEVEL_WARNING;
+  return level >= SCV_LOG_WARNING;
 }
 
 // Determine if a log level is security-related
 inline bool log_level_is_security(LogLevel level) {
-  return level >= LOG_LEVEL_ALERT;
+  return level >= SCV_LOG_ALERT;
 }
 
 #endif // SECURACV_LOG_LEVEL_H

@@ -202,7 +202,7 @@ static void set_state(ChirpState new_state) {
   char detail[64];
   snprintf(detail, sizeof(detail), "chirp: %s -> %s",
            state_name(old_state), state_name(new_state));
-  health_log(LOG_LEVEL_DEBUG, LOG_CAT_NETWORK, detail);
+  health_log(SCV_LOG_DEBUG, SCV_CAT_NETWORK, detail);
 
   // Notify callback
   if (g_state_callback) {
@@ -241,7 +241,7 @@ static void generate_session_identity() {
   g_session.created_ms = millis();
   g_session.valid = true;
 
-  health_log(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "chirp: new session identity generated");
+  health_log(SCV_LOG_INFO, SCV_CAT_NETWORK, "chirp: new session identity generated");
 }
 
 static void generate_emoji_string(const uint8_t* session_id, char* emoji_out) {
@@ -341,7 +341,7 @@ static void broadcast_message(const uint8_t* data, size_t len) {
 
   esp_err_t err = esp_now_send(BROADCAST_ADDR, data, len);
   if (err != ESP_OK) {
-    health_log(LOG_LEVEL_WARNING, LOG_CAT_NETWORK, "chirp: broadcast failed");
+    health_log(SCV_LOG_WARNING, SCV_CAT_NETWORK, "chirp: broadcast failed");
   }
 }
 
@@ -499,7 +499,7 @@ static void handle_witness(const uint8_t* data, size_t len, int8_t rssi) {
     char log_detail[80];
     snprintf(log_detail, sizeof(log_detail), "chirp: %s (%d confirms, hop %d)",
              tpl_text, payload->confirm_count, hdr->hop_count);
-    health_log(LOG_LEVEL_INFO, LOG_CAT_NETWORK, log_detail);
+    health_log(SCV_LOG_INFO, SCV_CAT_NETWORK, log_detail);
 
     // Only relay if validated and under hop limit
     if (g_relay_enabled && chirp->validated && hdr->hop_count < MAX_HOP_COUNT) {
@@ -602,7 +602,7 @@ static void relay_chirp(const ReceivedChirp* chirp) {
     }
   }
 
-  health_log(LOG_LEVEL_DEBUG, LOG_CAT_NETWORK, "chirp: relayed");
+  health_log(SCV_LOG_DEBUG, SCV_CAT_NETWORK, "chirp: relayed");
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -729,7 +729,7 @@ bool init() {
   // based on CHIRP_MAGIC byte
 
   g_initialized = true;
-  health_log(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "chirp channel initialized");
+  health_log(SCV_LOG_INFO, SCV_CAT_NETWORK, "chirp channel initialized");
 
   return true;
 }
@@ -974,13 +974,13 @@ bool send_chirp(ChirpTemplate template_id, ChirpUrgency urgency,
   // Validate template
   const TemplateEntry* entry = find_template(template_id);
   if (!entry) {
-    health_log(LOG_LEVEL_WARNING, LOG_CAT_NETWORK, "chirp: invalid template");
+    health_log(SCV_LOG_WARNING, SCV_CAT_NETWORK, "chirp: invalid template");
     return false;
   }
 
   // Night mode restriction
   if (is_night_mode() && !entry->night_allowed) {
-    health_log(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "chirp: template not allowed at night");
+    health_log(SCV_LOG_INFO, SCV_CAT_NETWORK, "chirp: template not allowed at night");
     return false;
   }
 
@@ -1040,7 +1040,7 @@ bool send_chirp(ChirpTemplate template_id, ChirpUrgency urgency,
   char log_detail[96];
   snprintf(log_detail, sizeof(log_detail), "chirp sent: %s (%s, tier %d)",
            entry->text, urgency_name(urgency), g_cooldown.chirps_sent_today);
-  health_log(LOG_LEVEL_INFO, LOG_CAT_NETWORK, log_detail);
+  health_log(SCV_LOG_INFO, SCV_CAT_NETWORK, log_detail);
 
   return true;
 }
@@ -1097,7 +1097,7 @@ bool confirm_chirp(const uint8_t* nonce) {
 
       broadcast_message(buf, sizeof(buf));
 
-      health_log(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "chirp: confirmed witness");
+      health_log(SCV_LOG_INFO, SCV_CAT_NETWORK, "chirp: confirmed witness");
       return true;
     }
   }
