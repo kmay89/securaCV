@@ -25,7 +25,7 @@ namespace chirp_api {
 inline esp_err_t handle_chirp_status(httpd_req_t* req) {
   chirp_channel::ChirpStatus status = chirp_channel::get_status();
 
-  StaticJsonDocument<768> doc;
+  JsonDocument doc;
   doc["state"] = chirp_channel::state_name(status.state);
   doc["session_emoji"] = status.session_emoji;
   doc["nearby_count"] = status.nearby_count;
@@ -64,12 +64,12 @@ inline esp_err_t handle_chirp_nearby(httpd_req_t* req) {
   size_t count;
   const chirp_channel::NearbyDevice* devices = chirp_channel::get_nearby_devices(&count);
 
-  StaticJsonDocument<3072> doc;
+  JsonDocument doc;
   doc["count"] = count;
 
-  JsonArray arr = doc.createNestedArray("devices");
+  JsonArray arr = doc["devices"].to<JsonArray>();
   for (size_t i = 0; i < count && i < chirp_channel::MAX_NEARBY_CACHE; i++) {
-    JsonObject dev = arr.createNestedObject();
+    JsonObject dev = arr.add<JsonObject>();
     dev["emoji"] = devices[i].emoji;
     dev["age_sec"] = (millis() - devices[i].last_seen_ms) / 1000;
     dev["rssi"] = devices[i].rssi;
@@ -89,13 +89,13 @@ inline esp_err_t handle_chirp_recent(httpd_req_t* req) {
   size_t count;
   const chirp_channel::ReceivedChirp* chirps = chirp_channel::get_recent_chirps(&count);
 
-  DynamicJsonDocument doc(4096);
-  JsonArray arr = doc.createNestedArray("chirps");
+  JsonDocument doc;
+  JsonArray arr = doc["chirps"].to<JsonArray>();
 
   for (size_t i = 0; i < count; i++) {
     if (chirps[i].dismissed) continue;
 
-    JsonObject c = arr.createNestedObject();
+    JsonObject c = arr.add<JsonObject>();
     c["emoji"] = chirps[i].sender_emoji;
 
     // Template-based message (no free text)
@@ -142,7 +142,7 @@ inline esp_err_t handle_chirp_recent(httpd_req_t* req) {
 inline esp_err_t handle_chirp_enable(httpd_req_t* req) {
   bool success = chirp_channel::enable();
 
-  StaticJsonDocument<128> doc;
+  JsonDocument doc;
   doc["success"] = success;
   if (success) {
     doc["session_emoji"] = chirp_channel::get_session_emoji();
@@ -162,7 +162,7 @@ inline esp_err_t handle_chirp_enable(httpd_req_t* req) {
 inline esp_err_t handle_chirp_disable(httpd_req_t* req) {
   chirp_channel::disable();
 
-  StaticJsonDocument<64> doc;
+  JsonDocument doc;
   doc["success"] = true;
 
   char buffer[64];
@@ -187,7 +187,7 @@ inline esp_err_t handle_chirp_send(httpd_req_t* req) {
   content[content_len] = '\0';
 
   // Parse JSON
-  StaticJsonDocument<256> input;
+  JsonDocument input;
   DeserializationError err = deserializeJson(input, content);
   if (err) {
     httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
@@ -195,7 +195,7 @@ inline esp_err_t handle_chirp_send(httpd_req_t* req) {
   }
 
   // Extract template ID (required)
-  if (!input.containsKey("template_id")) {
+  if (!input["template_id"].is<JsonVariant>()) {
     httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "template_id is required");
     return ESP_FAIL;
   }
@@ -204,7 +204,7 @@ inline esp_err_t handle_chirp_send(httpd_req_t* req) {
 
   // Validate template exists
   if (!chirp_channel::is_valid_template(template_id)) {
-    StaticJsonDocument<256> doc;
+    JsonDocument doc;
     doc["success"] = false;
     doc["error"] = "invalid_template";
     doc["message"] = "Unknown template ID";
@@ -229,7 +229,7 @@ inline esp_err_t handle_chirp_send(httpd_req_t* req) {
   // Attempt to send
   bool success = chirp_channel::send_chirp(template_id, urgency, detail, ttl);
 
-  StaticJsonDocument<384> doc;
+  JsonDocument doc;
   doc["success"] = success;
 
   if (success) {
@@ -263,10 +263,10 @@ inline esp_err_t handle_chirp_send(httpd_req_t* req) {
 
 // GET /api/chirp/templates - List available templates
 inline esp_err_t handle_chirp_templates(httpd_req_t* req) {
-  DynamicJsonDocument doc(4096);
+  JsonDocument doc;
 
   // Authority templates
-  JsonArray auth = doc.createNestedArray("authority");
+  JsonArray auth = doc["authority"].to<JsonArray>();
   auth.add(JsonObject());
   auth[0]["id"] = 0x00; auth[0]["text"] = "police activity in area";
   auth.add(JsonObject());
@@ -279,7 +279,7 @@ inline esp_err_t handle_chirp_templates(httpd_req_t* req) {
   auth[4]["id"] = 0x04; auth[4]["text"] = "federal agents in area";
 
   // Infrastructure templates
-  JsonArray infra = doc.createNestedArray("infrastructure");
+  JsonArray infra = doc["infrastructure"].to<JsonArray>();
   infra.add(JsonObject());
   infra[0]["id"] = 0x10; infra[0]["text"] = "power outage";
   infra.add(JsonObject());
@@ -292,7 +292,7 @@ inline esp_err_t handle_chirp_templates(httpd_req_t* req) {
   infra[4]["id"] = 0x14; infra[4]["text"] = "road closed or blocked";
 
   // Emergency templates
-  JsonArray emerg = doc.createNestedArray("emergency");
+  JsonArray emerg = doc["emergency"].to<JsonArray>();
   emerg.add(JsonObject());
   emerg[0]["id"] = 0x20; emerg[0]["text"] = "fire or smoke visible";
   emerg.add(JsonObject());
@@ -305,7 +305,7 @@ inline esp_err_t handle_chirp_templates(httpd_req_t* req) {
   emerg[4]["id"] = 0x24; emerg[4]["text"] = "shelter in place advisory";
 
   // Weather templates
-  JsonArray weather = doc.createNestedArray("weather");
+  JsonArray weather = doc["weather"].to<JsonArray>();
   weather.add(JsonObject());
   weather[0]["id"] = 0x30; weather[0]["text"] = "severe weather warning";
   weather.add(JsonObject());
@@ -316,7 +316,7 @@ inline esp_err_t handle_chirp_templates(httpd_req_t* req) {
   weather[3]["id"] = 0x33; weather[3]["text"] = "dangerous lightning nearby";
 
   // Mutual aid templates
-  JsonArray aid = doc.createNestedArray("mutual_aid");
+  JsonArray aid = doc["mutual_aid"].to<JsonArray>();
   aid.add(JsonObject());
   aid[0]["id"] = 0x40; aid[0]["text"] = "neighbor may need help";
   aid.add(JsonObject());
@@ -325,7 +325,7 @@ inline esp_err_t handle_chirp_templates(httpd_req_t* req) {
   aid[2]["id"] = 0x42; aid[2]["text"] = "offering assistance";
 
   // All clear templates
-  JsonArray clear = doc.createNestedArray("all_clear");
+  JsonArray clear = doc["all_clear"].to<JsonArray>();
   clear.add(JsonObject());
   clear[0]["id"] = 0x80; clear[0]["text"] = "situation resolved";
   clear.add(JsonObject());
@@ -334,7 +334,7 @@ inline esp_err_t handle_chirp_templates(httpd_req_t* req) {
   clear[2]["id"] = 0x82; clear[2]["text"] = "false alarm";
 
   // Details
-  JsonArray details = doc.createNestedArray("details");
+  JsonArray details = doc["details"].to<JsonArray>();
   details.add(JsonObject());
   details[0]["id"] = 1; details[0]["text"] = "few vehicles";
   details.add(JsonObject());
@@ -372,7 +372,7 @@ inline esp_err_t handle_chirp_ack(httpd_req_t* req) {
   }
   content[content_len] = '\0';
 
-  StaticJsonDocument<128> input;
+  JsonDocument input;
   DeserializationError err = deserializeJson(input, content);
   if (err) {
     httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
@@ -401,7 +401,7 @@ inline esp_err_t handle_chirp_ack(httpd_req_t* req) {
 
   bool success = chirp_channel::acknowledge_chirp(nonce, ack_type);
 
-  StaticJsonDocument<64> doc;
+  JsonDocument doc;
   doc["success"] = success;
 
   char buffer[64];
@@ -422,7 +422,7 @@ inline esp_err_t handle_chirp_dismiss(httpd_req_t* req) {
   }
   content[content_len] = '\0';
 
-  StaticJsonDocument<64> input;
+  JsonDocument input;
   DeserializationError err = deserializeJson(input, content);
   if (err) {
     httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
@@ -444,7 +444,7 @@ inline esp_err_t handle_chirp_dismiss(httpd_req_t* req) {
 
   bool success = chirp_channel::dismiss_chirp(nonce);
 
-  StaticJsonDocument<64> doc;
+  JsonDocument doc;
   doc["success"] = success;
 
   char buffer[64];
@@ -465,7 +465,7 @@ inline esp_err_t handle_chirp_mute(httpd_req_t* req) {
   }
   content[content_len] = '\0';
 
-  StaticJsonDocument<64> input;
+  JsonDocument input;
   DeserializationError err = deserializeJson(input, content);
   if (err) {
     httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
@@ -476,7 +476,7 @@ inline esp_err_t handle_chirp_mute(httpd_req_t* req) {
 
   bool success = chirp_channel::mute(duration);
 
-  StaticJsonDocument<64> doc;
+  JsonDocument doc;
   doc["success"] = success;
   if (!success) {
     doc["error"] = "invalid_duration";
@@ -495,7 +495,7 @@ inline esp_err_t handle_chirp_mute(httpd_req_t* req) {
 inline esp_err_t handle_chirp_unmute(httpd_req_t* req) {
   chirp_channel::unmute();
 
-  StaticJsonDocument<64> doc;
+  JsonDocument doc;
   doc["success"] = true;
 
   char buffer[64];
@@ -516,7 +516,7 @@ inline esp_err_t handle_chirp_settings(httpd_req_t* req) {
   }
   content[content_len] = '\0';
 
-  StaticJsonDocument<128> input;
+  JsonDocument input;
   DeserializationError err = deserializeJson(input, content);
   if (err) {
     httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
@@ -524,12 +524,12 @@ inline esp_err_t handle_chirp_settings(httpd_req_t* req) {
   }
 
   // Update relay setting if provided
-  if (input.containsKey("relay_enabled")) {
+  if (input["relay_enabled"].is<JsonVariant>()) {
     chirp_channel::set_relay_enabled(input["relay_enabled"].as<bool>());
   }
 
   // Update urgency filter if provided
-  if (input.containsKey("urgency_filter")) {
+  if (input["urgency_filter"].is<JsonVariant>()) {
     const char* filter_str = input["urgency_filter"] | "info";
     chirp_channel::ChirpUrgency filter = chirp_channel::CHIRP_URG_INFO;
     if (strcmp(filter_str, "caution") == 0) filter = chirp_channel::CHIRP_URG_CAUTION;
@@ -538,7 +538,7 @@ inline esp_err_t handle_chirp_settings(httpd_req_t* req) {
   }
 
   // Return current settings
-  StaticJsonDocument<128> doc;
+  JsonDocument doc;
   doc["success"] = true;
   doc["relay_enabled"] = chirp_channel::is_relay_enabled();
   doc["urgency_filter"] = chirp_channel::urgency_name(chirp_channel::get_urgency_filter());
@@ -561,7 +561,7 @@ inline esp_err_t handle_chirp_confirm(httpd_req_t* req) {
   }
   content[content_len] = '\0';
 
-  StaticJsonDocument<64> input;
+  JsonDocument input;
   DeserializationError err = deserializeJson(input, content);
   if (err) {
     httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
@@ -583,7 +583,7 @@ inline esp_err_t handle_chirp_confirm(httpd_req_t* req) {
 
   bool success = chirp_channel::confirm_chirp(nonce);
 
-  StaticJsonDocument<64> doc;
+  JsonDocument doc;
   doc["success"] = success;
   if (!success) {
     doc["error"] = "not_found";

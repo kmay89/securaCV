@@ -29,7 +29,7 @@ static inline esp_err_t send_json_response(httpd_req_t* req, const char* json) {
 }
 
 static inline esp_err_t send_success(httpd_req_t* req, const char* message = nullptr) {
-  StaticJsonDocument<128> doc;
+  JsonDocument doc;
   doc["success"] = true;
   if (message) doc["message"] = message;
 
@@ -39,7 +39,7 @@ static inline esp_err_t send_success(httpd_req_t* req, const char* message = nul
 }
 
 static inline esp_err_t send_error(httpd_req_t* req, const char* error) {
-  StaticJsonDocument<128> doc;
+  JsonDocument doc;
   doc["success"] = false;
   doc["error"] = error;
 
@@ -58,7 +58,7 @@ static inline esp_err_t send_error(httpd_req_t* req, const char* error) {
 inline esp_err_t handle_rf_status(httpd_req_t* req) {
   rf_presence::RfStateSnapshot snapshot = rf_presence::get_snapshot();
 
-  StaticJsonDocument<512> doc;
+  JsonDocument doc;
 
   // State information
   doc["state"] = snapshot.state_name;
@@ -107,7 +107,7 @@ inline esp_err_t handle_rf_disable(httpd_req_t* req) {
 inline esp_err_t handle_rf_rotate(httpd_req_t* req) {
   rf_presence::rotate_session();
 
-  StaticJsonDocument<128> doc;
+  JsonDocument doc;
   doc["success"] = true;
   doc["message"] = "Session rotated";
   doc["new_epoch"] = rf_presence::get_session_epoch();
@@ -121,7 +121,7 @@ inline esp_err_t handle_rf_rotate(httpd_req_t* req) {
 inline esp_err_t handle_rf_settings_get(httpd_req_t* req) {
   rf_presence::RfPresenceSettings settings = rf_presence::get_settings();
 
-  StaticJsonDocument<256> doc;
+  JsonDocument doc;
   doc["enabled"] = settings.enabled;
   doc["presence_threshold_sec"] = settings.presence_threshold_ms / 1000;
   doc["dwell_threshold_sec"] = settings.dwell_threshold_ms / 1000;
@@ -156,7 +156,7 @@ inline esp_err_t handle_rf_settings_set(httpd_req_t* req) {
   }
   content[content_len] = '\0';
 
-  StaticJsonDocument<256> input;
+  JsonDocument input;
   DeserializationError json_err = deserializeJson(input, content);
   if (json_err != DeserializationError::Ok) {
     return send_error(req, "Invalid JSON");
@@ -165,11 +165,11 @@ inline esp_err_t handle_rf_settings_set(httpd_req_t* req) {
   rf_presence::RfPresenceSettings settings = rf_presence::get_settings();
   bool any_clamped = false;
 
-  if (input.containsKey("enabled")) {
+  if (input["enabled"].is<JsonVariant>()) {
     settings.enabled = input["enabled"].as<bool>();
   }
 
-  if (input.containsKey("presence_threshold_sec")) {
+  if (input["presence_threshold_sec"].is<JsonVariant>()) {
     uint32_t val_ms = input["presence_threshold_sec"].as<uint32_t>() * 1000;
     uint32_t clamped = clamp(val_ms,
       rf_presence::MIN_PRESENCE_THRESHOLD_MS,
@@ -178,7 +178,7 @@ inline esp_err_t handle_rf_settings_set(httpd_req_t* req) {
     settings.presence_threshold_ms = clamped;
   }
 
-  if (input.containsKey("dwell_threshold_sec")) {
+  if (input["dwell_threshold_sec"].is<JsonVariant>()) {
     uint32_t val_ms = input["dwell_threshold_sec"].as<uint32_t>() * 1000;
     uint32_t clamped = clamp(val_ms,
       rf_presence::MIN_DWELL_THRESHOLD_MS,
@@ -187,7 +187,7 @@ inline esp_err_t handle_rf_settings_set(httpd_req_t* req) {
     settings.dwell_threshold_ms = clamped;
   }
 
-  if (input.containsKey("lost_timeout_sec")) {
+  if (input["lost_timeout_sec"].is<JsonVariant>()) {
     uint32_t val_ms = input["lost_timeout_sec"].as<uint32_t>() * 1000;
     uint32_t clamped = clamp(val_ms,
       rf_presence::MIN_LOST_TIMEOUT_MS,
@@ -196,7 +196,7 @@ inline esp_err_t handle_rf_settings_set(httpd_req_t* req) {
     settings.lost_timeout_ms = clamped;
   }
 
-  if (input.containsKey("min_presence_count")) {
+  if (input["min_presence_count"].is<JsonVariant>()) {
     uint8_t val = input["min_presence_count"].as<uint8_t>();
     uint8_t clamped = clamp(val,
       rf_presence::MIN_PRESENCE_COUNT_SETTING,
@@ -205,11 +205,11 @@ inline esp_err_t handle_rf_settings_set(httpd_req_t* req) {
     settings.min_presence_count = clamped;
   }
 
-  if (input.containsKey("emit_impulse_events")) {
+  if (input["emit_impulse_events"].is<JsonVariant>()) {
     settings.emit_impulse_events = input["emit_impulse_events"].as<bool>();
   }
 
-  if (input.containsKey("emit_narrative_hints")) {
+  if (input["emit_narrative_hints"].is<JsonVariant>()) {
     settings.emit_narrative_hints = input["emit_narrative_hints"].as<bool>();
   }
 
@@ -237,7 +237,7 @@ inline esp_err_t handle_rf_conformance(httpd_req_t* req) {
     }
   }
 
-  StaticJsonDocument<384> doc;
+  JsonDocument doc;
 
   doc["no_mac_storage"] = rf_presence::conformance_check_no_mac_storage();
   doc["aggregate_only"] = rf_presence::conformance_check_aggregate_only();
