@@ -2,6 +2,8 @@
 
 const { createApp } = require('../../device-api/server');
 
+const TEST_TOKEN = 'cv_test_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+
 /**
  * Starts the device-api server for testing.
  * @param {Object} options
@@ -14,10 +16,8 @@ const { createApp } = require('../../device-api/server');
  * @returns {Promise<{url: string, close: Function, state: Object, rateLimitMiddleware: Object}>}
  */
 async function startServer(options = {}) {
-  const deviceOverrides = {};
-  if (options.token) {
-    deviceOverrides.api_token = options.token;
-  }
+  const token = options.token || TEST_TOKEN;
+  const deviceOverrides = { api_token: token };
   if (options.allowedHosts) {
     // Custom host handling is done via device identity
   }
@@ -31,10 +31,8 @@ async function startServer(options = {}) {
 
   const { app, state, rateLimitMiddleware } = createApp(appOptions);
 
-  // Override token if provided
-  if (options.token) {
-    state.device.api_token = options.token;
-  }
+  // Ensure token is set
+  state.device.api_token = token;
 
   return new Promise((resolve, reject) => {
     const server = app.listen(options.port || 0, '127.0.0.1', () => {
@@ -52,4 +50,4 @@ async function startServer(options = {}) {
   });
 }
 
-module.exports = { startServer };
+module.exports = { startServer, TEST_TOKEN };

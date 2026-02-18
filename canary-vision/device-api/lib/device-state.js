@@ -10,7 +10,6 @@ const DEVICE = {
   ip: '192.168.1.47',
   mac: 'AA:BB:CC:DD:EE:01',
   mdns_hostname: 'canary-a3f7.local',
-  api_token: 'cv_a3f7_8b2e4f1a9c3d7e0b5f2a8c4d6e1b3a7f',
 };
 
 const DEFAULT_CONFIG = {
@@ -63,16 +62,28 @@ const DEFAULT_PEERS = [
   },
 ];
 
+function generateToken(deviceId) {
+  const suffix = deviceId.split('-').pop() || 'xxxx';
+  return 'cv_' + suffix + '_' + crypto.randomBytes(18).toString('hex');
+}
+
 function createDeviceState(overrides = {}) {
   const device = { ...DEVICE, ...overrides };
 
+  // Generate a unique API token if none was provided via overrides or env
+  if (!device.api_token) {
+    device.api_token = process.env.CANARY_TOKEN || generateToken(device.device_id);
+  }
+
   // Generate Ed25519 keypair for witness signing
+  // NOTE: Production firmware should persist this keypair across reboots
+  // (e.g. in NVS on ESP32) so the witness chain remains externally verifiable.
   const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
 
   const startTime = Date.now();
 
   // Deep clone config
-  const config = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
+  const config = structuredClone(DEFAULT_CONFIG);
 
   // Pending physical confirmations
   const pendingPhysicalConfirm = new Set();
@@ -110,7 +121,7 @@ function createDeviceState(overrides = {}) {
     const timestamp = new Date().toISOString();
     const data = `${witnessSeq}:${prevHash}:${timestamp}:${eventType}:${zone}`;
     const hash = crypto.createHash('sha256').update(data).digest('hex');
-    const signature = crypto.sign(null, Buffer.from(hash), privateKey).toString('hex');
+    const signature = crypto.sign(undefined, Buffer.from(hash), privateKey).toString('hex');
 
     const record = {
       seq: witnessSeq,
@@ -159,7 +170,7 @@ function createDeviceState(overrides = {}) {
     lastRebootTime,
     updateInProgress,
     lastUpdateTime,
-    peers: JSON.parse(JSON.stringify(overrides.peers || DEFAULT_PEERS)),
+    peers: structuredClone(overrides.peers || DEFAULT_PEERS),
     addLog,
     addWitnessRecord,
     getUptime() {

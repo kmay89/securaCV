@@ -442,6 +442,22 @@ html, body {
   word-break: break-all;
 }
 
+/* Utility classes */
+.cursor-pointer { cursor: pointer; }
+.mt-4 { margin-top: 4px; }
+.mt-12 { margin-top: 12px; }
+.mt-20 { margin-top: 20px; }
+.mb-8 { margin-bottom: 8px; }
+.ml-12 { margin-left: 12px; }
+
+/* Card link (full-width, no decoration) */
+.card-link {
+  color: inherit;
+  text-decoration: none;
+  display: flex;
+  justify-content: space-between;
+}
+
 /* Loading */
 .loading {
   display: flex;

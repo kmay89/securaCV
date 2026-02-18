@@ -51,7 +51,7 @@ function configRoutes(state) {
   const router = Router();
 
   router.get('/api/v1/config', (req, res) => {
-    res.json(JSON.parse(JSON.stringify(state.config)));
+    res.json(structuredClone(state.config));
   });
 
   router.put('/api/v1/config', (req, res) => {
@@ -90,7 +90,7 @@ function configRoutes(state) {
 
     state.addLog('INFO', 'Config updated');
 
-    const response = { ok: true, config: JSON.parse(JSON.stringify(state.config)) };
+    const response = { ok: true, config: structuredClone(state.config) };
     if (pendingConfirm.length > 0) {
       response.pending_physical_confirm = pendingConfirm;
     }
@@ -105,7 +105,7 @@ function configRoutes(state) {
         message: `Unknown config section: ${section}`,
       });
     }
-    res.json(JSON.parse(JSON.stringify(state.config[section])));
+    res.json(structuredClone(state.config[section]));
   });
 
   router.put('/api/v1/config/:section', (req, res) => {
@@ -144,7 +144,7 @@ function configRoutes(state) {
     Object.assign(state.config[section], body);
     state.addLog('INFO', `Config section '${section}' updated`);
 
-    const response = { ok: true, config: JSON.parse(JSON.stringify(state.config)) };
+    const response = { ok: true, config: structuredClone(state.config) };
     if (pendingConfirm.length > 0) {
       response.pending_physical_confirm = pendingConfirm;
     }

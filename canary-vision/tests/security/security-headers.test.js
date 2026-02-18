@@ -2,10 +2,10 @@
 
 const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
-const { startServer } = require('../helpers/start-server');
+const { startServer, TEST_TOKEN } = require('../helpers/start-server');
 const { createClient, request } = require('../helpers/test-client');
 
-const TOKEN = 'cv_a3f7_8b2e4f1a9c3d7e0b5f2a8c4d6e1b3a7f';
+const TOKEN = TEST_TOKEN;
 
 describe('Security Headers', () => {
   let server, client;

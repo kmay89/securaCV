@@ -300,8 +300,7 @@ function renderCanariesView() {
     ]));
   } else {
     devices.forEach(function (device) {
-      var card = el('div', { className: 'card' });
-      card.style.cursor = 'pointer';
+      var card = el('div', { className: 'card cursor-pointer' });
       card.addEventListener('click', function () {
         Router.navigate('#/device/' + device.id);
       });
@@ -322,10 +321,9 @@ function renderCanariesView() {
     });
 
     content.appendChild(el('button', {
-      className: 'btn btn-secondary btn-block',
+      className: 'btn btn-secondary btn-block mt-12',
       textContent: '+ Add Canary',
       onClick: function () { Router.navigate('#/canaries/add'); },
-      style: 'margin-top: 12px',
     }));
   }
 
@@ -497,7 +495,7 @@ function renderDeviceView(deviceId) {
 
   // Config sections
   var sections = el('div', { className: 'card' }, [
-    el('div', { className: 'card-title', textContent: 'Configuration', style: 'margin-bottom: 8px' }),
+    el('div', { className: 'card-title mb-8', textContent: 'Configuration' }),
     el('ul', { className: 'section-list' }, [
       el('li', {}, [el('a', { href: '#/device/' + deviceId + '/config/network' }, [
         'Network', el('span', { className: 'arrow', textContent: '\u203A' })
@@ -516,8 +514,8 @@ function renderDeviceView(deviceId) {
   content.appendChild(sections);
 
   // Logs link
-  content.appendChild(el('div', { className: 'card', style: 'cursor:pointer' }, [
-    el('a', { href: '#/device/' + deviceId + '/logs', style: 'color:inherit;text-decoration:none;display:flex;justify-content:space-between' }, [
+  content.appendChild(el('div', { className: 'card cursor-pointer' }, [
+    el('a', { href: '#/device/' + deviceId + '/logs', className: 'card-link' }, [
       el('span', { textContent: 'View Logs' }),
       el('span', { className: 'arrow', textContent: '\u203A' }),
     ]),
@@ -525,15 +523,14 @@ function renderDeviceView(deviceId) {
 
   // Token display
   content.appendChild(el('div', { className: 'card' }, [
-    el('div', { className: 'card-title', textContent: 'API Token', style: 'margin-bottom: 8px' }),
+    el('div', { className: 'card-title mb-8', textContent: 'API Token' }),
     el('div', { className: 'token-display', textContent: maskToken(device.token) }),
   ]));
 
   // Remove button
   content.appendChild(el('button', {
-    className: 'btn btn-danger btn-block',
+    className: 'btn btn-danger btn-block mt-20',
     textContent: 'Remove Device',
-    style: 'margin-top: 20px',
     onClick: function () {
       if (confirm('Remove this device?')) {
         CanaryStorage.removeDevice(deviceId);
@@ -564,9 +561,8 @@ function renderDeviceView(deviceId) {
         alertArea2.appendChild(el('div', { className: 'alert alert-error' }, [
           err.status === 401 ? 'Invalid token.' : 'Device offline.',
           el('button', {
-            className: 'btn btn-secondary',
+            className: 'btn btn-secondary ml-12',
             textContent: 'Retry',
-            style: 'margin-left: 12px',
             onClick: function () { renderDeviceView(deviceId); },
           }),
         ]));
@@ -738,27 +734,25 @@ function renderSettingsView() {
   var content = el('div', { className: 'content' });
 
   content.appendChild(el('div', { className: 'card' }, [
-    el('div', { className: 'card-title', textContent: 'About', style: 'margin-bottom: 8px' }),
+    el('div', { className: 'card-title mb-8', textContent: 'About' }),
     el('div', { className: 'card-subtitle' }, [
       'Canary Vision v0.1.0',
     ]),
     el('div', {
-      className: 'card-subtitle',
+      className: 'card-subtitle mt-4',
       textContent: 'Privacy-preserving camera fleet management by ERRERlabs',
-      style: 'margin-top: 4px',
     }),
   ]));
 
   var devices = CanaryStorage.getDevices();
   content.appendChild(el('div', { className: 'card' }, [
-    el('div', { className: 'card-title', textContent: 'Devices', style: 'margin-bottom: 8px' }),
+    el('div', { className: 'card-title mb-8', textContent: 'Devices' }),
     el('div', { className: 'card-subtitle', textContent: devices.length + ' device(s) configured' }),
   ]));
 
   content.appendChild(el('button', {
-    className: 'btn btn-danger btn-block',
+    className: 'btn btn-danger btn-block mt-20',
     textContent: 'Clear All Data',
-    style: 'margin-top: 20px',
     onClick: function () {
       if (confirm('Remove all devices and clear local data?')) {
         localStorage.removeItem(CanaryStorage.KEY);
