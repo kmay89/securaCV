@@ -280,6 +280,9 @@ static bool init() {
 }
 
 static bool startTask() {
+    // On dual-core (ESP32-S3): pin to core 0 (WiFi/BLE core) to keep core 1 free
+    // On single-core (ESP32-C3): use xTaskCreate (no core pinning needed)
+    #if HW_CPU_CORES > 1
     BaseType_t result = xTaskCreatePinnedToCore(
         bleNearbyTask,
         "ble_nearby",
@@ -289,6 +292,16 @@ static bool startTask() {
         &g_scanTaskHandle,
         0  // Run on core 0 (WiFi/BLE core)
     );
+    #else
+    BaseType_t result = xTaskCreate(
+        bleNearbyTask,
+        "ble_nearby",
+        NEARBY_SCAN_TASK_STACK,
+        nullptr,
+        NEARBY_SCAN_TASK_PRIORITY,
+        &g_scanTaskHandle
+    );
+    #endif
 
     if (result != pdPASS) {
         Serial.println("[BLE] Failed to create nearby scan task");

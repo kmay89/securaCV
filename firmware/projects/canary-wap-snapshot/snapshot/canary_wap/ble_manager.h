@@ -88,12 +88,16 @@ static bool init(const char* deviceIdHash, const char* fwVersion,
         snprintf(bleName, sizeof(bleName), "%s0000", BLE_DEVICE_NAME_PREFIX);
     }
 
-    // NimBLEDevice::init() can fail if BLE hardware is unavailable
-    // On ESP32-S3 without antenna, this may still succeed but advertising won't reach
+    // NimBLEDevice::init() can fail if BLE hardware is unavailable.
+    // Without external antenna connected to the IPEX connector,
+    // init may succeed but advertising won't reach other devices.
+    // XIAO ESP32-C3: MUST connect the included WiFi/BLE antenna to IPEX connector.
+    // XIAO ESP32-S3: Has onboard antenna, but external antenna improves range.
     NimBLEDevice::init(bleName);
 
-    // Set transmit power
-    NimBLEDevice::setPower(ESP_PWR_LVL_P9);  // Max power for range
+    // Set transmit power to maximum for range
+    // ESP_PWR_LVL_P9 (+9dBm) is valid on both ESP32-S3 and ESP32-C3
+    NimBLEDevice::setPower(ESP_PWR_LVL_P9);
 
     g_ble_available = true;
 

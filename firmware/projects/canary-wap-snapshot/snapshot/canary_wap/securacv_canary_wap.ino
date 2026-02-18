@@ -4,7 +4,9 @@
   ║  Version 2.0.1 — SD Storage + WiFi Access Point + Fixed Camera Peek          ║
   ║                                                                              ║
   ║  Privacy Witness Kernel (PWK) Compatible                                     ║
-  ║  Hardware: ESP32-S3 (XIAO Sense) + L76K GNSS + microSD                       ║
+  ║  Hardware: XIAO ESP32-S3 Sense / XIAO ESP32-C3 + L76K GNSS + microSD        ║
+  ║  Target:   Set HARDWARE_XIAO_ESP32C3 or HARDWARE_XIAO_ESP32S3 in            ║
+  ║            build_config.h to match your board                                ║
   ╚══════════════════════════════════════════════════════════════════════════════╝
   
   SECURITY PROPERTIES:
@@ -120,25 +122,58 @@ static const char* SIGNATURE_ALGORITHM = "ed25519";
 // DEVICE CONFIG
 // ════════════════════════════════════════════════════════════════════════════
 
+// ════════════════════════════════════════════════════════════════════════════
+// DEVICE ID — derived from hardware target
+// ════════════════════════════════════════════════════════════════════════════
+
+#if defined(HARDWARE_XIAO_ESP32C3)
+static const char* DEVICE_ID_PREFIX = "canary-c3-";
+#else
 static const char* DEVICE_ID_PREFIX = "canary-s3-";
+#endif
 static const char* ZONE_ID   = "zone:mobile";
 
 // ════════════════════════════════════════════════════════════════════════════
-// GNSS CONFIG
+// GNSS CONFIG — Pin assignments differ per hardware target
 // ════════════════════════════════════════════════════════════════════════════
 
 static const uint32_t GPS_BAUD = 9600;
-static const int GPS_RX_GPIO = 44;  // XIAO D7
-static const int GPS_TX_GPIO = 43;  // XIAO D6
+
+#if defined(HARDWARE_XIAO_ESP32C3)
+// XIAO ESP32-C3 pin mapping (GPIO 0-21 only)
+// D6 = GPIO 2, D7 = GPIO 3 on the C3 pinout
+// WARNING: GPIO 2 is a strapping pin on C3 — ensure it is not pulled
+// high/low externally during boot, or the chip may enter wrong boot mode.
+static const int GPS_RX_GPIO = 20;  // XIAO C3 D7 (GPIO 20)
+static const int GPS_TX_GPIO = 21;  // XIAO C3 D6 (GPIO 21)
+#else
+// XIAO ESP32-S3 Sense pin mapping
+static const int GPS_RX_GPIO = 44;  // XIAO S3 D7
+static const int GPS_TX_GPIO = 43;  // XIAO S3 D6
+#endif
 
 // ════════════════════════════════════════════════════════════════════════════
-// SD CARD CONFIG (XIAO ESP32S3 Sense)
+// SD CARD CONFIG — Pin assignments differ per hardware target
 // ════════════════════════════════════════════════════════════════════════════
 
+#if defined(HARDWARE_XIAO_ESP32C3)
+// XIAO ESP32-C3 SPI pins for SD card
+// Using the standard SPI pins on C3 to avoid strapping pins (GPIO 8, 9)
+// D0=GPIO2, D1=GPIO3, D2=GPIO4, D3=GPIO5, D8=GPIO8(SCK), D9=GPIO9(MISO), D10=GPIO10(MOSI)
+// NOTE: GPIO 8 and 9 are strapping pins on C3. If SD card is connected
+// to these pins, ensure pull-up/pull-down resistors match the boot config
+// (GPIO 8 HIGH for normal boot, GPIO 9 HIGH for normal boot).
+static const int SD_CS_PIN   = 5;   // XIAO C3 D3 (GPIO 5)
+static const int SD_SCK_PIN  = 8;   // XIAO C3 D8 (GPIO 8) — strapping pin, needs pull-up
+static const int SD_MISO_PIN = 9;   // XIAO C3 D9 (GPIO 9) — strapping pin, needs pull-up
+static const int SD_MOSI_PIN = 10;  // XIAO C3 D10 (GPIO 10)
+#else
+// XIAO ESP32-S3 Sense SPI pins (directly on expansion board)
 static const int SD_CS_PIN   = 21;
 static const int SD_SCK_PIN  = 7;
 static const int SD_MISO_PIN = 8;
 static const int SD_MOSI_PIN = 9;
+#endif
 static const uint32_t SD_SPI_FAST = 4000000;
 static const uint32_t SD_SPI_SLOW = 1000000;
 
@@ -151,10 +186,10 @@ static const int   AP_CHANNEL          = 1;
 static const int   AP_MAX_CLIENTS      = 4;
 
 // ════════════════════════════════════════════════════════════════════════════
-// CAMERA CONFIG (XIAO ESP32S3 Sense)
+// CAMERA CONFIG (XIAO ESP32-S3 Sense only — ESP32-C3 has no camera interface)
 // ════════════════════════════════════════════════════════════════════════════
 
-#if FEATURE_CAMERA_PEEK
+#if FEATURE_CAMERA_PEEK && HW_HAS_CAMERA
 #define CAM_PIN_PWDN    -1
 #define CAM_PIN_RESET   -1
 #define CAM_PIN_XCLK    10
