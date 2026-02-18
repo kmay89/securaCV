@@ -686,7 +686,7 @@ static void handle_power_alert(OperaPeer* peer, const uint8_t* payload) {
   MeshAlert mesh_alert;
   mesh_alert.timestamp_ms = millis();
   mesh_alert.type = (AlertType)alert->alert_type;
-  mesh_alert.severity = LOG_LEVEL_ALERT;
+  mesh_alert.severity = SCV_LOG_ALERT;
   memcpy(mesh_alert.sender_fp, peer->fingerprint, FINGERPRINT_SIZE);
   strncpy(mesh_alert.sender_name, peer->name, MAX_PEER_NAME_LEN);
   mesh_alert.witness_seq = 0;
@@ -713,7 +713,7 @@ static void handle_offline_imminent(OperaPeer* peer, const uint8_t* payload) {
   MeshAlert mesh_alert;
   mesh_alert.timestamp_ms = millis();
   mesh_alert.type = (AlertType)alert->reason;
-  mesh_alert.severity = LOG_LEVEL_TAMPER;
+  mesh_alert.severity = SCV_LOG_TAMPER;
   memcpy(mesh_alert.sender_fp, peer->fingerprint, FINGERPRINT_SIZE);
   strncpy(mesh_alert.sender_name, peer->name, MAX_PEER_NAME_LEN);
   mesh_alert.witness_seq = alert->final_seq;

@@ -406,14 +406,14 @@ void update(void (*log_callback)(LogLevel, LogCategory, const char*, const char*
 
         LogLevel level;
         if (new_state == TEMP_COLD_CRIT || new_state == TEMP_HOT_CRIT) {
-          level = LOG_LEVEL_ALERT;
+          level = SCV_LOG_ALERT;
         } else if (new_state == TEMP_COLD_WARN || new_state == TEMP_HOT_WARN) {
-          level = LOG_LEVEL_WARNING;
+          level = SCV_LOG_WARNING;
         } else {
-          level = LOG_LEVEL_INFO;
+          level = SCV_LOG_INFO;
         }
 
-        log_callback(level, LOG_CAT_SENSOR, "Temp alert state change", detail);
+        log_callback(level, SCV_CAT_SENSOR, "Temp alert state change", detail);
       }
     }
   }

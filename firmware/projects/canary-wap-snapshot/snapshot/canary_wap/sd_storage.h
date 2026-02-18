@@ -138,8 +138,8 @@ bool read_health_logs(const char* date,
                       void (*callback)(const HealthLogEntry&, void* ctx),
                       void* ctx, uint32_t start_seq = 0, uint32_t limit = 100);
 bool acknowledge_log(uint32_t log_seq, AckStatus new_status, const char* reason);
-uint32_t count_health_logs(const char* date = nullptr, LogLevel min_level = LOG_LEVEL_DEBUG);
-uint32_t count_unacknowledged(LogLevel min_level = LOG_LEVEL_WARNING);
+uint32_t count_health_logs(const char* date = nullptr, LogLevel min_level = SCV_LOG_DEBUG);
+uint32_t count_unacknowledged(LogLevel min_level = SCV_LOG_WARNING);
 
 // Chain state persistence (redundant backup to NVS)
 bool save_chain_state(const uint8_t* chain_head, uint32_t seq, uint32_t boot_count);

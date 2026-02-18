@@ -29,13 +29,13 @@
  * @param category Event category (see log_level.h)
  * @param message  Human-readable message describing the event
  *
- * Events at LOG_LEVEL_DEBUG are typically not stored.
- * Events at LOG_LEVEL_WARNING and above may require user acknowledgment.
- * Events at LOG_LEVEL_TAMPER are security-related and always stored.
+ * Events at SCV_LOG_DEBUG are typically not stored.
+ * Events at SCV_LOG_WARNING and above may require user acknowledgment.
+ * Events at SCV_LOG_TAMPER are security-related and always stored.
  *
  * Example usage:
- *   health_log(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "chirp: new session");
- *   health_log(LOG_LEVEL_WARNING, LOG_CAT_CRYPTO, "key derivation slow");
+ *   health_log(SCV_LOG_INFO, SCV_CAT_NETWORK, "chirp: new session");
+ *   health_log(SCV_LOG_WARNING, SCV_CAT_CRYPTO, "key derivation slow");
  */
 void health_log(LogLevel level, LogCategory category, const char* message);
 
@@ -48,8 +48,8 @@ void health_log(LogLevel level, LogCategory category, const char* message);
  * @param detail   Optional additional detail (can be nullptr)
  *
  * Example usage:
- *   log_health(LOG_LEVEL_INFO, LOG_CAT_BLUETOOTH, "BLE connected", "AA:BB:CC:DD:EE:FF");
- *   log_health(LOG_LEVEL_WARNING, LOG_CAT_BLUETOOTH, "Pairing timeout", nullptr);
+ *   log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "BLE connected", "AA:BB:CC:DD:EE:FF");
+ *   log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH, "Pairing timeout", nullptr);
  */
 void log_health(LogLevel level, LogCategory category, const char* message, const char* detail);
 
@@ -67,28 +67,28 @@ namespace health_logging {
 
 // Re-export log level constants for namespace-qualified access
 // Note: LOG_LEVEL_WARN alias removed to avoid conflict with NimBLE's macro
-constexpr LogLevel LEVEL_DEBUG    = ::LOG_LEVEL_DEBUG;
-constexpr LogLevel LEVEL_INFO     = ::LOG_LEVEL_INFO;
-constexpr LogLevel LEVEL_NOTICE   = ::LOG_LEVEL_NOTICE;
-constexpr LogLevel LEVEL_WARNING  = ::LOG_LEVEL_WARNING;
-constexpr LogLevel LEVEL_ERROR    = ::LOG_LEVEL_ERROR;
-constexpr LogLevel LEVEL_CRITICAL = ::LOG_LEVEL_CRITICAL;
-constexpr LogLevel LEVEL_ALERT    = ::LOG_LEVEL_ALERT;
-constexpr LogLevel LEVEL_TAMPER   = ::LOG_LEVEL_TAMPER;
+constexpr LogLevel LEVEL_DEBUG    = ::SCV_LOG_DEBUG;
+constexpr LogLevel LEVEL_INFO     = ::SCV_LOG_INFO;
+constexpr LogLevel LEVEL_NOTICE   = ::SCV_LOG_NOTICE;
+constexpr LogLevel LEVEL_WARNING  = ::SCV_LOG_WARNING;
+constexpr LogLevel LEVEL_ERROR    = ::SCV_LOG_ERROR;
+constexpr LogLevel LEVEL_CRITICAL = ::SCV_LOG_CRITICAL;
+constexpr LogLevel LEVEL_ALERT    = ::SCV_LOG_ALERT;
+constexpr LogLevel LEVEL_TAMPER   = ::SCV_LOG_TAMPER;
 
 // Re-export log category constants for namespace-qualified access
-constexpr LogCategory CAT_SYSTEM    = ::LOG_CAT_SYSTEM;
-constexpr LogCategory CAT_CRYPTO    = ::LOG_CAT_CRYPTO;
-constexpr LogCategory CAT_CHAIN     = ::LOG_CAT_CHAIN;
-constexpr LogCategory CAT_GPS       = ::LOG_CAT_GPS;
-constexpr LogCategory CAT_STORAGE   = ::LOG_CAT_STORAGE;
-constexpr LogCategory CAT_NETWORK   = ::LOG_CAT_NETWORK;
-constexpr LogCategory CAT_SENSOR    = ::LOG_CAT_SENSOR;
-constexpr LogCategory CAT_USER      = ::LOG_CAT_USER;
-constexpr LogCategory CAT_WITNESS   = ::LOG_CAT_WITNESS;
-constexpr LogCategory CAT_MESH      = ::LOG_CAT_MESH;
-constexpr LogCategory CAT_BLUETOOTH = ::LOG_CAT_BLUETOOTH;
-constexpr LogCategory CAT_RF        = ::LOG_CAT_RF;
+constexpr LogCategory CAT_SYSTEM    = ::SCV_CAT_SYSTEM;
+constexpr LogCategory CAT_CRYPTO    = ::SCV_CAT_CRYPTO;
+constexpr LogCategory CAT_CHAIN     = ::SCV_CAT_CHAIN;
+constexpr LogCategory CAT_GPS       = ::SCV_CAT_GPS;
+constexpr LogCategory CAT_STORAGE   = ::SCV_CAT_STORAGE;
+constexpr LogCategory CAT_NETWORK   = ::SCV_CAT_NETWORK;
+constexpr LogCategory CAT_SENSOR    = ::SCV_CAT_SENSOR;
+constexpr LogCategory CAT_USER      = ::SCV_CAT_USER;
+constexpr LogCategory CAT_WITNESS   = ::SCV_CAT_WITNESS;
+constexpr LogCategory CAT_MESH      = ::SCV_CAT_MESH;
+constexpr LogCategory CAT_BLUETOOTH = ::SCV_CAT_BLUETOOTH;
+constexpr LogCategory CAT_RF        = ::SCV_CAT_RF;
 
 // Log function wrapper
 // Delegates to the global health_log() function

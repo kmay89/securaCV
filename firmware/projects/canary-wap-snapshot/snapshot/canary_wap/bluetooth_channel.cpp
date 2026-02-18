@@ -152,7 +152,7 @@ class ServerCallbacks : public NimBLEServerCallbacks {
     if (g_settings.notify_on_connect) {
       char detail[64];
       format_address(g_connection.address, detail);
-      log_health(LOG_LEVEL_INFO, LOG_CAT_BLUETOOTH, "BLE device connected", detail);
+      log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "BLE device connected", detail);
     }
 
     if (g_conn_callback) {
@@ -173,7 +173,7 @@ class ServerCallbacks : public NimBLEServerCallbacks {
       char detail[80];
       snprintf(detail, sizeof(detail), "Duration: %lus, Reason: %d",
                connected_duration / 1000, reason);
-      log_health(LOG_LEVEL_INFO, LOG_CAT_BLUETOOTH, "BLE device disconnected", detail);
+      log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "BLE device disconnected", detail);
     }
 
     if (g_conn_callback) {
@@ -221,7 +221,7 @@ class ServerCallbacks : public NimBLEServerCallbacks {
           dev->blocked = false;
 
           save_paired_devices();
-          log_health(LOG_LEVEL_INFO, LOG_CAT_BLUETOOTH, "New device paired", g_connection.name);
+          log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "New device paired", g_connection.name);
         }
       }
 
@@ -231,7 +231,7 @@ class ServerCallbacks : public NimBLEServerCallbacks {
       }
     } else {
       g_pairing.state = PAIR_FAILED;
-      log_health(LOG_LEVEL_WARNING, LOG_CAT_BLUETOOTH, "Pairing failed", nullptr);
+      log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH, "Pairing failed", nullptr);
       if (g_pair_callback) {
         g_pair_callback(&g_pairing);
       }
@@ -252,7 +252,7 @@ class ServerCallbacks : public NimBLEServerCallbacks {
 
     char pin_str[16];
     snprintf(pin_str, sizeof(pin_str), "%06lu", (unsigned long)passkey);
-    log_health(LOG_LEVEL_NOTICE, LOG_CAT_BLUETOOTH, "Pairing PIN displayed", pin_str);
+    log_health(SCV_LOG_NOTICE, SCV_CAT_BLUETOOTH, "Pairing PIN displayed", pin_str);
 
     if (g_pair_callback) {
       g_pair_callback(&g_pairing);
@@ -266,7 +266,7 @@ class ServerCallbacks : public NimBLEServerCallbacks {
 
     char pin_str[16];
     snprintf(pin_str, sizeof(pin_str), "%06lu", (unsigned long)pin);
-    log_health(LOG_LEVEL_NOTICE, LOG_CAT_BLUETOOTH, "Confirm pairing PIN", pin_str);
+    log_health(SCV_LOG_NOTICE, SCV_CAT_BLUETOOTH, "Confirm pairing PIN", pin_str);
 
     if (g_pair_callback) {
       g_pair_callback(&g_pairing);
@@ -334,7 +334,7 @@ class ScanCallbacks : public NimBLEScanCallbacks {
   void onScanEnd(const NimBLEScanResults& /*results*/, int /*reason*/) override {
     g_scanning = false;
     set_state(g_connection.connected ? BT_CONNECTED : BT_IDLE);
-    log_health(LOG_LEVEL_INFO, LOG_CAT_BLUETOOTH, "BLE scan complete",
+    log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "BLE scan complete",
                String(g_scanned_count).c_str());
   }
 };
@@ -356,7 +356,7 @@ static void set_state(BluetoothState new_state) {
   char detail[64];
   snprintf(detail, sizeof(detail), "%s -> %s",
            state_name(old_state), state_name(new_state));
-  log_health(LOG_LEVEL_DEBUG, LOG_CAT_BLUETOOTH, "BLE state change", detail);
+  log_health(SCV_LOG_DEBUG, SCV_CAT_BLUETOOTH, "BLE state change", detail);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -447,7 +447,7 @@ static void handle_inactivity_timeout() {
 
   uint32_t inactive_ms = millis() - g_connection.last_activity_ms;
   if (inactive_ms >= g_settings.inactivity_timeout_ms) {
-    log_health(LOG_LEVEL_INFO, LOG_CAT_BLUETOOTH, "Disconnecting due to inactivity", nullptr);
+    log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "Disconnecting due to inactivity", nullptr);
     disconnect();
   }
 }
@@ -506,7 +506,7 @@ bool init() {
   if (g_initialized) return true;
 
   set_state(BT_INITIALIZING);
-  log_health(LOG_LEVEL_INFO, LOG_CAT_BLUETOOTH, "Initializing BLE", nullptr);
+  log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "Initializing BLE", nullptr);
 
   // Load settings
   load_settings();
@@ -565,7 +565,7 @@ bool init() {
   g_initialized = true;
   set_state(BT_IDLE);
 
-  log_health(LOG_LEVEL_INFO, LOG_CAT_BLUETOOTH, "BLE initialized", g_settings.device_name);
+  log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "BLE initialized", g_settings.device_name);
 
   // Auto-start advertising if enabled
   if (g_settings.enabled && g_settings.auto_advertise) {
@@ -596,7 +596,7 @@ void deinit() {
   g_initialized = false;
   set_state(BT_DISABLED);
 
-  log_health(LOG_LEVEL_INFO, LOG_CAT_BLUETOOTH, "BLE deinitialized", nullptr);
+  log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "BLE deinitialized", nullptr);
 }
 
 bool is_initialized() {
@@ -615,7 +615,7 @@ bool enable() {
     set_state(BT_IDLE);
   }
 
-  log_health(LOG_LEVEL_INFO, LOG_CAT_BLUETOOTH, "BLE enabled", nullptr);
+  log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "BLE enabled", nullptr);
   return true;
 }
 
@@ -628,7 +628,7 @@ void disable() {
   save_settings();
   set_state(BT_DISABLED);
 
-  log_health(LOG_LEVEL_INFO, LOG_CAT_BLUETOOTH, "BLE disabled", nullptr);
+  log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "BLE disabled", nullptr);
 }
 
 bool is_enabled() {
@@ -643,7 +643,7 @@ bool start_advertising() {
     g_advertising->start();
     g_advertising_start_ms = millis();
     set_state(BT_ADVERTISING);
-    log_health(LOG_LEVEL_DEBUG, LOG_CAT_BLUETOOTH, "BLE advertising started", nullptr);
+    log_health(SCV_LOG_DEBUG, SCV_CAT_BLUETOOTH, "BLE advertising started", nullptr);
   }
 
   return true;
@@ -656,7 +656,7 @@ void stop_advertising() {
     if (g_state == BT_ADVERTISING) {
       set_state(BT_IDLE);
     }
-    log_health(LOG_LEVEL_DEBUG, LOG_CAT_BLUETOOTH, "BLE advertising stopped", nullptr);
+    log_health(SCV_LOG_DEBUG, SCV_CAT_BLUETOOTH, "BLE advertising stopped", nullptr);
   }
 }
 
@@ -679,7 +679,7 @@ bool start_scan(uint32_t duration_ms) {
   // Start scan (non-blocking with callback)
   g_scanner->start(duration_ms / 1000, false);
 
-  log_health(LOG_LEVEL_INFO, LOG_CAT_BLUETOOTH, "BLE scan started",
+  log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "BLE scan started",
              String(duration_ms / 1000).c_str());
   return true;
 }
@@ -691,7 +691,7 @@ void stop_scan() {
     if (g_state == BT_SCANNING) {
       set_state(g_connection.connected ? BT_CONNECTED : BT_IDLE);
     }
-    log_health(LOG_LEVEL_DEBUG, LOG_CAT_BLUETOOTH, "BLE scan stopped", nullptr);
+    log_health(SCV_LOG_DEBUG, SCV_CAT_BLUETOOTH, "BLE scan stopped", nullptr);
   }
 }
 
@@ -723,7 +723,7 @@ bool start_pairing() {
   // Make sure we're advertising
   start_advertising();
 
-  log_health(LOG_LEVEL_INFO, LOG_CAT_BLUETOOTH, "Pairing mode started", nullptr);
+  log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "Pairing mode started", nullptr);
 
   if (g_pair_callback) {
     g_pair_callback(&g_pairing);
@@ -742,7 +742,7 @@ void cancel_pairing() {
     set_state(g_connection.connected ? BT_CONNECTED : BT_IDLE);
   }
 
-  log_health(LOG_LEVEL_INFO, LOG_CAT_BLUETOOTH, "Pairing cancelled", nullptr);
+  log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "Pairing cancelled", nullptr);
 }
 
 bool confirm_pairing(uint32_t pin) {
@@ -760,7 +760,7 @@ bool reject_pairing() {
   if (g_pairing.state == PAIR_NONE) return false;
 
   g_pairing.state = PAIR_FAILED;
-  log_health(LOG_LEVEL_INFO, LOG_CAT_BLUETOOTH, "Pairing rejected", nullptr);
+  log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "Pairing rejected", nullptr);
 
   if (g_pair_callback) {
     g_pair_callback(&g_pairing);
@@ -821,7 +821,7 @@ bool remove_paired_device(const uint8_t* address) {
       NimBLEDevice::deleteBond(NimBLEAddress(address, addr_type));
 
       save_paired_devices();
-      log_health(LOG_LEVEL_INFO, LOG_CAT_BLUETOOTH, "Paired device removed", nullptr);
+      log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "Paired device removed", nullptr);
       return true;
     }
   }
@@ -840,7 +840,7 @@ bool clear_all_paired_devices() {
   }
 
   save_paired_devices();
-  log_health(LOG_LEVEL_INFO, LOG_CAT_BLUETOOTH, "All paired devices cleared", nullptr);
+  log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "All paired devices cleared", nullptr);
   return true;
 }
 
@@ -898,7 +898,7 @@ bool set_device_name(const char* name) {
   g_settings.device_name[MAX_DEVICE_NAME_LEN] = '\0';
   save_settings();
 
-  log_health(LOG_LEVEL_INFO, LOG_CAT_BLUETOOTH, "Device name changed", name);
+  log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "Device name changed", name);
   return true;
 }
 
@@ -1024,7 +1024,7 @@ void update() {
   // Check pairing timeout
   if (g_pairing.state != PAIR_NONE && g_pairing.state != PAIR_COMPLETE) {
     if (now - g_pairing.started_ms >= PAIRING_TIMEOUT_MS) {
-      log_health(LOG_LEVEL_WARNING, LOG_CAT_BLUETOOTH, "Pairing timeout", nullptr);
+      log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH, "Pairing timeout", nullptr);
       cancel_pairing();
     }
   }

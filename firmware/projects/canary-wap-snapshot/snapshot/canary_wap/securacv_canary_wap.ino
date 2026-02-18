@@ -1072,7 +1072,7 @@ static bool verify_record_signature(const WitnessRecord* rec) {
 
 void log_health(LogLevel level, LogCategory category, const char* message, const char* detail) {
   // Skip DEBUG by default
-  if (level < LOG_LEVEL_INFO) return;
+  if (level < SCV_LOG_INFO) return;
   
   HealthLogRingEntry& entry = g_health_log_ring[g_health_log_ring_head];
   entry.seq = ++g_device.log_seq;
@@ -1139,7 +1139,7 @@ static void log_state_transition(FixState from, FixState to, const char* reason)
   
   char msg[64];
   snprintf(msg, sizeof(msg), "%s -> %s", state_name(from), state_name(to));
-  log_health(LOG_LEVEL_NOTICE, LOG_CAT_GPS, msg, reason);
+  log_health(SCV_LOG_NOTICE, SCV_CAT_GPS, msg, reason);
   
   // Create state change witness record
   uint8_t payload[256];
@@ -1666,7 +1666,7 @@ static esp_err_t handle_ack_all(httpd_req_t* req) {
   }
   g_health.logs_unacked = 0;
   
-  log_health(LOG_LEVEL_INFO, LOG_CAT_USER, "Bulk acknowledgment", nullptr);
+  log_health(SCV_LOG_INFO, SCV_CAT_USER, "Bulk acknowledgment", nullptr);
   
   JsonDocument doc;
   doc["ok"] = true;
@@ -1784,7 +1784,7 @@ static esp_err_t handle_export(httpd_req_t* req) {
   // Mark successful SD operation
   sd_op_success();
 
-  log_health(LOG_LEVEL_INFO, LOG_CAT_USER, "Export created", export_path);
+  log_health(SCV_LOG_INFO, SCV_CAT_USER, "Export created", export_path);
 
   JsonDocument doc;
   doc["ok"] = true;
@@ -1798,7 +1798,7 @@ static esp_err_t handle_export(httpd_req_t* req) {
 static esp_err_t handle_reboot(httpd_req_t* req) {
   g_health.http_requests++;
   
-  log_health(LOG_LEVEL_NOTICE, LOG_CAT_USER, "Reboot requested", nullptr);
+  log_health(SCV_LOG_NOTICE, SCV_CAT_USER, "Reboot requested", nullptr);
   
   // Persist state
   nvs_store_u32(NVS_KEY_SEQ, g_device.seq);
@@ -1916,7 +1916,7 @@ static esp_err_t handle_peek_start(httpd_req_t* req) {
   
   g_peek_active = true;
   
-  log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "Peek started", nullptr);
+  log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "Peek started", nullptr);
   
   JsonDocument doc;
   doc["ok"] = true;
@@ -2005,7 +2005,7 @@ static esp_err_t handle_peek_stream(httpd_req_t* req) {
   // End chunked response
   httpd_resp_send_chunk(req, NULL, 0);
   
-  log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "Peek stream ended", nullptr);
+  log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "Peek stream ended", nullptr);
   
   return ESP_OK;
 }
@@ -2040,7 +2040,7 @@ static esp_err_t handle_peek_stop(httpd_req_t* req) {
   
   g_peek_active = false;
   
-  log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "Peek stopped", nullptr);
+  log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "Peek stopped", nullptr);
   
   JsonDocument doc;
   doc["ok"] = true;
@@ -2116,7 +2116,7 @@ static esp_err_t handle_peek_resolution(httpd_req_t* req) {
   if (success) {
     doc["resolution"] = size;
     doc["resolution_name"] = framesize_name((framesize_t)size);
-    log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "Resolution changed", framesize_name((framesize_t)size));
+    log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "Resolution changed", framesize_name((framesize_t)size));
   } else {
     doc["error"] = "Failed to set resolution";
   }
@@ -2254,7 +2254,7 @@ static esp_err_t handle_mesh_enable(httpd_req_t* req) {
 
   bool enabled = body["enabled"] | false;
   mesh_network::set_enabled(enabled);
-  log_health(LOG_LEVEL_INFO, LOG_CAT_MESH, enabled ? "Mesh enabled" : "Mesh disabled", nullptr);
+  log_health(SCV_LOG_INFO, SCV_CAT_MESH, enabled ? "Mesh enabled" : "Mesh disabled", nullptr);
 
   return http_send_json(req, "{\"ok\":true}");
 }
@@ -2273,7 +2273,7 @@ static esp_err_t handle_mesh_pair_start(httpd_req_t* req) {
   }
 
   if (mesh_network::start_pairing_initiator(opera_name)) {
-    log_health(LOG_LEVEL_INFO, LOG_CAT_MESH, "Pairing started (initiator)", nullptr);
+    log_health(SCV_LOG_INFO, SCV_CAT_MESH, "Pairing started (initiator)", nullptr);
     return http_send_json(req, "{\"ok\":true}");
   }
   return http_send_error(req, 400, "pairing_failed");
@@ -2283,7 +2283,7 @@ static esp_err_t handle_mesh_pair_join(httpd_req_t* req) {
   g_health.http_requests++;
 
   if (mesh_network::start_pairing_joiner()) {
-    log_health(LOG_LEVEL_INFO, LOG_CAT_MESH, "Pairing started (joiner)", nullptr);
+    log_health(SCV_LOG_INFO, SCV_CAT_MESH, "Pairing started (joiner)", nullptr);
     return http_send_json(req, "{\"ok\":true}");
   }
   return http_send_error(req, 400, "pairing_failed");
@@ -2293,7 +2293,7 @@ static esp_err_t handle_mesh_pair_confirm(httpd_req_t* req) {
   g_health.http_requests++;
 
   if (mesh_network::confirm_pairing()) {
-    log_health(LOG_LEVEL_INFO, LOG_CAT_MESH, "Pairing confirmed", nullptr);
+    log_health(SCV_LOG_INFO, SCV_CAT_MESH, "Pairing confirmed", nullptr);
     return http_send_json(req, "{\"ok\":true}");
   }
   return http_send_error(req, 400, "confirm_failed");
@@ -2302,7 +2302,7 @@ static esp_err_t handle_mesh_pair_confirm(httpd_req_t* req) {
 static esp_err_t handle_mesh_pair_cancel(httpd_req_t* req) {
   g_health.http_requests++;
   mesh_network::cancel_pairing();
-  log_health(LOG_LEVEL_INFO, LOG_CAT_MESH, "Pairing cancelled", nullptr);
+  log_health(SCV_LOG_INFO, SCV_CAT_MESH, "Pairing cancelled", nullptr);
   return http_send_json(req, "{\"ok\":true}");
 }
 
@@ -2310,7 +2310,7 @@ static esp_err_t handle_mesh_leave(httpd_req_t* req) {
   g_health.http_requests++;
 
   if (mesh_network::leave_opera()) {
-    log_health(LOG_LEVEL_WARNING, LOG_CAT_MESH, "Left opera", nullptr);
+    log_health(SCV_LOG_WARNING, SCV_CAT_MESH, "Left opera", nullptr);
     return http_send_json(req, "{\"ok\":true}");
   }
   return http_send_error(req, 400, "leave_failed");
@@ -2342,7 +2342,7 @@ static esp_err_t handle_mesh_remove(httpd_req_t* req) {
   }
 
   if (mesh_network::remove_peer(fp)) {
-    log_health(LOG_LEVEL_WARNING, LOG_CAT_MESH, "Peer removed", fp_hex);
+    log_health(SCV_LOG_WARNING, SCV_CAT_MESH, "Peer removed", fp_hex);
     return http_send_json(req, "{\"ok\":true}");
   }
   return http_send_error(req, 400, "remove_failed");
@@ -2367,7 +2367,7 @@ static esp_err_t handle_mesh_name(httpd_req_t* req) {
   }
 
   if (mesh_network::set_opera_name(name)) {
-    log_health(LOG_LEVEL_INFO, LOG_CAT_MESH, "Opera name changed", name);
+    log_health(SCV_LOG_INFO, SCV_CAT_MESH, "Opera name changed", name);
     return http_send_json(req, "{\"ok\":true}");
   }
   return http_send_error(req, 400, "rename_failed");
@@ -2560,7 +2560,7 @@ static esp_err_t handle_wifi_disconnect(httpd_req_t* req) {
     nvs.end();
   }
 
-  log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "WiFi disconnected", nullptr);
+  log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "WiFi disconnected", nullptr);
 
   JsonDocument doc;
   doc["ok"] = true;
@@ -2717,7 +2717,7 @@ static void start_http_server() {
   config.max_uri_handlers = base_handlers + camera_handlers + mesh_handlers + bluetooth_handlers + ble_discovery_handlers + handler_headroom;
   
   if (httpd_start(&g_http_server, &config) != ESP_OK) {
-    log_health(LOG_LEVEL_ERROR, LOG_CAT_NETWORK, "HTTP server start failed", nullptr);
+    log_health(SCV_LOG_ERROR, SCV_CAT_NETWORK, "HTTP server start failed", nullptr);
     return;
   }
   
@@ -2868,7 +2868,7 @@ static void start_http_server() {
   }
 #endif
 
-  log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "HTTP server started", "port 80");
+  log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "HTTP server started", "port 80");
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -2923,7 +2923,7 @@ static bool wifi_save_credentials() {
   nvs.end();
   g_wifi_creds.configured = true;
 
-  log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "WiFi credentials saved", g_wifi_creds.ssid);
+  log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "WiFi credentials saved", g_wifi_creds.ssid);
   return true;
 }
 
@@ -2940,7 +2940,7 @@ static bool wifi_clear_credentials() {
   memset(&g_wifi_creds, 0, sizeof(g_wifi_creds));
   g_wifi_status.state = WIFI_PROV_AP_ONLY;
 
-  log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "WiFi credentials cleared", nullptr);
+  log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "WiFi credentials cleared", nullptr);
   return true;
 }
 
@@ -2981,7 +2981,7 @@ static void wifi_connect_to_home() {
 
   char msg[64];
   snprintf(msg, sizeof(msg), "Connecting to: %s", g_wifi_creds.ssid);
-  log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, msg, nullptr);
+  log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, msg, nullptr);
 
   // Start connection (non-blocking)
   WiFi.begin(g_wifi_creds.ssid, g_wifi_creds.password);
@@ -3002,17 +3002,17 @@ static void wifi_check_connection() {
 
         char msg[80];
         snprintf(msg, sizeof(msg), "Connected to %s", g_wifi_creds.ssid);
-        log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, msg, g_wifi_status.sta_ip);
+        log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, msg, g_wifi_status.sta_ip);
       } else if (now - g_wifi_status.last_connect_ms > WIFI_CONNECT_TIMEOUT_MS) {
         g_wifi_status.state = WIFI_PROV_FAILED;
-        log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK, "WiFi connection timeout", g_wifi_creds.ssid);
+        log_health(SCV_LOG_WARNING, SCV_CAT_NETWORK, "WiFi connection timeout", g_wifi_creds.ssid);
       }
       break;
 
     case WIFI_PROV_CONNECTED:
       if (!WiFi.isConnected()) {
         g_wifi_status.state = WIFI_PROV_FAILED;
-        log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK, "WiFi connection lost", nullptr);
+        log_health(SCV_LOG_WARNING, SCV_CAT_NETWORK, "WiFi connection lost", nullptr);
       }
       break;
 
@@ -3045,7 +3045,7 @@ static void wifi_init_provisioning() {
   bool ap_ok = WiFi.softAP(g_device.ap_ssid, AP_PASSWORD_DEFAULT, AP_CHANNEL, false, AP_MAX_CLIENTS);
 
   if (!ap_ok) {
-    log_health(LOG_LEVEL_ERROR, LOG_CAT_NETWORK, "WiFi AP start failed", nullptr);
+    log_health(SCV_LOG_ERROR, SCV_CAT_NETWORK, "WiFi AP start failed", nullptr);
     return;
   }
 
@@ -3058,12 +3058,12 @@ static void wifi_init_provisioning() {
 
   char msg[64];
   snprintf(msg, sizeof(msg), "AP: %s", g_device.ap_ssid);
-  log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, msg, g_wifi_status.ap_ip);
+  log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, msg, g_wifi_status.ap_ip);
 
   // Start mDNS
   if (MDNS.begin("canary")) {
     MDNS.addService("http", "tcp", 80);
-    log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "mDNS started", "canary.local");
+    log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "mDNS started", "canary.local");
   }
 
   // Attempt to connect to home WiFi if configured
@@ -3071,7 +3071,7 @@ static void wifi_init_provisioning() {
     wifi_connect_to_home();
   } else {
     g_wifi_status.state = WIFI_PROV_AP_ONLY;
-    log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "AP-only mode", "No home WiFi configured");
+    log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "AP-only mode", "No home WiFi configured");
   }
 }
 
@@ -3383,7 +3383,7 @@ void setup() {
     Serial.println("[!!] PROVISIONING FAILED - HALTING");
     // Don't infinite loop - just log and continue with limited function
     // The device should still serve HTTP so user can diagnose
-    log_health(LOG_LEVEL_CRITICAL, LOG_CAT_CRYPTO, "Provisioning failed", nullptr);
+    log_health(SCV_LOG_CRITICAL, SCV_CAT_CRYPTO, "Provisioning failed", nullptr);
   }
 
   pinMode(BOOT_BUTTON_GPIO, INPUT_PULLUP);
@@ -3428,12 +3428,12 @@ void setup() {
       if (!SD.exists("/EXPORT")) SD.mkdir("/EXPORT");
 
       Serial.println("[OK] SD card ready for witness records");
-      log_health(LOG_LEVEL_INFO, LOG_CAT_STORAGE, "SD card mounted", nullptr);
+      log_health(SCV_LOG_INFO, SCV_CAT_STORAGE, "SD card mounted", nullptr);
     } else {
       g_sd_mounted = false;
       g_health.sd_healthy = false;
       Serial.println("[--] SD card not present — witness records buffered in RAM");
-      log_health(LOG_LEVEL_WARNING, LOG_CAT_STORAGE, "SD card not available", nullptr);
+      log_health(SCV_LOG_WARNING, SCV_CAT_STORAGE, "SD card not available", nullptr);
     }
   } else {
     Serial.println("[--] SD card init skipped (safe mode)");
@@ -3478,7 +3478,7 @@ void setup() {
     Serial.println("[..] Initializing mesh network (opera)...");
     if (mesh_network::init(g_device.privkey, g_device.pubkey, g_device.device_id)) {
       Serial.println("[OK] Mesh network initialized");
-      log_health(LOG_LEVEL_INFO, LOG_CAT_MESH, "Mesh network initialized", nullptr);
+      log_health(SCV_LOG_INFO, SCV_CAT_MESH, "Mesh network initialized", nullptr);
 
       // Set up mesh callbacks
       mesh_network::set_alert_callback([](const mesh_network::MeshAlert* alert) {
@@ -3486,7 +3486,7 @@ void setup() {
         char detail[80];
         snprintf(detail, sizeof(detail), "From %s: %s",
                  alert->sender_name, alert->detail);
-        log_health((LogLevel)alert->severity, LOG_CAT_MESH, "Opera alert received", detail);
+        log_health((LogLevel)alert->severity, SCV_CAT_MESH, "Opera alert received", detail);
       });
 
       mesh_network::set_peer_state_callback([](const mesh_network::OperaPeer* peer,
@@ -3497,7 +3497,7 @@ void setup() {
                  peer->name,
                  mesh_network::peer_state_name(old_state),
                  mesh_network::peer_state_name(new_state));
-        log_health(LOG_LEVEL_INFO, LOG_CAT_MESH, "Peer state changed", detail);
+        log_health(SCV_LOG_INFO, SCV_CAT_MESH, "Peer state changed", detail);
       });
     } else {
       Serial.println("[--] Mesh network init failed");
@@ -3513,7 +3513,7 @@ void setup() {
     Serial.println("[..] Initializing Bluetooth Low Energy...");
     if (bluetooth_channel::init()) {
       Serial.println("[OK] Bluetooth initialized");
-      log_health(LOG_LEVEL_INFO, LOG_CAT_BLUETOOTH, "Bluetooth initialized", nullptr);
+      log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "Bluetooth initialized", nullptr);
     } else {
       Serial.println("[--] Bluetooth init failed");
     }
@@ -3534,7 +3534,7 @@ void setup() {
     if (ble_manager::init(ble_device_id_hex, FIRMWARE_VERSION,
                           &g_device.seq, g_device.chain_head)) {
       Serial.println("[OK] BLE Discovery initialized — Opera advertising, Nearby scanning");
-      log_health(LOG_LEVEL_INFO, LOG_CAT_BLUETOOTH, "BLE Discovery initialized", nullptr);
+      log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "BLE Discovery initialized", nullptr);
 
       ble_manager::operaStart();
       ble_manager::nearbyStart();
@@ -3544,7 +3544,7 @@ void setup() {
     } else {
       Serial.println("[--] BLE Discovery initialization failed — operating without BLE discovery");
       Serial.println("[--] Check: Is the BLE antenna connected?");
-      log_health(LOG_LEVEL_WARNING, LOG_CAT_BLUETOOTH, "BLE Discovery init failed", nullptr);
+      log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH, "BLE Discovery init failed", nullptr);
     }
   } else {
     Serial.println("[--] BLE Discovery init skipped (safe mode)");
@@ -3567,7 +3567,7 @@ void setup() {
                   sys_monitor::g_sys_metrics.heap_free / 1024,
                   psram_str);
   }
-  log_health(LOG_LEVEL_INFO, LOG_CAT_SYSTEM, "System monitor initialized", nullptr);
+  log_health(SCV_LOG_INFO, SCV_CAT_SYSTEM, "System monitor initialized", nullptr);
   #endif
 
   // ════════════════════════════════════════════════════════════════════════════
@@ -3605,7 +3605,7 @@ void setup() {
   }
   
   // Log boot event
-  log_health(LOG_LEVEL_INFO, LOG_CAT_SYSTEM, "Device boot complete", FIRMWARE_VERSION);
+  log_health(SCV_LOG_INFO, SCV_CAT_SYSTEM, "Device boot complete", FIRMWARE_VERSION);
   
   Serial.println();
   Serial.println("╔══════════════════════════════════════════════════════════════╗");
@@ -3765,12 +3765,12 @@ void loop() {
     uint8_t payload[512];
     size_t payload_len = 0;
     if (!build_witness_event(&g_fix, g_state, payload, sizeof(payload), &payload_len)) {
-      log_health(LOG_LEVEL_ERROR, LOG_CAT_WITNESS, "Payload build failed", nullptr);
+      log_health(SCV_LOG_ERROR, SCV_CAT_WITNESS, "Payload build failed", nullptr);
       return;
     }
 
     if (!create_witness_record(payload, payload_len, RECORD_WITNESS_EVENT, &g_last_record)) {
-      log_health(LOG_LEVEL_ERROR, LOG_CAT_CRYPTO, "Record verification failed", nullptr);
+      log_health(SCV_LOG_ERROR, SCV_CAT_CRYPTO, "Record verification failed", nullptr);
     }
 
     // Print table row
@@ -3788,7 +3788,7 @@ void loop() {
     g_last_verify_ms = now;
     
     if (!verify_record_signature(&g_last_record)) {
-      log_health(LOG_LEVEL_CRITICAL, LOG_CAT_CRYPTO, "Self-verification FAILED", nullptr);
+      log_health(SCV_LOG_CRITICAL, SCV_CAT_CRYPTO, "Self-verification FAILED", nullptr);
       g_health.crypto_healthy = false;
     } else {
       g_health.crypto_healthy = true;
