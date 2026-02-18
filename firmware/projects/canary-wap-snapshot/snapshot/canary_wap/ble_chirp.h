@@ -95,17 +95,19 @@ static void buildChirpPayload(ChirpType type, uint8_t* payload, size_t* len) {
 // RESTORE OPERA ADVERTISING (internal)
 // ════════════════════════════════════════════════════════════════
 
+// Stored device name for restoring after chirp (set during init)
+static char g_operaDeviceName[16] = {0};
+
 static void restoreOperaAdvertising() {
     NimBLEAdvertising* pAdvertising = NimBLEDevice::getAdvertising();
     if (!pAdvertising) return;
 
     pAdvertising->stop();
 
-    // Restore Opera service advertising
-    NimBLEAdvertisementData restoreData;
-    restoreData.setCompleteServices(NimBLEUUID(SCV_SERVICE_UUID));
-    pAdvertising->setAdvertisementData(restoreData);
-    pAdvertising->setName(NimBLEDevice::getAddress().toString().c_str());
+    // Restore Opera service advertising with correct SCV-XXXX device name
+    // (Previously used NimBLEDevice::getAddress() which leaked the raw MAC address)
+    pAdvertising->addServiceUUID(SCV_SERVICE_UUID);
+    pAdvertising->setName(g_operaDeviceName);
     pAdvertising->start();
 }
 
@@ -129,6 +131,11 @@ static bool init(const char* deviceIdHash, uint8_t* chainHead) {
 
         hex[0] = suffix[2]; hex[1] = suffix[3];
         g_deviceIdPrefixBytes[1] = (uint8_t)strtol(hex, nullptr, 16);
+
+        // Store the SCV-XXXX device name so restoreOperaAdvertising()
+        // can restore the correct name after chirp broadcast
+        snprintf(g_operaDeviceName, sizeof(g_operaDeviceName), "%s%s",
+                 BLE_DEVICE_NAME_PREFIX, suffix);
     }
 
     Serial.printf("[BLE] Chirp initialized — device prefix: %02x%02x\n",
@@ -168,10 +175,10 @@ static bool sendChirp(ChirpType type) {
     // Stop current advertising
     pAdvertising->stop();
 
-    // Set manufacturer data for chirp
+    // Set manufacturer data for chirp (use SCV-XXXX name, not raw MAC address)
     NimBLEAdvertisementData advData;
     advData.setManufacturerData(std::string((char*)mfgData, payloadLen + 2));
-    advData.setName(NimBLEDevice::getAddress().toString().c_str());
+    advData.setName(g_operaDeviceName);
     pAdvertising->setAdvertisementData(advData);
 
     // Start chirp broadcast (non-blocking — update() will stop it after duration)
