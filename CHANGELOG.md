@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.4.0] - 2026-02-18
+
+### Added
+- **BLE Discovery subsystem** for Canary firmware (Opera/Chirp/Nearby):
+  - **Opera**: BLE server advertising with SecuraCV custom GATT service — privacy-safe device
+    identifier derived from Ed25519 pubkey hash, read-only status characteristics, writable
+    command characteristic
+  - **Chirp**: Connectionless BLE broadcast alerts between Canary devices — manufacturer-specific
+    advertising data with truncated chain hash, coarsened timestamps, rate-limited (10s minimum)
+  - **Nearby**: BLE scanner running on dedicated FreeRTOS task — discovers other Canaries via
+    service UUID, tracks RSSI for proximity, thread-safe with mutex-protected shared state
+  - New firmware files: `ble_config.h`, `ble_opera.h`, `ble_chirp.h`, `ble_nearby.h`, `ble_manager.h`
+  - `FEATURE_BLE` compile flag in `build_config.h` (disabled in MINIMAL/DEV, enabled in FULL)
+  - HTTP API endpoints: `GET /api/ble/status`, `GET /api/nearby`, `POST /api/chirp/send`
+  - Web UI: BLE Discovery tab in Community panel with signal strength bars, nearby Canary list,
+    chirp send buttons
+  - NimBLE-Arduino library dependency (lighter than bluedroid, ~60% less RAM)
+  - BLE protocol specification: `docs/ble_protocol.md`
+  - BLE semantic events added to `spec/event_contract.md`
+
+### Security
+- BLE uses NimBLE only (no Bluetooth Classic — smaller binary blob surface)
+- Device identity from Ed25519 pubkey hash, not hardware MAC address
+- Non-Canary BLE devices counted only, never individually logged (privacy by default)
+- All BLE code gated behind feature flag — compiles out completely when disabled
+- Graceful degradation: firmware continues if BLE hardware unavailable
+
 ## [0.3.1] - 2026-01-21
 ### Fixed
 - `log_verify` now verifies break-glass receipt chain (called from `main`)

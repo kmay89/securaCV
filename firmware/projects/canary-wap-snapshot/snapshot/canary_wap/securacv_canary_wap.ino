@@ -101,6 +101,10 @@
 
 #include "build_config.h"
 
+// BLE Discovery Subsystem (Opera/Chirp/Nearby)
+#include "ble_config.h"
+#include "ble_manager.h"
+
 // ════════════════════════════════════════════════════════════════════════════
 // VERSION & PROTOCOL (must match PWK expectations)
 // ════════════════════════════════════════════════════════════════════════════
@@ -2630,6 +2634,70 @@ static esp_err_t handle_captive_portal(httpd_req_t* req) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// BLE DISCOVERY API HANDLERS (Opera/Chirp/Nearby)
+// ════════════════════════════════════════════════════════════════════════════
+
+#if FEATURE_BLE
+
+// GET /api/ble/status — BLE subsystem status
+static esp_err_t handle_ble_status(httpd_req_t* req) {
+  g_health.http_requests++;
+  String json = ble_manager::statusJson();
+  return http_send_json(req, json.c_str());
+}
+
+// GET /api/nearby — Nearby Canary devices
+static esp_err_t handle_ble_nearby(httpd_req_t* req) {
+  g_health.http_requests++;
+  String json = ble_manager::nearbyJson();
+  return http_send_json(req, json.c_str());
+}
+
+// POST /api/chirp/send — Trigger a manual chirp alert
+static esp_err_t handle_ble_chirp_send(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  if (!ble_manager::isAvailable()) {
+    return http_send_error(req, 503, "ble_unavailable");
+  }
+
+  // Parse request body for chirp type
+  char content[64];
+  int content_len = httpd_req_recv(req, content, sizeof(content) - 1);
+  ChirpType chirpType = CHIRP_ALERT;  // Default
+
+  if (content_len > 0) {
+    content[content_len] = '\0';
+    StaticJsonDocument<64> doc;
+    if (deserializeJson(doc, content) == DeserializationError::Ok) {
+      const char* typeStr = doc["type"] | "";
+      if (strcmp(typeStr, "heartbeat") == 0) chirpType = CHIRP_HEARTBEAT;
+      else if (strcmp(typeStr, "tamper") == 0) chirpType = CHIRP_TAMPER;
+      else if (strcmp(typeStr, "witness") == 0) chirpType = CHIRP_WITNESS;
+      else if (strcmp(typeStr, "boot") == 0) chirpType = CHIRP_BOOT;
+    }
+  }
+
+  // Rate limit check
+  if (ble_chirp::isRateLimited()) {
+    httpd_resp_set_status(req, "429 Too Many Requests");
+    return http_send_json(req, "{\"ok\":false,\"error\":\"rate_limited\"}");
+  }
+
+  if (ble_manager::sendChirp(chirpType)) {
+    char response[128];
+    snprintf(response, sizeof(response),
+      "{\"ok\":true,\"chirp_type\":\"%s\",\"chirps_sent\":%u}",
+      chirpTypeName(chirpType), ble_chirp::getChirpsSent());
+    return http_send_json(req, response);
+  }
+
+  return http_send_error(req, 500, "chirp_failed");
+}
+
+#endif // FEATURE_BLE
+
+// ════════════════════════════════════════════════════════════════════════════
 // HTTP SERVER SETUP
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -2644,8 +2712,9 @@ static void start_http_server() {
   const int camera_handlers = 6;      // Camera peek endpoints
   const int mesh_handlers = 12;       // Mesh network endpoints
   const int bluetooth_handlers = 23;  // Bluetooth API endpoints
+  const int ble_discovery_handlers = 3; // BLE discovery (Opera/Chirp/Nearby) endpoints
   const int handler_headroom = 4;     // Reserve for future additions
-  config.max_uri_handlers = base_handlers + camera_handlers + mesh_handlers + bluetooth_handlers + handler_headroom;
+  config.max_uri_handlers = base_handlers + camera_handlers + mesh_handlers + bluetooth_handlers + ble_discovery_handlers + handler_headroom;
   
   if (httpd_start(&g_http_server, &config) != ESP_OK) {
     log_health(LOG_LEVEL_ERROR, LOG_CAT_NETWORK, "HTTP server start failed", nullptr);
@@ -2783,6 +2852,20 @@ static void start_http_server() {
 #if FEATURE_BLUETOOTH
   // Bluetooth endpoints
   bluetooth_api::register_routes(g_http_server);
+#endif
+
+#if FEATURE_BLE
+  // BLE Discovery endpoints (Opera/Chirp/Nearby)
+  {
+    httpd_uri_t ble_status = { .uri = "/api/ble/status", .method = HTTP_GET, .handler = handle_ble_status, .user_ctx = nullptr };
+    httpd_register_uri_handler(g_http_server, &ble_status);
+
+    httpd_uri_t ble_nearby = { .uri = "/api/nearby", .method = HTTP_GET, .handler = handle_ble_nearby, .user_ctx = nullptr };
+    httpd_register_uri_handler(g_http_server, &ble_nearby);
+
+    httpd_uri_t ble_chirp_send = { .uri = "/api/chirp/send", .method = HTTP_POST, .handler = handle_ble_chirp_send, .user_ctx = nullptr };
+    httpd_register_uri_handler(g_http_server, &ble_chirp_send);
+  }
 #endif
 
   log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "HTTP server started", "port 80");
@@ -3424,7 +3507,7 @@ void setup() {
   }
   #endif
 
-  // Initialize Bluetooth
+  // Initialize Bluetooth (legacy channel)
   #if FEATURE_BLUETOOTH
   if (!in_safe_mode) {
     Serial.println("[..] Initializing Bluetooth Low Energy...");
@@ -3436,6 +3519,35 @@ void setup() {
     }
   } else {
     Serial.println("[--] Bluetooth init skipped (safe mode)");
+  }
+  #endif
+
+  // Initialize BLE Discovery (Opera/Chirp/Nearby)
+  #if FEATURE_BLE
+  if (!in_safe_mode) {
+    Serial.println("[..] Initializing BLE Discovery subsystem...");
+
+    // Build device ID hash hex string from pubkey fingerprint
+    char ble_device_id_hex[20];
+    hex_to_str(ble_device_id_hex, g_device.pubkey_fp, 8);
+
+    if (ble_manager::init(ble_device_id_hex, FIRMWARE_VERSION,
+                          &g_device.seq, g_device.chain_head)) {
+      Serial.println("[OK] BLE Discovery initialized — Opera advertising, Nearby scanning");
+      log_health(LOG_LEVEL_INFO, LOG_CAT_BLUETOOTH, "BLE Discovery initialized", nullptr);
+
+      ble_manager::operaStart();
+      ble_manager::nearbyStart();
+
+      // Boot chirp
+      ble_manager::sendChirp(CHIRP_BOOT);
+    } else {
+      Serial.println("[--] BLE Discovery initialization failed — operating without BLE discovery");
+      Serial.println("[--] Check: Is the BLE antenna connected?");
+      log_health(LOG_LEVEL_WARNING, LOG_CAT_BLUETOOTH, "BLE Discovery init failed", nullptr);
+    }
+  } else {
+    Serial.println("[--] BLE Discovery init skipped (safe mode)");
   }
   #endif
 
@@ -3622,9 +3734,17 @@ void loop() {
   mesh_network::update();
   #endif
 
-  // Update Bluetooth
+  // Update Bluetooth (legacy channel)
   #if FEATURE_BLUETOOTH
   bluetooth_channel::update();
+  #endif
+
+  // Update BLE Discovery (Opera/Chirp/Nearby)
+  #if FEATURE_BLE
+  if (ble_manager::isAvailable()) {
+    ble_manager::update();
+    ble_manager::chirpHeartbeatCheck();
+  }
   #endif
 
   // Update system monitor (temp, heap, alerts)
