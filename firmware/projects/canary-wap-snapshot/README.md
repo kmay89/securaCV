@@ -52,6 +52,31 @@ Partition Scheme: "Huge APP (3MB No OTA)"
 
 ---
 
+## BLE Discovery (Opera/Chirp/Nearby)
+
+The Canary firmware includes an optional BLE Discovery subsystem controlled by the
+`FEATURE_BLE` compile flag (enabled in FULL profile). It adds three BLE subsystems:
+
+- **Opera**: BLE server/advertising — Canary broadcasts its presence via custom GATT service
+- **Chirp**: Connectionless broadcast alerts between Canary devices
+- **Nearby**: BLE scanner that discovers other Canaries and tracks proximity (RSSI)
+
+**New files**: `ble_config.h`, `ble_opera.h`, `ble_chirp.h`, `ble_nearby.h`, `ble_manager.h`
+
+**API endpoints**: `GET /api/ble/status`, `GET /api/nearby`, `POST /api/chirp/send`
+
+**Library dependency**: NimBLE-Arduino by h2zero (install via Arduino Library Manager)
+
+**Antenna requirement**: The XIAO ESP32S3 has a dedicated IPEX BLE antenna connector — it
+must be installed for BLE to work. If absent, the firmware gracefully degrades without BLE.
+
+**Security note**: BLE can be compiled out entirely by setting `FEATURE_BLE=0`. When disabled,
+all BLE binary blobs are removed from the build, reducing the trust surface.
+
+See `docs/ble_protocol.md` for the full protocol specification.
+
+---
+
 ## What belongs here
 
 - The raw Arduino sketch files as-is (e.g., `*.ino`, `*.h`).
