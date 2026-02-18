@@ -46,6 +46,7 @@
   #define FEATURE_STATE_LOG     1
   #define FEATURE_MESH_NETWORK  0
   #define FEATURE_BLUETOOTH     0
+  #define FEATURE_BLE           0   // BLE Discovery (Opera/Chirp/Nearby)
   #define FEATURE_SYS_MONITOR   0
 
   #define DEBUG_NMEA            0
@@ -68,6 +69,7 @@
   #define FEATURE_STATE_LOG     1
   #define FEATURE_MESH_NETWORK  0   // Skip mesh (saves ~15s)
   #define FEATURE_BLUETOOTH     0   // Skip BLE (saves ~25s)
+  #define FEATURE_BLE           0   // Skip BLE Discovery (saves ~25s)
   #define FEATURE_SYS_MONITOR   1
 
   #define DEBUG_NMEA            0
@@ -89,6 +91,7 @@
   #define FEATURE_STATE_LOG     1
   #define FEATURE_MESH_NETWORK  1
   #define FEATURE_BLUETOOTH     1
+  #define FEATURE_BLE           1   // BLE Discovery (Opera/Chirp/Nearby)
   #define FEATURE_SYS_MONITOR   1
 
   #define DEBUG_NMEA            0

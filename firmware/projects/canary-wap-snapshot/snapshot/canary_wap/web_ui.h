@@ -918,6 +918,78 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       <div class="sub-nav">
         <button class="sub-nav-btn active" onclick="switchCommunityTab('opera')">🔗 Opera Network</button>
         <button class="sub-nav-btn" onclick="switchCommunityTab('chirp')">🐦 Chirp Channel</button>
+        <button class="sub-nav-btn" onclick="switchCommunityTab('ble-discovery')">📡 BLE Discovery</button>
+      </div>
+
+      <!-- BLE DISCOVERY SUB-PANEL -->
+      <div class="sub-panel" id="community-ble-discovery">
+        <div class="feature-info">
+          <h4>📡 BLE Discovery (Opera/Chirp/Nearby)</h4>
+          <p>Bluetooth Low Energy subsystem for device presence, broadcast alerts, and proximity detection.</p>
+          <ul>
+            <li><strong>Opera:</strong> Advertises device presence — discoverable by other Canaries and phones</li>
+            <li><strong>Chirp:</strong> Connectionless broadcast alerts between Canary devices</li>
+            <li><strong>Nearby:</strong> Scans for and tracks other Canary devices by signal strength</li>
+          </ul>
+          <div class="privacy-note">🔒 Non-Canary BLE devices are counted only — never individually logged. No MAC addresses stored.</div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title">BLE Status</div>
+              <div class="card-subtitle" id="bleSubtitle">BLE discovery subsystem</div>
+            </div>
+            <div class="badge info" id="bleStateBadge">
+              <span class="badge-dot"></span>
+              <span id="bleStateText">Loading...</span>
+            </div>
+          </div>
+          <div class="stats-grid">
+            <div class="stat-item">
+              <div class="stat-label">Opera</div>
+              <div class="stat-value" style="font-size:0.9rem;" id="bleOperaState">--</div>
+            </div>
+            <div class="stat-item">
+              <div class="stat-label">Chirp Sent</div>
+              <div class="stat-value" id="bleChirpSent">0</div>
+            </div>
+            <div class="stat-item">
+              <div class="stat-label">Chirp Recv</div>
+              <div class="stat-value" id="bleChirpRecv">0</div>
+            </div>
+            <div class="stat-item">
+              <div class="stat-label">Connections</div>
+              <div class="stat-value" id="bleConnections">0</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title">Nearby Canaries</div>
+              <div class="card-subtitle" id="bleNearbySubtitle">Scanning...</div>
+            </div>
+          </div>
+          <div id="bleNearbyList">
+            <div class="empty-state"><div class="empty-icon">📡</div><p>No nearby Canaries detected</p></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title">Send Chirp Alert</div>
+              <div class="card-subtitle">Broadcast an alert to nearby Canaries</div>
+            </div>
+          </div>
+          <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+            <button class="btn btn-primary" onclick="sendBleChirp('alert')">🚨 Alert</button>
+            <button class="btn btn-secondary" onclick="sendBleChirp('heartbeat')">💓 Heartbeat</button>
+          </div>
+          <div id="bleChirpResult" style="margin-top:0.5rem;font-size:0.85rem;color:var(--muted);"></div>
+        </div>
       </div>
 
       <!-- OPERA SUB-PANEL -->
@@ -1604,7 +1676,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
       if (panel === 'records') { loadLogs(); loadWitness(); }
       else if (panel === 'camera') refreshPeekStatus();
-      else if (panel === 'community') { refreshOpera(); refreshChirpStatus(); }
+      else if (panel === 'community') { refreshOpera(); refreshChirpStatus(); refreshBleDiscovery(); }
       else if (panel === 'settings') { loadWifiStatus(); refreshBtStatus(); loadBtPairedDevices(); loadRfSettings(); }
 
       if (panel !== 'camera' && peekActive) stopPeek();
@@ -1617,6 +1689,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       document.querySelectorAll('#panel-community .sub-panel').forEach(p => p.classList.remove('active'));
       document.getElementById(`community-${tab}`).classList.add('active');
       if (tab === 'opera') refreshOpera();
+      else if (tab === 'ble-discovery') refreshBleDiscovery();
       else refreshChirpStatus();
     }
 
@@ -2314,6 +2387,101 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     // ══════════════════════════════════════════════════════════════════
     // BLUETOOTH
     // ══════════════════════════════════════════════════════════════════
+    // ── BLE Discovery (Opera/Chirp/Nearby) ──
+    let bleDiscoveryTimer = null;
+
+    async function refreshBleDiscovery() {
+      try {
+        const status = await api('/api/ble/status');
+        if (!status) return;
+
+        const badge = document.getElementById('bleStateBadge');
+        const text = document.getElementById('bleStateText');
+        if (status.ble_available) {
+          badge.className = 'badge success';
+          text.textContent = 'Active';
+        } else {
+          badge.className = 'badge warning';
+          text.textContent = 'Unavailable';
+        }
+
+        document.getElementById('bleOperaState').textContent = status.opera?.active ? 'Active' : 'Off';
+        document.getElementById('bleChirpSent').textContent = status.chirp?.sent || 0;
+        document.getElementById('bleChirpRecv').textContent = status.chirp?.received || 0;
+        document.getElementById('bleConnections').textContent = status.opera?.connections_total || 0;
+        document.getElementById('bleSubtitle').textContent = status.opera?.device_name || 'BLE discovery';
+      } catch(e) {}
+
+      try {
+        const nearby = await api('/api/nearby');
+        if (!nearby) return;
+
+        const list = document.getElementById('bleNearbyList');
+        const canaries = nearby.canaries || [];
+        const nonCanary = nearby.non_canary_device_count || 0;
+
+        document.getElementById('bleNearbySubtitle').textContent =
+          canaries.length + ' Canaries, ' + nonCanary + ' other BLE devices';
+
+        if (canaries.length === 0) {
+          list.innerHTML = '<div class="empty-state"><div class="empty-icon">📡</div><p>No nearby Canaries detected</p></div>';
+          return;
+        }
+
+        let html = '';
+        canaries.forEach(c => {
+          const rssi = c.rssi_current;
+          const quality = c.rssi_quality;
+          const barPct = Math.max(0, Math.min(100, (rssi + 100) * 2));
+          const barColor = quality === 'excellent' ? 'var(--success)' :
+                           quality === 'good' ? 'var(--accent)' :
+                           quality === 'fair' ? 'var(--warning)' : 'var(--danger)';
+          html += '<div style="display:flex;align-items:center;gap:0.75rem;padding:0.6rem 0;border-bottom:1px solid var(--border);">';
+          html += '<div style="min-width:60px;font-family:var(--mono);font-weight:600;color:var(--accent);">SCV-' + c.device_id_prefix + '</div>';
+          html += '<div style="flex:1;">';
+          html += '<div style="background:var(--border);border-radius:4px;height:8px;overflow:hidden;">';
+          html += '<div style="background:' + barColor + ';width:' + barPct + '%;height:100%;border-radius:4px;transition:width 0.3s;"></div>';
+          html += '</div></div>';
+          html += '<div style="min-width:80px;text-align:right;font-size:0.8rem;">';
+          html += '<span style="color:var(--text);">' + rssi + ' dBm</span><br>';
+          html += '<span style="color:var(--muted);">' + quality + '</span>';
+          html += '</div>';
+          html += '<div style="min-width:40px;text-align:right;font-size:0.75rem;color:var(--muted);">' + c.last_seen_sec_ago + 's</div>';
+          html += '</div>';
+        });
+        list.innerHTML = html;
+      } catch(e) {}
+
+      // Auto-refresh every 10 seconds when tab is visible
+      clearTimeout(bleDiscoveryTimer);
+      if (currentCommunityTab === 'ble-discovery') {
+        bleDiscoveryTimer = setTimeout(refreshBleDiscovery, 10000);
+      }
+    }
+
+    async function sendBleChirp(type) {
+      const result = document.getElementById('bleChirpResult');
+      result.textContent = 'Sending...';
+      try {
+        const data = await fetch('/api/chirp/send', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({type: type})
+        }).then(r => r.json());
+        if (data.ok) {
+          result.style.color = 'var(--success)';
+          result.textContent = 'Chirp sent: ' + data.chirp_type + ' (total: ' + data.chirps_sent + ')';
+        } else {
+          result.style.color = 'var(--danger)';
+          result.textContent = 'Failed: ' + (data.error || 'unknown error');
+        }
+      } catch(e) {
+        result.style.color = 'var(--danger)';
+        result.textContent = 'Error: ' + e.message;
+      }
+      setTimeout(() => { result.textContent = ''; }, 5000);
+    }
+
     let btState = null;
 
     async function refreshBtStatus() {

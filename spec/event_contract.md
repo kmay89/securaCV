@@ -188,3 +188,30 @@ Once written to the sealed log:
 New event types MAY be introduced via new rulesets.
 Older events remain governed by their original contract and semantics.
 Backward reinterpretation is forbidden.
+
+---
+
+## 10. BLE Discovery Semantic Events
+
+The following semantic events are emitted by the BLE Discovery subsystem
+(Opera/Chirp/Nearby) and fed into the witness chain as new records:
+
+| Event Type | Category | Description |
+|-----------|----------|-------------|
+| `ble_initialized` | BLUETOOTH | BLE subsystem started successfully |
+| `ble_init_failed` | BLUETOOTH | BLE failed to start (no antenna, hardware fault) |
+| `ble_client_connected` | BLUETOOTH | A BLE client connected to Opera server |
+| `ble_client_disconnected` | BLUETOOTH | A BLE client disconnected from Opera server |
+| `chirp_sent` | BLUETOOTH | A chirp broadcast was sent (includes type) |
+| `chirp_received` | BLUETOOTH | A chirp was received from another Canary |
+| `canary_discovered` | BLUETOOTH | A new Canary device appeared in scan |
+| `canary_lost` | BLUETOOTH | A previously visible Canary dropped off |
+
+### Privacy Constraints for BLE Events
+
+- BLE events MUST NOT include MAC addresses or stable hardware identifiers
+- Device identification uses truncated Ed25519 pubkey hash only
+- Non-Canary device counts are aggregate only (no individual entries)
+- Chirp received events include the sender's device ID prefix (from pubkey hash)
+- RSSI values MAY be included for proximity context but MUST NOT be stored
+  with enough precision to enable tracking

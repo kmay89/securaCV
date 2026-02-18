@@ -27,7 +27,7 @@ static inline esp_err_t send_json_response(httpd_req_t* req, const char* json) {
 }
 
 static inline esp_err_t send_success(httpd_req_t* req, const char* message = nullptr) {
-  StaticJsonDocument<128> doc;
+  JsonDocument doc;
   doc["success"] = true;
   if (message) doc["message"] = message;
 
@@ -37,7 +37,7 @@ static inline esp_err_t send_success(httpd_req_t* req, const char* message = nul
 }
 
 static inline esp_err_t send_error(httpd_req_t* req, const char* error) {
-  StaticJsonDocument<128> doc;
+  JsonDocument doc;
   doc["success"] = false;
   doc["error"] = error;
 
@@ -54,7 +54,7 @@ static inline esp_err_t send_error(httpd_req_t* req, const char* error) {
 inline esp_err_t handle_bluetooth_status(httpd_req_t* req) {
   bluetooth_channel::BluetoothStatus status = bluetooth_channel::get_status();
 
-  DynamicJsonDocument doc(2048);
+  JsonDocument doc;
 
   doc["state"] = bluetooth_channel::state_name(status.state);
   doc["enabled"] = status.enabled;
@@ -69,7 +69,7 @@ inline esp_err_t handle_bluetooth_status(httpd_req_t* req) {
 
   // Connection info
   if (status.connected) {
-    JsonObject conn = doc.createNestedObject("connection");
+    JsonObject conn = doc["connection"].to<JsonObject>();
     char addr[18];
     bluetooth_channel::format_address(status.connection.address, addr);
     conn["address"] = addr;
@@ -83,7 +83,7 @@ inline esp_err_t handle_bluetooth_status(httpd_req_t* req) {
 
   // Pairing info
   if (status.pairing.state != bluetooth_channel::PAIR_NONE) {
-    JsonObject pair = doc.createNestedObject("pairing");
+    JsonObject pair = doc["pairing"].to<JsonObject>();
     pair["state"] = bluetooth_channel::pairing_state_name(status.pairing.state);
     if (status.pairing.pin_displayed) {
       pair["pin"] = status.pairing.pin_code;
@@ -95,7 +95,7 @@ inline esp_err_t handle_bluetooth_status(httpd_req_t* req) {
   }
 
   // Statistics
-  JsonObject stats = doc.createNestedObject("stats");
+  JsonObject stats = doc["stats"].to<JsonObject>();
   stats["total_connections"] = status.total_connections;
   stats["total_bytes_sent"] = status.total_bytes_sent;
   stats["total_bytes_received"] = status.total_bytes_received;
@@ -147,16 +147,16 @@ inline esp_err_t handle_bluetooth_scan_start(httpd_req_t* req) {
   int content_len = httpd_req_recv(req, content, sizeof(content) - 1);
   if (content_len > 0) {
     content[content_len] = '\0';
-    StaticJsonDocument<64> input;
+    JsonDocument input;
     if (deserializeJson(input, content) == DeserializationError::Ok) {
-      if (input.containsKey("duration_sec")) {
+      if (input["duration_sec"].is<JsonVariant>()) {
         duration_ms = input["duration_sec"].as<uint32_t>() * 1000;
       }
     }
   }
 
   if (bluetooth_channel::start_scan(duration_ms)) {
-    StaticJsonDocument<128> doc;
+    JsonDocument doc;
     doc["success"] = true;
     doc["message"] = "Scan started";
     doc["duration_sec"] = duration_ms / 1000;
@@ -179,13 +179,13 @@ inline esp_err_t handle_bluetooth_scan_results(httpd_req_t* req) {
   size_t count;
   const bluetooth_channel::ScannedDevice* devices = bluetooth_channel::get_scanned_devices(&count);
 
-  DynamicJsonDocument doc(4096);
+  JsonDocument doc;
   doc["scanning"] = bluetooth_channel::is_scanning();
   doc["count"] = count;
 
-  JsonArray arr = doc.createNestedArray("devices");
+  JsonArray arr = doc["devices"].to<JsonArray>();
   for (size_t i = 0; i < count; i++) {
-    JsonObject dev = arr.createNestedObject();
+    JsonObject dev = arr.add<JsonObject>();
 
     char addr[18];
     bluetooth_channel::format_address(devices[i].address, addr);
@@ -235,12 +235,12 @@ inline esp_err_t handle_bluetooth_pair_confirm(httpd_req_t* req) {
   }
   content[content_len] = '\0';
 
-  StaticJsonDocument<64> input;
+  JsonDocument input;
   if (deserializeJson(input, content) != DeserializationError::Ok) {
     return send_error(req, "Invalid JSON");
   }
 
-  if (!input.containsKey("pin")) {
+  if (!input["pin"].is<JsonVariant>()) {
     return send_error(req, "Missing 'pin' field");
   }
 
@@ -264,12 +264,12 @@ inline esp_err_t handle_bluetooth_paired_list(httpd_req_t* req) {
   size_t count;
   const bluetooth_channel::PairedDevice* devices = bluetooth_channel::get_paired_devices(&count);
 
-  DynamicJsonDocument doc(2048);
+  JsonDocument doc;
   doc["count"] = count;
 
-  JsonArray arr = doc.createNestedArray("devices");
+  JsonArray arr = doc["devices"].to<JsonArray>();
   for (size_t i = 0; i < count; i++) {
-    JsonObject dev = arr.createNestedObject();
+    JsonObject dev = arr.add<JsonObject>();
 
     char addr[18];
     bluetooth_channel::format_address(devices[i].address, addr);
@@ -300,12 +300,12 @@ inline esp_err_t handle_bluetooth_paired_remove(httpd_req_t* req) {
   }
   content[content_len] = '\0';
 
-  StaticJsonDocument<64> input;
+  JsonDocument input;
   if (deserializeJson(input, content) != DeserializationError::Ok) {
     return send_error(req, "Invalid JSON");
   }
 
-  if (!input.containsKey("address")) {
+  if (!input["address"].is<JsonVariant>()) {
     return send_error(req, "Missing 'address' field");
   }
 
@@ -337,12 +337,12 @@ inline esp_err_t handle_bluetooth_paired_trust(httpd_req_t* req) {
   }
   content[content_len] = '\0';
 
-  StaticJsonDocument<128> input;
+  JsonDocument input;
   if (deserializeJson(input, content) != DeserializationError::Ok) {
     return send_error(req, "Invalid JSON");
   }
 
-  if (!input.containsKey("address") || !input.containsKey("trusted")) {
+  if (!input["address"].is<JsonVariant>() || !input["trusted"].is<JsonVariant>()) {
     return send_error(req, "Missing 'address' or 'trusted' field");
   }
 
@@ -367,12 +367,12 @@ inline esp_err_t handle_bluetooth_paired_block(httpd_req_t* req) {
   }
   content[content_len] = '\0';
 
-  StaticJsonDocument<128> input;
+  JsonDocument input;
   if (deserializeJson(input, content) != DeserializationError::Ok) {
     return send_error(req, "Invalid JSON");
   }
 
-  if (!input.containsKey("address") || !input.containsKey("blocked")) {
+  if (!input["address"].is<JsonVariant>() || !input["blocked"].is<JsonVariant>()) {
     return send_error(req, "Missing 'address' or 'blocked' field");
   }
 
@@ -400,7 +400,7 @@ inline esp_err_t handle_bluetooth_disconnect(httpd_req_t* req) {
 inline esp_err_t handle_bluetooth_settings_get(httpd_req_t* req) {
   bluetooth_channel::BluetoothSettings settings = bluetooth_channel::get_settings();
 
-  StaticJsonDocument<512> doc;
+  JsonDocument doc;
   doc["enabled"] = settings.enabled;
   doc["auto_advertise"] = settings.auto_advertise;
   doc["allow_pairing"] = settings.allow_pairing;
@@ -424,37 +424,37 @@ inline esp_err_t handle_bluetooth_settings_set(httpd_req_t* req) {
   }
   content[content_len] = '\0';
 
-  StaticJsonDocument<512> input;
+  JsonDocument input;
   if (deserializeJson(input, content) != DeserializationError::Ok) {
     return send_error(req, "Invalid JSON");
   }
 
   bluetooth_channel::BluetoothSettings settings = bluetooth_channel::get_settings();
 
-  if (input.containsKey("enabled")) {
+  if (input["enabled"].is<JsonVariant>()) {
     settings.enabled = input["enabled"].as<bool>();
   }
-  if (input.containsKey("auto_advertise")) {
+  if (input["auto_advertise"].is<JsonVariant>()) {
     settings.auto_advertise = input["auto_advertise"].as<bool>();
   }
-  if (input.containsKey("allow_pairing")) {
+  if (input["allow_pairing"].is<JsonVariant>()) {
     settings.allow_pairing = input["allow_pairing"].as<bool>();
   }
-  if (input.containsKey("require_pin")) {
+  if (input["require_pin"].is<JsonVariant>()) {
     settings.require_pin = input["require_pin"].as<bool>();
   }
-  if (input.containsKey("device_name")) {
+  if (input["device_name"].is<JsonVariant>()) {
     strncpy(settings.device_name, input["device_name"].as<const char*>(),
             bluetooth_channel::MAX_DEVICE_NAME_LEN);
     settings.device_name[bluetooth_channel::MAX_DEVICE_NAME_LEN] = '\0';
   }
-  if (input.containsKey("tx_power")) {
+  if (input["tx_power"].is<JsonVariant>()) {
     settings.tx_power = input["tx_power"].as<int8_t>();
   }
-  if (input.containsKey("inactivity_timeout_sec")) {
+  if (input["inactivity_timeout_sec"].is<JsonVariant>()) {
     settings.inactivity_timeout_ms = input["inactivity_timeout_sec"].as<uint32_t>() * 1000;
   }
-  if (input.containsKey("notify_on_connect")) {
+  if (input["notify_on_connect"].is<JsonVariant>()) {
     settings.notify_on_connect = input["notify_on_connect"].as<bool>();
   }
 
@@ -473,12 +473,12 @@ inline esp_err_t handle_bluetooth_name_set(httpd_req_t* req) {
   }
   content[content_len] = '\0';
 
-  StaticJsonDocument<128> input;
+  JsonDocument input;
   if (deserializeJson(input, content) != DeserializationError::Ok) {
     return send_error(req, "Invalid JSON");
   }
 
-  if (!input.containsKey("name")) {
+  if (!input["name"].is<JsonVariant>()) {
     return send_error(req, "Missing 'name' field");
   }
 
@@ -498,18 +498,18 @@ inline esp_err_t handle_bluetooth_power_set(httpd_req_t* req) {
   }
   content[content_len] = '\0';
 
-  StaticJsonDocument<64> input;
+  JsonDocument input;
   if (deserializeJson(input, content) != DeserializationError::Ok) {
     return send_error(req, "Invalid JSON");
   }
 
-  if (!input.containsKey("power")) {
+  if (!input["power"].is<JsonVariant>()) {
     return send_error(req, "Missing 'power' field");
   }
 
   int8_t power = input["power"].as<int8_t>();
   if (bluetooth_channel::set_tx_power(power)) {
-    StaticJsonDocument<128> doc;
+    JsonDocument doc;
     doc["success"] = true;
     doc["message"] = "TX power updated";
     doc["power"] = power;

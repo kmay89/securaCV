@@ -101,6 +101,10 @@
 
 #include "build_config.h"
 
+// BLE Discovery Subsystem (Opera/Chirp/Nearby)
+#include "ble_config.h"
+#include "ble_manager.h"
+
 // ════════════════════════════════════════════════════════════════════════════
 // VERSION & PROTOCOL (must match PWK expectations)
 // ════════════════════════════════════════════════════════════════════════════
@@ -1431,7 +1435,7 @@ static esp_err_t handle_ui(httpd_req_t* req) {
 static esp_err_t handle_status(httpd_req_t* req) {
   g_health.http_requests++;
 
-  StaticJsonDocument<1536> doc;
+  JsonDocument doc;
   doc["ok"] = true;
   doc["device_id"] = g_device.device_id;
   doc["device_type"] = DEVICE_TYPE;
@@ -1495,7 +1499,7 @@ static esp_err_t handle_status(httpd_req_t* req) {
   doc["unacked_count"] = g_health.logs_unacked;
 
   // GPS position data (safe even if GPS absent - returns zeros/false)
-  JsonObject gps = doc.createNestedObject("gps");
+  JsonObject gps = doc["gps"].to<JsonObject>();
   gps["available"] = g_hw.gps_available;
   gps["fix"] = g_fix.valid;
   // Only include coordinates if GPS is available and has fix
@@ -1541,7 +1545,7 @@ static esp_err_t handle_system_metrics(httpd_req_t* req) {
 static esp_err_t handle_chain(httpd_req_t* req) {
   g_health.http_requests++;
 
-  StaticJsonDocument<512> doc;
+  JsonDocument doc;
   doc["ok"] = true;
   
   char chain_hex[65];
@@ -1549,11 +1553,11 @@ static esp_err_t handle_chain(httpd_req_t* req) {
   doc["chain_head"] = chain_hex;
   doc["sequence"] = g_device.seq;
   
-  JsonArray blocks = doc.createNestedArray("blocks");
+  JsonArray blocks = doc["blocks"].to<JsonArray>();
   
   // Add last record info
   if (g_last_record.seq > 0) {
-    JsonObject block = blocks.createNestedObject();
+    JsonObject block = blocks.add<JsonObject>();
     char hash[65];
     hex_to_str(hash, g_last_record.chain_hash, 32);
     block["seq"] = g_last_record.seq;
@@ -1579,11 +1583,11 @@ static esp_err_t handle_logs(httpd_req_t* req) {
     }
   }
   
-  DynamicJsonDocument doc(4096);
+  JsonDocument doc;
   doc["ok"] = true;
   doc["total"] = g_health_log_ring_count;
   
-  JsonArray logs = doc.createNestedArray("logs");
+  JsonArray logs = doc["logs"].to<JsonArray>();
   
   // Iterate through ring buffer (most recent first)
   for (size_t i = 0; i < g_health_log_ring_count; i++) {
@@ -1594,7 +1598,7 @@ static esp_err_t handle_logs(httpd_req_t* req) {
       continue;
     }
     
-    JsonObject log = logs.createNestedObject();
+    JsonObject log = logs.add<JsonObject>();
     log["seq"] = entry.seq;
     log["timestamp_ms"] = entry.timestamp_ms;
     log["level"] = (int)entry.level;
@@ -1630,7 +1634,7 @@ static esp_err_t handle_log_ack(httpd_req_t* req) {
   
   const char* reason = "";
   if (ret > 0) {
-    StaticJsonDocument<128> body;
+    JsonDocument body;
     if (deserializeJson(body, content) == DeserializationError::Ok) {
       reason = body["reason"] | "";
     }
@@ -1638,7 +1642,7 @@ static esp_err_t handle_log_ack(httpd_req_t* req) {
   
   bool success = acknowledge_log_entry(seq, ACK_STATUS_ACKNOWLEDGED, reason);
   
-  StaticJsonDocument<128> doc;
+  JsonDocument doc;
   doc["ok"] = success;
   if (!success) {
     doc["error"] = "Log entry not found";
@@ -1664,7 +1668,7 @@ static esp_err_t handle_ack_all(httpd_req_t* req) {
   
   log_health(LOG_LEVEL_INFO, LOG_CAT_USER, "Bulk acknowledgment", nullptr);
   
-  StaticJsonDocument<128> doc;
+  JsonDocument doc;
   doc["ok"] = true;
   doc["acknowledged"] = acked;
   
@@ -1676,15 +1680,15 @@ static esp_err_t handle_ack_all(httpd_req_t* req) {
 static esp_err_t handle_witness(httpd_req_t* req) {
   g_health.http_requests++;
   
-  DynamicJsonDocument doc(2048);
+  JsonDocument doc;
   doc["ok"] = true;
   doc["total"] = g_health.records_created;
   
-  JsonArray records = doc.createNestedArray("records");
+  JsonArray records = doc["records"].to<JsonArray>();
   
   // Just show last record info for now
   if (g_last_record.seq > 0) {
-    JsonObject rec = records.createNestedObject();
+    JsonObject rec = records.add<JsonObject>();
     rec["seq"] = g_last_record.seq;
     rec["time_bucket"] = g_last_record.time_bucket;
     rec["type"] = (int)g_last_record.type;
@@ -1705,7 +1709,7 @@ static esp_err_t handle_witness(httpd_req_t* req) {
 static esp_err_t handle_config_get(httpd_req_t* req) {
   g_health.http_requests++;
   
-  StaticJsonDocument<256> doc;
+  JsonDocument doc;
   doc["ok"] = true;
   doc["record_interval_ms"] = RECORD_INTERVAL_MS;
   doc["time_bucket_ms"] = TIME_BUCKET_MS;
@@ -1721,7 +1725,7 @@ static esp_err_t handle_export(httpd_req_t* req) {
 
   // Check SD card availability using hardware state (non-blocking)
   if (!sd_is_available()) {
-    StaticJsonDocument<192> doc;
+    JsonDocument doc;
     doc["ok"] = false;
     doc["error"] = "SD card not available";
     doc["sd_state"] = sd_state_name(g_hw.sd_state);
@@ -1733,7 +1737,7 @@ static esp_err_t handle_export(httpd_req_t* req) {
 
   // Verify SD card is still present before proceeding
   if (!sd_verify_present()) {
-    StaticJsonDocument<192> doc;
+    JsonDocument doc;
     doc["ok"] = false;
     doc["error"] = "SD card was removed during operation";
     doc["sd_state"] = sd_state_name(g_hw.sd_state);
@@ -1751,7 +1755,7 @@ static esp_err_t handle_export(httpd_req_t* req) {
   if (!file) {
     // SD operation failed - mark as error
     sd_op_failure();
-    StaticJsonDocument<192> doc;
+    JsonDocument doc;
     doc["ok"] = false;
     doc["error"] = "Failed to create export file";
     doc["sd_state"] = sd_state_name(g_hw.sd_state);
@@ -1761,7 +1765,7 @@ static esp_err_t handle_export(httpd_req_t* req) {
   }
 
   // Write export header
-  StaticJsonDocument<512> header;
+  JsonDocument header;
   header["version"] = PROTOCOL_VERSION;
   header["device_id"] = g_device.device_id;
   header["firmware"] = FIRMWARE_VERSION;
@@ -1782,7 +1786,7 @@ static esp_err_t handle_export(httpd_req_t* req) {
 
   log_health(LOG_LEVEL_INFO, LOG_CAT_USER, "Export created", export_path);
 
-  StaticJsonDocument<128> doc;
+  JsonDocument doc;
   doc["ok"] = true;
   doc["download_url"] = String("/api/download?path=") + export_path;
 
@@ -1800,7 +1804,7 @@ static esp_err_t handle_reboot(httpd_req_t* req) {
   nvs_store_u32(NVS_KEY_SEQ, g_device.seq);
   nvs_store_bytes(NVS_KEY_CHAIN, g_device.chain_head, 32);
   
-  StaticJsonDocument<64> doc;
+  JsonDocument doc;
   doc["ok"] = true;
   doc["message"] = "Rebooting...";
   
@@ -1914,7 +1918,7 @@ static esp_err_t handle_peek_start(httpd_req_t* req) {
   
   log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "Peek started", nullptr);
   
-  StaticJsonDocument<128> doc;
+  JsonDocument doc;
   doc["ok"] = true;
   doc["message"] = "Peek stream activated";
   doc["resolution"] = framesize_name(g_peek_framesize);
@@ -2038,7 +2042,7 @@ static esp_err_t handle_peek_stop(httpd_req_t* req) {
   
   log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "Peek stopped", nullptr);
   
-  StaticJsonDocument<64> doc;
+  JsonDocument doc;
   doc["ok"] = true;
   doc["message"] = "Peek stopped";
   
@@ -2050,7 +2054,7 @@ static esp_err_t handle_peek_stop(httpd_req_t* req) {
 static esp_err_t handle_peek_status(httpd_req_t* req) {
   g_health.http_requests++;
   
-  StaticJsonDocument<256> doc;
+  JsonDocument doc;
   doc["ok"] = true;
   doc["camera_initialized"] = g_camera_initialized;
   doc["peek_active"] = g_peek_active;
@@ -2083,7 +2087,7 @@ static esp_err_t handle_peek_resolution(httpd_req_t* req) {
     return http_send_json(req, resp);
   }
   
-  StaticJsonDocument<64> body;
+  JsonDocument body;
   if (deserializeJson(body, content) != DeserializationError::Ok) {
     const char* resp = "{\"ok\":false,\"error\":\"Invalid JSON\"}";
     return http_send_json(req, resp);
@@ -2107,7 +2111,7 @@ static esp_err_t handle_peek_resolution(httpd_req_t* req) {
     g_peek_active = true;
   }
   
-  StaticJsonDocument<128> doc;
+  JsonDocument doc;
   doc["ok"] = success;
   if (success) {
     doc["resolution"] = size;
@@ -2137,7 +2141,7 @@ static esp_err_t handle_mesh_status(httpd_req_t* req) {
   const mesh_network::OperaConfig* config = mesh_network::get_opera_config();
   const mesh_network::PairingSession* pairing = mesh_network::get_pairing_session();
 
-  StaticJsonDocument<512> doc;
+  JsonDocument doc;
   doc["ok"] = true;
   doc["state"] = mesh_network::state_name(status.state);
   doc["enabled"] = mesh_network::is_enabled();
@@ -2169,16 +2173,16 @@ static esp_err_t handle_mesh_peers(httpd_req_t* req) {
   g_health.http_requests++;
 
   uint8_t count = mesh_network::get_peer_count();
-  DynamicJsonDocument doc(2048);
+  JsonDocument doc;
   doc["ok"] = true;
   doc["count"] = count;
 
-  JsonArray peers = doc.createNestedArray("peers");
+  JsonArray peers = doc["peers"].to<JsonArray>();
   for (uint8_t i = 0; i < count; i++) {
     const mesh_network::OperaPeer* peer = mesh_network::get_peer(i);
     if (!peer) continue;
 
-    JsonObject p = peers.createNestedObject();
+    JsonObject p = peers.add<JsonObject>();
     p["name"] = peer->name;
 
     char fp_hex[17];
@@ -2207,14 +2211,14 @@ static esp_err_t handle_mesh_alerts(httpd_req_t* req) {
   size_t count = 0;
   const mesh_network::MeshAlert* alerts = mesh_network::get_alerts(&count);
 
-  DynamicJsonDocument doc(2048);
+  JsonDocument doc;
   doc["ok"] = true;
   doc["count"] = count;
 
-  JsonArray arr = doc.createNestedArray("alerts");
+  JsonArray arr = doc["alerts"].to<JsonArray>();
   for (size_t i = 0; i < count; i++) {
     const mesh_network::MeshAlert* alert = &alerts[i];
-    JsonObject a = arr.createNestedObject();
+    JsonObject a = arr.add<JsonObject>();
 
     a["timestamp_ms"] = alert->timestamp_ms;
     a["type"] = mesh_network::alert_type_name(alert->type);
@@ -2243,7 +2247,7 @@ static esp_err_t handle_mesh_enable(httpd_req_t* req) {
   if (ret <= 0) return http_send_error(req, 400, "invalid_body");
   buf[ret] = '\0';
 
-  StaticJsonDocument<64> body;
+  JsonDocument body;
   if (deserializeJson(body, buf) != DeserializationError::Ok) {
     return http_send_error(req, 400, "invalid_json");
   }
@@ -2263,7 +2267,7 @@ static esp_err_t handle_mesh_pair_start(httpd_req_t* req) {
   buf[ret > 0 ? ret : 0] = '\0';
 
   const char* opera_name = nullptr;
-  StaticJsonDocument<128> body;
+  JsonDocument body;
   if (ret > 0 && deserializeJson(body, buf) == DeserializationError::Ok) {
     opera_name = body["name"] | (const char*)nullptr;
   }
@@ -2320,7 +2324,7 @@ static esp_err_t handle_mesh_remove(httpd_req_t* req) {
   if (ret <= 0) return http_send_error(req, 400, "invalid_body");
   buf[ret] = '\0';
 
-  StaticJsonDocument<64> body;
+  JsonDocument body;
   if (deserializeJson(body, buf) != DeserializationError::Ok) {
     return http_send_error(req, 400, "invalid_json");
   }
@@ -2352,7 +2356,7 @@ static esp_err_t handle_mesh_name(httpd_req_t* req) {
   if (ret <= 0) return http_send_error(req, 400, "invalid_body");
   buf[ret] = '\0';
 
-  StaticJsonDocument<128> body;
+  JsonDocument body;
   if (deserializeJson(body, buf) != DeserializationError::Ok) {
     return http_send_error(req, 400, "invalid_json");
   }
@@ -2380,7 +2384,7 @@ static esp_err_t handle_wifi_status(httpd_req_t* req) {
 
   wifi_update_status();
 
-  StaticJsonDocument<512> doc;
+  JsonDocument doc;
   doc["ok"] = true;
   doc["state"] = wifi_state_name(g_wifi_status.state);
   doc["ap_active"] = g_wifi_status.ap_active;
@@ -2412,7 +2416,7 @@ static esp_err_t handle_wifi_scan(httpd_req_t* req) {
 
   if (scanResult == WIFI_SCAN_RUNNING) {
     // Scan still in progress - tell client to poll again
-    StaticJsonDocument<64> doc;
+    JsonDocument doc;
     doc["ok"] = true;
     doc["scanning"] = true;
     String response;
@@ -2426,7 +2430,7 @@ static esp_err_t handle_wifi_scan(httpd_req_t* req) {
     g_wifi_status.state = WIFI_PROV_SCANNING;
     WiFi.scanNetworks(true, false, false, 300);  // async=true
 
-    StaticJsonDocument<64> doc;
+    JsonDocument doc;
     doc["ok"] = true;
     doc["scanning"] = true;
     String response;
@@ -2441,15 +2445,15 @@ static esp_err_t handle_wifi_scan(httpd_req_t* req) {
   }
 
   int n = scanResult;
-  DynamicJsonDocument doc(2048);
+  JsonDocument doc;
   doc["ok"] = true;
   doc["scanning"] = false;
   doc["count"] = n;
 
-  JsonArray networks = doc.createNestedArray("networks");
+  JsonArray networks = doc["networks"].to<JsonArray>();
 
   for (int i = 0; i < n && i < 20; i++) {
-    JsonObject net = networks.createNestedObject();
+    JsonObject net = networks.add<JsonObject>();
     net["ssid"] = WiFi.SSID(i);
     net["rssi"] = WiFi.RSSI(i);
     net["channel"] = WiFi.channel(i);
@@ -2480,7 +2484,7 @@ static esp_err_t handle_wifi_connect(httpd_req_t* req) {
   int ret = httpd_req_recv(req, content, sizeof(content) - 1);
 
   if (ret <= 0) {
-    StaticJsonDocument<64> doc;
+    JsonDocument doc;
     doc["ok"] = false;
     doc["error"] = "No body";
     String response;
@@ -2488,9 +2492,9 @@ static esp_err_t handle_wifi_connect(httpd_req_t* req) {
     return http_send_json(req, response.c_str());
   }
 
-  StaticJsonDocument<256> body;
+  JsonDocument body;
   if (deserializeJson(body, content) != DeserializationError::Ok) {
-    StaticJsonDocument<64> doc;
+    JsonDocument doc;
     doc["ok"] = false;
     doc["error"] = "Invalid JSON";
     String response;
@@ -2502,7 +2506,7 @@ static esp_err_t handle_wifi_connect(httpd_req_t* req) {
   const char* password = body["password"] | "";
 
   if (strlen(ssid) == 0 || strlen(ssid) > 32) {
-    StaticJsonDocument<64> doc;
+    JsonDocument doc;
     doc["ok"] = false;
     doc["error"] = "Invalid SSID (1-32 chars required)";
     String response;
@@ -2511,7 +2515,7 @@ static esp_err_t handle_wifi_connect(httpd_req_t* req) {
   }
 
   if (strlen(password) > 64) {
-    StaticJsonDocument<64> doc;
+    JsonDocument doc;
     doc["ok"] = false;
     doc["error"] = "Password too long (max 64 chars)";
     String response;
@@ -2532,7 +2536,7 @@ static esp_err_t handle_wifi_connect(httpd_req_t* req) {
   // Attempt connection
   wifi_connect_to_home();
 
-  StaticJsonDocument<128> doc;
+  JsonDocument doc;
   doc["ok"] = true;
   doc["message"] = "Credentials saved, attempting connection";
   doc["ssid"] = g_wifi_creds.ssid;
@@ -2558,7 +2562,7 @@ static esp_err_t handle_wifi_disconnect(httpd_req_t* req) {
 
   log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "WiFi disconnected", nullptr);
 
-  StaticJsonDocument<64> doc;
+  JsonDocument doc;
   doc["ok"] = true;
   doc["message"] = "Disconnected from home WiFi";
 
@@ -2573,7 +2577,7 @@ static esp_err_t handle_wifi_forget(httpd_req_t* req) {
   WiFi.disconnect(true);
   wifi_clear_credentials();
 
-  StaticJsonDocument<64> doc;
+  JsonDocument doc;
   doc["ok"] = true;
   doc["message"] = "WiFi credentials forgotten";
 
@@ -2586,7 +2590,7 @@ static esp_err_t handle_wifi_reconnect(httpd_req_t* req) {
   g_health.http_requests++;
 
   if (!g_wifi_creds.configured) {
-    StaticJsonDocument<64> doc;
+    JsonDocument doc;
     doc["ok"] = false;
     doc["error"] = "No WiFi credentials configured";
     String response;
@@ -2607,7 +2611,7 @@ static esp_err_t handle_wifi_reconnect(httpd_req_t* req) {
 
   wifi_connect_to_home();
 
-  StaticJsonDocument<128> doc;
+  JsonDocument doc;
   doc["ok"] = true;
   doc["message"] = "Attempting to reconnect";
   doc["ssid"] = g_wifi_creds.ssid;
@@ -2630,6 +2634,70 @@ static esp_err_t handle_captive_portal(httpd_req_t* req) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// BLE DISCOVERY API HANDLERS (Opera/Chirp/Nearby)
+// ════════════════════════════════════════════════════════════════════════════
+
+#if FEATURE_BLE
+
+// GET /api/ble/status — BLE subsystem status
+static esp_err_t handle_ble_status(httpd_req_t* req) {
+  g_health.http_requests++;
+  String json = ble_manager::statusJson();
+  return http_send_json(req, json.c_str());
+}
+
+// GET /api/nearby — Nearby Canary devices
+static esp_err_t handle_ble_nearby(httpd_req_t* req) {
+  g_health.http_requests++;
+  String json = ble_manager::nearbyJson();
+  return http_send_json(req, json.c_str());
+}
+
+// POST /api/chirp/send — Trigger a manual chirp alert
+static esp_err_t handle_ble_chirp_send(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  if (!ble_manager::isAvailable()) {
+    return http_send_error(req, 503, "ble_unavailable");
+  }
+
+  // Parse request body for chirp type
+  char content[64];
+  int content_len = httpd_req_recv(req, content, sizeof(content) - 1);
+  ChirpType chirpType = CHIRP_ALERT;  // Default
+
+  if (content_len > 0) {
+    content[content_len] = '\0';
+    JsonDocument doc;
+    if (deserializeJson(doc, content) == DeserializationError::Ok) {
+      const char* typeStr = doc["type"] | "";
+      if (strcmp(typeStr, "heartbeat") == 0) chirpType = CHIRP_HEARTBEAT;
+      else if (strcmp(typeStr, "tamper") == 0) chirpType = CHIRP_TAMPER;
+      else if (strcmp(typeStr, "witness") == 0) chirpType = CHIRP_WITNESS;
+      else if (strcmp(typeStr, "boot") == 0) chirpType = CHIRP_BOOT;
+    }
+  }
+
+  // Rate limit check
+  if (ble_chirp::isRateLimited()) {
+    httpd_resp_set_status(req, "429 Too Many Requests");
+    return http_send_json(req, "{\"ok\":false,\"error\":\"rate_limited\"}");
+  }
+
+  if (ble_manager::sendChirp(chirpType)) {
+    char response[128];
+    snprintf(response, sizeof(response),
+      "{\"ok\":true,\"chirp_type\":\"%s\",\"chirps_sent\":%u}",
+      chirpTypeName(chirpType), ble_chirp::getChirpsSent());
+    return http_send_json(req, response);
+  }
+
+  return http_send_error(req, 500, "chirp_failed");
+}
+
+#endif // FEATURE_BLE
+
+// ════════════════════════════════════════════════════════════════════════════
 // HTTP SERVER SETUP
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -2644,8 +2712,9 @@ static void start_http_server() {
   const int camera_handlers = 6;      // Camera peek endpoints
   const int mesh_handlers = 12;       // Mesh network endpoints
   const int bluetooth_handlers = 23;  // Bluetooth API endpoints
+  const int ble_discovery_handlers = 3; // BLE discovery (Opera/Chirp/Nearby) endpoints
   const int handler_headroom = 4;     // Reserve for future additions
-  config.max_uri_handlers = base_handlers + camera_handlers + mesh_handlers + bluetooth_handlers + handler_headroom;
+  config.max_uri_handlers = base_handlers + camera_handlers + mesh_handlers + bluetooth_handlers + ble_discovery_handlers + handler_headroom;
   
   if (httpd_start(&g_http_server, &config) != ESP_OK) {
     log_health(LOG_LEVEL_ERROR, LOG_CAT_NETWORK, "HTTP server start failed", nullptr);
@@ -2783,6 +2852,20 @@ static void start_http_server() {
 #if FEATURE_BLUETOOTH
   // Bluetooth endpoints
   bluetooth_api::register_routes(g_http_server);
+#endif
+
+#if FEATURE_BLE
+  // BLE Discovery endpoints (Opera/Chirp/Nearby)
+  {
+    httpd_uri_t ble_status = { .uri = "/api/ble/status", .method = HTTP_GET, .handler = handle_ble_status, .user_ctx = nullptr };
+    httpd_register_uri_handler(g_http_server, &ble_status);
+
+    httpd_uri_t ble_nearby = { .uri = "/api/nearby", .method = HTTP_GET, .handler = handle_ble_nearby, .user_ctx = nullptr };
+    httpd_register_uri_handler(g_http_server, &ble_nearby);
+
+    httpd_uri_t ble_chirp_send = { .uri = "/api/chirp/send", .method = HTTP_POST, .handler = handle_ble_chirp_send, .user_ctx = nullptr };
+    httpd_register_uri_handler(g_http_server, &ble_chirp_send);
+  }
 #endif
 
   log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "HTTP server started", "port 80");
@@ -3424,7 +3507,7 @@ void setup() {
   }
   #endif
 
-  // Initialize Bluetooth
+  // Initialize Bluetooth (legacy channel)
   #if FEATURE_BLUETOOTH
   if (!in_safe_mode) {
     Serial.println("[..] Initializing Bluetooth Low Energy...");
@@ -3436,6 +3519,35 @@ void setup() {
     }
   } else {
     Serial.println("[--] Bluetooth init skipped (safe mode)");
+  }
+  #endif
+
+  // Initialize BLE Discovery (Opera/Chirp/Nearby)
+  #if FEATURE_BLE
+  if (!in_safe_mode) {
+    Serial.println("[..] Initializing BLE Discovery subsystem...");
+
+    // Build device ID hash hex string from pubkey fingerprint
+    char ble_device_id_hex[20];
+    hex_to_str(ble_device_id_hex, g_device.pubkey_fp, 8);
+
+    if (ble_manager::init(ble_device_id_hex, FIRMWARE_VERSION,
+                          &g_device.seq, g_device.chain_head)) {
+      Serial.println("[OK] BLE Discovery initialized — Opera advertising, Nearby scanning");
+      log_health(LOG_LEVEL_INFO, LOG_CAT_BLUETOOTH, "BLE Discovery initialized", nullptr);
+
+      ble_manager::operaStart();
+      ble_manager::nearbyStart();
+
+      // Boot chirp
+      ble_manager::sendChirp(CHIRP_BOOT);
+    } else {
+      Serial.println("[--] BLE Discovery initialization failed — operating without BLE discovery");
+      Serial.println("[--] Check: Is the BLE antenna connected?");
+      log_health(LOG_LEVEL_WARNING, LOG_CAT_BLUETOOTH, "BLE Discovery init failed", nullptr);
+    }
+  } else {
+    Serial.println("[--] BLE Discovery init skipped (safe mode)");
   }
   #endif
 
@@ -3622,9 +3734,17 @@ void loop() {
   mesh_network::update();
   #endif
 
-  // Update Bluetooth
+  // Update Bluetooth (legacy channel)
   #if FEATURE_BLUETOOTH
   bluetooth_channel::update();
+  #endif
+
+  // Update BLE Discovery (Opera/Chirp/Nearby)
+  #if FEATURE_BLE
+  if (ble_manager::isAvailable()) {
+    ble_manager::update();
+    ble_manager::chirpHeartbeatCheck();
+  }
   #endif
 
   // Update system monitor (temp, heap, alerts)
