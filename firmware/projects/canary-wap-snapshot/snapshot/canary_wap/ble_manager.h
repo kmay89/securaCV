@@ -218,26 +218,26 @@ static void update() {
 
 // Build /api/ble/status JSON
 static String statusJson() {
-    StaticJsonDocument<384> doc;
+    JsonDocument doc;
     doc["ble_enabled"] = true;
     doc["ble_available"] = g_ble_available;
 
     // Opera status
-    JsonObject opera = doc.createNestedObject("opera");
+    JsonObject opera = doc["opera"].to<JsonObject>();
     opera["active"] = g_opera_active;
     opera["connections_total"] = ble_opera::getConnectionsTotal();
     opera["connected_now"] = ble_opera::getConnectedNow();
     opera["device_name"] = ble_opera::getDeviceName();
 
     // Chirp status
-    JsonObject chirp = doc.createNestedObject("chirp");
+    JsonObject chirp = doc["chirp"].to<JsonObject>();
     chirp["active"] = g_chirp_active;
     chirp["sent"] = ble_chirp::getChirpsSent();
     chirp["received"] = ble_nearby::getChirpsReceived();
     chirp["last_sent_type"] = chirpTypeName(ble_chirp::getLastChirpType());
 
     // Nearby status
-    JsonObject nearby = doc.createNestedObject("nearby");
+    JsonObject nearby = doc["nearby"].to<JsonObject>();
     nearby["active"] = g_nearby_active;
     nearby["canary_count"] = ble_nearby::activeCanaryCount();
     nearby["non_canary_count"] = ble_nearby::getNonCanaryCount();

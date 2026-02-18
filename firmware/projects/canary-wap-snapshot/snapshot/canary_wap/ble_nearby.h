@@ -136,7 +136,7 @@ class NearbyScanCallbacks : public NimBLEScanCallbacks {
         memset(&tempCanary, 0, sizeof(tempCanary));
 
         if (advertisedDevice->haveManufacturerData()) {
-            String mfgData = advertisedDevice->getManufacturerData();
+            String mfgData = String(advertisedDevice->getManufacturerData().c_str());
             if (mfgData.length() >= CHIRP_PAYLOAD_SIZE + 2) {
                 hasChirpData = parseChirpData(
                     (const uint8_t*)mfgData.c_str(),
