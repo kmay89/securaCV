@@ -1,0 +1,21 @@
+{
+  "name": "canary-vision",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Privacy-preserving fleet management for SecuraCV Canary devices",
+  "author": "ERRERlabs <karl@errerlabs.com>",
+  "license": "MIT",
+  "workspaces": [
+    "device-api"
+  ],
+  "scripts": {
+    "test": "bash tests/run-all.sh",
+    "test:security": "node --test tests/security/*.test.js",
+    "test:api": "node --test tests/api/*.test.js",
+    "test:spa": "node --test tests/spa/*.test.js",
+    "dev": "node device-api/server.js"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

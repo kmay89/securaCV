@@ -7,9 +7,9 @@ from typing import Any
 import voluptuous as vol
 
 from homeassistant import config_entries
+from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.const import CONF_TOKEN, CONF_URL
 from homeassistant.core import HomeAssistant
-from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import (
@@ -53,7 +53,7 @@ class SecuraCVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Handle the initial step - kernel connection."""
         errors: dict[str, str] = {}
 
@@ -104,7 +104,7 @@ class SecuraCVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_mqtt(
         self, discovery_info: dict[str, Any]
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Handle MQTT auto-discovery.
 
         Triggered when HA sees a message on a topic matching
