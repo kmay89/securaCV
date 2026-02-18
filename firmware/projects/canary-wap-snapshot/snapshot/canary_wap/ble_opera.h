@@ -25,10 +25,11 @@
 #if FEATURE_BLE && FEATURE_BLE_OPERA
 
 #include <NimBLEDevice.h>
+#include "log_level.h"
 
 // Forward declarations for witness chain integration
 // These are provided by the main .ino or ble_manager
-extern void log_health(uint8_t level, uint8_t category, const char* message, const char* detail);
+extern void log_health(LogLevel level, LogCategory category, const char* message, const char* detail);
 
 namespace ble_opera {
 
