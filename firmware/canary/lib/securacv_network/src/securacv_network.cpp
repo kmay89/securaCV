@@ -350,8 +350,8 @@ void NetworkManager::registerHttpHandlers() {
 // HTTP HANDLERS
 // ════════════════════════════════════════════════════════════════════════════
 
-// Declare webui extern (defined in securacv_webui library)
-extern const char CANARY_UI_HTML[];
+// Include triggers PlatformIO LDF to build+link the securacv_webui library
+#include "securacv_webui.h"
 
 static esp_err_t handle_ui(httpd_req_t* req) {
   witness_get_health().http_requests++;
