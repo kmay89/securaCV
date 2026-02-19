@@ -580,6 +580,67 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       border-bottom: 1px solid var(--border);
     }
 
+    /* Auth Modal — Full-screen overlay for token entry */
+    .auth-overlay {
+      position: fixed;
+      inset: 0;
+      background: var(--bg);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 2000;
+      padding: 1rem;
+    }
+    .auth-overlay.hidden { display: none; }
+    .auth-box {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 2rem;
+      width: 100%;
+      max-width: 420px;
+      box-shadow: var(--shadow);
+    }
+    .auth-brand {
+      text-align: center;
+      margin-bottom: 1.5rem;
+    }
+    .auth-brand h2 { font-size: 1.3rem; font-weight: 600; margin-bottom: 0.25rem; }
+    .auth-brand p { font-size: 0.8rem; color: var(--muted); }
+    .auth-divider {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin: 1rem 0;
+      font-size: 0.75rem;
+      color: var(--muted);
+    }
+    .auth-divider::before, .auth-divider::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: var(--border);
+    }
+    .auth-status {
+      text-align: center;
+      font-size: 0.8rem;
+      padding: 0.5rem;
+      border-radius: 6px;
+      margin-top: 0.75rem;
+      display: none;
+    }
+    .auth-status.error { display: block; background: var(--danger-dim); color: var(--danger); }
+    .auth-status.success { display: block; background: var(--success-dim); color: var(--success); }
+    .auth-status.info { display: block; background: var(--accent-dim); color: var(--accent); }
+    .auth-footer {
+      margin-top: 1.5rem;
+      text-align: center;
+      font-size: 0.72rem;
+      color: var(--muted);
+    }
+    .auth-footer span { margin: 0 0.3rem; }
+
     /* Responsive */
     @media (max-width: 600px) {
       .stats-grid { grid-template-columns: repeat(2, 1fr); }
@@ -590,6 +651,33 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
   </style>
 </head>
 <body>
+
+  <!-- Auth Modal — shown on first load, requires token to proceed -->
+  <div class="auth-overlay" id="authOverlay">
+    <div class="auth-box">
+      <div class="auth-brand">
+        <h2>SecuraCV Canary Dashboard</h2>
+        <p>Enter your API token to connect</p>
+      </div>
+      <div class="form-group">
+        <label class="form-label">API Token</label>
+        <input type="text" class="form-input" id="tokenInput" placeholder="cv_..." autocomplete="off" spellcheck="false">
+      </div>
+      <button class="btn btn-primary" style="width:100%" onclick="connectWithToken()">Connect</button>
+      <div class="auth-divider">or</div>
+      <button class="btn btn-secondary" style="width:100%" onclick="requestFromDevice()">Request from Device</button>
+      <p style="font-size:0.72rem;color:var(--muted);text-align:center;margin-top:0.5rem;">
+        Press BOOT button on device, then click above
+      </p>
+      <div class="auth-status" id="authStatus"></div>
+      <div class="auth-footer">
+        <span id="authDeviceId">--</span> |
+        <span id="authFw">--</span> |
+        <span id="authTls">TLS: --</span>
+      </div>
+    </div>
+  </div>
+
   <header>
     <div class="header-content">
       <div class="brand">
@@ -1652,6 +1740,119 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
   <script>
     const API_BASE = '';
+
+    // ═══════════════════════════════════════════════════════════════
+    // AUTH — Token stored ONLY in JS variable. No localStorage/cookies.
+    // ═══════════════════════════════════════════════════════════════
+    let apiToken = null;
+
+    async function secureFetch(endpoint, options = {}) {
+      const headers = options.headers || {};
+      if (apiToken) {
+        headers['Authorization'] = 'Bearer ' + apiToken;
+      }
+      options.headers = headers;
+      try {
+        const resp = await fetch(API_BASE + endpoint, options);
+        if (resp.status === 401 || resp.status === 403) {
+          apiToken = null;
+          showAuthModal('Invalid or expired token. Please re-enter.');
+          throw new Error('auth_required');
+        }
+        if (resp.status === 429) {
+          const data = await resp.json();
+          showAuthModal('Too many failed attempts. Retry in ' + data.retry_after_s + ' seconds.');
+          throw new Error('rate_limited');
+        }
+        return resp;
+      } catch (e) {
+        if (e.message === 'auth_required' || e.message === 'rate_limited') throw e;
+        throw e;
+      }
+    }
+
+    function showAuthModal(msg) {
+      document.getElementById('authOverlay').classList.remove('hidden');
+      if (msg) {
+        const s = document.getElementById('authStatus');
+        s.textContent = msg;
+        s.className = 'auth-status error';
+      }
+    }
+
+    function hideAuthModal() {
+      document.getElementById('authOverlay').classList.add('hidden');
+      document.getElementById('authStatus').className = 'auth-status';
+    }
+
+    async function connectWithToken() {
+      const input = document.getElementById('tokenInput').value.trim();
+      if (!input.startsWith('cv_')) {
+        const s = document.getElementById('authStatus');
+        s.textContent = 'Token must start with cv_';
+        s.className = 'auth-status error';
+        return;
+      }
+      apiToken = input;
+      try {
+        const resp = await secureFetch('/api/status');
+        if (resp.ok) {
+          hideAuthModal();
+          startDashboard();
+        }
+      } catch (e) {
+        apiToken = null;
+      }
+    }
+
+    async function requestFromDevice() {
+      const s = document.getElementById('authStatus');
+      s.textContent = 'Waiting... Press BOOT button on device now.';
+      s.className = 'auth-status info';
+      for (let i = 0; i < 30; i++) {
+        try {
+          const resp = await fetch(API_BASE + '/api/provisioning-receipt');
+          if (resp.status === 200) {
+            const receipt = await resp.json();
+            apiToken = receipt.token;
+            hideAuthModal();
+            startDashboard();
+            return;
+          }
+        } catch (e) { /* network error, keep trying */ }
+        await new Promise(r => setTimeout(r, 2000));
+      }
+      s.textContent = 'Timeout. Press BOOT button and try again.';
+      s.className = 'auth-status error';
+    }
+
+    // Load device info (no auth required) for the auth footer
+    async function loadAuthDeviceInfo() {
+      try {
+        const resp = await fetch(API_BASE + '/api/device-info');
+        if (resp.ok) {
+          const d = await resp.json();
+          document.getElementById('authDeviceId').textContent = d.device_id || '--';
+          document.getElementById('authFw').textContent = 'FW: ' + (d.firmware || '--');
+          document.getElementById('authTls').textContent = 'TLS: ' + (d.tls_enabled ? 'Yes' : 'No');
+        }
+      } catch (e) { /* ignore */ }
+    }
+
+    // Handle Enter key in token input
+    document.addEventListener('DOMContentLoaded', () => {
+      const ti = document.getElementById('tokenInput');
+      if (ti) ti.addEventListener('keydown', (e) => { if (e.key === 'Enter') connectWithToken(); });
+      loadAuthDeviceInfo();
+    });
+
+    function startDashboard() {
+      refreshAll();
+      if (!window._refreshInterval) {
+        window._refreshInterval = setInterval(refreshAll, 5000);
+      }
+    }
+
     let currentPanel = 'status';
     let currentCommunityTab = 'opera';
     let currentRecordsTab = 'logs';
@@ -1714,16 +1915,19 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       else if (tab === 'rf') loadRfSettings();
     }
 
-    // API helper
+    // API helper — uses secureFetch for authenticated requests
     async function api(endpoint, method = 'GET', body = null) {
       const opts = { method, headers: {} };
       if (body) { opts.headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(body); }
       try {
-        const res = await fetch(API_BASE + endpoint, opts);
+        const res = await secureFetch(endpoint, opts);
         const text = await res.text();
         try { return JSON.parse(text); }
         catch { return { ok: false, error: text.slice(0, 100) }; }
-      } catch (e) { return { ok: false, error: 'Network error' }; }
+      } catch (e) {
+        if (e.message === 'auth_required' || e.message === 'rate_limited') return { ok: false, error: e.message };
+        return { ok: false, error: 'Network error' };
+      }
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -2463,11 +2667,12 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       const result = document.getElementById('bleChirpResult');
       result.textContent = 'Sending...';
       try {
-        const data = await fetch('/api/chirp/send', {
+        const resp = await secureFetch('/api/chirp/send', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({type: type})
-        }).then(r => r.json());
+        });
+        const data = await resp.json();
         if (data.ok) {
           result.style.color = 'var(--success)';
           result.textContent = 'Chirp sent: ' + data.chirp_type + ' (total: ' + data.chirps_sent + ')';

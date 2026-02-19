@@ -41,7 +41,8 @@ enum LogCategory : uint8_t {
   SCV_CAT_WITNESS    = 8,   // Witness record creation
   SCV_CAT_MESH       = 9,   // Mesh network (flock) operations
   SCV_CAT_BLUETOOTH  = 10,  // Bluetooth Low Energy operations
-  SCV_CAT_RF         = 11   // RF presence detection operations
+  SCV_CAT_RF         = 11,  // RF presence detection operations
+  SCV_CAT_AUTH       = 12   // API authentication & authorization
 };
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -101,6 +102,7 @@ inline const char* log_category_name(LogCategory cat) {
     case SCV_CAT_MESH:      return "MESH";
     case SCV_CAT_BLUETOOTH: return "BLUETOOTH";
     case SCV_CAT_RF:        return "RF";
+    case SCV_CAT_AUTH:      return "AUTH";
     default:                return "???";
   }
 }

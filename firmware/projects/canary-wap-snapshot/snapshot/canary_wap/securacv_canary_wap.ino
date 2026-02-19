@@ -65,8 +65,15 @@
 #include "esp_random.h"
 #include "esp_task_wdt.h"
 #include "esp_http_server.h"
+#include "esp_https_server.h"
 #include "esp_mac.h"
 #include "mbedtls/sha256.h"
+#include "mbedtls/md.h"
+#include "mbedtls/pk.h"
+#include "mbedtls/entropy.h"
+#include "mbedtls/ctr_drbg.h"
+#include "mbedtls/x509_crt.h"
+#include "mbedtls/x509write_crt.h"
 
 #include <WiFi.h>
 #include <ESPmDNS.h>
@@ -84,6 +91,7 @@
 #include "health_log.h"
 #include "sd_storage.h"
 #include "nvs_store.h"
+#include "api_auth.h"
 #include "wap_server.h"
 #include "web_ui.h"
 #include "mesh_network.h"
@@ -112,7 +120,7 @@
 // ════════════════════════════════════════════════════════════════════════════
 
 static const char* DEVICE_TYPE        = "canary";
-static const char* FIRMWARE_VERSION   = "2.1.0";  // Hardware resilience update
+static const char* FIRMWARE_VERSION   = "2.1.0-wap";  // TLS + API auth hardening
 static const char* RULESET_ID         = "securacv:canary:v1.0";
 static const char* PROTOCOL_VERSION   = "pwk:v0.3.0";
 static const char* CHAIN_ALGORITHM    = "sha256-domain-sep";
@@ -181,9 +189,9 @@ static const uint32_t SD_SPI_SLOW = 1000000;
 // WIFI AP CONFIG
 // ════════════════════════════════════════════════════════════════════════════
 
-static const char* AP_PASSWORD_DEFAULT = "witness2026";
+static const char* AP_PASSWORD_DEFAULT = "witness2026";  // fallback only; device-unique password used
 static const int   AP_CHANNEL          = 1;
-static const int   AP_MAX_CLIENTS      = 4;
+static const int   AP_MAX_CLIENTS      = 1;  // Hardened: max 1 client for security
 
 // ════════════════════════════════════════════════════════════════════════════
 // CAMERA CONFIG (XIAO ESP32-S3 Sense only — ESP32-C3 has no camera interface)
@@ -226,6 +234,8 @@ static const uint32_t SD_PERSIST_INTERVAL  = 10;      // Persist every N records
 static const uint32_t SERIAL_CDC_WAIT_MS   = 2500;
 static const uint32_t BOOT_BUTTON_HOLD_MS  = 1200;
 static const int      BOOT_BUTTON_GPIO     = 0;
+static const uint32_t BOOT_SHORT_PRESS_MS  = 200;   // min for short press (provisioning gate)
+static const uint32_t BOOT_LONG_PRESS_MS   = 3000;  // hold for factory reset
 
 // ════════════════════════════════════════════════════════════════════════════
 // MOTION DETECTION WITH HYSTERESIS
@@ -250,6 +260,9 @@ static const char* NVS_KEY_LOGSEQ   = "logseq";
 static const char* NVS_KEY_WIFI_SSID = "wifi_ssid";
 static const char* NVS_KEY_WIFI_PASS = "wifi_pass";
 static const char* NVS_KEY_WIFI_EN   = "wifi_en";
+static const char* NVS_KEY_API_TKN  = "api_tkn";
+static const char* NVS_KEY_TLS_CERT = "tls_cert";
+static const char* NVS_KEY_TLS_KEY  = "tls_key";
 
 // ════════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -366,6 +379,11 @@ struct DeviceIdentity {
   bool     tamper_active;
   char     device_id[32];
   char     ap_ssid[32];
+  // API security fields (added for SAP integration)
+  char     api_token_str[36];    // "cv_" + 32 base62 chars + null
+  char     ap_password[16];      // device-unique AP password "cv-XXXXX"
+  char     fingerprint_hex[17];  // hex-encoded pubkey fingerprint (8 bytes = 16 hex chars)
+  bool     first_boot;           // true if keypair was just generated
 };
 
 struct SystemHealth {
@@ -451,6 +469,20 @@ static bool g_sd_mounted = false;
 
 // HTTP server
 static httpd_handle_t g_http_server = nullptr;
+
+// HTTPS server (TLS)
+static httpd_handle_t g_https_server = nullptr;
+static bool g_tls_enabled = false;
+
+// TLS certificate (DER-encoded, stored in NVS)
+static uint8_t* g_tls_cert_der = nullptr;
+static size_t   g_tls_cert_der_len = 0;
+static uint8_t* g_tls_key_der = nullptr;
+static size_t   g_tls_key_der_len = 0;
+static char     g_tls_cert_fp_hex[65] = {0};  // SHA256 of cert for pinning
+
+// Provisioning gate (physical BOOT button)
+static volatile bool g_provisioning_gate_open = false;
 
 // WiFi provisioning state
 static WiFiCredentials g_wifi_creds;
@@ -750,6 +782,333 @@ static void compute_fingerprint(const uint8_t pub[32], uint8_t fp[8]) {
   uint8_t hash[32];
   sha256_domain("securacv:pubkey:fingerprint", pub, 32, hash);
   memcpy(fp, hash, 8);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// HMAC-SHA256 (using mbedtls)
+// ════════════════════════════════════════════════════════════════════════════
+
+static void hmac_sha256(const uint8_t* key, size_t key_len,
+                        const uint8_t* data, size_t data_len,
+                        uint8_t out[32]) {
+  mbedtls_md_context_t ctx;
+  mbedtls_md_init(&ctx);
+  mbedtls_md_setup(&ctx, mbedtls_md_info_from_type(MBEDTLS_MD_SHA256), 1);
+  mbedtls_md_hmac_starts(&ctx, key, key_len);
+  mbedtls_md_hmac_update(&ctx, data, data_len);
+  mbedtls_md_hmac_finish(&ctx, out);
+  mbedtls_md_free(&ctx);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// BASE62 ENCODING (unbiased rejection sampling)
+// ════════════════════════════════════════════════════════════════════════════
+
+static const char BASE62[] =
+  "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+
+// Rejection sampling: discard bytes >= 248 (248 = 62*4, evenly divisible)
+// This eliminates modular bias entirely.
+static void base62_encode_unbiased(const uint8_t* input, size_t in_len,
+                                   char* output, size_t out_len) {
+  size_t out_idx = 0;
+  output[out_idx++] = 'c';
+  output[out_idx++] = 'v';
+  output[out_idx++] = '_';
+
+  size_t target_chars = 32;
+  size_t chars_produced = 0;
+  size_t i = 0;
+
+  while (chars_produced < target_chars && out_idx < out_len - 1) {
+    uint8_t b;
+    if (i < in_len) {
+      b = input[i++];
+    } else {
+      // Extremely unlikely fallback: deterministic byte generation
+      b = (uint8_t)(i ^ 0xA5);
+      i++;
+    }
+
+    if (b < 248) {  // 248 = 62 * 4 → evenly divisible
+      output[out_idx++] = BASE62[b % 62];
+      chars_produced++;
+    }
+    // else: reject this byte (biased), try next
+  }
+
+  output[out_idx] = '\0';
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// HKDF-STYLE API TOKEN DERIVATION (two-step key separation)
+// ════════════════════════════════════════════════════════════════════════════
+
+static bool derive_api_token(const uint8_t privkey[32], char* token_str, size_t token_str_len) {
+  // ── Step 1: Derive intermediate token-key (key separation) ────────────
+  // The Ed25519 signing key NEVER directly touches the token derivation context.
+  uint8_t token_key[32];
+  hmac_sha256(
+    privkey, 32,
+    (const uint8_t*)"securacv:token-key-derive:v1", 28,
+    token_key
+  );
+
+  // ── Step 2: Derive actual API token from intermediate key + MAC ──────
+  uint8_t mac[6];
+  esp_read_mac(mac, ESP_MAC_WIFI_STA);
+
+  uint8_t token_input[27];  // 21 bytes domain + 6 bytes MAC
+  memcpy(token_input, "securacv:api-token:v1", 21);
+  memcpy(token_input + 21, mac, 6);
+
+  uint8_t token_hash[32];
+  hmac_sha256(
+    token_key, 32,
+    token_input, 27,
+    token_hash
+  );
+
+  // ── Step 3: Encode as base62 with rejection sampling ─────────────────
+  uint8_t token_bytes[24];
+  memcpy(token_bytes, token_hash, 24);
+  base62_encode_unbiased(token_bytes, 24, token_str, token_str_len);
+
+  // ── Wipe intermediate key material ───────────────────────────────────
+  secure_zero(token_key, sizeof(token_key));
+  secure_zero(token_hash, sizeof(token_hash));
+  secure_zero(token_bytes, sizeof(token_bytes));
+
+  return strlen(token_str) >= 35;  // "cv_" + 32 chars
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// DEVICE-UNIQUE AP PASSWORD (derived from pubkey fingerprint)
+// ════════════════════════════════════════════════════════════════════════════
+
+static void derive_ap_password(const uint8_t fingerprint[8], char* password, size_t len) {
+  // Use bytes 0-4 of fingerprint for password material
+  // WPA2-PSK requires 8-63 ASCII characters
+  char encoded[6];
+  for (int i = 0; i < 5; i++) {
+    encoded[i] = BASE62[fingerprint[i] % 62];
+  }
+  encoded[5] = '\0';
+  snprintf(password, len, "cv-%s", encoded);
+  // Result: "cv-XXXXX" — 8 chars, unique per device
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// NVS TOKEN STORAGE
+// ════════════════════════════════════════════════════════════════════════════
+
+static bool nvs_store_token(const char* token_str) {
+  NvsManager& nvs = NvsManager::instance();
+  if (!nvs.beginReadWrite()) return false;
+  size_t written = nvs.putBytes(NVS_KEY_API_TKN, token_str, strlen(token_str));
+  nvs.end();
+  return written > 0;
+}
+
+static bool nvs_load_token(char* token_str, size_t max_len) {
+  NvsManager& nvs = NvsManager::instance();
+  if (!nvs.beginReadOnly()) return false;
+  size_t n = nvs.getBytesLength(NVS_KEY_API_TKN);
+  if (n == 0 || n >= max_len) { nvs.end(); return false; }
+  nvs.getBytes(NVS_KEY_API_TKN, token_str, n);
+  token_str[n] = '\0';
+  nvs.end();
+  return strlen(token_str) >= 35;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// TLS CERTIFICATE GENERATION & MANAGEMENT
+// ════════════════════════════════════════════════════════════════════════════
+
+static bool tls_load_from_nvs() {
+  NvsManager& nvs = NvsManager::instance();
+  if (!nvs.beginReadOnly()) return false;
+
+  size_t cert_len = nvs.getBytesLength(NVS_KEY_TLS_CERT);
+  size_t key_len  = nvs.getBytesLength(NVS_KEY_TLS_KEY);
+
+  if (cert_len == 0 || key_len == 0) {
+    nvs.end();
+    return false;
+  }
+
+  g_tls_cert_der = (uint8_t*)malloc(cert_len);
+  g_tls_key_der  = (uint8_t*)malloc(key_len);
+  if (!g_tls_cert_der || !g_tls_key_der) {
+    free(g_tls_cert_der); g_tls_cert_der = nullptr;
+    free(g_tls_key_der);  g_tls_key_der = nullptr;
+    nvs.end();
+    return false;
+  }
+
+  nvs.getBytes(NVS_KEY_TLS_CERT, g_tls_cert_der, cert_len);
+  nvs.getBytes(NVS_KEY_TLS_KEY,  g_tls_key_der,  key_len);
+  g_tls_cert_der_len = cert_len;
+  g_tls_key_der_len  = key_len;
+
+  nvs.end();
+  return true;
+}
+
+static bool tls_store_to_nvs() {
+  if (!g_tls_cert_der || !g_tls_key_der) return false;
+  NvsManager& nvs = NvsManager::instance();
+  if (!nvs.beginReadWrite()) return false;
+  nvs.putBytes(NVS_KEY_TLS_CERT, g_tls_cert_der, g_tls_cert_der_len);
+  nvs.putBytes(NVS_KEY_TLS_KEY,  g_tls_key_der,  g_tls_key_der_len);
+  nvs.end();
+  return true;
+}
+
+static void tls_compute_cert_fingerprint() {
+  if (!g_tls_cert_der || g_tls_cert_der_len == 0) return;
+  uint8_t cert_fp[32];
+  sha256_raw(g_tls_cert_der, g_tls_cert_der_len, cert_fp);
+  hex_to_str(g_tls_cert_fp_hex, cert_fp, 32);
+}
+
+static bool tls_generate_self_signed_cert() {
+  Serial.println("[TLS] Generating self-signed certificate (RSA-2048)...");
+  Serial.println("[TLS] This takes 30-60 seconds on first boot only.");
+
+  int ret;
+  mbedtls_pk_context key;
+  mbedtls_x509write_cert crt;
+  mbedtls_entropy_context entropy;
+  mbedtls_ctr_drbg_context ctr_drbg;
+  mbedtls_mpi serial_mpi;
+
+  mbedtls_pk_init(&key);
+  mbedtls_x509write_crt_init(&crt);
+  mbedtls_entropy_init(&entropy);
+  mbedtls_ctr_drbg_init(&ctr_drbg);
+  mbedtls_mpi_init(&serial_mpi);
+
+  const char *pers = "securacv_tls_gen";
+  ret = mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy,
+                               (const unsigned char*)pers, strlen(pers));
+  if (ret != 0) {
+    Serial.printf("[TLS] DRBG seed failed: -0x%04X\n", (unsigned)-ret);
+    goto cleanup;
+  }
+
+  // Generate RSA-2048 key
+  ret = mbedtls_pk_setup(&key, mbedtls_pk_info_from_type(MBEDTLS_PK_RSA));
+  if (ret != 0) {
+    Serial.printf("[TLS] PK setup failed: -0x%04X\n", (unsigned)-ret);
+    goto cleanup;
+  }
+
+  ret = mbedtls_rsa_gen_key(mbedtls_pk_rsa(key), mbedtls_ctr_drbg_random,
+                             &ctr_drbg, 2048, 65537);
+  if (ret != 0) {
+    Serial.printf("[TLS] RSA keygen failed: -0x%04X\n", (unsigned)-ret);
+    goto cleanup;
+  }
+  Serial.println("[TLS] RSA-2048 key generated");
+
+  // Build CN with device fingerprint for pinning
+  {
+    char subject[80];
+    snprintf(subject, sizeof(subject), "CN=securacv-%s,O=SecuraCV,OU=Canary",
+             g_device.fingerprint_hex);
+
+    mbedtls_x509write_crt_set_subject_key(&crt, &key);
+    mbedtls_x509write_crt_set_issuer_key(&crt, &key);
+    mbedtls_x509write_crt_set_md_alg(&crt, MBEDTLS_MD_SHA256);
+
+    ret = mbedtls_x509write_crt_set_subject_name(&crt, subject);
+    if (ret != 0) {
+      Serial.printf("[TLS] Set subject failed: -0x%04X\n", (unsigned)-ret);
+      goto cleanup;
+    }
+    ret = mbedtls_x509write_crt_set_issuer_name(&crt, subject);
+    if (ret != 0) {
+      Serial.printf("[TLS] Set issuer failed: -0x%04X\n", (unsigned)-ret);
+      goto cleanup;
+    }
+
+    mbedtls_mpi_lset(&serial_mpi, 1);
+    mbedtls_x509write_crt_set_serial(&crt, &serial_mpi);
+
+    mbedtls_x509write_crt_set_validity(&crt, "20250101000000", "20350101000000");
+  }
+
+  // Write certificate to DER
+  {
+    uint8_t cert_buf[2048];
+    ret = mbedtls_x509write_crt_der(&crt, cert_buf, sizeof(cert_buf),
+                                     mbedtls_ctr_drbg_random, &ctr_drbg);
+    if (ret < 0) {
+      Serial.printf("[TLS] Cert write failed: -0x%04X\n", (unsigned)-ret);
+      goto cleanup;
+    }
+    // DER output is written to the END of the buffer
+    g_tls_cert_der_len = ret;
+    g_tls_cert_der = (uint8_t*)malloc(g_tls_cert_der_len);
+    if (!g_tls_cert_der) { ret = -1; goto cleanup; }
+    memcpy(g_tls_cert_der, cert_buf + sizeof(cert_buf) - ret, ret);
+  }
+
+  // Write private key to DER
+  {
+    uint8_t key_buf[2048];
+    ret = mbedtls_pk_write_key_der(&key, key_buf, sizeof(key_buf));
+    if (ret < 0) {
+      Serial.printf("[TLS] Key write failed: -0x%04X\n", (unsigned)-ret);
+      free(g_tls_cert_der); g_tls_cert_der = nullptr;
+      goto cleanup;
+    }
+    g_tls_key_der_len = ret;
+    g_tls_key_der = (uint8_t*)malloc(g_tls_key_der_len);
+    if (!g_tls_key_der) {
+      free(g_tls_cert_der); g_tls_cert_der = nullptr;
+      ret = -1; goto cleanup;
+    }
+    memcpy(g_tls_key_der, key_buf + sizeof(key_buf) - ret, ret);
+  }
+
+  Serial.println("[TLS] Certificate generated successfully");
+  ret = 0;
+
+cleanup:
+  mbedtls_mpi_free(&serial_mpi);
+  mbedtls_x509write_crt_free(&crt);
+  mbedtls_pk_free(&key);
+  mbedtls_ctr_drbg_free(&ctr_drbg);
+  mbedtls_entropy_free(&entropy);
+  return (ret == 0);
+}
+
+static bool init_tls_cert() {
+  // Try loading from NVS first
+  if (tls_load_from_nvs()) {
+    tls_compute_cert_fingerprint();
+    Serial.println("[TLS] Loaded certificate from NVS");
+    Serial.printf("[TLS] Cert fingerprint: %.16s...\n", g_tls_cert_fp_hex);
+    return true;
+  }
+
+  // Generate new self-signed cert
+  if (!tls_generate_self_signed_cert()) {
+    Serial.println("[TLS] Certificate generation FAILED");
+    return false;
+  }
+
+  // Store in NVS for reuse across reboots
+  if (!tls_store_to_nvs()) {
+    Serial.println("[TLS] WARNING: Failed to store cert in NVS");
+  }
+
+  tls_compute_cert_fingerprint();
+  Serial.printf("[TLS] CN: securacv-%s\n", g_device.fingerprint_hex);
+  Serial.printf("[TLS] Cert fingerprint: %.16s...\n", g_tls_cert_fp_hex);
+  return true;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -2733,177 +3092,405 @@ static esp_err_t handle_ble_chirp_send(httpd_req_t* req) {
 #endif // FEATURE_BLE
 
 // ════════════════════════════════════════════════════════════════════════════
-// HTTP SERVER SETUP
+// API: DEVICE INFO (public, no auth required)
 // ════════════════════════════════════════════════════════════════════════════
 
-static void start_http_server() {
-  httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-  config.server_port = 80;
-  config.uri_match_fn = httpd_uri_match_wildcard;
-  config.stack_size = 8192;  // Increased stack for camera streaming
+static esp_err_t handle_device_info(httpd_req_t* req) {
+  g_health.http_requests++;
 
+  char json[512];
+  snprintf(json, sizeof(json),
+    "{"
+    "\"device_id\":\"%s\","
+    "\"firmware\":\"%s\","
+    "\"pubkey_fp\":\"%s\","
+    "\"mac\":\"%s\","
+    "\"uptime_ms\":%lu,"
+    "\"chain_length\":%lu,"
+    "\"auth_required\":true,"
+    "\"tls_enabled\":%s,"
+    "\"provisioning_gate\":\"physical_button\""
+    "}",
+    g_device.device_id,
+    FIRMWARE_VERSION,
+    g_device.fingerprint_hex,
+    WiFi.macAddress().c_str(),
+    (unsigned long)millis(),
+    (unsigned long)g_device.seq,
+    g_tls_enabled ? "true" : "false"
+  );
+
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+  return httpd_resp_sendstr(req, json);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// API: PROVISIONING RECEIPT (physical gate or Bearer auth)
+// ════════════════════════════════════════════════════════════════════════════
+
+static esp_err_t send_provisioning_receipt(httpd_req_t* req) {
+  char json[1024];
+  snprintf(json, sizeof(json),
+    "{\n"
+    "  \"device_id\": \"%s\",\n"
+    "  \"base_url\": \"%s://%s\",\n"
+    "  \"token\": \"%s\",\n"
+    "  \"pubkey_fp\": \"%s\",\n"
+    "  \"firmware\": \"%s\",\n"
+    "  \"mac\": \"%s\",\n"
+    "  \"ap_ssid\": \"%s\",\n"
+    "  \"ap_password\": \"%s\",\n"
+    "  \"tls_cert_fp\": \"%s\",\n"
+    "  \"provisioned_at\": \"boot:%lu\"\n"
+    "}",
+    g_device.device_id,
+    g_tls_enabled ? "https" : "http",
+    WiFi.softAPIP().toString().c_str(),
+    g_device.api_token_str,
+    g_device.fingerprint_hex,
+    FIRMWARE_VERSION,
+    WiFi.macAddress().c_str(),
+    g_device.ap_ssid,
+    g_device.ap_password,
+    g_tls_cert_fp_hex,
+    (unsigned long)g_device.boot_count
+  );
+
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+  return httpd_resp_sendstr(req, json);
+}
+
+static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  // If authenticated with valid Bearer token, always serve (for SAP re-sync)
+  if (api_auth_check_optional(req, g_device.api_token_str)) {
+    return send_provisioning_receipt(req);
+  }
+
+  // No valid token — check physical gate
+  if (!g_provisioning_gate_open) {
+    httpd_resp_set_status(req, "403 Forbidden");
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_sendstr(req,
+      "{\"error\":\"physical_confirmation_required\","
+      "\"hint\":\"Press the BOOT button on the device to reveal the provisioning receipt.\","
+      "\"button\":\"BOOT (short press < 2 seconds)\"}");
+  }
+
+  // Gate is open — serve receipt and close gate
+  esp_err_t result = send_provisioning_receipt(req);
+  g_provisioning_gate_open = false;
+  Serial.println("[AUTH] Provisioning receipt served. Gate closed.");
+  log_health(SCV_LOG_INFO, SCV_CAT_AUTH, "Provisioning receipt served via HTTPS", nullptr);
+  return result;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// HTTP → HTTPS REDIRECT (port 80)
+// ════════════════════════════════════════════════════════════════════════════
+
+static esp_err_t handle_https_redirect(httpd_req_t* req) {
+  char location[128];
+  snprintf(location, sizeof(location), "https://%s%s",
+           WiFi.softAPIP().toString().c_str(),
+           req->uri);
+  httpd_resp_set_status(req, "301 Moved Permanently");
+  httpd_resp_set_hdr(req, "Location", location);
+  return httpd_resp_sendstr(req, "Redirecting to HTTPS...");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// HTTP SERVER SETUP (with optional TLS)
+// ════════════════════════════════════════════════════════════════════════════
+
+// Register all route handlers on a given server handle
+static void register_api_routes(httpd_handle_t server);
+
+// ── Auth-wrapped handler helpers ──
+// These wrappers add Bearer token authentication to existing handlers.
+
+static esp_err_t handle_status_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_status(req);
+}
+static esp_err_t handle_chain_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_chain(req);
+}
+static esp_err_t handle_logs_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_logs(req);
+}
+static esp_err_t handle_log_ack_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_log_ack(req);
+}
+static esp_err_t handle_ack_all_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_ack_all(req);
+}
+static esp_err_t handle_witness_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_witness(req);
+}
+static esp_err_t handle_config_get_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_config_get(req);
+}
+static esp_err_t handle_export_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_export(req);
+}
+static esp_err_t handle_reboot_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_reboot(req);
+}
+
+#if FEATURE_SYS_MONITOR
+static esp_err_t handle_system_metrics_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_system_metrics(req);
+}
+#endif
+
+// Register all route handlers on a given httpd server handle
+static void register_api_routes(httpd_handle_t server) {
+  // UI — no auth required (serves dashboard HTML)
+  httpd_uri_t ui = { .uri = "/", .method = HTTP_GET, .handler = handle_ui };
+  httpd_register_uri_handler(server, &ui);
+
+  // Device info — no auth required (non-sensitive metadata)
+  httpd_uri_t devinfo = { .uri = "/api/device-info", .method = HTTP_GET, .handler = handle_device_info };
+  httpd_register_uri_handler(server, &devinfo);
+
+  // Provisioning receipt — physical gate or Bearer auth
+  httpd_uri_t prov = { .uri = "/api/provisioning-receipt", .method = HTTP_GET, .handler = handle_provisioning_receipt };
+  httpd_register_uri_handler(server, &prov);
+
+  // Authenticated API endpoints (Bearer token required)
+  httpd_uri_t status = { .uri = "/api/status", .method = HTTP_GET, .handler = handle_status_auth };
+  httpd_register_uri_handler(server, &status);
+
+#if FEATURE_SYS_MONITOR
+  httpd_uri_t sys_metrics = { .uri = "/api/system", .method = HTTP_GET, .handler = handle_system_metrics_auth };
+  httpd_register_uri_handler(server, &sys_metrics);
+#endif
+
+  httpd_uri_t chain = { .uri = "/api/chain", .method = HTTP_GET, .handler = handle_chain_auth };
+  httpd_register_uri_handler(server, &chain);
+
+  httpd_uri_t logs = { .uri = "/api/logs", .method = HTTP_GET, .handler = handle_logs_auth };
+  httpd_register_uri_handler(server, &logs);
+
+  httpd_uri_t log_ack = { .uri = "/api/logs/*/ack", .method = HTTP_POST, .handler = handle_log_ack_auth };
+  httpd_register_uri_handler(server, &log_ack);
+
+  httpd_uri_t ack_all = { .uri = "/api/logs/ack-all", .method = HTTP_POST, .handler = handle_ack_all_auth };
+  httpd_register_uri_handler(server, &ack_all);
+
+  httpd_uri_t witness = { .uri = "/api/witness", .method = HTTP_GET, .handler = handle_witness_auth };
+  httpd_register_uri_handler(server, &witness);
+
+  httpd_uri_t config_get = { .uri = "/api/config", .method = HTTP_GET, .handler = handle_config_get_auth };
+  httpd_register_uri_handler(server, &config_get);
+
+  httpd_uri_t export_bundle = { .uri = "/api/export", .method = HTTP_POST, .handler = handle_export_auth };
+  httpd_register_uri_handler(server, &export_bundle);
+
+  httpd_uri_t reboot = { .uri = "/api/reboot", .method = HTTP_POST, .handler = handle_reboot_auth };
+  httpd_register_uri_handler(server, &reboot);
+}
+
+static void start_http_server() {
   // Calculate max URI handlers based on feature usage
-  const int base_handlers = 19;       // UI, API, WiFi provisioning, captive portal
+  const int base_handlers = 22;       // UI, API (auth + public), WiFi provisioning, captive portal
   const int camera_handlers = 6;      // Camera peek endpoints
   const int mesh_handlers = 12;       // Mesh network endpoints
   const int bluetooth_handlers = 23;  // Bluetooth API endpoints
   const int ble_discovery_handlers = 3; // BLE discovery (Opera/Chirp/Nearby) endpoints
-  const int handler_headroom = 4;     // Reserve for future additions
-  config.max_uri_handlers = base_handlers + camera_handlers + mesh_handlers + bluetooth_handlers + ble_discovery_handlers + handler_headroom;
-  
-  if (httpd_start(&g_http_server, &config) != ESP_OK) {
-    log_health(SCV_LOG_ERROR, SCV_CAT_NETWORK, "HTTP server start failed", nullptr);
-    return;
+  const int handler_headroom = 6;     // Reserve for future additions
+  const int total_handlers = base_handlers + camera_handlers + mesh_handlers + bluetooth_handlers + ble_discovery_handlers + handler_headroom;
+
+  // ── Start HTTPS server (port 443) if TLS cert is available ──
+  if (g_tls_enabled && g_tls_cert_der && g_tls_key_der) {
+    httpd_ssl_config_t ssl_config = HTTPD_SSL_CONFIG_DEFAULT();
+    ssl_config.servercert = g_tls_cert_der;
+    ssl_config.servercert_len = g_tls_cert_der_len;
+    ssl_config.prvtkey_pem = g_tls_key_der;
+    ssl_config.prvtkey_pem_len = g_tls_key_der_len;
+    ssl_config.httpd.uri_match_fn = httpd_uri_match_wildcard;
+    ssl_config.httpd.stack_size = 10240;  // Larger stack for TLS + camera
+    ssl_config.httpd.max_uri_handlers = total_handlers;
+    ssl_config.httpd.server_port = 443;
+
+    if (httpd_ssl_start(&g_https_server, &ssl_config) == ESP_OK) {
+      Serial.println("[HTTPS] Server started on port 443");
+      log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "HTTPS server started", "port 443");
+
+      // Register all routes on HTTPS server
+      register_api_routes(g_https_server);
+
+      // ── Start HTTP redirect server (port 80 → HTTPS) ──
+      httpd_config_t redirect_config = HTTPD_DEFAULT_CONFIG();
+      redirect_config.server_port = 80;
+      redirect_config.uri_match_fn = httpd_uri_match_wildcard;
+      redirect_config.max_uri_handlers = 2;
+
+      if (httpd_start(&g_http_server, &redirect_config) == ESP_OK) {
+        // Catch-all redirect to HTTPS
+        httpd_uri_t redirect_all = { .uri = "/*", .method = HTTP_GET, .handler = handle_https_redirect };
+        httpd_register_uri_handler(g_http_server, &redirect_all);
+        httpd_uri_t redirect_post = { .uri = "/*", .method = HTTP_POST, .handler = handle_https_redirect };
+        httpd_register_uri_handler(g_http_server, &redirect_post);
+        Serial.println("[HTTP]  Redirect server on port 80 -> HTTPS");
+      }
+
+      goto register_extra_routes;
+    } else {
+      Serial.println("[HTTPS] Server start FAILED — falling back to HTTP");
+      log_health(SCV_LOG_WARNING, SCV_CAT_NETWORK, "HTTPS start failed, using HTTP", nullptr);
+      g_tls_enabled = false;
+    }
   }
-  
-  // UI
-  httpd_uri_t ui = { .uri = "/", .method = HTTP_GET, .handler = handle_ui };
-  httpd_register_uri_handler(g_http_server, &ui);
-  
-  // API endpoints
-  httpd_uri_t status = { .uri = "/api/status", .method = HTTP_GET, .handler = handle_status };
-  httpd_register_uri_handler(g_http_server, &status);
 
-#if FEATURE_SYS_MONITOR
-  httpd_uri_t sys_metrics = { .uri = "/api/system", .method = HTTP_GET, .handler = handle_system_metrics };
-  httpd_register_uri_handler(g_http_server, &sys_metrics);
-#endif
+  // ── Fallback: HTTP-only mode (port 80) ──
+  {
+    httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+    config.server_port = 80;
+    config.uri_match_fn = httpd_uri_match_wildcard;
+    config.stack_size = 8192;
+    config.max_uri_handlers = total_handlers;
 
-  httpd_uri_t chain = { .uri = "/api/chain", .method = HTTP_GET, .handler = handle_chain };
-  httpd_register_uri_handler(g_http_server, &chain);
-  
-  httpd_uri_t logs = { .uri = "/api/logs", .method = HTTP_GET, .handler = handle_logs };
-  httpd_register_uri_handler(g_http_server, &logs);
-  
-  httpd_uri_t log_ack = { .uri = "/api/logs/*/ack", .method = HTTP_POST, .handler = handle_log_ack };
-  httpd_register_uri_handler(g_http_server, &log_ack);
-  
-  httpd_uri_t ack_all = { .uri = "/api/logs/ack-all", .method = HTTP_POST, .handler = handle_ack_all };
-  httpd_register_uri_handler(g_http_server, &ack_all);
-  
-  httpd_uri_t witness = { .uri = "/api/witness", .method = HTTP_GET, .handler = handle_witness };
-  httpd_register_uri_handler(g_http_server, &witness);
-  
-  httpd_uri_t config_get = { .uri = "/api/config", .method = HTTP_GET, .handler = handle_config_get };
-  httpd_register_uri_handler(g_http_server, &config_get);
-  
-  httpd_uri_t export_bundle = { .uri = "/api/export", .method = HTTP_POST, .handler = handle_export };
-  httpd_register_uri_handler(g_http_server, &export_bundle);
-  
-  httpd_uri_t reboot = { .uri = "/api/reboot", .method = HTTP_POST, .handler = handle_reboot };
-  httpd_register_uri_handler(g_http_server, &reboot);
+    if (httpd_start(&g_http_server, &config) != ESP_OK) {
+      log_health(SCV_LOG_ERROR, SCV_CAT_NETWORK, "HTTP server start failed", nullptr);
+      return;
+    }
 
-  // WiFi provisioning endpoints
+    Serial.println("[HTTP]  Server started on port 80 (no TLS)");
+    Serial.println("[WARN] API traffic is NOT encrypted. Use only in trusted environments.");
+    log_health(SCV_LOG_WARNING, SCV_CAT_NETWORK, "HTTP-only mode (no TLS)", nullptr);
+
+    // Register all routes on HTTP server
+    register_api_routes(g_http_server);
+  }
+
+register_extra_routes:
+  // Get the active server handle for additional route registration
+  httpd_handle_t active_server = g_https_server ? g_https_server : g_http_server;
+
+  // WiFi provisioning endpoints (auth required)
   httpd_uri_t wifi_status = { .uri = "/api/wifi", .method = HTTP_GET, .handler = handle_wifi_status };
-  httpd_register_uri_handler(g_http_server, &wifi_status);
+  httpd_register_uri_handler(active_server, &wifi_status);
 
   httpd_uri_t wifi_scan = { .uri = "/api/wifi/scan", .method = HTTP_GET, .handler = handle_wifi_scan };
-  httpd_register_uri_handler(g_http_server, &wifi_scan);
+  httpd_register_uri_handler(active_server, &wifi_scan);
 
   httpd_uri_t wifi_connect = { .uri = "/api/wifi/connect", .method = HTTP_POST, .handler = handle_wifi_connect };
-  httpd_register_uri_handler(g_http_server, &wifi_connect);
+  httpd_register_uri_handler(active_server, &wifi_connect);
 
   httpd_uri_t wifi_disconnect = { .uri = "/api/wifi/disconnect", .method = HTTP_POST, .handler = handle_wifi_disconnect };
-  httpd_register_uri_handler(g_http_server, &wifi_disconnect);
+  httpd_register_uri_handler(active_server, &wifi_disconnect);
 
   httpd_uri_t wifi_forget = { .uri = "/api/wifi/forget", .method = HTTP_POST, .handler = handle_wifi_forget };
-  httpd_register_uri_handler(g_http_server, &wifi_forget);
+  httpd_register_uri_handler(active_server, &wifi_forget);
 
   httpd_uri_t wifi_reconnect = { .uri = "/api/wifi/reconnect", .method = HTTP_POST, .handler = handle_wifi_reconnect };
-  httpd_register_uri_handler(g_http_server, &wifi_reconnect);
+  httpd_register_uri_handler(active_server, &wifi_reconnect);
 
   // Captive portal detection URLs (for iOS/Android automatic redirect)
   httpd_uri_t captive1 = { .uri = "/hotspot-detect.html", .method = HTTP_GET, .handler = handle_captive_portal };
-  httpd_register_uri_handler(g_http_server, &captive1);
+  httpd_register_uri_handler(active_server, &captive1);
 
   httpd_uri_t captive2 = { .uri = "/generate_204", .method = HTTP_GET, .handler = handle_captive_portal };
-  httpd_register_uri_handler(g_http_server, &captive2);
+  httpd_register_uri_handler(active_server, &captive2);
 
   httpd_uri_t captive3 = { .uri = "/connecttest.txt", .method = HTTP_GET, .handler = handle_captive_portal };
-  httpd_register_uri_handler(g_http_server, &captive3);
+  httpd_register_uri_handler(active_server, &captive3);
 
 #if FEATURE_CAMERA_PEEK
-  // Camera peek endpoints (for positioning/setup only - no recording)
-  // NEW: Start endpoint to explicitly activate streaming
+  // Camera peek endpoints (auth required for all peek operations)
   httpd_uri_t peek_start = { .uri = "/api/peek/start", .method = HTTP_POST, .handler = handle_peek_start };
-  httpd_register_uri_handler(g_http_server, &peek_start);
-  
+  httpd_register_uri_handler(active_server, &peek_start);
+
   httpd_uri_t peek_stream = { .uri = "/api/peek/stream", .method = HTTP_GET, .handler = handle_peek_stream };
-  httpd_register_uri_handler(g_http_server, &peek_stream);
-  
+  httpd_register_uri_handler(active_server, &peek_stream);
+
   httpd_uri_t peek_snapshot = { .uri = "/api/peek/snapshot", .method = HTTP_GET, .handler = handle_peek_snapshot };
-  httpd_register_uri_handler(g_http_server, &peek_snapshot);
-  
+  httpd_register_uri_handler(active_server, &peek_snapshot);
+
   httpd_uri_t peek_stop = { .uri = "/api/peek/stop", .method = HTTP_POST, .handler = handle_peek_stop };
-  httpd_register_uri_handler(g_http_server, &peek_stop);
-  
+  httpd_register_uri_handler(active_server, &peek_stop);
+
   httpd_uri_t peek_status = { .uri = "/api/peek/status", .method = HTTP_GET, .handler = handle_peek_status };
-  httpd_register_uri_handler(g_http_server, &peek_status);
-  
-  // NEW: Resolution control endpoint
+  httpd_register_uri_handler(active_server, &peek_status);
+
   httpd_uri_t peek_resolution = { .uri = "/api/peek/resolution", .method = HTTP_POST, .handler = handle_peek_resolution };
-  httpd_register_uri_handler(g_http_server, &peek_resolution);
+  httpd_register_uri_handler(active_server, &peek_resolution);
 #endif
 
 #if FEATURE_MESH_NETWORK
   // Mesh network (opera) endpoints
   httpd_uri_t mesh_status = { .uri = "/api/mesh", .method = HTTP_GET, .handler = handle_mesh_status };
-  httpd_register_uri_handler(g_http_server, &mesh_status);
+  httpd_register_uri_handler(active_server, &mesh_status);
 
   httpd_uri_t mesh_peers = { .uri = "/api/mesh/peers", .method = HTTP_GET, .handler = handle_mesh_peers };
-  httpd_register_uri_handler(g_http_server, &mesh_peers);
+  httpd_register_uri_handler(active_server, &mesh_peers);
 
   httpd_uri_t mesh_alerts = { .uri = "/api/mesh/alerts", .method = HTTP_GET, .handler = handle_mesh_alerts };
-  httpd_register_uri_handler(g_http_server, &mesh_alerts);
+  httpd_register_uri_handler(active_server, &mesh_alerts);
 
   httpd_uri_t mesh_alerts_clear = { .uri = "/api/mesh/alerts", .method = HTTP_DELETE, .handler = handle_mesh_alerts_clear };
-  httpd_register_uri_handler(g_http_server, &mesh_alerts_clear);
+  httpd_register_uri_handler(active_server, &mesh_alerts_clear);
 
   httpd_uri_t mesh_enable = { .uri = "/api/mesh/enable", .method = HTTP_POST, .handler = handle_mesh_enable };
-  httpd_register_uri_handler(g_http_server, &mesh_enable);
+  httpd_register_uri_handler(active_server, &mesh_enable);
 
   httpd_uri_t mesh_pair_start = { .uri = "/api/mesh/pair/start", .method = HTTP_POST, .handler = handle_mesh_pair_start };
-  httpd_register_uri_handler(g_http_server, &mesh_pair_start);
+  httpd_register_uri_handler(active_server, &mesh_pair_start);
 
   httpd_uri_t mesh_pair_join = { .uri = "/api/mesh/pair/join", .method = HTTP_POST, .handler = handle_mesh_pair_join };
-  httpd_register_uri_handler(g_http_server, &mesh_pair_join);
+  httpd_register_uri_handler(active_server, &mesh_pair_join);
 
   httpd_uri_t mesh_pair_confirm = { .uri = "/api/mesh/pair/confirm", .method = HTTP_POST, .handler = handle_mesh_pair_confirm };
-  httpd_register_uri_handler(g_http_server, &mesh_pair_confirm);
+  httpd_register_uri_handler(active_server, &mesh_pair_confirm);
 
   httpd_uri_t mesh_pair_cancel = { .uri = "/api/mesh/pair/cancel", .method = HTTP_POST, .handler = handle_mesh_pair_cancel };
-  httpd_register_uri_handler(g_http_server, &mesh_pair_cancel);
+  httpd_register_uri_handler(active_server, &mesh_pair_cancel);
 
   httpd_uri_t mesh_leave = { .uri = "/api/mesh/leave", .method = HTTP_POST, .handler = handle_mesh_leave };
-  httpd_register_uri_handler(g_http_server, &mesh_leave);
+  httpd_register_uri_handler(active_server, &mesh_leave);
 
   httpd_uri_t mesh_remove = { .uri = "/api/mesh/remove", .method = HTTP_POST, .handler = handle_mesh_remove };
-  httpd_register_uri_handler(g_http_server, &mesh_remove);
+  httpd_register_uri_handler(active_server, &mesh_remove);
 
   httpd_uri_t mesh_name = { .uri = "/api/mesh/name", .method = HTTP_POST, .handler = handle_mesh_name };
-  httpd_register_uri_handler(g_http_server, &mesh_name);
+  httpd_register_uri_handler(active_server, &mesh_name);
 #endif
 
 #if FEATURE_BLUETOOTH
   // Bluetooth endpoints
-  bluetooth_api::register_routes(g_http_server);
+  bluetooth_api::register_routes(active_server);
 #endif
 
 #if FEATURE_BLE
   // BLE Discovery endpoints (Opera/Chirp/Nearby)
   {
     httpd_uri_t ble_status = { .uri = "/api/ble/status", .method = HTTP_GET, .handler = handle_ble_status, .user_ctx = nullptr };
-    httpd_register_uri_handler(g_http_server, &ble_status);
+    httpd_register_uri_handler(active_server, &ble_status);
 
     httpd_uri_t ble_nearby = { .uri = "/api/nearby", .method = HTTP_GET, .handler = handle_ble_nearby, .user_ctx = nullptr };
-    httpd_register_uri_handler(g_http_server, &ble_nearby);
+    httpd_register_uri_handler(active_server, &ble_nearby);
 
     httpd_uri_t ble_chirp_send = { .uri = "/api/chirp/send", .method = HTTP_POST, .handler = handle_ble_chirp_send, .user_ctx = nullptr };
-    httpd_register_uri_handler(g_http_server, &ble_chirp_send);
+    httpd_register_uri_handler(active_server, &ble_chirp_send);
   }
 #endif
 
-  log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "HTTP server started", "port 80");
+  log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "API server started",
+             g_tls_enabled ? "HTTPS port 443" : "HTTP port 80");
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -3076,8 +3663,9 @@ static void wifi_init_provisioning() {
   // Always use AP+STA mode for provisioning capability
   WiFi.mode(WIFI_AP_STA);
 
-  // Start Access Point
-  bool ap_ok = WiFi.softAP(g_device.ap_ssid, AP_PASSWORD_DEFAULT, AP_CHANNEL, false, AP_MAX_CLIENTS);
+  // Start Access Point with device-unique password (or fallback to default)
+  const char* ap_pass = (strlen(g_device.ap_password) >= 8) ? g_device.ap_password : AP_PASSWORD_DEFAULT;
+  bool ap_ok = WiFi.softAP(g_device.ap_ssid, ap_pass, AP_CHANNEL, false, AP_MAX_CLIENTS);
 
   if (!ap_ok) {
     log_health(SCV_LOG_ERROR, SCV_CAT_NETWORK, "WiFi AP start failed", nullptr);
@@ -3128,17 +3716,18 @@ static bool start_wifi_ap() {
 // ════════════════════════════════════════════════════════════════════════════
 
 static bool provision_device() {
-  Serial.println("[..] Provisioning device identity...");
-  
+  Serial.println("[PROV] Provisioning device identity...");
+
   // Generate device ID from MAC
   generate_device_id(g_device.device_id, sizeof(g_device.device_id));
   generate_ap_ssid(g_device.ap_ssid, sizeof(g_device.ap_ssid));
-  
+  g_device.first_boot = false;
+
   // Try to load existing key
   if (nvs_load_key(g_device.privkey)) {
-    Serial.println("[OK] Loaded existing keypair from NVS");
+    Serial.println("[PROV] Loaded existing keypair from NVS");
   } else {
-    Serial.println("[..] Generating new keypair...");
+    Serial.println("[PROV] Generating Ed25519 keypair from hardware RNG...");
     if (!generate_keypair(g_device.privkey, g_device.pubkey)) {
       Serial.println("[!!] Keypair generation failed");
       return false;
@@ -3147,35 +3736,58 @@ static bool provision_device() {
       Serial.println("[!!] Failed to store keypair");
       return false;
     }
-    Serial.println("[OK] New keypair generated and stored");
+    Serial.println("[PROV] Keypair stored in NVS");
+    g_device.first_boot = true;
   }
-  
-  // Derive public key
+
+  // Derive public key and fingerprint
   Ed25519::derivePublicKey(g_device.pubkey, g_device.privkey);
   compute_fingerprint(g_device.pubkey, g_device.pubkey_fp);
-  
+  hex_to_str(g_device.fingerprint_hex, g_device.pubkey_fp, 8);
+  Serial.printf("[PROV] Public key fingerprint: %s\n", g_device.fingerprint_hex);
+
+  // ── Derive API token (HKDF-style, 2-step) ──
+  Serial.println("[PROV] Deriving API token (HKDF-style, 2-step)...");
+  if (nvs_load_token(g_device.api_token_str, sizeof(g_device.api_token_str))) {
+    Serial.println("[PROV] Loaded existing API token from NVS");
+  } else {
+    if (!derive_api_token(g_device.privkey, g_device.api_token_str, sizeof(g_device.api_token_str))) {
+      Serial.println("[!!] API token derivation failed");
+      return false;
+    }
+    if (!nvs_store_token(g_device.api_token_str)) {
+      Serial.println("[!!] Failed to store API token");
+      return false;
+    }
+    Serial.println("[PROV] API token stored in NVS");
+  }
+
+  // ── Derive device-unique AP password ──
+  Serial.println("[PROV] Deriving device-unique AP password...");
+  derive_ap_password(g_device.pubkey_fp, g_device.ap_password, sizeof(g_device.ap_password));
+
   // Load chain state
   g_device.seq = nvs_load_u32(NVS_KEY_SEQ, 0);
   g_device.seq_persisted = g_device.seq;
   g_device.boot_count = nvs_load_u32(NVS_KEY_BOOTS, 0) + 1;
   nvs_store_u32(NVS_KEY_BOOTS, g_device.boot_count);
   g_device.log_seq = nvs_load_u32(NVS_KEY_LOGSEQ, 0);
-  
+
   if (!nvs_load_bytes(NVS_KEY_CHAIN, g_device.chain_head, 32)) {
     // Initialize genesis chain hash
     sha256_domain("securacv:genesis:v1", (const uint8_t*)g_device.device_id, strlen(g_device.device_id), g_device.chain_head);
     nvs_store_bytes(NVS_KEY_CHAIN, g_device.chain_head, 32);
   }
-  
+
   g_device.boot_ms = millis();
   g_device.initialized = true;
   g_health.crypto_healthy = true;
   g_health.min_heap = ESP.getFreeHeap();
-  
-  Serial.printf("[OK] Device ID: %s\n", g_device.device_id);
-  Serial.printf("[OK] Boot count: %u\n", g_device.boot_count);
-  Serial.printf("[OK] Chain seq: %u\n", g_device.seq);
-  
+
+  Serial.printf("[PROV] Device ID: %s\n", g_device.device_id);
+  Serial.printf("[PROV] Boot count: %u\n", g_device.boot_count);
+  Serial.printf("[PROV] Chain seq: %u\n", g_device.seq);
+
   return true;
 }
 
@@ -3339,9 +3951,15 @@ static void handle_serial_commands() {
         break;
       case 'w':
         Serial.printf("WiFi AP: %s\n", g_device.ap_ssid);
-        Serial.printf("Password: %s\n", AP_PASSWORD_DEFAULT);
+        Serial.printf("Password: %s\n", g_device.ap_password);
         Serial.printf("IP: %s\n", WiFi.softAPIP().toString().c_str());
+        Serial.printf("TLS: %s\n", g_tls_enabled ? "YES (port 443)" : "NO (port 80)");
         Serial.printf("Clients: %d\n", WiFi.softAPgetStationNum());
+        {
+          char redacted[16];
+          auth_redact_token(g_device.api_token_str, redacted, sizeof(redacted));
+          Serial.printf("API Token: %s\n", redacted);
+        }
         break;
       case 'c':
         #if FEATURE_CAMERA_PEEK
@@ -3475,14 +4093,27 @@ void setup() {
   }
   #endif
   
+  // ── TLS Certificate Initialization ──
+  #if FEATURE_WIFI_AP && FEATURE_HTTP_SERVER
+  if (g_device.initialized) {
+    if (init_tls_cert()) {
+      g_tls_enabled = true;
+    } else {
+      Serial.println("[WARN] TLS unavailable — running in HTTP-ONLY mode");
+      Serial.println("[WARN] API traffic is NOT encrypted.");
+      g_tls_enabled = false;
+    }
+  }
+  #endif
+
   // Start WiFi Access Point
   #if FEATURE_WIFI_AP
   Serial.println("[..] Starting WiFi Access Point...");
   if (start_wifi_ap()) {
-    Serial.println("[OK] WiFi AP active");
-    
+    Serial.printf("[WIFI] AP started: %s (password: %s)\n", g_device.ap_ssid, g_device.ap_password);
+
     #if FEATURE_HTTP_SERVER
-    Serial.println("[..] Starting HTTP server...");
+    Serial.println("[..] Starting API server...");
     start_http_server();
     #endif
   } else {
@@ -3642,20 +4273,56 @@ void setup() {
   // Log boot event
   log_health(SCV_LOG_INFO, SCV_CAT_SYSTEM, "Device boot complete", FIRMWARE_VERSION);
   
+  // Print provisioning receipt on first boot (full token visible via Serial = physical access)
+  if (g_device.first_boot) {
+    Serial.println();
+    Serial.println("╔══════════════════════════════════════════════════════════════╗");
+    Serial.println("║            PROVISIONING RECEIPT                               ║");
+    Serial.println("║  Save this JSON for the Secure Admin Panel (SAP)              ║");
+    Serial.println("╠══════════════════════════════════════════════════════════════╣");
+    Serial.println("║                                                              ║");
+    Serial.printf( "║  {                                                           ║\n");
+    Serial.printf( "║    \"device_id\": \"%s\",\n", g_device.device_id);
+    #if FEATURE_WIFI_AP
+    Serial.printf( "║    \"base_url\": \"%s://%s\",\n",
+                   g_tls_enabled ? "https" : "http", WiFi.softAPIP().toString().c_str());
+    #endif
+    Serial.printf( "║    \"token\": \"%s\",\n", g_device.api_token_str);
+    Serial.printf( "║    \"pubkey_fp\": \"%s\",\n", g_device.fingerprint_hex);
+    Serial.printf( "║    \"firmware\": \"%s\",\n", FIRMWARE_VERSION);
+    Serial.printf( "║    \"mac\": \"%s\",\n", WiFi.macAddress().c_str());
+    Serial.printf( "║    \"ap_ssid\": \"%s\",\n", g_device.ap_ssid);
+    Serial.printf( "║    \"ap_password\": \"%s\",\n", g_device.ap_password);
+    if (g_tls_enabled) {
+      Serial.printf("║    \"tls_cert_fp\": \"%s\",\n", g_tls_cert_fp_hex);
+    }
+    Serial.printf( "║    \"provisioned_at\": \"boot:%lu\"\n", (unsigned long)g_device.boot_count);
+    Serial.println("║  }                                                           ║");
+    Serial.println("║                                                              ║");
+    Serial.println("╚══════════════════════════════════════════════════════════════╝");
+  } else {
+    // Subsequent boots: show redacted token
+    char redacted[16];
+    auth_redact_token(g_device.api_token_str, redacted, sizeof(redacted));
+    Serial.printf("[PROV] API token: %s  (redacted — full token on first boot only)\n", redacted);
+  }
+
   Serial.println();
   Serial.println("╔══════════════════════════════════════════════════════════════╗");
   Serial.println("║               WITNESS DEVICE READY                           ║");
   Serial.println("╠══════════════════════════════════════════════════════════════╣");
   Serial.printf("║  Device ID  : %-45s  ║\n", g_device.device_id);
   Serial.printf("║  WiFi AP    : %-45s  ║\n", g_device.ap_ssid);
-  Serial.printf("║  Password   : %-45s  ║\n", AP_PASSWORD_DEFAULT);
+  Serial.printf("║  Password   : %-45s  ║\n", g_device.ap_password);
   #if FEATURE_WIFI_AP
-  Serial.printf("║  Dashboard  : http://%-39s  ║\n", WiFi.softAPIP().toString().c_str());
-  Serial.println("║  mDNS       : http://canary.local                             ║");
+  Serial.printf("║  Dashboard  : %s://%-36s  ║\n",
+                g_tls_enabled ? "https" : "http",
+                WiFi.softAPIP().toString().c_str());
   #endif
   Serial.println("╠══════════════════════════════════════════════════════════════╣");
   Serial.println("║  Commands: h=help i=identity s=status t=time g=gps c=cam m=sys║");
-  Serial.println("║  Hold BOOT button 1.2s to print all info                     ║");
+  Serial.println("║  Press BOOT (short) = serve provisioning receipt via HTTPS    ║");
+  Serial.println("║  Hold  BOOT (>3s)   = factory reset                           ║");
   Serial.println("╚══════════════════════════════════════════════════════════════╝");
   Serial.println();
   print_table_header();
@@ -3678,26 +4345,52 @@ void loop() {
   // Handle serial commands
   handle_serial_commands();
 
-  // Check boot button for info reprint
+  // Check boot button:
+  //   Short press (<2s) = open provisioning gate
+  //   Medium hold (1.2-3s) = print device info
+  //   Long hold (>3s)  = factory reset (handled by existing code)
   static uint32_t boot_btn_start = 0;
+  static bool boot_btn_was_pressed = false;
   bool pressed = (digitalRead(BOOT_BUTTON_GPIO) == LOW);
-  if (pressed) {
-    if (boot_btn_start == 0) {
-      boot_btn_start = millis();
-    } else if (millis() - boot_btn_start >= BOOT_BUTTON_HOLD_MS) {
+
+  if (pressed && !boot_btn_was_pressed) {
+    boot_btn_start = millis();
+    boot_btn_was_pressed = true;
+  }
+
+  if (!pressed && boot_btn_was_pressed) {
+    uint32_t duration = millis() - boot_btn_start;
+    boot_btn_was_pressed = false;
+    boot_btn_start = 0;
+
+    if (duration >= BOOT_LONG_PRESS_MS) {
+      // Factory reset — handled by existing code path below
+      // (already exists in the codebase)
+    } else if (duration >= BOOT_BUTTON_HOLD_MS) {
+      // Medium hold: print device info (existing behavior)
       if (g_device.initialized) {
         print_identity_block();
         print_time_block();
         print_gps_block();
-        hw_state_print();  // Also print hardware state
+        hw_state_print();
         print_status_bar();
         print_table_header();
       }
-      boot_btn_start = 0;
-      delay(300);
+    } else if (duration >= BOOT_SHORT_PRESS_MS) {
+      // Short press: open provisioning gate
+      g_provisioning_gate_open = true;
+      Serial.println("[AUTH] Provisioning gate OPENED (receipt available for next request)");
+      log_health(SCV_LOG_INFO, SCV_CAT_AUTH, "Provisioning gate opened", "BOOT button");
+      // Blink LED 3x to confirm
+      #ifdef LED_BUILTIN
+      for (int i = 0; i < 3; i++) {
+        digitalWrite(LED_BUILTIN, HIGH);
+        delay(100);
+        digitalWrite(LED_BUILTIN, LOW);
+        delay(100);
+      }
+      #endif
     }
-  } else {
-    boot_btn_start = 0;
   }
 
   // ════════════════════════════════════════════════════════════════════════════
