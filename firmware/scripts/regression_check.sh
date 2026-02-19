@@ -225,7 +225,7 @@ echo "── Security: Zero phone-home ──"
 # WiFi.begin() connects to an external AP (station mode).
 # HTTPClient, WiFiClient, mqtt.connect() are outbound patterns.
 # WiFiAP, WiFi.softAP are acceptable (AP mode = inbound).
-OUTBOUND_HITS=$(grep -rn 'WiFi\.begin\s*(\|HTTPClient\|WiFiClient\s\|WiFiClientSecure\|mqtt\.connect\|\.connect(' "${SRC_DIRS[@]}" 2>/dev/null \
+OUTBOUND_HITS=$(grep -rEn 'WiFi\.begin\(|HTTPClient|WiFiClient[[:space:]]|WiFiClientSecure|mqtt\.connect\(|\.connect\(' "${SRC_DIRS[@]}" 2>/dev/null \
   | grep -v "//.*WiFi\|WiFi\.softAP\|WiFiAP\|WiFiServer\|#if.*FEATURE_HA_MQTT\|#ifdef.*MQTT\|\.h:\|\.md:" \
   | grep -v "FEATURE_MESH_NETWORK\|mesh\|example\|test" \
   | head -10 || true)
@@ -247,7 +247,7 @@ echo "── Security: Private key isolation ──"
 # This check looks for private key bytes being printed, serialized to JSON, written to
 # SD card, or included in API responses. It excludes legitimate internal uses like
 # Ed25519::sign(), derive_api_token(), nvs_store_key(), and nvs_load_key().
-PRIVKEY_LEAK=$(grep -rn 'priv\(ate\)\?_\?key\|privkey\|NVS_KEY_PRIV' "${SRC_DIRS[@]}" 2>/dev/null \
+PRIVKEY_LEAK=$(grep -rEn 'priv(ate)?_?key|privkey|NVS_KEY_PRIV' "${SRC_DIRS[@]}" 2>/dev/null \
   | grep -i 'print\|log\|serial\|json\|response\|send\|export\|write.*sd\|write.*file\|transmit\|broadcast' \
   | grep -v "//\|store_key\|load_key\|nvs_.*key\|\.h:\|\.md:\|derive_api_token\|Ed25519::sign\|crypto_sign\|HKDF\|hmac" \
   | head -10 || true)
@@ -267,7 +267,7 @@ echo "── Privacy: Presence detection MAC handling ──"
 
 # Presence detection must hash MACs before storage. Look for patterns
 # that store or transmit raw BSSID/MAC data.
-RAW_MAC_STORE=$(grep -rn 'bssid\|BSSID\|macAddress' "${SRC_DIRS[@]}" 2>/dev/null \
+RAW_MAC_STORE=$(grep -rEn 'bssid|BSSID|macAddress' "${SRC_DIRS[@]}" 2>/dev/null \
   | grep -i 'store\|save\|write\|persist\|sd\|nvs\|put\|append\|push_back\|log' \
   | grep -v "//\|hash\|fingerprint\|derive\|digest\|sha256\|\.h:\|\.md:" \
   | head -10 || true)
@@ -285,7 +285,7 @@ echo ""
 echo "── Security: TLS enforcement ──"
 
 # Look for patterns that might serve HTTP without TLS redirect
-HTTP_FALLBACK=$(grep -rn 'server\.begin\s*(\s*80\|:80\b\|HTTP_PORT\s*=\?\s*80\|listen.*80' "${SRC_DIRS[@]}" 2>/dev/null \
+HTTP_FALLBACK=$(grep -rEn 'server\.begin[[:space:]]*\([[:space:]]*80|:80\b|HTTP_PORT[[:space:]]*=?[[:space:]]*80|listen.*80' "${SRC_DIRS[@]}" 2>/dev/null \
   | grep -v "//\|redirect\|301\|https\|\.md:" \
   | head -5 || true)
 if [ -n "$HTTP_FALLBACK" ]; then
