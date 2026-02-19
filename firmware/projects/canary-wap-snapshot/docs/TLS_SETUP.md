@@ -14,7 +14,7 @@ At first boot, the device generates a self-signed TLS certificate:
 Algorithm:  RSA-2048
 Signature:  SHA-256 with RSA
 Subject:    CN=SecuraCV Canary
-Validity:   10 years from generation
+Validity:   2020–2050 (wide window for devices without reliable RTC)
 Storage:    NVS (DER-encoded)
 ```
 
@@ -149,8 +149,8 @@ The HTTPS server is configured with:
 ```cpp
 httpd_ssl_config_t config = HTTPD_SSL_CONFIG_DEFAULT();
 config.port_secure = 443;
-config.cacert_pem = cert_der;       // DER certificate
-config.cacert_len = cert_der_len;
+config.servercert = cert_der;       // DER certificate
+config.servercert_len = cert_der_len;
 config.prvtkey_pem = key_der;       // DER private key
 config.prvtkey_len = key_der_len;
 config.httpd.max_uri_handlers = 40; // Accommodate all API routes

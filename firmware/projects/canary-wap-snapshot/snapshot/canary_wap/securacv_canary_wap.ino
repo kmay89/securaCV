@@ -809,8 +809,8 @@ static const char BASE62[] =
 
 // Rejection sampling: discard bytes >= 248 (248 = 62*4, evenly divisible)
 // This eliminates modular bias entirely.
-static void base62_encode_unbiased(const uint8_t* input, size_t in_len,
-                                   char* output, size_t out_len) {
+static void format_api_token_string(const uint8_t* input, size_t in_len,
+                                    char* output, size_t out_len) {
   size_t out_idx = 0;
   output[out_idx++] = 'c';
   output[out_idx++] = 'v';
@@ -872,7 +872,7 @@ static bool derive_api_token(const uint8_t privkey[32], char* token_str, size_t 
   // ── Step 3: Encode as base62 with rejection sampling ─────────────────
   uint8_t token_bytes[24];
   memcpy(token_bytes, token_hash, 24);
-  base62_encode_unbiased(token_bytes, 24, token_str, token_str_len);
+  format_api_token_string(token_bytes, 24, token_str, token_str_len);
 
   // ── Wipe intermediate key material ───────────────────────────────────
   secure_zero(token_key, sizeof(token_key));
@@ -887,11 +887,19 @@ static bool derive_api_token(const uint8_t privkey[32], char* token_str, size_t 
 // ════════════════════════════════════════════════════════════════════════════
 
 static void derive_ap_password(const uint8_t fingerprint[8], char* password, size_t len) {
-  // Use bytes 0-4 of fingerprint for password material
+  // Use bytes 0-7 of fingerprint for password material
   // WPA2-PSK requires 8-63 ASCII characters
   char encoded[6];
-  for (int i = 0; i < 5; i++) {
-    encoded[i] = BASE62[fingerprint[i] % 62];
+  size_t chars_produced = 0;
+  for (size_t i = 0; chars_produced < 5 && i < 8; i++) {
+    uint8_t b = fingerprint[i];
+    if (b < 248) {  // 248 = 62 * 4, rejection sampling to avoid bias
+      encoded[chars_produced++] = BASE62[b % 62];
+    }
+  }
+  // Fallback in the extremely unlikely case we don't get 5 chars from 8 bytes
+  while (chars_produced < 5) {
+    encoded[chars_produced++] = '0';
   }
   encoded[5] = '\0';
   snprintf(password, len, "cv-%s", encoded);
@@ -1036,7 +1044,7 @@ static bool tls_generate_self_signed_cert() {
     mbedtls_mpi_lset(&serial_mpi, 1);
     mbedtls_x509write_crt_set_serial(&crt, &serial_mpi);
 
-    mbedtls_x509write_crt_set_validity(&crt, "20250101000000", "20350101000000");
+    mbedtls_x509write_crt_set_validity(&crt, "20200101000000", "20500101000000");
   }
 
   // Write certificate to DER

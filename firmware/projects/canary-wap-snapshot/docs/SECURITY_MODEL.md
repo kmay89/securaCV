@@ -85,7 +85,7 @@ Layer 6: Monitoring
 
 - Generated at first boot using mbedtls
 - Self-signed X.509 certificate (CN=SecuraCV Canary)
-- 10-year validity (local-only device, no CA infrastructure)
+- 30-year validity window (2020–2050, local-only device without reliable RTC at boot)
 - Stored in NVS as DER-encoded blobs
 - SHA-256 fingerprint available via `/api/device-info`
 
