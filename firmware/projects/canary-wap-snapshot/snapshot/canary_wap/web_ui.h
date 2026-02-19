@@ -693,6 +693,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         <div class="badge info" id="gpsBadge"><span class="badge-dot"></span><span id="gpsStatus">GPS</span></div>
         <div class="badge success" id="sdBadge"><span class="badge-dot"></span><span>SD OK</span></div>
         <div class="badge info" id="rfBadge"><span class="badge-dot"></span><span id="rfStatus">RF</span></div>
+        <div class="badge info" id="wpBadge" title="WiFi Presence — nearby device count"><span class="badge-dot"></span><span id="wpBadgeText">WP</span></div>
       </div>
     </div>
   </header>
@@ -702,6 +703,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     <nav>
       <button class="nav-btn active" data-panel="status">Status</button>
       <button class="nav-btn" data-panel="camera">Camera</button>
+      <button class="nav-btn" data-panel="presence">Presence</button>
       <button class="nav-btn" data-panel="community">Community<span class="count" id="communityCount" style="display:none">0</span></button>
       <button class="nav-btn" data-panel="records">Records<span class="count" id="recordsCount" style="display:none">0</span></button>
       <button class="nav-btn" data-panel="settings">Settings</button>
@@ -994,6 +996,113 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         <div id="snapshotPreview" style="margin-top:1rem;display:none;">
           <div class="form-label">Snapshot</div>
           <img id="snapshotImg" style="max-width:100%;border-radius:8px;border:1px solid var(--border);" alt="Snapshot">
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════════════ -->
+    <!-- PRESENCE PANEL - WiFi Presence Detection + Audible Chirp -->
+    <!-- ═══════════════════════════════════════════════════════════════════════ -->
+    <div class="panel" id="panel-presence">
+      <!-- WiFi Presence Detection -->
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">WiFi Presence Detection</div>
+            <div class="card-subtitle">Privacy-preserving device counting via probe requests</div>
+          </div>
+          <div class="badge info" id="wifiPresenceBadge">
+            <span class="badge-dot"></span>
+            <span id="wifiPresenceState">Loading...</span>
+          </div>
+        </div>
+        <div class="stats-grid">
+          <div class="stat-item">
+            <div class="stat-label">Devices Now</div>
+            <div class="stat-value" id="wpCurrentCount">0</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-label">Last Bucket</div>
+            <div class="stat-value" id="wpLastCount">0</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-label">Peak</div>
+            <div class="stat-value" id="wpPeakCount">0</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-label">Total Probes</div>
+            <div class="stat-value" id="wpTotalProbes">0</div>
+          </div>
+        </div>
+        <!-- History sparkline -->
+        <div style="margin-top:1rem;">
+          <div class="form-label">History (last 10 minutes)</div>
+          <div id="wpSparkline" style="display:flex;align-items:flex-end;gap:2px;height:40px;padding:0.5rem 0;"></div>
+        </div>
+        <div class="toggle-row" style="margin-top:1rem;">
+          <div class="toggle-info">
+            <div class="toggle-title">WiFi Presence Monitoring</div>
+            <div class="toggle-desc">Listen for probe requests from nearby devices</div>
+          </div>
+          <label style="cursor:pointer;">
+            <input type="checkbox" id="wpEnabled" onchange="toggleWifiPresence()">
+          </label>
+        </div>
+        <div style="margin-top:0.75rem;padding:0.75rem;background:rgba(99,179,237,0.1);border-radius:8px;font-size:0.75rem;color:var(--muted);">
+          <strong>Privacy:</strong> MAC addresses are hashed immediately and never stored.
+          Only anonymous device counts are recorded. Hashes rotate every bucket window
+          so devices cannot be tracked across time.
+        </div>
+      </div>
+
+      <!-- BLE Presence -->
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Bluetooth Presence</div>
+            <div class="card-subtitle" id="blePresenceSubtitle">BLE device detection</div>
+          </div>
+        </div>
+        <div id="blePresenceContent">
+          <div style="padding:1rem;background:rgba(246,173,85,0.1);border-radius:8px;font-size:0.8rem;">
+            <strong>BLE Status:</strong>
+            <span id="blePresenceStatus">Checking...</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Audible Chirp Controls -->
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Canary Chirp</div>
+            <div class="card-subtitle" id="chirpSubtitleText">Local audible/visual alerts</div>
+          </div>
+          <div class="badge info" id="chirpHwBadge">
+            <span class="badge-dot"></span>
+            <span id="chirpHwState">Loading...</span>
+          </div>
+        </div>
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+          <button class="btn btn-primary btn-sm" onclick="playAudibleChirp('confirm')" title="Play two short beeps — device confirmation">Test</button>
+          <button class="btn btn-secondary btn-sm" onclick="playAudibleChirp('alert')" title="Play rising three-tone alert">Alert</button>
+          <button class="btn btn-secondary btn-sm" onclick="playAudibleChirp('success')" title="Play pleasant ascending tone">Success</button>
+          <button class="btn btn-secondary btn-sm" onclick="playAudibleChirp('error')" title="Play descending error tone">Error</button>
+        </div>
+        <div id="chirpHwResult" style="margin-top:0.5rem;font-size:0.8rem;min-height:1.2em;"></div>
+        <div style="margin-top:0.75rem;font-size:0.8rem;color:var(--muted);">
+          <span id="chirpHwMode">Mode: Checking...</span><br>
+          <span style="font-size:0.75rem;">Connect a passive buzzer to the configured GPIO for audio alerts.
+          Without a buzzer, chirp uses LED blink patterns.</span>
+        </div>
+        <div class="toggle-row" style="margin-top:0.75rem;">
+          <div class="toggle-info">
+            <div class="toggle-title">Visual Only Mode</div>
+            <div class="toggle-desc">Use LED blinks instead of buzzer tones</div>
+          </div>
+          <label style="cursor:pointer;">
+            <input type="checkbox" id="chirpVisualOnly" onchange="setChirpVisualOnly()">
+          </label>
         </div>
       </div>
     </div>
@@ -1384,7 +1493,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
             <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
               <button class="btn btn-secondary btn-sm" onclick="filterLogs('all')">All</button>
               <button class="btn btn-secondary btn-sm" onclick="filterLogs('unread')">Unread</button>
-              <button class="btn btn-danger btn-sm" onclick="ackAllLogs()">Ack All</button>
+              <button class="btn btn-danger btn-sm" onclick="ackAllLogs()" title="Acknowledge all unread log entries">Ack All</button>
             </div>
           </div>
           <div class="log-list" id="logList">
@@ -1401,7 +1510,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
               <div class="card-title">Witness Records</div>
               <div class="card-subtitle" id="witnessSubtitle">Cryptographically signed events</div>
             </div>
-            <button class="btn btn-primary btn-sm" onclick="exportWitness()">⬇ Export</button>
+            <button class="btn btn-primary btn-sm" onclick="exportWitness()" title="Download witness record bundle for verification">⬇ Export</button>
           </div>
           <div class="log-list" id="witnessList">
             <div class="loading"><div class="spinner"></div></div>
@@ -1615,8 +1724,8 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
             </select>
           </div>
           <div style="display:flex;gap:0.5rem;margin-top:1rem;flex-wrap:wrap;">
-            <button class="btn btn-primary" onclick="saveConfig()">Save Configuration</button>
-            <button class="btn btn-danger" onclick="confirmReboot()">Reboot Device</button>
+            <button class="btn btn-primary" onclick="saveConfig()" title="Save current settings to device NVS">Save Configuration</button>
+            <button class="btn btn-danger" onclick="confirmReboot()" title="Restart the device (witness chain preserved)">Reboot Device</button>
           </div>
         </div>
 
@@ -1638,7 +1747,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
             </div>
           </div>
           <div style="margin-top:1rem;">
-            <button class="btn btn-secondary" onclick="rotateOldLogs()">Rotate Old Logs (30+ days)</button>
+            <button class="btn btn-secondary" onclick="rotateOldLogs()" title="Delete health logs older than 30 days from SD card">Rotate Old Logs (30+ days)</button>
           </div>
         </div>
       </div>
@@ -1846,6 +1955,16 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       loadAuthDeviceInfo();
     });
 
+    // Refresh all dashboard data
+    function refreshAll() {
+      refreshStatus();
+      refreshSystemHealth();
+      loadChain();
+      refreshRfStatus();
+      refreshWifiPresence();
+      refreshAudibleChirpStatus();
+    }
+
     function startDashboard() {
       refreshAll();
       if (!window._refreshInterval) {
@@ -1877,6 +1996,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
       if (panel === 'records') { loadLogs(); loadWitness(); }
       else if (panel === 'camera') refreshPeekStatus();
+      else if (panel === 'presence') { refreshWifiPresence(); refreshAudibleChirpStatus(); }
       else if (panel === 'community') { refreshOpera(); refreshChirpStatus(); refreshBleDiscovery(); }
       else if (panel === 'settings') { loadWifiStatus(); refreshBtStatus(); loadBtPairedDevices(); loadRfSettings(); }
 
@@ -1960,6 +2080,22 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       document.getElementById('sdUsed').textContent = Math.round((data.sd_used || 0) / (1024 * 1024));
 
       if (typeof data.camera_ready !== 'undefined') cameraReady = data.camera_ready;
+
+      // Update WiFi presence badges from status response
+      if (data.presence) {
+        const wpBadge = document.getElementById('wpBadge');
+        const wpText = document.getElementById('wpBadgeText');
+        if (data.presence.wifi_enabled && data.presence.wifi_count > 0) {
+          wpBadge.className = 'badge success';
+          wpText.textContent = data.presence.wifi_count + ' WP';
+        } else if (data.presence.wifi_enabled) {
+          wpBadge.className = 'badge info';
+          wpText.textContent = '0 WP';
+        } else {
+          wpBadge.className = 'badge info';
+          wpText.textContent = 'WP';
+        }
+      }
     }
 
     // Helper function to get temperature badge class based on state
@@ -2495,6 +2631,113 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     async function ackAllLogs() { if (confirm('Acknowledge all?')) { await api('/api/logs/ack-all', 'POST', { level: 3 }); loadLogs(); refreshStatus(); } }
 
     // ══════════════════════════════════════════════════════════════════
+    // WIFI PRESENCE DETECTION
+    // ══════════════════════════════════════════════════════════════════
+    async function refreshWifiPresence() {
+      const data = await api('/api/presence/wifi');
+      if (!data.feature_available && !data.enabled && data.enabled === undefined) return;
+
+      const badge = document.getElementById('wifiPresenceBadge');
+      const state = document.getElementById('wifiPresenceState');
+
+      if (data.enabled) {
+        badge.className = 'badge success';
+        state.textContent = data.current_count + ' devices';
+      } else {
+        badge.className = 'badge info';
+        state.textContent = data.feature_available ? 'Stopped' : 'Unavailable';
+      }
+
+      document.getElementById('wpEnabled').checked = data.enabled || false;
+      document.getElementById('wpCurrentCount').textContent = data.current_count || 0;
+      document.getElementById('wpLastCount').textContent = data.last_count || 0;
+      document.getElementById('wpPeakCount').textContent = data.peak_count || 0;
+      document.getElementById('wpTotalProbes').textContent = data.total_probes || 0;
+
+      // Render sparkline
+      if (data.history) {
+        const sparkline = document.getElementById('wpSparkline');
+        const max = Math.max(1, ...data.history);
+        sparkline.innerHTML = data.history.map(v => {
+          const pct = Math.max(4, (v / max) * 100);
+          const color = v > 0 ? 'var(--accent)' : 'var(--border)';
+          return '<div style="flex:1;background:' + color + ';height:' + pct + '%;border-radius:2px;min-width:4px;" title="' + v + ' devices"></div>';
+        }).join('');
+      }
+
+      // BLE presence status
+      const bleStatus = document.getElementById('blePresenceStatus');
+      const bleSubtitle = document.getElementById('blePresenceSubtitle');
+      try {
+        const presData = await api('/api/presence');
+        if (presData.ble?.available) {
+          bleStatus.textContent = 'BLE scanning available via BLE Discovery subsystem';
+          bleSubtitle.textContent = 'Active';
+        } else {
+          bleStatus.innerHTML = '<strong>Disabled at compile time</strong> (security: no BT binary blobs).<br>' +
+            'To enable: rebuild firmware with FEATURE_BLE=1 and CONFIG_BT_ENABLED=y in sdkconfig.';
+          bleSubtitle.textContent = 'Compile-time disabled';
+        }
+      } catch(e) {}
+    }
+
+    async function toggleWifiPresence() {
+      const enabled = document.getElementById('wpEnabled').checked;
+      const data = await api(enabled ? '/api/presence/wifi/start' : '/api/presence/wifi/stop', 'POST');
+      if (!data.success) {
+        document.getElementById('wpEnabled').checked = !enabled;
+        alert('Failed: ' + (data.error || 'Unknown error'));
+      }
+      refreshWifiPresence();
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // AUDIBLE CHIRP
+    // ══════════════════════════════════════════════════════════════════
+    async function refreshAudibleChirpStatus() {
+      const data = await api('/api/audible-chirp');
+      if (!data.feature_available && !data.available) return;
+
+      const badge = document.getElementById('chirpHwBadge');
+      const state = document.getElementById('chirpHwState');
+      const mode = document.getElementById('chirpHwMode');
+
+      if (data.available) {
+        badge.className = 'badge success';
+        state.textContent = 'Ready';
+        mode.textContent = data.visual_only
+          ? 'Mode: Visual only (LED blink) — connect buzzer to GPIO ' + data.gpio + ' for audio'
+          : 'Mode: Audio (GPIO ' + data.gpio + ')';
+        document.getElementById('chirpVisualOnly').checked = data.visual_only;
+      } else {
+        badge.className = 'badge info';
+        state.textContent = 'Unavailable';
+        mode.textContent = 'Mode: Not compiled (FEATURE_AUDIBLE_CHIRP=0)';
+      }
+    }
+
+    async function playAudibleChirp(pattern) {
+      const result = document.getElementById('chirpHwResult');
+      result.textContent = 'Playing...';
+      result.style.color = 'var(--muted)';
+      const data = await api('/api/audible-chirp/play', 'POST', { pattern });
+      if (data.success) {
+        result.style.color = 'var(--success)';
+        result.textContent = 'Played: ' + data.pattern + (data.visual_only ? ' (LED blink)' : ' (audio)');
+      } else {
+        result.style.color = 'var(--danger)';
+        result.textContent = 'Failed: ' + (data.error || 'Unknown error');
+      }
+      setTimeout(() => { result.textContent = ''; }, 3000);
+    }
+
+    async function setChirpVisualOnly() {
+      const visual = document.getElementById('chirpVisualOnly').checked;
+      await api('/api/audible-chirp/config', 'POST', { visual_only: visual });
+      refreshAudibleChirpStatus();
+    }
+
+    // ══════════════════════════════════════════════════════════════════
     // WIFI
     // ══════════════════════════════════════════════════════════════════
     let wifiState = null;
@@ -2792,6 +3035,8 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     refreshSystemHealth();
     loadChain();
     refreshRfStatus();
+    refreshWifiPresence();
+    refreshAudibleChirpStatus();
     loadWifiStatus();
     refreshOpera();
     refreshChirpStatus();
@@ -2805,7 +3050,8 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     setInterval(refreshRfStatus, 3000);
     setInterval(loadWifiStatus, 5000);
     setInterval(() => {
-      if (currentPanel === 'records' && currentRecordsTab === 'logs') loadLogs();
+      if (currentPanel === 'presence') refreshWifiPresence();
+      else if (currentPanel === 'records' && currentRecordsTab === 'logs') loadLogs();
       else if (currentPanel === 'records' && currentRecordsTab === 'witness') loadWitness();
       else if (currentPanel === 'community' && currentCommunityTab === 'opera') refreshOpera();
       else if (currentPanel === 'community' && currentCommunityTab === 'chirp') refreshChirpStatus();
