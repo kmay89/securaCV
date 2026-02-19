@@ -22,6 +22,16 @@
 - **Root cause:** `esp_camera.h` must be included AFTER WiFi/system headers
 - **Fix:** Include order: system → WiFi → crypto → esp_camera → project headers
 
+### Watchdog API differs between ESP-IDF 4.x and 5.x
+- **What happened:** CI build failed with `esp_task_wdt_config_t` not declared
+- **Root cause:** ESP-IDF 5.x introduced a struct-based watchdog API
+  (`esp_task_wdt_config_t`, `esp_task_wdt_reconfigure`). ESP-IDF 4.x uses
+  the simpler `esp_task_wdt_init(uint32_t timeout, bool panic)`.
+  PlatformIO `espressif32 @ ^6.5.0` with Arduino framework uses ESP-IDF 4.4.x.
+- **Fix:** Use `#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)` to
+  select the correct API at compile time. Include `esp_idf_version.h`.
+- **Date learned:** 2026-02
+
 ---
 
 ## Hardware: XIAO ESP32S3 Sense

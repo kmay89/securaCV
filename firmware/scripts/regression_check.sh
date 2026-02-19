@@ -136,7 +136,7 @@ echo "── Security: Auth implementation ──"
 # If Bearer auth exists, it MUST use constant-time comparison
 AUTH_PRESENT=$(grep -rn "Bearer\|Authorization\|authenticate" "${SRC_DIRS[@]}" 2>/dev/null | grep -v "//" | head -1 || true)
 if [ -n "$AUTH_PRESENT" ]; then
-  CT_COMPARE=$(grep -rn "constant_time_compare\|volatile.*result.*|=\|crypto_verify" "${SRC_DIRS[@]}" 2>/dev/null || true)
+  CT_COMPARE=$(grep -rn "constant_time_compare\|volatile.*result.*\|=\|crypto_verify" "${SRC_DIRS[@]}" 2>/dev/null | grep -v "//" || true)
   if [ -n "$CT_COMPARE" ]; then
     check_pass "Auth appears to use constant-time comparison"
   else
@@ -161,7 +161,7 @@ echo "── Hardware: Camera configuration ──"
 if [ -f "$CONFIG_H" ]; then
   CAM_PWDN=$(grep -n "CAM_PIN_PWDN\|PWDN_GPIO_NUM" "$CONFIG_H" 2>/dev/null | head -1 || true)
   if [ -n "$CAM_PWDN" ]; then
-    if echo "$CAM_PWDN" | grep -q "\-1"; then
+    if echo "$CAM_PWDN" | grep -qE '[[:space:]=-]-1([[:space:]]|$)'; then
       check_pass "Camera PWDN pin set to -1 (correct for XIAO ESP32S3 Sense)"
     else
       check_warn "Camera PWDN pin may not be -1 — XIAO ESP32S3 Sense requires PWDN=-1"
@@ -181,10 +181,10 @@ echo "── Hardware: SD card SPI pins ──"
 # XIAO ESP32S3 Sense SD card SPI pins: CS=21, SCK=7, MISO=8, MOSI=9
 if [ -f "$CONFIG_H" ]; then
   SD_PINS_OK=true
-  grep -q "SD_CS_PIN.*21\|SD_CS_PIN *21" "$CONFIG_H" 2>/dev/null || SD_PINS_OK=false
-  grep -q "SD_SCK_PIN.*7\|SD_SCK_PIN *7" "$CONFIG_H" 2>/dev/null || SD_PINS_OK=false
-  grep -q "SD_MISO_PIN.*8\|SD_MISO_PIN *8" "$CONFIG_H" 2>/dev/null || SD_PINS_OK=false
-  grep -q "SD_MOSI_PIN.*9\|SD_MOSI_PIN *9" "$CONFIG_H" 2>/dev/null || SD_PINS_OK=false
+  grep -qE "SD_CS_PIN\s+21\b" "$CONFIG_H" 2>/dev/null || SD_PINS_OK=false
+  grep -qE "SD_SCK_PIN\s+7\b" "$CONFIG_H" 2>/dev/null || SD_PINS_OK=false
+  grep -qE "SD_MISO_PIN\s+8\b" "$CONFIG_H" 2>/dev/null || SD_PINS_OK=false
+  grep -qE "SD_MOSI_PIN\s+9\b" "$CONFIG_H" 2>/dev/null || SD_PINS_OK=false
 
   if [ "$SD_PINS_OK" = true ]; then
     check_pass "SD SPI pins correct for XIAO ESP32S3 Sense (CS=21,SCK=7,MISO=8,MOSI=9)"
@@ -261,6 +261,26 @@ echo "── Reliability: Watchdog ──"
 WDT_PRESENT=$(grep -rn "esp_task_wdt" "${SRC_DIRS[@]}" 2>/dev/null | head -1 || true)
 if [ -n "$WDT_PRESENT" ]; then
   check_pass "Watchdog timer configured"
+  # Verify ESP-IDF version guard if struct-based API is used
+  WDT_CONFIG_T=$(grep -rn "esp_task_wdt_config_t\|esp_task_wdt_reconfigure" "${SRC_DIRS[@]}" 2>/dev/null | grep -v "//" || true)
+  if [ -n "$WDT_CONFIG_T" ]; then
+    WDT_VERSION_GUARD=$(grep -rn "ESP_IDF_VERSION" "${SRC_DIRS[@]}" 2>/dev/null | grep -i "wdt\|watchdog\|5.*0.*0" | head -1 || true)
+    if [ -z "$WDT_VERSION_GUARD" ]; then
+      # Check if the version guard is near the wdt code (within same file)
+      for wdt_file in $(grep -rl "esp_task_wdt_config_t\|esp_task_wdt_reconfigure" "${SRC_DIRS[@]}" 2>/dev/null); do
+        if grep -q "ESP_IDF_VERSION" "$wdt_file" 2>/dev/null; then
+          WDT_VERSION_GUARD="found"
+          break
+        fi
+      done
+    fi
+    if [ -n "$WDT_VERSION_GUARD" ]; then
+      check_pass "Watchdog API uses ESP-IDF version guard"
+    else
+      check_fail "esp_task_wdt_config_t used without ESP_IDF_VERSION guard — breaks on ESP-IDF 4.x"
+      blue "  Fix: #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0) around struct-based API"
+    fi
+  fi
 else
   check_warn "No watchdog timer found — device may hang without recovery"
 fi
