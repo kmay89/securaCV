@@ -51,6 +51,27 @@
 #ifndef FEATURE_BLUETOOTH
   #define FEATURE_BLUETOOTH     0
 #endif
+#ifndef FEATURE_BLE
+  #define FEATURE_BLE           0   // BLE Discovery (Opera/Chirp/Nearby)
+#endif
+#ifndef FEATURE_SYS_MONITOR
+  #define FEATURE_SYS_MONITOR   0
+#endif
+#ifndef FEATURE_WIFI_PRESENCE
+  #define FEATURE_WIFI_PRESENCE 0   // WiFi probe request presence detection
+#endif
+#ifndef FEATURE_AUDIBLE_CHIRP
+  #define FEATURE_AUDIBLE_CHIRP 0   // Local audible/visual alert tones
+#endif
+#ifndef FEATURE_RF_PRESENCE
+  #define FEATURE_RF_PRESENCE   0   // RF presence detection
+#endif
+#ifndef FEATURE_CHIRP
+  #define FEATURE_CHIRP         0   // Chirp community witness network
+#endif
+#ifndef FEATURE_GNSS
+  #define FEATURE_GNSS          1   // GPS/GNSS telemetry (enabled by default)
+#endif
 
 // ════════════════════════════════════════════════════════════════
 // DEBUG FLAG DEFAULTS

@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OperaCanary Fleet Manager</title>
+<style>
+:root {
+  --bg: #0f1118; --surface: #1a1d2e; --card: #222640; --card-hover: #2a2f4a;
+  --border: #2d3250; --text: #e8eaf0; --muted: #8891a8; --accent: #4a9eff;
+  --accent-dim: rgba(74,158,255,0.12); --success: #4ade80; --warning: #fbbf24;
+  --danger: #f87171; --danger-dim: rgba(248,113,113,0.1);
+  --mono: 'SF Mono','Fira Code','Cascadia Code',monospace;
+  --sans: system-ui,-apple-system,'Segoe UI',sans-serif;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: var(--sans); background: var(--bg); color: var(--text); min-height: 100vh; }
+a { color: var(--accent); text-decoration: none; }
+
+/* Layout */
+.app { max-width: 1200px; margin: 0 auto; padding: 1rem; }
+header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem; padding: 1rem 0; border-bottom: 1px solid var(--border); margin-bottom: 1rem; }
+header h1 { font-size: 1.25rem; font-weight: 600; }
+header h1 span { color: var(--accent); }
+.header-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+/* Buttons */
+.btn { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.5rem 1rem; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); font-size: 0.8rem; cursor: pointer; transition: all 0.15s; }
+.btn:hover { background: var(--card); border-color: var(--accent); }
+.btn-primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.btn-primary:hover { background: #3d8ae6; }
+.btn-sm { padding: 0.3rem 0.6rem; font-size: 0.75rem; }
+.btn-danger { border-color: var(--danger); color: var(--danger); }
+.btn-danger:hover { background: var(--danger-dim); }
+
+/* Input */
+.input { padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); font-size: 0.85rem; outline: none; }
+.input:focus { border-color: var(--accent); }
+.input-group { display: flex; gap: 0.5rem; }
+
+/* Stats Row */
+.stats-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 0.75rem; margin-bottom: 1.25rem; }
+.stat-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 0.85rem; }
+.stat-label { font-size: 0.7rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.3rem; }
+.stat-value { font-size: 1.3rem; font-weight: 600; font-family: var(--mono); }
+.stat-value.online { color: var(--success); }
+.stat-value.offline { color: var(--danger); }
+.stat-value.warn { color: var(--warning); }
+.stat-value.accent { color: var(--accent); }
+
+/* Device Grid */
+.device-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 0.75rem; margin-bottom: 1rem; }
+.device-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 1rem; cursor: pointer; transition: all 0.15s; position: relative; }
+.device-card:hover { border-color: var(--accent); background: var(--card-hover); transform: translateY(-1px); }
+.device-card.offline { opacity: 0.6; }
+.device-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem; }
+.device-name { font-weight: 600; font-size: 0.9rem; }
+.device-status { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.device-status.on { background: var(--success); box-shadow: 0 0 6px var(--success); }
+.device-status.off { background: var(--danger); }
+.device-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 0.4rem; }
+.device-meta-item { font-size: 0.75rem; }
+.device-meta-label { color: var(--muted); }
+.device-meta-value { font-family: var(--mono); color: var(--accent); }
+.device-remove { position: absolute; top: 0.5rem; right: 0.5rem; background: none; border: none; color: var(--muted); cursor: pointer; font-size: 1rem; line-height: 1; padding: 0.2rem; opacity: 0; transition: opacity 0.15s; }
+.device-card:hover .device-remove { opacity: 1; }
+.device-remove:hover { color: var(--danger); }
+
+/* Pagination */
+.pagination { display: flex; align-items: center; justify-content: center; gap: 0.5rem; padding: 1rem 0; }
+.page-info { font-size: 0.8rem; color: var(--muted); margin: 0 0.5rem; }
+
+/* Detail View */
+.detail-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 100; overflow-y: auto; padding: 2rem 1rem; }
+.detail-overlay.active { display: block; }
+.detail-panel { max-width: 800px; margin: 0 auto; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 1.5rem; }
+.detail-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; padding-bottom: 1rem; border-bottom: 1px solid var(--border); }
+.detail-title { font-size: 1.1rem; font-weight: 600; }
+.detail-close { background: none; border: none; color: var(--muted); font-size: 1.5rem; cursor: pointer; padding: 0.25rem; }
+.detail-close:hover { color: var(--text); }
+
+/* Tabs */
+.tabs { display: flex; gap: 0.5rem; margin-bottom: 1rem; overflow-x: auto; }
+.tab { padding: 0.5rem 1rem; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: var(--muted); font-size: 0.8rem; cursor: pointer; white-space: nowrap; }
+.tab.active { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+.tab-content { display: none; }
+.tab-content.active { display: block; }
+
+/* Data Grid */
+.data-grid { display: grid; gap: 0.5rem; }
+.data-row { display: flex; justify-content: space-between; align-items: center; padding: 0.5rem 0.75rem; background: rgba(0,0,0,0.15); border-radius: 6px; }
+.data-label { font-size: 0.8rem; color: var(--muted); }
+.data-value { font-family: var(--mono); font-size: 0.8rem; color: var(--accent); word-break: break-all; text-align: right; max-width: 60%; }
+
+/* Log Entry */
+.log-entry { display: grid; grid-template-columns: auto auto 1fr; gap: 0.5rem; align-items: start; padding: 0.5rem; background: rgba(0,0,0,0.15); border-radius: 6px; border-left: 3px solid var(--border); font-size: 0.8rem; }
+.log-entry.warn { border-left-color: var(--warning); }
+.log-entry.error { border-left-color: var(--danger); }
+.log-entry.crit { border-left-color: var(--danger); background: var(--danger-dim); }
+.log-level { font-family: var(--mono); font-size: 0.7rem; font-weight: 600; padding: 0.15rem 0.3rem; border-radius: 3px; }
+.log-cat { font-size: 0.7rem; color: var(--muted); }
+
+/* Camera Peek */
+.peek-frame { width: 100%; aspect-ratio: 4/3; background: #0a0e1a; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; }
+.peek-frame img { width: 100%; height: 100%; object-fit: contain; }
+.peek-frame .no-cam { color: var(--muted); font-size: 0.85rem; }
+.peek-controls { display: flex; gap: 0.5rem; margin-top: 0.75rem; }
+
+/* Empty State */
+.empty-state { text-align: center; padding: 3rem 1rem; color: var(--muted); }
+.empty-state h2 { font-size: 1.1rem; margin-bottom: 0.5rem; color: var(--text); }
+.empty-state p { font-size: 0.85rem; margin-bottom: 1.5rem; }
+
+/* Toast */
+.toast { position: fixed; bottom: 1.5rem; right: 1.5rem; padding: 0.75rem 1.25rem; background: var(--card); border: 1px solid var(--border); border-radius: 8px; font-size: 0.85rem; z-index: 200; opacity: 0; transition: opacity 0.3s; pointer-events: none; }
+.toast.show { opacity: 1; }
+
+/* Footer */
+footer { text-align: center; padding: 2rem 0 1rem; font-size: 0.75rem; color: var(--muted); border-top: 1px solid var(--border); margin-top: 2rem; }
+
+/* Responsive */
+@media (max-width: 640px) {
+  .stats-row { grid-template-columns: repeat(2, 1fr); }
+  .device-grid { grid-template-columns: 1fr; }
+  header { flex-direction: column; align-items: flex-start; }
+  .header-actions { width: 100%; }
+  .input-group { flex-direction: column; }
+  .input-group .input { width: 100%; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1><span>SecuraCV</span> Fleet Manager</h1>
+    <div class="header-actions">
+      <div class="input-group">
+        <input class="input" id="addDeviceInput" type="text" placeholder="IP or hostname (e.g. 192.168.4.1)" />
+        <button class="btn btn-primary" onclick="addDevice()">Add Device</button>
+      </div>
+      <button class="btn" onclick="refreshAll()" id="refreshBtn">Refresh All</button>
+      <button class="btn" id="autoToggle" onclick="toggleAutoRefresh()">Auto: Off</button>
+    </div>
+  </header>
+
+  <!-- Fleet Stats -->
+  <div class="stats-row" id="statsRow">
+    <div class="stat-card"><div class="stat-label">Total Devices</div><div class="stat-value accent" id="statTotal">0</div></div>
+    <div class="stat-card"><div class="stat-label">Online</div><div class="stat-value online" id="statOnline">0</div></div>
+    <div class="stat-card"><div class="stat-label">Offline</div><div class="stat-value offline" id="statOffline">0</div></div>
+    <div class="stat-card"><div class="stat-label">Chain Issues</div><div class="stat-value warn" id="statChainIssues">0</div></div>
+    <div class="stat-card"><div class="stat-label">Total Records</div><div class="stat-value accent" id="statRecords">0</div></div>
+  </div>
+
+  <!-- Device Grid -->
+  <div id="deviceGrid" class="device-grid"></div>
+
+  <!-- Pagination -->
+  <div class="pagination" id="pagination" style="display:none">
+    <button class="btn btn-sm" onclick="prevPage()">&lt; Prev</button>
+    <span class="page-info" id="pageInfo">Page 1 of 1</span>
+    <button class="btn btn-sm" onclick="nextPage()">Next &gt;</button>
+  </div>
+
+  <!-- Empty State -->
+  <div class="empty-state" id="emptyState">
+    <h2>No Canary Devices</h2>
+    <p>Add your first device by entering its IP address or hostname above.<br>
+       Default: <strong>192.168.4.1</strong> (direct WiFi AP connection)</p>
+    <button class="btn btn-primary" onclick="addDevice('192.168.4.1')">Add Default (192.168.4.1)</button>
+  </div>
+
+  <footer>ERRERlabs &mdash; Privacy by Design &mdash; No telemetry, no cloud, no tracking</footer>
+</div>
+
+<!-- Detail Overlay -->
+<div class="detail-overlay" id="detailOverlay" onclick="if(event.target===this)closeDetail()">
+  <div class="detail-panel">
+    <div class="detail-header">
+      <div class="detail-title" id="detailTitle">Device</div>
+      <button class="detail-close" onclick="closeDetail()">&times;</button>
+    </div>
+    <div class="tabs" id="detailTabs">
+      <button class="tab active" data-tab="status" onclick="switchTab(this)">Status</button>
+      <button class="tab" data-tab="logs" onclick="switchTab(this)">Logs</button>
+      <button class="tab" data-tab="chain" onclick="switchTab(this)">Chain</button>
+      <button class="tab" data-tab="peek" onclick="switchTab(this)">Peek</button>
+      <button class="tab" data-tab="export" onclick="switchTab(this)">Export</button>
+    </div>
+    <div class="tab-content active" id="tab-status"></div>
+    <div class="tab-content" id="tab-logs"></div>
+    <div class="tab-content" id="tab-chain"></div>
+    <div class="tab-content" id="tab-peek"></div>
+    <div class="tab-content" id="tab-export"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const DEVICES_KEY = 'securacv_fleet_devices';
+const PAGE_SIZE = 20;
+const FETCH_TIMEOUT = 3000;
+let devices = [];
+let currentPage = 0;
+let autoRefreshId = null;
+let currentDetailDevice = null;
+
+function loadDevices() {
+  try { devices = JSON.parse(localStorage.getItem(DEVICES_KEY) || '[]'); } catch { devices = []; }
+}
+function saveDevices() {
+  const stripped = devices.map(d => ({ host: d.host, name: d.name }));
+  localStorage.setItem(DEVICES_KEY, JSON.stringify(stripped));
+}
+
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 2500);
+}
+
+async function fetchWithTimeout(url, timeout = FETCH_TIMEOUT) {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeout);
+  try {
+    const resp = await fetch(url, { signal: controller.signal });
+    clearTimeout(id);
+    return resp;
+  } catch {
+    clearTimeout(id);
+    return null;
+  }
+}
+
+function baseUrl(host) {
+  const h = host.includes('://') ? host : 'http://' + host;
+  return h.replace(/\/+$/, '');
+}
+
+async function pollDevice(dev) {
+  const url = baseUrl(dev.host) + '/api/status';
+  try {
+    const resp = await fetchWithTimeout(url);
+    if (!resp || !resp.ok) { dev.online = false; dev.lastError = 'HTTP ' + (resp ? resp.status : 'timeout'); return; }
+    const data = await resp.json();
+    dev.online = true;
+    dev.lastSeen = Date.now();
+    dev.lastError = null;
+    dev.data = data;
+    dev.name = dev.name || data.device_id || dev.host;
+  } catch {
+    dev.online = false;
+    dev.lastError = 'Unreachable';
+  }
+}
+
+async function refreshAll() {
+  const btn = document.getElementById('refreshBtn');
+  btn.textContent = 'Refreshing...';
+  btn.disabled = true;
+  await Promise.allSettled(devices.map(d => pollDevice(d)));
+  btn.textContent = 'Refresh All';
+  btn.disabled = false;
+  render();
+}
+
+function toggleAutoRefresh() {
+  const btn = document.getElementById('autoToggle');
+  if (autoRefreshId) {
+    clearInterval(autoRefreshId);
+    autoRefreshId = null;
+    btn.textContent = 'Auto: Off';
+  } else {
+    autoRefreshId = setInterval(refreshAll, 30000);
+    btn.textContent = 'Auto: 30s';
+    toast('Auto-refresh enabled (30s)');
+  }
+}
+
+function addDevice(hostOverride) {
+  const input = document.getElementById('addDeviceInput');
+  const host = hostOverride || input.value.trim();
+  if (!host) return;
+  if (devices.find(d => d.host === host)) { toast('Device already added'); return; }
+  const dev = { host, name: host, online: false, data: null, lastSeen: null, lastError: null };
+  devices.push(dev);
+  saveDevices();
+  input.value = '';
+  pollDevice(dev).then(render);
+  render();
+  toast('Device added: ' + host);
+}
+
+function removeDevice(host, evt) {
+  evt.stopPropagation();
+  devices = devices.filter(d => d.host !== host);
+  saveDevices();
+  render();
+  toast('Device removed');
+}
+
+function formatUptime(sec) {
+  if (!sec) return '-';
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+  return `${h}h ${m}m ${s}s`;
+}
+
+function formatBytes(b) {
+  if (!b) return '-';
+  return (b / 1024).toFixed(1) + ' KB';
+}
+
+function timeSince(ts) {
+  if (!ts) return 'Never';
+  const diff = Math.floor((Date.now() - ts) / 1000);
+  if (diff < 60) return diff + 's ago';
+  if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+  return Math.floor(diff / 3600) + 'h ago';
+}
+
+function renderStats() {
+  const online = devices.filter(d => d.online).length;
+  const offline = devices.length - online;
+  const chainIssues = devices.filter(d => d.online && d.data && d.data.chain && !d.data.chain.valid).length;
+  const totalRecords = devices.reduce((sum, d) => sum + (d.data ? (d.data.records_created || d.data.sequence || 0) : 0), 0);
+  document.getElementById('statTotal').textContent = devices.length;
+  document.getElementById('statOnline').textContent = online;
+  document.getElementById('statOffline').textContent = offline;
+  document.getElementById('statChainIssues').textContent = chainIssues;
+  document.getElementById('statRecords').textContent = totalRecords.toLocaleString();
+}
+
+function renderDeviceCard(dev) {
+  const d = dev.data || {};
+  const cls = dev.online ? '' : ' offline';
+  const statusCls = dev.online ? 'on' : 'off';
+  const fw = d.firmware || '-';
+  const up = formatUptime(d.uptime_sec);
+  const heap = formatBytes(d.free_heap);
+  const seq = d.sequence || d.records_created || '-';
+  const chain = d.chain ? (d.chain.valid ? 'Healthy' : 'ISSUE') : (d.crypto_healthy === false ? 'ISSUE' : 'OK');
+  const chainColor = chain === 'ISSUE' ? 'color:var(--danger)' : 'color:var(--success)';
+  const seen = timeSince(dev.lastSeen);
+
+  return `<div class="device-card${cls}" onclick="openDetail('${dev.host}')">
+    <button class="device-remove" onclick="removeDevice('${dev.host}',event)" title="Remove">&times;</button>
+    <div class="device-header">
+      <div class="device-name">${dev.name || dev.host}</div>
+      <div class="device-status ${statusCls}"></div>
+    </div>
+    <div class="device-meta">
+      <div class="device-meta-item"><div class="device-meta-label">Firmware</div><div class="device-meta-value">${fw}</div></div>
+      <div class="device-meta-item"><div class="device-meta-label">Last Seen</div><div class="device-meta-value">${seen}</div></div>
+      <div class="device-meta-item"><div class="device-meta-label">Chain</div><div class="device-meta-value" style="${chainColor}">${chain}</div></div>
+      <div class="device-meta-item"><div class="device-meta-label">Records</div><div class="device-meta-value">${seq}</div></div>
+      <div class="device-meta-item"><div class="device-meta-label">Uptime</div><div class="device-meta-value">${up}</div></div>
+      <div class="device-meta-item"><div class="device-meta-label">Heap</div><div class="device-meta-value">${heap}</div></div>
+    </div>
+  </div>`;
+}
+
+function render() {
+  renderStats();
+  const grid = document.getElementById('deviceGrid');
+  const empty = document.getElementById('emptyState');
+  const pag = document.getElementById('pagination');
+
+  if (devices.length === 0) {
+    grid.innerHTML = '';
+    empty.style.display = '';
+    pag.style.display = 'none';
+    return;
+  }
+  empty.style.display = 'none';
+
+  const totalPages = Math.ceil(devices.length / PAGE_SIZE);
+  if (currentPage >= totalPages) currentPage = totalPages - 1;
+  if (currentPage < 0) currentPage = 0;
+
+  const start = currentPage * PAGE_SIZE;
+  const pageDevices = devices.slice(start, start + PAGE_SIZE);
+  grid.innerHTML = pageDevices.map(renderDeviceCard).join('');
+
+  if (totalPages > 1) {
+    pag.style.display = 'flex';
+    document.getElementById('pageInfo').textContent = `Page ${currentPage + 1} of ${totalPages} (${devices.length} devices)`;
+  } else {
+    pag.style.display = 'none';
+  }
+}
+
+function prevPage() { if (currentPage > 0) { currentPage--; render(); } }
+function nextPage() {
+  const totalPages = Math.ceil(devices.length / PAGE_SIZE);
+  if (currentPage < totalPages - 1) { currentPage++; render(); }
+}
+
+// Detail View
+async function openDetail(host) {
+  const dev = devices.find(d => d.host === host);
+  if (!dev) return;
+  currentDetailDevice = dev;
+  document.getElementById('detailTitle').textContent = dev.name || dev.host;
+  document.getElementById('detailOverlay').classList.add('active');
+  renderStatusTab(dev);
+  switchTab(document.querySelector('.tab[data-tab="status"]'));
+}
+
+function closeDetail() {
+  document.getElementById('detailOverlay').classList.remove('active');
+  currentDetailDevice = null;
+  // Stop peek stream if running
+  const img = document.getElementById('peekImg');
+  if (img) img.src = '';
+}
+
+function switchTab(el) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  const tabId = 'tab-' + el.dataset.tab;
+  document.getElementById(tabId).classList.add('active');
+
+  if (!currentDetailDevice) return;
+  const dev = currentDetailDevice;
+  switch (el.dataset.tab) {
+    case 'status': renderStatusTab(dev); break;
+    case 'logs': loadLogs(dev); break;
+    case 'chain': loadChain(dev); break;
+    case 'peek': renderPeekTab(dev); break;
+    case 'export': renderExportTab(dev); break;
+  }
+}
+
+function renderStatusTab(dev) {
+  const d = dev.data || {};
+  const gps = d.gps || {};
+  const chain = d.chain || {};
+  const rows = [
+    ['Device ID', d.device_id || '-'],
+    ['Host', dev.host],
+    ['Firmware', d.firmware || '-'],
+    ['Build', d.build || '-'],
+    ['Status', dev.online ? 'Online' : 'Offline'],
+    ['Uptime', formatUptime(d.uptime_sec)],
+    ['Free Heap', formatBytes(d.free_heap)],
+    ['Sequence', d.sequence || '-'],
+    ['Boot Count', d.boot_count || '-'],
+    ['Records Created', d.records_created || '-'],
+    ['SD Card', d.sd_healthy ? 'Healthy' : 'Not Available'],
+    ['Crypto', d.crypto_healthy !== false ? 'Healthy' : 'FAILED'],
+    ['GPS Fix', gps.fix ? `Yes (${gps.sats || 0} sats)` : 'No'],
+    ['GPS Position', gps.fix ? `${gps.lat?.toFixed(4)}, ${gps.lon?.toFixed(4)}` : '-'],
+    ['Chain Length', chain.length || d.sequence || '-'],
+    ['Chain Valid', chain.valid !== false ? 'Yes' : 'NO - INTEGRITY ISSUE'],
+    ['AP SSID', d.ap_ssid || '-'],
+  ];
+  document.getElementById('tab-status').innerHTML =
+    '<div class="data-grid">' +
+    rows.map(([l, v]) => `<div class="data-row"><span class="data-label">${l}</span><span class="data-value">${v}</span></div>`).join('') +
+    '</div><br><button class="btn btn-sm" onclick="pollDevice(currentDetailDevice).then(()=>{renderStatusTab(currentDetailDevice);render()})">Refresh</button>';
+}
+
+async function loadLogs(dev) {
+  const container = document.getElementById('tab-logs');
+  container.innerHTML = '<div style="color:var(--muted);padding:1rem">Loading logs...</div>';
+  try {
+    const resp = await fetchWithTimeout(baseUrl(dev.host) + '/api/logs', 5000);
+    if (!resp || !resp.ok) { container.innerHTML = '<div style="color:var(--muted);padding:1rem">Logs endpoint not available</div>'; return; }
+    const data = await resp.json();
+    const logs = data.logs || data.entries || data || [];
+    if (!Array.isArray(logs) || logs.length === 0) {
+      container.innerHTML = '<div style="color:var(--muted);padding:1rem">No log entries</div>';
+      return;
+    }
+    container.innerHTML = '<div style="display:flex;flex-direction:column;gap:0.4rem">' +
+      logs.slice(-50).reverse().map(log => {
+        const lvl = (log.level || log.severity || '').toLowerCase();
+        const cls = lvl.includes('crit') ? 'crit' : lvl.includes('err') ? 'error' : lvl.includes('warn') ? 'warn' : '';
+        return `<div class="log-entry ${cls}">
+          <span class="log-level">${log.level || log.severity || '?'}</span>
+          <span class="log-cat">${log.category || log.cat || ''}</span>
+          <span>${log.message || log.msg || JSON.stringify(log)}</span>
+        </div>`;
+      }).join('') + '</div>';
+  } catch {
+    container.innerHTML = '<div style="color:var(--muted);padding:1rem">Failed to load logs</div>';
+  }
+}
+
+async function loadChain(dev) {
+  const container = document.getElementById('tab-chain');
+  container.innerHTML = '<div style="color:var(--muted);padding:1rem">Loading chain state...</div>';
+  try {
+    const resp = await fetchWithTimeout(baseUrl(dev.host) + '/api/chain', 5000);
+    if (!resp || !resp.ok) { container.innerHTML = '<div style="color:var(--muted);padding:1rem">Chain endpoint not available</div>'; return; }
+    const data = await resp.json();
+    const chain = data.chain || data;
+    const rows = [
+      ['Chain Length', chain.length || chain.sequence || '-'],
+      ['Chain Valid', (chain.valid !== false) ? 'Yes' : 'INTEGRITY ISSUE'],
+      ['Algorithm', chain.algorithm || 'sha256-domain-sep'],
+      ['Last Hash', chain.last_hash ? chain.last_hash.substring(0, 16) + '...' : '-'],
+      ['Last Sequence', chain.last_seq || '-'],
+    ];
+    let html = '<div class="data-grid">' +
+      rows.map(([l, v]) => `<div class="data-row"><span class="data-label">${l}</span><span class="data-value">${v}</span></div>`).join('') +
+      '</div>';
+
+    const records = chain.records || chain.recent || data.records || [];
+    if (Array.isArray(records) && records.length > 0) {
+      html += '<h3 style="margin:1rem 0 0.5rem;font-size:0.9rem;color:var(--muted)">Recent Records</h3>';
+      html += '<div style="display:flex;flex-direction:column;gap:0.4rem">';
+      records.slice(-10).reverse().forEach(r => {
+        html += `<div class="data-row" style="flex-direction:column;align-items:flex-start;gap:0.25rem">
+          <div style="display:flex;justify-content:space-between;width:100%">
+            <span class="data-label">Seq #${r.seq || r.sequence || '?'}</span>
+            <span class="data-value" style="font-size:0.7rem">${r.type || r.record_type || ''}</span>
+          </div>
+          <span style="font-family:var(--mono);font-size:0.65rem;color:var(--muted);word-break:break-all">${r.hash || r.chain_hash || ''}</span>
+        </div>`;
+      });
+      html += '</div>';
+    }
+    container.innerHTML = html;
+  } catch {
+    container.innerHTML = '<div style="color:var(--muted);padding:1rem">Failed to load chain</div>';
+  }
+}
+
+function renderPeekTab(dev) {
+  const container = document.getElementById('tab-peek');
+  container.innerHTML = `
+    <div class="peek-frame" id="peekFrame">
+      <img id="peekImg" style="display:none" />
+      <div class="no-cam" id="peekPlaceholder">Camera preview not active.<br>Note: Positioning only. No frames are stored.</div>
+    </div>
+    <div class="peek-controls">
+      <button class="btn btn-sm btn-primary" onclick="startPeek()">Start Preview</button>
+      <button class="btn btn-sm" onclick="stopPeek()">Stop</button>
+      <button class="btn btn-sm" onclick="takeSnapshot()">Snapshot</button>
+    </div>
+    <p style="font-size:0.75rem;color:var(--muted);margin-top:0.5rem">
+      Privacy: This preview is for camera positioning only. No frames are stored &mdash;
+      SecuraCV records semantic events, not video.
+    </p>`;
+}
+
+function startPeek() {
+  if (!currentDetailDevice) return;
+  const img = document.getElementById('peekImg');
+  const ph = document.getElementById('peekPlaceholder');
+  fetchWithTimeout(baseUrl(currentDetailDevice.host) + '/api/peek/start', 3000).then(() => {
+    img.src = baseUrl(currentDetailDevice.host) + '/api/peek/stream';
+    img.style.display = 'block';
+    if (ph) ph.style.display = 'none';
+  });
+}
+
+function stopPeek() {
+  if (!currentDetailDevice) return;
+  const img = document.getElementById('peekImg');
+  const ph = document.getElementById('peekPlaceholder');
+  img.src = '';
+  img.style.display = 'none';
+  if (ph) ph.style.display = '';
+  fetchWithTimeout(baseUrl(currentDetailDevice.host) + '/api/peek/stop', 3000);
+}
+
+function takeSnapshot() {
+  if (!currentDetailDevice) return;
+  const img = document.getElementById('peekImg');
+  const ph = document.getElementById('peekPlaceholder');
+  img.src = baseUrl(currentDetailDevice.host) + '/api/peek/snapshot?' + Date.now();
+  img.style.display = 'block';
+  if (ph) ph.style.display = 'none';
+}
+
+function renderExportTab(dev) {
+  const container = document.getElementById('tab-export');
+  container.innerHTML = `
+    <div style="padding:1rem 0">
+      <p style="font-size:0.85rem;margin-bottom:1rem">Export the complete witness chain as a PWK-compatible JSON bundle for verification or archival.</p>
+      <button class="btn btn-primary" onclick="exportChain()">Export Chain Bundle</button>
+      <div id="exportResult" style="margin-top:1rem"></div>
+    </div>`;
+}
+
+async function exportChain() {
+  if (!currentDetailDevice) return;
+  const result = document.getElementById('exportResult');
+  result.innerHTML = '<span style="color:var(--muted)">Exporting...</span>';
+  try {
+    const resp = await fetchWithTimeout(baseUrl(currentDetailDevice.host) + '/api/export', 10000);
+    if (!resp || !resp.ok) { result.innerHTML = '<span style="color:var(--danger)">Export failed</span>'; return; }
+    const data = await resp.json();
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `securacv_export_${currentDetailDevice.data?.device_id || 'unknown'}_${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    result.innerHTML = '<span style="color:var(--success)">Export downloaded</span>';
+  } catch {
+    result.innerHTML = '<span style="color:var(--danger)">Export failed</span>';
+  }
+}
+
+// Keyboard shortcuts
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeDetail();
+  if (e.key === 'Enter' && document.activeElement === document.getElementById('addDeviceInput')) addDevice();
+});
+
+// Init
+loadDevices();
+render();
+if (devices.length > 0) refreshAll();
+</script>
+</body>
+</html>
