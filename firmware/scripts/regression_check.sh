@@ -218,6 +218,133 @@ done
 
 echo ""
 
+# ── Check: No outbound network connections ────────────────────
+echo "── Security: Zero phone-home ──"
+
+# The device must NEVER initiate outbound connections.
+# WiFi.begin() connects to an external AP (station mode).
+# HTTPClient, WiFiClient, mqtt.connect() are outbound patterns.
+# WiFiAP, WiFi.softAP are acceptable (AP mode = inbound).
+OUTBOUND_HITS=$(grep -rn 'WiFi\.begin\s*(\|HTTPClient\|WiFiClient\s\|WiFiClientSecure\|mqtt\.connect\|\.connect(' "${SRC_DIRS[@]}" 2>/dev/null \
+  | grep -v "//.*WiFi\|WiFi\.softAP\|WiFiAP\|WiFiServer\|#if.*FEATURE_HA_MQTT\|#ifdef.*MQTT\|\.h:\|\.md:" \
+  | grep -v "FEATURE_MESH_NETWORK\|mesh\|example\|test" \
+  | head -10 || true)
+if [ -n "$OUTBOUND_HITS" ]; then
+  check_warn "Possible outbound network connections detected — verify these are gated by feature flags"
+  echo "$OUTBOUND_HITS" | while read -r line; do blue "  $line"; done
+  blue "  Principle 2: Device must make ZERO outbound connections by default"
+  blue "  See: THREAT_MODEL.md → Principle 2: Zero Phone-Home"
+else
+  check_pass "No ungated outbound network connection patterns found"
+fi
+
+echo ""
+
+# ── Check: Private key never in API/export/log ────────────────
+echo "── Security: Private key isolation ──"
+
+# Ed25519 private key must never appear in any export, API response, log, or debug output.
+# This check looks for private key bytes being printed, serialized to JSON, written to
+# SD card, or included in API responses. It excludes legitimate internal uses like
+# Ed25519::sign(), derive_api_token(), nvs_store_key(), and nvs_load_key().
+PRIVKEY_LEAK=$(grep -rn 'priv\(ate\)\?_\?key\|privkey\|NVS_KEY_PRIV' "${SRC_DIRS[@]}" 2>/dev/null \
+  | grep -i 'print\|log\|serial\|json\|response\|send\|export\|write.*sd\|write.*file\|transmit\|broadcast' \
+  | grep -v "//\|store_key\|load_key\|nvs_.*key\|\.h:\|\.md:\|derive_api_token\|Ed25519::sign\|crypto_sign\|HKDF\|hmac" \
+  | head -10 || true)
+if [ -n "$PRIVKEY_LEAK" ]; then
+  check_fail "Private key may be leaking to log/API/export — CRITICAL security violation"
+  echo "$PRIVKEY_LEAK" | while read -r line; do blue "  $line"; done
+  blue "  Principle 1: Keys NEVER leave the device"
+  blue "  See: THREAT_MODEL.md → Principle 1: Keys Never Leave the Device"
+else
+  check_pass "No private key references in log/API/export contexts"
+fi
+
+echo ""
+
+# ── Check: No raw MAC storage in presence detection ──────────
+echo "── Privacy: Presence detection MAC handling ──"
+
+# Presence detection must hash MACs before storage. Look for patterns
+# that store or transmit raw BSSID/MAC data.
+RAW_MAC_STORE=$(grep -rn 'bssid\|BSSID\|macAddress' "${SRC_DIRS[@]}" 2>/dev/null \
+  | grep -i 'store\|save\|write\|persist\|sd\|nvs\|put\|append\|push_back\|log' \
+  | grep -v "//\|hash\|fingerprint\|derive\|digest\|sha256\|\.h:\|\.md:" \
+  | head -10 || true)
+if [ -n "$RAW_MAC_STORE" ]; then
+  check_warn "Raw MAC/BSSID may be stored without hashing — verify privacy compliance"
+  echo "$RAW_MAC_STORE" | while read -r line; do blue "  $line"; done
+  blue "  Principle 3: No identifier leaks. MACs must be hashed before any storage."
+else
+  check_pass "No raw MAC storage patterns detected"
+fi
+
+echo ""
+
+# ── Check: TLS required (no HTTP fallback) ────────────────────
+echo "── Security: TLS enforcement ──"
+
+# Look for patterns that might serve HTTP without TLS redirect
+HTTP_FALLBACK=$(grep -rn 'server\.begin\s*(\s*80\|:80\b\|HTTP_PORT\s*=\?\s*80\|listen.*80' "${SRC_DIRS[@]}" 2>/dev/null \
+  | grep -v "//\|redirect\|301\|https\|\.md:" \
+  | head -5 || true)
+if [ -n "$HTTP_FALLBACK" ]; then
+  check_warn "HTTP port 80 listener found — verify it only serves 301 redirect to HTTPS"
+  echo "$HTTP_FALLBACK" | while read -r line; do blue "  $line"; done
+  blue "  Principle 7: TLS required for all API access"
+else
+  check_pass "No unguarded HTTP listeners found"
+fi
+
+echo ""
+
+# ── Check: secure_defaults.h exists ──────────────────────────
+echo "── Security: Secure defaults header ──"
+
+if [ -f "$CANARY_DIR/include/secure_defaults.h" ]; then
+  check_pass "secure_defaults.h exists"
+  # Verify key defaults are present
+  DEFAULTS_OK=true
+  for def in DEFAULT_BLE_ENABLED DEFAULT_TLS_REQUIRED DEFAULT_MQTT_ENABLED DEFAULT_PRESENCE_STORE_RAW_MAC; do
+    if ! grep -q "$def" "$CANARY_DIR/include/secure_defaults.h" 2>/dev/null; then
+      check_warn "Missing $def in secure_defaults.h"
+      DEFAULTS_OK=false
+    fi
+  done
+  if [ "$DEFAULTS_OK" = true ]; then
+    check_pass "All critical security defaults defined in secure_defaults.h"
+  fi
+else
+  check_fail "secure_defaults.h is missing! Security defaults must be centralized."
+  blue "  See: THREAT_MODEL.md → Implementation Review Checklist"
+fi
+
+echo ""
+
+# ── Check: SECURITY_MODEL.md exists ──────────────────────────
+echo "── Documentation: Security Model ──"
+
+REPO_ROOT="$(cd "$FIRMWARE_DIR/.." && pwd)"
+if [ -f "$REPO_ROOT/SECURITY_MODEL.md" ]; then
+  SM_LINES=$(wc -l < "$REPO_ROOT/SECURITY_MODEL.md")
+  if [ "$SM_LINES" -lt 20 ]; then
+    check_fail "SECURITY_MODEL.md seems incomplete ($SM_LINES lines)"
+  else
+    check_pass "SECURITY_MODEL.md exists ($SM_LINES lines)"
+  fi
+else
+  check_fail "SECURITY_MODEL.md is missing — must be included in every evidence export"
+fi
+
+if [ -f "$REPO_ROOT/THREAT_MODEL.md" ]; then
+  TM_LINES=$(wc -l < "$REPO_ROOT/THREAT_MODEL.md")
+  check_pass "THREAT_MODEL.md exists ($TM_LINES lines)"
+else
+  check_warn "THREAT_MODEL.md is missing — needed for developer/auditor reference"
+fi
+
+echo ""
+
 # ── Check: No localStorage in web UI ──────────────────────────
 echo "── Security: Dashboard storage ──"
 
