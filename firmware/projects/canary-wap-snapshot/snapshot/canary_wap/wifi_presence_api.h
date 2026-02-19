@@ -3,6 +3,7 @@
  *
  * HTTP handlers for WiFi probe request presence detection.
  * Returns ONLY aggregate counts — no MAC addresses or identifiers.
+ * Uses String-based JSON serialization to avoid fixed-buffer overflows.
  */
 
 #ifndef SECURACV_WIFI_PRESENCE_API_H
@@ -13,6 +14,18 @@
 #include <ArduinoJson.h>
 
 namespace wifi_presence_api {
+
+// ════════════════════════════════════════════════════════════════════════════
+// HELPER
+// ════════════════════════════════════════════════════════════════════════════
+
+static inline esp_err_t send_json(httpd_req_t* req, const JsonDocument& doc) {
+  String response;
+  serializeJson(doc, response);
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+  return httpd_resp_sendstr(req, response.c_str());
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 // API HANDLERS
@@ -30,6 +43,7 @@ inline esp_err_t handle_wifi_presence_status(httpd_req_t* req) {
   doc["last_count"] = wifi_presence::get_last_count();
   doc["peak_count"] = wifi_presence::get_peak_count();
   doc["total_probes"] = wifi_presence::get_total_probes();
+  doc["queue_drops"] = wifi_presence::get_queue_drops();
   doc["bucket_duration_ms"] = (uint32_t)wifi_presence::BUCKET_DURATION_MS;
   doc["bucket_elapsed_ms"] = wifi_presence::get_bucket_elapsed_ms();
 
@@ -46,12 +60,7 @@ inline esp_err_t handle_wifi_presence_status(httpd_req_t* req) {
   doc["reason"] = "WiFi presence not compiled (FEATURE_WIFI_PRESENCE=0)";
   #endif
 
-  char buffer[512];
-  serializeJson(doc, buffer);
-
-  httpd_resp_set_type(req, "application/json");
-  httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-  return httpd_resp_sendstr(req, buffer);
+  return send_json(req, doc);
 }
 
 // POST /api/presence/wifi/start — Enable WiFi presence monitoring
@@ -71,12 +80,7 @@ inline esp_err_t handle_wifi_presence_start(httpd_req_t* req) {
   doc["error"] = "WiFi presence not compiled (FEATURE_WIFI_PRESENCE=0)";
   #endif
 
-  char buffer[128];
-  serializeJson(doc, buffer);
-
-  httpd_resp_set_type(req, "application/json");
-  httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-  return httpd_resp_sendstr(req, buffer);
+  return send_json(req, doc);
 }
 
 // POST /api/presence/wifi/stop — Disable WiFi presence monitoring
@@ -93,12 +97,7 @@ inline esp_err_t handle_wifi_presence_stop(httpd_req_t* req) {
   doc["error"] = "WiFi presence not compiled (FEATURE_WIFI_PRESENCE=0)";
   #endif
 
-  char buffer[128];
-  serializeJson(doc, buffer);
-
-  httpd_resp_set_type(req, "application/json");
-  httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-  return httpd_resp_sendstr(req, buffer);
+  return send_json(req, doc);
 }
 
 // GET /api/presence — Combined presence status (WiFi + BLE if available)
@@ -139,12 +138,7 @@ inline esp_err_t handle_presence_combined(httpd_req_t* req) {
   ble["enable_instructions"] = "Rebuild with FEATURE_BLE=1 and CONFIG_BT_ENABLED=y";
   #endif
 
-  char buffer[768];
-  serializeJson(doc, buffer);
-
-  httpd_resp_set_type(req, "application/json");
-  httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-  return httpd_resp_sendstr(req, buffer);
+  return send_json(req, doc);
 }
 
 // ════════════════════════════════════════════════════════════════════════════

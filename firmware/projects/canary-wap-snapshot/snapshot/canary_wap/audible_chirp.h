@@ -4,6 +4,12 @@
  * Local audible/visual alert system. NOT BLE broadcast — this is a literal
  * chirp sound from a buzzer (or LED blink pattern as fallback).
  *
+ * Architecture:
+ * - Non-blocking state machine: start_pattern() queues a pattern,
+ *   update() advances one note at a time using millis() timing.
+ * - Never blocks the main loop — patterns play across multiple loop() ticks.
+ * - Boot chirp uses the blocking play() variant (acceptable at setup time).
+ *
  * Uses:
  * - "I'm here" confirmation during setup
  * - Alert when presence threshold is crossed
@@ -111,6 +117,12 @@ static bool g_visual_only = true;   // Fallback: LED blink only
 static uint8_t g_gpio = CHIRP_GPIO;
 static uint32_t g_chirps_played = 0;
 
+// Non-blocking playback state machine
+static const ChirpNote* g_active_pattern = nullptr;  // Currently playing pattern (null = idle)
+static uint8_t  g_note_idx = 0;                      // Current note index
+static uint32_t g_note_start_ms = 0;                 // When current note started
+static bool     g_note_started = false;               // Whether current note's output is active
+
 // ════════════════════════════════════════════════════════════════════════════
 // INITIALIZATION
 // ════════════════════════════════════════════════════════════════════════════
@@ -136,67 +148,134 @@ static bool init(uint8_t gpio = CHIRP_GPIO) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// PLAYBACK
+// NON-BLOCKING PLAYBACK — call update() from loop()
 // ════════════════════════════════════════════════════════════════════════════
 
-// Play a chirp pattern (blocking — patterns are short)
-static void play(const ChirpNote* pattern) {
+// Begin a note's output (buzzer tone or LED on)
+static void begin_note(const ChirpNote* note) {
+  if (note->freq == 0) {
+    // Silence: ensure everything off
+    ledcWrite(g_gpio, 0);
+    #ifdef LED_BUILTIN
+    digitalWrite(LED_BUILTIN, LOW);
+    #endif
+  } else if (g_visual_only || note->freq == 1) {
+    // Visual chirp (LED blink)
+    #ifdef LED_BUILTIN
+    digitalWrite(LED_BUILTIN, HIGH);
+    #endif
+  } else {
+    // Audio chirp via PWM
+    ledcWriteTone(g_gpio, note->freq);
+    ledcWrite(g_gpio, 128);  // 50% duty cycle
+  }
+}
+
+// End a note's output
+static void end_note() {
+  ledcWrite(g_gpio, 0);
+  #ifdef LED_BUILTIN
+  digitalWrite(LED_BUILTIN, LOW);
+  #endif
+}
+
+// Start playing a pattern (non-blocking — advances via update())
+static void start_pattern(const ChirpNote* pattern) {
+  if (!g_initialized || !pattern) return;
+  // If already playing, the new pattern preempts the old one
+  end_note();
+  g_active_pattern = pattern;
+  g_note_idx = 0;
+  g_note_started = false;
+  g_note_start_ms = millis();
+}
+
+// Advance the state machine. Call this from loop().
+// Returns true if a pattern is currently playing.
+static bool update() {
+  if (!g_active_pattern) return false;
+
+  const ChirpNote* note = &g_active_pattern[g_note_idx];
+
+  // Check for end-of-pattern sentinel
+  if (note->duration_ms == 0 && note->freq == 0) {
+    end_note();
+    g_active_pattern = nullptr;
+    g_chirps_played++;
+    return false;
+  }
+
+  // Start the current note if not yet started
+  if (!g_note_started) {
+    begin_note(note);
+    g_note_started = true;
+    g_note_start_ms = millis();
+    return true;
+  }
+
+  // Check if current note duration has elapsed
+  if (millis() - g_note_start_ms >= note->duration_ms) {
+    end_note();
+    g_note_idx++;
+    g_note_started = false;
+  }
+
+  return true;
+}
+
+// Check if currently playing
+static bool is_playing() { return g_active_pattern != nullptr; }
+
+// ════════════════════════════════════════════════════════════════════════════
+// BLOCKING PLAYBACK — only for boot/setup, not loop() context
+// ════════════════════════════════════════════════════════════════════════════
+
+// Blocking play (use only at boot time or from API handlers where brief
+// blocking is acceptable). Patterns are short (<600ms worst case).
+static void play_blocking(const ChirpNote* pattern) {
   if (!g_initialized) return;
 
   for (int i = 0; pattern[i].duration_ms > 0 || pattern[i].freq > 0; i++) {
-    if (pattern[i].freq == 0) {
-      // Silence gap
-      ledcWrite(g_gpio, 0);
+    begin_note(&pattern[i]);
+    if (pattern[i].duration_ms > 0) {
       delay(pattern[i].duration_ms);
-    } else if (g_visual_only || pattern[i].freq == 1) {
-      // Visual chirp (LED blink)
-      #ifdef LED_BUILTIN
-      digitalWrite(LED_BUILTIN, HIGH);
-      delay(pattern[i].duration_ms);
-      digitalWrite(LED_BUILTIN, LOW);
-      #else
-      delay(pattern[i].duration_ms);
-      #endif
-    } else {
-      // Audio chirp via PWM
-      ledcWriteTone(g_gpio, pattern[i].freq);
-      ledcWrite(g_gpio, 128);  // 50% duty cycle
-      delay(pattern[i].duration_ms);
-      ledcWrite(g_gpio, 0);
     }
+    end_note();
   }
-  // Ensure silence after pattern
-  ledcWrite(g_gpio, 0);
   g_chirps_played++;
 }
 
-// Play by pattern enum
+// ════════════════════════════════════════════════════════════════════════════
+// CONVENIENCE FUNCTIONS
+// ════════════════════════════════════════════════════════════════════════════
+
+// Non-blocking (for loop() context — requires update() calls)
 static void play_pattern(ChirpPattern pat) {
   if (pat < PATTERN_COUNT) {
-    play(PATTERNS[pat]);
+    start_pattern(PATTERNS[pat]);
   }
 }
 
-// Play by pattern name string
+// By name — non-blocking
 static bool play_by_name(const char* name) {
   for (uint8_t i = 0; i < PATTERN_COUNT; i++) {
     if (strcmp(name, PATTERN_NAMES[i]) == 0) {
-      play(PATTERNS[i]);
+      start_pattern(PATTERNS[i]);
       return true;
     }
   }
   return false;
 }
 
-// Convenience functions
-static void chirp_confirm()  { play_pattern(PATTERN_CONFIRM); }
-static void chirp_alert()    { play_pattern(PATTERN_ALERT); }
-static void chirp_tamper()   { play_pattern(PATTERN_TAMPER); }
-static void chirp_success()  { play_pattern(PATTERN_SUCCESS); }
-static void chirp_error()    { play_pattern(PATTERN_ERROR); }
+// Blocking convenience (for boot/setup and API handlers)
+static void chirp_confirm()  { play_blocking(PATTERN_CONFIRM_NOTES); }
+static void chirp_alert()    { play_blocking(PATTERN_ALERT_NOTES); }
+static void chirp_tamper()   { play_blocking(PATTERN_TAMPER_NOTES); }
+static void chirp_success()  { play_blocking(PATTERN_SUCCESS_NOTES); }
+static void chirp_error()    { play_blocking(PATTERN_ERROR_NOTES); }
 
 // ════════════════════════════════════════════════════════════════════════════
-// CONFIGURATION
+// CONFIGURATION ACCESSORS
 // ════════════════════════════════════════════════════════════════════════════
 
 static void set_visual_only(bool visual) { g_visual_only = visual; }
@@ -216,6 +295,8 @@ static const char* pattern_name(ChirpPattern pat) {
 
 namespace audible_chirp {
   static inline bool init(uint8_t gpio = 2) { (void)gpio; return false; }
+  static inline bool update() { return false; }
+  static inline bool is_playing() { return false; }
   static inline void play_pattern(uint8_t) {}
   static inline bool play_by_name(const char*) { return false; }
   static inline void chirp_confirm() {}

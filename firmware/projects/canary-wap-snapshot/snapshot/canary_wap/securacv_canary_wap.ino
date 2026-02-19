@@ -4267,6 +4267,7 @@ void setup() {
       log_health(SCV_LOG_INFO, SCV_CAT_SYSTEM, "WiFi presence monitoring started", nullptr);
     } else {
       Serial.println("[--] WiFi presence init failed");
+      log_health(SCV_LOG_WARNING, SCV_CAT_SYSTEM, "WiFi presence init failed", nullptr);
     }
   } else {
     Serial.println("[--] WiFi presence skipped (safe mode)");
@@ -4543,6 +4544,16 @@ void loop() {
   }
   #endif
 
+  // Process WiFi presence probe queue (drains ISR queue, hashes, dedup)
+  #if FEATURE_WIFI_PRESENCE
+  wifi_presence::process_queue();
+  #endif
+
+  // Advance audible chirp state machine (non-blocking playback)
+  #if FEATURE_AUDIBLE_CHIRP
+  audible_chirp::update();
+  #endif
+
   // Update system monitor (temp, heap, alerts)
   #if FEATURE_SYS_MONITOR
   sys_monitor::update(log_health);
@@ -4582,14 +4593,13 @@ void loop() {
   // WiFi Presence threshold witness events
   #if FEATURE_WIFI_PRESENCE
   {
-    static uint8_t s_presence_threshold = 10;  // Default alert threshold
-    if (wifi_presence::threshold_crossed(s_presence_threshold)) {
+    if (wifi_presence::threshold_crossed(wifi_presence::DEFAULT_ALERT_THRESHOLD)) {
       uint8_t payload[128];
       CborWriter cb(payload, sizeof(payload));
       cb.write_map(3);
       cb.write_text("event_type"); cb.write_text("presence_threshold");
       cb.write_text("count"); cb.write_uint(wifi_presence::get_current_count());
-      cb.write_text("threshold"); cb.write_uint(s_presence_threshold);
+      cb.write_text("threshold"); cb.write_uint(wifi_presence::DEFAULT_ALERT_THRESHOLD);
       if (cb.ok()) {
         WitnessRecord rec;
         create_witness_record(payload, cb.size(), RECORD_WITNESS_EVENT, &rec);

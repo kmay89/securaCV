@@ -2678,7 +2678,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
             'To enable: rebuild firmware with FEATURE_BLE=1 and CONFIG_BT_ENABLED=y in sdkconfig.';
           bleSubtitle.textContent = 'Compile-time disabled';
         }
-      } catch(e) {}
+      } catch(e) { console.error('Failed to fetch BLE presence data:', e); }
     }
 
     async function toggleWifiPresence() {
@@ -2857,7 +2857,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         document.getElementById('bleChirpRecv').textContent = status.chirp?.received || 0;
         document.getElementById('bleConnections').textContent = status.opera?.connections_total || 0;
         document.getElementById('bleSubtitle').textContent = status.opera?.device_name || 'BLE discovery';
-      } catch(e) {}
+      } catch(e) { console.error('Failed to fetch BLE status:', e); }
 
       try {
         const nearby = await api('/api/nearby');
@@ -2897,7 +2897,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           html += '</div>';
         });
         list.innerHTML = html;
-      } catch(e) {}
+      } catch(e) { console.error('Failed to fetch nearby devices:', e); }
 
       // Auto-refresh every 10 seconds when tab is visible
       clearTimeout(bleDiscoveryTimer);

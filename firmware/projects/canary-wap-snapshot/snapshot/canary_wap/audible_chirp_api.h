@@ -2,6 +2,7 @@
  * SecuraCV Canary — Audible Chirp REST API Handlers
  *
  * HTTP handlers for local audible/visual alert tones.
+ * Uses String-based JSON serialization to avoid fixed-buffer overflows.
  */
 
 #ifndef SECURACV_AUDIBLE_CHIRP_API_H
@@ -13,6 +14,18 @@
 #include <cstring>
 
 namespace audible_chirp_api {
+
+// ════════════════════════════════════════════════════════════════════════════
+// HELPER
+// ════════════════════════════════════════════════════════════════════════════
+
+static inline esp_err_t send_json(httpd_req_t* req, const JsonDocument& doc) {
+  String response;
+  serializeJson(doc, response);
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+  return httpd_resp_sendstr(req, response.c_str());
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 // API HANDLERS
@@ -29,6 +42,7 @@ inline esp_err_t handle_chirp_status(httpd_req_t* req) {
   doc["gpio"] = audible_chirp::get_gpio();
   doc["visual_only"] = audible_chirp::is_visual_only();
   doc["chirps_played"] = audible_chirp::get_chirps_played();
+  doc["playing"] = audible_chirp::is_playing();
 
   JsonArray patterns = doc["patterns"].to<JsonArray>();
   for (uint8_t i = 0; i < audible_chirp::PATTERN_COUNT; i++) {
@@ -43,12 +57,7 @@ inline esp_err_t handle_chirp_status(httpd_req_t* req) {
   doc["reason"] = "Audible chirp not compiled (FEATURE_AUDIBLE_CHIRP=0)";
   #endif
 
-  char buffer[384];
-  serializeJson(doc, buffer);
-
-  httpd_resp_set_type(req, "application/json");
-  httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-  return httpd_resp_sendstr(req, buffer);
+  return send_json(req, doc);
 }
 
 // POST /api/audible-chirp/play — Play a chirp pattern
@@ -60,10 +69,7 @@ inline esp_err_t handle_chirp_play(httpd_req_t* req) {
   if (!audible_chirp::is_available()) {
     doc["success"] = false;
     doc["error"] = "Audible chirp not initialized";
-    char buffer[128];
-    serializeJson(doc, buffer);
-    httpd_resp_set_type(req, "application/json");
-    return httpd_resp_sendstr(req, buffer);
+    return send_json(req, doc);
   }
 
   // Read request body
@@ -75,11 +81,7 @@ inline esp_err_t handle_chirp_play(httpd_req_t* req) {
     doc["success"] = true;
     doc["pattern"] = "confirm";
     doc["note"] = "Default pattern (no body provided)";
-    char buffer[128];
-    serializeJson(doc, buffer);
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-    return httpd_resp_sendstr(req, buffer);
+    return send_json(req, doc);
   }
   content[content_len] = '\0';
 
@@ -89,10 +91,7 @@ inline esp_err_t handle_chirp_play(httpd_req_t* req) {
   if (err) {
     doc["success"] = false;
     doc["error"] = "Invalid JSON";
-    char buffer[128];
-    serializeJson(doc, buffer);
-    httpd_resp_set_type(req, "application/json");
-    return httpd_resp_sendstr(req, buffer);
+    return send_json(req, doc);
   }
 
   const char* pattern = input["pattern"] | "confirm";
@@ -111,12 +110,7 @@ inline esp_err_t handle_chirp_play(httpd_req_t* req) {
   doc["error"] = "Audible chirp not compiled (FEATURE_AUDIBLE_CHIRP=0)";
   #endif
 
-  char buffer[256];
-  serializeJson(doc, buffer);
-
-  httpd_resp_set_type(req, "application/json");
-  httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-  return httpd_resp_sendstr(req, buffer);
+  return send_json(req, doc);
 }
 
 // POST /api/audible-chirp/test — Quick test chirp (confirm pattern)
@@ -138,16 +132,11 @@ inline esp_err_t handle_chirp_test(httpd_req_t* req) {
   doc["error"] = "Audible chirp not compiled (FEATURE_AUDIBLE_CHIRP=0)";
   #endif
 
-  char buffer[128];
-  serializeJson(doc, buffer);
-
-  httpd_resp_set_type(req, "application/json");
-  httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-  return httpd_resp_sendstr(req, buffer);
+  return send_json(req, doc);
 }
 
 // POST /api/audible-chirp/config — Configure chirp settings
-// Body: {"visual_only": true} or {"gpio": 2}
+// Body: {"visual_only": true}
 inline esp_err_t handle_chirp_config(httpd_req_t* req) {
   char content[128];
   int content_len = httpd_req_recv(req, content, sizeof(content) - 1);
@@ -173,12 +162,7 @@ inline esp_err_t handle_chirp_config(httpd_req_t* req) {
   doc["error"] = "Audible chirp not compiled";
   #endif
 
-  char buffer[128];
-  serializeJson(doc, buffer);
-
-  httpd_resp_set_type(req, "application/json");
-  httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-  return httpd_resp_sendstr(req, buffer);
+  return send_json(req, doc);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
