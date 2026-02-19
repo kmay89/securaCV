@@ -77,6 +77,36 @@ See `docs/ble_protocol.md` for the full protocol specification.
 
 ---
 
+## API Security (v2.1.0+)
+
+The Canary WAP implements defense-in-depth API security:
+
+- **TLS 1.2+** — All connections encrypted via self-signed RSA-2048 certificate (port 443)
+- **Bearer token auth** — All protected API endpoints require `Authorization: Bearer cv_...` header
+- **HKDF token derivation** — API token derived deterministically from Ed25519 keypair via two-step HMAC-SHA256
+- **Device-unique credentials** — Both AP password and API token are unique per device
+- **Constant-time comparison** — Prevents timing side-channel attacks on token validation
+- **Exponential backoff** — Failed auth attempts trigger 2s→5min escalating lockout
+- **Physical provisioning gate** — BOOT button press required to retrieve token via API
+- **Single client AP** — Max 1 WiFi client for security isolation
+
+### Getting the API Token
+
+1. **First boot**: Full token printed to Serial (115200 baud)
+2. **Any time**: Press BOOT button while dashboard polls `/api/provisioning-receipt`
+3. **Serial**: Send `w` to see WiFi credentials (token redacted after first boot)
+
+### Documentation
+
+| Document | Description |
+|----------|-------------|
+| [API_AUTH.md](docs/API_AUTH.md) | Authentication reference — token format, endpoints, error codes |
+| [PROVISIONING_FLOW.md](docs/PROVISIONING_FLOW.md) | End-to-end provisioning walkthrough |
+| [SECURITY_MODEL.md](docs/SECURITY_MODEL.md) | Threat model and defense-in-depth architecture |
+| [TLS_SETUP.md](docs/TLS_SETUP.md) | TLS certificate strategy and troubleshooting |
+
+---
+
 ## What belongs here
 
 - The raw Arduino sketch files as-is (e.g., `*.ino`, `*.h`).

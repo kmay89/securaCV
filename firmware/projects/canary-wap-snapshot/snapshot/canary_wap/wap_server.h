@@ -11,10 +11,17 @@
  *
  * Security considerations:
  * - AP mode only (no internet connection required)
- * - WPA2-PSK encryption
- * - No sensitive data in URLs (POST for actions)
+ * - WPA2-PSK encryption with device-unique password
+ * - TLS 1.2+ on all connections (port 443)
+ * - HTTP port 80 redirects to HTTPS (301)
+ * - Bearer token authentication on protected endpoints
+ * - Constant-time token comparison (timing attack mitigation)
+ * - Exponential backoff on auth failures (brute-force mitigation)
+ * - Physical BOOT button required for provisioning receipt
+ * - No sensitive data in URLs (POST for actions, Authorization header for tokens)
  * - CORS restricted to same-origin
  * - Rate limiting on sensitive endpoints
+ * - Max 1 AP client for security isolation
  * - Mesh pairing requires physical confirmation
  */
 
@@ -25,6 +32,7 @@
 #include <WiFi.h>
 #include <ESPmDNS.h>
 #include "esp_http_server.h"
+#include "esp_https_server.h"
 
 // ════════════════════════════════════════════════════════════════════════════
 // CONFIGURATION
@@ -34,15 +42,16 @@ namespace wap_server {
 
 // Access Point configuration
 static const char* AP_SSID_PREFIX    = "SecuraCV-";      // + last 4 chars of MAC
-static const char* AP_PASSWORD       = "witness2026";    // Default password
+static const char* AP_PASSWORD       = "witness2026";    // Fallback; device-unique password used
 static const char* AP_HOSTNAME       = "canary";
 static const int   AP_CHANNEL        = 1;
-static const int   AP_MAX_CLIENTS    = 4;
+static const int   AP_MAX_CLIENTS    = 1;                // Hardened: max 1 client
 static const bool  AP_HIDDEN         = false;
 
-// HTTP Server configuration
-static const int   HTTP_PORT         = 80;
-static const int   HTTP_MAX_URI_LEN  = 512;
+// Server configuration
+static const int   HTTPS_PORT       = 443;              // Primary (TLS)
+static const int   HTTP_PORT        = 80;               // Redirect to HTTPS
+static const int   HTTP_MAX_URI_LEN = 512;
 static const int   HTTP_MAX_RESP_HDR = 512;
 
 // Rate limiting
@@ -87,9 +96,14 @@ struct RateLimitEntry {
 /*
  * REST API Endpoints:
  *
- * GET  /                    - Dashboard UI (HTML)
+ * ── Public (no auth required) ──
+ * GET  /                         - Dashboard UI (HTML)
+ * GET  /api/device-info          - Non-sensitive device metadata
+ * GET  /api/provisioning-receipt - Provisioning receipt (physical BOOT button or Bearer token)
+ *
+ * ── Authenticated (Bearer token required) ──
  * GET  /api/status          - Device status JSON
- * GET  /api/health          - System health metrics
+ * GET  /api/health          - System health metrics + auth stats
  * GET  /api/identity        - Device identity (public key, fingerprint)
  * GET  /api/chain           - Chain state (head hash, sequence)
  *
