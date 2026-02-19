@@ -415,8 +415,8 @@ static esp_err_t handle_chain(httpd_req_t* req) {
   doc["sequence"] = device.seq;
 
   if (last.seq > 0) {
-    JsonArray blocks = doc.createNestedArray("blocks");
-    JsonObject block = blocks.createNestedObject();
+    JsonArray blocks = doc["blocks"].to<JsonArray>();
+    JsonObject block = blocks.add<JsonObject>();
     char hash[65];
     hex_to_str(hash, last.chain_hash, 32);
     block["seq"] = last.seq;
@@ -441,13 +441,13 @@ static esp_err_t handle_logs(httpd_req_t* req) {
   doc["ok"] = true;
   doc["total"] = count;
 
-  JsonArray logs = doc.createNestedArray("logs");
+  JsonArray logs = doc["logs"].to<JsonArray>();
 
   for (size_t i = 0; i < count; i++) {
     size_t idx = (head + 100 - 1 - i) % 100;
     HealthLogRingEntry& entry = ring[idx];
 
-    JsonObject log = logs.createNestedObject();
+    JsonObject log = logs.add<JsonObject>();
     log["seq"] = entry.seq;
     log["timestamp_ms"] = entry.timestamp_ms;
     log["level"] = (int)entry.level;
@@ -552,7 +552,7 @@ static esp_err_t handle_ota(httpd_req_t* req) {
   char buf[4096];
   int remaining = req->content_len;
   while (remaining > 0) {
-    int recv_len = httpd_req_recv(req, buf, MIN(remaining, sizeof(buf)));
+    int recv_len = httpd_req_recv(req, buf, (remaining < (int)sizeof(buf)) ? remaining : sizeof(buf));
     if (recv_len <= 0) {
       Update.abort();
       return http_send_error(req, 500, "receive_failed");
