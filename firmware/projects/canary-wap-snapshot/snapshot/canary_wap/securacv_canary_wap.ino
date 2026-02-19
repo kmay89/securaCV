@@ -115,6 +115,14 @@
 #include "ble_config.h"
 #include "ble_manager.h"
 
+// WiFi Presence Detection (probe request monitoring)
+#include "wifi_presence.h"
+#include "wifi_presence_api.h"
+
+// Audible Chirp (local alert tones — PWM buzzer / LED blink)
+#include "audible_chirp.h"
+#include "audible_chirp_api.h"
+
 // ════════════════════════════════════════════════════════════════════════════
 // VERSION & PROTOCOL (must match PWK expectations)
 // ════════════════════════════════════════════════════════════════════════════
@@ -1923,6 +1931,25 @@ static esp_err_t handle_status(httpd_req_t* req) {
   gps["fix_mode"] = (int)g_fix.fix_mode;
   gps["state"] = state_name(g_state);
 
+  // WiFi Presence Detection status
+  JsonObject presence = doc["presence"].to<JsonObject>();
+  presence["wifi_available"] = (bool)FEATURE_WIFI_PRESENCE;
+  presence["wifi_enabled"] = wifi_presence::is_enabled();
+  presence["wifi_count"] = wifi_presence::get_current_count();
+  presence["wifi_last_count"] = wifi_presence::get_last_count();
+  presence["ble_available"] = (bool)FEATURE_BLE;
+  #if FEATURE_BLE
+  presence["ble_enabled"] = ble_manager::isNearbyActive();
+  #else
+  presence["ble_enabled"] = false;
+  #endif
+
+  // Audible Chirp status
+  JsonObject chirp_hw = doc["audible_chirp"].to<JsonObject>();
+  chirp_hw["available"] = (bool)FEATURE_AUDIBLE_CHIRP;
+  chirp_hw["visual_only"] = audible_chirp::is_visual_only();
+  chirp_hw["chirps_played"] = audible_chirp::get_chirps_played();
+
   String response;
   serializeJson(doc, response);
   return http_send_json(req, response.c_str());
@@ -3497,6 +3524,12 @@ register_extra_routes:
   }
 #endif
 
+  // WiFi Presence Detection endpoints
+  wifi_presence_api::register_routes(active_server);
+
+  // Audible Chirp endpoints
+  audible_chirp_api::register_routes(active_server);
+
   log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "API server started",
              g_tls_enabled ? "HTTPS port 443" : "HTTP port 80");
 }
@@ -4225,6 +4258,34 @@ void setup() {
   }
   #endif
 
+  // Initialize WiFi Presence Detection
+  #if FEATURE_WIFI_PRESENCE
+  if (!in_safe_mode) {
+    Serial.println("[..] Initializing WiFi presence detection...");
+    if (wifi_presence::start()) {
+      Serial.println("[OK] WiFi presence monitoring active (probe request counting)");
+      log_health(SCV_LOG_INFO, SCV_CAT_SYSTEM, "WiFi presence monitoring started", nullptr);
+    } else {
+      Serial.println("[--] WiFi presence init failed");
+      log_health(SCV_LOG_WARNING, SCV_CAT_SYSTEM, "WiFi presence init failed", nullptr);
+    }
+  } else {
+    Serial.println("[--] WiFi presence skipped (safe mode)");
+  }
+  #endif
+
+  // Initialize Audible Chirp
+  #if FEATURE_AUDIBLE_CHIRP
+  if (!in_safe_mode) {
+    Serial.println("[..] Initializing audible chirp system...");
+    audible_chirp::init();
+    // Play boot confirmation chirp
+    audible_chirp::chirp_confirm();
+    Serial.println("[OK] Audible chirp ready");
+    log_health(SCV_LOG_INFO, SCV_CAT_SYSTEM, "Audible chirp initialized", nullptr);
+  }
+  #endif
+
   // Initialize System Monitor (always - it's core monitoring)
   #if FEATURE_SYS_MONITOR
   Serial.println("[..] Initializing system monitor...");
@@ -4483,6 +4544,16 @@ void loop() {
   }
   #endif
 
+  // Process WiFi presence probe queue (drains ISR queue, hashes, dedup)
+  #if FEATURE_WIFI_PRESENCE
+  wifi_presence::process_queue();
+  #endif
+
+  // Advance audible chirp state machine (non-blocking playback)
+  #if FEATURE_AUDIBLE_CHIRP
+  audible_chirp::update();
+  #endif
+
   // Update system monitor (temp, heap, alerts)
   #if FEATURE_SYS_MONITOR
   sys_monitor::update(log_health);
@@ -4519,6 +4590,40 @@ void loop() {
     }
   }
   
+  // WiFi Presence threshold witness events
+  #if FEATURE_WIFI_PRESENCE
+  {
+    if (wifi_presence::threshold_crossed(wifi_presence::DEFAULT_ALERT_THRESHOLD)) {
+      uint8_t payload[128];
+      CborWriter cb(payload, sizeof(payload));
+      cb.write_map(3);
+      cb.write_text("event_type"); cb.write_text("presence_threshold");
+      cb.write_text("count"); cb.write_uint(wifi_presence::get_current_count());
+      cb.write_text("threshold"); cb.write_uint(wifi_presence::DEFAULT_ALERT_THRESHOLD);
+      if (cb.ok()) {
+        WitnessRecord rec;
+        create_witness_record(payload, cb.size(), RECORD_WITNESS_EVENT, &rec);
+        log_health(SCV_LOG_NOTICE, SCV_CAT_WITNESS, "Presence threshold crossed", nullptr);
+        #if FEATURE_AUDIBLE_CHIRP
+        audible_chirp::chirp_alert();
+        #endif
+      }
+    }
+    if (wifi_presence::presence_cleared()) {
+      uint8_t payload[64];
+      CborWriter cb(payload, sizeof(payload));
+      cb.write_map(2);
+      cb.write_text("event_type"); cb.write_text("presence_cleared");
+      cb.write_text("last_count"); cb.write_uint(wifi_presence::get_last_count());
+      if (cb.ok()) {
+        WitnessRecord rec;
+        create_witness_record(payload, cb.size(), RECORD_WITNESS_EVENT, &rec);
+        log_health(SCV_LOG_INFO, SCV_CAT_WITNESS, "Presence cleared", nullptr);
+      }
+    }
+  }
+  #endif
+
   // Periodic self-verification
   if (now - g_last_verify_ms >= VERIFY_INTERVAL_SEC * 1000) {
     g_last_verify_ms = now;

@@ -78,6 +78,8 @@
   #define FEATURE_BLUETOOTH     0
   #define FEATURE_BLE           0   // BLE Discovery (Opera/Chirp/Nearby)
   #define FEATURE_SYS_MONITOR   0
+  #define FEATURE_WIFI_PRESENCE 0   // WiFi probe request presence detection
+  #define FEATURE_AUDIBLE_CHIRP 0   // Local audible/visual alert tones
 
   #define DEBUG_NMEA            0
   #define DEBUG_CBOR            0
@@ -101,6 +103,8 @@
   #define FEATURE_BLUETOOTH     0   // Skip BLE (saves ~25s)
   #define FEATURE_BLE           0   // Skip BLE Discovery (saves ~25s)
   #define FEATURE_SYS_MONITOR   1
+  #define FEATURE_WIFI_PRESENCE 1   // WiFi probe request presence detection
+  #define FEATURE_AUDIBLE_CHIRP 1   // Local audible/visual alert tones
 
   #define DEBUG_NMEA            0
   #define DEBUG_CBOR            0
@@ -124,6 +128,8 @@
   #define FEATURE_BLUETOOTH     HW_HAS_BT_CLASSIC // ESP32-C3 has no Classic Bluetooth
   #define FEATURE_BLE           1   // BLE Discovery (Opera/Chirp/Nearby) — works on both S3 and C3
   #define FEATURE_SYS_MONITOR   1
+  #define FEATURE_WIFI_PRESENCE 1   // WiFi probe request presence detection
+  #define FEATURE_AUDIBLE_CHIRP 1   // Local audible/visual alert tones
 
   #define DEBUG_NMEA            0
   #define DEBUG_CBOR            0
