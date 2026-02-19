@@ -17,6 +17,10 @@
 #include "securacv_storage.h"
 #endif
 
+#if FEATURE_WATCHDOG
+#include "esp_task_wdt.h"
+#endif
+
 #if FEATURE_CAMERA_PEEK
 #include "securacv_camera.h"
 #endif
@@ -361,7 +365,7 @@ static esp_err_t handle_status(httpd_req_t* req) {
   DeviceIdentity& device = witness_get_device();
   SystemHealth& health = witness_get_health();
 
-  StaticJsonDocument<1024> doc;
+  JsonDocument doc;
   doc["ok"] = true;
   doc["device_id"] = device.device_id;
   doc["device_type"] = DEVICE_TYPE;
@@ -402,7 +406,7 @@ static esp_err_t handle_chain(httpd_req_t* req) {
   DeviceIdentity& device = witness_get_device();
   WitnessRecord& last = witness_get_last_record();
 
-  StaticJsonDocument<512> doc;
+  JsonDocument doc;
   doc["ok"] = true;
 
   char chain_hex[65];
@@ -433,7 +437,7 @@ static esp_err_t handle_logs(httpd_req_t* req) {
   size_t count = witness_get_health_log_count();
   size_t head = witness_get_health_log_head();
 
-  DynamicJsonDocument doc(4096);
+  JsonDocument doc;
   doc["ok"] = true;
   doc["total"] = count;
 
@@ -474,7 +478,7 @@ static esp_err_t handle_log_ack(httpd_req_t* req) {
 
   bool success = acknowledge_log_entry(seq, ACK_STATUS_ACKNOWLEDGED, "");
 
-  StaticJsonDocument<128> doc;
+  JsonDocument doc;
   doc["ok"] = success;
   if (!success) {
     doc["error"] = "Log entry not found";
@@ -502,7 +506,7 @@ static esp_err_t handle_ack_all(httpd_req_t* req) {
 
   log_health(LOG_LEVEL_INFO, LOG_CAT_USER, "Bulk acknowledgment", nullptr);
 
-  StaticJsonDocument<128> doc;
+  JsonDocument doc;
   doc["ok"] = true;
   doc["acknowledged"] = acked;
 
@@ -520,7 +524,7 @@ static esp_err_t handle_reboot(httpd_req_t* req) {
   nvs_store_u32(NVS_KEY_SEQ, device.seq);
   nvs_store_bytes(NVS_KEY_CHAIN, device.chain_head, 32);
 
-  StaticJsonDocument<64> doc;
+  JsonDocument doc;
   doc["ok"] = true;
   doc["message"] = "Rebooting...";
 
@@ -583,7 +587,7 @@ static esp_err_t handle_peek_start(httpd_req_t* req) {
   camera_set_peek_active(true);
   log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "Peek started", nullptr);
 
-  StaticJsonDocument<128> doc;
+  JsonDocument doc;
   doc["ok"] = true;
   doc["message"] = "Peek stream activated";
   doc["resolution"] = camera_get_instance().getResolutionName();
@@ -663,7 +667,7 @@ static esp_err_t handle_peek_status(httpd_req_t* req) {
 
   CameraManager& cam = camera_get_instance();
 
-  StaticJsonDocument<256> doc;
+  JsonDocument doc;
   doc["ok"] = true;
   doc["camera_initialized"] = cam.isInitialized();
   doc["peek_active"] = cam.isPeekActive();
