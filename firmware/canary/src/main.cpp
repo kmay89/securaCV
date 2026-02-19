@@ -31,6 +31,7 @@
 
 #if FEATURE_WATCHDOG
 #include "esp_task_wdt.h"
+#include "esp_idf_version.h"
 #endif
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -84,15 +85,21 @@ void setup() {
   // Setup watchdog
 #if FEATURE_WATCHDOG
   Serial.printf("[..] Watchdog timer: %us timeout\n", WATCHDOG_TIMEOUT_SEC);
-  esp_task_wdt_config_t wdt_config = {
-    .timeout_ms = WATCHDOG_TIMEOUT_SEC * 1000,
-    .idle_core_mask = (1 << 0) | (1 << 1),
-    .trigger_panic = true
-  };
-  esp_err_t wdt_err = esp_task_wdt_reconfigure(&wdt_config);
-  if (wdt_err == ESP_ERR_INVALID_STATE) {
-    esp_task_wdt_init(&wdt_config);
-  }
+  #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+    // ESP-IDF 5.x: struct-based API
+    esp_task_wdt_config_t wdt_config = {
+      .timeout_ms = WATCHDOG_TIMEOUT_SEC * 1000,
+      .idle_core_mask = (1 << 0) | (1 << 1),
+      .trigger_panic = true
+    };
+    esp_err_t wdt_err = esp_task_wdt_reconfigure(&wdt_config);
+    if (wdt_err == ESP_ERR_INVALID_STATE) {
+      esp_task_wdt_init(&wdt_config);
+    }
+  #else
+    // ESP-IDF 4.x: simple parameters
+    esp_task_wdt_init(WATCHDOG_TIMEOUT_SEC, true);
+  #endif
   esp_task_wdt_add(NULL);
   Serial.println("[OK] Watchdog configured");
 #endif
