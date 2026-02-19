@@ -171,6 +171,73 @@
 
 ---
 
+## Security Architecture Principles
+
+> These are non-negotiable. They override convenience, features, roadmap
+> priorities, and business considerations. Any code change that violates
+> a principle is a security defect. See `THREAT_MODEL.md` for full details.
+
+### Private keys must never leave the device
+- **Principle:** The Ed25519 private key has no export, backup, or read interface
+- **Why:** A key that can be exported can be compelled (court orders, coercion)
+- **Rule:** No API endpoint, log statement, debug output, or export path may
+  include private key material. There is no recovery mechanism by design.
+- **Regression check:** Script greps for private key references in API/export context
+- **Date established:** 2026-02
+
+### Zero outbound network connections
+- **Principle:** The device makes zero outbound connections — it is a server, never a client
+- **Why:** Outbound connections reveal the device exists, create interceptable metadata,
+  and enable server-side coercion (e.g., compelled malicious updates)
+- **Rule:** No DNS lookups, no NTP, no telemetry, no update checks, no cloud sync.
+  MQTT is off by default. OTA updates are user-initiated only.
+- **Watch for:** Any `WiFi.begin()`, `HTTPClient`, `WiFiClient`, `mqtt.connect()` calls
+- **Regression check:** Script greps for outbound connection patterns
+- **Date established:** 2026-02
+
+### No identifier leaks
+- **Principle:** The device must not leak identifiers that enable tracking or correlation
+- **Why:** WiFi probe responses, BLE beacons, mDNS, and raw MACs are all tracking vectors
+- **Rule:** BLE off at compile time, MACs hashed before storage, GPS coarsened at
+  capture, no manufacturer OUI in AP BSSID
+- **Regression check:** Script checks for raw MAC storage, BLE enablement, high-precision GPS
+- **Date established:** 2026-02
+
+### Evidence must be self-verifying
+- **Principle:** Exported evidence bundles verifiable without ERRERlabs involvement
+- **Why:** If verification requires ERRERlabs, ERRERlabs can be shut down, compelled,
+  or compromised — making all evidence unverifiable
+- **Rule:** Every export includes: signed records, hash chain, public key, and
+  an offline HTML+JS verification page
+- **Date established:** 2026-02
+
+### TLS required — no HTTP fallback
+- **Principle:** All API traffic must be encrypted. No plaintext HTTP.
+- **Why:** Even on a local AP, an attacker in WiFi range can sniff plaintext
+- **Rule:** HTTP requests get 301 redirect to HTTPS. No `http://` endpoints.
+  `DEFAULT_TLS_REQUIRED` must be 1 in `secure_defaults.h`.
+- **Regression check:** Script checks for HTTP listener without TLS redirect
+- **Date established:** 2026-02
+
+### Fail secure, not fail open
+- **Principle:** When something fails, the device fails toward MORE security
+- **Why:** A device that falls back to HTTP on TLS failure, or stops recording
+  when storage is full, betrays users at exactly the wrong moment
+- **Rule:** SD full → witness to RAM. Auth fail → lockout. TLS fail → reject.
+  Chain corrupt → tamper alert. Never degrade silently.
+- **Date established:** 2026-02
+
+### Secure defaults in secure_defaults.h
+- **Principle:** All security-sensitive compile-time defaults are centralized
+  in `firmware/canary/include/secure_defaults.h`
+- **Why:** Scattered defaults are easy to misconfigure. Centralized defaults
+  with static assertions prevent accidental weakening.
+- **Rule:** Production builds should define `SECURACV_ENFORCE_SECURE_DEFAULTS=1`
+  to trigger compile-time checks against insecure values.
+- **Date established:** 2026-02
+
+---
+
 ## How to Add an Entry
 
 When you encounter a bug, regression, or hard-won lesson:
