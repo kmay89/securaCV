@@ -2,623 +2,1210 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0a0e1a">
 <title>OperaCanary Fleet Manager</title>
 <style>
+/* ================================================================
+   SecuraCV Canary Fleet Manager
+   Dark professional theme matching SecuraCV brand
+   ================================================================ */
 :root {
-  --bg: #0f1118; --surface: #1a1d2e; --card: #222640; --card-hover: #2a2f4a;
-  --border: #2d3250; --text: #e8eaf0; --muted: #8891a8; --accent: #4a9eff;
-  --accent-dim: rgba(74,158,255,0.12); --success: #4ade80; --warning: #fbbf24;
-  --danger: #f87171; --danger-dim: rgba(248,113,113,0.1);
-  --mono: 'SF Mono','Fira Code','Cascadia Code',monospace;
-  --sans: system-ui,-apple-system,'Segoe UI',sans-serif;
+  color-scheme: dark;
+  --bg: #0a0e1a;
+  --surface: #12182d;
+  --card: #12182d;
+  --card-hover: #1a2340;
+  --border: #2d3748;
+  --text: #e8ecf4;
+  --muted: #8892a8;
+  --accent: #4fd1c5;
+  --accent-dim: rgba(79,209,197,0.15);
+  --warning: #f6ad55;
+  --warning-dim: rgba(246,173,85,0.15);
+  --danger: #fc8181;
+  --danger-dim: rgba(252,129,129,0.12);
+  --success: #68d391;
+  --success-dim: rgba(104,211,145,0.15);
+  --info: #63b3ed;
+  --info-dim: rgba(99,179,237,0.15);
+  --shadow: 0 4px 20px rgba(0,0,0,0.4);
+  --mono: "JetBrains Mono","SF Mono","Cascadia Code","Fira Code","Consolas",monospace;
+  --sans: "Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
 }
-* { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: var(--sans); background: var(--bg); color: var(--text); min-height: 100vh; }
-a { color: var(--accent); text-decoration: none; }
+*,*::before,*::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { font-size: 15px; -webkit-tap-highlight-color: transparent; }
+body { font-family: var(--sans); background: var(--bg); color: var(--text); min-height: 100vh; line-height: 1.5; }
+::selection { background: var(--accent); color: var(--bg); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* Layout */
-.app { max-width: 1200px; margin: 0 auto; padding: 1rem; }
-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem; padding: 1rem 0; border-bottom: 1px solid var(--border); margin-bottom: 1rem; }
-header h1 { font-size: 1.25rem; font-weight: 600; }
-header h1 span { color: var(--accent); }
-.header-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.app { max-width: 1200px; margin: 0 auto; padding: 0 1rem 1rem; }
+header {
+  background: linear-gradient(135deg, #1a2340 0%, #12182d 100%);
+  border-bottom: 1px solid var(--border);
+  padding: 0.75rem 1rem;
+  position: sticky; top: 0; z-index: 100;
+}
+.header-inner {
+  max-width: 1200px; margin: 0 auto;
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 0.75rem; flex-wrap: wrap;
+}
+.brand { display: flex; align-items: center; gap: 0.6rem; }
+.brand-icon {
+  width: 36px; height: 36px;
+  background: var(--accent-dim); border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.2rem; flex-shrink: 0;
+}
+.brand h1 { font-size: 1.1rem; font-weight: 600; letter-spacing: -0.02em; white-space: nowrap; }
+.brand h1 em { font-style: normal; color: var(--accent); }
+.brand-sub { font-size: 0.68rem; color: var(--muted); display: block; }
+.header-actions { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
 
 /* Buttons */
-.btn { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.5rem 1rem; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); font-size: 0.8rem; cursor: pointer; transition: all 0.15s; }
-.btn:hover { background: var(--card); border-color: var(--accent); }
-.btn-primary { background: var(--accent); color: #fff; border-color: var(--accent); }
-.btn-primary:hover { background: #3d8ae6; }
-.btn-sm { padding: 0.3rem 0.6rem; font-size: 0.75rem; }
+.btn {
+  display: inline-flex; align-items: center; gap: 0.35rem;
+  padding: 0.45rem 0.85rem; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--surface); color: var(--text); font-size: 0.78rem; font-weight: 500;
+  cursor: pointer; transition: all 0.15s; white-space: nowrap; font-family: inherit;
+}
+.btn:hover { background: var(--card-hover); border-color: var(--accent); }
+.btn:active { transform: scale(0.97); }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-primary { background: var(--accent); color: var(--bg); border-color: var(--accent); font-weight: 600; }
+.btn-primary:hover { opacity: 0.9; }
+.btn-sm { padding: 0.3rem 0.6rem; font-size: 0.73rem; }
 .btn-danger { border-color: var(--danger); color: var(--danger); }
 .btn-danger:hover { background: var(--danger-dim); }
+.btn-icon { font-size: 1rem; line-height: 1; }
 
-/* Input */
-.input { padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); font-size: 0.85rem; outline: none; }
-.input:focus { border-color: var(--accent); }
-.input-group { display: flex; gap: 0.5rem; }
+/* Inputs */
+.input {
+  padding: 0.45rem 0.7rem; border: 1px solid var(--border); border-radius: 6px;
+  background: rgba(0,0,0,0.3); color: var(--text); font-size: 0.82rem; outline: none;
+  font-family: var(--mono); transition: border-color 0.15s;
+}
+.input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); }
+.input::placeholder { color: var(--muted); font-family: var(--sans); }
+.input-row { display: flex; gap: 0.5rem; margin-bottom: 1rem; flex-wrap: wrap; }
+.input-row .input { flex: 1; min-width: 180px; }
+.input-row .input-label { flex: 0 1 auto; min-width: 100px; }
+
+/* Auto-refresh toggle */
+.auto-label {
+  display: inline-flex; align-items: center; gap: 0.35rem;
+  font-size: 0.73rem; color: var(--muted); cursor: pointer; user-select: none;
+}
+.auto-label input[type=checkbox] { cursor: pointer; accent-color: var(--accent); }
+.auto-label.on { color: var(--accent); }
+
+/* Badge */
+.badge {
+  display: inline-flex; align-items: center; gap: 0.25rem;
+  padding: 0.2rem 0.5rem; border-radius: 5px;
+  font-size: 0.68rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em;
+}
+.dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.badge-ok { background: var(--success-dim); color: var(--success); }
+.badge-ok .dot { background: var(--success); animation: pulse 2s infinite; }
+.badge-warn { background: var(--warning-dim); color: var(--warning); }
+.badge-warn .dot { background: var(--warning); animation: pulse-fast 1s infinite; }
+.badge-err { background: var(--danger-dim); color: var(--danger); }
+.badge-err .dot { background: var(--danger); }
+.badge-off { background: rgba(255,255,255,0.05); color: var(--muted); }
+.badge-off .dot { background: var(--muted); }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+@keyframes pulse-fast { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
 
 /* Stats Row */
-.stats-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 0.75rem; margin-bottom: 1.25rem; }
-.stat-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 0.85rem; }
-.stat-label { font-size: 0.7rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.3rem; }
-.stat-value { font-size: 1.3rem; font-weight: 600; font-family: var(--mono); }
-.stat-value.online { color: var(--success); }
-.stat-value.offline { color: var(--danger); }
-.stat-value.warn { color: var(--warning); }
-.stat-value.accent { color: var(--accent); }
+.stats-row {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0.65rem; margin-bottom: 1.25rem;
+}
+.stat-card {
+  background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 0.75rem;
+}
+.stat-lbl { font-size: 0.68rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.2rem; }
+.stat-val { font-size: 1.3rem; font-weight: 600; font-family: var(--mono); }
+.stat-val.v-on { color: var(--success); }
+.stat-val.v-off { color: var(--danger); }
+.stat-val.v-warn { color: var(--warning); }
+.stat-val.v-acc { color: var(--accent); }
 
 /* Device Grid */
-.device-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 0.75rem; margin-bottom: 1rem; }
-.device-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 1rem; cursor: pointer; transition: all 0.15s; position: relative; }
-.device-card:hover { border-color: var(--accent); background: var(--card-hover); transform: translateY(-1px); }
-.device-card.offline { opacity: 0.6; }
-.device-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem; }
-.device-name { font-weight: 600; font-size: 0.9rem; }
-.device-status { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-.device-status.on { background: var(--success); box-shadow: 0 0 6px var(--success); }
-.device-status.off { background: var(--danger); }
-.device-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 0.4rem; }
-.device-meta-item { font-size: 0.75rem; }
-.device-meta-label { color: var(--muted); }
-.device-meta-value { font-family: var(--mono); color: var(--accent); }
-.device-remove { position: absolute; top: 0.5rem; right: 0.5rem; background: none; border: none; color: var(--muted); cursor: pointer; font-size: 1rem; line-height: 1; padding: 0.2rem; opacity: 0; transition: opacity 0.15s; }
-.device-card:hover .device-remove { opacity: 1; }
-.device-remove:hover { color: var(--danger); }
+.device-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(310px, 1fr)); gap: 0.7rem; margin-bottom: 0.75rem; }
+.dev-card {
+  background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+  padding: 0.85rem; cursor: pointer; transition: all 0.15s; position: relative;
+}
+.dev-card:hover { border-color: rgba(79,209,197,0.4); background: var(--card-hover); transform: translateY(-1px); box-shadow: var(--shadow); }
+.dev-card.is-online { border-left: 3px solid var(--success); }
+.dev-card.is-offline { border-left: 3px solid var(--muted); opacity: 0.65; }
+.dev-card.is-offline:hover { opacity: 1; }
+.dev-card.is-issue { border-left: 3px solid var(--warning); }
+.dev-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.5rem; gap: 0.5rem; }
+.dev-name { font-weight: 600; font-size: 0.88rem; word-break: break-all; }
+.dev-host { font-family: var(--mono); font-size: 0.7rem; color: var(--muted); margin-top: 0.1rem; }
+.dev-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 0.3rem 0.7rem; }
+.dm { font-size: 0.73rem; display: flex; justify-content: space-between; }
+.dm-l { color: var(--muted); }
+.dm-v { font-family: var(--mono); font-size: 0.7rem; }
+.dm-v.ok { color: var(--success); }
+.dm-v.wn { color: var(--warning); }
+.dm-v.er { color: var(--danger); }
+.dm-v.ac { color: var(--accent); }
+.dev-rm {
+  position: absolute; top: 0.4rem; right: 0.4rem;
+  background: none; border: none; color: var(--muted); cursor: pointer;
+  font-size: 1.1rem; line-height: 1; padding: 0.15rem 0.3rem; border-radius: 4px;
+  opacity: 0; transition: opacity 0.15s;
+}
+.dev-card:hover .dev-rm { opacity: 1; }
+.dev-rm:hover { color: var(--danger); background: var(--danger-dim); }
 
 /* Pagination */
-.pagination { display: flex; align-items: center; justify-content: center; gap: 0.5rem; padding: 1rem 0; }
-.page-info { font-size: 0.8rem; color: var(--muted); margin: 0 0.5rem; }
+.pag { display: flex; align-items: center; justify-content: center; gap: 0.35rem; padding: 0.75rem 0; }
+.pag .btn.pg-active { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+.pg-info { font-size: 0.75rem; color: var(--muted); margin: 0 0.4rem; }
 
-/* Detail View */
-.detail-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 100; overflow-y: auto; padding: 2rem 1rem; }
+/* Detail Overlay */
+.detail-overlay {
+  display: none; position: fixed; inset: 0;
+  background: rgba(0,0,0,0.7); z-index: 200;
+  overflow-y: auto; padding: 1.5rem 1rem; -webkit-overflow-scrolling: touch;
+}
 .detail-overlay.active { display: block; }
-.detail-panel { max-width: 800px; margin: 0 auto; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 1.5rem; }
-.detail-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; padding-bottom: 1rem; border-bottom: 1px solid var(--border); }
-.detail-title { font-size: 1.1rem; font-weight: 600; }
-.detail-close { background: none; border: none; color: var(--muted); font-size: 1.5rem; cursor: pointer; padding: 0.25rem; }
+.detail-panel {
+  max-width: 860px; margin: 0 auto;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  padding: 1.25rem; box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+}
+.detail-hdr {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 1rem; padding-bottom: 0.75rem; border-bottom: 1px solid var(--border);
+  gap: 0.5rem; flex-wrap: wrap;
+}
+.detail-hdr h2 { font-size: 1.05rem; font-weight: 600; }
+.detail-hdr-actions { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+.detail-close {
+  background: none; border: none; color: var(--muted); font-size: 1.6rem;
+  cursor: pointer; padding: 0 0.3rem; line-height: 1;
+}
 .detail-close:hover { color: var(--text); }
 
 /* Tabs */
-.tabs { display: flex; gap: 0.5rem; margin-bottom: 1rem; overflow-x: auto; }
-.tab { padding: 0.5rem 1rem; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: var(--muted); font-size: 0.8rem; cursor: pointer; white-space: nowrap; }
+.tabs { display: flex; gap: 0.35rem; margin-bottom: 1rem; overflow-x: auto; padding-bottom: 2px; }
+.tab {
+  padding: 0.45rem 0.85rem; border: 1px solid var(--border); border-radius: 6px;
+  background: transparent; color: var(--muted); font-size: 0.78rem; font-weight: 500;
+  cursor: pointer; white-space: nowrap; font-family: inherit; transition: all 0.15s;
+}
+.tab:hover { color: var(--text); background: rgba(255,255,255,0.04); }
 .tab.active { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
-.tab-content { display: none; }
-.tab-content.active { display: block; }
+.tab-body { display: none; }
+.tab-body.active { display: block; }
 
 /* Data Grid */
-.data-grid { display: grid; gap: 0.5rem; }
-.data-row { display: flex; justify-content: space-between; align-items: center; padding: 0.5rem 0.75rem; background: rgba(0,0,0,0.15); border-radius: 6px; }
-.data-label { font-size: 0.8rem; color: var(--muted); }
-.data-value { font-family: var(--mono); font-size: 0.8rem; color: var(--accent); word-break: break-all; text-align: right; max-width: 60%; }
+.dg { display: grid; gap: 0.4rem; }
+.dr {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 0.45rem 0.7rem; background: rgba(0,0,0,0.15); border-radius: 6px;
+}
+.dr-l { font-size: 0.78rem; color: var(--muted); }
+.dr-v { font-family: var(--mono); font-size: 0.78rem; color: var(--accent); word-break: break-all; text-align: right; max-width: 60%; }
+.dr-v.v-ok { color: var(--success); }
+.dr-v.v-er { color: var(--danger); }
+.dr-v.v-wn { color: var(--warning); }
 
-/* Log Entry */
-.log-entry { display: grid; grid-template-columns: auto auto 1fr; gap: 0.5rem; align-items: start; padding: 0.5rem; background: rgba(0,0,0,0.15); border-radius: 6px; border-left: 3px solid var(--border); font-size: 0.8rem; }
-.log-entry.warn { border-left-color: var(--warning); }
-.log-entry.error { border-left-color: var(--danger); }
-.log-entry.crit { border-left-color: var(--danger); background: var(--danger-dim); }
-.log-level { font-family: var(--mono); font-size: 0.7rem; font-weight: 600; padding: 0.15rem 0.3rem; border-radius: 3px; }
-.log-cat { font-size: 0.7rem; color: var(--muted); }
+/* Log Entries */
+.logs-wrap { display: flex; flex-direction: column; gap: 0.35rem; max-height: 400px; overflow-y: auto; }
+.log-e {
+  display: grid; grid-template-columns: auto 1fr auto; gap: 0.5rem; align-items: start;
+  padding: 0.45rem 0.55rem; background: rgba(0,0,0,0.15); border-radius: 6px;
+  border-left: 3px solid var(--border); font-size: 0.78rem;
+}
+.log-e.warn { border-left-color: var(--warning); }
+.log-e.error { border-left-color: var(--danger); }
+.log-e.crit { border-left-color: var(--danger); background: var(--danger-dim); }
+.log-lvl {
+  font-family: var(--mono); font-size: 0.66rem; font-weight: 600;
+  padding: 0.12rem 0.3rem; border-radius: 3px; text-transform: uppercase; white-space: nowrap;
+}
+.log-lvl.error { background: var(--danger-dim); color: var(--danger); }
+.log-lvl.warn { background: var(--warning-dim); color: var(--warning); }
+.log-lvl.info { background: var(--info-dim); color: var(--info); }
+.log-lvl.crit { background: var(--danger); color: #fff; }
+.log-msg { color: var(--text); word-break: break-word; }
+.log-ts { color: var(--muted); font-family: var(--mono); font-size: 0.68rem; white-space: nowrap; }
+
+/* Chain Viz */
+.chain-viz {
+  display: flex; align-items: center; gap: 0.35rem;
+  padding: 0.6rem; background: rgba(0,0,0,0.15); border-radius: 8px; overflow-x: auto;
+}
+.chain-blk { display: flex; flex-direction: column; align-items: center; min-width: 68px; }
+.chain-hash {
+  font-family: var(--mono); font-size: 0.6rem; color: var(--accent);
+  padding: 0.2rem 0.35rem; background: var(--accent-dim); border-radius: 4px;
+}
+.chain-seq { font-size: 0.66rem; color: var(--muted); margin-top: 0.15rem; }
+.chain-arr { color: var(--muted); font-size: 0.95rem; }
 
 /* Camera Peek */
-.peek-frame { width: 100%; aspect-ratio: 4/3; background: #0a0e1a; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; }
-.peek-frame img { width: 100%; height: 100%; object-fit: contain; }
-.peek-frame .no-cam { color: var(--muted); font-size: 0.85rem; }
-.peek-controls { display: flex; gap: 0.5rem; margin-top: 0.75rem; }
+.peek-frame {
+  width: 100%; aspect-ratio: 4/3; background: #060a14; border-radius: 8px;
+  overflow: hidden; border: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: center;
+}
+.peek-frame img { width: 100%; height: 100%; object-fit: contain; display: none; }
+.no-cam { color: var(--muted); font-size: 0.82rem; text-align: center; padding: 1rem; }
+.peek-ctrls { display: flex; gap: 0.5rem; margin-top: 0.65rem; align-items: center; }
+.peek-status { font-size: 0.73rem; color: var(--muted); margin-left: auto; }
 
-/* Empty State */
-.empty-state { text-align: center; padding: 3rem 1rem; color: var(--muted); }
-.empty-state h2 { font-size: 1.1rem; margin-bottom: 0.5rem; color: var(--text); }
-.empty-state p { font-size: 0.85rem; margin-bottom: 1.5rem; }
+/* Confirm modal */
+.modal-bg {
+  display: none; position: fixed; inset: 0;
+  background: rgba(0,0,0,0.6); z-index: 300;
+  align-items: center; justify-content: center; padding: 1rem;
+}
+.modal-bg.show { display: flex; }
+.modal-box {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  padding: 1.25rem; max-width: 420px; width: 100%; box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+}
+.modal-box h3 { font-size: 0.95rem; margin-bottom: 0.5rem; }
+.modal-box p { font-size: 0.82rem; color: var(--muted); margin-bottom: 1rem; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 0.5rem; }
 
 /* Toast */
-.toast { position: fixed; bottom: 1.5rem; right: 1.5rem; padding: 0.75rem 1.25rem; background: var(--card); border: 1px solid var(--border); border-radius: 8px; font-size: 0.85rem; z-index: 200; opacity: 0; transition: opacity 0.3s; pointer-events: none; }
-.toast.show { opacity: 1; }
+.toast-wrap { position: fixed; top: 65px; right: 1rem; z-index: 400; display: flex; flex-direction: column; gap: 0.4rem; pointer-events: none; }
+.toast-item {
+  background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+  padding: 0.55rem 0.9rem; font-size: 0.78rem; box-shadow: var(--shadow);
+  animation: toast-in 0.3s ease; pointer-events: auto; max-width: 340px;
+}
+.toast-item.t-ok { border-left: 3px solid var(--success); }
+.toast-item.t-err { border-left: 3px solid var(--danger); }
+.toast-item.t-info { border-left: 3px solid var(--info); }
+@keyframes toast-in { from { transform: translateX(100%); opacity: 0; } to { transform: none; opacity: 1; } }
+
+/* Empty State */
+.empty { text-align: center; padding: 3rem 1rem; color: var(--muted); }
+.empty h3 { font-size: 1rem; color: var(--text); margin-bottom: 0.4rem; }
+.empty p { font-size: 0.82rem; max-width: 420px; margin: 0 auto 1rem; }
+
+/* Spinner */
+.spin {
+  display: inline-block; width: 14px; height: 14px;
+  border: 2px solid var(--border); border-top-color: var(--accent);
+  border-radius: 50%; animation: sp 0.7s linear infinite;
+}
+@keyframes sp { to { transform: rotate(360deg); } }
 
 /* Footer */
-footer { text-align: center; padding: 2rem 0 1rem; font-size: 0.75rem; color: var(--muted); border-top: 1px solid var(--border); margin-top: 2rem; }
+footer {
+  text-align: center; padding: 1.5rem 0 1rem; font-size: 0.7rem;
+  color: var(--muted); border-top: 1px solid var(--border); margin-top: 2rem;
+}
+footer strong { color: var(--text); font-weight: 500; }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--muted); }
 
 /* Responsive */
-@media (max-width: 640px) {
+@media (max-width: 768px) {
+  .header-inner { flex-direction: column; align-items: flex-start; }
+  .header-actions { width: 100%; justify-content: flex-start; }
   .stats-row { grid-template-columns: repeat(2, 1fr); }
   .device-grid { grid-template-columns: 1fr; }
-  header { flex-direction: column; align-items: flex-start; }
-  .header-actions { width: 100%; }
-  .input-group { flex-direction: column; }
-  .input-group .input { width: 100%; }
+  .input-row { flex-direction: column; }
+  .input-row .input { min-width: 0; width: 100%; }
+  .detail-panel { padding: 1rem; }
+}
+@media (max-width: 480px) {
+  .stats-row { grid-template-columns: 1fr 1fr; }
+  .stat-val { font-size: 1.1rem; }
+  .tabs { gap: 0.25rem; }
+  .tab { padding: 0.4rem 0.6rem; font-size: 0.73rem; }
 }
 </style>
 </head>
 <body>
-<div class="app">
-  <header>
-    <h1><span>SecuraCV</span> Fleet Manager</h1>
-    <div class="header-actions">
-      <div class="input-group">
-        <input class="input" id="addDeviceInput" type="text" placeholder="IP or hostname (e.g. 192.168.4.1)" />
-        <button class="btn btn-primary" onclick="addDevice()">Add Device</button>
-      </div>
-      <button class="btn" onclick="refreshAll()" id="refreshBtn">Refresh All</button>
-      <button class="btn" id="autoToggle" onclick="toggleAutoRefresh()">Auto: Off</button>
-    </div>
-  </header>
 
-  <!-- Fleet Stats -->
+<!-- Header -->
+<header>
+  <div class="header-inner">
+    <div class="brand">
+      <div class="brand-icon">&#x1F426;</div>
+      <div>
+        <h1><em>SecuraCV</em> Canary Fleet Manager</h1>
+        <span class="brand-sub">Local network fleet management &mdash; no cloud</span>
+      </div>
+    </div>
+    <div class="header-actions">
+      <label class="auto-label" id="autoLabel">
+        <input type="checkbox" id="autoCb" /> Auto-refresh (30s)
+      </label>
+      <button class="btn" id="refreshBtn" onclick="FM.refreshAll()">
+        <span class="btn-icon">&#x21BB;</span> Refresh All
+      </button>
+      <button class="btn" onclick="FM.exportAll()">
+        <span class="btn-icon">&#x2913;</span> Export All
+      </button>
+    </div>
+  </div>
+</header>
+
+<!-- Toasts -->
+<div class="toast-wrap" id="toastWrap"></div>
+
+<!-- Confirm Modal -->
+<div class="modal-bg" id="modalBg" onclick="if(event.target===this)FM.hideModal()">
+  <div class="modal-box">
+    <h3 id="modalTitle">Confirm</h3>
+    <p id="modalMsg">Are you sure?</p>
+    <div class="modal-actions">
+      <button class="btn" onclick="FM.hideModal()">Cancel</button>
+      <button class="btn btn-danger" id="modalOk">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<!-- Main -->
+<div class="app">
+
+  <!-- Stats -->
   <div class="stats-row" id="statsRow">
-    <div class="stat-card"><div class="stat-label">Total Devices</div><div class="stat-value accent" id="statTotal">0</div></div>
-    <div class="stat-card"><div class="stat-label">Online</div><div class="stat-value online" id="statOnline">0</div></div>
-    <div class="stat-card"><div class="stat-label">Offline</div><div class="stat-value offline" id="statOffline">0</div></div>
-    <div class="stat-card"><div class="stat-label">Chain Issues</div><div class="stat-value warn" id="statChainIssues">0</div></div>
-    <div class="stat-card"><div class="stat-label">Total Records</div><div class="stat-value accent" id="statRecords">0</div></div>
+    <div class="stat-card"><div class="stat-lbl">Total Devices</div><div class="stat-val v-acc" id="sTotal">0</div></div>
+    <div class="stat-card"><div class="stat-lbl">Online</div><div class="stat-val v-on" id="sOnline">0</div></div>
+    <div class="stat-card"><div class="stat-lbl">Offline</div><div class="stat-val v-off" id="sOffline">0</div></div>
+    <div class="stat-card"><div class="stat-lbl">Chain Healthy</div><div class="stat-val v-on" id="sChainOk">0</div></div>
+    <div class="stat-card"><div class="stat-lbl">Chain Issues</div><div class="stat-val v-warn" id="sChainBad">0</div></div>
+    <div class="stat-card"><div class="stat-lbl">Total Records</div><div class="stat-val v-acc" id="sRecords">0</div></div>
+  </div>
+
+  <!-- Add device row -->
+  <div class="input-row">
+    <input class="input" id="inHost" type="text"
+           placeholder="IP or hostname (e.g. 192.168.4.1, canary.local)"
+           autocomplete="off" spellcheck="false" />
+    <input class="input input-label" id="inLabel" type="text"
+           placeholder="Label (optional)" autocomplete="off" spellcheck="false" />
+    <button class="btn btn-primary" onclick="FM.addDevice()">+ Add Device</button>
   </div>
 
   <!-- Device Grid -->
-  <div id="deviceGrid" class="device-grid"></div>
+  <div class="device-grid" id="grid"></div>
 
   <!-- Pagination -->
-  <div class="pagination" id="pagination" style="display:none">
-    <button class="btn btn-sm" onclick="prevPage()">&lt; Prev</button>
-    <span class="page-info" id="pageInfo">Page 1 of 1</span>
-    <button class="btn btn-sm" onclick="nextPage()">Next &gt;</button>
-  </div>
+  <div class="pag" id="pag" style="display:none"></div>
 
   <!-- Empty State -->
-  <div class="empty-state" id="emptyState">
-    <h2>No Canary Devices</h2>
+  <div class="empty" id="emptyState">
+    <div style="font-size:2.5rem;opacity:0.3;margin-bottom:0.5rem">&#x1F426;</div>
+    <h3>No Canary Devices</h3>
     <p>Add your first device by entering its IP address or hostname above.<br>
-       Default: <strong>192.168.4.1</strong> (direct WiFi AP connection)</p>
-    <button class="btn btn-primary" onclick="addDevice('192.168.4.1')">Add Default (192.168.4.1)</button>
+       Default: <strong>192.168.4.1</strong> (direct WiFi AP connection).</p>
+    <button class="btn btn-primary" onclick="FM.addDevice('192.168.4.1')">Add Default (192.168.4.1)</button>
   </div>
 
-  <footer>ERRERlabs &mdash; Privacy by Design &mdash; No telemetry, no cloud, no tracking</footer>
+  <footer>
+    <strong>ERRERlabs</strong> &mdash; Privacy by Design<br>
+    <span style="opacity:0.55">OperaCanary Fleet Manager &middot; No telemetry &middot; No analytics &middot; No cloud &middot; Local only</span>
+  </footer>
 </div>
 
 <!-- Detail Overlay -->
-<div class="detail-overlay" id="detailOverlay" onclick="if(event.target===this)closeDetail()">
+<div class="detail-overlay" id="overlay" onclick="if(event.target===this)FM.closeDetail()">
   <div class="detail-panel">
-    <div class="detail-header">
-      <div class="detail-title" id="detailTitle">Device</div>
-      <button class="detail-close" onclick="closeDetail()">&times;</button>
+    <div class="detail-hdr">
+      <h2 id="dTitle">Device</h2>
+      <div class="detail-hdr-actions">
+        <button class="btn btn-sm" onclick="FM.refreshDetail()"><span class="btn-icon">&#x21BB;</span> Refresh</button>
+        <button class="btn btn-sm" onclick="FM.exportCurrent()"><span class="btn-icon">&#x2913;</span> Export</button>
+        <button class="btn btn-sm btn-danger" onclick="FM.removeCurrent()">Remove</button>
+      </div>
+      <button class="detail-close" onclick="FM.closeDetail()">&times;</button>
     </div>
-    <div class="tabs" id="detailTabs">
-      <button class="tab active" data-tab="status" onclick="switchTab(this)">Status</button>
-      <button class="tab" data-tab="logs" onclick="switchTab(this)">Logs</button>
-      <button class="tab" data-tab="chain" onclick="switchTab(this)">Chain</button>
-      <button class="tab" data-tab="peek" onclick="switchTab(this)">Peek</button>
-      <button class="tab" data-tab="export" onclick="switchTab(this)">Export</button>
+    <div class="tabs" id="dTabs">
+      <button class="tab active" data-t="status">Status</button>
+      <button class="tab" data-t="logs">Logs</button>
+      <button class="tab" data-t="chain">Chain</button>
+      <button class="tab" data-t="peek">Camera Peek</button>
+      <button class="tab" data-t="export">Export</button>
     </div>
-    <div class="tab-content active" id="tab-status"></div>
-    <div class="tab-content" id="tab-logs"></div>
-    <div class="tab-content" id="tab-chain"></div>
-    <div class="tab-content" id="tab-peek"></div>
-    <div class="tab-content" id="tab-export"></div>
+    <div class="tab-body active" id="tb-status"></div>
+    <div class="tab-body" id="tb-logs"></div>
+    <div class="tab-body" id="tb-chain"></div>
+    <div class="tab-body" id="tb-peek"></div>
+    <div class="tab-body" id="tb-export"></div>
   </div>
 </div>
 
-<div class="toast" id="toast"></div>
-
 <script>
-const DEVICES_KEY = 'securacv_fleet_devices';
-const PAGE_SIZE = 20;
-const FETCH_TIMEOUT = 3000;
-let devices = [];
-let currentPage = 0;
-let autoRefreshId = null;
-let currentDetailDevice = null;
+/* ================================================================
+   Fleet Manager Application
+   Single-file, zero dependencies, works offline
+   No telemetry (Invariant IV), no stored video (Invariant I),
+   no identity data (Invariant II)
+   ================================================================ */
+var FM = (function() {
+  'use strict';
 
-function loadDevices() {
-  try { devices = JSON.parse(localStorage.getItem(DEVICES_KEY) || '[]'); } catch { devices = []; }
-}
-function saveDevices() {
-  const stripped = devices.map(d => ({ host: d.host, name: d.name }));
-  localStorage.setItem(DEVICES_KEY, JSON.stringify(stripped));
-}
+  // ── Constants ──────────────────────────────────────────────────
+  var STORE_KEY  = 'securacv_fleet_devices';
+  var PAGE_SIZE  = 20;
+  var TIMEOUT_MS = 3000;
+  var RETRY_MAX  = 2;
+  var RETRY_WAIT = 800;
+  var AUTO_MS    = 30000;
 
-function toast(msg) {
-  const el = document.getElementById('toast');
-  el.textContent = msg;
-  el.classList.add('show');
-  setTimeout(() => el.classList.remove('show'), 2500);
-}
+  // ── State ──────────────────────────────────────────────────────
+  var devices     = [];   // [{host,label,online,data,lastSeen,error,fetching}]
+  var page        = 0;    // zero-indexed current page
+  var autoTimer   = null;
+  var refreshing  = false;
+  var detailDev   = null; // currently open device ref
+  var peekActive  = false;
+  var modalCb     = null;
 
-async function fetchWithTimeout(url, timeout = FETCH_TIMEOUT) {
-  const controller = new AbortController();
-  const id = setTimeout(() => controller.abort(), timeout);
-  try {
-    const resp = await fetch(url, { signal: controller.signal });
-    clearTimeout(id);
-    return resp;
-  } catch {
-    clearTimeout(id);
-    return null;
+  // ── DOM helpers ────────────────────────────────────────────────
+  var $ = function(id) { return document.getElementById(id); };
+
+  function esc(s) {
+    if (s == null) return '';
+    return String(s).replace(/[&<>"']/g, function(c) {
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c];
+    });
   }
-}
 
-function baseUrl(host) {
-  const h = host.includes('://') ? host : 'http://' + host;
-  return h.replace(/\/+$/, '');
-}
+  function fmtNum(n) { return n != null ? Number(n).toLocaleString() : '0'; }
 
-async function pollDevice(dev) {
-  const url = baseUrl(dev.host) + '/api/status';
-  try {
-    const resp = await fetchWithTimeout(url);
-    if (!resp || !resp.ok) { dev.online = false; dev.lastError = 'HTTP ' + (resp ? resp.status : 'timeout'); return; }
-    const data = await resp.json();
-    dev.online = true;
-    dev.lastSeen = Date.now();
-    dev.lastError = null;
-    dev.data = data;
-    dev.name = dev.name || data.device_id || dev.host;
-  } catch {
-    dev.online = false;
-    dev.lastError = 'Unreachable';
+  function fmtUp(sec) {
+    if (!sec || sec < 0) return '--';
+    var d = Math.floor(sec/86400), h = Math.floor((sec%86400)/3600),
+        m = Math.floor((sec%3600)/60), s = Math.floor(sec%60);
+    if (d > 0) return d + 'd ' + h + 'h';
+    if (h > 0) return h + 'h ' + m + 'm';
+    if (m > 0) return m + 'm ' + s + 's';
+    return s + 's';
   }
-}
 
-async function refreshAll() {
-  const btn = document.getElementById('refreshBtn');
-  btn.textContent = 'Refreshing...';
-  btn.disabled = true;
-  await Promise.allSettled(devices.map(d => pollDevice(d)));
-  btn.textContent = 'Refresh All';
-  btn.disabled = false;
-  render();
-}
-
-function toggleAutoRefresh() {
-  const btn = document.getElementById('autoToggle');
-  if (autoRefreshId) {
-    clearInterval(autoRefreshId);
-    autoRefreshId = null;
-    btn.textContent = 'Auto: Off';
-  } else {
-    autoRefreshId = setInterval(refreshAll, 30000);
-    btn.textContent = 'Auto: 30s';
-    toast('Auto-refresh enabled (30s)');
+  function fmtBytes(b) {
+    if (!b) return '--';
+    if (b > 1048576) return (b/1048576).toFixed(1) + ' MB';
+    return (b/1024).toFixed(1) + ' KB';
   }
-}
 
-function addDevice(hostOverride) {
-  const input = document.getElementById('addDeviceInput');
-  const host = hostOverride || input.value.trim();
-  if (!host) return;
-  if (devices.find(d => d.host === host)) { toast('Device already added'); return; }
-  const dev = { host, name: host, online: false, data: null, lastSeen: null, lastError: null };
-  devices.push(dev);
-  saveDevices();
-  input.value = '';
-  pollDevice(dev).then(render);
-  render();
-  toast('Device added: ' + host);
-}
-
-function removeDevice(host, evt) {
-  evt.stopPropagation();
-  devices = devices.filter(d => d.host !== host);
-  saveDevices();
-  render();
-  toast('Device removed');
-}
-
-function formatUptime(sec) {
-  if (!sec) return '-';
-  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
-  return `${h}h ${m}m ${s}s`;
-}
-
-function formatBytes(b) {
-  if (!b) return '-';
-  return (b / 1024).toFixed(1) + ' KB';
-}
-
-function timeSince(ts) {
-  if (!ts) return 'Never';
-  const diff = Math.floor((Date.now() - ts) / 1000);
-  if (diff < 60) return diff + 's ago';
-  if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
-  return Math.floor(diff / 3600) + 'h ago';
-}
-
-function renderStats() {
-  const online = devices.filter(d => d.online).length;
-  const offline = devices.length - online;
-  const chainIssues = devices.filter(d => d.online && d.data && d.data.chain && !d.data.chain.valid).length;
-  const totalRecords = devices.reduce((sum, d) => sum + (d.data ? (d.data.records_created || d.data.sequence || 0) : 0), 0);
-  document.getElementById('statTotal').textContent = devices.length;
-  document.getElementById('statOnline').textContent = online;
-  document.getElementById('statOffline').textContent = offline;
-  document.getElementById('statChainIssues').textContent = chainIssues;
-  document.getElementById('statRecords').textContent = totalRecords.toLocaleString();
-}
-
-function renderDeviceCard(dev) {
-  const d = dev.data || {};
-  const cls = dev.online ? '' : ' offline';
-  const statusCls = dev.online ? 'on' : 'off';
-  const fw = d.firmware || '-';
-  const up = formatUptime(d.uptime_sec);
-  const heap = formatBytes(d.free_heap);
-  const seq = d.sequence || d.records_created || '-';
-  const chain = d.chain ? (d.chain.valid ? 'Healthy' : 'ISSUE') : (d.crypto_healthy === false ? 'ISSUE' : 'OK');
-  const chainColor = chain === 'ISSUE' ? 'color:var(--danger)' : 'color:var(--success)';
-  const seen = timeSince(dev.lastSeen);
-
-  return `<div class="device-card${cls}" onclick="openDetail('${dev.host}')">
-    <button class="device-remove" onclick="removeDevice('${dev.host}',event)" title="Remove">&times;</button>
-    <div class="device-header">
-      <div class="device-name">${dev.name || dev.host}</div>
-      <div class="device-status ${statusCls}"></div>
-    </div>
-    <div class="device-meta">
-      <div class="device-meta-item"><div class="device-meta-label">Firmware</div><div class="device-meta-value">${fw}</div></div>
-      <div class="device-meta-item"><div class="device-meta-label">Last Seen</div><div class="device-meta-value">${seen}</div></div>
-      <div class="device-meta-item"><div class="device-meta-label">Chain</div><div class="device-meta-value" style="${chainColor}">${chain}</div></div>
-      <div class="device-meta-item"><div class="device-meta-label">Records</div><div class="device-meta-value">${seq}</div></div>
-      <div class="device-meta-item"><div class="device-meta-label">Uptime</div><div class="device-meta-value">${up}</div></div>
-      <div class="device-meta-item"><div class="device-meta-label">Heap</div><div class="device-meta-value">${heap}</div></div>
-    </div>
-  </div>`;
-}
-
-function render() {
-  renderStats();
-  const grid = document.getElementById('deviceGrid');
-  const empty = document.getElementById('emptyState');
-  const pag = document.getElementById('pagination');
-
-  if (devices.length === 0) {
-    grid.innerHTML = '';
-    empty.style.display = '';
-    pag.style.display = 'none';
-    return;
+  function fmtTime(ts) {
+    return ts ? new Date(ts).toLocaleTimeString() : '--';
   }
-  empty.style.display = 'none';
 
-  const totalPages = Math.ceil(devices.length / PAGE_SIZE);
-  if (currentPage >= totalPages) currentPage = totalPages - 1;
-  if (currentPage < 0) currentPage = 0;
-
-  const start = currentPage * PAGE_SIZE;
-  const pageDevices = devices.slice(start, start + PAGE_SIZE);
-  grid.innerHTML = pageDevices.map(renderDeviceCard).join('');
-
-  if (totalPages > 1) {
-    pag.style.display = 'flex';
-    document.getElementById('pageInfo').textContent = `Page ${currentPage + 1} of ${totalPages} (${devices.length} devices)`;
-  } else {
-    pag.style.display = 'none';
+  function ago(ts) {
+    if (!ts) return 'never';
+    var s = Math.floor((Date.now()-ts)/1000);
+    if (s < 5) return 'just now';
+    if (s < 60) return s + 's ago';
+    var m = Math.floor(s/60);
+    if (m < 60) return m + 'm ago';
+    var h = Math.floor(m/60);
+    if (h < 24) return h + 'h ago';
+    return Math.floor(h/24) + 'd ago';
   }
-}
 
-function prevPage() { if (currentPage > 0) { currentPage--; render(); } }
-function nextPage() {
-  const totalPages = Math.ceil(devices.length / PAGE_SIZE);
-  if (currentPage < totalPages - 1) { currentPage++; render(); }
-}
-
-// Detail View
-async function openDetail(host) {
-  const dev = devices.find(d => d.host === host);
-  if (!dev) return;
-  currentDetailDevice = dev;
-  document.getElementById('detailTitle').textContent = dev.name || dev.host;
-  document.getElementById('detailOverlay').classList.add('active');
-  renderStatusTab(dev);
-  switchTab(document.querySelector('.tab[data-tab="status"]'));
-}
-
-function closeDetail() {
-  document.getElementById('detailOverlay').classList.remove('active');
-  currentDetailDevice = null;
-  // Stop peek stream if running
-  const img = document.getElementById('peekImg');
-  if (img) img.src = '';
-}
-
-function switchTab(el) {
-  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
-  el.classList.add('active');
-  const tabId = 'tab-' + el.dataset.tab;
-  document.getElementById(tabId).classList.add('active');
-
-  if (!currentDetailDevice) return;
-  const dev = currentDetailDevice;
-  switch (el.dataset.tab) {
-    case 'status': renderStatusTab(dev); break;
-    case 'logs': loadLogs(dev); break;
-    case 'chain': loadChain(dev); break;
-    case 'peek': renderPeekTab(dev); break;
-    case 'export': renderExportTab(dev); break;
+  function shortHash(h) {
+    if (!h) return '------';
+    return h.length <= 10 ? h : h.slice(0,4) + '..' + h.slice(-4);
   }
-}
 
-function renderStatusTab(dev) {
-  const d = dev.data || {};
-  const gps = d.gps || {};
-  const chain = d.chain || {};
-  const rows = [
-    ['Device ID', d.device_id || '-'],
-    ['Host', dev.host],
-    ['Firmware', d.firmware || '-'],
-    ['Build', d.build || '-'],
-    ['Status', dev.online ? 'Online' : 'Offline'],
-    ['Uptime', formatUptime(d.uptime_sec)],
-    ['Free Heap', formatBytes(d.free_heap)],
-    ['Sequence', d.sequence || '-'],
-    ['Boot Count', d.boot_count || '-'],
-    ['Records Created', d.records_created || '-'],
-    ['SD Card', d.sd_healthy ? 'Healthy' : 'Not Available'],
-    ['Crypto', d.crypto_healthy !== false ? 'Healthy' : 'FAILED'],
-    ['GPS Fix', gps.fix ? `Yes (${gps.sats || 0} sats)` : 'No'],
-    ['GPS Position', gps.fix ? `${gps.lat?.toFixed(4)}, ${gps.lon?.toFixed(4)}` : '-'],
-    ['Chain Length', chain.length || d.sequence || '-'],
-    ['Chain Valid', chain.valid !== false ? 'Yes' : 'NO - INTEGRITY ISSUE'],
-    ['AP SSID', d.ap_ssid || '-'],
-  ];
-  document.getElementById('tab-status').innerHTML =
-    '<div class="data-grid">' +
-    rows.map(([l, v]) => `<div class="data-row"><span class="data-label">${l}</span><span class="data-value">${v}</span></div>`).join('') +
-    '</div><br><button class="btn btn-sm" onclick="pollDevice(currentDetailDevice).then(()=>{renderStatusTab(currentDetailDevice);render()})">Refresh</button>';
-}
+  // ── Persistence ────────────────────────────────────────────────
+  function save() {
+    try {
+      localStorage.setItem(STORE_KEY, JSON.stringify(
+        devices.map(function(d) { return { host: d.host, label: d.label }; })
+      ));
+    } catch(e) { /* quota or unavailable */ }
+  }
 
-async function loadLogs(dev) {
-  const container = document.getElementById('tab-logs');
-  container.innerHTML = '<div style="color:var(--muted);padding:1rem">Loading logs...</div>';
-  try {
-    const resp = await fetchWithTimeout(baseUrl(dev.host) + '/api/logs', 5000);
-    if (!resp || !resp.ok) { container.innerHTML = '<div style="color:var(--muted);padding:1rem">Logs endpoint not available</div>'; return; }
-    const data = await resp.json();
-    const logs = data.logs || data.entries || data || [];
-    if (!Array.isArray(logs) || logs.length === 0) {
-      container.innerHTML = '<div style="color:var(--muted);padding:1rem">No log entries</div>';
+  function load() {
+    try {
+      var raw = localStorage.getItem(STORE_KEY);
+      if (!raw) return [];
+      var arr = JSON.parse(raw);
+      if (!Array.isArray(arr)) return [];
+      return arr.map(function(d) { return mkDev(d.host, d.label || ''); });
+    } catch(e) { return []; }
+  }
+
+  function mkDev(host, label) {
+    return {
+      host: norm(host), label: label || '',
+      online: false, data: null, lastSeen: null, error: null, fetching: false
+    };
+  }
+
+  function norm(h) {
+    return h.trim().replace(/^https?:\/\//, '').replace(/\/+$/, '');
+  }
+
+  function url(dev, path) {
+    return 'http://' + dev.host + path;
+  }
+
+  // ── Fetch with timeout + retry ─────────────────────────────────
+  function ftch(u, opts, ms) {
+    ms = ms || TIMEOUT_MS;
+    return new Promise(function(ok, fail) {
+      var ctrl = new AbortController();
+      var tid = setTimeout(function() { ctrl.abort(); fail(new Error('Timeout')); }, ms);
+      var fo = Object.assign({}, opts || {}, { signal: ctrl.signal, mode: 'cors' });
+      fetch(u, fo).then(function(r) { clearTimeout(tid); ok(r); })
+                  .catch(function(e) { clearTimeout(tid); fail(e); });
+    });
+  }
+
+  function ftchRetry(u, opts, retries) {
+    retries = retries !== undefined ? retries : RETRY_MAX;
+    return ftch(u, opts).catch(function(e) {
+      if (retries > 0) {
+        return new Promise(function(ok) { setTimeout(ok, RETRY_WAIT); })
+          .then(function() { return ftchRetry(u, opts, retries - 1); });
+      }
+      throw e;
+    });
+  }
+
+  // ── Poll device ────────────────────────────────────────────────
+  function poll(dev) {
+    if (dev.fetching) return Promise.resolve();
+    dev.fetching = true;
+    return ftchRetry(url(dev, '/api/status'))
+      .then(function(r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
+      .then(function(d) {
+        dev.data = d; dev.online = true; dev.lastSeen = Date.now(); dev.error = null;
+        dev.fetching = false;
+      })
+      .catch(function(e) {
+        dev.online = false; dev.error = e.message || 'Unreachable'; dev.fetching = false;
+      });
+  }
+
+  function pollAll(cb) {
+    if (refreshing) return;
+    refreshing = true;
+    var btn = $('refreshBtn');
+    btn.innerHTML = '<span class="spin"></span> Refreshing...';
+    btn.disabled = true;
+
+    var ps = devices.map(function(d) {
+      return poll(d).then(function() { return {s:'ok'}; }, function() { return {s:'err'}; });
+    });
+    Promise.all(ps).then(function() {
+      refreshing = false;
+      btn.innerHTML = '<span class="btn-icon">&#x21BB;</span> Refresh All';
+      btn.disabled = false;
+      renderAll();
+      if (cb) cb();
+    });
+  }
+
+  // ── Stats ──────────────────────────────────────────────────────
+  function renderStats() {
+    var on = 0, off = 0, cOk = 0, cBad = 0, recs = 0;
+    for (var i = 0; i < devices.length; i++) {
+      var d = devices[i];
+      if (d.online) {
+        on++;
+        if (d.data) {
+          var ch = d.data.chain;
+          if (ch && ch.valid === true) cOk++;
+          else if (ch && ch.valid === false) cBad++;
+          else cOk++; // no chain data = assume ok
+          recs += (d.data.records_created || d.data.sequence || 0);
+        }
+      } else { off++; }
+    }
+    $('sTotal').textContent = devices.length;
+    $('sOnline').textContent = on;
+    $('sOffline').textContent = off;
+    $('sChainOk').textContent = cOk;
+    $('sChainBad').textContent = cBad;
+    $('sRecords').textContent = fmtNum(recs);
+  }
+
+  // ── Device Grid ────────────────────────────────────────────────
+  function renderGrid() {
+    var total = devices.length;
+    if (total === 0) {
+      $('grid').innerHTML = '';
+      $('pag').style.display = 'none';
+      $('emptyState').style.display = '';
       return;
     }
-    container.innerHTML = '<div style="display:flex;flex-direction:column;gap:0.4rem">' +
-      logs.slice(-50).reverse().map(log => {
-        const lvl = (log.level || log.severity || '').toLowerCase();
-        const cls = lvl.includes('crit') ? 'crit' : lvl.includes('err') ? 'error' : lvl.includes('warn') ? 'warn' : '';
-        return `<div class="log-entry ${cls}">
-          <span class="log-level">${log.level || log.severity || '?'}</span>
-          <span class="log-cat">${log.category || log.cat || ''}</span>
-          <span>${log.message || log.msg || JSON.stringify(log)}</span>
-        </div>`;
-      }).join('') + '</div>';
-  } catch {
-    container.innerHTML = '<div style="color:var(--muted);padding:1rem">Failed to load logs</div>';
-  }
-}
+    $('emptyState').style.display = 'none';
 
-async function loadChain(dev) {
-  const container = document.getElementById('tab-chain');
-  container.innerHTML = '<div style="color:var(--muted);padding:1rem">Loading chain state...</div>';
-  try {
-    const resp = await fetchWithTimeout(baseUrl(dev.host) + '/api/chain', 5000);
-    if (!resp || !resp.ok) { container.innerHTML = '<div style="color:var(--muted);padding:1rem">Chain endpoint not available</div>'; return; }
-    const data = await resp.json();
-    const chain = data.chain || data;
-    const rows = [
-      ['Chain Length', chain.length || chain.sequence || '-'],
-      ['Chain Valid', (chain.valid !== false) ? 'Yes' : 'INTEGRITY ISSUE'],
-      ['Algorithm', chain.algorithm || 'sha256-domain-sep'],
-      ['Last Hash', chain.last_hash ? chain.last_hash.substring(0, 16) + '...' : '-'],
-      ['Last Sequence', chain.last_seq || '-'],
-    ];
-    let html = '<div class="data-grid">' +
-      rows.map(([l, v]) => `<div class="data-row"><span class="data-label">${l}</span><span class="data-value">${v}</span></div>`).join('') +
-      '</div>';
+    var pages = Math.ceil(total / PAGE_SIZE);
+    if (page >= pages) page = pages - 1;
+    if (page < 0) page = 0;
 
-    const records = chain.records || chain.recent || data.records || [];
-    if (Array.isArray(records) && records.length > 0) {
-      html += '<h3 style="margin:1rem 0 0.5rem;font-size:0.9rem;color:var(--muted)">Recent Records</h3>';
-      html += '<div style="display:flex;flex-direction:column;gap:0.4rem">';
-      records.slice(-10).reverse().forEach(r => {
-        html += `<div class="data-row" style="flex-direction:column;align-items:flex-start;gap:0.25rem">
-          <div style="display:flex;justify-content:space-between;width:100%">
-            <span class="data-label">Seq #${r.seq || r.sequence || '?'}</span>
-            <span class="data-value" style="font-size:0.7rem">${r.type || r.record_type || ''}</span>
-          </div>
-          <span style="font-family:var(--mono);font-size:0.65rem;color:var(--muted);word-break:break-all">${r.hash || r.chain_hash || ''}</span>
-        </div>`;
-      });
+    var s = page * PAGE_SIZE;
+    var e = Math.min(s + PAGE_SIZE, total);
+    var slice = devices.slice(s, e);
+
+    var html = '';
+    for (var i = 0; i < slice.length; i++) {
+      var gi = s + i;
+      var d = slice[i];
+      var cls = d.online ? 'is-online' : 'is-offline';
+      if (d.online && d.data && d.data.chain && d.data.chain.valid === false) cls = 'is-issue';
+
+      var dat = d.data || {};
+      var name = d.label || dat.device_id || d.host;
+      var fw = dat.firmware || '--';
+      var ls = d.lastSeen ? ago(d.lastSeen) : 'never';
+      var ch, chc;
+      if (d.online && dat.chain) {
+        ch = dat.chain.valid ? 'Valid (' + (dat.chain.length||0) + ')' : 'INVALID';
+        chc = dat.chain.valid ? 'ok' : 'er';
+      } else if (d.online) {
+        ch = 'N/A'; chc = '';
+      } else {
+        ch = '--'; chc = '';
+      }
+      var rec = d.online && dat ? fmtNum(dat.records_created || dat.sequence || 0) : '--';
+      var up = dat.uptime_sec ? fmtUp(dat.uptime_sec) : '--';
+      var sd = d.online && dat ? (dat.sd_healthy ? 'OK' : (dat.sd_healthy === false ? 'FAIL' : '--')) : '--';
+      var sdc = (sd === 'FAIL') ? 'er' : (sd === 'OK' ? 'ok' : '');
+      var ssid = dat.ap_ssid || '';
+
+      html += '<div class="dev-card ' + cls + '" data-i="' + gi + '">';
+      html += '<button class="dev-rm" data-rm="' + gi + '" title="Remove">&times;</button>';
+      html += '<div class="dev-top"><div>';
+      html += '<div class="dev-name">' + esc(name) + '</div>';
+      html += '<div class="dev-host">' + esc(d.host) + (ssid ? ' &middot; ' + esc(ssid) : '') + '</div>';
+      html += '</div>';
+      if (d.online) {
+        html += '<span class="badge badge-ok"><span class="dot"></span>Online</span>';
+      } else if (d.error) {
+        html += '<span class="badge badge-off"><span class="dot"></span>Offline</span>';
+      } else {
+        html += '<span class="badge badge-off"><span class="dot"></span>Unknown</span>';
+      }
+      html += '</div>';
+      html += '<div class="dev-meta">';
+      html += dm('Firmware', fw, 'ac');
+      html += dm('Last Seen', ls, '');
+      html += dm('Chain', ch, chc);
+      html += dm('Records', rec, '');
+      html += dm('Uptime', up, '');
+      html += dm('SD Card', sd, sdc);
+      html += '</div>';
+      if (d.fetching) html += '<div style="margin-top:0.4rem"><span class="spin"></span></div>';
       html += '</div>';
     }
-    container.innerHTML = html;
-  } catch {
-    container.innerHTML = '<div style="color:var(--muted);padding:1rem">Failed to load chain</div>';
+    $('grid').innerHTML = html;
+    renderPag(pages);
+    bindGrid();
   }
-}
 
-function renderPeekTab(dev) {
-  const container = document.getElementById('tab-peek');
-  container.innerHTML = `
-    <div class="peek-frame" id="peekFrame">
-      <img id="peekImg" style="display:none" />
-      <div class="no-cam" id="peekPlaceholder">Camera preview not active.<br>Note: Positioning only. No frames are stored.</div>
-    </div>
-    <div class="peek-controls">
-      <button class="btn btn-sm btn-primary" onclick="startPeek()">Start Preview</button>
-      <button class="btn btn-sm" onclick="stopPeek()">Stop</button>
-      <button class="btn btn-sm" onclick="takeSnapshot()">Snapshot</button>
-    </div>
-    <p style="font-size:0.75rem;color:var(--muted);margin-top:0.5rem">
-      Privacy: This preview is for camera positioning only. No frames are stored &mdash;
-      SecuraCV records semantic events, not video.
-    </p>`;
-}
+  function dm(l, v, c) {
+    return '<div class="dm"><span class="dm-l">' + l + '</span><span class="dm-v' +
+      (c ? ' ' + c : '') + '">' + esc(v) + '</span></div>';
+  }
 
-function startPeek() {
-  if (!currentDetailDevice) return;
-  const img = document.getElementById('peekImg');
-  const ph = document.getElementById('peekPlaceholder');
-  fetchWithTimeout(baseUrl(currentDetailDevice.host) + '/api/peek/start', 3000).then(() => {
-    img.src = baseUrl(currentDetailDevice.host) + '/api/peek/stream';
-    img.style.display = 'block';
-    if (ph) ph.style.display = 'none';
+  function renderPag(pages) {
+    if (pages <= 1) { $('pag').style.display = 'none'; return; }
+    $('pag').style.display = 'flex';
+    var h = '<button class="btn btn-sm" data-pg="prev"' + (page<=0?' disabled':'') + '>&larr;</button>';
+    var range = pagRange(page + 1, pages);
+    for (var i = 0; i < range.length; i++) {
+      var p = range[i];
+      if (p === '...') { h += '<span class="pg-info">...</span>'; }
+      else { h += '<button class="btn btn-sm' + (p===(page+1) ? ' pg-active' : '') + '" data-pg="' + p + '">' + p + '</button>'; }
+    }
+    h += '<button class="btn btn-sm" data-pg="next"' + (page>=pages-1?' disabled':'') + '>&rarr;</button>';
+    h += '<span class="pg-info">' + (page+1) + ' / ' + pages + '</span>';
+    $('pag').innerHTML = h;
+
+    $('pag').querySelectorAll('[data-pg]').forEach(function(b) {
+      b.addEventListener('click', function() {
+        var v = this.getAttribute('data-pg');
+        if (v === 'prev') { if (page>0) page--; }
+        else if (v === 'next') { var tp = Math.ceil(devices.length/PAGE_SIZE); if (page<tp-1) page++; }
+        else { page = parseInt(v,10) - 1; }
+        renderGrid();
+      });
+    });
+  }
+
+  function pagRange(cur, tot) {
+    if (tot <= 7) { var a=[]; for(var i=1;i<=tot;i++) a.push(i); return a; }
+    var r = [1];
+    if (cur > 3) r.push('...');
+    for (var j = Math.max(2,cur-1); j <= Math.min(tot-1,cur+1); j++) r.push(j);
+    if (cur < tot-2) r.push('...');
+    r.push(tot);
+    return r;
+  }
+
+  function bindGrid() {
+    $('grid').querySelectorAll('.dev-card').forEach(function(c) {
+      c.addEventListener('click', function(ev) {
+        if (ev.target.classList.contains('dev-rm') || ev.target.closest('.dev-rm')) return;
+        openDetail(parseInt(this.getAttribute('data-i'), 10));
+      });
+    });
+    $('grid').querySelectorAll('.dev-rm').forEach(function(b) {
+      b.addEventListener('click', function(ev) {
+        ev.stopPropagation();
+        var idx = parseInt(this.getAttribute('data-rm'), 10);
+        confirm('Remove Device',
+          'Remove "' + esc(devices[idx].label || devices[idx].host) + '" from fleet?',
+          function() { removeDev(idx); });
+      });
+    });
+  }
+
+  function renderAll() {
+    renderStats();
+    renderGrid();
+  }
+
+  // ── Add / Remove ───────────────────────────────────────────────
+  function addDevice(hostOverride) {
+    var host = hostOverride || $('inHost').value.trim();
+    if (!host) { toast('Enter an IP or hostname', 'err'); $('inHost').focus(); return; }
+    var n = norm(host);
+    for (var i = 0; i < devices.length; i++) {
+      if (devices[i].host === n) { toast('Already in fleet: ' + n, 'err'); return; }
+    }
+    var label = $('inLabel').value.trim();
+    var dev = mkDev(n, label);
+    devices.push(dev);
+    save();
+    $('inHost').value = '';
+    $('inLabel').value = '';
+    page = Math.max(0, Math.ceil(devices.length / PAGE_SIZE) - 1);
+    poll(dev).then(renderAll);
+    renderAll();
+    toast('Added: ' + n, 'ok');
+  }
+
+  function removeDev(idx) {
+    if (idx < 0 || idx >= devices.length) return;
+    var d = devices.splice(idx, 1)[0];
+    save();
+    if (detailDev === d) closeDetail();
+    renderAll();
+    toast('Removed: ' + (d.label || d.host), 'info');
+  }
+
+  // ── Detail View ────────────────────────────────────────────────
+  function openDetail(idx) {
+    detailDev = devices[idx];
+    if (!detailDev) return;
+    $('dTitle').textContent = detailDev.label || (detailDev.data && detailDev.data.device_id) || detailDev.host;
+    $('overlay').classList.add('active');
+    // Reset tabs to status
+    switchTab('status');
+  }
+
+  function closeDetail() {
+    $('overlay').classList.remove('active');
+    stopPeek();
+    detailDev = null;
+  }
+
+  function switchTab(name) {
+    var tabs = $('dTabs').querySelectorAll('.tab');
+    tabs.forEach(function(t) { t.classList.toggle('active', t.getAttribute('data-t') === name); });
+    ['status','logs','chain','peek','export'].forEach(function(n) {
+      var el = $('tb-' + n);
+      if (el) el.classList.toggle('active', n === name);
+    });
+    if (!detailDev) return;
+    switch(name) {
+      case 'status': renderStatusTab(); break;
+      case 'logs':   loadLogs(); break;
+      case 'chain':  loadChain(); break;
+      case 'peek':   renderPeekTab(); break;
+      case 'export': renderExportTab(); break;
+    }
+  }
+
+  // Tab click binding
+  document.addEventListener('DOMContentLoaded', function() {
+    $('dTabs').querySelectorAll('.tab').forEach(function(t) {
+      t.addEventListener('click', function() { switchTab(this.getAttribute('data-t')); });
+    });
   });
-}
 
-function stopPeek() {
-  if (!currentDetailDevice) return;
-  const img = document.getElementById('peekImg');
-  const ph = document.getElementById('peekPlaceholder');
-  img.src = '';
-  img.style.display = 'none';
-  if (ph) ph.style.display = '';
-  fetchWithTimeout(baseUrl(currentDetailDevice.host) + '/api/peek/stop', 3000);
-}
+  // ── Status Tab ─────────────────────────────────────────────────
+  function renderStatusTab() {
+    var d = detailDev; if (!d) return;
+    var s = d.data || {};
+    var gps = s.gps || {};
+    var ch = s.chain || {};
 
-function takeSnapshot() {
-  if (!currentDetailDevice) return;
-  const img = document.getElementById('peekImg');
-  const ph = document.getElementById('peekPlaceholder');
-  img.src = baseUrl(currentDetailDevice.host) + '/api/peek/snapshot?' + Date.now();
-  img.style.display = 'block';
-  if (ph) ph.style.display = 'none';
-}
+    var rows = [
+      ['Device ID', s.device_id || '--'],
+      ['Host', d.host],
+      ['Label', d.label || '(none)'],
+      ['Firmware', s.firmware || '--'],
+      ['Status', d.online ? 'Online' : 'Offline (' + (d.error||'') + ')'],
+      ['Uptime', fmtUp(s.uptime_sec)],
+      ['Free Heap', s.free_heap ? fmtBytes(s.free_heap) : '--'],
+      ['Boot Count', s.boot_count != null ? String(s.boot_count) : '--'],
+      ['Sequence', s.sequence != null ? fmtNum(s.sequence) : '--'],
+      ['Records Created', s.records_created != null ? fmtNum(s.records_created) : '--'],
+      ['SD Card', s.sd_healthy === true ? 'Healthy' : (s.sd_healthy === false ? 'FAILED' : '--')],
+      ['Crypto', s.crypto_healthy === true ? 'Healthy' : (s.crypto_healthy === false ? 'FAILED' : '--')],
+      ['GPS Fix', gps.fix ? 'Yes (' + (gps.sats||0) + ' sats)' : (gps.fix === false ? 'No' : '--')],
+      ['GPS Position', gps.fix && gps.lat != null ? gps.lat.toFixed(4) + ', ' + gps.lon.toFixed(4) : '--'],
+      ['Chain Length', ch.length != null ? fmtNum(ch.length) : (s.sequence != null ? fmtNum(s.sequence) : '--')],
+      ['Chain Valid', ch.valid === true ? 'Yes' : (ch.valid === false ? 'NO - INTEGRITY ISSUE' : '--')],
+      ['AP SSID', s.ap_ssid || '--'],
+      ['Last Seen', d.lastSeen ? fmtTime(d.lastSeen) + ' (' + ago(d.lastSeen) + ')' : 'Never'],
+    ];
 
-function renderExportTab(dev) {
-  const container = document.getElementById('tab-export');
-  container.innerHTML = `
-    <div style="padding:1rem 0">
-      <p style="font-size:0.85rem;margin-bottom:1rem">Export the complete witness chain as a PWK-compatible JSON bundle for verification or archival.</p>
-      <button class="btn btn-primary" onclick="exportChain()">Export Chain Bundle</button>
-      <div id="exportResult" style="margin-top:1rem"></div>
-    </div>`;
-}
-
-async function exportChain() {
-  if (!currentDetailDevice) return;
-  const result = document.getElementById('exportResult');
-  result.innerHTML = '<span style="color:var(--muted)">Exporting...</span>';
-  try {
-    const resp = await fetchWithTimeout(baseUrl(currentDetailDevice.host) + '/api/export', 10000);
-    if (!resp || !resp.ok) { result.innerHTML = '<span style="color:var(--danger)">Export failed</span>'; return; }
-    const data = await resp.json();
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `securacv_export_${currentDetailDevice.data?.device_id || 'unknown'}_${Date.now()}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-    result.innerHTML = '<span style="color:var(--success)">Export downloaded</span>';
-  } catch {
-    result.innerHTML = '<span style="color:var(--danger)">Export failed</span>';
+    var html = '<div class="dg">';
+    for (var i = 0; i < rows.length; i++) {
+      var vc = '';
+      var v = rows[i][1];
+      if (v === 'FAILED' || v === 'NO - INTEGRITY ISSUE' || v.indexOf('Offline') === 0) vc = ' v-er';
+      else if (v === 'Healthy' || v === 'Yes' || v === 'Online') vc = ' v-ok';
+      html += '<div class="dr"><span class="dr-l">' + esc(rows[i][0]) + '</span><span class="dr-v' + vc + '">' + esc(v) + '</span></div>';
+    }
+    html += '</div>';
+    $('tb-status').innerHTML = html;
   }
-}
 
-// Keyboard shortcuts
-document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') closeDetail();
-  if (e.key === 'Enter' && document.activeElement === document.getElementById('addDeviceInput')) addDevice();
-});
+  // ── Logs Tab ───────────────────────────────────────────────────
+  function loadLogs() {
+    var d = detailDev; if (!d) return;
+    var c = $('tb-logs');
+    if (!d.online) { c.innerHTML = '<div style="color:var(--muted);padding:1rem">Device is offline.</div>'; return; }
+    c.innerHTML = '<div style="padding:1rem"><span class="spin"></span> Loading logs...</div>';
 
-// Init
-loadDevices();
-render();
-if (devices.length > 0) refreshAll();
+    ftchRetry(url(d, '/api/logs'), null, 1)
+      .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function(data) {
+        var logs = data.logs || data.entries || data;
+        if (!Array.isArray(logs)) logs = [];
+        if (logs.length === 0) {
+          c.innerHTML = '<div style="color:var(--muted);padding:1rem">No log entries.</div>';
+          return;
+        }
+        var html = '<div class="logs-wrap">';
+        var max = Math.min(logs.length, 100);
+        for (var i = 0; i < max; i++) {
+          var e = logs[i];
+          var lv = (e.level || e.severity || 'info').toLowerCase();
+          var lc = 'info';
+          if (lv.indexOf('crit') >= 0) lc = 'crit';
+          else if (lv.indexOf('err') >= 0) lc = 'error';
+          else if (lv.indexOf('warn') >= 0) lc = 'warn';
+
+          html += '<div class="log-e ' + lc + '">';
+          html += '<span class="log-lvl ' + lc + '">' + esc(lv) + '</span>';
+          html += '<span class="log-msg">' + esc(e.message || e.msg || e.text || JSON.stringify(e)) + '</span>';
+          html += '<span class="log-ts">' + esc(e.timestamp || e.time || e.ts || '') + '</span>';
+          html += '</div>';
+        }
+        if (logs.length > max) {
+          html += '<div style="text-align:center;font-size:0.73rem;color:var(--muted);padding:0.5rem">...and ' + (logs.length-max) + ' more</div>';
+        }
+        html += '</div>';
+        c.innerHTML = html;
+      })
+      .catch(function(err) {
+        c.innerHTML = '<div style="color:var(--danger);padding:1rem">Failed: ' + esc(err.message) + '</div>';
+      });
+  }
+
+  // ── Chain Tab ──────────────────────────────────────────────────
+  function loadChain() {
+    var d = detailDev; if (!d) return;
+    var c = $('tb-chain');
+    if (!d.online) { c.innerHTML = '<div style="color:var(--muted);padding:1rem">Device is offline.</div>'; return; }
+    c.innerHTML = '<div style="padding:1rem"><span class="spin"></span> Loading chain...</div>';
+
+    ftchRetry(url(d, '/api/chain'), null, 1)
+      .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function(data) {
+        var chain = data.chain || data;
+        var html = '';
+
+        // Summary
+        html += '<div class="dg" style="margin-bottom:0.75rem">';
+        if (chain.length != null) html += '<div class="dr"><span class="dr-l">Chain Length</span><span class="dr-v">' + fmtNum(chain.length) + '</span></div>';
+        if (chain.valid != null) html += '<div class="dr"><span class="dr-l">Valid</span><span class="dr-v' + (chain.valid ? ' v-ok' : ' v-er') + '">' + (chain.valid ? 'Yes' : 'INVALID') + '</span></div>';
+        if (chain.algorithm) html += '<div class="dr"><span class="dr-l">Algorithm</span><span class="dr-v">' + esc(chain.algorithm) + '</span></div>';
+        if (chain.last_hash) html += '<div class="dr"><span class="dr-l">Last Hash</span><span class="dr-v">' + esc(shortHash(chain.last_hash)) + '</span></div>';
+        if (chain.last_seq != null) html += '<div class="dr"><span class="dr-l">Last Seq</span><span class="dr-v">' + chain.last_seq + '</span></div>';
+        html += '</div>';
+
+        // Recent records visualization
+        var recs = chain.records || chain.recent || data.records || data.blocks || [];
+        if (Array.isArray(recs) && recs.length > 0) {
+          html += '<div style="font-size:0.78rem;color:var(--muted);margin-bottom:0.4rem">Recent blocks:</div>';
+          html += '<div class="chain-viz">';
+          var show = Math.min(recs.length, 10);
+          for (var i = 0; i < show; i++) {
+            var r = recs[i];
+            if (i > 0) html += '<span class="chain-arr">&#x2192;</span>';
+            html += '<div class="chain-blk">';
+            html += '<span class="chain-hash">' + esc(shortHash(r.hash || r.chain_hash || r.prev_hash || '')) + '</span>';
+            html += '<span class="chain-seq">#' + (r.seq || r.sequence || i) + '</span>';
+            html += '</div>';
+          }
+          if (recs.length > show) {
+            html += '<span class="chain-arr">...</span>';
+            html += '<span style="font-size:0.73rem;color:var(--muted)">+' + (recs.length-show) + ' more</span>';
+          }
+          html += '</div>';
+        }
+
+        c.innerHTML = html || '<div style="color:var(--muted);padding:1rem">No chain data returned.</div>';
+      })
+      .catch(function(err) {
+        c.innerHTML = '<div style="color:var(--danger);padding:1rem">Failed: ' + esc(err.message) + '</div>';
+      });
+  }
+
+  // ── Peek Tab ───────────────────────────────────────────────────
+  function renderPeekTab() {
+    var c = $('tb-peek');
+    c.innerHTML =
+      '<div class="peek-frame" id="pkFrame">' +
+        '<img id="pkImg" />' +
+        '<div class="no-cam" id="pkPlaceholder">Camera preview not active.<br>Positioning only &mdash; no frames are stored (Invariant I).</div>' +
+      '</div>' +
+      '<div class="peek-ctrls">' +
+        '<button class="btn btn-sm btn-primary" id="pkStart">Start Preview</button>' +
+        '<button class="btn btn-sm btn-danger" id="pkStop" disabled>Stop</button>' +
+        '<span class="peek-status" id="pkStatus"></span>' +
+      '</div>' +
+      '<p style="font-size:0.72rem;color:var(--muted);margin-top:0.5rem">' +
+        'Privacy: Streaming only for camera positioning. No frames are stored or transmitted beyond this browser tab. ' +
+        'SecuraCV records semantic events, not video.</p>';
+
+    $('pkStart').addEventListener('click', startPeek);
+    $('pkStop').addEventListener('click', function() { stopPeek(); });
+  }
+
+  function startPeek() {
+    if (!detailDev || !detailDev.online) { toast('Device offline', 'err'); return; }
+    var btn = $('pkStart');
+    var st = $('pkStatus');
+    btn.disabled = true;
+    st.textContent = 'Starting...';
+    st.style.color = 'var(--muted)';
+
+    ftch(url(detailDev, '/api/peek/start'), { method: 'POST' }, 5000)
+      .then(function(r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.text(); // may or may not return JSON
+      })
+      .then(function() {
+        peekActive = true;
+        var img = $('pkImg');
+        var ph = $('pkPlaceholder');
+        img.src = url(detailDev, '/api/peek/stream');
+        img.style.display = 'block';
+        if (ph) ph.style.display = 'none';
+        btn.disabled = true;
+        $('pkStop').disabled = false;
+        st.textContent = 'Streaming live (no recording)';
+        st.style.color = 'var(--success)';
+      })
+      .catch(function(e) {
+        btn.disabled = false;
+        st.textContent = 'Failed: ' + e.message;
+        st.style.color = 'var(--danger)';
+        toast('Peek failed: ' + e.message, 'err');
+      });
+  }
+
+  function stopPeek() {
+    if (detailDev && peekActive) {
+      ftch(url(detailDev, '/api/peek/stop'), { method: 'POST' }, 3000).catch(function(){});
+    }
+    peekActive = false;
+    var img = $('pkImg');
+    var ph = $('pkPlaceholder');
+    var st = $('pkStatus');
+    var start = $('pkStart');
+    var stop = $('pkStop');
+    if (img) { img.src = ''; img.style.display = 'none'; }
+    if (ph) ph.style.display = '';
+    if (start) start.disabled = false;
+    if (stop) stop.disabled = true;
+    if (st) { st.textContent = ''; st.style.color = 'var(--muted)'; }
+  }
+
+  // ── Export Tab ─────────────────────────────────────────────────
+  function renderExportTab() {
+    var c = $('tb-export');
+    c.innerHTML =
+      '<div style="padding:0.5rem 0">' +
+        '<p style="font-size:0.82rem;color:var(--muted);margin-bottom:1rem">' +
+          'Export the complete witness chain as a PWK-compatible bundle for verification, archival, or legal proceedings.' +
+        '</p>' +
+        '<button class="btn btn-primary" id="expBtn">Export Chain Bundle</button>' +
+        '<div id="expResult" style="margin-top:0.75rem"></div>' +
+      '</div>';
+    $('expBtn').addEventListener('click', function() { doExport(detailDev); });
+  }
+
+  function doExport(dev) {
+    if (!dev || !dev.online) { toast('Device offline', 'err'); return; }
+    var result = $('expResult');
+    if (result) result.innerHTML = '<span class="spin"></span> <span style="color:var(--muted)">Exporting...</span>';
+
+    ftch(url(dev, '/api/export'), { method: 'POST' }, 15000)
+      .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.blob(); })
+      .then(function(blob) {
+        var id = (dev.data && dev.data.device_id) || dev.host.replace(/[^a-zA-Z0-9]/g, '_');
+        var fn = 'securacv_export_' + id + '_' + Date.now() + '.pwk';
+        dlBlob(blob, fn);
+        if (result) result.innerHTML = '<span style="color:var(--success)">Downloaded: ' + esc(fn) + '</span>';
+        toast('Export saved: ' + fn, 'ok');
+      })
+      .catch(function(e) {
+        if (result) result.innerHTML = '<span style="color:var(--danger)">Failed: ' + esc(e.message) + '</span>';
+        toast('Export failed: ' + e.message, 'err');
+      });
+  }
+
+  function dlBlob(blob, fn) {
+    var u = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = u; a.download = fn;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(function() { URL.revokeObjectURL(u); }, 2000);
+  }
+
+  function exportAll() {
+    var online = devices.filter(function(d) { return d.online; });
+    if (online.length === 0) { toast('No online devices to export', 'err'); return; }
+    toast('Exporting ' + online.length + ' device(s)...', 'info');
+    online.forEach(function(d) { doExport(d); });
+  }
+
+  // ── Auto-refresh ───────────────────────────────────────────────
+  function toggleAuto() {
+    var cb = $('autoCb');
+    var lbl = $('autoLabel');
+    if (autoTimer) {
+      clearInterval(autoTimer); autoTimer = null;
+      cb.checked = false;
+      lbl.classList.remove('on');
+    } else {
+      autoTimer = setInterval(function() { pollAll(); }, AUTO_MS);
+      cb.checked = true;
+      lbl.classList.add('on');
+      toast('Auto-refresh on (30s)', 'info');
+    }
+  }
+
+  // ── Detail helpers ─────────────────────────────────────────────
+  function refreshDetail() {
+    if (!detailDev) return;
+    poll(detailDev).then(function() {
+      renderAll();
+      // Re-render active tab
+      var active = $('dTabs').querySelector('.tab.active');
+      if (active) switchTab(active.getAttribute('data-t'));
+    });
+  }
+
+  function exportCurrent() {
+    if (detailDev) doExport(detailDev);
+  }
+
+  function removeCurrent() {
+    if (!detailDev) return;
+    var d = detailDev;
+    var idx = devices.indexOf(d);
+    if (idx < 0) return;
+    confirm('Remove Device',
+      'Remove "' + esc(d.label || d.host) + '" from the fleet?',
+      function() { closeDetail(); removeDev(idx); });
+  }
+
+  // ── Confirm Modal ──────────────────────────────────────────────
+  function confirm(title, msg, cb) {
+    $('modalTitle').textContent = title;
+    $('modalMsg').textContent = msg;
+    $('modalBg').classList.add('show');
+    modalCb = cb;
+    $('modalOk').onclick = function() {
+      hideModal();
+      if (modalCb) { var fn = modalCb; modalCb = null; fn(); }
+    };
+  }
+
+  function hideModal() {
+    $('modalBg').classList.remove('show');
+    modalCb = null;
+  }
+
+  // ── Toasts ─────────────────────────────────────────────────────
+  function toast(msg, type) {
+    type = type || 'info';
+    var cls = type === 'ok' ? 't-ok' : type === 'err' ? 't-err' : 't-info';
+    var el = document.createElement('div');
+    el.className = 'toast-item ' + cls;
+    el.textContent = msg;
+    $('toastWrap').appendChild(el);
+    setTimeout(function() {
+      el.style.opacity = '0'; el.style.transition = 'opacity 0.3s';
+      setTimeout(function() { if (el.parentNode) el.parentNode.removeChild(el); }, 300);
+    }, 3000);
+  }
+
+  // ── Keyboard shortcuts ─────────────────────────────────────────
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+      if ($('modalBg').classList.contains('show')) { hideModal(); }
+      else if ($('overlay').classList.contains('active')) { closeDetail(); }
+    }
+    if (e.key === 'Enter' && document.activeElement === $('inHost')) { addDevice(); }
+    if (e.key === 'Enter' && document.activeElement === $('inLabel')) { addDevice(); }
+  });
+
+  // ── Auto-refresh checkbox ──────────────────────────────────────
+  $('autoCb').addEventListener('change', toggleAuto);
+
+  // ── Init ───────────────────────────────────────────────────────
+  devices = load();
+  renderAll();
+  if (devices.length > 0) pollAll();
+
+  // ── Public API ─────────────────────────────────────────────────
+  return {
+    addDevice:     addDevice,
+    refreshAll:    function() { pollAll(); },
+    exportAll:     exportAll,
+    closeDetail:   closeDetail,
+    refreshDetail: refreshDetail,
+    exportCurrent: exportCurrent,
+    removeCurrent: removeCurrent,
+    hideModal:     hideModal
+  };
+
+})();
 </script>
 </body>
 </html>
