@@ -225,7 +225,7 @@ echo "── Security: Zero phone-home ──"
 # WiFi.begin() connects to an external AP (station mode).
 # HTTPClient, WiFiClient, mqtt.connect() are outbound patterns.
 # WiFiAP, WiFi.softAP are acceptable (AP mode = inbound).
-OUTBOUND_HITS=$(grep -rEn 'WiFi\.begin\(|HTTPClient|WiFiClient |WiFiClientSecure|mqtt\.connect\(|\.connect\(' "${SRC_DIRS[@]}" 2>/dev/null \
+OUTBOUND_HITS=$(grep -rEn 'WiFi\.begin\(|HTTPClient|WiFiClient[[:space:]]|WiFiClientSecure|mqtt\.connect\(|\.connect\(' "${SRC_DIRS[@]}" 2>/dev/null \
   | grep -v "//.*WiFi\|WiFi\.softAP\|WiFiAP\|WiFiServer\|#if.*FEATURE_HA_MQTT\|#ifdef.*MQTT\|\.h:\|\.md:" \
   | grep -v "FEATURE_MESH_NETWORK\|mesh\|example\|test" \
   | head -10 || true)
@@ -285,7 +285,7 @@ echo ""
 echo "── Security: TLS enforcement ──"
 
 # Look for patterns that might serve HTTP without TLS redirect
-HTTP_FALLBACK=$(grep -rEn 'server\.begin\s*\(\s*80|:80\b|HTTP_PORT\s*=\s*80|listen.*80' "${SRC_DIRS[@]}" 2>/dev/null \
+HTTP_FALLBACK=$(grep -rEn 'server\.begin[[:space:]]*\([[:space:]]*80|:80\b|HTTP_PORT[[:space:]]*=?[[:space:]]*80|listen.*80' "${SRC_DIRS[@]}" 2>/dev/null \
   | grep -v "//\|redirect\|301\|https\|\.md:" \
   | head -5 || true)
 if [ -n "$HTTP_FALLBACK" ]; then
