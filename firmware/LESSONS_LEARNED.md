@@ -141,6 +141,20 @@
   Arduino IDE requires libraries installed globally
 - **Test:** CI runs both `arduino-cli compile` and `pio run`
 
+### PlatformIO libraries can't see project `include/` by default
+- **What happened:** CI build failed: `canary_config.h: No such file or directory`
+  when compiling library components (`securacv_camera`, `securacv_crypto`, etc.)
+- **Root cause:** PlatformIO builds libraries in isolation. The project's
+  `include/` directory is only on the compiler search path for `src/`, not
+  for `lib/` components. All 6 library modules `#include "canary_config.h"`
+  but can't find it.
+- **Fix:** Add `-I${PROJECT_DIR}/include` to `build_flags` in `[env]` section
+  of `platformio.ini`. This makes the include path global across project
+  source and library compilation.
+- **Why not `lib_ldf_mode = deep+`?** That's slower and less explicit. A
+  direct `-I` flag is clear about what's happening.
+- **Date learned:** 2026-02
+
 ### Feature flags for everything
 - **Rule:** Every major feature has a `#define FEATURE_X` flag (see
   `firmware/canary/include/canary_config.h` for defaults)
