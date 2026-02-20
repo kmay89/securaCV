@@ -34,6 +34,11 @@
 #include "esp_idf_version.h"
 #endif
 
+#if FEATURE_HA_MQTT
+#include "securacv_mqtt.h"
+#include <ArduinoJson.h>
+#endif
+
 // ════════════════════════════════════════════════════════════════════════════
 // GLOBALS
 // ════════════════════════════════════════════════════════════════════════════
@@ -41,10 +46,25 @@
 static GpsManager s_gps;
 static uint32_t g_last_record_ms = 0;
 
+#if FEATURE_HA_MQTT
+static uint32_t g_last_mqtt_status_ms = 0;
+static uint32_t g_last_mqtt_health_ms = 0;
+#endif
+
+// Device-unique AP password (derived from pubkey fingerprint)
+static char g_ap_password[16];
+
 // Serial command helpers
 static void handle_serial_commands();
 static void print_banner();
 static void print_status();
+static void handle_boot_button();
+static void derive_ap_password(const uint8_t fingerprint[8], char* password, size_t len);
+
+#if FEATURE_HA_MQTT
+static void mqtt_publish_status_update();
+static void mqtt_publish_health_update();
+#endif
 
 // ════════════════════════════════════════════════════════════════════════════
 // UTILITY FUNCTIONS
@@ -61,6 +81,47 @@ static void serial_wait_for_cdc(uint32_t timeout_ms) {
 #endif
 }
 
+// Derive device-unique AP password from public key fingerprint
+// Format: "cv-XXXXX" (8 chars, unique per device)
+static const char BASE62[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+
+static void derive_ap_password(const uint8_t fingerprint[8], char* password, size_t len) {
+  char encoded[6];
+  size_t chars_produced = 0;
+  for (size_t i = 0; chars_produced < 5 && i < 8; i++) {
+    uint8_t b = fingerprint[i];
+    if (b < 248) { // Rejection sampling for unbiased BASE62
+      encoded[chars_produced++] = BASE62[b % 62];
+    }
+  }
+  while (chars_produced < 5) {
+    encoded[chars_produced++] = '0';
+  }
+  encoded[5] = '\0';
+  snprintf(password, len, "cv-%s", encoded);
+}
+
+// Factory reset: erase NVS and reboot
+static void factory_reset() {
+  Serial.println("\n[!!] FACTORY RESET — Erasing all stored data...");
+  log_health(LOG_LEVEL_ALERT, LOG_CAT_SYSTEM, "Factory reset initiated", nullptr);
+
+  // Persist final chain state before clearing
+  witness_persist_chain_state();
+
+  // Clear NVS
+  NvsManager& nvs = NvsManager::instance();
+  if (nvs.beginReadWrite()) {
+    nvs.clear();
+    nvs.end();
+    Serial.println("[OK] NVS erased");
+  }
+
+  Serial.println("[..] Rebooting in 2 seconds...");
+  delay(2000);
+  ESP.restart();
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // SETUP
 // ════════════════════════════════════════════════════════════════════════════
@@ -71,6 +132,21 @@ void setup() {
 
   print_banner();
 
+  // Check for factory reset: hold BOOT button during startup
+  pinMode(BOOT_BUTTON_GPIO, INPUT_PULLUP);
+  delay(100); // Debounce
+  if (digitalRead(BOOT_BUTTON_GPIO) == LOW) {
+    Serial.println("[!!] BOOT button held at startup — checking for factory reset...");
+    uint32_t held_start = millis();
+    while (digitalRead(BOOT_BUTTON_GPIO) == LOW) {
+      if (millis() - held_start >= BOOT_LONG_PRESS_MS) {
+        factory_reset(); // Does not return
+      }
+      delay(10);
+    }
+    Serial.println("[OK] BOOT button released before factory reset threshold");
+  }
+
   // Provision device identity (keys, chain state)
   if (!witness_provision_device()) {
     Serial.println("[!!] Device provisioning failed - HALTING");
@@ -80,7 +156,9 @@ void setup() {
   DeviceIdentity& device = witness_get_device();
   Serial.printf("[OK] Device ID: %s\n", device.device_id);
 
-  pinMode(BOOT_BUTTON_GPIO, INPUT_PULLUP);
+  // Derive device-unique AP password from pubkey fingerprint
+  derive_ap_password(device.pubkey_fp, g_ap_password, sizeof(g_ap_password));
+  Serial.printf("[OK] AP password derived (device-unique)\n");
 
   // Setup watchdog
 #if FEATURE_WATCHDOG
@@ -120,7 +198,7 @@ void setup() {
 #if FEATURE_WIFI_AP
   Serial.println("[..] Starting WiFi Access Point...");
   NetworkManager& net = network_get_instance();
-  if (net.begin(device.ap_ssid, AP_PASSWORD_DEFAULT)) {
+  if (net.begin(device.ap_ssid, g_ap_password)) {
     Serial.println("[OK] WiFi AP active");
 #if FEATURE_HTTP_SERVER
     Serial.println("[..] Starting HTTP server...");
@@ -145,6 +223,12 @@ void setup() {
   Serial.println();
   Serial.printf("[..] GNSS: %u baud, RX=GPIO%d, TX=GPIO%d\n", GPS_BAUD, GPS_RX_PIN, GPS_TX_PIN);
   s_gps.begin(Serial1, GPS_BAUD, GPS_RX_PIN, GPS_TX_PIN);
+
+  // Initialize MQTT (optional — device works without it)
+#if FEATURE_HA_MQTT
+  Serial.println("[..] Initializing MQTT...");
+  mqtt_init(device.device_id, FIRMWARE_VERSION);
+#endif
 
   // Create boot attestation record
   Serial.println("[..] Creating boot attestation record...");
@@ -174,13 +258,13 @@ void setup() {
 #if FEATURE_WIFI_AP
   NetworkManager& network = network_get_instance();
   Serial.printf("║  WiFi AP    : %-45s  ║\n", device.ap_ssid);
-  Serial.printf("║  Password   : %-45s  ║\n", AP_PASSWORD_DEFAULT);
+  Serial.printf("║  Password   : %-45s  ║\n", g_ap_password);
   Serial.printf("║  Dashboard  : http://%-39s  ║\n", network.getStatus().ap_ip);
   Serial.println("║  mDNS       : http://canary.local                             ║");
 #endif
   Serial.println("╠══════════════════════════════════════════════════════════════╣");
   Serial.println("║  Commands: h=help, i=identity, s=status, g=gps               ║");
-  Serial.println("║  Hold BOOT button 1.2s to print all info                     ║");
+  Serial.println("║  BOOT: short=info, 5s hold=factory reset                     ║");
   Serial.println("╚══════════════════════════════════════════════════════════════╝");
   Serial.println();
 }
@@ -197,20 +281,8 @@ void loop() {
   // Handle serial commands
   handle_serial_commands();
 
-  // Check boot button for info reprint
-  static uint32_t boot_btn_start = 0;
-  bool pressed = (digitalRead(BOOT_BUTTON_GPIO) == LOW);
-  if (pressed) {
-    if (boot_btn_start == 0) {
-      boot_btn_start = millis();
-    } else if (millis() - boot_btn_start >= BOOT_BUTTON_HOLD_MS) {
-      print_status();
-      boot_btn_start = 0;
-      delay(300);
-    }
-  } else {
-    boot_btn_start = 0;
-  }
+  // Handle boot button (info print, factory reset)
+  handle_boot_button();
 
   // Update GPS
   s_gps.update();
@@ -243,6 +315,23 @@ void loop() {
 #if FEATURE_WIFI_AP
   // Check WiFi connection periodically
   network_get_instance().checkConnection();
+#endif
+
+#if FEATURE_HA_MQTT
+  // MQTT loop — handles reconnect and keepalive
+  mqtt_loop();
+
+  // Publish status periodically
+  if (mqtt_connected() && now - g_last_mqtt_status_ms >= MQTT_STATUS_INTERVAL_MS) {
+    g_last_mqtt_status_ms = now;
+    mqtt_publish_status_update();
+  }
+
+  // Publish health periodically
+  if (mqtt_connected() && now - g_last_mqtt_health_ms >= MQTT_HEALTH_INTERVAL_MS) {
+    g_last_mqtt_health_ms = now;
+    mqtt_publish_health_update();
+  }
 #endif
 
   // Create witness records at interval
@@ -279,6 +368,101 @@ void loop() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// BOOT BUTTON HANDLER
+// ════════════════════════════════════════════════════════════════════════════
+
+static void handle_boot_button() {
+  static uint32_t boot_btn_start = 0;
+  static bool boot_btn_was_pressed = false;
+
+  bool pressed = (digitalRead(BOOT_BUTTON_GPIO) == LOW);
+
+  if (pressed && !boot_btn_was_pressed) {
+    // Button just pressed
+    boot_btn_start = millis();
+    boot_btn_was_pressed = true;
+  } else if (pressed && boot_btn_was_pressed) {
+    // Still held — check for factory reset threshold
+    uint32_t duration = millis() - boot_btn_start;
+    if (duration >= BOOT_LONG_PRESS_MS) {
+      factory_reset(); // Does not return
+    }
+  } else if (!pressed && boot_btn_was_pressed) {
+    // Button released
+    uint32_t duration = millis() - boot_btn_start;
+    boot_btn_was_pressed = false;
+
+    if (duration >= BOOT_MEDIUM_PRESS_MS) {
+      // Medium hold: print device info
+      print_status();
+    }
+    // Short press: reserved for future use (provisioning gate)
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// MQTT PUBLISHING
+// ════════════════════════════════════════════════════════════════════════════
+
+#if FEATURE_HA_MQTT
+
+static void mqtt_publish_status_update() {
+  DeviceIdentity& device = witness_get_device();
+  SystemHealth& health = witness_get_health();
+  const GnssFix& fix = s_gps.getFix();
+
+  JsonDocument doc;
+  doc["uptime"] = health.uptime_sec;
+  doc["free_heap"] = health.free_heap;
+  doc["records_created"] = health.records_created;
+  doc["seq"] = device.seq;
+  doc["state"] = state_name_short(witness_get_state());
+  doc["gps_fix"] = fix.valid;
+  if (fix.valid) {
+    doc["lat"] = fix.lat;
+    doc["lon"] = fix.lon;
+    doc["satellites"] = fix.satellites;
+  }
+  doc["sd_healthy"] = health.sd_healthy;
+  doc["chain_valid"] = (health.verify_failures == 0);
+  doc["firmware"] = FIRMWARE_VERSION;
+
+  String payload;
+  serializeJson(doc, payload);
+  mqtt_publish_status(payload.c_str());
+}
+
+static void mqtt_publish_health_update() {
+  SystemHealth& health = witness_get_health();
+  DeviceIdentity& device = witness_get_device();
+
+  JsonDocument doc;
+  doc["uptime"] = health.uptime_sec;
+  doc["free_heap"] = health.free_heap;
+  doc["min_heap"] = health.min_heap;
+  doc["records_created"] = health.records_created;
+  doc["records_verified"] = health.records_verified;
+  doc["verify_failures"] = health.verify_failures;
+  doc["chain_persists"] = health.chain_persists;
+  doc["gps_healthy"] = health.gps_healthy;
+  doc["crypto_healthy"] = health.crypto_healthy;
+  doc["sd_healthy"] = health.sd_healthy;
+  doc["wifi_active"] = health.wifi_active;
+  doc["http_requests"] = health.http_requests;
+  doc["sd_writes"] = health.sd_writes;
+  doc["sd_errors"] = health.sd_errors;
+  doc["boot_count"] = device.boot_count;
+  doc["firmware_version"] = FIRMWARE_VERSION;
+  doc["tamper_detected"] = device.tamper_active;
+
+  String payload;
+  serializeJson(doc, payload);
+  mqtt_publish_health(payload.c_str());
+}
+
+#endif // FEATURE_HA_MQTT
+
+// ════════════════════════════════════════════════════════════════════════════
 // SERIAL COMMANDS
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -296,6 +480,9 @@ static void handle_serial_commands() {
       Serial.println("  s - Status");
       Serial.println("  g - GPS info");
       Serial.println("  r - Reboot");
+#if FEATURE_HA_MQTT
+      Serial.println("  m - MQTT status");
+#endif
       Serial.println();
       break;
 
@@ -333,9 +520,22 @@ static void handle_serial_commands() {
       break;
     }
 
+#if FEATURE_HA_MQTT
+    case 'm':
+    case 'M':
+      Serial.println("\n=== MQTT ===");
+      Serial.printf("  Connected: %s\n", mqtt_connected() ? "Yes" : "No");
+      Serial.println();
+      break;
+#endif
+
     case 'r':
     case 'R':
       Serial.println("\nRebooting...");
+      witness_persist_chain_state();
+#if FEATURE_HA_MQTT
+      mqtt_disconnect();
+#endif
       delay(500);
       ESP.restart();
       break;
@@ -383,6 +583,10 @@ static void print_status() {
 
 #if FEATURE_WIFI_AP
   Serial.printf("  WiFi: %s\n", health.wifi_active ? "OK" : "Down");
+#endif
+
+#if FEATURE_HA_MQTT
+  Serial.printf("  MQTT: %s\n", mqtt_connected() ? "Connected" : "Disconnected");
 #endif
 
   Serial.println();
