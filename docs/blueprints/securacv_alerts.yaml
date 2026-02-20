@@ -1,0 +1,168 @@
+# SecuraCV Alert Blueprint for Home Assistant
+#
+# Import this blueprint via:
+#   Settings > Automations > Blueprints > Import Blueprint
+#   URL: https://github.com/kmay89/securaCV/blob/main/docs/blueprints/securacv_alerts.yaml
+#
+# Creates automations for tamper alerts, chain integrity failures,
+# device offline, and GPS loss — all from a single configuration.
+
+blueprint:
+  name: "SecuraCV Canary Alerts"
+  description: >-
+    Monitor a SecuraCV Canary witness device and send notifications for
+    tamper events, chain integrity failures, device offline, and GPS loss.
+    Privacy by design — only semantic events, never raw video.
+  domain: automation
+  author: "ERRERlabs"
+  source_url: "https://github.com/kmay89/securaCV/blob/main/docs/blueprints/securacv_alerts.yaml"
+
+  input:
+    canary_device:
+      name: "Canary Device"
+      description: "Select the SecuraCV Canary device to monitor"
+      selector:
+        device:
+          integration: securacv
+          model: "SecuraCV Canary"
+
+    notify_service:
+      name: "Notification Service"
+      description: "The notification service to use (e.g., mobile_app_your_phone, telegram, pushover)"
+      selector:
+        text:
+      default: "notify.mobile_app"
+
+    enable_tamper_alerts:
+      name: "Enable Tamper Alerts"
+      description: "Send notification on tamper events (enclosure open, unexpected motion, etc.)"
+      selector:
+        boolean:
+      default: true
+
+    enable_chain_alerts:
+      name: "Enable Chain Integrity Alerts"
+      description: "Send notification when witness chain verification fails"
+      selector:
+        boolean:
+      default: true
+
+    enable_offline_alerts:
+      name: "Enable Offline Alerts"
+      description: "Send notification when device goes offline for 5+ minutes"
+      selector:
+        boolean:
+      default: true
+
+    enable_gps_alerts:
+      name: "Enable GPS Loss Alerts"
+      description: "Send notification when GPS fix is lost for 2+ minutes"
+      selector:
+        boolean:
+      default: false
+
+    offline_delay:
+      name: "Offline Delay"
+      description: "How long to wait before alerting on device offline (avoids WiFi blips)"
+      selector:
+        duration:
+      default:
+        minutes: 5
+
+trigger:
+  - platform: state
+    entity_id: !input canary_device
+    attribute: tamper
+    to: "on"
+    id: tamper
+
+  - platform: state
+    entity_id: !input canary_device
+    attribute: chain_valid
+    to: "off"
+    id: chain_fail
+
+  - platform: state
+    entity_id: !input canary_device
+    attribute: online
+    to: "off"
+    for: !input offline_delay
+    id: offline
+
+  - platform: state
+    entity_id: !input canary_device
+    attribute: gps_fix
+    to: "off"
+    for:
+      minutes: 2
+    id: gps_lost
+
+condition: []
+
+action:
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: tamper
+          - condition: template
+            value_template: "{{ true == enable_tamper_alerts }}"
+        sequence:
+          - service: !input notify_service
+            data:
+              title: "SecuraCV Tamper Alert"
+              message: >-
+                Canary device {{ trigger.entity_id }} detected tampering.
+                Check device immediately.
+              data:
+                tag: securacv-tamper
+                importance: high
+
+      - conditions:
+          - condition: trigger
+            id: chain_fail
+          - condition: template
+            value_template: "{{ true == enable_chain_alerts }}"
+        sequence:
+          - service: !input notify_service
+            data:
+              title: "SecuraCV Chain Integrity Failure"
+              message: >-
+                Witness chain on {{ trigger.entity_id }} failed verification.
+                Evidence integrity may be compromised.
+              data:
+                tag: securacv-chain
+                importance: high
+
+      - conditions:
+          - condition: trigger
+            id: offline
+          - condition: template
+            value_template: "{{ true == enable_offline_alerts }}"
+        sequence:
+          - service: !input notify_service
+            data:
+              title: "SecuraCV Device Offline"
+              message: >-
+                Canary {{ trigger.entity_id }} has been unreachable.
+              data:
+                tag: securacv-offline
+                importance: default
+
+      - conditions:
+          - condition: trigger
+            id: gps_lost
+          - condition: template
+            value_template: "{{ true == enable_gps_alerts }}"
+        sequence:
+          - service: !input notify_service
+            data:
+              title: "SecuraCV GPS Fix Lost"
+              message: >-
+                Canary {{ trigger.entity_id }} lost GPS fix.
+                Possible jamming or indoor placement.
+              data:
+                tag: securacv-gps
+                importance: default
+
+mode: parallel
+max: 5
