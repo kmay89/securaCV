@@ -65,15 +65,33 @@
 #include "esp_random.h"
 #include "esp_task_wdt.h"
 #include "esp_http_server.h"
-#include "esp_https_server.h"
+// TLS self-signed cert generation requires mbedtls x509write support,
+// which is not available in all ESP32 Arduino Core builds (e.g., 3.3.7).
+// Auto-detect: if the header exists, enable runtime TLS cert generation.
+#if __has_include("mbedtls/x509write_crt.h")
+  #define SECURACV_HAS_TLS_CERTGEN 1
+#else
+  #define SECURACV_HAS_TLS_CERTGEN 0
+#endif
+
+// esp_https_server.h requires CONFIG_ESP_HTTPS_SERVER_ENABLE in ESP-IDF.
+// Guard it so builds without HTTPS support fall back to HTTP-only.
+#if __has_include("esp_https_server.h")
+  #include "esp_https_server.h"
+  #define SECURACV_HAS_HTTPS_SERVER 1
+#else
+  #define SECURACV_HAS_HTTPS_SERVER 0
+#endif
 #include "esp_mac.h"
 #include "mbedtls/sha256.h"
 #include "mbedtls/md.h"
 #include "mbedtls/pk.h"
 #include "mbedtls/entropy.h"
 #include "mbedtls/ctr_drbg.h"
+#if SECURACV_HAS_TLS_CERTGEN
 #include "mbedtls/x509_crt.h"
 #include "mbedtls/x509write_crt.h"
+#endif
 
 #include <WiFi.h>
 #include <ESPmDNS.h>
@@ -988,6 +1006,7 @@ static void tls_compute_cert_fingerprint() {
   hex_to_str(g_tls_cert_fp_hex, cert_fp, 32);
 }
 
+#if SECURACV_HAS_TLS_CERTGEN
 static bool tls_generate_self_signed_cert() {
   Serial.println("[TLS] Generating self-signed certificate (RSA-2048)...");
   Serial.println("[TLS] This takes 30-60 seconds on first boot only.");
@@ -1100,6 +1119,7 @@ cleanup:
   mbedtls_entropy_free(&entropy);
   return (ret == 0);
 }
+#endif // SECURACV_HAS_TLS_CERTGEN
 
 static bool init_tls_cert() {
   // Try loading from NVS first
@@ -1110,6 +1130,7 @@ static bool init_tls_cert() {
     return true;
   }
 
+#if SECURACV_HAS_TLS_CERTGEN
   // Generate new self-signed cert
   if (!tls_generate_self_signed_cert()) {
     Serial.println("[TLS] Certificate generation FAILED");
@@ -1125,6 +1146,11 @@ static bool init_tls_cert() {
   Serial.printf("[TLS] CN: securacv-%s\n", g_device.fingerprint_hex);
   Serial.printf("[TLS] Cert fingerprint: %.16s...\n", g_tls_cert_fp_hex);
   return true;
+#else
+  Serial.println("[TLS] Certificate generation not available (mbedtls x509write not compiled in)");
+  Serial.println("[TLS] To enable HTTPS, provision a certificate via NVS or use PlatformIO build.");
+  return false;
+#endif
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -3227,6 +3253,7 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
 // HTTP → HTTPS REDIRECT (port 80)
 // ════════════════════════════════════════════════════════════════════════════
 
+#if SECURACV_HAS_HTTPS_SERVER
 static esp_err_t handle_https_redirect(httpd_req_t* req) {
   char location[128];
   snprintf(location, sizeof(location), "https://%s%s",
@@ -3236,6 +3263,7 @@ static esp_err_t handle_https_redirect(httpd_req_t* req) {
   httpd_resp_set_hdr(req, "Location", location);
   return httpd_resp_sendstr(req, "Redirecting to HTTPS...");
 }
+#endif // SECURACV_HAS_HTTPS_SERVER
 
 // ════════════════════════════════════════════════════════════════════════════
 // HTTP SERVER SETUP (with optional TLS)
@@ -3350,6 +3378,7 @@ static void start_http_server() {
   const int total_handlers = base_handlers + camera_handlers + mesh_handlers + bluetooth_handlers + ble_discovery_handlers + handler_headroom;
 
   // ── Start HTTPS server (port 443) if TLS cert is available ──
+#if SECURACV_HAS_HTTPS_SERVER
   if (g_tls_enabled && g_tls_cert_der && g_tls_key_der) {
     httpd_ssl_config_t ssl_config = HTTPD_SSL_CONFIG_DEFAULT();
     ssl_config.servercert = g_tls_cert_der;
@@ -3390,6 +3419,7 @@ static void start_http_server() {
       g_tls_enabled = false;
     }
   }
+#endif // SECURACV_HAS_HTTPS_SERVER
 
   // ── Fallback: HTTP-only mode (port 80) ──
   {
