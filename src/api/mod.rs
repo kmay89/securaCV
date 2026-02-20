@@ -147,8 +147,7 @@ impl ApiServer {
     pub fn spawn(self) -> Result<ApiHandle> {
         // Firmware alignment: DEFAULT_TLS_REQUIRED = 1
         // Log a conformance alarm if running without TLS and not explicitly allowed.
-        if (self.cfg.tls.is_none()
-            || !self.cfg.tls.as_ref().is_some_and(|t| t.is_configured()))
+        if (self.cfg.tls.is_none() || !self.cfg.tls.as_ref().is_some_and(|t| t.is_configured()))
             && !self.cfg.allow_insecure
         {
             log::warn!(
