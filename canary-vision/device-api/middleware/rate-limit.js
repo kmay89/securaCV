@@ -89,6 +89,14 @@ function rateLimit(options = {}) {
       }
     };
 
+    // Record successful auth — resets lockout escalation so a previously
+    // locked-out user starts fresh after a good login.
+    res.recordAuthSuccess = () => {
+      entry.lockoutCount = 0;
+      entry.authFailures = [];
+      entry.lockedUntil = 0;
+    };
+
     next();
   }
 

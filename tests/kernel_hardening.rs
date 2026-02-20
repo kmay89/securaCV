@@ -556,13 +556,34 @@ fn export_event_has_no_identity_fields() {
     }
 
     // Explicitly verify no identity-like fields
-    assert!(!obj.contains_key("correlation_token"), "correlation_token must not appear in export");
-    assert!(!obj.contains_key("created_at"), "created_at must not appear in export");
-    assert!(!obj.contains_key("mac_address"), "mac_address must not appear in export");
-    assert!(!obj.contains_key("ip_address"), "ip_address must not appear in export");
-    assert!(!obj.contains_key("device_id"), "device_id must not appear in export");
-    assert!(!obj.contains_key("face_embedding"), "face_embedding must not appear in export");
-    assert!(!obj.contains_key("plate_number"), "plate_number must not appear in export");
+    assert!(
+        !obj.contains_key("correlation_token"),
+        "correlation_token must not appear in export"
+    );
+    assert!(
+        !obj.contains_key("created_at"),
+        "created_at must not appear in export"
+    );
+    assert!(
+        !obj.contains_key("mac_address"),
+        "mac_address must not appear in export"
+    );
+    assert!(
+        !obj.contains_key("ip_address"),
+        "ip_address must not appear in export"
+    );
+    assert!(
+        !obj.contains_key("device_id"),
+        "device_id must not appear in export"
+    );
+    assert!(
+        !obj.contains_key("face_embedding"),
+        "face_embedding must not appear in export"
+    );
+    assert!(
+        !obj.contains_key("plate_number"),
+        "plate_number must not appear in export"
+    );
 }
 
 /// Assert that zone_id validation rejects anything that looks like GPS coordinates.
@@ -576,7 +597,7 @@ fn zone_id_rejects_gps_coordinates() {
         "lat=41.5,lon=-81.6",
         "N41.5W81.6",
         "41°30'N",
-        "zone:41.5",        // looks like coordinate embedded in zone format
+        "zone:41.5", // looks like coordinate embedded in zone format
     ];
 
     for zone_id in gps_like_zone_ids {
@@ -615,15 +636,35 @@ fn export_contains_no_gps_data() {
 
     let json_str = serde_json::to_string(&artifact).expect("serialize artifact");
 
-    // Ensure no GPS-related keywords appear in the serialized export
-    let forbidden_patterns = ["latitude", "longitude", "lat", "lon", "gps", "coord"];
-    for pattern in forbidden_patterns {
-        assert!(
-            !json_str.to_lowercase().contains(pattern),
-            "Export artifact contains forbidden GPS-related pattern: '{}'",
-            pattern
-        );
+    // Check that no JSON object key is GPS-related.
+    // We inspect keys rather than raw substring matching to avoid false
+    // positives (e.g. "parking lot" contains "lat", "balcony" contains "lon").
+    let json_value = serde_json::to_value(&artifact).expect("serialize artifact to Value");
+    fn assert_no_gps_keys(val: &serde_json::Value) {
+        match val {
+            serde_json::Value::Object(map) => {
+                let forbidden_keys = ["latitude", "longitude", "lat", "lon", "gps", "coordinates"];
+                for key in map.keys() {
+                    let lower = key.to_lowercase();
+                    assert!(
+                        !forbidden_keys.contains(&lower.as_str()),
+                        "Export artifact contains forbidden GPS-related key: '{}'",
+                        key
+                    );
+                }
+                for v in map.values() {
+                    assert_no_gps_keys(v);
+                }
+            }
+            serde_json::Value::Array(arr) => {
+                for v in arr {
+                    assert_no_gps_keys(v);
+                }
+            }
+            _ => {}
+        }
     }
+    assert_no_gps_keys(&json_value);
 }
 
 // ==================== Signing Key Seed Entropy Enforcement ====================

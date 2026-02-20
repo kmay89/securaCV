@@ -3384,7 +3384,7 @@ static void start_http_server() {
     ssl_config.servercert = g_tls_cert_der;
     ssl_config.servercert_len = g_tls_cert_der_len;
     ssl_config.prvtkey_pem = g_tls_key_der;
-    ssl_config.prvtkey_pem_len = g_tls_key_der_len;
+    ssl_config.prvtkey_len = g_tls_key_der_len;
     ssl_config.httpd.uri_match_fn = httpd_uri_match_wildcard;
     ssl_config.httpd.stack_size = 10240;  // Larger stack for TLS + camera
     ssl_config.httpd.max_uri_handlers = total_handlers;

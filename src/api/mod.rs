@@ -28,8 +28,13 @@ pub struct ApiTlsConfig {
 impl ApiTlsConfig {
     /// Load TLS materials from file paths.
     pub fn load(cert_path: &Path, key_path: &Path) -> Result<Self> {
-        let cert_pem = std::fs::read(cert_path)
-            .map_err(|e| anyhow!("failed to read API TLS cert '{}': {}", cert_path.display(), e))?;
+        let cert_pem = std::fs::read(cert_path).map_err(|e| {
+            anyhow!(
+                "failed to read API TLS cert '{}': {}",
+                cert_path.display(),
+                e
+            )
+        })?;
         let key_pem = std::fs::read(key_path)
             .map_err(|e| anyhow!("failed to read API TLS key '{}': {}", key_path.display(), e))?;
         Ok(Self {
@@ -196,20 +201,28 @@ impl ApiServer {
 /// Per-IP auth failure tracker with exponential backoff.
 /// Aligned with firmware's DEFAULT_AUTH_LOCKOUT_BASE_SEC / DEFAULT_AUTH_LOCKOUT_CAP_SEC.
 struct AuthFailureTracker {
-    /// Map<IP, (failure_count, locked_until_epoch_ms)>
-    entries: HashMap<std::net::IpAddr, (u32, u64)>,
+    entries: HashMap<std::net::IpAddr, AuthFailureEntry>,
     base_lockout_ms: u64,
     cap_lockout_ms: u64,
     max_attempts: u32,
+}
+
+struct AuthFailureEntry {
+    /// Failures since last lockout (or since start).
+    failure_count: u32,
+    /// Number of times this IP has been locked out (drives exponential backoff).
+    lockout_count: u32,
+    /// Epoch ms when lockout expires.
+    locked_until_ms: u64,
 }
 
 impl AuthFailureTracker {
     fn new() -> Self {
         Self {
             entries: HashMap::new(),
-            base_lockout_ms: 2_000,    // firmware: DEFAULT_AUTH_LOCKOUT_BASE_SEC = 2
-            cap_lockout_ms: 300_000,   // firmware: DEFAULT_AUTH_LOCKOUT_CAP_SEC = 300
-            max_attempts: 5,           // firmware: DEFAULT_AUTH_MAX_ATTEMPTS = 5
+            base_lockout_ms: 2_000, // firmware: DEFAULT_AUTH_LOCKOUT_BASE_SEC = 2
+            cap_lockout_ms: 300_000, // firmware: DEFAULT_AUTH_LOCKOUT_CAP_SEC = 300
+            max_attempts: 5,        // firmware: DEFAULT_AUTH_MAX_ATTEMPTS = 5
         }
     }
 
@@ -221,24 +234,31 @@ impl AuthFailureTracker {
     }
 
     fn is_locked(&self, ip: &std::net::IpAddr) -> Option<u64> {
-        if let Some(&(_, locked_until)) = self.entries.get(ip) {
+        if let Some(entry) = self.entries.get(ip) {
             let now = Self::now_ms();
-            if locked_until > now {
-                return Some((locked_until - now + 999) / 1000); // ceil to seconds
+            if entry.locked_until_ms > now {
+                return Some((entry.locked_until_ms - now + 999) / 1000); // ceil to seconds
             }
         }
         None
     }
 
     fn record_failure(&mut self, ip: std::net::IpAddr) {
-        let entry = self.entries.entry(ip).or_insert((0, 0));
-        entry.0 += 1;
-        if entry.0 >= self.max_attempts {
+        let entry = self.entries.entry(ip).or_insert(AuthFailureEntry {
+            failure_count: 0,
+            lockout_count: 0,
+            locked_until_ms: 0,
+        });
+        entry.failure_count += 1;
+        if entry.failure_count >= self.max_attempts {
+            entry.lockout_count += 1;
             let lockout_ms = std::cmp::min(
-                self.base_lockout_ms * 2u64.saturating_pow(entry.0 / self.max_attempts - 1),
+                self.base_lockout_ms * 2u64.saturating_pow(entry.lockout_count.saturating_sub(1)),
                 self.cap_lockout_ms,
             );
-            entry.1 = Self::now_ms() + lockout_ms;
+            entry.locked_until_ms = Self::now_ms() + lockout_ms;
+            // Reset failure count so the next round requires max_attempts again
+            entry.failure_count = 0;
         }
     }
 
@@ -263,9 +283,14 @@ fn run_api(
         }
         match listener.accept() {
             Ok((stream, _)) => {
-                if let Err(err) =
-                    handle_connection(stream, &mut kernel, &cfg, token_mgr, expected_ruleset_hash, &mut auth_tracker)
-                {
+                if let Err(err) = handle_connection(
+                    stream,
+                    &mut kernel,
+                    &cfg,
+                    token_mgr,
+                    expected_ruleset_hash,
+                    &mut auth_tracker,
+                ) {
                     log::warn!("event api request rejected: {}", err);
                 }
             }
@@ -296,10 +321,7 @@ fn handle_connection(
 
     // Check auth lockout before processing request
     if let Some(retry_after) = auth_tracker.is_locked(&peer.ip()) {
-        let body = format!(
-            r#"{{"error":"auth_locked","retry_after":{}}}"#,
-            retry_after
-        );
+        let body = format!(r#"{{"error":"auth_locked","retry_after":{}}}"#, retry_after);
         write_json_response(&mut stream, 429, &body)?;
         return Ok(());
     }

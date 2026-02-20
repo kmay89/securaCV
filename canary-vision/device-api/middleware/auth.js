@@ -26,6 +26,11 @@ function authMiddleware(state) {
       });
     }
 
+    // Successful auth — reset lockout escalation
+    if (typeof res.recordAuthSuccess === 'function') {
+      res.recordAuthSuccess();
+    }
+
     next();
   };
 }

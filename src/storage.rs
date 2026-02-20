@@ -291,7 +291,7 @@ impl SealedLogStore for SqliteSealedLogStore {
 
         let mut out = Vec::with_capacity(payloads.len());
         for payload in payloads {
-            let record: SealedLogRecord = serde_json::from_str(&payload)?;
+            let record = SealedLogRecord::deserialize_compat(&payload)?;
 
             if let Err(e) =
                 ReprocessGuard::assert_same_ruleset(expected_ruleset_hash, record.ruleset_hash())
@@ -404,7 +404,7 @@ impl SealedLogStore for InMemorySealedLogStore {
 
         let mut out = Vec::with_capacity(payloads.len());
         for payload in payloads {
-            let record: SealedLogRecord = serde_json::from_str(&payload)?;
+            let record = SealedLogRecord::deserialize_compat(&payload)?;
 
             if let Err(e) =
                 ReprocessGuard::assert_same_ruleset(expected_ruleset_hash, record.ruleset_hash())

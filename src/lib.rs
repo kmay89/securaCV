@@ -93,10 +93,30 @@ pub(crate) fn open_db_connection(db_path: &str) -> Result<Connection> {
                 | OpenFlags::SQLITE_OPEN_URI,
         )?);
     }
+    // Pre-create the DB file with 0600 permissions before SQLite opens it.
+    // This prevents a TOCTOU race where the file briefly exists with the
+    // default umask (e.g. 0022 → 0644, world-readable).
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        let path = std::path::Path::new(db_path);
+        if !path.exists() {
+            if let Err(e) = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(path)
+            {
+                eprintln!(
+                    "[CONFORMANCE] failed to pre-create DB with 0600 permissions: {}",
+                    e
+                );
+            }
+        }
+    }
     let conn = Connection::open(db_path)?;
-    // Enforce 0600 permissions on the DB file to align with firmware's
-    // DEFAULT_FLASH_ENCRYPTION policy. The sealed event log, break-glass
-    // receipts, and PQC key material are all stored here.
+    // Also tighten permissions on existing files that may have been created
+    // with a lax umask by an older version of the kernel.
     enforce_db_file_permissions(db_path);
     Ok(conn)
 }
@@ -110,13 +130,10 @@ fn enforce_db_file_permissions(db_path: &str) {
         use std::os::unix::fs::PermissionsExt;
         let path = std::path::Path::new(db_path);
         if path.exists() {
-            if let Err(e) =
-                std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-            {
+            if let Err(e) = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)) {
                 eprintln!(
                     "[CONFORMANCE] failed to set 0600 permissions on database '{}': {}",
-                    db_path,
-                    e
+                    db_path, e
                 );
             }
         }
@@ -271,14 +288,53 @@ impl FailureEvent {
 /// could misclassify malformed JSON blobs, affecting sealed log integrity.
 ///
 /// For backwards compatibility with existing databases that used `untagged`,
-/// deserialization falls back to trying without the tag.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+/// [`SealedLogRecord::deserialize_compat`] falls back to untagged parsing.
+#[derive(Clone, Debug, Serialize)]
 #[serde(tag = "record_type")]
 pub enum SealedLogRecord {
     #[serde(rename = "event")]
     Event(Event),
     #[serde(rename = "failure")]
     Failure(FailureEvent),
+}
+
+/// Tagged deserialization helper (new format with `record_type` field).
+#[derive(Deserialize)]
+#[serde(tag = "record_type")]
+enum SealedLogRecordTagged {
+    #[serde(rename = "event")]
+    Event(Event),
+    #[serde(rename = "failure")]
+    Failure(FailureEvent),
+}
+
+/// Untagged deserialization helper (legacy format without `record_type` field).
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum SealedLogRecordLegacy {
+    Event(Event),
+    Failure(FailureEvent),
+}
+
+impl SealedLogRecord {
+    /// Deserialize with backward compatibility: tries tagged format first,
+    /// then falls back to untagged for records written before M1 migration.
+    pub fn deserialize_compat(json_str: &str) -> Result<Self> {
+        // Try tagged format first (new records)
+        if let Ok(tagged) = serde_json::from_str::<SealedLogRecordTagged>(json_str) {
+            return Ok(match tagged {
+                SealedLogRecordTagged::Event(e) => SealedLogRecord::Event(e),
+                SealedLogRecordTagged::Failure(f) => SealedLogRecord::Failure(f),
+            });
+        }
+        // Fall back to untagged for existing databases
+        let legacy: SealedLogRecordLegacy = serde_json::from_str(json_str)
+            .map_err(|e| anyhow!("failed to deserialize SealedLogRecord: {}", e))?;
+        Ok(match legacy {
+            SealedLogRecordLegacy::Event(e) => SealedLogRecord::Event(e),
+            SealedLogRecordLegacy::Failure(f) => SealedLogRecord::Failure(f),
+        })
+    }
 }
 
 impl SealedLogRecord {
@@ -1585,7 +1641,7 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
             std::collections::BTreeMap::new();
 
         for payload in payloads {
-            let record: SealedLogRecord = serde_json::from_str(&payload)?;
+            let record = SealedLogRecord::deserialize_compat(&payload)?;
 
             if let Err(e) =
                 ReprocessGuard::assert_same_ruleset(expected_ruleset_hash, record.ruleset_hash())
@@ -2578,7 +2634,7 @@ mod tests {
             [],
             |row| row.get(0),
         )?;
-        let record: SealedLogRecord = serde_json::from_str(&payload)?;
+        let record = SealedLogRecord::deserialize_compat(&payload)?;
         match record {
             SealedLogRecord::Failure(ev) => {
                 assert_eq!(ev.failure_type, FailureType::GapMissingData)
