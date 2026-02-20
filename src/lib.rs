@@ -2543,7 +2543,7 @@ mod tests {
 
     #[test]
     fn device_key_seed_accepts_and_signs() -> Result<()> {
-        let seed = "devkey:test";
+        let seed = "devkey:test:a1b2c3d4e5f6a7b8c9d0";
         let signing_key = signing_key_from_seed(seed)?;
         let verifying_key = verifying_key_from_seed(seed)?;
         let entry_hash = [7u8; 32];
