@@ -1,6 +1,112 @@
 # Home Assistant Integration Guide
 
-Install the SecuraCV Home Assistant integration via HACS, then connect it to a running Privacy Witness Kernel instance (add-on, Docker, or another host).
+Install the SecuraCV Home Assistant integration via HACS, then connect it to your SecuraCV Canary devices via MQTT or the Privacy Witness Kernel via HTTP API.
+
+## Quick Start: Canary via MQTT (Recommended)
+
+Most users should use this path. Canary devices auto-discover in Home Assistant via MQTT Discovery.
+
+### Prerequisites
+
+1. **MQTT broker** (Mosquitto recommended) running and configured in HA
+2. **SecuraCV Canary** device powered on with firmware v2.1.0+
+3. **Home WiFi** credentials entered into the Canary via its web dashboard
+
+### Step 1: Install the Integration
+
+Install via HACS:
+1. Open HACS in Home Assistant
+2. Search for "SecuraCV"
+3. Install the integration
+4. Restart Home Assistant
+
+### Step 2: Configure the Integration
+
+1. Go to **Settings > Devices & Services > Add Integration**
+2. Search for "SecuraCV"
+3. Select **"Canary devices via MQTT (Recommended)"**
+4. Set the MQTT topic prefix (default: `securacv`) — this must match your Canary firmware config
+5. Click Submit
+
+### Step 3: Configure the Canary Device
+
+Connect to your Canary's WiFi AP (SSID shown on device, password is device-unique):
+
+1. Open `http://canary.local` or `http://192.168.4.1` in your browser
+2. Go to the **Network** tab
+3. Enter your home WiFi credentials (the Canary needs WiFi to reach the MQTT broker)
+4. Enter your MQTT broker details:
+   - **Host**: Your Mosquitto broker IP (e.g., `192.168.1.10` or `homeassistant.local`)
+   - **Port**: `1883` (default)
+   - **Username/Password**: If your broker requires authentication
+5. Save and reboot the Canary
+
+### Step 4: Verify Discovery
+
+Within 30 seconds of the Canary connecting to MQTT:
+
+1. Go to **Settings > Devices & Services > SecuraCV**
+2. You should see your Canary device listed with sensors:
+   - **Witness Count** — Total witness records created
+   - **Chain Sequence** — Current chain sequence number
+   - **Uptime** — Device uptime
+   - **Free Heap** — Available memory
+   - **GPS Satellites** — Satellite count
+   - **Online** — Device connectivity (via MQTT LWT)
+   - **Chain Valid** — Witness chain integrity
+   - **Tamper Detected** — Tamper event status
+   - **GPS Fix** — GPS fix status
+   - **SD Card Healthy** — Storage health
+
+### Step 5: Set Up Notifications
+
+Import the SecuraCV Alert Blueprint for one-click notification setup:
+
+1. Go to **Settings > Automations > Blueprints > Import Blueprint**
+2. Enter URL: `https://github.com/kmay89/securaCV/blob/main/docs/blueprints/securacv_alerts.yaml`
+3. Create an automation from the blueprint
+4. Select your Canary device and notification service
+5. Enable the alert types you want (tamper, chain failure, offline, GPS loss)
+
+Or copy automations from `docs/homeassistant_automations.yaml` for manual setup.
+
+### Troubleshooting: MQTT Setup
+
+| Symptom | Check |
+|---------|-------|
+| Device not appearing in HA | Verify Canary is connected to home WiFi (check serial output or WAP dashboard) |
+| MQTT not connecting | Verify broker host/port in Canary config matches your Mosquitto setup |
+| Sensors show "unavailable" | Check MQTT broker logs for connection attempts from `securacv-canary-*` client IDs |
+| Discovery not working | Ensure HA MQTT integration is configured and `securacv/#` topics are not blocked |
+| Tamper alerts not firing | Verify the `tamper` binary sensor entity exists and automations are enabled |
+
+### MQTT Topic Reference
+
+| Topic | Direction | Content |
+|-------|-----------|---------|
+| `securacv/{device_id}/status` | Device → HA | Device state, GPS, chain sequence (every 30s) |
+| `securacv/{device_id}/health` | Device → HA | System metrics (every 60s) |
+| `securacv/{device_id}/events` | Device → HA | Witness record events |
+| `securacv/{device_id}/chain` | Device → HA | Hash chain state |
+| `securacv/{device_id}/tamper` | Device → HA | Tamper alerts (immediate) |
+| `securacv/{device_id}/availability` | Device → HA | Online/offline (LWT, retained) |
+| `homeassistant/*/securacv_*/config` | Device → HA | HA MQTT Discovery config (retained) |
+
+---
+
+## Alternative Setup Modes
+
+The integration supports three modes. The MQTT-only mode above is recommended for most users.
+
+| Mode | Best For | How It Works |
+|------|----------|--------------|
+| **MQTT only** | Canary device users | Auto-discover devices via MQTT (recommended) |
+| **Kernel only** | PWK API users | Poll the Witness Kernel HTTP API |
+| **Both** | Advanced users | MQTT for Canary + HTTP for the kernel |
+
+---
+
+## Legacy: Witness Kernel Setup
 
 ## Choose Your Mode
 

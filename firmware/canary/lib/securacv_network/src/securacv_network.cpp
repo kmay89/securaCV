@@ -258,6 +258,49 @@ void NetworkManager::checkConnection() {
   }
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// RATE LIMITING
+// ════════════════════════════════════════════════════════════════════════════
+
+static RateLimitState s_rate_limit = {0, 0, 0};
+
+bool rate_limit_check(httpd_req_t* req, bool is_action) {
+  uint32_t now = millis();
+
+  // Reset window if expired
+  if (now - s_rate_limit.window_start_ms >= RATE_LIMIT_WINDOW_MS) {
+    s_rate_limit.window_start_ms = now;
+    s_rate_limit.request_count = 0;
+    s_rate_limit.action_count = 0;
+  }
+
+  s_rate_limit.request_count++;
+  if (is_action) {
+    s_rate_limit.action_count++;
+  }
+
+  bool limited = (s_rate_limit.request_count > RATE_LIMIT_MAX_REQUESTS) ||
+                 (is_action && s_rate_limit.action_count > RATE_LIMIT_MAX_ACTIONS);
+
+  if (limited) {
+    uint32_t remaining_ms = RATE_LIMIT_WINDOW_MS - (now - s_rate_limit.window_start_ms);
+    uint32_t retry_after = (remaining_ms / 1000) + 1;
+
+    char retry_str[8];
+    snprintf(retry_str, sizeof(retry_str), "%lu", (unsigned long)retry_after);
+
+    httpd_resp_set_status(req, "429 Too Many Requests");
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Retry-After", retry_str);
+    httpd_resp_sendstr(req, "{\"error\":\"rate_limited\"}");
+
+    witness_get_health().http_errors++;
+    return false;
+  }
+
+  return true;
+}
+
 // Forward declarations for HTTP handlers
 static esp_err_t handle_ui(httpd_req_t* req);
 static esp_err_t handle_status(httpd_req_t* req);
@@ -266,6 +309,18 @@ static esp_err_t handle_logs(httpd_req_t* req);
 static esp_err_t handle_log_ack(httpd_req_t* req);
 static esp_err_t handle_ack_all(httpd_req_t* req);
 static esp_err_t handle_reboot(httpd_req_t* req);
+static esp_err_t handle_export(httpd_req_t* req);
+
+// WiFi API endpoints (for MQTT STA configuration)
+static esp_err_t handle_wifi_status(httpd_req_t* req);
+static esp_err_t handle_wifi_scan(httpd_req_t* req);
+static esp_err_t handle_wifi_connect(httpd_req_t* req);
+static esp_err_t handle_wifi_disconnect(httpd_req_t* req);
+
+#if FEATURE_HA_MQTT
+static esp_err_t handle_mqtt_status(httpd_req_t* req);
+static esp_err_t handle_mqtt_config(httpd_req_t* req);
+#endif
 
 #if FEATURE_OTA_UPDATE
 static esp_err_t handle_ota(httpd_req_t* req);
@@ -283,7 +338,7 @@ bool NetworkManager::startHttpServer() {
   config.server_port = 80;
   config.uri_match_fn = httpd_uri_match_wildcard;
   config.stack_size = 8192;
-  config.max_uri_handlers = 16;
+  config.max_uri_handlers = 24;
 
   if (httpd_start(&m_http_server, &config) != ESP_OK) {
     log_health(LOG_LEVEL_ERROR, LOG_CAT_NETWORK, "HTTP server start failed", nullptr);
@@ -326,6 +381,30 @@ void NetworkManager::registerHttpHandlers() {
   httpd_uri_t reboot = { .uri = "/api/reboot", .method = HTTP_POST, .handler = handle_reboot };
   httpd_register_uri_handler(m_http_server, &reboot);
 
+  httpd_uri_t export_ep = { .uri = "/api/export", .method = HTTP_POST, .handler = handle_export };
+  httpd_register_uri_handler(m_http_server, &export_ep);
+
+  // WiFi management endpoints
+  httpd_uri_t wifi_status = { .uri = "/api/wifi/status", .method = HTTP_GET, .handler = handle_wifi_status };
+  httpd_register_uri_handler(m_http_server, &wifi_status);
+
+  httpd_uri_t wifi_scan = { .uri = "/api/wifi/scan", .method = HTTP_GET, .handler = handle_wifi_scan };
+  httpd_register_uri_handler(m_http_server, &wifi_scan);
+
+  httpd_uri_t wifi_connect = { .uri = "/api/wifi/connect", .method = HTTP_POST, .handler = handle_wifi_connect };
+  httpd_register_uri_handler(m_http_server, &wifi_connect);
+
+  httpd_uri_t wifi_disconnect = { .uri = "/api/wifi/disconnect", .method = HTTP_POST, .handler = handle_wifi_disconnect };
+  httpd_register_uri_handler(m_http_server, &wifi_disconnect);
+
+  #if FEATURE_HA_MQTT
+  httpd_uri_t mqtt_stat = { .uri = "/api/mqtt/status", .method = HTTP_GET, .handler = handle_mqtt_status };
+  httpd_register_uri_handler(m_http_server, &mqtt_stat);
+
+  httpd_uri_t mqtt_cfg = { .uri = "/api/mqtt/config", .method = HTTP_POST, .handler = handle_mqtt_config };
+  httpd_register_uri_handler(m_http_server, &mqtt_cfg);
+  #endif
+
   #if FEATURE_OTA_UPDATE
   httpd_uri_t ota = { .uri = "/api/ota", .method = HTTP_POST, .handler = handle_ota };
   httpd_register_uri_handler(m_http_server, &ota);
@@ -360,6 +439,7 @@ static esp_err_t handle_ui(httpd_req_t* req) {
 }
 
 static esp_err_t handle_status(httpd_req_t* req) {
+  if (!rate_limit_check(req)) return ESP_OK;
   witness_get_health().http_requests++;
 
   DeviceIdentity& device = witness_get_device();
@@ -401,6 +481,7 @@ static esp_err_t handle_status(httpd_req_t* req) {
 }
 
 static esp_err_t handle_chain(httpd_req_t* req) {
+  if (!rate_limit_check(req)) return ESP_OK;
   witness_get_health().http_requests++;
 
   DeviceIdentity& device = witness_get_device();
@@ -431,6 +512,7 @@ static esp_err_t handle_chain(httpd_req_t* req) {
 }
 
 static esp_err_t handle_logs(httpd_req_t* req) {
+  if (!rate_limit_check(req)) return ESP_OK;
   witness_get_health().http_requests++;
 
   HealthLogRingEntry* ring = witness_get_health_log_ring();
@@ -466,6 +548,7 @@ static esp_err_t handle_logs(httpd_req_t* req) {
 }
 
 static esp_err_t handle_log_ack(httpd_req_t* req) {
+  if (!rate_limit_check(req, true)) return ESP_OK;
   witness_get_health().http_requests++;
 
   const char* uri = req->uri;
@@ -490,6 +573,7 @@ static esp_err_t handle_log_ack(httpd_req_t* req) {
 }
 
 static esp_err_t handle_ack_all(httpd_req_t* req) {
+  if (!rate_limit_check(req, true)) return ESP_OK;
   witness_get_health().http_requests++;
 
   HealthLogRingEntry* ring = witness_get_health_log_ring();
@@ -516,6 +600,7 @@ static esp_err_t handle_ack_all(httpd_req_t* req) {
 }
 
 static esp_err_t handle_reboot(httpd_req_t* req) {
+  if (!rate_limit_check(req, true)) return ESP_OK;
   witness_get_health().http_requests++;
 
   log_health(LOG_LEVEL_NOTICE, LOG_CAT_USER, "Reboot requested", nullptr);
@@ -679,6 +764,255 @@ static esp_err_t handle_peek_status(httpd_req_t* req) {
   return http_send_json(req, response.c_str());
 }
 #endif
+
+// ════════════════════════════════════════════════════════════════════════════
+// EXPORT ENDPOINT
+// ════════════════════════════════════════════════════════════════════════════
+
+static esp_err_t handle_export(httpd_req_t* req) {
+  if (!rate_limit_check(req, true)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  DeviceIdentity& device = witness_get_device();
+  SystemHealth& health = witness_get_health();
+  WitnessRecord& last = witness_get_last_record();
+
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["version"] = PROTOCOL_VERSION;
+  doc["device_id"] = device.device_id;
+  doc["firmware"] = FIRMWARE_VERSION;
+  doc["ruleset"] = RULESET_ID;
+  doc["export_time_ms"] = millis();
+  doc["chain_seq"] = device.seq;
+  doc["records_total"] = health.records_created;
+
+  char pubkey_hex[65];
+  hex_to_str(pubkey_hex, device.pubkey, 32);
+  doc["pubkey"] = pubkey_hex;
+
+  char chain_hex[65];
+  hex_to_str(chain_hex, device.chain_head, 32);
+  doc["chain_head"] = chain_hex;
+
+  if (last.seq > 0) {
+    JsonObject last_rec = doc["last_record"].to<JsonObject>();
+    last_rec["seq"] = last.seq;
+    char hash[65];
+    hex_to_str(hash, last.chain_hash, 32);
+    last_rec["hash"] = hash;
+    last_rec["type"] = record_type_name(last.type);
+    last_rec["verified"] = last.verified;
+  }
+
+  doc["sd_available"] = health.sd_healthy;
+
+  log_health(LOG_LEVEL_INFO, LOG_CAT_USER, "Export bundle created", nullptr);
+
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// WIFI API ENDPOINTS
+// ════════════════════════════════════════════════════════════════════════════
+
+static esp_err_t handle_wifi_status(httpd_req_t* req) {
+  if (!rate_limit_check(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  NetworkManager& net = network_get_instance();
+  const WiFiStatus& status = net.getStatus();
+
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["state"] = NetworkManager::stateName(status.state);
+  doc["ap_active"] = status.ap_active;
+  doc["sta_connected"] = status.sta_connected;
+  doc["ap_ip"] = status.ap_ip;
+  if (status.sta_connected) {
+    doc["sta_ip"] = status.sta_ip;
+    doc["rssi"] = status.rssi;
+  }
+  doc["ap_clients"] = status.ap_clients;
+
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+static esp_err_t handle_wifi_scan(httpd_req_t* req) {
+  if (!rate_limit_check(req, true)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  int n = WiFi.scanNetworks(false, false, false, 300);
+
+  JsonDocument doc;
+  doc["ok"] = true;
+  JsonArray networks = doc["networks"].to<JsonArray>();
+
+  for (int i = 0; i < n && i < 20; i++) {
+    JsonObject net = networks.add<JsonObject>();
+    net["ssid"] = WiFi.SSID(i);
+    net["rssi"] = WiFi.RSSI(i);
+    net["channel"] = WiFi.channel(i);
+    net["encryption"] = (WiFi.encryptionType(i) == WIFI_AUTH_OPEN) ? "open" : "wpa";
+  }
+
+  WiFi.scanDelete();
+
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+static esp_err_t handle_wifi_connect(httpd_req_t* req) {
+  if (!rate_limit_check(req, true)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  char body[256];
+  int recv = httpd_req_recv(req, body, sizeof(body) - 1);
+  if (recv <= 0) {
+    return http_send_error(req, 400, "empty_body");
+  }
+  body[recv] = '\0';
+
+  JsonDocument input;
+  if (deserializeJson(input, body) != DeserializationError::Ok) {
+    return http_send_error(req, 400, "invalid_json");
+  }
+
+  const char* ssid = input["ssid"];
+  const char* password = input["password"];
+
+  if (!ssid || strlen(ssid) == 0) {
+    return http_send_error(req, 400, "missing_ssid");
+  }
+
+  NetworkManager& net = network_get_instance();
+  WiFiCredentials creds;
+  memset(&creds, 0, sizeof(creds));
+  strncpy(creds.ssid, ssid, sizeof(creds.ssid) - 1);
+  if (password) {
+    strncpy(creds.password, password, sizeof(creds.password) - 1);
+  }
+  creds.enabled = true;
+  creds.configured = true;
+
+  // Transfer local credentials to the manager, then save and connect
+  net.setCredentials(creds);
+  net.saveCredentials();
+  net.connectToHome();
+
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["message"] = "Connecting to WiFi...";
+  doc["ssid"] = ssid;
+
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+static esp_err_t handle_wifi_disconnect(httpd_req_t* req) {
+  if (!rate_limit_check(req, true)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  WiFi.disconnect(false);
+
+  NetworkManager& net = network_get_instance();
+  net.clearCredentials();
+
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["message"] = "Disconnected from home WiFi";
+
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// MQTT API ENDPOINTS
+// ════════════════════════════════════════════════════════════════════════════
+
+#if FEATURE_HA_MQTT
+#include "securacv_mqtt.h"
+
+static esp_err_t handle_mqtt_status(httpd_req_t* req) {
+  if (!rate_limit_check(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["connected"] = mqtt_connected();
+
+  MqttCredentials creds;
+  if (mqtt_load_credentials(&creds)) {
+    doc["enabled"] = creds.enabled;
+    doc["host"] = creds.host;
+    doc["port"] = creds.port;
+    // Do not expose username/password in API response
+  } else {
+    doc["enabled"] = false;
+    doc["configured"] = false;
+  }
+
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+static esp_err_t handle_mqtt_config(httpd_req_t* req) {
+  if (!rate_limit_check(req, true)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  char body[512];
+  int recv = httpd_req_recv(req, body, sizeof(body) - 1);
+  if (recv <= 0) {
+    return http_send_error(req, 400, "empty_body");
+  }
+  body[recv] = '\0';
+
+  JsonDocument input;
+  if (deserializeJson(input, body) != DeserializationError::Ok) {
+    return http_send_error(req, 400, "invalid_json");
+  }
+
+  MqttCredentials creds;
+  memset(&creds, 0, sizeof(creds));
+
+  const char* host = input["host"];
+  if (!host || strlen(host) == 0) {
+    return http_send_error(req, 400, "missing_host");
+  }
+
+  strncpy(creds.host, host, sizeof(creds.host) - 1);
+  creds.port = input["port"] | MQTT_PORT;
+
+  const char* user = input["username"];
+  if (user) strncpy(creds.username, user, sizeof(creds.username) - 1);
+
+  const char* pass = input["password"];
+  if (pass) strncpy(creds.password, pass, sizeof(creds.password) - 1);
+
+  creds.enabled = input["enabled"] | true;
+  creds.configured = true;
+
+  if (!mqtt_save_credentials(&creds)) {
+    return http_send_error(req, 500, "save_failed");
+  }
+
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["message"] = "MQTT configuration saved. Reboot to apply.";
+
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+#endif // FEATURE_HA_MQTT
 
 // ════════════════════════════════════════════════════════════════════════════
 // CONVENIENCE FUNCTIONS

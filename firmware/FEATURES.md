@@ -1,6 +1,6 @@
 # SecuraCV Canary Firmware — Feature Audit Matrix
 
-**Audit Date:** 2026-02-19
+**Audit Date:** 2026-02-20
 **WAP Snapshot Version:** 2.1.0-wap (canonical reference)
 **Arduino IDE Version:** 2.1.0-arduino (simplified)
 **PlatformIO Canary Version:** modular library build
@@ -38,7 +38,7 @@
 | Boot count persistence | ✅ | ✅ | ✅ | ✅ |
 | Chain sequence persistence | ✅ | ⚠️ Basic | ✅ | ⚠️ |
 | Previous hash persistence | ✅ | ❌ | ✅ | ⚠️ |
-| Factory reset via BOOT button | ✅ (short/long press) | ❌ | ❌ | ❌ |
+| Factory reset via BOOT button | ✅ (short/long press) | ❌ | ✅ (5s hold) | ❌ |
 | API token NVS storage | ✅ | ❌ | ❌ | ❌ |
 | TLS cert NVS storage | ✅ | ❌ | ❌ | ❌ |
 | WiFi credentials NVS storage | ✅ | ❌ | ❌ | ❌ |
@@ -59,12 +59,12 @@
 | Feature | WAP Snapshot | Arduino IDE | PlatformIO (canary/) | PlatformIO (canary-wap/) |
 |---------|:---:|:---:|:---:|:---:|
 | AP mode with dynamic SSID | ✅ SecuraCV-<MAC> | ✅ | ✅ | ✅ |
-| Device-unique AP password | ✅ (derived from fingerprint) | ❌ Static default | ❌ Static default | ❌ Static default |
-| Max client limit (1) | ✅ Hardened | ❌ (4 clients) | ❌ (configurable) | ❌ (configurable) |
-| mDNS (canary.local) | ✅ | ❌ | ❌ | ❌ |
-| Rate limiting on API | ✅ | ❌ | ❌ | ❌ |
+| Device-unique AP password | ✅ (derived from fingerprint) | ❌ Static default | ✅ (derived from pubkey fp) | ❌ Static default |
+| Max client limit (1) | ✅ Hardened | ❌ (4 clients) | ✅ (1 client) | ❌ (configurable) |
+| mDNS (canary.local) | ✅ | ❌ | ✅ | ❌ |
+| Rate limiting on API | ✅ | ❌ | ✅ (120 req/min) | ❌ |
 | TLS (HTTPS) support | ✅ Self-signed cert | ❌ | ❌ | ❌ |
-| WiFi STA (home network connect) | ✅ | ❌ | ❌ | ❌ |
+| WiFi STA (home network connect) | ✅ | ❌ | ✅ (AP+STA dual mode) | ❌ |
 | Captive portal redirect | ✅ | ❌ | ❌ | ❌ |
 
 ## REST API Endpoints
@@ -76,18 +76,18 @@
 | `GET /api/device-info` | ✅ | ❌ | ❌ | ❌ |
 | `GET /api/provisioning-receipt` | ✅ (BOOT button gated) | ❌ | ❌ | ❌ |
 | `GET /api/system` (sys metrics) | ✅ | ❌ | ❌ | ❌ |
-| `GET /api/chain` | ✅ | ❌ | ❌ | ❌ |
-| `GET /api/logs` | ✅ | ❌ | ❌ | ❌ |
-| `POST /api/logs/*/ack` | ✅ | ❌ | ❌ | ❌ |
-| `POST /api/logs/ack-all` | ✅ | ❌ | ❌ | ❌ |
+| `GET /api/chain` | ✅ | ❌ | ✅ | ❌ |
+| `GET /api/logs` | ✅ | ❌ | ✅ | ❌ |
+| `POST /api/logs/*/ack` | ✅ | ❌ | ✅ | ❌ |
+| `POST /api/logs/ack-all` | ✅ | ❌ | ✅ | ❌ |
 | `GET /api/witness` | ✅ | ❌ | ❌ | ❌ |
 | `GET /api/config` | ✅ | ❌ | ❌ | ❌ |
-| `POST /api/export` | ✅ PWK bundle | ❌ | ❌ | ❌ |
-| `POST /api/reboot` | ✅ | ❌ | ❌ | ❌ |
-| `GET /api/wifi` | ✅ | ❌ | ❌ | ❌ |
-| `GET /api/wifi/scan` | ✅ | ❌ | ❌ | ❌ |
-| `POST /api/wifi/connect` | ✅ | ❌ | ❌ | ❌ |
-| `POST /api/wifi/disconnect` | ✅ | ❌ | ❌ | ❌ |
+| `POST /api/export` | ✅ PWK bundle | ❌ | ✅ | ❌ |
+| `POST /api/reboot` | ✅ | ❌ | ✅ | ❌ |
+| `GET /api/wifi/status` | ✅ | ❌ | ✅ | ❌ |
+| `GET /api/wifi/scan` | ✅ | ❌ | ✅ | ❌ |
+| `POST /api/wifi/connect` | ✅ | ❌ | ✅ | ❌ |
+| `POST /api/wifi/disconnect` | ✅ | ❌ | ✅ | ❌ |
 | `POST /api/wifi/forget` | ✅ | ❌ | ❌ | ❌ |
 | `POST /api/wifi/reconnect` | ✅ | ❌ | ❌ | ❌ |
 | `POST /api/peek/start` | ✅ | ❌ | ❌ | ❌ |
@@ -168,7 +168,7 @@
 | API authentication (bearer token) | ✅ api_auth.h | ❌ | ❌ | ❌ |
 | Provisioning gate (BOOT button) | ✅ | ❌ | ❌ | ❌ |
 | HKDF API token derivation | ✅ | ❌ | ❌ | ❌ |
-| Serial command handler | ✅ (h/i/s/t/g/c/m) | ❌ | ❌ | ❌ |
+| Serial command handler | ✅ (h/i/s/t/g/c/m) | ❌ | ✅ (h/i/s/g/m/r) | ❌ |
 | Watchdog timer | ✅ | ❌ | ✅ | ⚠️ |
 | OTA update support | ❌ | ❌ | ✅ FEATURE_OTA_UPDATE | ❌ |
 
@@ -220,6 +220,10 @@
 | Services | ✅ | export_chain, verify_chain |
 | No camera entities | ✅ | Privacy by design |
 | Multi-device support | ✅ | MQTT topic: `securacv/{DEVICE_ID}/...` |
+| MQTT publishing from firmware | ✅ | securacv_mqtt lib with HA Discovery |
+| MQTT-only config flow | ✅ | No kernel required for Canary-only setups |
+| HA Blueprint for alerts | ✅ | One-click notification setup |
+| Notification automations | ✅ | Tamper, chain fail, offline, GPS loss |
 
 ## Fleet Management UI
 
@@ -239,7 +243,7 @@
 The **WAP Snapshot** is the canonical reference with ~45+ features. The other build targets have significant gaps:
 
 - **Arduino IDE build**: ~15% feature parity (basic WiFi AP + crypto init, no hash chain, no camera, no GPS, no health logs, no chain export, minimal web UI)
-- **PlatformIO canary/**: ~60% feature parity (well-structured libraries, good crypto/witness/storage, but missing camera streaming, GPS motion FSM, full web UI, API auth, many API endpoints)
+- **PlatformIO canary/**: ~75% feature parity (MQTT publishing, HA Discovery, rate limiting, factory reset, device-unique AP password, WiFi STA, export — still missing camera streaming, GPS motion FSM, full web UI tabs, API auth)
 - **PlatformIO canary-wap/**: ~40% feature parity (uses common headers, good config system, but implementations are skeleton/stub)
 
 ### Priority Actions

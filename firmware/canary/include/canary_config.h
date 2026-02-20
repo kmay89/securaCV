@@ -164,9 +164,10 @@
 // WIFI AP DEFAULTS
 // ════════════════════════════════════════════════════════════════
 
+// Fallback only — production uses device-unique password derived from pubkey
 #define AP_PASSWORD_DEFAULT  "witness2026"
 #define AP_CHANNEL           1
-#define AP_MAX_CONNECTIONS   4
+#define AP_MAX_CONNECTIONS   1    // Hardened: max 1 client for security isolation
 
 // ════════════════════════════════════════════════════════════════
 // TIMING & COARSENING
@@ -194,6 +195,9 @@
 
 #define SERIAL_CDC_WAIT_MS       2500
 #define BOOT_BUTTON_HOLD_MS      1200
+#define BOOT_SHORT_PRESS_MS      200     // Min for short press
+#define BOOT_LONG_PRESS_MS       5000    // Hold for factory reset
+#define BOOT_MEDIUM_PRESS_MS     1200    // Medium hold for info print
 
 // ════════════════════════════════════════════════════════════════
 // SD CARD SPI SPEEDS
@@ -228,12 +232,20 @@
 // MQTT (Home Assistant)
 // ════════════════════════════════════════════════════════════════
 
-#if FEATURE_HA_MQTT
-  #define MQTT_SERVER        "homeassistant.local"
+#ifndef MQTT_PORT
   #define MQTT_PORT          1883
-  #define MQTT_USER          "securacv"
-  #define MQTT_TOPIC_PREFIX  "securacv/canary"
 #endif
+#ifndef MQTT_TOPIC_PREFIX
+  #define MQTT_TOPIC_PREFIX  "securacv"
+#endif
+
+// ════════════════════════════════════════════════════════════════
+// RATE LIMITING
+// ════════════════════════════════════════════════════════════════
+
+#define RATE_LIMIT_WINDOW_MS     60000   // 1 minute window
+#define RATE_LIMIT_MAX_REQUESTS  120     // Max requests per window
+#define RATE_LIMIT_MAX_ACTIONS   30      // Max POST actions per window
 
 // ════════════════════════════════════════════════════════════════
 // ZONE ID

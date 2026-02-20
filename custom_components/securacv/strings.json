@@ -3,18 +3,48 @@
     "flow_title": "SecuraCV",
     "step": {
       "user": {
-        "title": "Connect to SecuraCV",
-        "description": "Enter the connection details for your SecuraCV Privacy Witness Kernel instance.\n\nThe kernel runs as a Home Assistant add-on, Docker container, or standalone service.",
+        "title": "SecuraCV Setup",
+        "description": "Choose how to connect to your SecuraCV devices.",
         "data": {
-          "url": "Kernel URL",
-          "token": "API Token",
-          "enable_mqtt": "Enable MQTT for Canary devices",
+          "setup_mode": "Setup Mode"
+        },
+        "data_description": {
+          "setup_mode": "Most users should choose 'Canary devices via MQTT' — devices auto-discover via MQTT Discovery."
+        }
+      },
+      "mqtt_config": {
+        "title": "MQTT Configuration",
+        "description": "Configure MQTT for Canary device auto-discovery.\n\nCanary devices publish to topics under this prefix. Devices will appear automatically in Home Assistant.",
+        "data": {
           "mqtt_prefix": "MQTT Topic Prefix"
         },
         "data_description": {
+          "mqtt_prefix": "MQTT topic prefix for Canary devices (default: securacv)"
+        }
+      },
+      "kernel": {
+        "title": "Witness Kernel Connection",
+        "description": "Enter the connection details for your SecuraCV Privacy Witness Kernel.\n\nThe kernel runs as a Home Assistant add-on, Docker container, or standalone service.",
+        "data": {
+          "url": "Kernel URL",
+          "token": "API Token"
+        },
+        "data_description": {
           "url": "URL of the Privacy Witness Kernel Event API (e.g., http://privacy_witness_kernel:8799)",
+          "token": "Bearer token from the kernel's api_token file"
+        }
+      },
+      "both": {
+        "title": "MQTT + Kernel Connection",
+        "description": "Configure both MQTT for Canary devices and HTTP for the Witness Kernel.",
+        "data": {
+          "url": "Kernel URL",
+          "token": "API Token",
+          "mqtt_prefix": "MQTT Topic Prefix"
+        },
+        "data_description": {
+          "url": "URL of the Privacy Witness Kernel Event API",
           "token": "Bearer token from the kernel's api_token file",
-          "enable_mqtt": "Subscribe to MQTT topics for real-time Canary device updates",
           "mqtt_prefix": "MQTT topic prefix for Canary devices (default: securacv)"
         }
       }
@@ -24,7 +54,7 @@
       "invalid_auth": "Invalid API token. Read the token from the kernel's api_token file."
     },
     "abort": {
-      "already_configured": "This kernel is already configured."
+      "already_configured": "This integration is already configured."
     }
   },
   "services": {

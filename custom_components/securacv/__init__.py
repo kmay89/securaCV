@@ -1,10 +1,13 @@
 """SecuraCV - Privacy Witness Kernel integration for Home Assistant.
 
-Connects to the SecuraCV Privacy Witness Kernel via HTTP API. Optionally
-subscribes to MQTT for real-time updates from Canary devices.
+Connects to SecuraCV Canary devices via MQTT and/or the Privacy Witness
+Kernel via HTTP API. Surfaces semantic witness events, hash chain integrity,
+and device health — never raw video or identity data. Privacy by design.
 
-Surfaces semantic witness events, hash chain integrity, and device health -
-never raw video or identity data. Privacy by design.
+Setup modes:
+  - MQTT only: Auto-discovers Canary devices via MQTT (recommended)
+  - Kernel only: Polls the PWK Event API via HTTP
+  - Both: MQTT for Canary devices + HTTP for the kernel
 """
 from __future__ import annotations
 
@@ -27,10 +30,14 @@ from .const import (
     DOMAIN,
     CONF_MQTT_PREFIX,
     CONF_ENABLE_MQTT,
+    CONF_SETUP_MODE,
     TOPIC_STATUS,
     MANUFACTURER,
     MODEL_KERNEL,
     MODEL_CANARY,
+    SETUP_MODE_MQTT,
+    SETUP_MODE_KERNEL,
+    SETUP_MODE_BOTH,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -144,17 +151,41 @@ class SecuraCVCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return {"latest_event": latest_event}
 
 
+class SecuraCVMqttOnlyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
+    """Stub coordinator for MQTT-only mode (no HTTP polling)."""
+
+    def __init__(self, hass: HomeAssistant) -> None:
+        """Initialize the coordinator."""
+        super().__init__(
+            hass,
+            logger=_LOGGER,
+            name="SecuraCV",
+            update_interval=None,  # No polling — MQTT push only
+        )
+        self.data = {"latest_event": None}
+
+    async def _async_update_data(self) -> dict[str, Any]:
+        """No-op for MQTT-only mode."""
+        return self.data
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up SecuraCV from a config entry."""
     hass.data.setdefault(DOMAIN, {})
 
-    # Initialize HTTP API client for kernel connection
-    session = async_get_clientsession(hass)
-    api = SecuraCVApi(entry.data[CONF_URL], entry.data[CONF_TOKEN], session)
-    coordinator = SecuraCVCoordinator(hass, api)
+    setup_mode = entry.data.get(CONF_SETUP_MODE, SETUP_MODE_KERNEL)
+    has_kernel = setup_mode in (SETUP_MODE_KERNEL, SETUP_MODE_BOTH)
+    enable_mqtt = entry.data.get(CONF_ENABLE_MQTT, False)
 
-    # Fetch initial data
-    await coordinator.async_config_entry_first_refresh()
+    # Initialize coordinator based on setup mode
+    if has_kernel:
+        session = async_get_clientsession(hass)
+        api = SecuraCVApi(entry.data[CONF_URL], entry.data[CONF_TOKEN], session)
+        coordinator = SecuraCVCoordinator(hass, api)
+        await coordinator.async_config_entry_first_refresh()
+    else:
+        api = None
+        coordinator = SecuraCVMqttOnlyCoordinator(hass)
 
     # Store entry data
     entry_data: dict[str, Any] = {
@@ -162,23 +193,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "coordinator": coordinator,
         "devices": {},
         "unsub_mqtt": [],
+        "setup_mode": setup_mode,
     }
     hass.data[DOMAIN][entry.entry_id] = entry_data
 
-    # Register the kernel as a device
-    dev_registry = dr.async_get(hass)
-    dev_registry.async_get_or_create(
-        config_entry_id=entry.entry_id,
-        identifiers={(DOMAIN, entry.data[CONF_URL])},
-        manufacturer=MANUFACTURER,
-        model=MODEL_KERNEL,
-        name="SecuraCV Privacy Witness Kernel",
-        configuration_url=entry.data[CONF_URL],
-    )
+    # Register the kernel as a device (only if kernel mode)
+    if has_kernel:
+        dev_registry = dr.async_get(hass)
+        dev_registry.async_get_or_create(
+            config_entry_id=entry.entry_id,
+            identifiers={(DOMAIN, entry.data[CONF_URL])},
+            manufacturer=MANUFACTURER,
+            model=MODEL_KERNEL,
+            name="SecuraCV Privacy Witness Kernel",
+            configuration_url=entry.data[CONF_URL],
+        )
 
-    # Optionally set up MQTT subscriptions for Canary devices
+    # Set up MQTT subscriptions for Canary devices
     mqtt_prefix = entry.data.get(CONF_MQTT_PREFIX)
-    enable_mqtt = entry.data.get(CONF_ENABLE_MQTT, False)
 
     if enable_mqtt and mqtt_prefix:
         try:
@@ -198,8 +230,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     _LOGGER.info(
-        "SecuraCV integration loaded (kernel: %s, mqtt: %s)",
-        entry.data[CONF_URL],
+        "SecuraCV integration loaded (mode: %s, mqtt: %s)",
+        setup_mode,
         "enabled" if enable_mqtt else "disabled",
     )
 

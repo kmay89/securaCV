@@ -1,0 +1,154 @@
+# SecuraCV Home Assistant Automations
+#
+# Copy-paste these automations into your HA configuration.yaml or
+# create them via the HA UI (Settings > Automations > Create Automation).
+#
+# Replace XXXX with your Canary device ID (e.g., canary-s3-a3f7).
+# Replace "mobile_app_your_phone" with your companion app service name.
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TAMPER ALERT — Immediate phone notification
+# Fires when any tamper event is detected (enclosure open, motion, etc.)
+# ═══════════════════════════════════════════════════════════════════════════
+
+automation:
+  - alias: "SecuraCV Tamper Alert"
+    description: "Send push notification when a Canary device detects tampering"
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.securacv_canary_XXXX_tamper
+        to: "on"
+    condition: []
+    action:
+      - service: notify.mobile_app_your_phone
+        data:
+          title: "SecuraCV Tamper Alert"
+          message: "Canary device detected tampering — {{ trigger.entity_id }}"
+          data:
+            tag: securacv-tamper
+            importance: high
+            channel: securacv_alerts
+            actions:
+              - action: VIEW_DEVICE
+                title: "View Device"
+    mode: single
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # CHAIN INTEGRITY FAILURE — Persistent notification
+  # Evidence chain verification failed — potential tampering with records
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - alias: "SecuraCV Chain Integrity Alert"
+    description: "Create persistent notification when witness chain verification fails"
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.securacv_canary_XXXX_chain_valid
+        to: "off"
+    condition: []
+    action:
+      - service: persistent_notification.create
+        data:
+          title: "SecuraCV Chain Integrity Failure"
+          message: >-
+            Witness chain on {{ trigger.entity_id }} failed verification.
+            Evidence may have been tampered with. Check device logs immediately.
+          notification_id: securacv-chain-fail
+      - service: notify.mobile_app_your_phone
+        data:
+          title: "SecuraCV Chain Integrity Failure"
+          message: "Witness chain verification FAILED. Evidence integrity compromised."
+          data:
+            tag: securacv-chain
+            importance: high
+            channel: securacv_critical
+    mode: single
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # DEVICE OFFLINE — Delayed notification (avoids false positives)
+  # Waits 5 minutes before alerting to avoid WiFi blips
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - alias: "SecuraCV Device Offline"
+    description: "Notify when a Canary device has been unreachable for 5 minutes"
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.securacv_canary_XXXX_online
+        to: "off"
+        for: "00:05:00"
+    condition: []
+    action:
+      - service: notify.mobile_app_your_phone
+        data:
+          title: "SecuraCV Device Offline"
+          message: "Canary {{ trigger.entity_id }} has been unreachable for 5 minutes"
+          data:
+            tag: securacv-offline
+            importance: default
+            channel: securacv_alerts
+    mode: single
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # GPS FIX LOST — Alert for mobile deployments
+  # Important for vehicle/transport monitoring scenarios
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - alias: "SecuraCV GPS Fix Lost"
+    description: "Notify when a Canary device loses GPS fix"
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.securacv_canary_XXXX_gps_fix
+        to: "off"
+        for: "00:02:00"
+    condition: []
+    action:
+      - service: notify.mobile_app_your_phone
+        data:
+          title: "SecuraCV GPS Fix Lost"
+          message: "Canary {{ trigger.entity_id }} lost GPS fix. Possible jamming or indoor placement."
+          data:
+            tag: securacv-gps
+            importance: default
+            channel: securacv_alerts
+    mode: single
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # SD CARD FAILURE — Storage integrity alert
+  # SD card is required for witness record persistence
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - alias: "SecuraCV SD Card Failure"
+    description: "Notify when a Canary device's SD card becomes unhealthy"
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.securacv_canary_XXXX_sd_healthy
+        to: "off"
+    condition: []
+    action:
+      - service: notify.mobile_app_your_phone
+        data:
+          title: "SecuraCV SD Card Issue"
+          message: "Canary {{ trigger.entity_id }} SD card failure. Witness records may not persist."
+          data:
+            tag: securacv-sd
+            importance: high
+            channel: securacv_alerts
+    mode: single
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # DEVICE BACK ONLINE — Clear offline notification
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - alias: "SecuraCV Device Back Online"
+    description: "Clear offline notification when device reconnects"
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.securacv_canary_XXXX_online
+        to: "on"
+    condition: []
+    action:
+      - service: notify.mobile_app_your_phone
+        data:
+          message: "clear_notification"
+          data:
+            tag: securacv-offline
+    mode: single
