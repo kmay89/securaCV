@@ -634,8 +634,6 @@ fn export_contains_no_gps_data() {
         .export_events_for_api(cfg.ruleset_hash, ExportOptions::default())
         .expect("export");
 
-    let json_str = serde_json::to_string(&artifact).expect("serialize artifact");
-
     // Check that no JSON object key is GPS-related.
     // We inspect keys rather than raw substring matching to avoid false
     // positives (e.g. "parking lot" contains "lat", "balcony" contains "lon").

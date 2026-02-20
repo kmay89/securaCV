@@ -147,15 +147,16 @@ impl ApiServer {
     pub fn spawn(self) -> Result<ApiHandle> {
         // Firmware alignment: DEFAULT_TLS_REQUIRED = 1
         // Log a conformance alarm if running without TLS and not explicitly allowed.
-        if self.cfg.tls.is_none() || !self.cfg.tls.as_ref().map_or(false, |t| t.is_configured()) {
-            if !self.cfg.allow_insecure {
-                log::warn!(
-                    "CONFORMANCE: API server starting WITHOUT TLS. \
-                     This violates firmware policy DEFAULT_TLS_REQUIRED=1. \
-                     Use --api-tls-cert and --api-tls-key to enable TLS, \
-                     or --allow-insecure-api to suppress this warning."
-                );
-            }
+        if (self.cfg.tls.is_none()
+            || !self.cfg.tls.as_ref().is_some_and(|t| t.is_configured()))
+            && !self.cfg.allow_insecure
+        {
+            log::warn!(
+                "CONFORMANCE: API server starting WITHOUT TLS. \
+                 This violates firmware policy DEFAULT_TLS_REQUIRED=1. \
+                 Use --api-tls-cert and --api-tls-key to enable TLS, \
+                 or --allow-insecure-api to suppress this warning."
+            );
         }
 
         let configured_addr: SocketAddr = self.cfg.addr.parse()?;
@@ -237,7 +238,7 @@ impl AuthFailureTracker {
         if let Some(entry) = self.entries.get(ip) {
             let now = Self::now_ms();
             if entry.locked_until_ms > now {
-                return Some((entry.locked_until_ms - now + 999) / 1000); // ceil to seconds
+                return Some((entry.locked_until_ms - now).div_ceil(1000));
             }
         }
         None
