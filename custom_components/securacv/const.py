@@ -9,6 +9,12 @@ DOMAIN = "securacv"
 # Config keys
 CONF_MQTT_PREFIX = "mqtt_prefix"
 CONF_ENABLE_MQTT = "enable_mqtt"
+CONF_SETUP_MODE = "setup_mode"
+
+# Setup modes
+SETUP_MODE_MQTT = "mqtt"
+SETUP_MODE_KERNEL = "kernel"
+SETUP_MODE_BOTH = "both"
 
 # =============================================================================
 # MQTT Topics (relative to prefix/{device_id}/)
