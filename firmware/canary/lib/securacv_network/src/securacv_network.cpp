@@ -900,8 +900,8 @@ static esp_err_t handle_wifi_connect(httpd_req_t* req) {
   creds.enabled = true;
   creds.configured = true;
 
-  // Save and connect
-  // Access the internal credentials via the manager
+  // Transfer local credentials to the manager, then save and connect
+  net.setCredentials(creds);
   net.saveCredentials();
   net.connectToHome();
 

@@ -69,6 +69,7 @@ public:
   // Status
   const WiFiStatus& getStatus() const { return m_status; }
   const WiFiCredentials& getCredentials() const { return m_creds; }
+  void setCredentials(const WiFiCredentials& creds) { m_creds = creds; }
 
   // WiFi provisioning
   bool loadCredentials();

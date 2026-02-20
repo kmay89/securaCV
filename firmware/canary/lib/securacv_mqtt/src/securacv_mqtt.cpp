@@ -313,11 +313,10 @@ bool mqtt_publish_chain(const char* json_payload) {
 
 bool mqtt_publish_tamper(const char* json_payload) {
   if (!s_mqtt.connected()) return false;
-  // QoS 1 for tamper — must not be lost
-  // PubSubClient publish() with retained=false is QoS 0 by default.
-  // For QoS 1, we use publish with explicit parameters.
-  return s_mqtt.publish(s_topic_tamper, (const uint8_t*)json_payload,
-                        strlen(json_payload), false);
+  // NOTE: PubSubClient only supports QoS 0 for publishing.
+  // Use retained=true so the last tamper alert persists on the broker
+  // for subscribers that connect after the event.
+  return s_mqtt.publish(s_topic_tamper, json_payload, true);
 }
 
 bool mqtt_publish_transport(const char* json_payload) {
