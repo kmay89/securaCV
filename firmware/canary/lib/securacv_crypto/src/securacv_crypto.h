@@ -95,7 +95,7 @@ void crypto_fingerprint(const uint8_t pub[32], uint8_t fp[8]);
 // CHAIN OPERATIONS
 // ════════════════════════════════════════════════════════════════════════════
 
-// Compute chain hash: H("securacv:chain:v1" || 0x00 || prev || payload_hash || seq || time_bucket)
+// Compute chain hash: H("securacv:fw:chain:v1" || 0x00 || prev || payload_hash || seq || time_bucket)
 void compute_chain_hash(const uint8_t prev[32], const uint8_t payload_hash[32],
                         uint32_t seq, uint32_t time_bucket, uint8_t out[32]);
 

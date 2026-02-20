@@ -35,10 +35,14 @@ extern "C" {
 #define WITNESS_SIG_SIZE        64
 #define WITNESS_FINGERPRINT_LEN 8
 
-// Domain separation prefixes
-#define DOMAIN_CHAIN_HASH       "securacv:chain:v1"
-#define DOMAIN_PAYLOAD_HASH     "securacv:payload:v1"
-#define DOMAIN_BOOT_ATTEST      "securacv:boot:v1"
+// Domain separation prefixes — aligned with kernel's "securacv:" prefix scheme.
+// Kernel uses "securacv:pwk:*:v2" for its contexts.
+// Firmware uses "securacv:fw:*:v1" for its contexts.
+// This intentional divergence prevents cross-context signature reuse while
+// sharing a common prefix for organizational clarity.
+#define DOMAIN_CHAIN_HASH       "securacv:fw:chain:v1"
+#define DOMAIN_PAYLOAD_HASH     "securacv:fw:payload:v1"
+#define DOMAIN_BOOT_ATTEST      "securacv:fw:boot:v1"
 
 // ============================================================================
 // CHAIN STATE

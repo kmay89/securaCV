@@ -6,21 +6,59 @@
    ======================================================================== */
 
 // --------------- Storage ---------------
+// Security: Tokens are held in sessionStorage (cleared on tab close).
+// Only non-sensitive device metadata is persisted to localStorage.
+// This prevents XSS or malicious extensions from exfiltrating tokens
+// via localStorage.getItem(). sessionStorage survives page refreshes
+// but is cleared on tab close, which is acceptable because the
+// provisioning receipt flow supports re-entry.
+
+var SESSION_TOKEN_PREFIX = 'canary_token:';
 
 var CanaryStorage = {
   KEY: 'canary_devices',
 
+  _getToken: function (id) {
+    try { return sessionStorage.getItem(SESSION_TOKEN_PREFIX + id) || ''; }
+    catch (e) { return ''; }
+  },
+
+  _setToken: function (id, token) {
+    try { sessionStorage.setItem(SESSION_TOKEN_PREFIX + id, token); }
+    catch (e) { /* sessionStorage unavailable — tokens will not survive refresh */ }
+  },
+
+  _removeToken: function (id) {
+    try { sessionStorage.removeItem(SESSION_TOKEN_PREFIX + id); }
+    catch (e) { /* ignore */ }
+  },
+
   getDevices: function () {
     try {
       var raw = localStorage.getItem(CanaryStorage.KEY);
-      return raw ? JSON.parse(raw) : [];
+      var devices = raw ? JSON.parse(raw) : [];
+      // Rehydrate tokens from sessionStorage
+      for (var i = 0; i < devices.length; i++) {
+        var tok = CanaryStorage._getToken(devices[i].id);
+        if (tok) devices[i].token = tok;
+      }
+      return devices;
     } catch (e) {
       return [];
     }
   },
 
   saveDevices: function (devices) {
-    localStorage.setItem(CanaryStorage.KEY, JSON.stringify(devices));
+    // Strip tokens before persisting to localStorage
+    var sanitized = devices.map(function (d) {
+      var copy = Object.assign({}, d);
+      if (copy.token) {
+        CanaryStorage._setToken(copy.id, copy.token);
+        delete copy.token;
+      }
+      return copy;
+    });
+    localStorage.setItem(CanaryStorage.KEY, JSON.stringify(sanitized));
   },
 
   getDevice: function (id) {
@@ -32,12 +70,20 @@ var CanaryStorage = {
   },
 
   addDevice: function (device) {
+    // Store token in sessionStorage
+    if (device.token) {
+      CanaryStorage._setToken(device.id, device.token);
+    }
     var devices = CanaryStorage.getDevices();
     devices.push(device);
     CanaryStorage.saveDevices(devices);
   },
 
   updateDevice: function (id, updates) {
+    // Capture token update in sessionStorage
+    if (updates.token) {
+      CanaryStorage._setToken(id, updates.token);
+    }
     var devices = CanaryStorage.getDevices();
     for (var i = 0; i < devices.length; i++) {
       if (devices[i].id === id) {
@@ -49,6 +95,7 @@ var CanaryStorage = {
   },
 
   removeDevice: function (id) {
+    CanaryStorage._removeToken(id);
     var devices = CanaryStorage.getDevices();
     CanaryStorage.saveDevices(devices.filter(function (d) { return d.id !== id; }));
   }

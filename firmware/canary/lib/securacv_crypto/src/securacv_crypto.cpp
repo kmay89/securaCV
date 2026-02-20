@@ -171,7 +171,7 @@ void compute_chain_hash(const uint8_t prev[32], const uint8_t payload_hash[32],
   buf[70] = (time_bucket >> 8) & 0xFF;
   buf[71] = time_bucket & 0xFF;
 
-  sha256_domain("securacv:chain:v1", buf, sizeof(buf), out);
+  sha256_domain("securacv:fw:chain:v1", buf, sizeof(buf), out);
 }
 
 // ════════════════════════════════════════════════════════════════════════════

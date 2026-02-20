@@ -5,6 +5,12 @@ const { Router } = require('express');
 const VALID_SECTIONS = ['network', 'privacy', 'detection', 'integrations'];
 const VALID_PURGE_HOURS = [1, 6, 12, 24, 48, 168];
 
+// Keys that are IMMUTABLE via the API (Invariant I: No Raw Export).
+// camera_peek_enabled is a raw media export path that bypasses the kernel's
+// break-glass/quorum architecture. It MUST NOT be changeable via any API
+// endpoint — only via physical device interaction or break-glass quorum.
+const IMMUTABLE_PRIVACY_KEYS = ['camera_peek_enabled'];
+
 function validateConfigValues(section, data) {
   const errors = [];
 
@@ -47,6 +53,23 @@ function validateConfigValues(section, data) {
   return errors;
 }
 
+// Strip immutable keys from a privacy config update and return rejected keys.
+function stripImmutableKeys(data, section) {
+  const rejected = [];
+  if (section === 'privacy' || (!section && data.privacy)) {
+    const privacy = section ? data : data.privacy;
+    if (privacy) {
+      for (const key of IMMUTABLE_PRIVACY_KEYS) {
+        if (key in privacy) {
+          rejected.push(key);
+          delete privacy[key];
+        }
+      }
+    }
+  }
+  return rejected;
+}
+
 function configRoutes(state) {
   const router = Router();
 
@@ -72,18 +95,12 @@ function configRoutes(state) {
       });
     }
 
-    const pendingConfirm = [];
+    // Enforce immutability of camera_peek_enabled via API (Invariant I).
+    const rejected = stripImmutableKeys(body, null);
 
     // Merge each section
     for (const section of VALID_SECTIONS) {
       if (body[section] && typeof body[section] === 'object') {
-        // Check for camera_peek_enabled requiring physical confirmation
-        if (section === 'privacy' && body.privacy.camera_peek_enabled === true) {
-          pendingConfirm.push('camera_peek_enabled');
-          state.pendingPhysicalConfirm.add('camera_peek_enabled');
-          delete body.privacy.camera_peek_enabled;
-        }
-
         Object.assign(state.config[section], body[section]);
       }
     }
@@ -91,8 +108,9 @@ function configRoutes(state) {
     state.addLog('INFO', 'Config updated');
 
     const response = { ok: true, config: structuredClone(state.config) };
-    if (pendingConfirm.length > 0) {
-      response.pending_physical_confirm = pendingConfirm;
+    if (rejected.length > 0) {
+      response.rejected_immutable = rejected;
+      state.addLog('WARN', `Config update rejected immutable keys: ${rejected.join(', ')}`);
     }
     res.json(response);
   });
@@ -133,43 +151,24 @@ function configRoutes(state) {
       });
     }
 
-    const pendingConfirm = [];
-
-    if (section === 'privacy' && body.camera_peek_enabled === true) {
-      pendingConfirm.push('camera_peek_enabled');
-      state.pendingPhysicalConfirm.add('camera_peek_enabled');
-      delete body.camera_peek_enabled;
-    }
+    // Enforce immutability of camera_peek_enabled via API (Invariant I).
+    const rejected = stripImmutableKeys(body, section);
 
     Object.assign(state.config[section], body);
     state.addLog('INFO', `Config section '${section}' updated`);
 
     const response = { ok: true, config: structuredClone(state.config) };
-    if (pendingConfirm.length > 0) {
-      response.pending_physical_confirm = pendingConfirm;
+    if (rejected.length > 0) {
+      response.rejected_immutable = rejected;
+      state.addLog('WARN', `Config update rejected immutable keys: ${rejected.join(', ')}`);
     }
     res.json(response);
   });
 
-  // Physical confirm endpoint (simulates button press)
-  router.post('/api/v1/confirm', (req, res) => {
-    if (state.pendingPhysicalConfirm.size === 0) {
-      return res.status(400).json({
-        error: 'nothing_pending',
-        message: 'No settings pending physical confirmation',
-      });
-    }
-
-    for (const key of state.pendingPhysicalConfirm) {
-      if (key === 'camera_peek_enabled') {
-        state.config.privacy.camera_peek_enabled = true;
-      }
-    }
-    state.pendingPhysicalConfirm.clear();
-    state.addLog('INFO', 'Physical confirmation received');
-
-    res.json({ ok: true, confirmed: ['camera_peek_enabled'] });
-  });
+  // Physical confirm endpoint removed — camera_peek_enabled is now fully
+  // immutable via the API per Invariant I (No Raw Export by Design).
+  // Physical confirmation must happen via the firmware's physical button
+  // mechanism, not via an HTTP endpoint.
 
   return router;
 }

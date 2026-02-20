@@ -920,7 +920,7 @@ mod tests {
             ruleset_hash,
             kernel_version: "test".to_string(),
             retention: Duration::from_secs(60),
-            device_key_seed: "devkey:test".to_string(),
+            device_key_seed: "devkey:test:a1b2c3d4e5f6a7b8c9d0".to_string(),
             zone_policy: ZonePolicy::default(),
         };
         let mut kernel = Kernel::open(&cfg)?;
@@ -974,7 +974,7 @@ mod tests {
         let db_path = temp_dir.join("witness.db");
 
         let ruleset_id = "ruleset:test";
-        let device_key_seed = "devkey:test";
+        let device_key_seed = "devkey:test:a1b2c3d4e5f6a7b8c9d0";
         let trustee_key = SigningKey::from_bytes(&[7u8; 32]);
         let trustee_entry = format!(
             "alice:{}",

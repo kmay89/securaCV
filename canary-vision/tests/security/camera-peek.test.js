@@ -7,7 +7,7 @@ const { createClient } = require('../helpers/test-client');
 
 const TOKEN = TEST_TOKEN;
 
-describe('D10: Camera Peek Default Off', () => {
+describe('D10: Camera Peek Immutable via API (Invariant I)', () => {
   let server, client;
 
   before(async () => {
@@ -25,18 +25,45 @@ describe('D10: Camera Peek Default Off', () => {
     assert.equal(res.json.privacy.camera_peek_enabled, false);
   });
 
-  it('D10: Cannot enable camera_peek via API alone', async () => {
-    // Try to enable camera_peek
+  it('D10: camera_peek_enabled is immutable via full config PUT', async () => {
+    // Try to enable camera_peek via full config update
     const putRes = await client.put('/api/v1/config', {
       privacy: { camera_peek_enabled: true },
     });
     assert.equal(putRes.status, 200);
-    assert.ok(putRes.json.pending_physical_confirm);
-    assert.ok(putRes.json.pending_physical_confirm.includes('camera_peek_enabled'));
+
+    // Key should be rejected as immutable
+    assert.ok(putRes.json.rejected_immutable);
+    assert.ok(putRes.json.rejected_immutable.includes('camera_peek_enabled'));
 
     // Verify it's still false
     const getRes = await client.get('/api/v1/config');
     assert.equal(getRes.json.privacy.camera_peek_enabled, false);
+  });
+
+  it('D10: camera_peek_enabled is immutable via section PUT', async () => {
+    // Try to enable camera_peek via privacy section update
+    const putRes = await client.put('/api/v1/config/privacy', {
+      camera_peek_enabled: true,
+    });
+    assert.equal(putRes.status, 200);
+
+    // Key should be rejected as immutable
+    assert.ok(putRes.json.rejected_immutable);
+    assert.ok(putRes.json.rejected_immutable.includes('camera_peek_enabled'));
+
+    // Verify it's still false
+    const getRes = await client.get('/api/v1/config/privacy');
+    assert.equal(getRes.json.camera_peek_enabled, false);
+  });
+
+  it('D10: No API endpoint can enable camera streaming', async () => {
+    // After all attempts, peek must still be false
+    const res = await client.get('/api/v1/config');
+    assert.equal(res.json.privacy.camera_peek_enabled, false);
+    assert.equal(res.json.privacy.video_storage, 'none');
+    assert.equal(res.json.privacy.semantic_events_only, true);
+    assert.equal(res.json.privacy.local_processing_only, true);
   });
 
   it('D10: Config shows peek is off in fresh state', async () => {
