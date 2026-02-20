@@ -109,6 +109,20 @@ httpd_handle_t network_get_http_server();
 esp_err_t http_send_json(httpd_req_t* req, const char* json);
 esp_err_t http_send_error(httpd_req_t* req, int status_code, const char* error_code);
 
+// ════════════════════════════════════════════════════════════════════════════
+// RATE LIMITING
+// ════════════════════════════════════════════════════════════════════════════
+
+struct RateLimitState {
+  uint32_t window_start_ms;
+  uint16_t request_count;
+  uint16_t action_count;
+};
+
+// Check rate limit. Returns true if request is allowed, false if rate-limited.
+// Sends 429 response automatically if rate-limited.
+bool rate_limit_check(httpd_req_t* req, bool is_action = false);
+
 #endif // FEATURE_WIFI_AP || FEATURE_HTTP_SERVER
 
 #endif // SECURACV_NETWORK_H
