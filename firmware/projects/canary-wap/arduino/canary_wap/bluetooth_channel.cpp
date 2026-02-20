@@ -6,6 +6,10 @@
  * Provides secure local connectivity for mobile app integration.
  */
 
+#include "build_config.h"
+
+#if FEATURE_BLUETOOTH && __has_include(<NimBLEDevice.h>)
+
 #include "bluetooth_channel.h"
 #include "nvs_store.h"
 
@@ -1091,3 +1095,5 @@ const char* pairing_state_name(PairingState state) {
 }
 
 } // namespace bluetooth_channel
+
+#endif // FEATURE_BLUETOOTH && NimBLEDevice.h available

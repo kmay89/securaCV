@@ -21,8 +21,18 @@
 // ════════════════════════════════════════════════════════════════
 // Set FEATURE_BLE to 0 to compile without ANY BLE code (removes binary blobs)
 // When 0, all BLE headers become no-ops
+//
+// Auto-detect: if NimBLE library is not installed, force-disable BLE
+// regardless of build profile setting. This prevents build failures
+// in environments without the library (e.g., CI with Arduino Core only).
 #ifndef FEATURE_BLE
 #define FEATURE_BLE           1
+#endif
+
+#if FEATURE_BLE && !__has_include(<NimBLEDevice.h>)
+  #undef  FEATURE_BLE
+  #define FEATURE_BLE 0
+  #pragma message "NimBLEDevice.h not found — FEATURE_BLE auto-disabled"
 #endif
 
 // Sub-feature flags (only relevant if FEATURE_BLE == 1)

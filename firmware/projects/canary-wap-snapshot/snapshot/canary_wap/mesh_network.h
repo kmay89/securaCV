@@ -19,7 +19,10 @@
 #define SECURACV_MESH_NETWORK_H
 
 #include <Arduino.h>
+#include "build_config.h"
+#if FEATURE_MESH_NETWORK
 #include <esp_now.h>
+#endif
 #include "log_level.h"
 
 // ════════════════════════════════════════════════════════════════════════════

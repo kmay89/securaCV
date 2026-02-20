@@ -6,6 +6,10 @@
  * Uses ESP-NOW for primary transport with Ed25519 authentication.
  */
 
+#include "build_config.h"
+
+#if FEATURE_MESH_NETWORK
+
 #include "mesh_network.h"
 #include "log_level.h"
 
@@ -1526,3 +1530,5 @@ void get_message_stats(uint32_t* sent, uint32_t* received, uint32_t* errors) {
 }
 
 } // namespace mesh_network
+
+#endif // FEATURE_MESH_NETWORK

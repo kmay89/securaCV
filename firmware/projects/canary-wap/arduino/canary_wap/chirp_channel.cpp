@@ -19,6 +19,10 @@
  * See spec/chirp_channel_v0.md for full specification.
  */
 
+#include "build_config.h"
+
+#if FEATURE_MESH_NETWORK
+
 #include "mesh_network.h"
 #include "nvs_store.h"
 #include "health_log.h"
@@ -1235,3 +1239,5 @@ void dispatch_espnow_message(const uint8_t* mac, const uint8_t* data, int len) {
 }
 
 } // namespace chirp_channel
+
+#endif // FEATURE_MESH_NETWORK
