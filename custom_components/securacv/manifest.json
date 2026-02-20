@@ -1,15 +1,15 @@
 {
   "domain": "securacv",
   "name": "SecuraCV",
-  "after_dependencies": ["mqtt"],
+  "version": "0.2.0",
+  "documentation": "https://github.com/kmay89/securaCV",
+  "issue_tracker": "https://github.com/kmay89/securaCV/issues",
   "codeowners": ["@kmay89"],
   "config_flow": true,
-  "dependencies": [],
-  "documentation": "https://github.com/kmay89/securaCV",
+  "dependencies": ["mqtt"],
+  "iot_class": "local_push",
   "integration_type": "hub",
-  "iot_class": "local_polling",
-  "issue_tracker": "https://github.com/kmay89/securaCV/issues",
+  "mqtt": ["securacv/#"],
   "loggers": ["securacv"],
-  "requirements": [],
-  "version": "0.1.0"
+  "requirements": []
 }
