@@ -176,6 +176,70 @@ make help        # Show all targets
 
 ---
 
+## Build Targets & Feature Parity
+
+See [FEATURES.md](FEATURES.md) for the complete feature audit matrix comparing all build targets.
+
+| Build Target | Location | Feature Coverage | Notes |
+|-------------|----------|-----------------|-------|
+| **WAP Snapshot** | `projects/canary-wap-snapshot/` | 100% (canonical) | Reference implementation |
+| **Arduino IDE** | `projects/canary-wap/arduino/canary_wap/` | 100% | Full WAP parity |
+| **PlatformIO (canary/)** | `canary/` | ~85% | Modular libraries, some stubs |
+| **PlatformIO (canary-wap/)** | `projects/canary-wap/` | ~75% | Uses common headers |
+
+### PlatformIO Build Environments (canary/)
+
+| Environment | Features | Use Case |
+|-------------|----------|----------|
+| `dev` | SD, WiFi, HTTP, Camera, OTA | Development iteration |
+| `release` | Same as dev, optimized | Production |
+| `full` | + Mesh, BLE, RF Presence, Chirp | Full WAP parity |
+| `dev_ha` | dev + MQTT + HA Discovery | Home Assistant integration |
+| `release_ha` | release + MQTT + HA Discovery | Production HA deployment |
+| `standalone` | release - MQTT | Standalone WAP mode |
+| `minimal` | Crypto + GPS only | Testing crypto/chain logic |
+
+## Fleet Management
+
+A standalone fleet management dashboard is available at `fleet-manager.html`:
+
+```bash
+# Open in your browser (no build tools required)
+open firmware/fleet-manager.html
+```
+
+Features:
+- Add/remove Canary devices by IP address
+- Fleet health overview (online/offline, chain integrity)
+- Individual device drill-down (status, logs, chain, camera peek)
+- Pagination for 50+ device fleets
+- Persistent device list via localStorage
+- Works offline (no cloud dependencies)
+
+---
+
+## Provisioning
+
+Production device provisioning tools are in `provisioning/`:
+
+```bash
+# Generate signing keys
+./provisioning/generate_keys.sh
+
+# Verify virgin device
+python3 provisioning/verify_device.py --port /dev/ttyACM0
+
+# Full provisioning workflow
+./provisioning/provision_canary.sh --port /dev/ttyACM0
+
+# Dry run (preview without burning eFuses)
+./provisioning/provision_canary.sh --dry-run --port /dev/ttyACM0
+```
+
+See [provisioning/README.md](provisioning/README.md) for complete guide.
+
+---
+
 ## Adding a New Board
 
 1. Create `boards/<board-id>/pins/pins.h` with pin definitions
