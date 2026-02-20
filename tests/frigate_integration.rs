@@ -123,7 +123,7 @@ fn setup_test_kernel() -> (Kernel, KernelConfig) {
         ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:frigate_test"),
         kernel_version: "0.0.0-test".to_string(),
         retention: Duration::from_secs(60),
-        device_key_seed: "devkey:frigate_test".to_string(),
+        device_key_seed: "devkey:frigate_test:a1b2c3d4e5f6".to_string(),
         zone_policy: ZonePolicy::default(),
     };
     let kernel = Kernel::open(&cfg).expect("open kernel");

@@ -14,11 +14,19 @@ use pqcrypto_traits::sign::{
 pub const ED25519_SCHEME_ID: &str = "ed25519";
 pub const PQ_SCHEME_DILITHIUM2: &str = "dilithium2";
 
-pub const DOMAIN_SEALED_LOG_ENTRY: &str = "pwk:sealed-log-entry:v2";
-pub const DOMAIN_CHECKPOINT: &str = "pwk:sealed-log-checkpoint:v2";
-pub const DOMAIN_BREAK_GLASS_RECEIPT: &str = "pwk:break-glass-receipt:v2";
-pub const DOMAIN_EXPORT_RECEIPT: &str = "pwk:export-receipt:v2";
-pub const DOMAIN_BREAK_GLASS_TOKEN: &str = "pwk:break-glass-token:v2";
+// Domain separation strings use a shared prefix scheme aligned with firmware.
+// Firmware uses "securacv:fw:chain:v1" for its hash chain.
+// Kernel uses "securacv:pwk:" prefix for all domain strings.
+// This intentional divergence is documented here to prevent silent verification
+// failures if firmware witness records are ever verified from the kernel side.
+//
+// Firmware domain: "securacv:fw:chain:v1"   (hash chain on ESP32)
+// Kernel domains:  "securacv:pwk:*:v2"      (all kernel signature contexts)
+pub const DOMAIN_SEALED_LOG_ENTRY: &str = "securacv:pwk:sealed-log-entry:v2";
+pub const DOMAIN_CHECKPOINT: &str = "securacv:pwk:sealed-log-checkpoint:v2";
+pub const DOMAIN_BREAK_GLASS_RECEIPT: &str = "securacv:pwk:break-glass-receipt:v2";
+pub const DOMAIN_EXPORT_RECEIPT: &str = "securacv:pwk:export-receipt:v2";
+pub const DOMAIN_BREAK_GLASS_TOKEN: &str = "securacv:pwk:break-glass-token:v2";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SignatureMode {

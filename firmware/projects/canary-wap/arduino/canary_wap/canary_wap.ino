@@ -1159,7 +1159,7 @@ static bool init_tls_cert() {
 
 static void compute_chain_hash(const uint8_t prev[32], const uint8_t payload_hash[32], 
                                uint32_t seq, uint32_t time_bucket, uint8_t out[32]) {
-  // Domain-separated: "securacv:chain:v1" || 0x00 || prev || payload_hash || seq (BE) || time_bucket (BE)
+  // Domain-separated: "securacv:fw:chain:v1" || 0x00 || prev || payload_hash || seq (BE) || time_bucket (BE)
   uint8_t buf[32 + 32 + 4 + 4];
   memcpy(buf, prev, 32);
   memcpy(buf + 32, payload_hash, 32);
@@ -1172,7 +1172,7 @@ static void compute_chain_hash(const uint8_t prev[32], const uint8_t payload_has
   buf[70] = (time_bucket >> 8) & 0xFF;
   buf[71] = time_bucket & 0xFF;
   
-  sha256_domain("securacv:chain:v1", buf, sizeof(buf), out);
+  sha256_domain("securacv:fw:chain:v1", buf, sizeof(buf), out);
 }
 
 static void update_chain(const uint8_t payload_hash[32], uint32_t tb, WitnessRecord* rec) {
@@ -1459,7 +1459,7 @@ static bool build_state_change(FixState from, FixState to, const char* reason,
 static bool create_witness_record(const uint8_t* payload, size_t len, RecordType type, WitnessRecord* out) {
   // Hash payload
   uint8_t payload_hash[32];
-  sha256_domain("securacv:payload:v1", payload, len, payload_hash);
+  sha256_domain("securacv:fw:payload:v1", payload, len, payload_hash);
   
   // Update chain
   uint32_t tb = time_bucket();

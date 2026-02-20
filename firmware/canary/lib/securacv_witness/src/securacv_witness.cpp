@@ -189,7 +189,7 @@ void witness_persist_chain_state() {
 bool witness_create_record(const uint8_t* payload, size_t len, RecordType type, WitnessRecord* out) {
   // Hash payload
   uint8_t payload_hash[32];
-  sha256_domain("securacv:payload:v1", payload, len, payload_hash);
+  sha256_domain("securacv:fw:payload:v1", payload, len, payload_hash);
 
   // Update chain
   uint32_t tb = time_bucket();

@@ -10,13 +10,48 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::Duration;
 
+#[cfg(feature = "pqc-tls")]
+use std::io::{BufReader, BufWriter};
+
 const MAX_REQUEST_BYTES: usize = 8192;
+
+/// TLS configuration for the kernel API server.
+/// Mirrors firmware's DEFAULT_TLS_REQUIRED policy.
+#[derive(Clone, Debug, Default)]
+pub struct ApiTlsConfig {
+    /// PEM-encoded certificate chain.
+    pub cert_pem: Option<Vec<u8>>,
+    /// PEM-encoded private key.
+    pub key_pem: Option<Vec<u8>>,
+}
+
+impl ApiTlsConfig {
+    /// Load TLS materials from file paths.
+    pub fn load(cert_path: &Path, key_path: &Path) -> Result<Self> {
+        let cert_pem = std::fs::read(cert_path)
+            .map_err(|e| anyhow!("failed to read API TLS cert '{}': {}", cert_path.display(), e))?;
+        let key_pem = std::fs::read(key_path)
+            .map_err(|e| anyhow!("failed to read API TLS key '{}': {}", key_path.display(), e))?;
+        Ok(Self {
+            cert_pem: Some(cert_pem),
+            key_pem: Some(key_pem),
+        })
+    }
+
+    pub fn is_configured(&self) -> bool {
+        self.cert_pem.is_some() && self.key_pem.is_some()
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct ApiConfig {
     pub addr: String,
     pub export_options: ExportOptions,
     pub token_path: Option<PathBuf>,
+    /// TLS configuration. When set, the API server uses TLS.
+    pub tls: Option<ApiTlsConfig>,
+    /// Allow plaintext HTTP without TLS. Logs a conformance alarm if true.
+    pub allow_insecure: bool,
 }
 
 impl Default for ApiConfig {
@@ -25,6 +60,8 @@ impl Default for ApiConfig {
             addr: "127.0.0.1:8799".to_string(),
             export_options: ExportOptions::default(),
             token_path: None,
+            tls: None,
+            allow_insecure: false,
         }
     }
 }
@@ -103,6 +140,19 @@ impl ApiServer {
     }
 
     pub fn spawn(self) -> Result<ApiHandle> {
+        // Firmware alignment: DEFAULT_TLS_REQUIRED = 1
+        // Log a conformance alarm if running without TLS and not explicitly allowed.
+        if self.cfg.tls.is_none() || !self.cfg.tls.as_ref().map_or(false, |t| t.is_configured()) {
+            if !self.cfg.allow_insecure {
+                log::warn!(
+                    "CONFORMANCE: API server starting WITHOUT TLS. \
+                     This violates firmware policy DEFAULT_TLS_REQUIRED=1. \
+                     Use --api-tls-cert and --api-tls-key to enable TLS, \
+                     or --allow-insecure-api to suppress this warning."
+                );
+            }
+        }
+
         let configured_addr: SocketAddr = self.cfg.addr.parse()?;
         let listener = TcpListener::bind(configured_addr)?;
         let addr = listener.local_addr()?;
@@ -143,6 +193,60 @@ impl ApiServer {
     }
 }
 
+/// Per-IP auth failure tracker with exponential backoff.
+/// Aligned with firmware's DEFAULT_AUTH_LOCKOUT_BASE_SEC / DEFAULT_AUTH_LOCKOUT_CAP_SEC.
+struct AuthFailureTracker {
+    /// Map<IP, (failure_count, locked_until_epoch_ms)>
+    entries: HashMap<std::net::IpAddr, (u32, u64)>,
+    base_lockout_ms: u64,
+    cap_lockout_ms: u64,
+    max_attempts: u32,
+}
+
+impl AuthFailureTracker {
+    fn new() -> Self {
+        Self {
+            entries: HashMap::new(),
+            base_lockout_ms: 2_000,    // firmware: DEFAULT_AUTH_LOCKOUT_BASE_SEC = 2
+            cap_lockout_ms: 300_000,   // firmware: DEFAULT_AUTH_LOCKOUT_CAP_SEC = 300
+            max_attempts: 5,           // firmware: DEFAULT_AUTH_MAX_ATTEMPTS = 5
+        }
+    }
+
+    fn now_ms() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64
+    }
+
+    fn is_locked(&self, ip: &std::net::IpAddr) -> Option<u64> {
+        if let Some(&(_, locked_until)) = self.entries.get(ip) {
+            let now = Self::now_ms();
+            if locked_until > now {
+                return Some((locked_until - now + 999) / 1000); // ceil to seconds
+            }
+        }
+        None
+    }
+
+    fn record_failure(&mut self, ip: std::net::IpAddr) {
+        let entry = self.entries.entry(ip).or_insert((0, 0));
+        entry.0 += 1;
+        if entry.0 >= self.max_attempts {
+            let lockout_ms = std::cmp::min(
+                self.base_lockout_ms * 2u64.saturating_pow(entry.0 / self.max_attempts - 1),
+                self.cap_lockout_ms,
+            );
+            entry.1 = Self::now_ms() + lockout_ms;
+        }
+    }
+
+    fn clear_on_success(&mut self, ip: &std::net::IpAddr) {
+        self.entries.remove(ip);
+    }
+}
+
 fn run_api(
     listener: TcpListener,
     cfg: ApiConfig,
@@ -152,6 +256,7 @@ fn run_api(
 ) -> Result<()> {
     let mut kernel = Kernel::open(&kernel_cfg)?;
     let expected_ruleset_hash = kernel_cfg.ruleset_hash;
+    let mut auth_tracker = AuthFailureTracker::new();
     loop {
         if shutdown.load(Ordering::SeqCst) {
             break;
@@ -159,7 +264,7 @@ fn run_api(
         match listener.accept() {
             Ok((stream, _)) => {
                 if let Err(err) =
-                    handle_connection(stream, &mut kernel, &cfg, token_mgr, expected_ruleset_hash)
+                    handle_connection(stream, &mut kernel, &cfg, token_mgr, expected_ruleset_hash, &mut auth_tracker)
                 {
                     log::warn!("event api request rejected: {}", err);
                 }
@@ -180,11 +285,22 @@ fn handle_connection(
     cfg: &ApiConfig,
     token_mgr: &mut CapabilityTokenManager,
     expected_ruleset_hash: [u8; 32],
+    auth_tracker: &mut AuthFailureTracker,
 ) -> Result<()> {
     let peer = stream.peer_addr()?;
     let local = stream.local_addr()?;
     if local.ip().is_loopback() && !peer.ip().is_loopback() {
         write_json_response(&mut stream, 403, r#"{"error":"forbidden"}"#)?;
+        return Ok(());
+    }
+
+    // Check auth lockout before processing request
+    if let Some(retry_after) = auth_tracker.is_locked(&peer.ip()) {
+        let body = format!(
+            r#"{{"error":"auth_locked","retry_after":{}}}"#,
+            retry_after
+        );
+        write_json_response(&mut stream, 429, &body)?;
         return Ok(());
     }
 
@@ -217,6 +333,7 @@ fn handle_connection(
     let token = match request.bearer_token() {
         Some(token) => token,
         None => {
+            auth_tracker.record_failure(peer.ip());
             write_json_response(&mut stream, 401, r#"{"error":"missing_token"}"#)?;
             return Ok(());
         }
@@ -238,9 +355,13 @@ fn handle_connection(
     }
 
     if let Err(err) = token_mgr.validate(&token, now_bucket) {
+        auth_tracker.record_failure(peer.ip());
         write_json_response(&mut stream, 401, r#"{"error":"invalid_token"}"#)?;
         return Err(err);
     }
+
+    // Successful auth — clear any failure history for this IP
+    auth_tracker.clear_on_success(&peer.ip());
 
     let artifact = kernel.export_events_for_api(expected_ruleset_hash, cfg.export_options)?;
     if request.path == "/events/latest" {
@@ -311,14 +432,24 @@ fn write_response(
 ) -> Result<()> {
     let status_line = match status {
         200 => "HTTP/1.1 200 OK",
+        400 => "HTTP/1.1 400 Bad Request",
         401 => "HTTP/1.1 401 Unauthorized",
         403 => "HTTP/1.1 403 Forbidden",
         404 => "HTTP/1.1 404 Not Found",
         405 => "HTTP/1.1 405 Method Not Allowed",
+        429 => "HTTP/1.1 429 Too Many Requests",
         _ => "HTTP/1.1 500 Internal Server Error",
     };
+    // Security headers aligned with canary-vision/device-api/middleware/security-headers.js
     let header = format!(
-        "{status_line}\r\nContent-Type: {content_type}\r\nContent-Length: {len}\r\nCache-Control: no-store\r\n\r\n",
+        "{status_line}\r\n\
+         Content-Type: {content_type}\r\n\
+         Content-Length: {len}\r\n\
+         Cache-Control: no-store\r\n\
+         X-Content-Type-Options: nosniff\r\n\
+         X-Frame-Options: DENY\r\n\
+         Referrer-Policy: no-referrer\r\n\
+         \r\n",
         status_line = status_line,
         content_type = content_type,
         len = body.len()

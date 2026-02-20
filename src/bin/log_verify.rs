@@ -283,7 +283,7 @@ mod tests {
             ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
             kernel_version: env!("CARGO_PKG_VERSION").to_string(),
             retention: std::time::Duration::from_secs(60),
-            device_key_seed: "devkey:test".to_string(),
+            device_key_seed: "devkey:test:a1b2c3d4e5f6a7b8c9d0".to_string(),
             zone_policy: ZonePolicy::default(),
         })?;
         write_test_event(&mut kernel)?;
@@ -330,7 +330,7 @@ mod tests {
             ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
             kernel_version: env!("CARGO_PKG_VERSION").to_string(),
             retention: std::time::Duration::from_secs(60),
-            device_key_seed: "devkey:test".to_string(),
+            device_key_seed: "devkey:test:a1b2c3d4e5f6a7b8c9d0".to_string(),
             zone_policy: ZonePolicy::default(),
         })?;
         write_test_event(&mut kernel)?;
@@ -355,7 +355,7 @@ mod tests {
             ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
             kernel_version: env!("CARGO_PKG_VERSION").to_string(),
             retention: std::time::Duration::from_secs(60),
-            device_key_seed: "devkey:test".to_string(),
+            device_key_seed: "devkey:test:a1b2c3d4e5f6a7b8c9d0".to_string(),
             zone_policy: ZonePolicy::default(),
         })?;
         write_test_event(&mut kernel)?;
@@ -389,7 +389,7 @@ mod tests {
             ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
             kernel_version: env!("CARGO_PKG_VERSION").to_string(),
             retention: std::time::Duration::from_secs(60),
-            device_key_seed: "devkey:test".to_string(),
+            device_key_seed: "devkey:test:a1b2c3d4e5f6a7b8c9d0".to_string(),
             zone_policy: ZonePolicy::default(),
         })?;
         write_test_event(&mut kernel)?;
@@ -425,7 +425,7 @@ mod tests {
             ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
             kernel_version: env!("CARGO_PKG_VERSION").to_string(),
             retention: std::time::Duration::from_secs(60),
-            device_key_seed: "devkey:test".to_string(),
+            device_key_seed: "devkey:test:a1b2c3d4e5f6a7b8c9d0".to_string(),
             zone_policy: ZonePolicy::default(),
         })?;
 
@@ -480,7 +480,7 @@ mod tests {
             ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
             kernel_version: env!("CARGO_PKG_VERSION").to_string(),
             retention: std::time::Duration::from_secs(60),
-            device_key_seed: "devkey:test".to_string(),
+            device_key_seed: "devkey:test:a1b2c3d4e5f6a7b8c9d0".to_string(),
             zone_policy: ZonePolicy::default(),
         })?;
 
@@ -534,7 +534,7 @@ mod tests {
             ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
             kernel_version: env!("CARGO_PKG_VERSION").to_string(),
             retention: std::time::Duration::from_secs(60),
-            device_key_seed: "devkey:test".to_string(),
+            device_key_seed: "devkey:test:a1b2c3d4e5f6a7b8c9d0".to_string(),
             zone_policy: ZonePolicy::default(),
         })?;
 

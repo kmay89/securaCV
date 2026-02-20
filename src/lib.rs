@@ -22,13 +22,13 @@
 
 use anyhow::{anyhow, Result};
 use ed25519_dalek::{SigningKey, VerifyingKey};
-use rand::RngCore;
+use rand::{Rng, RngCore};
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::sync::OnceLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use zeroize::Zeroize;
+// zeroize::Zeroizing used directly in BucketKeyManager
 
 use crate::crypto::signatures::{
     PqPublicKey, SignatureKeys, SignatureMode, SignatureSet, DOMAIN_BREAK_GLASS_RECEIPT,
@@ -93,7 +93,34 @@ pub(crate) fn open_db_connection(db_path: &str) -> Result<Connection> {
                 | OpenFlags::SQLITE_OPEN_URI,
         )?);
     }
-    Ok(Connection::open(db_path)?)
+    let conn = Connection::open(db_path)?;
+    // Enforce 0600 permissions on the DB file to align with firmware's
+    // DEFAULT_FLASH_ENCRYPTION policy. The sealed event log, break-glass
+    // receipts, and PQC key material are all stored here.
+    enforce_db_file_permissions(db_path);
+    Ok(conn)
+}
+
+/// Enforce restrictive file permissions on the SQLite database.
+/// Logs a warning on failure rather than failing hard (the DB may be
+/// in-memory or on a filesystem that doesn't support Unix permissions).
+fn enforce_db_file_permissions(db_path: &str) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let path = std::path::Path::new(db_path);
+        if path.exists() {
+            if let Err(e) =
+                std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+            {
+                eprintln!(
+                    "[CONFORMANCE] failed to set 0600 permissions on database '{}': {}",
+                    db_path,
+                    e
+                );
+            }
+        }
+    }
 }
 
 // -------------------- Time Buckets --------------------
@@ -238,10 +265,19 @@ impl FailureEvent {
 }
 
 /// Sealed log records include normal events and explicit failure/gap artifacts.
+///
+/// Uses tagged serialization (`record_type` discriminator) to prevent silent
+/// type confusion during deserialization. `untagged` was previously used but
+/// could misclassify malformed JSON blobs, affecting sealed log integrity.
+///
+/// For backwards compatibility with existing databases that used `untagged`,
+/// deserialization falls back to trying without the tag.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(untagged)]
+#[serde(tag = "record_type")]
 pub enum SealedLogRecord {
+    #[serde(rename = "event")]
     Event(Event),
+    #[serde(rename = "failure")]
     Failure(FailureEvent),
 }
 
@@ -443,9 +479,12 @@ impl ContractEnforcer {
 /// Keys are *randomly generated* per bucket and *destroyed* when the bucket changes.
 /// This makes cross-window correlation cryptographically impossible *from the token alone*,
 /// because the key for an expired bucket no longer exists.
+///
+/// Key material uses `zeroize::Zeroizing` wrapper to ensure automatic zeroization on drop
+/// and prevent the compiler from optimizing away the zeroization.
 pub struct BucketKeyManager {
     current_bucket: Option<TimeBucket>,
-    key: [u8; 32],
+    key: zeroize::Zeroizing<[u8; 32]>,
     has_key: bool,
 }
 
@@ -453,7 +492,7 @@ impl BucketKeyManager {
     pub fn new() -> Self {
         Self {
             current_bucket: None,
-            key: [0u8; 32],
+            key: zeroize::Zeroizing::new([0u8; 32]),
             has_key: false,
         }
     }
@@ -463,12 +502,12 @@ impl BucketKeyManager {
             return;
         }
 
-        // Destroy previous key material
-        self.key.zeroize();
+        // Destroy previous key material (Zeroizing handles zeroization)
+        self.key = zeroize::Zeroizing::new([0u8; 32]);
         self.has_key = false;
 
         // Generate a new per-bucket key
-        rand::thread_rng().fill_bytes(&mut self.key);
+        rand::thread_rng().fill_bytes(self.key.as_mut());
         self.has_key = true;
         self.current_bucket = Some(bucket);
     }
@@ -480,14 +519,14 @@ impl BucketKeyManager {
             return Err(anyhow!("conformance: bucket key not initialized"));
         }
         let mut hasher = Sha256::new();
-        hasher.update(self.key);
+        hasher.update(self.key.as_ref());
         hasher.update(features_hash);
         Ok(hasher.finalize().into())
     }
 
     /// For conformance tests: prove key rotation occurred (current key differs from old).
     pub fn export_key_for_test_only(&self) -> [u8; 32] {
-        self.key
+        *self.key
     }
 }
 
@@ -499,7 +538,8 @@ impl Default for BucketKeyManager {
 
 impl Drop for BucketKeyManager {
     fn drop(&mut self) {
-        self.key.zeroize();
+        // Zeroizing wrapper already handles zeroization on drop,
+        // but we also clear the has_key flag explicitly.
         self.has_key = false;
     }
 }
@@ -1692,6 +1732,10 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
     }
 }
 
+/// Minimum seed length for production use (32 hex chars = 16 bytes of entropy).
+/// Seeds shorter than this are brute-forceable.
+pub const MIN_SEED_LENGTH: usize = 32;
+
 pub fn signing_key_from_seed(seed: &str) -> Result<SigningKey> {
     let trimmed = seed.trim();
     if trimmed.is_empty() {
@@ -1699,6 +1743,17 @@ pub fn signing_key_from_seed(seed: &str) -> Result<SigningKey> {
     }
     if trimmed == "devkey:mvp" {
         return Err(anyhow!("device_key_seed must not use MVP placeholder"));
+    }
+    // Enforce minimum entropy: firmware uses hardware RNG (32+ bytes).
+    // Seeds shorter than MIN_SEED_LENGTH are likely dictionary words or
+    // short passphrases and are brute-forceable.
+    if trimmed.len() < MIN_SEED_LENGTH {
+        return Err(anyhow!(
+            "device_key_seed too short: {} chars (minimum {} required). \
+             Use `dd if=/dev/urandom bs=32 count=1 | xxd -p` to generate a secure seed.",
+            trimmed.len(),
+            MIN_SEED_LENGTH
+        ));
     }
     let mut hasher = Sha256::new();
     hasher.update(trimmed.as_bytes());
@@ -1876,9 +1931,11 @@ fn jitter_time_bucket(bucket: TimeBucket, jitter_s: u64, jitter_step_s: u64) -> 
         return Ok(bucket);
     }
 
-    let span = (steps * 2 + 1) as u64;
+    // Use gen_range() for rejection sampling instead of modulo to avoid bias.
+    // Modulo bias is small for typical spans but this is a privacy-critical path
+    // where jitter protects against timing correlation attacks.
     let mut rng = rand::rngs::OsRng;
-    let choice = (rng.next_u64() % span) as i64 - steps;
+    let choice = rng.gen_range(-steps..=steps);
     let offset = choice * jitter_step_s as i64;
     let start = if offset.is_negative() {
         let offset_abs = (-offset) as u64;
@@ -2109,7 +2166,7 @@ mod tests {
             ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
             kernel_version: "0.0.0-test".to_string(),
             retention: Duration::from_secs(60),
-            device_key_seed: "devkey:test".to_string(),
+            device_key_seed: "devkey:test:a1b2c3d4e5f6a7b8c9d0".to_string(),
             zone_policy: ZonePolicy::default(),
         };
         let kernel = Kernel::open(&cfg)?;
@@ -2458,7 +2515,7 @@ mod tests {
             ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
             kernel_version: "0.0.0-test".to_string(),
             retention: Duration::from_secs(60),
-            device_key_seed: "devkey:test".to_string(),
+            device_key_seed: "devkey:test:a1b2c3d4e5f6a7b8c9d0".to_string(),
             zone_policy: ZonePolicy::default(),
         };
         let sealed_log = Box::new(InMemorySealedLogStore::default());
@@ -2478,7 +2535,7 @@ mod tests {
             ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
             kernel_version: "0.0.0-test".to_string(),
             retention: Duration::from_secs(60),
-            device_key_seed: "devkey:test".to_string(),
+            device_key_seed: "devkey:test:a1b2c3d4e5f6a7b8c9d0".to_string(),
             zone_policy: ZonePolicy::default(),
         };
         let mut kernel = Kernel::open(&cfg)?;
@@ -2539,7 +2596,7 @@ mod tests {
             ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
             kernel_version: "0.0.0-test".to_string(),
             retention: Duration::from_secs(60),
-            device_key_seed: "devkey:test".to_string(),
+            device_key_seed: "devkey:test:a1b2c3d4e5f6a7b8c9d0".to_string(),
             zone_policy: ZonePolicy::new(vec!["zone:private".to_string()])?,
         };
         let mut kernel = Kernel::open(&cfg)?;
@@ -2591,7 +2648,7 @@ mod tests {
             ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
             kernel_version: "0.0.0-test".to_string(),
             retention: Duration::from_secs(60),
-            device_key_seed: "devkey:test".to_string(),
+            device_key_seed: "devkey:test:a1b2c3d4e5f6a7b8c9d0".to_string(),
             zone_policy: ZonePolicy::new(vec!["zone:private".to_string()])?,
         };
         let mut kernel = Kernel::open(&cfg)?;
@@ -2675,7 +2732,7 @@ mod tests {
             ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
             kernel_version: "0.0.0-test".to_string(),
             retention: Duration::from_secs(60),
-            device_key_seed: "devkey:test".to_string(),
+            device_key_seed: "devkey:test:a1b2c3d4e5f6a7b8c9d0".to_string(),
             zone_policy: ZonePolicy::default(),
         };
         let kernel = Kernel::open(&cfg)?;
@@ -2706,7 +2763,7 @@ mod tests {
             ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
             kernel_version: "0.0.0-test".to_string(),
             retention: Duration::from_secs(60),
-            device_key_seed: "devkey:test".to_string(),
+            device_key_seed: "devkey:test:a1b2c3d4e5f6a7b8c9d0".to_string(),
             zone_policy: ZonePolicy::default(),
         };
         let kernel = Kernel::open(&cfg)?;

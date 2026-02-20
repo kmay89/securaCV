@@ -16,7 +16,7 @@ fn setup_test_kernel() -> (Kernel, KernelConfig) {
         ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:hardening_test"),
         kernel_version: "0.0.0-test".to_string(),
         retention: Duration::from_secs(60),
-        device_key_seed: "devkey:hardening_test".to_string(),
+        device_key_seed: "devkey:hardening_test:a1b2c3d4e5f6".to_string(),
         zone_policy: ZonePolicy::default(),
     };
     let kernel = Kernel::open(&cfg).expect("open kernel");
@@ -324,7 +324,7 @@ fn kernel_device_key_is_derived_from_seed() {
         ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
         kernel_version: "0.0.0-test".to_string(),
         retention: Duration::from_secs(60),
-        device_key_seed: "seed_one".to_string(),
+        device_key_seed: "seed_one:a1b2c3d4e5f6a7b8c9d0e1".to_string(),
         zone_policy: ZonePolicy::default(),
     };
 
@@ -334,7 +334,7 @@ fn kernel_device_key_is_derived_from_seed() {
         ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
         kernel_version: "0.0.0-test".to_string(),
         retention: Duration::from_secs(60),
-        device_key_seed: "seed_two".to_string(),
+        device_key_seed: "seed_two:a1b2c3d4e5f6a7b8c9d0e1".to_string(),
         zone_policy: ZonePolicy::default(),
     };
 
@@ -517,4 +517,139 @@ fn export_returns_events_for_matching_ruleset() {
         .sum();
 
     assert_eq!(total, 10, "Should export all events for matching ruleset");
+}
+
+// ==================== Invariant II: No Identity Substrate — Additional Conformance ====================
+
+/// Assert that ExportEvent contains ONLY the allowed fields.
+/// This prevents accidental addition of identity-related fields.
+#[test]
+fn export_event_has_no_identity_fields() {
+    let (mut kernel, cfg) = setup_test_kernel();
+    add_events(&mut kernel, &cfg, 1);
+
+    let artifact = kernel
+        .export_events_for_api(cfg.ruleset_hash, ExportOptions::default())
+        .expect("export");
+
+    let event = &artifact.batches[0].buckets[0].events[0];
+    let json = serde_json::to_value(event).expect("serialize");
+    let obj = json.as_object().expect("json object");
+
+    // Allowlist of fields that may appear in ExportEvent
+    let allowed_fields: Vec<&str> = vec![
+        "event_type",
+        "time_bucket",
+        "zone_id",
+        "confidence",
+        "kernel_version",
+        "ruleset_id",
+        "ruleset_hash",
+    ];
+
+    for key in obj.keys() {
+        assert!(
+            allowed_fields.contains(&key.as_str()),
+            "ExportEvent contains unexpected field '{}' which may leak identity data",
+            key
+        );
+    }
+
+    // Explicitly verify no identity-like fields
+    assert!(!obj.contains_key("correlation_token"), "correlation_token must not appear in export");
+    assert!(!obj.contains_key("created_at"), "created_at must not appear in export");
+    assert!(!obj.contains_key("mac_address"), "mac_address must not appear in export");
+    assert!(!obj.contains_key("ip_address"), "ip_address must not appear in export");
+    assert!(!obj.contains_key("device_id"), "device_id must not appear in export");
+    assert!(!obj.contains_key("face_embedding"), "face_embedding must not appear in export");
+    assert!(!obj.contains_key("plate_number"), "plate_number must not appear in export");
+}
+
+/// Assert that zone_id validation rejects anything that looks like GPS coordinates.
+#[test]
+fn zone_id_rejects_gps_coordinates() {
+    let (mut kernel, cfg) = setup_test_kernel();
+    let desc = make_module_descriptor();
+
+    let gps_like_zone_ids = [
+        "41.5,-81.6",
+        "lat=41.5,lon=-81.6",
+        "N41.5W81.6",
+        "41°30'N",
+        "zone:41.5",        // looks like coordinate embedded in zone format
+    ];
+
+    for zone_id in gps_like_zone_ids {
+        let bucket = TimeBucket::now(600).expect("time bucket");
+        let candidate = CandidateEvent {
+            event_type: EventType::BoundaryCrossingObjectLarge,
+            time_bucket: bucket,
+            zone_id: zone_id.to_string(),
+            confidence: 0.8,
+            correlation_token: None,
+        };
+        let result = kernel.append_event_checked(
+            &desc,
+            candidate,
+            &cfg.kernel_version,
+            &cfg.ruleset_id,
+            cfg.ruleset_hash,
+        );
+        assert!(
+            result.is_err(),
+            "Zone ID '{}' should be rejected (looks like GPS coordinates)",
+            zone_id
+        );
+    }
+}
+
+/// Assert that no GPS/latitude/longitude data appears in export artifacts.
+#[test]
+fn export_contains_no_gps_data() {
+    let (mut kernel, cfg) = setup_test_kernel();
+    add_events(&mut kernel, &cfg, 5);
+
+    let artifact = kernel
+        .export_events_for_api(cfg.ruleset_hash, ExportOptions::default())
+        .expect("export");
+
+    let json_str = serde_json::to_string(&artifact).expect("serialize artifact");
+
+    // Ensure no GPS-related keywords appear in the serialized export
+    let forbidden_patterns = ["latitude", "longitude", "lat", "lon", "gps", "coord"];
+    for pattern in forbidden_patterns {
+        assert!(
+            !json_str.to_lowercase().contains(pattern),
+            "Export artifact contains forbidden GPS-related pattern: '{}'",
+            pattern
+        );
+    }
+}
+
+// ==================== Signing Key Seed Entropy Enforcement ====================
+
+#[test]
+fn signing_key_rejects_short_seed() {
+    // Seeds shorter than MIN_SEED_LENGTH (32) should be rejected
+    let result = witness_kernel::signing_key_from_seed("short_seed");
+    assert!(result.is_err(), "Short seed should be rejected");
+    assert!(
+        result.unwrap_err().to_string().contains("too short"),
+        "Error should mention seed is too short"
+    );
+}
+
+#[test]
+fn signing_key_accepts_long_enough_seed() {
+    // A 32+ char hex seed should be accepted
+    let long_seed = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6";
+    assert_eq!(long_seed.len(), 32);
+    let result = witness_kernel::signing_key_from_seed(long_seed);
+    assert!(result.is_ok(), "Seed of length 32 should be accepted");
+}
+
+#[test]
+fn signing_key_rejects_mvp_placeholder() {
+    let result = witness_kernel::signing_key_from_seed("devkey:mvp");
+    assert!(result.is_err(), "MVP placeholder should be rejected");
 }

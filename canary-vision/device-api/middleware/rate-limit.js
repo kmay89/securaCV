@@ -4,10 +4,13 @@ function rateLimit(options = {}) {
   const generalLimit = options.generalLimit || 30;
   const generalWindowMs = options.generalWindowMs || 60000;
   const authFailLimit = options.authFailLimit || 5;
-  const authLockoutMs = options.authLockoutMs || 60000;
+  // Exponential backoff aligned with firmware's DEFAULT_AUTH_LOCKOUT_BASE_SEC=2
+  // and DEFAULT_AUTH_LOCKOUT_CAP_SEC=300.
+  const authLockoutBaseMs = options.authLockoutBaseMs || 2000;
+  const authLockoutCapMs = options.authLockoutCapMs || 300000;
   const maxEntries = options.maxEntries || 64;
 
-  // Map<ip, { requests: [{ts}], authFailures: [{ts}], lockedUntil: number }>
+  // Map<ip, { requests: [{ts}], authFailures: [{ts}], lockedUntil: number, lockoutCount: number }>
   const ipMap = new Map();
 
   function getEntry(ip) {
@@ -17,7 +20,7 @@ function rateLimit(options = {}) {
         const oldestKey = ipMap.keys().next().value;
         ipMap.delete(oldestKey);
       }
-      ipMap.set(ip, { requests: [], authFailures: [], lockedUntil: 0 });
+      ipMap.set(ip, { requests: [], authFailures: [], lockedUntil: 0, lockoutCount: 0 });
     }
     // Move to end (most recently used)
     const entry = ipMap.get(ip);
@@ -44,14 +47,15 @@ function rateLimit(options = {}) {
       res.setHeader('Retry-After', String(retryAfter));
       return res.status(429).json({
         error: 'auth_locked',
-        message: 'Too many authentication failures. Locked for 60 seconds.',
+        message: `Too many authentication failures. Locked for ${retryAfter} seconds.`,
         retry_after: retryAfter,
       });
     }
 
     // Clean up expired entries
     cleanup(entry.requests, generalWindowMs);
-    cleanup(entry.authFailures, authLockoutMs);
+    // Use cap window for auth failure cleanup so lockout history persists
+    cleanup(entry.authFailures, authLockoutCapMs);
 
     // Check general rate limit
     if (entry.requests.length >= generalLimit) {
@@ -68,11 +72,20 @@ function rateLimit(options = {}) {
     // Track request
     entry.requests.push(now);
 
-    // Expose a method to record auth failures
+    // Expose a method to record auth failures with exponential backoff.
+    // Firmware pattern: DEFAULT_AUTH_LOCKOUT_BASE_SEC * 2^(lockoutCount)
+    // capped at DEFAULT_AUTH_LOCKOUT_CAP_SEC.
     res.recordAuthFailure = () => {
       entry.authFailures.push(Date.now());
       if (entry.authFailures.length >= authFailLimit) {
-        entry.lockedUntil = Date.now() + authLockoutMs;
+        entry.lockoutCount++;
+        const lockoutMs = Math.min(
+          authLockoutBaseMs * Math.pow(2, entry.lockoutCount - 1),
+          authLockoutCapMs
+        );
+        entry.lockedUntil = Date.now() + lockoutMs;
+        // Clear failure count to start fresh after lockout
+        entry.authFailures = [];
       }
     };
 

@@ -6,6 +6,13 @@
    ======================================================================== */
 
 // --------------- Storage ---------------
+// Security: Tokens are held in session-only memory (sessionTokens map).
+// Only non-sensitive device metadata is persisted to localStorage.
+// This prevents XSS or malicious extensions from exfiltrating tokens
+// via localStorage.getItem(). Tokens are lost on tab close, which is
+// acceptable because the provisioning receipt flow supports re-entry.
+
+var sessionTokens = {};
 
 var CanaryStorage = {
   KEY: 'canary_devices',
@@ -13,14 +20,30 @@ var CanaryStorage = {
   getDevices: function () {
     try {
       var raw = localStorage.getItem(CanaryStorage.KEY);
-      return raw ? JSON.parse(raw) : [];
+      var devices = raw ? JSON.parse(raw) : [];
+      // Rehydrate tokens from session memory
+      for (var i = 0; i < devices.length; i++) {
+        if (sessionTokens[devices[i].id]) {
+          devices[i].token = sessionTokens[devices[i].id];
+        }
+      }
+      return devices;
     } catch (e) {
       return [];
     }
   },
 
   saveDevices: function (devices) {
-    localStorage.setItem(CanaryStorage.KEY, JSON.stringify(devices));
+    // Strip tokens before persisting to localStorage
+    var sanitized = devices.map(function (d) {
+      var copy = Object.assign({}, d);
+      if (copy.token) {
+        sessionTokens[copy.id] = copy.token;
+        delete copy.token;
+      }
+      return copy;
+    });
+    localStorage.setItem(CanaryStorage.KEY, JSON.stringify(sanitized));
   },
 
   getDevice: function (id) {
@@ -32,12 +55,20 @@ var CanaryStorage = {
   },
 
   addDevice: function (device) {
+    // Store token in session memory
+    if (device.token) {
+      sessionTokens[device.id] = device.token;
+    }
     var devices = CanaryStorage.getDevices();
     devices.push(device);
     CanaryStorage.saveDevices(devices);
   },
 
   updateDevice: function (id, updates) {
+    // Capture token update in session memory
+    if (updates.token) {
+      sessionTokens[id] = updates.token;
+    }
     var devices = CanaryStorage.getDevices();
     for (var i = 0; i < devices.length; i++) {
       if (devices[i].id === id) {
@@ -49,6 +80,7 @@ var CanaryStorage = {
   },
 
   removeDevice: function (id) {
+    delete sessionTokens[id];
     var devices = CanaryStorage.getDevices();
     CanaryStorage.saveDevices(devices.filter(function (d) { return d.id !== id; }));
   }
