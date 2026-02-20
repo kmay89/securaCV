@@ -324,7 +324,7 @@ fn kernel_device_key_is_derived_from_seed() {
         ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
         kernel_version: "0.0.0-test".to_string(),
         retention: Duration::from_secs(60),
-        device_key_seed: "seed_one:a1b2c3d4e5f6a7b8c9d0e1".to_string(),
+        device_key_seed: "seed_one:a1b2c3d4e5f6a7b8c9d0e1f2".to_string(),
         zone_policy: ZonePolicy::default(),
     };
 
@@ -334,7 +334,7 @@ fn kernel_device_key_is_derived_from_seed() {
         ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
         kernel_version: "0.0.0-test".to_string(),
         retention: Duration::from_secs(60),
-        device_key_seed: "seed_two:a1b2c3d4e5f6a7b8c9d0e1".to_string(),
+        device_key_seed: "seed_two:a1b2c3d4e5f6a7b8c9d0e1f2".to_string(),
         zone_policy: ZonePolicy::default(),
     };
 
