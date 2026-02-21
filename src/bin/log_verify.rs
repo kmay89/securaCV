@@ -54,6 +54,9 @@ struct Args {
     /// Path to file containing PQ public key (hex-encoded)
     #[arg(long, value_name = "PATH", conflicts_with = "pq_public_key")]
     pq_public_key_file: Option<String>,
+    /// SQLCipher database encryption key (hex-encoded, 32 bytes)
+    #[arg(long, value_name = "HEX", env = "SECURACV_DB_KEY")]
+    db_key: Option<String>,
 }
 
 #[derive(ValueEnum, Clone, Debug)]
@@ -79,7 +82,11 @@ fn main() -> Result<()> {
     let ui = ui::Ui::from_args(Some(&args.ui), is_tty, !stdout_is_tty);
     let conn = {
         let _stage = ui.stage("Open database");
-        Connection::open(&args.db)?
+        let conn = Connection::open(&args.db)?;
+        if let Some(ref key) = args.db_key {
+            conn.pragma_update(None, "key", &format!("x'{}'", key))?;
+        }
+        conn
     };
     let verifying_key = {
         let _stage = ui.stage("Load verifying key");
@@ -222,10 +229,21 @@ mod tests {
     use std::path::{Path, PathBuf};
     use witness_kernel::crypto::signatures::SignatureMode;
     use witness_kernel::{
-        Approval, BreakGlass, CandidateEvent, EventType, InferenceBackend, Kernel, KernelConfig,
-        ModuleDescriptor, QuorumPolicy, TimeBucket, TrusteeEntry, TrusteeId, UnlockRequest,
-        ZonePolicy,
+        derive_db_encryption_key, signing_key_from_seed, Approval, BreakGlass, CandidateEvent,
+        EventType, InferenceBackend, Kernel, KernelConfig, ModuleDescriptor, QuorumPolicy,
+        TimeBucket, TrusteeEntry, TrusteeId, UnlockRequest, ZonePolicy,
     };
+
+    const TEST_SEED: &str = "devkey:test:a1b2c3d4e5f6a7b8c9d0";
+
+    fn open_encrypted_test_db(path: &Path) -> Connection {
+        let signing_key = signing_key_from_seed(TEST_SEED).unwrap();
+        let db_key = derive_db_encryption_key(&signing_key);
+        let conn = Connection::open(path).unwrap();
+        conn.pragma_update(None, "key", &format!("x'{}'", &*db_key))
+            .unwrap();
+        conn
+    }
 
     struct TempDb {
         path: PathBuf,
@@ -283,14 +301,14 @@ mod tests {
             ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
             kernel_version: env!("CARGO_PKG_VERSION").to_string(),
             retention: std::time::Duration::from_secs(60),
-            device_key_seed: "devkey:test:a1b2c3d4e5f6a7b8c9d0".to_string(),
+            device_key_seed: TEST_SEED.to_string(),
             zone_policy: ZonePolicy::default(),
         })?;
         write_test_event(&mut kernel)?;
         let public_key_hex = hex::encode(kernel.device_key_for_verify_only());
         drop(kernel);
 
-        let conn = Connection::open(db.path())?;
+        let conn = open_encrypted_test_db(db.path());
         let verifying_key = load_verifying_key(&conn, Some(&public_key_hex), None)?;
         let checkpoint = verify::latest_checkpoint(&conn)?;
         verify::verify_events_with(
@@ -330,7 +348,7 @@ mod tests {
             ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
             kernel_version: env!("CARGO_PKG_VERSION").to_string(),
             retention: std::time::Duration::from_secs(60),
-            device_key_seed: "devkey:test:a1b2c3d4e5f6a7b8c9d0".to_string(),
+            device_key_seed: TEST_SEED.to_string(),
             zone_policy: ZonePolicy::default(),
         })?;
         write_test_event(&mut kernel)?;
@@ -339,7 +357,7 @@ mod tests {
             .execute("DELETE FROM device_metadata WHERE id = 1", [])?;
         drop(kernel);
 
-        let conn = Connection::open(db.path())?;
+        let conn = open_encrypted_test_db(db.path());
         let result = load_verifying_key(&conn, None, None);
         assert!(result.is_err());
 
@@ -355,7 +373,7 @@ mod tests {
             ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
             kernel_version: env!("CARGO_PKG_VERSION").to_string(),
             retention: std::time::Duration::from_secs(60),
-            device_key_seed: "devkey:test:a1b2c3d4e5f6a7b8c9d0".to_string(),
+            device_key_seed: TEST_SEED.to_string(),
             zone_policy: ZonePolicy::default(),
         })?;
         write_test_event(&mut kernel)?;
@@ -364,7 +382,7 @@ mod tests {
         let wrong_signing_key = SigningKey::from_bytes(&[42u8; 32]);
         let public_key_hex = hex::encode(wrong_signing_key.verifying_key().to_bytes());
 
-        let conn = Connection::open(db.path())?;
+        let conn = open_encrypted_test_db(db.path());
         let verifying_key = load_verifying_key(&conn, Some(&public_key_hex), None)?;
         let checkpoint = verify::latest_checkpoint(&conn)?;
         let result = verify::verify_events_with(
@@ -389,7 +407,7 @@ mod tests {
             ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
             kernel_version: env!("CARGO_PKG_VERSION").to_string(),
             retention: std::time::Duration::from_secs(60),
-            device_key_seed: "devkey:test:a1b2c3d4e5f6a7b8c9d0".to_string(),
+            device_key_seed: TEST_SEED.to_string(),
             zone_policy: ZonePolicy::default(),
         })?;
         write_test_event(&mut kernel)?;
@@ -400,7 +418,7 @@ mod tests {
         let public_key_hex = hex::encode(kernel.device_key_for_verify_only());
         drop(kernel);
 
-        let conn = Connection::open(db.path())?;
+        let conn = open_encrypted_test_db(db.path());
         let verifying_key = load_verifying_key(&conn, Some(&public_key_hex), None)?;
         let checkpoint = verify::latest_checkpoint(&conn)?;
         let result = verify::verify_events_with(
@@ -425,7 +443,7 @@ mod tests {
             ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
             kernel_version: env!("CARGO_PKG_VERSION").to_string(),
             retention: std::time::Duration::from_secs(60),
-            device_key_seed: "devkey:test:a1b2c3d4e5f6a7b8c9d0".to_string(),
+            device_key_seed: TEST_SEED.to_string(),
             zone_policy: ZonePolicy::default(),
         })?;
 
@@ -455,7 +473,7 @@ mod tests {
         let public_key_hex = hex::encode(kernel.device_key_for_verify_only());
         drop(kernel);
 
-        let conn = Connection::open(db.path())?;
+        let conn = open_encrypted_test_db(db.path());
         let verifying_key = load_verifying_key(&conn, Some(&public_key_hex), None)?;
         let policy = verify::load_break_glass_policy(&conn)?;
         let result = verify::verify_break_glass_receipts_with(
@@ -480,7 +498,7 @@ mod tests {
             ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
             kernel_version: env!("CARGO_PKG_VERSION").to_string(),
             retention: std::time::Duration::from_secs(60),
-            device_key_seed: "devkey:test:a1b2c3d4e5f6a7b8c9d0".to_string(),
+            device_key_seed: TEST_SEED.to_string(),
             zone_policy: ZonePolicy::default(),
         })?;
 
@@ -509,7 +527,7 @@ mod tests {
         let public_key_hex = hex::encode(kernel.device_key_for_verify_only());
         drop(kernel);
 
-        let conn = Connection::open(db.path())?;
+        let conn = open_encrypted_test_db(db.path());
         let verifying_key = load_verifying_key(&conn, Some(&public_key_hex), None)?;
         let policy = verify::load_break_glass_policy(&conn)?;
         let result = verify::verify_break_glass_receipts_with(
@@ -534,7 +552,7 @@ mod tests {
             ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
             kernel_version: env!("CARGO_PKG_VERSION").to_string(),
             retention: std::time::Duration::from_secs(60),
-            device_key_seed: "devkey:test:a1b2c3d4e5f6a7b8c9d0".to_string(),
+            device_key_seed: TEST_SEED.to_string(),
             zone_policy: ZonePolicy::default(),
         })?;
 
@@ -563,7 +581,7 @@ mod tests {
         let public_key_hex = hex::encode(kernel.device_key_for_verify_only());
         drop(kernel);
 
-        let conn = Connection::open(db.path())?;
+        let conn = open_encrypted_test_db(db.path());
         let verifying_key = load_verifying_key(&conn, Some(&public_key_hex), None)?;
         let policy = verify::load_break_glass_policy(&conn)?;
         let result = verify::verify_break_glass_receipts_with(

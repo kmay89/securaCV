@@ -4,7 +4,10 @@ use std::collections::HashSet;
 use std::time::Duration;
 
 use crate::crypto::signatures::{SignatureKeys, DOMAIN_CHECKPOINT, DOMAIN_SEALED_LOG_ENTRY};
-use crate::{hash_entry, now_s, open_db_connection, sign_entry, ReprocessGuard, SealedLogRecord};
+use crate::{
+    hash_entry, now_s, open_db_connection, open_db_connection_with_key, sign_entry,
+    ReprocessGuard, SealedLogRecord,
+};
 
 pub trait SealedLogStore {
     fn append_record(
@@ -34,6 +37,13 @@ pub struct SqliteSealedLogStore {
 impl SqliteSealedLogStore {
     pub fn open(db_path: &str) -> Result<Self> {
         let conn = open_db_connection(db_path)?;
+        let mut store = Self { conn };
+        store.ensure_schema()?;
+        Ok(store)
+    }
+
+    pub fn open_with_key(db_path: &str, encryption_key: Option<&str>) -> Result<Self> {
+        let conn = open_db_connection_with_key(db_path, encryption_key)?;
         let mut store = Self { conn };
         store.ensure_schema()?;
         Ok(store)
