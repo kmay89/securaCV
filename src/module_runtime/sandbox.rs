@@ -210,6 +210,7 @@ mod linux {
         if len > MAX_SANDBOX_PAYLOAD {
             unsafe {
                 close(fds[0]);
+                libc::kill(pid, libc::SIGKILL);
                 waitpid(pid, std::ptr::null_mut(), 0);
             }
             return Err(anyhow!(
