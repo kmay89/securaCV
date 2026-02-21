@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::Duration;
+use subtle::ConstantTimeEq;
 
 #[cfg(feature = "pqc-tls")]
 use std::io::{BufReader, BufWriter};
@@ -127,7 +128,11 @@ impl CapabilityTokenManager {
             return Err(anyhow!("capability token expired"));
         }
         let presented = parse_hex32(presented)?;
-        if presented != self.token {
+        // SECURITY: Use constant-time comparison to prevent timing side-channel
+        // attacks that could leak token bytes. The `!=` operator on byte arrays
+        // short-circuits on the first differing byte, enabling byte-by-byte
+        // extraction via response-time measurement.
+        if presented.ct_eq(&self.token).unwrap_u8() != 1 {
             return Err(anyhow!("capability token invalid"));
         }
         Ok(())
@@ -366,12 +371,12 @@ fn handle_connection(
         if let Some(path) = &cfg.token_path {
             write_token_file(path, &token_mgr.token_hex())?;
         } else {
+            // SECURITY: Never log the token value, even to stderr.
+            // Token material in logs can be captured by log aggregators,
+            // process monitors, or shell history. Require explicit file path.
             log::warn!(
-                "event api capability token rotated; configure WITNESS_API_TOKEN_PATH to persist"
-            );
-            log::warn!(
-                "event api capability token (handle securely): {}",
-                token_mgr.token_hex()
+                "event api capability token rotated but WITNESS_API_TOKEN_PATH not set; \
+                 new token is NOT accessible — configure the path to persist tokens"
             );
         }
     }
@@ -471,6 +476,7 @@ fn write_response(
          X-Content-Type-Options: nosniff\r\n\
          X-Frame-Options: DENY\r\n\
          Referrer-Policy: no-referrer\r\n\
+         Permissions-Policy: camera=(), microphone=(), geolocation=()\r\n\
          \r\n",
         status_line = status_line,
         content_type = content_type,

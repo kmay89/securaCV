@@ -199,9 +199,26 @@ mod linux {
 
         unsafe { close(fds[1]) };
 
+        // SECURITY: Cap IPC payload to prevent a malicious/corrupted child
+        // from sending a huge length value and causing OOM in the parent.
+        // 16 MiB is generous for any serialized sandbox response.
+        const MAX_SANDBOX_PAYLOAD: u64 = 16 * 1024 * 1024;
+
         let mut len_bytes = [0u8; 8];
         read_exact(fds[0], &mut len_bytes)?;
-        let len = u64::from_le_bytes(len_bytes) as usize;
+        let len = u64::from_le_bytes(len_bytes);
+        if len > MAX_SANDBOX_PAYLOAD {
+            unsafe {
+                close(fds[0]);
+                waitpid(pid, std::ptr::null_mut(), 0);
+            }
+            return Err(anyhow!(
+                "sandbox: response too large ({} bytes, max {})",
+                len,
+                MAX_SANDBOX_PAYLOAD
+            ));
+        }
+        let len = len as usize;
         let mut payload = vec![0u8; len];
         read_exact(fds[0], &mut payload)?;
         unsafe { close(fds[0]) };
