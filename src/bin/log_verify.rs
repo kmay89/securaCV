@@ -84,7 +84,7 @@ fn main() -> Result<()> {
         let _stage = ui.stage("Open database");
         let conn = Connection::open(&args.db)?;
         if let Some(ref key) = args.db_key {
-            conn.pragma_update(None, "key", &format!("x'{}'", key))?;
+            conn.pragma_update(None, "key", format!("x'{}'", key))?;
         }
         conn
     };
@@ -240,7 +240,7 @@ mod tests {
         let signing_key = signing_key_from_seed(TEST_SEED).unwrap();
         let db_key = derive_db_encryption_key(&signing_key);
         let conn = Connection::open(path).unwrap();
-        conn.pragma_update(None, "key", &format!("x'{}'", &*db_key))
+        conn.pragma_update(None, "key", format!("x'{}'", &*db_key))
             .unwrap();
         conn
     }

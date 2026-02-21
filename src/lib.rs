@@ -103,7 +103,7 @@ pub fn derive_db_encryption_key(signing_key: &SigningKey) -> Zeroizing<String> {
 
 /// Apply the SQLCipher encryption key to an open database connection.
 fn apply_sqlcipher_key(conn: &Connection, hex_key: &str) -> Result<()> {
-    conn.pragma_update(None, "key", &format!("x'{}'", hex_key))?;
+    conn.pragma_update(None, "key", format!("x'{}'", hex_key))?;
     // Verify the key works by reading a page
     conn.query_row("SELECT count(*) FROM sqlite_master", [], |_| Ok(()))
         .map_err(|_| {
