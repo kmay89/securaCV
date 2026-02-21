@@ -34,8 +34,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgstreamer1.0-0 \
   && rm -rf /var/lib/apt/lists/*
 
-RUN groupadd --system witness && \
-    useradd --system --gid witness --home-dir /data --no-create-home witness && \
+RUN groupadd --system --gid 1001 witness && \
+    useradd --system --uid 1001 --gid witness --home-dir /data --no-create-home witness && \
     mkdir -p /data && chown witness:witness /data
 
 WORKDIR /data

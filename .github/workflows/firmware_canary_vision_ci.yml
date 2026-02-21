@@ -4,11 +4,11 @@ on:
   push:
     branches: [ "main" ]
     paths:
-      - "firmware/canary_vision/**"
+      - "firmware/projects/canary-vision/**"
       - ".github/workflows/firmware_canary_vision_ci.yml"
   pull_request:
     paths:
-      - "firmware/canary_vision/**"
+      - "firmware/projects/canary-vision/**"
       - ".github/workflows/firmware_canary_vision_ci.yml"
 
 concurrency:
@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: firmware/canary_vision
+        working-directory: firmware/projects/canary-vision
 
     steps:
       - name: Checkout
@@ -36,7 +36,7 @@ jobs:
         with:
           path: |
             ~/.platformio
-          key: ${{ runner.os }}-pio-${{ hashFiles('firmware/canary_vision/platformio.ini') }}
+          key: ${{ runner.os }}-pio-${{ hashFiles('firmware/projects/canary-vision/platformio.ini') }}
           restore-keys: |
             ${{ runner.os }}-pio-
 
