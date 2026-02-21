@@ -4,11 +4,11 @@ on:
   push:
     branches: [ "main" ]
     paths:
-      - "firmware/canary_vision/**"
+      - "firmware/projects/canary-vision/**"
       - ".github/workflows/firmware_canary_vision_ci.yml"
   pull_request:
     paths:
-      - "firmware/canary_vision/**"
+      - "firmware/projects/canary-vision/**"
       - ".github/workflows/firmware_canary_vision_ci.yml"
 
 concurrency:
@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: firmware/canary_vision
+        working-directory: firmware/projects/canary-vision
 
     steps:
       - name: Checkout
@@ -36,7 +36,7 @@ jobs:
         with:
           path: |
             ~/.platformio
-          key: ${{ runner.os }}-pio-${{ hashFiles('firmware/canary_vision/platformio.ini') }}
+          key: ${{ runner.os }}-pio-${{ hashFiles('firmware/projects/canary-vision/platformio.ini') }}
           restore-keys: |
             ${{ runner.os }}-pio-
 
@@ -45,12 +45,21 @@ jobs:
           python -m pip install --upgrade pip
           pip install --upgrade platformio
 
-      - name: Provide CI secrets header (build-only)
+      - name: Generate CI secrets header (build-only, not from committed file)
         run: |
-          cp secrets/secrets.example.h secrets/secrets.h
+          cat > secrets/secrets.h << 'HEADER'
+          #pragma once
+          // Auto-generated for CI build verification only. Not for deployment.
+          #define WIFI_SSID "ci"
+          #define WIFI_PASS "ci"
+          #define MQTT_HOST "127.0.0.1"
+          #define MQTT_PORT 1883
+          #define MQTT_USER "ci"
+          #define MQTT_PASS "ci"
+          HEADER
 
 
       - name: PlatformIO build
         run: |
-          pio run
+          pio run -e canary-vision-default
 

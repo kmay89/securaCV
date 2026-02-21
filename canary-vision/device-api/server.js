@@ -79,13 +79,18 @@ function createApp(options = {}) {
 
 // Run as standalone server
 if (require.main === module) {
+  const fs = require('node:fs');
   const port = process.env.PORT || 3000;
   const dataDir = process.env.CANARY_DATA_DIR || path.join(__dirname, '..', '.data');
   const { app, state } = createApp({ devMode: true, deviceOverrides: { keyDir: dataDir } });
   app.listen(port, () => {
     console.log(`Canary Vision device-api listening on http://localhost:${port}`);
     console.log('Dev mode enabled (localhost allowed in Host validation)');
-    console.log(`API token: ${state.device.api_token}`);
+    // Write token to file instead of stdout to prevent log exposure
+    const tokenPath = path.join(dataDir, 'api_token');
+    fs.mkdirSync(dataDir, { recursive: true });
+    fs.writeFileSync(tokenPath, state.device.api_token + '\n', { mode: 0o600 });
+    console.log(`API token written to ${tokenPath}`);
   });
 }
 

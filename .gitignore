@@ -32,6 +32,7 @@ api_token
 .env
 .env.local
 secrets.h
+.device_key_seed
 # =============================== 
 # Firmware secrets (DO NOT COMMIT)
 # ===============================
