@@ -14,13 +14,23 @@ The SecuraCV container runs three binaries from this repo:
 
 ## Quickstart
 
-1) **Set a device key seed** (required by the kernel):
+1) **Create a device key seed** (stored as a Docker secret, never in environment):
 
 ```bash
-export DEVICE_KEY_SEED=$(openssl rand -hex 32)
+openssl rand -hex 32 > .device_key_seed
+chmod 600 .device_key_seed
 ```
 
-2) **Review the demo camera** in `frigate.yml` and replace the RTSP URL:
+2) **Set up MQTT credentials** (anonymous access is disabled by default):
+
+```bash
+# Start mosquitto first to create the password file
+docker compose up -d mosquitto
+docker compose exec mosquitto mosquitto_passwd -c /mosquitto/config/passwd securacv
+docker compose restart mosquitto
+```
+
+3) **Review the demo camera** in `frigate.yml` and replace the RTSP URL:
 
 ```yaml
 cameras:
@@ -32,16 +42,23 @@ cameras:
 
 Use a real RTSP source (camera, go2rtc, etc.) so Frigate can emit detections.
 
-3) **Start the stack**:
+4) **Start the stack**:
 
 ```bash
 docker compose up -d --build
 ```
 
-4) **Open the UIs**:
+5) **Open the UIs**:
 
 - Home Assistant: http://localhost:8123
 - Frigate: http://localhost:5000
+
+## Security Notes
+
+- **MQTT authentication** is required. Anonymous access is disabled in `mosquitto.conf`.
+- **Ports are bound to localhost** (`127.0.0.1`) by default to prevent network exposure.
+- **DEVICE_KEY_SEED** is loaded via Docker secrets (`/run/secrets/`), not environment variables.
+- For production, enable TLS on the MQTT broker (see comments in `mosquitto.conf`).
 
 ## What to expect
 
@@ -56,13 +73,12 @@ docker compose up -d --build
 From another terminal (requires `mosquitto_sub` installed locally):
 
 ```bash
-mosquitto_sub -h localhost -t 'frigate/events' -v
-mosquitto_sub -h localhost -t 'homeassistant/#' -v
-mosquitto_sub -h localhost -t 'witness/#' -v
+mosquitto_sub -h localhost -u securacv -P <password> -t 'frigate/events' -v
+mosquitto_sub -h localhost -u securacv -P <password> -t 'homeassistant/#' -v
+mosquitto_sub -h localhost -u securacv -P <password> -t 'witness/#' -v
 ```
 
 ## Notes
 
 - This setup keeps MQTT as the shared event bus across Frigate, SecuraCV, and Home Assistant.
 - The Frigate config disables recordings and snapshots to avoid storing raw media.
-- If you need MQTT authentication, edit `mosquitto.conf` and add credentials to the SecuraCV and Home Assistant MQTT configs.

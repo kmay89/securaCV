@@ -7,8 +7,9 @@ services:
     volumes:
       - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - mosquitto_data:/mosquitto/data
+      - mosquitto_config:/mosquitto/config
     ports:
-      - "1883:1883"
+      - "127.0.0.1:1883:1883"
 
   frigate:
     image: ghcr.io/blakeblackshear/frigate:stable
@@ -17,7 +18,7 @@ services:
       - mosquitto
     shm_size: "256mb"
     ports:
-      - "5000:5000"
+      - "127.0.0.1:5000:5000"
     volumes:
       - ./frigate.yml:/config/config.yml:ro
       - frigate_media:/media/frigate
@@ -28,7 +29,7 @@ services:
     depends_on:
       - mosquitto
     ports:
-      - "8123:8123"
+      - "127.0.0.1:8123:8123"
     volumes:
       - homeassistant_config:/config
 
@@ -43,7 +44,6 @@ services:
       - frigate
     working_dir: /data
     environment:
-      DEVICE_KEY_SEED: ${DEVICE_KEY_SEED}
       WITNESS_API_TOKEN_PATH: /data/api_token
       MQTT_BROKER_ADDR: mosquitto:1883
       FRIGATE_MQTT_TOPIC: frigate/events
@@ -51,11 +51,14 @@ services:
       MQTT_TOPIC_PREFIX: witness
       ALLOW_REMOTE_MQTT: "true"
       DAEMON_MODE: "true"
+    secrets:
+      - device_key_seed
     volumes:
       - securacv_data:/data
     entrypoint: ["/bin/sh", "-c"]
     command: >-
       set -eu;
+      export DEVICE_KEY_SEED=$(cat /run/secrets/device_key_seed);
       witness_api &
       until [ -f "$WITNESS_API_TOKEN_PATH" ]; do
         sleep 1;
@@ -64,8 +67,14 @@ services:
       event_mqtt_bridge --daemon --api-token-path "$WITNESS_API_TOKEN_PATH" &
       wait
 
+secrets:
+  device_key_seed:
+    # Generate with: openssl rand -hex 32 > .device_key_seed
+    file: .device_key_seed
+
 volumes:
   mosquitto_data:
+  mosquitto_config:
   frigate_media:
   homeassistant_config:
   securacv_data:
