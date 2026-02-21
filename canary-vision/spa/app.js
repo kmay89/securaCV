@@ -14,23 +14,152 @@
 // provisioning receipt flow supports re-entry.
 
 var SESSION_TOKEN_PREFIX = 'canary_token:';
+var SESSION_ISSUED_PREFIX = 'canary_issued:';
+
+// Default 8 hours, configurable via data attribute on <script> tag
+var MAX_SESSION_DURATION_MS = (function () {
+  try {
+    var scripts = document.querySelectorAll('script[data-session-ttl]');
+    if (scripts.length > 0) {
+      var hours = parseFloat(scripts[0].getAttribute('data-session-ttl'));
+      if (!isNaN(hours) && hours > 0) return hours * 3600 * 1000;
+    }
+  } catch (e) { /* ignore */ }
+  return 8 * 3600 * 1000; // 8 hours default
+})();
+
+var SESSION_WARNING_MS = 5 * 60 * 1000; // 5 minutes before expiry
+
+var CanarySession = {
+  _warningTimers: {},
+  _expiryTimers: {},
+  _warningShown: {},
+
+  isExpired: function (id) {
+    try {
+      var issuedStr = sessionStorage.getItem(SESSION_ISSUED_PREFIX + id);
+      if (!issuedStr) return false; // No timestamp means legacy token — don't expire
+      var elapsed = Date.now() - parseInt(issuedStr, 10);
+      return elapsed > MAX_SESSION_DURATION_MS;
+    } catch (e) { return false; }
+  },
+
+  timeRemaining: function (id) {
+    try {
+      var issuedStr = sessionStorage.getItem(SESSION_ISSUED_PREFIX + id);
+      if (!issuedStr) return Infinity;
+      var elapsed = Date.now() - parseInt(issuedStr, 10);
+      return Math.max(0, MAX_SESSION_DURATION_MS - elapsed);
+    } catch (e) { return Infinity; }
+  },
+
+  clearSession: function (id) {
+    try {
+      sessionStorage.removeItem(SESSION_TOKEN_PREFIX + id);
+      sessionStorage.removeItem(SESSION_ISSUED_PREFIX + id);
+    } catch (e) { /* ignore */ }
+    if (CanarySession._warningTimers[id]) {
+      clearTimeout(CanarySession._warningTimers[id]);
+      delete CanarySession._warningTimers[id];
+    }
+    if (CanarySession._expiryTimers[id]) {
+      clearTimeout(CanarySession._expiryTimers[id]);
+      delete CanarySession._expiryTimers[id];
+    }
+    delete CanarySession._warningShown[id];
+  },
+
+  scheduleExpiry: function (id) {
+    var remaining = CanarySession.timeRemaining(id);
+    if (remaining === Infinity) return;
+
+    // Schedule warning 5 minutes before expiry
+    var warningIn = remaining - SESSION_WARNING_MS;
+    if (warningIn > 0 && !CanarySession._warningShown[id]) {
+      CanarySession._warningTimers[id] = setTimeout(function () {
+        CanarySession._showWarning(id);
+      }, warningIn);
+    }
+
+    // Schedule expiry
+    if (remaining > 0) {
+      CanarySession._expiryTimers[id] = setTimeout(function () {
+        CanarySession._handleExpiry(id);
+      }, remaining);
+    }
+  },
+
+  _showWarning: function (id) {
+    CanarySession._warningShown[id] = true;
+    var banner = document.getElementById('session-warning');
+    if (banner) banner.parentNode.removeChild(banner);
+
+    var device = CanaryStorage.getDevice(id);
+    var name = device ? (device.name || id) : id;
+
+    var warningEl = el('div', {
+      id: 'session-warning',
+      className: 'alert alert-warning session-expiry-warning',
+    }, [
+      'Session for ' + name + ' expires in ~5 minutes. ',
+      el('button', {
+        className: 'btn btn-secondary btn-sm',
+        textContent: 'Dismiss',
+        onClick: function () { warningEl.parentNode.removeChild(warningEl); },
+      }),
+    ]);
+
+    var app = document.getElementById('app');
+    if (app && app.firstChild) {
+      app.insertBefore(warningEl, app.firstChild);
+    }
+  },
+
+  _handleExpiry: function (id) {
+    CanarySession.clearSession(id);
+
+    // Show expired message and redirect
+    var app = document.getElementById('app');
+    if (app) {
+      while (app.firstChild) app.removeChild(app.firstChild);
+      app.appendChild(el('div', { className: 'content' }, [
+        el('div', { className: 'alert alert-error', textContent: 'Session expired. Please re-authenticate.' }),
+        el('button', {
+          className: 'btn btn-primary mt-12',
+          textContent: 'Go to Devices',
+          onClick: function () { Router.navigate('#/canaries'); },
+        }),
+      ]));
+    }
+  },
+};
 
 var CanaryStorage = {
   KEY: 'canary_devices',
 
   _getToken: function (id) {
-    try { return sessionStorage.getItem(SESSION_TOKEN_PREFIX + id) || ''; }
-    catch (e) { return ''; }
+    try {
+      // Check expiration before returning token
+      if (CanarySession.isExpired(id)) {
+        CanarySession.clearSession(id);
+        return '';
+      }
+      return sessionStorage.getItem(SESSION_TOKEN_PREFIX + id) || '';
+    } catch (e) { return ''; }
   },
 
   _setToken: function (id, token) {
-    try { sessionStorage.setItem(SESSION_TOKEN_PREFIX + id, token); }
-    catch (e) { /* sessionStorage unavailable — tokens will not survive refresh */ }
+    try {
+      sessionStorage.setItem(SESSION_TOKEN_PREFIX + id, token);
+      // Store issued_at timestamp alongside the token
+      sessionStorage.setItem(SESSION_ISSUED_PREFIX + id, String(Date.now()));
+      // Schedule expiry timers
+      CanarySession.scheduleExpiry(id);
+    } catch (e) { /* sessionStorage unavailable — tokens will not survive refresh */ }
   },
 
   _removeToken: function (id) {
-    try { sessionStorage.removeItem(SESSION_TOKEN_PREFIX + id); }
-    catch (e) { /* ignore */ }
+    CanarySession.clearSession(id);
   },
 
   getDevices: function () {
@@ -134,6 +263,13 @@ var CanaryAPI = {
     var device = CanaryStorage.getDevices().find(function (d) {
       return d.base_url === baseUrl;
     });
+
+    // Check session expiration before making the request
+    if (device && CanarySession.isExpired(device.id)) {
+      CanarySession._handleExpiry(device.id);
+      return Promise.reject(new Error('Session expired'));
+    }
+
     var token = options.token || (device ? device.token : '');
 
     var controller = new AbortController();
@@ -156,6 +292,10 @@ var CanaryAPI = {
       clearTimeout(timeoutId);
       if (res.status === 401) {
         return res.json().then(function (data) {
+          // Handle server-side token expiration
+          if (data.error === 'token_expired' && device) {
+            CanarySession._handleExpiry(device.id);
+          }
           var err = new Error(data.message || 'Authentication required');
           err.status = 401;
           err.data = data;
@@ -845,4 +985,13 @@ Router.register('/settings', renderSettingsView);
 // --------------- Init ---------------
 
 window.addEventListener('hashchange', function () { Router.resolve(); });
-window.addEventListener('DOMContentLoaded', function () { Router.resolve(); });
+window.addEventListener('DOMContentLoaded', function () {
+  // Rehydrate expiry timers for existing sessions
+  var devices = CanaryStorage.getDevices();
+  for (var i = 0; i < devices.length; i++) {
+    if (devices[i].token) {
+      CanarySession.scheduleExpiry(devices[i].id);
+    }
+  }
+  Router.resolve();
+});
