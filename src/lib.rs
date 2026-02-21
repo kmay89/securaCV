@@ -106,7 +106,9 @@ fn apply_sqlcipher_key(conn: &Connection, hex_key: &str) -> Result<()> {
     conn.pragma_update(None, "key", &format!("x'{}'", hex_key))?;
     // Verify the key works by reading a page
     conn.query_row("SELECT count(*) FROM sqlite_master", [], |_| Ok(()))
-        .map_err(|_| anyhow!("SQLCipher key verification failed — wrong key or corrupt database"))?;
+        .map_err(|_| {
+            anyhow!("SQLCipher key verification failed — wrong key or corrupt database")
+        })?;
     Ok(())
 }
 
@@ -3104,7 +3106,10 @@ mod tests {
         // Opening without a key should fail
         let plain_conn = Connection::open(&db_path)?;
         let result = plain_conn.query_row("SELECT count(*) FROM sqlite_master", [], |_| Ok(()));
-        assert!(result.is_err(), "opening encrypted DB without key should fail");
+        assert!(
+            result.is_err(),
+            "opening encrypted DB without key should fail"
+        );
 
         Ok(())
     }
@@ -3126,7 +3131,10 @@ mod tests {
 
         // Verify it's plaintext
         let raw = std::fs::read(&db_path)?;
-        assert!(raw.starts_with(b"SQLite format 3\0"), "should start plaintext");
+        assert!(
+            raw.starts_with(b"SQLite format 3\0"),
+            "should start plaintext"
+        );
 
         // Step 2: Open with a key — this should trigger migration
         let signing_key = signing_key_from_seed("devkey:test:a1b2c3d4e5f6a7b8c9d0")?;
@@ -3134,10 +3142,9 @@ mod tests {
         let conn = open_db_connection_with_key(&db_path_str, Some(&db_key))?;
 
         // Verify we can read the migrated data
-        let val: String =
-            conn.query_row("SELECT val FROM test_data WHERE id = 1", [], |row| {
-                row.get(0)
-            })?;
+        let val: String = conn.query_row("SELECT val FROM test_data WHERE id = 1", [], |row| {
+            row.get(0)
+        })?;
         assert_eq!(val, "migration_sentinel");
         drop(conn);
 

@@ -5,8 +5,8 @@ use std::time::Duration;
 
 use crate::crypto::signatures::{SignatureKeys, DOMAIN_CHECKPOINT, DOMAIN_SEALED_LOG_ENTRY};
 use crate::{
-    hash_entry, now_s, open_db_connection, open_db_connection_with_key, sign_entry,
-    ReprocessGuard, SealedLogRecord,
+    hash_entry, now_s, open_db_connection, open_db_connection_with_key, sign_entry, ReprocessGuard,
+    SealedLogRecord,
 };
 
 pub trait SealedLogStore {
