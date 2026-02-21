@@ -61,5 +61,5 @@ jobs:
 
       - name: PlatformIO build
         run: |
-          pio run
+          pio run -e canary-vision-default
 
