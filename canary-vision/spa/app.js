@@ -456,6 +456,11 @@ function handleAddCanary() {
   }
 
   // Normalize base_url
+  // SECURITY NOTE: HTTP is used for private-network device communication.
+  // The isPrivateUrl() check below ensures only RFC 1918 / link-local
+  // addresses are accepted. Public addresses are rejected before any
+  // request is made. The device API requires X-Canary-Token auth and
+  // CORS/PNA middleware provides additional browser-level isolation.
   var baseUrl = host;
   if (baseUrl.indexOf('http') !== 0) {
     baseUrl = 'http://' + baseUrl;

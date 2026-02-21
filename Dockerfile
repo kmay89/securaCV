@@ -45,8 +45,15 @@ COPY --from=build /app/target/release/witnessd /usr/local/bin/witnessd
 ENV WITNESS_API_ADDR=0.0.0.0:8799
 ENV RUST_LOG=info
 
+# SECURITY: Expose only the API port. No other services should bind.
 EXPOSE 8799
 VOLUME ["/data"]
 
-USER witness
+# SECURITY: Run as non-root with explicit UID.
+USER 1001:1001
+
+# SECURITY: Health check for orchestrators to detect stuck processes.
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+  CMD ["witnessd", "--health-check"] || exit 1
+
 ENTRYPOINT ["witnessd"]

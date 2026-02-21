@@ -15,6 +15,10 @@ function securityHeaders() {
     res.setHeader('Content-Security-Policy', CSP);
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('Referrer-Policy', 'no-referrer');
+    // SECURITY: Permissions-Policy disables browser features that are
+    // unnecessary for a device dashboard and could be abused by injected
+    // scripts (e.g., via XSS) to access camera, microphone, or geolocation.
+    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
     next();
   };
 }

@@ -128,11 +128,70 @@ impl SqliteSealedLogStore {
     }
 }
 
+/// SECURITY: Validates that a SQL identifier contains only safe characters.
+/// Prevents SQL injection when table/column names are interpolated into DDL
+/// statements (which cannot use parameterized queries for identifiers).
+fn validate_sql_identifier(name: &str, label: &str) -> Result<()> {
+    if name.is_empty() || name.len() > 64 {
+        return Err(anyhow!("{} must be 1-64 characters", label));
+    }
+    if !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
+        return Err(anyhow!(
+            "{} '{}' contains unsafe characters (only [a-zA-Z0-9_] allowed)",
+            label,
+            name
+        ));
+    }
+    if name.bytes().next().is_none_or(|b| b.is_ascii_digit()) {
+        return Err(anyhow!("{} '{}' must not start with a digit", label, name));
+    }
+    Ok(())
+}
+
+/// SECURITY: Validates a SQL column type expression. More permissive than
+/// identifier validation — allows spaces, parentheses, and commas for types
+/// like `INTEGER PRIMARY KEY`, `VARCHAR(255)`, or `DECIMAL(10,2)` — while
+/// still blocking injection characters (`;`, `--`, `'`, `"`).
+fn validate_sql_column_type(type_expr: &str, label: &str) -> Result<()> {
+    if type_expr.is_empty() || type_expr.len() > 64 {
+        return Err(anyhow!("{} must be 1-64 characters", label));
+    }
+    if type_expr.contains(';')
+        || type_expr.contains("--")
+        || type_expr.contains('\'')
+        || type_expr.contains('"')
+    {
+        return Err(anyhow!(
+            "{} '{}' contains unsafe characters",
+            label,
+            type_expr
+        ));
+    }
+    if !type_expr
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b"_ (),".contains(&b))
+    {
+        return Err(anyhow!(
+            "{} '{}' contains disallowed characters (only [a-zA-Z0-9_ (),] allowed)",
+            label,
+            type_expr
+        ));
+    }
+    Ok(())
+}
+
 pub fn ensure_columns(
     conn: &Connection,
     table: &str,
     columns_to_add: &[(&str, &str)],
 ) -> Result<()> {
+    // SECURITY: Validate all identifiers before interpolation into SQL.
+    validate_sql_identifier(table, "table name")?;
+    for (column, column_type) in columns_to_add {
+        validate_sql_identifier(column, "column name")?;
+        validate_sql_column_type(column_type, "column type")?;
+    }
+
     let mut stmt = conn.prepare(&format!("PRAGMA table_info({})", table))?;
     let existing_columns: HashSet<String> = stmt
         .query_map([], |row| row.get(1))?

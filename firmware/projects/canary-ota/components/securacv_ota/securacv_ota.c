@@ -40,6 +40,19 @@
 #include "mbedtls/sha256.h"
 
 // ============================================================================
+// SECURITY: Compile-time guard against cert-skip in release builds
+// ============================================================================
+// SECURACV_OTA_SKIP_CERT_VERIFY disables TLS certificate verification,
+// enabling MITM attacks on OTA downloads. It MUST only be used in
+// development builds with self-signed certs and mock_ota_server.py.
+#if defined(SECURACV_OTA_SKIP_CERT_VERIFY) && !defined(SECURACV_DEBUG_BUILD)
+  #error "SECURACV_OTA_SKIP_CERT_VERIFY is set without SECURACV_DEBUG_BUILD. " \
+         "This disables TLS certificate verification and MUST NOT be used in " \
+         "release/production firmware. Remove -DSECURACV_OTA_SKIP_CERT_VERIFY " \
+         "from build_flags or define -DSECURACV_DEBUG_BUILD for dev builds."
+#endif
+
+// ============================================================================
 // LOGGING
 // ============================================================================
 
