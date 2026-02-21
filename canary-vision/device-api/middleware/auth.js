@@ -14,6 +14,21 @@ function getSessionTtlMs() {
 const crypto = require('node:crypto');
 const sessionFirstSeen = new Map();
 
+// Periodically clean up stale sessions to prevent unbounded memory growth
+// from tokens that are used once and then abandoned.
+const SESSION_CLEANUP_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
+const _cleanupTimer = setInterval(() => {
+  const now = Date.now();
+  const ttl = getSessionTtlMs();
+  for (const [hash, firstSeen] of sessionFirstSeen.entries()) {
+    if (now - firstSeen > ttl) {
+      sessionFirstSeen.delete(hash);
+    }
+  }
+}, SESSION_CLEANUP_INTERVAL_MS);
+// Allow the process to exit even if the timer is still running
+if (_cleanupTimer.unref) _cleanupTimer.unref();
+
 function tokenHash(token) {
   return crypto.createHash('sha256').update(token).digest('hex');
 }

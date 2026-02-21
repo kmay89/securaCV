@@ -118,18 +118,49 @@ var CanarySession = {
   _handleExpiry: function (id) {
     CanarySession.clearSession(id);
 
-    // Show expired message and redirect
+    var device = CanaryStorage.getDevice(id);
+    var name = device ? (device.name || id) : id;
+
+    // Check if the user is currently viewing the expired device's page
+    var hash = window.location.hash || '';
+    var onExpiredDevice = hash.indexOf('#/device/' + id) === 0;
+
     var app = document.getElementById('app');
-    if (app) {
+    if (!app) return;
+
+    if (onExpiredDevice) {
+      // User is on this device's page — replace UI with expiry message
       while (app.firstChild) app.removeChild(app.firstChild);
       app.appendChild(el('div', { className: 'content' }, [
-        el('div', { className: 'alert alert-error', textContent: 'Session expired. Please re-authenticate.' }),
+        el('div', { className: 'alert alert-error', textContent: 'Session for ' + name + ' expired. Please re-authenticate.' }),
         el('button', {
           className: 'btn btn-primary mt-12',
           textContent: 'Go to Devices',
           onClick: function () { Router.navigate('#/canaries'); },
         }),
       ]));
+    } else {
+      // User is on a different page — show a non-intrusive banner
+      var existing = document.getElementById('session-expired-' + id);
+      if (existing) existing.parentNode.removeChild(existing);
+
+      var banner = el('div', {
+        id: 'session-expired-' + id,
+        className: 'alert alert-warning session-expiry-warning',
+      }, [
+        'Session for ' + name + ' has expired. ',
+        el('button', {
+          className: 'btn btn-secondary btn-sm',
+          textContent: 'Dismiss',
+          onClick: function () { banner.parentNode.removeChild(banner); },
+        }),
+      ]);
+
+      if (app.firstChild) {
+        app.insertBefore(banner, app.firstChild);
+      } else {
+        app.appendChild(banner);
+      }
     }
   },
 };
