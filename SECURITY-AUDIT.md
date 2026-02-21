@@ -1,7 +1,7 @@
-# SecuraCV — Security Audit Report (v2)
+# SecuraCV — Security Audit Report (v3)
 
 **Date:** 2026-02-21
-**Revision:** 2 — deep hardening pass (research-grade)
+**Revision:** 3 — post-audit hardening (non-blocking recommendations addressed)
 **Scope:** Full-stack audit — Rust kernel (every `.rs` file), firmware (C/C++), Node.js device API, SPA, Docker, CI/CD, supply chain, cryptographic correctness, injection surfaces, side channels
 **Methodology:** Line-by-line manual audit of every source file, dependency review, threat modeling against OWASP Top 10, STRIDE, and privacy-specific threat models
 
@@ -123,16 +123,23 @@ This second audit pass focused on **subtle side-channel attacks, OOM/DoS vectors
 
 ---
 
+## Phase 3 — Resolved Non-Blocking Recommendations
+
+The following recommendations from the v2 audit have been addressed:
+
+| # | Recommendation | Implementation |
+|---|---------------|----------------|
+| R-1 | **Database encryption at rest** (SQLCipher) | Switched `rusqlite` from `bundled` to `bundled-sqlcipher`. DB encryption key derived from the device Ed25519 signing key via HKDF-SHA256 with domain separation (`securacv-db-encryption-v1`). Automatic migration of unencrypted databases on startup via `sqlcipher_export()`. Tests verify encrypted DB is not plaintext-readable and migration preserves data. |
+| R-2 | **Firmware signature verification** in Node.js OTA route | Implemented Ed25519 signature verification of firmware binaries via `X-Firmware-Signature` header. Uses `SECURACV_FW_SIGNING_PUBKEY` env var or device public key. Returns HTTP 403 with structured JSON on failure (no byte-level leak). Tests cover valid/invalid/missing signatures and truncated payloads. |
+| R-3 | **Firmware anti-downgrade protection** | Defined firmware header format (magic `SCV\x01` + semver triple). Node.js: persistent version file, rejects version ≤ installed. ESP32: NVS-stored minimum version floor that only ratchets upward, checked against both compiled version and NVS floor. Downgrade attempts logged as security events. Tests cover upgrade/same-version/downgrade/corrupt-header scenarios. |
+| R-4 | **SBOM generation** in CI | Added `.github/workflows/sbom.yml` generating CycloneDX 1.5 JSON SBOMs for Rust (`cargo-cyclonedx`), Node.js (`@cyclonedx/cdxgen`), and firmware (manual listing of ESP-IDF vendored deps). All attached as build artifacts with 90-day retention. Documentation in `sbom/README.md`. |
+| R-5 | **Token expiration for SPA sessionStorage** | Client-side: `issued_at` timestamp stored alongside token, checked on every API request against configurable TTL (default 8h). 5-minute non-blocking warning, full session clear on expiry with user-friendly redirect. Server-side: auth middleware tracks per-token first-seen time, rejects expired tokens with HTTP 401 `token_expired` error code. |
+
 ## Remaining Recommendations (Not Blocking)
 
 | Priority | Recommendation | Rationale |
 |----------|---------------|-----------|
-| Medium | **Database encryption at rest** (SQLCipher) | Defense-in-depth if device storage is physically compromised |
-| Medium | **SBOM generation** in CI (`cargo-sbom`) | Supply chain transparency for auditors |
-| Medium | **Firmware signature verification** in Node.js update route | Currently stubbed (`routes/update.js:68`) — reference server only |
-| Medium | **Firmware downgrade protection** | OTA accepts any version newer than minimum; no anti-rollback to older-but-valid versions |
 | Low | **TLS certificate auto-generation** for local API | Self-signed cert fallback to reduce plaintext friction |
-| Low | **Token expiration in sessionStorage** | SPA tokens survive page refresh indefinitely (cleared on tab close) |
 | Low | **Signed commits/tags** enforcement in CI | Chain of custody for release artifacts |
 
 ---
@@ -151,7 +158,7 @@ This audit was conducted at the stakes described: **public infrastructure for di
 
 ---
 
-## Files Modified in This Hardening Pass
+## Files Modified in Phase 2 Hardening Pass
 
 | File | Change |
 |------|--------|
@@ -165,4 +172,24 @@ This audit was conducted at the stakes described: **public infrastructure for di
 | `firmware/projects/canary-ota/components/securacv_ota/securacv_ota.c` | Compile-time guard against cert-skip in release builds |
 | `firmware/projects/canary-ota/platformio.ini` | Added `SECURACV_DEBUG_BUILD` to dev/test environments |
 | `Dockerfile` | Numeric UID, healthcheck |
-| `SECURITY-AUDIT.md` | This report (v2) |
+| `SECURITY-AUDIT.md` | Report (v2) |
+
+## Files Modified in Phase 3 Post-Audit Hardening
+
+| File | Change |
+|------|--------|
+| `Cargo.toml` | Switched to `bundled-sqlcipher`, added `hkdf` |
+| `src/lib.rs` | HKDF key derivation, SQLCipher encryption, migration logic, 2 new tests |
+| `src/storage.rs` | `open_with_key()` for encrypted DB connections |
+| `src/bin/log_verify.rs` | `--db-key` argument for encrypted DB verification |
+| `canary-vision/device-api/routes/update.js` | Ed25519 signature verification, firmware header parsing, anti-downgrade |
+| `canary-vision/device-api/middleware/auth.js` | Server-side token expiration enforcement |
+| `canary-vision/spa/app.js` | Client-side session TTL, expiry warning, issued_at tracking |
+| `canary-vision/tests/helpers/test-client.js` | Buffer body support in test HTTP client |
+| `canary-vision/tests/api/update.test.js` | 9 tests for signature verification and anti-downgrade |
+| `canary-vision/tests/spa/session-expiry.test.js` | 6 tests for SPA session expiry |
+| `canary-vision/tests/security/token-expiry.test.js` | 3 tests for server-side token expiry |
+| `firmware/projects/canary-ota/components/securacv_ota/securacv_ota.c` | NVS-based anti-rollback version floor |
+| `.github/workflows/sbom.yml` | CycloneDX SBOM generation for Rust, Node.js, firmware |
+| `sbom/README.md` | SBOM generation documentation |
+| `SECURITY-AUDIT.md` | This report (v3) |

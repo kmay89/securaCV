@@ -1,0 +1,139 @@
+name: SBOM Generation
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch: {}
+
+jobs:
+  generate-sbom:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+    - uses: actions/checkout@v4
+
+    # ---- Rust SBOM ----
+    - name: Install cargo-cyclonedx
+      run: cargo install cargo-cyclonedx
+
+    - name: Generate Rust SBOM (CycloneDX)
+      run: cargo cyclonedx --format json --output-cdx > sbom-rust.cdx.json || cargo cyclonedx --format json > sbom-rust.cdx.json
+
+    # ---- Node.js SBOM ----
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Install Node.js dependencies
+      run: cd canary-vision && npm ci
+
+    - name: Install cdxgen
+      run: npm install -g @cyclonedx/cdxgen
+
+    - name: Generate Node.js SBOM (CycloneDX)
+      run: cdxgen -t node -o sbom-node.cdx.json canary-vision/
+
+    # ---- Firmware (C/C++) SBOM ----
+    - name: Generate Firmware SBOM (CycloneDX)
+      run: |
+        cat > sbom-firmware.cdx.json << 'FWEOF'
+        {
+          "bomFormat": "CycloneDX",
+          "specVersion": "1.5",
+          "serialNumber": "urn:uuid:firmware-sbom",
+          "version": 1,
+          "metadata": {
+            "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "component": {
+              "type": "firmware",
+              "name": "securacv-canary-firmware",
+              "version": "1.0.0",
+              "description": "SecuraCV Canary ESP32-S3 firmware"
+            },
+            "tools": [
+              {
+                "name": "manual-sbom-generator",
+                "version": "1.0.0"
+              }
+            ]
+          },
+          "components": [
+            {
+              "type": "framework",
+              "name": "esp-idf",
+              "version": "5.1",
+              "description": "Espressif IoT Development Framework",
+              "purl": "pkg:github/espressif/esp-idf@v5.1",
+              "licenses": [{ "license": { "id": "Apache-2.0" } }]
+            },
+            {
+              "type": "library",
+              "name": "freertos",
+              "version": "10.5.1",
+              "description": "FreeRTOS real-time operating system kernel (ESP-IDF bundled)",
+              "purl": "pkg:github/FreeRTOS/FreeRTOS-Kernel@V10.5.1",
+              "licenses": [{ "license": { "id": "MIT" } }]
+            },
+            {
+              "type": "library",
+              "name": "mbedtls",
+              "version": "3.4.1",
+              "description": "Mbed TLS cryptographic library (ESP-IDF bundled)",
+              "purl": "pkg:github/Mbed-TLS/mbedtls@v3.4.1",
+              "licenses": [{ "license": { "id": "Apache-2.0" } }]
+            },
+            {
+              "type": "library",
+              "name": "cJSON",
+              "version": "1.7.17",
+              "description": "Ultralightweight JSON parser (ESP-IDF component)",
+              "purl": "pkg:github/DaveGamble/cJSON@v1.7.17",
+              "licenses": [{ "license": { "id": "MIT" } }]
+            },
+            {
+              "type": "library",
+              "name": "lwip",
+              "version": "2.1.3",
+              "description": "Lightweight TCP/IP stack (ESP-IDF bundled)",
+              "purl": "pkg:github/lwip-tcpip/lwip@STABLE-2_1_3_RELEASE",
+              "licenses": [{ "license": { "id": "BSD-3-Clause" } }]
+            },
+            {
+              "type": "library",
+              "name": "esp-tls",
+              "version": "5.1",
+              "description": "ESP-IDF TLS abstraction layer",
+              "purl": "pkg:github/espressif/esp-idf@v5.1#components/esp-tls"
+            },
+            {
+              "type": "library",
+              "name": "nvs_flash",
+              "version": "5.1",
+              "description": "ESP-IDF Non-Volatile Storage library",
+              "purl": "pkg:github/espressif/esp-idf@v5.1#components/nvs_flash"
+            },
+            {
+              "type": "library",
+              "name": "esp_https_ota",
+              "version": "5.1",
+              "description": "ESP-IDF HTTPS OTA update component",
+              "purl": "pkg:github/espressif/esp-idf@v5.1#components/esp_https_ota"
+            }
+          ]
+        }
+        FWEOF
+
+    # ---- Upload artifacts ----
+    - name: Upload SBOM artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: sbom-artifacts
+        path: |
+          sbom-rust.cdx.json
+          sbom-node.cdx.json
+          sbom-firmware.cdx.json
+        retention-days: 90

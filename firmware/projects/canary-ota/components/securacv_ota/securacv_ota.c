@@ -36,6 +36,7 @@
 #include "esp_app_format.h"
 #include "esp_partition.h"
 #include "nvs_flash.h"
+#include "nvs.h"
 #include "cJSON.h"
 #include "mbedtls/sha256.h"
 
@@ -110,6 +111,53 @@ typedef struct {
 static ota_context_t s_ctx = {0};
 
 // ============================================================================
+// NVS ANTI-ROLLBACK VERSION STORAGE
+// ============================================================================
+
+#define NVS_NAMESPACE "securacv_ota"
+#define NVS_KEY_MIN_VERSION "min_ver"
+
+/**
+ * @brief Persist a minimum acceptable firmware version in NVS.
+ *
+ * The stored version is a monotonically increasing floor. Any OTA
+ * payload whose version is <= this floor is rejected, even if a
+ * validly-signed older firmware is presented after a physical rollback.
+ */
+static esp_err_t nvs_store_min_version(const char *version_str)
+{
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "nvs_open failed: %s", esp_err_to_name(err));
+        return err;
+    }
+    err = nvs_set_str(handle, NVS_KEY_MIN_VERSION, version_str);
+    if (err == ESP_OK) {
+        err = nvs_commit(handle);
+    }
+    nvs_close(handle);
+    return err;
+}
+
+/**
+ * @brief Read the NVS-stored minimum firmware version.
+ * @param buf   Output buffer for the version string.
+ * @param buf_len Size of buf.
+ * @return ESP_OK on success, ESP_ERR_NVS_NOT_FOUND if not yet stored.
+ */
+static esp_err_t nvs_load_min_version(char *buf, size_t buf_len)
+{
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &handle);
+    if (err != ESP_OK) return err;
+
+    err = nvs_get_str(handle, NVS_KEY_MIN_VERSION, buf, &buf_len);
+    nvs_close(handle);
+    return err;
+}
+
+// ============================================================================
 // FORWARD DECLARATIONS
 // ============================================================================
 
@@ -163,6 +211,21 @@ esp_err_t securacv_ota_init(const securacv_ota_config_t *config)
 
     s_ctx.state = SECURACV_OTA_IDLE;
     s_ctx.initialized = true;
+
+    // Persist the currently-running version as the NVS minimum floor.
+    // This is monotonic: once v1.5 runs, NVS records 1.5 and any
+    // future OTA to <= 1.5 is rejected.
+    {
+        char stored[16] = {0};
+        esp_err_t nvs_err = nvs_load_min_version(stored, sizeof(stored));
+        if (nvs_err == ESP_ERR_NVS_NOT_FOUND ||
+            securacv_version_compare(SECURACV_FW_VERSION_STRING, stored) > 0) {
+            nvs_store_min_version(SECURACV_FW_VERSION_STRING);
+            ESP_LOGI(TAG, "NVS min firmware version updated to %s", SECURACV_FW_VERSION_STRING);
+        } else {
+            ESP_LOGI(TAG, "NVS min firmware version: %s", stored);
+        }
+    }
 
     ESP_LOGI(TAG, "OTA engine initialized");
     ESP_LOGI(TAG, "  Manifest URL: %s", config->manifest_url);
@@ -551,26 +614,37 @@ static void ota_task(void *arg)
         goto task_exit;
     }
 
-    // Check version comparison
-    int cmp = securacv_version_compare(s_ctx.manifest.version, SECURACV_FW_VERSION_STRING);
+    // Anti-rollback: check manifest version against both the running
+    // firmware AND the NVS-stored minimum version floor.
+    {
+        char nvs_min[16] = {0};
+        const char *effective_floor = SECURACV_FW_VERSION_STRING;
+        if (nvs_load_min_version(nvs_min, sizeof(nvs_min)) == ESP_OK) {
+            // Use whichever is higher: NVS minimum or compiled version
+            if (securacv_version_compare(nvs_min, SECURACV_FW_VERSION_STRING) > 0) {
+                effective_floor = nvs_min;
+            }
+        }
 
-    if (cmp > 0) {
-        ESP_LOGI(TAG, "Update available: %s -> %s",
-                 SECURACV_FW_VERSION_STRING, s_ctx.manifest.version);
-        s_ctx.update_available = true;
-    } else if (cmp == 0) {
-        ESP_LOGI(TAG, "Already running latest version: %s", SECURACV_FW_VERSION_STRING);
-        s_ctx.update_available = false;
-        if (!s_ctx.config.skip_version_check) {
-            ota_set_error(SECURACV_OTA_ERR_NO_UPDATE);
+        int cmp = securacv_version_compare(s_ctx.manifest.version, effective_floor);
+        if (cmp > 0) {
+            ESP_LOGI(TAG, "Update available: %s -> %s",
+                     effective_floor, s_ctx.manifest.version);
+            s_ctx.update_available = true;
+        } else if (cmp == 0) {
+            ESP_LOGI(TAG, "Already running latest version: %s", effective_floor);
+            s_ctx.update_available = false;
+            if (!s_ctx.config.skip_version_check) {
+                ota_set_error(SECURACV_OTA_ERR_NO_UPDATE);
+                goto task_exit;
+            }
+        } else {
+            ESP_LOGW(TAG, "SECURITY: Version rollback rejected: %s <= %s",
+                     s_ctx.manifest.version, effective_floor);
+            s_ctx.update_available = false;
+            ota_set_error(SECURACV_OTA_ERR_VERSION_ROLLBACK);
             goto task_exit;
         }
-    } else {
-        ESP_LOGW(TAG, "Server has older version: %s < %s",
-                 s_ctx.manifest.version, SECURACV_FW_VERSION_STRING);
-        s_ctx.update_available = false;
-        ota_set_error(SECURACV_OTA_ERR_NO_UPDATE);
-        goto task_exit;
     }
 
     // Check minimum version requirement

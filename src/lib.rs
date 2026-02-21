@@ -22,12 +22,14 @@
 
 use anyhow::{anyhow, Result};
 use ed25519_dalek::{SigningKey, VerifyingKey};
+use hkdf::Hkdf;
 use rand::{Rng, RngCore};
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::sync::OnceLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use zeroize::Zeroizing;
 // zeroize::Zeroizing used directly in BucketKeyManager
 
 use crate::crypto::signatures::{
@@ -84,14 +86,103 @@ pub fn shared_memory_uri() -> String {
     )
 }
 
+/// Domain separation context for deriving the DB encryption key from the
+/// device's Ed25519 signing key via HKDF-SHA256. This ensures the DB key
+/// is cryptographically independent from signing operations.
+const DB_ENCRYPTION_HKDF_CONTEXT: &[u8] = b"securacv-db-encryption-v1";
+
+/// Derive a hex-encoded SQLCipher key from an Ed25519 signing key using
+/// HKDF-SHA256 with domain separation.
+pub fn derive_db_encryption_key(signing_key: &SigningKey) -> Zeroizing<String> {
+    let hk = Hkdf::<Sha256>::new(None, signing_key.as_bytes());
+    let mut okm = Zeroizing::new([0u8; 32]);
+    hk.expand(DB_ENCRYPTION_HKDF_CONTEXT, okm.as_mut())
+        .expect("HKDF-SHA256 expand with 32-byte output cannot fail");
+    Zeroizing::new(hex::encode(okm.as_ref()))
+}
+
+/// Apply the SQLCipher encryption key to an open database connection.
+fn apply_sqlcipher_key(conn: &Connection, hex_key: &str) -> Result<()> {
+    conn.pragma_update(None, "key", format!("x'{}'", hex_key))?;
+    // Verify the key works by reading a page
+    conn.query_row("SELECT count(*) FROM sqlite_master", [], |_| Ok(()))
+        .map_err(|_| {
+            anyhow!("SQLCipher key verification failed — wrong key or corrupt database")
+        })?;
+    Ok(())
+}
+
+/// Check if a database file is unencrypted (plaintext SQLite header).
+fn is_unencrypted_db(db_path: &str) -> bool {
+    let path = std::path::Path::new(db_path);
+    if !path.exists() {
+        return false;
+    }
+    // SQLite databases start with "SQLite format 3\0" (16 bytes).
+    // Encrypted databases have random-looking bytes at offset 0.
+    match std::fs::read(path) {
+        Ok(data) if data.len() >= 16 => data.starts_with(b"SQLite format 3\0"),
+        _ => false,
+    }
+}
+
+/// Migrate an unencrypted SQLite database to SQLCipher encryption in-place.
+/// Uses ATTACH + sqlcipher_export() to re-encrypt all data.
+fn migrate_unencrypted_to_encrypted(db_path: &str, hex_key: &str) -> Result<()> {
+    eprintln!(
+        "[SECURITY] Migrating unencrypted database '{}' to SQLCipher encryption",
+        db_path
+    );
+
+    let encrypted_path = format!("{}.encrypted", db_path);
+
+    // Open the unencrypted database (no key)
+    let plain_conn = Connection::open(db_path)?;
+
+    // Attach the new encrypted database
+    plain_conn.execute_batch(&format!(
+        "ATTACH DATABASE '{}' AS encrypted KEY \"x'{}'\";",
+        encrypted_path, hex_key
+    ))?;
+
+    // Export all data to the encrypted database
+    plain_conn.query_row("SELECT sqlcipher_export('encrypted')", [], |_| Ok(()))?;
+
+    // Detach and close
+    plain_conn.execute_batch("DETACH DATABASE encrypted;")?;
+    drop(plain_conn);
+
+    // Replace the original file with the encrypted one
+    std::fs::rename(&encrypted_path, db_path)?;
+    enforce_db_file_permissions(db_path);
+
+    eprintln!(
+        "[SECURITY] Database migration to SQLCipher complete: '{}'",
+        db_path
+    );
+
+    Ok(())
+}
+
 pub(crate) fn open_db_connection(db_path: &str) -> Result<Connection> {
+    open_db_connection_with_key(db_path, None)
+}
+
+pub(crate) fn open_db_connection_with_key(
+    db_path: &str,
+    encryption_key: Option<&str>,
+) -> Result<Connection> {
     if db_path.starts_with("file:") {
-        return Ok(Connection::open_with_flags(
+        let conn = Connection::open_with_flags(
             db_path,
             OpenFlags::SQLITE_OPEN_READ_WRITE
                 | OpenFlags::SQLITE_OPEN_CREATE
                 | OpenFlags::SQLITE_OPEN_URI,
-        )?);
+        )?;
+        if let Some(key) = encryption_key {
+            apply_sqlcipher_key(&conn, key)?;
+        }
+        return Ok(conn);
     }
     // Pre-create the DB file with 0600 permissions before SQLite opens it.
     // This prevents a TOCTOU race where the file briefly exists with the
@@ -114,7 +205,21 @@ pub(crate) fn open_db_connection(db_path: &str) -> Result<Connection> {
             }
         }
     }
+
+    // Migration: if database exists and is unencrypted, encrypt it in-place
+    if let Some(key) = encryption_key {
+        if is_unencrypted_db(db_path) {
+            migrate_unencrypted_to_encrypted(db_path, key)?;
+        }
+    }
+
     let conn = Connection::open(db_path)?;
+
+    // Apply encryption key if provided
+    if let Some(key) = encryption_key {
+        apply_sqlcipher_key(&conn, key)?;
+    }
+
     // Also tighten permissions on existing files that may have been created
     // with a lax umask by an older version of the kernel.
     enforce_db_file_permissions(db_path);
@@ -731,9 +836,13 @@ impl Kernel {
         } else {
             cfg.db_path.clone()
         };
-        let conn = open_db_connection(&db_path)?;
-        let sealed_log = Box::new(SqliteSealedLogStore::open(&db_path)?);
         let device_key = signing_key_from_seed(&cfg.device_key_seed)?;
+        let db_key = derive_db_encryption_key(&device_key);
+        let conn = open_db_connection_with_key(&db_path, Some(&db_key))?;
+        let sealed_log = Box::new(SqliteSealedLogStore::open_with_key(
+            &db_path,
+            Some(&db_key),
+        )?);
         let zone_policy = cfg.zone_policy.normalized()?;
         let mut k = Self {
             conn,
@@ -763,8 +872,9 @@ impl Kernel {
                 "and pass it explicitly in `KernelConfig::db_path`."
             )));
         }
-        let conn = open_db_connection(&cfg.db_path)?;
         let device_key = signing_key_from_seed(&cfg.device_key_seed)?;
+        let db_key = derive_db_encryption_key(&device_key);
+        let conn = open_db_connection_with_key(&cfg.db_path, Some(&db_key))?;
         let zone_policy = cfg.zone_policy.normalized()?;
         let mut k = Self {
             conn,
@@ -2963,6 +3073,88 @@ mod tests {
             .as_ref()
             .unwrap()
             .contains("test crypto failure"));
+        Ok(())
+    }
+
+    #[test]
+    fn sqlcipher_encrypted_db_not_plaintext_readable() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let db_path = dir.path().join("encrypted_test.db");
+        let db_path_str = db_path.to_string_lossy().to_string();
+
+        // Create a kernel which will create an encrypted database
+        let cfg = KernelConfig {
+            db_path: db_path_str.clone(),
+            ruleset_id: "ruleset:test".to_string(),
+            ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
+            kernel_version: "0.0.0-test".to_string(),
+            retention: Duration::from_secs(60),
+            device_key_seed: "devkey:test:a1b2c3d4e5f6a7b8c9d0".to_string(),
+            zone_policy: ZonePolicy::default(),
+        };
+        let _kernel = Kernel::open(&cfg)?;
+        drop(_kernel);
+
+        // Read the raw database file and verify it does NOT start with
+        // the SQLite plaintext header "SQLite format 3\0"
+        let raw = std::fs::read(&db_path)?;
+        assert!(
+            !raw.starts_with(b"SQLite format 3\0"),
+            "encrypted database should not have a plaintext SQLite header"
+        );
+
+        // Opening without a key should fail
+        let plain_conn = Connection::open(&db_path)?;
+        let result = plain_conn.query_row("SELECT count(*) FROM sqlite_master", [], |_| Ok(()));
+        assert!(
+            result.is_err(),
+            "opening encrypted DB without key should fail"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn sqlcipher_migration_from_unencrypted() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let db_path = dir.path().join("migrate_test.db");
+        let db_path_str = db_path.to_string_lossy().to_string();
+
+        // Step 1: Create an unencrypted database directly (simulating pre-SQLCipher state)
+        {
+            let conn = Connection::open(&db_path)?;
+            conn.execute_batch(
+                "CREATE TABLE test_data (id INTEGER PRIMARY KEY, val TEXT);
+                 INSERT INTO test_data (val) VALUES ('migration_sentinel');",
+            )?;
+        }
+
+        // Verify it's plaintext
+        let raw = std::fs::read(&db_path)?;
+        assert!(
+            raw.starts_with(b"SQLite format 3\0"),
+            "should start plaintext"
+        );
+
+        // Step 2: Open with a key — this should trigger migration
+        let signing_key = signing_key_from_seed("devkey:test:a1b2c3d4e5f6a7b8c9d0")?;
+        let db_key = derive_db_encryption_key(&signing_key);
+        let conn = open_db_connection_with_key(&db_path_str, Some(&db_key))?;
+
+        // Verify we can read the migrated data
+        let val: String = conn.query_row("SELECT val FROM test_data WHERE id = 1", [], |row| {
+            row.get(0)
+        })?;
+        assert_eq!(val, "migration_sentinel");
+        drop(conn);
+
+        // Verify the file is now encrypted (no plaintext header)
+        let raw = std::fs::read(&db_path)?;
+        assert!(
+            !raw.starts_with(b"SQLite format 3\0"),
+            "migrated database should be encrypted"
+        );
+
         Ok(())
     }
 }
