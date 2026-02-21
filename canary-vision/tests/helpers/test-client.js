@@ -40,9 +40,16 @@ function request(url, options = {}) {
     req.on('error', reject);
 
     if (options.body) {
-      const data = typeof options.body === 'string' ? options.body : JSON.stringify(options.body);
-      if (!reqOptions.headers['Content-Type'] && typeof options.body !== 'string') {
-        reqOptions.headers['Content-Type'] = 'application/json';
+      let data;
+      if (Buffer.isBuffer(options.body)) {
+        data = options.body;
+      } else if (typeof options.body === 'string') {
+        data = options.body;
+      } else {
+        data = JSON.stringify(options.body);
+        if (!reqOptions.headers['Content-Type']) {
+          reqOptions.headers['Content-Type'] = 'application/json';
+        }
       }
       req.write(data);
     }
