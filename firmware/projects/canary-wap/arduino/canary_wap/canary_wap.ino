@@ -3727,12 +3727,12 @@ static void wifi_check_connection() {
 static bool resolve_ap_password(char* out_password, size_t out_len) {
   if (!out_password || out_len == 0) return false;
 
-  if (strlen(g_device.ap_password) >= 8) {
-    snprintf(out_password, out_len, "%s", g_device.ap_password);
-    return true;
+  // Derive only when no valid password is currently present.
+  if (strlen(g_device.ap_password) < 8) {
+    derive_ap_password(g_device.pubkey_fp, g_device.ap_password, sizeof(g_device.ap_password));
   }
 
-  derive_ap_password(g_device.pubkey_fp, g_device.ap_password, sizeof(g_device.ap_password));
+  // Use either pre-existing or freshly derived device-unique password.
   if (strlen(g_device.ap_password) >= 8) {
     snprintf(out_password, out_len, "%s", g_device.ap_password);
     return true;
