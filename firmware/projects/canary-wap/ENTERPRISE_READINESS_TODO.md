@@ -7,7 +7,7 @@ This checklist is based on a repository audit focused on:
 - Witness-kernel backbone readiness
 - Home Assistant + Frigate + MQTT integration readiness
 
-Reference baseline inventory: `firmware/FIRMWARE_VARIANT_AUDIT.md` (canonical-path and rot-risk analysis).
+Reference baseline inventory: [`firmware/FIRMWARE_VARIANT_AUDIT.md`](../../FIRMWARE_VARIANT_AUDIT.md) (canonical-path and rot-risk analysis).
 
 ## 0) Current Snapshot (from this audit)
 

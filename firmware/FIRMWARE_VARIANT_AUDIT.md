@@ -6,15 +6,15 @@ Purpose: identify which firmware path is currently most active and most user-fri
 
 ## Executive Summary
 
-- **Most user-friendly + enterprise-ready candidate (current):** `firmware/canary`
+- **Most user-friendly + enterprise-ready candidate (current):** [`firmware/canary`](./canary)
   - Modular architecture, active recent commits, integrated AP + onboarding APIs (`/api/wifi/*`, `/api/mqtt/*`), and modern dashboard UI.
-- **Arduino-first compatibility path:** `firmware/projects/canary-wap/arduino/canary_wap`
+- **Arduino-first compatibility path:** [`firmware/projects/canary-wap/arduino/canary_wap`](./projects/canary-wap/arduino/canary_wap)
   - Functionally rich and very UI-heavy, but monolithic and high maintenance cost.
-- **High rot risk:** `firmware/projects/canary-wap-snapshot`
+- **High rot risk:** [`firmware/projects/canary-wap-snapshot`](./projects/canary-wap-snapshot)
   - Snapshot mirror that duplicates the Arduino WAP tree and will drift unless explicitly frozen.
 - **Specialized/adjacent stacks (not primary WAP UX path):**
-  - `firmware/projects/canary-vision` (ESP32-C3 + Vision AI, MQTT-focused)
-  - `firmware/projects/canary-ota` (ESP-IDF OTA subsystem)
+  - [`firmware/projects/canary-vision`](./projects/canary-vision) (ESP32-C3 + Vision AI, MQTT-focused)
+  - [`firmware/projects/canary-ota`](./projects/canary-ota) (ESP-IDF OTA subsystem)
 
 ---
 
