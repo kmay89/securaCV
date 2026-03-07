@@ -42,7 +42,6 @@ namespace wap_server {
 
 // Access Point configuration
 static const char* AP_SSID_PREFIX    = "SecuraCV-";      // + last 4 chars of MAC
-static const char* AP_PASSWORD       = "witness2026";    // Fallback; device-unique password used
 static const char* AP_HOSTNAME       = "canary";
 static const int   AP_CHANNEL        = 1;
 static const int   AP_MAX_CLIENTS    = 1;                // Hardened: max 1 client

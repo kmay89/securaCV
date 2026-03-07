@@ -21,10 +21,10 @@ Reference baseline inventory: [`firmware/FIRMWARE_VARIANT_AUDIT.md`](../../FIRMW
 
 ## 1) Critical security/privacy fixes before enterprise rollout
 
-- [ ] **Eliminate fallback AP password from production paths**
-  - Replace static fallback (`"witness2026"`) with mandatory device-unique generated credential.
-  - Ensure fallback is compile-time-disabled for release builds.
-  - Update docs to remove any default-password onboarding language.
+- [x] **Eliminate fallback AP password from production paths**
+  - [x] Replace static fallback (`"witness2026"`) with mandatory device-unique generated credential.
+  - [x] Ensure fallback is compile-time-disabled for release builds.
+  - [x] Update docs to remove any default-password onboarding language.
 
 - [ ] **Stop exposing raw MAC addresses in WAP APIs/logs**
   - Replace raw MAC with salted/rotating pseudonymous tokens where presence is needed.

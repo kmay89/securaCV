@@ -30,7 +30,21 @@
 // #define BUILD_PROFILE_DEV       // Development: + WiFi + HTTP + SD (~90s)
 #define BUILD_PROFILE_FULL      // Full features: + Mesh + BLE (~150s)
 
+
+// Security guardrails
+// FULL is treated as release-grade: no debug/developer credential fallbacks.
+#if defined(BUILD_PROFILE_FULL)
+  #define SECURACV_RELEASE_BUILD 1
+#else
+  #define SECURACV_RELEASE_BUILD 0
+#endif
 // Sanity checks
+// Compiler output guidance
+#if SECURACV_RELEASE_BUILD
+  #pragma message("[SecuraCV] Release build: AP password is device-unique and printed in provisioning/boot serial output.")
+#else
+  #pragma message("[SecuraCV] Non-release build: device-unique AP password is preferred; debug fallback may be generated if derivation fails.")
+#endif
 #if (defined(BUILD_PROFILE_MINIMAL) + defined(BUILD_PROFILE_DEV) + defined(BUILD_PROFILE_FULL)) != 1
   #error "Exactly one build profile must be selected in build_config.h."
 #endif
