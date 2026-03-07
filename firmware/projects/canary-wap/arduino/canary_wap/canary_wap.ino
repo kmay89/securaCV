@@ -215,7 +215,6 @@ static const uint32_t SD_SPI_SLOW = 1000000;
 // WIFI AP CONFIG
 // ════════════════════════════════════════════════════════════════════════════
 
-static const char* AP_PASSWORD_DEFAULT = "witness2026";  // fallback only; device-unique password used
 static const int   AP_CHANNEL          = 1;
 static const int   AP_MAX_CLIENTS      = 1;  // Hardened: max 1 client for security
 
@@ -3725,6 +3724,33 @@ static void wifi_check_connection() {
   }
 }
 
+static bool resolve_ap_password(char* out_password, size_t out_len) {
+  if (!out_password || out_len == 0) return false;
+
+  if (strlen(g_device.ap_password) >= 8) {
+    snprintf(out_password, out_len, "%s", g_device.ap_password);
+    return true;
+  }
+
+  derive_ap_password(g_device.pubkey_fp, g_device.ap_password, sizeof(g_device.ap_password));
+  if (strlen(g_device.ap_password) >= 8) {
+    snprintf(out_password, out_len, "%s", g_device.ap_password);
+    return true;
+  }
+
+#if SECURACV_RELEASE_BUILD
+  log_health(SCV_LOG_ERROR, SCV_CAT_NETWORK,
+             "AP password unavailable", "Release build requires device-unique credential");
+  return false;
+#else
+  uint32_t entropy = esp_random();
+  snprintf(out_password, out_len, "dev-%08lx", (unsigned long)entropy);
+  log_health(SCV_LOG_WARNING, SCV_CAT_NETWORK,
+             "AP debug password generated", "Non-release fallback in use");
+  return true;
+#endif
+}
+
 static void wifi_init_provisioning() {
   memset(&g_wifi_status, 0, sizeof(g_wifi_status));
 
@@ -3734,8 +3760,11 @@ static void wifi_init_provisioning() {
   // Always use AP+STA mode for provisioning capability
   WiFi.mode(WIFI_AP_STA);
 
-  // Start Access Point with device-unique password (or fallback to default)
-  const char* ap_pass = (strlen(g_device.ap_password) >= 8) ? g_device.ap_password : AP_PASSWORD_DEFAULT;
+  // Start Access Point with device-unique password.
+  char ap_pass[32] = {0};
+  if (!resolve_ap_password(ap_pass, sizeof(ap_pass))) {
+    return;
+  }
   bool ap_ok = WiFi.softAP(g_device.ap_ssid, ap_pass, AP_CHANNEL, false, AP_MAX_CLIENTS);
 
   if (!ap_ok) {

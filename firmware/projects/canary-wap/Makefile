@@ -127,7 +127,7 @@ secrets:
 			cp secrets/secrets.example.h secrets/secrets.h; \
 			echo "Created secrets/secrets.h from template"; \
 			echo "IMPORTANT: Edit secrets/secrets.h with your credentials"; \
-			echo "           Change the default AP password before deployment!"; \
+			echo "           Verify provisioning receipt and store device-unique AP password securely!"; \
 		else \
 			echo "Error: secrets/secrets.example.h not found"; \
 			exit 1; \
