@@ -4243,6 +4243,20 @@ void setup() {
     Serial.println("[WARN] WiFi AP failed to start");
   }
   #endif
+
+  // Print quick-connect details early so users do not need to wait for later init phases.
+  #if FEATURE_WIFI_AP
+  if (g_device.initialized) {
+    Serial.println("[PROV] Quick connect (early):");
+    Serial.printf("[PROV]   WiFi SSID : %s\n", g_device.ap_ssid);
+    Serial.printf("[PROV]   WiFi PASS : %s\n", g_device.ap_password);
+    Serial.printf("[PROV]   URL       : %s://canary.local  (or %s://%s)\n",
+                  g_tls_enabled ? "https" : "http",
+                  g_tls_enabled ? "https" : "http",
+                  WiFi.softAPIP().toString().c_str());
+    Serial.printf("[PROV]   API TOKEN : %s\n", g_device.api_token_str);
+  }
+  #endif
   
   // Initialize camera for peek/preview
   #if FEATURE_CAMERA_PEEK
@@ -4424,39 +4438,44 @@ void setup() {
   // Log boot event
   log_health(SCV_LOG_INFO, SCV_CAT_SYSTEM, "Device boot complete", FIRMWARE_VERSION);
   
-  // Print provisioning receipt on first boot (full token visible via Serial = physical access)
-  if (g_device.first_boot) {
-    Serial.println();
-    Serial.println("╔══════════════════════════════════════════════════════════════╗");
-    Serial.println("║            PROVISIONING RECEIPT                               ║");
-    Serial.println("║  Save this JSON for the Secure Admin Panel (SAP)              ║");
-    Serial.println("╠══════════════════════════════════════════════════════════════╣");
-    Serial.println("║                                                              ║");
-    Serial.printf( "║  {                                                           ║\n");
-    Serial.printf( "║    \"device_id\": \"%s\",\n", g_device.device_id);
-    #if FEATURE_WIFI_AP
-    Serial.printf( "║    \"base_url\": \"%s://%s\",\n",
-                   g_tls_enabled ? "https" : "http", WiFi.softAPIP().toString().c_str());
-    #endif
-    Serial.printf( "║    \"token\": \"%s\",\n", g_device.api_token_str);
-    Serial.printf( "║    \"pubkey_fp\": \"%s\",\n", g_device.fingerprint_hex);
-    Serial.printf( "║    \"firmware\": \"%s\",\n", FIRMWARE_VERSION);
-    Serial.printf( "║    \"mac\": \"%s\",\n", WiFi.macAddress().c_str());
-    Serial.printf( "║    \"ap_ssid\": \"%s\",\n", g_device.ap_ssid);
-    Serial.printf( "║    \"ap_password\": \"%s\",\n", g_device.ap_password);
-    if (g_tls_enabled) {
-      Serial.printf("║    \"tls_cert_fp\": \"%s\",\n", g_tls_cert_fp_hex);
-    }
-    Serial.printf( "║    \"provisioned_at\": \"boot:%lu\"\n", (unsigned long)g_device.boot_count);
-    Serial.println("║  }                                                           ║");
-    Serial.println("║                                                              ║");
-    Serial.println("╚══════════════════════════════════════════════════════════════╝");
-  } else {
-    // Subsequent boots: show redacted token
-    char redacted[16];
-    auth_redact_token(g_device.api_token_str, redacted, sizeof(redacted));
-    Serial.printf("[PROV] API token: %s  (redacted — full token on first boot only)\n", redacted);
+  // Print full provisioning receipt on every boot.
+  // Serial output requires local physical access and removes first-boot friction.
+  Serial.println();
+  Serial.println("╔══════════════════════════════════════════════════════════════╗");
+  Serial.println("║            PROVISIONING RECEIPT                               ║");
+  Serial.println("║  Save this JSON for the Secure Admin Panel (SAP)              ║");
+  Serial.println("╠══════════════════════════════════════════════════════════════╣");
+  Serial.println("║                                                              ║");
+  Serial.printf( "║  {                                                           ║\n");
+  Serial.printf( "║    \"device_id\": \"%s\",\n", g_device.device_id);
+  #if FEATURE_WIFI_AP
+  Serial.printf( "║    \"base_url\": \"%s://%s\",\n",
+                 g_tls_enabled ? "https" : "http", WiFi.softAPIP().toString().c_str());
+  #endif
+  Serial.printf( "║    \"token\": \"%s\",\n", g_device.api_token_str);
+  Serial.printf( "║    \"pubkey_fp\": \"%s\",\n", g_device.fingerprint_hex);
+  Serial.printf( "║    \"firmware\": \"%s\",\n", FIRMWARE_VERSION);
+  Serial.printf( "║    \"mac\": \"%s\",\n", WiFi.macAddress().c_str());
+  Serial.printf( "║    \"ap_ssid\": \"%s\",\n", g_device.ap_ssid);
+  Serial.printf( "║    \"ap_password\": \"%s\",\n", g_device.ap_password);
+  if (g_tls_enabled) {
+    Serial.printf("║    \"tls_cert_fp\": \"%s\",\n", g_tls_cert_fp_hex);
   }
+  Serial.printf( "║    \"provisioned_at\": \"boot:%lu\"\n", (unsigned long)g_device.boot_count);
+  Serial.println("║  }                                                           ║");
+  Serial.println("║                                                              ║");
+  Serial.println("╚══════════════════════════════════════════════════════════════╝");
+
+  #if FEATURE_WIFI_AP
+  Serial.println("[PROV] Quick connect:");
+  Serial.printf("[PROV]   WiFi SSID : %s\n", g_device.ap_ssid);
+  Serial.printf("[PROV]   WiFi PASS : %s\n", g_device.ap_password);
+  Serial.printf("[PROV]   URL       : %s://canary.local  (or %s://%s)\n",
+                g_tls_enabled ? "https" : "http",
+                g_tls_enabled ? "https" : "http",
+                WiFi.softAPIP().toString().c_str());
+  Serial.printf("[PROV]   API TOKEN : %s\n", g_device.api_token_str);
+  #endif
 
   Serial.println();
   Serial.println("╔══════════════════════════════════════════════════════════════╗");
@@ -4472,7 +4491,7 @@ void setup() {
   #endif
   Serial.println("╠══════════════════════════════════════════════════════════════╣");
   Serial.println("║  Commands: h=help i=identity s=status t=time g=gps c=cam m=sys║");
-  Serial.println("║  Press BOOT (short) = serve provisioning receipt via HTTPS    ║");
+  Serial.println("║  Token + WiFi credentials are printed above on every boot      ║");
   Serial.println("║  Hold  BOOT (>3s)   = factory reset                           ║");
   Serial.println("╚══════════════════════════════════════════════════════════════╝");
   Serial.println();
