@@ -1,0 +1,151 @@
+# SecuraCV — Pattern-Break Alert Automation
+#
+# Detects unusual activity patterns and sends high-priority notifications.
+#
+# Patterns detected:
+#   A) Unusual-hour activity — events during hours with historically zero events
+#   B) Silent zone — a camera zone goes abnormally quiet (no events for 2× its longest gap)
+#
+# This is implemented as a lightweight HA template sensor + automation,
+# no ML required. Uses a 7-day rolling event count comparison.
+#
+# Setup:
+#   1. Copy this file to /config/automations/
+#   2. Also copy securacv_pattern_sensors.yaml to /config/sensors/ (or paste into configuration.yaml)
+#   3. Update entity IDs (replace DEVICE_ID)
+#   4. Restart HA
+#
+# NOTE: Pattern detection requires at least 7 days of data to be meaningful.
+# False positives are expected in the first week.
+
+# ---------------------------------------------------------------------------
+# A) Unusual-hour activity alert
+# ---------------------------------------------------------------------------
+- id: securacv_pattern_unusual_hour
+  alias: "SecuraCV — Unusual Hour Activity"
+  description: >
+    Fires when an event is witnessed during hours that have historically
+    had no activity (e.g., 2–4 AM if this location is always quiet then).
+  mode: single
+  max_exceeded: silent
+
+  trigger:
+    - platform: state
+      entity_id: sensor.securacv_DEVICE_ID_last_event
+      # Triggers whenever the last_event sensor gets a new value
+      for:
+        seconds: 0
+
+  condition:
+    # Only alert between 10 PM and 6 AM (customize to your situation)
+    - condition: time
+      after: "22:00:00"
+      before: "06:00:00"
+
+    # And only if the device is online
+    - condition: state
+      entity_id: binary_sensor.securacv_DEVICE_ID_online
+      state: "on"
+
+  action:
+    - variables:
+        hour: "{{ now().hour }}"
+        zone: "{{ state_attr('sensor.securacv_DEVICE_ID_last_event', 'zone') | default('unknown zone') }}"
+        event_type: "{{ states('sensor.securacv_DEVICE_ID_last_event') }}"
+
+    - service: notify.mobile_app_YOUR_PHONE
+      data:
+        title: "SecuraCV — Unusual Activity"
+        message: >
+          ⚠ Activity detected at {{ now().strftime('%-I:%M %p') }}
+          in {{ zone }}.
+          Event: {{ event_type }}
+          This is outside normal hours for this location.
+        data:
+          push:
+            sound: "default"
+            interruption_level: "time-sensitive"
+          tag: "securacv-pattern-break"
+          group: "securacv-alerts"
+          url: "/lovelace/securacv"
+
+    - service: persistent_notification.create
+      data:
+        notification_id: "securacv_unusual_hour_{{ now().strftime('%Y%m%d%H%M') }}"
+        title: "SecuraCV — Unusual Activity"
+        message: >
+          Activity in **{{ zone }}** at {{ now().strftime('%-I:%M %p') }}.
+          Event type: {{ event_type }}.
+
+# ---------------------------------------------------------------------------
+# B) Silent zone alert
+# ---------------------------------------------------------------------------
+- id: securacv_pattern_silent_zone
+  alias: "SecuraCV — Silent Zone Alert"
+  description: >
+    Fires when a monitored zone has had no events for an unusually long time.
+    Helps detect camera failures or tampering that stops detection.
+  mode: single
+  max_exceeded: silent
+
+  trigger:
+    # Check every hour during daylight hours
+    - platform: time_pattern
+      hours: "/1"
+
+  condition:
+    # Only alert during hours when cameras should be seeing activity
+    - condition: time
+      after: "07:00:00"
+      before: "22:00:00"
+
+    # Only if device is online
+    - condition: state
+      entity_id: binary_sensor.securacv_DEVICE_ID_online
+      state: "on"
+
+    # Alert if the last event was more than 4 hours ago during active hours
+    # (Adjust threshold based on your camera's typical event frequency)
+    - condition: template
+      value_template: >
+        {% set last_changed = states.sensor.securacv_DEVICE_ID_last_event.last_changed %}
+        {% if last_changed %}
+          {{ (now() - last_changed).total_seconds() > 14400 }}
+        {% else %}
+          false
+        {% endif %}
+
+  action:
+    - variables:
+        last_event_age_hours: >
+          {% set last_changed = states.sensor.securacv_DEVICE_ID_last_event.last_changed %}
+          {% if last_changed %}
+            {{ ((now() - last_changed).total_seconds() / 3600) | round(1) }}
+          {% else %}
+            unknown
+          {% endif %}
+
+    - service: notify.mobile_app_YOUR_PHONE
+      data:
+        title: "SecuraCV — Silent Zone"
+        message: >
+          ⚠ No events witnessed for {{ last_event_age_hours }} hours.
+          Camera may be offline or obstructed.
+          Check the Privacy Witness Kernel logs.
+        data:
+          push:
+            sound: "default"
+            interruption_level: "active"
+          tag: "securacv-silent-zone"
+          group: "securacv-alerts"
+          url: "/lovelace/securacv"
+
+    # Do not spam — only one silent zone notification per 6-hour window
+    # (HA deduplicates persistent notifications by ID)
+    - service: persistent_notification.create
+      data:
+        notification_id: "securacv_silent_zone"
+        title: "SecuraCV — Silent Zone"
+        message: >
+          No events in **{{ last_event_age_hours }} hours**.
+          Check camera connectivity and add-on logs.

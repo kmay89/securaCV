@@ -13,9 +13,27 @@ CONFIG_FILE="/config/witness_config.json"
 DB_PATH="/config/witness.db"
 VAULT_PATH="/share/witness_vault"
 TOKEN_FILE="/config/api_token"
+INGRESS_PORT="${INGRESS_PORT:-8788}"
 
 # Log startup
 bashio::log.info "Starting Privacy Witness Kernel add-on..."
+
+# ============================================================================
+# First-run detection: if device_key_seed is not set, serve the setup wizard
+# instead of erroring out immediately. The wizard lets the user configure
+# everything through a browser UI and then saves options via the Supervisor API.
+# ============================================================================
+DEVICE_KEY_SEED=$(bashio::config 'device_key_seed' || echo "")
+
+if [ -z "$DEVICE_KEY_SEED" ] || [ "$DEVICE_KEY_SEED" = "devkey:mvp" ]; then
+    bashio::log.info "=== First-run detected: serving setup wizard on port ${INGRESS_PORT} ==="
+    bashio::log.info "Open the add-on Web UI to complete setup, then restart this add-on."
+
+    export SUPERVISOR_TOKEN="${HASSIO_TOKEN:-}"
+    export INGRESS_PATH="${SUPERVISOR_INGRESS_PATH:-}"
+
+    exec /usr/bin/python3 /usr/local/bin/serve_wizard.py
+fi
 
 # Read common configuration
 DEVICE_KEY_SEED=$(bashio::config 'device_key_seed')

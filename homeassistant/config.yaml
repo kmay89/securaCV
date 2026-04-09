@@ -101,6 +101,13 @@ schema:
 environment:
   RUST_LOG: "info"
 
+# Ingress: setup wizard on first run, status panel thereafter
+ingress: true
+ingress_port: 8788
+ingress_stream: false
+panel_icon: "mdi:shield-check"
+panel_title: "SecuraCV"
+
 # Startup configuration
 startup: services
 boot: auto
