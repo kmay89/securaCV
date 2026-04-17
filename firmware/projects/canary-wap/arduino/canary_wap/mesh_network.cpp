@@ -1115,6 +1115,12 @@ void update() {
   // Process received messages
   if (g_rx_pending) {
     handle_received_message(g_rx_mac, g_rx_buffer, g_rx_len);
+    // Chirp shares the ESP-NOW channel with the mesh protocol; forward every
+    // frame to the chirp dispatcher, which filters on CHIRP_MAGIC and ignores
+    // non-chirp traffic. g_rx_rssi is the actual RSSI reported by the radio
+    // in espnow_recv_cb (info->rx_ctrl->rssi).
+    chirp_channel::dispatch_espnow_message(g_rx_mac, g_rx_buffer,
+                                           (int)g_rx_len, g_rx_rssi);
     g_rx_pending = false;
   }
 

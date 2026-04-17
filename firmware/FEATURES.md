@@ -1,9 +1,19 @@
 # SecuraCV Canary Firmware — Feature Audit Matrix
 
-**Audit Date:** 2026-02-20
-**WAP Snapshot Version:** 2.1.0-wap (canonical reference)
-**Arduino IDE Version:** 2.1.0-arduino (simplified)
-**PlatformIO Canary Version:** modular library build
+**Last updated:** 2026-04-17
+**Original audit:** 2026-02-20
+**Companion docs:** [VARIANT_POLICY.md](VARIANT_POLICY.md) (lifecycle labels), [FIRMWARE_VARIANT_AUDIT.md](FIRMWARE_VARIANT_AUDIT.md) (risk analysis)
+
+**Variant identifiers used below:**
+
+| Identifier | Path | Lifecycle |
+|---|---|---|
+| **canary (PIO)** | `firmware/canary/` | ACTIVE |
+| **canary-wap (Arduino)** | `firmware/projects/canary-wap/arduino/canary_wap/` | COMPATIBILITY |
+| **canary-wap (PIO)** | `firmware/projects/canary-wap/` | COMPATIBILITY |
+| **canary-vision** | `firmware/projects/canary-vision/` | SPECIALIZED |
+| **canary-ota** | `firmware/projects/canary-ota/` | SPECIALIZED |
+| **snapshot (archived)** | `firmware/projects/_archive/canary-wap-snapshot/` | ARCHIVED (build-gated) |
 
 ## Legend
 
@@ -12,8 +22,48 @@
 | ✅ | Feature present and functional |
 | ❌ | Feature missing entirely |
 | ⚠️ | Feature partially implemented or stubbed |
+| ➖ | Not applicable to this variant's scope |
 
 ---
+
+## Feature-Parity Dashboard
+
+Single-row-per-capability summary across every non-archived variant. This is the **authoritative at-a-glance view**; the deeper per-subsystem tables below remain as detail.
+
+> **CI contract:** a PR that regresses a ✅ → ⚠️/❌ cell in this dashboard must include an issue reference in the PR body (e.g. `Regresses FEATURES.md: <cell> (#1234)`). The `regression_check.sh` + `archive-guard` jobs in `.github/workflows/firmware.yml` will be extended to parse this table and fail if a cell downgrades without an accompanying `#<number>` reference in the PR description.
+
+| Capability | canary (PIO) | canary-wap (Arduino) | canary-wap (PIO) | canary-vision | canary-ota | snapshot (archived) |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|
+| Ed25519 signing of witness records | ✅ | ✅ | ⚠️ | ✅ | ➖ | ✅ |
+| SHA-256 hash-chain continuity (domain-separated, NVS-persisted) | ✅ | ✅ | ⚠️ | ✅ | ➖ | ✅ |
+| GPS (NMEA parse + fix FSM + motion hysteresis) | ✅ | ✅ | ⚠️ | ❌ | ➖ | ✅ |
+| SD storage (append-only, `/WITNESS` `/HEALTH` `/CHAIN` `/EXPORT`) | ✅ | ✅ | ⚠️ | ❌ | ➖ | ✅ |
+| SD graceful shutdown flush | ✅ | ✅ | ⚠️ | ➖ | ➖ | ⚠️ |
+| SD status counters (`witness_count` / `health_count` / `unacked_count`) | ✅ | ✅ | ⚠️ | ➖ | ➖ | ⚠️ |
+| WiFi AP (SecuraCV-XXXX SSID, device-unique password) | ✅ | ✅ | ⚠️ | ❌ | ➖ | ✅ |
+| WiFi STA (home network dual-mode) | ✅ | ✅ | ❌ | ✅ | ➖ | ✅ |
+| Web UI (embedded PROGMEM dashboard) | ⚠️ | ✅ | ⚠️ | ❌ | ➖ | ✅ |
+| Camera peek (MJPEG stream, no frame storage) | ❌ | ✅ | ⚠️ | ➖ | ➖ | ✅ |
+| Mesh network (Opera / ESP-NOW) | ⚠️ | ✅ | ⚠️ | ❌ | ➖ | ✅ |
+| Mesh RSSI from ESP-NOW radio | ⚠️ | ✅ | ❌ | ❌ | ➖ | ❌ |
+| BLE discovery (Opera/Chirp/Nearby) | ❌ | ✅ | ❌ | ❌ | ➖ | ✅ |
+| RF presence detection | ❌ | ✅ | ⚠️ | ❌ | ➖ | ✅ |
+| Chirp channel (broadcast beacon) | ⚠️ | ✅ | ⚠️ | ❌ | ➖ | ✅ |
+| MQTT publish + HA Discovery | ✅ | ❌ | ❌ | ✅ | ➖ | ❌ |
+| OTA A/B with rollback safety | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ |
+| API authentication (bearer token + HKDF derivation) | ❌ | ✅ | ❌ | ❌ | ➖ | ✅ |
+| Rate limiting on HTTP API | ✅ | ✅ | ❌ | ➖ | ➖ | ✅ |
+| TLS (HTTPS self-signed) | ❌ | ❌ | ❌ | ❌ | ➖ | ✅ |
+| Watchdog timer | ✅ | ✅ | ⚠️ | ✅ | ✅ | ✅ |
+| Provisioning gate (BOOT button) | ✅ | ✅ | ❌ | ❌ | ➖ | ✅ |
+| `SECURACV_RELEASE_BUILD` fail-closed guards | ✅ | ✅ | ⚠️ | ✅ | ✅ | ✅ (archive-only) |
+
+---
+
+
+## Detailed Per-Subsystem Tables
+
+> **Note:** The tables below originate from the 2026-02-20 audit and use **WAP Snapshot** as the original canonical reference column. That tree is now **ARCHIVED** (see [VARIANT_POLICY.md](VARIANT_POLICY.md)); the dashboard above reflects the current post-archive state. The detailed tables are preserved as a historical parity record and for granular triage; when adding new capability rows, mirror them into the dashboard first.
 
 ## Core Cryptographic Witness Chain
 
@@ -240,15 +290,15 @@
 
 ## Summary
 
-The **WAP Snapshot** is the canonical reference with ~45+ features. The other build targets have significant gaps:
+Post-archive (2026-04), the ACTIVE canonical tree is `firmware/canary/` (PlatformIO). The WAP Snapshot remains as a frozen reference under `firmware/projects/_archive/canary-wap-snapshot/` and no longer accepts new work.
 
-- **Arduino IDE build**: ~15% feature parity (basic WiFi AP + crypto init, no hash chain, no camera, no GPS, no health logs, no chain export, minimal web UI)
-- **PlatformIO canary/**: ~75% feature parity (MQTT publishing, HA Discovery, rate limiting, factory reset, device-unique AP password, WiFi STA, export — still missing camera streaming, GPS motion FSM, full web UI tabs, API auth)
-- **PlatformIO canary-wap/**: ~40% feature parity (uses common headers, good config system, but implementations are skeleton/stub)
+- **canary-wap Arduino (COMPATIBILITY)**: ~100% WAP parity; recently hardened (real ESP-NOW RSSI 2026-04, SD flush-on-unmount 2026-04).
+- **canary (PIO, ACTIVE)**: ~85% feature parity — modular libs, MQTT + HA Discovery, WiFi STA, export, storage status counters (2026-04). Gaps: camera streaming, full GPS motion FSM, some web UI tabs, API auth parity.
+- **canary-wap (PIO, COMPATIBILITY)**: ~40% parity — uses common headers, many implementations still skeleton.
 
 ### Priority Actions
 
-1. **Arduino IDE build**: Complete rewrite needed — replace stub with full WAP-equivalent implementation
-2. **PlatformIO canary/**: Fill in missing API endpoints, camera streaming, web UI tabs
-3. **PlatformIO canary-wap/**: Implement common module bodies that currently exist only as headers
-4. **Fleet management**: Create scalable multi-device dashboard
+1. **canary (PIO)**: Close the remaining UX gaps (camera streaming, full dashboard tabs, API auth parity) so it can fully replace the Arduino compatibility lane.
+2. **canary-wap (PIO)**: Implement common module bodies that currently exist only as headers; decide whether to retire this lane in favour of the Arduino compatibility tree + canary.
+3. **Fleet management**: Create scalable multi-device dashboard (canary-vision SPA follow-up).
+4. **Dashboard integrity**: Wire CI to fail on `✅ → ⚠️/❌` regressions in the Feature-Parity Dashboard unless the PR cites an issue.

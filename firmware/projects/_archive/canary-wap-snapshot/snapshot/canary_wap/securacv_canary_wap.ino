@@ -215,7 +215,12 @@ static const uint32_t SD_SPI_SLOW = 1000000;
 // WIFI AP CONFIG
 // ════════════════════════════════════════════════════════════════════════════
 
-static const char* AP_PASSWORD_DEFAULT = "witness2026";  // fallback only; device-unique password used
+// NOTE (archived snapshot): the historical "witness2026" fallback was removed
+// as a security backport before freezing. A build-time guard in build_config.h
+// prevents this archive from being compiled by accident. If you intentionally
+// revive the archive (SECURACV_ALLOW_ARCHIVED_BUILD=1), provisioning MUST
+// succeed before AP startup — there is no static fallback password.
+static const char* AP_PASSWORD_DEFAULT = "";
 static const int   AP_CHANNEL          = 1;
 static const int   AP_MAX_CLIENTS      = 1;  // Hardened: max 1 client for security
 
