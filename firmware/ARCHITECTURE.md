@@ -1,7 +1,8 @@
 # Firmware Architecture (Normative)
 
 **Status:** Canonical and normative for the `firmware/` subtree.  
-**Precedence:** If a document conflicts with this file, this file wins within `firmware/`.
+**Precedence:** If a document conflicts with this file, this file wins within `firmware/`.  
+**Companion policy:** [VARIANT_POLICY.md](VARIANT_POLICY.md) governs variant lifecycle (ACTIVE/COMPATIBILITY/SPECIALIZED/ARCHIVED).
 
 ## Purpose
 
