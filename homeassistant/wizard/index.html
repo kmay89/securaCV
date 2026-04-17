@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SecuraCV Setup</title>
+<style>
+  :root {
+    --primary: #1e88e5;
+    --primary-dark: #1565c0;
+    --success: #43a047;
+    --danger: #e53935;
+    --warn: #fb8c00;
+    --surface: #fff;
+    --surface-2: #f5f7fa;
+    --border: #e0e4ea;
+    --text: #1a1a2e;
+    --text-muted: #6b7280;
+    --radius: 10px;
+    --shadow: 0 2px 16px rgba(0,0,0,0.08);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--surface-2);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    padding: 24px 16px;
+  }
+
+  /* ---- Progress bar ---- */
+  .progress-bar {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 28px;
+    width: 100%;
+    max-width: 560px;
+  }
+  .progress-step {
+    flex: 1;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--border);
+    transition: background 0.3s;
+  }
+  .progress-step.active { background: var(--primary); }
+  .progress-step.done   { background: var(--success); }
+
+  /* ---- Card ---- */
+  .card {
+    background: var(--surface);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 36px 32px;
+    width: 100%;
+    max-width: 560px;
+  }
+  @media (max-width: 600px) { .card { padding: 24px 16px; } }
+
+  .card-header {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 8px;
+  }
+  .card-icon { font-size: 2rem; line-height: 1; }
+  h1 { font-size: 1.5rem; font-weight: 700; color: var(--text); }
+  h2 { font-size: 1.1rem; font-weight: 600; color: var(--text); margin-bottom: 16px; }
+  .subtitle { color: var(--text-muted); font-size: 0.95rem; margin-bottom: 28px; line-height: 1.5; }
+
+  /* ---- Form elements ---- */
+  label { display: block; font-size: 0.85rem; font-weight: 600; color: var(--text-muted); margin-bottom: 4px; }
+  input[type=text], input[type=number], input[type=time], select {
+    width: 100%;
+    padding: 10px 14px;
+    border: 1.5px solid var(--border);
+    border-radius: 6px;
+    font-size: 0.95rem;
+    color: var(--text);
+    background: var(--surface);
+    transition: border-color 0.2s;
+    margin-bottom: 4px;
+  }
+  input:focus, select:focus { outline: none; border-color: var(--primary); }
+  .field { margin-bottom: 18px; }
+  .field-row { display: flex; gap: 12px; }
+  .field-row .field { flex: 1; }
+
+  /* ---- Toggle ---- */
+  .toggle-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
+  .toggle-label { font-size: 0.95rem; font-weight: 500; }
+  .toggle-sub   { font-size: 0.82rem; color: var(--text-muted); }
+  .toggle {
+    position: relative; width: 44px; height: 24px; flex-shrink: 0;
+  }
+  .toggle input { opacity: 0; width: 0; height: 0; }
+  .slider {
+    position: absolute; cursor: pointer; inset: 0;
+    background: var(--border); border-radius: 24px; transition: .3s;
+  }
+  .slider:before {
+    content: ""; position: absolute; height: 18px; width: 18px;
+    left: 3px; bottom: 3px; background: #fff; border-radius: 50%; transition: .3s;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  }
+  input:checked + .slider { background: var(--primary); }
+  input:checked + .slider:before { transform: translateX(20px); }
+
+  /* ---- Camera card ---- */
+  .camera-card {
+    border: 1.5px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 14px;
+    background: var(--surface-2);
+  }
+  .camera-card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+  .camera-title { font-weight: 600; font-size: 0.95rem; }
+  .btn-remove {
+    background: none; border: none; color: var(--danger); cursor: pointer;
+    font-size: 1.1rem; padding: 2px 6px; border-radius: 4px;
+  }
+  .btn-remove:hover { background: #fdecea; }
+  .test-result {
+    font-size: 0.82rem; margin-top: 4px; padding: 6px 10px;
+    border-radius: 5px; display: none;
+  }
+  .test-result.ok   { background: #e8f5e9; color: #2e7d32; display: block; }
+  .test-result.fail { background: #fdecea; color: #c62828; display: block; }
+
+  /* ---- Buttons ---- */
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 11px 24px; border-radius: 7px; font-size: 0.95rem; font-weight: 600;
+    cursor: pointer; border: none; transition: background 0.2s, transform 0.1s;
+  }
+  .btn:active { transform: translateY(1px); }
+  .btn-primary { background: var(--primary); color: #fff; }
+  .btn-primary:hover { background: var(--primary-dark); }
+  .btn-secondary {
+    background: var(--surface-2); color: var(--text);
+    border: 1.5px solid var(--border);
+  }
+  .btn-secondary:hover { background: var(--border); }
+  .btn-success { background: var(--success); color: #fff; }
+  .btn-sm { padding: 7px 14px; font-size: 0.82rem; }
+  .btn-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 28px; }
+  .btn-row .right { display: flex; gap: 10px; }
+
+  /* ---- Info boxes ---- */
+  .info-box {
+    border-radius: 7px; padding: 14px 16px; margin-bottom: 20px; font-size: 0.88rem; line-height: 1.6;
+  }
+  .info-box.blue  { background: #e3f0fc; border-left: 3px solid var(--primary); }
+  .info-box.green { background: #e8f5e9; border-left: 3px solid var(--success); }
+  .info-box.warn  { background: #fff3e0; border-left: 3px solid var(--warn); }
+  .info-box.red   { background: #fdecea; border-left: 3px solid var(--danger); }
+  .info-box strong { display: block; margin-bottom: 4px; }
+
+  /* ---- Summary list ---- */
+  .summary-list { list-style: none; }
+  .summary-list li {
+    display: flex; justify-content: space-between;
+    padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 0.9rem;
+  }
+  .summary-list li:last-child { border-bottom: none; }
+  .summary-key   { color: var(--text-muted); }
+  .summary-value { font-weight: 600; text-align: right; max-width: 65%; word-break: break-all; }
+
+  /* ---- Key display ---- */
+  .key-box {
+    background: #f0f4f8; border: 1.5px solid var(--border); border-radius: 7px;
+    padding: 12px 14px; font-family: monospace; font-size: 0.8rem;
+    word-break: break-all; color: #334155; margin: 8px 0 16px;
+  }
+
+  /* ---- Done screen ---- */
+  .done-icon { text-align: center; font-size: 4rem; margin-bottom: 16px; }
+  .done-title { text-align: center; font-size: 1.4rem; font-weight: 700; margin-bottom: 8px; }
+  .done-sub   { text-align: center; color: var(--text-muted); margin-bottom: 24px; }
+  .step-list  { list-style: none; }
+  .step-list li {
+    padding: 10px 0 10px 32px; position: relative;
+    border-bottom: 1px solid var(--border); font-size: 0.9rem;
+  }
+  .step-list li:before { content: "→"; position: absolute; left: 8px; color: var(--primary); }
+
+  /* ---- Loading spinner ---- */
+  .spinner {
+    display: inline-block; width: 18px; height: 18px;
+    border: 2px solid rgba(255,255,255,0.4); border-top-color: #fff;
+    border-radius: 50%; animation: spin 0.7s linear infinite; vertical-align: middle;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ---- Hidden ---- */
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<!-- Progress bar -->
+<div class="progress-bar" id="progress-bar">
+  <div class="progress-step active" data-step="1"></div>
+  <div class="progress-step" data-step="2"></div>
+  <div class="progress-step" data-step="3"></div>
+  <div class="progress-step" data-step="4"></div>
+  <div class="progress-step" data-step="5"></div>
+</div>
+
+<!-- ================================================================
+     Screen 1: Welcome
+     ================================================================ -->
+<div class="card" id="screen-1">
+  <div class="card-header">
+    <span class="card-icon">🛡</span>
+    <h1>SecuraCV</h1>
+  </div>
+  <p class="subtitle">
+    A security camera with a 24-hour memory.<br>
+    Clips stay on your hardware. They auto-delete. The only thing that
+    persists is a tamper-proof log that proves nobody altered the record.
+  </p>
+
+  <div class="info-box blue">
+    <strong>What this wizard does:</strong>
+    Connects your cameras to Frigate, configures the Privacy Witness Kernel,
+    and sets up daily notifications — in about 2 minutes.
+  </div>
+
+  <div class="info-box warn">
+    <strong>Before you continue:</strong>
+    Make sure <strong>Frigate</strong> and <strong>Mosquitto</strong> add-ons are
+    installed. If you used the SecuraCV install script, they're already there.
+  </div>
+
+  <div class="btn-row">
+    <span></span>
+    <button class="btn btn-primary" onclick="goTo(2)">Get Started →</button>
+  </div>
+</div>
+
+<!-- ================================================================
+     Screen 2: Add Cameras
+     ================================================================ -->
+<div class="card hidden" id="screen-2">
+  <h2>📷 Add Cameras</h2>
+  <p class="subtitle">
+    Enter the name and RTSP stream URL for each camera. You can add more later
+    from the add-on configuration panel.
+  </p>
+
+  <div id="cameras-container"></div>
+
+  <button class="btn btn-secondary btn-sm" onclick="addCamera()" style="margin-bottom:20px">
+    + Add Another Camera
+  </button>
+
+  <div id="camera-error" class="info-box red hidden"></div>
+
+  <div class="btn-row">
+    <button class="btn btn-secondary" onclick="goTo(1)">← Back</button>
+    <button class="btn btn-primary" onclick="validateCamerasAndNext()">Next →</button>
+  </div>
+</div>
+
+<!-- ================================================================
+     Screen 3: Settings
+     ================================================================ -->
+<div class="card hidden" id="screen-3">
+  <h2>⚙️ Settings</h2>
+
+  <div class="field">
+    <label for="retention">Clip retention period</label>
+    <select id="retention">
+      <option value="1" selected>24 hours (recommended)</option>
+      <option value="2">48 hours</option>
+      <option value="7">7 days</option>
+      <option value="30">30 days</option>
+    </select>
+    <small style="color:var(--text-muted);font-size:0.8rem">
+      Frigate clips older than this are automatically deleted.
+      The witness log is kept forever (it's tiny).
+    </small>
+  </div>
+
+  <div class="field">
+    <label for="digest-time">Daily digest notification time</label>
+    <input type="time" id="digest-time" value="08:00">
+  </div>
+
+  <div class="toggle-row">
+    <div>
+      <div class="toggle-label">Pattern-break alerts</div>
+      <div class="toggle-sub">Notify when activity is unusual for the time of day</div>
+    </div>
+    <label class="toggle">
+      <input type="checkbox" id="pattern-alerts" checked>
+      <span class="slider"></span>
+    </label>
+  </div>
+
+  <div class="toggle-row">
+    <div>
+      <div class="toggle-label">Integrity failure alerts</div>
+      <div class="toggle-sub">Persistent notification if witness log tampering is detected</div>
+    </div>
+    <label class="toggle">
+      <input type="checkbox" id="integrity-alerts" checked>
+      <span class="slider"></span>
+    </label>
+  </div>
+
+  <div class="btn-row">
+    <button class="btn btn-secondary" onclick="goTo(2)">← Back</button>
+    <button class="btn btn-primary" onclick="goTo(4)">Next →</button>
+  </div>
+</div>
+
+<!-- ================================================================
+     Screen 4: Confirm & Start
+     ================================================================ -->
+<div class="card hidden" id="screen-4">
+  <h2>✅ Confirm &amp; Start</h2>
+
+  <ul class="summary-list" id="summary-list"></ul>
+
+  <div class="info-box warn" style="margin-top:20px">
+    <strong>Your device signing key</strong>
+    <div id="key-display" class="key-box">Generating…</div>
+    Back this up — it's stored at <code>/config/.securacv/device_key</code>.
+    Losing it means losing the ability to verify your witness log.
+  </div>
+
+  <div id="start-error" class="info-box red hidden"></div>
+
+  <div class="btn-row">
+    <button class="btn btn-secondary" onclick="goTo(3)">← Back</button>
+    <button class="btn btn-primary" id="start-btn" onclick="startSetup()">
+      Start SecuraCV
+    </button>
+  </div>
+</div>
+
+<!-- ================================================================
+     Screen 5: Done
+     ================================================================ -->
+<div class="card hidden" id="screen-5">
+  <div id="done-success" class="hidden">
+    <div class="done-icon">✅</div>
+    <div class="done-title">You're protected.</div>
+    <div class="done-sub">SecuraCV is running. Restart Home Assistant to activate all sensors.</div>
+    <div class="info-box green">
+      <strong>What happens next:</strong>
+      Camera clips will appear in Frigate with a verified ✓ badge per event.
+      Your daily digest will arrive at your configured time.
+    </div>
+    <ul class="step-list">
+      <li>Restart Home Assistant — Settings → System → Restart</li>
+      <li>Add the SecuraCV integration — Settings → Devices &amp; Services → Add Integration → SecuraCV</li>
+      <li>Open the SecuraCV dashboard from the sidebar</li>
+    </ul>
+  </div>
+
+  <div id="done-error" class="hidden">
+    <div class="done-icon">❌</div>
+    <div class="done-title">Setup incomplete</div>
+    <div class="done-sub">Configuration was saved but the kernel could not start.</div>
+    <div class="info-box red" id="done-error-detail"></div>
+    <p style="font-size:0.9rem;color:var(--text-muted)">
+      Check the add-on logs: Settings → Add-ons → Privacy Witness Kernel → Logs
+    </p>
+  </div>
+
+  <div class="btn-row" style="justify-content:center;margin-top:28px">
+    <button class="btn btn-secondary btn-sm" onclick="goTo(1)">Start Over</button>
+  </div>
+</div>
+
+<!-- ================================================================
+     JavaScript
+     ================================================================ -->
+<script>
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+let currentStep = 1;
+let cameras = [];
+let deviceKeySeed = "";
+
+// ---------------------------------------------------------------------------
+// Navigation
+// ---------------------------------------------------------------------------
+function goTo(step) {
+  document.getElementById(`screen-${currentStep}`).classList.add("hidden");
+  currentStep = step;
+  document.getElementById(`screen-${step}`).classList.remove("hidden");
+  updateProgressBar();
+
+  if (step === 2 && cameras.length === 0) addCamera();
+  if (step === 4) renderSummary();
+}
+
+function updateProgressBar() {
+  const steps = document.querySelectorAll(".progress-step");
+  steps.forEach((el, i) => {
+    const n = i + 1;
+    el.classList.toggle("done",   n < currentStep);
+    el.classList.toggle("active", n === currentStep);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Camera management
+// ---------------------------------------------------------------------------
+let cameraCounter = 0;
+
+function addCamera() {
+  const id = ++cameraCounter;
+  cameras.push({ id, name: "", url: "", zone_id: "" });
+  renderCameras();
+}
+
+function removeCamera(id) {
+  cameras = cameras.filter(c => c.id !== id);
+  renderCameras();
+}
+
+function renderCameras() {
+  const container = document.getElementById("cameras-container");
+  container.innerHTML = "";
+
+  if (cameras.length === 0) {
+    addCamera();
+    return;
+  }
+
+  cameras.forEach((cam, idx) => {
+    const div = document.createElement("div");
+    div.className = "camera-card";
+    div.innerHTML = `
+      <div class="camera-card-header">
+        <span class="camera-title">Camera ${idx + 1}</span>
+        ${cameras.length > 1
+          ? `<button class="btn-remove" onclick="removeCamera(${cam.id})" title="Remove">✕</button>`
+          : ""}
+      </div>
+      <div class="field">
+        <label>Name (e.g. "Front Door")</label>
+        <input type="text" placeholder="Front Door" value="${escHtml(cam.name)}"
+          oninput="updateCamera(${cam.id}, 'name', this.value)">
+      </div>
+      <div class="field">
+        <label>RTSP URL</label>
+        <input type="text" placeholder="rtsp://user:pass@192.168.1.100:554/stream1"
+          value="${escHtml(cam.url)}"
+          oninput="updateCamera(${cam.id}, 'url', this.value)">
+        <div style="margin-top:6px;display:flex;gap:8px;align-items:center">
+          <button class="btn btn-secondary btn-sm" onclick="testCamera(${cam.id})">
+            Test Connection
+          </button>
+          <span class="test-result" id="test-${cam.id}"></span>
+        </div>
+      </div>
+    `;
+    container.appendChild(div);
+  });
+}
+
+function updateCamera(id, key, val) {
+  const cam = cameras.find(c => c.id === id);
+  if (!cam) return;
+  cam[key] = val;
+  if (key === "name") {
+    cam.zone_id = "zone:" + val.toLowerCase().replace(/[^a-z0-9_-]/g, "_").slice(0, 64);
+  }
+}
+
+async function testCamera(id) {
+  const cam = cameras.find(c => c.id === id);
+  if (!cam || !cam.url) return;
+  const el = document.getElementById(`test-${id}`);
+  el.className = "test-result";
+  el.textContent = "Testing…";
+  el.style.display = "block";
+
+  try {
+    const res = await api("/api/test-camera", { url: cam.url });
+    if (res.ok) {
+      el.className = "test-result ok";
+      el.textContent = `✓ Connected to ${res.host}:${res.port}`;
+    } else {
+      el.className = "test-result fail";
+      el.textContent = `✗ ${res.error}`;
+    }
+  } catch (e) {
+    el.className = "test-result fail";
+    el.textContent = `✗ ${e.message}`;
+  }
+}
+
+function validateCamerasAndNext() {
+  const errEl = document.getElementById("camera-error");
+  errEl.classList.add("hidden");
+
+  for (const cam of cameras) {
+    if (!cam.name.trim()) {
+      errEl.textContent = "Every camera needs a name.";
+      errEl.classList.remove("hidden");
+      return;
+    }
+    if (!cam.url.trim()) {
+      errEl.textContent = `Camera "${cam.name}": RTSP URL is required.`;
+      errEl.classList.remove("hidden");
+      return;
+    }
+  }
+  goTo(3);
+}
+
+// ---------------------------------------------------------------------------
+// Summary
+// ---------------------------------------------------------------------------
+function renderSummary() {
+  // Generate key seed preview
+  if (!deviceKeySeed) {
+    deviceKeySeed = generateHex(32);
+  }
+  document.getElementById("key-display").textContent = deviceKeySeed;
+
+  const list = document.getElementById("summary-list");
+  list.innerHTML = "";
+
+  const retention = document.getElementById("retention");
+  const digestTime = document.getElementById("digest-time").value;
+  const patternAlerts = document.getElementById("pattern-alerts").checked;
+
+  const items = [
+    ["Mode", "Frigate integration (recommended)"],
+    ["Cameras", cameras.map(c => c.name || "(unnamed)").join(", ") || "—"],
+    ["Clip retention", retention.options[retention.selectedIndex].text],
+    ["Daily digest", digestTime],
+    ["Pattern-break alerts", patternAlerts ? "Enabled" : "Disabled"],
+  ];
+
+  items.forEach(([key, val]) => {
+    const li = document.createElement("li");
+    li.innerHTML = `<span class="summary-key">${escHtml(key)}</span>
+                    <span class="summary-value">${escHtml(String(val))}</span>`;
+    list.appendChild(li);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Save & start
+// ---------------------------------------------------------------------------
+async function startSetup() {
+  const btn = document.getElementById("start-btn");
+  const errEl = document.getElementById("start-error");
+  errEl.classList.add("hidden");
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Saving…';
+
+  const retention = document.getElementById("retention");
+  const digestTime = document.getElementById("digest-time").value;
+  const patternAlerts = document.getElementById("pattern-alerts").checked;
+
+  const payload = {
+    mode: "frigate",
+    cameras: cameras.map(c => ({
+      name: c.name.trim(),
+      url: c.url.trim(),
+      zone_id: c.zone_id || `zone:${c.name.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`,
+    })),
+    retention_days: parseInt(retention.value, 10),
+    digest_time: digestTime,
+    pattern_alerts: patternAlerts,
+    device_key_seed: deviceKeySeed,
+  };
+
+  try {
+    const res = await api("/api/save", payload);
+    if (!res.ok) throw new Error(res.error || "Unknown error");
+
+    // Attempt restart (non-fatal if it fails — user can restart manually)
+    try { await api("/api/restart", {}); } catch (_) {}
+
+    // Wait a moment then show done screen
+    btn.innerHTML = '<span class="spinner"></span> Starting…';
+    await delay(2000);
+
+    goTo(5);
+    showDoneSuccess();
+  } catch (e) {
+    btn.disabled = false;
+    btn.innerHTML = "Start SecuraCV";
+    errEl.textContent = "Error: " + e.message;
+    errEl.classList.remove("hidden");
+  }
+}
+
+function showDoneSuccess() {
+  document.getElementById("done-success").classList.remove("hidden");
+  document.getElementById("done-error").classList.add("hidden");
+}
+
+function showDoneError(msg) {
+  document.getElementById("done-error").classList.remove("hidden");
+  document.getElementById("done-success").classList.add("hidden");
+  document.getElementById("done-error-detail").textContent = msg;
+}
+
+// ---------------------------------------------------------------------------
+// Utilities
+// ---------------------------------------------------------------------------
+function api(path, data) {
+  const base = (window.hassioIngress || "");
+  return fetch(base + path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  }).then(r => r.json());
+}
+
+function generateHex(bytes) {
+  const arr = new Uint8Array(bytes);
+  crypto.getRandomValues(arr);
+  return Array.from(arr).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+
+function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// ---------------------------------------------------------------------------
+// Init: check if already configured
+// ---------------------------------------------------------------------------
+(async function init() {
+  try {
+    const res = await fetch((window.hassioIngress || "") + "/api/status");
+    const data = await res.json();
+    if (data.ok && data.configured) {
+      // Already configured — show a "re-configure" message on welcome screen
+      const card = document.getElementById("screen-1");
+      const note = document.createElement("div");
+      note.className = "info-box green";
+      note.innerHTML = "<strong>Already configured!</strong> Running the wizard again will overwrite your current settings.";
+      card.insertBefore(note, card.querySelector(".btn-row"));
+    }
+  } catch (_) { /* ignore */ }
+})();
+</script>
+</body>
+</html>

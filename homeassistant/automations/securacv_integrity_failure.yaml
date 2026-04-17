@@ -1,0 +1,148 @@
+# SecuraCV — Integrity Failure Automation
+#
+# Creates a persistent (non-dismissable) HA notification if the witness log
+# fails cryptographic verification. Also sends a high-priority push notification.
+#
+# This is the most important alert in SecuraCV. An integrity failure means:
+#   - The witness log may have been tampered with
+#   - Evidence may be compromised
+#   - Immediate investigation is required
+#
+# Setup:
+#   1. Copy this file to /config/automations/
+#   2. Update entity IDs (replace DEVICE_ID)
+#   3. Restart HA
+
+- id: securacv_integrity_failure
+  alias: "SecuraCV — Integrity Failure"
+  description: >
+    Fires when the witness chain validation sensor goes to 'off'
+    (verification failed). Creates a persistent notification that cannot
+    be dismissed until the integrity is restored.
+  mode: queued
+  max: 3
+
+  trigger:
+    # Primary trigger: chain_valid goes false
+    - platform: state
+      entity_id: binary_sensor.securacv_DEVICE_ID_chain_valid
+      to: "off"
+      # Don't fire on HA startup unavailable state
+      from: "on"
+
+    # Secondary trigger: tamper sensor activates
+    - platform: state
+      entity_id: binary_sensor.securacv_DEVICE_ID_tamper
+      to: "on"
+      from: "off"
+
+  condition: []
+
+  action:
+    - variables:
+        trigger_source: "{{ trigger.entity_id }}"
+        tamper_type: >
+          {{ state_attr('sensor.securacv_DEVICE_ID_last_event', 'tamper_type') | default('unknown') }}
+        is_chain_failure: >
+          {{ trigger.entity_id == 'binary_sensor.securacv_DEVICE_ID_chain_valid' }}
+        is_tamper: >
+          {{ trigger.entity_id == 'binary_sensor.securacv_DEVICE_ID_tamper' }}
+
+    # ---- Push notification (high priority) ----
+    - service: notify.mobile_app_YOUR_PHONE
+      data:
+        title: >
+          {% if is_chain_failure %}
+          🔴 SecuraCV — LOG INTEGRITY FAILURE
+          {% else %}
+          ⚠ SecuraCV — Tamper Detected
+          {% endif %}
+        message: >
+          {% if is_chain_failure %}
+          The witness log has FAILED cryptographic verification.
+          This may indicate tampering. Immediate investigation required.
+          Do NOT delete any files. Contact your trustee(s) for break-glass.
+          {% else %}
+          Tamper event detected: {{ tamper_type }}.
+          The device may have been physically accessed or interfered with.
+          {% endif %}
+
+          Time: {{ now().strftime('%Y-%m-%d %H:%M:%S') }}
+        data:
+          push:
+            sound: "alarm"
+            interruption_level: "critical"
+            # Critical push bypasses DND on iOS
+          tag: "securacv-integrity-failure"
+          group: "securacv-security"
+          url: "/lovelace/securacv-audit"
+          # Expire this notification if integrity is restored within 24h
+          # (handled by the restore automation below)
+
+    # ---- Persistent notification (cannot be dismissed until resolved) ----
+    - service: persistent_notification.create
+      data:
+        notification_id: "securacv_integrity_failure"
+        title: >
+          {% if is_chain_failure %}
+          🔴 SecuraCV: Log Integrity Failure
+          {% else %}
+          ⚠ SecuraCV: Tamper Detected
+          {% endif %}
+        message: >
+          {% if is_chain_failure %}
+          **The witness log has failed cryptographic verification.**
+
+          This means the log may have been altered after recording.
+          This notification will remain until integrity is restored.
+
+          **Immediate actions:**
+          1. Do not delete or modify any files in `/config/` or `/share/witness_vault/`
+          2. Run `log_verify` from the add-on terminal to get details
+          3. Contact your break-glass trustees
+          4. Export the chain for offline analysis
+
+          Time of failure: {{ now().strftime('%Y-%m-%d %H:%M:%S') }}
+          {% else %}
+          **Tamper event detected on SecuraCV device.**
+
+          Type: {{ tamper_type }}
+          Time: {{ now().strftime('%Y-%m-%d %H:%M:%S') }}
+
+          The witness log may be compromised. Verify integrity immediately.
+          {% endif %}
+
+# ---------------------------------------------------------------------------
+# Restore automation — clears the persistent notification if integrity recovers
+# ---------------------------------------------------------------------------
+- id: securacv_integrity_restored
+  alias: "SecuraCV — Integrity Restored"
+  description: >
+    Clears the integrity failure persistent notification when the chain
+    becomes valid again. Also sends a resolution notification.
+  mode: single
+
+  trigger:
+    - platform: state
+      entity_id: binary_sensor.securacv_DEVICE_ID_chain_valid
+      to: "on"
+      from: "off"
+
+  condition: []
+
+  action:
+    - service: persistent_notification.dismiss
+      data:
+        notification_id: "securacv_integrity_failure"
+
+    - service: notify.mobile_app_YOUR_PHONE
+      data:
+        title: "✅ SecuraCV — Integrity Restored"
+        message: >
+          The witness log has passed cryptographic verification.
+          Integrity restored at {{ now().strftime('%H:%M') }}.
+        data:
+          push:
+            sound: "default"
+          tag: "securacv-integrity-failure"
+          group: "securacv-security"
