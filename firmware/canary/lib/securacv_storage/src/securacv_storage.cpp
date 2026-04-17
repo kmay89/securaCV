@@ -6,6 +6,7 @@
  */
 
 #include "securacv_storage.h"
+#include "securacv_witness.h"
 
 #if FEATURE_SD_STORAGE
 
@@ -82,9 +83,36 @@ SDStatus StorageManager::getStatus() {
     status.total_bytes = SD.totalBytes();
     status.used_bytes = SD.usedBytes();
     status.free_bytes = status.total_bytes - status.used_bytes;
+    status.witness_count = countFilesInDir("/WITNESS");
+    status.health_count  = countFilesInDir("/HEALTH");
   }
 
+  // Unacked count is owned by the witness/health-log subsystem; mirror it
+  // here so the storage status API is a single source of truth for dashboards.
+  status.unacked_count = witness_get_health().logs_unacked;
+
   return status;
+}
+
+uint32_t StorageManager::countFilesInDir(const char* dir_path) {
+  if (!m_mounted || !dir_path) return 0;
+
+  File dir = SD.open(dir_path);
+  if (!dir) return 0;
+  if (!dir.isDirectory()) {
+    dir.close();
+    return 0;
+  }
+
+  uint32_t count = 0;
+  for (File entry = dir.openNextFile(); entry; entry = dir.openNextFile()) {
+    if (!entry.isDirectory()) {
+      count++;
+    }
+    entry.close();
+  }
+  dir.close();
+  return count;
 }
 
 bool StorageManager::fileExists(const char* path) {

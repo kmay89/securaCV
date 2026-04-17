@@ -29,9 +29,9 @@ struct SDStatus {
   uint64_t total_bytes;
   uint64_t used_bytes;
   uint64_t free_bytes;
-  uint32_t witness_count;   // TODO: Implement file counting in getStatus()
-  uint32_t health_count;    // TODO: Implement file counting in getStatus()
-  uint32_t unacked_count;   // TODO: Implement acknowledgment tracking
+  uint32_t witness_count;   // Files in /WITNESS (enumerated on getStatus)
+  uint32_t health_count;    // Files in /HEALTH (enumerated on getStatus)
+  uint32_t unacked_count;   // Unread health log entries (mirrors SystemHealth.logs_unacked)
   uint32_t last_write_ms;
   uint32_t write_errors;
   uint32_t read_errors;
@@ -59,6 +59,10 @@ public:
   // File operations
   bool fileExists(const char* path);
   size_t fileSize(const char* path);
+
+  // Count regular files directly under `dir_path` (non-recursive).
+  // Returns 0 if the directory does not exist or the card is not mounted.
+  uint32_t countFilesInDir(const char* dir_path);
 
 private:
   SPIClass* m_spi;
