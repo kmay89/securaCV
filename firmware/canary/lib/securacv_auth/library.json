@@ -1,0 +1,19 @@
+{
+    "name": "securacv_auth",
+    "version": "0.1.0",
+    "description": "SecuraCV API bearer-token authentication: constant-time compare, exponential backoff, token redaction",
+    "keywords": ["securacv", "auth", "bearer", "http", "esp32"],
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/kmay89/securaCV.git"
+    },
+    "authors": [
+        {
+            "name": "Karl May",
+            "email": "karl@errerlabs.com"
+        }
+    ],
+    "license": "Apache-2.0",
+    "frameworks": "arduino",
+    "platforms": "espressif32"
+}

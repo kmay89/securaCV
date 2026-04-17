@@ -123,4 +123,5 @@ When reviewing a firmware PR, confirm:
 - [ARCHITECTURE.md](ARCHITECTURE.md) — module composition rules (the "what can import what" contract)
 - [FIRMWARE_VARIANT_AUDIT.md](FIRMWARE_VARIANT_AUDIT.md) — per-variant risk analysis
 - [FEATURES.md](FEATURES.md) — feature-parity matrix across variants
+- [canary/CONSOLIDATION.md](canary/CONSOLIDATION.md) — roadmap for collapsing the Arduino COMPATIBILITY tree into the ACTIVE canary PIO tree
 - [scripts/regression_check.sh](./scripts/regression_check.sh) — automated regression gate
