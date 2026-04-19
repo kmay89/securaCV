@@ -51,7 +51,7 @@ Single-row-per-capability summary across every non-archived variant. This is the
 | Chirp channel (broadcast beacon) | ⚠️ | ✅ | ⚠️ | ❌ | ➖ | ✅ |
 | MQTT publish + HA Discovery | ✅ | ❌ | ❌ | ✅ | ➖ | ❌ |
 | OTA A/B with rollback safety | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ |
-| API authentication (bearer token + HKDF derivation) | ⚠️ (securacv_auth lib; not yet wired — see [canary/CONSOLIDATION.md](canary/CONSOLIDATION.md) Phase 2) | ✅ | ❌ | ❌ | ➖ | ✅ |
+| API authentication (bearer token + HKDF derivation) | ✅ (mutating endpoints gated; reads still open pending SPA token wiring) | ✅ | ❌ | ❌ | ➖ | ✅ |
 | Rate limiting on HTTP API | ✅ | ✅ | ❌ | ➖ | ➖ | ✅ |
 | TLS (HTTPS self-signed) | ❌ | ❌ | ❌ | ❌ | ➖ | ✅ |
 | Watchdog timer | ✅ | ✅ | ⚠️ | ✅ | ✅ | ✅ |
@@ -215,9 +215,9 @@ Single-row-per-capability summary across every non-archived variant. This is the
 | RF presence detection | ✅ rf_presence.h/.cpp | ❌ | ⚠️ rf_presence.h header | ⚠️ |
 | Chirp channel | ✅ chirp_channel.cpp | ❌ | ⚠️ chirp_channel.h header | ⚠️ |
 | Hardware state & safe mode | ✅ hardware_state.h | ❌ | ❌ | ❌ |
-| API authentication (bearer token) | ✅ api_auth.h | ❌ | ❌ | ❌ |
+| API authentication (bearer token) | ✅ api_auth.h | ❌ | ⚠️ securacv_auth lib (mutating endpoints gated) | ❌ |
 | Provisioning gate (BOOT button) | ✅ | ❌ | ❌ | ❌ |
-| HKDF API token derivation | ✅ | ❌ | ❌ | ❌ |
+| HKDF API token derivation | ✅ | ❌ | ✅ securacv_crypto::derive_api_token | ❌ |
 | Serial command handler | ✅ (h/i/s/t/g/c/m) | ❌ | ✅ (h/i/s/g/m/r) | ❌ |
 | Watchdog timer | ✅ | ❌ | ✅ | ⚠️ |
 | OTA update support | ❌ | ❌ | ✅ FEATURE_OTA_UPDATE | ❌ |
@@ -293,12 +293,12 @@ Single-row-per-capability summary across every non-archived variant. This is the
 Post-archive (2026-04), the ACTIVE canonical tree is `firmware/canary/` (PlatformIO). The WAP Snapshot remains as a frozen reference under `firmware/projects/_archive/canary-wap-snapshot/` and no longer accepts new work.
 
 - **canary-wap Arduino (COMPATIBILITY)**: ~100% WAP parity; recently hardened (real ESP-NOW RSSI 2026-04, SD flush-on-unmount 2026-04).
-- **canary (PIO, ACTIVE)**: ~85% feature parity — modular libs, MQTT + HA Discovery, WiFi STA, export, storage status counters (2026-04). Gaps: camera streaming, full GPS motion FSM, some web UI tabs, API auth parity.
+- **canary (PIO, ACTIVE)**: ~88% feature parity — modular libs, MQTT + HA Discovery, WiFi STA, export, storage status counters (2026-04), HKDF-derived bearer token gating mutating endpoints (2026-04). Gaps: camera streaming, full GPS motion FSM, some web UI tabs, SPA token-passing for read endpoints.
 - **canary-wap (PIO, COMPATIBILITY)**: ~40% parity — uses common headers, many implementations still skeleton.
 
 ### Priority Actions
 
-1. **canary (PIO)**: Close the remaining UX gaps (camera streaming, full dashboard tabs, API auth parity) so it can fully replace the Arduino compatibility lane.
+1. **canary (PIO)**: Close the remaining UX gaps (camera streaming, full dashboard tabs, SPA token wiring on read endpoints) so it can fully replace the Arduino compatibility lane.
 2. **canary-wap (PIO)**: Implement common module bodies that currently exist only as headers; decide whether to retire this lane in favour of the Arduino compatibility tree + canary.
 3. **Fleet management**: Create scalable multi-device dashboard (canary-vision SPA follow-up).
 4. **Dashboard integrity**: Wire CI to fail on `✅ → ⚠️/❌` regressions in the Feature-Parity Dashboard unless the PR cites an issue.

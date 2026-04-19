@@ -227,6 +227,7 @@
 #define NVS_KEY_WIFI_SSID "wifi_ssid"
 #define NVS_KEY_WIFI_PASS "wifi_pass"
 #define NVS_KEY_WIFI_EN   "wifi_en"
+#define NVS_KEY_TOKEN     "api_token"
 
 // ════════════════════════════════════════════════════════════════
 // MQTT (Home Assistant)
