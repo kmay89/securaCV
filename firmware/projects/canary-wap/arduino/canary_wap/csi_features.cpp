@@ -90,6 +90,25 @@ static inline int8_t clip_i8(int32_t v) {
   return (int8_t)v;
 }
 
+/* Integer square root via bit-by-bit method. Fixed-time per input size;
+ * ~16 iterations for 32-bit inputs. No FPU, no libm. */
+static uint32_t isqrt_u32(uint32_t n) {
+  uint32_t root = 0;
+  uint32_t bit = (uint32_t)1 << 30;  /* highest even bit ≤ 2^31 */
+  while (bit > n) bit >>= 2;
+  while (bit) {
+    const uint32_t trial = root + bit;
+    if (n >= trial) {
+      n -= trial;
+      root = (root >> 1) + bit;
+    } else {
+      root >>= 1;
+    }
+    bit >>= 2;
+  }
+  return root;
+}
+
 /* Compute which band (0..AMP_BANDS-1) this subcarrier belongs to. */
 static inline size_t amp_band_of(size_t sc, size_t sc_total) {
   if (sc_total == 0) return 0;
@@ -264,11 +283,16 @@ static void compute_breathing(int8_t out[BREATH_BINS]) {
     const int64_t mag2 = (int64_t)s_prev * s_prev
                        + (int64_t)s_prev2 * s_prev2
                        - (((int64_t)coef_q8 * s_prev * s_prev2) >> 8);
-    /* Scale: take integer log2-ish by counting leading zeros. */
-    int32_t scaled = 0;
+    /* Log2-scale the magnitude² into int8 range. Expected mag² spans ~10³
+     * (quiet room) to ~10¹⁰ (strong motion at the target frequency), so
+     * log2(mag²) ∈ [~10, ~33]. Mapping to int8 with multiplier 4 and −60
+     * offset gives: 10→−20, 16→4, 23→32, 30→60, saturating above. This
+     * fills the int8 range per the header's design goal (typical activity
+     * ≈ [−60, 60] with headroom to saturate on extremes). */
+    int32_t log2_mag2 = 0;
     int64_t m = mag2;
-    while (m > 0) { m >>= 2; scaled++; }
-    out[i] = clip_i8(scaled - 12);  /* −12 centers on "quiet room" */
+    while (m > 1) { m >>= 1; log2_mag2++; }
+    out[i] = clip_i8(log2_mag2 * 4 - 60);
     (void)BREATH_FREQ_HZ_X100;       /* reserved for future precise tuning */
   }
 }
@@ -294,11 +318,8 @@ void finalize(csi_features_t* out, uint32_t frames_in_window) {
     const int32_t m = s_rssi_sum / s_rssi_n;
     const int32_t v = (s_rssi_sq_sum / s_rssi_n) - m * m;
     rssi_mean = clip_i8(m);
-    /* Cheap std approximation: sqrt via integer shifts. */
-    int32_t s = 0;
-    int32_t x = v > 0 ? v : 0;
-    while (x > 1) { x >>= 2; s++; }
-    rssi_std = clip_i8(s << 2);
+    /* True integer sqrt: for variance 1600 gives 40, for 10000 gives 100. */
+    rssi_std = clip_i8((int32_t)isqrt_u32((uint32_t)(v > 0 ? v : 0)));
   }
 
   /* Lay out the 32-dim vector. */
