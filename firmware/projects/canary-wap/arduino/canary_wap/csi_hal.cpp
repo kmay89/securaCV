@@ -70,7 +70,10 @@ struct CsiSlot {
   int8_t   iq[CSI_MAX_SUBCARRIERS * 2];  /* interleaved I,Q */
 };
 
-static constexpr size_t RING_CAP = 8;
+/* 16 slots × ~264 bytes = ~4 KB. Sized for the 20 Hz target frame rate
+ * so even a 400 ms main-loop stall (worst-case NVS write + network I/O)
+ * doesn't lose a full window of CSI frames. */
+static constexpr size_t RING_CAP = 16;
 static CsiSlot s_ring[RING_CAP];
 static std::atomic<uint32_t> s_head{0};  /* producer writes */
 static std::atomic<uint32_t> s_tail{0};  /* consumer reads */
@@ -81,6 +84,10 @@ static std::atomic<uint32_t> s_tail{0};  /* consumer reads */
 
 static bool s_initialized = false;
 static bool s_running = false;
+/* Set when start() was called while WiFi was not yet up. process() retries
+ * the CSI-enable sequence each tick until it succeeds or stop() is called. */
+static bool s_start_pending = false;
+static uint32_t s_start_retry_last_ms = 0;
 static Config s_cfg = Config::defaults();
 static FeaturesCallback s_cb = nullptr;
 
@@ -234,68 +241,106 @@ void deinit() {
   s_initialized = false;
 }
 
+/*
+ * Attempt the three ESP-IDF CSI setup calls in order. Returns:
+ *   +1  success — CSI is actually enabled and ready to produce callbacks
+ *    0  WiFi not yet started — caller should retry later
+ *   -1  hard failure — logs printed, do not retry
+ */
+static int try_enable_csi_now() {
+#if SECURACV_HAVE_CSI_API
+  wifi_csi_config_t cfg;
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.lltf_en           = true;
+  cfg.htltf_en          = true;
+  cfg.stbc_htltf2_en    = false;
+  cfg.ltf_merge_en      = true;
+  cfg.channel_filter_en = true;
+  cfg.manu_scale        = false;
+  cfg.shift             = 0;
+
+  esp_err_t err = esp_wifi_set_csi_config(&cfg);
+  if (err == ESP_ERR_WIFI_NOT_STARTED) return 0;
+  if (err != ESP_OK) {
+    health_logging::logf(health_logging::LEVEL_WARNING, health_logging::CAT_RF,
+      "CSI config failed (err=0x%x); sensing disabled", err);
+    return -1;
+  }
+
+  err = esp_wifi_set_csi_rx_cb(&csi_rx_cb, nullptr);
+  if (err == ESP_ERR_WIFI_NOT_STARTED) return 0;
+  if (err != ESP_OK) {
+    health_logging::logf(health_logging::LEVEL_WARNING, health_logging::CAT_RF,
+      "CSI callback register failed (err=0x%x)", err);
+    return -1;
+  }
+
+  err = esp_wifi_set_csi(true);
+  if (err == ESP_ERR_WIFI_NOT_STARTED) return 0;
+  if (err != ESP_OK) {
+    health_logging::logf(health_logging::LEVEL_WARNING, health_logging::CAT_RF,
+      "CSI enable failed (err=0x%x)", err);
+    return -1;
+  }
+  return 1;
+#else
+  (void)csi_rx_cb;  /* suppress unused-warning when CSI API is compiled out */
+  return -1;
+#endif
+}
+
 bool start() {
   if (!s_initialized) return false;
   if (s_running) return true;
 
-#if SECURACV_HAVE_CSI_API
-  /* Configure CSI collection. Zero-init covers any newer fields (e.g.
-   * dump_ack_en, val_scale_cfg) that may not exist in older IDF headers. */
-  wifi_csi_config_t cfg;
-  memset(&cfg, 0, sizeof(cfg));
-  cfg.lltf_en         = true;   /* legacy LTF — always useful */
-  cfg.htltf_en        = true;   /* HT-LTF (more subcarriers) */
-  cfg.stbc_htltf2_en  = false;  /* not needed for sensing */
-  cfg.ltf_merge_en    = true;   /* merge for SNR */
-  cfg.channel_filter_en = true; /* drop adjacent-channel leakage */
-  cfg.manu_scale      = false;  /* use automatic scaling */
-  cfg.shift           = 0;
-
-  esp_err_t err = esp_wifi_set_csi_config(&cfg);
-  if (err != ESP_OK && err != ESP_ERR_WIFI_NOT_STARTED) {
-    health_logging::logf(health_logging::LEVEL_WARNING, health_logging::CAT_RF,
-      "CSI config failed (err=0x%x); sensing will no-op", err);
-    return false;
+  const int r = try_enable_csi_now();
+  if (r == 1) {
+    s_window_start_ms = millis();
+    s_window_frames = 0;
+    s_running = true;
+    s_start_pending = false;
+    return true;
   }
-
-  err = esp_wifi_set_csi_rx_cb(&csi_rx_cb, nullptr);
-  if (err != ESP_OK && err != ESP_ERR_WIFI_NOT_STARTED) {
-    health_logging::logf(health_logging::LEVEL_WARNING, health_logging::CAT_RF,
-      "CSI callback register failed (err=0x%x)", err);
-    return false;
+  if (r == 0) {
+    /* WiFi stack not up yet. Defer: process() will retry each call until
+     * it succeeds or the feature is explicitly stop()'d. s_running stays
+     * false so callers correctly see sensing as not yet active. */
+    s_start_pending = true;
+    health_logging::log(health_logging::LEVEL_INFO, health_logging::CAT_RF,
+      "CSI start deferred — WiFi not yet running; will retry in process()");
+    return true;   /* init-accepted; the retry is silent and automatic */
   }
-
-  err = esp_wifi_set_csi(true);
-  if (err != ESP_OK && err != ESP_ERR_WIFI_NOT_STARTED) {
-    health_logging::logf(health_logging::LEVEL_WARNING, health_logging::CAT_RF,
-      "CSI enable failed (err=0x%x)", err);
-    return false;
-  }
-#else
-  /* CSI API not available in this build of the WiFi driver. The whole
-   * feature pipeline downstream gracefully no-ops: no callbacks fire,
-   * no features are emitted, and rf_presence's CSI scalars stay at 0. */
+  /* r == -1: hard failure, logged. CSI pipeline no-ops for this session. */
+#if !SECURACV_HAVE_CSI_API
   health_logging::log(health_logging::LEVEL_INFO, health_logging::CAT_RF,
     "CSI API not compiled into this WiFi driver build; sensing disabled");
 #endif
-
-  s_window_start_ms = millis();
-  s_window_frames = 0;
-  s_running = true;
-  return true;
+  s_start_pending = false;
+  return false;
 }
 
 void stop() {
-  if (!s_running) return;
+  /* Stop even if a deferred start was pending — clear that too. */
+  s_start_pending = false;
+  if (!s_running) {
+    /* Nothing to tear down in the WiFi driver, but we still scrub
+     * extractor state so a subsequent start() begins clean. */
+    csi_features::reset();
+    secure_wipe(s_ring, sizeof(s_ring));
+    return;
+  }
 #if SECURACV_HAVE_CSI_API
   esp_wifi_set_csi(false);
   esp_wifi_set_csi_rx_cb(nullptr, nullptr);
 #endif
   s_running = false;
 
-  /* Drain + scrub. */
+  /* Drain ring + scrub extractor's static per-window history so no
+   * residual CSI-derived state (s_amp_hist, s_prev_iq, counters) leaks
+   * into a subsequent run. Matches the header-documented behavior. */
   s_head.store(s_tail.load());
   secure_wipe(s_ring, sizeof(s_ring));
+  csi_features::reset();
 }
 
 bool is_running() { return s_running; }
@@ -307,6 +352,29 @@ void set_features_callback(FeaturesCallback cb) { s_cb = cb; }
  * ────────────────────────────────────────────────────────────────────────── */
 
 int process() {
+  /* Deferred-start retry. If start() was called while WiFi wasn't ready,
+   * we retry once per second here until the three esp_wifi_set_csi_* calls
+   * succeed. This keeps the caller contract simple (start once, it activates
+   * whenever WiFi comes up) without silently pretending sensing is live. */
+  if (s_start_pending && !s_running) {
+    const uint32_t now = millis();
+    if ((now - s_start_retry_last_ms) >= 1000) {
+      s_start_retry_last_ms = now;
+      const int r = try_enable_csi_now();
+      if (r == 1) {
+        s_window_start_ms = now;
+        s_window_frames = 0;
+        s_running = true;
+        s_start_pending = false;
+        health_logging::log(health_logging::LEVEL_INFO, health_logging::CAT_RF,
+          "CSI deferred start succeeded (WiFi now up)");
+      } else if (r == -1) {
+        /* Hard failure after WiFi came up — give up rather than loop. */
+        s_start_pending = false;
+      }
+    }
+  }
+
   if (!s_running) return 0;
 
   /* Drain all available frames into the feature aggregator. */
