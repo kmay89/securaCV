@@ -87,6 +87,12 @@ static float s_last_temp_c = 0.0f;
 static float s_current_temp_c = 0.0f;
 static uint8_t s_power_flags = 0;
 
+// CSI-derived scalars (0..100). Updated by feed_csi_window(); decay to 0
+// after CSI_FEED_TTL_MS without a new window. NEVER contain raw identifiers.
+static uint8_t s_csi_motion_score = 0;
+static uint8_t s_csi_breathing_score = 0;
+static uint32_t s_csi_last_feed_ms = 0;
+
 // Session token map (ephemeral deduplication)
 static SessionToken s_token_map[SESSION_TOKEN_MAP_SIZE];
 static size_t s_token_count = 0;
@@ -319,7 +325,27 @@ static const char* confidence_name(ConfidenceClass conf) {
   }
 }
 
-static ConfidenceClass calc_confidence(uint8_t ble_count, uint8_t probe_bursts, int8_t rssi_mean) {
+// Fusion head: combines BLE, WiFi, CSI motion, and CSI breathing into a
+// single confidence class.
+//
+// Backwards-compatibility: when `csi_motion` and `csi_breathing` are 0
+// (CSI not wired, or stale feed), the result matches the Phase-0 scorer
+// exactly. This keeps v0 behavior frozen until Phase 6 swaps in the
+// learned anomaly model.
+//
+// Weights rationale:
+//   • CSI motion is the strongest signal — it works even when a visitor
+//     has no broadcasting device (e.g. a courier with the phone in a
+//     Faraday pocket). It gets weight 0.6 at max.
+//   • Breathing is a minor positive signal for *sustained* presence; we
+//     use it as a tie-breaker, weight 0.1.
+//   • BLE and WiFi retain their original weights so a CSI-less device
+//     (ESP32-C3 without HT40 CSI, say) keeps the v0 behavior.
+static ConfidenceClass calc_confidence(uint8_t ble_count,
+                                       uint8_t probe_bursts,
+                                       int8_t  rssi_mean,
+                                       uint8_t csi_motion = 0,
+                                       uint8_t csi_breathing = 0) {
   float score = 0.0f;
 
   // BLE sustained presence (weight 1.0)
@@ -335,10 +361,38 @@ static ConfidenceClass calc_confidence(uint8_t ble_count, uint8_t probe_bursts, 
   // RSSI strength bonus
   if (rssi_mean > -60) score += 0.1f;
 
+  // CSI motion bonus (weight up to 0.6). Below CSI_MOTION_ASSIST_MIN we
+  // treat it as noise; between MIN and CONFIRM it assists; above CONFIRM
+  // it is standalone evidence of presence.
+  if (csi_motion >= CSI_MOTION_ASSIST_MIN) {
+    const float m = (float)csi_motion / 100.0f;
+    score += m >= 0.6f ? 0.6f : m;
+  }
+
+  // Breathing is a weak but valuable dwell signal.
+  if (csi_breathing > CSI_MOTION_ASSIST_MIN) {
+    score += 0.1f;
+  }
+
   if (score >= 0.8f) return CONF_HIGH;
   if (score >= 0.5f) return CONF_MODERATE;
   if (score >= 0.2f) return CONF_LOW;
   return CONF_UNCERTAIN;
+}
+
+// Helper: returns the current CSI motion score if a recent feed is valid,
+// 0 otherwise. Called by emit_event() and the FSM to inject CSI into the
+// existing decision paths without refactoring.
+static uint8_t active_csi_motion(uint32_t now_ms) {
+  if (s_csi_last_feed_ms == 0) return 0;
+  if (elapsed_ms(s_csi_last_feed_ms, now_ms) > CSI_FEED_TTL_MS) return 0;
+  return s_csi_motion_score;
+}
+
+static uint8_t active_csi_breathing(uint32_t now_ms) {
+  if (s_csi_last_feed_ms == 0) return 0;
+  if (elapsed_ms(s_csi_last_feed_ms, now_ms) > CSI_FEED_TTL_MS) return 0;
+  return s_csi_breathing_score;
 }
 
 static DwellClass calc_dwell_class(uint32_t duration_ms) {
@@ -381,10 +435,14 @@ static void emit_event(const char* event_name, SignalSource sig, int8_t count_de
   uint8_t device_count = count_active_tokens(now_ms);
   uint32_t state_duration = now_ms - s_state_enter_ms;
 
+  const uint8_t csi_m = active_csi_motion(now_ms);
+  const uint8_t csi_b = active_csi_breathing(now_ms);
+
   RfEvent event = {
     .event_name = event_name,
     .signal = sig,
-    .confidence = calc_confidence(device_count, s_probe_burst_count, rssi_mean),
+    .confidence = calc_confidence(device_count, s_probe_burst_count, rssi_mean,
+                                  csi_m, csi_b),
     .count_delta = count_delta,
     .dwell_class = calc_dwell_class(state_duration),
     .time_bucket = get_time_bucket(),
@@ -583,6 +641,9 @@ bool init() {
   s_probe_burst_count = 0;
   s_probe_rssi_peak = RSSI_NOISE_FLOOR;
   s_power_flags = 0;
+  s_csi_motion_score = 0;
+  s_csi_breathing_score = 0;
+  s_csi_last_feed_ms = 0;
   s_last_event = "boot";
 
   s_initialized = true;
@@ -659,7 +720,9 @@ RfStateSnapshot get_snapshot() {
 
   return RfStateSnapshot{
     .state = s_state,
-    .confidence = calc_confidence(device_count, s_probe_burst_count, rssi_mean),
+    .confidence = calc_confidence(device_count, s_probe_burst_count, rssi_mean,
+                                  active_csi_motion(now_ms),
+                                  active_csi_breathing(now_ms)),
     .device_count = device_count,
     .rssi_mean = rssi_mean,
     .state_duration_ms = state_duration,
@@ -730,6 +793,9 @@ void rotate_session() {
   s_probe_burst_count = 0;
   s_probe_rssi_peak = RSSI_NOISE_FLOOR;
   s_power_flags = 0;
+  s_csi_motion_score = 0;
+  s_csi_breathing_score = 0;
+  s_csi_last_feed_ms = 0;
   s_current_device_count = 0;
   s_current_rssi_sum = 0;
   s_current_rssi_max = RSSI_NOISE_FLOOR;
@@ -797,6 +863,80 @@ void feed_power_event(uint8_t flags) {
     s_power_flags |= flags;
     s_last_power_event_time_ms = millis();
   }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// CSI FEED (privacy barrier: we accept only the int8 aggregate feature vector
+// defined in csi_types.h; csi_features_t carries no
+// identifiers, no raw subcarrier samples, and no precise timestamps.)
+//
+// Motion score is derived from the signed Doppler bands and amplitude
+// variance bands. Breathing score is derived from the 0.1–0.5 Hz FFT bins.
+// Both are mapped to 0..100 with the same convention as other internal
+// scalars, so the fusion head treats them uniformly.
+// ────────────────────────────────────────────────────────────────────────────
+void feed_csi_window(const ::csi_features_t* features) {
+  if (!s_initialized || !s_enabled) return;
+  if (features == nullptr) return;
+
+  // Sanity: frames_in_window is a public field and a degraded window
+  // (< 4 frames) is not worth using.
+  if (features->frames_in_window < 4) return;
+
+  // Motion score: mean of |Doppler| bands + half of amp-variance bands.
+  // Amp indexes are [0..7], Doppler indexes are [8..11].
+  int32_t motion_acc = 0;
+  for (size_t i = 0; i < 8; i++) {
+    const int32_t a = features->v[i];
+    motion_acc += a < 0 ? -a : a;   // amplitude variance is always positive
+  }
+  for (size_t i = 8; i < 12; i++) {
+    const int32_t d = features->v[i];
+    motion_acc += d < 0 ? -d : d;   // |Doppler| — sign carries direction, not strength
+  }
+  // Normalize: 12 bands, each up to ~60 for a "busy room" → acc ~ 720.
+  // Clamp to 0..100.
+  int32_t motion = motion_acc / 8;  // empirical scaling
+  if (motion > 100) motion = 100;
+  if (motion < 0)   motion = 0;
+
+  // Breathing score: sum of the 8 FFT bins [12..19], same clamp.
+  int32_t breath_acc = 0;
+  for (size_t i = 12; i < 20; i++) {
+    const int32_t b = features->v[i];
+    breath_acc += b < 0 ? -b : b;
+  }
+  int32_t breath = breath_acc / 4;  // 8 bins → /4 keeps typical values ~0..80
+  if (breath > 100) breath = 100;
+  if (breath < 0)   breath = 0;
+
+  s_csi_motion_score     = (uint8_t)motion;
+  s_csi_breathing_score  = (uint8_t)breath;
+  s_csi_last_feed_ms     = millis();
+
+  // Boost the FSM toward IMPULSE if CSI is shouting but BLE/WiFi are quiet.
+  // This is the "courier with a Faraday pocket" case — motion is real but
+  // no device is broadcasting. We nudge but never force a transition; the
+  // FSM still requires its own state_duration threshold to confirm.
+  if (motion >= CSI_MOTION_CONFIRM && s_state == RF_EMPTY) {
+    s_probe_burst_count = (s_probe_burst_count < 2) ? 2 : s_probe_burst_count;
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// CSI INTROSPECTION
+// ────────────────────────────────────────────────────────────────────────────
+uint8_t current_csi_motion_score() {
+  return active_csi_motion(millis());
+}
+
+uint8_t current_csi_breathing_score() {
+  return active_csi_breathing(millis());
+}
+
+bool has_recent_csi() {
+  if (s_csi_last_feed_ms == 0) return false;
+  return elapsed_ms(s_csi_last_feed_ms, millis()) <= CSI_FEED_TTL_MS;
 }
 
 // ════════════════════════════════════════════════════════════════════════════

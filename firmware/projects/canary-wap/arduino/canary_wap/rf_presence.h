@@ -20,6 +20,7 @@
 #define SECURACV_RF_PRESENCE_H
 
 #include <Arduino.h>
+#include "csi_types.h"
 
 namespace rf_presence {
 
@@ -44,6 +45,11 @@ static const uint32_t DEPARTING_CONFIRM_MS = 15000;    // Confirm departure
 static const int8_t  RSSI_NOISE_FLOOR = -90;           // Below this = noise
 static const uint8_t MIN_PRESENCE_COUNT = 1;           // Min devices for presence
 static const uint8_t PROBE_BURST_THRESHOLD = 3;        // Probes/sec for burst
+
+// CSI integration
+static const uint32_t CSI_FEED_TTL_MS = 5000;          // Stale after 5s without a window
+static const uint8_t  CSI_MOTION_ASSIST_MIN = 20;      // Min CSI motion to boost confidence
+static const uint8_t  CSI_MOTION_CONFIRM = 60;         // CSI motion alone is strong evidence
 
 // ════════════════════════════════════════════════════════════════════════════
 // ENUMS
@@ -222,9 +228,26 @@ void feed_ble_scan(const uint8_t* mac_address, int8_t rssi, bool connectable);
 // IMPORTANT: mac_address is used ONLY for dedup, never stored
 void feed_wifi_probe(const uint8_t* mac_address, int8_t rssi);
 
+// Feed a completed CSI feature window (Phase 2 output).
+// IMPORTANT: `features->v[]` contains ONLY bucketed int8 aggregates; no
+// identifiers, no raw subcarrier samples. See csi_types.h for the full
+// privacy contract.
+void feed_csi_window(const ::csi_features_t* features);
+
 // Feed environmental signals
 void feed_temperature(float temp_celsius);
 void feed_power_event(uint8_t flags);  // See POWER_FLAG_* constants
+
+// ════════════════════════════════════════════════════════════════════════════
+// CSI-DERIVED STATE (read-only introspection)
+// ════════════════════════════════════════════════════════════════════════════
+
+// Current CSI motion score, 0..100. Non-zero only when a CSI window has
+// been fed within CSI_FEED_TTL_MS (default 5000 ms). Used by the fusion
+// head and exposed to status APIs for debugging.
+uint8_t current_csi_motion_score();
+uint8_t current_csi_breathing_score();
+bool    has_recent_csi();
 
 // Power event flags
 static const uint8_t POWER_FLAG_BROWNOUT = 0x01;
