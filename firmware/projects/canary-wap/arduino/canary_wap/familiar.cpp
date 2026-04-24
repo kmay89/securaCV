@@ -10,6 +10,7 @@
  */
 
 #include "familiar.h"
+#include "dp.h"
 #include "nvs_store.h"
 #include "health_log.h"
 
@@ -414,6 +415,26 @@ bool get_stats(Stats* out) {
   out->ms_until_next_rotation = elapsed >= ROTATION_PERIOD_MS
                                 ? 0
                                 : (ROTATION_PERIOD_MS - elapsed);
+  return true;
+}
+
+bool get_stats_for_export(Stats* out) {
+  if (!get_stats(out)) return false;
+  // Activity counters and Bloom-filter loads leak event frequency; both
+  // get Gaussian noise. Rotation count (low-info) is also noised for
+  // consistency. ms_until_next_rotation is deterministic from rotation
+  // cadence, not privacy-sensitive.
+  out->total_notes                  = dp::noisy_u32(out->total_notes,                  1);
+  out->total_rotations              = dp::noisy_u32(out->total_rotations,              1);
+  out->total_ambient_queries        = dp::noisy_u32(out->total_ambient_queries,        1);
+  out->total_ambient_matches        = dp::noisy_u32(out->total_ambient_matches,        1);
+  out->total_always_ignored_queries = dp::noisy_u32(out->total_always_ignored_queries, 1);
+  out->total_always_ignored_matches = dp::noisy_u32(out->total_always_ignored_matches, 1);
+  // Bit-set counts: a single note_fingerprint() flips up to BLOOM_HASHES = 8
+  // bits; sensitivity is 8 for these popcount-style exports.
+  out->today_bits_set          = dp::noisy_u32(out->today_bits_set,          BLOOM_HASHES);
+  out->yesterday_bits_set      = dp::noisy_u32(out->yesterday_bits_set,      BLOOM_HASHES);
+  out->always_ignored_bits_set = dp::noisy_u32(out->always_ignored_bits_set, IGNORE_HASHES);
   return true;
 }
 

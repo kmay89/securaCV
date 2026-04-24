@@ -166,6 +166,13 @@ bool forget_always_ignored();
 
 bool get_stats(Stats* out);
 
+// Same as get_stats(), with differential-privacy Gaussian noise applied
+// to the monotonic counter fields. Use for HTTP / MQTT export; local
+// decision paths (is_ambient, is_always_ignored) are intentionally
+// noise-free. Bit-set counts are noised too — they leak the load of
+// the Bloom filter which is a proxy for event frequency.
+bool get_stats_for_export(Stats* out);
+
 // ════════════════════════════════════════════════════════════════════════════
 // CONFORMANCE
 // ════════════════════════════════════════════════════════════════════════════

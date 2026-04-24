@@ -23,6 +23,7 @@
 #include "household.h"
 #include "familiar.h"
 #include "baseline.h"
+#include "dp.h"
 #include <string.h>
 #include <mbedtls/sha256.h>
 
@@ -909,6 +910,12 @@ void rotate_session() {
 
   // Reset last event to prevent cross-session correlation
   s_last_event = "session_rotated";
+
+  // Phase 7: reset the differential-privacy budget. An attacker observing
+  // our MQTT / HTTP surface over a 4 h window now gets a fresh ε budget
+  // after each rotation; they can't compose queries across sessions to
+  // aggregate below the per-query DP guarantee.
+  dp::reset_budget();
 
   health_logging::logf(health_logging::LEVEL_INFO, health_logging::CAT_RF,
     "Session rotated, new epoch=%u", s_session_epoch);

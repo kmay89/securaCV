@@ -168,6 +168,14 @@ bool training_complete();
 
 bool get_stats(Stats* out);
 
+// Same as get_stats(), with differential-privacy Gaussian noise applied
+// to the monotonic counter fields (observations, anomaly queries/hits).
+// trained_ms, training_complete, current_k_x10, and populated_buckets
+// are deterministic state observable from device behavior anyway —
+// they're not noised. Use this variant whenever Stats crosses the
+// HTTP / MQTT boundary.
+bool get_stats_for_export(Stats* out);
+
 // User-initiated reset: wipe all bucket stats + restart the 72 h training
 // window. Used when the user moves the device to a new location, or after
 // a big lifestyle change (new baby, new roommate, etc.).
