@@ -464,40 +464,34 @@ static esp_err_t handle_ui(httpd_req_t* req) {
   httpd_resp_set_type(req, "text/html");
 
   // Phase 2.5: inject the bearer credential into the embedded SPA so its
-  // fetch() helper can send `Authorization: Bearer cv_…`. One byte-swap per
-  // request — the HTML is already near the oversize threshold enforced by
-  // regression_check.sh, so we keep this as a single-pass substitution and
-  // ship the HTML unchanged if the placeholder is absent.
+  // fetch() helper can send `Authorization: Bearer cv_…`. The SPA is tens
+  // of KB and ESP32 heap fragments fast, so we stream prefix/token/suffix
+  // as three chunks rather than allocating a rendered copy.
   static const char kTokenPlaceholder[] = "__CV_TOKEN__";
   const size_t placeholder_len = sizeof(kTokenPlaceholder) - 1;
+
+  const char* needle = strstr(CANARY_UI_HTML, kTokenPlaceholder);
+  if (!needle) {
+    return httpd_resp_send(req, CANARY_UI_HTML, HTTPD_RESP_USE_STRLEN);
+  }
 
   const char* token = auth_get_token();
   if (!token) token = "";
   const size_t token_len = strlen(token);
-
-  const size_t html_len = strlen(CANARY_UI_HTML);
-  const char* needle = strstr(CANARY_UI_HTML, kTokenPlaceholder);
-
-  if (!needle) {
-    return httpd_resp_send(req, CANARY_UI_HTML, html_len);
-  }
-
   const size_t prefix_len = needle - CANARY_UI_HTML;
-  const size_t suffix_len = html_len - prefix_len - placeholder_len;
-  const size_t out_len = prefix_len + token_len + suffix_len;
 
-  char* out = (char*)malloc(out_len + 1);
-  if (!out) {
-    return http_send_error(req, 500, "oom");
+  esp_err_t result = httpd_resp_send_chunk(req, CANARY_UI_HTML, prefix_len);
+  if (result != ESP_OK) return result;
+
+  if (token_len > 0) {
+    result = httpd_resp_send_chunk(req, token, token_len);
+    if (result != ESP_OK) return result;
   }
-  memcpy(out, CANARY_UI_HTML, prefix_len);
-  memcpy(out + prefix_len, token, token_len);
-  memcpy(out + prefix_len + token_len, needle + placeholder_len, suffix_len);
-  out[out_len] = '\0';
 
-  esp_err_t result = httpd_resp_send(req, out, out_len);
-  free(out);
-  return result;
+  result = httpd_resp_send_chunk(req, needle + placeholder_len, HTTPD_RESP_USE_STRLEN);
+  if (result != ESP_OK) return result;
+
+  return httpd_resp_send_chunk(req, NULL, 0);
 }
 
 static esp_err_t handle_status(httpd_req_t* req) {
