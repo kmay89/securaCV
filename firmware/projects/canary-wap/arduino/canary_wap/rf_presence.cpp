@@ -808,15 +808,19 @@ void set_event_callback(RfEventCallback cb) {
 // ════════════════════════════════════════════════════════════════════════════
 
 void update() {
+  // Phase 5: familiar-filter rotation is time-based aging, not event-
+  // driven. Run it even when s_enabled is false — otherwise disabling RF
+  // presence for >24 h would freeze yesterday's filter indefinitely and
+  // violate the ~48 h retention invariant. We still need s_initialized
+  // so we don't touch uninitialized module state.
+  if (s_initialized) familiar::tick(millis());
+
   if (!s_initialized || !s_enabled) return;
 
   uint32_t now_ms = millis();
 
   // Check for session rotation
   check_session_rotation(now_ms);
-
-  // Phase 5: rotate the familiar-device filter every 24 h if due.
-  familiar::tick(now_ms);
 
   // Decay transient counters
   decay_probe_bursts(now_ms);
