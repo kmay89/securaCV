@@ -153,17 +153,31 @@ bool init() {
   memset(s_buckets, 0, sizeof(s_buckets));
 
   // Version-checked blob load: reject NVS data with a mismatched schema.
+  // On mismatch we also discard the trained_ms counter — otherwise we'd
+  // boot with empty buckets but a fully-tightened k=2.0 threshold and
+  // over-fire anomalies until the new buckets refilled (codex review #314).
   const uint32_t stored_version = nvs_store::get_u32(NVS_KEY_VERSION, 0);
+  bool force_trained_reset = false;
   if (stored_version == BASELINE_SCHEMA_VERSION) {
     nvs_store::get_blob(NVS_KEY_BUCKETS, s_buckets, sizeof(s_buckets));
   } else if (stored_version != 0) {
     health_logging::logf(health_logging::LEVEL_WARNING, health_logging::CAT_RF,
-      "Baseline: NVS schema mismatch (stored=%u, expected=%u); resetting",
+      "Baseline: NVS schema mismatch (stored=%u, expected=%u); full reset",
       (unsigned)stored_version, (unsigned)BASELINE_SCHEMA_VERSION);
+    force_trained_reset = true;
   }
 
-  s_trained_ms = nvs_store::get_u32(NVS_KEY_TRAINED, 0);
-  if (s_trained_ms > TRAINING_PERIOD_MS) s_trained_ms = TRAINING_PERIOD_MS;
+  if (force_trained_reset) {
+    s_trained_ms = 0;
+    // Write back a consistent state so the next init() sees the new
+    // schema version with matching (empty) buckets and zero progress.
+    nvs_store::set_u32(NVS_KEY_TRAINED, 0);
+    nvs_store::set_u32(NVS_KEY_VERSION, BASELINE_SCHEMA_VERSION);
+    nvs_store::set_blob(NVS_KEY_BUCKETS, s_buckets, sizeof(s_buckets));
+  } else {
+    s_trained_ms = nvs_store::get_u32(NVS_KEY_TRAINED, 0);
+    if (s_trained_ms > TRAINING_PERIOD_MS) s_trained_ms = TRAINING_PERIOD_MS;
+  }
 
   s_boot_anchor_ms = millis();
   s_last_persist_ms = millis();
@@ -240,37 +254,56 @@ void tick(uint32_t now_ms) {
 // ────────────────────────────────────────────────────────────────────────────
 
 // Given a bucket and feature index, compute |z| × 10 as an unsigned int.
-// Returns INT16_MAX on underpopulated or degenerate (zero-variance) buckets
-// so callers can treat "no baseline" as "not anomalous yet".
+//
+// The precision-preserving formulation from gemini review #314: compute
+//    z² × 100 = (x·n − Σx)² · (n−1) · 100 / (n · (n·Σx² − (Σx)²))
+// in int64 space in one go, then take a single sqrt. This avoids the
+// compounding truncation of the naive
+//    mean = Σx / n
+//    σ²   = (n·Σx² − (Σx)²) / (n·(n−1))
+//    z    = (x − mean) · 10 / √σ²
+// where each integer-division step rounded toward zero and killed
+// precision for features with small ranges (ble_count, stable RSSI).
+//
+// Overflow: worst case is RSSI with n=8000, x=-127, Σx=-127·n = -1.02M.
+//   xn_minus_sum  ≤ 2·10⁶   (absolute)
+//   (xn_minus_sum)² ≤ 4·10¹²
+//   × (n−1) · 100  ≤ 3.2·10¹⁸     < int64 max (9.2·10¹⁸) ✓
+//
+// Returns INT16_MAX only for under-populated buckets. A zero-variance
+// bucket with x == mean returns 0; with x ≠ mean it returns INT16_MAX
+// (so is_anomaly treats it as "unknown", not "definitely anomalous" —
+// a stable bucket with one outlier is ambiguous without more samples).
 static int16_t z_score_x10(const Bucket& b, uint8_t feat, int32_t x) {
   if (b.count < 2) return INT16_MAX;
 
-  // mean = sum / count (integer; ok for features bounded to small ranges)
-  const int32_t n = (int32_t)b.count;
-  const int32_t mean = b.sum[feat] / n;
+  const int64_t n      = (int64_t)b.count;
+  const int64_t sum    = (int64_t)b.sum[feat];
+  const int64_t sum_sq = b.sum_sq[feat];
 
-  // variance = (n * sum_sq - sum²) / (n * (n - 1))
-  //   numerator may be large but fits in int64 for our value ranges.
-  const int64_t num = (int64_t)n * b.sum_sq[feat]
-                    - (int64_t)b.sum[feat] * (int64_t)b.sum[feat];
-  if (num <= 0) return INT16_MAX;  // degenerate / no variance
-  const int64_t den = (int64_t)n * (int64_t)(n - 1);
-  if (den <= 0) return INT16_MAX;
+  // num = n·Σx² − (Σx)² = n · (n−1) · sample_variance
+  const int64_t num = n * sum_sq - sum * sum;
 
-  // variance as uint32 (numerator/den ≤ feature_range² ≤ 16129 for RSSI),
-  // safe to truncate.
-  const uint32_t variance = (uint32_t)(num / den);
-  if (variance == 0) return INT16_MAX;
+  if (num <= 0) {
+    // Bucket has no variance. If x matches the (integer) mean we report
+    // z = 0; otherwise we cannot score it meaningfully and return
+    // INT16_MAX so is_anomaly treats this feature as "unknown".
+    return (x * n == sum) ? 0 : INT16_MAX;
+  }
 
-  const uint32_t sigma = isqrt_u32(variance);
-  if (sigma == 0) return INT16_MAX;
+  const int64_t xn_minus_sum = (int64_t)x * n - sum;
+  // z²·100 = (x·n − Σx)² · (n−1) · 100 / (n · num)
+  const int64_t z2_x100_num = xn_minus_sum * xn_minus_sum * (n - 1) * 100LL;
+  const int64_t z2_x100_den = n * num;
+  if (z2_x100_den <= 0) return INT16_MAX;
 
-  const int32_t dev = x - mean;
-  const uint32_t abs_dev = (uint32_t)(dev < 0 ? -dev : dev);
+  const uint64_t z2_x100 = (uint64_t)(z2_x100_num / z2_x100_den);
+  if (z2_x100 == 0) return 0;
 
-  // z × 10 = abs_dev * 10 / sigma. Cap at INT16_MAX so we don't
-  // truncate negatives.
-  const uint32_t z10 = (abs_dev * 10U) / sigma;
+  // sqrt, then cap. isqrt_u32 takes uint32_t; clamp first to avoid
+  // truncation of very large z² values (they saturate to INT16_MAX anyway).
+  const uint32_t z2_capped = (z2_x100 > UINT32_MAX) ? UINT32_MAX : (uint32_t)z2_x100;
+  const uint32_t z10 = isqrt_u32(z2_capped);
   return z10 > (uint32_t)INT16_MAX ? INT16_MAX : (int16_t)z10;
 }
 
@@ -331,13 +364,16 @@ bool get_stats(Stats* out) {
 
 bool restart_training() {
   if (!s_initialized) return false;
-  memset(s_buckets, 0, sizeof(s_buckets));
+  // secure_wipe (not memset) per the header's privacy invariant: a
+  // user-initiated restart should leave no trace of the previous
+  // baseline in RAM between the wipe and the next persist.
+  secure_wipe(s_buckets, sizeof(s_buckets));
   s_trained_ms = 0;
   s_boot_anchor_ms = millis();
   s_last_persist_ms = millis();
   persist_all();
   health_logging::log(health_logging::LEVEL_INFO, health_logging::CAT_RF,
-    "Baseline: training restarted (all buckets cleared)");
+    "Baseline: training restarted (all buckets secure-wiped)");
   return true;
 }
 

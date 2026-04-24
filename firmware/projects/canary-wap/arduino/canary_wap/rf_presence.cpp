@@ -732,6 +732,15 @@ bool init() {
 void deinit() {
   if (!s_initialized) return;
 
+  // Tear down the Phase 4/5/6 modules we bring up in init(). Without
+  // these, a deinit/reinit cycle would leave stale bucket stats,
+  // fingerprint Bloom filters, and household IRKs in RAM (their own
+  // init() functions short-circuit on s_initialized), silently
+  // bypassing the per-module wipe paths (codex review #314).
+  baseline::deinit();
+  familiar::deinit();
+  household::deinit();
+
   // Secure wipe of all sensitive data
   secure_wipe(s_device_secret, sizeof(s_device_secret));
   secure_wipe(s_token_map, sizeof(s_token_map));
