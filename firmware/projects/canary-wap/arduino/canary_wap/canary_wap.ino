@@ -548,6 +548,7 @@ static void print_identity_block();
 static void print_time_block();
 static void print_gps_block();
 static void print_help();
+static void print_quick_connect_details(const char* title);
 static bool create_witness_record(const uint8_t* payload, size_t len, RecordType type, WitnessRecord* out);
 // log_health is declared extern in health_log.h for use by other modules
 void log_health(LogLevel level, LogCategory category, const char* message, const char* detail = nullptr);
@@ -3918,6 +3919,23 @@ static bool provision_device() {
 // OUTPUT FORMATTING
 // ════════════════════════════════════════════════════════════════════════════
 
+static void print_quick_connect_details(const char* title) {
+  #if FEATURE_WIFI_AP
+  if (!g_device.initialized) return;
+
+  Serial.println(title);
+  Serial.printf("[PROV]   WiFi SSID : %s\n", g_device.ap_ssid);
+  Serial.printf("[PROV]   WiFi PASS : %s\n", g_device.ap_password);
+  Serial.printf("[PROV]   URL       : %s://canary.local  (or %s://%s)\n",
+                g_tls_enabled ? "https" : "http",
+                g_tls_enabled ? "https" : "http",
+                WiFi.softAPIP().toString().c_str());
+  Serial.printf("[PROV]   API TOKEN : %s\n", g_device.api_token_str);
+  #else
+  (void)title;
+  #endif
+}
+
 static void print_table_header() {
   Serial.println("+------+------+-------+----+-------------+-------------+--------+---+----+-----+-----+------+-------+------------------+");
   Serial.println("|  seq | type | state | ok |     lat     |     lon     | alt(m) | Q |sat |hdop |vdop | m/s  | course|     chain        |");
@@ -4243,6 +4261,8 @@ void setup() {
     Serial.println("[WARN] WiFi AP failed to start");
   }
   #endif
+  // Print quick-connect details early so users do not need to wait for later init phases.
+  print_quick_connect_details("[PROV] Quick connect (early):");
   
   // Initialize camera for peek/preview
   #if FEATURE_CAMERA_PEEK
@@ -4451,17 +4471,7 @@ void setup() {
   Serial.println("║  }                                                           ║");
   Serial.println("║                                                              ║");
   Serial.println("╚══════════════════════════════════════════════════════════════╝");
-
-  #if FEATURE_WIFI_AP
-  Serial.println("[PROV] Quick connect:");
-  Serial.printf("[PROV]   WiFi SSID : %s\n", g_device.ap_ssid);
-  Serial.printf("[PROV]   WiFi PASS : %s\n", g_device.ap_password);
-  Serial.printf("[PROV]   URL       : %s://canary.local  (or %s://%s)\n",
-                g_tls_enabled ? "https" : "http",
-                g_tls_enabled ? "https" : "http",
-                WiFi.softAPIP().toString().c_str());
-  Serial.printf("[PROV]   API TOKEN : %s\n", g_device.api_token_str);
-  #endif
+  print_quick_connect_details("[PROV] Quick connect:");
 
   Serial.println();
   Serial.println("╔══════════════════════════════════════════════════════════════╗");
