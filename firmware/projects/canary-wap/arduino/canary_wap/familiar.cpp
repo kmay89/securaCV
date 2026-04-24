@@ -95,9 +95,11 @@ static void hash_indices(uint16_t fp, size_t bit_width, uint8_t k,
   uint8_t digest[32];
   mbedtls_sha256_context ctx;
   mbedtls_sha256_init(&ctx);
-  // mbedtls_sha256_starts_ret returns 0 on success; we proceed regardless
-  // since a failure here would be fatal for the whole module (and SHA on
-  // ESP32 is hardware-backed — failure is extremely unlikely).
+  // Matches the rest of the canary-wap codebase (see canary_wap.ino and
+  // chirp_channel.cpp). arduino-esp32 3.3.x ships mbedTLS 3.x, where the
+  // `_ret`-suffixed variants are the deprecated ones — the non-suffixed
+  // names return int and are canonical. We don't check the return because
+  // SHA on ESP32 is hardware-backed and a failure here would be fatal.
   mbedtls_sha256_starts(&ctx, 0);
   mbedtls_sha256_update(&ctx, in, sizeof(in));
   mbedtls_sha256_finish(&ctx, digest);
@@ -154,13 +156,16 @@ static uint32_t bloom_popcount(const uint8_t* filter, size_t bytes) {
 // ────────────────────────────────────────────────────────────────────────────
 
 static void add_dp_noise(uint8_t* filter, size_t bytes) {
-  // We implement Bernoulli(p) using 16-bit random draws.
+  // Bernoulli(p) sampled as `(r % 10000) < DP_NOISE_BASIS_POINTS`. Batch
+  // the RNG: fill 8 uint32_t once per byte (one esp_fill_random call per
+  // byte instead of 8), reducing hardware-RNG syscalls from ~2048 to 256
+  // per rotation. Stack cost is 32 bytes, well inside the task budget.
   for (size_t i = 0; i < bytes; i++) {
+    uint32_t r[8];
+    esp_fill_random(r, sizeof(r));
     uint8_t noise = 0;
     for (uint8_t b = 0; b < 8; b++) {
-      uint32_t r;
-      esp_fill_random(&r, sizeof(r));
-      if ((r % 10000) < DP_NOISE_BASIS_POINTS) {
+      if ((r[b] % 10000) < DP_NOISE_BASIS_POINTS) {
         noise |= (uint8_t)(1u << b);
       }
     }
@@ -220,7 +225,14 @@ bool init() {
     // Treat as valid only if non-zero.
     s_yesterday_valid = bloom_popcount(s_yesterday, sizeof(s_yesterday)) > 0;
   }
-  s_last_rotation_ms = nvs_store::get_u32(NVS_KEY_ROT_UP_MS, s_last_rotation_ms);
+  // Restore the rotation anchor from NVS, but detect reboots. millis()
+  // resets to 0 on boot, so if the stored uptime is *greater* than the
+  // current uptime we know we're on a fresh boot — restart the rotation
+  // window from "now" instead of immediately forcing a rotation on the
+  // very next tick() call (which would wipe yesterday's memory).
+  const uint32_t stored_rot = nvs_store::get_u32(NVS_KEY_ROT_UP_MS, s_last_rotation_ms);
+  const uint32_t now_boot = millis();
+  s_last_rotation_ms = (stored_rot > now_boot) ? now_boot : stored_rot;
 
   s_initialized = true;
   health_logging::logf(health_logging::LEVEL_INFO, health_logging::CAT_RF,
@@ -410,11 +422,19 @@ bool get_stats(Stats* out) {
 // ────────────────────────────────────────────────────────────────────────────
 
 bool conformance_self_test() {
-  // Save state so the test doesn't corrupt real data.
+  // Save state so the test doesn't corrupt real data. Also save the stats
+  // counters — note_fingerprint() and is_*()_query paths increment them
+  // and we don't want test activity to pollute production telemetry.
   uint8_t saved_today    [BLOOM_BYTES];
   uint8_t saved_yesterday[BLOOM_BYTES];
-  bool    saved_yvalid = s_yesterday_valid;
+  bool     saved_yvalid   = s_yesterday_valid;
   uint32_t saved_last_rot = s_last_rotation_ms;
+  const uint32_t saved_notes     = s_total_notes;
+  const uint32_t saved_rotations = s_total_rotations;
+  const uint32_t saved_aq        = s_total_ambient_queries;
+  const uint32_t saved_am        = s_total_ambient_matches;
+  const uint32_t saved_iq        = s_total_always_ignored_queries;
+  const uint32_t saved_im        = s_total_always_ignored_matches;
 
   memcpy(saved_today,     s_today,     sizeof(saved_today));
   memcpy(saved_yesterday, s_yesterday, sizeof(saved_yesterday));
@@ -442,11 +462,18 @@ bool conformance_self_test() {
   memcpy(s_yesterday, s_today, sizeof(s_yesterday));
   const bool step3 = !is_ambient(test_fp);
 
-  // Restore state.
+  // Restore state (filters, validity, rotation anchor, and stats — we
+  // don't want test activity to pollute production telemetry).
   memcpy(s_today,     saved_today,     sizeof(s_today));
   memcpy(s_yesterday, saved_yesterday, sizeof(s_yesterday));
   s_yesterday_valid = saved_yvalid;
   s_last_rotation_ms = saved_last_rot;
+  s_total_notes                  = saved_notes;
+  s_total_rotations              = saved_rotations;
+  s_total_ambient_queries        = saved_aq;
+  s_total_ambient_matches        = saved_am;
+  s_total_always_ignored_queries = saved_iq;
+  s_total_always_ignored_matches = saved_im;
 
   const bool ok = step1a && step1b && step2 && step3;
   if (!ok) {

@@ -80,6 +80,12 @@ static int8_t s_current_rssi_min = 0;
 static uint8_t s_rssi_count = 0;
 static uint8_t s_adv_count_this_second = 0;
 static uint32_t s_last_adv_second = 0;
+// 4-second sliding window of advertising counts. Used by the familiar
+// fingerprint to estimate adv/minute with enough granularity that all
+// four density buckets are actually reachable (the prior single-second
+// approximation made bucket 1 unreachable — gemini review #313).
+static uint8_t s_adv_window[4] = {0, 0, 0, 0};
+static uint8_t s_adv_window_idx = 0;
 
 // Probe tracking
 static uint8_t s_probe_burst_count = 0;
@@ -471,9 +477,19 @@ static void emit_event(const char* event_name, SignalSource sig, int8_t count_de
     // counter; a modest over-estimate when a burst just hit, under-
     // estimate when observation started mid-second — acceptable since
     // the density class has only 4 buckets.
-    fp_in.adv_per_minute     = (uint8_t)((s_adv_count_this_second >= 255 / 60)
-                                         ? 255
-                                         : (s_adv_count_this_second * 60));
+    // 4-second sliding sum × 15 ≈ advertisements per minute. This gives
+    // enough granularity that all four density buckets in compute_fingerprint
+    // (<4, 4-16, 16-64, ≥64 per minute) are actually reachable:
+    //   0 ads in 4s → 0/min   → bucket 0 (quiet)
+    //   1 ad  in 4s → 15/min  → bucket 1 (low)
+    //   2-4  in 4s → 30-60/min → bucket 2 (med)
+    //   5+   in 4s → 75+/min  → bucket 3 (high)
+    const uint16_t adv_sum_4s = (uint16_t)s_adv_window[0]
+                              + (uint16_t)s_adv_window[1]
+                              + (uint16_t)s_adv_window[2]
+                              + (uint16_t)s_adv_window[3];
+    const uint16_t approx_apm = adv_sum_4s * 15;
+    fp_in.adv_per_minute     = (uint8_t)(approx_apm > 255 ? 255 : approx_apm);
     const uint8_t spread = (uint8_t)((rssi_max >= rssi_min)
                                      ? (rssi_max - rssi_min)
                                      : 0);
@@ -669,6 +685,8 @@ bool init() {
   s_rssi_count = 0;
   s_adv_count_this_second = 0;
   s_last_adv_second = 0;
+  memset(s_adv_window, 0, sizeof(s_adv_window));
+  s_adv_window_idx = 0;
   s_probe_burst_count = 0;
   s_probe_rssi_peak = RSSI_NOISE_FLOOR;
   s_power_flags = 0;
@@ -810,9 +828,12 @@ void update() {
   // Run FSM
   fsm_tick(now_ms);
 
-  // Reset per-second counters
+  // Reset per-second counters. On each rollover, push the second we just
+  // finished into the 4-slot sliding window before zeroing.
   uint32_t current_second = now_ms / 1000;
   if (current_second != s_last_adv_second) {
+    s_adv_window[s_adv_window_idx] = s_adv_count_this_second;
+    s_adv_window_idx = (uint8_t)((s_adv_window_idx + 1) & 0x03);
     s_adv_count_this_second = 0;
     s_last_adv_second = current_second;
   }
@@ -841,6 +862,8 @@ void rotate_session() {
   s_current_rssi_min = 0;
   s_rssi_count = 0;
   s_adv_count_this_second = 0;
+  memset(s_adv_window, 0, sizeof(s_adv_window));
+  s_adv_window_idx = 0;
 
   // Clear observations (contain timestamps that could correlate sessions)
   secure_wipe(s_observations, sizeof(s_observations));
