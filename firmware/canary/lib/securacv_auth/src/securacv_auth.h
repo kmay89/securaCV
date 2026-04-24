@@ -119,4 +119,20 @@ bool auth_check_optional(httpd_req_t* req, const char* expected_token);
 void auth_redact_token(const char* token, char* out, size_t out_len);
 void auth_stats_json(char* buf, size_t buf_len);
 
+// ════════════════════════════════════════════════════════════════════════════
+// BEARER CREDENTIAL OWNERSHIP
+// ════════════════════════════════════════════════════════════════════════════
+// The bearer credential is derived from the device's signing key but lives
+// here, not in the witness module — that boundary is enforced by
+// regression_check.sh so the credential cannot be pulled into the chain
+// payload by accident.
+
+// Load the bearer credential from NVS, or derive it via HKDF and persist
+// it on first boot. Returns true if the credential is ready to use.
+bool auth_load_or_derive(const uint8_t privkey[32]);
+
+// Read the current bearer credential. Returns an empty string if
+// auth_load_or_derive() has not yet succeeded on this boot.
+const char* auth_get_token();
+
 #endif  // SECURACV_AUTH_H

@@ -8,6 +8,8 @@
  */
 
 #include "securacv_auth.h"
+#include "securacv_crypto.h"
+#include "canary_config.h"
 
 #include <string.h>
 
@@ -294,4 +296,57 @@ void auth_redact_token(const char* token, char* out, size_t out_len) {
 
 void auth_stats_json(char* buf, size_t buf_len) {
   auth_get_instance().statsJson(buf, buf_len);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// BEARER CREDENTIAL OWNERSHIP
+// ════════════════════════════════════════════════════════════════════════════
+
+static char s_bearer[36];  // "cv_" + 32 base62 chars + NUL
+
+bool auth_load_or_derive(const uint8_t privkey[32]) {
+  if (!privkey) return false;
+
+  NvsManager& nvs = NvsManager::instance();
+  bool loaded = false;
+
+  if (nvs.beginReadOnly()) {
+    size_t tlen = nvs.getBytesLength(NVS_KEY_TOKEN);
+    if (tlen > 0 && tlen < sizeof(s_bearer)) {
+      size_t got = nvs.getBytes(NVS_KEY_TOKEN, s_bearer, tlen);
+      if (got == tlen) {
+        s_bearer[tlen] = '\0';
+        loaded = (strncmp(s_bearer, "cv_", 3) == 0 && strlen(s_bearer) >= 35);
+      } else {
+        // Partial read — treat as absent so we re-derive rather than
+        // trusting whatever partial bytes landed in s_bearer.
+        s_bearer[0] = '\0';
+      }
+    }
+    nvs.end();
+  }
+
+  if (!loaded) {
+    if (!derive_api_token(privkey, s_bearer, sizeof(s_bearer))) {
+      s_bearer[0] = '\0';
+      return false;
+    }
+    if (nvs.beginReadWrite()) {
+      size_t wrote = nvs.putBytes(NVS_KEY_TOKEN, s_bearer, strlen(s_bearer));
+      nvs.end();
+      if (wrote == 0) {
+        // Persistence failed. Token derivation is deterministic in the
+        // signing key + MAC, so the same credential will be re-derived
+        // next boot — client-side cached tokens remain valid.
+        Serial.println("[!!] Bearer credential NVS persist failed "
+                       "(will re-derive on next boot)");
+      }
+    }
+  }
+
+  return s_bearer[0] != '\0';
+}
+
+const char* auth_get_token() {
+  return s_bearer;
 }

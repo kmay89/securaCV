@@ -92,6 +92,33 @@ bool crypto_verify(const uint8_t pub[32], const uint8_t* msg, size_t len, const 
 void crypto_fingerprint(const uint8_t pub[32], uint8_t fp[8]);
 
 // ════════════════════════════════════════════════════════════════════════════
+// HMAC-SHA256 + HKDF-STYLE API TOKEN DERIVATION
+// ════════════════════════════════════════════════════════════════════════════
+
+// HMAC-SHA256 using mbedtls. Returns true on success.
+bool hmac_sha256(const uint8_t* key, size_t key_len,
+                 const uint8_t* data, size_t data_len,
+                 uint8_t out[32]);
+
+// Base62-encode `in_len` bytes into `output` using unbiased rejection
+// sampling (reject bytes >= 248 since 248 = 62 * 4). Prefix is "cv_" and
+// the output target is 32 base62 chars — so `out_len` must be >= 36.
+// Always null-terminates when out_len >= 1.
+void format_api_token_string(const uint8_t* input, size_t in_len,
+                             char* output, size_t out_len);
+
+// Derive the device's API bearer token from the Ed25519 private key via
+// two-step key separation:
+//   step 1: token_key = HMAC(priv, "securacv:token-key-derive:v1")
+//   step 2: token_hash = HMAC(token_key, "securacv:api-token:v1" || MAC[6])
+//   step 3: base62-encode first 24 bytes of token_hash with "cv_" prefix
+// The Ed25519 signing key never directly touches the token context.
+// token_str must be at least 36 bytes ("cv_" + 32 chars + NUL). Returns
+// true on success.
+bool derive_api_token(const uint8_t privkey[32],
+                      char* token_str, size_t token_str_len);
+
+// ════════════════════════════════════════════════════════════════════════════
 // CHAIN OPERATIONS
 // ════════════════════════════════════════════════════════════════════════════
 
