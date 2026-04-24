@@ -95,8 +95,8 @@ void crypto_fingerprint(const uint8_t pub[32], uint8_t fp[8]);
 // HMAC-SHA256 + HKDF-STYLE API TOKEN DERIVATION
 // ════════════════════════════════════════════════════════════════════════════
 
-// HMAC-SHA256 using mbedtls.
-void hmac_sha256(const uint8_t* key, size_t key_len,
+// HMAC-SHA256 using mbedtls. Returns true on success.
+bool hmac_sha256(const uint8_t* key, size_t key_len,
                  const uint8_t* data, size_t data_len,
                  uint8_t out[32]);
 

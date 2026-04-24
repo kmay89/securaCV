@@ -158,16 +158,20 @@ void crypto_fingerprint(const uint8_t pub[32], uint8_t fp[8]) {
 // HMAC-SHA256 + HKDF-STYLE API TOKEN DERIVATION
 // ════════════════════════════════════════════════════════════════════════════
 
-void hmac_sha256(const uint8_t* key, size_t key_len,
+bool hmac_sha256(const uint8_t* key, size_t key_len,
                  const uint8_t* data, size_t data_len,
                  uint8_t out[32]) {
+  const mbedtls_md_info_t* info = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+  if (!info) return false;
+
   mbedtls_md_context_t ctx;
   mbedtls_md_init(&ctx);
-  mbedtls_md_setup(&ctx, mbedtls_md_info_from_type(MBEDTLS_MD_SHA256), 1);
-  mbedtls_md_hmac_starts(&ctx, key, key_len);
-  mbedtls_md_hmac_update(&ctx, data, data_len);
-  mbedtls_md_hmac_finish(&ctx, out);
+  int ret = mbedtls_md_setup(&ctx, info, 1);
+  if (ret == 0) ret = mbedtls_md_hmac_starts(&ctx, key, key_len);
+  if (ret == 0) ret = mbedtls_md_hmac_update(&ctx, data, data_len);
+  if (ret == 0) ret = mbedtls_md_hmac_finish(&ctx, out);
   mbedtls_md_free(&ctx);
+  return ret == 0;
 }
 
 static const char BASE62[] =
@@ -216,11 +220,12 @@ bool derive_api_token(const uint8_t privkey[32],
   // Step 1: derive an intermediate token key so the Ed25519 signing key
   // never directly touches the token-derivation context.
   uint8_t token_key[32];
-  hmac_sha256(
-    privkey, 32,
-    (const uint8_t*)"securacv:token-key-derive:v1", 28,
-    token_key
-  );
+  if (!hmac_sha256(
+        privkey, 32,
+        (const uint8_t*)"securacv:token-key-derive:v1", 28,
+        token_key)) {
+    return false;
+  }
 
   // Step 2: derive the token hash from intermediate key + STA MAC so
   // identical private keys on different devices still differ (defense in
@@ -233,16 +238,23 @@ bool derive_api_token(const uint8_t privkey[32],
   memcpy(token_input + 21, mac, 6);
 
   uint8_t token_hash[32];
-  hmac_sha256(token_key, 32, token_input, 27, token_hash);
+  if (!hmac_sha256(token_key, 32, token_input, 27, token_hash)) {
+    secure_zero(token_key, sizeof(token_key));
+    return false;
+  }
 
-  // Step 3: base62-encode first 24 bytes with "cv_" prefix.
-  uint8_t token_bytes[24];
-  memcpy(token_bytes, token_hash, 24);
-  format_api_token_string(token_bytes, 24, token_str, token_str_len);
+  // Step 3: feed the full 32 bytes into base62 with "cv_" prefix. At a
+  // ~3.1% rejection rate this gives ~31 accepted bytes — comfortably
+  // more than the 32 chars we target — so the deterministic fallback in
+  // format_api_token_string() effectively never runs and full HMAC entropy
+  // is preserved. This diverges from the 24-byte canary-wap reference;
+  // existing canary-wap devices retain their previously-stored tokens via
+  // NVS load, so the divergence only affects fresh canary-PIO flashes.
+  format_api_token_string(token_hash, sizeof(token_hash),
+                          token_str, token_str_len);
 
   secure_zero(token_key, sizeof(token_key));
   secure_zero(token_hash, sizeof(token_hash));
-  secure_zero(token_bytes, sizeof(token_bytes));
 
   return strlen(token_str) >= 35;  // "cv_" + 32 chars
 }

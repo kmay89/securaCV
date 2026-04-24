@@ -313,9 +313,15 @@ bool auth_load_or_derive(const uint8_t privkey[32]) {
   if (nvs.beginReadOnly()) {
     size_t tlen = nvs.getBytesLength(NVS_KEY_TOKEN);
     if (tlen > 0 && tlen < sizeof(s_bearer)) {
-      nvs.getBytes(NVS_KEY_TOKEN, s_bearer, tlen);
-      s_bearer[tlen] = '\0';
-      loaded = (strncmp(s_bearer, "cv_", 3) == 0 && strlen(s_bearer) >= 35);
+      size_t got = nvs.getBytes(NVS_KEY_TOKEN, s_bearer, tlen);
+      if (got == tlen) {
+        s_bearer[tlen] = '\0';
+        loaded = (strncmp(s_bearer, "cv_", 3) == 0 && strlen(s_bearer) >= 35);
+      } else {
+        // Partial read — treat as absent so we re-derive rather than
+        // trusting whatever partial bytes landed in s_bearer.
+        s_bearer[0] = '\0';
+      }
     }
     nvs.end();
   }
@@ -326,8 +332,15 @@ bool auth_load_or_derive(const uint8_t privkey[32]) {
       return false;
     }
     if (nvs.beginReadWrite()) {
-      nvs.putBytes(NVS_KEY_TOKEN, s_bearer, strlen(s_bearer));
+      size_t wrote = nvs.putBytes(NVS_KEY_TOKEN, s_bearer, strlen(s_bearer));
       nvs.end();
+      if (wrote == 0) {
+        // Persistence failed. Token derivation is deterministic in the
+        // signing key + MAC, so the same credential will be re-derived
+        // next boot — client-side cached tokens remain valid.
+        Serial.println("[!!] Bearer credential NVS persist failed "
+                       "(will re-derive on next boot)");
+      }
     }
   }
 
