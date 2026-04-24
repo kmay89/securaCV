@@ -8,6 +8,7 @@
 #include "securacv_network.h"
 #include "securacv_witness.h"
 #include "securacv_crypto.h"
+#include "securacv_auth.h"
 
 #if FEATURE_WIFI_AP || FEATURE_HTTP_SERVER
 
@@ -301,6 +302,32 @@ bool rate_limit_check(httpd_req_t* req, bool is_action) {
   return true;
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// AUTH GATE
+// ════════════════════════════════════════════════════════════════════════════
+//
+// Wraps auth_check() against the device-provisioned API bearer token.
+// On failure the AuthManager has already written the 401/403/429 response,
+// so the handler can return ESP_OK directly after this returns false.
+// Tracks http_errors so the status endpoint surfaces rejected calls.
+
+static bool auth_gate(httpd_req_t* req) {
+  const char* token = auth_get_token();
+  if (!token || token[0] == '\0') {
+    // Fail closed: if the bearer credential isn't provisioned, refuse.
+    httpd_resp_set_status(req, "503 Service Unavailable");
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, "{\"error\":\"not_provisioned\"}");
+    witness_get_health().http_errors++;
+    return false;
+  }
+  if (!auth_check(req, token)) {
+    witness_get_health().http_errors++;
+    return false;
+  }
+  return true;
+}
+
 // Forward declarations for HTTP handlers
 static esp_err_t handle_ui(httpd_req_t* req);
 static esp_err_t handle_status(httpd_req_t* req);
@@ -549,6 +576,7 @@ static esp_err_t handle_logs(httpd_req_t* req) {
 
 static esp_err_t handle_log_ack(httpd_req_t* req) {
   if (!rate_limit_check(req, true)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
   witness_get_health().http_requests++;
 
   const char* uri = req->uri;
@@ -574,6 +602,7 @@ static esp_err_t handle_log_ack(httpd_req_t* req) {
 
 static esp_err_t handle_ack_all(httpd_req_t* req) {
   if (!rate_limit_check(req, true)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
   witness_get_health().http_requests++;
 
   HealthLogRingEntry* ring = witness_get_health_log_ring();
@@ -601,6 +630,7 @@ static esp_err_t handle_ack_all(httpd_req_t* req) {
 
 static esp_err_t handle_reboot(httpd_req_t* req) {
   if (!rate_limit_check(req, true)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
   witness_get_health().http_requests++;
 
   log_health(LOG_LEVEL_NOTICE, LOG_CAT_USER, "Reboot requested", nullptr);
@@ -624,6 +654,8 @@ static esp_err_t handle_reboot(httpd_req_t* req) {
 
 #if FEATURE_OTA_UPDATE
 static esp_err_t handle_ota(httpd_req_t* req) {
+  if (!rate_limit_check(req, true)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
   witness_get_health().http_requests++;
 
   if (req->content_len <= 0 || req->content_len > 2 * 1024 * 1024) {
@@ -771,6 +803,7 @@ static esp_err_t handle_peek_status(httpd_req_t* req) {
 
 static esp_err_t handle_export(httpd_req_t* req) {
   if (!rate_limit_check(req, true)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
   witness_get_health().http_requests++;
 
   DeviceIdentity& device = witness_get_device();
@@ -869,6 +902,7 @@ static esp_err_t handle_wifi_scan(httpd_req_t* req) {
 
 static esp_err_t handle_wifi_connect(httpd_req_t* req) {
   if (!rate_limit_check(req, true)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
   witness_get_health().http_requests++;
 
   char body[256];
@@ -917,6 +951,7 @@ static esp_err_t handle_wifi_connect(httpd_req_t* req) {
 
 static esp_err_t handle_wifi_disconnect(httpd_req_t* req) {
   if (!rate_limit_check(req, true)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
   witness_get_health().http_requests++;
 
   WiFi.disconnect(false);
@@ -966,6 +1001,7 @@ static esp_err_t handle_mqtt_status(httpd_req_t* req) {
 
 static esp_err_t handle_mqtt_config(httpd_req_t* req) {
   if (!rate_limit_check(req, true)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
   witness_get_health().http_requests++;
 
   char body[512];

@@ -122,3 +122,50 @@ jobs:
             exit 1
           fi
           echo "LESSONS_LEARNED.md: $LINES lines ✓"
+
+  archive-guard:
+    name: Archive Edit Guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Reject edits under firmware/projects/_archive/
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -euo pipefail
+
+          # Determine the base ref to diff against.
+          if [ -n "${GITHUB_BASE_REF:-}" ]; then
+            git fetch origin "${GITHUB_BASE_REF}" --depth=1
+            BASE="origin/${GITHUB_BASE_REF}"
+          else
+            # Push event: compare against the previous commit on this ref.
+            BASE="${GITHUB_SHA}^"
+          fi
+
+          CHANGED=$(git diff --name-only "$BASE"..."${GITHUB_SHA}" -- 'firmware/projects/_archive/' || true)
+          if [ -z "$CHANGED" ]; then
+            echo "No changes under firmware/projects/_archive/ — guard passes."
+            exit 0
+          fi
+
+          echo "Detected changes under firmware/projects/_archive/:"
+          echo "$CHANGED"
+
+          # Permit only if an explicit opt-in marker is present in the PR
+          # title/body or in at least one commit message in the range.
+          MARKER='[archive-edit]'
+          if echo "${PR_TITLE:-}" | grep -qF "$MARKER" \
+             || echo "${PR_BODY:-}" | grep -qF "$MARKER" \
+             || git log --format=%B "$BASE"..."${GITHUB_SHA}" | grep -qF "$MARKER"; then
+            echo "Found '$MARKER' marker — archive edit allowed."
+            exit 0
+          fi
+
+          echo "::error::Edits under firmware/projects/_archive/ are frozen."
+          echo "::error::Add '[archive-edit]' to the PR title, body, or a commit message if this is an intentional backport."
+          exit 1

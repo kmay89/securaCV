@@ -501,7 +501,11 @@ void sd_periodic_check(SPIClass& spi, int cs_pin, uint32_t speed) {
     Serial.println("[SD] Periodic check - attempting remount...");
     if (sd_mount_safe(spi, cs_pin, speed)) {
       Serial.println("[SD] Card re-detected and mounted");
-      // TODO: Flush any buffered data to SD
+      // No deferred-write queue is maintained while the card is absent:
+      // writes that arrived during SD_ABSENT are accounted for in
+      // g_hw.sd_error_count (see sd_op_failure) and dropped by design.
+      // If a RAM ring buffer for deferred writes is ever added, flush it
+      // here right after remount.
     }
   }
 }
@@ -533,7 +537,20 @@ void sd_op_failure() {
 
 void sd_unmount_safe() {
   if (g_hw.sd_state == SD_MOUNTED) {
-    Serial.println("[SD] Unmounting...");
+    Serial.println("[SD] Flushing and unmounting...");
+
+    // Force any pending directory/metadata writes to the card before we tear
+    // down the FAT driver. SD.end() already calls esp_vfs_fat_sdmmc_unmount
+    // which flushes, but opening+closing a zero-length sentinel guarantees
+    // the FAT allocation table is synced even on driver variants that defer
+    // the final metadata write until the next I/O.
+    File sync_handle = SD.open("/.scv_sync", FILE_WRITE);
+    if (sync_handle) {
+      sync_handle.flush();
+      sync_handle.close();
+      SD.remove("/.scv_sync");
+    }
+
     SD.end();
     g_hw.sd_available = false;
     g_hw.sd_state = SD_ABSENT;

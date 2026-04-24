@@ -923,6 +923,12 @@ const char* get_session_emoji();
 // Get session ID (for debugging only)
 const uint8_t* get_session_id();
 
+// Dispatch an ESP-NOW frame received by the mesh callback into chirp_channel.
+// `rssi_dbm` is the raw RSSI value from `esp_now_recv_info_t::rx_ctrl->rssi`
+// (typical range: -30 for very close, -95 near noise floor).
+void dispatch_espnow_message(const uint8_t* mac, const uint8_t* data,
+                             int len, int8_t rssi_dbm);
+
 } // namespace chirp_channel
 
 #endif // SECURACV_MESH_NETWORK_H

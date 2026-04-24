@@ -32,7 +32,8 @@ RUN apk add --no-cache \
     libseccomp \
     sqlite-libs \
     jq \
-    curl
+    curl \
+    python3
 
 # Copy binaries
 COPY --from=builder /build/target/release/witnessd /usr/local/bin/
@@ -44,10 +45,12 @@ COPY --from=builder /build/target/release/log_verify /usr/local/bin/
 COPY --from=builder /build/target/release/export_events /usr/local/bin/
 COPY --from=builder /build/target/release/export_verify /usr/local/bin/
 
-# Copy add-on scripts
+# Copy add-on scripts and wizard
 COPY homeassistant/run.sh /run.sh
 COPY homeassistant/discover_cameras.sh /usr/local/bin/
-RUN chmod +x /run.sh /usr/local/bin/discover_cameras.sh
+COPY homeassistant/serve_wizard.py /usr/local/bin/
+COPY homeassistant/wizard/ /usr/local/share/securacv-wizard/
+RUN chmod +x /run.sh /usr/local/bin/discover_cameras.sh /usr/local/bin/serve_wizard.py
 
 # Data directories
 RUN mkdir -p /data/vault /config

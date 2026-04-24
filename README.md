@@ -5,7 +5,91 @@
 
 ![SecuraCV logo animation](docs/securacv_logo_animation-2.gif)
 
+### A security camera with a 24-hour memory.
 
+Clips stay on your hardware. They auto-delete. The only thing that persists
+is a tamper-proof log that proves nobody — including you — altered the record.
+
+---
+
+## Install (3 steps)
+
+**1.** Install [Home Assistant OS](https://www.home-assistant.io/installation/) on a Raspberry Pi 4/5 or PC.
+
+**2.** Open the Terminal add-on (or SSH) and run:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/kmay89/securaCV/main/scripts/install.sh | bash
+```
+
+**3.** Follow the setup wizard — open the Privacy Witness Kernel add-on from
+Settings → Add-ons → Privacy Witness Kernel → Open Web UI.
+
+That's it. Camera clips will appear in Frigate with a **verified ✓** badge per event.
+
+---
+
+## How It Works (for normal people)
+
+- Your cameras record clips locally via **Frigate** (an open-source NVR)
+- Clips auto-delete after **24 hours** (configurable — you choose the retention)
+- SecuraCV keeps a **cryptographic witness log** of every detected event
+- The log is tamper-evident: if anyone — including you — alters it, the signature breaks
+- If you ever need to prove what happened, **break the glass** — a multi-party
+  authorization process that requires your chosen trustees to approve access
+- Nobody can tamper with the log, not even the system administrator
+
+**Daily digest:** Every morning you get a push notification summarising event counts
+per zone and confirming all witnesses are valid.
+
+**Pattern alerts:** Unusual-hour activity or unexpectedly silent zones trigger
+a high-priority push notification automatically.
+
+---
+
+## What you need
+
+| Item | Notes |
+|------|-------|
+| Raspberry Pi 4 (4 GB+) or x86 PC | Pi 5 works great; 3 cameras at 10 fps |
+| Home Assistant OS | Installed from the official image |
+| IP camera(s) with RTSP | Any Hikvision, Dahua, Reolink, Amcrest, Ubiquiti, etc. |
+| HA Companion App (optional) | For push notifications to your phone |
+
+---
+
+## How It Works (for engineers)
+
+SecuraCV wraps [Frigate](https://frigate.video/) (camera ingest, object detection,
+clip storage and retention) with a **Privacy Witness Kernel** that:
+
+1. Subscribes to Frigate's MQTT event stream
+2. Converts raw detection events into privacy-preserving semantic claims
+   (e.g., `BoundaryCrossingObjectLarge`) with no raw frames, no precise timestamps,
+   no identity data — per the [invariants](spec/invariants.md)
+3. Appends each claim to a **hash-chained, Ed25519-signed append-only log**
+4. Seals sensitive claims into encrypted vault envelopes (break-glass required to open)
+5. Publishes verification status back to Home Assistant via MQTT Discovery
+
+The result: a forensic-grade event log that proves what the cameras saw,
+while discarding everything that could enable mass surveillance.
+
+```
+Camera → Frigate (clips, detection) → MQTT → Privacy Witness Kernel
+                                                    ↓
+                               Hash-chained log + sealed vault
+                                                    ↓
+                               HA integration (sensors, verification)
+                                                    ↓
+                               Your phone (daily digest, alerts)
+```
+
+### Canonical specifications
+
+- [`spec/invariants.md`](spec/invariants.md) — Seven non-negotiable privacy constraints (enforced in code)
+- [`spec/event_contract.md`](spec/event_contract.md) — Permissible event structure and forbidden claims
+- [`spec/threat_model.md`](spec/threat_model.md) — Threats in and out of scope
+- [`kernel/architecture.md`](kernel/architecture.md) — Component isolation, trust boundaries
 
 ---
 

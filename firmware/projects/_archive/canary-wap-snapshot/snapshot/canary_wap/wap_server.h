@@ -42,7 +42,10 @@ namespace wap_server {
 
 // Access Point configuration
 static const char* AP_SSID_PREFIX    = "SecuraCV-";      // + last 4 chars of MAC
-static const char* AP_PASSWORD       = "witness2026";    // Fallback; device-unique password used
+// AP password constant removed (was "witness2026" fallback). Device-unique
+// password is derived from the Ed25519 pubkey fingerprint at runtime in
+// securacv_canary_wap.ino::resolve_ap_password(); no static fallback is kept
+// in this frozen archive.
 static const char* AP_HOSTNAME       = "canary";
 static const int   AP_CHANNEL        = 1;
 static const int   AP_MAX_CLIENTS    = 1;                // Hardened: max 1 client
