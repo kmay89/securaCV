@@ -291,7 +291,11 @@ static int try_enable_csi_now() {
 
 bool start() {
   if (!s_initialized) return false;
-  if (s_running) return true;
+  /* Already running, or deferred-start already queued — no-op either way.
+   * Without the s_start_pending check, repeat start() calls while WiFi is
+   * still coming up would each re-run try_enable_csi_now() and emit a
+   * duplicate "deferred" log line. */
+  if (s_running || s_start_pending) return true;
 
   const int r = try_enable_csi_now();
   if (r == 1) {
