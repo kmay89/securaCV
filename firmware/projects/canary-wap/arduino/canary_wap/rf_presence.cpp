@@ -21,6 +21,8 @@
 #include "nvs_store.h"
 #include "health_log.h"
 #include "household.h"
+#include "familiar.h"
+#include <string.h>
 #include <mbedtls/sha256.h>
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -452,6 +454,34 @@ static void emit_event(const char* event_name, SignalSource sig, int8_t count_de
 
   s_last_event = event_name;
   s_event_callback(&event);
+
+  // ── Phase 5: note the behavioral fingerprint of each confirmed arrival ──
+  // Only on PRESENCE_STARTED (not on impulse/dwell/departure) — so the
+  // Bloom filter accumulates at most one entry per arrival, keeping its
+  // load low enough that the false-positive rate stays under ~0.5%.
+  //
+  // We compute the fingerprint from the rf_presence state we already
+  // have in this scope (no MAC, no token, no raw RSSI sample escapes —
+  // only the 11-bit bucketed fingerprint enters the Bloom filter).
+  if (event_name && strcmp(event_name, "rf_presence_started") == 0) {
+    familiar::FingerprintInputs fp_in;
+    fp_in.time_of_day_bucket = get_time_bucket();
+    fp_in.rssi_mean_dbm      = rssi_mean;
+    // Approximate advertising density per minute from the per-second
+    // counter; a modest over-estimate when a burst just hit, under-
+    // estimate when observation started mid-second — acceptable since
+    // the density class has only 4 buckets.
+    fp_in.adv_per_minute     = (uint8_t)((s_adv_count_this_second >= 255 / 60)
+                                         ? 255
+                                         : (s_adv_count_this_second * 60));
+    const uint8_t spread = (uint8_t)((rssi_max >= rssi_min)
+                                     ? (rssi_max - rssi_min)
+                                     : 0);
+    fp_in.rssi_spread_dbm    = spread;
+
+    const uint16_t fp = familiar::compute_fingerprint(fp_in);
+    familiar::note_fingerprint(fp);
+  }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -650,6 +680,11 @@ bool init() {
   s_initialized = true;
   s_enabled = s_settings.enabled;
 
+  // Phase 5: bring up the familiar-device recognizer alongside us. Loads
+  // the "always ignore" filter + yesterday snapshot from NVS; re-seeds
+  // the salt on first boot. Safe before BLE/WiFi come up.
+  familiar::init();
+
   health_logging::logf(health_logging::LEVEL_INFO, health_logging::CAT_RF,
     "RF Presence initialized, epoch=%u", s_session_epoch);
 
@@ -761,6 +796,9 @@ void update() {
 
   // Check for session rotation
   check_session_rotation(now_ms);
+
+  // Phase 5: rotate the familiar-device filter every 24 h if due.
+  familiar::tick(now_ms);
 
   // Decay transient counters
   decay_probe_bursts(now_ms);
