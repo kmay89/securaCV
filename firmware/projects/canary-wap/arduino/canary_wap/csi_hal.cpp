@@ -25,9 +25,24 @@ extern "C" {
   #include <esp_wifi.h>
   #include <esp_err.h>
   #include <esp_system.h>
-  #include <esp_attr.h>    /* IRAM_ATTR */
   #include <esp_timer.h>   /* esp_timer_get_time */
 }
+
+/*
+ * CSI compile-time gate. ESP-IDF can be built with or without CSI support.
+ * arduino-esp32's prebuilt static libraries enable it by default for S3/C3,
+ * but if a board variant disables it (or a future release reorganizes the
+ * wifi_csi_config_t struct), we want a clean compile + a runtime no-op
+ * rather than a broken build. Detection: presence of CONFIG_ESP_WIFI_CSI
+ * or fall through to "assume available" if not defined. We ALSO wrap any
+ * direct field access in `#if SECURACV_HAVE_CSI_API` so a future struct
+ * rename only hits one place.
+ */
+#if defined(CONFIG_ESP_WIFI_CSI_ENABLED) || !defined(CONFIG_IDF_TARGET)
+  #define SECURACV_HAVE_CSI_API 1
+#else
+  #define SECURACV_HAVE_CSI_API 0
+#endif
 
 namespace csi_hal {
 
@@ -125,7 +140,7 @@ static inline void extract_scrubbed_metadata(const wifi_csi_info_t* info,
  * ESP-IDF CSI CALLBACK  (WiFi task context)
  * ────────────────────────────────────────────────────────────────────────── */
 
-static void IRAM_ATTR csi_rx_cb(void* /*ctx*/, wifi_csi_info_t* info) {
+static void csi_rx_cb(void* /*ctx*/, wifi_csi_info_t* info) {
   if (info == nullptr || info->buf == nullptr || info->len == 0) {
     return;
   }
@@ -223,10 +238,11 @@ bool start() {
   if (!s_initialized) return false;
   if (s_running) return true;
 
-  /* Configure CSI collection. We want RSSI, subcarriers, and HT-LTF; we
-   * explicitly do NOT request mac_tailored data (which would export the
-   * MAC in ctx). */
-  wifi_csi_config_t cfg = {};
+#if SECURACV_HAVE_CSI_API
+  /* Configure CSI collection. Zero-init covers any newer fields (e.g.
+   * dump_ack_en, val_scale_cfg) that may not exist in older IDF headers. */
+  wifi_csi_config_t cfg;
+  memset(&cfg, 0, sizeof(cfg));
   cfg.lltf_en         = true;   /* legacy LTF — always useful */
   cfg.htltf_en        = true;   /* HT-LTF (more subcarriers) */
   cfg.stbc_htltf2_en  = false;  /* not needed for sensing */
@@ -255,6 +271,13 @@ bool start() {
       "CSI enable failed (err=0x%x)", err);
     return false;
   }
+#else
+  /* CSI API not available in this build of the WiFi driver. The whole
+   * feature pipeline downstream gracefully no-ops: no callbacks fire,
+   * no features are emitted, and rf_presence's CSI scalars stay at 0. */
+  health_logging::log(health_logging::LEVEL_INFO, health_logging::CAT_RF,
+    "CSI API not compiled into this WiFi driver build; sensing disabled");
+#endif
 
   s_window_start_ms = millis();
   s_window_frames = 0;
@@ -264,8 +287,10 @@ bool start() {
 
 void stop() {
   if (!s_running) return;
+#if SECURACV_HAVE_CSI_API
   esp_wifi_set_csi(false);
   esp_wifi_set_csi_rx_cb(nullptr, nullptr);
+#endif
   s_running = false;
 
   /* Drain + scrub. */
@@ -405,16 +430,23 @@ bool conformance_check_no_mac_in_buffers() {
 /* ──────────────────────────────────────────────────────────────────────────
  * C API SHIMS — satisfy the portable C interface declared in csi_types.h
  * for any caller that prefers it over the csi_hal:: C++ namespace.
+ *
+ * The trampoline is defined OUTSIDE extern "C" so its address has the
+ * C++ function-pointer linkage that csi_hal::set_features_callback expects.
+ * The C-linkage shim functions then refer to the trampoline by name; the
+ * compiler resolves the reference fine across linkage boundaries.
  * ────────────────────────────────────────────────────────────────────────── */
 
-extern "C" {
+namespace {
+  void (*s_c_cb)(const csi_features_t*, void*) = nullptr;
+  void* s_c_user = nullptr;
 
-static void (*s_c_cb)(const csi_features_t*, void*) = nullptr;
-static void* s_c_user = nullptr;
-
-static void c_cb_trampoline(const csi_features_t* f) {
-  if (s_c_cb) s_c_cb(f, s_c_user);
+  void c_cb_trampoline(const csi_features_t* f) {
+    if (s_c_cb) s_c_cb(f, s_c_user);
+  }
 }
+
+extern "C" {
 
 bool csi_init(const csi_config_t* config) {
   csi_hal::Config cfg = csi_hal::Config::defaults();

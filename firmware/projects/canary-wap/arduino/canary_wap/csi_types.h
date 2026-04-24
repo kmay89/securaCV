@@ -88,8 +88,15 @@ typedef struct {
   uint8_t  caps_observed;      /* csi_cap_t bitmask of what this window used */
 } csi_features_t;
 
+/* Compile-time size check. Use C++11 static_assert when available
+ * (Arduino sketch is C++); fall back to C11 _Static_assert otherwise. */
+#ifdef __cplusplus
+static_assert(sizeof(((csi_features_t*)0)->v) == CSI_FEATURE_DIM,
+              "CSI feature vector must be exactly 32 int8 bytes");
+#elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
 _Static_assert(sizeof(((csi_features_t*)0)->v) == CSI_FEATURE_DIM,
                "CSI feature vector must be exactly 32 int8 bytes");
+#endif
 
 /**
  * Configuration passed to csi_init().
