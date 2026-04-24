@@ -2,9 +2,8 @@
  * SecuraCV Canary — CSI HAL (ESP32 backend)
  * Version 0.1.0
  *
- * Implements the abstract CSI interface defined in
- * firmware/common/rf_sensing/csi.h, backed by Espressif's
- * esp_wifi_set_csi_rx_cb() on ESP32-S3 / ESP32-C3.
+ * Implements the CSI interface defined in csi_types.h, backed by
+ * Espressif's esp_wifi_set_csi_rx_cb() on ESP32-S3 / ESP32-C3.
  *
  * PRIVACY BARRIER (enforced in this file, tested in conformance checks):
  *   The ESP-IDF CSI callback delivers a wifi_csi_info_t that contains the
@@ -22,7 +21,7 @@
 #define SECURACV_CSI_HAL_H
 
 #include <Arduino.h>
-#include "../../../../common/rf_sensing/csi.h"
+#include "csi_types.h"
 
 namespace csi_hal {
 

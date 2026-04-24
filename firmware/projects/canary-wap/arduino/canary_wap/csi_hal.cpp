@@ -403,8 +403,8 @@ bool conformance_check_no_mac_in_buffers() {
 }  /* namespace csi_hal */
 
 /* ──────────────────────────────────────────────────────────────────────────
- * C API SHIMS — satisfy firmware/common/rf_sensing/csi.h for any caller
- * that uses the portable C interface instead of the C++ namespace.
+ * C API SHIMS — satisfy the portable C interface declared in csi_types.h
+ * for any caller that prefers it over the csi_hal:: C++ namespace.
  * ────────────────────────────────────────────────────────────────────────── */
 
 extern "C" {

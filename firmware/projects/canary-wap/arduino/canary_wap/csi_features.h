@@ -4,7 +4,7 @@
  *
  * Converts a stream of CSI frames (provided by csi_hal) into a fixed
  * 32-dim int8 feature vector per 1-second window. Implements the contract
- * defined in firmware/common/rf_sensing/csi.h.
+ * defined in csi_types.h.
  *
  * ALLOCATION-FREE: all state lives in static buffers, sized at compile time.
  *
@@ -21,7 +21,7 @@
 #define SECURACV_CSI_FEATURES_H
 
 #include <stdint.h>
-#include "../../../../common/rf_sensing/csi.h"
+#include "csi_types.h"
 
 namespace csi_features {
 

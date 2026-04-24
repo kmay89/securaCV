@@ -20,7 +20,7 @@
 #define SECURACV_RF_PRESENCE_H
 
 #include <Arduino.h>
-#include "../../../../common/rf_sensing/csi.h"
+#include "csi_types.h"
 
 namespace rf_presence {
 
@@ -230,8 +230,8 @@ void feed_wifi_probe(const uint8_t* mac_address, int8_t rssi);
 
 // Feed a completed CSI feature window (Phase 2 output).
 // IMPORTANT: `features->v[]` contains ONLY bucketed int8 aggregates; no
-// identifiers, no raw subcarrier samples. See firmware/common/rf_sensing/csi.h
-// for the full privacy contract.
+// identifiers, no raw subcarrier samples. See csi_types.h for the full
+// privacy contract.
 void feed_csi_window(const ::csi_features_t* features);
 
 // Feed environmental signals

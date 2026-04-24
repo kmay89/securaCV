@@ -867,7 +867,7 @@ void feed_power_event(uint8_t flags) {
 
 // ────────────────────────────────────────────────────────────────────────────
 // CSI FEED (privacy barrier: we accept only the int8 aggregate feature vector
-// defined in firmware/common/rf_sensing/csi.h; csi_features_t carries no
+// defined in csi_types.h; csi_features_t carries no
 // identifiers, no raw subcarrier samples, and no precise timestamps.)
 //
 // Motion score is derived from the signed Doppler bands and amplitude

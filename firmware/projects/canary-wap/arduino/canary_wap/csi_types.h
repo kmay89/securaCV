@@ -1,9 +1,9 @@
 /**
- * @file csi.h
- * @brief Privacy-preserving WiFi Channel State Information (CSI) sensing
+ * @file csi_types.h
+ * @brief Privacy-preserving WiFi CSI types (canary-wap sketch-local)
  *
- * Abstract interface for CSI-based environmental sensing. Used by the
- * rf_presence fusion layer to detect motion, breathing, and micro-activity
+ * Abstract types and constants for CSI-based environmental sensing. Used by
+ * the rf_presence fusion layer to detect motion, breathing, and micro-activity
  * from subcarrier amplitude/phase dynamics without storing or transmitting
  * any device identifier.
  *
@@ -15,16 +15,16 @@
  *   4. Features are bucketed (int8) so fine-grained side channels are lost.
  *   5. No per-frame timestamp is exported; only a coarse time bucket.
  *
- * This file is the public contract. Concrete backends live under each
- * project's HAL layer (e.g. canary-wap/arduino/canary_wap/csi_hal.cpp for
- * ESP32-S3, a future canary-wap-c6/.../csi_hal.cpp for ESP32-C6 with
- * 802.11bf sounding-frame support).
+ * Lives inside the canary-wap sketch directory because Arduino CLI copies
+ * sketch files into a temp build dir before compiling, which breaks any
+ * relative-path include that escapes the sketch directory. A future C6
+ * board port can copy this file into its own sketch directory verbatim.
  *
  * See spec/canary_free_signals_v0.md (upcoming v1) for the threat model.
  */
 
-#ifndef SECURACV_COMMON_RF_SENSING_CSI_H
-#define SECURACV_COMMON_RF_SENSING_CSI_H
+#ifndef SECURACV_CSI_TYPES_H
+#define SECURACV_CSI_TYPES_H
 
 #include <stdint.h>
 #include <stddef.h>
@@ -190,4 +190,4 @@ bool csi_get_stats(csi_stats_t* out);
 }
 #endif
 
-#endif /* SECURACV_COMMON_RF_SENSING_CSI_H */
+#endif /* SECURACV_CSI_TYPES_H */
