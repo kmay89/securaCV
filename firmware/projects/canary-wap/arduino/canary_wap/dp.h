@@ -23,10 +23,11 @@
  * HOW TO USE
  * ==========
  *   // Inside a get_stats_for_export():
- *   uint32_t exported = dp::noisy_u32(s_total_events, /*sensitivity*/1);
+ *   uint32_t exported = dp::noisy_u32(s_total_events, 1);   // sensitivity = 1
  *
- *   // Default is ε=1.0, δ=1e-5. Override for tighter/looser queries:
- *   uint32_t v = dp::noisy_u32(x, sensitivity, /*eps_x1000*/500, /*d_inv*/1000000);
+ *   // Default is epsilon = 1.0, delta = 1e-5. Override for tighter/looser queries:
+ *   //   args are: value, sensitivity, epsilon_x1000, delta_inv
+ *   uint32_t v = dp::noisy_u32(x, sensitivity, 500, 1000000);
  *
  * Do NOT call these on values used for local decisions (is_anomaly,
  * resolve_rpa, is_ambient). Those must stay noise-free so the firmware
