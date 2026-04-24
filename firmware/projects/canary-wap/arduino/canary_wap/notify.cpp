@@ -23,6 +23,7 @@
 
 #include <string.h>
 #include <stdio.h>
+#include <atomic>
 
 namespace notify {
 
@@ -52,9 +53,16 @@ static uint32_t s_total_suppressed_context = 0;
 static uint32_t s_total_suppressed_severity = 0;
 static uint32_t s_total_suppressed_transient = 0;
 
-// Last decision for polling consumers.
-static bool          s_have_last = false;
-static AlertDecision s_last = {};
+// Last decision — double-buffered so a polling consumer on a different
+// task (web server, MQTT handler) can never observe a torn write. The
+// writer fills the INACTIVE buffer, then atomically flips s_last_idx
+// (a single-byte store); the reader captures the index first and then
+// copies the buffer it pointed to. AlertDecision is ~170 B (bounded by
+// reason[REASON_MAX]), so non-atomic copy without this pattern risks
+// string corruption — gemini review #316.
+static std::atomic<bool> s_have_last{false};
+static AlertDecision     s_last_buf[2] = {};
+static std::atomic<uint8_t> s_last_idx{0};
 
 // ────────────────────────────────────────────────────────────────────────────
 // NVS KEYS
@@ -62,6 +70,18 @@ static AlertDecision s_last = {};
 
 static const char* NVS_KEY_CONTEXT       = "nf_ctx";
 static const char* NVS_KEY_DEDUP_WINDOW  = "nf_dedup";
+
+// Publish a decision to the double-buffered last-decision slot. Lock-
+// free: the writer fills the INACTIVE buffer in full, then atomically
+// flips the index. A concurrent reader captures the index BEFORE
+// copying, so it either sees the previous snapshot or the new one —
+// never a torn half.
+static void publish_last(const AlertDecision& d) {
+  const uint8_t write_idx = (uint8_t)(s_last_idx.load(std::memory_order_relaxed) ^ 1);
+  s_last_buf[write_idx] = d;  // full struct copy into the inactive buffer
+  s_last_idx.store(write_idx, std::memory_order_release);
+  s_have_last.store(true, std::memory_order_release);
+}
 
 // ────────────────────────────────────────────────────────────────────────────
 // DEDUP RING
@@ -221,10 +241,12 @@ static void build_suppress_reason(char* out, size_t cap,
 
 // Stable hash of (fingerprint, baseline bucket) so the same device at
 // the same time-of-day bucket produces the same dedup key across events.
+// Uses Knuth multiplicative hash; takes the HIGH 16 bits of the product
+// (low bits of a multiplicative hash carry less entropy and are
+// essentially just an LCG step — gemini review #316).
 static uint16_t compute_dedup_key(const AlertInput& in) {
-  // Mix with a multiplicative prime so low-entropy bits get spread.
-  return (uint16_t)(((uint32_t)in.fingerprint * 2654435761U)
-                    ^ ((uint32_t)in.bl_bucket << 8)) & 0xFFFFU;
+  const uint32_t h = (uint32_t)in.fingerprint * 2654435761U;
+  return (uint16_t)((h >> 16) ^ ((uint32_t)in.bl_bucket << 8));
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -250,7 +272,8 @@ bool init() {
   s_total_suppressed_context = 0;
   s_total_suppressed_severity = 0;
   s_total_suppressed_transient = 0;
-  s_have_last = false;
+  s_have_last.store(false, std::memory_order_relaxed);
+  s_last_idx.store(0, std::memory_order_relaxed);
 
   s_initialized = true;
   health_logging::logf(health_logging::LEVEL_INFO, health_logging::CAT_RF,
@@ -262,8 +285,9 @@ bool init() {
 void deinit() {
   if (!s_initialized) return;
   memset(s_dedup, 0, sizeof(s_dedup));
-  memset(&s_last, 0, sizeof(s_last));
-  s_have_last = false;
+  memset(s_last_buf, 0, sizeof(s_last_buf));
+  s_have_last.store(false, std::memory_order_relaxed);
+  s_last_idx.store(0, std::memory_order_relaxed);
   s_initialized = false;
 }
 
@@ -288,7 +312,7 @@ AlertDecision evaluate(const AlertInput& in) {
     d.suppress_reason = SUP_HOUSEHOLD;
     s_total_suppressed_household++;
     build_suppress_reason(d.reason, REASON_MAX, in, SUP_HOUSEHOLD);
-    s_last = d; s_have_last = true;
+    publish_last(d);
     return d;
   }
 
@@ -301,7 +325,7 @@ AlertDecision evaluate(const AlertInput& in) {
     d.suppress_reason = SUP_TRANSIENT;
     s_total_suppressed_transient++;
     build_suppress_reason(d.reason, REASON_MAX, in, SUP_TRANSIENT);
-    s_last = d; s_have_last = true;
+    publish_last(d);
     return d;
   }
 
@@ -310,7 +334,7 @@ AlertDecision evaluate(const AlertInput& in) {
     d.suppress_reason = SUP_AMBIENT;
     s_total_suppressed_ambient++;
     build_suppress_reason(d.reason, REASON_MAX, in, SUP_AMBIENT);
-    s_last = d; s_have_last = true;
+    publish_last(d);
     return d;
   }
 
@@ -319,7 +343,7 @@ AlertDecision evaluate(const AlertInput& in) {
     d.suppress_reason = SUP_ALWAYS_IGNORED;
     s_total_suppressed_always_ignored++;
     build_suppress_reason(d.reason, REASON_MAX, in, SUP_ALWAYS_IGNORED);
-    s_last = d; s_have_last = true;
+    publish_last(d);
     return d;
   }
 
@@ -328,7 +352,7 @@ AlertDecision evaluate(const AlertInput& in) {
     d.suppress_reason = SUP_DEDUP;
     s_total_suppressed_dedup++;
     build_suppress_reason(d.reason, REASON_MAX, in, SUP_DEDUP);
-    s_last = d; s_have_last = true;
+    publish_last(d);
     return d;
   }
 
@@ -345,7 +369,7 @@ AlertDecision evaluate(const AlertInput& in) {
     if (d.suppress_reason == SUP_CONTEXT_TOO_QUIET) s_total_suppressed_context++;
     else                                            s_total_suppressed_severity++;
     build_suppress_reason(d.reason, REASON_MAX, in, d.suppress_reason);
-    s_last = d; s_have_last = true;
+    publish_last(d);
     return d;
   }
 
@@ -360,7 +384,7 @@ AlertDecision evaluate(const AlertInput& in) {
   health_logging::logf(health_logging::LEVEL_WARNING, health_logging::CAT_RF,
     "Notify FIRE [%s] %s", severity_name(sev), d.reason);
 
-  s_last = d; s_have_last = true;
+  publish_last(d);
   return d;
 }
 
@@ -434,8 +458,13 @@ bool get_stats_for_export(Stats* out) {
 }
 
 bool get_last_decision(AlertDecision* out) {
-  if (!s_initialized || !s_have_last || !out) return false;
-  *out = s_last;
+  if (!s_initialized || !out) return false;
+  if (!s_have_last.load(std::memory_order_acquire)) return false;
+  // Snapshot the active buffer index, then copy. If the writer flips
+  // mid-copy, we still finish reading a self-consistent buffer because
+  // the writer only writes into the INACTIVE buffer.
+  const uint8_t idx = s_last_idx.load(std::memory_order_acquire);
+  *out = s_last_buf[idx];
   return true;
 }
 
@@ -460,8 +489,10 @@ bool conformance_self_test() {
   const uint32_t st_cx = s_total_suppressed_context;
   const uint32_t st_sv = s_total_suppressed_severity;
   const uint32_t st_tr = s_total_suppressed_transient;
-  const bool saved_have = s_have_last;
-  const AlertDecision saved_last = s_last;
+  const bool saved_have = s_have_last.load(std::memory_order_relaxed);
+  const uint8_t saved_idx = s_last_idx.load(std::memory_order_relaxed);
+  AlertDecision saved_last_buf[2];
+  memcpy(saved_last_buf, s_last_buf, sizeof(saved_last_buf));
 
   memset(s_dedup, 0, sizeof(s_dedup));
   s_context = CTX_AWAY;  // wide gate so severity isn't a bottleneck
@@ -512,8 +543,9 @@ bool conformance_self_test() {
   s_total_suppressed_context = st_cx;
   s_total_suppressed_severity = st_sv;
   s_total_suppressed_transient = st_tr;
-  s_have_last = saved_have;
-  s_last = saved_last;
+  memcpy(s_last_buf, saved_last_buf, sizeof(s_last_buf));
+  s_last_idx.store(saved_idx, std::memory_order_relaxed);
+  s_have_last.store(saved_have, std::memory_order_relaxed);
 
   const bool ok = ok1 && ok2 && ok3 && ok4;
   if (!ok) {

@@ -38,7 +38,7 @@
  * Phase 8 only DECIDES; it does not DELIVER. Actual notification delivery
  * (MQTT publish, HTTP push, iOS APNS webhook, audible buzzer) lands in
  * Phase 10's wizard / delivery layer. For now the decision is logged via
- * health_logging at LEVEL_NOTICE if fired, LEVEL_DEBUG if suppressed,
+ * health_logging at LEVEL_WARNING if fired, LEVEL_DEBUG if suppressed,
  * and get_last_decision() can be polled by a future consumer.
  */
 
@@ -154,7 +154,7 @@ void deinit();
 // ════════════════════════════════════════════════════════════════════════════
 
 // Run the 5-way filter. Returns a fully-populated AlertDecision. On fire,
-// the decision is also logged via health_logging at LEVEL_NOTICE, so any
+// the decision is also logged via health_logging at LEVEL_WARNING, so any
 // future consumer subscribed to the health log can react even without
 // polling get_last_decision().
 AlertDecision evaluate(const AlertInput& in);

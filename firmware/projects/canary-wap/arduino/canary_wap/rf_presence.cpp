@@ -73,6 +73,12 @@ static uint8_t s_device_secret[32] = {0};  // Per-device secret for token deriva
 // FSM state
 static RfState s_state = RF_EMPTY;
 static uint32_t s_state_enter_ms = 0;
+// Timestamp of the FIRST detection of the current "presence episode" —
+// when the FSM left RF_EMPTY. Reset to 0 when we return to RF_EMPTY.
+// Used by notify::evaluate to answer "how long has this device been
+// around?" which state_enter_ms cannot, because state_enter_ms is
+// updated on every FSM transition (IMPULSE → PRESENCE → DWELLING …).
+static uint32_t s_presence_episode_start_ms = 0;
 static const char* s_last_event = "boot";
 
 // Observation tracking
@@ -438,7 +444,11 @@ static const char* get_narrative_hint(RfState state, DwellClass dwell, uint8_t t
 }
 
 static void emit_event(const char* event_name, SignalSource sig, int8_t count_delta) {
-  if (!s_event_callback) return;
+  // Phase 5/6/8 must NOT be gated behind s_event_callback — they're an
+  // internal decision/persistence engine that should run whether or not
+  // any external observer has registered a callback (codex review #316).
+  // Compute the shared metrics once, then deliver to the callback AND
+  // feed the phase modules independently.
 
   uint32_t now_ms = millis();
   int8_t rssi_max, rssi_mean, rssi_min;
@@ -450,19 +460,24 @@ static void emit_event(const char* event_name, SignalSource sig, int8_t count_de
   const uint8_t csi_m = active_csi_motion(now_ms);
   const uint8_t csi_b = active_csi_breathing(now_ms);
 
-  RfEvent event = {
-    .event_name = event_name,
-    .signal = sig,
-    .confidence = calc_confidence(device_count, s_probe_burst_count, rssi_mean,
-                                  csi_m, csi_b),
-    .count_delta = count_delta,
-    .dwell_class = calc_dwell_class(state_duration),
-    .time_bucket = get_time_bucket(),
-    .narrative_hint = get_narrative_hint(s_state, calc_dwell_class(state_duration), get_time_bucket())
-  };
-
   s_last_event = event_name;
-  s_event_callback(&event);
+
+  // Deliver to the registered event callback if any. This is a purely
+  // external side channel; the internal pipeline below does not depend
+  // on it.
+  if (s_event_callback) {
+    RfEvent event = {
+      .event_name = event_name,
+      .signal = sig,
+      .confidence = calc_confidence(device_count, s_probe_burst_count, rssi_mean,
+                                    csi_m, csi_b),
+      .count_delta = count_delta,
+      .dwell_class = calc_dwell_class(state_duration),
+      .time_bucket = get_time_bucket(),
+      .narrative_hint = get_narrative_hint(s_state, calc_dwell_class(state_duration), get_time_bucket())
+    };
+    s_event_callback(&event);
+  }
 
   // ── Phase 5: note the behavioral fingerprint of each confirmed arrival ──
   // Only on PRESENCE_STARTED (not on impulse/dwell/departure) — so the
@@ -501,10 +516,17 @@ static void emit_event(const char* event_name, SignalSource sig, int8_t count_de
     const uint16_t fp = familiar::compute_fingerprint(fp_in);
     familiar::note_fingerprint(fp);
 
-    // ── Phase 6: feed the adaptive baseline the same event ──
-    // Uses the features already computed above (csi_motion, ble_count via
-    // device_count, rssi_mean, rssi_spread). Bucket is the hour-of-day
-    // derived from our 10-minute time bucket.
+    // ── Phase 6/8 ORDER MATTERS (codex review #316) ──
+    // We must EVALUATE the notification policy against the baseline's
+    // state BEFORE we OBSERVE the new sample, or the candidate event
+    // would be compared to a distribution that already absorbed it —
+    // which dampens outliers in sparse buckets and silently suppresses
+    // alerts that should fire.
+    //
+    // Also: the "sustained" gate in notify needs the TOTAL time since
+    // the device was first detected (presence episode start), not the
+    // time since the current FSM state began (which is ~0 at the
+    // rf_presence_started transition).
     const baseline::Features bl_in = {
       /* csi_motion   */ (int16_t)csi_m,
       /* ble_count    */ (int16_t)device_count,
@@ -513,23 +535,24 @@ static void emit_event(const char* event_name, SignalSource sig, int8_t count_de
     };
     const uint8_t bl_bucket =
         baseline::bucket_from_time_bucket(get_time_bucket());
-    baseline::observe(bl_bucket, bl_in);
 
-    // ── Phase 8: quiet-by-default notification policy ──
-    // Compose AlertInput from the fingerprint + baseline + local state.
-    // The policy queries household/familiar/baseline itself to make the
-    // 5-way filter decision; we pass already_resolved_household=false
-    // because rf_presence::feed_ble_scan already short-circuited any
-    // RPA that resolved to a paired IRK (it never reaches emit_event).
+    const uint32_t episode_duration_ms =
+        (s_presence_episode_start_ms == 0) ? 0
+                                           : elapsed_ms(s_presence_episode_start_ms, now_ms);
+
+    // ── Phase 8: quiet-by-default notification policy ── (evaluate FIRST)
     notify::AlertInput ni = {};
     ni.fingerprint          = fp;
     ni.bl_bucket            = bl_bucket;
     ni.time_of_day_bucket   = get_time_bucket();
     ni.features             = bl_in;
-    ni.presence_duration_ms = state_duration;
+    ni.presence_duration_ms = episode_duration_ms;
     ni.device_count         = device_count;
     ni.already_resolved_household = false;
     (void)notify::evaluate(ni);
+
+    // ── Phase 6: feed the adaptive baseline (AFTER notify::evaluate) ──
+    baseline::observe(bl_bucket, bl_in);
   }
 }
 
@@ -546,6 +569,17 @@ static void transition_to(RfState new_state, uint32_t now_ms) {
   s_state = new_state;
   s_state_enter_ms = now_ms;
   s_last_transition_ms = now_ms;  // Track for rate limiting
+
+  // Maintain the presence-episode timestamp. It starts when we first
+  // leave RF_EMPTY (a new episode) and ends when we return to RF_EMPTY.
+  // This gives notify::evaluate a true "how long has this device been
+  // around" value, regardless of intermediate IMPULSE→PRESENCE→DWELL
+  // transitions which keep resetting s_state_enter_ms.
+  if (old_state == RF_EMPTY && new_state != RF_EMPTY) {
+    s_presence_episode_start_ms = now_ms;
+  } else if (new_state == RF_EMPTY) {
+    s_presence_episode_start_ms = 0;
+  }
 
   // Log transition
   health_logging::logf(health_logging::LEVEL_INFO, health_logging::CAT_RF,
