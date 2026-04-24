@@ -20,6 +20,7 @@
 #include "rf_presence.h"
 #include "nvs_store.h"
 #include "health_log.h"
+#include "household.h"
 #include <mbedtls/sha256.h>
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -822,6 +823,22 @@ void rotate_session() {
 void feed_ble_scan(const uint8_t* mac_address, int8_t rssi, bool connectable) {
   if (!s_initialized || !s_enabled) return;
   if (rssi < RSSI_NOISE_FLOOR) return;  // Ignore noise
+  if (!mac_address) return;
+
+  // === HOUSEHOLD SHORT-CIRCUIT (Phase 4) ===
+  // If this MAC is a Resolvable Private Address that resolves to any of
+  // the IRKs we have on file for household devices, we treat it as if it
+  // were never observed — no token, no presence count, no event. This is
+  // how we satisfy the user's "don't alert me for my own phone" goal
+  // without ever storing the phone's MAC or identity.
+  //
+  // This check happens BEFORE token derivation so the MAC is not hashed
+  // into the token map at all for household devices. That preserves the
+  // invariant that the token map cannot be used to correlate a household
+  // device's presence across session rotations.
+  if (household::resolve_rpa(mac_address)) {
+    return;
+  }
 
   uint32_t now_ms = millis();
 
