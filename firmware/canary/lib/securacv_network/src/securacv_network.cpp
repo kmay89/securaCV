@@ -462,11 +462,47 @@ void NetworkManager::registerHttpHandlers() {
 static esp_err_t handle_ui(httpd_req_t* req) {
   witness_get_health().http_requests++;
   httpd_resp_set_type(req, "text/html");
-  return httpd_resp_send(req, CANARY_UI_HTML, HTTPD_RESP_USE_STRLEN);
+
+  // Phase 2.5: inject the bearer credential into the embedded SPA so its
+  // fetch() helper can send `Authorization: Bearer cv_…`. One byte-swap per
+  // request — the HTML is already near the oversize threshold enforced by
+  // regression_check.sh, so we keep this as a single-pass substitution and
+  // ship the HTML unchanged if the placeholder is absent.
+  static const char kTokenPlaceholder[] = "__CV_TOKEN__";
+  const size_t placeholder_len = sizeof(kTokenPlaceholder) - 1;
+
+  const char* token = auth_get_token();
+  if (!token) token = "";
+  const size_t token_len = strlen(token);
+
+  const size_t html_len = strlen(CANARY_UI_HTML);
+  const char* needle = strstr(CANARY_UI_HTML, kTokenPlaceholder);
+
+  if (!needle) {
+    return httpd_resp_send(req, CANARY_UI_HTML, html_len);
+  }
+
+  const size_t prefix_len = needle - CANARY_UI_HTML;
+  const size_t suffix_len = html_len - prefix_len - placeholder_len;
+  const size_t out_len = prefix_len + token_len + suffix_len;
+
+  char* out = (char*)malloc(out_len + 1);
+  if (!out) {
+    return http_send_error(req, 500, "oom");
+  }
+  memcpy(out, CANARY_UI_HTML, prefix_len);
+  memcpy(out + prefix_len, token, token_len);
+  memcpy(out + prefix_len + token_len, needle + placeholder_len, suffix_len);
+  out[out_len] = '\0';
+
+  esp_err_t result = httpd_resp_send(req, out, out_len);
+  free(out);
+  return result;
 }
 
 static esp_err_t handle_status(httpd_req_t* req) {
   if (!rate_limit_check(req)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
   witness_get_health().http_requests++;
 
   DeviceIdentity& device = witness_get_device();
@@ -509,6 +545,7 @@ static esp_err_t handle_status(httpd_req_t* req) {
 
 static esp_err_t handle_chain(httpd_req_t* req) {
   if (!rate_limit_check(req)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
   witness_get_health().http_requests++;
 
   DeviceIdentity& device = witness_get_device();
@@ -540,6 +577,7 @@ static esp_err_t handle_chain(httpd_req_t* req) {
 
 static esp_err_t handle_logs(httpd_req_t* req) {
   if (!rate_limit_check(req)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
   witness_get_health().http_requests++;
 
   HealthLogRingEntry* ring = witness_get_health_log_ring();
@@ -695,6 +733,7 @@ static esp_err_t handle_ota(httpd_req_t* req) {
 
 #if FEATURE_CAMERA_PEEK
 static esp_err_t handle_peek_start(httpd_req_t* req) {
+  if (!auth_gate(req)) return ESP_OK;
   witness_get_health().http_requests++;
 
   if (!camera_is_initialized()) {
@@ -715,6 +754,7 @@ static esp_err_t handle_peek_start(httpd_req_t* req) {
 }
 
 static esp_err_t handle_peek_stream(httpd_req_t* req) {
+  if (!auth_gate(req)) return ESP_OK;
   witness_get_health().http_requests++;
 
   CameraManager& cam = camera_get_instance();
@@ -771,6 +811,7 @@ static esp_err_t handle_peek_stream(httpd_req_t* req) {
 }
 
 static esp_err_t handle_peek_stop(httpd_req_t* req) {
+  if (!auth_gate(req)) return ESP_OK;
   witness_get_health().http_requests++;
 
   camera_set_peek_active(false);
@@ -780,6 +821,7 @@ static esp_err_t handle_peek_stop(httpd_req_t* req) {
 }
 
 static esp_err_t handle_peek_status(httpd_req_t* req) {
+  if (!auth_gate(req)) return ESP_OK;
   witness_get_health().http_requests++;
 
   CameraManager& cam = camera_get_instance();
@@ -853,6 +895,7 @@ static esp_err_t handle_export(httpd_req_t* req) {
 
 static esp_err_t handle_wifi_status(httpd_req_t* req) {
   if (!rate_limit_check(req)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
   witness_get_health().http_requests++;
 
   NetworkManager& net = network_get_instance();
@@ -977,6 +1020,7 @@ static esp_err_t handle_wifi_disconnect(httpd_req_t* req) {
 
 static esp_err_t handle_mqtt_status(httpd_req_t* req) {
   if (!rate_limit_check(req)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
   witness_get_health().http_requests++;
 
   JsonDocument doc;
