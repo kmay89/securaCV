@@ -1,6 +1,6 @@
 # Canary Consolidation Plan
 
-**Status:** Phase 1 in progress
+**Status:** Phase 2 in progress (Phase 1 ✅ landed in #305)
 **Created:** 2026-04-17
 **Owner:** firmware maintainers
 **Companion docs:** [VARIANT_POLICY.md](../VARIANT_POLICY.md), [FEATURES.md](../FEATURES.md), [FIRMWARE_VARIANT_AUDIT.md](../FIRMWARE_VARIANT_AUDIT.md)
@@ -40,7 +40,7 @@ Derived from the post-archive Feature-Parity Dashboard in [FEATURES.md](../FEATU
 
 | # | Gap | Current canary (PIO) state | Source to port from | Port complexity | Security impact |
 |---|---|---|---|---|---|
-| 1 | API authentication (bearer token + HKDF derivation + exponential backoff + constant-time compare) | ❌ | `canary_wap/api_auth.h` (~275 LOC) | **Low** (self-contained, ESP-IDF native) | **High** (every REST endpoint is currently unauthenticated) |
+| 1 | API authentication (bearer token + HKDF derivation + exponential backoff + constant-time compare) | ⚠️ (Phase 2: mutating endpoints gated; reads still open pending SPA token wiring) | `canary_wap/api_auth.h` (~275 LOC) | **Low** (self-contained, ESP-IDF native) | **High** (every REST endpoint is currently unauthenticated) |
 | 2 | Rate limiting on HTTP API | ✅ (already present) | — | N/A | — |
 | 3 | Camera peek MJPEG streaming | ❌ | `canary_wap/wap_server.cpp` peek handlers | High (streaming loop + resolution control) | Medium (no frame storage, still subject to DoS) |
 | 4 | GPS motion FSM (EMA + hysteresis + debounce) | ⚠️ NMEA parse only | `canary_wap/*` motion detection | Medium | Low |
@@ -73,16 +73,24 @@ Phases are ordered by **security impact first**, then **blast radius**, then **r
 - `library.json` ships independently so existing PlatformIO builds ignore it until opted in.
 - Update [FEATURES.md](../FEATURES.md) dashboard to mark gap #1 as ⚠️ (library present, handlers not yet wired).
 
-### Phase 2 — Wire API auth into sensitive endpoints
+### Phase 2 — Wire API auth into sensitive endpoints (this PR)
 
-- Wire `api_auth_check` into mutating/privileged handlers in `securacv_network.cpp`:
+- ✅ Added `hmac_sha256()` + `derive_api_token()` to `securacv_crypto` using two-step HKDF (token-key-derive then transport-secret w/ STA MAC), with base62 rejection sampling — byte-for-byte parity with `canary_wap/canary_wap.ino:816-908`.
+- ✅ Bearer credential lives entirely in `securacv_auth` (`auth_load_or_derive` + `auth_get_token`); the witness module only triggers derivation. Regression-check `Token isolation` rule enforces this boundary so the credential cannot enter chain payloads.
+- ✅ `auth_gate()` helper in `securacv_network.cpp` wraps `auth_check()` and fails closed if the bearer is unprovisioned (returns 503 `not_provisioned`).
+- ✅ Wired `auth_gate` into the 8 mutating handlers:
   - `POST /api/export`, `POST /api/reboot`
   - `POST /api/logs/*/ack`, `POST /api/logs/ack-all`
   - `POST /api/wifi/connect`, `POST /api/wifi/disconnect`
-  - `POST /api/mqtt/config`, `POST /api/mqtt/disconnect`
-  - `POST /api/ota` (if `FEATURE_OTA_UPDATE`)
-- Leave unauthenticated: `GET /api/status` (health), `GET /` (dashboard HTML — auth happens in-UI).
-- Derive the device API token via HKDF(device_seed, "securacv-api-token-v1") in `securacv_crypto` (parity with canary-wap).
+  - `POST /api/mqtt/config` (`FEATURE_HA_MQTT`)
+  - `POST /api/ota` (`FEATURE_OTA_UPDATE`)
+- Left unauthenticated for now: `GET /api/status`, `GET /api/chain`, `GET /api/logs`, `GET /api/wifi/status`, `GET /api/mqtt/status`, `GET /api/peek/*`, `GET /` — these still feed the embedded SPA which doesn't yet hold the bearer token.
+- Gap #1 flipped to ⚠️ (mutating endpoints gated). Final ✅ flips when SPA token wiring lands.
+
+### Phase 2.5 — SPA token wiring (next PR)
+
+- Inject the bearer into the embedded SPA at handler-render time so `fetch()` calls send `Authorization: Bearer cv_…`.
+- Re-gate the read endpoints once the SPA carries the token.
 - Flip gap #1 to ✅.
 
 ### Phase 3 — Provisioning gate + hardware state

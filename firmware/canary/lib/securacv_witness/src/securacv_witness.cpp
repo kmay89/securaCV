@@ -7,6 +7,7 @@
 
 #include "securacv_witness.h"
 #include "securacv_crypto.h"
+#include "securacv_auth.h"
 #include "canary_config.h"
 
 #include <Arduino.h>
@@ -140,6 +141,14 @@ bool witness_provision_device() {
     sha256_domain("securacv:genesis:v1", (const uint8_t*)g_device.device_id,
                   strlen(g_device.device_id), g_device.chain_head);
     nvs_store_bytes(NVS_KEY_CHAIN, g_device.chain_head, 32);
+  }
+
+  // Provision the transport-layer bearer credential. Owned entirely by
+  // securacv_auth — we just trigger derivation here so it happens during
+  // device boot. The credential MUST NOT enter the witness chain.
+  if (!auth_load_or_derive(g_device.privkey)) {
+    Serial.println("[!!] Bearer credential provisioning failed");
+    return false;
   }
 
   g_device.boot_ms = millis();
