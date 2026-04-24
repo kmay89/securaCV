@@ -22,6 +22,7 @@
 #include "health_log.h"
 #include "household.h"
 #include "familiar.h"
+#include "baseline.h"
 #include <string.h>
 #include <mbedtls/sha256.h>
 
@@ -497,6 +498,21 @@ static void emit_event(const char* event_name, SignalSource sig, int8_t count_de
 
     const uint16_t fp = familiar::compute_fingerprint(fp_in);
     familiar::note_fingerprint(fp);
+
+    // ── Phase 6: feed the adaptive baseline the same event ──
+    // Uses the features already computed above (csi_motion, ble_count via
+    // device_count, rssi_mean, rssi_spread). Bucket is the hour-of-day
+    // derived from our 10-minute time bucket. Phase 8 will consume the
+    // anomaly verdict; we just accumulate + score for now.
+    const baseline::Features bl_in = {
+      /* csi_motion   */ (int16_t)csi_m,
+      /* ble_count    */ (int16_t)device_count,
+      /* rssi_mean    */ (int16_t)rssi_mean,
+      /* rssi_spread  */ (int16_t)spread
+    };
+    const uint8_t bl_bucket =
+        baseline::bucket_from_time_bucket(get_time_bucket());
+    baseline::observe(bl_bucket, bl_in);
   }
 }
 
@@ -703,6 +719,10 @@ bool init() {
   // the salt on first boot. Safe before BLE/WiFi come up.
   familiar::init();
 
+  // Phase 6: bring up the adaptive baseline. Loads bucket stats +
+  // accumulated training time from NVS. Safe before BLE/WiFi come up.
+  baseline::init();
+
   health_logging::logf(health_logging::LEVEL_INFO, health_logging::CAT_RF,
     "RF Presence initialized, epoch=%u", s_session_epoch);
 
@@ -711,6 +731,15 @@ bool init() {
 
 void deinit() {
   if (!s_initialized) return;
+
+  // Tear down the Phase 4/5/6 modules we bring up in init(). Without
+  // these, a deinit/reinit cycle would leave stale bucket stats,
+  // fingerprint Bloom filters, and household IRKs in RAM (their own
+  // init() functions short-circuit on s_initialized), silently
+  // bypassing the per-module wipe paths (codex review #314).
+  baseline::deinit();
+  familiar::deinit();
+  household::deinit();
 
   // Secure wipe of all sensitive data
   secure_wipe(s_device_secret, sizeof(s_device_secret));
@@ -808,12 +837,16 @@ void set_event_callback(RfEventCallback cb) {
 // ════════════════════════════════════════════════════════════════════════════
 
 void update() {
-  // Phase 5: familiar-filter rotation is time-based aging, not event-
-  // driven. Run it even when s_enabled is false — otherwise disabling RF
-  // presence for >24 h would freeze yesterday's filter indefinitely and
-  // violate the ~48 h retention invariant. We still need s_initialized
-  // so we don't touch uninitialized module state.
-  if (s_initialized) familiar::tick(millis());
+  // Phase 5 + 6: familiar filter rotation (24 h) and baseline training
+  // progress persistence (1 h) are time-based, not event-driven. Run
+  // them even when s_enabled is false — otherwise disabling RF presence
+  // would halt aging for the familiar filter and NVS persistence for
+  // the baseline, violating retention + recovery invariants.
+  if (s_initialized) {
+    const uint32_t now = millis();
+    familiar::tick(now);
+    baseline::tick(now);
+  }
 
   if (!s_initialized || !s_enabled) return;
 
