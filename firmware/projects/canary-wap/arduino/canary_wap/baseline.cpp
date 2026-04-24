@@ -11,6 +11,7 @@
  */
 
 #include "baseline.h"
+#include "dp.h"
 #include "nvs_store.h"
 #include "health_log.h"
 
@@ -359,6 +360,14 @@ bool get_stats(Stats* out) {
     if (s_buckets[i].count >= 2) populated++;
   }
   out->populated_buckets = populated;
+  return true;
+}
+
+bool get_stats_for_export(Stats* out) {
+  if (!get_stats(out)) return false;
+  out->total_observations    = dp::noisy_u32(out->total_observations,    1);
+  out->total_anomaly_queries = dp::noisy_u32(out->total_anomaly_queries, 1);
+  out->total_anomaly_hits    = dp::noisy_u32(out->total_anomaly_hits,    1);
   return true;
 }
 

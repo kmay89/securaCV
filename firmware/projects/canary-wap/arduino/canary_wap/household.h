@@ -171,6 +171,15 @@ struct Stats {
 };
 bool get_stats(Stats* out);
 
+// Same fields as get_stats(), but with differential-privacy Gaussian
+// noise applied to the monotonic counter fields (total_* queries and
+// matches). Use this variant whenever the Stats struct is about to
+// cross the export boundary (HTTP, MQTT, mesh). The enrolled_count
+// and enrolling flag are NOT noised — they're user-visible constants
+// (≤ MAX_HOUSEHOLD_DEVICES) whose exact values the user needs. Only
+// the activity counters carry privacy-sensitive behavior information.
+bool get_stats_for_export(Stats* out);
+
 // ════════════════════════════════════════════════════════════════════════════
 // CONFORMANCE
 // ════════════════════════════════════════════════════════════════════════════
