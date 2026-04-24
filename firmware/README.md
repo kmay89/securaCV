@@ -86,7 +86,7 @@ firmware/
 
 **Key rule:** Composition happens only in `envs/` and `projects/`. Common modules never import board or config files.
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed rules.
+See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed composition rules and [VARIANT_POLICY.md](VARIANT_POLICY.md) for the lifecycle policy governing each variant.
 
 ---
 
@@ -178,14 +178,16 @@ make help        # Show all targets
 
 ## Build Targets & Feature Parity
 
-See [FEATURES.md](FEATURES.md) for the complete feature audit matrix comparing all build targets.
+See [FEATURES.md](FEATURES.md) for the complete feature audit matrix and [VARIANT_POLICY.md](VARIANT_POLICY.md) for each variant's lifecycle status.
 
-| Build Target | Location | Feature Coverage | Notes |
-|-------------|----------|-----------------|-------|
-| **WAP Snapshot** | `projects/canary-wap-snapshot/` | 100% (canonical) | Reference implementation |
-| **Arduino IDE** | `projects/canary-wap/arduino/canary_wap/` | 100% | Full WAP parity |
-| **PlatformIO (canary/)** | `canary/` | ~85% | Modular libraries, some stubs |
-| **PlatformIO (canary-wap/)** | `projects/canary-wap/` | ~75% | Uses common headers |
+| Build Target | Location | Lifecycle | Notes |
+|-------------|----------|-----------|-------|
+| **PlatformIO (canary/)** | `canary/` | ACTIVE | Modular libraries, canonical onboarding UI/API |
+| **Arduino IDE (canary-wap)** | `projects/canary-wap/arduino/canary_wap/` | COMPATIBILITY | Monolithic sketch; full WAP UX |
+| **PlatformIO (canary-wap/)** | `projects/canary-wap/` | COMPATIBILITY | Uses common headers |
+| **canary-vision** | `projects/canary-vision/` | SPECIALIZED | ESP32-C3 + Grove Vision AI + MQTT/HA |
+| **canary-ota** | `projects/canary-ota/` | SPECIALIZED | OTA A/B subsystem |
+| **WAP Snapshot** | `projects/_archive/canary-wap-snapshot/` | ARCHIVED | Frozen 2026-02-20; read-only reference |
 
 ### PlatformIO Build Environments (canary/)
 

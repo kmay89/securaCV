@@ -30,6 +30,29 @@
 // #define BUILD_PROFILE_DEV       // Development: + WiFi + HTTP + SD (~90s)
 #define BUILD_PROFILE_FULL      // Full features: + Mesh + BLE (~150s)
 
+
+// ════════════════════════════════════════════════════════════════════════════
+// ARCHIVED SNAPSHOT — BUILD GATE
+// ════════════════════════════════════════════════════════════════════════════
+// This tree is a frozen reference copy of the Arduino canary_wap sketch that
+// was current as of 2026-02-20. It is preserved for historical/audit purposes
+// only. Active development happens in:
+//   firmware/projects/canary-wap/arduino/canary_wap/
+//
+// Building this archive is blocked by default. If you truly need to
+// reproduce the historical binary, pass -DSECURACV_ALLOW_ARCHIVED_BUILD=1.
+#ifndef SECURACV_ALLOW_ARCHIVED_BUILD
+  #error "canary-wap-snapshot is archived. Use firmware/projects/canary-wap/ for new builds, or define SECURACV_ALLOW_ARCHIVED_BUILD=1 to build this frozen reference."
+#endif
+
+// Security guardrails
+// FULL is treated as release-grade: no debug/developer credential fallbacks.
+#if defined(BUILD_PROFILE_FULL)
+  #define SECURACV_RELEASE_BUILD 1
+#else
+  #define SECURACV_RELEASE_BUILD 0
+#endif
+
 // Sanity checks
 #if (defined(BUILD_PROFILE_MINIMAL) + defined(BUILD_PROFILE_DEV) + defined(BUILD_PROFILE_FULL)) != 1
   #error "Exactly one build profile must be selected in build_config.h."

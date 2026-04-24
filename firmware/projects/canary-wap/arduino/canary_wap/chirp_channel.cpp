@@ -187,7 +187,7 @@ static void prune_stale_nearby();
 static void prune_old_chirps();
 static void load_settings();
 static void save_settings();
-static void on_espnow_recv(const uint8_t* mac, const uint8_t* data, int len);
+static void on_espnow_recv(const uint8_t* mac, const uint8_t* data, int len, int8_t rssi_dbm);
 static const TemplateEntry* find_template(ChirpTemplate id);
 static ChirpCategory template_to_category(ChirpTemplate id);
 static uint32_t get_cooldown_for_tier(uint8_t tier);
@@ -613,7 +613,7 @@ static void relay_chirp(const ReceivedChirp* chirp) {
 // ESP-NOW CALLBACK
 // ════════════════════════════════════════════════════════════════════════════
 
-static void on_espnow_recv(const uint8_t* mac, const uint8_t* data, int len) {
+static void on_espnow_recv(const uint8_t* mac, const uint8_t* data, int len, int8_t rssi_dbm) {
   (void)mac;  // Unused - we use session IDs, not MACs
 
   if (len < sizeof(ChirpHeader)) return;
@@ -625,8 +625,12 @@ static void on_espnow_recv(const uint8_t* mac, const uint8_t* data, int len) {
   if (hdr->magic != CHIRP_MAGIC) return;
   if (hdr->version != PROTOCOL_VERSION) return;
 
-  // Get RSSI (approximate)
-  int8_t rssi = -50;  // TODO: Get actual RSSI from ESP-NOW
+  // RSSI arrives from the mesh ESP-NOW callback via
+  // esp_now_recv_info_t::rx_ctrl->rssi. Clamp to a sane range in case the
+  // radio reports an unexpected value so downstream proximity tiers stay stable.
+  int8_t rssi = rssi_dbm;
+  if (rssi > 0)    rssi = 0;      // RSSI is always negative dBm
+  if (rssi < -120) rssi = -120;   // ESP-NOW noise floor
 
   switch (hdr->msg_type) {
     case CHIRP_MSG_PRESENCE:
@@ -1233,9 +1237,13 @@ const uint8_t* get_session_id() {
   return g_session.session_id;
 }
 
-// ESP-NOW receive dispatcher - called by main firmware
-void dispatch_espnow_message(const uint8_t* mac, const uint8_t* data, int len) {
-  on_espnow_recv(mac, data, len);
+// ESP-NOW receive dispatcher - called by the mesh network's ESP-NOW callback.
+// `rssi_dbm` must be the raw RSSI reported by the radio
+// (esp_now_recv_info_t::rx_ctrl->rssi); callers that truly cannot supply it
+// should pass 0 rather than a guessed value.
+void dispatch_espnow_message(const uint8_t* mac, const uint8_t* data,
+                             int len, int8_t rssi_dbm) {
+  on_espnow_recv(mac, data, len, rssi_dbm);
 }
 
 } // namespace chirp_channel
