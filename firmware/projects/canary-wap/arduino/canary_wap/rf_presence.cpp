@@ -21,6 +21,8 @@
 #include "nvs_store.h"
 #include "health_log.h"
 #include "household.h"
+#include "familiar.h"
+#include <string.h>
 #include <mbedtls/sha256.h>
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -78,6 +80,12 @@ static int8_t s_current_rssi_min = 0;
 static uint8_t s_rssi_count = 0;
 static uint8_t s_adv_count_this_second = 0;
 static uint32_t s_last_adv_second = 0;
+// 4-second sliding window of advertising counts. Used by the familiar
+// fingerprint to estimate adv/minute with enough granularity that all
+// four density buckets are actually reachable (the prior single-second
+// approximation made bucket 1 unreachable — gemini review #313).
+static uint8_t s_adv_window[4] = {0, 0, 0, 0};
+static uint8_t s_adv_window_idx = 0;
 
 // Probe tracking
 static uint8_t s_probe_burst_count = 0;
@@ -452,6 +460,44 @@ static void emit_event(const char* event_name, SignalSource sig, int8_t count_de
 
   s_last_event = event_name;
   s_event_callback(&event);
+
+  // ── Phase 5: note the behavioral fingerprint of each confirmed arrival ──
+  // Only on PRESENCE_STARTED (not on impulse/dwell/departure) — so the
+  // Bloom filter accumulates at most one entry per arrival, keeping its
+  // load low enough that the false-positive rate stays under ~0.5%.
+  //
+  // We compute the fingerprint from the rf_presence state we already
+  // have in this scope (no MAC, no token, no raw RSSI sample escapes —
+  // only the 11-bit bucketed fingerprint enters the Bloom filter).
+  if (event_name && strcmp(event_name, "rf_presence_started") == 0) {
+    familiar::FingerprintInputs fp_in;
+    fp_in.time_of_day_bucket = get_time_bucket();
+    fp_in.rssi_mean_dbm      = rssi_mean;
+    // Approximate advertising density per minute from the per-second
+    // counter; a modest over-estimate when a burst just hit, under-
+    // estimate when observation started mid-second — acceptable since
+    // the density class has only 4 buckets.
+    // 4-second sliding sum × 15 ≈ advertisements per minute. This gives
+    // enough granularity that all four density buckets in compute_fingerprint
+    // (<4, 4-16, 16-64, ≥64 per minute) are actually reachable:
+    //   0 ads in 4s → 0/min   → bucket 0 (quiet)
+    //   1 ad  in 4s → 15/min  → bucket 1 (low)
+    //   2-4  in 4s → 30-60/min → bucket 2 (med)
+    //   5+   in 4s → 75+/min  → bucket 3 (high)
+    const uint16_t adv_sum_4s = (uint16_t)s_adv_window[0]
+                              + (uint16_t)s_adv_window[1]
+                              + (uint16_t)s_adv_window[2]
+                              + (uint16_t)s_adv_window[3];
+    const uint16_t approx_apm = adv_sum_4s * 15;
+    fp_in.adv_per_minute     = (uint8_t)(approx_apm > 255 ? 255 : approx_apm);
+    const uint8_t spread = (uint8_t)((rssi_max >= rssi_min)
+                                     ? (rssi_max - rssi_min)
+                                     : 0);
+    fp_in.rssi_spread_dbm    = spread;
+
+    const uint16_t fp = familiar::compute_fingerprint(fp_in);
+    familiar::note_fingerprint(fp);
+  }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -639,6 +685,8 @@ bool init() {
   s_rssi_count = 0;
   s_adv_count_this_second = 0;
   s_last_adv_second = 0;
+  memset(s_adv_window, 0, sizeof(s_adv_window));
+  s_adv_window_idx = 0;
   s_probe_burst_count = 0;
   s_probe_rssi_peak = RSSI_NOISE_FLOOR;
   s_power_flags = 0;
@@ -649,6 +697,11 @@ bool init() {
 
   s_initialized = true;
   s_enabled = s_settings.enabled;
+
+  // Phase 5: bring up the familiar-device recognizer alongside us. Loads
+  // the "always ignore" filter + yesterday snapshot from NVS; re-seeds
+  // the salt on first boot. Safe before BLE/WiFi come up.
+  familiar::init();
 
   health_logging::logf(health_logging::LEVEL_INFO, health_logging::CAT_RF,
     "RF Presence initialized, epoch=%u", s_session_epoch);
@@ -755,6 +808,13 @@ void set_event_callback(RfEventCallback cb) {
 // ════════════════════════════════════════════════════════════════════════════
 
 void update() {
+  // Phase 5: familiar-filter rotation is time-based aging, not event-
+  // driven. Run it even when s_enabled is false — otherwise disabling RF
+  // presence for >24 h would freeze yesterday's filter indefinitely and
+  // violate the ~48 h retention invariant. We still need s_initialized
+  // so we don't touch uninitialized module state.
+  if (s_initialized) familiar::tick(millis());
+
   if (!s_initialized || !s_enabled) return;
 
   uint32_t now_ms = millis();
@@ -772,9 +832,12 @@ void update() {
   // Run FSM
   fsm_tick(now_ms);
 
-  // Reset per-second counters
+  // Reset per-second counters. On each rollover, push the second we just
+  // finished into the 4-slot sliding window before zeroing.
   uint32_t current_second = now_ms / 1000;
   if (current_second != s_last_adv_second) {
+    s_adv_window[s_adv_window_idx] = s_adv_count_this_second;
+    s_adv_window_idx = (uint8_t)((s_adv_window_idx + 1) & 0x03);
     s_adv_count_this_second = 0;
     s_last_adv_second = current_second;
   }
@@ -803,6 +866,8 @@ void rotate_session() {
   s_current_rssi_min = 0;
   s_rssi_count = 0;
   s_adv_count_this_second = 0;
+  memset(s_adv_window, 0, sizeof(s_adv_window));
+  s_adv_window_idx = 0;
 
   // Clear observations (contain timestamps that could correlate sessions)
   secure_wipe(s_observations, sizeof(s_observations));
