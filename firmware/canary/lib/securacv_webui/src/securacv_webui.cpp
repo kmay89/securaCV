@@ -1617,6 +1617,11 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
   <script>
     const API_BASE = '';
+    // Bearer credential injected by handle_ui() at render time (Phase 2.5).
+    // In the unprovisioned/dev-preview path the placeholder stays in place
+    // and the api() helper skips the Authorization header — requests then
+    // fail closed on the server side.
+    const CV_TOKEN = '__CV_TOKEN__';
     let currentPanel = 'status';
     let pendingAckSeq = null;
     let logFilter = 'all';
@@ -1657,6 +1662,9 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     // API calls
     async function api(endpoint, method = 'GET', body = null) {
       const opts = { method, headers: {} };
+      if (CV_TOKEN && CV_TOKEN.charAt(0) !== '_') {
+        opts.headers['Authorization'] = 'Bearer ' + CV_TOKEN;
+      }
       if (body) {
         opts.headers['Content-Type'] = 'application/json';
         opts.body = JSON.stringify(body);

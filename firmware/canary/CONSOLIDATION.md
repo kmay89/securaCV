@@ -1,6 +1,6 @@
 # Canary Consolidation Plan
 
-**Status:** Phase 2 in progress (Phase 1 ✅ landed in #305)
+**Status:** Phase 2.5 in progress (Phases 1 ✅ #305, 2 ✅ #306)
 **Created:** 2026-04-17
 **Owner:** firmware maintainers
 **Companion docs:** [VARIANT_POLICY.md](../VARIANT_POLICY.md), [FEATURES.md](../FEATURES.md), [FIRMWARE_VARIANT_AUDIT.md](../FIRMWARE_VARIANT_AUDIT.md)
@@ -40,7 +40,7 @@ Derived from the post-archive Feature-Parity Dashboard in [FEATURES.md](../FEATU
 
 | # | Gap | Current canary (PIO) state | Source to port from | Port complexity | Security impact |
 |---|---|---|---|---|---|
-| 1 | API authentication (bearer token + HKDF derivation + exponential backoff + constant-time compare) | ⚠️ (Phase 2: mutating endpoints gated; reads still open pending SPA token wiring) | `canary_wap/api_auth.h` (~275 LOC) | **Low** (self-contained, ESP-IDF native) | **High** (every REST endpoint is currently unauthenticated) |
+| 1 | API authentication (bearer token + HKDF derivation + exponential backoff + constant-time compare) | ✅ (Phase 2.5: SPA injects bearer; all read + mutating endpoints gated) | `canary_wap/api_auth.h` (~275 LOC) | **Low** (self-contained, ESP-IDF native) | **High** (every REST endpoint is currently unauthenticated) |
 | 2 | Rate limiting on HTTP API | ✅ (already present) | — | N/A | — |
 | 3 | Camera peek MJPEG streaming | ❌ | `canary_wap/wap_server.cpp` peek handlers | High (streaming loop + resolution control) | Medium (no frame storage, still subject to DoS) |
 | 4 | GPS motion FSM (EMA + hysteresis + debounce) | ⚠️ NMEA parse only | `canary_wap/*` motion detection | Medium | Low |
@@ -87,11 +87,17 @@ Phases are ordered by **security impact first**, then **blast radius**, then **r
 - Left unauthenticated for now: `GET /api/status`, `GET /api/chain`, `GET /api/logs`, `GET /api/wifi/status`, `GET /api/mqtt/status`, `GET /api/peek/*`, `GET /` — these still feed the embedded SPA which doesn't yet hold the bearer token.
 - Gap #1 flipped to ⚠️ (mutating endpoints gated). Final ✅ flips when SPA token wiring lands.
 
-### Phase 2.5 — SPA token wiring (next PR)
+### Phase 2.5 — SPA token wiring (this PR)
 
-- Inject the bearer into the embedded SPA at handler-render time so `fetch()` calls send `Authorization: Bearer cv_…`.
-- Re-gate the read endpoints once the SPA carries the token.
-- Flip gap #1 to ✅.
+- ✅ `handle_ui` performs a one-shot byte-swap of `__CV_TOKEN__` in the HTML template with `auth_get_token()` before sending the SPA, so the rendered page carries the per-device bearer credential.
+- ✅ SPA `api()` helper threads `Authorization: Bearer cv_…` into every `fetch()` call. Defensive guard skips the header if the placeholder survived (e.g. dev preview), so the server's fail-closed 503 surfaces cleanly.
+- ✅ `auth_gate` wired into the 9 remaining SPA-driven read endpoints:
+  - `GET /api/status`, `GET /api/chain`, `GET /api/logs`
+  - `GET /api/wifi/status`, `GET /api/mqtt/status` (`FEATURE_HA_MQTT`)
+  - `POST /api/peek/start`, `GET /api/peek/stream`, `POST /api/peek/stop`, `GET /api/peek/status` (`FEATURE_CAMERA_PEEK`)
+- Carve-outs still unauthenticated: `GET /` (the SPA shell itself — must be reachable to receive the token), `GET /api/wifi/scan` (not called from the SPA today; revisit when the WiFi setup tab lands).
+- Bearer credential remains confined to `securacv_auth`; `regression_check.sh` "Token isolation" rule still greps clean.
+- Gap #1 flipped to ✅.
 
 ### Phase 3 — Provisioning gate + hardware state
 
