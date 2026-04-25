@@ -424,29 +424,31 @@ bool merge_remote_bucket(uint8_t bucket, const RemoteBucketShare& share) {
   // we must accept the same fraction of sum / sum_sq, otherwise the
   // mean and variance will be biased.
   //
-  // We use __int128_t for the intermediate product so a crafted or
-  // corrupted peer share with a near-INT64_MAX sum_sq can't overflow
-  // the int64 multiply (codex P1 + gemini HIGH on #317). __int128 is
-  // supported by xtensa-esp-elf-gcc via software emulation; the extra
-  // code is small and only runs on merge paths (not the hot scan loop).
+  // Overflow safety without __int128 (not reliable on xtensa-esp-elf-gcc):
+  // before multiplying by `add_count`, clamp the operand to a magnitude
+  // that keeps the product in int64. A crafted peer share with
+  // |share.sum_sq[i]| > INT64_MAX / add_count would have overflowed a
+  // plain int64 multiply; clamping biases only adversarial inputs toward
+  // smaller magnitudes while leaving honest shares (always well below
+  // the threshold — BUCKET_MAX_COUNT × max_feature² ≈ 1.3×10⁸) untouched.
   int64_t scaled_sum   [FEATURE_COUNT] = {0};
   int64_t scaled_sum_sq[FEATURE_COUNT] = {0};
   if (add_count < share.count) {
-    // share.count is non-zero because add_count > 0 and add_count <= share.count.
-    const __int128 ac  = (__int128)add_count;
-    const __int128 sc  = (__int128)share.count;
+    // share.count is non-zero because add_count > 0 and add_count ≤ share.count.
+    const int64_t ac = (int64_t)add_count;
+    const int64_t sc = (int64_t)share.count;
+    // Largest per-operand magnitude that can be multiplied by ac without
+    // overflowing int64. `ac ≥ 1` so this is well-defined.
+    const int64_t max_safe = INT64_MAX / ac;
     for (uint8_t i = 0; i < FEATURE_COUNT; i++) {
-      const __int128 prod_sum    = (__int128)share.sum[i]    * ac;
-      const __int128 prod_sum_sq = (__int128)share.sum_sq[i] * ac;
-      // Integer division by share.count, then clamp to int64 range.
-      const __int128 s128    = prod_sum    / sc;
-      const __int128 ss128   = prod_sum_sq / sc;
-      scaled_sum[i]    = (s128  >  (__int128)INT64_MAX) ? INT64_MAX
-                       : (s128  <  (__int128)INT64_MIN) ? INT64_MIN
-                       : (int64_t)s128;
-      scaled_sum_sq[i] = (ss128 >  (__int128)INT64_MAX) ? INT64_MAX
-                       : (ss128 <  (__int128)INT64_MIN) ? INT64_MIN
-                       : (int64_t)ss128;
+      int64_t s  = (int64_t)share.sum[i];
+      int64_t ss = share.sum_sq[i];
+      if (s  >  max_safe)  s  =  max_safe;
+      if (s  < -max_safe)  s  = -max_safe;
+      if (ss >  max_safe)  ss =  max_safe;
+      if (ss < -max_safe)  ss = -max_safe;
+      scaled_sum[i]    = (s  * ac) / sc;
+      scaled_sum_sq[i] = (ss * ac) / sc;
     }
   } else {
     for (uint8_t i = 0; i < FEATURE_COUNT; i++) {
