@@ -767,6 +767,13 @@ bool init() {
   s_initialized = true;
   s_enabled = s_settings.enabled;
 
+  // Phase 4: bring up the household IRK recognizer. Loads paired device
+  // IRKs from NVS so resolve_rpa() can suppress household traffic before
+  // it even reaches the token map. Audit fix: this call was missing in
+  // the original Phase 4 wiring, leaving the module silently dormant
+  // (s_initialized=false → resolve_rpa always returned false).
+  household::init();
+
   // Phase 5: bring up the familiar-device recognizer alongside us. Loads
   // the "always ignore" filter + yesterday snapshot from NVS; re-seeds
   // the salt on first boot. Safe before BLE/WiFi come up.

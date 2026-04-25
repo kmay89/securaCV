@@ -212,6 +212,17 @@ bool merge_remote_bucket(uint8_t bucket, const RemoteBucketShare& share);
 // bucket index. Used by federated::build_baseline_share().
 bool snapshot_bucket(uint8_t bucket, RemoteBucketShare* out);
 
+// TEST-ONLY: directly overwrite a bucket's count / sum / sum_sq from a
+// RemoteBucketShare, BYPASSING the merge_remote_bucket bounds. This is
+// the only way for tests::red_team_federated_poisoning to restore a
+// bucket to its pre-test state after exercising the merge path; calling
+// merge_remote_bucket with a "negative share" is impossible (count is
+// unsigned).
+//
+// MUST NOT be called from production code paths. The function name
+// includes _for_tests so that grep audits flag accidental uses.
+bool overwrite_bucket_for_tests(uint8_t bucket, const RemoteBucketShare& share);
+
 // ════════════════════════════════════════════════════════════════════════════
 // CONFORMANCE
 // ════════════════════════════════════════════════════════════════════════════
