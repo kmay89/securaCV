@@ -274,19 +274,27 @@ bool red_team_federated_poisoning() {
   // sum / sum_sq must be finite (post-merge file has int32/int64 saturate
   // guards, so they should saturate at INT32_MAX / INT64_MAX rather than
   // wrap to negative).
+  bool numeric_ok = true;
   for (uint8_t i = 0; i < baseline::FEATURE_COUNT; i++) {
-    if (after.sum[i] < 0)    return false;  // overflow → wrapped negative
-    if (after.sum_sq[i] < 0) return false;
+    if (after.sum[i] < 0)    numeric_ok = false;  // overflow → wrapped negative
+    if (after.sum_sq[i] < 0) numeric_ok = false;
   }
 
-  // Restore the bucket by submitting a "negative" share — actually we
-  // can't, since share is unsigned-count + signed sums. Easiest path:
-  // call restart_training() if the test bucket was empty, else accept
-  // that this red-team test pollutes one bucket. For now we accept the
-  // pollution; running this in production tests is gated by the caller.
-  // Future: add baseline::overwrite_bucket_for_tests() — out of scope here.
+  // Restore the bucket from our pre-test snapshot. This uses the test-
+  // only setter we added specifically so this scenario can run on
+  // production devices without polluting the baseline.
+  if (!baseline::overwrite_bucket_for_tests(test_bucket, snap)) return false;
 
-  return true;
+  // Sanity-check that the restore actually round-tripped.
+  baseline::RemoteBucketShare verify;
+  if (!baseline::snapshot_bucket(test_bucket, &verify)) return false;
+  if (verify.count != snap.count) return false;
+  for (uint8_t i = 0; i < baseline::FEATURE_COUNT; i++) {
+    if (verify.sum[i]    != snap.sum[i])    return false;
+    if (verify.sum_sq[i] != snap.sum_sq[i]) return false;
+  }
+
+  return numeric_ok;
 }
 
 bool run_all_red_team(Report* out) {

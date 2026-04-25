@@ -402,6 +402,21 @@ bool snapshot_bucket(uint8_t bucket, RemoteBucketShare* out) {
   return true;
 }
 
+// Test-only inverse of snapshot_bucket. See header for the warning.
+bool overwrite_bucket_for_tests(uint8_t bucket, const RemoteBucketShare& share) {
+  if (!s_initialized) return false;
+  if (bucket >= BUCKET_COUNT) return false;
+  Bucket& b = s_buckets[bucket];
+  // share.count is uint16; clamp at BUCKET_MAX_COUNT defensively in case
+  // a future caller passes an arbitrary share.
+  b.count = share.count > BUCKET_MAX_COUNT ? BUCKET_MAX_COUNT : share.count;
+  for (uint8_t i = 0; i < FEATURE_COUNT; i++) {
+    b.sum[i]    = share.sum[i];
+    b.sum_sq[i] = share.sum_sq[i];
+  }
+  return true;
+}
+
 bool merge_remote_bucket(uint8_t bucket, const RemoteBucketShare& share) {
   if (!s_initialized) return false;
   if (bucket >= BUCKET_COUNT) return false;
