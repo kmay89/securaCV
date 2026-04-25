@@ -423,15 +423,30 @@ bool merge_remote_bucket(uint8_t bucket, const RemoteBucketShare& share) {
   // Scale factor for sums: if we accepted only a fraction of the share,
   // we must accept the same fraction of sum / sum_sq, otherwise the
   // mean and variance will be biased.
-  // scale_x1000 = add_count * 1000 / share.count
-  // (only when share.count > add_count; otherwise scale = 1.0)
+  //
+  // We use __int128_t for the intermediate product so a crafted or
+  // corrupted peer share with a near-INT64_MAX sum_sq can't overflow
+  // the int64 multiply (codex P1 + gemini HIGH on #317). __int128 is
+  // supported by xtensa-esp-elf-gcc via software emulation; the extra
+  // code is small and only runs on merge paths (not the hot scan loop).
   int64_t scaled_sum   [FEATURE_COUNT] = {0};
   int64_t scaled_sum_sq[FEATURE_COUNT] = {0};
-  if (share.count > 0 && add_count < share.count) {
-    const uint64_t scale_x1000 = ((uint64_t)add_count * 1000ULL) / share.count;
+  if (add_count < share.count) {
+    // share.count is non-zero because add_count > 0 and add_count <= share.count.
+    const __int128 ac  = (__int128)add_count;
+    const __int128 sc  = (__int128)share.count;
     for (uint8_t i = 0; i < FEATURE_COUNT; i++) {
-      scaled_sum[i]    = ((int64_t)share.sum[i]    * (int64_t)scale_x1000) / 1000;
-      scaled_sum_sq[i] = (share.sum_sq[i]          * (int64_t)scale_x1000) / 1000;
+      const __int128 prod_sum    = (__int128)share.sum[i]    * ac;
+      const __int128 prod_sum_sq = (__int128)share.sum_sq[i] * ac;
+      // Integer division by share.count, then clamp to int64 range.
+      const __int128 s128    = prod_sum    / sc;
+      const __int128 ss128   = prod_sum_sq / sc;
+      scaled_sum[i]    = (s128  >  (__int128)INT64_MAX) ? INT64_MAX
+                       : (s128  <  (__int128)INT64_MIN) ? INT64_MIN
+                       : (int64_t)s128;
+      scaled_sum_sq[i] = (ss128 >  (__int128)INT64_MAX) ? INT64_MAX
+                       : (ss128 <  (__int128)INT64_MIN) ? INT64_MIN
+                       : (int64_t)ss128;
     }
   } else {
     for (uint8_t i = 0; i < FEATURE_COUNT; i++) {

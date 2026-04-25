@@ -20,7 +20,11 @@ namespace federated {
 
 static bool s_initialized = false;
 
-static uint32_t s_last_build_ms = 0;
+// Per-share-type throttle timestamps. Decoupled so building a baseline
+// share doesn't starve familiar-share emission (and vice versa) for
+// SHARE_BUILD_MIN_INTERVAL_MS — codex P2 on #317.
+static uint32_t s_last_baseline_build_ms = 0;
+static uint32_t s_last_familiar_build_ms = 0;
 
 static uint32_t s_total_baseline_built = 0;
 static uint32_t s_total_familiar_built = 0;
@@ -38,10 +42,10 @@ static inline uint32_t elapsed_ms(uint32_t start, uint32_t now) {
   return now - start;  // unsigned sub → wrap-safe
 }
 
-static bool throttle_allows_build(bool force) {
+static bool throttle_allows_build(uint32_t last_build_ms, bool force) {
   if (force) return true;
-  if (s_last_build_ms == 0) return true;  // never built before
-  return elapsed_ms(s_last_build_ms, millis()) >= SHARE_BUILD_MIN_INTERVAL_MS;
+  if (last_build_ms == 0) return true;  // never built before
+  return elapsed_ms(last_build_ms, millis()) >= SHARE_BUILD_MIN_INTERVAL_MS;
 }
 
 // Apply DP noise to a single bucket share in-place. count gets noise
@@ -56,17 +60,18 @@ static void apply_dp_noise_to_bucket(BaselineShareBucket* b) {
     b->sum[i] = dp::noisy_i32(b->sum[i], SUM_SENSITIVITY[i]);
 
     // sum_sq: sensitivity = max_feature² (one event shifts sum_sq by
-    // up to that). int64 — apply noise via two int32 noisy draws and
-    // combine, since dp:: doesn't have an i64 path. The approximation
-    // is fine because the sensitivity here is dominated by the sample
-    // squared, not the noise.
+    // up to that). Since dp::* doesn't have an i64 path, we draw a
+    // single noisy_i32 with the sensitivity clamped to UINT32_MAX and
+    // add it to the int64 accumulator with saturation guards. The
+    // clamp is acceptable because SUM_SENSITIVITY²  (≤ 65025 for our
+    // worst-case feature) stays well under UINT32_MAX.
     const uint64_t sens_sq = (uint64_t)SUM_SENSITIVITY[i] * SUM_SENSITIVITY[i];
     const uint32_t sens_clamped =
         sens_sq > UINT32_MAX ? UINT32_MAX : (uint32_t)sens_sq;
-    const int32_t noise = dp::noisy_i32(0, sens_clamped) - 0;
-    // Apply with int64 saturation guards.
-    if (noise > 0 && b->sum_sq[i] > INT64_MAX - noise) b->sum_sq[i] = INT64_MAX;
-    else                                                b->sum_sq[i] += noise;
+    const int32_t noise = dp::noisy_i32(0, sens_clamped);
+    if      (noise > 0 && b->sum_sq[i] > INT64_MAX - noise) b->sum_sq[i] = INT64_MAX;
+    else if (noise < 0 && b->sum_sq[i] < INT64_MIN - noise) b->sum_sq[i] = INT64_MIN;
+    else                                                    b->sum_sq[i] += noise;
   }
 }
 
@@ -76,7 +81,8 @@ static void apply_dp_noise_to_bucket(BaselineShareBucket* b) {
 
 bool init() {
   if (s_initialized) return true;
-  s_last_build_ms = 0;
+  s_last_baseline_build_ms = 0;
+  s_last_familiar_build_ms = 0;
   s_total_baseline_built = 0;
   s_total_familiar_built = 0;
   s_total_baseline_merged = 0;
@@ -108,7 +114,7 @@ void tick(uint32_t /*now_ms*/) {
 
 bool build_baseline_share(BaselineShare* out, bool force) {
   if (!s_initialized || !out) return false;
-  if (!throttle_allows_build(force)) return false;
+  if (!throttle_allows_build(s_last_baseline_build_ms, force)) return false;
 
   memset(out, 0, sizeof(*out));
   out->magic         = MAGIC_BASELINE;
@@ -131,14 +137,14 @@ bool build_baseline_share(BaselineShare* out, bool force) {
     apply_dp_noise_to_bucket(b);
   }
 
-  s_last_build_ms = millis();
+  s_last_baseline_build_ms = millis();
   s_total_baseline_built++;
   return true;
 }
 
 bool build_familiar_share(FamiliarShare* out, bool force) {
   if (!s_initialized || !out) return false;
-  if (!throttle_allows_build(force)) return false;
+  if (!throttle_allows_build(s_last_familiar_build_ms, force)) return false;
 
   memset(out, 0, sizeof(*out));
   out->magic        = MAGIC_FAMILIAR;
@@ -152,7 +158,7 @@ bool build_familiar_share(FamiliarShare* out, bool force) {
 
   // Note: familiar::rotate_now already applied DP bit-flip noise to
   // yesterday on the most recent rotation, so we forward as-is.
-  s_last_build_ms = millis();
+  s_last_familiar_build_ms = millis();
   s_total_familiar_built++;
   return true;
 }
@@ -175,10 +181,23 @@ bool handle_baseline_share(const BaselineShare* in, size_t bytes) {
     s_total_rejected_magic++;
     return false;
   }
-  if (in->wire_version != WIRE_VERSION_BASELINE
-      || in->bucket_count != baseline::BUCKET_COUNT
-      || in->feature_count != baseline::FEATURE_COUNT) {
+  if (in->wire_version != WIRE_VERSION_BASELINE) {
     s_total_rejected_version++;
+    health_logging::logf(health_logging::LEVEL_WARNING, health_logging::CAT_RF,
+      "Federated: baseline share wire_version %u != expected %u",
+      (unsigned)in->wire_version, (unsigned)WIRE_VERSION_BASELINE);
+    return false;
+  }
+  if (in->bucket_count != baseline::BUCKET_COUNT
+      || in->feature_count != baseline::FEATURE_COUNT) {
+    // Shape mismatch — likely a peer running a different build target.
+    // Bump the version counter (same semantic family: incompatible
+    // structure) but log specifically so operators can tell them apart.
+    s_total_rejected_version++;
+    health_logging::logf(health_logging::LEVEL_WARNING, health_logging::CAT_RF,
+      "Federated: baseline share layout (buckets %u!=%u, features %u!=%u)",
+      (unsigned)in->bucket_count, (unsigned)baseline::BUCKET_COUNT,
+      (unsigned)in->feature_count, (unsigned)baseline::FEATURE_COUNT);
     return false;
   }
 
@@ -205,14 +224,22 @@ bool handle_familiar_share(const FamiliarShare* in, size_t bytes) {
 
   if (bytes != sizeof(FamiliarShare)) {
     s_total_rejected_size++;
+    health_logging::logf(health_logging::LEVEL_WARNING, health_logging::CAT_RF,
+      "Federated: familiar share size %u != expected %u",
+      (unsigned)bytes, (unsigned)sizeof(FamiliarShare));
     return false;
   }
   if (in->magic != MAGIC_FAMILIAR) {
     s_total_rejected_magic++;
+    health_logging::log(health_logging::LEVEL_WARNING, health_logging::CAT_RF,
+      "Federated: familiar share magic mismatch");
     return false;
   }
   if (in->wire_version != WIRE_VERSION_FAMILIAR) {
     s_total_rejected_version++;
+    health_logging::logf(health_logging::LEVEL_WARNING, health_logging::CAT_RF,
+      "Federated: familiar share wire_version %u != expected %u",
+      (unsigned)in->wire_version, (unsigned)WIRE_VERSION_FAMILIAR);
     return false;
   }
 
@@ -237,9 +264,14 @@ bool get_stats(Stats* out) {
   out->total_rejected_version   = s_total_rejected_version;
   out->total_rejected_magic     = s_total_rejected_magic;
   out->total_rejected_size      = s_total_rejected_size;
-  out->last_build_age_ms = s_last_build_ms == 0
+  // Report the age of the MORE-RECENT of the two share builds — most
+  // useful operationally ("when did I last federate anything?").
+  const uint32_t most_recent_build_ms =
+      (s_last_familiar_build_ms > s_last_baseline_build_ms)
+      ? s_last_familiar_build_ms : s_last_baseline_build_ms;
+  out->last_build_age_ms = most_recent_build_ms == 0
                            ? 0
-                           : elapsed_ms(s_last_build_ms, millis());
+                           : elapsed_ms(most_recent_build_ms, millis());
   return true;
 }
 
@@ -264,7 +296,8 @@ bool conformance_self_test() {
   if (!s_initialized) return false;
 
   // Save stats and throttle so the test doesn't pollute them.
-  const uint32_t saved_last_build = s_last_build_ms;
+  const uint32_t saved_last_build_bl = s_last_baseline_build_ms;
+  const uint32_t saved_last_build_fm = s_last_familiar_build_ms;
   const uint32_t saved_bb = s_total_baseline_built;
   const uint32_t saved_fb = s_total_familiar_built;
   const uint32_t saved_bm = s_total_baseline_merged;
@@ -306,9 +339,11 @@ bool conformance_self_test() {
     f_round_trip = handle_familiar_share(&fsh, sizeof(fsh));
   }
 
-  // Restore stats (we deliberately leave the test's intentional rejects
-  // visible so the caller can verify the counters moved during the run).
-  s_last_build_ms = saved_last_build;
+  // Restore stats + throttle so the test doesn't pollute production
+  // telemetry. This also zeroes the intentional-reject increments the
+  // test made, keeping the counter meaning "rejects observed in prod".
+  s_last_baseline_build_ms = saved_last_build_bl;
+  s_last_familiar_build_ms = saved_last_build_fm;
   s_total_baseline_built  = saved_bb;
   s_total_familiar_built  = saved_fb;
   s_total_baseline_merged = saved_bm;
