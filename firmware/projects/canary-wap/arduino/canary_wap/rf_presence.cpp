@@ -24,6 +24,7 @@
 #include "familiar.h"
 #include "baseline.h"
 #include "notify.h"
+#include "federated.h"
 #include "dp.h"
 #include <string.h>
 #include <mbedtls/sha256.h>
@@ -778,6 +779,11 @@ bool init() {
   // dedup window config from NVS.
   notify::init();
 
+  // Phase 9: bring up the federated mesh aggregation toolkit. No I/O
+  // here; just clears stats. Mesh transport calls handle_*_share() on
+  // receipt and build_*_share() periodically (or on session rotation).
+  federated::init();
+
   health_logging::logf(health_logging::LEVEL_INFO, health_logging::CAT_RF,
     "RF Presence initialized, epoch=%u", s_session_epoch);
 
@@ -787,11 +793,13 @@ bool init() {
 void deinit() {
   if (!s_initialized) return;
 
-  // Tear down the Phase 4/5/6/8 modules we bring up in init(). Without
+  // Tear down the Phase 4/5/6/8/9 modules we bring up in init(). Without
   // these, a deinit/reinit cycle would leave stale bucket stats,
-  // fingerprint Bloom filters, IRKs, and dedup state in RAM (their
-  // own init() functions short-circuit on s_initialized), silently
-  // bypassing the per-module wipe paths.
+  // fingerprint Bloom filters, IRKs, dedup state, and federated counters
+  // in RAM (their own init() functions short-circuit on s_initialized),
+  // silently bypassing the per-module wipe paths. Reverse-dependency
+  // order: federated reads baseline/familiar, notify reads them too.
+  federated::deinit();
   notify::deinit();
   baseline::deinit();
   familiar::deinit();
@@ -893,17 +901,16 @@ void set_event_callback(RfEventCallback cb) {
 // ════════════════════════════════════════════════════════════════════════════
 
 void update() {
-  // Phase 5 + 6 + 8: familiar filter rotation (24 h), baseline training
-  // progress persistence (1 h), and notify dedup pruning are all time-
-  // based, not event-driven. Run them even when s_enabled is false —
-  // otherwise disabling RF presence would halt aging for the familiar
-  // filter, NVS persistence for the baseline, and dedup cleanup for
-  // the notification policy.
+  // Phase 5 + 6 + 8 + 9: familiar filter rotation (24 h), baseline
+  // training progress persistence (1 h), notify dedup pruning, and
+  // federated build-throttle bookkeeping are all time-based, not
+  // event-driven. Run them even when s_enabled is false.
   if (s_initialized) {
     const uint32_t now = millis();
     familiar::tick(now);
     baseline::tick(now);
     notify::tick(now);
+    federated::tick(now);
   }
 
   if (!s_initialized || !s_enabled) return;

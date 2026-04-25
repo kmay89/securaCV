@@ -387,6 +387,94 @@ bool restart_training() {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+// FEDERATED MERGE (Phase 9)
+// ────────────────────────────────────────────────────────────────────────────
+
+bool snapshot_bucket(uint8_t bucket, RemoteBucketShare* out) {
+  if (!s_initialized || !out) return false;
+  if (bucket >= BUCKET_COUNT) return false;
+  const Bucket& b = s_buckets[bucket];
+  out->count = b.count;
+  for (uint8_t i = 0; i < FEATURE_COUNT; i++) {
+    out->sum[i]    = b.sum[i];
+    out->sum_sq[i] = b.sum_sq[i];
+  }
+  return true;
+}
+
+bool merge_remote_bucket(uint8_t bucket, const RemoteBucketShare& share) {
+  if (!s_initialized) return false;
+  if (bucket >= BUCKET_COUNT) return false;
+
+  Bucket& b = s_buckets[bucket];
+  if (b.count >= BUCKET_MAX_COUNT) return false;  // local saturated
+
+  // Cap the peer's contribution. Even if a peer reports count=10000, we
+  // only credit them with REMOTE_MERGE_MAX_COUNT; this bounds influence.
+  uint16_t add_count = share.count;
+  if (add_count > REMOTE_MERGE_MAX_COUNT) add_count = REMOTE_MERGE_MAX_COUNT;
+
+  // Don't let merge push count past BUCKET_MAX_COUNT. Scale sums
+  // proportionally if we have to clamp count.
+  const uint16_t headroom = (uint16_t)(BUCKET_MAX_COUNT - b.count);
+  if (add_count > headroom) add_count = headroom;
+  if (add_count == 0) return false;
+
+  // Scale factor for sums: if we accepted only a fraction of the share,
+  // we must accept the same fraction of sum / sum_sq, otherwise the
+  // mean and variance will be biased.
+  //
+  // Overflow safety without __int128 (not reliable on xtensa-esp-elf-gcc):
+  // before multiplying by `add_count`, clamp the operand to a magnitude
+  // that keeps the product in int64. A crafted peer share with
+  // |share.sum_sq[i]| > INT64_MAX / add_count would have overflowed a
+  // plain int64 multiply; clamping biases only adversarial inputs toward
+  // smaller magnitudes while leaving honest shares (always well below
+  // the threshold — BUCKET_MAX_COUNT × max_feature² ≈ 1.3×10⁸) untouched.
+  int64_t scaled_sum   [FEATURE_COUNT] = {0};
+  int64_t scaled_sum_sq[FEATURE_COUNT] = {0};
+  if (add_count < share.count) {
+    // share.count is non-zero because add_count > 0 and add_count ≤ share.count.
+    const int64_t ac = (int64_t)add_count;
+    const int64_t sc = (int64_t)share.count;
+    // Largest per-operand magnitude that can be multiplied by ac without
+    // overflowing int64. `ac ≥ 1` so this is well-defined.
+    const int64_t max_safe = INT64_MAX / ac;
+    for (uint8_t i = 0; i < FEATURE_COUNT; i++) {
+      int64_t s  = (int64_t)share.sum[i];
+      int64_t ss = share.sum_sq[i];
+      if (s  >  max_safe)  s  =  max_safe;
+      if (s  < -max_safe)  s  = -max_safe;
+      if (ss >  max_safe)  ss =  max_safe;
+      if (ss < -max_safe)  ss = -max_safe;
+      scaled_sum[i]    = (s  * ac) / sc;
+      scaled_sum_sq[i] = (ss * ac) / sc;
+    }
+  } else {
+    for (uint8_t i = 0; i < FEATURE_COUNT; i++) {
+      scaled_sum[i]    = share.sum[i];
+      scaled_sum_sq[i] = share.sum_sq[i];
+    }
+  }
+
+  // Apply, with overflow saturation guards on int32 sum.
+  for (uint8_t i = 0; i < FEATURE_COUNT; i++) {
+    const int64_t new_sum = (int64_t)b.sum[i] + scaled_sum[i];
+    if      (new_sum >  INT32_MAX) b.sum[i] =  INT32_MAX;
+    else if (new_sum <  INT32_MIN) b.sum[i] =  INT32_MIN;
+    else                           b.sum[i] = (int32_t)new_sum;
+    // sum_sq is already int64; saturate at INT64_MAX.
+    if (scaled_sum_sq[i] > 0 && b.sum_sq[i] > INT64_MAX - scaled_sum_sq[i]) {
+      b.sum_sq[i] = INT64_MAX;
+    } else {
+      b.sum_sq[i] += scaled_sum_sq[i];
+    }
+  }
+  b.count = (uint16_t)(b.count + add_count);
+  return true;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 // CONFORMANCE
 // ────────────────────────────────────────────────────────────────────────────
 

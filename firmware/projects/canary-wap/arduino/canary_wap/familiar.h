@@ -161,6 +161,32 @@ bool is_always_ignored(uint16_t fp);
 bool forget_always_ignored();
 
 // ════════════════════════════════════════════════════════════════════════════
+// FEDERATED MERGE (Phase 9)
+//
+// A peer's "yesterday" Bloom filter snapshot can be OR-merged into ours
+// to expand the ambient set with fingerprints the peer has seen but we
+// haven't. This is safe because a Bloom filter answers "have we seen
+// this?" — a OR is just a union with the peer's positive set.
+// ════════════════════════════════════════════════════════════════════════════
+
+// Merge `peer_yesterday` (BLOOM_BYTES bytes) into our local yesterday
+// filter via bitwise OR. After merge, our `is_ambient(fp)` returns true
+// for any fingerprint either we OR the peer has seen recently.
+//
+// Safe to call even if our yesterday is "cold" (first day) — merging
+// with an empty side is a no-op for that side. After merge, yesterday
+// is marked valid. NVS is updated so the merged state survives reboot.
+bool merge_remote_yesterday(const uint8_t* peer_yesterday, size_t len);
+
+// Copy our local "yesterday" filter into `out` (must be at least
+// BLOOM_BYTES). Returns false if yesterday is not yet valid (first
+// day before any rotation has occurred) or out_len < BLOOM_BYTES.
+// NO DP noise is applied here — the rotation already added it. The
+// federated module is responsible for any additional epsilon-budget
+// accounting on transmission.
+bool snapshot_yesterday(uint8_t* out, size_t out_len);
+
+// ════════════════════════════════════════════════════════════════════════════
 // INTROSPECTION
 // ════════════════════════════════════════════════════════════════════════════
 
