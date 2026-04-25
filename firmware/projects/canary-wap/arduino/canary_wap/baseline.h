@@ -182,6 +182,37 @@ bool get_stats_for_export(Stats* out);
 bool restart_training();
 
 // ════════════════════════════════════════════════════════════════════════════
+// FEDERATED MERGE (Phase 9)
+//
+// Per-bucket share format used by federated mesh aggregation. A peer
+// contributes (count_delta, sum[F], sum_sq[F]) for each bucket; we merge
+// those into our local Welford accumulators with bounded effect.
+// ════════════════════════════════════════════════════════════════════════════
+
+struct RemoteBucketShare {
+  uint16_t count;                 // peer's contribution to count
+  int32_t  sum    [FEATURE_COUNT];
+  int64_t  sum_sq [FEATURE_COUNT];
+};
+
+// Maximum count contribution accepted from a single peer in one merge.
+// Caps the influence of any one (potentially malicious) peer so they
+// cannot dominate our local baseline by submitting a large count.
+static const uint16_t REMOTE_MERGE_MAX_COUNT = 64;
+
+// Merge one peer's bucket share into our local bucket. Returns true on
+// success, false if the bucket index is invalid or the local bucket is
+// already saturated. Caps remote.count at REMOTE_MERGE_MAX_COUNT and
+// will not push our local count past BUCKET_MAX_COUNT.
+bool merge_remote_bucket(uint8_t bucket, const RemoteBucketShare& share);
+
+// Snapshot one of our local buckets into a RemoteBucketShare (caller-
+// owned). NO DP noise is applied here — the federated module is
+// responsible for noising before transmission. Returns false on invalid
+// bucket index. Used by federated::build_baseline_share().
+bool snapshot_bucket(uint8_t bucket, RemoteBucketShare* out);
+
+// ════════════════════════════════════════════════════════════════════════════
 // CONFORMANCE
 // ════════════════════════════════════════════════════════════════════════════
 

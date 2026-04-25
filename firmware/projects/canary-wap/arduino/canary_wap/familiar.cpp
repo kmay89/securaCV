@@ -394,6 +394,34 @@ bool forget_always_ignored() {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+// FEDERATED MERGE (Phase 9)
+// ────────────────────────────────────────────────────────────────────────────
+
+bool snapshot_yesterday(uint8_t* out, size_t out_len) {
+  if (!s_initialized || !out) return false;
+  if (out_len < sizeof(s_yesterday)) return false;
+  if (!s_yesterday_valid) return false;
+  memcpy(out, s_yesterday, sizeof(s_yesterday));
+  return true;
+}
+
+bool merge_remote_yesterday(const uint8_t* peer_yesterday, size_t len) {
+  if (!s_initialized) return false;
+  if (peer_yesterday == nullptr) return false;
+  if (len != sizeof(s_yesterday)) return false;
+
+  for (size_t i = 0; i < sizeof(s_yesterday); i++) {
+    s_yesterday[i] |= peer_yesterday[i];
+  }
+  s_yesterday_valid = true;
+  persist_yesterday();
+  health_logging::logf(health_logging::LEVEL_INFO, health_logging::CAT_RF,
+    "Familiar: merged peer yesterday (now %u bits set)",
+    (unsigned)bloom_popcount(s_yesterday, sizeof(s_yesterday)));
+  return true;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 // INTROSPECTION
 // ────────────────────────────────────────────────────────────────────────────
 
