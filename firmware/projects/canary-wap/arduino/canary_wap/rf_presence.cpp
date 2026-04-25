@@ -25,6 +25,7 @@
 #include "baseline.h"
 #include "notify.h"
 #include "federated.h"
+#include "wizard.h"
 #include "dp.h"
 #include <string.h>
 #include <mbedtls/sha256.h>
@@ -784,6 +785,10 @@ bool init() {
   // receipt and build_*_share() periodically (or on session rotation).
   federated::init();
 
+  // Phase 10: bring up the setup wizard. Loads persisted state + zone
+  // name from NVS. Must come AFTER the six modules it orchestrates.
+  wizard::init();
+
   health_logging::logf(health_logging::LEVEL_INFO, health_logging::CAT_RF,
     "RF Presence initialized, epoch=%u", s_session_epoch);
 
@@ -793,12 +798,10 @@ bool init() {
 void deinit() {
   if (!s_initialized) return;
 
-  // Tear down the Phase 4/5/6/8/9 modules we bring up in init(). Without
-  // these, a deinit/reinit cycle would leave stale bucket stats,
-  // fingerprint Bloom filters, IRKs, dedup state, and federated counters
-  // in RAM (their own init() functions short-circuit on s_initialized),
-  // silently bypassing the per-module wipe paths. Reverse-dependency
-  // order: federated reads baseline/familiar, notify reads them too.
+  // Tear down the Phase 4/5/6/8/9/10 modules we bring up in init().
+  // Reverse-dependency order: wizard reads all of the rest, federated
+  // reads baseline/familiar, notify reads them too.
+  wizard::deinit();
   federated::deinit();
   notify::deinit();
   baseline::deinit();
@@ -901,16 +904,18 @@ void set_event_callback(RfEventCallback cb) {
 // ════════════════════════════════════════════════════════════════════════════
 
 void update() {
-  // Phase 5 + 6 + 8 + 9: familiar filter rotation (24 h), baseline
-  // training progress persistence (1 h), notify dedup pruning, and
-  // federated build-throttle bookkeeping are all time-based, not
-  // event-driven. Run them even when s_enabled is false.
+  // Phase 5 + 6 + 8 + 9 + 10: familiar filter rotation (24 h), baseline
+  // training progress persistence (1 h), notify dedup pruning, federated
+  // build-throttle bookkeeping, and wizard state-machine advancement are
+  // all time-based, not event-driven. Run them even when s_enabled is
+  // false.
   if (s_initialized) {
     const uint32_t now = millis();
     familiar::tick(now);
     baseline::tick(now);
     notify::tick(now);
     federated::tick(now);
+    wizard::tick(now);
   }
 
   if (!s_initialized || !s_enabled) return;
