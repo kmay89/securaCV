@@ -47,7 +47,15 @@ static inline void push_result(Report* r, bool conformance,
 
 bool run_all_conformance(Report* out) {
   if (!out) return false;
-  memset(out, 0, sizeof(*out));
+  // Zero only the conformance fields. If the caller invoked
+  // run_all_red_team() first (or is reusing a Report struct), an
+  // unconditional memset of the whole struct would clobber those
+  // results — codex P2 on #320.
+  out->conformance_count  = 0;
+  out->conformance_passed = 0;
+  for (size_t i = 0; i < MAX_MODULE_RESULTS; i++) {
+    out->conformance[i] = NamedResult{ nullptr, false };
+  }
 
   // Modules in include-order so failures point at the lowest-level
   // module that broke (saves debugging time).
@@ -299,6 +307,15 @@ bool red_team_federated_poisoning() {
 
 bool run_all_red_team(Report* out) {
   if (!out) return false;
+  // Zero only the red-team fields. Symmetric with run_all_conformance
+  // (codex P2 on #320). Without this, calling run_all_red_team() with a
+  // stale Report whose red_team_count is already ≥ MAX_REDTEAM_RESULTS
+  // would silently drop every push_result() entry.
+  out->red_team_count  = 0;
+  out->red_team_passed = 0;
+  for (size_t i = 0; i < MAX_REDTEAM_RESULTS; i++) {
+    out->red_team[i] = NamedResult{ nullptr, false };
+  }
 
   push_result(out, false, "mac_randomization_replay",
               red_team_mac_randomization_replay());
