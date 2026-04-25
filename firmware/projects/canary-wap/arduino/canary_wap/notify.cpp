@@ -297,7 +297,8 @@ void deinit() {
 
 AlertDecision evaluate(const AlertInput& in) {
   AlertDecision d = {};
-  d.dedup_key = compute_dedup_key(in);
+  d.dedup_key   = compute_dedup_key(in);
+  d.fingerprint = in.fingerprint;  // forward so wizard / UI can hash it
 
   if (!s_initialized) return d;
 

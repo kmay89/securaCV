@@ -223,18 +223,11 @@ bool always_ignore_last_decision() {
   // controls (QUIET_HOURS) or explicitly forget_always_ignored later.
   if (d.fired) return false;
 
-  // familiar::always_ignore takes the raw fingerprint, which we don't
-  // have on an AlertDecision (by design — the reason string is the
-  // user-facing summary). Use the dedup_key as a proxy here? No —
-  // the dedup_key is hashed and doesn't map to a fingerprint. The
-  // clean path is to have notify expose the fingerprint alongside
-  // the decision. For v1 we only make the call if the caller already
-  // has the fingerprint; we expose a follow-up overload for them.
-  //
-  // Until notify::AlertDecision gains a fingerprint field (planned
-  // v0.2), this entry point returns false. Kept here so HTTP routing
-  // in wap_server.cpp can be written once.
-  return false;
+  // notify::AlertDecision now carries the raw fingerprint that produced
+  // the decision (post-audit fix). Pipe it straight into familiar's
+  // always-ignore Bloom filter; subsequent matching events will be
+  // suppressed by Phase 8's notify::evaluate().
+  return familiar::always_ignore(d.fingerprint);
 }
 
 bool set_context(notify::Context c) {

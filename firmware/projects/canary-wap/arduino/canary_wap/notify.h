@@ -125,6 +125,7 @@ struct AlertDecision {
   Severity        severity;
   SuppressReason  suppress_reason;  // SUP_NONE if fired
   uint16_t        dedup_key;        // stable hash of (fingerprint ⊕ bucket)
+  uint16_t        fingerprint;      // raw familiar::compute_fingerprint output
   char            reason[REASON_MAX];
 };
 
