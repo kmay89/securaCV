@@ -1094,6 +1094,30 @@ const char* pairing_state_name(PairingState state) {
   }
 }
 
+float estimate_distance_m(int8_t rssi_dbm, int8_t tx_ref_dbm) {
+  // RSSI of 0 from NimBLE means "no measurement available" — surface that
+  // explicitly so the UI can render "—" instead of a bogus number.
+  if (rssi_dbm == 0) return 0.0f;
+  // Path-loss exponent. 2.0 = free space; 3.0 = light obstruction; we use 2.5
+  // as a household default. Tuned by observation, not regulation — the value
+  // shifts the absolute number but not the relative ordering of devices.
+  const float n = 2.5f;
+  float exponent = ((float)tx_ref_dbm - (float)rssi_dbm) / (10.0f * n);
+  float d = powf(10.0f, exponent);
+  if (d < 0.1f) d = 0.1f;
+  if (d > 100.0f) d = 100.0f;
+  return d;
+}
+
+const char* distance_label(float metres) {
+  if (metres <= 0.0f)  return "unknown";
+  if (metres <= 1.0f)  return "right here";
+  if (metres <= 3.0f)  return "near";
+  if (metres <= 8.0f)  return "nearby";
+  if (metres <= 20.0f) return "in range";
+  return "far";
+}
+
 } // namespace bluetooth_channel
 
 #endif // FEATURE_BLUETOOTH && NimBLEDevice.h available

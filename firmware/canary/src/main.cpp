@@ -300,6 +300,11 @@ void loop() {
   const GnssFix& fix = s_gps.getFix();
   witness_update_state(fix.valid, fix.last_update_ms, s_gps.getSpeedMps());
 
+  // Advance the motion filter so the API reports a stable position when the
+  // device is stationary. We hint with the witness state's notion of "at
+  // rest" so the filter and state machine don't disagree.
+  s_gps.updateMotion(witness_get_state() == STATE_STATIONARY);
+
   // Update health metrics
   SystemHealth& health = witness_get_health();
   uint32_t now = millis();

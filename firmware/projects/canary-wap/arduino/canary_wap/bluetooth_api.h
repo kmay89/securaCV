@@ -75,6 +75,11 @@ inline esp_err_t handle_bluetooth_status(httpd_req_t* req) {
     conn["address"] = addr;
     conn["name"] = status.connection.name;
     conn["rssi"] = status.connection.rssi;
+    // Coarse distance hint, Find-My style. Treat as a "near/nearby/far"
+    // signal — BLE RSSI is too noisy for survey-grade distance.
+    float dist = bluetooth_channel::estimate_distance_m(status.connection.rssi);
+    conn["distance_m"] = dist;
+    conn["distance_label"] = bluetooth_channel::distance_label(dist);
     conn["security"] = bluetooth_channel::security_level_name(status.connection.security);
     conn["connected_sec"] = (millis() - status.connection.connected_since_ms) / 1000;
     conn["bytes_sent"] = status.connection.bytes_sent;
@@ -204,6 +209,11 @@ inline esp_err_t handle_bluetooth_scan_results(httpd_req_t* req) {
     dev["address"] = addr;
     dev["name"] = devices[i].name;
     dev["rssi"] = devices[i].rssi;
+    // Coarse Find-My-style distance hint. BLE RSSI is noisy enough that we
+    // surface both the raw dBm and a friendly bucket so the UI can pick.
+    float dist = bluetooth_channel::estimate_distance_m(devices[i].rssi);
+    dev["distance_m"] = dist;
+    dev["distance_label"] = bluetooth_channel::distance_label(dist);
     dev["type"] = bluetooth_channel::device_type_name(devices[i].type);
     dev["connectable"] = devices[i].connectable;
     dev["is_securacv"] = devices[i].has_securacv_service;

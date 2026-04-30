@@ -105,9 +105,15 @@
   #define DEBUG_HTTP            0
 
 #elif defined(BUILD_PROFILE_DEV)
-  // ── DEV: WiFi + HTTP + SD for web UI testing ──
-  // Use for: Testing HTTP API, web dashboard, SD storage
-  // Skips: Camera, Mesh, BLE (biggest compile time savers)
+  // ── DEV: WiFi + HTTP + SD + BLE pairing for full app testing ──
+  // Use for: Testing HTTP API, web dashboard, SD storage, BLE pairing flow.
+  // Skips: Camera, Mesh (biggest remaining compile time savers).
+  //
+  // BLE was previously disabled here for build speed, but the dashboard's
+  // Bluetooth panel ships with the build, so users would land on the
+  // pairing/scan UI and see "BLE unavailable in this build". Including the
+  // pairing channel in DEV keeps the panel honest while still letting MINIMAL
+  // be the no-radio fast-iteration target.
 
   #define FEATURE_SD_STORAGE    1
   #define FEATURE_WIFI_AP       1
@@ -117,8 +123,8 @@
   #define FEATURE_WATCHDOG      1
   #define FEATURE_STATE_LOG     1
   #define FEATURE_MESH_NETWORK  0   // Skip mesh (saves ~15s)
-  #define FEATURE_BLUETOOTH     0   // Skip BLE (saves ~25s)
-  #define FEATURE_BLE           0   // Skip BLE Discovery (saves ~25s)
+  #define FEATURE_BLUETOOTH     HW_HAS_BLE   // BLE pairing channel (NimBLE)
+  #define FEATURE_BLE           0   // Skip Opera/Chirp/Nearby discovery (saves ~25s)
   #define FEATURE_SYS_MONITOR   1
   #define FEATURE_WIFI_PRESENCE 1   // WiFi probe request presence detection
   #define FEATURE_AUDIBLE_CHIRP 1   // Local audible/visual alert tones

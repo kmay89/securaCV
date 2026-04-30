@@ -58,6 +58,24 @@ struct GpsUtcTime {
   uint32_t last_seen_ms;
 };
 
+// Motion filter output. The L76K reports ~0.3-0.7 m/s of phantom speed and a
+// few metres of position scatter even when the device sits still in a window.
+// The witness chain still records the raw GnssFix (so we never lie about what
+// the receiver saw), but the API/UI consumes MotionView so a stationary
+// mounted camera presents as truly stationary. Real motion still shows up:
+// the lock releases once we've seen sustained drift > STATIONARY_RADIUS_M
+// or speed >= MOVING_THRESHOLD_MPS for the release window.
+struct MotionView {
+  double  display_lat;
+  double  display_lon;
+  double  display_alt_m;
+  float   display_speed_mps;   // 0 while locked
+  float   raw_speed_mps;       // Smoothed RMC speed (for diagnostics)
+  bool    is_stationary;       // true while position is anchor-locked
+  bool    has_anchor;
+  uint32_t anchor_samples;     // Fixes folded into the anchor centroid
+};
+
 // ════════════════════════════════════════════════════════════════════════════
 // GPS MANAGER
 // ════════════════════════════════════════════════════════════════════════════
@@ -81,8 +99,15 @@ public:
   const GpsUtcTime& getUtcTime() const { return m_utc; }
   GpsUtcTime& getUtcTime() { return m_utc; }
 
-  // Speed in m/s
+  // Speed in m/s (raw — NMEA RMC after knots->m/s)
   float getSpeedMps() const;
+
+  // Motion-filtered view for the API/UI. Locks to an anchor centroid while
+  // stationary so the dashboard doesn't render multipath drift as movement.
+  // Call updateMotion(state_is_stationary_hint) once per main-loop iteration
+  // to advance the filter; getMotionView() is read-only.
+  void updateMotion(bool stationary_hint);
+  const MotionView& getMotionView() const { return m_motion; }
 
   // Statistics
   uint32_t getSentenceCount() const { return m_sentence_count; }
@@ -101,6 +126,9 @@ private:
   HardwareSerial* m_serial;
   GnssFix m_fix;
   GpsUtcTime m_utc;
+  MotionView m_motion;
+  float    m_speed_ema_mps;
+  uint32_t m_motion_release_since_ms;
 
   // Ring buffer for NMEA data
   static const size_t RB_SIZE = 2048;
