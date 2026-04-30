@@ -95,9 +95,12 @@ static bool init(const char* deviceIdHash, const char* fwVersion,
     // XIAO ESP32-S3: Has onboard antenna, but external antenna improves range.
     NimBLEDevice::init(bleName);
 
-    // Set transmit power to maximum for range
-    // ESP_PWR_LVL_P9 (+9dBm) is valid on both ESP32-S3 and ESP32-C3
-    NimBLEDevice::setPower(ESP_PWR_LVL_P9);
+    // Set transmit power to maximum for range. NimBLE 2.x setPower takes the
+    // dBm value directly (int8_t) — DO NOT pass the ESP_PWR_LVL_* enum, those
+    // values are indexes (P9 == 9 here happens to coincide, but P3 == 7, etc.)
+    // and would set the wrong power on other levels. +9 dBm is valid on both
+    // ESP32-S3 and ESP32-C3.
+    NimBLEDevice::setPower(9);
 
     g_ble_available = true;
 

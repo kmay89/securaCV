@@ -62,7 +62,9 @@ make monitor
 2. **Install Libraries** (Tools → Manage Libraries):
    - ArduinoJson by Benoit Blanchon (7.x)
    - Crypto by Rhys Weatherley
-   - NimBLE-Arduino by h2zero
+   - NimBLE-Arduino by h2zero (**2.3.8 or later** — the firmware uses the
+     2.x callback API, 1.x will fail to compile and silently ship with
+     Bluetooth disabled)
 
 3. **Configure Board** (Tools menu):
    - Board: **ESP32S3 Dev Module**

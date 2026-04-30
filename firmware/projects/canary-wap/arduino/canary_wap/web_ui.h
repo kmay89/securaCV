@@ -1673,6 +1673,10 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
               <div class="stat-label">Nearby</div>
               <div class="stat-value" id="btNearbyCount">0</div>
             </div>
+            <div class="stat-item">
+              <div class="stat-label">MTU</div>
+              <div class="stat-value" id="btMtu">--<span class="stat-unit">B</span></div>
+            </div>
           </div>
           <!-- Live connection panel (Find My-style: name, signal bars, distance) -->
           <div id="btConnLive" style="display:none;margin-top:1rem;padding:0.85rem;border:1px solid var(--border);border-radius:8px;background:var(--card-hover,#1a2340);">
@@ -1724,8 +1728,16 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
             <div style="font-size:0.8rem;color:var(--muted);margin-bottom:0.25rem;" id="btPairingState">Pairing mode active</div>
             <div style="font-family:monospace;font-size:1.6rem;letter-spacing:0.2em;text-align:center;" id="btPairingPin">------</div>
             <div style="font-size:0.75rem;color:var(--muted);margin-top:0.25rem;text-align:center;" id="btPairingHint">Open Bluetooth on your phone, connect to this device, and confirm the PIN.</div>
+            <!-- Confirm / Reject only render in the 'confirming' state. The
+                 user MUST visually compare the PIN above against the one on
+                 their phone before tapping Numbers match — that's the bit
+                 that prevents an MITM from coercing the bond. -->
+            <div id="btPairingConfirmRow" style="display:none;gap:0.5rem;margin-top:0.6rem;justify-content:center;">
+              <button class="btn btn-sm btn-primary" onclick="btConfirmPairing()">Numbers match</button>
+              <button class="btn btn-sm btn-danger" onclick="btRejectPairing()">Don't match</button>
+            </div>
             <div style="display:flex;gap:0.5rem;margin-top:0.5rem;justify-content:center;">
-              <button class="btn btn-sm btn-danger" onclick="btCancelPairing()">Cancel Pairing</button>
+              <button class="btn btn-sm btn-secondary" onclick="btCancelPairing()">Cancel Pairing</button>
             </div>
           </div>
           <div class="toggle-row" style="margin-top:1rem;">
@@ -1745,6 +1757,40 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
             <label style="cursor:pointer;">
               <input type="checkbox" id="btAllowPairing" onchange="saveBtSettings()">
             </label>
+          </div>
+          <div class="toggle-row">
+            <div class="toggle-info">
+              <div class="toggle-title">Long-range mode (Coded PHY S=8)</div>
+              <div class="toggle-desc">~4× range, ~125 kbps. Peer must support BLE 5.0 LR.</div>
+            </div>
+            <label style="cursor:pointer;">
+              <input type="checkbox" id="btLongRange" onchange="saveBtSettings()">
+            </label>
+          </div>
+        </div>
+
+        <!-- BLE OTA status. Hidden when idle; surfaces when a paired
+             client begins streaming a signed firmware image over GATT. -->
+        <div class="card" id="btOtaCard" style="display:none;">
+          <div class="card-header">
+            <div>
+              <div class="card-title">BLE Firmware Update</div>
+              <div class="card-subtitle" id="btOtaSubtitle">Receiving image over BLE…</div>
+            </div>
+            <div class="badge info" id="btOtaBadge">
+              <span class="badge-dot"></span>
+              <span id="btOtaStateText">idle</span>
+            </div>
+          </div>
+          <div style="margin-top:0.75rem;">
+            <div style="display:flex;justify-content:space-between;font-size:0.75rem;color:var(--muted);margin-bottom:0.25rem;">
+              <span id="btOtaProgressLabel">0%</span>
+              <span id="btOtaBytesLabel">0 / 0 B</span>
+            </div>
+            <div style="height:6px;background:var(--surface-2,#222);border-radius:3px;overflow:hidden;">
+              <div id="btOtaProgressBar" style="height:100%;width:0;background:var(--accent);transition:width 0.3s;"></div>
+            </div>
+            <div id="btOtaError" style="display:none;margin-top:0.5rem;font-size:0.75rem;color:var(--danger,#e44);"></div>
           </div>
         </div>
 
@@ -2081,7 +2127,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       else if (panel === 'camera') refreshPeekStatus();
       else if (panel === 'presence') { refreshWifiPresence(); refreshAudibleChirpStatus(); }
       else if (panel === 'community') { refreshOpera(); refreshChirpStatus(); refreshBleDiscovery(); }
-      else if (panel === 'settings') { loadWifiStatus(); refreshBtStatus(); loadBtPairedDevices(); loadRfSettings(); }
+      else if (panel === 'settings') { loadWifiStatus(); refreshBtStatus(); loadBtPairedDevices(); refreshBtOtaStatus(); loadRfSettings(); }
 
       if (panel !== 'camera' && peekActive) stopPeek();
     }
@@ -2114,7 +2160,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       document.querySelectorAll('#panel-settings .sub-panel').forEach(p => p.classList.remove('active'));
       document.getElementById(`settings-${tab}`).classList.add('active');
       if (tab === 'wifi') loadWifiStatus();
-      else if (tab === 'bluetooth') { refreshBtStatus(); loadBtPairedDevices(); }
+      else if (tab === 'bluetooth') { refreshBtStatus(); loadBtPairedDevices(); refreshBtOtaStatus(); }
       else if (tab === 'rf') loadRfSettings();
     }
 
@@ -3167,11 +3213,16 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     async function refreshBtStatus() {
       const data = await api('/api/bluetooth');
       if (!data || !data.state) {
-        // Backend not present (FEATURE_BLUETOOTH=0 or build without NimBLE).
-        // We still let the user toggle settings; the controls are inert until
-        // a build with bluetooth_channel is flashed.
+        // Backend not present. Three failure modes land here:
+        //   1. FEATURE_BLUETOOTH=0 (MINIMAL profile)
+        //   2. NimBLEDevice.h missing (library not installed)
+        //   3. NimBLE-Arduino is 1.x — the bluetooth_channel TU silently
+        //      compiled empty against the wrong callback API and
+        //      register_routes() was never called.
+        // Surface (3) explicitly because it bit us before and the symptom
+        // (no /api/bluetooth response) looks identical to (1) and (2).
         const subtitle = document.getElementById('btSubtitle');
-        if (subtitle) subtitle.textContent = 'BLE not enabled in this firmware build — flash a build with FEATURE_BLUETOOTH=1';
+        if (subtitle) subtitle.textContent = 'BLE radio not registered. Flash a FULL or DEV build with NimBLE-Arduino ≥ 2.3.8.';
         const badge = document.getElementById('btStateBadge');
         const text = document.getElementById('btStateText');
         if (badge && text) { badge.className = 'badge warning'; text.textContent = 'Unavailable'; }
@@ -3184,6 +3235,16 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       document.getElementById('btStateVal').textContent = data.state;
       document.getElementById('btDeviceName').textContent = data.device_name || '--';
       document.getElementById('btTxPower').innerHTML = (data.tx_power >= 0 ? '+' : '') + data.tx_power + '<span class="stat-unit">dBm</span>';
+      // MTU only meaningful while connected; shows the negotiated value
+      // (defaults to 23 — ATT minimum — when no peer is present).
+      const mtuEl = document.getElementById('btMtu');
+      if (mtuEl) {
+        if (data.connected && data.mtu) {
+          mtuEl.innerHTML = data.mtu + '<span class="stat-unit">B</span>';
+        } else {
+          mtuEl.innerHTML = '--<span class="stat-unit">B</span>';
+        }
+      }
       document.getElementById('btPairedCount').textContent = data.paired_count || 0;
       // The scan-list polling also writes this — fall back to the status-side
       // count so the stat shows something between scans.
@@ -3220,22 +3281,30 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       // Pairing PIN / state display. The backend only includes data.pairing
       // when a pairing session is active.
       const box = document.getElementById('btPairingBox');
+      const confirmRow = document.getElementById('btPairingConfirmRow');
       if (data.pairing && data.pairing.state) {
         box.style.display = '';
         document.getElementById('btPairingState').textContent = 'Pairing: ' + data.pairing.state;
         const pinEl = document.getElementById('btPairingPin');
+        const isConfirming = (data.pairing.state === 'confirming');
         if (data.pairing.pin !== undefined && data.pairing.pin !== null) {
           pinEl.textContent = String(data.pairing.pin).padStart(6, '0');
-          document.getElementById('btPairingHint').textContent =
-            'Confirm this PIN on your phone, or it will be auto-confirmed by the device.';
+          window.__btPairingPin = data.pairing.pin;
+          document.getElementById('btPairingHint').textContent = isConfirming
+            ? 'Compare this 6-digit code to the code on your phone. If they match, tap "Numbers match".'
+            : 'Confirm this PIN on your phone.';
         } else {
           pinEl.textContent = 'waiting…';
+          window.__btPairingPin = null;
           document.getElementById('btPairingHint').textContent =
             'Open Bluetooth on your phone, connect to ' + (data.device_name || 'this device') +
             ', and a PIN will appear here.';
         }
+        confirmRow.style.display = isConfirming ? 'flex' : 'none';
       } else {
         box.style.display = 'none';
+        confirmRow.style.display = 'none';
+        window.__btPairingPin = null;
       }
 
       // While pairing or advertising, poll faster so the PIN appears promptly.
@@ -3254,13 +3323,17 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       if (data.auto_advertise !== undefined) {
         document.getElementById('btAutoAdv').checked = data.auto_advertise;
         document.getElementById('btAllowPairing').checked = data.allow_pairing;
+        const lr = document.getElementById('btLongRange');
+        if (lr) lr.checked = !!data.long_range_mode;
       }
     }
 
     async function saveBtSettings() {
+      const lr = document.getElementById('btLongRange');
       await api('/api/bluetooth/settings', 'POST', {
         auto_advertise: document.getElementById('btAutoAdv').checked,
-        allow_pairing: document.getElementById('btAllowPairing').checked
+        allow_pairing: document.getElementById('btAllowPairing').checked,
+        long_range_mode: lr ? lr.checked : false
       });
     }
 
@@ -3291,6 +3364,65 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     async function btCancelPairing() {
       await api('/api/bluetooth/pair/cancel', 'POST');
       refreshBtStatus();
+    }
+
+    async function btConfirmPairing() {
+      // Send back the same PIN the firmware showed us. The backend
+      // cross-checks before injecting confirmation into NimBLE — a mismatch
+      // is treated as a reject, not a retry.
+      const pin = window.__btPairingPin;
+      if (pin === null || pin === undefined) {
+        alert('No pairing PIN to confirm.');
+        return;
+      }
+      const data = await api('/api/bluetooth/pair/confirm', 'POST', { pin: pin });
+      if (data && data.success === false) {
+        alert('Confirm failed: ' + (data.error || 'unknown error'));
+      }
+      refreshBtStatus();
+    }
+
+    async function btRejectPairing() {
+      await api('/api/bluetooth/pair/reject', 'POST');
+      refreshBtStatus();
+    }
+
+    // Poll OTA status alongside BT status. The card stays hidden when no
+    // session is active, surfaces with a progress bar during receive, and
+    // shows the verifier's reason on failure.
+    async function refreshBtOtaStatus() {
+      const data = await api('/api/bluetooth/ota');
+      const card = document.getElementById('btOtaCard');
+      if (!card) return;
+      const state = data && data.state ? data.state : 'idle';
+      if (state === 'idle') {
+        card.style.display = 'none';
+        if (window.__btOtaPollTimer) {
+          clearInterval(window.__btOtaPollTimer);
+          window.__btOtaPollTimer = null;
+        }
+        return;
+      }
+      card.style.display = '';
+      document.getElementById('btOtaStateText').textContent = state;
+      const badge = document.getElementById('btOtaBadge');
+      badge.className = 'badge ' + (state === 'failed' ? 'warning' : (state === 'rebooting' ? 'success' : 'info'));
+      const pct = data.progress_pct || 0;
+      document.getElementById('btOtaProgressLabel').textContent = pct + '%';
+      document.getElementById('btOtaBytesLabel').textContent =
+        (data.bytes_received || 0) + ' / ' + (data.image_size || 0) + ' B';
+      document.getElementById('btOtaProgressBar').style.width = pct + '%';
+      const errEl = document.getElementById('btOtaError');
+      if (data.last_error) {
+        errEl.style.display = '';
+        errEl.textContent = 'Error: ' + data.last_error;
+      } else {
+        errEl.style.display = 'none';
+      }
+      // Faster poll while a session is active
+      if (!window.__btOtaPollTimer && (state === 'receiving' || state === 'verifying')) {
+        window.__btOtaPollTimer = setInterval(refreshBtOtaStatus, 800);
+      }
     }
 
     async function btDisconnect() {

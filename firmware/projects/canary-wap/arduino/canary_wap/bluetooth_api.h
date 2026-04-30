@@ -12,6 +12,7 @@
 
 #include "esp_http_server.h"
 #include "bluetooth_channel.h"
+#include "ble_ota.h"
 #include <ArduinoJson.h>
 
 namespace bluetooth_api {
@@ -64,6 +65,7 @@ inline esp_err_t handle_bluetooth_status(httpd_req_t* req) {
   doc["device_name"] = status.device_name;
   doc["local_address"] = status.local_address;
   doc["tx_power"] = status.tx_power;
+  doc["mtu"] = status.mtu;
   doc["paired_count"] = status.paired_count;
   doc["scanned_count"] = status.scanned_count;
 
@@ -113,6 +115,21 @@ inline esp_err_t handle_bluetooth_status(httpd_req_t* req) {
   }
   serializeJson(doc, buffer);
   return send_json_response(req, buffer.c_str());
+}
+
+// GET /api/bluetooth/ota - BLE OTA session status
+inline esp_err_t handle_bluetooth_ota_status(httpd_req_t* req) {
+  JsonDocument doc;
+  doc["state"] = ble_ota::state_name(ble_ota::get_state());
+  doc["progress_pct"] = ble_ota::get_progress_percent();
+  doc["image_size"] = ble_ota::get_image_size();
+  doc["bytes_received"] = ble_ota::get_bytes_received();
+  const char* err = ble_ota::last_error();
+  if (err && err[0]) doc["last_error"] = err;
+
+  char buffer[256];
+  serializeJson(doc, buffer);
+  return send_json_response(req, buffer);
 }
 
 // POST /api/bluetooth/enable - Enable Bluetooth
@@ -441,6 +458,7 @@ inline esp_err_t handle_bluetooth_settings_get(httpd_req_t* req) {
   doc["tx_power"] = settings.tx_power;
   doc["inactivity_timeout_sec"] = settings.inactivity_timeout_ms / 1000;
   doc["notify_on_connect"] = settings.notify_on_connect;
+  doc["long_range_mode"] = settings.long_range_mode;
 
   char buffer[512];
   serializeJson(doc, buffer);
@@ -488,6 +506,9 @@ inline esp_err_t handle_bluetooth_settings_set(httpd_req_t* req) {
   }
   if (input["notify_on_connect"].is<JsonVariant>()) {
     settings.notify_on_connect = input["notify_on_connect"].as<bool>();
+  }
+  if (input["long_range_mode"].is<JsonVariant>()) {
+    settings.long_range_mode = input["long_range_mode"].as<bool>();
   }
 
   if (bluetooth_channel::set_settings(settings)) {
@@ -572,6 +593,7 @@ inline void register_routes(httpd_handle_t server) {
   register_api_handler(server, "/api/bluetooth/scan/results", HTTP_GET, handle_bluetooth_scan_results);
   register_api_handler(server, "/api/bluetooth/paired", HTTP_GET, handle_bluetooth_paired_list);
   register_api_handler(server, "/api/bluetooth/settings", HTTP_GET, handle_bluetooth_settings_get);
+  register_api_handler(server, "/api/bluetooth/ota", HTTP_GET, handle_bluetooth_ota_status);
 
   // POST endpoints
   register_api_handler(server, "/api/bluetooth/enable", HTTP_POST, handle_bluetooth_enable);

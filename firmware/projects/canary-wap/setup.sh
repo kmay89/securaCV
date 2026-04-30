@@ -173,7 +173,7 @@ setup_platformio() {
     print_info "Installing libraries..."
     pio pkg install --global --library "bblanchon/ArduinoJson@^7.0.0" 2>/dev/null || true
     pio pkg install --global --library "rweather/Crypto@^0.4.0" 2>/dev/null || true
-    pio pkg install --global --library "h2zero/NimBLE-Arduino@^1.4.0" 2>/dev/null || true
+    pio pkg install --global --library "h2zero/NimBLE-Arduino@^2.3.8" 2>/dev/null || true
 
     print_success "PlatformIO setup complete!"
     echo ""
@@ -239,7 +239,7 @@ setup_arduino() {
     echo "2. Install Libraries (Tools → Manage Libraries):"
     echo "   - ArduinoJson by Benoit Blanchon (version 7.x)"
     echo "   - Crypto by Rhys Weatherley"
-    echo "   - NimBLE-Arduino by h2zero"
+    echo "   - NimBLE-Arduino by h2zero (version 2.3.8 or later — DO NOT use 1.x)"
     echo ""
     echo "3. Board Settings (Tools menu):"
     echo "   - Board: ESP32S3 Dev Module (or XIAO ESP32S3)"

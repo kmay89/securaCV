@@ -41,6 +41,8 @@
 #endif
 
 #include "health_log.h"
+#include "ble_ota.h"
+#include "ota_release_key.h"
 
 namespace bluetooth_channel {
 
@@ -69,12 +71,28 @@ static BluetoothSettings g_settings = {
   .device_name = "SecuraCV-Canary",
   .tx_power = 3,
   .inactivity_timeout_ms = INACTIVITY_TIMEOUT_MS,
-  .notify_on_connect = true
+  .notify_on_connect = true,
+  .long_range_mode = false
 };
 
 // Connection state
 static ConnectionInfo g_connection = {};
 static PairingSession g_pairing = {};
+
+// Pending Numeric-Comparison pairing — captured in onConfirmPassKey, drained
+// by confirm_pairing()/reject_pairing()/cancel_pairing(). Without this, the
+// only way to satisfy the host's pairing flow was to call injectConfirmPasskey
+// from inside the callback itself, which forced an auto-yes that bypassed the
+// MITM check. NimBLEConnInfo is a thin POD wrapping ble_gap_conn_desc — safe
+// to copy by value.
+static NimBLEConnInfo g_pending_pair_info{};
+static bool g_pending_pair_active = false;
+
+// Active connection handle so update() can poll RSSI / MTU without keeping
+// a reference to the callback's NimBLEConnInfo (which is per-callback scope).
+// 0xFFFF = "no connection" (BLE conn handles are 0..0x0EFE in NimBLE).
+static uint16_t g_connection_handle = 0xFFFF;
+static uint16_t g_connection_mtu = 23;  // negotiated MTU; defaults to ATT min
 
 // Paired devices
 static PairedDevice g_paired_devices[MAX_PAIRED_DEVICES];
@@ -110,6 +128,7 @@ static const char* NVS_KEY_BT_NAME = "bt_name";
 static const char* NVS_KEY_BT_TX_PWR = "bt_tx_pwr";
 static const char* NVS_KEY_BT_TIMEOUT = "bt_timeout";
 static const char* NVS_KEY_BT_PAIRED = "bt_paired";
+static const char* NVS_KEY_BT_LONG_RANGE = "bt_long_range";
 
 // ════════════════════════════════════════════════════════════════════════════
 // FORWARD DECLARATIONS
@@ -132,6 +151,7 @@ static DeviceType detect_device_type(const NimBLEAdvertisedDevice* device);
 class ServerCallbacks : public NimBLEServerCallbacks {
   void onConnect(NimBLEServer* server, NimBLEConnInfo& connInfo) override {
     g_connection.connected = true;
+    g_connection_handle = connInfo.getConnHandle();
     memcpy(g_connection.address, connInfo.getAddress().getBase()->val, BLE_ADDRESS_LENGTH);
 
     NimBLEAddress addr(connInfo.getAddress());
@@ -142,6 +162,22 @@ class ServerCallbacks : public NimBLEServerCallbacks {
     g_connection.last_activity_ms = millis();
     g_connection.bytes_sent = 0;
     g_connection.bytes_received = 0;
+
+    // Request a faster connection interval. Units: 1.25 ms for interval,
+    // 10 ms for supervision timeout. The (24, 40, 0, 400) range is inside
+    // Apple's accepted band (min 15 ms, range >= 15 ms, timeout >= 2 s)
+    // so iOS won't reject and renegotiate to 30 ms+. Android typically
+    // honours the request directly. Falls back silently to the default
+    // 30-ms interval if the peer refuses.
+    server->updateConnParams(connInfo.getConnHandle(), 24, 40, 0, 400);
+
+    // If long-range mode is on, request a PHY switch to LE Coded S=8.
+    // BLE_HCI_LE_PHY_CODED_PREF_MASK = 0x04, S=8 option = 0x0002. Peer can
+    // refuse and we keep 1M — there's no downside to trying.
+    if (g_settings.long_range_mode) {
+      ble_gap_set_prefered_le_phy(connInfo.getConnHandle(),
+                                  0x04, 0x04, 0x0002);
+    }
 
     // Update security level
     if (connInfo.isEncrypted()) {
@@ -185,6 +221,8 @@ class ServerCallbacks : public NimBLEServerCallbacks {
     }
 
     memset(&g_connection, 0, sizeof(g_connection));
+    g_connection_handle = 0xFFFF;
+    g_connection_mtu = 23;
     set_state(BT_IDLE);
 
     // Resume advertising if enabled
@@ -265,19 +303,29 @@ class ServerCallbacks : public NimBLEServerCallbacks {
   }
 
   void onConfirmPassKey(NimBLEConnInfo& connInfo, uint32_t pin) override {
+    // BLE Numeric Comparison: the peer and we both saw `pin` derived from the
+    // ECDH handshake. The user must visually verify the same six digits show
+    // on both screens before we tell NimBLE to accept — this is the bit that
+    // closes Man-In-The-Middle. We stash the conn info and surface the PIN to
+    // the SPA; confirm_pairing()/reject_pairing()/cancel_pairing() drain it.
+    g_pending_pair_info = connInfo;
+    g_pending_pair_active = true;
+
     g_pairing.state = PAIR_CONFIRMING;
     g_pairing.pin_code = pin;
+    g_pairing.pin_displayed = true;
+    g_pairing.user_confirmed = false;
 
     char pin_str[16];
     snprintf(pin_str, sizeof(pin_str), "%06lu", (unsigned long)pin);
-    log_health(SCV_LOG_NOTICE, SCV_CAT_BLUETOOTH, "Confirm pairing PIN", pin_str);
+    log_health(SCV_LOG_NOTICE, SCV_CAT_BLUETOOTH,
+               "BLE pairing PIN — awaiting user confirmation", pin_str);
 
     if (g_pair_callback) {
       g_pair_callback(&g_pairing);
     }
-
-    // Auto-confirm for now - in production, wait for user confirmation
-    NimBLEDevice::injectConfirmPasskey(connInfo, true);
+    // Intentionally NO injectConfirmPasskey() here. The pairing timeout
+    // (PAIRING_TIMEOUT_MS) will reject if the user doesn't respond.
   }
 };
 
@@ -351,6 +399,17 @@ static ScanCallbacks g_scan_callbacks;
 // STATE MANAGEMENT
 // ════════════════════════════════════════════════════════════════════════════
 
+// ESP32 NimBLE accepts BLE TX power in the range [-12, +9] dBm. Anything
+// outside that band makes setPower fail (or, worse, behave silently in
+// unsupported ranges on some IDF versions). Clamp at every boundary
+// — NVS load, settings POST — so a corrupted persisted value or a
+// validation-skipping API caller can't reach the radio with garbage.
+static int8_t clamp_tx_power(int8_t v) {
+  if (v < -12) return -12;
+  if (v >  9)  return  9;
+  return v;
+}
+
 static void set_state(BluetoothState new_state) {
   if (g_state == new_state) return;
 
@@ -375,8 +434,9 @@ static void load_settings() {
   g_settings.auto_advertise = nvs.getBool(NVS_KEY_BT_AUTO_ADV, true);
   g_settings.allow_pairing = nvs.getBool(NVS_KEY_BT_ALLOW_PAIR, true);
   g_settings.require_pin = nvs.getBool(NVS_KEY_BT_REQ_PIN, true);
-  g_settings.tx_power = nvs.getChar(NVS_KEY_BT_TX_PWR, 3);
+  g_settings.tx_power = clamp_tx_power(nvs.getChar(NVS_KEY_BT_TX_PWR, 3));
   g_settings.inactivity_timeout_ms = nvs.getULong(NVS_KEY_BT_TIMEOUT, INACTIVITY_TIMEOUT_MS);
+  g_settings.long_range_mode = nvs.getBool(NVS_KEY_BT_LONG_RANGE, false);
 
   size_t name_len = nvs.getBytesLength(NVS_KEY_BT_NAME);
   if (name_len > 0 && name_len <= MAX_DEVICE_NAME_LEN) {
@@ -397,6 +457,7 @@ static void save_settings() {
   nvs.putBool(NVS_KEY_BT_REQ_PIN, g_settings.require_pin);
   nvs.putChar(NVS_KEY_BT_TX_PWR, g_settings.tx_power);
   nvs.putULong(NVS_KEY_BT_TIMEOUT, g_settings.inactivity_timeout_ms);
+  nvs.putBool(NVS_KEY_BT_LONG_RANGE, g_settings.long_range_mode);
   nvs.putBytes(NVS_KEY_BT_NAME, g_settings.device_name, strlen(g_settings.device_name));
 
   nvs.end();
@@ -518,7 +579,27 @@ bool init() {
 
   // Initialize NimBLE
   NimBLEDevice::init(g_settings.device_name);
-  NimBLEDevice::setPower(ESP_PWR_LVL_P3);  // +3 dBm
+  // NimBLE 2.x takes the dBm value directly (int8_t). Don't pass the
+  // ESP_PWR_LVL_* enum here — those values are indexes (e.g. P3 == 7), not
+  // dBm, and would set the radio to a different power than intended.
+  NimBLEDevice::setPower(g_settings.tx_power);
+
+  // Bump default ATT MTU to 247 (244-byte payload). The default is 23
+  // (20-byte payload), which fragments every JSON status read into 3+ ATT
+  // packets and roughly triples connection-event time on the radio. 247 is
+  // the largest a single LE Data Length Extension packet carries without
+  // additional fragmentation; both iOS and modern Android accept it.
+  NimBLEDevice::setMTU(247);
+
+  // Long-range mode: declare a preference for LE Coded PHY on new
+  // connections. The actual PHY upgrade happens after the link is up,
+  // via a PHY update request in onConnect — discovery still uses 1M.
+  // Bit masks: 0x01 = 1M, 0x02 = 2M, 0x04 = Coded.
+  if (g_settings.long_range_mode) {
+    NimBLEDevice::setDefaultPhy(0x04, 0x04);
+  } else {
+    NimBLEDevice::setDefaultPhy(0x01 | 0x02, 0x01 | 0x02);
+  }
 
   // Set security
   NimBLEDevice::setSecurityAuth(true, true, true);  // bonding, MITM, SC
@@ -551,6 +632,12 @@ bool init() {
 
   // Start service
   g_service->start();
+
+  // Register the OTA service on the same NimBLE server. It exposes its own
+  // GATT service UUID so peers can discover and skip it independently of
+  // the primary control surface, and so a half-completed OTA can't disturb
+  // the control characteristics.
+  ble_ota::init(g_server, SECURACV_OTA_RELEASE_PUBKEY);
 
   // Set up advertising
   g_advertising = NimBLEDevice::getAdvertising();
@@ -737,6 +824,12 @@ bool start_pairing() {
 }
 
 void cancel_pairing() {
+  // Drain any pending Numeric-Comparison so NimBLE doesn't sit indefinitely
+  // waiting on injectConfirmPasskey. A reject closes the bond attempt cleanly.
+  if (g_pending_pair_active) {
+    NimBLEDevice::injectConfirmPasskey(g_pending_pair_info, false);
+    g_pending_pair_active = false;
+  }
   if (g_pairing.state == PAIR_NONE) return;
 
   g_pairing.state = PAIR_NONE;
@@ -751,16 +844,34 @@ void cancel_pairing() {
 
 bool confirm_pairing(uint32_t pin) {
   if (g_pairing.state != PAIR_CONFIRMING) return false;
+  if (!g_pending_pair_active) return false;
 
-  if (pin == g_pairing.pin_code) {
-    g_pairing.user_confirmed = true;
-    return true;
+  // The SPA sends back the same six digits we showed it. A mismatch means
+  // either a bug in the SPA, a stale request, or an active attacker trying
+  // to coerce a yes — all warrant a reject.
+  if (pin != g_pairing.pin_code) {
+    log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH,
+               "Pairing PIN mismatch — rejecting", nullptr);
+    NimBLEDevice::injectConfirmPasskey(g_pending_pair_info, false);
+    g_pending_pair_active = false;
+    g_pairing.state = PAIR_FAILED;
+    if (g_pair_callback) g_pair_callback(&g_pairing);
+    return false;
   }
 
-  return false;
+  g_pairing.user_confirmed = true;
+  NimBLEDevice::injectConfirmPasskey(g_pending_pair_info, true);
+  g_pending_pair_active = false;
+  log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH,
+             "Pairing PIN confirmed by user", nullptr);
+  return true;
 }
 
 bool reject_pairing() {
+  if (g_pending_pair_active) {
+    NimBLEDevice::injectConfirmPasskey(g_pending_pair_info, false);
+    g_pending_pair_active = false;
+  }
   if (g_pairing.state == PAIR_NONE) return false;
 
   g_pairing.state = PAIR_FAILED;
@@ -876,6 +987,9 @@ BluetoothSettings get_settings() {
 
 bool set_settings(const BluetoothSettings& settings) {
   g_settings = settings;
+  // The settings struct comes from a JSON POST — the API parser doesn't
+  // range-check tx_power, so clamp here before it goes to NVS or the radio.
+  g_settings.tx_power = clamp_tx_power(g_settings.tx_power);
   save_settings();
 
   // Apply changes
@@ -913,18 +1027,9 @@ bool set_tx_power(int8_t power) {
   save_settings();
 
   if (g_initialized) {
-    // Map to ESP power levels
-    esp_power_level_t level = ESP_PWR_LVL_P3;
-    if (power <= -12) level = ESP_PWR_LVL_N12;
-    else if (power <= -9) level = ESP_PWR_LVL_N9;
-    else if (power <= -6) level = ESP_PWR_LVL_N6;
-    else if (power <= -3) level = ESP_PWR_LVL_N3;
-    else if (power <= 0) level = ESP_PWR_LVL_N0;
-    else if (power <= 3) level = ESP_PWR_LVL_P3;
-    else if (power <= 6) level = ESP_PWR_LVL_P6;
-    else level = ESP_PWR_LVL_P9;
-
-    NimBLEDevice::setPower(level);
+    // NimBLE 2.x: setPower takes the dBm value directly. The validated
+    // [-12, +9] range maps 1:1 onto the supported ESP32 power levels.
+    NimBLEDevice::setPower(power);
   }
 
   return true;
@@ -950,6 +1055,7 @@ BluetoothStatus get_status() {
   }
 
   status.tx_power = g_settings.tx_power;
+  status.mtu = g_connection_mtu;
   status.paired_count = g_paired_count;
   status.scanned_count = g_scanned_count;
   status.connection = g_connection;
@@ -1015,8 +1121,17 @@ void update() {
     last_status_update = now;
     update_status_characteristic();
 
-    // Update RSSI
-    // Note: NimBLE doesn't provide direct RSSI access for connections
+    // Refresh live RSSI + negotiated MTU for the API surface. The host call
+    // ble_gap_conn_rssi() reads the most recent received-signal strength on
+    // the active link — works regardless of whether the link is encrypted.
+    if (g_connection_handle != 0xFFFF) {
+      int8_t rssi = 0;
+      if (ble_gap_conn_rssi(g_connection_handle, &rssi) == 0) {
+        g_connection.rssi = rssi;
+      }
+      uint16_t mtu = ble_att_mtu(g_connection_handle);
+      if (mtu >= 23) g_connection_mtu = mtu;
+    }
   }
 
   // Check inactivity timeout
