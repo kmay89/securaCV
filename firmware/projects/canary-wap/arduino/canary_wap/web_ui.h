@@ -3167,11 +3167,16 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     async function refreshBtStatus() {
       const data = await api('/api/bluetooth');
       if (!data || !data.state) {
-        // Backend not present (FEATURE_BLUETOOTH=0 or build without NimBLE).
-        // We still let the user toggle settings; the controls are inert until
-        // a build with bluetooth_channel is flashed.
+        // Backend not present. Three failure modes land here:
+        //   1. FEATURE_BLUETOOTH=0 (MINIMAL profile)
+        //   2. NimBLEDevice.h missing (library not installed)
+        //   3. NimBLE-Arduino is 1.x — the bluetooth_channel TU silently
+        //      compiled empty against the wrong callback API and
+        //      register_routes() was never called.
+        // Surface (3) explicitly because it bit us before and the symptom
+        // (no /api/bluetooth response) looks identical to (1) and (2).
         const subtitle = document.getElementById('btSubtitle');
-        if (subtitle) subtitle.textContent = 'BLE not enabled in this firmware build — flash a build with FEATURE_BLUETOOTH=1';
+        if (subtitle) subtitle.textContent = 'BLE radio not registered. Flash a FULL or DEV build with NimBLE-Arduino ≥ 2.3.0.';
         const badge = document.getElementById('btStateBadge');
         const text = document.getElementById('btStateText');
         if (badge && text) { badge.className = 'badge warning'; text.textContent = 'Unavailable'; }

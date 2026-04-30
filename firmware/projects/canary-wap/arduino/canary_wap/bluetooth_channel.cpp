@@ -518,7 +518,10 @@ bool init() {
 
   // Initialize NimBLE
   NimBLEDevice::init(g_settings.device_name);
-  NimBLEDevice::setPower(ESP_PWR_LVL_P3);  // +3 dBm
+  // NimBLE 2.x takes the dBm value directly (int8_t). Don't pass the
+  // ESP_PWR_LVL_* enum here — those values are indexes (e.g. P3 == 7), not
+  // dBm, and would set the radio to a different power than intended.
+  NimBLEDevice::setPower(g_settings.tx_power);
 
   // Set security
   NimBLEDevice::setSecurityAuth(true, true, true);  // bonding, MITM, SC
@@ -913,18 +916,9 @@ bool set_tx_power(int8_t power) {
   save_settings();
 
   if (g_initialized) {
-    // Map to ESP power levels
-    esp_power_level_t level = ESP_PWR_LVL_P3;
-    if (power <= -12) level = ESP_PWR_LVL_N12;
-    else if (power <= -9) level = ESP_PWR_LVL_N9;
-    else if (power <= -6) level = ESP_PWR_LVL_N6;
-    else if (power <= -3) level = ESP_PWR_LVL_N3;
-    else if (power <= 0) level = ESP_PWR_LVL_N0;
-    else if (power <= 3) level = ESP_PWR_LVL_P3;
-    else if (power <= 6) level = ESP_PWR_LVL_P6;
-    else level = ESP_PWR_LVL_P9;
-
-    NimBLEDevice::setPower(level);
+    // NimBLE 2.x: setPower takes the dBm value directly. The validated
+    // [-12, +9] range maps 1:1 onto the supported ESP32 power levels.
+    NimBLEDevice::setPower(power);
   }
 
   return true;
