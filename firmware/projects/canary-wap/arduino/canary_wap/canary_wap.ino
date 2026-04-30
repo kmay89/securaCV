@@ -3182,6 +3182,39 @@ static esp_err_t handle_wifi_connect(httpd_req_t* req) {
   return http_send_json(req, response.c_str());
 }
 
+// External-linkage bridge for the BLE provisioning module. ble_provision.cpp
+// hands a paired phone's chosen credentials in here; we run the same input
+// validation as handle_wifi_connect, persist to NVS, and kick the existing
+// connect state machine. Returns false on validation failure (caller surfaces
+// that to the BLE peer via the STATE characteristic).
+//
+// NOT static — needs external linkage so ble_provision.cpp's `extern bool
+// ble_request_wifi_provisioning(...)` declaration links against this body.
+bool ble_request_wifi_provisioning(const char* ssid, const char* password) {
+  if (!ssid || !password) return false;
+  const size_t ssid_len = strlen(ssid);
+  const size_t pw_len   = strlen(password);
+  if (ssid_len == 0 || ssid_len > 32) return false;   // WPA2 SSID bound
+  if (pw_len > 64)                    return false;   // WPA2 PSK bound
+  // Empty password = open network. Allowed (matches handle_wifi_connect).
+
+  strncpy(g_wifi_creds.ssid, ssid, sizeof(g_wifi_creds.ssid) - 1);
+  g_wifi_creds.ssid[sizeof(g_wifi_creds.ssid) - 1] = '\0';
+  strncpy(g_wifi_creds.password, password, sizeof(g_wifi_creds.password) - 1);
+  g_wifi_creds.password[sizeof(g_wifi_creds.password) - 1] = '\0';
+  g_wifi_creds.enabled    = true;
+  g_wifi_creds.configured = true;
+
+  wifi_save_credentials();
+  g_wifi_status.last_fail_reason[0] = '\0';
+  wifi_connect_to_home();
+
+  log_health(SCV_LOG_INFO, SCV_CAT_NETWORK,
+             "WiFi credentials applied via BLE provisioning",
+             g_wifi_creds.ssid);
+  return true;
+}
+
 static esp_err_t handle_wifi_disconnect(httpd_req_t* req) {
   g_health.http_requests++;
 
