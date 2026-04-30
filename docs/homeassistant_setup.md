@@ -32,7 +32,7 @@ Install via HACS:
 
 Connect to your Canary's WiFi AP (SSID shown on device, password is device-unique):
 
-1. Open `http://canary.local` or `http://192.168.4.1` in your browser
+1. Open `http://canary-<id>.local` (the device's unique hostname, shown in the boot banner — e.g. `http://canary-s3-ab12.local`) or `http://192.168.4.1` in your browser. If you only have one Canary, plain `http://canary.local` may also resolve, but each Canary always advertises its unique hostname so multiple devices on the same network don't collide.
 2. Go to the **Network** tab
 3. Enter your home WiFi credentials (the Canary needs WiFi to reach the MQTT broker)
 4. Enter your MQTT broker details:

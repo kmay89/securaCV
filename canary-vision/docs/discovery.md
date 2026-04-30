@@ -48,13 +48,20 @@ Each device maintains a list of known peers and exposes it at `GET /api/v1/peers
    ```json
    {
      "peers": [
-       { "device_id": "canary-b1c2", "name": "Garage", "ip": "192.168.1.103" },
-       { "device_id": "canary-d4e5", "name": "Back Yard", "ip": "192.168.1.110" }
+       { "device_id": "canary-b1c2", "name": "Garage",   "ip": "192.168.1.103", "mdns_hostname": "canary-b1c2.local" },
+       { "device_id": "canary-d4e5", "name": "Back Yard", "ip": "192.168.1.110", "mdns_hostname": "canary-d4e5.local" }
      ]
    }
    ```
-3. SPA offers to add `canary-b1c2` and `canary-d4e5` to the user's device list.
-4. User selects a peer and provides the token for that device.
+3. SPA renders a "Discovered on your network" section on the My Canaries
+   view with one card per peer that is not yet in the user's device list.
+4. The user taps "Pair this Canary"; the host is pre-filled, and the user
+   provides the token for that specific device. Each peer is independently
+   authenticated — knowing a peer exists does not grant API access.
+
+The SPA prefers `mdns_hostname` over `ip` when constructing the peer's
+`base_url` because IPs change over DHCP leases but mDNS names don't. The
+field is optional; clients fall back to `ip` when absent.
 
 The peer list is read-only. There is no endpoint to add or remove peers via the API. Peers are discovered by the device itself through mDNS and stored in device state.
 
