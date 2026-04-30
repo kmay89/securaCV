@@ -68,6 +68,40 @@ NetworkManager::NetworkManager()
   : m_http_server(nullptr), m_scan_in_progress(false) {
   memset(&m_creds, 0, sizeof(m_creds));
   memset(&m_status, 0, sizeof(m_status));
+  m_mdns_hostname[0] = '\0';
+}
+
+// mDNS hostname rules (RFC 6762 §16): only [a-z0-9-], must not start/end with
+// hyphen. We lowercase the device_id and replace any other byte with '-'.
+static void sanitize_mdns_hostname(const char* in, char* out, size_t cap) {
+  if (cap == 0) return;
+  size_t j = 0;
+  for (size_t i = 0; in && in[i] && j < cap - 1; i++) {
+    char c = in[i];
+    if (c >= 'A' && c <= 'Z') c = c - 'A' + 'a';
+    if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-') {
+      out[j++] = c;
+    } else {
+      out[j++] = '-';
+    }
+  }
+  // Trim leading/trailing hyphens
+  while (j > 0 && out[j-1] == '-') j--;
+  size_t start = 0;
+  while (start < j && out[start] == '-') start++;
+  if (start > 0) {
+    memmove(out, out + start, j - start);
+    j -= start;
+  }
+  if (j == 0) {
+    // Fallback to a safe default rather than emitting an empty name.
+    const char* fb = "canary";
+    size_t fb_len = strlen(fb);
+    if (fb_len >= cap) fb_len = cap - 1;
+    memcpy(out, fb, fb_len);
+    j = fb_len;
+  }
+  out[j] = '\0';
 }
 
 const char* NetworkManager::stateName(WiFiProvState s) {
@@ -82,7 +116,8 @@ const char* NetworkManager::stateName(WiFiProvState s) {
   }
 }
 
-bool NetworkManager::begin(const char* ap_ssid, const char* ap_password) {
+bool NetworkManager::begin(const char* ap_ssid, const char* ap_password,
+                           const char* mdns_hostname) {
   // Load saved credentials
   bool has_creds = loadCredentials();
 
@@ -107,10 +142,27 @@ bool NetworkManager::begin(const char* ap_ssid, const char* ap_password) {
   snprintf(msg, sizeof(msg), "AP: %s", ap_ssid);
   log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, msg, m_status.ap_ip);
 
-  // Start mDNS
-  if (MDNS.begin("canary")) {
+  // Start mDNS with a per-device hostname so multiple Canaries on the
+  // same home network do not collide on `canary.local`. Falls back to
+  // "canary" if no identity is supplied (legacy single-device path).
+  sanitize_mdns_hostname(mdns_hostname ? mdns_hostname : "canary",
+                         m_mdns_hostname, sizeof(m_mdns_hostname));
+  if (MDNS.begin(m_mdns_hostname)) {
     MDNS.addService("http", "tcp", 80);
-    log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "mDNS started", "canary.local");
+
+    // Advertise the SecuraCV-specific service so peer Canaries (and the
+    // companion SPA) can browse the network without subnet scanning.
+    // TXT records mirror the discovery protocol in
+    // canary-vision/docs/discovery.md.
+    MDNS.addService("securacv", "tcp", 80);
+    MDNS.addServiceTxt("securacv", "tcp", "device_id",
+                       mdns_hostname ? mdns_hostname : m_mdns_hostname);
+    MDNS.addServiceTxt("securacv", "tcp", "fw", FIRMWARE_VERSION);
+    MDNS.addServiceTxt("securacv", "tcp", "model", "XIAO ESP32S3");
+
+    char fqdn[64];
+    snprintf(fqdn, sizeof(fqdn), "%s.local", m_mdns_hostname);
+    log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "mDNS started", fqdn);
   }
 
   // Attempt to connect to home WiFi if configured
@@ -1092,8 +1144,9 @@ static esp_err_t handle_mqtt_config(httpd_req_t* req) {
 // CONVENIENCE FUNCTIONS
 // ════════════════════════════════════════════════════════════════════════════
 
-bool network_init(const char* ap_ssid, const char* ap_password) {
-  return network_get_instance().begin(ap_ssid, ap_password);
+bool network_init(const char* ap_ssid, const char* ap_password,
+                  const char* mdns_hostname) {
+  return network_get_instance().begin(ap_ssid, ap_password, mdns_hostname);
 }
 
 bool network_start_http() {

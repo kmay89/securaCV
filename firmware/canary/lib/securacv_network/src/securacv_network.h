@@ -59,8 +59,17 @@ class NetworkManager {
 public:
   NetworkManager();
 
-  // Initialize WiFi provisioning (AP + optional STA)
-  bool begin(const char* ap_ssid, const char* ap_password = AP_PASSWORD_DEFAULT);
+  // Initialize WiFi provisioning (AP + optional STA).
+  // mdns_hostname is the per-device mDNS name (without the .local suffix).
+  // When null, falls back to "canary" (legacy behavior — collides if you
+  // run more than one Canary on the same network, so always pass an ID).
+  bool begin(const char* ap_ssid,
+             const char* ap_password = AP_PASSWORD_DEFAULT,
+             const char* mdns_hostname = nullptr);
+
+  // Returns the mDNS hostname registered for this device (without ".local").
+  // Empty string if mDNS is not active.
+  const char* getMdnsHostname() const { return m_mdns_hostname; }
 
   // HTTP server
   bool startHttpServer();
@@ -92,6 +101,7 @@ private:
   WiFiStatus m_status;
   httpd_handle_t m_http_server;
   bool m_scan_in_progress;
+  char m_mdns_hostname[40];
 };
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -101,7 +111,9 @@ private:
 NetworkManager& network_get_instance();
 
 // Convenience functions
-bool network_init(const char* ap_ssid, const char* ap_password = AP_PASSWORD_DEFAULT);
+bool network_init(const char* ap_ssid,
+                  const char* ap_password = AP_PASSWORD_DEFAULT,
+                  const char* mdns_hostname = nullptr);
 bool network_start_http();
 void network_update();
 httpd_handle_t network_get_http_server();

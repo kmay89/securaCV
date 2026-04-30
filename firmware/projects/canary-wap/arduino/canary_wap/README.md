@@ -94,7 +94,7 @@ Edit `build_config.h` to select your build profile:
 2. Open Serial Monitor at **115200 baud**
 3. Note the WiFi SSID and password from the boot banner
 4. Connect your phone/laptop to the `SecuraCV-XXXX` WiFi network
-5. Open `https://192.168.4.1` (or `http://canary.local`)
+5. Open `https://192.168.4.1` (or the device's unique mDNS URL, e.g. `http://canary-s3-ab12.local` — shown in the boot banner)
 6. On first boot, save the **Provisioning Receipt** from Serial output
 
 ## Security Properties

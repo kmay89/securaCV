@@ -34,4 +34,14 @@ describe('GET /api/v1/peers', () => {
     assert.ok(peer.ip);
     assert.ok(peer.last_seen);
   });
+
+  it('peer entries advertise an mDNS hostname for stable pairing', async () => {
+    // The SPA prefers mdns_hostname over ip when constructing base_url so
+    // pairing survives DHCP lease changes.
+    const res = await client.get('/api/v1/peers');
+    for (const peer of res.json.peers) {
+      assert.ok(peer.mdns_hostname, `peer ${peer.device_id} missing mdns_hostname`);
+      assert.match(peer.mdns_hostname, /\.local$/);
+    }
+  });
 });

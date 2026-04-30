@@ -543,9 +543,123 @@ function renderCanariesView() {
       textContent: '+ Add Canary',
       onClick: function () { Router.navigate('#/canaries/add'); },
     }));
+
+    // Discovered-but-not-yet-added peers slot in below the fleet list.
+    // The container is populated asynchronously so the view paints fast.
+    content.appendChild(el('div', { id: 'discovered-peers' }));
   }
 
   app.appendChild(content);
+
+  if (devices.length > 0) {
+    refreshDiscoveredPeers(devices);
+  }
+}
+
+// --------------- Peer Discovery ---------------
+
+// Build the canonical base URL for a peer using its mDNS hostname when
+// available, falling back to its LAN IP. Hostname is preferred because
+// IPs change and mDNS doesn't.
+function peerBaseUrl(peer) {
+  var host = peer.mdns_hostname || peer.ip;
+  if (!host) return '';
+  if (host.indexOf('http') === 0) return host.replace(/\/+$/, '');
+  return 'http://' + host.replace(/\/+$/, '');
+}
+
+// Returns the set of base_urls and device_ids already managed by the user,
+// so we can filter them out of the discovered list.
+function collectKnownIdentities(devices) {
+  var knownIds = {};
+  var knownUrls = {};
+  for (var i = 0; i < devices.length; i++) {
+    if (devices[i].id) knownIds[devices[i].id] = true;
+    if (devices[i].base_url) knownUrls[devices[i].base_url] = true;
+  }
+  return { ids: knownIds, urls: knownUrls };
+}
+
+function refreshDiscoveredPeers(devices) {
+  var slot = document.getElementById('discovered-peers');
+  if (!slot) return;
+
+  // Query each known device's peer list in parallel. Failures are silent —
+  // a device being offline shouldn't break the discovery UI.
+  var requests = devices.map(function (d) {
+    return CanaryAPI.request(d.base_url, '/api/v1/peers')
+      .then(function (data) { return (data && data.peers) || []; })
+      .catch(function () { return []; });
+  });
+
+  Promise.all(requests).then(function (results) {
+    var slotNow = document.getElementById('discovered-peers');
+    if (!slotNow) return; // user navigated away
+
+    var known = collectKnownIdentities(CanaryStorage.getDevices());
+    var seen = {};
+    var discovered = [];
+
+    for (var i = 0; i < results.length; i++) {
+      var peers = results[i];
+      for (var j = 0; j < peers.length; j++) {
+        var p = peers[j];
+        if (!p || !p.device_id) continue;
+        if (known.ids[p.device_id]) continue;
+        var baseUrl = peerBaseUrl(p);
+        if (!baseUrl || known.urls[baseUrl]) continue;
+        if (seen[p.device_id]) continue;
+        seen[p.device_id] = true;
+        discovered.push(p);
+      }
+    }
+
+    while (slotNow.firstChild) slotNow.removeChild(slotNow.firstChild);
+    if (discovered.length === 0) return;
+
+    slotNow.appendChild(renderDiscoveredPeerSection(discovered));
+  });
+}
+
+function renderDiscoveredPeerSection(peers) {
+  var section = el('div', { className: 'card mt-20' });
+  section.appendChild(el('div', {
+    className: 'card-title mb-8',
+    textContent: 'Discovered on your network',
+  }));
+  section.appendChild(el('div', {
+    className: 'card-subtitle mb-8',
+    textContent: 'Other Canaries are advertising on your home WiFi. Add them here.',
+  }));
+
+  peers.forEach(function (peer) {
+    var baseUrl = peerBaseUrl(peer);
+    var row = el('div', { className: 'card' }, [
+      el('div', { className: 'card-header' }, [
+        el('div', {}, [
+          el('div', { className: 'card-title', textContent: peer.name || peer.device_id }),
+          el('div', { className: 'card-subtitle', textContent: baseUrl || peer.device_id }),
+        ]),
+        el('span', { className: 'status-dot' }),
+      ]),
+      el('button', {
+        className: 'btn btn-primary btn-block mt-12',
+        textContent: 'Pair this Canary',
+        onClick: function () {
+          // Pre-fill the Add form with what we already know so the user
+          // only needs to paste this device's token.
+          try {
+            sessionStorage.setItem('canary_prefill_host', baseUrl);
+            sessionStorage.setItem('canary_prefill_id', peer.device_id);
+          } catch (e) { /* ignore */ }
+          Router.navigate('#/canaries/add');
+        },
+      }),
+    ]);
+    section.appendChild(row);
+  });
+
+  return section;
 }
 
 function renderAddCanaryView() {
@@ -556,6 +670,23 @@ function renderAddCanaryView() {
   var alert = el('div', { id: 'add-alert' });
   content.appendChild(alert);
 
+  // If the user got here from the "Discovered" list, the host is already
+  // known — we just need their token. One-shot consume so a manual
+  // re-entry on the same view starts blank.
+  var prefillHost = '';
+  try {
+    prefillHost = sessionStorage.getItem('canary_prefill_host') || '';
+    sessionStorage.removeItem('canary_prefill_host');
+    sessionStorage.removeItem('canary_prefill_id');
+  } catch (e) { /* ignore */ }
+
+  if (prefillHost) {
+    content.appendChild(el('div', {
+      className: 'alert alert-info',
+      textContent: 'Pairing ' + prefillHost + ' — paste its API token below.',
+    }));
+  }
+
   var form = el('div', {}, [
     el('div', { className: 'form-group' }, [
       el('label', { className: 'form-label', textContent: 'Device Address' }),
@@ -564,6 +695,7 @@ function renderAddCanaryView() {
         id: 'add-host',
         type: 'text',
         placeholder: 'e.g. canary-a3f7.local or 192.168.1.47',
+        value: prefillHost,
       }),
     ]),
     el('div', { className: 'form-group' }, [

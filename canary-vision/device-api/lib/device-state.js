@@ -54,12 +54,14 @@ const DEFAULT_PEERS = [
     device_id: 'canary-b1c2',
     name: 'Garage',
     ip: '192.168.1.103',
+    mdns_hostname: 'canary-b1c2.local',
     last_seen: '2026-02-18T14:20:00Z',
   },
   {
     device_id: 'canary-d4e5',
     name: 'Back Yard',
     ip: '192.168.1.110',
+    mdns_hostname: 'canary-d4e5.local',
     last_seen: '2026-02-18T14:18:00Z',
   },
 ];

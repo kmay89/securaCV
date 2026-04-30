@@ -198,7 +198,10 @@ void setup() {
 #if FEATURE_WIFI_AP
   Serial.println("[..] Starting WiFi Access Point...");
   NetworkManager& net = network_get_instance();
-  if (net.begin(device.ap_ssid, g_ap_password)) {
+  // Pass device_id as the mDNS hostname so each Canary on a shared home
+  // network is reachable at its own canary-<id>.local — fixes hostname
+  // collisions when a homeowner has more than one Canary.
+  if (net.begin(device.ap_ssid, g_ap_password, device.device_id)) {
     Serial.println("[OK] WiFi AP active");
 #if FEATURE_HTTP_SERVER
     Serial.println("[..] Starting HTTP server...");
@@ -260,7 +263,13 @@ void setup() {
   Serial.printf("║  WiFi AP    : %-45s  ║\n", device.ap_ssid);
   Serial.printf("║  Password   : %-45s  ║\n", g_ap_password);
   Serial.printf("║  Dashboard  : http://%-39s  ║\n", network.getStatus().ap_ip);
-  Serial.println("║  mDNS       : http://canary.local                             ║");
+  {
+    const char* host = network.getMdnsHostname();
+    char mdns_url[64];
+    snprintf(mdns_url, sizeof(mdns_url), "http://%s.local",
+             (host && host[0]) ? host : "canary");
+    Serial.printf("║  mDNS       : %-45s  ║\n", mdns_url);
+  }
 #endif
   Serial.println("╠══════════════════════════════════════════════════════════════╣");
   Serial.println("║  Commands: h=help, i=identity, s=status, g=gps               ║");
