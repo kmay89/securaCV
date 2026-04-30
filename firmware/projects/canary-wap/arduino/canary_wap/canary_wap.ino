@@ -3193,9 +3193,11 @@ static esp_err_t handle_wifi_connect(httpd_req_t* req) {
 // .ino function signatures to the top of the translation unit before
 // walking the body, and would otherwise fail to find BleLogSnapshot.
 
-bool ble_log_get_head(uint32_t* count, uint32_t* oldest_seq, uint32_t* newest_seq) {
-  if (!count || !oldest_seq || !newest_seq) return false;
-  *count = (uint32_t)g_health_log_ring_count;
+bool ble_log_get_head(uint32_t* count, uint32_t* oldest_seq, uint32_t* newest_seq,
+                      uint32_t* ring_size) {
+  if (!count || !oldest_seq || !newest_seq || !ring_size) return false;
+  *count     = (uint32_t)g_health_log_ring_count;
+  *ring_size = (uint32_t)HEALTH_LOG_RING_SIZE;
   if (g_health_log_ring_count == 0) {
     *oldest_seq = 0;
     *newest_seq = 0;

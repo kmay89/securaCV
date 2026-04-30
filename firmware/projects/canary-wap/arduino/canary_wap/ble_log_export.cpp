@@ -73,8 +73,8 @@ static const char* ack_short(uint8_t a) {
 // ────────────────────────────────────────────────────────────────────────────
 
 static void rebuild_head(bool force_notify) {
-  uint32_t count = 0, oldest = 0, newest = 0;
-  if (!ble_log_get_head(&count, &oldest, &newest)) return;
+  uint32_t count = 0, oldest = 0, newest = 0, ring_size = 0;
+  if (!ble_log_get_head(&count, &oldest, &newest, &ring_size)) return;
 
   // Only push notifications when the visible state actually changes —
   // count or newest_seq moving means a new entry landed. Avoids burning
@@ -83,20 +83,24 @@ static void rebuild_head(bool force_notify) {
                        (newest != g_head_last_newest);
   if (!changed && !force_notify) return;
 
-  g_head_last_count  = count;
-  g_head_last_newest = newest;
-
+  // Serialise BEFORE updating the cached "last seen" state. If
+  // serializeJson fails (overflow, allocator pressure), we want the
+  // next tick to retry — bumping the cache here would mark the change
+  // as "processed" and silently stall notifications until another
+  // entry lands and shifts newest_seq again. Caught by Gemini review.
   JsonDocument doc;
   doc["count"]      = count;
   doc["oldest_seq"] = oldest;
   doc["newest_seq"] = newest;
-  // ring_size is a coarse hint at the device's retention; SPA shows the
-  // same number on /api/logs.
-  doc["ring_size"]  = (uint32_t)100;
+  doc["ring_size"]  = ring_size;
 
   size_t n = serializeJson(doc, g_head_buf, sizeof(g_head_buf));
   if (n == 0 || n + 1 > sizeof(g_head_buf)) return;
-  g_head_buf_len = n;
+
+  // Success — commit the cache and emit.
+  g_head_last_count  = count;
+  g_head_last_newest = newest;
+  g_head_buf_len     = n;
 
   if (g_head) {
     g_head->setValue((uint8_t*)g_head_buf, g_head_buf_len);
@@ -188,12 +192,22 @@ bool init(NimBLEServer* server) {
   g_service = server->createService(SERVICE_UUID);
   if (!g_service) return false;
 
+  // Each createCharacteristic can return nullptr if the GATT table is
+  // exhausted or the heap is fragmented. Without these guards a later
+  // setCallbacks/setValue would crash and take BLE init down completely
+  // instead of failing the OTA service gracefully. Caught by Codex.
+
   // HEAD — bonded read + notify, no write.
   g_head = g_service->createCharacteristic(
     NimBLEUUID(HEAD_UUID),
     NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY
       | NIMBLE_PROPERTY::READ_ENC | NIMBLE_PROPERTY::READ_AUTHEN
   );
+  if (!g_head) {
+    log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH,
+               "ble_log_export: HEAD characteristic alloc failed", nullptr);
+    return false;
+  }
 
   // REQUEST — bonded write only. Read property deliberately omitted —
   // the request payload is only meaningful as a side-effecting write.
@@ -202,6 +216,11 @@ bool init(NimBLEServer* server) {
     NIMBLE_PROPERTY::WRITE
       | NIMBLE_PROPERTY::WRITE_ENC | NIMBLE_PROPERTY::WRITE_AUTHEN
   );
+  if (!g_request) {
+    log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH,
+               "ble_log_export: REQUEST characteristic alloc failed", nullptr);
+    return false;
+  }
   g_request->setCallbacks(&g_request_cb);
 
   // RECORD — bonded read + notify. Each completed REQUEST writes the
@@ -212,6 +231,11 @@ bool init(NimBLEServer* server) {
     NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY
       | NIMBLE_PROPERTY::READ_ENC | NIMBLE_PROPERTY::READ_AUTHEN
   );
+  if (!g_record) {
+    log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH,
+               "ble_log_export: RECORD characteristic alloc failed", nullptr);
+    return false;
+  }
 
   g_service->start();
 

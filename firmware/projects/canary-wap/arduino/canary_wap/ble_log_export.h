@@ -55,8 +55,12 @@ struct BleLogSnapshot {
 
 // External-linkage bridges defined in canary_wap.ino. They wrap
 // g_health_log_ring so the BLE module doesn't need to know about
-// HEALTH_LOG_RING_SIZE / head-index arithmetic.
-extern bool ble_log_get_head(uint32_t* count, uint32_t* oldest_seq, uint32_t* newest_seq);
+// HEALTH_LOG_RING_SIZE / head-index arithmetic. ring_size is reported
+// from the bridge so the BLE module never bakes the constant in — if
+// the .ino-side ring grows, the BLE response reflects it without code
+// changes here.
+extern bool ble_log_get_head(uint32_t* count, uint32_t* oldest_seq,
+                             uint32_t* newest_seq, uint32_t* ring_size);
 extern bool ble_log_get_by_index(size_t newest_first_index, BleLogSnapshot* out);
 
 namespace ble_log_export {
