@@ -8,6 +8,7 @@
 #include "securacv_gps.h"
 #include <string.h>
 #include <stdlib.h>
+#include <math.h>
 
 // ════════════════════════════════════════════════════════════════════════════
 // UTILITY FUNCTIONS
@@ -48,13 +49,15 @@ float knots_to_kmh(float knots) {
 GpsManager::GpsManager()
   : m_serial(nullptr), m_rb_head(0), m_rb_tail(0), m_rb_count(0),
     m_line_len(0), m_sentence_count(0), m_checksum_errors(0), m_first_fix_ms(0),
-    m_gga_count(0), m_rmc_count(0), m_gsa_count(0), m_gsv_count(0), m_vtg_count(0) {
+    m_gga_count(0), m_rmc_count(0), m_gsa_count(0), m_gsv_count(0), m_vtg_count(0),
+    m_speed_ema_mps(0.0f), m_motion_release_since_ms(0) {
   memset(&m_fix, 0, sizeof(m_fix));
   m_fix.hdop = 99.9;
   m_fix.pdop = 99.9;
   m_fix.vdop = 99.9;
   m_fix.fix_mode = FIX_MODE_NONE;
   memset(&m_utc, 0, sizeof(m_utc));
+  memset(&m_motion, 0, sizeof(m_motion));
 }
 
 void GpsManager::begin(HardwareSerial& serial, uint32_t baud, int rx_pin, int tx_pin) {
@@ -226,6 +229,11 @@ void GpsManager::parseNmea(char* line) {
     if (speed && *speed) {
       m_fix.speed_knots = parse_double(speed, 0);
       m_fix.speed_kmh = knots_to_kmh(m_fix.speed_knots);
+      // Smooth raw speed for the motion filter so a single noisy RMC doesn't
+      // flap the displayed speed. Alpha mirrors the WAP project (0.15).
+      const float alpha = 0.15f;
+      float mps = knots_to_mps(m_fix.speed_knots);
+      m_speed_ema_mps = m_speed_ema_mps * (1.0f - alpha) + mps * alpha;
     }
 
     if (course && *course) {
@@ -286,5 +294,108 @@ void GpsManager::parseNmea(char* line) {
     if (speed_kmh && *speed_kmh) {
       m_fix.speed_kmh = parse_double(speed_kmh, m_fix.speed_kmh);
     }
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// MOTION FILTER (anchor lock for stationary deployments)
+// ════════════════════════════════════════════════════════════════════════════
+//
+// Mounted cameras sit still in a window. The L76K still emits ~0.3-0.7 m/s
+// of "speed" and a few metres of position scatter from multipath. Surfacing
+// that raw makes a stationary deployment look like it's drifting — kills
+// credibility for a witness device. The motion filter holds the published
+// position to a smoothed centroid while we're at rest, and only releases it
+// once we see sustained motion (matching the witness state machine).
+
+static const double STATIONARY_RADIUS_M = 8.0;
+static const double HDOP_LOCK_MAX       = 5.0;
+static const float  STATIC_THRESHOLD    = 0.4f;
+static const float  MOVING_THRESHOLD    = 0.8f;
+static const float  ANCHOR_EMA_ALPHA    = 0.10f;
+static const uint32_t MOTION_RELEASE_MS = 3000;
+
+static double motion_haversine_m(double lat1, double lon1, double lat2, double lon2) {
+  // Spherical Earth approximation; accurate to ~0.5% over short distances,
+  // which is well inside GNSS noise. Only used for "is this fix near the
+  // anchor?" decisions, never for any logged position.
+  const double R = 6371000.0;
+  const double d2r = 0.017453292519943295;
+  double phi1 = lat1 * d2r;
+  double phi2 = lat2 * d2r;
+  double dphi = (lat2 - lat1) * d2r;
+  double dlam = (lon2 - lon1) * d2r;
+  double s1 = sin(dphi * 0.5);
+  double s2 = sin(dlam * 0.5);
+  double a = s1 * s1 + cos(phi1) * cos(phi2) * s2 * s2;
+  if (a < 0) a = 0; if (a > 1) a = 1;
+  return 2.0 * R * asin(sqrt(a));
+}
+
+void GpsManager::updateMotion(bool stationary_hint) {
+  uint32_t now = millis();
+  m_motion.raw_speed_mps = m_speed_ema_mps;
+
+  if (!m_fix.valid) {
+    m_motion.is_stationary = false;
+    m_motion.has_anchor = false;
+    m_motion.display_lat = 0.0;
+    m_motion.display_lon = 0.0;
+    m_motion.display_alt_m = 0.0;
+    m_motion.display_speed_mps = 0.0f;
+    m_motion.anchor_samples = 0;
+    m_motion_release_since_ms = 0;
+    return;
+  }
+
+  bool fix_trustworthy = (m_fix.hdop > 0 && m_fix.hdop <= HDOP_LOCK_MAX);
+  // Caller may already track a state machine (STATE_STATIONARY etc.). When
+  // they do, we trust their hint; otherwise fall back to the raw speed EMA.
+  bool want_locked = stationary_hint || (m_speed_ema_mps <= STATIC_THRESHOLD);
+  if (m_speed_ema_mps >= MOVING_THRESHOLD) want_locked = false;
+
+  if (want_locked) {
+    if (!m_motion.has_anchor) {
+      m_motion.has_anchor = true;
+      m_motion.is_stationary = true;
+      m_motion.anchor_samples = 1;
+      m_motion.display_lat = m_fix.lat;
+      m_motion.display_lon = m_fix.lon;
+      m_motion.display_alt_m = m_fix.altitude_m;
+      m_motion_release_since_ms = 0;
+    } else {
+      double drift = motion_haversine_m(m_motion.display_lat, m_motion.display_lon,
+                                        m_fix.lat, m_fix.lon);
+      if (drift <= STATIONARY_RADIUS_M && fix_trustworthy) {
+        // Slow EMA so a single bad fix can't yank the displayed position.
+        const double a = (double)ANCHOR_EMA_ALPHA;
+        m_motion.display_lat   = m_motion.display_lat   * (1.0 - a) + m_fix.lat        * a;
+        m_motion.display_lon   = m_motion.display_lon   * (1.0 - a) + m_fix.lon        * a;
+        m_motion.display_alt_m = m_motion.display_alt_m * (1.0 - a) + m_fix.altitude_m * a;
+        if (m_motion.anchor_samples < UINT32_MAX) m_motion.anchor_samples++;
+        m_motion_release_since_ms = 0;
+      } else if (drift > STATIONARY_RADIUS_M) {
+        // Out-of-radius fix: could be real motion or a multipath outlier.
+        // Don't release immediately — wait for sustained drift.
+        if (m_motion_release_since_ms == 0) m_motion_release_since_ms = now;
+        if ((now - m_motion_release_since_ms) >= MOTION_RELEASE_MS) {
+          m_motion.is_stationary = false;
+          m_motion.has_anchor = false;
+        }
+      }
+    }
+  } else {
+    m_motion.is_stationary = false;
+    m_motion.has_anchor = false;
+    m_motion_release_since_ms = 0;
+  }
+
+  if (m_motion.is_stationary && m_motion.has_anchor) {
+    m_motion.display_speed_mps = 0.0f;
+  } else {
+    m_motion.display_lat = m_fix.lat;
+    m_motion.display_lon = m_fix.lon;
+    m_motion.display_alt_m = m_fix.altitude_m;
+    m_motion.display_speed_mps = (m_speed_ema_mps < STATIC_THRESHOLD) ? 0.0f : m_speed_ema_mps;
   }
 }

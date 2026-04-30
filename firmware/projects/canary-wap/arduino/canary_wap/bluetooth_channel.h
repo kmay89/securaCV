@@ -275,6 +275,23 @@ const char* device_type_name(DeviceType type);
 const char* security_level_name(SecurityLevel level);
 const char* pairing_state_name(PairingState state);
 
+// Coarse distance estimate from RSSI using the log-distance path-loss model:
+//   d = 10 ^ ((tx_ref_dbm - rssi) / (10 * n))
+// where tx_ref_dbm is the device's expected RSSI at 1 m and n is the path-loss
+// exponent (free space ~2.0; indoor ~2.5–3.5). We pick n=2.5 as a household
+// default. This is *coarse* — BLE RSSI is noisy and varies with antenna
+// orientation, body absorption, and multipath. Treat the result as a
+// "near / nearby / far" hint, not survey-grade distance. Matches the way the
+// Apple Find My UI presents distance.
+//
+// rssi_dbm:    measured RSSI (negative dBm; less negative = closer)
+// tx_ref_dbm:  RSSI at 1m for this peer (default -59 dBm, typical for BLE 0dBm)
+// returns:     estimated metres, clamped to [0.1, 100.0]; 0 means unknown.
+float estimate_distance_m(int8_t rssi_dbm, int8_t tx_ref_dbm = -59);
+
+// Friendly bucket label ("near", "nearby", "far", "very far") suitable for UI.
+const char* distance_label(float metres);
+
 } // namespace bluetooth_channel
 
 #endif // SECURACV_BLUETOOTH_CHANNEL_H

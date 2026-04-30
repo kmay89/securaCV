@@ -641,6 +641,32 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     }
     .auth-footer span { margin: 0 0.3rem; }
 
+    /* BLE signal bars (Find My-style) — four ascending bars, each lit if RSSI
+       crosses a threshold. CSS-only so it stays cheap to render hundreds of
+       results on a phone. */
+    .signal-bars { width: 18px; }
+    .signal-bars span {
+      width: 3px; background: var(--border); border-radius: 1px; opacity: 0.6;
+    }
+    .signal-bars span:nth-child(1) { height: 4px; }
+    .signal-bars span:nth-child(2) { height: 7px; }
+    .signal-bars span:nth-child(3) { height: 10px; }
+    .signal-bars span:nth-child(4) { height: 13px; }
+    .signal-bars.s1 span:nth-child(1),
+    .signal-bars.s2 span:nth-child(-n+2),
+    .signal-bars.s3 span:nth-child(-n+3),
+    .signal-bars.s4 span:nth-child(-n+4) { background: var(--accent); opacity: 1; }
+    .signal-bars.weak span:nth-child(-n+1) { background: var(--danger); opacity: 1; }
+    .ble-row { display:flex; align-items:center; gap:0.6rem; padding:0.6rem 0.75rem; }
+    .ble-row + .ble-row { border-top: 1px solid var(--border); }
+    .ble-row .ble-icon { font-size:1.3rem; }
+    .ble-row .ble-meta { flex:1; min-width:0; }
+    .ble-row .ble-name { font-weight:600; font-size:0.9rem; }
+    .ble-row .ble-sub  { font-size:0.7rem; color: var(--muted); font-family: var(--mono); }
+    .ble-row .ble-dist { text-align:right; min-width:70px; }
+    .ble-row .ble-dist .ble-dist-m { font-weight:600; font-size:0.85rem; }
+    .ble-row .ble-dist .ble-dist-l { font-size:0.65rem; color: var(--muted); }
+
     /* Responsive */
     @media (max-width: 600px) {
       .stats-grid { grid-template-columns: repeat(2, 1fr); }
@@ -1643,6 +1669,34 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
               <div class="stat-label">Paired</div>
               <div class="stat-value" id="btPairedCount">0</div>
             </div>
+            <div class="stat-item">
+              <div class="stat-label">Nearby</div>
+              <div class="stat-value" id="btNearbyCount">0</div>
+            </div>
+          </div>
+          <!-- Live connection panel (Find My-style: name, signal bars, distance) -->
+          <div id="btConnLive" style="display:none;margin-top:1rem;padding:0.85rem;border:1px solid var(--border);border-radius:8px;background:var(--card-hover,#1a2340);">
+            <div style="display:flex;align-items:center;gap:0.75rem;">
+              <div style="font-size:1.6rem;">📱</div>
+              <div style="flex:1;min-width:0;">
+                <div style="font-weight:600;" id="btConnName">Connected device</div>
+                <div style="font-size:0.7rem;color:var(--muted);font-family:var(--mono,monospace);" id="btConnAddr">--</div>
+              </div>
+              <div style="text-align:right;">
+                <div style="font-weight:600;" id="btConnDistance">— m</div>
+                <div style="font-size:0.7rem;color:var(--muted);" id="btConnDistanceLabel">unknown</div>
+              </div>
+            </div>
+            <div style="display:flex;align-items:center;gap:0.5rem;margin-top:0.5rem;">
+              <div class="signal-bars" id="btConnBars" style="display:inline-flex;gap:2px;align-items:flex-end;height:14px;">
+                <span></span><span></span><span></span><span></span>
+              </div>
+              <span style="font-size:0.75rem;color:var(--muted);" id="btConnRssi">— dBm</span>
+              <span style="margin-left:auto;font-size:0.7rem;color:var(--muted);" id="btConnSecurity">—</span>
+            </div>
+            <div style="margin-top:0.5rem;display:flex;gap:0.5rem;">
+              <button class="btn btn-sm btn-danger" onclick="btDisconnect()">Disconnect</button>
+            </div>
           </div>
           <div class="toggle-row" style="margin-top:1rem;">
             <div class="toggle-info">
@@ -1691,6 +1745,24 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
             <label style="cursor:pointer;">
               <input type="checkbox" id="btAllowPairing" onchange="saveBtSettings()">
             </label>
+          </div>
+        </div>
+
+        <!-- Nearby Bluetooth scanner — mirrors the WiFi scan presentation
+             so people get the same "X devices nearby" affordance for both. -->
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title">Nearby Bluetooth Devices</div>
+              <div class="card-subtitle" id="btScanSubtitle">Tap Scan to see what's around</div>
+            </div>
+            <div style="display:flex;gap:0.5rem;">
+              <button class="btn btn-secondary btn-sm" id="btScanBtn" onclick="btStartScan()">Scan</button>
+              <button class="btn btn-ghost btn-sm" onclick="btClearScan()" title="Clear results">Clear</button>
+            </div>
+          </div>
+          <div id="btScanList" class="log-list" style="max-height:280px;">
+            <p style="color:var(--muted);font-size:0.85rem;text-align:center;padding:1rem;">No scan yet</p>
           </div>
         </div>
 
@@ -2257,16 +2329,33 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     }
 
     function updateGps(gps) {
-      const hasFix = gps.valid && gps.quality > 0;
+      // Backend emits gps.fix (bool) — gps.valid never existed; the previous
+      // check "gps.valid && ..." was always false, which is why the UI showed
+      // "Waiting for fix" even with valid coordinates.
+      const hasFix = !!(gps && gps.fix && gps.quality > 0);
+      const stationary = !!(gps && gps.stationary);
       document.getElementById('gpsStatus').textContent = hasFix ? (gps.satellites + ' Sats') : 'No Fix';
-      document.getElementById('gpsSubtitle').textContent = hasFix ? `Fix: ${gps.fix_mode || '?'}D` : 'Waiting for fix...';
+      // When the motion filter has us locked, surface that explicitly so the
+      // 0 m/s reading reads as "intentionally pinned" rather than "broken".
+      let subtitle;
+      if (!hasFix) {
+        subtitle = 'Waiting for fix...';
+      } else if (stationary) {
+        subtitle = `Stationary · Fix ${gps.fix_mode || '?'}D`;
+      } else {
+        subtitle = `Fix: ${gps.fix_mode || '?'}D`;
+      }
+      document.getElementById('gpsSubtitle').textContent = subtitle;
       document.getElementById('gpsBadge').className = 'badge ' + (hasFix ? 'success' : 'warning');
-      document.getElementById('gpsLat').textContent = gps.lat?.toFixed(6) || '--';
-      document.getElementById('gpsLon').textContent = gps.lon?.toFixed(6) || '--';
-      document.getElementById('gpsAlt').textContent = gps.alt ? gps.alt.toFixed(1) + ' m' : '--';
-      document.getElementById('gpsSpeed').textContent = gps.speed ? gps.speed.toFixed(1) + ' m/s' : '--';
+      document.getElementById('gpsLat').textContent = (gps.lat != null) ? Number(gps.lat).toFixed(6) : '--';
+      document.getElementById('gpsLon').textContent = (gps.lon != null) ? Number(gps.lon).toFixed(6) : '--';
+      document.getElementById('gpsAlt').textContent = gps.alt ? Number(gps.alt).toFixed(1) + ' m' : '--';
+      // 0.0 m/s is a valid reading (anchor lock) — render it instead of '--'.
+      document.getElementById('gpsSpeed').textContent = (hasFix && gps.speed != null)
+        ? Number(gps.speed).toFixed(1) + ' m/s' + (stationary ? ' · still' : '')
+        : '--';
       document.getElementById('gpsSats').textContent = gps.satellites || '--';
-      document.getElementById('gpsHdop').textContent = gps.hdop?.toFixed(1) || '--';
+      document.getElementById('gpsHdop').textContent = (gps.hdop != null) ? Number(gps.hdop).toFixed(1) : '--';
     }
 
     function updateBadges(data) {
@@ -3046,16 +3135,48 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     }
 
     let btState = null;
+    let btScanPolling = null;
+
+    // RSSI -> bar count (1..4). Mirrors Apple's Bluetooth meter: -55 dBm and
+    // up is "right next to it"; below ~-90 is "too far to be useful".
+    function rssiBarCount(rssi) {
+      if (rssi == null || rssi === 0) return 0;
+      if (rssi >= -55) return 4;
+      if (rssi >= -70) return 3;
+      if (rssi >= -85) return 2;
+      return 1;
+    }
+    function distancePretty(m) {
+      if (!m || m <= 0) return '—';
+      if (m < 1) return m.toFixed(1) + ' m';
+      if (m < 10) return m.toFixed(1) + ' m';
+      return Math.round(m) + ' m';
+    }
+    function deviceIcon(d) {
+      if (d.is_securacv) return '🔒';
+      switch (d.type) {
+        case 'phone':    return '📱';
+        case 'tablet':   return '📱';
+        case 'computer': return '💻';
+        case 'wearable': return '⌚';
+        case 'securacv': return '🔒';
+        default:         return '📶';
+      }
+    }
 
     async function refreshBtStatus() {
       const data = await api('/api/bluetooth');
       if (!data || !data.state) {
         // Backend not present (FEATURE_BLUETOOTH=0 or build without NimBLE).
+        // We still let the user toggle settings; the controls are inert until
+        // a build with bluetooth_channel is flashed.
         const subtitle = document.getElementById('btSubtitle');
-        if (subtitle) subtitle.textContent = 'BLE unavailable in this build';
+        if (subtitle) subtitle.textContent = 'BLE not enabled in this firmware build — flash a build with FEATURE_BLUETOOTH=1';
         const badge = document.getElementById('btStateBadge');
         const text = document.getElementById('btStateText');
         if (badge && text) { badge.className = 'badge warning'; text.textContent = 'Unavailable'; }
+        const conn = document.getElementById('btConnLive');
+        if (conn) conn.style.display = 'none';
         return;
       }
       btState = data;
@@ -3064,6 +3185,10 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       document.getElementById('btDeviceName').textContent = data.device_name || '--';
       document.getElementById('btTxPower').innerHTML = (data.tx_power >= 0 ? '+' : '') + data.tx_power + '<span class="stat-unit">dBm</span>';
       document.getElementById('btPairedCount').textContent = data.paired_count || 0;
+      // The scan-list polling also writes this — fall back to the status-side
+      // count so the stat shows something between scans.
+      const nearbyEl = document.getElementById('btNearbyCount');
+      if (nearbyEl && nearbyEl.dataset.live !== '1') nearbyEl.textContent = data.scanned_count || 0;
       document.getElementById('btEnabled').checked = data.enabled;
 
       const badge = document.getElementById('btStateBadge');
@@ -3071,6 +3196,22 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       if (data.connected) { badge.className = 'badge success'; text.textContent = 'Connected'; }
       else if (data.advertising) { badge.className = 'badge info'; text.textContent = 'Advertising'; }
       else { badge.className = 'badge info'; text.textContent = data.enabled ? 'Idle' : 'Disabled'; }
+
+      // Live connection panel (Find My-like card)
+      const connEl = document.getElementById('btConnLive');
+      if (data.connected && data.connection) {
+        connEl.style.display = '';
+        document.getElementById('btConnName').textContent = data.connection.name || 'Unnamed device';
+        document.getElementById('btConnAddr').textContent = data.connection.address || '';
+        document.getElementById('btConnRssi').textContent = (data.connection.rssi || 0) + ' dBm';
+        document.getElementById('btConnDistance').textContent = distancePretty(data.connection.distance_m);
+        document.getElementById('btConnDistanceLabel').textContent = data.connection.distance_label || '';
+        document.getElementById('btConnSecurity').textContent = data.connection.security || '';
+        const bars = document.getElementById('btConnBars');
+        bars.className = 'signal-bars s' + rssiBarCount(data.connection.rssi);
+      } else {
+        connEl.style.display = 'none';
+      }
 
       const advBtn = document.getElementById('btAdvBtn');
       advBtn.textContent = data.advertising ? 'Stop Advertising' : 'Start Advertising';
@@ -3150,6 +3291,90 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     async function btCancelPairing() {
       await api('/api/bluetooth/pair/cancel', 'POST');
       refreshBtStatus();
+    }
+
+    async function btDisconnect() {
+      await api('/api/bluetooth/disconnect', 'POST');
+      refreshBtStatus();
+    }
+
+    // Nearby Bluetooth scan: kick off a 10s scan and poll results so the list
+    // populates in real time, matching the WiFi scan UX.
+    async function btStartScan() {
+      const btn = document.getElementById('btScanBtn');
+      btn.disabled = true;
+      btn.textContent = 'Scanning…';
+      document.getElementById('btScanSubtitle').textContent = 'Listening for advertisements…';
+      document.getElementById('btScanList').innerHTML =
+        '<div class="loading" style="padding:1rem;text-align:center;"><div class="spinner"></div></div>';
+      const start = await api('/api/bluetooth/scan/start', 'POST', { duration_sec: 10 });
+      if (start && start.success === false) {
+        btn.disabled = false;
+        btn.textContent = 'Scan';
+        document.getElementById('btScanList').innerHTML =
+          '<p style="color:var(--danger);font-size:0.85rem;text-align:center;padding:1rem;">' +
+          (start.error || 'Scan failed') + '</p>';
+        return;
+      }
+      // Poll for incremental results so devices fade in as the scanner sees them.
+      if (btScanPolling) clearInterval(btScanPolling);
+      btScanPolling = setInterval(async () => {
+        const r = await api('/api/bluetooth/scan/results');
+        if (r && r.devices) renderBtScanList(r.devices);
+        if (r && !r.scanning) {
+          clearInterval(btScanPolling); btScanPolling = null;
+          btn.disabled = false;
+          btn.textContent = 'Scan';
+        }
+      }, 1000);
+      // Hard cutoff: never leave the spinner spinning.
+      setTimeout(() => {
+        if (btScanPolling) { clearInterval(btScanPolling); btScanPolling = null; }
+        btn.disabled = false;
+        btn.textContent = 'Scan';
+      }, 14000);
+    }
+
+    function renderBtScanList(devices) {
+      const list = document.getElementById('btScanList');
+      const sub  = document.getElementById('btScanSubtitle');
+      const live = document.getElementById('btNearbyCount');
+      sub.textContent = devices.length + ' device' + (devices.length === 1 ? '' : 's') + ' nearby';
+      if (live) { live.textContent = devices.length; live.dataset.live = '1'; }
+      if (!devices.length) {
+        list.innerHTML = '<p style="color:var(--muted);font-size:0.85rem;text-align:center;padding:1rem;">No advertisements heard yet</p>';
+        return;
+      }
+      // Sort by signal strength (closest first) so the most relevant devices
+      // float to the top — same behaviour as Apple Find My.
+      devices.sort((a, b) => (b.rssi || -200) - (a.rssi || -200));
+      list.innerHTML = devices.map(d => {
+        const bars = rssiBarCount(d.rssi);
+        const barsCls = 'signal-bars s' + bars + (bars === 1 ? ' weak' : '');
+        const securaBadge = d.is_securacv ?
+          ' <span class="badge success" style="font-size:0.6rem;">SecuraCV</span>' : '';
+        return '<div class="ble-row">' +
+          '<div class="ble-icon">' + deviceIcon(d) + '</div>' +
+          '<div class="ble-meta">' +
+            '<div class="ble-name">' + escapeHtml(d.name || 'Unknown device') + securaBadge + '</div>' +
+            '<div class="ble-sub">' + escapeHtml(d.address || '') + ' · ' + (d.rssi || '?') + ' dBm</div>' +
+          '</div>' +
+          '<div class="' + barsCls + '"><span></span><span></span><span></span><span></span></div>' +
+          '<div class="ble-dist">' +
+            '<div class="ble-dist-m">' + distancePretty(d.distance_m) + '</div>' +
+            '<div class="ble-dist-l">' + escapeHtml(d.distance_label || '') + '</div>' +
+          '</div>' +
+        '</div>';
+      }).join('');
+    }
+
+    async function btClearScan() {
+      await api('/api/bluetooth/scan/results', 'DELETE');
+      const live = document.getElementById('btNearbyCount');
+      if (live) { live.textContent = '0'; delete live.dataset.live; }
+      document.getElementById('btScanList').innerHTML =
+        '<p style="color:var(--muted);font-size:0.85rem;text-align:center;padding:1rem;">No scan yet</p>';
+      document.getElementById('btScanSubtitle').textContent = 'Tap Scan to see what’s around';
     }
 
     async function loadBtPairedDevices() {

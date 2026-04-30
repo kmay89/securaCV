@@ -265,11 +265,29 @@ static const uint32_t BOOT_LONG_PRESS_MS   = 3000;  // hold for factory reset
 // ════════════════════════════════════════════════════════════════════════════
 // MOTION DETECTION WITH HYSTERESIS
 // ════════════════════════════════════════════════════════════════════════════
+//
+// Mounted cameras sit still in a window: the L76K still emits ~0.3–0.7 m/s of
+// "speed" and a few metres of position wander from multipath. If we surface
+// that raw, the dashboard looks like the camera is drifting around — which
+// kills credibility for evidence chains. The motion filter below holds the
+// displayed position to a smoothed anchor whenever the device is at rest, and
+// only releases it once we see sustained, unambiguous motion (matching the
+// existing FixState hysteresis). This keeps a stolen/moving deployment honest
+// (real motion still shows) while making a stationary deployment rock-solid.
 
 static const float    MOVING_THRESHOLD_MPS   = 0.8f;
 static const float    STATIC_THRESHOLD_MPS   = 0.4f;
 static const float    SPEED_EMA_ALPHA        = 0.15f;
 static const uint32_t STATE_HYSTERESIS_MS    = 2000;
+
+// Position lock parameters. STATIONARY_RADIUS_M is the maximum drift from the
+// anchor we accept as "still"; HDOP_LOCK_MAX gates the filter to fixes that
+// are at least minimally trustworthy (HDOP > 5 means we're in deep multipath
+// and should not anchor against that noise).
+static const double   STATIONARY_RADIUS_M    = 8.0;
+static const double   HDOP_LOCK_MAX          = 5.0;
+static const float    ANCHOR_EMA_ALPHA       = 0.10f;
+static const uint32_t MOTION_RELEASE_MS      = 3000;  // Sustained motion before unlocking position
 
 // ════════════════════════════════════════════════════════════════════════════
 // NVS PERSISTENCE
@@ -488,6 +506,25 @@ static float g_speed_ema = 0.0f;
 static uint32_t g_last_record_ms = 0;
 static uint32_t g_last_verify_ms = 0;
 static uint32_t g_boot_button_press_start = 0;
+
+// ── Motion filter (anchor-lock when stationary) ─────────────────────────────
+// display_* are what the API/UI publish; raw values stay in g_fix for the
+// witness chain so we never tamper with the underlying truth — only the
+// presentation. is_locked is true while the position is held at the anchor.
+struct MotionFilter {
+  double  display_lat;
+  double  display_lon;
+  double  display_alt_m;
+  float   display_speed_mps;
+  bool    is_locked;
+  bool    has_anchor;
+  double  anchor_lat;
+  double  anchor_lon;
+  double  anchor_alt_m;
+  uint32_t anchor_samples;
+  uint32_t motion_candidate_since_ms;
+};
+static MotionFilter g_motion = {0};
 
 // SD card
 static SPIClass g_sd_spi(FSPI);
@@ -1844,6 +1881,136 @@ static FixState update_state(const GnssFix* fx, FixState cur) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// MOTION FILTER
+// ════════════════════════════════════════════════════════════════════════════
+//
+// Why this exists: the L76K — like every consumer GNSS — emits a non-zero
+// speed and a few metres of position scatter even when the device is bolted
+// to a wall. The witness chain still records the raw fix (we never lie about
+// what the receiver said), but the API/UI publishes a filtered view so a
+// stationary mounted camera presents as stationary. The filter has two modes:
+//
+//   LOCKED   (stationary): displayed lat/lon/alt are pinned to a running
+//              centroid of recent fixes; displayed speed is forced to 0.
+//              We accept new fixes into the centroid only while they stay
+//              within STATIONARY_RADIUS_M of the anchor and HDOP is sane.
+//
+//   UNLOCKED (moving): displayed values track the raw fix verbatim, and
+//              speed is the existing EMA. We re-acquire an anchor as soon
+//              as the witness state machine settles back to STATIONARY.
+//
+// Transitions follow the existing FixState hysteresis: the filter only
+// unlocks once we've seen sustained motion (raw speed >= MOVING_THRESHOLD_MPS
+// or position drift > STATIONARY_RADIUS_M for MOTION_RELEASE_MS). That keeps
+// a stolen device honest — real motion shows up — without flickering during
+// a brief multipath spike at rest.
+
+static double motion_haversine_m(double lat1, double lon1, double lat2, double lon2) {
+  // Spherical Earth approximation; accurate to ~0.5% for short distances,
+  // which is well within GNSS noise. We only use this for "is this fix near
+  // the anchor?" decisions, not for any logged position.
+  const double R = 6371000.0;
+  const double d2r = 0.017453292519943295;  // M_PI / 180
+  double phi1 = lat1 * d2r;
+  double phi2 = lat2 * d2r;
+  double dphi = (lat2 - lat1) * d2r;
+  double dlam = (lon2 - lon1) * d2r;
+  double s1 = sin(dphi * 0.5);
+  double s2 = sin(dlam * 0.5);
+  double a = s1 * s1 + cos(phi1) * cos(phi2) * s2 * s2;
+  if (a < 0) a = 0; if (a > 1) a = 1;
+  return 2.0 * R * asin(sqrt(a));
+}
+
+static void motion_reset_anchor(double lat, double lon, double alt) {
+  g_motion.anchor_lat = lat;
+  g_motion.anchor_lon = lon;
+  g_motion.anchor_alt_m = alt;
+  g_motion.anchor_samples = 1;
+  g_motion.has_anchor = true;
+  g_motion.motion_candidate_since_ms = 0;
+}
+
+static void motion_filter_update(const GnssFix* fx, FixState state) {
+  uint32_t now = millis();
+
+  // No fix → nothing meaningful to display. Drop the lock so we don't keep
+  // showing a stale anchor; surface zeros and let the UI's "Waiting for fix"
+  // copy take over.
+  if (!fx->valid) {
+    g_motion.is_locked = false;
+    g_motion.has_anchor = false;
+    g_motion.display_lat = 0.0;
+    g_motion.display_lon = 0.0;
+    g_motion.display_alt_m = 0.0;
+    g_motion.display_speed_mps = 0.0f;
+    g_motion.motion_candidate_since_ms = 0;
+    return;
+  }
+
+  // Untrustworthy fix (deep multipath, urban canyon) — pass it through but
+  // don't let it pollute the anchor.
+  bool fix_trustworthy = (fx->hdop > 0 && fx->hdop <= HDOP_LOCK_MAX);
+
+  bool want_locked = (state == STATE_STATIONARY) ||
+                     (state == STATE_FIX_ACQUIRED && g_speed_ema <= STATIC_THRESHOLD_MPS);
+
+  if (want_locked) {
+    if (!g_motion.has_anchor || !g_motion.is_locked) {
+      // (Re)entering the locked state — seed the anchor at the current fix.
+      motion_reset_anchor(fx->lat, fx->lon, fx->altitude_m);
+      g_motion.is_locked = true;
+    } else {
+      double drift = motion_haversine_m(g_motion.anchor_lat, g_motion.anchor_lon, fx->lat, fx->lon);
+
+      if (drift <= STATIONARY_RADIUS_M && fix_trustworthy) {
+        // Fold the new fix into the anchor with an EMA. Using a slow alpha
+        // means a single bad fix can't yank the displayed position around,
+        // but real settling still shows up over ~10 samples.
+        const double a = (double)ANCHOR_EMA_ALPHA;
+        g_motion.anchor_lat   = g_motion.anchor_lat   * (1.0 - a) + fx->lat        * a;
+        g_motion.anchor_lon   = g_motion.anchor_lon   * (1.0 - a) + fx->lon        * a;
+        g_motion.anchor_alt_m = g_motion.anchor_alt_m * (1.0 - a) + fx->altitude_m * a;
+        if (g_motion.anchor_samples < UINT32_MAX) g_motion.anchor_samples++;
+        g_motion.motion_candidate_since_ms = 0;
+      } else if (drift > STATIONARY_RADIUS_M) {
+        // Fix is outside the lock radius. Could be real motion the state
+        // machine hasn't caught yet, or a one-off multipath outlier. Start
+        // the candidate clock; only release the lock if we keep seeing
+        // outside-radius fixes for MOTION_RELEASE_MS.
+        if (g_motion.motion_candidate_since_ms == 0) {
+          g_motion.motion_candidate_since_ms = now;
+        }
+        if ((now - g_motion.motion_candidate_since_ms) >= MOTION_RELEASE_MS) {
+          g_motion.is_locked = false;
+          g_motion.has_anchor = false;
+        }
+      }
+    }
+  } else {
+    // State machine says we're moving — release the lock immediately so the
+    // UI tracks the raw fix.
+    g_motion.is_locked = false;
+    g_motion.has_anchor = false;
+    g_motion.motion_candidate_since_ms = 0;
+  }
+
+  if (g_motion.is_locked && g_motion.has_anchor) {
+    g_motion.display_lat = g_motion.anchor_lat;
+    g_motion.display_lon = g_motion.anchor_lon;
+    g_motion.display_alt_m = g_motion.anchor_alt_m;
+    g_motion.display_speed_mps = 0.0f;
+  } else {
+    g_motion.display_lat = fx->lat;
+    g_motion.display_lon = fx->lon;
+    g_motion.display_alt_m = fx->altitude_m;
+    // While moving, surface the smoothed speed; deadband sub-threshold so we
+    // don't render meaningless 0.05 m/s twitches once we've settled.
+    g_motion.display_speed_mps = (g_speed_ema < STATIC_THRESHOLD_MPS) ? 0.0f : g_speed_ema;
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // HTTP HANDLERS
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -1935,23 +2102,30 @@ static esp_err_t handle_status(httpd_req_t* req) {
   doc["logs_stored"] = g_health.logs_stored;
   doc["unacked_count"] = g_health.logs_unacked;
 
-  // GPS position data (safe even if GPS absent - returns zeros/false)
+  // GPS position data (safe even if GPS absent - returns zeros/false).
+  // We surface the motion-filtered values here so a stationary mounted
+  // device shows a stable lat/lon and 0 m/s, instead of the raw L76K jitter.
+  // The raw fix is still recorded in the witness chain — see
+  // motion_filter_update() for the rationale.
   JsonObject gps = doc["gps"].to<JsonObject>();
   gps["available"] = g_hw.gps_available;
   gps["fix"] = g_fix.valid;
-  // Only include coordinates if GPS is available and has fix
   if (g_hw.gps_available && g_fix.valid) {
-    gps["lat"] = g_fix.lat;
-    gps["lon"] = g_fix.lon;
-    gps["alt"] = g_fix.altitude_m;
-    gps["speed"] = g_speed_ema;
+    gps["lat"] = g_motion.display_lat;
+    gps["lon"] = g_motion.display_lon;
+    gps["alt"] = g_motion.display_alt_m;
+    gps["speed"] = g_motion.display_speed_mps;
     gps["hdop"] = g_fix.hdop;
+    gps["stationary"] = g_motion.is_locked;
+    gps["raw_speed"] = g_speed_ema;  // For diagnostics / "show jitter" toggles
   } else {
     gps["lat"] = 0.0;
     gps["lon"] = 0.0;
     gps["alt"] = 0.0;
     gps["speed"] = 0.0;
     gps["hdop"] = 99.9;
+    gps["stationary"] = false;
+    gps["raw_speed"] = 0.0;
   }
   gps["quality"] = g_fix.quality;
   gps["satellites"] = g_hw.gps_available ? g_fix.satellites : 0;
@@ -4650,6 +4824,11 @@ void loop() {
 
   // Update state machine
   g_state = update_state(&g_fix, g_state);
+
+  // Update motion filter (publishes display_lat/lon/speed to API/UI). The raw
+  // g_fix is preserved for the witness chain — only the presentation layer
+  // sees the anchor-locked values.
+  motion_filter_update(&g_fix, g_state);
 
   // ════════════════════════════════════════════════════════════════════════════
   // PERIODIC HARDWARE CHECKS — SD card hot-plug, etc.
