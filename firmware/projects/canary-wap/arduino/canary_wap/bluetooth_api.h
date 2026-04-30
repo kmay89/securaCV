@@ -126,6 +126,18 @@ inline esp_err_t handle_bluetooth_disable(httpd_req_t* req) {
 
 // POST /api/bluetooth/advertise/start - Start advertising
 inline esp_err_t handle_bluetooth_advertise_start(httpd_req_t* req) {
+  // Auto-enable: clicking "Start Advertising" is unambiguous user intent.
+  // Without this the call silently returns false when enabled=false in NVS.
+  if (!bluetooth_channel::is_enabled()) {
+    if (!bluetooth_channel::enable()) {
+      return send_error(req, "Bluetooth init failed (check antenna / NimBLE library)");
+    }
+  }
+  // Check pre-conditions before issuing the start call so the error message
+  // is specific and we avoid a no-op state transition.
+  if (bluetooth_channel::is_connected()) {
+    return send_error(req, "Cannot advertise while a device is connected");
+  }
   if (bluetooth_channel::start_advertising()) {
     return send_success(req, "Advertising started");
   }
@@ -214,8 +226,18 @@ inline esp_err_t handle_bluetooth_scan_clear(httpd_req_t* req) {
 
 // POST /api/bluetooth/pair/start - Start pairing mode
 inline esp_err_t handle_bluetooth_pair_start(httpd_req_t* req) {
+  // Auto-enable: same rationale as advertise/start.
+  if (!bluetooth_channel::is_enabled()) {
+    if (!bluetooth_channel::enable()) {
+      return send_error(req, "Bluetooth init failed (check antenna / NimBLE library)");
+    }
+  }
   if (bluetooth_channel::start_pairing()) {
     return send_success(req, "Pairing mode started");
+  }
+  bluetooth_channel::BluetoothSettings s = bluetooth_channel::get_settings();
+  if (!s.allow_pairing) {
+    return send_error(req, "Pairing disabled in settings — toggle 'Allow new pairings' first");
   }
   return send_error(req, "Failed to start pairing");
 }

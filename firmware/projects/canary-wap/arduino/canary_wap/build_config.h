@@ -19,8 +19,8 @@
 // HARDWARE TARGET SELECTION — Uncomment exactly ONE
 // ════════════════════════════════════════════════════════════════════════════
 
-// #define HARDWARE_XIAO_ESP32S3   // XIAO ESP32-S3 Sense (dual-core, camera, PSRAM)
-#define HARDWARE_XIAO_ESP32C3   // XIAO ESP32-C3 (single-core RISC-V, BLE 5.0 only)
+#define HARDWARE_XIAO_ESP32S3   // XIAO ESP32-S3 Sense (dual-core, camera, PSRAM)
+// #define HARDWARE_XIAO_ESP32C3   // XIAO ESP32-C3 (single-core RISC-V, BLE 5.0 only)
 
 // ════════════════════════════════════════════════════════════════════════════
 // BUILD PROFILE SELECTION — Uncomment exactly ONE
@@ -60,14 +60,17 @@
   // GPIO range: 0-21 only. Strapping pins: GPIO 2, 8, 9
   #define HW_HAS_CAMERA         0
   #define HW_HAS_PSRAM          0
-  #define HW_HAS_BT_CLASSIC     0   // C3 supports BLE only, no Classic Bluetooth
+  #define HW_HAS_BT_CLASSIC     0   // C3 has no Classic Bluetooth radio
+  #define HW_HAS_BLE            1   // C3 supports Bluetooth Low Energy 5.0
   #define HW_CPU_CORES          1
   #define HW_MAX_GPIO           21
 #elif defined(HARDWARE_XIAO_ESP32S3)
-  // ESP32-S3: Dual-core Xtensa LX7, BLE + Classic BT, camera, PSRAM
+  // ESP32-S3: Dual-core Xtensa LX7, BLE 5.0 only (no Classic), camera, PSRAM
+  // Reference: ESP32-S3 datasheet §1.1 — "Bluetooth LE 5.0", no BR/EDR.
   #define HW_HAS_CAMERA         1
   #define HW_HAS_PSRAM          1
-  #define HW_HAS_BT_CLASSIC     1
+  #define HW_HAS_BT_CLASSIC     0   // S3 has no Classic Bluetooth radio
+  #define HW_HAS_BLE            1   // S3 supports Bluetooth Low Energy 5.0
   #define HW_CPU_CORES          2
   #define HW_MAX_GPIO           48
 #endif
@@ -129,7 +132,8 @@
 #elif defined(BUILD_PROFILE_FULL)
   // ── FULL: All hardware-supported features enabled ──
   // Use for: Production builds, full integration testing
-  // Note: Camera and Classic BT auto-disabled on ESP32-C3 (hardware limitation)
+  // Note: Camera auto-disabled on ESP32-C3 (no DVP camera interface).
+  //       BLE works on both S3 and C3; neither variant has Classic Bluetooth.
 
   #define FEATURE_SD_STORAGE    1
   #define FEATURE_WIFI_AP       1
@@ -139,7 +143,10 @@
   #define FEATURE_WATCHDOG      1
   #define FEATURE_STATE_LOG     1
   #define FEATURE_MESH_NETWORK  1
-  #define FEATURE_BLUETOOTH     HW_HAS_BT_CLASSIC // ESP32-C3 has no Classic Bluetooth
+  // FEATURE_BLUETOOTH gates the BLE pairing/advertising channel (NimBLE).
+  // This is BLE, not Classic Bluetooth — gate on HW_HAS_BLE so it works on
+  // both XIAO ESP32-S3 and XIAO ESP32-C3 (both BLE 5.0 capable).
+  #define FEATURE_BLUETOOTH     HW_HAS_BLE
   #define FEATURE_BLE           1   // BLE Discovery (Opera/Chirp/Nearby) — works on both S3 and C3
   #define FEATURE_SYS_MONITOR   1
   #define FEATURE_WIFI_PRESENCE 1   // WiFi probe request presence detection
