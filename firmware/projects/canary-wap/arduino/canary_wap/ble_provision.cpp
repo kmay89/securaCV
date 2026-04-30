@@ -150,8 +150,12 @@ static void start_scan() {
   // async=true so we don't block the BLE callback. show_hidden=false.
   // passive=false (active probes are needed to surface most home APs).
   int n = WiFi.scanNetworks(/*async=*/true, /*show_hidden=*/false, /*passive=*/false);
-  if (n == WIFI_SCAN_RUNNING || n == WIFI_SCAN_FAILED || n == 0) {
-    // n == WIFI_SCAN_RUNNING (-1) is the expected return for async start.
+  if (n == WIFI_SCAN_RUNNING) {
+    // WIFI_SCAN_RUNNING (-1) is the only success return for an async start.
+    // WIFI_SCAN_FAILED (-2) means the radio refused — n == 0 means a
+    // synchronous empty result, which shouldn't happen with async=true and
+    // is also not a valid in-flight signal. Either way, don't pretend the
+    // scan is in flight if it isn't.
     g_scan_in_flight   = true;
     g_scan_started_ms  = millis();
     g_scans_started++;
@@ -247,6 +251,14 @@ class CredsCb : public NimBLECharacteristicCallbacks {
       return;
     }
 
+    // Past the rate-limit gate — count this as a "spent attempt" RIGHT NOW
+    // so any failure path below (oversized payload, bad JSON, validation
+    // refusal) still consumes one of the hourly slots and arms the
+    // cooldown. Without this, an attacker could flood malformed writes
+    // and never trip the rate limiter, which is what Codex P2 caught.
+    g_last_creds_write_ms    = now;
+    g_hourly_writes_count++;
+
     std::string val = c->getValue();
     if (val.empty() || val.size() > 256) {  // SSID + pw + JSON envelope
       g_creds_rejected++;
@@ -266,16 +278,26 @@ class CredsCb : public NimBLECharacteristicCallbacks {
     const char* ssid_in = doc["ssid"] | "";
     const char* pw_in   = doc["password"] | "";
 
+    // Reject (don't silently truncate) over-spec inputs. WPA2 caps SSID
+    // at 32 bytes and PSK at 64 bytes; anything longer can't be a valid
+    // home credential, so accepting a truncated version would persist a
+    // wrong value the user never typed. Codex P1 flagged this.
+    const size_t ssid_in_len = strlen(ssid_in);
+    const size_t pw_in_len   = strlen(pw_in);
+    if (ssid_in_len == 0 || ssid_in_len > MAX_SSID_LEN ||
+        pw_in_len > MAX_PASSWORD_LEN) {
+      g_creds_rejected++;
+      publish_state("error", "invalid");
+      log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH,
+        "BLE provisioning: creds rejected (size out of range)", nullptr);
+      return;
+    }
+
     char ssid[MAX_SSID_LEN + 1] = {0};
     char pw[MAX_PASSWORD_LEN + 1] = {0};
-    strncpy(ssid, ssid_in, MAX_SSID_LEN);
-    strncpy(pw,   pw_in,   MAX_PASSWORD_LEN);
-
-    // Update rate counters BEFORE handing off to the bridge — even
-    // failed validation counts against the cap, so an attacker can't
-    // drive thousands of malformed writes.
-    g_last_creds_write_ms = now;
-    g_hourly_writes_count++;
+    memcpy(ssid, ssid_in, ssid_in_len);
+    memcpy(pw,   pw_in,   pw_in_len);
+    // ssid/pw are zero-initialised so the trailing NUL is already in place.
 
     bool ok = ble_request_wifi_provisioning(ssid, pw);
 
