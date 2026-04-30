@@ -1758,6 +1758,15 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
               <input type="checkbox" id="btAllowPairing" onchange="saveBtSettings()">
             </label>
           </div>
+          <div class="toggle-row">
+            <div class="toggle-info">
+              <div class="toggle-title">Long-range mode (Coded PHY S=8)</div>
+              <div class="toggle-desc">~4× range, ~125 kbps. Peer must support BLE 5.0 LR.</div>
+            </div>
+            <label style="cursor:pointer;">
+              <input type="checkbox" id="btLongRange" onchange="saveBtSettings()">
+            </label>
+          </div>
         </div>
 
         <!-- Nearby Bluetooth scanner — mirrors the WiFi scan presentation
@@ -3289,13 +3298,17 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       if (data.auto_advertise !== undefined) {
         document.getElementById('btAutoAdv').checked = data.auto_advertise;
         document.getElementById('btAllowPairing').checked = data.allow_pairing;
+        const lr = document.getElementById('btLongRange');
+        if (lr) lr.checked = !!data.long_range_mode;
       }
     }
 
     async function saveBtSettings() {
+      const lr = document.getElementById('btLongRange');
       await api('/api/bluetooth/settings', 'POST', {
         auto_advertise: document.getElementById('btAutoAdv').checked,
-        allow_pairing: document.getElementById('btAllowPairing').checked
+        allow_pairing: document.getElementById('btAllowPairing').checked,
+        long_range_mode: lr ? lr.checked : false
       });
     }
 

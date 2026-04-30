@@ -69,7 +69,8 @@ static BluetoothSettings g_settings = {
   .device_name = "SecuraCV-Canary",
   .tx_power = 3,
   .inactivity_timeout_ms = INACTIVITY_TIMEOUT_MS,
-  .notify_on_connect = true
+  .notify_on_connect = true,
+  .long_range_mode = false
 };
 
 // Connection state
@@ -125,6 +126,7 @@ static const char* NVS_KEY_BT_NAME = "bt_name";
 static const char* NVS_KEY_BT_TX_PWR = "bt_tx_pwr";
 static const char* NVS_KEY_BT_TIMEOUT = "bt_timeout";
 static const char* NVS_KEY_BT_PAIRED = "bt_paired";
+static const char* NVS_KEY_BT_LONG_RANGE = "bt_long_range";
 
 // ════════════════════════════════════════════════════════════════════════════
 // FORWARD DECLARATIONS
@@ -166,6 +168,14 @@ class ServerCallbacks : public NimBLEServerCallbacks {
     // honours the request directly. Falls back silently to the default
     // 30-ms interval if the peer refuses.
     server->updateConnParams(connInfo.getConnHandle(), 24, 40, 0, 400);
+
+    // If long-range mode is on, request a PHY switch to LE Coded S=8.
+    // BLE_HCI_LE_PHY_CODED_PREF_MASK = 0x04, S=8 option = 0x0002. Peer can
+    // refuse and we keep 1M — there's no downside to trying.
+    if (g_settings.long_range_mode) {
+      ble_gap_set_prefered_le_phy(connInfo.getConnHandle(),
+                                  0x04, 0x04, 0x0002);
+    }
 
     // Update security level
     if (connInfo.isEncrypted()) {
@@ -413,6 +423,7 @@ static void load_settings() {
   g_settings.require_pin = nvs.getBool(NVS_KEY_BT_REQ_PIN, true);
   g_settings.tx_power = nvs.getChar(NVS_KEY_BT_TX_PWR, 3);
   g_settings.inactivity_timeout_ms = nvs.getULong(NVS_KEY_BT_TIMEOUT, INACTIVITY_TIMEOUT_MS);
+  g_settings.long_range_mode = nvs.getBool(NVS_KEY_BT_LONG_RANGE, false);
 
   size_t name_len = nvs.getBytesLength(NVS_KEY_BT_NAME);
   if (name_len > 0 && name_len <= MAX_DEVICE_NAME_LEN) {
@@ -433,6 +444,7 @@ static void save_settings() {
   nvs.putBool(NVS_KEY_BT_REQ_PIN, g_settings.require_pin);
   nvs.putChar(NVS_KEY_BT_TX_PWR, g_settings.tx_power);
   nvs.putULong(NVS_KEY_BT_TIMEOUT, g_settings.inactivity_timeout_ms);
+  nvs.putBool(NVS_KEY_BT_LONG_RANGE, g_settings.long_range_mode);
   nvs.putBytes(NVS_KEY_BT_NAME, g_settings.device_name, strlen(g_settings.device_name));
 
   nvs.end();
@@ -565,6 +577,16 @@ bool init() {
   // the largest a single LE Data Length Extension packet carries without
   // additional fragmentation; both iOS and modern Android accept it.
   NimBLEDevice::setMTU(247);
+
+  // Long-range mode: declare a preference for LE Coded PHY on new
+  // connections. The actual PHY upgrade happens after the link is up,
+  // via a PHY update request in onConnect — discovery still uses 1M.
+  // Bit masks: 0x01 = 1M, 0x02 = 2M, 0x04 = Coded.
+  if (g_settings.long_range_mode) {
+    NimBLEDevice::setDefaultPhy(0x04, 0x04);
+  } else {
+    NimBLEDevice::setDefaultPhy(0x01 | 0x02, 0x01 | 0x02);
+  }
 
   // Set security
   NimBLEDevice::setSecurityAuth(true, true, true);  // bonding, MITM, SC

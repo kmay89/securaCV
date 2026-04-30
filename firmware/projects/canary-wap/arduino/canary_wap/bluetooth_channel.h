@@ -185,6 +185,11 @@ struct BluetoothSettings {
   int8_t tx_power;                          // Transmit power (-12 to +9 dBm)
   uint32_t inactivity_timeout_ms;           // Auto-disconnect timeout
   bool notify_on_connect;                   // Log connection events
+  // Long-range mode: request LE Coded PHY (S=8) on every new connection.
+  // ~4× range vs 1M PHY at ~125 kbps throughput (vs 1 Mbps). Discovery is
+  // unaffected — peers still scan and connect on 1M; the PHY update is
+  // negotiated post-connection. Disable for higher throughput sessions.
+  bool long_range_mode;
 };
 
 // ════════════════════════════════════════════════════════════════════════════

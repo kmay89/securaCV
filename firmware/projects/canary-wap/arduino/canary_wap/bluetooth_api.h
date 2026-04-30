@@ -442,6 +442,7 @@ inline esp_err_t handle_bluetooth_settings_get(httpd_req_t* req) {
   doc["tx_power"] = settings.tx_power;
   doc["inactivity_timeout_sec"] = settings.inactivity_timeout_ms / 1000;
   doc["notify_on_connect"] = settings.notify_on_connect;
+  doc["long_range_mode"] = settings.long_range_mode;
 
   char buffer[512];
   serializeJson(doc, buffer);
@@ -489,6 +490,9 @@ inline esp_err_t handle_bluetooth_settings_set(httpd_req_t* req) {
   }
   if (input["notify_on_connect"].is<JsonVariant>()) {
     settings.notify_on_connect = input["notify_on_connect"].as<bool>();
+  }
+  if (input["long_range_mode"].is<JsonVariant>()) {
+    settings.long_range_mode = input["long_range_mode"].as<bool>();
   }
 
   if (bluetooth_channel::set_settings(settings)) {
