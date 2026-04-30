@@ -162,6 +162,7 @@ struct BluetoothStatus {
   char local_address[18];                   // "XX:XX:XX:XX:XX:XX"
   int8_t tx_power;                          // dBm
   uint16_t mtu;                             // negotiated ATT MTU (23..247)
+  uint8_t battery_pct;                      // SIG Battery Service value
   uint8_t paired_count;
   uint8_t scanned_count;
   ConnectionInfo connection;
@@ -216,6 +217,13 @@ typedef void (*DataCallback)(const uint8_t* data, size_t len);
 bool init();
 void deinit();
 bool is_initialized();
+
+// Push device metadata into the BLE Device Information Service. Optional;
+// must be called BEFORE init() to take effect (init reads the cached
+// strings when registering DIS). Strings are copied — caller-owned
+// memory not retained. If you skip this, defaults populate the DIS
+// (manufacturer="SecuraCV", model="Canary WAP", fw="unknown", etc.).
+void set_device_metadata(const char* fw_revision, const char* serial);
 
 // Enable/disable
 bool enable();

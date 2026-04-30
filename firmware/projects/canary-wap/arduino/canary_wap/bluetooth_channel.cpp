@@ -46,6 +46,7 @@
 #include "ble_console.h"
 #include "ble_provision.h"
 #include "ble_log_export.h"
+#include "ble_standard_profiles.h"
 #include "ota_release_key.h"
 
 namespace bluetooth_channel {
@@ -56,6 +57,17 @@ namespace bluetooth_channel {
 
 static BluetoothState g_state = BT_DISABLED;
 static bool g_initialized = false;
+
+// Device-info metadata for the SIG Standard Profiles (Device Information
+// Service). canary_wap.ino calls set_device_metadata() before init() to
+// push the firmware version + serial in. Build-target / build-profile
+// names come from build_config.h macros and are baked at compile time.
+static char g_meta_manufacturer[24] = "SecuraCV";
+static char g_meta_model[24]        = "Canary WAP";
+static char g_meta_hw_revision[24]  = HARDWARE_TARGET_NAME;
+static char g_meta_fw_revision[24]  = "unknown";
+static char g_meta_sw_revision[24]  = BUILD_PROFILE_NAME;
+static char g_meta_serial[24]       = "";
 
 // BLE components
 static NimBLEServer* g_server = nullptr;
@@ -673,6 +685,31 @@ bool init() {
   // canary.local is unreachable.
   ble_log_export::init(g_server);
 
+  // SIG Standard Profiles — Device Information Service (manufacturer,
+  // model, fw/hw/sw revision, serial), Battery Service, GAP Appearance.
+  // Without these the device shows as "Unknown" in the iOS / Android
+  // BT pane; with them it gets a camera icon and proper metadata. The
+  // serial defaults to the BLE local address if set_device_metadata()
+  // wasn't called before init() — never empty in the on-air payload.
+  {
+    const char* serial_for_dis = g_meta_serial;
+    char serial_fallback[18] = {0};
+    if (serial_for_dis[0] == '\0') {
+      NimBLEAddress addr = NimBLEDevice::getAddress();
+      snprintf(serial_fallback, sizeof(serial_fallback), "%s", addr.toString().c_str());
+      serial_for_dis = serial_fallback;
+    }
+    ble_standard_profiles::register_all(
+      g_server,
+      g_meta_manufacturer,
+      g_meta_model,
+      serial_for_dis,
+      g_meta_fw_revision,
+      g_meta_hw_revision,
+      g_meta_sw_revision
+    );
+  }
+
   // Set up advertising
   g_advertising = NimBLEDevice::getAdvertising();
   g_advertising->addServiceUUID(SERVICE_UUID);
@@ -738,6 +775,22 @@ void deinit() {
 
 bool is_initialized() {
   return g_initialized;
+}
+
+void set_device_metadata(const char* fw_revision, const char* serial) {
+  // Caller hands ownership of the strings — we copy. Empty / nullptr
+  // leaves the existing default in place. Must be invoked BEFORE init();
+  // init() reads these into the DIS characteristics during service
+  // creation, after which they're cached on the BLE stack and changes
+  // here have no effect until the next reinit.
+  if (fw_revision && fw_revision[0]) {
+    strncpy(g_meta_fw_revision, fw_revision, sizeof(g_meta_fw_revision) - 1);
+    g_meta_fw_revision[sizeof(g_meta_fw_revision) - 1] = '\0';
+  }
+  if (serial && serial[0]) {
+    strncpy(g_meta_serial, serial, sizeof(g_meta_serial) - 1);
+    g_meta_serial[sizeof(g_meta_serial) - 1] = '\0';
+  }
 }
 
 bool enable() {
@@ -1114,6 +1167,11 @@ BluetoothStatus get_status() {
 
   status.tx_power = g_settings.tx_power;
   status.mtu = g_connection_mtu;
+  // Mirror the SIG Battery Service value into /api/bluetooth so the SPA
+  // can render it next to the other BT stats. The standard-profiles
+  // module owns the canonical value (which a future battery sense
+  // driver can update via set_battery_level); we just read.
+  status.battery_pct = ble_standard_profiles::get_battery_level();
   status.paired_count = g_paired_count;
   status.scanned_count = g_scanned_count;
   status.connection = g_connection;

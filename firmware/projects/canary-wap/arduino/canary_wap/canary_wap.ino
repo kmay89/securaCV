@@ -4650,6 +4650,10 @@ void setup() {
   #if FEATURE_BLUETOOTH
   if (!in_safe_mode) {
     Serial.println("[..] Initializing Bluetooth Low Energy...");
+    // Push device metadata into bluetooth_channel BEFORE init(). The DIS
+    // characteristics get baked during service creation; setting these
+    // afterwards has no effect until the next reinit.
+    bluetooth_channel::set_device_metadata(FIRMWARE_VERSION, g_device.fingerprint_hex);
     if (bluetooth_channel::init()) {
       Serial.println("[OK] Bluetooth initialized");
       log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "Bluetooth initialized", nullptr);
