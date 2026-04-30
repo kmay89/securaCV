@@ -399,6 +399,17 @@ static ScanCallbacks g_scan_callbacks;
 // STATE MANAGEMENT
 // ════════════════════════════════════════════════════════════════════════════
 
+// ESP32 NimBLE accepts BLE TX power in the range [-12, +9] dBm. Anything
+// outside that band makes setPower fail (or, worse, behave silently in
+// unsupported ranges on some IDF versions). Clamp at every boundary
+// — NVS load, settings POST — so a corrupted persisted value or a
+// validation-skipping API caller can't reach the radio with garbage.
+static int8_t clamp_tx_power(int8_t v) {
+  if (v < -12) return -12;
+  if (v >  9)  return  9;
+  return v;
+}
+
 static void set_state(BluetoothState new_state) {
   if (g_state == new_state) return;
 
@@ -423,7 +434,7 @@ static void load_settings() {
   g_settings.auto_advertise = nvs.getBool(NVS_KEY_BT_AUTO_ADV, true);
   g_settings.allow_pairing = nvs.getBool(NVS_KEY_BT_ALLOW_PAIR, true);
   g_settings.require_pin = nvs.getBool(NVS_KEY_BT_REQ_PIN, true);
-  g_settings.tx_power = nvs.getChar(NVS_KEY_BT_TX_PWR, 3);
+  g_settings.tx_power = clamp_tx_power(nvs.getChar(NVS_KEY_BT_TX_PWR, 3));
   g_settings.inactivity_timeout_ms = nvs.getULong(NVS_KEY_BT_TIMEOUT, INACTIVITY_TIMEOUT_MS);
   g_settings.long_range_mode = nvs.getBool(NVS_KEY_BT_LONG_RANGE, false);
 
@@ -976,6 +987,9 @@ BluetoothSettings get_settings() {
 
 bool set_settings(const BluetoothSettings& settings) {
   g_settings = settings;
+  // The settings struct comes from a JSON POST — the API parser doesn't
+  // range-check tx_power, so clamp here before it goes to NVS or the radio.
+  g_settings.tx_power = clamp_tx_power(g_settings.tx_power);
   save_settings();
 
   // Apply changes

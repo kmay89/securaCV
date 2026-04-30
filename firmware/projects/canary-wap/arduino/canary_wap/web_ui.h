@@ -3222,7 +3222,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         // Surface (3) explicitly because it bit us before and the symptom
         // (no /api/bluetooth response) looks identical to (1) and (2).
         const subtitle = document.getElementById('btSubtitle');
-        if (subtitle) subtitle.textContent = 'BLE radio not registered. Flash a FULL or DEV build with NimBLE-Arduino ≥ 2.3.0.';
+        if (subtitle) subtitle.textContent = 'BLE radio not registered. Flash a FULL or DEV build with NimBLE-Arduino ≥ 2.3.8.';
         const badge = document.getElementById('btStateBadge');
         const text = document.getElementById('btStateText');
         if (badge && text) { badge.className = 'badge warning'; text.textContent = 'Unavailable'; }
