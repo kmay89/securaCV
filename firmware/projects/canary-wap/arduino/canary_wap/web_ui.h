@@ -1574,12 +1574,15 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           <div id="wifiRssiBar" style="margin-bottom:1rem;display:none;">
             <div class="stat-label">Signal Strength</div>
             <div style="display:flex;align-items:center;gap:0.5rem;">
+              <span id="wifiRssiBars" style="font-family:monospace;letter-spacing:1px;font-size:0.95rem;color:var(--success);">▮▮▮▮</span>
               <div style="flex:1;height:8px;background:rgba(0,0,0,0.3);border-radius:4px;overflow:hidden;">
                 <div id="wifiRssiLevel" style="height:100%;background:var(--success);width:0%;transition:width 0.3s;"></div>
               </div>
+              <span id="wifiRssiQuality" style="font-size:0.75rem;color:var(--muted);min-width:4.5em;text-align:right;">--</span>
               <span id="wifiRssiValue" style="font-size:0.75rem;color:var(--muted);">-- dBm</span>
             </div>
           </div>
+          <div id="wifiFailReason" style="display:none;margin-bottom:0.75rem;padding:0.5rem 0.75rem;border-radius:6px;background:var(--danger-dim);color:var(--danger);font-size:0.85rem;"></div>
           <div id="wifiSetupSection">
             <div class="form-group">
               <label class="form-label">Home WiFi Network</label>
@@ -1598,7 +1601,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
             <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
               <button class="btn btn-primary" onclick="connectWifi()" id="wifiConnectBtn">Connect</button>
               <button class="btn btn-secondary" onclick="disconnectWifi()" id="wifiDisconnectBtn" style="display:none;">Disconnect</button>
-              <button class="btn btn-danger" onclick="forgetWifi()" id="wifiForgetBtn" style="display:none;">Forget</button>
+              <button class="btn btn-danger" onclick="forgetWifi()" id="wifiForgetBtn" style="display:none;">Remove credentials</button>
             </div>
           </div>
           <div id="wifiProgress" style="display:none;margin-top:1rem;">
@@ -2261,8 +2264,22 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     function updateBadges(data) {
       document.getElementById('chainBadge').className = 'badge ' + (data.crypto_healthy ? 'success' : 'danger');
       const sdBadge = document.getElementById('sdBadge');
-      sdBadge.className = 'badge ' + (data.sd_mounted ? 'success' : 'danger');
-      sdBadge.querySelector('span:last-child').textContent = data.sd_mounted ? 'SD OK' : 'SD ERR';
+      // Distinguish "no card present" (informational, not an error) from a real
+      // SD failure. The firmware exposes sd_state ∈ {ABSENT, MOUNTED, ERROR};
+      // we previously painted any non-mounted state red, which made "SD ERR"
+      // stick after acknowledging the latest log even though the card was
+      // simply not inserted.
+      const sdState = data.sd_state || (data.sd_mounted ? 'MOUNTED' : 'ABSENT');
+      let cls = 'info', label = 'No SD';
+      if (sdState === 'MOUNTED') { cls = 'success'; label = 'SD OK'; }
+      else if (sdState === 'ERROR') { cls = 'danger'; label = 'SD ERR'; }
+      sdBadge.className = 'badge ' + cls;
+      sdBadge.querySelector('span:last-child').textContent = label;
+      sdBadge.title = sdState === 'ABSENT'
+        ? 'No SD card inserted (witness logging continues in RAM)'
+        : sdState === 'ERROR'
+          ? 'SD card mounted but reporting errors — check the card'
+          : 'SD card mounted and healthy';
     }
 
     async function loadChain() {
@@ -2743,6 +2760,30 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     let wifiState = null;
     let wifiPollingInterval = null;
 
+    // Map an RSSI (dBm) to a 0-4 bar count. Common rule of thumb:
+    //   >= -55 dBm  excellent (4)    >= -65 dBm  good (3)
+    //   >= -75 dBm  fair (2)         >= -85 dBm  weak (1)   else none (0)
+    function rssiBarLevel(rssi) {
+      if (rssi == null || rssi === 0) return 0;
+      if (rssi >= -55) return 4;
+      if (rssi >= -65) return 3;
+      if (rssi >= -75) return 2;
+      if (rssi >= -85) return 1;
+      return 0;
+    }
+    function rssiQualityLabel(level) {
+      return ['No signal','Weak','Fair','Good','Excellent'][level] || '--';
+    }
+    function rssiBarString(level) {
+      // Filled vs empty unicode block characters, easy to render in <option> too.
+      return '▮'.repeat(level) + '▯'.repeat(4 - level);
+    }
+    function rssiBarColor(level) {
+      if (level >= 3) return 'var(--success)';
+      if (level === 2) return 'var(--warning)';
+      return 'var(--danger)';
+    }
+
     async function loadWifiStatus() {
       const data = await api('/api/wifi');
       if (!data.ok) return;
@@ -2756,15 +2797,35 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       const state = document.getElementById('wifiState');
       if (data.sta_connected) { badge.className = 'badge success'; state.textContent = 'Connected'; }
       else if (data.state === 'connecting') { badge.className = 'badge warning'; state.textContent = 'Connecting'; }
+      else if (data.state === 'failed') { badge.className = 'badge danger'; state.textContent = 'Failed'; }
       else { badge.className = 'badge info'; state.textContent = data.configured ? 'Disconnected' : 'AP Only'; }
 
       const rssiBar = document.getElementById('wifiRssiBar');
       if (data.sta_connected && data.rssi) {
         rssiBar.style.display = 'block';
+        const lvl = rssiBarLevel(data.rssi);
         const pct = Math.max(0, Math.min(100, (data.rssi + 90) * 1.67));
-        document.getElementById('wifiRssiLevel').style.width = pct + '%';
+        const lvlEl = document.getElementById('wifiRssiLevel');
+        lvlEl.style.width = pct + '%';
+        lvlEl.style.background = rssiBarColor(lvl);
+        const barsEl = document.getElementById('wifiRssiBars');
+        barsEl.textContent = rssiBarString(lvl);
+        barsEl.style.color = rssiBarColor(lvl);
+        document.getElementById('wifiRssiQuality').textContent = rssiQualityLabel(lvl);
         document.getElementById('wifiRssiValue').textContent = data.rssi + ' dBm';
       } else { rssiBar.style.display = 'none'; }
+
+      // Surface the most recent failure reason from the firmware so the user
+      // knows why "always fails" is happening (wrong password, not in range, …).
+      const failBox = document.getElementById('wifiFailReason');
+      if (failBox) {
+        if (!data.sta_connected && data.state === 'failed' && data.fail_reason) {
+          failBox.textContent = 'Last attempt failed: ' + data.fail_reason;
+          failBox.style.display = 'block';
+        } else if (data.sta_connected) {
+          failBox.style.display = 'none';
+        }
+      }
 
       document.getElementById('wifiConnectBtn').style.display = data.sta_connected ? 'none' : 'inline-flex';
       document.getElementById('wifiDisconnectBtn').style.display = data.sta_connected ? 'inline-flex' : 'none';
@@ -2793,9 +2854,12 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         data.networks.sort((a, b) => b.rssi - a.rssi);
         data.networks.forEach(n => {
           if (n.ssid) {
+            const lvl = rssiBarLevel(n.rssi);
+            const lock = (n.security && n.security !== 'open') ? '🔒' : '  ';
             const opt = document.createElement('option');
             opt.value = n.ssid;
-            opt.textContent = `${n.ssid} (${n.rssi} dBm)`;
+            // Bars first so users can scan vertically; raw dBm preserved for power users.
+            opt.textContent = `${rssiBarString(lvl)} ${lock} ${n.ssid}  ·  ${rssiQualityLabel(lvl)} (${n.rssi} dBm)`;
             select.appendChild(opt);
           }
         });
@@ -2809,15 +2873,43 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       const password = document.getElementById('wifiPassword').value;
       if (!ssid) { alert('Enter network name'); return; }
 
+      // Hide any previous failure banner; the firmware will repopulate it
+      // if the new attempt also fails.
+      const failBox = document.getElementById('wifiFailReason');
+      if (failBox) failBox.style.display = 'none';
+
       document.getElementById('wifiProgress').style.display = 'block';
-      document.getElementById('wifiProgressText').textContent = 'Connecting...';
+      document.getElementById('wifiProgressText').textContent = 'Connecting…';
       const data = await api('/api/wifi/connect', 'POST', { ssid, password });
-      if (!data.ok) { document.getElementById('wifiProgress').style.display = 'none'; alert('Failed'); return; }
+      if (!data.ok) {
+        document.getElementById('wifiProgress').style.display = 'none';
+        alert('Failed: ' + (data.error || 'unknown error'));
+        return;
+      }
       startWifiPolling();
     }
 
     async function disconnectWifi() { if (confirm('Disconnect?')) { await api('/api/wifi/disconnect', 'POST'); loadWifiStatus(); } }
-    async function forgetWifi() { if (confirm('Forget credentials?')) { await api('/api/wifi/forget', 'POST'); loadWifiStatus(); } }
+
+    function clearWifiInputs() {
+      document.getElementById('wifiPassword').value = '';
+      document.getElementById('wifiSsidInput').value = '';
+      const sel = document.getElementById('wifiSsidSelect');
+      if (sel) sel.selectedIndex = 0;
+      const failBox = document.getElementById('wifiFailReason');
+      if (failBox) { failBox.style.display = 'none'; failBox.textContent = ''; }
+      document.getElementById('wifiProgress').style.display = 'none';
+    }
+
+    async function forgetWifi() {
+      if (!confirm('Remove saved WiFi credentials from this Canary?')) return;
+      stopWifiPolling();
+      const data = await api('/api/wifi/forget', 'POST');
+      if (!data.ok) { alert('Failed to remove credentials'); return; }
+      // Wipe the input fields so the next user doesn't see the prior password.
+      clearWifiInputs();
+      await loadWifiStatus();
+    }
 
     function startWifiPolling() {
       if (wifiPollingInterval) clearInterval(wifiPollingInterval);
@@ -2825,8 +2917,23 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       wifiPollingInterval = setInterval(async () => {
         await loadWifiStatus();
         count++;
-        if (wifiState?.sta_connected) { stopWifiPolling(); document.getElementById('wifiProgress').style.display = 'none'; alert('Connected!'); }
-        else if (wifiState?.state === 'failed' || count > 20) { stopWifiPolling(); document.getElementById('wifiProgress').style.display = 'none'; }
+        if (wifiState?.sta_connected) {
+          stopWifiPolling();
+          document.getElementById('wifiProgress').style.display = 'none';
+          alert('Connected to ' + (wifiState.sta_ssid || 'home WiFi') + '!');
+        } else if (wifiState?.state === 'failed') {
+          stopWifiPolling();
+          document.getElementById('wifiProgress').style.display = 'none';
+          // loadWifiStatus already rendered the fail_reason banner; nudge user.
+          if (wifiState.fail_reason) {
+            alert('Connection failed: ' + wifiState.fail_reason);
+          }
+        } else if (count > 25) {
+          // Slightly longer than the firmware's 15s connect timeout to allow
+          // for AP-channel renegotiation when STA joins on a different channel.
+          stopWifiPolling();
+          document.getElementById('wifiProgress').style.display = 'none';
+        }
       }, 1000);
     }
     function stopWifiPolling() { if (wifiPollingInterval) { clearInterval(wifiPollingInterval); wifiPollingInterval = null; } }
