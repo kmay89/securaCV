@@ -43,6 +43,7 @@
 #include "health_log.h"
 #include "ble_ota.h"
 #include "ble_presence.h"
+#include "ble_console.h"
 #include "ota_release_key.h"
 
 namespace bluetooth_channel {
@@ -653,6 +654,12 @@ bool init() {
   // the control characteristics.
   ble_ota::init(g_server, SECURACV_OTA_RELEASE_PUBKEY);
 
+  // Offline console: read-only JSON snapshot of device state. Requires a
+  // bonded link (the characteristic carries READ_ENC + READ_AUTHEN), so
+  // a paired phone can pull `/api/status`-shaped data even when WiFi is
+  // down.
+  ble_console::init(g_server);
+
   // Set up advertising
   g_advertising = NimBLEDevice::getAdvertising();
   g_advertising->addServiceUUID(SERVICE_UUID);
@@ -1153,6 +1160,11 @@ void update() {
 
   static uint32_t last_status_update = 0;
   uint32_t now = millis();
+
+  // Refresh the offline-console snapshot. Internally throttled to its own
+  // SNAPSHOT_PERIOD_MS so calling on every iteration is cheap; only sends
+  // a notification when the JSON bytes actually changed.
+  ble_console::tick();
 
   // Update status characteristic periodically
   if (g_connection.connected && now - last_status_update >= STATUS_UPDATE_INTERVAL_MS) {
