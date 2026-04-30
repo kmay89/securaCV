@@ -1769,6 +1769,31 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           </div>
         </div>
 
+        <!-- BLE OTA status. Hidden when idle; surfaces when a paired
+             client begins streaming a signed firmware image over GATT. -->
+        <div class="card" id="btOtaCard" style="display:none;">
+          <div class="card-header">
+            <div>
+              <div class="card-title">BLE Firmware Update</div>
+              <div class="card-subtitle" id="btOtaSubtitle">Receiving image over BLE…</div>
+            </div>
+            <div class="badge info" id="btOtaBadge">
+              <span class="badge-dot"></span>
+              <span id="btOtaStateText">idle</span>
+            </div>
+          </div>
+          <div style="margin-top:0.75rem;">
+            <div style="display:flex;justify-content:space-between;font-size:0.75rem;color:var(--muted);margin-bottom:0.25rem;">
+              <span id="btOtaProgressLabel">0%</span>
+              <span id="btOtaBytesLabel">0 / 0 B</span>
+            </div>
+            <div style="height:6px;background:var(--surface-2,#222);border-radius:3px;overflow:hidden;">
+              <div id="btOtaProgressBar" style="height:100%;width:0;background:var(--accent);transition:width 0.3s;"></div>
+            </div>
+            <div id="btOtaError" style="display:none;margin-top:0.5rem;font-size:0.75rem;color:var(--danger,#e44);"></div>
+          </div>
+        </div>
+
         <!-- Nearby Bluetooth scanner — mirrors the WiFi scan presentation
              so people get the same "X devices nearby" affordance for both. -->
         <div class="card">
@@ -2102,7 +2127,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       else if (panel === 'camera') refreshPeekStatus();
       else if (panel === 'presence') { refreshWifiPresence(); refreshAudibleChirpStatus(); }
       else if (panel === 'community') { refreshOpera(); refreshChirpStatus(); refreshBleDiscovery(); }
-      else if (panel === 'settings') { loadWifiStatus(); refreshBtStatus(); loadBtPairedDevices(); loadRfSettings(); }
+      else if (panel === 'settings') { loadWifiStatus(); refreshBtStatus(); loadBtPairedDevices(); refreshBtOtaStatus(); loadRfSettings(); }
 
       if (panel !== 'camera' && peekActive) stopPeek();
     }
@@ -2135,7 +2160,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       document.querySelectorAll('#panel-settings .sub-panel').forEach(p => p.classList.remove('active'));
       document.getElementById(`settings-${tab}`).classList.add('active');
       if (tab === 'wifi') loadWifiStatus();
-      else if (tab === 'bluetooth') { refreshBtStatus(); loadBtPairedDevices(); }
+      else if (tab === 'bluetooth') { refreshBtStatus(); loadBtPairedDevices(); refreshBtOtaStatus(); }
       else if (tab === 'rf') loadRfSettings();
     }
 
@@ -3360,6 +3385,44 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     async function btRejectPairing() {
       await api('/api/bluetooth/pair/reject', 'POST');
       refreshBtStatus();
+    }
+
+    // Poll OTA status alongside BT status. The card stays hidden when no
+    // session is active, surfaces with a progress bar during receive, and
+    // shows the verifier's reason on failure.
+    async function refreshBtOtaStatus() {
+      const data = await api('/api/bluetooth/ota');
+      const card = document.getElementById('btOtaCard');
+      if (!card) return;
+      const state = data && data.state ? data.state : 'idle';
+      if (state === 'idle') {
+        card.style.display = 'none';
+        if (window.__btOtaPollTimer) {
+          clearInterval(window.__btOtaPollTimer);
+          window.__btOtaPollTimer = null;
+        }
+        return;
+      }
+      card.style.display = '';
+      document.getElementById('btOtaStateText').textContent = state;
+      const badge = document.getElementById('btOtaBadge');
+      badge.className = 'badge ' + (state === 'failed' ? 'warning' : (state === 'rebooting' ? 'success' : 'info'));
+      const pct = data.progress_pct || 0;
+      document.getElementById('btOtaProgressLabel').textContent = pct + '%';
+      document.getElementById('btOtaBytesLabel').textContent =
+        (data.bytes_received || 0) + ' / ' + (data.image_size || 0) + ' B';
+      document.getElementById('btOtaProgressBar').style.width = pct + '%';
+      const errEl = document.getElementById('btOtaError');
+      if (data.last_error) {
+        errEl.style.display = '';
+        errEl.textContent = 'Error: ' + data.last_error;
+      } else {
+        errEl.style.display = 'none';
+      }
+      // Faster poll while a session is active
+      if (!window.__btOtaPollTimer && (state === 'receiving' || state === 'verifying')) {
+        window.__btOtaPollTimer = setInterval(refreshBtOtaStatus, 800);
+      }
     }
 
     async function btDisconnect() {

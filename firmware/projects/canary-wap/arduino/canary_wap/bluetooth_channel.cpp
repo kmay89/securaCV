@@ -41,6 +41,8 @@
 #endif
 
 #include "health_log.h"
+#include "ble_ota.h"
+#include "ota_release_key.h"
 
 namespace bluetooth_channel {
 
@@ -619,6 +621,12 @@ bool init() {
 
   // Start service
   g_service->start();
+
+  // Register the OTA service on the same NimBLE server. It exposes its own
+  // GATT service UUID so peers can discover and skip it independently of
+  // the primary control surface, and so a half-completed OTA can't disturb
+  // the control characteristics.
+  ble_ota::init(g_server, SECURACV_OTA_RELEASE_PUBKEY);
 
   // Set up advertising
   g_advertising = NimBLEDevice::getAdvertising();

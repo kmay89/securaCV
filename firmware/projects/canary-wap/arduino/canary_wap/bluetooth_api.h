@@ -12,6 +12,7 @@
 
 #include "esp_http_server.h"
 #include "bluetooth_channel.h"
+#include "ble_ota.h"
 #include <ArduinoJson.h>
 
 namespace bluetooth_api {
@@ -114,6 +115,21 @@ inline esp_err_t handle_bluetooth_status(httpd_req_t* req) {
   }
   serializeJson(doc, buffer);
   return send_json_response(req, buffer.c_str());
+}
+
+// GET /api/bluetooth/ota - BLE OTA session status
+inline esp_err_t handle_bluetooth_ota_status(httpd_req_t* req) {
+  JsonDocument doc;
+  doc["state"] = ble_ota::state_name(ble_ota::get_state());
+  doc["progress_pct"] = ble_ota::get_progress_percent();
+  doc["image_size"] = ble_ota::get_image_size();
+  doc["bytes_received"] = ble_ota::get_bytes_received();
+  const char* err = ble_ota::last_error();
+  if (err && err[0]) doc["last_error"] = err;
+
+  char buffer[256];
+  serializeJson(doc, buffer);
+  return send_json_response(req, buffer);
 }
 
 // POST /api/bluetooth/enable - Enable Bluetooth
@@ -577,6 +593,7 @@ inline void register_routes(httpd_handle_t server) {
   register_api_handler(server, "/api/bluetooth/scan/results", HTTP_GET, handle_bluetooth_scan_results);
   register_api_handler(server, "/api/bluetooth/paired", HTTP_GET, handle_bluetooth_paired_list);
   register_api_handler(server, "/api/bluetooth/settings", HTTP_GET, handle_bluetooth_settings_get);
+  register_api_handler(server, "/api/bluetooth/ota", HTTP_GET, handle_bluetooth_ota_status);
 
   // POST endpoints
   register_api_handler(server, "/api/bluetooth/enable", HTTP_POST, handle_bluetooth_enable);
