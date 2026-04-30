@@ -1030,6 +1030,40 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     <!-- PRESENCE PANEL - WiFi Presence Detection + Audible Chirp -->
     <!-- ═══════════════════════════════════════════════════════════════════════ -->
     <div class="panel" id="panel-presence">
+      <!-- Headline: Who's Home (auto-context indicator + manual override) -->
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Who's Home</div>
+            <div class="card-subtitle" id="presenceSubtitle">Loading…</div>
+          </div>
+          <div class="badge info" id="presenceBadge">
+            <span class="badge-dot"></span>
+            <span id="presenceBadgeText">—</span>
+          </div>
+        </div>
+        <div style="margin-top:0.6rem;display:flex;gap:0.4rem;flex-wrap:wrap;">
+          <button class="btn btn-sm btn-secondary" onclick="setPresenceOverride('home')">I'm home</button>
+          <button class="btn btn-sm btn-secondary" onclick="setPresenceOverride('away')">I'm away</button>
+          <button class="btn btn-sm btn-secondary" onclick="setPresenceOverride('quiet')">Quiet hours</button>
+          <button class="btn btn-sm btn-ghost" id="presenceClearOverrideBtn" onclick="clearPresenceOverride()" style="display:none;">Clear override</button>
+        </div>
+        <div id="presenceOverrideHint" style="display:none;margin-top:0.5rem;font-size:0.7rem;color:var(--muted);"></div>
+      </div>
+
+      <!-- Household Devices: paired phones with role selectors -->
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Household Devices</div>
+            <div class="card-subtitle">Tag your own phone <strong>Owner</strong> so the device knows you're home and stops alerting on your arrivals.</div>
+          </div>
+        </div>
+        <div id="householdList" class="log-list" style="max-height:260px;">
+          <p style="color:var(--muted);font-size:0.85rem;text-align:center;padding:0.75rem;">Loading…</p>
+        </div>
+      </div>
+
       <!-- WiFi Presence Detection -->
       <div class="card">
         <div class="card-header">
@@ -2125,7 +2159,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
       if (panel === 'records') { loadLogs(); loadWitness(); }
       else if (panel === 'camera') refreshPeekStatus();
-      else if (panel === 'presence') { refreshWifiPresence(); refreshAudibleChirpStatus(); }
+      else if (panel === 'presence') { refreshPresence(); refreshHousehold(); refreshWifiPresence(); refreshAudibleChirpStatus(); }
       else if (panel === 'community') { refreshOpera(); refreshChirpStatus(); refreshBleDiscovery(); }
       else if (panel === 'settings') { loadWifiStatus(); refreshBtStatus(); loadBtPairedDevices(); refreshBtOtaStatus(); loadRfSettings(); }
 
@@ -2793,6 +2827,118 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     // ══════════════════════════════════════════════════════════════════
     // WIFI PRESENCE DETECTION
     // ══════════════════════════════════════════════════════════════════
+    // ── Household + presence (auto-context) ─────────────────────────────────
+    function fmtAgo(ms) {
+      if (ms == null) return 'never';
+      const sec = Math.floor(ms / 1000);
+      if (sec < 60)   return sec + 's ago';
+      const min = Math.floor(sec / 60);
+      if (min < 60)   return min + ' min ago';
+      const hr  = Math.floor(min / 60);
+      if (hr  < 24)   return hr + ' h ago';
+      return Math.floor(hr / 24) + ' d ago';
+    }
+
+    async function refreshPresence() {
+      const data = await api('/api/presence');
+      if (!data || !data.effective_context) return;
+
+      const badge = document.getElementById('presenceBadge');
+      const text  = document.getElementById('presenceBadgeText');
+      const sub   = document.getElementById('presenceSubtitle');
+      const clearBtn = document.getElementById('presenceClearOverrideBtn');
+      const hint  = document.getElementById('presenceOverrideHint');
+
+      const ctx = data.effective_context;
+      text.textContent = ctx.toUpperCase();
+      // Color cue: HOME = info (calm), AWAY = success (armed), QUIET/TRAVELING = warning
+      badge.className = 'badge ' + (
+        ctx === 'home' ? 'info' :
+        ctx === 'away' ? 'success' :
+        'warning'
+      );
+
+      let s;
+      if (data.owner_seen_recently) {
+        s = 'Owner phone seen ' + fmtAgo(data.ms_since_any_owner) + '. Quieter alerts.';
+      } else if (data.ms_since_any_owner == null) {
+        s = 'No owner-tagged device yet. Pair one and tag it Owner below to enable auto-quiet at home.';
+      } else {
+        s = 'No owner phone seen for ' + fmtAgo(data.ms_since_any_owner) + '. Alerting on anything new.';
+      }
+      sub.textContent = s;
+
+      if (data.override_active) {
+        clearBtn.style.display = '';
+        hint.style.display = '';
+        const remaining = Math.round((data.override_ms_remaining || 0) / 60000);
+        hint.textContent = 'Manual override active for ' + remaining + ' more minutes (auto-resumes after).';
+      } else {
+        clearBtn.style.display = 'none';
+        hint.style.display = 'none';
+      }
+    }
+
+    async function setPresenceOverride(ctx) {
+      const r = await api('/api/presence/override', 'POST', { context: ctx });
+      if (r && r.success === false) alert('Override: ' + (r.error || 'failed'));
+      refreshPresence();
+    }
+    async function clearPresenceOverride() {
+      await api('/api/presence/override', 'DELETE');
+      refreshPresence();
+    }
+
+    function roleBadgeStyle(role) {
+      if (role === 'owner')  return 'background:rgba(102,179,255,0.15);color:#66b3ff;';
+      if (role === 'family') return 'background:rgba(72,187,120,0.15);color:#48bb78;';
+      return                        'background:rgba(160,160,160,0.15);color:var(--muted);';
+    }
+
+    async function refreshHousehold() {
+      const data = await api('/api/household');
+      const list = document.getElementById('householdList');
+      if (!list) return;
+      if (!data || !Array.isArray(data.devices) || data.devices.length === 0) {
+        list.innerHTML = '<p style="color:var(--muted);font-size:0.85rem;text-align:center;padding:0.75rem;">No paired devices yet. Tap Start Pairing on the Bluetooth panel to add one.</p>';
+        return;
+      }
+      list.innerHTML = data.devices.map(d => {
+        const seen = (d.last_seen_ago_ms == null)
+          ? 'never seen this boot'
+          : 'seen ' + fmtAgo(d.last_seen_ago_ms);
+        return (
+          '<div style="padding:0.6rem 0.75rem;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:0.6rem;">' +
+            '<div style="flex:1;min-width:0;">' +
+              '<div style="font-weight:600;">' + (d.label && d.label.length ? d.label : 'Slot ' + d.slot) + '</div>' +
+              '<div style="font-size:0.7rem;color:var(--muted);">' + seen + '</div>' +
+            '</div>' +
+            '<span class="badge" style="font-size:0.65rem;padding:0.15rem 0.45rem;' + roleBadgeStyle(d.role) + '">' + d.role + '</span>' +
+            '<select onchange="setHouseholdRole(' + d.slot + ', this.value)" style="background:var(--surface-2,#222);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.2rem 0.4rem;font-size:0.7rem;">' +
+              '<option value="guest"' + (d.role === 'guest'  ? ' selected' : '') + '>Guest</option>' +
+              '<option value="family"' + (d.role === 'family' ? ' selected' : '') + '>Family</option>' +
+              '<option value="owner"'  + (d.role === 'owner'  ? ' selected' : '') + '>Owner</option>' +
+            '</select>' +
+            '<button class="btn btn-sm btn-ghost" onclick="forgetHousehold(' + d.slot + ', \'' + (d.label || '').replace(/'/g, '\\\'') + '\')" title="Forget this device" style="font-size:0.7rem;">×</button>' +
+          '</div>'
+        );
+      }).join('');
+    }
+
+    async function setHouseholdRole(slot, role) {
+      const r = await api('/api/household/role', 'POST', { slot: slot, role: role });
+      if (r && r.success === false) alert('Role: ' + (r.error || 'failed'));
+      refreshHousehold();
+      refreshPresence();
+    }
+    async function forgetHousehold(slot, label) {
+      if (!confirm('Forget ' + (label || 'this paired device') + '? It will need to re-pair to be recognized again.')) return;
+      const r = await api('/api/household', 'DELETE', { slot: slot });
+      if (r && r.success === false) alert('Forget: ' + (r.error || 'failed'));
+      refreshHousehold();
+      refreshPresence();
+    }
+
     async function refreshWifiPresence() {
       const data = await api('/api/presence/wifi');
       if (!data.feature_available && !data.enabled && data.enabled === undefined) return;
@@ -3576,7 +3722,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     setInterval(refreshRfStatus, 3000);
     setInterval(loadWifiStatus, 5000);
     setInterval(() => {
-      if (currentPanel === 'presence') refreshWifiPresence();
+      if (currentPanel === 'presence') { refreshPresence(); refreshHousehold(); refreshWifiPresence(); }
       else if (currentPanel === 'records' && currentRecordsTab === 'logs') loadLogs();
       else if (currentPanel === 'records' && currentRecordsTab === 'witness') loadWitness();
       else if (currentPanel === 'community' && currentCommunityTab === 'opera') refreshOpera();

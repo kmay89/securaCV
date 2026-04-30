@@ -77,6 +77,25 @@ struct ResolveResult {
   bool     looked_like_rpa;// true if the MAC had the RPA type bits set
 };
 
+// Per-device trust role. Encoded into the low byte of the slot's `flags`
+// field — the existing NVS layout is preserved (uint16_t at offset 36),
+// so devices upgrading from main get ROLE_GUEST (the all-zero default)
+// automatically. Higher numeric values do NOT imply more permissions —
+// these are categories, not levels — but the ordering is stable so it's
+// safe to compare with == in the hot path.
+enum DeviceRole : uint8_t {
+  ROLE_GUEST  = 0,  // Default for newly-paired device. Treated as household
+                    // (suppresses arrival alerts) but does NOT influence the
+                    // home/away auto-context — guests may come and go.
+  ROLE_FAMILY = 1,  // Trusted household member, but not the operator. Same
+                    // suppression as guest plus counted in "who is home"
+                    // displays. Doesn't toggle auto-context by itself.
+  ROLE_OWNER  = 2,  // Operator's own device. Hard-suppresses every alert
+                    // about their own arrival/departure. Presence drives
+                    // auto-context: any owner-IRK seen recently → CTX_HOME,
+                    // none seen for the AWAY window → CTX_AWAY.
+};
+
 // ════════════════════════════════════════════════════════════════════════════
 // LIFECYCLE
 // ════════════════════════════════════════════════════════════════════════════
@@ -147,6 +166,38 @@ bool resolve_rpa(const uint8_t mac[6]);
 // Detailed resolution with diagnostics. Same cost as resolve_rpa() but
 // returns slot index and RPA-type flag for debugging / status UIs.
 ResolveResult resolve_rpa_detailed(const uint8_t mac[6]);
+
+// ════════════════════════════════════════════════════════════════════════════
+// ROLE / PRESENCE — owner-aware suppression and auto-context
+// ════════════════════════════════════════════════════════════════════════════
+
+// Get the role currently assigned to a slot. Returns ROLE_GUEST for unused
+// slots (safe default — least permissive).
+DeviceRole get_role(uint8_t slot);
+
+// Assign a role to an enrolled slot. Persists to NVS. The caller is
+// expected to enforce its own authentication (REST endpoint validates the
+// bearer token + bonded session before reaching this). Returns false if
+// the slot is empty or `role` is out of range. Always logs to the witness
+// chain via the supplied audit_log callback so role changes are auditable.
+typedef void (*RoleAuditCallback)(uint8_t slot, DeviceRole old_role, DeviceRole new_role);
+bool set_role(uint8_t slot, DeviceRole role, RoleAuditCallback audit_cb);
+
+// Update the in-memory last-seen timestamp for slot N. Called from the hot
+// path when an RPA resolves successfully. Not persisted (volatile) — phones
+// re-emit advertisements every few seconds, so we'll relearn after reboot.
+void mark_seen(uint8_t slot, uint32_t now_ms);
+
+// device-millis() of the most recent successful RPA resolve for slot N.
+// Returns 0 if never seen since boot.
+uint32_t last_seen_ms(uint8_t slot);
+
+// True if any slot with role >= min_role has been seen within the last
+// `window_ms`. Used by presence_context to decide CTX_HOME vs CTX_AWAY.
+//
+// Carefully: does NOT reveal which slot matched (no side channel for
+// "which family member is home"). Returns aggregate yes/no only.
+bool any_role_seen_within(DeviceRole min_role, uint32_t window_ms, uint32_t now_ms);
 
 // ════════════════════════════════════════════════════════════════════════════
 // INTROSPECTION (for status API — does NOT expose IRK material)
