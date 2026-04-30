@@ -1711,6 +1711,10 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
               <div class="stat-label">MTU</div>
               <div class="stat-value" id="btMtu">--<span class="stat-unit">B</span></div>
             </div>
+            <div class="stat-item">
+              <div class="stat-label">Battery</div>
+              <div class="stat-value" id="btBattery">--<span class="stat-unit">%</span></div>
+            </div>
           </div>
           <!-- Live connection panel (Find My-style: name, signal bars, distance) -->
           <div id="btConnLive" style="display:none;margin-top:1rem;padding:0.85rem;border:1px solid var(--border);border-radius:8px;background:var(--card-hover,#1a2340);">
@@ -3390,6 +3394,14 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         } else {
           mtuEl.innerHTML = '--<span class="stat-unit">B</span>';
         }
+      }
+      // Battery comes from the SIG Battery Service. Mains-powered devices
+      // sit at 100 % indefinitely; a future battery-sense driver can call
+      // ble_standard_profiles::set_battery_level() to update the value.
+      const battEl = document.getElementById('btBattery');
+      if (battEl) {
+        const pct = (typeof data.battery_pct === 'number') ? data.battery_pct : null;
+        battEl.innerHTML = (pct === null ? '--' : pct) + '<span class="stat-unit">%</span>';
       }
       document.getElementById('btPairedCount').textContent = data.paired_count || 0;
       // The scan-list polling also writes this — fall back to the status-side
