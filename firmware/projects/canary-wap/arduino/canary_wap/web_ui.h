@@ -1724,8 +1724,16 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
             <div style="font-size:0.8rem;color:var(--muted);margin-bottom:0.25rem;" id="btPairingState">Pairing mode active</div>
             <div style="font-family:monospace;font-size:1.6rem;letter-spacing:0.2em;text-align:center;" id="btPairingPin">------</div>
             <div style="font-size:0.75rem;color:var(--muted);margin-top:0.25rem;text-align:center;" id="btPairingHint">Open Bluetooth on your phone, connect to this device, and confirm the PIN.</div>
+            <!-- Confirm / Reject only render in the 'confirming' state. The
+                 user MUST visually compare the PIN above against the one on
+                 their phone before tapping Numbers match — that's the bit
+                 that prevents an MITM from coercing the bond. -->
+            <div id="btPairingConfirmRow" style="display:none;gap:0.5rem;margin-top:0.6rem;justify-content:center;">
+              <button class="btn btn-sm btn-primary" onclick="btConfirmPairing()">Numbers match</button>
+              <button class="btn btn-sm btn-danger" onclick="btRejectPairing()">Don't match</button>
+            </div>
             <div style="display:flex;gap:0.5rem;margin-top:0.5rem;justify-content:center;">
-              <button class="btn btn-sm btn-danger" onclick="btCancelPairing()">Cancel Pairing</button>
+              <button class="btn btn-sm btn-secondary" onclick="btCancelPairing()">Cancel Pairing</button>
             </div>
           </div>
           <div class="toggle-row" style="margin-top:1rem;">
@@ -3225,22 +3233,30 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       // Pairing PIN / state display. The backend only includes data.pairing
       // when a pairing session is active.
       const box = document.getElementById('btPairingBox');
+      const confirmRow = document.getElementById('btPairingConfirmRow');
       if (data.pairing && data.pairing.state) {
         box.style.display = '';
         document.getElementById('btPairingState').textContent = 'Pairing: ' + data.pairing.state;
         const pinEl = document.getElementById('btPairingPin');
+        const isConfirming = (data.pairing.state === 'confirming');
         if (data.pairing.pin !== undefined && data.pairing.pin !== null) {
           pinEl.textContent = String(data.pairing.pin).padStart(6, '0');
-          document.getElementById('btPairingHint').textContent =
-            'Confirm this PIN on your phone, or it will be auto-confirmed by the device.';
+          window.__btPairingPin = data.pairing.pin;
+          document.getElementById('btPairingHint').textContent = isConfirming
+            ? 'Compare this 6-digit code to the code on your phone. If they match, tap "Numbers match".'
+            : 'Confirm this PIN on your phone.';
         } else {
           pinEl.textContent = 'waiting…';
+          window.__btPairingPin = null;
           document.getElementById('btPairingHint').textContent =
             'Open Bluetooth on your phone, connect to ' + (data.device_name || 'this device') +
             ', and a PIN will appear here.';
         }
+        confirmRow.style.display = isConfirming ? 'flex' : 'none';
       } else {
         box.style.display = 'none';
+        confirmRow.style.display = 'none';
+        window.__btPairingPin = null;
       }
 
       // While pairing or advertising, poll faster so the PIN appears promptly.
@@ -3295,6 +3311,27 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
     async function btCancelPairing() {
       await api('/api/bluetooth/pair/cancel', 'POST');
+      refreshBtStatus();
+    }
+
+    async function btConfirmPairing() {
+      // Send back the same PIN the firmware showed us. The backend
+      // cross-checks before injecting confirmation into NimBLE — a mismatch
+      // is treated as a reject, not a retry.
+      const pin = window.__btPairingPin;
+      if (pin === null || pin === undefined) {
+        alert('No pairing PIN to confirm.');
+        return;
+      }
+      const data = await api('/api/bluetooth/pair/confirm', 'POST', { pin: pin });
+      if (data && data.success === false) {
+        alert('Confirm failed: ' + (data.error || 'unknown error'));
+      }
+      refreshBtStatus();
+    }
+
+    async function btRejectPairing() {
+      await api('/api/bluetooth/pair/reject', 'POST');
       refreshBtStatus();
     }
 

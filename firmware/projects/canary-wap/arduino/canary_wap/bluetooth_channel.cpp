@@ -76,6 +76,15 @@ static BluetoothSettings g_settings = {
 static ConnectionInfo g_connection = {};
 static PairingSession g_pairing = {};
 
+// Pending Numeric-Comparison pairing — captured in onConfirmPassKey, drained
+// by confirm_pairing()/reject_pairing()/cancel_pairing(). Without this, the
+// only way to satisfy the host's pairing flow was to call injectConfirmPasskey
+// from inside the callback itself, which forced an auto-yes that bypassed the
+// MITM check. NimBLEConnInfo is a thin POD wrapping ble_gap_conn_desc — safe
+// to copy by value.
+static NimBLEConnInfo g_pending_pair_info{};
+static bool g_pending_pair_active = false;
+
 // Paired devices
 static PairedDevice g_paired_devices[MAX_PAIRED_DEVICES];
 static size_t g_paired_count = 0;
@@ -265,19 +274,29 @@ class ServerCallbacks : public NimBLEServerCallbacks {
   }
 
   void onConfirmPassKey(NimBLEConnInfo& connInfo, uint32_t pin) override {
+    // BLE Numeric Comparison: the peer and we both saw `pin` derived from the
+    // ECDH handshake. The user must visually verify the same six digits show
+    // on both screens before we tell NimBLE to accept — this is the bit that
+    // closes Man-In-The-Middle. We stash the conn info and surface the PIN to
+    // the SPA; confirm_pairing()/reject_pairing()/cancel_pairing() drain it.
+    g_pending_pair_info = connInfo;
+    g_pending_pair_active = true;
+
     g_pairing.state = PAIR_CONFIRMING;
     g_pairing.pin_code = pin;
+    g_pairing.pin_displayed = true;
+    g_pairing.user_confirmed = false;
 
     char pin_str[16];
     snprintf(pin_str, sizeof(pin_str), "%06lu", (unsigned long)pin);
-    log_health(SCV_LOG_NOTICE, SCV_CAT_BLUETOOTH, "Confirm pairing PIN", pin_str);
+    log_health(SCV_LOG_NOTICE, SCV_CAT_BLUETOOTH,
+               "BLE pairing PIN — awaiting user confirmation", pin_str);
 
     if (g_pair_callback) {
       g_pair_callback(&g_pairing);
     }
-
-    // Auto-confirm for now - in production, wait for user confirmation
-    NimBLEDevice::injectConfirmPasskey(connInfo, true);
+    // Intentionally NO injectConfirmPasskey() here. The pairing timeout
+    // (PAIRING_TIMEOUT_MS) will reject if the user doesn't respond.
   }
 };
 
@@ -740,6 +759,12 @@ bool start_pairing() {
 }
 
 void cancel_pairing() {
+  // Drain any pending Numeric-Comparison so NimBLE doesn't sit indefinitely
+  // waiting on injectConfirmPasskey. A reject closes the bond attempt cleanly.
+  if (g_pending_pair_active) {
+    NimBLEDevice::injectConfirmPasskey(g_pending_pair_info, false);
+    g_pending_pair_active = false;
+  }
   if (g_pairing.state == PAIR_NONE) return;
 
   g_pairing.state = PAIR_NONE;
@@ -754,16 +779,34 @@ void cancel_pairing() {
 
 bool confirm_pairing(uint32_t pin) {
   if (g_pairing.state != PAIR_CONFIRMING) return false;
+  if (!g_pending_pair_active) return false;
 
-  if (pin == g_pairing.pin_code) {
-    g_pairing.user_confirmed = true;
-    return true;
+  // The SPA sends back the same six digits we showed it. A mismatch means
+  // either a bug in the SPA, a stale request, or an active attacker trying
+  // to coerce a yes — all warrant a reject.
+  if (pin != g_pairing.pin_code) {
+    log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH,
+               "Pairing PIN mismatch — rejecting", nullptr);
+    NimBLEDevice::injectConfirmPasskey(g_pending_pair_info, false);
+    g_pending_pair_active = false;
+    g_pairing.state = PAIR_FAILED;
+    if (g_pair_callback) g_pair_callback(&g_pairing);
+    return false;
   }
 
-  return false;
+  g_pairing.user_confirmed = true;
+  NimBLEDevice::injectConfirmPasskey(g_pending_pair_info, true);
+  g_pending_pair_active = false;
+  log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH,
+             "Pairing PIN confirmed by user", nullptr);
+  return true;
 }
 
 bool reject_pairing() {
+  if (g_pending_pair_active) {
+    NimBLEDevice::injectConfirmPasskey(g_pending_pair_info, false);
+    g_pending_pair_active = false;
+  }
   if (g_pairing.state == PAIR_NONE) return false;
 
   g_pairing.state = PAIR_FAILED;
