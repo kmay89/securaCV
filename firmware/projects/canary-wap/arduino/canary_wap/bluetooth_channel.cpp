@@ -45,6 +45,7 @@
 #include "ble_presence.h"
 #include "ble_console.h"
 #include "ble_provision.h"
+#include "ble_log_export.h"
 #include "ota_release_key.h"
 
 namespace bluetooth_channel {
@@ -667,6 +668,11 @@ bool init() {
   // others require READ_ENC + READ_AUTHEN.
   ble_provision::init(g_server);
 
+  // Read-only health-log export. Bonded peers can paginate through the
+  // ring buffer over BLE for forensic recovery / on-site triage when
+  // canary.local is unreachable.
+  ble_log_export::init(g_server);
+
   // Set up advertising
   g_advertising = NimBLEDevice::getAdvertising();
   g_advertising->addServiceUUID(SERVICE_UUID);
@@ -1176,6 +1182,11 @@ void update() {
   // Drain async WiFi-scan completion + mirror connect outcome into the
   // provisioning STATE characteristic.
   ble_provision::tick();
+
+  // Refresh the log-export HEAD so subscribers see new entries land
+  // without having to poll. Internally throttled, no-op when the ring
+  // hasn't changed.
+  ble_log_export::tick();
 
   // Update status characteristic periodically
   if (g_connection.connected && now - last_status_update >= STATUS_UPDATE_INTERVAL_MS) {

@@ -3182,6 +3182,71 @@ static esp_err_t handle_wifi_connect(httpd_req_t* req) {
   return http_send_json(req, response.c_str());
 }
 
+// External-linkage bridge for the BLE log-export module. ble_log_export.cpp
+// reads through these helpers rather than poking g_health_log_ring directly,
+// so the storage layout stays internal to this TU and the BLE module doesn't
+// need to know about HEALTH_LOG_RING_SIZE / head-index arithmetic.
+//
+// Both functions are NOT static — non-static linkage matches the
+// `extern bool ble_log_*` declarations in ble_log_export.cpp.
+
+// Wire-format snapshot of one health-log entry, sized to fit a single
+// BLE MTU-247 read after JSON serialisation. Field sizes mirror
+// HealthLogRingEntry.
+struct BleLogSnapshot {
+  uint32_t seq;
+  uint32_t timestamp_ms;
+  uint8_t  level;
+  uint8_t  category;
+  uint8_t  ack_status;
+  char     message[80];
+  char     detail[48];
+};
+
+bool ble_log_get_head(uint32_t* count, uint32_t* oldest_seq, uint32_t* newest_seq) {
+  if (!count || !oldest_seq || !newest_seq) return false;
+  *count = (uint32_t)g_health_log_ring_count;
+  if (g_health_log_ring_count == 0) {
+    *oldest_seq = 0;
+    *newest_seq = 0;
+    return true;
+  }
+  // The ring stores entries in chronological order (oldest at head when
+  // wrapped, newest at head-1). Walk both ends to read the seq numbers
+  // without tying the BLE module to ring-buffer mechanics.
+  size_t newest_idx = (g_health_log_ring_head + HEALTH_LOG_RING_SIZE - 1)
+                       % HEALTH_LOG_RING_SIZE;
+  size_t oldest_idx = (g_health_log_ring_count == HEALTH_LOG_RING_SIZE)
+                       ? g_health_log_ring_head
+                       : 0;
+  *newest_seq = g_health_log_ring[newest_idx].seq;
+  *oldest_seq = g_health_log_ring[oldest_idx].seq;
+  return true;
+}
+
+bool ble_log_get_by_index(size_t newest_first_index, BleLogSnapshot* out) {
+  if (!out) return false;
+  if (newest_first_index >= g_health_log_ring_count) return false;
+  // newest-first: index 0 = most recent; matches handle_logs() iteration
+  // order so a phone scrolling through "0..count-1" sees the same order
+  // as the SPA's logs panel.
+  size_t idx = (g_health_log_ring_head + HEALTH_LOG_RING_SIZE - 1
+                - newest_first_index) % HEALTH_LOG_RING_SIZE;
+  const HealthLogRingEntry& entry = g_health_log_ring[idx];
+  out->seq          = entry.seq;
+  out->timestamp_ms = entry.timestamp_ms;
+  out->level        = (uint8_t)entry.level;
+  out->category     = (uint8_t)entry.category;
+  out->ack_status   = (uint8_t)entry.ack_status;
+  // strncpy + explicit NUL: messages are bounded to the struct sizes and
+  // we want to make sure short messages don't read past their end.
+  strncpy(out->message, entry.message, sizeof(out->message) - 1);
+  out->message[sizeof(out->message) - 1] = '\0';
+  strncpy(out->detail, entry.detail, sizeof(out->detail) - 1);
+  out->detail[sizeof(out->detail) - 1] = '\0';
+  return true;
+}
+
 // External-linkage bridge for the BLE provisioning module. ble_provision.cpp
 // hands a paired phone's chosen credentials in here; we run the same input
 // validation as handle_wifi_connect, persist to NVS, and kick the existing
