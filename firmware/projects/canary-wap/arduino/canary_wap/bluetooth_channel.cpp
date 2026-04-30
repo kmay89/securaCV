@@ -44,6 +44,7 @@
 #include "ble_ota.h"
 #include "ble_presence.h"
 #include "ble_console.h"
+#include "ble_provision.h"
 #include "ota_release_key.h"
 
 namespace bluetooth_channel {
@@ -660,6 +661,12 @@ bool init() {
   // down.
   ble_console::init(g_server);
 
+  // BLE WiFi provisioning: scan + creds + state characteristics so a
+  // paired phone can configure home WiFi without the captive AP. The
+  // creds characteristic is write-only and rate-limited; reads of the
+  // others require READ_ENC + READ_AUTHEN.
+  ble_provision::init(g_server);
+
   // Set up advertising
   g_advertising = NimBLEDevice::getAdvertising();
   g_advertising->addServiceUUID(SERVICE_UUID);
@@ -1165,6 +1172,10 @@ void update() {
   // SNAPSHOT_PERIOD_MS so calling on every iteration is cheap; only sends
   // a notification when the JSON bytes actually changed.
   ble_console::tick();
+
+  // Drain async WiFi-scan completion + mirror connect outcome into the
+  // provisioning STATE characteristic.
+  ble_provision::tick();
 
   // Update status characteristic periodically
   if (g_connection.connected && now - last_status_update >= STATUS_UPDATE_INTERVAL_MS) {
