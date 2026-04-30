@@ -133,11 +133,13 @@ inline esp_err_t handle_bluetooth_advertise_start(httpd_req_t* req) {
       return send_error(req, "Bluetooth init failed (check antenna / NimBLE library)");
     }
   }
-  if (bluetooth_channel::start_advertising()) {
-    return send_success(req, "Advertising started");
-  }
+  // Check pre-conditions before issuing the start call so the error message
+  // is specific and we avoid a no-op state transition.
   if (bluetooth_channel::is_connected()) {
     return send_error(req, "Cannot advertise while a device is connected");
+  }
+  if (bluetooth_channel::start_advertising()) {
+    return send_success(req, "Advertising started");
   }
   return send_error(req, "Failed to start advertising");
 }

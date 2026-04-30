@@ -35,6 +35,16 @@
   #pragma message "NimBLEDevice.h not found — FEATURE_BLE auto-disabled"
 #endif
 
+// FEATURE_BLUETOOTH gates the BLE pairing/advertising channel
+// (bluetooth_channel.cpp + bluetooth_api.h). Like FEATURE_BLE above, it
+// requires NimBLE — auto-disable if the library is missing so CI builds
+// without the lib still link.
+#if defined(FEATURE_BLUETOOTH) && FEATURE_BLUETOOTH && !__has_include(<NimBLEDevice.h>)
+  #undef  FEATURE_BLUETOOTH
+  #define FEATURE_BLUETOOTH 0
+  #pragma message "NimBLEDevice.h not found — FEATURE_BLUETOOTH auto-disabled"
+#endif
+
 // Sub-feature flags (only relevant if FEATURE_BLE == 1)
 #define FEATURE_BLE_OPERA     1   // Server/advertising mode (presence)
 #define FEATURE_BLE_CHIRP     1   // Broadcast alert mode (connectionless)
