@@ -1666,6 +1666,14 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
             <button class="btn btn-primary" id="btAdvBtn" onclick="toggleBtAdvertising()">Start Advertising</button>
             <button class="btn btn-secondary" id="btPairBtn" onclick="btStartPairing()">Start Pairing</button>
           </div>
+          <div id="btPairingBox" style="display:none;margin-top:1rem;padding:0.75rem;background:var(--surface-2,#222);border:1px solid var(--border);border-radius:6px;">
+            <div style="font-size:0.8rem;color:var(--muted);margin-bottom:0.25rem;" id="btPairingState">Pairing mode active</div>
+            <div style="font-family:monospace;font-size:1.6rem;letter-spacing:0.2em;text-align:center;" id="btPairingPin">------</div>
+            <div style="font-size:0.75rem;color:var(--muted);margin-top:0.25rem;text-align:center;" id="btPairingHint">Open Bluetooth on your phone, connect to this device, and confirm the PIN.</div>
+            <div style="display:flex;gap:0.5rem;margin-top:0.5rem;justify-content:center;">
+              <button class="btn btn-sm btn-danger" onclick="btCancelPairing()">Cancel Pairing</button>
+            </div>
+          </div>
           <div class="toggle-row" style="margin-top:1rem;">
             <div class="toggle-info">
               <div class="toggle-title">Auto-advertise on boot</div>
@@ -3041,7 +3049,15 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
     async function refreshBtStatus() {
       const data = await api('/api/bluetooth');
-      if (!data.state) return;
+      if (!data || !data.state) {
+        // Backend not present (FEATURE_BLUETOOTH=0 or build without NimBLE).
+        const subtitle = document.getElementById('btSubtitle');
+        if (subtitle) subtitle.textContent = 'BLE unavailable in this build';
+        const badge = document.getElementById('btStateBadge');
+        const text = document.getElementById('btStateText');
+        if (badge && text) { badge.className = 'badge warning'; text.textContent = 'Unavailable'; }
+        return;
+      }
       btState = data;
 
       document.getElementById('btStateVal').textContent = data.state;
@@ -3059,6 +3075,37 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       const advBtn = document.getElementById('btAdvBtn');
       advBtn.textContent = data.advertising ? 'Stop Advertising' : 'Start Advertising';
       advBtn.className = data.advertising ? 'btn btn-danger' : 'btn btn-primary';
+
+      // Pairing PIN / state display. The backend only includes data.pairing
+      // when a pairing session is active.
+      const box = document.getElementById('btPairingBox');
+      if (data.pairing && data.pairing.state) {
+        box.style.display = '';
+        document.getElementById('btPairingState').textContent = 'Pairing: ' + data.pairing.state;
+        const pinEl = document.getElementById('btPairingPin');
+        if (data.pairing.pin !== undefined && data.pairing.pin !== null) {
+          pinEl.textContent = String(data.pairing.pin).padStart(6, '0');
+          document.getElementById('btPairingHint').textContent =
+            'Confirm this PIN on your phone, or it will be auto-confirmed by the device.';
+        } else {
+          pinEl.textContent = 'waiting…';
+          document.getElementById('btPairingHint').textContent =
+            'Open Bluetooth on your phone, connect to ' + (data.device_name || 'this device') +
+            ', and a PIN will appear here.';
+        }
+      } else {
+        box.style.display = 'none';
+      }
+
+      // While pairing or advertising, poll faster so the PIN appears promptly.
+      if (data.advertising || (data.pairing && data.pairing.state)) {
+        if (!window.__btPollTimer) {
+          window.__btPollTimer = setInterval(refreshBtStatus, 1500);
+        }
+      } else if (window.__btPollTimer) {
+        clearInterval(window.__btPollTimer);
+        window.__btPollTimer = null;
+      }
     }
 
     async function loadBtSettings() {
@@ -3084,11 +3131,26 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
     async function toggleBtAdvertising() {
       const isAdv = btState?.advertising;
-      await api(isAdv ? '/api/bluetooth/advertise/stop' : '/api/bluetooth/advertise/start', 'POST');
+      const ep = isAdv ? '/api/bluetooth/advertise/stop' : '/api/bluetooth/advertise/start';
+      const data = await api(ep, 'POST');
+      if (data && data.success === false) {
+        alert('Bluetooth: ' + (data.error || 'unknown error'));
+      }
       refreshBtStatus();
     }
 
-    async function btStartPairing() { await api('/api/bluetooth/pair/start', 'POST'); refreshBtStatus(); }
+    async function btStartPairing() {
+      const data = await api('/api/bluetooth/pair/start', 'POST');
+      if (data && data.success === false) {
+        alert('Pairing: ' + (data.error || 'unknown error'));
+      }
+      refreshBtStatus();
+    }
+
+    async function btCancelPairing() {
+      await api('/api/bluetooth/pair/cancel', 'POST');
+      refreshBtStatus();
+    }
 
     async function loadBtPairedDevices() {
       const data = await api('/api/bluetooth/paired');
