@@ -36,6 +36,29 @@
 
 class NimBLEServer;
 
+// Wire-format snapshot of one health-log entry. Defined at global scope
+// (not inside the namespace) so the bridge functions in canary_wap.ino
+// can use the same type without namespace-qualification, AND so it's
+// visible to the Arduino IDE's auto-prototype generator — Arduino
+// pre-processes .ino files by lifting function signatures to the top
+// of the unit BEFORE walking the body, so any type referenced in a .ino
+// function signature must exist in a header that's #include'd up there.
+struct BleLogSnapshot {
+  uint32_t seq;
+  uint32_t timestamp_ms;
+  uint8_t  level;
+  uint8_t  category;
+  uint8_t  ack_status;
+  char     message[80];
+  char     detail[48];
+};
+
+// External-linkage bridges defined in canary_wap.ino. They wrap
+// g_health_log_ring so the BLE module doesn't need to know about
+// HEALTH_LOG_RING_SIZE / head-index arithmetic.
+extern bool ble_log_get_head(uint32_t* count, uint32_t* oldest_seq, uint32_t* newest_seq);
+extern bool ble_log_get_by_index(size_t newest_first_index, BleLogSnapshot* out);
+
 namespace ble_log_export {
 
 static const char* SERVICE_UUID  = "8fc1cef5-b162-4401-9607-c8ac21383e90";

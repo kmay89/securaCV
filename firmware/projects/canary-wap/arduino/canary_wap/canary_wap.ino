@@ -116,6 +116,7 @@
 #include "bluetooth_channel.h"
 #include "bluetooth_api.h"
 #include "ble_console.h"
+#include "ble_log_export.h"
 #include "household_api.h"
 #include "sys_monitor.h"
 #include "hardware_state.h"
@@ -3187,21 +3188,10 @@ static esp_err_t handle_wifi_connect(httpd_req_t* req) {
 // so the storage layout stays internal to this TU and the BLE module doesn't
 // need to know about HEALTH_LOG_RING_SIZE / head-index arithmetic.
 //
-// Both functions are NOT static — non-static linkage matches the
-// `extern bool ble_log_*` declarations in ble_log_export.cpp.
-
-// Wire-format snapshot of one health-log entry, sized to fit a single
-// BLE MTU-247 read after JSON serialisation. Field sizes mirror
-// HealthLogRingEntry.
-struct BleLogSnapshot {
-  uint32_t seq;
-  uint32_t timestamp_ms;
-  uint8_t  level;
-  uint8_t  category;
-  uint8_t  ack_status;
-  char     message[80];
-  char     detail[48];
-};
+// BleLogSnapshot is defined in ble_log_export.h (included above) so the
+// type is visible to Arduino IDE's auto-prototype generator — it lifts
+// .ino function signatures to the top of the translation unit before
+// walking the body, and would otherwise fail to find BleLogSnapshot.
 
 bool ble_log_get_head(uint32_t* count, uint32_t* oldest_seq, uint32_t* newest_seq) {
   if (!count || !oldest_seq || !newest_seq) return false;

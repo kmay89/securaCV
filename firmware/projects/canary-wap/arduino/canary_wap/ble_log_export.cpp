@@ -15,20 +15,9 @@
 
 #include "health_log.h"
 
-// External-linkage bridges defined in canary_wap.ino. The struct definition
-// must be reproduced here because the bridges return it by-pointer, but the
-// .ino-side struct lives behind internal linkage.
-struct BleLogSnapshot {
-  uint32_t seq;
-  uint32_t timestamp_ms;
-  uint8_t  level;
-  uint8_t  category;
-  uint8_t  ack_status;
-  char     message[80];
-  char     detail[48];
-};
-extern bool ble_log_get_head(uint32_t* count, uint32_t* oldest_seq, uint32_t* newest_seq);
-extern bool ble_log_get_by_index(size_t newest_first_index, BleLogSnapshot* out);
+// BleLogSnapshot + the two extern bridge declarations live in
+// ble_log_export.h so they're visible to canary_wap.ino's auto-prototype
+// generator (Arduino IDE quirk — see the comment in the header).
 
 namespace ble_log_export {
 
