@@ -3696,8 +3696,11 @@ static void wifi_connect_to_home() {
 
   // Clear any stale STA state (previous failed attempt, prior association)
   // before starting a fresh association. Without this, WiFi.begin() can
-  // immediately return WL_DISCONNECTED on retries.
-  WiFi.disconnect(false, true);
+  // immediately return WL_DISCONNECTED on retries. Pass eraseap=false: the
+  // periodic retry path also calls this function, and erasing the SDK's
+  // STA NVS config on every failed attempt would needlessly wear flash.
+  // WiFi.begin() below installs a fresh config anyway.
+  WiFi.disconnect(false, false);
 
   g_wifi_status.state = WIFI_PROV_CONNECTING;
   g_wifi_status.connect_attempts++;
@@ -3732,8 +3735,11 @@ static void wifi_check_connection() {
       }
 
       // Detect specific failure modes early so the UI can show a useful
-      // reason instead of waiting for the full timeout.
-      const wl_status_t wl = (wl_status_t)WiFi.status();
+      // reason instead of waiting for the full timeout. WiFi.status() returns
+      // a uint8_t; compare directly against the well-known constants rather
+      // than narrowing to wl_status_t (which would invoke implementation-
+      // defined behaviour for any future status value the enum doesn't list).
+      const uint8_t wl = WiFi.status();
       const char* fail_reason = nullptr;
       if (wl == WL_NO_SSID_AVAIL) {
         fail_reason = "Network not found";
