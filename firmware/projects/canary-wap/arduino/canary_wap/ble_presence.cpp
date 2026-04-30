@@ -194,4 +194,32 @@ bool get_stats(Stats* out) {
 
 }  // namespace ble_presence
 
+#else  // !(FEATURE_BLUETOOTH && __has_include(<NimBLEDevice.h>))
+
+// No-NimBLE stubs. The Arduino-IDE CI build doesn't install NimBLE-Arduino,
+// so the real implementation above never compiles in that path. We still
+// need the symbols to link, because household_api.h calls into ble_presence
+// unconditionally (see comment in ble_presence.h). Each stub returns the
+// "off / not running / zero" answer that callers already handle.
+namespace ble_presence {
+bool init() { return false; }
+void deinit() {}
+bool start() { return false; }
+void stop() {}
+bool is_running() { return false; }
+void pause_for_user_scan() {}
+void resume_continuous_scan() {}
+void notify_console_connected(bool /*connected*/) {}
+bool get_stats(Stats* out) {
+  if (!out) return false;
+  out->adverts_seen = 0;
+  out->adverts_resolved_household = 0;
+  out->adverts_dropped_busy = 0;
+  out->pause_count = 0;
+  out->running = false;
+  out->reduced_duty = false;
+  return true;
+}
+}  // namespace ble_presence
+
 #endif // FEATURE_BLUETOOTH && __has_include(<NimBLEDevice.h>)

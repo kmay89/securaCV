@@ -41,9 +41,11 @@
 #ifndef SECURACV_BLE_PRESENCE_H
 #define SECURACV_BLE_PRESENCE_H
 
-#include "build_config.h"
-
-#if FEATURE_BLUETOOTH && __has_include(<NimBLEDevice.h>)
+// API surface is declared unconditionally so callers (e.g. household_api.h)
+// can compile in builds where NimBLE isn't available — the Arduino IDE CI
+// build only installs Crypto + ArduinoJson, no NimBLE library, and everything
+// here has to compile against that. The .cpp swaps in a no-op stub variant
+// of every function in that case so links succeed.
 
 #include <stdint.h>
 #include <stddef.h>
@@ -107,7 +109,5 @@ struct Stats {
 bool get_stats(Stats* out);
 
 }  // namespace ble_presence
-
-#endif // FEATURE_BLUETOOTH && __has_include(<NimBLEDevice.h>)
 
 #endif // SECURACV_BLE_PRESENCE_H
