@@ -161,6 +161,7 @@ struct BluetoothStatus {
   char device_name[MAX_DEVICE_NAME_LEN + 1];
   char local_address[18];                   // "XX:XX:XX:XX:XX:XX"
   int8_t tx_power;                          // dBm
+  uint16_t mtu;                             // negotiated ATT MTU (23..247)
   uint8_t paired_count;
   uint8_t scanned_count;
   ConnectionInfo connection;

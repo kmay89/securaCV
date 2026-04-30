@@ -85,6 +85,12 @@ static PairingSession g_pairing = {};
 static NimBLEConnInfo g_pending_pair_info{};
 static bool g_pending_pair_active = false;
 
+// Active connection handle so update() can poll RSSI / MTU without keeping
+// a reference to the callback's NimBLEConnInfo (which is per-callback scope).
+// 0xFFFF = "no connection" (BLE conn handles are 0..0x0EFE in NimBLE).
+static uint16_t g_connection_handle = 0xFFFF;
+static uint16_t g_connection_mtu = 23;  // negotiated MTU; defaults to ATT min
+
 // Paired devices
 static PairedDevice g_paired_devices[MAX_PAIRED_DEVICES];
 static size_t g_paired_count = 0;
@@ -141,6 +147,7 @@ static DeviceType detect_device_type(const NimBLEAdvertisedDevice* device);
 class ServerCallbacks : public NimBLEServerCallbacks {
   void onConnect(NimBLEServer* server, NimBLEConnInfo& connInfo) override {
     g_connection.connected = true;
+    g_connection_handle = connInfo.getConnHandle();
     memcpy(g_connection.address, connInfo.getAddress().getBase()->val, BLE_ADDRESS_LENGTH);
 
     NimBLEAddress addr(connInfo.getAddress());
@@ -151,6 +158,14 @@ class ServerCallbacks : public NimBLEServerCallbacks {
     g_connection.last_activity_ms = millis();
     g_connection.bytes_sent = 0;
     g_connection.bytes_received = 0;
+
+    // Request a faster connection interval. Units: 1.25 ms for interval,
+    // 10 ms for supervision timeout. The (24, 40, 0, 400) range is inside
+    // Apple's accepted band (min 15 ms, range >= 15 ms, timeout >= 2 s)
+    // so iOS won't reject and renegotiate to 30 ms+. Android typically
+    // honours the request directly. Falls back silently to the default
+    // 30-ms interval if the peer refuses.
+    server->updateConnParams(connInfo.getConnHandle(), 24, 40, 0, 400);
 
     // Update security level
     if (connInfo.isEncrypted()) {
@@ -194,6 +209,8 @@ class ServerCallbacks : public NimBLEServerCallbacks {
     }
 
     memset(&g_connection, 0, sizeof(g_connection));
+    g_connection_handle = 0xFFFF;
+    g_connection_mtu = 23;
     set_state(BT_IDLE);
 
     // Resume advertising if enabled
@@ -541,6 +558,13 @@ bool init() {
   // ESP_PWR_LVL_* enum here — those values are indexes (e.g. P3 == 7), not
   // dBm, and would set the radio to a different power than intended.
   NimBLEDevice::setPower(g_settings.tx_power);
+
+  // Bump default ATT MTU to 247 (244-byte payload). The default is 23
+  // (20-byte payload), which fragments every JSON status read into 3+ ATT
+  // packets and roughly triples connection-event time on the radio. 247 is
+  // the largest a single LE Data Length Extension packet carries without
+  // additional fragmentation; both iOS and modern Android accept it.
+  NimBLEDevice::setMTU(247);
 
   // Set security
   NimBLEDevice::setSecurityAuth(true, true, true);  // bonding, MITM, SC
@@ -987,6 +1011,7 @@ BluetoothStatus get_status() {
   }
 
   status.tx_power = g_settings.tx_power;
+  status.mtu = g_connection_mtu;
   status.paired_count = g_paired_count;
   status.scanned_count = g_scanned_count;
   status.connection = g_connection;
@@ -1052,8 +1077,17 @@ void update() {
     last_status_update = now;
     update_status_characteristic();
 
-    // Update RSSI
-    // Note: NimBLE doesn't provide direct RSSI access for connections
+    // Refresh live RSSI + negotiated MTU for the API surface. The host call
+    // ble_gap_conn_rssi() reads the most recent received-signal strength on
+    // the active link — works regardless of whether the link is encrypted.
+    if (g_connection_handle != 0xFFFF) {
+      int8_t rssi = 0;
+      if (ble_gap_conn_rssi(g_connection_handle, &rssi) == 0) {
+        g_connection.rssi = rssi;
+      }
+      uint16_t mtu = ble_att_mtu(g_connection_handle);
+      if (mtu >= 23) g_connection_mtu = mtu;
+    }
   }
 
   // Check inactivity timeout

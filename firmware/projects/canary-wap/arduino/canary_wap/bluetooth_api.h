@@ -64,6 +64,7 @@ inline esp_err_t handle_bluetooth_status(httpd_req_t* req) {
   doc["device_name"] = status.device_name;
   doc["local_address"] = status.local_address;
   doc["tx_power"] = status.tx_power;
+  doc["mtu"] = status.mtu;
   doc["paired_count"] = status.paired_count;
   doc["scanned_count"] = status.scanned_count;
 

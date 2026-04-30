@@ -1673,6 +1673,10 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
               <div class="stat-label">Nearby</div>
               <div class="stat-value" id="btNearbyCount">0</div>
             </div>
+            <div class="stat-item">
+              <div class="stat-label">MTU</div>
+              <div class="stat-value" id="btMtu">--<span class="stat-unit">B</span></div>
+            </div>
           </div>
           <!-- Live connection panel (Find My-style: name, signal bars, distance) -->
           <div id="btConnLive" style="display:none;margin-top:1rem;padding:0.85rem;border:1px solid var(--border);border-radius:8px;background:var(--card-hover,#1a2340);">
@@ -3197,6 +3201,16 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       document.getElementById('btStateVal').textContent = data.state;
       document.getElementById('btDeviceName').textContent = data.device_name || '--';
       document.getElementById('btTxPower').innerHTML = (data.tx_power >= 0 ? '+' : '') + data.tx_power + '<span class="stat-unit">dBm</span>';
+      // MTU only meaningful while connected; shows the negotiated value
+      // (defaults to 23 — ATT minimum — when no peer is present).
+      const mtuEl = document.getElementById('btMtu');
+      if (mtuEl) {
+        if (data.connected && data.mtu) {
+          mtuEl.innerHTML = data.mtu + '<span class="stat-unit">B</span>';
+        } else {
+          mtuEl.innerHTML = '--<span class="stat-unit">B</span>';
+        }
+      }
       document.getElementById('btPairedCount').textContent = data.paired_count || 0;
       // The scan-list polling also writes this — fall back to the status-side
       // count so the stat shows something between scans.
