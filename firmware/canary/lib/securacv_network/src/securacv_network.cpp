@@ -65,9 +65,12 @@ esp_err_t http_send_error(httpd_req_t* req, int status_code, const char* error_c
 // ════════════════════════════════════════════════════════════════════════════
 
 NetworkManager::NetworkManager()
-  : m_http_server(nullptr), m_scan_in_progress(false) {
+  : m_http_server(nullptr),
+    m_scan_in_progress(false),
+    m_peers_last_browse_ms(0) {
   memset(&m_creds, 0, sizeof(m_creds));
   memset(&m_status, 0, sizeof(m_status));
+  memset(m_peers, 0, sizeof(m_peers));
   m_mdns_hostname[0] = '\0';
 }
 
@@ -273,6 +276,131 @@ void NetworkManager::updateStatus() {
   snprintf(m_status.ap_ip, sizeof(m_status.ap_ip), "%d.%d.%d.%d", apip[0], apip[1], apip[2], apip[3]);
 }
 
+size_t NetworkManager::getPeerCount() const {
+  size_t n = 0;
+  for (size_t i = 0; i < PEER_CACHE_MAX; i++) {
+    if (m_peers[i].valid) n++;
+  }
+  return n;
+}
+
+// Insert or refresh a peer in the cache. Slot is found by device_id match,
+// then by mdns_hostname, then by the first invalid slot, then by oldest
+// last_seen — guarantees the most recently seen PEER_CACHE_MAX peers stay.
+static void peer_upsert(PeerEntry* peers,
+                        const char* device_id,
+                        const char* name,
+                        const char* mdns_hostname,
+                        const char* ip) {
+  if (!device_id || !device_id[0]) return;
+
+  int slot = -1;
+  for (size_t i = 0; i < PEER_CACHE_MAX; i++) {
+    if (peers[i].valid && strncmp(peers[i].device_id, device_id,
+                                  sizeof(peers[i].device_id)) == 0) {
+      slot = (int)i; break;
+    }
+  }
+  if (slot < 0 && mdns_hostname) {
+    for (size_t i = 0; i < PEER_CACHE_MAX; i++) {
+      if (peers[i].valid && strncmp(peers[i].mdns_hostname, mdns_hostname,
+                                    sizeof(peers[i].mdns_hostname)) == 0) {
+        slot = (int)i; break;
+      }
+    }
+  }
+  if (slot < 0) {
+    for (size_t i = 0; i < PEER_CACHE_MAX; i++) {
+      if (!peers[i].valid) { slot = (int)i; break; }
+    }
+  }
+  if (slot < 0) {
+    uint32_t oldest = UINT32_MAX;
+    for (size_t i = 0; i < PEER_CACHE_MAX; i++) {
+      if (peers[i].last_seen_ms < oldest) {
+        oldest = peers[i].last_seen_ms; slot = (int)i;
+      }
+    }
+  }
+  if (slot < 0) return;
+
+  PeerEntry& p = peers[slot];
+  strncpy(p.device_id, device_id, sizeof(p.device_id) - 1);
+  p.device_id[sizeof(p.device_id) - 1] = '\0';
+  if (name) {
+    strncpy(p.name, name, sizeof(p.name) - 1);
+    p.name[sizeof(p.name) - 1] = '\0';
+  } else if (!p.valid) {
+    p.name[0] = '\0';
+  }
+  if (mdns_hostname) {
+    strncpy(p.mdns_hostname, mdns_hostname, sizeof(p.mdns_hostname) - 1);
+    p.mdns_hostname[sizeof(p.mdns_hostname) - 1] = '\0';
+  }
+  if (ip) {
+    strncpy(p.ip, ip, sizeof(p.ip) - 1);
+    p.ip[sizeof(p.ip) - 1] = '\0';
+  }
+  p.last_seen_ms = millis();
+  p.valid = true;
+}
+
+void NetworkManager::browsePeers() {
+  // Only browse when on home WiFi; in AP-only mode there's no LAN to browse.
+  if (!m_status.sta_connected) return;
+  if (m_mdns_hostname[0] == '\0') return;
+
+  uint32_t now = millis();
+  if (m_peers_last_browse_ms != 0 &&
+      (now - m_peers_last_browse_ms) < PEER_BROWSE_INTERVAL_MS) {
+    // Even when not browsing, prune stale entries so the cache reflects
+    // peers that have actually disappeared.
+    for (size_t i = 0; i < PEER_CACHE_MAX; i++) {
+      if (m_peers[i].valid && (now - m_peers[i].last_seen_ms) > PEER_STALE_MS) {
+        m_peers[i].valid = false;
+      }
+    }
+    return;
+  }
+  m_peers_last_browse_ms = now;
+
+  // queryService blocks for up to ~1s waiting for responses. That's fine
+  // here because we only call it on the 30s cadence above.
+  int n = MDNS.queryService("securacv", "tcp");
+  for (int i = 0; i < n; i++) {
+    String host = MDNS.hostname(i);
+    if (host.length() == 0) continue;
+
+    // Filter ourselves out — we know our own hostname.
+    String me(m_mdns_hostname);
+    if (host.equalsIgnoreCase(me)) continue;
+
+    IPAddress ip = MDNS.IP(i);
+    char ip_str[16] = {0};
+    snprintf(ip_str, sizeof(ip_str), "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
+
+    char fqdn[40] = {0};
+    snprintf(fqdn, sizeof(fqdn), "%s.local", host.c_str());
+
+    // TXT records are advertised by addServiceTxt() in begin(); read them
+    // back. ESPmDNS returns empty string when a key is absent.
+    String tx_id   = MDNS.txt(i, "device_id");
+    String tx_name = MDNS.txt(i, "name");
+
+    const char* device_id = tx_id.length() > 0 ? tx_id.c_str() : host.c_str();
+    const char* name      = tx_name.length() > 0 ? tx_name.c_str() : nullptr;
+
+    peer_upsert(m_peers, device_id, name, fqdn, ip_str);
+  }
+
+  // Drop entries we didn't refresh and that have aged past the stale window.
+  for (size_t i = 0; i < PEER_CACHE_MAX; i++) {
+    if (m_peers[i].valid && (now - m_peers[i].last_seen_ms) > PEER_STALE_MS) {
+      m_peers[i].valid = false;
+    }
+  }
+}
+
 void NetworkManager::checkConnection() {
   uint32_t now = millis();
   updateStatus();
@@ -396,6 +524,9 @@ static esp_err_t handle_wifi_scan(httpd_req_t* req);
 static esp_err_t handle_wifi_connect(httpd_req_t* req);
 static esp_err_t handle_wifi_disconnect(httpd_req_t* req);
 
+// Peer discovery
+static esp_err_t handle_peers(httpd_req_t* req);
+
 #if FEATURE_HA_MQTT
 static esp_err_t handle_mqtt_status(httpd_req_t* req);
 static esp_err_t handle_mqtt_config(httpd_req_t* req);
@@ -475,6 +606,11 @@ void NetworkManager::registerHttpHandlers() {
 
   httpd_uri_t wifi_disconnect = { .uri = "/api/wifi/disconnect", .method = HTTP_POST, .handler = handle_wifi_disconnect };
   httpd_register_uri_handler(m_http_server, &wifi_disconnect);
+
+  // Peer list (mDNS browse cache). Path matches canary-vision/docs/discovery.md
+  // and the SPA's CanaryAPI.request(... '/api/v1/peers').
+  httpd_uri_t peers_ep = { .uri = "/api/v1/peers", .method = HTTP_GET, .handler = handle_peers };
+  httpd_register_uri_handler(m_http_server, &peers_ep);
 
   #if FEATURE_HA_MQTT
   httpd_uri_t mqtt_stat = { .uri = "/api/mqtt/status", .method = HTTP_GET, .handler = handle_mqtt_status };
@@ -583,6 +719,41 @@ static esp_err_t handle_status(httpd_req_t* req) {
 
   doc["logs_stored"] = health.logs_stored;
   doc["unacked_count"] = health.logs_unacked;
+
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+// GET /api/v1/peers
+// Returns the cached list of other Canaries this device has discovered via
+// mDNS (_securacv._tcp). The cache is populated by NetworkManager::browsePeers
+// on a slow cadence; this handler is read-only and never blocks on the
+// network. Response shape matches canary-vision/docs/discovery.md.
+static esp_err_t handle_peers(httpd_req_t* req) {
+  if (!rate_limit_check(req)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  // Refresh opportunistically — internally throttled so this is cheap if
+  // we already browsed within the interval.
+  network_get_instance().browsePeers();
+
+  const PeerEntry* peers = network_get_instance().getPeers();
+
+  JsonDocument doc;
+  doc["ok"] = true;
+  JsonArray arr = doc["peers"].to<JsonArray>();
+  uint32_t now = millis();
+  for (size_t i = 0; i < PEER_CACHE_MAX; i++) {
+    if (!peers[i].valid) continue;
+    JsonObject p = arr.add<JsonObject>();
+    p["device_id"]      = peers[i].device_id;
+    if (peers[i].name[0]) p["name"] = peers[i].name;
+    if (peers[i].ip[0])   p["ip"]   = peers[i].ip;
+    if (peers[i].mdns_hostname[0]) p["mdns_hostname"] = peers[i].mdns_hostname;
+    p["last_seen_ms_ago"] = (uint32_t)(now - peers[i].last_seen_ms);
+  }
 
   String response;
   serializeJson(doc, response);

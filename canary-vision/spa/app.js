@@ -646,11 +646,12 @@ function renderDiscoveredPeerSection(peers) {
         className: 'btn btn-primary btn-block mt-12',
         textContent: 'Pair this Canary',
         onClick: function () {
-          // Pre-fill the Add form with what we already know so the user
-          // only needs to paste this device's token.
+          // Pre-fill the Add form host so the user only needs to paste
+          // this device's token. The device_id is recovered from
+          // /api/v1/info during the pairing request, so we don't need
+          // to stash it separately.
           try {
             sessionStorage.setItem('canary_prefill_host', baseUrl);
-            sessionStorage.setItem('canary_prefill_id', peer.device_id);
           } catch (e) { /* ignore */ }
           Router.navigate('#/canaries/add');
         },
@@ -677,7 +678,6 @@ function renderAddCanaryView() {
   try {
     prefillHost = sessionStorage.getItem('canary_prefill_host') || '';
     sessionStorage.removeItem('canary_prefill_host');
-    sessionStorage.removeItem('canary_prefill_id');
   } catch (e) { /* ignore */ }
 
   if (prefillHost) {

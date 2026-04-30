@@ -52,8 +52,29 @@ struct WiFiStatus {
 };
 
 // ════════════════════════════════════════════════════════════════════════════
-// NETWORK MANAGER
+// PEER DISCOVERY
 // ════════════════════════════════════════════════════════════════════════════
+
+// Maximum number of peer Canaries we cache from mDNS browse. Sized to fit in
+// a single small struct array (no heap allocation). Homes with more than 8
+// devices can still discover via the SPA's manual add flow.
+#define PEER_CACHE_MAX        8
+
+// How often to re-browse mDNS for _securacv._tcp peers when on home WiFi.
+// Coupled to STA connectivity — never browses in AP-only mode.
+#define PEER_BROWSE_INTERVAL_MS 30000UL
+
+// Peers older than this are considered stale and dropped from the cache.
+#define PEER_STALE_MS         (5UL * 60UL * 1000UL)
+
+struct PeerEntry {
+  char     device_id[32];      // From TXT record; falls back to hostname stem.
+  char     name[32];           // From TXT record (optional).
+  char     mdns_hostname[40];  // e.g. "canary-ab12.local"
+  char     ip[16];             // dotted IPv4
+  uint32_t last_seen_ms;       // millis() of last successful browse hit.
+  bool     valid;
+};
 
 class NetworkManager {
 public:
@@ -70,6 +91,16 @@ public:
   // Returns the mDNS hostname registered for this device (without ".local").
   // Empty string if mDNS is not active.
   const char* getMdnsHostname() const { return m_mdns_hostname; }
+
+  // Browse the local network for other Canaries advertising _securacv._tcp.
+  // Updates the in-memory peer cache. Throttled internally to
+  // PEER_BROWSE_INTERVAL_MS; cheap to call every loop iteration. No-op until
+  // the STA interface is connected to home WiFi.
+  void browsePeers();
+
+  // Const access to the peer cache for HTTP handlers / diagnostics.
+  const PeerEntry* getPeers() const { return m_peers; }
+  size_t getPeerCount() const;
 
   // HTTP server
   bool startHttpServer();
@@ -102,6 +133,8 @@ private:
   httpd_handle_t m_http_server;
   bool m_scan_in_progress;
   char m_mdns_hostname[40];
+  PeerEntry m_peers[PEER_CACHE_MAX];
+  uint32_t m_peers_last_browse_ms;
 };
 
 // ════════════════════════════════════════════════════════════════════════════
