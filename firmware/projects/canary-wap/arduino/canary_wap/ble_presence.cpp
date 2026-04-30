@@ -201,6 +201,12 @@ bool get_stats(Stats* out) {
 // need the symbols to link, because household_api.h calls into ble_presence
 // unconditionally (see comment in ble_presence.h). Each stub returns the
 // "off / not running / zero" answer that callers already handle.
+//
+// The header is included here too so Stats and the function declarations
+// are visible — the real-impl arm above includes it inside the #if, and
+// without this line the stub function bodies don't see the type.
+#include "ble_presence.h"
+
 namespace ble_presence {
 bool init() { return false; }
 void deinit() {}
