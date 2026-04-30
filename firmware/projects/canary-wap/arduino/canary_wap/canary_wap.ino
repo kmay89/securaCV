@@ -115,6 +115,7 @@
 #include "mesh_network.h"
 #include "bluetooth_channel.h"
 #include "bluetooth_api.h"
+#include "ble_console.h"
 #include "household_api.h"
 #include "sys_monitor.h"
 #include "hardware_state.h"
@@ -4562,6 +4563,10 @@ void setup() {
     if (bluetooth_channel::init()) {
       Serial.println("[OK] Bluetooth initialized");
       log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "Bluetooth initialized", nullptr);
+      // Hand the offline-console module the device's short fingerprint
+      // and firmware version so its snapshot JSON identifies us. Both
+      // are owned by the .ino — the module copies into its own buffers.
+      ble_console::set_device_metadata(g_device.fingerprint_hex, FIRMWARE_VERSION);
     } else {
       Serial.println("[--] Bluetooth init failed");
     }
