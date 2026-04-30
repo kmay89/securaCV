@@ -23,6 +23,7 @@
 #include "household.h"
 #include "familiar.h"
 #include "baseline.h"
+#include "presence_context.h"
 #include "notify.h"
 #include "federated.h"
 #include "wizard.h"
@@ -792,6 +793,11 @@ bool init() {
   // receipt and build_*_share() periodically (or on session rotation).
   federated::init();
 
+  // BLE auto-context: read OWNER-role last-seen out of the household
+  // module and switch notify::set_context() between HOME / AWAY without
+  // user intervention. Loads any persisted user override from NVS.
+  presence_context::init();
+
   // Phase 10: bring up the setup wizard. Loads persisted state + zone
   // name from NVS. Must come AFTER the six modules it orchestrates.
   wizard::init();
@@ -923,6 +929,10 @@ void update() {
     notify::tick(now);
     federated::tick(now);
     wizard::tick(now);
+    // presence_context tick goes after notify so notify::set_context()
+    // calls land in the same loop iteration as the auto-context decision
+    // they're driving — the HOME/AWAY flip is reflected immediately.
+    presence_context::tick();
   }
 
   if (!s_initialized || !s_enabled) return;

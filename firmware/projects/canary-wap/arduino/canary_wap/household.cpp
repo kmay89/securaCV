@@ -59,6 +59,23 @@ static HouseholdSlot s_slots[MAX_HOUSEHOLD_DEVICES];
 // Bitmap of occupied slots (bit i set ⇒ slot i is in use).
 static uint32_t s_slot_bitmap = 0;
 
+// Volatile per-slot last-seen timestamps (device millis()). Not persisted
+// — devices broadcast advertisements every few seconds, so the array
+// re-populates within one scan cycle of a reboot. Keeping this off NVS
+// avoids flash wear from updating on every advertisement.
+static uint32_t s_last_seen_ms[MAX_HOUSEHOLD_DEVICES] = {0};
+
+// Convenience accessors that interpret the low byte of slot.flags as the
+// DeviceRole. The high byte is reserved for future bit-flags (e.g. a
+// "user has manually overridden auto-context" bit). Encoding role in a
+// pre-existing field keeps the on-disk struct size at the asserted 40 B.
+static inline DeviceRole role_from_flags(uint16_t flags) {
+  return static_cast<DeviceRole>(flags & 0xFF);
+}
+static inline uint16_t flags_with_role(uint16_t flags, DeviceRole r) {
+  return (flags & 0xFF00) | (uint16_t)r;
+}
+
 static bool s_initialized = false;
 static bool s_enrolling = false;
 static uint32_t s_enrollment_started_ms = 0;
@@ -346,6 +363,9 @@ ResolveResult resolve_rpa_detailed(const uint8_t mac[6]) {
       r.matched = true;
       r.slot = (int8_t)i;
       s_total_resolves_matched++;
+      // Update the volatile last-seen timestamp so presence_context can
+      // decide auto-context without re-deriving from raw scan data.
+      s_last_seen_ms[i] = millis();
       secure_wipe(computed_hash, sizeof(computed_hash));
       return r;
     }
@@ -356,6 +376,63 @@ ResolveResult resolve_rpa_detailed(const uint8_t mac[6]) {
 
 bool resolve_rpa(const uint8_t mac[6]) {
   return resolve_rpa_detailed(mac).matched;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// ROLE / PRESENCE
+// ────────────────────────────────────────────────────────────────────────────
+
+DeviceRole get_role(uint8_t slot) {
+  if (!slot_is_used(slot)) return ROLE_GUEST;
+  return role_from_flags(s_slots[slot].flags);
+}
+
+bool set_role(uint8_t slot, DeviceRole role, RoleAuditCallback audit_cb) {
+  if (!s_initialized || !slot_is_used(slot)) return false;
+  // Defensive bound: only the three values defined in the enum are accepted.
+  if (role > ROLE_OWNER) return false;
+
+  const DeviceRole old_role = role_from_flags(s_slots[slot].flags);
+  if (old_role == role) return true;  // no-op
+
+  s_slots[slot].flags = flags_with_role(s_slots[slot].flags, role);
+  persist();
+
+  // Audit hook fires AFTER the change is committed to NVS so a crash
+  // during the callback can't lose the audit-vs-state correlation.
+  if (audit_cb) audit_cb(slot, old_role, role);
+
+  health_logging::logf(health_logging::LEVEL_INFO, health_logging::CAT_RF,
+    "Household: slot %u role %u -> %u",
+    (unsigned)slot, (unsigned)old_role, (unsigned)role);
+  return true;
+}
+
+void mark_seen(uint8_t slot, uint32_t now_ms) {
+  if (!slot_is_used(slot)) return;
+  s_last_seen_ms[slot] = now_ms;
+}
+
+uint32_t last_seen_ms(uint8_t slot) {
+  if (!slot_is_used(slot)) return 0;
+  return s_last_seen_ms[slot];
+}
+
+bool any_role_seen_within(DeviceRole min_role,
+                          uint32_t window_ms,
+                          uint32_t now_ms) {
+  if (!s_initialized) return false;
+  for (uint8_t i = 0; i < MAX_HOUSEHOLD_DEVICES; i++) {
+    if (!slot_is_used(i)) continue;
+    if (role_from_flags(s_slots[i].flags) < min_role) continue;
+    const uint32_t ts = s_last_seen_ms[i];
+    if (ts == 0) continue;
+    // Underflow-safe age computation. If now_ms < ts (clock skew?), treat
+    // as just-seen rather than UINT32_MAX old.
+    const uint32_t age = (now_ms >= ts) ? (now_ms - ts) : 0;
+    if (age <= window_ms) return true;
+  }
+  return false;
 }
 
 // ────────────────────────────────────────────────────────────────────────────

@@ -115,6 +115,7 @@
 #include "mesh_network.h"
 #include "bluetooth_channel.h"
 #include "bluetooth_api.h"
+#include "household_api.h"
 #include "sys_monitor.h"
 #include "hardware_state.h"
 
@@ -3735,6 +3736,9 @@ register_extra_routes:
 
   // WiFi Presence Detection endpoints
   wifi_presence_api::register_routes(active_server);
+
+  // Household roles + auto-context (Owner/Family/Guest tagging, presence)
+  household_api::register_routes(active_server);
 
   // Audible Chirp endpoints
   audible_chirp_api::register_routes(active_server);

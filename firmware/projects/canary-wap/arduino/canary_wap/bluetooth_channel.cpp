@@ -42,6 +42,7 @@
 
 #include "health_log.h"
 #include "ble_ota.h"
+#include "ble_presence.h"
 #include "ota_release_key.h"
 
 namespace bluetooth_channel {
@@ -189,6 +190,11 @@ class ServerCallbacks : public NimBLEServerCallbacks {
     g_total_connections++;
     set_state(BT_CONNECTED);
 
+    // Tell the presence sensor to drop to reduced-duty so the live console
+    // link gets more radio time. ble_presence stops/restarts the scanner
+    // with the new parameters internally.
+    ble_presence::notify_console_connected(true);
+
     if (g_settings.notify_on_connect) {
       char detail[64];
       format_address(g_connection.address, detail);
@@ -224,6 +230,10 @@ class ServerCallbacks : public NimBLEServerCallbacks {
     g_connection_handle = 0xFFFF;
     g_connection_mtu = 23;
     set_state(BT_IDLE);
+
+    // Restore the presence sensor's normal duty cycle now that the radio
+    // doesn't need to favor a live link.
+    ble_presence::notify_console_connected(false);
 
     // Resume advertising if enabled
     if (g_settings.enabled && g_settings.auto_advertise) {
@@ -388,6 +398,10 @@ class ScanCallbacks : public NimBLEScanCallbacks {
     set_state(g_connection.connected ? BT_CONNECTED : BT_IDLE);
     log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "BLE scan complete",
                String(g_scanned_count).c_str());
+    // Hand the radio back to the always-on presence loop. Safe to call
+    // even when the user-triggered scan reached its natural duration
+    // rather than going through stop_scan().
+    ble_presence::resume_continuous_scan();
   }
 };
 
@@ -664,11 +678,23 @@ bool init() {
     start_advertising();
   }
 
+  // Bring up the always-on presence sensor. The user-triggered scan in
+  // start_scan() preempts this; resume_continuous_scan() unwinds the swap
+  // when the user scan ends. ble_presence is read-only (no advertise, no
+  // connect, just listen) so it adds no attack surface beyond what we
+  // already have for legitimate scan results.
+  ble_presence::init();
+  ble_presence::start();
+
   return true;
 }
 
 void deinit() {
   if (!g_initialized) return;
+
+  // Tear down the presence sensor before NimBLE goes away so its scanner
+  // pointer doesn't dangle.
+  ble_presence::deinit();
 
   stop_advertising();
   stop_scan();
@@ -759,6 +785,16 @@ bool start_scan(uint32_t duration_ms) {
   if (!g_initialized || !g_settings.enabled) return false;
   if (g_scanning) return false;
 
+  // Hand the radio over from the always-on presence sensor. NimBLE has one
+  // scanner singleton — we pause continuous mode, swap our own callbacks
+  // and aggressive duty cycle in via setActiveScan + the existing
+  // g_scan_callbacks, then resume continuous after the user scan ends.
+  ble_presence::pause_for_user_scan();
+  g_scanner->setScanCallbacks(&g_scan_callbacks);
+  g_scanner->setActiveScan(true);  // request scan responses for richer UI
+  g_scanner->setInterval(SCAN_INTERVAL_MS);
+  g_scanner->setWindow(SCAN_WINDOW_MS);
+
   // Clear previous results
   clear_scan_results();
 
@@ -783,6 +819,8 @@ void stop_scan() {
       set_state(g_connection.connected ? BT_CONNECTED : BT_IDLE);
     }
     log_health(SCV_LOG_DEBUG, SCV_CAT_BLUETOOTH, "BLE scan stopped", nullptr);
+    // Hand the radio back to the always-on presence loop.
+    ble_presence::resume_continuous_scan();
   }
 }
 
