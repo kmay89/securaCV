@@ -58,10 +58,16 @@ static constexpr uint16_t CHR_BATTERY_LEVEL      = 0x2A19;
 // if a specific host doesn't recognise the subtype.
 static constexpr uint16_t GAP_APPEARANCE_CAMERA  = 0x0541;
 
-// Battery-level characteristic — module-internal so set_battery_level
-// can update it after init. nullptr until register_battery runs.
-static NimBLECharacteristic* g_battery_char = nullptr;
-static uint8_t               g_battery_level_pct = 100;
+// Battery-level characteristic — header-shared mutable state. MUST be
+// `inline` (not `static`) so every TU that includes this header sees
+// the SAME instance. With `static`, each TU gets its own private copy:
+// register_battery() in bluetooth_channel.cpp would initialise its
+// local pointer, and a later set_battery_level() call from a different
+// .cpp (e.g. a battery-sense driver) would update its own nullptr
+// copy and silently no-op. Caught by gemini-code-assist on PR #333;
+// requires C++17, which the project already builds with.
+inline NimBLECharacteristic* g_battery_char = nullptr;
+inline uint8_t               g_battery_level_pct = 100;
 
 // Build a single SIG service that exposes the static device-info strings.
 // Each characteristic is read-only, no security flags — DIS is meant to
