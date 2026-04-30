@@ -341,6 +341,7 @@ struct WiFiStatus {
   uint32_t connect_attempts;
   uint32_t last_connect_ms;
   uint32_t connected_since_ms;
+  char last_fail_reason[48];  // Human-readable reason for the most recent connect failure
 };
 
 struct GnssFix {
@@ -2853,6 +2854,7 @@ static esp_err_t handle_wifi_status(httpd_req_t* req) {
   doc["configured"] = g_wifi_creds.configured;
   doc["enabled"] = g_wifi_creds.enabled;
   doc["connect_attempts"] = g_wifi_status.connect_attempts;
+  doc["fail_reason"] = g_wifi_status.last_fail_reason;
 
   if (g_wifi_status.sta_connected && g_wifi_status.connected_since_ms > 0) {
     doc["connected_sec"] = (millis() - g_wifi_status.connected_since_ms) / 1000;
@@ -2987,6 +2989,9 @@ static esp_err_t handle_wifi_connect(httpd_req_t* req) {
   g_wifi_creds.configured = true;
 
   wifi_save_credentials();
+
+  // Clear stale failure context from any previous attempt before retrying.
+  g_wifi_status.last_fail_reason[0] = '\0';
 
   // Attempt connection
   wifi_connect_to_home();
@@ -3632,6 +3637,7 @@ static bool wifi_clear_credentials() {
 
   memset(&g_wifi_creds, 0, sizeof(g_wifi_creds));
   g_wifi_status.state = WIFI_PROV_AP_ONLY;
+  g_wifi_status.last_fail_reason[0] = '\0';
 
   log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "WiFi credentials cleared", nullptr);
   return true;
@@ -3668,6 +3674,34 @@ static void wifi_connect_to_home() {
     return;
   }
 
+  // Drop any leftover async scan results before attempting STA association.
+  // A pending scan handle keeps the radio busy and causes WiFi.begin() to
+  // silently fail to associate on some core versions.
+  if (g_wifi_scan_in_progress || WiFi.scanComplete() >= 0) {
+    WiFi.scanDelete();
+    g_wifi_scan_in_progress = false;
+  }
+
+  // Ensure AP+STA mode is active (required to keep the captive-portal AP up
+  // while the STA tries to associate to the home network).
+  if ((WiFi.getMode() & WIFI_MODE_APSTA) != WIFI_MODE_APSTA) {
+    WiFi.mode(WIFI_AP_STA);
+  }
+
+  // We persist credentials in our own NVS namespace, so disable the Arduino
+  // core's auto-persist to avoid double-writes that can corrupt the wpa NVS
+  // partition and silently fail subsequent WiFi.begin() calls.
+  WiFi.persistent(false);
+  WiFi.setAutoReconnect(true);
+
+  // Clear any stale STA state (previous failed attempt, prior association)
+  // before starting a fresh association. Without this, WiFi.begin() can
+  // immediately return WL_DISCONNECTED on retries. Pass eraseap=false: the
+  // periodic retry path also calls this function, and erasing the SDK's
+  // STA NVS config on every failed attempt would needlessly wear flash.
+  // WiFi.begin() below installs a fresh config anyway.
+  WiFi.disconnect(false, false);
+
   g_wifi_status.state = WIFI_PROV_CONNECTING;
   g_wifi_status.connect_attempts++;
   g_wifi_status.last_connect_ms = millis();
@@ -3688,23 +3722,50 @@ static void wifi_check_connection() {
 
   // Handle state transitions
   switch (g_wifi_status.state) {
-    case WIFI_PROV_CONNECTING:
+    case WIFI_PROV_CONNECTING: {
       if (WiFi.isConnected()) {
         g_wifi_status.state = WIFI_PROV_CONNECTED;
         g_wifi_status.connected_since_ms = now;
+        g_wifi_status.last_fail_reason[0] = '\0';
 
         char msg[80];
         snprintf(msg, sizeof(msg), "Connected to %s", g_wifi_creds.ssid);
         log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, msg, g_wifi_status.sta_ip);
+        break;
+      }
+
+      // Detect specific failure modes early so the UI can show a useful
+      // reason instead of waiting for the full timeout. WiFi.status() returns
+      // a uint8_t; compare directly against the well-known constants rather
+      // than narrowing to wl_status_t (which would invoke implementation-
+      // defined behaviour for any future status value the enum doesn't list).
+      const uint8_t wl = WiFi.status();
+      const char* fail_reason = nullptr;
+      if (wl == WL_NO_SSID_AVAIL) {
+        fail_reason = "Network not found";
+      } else if (wl == WL_CONNECT_FAILED) {
+        fail_reason = "Wrong password or auth rejected";
+      }
+
+      if (fail_reason) {
+        snprintf(g_wifi_status.last_fail_reason, sizeof(g_wifi_status.last_fail_reason),
+                 "%s", fail_reason);
+        g_wifi_status.state = WIFI_PROV_FAILED;
+        log_health(SCV_LOG_WARNING, SCV_CAT_NETWORK, fail_reason, g_wifi_creds.ssid);
       } else if (now - g_wifi_status.last_connect_ms > WIFI_CONNECT_TIMEOUT_MS) {
+        snprintf(g_wifi_status.last_fail_reason, sizeof(g_wifi_status.last_fail_reason),
+                 "%s", "Connection timeout");
         g_wifi_status.state = WIFI_PROV_FAILED;
         log_health(SCV_LOG_WARNING, SCV_CAT_NETWORK, "WiFi connection timeout", g_wifi_creds.ssid);
       }
       break;
+    }
 
     case WIFI_PROV_CONNECTED:
       if (!WiFi.isConnected()) {
         g_wifi_status.state = WIFI_PROV_FAILED;
+        snprintf(g_wifi_status.last_fail_reason, sizeof(g_wifi_status.last_fail_reason),
+                 "%s", "Connection lost");
         log_health(SCV_LOG_WARNING, SCV_CAT_NETWORK, "WiFi connection lost", nullptr);
       }
       break;
