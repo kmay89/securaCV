@@ -120,6 +120,14 @@ footer a{color:var(--accent);text-decoration:none}
 .log-meta{color:var(--muted);font-size:.65rem;font-family:ui-monospace,'SF Mono',Menlo,monospace}
 .log-msg{color:var(--text)}
 .log-detail{color:var(--muted);font-size:.7rem;margin-top:.15rem;font-family:ui-monospace,'SF Mono',Menlo,monospace;overflow-wrap:anywhere}
+.file-row{display:flex;flex-direction:column;gap:.3rem;margin-bottom:.65rem}
+.file-row label{font-size:.75rem;color:var(--muted);font-weight:600}
+.file-row input[type=file]{font-size:.8rem;color:var(--text);font-family:inherit}
+.file-row input[type=file]::-webkit-file-upload-button{padding:.45rem .7rem;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:inherit;font-size:.8rem;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.bar-track{height:8px;background:var(--surface-2);border-radius:4px;overflow:hidden;margin-top:.25rem}
+.bar-fill{height:100%;background:linear-gradient(90deg,var(--accent),var(--success));width:0;transition:width .25s ease-out}
+.bar-fill.fail{background:var(--danger)}
+.bar-meta{display:flex;justify-content:space-between;font-size:.7rem;color:var(--muted);font-variant-numeric:tabular-nums;margin-top:.25rem}
 </style>
 </head>
 <body>
@@ -140,6 +148,7 @@ footer a{color:var(--accent);text-decoration:none}
   <button class="tab-btn active" data-tab="status">Status</button>
   <button class="tab-btn" data-tab="wifi">WiFi</button>
   <button class="tab-btn" data-tab="logs">Logs</button>
+  <button class="tab-btn" data-tab="ota">OTA</button>
 </div>
 
 <div class="tab-content" id="tab-status">
@@ -157,6 +166,35 @@ footer a{color:var(--accent);text-decoration:none}
     <div class="stat"><span class="stat-l">Household devices</span><span class="stat-v" id="s-hh">&mdash;</span></div>
     <div class="stat"><span class="stat-l">BLE adverts</span><span class="stat-v" id="s-ble">&mdash;</span></div>
     <div class="stat"><span class="stat-l">RF motion</span><span class="stat-v" id="s-motion">&mdash;</span></div>
+  </div>
+</div>
+
+<div class="tab-content hidden" id="tab-ota">
+  <div class="card hidden" id="ota-card">
+    <div class="card-title">
+      <span>Firmware update</span>
+      <span class="badge badge-disconnected" id="ota-state-badge">idle</span>
+    </div>
+    <p class="intro">Pick a signed firmware image (<code>.bin</code>) and its signature manifest (<code>.json</code> with <code>sha256</code>, <code>signature</code>, and <code>version</code>). The image is verified against the device's release public key before any flash partition is touched.</p>
+    <div class="file-row">
+      <label for="ota-bin">Firmware image (.bin)</label>
+      <input type="file" id="ota-bin" accept=".bin,application/octet-stream">
+    </div>
+    <div class="file-row">
+      <label for="ota-sig">Signature manifest (.json)</label>
+      <input type="file" id="ota-sig" accept=".json,application/json">
+    </div>
+    <div id="ota-meta" class="intro hidden" style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:.7rem;background:var(--surface-2);padding:.5rem .65rem;border-radius:8px"></div>
+    <button class="btn btn-primary" id="ota-start-btn" disabled style="margin-top:.5rem;opacity:.5">Pick both files first</button>
+    <div id="ota-progress" class="hidden" style="margin-top:.6rem">
+      <div class="bar-track"><div class="bar-fill" id="ota-bar"></div></div>
+      <div class="bar-meta">
+        <span id="ota-pct">0%</span>
+        <span id="ota-bytes">0 / 0 B</span>
+      </div>
+    </div>
+    <div id="ota-error" class="err" style="margin-top:.5rem"></div>
+    <p class="intro" style="font-size:.7rem;margin-top:.6rem">Don't disconnect or close this page during transfer. The device reboots into the new image automatically when the bytes verify.</p>
   </div>
 </div>
 
@@ -222,6 +260,21 @@ const SVC_LOG          = '8fc1cef5-b162-4401-9607-c8ac21383e90';
 const CHR_LOG_HEAD     = '8fc1cef6-b162-4401-9607-c8ac21383e90';
 const CHR_LOG_REQUEST  = '8fc1cef7-b162-4401-9607-c8ac21383e90';
 const CHR_LOG_RECORD   = '8fc1cef8-b162-4401-9607-c8ac21383e90';
+// ble_ota (PR #327): write+notify CONTROL (BEGIN+OtaHeader / ABORT),
+// write+write_nr DATA (firmware bytes streamed), read+notify STATUS
+// (8-byte tuple: {state, pct, bytes_left:u32}). All bonded; OTA hard-
+// disabled until SECURACV_OTA_RELEASE_PUBKEY is provisioned (default zero).
+const SVC_OTA          = '8fc1ced0-b162-4401-9607-c8ac21383e90';
+const CHR_OTA_CONTROL  = '8fc1ced1-b162-4401-9607-c8ac21383e90';
+const CHR_OTA_DATA     = '8fc1ced2-b162-4401-9607-c8ac21383e90';
+const CHR_OTA_STATUS   = '8fc1ced3-b162-4401-9607-c8ac21383e90';
+
+// State enum mirrors ble_ota.h::OtaState. Notification packet layout:
+//   byte 0     state (0..4)
+//   byte 1     progress %
+//   bytes 2-5  bytes_left (uint32 LE)
+//   bytes 6-7  reserved
+const OTA_STATES = ['idle', 'receiving', 'verifying', 'rebooting', 'failed'];
 
 const LOGS_PAGE = 30;  // max entries auto-loaded per Refresh
 
@@ -236,6 +289,10 @@ let logHead = null, logRequest = null, logRecord = null;
 let logHeadData = { count: 0, ring_size: 0 };
 let logFetchPending = null;   // resolver for the current in-flight RECORD
 let logFetchInProgress = false;
+let otaControl = null, otaData = null, otaStatus = null;
+let otaBinFile = null;        // File object for the .bin
+let otaManifest = null;       // parsed JSON {sha256, signature, version}
+let otaInProgress = false;
 
 const $ = (id) => document.getElementById(id);
 function showErr(msg){const e=$('err-msg');e.textContent=msg;e.classList.add('show');}
@@ -511,6 +568,224 @@ async function fetchLogs(){
   }
 }
 
+// ── ble_ota ────────────────────────────────────────────────────────────────
+function hexToBytes(hex){
+  if (typeof hex !== 'string') return null;
+  hex = hex.trim().replace(/[^0-9a-fA-F]/g, '');
+  if (hex.length % 2) return null;
+  const out = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.substr(i*2, 2), 16);
+  return out;
+}
+function bytesToHex(buf){
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+async function sha256Hex(buf){
+  const h = await crypto.subtle.digest('SHA-256', buf);
+  return bytesToHex(h);
+}
+function setOtaState(state, pct, bytesLeft, errorText){
+  const b = $('ota-state-badge');
+  b.textContent = (errorText && state === 'failed') ? (state + ' · ' + errorText) : state;
+  b.className = 'badge ' + (
+    state === 'rebooting' ? 'badge-away' :
+    state === 'receiving' ||
+    state === 'verifying' ? 'badge-warn' :
+    state === 'failed'    ? 'badge-warn' :
+                            'badge-disconnected'
+  );
+  if (state === 'failed' && errorText) {
+    const e = $('ota-error');
+    e.textContent = 'Update failed: ' + errorText;
+    e.classList.add('show');
+  }
+  if (typeof pct === 'number') {
+    const bar = $('ota-bar');
+    bar.style.width = Math.max(0, Math.min(100, pct)) + '%';
+    if (state === 'failed') bar.classList.add('fail'); else bar.classList.remove('fail');
+    $('ota-pct').textContent = Math.round(pct) + '%';
+  }
+  if (typeof bytesLeft === 'number' && otaBinFile) {
+    const sent = otaBinFile.size - bytesLeft;
+    $('ota-bytes').textContent = (sent > 0 ? sent : 0) + ' / ' + otaBinFile.size + ' B';
+  }
+}
+function onOtaStatus(event){
+  // Packet: {state:u8, pct:u8, bytes_left:u32 LE, reserved:u16}
+  const dv = new DataView(event.target.value.buffer);
+  if (dv.byteLength < 6) return;
+  const state = OTA_STATES[dv.getUint8(0)] || 'unknown';
+  const pct   = dv.getUint8(1);
+  const left  = dv.getUint32(2, /*littleEndian=*/true);
+  setOtaState(state, pct, left);
+  if (state === 'failed' && otaInProgress) {
+    // Firmware sets last_error which we don't get over BLE; surface
+    // generic + suggest re-pick.
+    setOtaState('failed', pct, left, 'see device serial log');
+    otaInProgress = false;
+    refreshOtaStartButton();
+  }
+  if (state === 'rebooting') {
+    // Firmware will reboot in ~500 ms; the BLE link drops on reboot
+    // and onDisconnect will tidy up. Just freeze the UI.
+    otaInProgress = false;
+  }
+}
+async function readFileAsArrayBuffer(file){
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload  = () => resolve(r.result);
+    r.onerror = () => reject(r.error || new Error('read failed'));
+    r.readAsArrayBuffer(file);
+  });
+}
+async function readFileAsText(file){
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload  = () => resolve(r.result);
+    r.onerror = () => reject(r.error || new Error('read failed'));
+    r.readAsText(file);
+  });
+}
+async function loadOtaInputs(){
+  // Load both files when each input changes; ungate the Start button
+  // when both validate.
+  const binEl = $('ota-bin'), sigEl = $('ota-sig');
+  if (binEl.files && binEl.files[0]) otaBinFile = binEl.files[0]; else otaBinFile = null;
+  if (sigEl.files && sigEl.files[0]) {
+    try {
+      const txt = await readFileAsText(sigEl.files[0]);
+      const m = JSON.parse(txt);
+      if (typeof m.sha256 !== 'string' || typeof m.signature !== 'string' || typeof m.version !== 'string') {
+        throw new Error('manifest must have sha256, signature, and version');
+      }
+      const sha = hexToBytes(m.sha256);
+      const sig = hexToBytes(m.signature);
+      if (!sha || sha.length !== 32) throw new Error('sha256 must be 64 hex chars');
+      if (!sig || sig.length !== 64) throw new Error('signature must be 128 hex chars');
+      if (m.version.length > 31) throw new Error('version must be ≤ 31 chars');
+      otaManifest = { sha256: sha, signature: sig, version: m.version };
+    } catch (e) {
+      otaManifest = null;
+      const me = $('ota-error');
+      me.textContent = 'Manifest invalid: ' + e.message;
+      me.classList.add('show');
+      refreshOtaStartButton();
+      return;
+    }
+  } else {
+    otaManifest = null;
+  }
+  $('ota-error').classList.remove('show');
+  if (otaBinFile && otaManifest) {
+    $('ota-meta').classList.remove('hidden');
+    $('ota-meta').textContent =
+      'Image: ' + otaBinFile.name + ' (' + otaBinFile.size + ' B)\n' +
+      'Version: ' + otaManifest.version + '\n' +
+      'SHA-256: ' + bytesToHex(otaManifest.sha256);
+  } else {
+    $('ota-meta').classList.add('hidden');
+  }
+  refreshOtaStartButton();
+}
+function refreshOtaStartButton(){
+  const btn = $('ota-start-btn');
+  if (otaInProgress) {
+    btn.disabled = true; btn.style.opacity = '.5';
+    btn.textContent = 'Updating…';
+  } else if (otaBinFile && otaManifest && otaControl && otaData) {
+    btn.disabled = false; btn.style.opacity = '1';
+    btn.textContent = 'Start update';
+  } else {
+    btn.disabled = true; btn.style.opacity = '.5';
+    btn.textContent = otaControl ? 'Pick both files first' : 'Service not available';
+  }
+}
+async function startOta(){
+  if (otaInProgress) return;
+  if (!otaControl || !otaData) return;
+  if (!otaBinFile || !otaManifest) return;
+  $('ota-error').classList.remove('show');
+  $('ota-progress').classList.remove('hidden');
+  setOtaState('idle', 0, otaBinFile.size);
+  otaInProgress = true;
+  refreshOtaStartButton();
+
+  try {
+    const imageBuf = await readFileAsArrayBuffer(otaBinFile);
+    // Client-side defense: hash the bin and compare to the manifest BEFORE
+    // streaming. Catches "user picked the wrong files" cases without
+    // burning radio time / wear-leveling on the inactive flash partition.
+    const actualSha = await sha256Hex(imageBuf);
+    const expectedSha = bytesToHex(otaManifest.sha256);
+    if (actualSha !== expectedSha) {
+      throw new Error('local SHA-256 of image does not match manifest');
+    }
+
+    // Build the 132-byte OtaHeader (see ble_ota.h).
+    //   [0..3]    image_size (u32 LE)
+    //   [4..35]   sha256
+    //   [36..99]  signature (Ed25519, 64 B)
+    //   [100..131] version (null-terminated, max 31 chars + NUL)
+    const header = new Uint8Array(132);
+    const dv = new DataView(header.buffer);
+    dv.setUint32(0, imageBuf.byteLength, /*littleEndian=*/true);
+    header.set(otaManifest.sha256, 4);
+    header.set(otaManifest.signature, 36);
+    const verBytes = new TextEncoder().encode(otaManifest.version);
+    header.set(verBytes.subarray(0, Math.min(31, verBytes.length)), 100);
+    // bytes 100+verLen..131 stay zero (NUL terminator + padding)
+
+    // BEGIN: command byte 0x01 followed by the header (133 bytes total).
+    const beginPkt = new Uint8Array(1 + header.length);
+    beginPkt[0] = 0x01;
+    beginPkt.set(header, 1);
+    setOtaState('receiving', 0, imageBuf.byteLength);
+    await otaControl.writeValue(beginPkt);
+
+    // Stream firmware bytes. ATT MTU is at least 23, typically 247 after
+    // PR #327's negotiation; payload size is MTU - 3 (ATT WriteWithoutResp
+    // overhead). 240 is a safe target inside the negotiated MTU.
+    const CHUNK = 240;
+    const total = imageBuf.byteLength;
+    const view = new Uint8Array(imageBuf);
+    let offset = 0;
+    while (offset < total && otaInProgress) {
+      const end = Math.min(offset + CHUNK, total);
+      const slice = view.subarray(offset, end);
+      // writeValueWithoutResponse uses ATT Write Command (no PDU back),
+      // 10-100x faster than write-with-response over the same link.
+      // The DATA characteristic advertises WRITE_NR per ble_ota.cpp.
+      try {
+        await otaData.writeValueWithoutResponse(slice);
+      } catch (e) {
+        // Some Web Bluetooth stacks throttle without-response writes by
+        // returning a NetworkError when the queue is full. Backoff and
+        // retry once.
+        await new Promise(r => setTimeout(r, 30));
+        await otaData.writeValueWithoutResponse(slice);
+      }
+      offset = end;
+      // STATUS notifications drive the visible progress bar; no need to
+      // update from here. But if notifications haven't fired yet, set a
+      // local optimistic value so the bar moves smoothly.
+      const pct = Math.round((offset / total) * 100);
+      $('ota-bar').style.width = pct + '%';
+      $('ota-pct').textContent = pct + '%';
+      $('ota-bytes').textContent = offset + ' / ' + total + ' B';
+    }
+    // After the last chunk, the firmware verifies + reboots. Final state
+    // arrives via STATUS notifications.
+  } catch (err) {
+    setOtaState('failed', null, null, err.message || String(err));
+    otaInProgress = false;
+    refreshOtaStartButton();
+    // Best-effort ABORT so the firmware drops back to OTA_IDLE rather
+    // than waiting on more DATA writes that aren't coming.
+    try { if (otaControl) await otaControl.writeValue(new Uint8Array([0x02])); } catch (_) {}
+  }
+}
+
 // ── tab switching ──────────────────────────────────────────────────────────
 function showTab(name){
   document.querySelectorAll('.tab-btn').forEach(b => {
@@ -519,6 +794,7 @@ function showTab(name){
   $('tab-status').classList.toggle('hidden', name !== 'status');
   $('tab-wifi').classList.toggle('hidden', name !== 'wifi');
   $('tab-logs').classList.toggle('hidden', name !== 'logs');
+  $('tab-ota').classList.toggle('hidden', name !== 'ota');
 }
 
 async function connect(){
@@ -541,7 +817,7 @@ async function connect(){
     $('conn-state').textContent = 'Selecting device…';
     device = await navigator.bluetooth.requestDevice({
       filters: [{ namePrefix: 'SecuraCV' }],
-      optionalServices: [SVC_CONSOLE, SVC_PROVISION, SVC_LOG,
+      optionalServices: [SVC_CONSOLE, SVC_PROVISION, SVC_LOG, SVC_OTA,
         '0000180a-0000-1000-8000-00805f9b34fb',
         '0000180f-0000-1000-8000-00805f9b34fb']
     });
@@ -610,6 +886,28 @@ async function connect(){
     } catch (e) {
       console.warn('Log-export service unavailable:', e.message);
     }
+
+    // OTA service (PR #327) — best-effort like the others. The release
+    // pubkey may be unprovisioned (zero), in which case the firmware
+    // refuses BEGIN; the tab still renders so the user can see what's
+    // wrong. Older firmware without ble_ota at all just skips the tab.
+    try {
+      const otaSvc = await server.getPrimaryService(SVC_OTA);
+      otaControl = await otaSvc.getCharacteristic(CHR_OTA_CONTROL);
+      otaData    = await otaSvc.getCharacteristic(CHR_OTA_DATA);
+      otaStatus  = await otaSvc.getCharacteristic(CHR_OTA_STATUS);
+      await otaStatus.startNotifications();
+      otaStatus.addEventListener('characteristicvaluechanged', onOtaStatus);
+      try {
+        const sv = await otaStatus.readValue();
+        onOtaStatus({ target: { value: sv } });
+      } catch (_) {}
+      $('tab-nav').classList.remove('hidden');
+      $('ota-card').classList.remove('hidden');
+      refreshOtaStartButton();
+    } catch (e) {
+      console.warn('OTA service unavailable:', e.message);
+    }
   } catch (err) {
     showErr(err.message || String(err));
     $('conn-state').textContent = 'Not connected';
@@ -624,14 +922,27 @@ function onDisconnect(){
   $('tab-nav').classList.add('hidden');
   $('wifi-card').classList.add('hidden');
   $('logs-card').classList.add('hidden');
+  $('ota-card').classList.add('hidden');
   $('creds-box').classList.add('hidden');
   $('pw-input').value = '';
   $('logs-list').innerHTML = '<p class="intro" style="text-align:center;padding:1rem 0">Tap Refresh to fetch the most recent entries.</p>';
+  $('ota-progress').classList.add('hidden');
+  $('ota-error').classList.remove('show');
+  $('ota-bar').style.width = '0';
+  $('ota-pct').textContent = '0%';
+  $('ota-bytes').textContent = '0 / 0 B';
+  $('ota-meta').classList.add('hidden');
+  $('ota-bin').value = '';
+  $('ota-sig').value = '';
   snapshotChar = provScanTrigger = provScanResults = provCreds = provState = null;
   logHead = logRequest = logRecord = null;
   logHeadData = { count: 0, ring_size: 0 };
   logFetchPending = null;
   logFetchInProgress = false;
+  otaControl = otaData = otaStatus = null;
+  otaBinFile = null;
+  otaManifest = null;
+  otaInProgress = false;
   selectedAp = null;
   showTab('status');
 }
@@ -646,6 +957,9 @@ $('disconnect-btn').addEventListener('click', disconnect);
 $('scan-btn').addEventListener('click', wifiScan);
 $('creds-send').addEventListener('click', wifiSendCreds);
 $('logs-refresh-btn').addEventListener('click', fetchLogs);
+$('ota-bin').addEventListener('change', loadOtaInputs);
+$('ota-sig').addEventListener('change', loadOtaInputs);
+$('ota-start-btn').addEventListener('click', startOta);
 document.querySelectorAll('.tab-btn').forEach(b => {
   b.addEventListener('click', () => {
     showTab(b.dataset.tab);
