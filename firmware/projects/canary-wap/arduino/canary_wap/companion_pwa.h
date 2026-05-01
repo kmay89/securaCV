@@ -176,6 +176,16 @@ function onSnapshot(event){
 
 async function connect(){
   clearErr();
+  // Web Bluetooth requires a secure context (HTTPS or localhost). On
+  // plain HTTP the API is undefined regardless of browser support, so
+  // detect that explicitly — otherwise users on a perfectly capable
+  // Chrome/Edge see a misleading "browser not supported" error and
+  // never reach this flow. canary.local ships HTTP by default; HTTPS
+  // is opt-in via the firmware's TLS toggle.
+  if (!window.isSecureContext) {
+    showErr('Web Bluetooth requires HTTPS. Open this page over https:// (enable TLS on the device) or use localhost. Cached PWAs launched from the home screen inherit the origin they were installed from.');
+    return;
+  }
   if(!navigator.bluetooth){
     showErr('Web Bluetooth not supported by this browser. On iOS, install Bluefy.');
     return;
@@ -222,6 +232,22 @@ async function disconnect(){
 
 $('connect-btn').addEventListener('click', connect);
 $('disconnect-btn').addEventListener('click', disconnect);
+
+// Up-front capability check so the user sees the real blocker before
+// they tap Connect. Two distinct failure modes get distinct messages:
+// (1) insecure context → tell them to use HTTPS; (2) no Web Bluetooth
+// API → tell iOS users to install Bluefy.
+(function checkCapabilities(){
+  if (!window.isSecureContext) {
+    $('connect-btn').disabled = true;
+    $('connect-btn').style.opacity = '0.5';
+    showErr('This page is loaded over an insecure origin. Web Bluetooth requires HTTPS or localhost — open over https:// to connect.');
+  } else if (!navigator.bluetooth) {
+    $('connect-btn').disabled = true;
+    $('connect-btn').style.opacity = '0.5';
+    showErr('Web Bluetooth is not available in this browser. On iOS, install Bluefy from the App Store and reopen this page in it.');
+  }
+})();
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/companion-sw.js', { scope: '/companion' })
