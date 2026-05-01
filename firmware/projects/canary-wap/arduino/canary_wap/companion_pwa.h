@@ -302,20 +302,31 @@ function onProvState(event){
     const text = new TextDecoder().decode(event.target.value);
     const data = JSON.parse(text);
     setProvStateBadge(data.state, data.error);
-    if (data.state === 'connected') {
-      // Mirror into the main connect-state header so the user sees the
-      // win whether they're on the WiFi tab or the Status tab.
-      $('conn-state').textContent = (device && device.name ? device.name : 'Connected') + ' · WiFi joined';
-    }
+    // Always re-derive the header from the current state so a previous
+    // "WiFi joined" doesn't stick after a subsequent failed / disconnect /
+    // rate_limited. Caught by Gemini.
+    const base = (device && device.name) ? device.name : 'Connected';
+    $('conn-state').textContent = (data.state === 'connected')
+      ? (base + ' · WiFi joined')
+      : base;
   } catch (e) {}
 }
 async function wifiScan(){
   if (!provScanTrigger) return;
   setProvStateBadge('scanning');
   $('ap-list').innerHTML = '<p class="intro" style="text-align:center">Scanning…</p>';
+  // Reset prior selection so the password field doesn't hang around with a
+  // stale SSID while new results render. Caught by Gemini.
+  selectedAp = null;
+  $('creds-box').classList.add('hidden');
+  $('pw-input').value = '';
   try {
-    // Any byte is fine — the firmware just needs a write to fire.
-    await provScanTrigger.writeValueWithoutResponse(new Uint8Array([1]));
+    // SCAN_TRIGGER is provisioned as NIMBLE_PROPERTY::WRITE
+    // (write-with-response) only — NOT WRITE_NR. Web Bluetooth throws
+    // NotSupportedError if we use writeValueWithoutResponse on a
+    // characteristic that doesn't advertise that property. Caught by
+    // Codex P1 + Gemini high.
+    await provScanTrigger.writeValue(new Uint8Array([1]));
   } catch (e) {
     showErr('Scan failed: ' + e.message);
   }
@@ -378,16 +389,16 @@ async function connect(){
     $('connect-card').classList.add('hidden');
     $('status-card').classList.remove('hidden');
     $('actions-card').classList.remove('hidden');
-    $('tab-nav').classList.remove('hidden');
-    $('wifi-card').classList.remove('hidden');
     const value = await snapshotChar.readValue();
     onSnapshot({ target: { value } });
     await snapshotChar.startNotifications();
     snapshotChar.addEventListener('characteristicvaluechanged', onSnapshot);
 
     // Provisioning service — best-effort. Older firmware (pre-#330)
-    // doesn't ship it; if getPrimaryService throws, just skip the
-    // WiFi tab features rather than failing the whole connect.
+    // doesn't ship it; if getPrimaryService throws, skip the WiFi tab
+    // entirely rather than show a tab that does nothing. Reveal the
+    // tab nav + WiFi card only AFTER discovery succeeds. Caught by
+    // Gemini.
     try {
       const provSvc = await server.getPrimaryService(SVC_PROVISION);
       provScanTrigger = await provSvc.getCharacteristic(CHR_PROV_SCAN_TRIGGER);
@@ -403,6 +414,9 @@ async function connect(){
         const sv = await provState.readValue();
         onProvState({ target: { value: sv } });
       } catch (_) {}
+      // Only NOW reveal the WiFi UI — discovery worked.
+      $('tab-nav').classList.remove('hidden');
+      $('wifi-card').classList.remove('hidden');
     } catch (e) {
       console.warn('Provisioning service unavailable:', e.message);
     }
