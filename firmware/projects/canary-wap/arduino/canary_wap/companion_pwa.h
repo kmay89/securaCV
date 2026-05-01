@@ -238,14 +238,16 @@ $('disconnect-btn').addEventListener('click', disconnect);
 // (1) insecure context → tell them to use HTTPS; (2) no Web Bluetooth
 // API → tell iOS users to install Bluefy.
 (function checkCapabilities(){
+  const btn = $('connect-btn');
+  const disable = (msg) => {
+    btn.disabled = true;
+    btn.style.opacity = '0.5';
+    showErr(msg);
+  };
   if (!window.isSecureContext) {
-    $('connect-btn').disabled = true;
-    $('connect-btn').style.opacity = '0.5';
-    showErr('This page is loaded over an insecure origin. Web Bluetooth requires HTTPS or localhost — open over https:// to connect.');
+    disable('This page is loaded over an insecure origin. Web Bluetooth requires HTTPS or localhost — open over https:// to connect.');
   } else if (!navigator.bluetooth) {
-    $('connect-btn').disabled = true;
-    $('connect-btn').style.opacity = '0.5';
-    showErr('Web Bluetooth is not available in this browser. On iOS, install Bluefy from the App Store and reopen this page in it.');
+    disable('Web Bluetooth is not available in this browser. On iOS, install Bluefy from the App Store and reopen this page in it.');
   }
 })();
 
