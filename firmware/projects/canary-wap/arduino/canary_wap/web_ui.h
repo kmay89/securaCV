@@ -2525,9 +2525,9 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       if (!cameraReady) { alert('Camera not available'); return; }
       const stream = document.getElementById('peekStream');
       document.getElementById('peekStatus').textContent = 'Connecting...';
-      stream.src = API_BASE + '/api/peek/stream?t=' + Date.now();
+      stream.src = API_BASE + '/api/peek/stream?t=' + Date.now() + '&token=' + encodeURIComponent(apiToken);
       stream.onload = () => { peekActive = true; updatePeekUI(); };
-      stream.onerror = () => { if (peekActive) setTimeout(() => { if (peekActive) stream.src = API_BASE + '/api/peek/stream?t=' + Date.now(); }, 2000); };
+      stream.onerror = () => { if (peekActive) setTimeout(() => { if (peekActive) stream.src = API_BASE + '/api/peek/stream?t=' + Date.now() + '&token=' + encodeURIComponent(apiToken); }, 2000); };
       peekActive = true; updatePeekUI();
     }
 
@@ -2541,7 +2541,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     async function takeSnapshot() {
       if (!cameraReady) { alert('Camera not available'); return; }
       const img = document.getElementById('snapshotImg');
-      img.src = API_BASE + '/api/peek/snapshot?t=' + Date.now();
+      img.src = API_BASE + '/api/peek/snapshot?t=' + Date.now() + '&token=' + encodeURIComponent(apiToken);
       img.onload = () => { document.getElementById('snapshotPreview').style.display = 'block'; };
     }
 
@@ -2557,7 +2557,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       const data = await api('/api/peek/resolution', 'POST', { size });
       if (data.ok) {
         currentResolution = size; updateResolutionUI();
-        if (peekActive) document.getElementById('peekStream').src = API_BASE + '/api/peek/stream?t=' + Date.now();
+        if (peekActive) document.getElementById('peekStream').src = API_BASE + '/api/peek/stream?t=' + Date.now() + '&token=' + encodeURIComponent(apiToken);
       }
     }
 

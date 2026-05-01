@@ -272,4 +272,32 @@ static void auth_stats_json(char* buf, size_t buf_len) {
   }
 }
 
+
+static bool api_auth_check_or_query(httpd_req_t* req, const char* expected_token, const char* query_key = "token") {
+  if (api_auth_check_optional(req, expected_token)) {
+    auth_record_success();
+    return true;
+  }
+
+  char qs[192];
+  esp_err_t qerr = httpd_req_get_url_query_str(req, qs, sizeof(qs));
+  if (qerr == ESP_OK) {
+    char token[128];
+    if (httpd_query_key_value(qs, query_key, token, sizeof(token)) == ESP_OK) {
+      size_t token_len = strlen(token);
+      size_t expected_len = strlen(expected_token);
+      if (token_len == expected_len && constant_time_compare(token, expected_token, expected_len)) {
+        auth_record_success();
+        return true;
+      }
+    }
+  }
+
+  auth_record_failure();
+  httpd_resp_set_status(req, "401 Unauthorized");
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_set_hdr(req, "WWW-Authenticate", "Bearer realm=\"securacv\"");
+  httpd_resp_sendstr(req, "{\"error\":\"unauthorized\",\"hint\":\"Use Authorization header or token query param\"}");
+  return false;
+}
 #endif // SECURACV_API_AUTH_H
