@@ -144,11 +144,14 @@ footer a{color:var(--accent);text-decoration:none}
 </div>
 
 <!-- Tab nav appears after connect; switches between Status / WiFi panels. -->
+<!-- Optional tab buttons start hidden; each is revealed only when the
+     corresponding GATT service is successfully discovered on the device.
+     Older firmware that ships only the Console service shows just Status. -->
 <div class="tab-nav hidden" id="tab-nav">
   <button class="tab-btn active" data-tab="status">Status</button>
-  <button class="tab-btn" data-tab="wifi">WiFi</button>
-  <button class="tab-btn" data-tab="logs">Logs</button>
-  <button class="tab-btn" data-tab="ota">OTA</button>
+  <button class="tab-btn hidden" data-tab="wifi" id="tab-btn-wifi">WiFi</button>
+  <button class="tab-btn hidden" data-tab="logs" id="tab-btn-logs">Logs</button>
+  <button class="tab-btn hidden" data-tab="ota"  id="tab-btn-ota">OTA</button>
 </div>
 
 <div class="tab-content" id="tab-status">
@@ -184,7 +187,7 @@ footer a{color:var(--accent);text-decoration:none}
       <label for="ota-sig">Signature manifest (.json)</label>
       <input type="file" id="ota-sig" accept=".json,application/json">
     </div>
-    <div id="ota-meta" class="intro hidden" style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:.7rem;background:var(--surface-2);padding:.5rem .65rem;border-radius:8px"></div>
+    <div id="ota-meta" class="intro hidden" style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:.7rem;background:var(--surface-2);padding:.5rem .65rem;border-radius:8px;white-space:pre-wrap"></div>
     <button class="btn btn-primary" id="ota-start-btn" disabled style="margin-top:.5rem;opacity:.5">Pick both files first</button>
     <div id="ota-progress" class="hidden" style="margin-top:.6rem">
       <div class="bar-track"><div class="bar-fill" id="ota-bar"></div></div>
@@ -611,9 +614,13 @@ function setOtaState(state, pct, bytesLeft, errorText){
   }
 }
 function onOtaStatus(event){
-  // Packet: {state:u8, pct:u8, bytes_left:u32 LE, reserved:u16}
-  const dv = new DataView(event.target.value.buffer);
-  if (dv.byteLength < 6) return;
+  // Packet: {state:u8, pct:u8, bytes_left:u32 LE, reserved:u16}.
+  // event.target.value is ALREADY a DataView per the Web Bluetooth spec —
+  // recreating one from .buffer is wrong because it ignores byteOffset
+  // and may include adjacent bytes if the underlying ArrayBuffer is
+  // larger than the actual packet. Use it directly.
+  const dv = event.target.value;
+  if (!dv || dv.byteLength < 6) return;
   const state = OTA_STATES[dv.getUint8(0)] || 'unknown';
   const pct   = dv.getUint8(1);
   const left  = dv.getUint32(2, /*littleEndian=*/true);
@@ -663,7 +670,14 @@ async function loadOtaInputs(){
       const sig = hexToBytes(m.signature);
       if (!sha || sha.length !== 32) throw new Error('sha256 must be 64 hex chars');
       if (!sig || sig.length !== 64) throw new Error('signature must be 128 hex chars');
-      if (m.version.length > 31) throw new Error('version must be ≤ 31 chars');
+      // The firmware OtaHeader.version slot is 32 bytes including the NUL
+      // terminator (see ble_ota.h). Validate the UTF-8 BYTE length — not
+      // the JS char count — so a 31-char string with multi-byte glyphs
+      // (emoji, CJK) doesn't sneak past and get silently truncated by
+      // memcpy on the device.
+      if (new TextEncoder().encode(m.version).length > 31) {
+        throw new Error('version must be ≤ 31 UTF-8 bytes');
+      }
       otaManifest = { sha256: sha, signature: sig, version: m.version };
     } catch (e) {
       otaManifest = null;
@@ -858,6 +872,7 @@ async function connect(){
       // Only NOW reveal the WiFi UI — discovery worked.
       $('tab-nav').classList.remove('hidden');
       $('wifi-card').classList.remove('hidden');
+      $('tab-btn-wifi').classList.remove('hidden');
     } catch (e) {
       console.warn('Provisioning service unavailable:', e.message);
     }
@@ -883,6 +898,7 @@ async function connect(){
       // own.
       $('tab-nav').classList.remove('hidden');
       $('logs-card').classList.remove('hidden');
+      $('tab-btn-logs').classList.remove('hidden');
     } catch (e) {
       console.warn('Log-export service unavailable:', e.message);
     }
@@ -904,6 +920,7 @@ async function connect(){
       } catch (_) {}
       $('tab-nav').classList.remove('hidden');
       $('ota-card').classList.remove('hidden');
+      $('tab-btn-ota').classList.remove('hidden');
       refreshOtaStartButton();
     } catch (e) {
       console.warn('OTA service unavailable:', e.message);
@@ -920,6 +937,12 @@ function onDisconnect(){
   $('status-card').classList.add('hidden');
   $('actions-card').classList.add('hidden');
   $('tab-nav').classList.add('hidden');
+  // Re-hide optional tab buttons so a future connect to a leaner-firmware
+  // device starts from a clean state — each is re-revealed by its own
+  // discovery block in connect().
+  $('tab-btn-wifi').classList.add('hidden');
+  $('tab-btn-logs').classList.add('hidden');
+  $('tab-btn-ota').classList.add('hidden');
   $('wifi-card').classList.add('hidden');
   $('logs-card').classList.add('hidden');
   $('ota-card').classList.add('hidden');
