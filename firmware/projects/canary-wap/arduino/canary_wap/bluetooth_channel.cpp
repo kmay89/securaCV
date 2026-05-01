@@ -46,6 +46,7 @@
 #include "ble_console.h"
 #include "ble_provision.h"
 #include "ble_log_export.h"
+#include "ble_witness_export.h"
 #include "ble_standard_profiles.h"
 #include "ota_release_key.h"
 
@@ -685,6 +686,12 @@ bool init() {
   // canary.local is unreachable.
   ble_log_export::init(g_server);
 
+  // Read-only witness-chain export. Surfaces the chain head + last
+  // signed record so a paired phone can independently verify the
+  // device's claimed chain state with the device's pubkey, no WiFi
+  // path required.
+  ble_witness_export::init(g_server);
+
   // SIG Standard Profiles — Device Information Service (manufacturer,
   // model, fw/hw/sw revision, serial), Battery Service, GAP Appearance.
   // Without these the device shows as "Unknown" in the iOS / Android
@@ -1245,6 +1252,9 @@ void update() {
   // without having to poll. Internally throttled, no-op when the ring
   // hasn't changed.
   ble_log_export::tick();
+
+  // Refresh the witness-chain head + last record. Same throttle pattern.
+  ble_witness_export::tick();
 
   // Update status characteristic periodically
   if (g_connection.connected && now - last_status_update >= STATUS_UPDATE_INTERVAL_MS) {
