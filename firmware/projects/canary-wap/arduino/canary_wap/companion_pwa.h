@@ -106,6 +106,20 @@ footer a{color:var(--accent);text-decoration:none}
 .input{width:100%;padding:.7rem .85rem;background:var(--surface-2);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:.95rem;font-family:inherit}
 .input:focus{outline:none;border-color:var(--accent)}
 .row-flex{display:flex;gap:.5rem;align-items:center}
+.log-list{max-height:60vh;overflow-y:auto;-webkit-overflow-scrolling:touch}
+.log-row{padding:.55rem .5rem;border-top:1px solid var(--border);font-size:.78rem;line-height:1.35}
+.log-row:first-child{border-top:none}
+.log-head{display:flex;align-items:center;gap:.4rem;margin-bottom:.15rem;flex-wrap:wrap}
+.log-lvl{display:inline-flex;align-items:center;padding:.05rem .35rem;border-radius:5px;font-size:.62rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase}
+.log-lvl.debug   {background:rgba(139,149,168,.15);color:var(--muted)}
+.log-lvl.info    {background:rgba(102,179,255,.15);color:var(--accent)}
+.log-lvl.notice  {background:rgba(102,179,255,.15);color:var(--accent)}
+.log-lvl.warn    {background:rgba(246,173,85,.15);color:var(--warning)}
+.log-lvl.error   {background:rgba(245,101,101,.15);color:var(--danger)}
+.log-lvl.crit    {background:var(--danger);color:#fff}
+.log-meta{color:var(--muted);font-size:.65rem;font-family:ui-monospace,'SF Mono',Menlo,monospace}
+.log-msg{color:var(--text)}
+.log-detail{color:var(--muted);font-size:.7rem;margin-top:.15rem;font-family:ui-monospace,'SF Mono',Menlo,monospace;overflow-wrap:anywhere}
 </style>
 </head>
 <body>
@@ -125,6 +139,7 @@ footer a{color:var(--accent);text-decoration:none}
 <div class="tab-nav hidden" id="tab-nav">
   <button class="tab-btn active" data-tab="status">Status</button>
   <button class="tab-btn" data-tab="wifi">WiFi</button>
+  <button class="tab-btn" data-tab="logs">Logs</button>
 </div>
 
 <div class="tab-content" id="tab-status">
@@ -142,6 +157,22 @@ footer a{color:var(--accent);text-decoration:none}
     <div class="stat"><span class="stat-l">Household devices</span><span class="stat-v" id="s-hh">&mdash;</span></div>
     <div class="stat"><span class="stat-l">BLE adverts</span><span class="stat-v" id="s-ble">&mdash;</span></div>
     <div class="stat"><span class="stat-l">RF motion</span><span class="stat-v" id="s-motion">&mdash;</span></div>
+  </div>
+</div>
+
+<div class="tab-content hidden" id="tab-logs">
+  <div class="card hidden" id="logs-card">
+    <div class="card-title">
+      <span>Recent events</span>
+      <span class="badge badge-disconnected" id="logs-count-badge">0 / 0</span>
+    </div>
+    <p class="intro">Newest first. Auto-refreshes when new events land. Drawn from the device's in-RAM ring buffer (capped at <span id="logs-ring-size">100</span>).</p>
+    <div style="display:flex;gap:.5rem;margin-bottom:.5rem">
+      <button class="btn btn-secondary" id="logs-refresh-btn" style="flex:1">Refresh</button>
+    </div>
+    <div class="log-list" id="logs-list">
+      <p class="intro" style="text-align:center;padding:1rem 0">Tap Refresh to fetch the most recent entries.</p>
+    </div>
   </div>
 </div>
 
@@ -184,6 +215,15 @@ const CHR_PROV_SCAN_TRIGGER = '8fc1cef1-b162-4401-9607-c8ac21383e90';
 const CHR_PROV_SCAN_RESULTS = '8fc1cef2-b162-4401-9607-c8ac21383e90';
 const CHR_PROV_CREDS        = '8fc1cef3-b162-4401-9607-c8ac21383e90';
 const CHR_PROV_STATE        = '8fc1cef4-b162-4401-9607-c8ac21383e90';
+// ble_log_export (PR #332): read+notify HEAD ({count, oldest_seq,
+// newest_seq, ring_size}), write-only REQUEST ({"index": N}), read+notify
+// RECORD (one log entry as compact JSON). All bonded.
+const SVC_LOG          = '8fc1cef5-b162-4401-9607-c8ac21383e90';
+const CHR_LOG_HEAD     = '8fc1cef6-b162-4401-9607-c8ac21383e90';
+const CHR_LOG_REQUEST  = '8fc1cef7-b162-4401-9607-c8ac21383e90';
+const CHR_LOG_RECORD   = '8fc1cef8-b162-4401-9607-c8ac21383e90';
+
+const LOGS_PAGE = 30;  // max entries auto-loaded per Refresh
 
 let device = null;
 let snapshotChar = null;
@@ -192,6 +232,10 @@ let provScanResults = null;
 let provCreds = null;
 let provState = null;
 let selectedAp = null;  // {ssid, sec} of currently-tapped row
+let logHead = null, logRequest = null, logRecord = null;
+let logHeadData = { count: 0, ring_size: 0 };
+let logFetchPending = null;   // resolver for the current in-flight RECORD
+let logFetchInProgress = false;
 
 const $ = (id) => document.getElementById(id);
 function showErr(msg){const e=$('err-msg');e.textContent=msg;e.classList.add('show');}
@@ -347,6 +391,126 @@ async function wifiSendCreds(){
   }
 }
 
+// ── ble_log_export ─────────────────────────────────────────────────────────
+function escHtml(s){return String(s).replace(/[<>&"']/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c]));}
+function fmtUptimeMs(ms){
+  if (ms == null) return '—';
+  const sec = Math.floor(ms / 1000);
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+  if (h) return h + 'h' + (m < 10 ? '0' : '') + m + 'm';
+  if (m) return m + 'm' + (s < 10 ? '0' : '') + s + 's';
+  return s + 's';
+}
+function levelClass(lvl){
+  switch (lvl) {
+    case 'debug':  return 'debug';
+    case 'info':
+    case 'notice': return 'info';
+    case 'warn':   return 'warn';
+    case 'error':  return 'error';
+    case 'crit':   return 'crit';
+    default:       return 'info';
+  }
+}
+function renderLogsHead(h){
+  $('logs-count-badge').textContent = (h.count || 0) + ' / ' + (h.ring_size || 0);
+  if (h.ring_size) $('logs-ring-size').textContent = h.ring_size;
+}
+function onLogHead(event){
+  try {
+    const text = new TextDecoder().decode(event.target.value);
+    const data = JSON.parse(text);
+    logHeadData = data;
+    renderLogsHead(data);
+    // Auto-refresh the visible log list when new entries land — but only
+    // if the Logs tab is the one in front. Otherwise just update the
+    // count and let the user pull when they switch over.
+    if (!$('tab-logs').classList.contains('hidden') && !logFetchInProgress) {
+      fetchLogs();
+    }
+  } catch (e) {}
+}
+function onLogRecord(event){
+  // Resolve the pending fetch promise so the for-loop in fetchLogs
+  // can advance to the next index. RECORD is set+notify-once-per-REQUEST
+  // by the firmware so this is a clean 1:1 pairing.
+  if (!logFetchPending) return;
+  try {
+    const text = new TextDecoder().decode(event.target.value);
+    logFetchPending(JSON.parse(text));
+  } catch (e) {
+    logFetchPending(null);
+  }
+  logFetchPending = null;
+}
+async function requestOneLog(index){
+  // Issue a REQUEST write and wait for the matching RECORD notification.
+  // Resolves with the parsed JSON or null on timeout.
+  return new Promise(async (resolve) => {
+    logFetchPending = resolve;
+    const timeout = setTimeout(() => {
+      if (logFetchPending === resolve) {
+        logFetchPending = null;
+        resolve(null);
+      }
+    }, 3000);
+    try {
+      await logRequest.writeValue(new TextEncoder().encode(
+        JSON.stringify({ index: index })));
+    } catch (e) {
+      clearTimeout(timeout);
+      if (logFetchPending === resolve) {
+        logFetchPending = null;
+        resolve(null);
+      }
+    }
+  });
+}
+function renderLogList(entries){
+  const list = $('logs-list');
+  if (!entries.length) {
+    list.innerHTML = '<p class="intro" style="text-align:center;padding:1rem 0">No log entries yet.</p>';
+    return;
+  }
+  list.innerHTML = entries.map(e => {
+    if (!e) return '';
+    const lvl = e.lvl || 'info';
+    const cat = (e.cat != null) ? ('cat ' + e.cat) : '';
+    const ts  = fmtUptimeMs(e.ts);
+    const seq = (e.seq != null) ? ('#' + e.seq) : '';
+    return '<div class="log-row">' +
+             '<div class="log-head">' +
+               '<span class="log-lvl ' + levelClass(lvl) + '">' + escHtml(lvl) + '</span>' +
+               '<span class="log-meta">' + escHtml(seq) + ' · ' + escHtml(ts) + (cat ? ' · ' + escHtml(cat) : '') + '</span>' +
+             '</div>' +
+             '<div class="log-msg">' + escHtml(e.msg || '') + '</div>' +
+             (e.det ? '<div class="log-detail">' + escHtml(e.det) + '</div>' : '') +
+           '</div>';
+  }).join('');
+}
+async function fetchLogs(){
+  if (!logRequest || !logRecord) return;
+  if (logFetchInProgress) return;
+  logFetchInProgress = true;
+  try {
+    const want = Math.min(LOGS_PAGE, logHeadData.count || 0);
+    if (want === 0) {
+      renderLogList([]);
+      return;
+    }
+    $('logs-list').innerHTML = '<p class="intro" style="text-align:center;padding:1rem 0">Fetching ' + want + ' entries…</p>';
+    const out = [];
+    for (let i = 0; i < want; i++) {
+      const entry = await requestOneLog(i);
+      if (!entry) break;  // timeout / error — render what we have so far
+      out.push(entry);
+    }
+    renderLogList(out);
+  } finally {
+    logFetchInProgress = false;
+  }
+}
+
 // ── tab switching ──────────────────────────────────────────────────────────
 function showTab(name){
   document.querySelectorAll('.tab-btn').forEach(b => {
@@ -376,7 +540,7 @@ async function connect(){
     $('conn-state').textContent = 'Selecting device…';
     device = await navigator.bluetooth.requestDevice({
       filters: [{ namePrefix: 'SecuraCV' }],
-      optionalServices: [SVC_CONSOLE, SVC_PROVISION,
+      optionalServices: [SVC_CONSOLE, SVC_PROVISION, SVC_LOG,
         '0000180a-0000-1000-8000-00805f9b34fb',
         '0000180f-0000-1000-8000-00805f9b34fb']
     });
@@ -420,6 +584,31 @@ async function connect(){
     } catch (e) {
       console.warn('Provisioning service unavailable:', e.message);
     }
+
+    // Log-export service (PR #332) — best-effort like provisioning.
+    // Older firmware without it just leaves the Logs tab hidden.
+    try {
+      const logSvc = await server.getPrimaryService(SVC_LOG);
+      logHead    = await logSvc.getCharacteristic(CHR_LOG_HEAD);
+      logRequest = await logSvc.getCharacteristic(CHR_LOG_REQUEST);
+      logRecord  = await logSvc.getCharacteristic(CHR_LOG_RECORD);
+      await logHead.startNotifications();
+      logHead.addEventListener('characteristicvaluechanged', onLogHead);
+      await logRecord.startNotifications();
+      logRecord.addEventListener('characteristicvaluechanged', onLogRecord);
+      // Prime the head badge with the current count.
+      try {
+        const hv = await logHead.readValue();
+        onLogHead({ target: { value: hv } });
+      } catch (_) {}
+      // The tab nav was already revealed by the provisioning block; if
+      // that path skipped, reveal nav here so Logs is reachable on its
+      // own.
+      $('tab-nav').classList.remove('hidden');
+      $('logs-card').classList.remove('hidden');
+    } catch (e) {
+      console.warn('Log-export service unavailable:', e.message);
+    }
   } catch (err) {
     showErr(err.message || String(err));
     $('conn-state').textContent = 'Not connected';
@@ -433,9 +622,15 @@ function onDisconnect(){
   $('actions-card').classList.add('hidden');
   $('tab-nav').classList.add('hidden');
   $('wifi-card').classList.add('hidden');
+  $('logs-card').classList.add('hidden');
   $('creds-box').classList.add('hidden');
   $('pw-input').value = '';
+  $('logs-list').innerHTML = '<p class="intro" style="text-align:center;padding:1rem 0">Tap Refresh to fetch the most recent entries.</p>';
   snapshotChar = provScanTrigger = provScanResults = provCreds = provState = null;
+  logHead = logRequest = logRecord = null;
+  logHeadData = { count: 0, ring_size: 0 };
+  logFetchPending = null;
+  logFetchInProgress = false;
   selectedAp = null;
   showTab('status');
 }
@@ -449,8 +644,18 @@ $('connect-btn').addEventListener('click', connect);
 $('disconnect-btn').addEventListener('click', disconnect);
 $('scan-btn').addEventListener('click', wifiScan);
 $('creds-send').addEventListener('click', wifiSendCreds);
+$('logs-refresh-btn').addEventListener('click', fetchLogs);
 document.querySelectorAll('.tab-btn').forEach(b => {
-  b.addEventListener('click', () => showTab(b.dataset.tab));
+  b.addEventListener('click', () => {
+    showTab(b.dataset.tab);
+    // Auto-fetch on first switch to Logs so the user doesn't have to
+    // tap Refresh just to see something land.
+    if (b.dataset.tab === 'logs' && logRequest && !logFetchInProgress) {
+      const list = $('logs-list');
+      // Only auto-fetch if we haven't loaded anything yet.
+      if (list && list.querySelector('.log-row') === null) fetchLogs();
+    }
+  });
 });
 
 // Up-front capability check so the user sees the real blocker before
