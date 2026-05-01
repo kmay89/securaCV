@@ -3275,6 +3275,63 @@ bool ble_log_get_by_index(size_t newest_first_index, BleLogSnapshot* out) {
   return true;
 }
 
+// External-linkage bridges for the BLE witness-export module
+// (ble_witness_export.cpp). The chain head + last record live behind
+// internal linkage in this TU; the bridges marshal the relevant fields
+// into compact JSON the BLE module just streams as a characteristic
+// value. Bonded peers can independently verify the device's chain
+// state without WiFi by reading these.
+
+bool ble_witness_get_head_json(char* out, size_t out_len) {
+  if (!out || out_len < 200) return false;
+  // Compact field names because the whole payload has to fit in MTU 247
+  // (244-byte ATT data) for a single read without long-read fallback.
+  //   s  = current chain seq
+  //   t  = total records ever created
+  //   h  = chain head (32-byte hash, hex)
+  //   pk = device pubkey (32 bytes, hex) — verifier needs this to check
+  //        the signature in the RECORD characteristic
+  char head_hex[65], pub_hex[65];
+  hex_to_str(head_hex, g_device.chain_head, 32);
+  hex_to_str(pub_hex,  g_device.pubkey, 32);
+  int n = snprintf(out, out_len,
+                   "{\"s\":%u,\"t\":%u,\"h\":\"%s\",\"pk\":\"%s\"}",
+                   (unsigned)g_device.seq,
+                   (unsigned)g_health.records_created,
+                   head_hex, pub_hex);
+  return n > 0 && (size_t)n < out_len;
+}
+
+bool ble_witness_get_record_json(char* out, size_t out_len) {
+  if (!out || out_len < 512) return false;
+  // No record yet — return false so the BLE module can short-circuit
+  // and surface a "no chain history yet" placeholder rather than
+  // emit a half-formed JSON.
+  if (g_last_record.seq == 0) return false;
+
+  char ph[65], prev[65], ch[65], sig[129];
+  hex_to_str(ph,   g_last_record.payload_hash, 32);
+  hex_to_str(prev, g_last_record.prev_hash,    32);
+  hex_to_str(ch,   g_last_record.chain_hash,   32);
+  hex_to_str(sig,  g_last_record.signature,    64);
+
+  // Field names again kept short to fit ~440 bytes inside the 512-byte
+  // characteristic value cap (BLE 4.2 long-read limit). Verifier needs
+  // payload_hash + prev_hash to recompute chain_hash, then the signature
+  // verifies chain_hash with the pubkey from HEAD.
+  int n = snprintf(out, out_len,
+                   "{\"seq\":%u,\"tb\":%u,\"t\":\"%s\",\"plen\":%u,"
+                   "\"ph\":\"%s\",\"prev\":\"%s\",\"ch\":\"%s\","
+                   "\"sig\":\"%s\",\"v\":%s}",
+                   (unsigned)g_last_record.seq,
+                   (unsigned)g_last_record.time_bucket,
+                   record_type_name(g_last_record.type),
+                   (unsigned)g_last_record.payload_len,
+                   ph, prev, ch, sig,
+                   g_last_record.verified ? "true" : "false");
+  return n > 0 && (size_t)n < out_len;
+}
+
 // External-linkage bridge for the BLE provisioning module. ble_provision.cpp
 // hands a paired phone's chosen credentials in here; we run the same input
 // validation as handle_wifi_connect, persist to NVS, and kick the existing
