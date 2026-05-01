@@ -3683,6 +3683,33 @@ static esp_err_t handle_reboot_auth(httpd_req_t* req) {
   return handle_reboot(req);
 }
 
+#if FEATURE_CAMERA_PEEK
+static esp_err_t handle_peek_stream_auth(httpd_req_t* req) {
+  if (!api_auth_check_or_query(req, g_device.api_token_str)) return ESP_OK;
+  return handle_peek_stream(req);
+}
+static esp_err_t handle_peek_snapshot_auth(httpd_req_t* req) {
+  if (!api_auth_check_or_query(req, g_device.api_token_str)) return ESP_OK;
+  return handle_peek_snapshot(req);
+}
+static esp_err_t handle_peek_status_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_peek_status(req);
+}
+static esp_err_t handle_peek_start_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_peek_start(req);
+}
+static esp_err_t handle_peek_stop_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_peek_stop(req);
+}
+static esp_err_t handle_peek_resolution_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_peek_resolution(req);
+}
+#endif
+
 #if FEATURE_SYS_MONITOR
 static esp_err_t handle_system_metrics_auth(httpd_req_t* req) {
   if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
@@ -3859,22 +3886,22 @@ register_extra_routes:
 
 #if FEATURE_CAMERA_PEEK
   // Camera peek endpoints (auth required for all peek operations)
-  httpd_uri_t peek_start = { .uri = "/api/peek/start", .method = HTTP_POST, .handler = handle_peek_start };
+  httpd_uri_t peek_start = { .uri = "/api/peek/start", .method = HTTP_POST, .handler = handle_peek_start_auth };
   httpd_register_uri_handler(active_server, &peek_start);
 
-  httpd_uri_t peek_stream = { .uri = "/api/peek/stream", .method = HTTP_GET, .handler = handle_peek_stream };
+  httpd_uri_t peek_stream = { .uri = "/api/peek/stream", .method = HTTP_GET, .handler = handle_peek_stream_auth };
   httpd_register_uri_handler(active_server, &peek_stream);
 
-  httpd_uri_t peek_snapshot = { .uri = "/api/peek/snapshot", .method = HTTP_GET, .handler = handle_peek_snapshot };
+  httpd_uri_t peek_snapshot = { .uri = "/api/peek/snapshot", .method = HTTP_GET, .handler = handle_peek_snapshot_auth };
   httpd_register_uri_handler(active_server, &peek_snapshot);
 
-  httpd_uri_t peek_stop = { .uri = "/api/peek/stop", .method = HTTP_POST, .handler = handle_peek_stop };
+  httpd_uri_t peek_stop = { .uri = "/api/peek/stop", .method = HTTP_POST, .handler = handle_peek_stop_auth };
   httpd_register_uri_handler(active_server, &peek_stop);
 
-  httpd_uri_t peek_status = { .uri = "/api/peek/status", .method = HTTP_GET, .handler = handle_peek_status };
+  httpd_uri_t peek_status = { .uri = "/api/peek/status", .method = HTTP_GET, .handler = handle_peek_status_auth };
   httpd_register_uri_handler(active_server, &peek_status);
 
-  httpd_uri_t peek_resolution = { .uri = "/api/peek/resolution", .method = HTTP_POST, .handler = handle_peek_resolution };
+  httpd_uri_t peek_resolution = { .uri = "/api/peek/resolution", .method = HTTP_POST, .handler = handle_peek_resolution_auth };
   httpd_register_uri_handler(active_server, &peek_resolution);
 #endif
 
