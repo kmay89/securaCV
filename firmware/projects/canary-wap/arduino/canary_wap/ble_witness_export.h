@@ -42,8 +42,14 @@ class NimBLEServer;
 // External-linkage bridges defined in canary_wap.ino. They marshal
 // g_device + g_last_record into compact JSON so the BLE module doesn't
 // need internal-linkage access to the device-state structs.
-extern bool ble_witness_get_head_json(char* out, size_t out_len);
-extern bool ble_witness_get_record_json(char* out, size_t out_len);
+//
+// ble_witness_get_total_records() is a cheap O(1) getter so tick() can
+// detect chain advancement without rebuilding HEAD just to throw it
+// away. Replaces the brittle "parse total back out of the JSON we just
+// built" that an earlier review flagged.
+extern uint32_t ble_witness_get_total_records();
+extern bool     ble_witness_get_head_json(char* out, size_t out_len);
+extern bool     ble_witness_get_record_json(char* out, size_t out_len);
 
 namespace ble_witness_export {
 

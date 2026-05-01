@@ -3282,6 +3282,13 @@ bool ble_log_get_by_index(size_t newest_first_index, BleLogSnapshot* out) {
 // value. Bonded peers can independently verify the device's chain
 // state without WiFi by reading these.
 
+// Cheap getter so the BLE module can detect chain advancement without
+// rebuilding HEAD just to throw it away. Mirrors `g_health.records_created`
+// 1:1; the value monotonically increases for the device's lifetime.
+uint32_t ble_witness_get_total_records() {
+  return (uint32_t)g_health.records_created;
+}
+
 bool ble_witness_get_head_json(char* out, size_t out_len) {
   if (!out || out_len < 200) return false;
   // Compact field names because the whole payload has to fit in MTU 247
