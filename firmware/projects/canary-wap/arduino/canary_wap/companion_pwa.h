@@ -128,6 +128,14 @@ footer a{color:var(--accent);text-decoration:none}
 .bar-fill{height:100%;background:linear-gradient(90deg,var(--accent),var(--success));width:0;transition:width .25s ease-out}
 .bar-fill.fail{background:var(--danger)}
 .bar-meta{display:flex;justify-content:space-between;font-size:.7rem;color:var(--muted);font-variant-numeric:tabular-nums;margin-top:.25rem}
+.hash{font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:.65rem;word-break:break-all;color:var(--muted);background:var(--surface-2);padding:.4rem .55rem;border-radius:6px;line-height:1.45}
+.verify-row{display:flex;align-items:center;gap:.5rem;padding:.6rem .65rem;background:var(--surface-2);border-radius:8px;margin-top:.5rem}
+.verify-icon{font-size:1.1rem}
+.verify-icon.ok{color:var(--success)}
+.verify-icon.bad{color:var(--danger)}
+.verify-icon.warn{color:var(--warning)}
+.verify-text{flex:1;font-size:.8rem}
+.verify-sub{color:var(--muted);font-size:.7rem;margin-top:.15rem}
 </style>
 </head>
 <body>
@@ -151,6 +159,7 @@ footer a{color:var(--accent);text-decoration:none}
   <button class="tab-btn active" data-tab="status">Status</button>
   <button class="tab-btn hidden" data-tab="wifi" id="tab-btn-wifi">WiFi</button>
   <button class="tab-btn hidden" data-tab="logs" id="tab-btn-logs">Logs</button>
+  <button class="tab-btn hidden" data-tab="witness" id="tab-btn-witness">Witness</button>
   <button class="tab-btn hidden" data-tab="ota"  id="tab-btn-ota">OTA</button>
 </div>
 
@@ -169,6 +178,36 @@ footer a{color:var(--accent);text-decoration:none}
     <div class="stat"><span class="stat-l">Household devices</span><span class="stat-v" id="s-hh">&mdash;</span></div>
     <div class="stat"><span class="stat-l">BLE adverts</span><span class="stat-v" id="s-ble">&mdash;</span></div>
     <div class="stat"><span class="stat-l">RF motion</span><span class="stat-v" id="s-motion">&mdash;</span></div>
+  </div>
+</div>
+
+<div class="tab-content hidden" id="tab-witness">
+  <div class="card hidden" id="witness-card">
+    <div class="card-title">
+      <span>Witness chain</span>
+      <span class="badge badge-disconnected" id="witness-state-badge">no data</span>
+    </div>
+    <p class="intro">The device's signed evidence chain. Public-key cryptography lets you verify the device hasn't lied about what it recorded — without trusting any server in between.</p>
+    <div class="stat"><span class="stat-l">Chain seq</span><span class="stat-v" id="w-seq">&mdash;</span></div>
+    <div class="stat"><span class="stat-l">Total records</span><span class="stat-v" id="w-total">&mdash;</span></div>
+    <div class="stat"><span class="stat-l">Last seq</span><span class="stat-v" id="w-rseq">&mdash;</span></div>
+    <div class="stat"><span class="stat-l">Last type</span><span class="stat-v" id="w-rtype">&mdash;</span></div>
+    <div class="stat"><span class="stat-l">Time bucket</span><span class="stat-v" id="w-tb">&mdash;</span></div>
+    <div class="stat"><span class="stat-l">Payload bytes</span><span class="stat-v" id="w-plen">&mdash;</span></div>
+    <div style="margin-top:.75rem;font-size:.65rem;color:var(--muted);font-weight:700;letter-spacing:.05em;text-transform:uppercase">Chain head</div>
+    <div class="hash" id="w-head">&mdash;</div>
+    <div style="margin-top:.5rem;font-size:.65rem;color:var(--muted);font-weight:700;letter-spacing:.05em;text-transform:uppercase">Device pubkey (Ed25519)</div>
+    <div class="hash" id="w-pk">&mdash;</div>
+    <div class="verify-row" id="verify-row" style="display:none">
+      <div class="verify-icon" id="verify-icon">&mdash;</div>
+      <div>
+        <div class="verify-text" id="verify-text">&mdash;</div>
+        <div class="verify-sub" id="verify-sub">&mdash;</div>
+      </div>
+    </div>
+    <div style="display:flex;gap:.5rem;margin-top:.6rem">
+      <button class="btn btn-secondary" id="witness-refresh-btn" style="flex:1">Refresh + verify</button>
+    </div>
   </div>
 </div>
 
@@ -263,6 +302,12 @@ const SVC_LOG          = '8fc1cef5-b162-4401-9607-c8ac21383e90';
 const CHR_LOG_HEAD     = '8fc1cef6-b162-4401-9607-c8ac21383e90';
 const CHR_LOG_REQUEST  = '8fc1cef7-b162-4401-9607-c8ac21383e90';
 const CHR_LOG_RECORD   = '8fc1cef8-b162-4401-9607-c8ac21383e90';
+// ble_witness_export (PR #340): read+notify HEAD ({s,t,h,pk}), read RECORD
+// (full last-record JSON, up to 512 B). All bonded.
+const SVC_WITNESS    = '8fc1cefa-b162-4401-9607-c8ac21383e90';
+const CHR_WIT_HEAD   = '8fc1cefb-b162-4401-9607-c8ac21383e90';
+const CHR_WIT_RECORD = '8fc1cefc-b162-4401-9607-c8ac21383e90';
+
 // ble_ota (PR #327): write+notify CONTROL (BEGIN+OtaHeader / ABORT),
 // write+write_nr DATA (firmware bytes streamed), read+notify STATUS
 // (8-byte tuple: {state, pct, bytes_left:u32}). All bonded; OTA hard-
@@ -292,6 +337,8 @@ let logHead = null, logRequest = null, logRecord = null;
 let logHeadData = { count: 0, ring_size: 0 };
 let logFetchPending = null;   // resolver for the current in-flight RECORD
 let logFetchInProgress = false;
+let witHead = null, witRecord = null;
+let witHeadData = null, witRecordData = null;
 let otaControl = null, otaData = null, otaStatus = null;
 let otaBinFile = null;        // File object for the .bin
 let otaManifest = null;       // parsed JSON {sha256, signature, version}
@@ -571,6 +618,142 @@ async function fetchLogs(){
   }
 }
 
+// ── ble_witness_export ─────────────────────────────────────────────────────
+function setWitnessVerify(state, text, sub) {
+  // state: 'ok' | 'bad' | 'warn'
+  const row = $('verify-row');
+  const icon = $('verify-icon');
+  if (!row) return;
+  row.style.display = '';
+  icon.className = 'verify-icon ' + state;
+  icon.textContent = state === 'ok' ? '✓' : state === 'bad' ? '✗' : '!';
+  $('verify-text').textContent = text;
+  $('verify-sub').textContent = sub || '';
+}
+function shortenHash(h) {
+  if (!h) return '—';
+  return h.length <= 24 ? h : (h.substr(0, 12) + '…' + h.substr(-12));
+}
+function renderWitness() {
+  const head = witHeadData;
+  const rec  = witRecordData;
+  if (!head) {
+    $('witness-state-badge').textContent = 'no data';
+    $('witness-state-badge').className = 'badge badge-disconnected';
+    return;
+  }
+  $('w-seq').textContent   = head.s != null ? String(head.s) : '—';
+  $('w-total').textContent = head.t != null ? String(head.t) : '—';
+  $('w-head').textContent  = head.h || '—';
+  $('w-pk').textContent    = head.pk || '—';
+
+  if (!rec || rec.empty) {
+    $('w-rseq').textContent  = '—';
+    $('w-rtype').textContent = 'no records yet';
+    $('w-tb').textContent    = '—';
+    $('w-plen').textContent  = '—';
+    $('witness-state-badge').textContent = 'empty';
+    $('witness-state-badge').className = 'badge badge-disconnected';
+    $('verify-row').style.display = 'none';
+    return;
+  }
+  $('w-rseq').textContent  = String(rec.seq != null ? rec.seq : '—');
+  $('w-rtype').textContent = rec.t || '—';
+  $('w-tb').textContent    = rec.tb != null ? String(rec.tb) : '—';
+  $('w-plen').textContent  = rec.plen != null ? (rec.plen + ' B') : '—';
+  $('witness-state-badge').textContent = 'live';
+  $('witness-state-badge').className = 'badge badge-away';
+}
+async function verifyWitnessSignature() {
+  const head = witHeadData;
+  const rec  = witRecordData;
+  if (!head || !head.pk || !head.h) return;
+  if (!rec || rec.empty || !rec.sig || !rec.ch) {
+    setWitnessVerify('warn', 'No record to verify',
+      'Chain is empty — no signed records have been generated yet.');
+    return;
+  }
+  // Sanity check 1: the record's chain_hash should equal HEAD.h (the
+  // most recent record IS the current head). If not, the device is
+  // already inconsistent — no need to even check the signature.
+  if (rec.ch !== head.h) {
+    setWitnessVerify('bad', 'Chain head mismatch',
+      'RECORD.ch ≠ HEAD.h. Device is reporting inconsistent state.');
+    return;
+  }
+  // Web Crypto Ed25519 support is uneven: Chrome/Edge/Firefox have it
+  // recently; Safari/iOS-WKWebView (incl. Bluefy) may not. Probe before
+  // attempting and fall back to an honest "couldn't verify" message
+  // rather than silently passing.
+  if (!crypto || !crypto.subtle || typeof crypto.subtle.importKey !== 'function') {
+    setWitnessVerify('warn', 'Verification unavailable',
+      'This browser doesn\'t expose Web Crypto. Use Chrome/Edge to verify.');
+    return;
+  }
+  try {
+    const pubBytes = hexToBytes(head.pk);
+    const sigBytes = hexToBytes(rec.sig);
+    const msgBytes = hexToBytes(rec.ch);
+    if (!pubBytes || pubBytes.length !== 32 ||
+        !sigBytes || sigBytes.length !== 64 ||
+        !msgBytes || msgBytes.length !== 32) {
+      setWitnessVerify('bad', 'Malformed cryptographic field',
+        'pubkey/signature/chain_hash had unexpected length.');
+      return;
+    }
+    // Ed25519 in SubtleCrypto became standard track relatively recently.
+    // Older Chrome may need raw-format key import.
+    const key = await crypto.subtle.importKey(
+      'raw', pubBytes, { name: 'Ed25519' }, false, ['verify']);
+    const ok = await crypto.subtle.verify(
+      'Ed25519', key, sigBytes, msgBytes);
+    if (ok) {
+      setWitnessVerify('ok', 'Signature verified',
+        "The device's pubkey signed this chain head. Evidence is authentic.");
+    } else {
+      setWitnessVerify('bad', 'Signature INVALID',
+        'The signature does not match the chain head. Do not trust this record.');
+    }
+  } catch (e) {
+    // Most likely path here is the algorithm name not being recognized
+    // (older browsers). Surface honestly rather than bury.
+    const msg = (e && e.message) ? e.message : String(e);
+    setWitnessVerify('warn', 'Verification skipped',
+      'Web Crypto refused Ed25519: ' + msg);
+  }
+}
+function onWitnessHead(event) {
+  try {
+    const text = new TextDecoder().decode(event.target.value);
+    witHeadData = JSON.parse(text);
+    renderWitness();
+    // If the Witness tab is in front, auto-refresh RECORD too — the
+    // chain advanced.
+    if (!$('tab-witness').classList.contains('hidden') && witRecord) {
+      witRecord.readValue().then(v => {
+        try {
+          witRecordData = JSON.parse(new TextDecoder().decode(v));
+        } catch (_) { witRecordData = null; }
+        renderWitness();
+        verifyWitnessSignature();
+      }).catch(()=>{});
+    }
+  } catch (_) {}
+}
+async function refreshWitness() {
+  if (!witHead || !witRecord) return;
+  try {
+    const hv = await witHead.readValue();
+    witHeadData = JSON.parse(new TextDecoder().decode(hv));
+  } catch (e) { witHeadData = null; }
+  try {
+    const rv = await witRecord.readValue();
+    witRecordData = JSON.parse(new TextDecoder().decode(rv));
+  } catch (e) { witRecordData = null; }
+  renderWitness();
+  verifyWitnessSignature();
+}
+
 // ── ble_ota ────────────────────────────────────────────────────────────────
 function hexToBytes(hex){
   if (typeof hex !== 'string') return null;
@@ -808,6 +991,7 @@ function showTab(name){
   $('tab-status').classList.toggle('hidden', name !== 'status');
   $('tab-wifi').classList.toggle('hidden', name !== 'wifi');
   $('tab-logs').classList.toggle('hidden', name !== 'logs');
+  $('tab-witness').classList.toggle('hidden', name !== 'witness');
   $('tab-ota').classList.toggle('hidden', name !== 'ota');
 }
 
@@ -831,7 +1015,7 @@ async function connect(){
     $('conn-state').textContent = 'Selecting device…';
     device = await navigator.bluetooth.requestDevice({
       filters: [{ namePrefix: 'SecuraCV' }],
-      optionalServices: [SVC_CONSOLE, SVC_PROVISION, SVC_LOG, SVC_OTA,
+      optionalServices: [SVC_CONSOLE, SVC_PROVISION, SVC_LOG, SVC_WITNESS, SVC_OTA,
         '0000180a-0000-1000-8000-00805f9b34fb',
         '0000180f-0000-1000-8000-00805f9b34fb']
     });
@@ -903,6 +1087,31 @@ async function connect(){
       console.warn('Log-export service unavailable:', e.message);
     }
 
+    // Witness export service (PR #340) — bonded read-only access to the
+    // chain head + most recent signed record. Best-effort discovery; the
+    // tab stays hidden if the firmware doesn't ship it.
+    try {
+      const witSvc = await server.getPrimaryService(SVC_WITNESS);
+      witHead   = await witSvc.getCharacteristic(CHR_WIT_HEAD);
+      witRecord = await witSvc.getCharacteristic(CHR_WIT_RECORD);
+      await witHead.startNotifications();
+      witHead.addEventListener('characteristicvaluechanged', onWitnessHead);
+      try {
+        const hv = await witHead.readValue();
+        witHeadData = JSON.parse(new TextDecoder().decode(hv));
+      } catch (_) {}
+      try {
+        const rv = await witRecord.readValue();
+        witRecordData = JSON.parse(new TextDecoder().decode(rv));
+      } catch (_) {}
+      renderWitness();
+      $('tab-nav').classList.remove('hidden');
+      $('tab-btn-witness').classList.remove('hidden');
+      $('witness-card').classList.remove('hidden');
+    } catch (e) {
+      console.warn('Witness-export service unavailable:', e.message);
+    }
+
     // OTA service (PR #327) — best-effort like the others. The release
     // pubkey may be unprovisioned (zero), in which case the firmware
     // refuses BEGIN; the tab still renders so the user can see what's
@@ -942,9 +1151,11 @@ function onDisconnect(){
   // discovery block in connect().
   $('tab-btn-wifi').classList.add('hidden');
   $('tab-btn-logs').classList.add('hidden');
+  $('tab-btn-witness').classList.add('hidden');
   $('tab-btn-ota').classList.add('hidden');
   $('wifi-card').classList.add('hidden');
   $('logs-card').classList.add('hidden');
+  $('witness-card').classList.add('hidden');
   $('ota-card').classList.add('hidden');
   $('creds-box').classList.add('hidden');
   $('pw-input').value = '';
@@ -962,6 +1173,9 @@ function onDisconnect(){
   logHeadData = { count: 0, ring_size: 0 };
   logFetchPending = null;
   logFetchInProgress = false;
+  witHead = witRecord = null;
+  witHeadData = witRecordData = null;
+  $('verify-row').style.display = 'none';
   otaControl = otaData = otaStatus = null;
   otaBinFile = null;
   otaManifest = null;
@@ -980,6 +1194,7 @@ $('disconnect-btn').addEventListener('click', disconnect);
 $('scan-btn').addEventListener('click', wifiScan);
 $('creds-send').addEventListener('click', wifiSendCreds);
 $('logs-refresh-btn').addEventListener('click', fetchLogs);
+$('witness-refresh-btn').addEventListener('click', refreshWitness);
 $('ota-bin').addEventListener('change', loadOtaInputs);
 $('ota-sig').addEventListener('change', loadOtaInputs);
 $('ota-start-btn').addEventListener('click', startOta);
@@ -992,6 +1207,12 @@ document.querySelectorAll('.tab-btn').forEach(b => {
       const list = $('logs-list');
       // Only auto-fetch if we haven't loaded anything yet.
       if (list && list.querySelector('.log-row') === null) fetchLogs();
+    }
+    // Run signature verification on first switch to Witness so the user
+    // sees the green check (or honest red) without an extra tap.
+    if (b.dataset.tab === 'witness' && witHead) {
+      const row = $('verify-row');
+      if (row && row.style.display === 'none') verifyWitnessSignature();
     }
   });
 });
