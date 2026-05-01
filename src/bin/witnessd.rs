@@ -156,6 +156,7 @@ fn main() -> Result<()> {
     let mut last_prune = Instant::now();
     let mut last_health_log = Instant::now();
     let mut event_count = 0u64;
+    let mut pipeline = PipelineCounters::default();
 
     log::info!("witnessd running. writing to {}", cfg.db_path);
     log::info!(
@@ -180,6 +181,7 @@ fn main() -> Result<()> {
         // Push to bounded buffer (for potential vault sealing)
         // The buffer enforces TTL and capacity limits automatically
         frame_buffer.push(frame);
+        pipeline.frames_buffered += 1;
 
         // Get the latest frame for processing
         let Some(frame_ref) = frame_buffer.latest() else {
@@ -191,8 +193,16 @@ fn main() -> Result<()> {
         let view = frame_ref.inference_view();
 
         // Run module inference
+        pipeline.inference_attempts += 1;
         let candidates =
-            runtime.execute_sandboxed(&mut module, &view, bucket, &token_mgr, &registry)?;
+            match runtime.execute_sandboxed(&mut module, &view, bucket, &token_mgr, &registry) {
+                Ok(candidates) => candidates,
+                Err(err) => {
+                    log::error!("module inference failed: {}", err);
+                    return Err(err);
+                }
+            };
+        pipeline.candidate_events += candidates.len() as u64;
 
         for cand in candidates {
             let ev = match kernel.append_event_checked(
@@ -204,12 +214,14 @@ fn main() -> Result<()> {
             ) {
                 Ok(ev) => ev,
                 Err(e) => {
+                    pipeline.events_rejected += 1;
                     log::warn!("event rejected: {}", e);
                     continue;
                 }
             };
 
             event_count += 1;
+            pipeline.events_appended += 1;
             log::info!(
                 "event #{}: {:?} zone={} bucket_start={} conf={:.2} token={}",
                 event_count,
@@ -255,6 +267,15 @@ fn main() -> Result<()> {
                 stats.frames_captured,
                 stats.source
             );
+            log::info!(
+                "pipeline captured={} buffered={} inference_attempts={} candidates={} appended={} rejected={}",
+                stats.frames_captured,
+                pipeline.frames_buffered,
+                pipeline.inference_attempts,
+                pipeline.candidate_events,
+                pipeline.events_appended,
+                pipeline.events_rejected
+            );
             last_health_log = Instant::now();
         }
 
@@ -279,6 +300,15 @@ fn main() -> Result<()> {
 struct IngestStats {
     frames_captured: u64,
     source: String,
+}
+
+#[derive(Default)]
+struct PipelineCounters {
+    frames_buffered: u64,
+    inference_attempts: u64,
+    candidate_events: u64,
+    events_appended: u64,
+    events_rejected: u64,
 }
 
 enum IngestSource {
