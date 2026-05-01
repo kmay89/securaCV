@@ -82,6 +82,30 @@ h1 .sub{display:block;font-size:.75rem;color:var(--muted);font-weight:400;margin
 footer{color:var(--muted);font-size:.7rem;text-align:center;padding:1rem 0 1.5rem;line-height:1.5}
 footer a{color:var(--accent);text-decoration:none}
 .intro{color:var(--muted);font-size:.85rem;margin-bottom:.75rem;line-height:1.45}
+.tab-nav{display:flex;gap:.3rem;background:var(--surface);padding:.25rem;border-radius:12px;margin-bottom:.75rem;border:1px solid var(--border)}
+.tab-btn{flex:1;padding:.55rem;background:transparent;border:none;color:var(--muted);font-size:.85rem;font-weight:600;border-radius:9px;cursor:pointer;-webkit-tap-highlight-color:transparent;font-family:inherit}
+.tab-btn.active{background:var(--surface-2);color:var(--text)}
+.tab-content{display:block}
+.tab-content.hidden{display:none!important}
+.ap-row{display:flex;align-items:center;gap:.6rem;padding:.65rem .5rem;border-radius:10px;cursor:pointer;-webkit-tap-highlight-color:transparent;border:1px solid transparent}
+.ap-row:active{background:var(--surface-2)}
+.ap-row.sel{background:var(--surface-2);border-color:var(--accent)}
+.ap-meta{flex:1;min-width:0}
+.ap-ssid{font-weight:600;font-size:.92rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ap-sub{font-size:.7rem;color:var(--muted);margin-top:.1rem}
+.ap-bars{display:inline-flex;gap:2px;align-items:flex-end;height:14px}
+.ap-bars span{width:3px;background:var(--border);border-radius:1px}
+.ap-bars span:nth-child(1){height:30%}
+.ap-bars span:nth-child(2){height:55%}
+.ap-bars span:nth-child(3){height:80%}
+.ap-bars span:nth-child(4){height:100%}
+.ap-bars.s4 span{background:var(--success)}
+.ap-bars.s3 span:nth-child(-n+3){background:var(--success)}
+.ap-bars.s2 span:nth-child(-n+2){background:var(--warning)}
+.ap-bars.s1 span:nth-child(-n+1){background:var(--danger)}
+.input{width:100%;padding:.7rem .85rem;background:var(--surface-2);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:.95rem;font-family:inherit}
+.input:focus{outline:none;border-color:var(--accent)}
+.row-flex{display:flex;gap:.5rem;align-items:center}
 </style>
 </head>
 <body>
@@ -97,20 +121,47 @@ footer a{color:var(--accent);text-decoration:none}
   <div class="err" id="err-msg"></div>
 </div>
 
-<div class="card hidden" id="status-card">
-  <div class="card-title">
-    <span><span class="dot live" id="live-dot"></span>Live status</span>
-    <span class="badge badge-disconnected" id="ctx-badge">&mdash;</span>
+<!-- Tab nav appears after connect; switches between Status / WiFi panels. -->
+<div class="tab-nav hidden" id="tab-nav">
+  <button class="tab-btn active" data-tab="status">Status</button>
+  <button class="tab-btn" data-tab="wifi">WiFi</button>
+</div>
+
+<div class="tab-content" id="tab-status">
+  <div class="card hidden" id="status-card">
+    <div class="card-title">
+      <span><span class="dot live" id="live-dot"></span>Live status</span>
+      <span class="badge badge-disconnected" id="ctx-badge">&mdash;</span>
+    </div>
+    <div class="stat"><span class="stat-l">Device</span><span class="stat-v" id="s-id">&mdash;</span></div>
+    <div class="stat"><span class="stat-l">Firmware</span><span class="stat-v" id="s-fw">&mdash;</span></div>
+    <div class="stat"><span class="stat-l">Uptime</span><span class="stat-v" id="s-up">&mdash;</span></div>
+    <div class="stat"><span class="stat-l">Free heap</span><span class="stat-v" id="s-heap">&mdash;</span></div>
+    <div class="stat"><span class="stat-l">WiFi</span><span class="stat-v" id="s-wifi">&mdash;</span></div>
+    <div class="stat"><span class="stat-l">Owner seen</span><span class="stat-v" id="s-owner">&mdash;</span></div>
+    <div class="stat"><span class="stat-l">Household devices</span><span class="stat-v" id="s-hh">&mdash;</span></div>
+    <div class="stat"><span class="stat-l">BLE adverts</span><span class="stat-v" id="s-ble">&mdash;</span></div>
+    <div class="stat"><span class="stat-l">RF motion</span><span class="stat-v" id="s-motion">&mdash;</span></div>
   </div>
-  <div class="stat"><span class="stat-l">Device</span><span class="stat-v" id="s-id">&mdash;</span></div>
-  <div class="stat"><span class="stat-l">Firmware</span><span class="stat-v" id="s-fw">&mdash;</span></div>
-  <div class="stat"><span class="stat-l">Uptime</span><span class="stat-v" id="s-up">&mdash;</span></div>
-  <div class="stat"><span class="stat-l">Free heap</span><span class="stat-v" id="s-heap">&mdash;</span></div>
-  <div class="stat"><span class="stat-l">WiFi</span><span class="stat-v" id="s-wifi">&mdash;</span></div>
-  <div class="stat"><span class="stat-l">Owner seen</span><span class="stat-v" id="s-owner">&mdash;</span></div>
-  <div class="stat"><span class="stat-l">Household devices</span><span class="stat-v" id="s-hh">&mdash;</span></div>
-  <div class="stat"><span class="stat-l">BLE adverts</span><span class="stat-v" id="s-ble">&mdash;</span></div>
-  <div class="stat"><span class="stat-l">RF motion</span><span class="stat-v" id="s-motion">&mdash;</span></div>
+</div>
+
+<div class="tab-content hidden" id="tab-wifi">
+  <div class="card hidden" id="wifi-card">
+    <div class="card-title">
+      <span>WiFi setup</span>
+      <span class="badge badge-disconnected" id="wifi-state-badge">idle</span>
+    </div>
+    <p class="intro">Pick a network, type the password, send. The Canary will join your home WiFi and you can close this page.</p>
+    <button class="btn btn-secondary" id="scan-btn">Scan for networks</button>
+    <div id="ap-list" style="margin-top:.5rem"></div>
+    <div id="creds-box" class="hidden" style="margin-top:.75rem">
+      <input type="password" class="input" id="pw-input" placeholder="WiFi password" autocomplete="new-password" spellcheck="false">
+      <div class="row-flex" style="margin-top:.5rem">
+        <button class="btn btn-primary" id="creds-send" style="flex:1">Send credentials</button>
+      </div>
+      <p class="intro" style="margin-top:.5rem;font-size:.7rem">Bonded link is encrypted; the password is write-only on the BLE characteristic and never readable back.</p>
+    </div>
+  </div>
 </div>
 
 <div class="card hidden" id="actions-card">
@@ -124,11 +175,23 @@ footer a{color:var(--accent);text-decoration:none}
 
 <script>
 'use strict';
-const SVC_CONSOLE  = '8fc1cee0-b162-4401-9607-c8ac21383e90';
-const CHR_SNAPSHOT = '8fc1cee1-b162-4401-9607-c8ac21383e90';
+const SVC_CONSOLE   = '8fc1cee0-b162-4401-9607-c8ac21383e90';
+const CHR_SNAPSHOT  = '8fc1cee1-b162-4401-9607-c8ac21383e90';
+// ble_provision (PR #330): write SCAN_TRIGGER, read+notify SCAN_RESULTS,
+// write-only CREDS, read+notify STATE. All bonded.
+const SVC_PROVISION = '8fc1cef0-b162-4401-9607-c8ac21383e90';
+const CHR_PROV_SCAN_TRIGGER = '8fc1cef1-b162-4401-9607-c8ac21383e90';
+const CHR_PROV_SCAN_RESULTS = '8fc1cef2-b162-4401-9607-c8ac21383e90';
+const CHR_PROV_CREDS        = '8fc1cef3-b162-4401-9607-c8ac21383e90';
+const CHR_PROV_STATE        = '8fc1cef4-b162-4401-9607-c8ac21383e90';
 
 let device = null;
 let snapshotChar = null;
+let provScanTrigger = null;
+let provScanResults = null;
+let provCreds = null;
+let provState = null;
+let selectedAp = null;  // {ssid, sec} of currently-tapped row
 
 const $ = (id) => document.getElementById(id);
 function showErr(msg){const e=$('err-msg');e.textContent=msg;e.classList.add('show');}
@@ -174,6 +237,125 @@ function onSnapshot(event){
   }
 }
 
+// ── ble_provision ──────────────────────────────────────────────────────────
+function rssiBars(rssi){
+  if (rssi >= -55) return 4;
+  if (rssi >= -70) return 3;
+  if (rssi >= -85) return 2;
+  return 1;
+}
+function setProvStateBadge(state, error){
+  const b = $('wifi-state-badge');
+  if (!b) return;
+  b.textContent = error ? (state + ' · ' + error) : state;
+  b.className = 'badge ' + (
+    state === 'connected'    ? 'badge-away' :
+    state === 'connecting' ||
+    state === 'scanning'     ? 'badge-warn' :
+    state === 'failed' ||
+    state === 'rate_limited' ? 'badge-warn' :
+                               'badge-disconnected'
+  );
+}
+function renderApList(payload){
+  const list = $('ap-list');
+  if (!list) return;
+  if (!payload || !Array.isArray(payload.aps) || payload.aps.length === 0) {
+    list.innerHTML = '<p class="intro" style="text-align:center">No networks heard. Try again.</p>';
+    return;
+  }
+  // Backend sorts by RSSI descending already; just render.
+  list.innerHTML = payload.aps.map((ap, i) => {
+    const bars = rssiBars(ap.rssi || -100);
+    const sec = ap.sec || 'open';
+    const safe = (s) => String(s).replace(/[<>&"']/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c]));
+    return '<div class="ap-row" data-i="' + i + '" data-ssid="' + safe(ap.ssid) + '" data-sec="' + safe(sec) + '">' +
+             '<div class="ap-meta">' +
+               '<div class="ap-ssid">' + (safe(ap.ssid) || '<em style="color:var(--muted)">(hidden)</em>') + '</div>' +
+               '<div class="ap-sub">' + safe(sec) + ' · ' + (ap.rssi || '?') + ' dBm</div>' +
+             '</div>' +
+             '<div class="ap-bars s' + bars + '"><span></span><span></span><span></span><span></span></div>' +
+           '</div>';
+  }).join('');
+  // Wire row taps. Skip rows with empty SSID (hidden networks aren't
+  // selectable in this v1 — let the user enter manually in a future
+  // PR if there's demand).
+  list.querySelectorAll('.ap-row').forEach(row => {
+    if (!row.dataset.ssid) return;
+    row.addEventListener('click', () => {
+      list.querySelectorAll('.ap-row').forEach(r => r.classList.remove('sel'));
+      row.classList.add('sel');
+      selectedAp = { ssid: row.dataset.ssid, sec: row.dataset.sec };
+      $('creds-box').classList.remove('hidden');
+      $('pw-input').focus();
+    });
+  });
+}
+function onScanResults(event){
+  try {
+    const text = new TextDecoder().decode(event.target.value);
+    renderApList(JSON.parse(text));
+  } catch (e) { showErr('Bad scan payload: ' + e.message); }
+}
+function onProvState(event){
+  try {
+    const text = new TextDecoder().decode(event.target.value);
+    const data = JSON.parse(text);
+    setProvStateBadge(data.state, data.error);
+    // Always re-derive the header from the current state so a previous
+    // "WiFi joined" doesn't stick after a subsequent failed / disconnect /
+    // rate_limited. Caught by Gemini.
+    const base = (device && device.name) ? device.name : 'Connected';
+    $('conn-state').textContent = (data.state === 'connected')
+      ? (base + ' · WiFi joined')
+      : base;
+  } catch (e) {}
+}
+async function wifiScan(){
+  if (!provScanTrigger) return;
+  setProvStateBadge('scanning');
+  $('ap-list').innerHTML = '<p class="intro" style="text-align:center">Scanning…</p>';
+  // Reset prior selection so the password field doesn't hang around with a
+  // stale SSID while new results render. Caught by Gemini.
+  selectedAp = null;
+  $('creds-box').classList.add('hidden');
+  $('pw-input').value = '';
+  try {
+    // SCAN_TRIGGER is provisioned as NIMBLE_PROPERTY::WRITE
+    // (write-with-response) only — NOT WRITE_NR. Web Bluetooth throws
+    // NotSupportedError if we use writeValueWithoutResponse on a
+    // characteristic that doesn't advertise that property. Caught by
+    // Codex P1 + Gemini high.
+    await provScanTrigger.writeValue(new Uint8Array([1]));
+  } catch (e) {
+    showErr('Scan failed: ' + e.message);
+  }
+}
+async function wifiSendCreds(){
+  if (!provCreds || !selectedAp) return;
+  const pw = $('pw-input').value || '';
+  if (selectedAp.ssid.length > 32) { showErr('SSID too long'); return; }
+  if (pw.length > 64)              { showErr('Password too long'); return; }
+  const payload = JSON.stringify({ ssid: selectedAp.ssid, password: pw });
+  try {
+    setProvStateBadge('connecting');
+    await provCreds.writeValue(new TextEncoder().encode(payload));
+    // Clear the password field immediately so it doesn't sit in the DOM.
+    $('pw-input').value = '';
+  } catch (e) {
+    showErr('Send failed: ' + e.message);
+  }
+}
+
+// ── tab switching ──────────────────────────────────────────────────────────
+function showTab(name){
+  document.querySelectorAll('.tab-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.tab === name);
+  });
+  $('tab-status').classList.toggle('hidden', name !== 'status');
+  $('tab-wifi').classList.toggle('hidden', name !== 'wifi');
+}
+
 async function connect(){
   clearErr();
   // Web Bluetooth requires a secure context (HTTPS or localhost). On
@@ -194,7 +376,7 @@ async function connect(){
     $('conn-state').textContent = 'Selecting device…';
     device = await navigator.bluetooth.requestDevice({
       filters: [{ namePrefix: 'SecuraCV' }],
-      optionalServices: [SVC_CONSOLE,
+      optionalServices: [SVC_CONSOLE, SVC_PROVISION,
         '0000180a-0000-1000-8000-00805f9b34fb',
         '0000180f-0000-1000-8000-00805f9b34fb']
     });
@@ -211,6 +393,33 @@ async function connect(){
     onSnapshot({ target: { value } });
     await snapshotChar.startNotifications();
     snapshotChar.addEventListener('characteristicvaluechanged', onSnapshot);
+
+    // Provisioning service — best-effort. Older firmware (pre-#330)
+    // doesn't ship it; if getPrimaryService throws, skip the WiFi tab
+    // entirely rather than show a tab that does nothing. Reveal the
+    // tab nav + WiFi card only AFTER discovery succeeds. Caught by
+    // Gemini.
+    try {
+      const provSvc = await server.getPrimaryService(SVC_PROVISION);
+      provScanTrigger = await provSvc.getCharacteristic(CHR_PROV_SCAN_TRIGGER);
+      provScanResults = await provSvc.getCharacteristic(CHR_PROV_SCAN_RESULTS);
+      provCreds       = await provSvc.getCharacteristic(CHR_PROV_CREDS);
+      provState       = await provSvc.getCharacteristic(CHR_PROV_STATE);
+      await provScanResults.startNotifications();
+      provScanResults.addEventListener('characteristicvaluechanged', onScanResults);
+      await provState.startNotifications();
+      provState.addEventListener('characteristicvaluechanged', onProvState);
+      // Prime the state badge with the current value.
+      try {
+        const sv = await provState.readValue();
+        onProvState({ target: { value: sv } });
+      } catch (_) {}
+      // Only NOW reveal the WiFi UI — discovery worked.
+      $('tab-nav').classList.remove('hidden');
+      $('wifi-card').classList.remove('hidden');
+    } catch (e) {
+      console.warn('Provisioning service unavailable:', e.message);
+    }
   } catch (err) {
     showErr(err.message || String(err));
     $('conn-state').textContent = 'Not connected';
@@ -222,7 +431,13 @@ function onDisconnect(){
   $('connect-card').classList.remove('hidden');
   $('status-card').classList.add('hidden');
   $('actions-card').classList.add('hidden');
-  snapshotChar = null;
+  $('tab-nav').classList.add('hidden');
+  $('wifi-card').classList.add('hidden');
+  $('creds-box').classList.add('hidden');
+  $('pw-input').value = '';
+  snapshotChar = provScanTrigger = provScanResults = provCreds = provState = null;
+  selectedAp = null;
+  showTab('status');
 }
 
 async function disconnect(){
@@ -232,6 +447,11 @@ async function disconnect(){
 
 $('connect-btn').addEventListener('click', connect);
 $('disconnect-btn').addEventListener('click', disconnect);
+$('scan-btn').addEventListener('click', wifiScan);
+$('creds-send').addEventListener('click', wifiSendCreds);
+document.querySelectorAll('.tab-btn').forEach(b => {
+  b.addEventListener('click', () => showTab(b.dataset.tab));
+});
 
 // Up-front capability check so the user sees the real blocker before
 // they tap Connect. Two distinct failure modes get distinct messages:
