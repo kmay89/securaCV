@@ -518,6 +518,7 @@ function showTab(name){
   });
   $('tab-status').classList.toggle('hidden', name !== 'status');
   $('tab-wifi').classList.toggle('hidden', name !== 'wifi');
+  $('tab-logs').classList.toggle('hidden', name !== 'logs');
 }
 
 async function connect(){
