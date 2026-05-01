@@ -112,6 +112,7 @@
 #include "api_auth.h"
 #include "wap_server.h"
 #include "web_ui.h"
+#include "companion_pwa.h"
 #include "mesh_network.h"
 #include "bluetooth_channel.h"
 #include "bluetooth_api.h"
@@ -2039,6 +2040,41 @@ static esp_err_t handle_ui(httpd_req_t* req) {
   return httpd_resp_send(req, CANARY_UI_HTML, HTTPD_RESP_USE_STRLEN);
 }
 
+// ── Companion PWA (Web Bluetooth) ───────────────────────────────────────────
+// Serves the standalone phone-side console at /companion. Pure static asset
+// shipping — no auth needed (the page itself just renders; the BLE
+// characteristics it talks to enforce READ_ENC + READ_AUTHEN, so a
+// drive-by visitor can load the HTML but can't see device state without
+// pairing first).
+
+static esp_err_t handle_companion_html(httpd_req_t* req) {
+  g_health.http_requests++;
+  httpd_resp_set_type(req, "text/html; charset=utf-8");
+  // Cache aggressively in the browser; the service worker will revalidate
+  // network-first when it can reach us, so updates land within one visit.
+  httpd_resp_set_hdr(req, "Cache-Control", "public, max-age=3600");
+  return httpd_resp_send(req, COMPANION_HTML, HTTPD_RESP_USE_STRLEN);
+}
+
+static esp_err_t handle_companion_sw(httpd_req_t* req) {
+  g_health.http_requests++;
+  httpd_resp_set_type(req, "application/javascript; charset=utf-8");
+  // Allow the SW (served from /) to claim the /companion scope. Without
+  // this header the browser refuses scope: '/companion' in register().
+  httpd_resp_set_hdr(req, "Service-Worker-Allowed", "/companion");
+  // SW itself MUST NOT be cached so updates can land — browsers
+  // re-fetch on every navigation when no cache directive present.
+  httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
+  return httpd_resp_send(req, COMPANION_SW_JS, HTTPD_RESP_USE_STRLEN);
+}
+
+static esp_err_t handle_companion_manifest(httpd_req_t* req) {
+  g_health.http_requests++;
+  httpd_resp_set_type(req, "application/manifest+json");
+  httpd_resp_set_hdr(req, "Cache-Control", "public, max-age=3600");
+  return httpd_resp_send(req, COMPANION_MANIFEST, HTTPD_RESP_USE_STRLEN);
+}
+
 static esp_err_t handle_status(httpd_req_t* req) {
   g_health.http_requests++;
 
@@ -3595,6 +3631,17 @@ static void register_api_routes(httpd_handle_t server) {
   // UI — no auth required (serves dashboard HTML)
   httpd_uri_t ui = { .uri = "/", .method = HTTP_GET, .handler = handle_ui };
   httpd_register_uri_handler(server, &ui);
+
+  // Companion PWA (Web Bluetooth phone-side console). Three static assets,
+  // no auth — the page itself is just HTML/JS/manifest; the BLE
+  // characteristics it talks to enforce READ_ENC + READ_AUTHEN, so a
+  // drive-by visitor without a bonded phone sees nothing useful.
+  httpd_uri_t comp_html = { .uri = "/companion", .method = HTTP_GET, .handler = handle_companion_html };
+  httpd_register_uri_handler(server, &comp_html);
+  httpd_uri_t comp_sw = { .uri = "/companion-sw.js", .method = HTTP_GET, .handler = handle_companion_sw };
+  httpd_register_uri_handler(server, &comp_sw);
+  httpd_uri_t comp_man = { .uri = "/companion-manifest.webmanifest", .method = HTTP_GET, .handler = handle_companion_manifest };
+  httpd_register_uri_handler(server, &comp_man);
 
   // Device info — no auth required (non-sensitive metadata)
   httpd_uri_t devinfo = { .uri = "/api/device-info", .method = HTTP_GET, .handler = handle_device_info };
