@@ -199,7 +199,8 @@ fn main() -> Result<()> {
                 Ok(candidates) => candidates,
                 Err(err) => {
                     log::error!("module inference failed: {}", err);
-                    return Err(err);
+                    pipeline.inference_errors += 1;
+                    continue;
                 }
             };
         pipeline.candidate_events += candidates.len() as u64;
@@ -268,10 +269,11 @@ fn main() -> Result<()> {
                 stats.source
             );
             log::info!(
-                "pipeline captured={} buffered={} inference_attempts={} candidates={} appended={} rejected={}",
+                "pipeline captured={} buffered={} inference_attempts={} inference_errors={} candidates={} appended={} rejected={}",
                 stats.frames_captured,
                 pipeline.frames_buffered,
                 pipeline.inference_attempts,
+                pipeline.inference_errors,
                 pipeline.candidate_events,
                 pipeline.events_appended,
                 pipeline.events_rejected
@@ -306,6 +308,7 @@ struct IngestStats {
 struct PipelineCounters {
     frames_buffered: u64,
     inference_attempts: u64,
+    inference_errors: u64,
     candidate_events: u64,
     events_appended: u64,
     events_rejected: u64,
