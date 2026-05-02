@@ -572,6 +572,12 @@ static uint16_t g_peek_sensor_pid     = 0;     // sensor product id (e.g. 0x26 =
 static uint8_t  g_peek_sensor_ver     = 0;
 static uint8_t  g_peek_sensor_midh    = 0;
 static uint8_t  g_peek_sensor_midl    = 0;
+// Init diagnostics — surfaced in /api/peek/status so the UI can show *why*
+// the camera failed rather than the silent "unavailable" the user used to see.
+static int      g_peek_last_init_err  = 0;     // esp_err_t of the last failed attempt (0 = ok)
+static char     g_peek_last_init_label[20] = "never"; // which attempt was tried last
+static bool     g_peek_psram_found    = false; // psramFound() result at the most recent init
+static uint32_t g_peek_init_count     = 0;     // number of init attempts since boot (incl. retries)
 // Frame pacing for MJPEG stream — inverse of target FPS. With PSRAM the stream
 // can deliver ~25 fps at VGA; without PSRAM the OV2640 itself caps below that.
 static uint32_t g_peek_frame_delay_ms = 40;    // 40 ms ≈ 25 fps target
@@ -2642,11 +2648,34 @@ static bool init_camera() {
   // reports correctly downstream.
   psramInit();
 
+  g_peek_init_count++;
+
+  // If a previous init attempt got partway through, the SCCB state machine
+  // and the LEDC channel may still be claimed. Always start cold so a runtime
+  // /api/peek/init retry behaves the same as a fresh boot init.
+  esp_camera_deinit();
+
   bool psram_ok = psramFound();
   size_t psram_total = psram_ok ? ESP.getPsramSize() : 0;
-  Serial.printf("[CAMERA] PSRAM: %s (%u bytes)\n",
+  g_peek_psram_found = psram_ok;
+  Serial.printf("[CAMERA] PSRAM: %s (%u bytes), free heap=%u, largest DMA block=%u\n",
                 psram_ok ? "found" : "not found",
-                (unsigned)psram_total);
+                (unsigned)psram_total,
+                (unsigned)ESP.getFreeHeap(),
+                (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DMA | MALLOC_CAP_8BIT));
+
+  // The XIAO ESP32-S3 *Sense* ships with 8MB OPI PSRAM. If psramFound() comes
+  // back false we are almost certainly running an Arduino-IDE FQBN that did
+  // not enable PSRAM at compile time — psramInit() cannot rescue this since
+  // the SDK's address space layout is decided at boot. Surface the most
+  // common operator mistake explicitly so the user can fix it without
+  // chasing kernel logs.
+  if (!psram_ok) {
+    Serial.println("[CAMERA] *** PSRAM not detected. On XIAO ESP32-S3 Sense this");
+    Serial.println("[CAMERA] *** almost always means the sketch was flashed without");
+    Serial.println("[CAMERA] *** PSRAM enabled. In Arduino IDE: Tools > PSRAM > 'OPI PSRAM'.");
+    Serial.println("[CAMERA] *** Falling back to QVGA-in-DRAM (still streams, just lower res).");
+  }
 
   // Attempt order is most-capable → most-conservative. Each attempt that
   // returns non-OK is followed by esp_camera_deinit() to fully reset the
@@ -2701,6 +2730,8 @@ static bool init_camera() {
   int       chosen   = -1;
   for (int i = 0; i < n_attempts; i++) {
     last_err = try_camera_init(attempts[i], labels[i]);
+    g_peek_last_init_err = (int)last_err;
+    strlcpy(g_peek_last_init_label, labels[i], sizeof(g_peek_last_init_label));
     if (last_err == ESP_OK) { chosen = i; break; }
     // Driver may be half-initialized after a failed probe; reset before retry.
     esp_camera_deinit();
@@ -2708,9 +2739,11 @@ static bool init_camera() {
   }
 
   if (chosen < 0) {
-    Serial.printf("[CAMERA] All init attempts failed — last err=0x%x\n", last_err);
+    Serial.printf("[CAMERA] All init attempts failed — last err=0x%x (%s)\n",
+                  last_err, esp_err_to_name(last_err));
     return false;
   }
+  g_peek_last_init_err = 0;
 
   const camera_config_t& winning = attempts[chosen];
   g_peek_framesize    = winning.frame_size;
@@ -3013,6 +3046,17 @@ static esp_err_t handle_peek_status(httpd_req_t* req) {
   doc["fb_count"]       = g_peek_fb_count;
   doc["frame_delay_ms"] = g_peek_frame_delay_ms; // stream pacing target
 
+  // Init diagnostics — when camera_initialized=false the UI now has enough
+  // signal to tell the user *why*: which attempt label was tried last, the
+  // raw esp_err_t code, whether PSRAM was visible, and how many init
+  // attempts have run since boot (including manual /api/peek/init retries).
+  doc["psram_found"]      = g_peek_psram_found;
+  doc["last_init_err"]    = g_peek_last_init_err;
+  doc["last_init_err_name"] = esp_err_to_name((esp_err_t)g_peek_last_init_err);
+  doc["last_init_label"]  = g_peek_last_init_label;
+  doc["init_attempts"]    = g_peek_init_count;
+  doc["free_heap"]        = (uint32_t)ESP.getFreeHeap();
+
   // Snapshot all volatile metrics atomically under the shared spinlock. 64-bit
   // reads are not atomic on the ESP32 (32-bit core), and reading the same
   // volatile multiple times can produce inconsistent rows (e.g.
@@ -3053,6 +3097,52 @@ static esp_err_t handle_peek_status(httpd_req_t* req) {
     avg_kbps = (uint32_t)((snap_total_bytes * 8ULL) / (uint64_t)uptime_ms);
   }
   doc["avg_kbps"]          = avg_kbps;
+
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// PEEK INIT / RE-INIT — POST /api/peek/init
+//
+// When the camera fails at boot (loose Sense connector, transient PSRAM
+// glitch, heap pressure during WiFi+TLS bring-up), the user previously had
+// no way to recover except a full reboot. This endpoint runs the same
+// multi-stage init the boot flow uses, after deinit-ing whatever half-
+// initialized state is currently present. Returns the resulting status so
+// the UI can show success/failure inline.
+// ════════════════════════════════════════════════════════════════════════════
+
+static esp_err_t handle_peek_init(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  // Stop any in-flight stream first so the streaming task isn't holding a
+  // framebuffer while we tear the driver down.
+  bool was_active = g_peek_active;
+  g_peek_active = false;
+  if (was_active) vTaskDelay(pdMS_TO_TICKS(150));
+
+  Serial.println("[CAMERA] /api/peek/init — runtime re-init requested");
+  log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "Camera re-init requested", nullptr);
+
+  bool ok = init_camera();
+  g_camera_initialized = ok;
+  g_hw.camera_available = ok;
+  if (ok) g_hw.camera_ever_init = true;
+
+  JsonDocument doc;
+  doc["ok"] = ok;
+  doc["camera_initialized"]  = g_camera_initialized;
+  doc["psram_found"]         = g_peek_psram_found;
+  doc["last_init_err"]       = g_peek_last_init_err;
+  doc["last_init_err_name"]  = esp_err_to_name((esp_err_t)g_peek_last_init_err);
+  doc["last_init_label"]     = g_peek_last_init_label;
+  doc["init_attempts"]       = g_peek_init_count;
+  doc["sensor_pid"]          = g_peek_sensor_pid;
+  doc["sensor_model"]        = sensor_model_name(g_peek_sensor_pid);
+  doc["resolution_name"]     = framesize_name(g_peek_framesize);
+  doc["fb_count"]            = g_peek_fb_count;
 
   String response;
   serializeJson(doc, response);
@@ -4220,6 +4310,10 @@ static esp_err_t handle_peek_sensor_set_auth(httpd_req_t* req) {
   if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
   return handle_peek_sensor_set(req);
 }
+static esp_err_t handle_peek_init_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_peek_init(req);
+}
 #endif
 
 #if FEATURE_SYS_MONITOR
@@ -4421,6 +4515,9 @@ register_extra_routes:
 
   httpd_uri_t peek_sensor_set = { .uri = "/api/peek/sensor", .method = HTTP_POST, .handler = handle_peek_sensor_set_auth };
   httpd_register_uri_handler(active_server, &peek_sensor_set);
+
+  httpd_uri_t peek_init = { .uri = "/api/peek/init", .method = HTTP_POST, .handler = handle_peek_init_auth };
+  httpd_register_uri_handler(active_server, &peek_init);
 #endif
 
 #if FEATURE_MESH_NETWORK
@@ -5191,6 +5288,28 @@ void setup() {
   // PHASE 3: Optional Peripherals — Skip if in safe mode, fail gracefully
   // ════════════════════════════════════════════════════════════════════════════
 
+  // Camera comes FIRST among the optional peripherals. esp_camera_init() needs
+  // a contiguous DMA-capable internal SRAM block (and, for the PSRAM paths, a
+  // sizeable PSRAM block). Once WiFi+HTTP are up, the LWIP/Wi-Fi pools have
+  // grabbed and fragmented internal heap; on a cold boot that often pushes
+  // OV2640 init into the DRAM-QVGA fallback, or fails it outright. Running
+  // the camera init before WiFi reliably gives the driver a clean heap.
+  #if FEATURE_CAMERA_PEEK
+  if (!in_safe_mode) {
+    Serial.println("[..] Initializing camera for peek/preview...");
+    g_camera_initialized = init_camera();
+    g_hw.camera_available = g_camera_initialized;
+    g_hw.camera_ever_init = g_camera_initialized;
+    if (g_camera_initialized) {
+      Serial.println("[OK] Camera ready for peek");
+    } else {
+      Serial.println("[--] Camera init failed - peek disabled (use /api/peek/init to retry)");
+    }
+  } else {
+    Serial.println("[--] Camera init skipped (safe mode)");
+  }
+  #endif
+
   // Initialize SD card storage (with timeout, non-blocking)
   #if FEATURE_SD_STORAGE
   if (!in_safe_mode) {
@@ -5249,23 +5368,6 @@ void setup() {
   #endif
   // Print quick-connect details early so users do not need to wait for later init phases.
   print_quick_connect_details("[PROV] Quick connect (early):");
-  
-  // Initialize camera for peek/preview
-  #if FEATURE_CAMERA_PEEK
-  if (!in_safe_mode) {
-    Serial.println("[..] Initializing camera for peek/preview...");
-    g_camera_initialized = init_camera();
-    g_hw.camera_available = g_camera_initialized;
-    g_hw.camera_ever_init = g_camera_initialized;
-    if (g_camera_initialized) {
-      Serial.println("[OK] Camera ready for peek");
-    } else {
-      Serial.println("[--] Camera init failed - peek disabled");
-    }
-  } else {
-    Serial.println("[--] Camera init skipped (safe mode)");
-  }
-  #endif
 
   // Initialize mesh network (opera)
   #if FEATURE_MESH_NETWORK
