@@ -1123,6 +1123,17 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           </div>
           <span id="camInfoLive" class="badge info" style="display:none;"><span class="badge-dot"></span>LIVE</span>
         </div>
+
+        <!-- Init diagnostics + retry. Shown only when esp_camera_init failed
+             at boot — gives the user a way to recover from a half-seated
+             camera connector or transient PSRAM brownout without rebooting. -->
+        <div id="camInitDiag" style="display:none;margin-bottom:0.75rem;padding:0.6rem 0.75rem;border-radius:6px;border:1px solid #b45309;background:rgba(180,83,9,0.12);color:#fde68a;">
+          <div style="font-weight:600;margin-bottom:0.25rem;">Camera not initialized</div>
+          <div id="camInitDiagText" style="font-size:0.78rem;line-height:1.4;">—</div>
+          <div style="margin-top:0.5rem;display:flex;gap:0.4rem;flex-wrap:wrap;">
+            <button class="btn btn-sm btn-primary" id="camReinitBtn" onclick="reinitCamera()">↻ Re-initialize Camera</button>
+          </div>
+        </div>
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:0.6rem 1rem;font-size:0.82rem;">
           <div><div style="color:var(--muted);font-size:0.7rem;text-transform:uppercase;letter-spacing:0.05em;">Sensor</div><div id="camSensor">—</div></div>
           <div><div style="color:var(--muted);font-size:0.7rem;text-transform:uppercase;letter-spacing:0.05em;">Pixel Format</div><div id="camPixFmt">—</div></div>
@@ -2629,6 +2640,31 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       setText('camXclk', data.xclk_hz ? (data.xclk_hz/1000000).toFixed(0) + ' MHz' : '—');
       setText('camPsram', (data.psram === true) ? 'Yes' : (data.psram === false ? 'No' : '—'));
       setText('camFbCount', data.fb_count != null ? String(data.fb_count) : '—');
+      // Init-failure diagnostics card. Only visible when camera_initialized=false.
+      const diag = document.getElementById('camInitDiag');
+      const diagText = document.getElementById('camInitDiagText');
+      if (diag && diagText) {
+        if (!data.camera_initialized) {
+          let msg = '';
+          if (data.last_init_label && data.last_init_label !== 'never') {
+            msg += 'Last attempt: <code>' + data.last_init_label + '</code> → ' +
+                   (data.last_init_err_name || ('0x' + (data.last_init_err||0).toString(16)));
+          } else {
+            msg += 'Camera init has not run yet.';
+          }
+          if (data.psram_found === false) {
+            msg += '<br>PSRAM not detected — on XIAO ESP32-S3 Sense this usually means the sketch was flashed without <b>Tools → PSRAM → OPI PSRAM</b>.';
+          }
+          if (typeof data.init_attempts !== 'undefined') {
+            msg += '<br><span style="color:var(--muted);font-size:0.72rem;">Attempts since boot: ' + data.init_attempts +
+                   (typeof data.free_heap !== 'undefined' ? ' · Free heap: ' + Math.round(data.free_heap/1024) + ' KB' : '') + '</span>';
+          }
+          diagText.innerHTML = msg;
+          diag.style.display = 'block';
+        } else {
+          diag.style.display = 'none';
+        }
+      }
       // Live stream metrics: when peek_active=true, show LIVE numbers; when
       // a stream just ended (frame_count>0 but inactive), surface the final
       // real measurements from that stream so the user can verify quality.
@@ -2729,6 +2765,31 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       stopCamInfoPolling();
       updatePeekUI();
       refreshPeekStatus();
+    }
+
+    async function reinitCamera() {
+      const btn = document.getElementById('camReinitBtn');
+      const diagText = document.getElementById('camInitDiagText');
+      if (btn) { btn.disabled = true; btn.textContent = '… initializing'; }
+      if (diagText) diagText.innerHTML = 'Re-running esp_camera_init() through PSRAM-XGA → PSRAM-VGA → DRAM-QVGA…';
+      try {
+        const r = await api('/api/peek/init', 'POST');
+        if (r && r.ok) {
+          // Pull a fresh status so the diag panel hides and the metrics re-populate.
+          await refreshPeekStatus();
+          await refreshSensorState();
+        } else if (r) {
+          if (diagText) {
+            diagText.innerHTML = 'Re-init failed: <code>' + (r.last_init_err_name || '0x' + (r.last_init_err||0).toString(16)) +
+                                 '</code> on attempt <code>' + (r.last_init_label || '?') + '</code>.' +
+                                 (r.psram_found === false ? '<br>PSRAM still not visible — flash with PSRAM=OPI in Arduino IDE.' : '');
+          }
+        }
+      } catch (e) {
+        if (diagText) diagText.textContent = 'Re-init request failed: ' + e;
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '↻ Re-initialize Camera'; }
+      }
     }
 
     async function takeSnapshot() {
