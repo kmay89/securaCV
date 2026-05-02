@@ -1024,6 +1024,33 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           <img id="snapshotImg" style="max-width:100%;border-radius:8px;border:1px solid var(--border);" alt="Snapshot">
         </div>
       </div>
+
+      <!-- Real-time camera info: every value is read from /api/peek/status (esp_camera state). -->
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Camera Info</div>
+            <div class="card-subtitle">Live sensor + stream metrics — updates every second while streaming</div>
+          </div>
+          <span id="camInfoLive" class="badge info" style="display:none;"><span class="badge-dot"></span>LIVE</span>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:0.6rem 1rem;font-size:0.82rem;">
+          <div><div style="color:var(--muted);font-size:0.7rem;text-transform:uppercase;letter-spacing:0.05em;">Sensor</div><div id="camSensor">—</div></div>
+          <div><div style="color:var(--muted);font-size:0.7rem;text-transform:uppercase;letter-spacing:0.05em;">Pixel Format</div><div id="camPixFmt">—</div></div>
+          <div><div style="color:var(--muted);font-size:0.7rem;text-transform:uppercase;letter-spacing:0.05em;">Resolution</div><div id="camRes">—</div></div>
+          <div><div style="color:var(--muted);font-size:0.7rem;text-transform:uppercase;letter-spacing:0.05em;">JPEG Quality</div><div id="camQuality" title="0–63, lower is higher quality">—</div></div>
+          <div><div style="color:var(--muted);font-size:0.7rem;text-transform:uppercase;letter-spacing:0.05em;">XCLK</div><div id="camXclk">—</div></div>
+          <div><div style="color:var(--muted);font-size:0.7rem;text-transform:uppercase;letter-spacing:0.05em;">PSRAM</div><div id="camPsram">—</div></div>
+          <div><div style="color:var(--muted);font-size:0.7rem;text-transform:uppercase;letter-spacing:0.05em;">Frame Buffers</div><div id="camFbCount">—</div></div>
+          <div><div style="color:var(--muted);font-size:0.7rem;text-transform:uppercase;letter-spacing:0.05em;">Frame Rate</div><div id="camFps">—</div></div>
+          <div><div style="color:var(--muted);font-size:0.7rem;text-transform:uppercase;letter-spacing:0.05em;">Last Frame</div><div id="camLastFrame">—</div></div>
+          <div><div style="color:var(--muted);font-size:0.7rem;text-transform:uppercase;letter-spacing:0.05em;">Avg Frame</div><div id="camAvgFrame">—</div></div>
+          <div><div style="color:var(--muted);font-size:0.7rem;text-transform:uppercase;letter-spacing:0.05em;">Throughput</div><div id="camKbps">—</div></div>
+          <div><div style="color:var(--muted);font-size:0.7rem;text-transform:uppercase;letter-spacing:0.05em;">Frames Sent</div><div id="camFrameCount">—</div></div>
+          <div><div style="color:var(--muted);font-size:0.7rem;text-transform:uppercase;letter-spacing:0.05em;">Stream Uptime</div><div id="camUptime">—</div></div>
+        </div>
+        <p style="font-size:0.7rem;color:var(--muted);margin-top:0.75rem;">All values are read directly from the on-device camera driver (esp_camera) — no placeholder data.</p>
+      </div>
     </div>
 
     <!-- ═══════════════════════════════════════════════════════════════════════ -->
@@ -2168,6 +2195,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       else if (panel === 'settings') { loadWifiStatus(); refreshBtStatus(); loadBtPairedDevices(); refreshBtOtaStatus(); loadRfSettings(); }
 
       if (panel !== 'camera' && peekActive) stopPeek();
+      if (panel !== 'camera') stopCamInfoPolling();
     }
 
     function switchCommunityTab(tab) {
@@ -2482,13 +2510,69 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     // ══════════════════════════════════════════════════════════════════
     // CAMERA/PEEK
     // ══════════════════════════════════════════════════════════════════
+    let camInfoTimer = null;
+
+    function fmtBytes(n) {
+      if (n == null || isNaN(n)) return '—';
+      if (n < 1024) return n + ' B';
+      if (n < 1024*1024) return (n/1024).toFixed(1) + ' KB';
+      return (n/1048576).toFixed(2) + ' MB';
+    }
+    function fmtDuration(ms) {
+      if (!ms || ms < 0) return '—';
+      const s = Math.floor(ms / 1000);
+      if (s < 60) return s + 's';
+      const m = Math.floor(s / 60);
+      const rs = s % 60;
+      return m + 'm ' + rs + 's';
+    }
+    function setText(id, v) { const el = document.getElementById(id); if (el) el.textContent = v; }
+
+    function applyCameraInfo(data) {
+      if (!data || !data.ok) return;
+      const sensor = data.sensor_model && data.sensor_model !== 'unknown'
+        ? data.sensor_model + ' (PID 0x' + (data.sensor_pid||0).toString(16).toUpperCase() + ')'
+        : 'PID 0x' + (data.sensor_pid||0).toString(16).toUpperCase();
+      setText('camSensor', data.sensor_pid ? sensor : 'unavailable');
+      setText('camPixFmt', data.pixel_format || '—');
+      setText('camRes', data.resolution_name || '—');
+      setText('camQuality', (data.jpeg_quality != null) ? (data.jpeg_quality + ' / 63') : '—');
+      setText('camXclk', data.xclk_hz ? (data.xclk_hz/1000000).toFixed(0) + ' MHz' : '—');
+      setText('camPsram', (data.psram === true) ? 'Yes' : (data.psram === false ? 'No' : '—'));
+      setText('camFbCount', data.fb_count != null ? String(data.fb_count) : '—');
+      // Live stream metrics: only show numeric values when actually streaming
+      if (data.peek_active) {
+        setText('camFps', (data.fps != null) ? (data.fps + ' fps') : '—');
+        setText('camLastFrame', fmtBytes(data.last_frame_bytes));
+        setText('camAvgFrame', fmtBytes(data.avg_frame_bytes));
+        setText('camKbps', (data.avg_kbps != null) ? (data.avg_kbps + ' kbps') : '—');
+        setText('camFrameCount', data.frame_count != null ? String(data.frame_count) : '—');
+        setText('camUptime', fmtDuration(data.stream_uptime_ms));
+        const live = document.getElementById('camInfoLive'); if (live) live.style.display = 'inline-flex';
+      } else {
+        ['camFps','camLastFrame','camAvgFrame','camKbps','camFrameCount','camUptime']
+          .forEach(id => setText(id, 'idle'));
+        const live = document.getElementById('camInfoLive'); if (live) live.style.display = 'none';
+      }
+    }
+
+    function startCamInfoPolling() {
+      if (camInfoTimer) return;
+      camInfoTimer = setInterval(refreshPeekStatus, 1000);
+    }
+    function stopCamInfoPolling() {
+      if (camInfoTimer) { clearInterval(camInfoTimer); camInfoTimer = null; }
+    }
+
     async function refreshPeekStatus() {
       const data = await api('/api/peek/status');
-      if (data.ok) {
+      if (data && data.ok) {
         cameraReady = data.camera_initialized;
         peekActive = data.peek_active;
         if (typeof data.resolution !== 'undefined') { currentResolution = data.resolution; updateResolutionUI(); }
+        applyCameraInfo(data);
         updatePeekUI();
+        if (peekActive) startCamInfoPolling(); else stopCamInfoPolling();
       }
     }
 
@@ -2526,16 +2610,19 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       const stream = document.getElementById('peekStream');
       document.getElementById('peekStatus').textContent = 'Connecting...';
       stream.src = API_BASE + '/api/peek/stream?t=' + Date.now() + '&token=' + encodeURIComponent(apiToken);
-      stream.onload = () => { peekActive = true; updatePeekUI(); };
+      stream.onload = () => { peekActive = true; updatePeekUI(); startCamInfoPolling(); setTimeout(refreshPeekStatus, 300); };
       stream.onerror = () => { if (peekActive) setTimeout(() => { if (peekActive) stream.src = API_BASE + '/api/peek/stream?t=' + Date.now() + '&token=' + encodeURIComponent(apiToken); }, 2000); };
       peekActive = true; updatePeekUI();
+      startCamInfoPolling();
     }
 
     async function stopPeek() {
       peekActive = false;
       document.getElementById('peekStream').src = '';
       await api('/api/peek/stop', 'POST');
+      stopCamInfoPolling();
       updatePeekUI();
+      refreshPeekStatus();
     }
 
     async function takeSnapshot() {

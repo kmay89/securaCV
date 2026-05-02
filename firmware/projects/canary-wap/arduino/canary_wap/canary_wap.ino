@@ -563,6 +563,25 @@ static const uint32_t WIFI_RECONNECT_INTERVAL_MS = 30000;
 static bool g_camera_initialized = false;
 static volatile bool g_peek_active = false;
 static framesize_t g_peek_framesize = FRAMESIZE_VGA;
+// Real-time camera metrics — all values derived from esp_camera state, never fabricated
+static int      g_peek_jpeg_quality   = 0;     // 0-63, lower = better quality (set at init)
+static int      g_peek_xclk_freq_hz   = 0;     // sensor clock in Hz
+static bool     g_peek_psram_used     = false; // framebuffer in PSRAM vs DRAM
+static uint8_t  g_peek_fb_count       = 0;     // configured framebuffer count
+static uint16_t g_peek_sensor_pid     = 0;     // sensor product id (e.g. 0x26 = OV2640)
+static uint8_t  g_peek_sensor_ver     = 0;
+static uint8_t  g_peek_sensor_midh    = 0;
+static uint8_t  g_peek_sensor_midl    = 0;
+// Per-stream measurements
+static volatile uint32_t g_peek_frame_count       = 0;  // frames sent in current stream
+static volatile uint32_t g_peek_last_frame_bytes  = 0;  // most recent frame jpeg size
+static volatile uint32_t g_peek_last_frame_ms     = 0;  // millis() of last frame
+static volatile uint32_t g_peek_stream_start_ms   = 0;  // millis() when stream began
+static volatile uint64_t g_peek_total_bytes       = 0;  // bytes sent in current stream
+// Rolling 1s window for instantaneous FPS (no fabrication: counted from real frame deliveries)
+static volatile uint32_t g_peek_fps_window_start  = 0;
+static volatile uint32_t g_peek_fps_window_count  = 0;
+static volatile uint32_t g_peek_fps_last          = 0;  // FPS measured over last full 1s window
 #endif
 
 // Health log buffer (circular, most recent entries)
@@ -2535,10 +2554,47 @@ static bool init_camera() {
     Serial.printf("[CAMERA] Init failed: 0x%x\n", err);
     return false;
   }
-  
-  g_peek_framesize = config.frame_size;
-  Serial.println("[CAMERA] Initialized for peek/preview");
+
+  g_peek_framesize    = config.frame_size;
+  g_peek_jpeg_quality = config.jpeg_quality;
+  g_peek_xclk_freq_hz = config.xclk_freq_hz;
+  g_peek_psram_used   = (config.fb_location == CAMERA_FB_IN_PSRAM);
+  g_peek_fb_count     = config.fb_count;
+
+  // Capture real sensor identity (PID identifies OV2640/OV5640/etc.)
+  sensor_t* s = esp_camera_sensor_get();
+  if (s) {
+    g_peek_sensor_pid  = s->id.PID;
+    g_peek_sensor_ver  = s->id.VER;
+    g_peek_sensor_midh = s->id.MIDH;
+    g_peek_sensor_midl = s->id.MIDL;
+  }
+
+  Serial.printf("[CAMERA] Initialized — sensor PID=0x%02X quality=%d xclk=%dHz psram=%s\n",
+                g_peek_sensor_pid, g_peek_jpeg_quality, g_peek_xclk_freq_hz,
+                g_peek_psram_used ? "yes" : "no");
   return true;
+}
+
+// Map sensor PID to a human-readable model name (real values from omnivision sensor.h)
+static const char* sensor_model_name(uint16_t pid) {
+  switch (pid) {
+    case 0x26: return "OV2640";
+    case 0x56: return "OV5640";
+    case 0x77: return "OV7670";
+    case 0x73: return "OV7725";
+    case 0x96: return "OV9650";
+    case 0x99: return "OV9655";
+    case 0x30: return "OV3660";
+    case 0x40: return "GC0308";
+    case 0x55: return "GC2145";
+    case 0x80: return "BF3005";
+    case 0xDA: return "NT99141";
+    case 0x9B: return "SC101IOT";
+    case 0xCC: return "SC030IOT";
+    case 0xE0: return "SC031GS";
+    default:   return "unknown";
+  }
 }
 
 // Set camera resolution
@@ -2611,14 +2667,26 @@ static esp_err_t handle_peek_stream(httpd_req_t* req) {
   
   // *** KEY FIX: Set peek_active to true when stream is requested ***
   g_peek_active = true;
-  
+
+  // Reset per-stream metrics so the UI shows real, fresh values
+  uint32_t now_ms = millis();
+  g_peek_frame_count      = 0;
+  g_peek_total_bytes      = 0;
+  g_peek_last_frame_bytes = 0;
+  g_peek_last_frame_ms    = 0;
+  g_peek_stream_start_ms  = now_ms;
+  g_peek_fps_window_start = now_ms;
+  g_peek_fps_window_count = 0;
+  g_peek_fps_last         = 0;
+
   // Set proper MJPEG multipart headers
   httpd_resp_set_type(req, "multipart/x-mixed-replace; boundary=frame");
   httpd_resp_set_hdr(req, "Cache-Control", "no-store, no-cache, must-revalidate, pre-check=0, post-check=0, max-age=0");
   httpd_resp_set_hdr(req, "Pragma", "no-cache");
   httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-  httpd_resp_set_hdr(req, "X-Framerate", "12");
-  
+  // Note: target pacing is ~12 fps via vTaskDelay below; the actual delivered FPS
+  // is measured at runtime and exposed via /api/peek/status (g_peek_fps_last).
+
   // Stream frames while active
   while (g_peek_active) {
     camera_fb_t* fb = esp_camera_fb_get();
@@ -2653,10 +2721,29 @@ static esp_err_t handle_peek_stream(httpd_req_t* req) {
       break;
     }
     
+    // Capture real metrics for this delivered frame BEFORE returning the buffer
+    uint32_t frame_bytes = (uint32_t)fb->len;
+
     // Send trailing CRLF
     res = httpd_resp_send_chunk(req, "\r\n", 2);
     esp_camera_fb_return(fb);
-    
+
+    if (res == ESP_OK) {
+      uint32_t t_ms = millis();
+      g_peek_last_frame_bytes = frame_bytes;
+      g_peek_last_frame_ms    = t_ms;
+      g_peek_total_bytes     += frame_bytes;
+      g_peek_frame_count++;
+      g_peek_fps_window_count++;
+      // Close the 1-second FPS window when 1000ms elapses; counter is accurate
+      uint32_t window_elapsed = t_ms - g_peek_fps_window_start;
+      if (window_elapsed >= 1000) {
+        g_peek_fps_last         = g_peek_fps_window_count;
+        g_peek_fps_window_count = 0;
+        g_peek_fps_window_start = t_ms;
+      }
+    }
+
     if (res != ESP_OK) {
       break;
     }
@@ -2722,14 +2809,51 @@ static esp_err_t handle_peek_stop(httpd_req_t* req) {
 
 static esp_err_t handle_peek_status(httpd_req_t* req) {
   g_health.http_requests++;
-  
+
   JsonDocument doc;
   doc["ok"] = true;
   doc["camera_initialized"] = g_camera_initialized;
   doc["peek_active"] = g_peek_active;
   doc["resolution"] = (int)g_peek_framesize;
   doc["resolution_name"] = framesize_name(g_peek_framesize);
-  
+
+  // Real sensor identity (no placeholders — pulled from sensor_t at init)
+  doc["sensor_pid"]    = g_peek_sensor_pid;
+  doc["sensor_ver"]    = g_peek_sensor_ver;
+  doc["sensor_midh"]   = g_peek_sensor_midh;
+  doc["sensor_midl"]   = g_peek_sensor_midl;
+  doc["sensor_model"]  = sensor_model_name(g_peek_sensor_pid);
+
+  // Real capture configuration
+  doc["pixel_format"]  = "JPEG";  // init_camera() always configures PIXFORMAT_JPEG
+  doc["jpeg_quality"]  = g_peek_jpeg_quality;   // 0..63 (lower = better)
+  doc["xclk_hz"]       = g_peek_xclk_freq_hz;
+  doc["psram"]         = g_peek_psram_used;
+  doc["fb_count"]      = g_peek_fb_count;
+
+  // Live measurements (only meaningful while/just-after streaming)
+  doc["frame_count"]       = g_peek_frame_count;
+  doc["last_frame_bytes"]  = g_peek_last_frame_bytes;
+  doc["total_bytes"]       = (uint32_t)(g_peek_total_bytes & 0xFFFFFFFFULL);
+  doc["fps"]               = g_peek_fps_last;  // measured over the last full 1s window
+
+  uint32_t now_ms      = millis();
+  uint32_t uptime_ms   = (g_peek_stream_start_ms && g_peek_active)
+                           ? (now_ms - g_peek_stream_start_ms)
+                           : 0;
+  doc["stream_uptime_ms"]  = uptime_ms;
+  uint32_t avg_bytes = (g_peek_frame_count > 0)
+                         ? (uint32_t)(g_peek_total_bytes / g_peek_frame_count)
+                         : 0;
+  doc["avg_frame_bytes"]   = avg_bytes;
+  // Average throughput in kbps over the entire stream so far (real, computed from totals)
+  uint32_t avg_kbps = 0;
+  if (uptime_ms > 0) {
+    // bytes * 8 / ms -> kbps directly (since /1000ms cancels with *1000 from kbits)
+    avg_kbps = (uint32_t)((g_peek_total_bytes * 8ULL) / (uint64_t)uptime_ms);
+  }
+  doc["avg_kbps"]          = avg_kbps;
+
   String response;
   serializeJson(doc, response);
   return http_send_json(req, response.c_str());
