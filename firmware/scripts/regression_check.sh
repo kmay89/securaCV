@@ -128,6 +128,17 @@ else
   check_pass "API token not referenced in chain/witness context"
 fi
 
+# ── Check: token / AP-password alphabet drops ambiguous glyphs ─────
+# User-typed identifiers (API tokens, AP passwords) must avoid 0/O and 1/I/l.
+# See LESSONS_LEARNED.md → "User-typed identifiers must use an unambiguous alphabet".
+AMBIGUOUS_ALPHABET=$(grep -rn '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz' "${SRC_DIRS[@]}" 2>/dev/null | grep -v "//" | grep -v "_archive" || true)
+if [ -n "$AMBIGUOUS_ALPHABET" ]; then
+  check_fail "Full base62 alphabet present in token/password path — ambiguous glyphs (0/O, 1/I/l) bite users"
+  echo "$AMBIGUOUS_ALPHABET" | while read -r line; do blue "  $line"; done
+else
+  check_pass "Token/password alphabet free of ambiguous glyphs"
+fi
+
 echo ""
 
 # ── Check: Constant-time comparison for auth ───────────────────

@@ -83,19 +83,22 @@ static void serial_wait_for_cdc(uint32_t timeout_ms) {
 
 // Derive device-unique AP password from public key fingerprint
 // Format: "cv-XXXXX" (8 chars, unique per device)
-static const char BASE62[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+// Drops visually ambiguous glyphs (0/O, 1/I/l) so users can read the
+// password off the serial monitor or sticker without guessing.
+static const char UNAMBIGUOUS_ALPHABET[] =
+  "23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
 static void derive_ap_password(const uint8_t fingerprint[8], char* password, size_t len) {
   char encoded[6];
   size_t chars_produced = 0;
   for (size_t i = 0; chars_produced < 5 && i < 8; i++) {
     uint8_t b = fingerprint[i];
-    if (b < 248) { // Rejection sampling for unbiased BASE62
-      encoded[chars_produced++] = BASE62[b % 62];
+    if (b < 228) { // 228 = 57 * 4, rejection sampling to avoid bias
+      encoded[chars_produced++] = UNAMBIGUOUS_ALPHABET[b % 57];
     }
   }
   while (chars_produced < 5) {
-    encoded[chars_produced++] = '0';
+    encoded[chars_produced++] = '2';
   }
   encoded[5] = '\0';
   snprintf(password, len, "cv-%s", encoded);
