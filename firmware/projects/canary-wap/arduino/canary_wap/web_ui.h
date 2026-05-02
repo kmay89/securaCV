@@ -688,7 +688,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       <div class="form-group">
         <label class="form-label">API Token</label>
         <input type="text" class="form-input" id="tokenInput" placeholder="cv_..." autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" style="font-family:var(--mono);letter-spacing:0.02em;">
-        <p style="font-size:0.7rem;color:var(--muted);margin-top:0.3rem;">Tokens never contain 0, O, 1, I, or l.</p>
+        <p style="font-size:0.7rem;color:var(--muted);margin-top:0.3rem;">Type the token exactly as displayed — don't substitute 0/O or 1/I/l. (New tokens omit those glyphs; older tokens may still contain them.)</p>
       </div>
       <button class="btn btn-primary" style="width:100%" onclick="connectWithToken()">Connect</button>
       <div class="auth-divider">or</div>
