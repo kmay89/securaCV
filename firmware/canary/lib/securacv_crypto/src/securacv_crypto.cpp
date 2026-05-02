@@ -174,8 +174,11 @@ bool hmac_sha256(const uint8_t* key, size_t key_len,
   return ret == 0;
 }
 
-static const char BASE62[] =
-  "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+// Unambiguous alphabet: drops 0/O and 1/I/l so users typing tokens by hand
+// (e.g. from the serial monitor) don't trip the rate limiter on glyph
+// collisions. 32 chars × log2(57) ≈ 187 bits — UX win > 3 bits of entropy.
+static const char UNAMBIGUOUS_ALPHABET[] =
+  "23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
 void format_api_token_string(const uint8_t* input, size_t in_len,
                              char* output, size_t out_len) {
@@ -204,8 +207,8 @@ void format_api_token_string(const uint8_t* input, size_t in_len,
       i++;
     }
 
-    if (b < 248) {  // 248 = 62 * 4 → evenly divisible, unbiased
-      output[out_idx++] = BASE62[b % 62];
+    if (b < 228) {  // 228 = 57 * 4 → evenly divisible, unbiased
+      output[out_idx++] = UNAMBIGUOUS_ALPHABET[b % 57];
       chars_produced++;
     }
   }

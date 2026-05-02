@@ -95,6 +95,29 @@
 - **Rule:** BLE features must be compile-time opt-in (OFF by default)
 - **Users must explicitly understand the tradeoff before enabling**
 
+### User-typed identifiers must use an unambiguous alphabet
+- **What happened:** A user typed their API token from the serial monitor into
+  the dashboard, hit Connect, got "Too many failed attempts" after a few tries.
+  Forensics showed `I` (capital i) at position 26 in the real token vs `l`
+  (lowercase L) in what they typed — same glyph in most fonts, different
+  bytes, constant-time compare fails. The auth rate limiter compounded the
+  pain.
+- **Root cause:** The token / AP-password encoder used a full base62 alphabet
+  (`0-9 A-Z a-z`), which contains glyph-confusion classes `0/O` and `1/I/l`.
+- **Fix:** Switched both `format_api_token_string` (API tokens) and
+  `derive_ap_password` (`cv-XXXXX` AP password) to a 57-char unambiguous
+  alphabet that drops `0`, `O`, `1`, `I`, `l`. Rejection-sampling threshold
+  moves from `248` (`62*4`) to `228` (`57*4`) so the result remains unbiased.
+  Entropy drops from ~190 to ~187 bits across 32 chars — UX win > 3 bits.
+  Dashboard token input also pinned to a monospace font.
+- **Rule:** Any identifier a human will type, read aloud, or transcribe from
+  a sticker MUST avoid `0/O` and `1/I/l`. Machine-only IDs (chain head,
+  signatures, hex device IDs) are fine as-is.
+- **Regression check:** Grep for `BASE62` or the literal
+  `0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz` in
+  user-facing token / password paths.
+- **Date learned:** 2026-04
+
 ---
 
 ## Web UI (web_ui.h)

@@ -896,13 +896,16 @@ static void hmac_sha256(const uint8_t* key, size_t key_len,
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// BASE62 ENCODING (unbiased rejection sampling)
+// UNAMBIGUOUS BASE57 ENCODING (unbiased rejection sampling)
 // ════════════════════════════════════════════════════════════════════════════
 
-static const char BASE62[] =
-  "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+// Drops the four glyph-confusion classes that bite users typing tokens by hand:
+//   '0' / 'O', '1' / 'I' / 'l'.
+// 32 chars × log2(57) ≈ 187 bits of entropy — UX win > 3 bits.
+static const char UNAMBIGUOUS_ALPHABET[] =
+  "23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
-// Rejection sampling: discard bytes >= 248 (248 = 62*4, evenly divisible)
+// Rejection sampling: discard bytes >= 228 (228 = 57*4, evenly divisible)
 // This eliminates modular bias entirely.
 static void format_api_token_string(const uint8_t* input, size_t in_len,
                                     char* output, size_t out_len) {
@@ -925,8 +928,8 @@ static void format_api_token_string(const uint8_t* input, size_t in_len,
       i++;
     }
 
-    if (b < 248) {  // 248 = 62 * 4 → evenly divisible
-      output[out_idx++] = BASE62[b % 62];
+    if (b < 228) {  // 228 = 57 * 4 → evenly divisible
+      output[out_idx++] = UNAMBIGUOUS_ALPHABET[b % 57];
       chars_produced++;
     }
     // else: reject this byte (biased), try next
@@ -988,13 +991,14 @@ static void derive_ap_password(const uint8_t fingerprint[8], char* password, siz
   size_t chars_produced = 0;
   for (size_t i = 0; chars_produced < 5 && i < 8; i++) {
     uint8_t b = fingerprint[i];
-    if (b < 248) {  // 248 = 62 * 4, rejection sampling to avoid bias
-      encoded[chars_produced++] = BASE62[b % 62];
+    if (b < 228) {  // 228 = 57 * 4, rejection sampling to avoid bias
+      encoded[chars_produced++] = UNAMBIGUOUS_ALPHABET[b % 57];
     }
   }
   // Fallback in the extremely unlikely case we don't get 5 chars from 8 bytes
+  // Use '2' (first char of unambiguous alphabet) — never '0' which we excluded.
   while (chars_produced < 5) {
-    encoded[chars_produced++] = '0';
+    encoded[chars_produced++] = '2';
   }
   encoded[5] = '\0';
   snprintf(password, len, "cv-%s", encoded);
