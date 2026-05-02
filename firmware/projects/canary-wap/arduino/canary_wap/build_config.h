@@ -39,11 +39,15 @@
   #define SECURACV_RELEASE_BUILD 0
 #endif
 // Sanity checks
-// Compiler output guidance
-#if SECURACV_RELEASE_BUILD
-  #pragma message("[SecuraCV] Release build: AP password is device-unique and printed in provisioning/boot serial output.")
-#else
-  #pragma message("[SecuraCV] Non-release build: device-unique AP password is preferred; debug fallback may be generated if derivation fails.")
+// Compiler output guidance — only emit once, from the main sketch TU.
+// (canary_wap.ino defines SECURACV_EMIT_BUILD_BANNER before including this
+// header so the note isn't printed by every .cpp that pulls it in.)
+#ifdef SECURACV_EMIT_BUILD_BANNER
+  #if SECURACV_RELEASE_BUILD
+    #pragma message("[SecuraCV] Release build: AP password is device-unique and printed in provisioning/boot serial output.")
+  #else
+    #pragma message("[SecuraCV] Non-release build: device-unique AP password is preferred; debug fallback may be generated if derivation fails.")
+  #endif
 #endif
 #if (defined(BUILD_PROFILE_MINIMAL) + defined(BUILD_PROFILE_DEV) + defined(BUILD_PROFILE_FULL)) != 1
   #error "Exactly one build profile must be selected in build_config.h."

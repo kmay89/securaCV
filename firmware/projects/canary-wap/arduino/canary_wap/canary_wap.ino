@@ -55,6 +55,11 @@
   - ArduinoJson 7.x
 */
 
+// Emit one-shot build banners (release-mode AP-password notice, NimBLE
+// auto-disable notes) only from this main translation unit. Defined before
+// any include so transitively-included build_config.h / ble_config.h see it.
+#define SECURACV_EMIT_BUILD_BANNER 1
+
 #include <Arduino.h>
 #include <Preferences.h>
 #include <ctype.h>

@@ -32,7 +32,9 @@
 #if FEATURE_BLE && !__has_include(<NimBLEDevice.h>)
   #undef  FEATURE_BLE
   #define FEATURE_BLE 0
-  #pragma message "NimBLEDevice.h not found — FEATURE_BLE auto-disabled"
+  #ifdef SECURACV_EMIT_BUILD_BANNER
+    #pragma message "NimBLEDevice.h not found — FEATURE_BLE auto-disabled"
+  #endif
 #endif
 
 // FEATURE_BLUETOOTH gates the BLE pairing/advertising channel
@@ -42,7 +44,9 @@
 #if defined(FEATURE_BLUETOOTH) && FEATURE_BLUETOOTH && !__has_include(<NimBLEDevice.h>)
   #undef  FEATURE_BLUETOOTH
   #define FEATURE_BLUETOOTH 0
-  #pragma message "NimBLEDevice.h not found — FEATURE_BLUETOOTH auto-disabled"
+  #ifdef SECURACV_EMIT_BUILD_BANNER
+    #pragma message "NimBLEDevice.h not found — FEATURE_BLUETOOTH auto-disabled"
+  #endif
 #endif
 
 // Sub-feature flags (only relevant if FEATURE_BLE == 1)
