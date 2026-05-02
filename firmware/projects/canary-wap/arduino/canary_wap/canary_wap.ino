@@ -2529,14 +2529,6 @@ static void apply_default_sensor_tuning() {
   sensor_t* s = esp_camera_sensor_get();
   if (!s) return;
 
-  // OV3660 ships out of focus and upside-down on most XIAO Sense kits; the
-  // upstream Espressif demo applies these specific corrections.
-  if (s->id.PID == OV3660_PID) {
-    s->set_vflip(s, 1);
-    s->set_brightness(s, 1);
-    s->set_saturation(s, -2);
-  }
-
   // Image tuning (range −2..2 for these three) — neutral defaults.
   s->set_brightness(s, 0);
   s->set_contrast(s, 0);
@@ -2576,6 +2568,17 @@ static void apply_default_sensor_tuning() {
 
   // Test pattern off.
   s->set_colorbar(s, 0);
+
+  // Sensor-specific corrections come LAST so they win over the generic
+  // defaults above. The OV3660 sits upside-down on the XIAO Sense module
+  // and ships oversaturated; the upstream Espressif demo applies these
+  // exact tweaks, and operators can still override them at runtime via
+  // /api/peek/sensor.
+  if (s->id.PID == OV3660_PID) {
+    s->set_vflip(s, 1);
+    s->set_brightness(s, 1);
+    s->set_saturation(s, -2);
+  }
 }
 
 // Single attempt at esp_camera_init with the supplied config. Returns ESP_OK

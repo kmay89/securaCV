@@ -81,11 +81,6 @@ static camera_config_t make_base_config() {
 static void apply_default_sensor_tuning() {
   sensor_t* s = esp_camera_sensor_get();
   if (!s) return;
-  if (s->id.PID == OV3660_PID) {
-    s->set_vflip(s, 1);
-    s->set_brightness(s, 1);
-    s->set_saturation(s, -2);
-  }
   s->set_brightness(s, 0);
   s->set_contrast(s, 0);
   s->set_saturation(s, 0);
@@ -108,6 +103,12 @@ static void apply_default_sensor_tuning() {
   s->set_hmirror(s, 0);
   s->set_vflip(s, 0);
   s->set_colorbar(s, 0);
+  // Sensor-specific corrections last so they win over the neutral defaults.
+  if (s->id.PID == OV3660_PID) {
+    s->set_vflip(s, 1);
+    s->set_brightness(s, 1);
+    s->set_saturation(s, -2);
+  }
 }
 
 bool CameraManager::begin() {
