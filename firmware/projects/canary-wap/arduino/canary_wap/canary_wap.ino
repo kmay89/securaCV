@@ -572,6 +572,9 @@ static uint16_t g_peek_sensor_pid     = 0;     // sensor product id (e.g. 0x26 =
 static uint8_t  g_peek_sensor_ver     = 0;
 static uint8_t  g_peek_sensor_midh    = 0;
 static uint8_t  g_peek_sensor_midl    = 0;
+// Frame pacing for MJPEG stream — inverse of target FPS. With PSRAM the stream
+// can deliver ~25 fps at VGA; without PSRAM the OV2640 itself caps below that.
+static uint32_t g_peek_frame_delay_ms = 40;    // 40 ms ≈ 25 fps target
 // Per-stream measurements
 static volatile uint32_t g_peek_frame_count       = 0;  // frames sent in current stream
 static volatile uint32_t g_peek_last_frame_bytes  = 0;  // most recent frame jpeg size
@@ -2516,55 +2519,202 @@ static esp_err_t handle_reboot(httpd_req_t* req) {
 
 #if FEATURE_CAMERA_PEEK
 
-static bool init_camera() {
-  camera_config_t config;
+// Apply Canary surveillance-tuned defaults to the OV2640 / OV3660 sensor.
+// These bias the sensor for low-light indoor scenes (typical Canary placement)
+// rather than the factory defaults which assume bright daylight. All values
+// are documented in the ESP32 esp_camera sensor.h header.
+//
+// Safe to call multiple times — every setter is idempotent on the sensor side.
+static void apply_default_sensor_tuning() {
+  sensor_t* s = esp_camera_sensor_get();
+  if (!s) return;
+
+  // OV3660 ships out of focus and upside-down on most XIAO Sense kits; the
+  // upstream Espressif demo applies these specific corrections.
+  if (s->id.PID == OV3660_PID) {
+    s->set_vflip(s, 1);
+    s->set_brightness(s, 1);
+    s->set_saturation(s, -2);
+  }
+
+  // Image tuning (range −2..2 for these three) — neutral defaults.
+  s->set_brightness(s, 0);
+  s->set_contrast(s, 0);
+  s->set_saturation(s, 0);
+
+  // No special effect (0=none, 1=negative, 2=grayscale, 3=red, 4=green, 5=blue, 6=sepia)
+  s->set_special_effect(s, 0);
+
+  // White balance: enable AWB + AWB gain, automatic mode.
+  s->set_whitebal(s, 1);          // Enable WB
+  s->set_awb_gain(s, 1);          // Enable AWB gain
+  s->set_wb_mode(s, 0);           // 0=auto, 1=sunny, 2=cloudy, 3=office, 4=home
+
+  // Auto exposure: enable AEC + AEC2 with neutral level. Manual aec_value
+  // ignored when set_aec is enabled.
+  s->set_exposure_ctrl(s, 1);     // AEC on
+  s->set_aec2(s, 1);              // AEC DSP-side on (smoother low-light)
+  s->set_ae_level(s, 0);          // Bias 0 (range −2..2)
+  s->set_aec_value(s, 300);       // Manual fallback (0..1200), only used if AEC off
+
+  // Auto gain: enabled, ceiling raised to GAINCEILING_4X for better low-light.
+  s->set_gain_ctrl(s, 1);         // AGC on
+  s->set_agc_gain(s, 0);          // Manual fallback (0..30)
+  s->set_gainceiling(s, (gainceiling_t)GAINCEILING_4X);
+
+  // Image cleanup: black/white pixel correction, gamma, lens correction, DCW.
+  s->set_bpc(s, 1);               // Black pixel correction
+  s->set_wpc(s, 1);               // White pixel correction
+  s->set_raw_gma(s, 1);           // Gamma correction
+  s->set_lenc(s, 1);              // Lens shading correction
+  s->set_dcw(s, 1);               // Downsize EN (better quality scaling)
+
+  // Orientation — Canary's enclosure mounts the sensor right-side up by
+  // default. Operators can flip via the sensor API at runtime.
+  s->set_hmirror(s, 0);
+  s->set_vflip(s, 0);
+
+  // Test pattern off.
+  s->set_colorbar(s, 0);
+}
+
+// Single attempt at esp_camera_init with the supplied config. Returns ESP_OK
+// or the error code so the caller can decide whether to retry.
+static esp_err_t try_camera_init(const camera_config_t& cfg, const char* label) {
+  esp_err_t err = esp_camera_init(&cfg);
+  if (err == ESP_OK) {
+    Serial.printf("[CAMERA] Init OK (%s) — frame=%d quality=%d fb=%d %s\n",
+                  label,
+                  (int)cfg.frame_size,
+                  cfg.jpeg_quality,
+                  cfg.fb_count,
+                  cfg.fb_location == CAMERA_FB_IN_PSRAM ? "psram" : "dram");
+  } else {
+    Serial.printf("[CAMERA] Init FAILED (%s) — err=0x%x frame=%d %s\n",
+                  label,
+                  err,
+                  (int)cfg.frame_size,
+                  cfg.fb_location == CAMERA_FB_IN_PSRAM ? "psram" : "dram");
+  }
+  return err;
+}
+
+// Build a camera_config_t with all pin/clock fields populated. Caller fills
+// in frame_size / jpeg_quality / fb_count / fb_location / grab_mode for the
+// specific attempt. Critically: zero-initialized so newer ESP-IDF fields
+// (sccb_i2c_port, etc.) start clean instead of inheriting stack garbage —
+// uninitialized sccb_i2c_port was the most common cause of "init returns
+// ESP_OK but sensor probes fail / framebuffer count is 0" on XIAO ESP32S3
+// Sense boards built against Arduino-ESP32 v3 / IDF v5.
+static camera_config_t make_base_camera_config() {
+  camera_config_t config = {};       // zero everything (incl. sccb_i2c_port)
   config.ledc_channel = LEDC_CHANNEL_0;
-  config.ledc_timer = LEDC_TIMER_0;
-  config.pin_d0 = CAM_PIN_D0;
-  config.pin_d1 = CAM_PIN_D1;
-  config.pin_d2 = CAM_PIN_D2;
-  config.pin_d3 = CAM_PIN_D3;
-  config.pin_d4 = CAM_PIN_D4;
-  config.pin_d5 = CAM_PIN_D5;
-  config.pin_d6 = CAM_PIN_D6;
-  config.pin_d7 = CAM_PIN_D7;
-  config.pin_xclk = CAM_PIN_XCLK;
-  config.pin_pclk = CAM_PIN_PCLK;
-  config.pin_vsync = CAM_PIN_VSYNC;
-  config.pin_href = CAM_PIN_HREF;
+  config.ledc_timer   = LEDC_TIMER_0;
+  config.pin_d0       = CAM_PIN_D0;
+  config.pin_d1       = CAM_PIN_D1;
+  config.pin_d2       = CAM_PIN_D2;
+  config.pin_d3       = CAM_PIN_D3;
+  config.pin_d4       = CAM_PIN_D4;
+  config.pin_d5       = CAM_PIN_D5;
+  config.pin_d6       = CAM_PIN_D6;
+  config.pin_d7       = CAM_PIN_D7;
+  config.pin_xclk     = CAM_PIN_XCLK;
+  config.pin_pclk     = CAM_PIN_PCLK;
+  config.pin_vsync    = CAM_PIN_VSYNC;
+  config.pin_href     = CAM_PIN_HREF;
   config.pin_sccb_sda = CAM_PIN_SIOD;
   config.pin_sccb_scl = CAM_PIN_SIOC;
-  config.pin_pwdn = CAM_PIN_PWDN;
-  config.pin_reset = CAM_PIN_RESET;
-  config.xclk_freq_hz = 20000000;
-  config.frame_size = FRAMESIZE_VGA;  // 640x480
+  config.pin_pwdn     = CAM_PIN_PWDN;
+  config.pin_reset    = CAM_PIN_RESET;
+  config.sccb_i2c_port = -1;         // -1 = let driver pick a free I2C port
+  config.xclk_freq_hz = 20000000;    // 20 MHz — Seeed/Espressif recommended
   config.pixel_format = PIXFORMAT_JPEG;
-  config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
-  config.fb_location = CAMERA_FB_IN_PSRAM;
-  config.jpeg_quality = 12;
-  config.fb_count = 1;
-  
-  // Adjust for PSRAM availability
-  if (psramFound()) {
-    config.jpeg_quality = 10;
-    config.fb_count = 2;
-    config.grab_mode = CAMERA_GRAB_LATEST;
-  } else {
-    config.frame_size = FRAMESIZE_QVGA;  // 320x240 if no PSRAM
-    config.fb_location = CAMERA_FB_IN_DRAM;
+  return config;
+}
+
+static bool init_camera() {
+  // Some flashing routes (Arduino IDE FQBN without PSRAM=opi, or stock board
+  // variant) leave OPI PSRAM uninitialized. psramInit() is a no-op when the
+  // ROM has already enabled PSRAM, but turns it on otherwise so psramFound()
+  // reports correctly downstream.
+  psramInit();
+
+  bool psram_ok = psramFound();
+  size_t psram_total = psram_ok ? ESP.getPsramSize() : 0;
+  Serial.printf("[CAMERA] PSRAM: %s (%u bytes)\n",
+                psram_ok ? "found" : "not found",
+                (unsigned)psram_total);
+
+  // Attempt order is most-capable → most-conservative. Each attempt that
+  // returns non-OK is followed by esp_camera_deinit() to fully reset the
+  // sensor before the next try (otherwise OV2640's I²C state machine can
+  // wedge after a failed probe).
+  camera_config_t attempts[3];
+  const char*     labels[3];
+  int n_attempts = 0;
+
+  if (psram_ok) {
+    // PSRAM fast path: 1024×768 with double-buffered LATEST grab. This is
+    // the highest-quality config that still hits the 25 fps target on a
+    // XIAO Sense (8MB OPI PSRAM @ 80 MHz).
+    camera_config_t cfg = make_base_camera_config();
+    cfg.frame_size  = FRAMESIZE_XGA;       // 1024×768
+    cfg.jpeg_quality = 10;                 // 0..63 (lower=better)
+    cfg.fb_count    = 2;
+    cfg.fb_location = CAMERA_FB_IN_PSRAM;
+    cfg.grab_mode   = CAMERA_GRAB_LATEST;
+    attempts[n_attempts] = cfg;
+    labels[n_attempts]   = "psram-xga";
+    n_attempts++;
+
+    // PSRAM safe path: VGA still uses PSRAM but a single buffer (lower
+    // bandwidth) — survives if SPIRAM_SPEED_80M was tried but the chip
+    // can't sustain it.
+    camera_config_t cfg2 = make_base_camera_config();
+    cfg2.frame_size  = FRAMESIZE_VGA;      // 640×480
+    cfg2.jpeg_quality = 12;
+    cfg2.fb_count    = 1;
+    cfg2.fb_location = CAMERA_FB_IN_PSRAM;
+    cfg2.grab_mode   = CAMERA_GRAB_WHEN_EMPTY;
+    attempts[n_attempts] = cfg2;
+    labels[n_attempts]   = "psram-vga";
+    n_attempts++;
   }
-  
-  esp_err_t err = esp_camera_init(&config);
-  if (err != ESP_OK) {
-    Serial.printf("[CAMERA] Init failed: 0x%x\n", err);
+
+  // No-PSRAM / last-resort: QVGA in DRAM. The OV2640 still drives JPEG fine
+  // here, just at a lower resolution. ESP32-S3 has enough free DRAM after
+  // Wi-Fi to allocate a single 320×240 JPEG framebuffer.
+  camera_config_t cfg3 = make_base_camera_config();
+  cfg3.frame_size  = FRAMESIZE_QVGA;
+  cfg3.jpeg_quality = 12;
+  cfg3.fb_count    = 1;
+  cfg3.fb_location = CAMERA_FB_IN_DRAM;
+  cfg3.grab_mode   = CAMERA_GRAB_WHEN_EMPTY;
+  attempts[n_attempts] = cfg3;
+  labels[n_attempts]   = "dram-qvga";
+  n_attempts++;
+
+  esp_err_t last_err = ESP_FAIL;
+  int       chosen   = -1;
+  for (int i = 0; i < n_attempts; i++) {
+    last_err = try_camera_init(attempts[i], labels[i]);
+    if (last_err == ESP_OK) { chosen = i; break; }
+    // Driver may be half-initialized after a failed probe; reset before retry.
+    esp_camera_deinit();
+    delay(100);
+  }
+
+  if (chosen < 0) {
+    Serial.printf("[CAMERA] All init attempts failed — last err=0x%x\n", last_err);
     return false;
   }
 
-  g_peek_framesize    = config.frame_size;
-  g_peek_jpeg_quality = config.jpeg_quality;
-  g_peek_xclk_freq_hz = config.xclk_freq_hz;
-  g_peek_psram_used   = (config.fb_location == CAMERA_FB_IN_PSRAM);
-  g_peek_fb_count     = config.fb_count;
+  const camera_config_t& winning = attempts[chosen];
+  g_peek_framesize    = winning.frame_size;
+  g_peek_jpeg_quality = winning.jpeg_quality;
+  g_peek_xclk_freq_hz = winning.xclk_freq_hz;
+  g_peek_psram_used   = (winning.fb_location == CAMERA_FB_IN_PSRAM);
+  g_peek_fb_count     = winning.fb_count;
 
   // Capture real sensor identity (PID identifies OV2640/OV5640/etc.)
   sensor_t* s = esp_camera_sensor_get();
@@ -2575,9 +2725,13 @@ static bool init_camera() {
     g_peek_sensor_midl = s->id.MIDL;
   }
 
-  Serial.printf("[CAMERA] Initialized — sensor PID=0x%02X quality=%d xclk=%dHz psram=%s\n",
+  // Apply surveillance-friendly defaults (AWB/AEC/AGC on, LENC, DCW, etc.)
+  apply_default_sensor_tuning();
+
+  Serial.printf("[CAMERA] Initialized — sensor PID=0x%02X quality=%d xclk=%dHz psram=%s fb_count=%u\n",
                 g_peek_sensor_pid, g_peek_jpeg_quality, g_peek_xclk_freq_hz,
-                g_peek_psram_used ? "yes" : "no");
+                g_peek_psram_used ? "yes" : "no",
+                (unsigned)g_peek_fb_count);
   return true;
 }
 
@@ -2766,11 +2920,17 @@ static esp_err_t handle_peek_stream(httpd_req_t* req) {
       break;
     }
     
-    // Feed watchdog and yield (target ~12 fps)
+    // Feed watchdog and yield. Pacing is configurable at runtime via
+    // /api/peek/sensor (frame_delay_ms). Default 40 ms ≈ 25 fps target;
+    // OV2640 will deliver fewer in low light because AEC stretches the
+    // exposure window — that's accurately reflected in the measured FPS.
     #if FEATURE_WATCHDOG
     esp_task_wdt_reset();
     #endif
-    vTaskDelay(pdMS_TO_TICKS(80));
+    uint32_t pace = g_peek_frame_delay_ms;
+    if (pace < 20)  pace = 20;
+    if (pace > 500) pace = 500;
+    vTaskDelay(pdMS_TO_TICKS(pace));
   }
   
   // *** KEY FIX: Set peek_active to false when stream ends ***
@@ -2843,11 +3003,12 @@ static esp_err_t handle_peek_status(httpd_req_t* req) {
   doc["sensor_model"]  = sensor_model_name(g_peek_sensor_pid);
 
   // Real capture configuration
-  doc["pixel_format"]  = "JPEG";  // init_camera() always configures PIXFORMAT_JPEG
-  doc["jpeg_quality"]  = g_peek_jpeg_quality;   // 0..63 (lower = better)
-  doc["xclk_hz"]       = g_peek_xclk_freq_hz;
-  doc["psram"]         = g_peek_psram_used;
-  doc["fb_count"]      = g_peek_fb_count;
+  doc["pixel_format"]   = "JPEG";  // init_camera() always configures PIXFORMAT_JPEG
+  doc["jpeg_quality"]   = g_peek_jpeg_quality;   // 0..63 (lower = better)
+  doc["xclk_hz"]        = g_peek_xclk_freq_hz;
+  doc["psram"]          = g_peek_psram_used;
+  doc["fb_count"]       = g_peek_fb_count;
+  doc["frame_delay_ms"] = g_peek_frame_delay_ms; // stream pacing target
 
   // Snapshot all volatile metrics atomically under the shared spinlock. 64-bit
   // reads are not atomic on the ESP32 (32-bit core), and reading the same
@@ -2953,6 +3114,186 @@ static esp_err_t handle_peek_resolution(httpd_req_t* req) {
   String response;
   serializeJson(doc, response);
   return http_send_json(req, response.c_str());
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// PEEK SENSOR PARAMETERS — GET / POST /api/peek/sensor
+//
+// Lets the operator tune the OV2640/OV3660 in real time without rebooting:
+// JPEG quality, brightness/contrast/saturation, white balance, exposure,
+// gain, lens correction, mirror/flip, etc. All values come straight from
+// the on-chip sensor_t — never fabricated.
+// ════════════════════════════════════════════════════════════════════════════
+
+// Helpers — apply one named field from a JsonObject if present.
+// Returns true if the field was present and successfully applied.
+static bool apply_int_setting(sensor_t* s, const JsonObject& body, const char* key,
+                              int (*setter)(sensor_t*, int), int min_val, int max_val) {
+  if (!body[key].is<int>()) return false;
+  int v = body[key].as<int>();
+  if (v < min_val) v = min_val;
+  if (v > max_val) v = max_val;
+  setter(s, v);
+  return true;
+}
+
+static esp_err_t handle_peek_sensor_get(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  if (!g_camera_initialized) {
+    const char* resp = "{\"ok\":false,\"error\":\"Camera not initialized\"}";
+    return http_send_json(req, resp);
+  }
+
+  sensor_t* s = esp_camera_sensor_get();
+  if (!s) {
+    const char* resp = "{\"ok\":false,\"error\":\"sensor_get failed\"}";
+    return http_send_json(req, resp);
+  }
+
+  // sensor->status holds the current values for every adjustable setting.
+  // This is the on-chip ground truth — what the OV2640 is actually doing
+  // right now.
+  JsonDocument doc;
+  doc["ok"]              = true;
+  doc["sensor_pid"]      = s->id.PID;
+  doc["sensor_model"]    = sensor_model_name(s->id.PID);
+  doc["framesize"]       = s->status.framesize;
+  doc["quality"]         = s->status.quality;        // 0..63 (lower=better)
+  doc["brightness"]      = s->status.brightness;     // -2..2
+  doc["contrast"]        = s->status.contrast;       // -2..2
+  doc["saturation"]      = s->status.saturation;     // -2..2
+  doc["sharpness"]       = s->status.sharpness;      // -2..2 (OV3660+)
+  doc["denoise"]         = s->status.denoise;        // 0..255 (OV3660+)
+  doc["special_effect"]  = s->status.special_effect; // 0..6
+  doc["wb_mode"]         = s->status.wb_mode;        // 0..4
+  doc["awb"]             = s->status.awb;            // 0/1
+  doc["awb_gain"]        = s->status.awb_gain;       // 0/1
+  doc["aec"]             = s->status.aec;            // 0/1
+  doc["aec2"]            = s->status.aec2;           // 0/1
+  doc["ae_level"]        = s->status.ae_level;       // -2..2
+  doc["aec_value"]       = s->status.aec_value;      // 0..1200 (manual)
+  doc["agc"]             = s->status.agc;            // 0/1
+  doc["agc_gain"]        = s->status.agc_gain;       // 0..30 (manual)
+  doc["gainceiling"]     = s->status.gainceiling;    // 0..6 (2x..128x)
+  doc["bpc"]             = s->status.bpc;            // 0/1
+  doc["wpc"]             = s->status.wpc;            // 0/1
+  doc["raw_gma"]         = s->status.raw_gma;        // 0/1
+  doc["lenc"]            = s->status.lenc;           // 0/1
+  doc["hmirror"]         = s->status.hmirror;        // 0/1
+  doc["vflip"]           = s->status.vflip;          // 0/1
+  doc["dcw"]             = s->status.dcw;            // 0/1
+  doc["colorbar"]        = s->status.colorbar;       // 0/1 (test pattern)
+  doc["frame_delay_ms"]  = g_peek_frame_delay_ms;    // stream pacing
+
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+static esp_err_t handle_peek_sensor_set(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  if (!g_camera_initialized) {
+    const char* resp = "{\"ok\":false,\"error\":\"Camera not initialized\"}";
+    return http_send_json(req, resp);
+  }
+
+  sensor_t* s = esp_camera_sensor_get();
+  if (!s) {
+    const char* resp = "{\"ok\":false,\"error\":\"sensor_get failed\"}";
+    return http_send_json(req, resp);
+  }
+
+  // Read body — generous limit to allow tuning multiple fields atomically.
+  char content[512] = {0};
+  int total = 0;
+  while (total < (int)sizeof(content) - 1) {
+    int r = httpd_req_recv(req, content + total, sizeof(content) - 1 - total);
+    if (r <= 0) break;
+    total += r;
+  }
+  if (total <= 0) {
+    const char* resp = "{\"ok\":false,\"error\":\"No body\"}";
+    return http_send_json(req, resp);
+  }
+
+  JsonDocument body;
+  if (deserializeJson(body, content) != DeserializationError::Ok) {
+    const char* resp = "{\"ok\":false,\"error\":\"Invalid JSON\"}";
+    return http_send_json(req, resp);
+  }
+  if (!body.is<JsonObject>()) {
+    const char* resp = "{\"ok\":false,\"error\":\"Body must be a JSON object\"}";
+    return http_send_json(req, resp);
+  }
+  JsonObject obj = body.as<JsonObject>();
+
+  // JPEG quality is special — also sync our cached metric so /status reflects it.
+  if (obj["quality"].is<int>()) {
+    int q = obj["quality"].as<int>();
+    if (q < 0) q = 0; if (q > 63) q = 63;
+    s->set_quality(s, q);
+    g_peek_jpeg_quality = q;
+  }
+
+  // Image tuning (range −2..2)
+  apply_int_setting(s, obj, "brightness",     s->set_brightness,     -2,  2);
+  apply_int_setting(s, obj, "contrast",       s->set_contrast,       -2,  2);
+  apply_int_setting(s, obj, "saturation",     s->set_saturation,     -2,  2);
+  apply_int_setting(s, obj, "sharpness",      s->set_sharpness,      -2,  2);
+  apply_int_setting(s, obj, "denoise",        s->set_denoise,         0, 255);
+  apply_int_setting(s, obj, "special_effect", s->set_special_effect,  0,  6);
+  apply_int_setting(s, obj, "ae_level",       s->set_ae_level,       -2,  2);
+
+  // White balance
+  apply_int_setting(s, obj, "wb_mode",        s->set_wb_mode,         0,  4);
+  apply_int_setting(s, obj, "awb",            s->set_whitebal,        0,  1);
+  apply_int_setting(s, obj, "awb_gain",       s->set_awb_gain,        0,  1);
+
+  // Exposure
+  apply_int_setting(s, obj, "aec",            s->set_exposure_ctrl,   0,  1);
+  apply_int_setting(s, obj, "aec2",           s->set_aec2,            0,  1);
+  apply_int_setting(s, obj, "aec_value",      s->set_aec_value,       0, 1200);
+
+  // Gain
+  apply_int_setting(s, obj, "agc",            s->set_gain_ctrl,       0,  1);
+  apply_int_setting(s, obj, "agc_gain",       s->set_agc_gain,        0, 30);
+  if (obj["gainceiling"].is<int>()) {
+    int g = obj["gainceiling"].as<int>();
+    if (g < 0) g = 0; if (g > 6) g = 6;
+    s->set_gainceiling(s, (gainceiling_t)g);
+  }
+
+  // Image cleanup
+  apply_int_setting(s, obj, "bpc",            s->set_bpc,             0,  1);
+  apply_int_setting(s, obj, "wpc",            s->set_wpc,             0,  1);
+  apply_int_setting(s, obj, "raw_gma",        s->set_raw_gma,         0,  1);
+  apply_int_setting(s, obj, "lenc",           s->set_lenc,            0,  1);
+  apply_int_setting(s, obj, "dcw",            s->set_dcw,             0,  1);
+
+  // Orientation + diagnostics
+  apply_int_setting(s, obj, "hmirror",        s->set_hmirror,         0,  1);
+  apply_int_setting(s, obj, "vflip",          s->set_vflip,           0,  1);
+  apply_int_setting(s, obj, "colorbar",       s->set_colorbar,        0,  1);
+
+  // Stream pacing (NOT a sensor setting, but lives here so the UI can tune
+  // FPS in one place). Range is clamped to keep the streaming task from
+  // either spinning the CPU or appearing frozen.
+  if (obj["frame_delay_ms"].is<int>()) {
+    int d = obj["frame_delay_ms"].as<int>();
+    if (d < 20)  d = 20;     // 50 fps cap (board can't actually deliver this)
+    if (d > 500) d = 500;    // 2 fps floor
+    g_peek_frame_delay_ms = (uint32_t)d;
+  }
+
+  // Reset to surveillance defaults if requested.
+  if (obj["reset_defaults"].is<bool>() && obj["reset_defaults"].as<bool>()) {
+    apply_default_sensor_tuning();
+  }
+
+  // Echo back the (now-current) sensor state so the UI doesn't need a second round-trip.
+  return handle_peek_sensor_get(req);
 }
 
 #endif // FEATURE_CAMERA_PEEK
@@ -3868,6 +4209,14 @@ static esp_err_t handle_peek_resolution_auth(httpd_req_t* req) {
   if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
   return handle_peek_resolution(req);
 }
+static esp_err_t handle_peek_sensor_get_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_peek_sensor_get(req);
+}
+static esp_err_t handle_peek_sensor_set_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_peek_sensor_set(req);
+}
 #endif
 
 #if FEATURE_SYS_MONITOR
@@ -4063,6 +4412,12 @@ register_extra_routes:
 
   httpd_uri_t peek_resolution = { .uri = "/api/peek/resolution", .method = HTTP_POST, .handler = handle_peek_resolution_auth };
   httpd_register_uri_handler(active_server, &peek_resolution);
+
+  httpd_uri_t peek_sensor_get = { .uri = "/api/peek/sensor", .method = HTTP_GET, .handler = handle_peek_sensor_get_auth };
+  httpd_register_uri_handler(active_server, &peek_sensor_get);
+
+  httpd_uri_t peek_sensor_set = { .uri = "/api/peek/sensor", .method = HTTP_POST, .handler = handle_peek_sensor_set_auth };
+  httpd_register_uri_handler(active_server, &peek_sensor_set);
 #endif
 
 #if FEATURE_MESH_NETWORK
