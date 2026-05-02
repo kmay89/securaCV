@@ -45,54 +45,130 @@ const char* framesize_name(framesize_t size) {
 CameraManager::CameraManager()
   : m_initialized(false), m_peek_active(false), m_framesize(FRAMESIZE_VGA) {}
 
-bool CameraManager::begin() {
-  camera_config_t config;
-  config.ledc_channel = LEDC_CHANNEL_0;
-  config.ledc_timer = LEDC_TIMER_0;
-  config.pin_d0 = CAM_PIN_D0;
-  config.pin_d1 = CAM_PIN_D1;
-  config.pin_d2 = CAM_PIN_D2;
-  config.pin_d3 = CAM_PIN_D3;
-  config.pin_d4 = CAM_PIN_D4;
-  config.pin_d5 = CAM_PIN_D5;
-  config.pin_d6 = CAM_PIN_D6;
-  config.pin_d7 = CAM_PIN_D7;
-  config.pin_xclk = CAM_PIN_XCLK;
-  config.pin_pclk = CAM_PIN_PCLK;
-  config.pin_vsync = CAM_PIN_VSYNC;
-  config.pin_href = CAM_PIN_HREF;
-  config.pin_sccb_sda = CAM_PIN_SIOD;
-  config.pin_sccb_scl = CAM_PIN_SIOC;
-  config.pin_pwdn = CAM_PIN_PWDN;
-  config.pin_reset = CAM_PIN_RESET;
-  config.xclk_freq_hz = 20000000;
-  config.frame_size = FRAMESIZE_VGA;
-  config.pixel_format = PIXFORMAT_JPEG;
-  config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
-  config.fb_location = CAMERA_FB_IN_PSRAM;
-  config.jpeg_quality = 12;
-  config.fb_count = 1;
+// Build a camera_config_t with all pin/clock fields populated. Critically
+// zero-initialized so newer ESP-IDF fields (sccb_i2c_port, etc.) start clean
+// instead of inheriting stack garbage — uninitialized sccb_i2c_port was the
+// most common cause of "init returns ESP_OK but sensor probe fails" on
+// XIAO ESP32S3 Sense boards built against Arduino-ESP32 v3 / IDF v5.
+static camera_config_t make_base_config() {
+  camera_config_t cfg = {};
+  cfg.ledc_channel  = LEDC_CHANNEL_0;
+  cfg.ledc_timer    = LEDC_TIMER_0;
+  cfg.pin_d0        = CAM_PIN_D0;
+  cfg.pin_d1        = CAM_PIN_D1;
+  cfg.pin_d2        = CAM_PIN_D2;
+  cfg.pin_d3        = CAM_PIN_D3;
+  cfg.pin_d4        = CAM_PIN_D4;
+  cfg.pin_d5        = CAM_PIN_D5;
+  cfg.pin_d6        = CAM_PIN_D6;
+  cfg.pin_d7        = CAM_PIN_D7;
+  cfg.pin_xclk      = CAM_PIN_XCLK;
+  cfg.pin_pclk      = CAM_PIN_PCLK;
+  cfg.pin_vsync     = CAM_PIN_VSYNC;
+  cfg.pin_href      = CAM_PIN_HREF;
+  cfg.pin_sccb_sda  = CAM_PIN_SIOD;
+  cfg.pin_sccb_scl  = CAM_PIN_SIOC;
+  cfg.pin_pwdn      = CAM_PIN_PWDN;
+  cfg.pin_reset     = CAM_PIN_RESET;
+  cfg.sccb_i2c_port = -1;
+  cfg.xclk_freq_hz  = 20000000;
+  cfg.pixel_format  = PIXFORMAT_JPEG;
+  return cfg;
+}
 
-  // Adjust for PSRAM availability
-  if (psramFound()) {
-    config.jpeg_quality = 10;
-    config.fb_count = 2;
-    config.grab_mode = CAMERA_GRAB_LATEST;
-  } else {
-    config.frame_size = FRAMESIZE_QVGA;
-    config.fb_location = CAMERA_FB_IN_DRAM;
+// Apply the same surveillance-tuned defaults as the WAP firmware so the new
+// lib-based image matches behavior once it ships.
+static void apply_default_sensor_tuning() {
+  sensor_t* s = esp_camera_sensor_get();
+  if (!s) return;
+  s->set_brightness(s, 0);
+  s->set_contrast(s, 0);
+  s->set_saturation(s, 0);
+  s->set_special_effect(s, 0);
+  s->set_whitebal(s, 1);
+  s->set_awb_gain(s, 1);
+  s->set_wb_mode(s, 0);
+  s->set_exposure_ctrl(s, 1);
+  s->set_aec2(s, 1);
+  s->set_ae_level(s, 0);
+  s->set_aec_value(s, 300);
+  s->set_gain_ctrl(s, 1);
+  s->set_agc_gain(s, 0);
+  s->set_gainceiling(s, (gainceiling_t)GAINCEILING_4X);
+  s->set_bpc(s, 1);
+  s->set_wpc(s, 1);
+  s->set_raw_gma(s, 1);
+  s->set_lenc(s, 1);
+  s->set_dcw(s, 1);
+  s->set_hmirror(s, 0);
+  s->set_vflip(s, 0);
+  s->set_colorbar(s, 0);
+  // Sensor-specific corrections last so they win over the neutral defaults.
+  if (s->id.PID == OV3660_PID) {
+    s->set_vflip(s, 1);
+    s->set_brightness(s, 1);
+    s->set_saturation(s, -2);
+  }
+}
+
+bool CameraManager::begin() {
+  // Force PSRAM init in case the board variant left it disabled. No-op on
+  // boards where the ROM already turned PSRAM on.
+  psramInit();
+  bool psram_ok = psramFound();
+  Serial.printf("[CAMERA] PSRAM: %s\n", psram_ok ? "found" : "not found");
+
+  // Multi-stage attempt: most-capable → most-conservative.
+  camera_config_t attempts[3];
+  const char*     labels[3];
+  int n = 0;
+
+  if (psram_ok) {
+    camera_config_t a = make_base_config();
+    a.frame_size  = FRAMESIZE_XGA;
+    a.jpeg_quality = 10;
+    a.fb_count    = 2;
+    a.fb_location = CAMERA_FB_IN_PSRAM;
+    a.grab_mode   = CAMERA_GRAB_LATEST;
+    attempts[n] = a; labels[n] = "psram-xga"; n++;
+
+    camera_config_t b = make_base_config();
+    b.frame_size  = FRAMESIZE_VGA;
+    b.jpeg_quality = 12;
+    b.fb_count    = 1;
+    b.fb_location = CAMERA_FB_IN_PSRAM;
+    b.grab_mode   = CAMERA_GRAB_WHEN_EMPTY;
+    attempts[n] = b; labels[n] = "psram-vga"; n++;
   }
 
-  esp_err_t err = esp_camera_init(&config);
-  if (err != ESP_OK) {
-    Serial.printf("[CAMERA] Init failed: 0x%x\n", err);
+  camera_config_t c = make_base_config();
+  c.frame_size  = FRAMESIZE_QVGA;
+  c.jpeg_quality = 12;
+  c.fb_count    = 1;
+  c.fb_location = CAMERA_FB_IN_DRAM;
+  c.grab_mode   = CAMERA_GRAB_WHEN_EMPTY;
+  attempts[n] = c; labels[n] = "dram-qvga"; n++;
+
+  esp_err_t err = ESP_FAIL;
+  int chosen = -1;
+  for (int i = 0; i < n; i++) {
+    err = esp_camera_init(&attempts[i]);
+    if (err == ESP_OK) { chosen = i; break; }
+    Serial.printf("[CAMERA] Init failed (%s): 0x%x — retrying\n", labels[i], err);
+    esp_camera_deinit();
+    delay(100);
+  }
+
+  if (chosen < 0) {
+    Serial.printf("[CAMERA] All init attempts failed (last err=0x%x)\n", err);
     m_initialized = false;
     return false;
   }
 
-  m_framesize = config.frame_size;
+  m_framesize = attempts[chosen].frame_size;
   m_initialized = true;
-  Serial.println("[CAMERA] Initialized for peek/preview");
+  apply_default_sensor_tuning();
+  Serial.printf("[CAMERA] Initialized (%s) for peek/preview\n", labels[chosen]);
   return true;
 }
 

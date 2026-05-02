@@ -1005,6 +1005,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
             <div class="card-title">Camera Controls</div>
             <div class="card-subtitle">Adjust preview settings</div>
           </div>
+          <button class="btn btn-ghost btn-sm" onclick="resetSensorDefaults()" title="Reset sensor to surveillance defaults">Reset</button>
         </div>
         <div style="display:flex;gap:0.75rem;flex-wrap:wrap;">
           <button class="btn btn-secondary" onclick="takeSnapshot()">📷 Snapshot</button>
@@ -1019,6 +1020,93 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           </div>
           <p id="resolutionStatus" style="font-size:0.7rem;color:var(--muted);margin-top:0.5rem;">Current: 640×480</p>
         </div>
+
+        <!--
+          Sensor tuning panel — every control here writes straight through to
+          the OV2640 / OV3660 sensor_t via /api/peek/sensor. Values are read
+          back from the sensor on poll, never fabricated.
+        -->
+        <div style="margin-top:1.25rem;">
+          <div class="form-label">Picture Quality</div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:0.6rem 1.25rem;font-size:0.82rem;">
+            <label>JPEG Quality (lower = sharper, larger): <span id="sensorQualityVal">—</span>
+              <input type="range" id="sensorQuality" min="4" max="40" step="1" oninput="onSensorSlider('quality', this.value, 'sensorQualityVal')">
+            </label>
+            <label>Brightness: <span id="sensorBrightnessVal">—</span>
+              <input type="range" id="sensorBrightness" min="-2" max="2" step="1" oninput="onSensorSlider('brightness', this.value, 'sensorBrightnessVal')">
+            </label>
+            <label>Contrast: <span id="sensorContrastVal">—</span>
+              <input type="range" id="sensorContrast" min="-2" max="2" step="1" oninput="onSensorSlider('contrast', this.value, 'sensorContrastVal')">
+            </label>
+            <label>Saturation: <span id="sensorSaturationVal">—</span>
+              <input type="range" id="sensorSaturation" min="-2" max="2" step="1" oninput="onSensorSlider('saturation', this.value, 'sensorSaturationVal')">
+            </label>
+            <label>AE Level (exposure bias): <span id="sensorAeLevelVal">—</span>
+              <input type="range" id="sensorAeLevel" min="-2" max="2" step="1" oninput="onSensorSlider('ae_level', this.value, 'sensorAeLevelVal')">
+            </label>
+            <label>Sharpness (OV3660 only): <span id="sensorSharpnessVal">—</span>
+              <input type="range" id="sensorSharpness" min="-2" max="2" step="1" oninput="onSensorSlider('sharpness', this.value, 'sensorSharpnessVal')">
+            </label>
+            <label>Frame delay (ms, ↓ = more fps): <span id="sensorFrameDelayVal">—</span>
+              <input type="range" id="sensorFrameDelay" min="20" max="200" step="5" oninput="onSensorSlider('frame_delay_ms', this.value, 'sensorFrameDelayVal')">
+            </label>
+          </div>
+        </div>
+
+        <div style="margin-top:1rem;">
+          <div class="form-label">Exposure / Gain</div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:0.4rem 1rem;font-size:0.82rem;">
+            <label><input type="checkbox" id="sensorAec" onchange="onSensorToggle('aec', this.checked)"> Auto Exposure (AEC)</label>
+            <label><input type="checkbox" id="sensorAec2" onchange="onSensorToggle('aec2', this.checked)"> AEC DSP (AEC2)</label>
+            <label><input type="checkbox" id="sensorAgc" onchange="onSensorToggle('agc', this.checked)"> Auto Gain (AGC)</label>
+            <label>Gain ceiling
+              <select id="sensorGainCeiling" onchange="onSensorSelect('gainceiling', this.value)">
+                <option value="0">2x</option><option value="1">4x</option>
+                <option value="2">8x</option><option value="3">16x</option>
+                <option value="4">32x</option><option value="5">64x</option>
+                <option value="6">128x</option>
+              </select>
+            </label>
+          </div>
+        </div>
+
+        <div style="margin-top:1rem;">
+          <div class="form-label">White Balance</div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:0.4rem 1rem;font-size:0.82rem;">
+            <label><input type="checkbox" id="sensorAwb" onchange="onSensorToggle('awb', this.checked)"> Auto WB</label>
+            <label><input type="checkbox" id="sensorAwbGain" onchange="onSensorToggle('awb_gain', this.checked)"> AWB Gain</label>
+            <label>WB Mode
+              <select id="sensorWbMode" onchange="onSensorSelect('wb_mode', this.value)">
+                <option value="0">Auto</option><option value="1">Sunny</option>
+                <option value="2">Cloudy</option><option value="3">Office</option>
+                <option value="4">Home</option>
+              </select>
+            </label>
+            <label>Special Effect
+              <select id="sensorSpecialEffect" onchange="onSensorSelect('special_effect', this.value)">
+                <option value="0">None</option><option value="1">Negative</option>
+                <option value="2">Grayscale</option><option value="3">Red Tint</option>
+                <option value="4">Green Tint</option><option value="5">Blue Tint</option>
+                <option value="6">Sepia</option>
+              </select>
+            </label>
+          </div>
+        </div>
+
+        <div style="margin-top:1rem;">
+          <div class="form-label">Image Cleanup &amp; Orientation</div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:0.4rem 1rem;font-size:0.82rem;">
+            <label><input type="checkbox" id="sensorBpc" onchange="onSensorToggle('bpc', this.checked)"> Black-pixel correct</label>
+            <label><input type="checkbox" id="sensorWpc" onchange="onSensorToggle('wpc', this.checked)"> White-pixel correct</label>
+            <label><input type="checkbox" id="sensorRawGma" onchange="onSensorToggle('raw_gma', this.checked)"> Gamma</label>
+            <label><input type="checkbox" id="sensorLenc" onchange="onSensorToggle('lenc', this.checked)"> Lens correction</label>
+            <label><input type="checkbox" id="sensorDcw" onchange="onSensorToggle('dcw', this.checked)"> DCW (downsize)</label>
+            <label><input type="checkbox" id="sensorHmirror" onchange="onSensorToggle('hmirror', this.checked)"> H-mirror</label>
+            <label><input type="checkbox" id="sensorVflip" onchange="onSensorToggle('vflip', this.checked)"> V-flip</label>
+            <label><input type="checkbox" id="sensorColorbar" onchange="onSensorToggle('colorbar', this.checked)"> Test pattern</label>
+          </div>
+        </div>
+
         <div id="snapshotPreview" style="margin-top:1rem;display:none;">
           <div class="form-label">Snapshot</div>
           <img id="snapshotImg" style="max-width:100%;border-radius:8px;border:1px solid var(--border);" alt="Snapshot">
@@ -2189,7 +2277,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       currentPanel = panel;
 
       if (panel === 'records') { loadLogs(); loadWitness(); }
-      else if (panel === 'camera') refreshPeekStatus();
+      else if (panel === 'camera') { refreshPeekStatus(); refreshSensorState(); }
       else if (panel === 'presence') { refreshPresence(); refreshHousehold(); refreshWifiPresence(); refreshAudibleChirpStatus(); }
       else if (panel === 'community') { refreshOpera(); refreshChirpStatus(); refreshBleDiscovery(); }
       else if (panel === 'settings') { loadWifiStatus(); refreshBtStatus(); loadBtPairedDevices(); refreshBtOtaStatus(); loadRfSettings(); }
@@ -2580,12 +2668,16 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     async function refreshPeekStatus() {
       const data = await api('/api/peek/status');
       if (data && data.ok) {
+        const wasReady = cameraReady;
         cameraReady = data.camera_initialized;
         peekActive = data.peek_active;
         if (typeof data.resolution !== 'undefined') { currentResolution = data.resolution; updateResolutionUI(); }
         applyCameraInfo(data);
         updatePeekUI();
         if (peekActive) startCamInfoPolling(); else stopCamInfoPolling();
+        // The camera just became available — pull sensor state so the
+        // tuning sliders show the on-chip values rather than blanks.
+        if (cameraReady && !wasReady) refreshSensorState();
       }
     }
 
@@ -2659,6 +2751,84 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         currentResolution = size; updateResolutionUI();
         if (peekActive) document.getElementById('peekStream').src = API_BASE + '/api/peek/stream?t=' + Date.now() + '&token=' + encodeURIComponent(apiToken);
       }
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    // SENSOR TUNING
+    // Real-time read/write of OV2640/OV3660 sensor parameters via
+    // /api/peek/sensor. Slider events are coalesced into one POST per ~200ms
+    // so dragging doesn't spam the device.
+    // ──────────────────────────────────────────────────────────────────
+    let sensorPostTimer = null;
+    let sensorPendingPatch = {};
+
+    function flushSensorPatch() {
+      sensorPostTimer = null;
+      const patch = sensorPendingPatch;
+      sensorPendingPatch = {};
+      if (Object.keys(patch).length === 0) return;
+      api('/api/peek/sensor', 'POST', patch).then(data => {
+        if (data && data.ok) applySensorState(data);
+      });
+    }
+    function queueSensorPatch(patch) {
+      Object.assign(sensorPendingPatch, patch);
+      if (!sensorPostTimer) sensorPostTimer = setTimeout(flushSensorPatch, 200);
+    }
+    function onSensorSlider(field, value, valId) {
+      const v = parseInt(value, 10);
+      const el = document.getElementById(valId);
+      if (el) el.textContent = String(v);
+      queueSensorPatch({ [field]: v });
+    }
+    function onSensorToggle(field, checked) {
+      queueSensorPatch({ [field]: checked ? 1 : 0 });
+    }
+    function onSensorSelect(field, value) {
+      queueSensorPatch({ [field]: parseInt(value, 10) });
+    }
+
+    function setVal(id, v) { const el = document.getElementById(id); if (el != null && v != null) el.value = v; }
+    function setChecked(id, v) { const el = document.getElementById(id); if (el != null) el.checked = !!v; }
+
+    function applySensorState(data) {
+      if (!data || !data.ok) return;
+      // Sliders
+      setVal('sensorQuality',     data.quality);     setText('sensorQualityVal',    data.quality);
+      setVal('sensorBrightness',  data.brightness);  setText('sensorBrightnessVal', data.brightness);
+      setVal('sensorContrast',    data.contrast);    setText('sensorContrastVal',   data.contrast);
+      setVal('sensorSaturation',  data.saturation);  setText('sensorSaturationVal', data.saturation);
+      setVal('sensorAeLevel',     data.ae_level);    setText('sensorAeLevelVal',    data.ae_level);
+      setVal('sensorSharpness',   data.sharpness);   setText('sensorSharpnessVal',  data.sharpness);
+      setVal('sensorFrameDelay',  data.frame_delay_ms); setText('sensorFrameDelayVal', data.frame_delay_ms);
+      // Toggles
+      setChecked('sensorAec',       data.aec);
+      setChecked('sensorAec2',      data.aec2);
+      setChecked('sensorAgc',       data.agc);
+      setChecked('sensorAwb',       data.awb);
+      setChecked('sensorAwbGain',   data.awb_gain);
+      setChecked('sensorBpc',       data.bpc);
+      setChecked('sensorWpc',       data.wpc);
+      setChecked('sensorRawGma',    data.raw_gma);
+      setChecked('sensorLenc',      data.lenc);
+      setChecked('sensorDcw',       data.dcw);
+      setChecked('sensorHmirror',   data.hmirror);
+      setChecked('sensorVflip',     data.vflip);
+      setChecked('sensorColorbar',  data.colorbar);
+      // Selects
+      setVal('sensorGainCeiling',   data.gainceiling);
+      setVal('sensorWbMode',        data.wb_mode);
+      setVal('sensorSpecialEffect', data.special_effect);
+    }
+
+    async function refreshSensorState() {
+      const data = await api('/api/peek/sensor');
+      if (data && data.ok) applySensorState(data);
+    }
+
+    async function resetSensorDefaults() {
+      const data = await api('/api/peek/sensor', 'POST', { reset_defaults: true });
+      if (data && data.ok) applySensorState(data);
     }
 
     // ══════════════════════════════════════════════════════════════════
