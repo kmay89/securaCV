@@ -582,6 +582,11 @@ static volatile uint64_t g_peek_total_bytes       = 0;  // bytes sent in current
 static volatile uint32_t g_peek_fps_window_start  = 0;
 static volatile uint32_t g_peek_fps_window_count  = 0;
 static volatile uint32_t g_peek_fps_last          = 0;  // FPS measured over last full 1s window
+// Spinlock guarding the metrics block above. Today esp_http_server runs in a
+// single task so the streaming loop and the status handler can't race in
+// practice, but holding this lock around both writers and the reader keeps
+// the snapshot torn-free if the stream ever moves into an async worker task.
+static portMUX_TYPE g_peek_metrics_mux = portMUX_INITIALIZER_UNLOCKED;
 #endif
 
 // Health log buffer (circular, most recent entries)
@@ -2655,6 +2660,13 @@ static esp_err_t handle_peek_start(httpd_req_t* req) {
 
 // ════════════════════════════════════════════════════════════════════════════
 // PEEK STREAM — FIXED: Now properly manages g_peek_active state
+//
+// NOTE on concurrency: esp_http_server runs a single task by default, so this
+// long-lived MJPEG handler blocks /api/peek/status polling until the client
+// disconnects. The metrics we update here remain in g_peek_* globals and are
+// rendered by the UI as "LAST STREAM" stats once the stream ends. Moving this
+// loop into a worker task via httpd_req_async_handler_begin/_complete is a
+// separate refactor (tracked outside this PR).
 // ════════════════════════════════════════════════════════════════════════════
 
 static esp_err_t handle_peek_stream(httpd_req_t* req) {
@@ -2668,8 +2680,9 @@ static esp_err_t handle_peek_stream(httpd_req_t* req) {
   // *** KEY FIX: Set peek_active to true when stream is requested ***
   g_peek_active = true;
 
-  // Reset per-stream metrics so the UI shows real, fresh values
+  // Reset per-stream metrics so the UI shows real, fresh values.
   uint32_t now_ms = millis();
+  portENTER_CRITICAL(&g_peek_metrics_mux);
   g_peek_frame_count      = 0;
   g_peek_total_bytes      = 0;
   g_peek_last_frame_bytes = 0;
@@ -2678,6 +2691,7 @@ static esp_err_t handle_peek_stream(httpd_req_t* req) {
   g_peek_fps_window_start = now_ms;
   g_peek_fps_window_count = 0;
   g_peek_fps_last         = 0;
+  portEXIT_CRITICAL(&g_peek_metrics_mux);
 
   // Set proper MJPEG multipart headers
   httpd_resp_set_type(req, "multipart/x-mixed-replace; boundary=frame");
@@ -2730,18 +2744,22 @@ static esp_err_t handle_peek_stream(httpd_req_t* req) {
 
     if (res == ESP_OK) {
       uint32_t t_ms = millis();
+      portENTER_CRITICAL(&g_peek_metrics_mux);
       g_peek_last_frame_bytes = frame_bytes;
       g_peek_last_frame_ms    = t_ms;
       g_peek_total_bytes     += frame_bytes;
       g_peek_frame_count++;
       g_peek_fps_window_count++;
-      // Close the 1-second FPS window when 1000ms elapses; counter is accurate
+      // Close the FPS window once it spans >=1000ms. Normalize by the actual
+      // elapsed time so jitter (slow capture, congestion) doesn't inflate the
+      // reported rate above the true delivery rate.
       uint32_t window_elapsed = t_ms - g_peek_fps_window_start;
       if (window_elapsed >= 1000) {
-        g_peek_fps_last         = g_peek_fps_window_count;
+        g_peek_fps_last         = (g_peek_fps_window_count * 1000U) / window_elapsed;
         g_peek_fps_window_count = 0;
         g_peek_fps_window_start = t_ms;
       }
+      portEXIT_CRITICAL(&g_peek_metrics_mux);
     }
 
     if (res != ESP_OK) {
@@ -2831,26 +2849,44 @@ static esp_err_t handle_peek_status(httpd_req_t* req) {
   doc["psram"]         = g_peek_psram_used;
   doc["fb_count"]      = g_peek_fb_count;
 
-  // Live measurements (only meaningful while/just-after streaming)
-  doc["frame_count"]       = g_peek_frame_count;
-  doc["last_frame_bytes"]  = g_peek_last_frame_bytes;
-  doc["total_bytes"]       = (uint32_t)(g_peek_total_bytes & 0xFFFFFFFFULL);
-  doc["fps"]               = g_peek_fps_last;  // measured over the last full 1s window
+  // Snapshot all volatile metrics atomically under the shared spinlock. 64-bit
+  // reads are not atomic on the ESP32 (32-bit core), and reading the same
+  // volatile multiple times can produce inconsistent rows (e.g.
+  // avg_frame_bytes not matching total_bytes / frame_count).
+  bool     snap_active;
+  uint32_t snap_frame_count;
+  uint32_t snap_last_frame_bytes;
+  uint64_t snap_total_bytes;
+  uint32_t snap_fps_last;
+  uint32_t snap_stream_start_ms;
+  portENTER_CRITICAL(&g_peek_metrics_mux);
+  snap_active           = g_peek_active;
+  snap_frame_count      = g_peek_frame_count;
+  snap_last_frame_bytes = g_peek_last_frame_bytes;
+  snap_total_bytes      = g_peek_total_bytes;
+  snap_fps_last         = g_peek_fps_last;
+  snap_stream_start_ms  = g_peek_stream_start_ms;
+  portEXIT_CRITICAL(&g_peek_metrics_mux);
+
+  doc["frame_count"]       = snap_frame_count;
+  doc["last_frame_bytes"]  = snap_last_frame_bytes;
+  doc["total_bytes"]       = snap_total_bytes;  // ArduinoJson v7 supports uint64_t natively — no 4GB wrap
+  doc["fps"]               = snap_fps_last;     // measured over the last full ~1s window, jitter-normalized
 
   uint32_t now_ms      = millis();
-  uint32_t uptime_ms   = (g_peek_stream_start_ms && g_peek_active)
-                           ? (now_ms - g_peek_stream_start_ms)
+  uint32_t uptime_ms   = (snap_stream_start_ms && snap_active)
+                           ? (now_ms - snap_stream_start_ms)
                            : 0;
   doc["stream_uptime_ms"]  = uptime_ms;
-  uint32_t avg_bytes = (g_peek_frame_count > 0)
-                         ? (uint32_t)(g_peek_total_bytes / g_peek_frame_count)
+  uint32_t avg_bytes = (snap_frame_count > 0)
+                         ? (uint32_t)(snap_total_bytes / snap_frame_count)
                          : 0;
   doc["avg_frame_bytes"]   = avg_bytes;
   // Average throughput in kbps over the entire stream so far (real, computed from totals)
   uint32_t avg_kbps = 0;
   if (uptime_ms > 0) {
     // bytes * 8 / ms -> kbps directly (since /1000ms cancels with *1000 from kbits)
-    avg_kbps = (uint32_t)((g_peek_total_bytes * 8ULL) / (uint64_t)uptime_ms);
+    avg_kbps = (uint32_t)((snap_total_bytes * 8ULL) / (uint64_t)uptime_ms);
   }
   doc["avg_kbps"]          = avg_kbps;
 

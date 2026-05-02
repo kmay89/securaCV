@@ -2540,19 +2540,32 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       setText('camXclk', data.xclk_hz ? (data.xclk_hz/1000000).toFixed(0) + ' MHz' : '—');
       setText('camPsram', (data.psram === true) ? 'Yes' : (data.psram === false ? 'No' : '—'));
       setText('camFbCount', data.fb_count != null ? String(data.fb_count) : '—');
-      // Live stream metrics: only show numeric values when actually streaming
+      // Live stream metrics: when peek_active=true, show LIVE numbers; when
+      // a stream just ended (frame_count>0 but inactive), surface the final
+      // real measurements from that stream so the user can verify quality.
+      // When the device has never streamed yet, show "idle" — never a fake number.
+      const hasMetrics = (data.frame_count != null) && (data.frame_count > 0);
+      const live = document.getElementById('camInfoLive');
       if (data.peek_active) {
         setText('camFps', (data.fps != null) ? (data.fps + ' fps') : '—');
         setText('camLastFrame', fmtBytes(data.last_frame_bytes));
         setText('camAvgFrame', fmtBytes(data.avg_frame_bytes));
         setText('camKbps', (data.avg_kbps != null) ? (data.avg_kbps + ' kbps') : '—');
-        setText('camFrameCount', data.frame_count != null ? String(data.frame_count) : '—');
+        setText('camFrameCount', String(data.frame_count));
         setText('camUptime', fmtDuration(data.stream_uptime_ms));
-        const live = document.getElementById('camInfoLive'); if (live) live.style.display = 'inline-flex';
+        if (live) { live.textContent = 'LIVE'; live.className = 'badge info'; live.style.display = 'inline-flex'; }
+      } else if (hasMetrics) {
+        setText('camFps', (data.fps != null) ? (data.fps + ' fps') : '—');
+        setText('camLastFrame', fmtBytes(data.last_frame_bytes));
+        setText('camAvgFrame', fmtBytes(data.avg_frame_bytes));
+        setText('camKbps', (data.avg_kbps != null) ? (data.avg_kbps + ' kbps') : '—');
+        setText('camFrameCount', String(data.frame_count));
+        setText('camUptime', fmtDuration(data.stream_uptime_ms));
+        if (live) { live.textContent = 'LAST STREAM'; live.className = 'badge'; live.style.display = 'inline-flex'; }
       } else {
         ['camFps','camLastFrame','camAvgFrame','camKbps','camFrameCount','camUptime']
           .forEach(id => setText(id, 'idle'));
-        const live = document.getElementById('camInfoLive'); if (live) live.style.display = 'none';
+        if (live) live.style.display = 'none';
       }
     }
 
