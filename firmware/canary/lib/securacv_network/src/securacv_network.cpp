@@ -30,7 +30,7 @@
 #include <Update.h>
 #endif
 
-#if FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS || FEATURE_TOUCH || FEATURE_IR_RMT || FEATURE_TEMP_TAMPER || FEATURE_TOUCH
+#if FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS || FEATURE_TOUCH || FEATURE_IR_RMT || FEATURE_TEMP_TAMPER
 #include "securacv_sensing.h"
 #endif
 #if FEATURE_CSI
@@ -50,7 +50,7 @@
 #endif
 /* Lowpower HAL is always compiled when any sensing is on, so the
  * Sensing endpoint can surface the wake reason and capability bits. */
-#if FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS || FEATURE_TOUCH || FEATURE_IR_RMT || FEATURE_TEMP_TAMPER || FEATURE_TOUCH
+#if FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS || FEATURE_TOUCH || FEATURE_IR_RMT || FEATURE_TEMP_TAMPER
 #include "securacv_lowpower.h"
 #endif
 
