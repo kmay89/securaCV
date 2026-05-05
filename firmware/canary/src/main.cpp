@@ -317,9 +317,10 @@ void setup() {
             : RECORD_WITNESS_EVENT;
 
     WitnessRecord rec;
-    if (witness_create_record(payload, cbor.size(), rt, &rec)) {
-      witness_get_health().records_created++;
-    } else {
+    /* witness_create_record() already increments records_created on
+     * success internally (securacv_witness.cpp); we only log on the
+     * failure path here. */
+    if (!witness_create_record(payload, cbor.size(), rt, &rec)) {
       log_health(LOG_LEVEL_ERROR, LOG_CAT_WITNESS,
                  "Sensing witness record failed", nullptr);
     }
