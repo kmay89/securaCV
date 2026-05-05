@@ -287,6 +287,46 @@ void setup() {
   mqtt_init(device.device_id, FIRMWARE_VERSION);
 #endif
 
+  // Wire emergency / security sensing events into the Ed25519 witness
+  // chain. Only T3/T4 alarm cadences, silent panic, enclosure tamper,
+  // and temp drift get signed — high-rate informational events (CSI
+  // windows, IR button presses) are deliberately NOT witnessed.
+#if FEATURE_SENSING_WITNESS && \
+    (FEATURE_ACOUSTIC_EVENTS || FEATURE_TOUCH || FEATURE_TEMP_TAMPER)
+  sensing_init();  /* idempotent — make sure the aggregator is up */
+  sensing_set_witness_callback([](const sensing_witness_event_t* we) {
+    /* Build a small CBOR payload — same shape across all five kinds
+     * so verifiers can ingest with one schema. The IR / CSI events
+     * deliberately don't reach this callback, so the schema doesn't
+     * need to carry their fields. */
+    uint8_t payload[64];
+    CborWriter cbor(payload, sizeof(payload));
+    cbor.write_map(4);
+    cbor.write_text("kind"); cbor.write_uint(we->kind);
+    cbor.write_text("conf"); cbor.write_uint(we->confidence);
+    cbor.write_text("bkt");  cbor.write_uint(we->time_bucket);
+    cbor.write_text("cat");  cbor.write_uint(we->category);
+
+    /* Tamper kinds (touch enclosure tamper, temp drift) get the
+     * RECORD_TAMPER_ALERT type so downstream filters can split them
+     * out. Everything else uses RECORD_WITNESS_EVENT. */
+    const RecordType rt =
+        (we->kind == SENSING_WITNESS_TOUCH_TAMPER ||
+         we->kind == SENSING_WITNESS_TEMP_DRIFT)
+            ? RECORD_TAMPER_ALERT
+            : RECORD_WITNESS_EVENT;
+
+    WitnessRecord rec;
+    if (witness_create_record(payload, cbor.size(), rt, &rec)) {
+      witness_get_health().records_created++;
+    } else {
+      log_health(LOG_LEVEL_ERROR, LOG_CAT_WITNESS,
+                 "Sensing witness record failed", nullptr);
+    }
+  });
+  Serial.println("[OK] Sensing witness chain bridge armed");
+#endif
+
   // Initialize CSI sensing (motion / breathing / micro-activity)
 #if FEATURE_CSI
   Serial.println("[..] Initializing CSI environmental sensing...");

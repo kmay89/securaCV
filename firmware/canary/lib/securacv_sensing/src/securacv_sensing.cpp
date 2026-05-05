@@ -18,6 +18,23 @@ namespace {
 
   sensing_state_t s_state;
   bool s_initialized = false;
+  sensing_witness_cb_t s_witness_cb = nullptr;
+
+  /* Fire the witness callback if registered, then zero the local
+   * struct so the per-event payload doesn't outlive the call. */
+  void fire_witness(uint8_t kind, uint8_t confidence,
+                    uint8_t time_bucket, uint8_t category) {
+    if (s_witness_cb == nullptr) return;
+    sensing_witness_event_t we = {};
+    we.kind        = kind;
+    we.confidence  = confidence;
+    we.time_bucket = time_bucket;
+    we.category    = category;
+    s_witness_cb(&we);
+    /* Volatile zero so the optimizer can't elide the wipe. */
+    volatile uint8_t* p = (volatile uint8_t*)&we;
+    for (size_t i = 0; i < sizeof(we); i++) p[i] = 0;
+  }
 
   /* Smoothing for the 0..100 scores so the UI doesn't jitter on transient
    * single-window spikes. EMA with α = 0.4 (favors recent data; reacts
@@ -125,6 +142,18 @@ void sensing_feed_audio_event(uint8_t event_type, uint8_t confidence,
    * the buckets are computed from millis() in both modules with the
    * same width, so they will always agree. */
   s_state.time_bucket = time_bucket;
+
+  /* T3 (smoke) and T4 (CO) are emergency events; sign them into the
+   * witness chain so the operator has tamper-evident proof later. The
+   * `category` byte carries the low byte of cycle_count — useful to
+   * tell "alarm sounded once" from "alarm has been going for minutes." */
+  if (event_type == 1 /* AUDIO_EVENT_T3_SMOKE_ALARM */) {
+    fire_witness(SENSING_WITNESS_AUDIO_T3, confidence, time_bucket,
+                 (uint8_t)(cycle_count & 0xFF));
+  } else if (event_type == 2 /* AUDIO_EVENT_T4_CO_ALARM */) {
+    fire_witness(SENSING_WITNESS_AUDIO_T4, confidence, time_bucket,
+                 (uint8_t)(cycle_count & 0xFF));
+  }
 }
 
 void sensing_feed_touch_event(uint8_t event_type, uint8_t confidence,
@@ -135,6 +164,16 @@ void sensing_feed_touch_event(uint8_t event_type, uint8_t confidence,
   s_state.last_touch_pad_channel = pad_channel;
   s_state.last_touch_event_ms    = millis();
   s_state.time_bucket            = time_bucket;
+
+  /* Silent panic and enclosure tamper are both witness-worthy. Approach
+   * (event_type==3) is too high-rate / low-stakes to sign every time. */
+  if (event_type == 1 /* TOUCH_EVENT_SILENT_PANIC */) {
+    fire_witness(SENSING_WITNESS_TOUCH_PANIC, confidence, time_bucket,
+                 pad_channel);
+  } else if (event_type == 2 /* TOUCH_EVENT_ENCLOSURE_TAMPER */) {
+    fire_witness(SENSING_WITNESS_TOUCH_TAMPER, confidence, time_bucket,
+                 pad_channel);
+  }
 }
 
 void sensing_feed_ir_event(uint8_t category, uint8_t hash_bucket,
@@ -152,6 +191,10 @@ void sensing_feed_temp_drift_event(uint8_t confidence, uint8_t time_bucket) {
   s_state.last_temp_drift_conf = confidence;
   s_state.last_temp_drift_ms   = millis();
   s_state.time_bucket          = time_bucket;
+  /* Sustained ±5 °C drift is a tamper indicator (case opened, device
+   * relocated). Always witness it; envsens already self-suppresses for
+   * 5 min after firing so this isn't chatty. */
+  fire_witness(SENSING_WITNESS_TEMP_DRIFT, confidence, time_bucket, 0);
 }
 
 void sensing_feed_csi(const csi_features_t* features) {
@@ -268,6 +311,10 @@ const char* sensing_label_name(uint8_t label) {
     case SENSING_LABEL_ACTIVE:   return "active";
     default:                     return "unknown";
   }
+}
+
+void sensing_set_witness_callback(sensing_witness_cb_t cb) {
+  s_witness_cb = cb;
 }
 
 }  /* extern "C" */
