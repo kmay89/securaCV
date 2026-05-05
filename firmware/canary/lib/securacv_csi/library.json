@@ -1,0 +1,19 @@
+{
+    "name": "securacv_csi",
+    "version": "0.1.0",
+    "description": "SecuraCV WiFi CSI — privacy-preserving environmental sensing (motion / breathing / micro-activity) via subcarrier dynamics. No identifiers, no raw samples — only a 32-byte int8 feature vector per 1 s window.",
+    "keywords": ["securacv", "wifi", "csi", "presence", "sensing", "motion", "breathing"],
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/kmay89/securaCV.git"
+    },
+    "authors": [
+        {
+            "name": "Karl May",
+            "email": "karl@errerlabs.com"
+        }
+    ],
+    "license": "Apache-2.0",
+    "frameworks": "arduino",
+    "platforms": "espressif32"
+}
