@@ -78,6 +78,12 @@
 #ifndef FEATURE_ACOUSTIC_EVENTS
   #define FEATURE_ACOUSTIC_EVENTS  0   // PDM mic + T3 smoke / T4 CO cadence detection
 #endif
+#ifndef FEATURE_TOUCH
+  #define FEATURE_TOUCH            0   // Capacitive touch (silent panic / tamper / approach)
+#endif
+#ifndef FEATURE_DEEP_SLEEP
+  #define FEATURE_DEEP_SLEEP       0   // ESP32-S3 native deep-sleep arming (opt-in)
+#endif
 
 // ════════════════════════════════════════════════════════════════
 // DEBUG FLAG DEFAULTS

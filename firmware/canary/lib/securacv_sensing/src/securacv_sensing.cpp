@@ -89,6 +89,11 @@ namespace {
  * window expires the snapshot reverts to event_type=0 ("none"). */
 static constexpr uint32_t ACOUSTIC_TTL_MS = 30000;
 
+/* TTL for last_touch_event_* — same rationale, slightly longer because
+ * touch events (panic, tamper) are rarer and a slow operator may want
+ * a longer window to catch the indicator on the dashboard. */
+static constexpr uint32_t TOUCH_TTL_MS    = 60000;
+
 extern "C" {
 
 void sensing_init(void) {
@@ -111,6 +116,16 @@ void sensing_feed_audio_event(uint8_t event_type, uint8_t confidence,
    * the buckets are computed from millis() in both modules with the
    * same width, so they will always agree. */
   s_state.time_bucket = time_bucket;
+}
+
+void sensing_feed_touch_event(uint8_t event_type, uint8_t confidence,
+                              uint8_t pad_channel, uint8_t time_bucket) {
+  if (!s_initialized) sensing_init();
+  s_state.last_touch_event_type  = event_type;
+  s_state.last_touch_event_conf  = confidence;
+  s_state.last_touch_pad_channel = pad_channel;
+  s_state.last_touch_event_ms    = millis();
+  s_state.time_bucket            = time_bucket;
 }
 
 void sensing_feed_csi(const csi_features_t* features) {
@@ -155,6 +170,15 @@ void sensing_tick(void) {
     s_state.last_audio_event_conf  = 0;
     s_state.last_audio_event_count = 0;
     s_state.last_audio_event_ms    = 0;
+  }
+
+  /* Age out the touch event field after TOUCH_TTL_MS. */
+  if (s_state.last_touch_event_ms != 0 &&
+      (millis() - s_state.last_touch_event_ms) > TOUCH_TTL_MS) {
+    s_state.last_touch_event_type  = 0;  /* TOUCH_EVENT_NONE */
+    s_state.last_touch_event_conf  = 0;
+    s_state.last_touch_pad_channel = 0;
+    s_state.last_touch_event_ms    = 0;
   }
 
   if (s_state.last_window_ms == 0) return;

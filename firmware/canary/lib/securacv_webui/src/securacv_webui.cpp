@@ -952,6 +952,54 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         </div>
       </div>
 
+      <!-- Touch (silent panic / enclosure tamper / approach) -->
+      <div class="card" id="touchCard" style="display:none;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Touch</div>
+            <div class="card-subtitle">
+              A capacitive pad wired to a side GPIO. Three behaviours, all
+              local: a silent panic long-press, an enclosure-tamper
+              detector, and an optional proximity hint. No audio, no
+              video.
+            </div>
+          </div>
+        </div>
+        <div id="touchHero" style="text-align:center; padding:18px 16px;">
+          <div id="touchPill" class="sensing-pill sensing-pill--quiet">Idle</div>
+          <div id="touchExplain" class="sensing-explain">
+            The pad is calibrating its baseline — give it a couple of seconds.
+          </div>
+        </div>
+        <div class="stats-grid">
+          <div class="stat-item"><div class="stat-label">Pad channel</div><div class="stat-value" id="tcChan">--</div></div>
+          <div class="stat-item"><div class="stat-label">Baseline</div><div class="stat-value" id="tcBase">--</div></div>
+          <div class="stat-item"><div class="stat-label">Reading</div><div class="stat-value" id="tcVal">--</div></div>
+          <div class="stat-item"><div class="stat-label">Panic events</div><div class="stat-value" id="tcPanic">0</div></div>
+          <div class="stat-item"><div class="stat-label">Tamper events</div><div class="stat-value" id="tcTamper">0</div></div>
+          <div class="stat-item"><div class="stat-label">Total reads</div><div class="stat-value" id="tcReads">0</div></div>
+        </div>
+      </div>
+
+      <!-- Power (boot / wake reason; sleep capability) -->
+      <div class="card" id="powerCard" style="display:none;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Power & wake</div>
+            <div class="card-subtitle">
+              ESP32-S3 native deep-sleep abstraction. The chip can be woken
+              by a timer, the touch peripheral, an RTC GPIO, or the ULP
+              coprocessor.
+            </div>
+          </div>
+        </div>
+        <div class="stats-grid">
+          <div class="stat-item"><div class="stat-label">Last wake</div><div class="stat-value" id="lpWake">--</div></div>
+          <div class="stat-item"><div class="stat-label">Wake pad</div><div class="stat-value" id="lpWakePad">--</div></div>
+          <div class="stat-item"><div class="stat-label">Caps</div><div class="stat-value" id="lpCaps" style="font-size:0.8rem;">--</div></div>
+        </div>
+      </div>
+
       <!-- Diagnostics -->
       <div class="card">
         <div class="card-header">
@@ -2267,6 +2315,75 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       set('acOn',     ast.on_transitions || 0);
       set('acOff',    ast.off_transitions || 0);
       set('acErr',    ast.i2s_read_errors || 0);
+
+      // ─── Touch (silent panic / enclosure tamper) ────────────────────
+      const tcCard = document.getElementById('touchCard');
+      const tc = data.touch;
+      if (tc) {
+        if (tcCard) tcCard.style.display = '';
+        const tcPill = document.getElementById('touchPill');
+        const tcExp  = document.getElementById('touchExplain');
+        const evt    = tc.last_event || 'none';
+        const tAge   = tc.last_event_age_ms;
+
+        if (!tc.enabled) {
+          tcPill.className = 'sensing-pill sensing-pill--offline';
+          tcPill.textContent = 'Pad offline';
+          tcExp.textContent = 'The touch peripheral failed to start. Check the device serial log.';
+        } else if (!tc.baseline_locked) {
+          tcPill.className = 'sensing-pill sensing-pill--quiet';
+          tcPill.textContent = 'Calibrating';
+          tcExp.textContent = 'The pad is sampling its idle baseline so accidental brushes can\'t trigger panic. This takes ~2 s.';
+        } else if (evt === 'silent_panic' && tAge >= 0 && tAge < 60000) {
+          tcPill.className = 'sensing-pill sensing-pill--active';
+          tcPill.textContent = '🚨 Silent panic';
+          tcExp.textContent = 'A long-press on the panic pad triggered. The device did not flash, beep, or otherwise indicate the press to anyone in the room.';
+        } else if (evt === 'enclosure_tamper' && tAge >= 0 && tAge < 60000) {
+          tcPill.className = 'sensing-pill sensing-pill--active';
+          tcPill.textContent = '⚠ Enclosure tamper';
+          tcExp.textContent = 'The pad reads above its calibrated baseline — typically the case has been opened or the device removed from its mount.';
+        } else if (evt === 'approach' && tAge >= 0 && tAge < 60000) {
+          tcPill.className = 'sensing-pill sensing-pill--motion';
+          tcPill.textContent = 'Approach';
+          tcExp.textContent = 'A hand or body passed within a few centimetres of the pad without contact.';
+        } else {
+          tcPill.className = 'sensing-pill sensing-pill--quiet';
+          tcPill.textContent = 'Idle';
+          tcExp.textContent = 'The pad is armed and watching for a long-press (panic) or a baseline shift (tamper).';
+        }
+
+        set('tcChan',   tc.pad_channel || '--');
+        set('tcBase',   tc.baseline_value || '--');
+        set('tcVal',    tc.last_value || '--');
+        const tst = tc.stats || {};
+        set('tcPanic',  tst.panic_events || 0);
+        set('tcTamper', tst.tamper_events || 0);
+        set('tcReads',  tst.reads_total || 0);
+      } else if (tcCard) {
+        tcCard.style.display = 'none';
+      }
+
+      // ─── Power & wake (lowpower HAL) ────────────────────────────────
+      const lpCard = document.getElementById('powerCard');
+      const lp = data.lowpower;
+      if (lp) {
+        if (lpCard) lpCard.style.display = '';
+        set('lpWake', lp.wake_reason || 'cold_boot');
+        set('lpWakePad', (lp.wake_touch_pad === undefined || lp.wake_touch_pad < 0)
+                          ? '--' : lp.wake_touch_pad);
+        // caps bitmask: 1=timer, 2=touch, 4=ext0, 8=ext1, 16=ulp_riscv, 32=ulp_fsm
+        const caps = lp.caps | 0;
+        const list = [];
+        if (caps & 1)  list.push('timer');
+        if (caps & 2)  list.push('touch');
+        if (caps & 4)  list.push('ext0');
+        if (caps & 8)  list.push('ext1');
+        if (caps & 16) list.push('ulp-riscv');
+        if (caps & 32) list.push('ulp-fsm');
+        set('lpCaps', list.join(', ') || '--');
+      } else if (lpCard) {
+        lpCard.style.display = 'none';
+      }
     }
 
     // Status updates
