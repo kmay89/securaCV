@@ -30,6 +30,11 @@
 #include <Update.h>
 #endif
 
+#if FEATURE_CSI
+#include "securacv_sensing.h"
+#include "securacv_csi.h"
+#endif
+
 // ════════════════════════════════════════════════════════════════════════════
 // GLOBAL INSTANCE
 // ════════════════════════════════════════════════════════════════════════════
@@ -541,6 +546,9 @@ static esp_err_t handle_peek_start(httpd_req_t* req);
 static esp_err_t handle_peek_stream(httpd_req_t* req);
 static esp_err_t handle_peek_stop(httpd_req_t* req);
 static esp_err_t handle_peek_status(httpd_req_t* req);
+#if FEATURE_CSI
+static esp_err_t handle_sensing(httpd_req_t* req);
+#endif
 #endif
 
 bool NetworkManager::startHttpServer() {
@@ -548,7 +556,7 @@ bool NetworkManager::startHttpServer() {
   config.server_port = 80;
   config.uri_match_fn = httpd_uri_match_wildcard;
   config.stack_size = 8192;
-  config.max_uri_handlers = 24;
+  config.max_uri_handlers = 25;  /* +1 for /api/sensing when FEATURE_CSI=1 */
 
   if (httpd_start(&m_http_server, &config) != ESP_OK) {
     log_health(LOG_LEVEL_ERROR, LOG_CAT_NETWORK, "HTTP server start failed", nullptr);
@@ -637,6 +645,11 @@ void NetworkManager::registerHttpHandlers() {
 
   httpd_uri_t peek_status = { .uri = "/api/peek/status", .method = HTTP_GET, .handler = handle_peek_status };
   httpd_register_uri_handler(m_http_server, &peek_status);
+  #endif
+
+  #if FEATURE_CSI
+  httpd_uri_t sensing_ep = { .uri = "/api/sensing", .method = HTTP_GET, .handler = handle_sensing };
+  httpd_register_uri_handler(m_http_server, &sensing_ep);
   #endif
 }
 
@@ -1310,6 +1323,71 @@ static esp_err_t handle_mqtt_config(httpd_req_t* req) {
   return http_send_json(req, response.c_str());
 }
 #endif // FEATURE_HA_MQTT
+
+// ════════════════════════════════════════════════════════════════════════════
+// CSI SENSING ENDPOINT — privacy-safe scalars + bar-graph arrays
+// ════════════════════════════════════════════════════════════════════════════
+
+#if FEATURE_CSI
+// GET /api/sensing — returns the live aggregated sensing snapshot for the
+// dashboard's Sensing panel. No raw subcarrier samples, no MAC/BSSID, no
+// per-frame timestamps. The 32-byte feature vector enters the sensing
+// aggregator from the CSI HAL callback; this endpoint serializes the
+// distilled state only (motion / breathing / activity_label + the small
+// bar-graph arrays already int8-bucketed by the feature extractor).
+static esp_err_t handle_sensing(httpd_req_t* req) {
+  if (!rate_limit_check(req)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  sensing_state_t s;
+  sensing_snapshot(&s);
+
+  csi_stats_t stats = {0};
+  csi_get_stats(&stats);
+
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["enabled"] = csi_is_running();
+
+  // Headline scalars for the Apple-style status card.
+  doc["motion"]    = s.motion_score;
+  doc["breathing"] = s.breathing_score;
+  doc["label"]     = sensing_label_name(s.activity_label);
+
+  doc["rssi_dbm"] = (int)s.rssi_dbm;
+  doc["rssi_std"] = (int)s.rssi_std;
+  doc["frames_in_window"] = s.frames_in_window;
+  doc["dropped_estimate"] = s.dropped_estimate;
+  doc["channel"]         = s.channel;
+  doc["bandwidth_code"]  = s.bandwidth_code;
+  doc["time_bucket"]     = s.time_bucket;
+  doc["windows_seen"]    = s.windows_seen;
+  doc["last_window_age_ms"] =
+      s.last_window_ms == 0 ? -1L : (long)(millis() - s.last_window_ms);
+
+  // Bar-graph arrays — int8 buckets straight from the feature vector.
+  JsonArray amp = doc["amp_bands"].to<JsonArray>();
+  for (int i = 0; i < 8; i++) amp.add((int)s.amp_bands[i]);
+  JsonArray dop = doc["doppler"].to<JsonArray>();
+  for (int i = 0; i < 4; i++) dop.add((int)s.doppler[i]);
+  JsonArray br = doc["breathing_bins"].to<JsonArray>();
+  for (int i = 0; i < 8; i++) br.add((int)s.breathing_bins[i]);
+
+  // Driver-level counters for the diagnostics tile.
+  JsonObject st = doc["stats"].to<JsonObject>();
+  st["frames_received"]     = stats.frames_received;
+  st["frames_dropped_rssi"] = stats.frames_dropped_rssi;
+  st["frames_dropped_rate"] = stats.frames_dropped_rate;
+  st["frames_dropped_full"] = stats.frames_dropped_full;
+  st["windows_emitted"]     = stats.windows_emitted;
+  st["windows_degraded"]    = stats.windows_degraded;
+
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+#endif // FEATURE_CSI
 
 // ════════════════════════════════════════════════════════════════════════════
 // CONVENIENCE FUNCTIONS

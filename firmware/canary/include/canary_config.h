@@ -72,6 +72,9 @@
 #ifndef FEATURE_GNSS
   #define FEATURE_GNSS          1   // GPS/GNSS telemetry (enabled by default)
 #endif
+#ifndef FEATURE_CSI
+  #define FEATURE_CSI           0   // WiFi CSI motion / breathing / micro-activity sensing
+#endif
 
 // ════════════════════════════════════════════════════════════════
 // DEBUG FLAG DEFAULTS

@@ -459,6 +459,88 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     /* Panels */
     .panel { display: none; }
     .panel.active { display: block; }
+
+    /* ── Sensing panel — gauges, pill, bar graphs, arrows ─────────── */
+    .sensing-pill {
+      display: inline-block;
+      padding: 8px 22px;
+      border-radius: 999px;
+      font-weight: 600;
+      font-size: 1rem;
+      letter-spacing: 0.5px;
+      text-transform: capitalize;
+    }
+    .sensing-pill--offline  { background: rgba(120,120,128,0.18); color: #98989d; }
+    .sensing-pill--quiet    { background: rgba(120,120,128,0.18); color: #98989d; }
+    .sensing-pill--presence { background: rgba(52,199,89,0.18);  color: #34c759; }
+    .sensing-pill--motion   { background: rgba(90,200,250,0.18); color: #5ac8fa; }
+    .sensing-pill--active   { background: rgba(255,159,10,0.20); color: #ff9f0a; }
+    .sensing-explain {
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 0.92rem;
+      max-width: 520px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+    .sensing-gauges {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(140px, 1fr));
+      gap: 16px;
+      padding: 10px 4px 4px;
+    }
+    @media (max-width: 520px) {
+      .sensing-gauges { grid-template-columns: 1fr; }
+    }
+    .sensing-gauge {
+      text-align: center;
+      padding: 12px 8px;
+      background: rgba(255,255,255,0.02);
+      border-radius: 12px;
+    }
+    .sensing-gauge__title {
+      font-size: 0.78rem;
+      color: var(--muted);
+      letter-spacing: 0.6px;
+      text-transform: uppercase;
+      margin-bottom: 6px;
+    }
+    .sensing-gauge__svg { width: 100%; height: 64px; }
+    .sensing-gauge__num { font-size: 1.4rem; font-weight: 600; margin-top: -8px; }
+    .sensing-gauge__unit { font-size: 0.72rem; color: var(--muted); margin-left: 3px; }
+    .sensing-bars {
+      display: flex;
+      align-items: flex-end;
+      gap: 6px;
+      height: 110px;
+      padding: 6px 4px 4px;
+    }
+    .sensing-bars--narrow { height: 80px; }
+    .sensing-bar {
+      flex: 1 1 0;
+      background: linear-gradient(180deg, #5ac8fa 0%, #0a84ff 100%);
+      border-radius: 4px 4px 0 0;
+      min-height: 3px;
+      transition: height 200ms ease-out;
+    }
+    .sensing-bars--narrow .sensing-bar {
+      background: linear-gradient(180deg, #34c759 0%, #30b350 100%);
+    }
+    .sensing-arrows {
+      display: flex;
+      justify-content: space-around;
+      gap: 6px;
+      padding: 8px 0 4px;
+      font-size: 1.6rem;
+      color: var(--muted);
+    }
+    .sensing-arrow {
+      flex: 1 1 0;
+      text-align: center;
+      transition: color 200ms, transform 200ms;
+    }
+    .sensing-arrow--pos { color: #5ac8fa; transform: translateY(-2px); }
+    .sensing-arrow--neg { color: #ff9f0a; transform: translateY(-2px) rotate(180deg); }
     
     /* Empty state */
     .empty-state {
@@ -630,6 +712,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
   <div class="container">
     <nav>
       <button class="nav-btn active" data-panel="status">Status</button>
+      <button class="nav-btn" data-panel="sensing">Sensing</button>
       <button class="nav-btn" data-panel="peek">Peek</button>
       <button class="nav-btn" data-panel="opera">
         Opera<span class="count" id="operaAlertCount" style="display:none">0</span>
@@ -754,6 +837,111 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
             <div class="gps-label">HDOP</div>
             <div class="gps-value" id="gpsHdop">--</div>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sensing Panel — live CSI motion / breathing / activity visualization -->
+    <div class="panel" id="panel-sensing">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">What this room feels like</div>
+            <div class="card-subtitle">
+              Privacy-safe RF sensing — no cameras, no microphones, no identifiers.
+              The radio sees the shape of motion in the room.
+            </div>
+          </div>
+          <button class="btn btn-ghost btn-sm" onclick="refreshSensing()">↻ Refresh</button>
+        </div>
+
+        <!-- Hero status pill -->
+        <div id="sensingHero" style="text-align:center; padding:24px 16px;">
+          <div id="sensingPill" class="sensing-pill sensing-pill--offline">Offline</div>
+          <div id="sensingExplain" class="sensing-explain">
+            Waiting for the WiFi radio to come up…
+          </div>
+        </div>
+
+        <!-- Three radial gauges -->
+        <div class="sensing-gauges">
+          <div class="sensing-gauge">
+            <div class="sensing-gauge__title">Motion</div>
+            <svg viewBox="0 0 100 60" class="sensing-gauge__svg" aria-hidden="true">
+              <path d="M10,55 A40,40 0 0 1 90,55" stroke="rgba(255,255,255,0.08)" stroke-width="8" fill="none" stroke-linecap="round"/>
+              <path id="motionArc" d="M10,55 A40,40 0 0 1 90,55" stroke="#5ac8fa" stroke-width="8" fill="none" stroke-linecap="round" stroke-dasharray="0 200"/>
+            </svg>
+            <div class="sensing-gauge__num"><span id="motionVal">0</span><span class="sensing-gauge__unit">%</span></div>
+          </div>
+          <div class="sensing-gauge">
+            <div class="sensing-gauge__title">Breathing-band</div>
+            <svg viewBox="0 0 100 60" class="sensing-gauge__svg" aria-hidden="true">
+              <path d="M10,55 A40,40 0 0 1 90,55" stroke="rgba(255,255,255,0.08)" stroke-width="8" fill="none" stroke-linecap="round"/>
+              <path id="breathArc" d="M10,55 A40,40 0 0 1 90,55" stroke="#34c759" stroke-width="8" fill="none" stroke-linecap="round" stroke-dasharray="0 200"/>
+            </svg>
+            <div class="sensing-gauge__num"><span id="breathVal">0</span><span class="sensing-gauge__unit">%</span></div>
+          </div>
+          <div class="sensing-gauge">
+            <div class="sensing-gauge__title">Signal</div>
+            <svg viewBox="0 0 100 60" class="sensing-gauge__svg" aria-hidden="true">
+              <path d="M10,55 A40,40 0 0 1 90,55" stroke="rgba(255,255,255,0.08)" stroke-width="8" fill="none" stroke-linecap="round"/>
+              <path id="rssiArc" d="M10,55 A40,40 0 0 1 90,55" stroke="#ff9f0a" stroke-width="8" fill="none" stroke-linecap="round" stroke-dasharray="0 200"/>
+            </svg>
+            <div class="sensing-gauge__num"><span id="rssiVal">--</span><span class="sensing-gauge__unit">dBm</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Amplitude band bars + Doppler arrows -->
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Subcarrier activity</div>
+            <div class="card-subtitle">
+              Eight frequency bands. Tall bars = lots of variance = something
+              moving. Direction arrows show whether the radio sees objects
+              approaching or receding.
+            </div>
+          </div>
+        </div>
+        <div class="sensing-bars" id="ampBars" role="img" aria-label="Eight amplitude variance bands"></div>
+        <div class="sensing-arrows" id="dopArrows" role="img" aria-label="Four directional Doppler bands"></div>
+      </div>
+
+      <!-- Breathing-band spectrum -->
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">0.1–0.5 Hz spectrum</div>
+            <div class="card-subtitle">
+              The frequency range a calmly breathing person sits in. A clear
+              peak in one of these bins means someone is in the room and at
+              rest — not necessarily who.
+            </div>
+          </div>
+        </div>
+        <div class="sensing-bars sensing-bars--narrow" id="breathBars" role="img" aria-label="Eight breathing-band Goertzel bins"></div>
+      </div>
+
+      <!-- Diagnostics -->
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Driver health</div>
+            <div class="card-subtitle">For your installer / Home Assistant</div>
+          </div>
+        </div>
+        <div class="stats-grid">
+          <div class="stat-item"><div class="stat-label">Frames in window</div><div class="stat-value" id="snFramesWin">0</div></div>
+          <div class="stat-item"><div class="stat-label">Dropped est.</div><div class="stat-value" id="snDropped">0</div></div>
+          <div class="stat-item"><div class="stat-label">Channel</div><div class="stat-value" id="snChan">--</div></div>
+          <div class="stat-item"><div class="stat-label">Bandwidth</div><div class="stat-value" id="snBw">--</div></div>
+          <div class="stat-item"><div class="stat-label">Windows seen</div><div class="stat-value" id="snWindows">0</div></div>
+          <div class="stat-item"><div class="stat-label">Last window age</div><div class="stat-value" id="snAge">--</div></div>
+          <div class="stat-item"><div class="stat-label">Frames received</div><div class="stat-value" id="snRx">0</div></div>
+          <div class="stat-item"><div class="stat-label">Drop: rate-limit</div><div class="stat-value" id="snDropRate">0</div></div>
+          <div class="stat-item"><div class="stat-label">Drop: RSSI floor</div><div class="stat-value" id="snDropRssi">0</div></div>
+          <div class="stat-item"><div class="stat-label">Drop: ring full</div><div class="stat-value" id="snDropFull">0</div></div>
         </div>
       </div>
     </div>
@@ -1652,6 +1840,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       else if (panel === 'opera') refreshOpera();
       else if (panel === 'community') refreshChirpStatus();
       else if (panel === 'bluetooth') { refreshBtStatus(); loadBtPairedDevices(); }
+      else if (panel === 'sensing') refreshSensing();
 
       // Stop peek stream when leaving peek panel
       if (panel !== 'peek' && peekActive) {
@@ -1878,6 +2067,135 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       } else {
         alert('Failed to set resolution: ' + (data.error || 'Unknown error'));
       }
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // Sensing — live CSI motion / breathing / activity visualization
+    // ════════════════════════════════════════════════════════════════
+    function buildSensingBars() {
+      const amp = document.getElementById('ampBars');
+      if (amp && !amp.dataset.built) {
+        for (let i = 0; i < 8; i++) {
+          const d = document.createElement('div');
+          d.className = 'sensing-bar';
+          d.style.height = '3px';
+          amp.appendChild(d);
+        }
+        amp.dataset.built = '1';
+      }
+      const br = document.getElementById('breathBars');
+      if (br && !br.dataset.built) {
+        for (let i = 0; i < 8; i++) {
+          const d = document.createElement('div');
+          d.className = 'sensing-bar';
+          d.style.height = '3px';
+          br.appendChild(d);
+        }
+        br.dataset.built = '1';
+      }
+      const arr = document.getElementById('dopArrows');
+      if (arr && !arr.dataset.built) {
+        for (let i = 0; i < 4; i++) {
+          const d = document.createElement('div');
+          d.className = 'sensing-arrow';
+          d.textContent = '·';
+          arr.appendChild(d);
+        }
+        arr.dataset.built = '1';
+      }
+    }
+
+    function setArc(elId, pct) {
+      // The SVG arc path is 125.66 units long (40-radius hemisphere); we
+      // animate stroke-dasharray to fill 0..pct of it.
+      const e = document.getElementById(elId);
+      if (!e) return;
+      const len = 125.66;
+      const fill = Math.max(0, Math.min(100, pct)) / 100 * len;
+      e.setAttribute('stroke-dasharray', fill + ' 200');
+    }
+
+    const SENSING_EXPLAIN = {
+      offline:  'Sensing is starting up. The radio needs WiFi to be running before CSI frames arrive.',
+      quiet:    'The room looks empty or perfectly still. The radio sees no movement larger than a still chair.',
+      presence: 'Steady micro-motion — the kind of signal a person sitting and breathing makes. No camera, no microphone.',
+      motion:   'Clear room-scale movement. Someone is walking or moving objects.',
+      active:   'Sustained, vigorous activity. Multiple people, or one person moving fast.'
+    };
+
+    async function refreshSensing() {
+      buildSensingBars();
+      const data = await api('/api/sensing');
+      if (!data || !data.ok) {
+        // Endpoint disabled (build without FEATURE_CSI) or offline.
+        document.getElementById('sensingPill').className = 'sensing-pill sensing-pill--offline';
+        document.getElementById('sensingPill').textContent = 'Unavailable';
+        document.getElementById('sensingExplain').textContent =
+          'This build was compiled without WiFi-CSI sensing.';
+        return;
+      }
+
+      // Hero pill
+      const label = data.label || 'offline';
+      const pill = document.getElementById('sensingPill');
+      pill.className = 'sensing-pill sensing-pill--' + label;
+      pill.textContent = label;
+      document.getElementById('sensingExplain').textContent =
+        SENSING_EXPLAIN[label] || SENSING_EXPLAIN.offline;
+
+      // Gauges
+      const motion = data.motion | 0;
+      const breath = data.breathing | 0;
+      document.getElementById('motionVal').textContent = motion;
+      document.getElementById('breathVal').textContent = breath;
+      setArc('motionArc', motion);
+      setArc('breathArc', breath);
+
+      const rssi = data.rssi_dbm;
+      document.getElementById('rssiVal').textContent =
+        (rssi === undefined || rssi === 0) ? '--' : rssi;
+      // RSSI gauge: -90 dBm → 0%, -30 dBm → 100%
+      const rssiPct = (rssi === undefined) ? 0 : Math.max(0, Math.min(100, (rssi + 90) * 100 / 60));
+      setArc('rssiArc', rssiPct);
+
+      // Bar graphs
+      const ampMax = 100;  // amp_bands are int8 0..127 in our scaling; clamp 100
+      const ampEls = document.querySelectorAll('#ampBars .sensing-bar');
+      (data.amp_bands || []).forEach((v, i) => {
+        if (!ampEls[i]) return;
+        const h = Math.max(3, Math.min(100, Math.abs(v) * 100 / ampMax));
+        ampEls[i].style.height = h + '%';
+      });
+      const brEls = document.querySelectorAll('#breathBars .sensing-bar');
+      (data.breathing_bins || []).forEach((v, i) => {
+        if (!brEls[i]) return;
+        const h = Math.max(3, Math.min(100, Math.abs(v) * 100 / 100));
+        brEls[i].style.height = h + '%';
+      });
+
+      // Doppler arrows — sign-aware; ↑ for positive, ↓ for negative, · for ~0
+      const arrowEls = document.querySelectorAll('#dopArrows .sensing-arrow');
+      (data.doppler || []).forEach((v, i) => {
+        if (!arrowEls[i]) return;
+        if (v > 8)        { arrowEls[i].textContent = '↑'; arrowEls[i].className = 'sensing-arrow sensing-arrow--pos'; }
+        else if (v < -8)  { arrowEls[i].textContent = '↑'; arrowEls[i].className = 'sensing-arrow sensing-arrow--neg'; }
+        else              { arrowEls[i].textContent = '·'; arrowEls[i].className = 'sensing-arrow'; }
+      });
+
+      // Diagnostics
+      const set = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
+      set('snFramesWin', data.frames_in_window | 0);
+      set('snDropped',   data.dropped_estimate | 0);
+      set('snChan',      data.channel || '--');
+      set('snBw',        (data.bandwidth_code === 1) ? 'HT40' : 'HT20');
+      set('snWindows',   data.windows_seen | 0);
+      const age = data.last_window_age_ms;
+      set('snAge', (age === undefined || age < 0) ? '--' : (age + ' ms'));
+      const st = data.stats || {};
+      set('snRx',       st.frames_received || 0);
+      set('snDropRate', st.frames_dropped_rate || 0);
+      set('snDropRssi', st.frames_dropped_rssi || 0);
+      set('snDropFull', st.frames_dropped_full || 0);
     }
 
     // Status updates
@@ -3292,6 +3610,11 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       else if (currentPanel === 'community') refreshChirpStatus();
       else if (currentPanel === 'bluetooth') refreshBtStatus();
     }, 5000);
+    /* Sensing panel polls at 1 Hz to match the CSI window cadence so the
+     * gauges feel live without flooding the device with HTTP. */
+    setInterval(() => {
+      if (currentPanel === 'sensing') refreshSensing();
+    }, 1000);
   </script>
 </body>
 </html>

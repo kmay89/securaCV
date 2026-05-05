@@ -1,0 +1,19 @@
+{
+    "name": "securacv_sensing",
+    "version": "0.1.0",
+    "description": "SecuraCV Sensing State — tiny in-process aggregator that turns raw CSI features into plain-English scalars (motion / breathing / activity) for the web UI and HTTP API. Privacy-safe: the 32-byte feature vector is the only input.",
+    "keywords": ["securacv", "sensing", "presence", "csi", "aggregator"],
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/kmay89/securaCV.git"
+    },
+    "authors": [
+        {
+            "name": "Karl May",
+            "email": "karl@errerlabs.com"
+        }
+    ],
+    "license": "Apache-2.0",
+    "frameworks": "arduino",
+    "platforms": "espressif32"
+}
