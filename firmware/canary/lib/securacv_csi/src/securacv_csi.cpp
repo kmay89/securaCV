@@ -65,7 +65,6 @@ static void secure_wipe(void* ptr, size_t len) {
  * ────────────────────────────────────────────────────────────────────────── */
 
 struct CsiSlot {
-  uint32_t seq_in_window;
   int8_t   rssi_dbm;
   uint8_t  bandwidth_code;          /* 0 = HT20, 1 = HT40 */
   uint8_t  channel;
@@ -343,8 +342,15 @@ namespace features {
     out->v[i++] = rssi_std;                                            /* 21 */
     out->v[i++] = s_rssi_max;                                          /* 22 */
     out->v[i++] = s_rssi_min;                                          /* 23 */
+    /* Per-window dropped-frame estimate: expected rate × window − actual. */
+    const int32_t expected_frames =
+        (int32_t)s_cfg.max_frame_rate_hz * (int32_t)CSI_WINDOW_MS / 1000;
+    const int32_t dropped_estimate =
+        expected_frames > (int32_t)s_frame_count
+            ? expected_frames - (int32_t)s_frame_count : 0;
+
     out->v[i++] = clip_i8((int32_t)s_frame_count);                     /* 24 */
-    out->v[i++] = 0;                                                   /* 25 reserved */
+    out->v[i++] = clip_i8(dropped_estimate);                           /* 25 */
     out->v[i++] = clip_i8((int32_t)s_last_channel);                    /* 26 */
     out->v[i++] = clip_i8((int32_t)s_last_bw);                         /* 27 */
     /* v[28..31] remain zero — reserved. */
@@ -352,7 +358,12 @@ namespace features {
     out->frames_in_window = (uint16_t)(frames_in_window > 0xFFFF
                                        ? 0xFFFF : frames_in_window);
 
-    /* 10-minute time bucket (0..143), matches rf_presence. */
+    /* 10-minute daily time bucket (0..143), per spec/canary_free_signals_v0.md
+     * Invariant C and rf_presence's bucket convention. NOT the same width as
+     * securacv_witness::time_bucket() (5 s, monotonic) — that helper is for
+     * record sequencing, not for the daily-cycle privacy bucket the witness
+     * record contract uses. When wall-clock time becomes available (GPS UTC),
+     * a future change can replace millis() here without touching any caller. */
     const uint32_t now_ms = millis();
     out->time_bucket = (uint8_t)((now_ms / (10UL * 60UL * 1000UL)) % 144);
 
@@ -407,7 +418,6 @@ static void csi_rx_cb(void* /*ctx*/, wifi_csi_info_t* info) {
   /* Wipe destination first so an early return can't leak prior frame bytes. */
   secure_wipe(slot->iq, sizeof(slot->iq));
   slot->subcarrier_cnt = 0;
-  slot->seq_in_window = 0;
 
   extract_scrubbed_metadata(info, slot);
 
@@ -441,6 +451,17 @@ bool init(const csi_config_t& cfg) {
   s_initialized = true;
   log_health(LOG_LEVEL_INFO, LOG_CAT_SENSOR,
              "CSI HAL initialized", "scrub barrier active");
+
+  /* Surface the channel/bandwidth_mhz advisory limitation explicitly so a
+   * caller who set them doesn't silently get the AP/STA defaults. The
+   * actual channel/bw used appears in feature-vector slots v[26]/v[27]. */
+  if (s_cfg.channel != 0) {
+    char detail[40];
+    snprintf(detail, sizeof(detail),
+             "requested ch=%u (advisory only)", (unsigned)s_cfg.channel);
+    log_health(LOG_LEVEL_NOTICE, LOG_CAT_SENSOR,
+               "CSI follows AP/STA channel; request ignored", detail);
+  }
   return true;
 }
 
@@ -544,8 +565,12 @@ void stop() {
   s_running = false;
 
   /* Drain ring + scrub extractor's static history so no residual CSI-derived
-   * state leaks into a subsequent run. */
-  s_head.store(s_tail.load());
+   * state leaks into a subsequent run. We're the consumer here, so we advance
+   * tail to head — never the other way round (that would be the consumer
+   * writing the producer's index, which races even with relaxed ordering).
+   * After esp_wifi_set_csi(false) the producer task can no longer enqueue,
+   * so this is well-defined. */
+  s_tail.store(s_head.load(std::memory_order_acquire), std::memory_order_release);
   secure_wipe(s_ring, sizeof(s_ring));
   features::reset();
 }
@@ -586,7 +611,6 @@ int process() {
     if (tail == head) break;
 
     CsiSlot* slot = &s_ring[tail % RING_CAP];
-    slot->seq_in_window = s_window_frames;
 
     features::accumulate(slot->iq, slot->subcarrier_cnt,
                          slot->rssi_dbm, slot->channel,
@@ -627,8 +651,15 @@ int process() {
  * ────────────────────────────────────────────────────────────────────────── */
 
 uint32_t get_caps() {
-  /* ESP32-S3 supports HT20/HT40 with phase. */
-  return CSI_CAP_HT20 | CSI_CAP_HT40 | CSI_CAP_PHASE;
+  /* All ESP32 family CSI backends support HT20 with phase. HT40 is only
+   * advertised on targets where the driver actually supports it (S3, S2),
+   * so downstream fusion code doesn't take HT40 paths on a backend that
+   * silently downgraded to 20 MHz. */
+  uint32_t caps = CSI_CAP_HT20 | CSI_CAP_PHASE;
+#if defined(CONFIG_IDF_TARGET_ESP32S3) || defined(CONFIG_IDF_TARGET_ESP32S2)
+  caps |= CSI_CAP_HT40;
+#endif
+  return caps;
 }
 
 bool get_stats(csi_stats_t* out) {
@@ -701,10 +732,12 @@ extern "C" {
 bool csi_init(const csi_config_t* config) {
   csi_config_t cfg = CSI_CONFIG_DEFAULT;
   if (config) {
-    cfg.channel = config->channel;
-    cfg.bandwidth_mhz = config->bandwidth_mhz;
+    /* Copy every field verbatim. 0 is a valid setting for rssi_floor_dbm
+     * (a caller that wants the default uses CSI_CONFIG_DEFAULT, not zero). */
+    cfg.channel           = config->channel;
+    cfg.bandwidth_mhz     = config->bandwidth_mhz;
     cfg.max_frame_rate_hz = config->max_frame_rate_hz;
-    if (config->rssi_floor_dbm != 0) cfg.rssi_floor_dbm = config->rssi_floor_dbm;
+    cfg.rssi_floor_dbm    = config->rssi_floor_dbm;
   }
   return csi::init(cfg);
 }

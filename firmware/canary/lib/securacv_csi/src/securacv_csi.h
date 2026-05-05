@@ -69,10 +69,17 @@ static_assert(sizeof(((csi_features_t*)0)->v) == CSI_FEATURE_DIM,
 #endif
 
 typedef struct {
+  /* CSI piggy-backs on the WiFi driver's existing AP/STA mode, so channel
+   * and bandwidth are determined by that mode — these fields are advisory
+   * only and are NOT pushed into esp_wifi_set_channel() (doing so would
+   * fight the AP/STA bring-up and stall associated clients). They are
+   * recorded for diagnostics; the actual values used appear in the
+   * feature vector at v[26] (channel) and v[27] (bandwidth_code). A
+   * non-zero `channel` request emits a one-shot notice to health_log. */
   uint8_t  channel;            /* 0 = follow current STA/AP channel */
-  uint8_t  bandwidth_mhz;      /* 20 or 40 */
+  uint8_t  bandwidth_mhz;      /* 20 or 40 — advisory only */
   uint16_t max_frame_rate_hz;  /* rate-limit; 0 = unlimited */
-  int8_t   rssi_floor_dbm;     /* drop frames below this; 0 = use default */
+  int8_t   rssi_floor_dbm;     /* drop frames with RSSI below this dBm */
 } csi_config_t;
 
 #define CSI_CONFIG_DEFAULT { \
