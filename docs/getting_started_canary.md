@@ -104,7 +104,42 @@ once your second device is paired.
 
 ---
 
-## 5 · What it never does
+## 5 · Listening for alarms
+
+Below the main sensing tiles you'll see a card titled **Acoustic alarms**.
+The Canary's microphone is *always* listening, but only for two
+specific patterns — the standard cadences every code-compliant smoke
+and CO alarm in your home already emits:
+
+| Cadence | Standard | What it sounds like |
+|---|---|---|
+| **T3** | NFPA 72 / ISO 8201 (smoke) | Three half-second beeps, half-second gaps, then 1.5 s silence — repeating. |
+| **T4** | UL 2034 (carbon monoxide) | Four short beeps, half-second silence, then five-second silence — repeating. |
+
+When the Canary recognises the pattern, the card turns red and the
+status pill reads **🔥 Smoke alarm pattern** or **⚠ CO alarm pattern**.
+That same event flows through the witness chain so a Home Assistant
+automation can react — for example, send everyone in the house a push
+notification *because* the kitchen Canary heard the upstairs smoke
+alarm before anyone in the basement noticed.
+
+What this card **does not** do:
+
+- It does not record audio. Ever. The microphone's output is reduced
+  to a single loudness number every 20 ms, then the sample buffer is
+  zeroed *in place* before the next 20 ms arrives.
+- It does not recognise voices, words, or specific sounds beyond the
+  two regulatory cadences. Speech is structurally impossible to
+  recover from a binary on/off envelope.
+- It does not phone home. The match is local.
+
+If your smoke / CO detector uses a non-standard cadence (rare, mostly
+older European models), the card will stay quiet — the Canary deliberately
+avoids fuzzy matching.
+
+---
+
+## 6 · What it never does
 
 Three things are **structurally impossible** with this device — not
 *hard*, not *configurable off*, but unable to:
@@ -188,6 +223,8 @@ for evidence, **export the chain before you factory-reset** —
 | Sensing pill stays **Offline** | This build was compiled without CSI; check **Settings → About → Build features** |
 | **Drop: rate-limit** climbing fast | Strong nearby 2.4 GHz interferer; move the Canary or switch your home Wi-Fi to channel 6 or 11 |
 | Gauges look noisy at low signal | Move the Canary closer to other Wi-Fi devices, or away from a metal wall behind it |
+| **Acoustic alarms** card says **Mic offline** | The PDM driver failed to start. Check serial output for an `Audio: I2S` error. Usually a hardware issue with the on-board mic. |
+| Smoke alarm beeping but no event fires | Most US/EU alarms use the standard T3 cadence; UK and some older alarms use T4. Check your alarm's manual for cadence type — only T3 (smoke) and T4 (CO) are matched today. |
 
 For anything else, **Settings → Diagnostics → Send to installer** packages
 the health log into a signed bundle you can share without leaking

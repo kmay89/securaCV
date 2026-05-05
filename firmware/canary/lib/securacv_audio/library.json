@@ -1,0 +1,19 @@
+{
+    "name": "securacv_audio",
+    "version": "0.1.0",
+    "description": "SecuraCV Audio — privacy-safe acoustic event detection. Brings up the on-board PDM microphone, computes a 50 Hz RMS envelope, and matches NFPA 72 / UL 2034 alarm cadences (T3 smoke, T4 CO). No audio frames ever leave the device — the only output that crosses the privacy barrier is {event_type, time_bucket, confidence}.",
+    "keywords": ["securacv", "audio", "pdm", "microphone", "alarm", "nfpa72", "t3", "t4", "co", "smoke"],
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/kmay89/securaCV.git"
+    },
+    "authors": [
+        {
+            "name": "Karl May",
+            "email": "karl@errerlabs.com"
+        }
+    ],
+    "license": "Apache-2.0",
+    "frameworks": "arduino",
+    "platforms": "espressif32"
+}

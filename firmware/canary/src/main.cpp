@@ -44,6 +44,16 @@
 #include "securacv_sensing.h"  /* tiny in-tree aggregator (lib/securacv_sensing) */
 #endif
 
+#if FEATURE_ACOUSTIC_EVENTS
+#include "securacv_audio.h"
+#ifndef FEATURE_CSI
+/* sensing_feed_audio_event lives in securacv_sensing; if CSI is off but
+ * acoustic is on, we still need the aggregator to surface events to the
+ * Sensing tab. */
+#include "securacv_sensing.h"
+#endif
+#endif
+
 // ════════════════════════════════════════════════════════════════════════════
 // GLOBALS
 // ════════════════════════════════════════════════════════════════════════════
@@ -260,6 +270,29 @@ void setup() {
   }
 #endif
 
+  // Initialize PDM acoustic event detection (T3 smoke / T4 CO cadences)
+#if FEATURE_ACOUSTIC_EVENTS
+  Serial.println("[..] Initializing PDM acoustic event detection...");
+#if !FEATURE_CSI
+  /* sensing_init() may not have been called above. Idempotent. */
+  sensing_init();
+#endif
+  audio_config_t audio_cfg = AUDIO_CONFIG_DEFAULT;
+  if (audio_init(&audio_cfg)) {
+    audio_set_event_callback([](const audio_event_t* evt) {
+      sensing_feed_audio_event(evt->event_type, evt->confidence,
+                               evt->cycle_count, evt->time_bucket);
+    });
+    if (audio_start()) {
+      Serial.println("[OK] Acoustic detector armed (T3 smoke / T4 CO)");
+    } else {
+      Serial.println("[WARN] Acoustic detector start failed");
+    }
+  } else {
+    Serial.println("[WARN] Acoustic detector init failed");
+  }
+#endif
+
   // Create boot attestation record
   Serial.println("[..] Creating boot attestation record...");
   uint8_t boot_payload[64];
@@ -364,6 +397,17 @@ void loop() {
   // as "quiet" instead of stale "active."
   csi::process();
   sensing_tick();
+#endif
+
+#if FEATURE_ACOUSTIC_EVENTS
+  // Pump audio: drain I2S DMA, compute RMS envelope, run cadence FSM,
+  // fire event callback into sensing_feed_audio_event() on T3/T4 match.
+  audio_process();
+#if !FEATURE_CSI
+  /* sensing_tick() ages out stale acoustic events too; if CSI is off
+   * we still need to call it. */
+  sensing_tick();
+#endif
 #endif
 
 #if FEATURE_HA_MQTT

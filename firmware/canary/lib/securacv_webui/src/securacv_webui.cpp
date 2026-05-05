@@ -923,6 +923,35 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         <div class="sensing-bars sensing-bars--narrow" id="breathBars" role="img" aria-label="Eight breathing-band Goertzel bins"></div>
       </div>
 
+      <!-- Acoustic events (T3 smoke / T4 CO cadence detection) -->
+      <div class="card" id="acousticCard" style="display:none;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Acoustic alarms</div>
+            <div class="card-subtitle">
+              The radio is silent here — this card listens for the standard
+              cadences every code-compliant smoke and CO alarm emits. No
+              audio ever leaves the device, only the pattern match.
+            </div>
+          </div>
+        </div>
+        <div id="acousticHero" style="text-align:center; padding:18px 16px;">
+          <div id="acousticPill" class="sensing-pill sensing-pill--quiet">No alarms</div>
+          <div id="acousticExplain" class="sensing-explain">
+            The PDM microphone is listening for NFPA 72 (smoke) and UL 2034
+            (CO) cadences. Nothing detected.
+          </div>
+        </div>
+        <div class="stats-grid">
+          <div class="stat-item"><div class="stat-label">T3 cycles seen</div><div class="stat-value" id="acT3">0</div></div>
+          <div class="stat-item"><div class="stat-label">T4 cycles seen</div><div class="stat-value" id="acT4">0</div></div>
+          <div class="stat-item"><div class="stat-label">Envelope frames</div><div class="stat-value" id="acFrames">0</div></div>
+          <div class="stat-item"><div class="stat-label">On-transitions</div><div class="stat-value" id="acOn">0</div></div>
+          <div class="stat-item"><div class="stat-label">Off-transitions</div><div class="stat-value" id="acOff">0</div></div>
+          <div class="stat-item"><div class="stat-label">I2S errors</div><div class="stat-value" id="acErr">0</div></div>
+        </div>
+      </div>
+
       <!-- Diagnostics -->
       <div class="card">
         <div class="card-header">
@@ -2196,6 +2225,48 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       set('snDropRate', st.frames_dropped_rate || 0);
       set('snDropRssi', st.frames_dropped_rssi || 0);
       set('snDropFull', st.frames_dropped_full || 0);
+
+      // ─── Acoustic alarms (T3 smoke / T4 CO) ──────────────────────────
+      // Card stays hidden if the firmware build doesn't include
+      // FEATURE_ACOUSTIC_EVENTS (the acoustic key won't be in the JSON).
+      const acCard = document.getElementById('acousticCard');
+      const ac = data.acoustic;
+      if (!ac) {
+        if (acCard) acCard.style.display = 'none';
+        return;
+      }
+      if (acCard) acCard.style.display = '';
+
+      const acPill = document.getElementById('acousticPill');
+      const acExp  = document.getElementById('acousticExplain');
+      const evtName = ac.last_event || 'none';
+      const age = ac.last_event_age_ms;
+
+      if (!ac.enabled) {
+        acPill.className = 'sensing-pill sensing-pill--offline';
+        acPill.textContent = 'Mic offline';
+        acExp.textContent = 'The PDM microphone failed to start. Check the device serial log.';
+      } else if (evtName === 'smoke_alarm_t3' && age >= 0 && age < 30000) {
+        acPill.className = 'sensing-pill sensing-pill--active';
+        acPill.textContent = '🔥 Smoke alarm pattern';
+        acExp.textContent = 'NFPA 72 / ISO 8201 cadence detected — your smoke alarm is sounding.';
+      } else if (evtName === 'co_alarm_t4' && age >= 0 && age < 30000) {
+        acPill.className = 'sensing-pill sensing-pill--active';
+        acPill.textContent = '⚠ CO alarm pattern';
+        acExp.textContent = 'UL 2034 cadence detected — your carbon monoxide alarm is sounding.';
+      } else {
+        acPill.className = 'sensing-pill sensing-pill--quiet';
+        acPill.textContent = 'No alarms';
+        acExp.textContent = 'Listening for the standard NFPA 72 (smoke) and UL 2034 (CO) cadences. Nothing detected.';
+      }
+
+      const ast = ac.stats || {};
+      set('acT3',     ast.t3_detected || 0);
+      set('acT4',     ast.t4_detected || 0);
+      set('acFrames', ast.frames_processed || 0);
+      set('acOn',     ast.on_transitions || 0);
+      set('acOff',    ast.off_transitions || 0);
+      set('acErr',    ast.i2s_read_errors || 0);
     }
 
     // Status updates

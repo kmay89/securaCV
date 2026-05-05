@@ -49,7 +49,8 @@ Single-row-per-capability summary across every non-archived variant. This is the
 | BLE discovery (Opera/Chirp/Nearby) | ❌ | ✅ | ❌ | ❌ | ➖ | ✅ |
 | RF presence detection | ❌ | ✅ | ⚠️ | ❌ | ➖ | ✅ |
 | WiFi CSI sensing (motion / breathing / micro-activity) | ✅ | ✅ | ❌ | ❌ | ➖ | ❌ |
-| Sensing dashboard panel (gauges + bar graphs) | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
+| Acoustic alarm-cadence detection (T3 smoke / T4 CO) | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
+| Sensing dashboard panel (gauges + bar graphs + acoustic) | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
 | Chirp channel (broadcast beacon) | ⚠️ | ✅ | ⚠️ | ❌ | ➖ | ✅ |
 | MQTT publish + HA Discovery | ✅ | ❌ | ❌ | ✅ | ➖ | ❌ |
 | OTA A/B with rollback safety | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ |
