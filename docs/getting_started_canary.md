@@ -296,11 +296,45 @@ your home network.
 
 ## Optional: Home Assistant
 
-If you have Home Assistant on your network, the Canary advertises a
-`_securacv._tcp` mDNS service. Add it via **Devices & Services → Add
-Integration → SecuraCV**. The Sensing entities — *motion*,
-*breathing*, *activity_label*, *channel*, *frames_in_window* — appear
-automatically. No cloud, no account.
+If you have Home Assistant on your network and have configured an
+MQTT broker (Mosquitto add-on works fine), point the Canary at it
+once and ~20 entities appear automatically under a single device
+named after your Canary's ID. **No cloud, no account, no integration
+to install** — Home Assistant's MQTT discovery does the work.
+
+The sensing entities you'll see:
+
+| Entity | Type | Source |
+|---|---|---|
+| **Activity** | sensor | quiet / presence / motion / active |
+| **Motion Score** | sensor (%) | CSI motion bands |
+| **Breathing Score** | sensor (%) | CSI 0.1–0.5 Hz Goertzel |
+| **Sensing RSSI** | sensor (dBm) | CSI window mean |
+| **Smoke Alarm Pattern** | binary_sensor (smoke) | T3 cadence detected |
+| **CO Alarm Pattern** | binary_sensor (CO) | T4 cadence detected |
+| **Silent Panic** | binary_sensor (safety) | Touch long-press |
+| **Enclosure Tamper** | binary_sensor (tamper) | Touch tamper OR thermal drift |
+| **Last IR Protocol** | sensor (diagnostic) | NEC / RC5 / Sony / none |
+| **Last IR Bucket** | sensor (diagnostic) | 0..15 per-session salted hash |
+| **Last Wake** | sensor (diagnostic) | cold_boot / timer / touch / ext0 / ext1 / ulp |
+
+Plus the existing 11 system entities (witness count, chain seq,
+uptime, free heap, GPS, online, etc.).
+
+Use these in HA automations:
+
+- *"If kitchen Canary's Smoke Alarm Pattern goes ON, push notification
+  to every phone in the house and flash bedroom lights."*
+- *"If any Canary's Enclosure Tamper goes ON, send Slack alert and
+  start camera recording on adjacent Frigate instance."*
+- *"If bedroom Canary's Activity stays at 'quiet' from 7 am to 11 am
+  on a weekday and the elder-care scenario is active, send a wellness
+  ping to the family group chat."*
+
+To configure: dashboard → **Settings → MQTT** → enter broker host
+and credentials. The Canary publishes one retained snapshot per
+30 s to `securacv/{device_id}/sensing` so HA gets the latest state
+even after a restart.
 
 ---
 
