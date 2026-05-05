@@ -281,7 +281,7 @@ void setup() {
   if (audio_init(&audio_cfg)) {
     audio_set_event_callback([](const audio_event_t* evt) {
       sensing_feed_audio_event(evt->event_type, evt->confidence,
-                               evt->cycle_count);
+                               evt->cycle_count, evt->time_bucket);
     });
     if (audio_start()) {
       Serial.println("[OK] Acoustic detector armed (T3 smoke / T4 CO)");

@@ -89,10 +89,14 @@ void sensing_feed_csi(const csi_features_t* features);
 
 /* Feed an acoustic event (T3 smoke / T4 CO from securacv_audio).
  * Decoupled from securacv_audio.h to keep the sensing lib a clean
- * leaf module — caller passes the three scalar fields directly. */
+ * leaf module — caller passes the scalar fields directly. The
+ * time_bucket should be the audio module's own bucket (0..143) so
+ * the snapshot's bucket field stays consistent regardless of which
+ * sensor produced the most recent update. */
 void sensing_feed_audio_event(uint8_t event_type,
                               uint8_t confidence,
-                              uint16_t cycle_count);
+                              uint16_t cycle_count,
+                              uint8_t time_bucket);
 
 /* Apply TTL decay; call from the main loop at 1–10 Hz. */
 void sensing_tick(void);

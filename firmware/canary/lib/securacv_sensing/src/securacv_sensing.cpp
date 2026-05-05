@@ -99,12 +99,18 @@ void sensing_init(void) {
 }
 
 void sensing_feed_audio_event(uint8_t event_type, uint8_t confidence,
-                              uint16_t cycle_count) {
+                              uint16_t cycle_count, uint8_t time_bucket) {
   if (!s_initialized) sensing_init();
   s_state.last_audio_event_type  = event_type;
   s_state.last_audio_event_conf  = confidence;
   s_state.last_audio_event_count = cycle_count;
   s_state.last_audio_event_ms    = millis();
+  /* Adopt the audio module's bucket so a CSI-disabled build still
+   * surfaces a coherent time_bucket on the Sensing snapshot. CSI's own
+   * feed_csi() call will overwrite this if both sensors are running —
+   * the buckets are computed from millis() in both modules with the
+   * same width, so they will always agree. */
+  s_state.time_bucket = time_bucket;
 }
 
 void sensing_feed_csi(const csi_features_t* features) {

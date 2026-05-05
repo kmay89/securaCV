@@ -37,7 +37,7 @@
 
 extern "C" {
   #include <esp_err.h>
-  #include <driver/i2s_pdm.h>
+  #include <driver/i2s.h>   /* legacy I2S API — works on ESP-IDF 4.4 (arduino-esp32 2.x) and 5.x */
 }
 
 namespace audio {
@@ -74,11 +74,18 @@ static bool s_initialized = false;
 static bool s_running = false;
 static audio_config_t s_cfg = AUDIO_CONFIG_DEFAULT;
 static audio_event_cb_t s_cb = nullptr;
-static i2s_chan_handle_t s_rx_chan = nullptr;
+static bool s_i2s_installed = false;
 
 /* Envelope hysteresis state machine. */
 static bool     s_envelope_high = false;
 static uint32_t s_state_entered_ms = 0;
+/* Set to true once a cadence cycle has been declared during the current OFF
+ * period; cleared on every new on/off transition. Without this flag, the
+ * matcher would re-fire continuously while the inter-cycle pause is held
+ * (the matcher is purely temporal and the same 6 transitions remain in
+ * the ring). Resetting s_state_entered_ms instead would corrupt the
+ * NEXT transition's prev_dur_ms — see review thread #351. */
+static bool     s_cycle_matched = false;
 
 /* Ring of recent on/off transitions (newest at head; wraps). Each entry
  * records the time we entered a state and the duration we stayed in the
@@ -108,18 +115,17 @@ static audio_stats_t s_stats;
  * RMS COMPUTATION  — int64 sum-of-squares; samples wiped after each call
  * ────────────────────────────────────────────────────────────────────────── */
 
-static uint16_t compute_rms(int16_t* samples, size_t n) {
+/* PRIVACY BARRIER: the caller wipes the FULL sample buffer (sizeof(samples),
+ * not n * 2) right after this returns. We don't wipe inside compute_rms
+ * because n may be smaller than the buffer when i2s_read returns short —
+ * a partial wipe would leave residual audio in the tail. */
+static uint16_t compute_rms(const int16_t* samples, size_t n) {
   if (n == 0) return 0;
   int64_t sumsq = 0;
   for (size_t i = 0; i < n; i++) {
     const int32_t s = samples[i];
     sumsq += (int64_t)s * s;
   }
-  /* PRIVACY BARRIER: scrub the sample buffer the moment we have the
-   * scalar. The caller may not need the buffer back, but we wipe in
-   * place defensively so a stale buffer can never leak audio. */
-  secure_wipe(samples, n * sizeof(int16_t));
-
   const uint32_t mean_sq = (uint32_t)(sumsq / (int64_t)n);
   uint32_t rms = isqrt_u32(mean_sq);
   if (rms > 0xFFFFu) rms = 0xFFFFu;
@@ -307,44 +313,59 @@ static void try_emit_event(uint8_t type, uint8_t conf, uint16_t cycle_count,
  * I2S BRING-UP / TEAR-DOWN
  * ────────────────────────────────────────────────────────────────────────── */
 
+/* Bring up I2S0 in PDM RX mode using the legacy driver. The XIAO ESP32-S3
+ * Sense's MSM261D mic uses two pins: WS=GPIO 42 (clock), DATA=GPIO 41.
+ * BCK is unused in PDM mode. */
 static bool i2s_open() {
-  i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
-  esp_err_t err = i2s_new_channel(&chan_cfg, nullptr, &s_rx_chan);
-  if (err != ESP_OK || s_rx_chan == nullptr) {
-    char d[32]; snprintf(d, sizeof(d), "new_channel err=0x%x", (unsigned)err);
-    log_health(LOG_LEVEL_WARNING, LOG_CAT_SENSOR,
-               "Audio: I2S channel alloc failed", d);
-    return false;
-  }
+  i2s_config_t cfg = {};
+  cfg.mode               = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX | I2S_MODE_PDM);
+  cfg.sample_rate        = s_cfg.sample_rate_hz;
+  cfg.bits_per_sample    = I2S_BITS_PER_SAMPLE_16BIT;
+  cfg.channel_format     = I2S_CHANNEL_FMT_ONLY_LEFT;
+  cfg.communication_format = I2S_COMM_FORMAT_STAND_I2S;
+  cfg.intr_alloc_flags   = ESP_INTR_FLAG_LEVEL1;
+  cfg.dma_buf_count      = 4;
+  cfg.dma_buf_len        = AUDIO_FRAME_SAMPLES;  /* one 20 ms frame per buffer */
+  cfg.use_apll           = false;
+  cfg.tx_desc_auto_clear = false;
+  cfg.fixed_mclk         = 0;
 
-  i2s_pdm_rx_config_t pdm_cfg = {
-    .clk_cfg  = I2S_PDM_RX_CLK_DEFAULT_CONFIG(s_cfg.sample_rate_hz),
-    .slot_cfg = I2S_PDM_RX_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT,
-                                               I2S_SLOT_MODE_MONO),
-    .gpio_cfg = {
-      .clk     = (gpio_num_t)MIC_PIN_CLK,
-      .din     = (gpio_num_t)MIC_PIN_DATA,
-      .invert_flags = { .clk_inv = false },
-    },
-  };
-
-  err = i2s_channel_init_pdm_rx_mode(s_rx_chan, &pdm_cfg);
+  esp_err_t err = i2s_driver_install(I2S_NUM_0, &cfg, 0, nullptr);
   if (err != ESP_OK) {
-    char d[32]; snprintf(d, sizeof(d), "init err=0x%x", (unsigned)err);
+    char d[32]; snprintf(d, sizeof(d), "install err=0x%x", (unsigned)err);
     log_health(LOG_LEVEL_WARNING, LOG_CAT_SENSOR,
-               "Audio: I2S PDM init failed", d);
-    i2s_del_channel(s_rx_chan);
-    s_rx_chan = nullptr;
+               "Audio: I2S driver install failed", d);
     return false;
   }
+  s_i2s_installed = true;
+
+  i2s_pin_config_t pins = {};
+  pins.bck_io_num   = I2S_PIN_NO_CHANGE;
+  pins.ws_io_num    = MIC_PIN_CLK;     /* PDM clock */
+  pins.data_out_num = I2S_PIN_NO_CHANGE;
+  pins.data_in_num  = MIC_PIN_DATA;    /* PDM data */
+  pins.mck_io_num   = I2S_PIN_NO_CHANGE;
+
+  err = i2s_set_pin(I2S_NUM_0, &pins);
+  if (err != ESP_OK) {
+    char d[32]; snprintf(d, sizeof(d), "set_pin err=0x%x", (unsigned)err);
+    log_health(LOG_LEVEL_WARNING, LOG_CAT_SENSOR,
+               "Audio: I2S pin config failed", d);
+    i2s_driver_uninstall(I2S_NUM_0);
+    s_i2s_installed = false;
+    return false;
+  }
+
+  /* Clear the DMA buffer so the first read after start doesn't observe
+   * stale RAM. zero_dma_buffer is well-defined post install+set_pin. */
+  i2s_zero_dma_buffer(I2S_NUM_0);
   return true;
 }
 
 static void i2s_close() {
-  if (s_rx_chan) {
-    i2s_channel_disable(s_rx_chan);
-    i2s_del_channel(s_rx_chan);
-    s_rx_chan = nullptr;
+  if (s_i2s_installed) {
+    i2s_driver_uninstall(I2S_NUM_0);
+    s_i2s_installed = false;
   }
 }
 
@@ -368,6 +389,7 @@ bool init(const audio_config_t& cfg) {
   s_trans_count = 0;
   s_envelope_high = false;
   s_state_entered_ms = 0;
+  s_cycle_matched = false;
   s_last_event_ms = 0;
   s_t3_cycles = 0;
   s_t4_cycles = 0;
@@ -395,19 +417,14 @@ bool start() {
   if (!s_initialized) return false;
   if (s_running)      return true;
 
+  /* Legacy I2S driver doesn't have a separate channel-enable step —
+   * i2s_driver_install() in i2s_open() leaves the channel in RX mode
+   * and DMA filling immediately. */
   if (!i2s_open()) return false;
-
-  esp_err_t err = i2s_channel_enable(s_rx_chan);
-  if (err != ESP_OK) {
-    char d[32]; snprintf(d, sizeof(d), "enable err=0x%x", (unsigned)err);
-    log_health(LOG_LEVEL_WARNING, LOG_CAT_SENSOR,
-               "Audio: I2S enable failed", d);
-    i2s_close();
-    return false;
-  }
 
   s_running = true;
   s_state_entered_ms = millis();
+  s_cycle_matched = false;
   return true;
 }
 
@@ -420,6 +437,7 @@ void stop() {
   s_trans_head = 0;
   s_trans_count = 0;
   s_envelope_high = false;
+  s_cycle_matched = false;
   s_t3_cycles = 0;
   s_t4_cycles = 0;
 }
@@ -433,9 +451,11 @@ void set_event_callback(audio_event_cb_t cb) { s_cb = cb; }
  * ────────────────────────────────────────────────────────────────────────── */
 
 int process() {
-  if (!s_running || s_rx_chan == nullptr) return 0;
+  if (!s_running || !s_i2s_installed) return 0;
 
-  /* Local sample buffer — scrubbed after each frame's RMS is computed. */
+  /* Local sample buffer; wiped (full size) after RMS is computed so no
+   * residual audio can persist on the stack regardless of how short the
+   * I2S read came back. */
   int16_t samples[AUDIO_FRAME_SAMPLES];
   size_t bytes_read = 0;
   int frames_this_call = 0;
@@ -444,20 +464,36 @@ int process() {
    * catch up without blocking. */
   for (int i = 0; i < 4; i++) {
     bytes_read = 0;
-    /* Non-blocking read: timeout 0 means "return what's already in DMA". */
-    esp_err_t err = i2s_channel_read(s_rx_chan, samples, sizeof(samples),
-                                      &bytes_read, 0);
-    if (err == ESP_ERR_TIMEOUT || bytes_read == 0) break;
+    /* Non-blocking read: timeout 0 returns immediately if no DMA buffer
+     * is ready. Legacy i2s_read returns ESP_OK with bytes_read==0 in
+     * that case (rather than ESP_ERR_TIMEOUT). */
+    esp_err_t err = i2s_read(I2S_NUM_0, samples, sizeof(samples),
+                             &bytes_read, 0);
+    if (err == ESP_ERR_TIMEOUT || bytes_read == 0) {
+      /* Always wipe the stack buffer even if the read produced nothing —
+       * a previous iteration may have left audio in it. */
+      secure_wipe(samples, sizeof(samples));
+      break;
+    }
     if (err != ESP_OK) {
       s_stats.i2s_read_errors++;
+      secure_wipe(samples, sizeof(samples));
       break;
     }
 
     const size_t n = bytes_read / sizeof(int16_t);
-    if (n == 0) break;
+    if (n == 0) {
+      secure_wipe(samples, sizeof(samples));
+      break;
+    }
 
-    /* compute_rms scrubs the buffer in place. */
     const uint16_t rms = compute_rms(samples, n);
+    /* PRIVACY BARRIER: wipe the FULL buffer (not just n samples) so any
+     * tail beyond the short read is also zeroed. compute_rms takes
+     * `const int16_t*` precisely so it can't accidentally leave the wipe
+     * to the callee. */
+    secure_wipe(samples, sizeof(samples));
+
     s_stats.frames_processed++;
     s_stats.envelope_samples++;
     frames_this_call++;
@@ -484,6 +520,9 @@ int process() {
                                 ? 0 : (now - s_state_entered_ms);
       push_transition(entered_on, now, prev_dur);
       s_state_entered_ms = now;
+      /* Every new transition rearms the cadence matcher — the matcher
+       * may now declare a fresh cycle. */
+      s_cycle_matched = false;
 
       /* Reset the cycle counter if we've been silent > 10 s — a fresh
        * cadence is starting. */
@@ -495,17 +534,23 @@ int process() {
 
     /* Cadence matching is timing-based and only meaningful right after
      * the long inter-cycle silence has elapsed. We check whenever we're
-     * currently OFF and the OFF state is at least 1 s old. */
-    if (!s_envelope_high && (now - s_state_entered_ms) >= 1000) {
+     * currently OFF, the OFF state is at least 1 s old, AND we haven't
+     * already declared a cycle for this OFF period (otherwise the same
+     * 6 transitions in the ring would re-trigger every iteration). */
+    if (!s_envelope_high && !s_cycle_matched &&
+        (now - s_state_entered_ms) >= 1000) {
       const int t3 = score_t3_cycle(now);
       if (t3 >= 50) {
         s_t3_cycles++;
         s_stats.t3_detected++;
         try_emit_event(AUDIO_EVENT_T3_SMOKE_ALARM, (uint8_t)t3,
                        s_t3_cycles, now);
-        /* Don't immediately re-fire on the same transitions: bump the
-         * head pointer so the matcher can't see them again. */
-        s_state_entered_ms = now;  /* refresh OFF clock */
+        /* Block re-firing on the same set of transitions until a new
+         * on/off transition arrives. We deliberately do NOT touch
+         * s_state_entered_ms — that would corrupt the next transition's
+         * prev_dur_ms and cause the next cycle's beep-1 timing to
+         * misfit. */
+        s_cycle_matched = true;
       } else {
         const int t4 = score_t4_cycle(now);
         if (t4 >= 50) {
@@ -513,7 +558,7 @@ int process() {
           s_stats.t4_detected++;
           try_emit_event(AUDIO_EVENT_T4_CO_ALARM, (uint8_t)t4,
                          s_t4_cycles, now);
-          s_state_entered_ms = now;
+          s_cycle_matched = true;
         }
       }
     }
