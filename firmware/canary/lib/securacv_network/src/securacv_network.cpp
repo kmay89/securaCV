@@ -30,7 +30,7 @@
 #include <Update.h>
 #endif
 
-#if FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS || FEATURE_TOUCH || FEATURE_TOUCH
+#if FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS || FEATURE_TOUCH || FEATURE_IR_RMT || FEATURE_TEMP_TAMPER || FEATURE_TOUCH
 #include "securacv_sensing.h"
 #endif
 #if FEATURE_CSI
@@ -42,9 +42,15 @@
 #if FEATURE_TOUCH
 #include "securacv_touch.h"
 #endif
+#if FEATURE_IR_RMT
+#include "securacv_ir.h"
+#endif
+#if FEATURE_TEMP_TAMPER
+#include "securacv_envsens.h"
+#endif
 /* Lowpower HAL is always compiled when any sensing is on, so the
  * Sensing endpoint can surface the wake reason and capability bits. */
-#if FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS || FEATURE_TOUCH || FEATURE_TOUCH
+#if FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS || FEATURE_TOUCH || FEATURE_IR_RMT || FEATURE_TEMP_TAMPER || FEATURE_TOUCH
 #include "securacv_lowpower.h"
 #endif
 
@@ -559,7 +565,7 @@ static esp_err_t handle_peek_start(httpd_req_t* req);
 static esp_err_t handle_peek_stream(httpd_req_t* req);
 static esp_err_t handle_peek_stop(httpd_req_t* req);
 static esp_err_t handle_peek_status(httpd_req_t* req);
-#if FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS || FEATURE_TOUCH
+#if FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS || FEATURE_TOUCH || FEATURE_IR_RMT || FEATURE_TEMP_TAMPER
 static esp_err_t handle_sensing(httpd_req_t* req);
 #endif
 #endif
@@ -660,7 +666,7 @@ void NetworkManager::registerHttpHandlers() {
   httpd_register_uri_handler(m_http_server, &peek_status);
   #endif
 
-  #if FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS || FEATURE_TOUCH
+  #if FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS || FEATURE_TOUCH || FEATURE_IR_RMT || FEATURE_TEMP_TAMPER
   httpd_uri_t sensing_ep = { .uri = "/api/sensing", .method = HTTP_GET, .handler = handle_sensing };
   httpd_register_uri_handler(m_http_server, &sensing_ep);
   #endif
@@ -1341,7 +1347,7 @@ static esp_err_t handle_mqtt_config(httpd_req_t* req) {
 // CSI SENSING ENDPOINT — privacy-safe scalars + bar-graph arrays
 // ════════════════════════════════════════════════════════════════════════════
 
-#if FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS || FEATURE_TOUCH
+#if FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS || FEATURE_TOUCH || FEATURE_IR_RMT || FEATURE_TEMP_TAMPER
 // GET /api/sensing — returns the live aggregated sensing snapshot for the
 // dashboard's Sensing panel. No raw subcarrier samples, no MAC/BSSID, no
 // audio samples, no per-frame timestamps. The data exposed here is the
@@ -1441,7 +1447,45 @@ static esp_err_t handle_sensing(httpd_req_t* req) {
   tst["approach_events"] = t_stats.approach_events;
 #endif // FEATURE_TOUCH
 
-#if FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS || FEATURE_TOUCH
+#if FEATURE_IR_RMT
+  ir_stats_t ir_stats = {0};
+  ir_get_stats(&ir_stats);
+
+  JsonObject ir_obj = doc["ir"].to<JsonObject>();
+  ir_obj["enabled"]      = ir_is_running();
+  ir_obj["last_protocol"] = ir_protocol_name(s.last_ir_category);
+  ir_obj["hash_bucket"]  = s.last_ir_hash_bucket;
+  ir_obj["confidence"]   = s.last_ir_confidence;
+  ir_obj["last_event_age_ms"] =
+      s.last_ir_event_ms == 0 ? -1L : (long)(millis() - s.last_ir_event_ms);
+
+  JsonObject ist = ir_obj["stats"].to<JsonObject>();
+  ist["frames_received"] = ir_stats.frames_received;
+  ist["frames_decoded"]  = ir_stats.frames_decoded;
+  ist["frames_unknown"]  = ir_stats.frames_unknown;
+  ist["events_emitted"]  = ir_stats.events_emitted;
+#endif // FEATURE_IR_RMT
+
+#if FEATURE_TEMP_TAMPER
+  envsens_stats_t e_stats = {0};
+  envsens_get_stats(&e_stats);
+
+  JsonObject ts = doc["temp"].to<JsonObject>();
+  ts["enabled"]         = envsens_is_running();
+  ts["confidence"]      = s.last_temp_drift_conf;
+  ts["baseline_locked"] = e_stats.baseline_locked;
+  ts["last_event_age_ms"] =
+      s.last_temp_drift_ms == 0 ? -1L : (long)(millis() - s.last_temp_drift_ms);
+
+  JsonObject est = ts["stats"].to<JsonObject>();
+  est["samples_taken"] = e_stats.samples_taken;
+  est["drift_events"]  = e_stats.drift_events;
+  /* Whole-degree rounding only; never exposes raw temperature. */
+  est["baseline_c"]    = (int)e_stats.baseline_c_rounded;
+  est["last_c"]        = (int)e_stats.last_c_rounded;
+#endif // FEATURE_TEMP_TAMPER
+
+#if FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS || FEATURE_TOUCH || FEATURE_IR_RMT || FEATURE_TEMP_TAMPER
   /* Lowpower wake reason + capability bits — useful for the installer
    * to confirm the device booted from a touch-pad wake (forensic trail)
    * vs a normal cold boot, and for the dashboard to surface what wake

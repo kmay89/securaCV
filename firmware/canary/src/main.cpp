@@ -61,6 +61,20 @@
 #endif
 #endif
 
+#if FEATURE_IR_RMT
+#include "securacv_ir.h"
+#if !FEATURE_CSI && !FEATURE_ACOUSTIC_EVENTS && !FEATURE_TOUCH
+#include "securacv_sensing.h"
+#endif
+#endif
+
+#if FEATURE_TEMP_TAMPER
+#include "securacv_envsens.h"
+#if !FEATURE_CSI && !FEATURE_ACOUSTIC_EVENTS && !FEATURE_TOUCH && !FEATURE_IR_RMT
+#include "securacv_sensing.h"
+#endif
+#endif
+
 /* The lowpower HAL is always compiled in once Phase 3 lands — it's
  * how main.cpp learns the wake reason on boot. Whether deep-sleep is
  * actually entered is gated separately by FEATURE_DEEP_SLEEP. */
@@ -347,6 +361,49 @@ void setup() {
   }
 #endif
 
+  // Initialize IR remote-control activity detection (RMT RX)
+#if FEATURE_IR_RMT
+  Serial.println("[..] Initializing IR remote-control detection...");
+#if !FEATURE_CSI && !FEATURE_ACOUSTIC_EVENTS && !FEATURE_TOUCH
+  sensing_init();
+#endif
+  ir_config_t ir_cfg = IR_CONFIG_DEFAULT;
+  if (ir_init(&ir_cfg)) {
+    ir_set_event_callback([](const ir_event_t* evt) {
+      sensing_feed_ir_event(evt->category, evt->hash_bucket,
+                            evt->confidence, evt->time_bucket);
+    });
+    if (ir_start()) {
+      Serial.printf("[OK] IR detector armed on GPIO %d\n", ir_cfg.gpio_num);
+    } else {
+      Serial.println("[WARN] IR detector start failed");
+    }
+  } else {
+    Serial.println("[WARN] IR detector init failed");
+  }
+#endif
+
+  // Initialize internal temperature-drift tamper detector
+#if FEATURE_TEMP_TAMPER
+  Serial.println("[..] Initializing temp-drift tamper detector...");
+#if !FEATURE_CSI && !FEATURE_ACOUSTIC_EVENTS && !FEATURE_TOUCH && !FEATURE_IR_RMT
+  sensing_init();
+#endif
+  envsens_config_t envsens_cfg = ENVSENS_CONFIG_DEFAULT;
+  if (envsens_init(&envsens_cfg)) {
+    envsens_set_event_callback([](const envsens_event_t* evt) {
+      sensing_feed_temp_drift_event(evt->confidence, evt->time_bucket);
+    });
+    if (envsens_start()) {
+      Serial.println("[OK] Temp-drift detector armed");
+    } else {
+      Serial.println("[WARN] Temp-drift detector start failed");
+    }
+  } else {
+    Serial.println("[WARN] Temp-drift detector init failed");
+  }
+#endif
+
   // Create boot attestation record
   Serial.println("[..] Creating boot attestation record...");
   uint8_t boot_payload[64];
@@ -470,6 +527,24 @@ void loop() {
   touch_process();
 #if !FEATURE_CSI && !FEATURE_ACOUSTIC_EVENTS
   /* TTL aging for touch events also runs out of sensing_tick(). */
+  sensing_tick();
+#endif
+#endif
+
+#if FEATURE_IR_RMT
+  // Pump IR: drain RMT ring, decode NEC/RC5/Sony, hash payload to
+  // privacy bucket, fire on confirmed match.
+  ir_process();
+#if !FEATURE_CSI && !FEATURE_ACOUSTIC_EVENTS && !FEATURE_TOUCH
+  sensing_tick();
+#endif
+#endif
+
+#if FEATURE_TEMP_TAMPER
+  // Pump envsens: sample internal die temp once per minute, run drift
+  // detector. Cheap — at most one read per process() call.
+  envsens_process();
+#if !FEATURE_CSI && !FEATURE_ACOUSTIC_EVENTS && !FEATURE_TOUCH && !FEATURE_IR_RMT
   sensing_tick();
 #endif
 #endif

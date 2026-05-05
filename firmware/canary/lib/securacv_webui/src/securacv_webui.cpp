@@ -981,6 +981,63 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         </div>
       </div>
 
+      <!-- IR appliance activity (NEC / RC5 / Sony remote presses) -->
+      <div class="card" id="irCard" style="display:none;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Appliance activity</div>
+            <div class="card-subtitle">
+              An IR receiver listens for the standard remote-control
+              cadences. The device records that something <i>was</i>
+              pressed — never which button, channel, or temperature
+              setting. The hash bucket below differs by remote within
+              one session and resets on every reboot.
+            </div>
+          </div>
+        </div>
+        <div id="irHero" style="text-align:center; padding:18px 16px;">
+          <div id="irPill" class="sensing-pill sensing-pill--quiet">No activity</div>
+          <div id="irExplain" class="sensing-explain">
+            The household's IR remotes are silent right now.
+          </div>
+        </div>
+        <div class="stats-grid">
+          <div class="stat-item"><div class="stat-label">Last protocol</div><div class="stat-value" id="irProto">--</div></div>
+          <div class="stat-item"><div class="stat-label">Hash bucket</div><div class="stat-value" id="irBucket">--</div></div>
+          <div class="stat-item"><div class="stat-label">Frames received</div><div class="stat-value" id="irRx">0</div></div>
+          <div class="stat-item"><div class="stat-label">Frames decoded</div><div class="stat-value" id="irDec">0</div></div>
+          <div class="stat-item"><div class="stat-label">Frames unknown</div><div class="stat-value" id="irUnk">0</div></div>
+          <div class="stat-item"><div class="stat-label">Events emitted</div><div class="stat-value" id="irEvt">0</div></div>
+        </div>
+      </div>
+
+      <!-- Internal temperature drift (tamper) -->
+      <div class="card" id="tempCard" style="display:none;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Thermal drift</div>
+            <div class="card-subtitle">
+              The chip's own die temperature is sampled once a minute and
+              compared against a learned baseline. A sudden ±5 °C step
+              while the device is otherwise idle is consistent with the
+              case being opened or the device being moved between rooms.
+            </div>
+          </div>
+        </div>
+        <div id="tempHero" style="text-align:center; padding:18px 16px;">
+          <div id="tempPill" class="sensing-pill sensing-pill--quiet">Stable</div>
+          <div id="tempExplain" class="sensing-explain">
+            The internal temperature is steady — no tamper indicators.
+          </div>
+        </div>
+        <div class="stats-grid">
+          <div class="stat-item"><div class="stat-label">Baseline (°C)</div><div class="stat-value" id="thBase">--</div></div>
+          <div class="stat-item"><div class="stat-label">Current (°C)</div><div class="stat-value" id="thNow">--</div></div>
+          <div class="stat-item"><div class="stat-label">Samples</div><div class="stat-value" id="thSamples">0</div></div>
+          <div class="stat-item"><div class="stat-label">Drift events</div><div class="stat-value" id="thDrift">0</div></div>
+        </div>
+      </div>
+
       <!-- Power (boot / wake reason; sleep capability) -->
       <div class="card" id="powerCard" style="display:none;">
         <div class="card-header">
@@ -2361,6 +2418,79 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         set('tcReads',  tst.reads_total || 0);
       } else if (tcCard) {
         tcCard.style.display = 'none';
+      }
+
+      // ─── IR (NEC / RC5 / Sony appliance activity) ──────────────────
+      const irCard = document.getElementById('irCard');
+      const irObj = data.ir;
+      if (irObj) {
+        if (irCard) irCard.style.display = '';
+        const irPill = document.getElementById('irPill');
+        const irExp  = document.getElementById('irExplain');
+        const proto  = irObj.last_protocol || 'unknown';
+        const irAge  = irObj.last_event_age_ms;
+
+        if (!irObj.enabled) {
+          irPill.className = 'sensing-pill sensing-pill--offline';
+          irPill.textContent = 'IR offline';
+          irExp.textContent = 'The RMT receiver failed to start. Check the device serial log.';
+        } else if (irAge >= 0 && irAge < 10000) {
+          irPill.className = 'sensing-pill sensing-pill--motion';
+          irPill.textContent = 'Active';
+          irExp.textContent = 'A ' + proto.toUpperCase() + ' remote was used. The device knows ' +
+                              'something was pressed (bucket #' + (irObj.hash_bucket | 0) +
+                              '), not which button.';
+        } else {
+          irPill.className = 'sensing-pill sensing-pill--quiet';
+          irPill.textContent = 'No activity';
+          irExp.textContent = 'The household\'s IR remotes are silent right now.';
+        }
+
+        set('irProto', (proto === 'unknown' || proto === '?') ? '--' : proto.toUpperCase());
+        set('irBucket', (irObj.hash_bucket === undefined) ? '--' : ('#' + irObj.hash_bucket));
+        const ist = irObj.stats || {};
+        set('irRx',  ist.frames_received || 0);
+        set('irDec', ist.frames_decoded || 0);
+        set('irUnk', ist.frames_unknown || 0);
+        set('irEvt', ist.events_emitted || 0);
+      } else if (irCard) {
+        irCard.style.display = 'none';
+      }
+
+      // ─── Thermal drift (internal die temp) ─────────────────────────
+      const thCard = document.getElementById('tempCard');
+      const tempObj = data.temp;
+      if (tempObj) {
+        if (thCard) thCard.style.display = '';
+        const thPill = document.getElementById('tempPill');
+        const thExp  = document.getElementById('tempExplain');
+        const thAge  = tempObj.last_event_age_ms;
+
+        if (!tempObj.enabled) {
+          thPill.className = 'sensing-pill sensing-pill--offline';
+          thPill.textContent = 'Sensor offline';
+          thExp.textContent = 'The internal temp sensor failed to start. Check the device serial log.';
+        } else if (!tempObj.baseline_locked) {
+          thPill.className = 'sensing-pill sensing-pill--quiet';
+          thPill.textContent = 'Calibrating';
+          thExp.textContent = 'Sampling baseline temperature — usually takes the first few minutes after boot.';
+        } else if (thAge >= 0 && thAge < 300000) {
+          thPill.className = 'sensing-pill sensing-pill--active';
+          thPill.textContent = '⚠ Thermal drift';
+          thExp.textContent = 'A sudden ±5 °C step from baseline — consistent with the case being opened or the device being moved.';
+        } else {
+          thPill.className = 'sensing-pill sensing-pill--quiet';
+          thPill.textContent = 'Stable';
+          thExp.textContent = 'The internal temperature is steady — no tamper indicators.';
+        }
+
+        const est = tempObj.stats || {};
+        set('thBase',    (est.baseline_c === undefined) ? '--' : est.baseline_c);
+        set('thNow',     (est.last_c === undefined)     ? '--' : est.last_c);
+        set('thSamples', est.samples_taken || 0);
+        set('thDrift',   est.drift_events || 0);
+      } else if (thCard) {
+        thCard.style.display = 'none';
       }
 
       // ─── Power & wake (lowpower HAL) ────────────────────────────────

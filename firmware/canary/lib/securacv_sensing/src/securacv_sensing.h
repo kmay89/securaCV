@@ -86,6 +86,20 @@ typedef struct {
   uint8_t  last_touch_event_conf;   /* 0..100 */
   uint8_t  last_touch_pad_channel;  /* 1..14 on S3 */
   uint32_t last_touch_event_ms;     /* millis() at the event */
+
+  /* ── IR appliance events (Phase 4) ─────────────────────────────
+   * Last IR remote-control activity. The hash_bucket is a 4-bit
+   * per-session-salted HMAC of the protocol+payload — stable within
+   * a session ("button A vs button B"), reset across reboots. */
+  uint8_t  last_ir_category;        /* ir_protocol_t (0=unknown..3=sony) */
+  uint8_t  last_ir_hash_bucket;     /* 0..15 */
+  uint8_t  last_ir_confidence;      /* 0..100 */
+  uint32_t last_ir_event_ms;
+
+  /* ── Temperature-drift tamper events (Phase 4) ─────────────────
+   * Last tamper_temp_drift event. */
+  uint8_t  last_temp_drift_conf;    /* 0..100 */
+  uint32_t last_temp_drift_ms;
 } sensing_state_t;
 
 /* Initialize the aggregator. Idempotent. */
@@ -112,6 +126,18 @@ void sensing_feed_touch_event(uint8_t event_type,
                               uint8_t confidence,
                               uint8_t pad_channel,
                               uint8_t time_bucket);
+
+/* Feed an IR appliance-activity event (NEC / RC5 / Sony from
+ * securacv_ir). The hash_bucket is the 4-bit privacy-bucketed
+ * HMAC of the IR payload; we don't get to see the raw payload. */
+void sensing_feed_ir_event(uint8_t category,
+                           uint8_t hash_bucket,
+                           uint8_t confidence,
+                           uint8_t time_bucket);
+
+/* Feed a temperature-drift tamper event (from securacv_envsens). */
+void sensing_feed_temp_drift_event(uint8_t confidence,
+                                   uint8_t time_bucket);
 
 /* Apply TTL decay; call from the main loop at 1–10 Hz. */
 void sensing_tick(void);

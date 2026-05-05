@@ -84,6 +84,12 @@
 #ifndef FEATURE_DEEP_SLEEP
   #define FEATURE_DEEP_SLEEP       0   // ESP32-S3 native deep-sleep arming (opt-in)
 #endif
+#ifndef FEATURE_IR_RMT
+  #define FEATURE_IR_RMT           0   // RMT IR remote-control activity detection
+#endif
+#ifndef FEATURE_TEMP_TAMPER
+  #define FEATURE_TEMP_TAMPER      0   // Internal die-temp drift tamper detection
+#endif
 
 // ════════════════════════════════════════════════════════════════
 // DEBUG FLAG DEFAULTS

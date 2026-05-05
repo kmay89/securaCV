@@ -52,7 +52,9 @@ Single-row-per-capability summary across every non-archived variant. This is the
 | Acoustic alarm-cadence detection (T3 smoke / T4 CO) | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
 | Capacitive touch (silent panic / enclosure tamper) | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
 | Native deep-sleep HAL (esp_sleep_* abstraction; ULP-RISC-V capable) | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
-| Sensing dashboard panel (gauges + acoustic + touch + power) | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
+| IR appliance activity (RMT NEC/RC5/Sony, salted-hash buckets) | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
+| Internal temp drift tamper (ESP32-S3 die sensor) | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
+| Sensing dashboard panel (gauges + acoustic + touch + IR + temp + power) | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
 | Chirp channel (broadcast beacon) | ⚠️ | ✅ | ⚠️ | ❌ | ➖ | ✅ |
 | MQTT publish + HA Discovery | ✅ | ❌ | ❌ | ✅ | ➖ | ❌ |
 | OTA A/B with rollback safety | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ |
