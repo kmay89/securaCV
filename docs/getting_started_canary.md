@@ -150,10 +150,11 @@ header), waiting for one of three things:
   a hidden contact under a desk). The device fires a `silent_panic`
   event into the witness chain *without* flashing an LED, beeping,
   or otherwise announcing the press to anyone in the room.
-- **Sustained shift above baseline → enclosure tamper.** If somebody
-  opens the case or pries the device off its mount, the pad reads
-  far above its calibrated baseline for more than 5 s and
-  `enclosure_tamper` fires.
+- **Sustained drop below baseline → enclosure tamper.** If somebody
+  opens the case or pries the device off its mount, the touch pad
+  loses its connection to the electrode and the reading drops to
+  less than half of its calibrated baseline; held there for more
+  than 5 s, `enclosure_tamper` fires.
 - **Brief approach (optional) → presence courtesy.** Off by default;
   a hand or body within a few centimetres triggers `approach` once
   per 1.5 s.
@@ -277,7 +278,7 @@ for evidence, **export the chain before you factory-reset** —
 | Gauges look noisy at low signal | Move the Canary closer to other Wi-Fi devices, or away from a metal wall behind it |
 | **Acoustic alarms** card says **Mic offline** | The PDM driver failed to start. Check serial output for an `Audio: I2S` error. Usually a hardware issue with the on-board mic. |
 | Smoke alarm beeping but no event fires | Most US/EU alarms use the standard T3 cadence; UK and some older alarms use T4. Check your alarm's manual for cadence type — only T3 (smoke) and T4 (CO) are matched today. |
-| **Touch** card stuck at **Calibrating** | The pad never produced a stable reading. Check that nothing is touching the pad during the first 2 s after boot, and that the GPIO is actually connected to a touch-capable pin (1, 3, 4, 5, or 6). |
+| **Touch** card stuck at **Calibrating** | The pad never produced a stable reading. Check that nothing is touching the pad during the first 2 s after boot (the baseline is sampled then), and that the GPIO is actually connected to a touch-capable pin (1, 3, 4, 5, or 6). |
 | Touch panic fires randomly | Your enclosure or mounting is letting the pad float. Either ground the pad better, raise the press threshold (`TOUCH_RELATIVE_THRESHOLD_PCT` in the lib), or move to a different channel via `-DTOUCH_PIN_NUM=N`. |
 | **Power & wake** card always reads **cold_boot** | Normal — this build doesn't actually deep-sleep. Battery / always-off behavior arrives in a follow-up build. |
 
