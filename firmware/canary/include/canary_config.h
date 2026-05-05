@@ -90,6 +90,9 @@
 #ifndef FEATURE_TEMP_TAMPER
   #define FEATURE_TEMP_TAMPER      0   // Internal die-temp drift tamper detection
 #endif
+#ifndef FEATURE_SENSING_WITNESS
+  #define FEATURE_SENSING_WITNESS  0   // Sign emergency/security sensing events into witness chain
+#endif
 
 // ════════════════════════════════════════════════════════════════
 // DEBUG FLAG DEFAULTS

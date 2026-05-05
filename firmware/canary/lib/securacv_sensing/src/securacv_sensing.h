@@ -148,6 +148,45 @@ void sensing_snapshot(sensing_state_t* out);
 /* Plain-English label for a sensing_label_t value. */
 const char* sensing_label_name(uint8_t label);
 
+/* ──────────────────────────────────────────────────────────────────────────
+ * Witness-chain bridge (Phase 5)
+ *
+ * Five kinds of sensing event are considered "witness-worthy" — rare,
+ * high-stakes, and the kind of thing the user would later want a
+ * cryptographically signed record of (alarm went off; panic pressed;
+ * case opened). High-rate informational events (CSI windows, IR button
+ * presses) are deliberately NOT witnessed — they would flood the
+ * Ed25519-signed chain without adding evidentiary value.
+ *
+ * The sensing lib stays a clean leaf module: it does NOT depend on
+ * securacv_witness. Application code (main.cpp) registers a callback;
+ * the callback receives the minimal scalar event and builds the CBOR
+ * payload + calls witness_create_record() itself.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+typedef enum {
+  SENSING_WITNESS_AUDIO_T3        = 1,   /* NFPA 72 / ISO 8201 smoke alarm */
+  SENSING_WITNESS_AUDIO_T4        = 2,   /* UL 2034 CO alarm */
+  SENSING_WITNESS_TOUCH_PANIC     = 3,   /* silent panic long-press */
+  SENSING_WITNESS_TOUCH_TAMPER    = 4,   /* enclosure tamper (pad disconnect) */
+  SENSING_WITNESS_TEMP_DRIFT      = 5,   /* internal die-temp drift */
+} sensing_witness_kind_t;
+
+typedef struct {
+  uint8_t  kind;          /* sensing_witness_kind_t */
+  uint8_t  confidence;    /* 0..100 */
+  uint8_t  time_bucket;   /* 10-min daily bucket (0..143) */
+  uint8_t  category;      /* protocol-specific extra: audio cycle_count low
+                           * byte, touch pad channel, 0 for temp */
+} sensing_witness_event_t;
+
+typedef void (*sensing_witness_cb_t)(const sensing_witness_event_t* evt);
+
+/* Register the witness callback. Pass nullptr to unregister.
+ * The callback is fired synchronously from inside the relevant
+ * sensing_feed_*_event() call. */
+void sensing_set_witness_callback(sensing_witness_cb_t cb);
+
 #ifdef __cplusplus
 }
 #endif

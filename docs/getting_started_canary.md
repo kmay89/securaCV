@@ -320,6 +320,33 @@ on serial.
 
 ---
 
+## A note on what gets recorded
+
+The sensing cards on the dashboard show *live* state — they're for
+you, in the moment. A subset of those events also get permanently
+recorded into the device's **witness chain**: an Ed25519-signed,
+SHA-256 hash-chained log on the SD card that's structurally tamper-
+evident.
+
+Five kinds of event are signed:
+
+- **Smoke alarm pattern** (T3 cadence)
+- **CO alarm pattern** (T4 cadence)
+- **Silent panic** (touch pad long-press)
+- **Enclosure tamper** (touch pad disconnect)
+- **Thermal drift** (sustained ±5 °C temperature step)
+
+That's it. Five high-stakes things the homeowner would actually want
+court-defensible records of. Everything else — CSI motion, IR remote
+activity, approach detection — stays as live dashboard state and is
+never written to disk.
+
+The signed records contain the same scalars the dashboard already
+shows (kind, confidence, time bucket, category). No extra information
+crosses the privacy barrier just because the chain is involved.
+
+---
+
 ## What you can break
 
 You can't brick the device through the dashboard. You *can* lose your
