@@ -175,7 +175,71 @@ camera pins are excluded).
 
 ---
 
-## 7 · Power & wake
+## 7 · Appliance activity
+
+The **Appliance activity** card listens — *passively, without storing
+anything* — for the IR pulses that every TV remote, AC remote, and
+set-top-box remote in your home emits. The standard cadences (NEC,
+RC5, Sony SIRC) cover well over 90 % of consumer remotes.
+
+When somebody hits a button, the card lights up:
+
+- **Last protocol** tells you what family of remote it was (NEC =
+  most TVs/AC; RC5 = Philips; Sony = its own thing).
+- **Hash bucket** is a small number 0–15. The same button on the
+  same remote produces the same bucket *within one session*. Across
+  reboots the buckets shuffle — a per-session salt is mixed into
+  the hash, so the bucket can't be used to track a remote across
+  days.
+
+What this gives you:
+
+- A "household active" baseline. If the kitchen canary normally sees
+  TV-remote activity from 7–10 pm but goes silent for three days,
+  Home Assistant has a clear signal something is off — without the
+  canary ever recording *what was watched*.
+- A coarse "which appliance" hint without identification: bucket #3
+  pressed twice in 5 s = "they're using the same thing twice"; bucket
+  #7 in another room = "different appliance / different remote." No
+  more than that.
+
+What you'd need to wire this up: a generic 38 kHz IR receiver module
+(VS1838B, TSOP4838, anything in that family). Three pins: VCC →
+3.3 V, GND → GND, OUT → **GPIO 3 (D2)**. Override at compile time
+with `-DIR_RX_PIN_NUM=N` if you've already wired that pin to
+something else.
+
+If your board has no IR receiver attached, the card stays at **No
+activity** forever — that's fine.
+
+---
+
+## 8 · Thermal drift
+
+The **Thermal drift** card watches the chip's *own* die temperature
+once a minute. The internal sensor on the ESP32-S3 is rough — about
+±2 °C absolute accuracy — but very repeatable, which is what we
+need.
+
+Once the device has run for ~5 minutes the baseline is locked.
+After that, if the temperature suddenly steps **±5 °C** — say
+because someone opened the case and let the warm air out, or
+unmounted the device and carried it from a heated living room to a
+cold garage — the card flips to **⚠ Thermal drift**.
+
+This is *defense-in-depth* on top of the touch-pad tamper detector
+from §6. The touch pad catches the common "case opened" scenario;
+the temp sensor catches the slower "device moved" scenario the
+touch pad can't see.
+
+The card never displays a precise temperature — only whole-degree
+readings. That's deliberate; an attacker with access to the
+dashboard learns nothing about the room beyond "warmer than 20 °C
+or cooler than 20 °C", because the calibration is also rounded.
+
+---
+
+## 9 · Power & wake
 
 The **Power & wake** card surfaces what the ESP32-S3's RTC peripheral
 sees when the chip wakes up from deep sleep. On a normal boot it reads
@@ -192,7 +256,7 @@ become live.
 
 ---
 
-## 8 · What it never does
+## 10 · What it never does
 
 Three things are **structurally impossible** with this device — not
 *hard*, not *configurable off*, but unable to:
@@ -281,6 +345,10 @@ for evidence, **export the chain before you factory-reset** —
 | **Touch** card stuck at **Calibrating** | The pad never produced a stable reading. Check that nothing is touching the pad during the first 2 s after boot (the baseline is sampled then), and that the GPIO is actually connected to a touch-capable pin (1, 3, 4, 5, or 6). |
 | Touch panic fires randomly | Your enclosure or mounting is letting the pad float. Either ground the pad better, raise the press threshold (`TOUCH_RELATIVE_THRESHOLD_PCT` in the lib), or move to a different channel via `-DTOUCH_PIN_NUM=N`. |
 | **Power & wake** card always reads **cold_boot** | Normal — this build doesn't actually deep-sleep. Battery / always-off behavior arrives in a follow-up build. |
+| **Appliance activity** card stays at **No activity** | Either no IR receiver is wired to GPIO 3 (D2), or no IR remotes are being used in the room. Check the **Frames received** counter on the same card — if it stays at 0 across several remote button presses, the receiver isn't seeing pulses (loose wire, wrong pin, wrong polarity on VCC/GND). |
+| **Appliance activity** decodes few frames | Many cheap IR remotes deviate from the ISO timing standards. The lib decodes NEC, RC5, and Sony SIRC — it deliberately rejects ambiguous frames so the dashboard isn't noisy with garbage. |
+| **Thermal drift** card never leaves **Calibrating** | The internal temp sensor needs five clean samples (5 minutes by default). If the device just booted, just wait. If it persists past 10 minutes, the sensor may have failed to start — check serial. |
+| **Thermal drift** firing constantly | Your room's HVAC is cycling aggressively (5+ °C swings at the device). Tune `drift_threshold_tenths_c` upward in the build, or move the device away from a cold-air register. |
 
 For anything else, **Settings → Diagnostics → Send to installer** packages
 the health log into a signed bundle you can share without leaking

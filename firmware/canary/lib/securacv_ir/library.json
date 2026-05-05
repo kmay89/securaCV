@@ -1,0 +1,19 @@
+{
+    "name": "securacv_ir",
+    "version": "0.1.0",
+    "description": "SecuraCV IR — RMT-based infrared remote-control activity detection on the ESP32-S3. Decodes NEC / RC5 / Sony protocol leaders, hashes the payload to a 4-bit privacy bucket per session (rotating salt), emits 'appliance_ir_activity' events without ever storing the raw IR code.",
+    "keywords": ["securacv", "ir", "rmt", "esp32-s3", "remote-control", "appliance"],
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/kmay89/securaCV.git"
+    },
+    "authors": [
+        {
+            "name": "Karl May",
+            "email": "karl@errerlabs.com"
+        }
+    ],
+    "license": "Apache-2.0",
+    "frameworks": "arduino",
+    "platforms": "espressif32"
+}

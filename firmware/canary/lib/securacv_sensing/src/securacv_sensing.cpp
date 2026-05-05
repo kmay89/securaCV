@@ -94,6 +94,15 @@ static constexpr uint32_t ACOUSTIC_TTL_MS = 30000;
  * a longer window to catch the indicator on the dashboard. */
 static constexpr uint32_t TOUCH_TTL_MS    = 60000;
 
+/* TTL for IR activity. Keep short — IR is high-frequency (several
+ * presses per minute when someone's actively using a remote) so we
+ * don't want the dashboard pill to lag reality. */
+static constexpr uint32_t IR_TTL_MS       = 10000;
+
+/* TTL for the temperature-drift event — long because the underlying
+ * detector itself fires at most once per 5 minutes (suppress_ms). */
+static constexpr uint32_t TEMP_DRIFT_TTL_MS = 300000;
+
 extern "C" {
 
 void sensing_init(void) {
@@ -126,6 +135,23 @@ void sensing_feed_touch_event(uint8_t event_type, uint8_t confidence,
   s_state.last_touch_pad_channel = pad_channel;
   s_state.last_touch_event_ms    = millis();
   s_state.time_bucket            = time_bucket;
+}
+
+void sensing_feed_ir_event(uint8_t category, uint8_t hash_bucket,
+                           uint8_t confidence, uint8_t time_bucket) {
+  if (!s_initialized) sensing_init();
+  s_state.last_ir_category     = category;
+  s_state.last_ir_hash_bucket  = hash_bucket;
+  s_state.last_ir_confidence   = confidence;
+  s_state.last_ir_event_ms     = millis();
+  s_state.time_bucket          = time_bucket;
+}
+
+void sensing_feed_temp_drift_event(uint8_t confidence, uint8_t time_bucket) {
+  if (!s_initialized) sensing_init();
+  s_state.last_temp_drift_conf = confidence;
+  s_state.last_temp_drift_ms   = millis();
+  s_state.time_bucket          = time_bucket;
 }
 
 void sensing_feed_csi(const csi_features_t* features) {
@@ -179,6 +205,22 @@ void sensing_tick(void) {
     s_state.last_touch_event_conf  = 0;
     s_state.last_touch_pad_channel = 0;
     s_state.last_touch_event_ms    = 0;
+  }
+
+  /* Age out the IR activity field after IR_TTL_MS. */
+  if (s_state.last_ir_event_ms != 0 &&
+      (millis() - s_state.last_ir_event_ms) > IR_TTL_MS) {
+    s_state.last_ir_category    = 0;
+    s_state.last_ir_hash_bucket = 0;
+    s_state.last_ir_confidence  = 0;
+    s_state.last_ir_event_ms    = 0;
+  }
+
+  /* Age out the temp-drift event field after TEMP_DRIFT_TTL_MS. */
+  if (s_state.last_temp_drift_ms != 0 &&
+      (millis() - s_state.last_temp_drift_ms) > TEMP_DRIFT_TTL_MS) {
+    s_state.last_temp_drift_conf = 0;
+    s_state.last_temp_drift_ms   = 0;
   }
 
   if (s_state.last_window_ms == 0) return;

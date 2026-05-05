@@ -1,0 +1,19 @@
+{
+    "name": "securacv_envsens",
+    "version": "0.1.0",
+    "description": "SecuraCV Environmental Sensors — internal die-temperature drift detector. Reads the ESP32-S3's built-in temp sensor once per minute, tracks an EMA baseline, and emits 'tamper_temp_drift' events on a sustained ≥5 °C step (case opened, device moved between rooms). No raw temperatures cross the privacy barrier — only the drift event with confidence.",
+    "keywords": ["securacv", "esp32-s3", "temperature", "tamper", "environment"],
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/kmay89/securaCV.git"
+    },
+    "authors": [
+        {
+            "name": "Karl May",
+            "email": "karl@errerlabs.com"
+        }
+    ],
+    "license": "Apache-2.0",
+    "frameworks": "arduino",
+    "platforms": "espressif32"
+}

@@ -41,24 +41,30 @@
 
 #if FEATURE_CSI
 #include "securacv_csi.h"
-#include "securacv_sensing.h"  /* tiny in-tree aggregator (lib/securacv_sensing) */
 #endif
 
 #if FEATURE_ACOUSTIC_EVENTS
 #include "securacv_audio.h"
-#ifndef FEATURE_CSI
-/* sensing_feed_audio_event lives in securacv_sensing; if CSI is off but
- * acoustic is on, we still need the aggregator to surface events to the
- * Sensing tab. */
-#include "securacv_sensing.h"
-#endif
 #endif
 
 #if FEATURE_TOUCH
 #include "securacv_touch.h"
-#if !FEATURE_CSI && !FEATURE_ACOUSTIC_EVENTS
-#include "securacv_sensing.h"
 #endif
+
+#if FEATURE_IR_RMT
+#include "securacv_ir.h"
+#endif
+
+#if FEATURE_TEMP_TAMPER
+#include "securacv_envsens.h"
+#endif
+
+/* All five sensing sources feed a single aggregator. The header is
+ * include-guarded, so one unconditional include is the right shape;
+ * sensing_init() is also idempotent so each feature block can call it
+ * without a guard. */
+#if FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS || FEATURE_TOUCH || FEATURE_IR_RMT || FEATURE_TEMP_TAMPER
+#include "securacv_sensing.h"
 #endif
 
 /* The lowpower HAL is always compiled in once Phase 3 lands — it's
@@ -303,10 +309,7 @@ void setup() {
   // Initialize PDM acoustic event detection (T3 smoke / T4 CO cadences)
 #if FEATURE_ACOUSTIC_EVENTS
   Serial.println("[..] Initializing PDM acoustic event detection...");
-#if !FEATURE_CSI
-  /* sensing_init() may not have been called above. Idempotent. */
-  sensing_init();
-#endif
+  sensing_init();  /* idempotent */
   audio_config_t audio_cfg = AUDIO_CONFIG_DEFAULT;
   if (audio_init(&audio_cfg)) {
     audio_set_event_callback([](const audio_event_t* evt) {
@@ -326,10 +329,7 @@ void setup() {
   // Initialize capacitive-touch sensor (silent panic / enclosure tamper)
 #if FEATURE_TOUCH
   Serial.println("[..] Initializing capacitive-touch sensor...");
-#if !FEATURE_CSI && !FEATURE_ACOUSTIC_EVENTS
-  /* sensing_init() may not have been called by CSI/audio above. */
-  sensing_init();
-#endif
+  sensing_init();  /* idempotent */
   touch_config_t touch_cfg = TOUCH_CONFIG_DEFAULT;
   if (touch_init(&touch_cfg)) {
     touch_set_event_callback([](const touch_event_t* evt) {
@@ -344,6 +344,45 @@ void setup() {
     }
   } else {
     Serial.println("[WARN] Touch sensor init failed");
+  }
+#endif
+
+  // Initialize IR remote-control activity detection (RMT RX)
+#if FEATURE_IR_RMT
+  Serial.println("[..] Initializing IR remote-control detection...");
+  sensing_init();  /* idempotent */
+  ir_config_t ir_cfg = IR_CONFIG_DEFAULT;
+  if (ir_init(&ir_cfg)) {
+    ir_set_event_callback([](const ir_event_t* evt) {
+      sensing_feed_ir_event(evt->category, evt->hash_bucket,
+                            evt->confidence, evt->time_bucket);
+    });
+    if (ir_start()) {
+      Serial.printf("[OK] IR detector armed on GPIO %d\n", ir_cfg.gpio_num);
+    } else {
+      Serial.println("[WARN] IR detector start failed");
+    }
+  } else {
+    Serial.println("[WARN] IR detector init failed");
+  }
+#endif
+
+  // Initialize internal temperature-drift tamper detector
+#if FEATURE_TEMP_TAMPER
+  Serial.println("[..] Initializing temp-drift tamper detector...");
+  sensing_init();  /* idempotent */
+  envsens_config_t envsens_cfg = ENVSENS_CONFIG_DEFAULT;
+  if (envsens_init(&envsens_cfg)) {
+    envsens_set_event_callback([](const envsens_event_t* evt) {
+      sensing_feed_temp_drift_event(evt->confidence, evt->time_bucket);
+    });
+    if (envsens_start()) {
+      Serial.println("[OK] Temp-drift detector armed");
+    } else {
+      Serial.println("[WARN] Temp-drift detector start failed");
+    }
+  } else {
+    Serial.println("[WARN] Temp-drift detector init failed");
   }
 #endif
 
@@ -447,31 +486,40 @@ void loop() {
 
 #if FEATURE_CSI
   // Pump CSI: drain ring, finalize windows, fire feature callback into
-  // sensing_feed_csi(). Apply TTL decay so a quiet RF environment shows
-  // as "quiet" instead of stale "active."
+  // sensing_feed_csi().
   csi::process();
-  sensing_tick();
 #endif
 
 #if FEATURE_ACOUSTIC_EVENTS
   // Pump audio: drain I2S DMA, compute RMS envelope, run cadence FSM,
   // fire event callback into sensing_feed_audio_event() on T3/T4 match.
   audio_process();
-#if !FEATURE_CSI
-  /* sensing_tick() ages out stale acoustic events too; if CSI is off
-   * we still need to call it. */
-  sensing_tick();
-#endif
 #endif
 
 #if FEATURE_TOUCH
   // Pump touch: read filtered pad value at 20 Hz, run panic/tamper/
   // approach state machines, fire event callback on confirmed match.
   touch_process();
-#if !FEATURE_CSI && !FEATURE_ACOUSTIC_EVENTS
-  /* TTL aging for touch events also runs out of sensing_tick(). */
-  sensing_tick();
 #endif
+
+#if FEATURE_IR_RMT
+  // Pump IR: drain RMT ring, decode NEC/RC5/Sony, hash payload to
+  // privacy bucket, fire on confirmed match.
+  ir_process();
+#endif
+
+#if FEATURE_TEMP_TAMPER
+  // Pump envsens: sample internal die temp once per minute, run drift
+  // detector. Cheap — at most one read per process() call.
+  envsens_process();
+#endif
+
+  // Age out stale sensing events (TTL decay across all sources). One
+  // call per loop is sufficient — sensing_tick() is idempotent and
+  // cheap. Gated only on "any sensing source compiled in" so an
+  // all-sensors-off build still links cleanly.
+#if FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS || FEATURE_TOUCH || FEATURE_IR_RMT || FEATURE_TEMP_TAMPER
+  sensing_tick();
 #endif
 
 #if FEATURE_HA_MQTT
