@@ -75,6 +75,9 @@
 #ifndef FEATURE_CSI
   #define FEATURE_CSI           0   // WiFi CSI motion / breathing / micro-activity sensing
 #endif
+#ifndef FEATURE_ACOUSTIC_EVENTS
+  #define FEATURE_ACOUSTIC_EVENTS  0   // PDM mic + T3 smoke / T4 CO cadence detection
+#endif
 
 // ════════════════════════════════════════════════════════════════
 // DEBUG FLAG DEFAULTS
@@ -133,6 +136,14 @@
   #define GPS_TX_PIN   43
 #endif
 #define GPS_BAUD       9600
+
+// PDM microphone (XIAO ESP32-S3 Sense built-in MSM261D3526H1CPM)
+#ifndef MIC_PIN_CLK
+  #define MIC_PIN_CLK    42
+#endif
+#ifndef MIC_PIN_DATA
+  #define MIC_PIN_DATA   41
+#endif
 
 // Tamper detection
 #define TAMPER_GPIO    2

@@ -68,6 +68,16 @@ typedef struct {
   int8_t   doppler[4];
   /* Eight-bin breathing spectrum (0.1–0.5 Hz Goertzel) from slots [12..19]. */
   int8_t   breathing_bins[8];
+
+  /* ── Acoustic events (Phase 2) ──────────────────────────────────
+   * Last cadence-detector event. All values are zero / "none" until
+   * sensing_feed_audio() is called; they then persist for ACOUSTIC_TTL_MS
+   * (defined in the .cpp) so a UI poll catches a transient T3/T4 event
+   * even if it fired between polls. */
+  uint8_t  last_audio_event_type;   /* audio_event_type_t (0..2) */
+  uint8_t  last_audio_event_conf;   /* 0..100 */
+  uint16_t last_audio_event_count;  /* cycles matched in this run */
+  uint32_t last_audio_event_ms;     /* millis() at the event */
 } sensing_state_t;
 
 /* Initialize the aggregator. Idempotent. */
@@ -76,6 +86,13 @@ void sensing_init(void);
 /* Feed a finalized CSI window. Safe to call from the CSI callback
  * (synchronous, allocation-free). */
 void sensing_feed_csi(const csi_features_t* features);
+
+/* Feed an acoustic event (T3 smoke / T4 CO from securacv_audio).
+ * Decoupled from securacv_audio.h to keep the sensing lib a clean
+ * leaf module — caller passes the three scalar fields directly. */
+void sensing_feed_audio_event(uint8_t event_type,
+                              uint8_t confidence,
+                              uint16_t cycle_count);
 
 /* Apply TTL decay; call from the main loop at 1–10 Hz. */
 void sensing_tick(void);

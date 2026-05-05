@@ -84,6 +84,11 @@ namespace {
 
 }  // namespace
 
+/* TTL for the last_audio_event_* fields: keep them sticky for 30 s so a
+ * 1 Hz dashboard poll never misses a single-shot T3/T4 event. After this
+ * window expires the snapshot reverts to event_type=0 ("none"). */
+static constexpr uint32_t ACOUSTIC_TTL_MS = 30000;
+
 extern "C" {
 
 void sensing_init(void) {
@@ -91,6 +96,15 @@ void sensing_init(void) {
   memset(&s_state, 0, sizeof(s_state));
   s_state.activity_label = SENSING_LABEL_OFFLINE;
   s_initialized = true;
+}
+
+void sensing_feed_audio_event(uint8_t event_type, uint8_t confidence,
+                              uint16_t cycle_count) {
+  if (!s_initialized) sensing_init();
+  s_state.last_audio_event_type  = event_type;
+  s_state.last_audio_event_conf  = confidence;
+  s_state.last_audio_event_count = cycle_count;
+  s_state.last_audio_event_ms    = millis();
 }
 
 void sensing_feed_csi(const csi_features_t* features) {
@@ -127,6 +141,16 @@ void sensing_feed_csi(const csi_features_t* features) {
 
 void sensing_tick(void) {
   if (!s_initialized) return;
+
+  /* Age out the acoustic event field after ACOUSTIC_TTL_MS. */
+  if (s_state.last_audio_event_ms != 0 &&
+      (millis() - s_state.last_audio_event_ms) > ACOUSTIC_TTL_MS) {
+    s_state.last_audio_event_type  = 0;  /* AUDIO_EVENT_NONE */
+    s_state.last_audio_event_conf  = 0;
+    s_state.last_audio_event_count = 0;
+    s_state.last_audio_event_ms    = 0;
+  }
+
   if (s_state.last_window_ms == 0) return;
 
   const uint32_t age = millis() - s_state.last_window_ms;

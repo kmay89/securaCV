@@ -30,9 +30,14 @@
 #include <Update.h>
 #endif
 
-#if FEATURE_CSI
+#if FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS
 #include "securacv_sensing.h"
+#endif
+#if FEATURE_CSI
 #include "securacv_csi.h"
+#endif
+#if FEATURE_ACOUSTIC_EVENTS
+#include "securacv_audio.h"
 #endif
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -546,7 +551,7 @@ static esp_err_t handle_peek_start(httpd_req_t* req);
 static esp_err_t handle_peek_stream(httpd_req_t* req);
 static esp_err_t handle_peek_stop(httpd_req_t* req);
 static esp_err_t handle_peek_status(httpd_req_t* req);
-#if FEATURE_CSI
+#if FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS
 static esp_err_t handle_sensing(httpd_req_t* req);
 #endif
 #endif
@@ -647,7 +652,7 @@ void NetworkManager::registerHttpHandlers() {
   httpd_register_uri_handler(m_http_server, &peek_status);
   #endif
 
-  #if FEATURE_CSI
+  #if FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS
   httpd_uri_t sensing_ep = { .uri = "/api/sensing", .method = HTTP_GET, .handler = handle_sensing };
   httpd_register_uri_handler(m_http_server, &sensing_ep);
   #endif
@@ -1328,13 +1333,13 @@ static esp_err_t handle_mqtt_config(httpd_req_t* req) {
 // CSI SENSING ENDPOINT — privacy-safe scalars + bar-graph arrays
 // ════════════════════════════════════════════════════════════════════════════
 
-#if FEATURE_CSI
+#if FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS
 // GET /api/sensing — returns the live aggregated sensing snapshot for the
 // dashboard's Sensing panel. No raw subcarrier samples, no MAC/BSSID, no
-// per-frame timestamps. The 32-byte feature vector enters the sensing
-// aggregator from the CSI HAL callback; this endpoint serializes the
-// distilled state only (motion / breathing / activity_label + the small
-// bar-graph arrays already int8-bucketed by the feature extractor).
+// audio samples, no per-frame timestamps. The data exposed here is the
+// distilled scalars + small int8 bar-graph arrays that the in-tree
+// aggregator (securacv_sensing) builds from CSI feature callbacks and
+// audio cadence-detector callbacks. Both are optional at compile time.
 static esp_err_t handle_sensing(httpd_req_t* req) {
   if (!rate_limit_check(req)) return ESP_OK;
   if (!auth_gate(req)) return ESP_OK;
@@ -1343,11 +1348,12 @@ static esp_err_t handle_sensing(httpd_req_t* req) {
   sensing_state_t s;
   sensing_snapshot(&s);
 
-  csi_stats_t stats = {0};
-  csi_get_stats(&stats);
-
   JsonDocument doc;
   doc["ok"] = true;
+
+#if FEATURE_CSI
+  csi_stats_t stats = {0};
+  csi_get_stats(&stats);
   doc["enabled"] = csi_is_running();
 
   // Headline scalars for the Apple-style status card.
@@ -1382,12 +1388,34 @@ static esp_err_t handle_sensing(httpd_req_t* req) {
   st["frames_dropped_full"] = stats.frames_dropped_full;
   st["windows_emitted"]     = stats.windows_emitted;
   st["windows_degraded"]    = stats.windows_degraded;
+#endif // FEATURE_CSI
+
+#if FEATURE_ACOUSTIC_EVENTS
+  audio_stats_t a_stats = {0};
+  audio_get_stats(&a_stats);
+
+  JsonObject ac = doc["acoustic"].to<JsonObject>();
+  ac["enabled"]     = audio_is_running();
+  ac["last_event"]  = audio_event_name(s.last_audio_event_type);
+  ac["confidence"]  = s.last_audio_event_conf;
+  ac["cycle_count"] = s.last_audio_event_count;
+  ac["last_event_age_ms"] =
+      s.last_audio_event_ms == 0 ? -1L : (long)(millis() - s.last_audio_event_ms);
+
+  JsonObject ast = ac["stats"].to<JsonObject>();
+  ast["frames_processed"] = a_stats.frames_processed;
+  ast["on_transitions"]   = a_stats.on_transitions;
+  ast["off_transitions"]  = a_stats.off_transitions;
+  ast["t3_detected"]      = a_stats.t3_detected;
+  ast["t4_detected"]      = a_stats.t4_detected;
+  ast["i2s_read_errors"]  = a_stats.i2s_read_errors;
+#endif // FEATURE_ACOUSTIC_EVENTS
 
   String response;
   serializeJson(doc, response);
   return http_send_json(req, response.c_str());
 }
-#endif // FEATURE_CSI
+#endif // FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS
 
 // ════════════════════════════════════════════════════════════════════════════
 // CONVENIENCE FUNCTIONS
