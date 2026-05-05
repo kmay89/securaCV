@@ -38,6 +38,7 @@ static char s_topic_health[64];
 static char s_topic_chain[64];
 static char s_topic_tamper[64];
 static char s_topic_transport[64];
+static char s_topic_sensing[64];
 static char s_topic_avail[64];
 
 // Reconnect backoff
@@ -64,6 +65,7 @@ static void build_topics(const char* device_id) {
   snprintf(s_topic_chain,     sizeof(s_topic_chain),     "securacv/%s/chain",     device_id);
   snprintf(s_topic_tamper,    sizeof(s_topic_tamper),    "securacv/%s/tamper",    device_id);
   snprintf(s_topic_transport, sizeof(s_topic_transport), "securacv/%s/transport", device_id);
+  snprintf(s_topic_sensing,   sizeof(s_topic_sensing),   "securacv/%s/sensing",   device_id);
   snprintf(s_topic_avail,     sizeof(s_topic_avail),     "securacv/%s/availability", device_id);
 }
 
@@ -324,6 +326,15 @@ bool mqtt_publish_transport(const char* json_payload) {
   return s_mqtt.publish(s_topic_transport, json_payload);
 }
 
+bool mqtt_publish_sensing(const char* json_payload) {
+  if (!s_mqtt.connected()) return false;
+  /* Retained so a Home Assistant restart re-acquires the latest
+   * snapshot immediately rather than seeing "Unknown" until the
+   * next publish interval. The payload is small (< 600 bytes) so
+   * broker storage cost is negligible. */
+  return s_mqtt.publish(s_topic_sensing, json_payload, true);
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // HA MQTT DISCOVERY
 // ════════════════════════════════════════════════════════════════════════════
@@ -557,6 +568,214 @@ bool mqtt_send_ha_discovery(const char* device_id, const char* firmware_version)
     String payload;
     serializeJson(doc, payload);
     publish_discovery("binary_sensor", device_id, "sd_healthy", payload.c_str());
+  }
+
+  // ════════════════════════════════════════════════════════════════════
+  // SENSING entities (Phase 1–5) — sourced from the retained
+  // securacv/{id}/sensing topic. All entities are emitted regardless
+  // of which FEATURE_* flags the firmware was built with; entities
+  // for missing sources stay at "Unknown" in HA, which the user can
+  // hide. Saves the lib from needing per-feature compile gates.
+  // ════════════════════════════════════════════════════════════════════
+
+  // ── Sensor: activity_label (quiet / presence / motion / active) ──
+  {
+    JsonDocument doc;
+    doc["name"] = "Activity";
+    doc["stat_t"] = s_topic_sensing;
+    doc["val_tpl"] = "{{ value_json.label | default('unknown') }}";
+    doc["ic"] = "mdi:radar";
+    char uid[64];
+    snprintf(uid, sizeof(uid), "securacv_%s_activity", device_id);
+    doc["uniq_id"] = uid;
+    JsonObject dev = doc["dev"].to<JsonObject>();
+    add_device_info(dev, device_id, firmware_version);
+    String payload;
+    serializeJson(doc, payload);
+    publish_discovery("sensor", device_id, "activity", payload.c_str());
+  }
+
+  // ── Sensor: motion_score (0..100) ──
+  {
+    JsonDocument doc;
+    doc["name"] = "Motion Score";
+    doc["stat_t"] = s_topic_sensing;
+    doc["val_tpl"] = "{{ value_json.motion | default(0) }}";
+    doc["unit_of_meas"] = "%";
+    doc["ic"] = "mdi:run";
+    char uid[64];
+    snprintf(uid, sizeof(uid), "securacv_%s_motion_score", device_id);
+    doc["uniq_id"] = uid;
+    JsonObject dev = doc["dev"].to<JsonObject>();
+    add_device_info(dev, device_id, firmware_version);
+    String payload;
+    serializeJson(doc, payload);
+    publish_discovery("sensor", device_id, "motion_score", payload.c_str());
+  }
+
+  // ── Sensor: breathing_score (0..100) ──
+  {
+    JsonDocument doc;
+    doc["name"] = "Breathing Score";
+    doc["stat_t"] = s_topic_sensing;
+    doc["val_tpl"] = "{{ value_json.breathing | default(0) }}";
+    doc["unit_of_meas"] = "%";
+    doc["ic"] = "mdi:lungs";
+    char uid[64];
+    snprintf(uid, sizeof(uid), "securacv_%s_breathing_score", device_id);
+    doc["uniq_id"] = uid;
+    JsonObject dev = doc["dev"].to<JsonObject>();
+    add_device_info(dev, device_id, firmware_version);
+    String payload;
+    serializeJson(doc, payload);
+    publish_discovery("sensor", device_id, "breathing_score", payload.c_str());
+  }
+
+  // ── Binary Sensor: smoke_alarm (T3 cadence) ──
+  {
+    JsonDocument doc;
+    doc["name"] = "Smoke Alarm Pattern";
+    doc["stat_t"] = s_topic_sensing;
+    doc["val_tpl"] =
+      "{{ 'ON' if value_json.acoustic_event == 'smoke_alarm_t3' else 'OFF' }}";
+    doc["dev_cla"] = "smoke";
+    char uid[64];
+    snprintf(uid, sizeof(uid), "securacv_%s_smoke_alarm", device_id);
+    doc["uniq_id"] = uid;
+    JsonObject dev = doc["dev"].to<JsonObject>();
+    add_device_info(dev, device_id, firmware_version);
+    String payload;
+    serializeJson(doc, payload);
+    publish_discovery("binary_sensor", device_id, "smoke_alarm", payload.c_str());
+  }
+
+  // ── Binary Sensor: co_alarm (T4 cadence) ──
+  {
+    JsonDocument doc;
+    doc["name"] = "CO Alarm Pattern";
+    doc["stat_t"] = s_topic_sensing;
+    doc["val_tpl"] =
+      "{{ 'ON' if value_json.acoustic_event == 'co_alarm_t4' else 'OFF' }}";
+    doc["dev_cla"] = "carbon_monoxide";
+    char uid[64];
+    snprintf(uid, sizeof(uid), "securacv_%s_co_alarm", device_id);
+    doc["uniq_id"] = uid;
+    JsonObject dev = doc["dev"].to<JsonObject>();
+    add_device_info(dev, device_id, firmware_version);
+    String payload;
+    serializeJson(doc, payload);
+    publish_discovery("binary_sensor", device_id, "co_alarm", payload.c_str());
+  }
+
+  // ── Binary Sensor: silent_panic (touch long-press) ──
+  {
+    JsonDocument doc;
+    doc["name"] = "Silent Panic";
+    doc["stat_t"] = s_topic_sensing;
+    doc["val_tpl"] =
+      "{{ 'ON' if value_json.touch_event == 'silent_panic' else 'OFF' }}";
+    doc["dev_cla"] = "safety";
+    doc["ic"] = "mdi:alert-octagon";
+    char uid[64];
+    snprintf(uid, sizeof(uid), "securacv_%s_silent_panic", device_id);
+    doc["uniq_id"] = uid;
+    JsonObject dev = doc["dev"].to<JsonObject>();
+    add_device_info(dev, device_id, firmware_version);
+    String payload;
+    serializeJson(doc, payload);
+    publish_discovery("binary_sensor", device_id, "silent_panic", payload.c_str());
+  }
+
+  // ── Binary Sensor: enclosure_tamper (touch tamper OR temp drift) ──
+  {
+    JsonDocument doc;
+    doc["name"] = "Enclosure Tamper";
+    doc["stat_t"] = s_topic_sensing;
+    doc["val_tpl"] =
+      "{{ 'ON' if (value_json.touch_event == 'enclosure_tamper' or "
+                  "value_json.temp_drift_active) else 'OFF' }}";
+    doc["dev_cla"] = "tamper";
+    char uid[64];
+    snprintf(uid, sizeof(uid), "securacv_%s_enclosure_tamper", device_id);
+    doc["uniq_id"] = uid;
+    JsonObject dev = doc["dev"].to<JsonObject>();
+    add_device_info(dev, device_id, firmware_version);
+    String payload;
+    serializeJson(doc, payload);
+    publish_discovery("binary_sensor", device_id, "enclosure_tamper", payload.c_str());
+  }
+
+  // ── Sensor: ir_last_protocol (NEC/RC5/Sony/none) ──
+  {
+    JsonDocument doc;
+    doc["name"] = "Last IR Protocol";
+    doc["stat_t"] = s_topic_sensing;
+    doc["val_tpl"] = "{{ value_json.ir_protocol | default('none') }}";
+    doc["ic"] = "mdi:remote";
+    doc["ent_cat"] = "diagnostic";
+    char uid[64];
+    snprintf(uid, sizeof(uid), "securacv_%s_ir_protocol", device_id);
+    doc["uniq_id"] = uid;
+    JsonObject dev = doc["dev"].to<JsonObject>();
+    add_device_info(dev, device_id, firmware_version);
+    String payload;
+    serializeJson(doc, payload);
+    publish_discovery("sensor", device_id, "ir_protocol", payload.c_str());
+  }
+
+  // ── Sensor: ir_hash_bucket (0..15, per-session salted) ──
+  {
+    JsonDocument doc;
+    doc["name"] = "Last IR Bucket";
+    doc["stat_t"] = s_topic_sensing;
+    doc["val_tpl"] = "{{ value_json.ir_bucket | default(0) }}";
+    doc["ic"] = "mdi:numeric";
+    doc["ent_cat"] = "diagnostic";
+    char uid[64];
+    snprintf(uid, sizeof(uid), "securacv_%s_ir_bucket", device_id);
+    doc["uniq_id"] = uid;
+    JsonObject dev = doc["dev"].to<JsonObject>();
+    add_device_info(dev, device_id, firmware_version);
+    String payload;
+    serializeJson(doc, payload);
+    publish_discovery("sensor", device_id, "ir_bucket", payload.c_str());
+  }
+
+  // ── Sensor: wake_reason (cold_boot/timer/touch/ext0/ext1/ulp/gpio/other) ──
+  {
+    JsonDocument doc;
+    doc["name"] = "Last Wake";
+    doc["stat_t"] = s_topic_sensing;
+    doc["val_tpl"] = "{{ value_json.wake_reason | default('cold_boot') }}";
+    doc["ic"] = "mdi:power-sleep";
+    doc["ent_cat"] = "diagnostic";
+    char uid[64];
+    snprintf(uid, sizeof(uid), "securacv_%s_wake_reason", device_id);
+    doc["uniq_id"] = uid;
+    JsonObject dev = doc["dev"].to<JsonObject>();
+    add_device_info(dev, device_id, firmware_version);
+    String payload;
+    serializeJson(doc, payload);
+    publish_discovery("sensor", device_id, "wake_reason", payload.c_str());
+  }
+
+  // ── Sensor: rssi_dbm (CSI window mean RSSI) ──
+  {
+    JsonDocument doc;
+    doc["name"] = "Sensing RSSI";
+    doc["stat_t"] = s_topic_sensing;
+    doc["val_tpl"] = "{{ value_json.rssi_dbm | default(0) }}";
+    doc["unit_of_meas"] = "dBm";
+    doc["dev_cla"] = "signal_strength";
+    doc["ent_cat"] = "diagnostic";
+    char uid[64];
+    snprintf(uid, sizeof(uid), "securacv_%s_sensing_rssi", device_id);
+    doc["uniq_id"] = uid;
+    JsonObject dev = doc["dev"].to<JsonObject>();
+    add_device_info(dev, device_id, firmware_version);
+    String payload;
+    serializeJson(doc, payload);
+    publish_discovery("sensor", device_id, "sensing_rssi", payload.c_str());
   }
 
   s_discovery_sent = true;

@@ -97,6 +97,13 @@ bool mqtt_publish_tamper(const char* json_payload);
 // Transport: transport status (QoS 0, on change)
 bool mqtt_publish_transport(const char* json_payload);
 
+// Sensing: full snapshot of the Phase-1..5 sensing state (CSI motion /
+// breathing scores, acoustic last-event, touch last-event, IR last-
+// activity, temp drift, lowpower wake reason). One retained JSON blob
+// per device — HA value_template extracts each entity's field. Called
+// every MQTT_STATUS_INTERVAL_MS from the main loop.
+bool mqtt_publish_sensing(const char* json_payload);
+
 // ── HA MQTT Discovery ───────────────────────────────────────────────────
 // Send Home Assistant MQTT Discovery config messages.
 // Called automatically on first connect and reconnect.

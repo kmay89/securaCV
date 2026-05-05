@@ -82,6 +82,7 @@ static uint32_t g_last_record_ms = 0;
 #if FEATURE_HA_MQTT
 static uint32_t g_last_mqtt_status_ms = 0;
 static uint32_t g_last_mqtt_health_ms = 0;
+static uint32_t g_last_mqtt_sensing_ms = 0;
 #endif
 
 // Device-unique AP password (derived from pubkey fingerprint)
@@ -97,6 +98,9 @@ static void derive_ap_password(const uint8_t fingerprint[8], char* password, siz
 #if FEATURE_HA_MQTT
 static void mqtt_publish_status_update();
 static void mqtt_publish_health_update();
+#if FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS || FEATURE_TOUCH || FEATURE_IR_RMT || FEATURE_TEMP_TAMPER
+static void mqtt_publish_sensing_update();
+#endif
 #endif
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -578,6 +582,17 @@ void loop() {
     g_last_mqtt_health_ms = now;
     mqtt_publish_health_update();
   }
+
+  // Publish sensing snapshot periodically — same cadence as status.
+  // Only useful when at least one sensing source is compiled in;
+  // otherwise the snapshot is all-defaults and the HA entities stay
+  // at "Unknown".
+#if FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS || FEATURE_TOUCH || FEATURE_IR_RMT || FEATURE_TEMP_TAMPER
+  if (mqtt_connected() && now - g_last_mqtt_sensing_ms >= MQTT_STATUS_INTERVAL_MS) {
+    g_last_mqtt_sensing_ms = now;
+    mqtt_publish_sensing_update();
+  }
+#endif
 #endif
 
   // Create witness records at interval
@@ -705,6 +720,78 @@ static void mqtt_publish_health_update() {
   serializeJson(doc, payload);
   mqtt_publish_health(payload.c_str());
 }
+
+#if FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS || FEATURE_TOUCH || FEATURE_IR_RMT || FEATURE_TEMP_TAMPER
+static void mqtt_publish_sensing_update() {
+  /* Single retained JSON snapshot of the sensing aggregator state.
+   * Each HA entity's value_template extracts its field. Same shape
+   * as /api/sensing — all the per-source TTL handling already lives
+   * inside securacv_sensing, so a stale event naturally clears here. */
+  sensing_state_t s;
+  sensing_snapshot(&s);
+
+  JsonDocument doc;
+
+  /* CSI / activity headline scalars. */
+  doc["label"]      = sensing_label_name(s.activity_label);
+  doc["motion"]     = s.motion_score;
+  doc["breathing"]  = s.breathing_score;
+  doc["rssi_dbm"]   = (int)s.rssi_dbm;
+  doc["frames_in_window"] = s.frames_in_window;
+  doc["channel"]    = s.channel;
+  doc["time_bucket"] = s.time_bucket;
+
+  /* Acoustic last event (cleared by TTL after 30 s). The HA value
+   * templates compare against the string here to drive smoke / CO
+   * binary sensors. Map enum → string locally to avoid pulling in
+   * securacv_audio.h here. */
+  const char* ae = "none";
+  switch (s.last_audio_event_type) {
+    case 1: ae = "smoke_alarm_t3"; break;
+    case 2: ae = "co_alarm_t4";    break;
+  }
+  doc["acoustic_event"] = ae;
+  doc["acoustic_conf"]  = s.last_audio_event_conf;
+
+  /* Touch last event (cleared by TTL after 60 s). */
+  const char* te = "none";
+  switch (s.last_touch_event_type) {
+    case 1: te = "silent_panic";     break;
+    case 2: te = "enclosure_tamper"; break;
+    case 3: te = "approach";         break;
+  }
+  doc["touch_event"]   = te;
+  doc["touch_conf"]    = s.last_touch_event_conf;
+  doc["touch_pad"]     = s.last_touch_pad_channel;
+
+  /* IR last activity (cleared by TTL after 10 s). */
+  const char* ip = "none";
+  switch (s.last_ir_category) {
+    case 1: ip = "nec";  break;
+    case 2: ip = "rc5";  break;
+    case 3: ip = "sony"; break;
+  }
+  doc["ir_protocol"] = ip;
+  doc["ir_bucket"]   = s.last_ir_hash_bucket;
+  doc["ir_conf"]     = s.last_ir_confidence;
+
+  /* Temp drift active flag (cleared by TTL after 5 min). The HA
+   * binary sensor for enclosure_tamper ORs this with touch_event
+   * so a single tamper indicator covers both surfaces. */
+  doc["temp_drift_active"] = (s.last_temp_drift_ms != 0);
+  doc["temp_drift_conf"]   = s.last_temp_drift_conf;
+
+  /* Lowpower wake reason — surfaces as a diagnostic sensor in HA so
+   * an operator can see whether a remote canary booted from a touch
+   * wake, timer, or cold boot. The lowpower HAL is unconditionally
+   * compiled in (see top of file). */
+  doc["wake_reason"] = lowpower_wake_reason_name(lowpower_get_wake_reason());
+
+  String payload;
+  serializeJson(doc, payload);
+  mqtt_publish_sensing(payload.c_str());
+}
+#endif
 
 #endif // FEATURE_HA_MQTT
 
