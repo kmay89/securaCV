@@ -1,0 +1,19 @@
+{
+    "name": "securacv_lowpower",
+    "version": "0.1.0",
+    "description": "SecuraCV Low-Power — thin HAL abstracting the ESP32-S3 native deep-sleep machinery (esp_sleep_*). Wake sources: timer, touch (RTC peripheral), EXT0 (single GPIO), EXT1 (multi GPIO), ULP-RISC-V. The rest of the firmware calls clean lowpower_arm_wake_*() / lowpower_enter_deep_sleep() / lowpower_get_wake_reason() — nothing in the application talks directly to esp_sleep_*.",
+    "keywords": ["securacv", "esp32-s3", "deep-sleep", "lowpower", "ulp", "wake"],
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/kmay89/securaCV.git"
+    },
+    "authors": [
+        {
+            "name": "Karl May",
+            "email": "karl@errerlabs.com"
+        }
+    ],
+    "license": "Apache-2.0",
+    "frameworks": "arduino",
+    "platforms": "espressif32"
+}

@@ -50,7 +50,9 @@ Single-row-per-capability summary across every non-archived variant. This is the
 | RF presence detection | ❌ | ✅ | ⚠️ | ❌ | ➖ | ✅ |
 | WiFi CSI sensing (motion / breathing / micro-activity) | ✅ | ✅ | ❌ | ❌ | ➖ | ❌ |
 | Acoustic alarm-cadence detection (T3 smoke / T4 CO) | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
-| Sensing dashboard panel (gauges + bar graphs + acoustic) | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
+| Capacitive touch (silent panic / enclosure tamper) | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
+| Native deep-sleep HAL (esp_sleep_* abstraction; ULP-RISC-V capable) | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
+| Sensing dashboard panel (gauges + acoustic + touch + power) | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
 | Chirp channel (broadcast beacon) | ⚠️ | ✅ | ⚠️ | ❌ | ➖ | ✅ |
 | MQTT publish + HA Discovery | ✅ | ❌ | ❌ | ✅ | ➖ | ❌ |
 | OTA A/B with rollback safety | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ |

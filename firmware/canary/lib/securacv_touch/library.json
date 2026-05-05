@@ -1,0 +1,19 @@
+{
+    "name": "securacv_touch",
+    "version": "0.1.0",
+    "description": "SecuraCV Touch — polled capacitive-touch sensing on the ESP32-S3 native touch_pad_* peripheral. Three modes: silent panic (long-press), enclosure tamper (sustained baseline drift), proximity approach (threshold). Privacy-safe — only event types cross the module boundary.",
+    "keywords": ["securacv", "touch", "esp32-s3", "panic", "tamper", "capacitive"],
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/kmay89/securaCV.git"
+    },
+    "authors": [
+        {
+            "name": "Karl May",
+            "email": "karl@errerlabs.com"
+        }
+    ],
+    "license": "Apache-2.0",
+    "frameworks": "arduino",
+    "platforms": "espressif32"
+}

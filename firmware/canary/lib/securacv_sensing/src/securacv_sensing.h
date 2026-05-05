@@ -78,6 +78,14 @@ typedef struct {
   uint8_t  last_audio_event_conf;   /* 0..100 */
   uint16_t last_audio_event_count;  /* cycles matched in this run */
   uint32_t last_audio_event_ms;     /* millis() at the event */
+
+  /* ── Touch events (Phase 3) ────────────────────────────────────
+   * Last touch-pad event (panic / tamper / approach). Zeroed once
+   * TOUCH_TTL_MS has elapsed since the event fired. */
+  uint8_t  last_touch_event_type;   /* touch_event_type_t (0..3) */
+  uint8_t  last_touch_event_conf;   /* 0..100 */
+  uint8_t  last_touch_pad_channel;  /* 1..14 on S3 */
+  uint32_t last_touch_event_ms;     /* millis() at the event */
 } sensing_state_t;
 
 /* Initialize the aggregator. Idempotent. */
@@ -96,6 +104,13 @@ void sensing_feed_csi(const csi_features_t* features);
 void sensing_feed_audio_event(uint8_t event_type,
                               uint8_t confidence,
                               uint16_t cycle_count,
+                              uint8_t time_bucket);
+
+/* Feed a touch event (panic / tamper / approach from securacv_touch).
+ * Same decoupling rationale as sensing_feed_audio_event. */
+void sensing_feed_touch_event(uint8_t event_type,
+                              uint8_t confidence,
+                              uint8_t pad_channel,
                               uint8_t time_bucket);
 
 /* Apply TTL decay; call from the main loop at 1–10 Hz. */

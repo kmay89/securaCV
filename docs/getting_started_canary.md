@@ -139,7 +139,60 @@ avoids fuzzy matching.
 
 ---
 
-## 6 · What it never does
+## 6 · The silent panic pad
+
+Below the **Acoustic alarms** card you'll see a card titled **Touch**.
+Out of the box it's connected to **GPIO 4** (pin **D3** on the XIAO
+header), waiting for one of three things:
+
+- **Long-press → silent panic.** Hold a finger on the pad for 1.5 s
+  (or anything you've wired the pad to — a bedside sticker electrode,
+  a hidden contact under a desk). The device fires a `silent_panic`
+  event into the witness chain *without* flashing an LED, beeping,
+  or otherwise announcing the press to anyone in the room.
+- **Sustained drop below baseline → enclosure tamper.** If somebody
+  opens the case or pries the device off its mount, the touch pad
+  loses its connection to the electrode and the reading drops to
+  less than half of its calibrated baseline; held there for more
+  than 5 s, `enclosure_tamper` fires.
+- **Brief approach (optional) → presence courtesy.** Off by default;
+  a hand or body within a few centimetres triggers `approach` once
+  per 1.5 s.
+
+The first ~2 s after boot are spent calibrating the baseline — during
+that window the card reads "Calibrating" and the panic / tamper
+detectors are off. After that the card stays at "Idle" until something
+happens.
+
+To wire your own panic surface, route a wire from **D3** to a small
+metal plate, sticker electrode, or a piece of conductive copper tape
+hidden under furniture. Anything bigger than a coin works.
+
+If you want to use a different pin, override at compile time with
+`-DTOUCH_PIN_NUM=N` where N is one of `1, 3, 4, 5, 6` (the available
+non-conflicting touch channels on the XIAO Sense — the SD-card and
+camera pins are excluded).
+
+---
+
+## 7 · Power & wake
+
+The **Power & wake** card surfaces what the ESP32-S3's RTC peripheral
+sees when the chip wakes up from deep sleep. On a normal boot it reads
+**cold_boot**; on a touch-pad wake it reads **touch** with the firing
+pad number; on an EXT0 GPIO wake it reads **ext0_gpio**, and so on.
+
+Today the canary runs always-on (constant Wi-Fi AP, HTTP server,
+sensing). A future battery profile (the *Garage / Workshop* deployment)
+will deep-sleep between events and wake on touch / timer. The
+plumbing for that is already in place — the **Caps** field on this
+card lists which native wake sources are wired up: `timer`, `touch`,
+`ext0`, `ext1`, `ulp-riscv`. When you flash a battery build, those
+become live.
+
+---
+
+## 8 · What it never does
 
 Three things are **structurally impossible** with this device — not
 *hard*, not *configurable off*, but unable to:
@@ -225,6 +278,9 @@ for evidence, **export the chain before you factory-reset** —
 | Gauges look noisy at low signal | Move the Canary closer to other Wi-Fi devices, or away from a metal wall behind it |
 | **Acoustic alarms** card says **Mic offline** | The PDM driver failed to start. Check serial output for an `Audio: I2S` error. Usually a hardware issue with the on-board mic. |
 | Smoke alarm beeping but no event fires | Most US/EU alarms use the standard T3 cadence; UK and some older alarms use T4. Check your alarm's manual for cadence type — only T3 (smoke) and T4 (CO) are matched today. |
+| **Touch** card stuck at **Calibrating** | The pad never produced a stable reading. Check that nothing is touching the pad during the first 2 s after boot (the baseline is sampled then), and that the GPIO is actually connected to a touch-capable pin (1, 3, 4, 5, or 6). |
+| Touch panic fires randomly | Your enclosure or mounting is letting the pad float. Either ground the pad better, raise the press threshold (`TOUCH_RELATIVE_THRESHOLD_PCT` in the lib), or move to a different channel via `-DTOUCH_PIN_NUM=N`. |
+| **Power & wake** card always reads **cold_boot** | Normal — this build doesn't actually deep-sleep. Battery / always-off behavior arrives in a follow-up build. |
 
 For anything else, **Settings → Diagnostics → Send to installer** packages
 the health log into a signed bundle you can share without leaking

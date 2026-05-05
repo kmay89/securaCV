@@ -54,6 +54,18 @@
 #endif
 #endif
 
+#if FEATURE_TOUCH
+#include "securacv_touch.h"
+#if !FEATURE_CSI && !FEATURE_ACOUSTIC_EVENTS
+#include "securacv_sensing.h"
+#endif
+#endif
+
+/* The lowpower HAL is always compiled in once Phase 3 lands — it's
+ * how main.cpp learns the wake reason on boot. Whether deep-sleep is
+ * actually entered is gated separately by FEATURE_DEEP_SLEEP. */
+#include "securacv_lowpower.h"
+
 // ════════════════════════════════════════════════════════════════════════════
 // GLOBALS
 // ════════════════════════════════════════════════════════════════════════════
@@ -149,6 +161,24 @@ void setup() {
   serial_wait_for_cdc(SERIAL_CDC_WAIT_MS);
 
   print_banner();
+
+  // Capture wake reason from the previous deep-sleep cycle BEFORE any
+  // peripheral init touches RTC state. On a normal cold boot this
+  // returns "cold_boot"; on a touch-pad wake (panic / tamper) we log
+  // the firing pad here so a forensics trail exists even if the device
+  // was woken by an attacker tampering with the enclosure.
+  lowpower_init();
+  {
+    const uint8_t wr = lowpower_get_wake_reason();
+    if (wr != LOWPOWER_WAKE_UNDEFINED) {
+      Serial.printf("[..] Wake reason: %s", lowpower_wake_reason_name(wr));
+      if (wr == LOWPOWER_WAKE_TOUCH) {
+        const int pad = lowpower_get_wake_touch_pad();
+        if (pad >= 0) Serial.printf(" (pad=%d)", pad);
+      }
+      Serial.println();
+    }
+  }
 
   // Check for factory reset: hold BOOT button during startup
   pinMode(BOOT_BUTTON_GPIO, INPUT_PULLUP);
@@ -293,6 +323,30 @@ void setup() {
   }
 #endif
 
+  // Initialize capacitive-touch sensor (silent panic / enclosure tamper)
+#if FEATURE_TOUCH
+  Serial.println("[..] Initializing capacitive-touch sensor...");
+#if !FEATURE_CSI && !FEATURE_ACOUSTIC_EVENTS
+  /* sensing_init() may not have been called by CSI/audio above. */
+  sensing_init();
+#endif
+  touch_config_t touch_cfg = TOUCH_CONFIG_DEFAULT;
+  if (touch_init(&touch_cfg)) {
+    touch_set_event_callback([](const touch_event_t* evt) {
+      sensing_feed_touch_event(evt->event_type, evt->confidence,
+                               evt->pad_channel, evt->time_bucket);
+    });
+    if (touch_start()) {
+      Serial.printf("[OK] Touch sensor armed on pad %d (panic+tamper)\n",
+                    touch_cfg.channel);
+    } else {
+      Serial.println("[WARN] Touch sensor start failed");
+    }
+  } else {
+    Serial.println("[WARN] Touch sensor init failed");
+  }
+#endif
+
   // Create boot attestation record
   Serial.println("[..] Creating boot attestation record...");
   uint8_t boot_payload[64];
@@ -406,6 +460,16 @@ void loop() {
 #if !FEATURE_CSI
   /* sensing_tick() ages out stale acoustic events too; if CSI is off
    * we still need to call it. */
+  sensing_tick();
+#endif
+#endif
+
+#if FEATURE_TOUCH
+  // Pump touch: read filtered pad value at 20 Hz, run panic/tamper/
+  // approach state machines, fire event callback on confirmed match.
+  touch_process();
+#if !FEATURE_CSI && !FEATURE_ACOUSTIC_EVENTS
+  /* TTL aging for touch events also runs out of sensing_tick(). */
   sensing_tick();
 #endif
 #endif

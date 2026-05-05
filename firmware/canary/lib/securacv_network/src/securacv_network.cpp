@@ -30,7 +30,7 @@
 #include <Update.h>
 #endif
 
-#if FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS
+#if FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS || FEATURE_TOUCH || FEATURE_TOUCH
 #include "securacv_sensing.h"
 #endif
 #if FEATURE_CSI
@@ -38,6 +38,14 @@
 #endif
 #if FEATURE_ACOUSTIC_EVENTS
 #include "securacv_audio.h"
+#endif
+#if FEATURE_TOUCH
+#include "securacv_touch.h"
+#endif
+/* Lowpower HAL is always compiled when any sensing is on, so the
+ * Sensing endpoint can surface the wake reason and capability bits. */
+#if FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS || FEATURE_TOUCH || FEATURE_TOUCH
+#include "securacv_lowpower.h"
 #endif
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -551,7 +559,7 @@ static esp_err_t handle_peek_start(httpd_req_t* req);
 static esp_err_t handle_peek_stream(httpd_req_t* req);
 static esp_err_t handle_peek_stop(httpd_req_t* req);
 static esp_err_t handle_peek_status(httpd_req_t* req);
-#if FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS
+#if FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS || FEATURE_TOUCH
 static esp_err_t handle_sensing(httpd_req_t* req);
 #endif
 #endif
@@ -652,7 +660,7 @@ void NetworkManager::registerHttpHandlers() {
   httpd_register_uri_handler(m_http_server, &peek_status);
   #endif
 
-  #if FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS
+  #if FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS || FEATURE_TOUCH
   httpd_uri_t sensing_ep = { .uri = "/api/sensing", .method = HTTP_GET, .handler = handle_sensing };
   httpd_register_uri_handler(m_http_server, &sensing_ep);
   #endif
@@ -1333,7 +1341,7 @@ static esp_err_t handle_mqtt_config(httpd_req_t* req) {
 // CSI SENSING ENDPOINT — privacy-safe scalars + bar-graph arrays
 // ════════════════════════════════════════════════════════════════════════════
 
-#if FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS
+#if FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS || FEATURE_TOUCH
 // GET /api/sensing — returns the live aggregated sensing snapshot for the
 // dashboard's Sensing panel. No raw subcarrier samples, no MAC/BSSID, no
 // audio samples, no per-frame timestamps. The data exposed here is the
@@ -1410,6 +1418,39 @@ static esp_err_t handle_sensing(httpd_req_t* req) {
   ast["t4_detected"]      = a_stats.t4_detected;
   ast["i2s_read_errors"]  = a_stats.i2s_read_errors;
 #endif // FEATURE_ACOUSTIC_EVENTS
+
+#if FEATURE_TOUCH
+  touch_stats_t t_stats = {0};
+  touch_get_stats(&t_stats);
+
+  JsonObject tc = doc["touch"].to<JsonObject>();
+  tc["enabled"]     = touch_is_running();
+  tc["last_event"]  = touch_event_name(s.last_touch_event_type);
+  tc["confidence"]  = s.last_touch_event_conf;
+  tc["pad_channel"] = s.last_touch_pad_channel;
+  tc["last_event_age_ms"] =
+      s.last_touch_event_ms == 0 ? -1L : (long)(millis() - s.last_touch_event_ms);
+  tc["baseline_locked"] = t_stats.baseline_locked;
+  tc["baseline_value"]  = t_stats.baseline_value;
+  tc["last_value"]      = t_stats.last_value;
+
+  JsonObject tst = tc["stats"].to<JsonObject>();
+  tst["reads_total"]     = t_stats.reads_total;
+  tst["panic_events"]    = t_stats.panic_events;
+  tst["tamper_events"]   = t_stats.tamper_events;
+  tst["approach_events"] = t_stats.approach_events;
+#endif // FEATURE_TOUCH
+
+#if FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS || FEATURE_TOUCH
+  /* Lowpower wake reason + capability bits — useful for the installer
+   * to confirm the device booted from a touch-pad wake (forensic trail)
+   * vs a normal cold boot, and for the dashboard to surface what wake
+   * sources are available on the chip. */
+  JsonObject lp = doc["lowpower"].to<JsonObject>();
+  lp["wake_reason"] = lowpower_wake_reason_name(lowpower_get_wake_reason());
+  lp["wake_touch_pad"] = lowpower_get_wake_touch_pad();
+  lp["caps"] = lowpower_get_caps();
+#endif
 
   String response;
   serializeJson(doc, response);
