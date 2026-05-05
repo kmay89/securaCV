@@ -48,6 +48,8 @@ Single-row-per-capability summary across every non-archived variant. This is the
 | Mesh RSSI from ESP-NOW radio | ⚠️ | ✅ | ❌ | ❌ | ➖ | ❌ |
 | BLE discovery (Opera/Chirp/Nearby) | ❌ | ✅ | ❌ | ❌ | ➖ | ✅ |
 | RF presence detection | ❌ | ✅ | ⚠️ | ❌ | ➖ | ✅ |
+| WiFi CSI sensing (motion / breathing / micro-activity) | ✅ | ✅ | ❌ | ❌ | ➖ | ❌ |
+| Sensing dashboard panel (gauges + bar graphs) | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
 | Chirp channel (broadcast beacon) | ⚠️ | ✅ | ⚠️ | ❌ | ➖ | ✅ |
 | MQTT publish + HA Discovery | ✅ | ❌ | ❌ | ✅ | ➖ | ❌ |
 | OTA A/B with rollback safety | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ |

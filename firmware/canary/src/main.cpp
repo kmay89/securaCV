@@ -39,6 +39,11 @@
 #include <ArduinoJson.h>
 #endif
 
+#if FEATURE_CSI
+#include "securacv_csi.h"
+#include "securacv_sensing.h"  /* tiny in-tree aggregator (lib/securacv_sensing) */
+#endif
+
 // ════════════════════════════════════════════════════════════════════════════
 // GLOBALS
 // ════════════════════════════════════════════════════════════════════════════
@@ -236,6 +241,25 @@ void setup() {
   mqtt_init(device.device_id, FIRMWARE_VERSION);
 #endif
 
+  // Initialize CSI sensing (motion / breathing / micro-activity)
+#if FEATURE_CSI
+  Serial.println("[..] Initializing CSI environmental sensing...");
+  sensing_init();
+  csi_config_t csi_cfg = CSI_CONFIG_DEFAULT;
+  if (csi::init(csi_cfg)) {
+    csi::set_features_callback([](const csi_features_t* f) { sensing_feed_csi(f); });
+    /* WiFi may not yet be running; start() defers itself if so and the
+     * deferred-start retry runs from process() until WiFi comes up. */
+    if (csi::start()) {
+      Serial.println("[OK] CSI sensing armed (deferred-start safe)");
+    } else {
+      Serial.println("[WARN] CSI sensing start failed");
+    }
+  } else {
+    Serial.println("[WARN] CSI sensing init failed");
+  }
+#endif
+
   // Create boot attestation record
   Serial.println("[..] Creating boot attestation record...");
   uint8_t boot_payload[64];
@@ -332,6 +356,14 @@ void loop() {
 #if FEATURE_WIFI_AP
   // Check WiFi connection periodically
   network_get_instance().checkConnection();
+#endif
+
+#if FEATURE_CSI
+  // Pump CSI: drain ring, finalize windows, fire feature callback into
+  // sensing_feed_csi(). Apply TTL decay so a quiet RF environment shows
+  // as "quiet" instead of stale "active."
+  csi::process();
+  sensing_tick();
 #endif
 
 #if FEATURE_HA_MQTT

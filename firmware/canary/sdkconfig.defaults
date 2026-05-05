@@ -44,3 +44,10 @@ CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_ota.csv"
 # ── HTTP server stack for streaming ───────────────────────────
 CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
 CONFIG_HTTPD_MAX_URI_LEN=512
+
+# ── WiFi CSI: enable channel-state-info callback API ──────────
+# Required by securacv_csi (motion / breathing / micro-activity
+# sensing). No per-frame data leaves the device — the driver hands
+# the HAL subcarrier I/Q, which is scrubbed of MAC/BSSID before
+# any data crosses the privacy barrier.
+CONFIG_ESP_WIFI_CSI_ENABLED=y
