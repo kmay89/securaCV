@@ -460,6 +460,57 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     .panel { display: none; }
     .panel.active { display: block; }
 
+    /* Live-indicator row on the Status tab */
+    .live-indicator-row {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 8px;
+      padding: 4px 4px 6px;
+    }
+    @media (max-width: 520px) {
+      .live-indicator-row { grid-template-columns: repeat(3, 1fr); }
+    }
+    .live-indicator {
+      text-align: center;
+      padding: 12px 4px;
+      background: rgba(255,255,255,0.02);
+      border-radius: 10px;
+      border: 1px solid rgba(255,255,255,0.05);
+      transition: all 200ms ease-out;
+    }
+    .live-indicator__icon {
+      font-size: 1.4rem;
+      margin-bottom: 4px;
+      filter: grayscale(100%);
+      opacity: 0.4;
+      transition: filter 200ms, opacity 200ms;
+    }
+    .live-indicator__label {
+      font-size: 0.7rem;
+      color: var(--muted);
+      letter-spacing: 0.4px;
+      text-transform: uppercase;
+    }
+    .live-indicator[data-state="on"] {
+      background: rgba(255,69,58,0.18);
+      border-color: rgba(255,69,58,0.45);
+    }
+    .live-indicator[data-state="on"] .live-indicator__icon {
+      filter: none;
+      opacity: 1;
+    }
+    .live-indicator[data-state="on"] .live-indicator__label {
+      color: #ff453a;
+    }
+    .live-indicator[data-state="info"] {
+      background: rgba(90,200,250,0.10);
+      border-color: rgba(90,200,250,0.35);
+    }
+    .live-indicator[data-state="info"] .live-indicator__icon {
+      filter: none;
+      opacity: 0.85;
+    }
+
     /* ── Sensing panel — gauges, pill, bar graphs, arrows ─────────── */
     .sensing-pill {
       display: inline-block;
@@ -730,6 +781,65 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
     <!-- Status Panel -->
     <div class="panel active" id="panel-status">
+
+      <!-- Live Sensing summary — surfaces the room-state pill + critical
+           alarm indicators on the landing page so the user sees "what
+           the radio feels right now" without navigating to the Sensing
+           tab. Hidden cleanly when the build has no sensing features. -->
+      <div class="card" id="liveSensingCard" style="display:none;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Live sensing</div>
+            <div class="card-subtitle">
+              What this canary is feeling right now — full detail under the Sensing tab.
+            </div>
+          </div>
+          <button class="btn btn-ghost btn-sm" onclick="switchPanel('sensing')">Open Sensing →</button>
+        </div>
+        <div style="text-align:center; padding:16px 8px 8px;">
+          <div id="liveActivityPill" class="sensing-pill sensing-pill--offline">Offline</div>
+        </div>
+        <!-- Five quick-glance indicators. Each one lights up red while
+             its underlying event is fresh; otherwise stays grey. -->
+        <div class="live-indicator-row">
+          <div class="live-indicator" id="liveIndSmoke" data-state="off">
+            <div class="live-indicator__icon">🔥</div>
+            <div class="live-indicator__label">Smoke alarm</div>
+          </div>
+          <div class="live-indicator" id="liveIndCO" data-state="off">
+            <div class="live-indicator__icon">⚠</div>
+            <div class="live-indicator__label">CO alarm</div>
+          </div>
+          <div class="live-indicator" id="liveIndPanic" data-state="off">
+            <div class="live-indicator__icon">🚨</div>
+            <div class="live-indicator__label">Silent panic</div>
+          </div>
+          <div class="live-indicator" id="liveIndTamper" data-state="off">
+            <div class="live-indicator__icon">🔧</div>
+            <div class="live-indicator__label">Tamper</div>
+          </div>
+          <div class="live-indicator" id="liveIndIR" data-state="off">
+            <div class="live-indicator__icon">📺</div>
+            <div class="live-indicator__label">Appliance</div>
+          </div>
+        </div>
+        <!-- Three small score readouts so the eye gets motion/breathing/RSSI at a glance. -->
+        <div class="stats-grid" style="margin-top:8px;">
+          <div class="stat-item">
+            <div class="stat-label">Motion</div>
+            <div class="stat-value"><span id="liveMotion">0</span><span class="stat-unit">%</span></div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-label">Breathing</div>
+            <div class="stat-value"><span id="liveBreath">0</span><span class="stat-unit">%</span></div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-label">RSSI</div>
+            <div class="stat-value"><span id="liveRssi">--</span><span class="stat-unit">dBm</span></div>
+          </div>
+        </div>
+      </div>
+
       <div class="card">
         <div class="card-header">
           <div>
@@ -1975,6 +2085,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       else if (panel === 'community') refreshChirpStatus();
       else if (panel === 'bluetooth') { refreshBtStatus(); loadBtPairedDevices(); }
       else if (panel === 'sensing') refreshSensing();
+      else if (panel === 'status') refreshLiveSensing();
 
       // Stop peek stream when leaving peek panel
       if (panel !== 'peek' && peekActive) {
@@ -2334,44 +2445,50 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       // ─── Acoustic alarms (T3 smoke / T4 CO) ──────────────────────────
       // Card stays hidden if the firmware build doesn't include
       // FEATURE_ACOUSTIC_EVENTS (the acoustic key won't be in the JSON).
+      // CRITICAL: do NOT early-return here — the touch/ir/temp/power cards
+      // render after this section and any return would hide them all.
       const acCard = document.getElementById('acousticCard');
       const ac = data.acoustic;
-      if (!ac) {
-        if (acCard) acCard.style.display = 'none';
-        return;
+      if (ac) {
+        if (acCard) acCard.style.display = '';
+
+        const acPill = document.getElementById('acousticPill');
+        const acExp  = document.getElementById('acousticExplain');
+        const evtName = ac.last_event || 'none';
+        // NB: variable name MUST NOT be `age` — that's already taken by
+        // the CSI block above. JS would throw `Identifier 'age' has
+        // already been declared` at parse time, breaking refreshSensing()
+        // entirely.
+        const acAge = ac.last_event_age_ms;
+
+        if (!ac.enabled) {
+          acPill.className = 'sensing-pill sensing-pill--offline';
+          acPill.textContent = 'Mic offline';
+          acExp.textContent = 'The PDM microphone failed to start. Check the device serial log.';
+        } else if (evtName === 'smoke_alarm_t3' && acAge >= 0 && acAge < 30000) {
+          acPill.className = 'sensing-pill sensing-pill--active';
+          acPill.textContent = '🔥 Smoke alarm pattern';
+          acExp.textContent = 'NFPA 72 / ISO 8201 cadence detected — your smoke alarm is sounding.';
+        } else if (evtName === 'co_alarm_t4' && acAge >= 0 && acAge < 30000) {
+          acPill.className = 'sensing-pill sensing-pill--active';
+          acPill.textContent = '⚠ CO alarm pattern';
+          acExp.textContent = 'UL 2034 cadence detected — your carbon monoxide alarm is sounding.';
+        } else {
+          acPill.className = 'sensing-pill sensing-pill--quiet';
+          acPill.textContent = 'No alarms';
+          acExp.textContent = 'Listening for the standard NFPA 72 (smoke) and UL 2034 (CO) cadences. Nothing detected.';
+        }
+
+        const ast = ac.stats || {};
+        set('acT3',     ast.t3_detected || 0);
+        set('acT4',     ast.t4_detected || 0);
+        set('acFrames', ast.frames_processed || 0);
+        set('acOn',     ast.on_transitions || 0);
+        set('acOff',    ast.off_transitions || 0);
+        set('acErr',    ast.i2s_read_errors || 0);
+      } else if (acCard) {
+        acCard.style.display = 'none';
       }
-      if (acCard) acCard.style.display = '';
-
-      const acPill = document.getElementById('acousticPill');
-      const acExp  = document.getElementById('acousticExplain');
-      const evtName = ac.last_event || 'none';
-      const age = ac.last_event_age_ms;
-
-      if (!ac.enabled) {
-        acPill.className = 'sensing-pill sensing-pill--offline';
-        acPill.textContent = 'Mic offline';
-        acExp.textContent = 'The PDM microphone failed to start. Check the device serial log.';
-      } else if (evtName === 'smoke_alarm_t3' && age >= 0 && age < 30000) {
-        acPill.className = 'sensing-pill sensing-pill--active';
-        acPill.textContent = '🔥 Smoke alarm pattern';
-        acExp.textContent = 'NFPA 72 / ISO 8201 cadence detected — your smoke alarm is sounding.';
-      } else if (evtName === 'co_alarm_t4' && age >= 0 && age < 30000) {
-        acPill.className = 'sensing-pill sensing-pill--active';
-        acPill.textContent = '⚠ CO alarm pattern';
-        acExp.textContent = 'UL 2034 cadence detected — your carbon monoxide alarm is sounding.';
-      } else {
-        acPill.className = 'sensing-pill sensing-pill--quiet';
-        acPill.textContent = 'No alarms';
-        acExp.textContent = 'Listening for the standard NFPA 72 (smoke) and UL 2034 (CO) cadences. Nothing detected.';
-      }
-
-      const ast = ac.stats || {};
-      set('acT3',     ast.t3_detected || 0);
-      set('acT4',     ast.t4_detected || 0);
-      set('acFrames', ast.frames_processed || 0);
-      set('acOn',     ast.on_transitions || 0);
-      set('acOff',    ast.off_transitions || 0);
-      set('acErr',    ast.i2s_read_errors || 0);
 
       // ─── Touch (silent panic / enclosure tamper) ────────────────────
       const tcCard = document.getElementById('touchCard');
@@ -2514,6 +2631,69 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       } else if (lpCard) {
         lpCard.style.display = 'none';
       }
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // Live Sensing summary on the Status tab
+    // ════════════════════════════════════════════════════════════════
+    // Pulls /api/sensing and lights up the five quick-glance
+    // indicators (smoke / CO / panic / tamper / appliance) plus the
+    // motion/breathing/RSSI numbers. Called as part of refreshStatus()
+    // so the user sees live state without ever touching the Sensing
+    // nav button. Card auto-hides cleanly if the build has no sensing.
+    async function refreshLiveSensing() {
+      const card = document.getElementById('liveSensingCard');
+      const data = await api('/api/sensing');
+      if (!data || !data.ok) {
+        // Build has no sensing endpoint at all — keep card hidden.
+        if (card) card.style.display = 'none';
+        return;
+      }
+      if (card) card.style.display = '';
+
+      // Hero pill
+      const label = data.label || 'offline';
+      const pill = document.getElementById('liveActivityPill');
+      if (pill) {
+        pill.className = 'sensing-pill sensing-pill--' + label;
+        pill.textContent = label;
+      }
+
+      // Numeric tiles
+      const setT = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
+      setT('liveMotion', (data.motion | 0));
+      setT('liveBreath', (data.breathing | 0));
+      setT('liveRssi',
+           (data.rssi_dbm === undefined || data.rssi_dbm === 0) ? '--' : data.rssi_dbm);
+
+      // Five indicator chips. "on" = critical/alarming (red);
+      // "info" = informational (blue); "off" = grey.
+      const setInd = (id, state) => {
+        const e = document.getElementById(id);
+        if (e) e.dataset.state = state;
+      };
+      const ac = data.acoustic || {};
+      const tc = data.touch || {};
+      const tm = data.temp || {};
+      const ir = data.ir || {};
+      const acAge = ac.last_event_age_ms;
+      const tcAge = tc.last_event_age_ms;
+      const tmAge = tm.last_event_age_ms;
+      const irAge = ir.last_event_age_ms;
+
+      setInd('liveIndSmoke',
+             (ac.last_event === 'smoke_alarm_t3' && acAge >= 0 && acAge < 30000) ? 'on' : 'off');
+      setInd('liveIndCO',
+             (ac.last_event === 'co_alarm_t4' && acAge >= 0 && acAge < 30000) ? 'on' : 'off');
+      setInd('liveIndPanic',
+             (tc.last_event === 'silent_panic' && tcAge >= 0 && tcAge < 60000) ? 'on' : 'off');
+      const tamperOn =
+            (tc.last_event === 'enclosure_tamper' && tcAge >= 0 && tcAge < 60000) ||
+            (tmAge >= 0 && tmAge < 300000 && tm.confidence > 0);
+      setInd('liveIndTamper', tamperOn ? 'on' : 'off');
+      setInd('liveIndIR',
+             (irAge >= 0 && irAge < 10000 && ir.last_protocol && ir.last_protocol !== 'none')
+             ? 'info' : 'off');
     }
 
     // Status updates
@@ -3911,6 +4091,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     // ══════════════════════════════════════════════════════════════════
 
     refreshStatus();
+    refreshLiveSensing();   // Status-tab live sensing summary
     loadChain();
     loadWifiStatus();
     refreshOpera();
@@ -3920,6 +4101,12 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     loadBtPairedDevices();
     updateResolutionUI();
     setInterval(refreshStatus, 2000);
+    /* Live sensing updates only matter when the user is actually on
+     * the Status tab — every 2 s is plenty (matches the existing
+     * refreshStatus cadence without doubling network load). */
+    setInterval(() => {
+      if (currentPanel === 'status') refreshLiveSensing();
+    }, 2000);
     setInterval(loadWifiStatus, 5000);
     setInterval(() => {
       if (currentPanel === 'logs') loadLogs();
