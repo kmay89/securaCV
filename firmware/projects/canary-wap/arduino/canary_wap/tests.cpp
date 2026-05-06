@@ -15,7 +15,7 @@
 #include "federated.h"
 #include "wizard.h"
 #include "dp.h"
-#include "csi_hal.h"
+#include <csi_hal.h>  // Moved to firmware/common/csi/ — see csi_types.h header for build wiring.
 #include "health_log.h"
 
 #include <string.h>

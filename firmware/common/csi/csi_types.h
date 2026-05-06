@@ -1,6 +1,6 @@
 /**
  * @file csi_types.h
- * @brief Privacy-preserving WiFi CSI types (canary-wap sketch-local)
+ * @brief Privacy-preserving WiFi CSI types (canonical, firmware/common/csi/)
  *
  * Abstract types and constants for CSI-based environmental sensing. Used by
  * the rf_presence fusion layer to detect motion, breathing, and micro-activity
@@ -15,10 +15,14 @@
  *   4. Features are bucketed (int8) so fine-grained side channels are lost.
  *   5. No per-frame timestamp is exported; only a coarse time bucket.
  *
- * Lives inside the canary-wap sketch directory because Arduino CLI copies
- * sketch files into a temp build dir before compiling, which breaks any
- * relative-path include that escapes the sketch directory. A future C6
- * board port can copy this file into its own sketch directory verbatim.
+ * BUILD CONSUMERS:
+ *   - PlatformIO: pulled in via -I PROJECT_DIR/../../common (set in
+ *     envs/platformio/canary-wap.ini); .cpp picked up by the
+ *     common-tree source filter that already exists in canary-wap.ini.
+ *   - Arduino CLI: pass --libraries firmware/common (the canary-wap Makefile
+ *     does this); library.properties in this directory makes it discoverable.
+ *   - Arduino IDE: a libraries/csi symlink next to the canary-wap sketch
+ *     points here, so the IDE auto-discovers the library.
  *
  * See spec/canary_free_signals_v0.md (upcoming v1) for the threat model.
  */

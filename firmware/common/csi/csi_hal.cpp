@@ -16,7 +16,43 @@
 
 #include "csi_hal.h"
 #include "csi_features.h"
-#include "health_log.h"
+
+/*
+ * Optional host logger bridge.
+ *
+ * The canary-wap firmware ships a sketch-local `health_log.h` that exposes
+ * a `health_logging::` namespace with structured log levels and categories.
+ * When this library is consumed by canary-wap (Arduino sketch via the
+ * library symlink, or PIO via -I path), we route diagnostics through it.
+ *
+ * When this library is consumed standalone (e.g. by a third-party Arduino
+ * sketch from `firmware/examples/csi_minimal/`), no host logger is present.
+ * In that case the macros below collapse to Serial.printf so the user still
+ * sees diagnostic output without depending on canary-wap internals.
+ *
+ * This keeps the CSI core self-contained and re-usable while preserving
+ * the rich logging behavior in the SecuraCV product.
+ */
+#if __has_include("health_log.h")
+  #include "health_log.h"
+  #define CSI_HAL_HAS_HOST_LOGGER 1
+#else
+  #include <Arduino.h>
+  #define CSI_HAL_HAS_HOST_LOGGER 0
+#endif
+
+#if CSI_HAL_HAS_HOST_LOGGER
+  #define CSI_LOG_INFO(msg) \
+    health_logging::log(health_logging::LEVEL_INFO, health_logging::CAT_RF, msg)
+  #define CSI_LOG_WARNF(...) \
+    health_logging::logf(health_logging::LEVEL_WARNING, health_logging::CAT_RF, __VA_ARGS__)
+  #define CSI_LOG_INFOF(...) \
+    health_logging::logf(health_logging::LEVEL_INFO, health_logging::CAT_RF, __VA_ARGS__)
+#else
+  #define CSI_LOG_INFO(msg)        do { Serial.printf("[CSI] %s\n", msg); } while (0)
+  #define CSI_LOG_WARNF(fmt, ...)  do { Serial.printf("[CSI WARN] " fmt "\n", ##__VA_ARGS__); } while (0)
+  #define CSI_LOG_INFOF(fmt, ...)  do { Serial.printf("[CSI] " fmt "\n", ##__VA_ARGS__); } while (0)
+#endif
 
 #include <string.h>
 #include <atomic>
@@ -228,8 +264,7 @@ bool init(const Config& cfg) {
    * hal_wifi_init(), we still succeed — we'll register on start(). */
   s_initialized = true;
 
-  health_logging::log(health_logging::LEVEL_INFO, health_logging::CAT_RF,
-    "CSI HAL initialized (ring capacity 8, scrub barrier active)");
+  CSI_LOG_INFO("CSI HAL initialized (ring capacity 8, scrub barrier active)");
   return true;
 }
 
@@ -262,24 +297,21 @@ static int try_enable_csi_now() {
   esp_err_t err = esp_wifi_set_csi_config(&cfg);
   if (err == ESP_ERR_WIFI_NOT_STARTED) return 0;
   if (err != ESP_OK) {
-    health_logging::logf(health_logging::LEVEL_WARNING, health_logging::CAT_RF,
-      "CSI config failed (err=0x%x); sensing disabled", err);
+    CSI_LOG_WARNF("CSI config failed (err=0x%x); sensing disabled", err);
     return -1;
   }
 
   err = esp_wifi_set_csi_rx_cb(&csi_rx_cb, nullptr);
   if (err == ESP_ERR_WIFI_NOT_STARTED) return 0;
   if (err != ESP_OK) {
-    health_logging::logf(health_logging::LEVEL_WARNING, health_logging::CAT_RF,
-      "CSI callback register failed (err=0x%x)", err);
+    CSI_LOG_WARNF("CSI callback register failed (err=0x%x)", err);
     return -1;
   }
 
   err = esp_wifi_set_csi(true);
   if (err == ESP_ERR_WIFI_NOT_STARTED) return 0;
   if (err != ESP_OK) {
-    health_logging::logf(health_logging::LEVEL_WARNING, health_logging::CAT_RF,
-      "CSI enable failed (err=0x%x)", err);
+    CSI_LOG_WARNF("CSI enable failed (err=0x%x)", err);
     return -1;
   }
   return 1;
@@ -310,14 +342,12 @@ bool start() {
      * it succeeds or the feature is explicitly stop()'d. s_running stays
      * false so callers correctly see sensing as not yet active. */
     s_start_pending = true;
-    health_logging::log(health_logging::LEVEL_INFO, health_logging::CAT_RF,
-      "CSI start deferred — WiFi not yet running; will retry in process()");
+    CSI_LOG_INFO("CSI start deferred — WiFi not yet running; will retry in process()");
     return true;   /* init-accepted; the retry is silent and automatic */
   }
   /* r == -1: hard failure, logged. CSI pipeline no-ops for this session. */
 #if !SECURACV_HAVE_CSI_API
-  health_logging::log(health_logging::LEVEL_INFO, health_logging::CAT_RF,
-    "CSI API not compiled into this WiFi driver build; sensing disabled");
+  CSI_LOG_INFO("CSI API not compiled into this WiFi driver build; sensing disabled");
 #endif
   s_start_pending = false;
   return false;
@@ -370,8 +400,7 @@ int process() {
         s_window_frames = 0;
         s_running = true;
         s_start_pending = false;
-        health_logging::log(health_logging::LEVEL_INFO, health_logging::CAT_RF,
-          "CSI deferred start succeeded (WiFi now up)");
+        CSI_LOG_INFO("CSI deferred start succeeded (WiFi now up)");
       } else if (r == -1) {
         /* Hard failure after WiFi came up — give up rather than loop. */
         s_start_pending = false;
@@ -480,9 +509,7 @@ bool conformance_check_no_mac_in_buffers() {
           const bool lu_bit = (first & 0x02) != 0;
           const bool mc_bit = (first & 0x01) != 0;
           if (lu_bit || mc_bit) {
-            health_logging::logf(health_logging::LEVEL_WARNING,
-              health_logging::CAT_RF,
-              "CSI conformance: suspicious byte run in slot %u at offset %u",
+            CSI_LOG_WARNF("CSI conformance: suspicious byte run in slot %u at offset %u",
               (unsigned)i, (unsigned)(j - 5));
             /* Do not return false — this is a heuristic; the ring contains
              * I/Q samples that occasionally form plausible-looking bytes.
