@@ -27,10 +27,14 @@ fn firmware_regression_check_script_passes() {
         return;
     }
 
-    let output = Command::new("bash")
-        .arg(&script)
-        .output()
-        .expect("failed to spawn bash for regression_check.sh");
+    let output = match Command::new("bash").arg(&script).output() {
+        Ok(out) => out,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            eprintln!("skipping: bash not found in PATH");
+            return;
+        }
+        Err(e) => panic!("failed to spawn bash for regression_check.sh: {e}"),
+    };
 
     if !output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout);

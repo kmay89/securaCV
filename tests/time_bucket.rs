@@ -50,6 +50,8 @@ fn coarsen_to_widens_bucket_size() {
     };
     let coarse = fine.coarsen_to(900).expect("coarsen to 15 minutes");
     assert_eq!(coarse.size_s, 900);
+    // 1_700_000_300 / 900 == 1_888_889 (truncated) → start = 1_888_889 * 900.
+    assert_eq!(coarse.start_epoch_s, 1_700_000_100);
     assert!(coarse.start_epoch_s <= fine.start_epoch_s);
     assert_eq!(coarse.start_epoch_s % 900, 0);
 }
