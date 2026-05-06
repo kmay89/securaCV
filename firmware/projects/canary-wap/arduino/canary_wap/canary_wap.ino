@@ -118,6 +118,7 @@
 #include "wap_server.h"
 #include "web_ui.h"
 #include "companion_pwa.h"
+#include "csi_integration.h"  // Boot the CSI library + HTTP endpoints
 #include "mesh_network.h"
 #include "bluetooth_channel.h"
 #include "bluetooth_api.h"
@@ -4389,6 +4390,11 @@ static void register_api_routes(httpd_handle_t server) {
 
   httpd_uri_t reboot = { .uri = "/api/reboot", .method = HTTP_POST, .handler = handle_reboot_auth };
   httpd_register_uri_handler(server, &reboot);
+
+  // CSI library integration: registers /api/csi/stream, /api/csi/window,
+  // /api/events/today, /api/events/dismiss, registers the four v1 sensing
+  // modules, and brings up csi_hal on this WiFi context.
+  csi_integration::init(server);
 }
 
 static void start_http_server() {
@@ -4398,8 +4404,9 @@ static void start_http_server() {
   const int mesh_handlers = 12;       // Mesh network endpoints
   const int bluetooth_handlers = 23;  // Bluetooth API endpoints
   const int ble_discovery_handlers = 3; // BLE discovery (Opera/Chirp/Nearby) endpoints
+  const int csi_handlers = 4;        // /api/csi/stream, /api/csi/window, /api/events/today, /api/events/dismiss
   const int handler_headroom = 6;     // Reserve for future additions
-  const int total_handlers = base_handlers + camera_handlers + mesh_handlers + bluetooth_handlers + ble_discovery_handlers + handler_headroom;
+  const int total_handlers = base_handlers + camera_handlers + mesh_handlers + bluetooth_handlers + ble_discovery_handlers + csi_handlers + handler_headroom;
 
   // ── Start HTTPS server (port 443) if TLS cert is available ──
 #if SECURACV_HAS_HTTPS_SERVER
