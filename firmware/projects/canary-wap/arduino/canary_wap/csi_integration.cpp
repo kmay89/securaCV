@@ -62,6 +62,19 @@ csi_features_t                          g_latest_window      = {};
 bool                                    g_have_latest_window = false;
 uint32_t                                g_stream_started_ms  = 0;
 
+/* Indices into csi_features_t::v for the two bands the snapshot fallback
+ * surfaces. Layout is documented in csi_features.h:11-18:
+ *   v[0..7]   amplitude variance
+ *   v[8..11]  phase-Doppler  (4 bands → motion)
+ *   v[12..19] breathing FFT  (8 bins  → micro-motion / breath rhythm)
+ *   v[20..23] RSSI stats
+ *   v[24..31] frame health + reserved
+ * Mirrored, deliberately by-value, in core_presence.cpp / core_breathing.cpp. */
+constexpr int IDX_DOPPLER_BASE   = 8;
+constexpr int IDX_DOPPLER_COUNT  = 4;
+constexpr int IDX_BREATHING_BASE = 12;
+constexpr int IDX_BREATHING_COUNT = 8;
+
 /* ──────────────────────────────────────────────────────────────────────────
  * MOST-RECENT-EVENT SNAPSHOT
  *
@@ -133,7 +146,11 @@ esp_err_t handle_stream(httpd_req_t* req) {
         "\"bundled\":%u,"
         "\"time_bucket\":%u"
       "}",
-      (unsigned long)((millis() - g_stream_started_ms) / 1000u),
+      /* `t` is the relative seconds at which THIS event was committed, not
+       * the time of the HTTP request — otherwise consecutive polls of the
+       * same event_id would tick `t` upward and break client-side duration
+       * math. */
+      (unsigned long)((s->committed_ms - g_stream_started_ms) / 1000u),
       (unsigned long)s->event_id, s->module_id, s->type_name, cat, priv,
       s->values.state_name, s->values.confidence,
       (unsigned)s->values.motion_score,
@@ -149,10 +166,18 @@ esp_err_t handle_stream(httpd_req_t* req) {
     uint8_t motion = 0, breathing = 0;
     if (g_have_latest_window) {
       int32_t m = 0, b = 0;
-      for (int i = 8;  i < 12; ++i) m += g_latest_window.v[i] < 0 ? -g_latest_window.v[i] : g_latest_window.v[i];
-      for (int i = 12; i < 20; ++i) b += g_latest_window.v[i] < 0 ? -g_latest_window.v[i] : g_latest_window.v[i];
-      motion    = (uint8_t)((m / 4)  > 100 ? 100 : (m / 4));
-      breathing = (uint8_t)((b / 8)  > 100 ? 100 : (b / 8));
+      for (int i = IDX_DOPPLER_BASE;
+           i < IDX_DOPPLER_BASE + IDX_DOPPLER_COUNT; ++i) {
+        m += abs((int)g_latest_window.v[i]);
+      }
+      for (int i = IDX_BREATHING_BASE;
+           i < IDX_BREATHING_BASE + IDX_BREATHING_COUNT; ++i) {
+        b += abs((int)g_latest_window.v[i]);
+      }
+      const int32_t m_avg = m / IDX_DOPPLER_COUNT;
+      const int32_t b_avg = b / IDX_BREATHING_COUNT;
+      motion    = (uint8_t)(m_avg > 100 ? 100 : m_avg);
+      breathing = (uint8_t)(b_avg > 100 ? 100 : b_avg);
     }
     snprintf(buf, sizeof(buf),
       "{\"t\":%lu,\"category\":\"ambient\",\"state\":\"sensing\","
