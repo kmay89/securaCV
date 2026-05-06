@@ -4404,7 +4404,7 @@ static void start_http_server() {
   const int mesh_handlers = 12;       // Mesh network endpoints
   const int bluetooth_handlers = 23;  // Bluetooth API endpoints
   const int ble_discovery_handlers = 3; // BLE discovery (Opera/Chirp/Nearby) endpoints
-  const int csi_handlers = 4;        // /api/csi/stream, /api/csi/window, /api/events/today, /api/events/dismiss
+  const int csi_handlers = 5;        // /api/csi/stream, /api/csi/window, /api/events/today, /api/events/dismiss, /sense
   const int handler_headroom = 6;     // Reserve for future additions
   const int total_handlers = base_handlers + camera_handlers + mesh_handlers + bluetooth_handlers + ble_discovery_handlers + csi_handlers + handler_headroom;
 
