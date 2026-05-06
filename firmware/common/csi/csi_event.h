@@ -174,6 +174,17 @@ csi_privacy_class_t csi_event_get_privacy_ceiling(void);
  */
 void csi_event_set_module_ceiling(const char* module_id, uint8_t override_per_hour);
 
+/**
+ * Align the chokepoint's `time_bucket` derivation to wall clock. Pass the
+ * delta, in minutes, between the host's wall clock and our monotonic
+ * uptime — i.e. `(wall_minutes_since_local_midnight) - (millis()/60000)`.
+ *
+ * Calling once per boot at first NTP / GPS sync is sufficient. Without
+ * this call, time_bucket is consistent within a session but unaligned
+ * with wall clock (rolls over at boot+0, not midnight).
+ */
+void csi_event_set_clock_offset_minutes(int32_t offset_minutes);
+
 /* ──────────────────────────────────────────────────────────────────────────
  * INTROSPECTION (for /api/events/today and the dashboard ribbon)
  * ────────────────────────────────────────────────────────────────────────── */

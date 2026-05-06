@@ -37,9 +37,16 @@ extern "C" void csi_module_record_emission_(uint32_t event_id, const char* modul
  * ────────────────────────────────────────────────────────────────────────── */
 
 #ifndef CSI_EVENT_RING_CAP
-/* Sized for one full day at 6 events/hour/module × ~6 modules = ~864.
- * The ring is in-memory only; the witness chain is the persistent record. */
-#define CSI_EVENT_RING_CAP 256
+/* In-memory dashboard cache for the Today receipts sheet and the daily
+ * summary's walk. The witness chain is the source of truth for forensic
+ * recall; this ring is just what the live UI scrolls over.
+ *
+ * 512 rows × ~120 B = ~60 KB. Comfortable on ESP32-S3 with PSRAM. The
+ * meta.daily_summary module walks at most 64 rows of this cache, so a
+ * 512-row ring gives it ~85 % chance of seeing the entire day even when
+ * multiple modules emit at their default 6/hour ceiling concurrently.
+ * For exact daily counts beyond the cache, walk the witness chain. */
+#define CSI_EVENT_RING_CAP 512
 #endif
 
 #ifndef CSI_EVENT_MODULE_CEILING_CAP
@@ -134,11 +141,26 @@ void apply_allow_list(csi_event_values_t* v, uint32_t allowed) {
 /* Coarsen any timestamp-bearing field. Currently only `time_bucket` is in
  * scope, and it's already a 10-minute bucket index. We re-derive it from
  * the current monotonic time so a module that forgot to set it can't leak
- * a finer-grained value (e.g. a millisecond counter cast into the slot). */
+ * a finer-grained value (e.g. a millisecond counter cast into the slot).
+ *
+ * NOTE: monotonic millis() is NOT aligned with wall-clock day, so a
+ * device booted mid-afternoon will roll its time_bucket back to 0 at
+ * boot+0, not at midnight. The Phase 4 host integration calls
+ * csi_event_set_clock_offset_minutes() at first sync to align the bucket
+ * index with wall clock; until that lands, time_bucket is consistent
+ * within a session and the meta.daily_summary module emits when its
+ * own host-supplied clock indicates day-boundary, so the surface
+ * inconsistency is contained. Tracked as a follow-up to Phase 4. */
+static int32_t s_clock_offset_minutes = 0;
+
 void coarsen_time_fields(csi_event_values_t* v) {
   if (!(v->present_fields & CSI_FIELD_TIME_BUCKET)) return;
-  const uint32_t minutes = csi_event_now_ms() / 60000u;
-  v->time_bucket = (uint8_t)((minutes / 10u) % 144u);
+  const int64_t mono_minutes = (int64_t)(csi_event_now_ms() / 60000u);
+  const int64_t wall_minutes = mono_minutes + s_clock_offset_minutes;
+  /* mod-144 in 10-minute buckets, modulo-safe for negative wall_minutes. */
+  int64_t bucket = (wall_minutes / 10) % 144;
+  if (bucket < 0) bucket += 144;
+  v->time_bucket = (uint8_t)bucket;
 }
 
 /* Strings entering the ring must be ASCII printable + nul. Anything else
@@ -209,6 +231,10 @@ void csi_event_set_privacy_ceiling(csi_privacy_class_t ceiling) {
 
 csi_privacy_class_t csi_event_get_privacy_ceiling(void) {
   return g_privacy_ceiling;
+}
+
+void csi_event_set_clock_offset_minutes(int32_t offset_minutes) {
+  s_clock_offset_minutes = offset_minutes;
 }
 
 void csi_event_set_module_ceiling(const char* module_id, uint8_t override_per_hour) {

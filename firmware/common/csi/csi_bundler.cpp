@@ -81,9 +81,12 @@ uint32_t allocate_id() {
 
 void close_slot(Slot* s) {
   if (!s->used) return;
-  /* Update final duration before commit. */
-  const uint32_t span_ms = (s->last_seen_ms >= s->opened_ms)
-                           ? (s->last_seen_ms - s->opened_ms) : 0;
+  /* Update final duration before commit. uint32_t subtraction wraps
+   * correctly across the ~49.7-day millis() rollover, so a naked
+   * subtraction is the right computation as long as the actual interval
+   * is < 2^32 ms. Bundle windows are bounded at 10 minutes by
+   * CSI_BUNDLER_WINDOW_MS, so the bound holds. */
+  const uint32_t span_ms = s->last_seen_ms - s->opened_ms;
   uint32_t span_sec = span_ms / 1000u;
   if (span_sec > 65535u) span_sec = 65535u;
   s->values.duration_sec = (uint16_t)span_sec;

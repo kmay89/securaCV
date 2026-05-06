@@ -27,8 +27,13 @@ const csi_event_decl_t EVENTS[] = {
 
 void emit_summary() {
   /* Walk the event ring; tally active periods and anomalies (P0 only,
-   * to stay contract-clean). */
-  csi_event_record_t buffer[64];
+   * to stay contract-clean).
+   *
+   * Static — sizeof(csi_event_record_t) is ~120 bytes so a 64-row stack
+   * buffer eats ~7.5 KB and would crowd ESP32's 8 KB default main task
+   * stack. The summary fires at most once per day so a single static
+   * scratchpad is the right tradeoff. */
+  static csi_event_record_t buffer[64];
   size_t n = csi_event_recent(buffer, sizeof(buffer) / sizeof(buffer[0]));
 
   uint16_t active_periods = 0;
