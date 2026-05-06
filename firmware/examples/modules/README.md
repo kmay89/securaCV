@@ -21,13 +21,16 @@ The chokepoint enforces the manifest at runtime: any field a module tries
 to publish that isn't on its allow-list is silently zeroed before the event
 is persisted, exported, or shown to the dashboard. Privacy is a runtime
 gate, not a documentation promise. The fuzzer at
-`firmware/common/csi/csi_event_invariants_test.cpp` proves it.
+`firmware/common/csi/csi_event_invariants_test.cpp` proves it. (The
+test lives at the library root, not under `src/`, so arduino-cli's 1.5
+recursive-compile of `src/` skips it; it builds standalone for CI.)
 
 ## Adding your module to a build
 
-1. Drop `your_module.{h,cpp}` next to this README (or any subdirectory the
-   PIO source filter picks up — `firmware/common/csi/modules/` if you're
-   contributing it back, your own tree otherwise).
+1. Drop `your_module.{h,cpp}` next to this README (or, if you're
+   contributing it back to SecuraCV, into `firmware/common/csi/src/`
+   alongside the other v1 modules so arduino-cli's 1.5-format recursive
+   compile picks it up).
 2. Register at boot:
 
    ```cpp

@@ -25,9 +25,9 @@
     "meta_daily_summary.h"
   ],
   "build": {
+    "srcDir": "src",
     "srcFilter": [
-      "+<*.cpp>",
-      "-<csi_event_invariants_test.cpp>"
+      "+<*.cpp>"
     ]
   }
 }

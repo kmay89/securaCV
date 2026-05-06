@@ -91,7 +91,7 @@ ifdef ARDUINO_CLI
 	@echo "Building with Arduino CLI..."
 	@# --libraries makes Arduino CLI treat each subdir of firmware/common/
 	@# as a library root, so #include <csi_types.h> resolves to
-	@# firmware/common/csi/csi_types.h via library.properties.
+	@# firmware/common/csi/src/csi_types.h via library.properties.
 	arduino-cli compile --fqbn $(ARDUINO_FQBN) \
 		--libraries ../../common \
 		--build-property "build.extra_flags=-DARDUINO_USB_CDC_ON_BOOT=1" \
