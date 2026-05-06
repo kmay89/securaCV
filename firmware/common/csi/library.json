@@ -1,0 +1,29 @@
+{
+  "name": "securacv-csi",
+  "version": "0.2.0",
+  "description": "Privacy-preserving WiFi Channel State Information sensing for ESP32-S3. Captures CSI, scrubs identifiers at the interrupt boundary, and exports a 32-dim int8 feature vector at 1 Hz covering motion, breathing, RSSI stats, and frame-rate health. Includes a modular sensing pipeline, a privacy-class-tagged event chokepoint, and a 10-minute sliding-window event bundler.",
+  "keywords": ["csi", "wifi-sensing", "esp32", "esp32-s3", "presence", "breathing", "motion", "privacy"],
+  "authors": [
+    {
+      "name": "SecuraCV Contributors",
+      "url": "https://github.com/kmay89/securacv"
+    }
+  ],
+  "license": "MIT",
+  "frameworks": ["arduino", "espidf"],
+  "platforms": ["espressif32"],
+  "headers": [
+    "csi_hal.h",
+    "csi_features.h",
+    "csi_types.h",
+    "csi_module.h",
+    "csi_event.h",
+    "csi_bundler.h"
+  ],
+  "build": {
+    "srcFilter": [
+      "+<*.cpp>",
+      "+<modules/*.cpp>"
+    ]
+  }
+}

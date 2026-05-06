@@ -20,7 +20,9 @@
 #define SECURACV_RF_PRESENCE_H
 
 #include <Arduino.h>
-#include "csi_types.h"
+// CSI types now live in firmware/common/csi/. Picked up via PIO -I path,
+// arduino-cli --libraries flag, or the libraries/csi symlink for Arduino IDE.
+#include <csi_types.h>
 
 namespace rf_presence {
 

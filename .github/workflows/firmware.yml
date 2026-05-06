@@ -94,8 +94,12 @@ jobs:
 
       - name: Compile firmware
         run: |
+          # --libraries makes arduino-cli treat each subdir of firmware/common/
+          # as a library root, so #include <csi_types.h> resolves to
+          # firmware/common/csi/csi_types.h via library.properties.
           arduino-cli compile \
             --fqbn esp32:esp32:XIAO_ESP32S3 \
+            --libraries firmware/common \
             --build-property "build.extra_flags=-DVALIDATION_BUILD=1" \
             firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino
 
