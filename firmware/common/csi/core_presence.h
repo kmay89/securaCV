@@ -1,5 +1,5 @@
 /**
- * @file modules/core_presence.h
+ * @file core_presence.h
  * @brief core.presence — derives `Empty / Subtle motion / Quiet / Active /
  *        Together` from the CSI feature stream and emits state-change events
  *        through the privacy chokepoint.
@@ -13,7 +13,7 @@
 #ifndef SECURACV_CSI_MODULE_CORE_PRESENCE_H
 #define SECURACV_CSI_MODULE_CORE_PRESENCE_H
 
-#include "../csi_module.h"
+#include "csi_module.h"
 
 #ifdef __cplusplus
 extern "C" {

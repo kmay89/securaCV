@@ -18,12 +18,16 @@
     "csi_types.h",
     "csi_module.h",
     "csi_event.h",
-    "csi_bundler.h"
+    "csi_bundler.h",
+    "core_presence.h",
+    "core_breathing.h",
+    "core_activity_ribbon.h",
+    "meta_daily_summary.h"
   ],
   "build": {
     "srcFilter": [
       "+<*.cpp>",
-      "+<modules/*.cpp>"
+      "-<csi_event_invariants_test.cpp>"
     ]
   }
 }

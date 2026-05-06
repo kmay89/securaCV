@@ -1,5 +1,5 @@
 /**
- * @file modules/core_breathing.h
+ * @file core_breathing.h
  * @brief core.breathing — locks onto the 0.15–0.45 Hz Goertzel band, emits
  *        `breathing_confirmed` and `breathing_lost` with confidence and an
  *        approximate BPM (P1, only at "confirmed" state).
@@ -8,7 +8,7 @@
 #ifndef SECURACV_CSI_MODULE_CORE_BREATHING_H
 #define SECURACV_CSI_MODULE_CORE_BREATHING_H
 
-#include "../csi_module.h"
+#include "csi_module.h"
 
 #ifdef __cplusplus
 extern "C" {

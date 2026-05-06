@@ -1,5 +1,5 @@
 /**
- * @file modules/meta_daily_summary.h
+ * @file meta_daily_summary.h
  * @brief meta.daily_summary — at the wall-clock day boundary, walks the
  *        in-memory event ring and emits one `daily_summary` event with
  *        coarsened counts (active periods, anomaly count, quiet hours).
@@ -13,7 +13,7 @@
 #ifndef SECURACV_CSI_MODULE_META_DAILY_SUMMARY_H
 #define SECURACV_CSI_MODULE_META_DAILY_SUMMARY_H
 
-#include "../csi_module.h"
+#include "csi_module.h"
 
 #ifdef __cplusplus
 extern "C" {

@@ -1,5 +1,5 @@
 /**
- * @file modules/core_activity_ribbon.h
+ * @file core_activity_ribbon.h
  * @brief core.activity_ribbon — writes the 96-bucket × 15-min activity ring
  *        that backs the dashboard's 24-hour aurora ribbon.
  *
@@ -12,7 +12,7 @@
 #ifndef SECURACV_CSI_MODULE_CORE_ACTIVITY_RIBBON_H
 #define SECURACV_CSI_MODULE_CORE_ACTIVITY_RIBBON_H
 
-#include "../csi_module.h"
+#include "csi_module.h"
 
 #include <stdint.h>
 

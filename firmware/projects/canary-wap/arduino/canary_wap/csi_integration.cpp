@@ -45,11 +45,14 @@
 #include <csi_module.h>
 #include <csi_event.h>
 
-/* The four v1 modules ship with the library. */
-#include <modules/core_presence.h>
-#include <modules/core_breathing.h>
-#include <modules/core_activity_ribbon.h>
-#include <modules/meta_daily_summary.h>
+/* The four v1 modules ship with the library. After the Phase-4 flattening
+ * (see commit notes) these live at the library root rather than in a
+ * modules/ subdir, so that arduino-cli's library-1.5 root-only compile
+ * picks up their .cpp files without needing a src/ tree. */
+#include <core_presence.h>
+#include <core_breathing.h>
+#include <core_activity_ribbon.h>
+#include <meta_daily_summary.h>
 
 namespace {
 
