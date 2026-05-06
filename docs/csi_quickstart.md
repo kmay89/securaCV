@@ -73,7 +73,7 @@ value. That's WiFi sensing on a $15 board, no camera, no cloud.
 | Subscribe from a laptop in Python | `firmware/examples/csi_pc_listener/listener.py` |
 | Add your own sensing behavior | `firmware/examples/modules/` and `docs/csi_modules.md` |
 | Wire CSI into a different host firmware | `firmware/common/csi/README.md` |
-| Understand the privacy contract | `firmware/common/csi/csi_event.h` and `spec/event_contract.md` |
+| Understand the privacy contract | `firmware/common/csi/src/csi_event.h` and `spec/event_contract.md` |
 | See what events the dashboard renders | `docs/csi_developer_api.md` |
 | Tune coefficients live without recompiling | `http://canary.local/tune` (after Phase 4 lands) |
 

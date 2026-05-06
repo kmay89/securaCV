@@ -20,7 +20,7 @@ own sketch.
 | `csi_module` | Tiny module-interface for layered sensing: `init` / `tick(features)` / `emit_event` / `on_event_dismissed` / `deinit`. The expansion path. | `csi_module.h` |
 | `csi_event` | The single privacy chokepoint. Tags every event with a class (`P0`/`P1`/`P2`), coarsens timestamps at emit time, strips fields not on the module's allow-list, and routes through the optional witness chain. | `csi_event.{h,cpp}` |
 | `csi_bundler` | Same-state events within a 10-minute sliding window collapse into one row with a duration. Stops the dashboard from flickering. | `csi_bundler.{h,cpp}` |
-| `modules/` | The four v1 modules: `core_presence`, `core_breathing`, `core_activity_ribbon`, `meta_daily_summary`. | `modules/*.{h,cpp}` |
+| v1 modules | `core.presence`, `core.breathing`, `core.activity_ribbon`, `meta.daily_summary`. | `core_*.{h,cpp}`, `meta_*.{h,cpp}` |
 
 ## Privacy invariants (enforced at runtime, not in docs)
 

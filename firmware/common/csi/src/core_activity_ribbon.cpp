@@ -1,5 +1,5 @@
 /**
- * @file modules/core_activity_ribbon.cpp
+ * @file core_activity_ribbon.cpp
  * @brief 96-bucket × 15-minute activity intensity ring.
  *
  * Each tick (~1 Hz) we update the *current* bucket's intensity using a
@@ -13,7 +13,7 @@
  */
 
 #include "core_activity_ribbon.h"
-#include "../csi_event.h"
+#include "csi_event.h"
 
 #include <string.h>
 

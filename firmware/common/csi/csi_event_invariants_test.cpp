@@ -18,10 +18,10 @@
  * Build:
  *   - Standalone (host x86) for CI: g++ -std=c++17 -DCSI_TEST_HOST_BUILD \
  *       firmware/common/csi/csi_event_invariants_test.cpp \
- *       firmware/common/csi/csi_event.cpp \
- *       firmware/common/csi/csi_module.cpp \
- *       firmware/common/csi/csi_bundler.cpp \
- *       -I firmware/common/csi -o /tmp/csi_invariants && /tmp/csi_invariants
+ *       firmware/common/csi/src/csi_event.cpp \
+ *       firmware/common/csi/src/csi_module.cpp \
+ *       firmware/common/csi/src/csi_bundler.cpp \
+ *       -I firmware/common/csi/src -o /tmp/csi_invariants && /tmp/csi_invariants
  *
  * Compiles cleanly inside an ESP32 firmware build too — guarded so it does
  * not run on-device unless CSI_TEST_RUN_ON_DEVICE is defined.

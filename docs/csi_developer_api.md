@@ -137,5 +137,5 @@ Closes the file and emits a witness-chain entry pointing to the artifact.
 | `P2` | The above + raw 32-dim feature vector and tuning state. Never persists; never leaves the device. |
 
 The chokepoint enforces these at runtime. The fuzzer at
-`firmware/common/csi/csi_event_invariants_test.cpp` proves the
+`firmware/common/csi/csi_event_invariants_test.cpp` (host-build) proves the
 enforcement is real, not aspirational.

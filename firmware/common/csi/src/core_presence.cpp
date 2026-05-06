@@ -1,5 +1,5 @@
 /**
- * @file modules/core_presence.cpp
+ * @file core_presence.cpp
  * @brief core.presence — state-change emitter for the headline UI.
  *
  * Confidence model (mirrors the plan's "What CSI Can and Cannot See" table):
@@ -12,7 +12,7 @@
  */
 
 #include "core_presence.h"
-#include "../csi_event.h"
+#include "csi_event.h"
 
 #include <string.h>
 

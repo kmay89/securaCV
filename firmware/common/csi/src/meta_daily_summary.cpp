@@ -1,10 +1,10 @@
 /**
- * @file modules/meta_daily_summary.cpp
+ * @file meta_daily_summary.cpp
  * @brief Day-boundary summary emitter.
  */
 
 #include "meta_daily_summary.h"
-#include "../csi_event.h"
+#include "csi_event.h"
 
 #include <string.h>
 #include <stdio.h>

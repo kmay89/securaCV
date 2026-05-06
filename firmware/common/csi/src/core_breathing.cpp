@@ -1,5 +1,5 @@
 /**
- * @file modules/core_breathing.cpp
+ * @file core_breathing.cpp
  * @brief Confidence-gated breathing detector.
  *
  * The numeric BPM (CSI_FIELD_BREATHING_RATE) is P1 — it only emits when the
@@ -14,7 +14,7 @@
  */
 
 #include "core_breathing.h"
-#include "../csi_event.h"
+#include "csi_event.h"
 
 #include <string.h>
 

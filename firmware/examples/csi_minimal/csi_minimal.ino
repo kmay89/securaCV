@@ -58,7 +58,7 @@ static uint8_t reduce_band(const int8_t* v, int from, int to) {
 static void on_csi_window(const csi_features_t* f, void* /*user*/) {
   g_window_count++;
 
-  /* See firmware/common/csi/csi_features.h for the full 32-dim layout.
+  /* See firmware/common/csi/src/csi_features.h for the full 32-dim layout.
    *   v[0..7]   amplitude variance
    *   v[8..11]  phase-Doppler (motion)
    *   v[12..19] breathing FFT
