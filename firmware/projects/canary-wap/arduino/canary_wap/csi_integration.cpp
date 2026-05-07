@@ -235,12 +235,15 @@ esp_err_t handle_events_today(httpd_req_t* req) {
     const csi_event_record_t* r = &buffer[i];
     if (r->event_id == 0) continue;
     if (r->privacy > csi_event_get_privacy_ceiling()) continue;
-    char row[384];
+    char row[400];
+    const char* cat = (r->category == CSI_CATEGORY_AMBIENT) ? "ambient"
+                    : (r->category == CSI_CATEGORY_ANOMALY) ? "anomaly" : "event";
     const int len = snprintf(row, sizeof(row),
       "%s{"
         "\"id\":%lu,"
         "\"module\":\"%s\","
         "\"type\":\"%s\","
+        "\"category\":\"%s\","
         "\"state\":\"%s\","
         "\"confidence\":\"%s\","
         "\"motion\":%u,"
@@ -253,7 +256,7 @@ esp_err_t handle_events_today(httpd_req_t* req) {
       "}",
       first ? "" : ",",
       (unsigned long)r->event_id,
-      r->module_id, r->type_name,
+      r->module_id, r->type_name, cat,
       r->values.state_name, r->values.confidence,
       (unsigned)r->values.motion_score,
       (unsigned)r->values.breathing_score,

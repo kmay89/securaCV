@@ -1249,10 +1249,13 @@ async function fetchToday() {
       return;
     }
     body.innerHTML = '';
-    /* Server doesn't yet expose category on /api/events/today rows, so we
-     * leave anomaly tallying to a Phase-4b follow-up that adds the field. */
-    let activeCount = 0, quietCount = 0;
+    let activeCount = 0, quietCount = 0, anomalyCount = 0;
     for (const e of events) {
+      // Server now exposes the row's privacy-class-tagged category from
+      // csi_event (P0 events are "event", anomalies are "anomaly", and
+      // ambient never persists). Tally the latter so users see if
+      // anything unusual happened today.
+      if (e.category === 'anomaly') anomalyCount++;
       const row = document.createElement('div');
       row.className = 'event-row' + (e.dismissed ? ' dismissed' : '');
       const stateLabel = ({
@@ -1276,7 +1279,11 @@ async function fetchToday() {
     }
     const summary = document.createElement('div');
     summary.className = 'summary-card';
-    summary.innerHTML = `<h3>Today</h3>${activeCount} active · ${quietCount} quiet`;
+    /* Singular vs plural and zero handling so the line reads naturally
+     * in the common case (no anomalies) without ever lying. */
+    const anomalyLine = anomalyCount === 0 ? ''
+      : ' · ' + anomalyCount + (anomalyCount === 1 ? ' unusual' : ' unusual');
+    summary.innerHTML = `<h3>Today</h3>${activeCount} active · ${quietCount} quiet${anomalyLine}`;
     body.appendChild(summary);
 
     body.querySelectorAll('.dismiss-btn').forEach(btn => {
