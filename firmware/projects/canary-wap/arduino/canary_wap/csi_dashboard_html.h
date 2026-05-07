@@ -588,6 +588,12 @@ static const char CSI_DASHBOARD_HTML[] PROGMEM = R"DASHBOARD(<!doctype html>
     padding: 24px;
   }
   body.is-onboarding .welcome-mask { opacity: 1; pointer-events: auto; }
+  /* Card 3's "Learn more" opens the What-it-sees sheet over the welcome
+   * mask. The welcome lives at z-index 110 and the sheet at 101, so we
+   * need to step the welcome out of the way while the sheet is up. The
+   * welcome stays in DOM (state preserved) and the user is returned
+   * to it when the sheet is dismissed. */
+  body.welcome-paused .welcome-mask { opacity: 0; pointer-events: none; }
 
   .welcome-card {
     width: min(440px, 100%);
@@ -1308,7 +1314,14 @@ buildWhatBody();
 document.getElementById('helpBtn').addEventListener('click', () => {
   openSheet(whatSheet, whatScrim);
 });
-whatScrim.addEventListener('click', () => closeSheet(whatSheet, whatScrim));
+whatScrim.addEventListener('click', () => {
+  closeSheet(whatSheet, whatScrim);
+  // If we got here from the welcome flow's "Learn more" link, restore
+  // the welcome mask so the user lands back on the same card. No-op
+  // when the class isn't set, so legitimate dashboard visits are
+  // unaffected.
+  document.body.classList.remove('welcome-paused');
+});
 
 document.getElementById('settingsBtn').addEventListener('click', () => {
   // The legacy tabbed admin dashboard now lives at /admin. The dashboard
@@ -1460,14 +1473,19 @@ calibrateBtn.addEventListener('click', () => {
     const pet = e.target.closest('[data-pet]');
     if (pet) {
       chosenPet = pet.dataset.pet;
-      // Cat and small dog: auto-enable Pet Mode. Large dog: leave to the user
-      // — large dogs sometimes lock briefly on the human Goertzel band, so
-      // forcing the filter would suppress real activity.
-      const enable = (chosenPet === 'cat' || chosenPet === 'small');
-      window.PET_MODE = enable;
-      localStorage.setItem('csi.pet', enable ? '1' : '0');
-      const sw = document.getElementById('petSwitch');
-      if (sw) sw.setAttribute('aria-checked', enable ? 'true' : 'false');
+      // Cat / small dog: auto-enable Pet Mode (clear win, no risk of
+      // suppressing real activity). Large dog and None: leave the
+      // existing Pet Mode setting alone — a returning user re-running
+      // onboarding shouldn't have their previous choice silently
+      // overwritten, and large dogs occasionally lock briefly on the
+      // human Goertzel band so forcing the filter would suppress real
+      // activity. Users can always toggle Pet Mode from the dashboard.
+      if (chosenPet === 'cat' || chosenPet === 'small') {
+        window.PET_MODE = true;
+        localStorage.setItem('csi.pet', '1');
+        const sw = document.getElementById('petSwitch');
+        if (sw) sw.setAttribute('aria-checked', 'true');
+      }
       render();
       return;
     }
@@ -1478,7 +1496,12 @@ calibrateBtn.addEventListener('click', () => {
     if (a === 'skip') {
       finish(false);
     } else if (a === 'what') {
-      // Open the "What it can / can't see" sheet without dismissing onboarding.
+      // Open the "What it can / can't see" sheet without dismissing
+      // onboarding. The sheet's z-index (101) sits below the welcome
+      // mask (110), so we temporarily step the welcome out of the way
+      // via body.welcome-paused; the sheet's existing scrim handler
+      // restores it when the user dismisses.
+      document.body.classList.add('welcome-paused');
       const help = document.getElementById('helpBtn');
       if (help) help.click();
     } else if (a === 'next') {
