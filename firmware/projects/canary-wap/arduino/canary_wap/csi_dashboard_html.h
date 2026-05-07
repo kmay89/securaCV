@@ -1034,7 +1034,7 @@ async function fetchToday() {
   body.innerHTML = '<p style="color:var(--fg-mute)">Loading…</p>';
   try {
     const r = await fetch('/api/events/today', {cache: 'no-store'});
-    if (!r.ok) throw 0;
+    if (!r.ok) throw new Error('today fetch returned ' + r.status);
     const j = await r.json();
     const events = j.events || [];
     if (events.length === 0) {
@@ -1042,7 +1042,9 @@ async function fetchToday() {
       return;
     }
     body.innerHTML = '';
-    let activeCount = 0, quietCount = 0, anomalyCount = 0;
+    /* Server doesn't yet expose category on /api/events/today rows, so we
+     * leave anomaly tallying to a Phase-4b follow-up that adds the field. */
+    let activeCount = 0, quietCount = 0;
     for (const e of events) {
       const row = document.createElement('div');
       row.className = 'event-row' + (e.dismissed ? ' dismissed' : '');
@@ -1067,7 +1069,7 @@ async function fetchToday() {
     }
     const summary = document.createElement('div');
     summary.className = 'summary-card';
-    summary.innerHTML = `<h3>Today</h3>${activeCount} active · ${quietCount} quiet · ${anomalyCount} unusual`;
+    summary.innerHTML = `<h3>Today</h3>${activeCount} active · ${quietCount} quiet`;
     body.appendChild(summary);
 
     body.querySelectorAll('.dismiss-btn').forEach(btn => {
@@ -1218,10 +1220,19 @@ function tick() {
 }
 requestAnimationFrame(tick);
 
-setInterval(pollStream, 1000);
-pollStream();
-
-setInterval(pollRawVector, 1000);
+/* Recursive setTimeout instead of setInterval — async polls can pile up if a
+ * fetch hangs (e.g. AP intermittently unreachable), and the device's tiny
+ * httpd worker pool is then starved when the next interval fires. The
+ * recursive form schedules the next poll only AFTER the current one
+ * settles. */
+function pollLoop(fn, intervalMs) {
+  (async function loop() {
+    try { await fn(); }
+    finally { setTimeout(loop, intervalMs); }
+  })();
+}
+pollLoop(pollStream, 1000);
+pollLoop(pollRawVector, 1000);
 
 // Service worker registration is left to companion_pwa.h's existing scope.
 </script>
