@@ -1279,10 +1279,11 @@ async function fetchToday() {
     }
     const summary = document.createElement('div');
     summary.className = 'summary-card';
-    /* Singular vs plural and zero handling so the line reads naturally
-     * in the common case (no anomalies) without ever lying. */
-    const anomalyLine = anomalyCount === 0 ? ''
-      : ' · ' + anomalyCount + (anomalyCount === 1 ? ' unusual' : ' unusual');
+    /* "unusual" works as both singular and plural here (the noun is
+     * implicit), so we don't need the singular/plural ternary. Hide
+     * the segment entirely on a 0-count day. */
+    let anomalyLine = '';
+    if (anomalyCount > 0) anomalyLine = ' · ' + anomalyCount + ' unusual';
     summary.innerHTML = `<h3>Today</h3>${activeCount} active · ${quietCount} quiet${anomalyLine}`;
     body.appendChild(summary);
 
