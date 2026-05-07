@@ -1395,12 +1395,45 @@ function setSwitch(el, on) {
   el.setAttribute('aria-checked', on ? 'true' : 'false');
 }
 const petSwitch = document.getElementById('petSwitch');
+/* Pet Mode lives in two places now: localStorage (instant UI feedback,
+ * survives an offline reload) AND the device's NVS via /api/settings
+ * (the source of truth that actually changes how core.presence behaves).
+ * The localStorage value is the optimistic boot state; we sync from
+ * /api/settings as soon as it answers. */
 window.PET_MODE = localStorage.getItem('csi.pet') === '1';
 setSwitch(petSwitch, window.PET_MODE);
+
+(async function syncPetModeFromServer() {
+  try {
+    const r = await fetch('/api/settings', {cache: 'no-store'});
+    if (!r.ok) return;
+    const j = await r.json();
+    if (typeof j.pet_mode === 'boolean' && j.pet_mode !== window.PET_MODE) {
+      window.PET_MODE = j.pet_mode;
+      setSwitch(petSwitch, window.PET_MODE);
+      localStorage.setItem('csi.pet', window.PET_MODE ? '1' : '0');
+    }
+  } catch {}
+})();
+
+async function persistPetMode(value) {
+  try {
+    await fetch('/api/settings', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({pet_mode: value}),
+    });
+  } catch {
+    /* If the device is briefly unreachable we still updated localStorage
+     * and the UI; the next boot of either side will reconcile. */
+  }
+}
+
 function togglePet() {
   window.PET_MODE = !window.PET_MODE;
   setSwitch(petSwitch, window.PET_MODE);
   localStorage.setItem('csi.pet', window.PET_MODE ? '1' : '0');
+  persistPetMode(window.PET_MODE);
 }
 petSwitch.addEventListener('click', togglePet);
 petSwitch.addEventListener('keydown', e => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); togglePet(); } });
@@ -1551,6 +1584,9 @@ calibrateBtn.addEventListener('click', () => {
         localStorage.setItem('csi.pet', '1');
         const sw = document.getElementById('petSwitch');
         if (sw) sw.setAttribute('aria-checked', 'true');
+        // Push to the device too so core.presence honors the choice
+        // immediately, not just after the user re-toggles the switch.
+        persistPetMode(true);
       }
       render();
       return;

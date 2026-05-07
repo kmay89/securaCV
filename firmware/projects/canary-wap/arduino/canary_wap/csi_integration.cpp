@@ -36,6 +36,7 @@
 #include "csi_dashboard_html.h"
 
 #include <Arduino.h>
+#include <Preferences.h>          // NVS-backed settings store
 #include <esp_http_server.h>
 #include <string.h>
 #include <stdlib.h>
@@ -301,6 +302,87 @@ esp_err_t handle_events_dismiss(httpd_req_t* req) {
   return ESP_OK;
 }
 
+/* ──────────────────────────────────────────────────────────────────────────
+ * /api/settings — GET reads NVS, POST writes NVS + reinits affected module
+ *
+ * Wire format (intentionally tiny, dashboard-friendly):
+ *   GET  → {"pet_mode":true|false}
+ *   POST {"pet_mode":true|false}  → 200 {"ok":true} after persisting
+ *
+ * Pet Mode is the only key on the wire today; preset / sensitivity-slider
+ * round-trips will land in a follow-up that maps preset → motion/active/
+ * breathing thresholds. The NVS schema (cp.pet_mode et al.) is already
+ * defined in SETTING_KEYS, so future endpoint expansion is purely
+ * additive.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+esp_err_t handle_settings_get(httpd_req_t* req) {
+  Preferences prefs;
+  bool pet_mode = false;
+  if (prefs.begin(SETTINGS_NS, /*readOnly=*/true)) {
+    pet_mode = prefs.getBool("cp.pet_mode", false);
+    prefs.end();
+  }
+  char buf[64];
+  snprintf(buf, sizeof(buf), "{\"pet_mode\":%s}", pet_mode ? "true" : "false");
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_send(req, buf, -1);
+  return ESP_OK;
+}
+
+esp_err_t handle_settings_post(httpd_req_t* req) {
+  /* Body is small JSON: {"pet_mode": true|false}. Hand-parse to keep
+   * ArduinoJson out of this TU. */
+  char body[96];
+  const int got = httpd_req_recv(req, body, sizeof(body) - 1);
+  if (got <= 0) {
+    httpd_resp_set_status(req, "400 Bad Request");
+    httpd_resp_send(req, "{\"ok\":false,\"reason\":\"empty body\"}", -1);
+    return ESP_OK;
+  }
+  body[got] = '\0';
+
+  bool wrote_anything = false;
+  Preferences prefs;
+  if (!prefs.begin(SETTINGS_NS, /*readOnly=*/false)) {
+    httpd_resp_set_status(req, "500 Internal Server Error");
+    httpd_resp_send(req, "{\"ok\":false,\"reason\":\"nvs unavailable\"}", -1);
+    return ESP_OK;
+  }
+
+  /* Look for "pet_mode": true | false. Tolerant scanner — accepts
+   * surrounding whitespace and either lowercase boolean. */
+  const char* k = strstr(body, "pet_mode");
+  if (k) {
+    const char* v = strchr(k, ':');
+    if (v) {
+      v++;
+      while (*v == ' ' || *v == '\t' || *v == '"') v++;
+      if (strncmp(v, "true", 4) == 0) {
+        prefs.putBool("cp.pet_mode", true);
+        wrote_anything = true;
+      } else if (strncmp(v, "false", 5) == 0) {
+        prefs.putBool("cp.pet_mode", false);
+        wrote_anything = true;
+      }
+    }
+  }
+  prefs.end();
+
+  if (!wrote_anything) {
+    httpd_resp_set_status(req, "400 Bad Request");
+    httpd_resp_send(req, "{\"ok\":false,\"reason\":\"no recognised keys\"}", -1);
+    return ESP_OK;
+  }
+
+  /* Re-init affected module so it picks up the new value on the next tick. */
+  reinit_module("core.presence");
+
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_send(req, "{\"ok\":true}", -1);
+  return ESP_OK;
+}
+
 esp_err_t handle_sense_page(httpd_req_t* req) {
   /* The headline Sensing dashboard. Static asset served straight from
    * PROGMEM. The page itself fetches /api/csi/stream + /api/events/today
@@ -315,6 +397,60 @@ esp_err_t handle_sense_page(httpd_req_t* req) {
 /* ──────────────────────────────────────────────────────────────────────────
  * MODULE REGISTRATION
  * ────────────────────────────────────────────────────────────────────────── */
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * SETTINGS — NVS-backed module settings
+ *
+ * The library declares csi_module_settings_int/bool/float with weak
+ * default symbols that just return the supplied default. We override
+ * them here with a thin Preferences-backed reader so the dashboard's
+ * Pet Mode toggle (and future preset / sensitivity controls) actually
+ * change what the modules do at run-time.
+ *
+ * NVS key length limit is 15 chars, so we shorten the dotted module
+ * keys to a stable abbreviation:
+ *
+ *   core.presence.pet_mode -> cp.pet_mode   (cp + dot + 8 = 11)
+ *   core.presence.motion_threshold -> cp.mt (still valid, mapped below)
+ *   ...
+ *
+ * The dashboard speaks in dotted keys; this map is the only place that
+ * knows about the abbreviation, so future setting-key additions touch
+ * one table.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+constexpr const char* SETTINGS_NS = "csi";
+
+struct SettingKey {
+  const char* full;   // "core.presence.pet_mode"
+  const char* nvs;    // "cp.pet_mode" — must be ≤ 15 chars
+};
+const SettingKey SETTING_KEYS[] = {
+  { "core.presence.pet_mode",            "cp.pet_mode"   },
+  { "core.presence.motion_threshold",    "cp.mt"         },
+  { "core.presence.active_threshold",    "cp.at"         },
+  { "core.presence.breathing_threshold", "cp.bt"         },
+  { "core.presence.pet_mode_seconds",    "cp.ps"         },
+  { "core.breathing.lock_threshold",     "cb.lt"         },
+  { "core.breathing.confirm_seconds",    "cb.cs"         },
+};
+
+const char* nvs_key_for(const char* full_key) {
+  for (const SettingKey& k : SETTING_KEYS) {
+    if (strcmp(k.full, full_key) == 0) return k.nvs;
+  }
+  return nullptr;
+}
+
+/* Reinit modules whose settings changed. Cheap — modules are stateless
+ * apart from a few static counters that init() resets, and there are
+ * only four registered. Called once after each /api/settings POST. */
+void reinit_module(const char* module_id) {
+  const csi_module_t* m = csi_module_find(module_id);
+  if (!m) return;
+  if (m->deinit) m->deinit();
+  if (m->init)   m->init(nullptr);
+}
 
 void register_v1_modules() {
   csi_module_register(core_presence_module());
@@ -332,6 +468,58 @@ void register_v1_modules() {
  * build links cleanly. Here we provide the strong implementation that
  * records the snapshot for /api/csi/stream.
  * ────────────────────────────────────────────────────────────────────────── */
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * STRONG OVERRIDES — csi_module_settings_*
+ *
+ * The library's weak defaults return whatever default the caller passes;
+ * here we look up the canonical full key, map to the short NVS key, and
+ * read the persisted value. Falls back to the caller's default when the
+ * key is absent or this is the first boot.
+ *
+ * Read-only Preferences handle is opened per call. Settings reads are
+ * infrequent (boot + post-POST reinit), so the small open/close cost
+ * is fine and avoids holding an NVS handle across the firmware lifetime.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+extern "C" int32_t csi_module_settings_int(const csi_module_settings_t*,
+                                           const char* key,
+                                           int32_t default_value) {
+  if (!key) return default_value;
+  const char* nvs_key = nvs_key_for(key);
+  if (!nvs_key) return default_value;
+  Preferences prefs;
+  if (!prefs.begin(SETTINGS_NS, /*readOnly=*/true)) return default_value;
+  int32_t v = prefs.getInt(nvs_key, default_value);
+  prefs.end();
+  return v;
+}
+
+extern "C" bool csi_module_settings_bool(const csi_module_settings_t*,
+                                         const char* key,
+                                         bool default_value) {
+  if (!key) return default_value;
+  const char* nvs_key = nvs_key_for(key);
+  if (!nvs_key) return default_value;
+  Preferences prefs;
+  if (!prefs.begin(SETTINGS_NS, /*readOnly=*/true)) return default_value;
+  bool v = prefs.getBool(nvs_key, default_value);
+  prefs.end();
+  return v;
+}
+
+extern "C" float csi_module_settings_float(const csi_module_settings_t*,
+                                           const char* key,
+                                           float default_value) {
+  if (!key) return default_value;
+  const char* nvs_key = nvs_key_for(key);
+  if (!nvs_key) return default_value;
+  Preferences prefs;
+  if (!prefs.begin(SETTINGS_NS, /*readOnly=*/true)) return default_value;
+  float v = prefs.getFloat(nvs_key, default_value);
+  prefs.end();
+  return v;
+}
 
 extern "C" void csi_event_on_committed(uint32_t                  event_id,
                                        const char*               module_id,
@@ -425,8 +613,21 @@ bool init(httpd_handle_t server) {
   };
   httpd_register_uri_handler(server, &r_sense);
 
+  /* /api/settings — GET returns persisted module settings, POST writes
+   * them and triggers a module reinit so the device responds immediately
+   * to dashboard changes. Pet Mode is the only key on the wire today;
+   * the NVS schema is set up for preset / sensitivity follow-up. */
+  static httpd_uri_t r_settings_get = {
+    .uri = "/api/settings", .method = HTTP_GET, .handler = handle_settings_get
+  };
+  httpd_register_uri_handler(server, &r_settings_get);
+  static httpd_uri_t r_settings_post = {
+    .uri = "/api/settings", .method = HTTP_POST, .handler = handle_settings_post
+  };
+  httpd_register_uri_handler(server, &r_settings_post);
+
   g_initialized = true;
-  Serial.printf("[CSI] integration ready: %u modules, 5 routes registered\n",
+  Serial.printf("[CSI] integration ready: %u modules, 7 routes registered\n",
                 (unsigned)csi_module_count());
   return true;
 }
