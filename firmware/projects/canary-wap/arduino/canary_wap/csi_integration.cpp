@@ -412,10 +412,11 @@ bool init(httpd_handle_t server) {
   };
   httpd_register_uri_handler(server, &r_dismiss);
 
-  /* The headline Sensing dashboard at /sense. Phase 5 will promote this to
-   * "/" once on-device validation is happy; landing as /sense first keeps
-   * the existing dashboard reachable for the canary-wap fleet during
-   * the transition. */
+  /* /sense is kept as an alias for the headline dashboard for backward
+   * compatibility — the canonical landing route is now "/" (handled by
+   * canary_wap.ino's handle_ui), and the legacy tabbed dashboard moved
+   * to /admin. Any links the companion PWA or third-party tools may
+   * have made during the Phase-3 staging period keep working. */
   static httpd_uri_t r_sense = {
     .uri = "/sense", .method = HTTP_GET, .handler = handle_sense_page
   };
