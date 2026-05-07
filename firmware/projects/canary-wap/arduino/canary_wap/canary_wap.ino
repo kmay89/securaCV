@@ -118,7 +118,8 @@
 #include "wap_server.h"
 #include "web_ui.h"
 #include "companion_pwa.h"
-#include "csi_integration.h"  // Boot the CSI library + HTTP endpoints
+#include "csi_integration.h"     // Boot the CSI library + HTTP endpoints
+#include "csi_dashboard_html.h"  // CSI_DASHBOARD_HTML — the Phase-3 headline UI now served at /
 #include "mesh_network.h"
 #include "bluetooth_channel.h"
 #include "bluetooth_api.h"
@@ -2078,6 +2079,21 @@ static esp_err_t http_send_error(httpd_req_t* req, int status_code, const char* 
 }
 
 static esp_err_t handle_ui(httpd_req_t* req) {
+  // The default route now lands on the headline Sensing dashboard from
+  // csi_dashboard_html.h (Phase 3 of the WiFi CSI Tool plan). The legacy
+  // tabbed admin dashboard is reachable at /admin via handle_legacy_ui().
+  // Cache headers off — the dashboard polls /api/csi/stream itself, the
+  // shell HTML doesn't need to be revalidated on every navigation.
+  g_health.http_requests++;
+  httpd_resp_set_type(req, "text/html");
+  return httpd_resp_send(req, CSI_DASHBOARD_HTML, HTTPD_RESP_USE_STRLEN);
+}
+
+static esp_err_t handle_legacy_ui(httpd_req_t* req) {
+  // The original tabbed administrator dashboard. Reachable at /admin so
+  // the canary-wap fleet keeps a familiar surface for power-user tasks
+  // (camera peek, witness export, fine-grained tabs) while / is reserved
+  // for the headline sensing experience.
   g_health.http_requests++;
   httpd_resp_set_type(req, "text/html");
   return httpd_resp_send(req, CANARY_UI_HTML, HTTPD_RESP_USE_STRLEN);
@@ -4335,9 +4351,12 @@ static esp_err_t handle_system_metrics_auth(httpd_req_t* req) {
 
 // Register all route handlers on a given httpd server handle
 static void register_api_routes(httpd_handle_t server) {
-  // UI — no auth required (serves dashboard HTML)
+  // UI — no auth required. / serves the headline Sensing dashboard;
+  // /admin keeps the legacy tabbed dashboard reachable for power-user tasks.
   httpd_uri_t ui = { .uri = "/", .method = HTTP_GET, .handler = handle_ui };
   httpd_register_uri_handler(server, &ui);
+  httpd_uri_t legacy_ui = { .uri = "/admin", .method = HTTP_GET, .handler = handle_legacy_ui };
+  httpd_register_uri_handler(server, &legacy_ui);
 
   // Companion PWA (Web Bluetooth phone-side console). Three static assets,
   // no auth — the page itself is just HTML/JS/manifest; the BLE
@@ -4399,7 +4418,7 @@ static void register_api_routes(httpd_handle_t server) {
 
 static void start_http_server() {
   // Calculate max URI handlers based on feature usage
-  const int base_handlers = 22;       // UI, API (auth + public), WiFi provisioning, captive portal
+  const int base_handlers = 23;       // UI (/ + /admin), API (auth + public), WiFi provisioning, captive portal
   const int camera_handlers = 6;      // Camera peek endpoints
   const int mesh_handlers = 12;       // Mesh network endpoints
   const int bluetooth_handlers = 23;  // Bluetooth API endpoints

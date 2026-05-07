@@ -1,7 +1,8 @@
 /**
  * @file csi_dashboard_html.h
- * @brief The headline Sensing dashboard at /sense — Phase 3 of the WiFi
- *        CSI Tool plan.
+ * @brief The headline Sensing dashboard, served at "/" by canary_wap.ino's
+ *        handle_ui() and aliased at /sense by csi_integration.cpp for
+ *        backward compatibility — Phase 3 of the WiFi CSI Tool plan.
  *
  * One PROGMEM HTML asset that renders the full landing experience: the
  * pearlescent presence orb, the hero state plate, the ambient theme
@@ -22,8 +23,8 @@
  * stack only. Vanilla canvas + CSS custom properties. Reduced-motion
  * preserved by collapsing animations to fades; dark mode follows OS.
  *
- * Lives at /sense for now; once on-device validation is happy,
- * a one-line change in handle_ui() promotes it to /.
+ * Served at / by handle_ui in canary_wap.ino. /sense kept as a
+ * compatibility alias for tools that linked to it during Phase-3 staging.
  */
 
 #ifndef SECURACV_CSI_DASHBOARD_HTML_H
@@ -1138,8 +1139,11 @@ document.getElementById('helpBtn').addEventListener('click', () => {
 whatScrim.addEventListener('click', () => closeSheet(whatSheet, whatScrim));
 
 document.getElementById('settingsBtn').addEventListener('click', () => {
-  // Settings page is the legacy / dashboard — link out for now.
-  window.location.href = '/';
+  // The legacy tabbed admin dashboard now lives at /admin. The dashboard
+  // is the headline route at /, so the Settings button points users
+  // toward the deeper power-user surface (camera peek, witness export,
+  // device-level config, etc.).
+  window.location.href = '/admin';
 });
 
 /* ────────────────────────────────────────────────────────────────────────
