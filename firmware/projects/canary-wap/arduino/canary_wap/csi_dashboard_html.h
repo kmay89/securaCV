@@ -1613,16 +1613,19 @@ pollLoop(pollRawVector, 1000);
 /* ────────────────────────────────────────────────────────────────────────
  *  Device identity badge
  *
- *  /api/status exposes the canary's per-device id (e.g. "canary-s3-AB12").
- *  Surface it in the topbar so a user with a fleet always knows which
- *  device they're looking at — and so a device that just got renamed or
- *  re-flashed shows the right label without a hardcoded fallback.
- *  Best-effort: a transient network blip leaves the placeholder text in
- *  place, never breaks the dashboard.
+ *  /api/device-info is the public, no-auth endpoint that exposes the
+ *  canary's per-device id (e.g. "canary-s3-AB12"). /api/status carries
+ *  the same field but is gated by handle_status_auth, so an
+ *  un-authenticated dashboard fetch silently 401s — use /api/device-info
+ *  here. Surface the id in the topbar so a user with a fleet always
+ *  knows which device they opened, and so a device that just got
+ *  renamed or re-flashed shows the right label without a firmware tweak.
+ *  Best-effort: a transient network blip leaves the "canary" placeholder
+ *  in place, never breaks the dashboard.
  * ──────────────────────────────────────────────────────────────────────── */
 (async function fetchDeviceId() {
   try {
-    const r = await fetch('/api/status', {cache: 'no-store'});
+    const r = await fetch('/api/device-info', {cache: 'no-store'});
     if (!r.ok) return;
     const j = await r.json();
     const el = document.getElementById('device-id');
