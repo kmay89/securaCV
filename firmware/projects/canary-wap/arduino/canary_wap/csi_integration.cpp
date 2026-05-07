@@ -111,6 +111,64 @@ void on_csi_window(const csi_features_t* features, void* /*user*/) {
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
+ * SETTINGS — NVS-backed module settings
+ *
+ * The library declares csi_module_settings_int/bool/float with weak
+ * default symbols that just return the supplied default. We override
+ * them here with a thin Preferences-backed reader so the dashboard's
+ * Pet Mode toggle (and future preset / sensitivity controls) actually
+ * change what the modules do at run-time.
+ *
+ * NVS key length limit is 15 chars, so we shorten the dotted module
+ * keys to a stable abbreviation:
+ *
+ *   core.presence.pet_mode -> cp.pet_mode   (cp + dot + 8 = 11)
+ *   core.presence.motion_threshold -> cp.mt (still valid, mapped below)
+ *   ...
+ *
+ * The dashboard speaks in dotted keys; this map is the only place that
+ * knows about the abbreviation, so future setting-key additions touch
+ * one table.
+ *
+ * Defined here (above HTTP HANDLERS) so the GET / POST handlers below
+ * can reference SETTINGS_NS, nvs_key_for(), and reinit_module() without
+ * forward declarations.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+constexpr const char* SETTINGS_NS = "csi";
+
+struct SettingKey {
+  const char* full;   // "core.presence.pet_mode"
+  const char* nvs;    // "cp.pet_mode" — must be ≤ 15 chars
+};
+const SettingKey SETTING_KEYS[] = {
+  { "core.presence.pet_mode",            "cp.pet_mode"   },
+  { "core.presence.motion_threshold",    "cp.mt"         },
+  { "core.presence.active_threshold",    "cp.at"         },
+  { "core.presence.breathing_threshold", "cp.bt"         },
+  { "core.presence.pet_mode_seconds",    "cp.ps"         },
+  { "core.breathing.lock_threshold",     "cb.lt"         },
+  { "core.breathing.confirm_seconds",    "cb.cs"         },
+};
+
+const char* nvs_key_for(const char* full_key) {
+  for (const SettingKey& k : SETTING_KEYS) {
+    if (strcmp(k.full, full_key) == 0) return k.nvs;
+  }
+  return nullptr;
+}
+
+/* Reinit modules whose settings changed. Cheap — modules are stateless
+ * apart from a few static counters that init() resets, and there are
+ * only four registered. Called once after each /api/settings POST. */
+void reinit_module(const char* module_id) {
+  const csi_module_t* m = csi_module_find(module_id);
+  if (!m) return;
+  if (m->deinit) m->deinit();
+  if (m->init)   m->init(nullptr);
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
  * HTTP HANDLERS
  * ────────────────────────────────────────────────────────────────────────── */
 
@@ -318,11 +376,18 @@ esp_err_t handle_events_dismiss(httpd_req_t* req) {
 
 esp_err_t handle_settings_get(httpd_req_t* req) {
   Preferences prefs;
-  bool pet_mode = false;
-  if (prefs.begin(SETTINGS_NS, /*readOnly=*/true)) {
-    pet_mode = prefs.getBool("cp.pet_mode", false);
-    prefs.end();
+  if (!prefs.begin(SETTINGS_NS, /*readOnly=*/true)) {
+    /* Don't silently report pet_mode=false — the dashboard would
+     * reconcile localStorage to that value and quietly disable Pet
+     * Mode for any user who had it on. Surface the unavailability
+     * so the client skips reconciliation and keeps its current
+     * localStorage source of truth. */
+    httpd_resp_set_status(req, "503 Service Unavailable");
+    httpd_resp_send(req, "{\"ok\":false,\"reason\":\"settings store unavailable\"}", -1);
+    return ESP_OK;
   }
+  bool pet_mode = prefs.getBool("cp.pet_mode", false);
+  prefs.end();
   char buf[64];
   snprintf(buf, sizeof(buf), "{\"pet_mode\":%s}", pet_mode ? "true" : "false");
   httpd_resp_set_type(req, "application/json");
@@ -351,8 +416,10 @@ esp_err_t handle_settings_post(httpd_req_t* req) {
   }
 
   /* Look for "pet_mode": true | false. Tolerant scanner — accepts
-   * surrounding whitespace and either lowercase boolean. */
-  const char* k = strstr(body, "pet_mode");
+   * surrounding whitespace and either lowercase boolean. We search for
+   * the QUOTED key so a body like {"not_pet_mode": true} doesn't
+   * accidentally match here. */
+  const char* k = strstr(body, "\"pet_mode\"");
   if (k) {
     const char* v = strchr(k, ':');
     if (v) {
@@ -397,60 +464,6 @@ esp_err_t handle_sense_page(httpd_req_t* req) {
 /* ──────────────────────────────────────────────────────────────────────────
  * MODULE REGISTRATION
  * ────────────────────────────────────────────────────────────────────────── */
-
-/* ──────────────────────────────────────────────────────────────────────────
- * SETTINGS — NVS-backed module settings
- *
- * The library declares csi_module_settings_int/bool/float with weak
- * default symbols that just return the supplied default. We override
- * them here with a thin Preferences-backed reader so the dashboard's
- * Pet Mode toggle (and future preset / sensitivity controls) actually
- * change what the modules do at run-time.
- *
- * NVS key length limit is 15 chars, so we shorten the dotted module
- * keys to a stable abbreviation:
- *
- *   core.presence.pet_mode -> cp.pet_mode   (cp + dot + 8 = 11)
- *   core.presence.motion_threshold -> cp.mt (still valid, mapped below)
- *   ...
- *
- * The dashboard speaks in dotted keys; this map is the only place that
- * knows about the abbreviation, so future setting-key additions touch
- * one table.
- * ────────────────────────────────────────────────────────────────────────── */
-
-constexpr const char* SETTINGS_NS = "csi";
-
-struct SettingKey {
-  const char* full;   // "core.presence.pet_mode"
-  const char* nvs;    // "cp.pet_mode" — must be ≤ 15 chars
-};
-const SettingKey SETTING_KEYS[] = {
-  { "core.presence.pet_mode",            "cp.pet_mode"   },
-  { "core.presence.motion_threshold",    "cp.mt"         },
-  { "core.presence.active_threshold",    "cp.at"         },
-  { "core.presence.breathing_threshold", "cp.bt"         },
-  { "core.presence.pet_mode_seconds",    "cp.ps"         },
-  { "core.breathing.lock_threshold",     "cb.lt"         },
-  { "core.breathing.confirm_seconds",    "cb.cs"         },
-};
-
-const char* nvs_key_for(const char* full_key) {
-  for (const SettingKey& k : SETTING_KEYS) {
-    if (strcmp(k.full, full_key) == 0) return k.nvs;
-  }
-  return nullptr;
-}
-
-/* Reinit modules whose settings changed. Cheap — modules are stateless
- * apart from a few static counters that init() resets, and there are
- * only four registered. Called once after each /api/settings POST. */
-void reinit_module(const char* module_id) {
-  const csi_module_t* m = csi_module_find(module_id);
-  if (!m) return;
-  if (m->deinit) m->deinit();
-  if (m->init)   m->init(nullptr);
-}
 
 void register_v1_modules() {
   csi_module_register(core_presence_module());
