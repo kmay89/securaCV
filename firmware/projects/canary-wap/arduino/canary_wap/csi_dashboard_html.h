@@ -562,6 +562,131 @@ static const char CSI_DASHBOARD_HTML[] PROGMEM = R"DASHBOARD(<!doctype html>
     padding: 0; margin: -1px; overflow: hidden;
     clip: rect(0,0,0,0); border: 0;
   }
+  /* ── First-run welcome overlay (4 cards) ───────────────────────────────
+   *
+   * Full-screen frosted-glass mask shown on the user's first visit, gated
+   * by localStorage('csi.onboarding.done'). Teaches the four things from
+   * the plan's "first-run explainer" before handing off to calibration:
+   *
+   *   1. "Your camera-free sixth sense" + optional Pets question.
+   *   2. "WiFi waves, not video. No MACs, no cloud."
+   *   3. "Best in the same room. Through one wall: motion only…"
+   *   4. "Step out for 60 s." (Calibration handoff.)
+   *
+   * The orb, hero plate, and ambient theme keep rendering underneath the
+   * overlay — when the user dismisses, the dashboard is already alive
+   * without a load flash. */
+  .welcome-mask {
+    position: fixed; inset: 0;
+    background: var(--bg-veil);
+    -webkit-backdrop-filter: blur(36px) saturate(170%);
+    backdrop-filter: blur(36px) saturate(170%);
+    z-index: 110;
+    opacity: 0; pointer-events: none;
+    transition: opacity .35s var(--ease-soft);
+    display: grid; place-items: center;
+    padding: 24px;
+  }
+  body.is-onboarding .welcome-mask { opacity: 1; pointer-events: auto; }
+
+  .welcome-card {
+    width: min(440px, 100%);
+    max-height: 80vh;
+    background: var(--bg-base);
+    border: 1px solid var(--hairline);
+    border-radius: 22px;
+    box-shadow: 0 18px 52px rgba(0,0,0,0.18), 0 2px 8px rgba(0,0,0,0.06);
+    padding: 28px 26px 22px;
+    display: grid;
+    gap: 14px;
+    text-align: center;
+    transform: translateY(8px) scale(0.98);
+    opacity: 0;
+    transition: opacity .3s var(--ease-soft), transform .35s var(--ease-spring);
+  }
+  body.is-onboarding .welcome-card.show {
+    opacity: 1; transform: translateY(0) scale(1);
+  }
+  .welcome-card .step {
+    font-size: 11px; letter-spacing: 0.12em; color: var(--fg-mute);
+    text-transform: uppercase;
+  }
+  .welcome-card h2 {
+    font-size: clamp(22px, 5vw, 28px);
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    margin: 0;
+  }
+  .welcome-card p {
+    margin: 0;
+    color: var(--fg-soft);
+    font-size: 16px;
+    line-height: 1.45;
+  }
+  .welcome-card .learn-more {
+    color: var(--orb-3);
+    text-decoration: none;
+    font-weight: 500;
+    font-size: 14px;
+  }
+  .welcome-card .learn-more:hover { text-decoration: underline; }
+  .welcome-card .pet-choices {
+    display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px;
+    margin-top: 4px;
+  }
+  .welcome-card .pet-choices button {
+    border: 1px solid var(--hairline);
+    background: var(--bg-veil);
+    color: var(--fg);
+    padding: 10px 8px;
+    border-radius: 10px;
+    font: inherit; font-size: 14px; font-weight: 500;
+    cursor: pointer;
+    transition: transform .15s var(--ease-spring), border-color .2s;
+  }
+  .welcome-card .pet-choices button:hover  { transform: translateY(-1px); border-color: var(--orb-3); }
+  .welcome-card .pet-choices button[aria-pressed="true"] {
+    border-color: var(--orb-3);
+    background: linear-gradient(135deg, rgba(140,158,255,0.10), rgba(30,197,177,0.10));
+  }
+  .welcome-card .actions {
+    display: grid; grid-template-columns: auto 1fr; gap: 10px; margin-top: 8px;
+  }
+  .welcome-card .actions .skip {
+    background: transparent;
+    border: 0;
+    color: var(--fg-mute);
+    font: inherit; font-size: 14px;
+    cursor: pointer;
+    padding: 12px 8px;
+  }
+  .welcome-card .actions .skip:hover { color: var(--fg-soft); }
+  .welcome-card .actions .primary {
+    border: 0;
+    border-radius: 12px;
+    padding: 12px 18px;
+    background: linear-gradient(135deg, var(--orb-3), var(--accent));
+    color: white;
+    font: inherit; font-size: 16px; font-weight: 600;
+    cursor: pointer;
+    box-shadow: 0 4px 14px var(--orb-glow);
+    transition: transform .15s var(--ease-spring);
+  }
+  .welcome-card .actions .primary:hover { transform: translateY(-1px); }
+  .welcome-card .dots {
+    display: flex; gap: 6px; justify-content: center; margin-top: 4px;
+  }
+  .welcome-card .dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--fg-mute); opacity: 0.4;
+    transition: opacity .25s, transform .25s var(--ease-spring);
+  }
+  .welcome-card .dot.active { opacity: 1; background: var(--orb-3); transform: scale(1.4); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .welcome-card { transition: opacity .2s; transform: none !important; }
+  }
+
   /* Calibration overlay that desaturates the page during baseline capture */
   .calibrating-mask {
     position: fixed; inset: 0;
@@ -677,6 +802,11 @@ static const char CSI_DASHBOARD_HTML[] PROGMEM = R"DASHBOARD(<!doctype html>
   <div class="sheet-body" id="whatBody"></div>
 </aside>
 
+<!-- First-run welcome overlay -->
+<div class="welcome-mask" id="welcomeMask">
+  <div class="welcome-card" id="welcomeCard" role="dialog" aria-labelledby="welcomeTitle"></div>
+</div>
+
 <!-- Calibration overlay -->
 <div class="calibrating-mask" id="calibratingMask">
   <div>
@@ -736,6 +866,48 @@ const COPY = {
       { scenario: "People walking past your window",     capability: "May trigger motion. Calibrate when nobody's home so the sensor learns what's normal." },
     ],
     foot: "No camera. No microphone. No MAC addresses. Nothing leaves the device.",
+  },
+  welcome: {
+    cards: [
+      {
+        step: "Step 1 of 4",
+        title: "Your camera-free sixth sense for the home.",
+        body: "This little device watches the WiFi waves bouncing around your room. When something moves, the waves change. That's it.",
+        primary: "Got it",
+        skip: "Skip",
+        // Card 1 also asks the optional Pets question — handled in JS.
+        pets: true,
+      },
+      {
+        step: "Step 2 of 4",
+        title: "Watches WiFi waves, not video.",
+        body: "No camera. No microphone. No MAC addresses stored. Nothing leaves the device.",
+        primary: "Next",
+        skip: "Skip",
+      },
+      {
+        step: "Step 3 of 4",
+        title: "Best in the same room.",
+        body: "Through one wall: motion only, no breathing claims. Through a floor: depends on your home. We're honest about what the sensor can and can't see.",
+        learnMore: "What it can and can't see",
+        primary: "Next",
+        skip: "Skip",
+      },
+      {
+        step: "Step 4 of 4",
+        title: "One last thing — let's learn your empty room.",
+        body: "Step out of this room for a minute. The sensor will use that minute to figure out what 'empty' looks like, so it knows when somebody's actually here.",
+        primary: "Calibrate now",
+        skip: "Maybe later",
+      },
+    ],
+    petQuestion: "Pets at home?",
+    petChoices: [
+      { id: "none",  label: "None"        },
+      { id: "cat",   label: "Cat"         },
+      { id: "small", label: "Small dog"   },
+      { id: "large", label: "Large dog"   },
+    ],
   },
 };
 
@@ -1212,6 +1384,117 @@ calibrateBtn.addEventListener('click', () => {
     }
   }, 1000);
 });
+
+/* ────────────────────────────────────────────────────────────────────────
+ *  First-run welcome overlay
+ *
+ *  Gated by localStorage('csi.onboarding.done') — the user only sees this
+ *  once. Pet selection on card 1 auto-enables Pet Mode for cat / small dog
+ *  (large-dog Pet Mode is opt-in, see plan). Card 4's primary action runs
+ *  the existing calibrate flow so the dashboard arrives baseline-aware.
+ * ──────────────────────────────────────────────────────────────────────── */
+(function welcomeFlow() {
+  if (localStorage.getItem('csi.onboarding.done') === '1') return;
+
+  const cards   = COPY.welcome.cards;
+  const cardEl  = document.getElementById('welcomeCard');
+  if (!cardEl) return;
+  let idx       = 0;
+  let chosenPet = localStorage.getItem('csi.pet.kind') || null;
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, ch => ({
+      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+    }[ch]));
+  }
+
+  function dotsHtml() {
+    return '<div class="dots">' +
+      cards.map((_, i) => `<span class="dot${i === idx ? ' active' : ''}"></span>`).join('') +
+      '</div>';
+  }
+
+  function petChoicesHtml() {
+    const choices = COPY.welcome.petChoices.map(c =>
+      `<button data-pet="${c.id}" aria-pressed="${chosenPet === c.id ? 'true' : 'false'}">${escapeHtml(c.label)}</button>`
+    ).join('');
+    return `
+      <div class="step">${escapeHtml(COPY.welcome.petQuestion)}</div>
+      <div class="pet-choices">${choices}</div>`;
+  }
+
+  function render() {
+    const c = cards[idx];
+    const learn = c.learnMore
+      ? `<a href="#" class="learn-more" data-action="what">${escapeHtml(c.learnMore)} →</a>`
+      : '';
+    cardEl.innerHTML = `
+      <div class="step">${escapeHtml(c.step)}</div>
+      <h2 id="welcomeTitle">${escapeHtml(c.title)}</h2>
+      <p>${escapeHtml(c.body)}</p>
+      ${learn}
+      ${c.pets ? petChoicesHtml() : ''}
+      <div class="actions">
+        <button class="skip" data-action="skip">${escapeHtml(c.skip)}</button>
+        <button class="primary" data-action="next">${escapeHtml(c.primary)}</button>
+      </div>
+      ${dotsHtml()}
+    `;
+    cardEl.classList.remove('show');
+    void cardEl.offsetWidth;   // force reflow so the show class re-triggers the spring
+    cardEl.classList.add('show');
+  }
+
+  function finish(launchCalibrate) {
+    localStorage.setItem('csi.onboarding.done', '1');
+    if (chosenPet) localStorage.setItem('csi.pet.kind', chosenPet);
+    document.body.classList.remove('is-onboarding');
+    if (launchCalibrate) {
+      // Hand off to the existing calibrate path.
+      const btn = document.getElementById('calibrateBtn');
+      if (btn) btn.click();
+    }
+  }
+
+  cardEl.addEventListener('click', e => {
+    const pet = e.target.closest('[data-pet]');
+    if (pet) {
+      chosenPet = pet.dataset.pet;
+      // Cat and small dog: auto-enable Pet Mode. Large dog: leave to the user
+      // — large dogs sometimes lock briefly on the human Goertzel band, so
+      // forcing the filter would suppress real activity.
+      const enable = (chosenPet === 'cat' || chosenPet === 'small');
+      window.PET_MODE = enable;
+      localStorage.setItem('csi.pet', enable ? '1' : '0');
+      const sw = document.getElementById('petSwitch');
+      if (sw) sw.setAttribute('aria-checked', enable ? 'true' : 'false');
+      render();
+      return;
+    }
+    const action = e.target.closest('[data-action]');
+    if (!action) return;
+    e.preventDefault();
+    const a = action.dataset.action;
+    if (a === 'skip') {
+      finish(false);
+    } else if (a === 'what') {
+      // Open the "What it can / can't see" sheet without dismissing onboarding.
+      const help = document.getElementById('helpBtn');
+      if (help) help.click();
+    } else if (a === 'next') {
+      idx++;
+      if (idx >= cards.length) {
+        // Card 4's primary launches calibrate.
+        finish(true);
+      } else {
+        render();
+      }
+    }
+  });
+
+  document.body.classList.add('is-onboarding');
+  render();
+})();
 
 /* ────────────────────────────────────────────────────────────────────────
  *  Animation / poll loop
