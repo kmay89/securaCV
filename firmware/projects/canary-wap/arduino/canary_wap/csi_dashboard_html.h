@@ -636,24 +636,49 @@ static const char CSI_DASHBOARD_HTML[] PROGMEM = R"DASHBOARD(<!doctype html>
     font-size: 14px;
   }
   .welcome-card .learn-more:hover { text-decoration: underline; }
+  .welcome-card .pet-hint {
+    font-size: 12px; color: var(--fg-mute);
+    margin: 0 0 -4px;
+  }
   .welcome-card .pet-choices {
     display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px;
     margin-top: 4px;
   }
   .welcome-card .pet-choices button {
+    position: relative;
     border: 1px solid var(--hairline);
     background: var(--bg-veil);
     color: var(--fg);
-    padding: 10px 8px;
+    padding: 10px 30px 10px 14px; /* right-pad for the check pip */
     border-radius: 10px;
     font: inherit; font-size: 14px; font-weight: 500;
     cursor: pointer;
-    transition: transform .15s var(--ease-spring), border-color .2s;
+    text-align: left;
+    transition: transform .15s var(--ease-spring), border-color .2s, background .2s;
   }
   .welcome-card .pet-choices button:hover  { transform: translateY(-1px); border-color: var(--orb-3); }
+  /* Empty checkbox pip in every chip — gets a check when selected. */
+  .welcome-card .pet-choices button::after {
+    content: "";
+    position: absolute; right: 10px; top: 50%;
+    width: 16px; height: 16px;
+    transform: translateY(-50%);
+    border: 1.5px solid var(--fg-mute);
+    border-radius: 4px;
+    background: transparent;
+    transition: background .15s, border-color .15s;
+  }
   .welcome-card .pet-choices button[aria-pressed="true"] {
     border-color: var(--orb-3);
     background: linear-gradient(135deg, rgba(140,158,255,0.10), rgba(30,197,177,0.10));
+  }
+  .welcome-card .pet-choices button[aria-pressed="true"]::after {
+    background: var(--orb-3);
+    border-color: var(--orb-3);
+    /* SVG checkmark in white as a background-image on the pip */
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path fill='none' stroke='white' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round' d='M3.5 8.5l3 3 6-6.5'/></svg>");
+    background-repeat: no-repeat;
+    background-position: center;
   }
   .welcome-card .actions {
     display: grid; grid-template-columns: auto 1fr; gap: 10px; margin-top: 8px;
@@ -907,12 +932,15 @@ const COPY = {
         skip: "Maybe later",
       },
     ],
-    petQuestion: "Pets at home?",
+    petQuestion: "Any pets at home?",
+    petHint:     "Pick all that apply.",
     petChoices: [
-      { id: "none",  label: "None"        },
-      { id: "cat",   label: "Cat"         },
-      { id: "small", label: "Small dog"   },
-      { id: "large", label: "Large dog"   },
+      // Order matters: "None" first because it's the mutually-exclusive
+      // escape hatch, then the specific pets the user can multi-select.
+      { id: "none",  label: "No pets"    },
+      { id: "cat",   label: "Cat"        },
+      { id: "small", label: "Small dog"  },
+      { id: "large", label: "Large dog"  },
     ],
   },
 };
@@ -1413,7 +1441,14 @@ calibrateBtn.addEventListener('click', () => {
   const cardEl  = document.getElementById('welcomeCard');
   if (!cardEl) return;
   let idx       = 0;
-  let chosenPet = localStorage.getItem('csi.pet.kind') || null;
+  // Multi-select: a household can have a cat AND a large dog. We keep
+  // a Set and let the user toggle. "none" is the mutually-exclusive
+  // escape hatch — picking it clears the others; picking any specific
+  // pet clears "none". Persisted as a comma-separated list in
+  // localStorage('csi.pet.kinds').
+  const initialKinds = (localStorage.getItem('csi.pet.kinds') || '')
+    .split(',').map(s => s.trim()).filter(Boolean);
+  const chosenPets = new Set(initialKinds);
 
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, ch => ({
@@ -1429,10 +1464,11 @@ calibrateBtn.addEventListener('click', () => {
 
   function petChoicesHtml() {
     const choices = COPY.welcome.petChoices.map(c =>
-      `<button data-pet="${c.id}" aria-pressed="${chosenPet === c.id ? 'true' : 'false'}">${escapeHtml(c.label)}</button>`
+      `<button data-pet="${c.id}" role="checkbox" aria-pressed="${chosenPets.has(c.id) ? 'true' : 'false'}">${escapeHtml(c.label)}</button>`
     ).join('');
     return `
       <div class="step">${escapeHtml(COPY.welcome.petQuestion)}</div>
+      <p class="pet-hint">${escapeHtml(COPY.welcome.petHint)}</p>
       <div class="pet-choices">${choices}</div>`;
   }
 
@@ -1460,7 +1496,11 @@ calibrateBtn.addEventListener('click', () => {
 
   function finish(launchCalibrate) {
     localStorage.setItem('csi.onboarding.done', '1');
-    if (chosenPet) localStorage.setItem('csi.pet.kind', chosenPet);
+    // Persist the comma-separated list. Empty Set means the user
+    // skipped without answering — leave any previous answer alone.
+    if (chosenPets.size > 0) {
+      localStorage.setItem('csi.pet.kinds', Array.from(chosenPets).join(','));
+    }
     document.body.classList.remove('is-onboarding');
     if (launchCalibrate) {
       // Hand off to the existing calibrate path.
@@ -1472,15 +1512,33 @@ calibrateBtn.addEventListener('click', () => {
   cardEl.addEventListener('click', e => {
     const pet = e.target.closest('[data-pet]');
     if (pet) {
-      chosenPet = pet.dataset.pet;
-      // Cat / small dog: auto-enable Pet Mode (clear win, no risk of
-      // suppressing real activity). Large dog and None: leave the
-      // existing Pet Mode setting alone — a returning user re-running
-      // onboarding shouldn't have their previous choice silently
-      // overwritten, and large dogs occasionally lock briefly on the
-      // human Goertzel band so forcing the filter would suppress real
-      // activity. Users can always toggle Pet Mode from the dashboard.
-      if (chosenPet === 'cat' || chosenPet === 'small') {
+      const id = pet.dataset.pet;
+      // Multi-select toggle with one rule: "none" is mutually exclusive
+      // with the specific pets. Picking "none" clears every other choice;
+      // picking any specific pet clears "none". This keeps the model
+      // both inclusive (a cat AND a large dog is a valid combination)
+      // and unambiguous (you can't simultaneously claim "no pets" and
+      // "small dog").
+      if (id === 'none') {
+        if (chosenPets.has('none')) {
+          chosenPets.delete('none');
+        } else {
+          chosenPets.clear();
+          chosenPets.add('none');
+        }
+      } else {
+        chosenPets.delete('none');
+        if (chosenPets.has(id)) chosenPets.delete(id); else chosenPets.add(id);
+      }
+
+      // Pet Mode auto-enable: any of {cat, small dog} → on. Large dog
+      // and "no pets" do not change Pet Mode — large dogs occasionally
+      // lock briefly on the human Goertzel band (suppressing them with
+      // Pet Mode would hide real activity), and a returning user who
+      // selects "no pets" while having had Pet Mode on for some other
+      // reason shouldn't have it silently flipped off. Users can
+      // always toggle Pet Mode from the dashboard switch.
+      if (chosenPets.has('cat') || chosenPets.has('small')) {
         window.PET_MODE = true;
         localStorage.setItem('csi.pet', '1');
         const sw = document.getElementById('petSwitch');
