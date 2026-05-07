@@ -1610,6 +1610,26 @@ function pollLoop(fn, intervalMs) {
 pollLoop(pollStream, 1000);
 pollLoop(pollRawVector, 1000);
 
+/* ────────────────────────────────────────────────────────────────────────
+ *  Device identity badge
+ *
+ *  /api/status exposes the canary's per-device id (e.g. "canary-s3-AB12").
+ *  Surface it in the topbar so a user with a fleet always knows which
+ *  device they're looking at — and so a device that just got renamed or
+ *  re-flashed shows the right label without a hardcoded fallback.
+ *  Best-effort: a transient network blip leaves the placeholder text in
+ *  place, never breaks the dashboard.
+ * ──────────────────────────────────────────────────────────────────────── */
+(async function fetchDeviceId() {
+  try {
+    const r = await fetch('/api/status', {cache: 'no-store'});
+    if (!r.ok) return;
+    const j = await r.json();
+    const el = document.getElementById('device-id');
+    if (el && j.device_id) el.textContent = j.device_id;
+  } catch {}
+})();
+
 // Service worker registration is left to companion_pwa.h's existing scope.
 </script>
 </body>
