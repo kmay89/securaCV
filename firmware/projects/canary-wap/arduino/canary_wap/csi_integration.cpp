@@ -33,6 +33,7 @@
  */
 
 #include "csi_integration.h"
+#include "csi_dashboard_html.h"
 
 #include <Arduino.h>
 #include <esp_http_server.h>
@@ -297,6 +298,17 @@ esp_err_t handle_events_dismiss(httpd_req_t* req) {
   return ESP_OK;
 }
 
+esp_err_t handle_sense_page(httpd_req_t* req) {
+  /* The headline Sensing dashboard. Static asset served straight from
+   * PROGMEM. The page itself fetches /api/csi/stream + /api/events/today
+   * + /api/events/dismiss + /api/csi/window for live data. No auth on the
+   * page render — everything privacy-sensitive is gated by the chokepoint's
+   * own privacy ceiling at the data endpoints. */
+  httpd_resp_set_type(req, "text/html");
+  httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
+  return httpd_resp_send(req, CSI_DASHBOARD_HTML, HTTPD_RESP_USE_STRLEN);
+}
+
 /* ──────────────────────────────────────────────────────────────────────────
  * MODULE REGISTRATION
  * ────────────────────────────────────────────────────────────────────────── */
@@ -400,8 +412,17 @@ bool init(httpd_handle_t server) {
   };
   httpd_register_uri_handler(server, &r_dismiss);
 
+  /* The headline Sensing dashboard at /sense. Phase 5 will promote this to
+   * "/" once on-device validation is happy; landing as /sense first keeps
+   * the existing dashboard reachable for the canary-wap fleet during
+   * the transition. */
+  static httpd_uri_t r_sense = {
+    .uri = "/sense", .method = HTTP_GET, .handler = handle_sense_page
+  };
+  httpd_register_uri_handler(server, &r_sense);
+
   g_initialized = true;
-  Serial.printf("[CSI] integration ready: %u modules, 4 routes registered\n",
+  Serial.printf("[CSI] integration ready: %u modules, 5 routes registered\n",
                 (unsigned)csi_module_count());
   return true;
 }
