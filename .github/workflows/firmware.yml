@@ -207,3 +207,35 @@ jobs:
 
       - name: Run host invariants test
         run: /tmp/csi_invariants
+
+  microcopy-lint:
+    name: Dashboard Microcopy Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run microcopy lint trio
+        # Three sub-checks gate every PR that touches the dashboard:
+        #
+        #   (1) Plain-words audit — banned technical jargon (CSI, RSSI,
+        #       NVS, threshold, preset, ...) must not appear in the COPY
+        #       object or the HTML body of the headline dashboard.
+        #
+        #   (2) Tooltip coverage — every data-tip="key" attribute resolves
+        #       to a defined entry in COPY.tooltips. Catches keys that
+        #       get renamed without updating the bank (silent empty
+        #       tooltips for the user — usability bug, not a crash, so
+        #       easy to ship without this guard).
+        #
+        #   (3) Reading-grade FKGL — aggregate Flesch-Kincaid across the
+        #       COPY corpus stays at or below 7th grade. The plan's
+        #       target is 6th; one grade of slack absorbs noisy short
+        #       strings.
+        run: |
+          chmod +x firmware/scripts/microcopy_lint.sh
+          firmware/scripts/microcopy_lint.sh

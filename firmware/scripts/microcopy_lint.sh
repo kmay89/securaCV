@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+# ═══════════════════════════════════════════════════════════════════════
+# Microcopy lint orchestrator
+# ═══════════════════════════════════════════════════════════════════════
+#
+# Three sub-checks that gate the dashboard's user-facing copy:
+#
+#   1. Plain-words audit  — banned technical jargon (CSI, RSSI, NVS, ...)
+#                           must not appear in the COPY object or HTML
+#                           body of the headline dashboard.
+#
+#   2. Tooltip coverage   — every data-tip="key" attribute resolves to a
+#                           defined entry in COPY.tooltips. Catches keys
+#                           that get renamed without updating the bank
+#                           (silent empty tooltips for the user).
+#
+#   3. Reading-grade FKGL — aggregate Flesch-Kincaid across the COPY
+#                           corpus stays at or below 7th grade. The plan's
+#                           target is 6th; one grade of slack absorbs
+#                           noisy short strings.
+#
+# Each check is independent. A failure in any one fails the whole job.
+# Failures print a clear message describing what to fix.
+#
+# Usage:   firmware/scripts/microcopy_lint.sh
+# Locally: SKIP_FKGL=1 firmware/scripts/microcopy_lint.sh   # if no python
+#
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DASH_HTML="$(cd "$SCRIPT_DIR/../.." && pwd)/firmware/projects/canary-wap/arduino/canary_wap/csi_dashboard_html.h"
+BANNED_TERMS="$SCRIPT_DIR/microcopy_banned_terms.txt"
+
+red()    { echo -e "\033[0;31m✗ $1\033[0m"; }
+green()  { echo -e "\033[0;32m✓ $1\033[0m"; }
+yellow() { echo -e "\033[0;33m⚠ $1\033[0m"; }
+
+if [ ! -f "$DASH_HTML" ]; then
+  red "Dashboard not found: $DASH_HTML"
+  exit 2
+fi
+if [ ! -f "$BANNED_TERMS" ]; then
+  red "Banned-terms list not found: $BANNED_TERMS"
+  exit 2
+fi
+
+echo "═══════════════════════════════════════════════════════════════════"
+echo "  Microcopy lint"
+echo "═══════════════════════════════════════════════════════════════════"
+
+ERRORS=0
+
+# ─────────────────────────────────────────────────────────────────────────
+# 1. Plain-words audit (banned-term grep against COPY block + HTML body)
+# ─────────────────────────────────────────────────────────────────────────
+
+echo ""
+echo "── Plain-words audit ──"
+
+# Extract user-facing regions only:
+#   - The COPY = { ... } object literal
+#   - The <body> ... <script> region (HTML body, no JS)
+# Code/comments outside these legitimately use technical terms.
+USER_FACING=$(awk '
+  /^const COPY = \{/ { in_copy=1 }
+  in_copy            { print }
+  in_copy && /^};/   { in_copy=0 }
+  /<body>/           { in_body=1; next }
+  /<script>/         { in_body=0 }
+  in_body            { print }
+' "$DASH_HTML")
+
+# Grep banned terms (whole-word, case-insensitive). The terms file is
+# read once into a single -wEf invocation. `|| true` because grep -v
+# returns 1 on no matches; we want the inverse.
+HITS=$(echo "$USER_FACING" \
+       | grep -wiEf <(grep -v '^#' "$BANNED_TERMS" | grep -v '^$' | sed 's/[[:space:]]*$//') \
+       || true)
+
+if [ -n "$HITS" ]; then
+  red "Plain-words audit FAILED — banned technical jargon found in user-facing copy:"
+  echo "$HITS" | head -20
+  echo ""
+  echo "These terms read as gibberish to grandma / kids / parents."
+  echo "Suggested replacements live at the top of $BANNED_TERMS."
+  ERRORS=$((ERRORS + 1))
+else
+  green "Plain-words audit OK — no banned jargon in COPY or HTML body."
+fi
+
+# ─────────────────────────────────────────────────────────────────────────
+# 2. Tooltip coverage
+# ─────────────────────────────────────────────────────────────────────────
+
+echo ""
+echo "── Tooltip coverage ──"
+
+if python3 "$SCRIPT_DIR/microcopy_tooltip_coverage.py" "$DASH_HTML"; then
+  green "Tooltip coverage OK — every data-tip key resolves."
+else
+  ERRORS=$((ERRORS + 1))
+fi
+
+# ─────────────────────────────────────────────────────────────────────────
+# 3. Reading-grade FKGL (skippable if python3 missing locally)
+# ─────────────────────────────────────────────────────────────────────────
+
+echo ""
+echo "── Reading-grade Flesch-Kincaid ──"
+
+if [ "${SKIP_FKGL:-0}" = "1" ]; then
+  yellow "FKGL skipped (SKIP_FKGL=1)."
+elif ! command -v python3 >/dev/null 2>&1; then
+  yellow "python3 not available — FKGL skipped. CI will run it."
+else
+  if python3 "$SCRIPT_DIR/microcopy_fkgl.py" "$DASH_HTML"; then
+    green "FKGL OK."
+  else
+    ERRORS=$((ERRORS + 1))
+  fi
+fi
+
+# ─────────────────────────────────────────────────────────────────────────
+
+echo ""
+if [ "$ERRORS" -eq 0 ]; then
+  echo "═══════════════════════════════════════════════════════════════════"
+  green "Microcopy lint passed."
+  echo "═══════════════════════════════════════════════════════════════════"
+  exit 0
+fi
+
+echo "═══════════════════════════════════════════════════════════════════"
+red "Microcopy lint FAILED — $ERRORS check(s) reported issues."
+echo "═══════════════════════════════════════════════════════════════════"
+exit 1

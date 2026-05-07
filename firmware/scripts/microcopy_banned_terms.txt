@@ -1,0 +1,42 @@
+# Banned terms in user-facing dashboard copy.
+#
+# These are technical jargon that bleed through if a contributor isn't
+# careful. They show up as warnings to grandma, kids, and parents who
+# just want to know whether someone's home. Replacement vocabulary lives
+# in the dashboard's COPY bank — see csi_dashboard_html.h's COPY object
+# and `docs/csi_quickstart.md`.
+#
+# Format: one term per line, treated as a whole word (grep -w). Lines
+# starting with # are comments. Empty lines are ignored.
+#
+# Acceptable substitutes (handled in COPY directly, not enforced here):
+#   "CSI" / "Channel State Information"  -> "WiFi sensing" / "the sensor"
+#   "RSSI" / "SNR"                       -> "signal" / "signal strength"
+#   "Goertzel" / "FFT" / "Doppler"       -> "rhythm" / "movement"
+#   "subcarrier"                         -> never user-visible
+#   "threshold" / "preset"               -> "mode" / "setting"
+#   "NVS" / "SSE" / "payload"            -> never user-visible
+#   "endpoint"                           -> "address" or hide entirely
+
+CSI
+RSSI
+SNR
+Goertzel
+Doppler
+FFT
+subcarrier
+subcarriers
+NVS
+SSE
+payload
+endpoint
+threshold
+thresholds
+preset
+presets
+
+# Multi-word terms — grep -wf matches whole words; we list each word that
+# would tip off the lint. The phrase "Channel State Information" is
+# unambiguous because "Channel State" doesn't appear elsewhere in
+# user-facing copy.
+Channel State Information
