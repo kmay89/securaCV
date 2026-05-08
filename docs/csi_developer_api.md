@@ -283,3 +283,28 @@ Closes the file and emits a witness-chain entry pointing to the artifact.
 The chokepoint enforces these at runtime. The fuzzer at
 `firmware/common/csi/csi_event_invariants_test.cpp` (host-build) proves the
 enforcement is real, not aspirational.
+
+## Witness-chain payload format
+
+Every committed P0 / P1 event is persisted to the witness chain via the
+strong override of `csi_event_commit_witness()` in `csi_integration.cpp`,
+which calls `csi_witness_emit_event()` in `canary_wap.ino`. The signed
+body is an ASCII string built by `csi_witness_build_payload()`
+(`firmware/common/csi/src/csi_witness_payload.{h,cpp}` — host-buildable
+so the privacy-invariants fuzzer can assert the format every CI run):
+
+```
+csi <module> <type> <category> <state> <conf>
+    m=<motion> b=<breathing> bpm=<bpm> d=<duration> bk=<bucket>
+    kv=<firmware_version> rs=<ruleset_id> zn=<zone_id>
+```
+
+The trailing `kv=` / `rs=` / `zn=` fields satisfy
+`spec/event_contract.md` §2 — every event MUST carry the firmware
+version that produced it, the ruleset it was scored against, and the
+zone it fired in. Verifiers can replay the chain against a different
+ruleset by inspecting `rs=`; a mismatch invalidates the row.
+
+`zn=` defaults to the compile-time `ZONE_ID` constant. Setting NVS key
+`core.zone_id` (string, ≤ 31 bytes) to a non-empty value overrides it
+without recompiling. The override is read once per boot.
