@@ -1315,6 +1315,47 @@ async function pollRawVector() {
   } catch {}
 }
 
+/* Privacy Budget pill — literal byte counter for outbound traffic.
+ * /api/privacy-budget returns {bytes_today, ceiling, since_ms}. We
+ * format human-friendly ("0 bytes" / "47 bytes" / "1.2 KB" / "3.4 MB"
+ * / "1.1 GB") and warm-tint the pill if either bytes > 0 or the
+ * privacy ceiling is above P0. Best-effort — a transient fetch
+ * failure leaves the placeholder in place. */
+function formatBytes(n) {
+  if (n < 1024)               return n + ' bytes';
+  if (n < 1024 * 1024)        return (n / 1024).toFixed(1) + ' KB';
+  if (n < 1024 * 1024 * 1024) return (n / (1024 * 1024)).toFixed(1) + ' MB';
+  return (n / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
+}
+
+async function fetchPrivacyBudget() {
+  const pill = document.getElementById('privacyPill');
+  if (!pill) return;
+  try {
+    const r = await fetch('/api/privacy-budget', {cache: 'no-store'});
+    if (!r.ok) return;
+    const j = await r.json();
+    /* DON'T use `j.bytes_today | 0` — JS bitwise ops coerce to
+     * signed 32-bit, so any value ≥ 2 GB wraps negative (and then
+     * formatBytes lies + the warm-tint check fails). The server's
+     * counter saturates at UINT32_MAX (~4 GB), so we need full
+     * unsigned 32-bit range. Number(...) keeps it as a JS double
+     * which represents 32-bit unsigned exactly. */
+    const bytes = Number(j.bytes_today) || 0;
+    const ceiling = j.ceiling || 'p0';
+    pill.textContent = 'Today: ' + formatBytes(bytes) + ' left the device';
+    /* Warm tint when the local-first invariant is being challenged in
+     * any way: either bytes left, or the user opted into a higher
+     * privacy class (P1 / P2). Cool means "nothing's leaving and
+     * nothing's been opted out of"; warm means "look at this." */
+    if (bytes > 0 || ceiling !== 'p0') {
+      pill.classList.add('warm');
+    } else {
+      pill.classList.remove('warm');
+    }
+  } catch {}
+}
+
 /* ────────────────────────────────────────────────────────────────────────
  *  Sheets
  * ──────────────────────────────────────────────────────────────────────── */
@@ -1333,6 +1374,7 @@ const todaySheet = document.getElementById('todaySheet');
 const todayScrim = document.getElementById('todayScrim');
 document.getElementById('todayBtn').addEventListener('click', () => {
   fetchToday();
+  fetchPrivacyBudget();
   openSheet(todaySheet, todayScrim);
 });
 todayScrim.addEventListener('click', () => closeSheet(todaySheet, todayScrim));
