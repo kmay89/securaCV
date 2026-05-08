@@ -175,6 +175,12 @@ const SettingKey SETTING_KEYS[] = {
   { "core.quiet_hours.enabled",          "qh.en"         },
   { "core.quiet_hours.start_min",        "qh.start"      },
   { "core.quiet_hours.end_min",          "qh.end"        },
+  /* Anomaly baseline — out-of-pattern detector tunables. Defaults
+   * cover a quiet home; Tuning Lab (PR 10) exposes them as sliders. */
+  { "anomaly.baseline.spike_ratio",      "ab.sr"         },
+  { "anomaly.baseline.min_motion",       "ab.mm"         },
+  { "anomaly.baseline.min_breathing",    "ab.mb"         },
+  { "anomaly.baseline.cooldown_sec",     "ab.cd"         },
 };
 
 const char* nvs_key_for(const char* full_key) {
