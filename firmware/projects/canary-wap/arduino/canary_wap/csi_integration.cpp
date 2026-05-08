@@ -619,6 +619,95 @@ esp_err_t handle_privacy_budget(httpd_req_t* req) {
   return ESP_OK;
 }
 
+/* ──────────────────────────────────────────────────────────────────────────
+ * PWA assets — /manifest.webmanifest + /sw.js
+ *
+ * The companion PWA at /companion ships its own SW scoped to /companion.
+ * The headline Sensing dashboard at / didn't have a PWA layer, so
+ * "Add to Home Screen" landed on a generic browser bookmark with no
+ * offline shell. This pair gives the dashboard a proper PWA identity:
+ * an install promptable manifest and a tiny SW that caches the shell.
+ *
+ * The SW uses a network-first strategy for the cached URLs so live
+ * dashboard updates land whenever WiFi is reachable; cache fallback
+ * only when offline. Live API routes (/api/csi/stream, etc.) are
+ * deliberately NOT in the precache list — they always hit the device.
+ *
+ * The icon is rendered inline as an SVG data URI so we don't need a
+ * separate /icon.png route. Apple/Android home-screen icons accept
+ * SVG; the orb-style gradient circle matches the dashboard's hero
+ * widget.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+const char SENSE_MANIFEST_JSON[] PROGMEM =
+  "{"
+    "\"name\":\"SecuraCV Canary\","
+    "\"short_name\":\"Canary\","
+    "\"start_url\":\"/\","
+    "\"scope\":\"/\","
+    "\"display\":\"standalone\","
+    "\"background_color\":\"#0c0a18\","
+    "\"theme_color\":\"#8e9eff\","
+    "\"description\":\"Camera-free sensing dashboard.\","
+    "\"icons\":["
+      "{"
+        "\"src\":\"data:image/svg+xml;utf8,"
+          "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256'>"
+          "<defs><radialGradient id='g' cx='40%25' cy='35%25' r='65%25'>"
+          "<stop offset='0%25' stop-color='%23cfd6ff'/>"
+          "<stop offset='55%25' stop-color='%238e9eff'/>"
+          "<stop offset='100%25' stop-color='%231f2546'/>"
+          "</radialGradient></defs>"
+          "<circle cx='128' cy='128' r='118' fill='url(%23g)'/>"
+          "</svg>\","
+        "\"sizes\":\"any\","
+        "\"type\":\"image/svg+xml\","
+        "\"purpose\":\"any maskable\""
+      "}"
+    "]"
+  "}";
+
+const char SENSE_SW_JS[] PROGMEM =
+  "const CACHE='securacv-sense-v1';\n"
+  "const URLS=['/','/manifest.webmanifest'];\n"
+  "self.addEventListener('install',e=>{e.waitUntil(caches.open(CACHE).then(c=>c.addAll(URLS)));self.skipWaiting();});\n"
+  "self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()));});\n"
+  "self.addEventListener('fetch',e=>{\n"
+  "  if(e.request.method!=='GET')return;\n"
+  "  const u=new URL(e.request.url);\n"
+  "  /* Live data endpoints always hit the network — never cache. */\n"
+  "  if(u.pathname.startsWith('/api/'))return;\n"
+  "  const wantsCache=URLS.some(p=>u.pathname===p);\n"
+  "  if(!wantsCache)return; /* pass-through for everything outside our shell */\n"
+  "  e.respondWith(fetch(e.request).then(r=>{\n"
+  "    if(r&&r.ok){const copy=r.clone();caches.open(CACHE).then(c=>c.put(e.request,copy));}\n"
+  "    return r;\n"
+  "  }).catch(()=>caches.match(e.request)));\n"
+  "});\n";
+
+esp_err_t handle_sense_manifest(httpd_req_t* req) {
+  httpd_resp_set_type(req, "application/manifest+json");
+  /* The shell rarely changes within a session — let the browser cache
+   * the manifest itself for an hour. The SW separately revalidates the
+   * shell's HTML on each visit. */
+  httpd_resp_set_hdr(req, "Cache-Control", "max-age=3600");
+  return httpd_resp_send(req, SENSE_MANIFEST_JSON, HTTPD_RESP_USE_STRLEN);
+}
+
+esp_err_t handle_sense_sw(httpd_req_t* req) {
+  httpd_resp_set_type(req, "application/javascript");
+  /* The Service-Worker-Allowed header lets the SW take a wider scope
+   * than its own URL when the page registers it with `scope: '/'`.
+   * The SW lives at the root so this is decorative for now, but
+   * keeping it makes future relocations harmless. */
+  httpd_resp_set_hdr(req, "Service-Worker-Allowed", "/");
+  /* SW updates need to bypass HTTP cache so a new version of this
+   * string activates on next install. The browser still caches the
+   * SW for ~24h max regardless of headers; this is the lower bound. */
+  httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+  return httpd_resp_send(req, SENSE_SW_JS, HTTPD_RESP_USE_STRLEN);
+}
+
 esp_err_t handle_sense_page(httpd_req_t* req) {
   /* The headline Sensing dashboard. Static asset served straight from
    * PROGMEM. The page itself fetches /api/csi/stream + /api/events/today
@@ -904,8 +993,20 @@ bool init(httpd_handle_t server) {
   };
   httpd_register_uri_handler(server, &r_privacy_budget);
 
+  /* Dashboard PWA shell — manifest + service worker. The SW is
+   * scope-/ so it can intercept dashboard fetches; live API routes
+   * are explicitly passed through inside the SW. */
+  static httpd_uri_t r_manifest = {
+    .uri = "/manifest.webmanifest", .method = HTTP_GET, .handler = handle_sense_manifest
+  };
+  httpd_register_uri_handler(server, &r_manifest);
+  static httpd_uri_t r_sw = {
+    .uri = "/sw.js", .method = HTTP_GET, .handler = handle_sense_sw
+  };
+  httpd_register_uri_handler(server, &r_sw);
+
   g_initialized = true;
-  Serial.printf("[CSI] integration ready: %u modules, 8 routes registered\n",
+  Serial.printf("[CSI] integration ready: %u modules, 10 routes registered\n",
                 (unsigned)csi_module_count());
   return true;
 }

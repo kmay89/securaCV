@@ -40,6 +40,12 @@ static const char CSI_DASHBOARD_HTML[] PROGMEM = R"DASHBOARD(<!doctype html>
 <meta name="theme-color" content="#0c0a18" media="(prefers-color-scheme: dark)">
 <meta name="theme-color" content="#f5f4ff" media="(prefers-color-scheme: light)">
 <title>Canary · Sensing</title>
+<!-- PWA shell. The SW lives at /sw.js (scope /), the manifest gives the
+     dashboard an installable identity for "Add to Home Screen". Both
+     come from csi_integration.cpp's handle_sense_manifest / _sw. -->
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Canary">
 <style>
   /* ── Design tokens ──────────────────────────────────────────────────── */
   :root {
@@ -1927,7 +1933,18 @@ pollLoop(pollRawVector, 1000);
   } catch {}
 })();
 
-// Service worker registration is left to companion_pwa.h's existing scope.
+/* PWA service worker — caches the dashboard shell so add-to-home-screen
+ * works offline. Live API routes deliberately bypass the SW (see /sw.js
+ * served by csi_integration.cpp's handle_sense_sw). Registration is
+ * best-effort: if the browser doesn't support service workers (very old
+ * iOS, embedded WebViews) the dashboard still works from the live
+ * network, just without the offline shell. */
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js', { scope: '/' })
+      .catch(e => console.warn('SW register failed:', e));
+  });
+}
 </script>
 </body>
 </html>
