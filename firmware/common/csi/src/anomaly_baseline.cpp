@@ -21,16 +21,19 @@
  * the ring without emitting. A device coming online doesn't have a
  * baseline yet — every reading would otherwise look "anomalous."
  *
- * Per-coefficient settings (NVS-backed via Tuning Lab in PR 10):
- *   anomaly.baseline.spike_ratio   — int, percent, default 250 (2.5×)
- *   anomaly.baseline.min_motion    — uint8, default 60
- *   anomaly.baseline.min_breathing — uint8, default 50
- *   anomaly.baseline.cooldown_sec  — int, default 600 (10 min)
+ * Per-coefficient settings (NVS-backed via Tuning Lab in PR 10).
+ * Values are clamped at read time so a corrupted NVS slot or
+ * out-of-range POST can't break the detector:
+ *   anomaly.baseline.spike_ratio   — percent, default 250 (2.5×), range 110..1000
+ *   anomaly.baseline.min_motion    — 0..100 scalar, default 60, range 1..100
+ *   anomaly.baseline.min_breathing — 0..100 scalar, default 50, range 1..100
+ *   anomaly.baseline.cooldown_sec  — seconds, default 600 (10 min), range 30..3600
  */
 
 #include "anomaly_baseline.h"
 #include "csi_event.h"
 
+#include <stdint.h>
 #include <string.h>
 
 namespace {
@@ -45,6 +48,24 @@ constexpr int IDX_BREATHING_FFT_COUNT = 8;
 constexpr size_t   RING_LEN              = 60;   /* ~60 s @ 1 Hz */
 constexpr uint16_t BASELINE_PRIME_TICKS  = 60;   /* warmup before first emit */
 
+/* Defaults exposed via the Tuning Lab (PR 10). Hard min/max are the
+ * envelope a host operator can dial these to without breaking the
+ * detector — values outside this range get clamped on read so that a
+ * corrupted NVS slot or a too-aggressive Tuning Lab POST can't make the
+ * module emit nonsense. */
+constexpr uint16_t DEFAULT_SPIKE_RATIO   = 250;   /* percent (2.5×) */
+constexpr uint16_t MIN_SPIKE_RATIO       = 110;   /* below 1.1× the gate is meaningless */
+constexpr uint16_t MAX_SPIKE_RATIO       = 1000;  /* above 10× nothing ever fires */
+
+constexpr uint8_t  DEFAULT_MIN_MOTION    = 60;
+constexpr uint8_t  DEFAULT_MIN_BREATHING = 50;
+constexpr uint8_t  MIN_FLOOR             = 1;     /* 0 disables the absolute floor */
+constexpr uint8_t  MAX_FLOOR             = 100;   /* scalars are 0..100 */
+
+constexpr uint16_t DEFAULT_COOLDOWN_SEC  = 600;   /* 10 min */
+constexpr uint16_t MIN_COOLDOWN_SEC      = 30;    /* avoid notification floods */
+constexpr uint16_t MAX_COOLDOWN_SEC      = 3600;  /* one per hour is the practical max */
+
 uint8_t  s_motion_ring[RING_LEN];
 uint8_t  s_breathing_ring[RING_LEN];
 size_t   s_ring_head     = 0;
@@ -52,10 +73,23 @@ uint16_t s_warmup_left   = BASELINE_PRIME_TICKS;
 uint16_t s_motion_cool   = 0;     /* ticks remaining in motion cooldown */
 uint16_t s_breathing_cool= 0;
 
-uint16_t s_spike_ratio   = 250;   /* percent (2.5×) */
-uint8_t  s_min_motion    = 60;
-uint8_t  s_min_breathing = 50;
-uint16_t s_cooldown_ticks= 600;
+uint16_t s_spike_ratio   = DEFAULT_SPIKE_RATIO;
+uint8_t  s_min_motion    = DEFAULT_MIN_MOTION;
+uint8_t  s_min_breathing = DEFAULT_MIN_BREATHING;
+uint16_t s_cooldown_ticks= DEFAULT_COOLDOWN_SEC;
+
+template <typename T>
+T clamp_range(int32_t v, T lo, T hi) {
+  if (v < (int32_t)lo) return lo;
+  if (v > (int32_t)hi) return hi;
+  return (T)v;
+}
+
+/* Per-event ceilings are equal because csi_event::emit() enforces the
+ * ceiling per-module, not per-event-type. If these differed, the event
+ * declared first would set the effective cap and starve the other. The
+ * shared cap below is the budget across both anomaly types combined. */
+constexpr uint8_t ANOMALY_CEILING_PER_HOUR = 10;
 
 const csi_event_decl_t EVENTS[] = {
   {
@@ -65,7 +99,7 @@ const csi_event_decl_t EVENTS[] = {
                                  | CSI_FIELD_TIME_BUCKET
                                  | CSI_FIELD_MOTION_SCORE,
     /* privacy */                 CSI_PRIVACY_P0,
-    /* default_ceiling_per_hour */ 6,
+    /* default_ceiling_per_hour */ ANOMALY_CEILING_PER_HOUR,
   },
   {
     /* type_name */               "unusual_breathing",
@@ -74,7 +108,7 @@ const csi_event_decl_t EVENTS[] = {
                                  | CSI_FIELD_TIME_BUCKET
                                  | CSI_FIELD_BREATHING_SCORE,
     /* privacy */                 CSI_PRIVACY_P0,
-    /* default_ceiling_per_hour */ 4,
+    /* default_ceiling_per_hour */ ANOMALY_CEILING_PER_HOUR,
   },
 };
 
@@ -97,10 +131,22 @@ uint8_t ring_average(const uint8_t* ring) {
 }
 
 void on_init(const csi_module_settings_t* s) {
-  s_spike_ratio    = (uint16_t)csi_module_settings_int(s, "anomaly.baseline.spike_ratio",  250);
-  s_min_motion     = (uint8_t) csi_module_settings_int(s, "anomaly.baseline.min_motion",   60);
-  s_min_breathing  = (uint8_t) csi_module_settings_int(s, "anomaly.baseline.min_breathing",50);
-  s_cooldown_ticks = (uint16_t)csi_module_settings_int(s, "anomaly.baseline.cooldown_sec", 600);
+  /* Read each setting then clamp into a sane range. A corrupted NVS slot
+   * or a Tuning Lab POST that overshoots the host clamps would otherwise
+   * silently produce zero-coverage detectors (e.g. spike_ratio=0 fires
+   * every tick) or notification floods (cooldown=0). */
+  s_spike_ratio    = clamp_range<uint16_t>(
+      csi_module_settings_int(s, "anomaly.baseline.spike_ratio",  DEFAULT_SPIKE_RATIO),
+      MIN_SPIKE_RATIO, MAX_SPIKE_RATIO);
+  s_min_motion     = clamp_range<uint8_t>(
+      csi_module_settings_int(s, "anomaly.baseline.min_motion",   DEFAULT_MIN_MOTION),
+      MIN_FLOOR, MAX_FLOOR);
+  s_min_breathing  = clamp_range<uint8_t>(
+      csi_module_settings_int(s, "anomaly.baseline.min_breathing", DEFAULT_MIN_BREATHING),
+      MIN_FLOOR, MAX_FLOOR);
+  s_cooldown_ticks = clamp_range<uint16_t>(
+      csi_module_settings_int(s, "anomaly.baseline.cooldown_sec", DEFAULT_COOLDOWN_SEC),
+      MIN_COOLDOWN_SEC, MAX_COOLDOWN_SEC);
 
   memset(s_motion_ring,    0, sizeof(s_motion_ring));
   memset(s_breathing_ring, 0, sizeof(s_breathing_ring));
