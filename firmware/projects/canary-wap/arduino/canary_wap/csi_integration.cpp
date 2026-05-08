@@ -166,6 +166,14 @@ const SettingKey SETTING_KEYS[] = {
   { "core.presence.pet_mode_seconds",    "cp.ps"         },
   { "core.breathing.lock_threshold",     "cb.lt"         },
   { "core.breathing.confirm_seconds",    "cb.cs"         },
+  /* Quiet Hours — a single time range (minutes-of-day, 0..1439) that
+   * the dashboard renders as dimmed ribbon cells and that future
+   * notification / anomaly modules can consult to suppress alerts.
+   * The setting is forward-compat scaffolding for PR 7 and beyond;
+   * today its only visible effect is the dimmed ribbon. */
+  { "core.quiet_hours.enabled",          "qh.en"         },
+  { "core.quiet_hours.start_min",        "qh.start"      },
+  { "core.quiet_hours.end_min",          "qh.end"        },
 };
 
 const char* nvs_key_for(const char* full_key) {
@@ -406,6 +414,9 @@ esp_err_t handle_settings_get(httpd_req_t* req) {
   const bool    pet_mode    = prefs.getBool("cp.pet_mode", false);
   const int32_t preset_idx  = prefs.getInt ("cp.preset",   1);   // default balanced
   const int32_t sensitivity = prefs.getInt ("cp.sens",     50);  // default neutral
+  const bool    qh_enabled  = prefs.getBool("qh.en",       false);
+  const int32_t qh_start    = prefs.getInt ("qh.start",    23 * 60);  // 11 PM default
+  const int32_t qh_end      = prefs.getInt ("qh.end",       7 * 60);  //  7 AM default
   prefs.end();
 
   /* Map preset index back to a stable string for the dashboard. The
@@ -415,10 +426,12 @@ esp_err_t handle_settings_get(httpd_req_t* req) {
   const char* preset_str = (preset_idx == 0) ? "sensitive"
                          : (preset_idx == 2) ? "quiet" : "balanced";
 
-  char buf[160];
+  char buf[256];
   snprintf(buf, sizeof(buf),
-    "{\"pet_mode\":%s,\"preset\":\"%s\",\"sensitivity\":%ld}",
-    pet_mode ? "true" : "false", preset_str, (long)sensitivity);
+    "{\"pet_mode\":%s,\"preset\":\"%s\",\"sensitivity\":%ld,"
+     "\"quiet_hours\":{\"enabled\":%s,\"start_min\":%ld,\"end_min\":%ld}}",
+    pet_mode ? "true" : "false", preset_str, (long)sensitivity,
+    qh_enabled ? "true" : "false", (long)qh_start, (long)qh_end);
   httpd_resp_set_type(req, "application/json");
   httpd_resp_send(req, buf, -1);
   return ESP_OK;
@@ -431,8 +444,10 @@ esp_err_t handle_settings_post(httpd_req_t* req) {
    *   "sensitivity": 0..100      → cp.sens (int)
    * Hand-parse to keep ArduinoJson out of this TU. We search for the
    * QUOTED key in every case so a body like {"not_pet_mode": true}
-   * doesn't accidentally match. */
-  char body[160];
+   * doesn't accidentally match. Buffer sized for the full payload:
+   *   pet_mode + preset + sensitivity + quiet_hours{enabled, start, end}
+   * is ~130 chars; 256 leaves comfortable headroom for future keys. */
+  char body[256];
   const int got = httpd_req_recv(req, body, sizeof(body) - 1);
   if (got <= 0) {
     httpd_resp_set_status(req, "400 Bad Request");
@@ -494,6 +509,68 @@ esp_err_t handle_settings_post(httpd_req_t* req) {
         prefs.putInt("cp.sens", (int32_t)n);
         wrote_anything = true;
       }
+    }
+  }
+
+  /* "quiet_hours": {"enabled": true|false, "start_min": M, "end_min": M}
+   *
+   * The original implementation gated on "\"quiet_hours\"" at the top
+   * level but then searched for "\"enabled\"" / "\"start_min\"" /
+   * "\"end_min\"" from the start of the body — meaning a future
+   * top-level `enabled` field (or any other object that happens to
+   * contain `enabled`) could overwrite qh.en with the wrong value.
+   *
+   * Walk the brace pair of the quiet_hours object and search ONLY
+   * within that span. We temporarily nul-terminate at the closing
+   * brace so strstr can't see past it, then restore the byte. Body
+   * is a local buffer; mutating it is fine. */
+  if (char* qh_key = (char*)strstr(body, "\"quiet_hours\"")) {
+    char* qh_open = strchr(qh_key, '{');
+    if (qh_open) {
+      int depth = 1;
+      char* p = qh_open + 1;
+      for (; *p; ++p) {
+        if (*p == '{') depth++;
+        else if (*p == '}') {
+          if (--depth == 0) break;
+        }
+      }
+      /* p now points at the matching close brace, or '\0' if malformed.
+       * Either way, nul-terminate one past it so strstr sees only the
+       * object's contents. Save the byte to restore after parsing. */
+      char saved = *p;
+      *p = '\0';
+
+      if (const char* e = strstr(qh_open, "\"enabled\"")) {
+        if (const char* v = strchr(e, ':')) {
+          v++;
+          while (*v == ' ' || *v == '\t' || *v == '"') v++;
+          if (strncmp(v, "true", 4) == 0) {
+            prefs.putBool("qh.en", true);  wrote_anything = true;
+          } else if (strncmp(v, "false", 5) == 0) {
+            prefs.putBool("qh.en", false); wrote_anything = true;
+          }
+        }
+      }
+      auto put_minute = [&](const char* tag, const char* nvs) {
+        const char* k = strstr(qh_open, tag);
+        if (!k) return;
+        const char* v = strchr(k, ':');
+        if (!v) return;
+        v++;
+        while (*v == ' ' || *v == '\t' || *v == '"') v++;
+        char* vend = nullptr;
+        long n = strtol(v, &vend, 10);
+        if (vend == v) return;
+        if (n < 0)    n = 0;
+        if (n > 1439) n = 1439;
+        prefs.putInt(nvs, (int32_t)n);
+        wrote_anything = true;
+      };
+      put_minute("\"start_min\"", "qh.start");
+      put_minute("\"end_min\"",   "qh.end");
+
+      *p = saved;  /* restore for any later parsers and for cleanliness */
     }
   }
 

@@ -405,10 +405,24 @@ static const char CSI_DASHBOARD_HTML[] PROGMEM = R"DASHBOARD(<!doctype html>
     .segmented .indicator { background: rgba(255,255,255,0.12); }
   }
 
-  .pet-row {
+  .pet-row,
+  .qh-row {
     display: inline-flex; gap: 10px; align-items: center;
     font-size: 14px; color: var(--fg-soft);
   }
+  .qh-row .qh-times {
+    display: inline-flex; gap: 6px; align-items: center;
+    font-size: 13px;
+  }
+  .qh-row .qh-times input[type="time"] {
+    border: 1px solid var(--hairline);
+    background: var(--bg-veil);
+    color: var(--fg);
+    padding: 4px 6px;
+    border-radius: 6px;
+    font: inherit; font-size: 13px;
+  }
+  .qh-row .qh-arrow { color: var(--fg-mute); }
   .switch {
     position: relative; width: 44px; height: 26px;
     background: rgba(0,0,0,0.10); border-radius: 13px;
@@ -788,6 +802,15 @@ static const char CSI_DASHBOARD_HTML[] PROGMEM = R"DASHBOARD(<!doctype html>
         <span>Pet Mode</span>
         <span class="switch" id="petSwitch" role="switch" aria-checked="false" tabindex="0" data-tip="petMode"></span>
       </div>
+      <div class="qh-row">
+        <span>Quiet hours</span>
+        <span class="switch" id="qhSwitch" role="switch" aria-checked="false" tabindex="0" data-tip="quietHours"></span>
+        <span class="qh-times" id="qhTimes" hidden>
+          <input type="time" id="qhStart" value="23:00" data-tip="quietHoursStart">
+          <span class="qh-arrow" aria-hidden="true">→</span>
+          <input type="time" id="qhEnd"   value="07:00" data-tip="quietHoursEnd">
+        </span>
+      </div>
 
       <details class="tinker">
         <summary>Details</summary>
@@ -875,6 +898,9 @@ const COPY = {
     balanced:    "Catches normal movement. Good for most homes.",
     quiet:       "Only big movements. Best with kids, pets, or open spaces.",
     petMode:     "Cats and small dogs breathe faster than people. Turn this on so they don't trigger 'someone's here'.",
+    quietHours:      "Hide late-night events from the ribbon. Movement is still tracked, just gently shaded.",
+    quietHoursStart: "When quiet hours begin.",
+    quietHoursEnd:   "When quiet hours end.",
     sensitivity: "Slide right to notice more. Slide left to ignore tiny movements.",
     rawVector:   "For tinkerers. Shows the live numbers behind the scenes.",
     breathAudio: "Play a soft breath sound that follows the rhythm in the room. Off by default.",
@@ -1138,7 +1164,12 @@ function drawRibbon() {
     const hue = 220 - intensity * 180;  // cool when empty, warm when active
     const sat = 60 + intensity * 30;
     const lit = 50 + (1 - intensity) * 35;
-    const a = 0.25 + intensity * 0.65;
+    /* Quiet Hours buckets render at half opacity — same color hue as
+     * waking hours so the eye still reads activity intensity, but the
+     * row visibly recedes. Cool tint stays cool; warm tint stays warm,
+     * just gentler. */
+    const inQH = isBucketInQuietHours(i);
+    const a = (0.25 + intensity * 0.65) * (inQH ? 0.5 : 1);
     ctx.fillStyle = `hsla(${hue}, ${sat}%, ${lit}%, ${a})`;
     ctx.fillRect(i*cellW, 0, cellW + 1, h);
   }
@@ -1532,6 +1563,17 @@ setSwitch(petSwitch, window.PET_MODE);
         localStorage.setItem('csi.sensitivity', serverSens);
       }
     }
+    if (j.quiet_hours && typeof j.quiet_hours === 'object') {
+      /* Use Number() instead of `| 0` for consistency with the
+       * bytes_today / sensitivity parsing established in PRs #370/#371.
+       * Minute values are 0..1439 so signed-32-bit coercion would be
+       * safe here too — but uniform style keeps the file scannable. */
+      const qh = j.quiet_hours;
+      if (typeof qh.enabled   === 'boolean') window.QH_ENABLED   = qh.enabled;
+      if (typeof qh.start_min === 'number')  window.QH_START_MIN = Number(qh.start_min);
+      if (typeof qh.end_min   === 'number')  window.QH_END_MIN   = Number(qh.end_min);
+      applyQhUiState();
+    }
   } catch {}
 })();
 
@@ -1556,6 +1598,103 @@ function togglePet() {
 }
 petSwitch.addEventListener('click', togglePet);
 petSwitch.addEventListener('keydown', e => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); togglePet(); } });
+
+/* ────────────────────────────────────────────────────────────────────────
+ *  Quiet Hours
+ *
+ *  Server stores three NVS keys: enabled (bool), start_min (0..1439),
+ *  end_min (0..1439). The dashboard reads them via /api/settings GET and
+ *  writes via /api/settings POST under the nested "quiet_hours" object.
+ *  Visible effect today is the dimmed activity-ribbon cells; future
+ *  notification / anomaly modules will also consult the setting to
+ *  suppress alerts.
+ *
+ *  All wall-clock comparisons happen client-side: the user's browser
+ *  has Date(), and the activity ribbon is a 96-cell × 15-min view of
+ *  THE USER'S local day. The server doesn't need wall clock for this
+ *  feature.
+ * ──────────────────────────────────────────────────────────────────────── */
+const qhSwitch = document.getElementById('qhSwitch');
+const qhTimes  = document.getElementById('qhTimes');
+const qhStart  = document.getElementById('qhStart');
+const qhEnd    = document.getElementById('qhEnd');
+
+window.QH_ENABLED   = false;
+window.QH_START_MIN = 23 * 60;
+window.QH_END_MIN   =  7 * 60;
+
+function minutesToTimeStr(m) {
+  const h = Math.floor(m / 60), mm = m % 60;
+  return String(h).padStart(2,'0') + ':' + String(mm).padStart(2,'0');
+}
+function timeStrToMinutes(s) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(s || '');
+  if (!m) return 0;
+  return (parseInt(m[1],10) || 0) * 60 + (parseInt(m[2],10) || 0);
+}
+
+function isBucketInQuietHours(bucketIdx) {
+  if (!window.QH_ENABLED) return false;
+  /* 15-min buckets — convert to minutes-of-day and compare against
+   * the [start, end) window. Range may wrap midnight (e.g. start=23:00
+   * end=07:00). */
+  const bucketMin = bucketIdx * 15;
+  const a = window.QH_START_MIN, b = window.QH_END_MIN;
+  if (a === b) return false;
+  if (a < b)  return bucketMin >= a && bucketMin < b;
+  return bucketMin >= a || bucketMin < b;
+}
+
+function applyQhUiState() {
+  if (qhSwitch) qhSwitch.setAttribute('aria-checked', window.QH_ENABLED ? 'true' : 'false');
+  if (qhTimes)  qhTimes.hidden = !window.QH_ENABLED;
+  if (qhStart)  qhStart.value = minutesToTimeStr(window.QH_START_MIN);
+  if (qhEnd)    qhEnd.value   = minutesToTimeStr(window.QH_END_MIN);
+}
+applyQhUiState();
+
+let g_qhTimer = null;
+async function persistQuietHours() {
+  /* Debounce: a user spinning the time picker fires `input` per second.
+   * 400 ms matches the sensitivity-slider debounce — one NVS write per
+   * pause, never per tick. */
+  clearTimeout(g_qhTimer);
+  g_qhTimer = setTimeout(async () => {
+    try {
+      await fetch('/api/settings', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          quiet_hours: {
+            enabled:   window.QH_ENABLED,
+            start_min: window.QH_START_MIN,
+            end_min:   window.QH_END_MIN,
+          },
+        }),
+      });
+    } catch {}
+  }, 400);
+}
+
+function toggleQuietHours() {
+  window.QH_ENABLED = !window.QH_ENABLED;
+  applyQhUiState();
+  persistQuietHours();
+}
+if (qhSwitch) {
+  qhSwitch.addEventListener('click', toggleQuietHours);
+  qhSwitch.addEventListener('keydown', e => {
+    if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); toggleQuietHours(); }
+  });
+}
+if (qhStart) qhStart.addEventListener('input', () => {
+  window.QH_START_MIN = timeStrToMinutes(qhStart.value);
+  persistQuietHours();
+});
+if (qhEnd) qhEnd.addEventListener('input', () => {
+  window.QH_END_MIN = timeStrToMinutes(qhEnd.value);
+  persistQuietHours();
+});
 
 const audioSwitch = document.getElementById('audioSwitch');
 window.AUDIO_ON = false;
