@@ -7,9 +7,17 @@
  *
  * Concurrency: emits originate from the main loop (the CSI HAL features
  * callback drives module ticks which call emit()); commits happen on the
- * same loop. There is no ISR path. Internal state is therefore single-
- * threaded and needs no locking, with one explicit exception called out
- * inline.
+ * same loop. There is no ISR path. The bundler and per-module ceiling
+ * counters are therefore single-threaded.
+ *
+ * The in-memory event ring (g_ring / g_ring_head), however, is also read by
+ * the HTTP server task: csi_event_recent() and csi_event_find() back the
+ * /api/events/today endpoint, and csi_event_dismiss() is invoked from the
+ * /api/events/dismiss POST handler. Those four ring-touching entry points
+ * — plus the producer-side persist_to_ring() called from emit() and the
+ * test-only csi_event_test_reset() — take a single FreeRTOS mutex so a web
+ * read can never tear against an emit write. The host-test build (no
+ * FreeRTOS) compiles the lock out: invariants tests are single-threaded.
  */
 
 #include "csi_event.h"
@@ -27,6 +35,35 @@
     struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
     return (uint32_t)(ts.tv_sec * 1000ULL + ts.tv_nsec / 1000000ULL);
   }
+#endif
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * RING MUTEX
+ *
+ * Guards every read/write of g_ring and g_ring_head. The longest critical
+ * section is csi_event_recent()'s walk over CSI_EVENT_RING_CAP rows, which
+ * is fine for a FreeRTOS mutex (the producer task can yield while the web
+ * task drains). A spinlock with interrupts disabled would be too coarse.
+ *
+ * On the host-test build (CSI_TEST_HOST_BUILD or non-Arduino, non-ESP_PLATFORM)
+ * the test driver is single-threaded, so the lock collapses to a no-op.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+#if (defined(ARDUINO) || defined(ESP_PLATFORM)) && !defined(CSI_TEST_HOST_BUILD)
+  #include <freertos/FreeRTOS.h>
+  #include <freertos/semphr.h>
+  namespace {
+    SemaphoreHandle_t g_ring_mutex = nullptr;
+    inline void ring_mutex_ensure() {
+      if (g_ring_mutex == nullptr) g_ring_mutex = xSemaphoreCreateMutex();
+    }
+    struct RingLock {
+      RingLock()  { ring_mutex_ensure(); if (g_ring_mutex) xSemaphoreTake(g_ring_mutex, portMAX_DELAY); }
+      ~RingLock() { if (g_ring_mutex) xSemaphoreGive(g_ring_mutex); }
+    };
+  }  /* namespace */
+#else
+  namespace { struct RingLock {}; }  /* host test build is single-threaded */
 #endif
 
 /* Internal hook from csi_module.cpp so dismiss can route correctly. */
@@ -196,6 +233,7 @@ void persist_to_ring(uint32_t                  event_id,
                      csi_event_category_t      category,
                      csi_privacy_class_t       privacy,
                      const csi_event_values_t* values) {
+  RingLock _lock;
   csi_event_record_t* rec = &g_ring[g_ring_head];
   memset(rec, 0, sizeof(*rec));
   rec->event_id      = event_id;
@@ -327,6 +365,7 @@ void csi_event_flush_bundles(void) {
 
 size_t csi_event_recent(csi_event_record_t* out, size_t max) {
   if (!out || max == 0) return 0;
+  RingLock _lock;
   size_t copied = 0;
   /* Walk backwards from the head, skipping empty slots. */
   for (size_t step = 0; step < CSI_EVENT_RING_CAP && copied < max; ++step) {
@@ -339,6 +378,7 @@ size_t csi_event_recent(csi_event_record_t* out, size_t max) {
 
 bool csi_event_find(uint32_t event_id, csi_event_record_t* out) {
   if (event_id == 0 || !out) return false;
+  RingLock _lock;
   for (size_t i = 0; i < CSI_EVENT_RING_CAP; ++i) {
     if (g_ring[i].event_id == event_id) {
       *out = g_ring[i];
@@ -350,18 +390,27 @@ bool csi_event_find(uint32_t event_id, csi_event_record_t* out) {
 
 bool csi_event_dismiss(uint32_t event_id) {
   if (event_id == 0) return false;
-  for (size_t i = 0; i < CSI_EVENT_RING_CAP; ++i) {
-    if (g_ring[i].event_id == event_id) {
-      g_ring[i].values.dismissed = 1;
-      g_ring[i].values.present_fields |= CSI_FIELD_DISMISSED;
-      csi_module_dispatch_dismiss(event_id);
-      return true;
+  bool found = false;
+  {
+    RingLock _lock;
+    for (size_t i = 0; i < CSI_EVENT_RING_CAP; ++i) {
+      if (g_ring[i].event_id == event_id) {
+        g_ring[i].values.dismissed = 1;
+        g_ring[i].values.present_fields |= CSI_FIELD_DISMISSED;
+        found = true;
+        break;
+      }
     }
   }
-  return false;
+  /* csi_module_dispatch_dismiss() is invoked outside the ring lock so the
+   * module callback can't accidentally re-enter the ring (e.g. via emit()) and
+   * deadlock against the same non-recursive mutex. */
+  if (found) csi_module_dispatch_dismiss(event_id);
+  return found;
 }
 
 void csi_event_test_reset(void) {
+  RingLock _lock;
   memset(g_ring, 0, sizeof(g_ring));
   g_ring_head = 0;
   g_next_event_id = 1;

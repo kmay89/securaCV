@@ -119,10 +119,16 @@ Slot* find_free_slot() {
   for (size_t i = 0; i < CSI_BUNDLER_SLOTS; ++i) {
     if (!g_slots[i].used) return &g_slots[i];
   }
-  /* No free slot; force-close the oldest. */
+  /* No free slot; force-close the oldest. Compare with signed subtraction so
+   * the result is correct across the ~49.7-day millis() rollover — a slot
+   * opened just before the wrap and one opened just after must still order
+   * correctly. Open bundles are bounded by CSI_BUNDLER_WINDOW_MS (10 min),
+   * so the spread between any two slots fits comfortably in int32_t. */
   Slot* oldest = &g_slots[0];
   for (size_t i = 1; i < CSI_BUNDLER_SLOTS; ++i) {
-    if (g_slots[i].opened_ms < oldest->opened_ms) oldest = &g_slots[i];
+    if ((int32_t)(g_slots[i].opened_ms - oldest->opened_ms) < 0) {
+      oldest = &g_slots[i];
+    }
   }
   close_slot(oldest);
   return oldest;

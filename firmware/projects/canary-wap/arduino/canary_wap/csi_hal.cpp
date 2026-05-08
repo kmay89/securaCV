@@ -213,11 +213,16 @@ static void csi_rx_cb(void* /*ctx*/, wifi_csi_info_t* info) {
   }
   CsiSlot* slot = &s_ring[head % RING_CAP];
 
-  /* Wipe the destination slot first so we can't leak residue from a prior
-   * frame if we early-return halfway through the copy. */
+  /* Wipe the I/Q buffer's trailing bytes before we copy in case the frame's
+   * subcarrier count is below CSI_MAX_SUBCARRIERS — the consumer wipes on
+   * release (process(), below) and init() wipes the whole ring at startup,
+   * so the leading bytes are already zero, but a defensive wipe keeps this
+   * invariant local instead of action-at-a-distance.
+   *
+   * subcarrier_cnt and seq_in_window are NOT reset here: subcarrier_cnt is
+   * unconditionally set to copy_pairs below, and seq_in_window is overwritten
+   * by the consumer (process()) before any read. */
   secure_wipe(slot->iq, sizeof(slot->iq));
-  slot->subcarrier_cnt = 0;
-  slot->seq_in_window = 0;
 
   /* PRIVACY BARRIER: metadata extraction happens BEFORE any buffer copy. */
   extract_scrubbed_metadata(info, slot);
