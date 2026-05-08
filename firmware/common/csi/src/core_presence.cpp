@@ -100,9 +100,52 @@ State derive_target_state(uint8_t motion, uint8_t breathing, uint16_t streak) {
 
 void on_init(const csi_module_settings_t* s) {
   s_pet_mode             = (uint8_t)csi_module_settings_bool (s, "core.presence.pet_mode",            false) ? 1 : 0;
-  s_motion_threshold     = (uint8_t)csi_module_settings_int  (s, "core.presence.motion_threshold",    35);
-  s_active_threshold     = (uint8_t)csi_module_settings_int  (s, "core.presence.active_threshold",    75);
-  s_breathing_threshold  = (uint8_t)csi_module_settings_int  (s, "core.presence.breathing_threshold", 30);
+
+  /* Two-layer threshold model:
+   *
+   *   1. Preset (0=sensitive, 1=balanced, 2=quiet) picks a baseline
+   *      tuple of (motion, active, breathing) thresholds. Default is
+   *      balanced — matches the previous static defaults.
+   *   2. Sensitivity slider (0..100, default 50) offsets every threshold
+   *      by ±20 points around the preset baseline. Higher slider value
+   *      = more sensitive = lower thresholds.
+   *
+   * The dashboard sends preset + sensitivity (Tier-3 user surface).
+   * Direct threshold keys (motion_threshold / active_threshold /
+   * breathing_threshold) remain available as per-coefficient overrides
+   * for the Tuning Lab (Tier-4); when they're absent the preset+
+   * sensitivity baseline wins. */
+  const int32_t preset = csi_module_settings_int(s, "core.presence.preset",      1);
+  const int32_t sens   = csi_module_settings_int(s, "core.presence.sensitivity", 50);
+
+  int32_t base_motion, base_active, base_breathing;
+  switch (preset) {
+    case 0: base_motion = 25; base_active = 60; base_breathing = 20; break;  // sensitive
+    case 2: base_motion = 50; base_active = 90; base_breathing = 40; break;  // quiet
+    default: base_motion = 35; base_active = 75; base_breathing = 30; break; // balanced
+  }
+  /* sens=0   → +20 (less sensitive); sens=50 → 0 (neutral);
+   * sens=100 → -20 (more sensitive). The 40 multiplier is the full
+   * ±20 span across the 0..100 slider range — (50-sens)*40/100
+   * = -20..+20 as documented. */
+  const int32_t offset = ((50 - sens) * 40) / 100;
+  auto clamp_threshold = [](int32_t v) -> int32_t {
+    if (v < 5) return 5;
+    if (v > 120) return 120;
+    return v;
+  };
+
+  /* Direct keys take precedence if explicitly set (Tuning Lab path);
+   * the default we pass is the preset+sensitivity baseline so the
+   * common case of "user only touched dashboard preset+slider" lands
+   * the right thresholds. */
+  s_motion_threshold    = (uint8_t)csi_module_settings_int(
+      s, "core.presence.motion_threshold",    clamp_threshold(base_motion    + offset));
+  s_active_threshold    = (uint8_t)csi_module_settings_int(
+      s, "core.presence.active_threshold",    clamp_threshold(base_active    + offset));
+  s_breathing_threshold = (uint8_t)csi_module_settings_int(
+      s, "core.presence.breathing_threshold", clamp_threshold(base_breathing + offset));
+
   s_pet_mode_required_win= (uint16_t)csi_module_settings_int (s, "core.presence.pet_mode_seconds",    30);
   s_current_state        = STATE_EMPTY;
   s_windows_in_state     = 0;

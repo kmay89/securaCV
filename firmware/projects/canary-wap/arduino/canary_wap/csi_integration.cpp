@@ -149,6 +149,17 @@ struct SettingKey {
 };
 const SettingKey SETTING_KEYS[] = {
   { "core.presence.pet_mode",            "cp.pet_mode"   },
+  /* Tier-3 dashboard surface: preset (0=sensitive, 1=balanced,
+   * 2=quiet) + sensitivity slider (0..100). Module reads these and
+   * computes the three thresholds below; users who change the
+   * dashboard's preset / slider land here. */
+  { "core.presence.preset",              "cp.preset"     },
+  { "core.presence.sensitivity",         "cp.sens"       },
+  /* Per-coefficient overrides (Tuning Lab path, Tier 4): if any of
+   * these are explicitly set in NVS they win over the preset
+   * baseline. Default value supplied at init() is the
+   * preset+sensitivity-derived baseline so common-case users
+   * never trip these. */
   { "core.presence.motion_threshold",    "cp.mt"         },
   { "core.presence.active_threshold",    "cp.at"         },
   { "core.presence.breathing_threshold", "cp.bt"         },
@@ -383,28 +394,45 @@ esp_err_t handle_events_dismiss(httpd_req_t* req) {
 esp_err_t handle_settings_get(httpd_req_t* req) {
   Preferences prefs;
   if (!prefs.begin(SETTINGS_NS, /*readOnly=*/true)) {
-    /* Don't silently report pet_mode=false — the dashboard would
-     * reconcile localStorage to that value and quietly disable Pet
-     * Mode for any user who had it on. Surface the unavailability
-     * so the client skips reconciliation and keeps its current
-     * localStorage source of truth. */
+    /* Don't silently report defaults — the dashboard would reconcile
+     * localStorage to those values and quietly clobber any choice the
+     * user had previously made. Surface the unavailability so the
+     * client skips reconciliation and keeps its current localStorage
+     * source of truth. */
     httpd_resp_set_status(req, "503 Service Unavailable");
     httpd_resp_send(req, "{\"ok\":false,\"reason\":\"settings store unavailable\"}", -1);
     return ESP_OK;
   }
-  bool pet_mode = prefs.getBool("cp.pet_mode", false);
+  const bool    pet_mode    = prefs.getBool("cp.pet_mode", false);
+  const int32_t preset_idx  = prefs.getInt ("cp.preset",   1);   // default balanced
+  const int32_t sensitivity = prefs.getInt ("cp.sens",     50);  // default neutral
   prefs.end();
-  char buf[64];
-  snprintf(buf, sizeof(buf), "{\"pet_mode\":%s}", pet_mode ? "true" : "false");
+
+  /* Map preset index back to a stable string for the dashboard. The
+   * mapping is the only place this conversion lives — keep it in sync
+   * with the parser in handle_settings_post and the switch in
+   * core_presence.cpp's on_init. */
+  const char* preset_str = (preset_idx == 0) ? "sensitive"
+                         : (preset_idx == 2) ? "quiet" : "balanced";
+
+  char buf[160];
+  snprintf(buf, sizeof(buf),
+    "{\"pet_mode\":%s,\"preset\":\"%s\",\"sensitivity\":%ld}",
+    pet_mode ? "true" : "false", preset_str, (long)sensitivity);
   httpd_resp_set_type(req, "application/json");
   httpd_resp_send(req, buf, -1);
   return ESP_OK;
 }
 
 esp_err_t handle_settings_post(httpd_req_t* req) {
-  /* Body is small JSON: {"pet_mode": true|false}. Hand-parse to keep
-   * ArduinoJson out of this TU. */
-  char body[96];
+  /* Body is small JSON. Recognized keys:
+   *   "pet_mode":    true|false  → cp.pet_mode (bool)
+   *   "preset":      "sensitive"|"balanced"|"quiet" → cp.preset (int 0..2)
+   *   "sensitivity": 0..100      → cp.sens (int)
+   * Hand-parse to keep ArduinoJson out of this TU. We search for the
+   * QUOTED key in every case so a body like {"not_pet_mode": true}
+   * doesn't accidentally match. */
+  char body[160];
   const int got = httpd_req_recv(req, body, sizeof(body) - 1);
   if (got <= 0) {
     httpd_resp_set_status(req, "400 Bad Request");
@@ -421,25 +449,54 @@ esp_err_t handle_settings_post(httpd_req_t* req) {
     return ESP_OK;
   }
 
-  /* Look for "pet_mode": true | false. Tolerant scanner — accepts
-   * surrounding whitespace and either lowercase boolean. We search for
-   * the QUOTED key so a body like {"not_pet_mode": true} doesn't
-   * accidentally match here. */
-  const char* k = strstr(body, "\"pet_mode\"");
-  if (k) {
-    const char* v = strchr(k, ':');
-    if (v) {
+  /* "pet_mode": true|false */
+  if (const char* k = strstr(body, "\"pet_mode\"")) {
+    if (const char* v = strchr(k, ':')) {
       v++;
       while (*v == ' ' || *v == '\t' || *v == '"') v++;
       if (strncmp(v, "true", 4) == 0) {
-        prefs.putBool("cp.pet_mode", true);
-        wrote_anything = true;
+        prefs.putBool("cp.pet_mode", true);  wrote_anything = true;
       } else if (strncmp(v, "false", 5) == 0) {
-        prefs.putBool("cp.pet_mode", false);
+        prefs.putBool("cp.pet_mode", false); wrote_anything = true;
+      }
+    }
+  }
+
+  /* "preset": "sensitive" | "balanced" | "quiet". Stored as int 0/1/2
+   * so core_presence.cpp's switch is fast and the NVS row is small. */
+  if (const char* k = strstr(body, "\"preset\"")) {
+    if (const char* v = strchr(k, ':')) {
+      v++;
+      while (*v == ' ' || *v == '\t' || *v == '"') v++;
+      int32_t idx = -1;
+      if      (strncmp(v, "sensitive", 9) == 0) idx = 0;
+      else if (strncmp(v, "balanced",  8) == 0) idx = 1;
+      else if (strncmp(v, "quiet",     5) == 0) idx = 2;
+      if (idx >= 0) {
+        prefs.putInt("cp.preset", idx);
         wrote_anything = true;
       }
     }
   }
+
+  /* "sensitivity": 0..100 (clamped). Skip `"` too so a value sent as
+   * a string ({"sensitivity":"75"}) parses the same as a bare number,
+   * matching the pet_mode and preset parsers above. */
+  if (const char* k = strstr(body, "\"sensitivity\"")) {
+    if (const char* v = strchr(k, ':')) {
+      v++;
+      while (*v == ' ' || *v == '\t' || *v == '"') v++;
+      char* end = nullptr;
+      long n = strtol(v, &end, 10);
+      if (end != v) {
+        if (n < 0)   n = 0;
+        if (n > 100) n = 100;
+        prefs.putInt("cp.sens", (int32_t)n);
+        wrote_anything = true;
+      }
+    }
+  }
+
   prefs.end();
 
   if (!wrote_anything) {
@@ -448,7 +505,7 @@ esp_err_t handle_settings_post(httpd_req_t* req) {
     return ESP_OK;
   }
 
-  /* Re-init affected module so it picks up the new value on the next tick. */
+  /* Re-init affected module so it picks up the new values on the next tick. */
   reinit_module("core.presence");
 
   httpd_resp_set_type(req, "application/json");
