@@ -1580,8 +1580,56 @@ static bool create_witness_record(const uint8_t* payload, size_t len, RecordType
     g_health.sd_writes++;
   }
   #endif
-  
+
   return true;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Public bridge for csi_integration.cpp's strong override of
+// csi_event_commit_witness(). The library declares that hook as a weak
+// symbol; the host plugs in this implementation so every committed P0/P1
+// CSI event signs into the existing witness chain.
+//
+// Payload format is intentionally tiny and human-greppable. We don't pull
+// CBOR in just for this — the witness chain itself is the canonical
+// record, the payload is just the per-event detail that gets hashed and
+// signed alongside the chain head.
+//
+//   csi <module> <type> <category> <state> <conf> m=<n> b=<n> bpm=<n>
+//       d=<n> bk=<n>
+//
+// All fields are ASCII; the chokepoint already sanitised the strings to
+// printable ASCII before this point.
+extern "C" bool csi_witness_emit_event(const char* module_id,
+                                       const char* type_name,
+                                       uint8_t     category,       // 0=ambient 1=event 2=anomaly
+                                       const char* state_name,
+                                       const char* confidence,
+                                       uint8_t     motion_score,
+                                       uint8_t     breathing_score,
+                                       uint8_t     bpm,
+                                       uint16_t    duration_sec,
+                                       uint8_t     time_bucket) {
+  uint8_t payload[160];
+  const int len = snprintf((char*)payload, sizeof(payload),
+    "csi %s %s %u %s %s m=%u b=%u bpm=%u d=%u bk=%u",
+    module_id ? module_id : "?",
+    type_name ? type_name : "?",
+    (unsigned)category,
+    state_name && state_name[0] ? state_name : "-",
+    confidence && confidence[0] ? confidence : "-",
+    (unsigned)motion_score,
+    (unsigned)breathing_score,
+    (unsigned)bpm,
+    (unsigned)duration_sec,
+    (unsigned)time_bucket);
+  if (len <= 0 || len >= (int)sizeof(payload)) return false;
+
+  WitnessRecord rec;
+  // RECORD_WITNESS_EVENT (=1) was reserved in the RecordType enum and
+  // unused — adopt it for module-emitted CSI events. RECORD_STATE_CHANGE
+  // is reserved for the device-state pipeline already in use elsewhere.
+  return create_witness_record(payload, (size_t)len, RECORD_WITNESS_EVENT, &rec);
 }
 
 static bool verify_record_signature(const WitnessRecord* rec) {

@@ -24,12 +24,11 @@
  *   sheet, Python listener) without that risk. SSE upgrade is tracked as
  *   a Phase 4 follow-up.
  *
- * Witness-chain integration (a strong override of
- * csi_event_commit_witness) is intentionally not wired here — the host
- * can plug it in via a small follow-up so this surface stays reviewable.
- * In the meantime, P0/P1 events still emit through the chokepoint and
- * appear on the snapshot stream and the Today sheet; they just don't
- * write to the witness chain yet.
+ * Witness-chain integration is wired below: the strong override of
+ * csi_event_commit_witness routes every committed P0/P1 event through
+ * canary_wap.ino's create_witness_record path so the event is
+ * Ed25519-signed and hash-chained. P2 never reaches that hook (the
+ * chokepoint gates it).
  */
 
 #include "csi_integration.h"
@@ -532,6 +531,62 @@ extern "C" float csi_module_settings_float(const csi_module_settings_t*,
   float v = prefs.getFloat(nvs_key, default_value);
   prefs.end();
   return v;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * STRONG OVERRIDE — csi_event_commit_witness
+ *
+ * The library declares this hook with a weak no-op default in
+ * firmware/common/csi/src/csi_event.cpp so the standalone build links
+ * cleanly. Here in the canary-wap host we route every committed P0/P1
+ * event into the existing witness chain via the public bridge defined in
+ * canary_wap.ino's create_witness_record path. P2 never reaches us — the
+ * chokepoint already gates that.
+ *
+ * The bridge function is defined in canary_wap.ino as extern "C"; we
+ * forward-declare it here (the .ino doesn't ship a header). Ed25519
+ * signing, hash-chaining, and SD persistence all happen inside the
+ * existing create_witness_record + persist_chain_state pipeline; this
+ * override is just the glue.
+ *
+ * Best-effort: a witness-chain failure (e.g. signing self-test broken,
+ * SD full) doesn't bubble back to the caller — the in-memory ring + SSE
+ * stream still update. This matches how create_witness_record's other
+ * call sites in canary_wap.ino treat failures.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+extern "C" bool csi_witness_emit_event(const char* module_id,
+                                       const char* type_name,
+                                       uint8_t     category,
+                                       const char* state_name,
+                                       const char* confidence,
+                                       uint8_t     motion_score,
+                                       uint8_t     breathing_score,
+                                       uint8_t     bpm,
+                                       uint16_t    duration_sec,
+                                       uint8_t     time_bucket);
+
+extern "C" bool csi_event_commit_witness(uint32_t                  /*event_id*/,
+                                         const char*               module_id,
+                                         const char*               type_name,
+                                         csi_event_category_t      category,
+                                         const csi_event_values_t* values) {
+  if (!values || !module_id || !type_name) return false;
+  /* Only persist Event / Anomaly. Ambient never reaches us thanks to the
+   * chokepoint, but defensive check keeps the contract local to this TU. */
+  if (category == CSI_CATEGORY_AMBIENT) return false;
+
+  return csi_witness_emit_event(
+    module_id,
+    type_name,
+    (uint8_t)category,
+    values->state_name,
+    values->confidence,
+    values->motion_score,
+    values->breathing_score,
+    values->breathing_rate_bpm,
+    values->duration_sec,
+    values->time_bucket);
 }
 
 extern "C" void csi_event_on_committed(uint32_t                  event_id,
