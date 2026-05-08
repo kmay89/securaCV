@@ -124,7 +124,7 @@ def main() -> int:
         "--max-grade",
         type=float,
         default=DEFAULT_MAX_GRADE,
-        help="Fail if aggregate FKGL exceeds this grade (default 6.0).",
+        help="Fail if aggregate FKGL exceeds this grade (default %(default)s).",
     )
     args = p.parse_args()
 
