@@ -469,10 +469,13 @@ esp_err_t handle_privacy_budget(httpd_req_t* req) {
   const char* ceiling_str = (ceiling == CSI_PRIVACY_P0) ? "p0"
                           : (ceiling == CSI_PRIVACY_P1) ? "p1" : "p2";
 
+  /* Atomic load — the counter is updated lock-free from any export
+   * path; see add_outbound_bytes() above for the threading rationale. */
+  const uint32_t bytes = __atomic_load_n(&g_outbound_bytes, __ATOMIC_RELAXED);
   char buf[96];
   snprintf(buf, sizeof(buf),
     "{\"bytes_today\":%lu,\"ceiling\":\"%s\",\"since_ms\":%lu}",
-    (unsigned long)g_outbound_bytes,
+    (unsigned long)bytes,
     ceiling_str,
     (unsigned long)(millis() - g_stream_started_ms));
   httpd_resp_set_type(req, "application/json");
@@ -662,18 +665,30 @@ unsigned int sse_client_count() {
 }
 
 void add_outbound_bytes(uint32_t bytes) {
-  /* Saturating add — cap at UINT32_MAX rather than wrap, since any
-   * value north of 4 GB/day is already a "wow that's a lot" signal and
-   * silently rolling back to 0 would lie to the dashboard. The most
-   * common call site emits a few hundred bytes; this branch is cheap. */
-  uint32_t prev = g_outbound_bytes;
-  uint32_t next = prev + bytes;
-  if (next < prev) next = UINT32_MAX;
-  g_outbound_bytes = next;
+  /* Lock-free CAS loop. The function is documented as callable from
+   * any host export path, including paths that run on different
+   * FreeRTOS tasks (a future MQTT publisher on the WiFi task, an SD
+   * exporter on the storage task, the HTTP task reading the counter
+   * for /api/privacy-budget). A naive read-modify-write would lose
+   * concurrent increments — the BLE export task's bytes could be
+   * stomped by the MQTT task and the user would see an under-count,
+   * which silently undermines the privacy promise the pill makes.
+   *
+   * GCC built-in atomics are available on ESP32's xtensa toolchain
+   * with no extra header. Saturating add at UINT32_MAX rather than
+   * wrap, since silently rolling back to 0 would lie. */
+  uint32_t expected = __atomic_load_n(&g_outbound_bytes, __ATOMIC_RELAXED);
+  uint32_t desired;
+  do {
+    desired = expected + bytes;
+    if (desired < expected) desired = UINT32_MAX;  // overflow → saturate
+  } while (!__atomic_compare_exchange_n(
+      &g_outbound_bytes, &expected, desired,
+      /*weak=*/false, __ATOMIC_RELAXED, __ATOMIC_RELAXED));
 }
 
 uint32_t outbound_bytes_today() {
-  return g_outbound_bytes;
+  return __atomic_load_n(&g_outbound_bytes, __ATOMIC_RELAXED);
 }
 
 bool init(httpd_handle_t server) {
