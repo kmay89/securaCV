@@ -170,6 +170,7 @@ alongside them — the host's `register_v1_modules()` is a one-line edit.
 | `core.activity_ribbon` | P0 | `ribbon_bucket_advanced` | Writes the 96-slot 15-minute ring that the dashboard renders as the aurora-strip activity ribbon. NVS-persisted. |
 | `meta.daily_summary` | P0 | `daily_summary` | One row per day at the bucket boundary: total active minutes, longest quiet stretch, anomaly count. |
 | `anomaly.baseline` | P0 | `unusual_motion`, `unusual_breathing` | 60-window rolling baseline of motion / breathing scalars; emits when the current sample exceeds the baseline by `spike_ratio` (default 2.5×) AND clears the absolute floor. Per-channel cooldown prevents notification floods; ranges are clamped at NVS read so a corrupt slot can't break the detector. |
+| `ble.events` | P0 | `ble_initialized`, `ble_init_failed`, `ble_client_connected`, `ble_client_disconnected`, `chirp_sent`, `chirp_received`, `canary_discovered`, `canary_lost` | Chokepoint-routed manifest for the eight BLE Discovery semantic events declared in `spec/event_contract.md` §10. Per-event allow-lists strip MAC-precision fields (motion / breathing / RSSI proxies); peer identification uses the truncated Ed25519 pubkey hash (≤16 hex chars) carried in `note`. Helpers in `ble_events_module.h` (e.g. `ble_events_emit_chirp_sent("boot")`) are the only legitimate BLE → witness-chain path going forward — direct `create_witness_record()` calls from the BLE stack would bypass the privacy contract. |
 
 ### Anomaly baseline tunables (live in the Tuning Lab)
 

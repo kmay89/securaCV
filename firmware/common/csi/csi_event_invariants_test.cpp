@@ -16,6 +16,9 @@
  *   7. Per-module hourly ceiling caps emits past the limit.
  *   8. The witness-chain payload string built from a committed event
  *      includes the spec §2 metadata fields kv= / rs= / zn=.
+ *   9. ble.events module (spec §10) — every BLE event flows through
+ *      the chokepoint, with MAC-precision fields stripped by the
+ *      allow-list.
  *
  * Build:
  *   - Standalone (host x86) for CI: g++ -std=c++17 -DCSI_TEST_HOST_BUILD \
@@ -24,6 +27,7 @@
  *       firmware/common/csi/src/csi_module.cpp \
  *       firmware/common/csi/src/csi_bundler.cpp \
  *       firmware/common/csi/src/csi_witness_payload.cpp \
+ *       firmware/common/csi/src/ble_events_module.cpp \
  *       -I firmware/common/csi/src -o /tmp/csi_invariants && /tmp/csi_invariants
  *
  * Compiles cleanly inside an ESP32 firmware build too — guarded so it does
@@ -34,6 +38,7 @@
 #include "csi_module.h"
 #include "csi_bundler.h"
 #include "csi_witness_payload.h"
+#include "ble_events_module.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -360,6 +365,73 @@ void test_witness_payload_includes_metadata() {
          "missing zone_id must render as zn=-");
 }
 
+void test_ble_events_strip_mac_precision_fields() {
+  /* spec/event_contract.md §10: BLE events MUST NOT include MAC
+   * addresses, RSSI at tracking precision, or stable hardware
+   * identifiers. The allow-list per event in ble_events_module.cpp
+   * encodes this — no event permits BREATHING_RATE / MOTION_SCORE /
+   * BREATHING_SCORE (BLE has nothing to say about CSI features), and
+   * a caller attempting to populate them gets them zeroed.
+   *
+   * This test exercises the allow-list directly: it builds a values
+   * struct asserting every CSI field, runs each ble.events type
+   * through emit, and asserts the captured commit has only the
+   * fields the allow-list permits. */
+  csi_event_test_reset();
+  reset_captures();
+  csi_module_register(ble_events_module());
+
+  const char* TYPES[] = {
+    "ble_initialized", "ble_init_failed",
+    "ble_client_connected", "ble_client_disconnected",
+    "chirp_sent", "chirp_received",
+    "canary_discovered", "canary_lost",
+  };
+  const size_t N = sizeof(TYPES) / sizeof(TYPES[0]);
+
+  for (size_t i = 0; i < N; ++i) {
+    reset_captures();
+    csi_event_values_t v;
+    csi_event_values_init(&v);
+    v.category = CSI_CATEGORY_EVENT;
+    /* Stuff every smuggleable field. */
+    v.present_fields = CSI_FIELD_STATE_NAME
+                     | CSI_FIELD_NOTE
+                     | CSI_FIELD_TIME_BUCKET
+                     | CSI_FIELD_MOTION_SCORE
+                     | CSI_FIELD_BREATHING_SCORE
+                     | CSI_FIELD_BREATHING_RATE
+                     | CSI_FIELD_DURATION_SEC;
+    strncpy(v.state_name, "smuggled", sizeof(v.state_name) - 1);
+    strncpy(v.note,       "ab12cd34", sizeof(v.note) - 1);
+    v.motion_score       = 99;
+    v.breathing_score    = 99;
+    v.breathing_rate_bpm = 99;
+    v.duration_sec       = 9999;
+
+    csi_event_emit("ble.events", TYPES[i], &v);
+    csi_event_flush_bundles();
+
+    bool seen = false;
+    for (size_t k = 0; k < g_captured_count; ++k) {
+      if (strcmp(g_captured[k].type_name, TYPES[i]) != 0) continue;
+      seen = true;
+      EXPECT(g_captured[k].values.motion_score == 0,
+             "ble.events MUST NOT carry motion_score");
+      EXPECT(g_captured[k].values.breathing_score == 0,
+             "ble.events MUST NOT carry breathing_score");
+      EXPECT(g_captured[k].values.breathing_rate_bpm == 0,
+             "ble.events MUST NOT carry breathing_rate (RSSI-precision proxy)");
+      EXPECT((g_captured[k].values.present_fields
+              & (CSI_FIELD_MOTION_SCORE
+               | CSI_FIELD_BREATHING_SCORE
+               | CSI_FIELD_BREATHING_RATE)) == 0,
+             "disallowed field bits must be cleared in present_fields");
+    }
+    EXPECT(seen, "every ble.events type must commit at least once");
+  }
+}
+
 void test_per_module_ceiling() {
   csi_event_test_reset();
   reset_captures();
@@ -393,6 +465,7 @@ extern "C" int csi_event_invariants_run() {
   test_bundler_collapses_burst();
   test_per_module_ceiling();
   test_witness_payload_includes_metadata();
+  test_ble_events_strip_mac_precision_fields();
 
   if (g_failures == 0) {
     fprintf(stderr, "[OK] csi_event invariants — all tests passed\n");
