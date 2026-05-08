@@ -119,6 +119,10 @@
 #include "web_ui.h"
 #include "companion_pwa.h"
 #include "csi_integration.h"     // Boot the CSI library + HTTP endpoints
+#include "setup_page_html.h"     // Captive-portal setup page (Tier 5 #11)
+extern "C" {
+#include "qrcodegen.h"           // Vendored Nayuki QR encoder, MIT
+}
 #include "csi_dashboard_html.h"  // CSI_DASHBOARD_HTML — the Phase-3 headline UI now served at /
 #include "mesh_network.h"
 #include "bluetooth_channel.h"
@@ -4118,13 +4122,146 @@ static esp_err_t handle_wifi_reconnect(httpd_req_t* req) {
 // Captive portal handler for iOS/Android/Windows detection
 // This handler is registered for specific captive portal detection URIs only.
 // Always redirect to main UI to trigger the captive portal popup.
+/* Tier 5 #11 — captive-portal setup page.
+ *
+ * Replaces the older 302 redirect to canary.local/. The redirect was
+ * dishonest: a freshly-flashed device that hasn't joined home WiFi yet
+ * has no canary.local mDNS name to resolve, so the redirect went
+ * nowhere on first contact. The new flow:
+ *
+ *   1. Issue a one-shot pairing token (32 random bytes, RAM-only,
+ *      10-min expiry, single-use).
+ *   2. Build the URL  http://192.168.4.1/companion?token=<64hex>
+ *   3. QR-encode the URL via Nayuki's qrcodegen (vendored, MIT).
+ *   4. Render the setup page from PROGMEM with the QR SVG inline +
+ *      a manual fallback link to the same URL.
+ *
+ * The QR SVG is a single <path> with one "M{x},{y}h1v1h-1z"
+ * subcommand per dark module. ~14 bytes/module worst case at v5
+ * = ~14 KB SVG, easily within ESP-IDF httpd response budget.
+ *
+ * Privacy: no outbound bytes — the page is served from the device.
+ * The captive-portal probe URLs (hotspot-detect.html, generate_204,
+ * etc.) all land here, so any phone that joins the SecuraCV-XXXX
+ * AP gets the setup page automatically.
+ */
 static esp_err_t handle_captive_portal(httpd_req_t* req) {
   g_health.http_requests++;
 
-  httpd_resp_set_status(req, "302 Found");
-  httpd_resp_set_hdr(req, "Location", "http://canary.local/");
-  httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
-  return httpd_resp_send(req, NULL, 0);
+  /* 1. Mint the token. Failure path: drop back to a tiny error so the
+   *    user can still see the manual companion URL and try the older
+   *    typed-credentials flow. */
+  char tok_hex[csi_integration::PAIR_TOKEN_HEX_LEN + 1];
+  if (!csi_integration::pair_token_issue(tok_hex, sizeof(tok_hex))) {
+    httpd_resp_set_status(req, "503 Service Unavailable");
+    httpd_resp_set_type(req, "text/plain");
+    return httpd_resp_send(req, "Setup is busy. Try again in a moment.", -1);
+  }
+
+  /* 2. Build the pairing URL. */
+  char pair_url[160];
+  snprintf(pair_url, sizeof(pair_url),
+           "http://192.168.4.1/companion?token=%s", tok_hex);
+
+  /* 3. QR-encode. We cap maxVersion at 10 (which holds 174 bytes at ECC L
+   *    or 122 at ECC M — far more than our ~100-char URL) so the buffer
+   *    stays small and stack-friendly. */
+  static constexpr int QR_MAX_VERSION = 10;
+  uint8_t qr [qrcodegen_BUFFER_LEN_FOR_VERSION(QR_MAX_VERSION)];
+  uint8_t tmp[qrcodegen_BUFFER_LEN_FOR_VERSION(QR_MAX_VERSION)];
+  bool ok = qrcodegen_encodeText(pair_url, tmp, qr, qrcodegen_Ecc_LOW,
+                                 1, QR_MAX_VERSION, qrcodegen_Mask_AUTO,
+                                 /*boostEcl=*/true);
+  if (!ok) {
+    httpd_resp_set_status(req, "500 Internal Server Error");
+    httpd_resp_set_type(req, "text/plain");
+    return httpd_resp_send(req, "Couldn't render setup code.", -1);
+  }
+  const int qr_size = qrcodegen_getSize(qr);
+  /* 4-module-wide quiet zone is required by the QR spec for camera
+   * decoding; we use 4. The viewBox encompasses size + 2*margin. */
+  const int margin = 4;
+  const int viewBox = qr_size + margin * 2;
+
+  /* 4. Stream the response: HEAD → SVG → TAIL. */
+  httpd_resp_set_type(req, "text/html");
+  httpd_resp_set_hdr(req, "Cache-Control", "no-cache, no-store, must-revalidate");
+  /* iOS captive portal heuristic: returning 200 + a real page (not the
+   * generated_204 / Success token) keeps the captive portal popup
+   * visible until the user taps "Done", which is what we want. */
+  httpd_resp_set_status(req, "200 OK");
+
+  /* HEAD */
+  httpd_resp_send_chunk(req, SETUP_PAGE_HTML_HEAD, HTTPD_RESP_USE_STRLEN);
+
+  /* SVG opening tag with the right viewBox. The buffer is sized for the
+   * worst case (viewBox triple-digit, three-digit width/height) plus
+   * generous slack; the explicit truncation guard below means a future
+   * markup change that stretches this past the buffer fails closed
+   * instead of exposing a stack read overflow. */
+  char svg_open[256];
+  int n = snprintf(svg_open, sizeof(svg_open),
+    "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 %d %d\" "
+    "shape-rendering=\"crispEdges\" role=\"img\" aria-label=\"Pair with phone\">"
+    "<rect width=\"%d\" height=\"%d\" fill=\"#fff\"/>"
+    "<path fill=\"#000\" d=\"",
+    viewBox, viewBox, viewBox, viewBox);
+  /* snprintf returns the would-have-written length; truncate to actual
+   * bytes in the buffer (excluding NUL) before handing the length to
+   * httpd_resp_send_chunk, which would otherwise read past the buffer. */
+  if (n > 0) {
+    if ((size_t)n >= sizeof(svg_open)) n = (int)(sizeof(svg_open) - 1);
+    httpd_resp_send_chunk(req, svg_open, n);
+  }
+
+  /* SVG path data — one "M{x} {y}h1v1h-1z" per dark module. The data is
+   * built in a stack chunk and flushed when the next module wouldn't
+   * fit. snprintf returns the would-have-written length, so we MUST
+   * flush before writing rather than after — a post-write check sees a
+   * `plen` that already overflows the buffer and the next send_chunk
+   * reads past it. */
+  char path_chunk[600];
+  size_t plen = 0;
+  /* Worst case per module at v40: two 3-digit ints + "M  h1v1h-1z" =
+   * about 14 bytes. 32 leaves comfortable slack. */
+  constexpr size_t MODULE_MAX_BYTES = 32;
+  for (int y = 0; y < qr_size; ++y) {
+    for (int x = 0; x < qr_size; ++x) {
+      if (!qrcodegen_getModule(qr, x, y)) continue;
+      if (plen + MODULE_MAX_BYTES > sizeof(path_chunk)) {
+        httpd_resp_send_chunk(req, path_chunk, plen);
+        plen = 0;
+      }
+      int wrote = snprintf(path_chunk + plen, sizeof(path_chunk) - plen,
+                           "M%d %dh1v1h-1z",
+                           x + margin, y + margin);
+      if (wrote <= 0) continue;
+      /* Truncation should be impossible given the size check above, but
+       * defend in depth: if it ever happens, drop the partial write
+       * rather than letting plen exceed the buffer. */
+      if ((size_t)wrote >= sizeof(path_chunk) - plen) {
+        path_chunk[plen] = '\0';
+        continue;
+      }
+      plen += (size_t)wrote;
+    }
+  }
+  if (plen > 0) httpd_resp_send_chunk(req, path_chunk, plen);
+  httpd_resp_send_chunk(req, "\"/></svg>", -1);
+
+  /* TAIL — splice the same pair URL into the manual fallback. The
+   * truncation guard refuses to send a partial response on overflow
+   * rather than letting send_chunk read past the buffer. */
+  char tail[1024];
+  int tn = snprintf(tail, sizeof(tail), SETUP_PAGE_HTML_TAIL_FMT, pair_url);
+  if (tn > 0) {
+    if ((size_t)tn >= sizeof(tail)) tn = (int)(sizeof(tail) - 1);
+    httpd_resp_send_chunk(req, tail, tn);
+  }
+
+  /* End of chunked response. */
+  httpd_resp_send_chunk(req, NULL, 0);
+  return ESP_OK;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -4471,7 +4608,7 @@ static void start_http_server() {
   const int mesh_handlers = 12;       // Mesh network endpoints
   const int bluetooth_handlers = 23;  // Bluetooth API endpoints
   const int ble_discovery_handlers = 3; // BLE discovery (Opera/Chirp/Nearby) endpoints
-  const int csi_handlers = 15;       // /api/csi/stream, /api/csi/window, /api/events/today, /api/events/dismiss, /sense, /api/settings (GET + POST), /api/privacy-budget, /manifest.webmanifest, /sw.js, /tune, /api/tune/coefficients (GET + POST), /api/tune/preset (GET + POST)
+  const int csi_handlers = 16;       // /api/csi/stream, /api/csi/window, /api/events/today, /api/events/dismiss, /sense, /api/settings (GET + POST), /api/privacy-budget, /manifest.webmanifest, /sw.js, /tune, /api/tune/coefficients (GET + POST), /api/tune/preset (GET + POST), /api/pair/token
   const int handler_headroom = 6;     // Reserve for future additions
   const int total_handlers = base_handlers + camera_handlers + mesh_handlers + bluetooth_handlers + ble_discovery_handlers + csi_handlers + handler_headroom;
 
