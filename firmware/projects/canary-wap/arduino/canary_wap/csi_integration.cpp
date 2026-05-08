@@ -63,6 +63,13 @@ csi_features_t                          g_latest_window      = {};
 bool                                    g_have_latest_window = false;
 uint32_t                                g_stream_started_ms  = 0;
 
+/* Privacy Budget byte counter. Increments only when host code calls
+ * csi_integration::add_outbound_bytes() — i.e. when bytes go to a
+ * destination outside the user's immediate network. The dashboard
+ * polls this via GET /api/privacy-budget. Resets at boot for now;
+ * a future wall-clock-aware reset hooks the same place. */
+uint32_t                                g_outbound_bytes      = 0;
+
 /* Indices into csi_features_t::v for the two bands the snapshot fallback
  * surfaces. Layout is documented in csi_features.h:11-18:
  *   v[0..7]   amplitude variance
@@ -449,6 +456,31 @@ esp_err_t handle_settings_post(httpd_req_t* req) {
   return ESP_OK;
 }
 
+esp_err_t handle_privacy_budget(httpd_req_t* req) {
+  /* Returns the literal outbound-byte count plus the current privacy
+   * ceiling so the dashboard can warm-tint the pill when the user has
+   * raised the ceiling above P0. ceiling=p0 + bytes=0 → cool pill;
+   * any change → warm pill. Cheap: a single 32-bit read and a
+   * three-letter switch.
+   *
+   * Cache-Control: no-store. The whole point of the pill is "what is
+   * the device sending right now" — a cached zero would lie. */
+  const csi_privacy_class_t ceiling = csi_event_get_privacy_ceiling();
+  const char* ceiling_str = (ceiling == CSI_PRIVACY_P0) ? "p0"
+                          : (ceiling == CSI_PRIVACY_P1) ? "p1" : "p2";
+
+  char buf[96];
+  snprintf(buf, sizeof(buf),
+    "{\"bytes_today\":%lu,\"ceiling\":\"%s\",\"since_ms\":%lu}",
+    (unsigned long)g_outbound_bytes,
+    ceiling_str,
+    (unsigned long)(millis() - g_stream_started_ms));
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+  httpd_resp_send(req, buf, -1);
+  return ESP_OK;
+}
+
 esp_err_t handle_sense_page(httpd_req_t* req) {
   /* The headline Sensing dashboard. Static asset served straight from
    * PROGMEM. The page itself fetches /api/csi/stream + /api/events/today
@@ -629,6 +661,21 @@ unsigned int sse_client_count() {
   return 0;
 }
 
+void add_outbound_bytes(uint32_t bytes) {
+  /* Saturating add — cap at UINT32_MAX rather than wrap, since any
+   * value north of 4 GB/day is already a "wow that's a lot" signal and
+   * silently rolling back to 0 would lie to the dashboard. The most
+   * common call site emits a few hundred bytes; this branch is cheap. */
+  uint32_t prev = g_outbound_bytes;
+  uint32_t next = prev + bytes;
+  if (next < prev) next = UINT32_MAX;
+  g_outbound_bytes = next;
+}
+
+uint32_t outbound_bytes_today() {
+  return g_outbound_bytes;
+}
+
 bool init(httpd_handle_t server) {
   if (g_initialized) return true;
   if (!server) return false;
@@ -694,8 +741,17 @@ bool init(httpd_handle_t server) {
   };
   httpd_register_uri_handler(server, &r_settings_post);
 
+  /* /api/privacy-budget — literal byte counter for outbound traffic.
+   * 0 by default (the device is local-first); other code calls
+   * csi_integration::add_outbound_bytes() when it sends data to a
+   * destination outside the user's immediate network. */
+  static httpd_uri_t r_privacy_budget = {
+    .uri = "/api/privacy-budget", .method = HTTP_GET, .handler = handle_privacy_budget
+  };
+  httpd_register_uri_handler(server, &r_privacy_budget);
+
   g_initialized = true;
-  Serial.printf("[CSI] integration ready: %u modules, 7 routes registered\n",
+  Serial.printf("[CSI] integration ready: %u modules, 8 routes registered\n",
                 (unsigned)csi_module_count());
   return true;
 }

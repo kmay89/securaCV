@@ -1315,6 +1315,40 @@ async function pollRawVector() {
   } catch {}
 }
 
+/* Privacy Budget pill — literal byte counter for outbound traffic.
+ * /api/privacy-budget returns {bytes_today, ceiling, since_ms}. We
+ * format human-friendly ("0 bytes" / "47 bytes" / "1.2 KB") and
+ * warm-tint the pill if either bytes > 0 or the privacy ceiling is
+ * above P0. Best-effort — a transient fetch failure leaves the
+ * placeholder in place. */
+function formatBytes(n) {
+  if (n < 1024)             return n + ' bytes';
+  if (n < 1024 * 1024)      return (n / 1024).toFixed(1) + ' KB';
+  return (n / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+async function fetchPrivacyBudget() {
+  const pill = document.getElementById('privacyPill');
+  if (!pill) return;
+  try {
+    const r = await fetch('/api/privacy-budget', {cache: 'no-store'});
+    if (!r.ok) return;
+    const j = await r.json();
+    const bytes = (j.bytes_today | 0);
+    const ceiling = j.ceiling || 'p0';
+    pill.textContent = 'Today: ' + formatBytes(bytes) + ' left the device';
+    /* Warm tint when the local-first invariant is being challenged in
+     * any way: either bytes left, or the user opted into a higher
+     * privacy class (P1 / P2). Cool means "nothing's leaving and
+     * nothing's been opted out of"; warm means "look at this." */
+    if (bytes > 0 || ceiling !== 'p0') {
+      pill.classList.add('warm');
+    } else {
+      pill.classList.remove('warm');
+    }
+  } catch {}
+}
+
 /* ────────────────────────────────────────────────────────────────────────
  *  Sheets
  * ──────────────────────────────────────────────────────────────────────── */
@@ -1333,6 +1367,7 @@ const todaySheet = document.getElementById('todaySheet');
 const todayScrim = document.getElementById('todayScrim');
 document.getElementById('todayBtn').addEventListener('click', () => {
   fetchToday();
+  fetchPrivacyBudget();
   openSheet(todaySheet, todayScrim);
 });
 todayScrim.addEventListener('click', () => closeSheet(todaySheet, todayScrim));
