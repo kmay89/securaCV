@@ -136,6 +136,36 @@ footer a{color:var(--accent);text-decoration:none}
 .verify-icon.warn{color:var(--warning)}
 .verify-text{flex:1;font-size:.8rem}
 .verify-sub{color:var(--muted);font-size:.7rem;margin-top:.15rem}
+
+/* ── Onboarding wizard (token mode, Tier 5 #12) ─────────────────────────── */
+.wiz-step{display:none}
+.wiz-step.active{display:block}
+.wiz-progress{display:flex;gap:6px;margin:0 0 14px 0}
+.wiz-progress span{flex:1;height:4px;border-radius:2px;background:var(--surface-2)}
+.wiz-progress span.done{background:var(--accent)}
+.wiz-progress span.now{background:var(--accent);box-shadow:0 0 10px var(--accent)}
+.wiz-h{font-size:1.1rem;font-weight:600;margin:0 0 .35rem;letter-spacing:-.01em}
+.wiz-sub{color:var(--muted);font-size:.85rem;margin:0 0 1rem;line-height:1.45}
+.wiz-input{width:100%;padding:.75rem .85rem;border-radius:10px;background:var(--surface-2);border:1px solid var(--border);color:var(--text);font-size:1rem;font-family:inherit;-webkit-appearance:none}
+.wiz-input:focus{outline:none;border-color:var(--accent)}
+.wiz-btnrow{display:flex;gap:.5rem;margin-top:1rem}
+.wiz-btnrow .btn{flex:1}
+.wiz-net-list{max-height:280px;overflow-y:auto;margin:.5rem 0 .25rem;border:1px solid var(--border);border-radius:10px;background:var(--surface-2)}
+.wiz-net-row{display:flex;align-items:center;gap:.6rem;padding:.7rem .8rem;cursor:pointer;-webkit-tap-highlight-color:transparent;border-top:1px solid var(--border)}
+.wiz-net-row:first-child{border-top:none}
+.wiz-net-row:active{background:rgba(102,179,255,.1)}
+.wiz-net-name{flex:1;font-size:.95rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wiz-net-rssi{color:var(--muted);font-size:.7rem;font-variant-numeric:tabular-nums}
+.wiz-net-lock{color:var(--muted);font-size:.85rem}
+.wiz-net-empty{padding:1rem;text-align:center;color:var(--muted);font-size:.85rem}
+.wiz-spin{display:flex;align-items:center;gap:.6rem;padding:.75rem 0;color:var(--muted);font-size:.85rem}
+.wiz-spin::before{content:'';width:14px;height:14px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:wiz-spin .8s linear infinite}
+@keyframes wiz-spin{to{transform:rotate(360deg)}}
+.wiz-tick{display:inline-block;width:42px;height:42px;border-radius:50%;background:rgba(72,187,120,.15);color:var(--success);text-align:center;line-height:42px;font-size:1.4rem;margin-bottom:.5rem}
+.wiz-cross{display:inline-block;width:42px;height:42px;border-radius:50%;background:rgba(245,101,101,.15);color:var(--danger);text-align:center;line-height:42px;font-size:1.4rem;margin-bottom:.5rem}
+.wiz-link-row{display:flex;flex-direction:column;gap:.5rem;margin-top:.75rem}
+.wiz-link-row a{display:block;padding:.7rem .85rem;background:var(--surface-2);border:1px solid var(--border);border-radius:10px;color:var(--accent);text-decoration:none;font-size:.9rem;text-align:center;font-weight:500}
+.wiz-link-row a:active{background:rgba(102,179,255,.1)}
 </style>
 </head>
 <body>
@@ -144,6 +174,87 @@ footer a{color:var(--accent);text-decoration:none}
     <span class="sub" id="conn-state">Not connected</span>
   </h1>
 </header>
+
+<!-- ─────────────────────────────────────────────────────────────────────────
+     Onboarding wizard (Tier 5 #12). Active only when the URL contains a
+     ?token=<hex> parameter handed off by the captive-portal QR. The wizard
+     is HTTP-only (no BLE pairing required) because the user is on the
+     device's AP at 192.168.4.1, where the WiFi-provisioning HTTP routes
+     are reachable without authentication. Token validation is best-effort:
+     the AP itself is the security boundary, the QR token is a UX gate.
+     ──────────────────────────────────────────────────────────────────────── -->
+<div class="card hidden" id="onboard-card">
+  <div class="wiz-progress">
+    <span id="wiz-prog-1" class="now"></span>
+    <span id="wiz-prog-2"></span>
+    <span id="wiz-prog-3"></span>
+    <span id="wiz-prog-4"></span>
+  </div>
+
+  <div class="wiz-step active" id="wiz-step-1">
+    <h2 class="wiz-h">We see your Canary</h2>
+    <p class="wiz-sub">It's awake and waiting. We'll point it at your home WiFi so it stays online when you leave the room.</p>
+    <ul class="intro" style="margin:0 0 1rem;padding-left:1.1rem;line-height:1.65">
+      <li>Privacy-first: nothing leaves your home unless you ask.</li>
+      <li>Setup takes about a minute.</li>
+      <li>You'll need your home WiFi password handy.</li>
+    </ul>
+    <div class="wiz-btnrow">
+      <button class="btn btn-primary" id="wiz-go-2">Let's go</button>
+    </div>
+  </div>
+
+  <div class="wiz-step" id="wiz-step-2">
+    <h2 class="wiz-h">Pick your home WiFi</h2>
+    <p class="wiz-sub">Your phone won't be on this list — pick the network your Canary should join.</p>
+    <div class="wiz-net-list" id="wiz-nets">
+      <div class="wiz-spin">Looking for networks…</div>
+    </div>
+    <div class="err" id="wiz-step-2-err"></div>
+    <div class="wiz-btnrow">
+      <button class="btn btn-secondary" id="wiz-rescan">Scan again</button>
+    </div>
+  </div>
+
+  <div class="wiz-step" id="wiz-step-3">
+    <h2 class="wiz-h">Type the password</h2>
+    <p class="wiz-sub">Joining <strong id="wiz-picked-ssid">…</strong>. Your password is sent only to the Canary.</p>
+    <input type="password" class="wiz-input" id="wiz-pw" placeholder="Network password" autocomplete="new-password" spellcheck="false">
+    <label style="display:flex;gap:.5rem;align-items:center;margin-top:.5rem;color:var(--muted);font-size:.8rem">
+      <input type="checkbox" id="wiz-show-pw"> Show password
+    </label>
+    <div class="err" id="wiz-step-3-err"></div>
+    <div class="wiz-btnrow">
+      <button class="btn btn-secondary" id="wiz-back-2">Back</button>
+      <button class="btn btn-primary" id="wiz-go-4">Connect</button>
+    </div>
+  </div>
+
+  <div class="wiz-step" id="wiz-step-4">
+    <div id="wiz-step-4-progress">
+      <h2 class="wiz-h">Connecting…</h2>
+      <p class="wiz-sub" id="wiz-progress-text">Talking to your Canary.</p>
+      <div class="wiz-spin" id="wiz-spin">Waiting for your home WiFi.</div>
+    </div>
+    <div id="wiz-step-4-success" class="hidden">
+      <div class="wiz-tick">✓</div>
+      <h2 class="wiz-h">Your Canary is online.</h2>
+      <p class="wiz-sub">Joined <strong id="wiz-success-ssid">your home WiFi</strong>. Switch your phone back to the same network, then tap below to start using it.</p>
+      <div class="wiz-link-row">
+        <a id="wiz-link-mdns" href="http://canary.local/">Open canary.local</a>
+        <a id="wiz-link-ip" href="#" style="display:none"></a>
+      </div>
+    </div>
+    <div id="wiz-step-4-failure" class="hidden">
+      <div class="wiz-cross">!</div>
+      <h2 class="wiz-h">Couldn't connect</h2>
+      <p class="wiz-sub" id="wiz-fail-reason">Check the password and try again.</p>
+      <div class="wiz-btnrow">
+        <button class="btn btn-secondary" id="wiz-fail-back">Try again</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <div class="card" id="connect-card">
   <p class="intro">Pair your Canary in <strong>Settings &rsaquo; Bluetooth</strong> first, then tap below to open the live console.</p>
@@ -286,6 +397,225 @@ footer a{color:var(--accent);text-decoration:none}
 
 <script>
 'use strict';
+
+/* ──────────────────────────────────────────────────────────────────────────
+ *  Onboarding wizard (Tier 5 #12). HTTP-only flow that runs against
+ *  /api/wifi/scan + /api/wifi/connect + /api/wifi while the phone is on
+ *  the device's AP. Activated when the URL contains ?token=<hex>.
+ * ────────────────────────────────────────────────────────────────────────── */
+(function onboardWizard() {
+  const params = new URLSearchParams(window.location.search);
+  const token = params.get('token');
+  if (!token || !/^[0-9a-fA-F]{64}$/.test(token)) return;  // BLE flow stays default
+
+  const $w = id => document.getElementById(id);
+  const card = $w('onboard-card');
+  const oldCard = $w('connect-card');
+  if (!card) return;
+
+  // Reveal wizard, hide BLE flow.
+  card.classList.remove('hidden');
+  if (oldCard) oldCard.classList.add('hidden');
+  // The BLE flow's tab nav and action card are also irrelevant here.
+  ['tab-nav','actions-card'].forEach(k => {
+    const el = $w(k); if (el) el.classList.add('hidden');
+  });
+
+  let pickedSsid = '';
+  let pickedSecure = true;
+  let scanTimer = 0;
+
+  function setStep(n) {
+    for (let i = 1; i <= 4; i++) {
+      $w('wiz-step-' + i).classList.toggle('active', i === n);
+      const dot = $w('wiz-prog-' + i);
+      dot.classList.remove('done', 'now');
+      if (i < n) dot.classList.add('done');
+      else if (i === n) dot.classList.add('now');
+    }
+  }
+
+  function setErr(stepN, msg) {
+    const e = $w('wiz-step-' + stepN + '-err');
+    if (!e) return;
+    if (msg) { e.textContent = msg; e.classList.add('show'); }
+    else     { e.textContent = '';  e.classList.remove('show'); }
+  }
+
+  // ── Card 1 ─────────────────────────────────────────────────────────────
+  $w('wiz-go-2').addEventListener('click', () => {
+    setStep(2);
+    startScan();
+  });
+
+  // ── Card 2: scan + pick ────────────────────────────────────────────────
+  function renderNets(nets) {
+    const list = $w('wiz-nets');
+    if (!nets || nets.length === 0) {
+      list.innerHTML = '<div class="wiz-net-empty">No networks found. Move closer to your router and try again.</div>';
+      return;
+    }
+    list.innerHTML = nets.map(n => {
+      const ssid = (n.ssid || '').replace(/[<>&"]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
+      const lock = n.secure ? '🔒' : '';
+      const rssi = (n.rssi != null) ? (n.rssi + ' dBm') : '';
+      return '<div class="wiz-net-row" data-ssid="' + ssid + '" data-secure="' + (n.secure ? 1 : 0) + '">'
+           + '<span class="wiz-net-name">' + (ssid || '(no name)') + '</span>'
+           + '<span class="wiz-net-lock">' + lock + '</span>'
+           + '<span class="wiz-net-rssi">' + rssi + '</span>'
+           + '</div>';
+    }).join('');
+    list.querySelectorAll('.wiz-net-row').forEach(row => {
+      row.addEventListener('click', () => {
+        pickedSsid   = row.dataset.ssid;
+        pickedSecure = row.dataset.secure === '1';
+        $w('wiz-picked-ssid').textContent = pickedSsid;
+        if (!pickedSecure) {
+          $w('wiz-pw').value = '';
+          $w('wiz-pw').setAttribute('placeholder', 'No password (open network)');
+        } else {
+          $w('wiz-pw').setAttribute('placeholder', 'Network password');
+        }
+        setStep(3);
+        setTimeout(() => $w('wiz-pw').focus(), 100);
+      });
+    });
+  }
+
+  async function pollScan() {
+    try {
+      const r = await fetch('/api/wifi/scan', { cache: 'no-store' });
+      if (!r.ok) throw new Error('scan HTTP ' + r.status);
+      const j = await r.json();
+      if (j.scanning) {
+        scanTimer = setTimeout(pollScan, 800);
+        return;
+      }
+      // Server returns either {ok,scanning:false,networks:[...]} or just
+      // {ok,networks:[...]}. Normalize.
+      const nets = (j.networks || []).slice().sort((a, b) => (b.rssi || -999) - (a.rssi || -999));
+      // Deduplicate by SSID, keeping the strongest.
+      const seen = new Set();
+      const dedup = [];
+      for (const n of nets) {
+        if (!n.ssid || seen.has(n.ssid)) continue;
+        seen.add(n.ssid);
+        dedup.push(n);
+      }
+      renderNets(dedup);
+    } catch (e) {
+      setErr(2, 'Scan failed: ' + e.message);
+      $w('wiz-nets').innerHTML = '<div class="wiz-net-empty">Try again in a moment.</div>';
+    }
+  }
+
+  function startScan() {
+    setErr(2, '');
+    $w('wiz-nets').innerHTML = '<div class="wiz-spin">Looking for networks…</div>';
+    if (scanTimer) clearTimeout(scanTimer);
+    pollScan();
+  }
+
+  $w('wiz-rescan').addEventListener('click', startScan);
+
+  // ── Card 3: password + connect ─────────────────────────────────────────
+  $w('wiz-back-2').addEventListener('click', () => setStep(2));
+  $w('wiz-show-pw').addEventListener('change', e => {
+    $w('wiz-pw').type = e.target.checked ? 'text' : 'password';
+  });
+  $w('wiz-pw').addEventListener('keydown', e => {
+    if (e.key === 'Enter') $w('wiz-go-4').click();
+  });
+  $w('wiz-go-4').addEventListener('click', async () => {
+    setErr(3, '');
+    const pw = $w('wiz-pw').value || '';
+    if (pickedSecure && pw.length === 0) {
+      setErr(3, 'This network needs a password.');
+      return;
+    }
+    setStep(4);
+    showProgress('Sending credentials to your Canary.');
+    try {
+      const r = await fetch('/api/wifi/connect', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ ssid: pickedSsid, password: pw, token: token }),
+      });
+      const j = await r.json();
+      if (!r.ok || j.ok === false) {
+        showFailure((j && j.error) ? j.error : ('HTTP ' + r.status));
+        return;
+      }
+      pollWifiUntilConnected();
+    } catch (e) {
+      showFailure(e.message);
+    }
+  });
+
+  // ── Card 4: progress + success / failure ───────────────────────────────
+  function showProgress(msg) {
+    $w('wiz-step-4-progress').classList.remove('hidden');
+    $w('wiz-step-4-success').classList.add('hidden');
+    $w('wiz-step-4-failure').classList.add('hidden');
+    if (msg) $w('wiz-progress-text').textContent = msg;
+  }
+  function showSuccess(staIp) {
+    $w('wiz-step-4-progress').classList.add('hidden');
+    $w('wiz-step-4-failure').classList.add('hidden');
+    $w('wiz-step-4-success').classList.remove('hidden');
+    $w('wiz-success-ssid').textContent = pickedSsid || 'your home WiFi';
+    if (staIp) {
+      const link = $w('wiz-link-ip');
+      link.href = 'http://' + staIp + '/';
+      link.textContent = 'Open ' + staIp;
+      link.style.display = 'block';
+    }
+    [4].forEach(i => {
+      const dot = $w('wiz-prog-' + i);
+      dot.classList.remove('now');
+      dot.classList.add('done');
+    });
+  }
+  function showFailure(reason) {
+    $w('wiz-step-4-progress').classList.add('hidden');
+    $w('wiz-step-4-success').classList.add('hidden');
+    $w('wiz-step-4-failure').classList.remove('hidden');
+    $w('wiz-fail-reason').textContent = reason
+      ? ('We couldn’t connect: ' + reason)
+      : 'Check the password and try again.';
+  }
+  $w('wiz-fail-back').addEventListener('click', () => setStep(3));
+
+  async function pollWifiUntilConnected() {
+    const t0 = Date.now();
+    const TIMEOUT_MS = 60_000;
+    const STEP_MS    = 1500;
+    let attempt = 0;
+    while (Date.now() - t0 < TIMEOUT_MS) {
+      attempt++;
+      showProgress(attempt === 1 ? 'Talking to your Canary.'
+                  : attempt < 5  ? 'Joining your home WiFi.'
+                                 : 'Almost there…');
+      try {
+        const r = await fetch('/api/wifi', { cache: 'no-store' });
+        if (r.ok) {
+          const j = await r.json();
+          if (j && j.sta_connected === true) {
+            showSuccess(j.sta_ip || '');
+            return;
+          }
+          if (j && j.fail_reason && /AUTH_FAIL|password|wrong/i.test(j.fail_reason)) {
+            showFailure('Wrong password.');
+            return;
+          }
+        }
+      } catch (_) { /* the AP may briefly drop while STA bring-up runs */ }
+      await new Promise(res => setTimeout(res, STEP_MS));
+    }
+    showFailure('Couldn’t reach your home WiFi. Move closer to the router and try again.');
+  }
+})();
+
 const SVC_CONSOLE   = '8fc1cee0-b162-4401-9607-c8ac21383e90';
 const CHR_SNAPSHOT  = '8fc1cee1-b162-4401-9607-c8ac21383e90';
 // ble_provision (PR #330): write SCAN_TRIGGER, read+notify SCAN_RESULTS,
