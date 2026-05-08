@@ -1,0 +1,78 @@
+name: CSI Module Disable Matrix
+
+# Closes the plan's verification promise: "Disabling any single module
+# via build flag still produces a working firmware." Each matrix slot
+# builds canary-wap with one CSI module disabled via a -DCSI_DISABLE_MODULE_*
+# preprocessor flag. The corresponding csi_module_register() call in
+# csi_integration.cpp's register_v1_modules() is wrapped in a matching
+# #ifndef guard, so the slot's build links cleanly even though that
+# module is absent. Any drift — for example, a future module that other
+# modules implicitly depend on — fails the slot, surfacing the implicit
+# coupling before it ships.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'firmware/projects/canary-wap/**'
+      - 'firmware/common/csi/**'
+      - '.github/workflows/csi_module_disable_matrix.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'firmware/projects/canary-wap/**'
+      - 'firmware/common/csi/**'
+      - '.github/workflows/csi_module_disable_matrix.yml'
+
+concurrency:
+  group: csi-module-disable-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-with-module-disabled:
+    name: Build with ${{ matrix.module }} disabled
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - module: core_presence
+            flag: CSI_DISABLE_MODULE_CORE_PRESENCE
+          - module: core_breathing
+            flag: CSI_DISABLE_MODULE_CORE_BREATHING
+          - module: core_activity_ribbon
+            flag: CSI_DISABLE_MODULE_CORE_ACTIVITY_RIBBON
+          - module: meta_daily_summary
+            flag: CSI_DISABLE_MODULE_META_DAILY_SUMMARY
+          - module: anomaly_baseline
+            flag: CSI_DISABLE_MODULE_ANOMALY_BASELINE
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Arduino CLI
+        uses: arduino/setup-arduino-cli@v2
+
+      - name: Configure Arduino CLI
+        run: |
+          arduino-cli config init
+          arduino-cli config add board_manager.additional_urls \
+            https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+          arduino-cli core update-index
+          arduino-cli core install esp32:esp32
+
+      - name: Install libraries
+        run: |
+          arduino-cli lib install "Crypto"
+          arduino-cli lib install "ArduinoJson"
+
+      - name: Compile with ${{ matrix.module }} disabled
+        run: |
+          # Same invocation as the main Arduino CLI Build job, plus the
+          # -D flag that drops one csi_module_register() call. Build
+          # success means the remaining modules don't depend on the
+          # disabled one's registration.
+          arduino-cli compile \
+            --fqbn esp32:esp32:XIAO_ESP32S3 \
+            --libraries firmware/common \
+            --build-property "build.extra_flags=-DVALIDATION_BUILD=1 -D${{ matrix.flag }}=1" \
+            firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino

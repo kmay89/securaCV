@@ -1156,26 +1156,46 @@ esp_err_t handle_pair_token(httpd_req_t* req) {
  * ────────────────────────────────────────────────────────────────────────── */
 
 void register_v1_modules() {
+  /* Each module is wrapped in a CSI_DISABLE_MODULE_<id> guard so a
+   * build with -DCSI_DISABLE_MODULE_<id>=1 still links cleanly. The
+   * .github/workflows/csi_module_disable_matrix.yml job exercises each
+   * single-disable variant on every PR — this guards the plan's
+   * promise that "Disabling any single module via build flag still
+   * produces a working firmware." */
+#ifndef CSI_DISABLE_MODULE_CORE_PRESENCE
   csi_module_register(core_presence_module());
+#endif
+#ifndef CSI_DISABLE_MODULE_CORE_BREATHING
   csi_module_register(core_breathing_module());
+#endif
+#ifndef CSI_DISABLE_MODULE_CORE_ACTIVITY_RIBBON
   csi_module_register(core_activity_ribbon_module());
+#endif
+#ifndef CSI_DISABLE_MODULE_META_DAILY_SUMMARY
   csi_module_register(meta_daily_summary_module());
+#endif
   /* meta.quiet_hours holds the manifest entry for the held_summary row
    * the chokepoint synthesises at the moment a configured Quiet Hours
    * window closes. Registering the module is what lets that synthetic
-   * emit pass the chokepoint's allow-list check. */
+   * emit pass the chokepoint's allow-list check. Not part of the disable
+   * matrix — gating Quiet Hours via build flag is a higher-layer feature
+   * concern, and the chokepoint's setter is the runtime kill switch. */
   csi_module_register(meta_quiet_hours_module());
   /* Tier 3 #7: baseline-aware anomaly detector. P0, no identity, just
    * "this room rarely looks like that." Watches the same features
    * stream the four core modules see. */
+#ifndef CSI_DISABLE_MODULE_ANOMALY_BASELINE
   csi_module_register(anomaly_baseline_module());
+#endif
 
   /* spec/event_contract.md §10: BLE Discovery semantic events. The
    * module exists so any BLE → witness-chain emit MUST go through the
    * chokepoint, where the per-event allow-list strips fields that
    * carry MAC addresses, RSSI at tracking precision, or stable
    * hardware identifiers. Helpers in ble_events_module.h are the only
-   * legitimate BLE→witness path going forward. */
+   * legitimate BLE→witness path going forward. Not part of the
+   * disable matrix today — the BLE stack itself is a feature flag
+   * (FEATURE_BLE_DISCOVERY) controlled at a higher layer. */
   csi_module_register(ble_events_module());
 
   /* Wire the persisted Quiet Hours range into the chokepoint. The
