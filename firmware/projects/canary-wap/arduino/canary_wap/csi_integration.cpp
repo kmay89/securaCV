@@ -38,6 +38,7 @@
 #include <Arduino.h>
 #include <Preferences.h>          // NVS-backed settings store
 #include <esp_http_server.h>
+#include <esp_random.h>           // esp_fill_random() — pairing token entropy
 #include <string.h>
 #include <stdlib.h>
 
@@ -1007,6 +1008,124 @@ esp_err_t handle_tune_post_preset(httpd_req_t* req) {
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
+ * PAIRING TOKEN STORE — Tier 5 #11
+ *
+ * RAM-only ring of one-shot tokens for the captive-portal QR onboarding
+ * flow. The captive-portal handler bakes the token into the QR; the
+ * companion PWA validates / consumes it before showing the WiFi
+ * credentials form.
+ *
+ * Slots: small fixed pool. Each slot tracks 32 random bytes, the
+ * issuance time, and a "used" flag. Eviction prefers (a) used slots,
+ * (b) expired slots, (c) the oldest unused slot. That last clause means
+ * a determined attacker can churn out token issuances and force the
+ * eviction of a token a real user is mid-onboarding with — but the
+ * legitimate user is already on the device's AP at that point, and
+ * the PWA simply re-fetches /api/pair/token if validation fails. No
+ * security regression vs. the older 302-redirect design.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+constexpr size_t   PAIR_SLOTS        = 4;
+constexpr uint32_t PAIR_TTL_MS       = 10UL * 60UL * 1000UL;  /* 10 min */
+constexpr size_t   PAIR_TOK_BYTES    = 32;                    /* 256-bit entropy */
+constexpr size_t   PAIR_TOK_HEX_LEN  = PAIR_TOK_BYTES * 2;    /* 64 hex chars */
+
+struct PairSlot {
+  bool     used;
+  bool     active;
+  uint32_t issued_ms;
+  uint8_t  token[PAIR_TOK_BYTES];
+};
+PairSlot g_pair_slots[PAIR_SLOTS] = {};
+
+void hex_encode(const uint8_t* in, size_t len, char* out) {
+  static const char* H = "0123456789abcdef";
+  for (size_t i = 0; i < len; ++i) {
+    out[2*i  ] = H[(in[i] >> 4) & 0xF];
+    out[2*i+1] = H[ in[i]       & 0xF];
+  }
+  out[2*len] = '\0';
+}
+
+bool hex_decode_to(const char* hex, uint8_t* out, size_t out_len) {
+  if (!hex || strlen(hex) != out_len * 2) return false;
+  for (size_t i = 0; i < out_len; ++i) {
+    char hi = hex[2*i], lo = hex[2*i+1];
+    auto val = [](char c) -> int {
+      if (c >= '0' && c <= '9') return c - '0';
+      if (c >= 'a' && c <= 'f') return 10 + c - 'a';
+      if (c >= 'A' && c <= 'F') return 10 + c - 'A';
+      return -1;
+    };
+    int hi_v = val(hi), lo_v = val(lo);
+    if (hi_v < 0 || lo_v < 0) return false;
+    out[i] = (uint8_t)((hi_v << 4) | lo_v);
+  }
+  return true;
+}
+
+/* Constant-time compare so a timing oracle can't tell us what's wrong. */
+bool ct_eq(const uint8_t* a, const uint8_t* b, size_t n) {
+  uint8_t d = 0;
+  for (size_t i = 0; i < n; ++i) d |= a[i] ^ b[i];
+  return d == 0;
+}
+
+PairSlot* pick_slot_for_issuance() {
+  const uint32_t now = millis();
+  /* Pass 1: prefer a used or expired slot. */
+  for (size_t i = 0; i < PAIR_SLOTS; ++i) {
+    PairSlot& s = g_pair_slots[i];
+    if (!s.active || s.used || (now - s.issued_ms) >= PAIR_TTL_MS) return &s;
+  }
+  /* Pass 2: evict the oldest active-and-unused slot. */
+  size_t oldest = 0;
+  for (size_t i = 1; i < PAIR_SLOTS; ++i) {
+    if ((now - g_pair_slots[i].issued_ms) > (now - g_pair_slots[oldest].issued_ms)) {
+      oldest = i;
+    }
+  }
+  return &g_pair_slots[oldest];
+}
+
+PairSlot* find_slot(const uint8_t* token) {
+  const uint32_t now = millis();
+  for (size_t i = 0; i < PAIR_SLOTS; ++i) {
+    PairSlot& s = g_pair_slots[i];
+    if (!s.active || s.used) continue;
+    if ((now - s.issued_ms) >= PAIR_TTL_MS) continue;
+    if (ct_eq(s.token, token, PAIR_TOK_BYTES)) return &s;
+  }
+  return nullptr;
+}
+
+esp_err_t handle_pair_token(httpd_req_t* req) {
+  /* Issues a fresh one-shot token. The captive-portal handler also calls
+   * the C++ helper directly (it embeds the same token in the QR), but
+   * having the route lets a manually-typed companion path or a future
+   * mobile flow refresh on demand. */
+  char hex[PAIR_TOK_HEX_LEN + 1];
+  if (!csi_integration::pair_token_issue(hex, sizeof(hex))) {
+    httpd_resp_set_status(req, "503 Service Unavailable");
+    return httpd_resp_send(req, "{\"ok\":false}", -1);
+  }
+  /* 256 is comfortable for the current envelope (URL-encoded token is
+   * 64 chars and the surrounding JSON is ~110 chars). We still pass
+   * -1 (HTTPD_RESP_USE_STRLEN) so that future schema changes that
+   * stretch this payload past the buffer get safely truncated by
+   * snprintf and reflected by strlen — the alternative of using
+   * snprintf's return value directly would trip a stack read overflow
+   * on truncation. */
+  char buf[256];
+  snprintf(buf, sizeof(buf),
+    "{\"ok\":true,\"token\":\"%s\",\"expires_in_sec\":%lu,\"pair_url\":\"http://192.168.4.1/companion?token=%s\"}",
+    hex, (unsigned long)(PAIR_TTL_MS / 1000UL), hex);
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+  return httpd_resp_send(req, buf, -1);
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
  * MODULE REGISTRATION
  * ────────────────────────────────────────────────────────────────────────── */
 
@@ -1206,6 +1325,39 @@ uint32_t outbound_bytes_today() {
   return __atomic_load_n(&g_outbound_bytes, __ATOMIC_RELAXED);
 }
 
+/* ──────────────────────────────────────────────────────────────────────────
+ * PUBLIC TOKEN API (Tier 5 #11)
+ * ────────────────────────────────────────────────────────────────────────── */
+
+bool pair_token_issue(char* hex_out, size_t out_cap) {
+  if (!hex_out || out_cap < PAIR_TOK_HEX_LEN + 1) return false;
+  PairSlot* s = pick_slot_for_issuance();
+  if (!s) return false;
+  esp_fill_random(s->token, PAIR_TOK_BYTES);
+  s->issued_ms = millis();
+  s->used      = false;
+  s->active    = true;
+  hex_encode(s->token, PAIR_TOK_BYTES, hex_out);
+  return true;
+}
+
+bool pair_token_valid(const char* hex) {
+  if (!hex) return false;
+  uint8_t raw[PAIR_TOK_BYTES];
+  if (!hex_decode_to(hex, raw, PAIR_TOK_BYTES)) return false;
+  return find_slot(raw) != nullptr;
+}
+
+bool pair_token_consume(const char* hex) {
+  if (!hex) return false;
+  uint8_t raw[PAIR_TOK_BYTES];
+  if (!hex_decode_to(hex, raw, PAIR_TOK_BYTES)) return false;
+  PairSlot* s = find_slot(raw);
+  if (!s) return false;
+  s->used = true;
+  return true;
+}
+
 bool init(httpd_handle_t server) {
   if (g_initialized) return true;
   if (!server) return false;
@@ -1317,8 +1469,18 @@ bool init(httpd_handle_t server) {
   };
   httpd_register_uri_handler(server, &r_tune_preset_post);
 
+  /* Tier 5 #11 — pairing token issuance. The captive portal handler in
+   * canary_wap.ino calls pair_token_issue() directly to bake the token
+   * into the QR; this route is for the companion PWA to refresh a
+   * token if the captive-portal copy expired before the user finished
+   * entering credentials. */
+  static httpd_uri_t r_pair_token = {
+    .uri = "/api/pair/token", .method = HTTP_GET, .handler = handle_pair_token
+  };
+  httpd_register_uri_handler(server, &r_pair_token);
+
   g_initialized = true;
-  Serial.printf("[CSI] integration ready: %u modules, 15 routes registered\n",
+  Serial.printf("[CSI] integration ready: %u modules, 16 routes registered\n",
                 (unsigned)csi_module_count());
   return true;
 }
