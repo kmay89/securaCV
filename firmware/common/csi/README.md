@@ -20,7 +20,7 @@ own sketch.
 | `csi_module` | Tiny module-interface for layered sensing: `init` / `tick(features)` / `emit_event` / `on_event_dismissed` / `deinit`. The expansion path. | `csi_module.h` |
 | `csi_event` | The single privacy chokepoint. Tags every event with a class (`P0`/`P1`/`P2`), coarsens timestamps at emit time, strips fields not on the module's allow-list, and routes through the optional witness chain. | `csi_event.{h,cpp}` |
 | `csi_bundler` | Same-state events within a 10-minute sliding window collapse into one row with a duration. Stops the dashboard from flickering. | `csi_bundler.{h,cpp}` |
-| v1 modules | `core.presence`, `core.breathing`, `core.activity_ribbon`, `meta.daily_summary`. | `core_*.{h,cpp}`, `meta_*.{h,cpp}` |
+| v1 modules | `core.presence`, `core.breathing`, `core.activity_ribbon`, `meta.daily_summary`, `anomaly.baseline`. | `core_*.{h,cpp}`, `meta_*.{h,cpp}`, `anomaly_baseline.{h,cpp}` |
 
 ## Privacy invariants (enforced at runtime, not in docs)
 
@@ -109,6 +109,37 @@ If you want more than the raw features, register modules. Each module declares
 its privacy class and event allow-list up front, and the runtime enforces both
 on emit. See `csi_module.h` for the contract and `firmware/examples/modules/`
 for a stub example.
+
+The five modules listed above are the v1 set; `docs/csi_modules.md` covers
+the events each one emits, the tunables they expose, and how to add your
+own alongside them.
+
+## Captive-portal pairing helper (host-side)
+
+If you're embedding the library into a product that wants the same
+"join AP → scan QR → onboarded" flow that SecuraCV ships, the
+`csi_integration` namespace exposes a small RAM-only pairing-token store
+your captive-portal handler can reach for:
+
+```cpp
+char hex[csi_integration::PAIR_TOKEN_HEX_LEN + 1];
+if (csi_integration::pair_token_issue(hex, sizeof(hex))) {
+  // Embed `hex` in a QR pointing at /companion?token=<hex>
+}
+// Later, the companion endpoint validates / consumes:
+if (csi_integration::pair_token_consume(received_hex)) {
+  // legitimate handoff; proceed with provisioning
+}
+```
+
+Tokens are 32 random bytes (`esp_fill_random()`), expire after 10 minutes,
+and are single-use. The store is intentionally NOT a security boundary
+— the AP password is — but it makes the QR handoff legible to the PWA
+and prevents stale URLs from accidentally re-running provisioning.
+
+The complete reference implementation (setup page, QR rendering with
+the vendored Nayuki encoder, companion-PWA 4-card wizard) lives under
+`firmware/projects/canary-wap/arduino/canary_wap/`.
 
 ## License
 
