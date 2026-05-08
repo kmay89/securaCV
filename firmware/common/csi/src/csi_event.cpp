@@ -344,21 +344,17 @@ void csi_event_set_quiet_window(uint16_t start_min,
    * would silently never trigger; reject obviously-broken values up front. */
   if (start_min >= 1440) start_min = (uint16_t)(start_min % 1440);
   if (end_min   >= 1440) end_min   = (uint16_t)(end_min   % 1440);
-  s_qh_start_min     = start_min;
-  s_qh_end_min       = end_min;
-  s_qh_enabled       = enabled;
-  /* If the new config leaves us outside the (possibly disabled) window
-   * AND there are events held from a previous in-window run, flush the
-   * summary now. This makes "user disables quiet hours mid-window from
-   * the dashboard" produce an immediate summary row instead of waiting
-   * for the next module emit. */
-  if (s_qh_held_count > 0) {
-    const int cur_min = compute_minute_of_day_();
-    if (!quiet_window_active_(cur_min)) {
-      s_qh_was_in_window = false;
-      flush_quiet_summary_();
-    }
-  }
+  /* The setter is called from the HTTP server task on /api/settings POST,
+   * while emit() runs on the main loop task. Keeping this purely a
+   * three-word state update — no recursive emit, no held-buffer flush —
+   * preserves the chokepoint's single-task invariant. The next emit
+   * (1 Hz from the features callback on the main loop) detects the
+   * in→out transition and flushes the summary itself. Single-word
+   * writes are atomic on ESP32, so a concurrent emit reading these
+   * fields sees either the old or the new value, never a torn mix. */
+  s_qh_start_min = start_min;
+  s_qh_end_min   = end_min;
+  s_qh_enabled   = enabled;
 }
 
 void csi_event_set_module_ceiling(const char* module_id, uint8_t override_per_hour) {

@@ -488,9 +488,18 @@ void test_quiet_hours_holds_and_summarises() {
   EXPECT(g_witness_commit_count == 0,
          "no witness writes expected during the quiet window");
 
-  /* Closing the window must synthesise exactly one summary row whose
-   * bundled_count reflects the suppressed emits. */
+  /* Disabling the window updates state but does NOT itself flush —
+   * that's the cross-task safety contract. The next emit (which on
+   * device runs on the main loop, same task as previous emits) sees
+   * the in→out transition and synthesises the summary. */
   csi_event_set_quiet_window(0, 0, false);
+
+  csi_event_values_t trigger;
+  csi_event_values_init(&trigger);
+  trigger.category       = CSI_CATEGORY_EVENT;
+  trigger.present_fields = CSI_FIELD_STATE_NAME;
+  strncpy(trigger.state_name, "post_qh", sizeof(trigger.state_name) - 1);
+  csi_event_emit("test.module", "test_state", &trigger);
   csi_event_flush_bundles();
 
   bool found_summary = false;

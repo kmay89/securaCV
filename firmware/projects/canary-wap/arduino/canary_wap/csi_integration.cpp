@@ -204,6 +204,22 @@ void reinit_module(const char* module_id) {
   if (m->init)   m->init(nullptr);
 }
 
+/* Read the persisted Quiet Hours range from NVS and push it into the
+ * chokepoint. Called both at boot (register_v1_modules) and on
+ * /api/settings POST. Defaults match the dashboard's UI defaults
+ * (23:00 → 07:00) so a never-set device is congruent with what a
+ * fresh installer sees. The chokepoint setter is a pure state update
+ * — held-summary flushing happens on the next emit, not here. */
+void apply_quiet_hours_from_nvs() {
+  Preferences qprefs;
+  if (!qprefs.begin(SETTINGS_NS, /*readOnly=*/true)) return;
+  const bool    qh_en    = qprefs.getBool("qh.en",    false);
+  const int32_t qh_start = qprefs.getInt ("qh.start", 23 * 60);
+  const int32_t qh_end   = qprefs.getInt ("qh.end",    7 * 60);
+  qprefs.end();
+  csi_event_set_quiet_window((uint16_t)qh_start, (uint16_t)qh_end, qh_en);
+}
+
 /* ──────────────────────────────────────────────────────────────────────────
  * HTTP HANDLERS
  * ────────────────────────────────────────────────────────────────────────── */
@@ -596,21 +612,13 @@ esp_err_t handle_settings_post(httpd_req_t* req) {
   /* Re-init affected module so it picks up the new values on the next tick. */
   reinit_module("core.presence");
 
-  /* Re-apply Quiet Hours to the chokepoint. The dashboard's settings panel
-   * may have changed any of the three keys; rather than parse the request
-   * again, just re-read NVS and push the resulting (start, end, enabled)
-   * triple into the chokepoint. The setter detects an in→out transition
-   * and synthesises a held_summary if disabling mid-window. */
-  {
-    Preferences qprefs;
-    if (qprefs.begin(SETTINGS_NS, /*readOnly=*/true)) {
-      const bool    qh_en    = qprefs.getBool("qh.en",    false);
-      const int32_t qh_start = qprefs.getInt ("qh.start", 23 * 60);
-      const int32_t qh_end   = qprefs.getInt ("qh.end",    7 * 60);
-      qprefs.end();
-      csi_event_set_quiet_window((uint16_t)qh_start, (uint16_t)qh_end, qh_en);
-    }
-  }
+  /* Re-apply Quiet Hours to the chokepoint. The dashboard's settings
+   * panel may have changed any of the three keys; rather than parse
+   * the request again, just re-read NVS via the shared helper. The
+   * next module emit on the main loop sees the new config and
+   * flushes a held_summary if we just transitioned out of an active
+   * window. */
+  apply_quiet_hours_from_nvs();
 
   httpd_resp_set_type(req, "application/json");
   httpd_resp_send(req, "{\"ok\":true}", -1);
@@ -1171,18 +1179,9 @@ void register_v1_modules() {
   csi_module_register(ble_events_module());
 
   /* Wire the persisted Quiet Hours range into the chokepoint. The
-   * dashboard's settings panel writes qh.en / qh.start / qh.end here
-   * via /api/settings POST; rebooting the device picks them back up.
-   * The setter accepts minute-of-day values in [0, 1440); a single
-   * range may cross midnight (start > end). */
-  Preferences qprefs;
-  if (qprefs.begin(SETTINGS_NS, /*readOnly=*/true)) {
-    const bool    qh_en    = qprefs.getBool("qh.en",    false);
-    const int32_t qh_start = qprefs.getInt ("qh.start", 23 * 60);
-    const int32_t qh_end   = qprefs.getInt ("qh.end",    7 * 60);
-    qprefs.end();
-    csi_event_set_quiet_window((uint16_t)qh_start, (uint16_t)qh_end, qh_en);
-  }
+   * dashboard's settings panel writes qh.en / qh.start / qh.end via
+   * /api/settings POST; rebooting the device picks them back up. */
+  apply_quiet_hours_from_nvs();
 }
 
 }  /* namespace */
