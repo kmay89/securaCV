@@ -103,6 +103,22 @@ jobs:
             --build-property "build.extra_flags=-DVALIDATION_BUILD=1" \
             firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino
 
+  csi-sketch-sync:
+    name: CSI Sketch Copy Sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify CSI library copies in canary-wap sketch dir match canonical source
+        # The Arduino IDE only sees files inside the sketch folder and globally
+        # installed libraries — so the CSI library is committed twice: once at
+        # firmware/common/csi/src/ (canonical) and once next to the sketch so
+        # GitHub zip downloads compile out of the box. This guard catches
+        # drift in either direction.
+        run: |
+          chmod +x firmware/scripts/check_csi_sync.sh
+          firmware/scripts/check_csi_sync.sh
+
   regression-check:
     name: Regression Guards
     runs-on: ubuntu-latest

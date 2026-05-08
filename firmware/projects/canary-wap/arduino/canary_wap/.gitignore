@@ -1,35 +1,14 @@
-# Files staged into this directory by ../../setup.sh arduino.
-# The canonical sources live elsewhere in the repo:
+# Files staged into this directory by ../../setup.sh arduino from
+# environment-specific sources elsewhere in the repo:
 #   - pins.h, camera.h: firmware/boards/xiao-esp32s3-sense/pins/
 #   - config.h:         firmware/configs/canary-wap/default/
 #   - secrets.h:        gitignored everywhere; populated from secrets/secrets.h
-#   - csi_*.{h,cpp}, core_*.{h,cpp}, anomaly_baseline.{h,cpp}, meta_daily_summary.{h,cpp}:
-#                       firmware/common/csi/src/
 #
-# Re-run setup.sh after pulling shared-source changes.
+# The CSI library files (csi_*, core_*, anomaly_baseline.*, meta_daily_summary.*)
+# are NOT gitignored — they are committed copies of firmware/common/csi/src/
+# so a fresh GitHub zip download builds without running setup.sh. The
+# scripts/check_csi_sync.sh CI guard keeps the two copies identical.
 pins.h
 camera.h
 config.h
 secrets.h
-
-anomaly_baseline.h
-anomaly_baseline.cpp
-core_activity_ribbon.h
-core_activity_ribbon.cpp
-core_breathing.h
-core_breathing.cpp
-core_presence.h
-core_presence.cpp
-csi_bundler.h
-csi_bundler.cpp
-csi_event.h
-csi_event.cpp
-csi_features.h
-csi_features.cpp
-csi_hal.h
-csi_hal.cpp
-csi_module.h
-csi_module.cpp
-csi_types.h
-meta_daily_summary.h
-meta_daily_summary.cpp
