@@ -1615,26 +1615,61 @@ static bool create_witness_record(const uint8_t* payload, size_t len, RecordType
 // CSI zone id. Defaults to ZONE_ID; overridable via NVS key
 // "core.zone_id" so a future dashboard / setup flow can label a
 // canary's coverage area without recompiling.
+//
+// The wire format `kv=<v> rs=<r> zn=<z>` is space-delimited, so the
+// override gets sanitised to a tokenizer-safe charset before caching:
+// any byte outside [A-Za-z0-9._:-] becomes '_'. This keeps a future
+// setup UI that accepts free-text labels (with spaces, accents,
+// emoji) from corrupting the wire format and breaking downstream
+// log_verify parsers that split on whitespace.
+//
+// `loaded` is set to true ONLY after `cached` is fully populated, so
+// any caller (the chokepoint is single-threaded today, but a future
+// task model shouldn't be a footgun) racing on first call sees either
+// "buffer not yet populated, run init again" or "buffer fully ready"
+// — never a torn read of partially-copied bytes.
 static const char* csi_zone_id() {
   static char  cached[32];
   static bool  loaded = false;
   if (!loaded) {
-    loaded = true;
+    char  scratch[32];
+    bool  found = false;
     Preferences prefs;
     if (prefs.begin("csi", /*readOnly=*/true)) {
       String v = prefs.getString("core.zone_id", "");
       prefs.end();
-      if (v.length() > 0 && v.length() < sizeof(cached)) {
-        strncpy(cached, v.c_str(), sizeof(cached) - 1);
-        cached[sizeof(cached) - 1] = '\0';
-        return cached;
+      if (v.length() > 0 && v.length() < sizeof(scratch)) {
+        strncpy(scratch, v.c_str(), sizeof(scratch) - 1);
+        scratch[sizeof(scratch) - 1] = '\0';
+        found = true;
       }
     }
-    strncpy(cached, ZONE_ID, sizeof(cached) - 1);
-    cached[sizeof(cached) - 1] = '\0';
+    if (!found) {
+      strncpy(scratch, ZONE_ID, sizeof(scratch) - 1);
+      scratch[sizeof(scratch) - 1] = '\0';
+    }
+    // Sanitize: keep only token-safe chars; replace others with '_'.
+    for (size_t i = 0; scratch[i] != '\0' && i < sizeof(scratch); ++i) {
+      const unsigned char c = (unsigned char)scratch[i];
+      const bool ok = (c >= 'A' && c <= 'Z')
+                   || (c >= 'a' && c <= 'z')
+                   || (c >= '0' && c <= '9')
+                   || c == '.' || c == '_' || c == '-' || c == ':';
+      if (!ok) scratch[i] = '_';
+    }
+    memcpy(cached, scratch, sizeof(cached));
+    loaded = true;   // publish only after cached is fully populated
   }
   return cached;
 }
+
+// Witness payload buffer size. Worst case for the format
+// `csi <m> <t> <c> <s> <conf> m=N b=N bpm=N d=N bk=N kv=<fw> rs=<rs> zn=<zn>`
+// runs ~220 bytes when every CSI_EVENT_NAME_MAX field is full plus a
+// 31-char zone id; 256 leaves comfortable headroom and the helper's
+// buffer-too-small return (-1) safely catches any future field growth
+// without truncating mid-token.
+static constexpr size_t CSI_WITNESS_PAYLOAD_MAX = 256;
 
 extern "C" bool csi_witness_emit_event(const char* module_id,
                                        const char* type_name,
@@ -1646,7 +1681,7 @@ extern "C" bool csi_witness_emit_event(const char* module_id,
                                        uint8_t     bpm,
                                        uint16_t    duration_sec,
                                        uint8_t     time_bucket) {
-  uint8_t payload[224];
+  uint8_t payload[CSI_WITNESS_PAYLOAD_MAX];
   const int len = csi_witness_build_payload(
     (char*)payload, sizeof(payload),
     module_id, type_name, category,
