@@ -28,6 +28,13 @@ concurrency:
   group: csi-module-disable-${{ github.ref }}
   cancel-in-progress: true
 
+# Minimal token scope. The matrix only checks out the repo and runs
+# Arduino CLI builds — it never writes back to GitHub, comments on PRs,
+# or pushes packages. CodeQL flagged the missing block as a default-
+# permissions hazard; this is the recommended fix.
+permissions:
+  contents: read
+
 jobs:
   build-with-module-disabled:
     name: Build with ${{ matrix.module }} disabled

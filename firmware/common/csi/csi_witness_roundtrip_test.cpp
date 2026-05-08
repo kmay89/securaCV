@@ -50,12 +50,21 @@ namespace {
  * real hash is SHA-256 + Ed25519 — but for the chain-link integrity
  * test, the property under test is "prev_hash == previous record's hash",
  * which doesn't depend on the hash function being cryptographically
- * strong. Using a fast deterministic hash keeps the test self-contained. */
+ * strong. Using a fast deterministic hash keeps the test self-contained.
+ *
+ * Pure: seed is taken as-is. Callers seed the very first chain link
+ * with FNV1A_OFFSET_BASIS and propagate the rolling hash from there.
+ * An earlier draft reseeded when seed==0; that re-seed would have
+ * silently dropped the contribution of all preceding fields if any
+ * intermediate hash happened to land on zero. */
+constexpr uint32_t FNV1A_OFFSET_BASIS = 0x811c9dc5u;
+constexpr uint32_t FNV1A_PRIME        = 0x01000193u;
+
 uint32_t fnv1a(const uint8_t* data, size_t len, uint32_t seed) {
-  uint32_t h = seed ? seed : 0x811c9dc5u;
+  uint32_t h = seed;
   for (size_t i = 0; i < len; ++i) {
     h ^= data[i];
-    h *= 0x01000193u;
+    h *= FNV1A_PRIME;
   }
   return h;
 }
@@ -72,12 +81,16 @@ struct ChainRecord {
 constexpr size_t CHAIN_CAP = 256;
 ChainRecord  g_chain[CHAIN_CAP];
 size_t       g_chain_len  = 0;
-uint32_t     g_chain_head = 0;   /* hash of the current chain tip */
+/* Genesis: seed the chain with FNV-1a's standard offset basis. Storing
+ * a deterministic non-zero genesis means every chain record's hash
+ * derives from a known starting point, and prev_hash on the first
+ * record points at this genesis sentinel. */
+uint32_t     g_chain_head = FNV1A_OFFSET_BASIS;
 
 void chain_reset() {
   memset(g_chain, 0, sizeof(g_chain));
   g_chain_len  = 0;
-  g_chain_head = 0;
+  g_chain_head = FNV1A_OFFSET_BASIS;
 }
 
 }  /* namespace */
@@ -105,12 +118,14 @@ extern "C" bool csi_event_commit_witness(uint32_t                  event_id,
   r->hash = h;
   g_chain_head = h;
 
-  strncpy(r->module_id,  module_id,            CSI_EVENT_NAME_MAX - 1);
-  strncpy(r->type_name,  type_name,            CSI_EVENT_NAME_MAX - 1);
-  strncpy(r->state_name, values->state_name,   CSI_EVENT_NAME_MAX - 1);
-  r->module_id [CSI_EVENT_NAME_MAX - 1] = '\0';
-  r->type_name [CSI_EVENT_NAME_MAX - 1] = '\0';
-  r->state_name[CSI_EVENT_NAME_MAX - 1] = '\0';
+  /* snprintf is the idiomatic way to copy with guaranteed null
+   * termination; strncpy + manual null is more verbose and easy to
+   * get wrong. The return value is intentionally ignored — these
+   * buffers stay inside the test process and never feed a downstream
+   * length field that would care about truncation. */
+  snprintf(r->module_id,  sizeof(r->module_id),  "%s", module_id);
+  snprintf(r->type_name,  sizeof(r->type_name),  "%s", type_name);
+  snprintf(r->state_name, sizeof(r->state_name), "%s", values->state_name);
 
   return true;
 }
@@ -177,7 +192,7 @@ void test_chain_continuity() {
 
   /* Walk the chain forward; each record's prev_hash must match the
    * previous record's hash. Genesis (i=0) has prev_hash == 0. */
-  uint32_t expected_prev = 0;
+  uint32_t expected_prev = FNV1A_OFFSET_BASIS;
   for (size_t i = 0; i < g_chain_len; ++i) {
     EXPECT(g_chain[i].prev_hash == expected_prev,
            "chain link must point at the previous record's hash");
@@ -230,7 +245,7 @@ void test_no_phantom_commits() {
   EXPECT(g_chain_len >= 1,
          "at least one record must reach the chain");
   /* Even with bundling, the chain link must hold. */
-  uint32_t expected_prev = 0;
+  uint32_t expected_prev = FNV1A_OFFSET_BASIS;
   for (size_t i = 0; i < g_chain_len; ++i) {
     EXPECT(g_chain[i].prev_hash == expected_prev,
            "bundled records must still chain correctly");
