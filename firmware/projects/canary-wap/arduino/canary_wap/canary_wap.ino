@@ -4194,42 +4194,68 @@ static esp_err_t handle_captive_portal(httpd_req_t* req) {
   /* HEAD */
   httpd_resp_send_chunk(req, SETUP_PAGE_HTML_HEAD, HTTPD_RESP_USE_STRLEN);
 
-  /* SVG opening tag with the right viewBox. */
-  char svg_open[160];
+  /* SVG opening tag with the right viewBox. The buffer is sized for the
+   * worst case (viewBox triple-digit, three-digit width/height) plus
+   * generous slack; the explicit truncation guard below means a future
+   * markup change that stretches this past the buffer fails closed
+   * instead of exposing a stack read overflow. */
+  char svg_open[256];
   int n = snprintf(svg_open, sizeof(svg_open),
     "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 %d %d\" "
     "shape-rendering=\"crispEdges\" role=\"img\" aria-label=\"Pair with phone\">"
     "<rect width=\"%d\" height=\"%d\" fill=\"#fff\"/>"
     "<path fill=\"#000\" d=\"",
     viewBox, viewBox, viewBox, viewBox);
-  if (n > 0) httpd_resp_send_chunk(req, svg_open, n);
+  /* snprintf returns the would-have-written length; truncate to actual
+   * bytes in the buffer (excluding NUL) before handing the length to
+   * httpd_resp_send_chunk, which would otherwise read past the buffer. */
+  if (n > 0) {
+    if ((size_t)n >= sizeof(svg_open)) n = (int)(sizeof(svg_open) - 1);
+    httpd_resp_send_chunk(req, svg_open, n);
+  }
 
-  /* SVG path data — one M{x},{y}h1v1h-1z per dark module. The data is
-   * built in chunks of ~512 bytes to keep stack/RAM use low. */
+  /* SVG path data — one "M{x} {y}h1v1h-1z" per dark module. The data is
+   * built in a stack chunk and flushed when the next module wouldn't
+   * fit. snprintf returns the would-have-written length, so we MUST
+   * flush before writing rather than after — a post-write check sees a
+   * `plen` that already overflows the buffer and the next send_chunk
+   * reads past it. */
   char path_chunk[600];
   size_t plen = 0;
+  /* Worst case per module at v40: two 3-digit ints + "M  h1v1h-1z" =
+   * about 14 bytes. 32 leaves comfortable slack. */
+  constexpr size_t MODULE_MAX_BYTES = 32;
   for (int y = 0; y < qr_size; ++y) {
     for (int x = 0; x < qr_size; ++x) {
       if (!qrcodegen_getModule(qr, x, y)) continue;
-      /* Up to 24 chars per module: "M%d,%dh1v1h-1z" with two ≤3-digit ints. */
-      int wrote = snprintf(path_chunk + plen, sizeof(path_chunk) - plen,
-                           "M%d %dh1v1h-1z",
-                           x + margin, y + margin);
-      if (wrote < 0) continue;
-      plen += (size_t)wrote;
-      if (plen > sizeof(path_chunk) - 32) {
+      if (plen + MODULE_MAX_BYTES > sizeof(path_chunk)) {
         httpd_resp_send_chunk(req, path_chunk, plen);
         plen = 0;
       }
+      int wrote = snprintf(path_chunk + plen, sizeof(path_chunk) - plen,
+                           "M%d %dh1v1h-1z",
+                           x + margin, y + margin);
+      if (wrote <= 0) continue;
+      /* Truncation should be impossible given the size check above, but
+       * defend in depth: if it ever happens, drop the partial write
+       * rather than letting plen exceed the buffer. */
+      if ((size_t)wrote >= sizeof(path_chunk) - plen) {
+        path_chunk[plen] = '\0';
+        continue;
+      }
+      plen += (size_t)wrote;
     }
   }
   if (plen > 0) httpd_resp_send_chunk(req, path_chunk, plen);
   httpd_resp_send_chunk(req, "\"/></svg>", -1);
 
-  /* TAIL — splice the same pair URL into the manual fallback. */
+  /* TAIL — splice the same pair URL into the manual fallback. The
+   * truncation guard refuses to send a partial response on overflow
+   * rather than letting send_chunk read past the buffer. */
   char tail[1024];
   int tn = snprintf(tail, sizeof(tail), SETUP_PAGE_HTML_TAIL_FMT, pair_url);
-  if (tn > 0 && (size_t)tn < sizeof(tail)) {
+  if (tn > 0) {
+    if ((size_t)tn >= sizeof(tail)) tn = (int)(sizeof(tail) - 1);
     httpd_resp_send_chunk(req, tail, tn);
   }
 
