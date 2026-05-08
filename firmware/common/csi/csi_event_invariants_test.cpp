@@ -416,6 +416,15 @@ void test_ble_events_strip_mac_precision_fields() {
     for (size_t k = 0; k < g_captured_count; ++k) {
       if (strcmp(g_captured[k].type_name, TYPES[i]) != 0) continue;
       seen = true;
+      /* Note on duration_sec: the chokepoint DOES strip it (no
+       * ble.events allow-list permits it), but the bundler's
+       * close_slot re-adds duration_sec to bundled rows because
+       * "how long was this bundle open" is legitimate metadata for
+       * any bundled event regardless of allow-list. Asserting it
+       * here would fight that intentional behaviour for the four
+       * stateful types that go through the bundler; the
+       * MAC-precision fields below are what spec §10 actually
+       * enforces, and the bundler doesn't touch those. */
       EXPECT(g_captured[k].values.motion_score == 0,
              "ble.events MUST NOT carry motion_score");
       EXPECT(g_captured[k].values.breathing_score == 0,
