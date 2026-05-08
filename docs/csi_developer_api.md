@@ -308,3 +308,21 @@ ruleset by inspecting `rs=`; a mismatch invalidates the row.
 `zn=` defaults to the compile-time `ZONE_ID` constant. Setting NVS key
 `core.zone_id` (string, ≤ 31 bytes) to a non-empty value overrides it
 without recompiling. The override is read once per boot.
+
+## Quiet Hours gating
+
+The dashboard's Quiet Hours range (NVS keys `qh.en`, `qh.start`, `qh.end`)
+is wired into the chokepoint via `csi_event_set_quiet_window(start_min,
+end_min, enabled)`. While the configured window is active, the chokepoint
+suppresses non-anomaly emits and increments an internal hold counter
+instead. At the first emit AFTER the window closes (or when the user
+disables Quiet Hours mid-window), the chokepoint synthesises one
+`held_summary` row through the registered `meta.quiet_hours` module.
+The summary's `note` is `"quiet_hours"` and `bundled_count` reflects
+the number of suppressed events. **Anomaly events (`CSI_CATEGORY_ANOMALY`)
+always pass through** — the night-time category is precisely when
+unusual activity matters most.
+
+The host wires this in `firmware/projects/canary-wap/arduino/canary_wap/
+csi_integration.cpp::register_v1_modules()` (boot-time NVS read) and
+the `/api/settings` POST handler (live re-apply on dashboard change).

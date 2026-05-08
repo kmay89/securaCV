@@ -209,6 +209,8 @@ jobs:
         #   7. The per-module hourly ceiling caps bursts
         #   8. The witness-chain payload includes kv= / rs= / zn= (spec §2)
         #   9. ble.events (spec §10) — MAC-precision fields stripped
+        #  10. Quiet Hours hold non-anomaly events; one summary at close
+        #  11. Anomaly events bypass the Quiet Hours gate
         #
         # If a future PR (or LLM coder) breaks any of these, this job
         # fails before the firmware build even starts.
@@ -222,6 +224,7 @@ jobs:
               firmware/common/csi/src/csi_bundler.cpp \
               firmware/common/csi/src/csi_witness_payload.cpp \
               firmware/common/csi/src/ble_events_module.cpp \
+              firmware/common/csi/src/meta_quiet_hours.cpp \
               -I firmware/common/csi/src \
               -o /tmp/csi_invariants
 
