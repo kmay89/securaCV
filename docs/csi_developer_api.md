@@ -162,9 +162,9 @@ page reload.
 ```json
 {
   "ok": true,
-  "token": "0123…cdef",
+  "token": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
   "expires_in_sec": 600,
-  "pair_url": "http://192.168.4.1/companion?token=0123…cdef"
+  "pair_url": "http://192.168.4.1/companion?token=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 }
 ```
 
@@ -185,17 +185,45 @@ These two routes are the dashboard's controls surface.
 
 ### `GET /api/settings`
 
-Returns the persisted module settings (Pet Mode, sensitivity preset,
-quiet-hours window, etc.). Read-only NVS open; falls back to declared
-defaults for unset keys.
+Returns the persisted dashboard-surface settings — Pet Mode, sensitivity
+preset, quiet-hours window — as a flat JSON envelope. Read-only NVS
+open; falls back to declared defaults for unset keys.
+
+```json
+{
+  "ok": true,
+  "pet_mode": false,
+  "preset": "balanced",
+  "sensitivity": 50,
+  "quiet_hours": { "enabled": false, "start_min": 0, "end_min": 480 }
+}
+```
 
 ### `POST /api/settings`
 
-Writes one or more setting keys, then drives `reinit_module()` for the
-affected module(s) so the new value lands on the next tick. Body is
-flat JSON keyed by full module-style keys (e.g. `core.presence.pet_mode`,
-`core.quiet_hours.enabled`); the abbreviated NVS keys are an
-implementation detail handled by `SETTING_KEYS`.
+Writes one or more dashboard settings, then drives `reinit_module()`
+for the affected module(s) so the new value lands on the next tick.
+The wire keys are deliberately short (the dashboard's controls surface,
+not the full module-tunable surface):
+
+| Wire key | Type | Meaning |
+| --- | --- | --- |
+| `"pet_mode"` | bool | Pet Mode toggle. |
+| `"preset"` | string | `"sensitive"` / `"balanced"` / `"quiet"`. |
+| `"sensitivity"` | int 0..100 | Slider; ±20 around the preset baseline. |
+| `"quiet_hours"` | object | `{ "enabled": bool, "start_min": int 0..1439, "end_min": int 0..1439 }`. |
+
+```bash
+curl -X POST http://canary.local/api/settings \
+     -H 'Content-Type: application/json' \
+     -d '{"pet_mode": true, "preset": "quiet"}'
+```
+
+For per-coefficient access (the full module-style keys like
+`core.presence.motion_threshold`, `anomaly.baseline.spike_ratio`,
+etc.), use `/api/tune/coefficients` from the Tuning Lab section
+above — that surface is the authoritative read/write for every
+NVS-backed coefficient.
 
 ### `GET /api/privacy-budget`
 

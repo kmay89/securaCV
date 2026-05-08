@@ -165,7 +165,7 @@ alongside them — the host's `register_v1_modules()` is a one-line edit.
 
 | Id | Privacy | Events emitted | What it does |
 | --- | --- | --- | --- |
-| `core.presence` | P0 | `presence_changed`, `together_observed` | RF-presence FSM (Empty → Sensing → Subtle → Quiet / Active / Together). Honors the `pet_mode` toggle by gating breathing-confirmation on a sustained Goertzel lock in the human band. |
+| `core.presence` | P0 | `presence_changed` | RF-presence FSM. Each transition emits `presence_changed` with `state_name` carrying the FSM state (`empty` / `sensing` / `subtle` / `quiet` / `active` / `together`). Honors the `pet_mode` toggle by gating breathing-confirmation on a sustained Goertzel lock in the human band. |
 | `core.breathing` | P0 | `breathing_confirmed`, `breathing_lost` | Goertzel lock on the 0.15–0.45 Hz band. Promotes confidence to `confirmed` after the configured confirm-window of consecutive locks. |
 | `core.activity_ribbon` | P0 | `ribbon_bucket_advanced` | Writes the 96-slot 15-minute ring that the dashboard renders as the aurora-strip activity ribbon. NVS-persisted. |
 | `meta.daily_summary` | P0 | `daily_summary` | One row per day at the bucket boundary: total active minutes, longest quiet stretch, anomaly count. |
@@ -180,4 +180,4 @@ alongside them — the host's `register_v1_modules()` is a one-line edit.
 | `anomaly.baseline.min_breathing` | 50 | 1..100 | Same, for the breathing channel. |
 | `anomaly.baseline.cooldown_sec` | 600 | 30..3600 | Per-channel cooldown after a fire. |
 
-The four ceiling/cooldown caps share an hourly limit (`ANOMALY_CEILING_PER_HOUR = 10`) because the chokepoint enforces the cap **per module**, not per event type — equal ceilings are how we stop one channel from starving the other.
+The two anomaly event types share an hourly limit (`ANOMALY_CEILING_PER_HOUR = 10`) because the chokepoint enforces the cap **per module**, not per event type — equal ceilings are how we stop one channel from starving the other.
