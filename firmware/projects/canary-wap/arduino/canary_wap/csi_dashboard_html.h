@@ -1416,6 +1416,9 @@ const modeGroup     = document.getElementById('modeGroup');
 const modeIndicator = document.getElementById('modeIndicator');
 const modeButtons   = modeGroup.querySelectorAll('button[data-mode]');
 
+/* Visual sync only — moves the indicator and updates aria-pressed.
+ * persistMode() handles localStorage + the /api/settings round-trip
+ * so a window resize doesn't accidentally re-POST every layout shift. */
 function setMode(mode) {
   modeButtons.forEach(b => {
     const on = b.dataset.mode === mode;
@@ -1427,11 +1430,63 @@ function setMode(mode) {
       modeIndicator.style.width = r1.width + 'px';
     }
   });
-  localStorage.setItem('csi.mode', mode);
 }
-modeButtons.forEach(b => b.addEventListener('click', () => setMode(b.dataset.mode)));
+
+async function persistPreset(mode) {
+  try {
+    await fetch('/api/settings', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({preset: mode}),
+    });
+  } catch {
+    /* Device temporarily unreachable; UI + localStorage already
+     * updated. Next boot of either side reconciles via /api/settings. */
+  }
+}
+
+function selectMode(mode) {
+  setMode(mode);
+  localStorage.setItem('csi.mode', mode);
+  persistPreset(mode);
+}
+
+modeButtons.forEach(b => b.addEventListener('click', () => selectMode(b.dataset.mode)));
 setMode(localStorage.getItem('csi.mode') || 'balanced');
+/* Resize re-runs setMode() (no persist) so the indicator stays
+ * aligned with the active button after viewport changes. */
 window.addEventListener('resize', () => setMode(localStorage.getItem('csi.mode') || 'balanced'));
+
+/* Sensitivity slider: 0..100, 50 = neutral. The server maps the value
+ * to a ±20-point offset on top of the preset baseline. We debounce the
+ * POST by 400 ms so a continuous drag writes NVS once per pause, not
+ * once per slider tick — NVS has a finite write count. */
+const sensitivitySlider = document.getElementById('sensitivitySlider');
+let g_sensTimer = null;
+function persistSensitivity(value) {
+  clearTimeout(g_sensTimer);
+  g_sensTimer = setTimeout(async () => {
+    try {
+      await fetch('/api/settings', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({sensitivity: value}),
+      });
+    } catch {}
+  }, 400);
+}
+
+if (sensitivitySlider) {
+  /* Restore from localStorage instantly, then let syncSettingsFromServer
+   * reconcile if the device's value differs. */
+  const localSens = localStorage.getItem('csi.sensitivity');
+  if (localSens !== null) sensitivitySlider.value = localSens;
+  sensitivitySlider.addEventListener('input', () => {
+    const v = parseInt(sensitivitySlider.value, 10) || 50;
+    localStorage.setItem('csi.sensitivity', String(v));
+    persistSensitivity(v);
+  });
+}
 
 function setSwitch(el, on) {
   el.setAttribute('aria-checked', on ? 'true' : 'false');
@@ -1445,7 +1500,11 @@ const petSwitch = document.getElementById('petSwitch');
 window.PET_MODE = localStorage.getItem('csi.pet') === '1';
 setSwitch(petSwitch, window.PET_MODE);
 
-(async function syncPetModeFromServer() {
+/* On load, pull every persistent setting from the device and reconcile
+ * against the optimistic localStorage state. The server is the source
+ * of truth — if the user changed Pet Mode / preset / sensitivity on
+ * another browser, this brings the current tab in line. */
+(async function syncSettingsFromServer() {
   try {
     const r = await fetch('/api/settings', {cache: 'no-store'});
     if (!r.ok) return;
@@ -1454,6 +1513,17 @@ setSwitch(petSwitch, window.PET_MODE);
       window.PET_MODE = j.pet_mode;
       setSwitch(petSwitch, window.PET_MODE);
       localStorage.setItem('csi.pet', window.PET_MODE ? '1' : '0');
+    }
+    if (typeof j.preset === 'string' && j.preset !== localStorage.getItem('csi.mode')) {
+      localStorage.setItem('csi.mode', j.preset);
+      setMode(j.preset);
+    }
+    if (typeof j.sensitivity === 'number' && sensitivitySlider) {
+      const serverSens = String(j.sensitivity | 0);
+      if (serverSens !== sensitivitySlider.value) {
+        sensitivitySlider.value = serverSens;
+        localStorage.setItem('csi.sensitivity', serverSens);
+      }
     }
   } catch {}
 })();
