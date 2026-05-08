@@ -28,6 +28,23 @@ This is the **complete** Arduino IDE version of the Canary WAP firmware, with fu
 
 ## Arduino IDE Setup
 
+### 0. Stage shared sources (required before first compile)
+
+The sketch pulls in the shared CSI library from `firmware/common/csi/`, the
+board pin definitions from `firmware/boards/`, and the default config from
+`firmware/configs/canary-wap/`. Arduino IDE only sees files inside the sketch
+folder and globally-installed libraries, so these have to be copied in once
+before the first build:
+
+```bash
+cd firmware/projects/canary-wap
+./setup.sh arduino
+```
+
+If you skip this, the build fails with `csi_types.h: No such file or directory`
+(the CSI library is missing) or with errors about `pins.h` / `config.h`.
+Re-run the script any time the shared sources change.
+
 ### 1. Board Installation
 
 1. Open Arduino IDE

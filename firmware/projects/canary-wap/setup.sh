@@ -224,6 +224,32 @@ setup_arduino() {
         print_success "Copied configuration"
     fi
 
+    # Stage the SecuraCV CSI library next to the sketch. Arduino IDE only
+    # searches the sketch directory, the sketch's `src/` subtree, and globally
+    # installed libraries — so the library that lives in firmware/common/csi/
+    # is otherwise invisible. csi_integration.h does `#include <csi_types.h>`
+    # and several .cpp files in the sketch (csi_integration.cpp, rf_presence.cpp,
+    # tests.cpp) include other headers from the same library.
+    #
+    # The library is currently flat (no subdirectories under src/), so a shallow
+    # copy of the top-level *.h / *.cpp is sufficient. If subdirectories ever
+    # get introduced under firmware/common/csi/src/, this needs to switch to
+    # `find` — the Arduino sketch directory must stay flat for `<csi_types.h>`
+    # to resolve, so nested files would have to be flattened or re-homed.
+    local csi_src="${FIRMWARE_ROOT}/common/csi/src"
+    if [ -d "$csi_src" ]; then
+        cp "${csi_src}"/*.h "${arduino_dir}/" 2>/dev/null || true
+        cp "${csi_src}"/*.cpp "${arduino_dir}/" 2>/dev/null || true
+        if [ -f "${arduino_dir}/csi_types.h" ]; then
+            print_success "Copied CSI library headers and sources"
+        else
+            print_error "Failed to stage CSI library files to ${arduino_dir}"
+            return 1
+        fi
+    else
+        print_warn "CSI library not found at ${csi_src} — sketch will not compile until firmware/common/csi/src/ is restored"
+    fi
+
     print_success "Arduino IDE setup complete!"
     echo ""
     echo "Arduino IDE Instructions:"
