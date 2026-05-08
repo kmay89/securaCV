@@ -1945,6 +1945,42 @@ if ('serviceWorker' in navigator) {
       .catch(e => console.warn('SW register failed:', e));
   });
 }
+
+/* ────────────────────────────────────────────────────────────────────────
+ *  Tuning Lab reveal (Tier 4 #10)
+ *
+ *  Hidden by design. Two ways in:
+ *    1. Long-press the device-id chip in the topbar (~700 ms).
+ *    2. Append ?tune=1 to any dashboard URL.
+ *
+ *  Both paths simply navigate to /tune. The lab itself enforces no auth
+ *  beyond the unguessable URL — every coefficient is surfaced as a slider
+ *  and any POST writes through the same NVS path the dashboard's settings
+ *  panel uses. This is not a security boundary; it's a "you must be
+ *  this curious to enter" affordance for tinkerers.
+ * ──────────────────────────────────────────────────────────────────────── */
+(function tuneLabReveal() {
+  if (new URLSearchParams(window.location.search).get('tune') === '1') {
+    window.location.replace('/tune');
+    return;
+  }
+  const el = document.getElementById('device-id');
+  if (!el) return;
+  let pressTimer = 0;
+  const start = () => {
+    if (pressTimer) clearTimeout(pressTimer);
+    pressTimer = setTimeout(() => { window.location.href = '/tune'; }, 700);
+  };
+  const cancel = () => {
+    if (pressTimer) { clearTimeout(pressTimer); pressTimer = 0; }
+  };
+  el.addEventListener('mousedown',  start);
+  el.addEventListener('mouseup',    cancel);
+  el.addEventListener('mouseleave', cancel);
+  el.addEventListener('touchstart', start, {passive: true});
+  el.addEventListener('touchend',   cancel);
+  el.addEventListener('touchcancel',cancel);
+})();
 </script>
 </body>
 </html>
