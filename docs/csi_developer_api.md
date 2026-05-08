@@ -6,8 +6,10 @@ the live model. Privacy is a runtime gate: every endpoint is labelled with
 the privacy class it can return, and the chokepoint enforces the class
 based on the user's settings.
 
-> Phase 4 of the WiFi CSI Tool plan. Endpoints land in
-> `firmware/projects/canary-wap/arduino/canary_wap/csi_stream_api.{h,cpp}`.
+> All endpoints land in
+> `firmware/projects/canary-wap/arduino/canary_wap/csi_integration.{h,cpp}`.
+> The same canary-wap reservation count comment in `start_http_server()`
+> is the canonical inventory.
 
 ---
 
@@ -15,11 +17,29 @@ based on the user's settings.
 
 ### `GET /api/csi/stream`
 
-Server-Sent Events, one JSON line per second, default privacy class `P0`.
+Polling-friendly snapshot at the library's natural 1 Hz cadence. Returns
+the most recently committed event (or an "ambient" record derived from
+the latest feature window if no event has fired yet) as JSON. Default
+privacy class `P0`.
 
-```
-event: csi
-data: {"t":4,"motion":12,"breathing":3,"confidence":"observed","rssi_mean":-42,"frames":18}
+> **Why polling and not SSE?** ESP-IDF's httpd holds a worker per
+> request until the handler returns. True long-lived SSE wants the
+> async-handler API and on-device validation we haven't done yet. The
+> client-side contract is identical to what an SSE upgrade would emit,
+> so the Python listener and the dashboard work unchanged when SSE
+> lands.
+
+```json
+{
+  "t": 4,
+  "motion": 12,
+  "breathing": 3,
+  "confidence": "observed",
+  "rssi_mean": -42,
+  "frames": 18,
+  "category": "ambient",
+  "privacy": "p0"
+}
 ```
 
 | Field | Type | Notes |
@@ -108,6 +128,130 @@ the Lab from the dashboard (long-press on the version chip, or
 
 Tuning bundles ride the existing witness-chain export format — no new
 persistence layer.
+
+---
+
+## First-run pairing (Tier 5)
+
+The captive-portal handler at `/` (and the iOS / Android probe URLs that
+the captive-portal popup hits) renders a setup page with a QR code and
+a manual fallback link. Both encode `http://192.168.4.1/companion?token=<64hex>`,
+where the 64-character hex string is a one-shot pairing token minted on
+each render.
+
+### Pairing tokens
+
+Tokens are 32 random bytes generated with `esp_fill_random()`, kept in a
+4-slot RAM-only ring (no persistence — a reboot invalidates everything),
+and expire after 10 minutes. Validation is constant-time. Single-use:
+once consumed the slot is marked and the next `pair_token_consume()`
+returns false.
+
+The token is NOT a security boundary — the AP itself is the gate, and
+the existing `/api/wifi/connect` handler is reachable to anyone on the
+AP. The token is a UX gate that tells the companion PWA "you came
+through the portal, run the wizard."
+
+### `GET /api/pair/token`
+
+Issue a fresh pairing token. The captive portal calls
+`pair_token_issue()` directly to embed the token in its QR; this route
+exists so the companion PWA can refresh a stale token without a full
+page reload.
+
+```json
+{
+  "ok": true,
+  "token": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "expires_in_sec": 600,
+  "pair_url": "http://192.168.4.1/companion?token=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+}
+```
+
+### Companion PWA wizard
+
+`/companion?token=<hex>` lights up an HTTP-only 4-card onboarding flow
+inside the existing companion PWA. The wizard uses
+`/api/wifi/scan` + `/api/wifi/connect` + `/api/wifi` (existing routes)
+to drive provisioning; no Bluetooth pairing needed. URLs without a
+`?token=` (or with a token that doesn't match `^[0-9a-fA-F]{64}$`)
+keep the BLE-driven console flow intact.
+
+---
+
+## Module settings + privacy budget
+
+These two routes are the dashboard's controls surface.
+
+### `GET /api/settings`
+
+Returns the persisted dashboard-surface settings — Pet Mode, sensitivity
+preset, quiet-hours window — as a flat JSON envelope. Read-only NVS
+open; falls back to declared defaults for unset keys.
+
+```json
+{
+  "ok": true,
+  "pet_mode": false,
+  "preset": "balanced",
+  "sensitivity": 50,
+  "quiet_hours": { "enabled": false, "start_min": 0, "end_min": 480 }
+}
+```
+
+### `POST /api/settings`
+
+Writes one or more dashboard settings, then drives `reinit_module()`
+for the affected module(s) so the new value lands on the next tick.
+The wire keys are deliberately short (the dashboard's controls surface,
+not the full module-tunable surface):
+
+| Wire key | Type | Meaning |
+| --- | --- | --- |
+| `"pet_mode"` | bool | Pet Mode toggle. |
+| `"preset"` | string | `"sensitive"` / `"balanced"` / `"quiet"`. |
+| `"sensitivity"` | int 0..100 | Slider; ±20 around the preset baseline. |
+| `"quiet_hours"` | object | `{ "enabled": bool, "start_min": int 0..1439, "end_min": int 0..1439 }`. |
+
+```bash
+curl -X POST http://canary.local/api/settings \
+     -H 'Content-Type: application/json' \
+     -d '{"pet_mode": true, "preset": "quiet"}'
+```
+
+For per-coefficient access (the full module-style keys like
+`core.presence.motion_threshold`, `anomaly.baseline.spike_ratio`,
+etc.), use `/api/tune/coefficients` from the Tuning Lab section
+above — that surface is the authoritative read/write for every
+NVS-backed coefficient.
+
+### `GET /api/privacy-budget`
+
+Literal byte counter for outbound traffic plus the current privacy
+ceiling. The dashboard surfaces this as the "Today: 0 bytes left the
+device" pill in the Today sheet.
+
+```json
+{
+  "bytes_today": 0,
+  "ceiling": "p0",
+  "since_ms": 12345
+}
+```
+
+The counter is incremented from the host when host code sends data to
+an off-device destination (MQTT, SD-export, BLE-paired phone export).
+Local fetches against the dashboard's own polling routes do NOT count.
+
+---
+
+## PWA shell
+
+`/manifest.webmanifest` and `/sw.js` give the dashboard a real PWA
+identity (Add to Home Screen, standalone display, offline shell).
+`/api/csi/stream`, `/api/events/*`, `/api/settings`, `/api/privacy-budget`
+are explicitly **passed through** by the service worker so live
+data always hits the device, never a stale cache.
 
 ---
 

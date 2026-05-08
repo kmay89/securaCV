@@ -6,26 +6,31 @@ Two paths on one page. Pick the one that matches who you are.
 
 ## I just got a Canary and want it to work (5 minutes)
 
-The "grandma path." No code, no terminal, no cables beyond USB-C for the
-first power-up.
+The "grandma path." No app to install, no account to create. The device
+ships with a captive-portal setup page that walks the phone through it.
 
 1. **Plug it in.** USB-C from the device to a phone charger, the wall, or
    a computer. The status LED breathes when it's running.
-2. **Open the SecuraCV app on your phone.** Tap **Set up a new device**.
-3. **Scan the QR code on the device or the box.** The app fills in the
-   pairing token and the device's home network for you.
-4. **Type your home WiFi password.** One screen. The phone hands the
-   credentials to the device over Bluetooth so they never go anywhere
-   else.
-5. **The dashboard opens automatically** at `canary.local`. Watch the
-   pearlescent orb at the centre of the screen — it should already be
-   gently pulsing if anyone is in the room.
+2. **Open Wi-Fi on your phone and pick `SecuraCV-XXXX`.** Your phone will
+   pop up a "Sign in to network" sheet automatically — that's the
+   captive-portal setup page the device serves.
+3. **Scan the big QR code on the page** with your phone's camera.
+   (Camera not working? There's a "Tap here to set up by hand" link
+   under the code that opens the same setup page in your browser.)
+4. **Pick your home Wi-Fi and type the password.** One screen each.
+   The credentials go directly to the device — they never leave your
+   home.
+5. **Switch your phone back to your home Wi-Fi** and tap the
+   "Open canary.local" button. The pearlescent dashboard opens, and
+   the orb at the centre should already be gently pulsing if anyone is
+   in the room.
 6. **Step out for one minute** when the dashboard suggests it. The device
    uses that minute to learn what your empty room looks like; afterwards,
    the orb settles when you're away and lights up when someone arrives.
 
-That's it. No account, no cloud, no app to keep running. The app is just
-the setup wizard — the device runs by itself.
+That's it. No account, no cloud, no app to keep running. The setup page
+is served by the device itself; once your home Wi-Fi is configured, the
+captive-portal AP turns into a quiet fallback for re-pairing later.
 
 ---
 
@@ -75,7 +80,9 @@ value. That's WiFi sensing on a $15 board, no camera, no cloud.
 | Wire CSI into a different host firmware | `firmware/common/csi/README.md` |
 | Understand the privacy contract | `firmware/common/csi/src/csi_event.h` and `spec/event_contract.md` |
 | See what events the dashboard renders | `docs/csi_developer_api.md` |
-| Tune coefficients live without recompiling | `http://canary.local/tune` (after Phase 4 lands) |
+| Tune coefficients live without recompiling | `http://canary.local/tune` (long-press the device-id chip in the topbar to reveal it, or append `?tune=1` to any dashboard URL) |
+| Inspect the captive-portal pairing flow | `firmware/projects/canary-wap/arduino/canary_wap/setup_page_html.h` and `handle_captive_portal` in `canary_wap.ino` |
+| See the one-shot pairing token contract | `csi_integration::pair_token_*` in `csi_integration.h` |
 
 ### Compatibility
 
