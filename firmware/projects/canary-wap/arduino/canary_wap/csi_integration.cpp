@@ -479,11 +479,13 @@ esp_err_t handle_settings_post(httpd_req_t* req) {
     }
   }
 
-  /* "sensitivity": 0..100 (clamped). */
+  /* "sensitivity": 0..100 (clamped). Skip `"` too so a value sent as
+   * a string ({"sensitivity":"75"}) parses the same as a bare number,
+   * matching the pet_mode and preset parsers above. */
   if (const char* k = strstr(body, "\"sensitivity\"")) {
     if (const char* v = strchr(k, ':')) {
       v++;
-      while (*v == ' ' || *v == '\t') v++;
+      while (*v == ' ' || *v == '\t' || *v == '"') v++;
       char* end = nullptr;
       long n = strtol(v, &end, 10);
       if (end != v) {

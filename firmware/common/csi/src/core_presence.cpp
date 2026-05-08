@@ -125,8 +125,10 @@ void on_init(const csi_module_settings_t* s) {
     default: base_motion = 35; base_active = 75; base_breathing = 30; break; // balanced
   }
   /* sens=0   → +20 (less sensitive); sens=50 → 0 (neutral);
-   * sens=100 → -20 (more sensitive). */
-  const int32_t offset = ((50 - sens) * 20) / 100;
+   * sens=100 → -20 (more sensitive). The 40 multiplier is the full
+   * ±20 span across the 0..100 slider range — (50-sens)*40/100
+   * = -20..+20 as documented. */
+  const int32_t offset = ((50 - sens) * 40) / 100;
   auto clamp_threshold = [](int32_t v) -> int32_t {
     if (v < 5) return 5;
     if (v > 120) return 120;

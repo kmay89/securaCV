@@ -1482,7 +1482,11 @@ if (sensitivitySlider) {
   const localSens = localStorage.getItem('csi.sensitivity');
   if (localSens !== null) sensitivitySlider.value = localSens;
   sensitivitySlider.addEventListener('input', () => {
-    const v = parseInt(sensitivitySlider.value, 10) || 50;
+    /* DON'T use `parseInt(...) || 50` here — `0` is falsy in JS and
+     * would silently round a valid minimum-sensitivity drag back up
+     * to the neutral midpoint. <input type="range"> always returns a
+     * numeric string, so Number() is safe and preserves 0. */
+    const v = Number(sensitivitySlider.value);
     localStorage.setItem('csi.sensitivity', String(v));
     persistSensitivity(v);
   });
@@ -1519,7 +1523,10 @@ setSwitch(petSwitch, window.PET_MODE);
       setMode(j.preset);
     }
     if (typeof j.sensitivity === 'number' && sensitivitySlider) {
-      const serverSens = String(j.sensitivity | 0);
+      /* Use String(Number(...)) for consistency with the bytes_today
+       * parsing in fetchPrivacyBudget — bitwise `| 0` would coerce
+       * to signed 32-bit and is also stylistically inconsistent. */
+      const serverSens = String(Number(j.sensitivity));
       if (serverSens !== sensitivitySlider.value) {
         sensitivitySlider.value = serverSens;
         localStorage.setItem('csi.sensitivity', serverSens);
