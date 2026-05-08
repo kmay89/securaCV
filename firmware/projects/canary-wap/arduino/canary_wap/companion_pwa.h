@@ -455,11 +455,29 @@ footer a{color:var(--accent);text-decoration:none}
       list.innerHTML = '<div class="wiz-net-empty">No networks found. Move closer to your router and try again.</div>';
       return;
     }
-    list.innerHTML = nets.map(n => {
-      const ssid = (n.ssid || '').replace(/[<>&"]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
-      const lock = n.secure ? '🔒' : '';
-      const rssi = (n.rssi != null) ? (n.rssi + ' dBm') : '';
-      return '<div class="wiz-net-row" data-ssid="' + ssid + '" data-secure="' + (n.secure ? 1 : 0) + '">'
+    /* Keep raw SSIDs in JS-side arrays and reference them from the DOM
+     * by integer index. Embedding the raw string in a data-* attribute
+     * works on most browsers but mixes encoding domains: an SSID
+     * containing &, <, >, " or ' gets HTML-escaped for safe markup,
+     * and round-tripping that back through dataset depends on browser-
+     * implementation details. The index pattern is unambiguous: the DOM
+     * never sees the SSID, and the JS click handler always sees the
+     * exact bytes the scan API returned, so SSIDs like "AT&T" or
+     * "Mom's WiFi" reach /api/wifi/connect verbatim. */
+    const rawSsids  = nets.map(n => n.ssid || '');
+    /* The scan API returns a `security` string ("open" / "wpa" / "wpa2"
+     * / "wpa/wpa2" / "wpa3" / "wpa2/wpa3" / "other"), not a `secure`
+     * boolean. Treat anything other than "open" as secure so the lock
+     * icon and the empty-password guard fire correctly. */
+    const isSecure  = nets.map(n => {
+      const s = (n.security || '').toLowerCase();
+      return s !== '' && s !== 'open' && s !== 'none';
+    });
+    list.innerHTML = nets.map((n, i) => {
+      const ssid = escHtml(rawSsids[i]);
+      const lock = isSecure[i] ? '🔒' : '';
+      const rssi = (n.rssi != null) ? escHtml(n.rssi + ' dBm') : '';
+      return '<div class="wiz-net-row" data-idx="' + i + '">'
            + '<span class="wiz-net-name">' + (ssid || '(no name)') + '</span>'
            + '<span class="wiz-net-lock">' + lock + '</span>'
            + '<span class="wiz-net-rssi">' + rssi + '</span>'
@@ -467,8 +485,10 @@ footer a{color:var(--accent);text-decoration:none}
     }).join('');
     list.querySelectorAll('.wiz-net-row').forEach(row => {
       row.addEventListener('click', () => {
-        pickedSsid   = row.dataset.ssid;
-        pickedSecure = row.dataset.secure === '1';
+        const i = Number(row.dataset.idx);
+        if (!Number.isInteger(i) || i < 0 || i >= rawSsids.length) return;
+        pickedSsid   = rawSsids[i];
+        pickedSecure = isSecure[i];
         $w('wiz-picked-ssid').textContent = pickedSsid;
         if (!pickedSecure) {
           $w('wiz-pw').value = '';
@@ -476,6 +496,10 @@ footer a{color:var(--accent);text-decoration:none}
         } else {
           $w('wiz-pw').setAttribute('placeholder', 'Network password');
         }
+        /* User has chosen a network — stop polling the radio. The
+         * pollScan loop would otherwise keep re-scanning in the
+         * background while the user is typing the password. */
+        if (scanTimer) { clearTimeout(scanTimer); scanTimer = 0; }
         setStep(3);
         setTimeout(() => $w('wiz-pw').focus(), 100);
       });
