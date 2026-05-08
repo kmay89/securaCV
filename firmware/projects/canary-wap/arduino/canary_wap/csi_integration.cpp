@@ -513,40 +513,65 @@ esp_err_t handle_settings_post(httpd_req_t* req) {
   }
 
   /* "quiet_hours": {"enabled": true|false, "start_min": M, "end_min": M}
-   * The dashboard sends the whole nested object. We don't bother
-   * parsing the brace structure — the keys we care about
-   * ("\"enabled\"", "\"start_min\"", "\"end_min\"") are unique within
-   * the QH context AND within the body as a whole, so a global strstr
-   * walk gives us each value cleanly. Minutes are clamped 0..1439. */
-  if (strstr(body, "\"quiet_hours\"")) {
-    if (const char* e = strstr(body, "\"enabled\"")) {
-      if (const char* v = strchr(e, ':')) {
-        v++;
-        while (*v == ' ' || *v == '\t' || *v == '"') v++;
-        if (strncmp(v, "true", 4) == 0) {
-          prefs.putBool("qh.en", true);  wrote_anything = true;
-        } else if (strncmp(v, "false", 5) == 0) {
-          prefs.putBool("qh.en", false); wrote_anything = true;
+   *
+   * The original implementation gated on "\"quiet_hours\"" at the top
+   * level but then searched for "\"enabled\"" / "\"start_min\"" /
+   * "\"end_min\"" from the start of the body — meaning a future
+   * top-level `enabled` field (or any other object that happens to
+   * contain `enabled`) could overwrite qh.en with the wrong value.
+   *
+   * Walk the brace pair of the quiet_hours object and search ONLY
+   * within that span. We temporarily nul-terminate at the closing
+   * brace so strstr can't see past it, then restore the byte. Body
+   * is a local buffer; mutating it is fine. */
+  if (char* qh_key = (char*)strstr(body, "\"quiet_hours\"")) {
+    char* qh_open = strchr(qh_key, '{');
+    if (qh_open) {
+      int depth = 1;
+      char* p = qh_open + 1;
+      for (; *p; ++p) {
+        if (*p == '{') depth++;
+        else if (*p == '}') {
+          if (--depth == 0) break;
         }
       }
+      /* p now points at the matching close brace, or '\0' if malformed.
+       * Either way, nul-terminate one past it so strstr sees only the
+       * object's contents. Save the byte to restore after parsing. */
+      char saved = *p;
+      *p = '\0';
+
+      if (const char* e = strstr(qh_open, "\"enabled\"")) {
+        if (const char* v = strchr(e, ':')) {
+          v++;
+          while (*v == ' ' || *v == '\t' || *v == '"') v++;
+          if (strncmp(v, "true", 4) == 0) {
+            prefs.putBool("qh.en", true);  wrote_anything = true;
+          } else if (strncmp(v, "false", 5) == 0) {
+            prefs.putBool("qh.en", false); wrote_anything = true;
+          }
+        }
+      }
+      auto put_minute = [&](const char* tag, const char* nvs) {
+        const char* k = strstr(qh_open, tag);
+        if (!k) return;
+        const char* v = strchr(k, ':');
+        if (!v) return;
+        v++;
+        while (*v == ' ' || *v == '\t' || *v == '"') v++;
+        char* vend = nullptr;
+        long n = strtol(v, &vend, 10);
+        if (vend == v) return;
+        if (n < 0)    n = 0;
+        if (n > 1439) n = 1439;
+        prefs.putInt(nvs, (int32_t)n);
+        wrote_anything = true;
+      };
+      put_minute("\"start_min\"", "qh.start");
+      put_minute("\"end_min\"",   "qh.end");
+
+      *p = saved;  /* restore for any later parsers and for cleanliness */
     }
-    auto put_minute = [&](const char* tag, const char* nvs) {
-      const char* k = strstr(body, tag);
-      if (!k) return;
-      const char* v = strchr(k, ':');
-      if (!v) return;
-      v++;
-      while (*v == ' ' || *v == '\t' || *v == '"') v++;
-      char* end = nullptr;
-      long n = strtol(v, &end, 10);
-      if (end == v) return;
-      if (n < 0)    n = 0;
-      if (n > 1439) n = 1439;
-      prefs.putInt(nvs, (int32_t)n);
-      wrote_anything = true;
-    };
-    put_minute("\"start_min\"", "qh.start");
-    put_minute("\"end_min\"",   "qh.end");
   }
 
   prefs.end();
