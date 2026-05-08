@@ -49,6 +49,7 @@ Single-row-per-capability summary across every non-archived variant. This is the
 | BLE discovery (Opera/Chirp/Nearby) | ❌ | ✅ | ❌ | ❌ | ➖ | ✅ |
 | RF presence detection | ❌ | ✅ | ⚠️ | ❌ | ➖ | ✅ |
 | WiFi CSI sensing (motion / breathing / micro-activity) | ✅ | ✅ | ❌ | ❌ | ➖ | ❌ |
+| CSI module pipeline + privacy chokepoint + 10-min bundler (v1: presence, breathing, ribbon, daily summary, anomaly) | ✅ | ✅ | ❌ | ❌ | ➖ | ❌ |
 | Acoustic alarm-cadence detection (T3 smoke / T4 CO) | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
 | Capacitive touch (silent panic / enclosure tamper) | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
 | Native deep-sleep HAL (esp_sleep_* abstraction; ULP-RISC-V capable) | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |

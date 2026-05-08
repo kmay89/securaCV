@@ -41,6 +41,13 @@
 
 #if FEATURE_CSI
 #include "securacv_csi.h"
+#include "csi_modules_integration.h"
+/* Bridge the canary HAL's csi_features_t into the common module
+ * pipeline. Both structs share the same int8 vector + telemetry layout;
+ * the assertion below is the wire-protocol guarantee that a refactor of
+ * either side breaks the build instead of scrambling features at runtime. */
+static_assert(sizeof(csi_features_t) == 36,
+              "canary HAL csi_features_t must be 32 (vector) + 2 (frames) + 1 (bucket) + 1 (caps) bytes");
 #endif
 
 #if FEATURE_ACOUSTIC_EVENTS
@@ -338,11 +345,26 @@ void setup() {
   sensing_init();
   csi_config_t csi_cfg = CSI_CONFIG_DEFAULT;
   if (csi::init(csi_cfg)) {
-    csi::set_features_callback([](const csi_features_t* f) { sensing_feed_csi(f); });
+    /* Register the v1 module pipeline (presence, breathing, activity
+     * ribbon, daily summary, anomaly baseline) BEFORE arming the
+     * features callback. The HAL won't deliver windows until start()
+     * succeeds, but registering early means a deferred-start retry
+     * doesn't race the first feature window. */
+    securacv_csi_modules_init();
+
+    csi::set_features_callback([](const csi_features_t* f) {
+      sensing_feed_csi(f);
+      /* Forward the same window into the common module pipeline.
+       * Pass as void* so this TU stays the only place where both
+       * csi_features_t typedefs are visible (canary HAL and common
+       * library); the size_t static_assert at the top of this file
+       * guards against future struct drift. */
+      securacv_csi_modules_feed(static_cast<const void*>(f));
+    });
     /* WiFi may not yet be running; start() defers itself if so and the
      * deferred-start retry runs from process() until WiFi comes up. */
     if (csi::start()) {
-      Serial.println("[OK] CSI sensing armed (deferred-start safe)");
+      Serial.println("[OK] CSI sensing armed (deferred-start safe, modules registered)");
     } else {
       Serial.println("[WARN] CSI sensing start failed");
     }
