@@ -22,7 +22,8 @@
     "core_presence.h",
     "core_breathing.h",
     "core_activity_ribbon.h",
-    "meta_daily_summary.h"
+    "meta_daily_summary.h",
+    "anomaly_baseline.h"
   ],
   "build": {
     "srcDir": "src",

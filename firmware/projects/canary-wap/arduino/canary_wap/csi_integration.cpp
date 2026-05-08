@@ -54,6 +54,7 @@
 #include <core_breathing.h>
 #include <core_activity_ribbon.h>
 #include <meta_daily_summary.h>
+#include <anomaly_baseline.h>
 
 namespace {
 
@@ -638,6 +639,10 @@ void register_v1_modules() {
   csi_module_register(core_breathing_module());
   csi_module_register(core_activity_ribbon_module());
   csi_module_register(meta_daily_summary_module());
+  /* Tier 3 #7: baseline-aware anomaly detector. P0, no identity, just
+   * "this room rarely looks like that." Watches the same features
+   * stream the four core modules see. */
+  csi_module_register(anomaly_baseline_module());
 }
 
 }  /* namespace */
