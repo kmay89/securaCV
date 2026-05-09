@@ -124,6 +124,7 @@
 #include "web_ui.h"
 #include "companion_pwa.h"
 #include "csi_integration.h"     // Boot the CSI library + HTTP endpoints
+#include "csi_mqtt.h"            // Optional MQTT bridge for HA integration
 #include "csi_witness_payload.h" // Builds the witness-chain payload string
 #include <ble_events_module.h>   // spec §10 BLE event chokepoint helpers
 #include "setup_page_html.h"     // Captive-portal setup page (Tier 5 #11)
@@ -4754,6 +4755,16 @@ static void register_api_routes(httpd_handle_t server) {
   // the dashboard at / bootstraps it through window.__CV_TOKEN injected
   // by handle_ui below.
   csi_integration::init(server, g_device.api_token_str);
+
+  // Optional MQTT bridge (publishes CSI events / health / chain / counts
+  // to a user-supplied broker so custom_components/securacv/ in HA sees
+  // live data). init() is a no-op if disabled in NVS, and idempotent —
+  // re-runs whenever /api/mqtt/config POST changes the broker. We pass
+  // the device id, firmware version, and pubkey hex up front so the
+  // health payload is self-contained.
+  char pubkey_hex[65];
+  hex_to_str(pubkey_hex, g_device.pubkey, 32);
+  csi_mqtt::init(g_device.device_id, FIRMWARE_VERSION, pubkey_hex);
 }
 
 static void start_http_server() {
@@ -4763,7 +4774,7 @@ static void start_http_server() {
   const int mesh_handlers = 12;       // Mesh network endpoints
   const int bluetooth_handlers = 23;  // Bluetooth API endpoints
   const int ble_discovery_handlers = 3; // BLE discovery (Opera/Chirp/Nearby) endpoints
-  const int csi_handlers = 19;       // /api/csi/stream, /api/csi/window, /api/events/today, /api/events/dismiss, /api/csi/calibrate/{start,status,apply}, /sense, /api/settings (GET + POST), /api/privacy-budget, /manifest.webmanifest, /sw.js, /tune, /api/tune/coefficients (GET + POST), /api/tune/preset (GET + POST), /api/pair/token
+  const int csi_handlers = 23;       // /api/csi/stream, /api/csi/window, /api/events/today, /api/events/dismiss, /api/csi/calibrate/{start,status,apply}, /sense, /api/settings (GET + POST), /api/privacy-budget, /manifest.webmanifest, /sw.js, /tune, /api/tune/coefficients (GET + POST), /api/tune/preset (GET + POST), /api/pair/token, /api/mqtt/config (GET + POST), /api/mqtt/test, /mqtt
   const int handler_headroom = 6;     // Reserve for future additions
   const int total_handlers = base_handlers + camera_handlers + mesh_handlers + bluetooth_handlers + ble_discovery_handlers + csi_handlers + handler_headroom;
 
@@ -6171,6 +6182,39 @@ void loop() {
   // is dead and /api/csi/stream returns the boot-fallback "sensing" state
   // forever (see csi_hal.h:39 and firmware/common/csi/README.md:61).
   csi_integration::loop();
+
+  // Optional MQTT bridge — pump (no-op when disabled or unconfigured),
+  // plus three cadence-gated publishers for the topics HA expects.
+  // Schemas locked against custom_components/securacv/sensor.py.
+  csi_mqtt::loop();
+  if (csi_mqtt::connected()) {
+    static uint32_t s_mqtt_status_ms = 0;
+    static uint32_t s_mqtt_health_ms = 0;
+    static uint32_t s_mqtt_counts_last = 0;
+    if (now - s_mqtt_status_ms >= 30000UL) {
+      s_mqtt_status_ms = now;
+      csi_mqtt::publish_status(
+          csi_integration::csi_running(),
+          /*wifi_connected=*/(WiFi.status() == WL_CONNECTED || WiFi.softAPgetStationNum() > 0),
+          /*rssi_dbm=*/(WiFi.status() == WL_CONNECTED) ? (int)WiFi.RSSI() : 0);
+    }
+    if (now - s_mqtt_health_ms >= 60000UL) {
+      s_mqtt_health_ms = now;
+      csi_mqtt::publish_health((uint32_t)ESP.getFreeHeap(),
+                               (uint32_t)uptime_seconds());
+    }
+    // Counts + chain: publish on each increment of records_created
+    // (saves bandwidth vs. heartbeating, and matches HA's expectation
+    // that the topic carries the latest total, not periodic noise).
+    // We use g_device.chain_head rather than g_last_record.chain_hash
+    // because the device-level head is always the canonical latest;
+    // a transient g_last_record could lag if a verifier path failed.
+    if (g_health.records_created != s_mqtt_counts_last) {
+      s_mqtt_counts_last = g_health.records_created;
+      csi_mqtt::publish_counts(g_health.records_created);
+      csi_mqtt::publish_chain(g_device.seq, g_device.chain_head);
+    }
+  }
 
   // Yield before witness record creation
   yield();
