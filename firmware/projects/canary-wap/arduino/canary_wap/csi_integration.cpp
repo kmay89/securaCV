@@ -439,6 +439,50 @@ void apply_privacy_ceiling_from_nvs() {
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
+ * EVENT-ID FLOOR — NVS persistence
+ *
+ * Lifts the cross-reboot collision in event_id allocation. csi_event
+ * starts from g_next_event_id = 1 every boot, so a previous-boot id=50
+ * and a current-boot id=50 are indistinguishable to anything that
+ * tracks ids — most notably csi_mqtt's reconnect-backfill watermark.
+ * PR #395 worked around it by clearing the SD log on cold boot. This
+ * commit removes that workaround by persisting the allocator's next-
+ * id to NVS and restoring at boot.
+ *
+ * Persist cadence: every CSI_ID_PERSIST_STRIDE allocations we write
+ * "current next_id + STRIDE" to NVS. After a reboot we restore from
+ * that persisted value, then continue from there. Worst case we skip
+ * up to STRIDE ids (never reuse one), and NVS write traffic stays
+ * bounded — at the per-module hourly ceiling (~6 events/hour) and
+ * STRIDE=10 we churn ~14 NVS writes/day, well inside the cell wear
+ * budget. ────────────────────────────────────────────────────────── */
+
+constexpr const char*    NVS_KEY_EVENT_ID = "ev.next";
+constexpr uint32_t       CSI_ID_PERSIST_STRIDE = 10;
+uint32_t                 g_id_persisted_at = 0;
+
+void apply_event_id_floor_from_nvs() {
+  Preferences prefs;
+  if (!prefs.begin(SETTINGS_NS, /*readOnly=*/true)) return;
+  const uint32_t persisted = (uint32_t)prefs.getULong(NVS_KEY_EVENT_ID, 0);
+  prefs.end();
+  if (persisted > 0) {
+    csi_event_set_event_id_floor(persisted);
+    g_id_persisted_at = persisted;
+  }
+}
+
+void persist_event_id_floor(uint32_t next_id) {
+  Preferences prefs;
+  if (!prefs.begin(SETTINGS_NS, /*readOnly=*/false)) return;
+  /* Persist next_id + STRIDE so a reboot between persists at most
+   * skips STRIDE ids forward but never rewinds into the live range. */
+  prefs.putULong(NVS_KEY_EVENT_ID, (unsigned long)(next_id + CSI_ID_PERSIST_STRIDE));
+  prefs.end();
+  g_id_persisted_at = next_id;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
  * HTTP HANDLERS
  * ────────────────────────────────────────────────────────────────────────── */
 
@@ -2007,6 +2051,25 @@ extern "C" void csi_event_on_committed(uint32_t                  event_id,
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
+ * STRONG OVERRIDE — csi_event_on_id_advance
+ *
+ * Fires on every event-id allocation. We throttle-persist the next-id
+ * to NVS every CSI_ID_PERSIST_STRIDE advances so a subsequent boot can
+ * resume from "persisted + safety_margin" via apply_event_id_floor_from_nvs.
+ * Without this, a reboot resets g_next_event_id to 1 and csi_mqtt's
+ * reconnect-backfill watermark loses the ability to disambiguate
+ * previous-boot vs current-boot events. ──────────────────────────── */
+
+extern "C" void csi_event_on_id_advance(uint32_t new_id) {
+  /* Cheap modulo gate so we don't hit NVS on every event. STRIDE=10
+   * means worst-case loss is 10 ids on a hard reset; NVS writes stay
+   * around ~14/day at the per-module hourly ceiling, well inside the
+   * cell wear budget. */
+  if (new_id < g_id_persisted_at + CSI_ID_PERSIST_STRIDE) return;
+  persist_event_id_floor(new_id);
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
  * PUBLIC API
  * ────────────────────────────────────────────────────────────────────────── */
 
@@ -2096,6 +2159,15 @@ bool init(httpd_handle_t server, const char* api_token) {
    * Done before HAL start so the very first /api/csi/window request after
    * boot honors the user's prior choice rather than always 403'ing. */
   apply_privacy_ceiling_from_nvs();
+
+  /* Restore the event-id floor from NVS so allocations stay globally
+   * monotone across reboots. Done before any module ticks (which can
+   * call csi_event_emit and trigger an allocation) so the very first
+   * post-reboot id starts at the persisted floor instead of 1. With
+   * this, csi_mqtt's reconnect-backfill watermark stays sound and
+   * csi_event_log no longer needs to wipe the on-disk log on cold
+   * boot to avoid id collisions. */
+  apply_event_id_floor_from_nvs();
 
   /* Bring up the CSI HAL. start() defers until WiFi is up; the deferred
    * retry is silent and handled by csi_hal::process().

@@ -253,9 +253,20 @@ void sanitize_strings(csi_event_values_t* v) {
   sanitize_string_field(v->note,            sizeof(v->note));
 }
 
+/* Weakly-overridable hook fired whenever the allocator hands out a
+ * fresh event_id. The standalone library default is a no-op so a
+ * third-party Arduino sketch links cleanly without supplying an NVS
+ * back-end. canary-wap's csi_integration.cpp provides a strong
+ * override that throttle-persists the floor so allocations stay
+ * globally unique across reboots — without that the watermark in
+ * csi_mqtt's reconnect backfill would be ambiguous (PR #395). */
+extern "C" __attribute__((weak))
+void csi_event_on_id_advance(uint32_t /*new_id*/) {}
+
 uint32_t allocate_event_id() {
   uint32_t id = g_next_event_id++;
   if (id == 0) id = g_next_event_id++;   /* never return 0; that means rejected */
+  csi_event_on_id_advance(id);
   return id;
 }
 
@@ -536,6 +547,37 @@ void csi_event_test_reset(void) {
   s_qh_was_in_window = false;
   s_qh_held_count    = 0;
   csi_bundler_reset();
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * EVENT-ID FLOOR  (host-side persistence hook)
+ *
+ * Lets canary-wap's csi_integration.cpp NVS-persist g_next_event_id so
+ * IDs stay globally unique across reboots — without this, csi_mqtt's
+ * reconnect-backfill watermark gets ambiguous (a fresh boot's id=1
+ * collides with a previous-boot's id=1, and the watermark logic can't
+ * tell them apart). PR #395 worked around it by truncating the SD log
+ * on every cold boot; PR #397 lifts that workaround once IDs are
+ * globally monotonic.
+ *
+ * `floor` is the minimum id the next allocation must be at-or-above.
+ * Set it from NVS at boot to whatever value the previous run last
+ * persisted, plus a safety margin (the host writes "floor + N" every N
+ * allocations, so a hard reset between persists loses at most N ids
+ * but never reuses one).
+ *
+ * The setter only ever moves g_next_event_id FORWARD — a stale or
+ * lower floor is ignored so a malicious / corrupt NVS read can't
+ * rewind ids back into the live range. ────────────────────────────── */
+
+void csi_event_set_event_id_floor(uint32_t floor) {
+  RingLock _lock;
+  if (floor > g_next_event_id) g_next_event_id = floor;
+}
+
+uint32_t csi_event_get_next_event_id(void) {
+  RingLock _lock;
+  return g_next_event_id;
 }
 
 /* ──────────────────────────────────────────────────────────────────────────

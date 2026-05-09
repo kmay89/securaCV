@@ -256,6 +256,39 @@ bool csi_event_dismiss(uint32_t event_id);
  */
 void csi_event_test_reset(void);
 
+/**
+ * Move the event-id allocator's next-id floor up to at least `floor`.
+ * No-op when floor <= the current next-id. Called from canary-wap's
+ * csi_integration::init() at boot to restore the persisted high-water-
+ * mark from NVS so allocations stay globally monotone across reboots.
+ *
+ * Without this, csi_mqtt's reconnect-backfill watermark would be
+ * ambiguous (previous-boot id=1 collides with current-boot id=1) and
+ * the cross-reboot history would either re-publish duplicates or skip
+ * unsent events. PR #395 worked around it by clearing the SD log on
+ * cold boot; this hook lets PR #397 keep the log instead.
+ */
+void csi_event_set_event_id_floor(uint32_t floor);
+
+/**
+ * Read the allocator's next-id (i.e. the value the next allocate_event_id
+ * call would return + 1). The host throttle-persists this to NVS so
+ * subsequent boots can restore via csi_event_set_event_id_floor.
+ */
+uint32_t csi_event_get_next_event_id(void);
+
+/**
+ * Weak hook fired on every successful event-id allocation. Standalone
+ * library default is a no-op. canary-wap's csi_integration.cpp
+ * provides a strong override that NVS-persists the floor every N
+ * advances so a future reboot can resume from the last persist plus a
+ * safety margin (we lose at most N ids but never reuse one).
+ *
+ * Don't call from inside emit() — by the time the hook fires, the
+ * allocator already advanced and the caller is mid-flight.
+ */
+void csi_event_on_id_advance(uint32_t new_id);
+
 #ifdef __cplusplus
 }
 #endif
