@@ -198,6 +198,19 @@ bool pair_token_valid(const char* hex);
  * return false). */
 bool pair_token_consume(const char* hex);
 
+/* ──────────────────────────────────────────────────────────────────────────
+ * SHARED UTILITIES
+ *
+ * Lowercase hex-encode `len` bytes of `in` into `out`, NUL-terminated.
+ * `out` must be sized for 2*len + 1. Exposed publicly so csi_mqtt and
+ * any future export path use one canonical encoder rather than spawning
+ * duplicates (PR #394 review r3213674564). canary_wap.ino has its own
+ * `hex_to_str(out, in, n)` with reversed argument order — that one
+ * stays as-is to avoid touching unrelated callers; new code should
+ * reach for this signature.
+ * ────────────────────────────────────────────────────────────────────────── */
+void hex_encode(const uint8_t* in, size_t len, char* out);
+
 }  /* namespace csi_integration */
 
 #endif /* SECURACV_CSI_INTEGRATION_H */

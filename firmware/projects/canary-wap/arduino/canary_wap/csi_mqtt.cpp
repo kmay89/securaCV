@@ -323,12 +323,9 @@ void publish_chain(uint32_t length, const uint8_t* latest_hash_32) {
   char hash_hex[65];
   hash_hex[0] = '\0';
   if (latest_hash_32) {
-    static const char* H = "0123456789abcdef";
-    for (size_t i = 0; i < 32; ++i) {
-      hash_hex[2*i  ] = H[(latest_hash_32[i] >> 4) & 0xF];
-      hash_hex[2*i+1] = H[ latest_hash_32[i]       & 0xF];
-    }
-    hash_hex[64] = '\0';
+    /* Reuse csi_integration's canonical hex encoder rather than
+     * duplicating the loop here (PR #394 review r3213674564). */
+    csi_integration::hex_encode(latest_hash_32, 32, hash_hex);
   }
   char body[160];
   const int n = snprintf(body, sizeof(body),
@@ -428,7 +425,12 @@ esp_err_t handle_config_get(httpd_req_t* req) {
    * the wire so a casual attacker who somehow obtained a session
    * cookie can't read the broker creds back out of GET. */
   char body[512];
-  const int n = snprintf(body, sizeof(body),
+  /* snprintf return value intentionally unchecked: we send via
+   * HTTPD_RESP_USE_STRLEN below so a truncated payload still has a
+   * NUL terminator and httpd_resp_send walks until it. Using
+   * snprintf's return as the length would walk past the NUL on
+   * truncation and over-read. (PR #394 review r3213674558.) */
+  snprintf(body, sizeof(body),
     "{"
       "\"enabled\":%s,"
       "\"host\":\"%s\","
@@ -449,7 +451,7 @@ esp_err_t handle_config_get(httpd_req_t* req) {
     connected() ? "true" : "false");
   httpd_resp_set_type(req, "application/json");
   httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-  httpd_resp_send(req, body, n);
+  httpd_resp_send(req, body, HTTPD_RESP_USE_STRLEN);
   return ESP_OK;
 }
 
@@ -470,10 +472,31 @@ static bool json_extract_string(const char* body, const char* key,
   p++;  /* past opening quote */
   size_t i = 0;
   while (*p && *p != '"' && i < out_cap - 1) {
-    /* Minimal escape handling: \" → ", \\ → \, \n / \t passed through
-     * raw (not relevant to broker host / username strings). */
-    if (*p == '\\' && (p[1] == '"' || p[1] == '\\')) { out[i++] = p[1]; p += 2; }
-    else { out[i++] = *p++; }
+    /* Standard JSON string escapes — covers everything a broker host /
+     * username / password / prefix could legally carry. \uXXXX is
+     * intentionally NOT decoded: those fields are ASCII in practice
+     * and adding UTF-16 surrogate handling for one corner case isn't
+     * worth the parser surface (PR #394 review r3213674569). An
+     * unrecognised escape passes the next char through literally —
+     * matches how the existing /api/settings POST parser handles
+     * nonsense, and avoids a silent reject for marginally-malformed
+     * input. */
+    if (*p == '\\' && p[1]) {
+      char esc = p[1];
+      switch (esc) {
+        case '"':  out[i++] = '"';  p += 2; break;
+        case '\\': out[i++] = '\\'; p += 2; break;
+        case '/':  out[i++] = '/';  p += 2; break;
+        case 'b':  out[i++] = '\b'; p += 2; break;
+        case 'f':  out[i++] = '\f'; p += 2; break;
+        case 'n':  out[i++] = '\n'; p += 2; break;
+        case 'r':  out[i++] = '\r'; p += 2; break;
+        case 't':  out[i++] = '\t'; p += 2; break;
+        default:   out[i++] = esc;  p += 2; break;
+      }
+    } else {
+      out[i++] = *p++;
+    }
   }
   out[i] = '\0';
   return true;

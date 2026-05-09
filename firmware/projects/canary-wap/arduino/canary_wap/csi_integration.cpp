@@ -1499,14 +1499,11 @@ struct PairSlot {
 };
 PairSlot g_pair_slots[PAIR_SLOTS] = {};
 
-void hex_encode(const uint8_t* in, size_t len, char* out) {
-  static const char* H = "0123456789abcdef";
-  for (size_t i = 0; i < len; ++i) {
-    out[2*i  ] = H[(in[i] >> 4) & 0xF];
-    out[2*i+1] = H[ in[i]       & 0xF];
-  }
-  out[2*len] = '\0';
-}
+/* hex_encode lives in the public csi_integration namespace (see the
+ * definition near the bottom of this file) so csi_mqtt and any future
+ * export path share one canonical encoder. The internal callers below
+ * reach it via unqualified lookup since they're already inside
+ * namespace csi_integration. */
 
 bool hex_decode_to(const char* hex, uint8_t* out, size_t out_len) {
   if (!hex || strlen(hex) != out_len * 2) return false;
@@ -2323,5 +2320,18 @@ bool csi_get_stats(csi_stats_t* out) {
   return csi_hal::get_stats(out);
 }
 
+/* Single source of truth for lowercase hex encoding. Moved out of the
+ * anonymous namespace so csi_mqtt and other exporters can call it
+ * with a qualified name, and so the internal session/pair-token
+ * issuance paths and the new csi_mqtt::publish_chain converge on one
+ * implementation (PR #394 review r3213674564). */
+void hex_encode(const uint8_t* in, size_t len, char* out) {
+  static const char* H = "0123456789abcdef";
+  for (size_t i = 0; i < len; ++i) {
+    out[2*i  ] = H[(in[i] >> 4) & 0xF];
+    out[2*i+1] = H[ in[i]       & 0xF];
+  }
+  out[2*len] = '\0';
+}
 
 }  /* namespace csi_integration */
