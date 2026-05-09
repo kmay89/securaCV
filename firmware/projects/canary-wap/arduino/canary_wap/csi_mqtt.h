@@ -104,12 +104,32 @@ bool connected();
  * Push one CSI event to {prefix}/{device_id}/events. Called from the
  * csi_event_on_committed() strong override after the chokepoint has
  * cleared the event. No-op when MQTT is disabled or disconnected.
+ *
+ * event_id is the same id csi_event allocated; tracked internally as
+ * the high-water-mark of "events HA has seen" so a subsequent MQTT
+ * reconnect knows where to start the backfill replay.
  */
-void publish_event(const char*               module_id,
+void publish_event(uint32_t                  event_id,
+                   const char*               module_id,
                    const char*               type_name,
                    csi_event_category_t      category,
                    csi_privacy_class_t       privacy,
                    const csi_event_values_t* values);
+
+/**
+ * Replay an on-disk event during MQTT-reconnect backfill. Same wire
+ * format as publish_event but anchors the timestamp at the original
+ * first_seen_ms (so HA's history places the event at the right
+ * moment instead of "now") and uses the persisted bundled_count.
+ * Called by the main-loop drain triggered when the MQTT bridge
+ * reconnects after an outage.
+ *
+ * Returns true on successful enqueue so the backfill iterator can
+ * stop mid-replay if a publish fails — letting later successes
+ * advance the watermark past a failed record would permanently
+ * skip it on subsequent reconnects.
+ */
+bool publish_event_record(const csi_event_record_t* rec);
 
 /**
  * Push the witness-chain head to {prefix}/{device_id}/chain.
