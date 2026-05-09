@@ -501,29 +501,6 @@ bool csi_event_find(uint32_t event_id, csi_event_record_t* out) {
   return false;
 }
 
-bool csi_event_inject(const csi_event_record_t* rec) {
-  if (!rec || rec->event_id == 0) return false;
-  RingLock _lock;
-  /* If an entry with this id is already in the ring (e.g. SD log
-   * contains an event we already saw this boot via the live commit
-   * path), update it in place rather than duplicating. Cheap linear
-   * scan; the ring is small. */
-  for (size_t i = 0; i < CSI_EVENT_RING_CAP; ++i) {
-    if (g_ring[i].event_id == rec->event_id) {
-      g_ring[i] = *rec;
-      if (rec->event_id >= g_next_event_id) g_next_event_id = rec->event_id + 1;
-      return true;
-    }
-  }
-  /* Not present — append at the head, evicting the oldest slot. */
-  g_ring[g_ring_head] = *rec;
-  g_ring_head = (g_ring_head + 1) % CSI_EVENT_RING_CAP;
-  /* Keep the allocator monotone so a fresh emit after rehydration
-   * doesn't collide with a replayed id. */
-  if (rec->event_id >= g_next_event_id) g_next_event_id = rec->event_id + 1;
-  return true;
-}
-
 bool csi_event_dismiss(uint32_t event_id) {
   if (event_id == 0) return false;
   bool found = false;

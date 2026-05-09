@@ -227,39 +227,10 @@ bool append(const csi_event_record_t* rec) {
   return wrote == n;
 }
 
-size_t load_into_ring() {
-  if (!sd_path_ready()) return 0;
-  File f = SD.open(LOG_PATH, FILE_READ);
-  if (!f) return 0;
-
-  size_t loaded = 0;
-  /* Read line-by-line. SD.h doesn't expose getline, so we hand-roll
-   * a small ring with a fixed cap. Lines longer than the cap are
-   * truncated — they'd fail parse_line's id check and silently
-   * dropped, which is the right behavior for a corrupt entry. */
-  char line[512];
-  size_t li = 0;
-  while (f.available() && loaded < CSI_EVENT_RING_CAP) {
-    const int c = f.read();
-    if (c < 0) break;
-    if (c == '\n') {
-      line[li] = '\0';
-      csi_event_record_t rec;
-      if (parse_line(line, &rec) && csi_event_inject(&rec)) loaded++;
-      li = 0;
-    } else if (li < sizeof(line) - 1) {
-      line[li++] = (char)c;
-    }
-  }
-  /* Terminal line without trailing newline (power-cut mid-write) — try it. */
-  if (li > 0) {
-    line[li] = '\0';
-    csi_event_record_t rec;
-    if (parse_line(line, &rec) && csi_event_inject(&rec)) loaded++;
-  }
-  f.close();
-  return loaded;
-}
+/* load_into_ring() deferred — see csi_event_log.h. The csi_event_inject
+ * helper it needs in the canonical library would touch firmware/common/csi
+ * AND its staged copy in lockstep, which is its own scope. The MQTT
+ * backfill path below does NOT depend on it and works as-is. */
 
 size_t iterate_since(uint32_t since_event_id, iterate_cb_t cb, void* user) {
   if (!cb || !sd_path_ready()) return 0;

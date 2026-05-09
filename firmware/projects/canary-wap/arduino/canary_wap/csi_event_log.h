@@ -78,11 +78,16 @@ bool init();
 bool append(const csi_event_record_t* rec);
 
 /**
- * Read the on-disk log and call csi_event_inject for each parseable
- * line. Caps at CSI_EVENT_RING_CAP rows so a long log doesn't trample
- * a fresh boot's first events. Returns the number of records loaded.
+ * Reserved for a future commit that adds a csi_event_inject helper to
+ * the canonical CSI library — would re-insert each persisted record
+ * back into the in-memory ring at boot so /api/events/today returns
+ * yesterday's tail before a fresh event commits. Not wired today
+ * (touching the canonical library + sketch staged copy in lockstep
+ * is its own scope; see PR #395 review history). The MQTT bridge
+ * backfill via iterate_since() does NOT depend on this — it walks
+ * the on-disk log directly.
  */
-size_t load_into_ring();
+/* size_t load_into_ring(); */  /* deferred */
 
 /**
  * Iterate events with id strictly greater than `since_event_id` and

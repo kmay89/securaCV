@@ -5738,18 +5738,14 @@ void setup() {
       if (!SD.exists("/CHAIN")) SD.mkdir("/CHAIN");
       if (!SD.exists("/EXPORT")) SD.mkdir("/EXPORT");
 
-      // CSI event persistence: rehydrate today's ring from
-      // /EVENTS/today.ndjson so /api/events/today still has yesterday's
-      // tail before any new event commits this boot, and so the MQTT
-      // bridge has something to backfill from on its first reconnect.
-      // No-op if the file is missing or the ring API rejects the
-      // record (corrupt line, etc.) — silent and best-effort.
+      // CSI event persistence: open /EVENTS/today.ndjson so the MQTT
+      // bridge's reconnect path has something to backfill from. The
+      // boot-time ring rehydration (re-populating /api/events/today
+      // with yesterday's tail) is deferred — it needs a csi_event_inject
+      // helper in the canonical CSI library that would touch the
+      // firmware/common/csi sources + the staged copy in lockstep, and
+      // that's a separate scope.
       csi_event_log::init();
-      const size_t loaded = csi_event_log::load_into_ring();
-      if (loaded > 0) {
-        Serial.printf("[EVT-LOG] rehydrated %u events from /EVENTS/today.ndjson\n",
-                      (unsigned)loaded);
-      }
 
       Serial.println("[OK] SD card ready for witness records");
       log_health(SCV_LOG_INFO, SCV_CAT_STORAGE, "SD card mounted", nullptr);
