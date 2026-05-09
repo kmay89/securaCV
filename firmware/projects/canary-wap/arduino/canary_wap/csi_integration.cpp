@@ -177,6 +177,126 @@ struct Snapshot {
 Snapshot g_snapshot = {};
 
 /* ──────────────────────────────────────────────────────────────────────────
+ * THRESHOLD CALIBRATION
+ *
+ * The default core.presence thresholds (motion=35, active=75, breathing=30)
+ * are tuned for a "typical" mid-noise apartment. Users in quieter RF
+ * environments (rural homes, single-occupant studios, screened rooms) see
+ * the orb sit on "Sensing…" forever because their ambient never crosses
+ * the floor. Calibration solves that by sampling the room with no person
+ * moving for ~10 s, then proposing thresholds that sit a margin above
+ * the observed ambient noise.
+ *
+ * The state machine is driven by on_csi_window: when state == RUNNING we
+ * accumulate motion / breathing magnitudes, track the per-window max +
+ * running sum, and after CALIB_WINDOWS samples compute proposed
+ * thresholds. The dashboard polls /api/csi/calibrate/status to render the
+ * progress bar and the proposed-vs-current diff, then POSTs to
+ * /api/csi/calibrate/apply to persist the proposal.
+ *
+ * Layout note: the indices below mirror the ones used by handle_stream
+ * (IDX_DOPPLER_BASE / IDX_BREATHING_BASE) but the calibration uses the
+ * same reduce-to-magnitude transform as core_presence.cpp so the
+ * proposed thresholds compare apples-to-apples with what the module
+ * actually sees at runtime. ────────────────────────────────────────── */
+
+constexpr uint32_t CALIB_WINDOWS    = 10;     /* ~10 s at the 1 Hz library rate */
+constexpr uint32_t CALIB_TIMEOUT_MS = 30UL * 1000UL;
+/* Margin added above observed ambient max. Big enough that breath-of-pet
+ * RF flicker doesn't sit at exactly the threshold; small enough that a
+ * truly quiet room ends up with very sensitive thresholds. The "safe
+ * floor" lower-bound (5) and upper-bound (120) match the same clamp the
+ * Tuning Lab + module init path apply, so a calibration result is always
+ * a valid coefficient value out of the box. */
+constexpr int32_t  CALIB_MARGIN     = 10;
+constexpr int32_t  CALIB_FLOOR      = 5;
+constexpr int32_t  CALIB_CEILING    = 120;
+
+enum CalibState : uint8_t {
+  CALIB_IDLE = 0,
+  CALIB_RUNNING,
+  CALIB_READY,
+  CALIB_TIMED_OUT,   /* Sampler started but no windows arrived (HAL stalled). */
+};
+
+struct Calibration {
+  CalibState state;
+  uint32_t   started_ms;
+  uint32_t   samples;            /* count of windows accumulated */
+  uint8_t    max_motion;         /* observed ambient peak */
+  uint8_t    max_breathing;
+  uint32_t   sum_motion;         /* for the dashboard's "average" readout */
+  uint32_t   sum_breathing;
+  /* Proposed thresholds, populated when state == CALIB_READY. */
+  uint8_t    proposed_motion;
+  uint8_t    proposed_active;
+  uint8_t    proposed_breathing;
+};
+
+Calibration g_calibration = {};
+
+uint8_t calib_clamp(int32_t v) {
+  if (v < CALIB_FLOOR)   return (uint8_t)CALIB_FLOOR;
+  if (v > CALIB_CEILING) return (uint8_t)CALIB_CEILING;
+  return (uint8_t)v;
+}
+
+/* Same reduce-to-magnitude as core_presence.cpp::reduce_magnitude.
+ * Keeping the math local avoids a cross-TU dependency on the module's
+ * internals — if the module changes its v[] layout, the constants
+ * IDX_DOPPLER_BASE etc. above already need updating in lockstep, so
+ * this helper isn't gaining a coupling we don't already have. */
+uint8_t calib_reduce(const int8_t* v, int from, int count) {
+  int32_t sum = 0;
+  for (int i = from; i < from + count; ++i) {
+    int8_t s = v[i];
+    sum += (s < 0) ? -(int32_t)s : (int32_t)s;
+  }
+  if (count <= 0) return 0;
+  int32_t avg = sum / count;
+  if (avg > 127) avg = 127;
+  return (uint8_t)avg;
+}
+
+void calibration_finalize() {
+  /* Proposal: ambient_max + CALIB_MARGIN, clamped to the same envelope
+   * the Tuning Lab uses. The active threshold sits 40 above motion
+   * (matches the +40 offset the "balanced" preset uses internally). */
+  const int32_t prop_motion =
+      (int32_t)g_calibration.max_motion + CALIB_MARGIN;
+  const int32_t prop_active = prop_motion + 40;
+  const int32_t prop_breath =
+      (int32_t)g_calibration.max_breathing + CALIB_MARGIN;
+  g_calibration.proposed_motion    = calib_clamp(prop_motion);
+  g_calibration.proposed_active    = calib_clamp(prop_active);
+  g_calibration.proposed_breathing = calib_clamp(prop_breath);
+  g_calibration.state              = CALIB_READY;
+}
+
+void calibration_observe(const csi_features_t* features) {
+  if (g_calibration.state != CALIB_RUNNING) return;
+  /* Hard timeout in case the HAL stalls mid-calibration — without this
+   * the dashboard would just spin forever on /status. */
+  if ((millis() - g_calibration.started_ms) >= CALIB_TIMEOUT_MS &&
+      g_calibration.samples == 0) {
+    g_calibration.state = CALIB_TIMED_OUT;
+    return;
+  }
+  /* IDX_DOPPLER_BASE/IDX_BREATHING_BASE are anonymous-namespace
+   * constants further up; reuse them here. */
+  const uint8_t m = calib_reduce(features->v,
+      IDX_DOPPLER_BASE, IDX_DOPPLER_COUNT);
+  const uint8_t b = calib_reduce(features->v,
+      IDX_BREATHING_BASE, IDX_BREATHING_COUNT);
+  if (m > g_calibration.max_motion)    g_calibration.max_motion    = m;
+  if (b > g_calibration.max_breathing) g_calibration.max_breathing = b;
+  g_calibration.sum_motion    += m;
+  g_calibration.sum_breathing += b;
+  g_calibration.samples++;
+  if (g_calibration.samples >= CALIB_WINDOWS) calibration_finalize();
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
  * CSI features callback — drives the module pipeline + legacy fusion.
  * ────────────────────────────────────────────────────────────────────────── */
 
@@ -184,6 +304,10 @@ void on_csi_window(const csi_features_t* features, void* /*user*/) {
   if (!features) return;
   g_latest_window      = *features;
   g_have_latest_window = true;
+  /* Calibration runs in parallel with the normal module pipeline so a
+   * user can hit Calibrate without disrupting live presence updates;
+   * calibration_observe is a fast accumulator, no allocation. */
+  calibration_observe(features);
   csi_module_tick_all(features);
   if (g_legacy_hook) g_legacy_hook(features);
 }
@@ -516,6 +640,141 @@ esp_err_t handle_events_dismiss(httpd_req_t* req) {
   const bool ok = csi_event_dismiss(event_id);
   httpd_resp_set_type(req, "application/json");
   httpd_resp_send(req, ok ? "{\"ok\":true}" : "{\"ok\":false}", -1);
+  return ESP_OK;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * /api/csi/calibrate/{start,status,apply}
+ *
+ * Threshold auto-calibration. The dashboard guides the user through a
+ * ~10 s observation of an empty / still room, then proposes thresholds
+ * a margin above the observed ambient. The user accepts or cancels.
+ *
+ * Wire shape:
+ *   POST /api/csi/calibrate/start   →  {"ok":true,"duration_sec":10}
+ *   GET  /api/csi/calibrate/status  →
+ *     while running:
+ *       {"state":"running","samples":N,"target":10}
+ *     when done:
+ *       {"state":"ready","samples":10,
+ *        "max_motion":M,"max_breathing":B,
+ *        "proposed":{"motion":X,"active":Y,"breathing":Z},
+ *        "current":{"motion":X0,"active":Y0,"breathing":Z0}}
+ *     timed out (HAL not running):
+ *       {"state":"timed_out"}
+ *     never started:
+ *       {"state":"idle"}
+ *   POST /api/csi/calibrate/apply   →  {"ok":true}  (writes NVS, reinits
+ *                                                   core.presence)
+ * ────────────────────────────────────────────────────────────────────────── */
+
+esp_err_t handle_calibrate_start(httpd_req_t* req) {
+  CSI_AUTH_OR_RETURN(req);
+  /* Reset the accumulator and arm. Calling start() while a previous
+   * run is RUNNING / READY is fine — the user re-clicked Calibrate. */
+  g_calibration = {};
+  g_calibration.state      = CALIB_RUNNING;
+  g_calibration.started_ms = millis();
+  httpd_resp_set_type(req, "application/json");
+  char buf[64];
+  snprintf(buf, sizeof(buf),
+    "{\"ok\":true,\"duration_sec\":%lu}",
+    (unsigned long)CALIB_WINDOWS);  /* 1 Hz library rate → seconds = windows */
+  httpd_resp_send(req, buf, -1);
+  return ESP_OK;
+}
+
+esp_err_t handle_calibrate_status(httpd_req_t* req) {
+  CSI_AUTH_OR_RETURN(req);
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+
+  /* Read the current persisted thresholds so the dashboard can render
+   * a "before / after" diff without an extra fetch. We read NVS rather
+   * than the module's runtime state to match what the user would see
+   * if they reopened the page (NVS is the source of truth across
+   * reboots). */
+  Preferences prefs;
+  bool prefs_ok = prefs.begin(SETTINGS_NS, /*readOnly=*/true);
+  const int32_t cur_motion =
+      prefs_ok ? prefs.getInt("cp.mt", 35) : 35;
+  const int32_t cur_active =
+      prefs_ok ? prefs.getInt("cp.at", 75) : 75;
+  const int32_t cur_breath =
+      prefs_ok ? prefs.getInt("cp.bt", 30) : 30;
+  if (prefs_ok) prefs.end();
+
+  char buf[320];
+  switch (g_calibration.state) {
+    case CALIB_IDLE:
+      snprintf(buf, sizeof(buf), "{\"state\":\"idle\"}");
+      break;
+    case CALIB_TIMED_OUT:
+      snprintf(buf, sizeof(buf),
+        "{\"state\":\"timed_out\","
+         "\"hint\":\"sensing not running; check /api/status csi.running\"}");
+      break;
+    case CALIB_RUNNING:
+      snprintf(buf, sizeof(buf),
+        "{\"state\":\"running\",\"samples\":%lu,\"target\":%lu}",
+        (unsigned long)g_calibration.samples,
+        (unsigned long)CALIB_WINDOWS);
+      break;
+    case CALIB_READY:
+    default:
+      snprintf(buf, sizeof(buf),
+        "{\"state\":\"ready\",\"samples\":%lu,"
+         "\"max_motion\":%u,\"max_breathing\":%u,"
+         "\"proposed\":{\"motion\":%u,\"active\":%u,\"breathing\":%u},"
+         "\"current\":{\"motion\":%ld,\"active\":%ld,\"breathing\":%ld}}",
+        (unsigned long)g_calibration.samples,
+        (unsigned)g_calibration.max_motion,
+        (unsigned)g_calibration.max_breathing,
+        (unsigned)g_calibration.proposed_motion,
+        (unsigned)g_calibration.proposed_active,
+        (unsigned)g_calibration.proposed_breathing,
+        (long)cur_motion, (long)cur_active, (long)cur_breath);
+      break;
+  }
+  httpd_resp_send(req, buf, -1);
+  return ESP_OK;
+}
+
+esp_err_t handle_calibrate_apply(httpd_req_t* req) {
+  CSI_AUTH_OR_RETURN(req);
+  httpd_resp_set_type(req, "application/json");
+
+  /* Refuse if the most recent calibration didn't actually finish — we
+   * don't want to silently apply stale or nonsense values. */
+  if (g_calibration.state != CALIB_READY) {
+    httpd_resp_set_status(req, "409 Conflict");
+    httpd_resp_send(req,
+      "{\"ok\":false,\"reason\":\"no calibration ready; call /start first\"}",
+      -1);
+    return ESP_OK;
+  }
+
+  Preferences prefs;
+  if (!prefs.begin(SETTINGS_NS, /*readOnly=*/false)) {
+    httpd_resp_set_status(req, "500 Internal Server Error");
+    httpd_resp_send(req, "{\"ok\":false,\"reason\":\"nvs unavailable\"}", -1);
+    return ESP_OK;
+  }
+  prefs.putInt("cp.mt", (int32_t)g_calibration.proposed_motion);
+  prefs.putInt("cp.at", (int32_t)g_calibration.proposed_active);
+  prefs.putInt("cp.bt", (int32_t)g_calibration.proposed_breathing);
+  prefs.end();
+
+  /* Reinit core.presence so the new thresholds take effect on the next
+   * tick — no reboot needed. Mirrors the reinit path in
+   * handle_settings_post. */
+  reinit_module("core.presence");
+
+  /* Mark the calibration consumed so a subsequent /status returns idle
+   * (avoids the dashboard showing the same proposal again). */
+  g_calibration.state = CALIB_IDLE;
+
+  httpd_resp_send(req, "{\"ok\":true}", -1);
   return ESP_OK;
 }
 
@@ -1862,6 +2121,24 @@ bool init(httpd_handle_t server, const char* api_token) {
     .uri = "/api/events/dismiss", .method = HTTP_POST, .handler = handle_events_dismiss
   };
   httpd_register_uri_handler(server, &r_dismiss);
+
+  /* /api/csi/calibrate/{start,status,apply} — threshold auto-calibration.
+   * The dashboard guides the user through ~10 s of "stand still" sampling,
+   * computes proposed thresholds a margin above the observed ambient,
+   * then applies on accept. canary_wap.ino's start_http_server route
+   * budget reserves three slots for these. */
+  static httpd_uri_t r_calib_start = {
+    .uri = "/api/csi/calibrate/start", .method = HTTP_POST, .handler = handle_calibrate_start
+  };
+  httpd_register_uri_handler(server, &r_calib_start);
+  static httpd_uri_t r_calib_status = {
+    .uri = "/api/csi/calibrate/status", .method = HTTP_GET, .handler = handle_calibrate_status
+  };
+  httpd_register_uri_handler(server, &r_calib_status);
+  static httpd_uri_t r_calib_apply = {
+    .uri = "/api/csi/calibrate/apply", .method = HTTP_POST, .handler = handle_calibrate_apply
+  };
+  httpd_register_uri_handler(server, &r_calib_apply);
 
   /* /sense is kept as an alias for the headline dashboard for backward
    * compatibility — the canonical landing route is now "/" (handled by

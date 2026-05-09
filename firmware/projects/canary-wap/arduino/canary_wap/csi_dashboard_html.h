@@ -757,6 +757,21 @@ static const char CSI_DASHBOARD_HTML[] PROGMEM = R"DASHBOARD(<!doctype html>
   body.is-calibrating .calibrating-mask { opacity: 1; pointer-events: auto; }
   .calibrating-mask .label { font-size: 18px; color: var(--fg); }
   .calibrating-mask .count { font-size: 56px; font-weight: 600; color: var(--fg); margin-top: 8px; letter-spacing: -0.02em; }
+  /* The "ready" state replaces the running countdown with a small
+   * proposed-vs-current diff and accept/cancel buttons. Same mask, two
+   * mutually-exclusive panels controlled by data-state on the wrapper. */
+  .calib-running, .calib-ready { display: none; }
+  .calibrating-mask[data-state="running"] .calib-running { display: block; }
+  .calibrating-mask[data-state="ready"]   .calib-ready   { display: block; }
+  .calib-ready { max-width: 320px; margin: 0 auto; }
+  .calib-ready h3 { font-size: 22px; font-weight: 500; margin: 0 0 8px; color: var(--fg); }
+  .calib-ready .row { display: flex; justify-content: space-between; padding: 6px 0; font-size: 14px; color: var(--fg); }
+  .calib-ready .row .now { color: var(--fg-mute); text-decoration: line-through; margin-right: 8px; }
+  .calib-ready .row .next { font-weight: 500; color: var(--orb-3); }
+  .calib-ready .actions { display: flex; gap: 12px; margin-top: 18px; justify-content: center; }
+  .calib-ready button { font: inherit; padding: 10px 22px; border-radius: 12px; border: 0; cursor: pointer; }
+  .calib-ready .accept { background: var(--orb-3); color: #1a1605; font-weight: 500; }
+  .calib-ready .cancel { background: transparent; color: var(--fg-mute); border: 1px solid var(--fg-mute); }
   @media (prefers-color-scheme: dark) { .calibrating-mask { background: rgba(0,0,0,0.55); } }
 </style>
 </head>
@@ -873,11 +888,31 @@ static const char CSI_DASHBOARD_HTML[] PROGMEM = R"DASHBOARD(<!doctype html>
 </div>
 
 <!-- Calibration overlay -->
-<div class="calibrating-mask" id="calibratingMask">
-  <div>
+<div class="calibrating-mask" id="calibratingMask" data-state="running">
+  <div class="calib-running">
     <div class="label">Learning your empty room.</div>
-    <div class="count" id="calibrateCount">60</div>
-    <div class="label" style="margin-top:8px">Step out for a minute.</div>
+    <div class="count" id="calibrateCount">10</div>
+    <div class="label" style="margin-top:8px">Step out for ten seconds.</div>
+  </div>
+  <div class="calib-ready">
+    <h3>Got it.</h3>
+    <p class="label" style="margin-bottom:10px">Here is what the canary suggests:</p>
+    <div class="row">
+      <span>Motion</span>
+      <span><span class="now" id="calibCurMotion">—</span><span class="next" id="calibNextMotion">—</span></span>
+    </div>
+    <div class="row">
+      <span>Active</span>
+      <span><span class="now" id="calibCurActive">—</span><span class="next" id="calibNextActive">—</span></span>
+    </div>
+    <div class="row">
+      <span>Breathing</span>
+      <span><span class="now" id="calibCurBreath">—</span><span class="next" id="calibNextBreath">—</span></span>
+    </div>
+    <div class="actions">
+      <button class="cancel" id="calibCancelBtn">Keep current</button>
+      <button class="accept" id="calibAcceptBtn">Use these</button>
+    </div>
   </div>
 </div>
 
@@ -944,9 +979,10 @@ const COPY = {
      * count is rendered into its own <div class="count"> sibling and is
      * NOT a placeholder in these strings. */
     label:    "The canary is learning your empty room.",
-    stepOut:  "Step out for a minute.",
+    stepOut:  "Step out for ten seconds.",
     btn:      "Calibrate empty room",
     done:     "Got it. The canary knows your room now.",
+    error:    "Sensing is offline. Try again in a moment.",
   },
   today: {
     empty: "Quiet so far today. The canary is perched, head cocked.",
@@ -1782,26 +1818,107 @@ audioSwitch.addEventListener('click', () => {
   setSwitch(audioSwitch, window.AUDIO_ON);
 });
 
-const calibrateBtn   = document.getElementById('calibrateBtn');
-const calibrateMask  = document.getElementById('calibratingMask');
-const calibrateCount = document.getElementById('calibrateCount');
-calibrateBtn.addEventListener('click', () => {
+const calibrateBtn      = document.getElementById('calibrateBtn');
+const calibrateMask     = document.getElementById('calibratingMask');
+const calibrateCount    = document.getElementById('calibrateCount');
+const calibAcceptBtn    = document.getElementById('calibAcceptBtn');
+const calibCancelBtn    = document.getElementById('calibCancelBtn');
+const calibCurMotion    = document.getElementById('calibCurMotion');
+const calibCurActive    = document.getElementById('calibCurActive');
+const calibCurBreath    = document.getElementById('calibCurBreath');
+const calibNextMotion   = document.getElementById('calibNextMotion');
+const calibNextActive   = document.getElementById('calibNextActive');
+const calibNextBreath   = document.getElementById('calibNextBreath');
+
+/* End the overlay regardless of success / cancel / error. Single tear-down
+ * spot so the body class, the running flag, and the button label all flip
+ * back together. */
+function endCalibration(label) {
+  document.body.classList.remove('is-calibrating');
+  calibrateMask.dataset.state = 'running';
+  calibrateBtn.dataset.running = '0';
+  if (label) {
+    calibrateBtn.textContent = label;
+    setTimeout(() => calibrateBtn.textContent = COPY.calibrate.btn, 3000);
+  }
+}
+
+/* Poll /api/csi/calibrate/status until the device reports ready or
+ * timed_out. The recursive setTimeout cadence (rather than setInterval)
+ * matches pollStream's pattern — a slow response can't pile up parallel
+ * polls. The countdown is derived from samples vs target so the display
+ * tracks what the device actually saw, not a JS-side guess that drifts
+ * from reality if a window dropped. */
+async function pollCalibrationStatus(target) {
+  let firstReply = true;
+  async function loop() {
+    let j;
+    try {
+      const r = await cvFetch('/api/csi/calibrate/status', {cache: 'no-store'});
+      if (!r.ok) throw new Error('status not ok');
+      j = await r.json();
+    } catch {
+      endCalibration(COPY.calibrate.error);
+      return;
+    }
+    if (j.state === 'running') {
+      const remain = Math.max(0, target - (j.samples | 0));
+      calibrateCount.textContent = remain;
+      setTimeout(loop, firstReply ? 250 : 800);
+      firstReply = false;
+    } else if (j.state === 'ready') {
+      calibCurMotion.textContent  = (j.current.motion  | 0);
+      calibCurActive.textContent  = (j.current.active  | 0);
+      calibCurBreath.textContent  = (j.current.breathing | 0);
+      calibNextMotion.textContent = (j.proposed.motion  | 0);
+      calibNextActive.textContent = (j.proposed.active  | 0);
+      calibNextBreath.textContent = (j.proposed.breathing | 0);
+      calibrateMask.dataset.state = 'ready';
+    } else {
+      /* idle or timed_out — both mean "we have nothing useful to show". */
+      endCalibration(COPY.calibrate.error);
+    }
+  }
+  loop();
+}
+
+calibrateBtn.addEventListener('click', async () => {
   if (calibrateBtn.dataset.running === '1') return;
   calibrateBtn.dataset.running = '1';
+  calibrateMask.dataset.state = 'running';
   document.body.classList.add('is-calibrating');
-  let secs = 60;
-  calibrateCount.textContent = secs;
-  const tid = setInterval(() => {
-    secs--;
-    calibrateCount.textContent = secs;
-    if (secs <= 0) {
-      clearInterval(tid);
-      document.body.classList.remove('is-calibrating');
-      calibrateBtn.dataset.running = '0';
-      calibrateBtn.textContent = COPY.calibrate.done;
-      setTimeout(() => calibrateBtn.textContent = COPY.calibrate.btn, 3000);
-    }
-  }, 1000);
+  /* Default countdown until the first /status returns the real target. */
+  calibrateCount.textContent = 10;
+  let target = 10;
+  try {
+    const r = await cvFetch('/api/csi/calibrate/start', {method: 'POST'});
+    if (!r.ok) throw new Error('start not ok');
+    const j = await r.json();
+    if (typeof j.duration_sec === 'number' && j.duration_sec > 0) target = j.duration_sec;
+    calibrateCount.textContent = target;
+  } catch {
+    endCalibration(COPY.calibrate.error);
+    return;
+  }
+  pollCalibrationStatus(target);
+});
+
+calibAcceptBtn.addEventListener('click', async () => {
+  try {
+    const r = await cvFetch('/api/csi/calibrate/apply', {method: 'POST'});
+    if (!r.ok) throw new Error('apply not ok');
+    endCalibration(COPY.calibrate.done);
+  } catch {
+    endCalibration(COPY.calibrate.error);
+  }
+});
+
+calibCancelBtn.addEventListener('click', () => {
+  /* No /cancel endpoint — the device just garbage-collects the
+   * proposal on the next /start (which resets g_calibration). The
+   * dashboard side closes the overlay and the user keeps current
+   * thresholds. */
+  endCalibration(null);
 });
 
 /* ────────────────────────────────────────────────────────────────────────
