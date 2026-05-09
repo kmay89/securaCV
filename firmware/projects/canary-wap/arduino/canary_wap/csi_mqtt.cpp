@@ -606,11 +606,18 @@ const DiscoveryEntity ENTITIES[] = {
 bool publish_one_discovery(const DiscoveryEntity& e) {
   const char* prefix = s_active_cfg.prefix[0] ? s_active_cfg.prefix : DEFAULT_PREFIX;
 
-  /* Topic: homeassistant/{component}/canary_<device_id>/{object_id}/config */
+  /* Topic: homeassistant/{component}/canary_<device_id>/{object_id}/config.
+   * Validate against truncation — a clipped topic would publish to a
+   * different path than HA expects to subscribe on, silently breaking
+   * the entity (PR #396 review r3213930617). 192 bytes covers the
+   * worst case (DISCOVERY_PREFIX 13 + component 13 + "canary_" 7 +
+   * device_id 32 + "/" + object_id 16 + "/config" 7 ≈ 90), so any
+   * truncation here is a programming error worth bailing on. */
   char topic[192];
-  snprintf(topic, sizeof(topic),
+  const int tn = snprintf(topic, sizeof(topic),
            "%s/%s/canary_%s/%s/config",
            DISCOVERY_PREFIX, e.component, s_device_id, e.object_id);
+  if (tn <= 0 || (size_t)tn >= sizeof(topic)) return false;
 
   /* Build optional-field segments first so the final snprintf is one
    * call (snprintf into a moving cursor would be more bytes of code
@@ -660,12 +667,21 @@ bool publish_one_discovery(const DiscoveryEntity& e) {
 /* Publish all discovery payloads. Called from MQTT_EVENT_CONNECTED
  * AFTER the online-status publish so HA sees the device as online
  * before the entity definitions reference its availability topic.
- * No-op when discovery is disabled in NVS. */
+ * No-op when discovery is disabled in NVS.
+ *
+ * Bails on the first failed publish — if esp_mqtt's queue is full or
+ * the broker dropped between the status publish and the discovery
+ * burst, the remaining payloads almost certainly fail too, and
+ * issuing them only burns task time and wifi airtime. The next
+ * MQTT_EVENT_CONNECTED republishes the full set (retained, so HA
+ * sees the latest version regardless), so an interrupted run is
+ * self-healing. (PR #396 review r3213930620.) */
 void publish_discovery() {
   if (!s_active_cfg.discovery) return;
   size_t ok = 0;
   for (const DiscoveryEntity& e : ENTITIES) {
-    if (publish_one_discovery(e)) ok++;
+    if (!publish_one_discovery(e)) break;
+    ok++;
   }
   Serial.printf("[MQTT] discovery: %u/%u entities announced\n",
                 (unsigned)ok, (unsigned)(sizeof(ENTITIES) / sizeof(ENTITIES[0])));
