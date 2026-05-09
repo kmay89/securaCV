@@ -922,8 +922,18 @@ const COPY = {
   },
   errors: {
     disconnect:  "Can't reach the canary. Move closer to your router and try again.",
-    calibrating: "The canary is learning your empty room. {seconds} seconds left.",
-    calibrated:  "Got it. The canary knows your room now.",
+  },
+  calibrate: {
+    /* The overlay's static text + the button labels. The seconds-remaining
+     * count is rendered into its own <div class="count"> sibling and is
+     * NOT a placeholder in these strings. */
+    label:    "The canary is learning your empty room.",
+    stepOut:  "Step out for a minute.",
+    btn:      "Calibrate empty room",
+    done:     "Got it. The canary knows your room now.",
+  },
+  today: {
+    empty: "Quiet so far today. The canary is perched, head cocked.",
   },
   what: {
     title: "What the sensor can and can't see",
@@ -984,6 +994,23 @@ const COPY = {
     ],
   },
 };
+
+/* ────────────────────────────────────────────────────────────────────────
+ *  Static-text hydration — the overlay's two <div class="label"> nodes
+ *  and the calibrate button label live in HTML at parse time, before any
+ *  JS runs, so they get baked-in placeholders. We replace those with
+ *  COPY.calibrate.* on script load. The microcopy doctrine ("every
+ *  user-facing string lives in COPY") then holds end-to-end.
+ * ──────────────────────────────────────────────────────────────────────── */
+(function hydrateStaticCopy() {
+  const labels = document.querySelectorAll('#calibratingMask .label');
+  if (labels.length >= 2) {
+    labels[0].textContent = COPY.calibrate.label;
+    labels[1].textContent = COPY.calibrate.stepOut;
+  }
+  const btn = document.getElementById('calibrateBtn');
+  if (btn) btn.textContent = COPY.calibrate.btn;
+})();
 
 /* ────────────────────────────────────────────────────────────────────────
  *  Tooltip plumbing — one pattern, used everywhere.
@@ -1290,7 +1317,7 @@ async function fetchToday() {
     const j = await r.json();
     const events = j.events || [];
     if (events.length === 0) {
-      body.innerHTML = '<p style="color:var(--fg-mute);padding:20px 0">Quiet so far today. The canary is perched, head cocked.</p>';
+      body.innerHTML = '<p style="color:var(--fg-mute);padding:20px 0">' + COPY.today.empty + '</p>';
       return;
     }
     body.innerHTML = '';
@@ -1733,8 +1760,8 @@ calibrateBtn.addEventListener('click', () => {
       clearInterval(tid);
       document.body.classList.remove('is-calibrating');
       calibrateBtn.dataset.running = '0';
-      calibrateBtn.textContent = 'Got it. Your empty room is set.';
-      setTimeout(() => calibrateBtn.textContent = 'Calibrate empty room', 3000);
+      calibrateBtn.textContent = COPY.calibrate.done;
+      setTimeout(() => calibrateBtn.textContent = COPY.calibrate.btn, 3000);
     }
   }, 1000);
 });
