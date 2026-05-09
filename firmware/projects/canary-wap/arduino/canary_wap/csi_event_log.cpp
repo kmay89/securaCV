@@ -231,21 +231,12 @@ bool init() {
       return false;
     }
   }
-  /* Truncate the log on cold boot. csi_event allocates event_ids from
-   * g_next_event_id which restarts at 1 each boot — so a log carried
-   * over from the previous boot would seed the MQTT bridge's "highest
-   * id sent" watermark to a value above current-boot ids, and any
-   * event emitted while disconnected this boot would silently fail
-   * to backfill on the next reconnect (PR #395 review r3213834315).
-   *
-   * The trade-off: events emitted between the last successful publish
-   * and a hard power cut are lost to HA. Acceptable for v1; a follow-up
-   * that NVS-persists g_next_event_id (or stamps records with
-   * boot_count) lifts this restriction and lets cross-reboot backfill
-   * stay on. csi_event_log::init() is only called from canary_wap.ino's
-   * setup() so a runtime config change (e.g. /api/mqtt/config POST →
-   * csi_mqtt::init re-run) does NOT clear the in-flight log. */
-  if (SD.exists(LOG_PATH)) SD.remove(LOG_PATH);
+  /* PR #395 truncated the log on cold boot to avoid the
+   * event_id-collision bug between previous-boot and current-boot ids.
+   * PR #397 fixes the underlying issue by NVS-persisting
+   * g_next_event_id (see apply_event_id_floor_from_nvs in
+   * csi_integration.cpp), so the log can now survive reboots and
+   * cross-reboot MQTT backfill works correctly. */
   return true;
 }
 
