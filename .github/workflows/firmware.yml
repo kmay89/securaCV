@@ -231,6 +231,28 @@ jobs:
       - name: Run host invariants test
         run: /tmp/csi_invariants
 
+      - name: Build host witness round-trip test
+        # Closes the plan's verification promise: "Every Event row
+        # round-trips through log_verify with a valid signature and an
+        # intact hash chain." The host build can't drive the device's
+        # private key, but it CAN exercise the chokepoint contract:
+        # every committed event reaches csi_event_commit_witness exactly
+        # once, IDs are unique across the chain, and each record's
+        # prev_hash points at the previous record's hash.
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -DCSI_TEST_HOST_BUILD \
+              -Wall -Wextra -Wno-unused-parameter \
+              firmware/common/csi/csi_witness_roundtrip_test.cpp \
+              firmware/common/csi/src/csi_event.cpp \
+              firmware/common/csi/src/csi_module.cpp \
+              firmware/common/csi/src/csi_bundler.cpp \
+              -I firmware/common/csi/src \
+              -o /tmp/csi_roundtrip
+
+      - name: Run host witness round-trip test
+        run: /tmp/csi_roundtrip
+
   microcopy-lint:
     name: Dashboard Microcopy Lint
     runs-on: ubuntu-latest
