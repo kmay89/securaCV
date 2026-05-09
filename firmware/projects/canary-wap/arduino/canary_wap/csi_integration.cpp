@@ -1549,4 +1549,73 @@ bool init(httpd_handle_t server) {
   return true;
 }
 
+/* ──────────────────────────────────────────────────────────────────────────
+ * MAIN-LOOP PUMP + BOOT SELF-TEST
+ *
+ * The host sketch calls csi_integration::loop() once per main-loop
+ * iteration. We forward to csi_hal::process(), which drains the WiFi-task
+ * SPSC ring, finalizes 1-Hz feature windows, dispatches each window through
+ * on_csi_window() into the v1 module pipeline, and silently retries the
+ * deferred CSI-enable sequence if start() was queued before WiFi came up.
+ *
+ * The self-test fires once, ~3 seconds after init() returned, and surfaces
+ * a single line on Serial so a cabled installer immediately knows whether
+ * the radio is producing CSI frames. This is intentionally not gated on a
+ * dashboard / API call: the dashboard's "Sensing…" copy is correct UX for
+ * an honest-but-quiet room, so it can't double as a "did it boot" signal.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+void loop() {
+  if (!g_initialized) return;
+
+  csi_hal::process();
+
+  /* One-shot boot self-test. The 3-second window is long enough for
+   * csi_hal's deferred-start retry (1 Hz) to converge AND for at least
+   * one or two windows to finalize on a healthy radio (windows are 1 s
+   * each), but short enough that an installer watching serial output
+   * doesn't lose patience. */
+  static bool s_boot_check_done = false;
+  if (s_boot_check_done) return;
+
+  const uint32_t now = millis();
+  if ((now - g_stream_started_ms) < 3000u) return;
+
+  s_boot_check_done = true;
+  csi_stats_t stats = {};
+  csi_hal::get_stats(&stats);
+  if (!csi_hal::is_running()) {
+    Serial.println("[CSI] STALLED: HAL not running after 3s — "
+                   "WiFi never came up or chip lacks CSI");
+  } else if (stats.frames_received == 0) {
+    Serial.println("[CSI] STALLED: 0 frames received in 3s — "
+                   "check antenna / WiFi mode");
+  } else if (stats.frames_dropped_full > 0 && stats.windows_emitted == 0) {
+    Serial.printf("[CSI] DROPS: %lu frames dropped (ring full), windows=0 — "
+                  "main loop starved\n",
+                  (unsigned long)stats.frames_dropped_full);
+  } else {
+    Serial.printf("[CSI] OK: %lu frames received, %lu windows emitted in 3s\n",
+                  (unsigned long)stats.frames_received,
+                  (unsigned long)stats.windows_emitted);
+  }
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * DIAGNOSTIC ACCESSORS — for /api/status
+ * ────────────────────────────────────────────────────────────────────────── */
+
+bool snapshot_valid() {
+  return g_snapshot.valid;
+}
+
+bool csi_running() {
+  return csi_hal::is_running();
+}
+
+bool csi_get_stats(csi_stats_t* out) {
+  if (!out) return false;
+  return csi_hal::get_stats(out);
+}
+
 }  /* namespace csi_integration */

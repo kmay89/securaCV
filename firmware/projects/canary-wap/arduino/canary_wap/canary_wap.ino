@@ -2364,6 +2364,25 @@ static esp_err_t handle_status(httpd_req_t* req) {
   chirp_hw["visual_only"] = audible_chirp::is_visual_only();
   chirp_hw["chirps_played"] = audible_chirp::get_chirps_played();
 
+  // CSI sensing pipeline health. `running` = HAL has registered the
+  // ESP-IDF callback; `frames_received` rising = radio is producing data;
+  // `windows_emitted` rising = main-loop pump is draining and finalizing
+  // 1 Hz windows; `frames_dropped_full` = pump is being starved (should be
+  // 0 in normal operation); `snapshot_valid` = a v1 module has committed
+  // at least one event since boot.
+  JsonObject csi = doc["csi"].to<JsonObject>();
+  csi["running"] = csi_integration::csi_running();
+  csi["snapshot_valid"] = csi_integration::snapshot_valid();
+  csi_stats_t cs = {};
+  if (csi_integration::csi_get_stats(&cs)) {
+    csi["frames_received"] = (uint32_t)cs.frames_received;
+    csi["windows_emitted"] = (uint32_t)cs.windows_emitted;
+    csi["frames_dropped_full"] = (uint32_t)cs.frames_dropped_full;
+    csi["frames_dropped_rate"] = (uint32_t)cs.frames_dropped_rate;
+    csi["frames_dropped_rssi"] = (uint32_t)cs.frames_dropped_rssi;
+    csi["windows_degraded"] = (uint32_t)cs.windows_degraded;
+  }
+
   String response;
   serializeJson(doc, response);
   return http_send_json(req, response.c_str());
@@ -6047,6 +6066,13 @@ void loop() {
   #if FEATURE_SYS_MONITOR
   sys_monitor::update(log_health);
   #endif
+
+  // Drain CSI ring, finalize 1-Hz feature windows, dispatch to v1 modules.
+  // The WiFi task fills the ring at up to 20 Hz; a stall longer than ~800 ms
+  // drops frames at RING_CAP=16. Without this call the entire CSI pipeline
+  // is dead and /api/csi/stream returns the boot-fallback "sensing" state
+  // forever (see csi_hal.h:39 and firmware/common/csi/README.md:61).
+  csi_integration::loop();
 
   // Yield before witness record creation
   yield();

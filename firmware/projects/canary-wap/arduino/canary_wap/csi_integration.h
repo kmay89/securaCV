@@ -31,6 +31,41 @@ namespace csi_integration {
 bool init(httpd_handle_t server);
 
 /**
+ * Per-tick pump. Call once per main-loop iteration after init().
+ *
+ * Drains the WiFi-task SPSC ring into the feature aggregator, finalizes
+ * 1-second windows, dispatches each window to the v1 module pipeline, and
+ * runs the deferred-start retry if csi_hal::start() was queued before WiFi
+ * came up. Without this call the entire CSI pipeline is dead and
+ * /api/csi/stream returns the boot-fallback "sensing" state forever.
+ *
+ * Also runs a one-shot boot self-test ~3 seconds after init() returns,
+ * logging exactly one of:
+ *   [CSI] OK: <N> frames received, <M> windows emitted in 3s
+ *   [CSI] STALLED: 0 frames received in 3s — check antenna / WiFi mode
+ *   [CSI] DROPS: <K> frames dropped (ring full), windows=<M> — main loop starved
+ *
+ * Cheap (single ring drain + millis() compare); safe to call from the
+ * Arduino main loop at full rate.
+ */
+void loop();
+
+/**
+ * Has any v1 module committed an event since boot? (i.e. has the snapshot
+ * served by /api/csi/stream ever transitioned from the boot fallback to a
+ * real event?) Used by /api/status for diagnostic visibility.
+ */
+bool snapshot_valid();
+
+/** csi_hal::is_running() bridge. False ⇒ start was deferred or chip
+ *  lacks CSI; either is diagnostic gold. */
+bool csi_running();
+
+/** csi_hal::get_stats() bridge. Fills out frames_received,
+ *  windows_emitted, frames_dropped_*, etc. Returns false on null arg. */
+bool csi_get_stats(csi_stats_t* out);
+
+/**
  * Optional: called by the existing CSI features callback when this firmware
  * still wants to drive rf_presence::feed_csi_window() in addition to the
  * module pipeline. Pass nullptr to disable.
