@@ -260,11 +260,35 @@ header {
   width: 100%; aspect-ratio: 4/3; background: #060a14; border-radius: 8px;
   overflow: hidden; border: 1px solid var(--border);
   display: flex; align-items: center; justify-content: center;
+  position: relative;
 }
 .peek-frame img { width: 100%; height: 100%; object-fit: contain; display: none; }
 .no-cam { color: var(--muted); font-size: 0.82rem; text-align: center; padding: 1rem; }
-.peek-ctrls { display: flex; gap: 0.5rem; margin-top: 0.65rem; align-items: center; }
-.peek-status { font-size: 0.73rem; color: var(--muted); margin-left: auto; }
+.peek-overlay {
+  position: absolute; inset: 0; display: none;
+  align-items: center; justify-content: center;
+  background: rgba(6,10,20,0.55); backdrop-filter: blur(2px);
+  color: var(--text); font-size: 0.78rem; gap: 0.45rem;
+  pointer-events: none;
+}
+.peek-overlay.show { display: flex; }
+.peek-live-dot {
+  position: absolute; top: 0.55rem; left: 0.6rem;
+  display: none; align-items: center; gap: 0.35rem;
+  background: rgba(0,0,0,0.55); padding: 0.18rem 0.5rem;
+  border-radius: 999px; font-size: 0.66rem; letter-spacing: 0.04em;
+  color: #fff; pointer-events: none;
+}
+.peek-live-dot.show { display: inline-flex; }
+.peek-live-dot::before {
+  content: ''; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--danger); box-shadow: 0 0 6px var(--danger);
+  animation: peek-pulse 1.4s ease-in-out infinite;
+}
+@keyframes peek-pulse { 0%,100% { opacity:1 } 50% { opacity: 0.35 } }
+.peek-ctrls { display: flex; gap: 0.5rem; margin-top: 0.65rem; align-items: center; flex-wrap: wrap; }
+.peek-status { font-size: 0.73rem; color: var(--muted); margin-left: auto; display: inline-flex; align-items: center; gap: 0.4rem; }
+.peek-status .spin { width: 11px; height: 11px; border-width: 2px; }
 
 /* Confirm modal */
 .modal-bg {
@@ -474,6 +498,10 @@ var FM = (function() {
   var refreshing  = false;
   var detailDev   = null; // currently open device ref
   var peekActive  = false;
+  var peekState   = 'idle'; // idle|initializing|ready|connecting|live|reconnecting|error|nocam
+  var peekRetry   = 0;
+  var peekRetryTm = null;
+  var peekImgGen  = 0;      // identifies the active stream attachment so stale handlers no-op
   var modalCb     = null;
 
   // ── DOM helpers ────────────────────────────────────────────────
@@ -833,6 +861,9 @@ var FM = (function() {
       var el = $('tb-' + n);
       if (el) el.classList.toggle('active', n === name);
     });
+    // Always release the camera socket when leaving the Peek tab so a
+    // forgotten stream doesn't keep the device's httpd worker pinned.
+    if (name !== 'peek' && peekActive) stopPeek(false);
     if (!detailDev) return;
     switch(name) {
       case 'status': renderStatusTab(); break;
@@ -984,74 +1015,264 @@ var FM = (function() {
   }
 
   // ── Peek Tab ───────────────────────────────────────────────────
+  // Design:
+  //  • On tab open, silently probe /api/peek/status. If the camera isn't
+  //    initialized, run /api/peek/init in the background — the user never
+  //    has to leave the fleet manager to wake the sensor.
+  //  • Start attaches the MJPEG <img>. The handler self-heals: if the
+  //    stream errors (transient WiFi, server disconnect, sensor stall),
+  //    it auto-reconnects with backoff for as long as the user hasn't
+  //    pressed Stop.
+  //  • While streaming, we do NOT poll /api/peek/status — the device's
+  //    httpd is single-task and the long-lived stream blocks status calls.
+  //
+  // Privacy: stream is positioning-only. No frames are stored or sent
+  // beyond this browser tab (Invariant I).
+
+  var PEEK_BACKOFF_MS  = [600, 1200, 2400, 4000, 6000]; // five quick retries, then steady
+  var PEEK_BACKOFF_MAX = 6000;
+  var PEEK_INIT_RETRY  = 2;   // /api/peek/init attempts before showing "no camera"
+
   function renderPeekTab() {
     var c = $('tb-peek');
     c.innerHTML =
       '<div class="peek-frame" id="pkFrame">' +
-        '<img id="pkImg" />' +
-        '<div class="no-cam" id="pkPlaceholder">Camera preview not active.<br>Positioning only &mdash; no frames are stored (Invariant I).</div>' +
+        '<img id="pkImg" alt="Camera preview" />' +
+        '<div class="no-cam" id="pkPlaceholder">Preparing camera&hellip;</div>' +
+        '<div class="peek-live-dot" id="pkLive">LIVE</div>' +
+        '<div class="peek-overlay" id="pkOverlay"><span class="spin"></span><span id="pkOverlayText">Working&hellip;</span></div>' +
       '</div>' +
       '<div class="peek-ctrls">' +
-        '<button class="btn btn-sm btn-primary" id="pkStart">Start Preview</button>' +
+        '<button class="btn btn-sm btn-primary" id="pkStart" disabled>Start Preview</button>' +
         '<button class="btn btn-sm btn-danger" id="pkStop" disabled>Stop</button>' +
+        '<button class="btn btn-sm" id="pkRetry" style="display:none">Retry</button>' +
         '<span class="peek-status" id="pkStatus"></span>' +
       '</div>' +
       '<p style="font-size:0.72rem;color:var(--muted);margin-top:0.5rem">' +
-        'Privacy: Streaming only for camera positioning. No frames are stored or transmitted beyond this browser tab. ' +
+        'Privacy: streaming only for positioning. No frames are stored or transmitted beyond this browser tab. ' +
         'SecuraCV records semantic events, not video.</p>';
 
     $('pkStart').addEventListener('click', startPeek);
-    $('pkStop').addEventListener('click', function() { stopPeek(); });
+    $('pkStop').addEventListener('click', function() { stopPeek(true); });
+    $('pkRetry').addEventListener('click', function() {
+      $('pkRetry').style.display = 'none';
+      ensureCameraReady();
+    });
+
+    setPeekState('initializing', 'Preparing camera…');
+    ensureCameraReady();
   }
 
-  function startPeek() {
-    if (!detailDev || !detailDev.online) { toast('Device offline', 'err'); return; }
-    var btn = $('pkStart');
-    var st = $('pkStatus');
-    btn.disabled = true;
-    st.textContent = 'Starting...';
-    st.style.color = 'var(--muted)';
+  function setPeekState(state, msg) {
+    peekState = state;
+    var st = $('pkStatus'); if (!st) return;
+    var start = $('pkStart');
+    var stop = $('pkStop');
+    var retry = $('pkRetry');
+    var img = $('pkImg');
+    var ph = $('pkPlaceholder');
+    var ov = $('pkOverlay');
+    var ovT = $('pkOverlayText');
+    var live = $('pkLive');
 
-    ftch(url(detailDev, '/api/peek/start'), { method: 'POST' }, 5000)
+    var color = 'var(--muted)';
+    var spin = false;
+    var showOverlay = false;
+    var liveDot = false;
+    var startEnabled = false;
+    var stopEnabled = false;
+    var retryShown = false;
+    var imgVisible = false;
+    var phVisible = true;
+    var phText = '';
+
+    switch (state) {
+      case 'initializing':
+        spin = true; phText = 'Preparing camera…'; break;
+      case 'ready':
+        color = 'var(--success)'; startEnabled = true; phText = 'Camera ready. Click Start Preview.'; break;
+      case 'connecting':
+        spin = true; showOverlay = true; stopEnabled = true;
+        phText = ''; phVisible = false; break;
+      case 'live':
+        color = 'var(--success)'; stopEnabled = true; liveDot = true;
+        imgVisible = true; phVisible = false; break;
+      case 'reconnecting':
+        color = 'var(--warning)'; spin = true; showOverlay = true; stopEnabled = true;
+        imgVisible = true; phVisible = false; break;
+      case 'nocam':
+        color = 'var(--danger)'; retryShown = true;
+        phText = 'Camera unavailable. Tap Retry to re-initialize.'; break;
+      case 'error':
+        color = 'var(--danger)'; startEnabled = true; retryShown = true;
+        phText = 'Stream error. Tap Start Preview or Retry.'; break;
+      case 'idle':
+      default:
+        startEnabled = !!(detailDev && detailDev.online);
+        phText = 'Camera idle.'; break;
+    }
+
+    if (st) {
+      st.style.color = color;
+      st.innerHTML = (spin ? '<span class="spin"></span>' : '') + (msg ? esc(msg) : '');
+    }
+    if (start) start.disabled = !startEnabled;
+    if (stop)  stop.disabled  = !stopEnabled;
+    if (retry) retry.style.display = retryShown ? '' : 'none';
+    if (img)   img.style.display = imgVisible ? 'block' : 'none';
+    if (ph)    { ph.style.display = phVisible ? '' : 'none'; if (phText) ph.innerHTML = esc(phText); }
+    if (ov)    ov.classList.toggle('show', showOverlay);
+    if (ovT && msg) ovT.textContent = msg;
+    if (live)  live.classList.toggle('show', liveDot);
+  }
+
+  // Probe + (if needed) re-init the camera so Start "just works".
+  function ensureCameraReady() {
+    var dev = detailDev;
+    if (!dev) return;
+    if (!dev.online) { setPeekState('error', 'Device offline'); return; }
+    setPeekState('initializing', 'Checking camera…');
+
+    ftch(url(dev, '/api/peek/status'), null, 5000)
       .then(function(r) {
         if (!r.ok) throw new Error('HTTP ' + r.status);
-        return r.text(); // may or may not return JSON
+        return r.json();
       })
-      .then(function() {
-        peekActive = true;
-        var img = $('pkImg');
-        var ph = $('pkPlaceholder');
-        img.src = url(detailDev, '/api/peek/stream');
-        img.style.display = 'block';
-        if (ph) ph.style.display = 'none';
-        btn.disabled = true;
-        $('pkStop').disabled = false;
-        st.textContent = 'Streaming live (no recording)';
-        st.style.color = 'var(--success)';
+      .then(function(s) {
+        if (dev !== detailDev) return; // tab switched away
+        if (s && s.camera_initialized) {
+          // If the device already had a peek_active flag set from a stale
+          // session, clear it before letting the user reconnect.
+          if (s.peek_active) {
+            ftch(url(dev, '/api/peek/stop'), { method: 'POST' }, 3000).catch(function(){});
+          }
+          setPeekState('ready', 'Camera ready');
+        } else {
+          initCamera(0);
+        }
       })
-      .catch(function(e) {
-        btn.disabled = false;
-        st.textContent = 'Failed: ' + e.message;
-        st.style.color = 'var(--danger)';
-        toast('Peek failed: ' + e.message, 'err');
+      .catch(function() {
+        // Status may not be reachable on older builds — try init anyway.
+        if (dev !== detailDev) return;
+        initCamera(0);
       });
   }
 
-  function stopPeek() {
-    if (detailDev && peekActive) {
+  function initCamera(attempt) {
+    var dev = detailDev;
+    if (!dev) return;
+    setPeekState('initializing',
+      attempt === 0 ? 'Initializing camera…' : 'Retrying init (' + (attempt + 1) + ')…');
+
+    ftch(url(dev, '/api/peek/init'), { method: 'POST' }, 8000)
+      .then(function(r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json().catch(function() { return { ok: true }; });
+      })
+      .then(function(j) {
+        if (dev !== detailDev) return;
+        if (j && j.camera_initialized) {
+          setPeekState('ready', 'Camera ready');
+        } else if (attempt + 1 < PEEK_INIT_RETRY) {
+          setTimeout(function() { initCamera(attempt + 1); }, 600);
+        } else {
+          var hint = (j && (j.last_init_err_name || j.last_init_label))
+            ? ' (' + esc(j.last_init_err_name || j.last_init_label) + ')'
+            : '';
+          setPeekState('nocam', 'Camera unavailable' + hint);
+        }
+      })
+      .catch(function(e) {
+        if (dev !== detailDev) return;
+        if (attempt + 1 < PEEK_INIT_RETRY) {
+          setTimeout(function() { initCamera(attempt + 1); }, 800);
+        } else {
+          setPeekState('nocam', 'Init failed: ' + e.message);
+        }
+      });
+  }
+
+  function startPeek() {
+    var dev = detailDev;
+    if (!dev || !dev.online) { toast('Device offline', 'err'); return; }
+    if (peekState === 'initializing' || peekState === 'connecting') return;
+
+    peekActive = true;
+    peekRetry  = 0;
+    if (peekRetryTm) { clearTimeout(peekRetryTm); peekRetryTm = null; }
+    setPeekState('connecting', 'Connecting…');
+
+    // Fire /api/peek/start so the firmware flag flips even if the user
+    // restarts the stream after a Stop. Failures are non-fatal — the
+    // /api/peek/stream handler also sets peek_active=true on entry.
+    ftch(url(dev, '/api/peek/start'), { method: 'POST' }, 5000)
+      .catch(function() { /* best-effort */ })
+      .then(function() {
+        if (!peekActive || dev !== detailDev) return;
+        attachStream(dev);
+      });
+  }
+
+  function attachStream(dev) {
+    var img = $('pkImg');
+    if (!img) return;
+    var gen = ++peekImgGen;
+
+    // Cache-bust so the browser opens a fresh connection on each retry
+    // (otherwise a half-closed connection can stall a reconnect).
+    img.src = url(dev, '/api/peek/stream') + '?t=' + Date.now();
+
+    img.onload = function() {
+      if (gen !== peekImgGen || !peekActive) return;
+      peekRetry = 0;
+      setPeekState('live', 'Live · positioning only');
+    };
+    img.onerror = function() {
+      if (gen !== peekImgGen || !peekActive) return;
+      scheduleReconnect(dev);
+    };
+  }
+
+  function scheduleReconnect(dev) {
+    if (!peekActive || dev !== detailDev) return;
+    var idx = Math.min(peekRetry, PEEK_BACKOFF_MS.length - 1);
+    var wait = PEEK_BACKOFF_MS[idx] || PEEK_BACKOFF_MAX;
+    peekRetry++;
+    setPeekState('reconnecting', 'Reconnecting…');
+    if (peekRetryTm) clearTimeout(peekRetryTm);
+    peekRetryTm = setTimeout(function() {
+      peekRetryTm = null;
+      if (!peekActive || dev !== detailDev) return;
+      attachStream(dev);
+    }, wait);
+  }
+
+  function stopPeek(userInitiated) {
+    var wasActive = peekActive;
+    peekActive = false;
+    peekImgGen++;                           // invalidate any pending img handlers
+    if (peekRetryTm) { clearTimeout(peekRetryTm); peekRetryTm = null; }
+
+    var img = $('pkImg');
+    if (img) {
+      img.onload = null;
+      img.onerror = null;
+      img.removeAttribute('src');           // closes the MJPEG socket on most browsers
+      img.style.display = 'none';
+    }
+
+    if (detailDev && wasActive) {
       ftch(url(detailDev, '/api/peek/stop'), { method: 'POST' }, 3000).catch(function(){});
     }
-    peekActive = false;
-    var img = $('pkImg');
-    var ph = $('pkPlaceholder');
-    var st = $('pkStatus');
-    var start = $('pkStart');
-    var stop = $('pkStop');
-    if (img) { img.src = ''; img.style.display = 'none'; }
-    if (ph) ph.style.display = '';
-    if (start) start.disabled = false;
-    if (stop) stop.disabled = true;
-    if (st) { st.textContent = ''; st.style.color = 'var(--muted)'; }
+
+    if (userInitiated) {
+      // Re-probe so Start lights up only when the device is reachable.
+      if (detailDev && detailDev.online) {
+        setPeekState('ready', 'Camera ready');
+      } else {
+        setPeekState('idle', '');
+      }
+    }
   }
 
   // ── Export Tab ─────────────────────────────────────────────────
