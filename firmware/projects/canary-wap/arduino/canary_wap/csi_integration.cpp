@@ -34,6 +34,7 @@
 #include "csi_integration.h"
 #include "csi_dashboard_html.h"
 #include "tune_ui.h"
+#include "csi_mqtt.h"             // optional MQTT bridge (publishes events)
 #include "api_auth.h"             // api_auth_check() — Bearer token gate
 
 #include <Arduino.h>
@@ -1040,13 +1041,13 @@ esp_err_t handle_privacy_budget(httpd_req_t* req) {
    * any change → warm pill. Cheap: a single 32-bit read and a
    * three-letter switch.
    *
-   * `wired:false` is set whenever no off-device export path actually
-   * calls add_outbound_bytes() — today none do (MQTT / SD / BLE export
-   * sites haven't been retrofitted), so the counter is structurally 0
-   * regardless of activity. The dashboard reads `wired` and either hides
-   * the pill or labels it "not yet measured" so the device doesn't claim
-   * a privacy guarantee it isn't actually enforcing. Flip to true once a
-   * caller exists.
+   * `wired` reflects whether any off-device export path actually feeds
+   * the byte counter. The MQTT bridge in csi_mqtt.cpp now calls
+   * add_outbound_bytes() on every successful publish, so the counter
+   * is structurally honest as soon as the broker is configured. SD /
+   * BLE export retrofits are a future commit. The dashboard reads
+   * `wired` and either hides the pill or shows "not yet measured" —
+   * we're now in the "yes, measured" branch.
    *
    * Cache-Control: no-store. The whole point of the pill is "what is
    * the device sending right now" — a cached zero would lie. */
@@ -1060,7 +1061,7 @@ esp_err_t handle_privacy_budget(httpd_req_t* req) {
   char buf[128];
   snprintf(buf, sizeof(buf),
     "{\"bytes_today\":%lu,\"ceiling\":\"%s\","
-     "\"since_ms\":%lu,\"wired\":false}",
+     "\"since_ms\":%lu,\"wired\":true}",
     (unsigned long)bytes,
     ceiling_str,
     (unsigned long)(millis() - g_stream_started_ms));
@@ -1498,14 +1499,11 @@ struct PairSlot {
 };
 PairSlot g_pair_slots[PAIR_SLOTS] = {};
 
-void hex_encode(const uint8_t* in, size_t len, char* out) {
-  static const char* H = "0123456789abcdef";
-  for (size_t i = 0; i < len; ++i) {
-    out[2*i  ] = H[(in[i] >> 4) & 0xF];
-    out[2*i+1] = H[ in[i]       & 0xF];
-  }
-  out[2*len] = '\0';
-}
+/* hex_encode lives in the public csi_integration namespace (see the
+ * definition near the bottom of this file) so csi_mqtt and any future
+ * export path share one canonical encoder. The internal callers below
+ * reach it via unqualified lookup since they're already inside
+ * namespace csi_integration. */
 
 bool hex_decode_to(const char* hex, uint8_t* out, size_t out_len) {
   if (!hex || strlen(hex) != out_len * 2) return false;
@@ -1986,6 +1984,12 @@ extern "C" void csi_event_on_committed(uint32_t                  event_id,
   strncpy(s->type_name, type_name ? type_name : "?", CSI_EVENT_NAME_MAX - 1);
   s->module_id[CSI_EVENT_NAME_MAX - 1] = '\0';
   s->type_name[CSI_EVENT_NAME_MAX - 1] = '\0';
+
+  /* Forward to MQTT (no-op when the bridge is disabled or the broker
+   * is unreachable). Same privacy ceiling already gated the snapshot
+   * write above, so we forward whatever we accepted into g_snapshot
+   * — no new chokepoint to keep in sync. */
+  csi_mqtt::publish_event(s->module_id, s->type_name, category, privacy, values);
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -2139,6 +2143,28 @@ bool init(httpd_handle_t server, const char* api_token) {
     .uri = "/api/csi/calibrate/apply", .method = HTTP_POST, .handler = handle_calibrate_apply
   };
   httpd_register_uri_handler(server, &r_calib_apply);
+
+  /* /api/mqtt/{config,test} + /mqtt — optional Home Assistant bridge.
+   * The token-provider lambda lets csi_mqtt's HTTP handlers
+   * authenticate against the same api_token the rest of the CSI
+   * surface uses without csi_mqtt needing to know about g_device. */
+  csi_mqtt::set_api_token_provider([]() -> const char* { return g_api_token; });
+  static httpd_uri_t r_mqtt_cfg_get = {
+    .uri = "/api/mqtt/config", .method = HTTP_GET, .handler = csi_mqtt::handle_config_get
+  };
+  httpd_register_uri_handler(server, &r_mqtt_cfg_get);
+  static httpd_uri_t r_mqtt_cfg_post = {
+    .uri = "/api/mqtt/config", .method = HTTP_POST, .handler = csi_mqtt::handle_config_post
+  };
+  httpd_register_uri_handler(server, &r_mqtt_cfg_post);
+  static httpd_uri_t r_mqtt_test = {
+    .uri = "/api/mqtt/test", .method = HTTP_POST, .handler = csi_mqtt::handle_test
+  };
+  httpd_register_uri_handler(server, &r_mqtt_test);
+  static httpd_uri_t r_mqtt_ui = {
+    .uri = "/mqtt", .method = HTTP_GET, .handler = csi_mqtt::handle_ui
+  };
+  httpd_register_uri_handler(server, &r_mqtt_ui);
 
   /* /sense is kept as an alias for the headline dashboard for backward
    * compatibility — the canonical landing route is now "/" (handled by
@@ -2294,5 +2320,18 @@ bool csi_get_stats(csi_stats_t* out) {
   return csi_hal::get_stats(out);
 }
 
+/* Single source of truth for lowercase hex encoding. Moved out of the
+ * anonymous namespace so csi_mqtt and other exporters can call it
+ * with a qualified name, and so the internal session/pair-token
+ * issuance paths and the new csi_mqtt::publish_chain converge on one
+ * implementation (PR #394 review r3213674564). */
+void hex_encode(const uint8_t* in, size_t len, char* out) {
+  static const char* H = "0123456789abcdef";
+  for (size_t i = 0; i < len; ++i) {
+    out[2*i  ] = H[(in[i] >> 4) & 0xF];
+    out[2*i+1] = H[ in[i]       & 0xF];
+  }
+  out[2*len] = '\0';
+}
 
 }  /* namespace csi_integration */
