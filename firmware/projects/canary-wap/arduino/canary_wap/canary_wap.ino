@@ -2202,11 +2202,55 @@ static esp_err_t handle_ui(httpd_req_t* req) {
   // The default route now lands on the headline Sensing dashboard from
   // csi_dashboard_html.h (Phase 3 of the WiFi CSI Tool plan). The legacy
   // tabbed admin dashboard is reachable at /admin via handle_legacy_ui().
-  // Cache headers off — the dashboard polls /api/csi/stream itself, the
-  // shell HTML doesn't need to be revalidated on every navigation.
+  //
+  // Three branches:
+  //   1. cv_session cookie present and valid → serve the dashboard HTML
+  //      as-is. The page's in-page fetches authenticate via the cookie
+  //      (HttpOnly + SameSite=Strict, sent automatically by browsers),
+  //      so no token ever appears in HTML source for an on-AP attacker
+  //      to view-source and harvest (PR #392 review r3213361582).
+  //   2. ?cv_pair=<hex> query param present → consume the one-shot
+  //      pair token, mint a fresh session, set the cookie, and 302
+  //      redirect to "/" so the URL is clean and the cookie is in
+  //      effect for subsequent requests.
+  //   3. Neither cookie nor pair param → render the "Welcome / Open
+  //      dashboard" landing page (csi_integration::send_pair_landing),
+  //      which mints a new pair token and offers a one-tap link.
   g_health.http_requests++;
-  httpd_resp_set_type(req, "text/html");
-  return httpd_resp_send(req, CSI_DASHBOARD_HTML, HTTPD_RESP_USE_STRLEN);
+
+  // Branch 1: existing valid session.
+  if (csi_integration::session_validate_cookie(req)) {
+    httpd_resp_set_type(req, "text/html");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
+    return httpd_resp_send(req, CSI_DASHBOARD_HTML, HTTPD_RESP_USE_STRLEN);
+  }
+
+  // Branch 2: one-shot pair-token consumption.
+  char qs[160];
+  if (httpd_req_get_url_query_str(req, qs, sizeof(qs)) == ESP_OK) {
+    char pair_hex[csi_integration::PAIR_TOKEN_HEX_LEN + 1];
+    if (httpd_query_key_value(qs, "cv_pair", pair_hex, sizeof(pair_hex)) == ESP_OK
+        && csi_integration::pair_token_consume(pair_hex)) {
+      char session_hex[csi_integration::SESSION_COOKIE_HEX_LEN + 1];
+      if (csi_integration::session_issue(session_hex, sizeof(session_hex))) {
+        // 86400 = 24 h, matching SESSION_TTL_MS in csi_integration.cpp.
+        // HttpOnly: no JS can read the cookie (mitigates XSS exfil).
+        // SameSite=Strict: cross-origin requests can't carry it (CSRF).
+        // Path=/: covers /, /tune, /api/*.
+        char cookie_hdr[160];
+        snprintf(cookie_hdr, sizeof(cookie_hdr),
+          "cv_session=%s; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400",
+          session_hex);
+        httpd_resp_set_status(req, "302 Found");
+        httpd_resp_set_hdr(req, "Set-Cookie", cookie_hdr);
+        httpd_resp_set_hdr(req, "Location", "/");
+        return httpd_resp_send(req, nullptr, 0);
+      }
+    }
+  }
+
+  // Branch 3: pair landing.
+  return csi_integration::send_pair_landing(req) ? ESP_OK : ESP_FAIL;
 }
 
 static esp_err_t handle_legacy_ui(httpd_req_t* req) {
@@ -4705,8 +4749,11 @@ static void register_api_routes(httpd_handle_t server) {
 
   // CSI library integration: registers /api/csi/stream, /api/csi/window,
   // /api/events/today, /api/events/dismiss, registers the four v1 sensing
-  // modules, and brings up csi_hal on this WiFi context.
-  csi_integration::init(server);
+  // modules, and brings up csi_hal on this WiFi context. The api_token
+  // is the Bearer token every CSI handler verifies via api_auth_check;
+  // the dashboard at / bootstraps it through window.__CV_TOKEN injected
+  // by handle_ui below.
+  csi_integration::init(server, g_device.api_token_str);
 }
 
 static void start_http_server() {

@@ -26,9 +26,17 @@ namespace csi_integration {
  *   - WiFi AP/STA is up (so esp_wifi_set_csi_rx_cb has a context)
  *   - the HTTP server is started (we register URI handlers on it)
  *
+ * The api_token argument is the device's Bearer token (g_device.api_token_str).
+ * Every CSI HTTP handler verifies the inbound Authorization header against it
+ * via api_auth_check(), matching the handle_*_auth pattern used by /api/status,
+ * /api/chain, /api/witness, etc. The dashboard at / bootstraps the token by
+ * reading window.__CV_TOKEN, which handle_ui injects into the HTML at request
+ * time. The pointer must remain valid for the lifetime of the integration
+ * (g_device lives forever, so passing &g_device.api_token_str[0] is fine).
+ *
  * Idempotent: a second call returns immediately.
  */
-bool init(httpd_handle_t server);
+bool init(httpd_handle_t server, const char* api_token);
 
 /**
  * Per-tick pump. Call once per main-loop iteration after init().
@@ -64,6 +72,49 @@ bool csi_running();
 /** csi_hal::get_stats() bridge. Fills out frames_received,
  *  windows_emitted, frames_dropped_*, etc. Returns false on null arg. */
 bool csi_get_stats(csi_stats_t* out);
+
+/**
+ * Length of the hex-encoded session cookie value (32 random bytes →
+ * 64 hex chars). Callers issuing a Set-Cookie need this to size their
+ * scratch buffers safely.
+ */
+constexpr size_t SESSION_COOKIE_HEX_LEN = 64;
+
+/**
+ * True if the request carries a `cv_session=<hex>` cookie that matches
+ * a live, unexpired session in the in-RAM session store. Never sends
+ * a response — caller decides what to do on failure (handle_ui shows
+ * a pair landing; CSI API handlers fall through to Bearer auth or 401).
+ *
+ * Replaces the previous design where the device's Bearer api_token was
+ * injected into dashboard HTML — that approach made the token
+ * harvestable by anyone on the SoftAP who could view-source on /
+ * (per pull-request review #392 r3213361582). Cookies are HttpOnly +
+ * SameSite=Strict, so JS can't read them and cross-origin requests
+ * can't forge them.
+ */
+bool session_validate_cookie(httpd_req_t* req);
+
+/**
+ * Mint a fresh session and write 64 hex chars + NUL to hex_out.
+ * out_cap must be >= SESSION_COOKIE_HEX_LEN + 1 (65). Returns true on
+ * success. Used by handle_ui's `?cv_pair=<token>` consumption branch:
+ * after a valid one-shot pair-token, we issue a session and bake the
+ * hex into a Set-Cookie header.
+ */
+bool session_issue(char* hex_out, size_t out_cap);
+
+/**
+ * Render the "tap to enter" landing page served by handle_ui when a
+ * visitor has neither a valid session cookie nor a pending pair-token
+ * URL. Mints a fresh pair token, embeds a /?cv_pair=<hex> link and a
+ * QR-friendly URL, and sends the response. Returns true on success.
+ *
+ * Idempotent in effect — every call mints a new pair token (rate-
+ * limited by PAIR_SLOTS), so a refresh always works even if the prior
+ * token expired or was consumed by a different tab.
+ */
+bool send_pair_landing(httpd_req_t* req);
 
 /**
  * Optional: called by the existing CSI features callback when this firmware

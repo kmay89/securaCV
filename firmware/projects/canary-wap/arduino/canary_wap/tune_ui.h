@@ -138,6 +138,15 @@ footer code{background:var(--card-hi);padding:1px 5px;border-radius:4px}
 </footer>
 
 <script>
+/* Auth helper — every /api/tune/* request authenticates via the
+ * HttpOnly cv_session cookie set when the visitor paired through /.
+ * Browsers send the cookie automatically with every same-origin fetch,
+ * so cvFetch is just a pass-through. Mirrors the helper in the headline
+ * dashboard. */
+function cvFetch(url, opts) {
+  return fetch(url, opts);
+}
+
 const $ = sel => document.querySelector(sel);
 const groupsEl = $('#groups');
 const status = $('#status');
@@ -221,7 +230,7 @@ function postCoeff(c){
     inflight = true;
     try {
       const body = {}; body[c.full_key] = c.value;
-      const r = await fetch('/api/tune/coefficients', {
+      const r = await cvFetch('/api/tune/coefficients', {
         method:'POST', headers:{'content-type':'application/json'},
         body: JSON.stringify(body)
       });
@@ -279,7 +288,7 @@ function bindRowEvents(){
 
 async function load(){
   try {
-    const r = await fetch('/api/tune/coefficients');
+    const r = await cvFetch('/api/tune/coefficients');
     if (!r.ok) throw new Error('HTTP '+r.status);
     const j = await r.json();
     state.coeffs = j.coefficients || [];
@@ -294,7 +303,7 @@ async function load(){
 
 $('#savePreset').addEventListener('click', async () => {
   try {
-    const r = await fetch('/api/tune/preset');
+    const r = await cvFetch('/api/tune/preset');
     if (!r.ok) throw new Error('HTTP '+r.status);
     const blob = await r.blob();
     const url = URL.createObjectURL(blob);
@@ -315,7 +324,7 @@ $('#loadPreset').addEventListener('change', async ev => {
   try {
     const text = await f.text();
     JSON.parse(text); // validate locally before sending
-    const r = await fetch('/api/tune/preset', {
+    const r = await cvFetch('/api/tune/preset', {
       method:'POST', headers:{'content-type':'application/json'}, body:text
     });
     if (!r.ok) throw new Error('HTTP '+r.status);
@@ -334,7 +343,7 @@ $('#resetAll').addEventListener('click', async () => {
     c.value = c.default;
     try {
       const body = {}; body[c.full_key] = c.value;
-      await fetch('/api/tune/coefficients', {
+      await cvFetch('/api/tune/coefficients', {
         method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body)
       });
     } catch(_){}

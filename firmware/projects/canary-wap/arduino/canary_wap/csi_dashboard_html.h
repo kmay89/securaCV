@@ -885,6 +885,22 @@ static const char CSI_DASHBOARD_HTML[] PROGMEM = R"DASHBOARD(<!doctype html>
 "use strict";
 
 /* ────────────────────────────────────────────────────────────────────────
+ *  Auth helper — every CSI HTTP handler verifies an HttpOnly cv_session
+ *  cookie set by handle_ui after the user opens the pair landing. Browsers
+ *  send the cookie automatically with every same-origin fetch, so cvFetch
+ *  is just a pass-through — no headers to set, no token to embed in the
+ *  page (which used to leak via view-source on the SoftAP, see PR #392
+ *  review r3213361582). If the cookie is missing or expired the request
+ *  401s and pollStream's catch block paints the disconnect plate; the
+ *  user reloads /, lands on the pair page, and re-pairs in one tap.
+ * ──────────────────────────────────────────────────────────────────────── */
+function cvFetch(url, opts) {
+  /* Reserved as the single fetch surface so adding cookie variants
+   * (refresh-after-401, retry-once, etc.) only touches one place. */
+  return fetch(url, opts);
+}
+
+/* ────────────────────────────────────────────────────────────────────────
  *  Microcopy bank — all user-facing strings live here.
  *  Reading-grade target ≤ 6th. Localization is a one-file edit.
  * ──────────────────────────────────────────────────────────────────────── */
@@ -1265,9 +1281,21 @@ let latestRawVector = null;
 
 async function pollStream() {
   try {
-    const r = await fetch('/api/csi/stream', {cache: 'no-store'});
+    const r = await cvFetch('/api/csi/stream', {cache: 'no-store'});
     if (!r.ok) throw new Error('stream not ok');
     const j = await r.json();
+
+    // Device-side honest signal: when the radio HAL never came up
+    // (chip lacks CSI, antenna fault), the firmware sends
+    // status:"unavailable" instead of the normal sensing fallback.
+    // Park the orb in the "sensing" theme but surface the disconnect
+    // copy so installers see something is actually wrong.
+    if (j.status === 'unavailable') {
+      setState('sensing', {confidence: 'tentative'});
+      document.body.classList.add('disconnected');
+      document.getElementById('frameCount').textContent = COPY.errors.disconnect;
+      return;
+    }
 
     const motion    = (j.motion    | 0);
     const breathing = (j.breathing | 0);
@@ -1312,7 +1340,7 @@ async function fetchToday() {
   const body = document.getElementById('todayBody');
   body.innerHTML = '<p style="color:var(--fg-mute)">Loading…</p>';
   try {
-    const r = await fetch('/api/events/today', {cache: 'no-store'});
+    const r = await cvFetch('/api/events/today', {cache: 'no-store'});
     if (!r.ok) throw new Error('today fetch returned ' + r.status);
     const j = await r.json();
     const events = j.events || [];
@@ -1362,7 +1390,7 @@ async function fetchToday() {
     body.querySelectorAll('.dismiss-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
         const id = +btn.dataset.id;
-        await fetch('/api/events/dismiss', {
+        await cvFetch('/api/events/dismiss', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({event_id: id}),
@@ -1379,7 +1407,7 @@ async function fetchToday() {
 async function pollRawVector() {
   if (!document.querySelector('details.tinker[open]')) return;
   try {
-    const r = await fetch('/api/csi/window', {cache: 'no-store'});
+    const r = await cvFetch('/api/csi/window', {cache: 'no-store'});
     if (!r.ok) return;  // 403 means privacy ceiling not raised; silently skip.
     const j = await r.json();
     if (j.v) latestRawVector = j.v;
@@ -1404,9 +1432,19 @@ async function fetchPrivacyBudget() {
   const pill = document.getElementById('privacyPill');
   if (!pill) return;
   try {
-    const r = await fetch('/api/privacy-budget', {cache: 'no-store'});
+    const r = await cvFetch('/api/privacy-budget', {cache: 'no-store'});
     if (!r.ok) return;
     const j = await r.json();
+    /* The server reports `wired:false` while no off-device export path
+     * actually feeds the byte counter. Until that's wired up the count
+     * is structurally 0 regardless of activity, so claiming "0 bytes
+     * left the device" would be a privacy guarantee we aren't actually
+     * enforcing. Hide the pill instead of lying about it. */
+    if (j.wired === false) {
+      pill.style.display = 'none';
+      return;
+    }
+    pill.style.display = '';
     /* DON'T use `j.bytes_today | 0` — JS bitwise ops coerce to
      * signed 32-bit, so any value ≥ 2 GB wraps negative (and then
      * formatBytes lies + the warm-tint check fails). The server's
@@ -1506,7 +1544,7 @@ function setMode(mode) {
 
 async function persistPreset(mode) {
   try {
-    await fetch('/api/settings', {
+    await cvFetch('/api/settings', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({preset: mode}),
@@ -1539,7 +1577,7 @@ function persistSensitivity(value) {
   clearTimeout(g_sensTimer);
   g_sensTimer = setTimeout(async () => {
     try {
-      await fetch('/api/settings', {
+      await cvFetch('/api/settings', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({sensitivity: value}),
@@ -1582,7 +1620,7 @@ setSwitch(petSwitch, window.PET_MODE);
  * another browser, this brings the current tab in line. */
 (async function syncSettingsFromServer() {
   try {
-    const r = await fetch('/api/settings', {cache: 'no-store'});
+    const r = await cvFetch('/api/settings', {cache: 'no-store'});
     if (!r.ok) return;
     const j = await r.json();
     if (typeof j.pet_mode === 'boolean' && j.pet_mode !== window.PET_MODE) {
@@ -1620,7 +1658,7 @@ setSwitch(petSwitch, window.PET_MODE);
 
 async function persistPetMode(value) {
   try {
-    await fetch('/api/settings', {
+    await cvFetch('/api/settings', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({pet_mode: value}),
@@ -1702,7 +1740,7 @@ async function persistQuietHours() {
   clearTimeout(g_qhTimer);
   g_qhTimer = setTimeout(async () => {
     try {
-      await fetch('/api/settings', {
+      await cvFetch('/api/settings', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({
@@ -1960,7 +1998,7 @@ pollLoop(pollRawVector, 1000);
  * ──────────────────────────────────────────────────────────────────────── */
 (async function fetchDeviceId() {
   try {
-    const r = await fetch('/api/device-info', {cache: 'no-store'});
+    const r = await cvFetch('/api/device-info', {cache: 'no-store'});
     if (!r.ok) return;
     const j = await r.json();
     const el = document.getElementById('device-id');

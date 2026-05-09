@@ -34,6 +34,7 @@
 #include "csi_integration.h"
 #include "csi_dashboard_html.h"
 #include "tune_ui.h"
+#include "api_auth.h"             // api_auth_check() — Bearer token gate
 
 #include <Arduino.h>
 #include <Preferences.h>          // NVS-backed settings store
@@ -67,6 +68,72 @@ csi_integration::legacy_features_hook_t g_legacy_hook        = nullptr;
 csi_features_t                          g_latest_window      = {};
 bool                                    g_have_latest_window = false;
 uint32_t                                g_stream_started_ms  = 0;
+/* True iff csi_hal::init() succeeded during csi_integration::init().
+ * When false the HTTP routes are still registered (so the dashboard
+ * doesn't 404) but handle_stream returns a "sensing_unavailable"
+ * payload so the user sees a clear error instead of a stuck orb. */
+bool                                    g_hal_ready          = false;
+/* Bearer token expected on all CSI HTTP requests. Pointer into the
+ * caller's storage (g_device.api_token_str) — never freed. */
+const char*                             g_api_token          = nullptr;
+
+/* Forward decl of the file-scope cv_session_validate trampoline (defined
+ * just below the anonymous namespace, near session_validate_cookie). The
+ * macro CSI_AUTH_OR_RETURN expands inside handlers that live in this
+ * anonymous namespace, but unqualified name lookup falls through to the
+ * enclosing global scope, so this declaration is found and the linker
+ * resolves it to the file-scope definition. We can't write
+ * `namespace csi_integration { ... }` HERE because that would create a
+ * nested namespace <anonymous>::csi_integration distinct from the
+ * file-scope one (different mangled names → linker error). */
+}  /* namespace (anonymous) — close briefly to put the decl at file scope */
+
+bool cv_session_validate(httpd_req_t* req);
+
+namespace {  /* re-open anonymous so the rest of the original block continues */
+
+/* Auth guard: drop into every handler at the very top. Mirrors the
+ * handle_*_auth pattern used by /api/status, /api/chain, etc. The
+ * macro form keeps the per-handler diff to one line.
+ *
+ * Two valid auth paths:
+ *   - cv_session cookie (HttpOnly, SameSite=Strict, set by handle_ui
+ *     after a one-shot pair-token URL hand-off). This is the dashboard's
+ *     normal route — browsers send the cookie automatically with every
+ *     /api/* fetch, so the token never appears in HTML source for any
+ *     in-page script (or page-source viewer) to harvest.
+ *   - Bearer header carrying the device's persistent api_token. Reserved
+ *     for tooling: the Python listener, the canary-vision fleet UI, and
+ *     similar. Same token surface as /api/status, /api/chain, etc.
+ *
+ * Failure paths:
+ *   - g_api_token unset (init() refuses null tokens, so structurally
+ *     unreachable today; defensive 503 protects future refactors that
+ *     might register a route before init() completes).
+ *   - Neither cookie nor Bearer valid → 401 + WWW-Authenticate. The
+ *     dashboard at / catches this and re-routes through the pair flow. */
+#define CSI_AUTH_OR_RETURN(req)                                       \
+  do {                                                                \
+    if (!g_api_token) {                                               \
+      httpd_resp_set_status((req), "503 Service Unavailable");        \
+      httpd_resp_set_type((req), "application/json");                 \
+      httpd_resp_sendstr((req),                                       \
+        "{\"error\":\"auth_unconfigured\","                           \
+         "\"hint\":\"csi_integration::init never received an "        \
+                   "api_token\"}");                                   \
+      return ESP_OK;                                                  \
+    }                                                                 \
+    if (cv_session_validate((req))) break;                            \
+    if (api_auth_check_optional((req), g_api_token)) break;           \
+    httpd_resp_set_status((req), "401 Unauthorized");                 \
+    httpd_resp_set_type((req), "application/json");                   \
+    httpd_resp_set_hdr((req), "WWW-Authenticate",                     \
+                       "Bearer realm=\"securacv\"");                  \
+    httpd_resp_sendstr((req),                                         \
+      "{\"error\":\"unauthorized\","                                  \
+       "\"hint\":\"open / on the canary AP to pair\"}");              \
+    return ESP_OK;                                                    \
+  } while (0)
 
 /* Privacy Budget byte counter. Increments only when host code calls
  * csi_integration::add_outbound_bytes() — i.e. when bytes go to a
@@ -179,6 +246,12 @@ const SettingKey SETTING_KEYS[] = {
   { "core.quiet_hours.enabled",          "qh.en"         },
   { "core.quiet_hours.start_min",        "qh.start"      },
   { "core.quiet_hours.end_min",          "qh.end"        },
+  /* Privacy ceiling. P0 (default, anti-snitch) blocks anything more
+   * detailed than coarse state names. P1 lets per-event scores leave
+   * the device. P2 unlocks the raw 32-dim feature window and the
+   * Tuning Lab. Stored as int (0/1/2) so the apply_*_from_nvs helper
+   * can use Preferences::getInt with a sane fallback. */
+  { "core.privacy_ceiling",              "cp.pc"         },
   /* Anomaly baseline — out-of-pattern detector tunables. Defaults
    * cover a quiet home; Tuning Lab (PR 10) exposes them as sliders. */
   { "anomaly.baseline.spike_ratio",      "ab.sr"         },
@@ -220,11 +293,31 @@ void apply_quiet_hours_from_nvs() {
   csi_event_set_quiet_window((uint16_t)qh_start, (uint16_t)qh_end, qh_en);
 }
 
+/* Restore the persisted privacy ceiling at boot. Without this every
+ * reboot reverts to P0 and the user has to re-consent to P1/P2 every
+ * power cycle, which made the Tuning Lab effectively unreachable.
+ * Default is P0 (privacy-first) — any out-of-range value falls back to
+ * P0 rather than silently elevating to a more permissive level. */
+void apply_privacy_ceiling_from_nvs() {
+  Preferences pprefs;
+  if (!pprefs.begin(SETTINGS_NS, /*readOnly=*/true)) return;
+  const int32_t raw = pprefs.getInt("cp.pc", (int32_t)CSI_PRIVACY_P0);
+  pprefs.end();
+  csi_privacy_class_t ceiling;
+  switch (raw) {
+    case (int32_t)CSI_PRIVACY_P1: ceiling = CSI_PRIVACY_P1; break;
+    case (int32_t)CSI_PRIVACY_P2: ceiling = CSI_PRIVACY_P2; break;
+    default:                      ceiling = CSI_PRIVACY_P0; break;
+  }
+  csi_event_set_privacy_ceiling(ceiling);
+}
+
 /* ──────────────────────────────────────────────────────────────────────────
  * HTTP HANDLERS
  * ────────────────────────────────────────────────────────────────────────── */
 
 esp_err_t handle_stream(httpd_req_t* req) {
+  CSI_AUTH_OR_RETURN(req);
   /* Polling-friendly snapshot. Returns the most recently committed event,
    * or an "ambient" record derived from the latest feature window if no
    * event has fired yet. The client reconnects once per second.
@@ -233,6 +326,17 @@ esp_err_t handle_stream(httpd_req_t* req) {
    * Python listener and the dashboard work unchanged when SSE lands. */
   httpd_resp_set_type(req, "application/json");
   httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
+
+  /* HAL never came up — be honest about it instead of returning the same
+   * "sensing" fallback as a healthy-but-quiet device. The dashboard maps
+   * status:"unavailable" to a clear "Sensing offline" plate. */
+  if (!g_hal_ready) {
+    const char* body = "{\"t\":0,\"status\":\"unavailable\","
+                       "\"reason\":\"hal_init_failed\","
+                       "\"category\":\"ambient\",\"state\":\"sensing\"}";
+    httpd_resp_send(req, body, -1);
+    return ESP_OK;
+  }
 
   char buf[640];
   if (g_snapshot.valid) {
@@ -303,6 +407,7 @@ esp_err_t handle_stream(httpd_req_t* req) {
 }
 
 esp_err_t handle_window(httpd_req_t* req) {
+  CSI_AUTH_OR_RETURN(req);
   /* Raw 32-dim feature vector. P2 only — the chokepoint enforces the
    * privacy ceiling, so unauthorized callers get a 403 with no data leak. */
   if (csi_event_get_privacy_ceiling() < CSI_PRIVACY_P2) {
@@ -333,6 +438,7 @@ esp_err_t handle_window(httpd_req_t* req) {
 }
 
 esp_err_t handle_events_today(httpd_req_t* req) {
+  CSI_AUTH_OR_RETURN(req);
   /* Walk the in-memory ring; emit at most 64 newest rows. Static buffer
    * so we don't blow the ESP32 task stack (csi_event_record_t is ~120 B). */
   static csi_event_record_t buffer[64];
@@ -387,6 +493,7 @@ esp_err_t handle_events_today(httpd_req_t* req) {
 }
 
 esp_err_t handle_events_dismiss(httpd_req_t* req) {
+  CSI_AUTH_OR_RETURN(req);
   /* Body is small JSON: {"event_id": <number>}. We parse with a tiny
    * scanner to avoid pulling ArduinoJson into this TU. */
   char body[96];
@@ -427,6 +534,7 @@ esp_err_t handle_events_dismiss(httpd_req_t* req) {
  * ────────────────────────────────────────────────────────────────────────── */
 
 esp_err_t handle_settings_get(httpd_req_t* req) {
+  CSI_AUTH_OR_RETURN(req);
   Preferences prefs;
   if (!prefs.begin(SETTINGS_NS, /*readOnly=*/true)) {
     /* Don't silently report defaults — the dashboard would reconcile
@@ -444,6 +552,11 @@ esp_err_t handle_settings_get(httpd_req_t* req) {
   const bool    qh_enabled  = prefs.getBool("qh.en",       false);
   const int32_t qh_start    = prefs.getInt ("qh.start",    23 * 60);  // 11 PM default
   const int32_t qh_end      = prefs.getInt ("qh.end",       7 * 60);  //  7 AM default
+  /* Privacy ceiling: persisted P0/P1/P2 choice (default P0 = anti-snitch).
+   * Read separately from the in-memory chokepoint state (which apply_*
+   * keeps in sync) so we always echo what's on disk, not what the
+   * chokepoint thinks. */
+  const int32_t privacy_raw = prefs.getInt("cp.pc", (int32_t)CSI_PRIVACY_P0);
   prefs.end();
 
   /* Map preset index back to a stable string for the dashboard. The
@@ -453,18 +566,25 @@ esp_err_t handle_settings_get(httpd_req_t* req) {
   const char* preset_str = (preset_idx == 0) ? "sensitive"
                          : (preset_idx == 2) ? "quiet" : "balanced";
 
-  char buf[256];
+  const char* privacy_str = (privacy_raw == (int32_t)CSI_PRIVACY_P2) ? "p2"
+                          : (privacy_raw == (int32_t)CSI_PRIVACY_P1) ? "p1"
+                          : "p0";
+
+  char buf[320];
   snprintf(buf, sizeof(buf),
     "{\"pet_mode\":%s,\"preset\":\"%s\",\"sensitivity\":%ld,"
-     "\"quiet_hours\":{\"enabled\":%s,\"start_min\":%ld,\"end_min\":%ld}}",
+     "\"quiet_hours\":{\"enabled\":%s,\"start_min\":%ld,\"end_min\":%ld},"
+     "\"privacy_ceiling\":\"%s\"}",
     pet_mode ? "true" : "false", preset_str, (long)sensitivity,
-    qh_enabled ? "true" : "false", (long)qh_start, (long)qh_end);
+    qh_enabled ? "true" : "false", (long)qh_start, (long)qh_end,
+    privacy_str);
   httpd_resp_set_type(req, "application/json");
   httpd_resp_send(req, buf, -1);
   return ESP_OK;
 }
 
 esp_err_t handle_settings_post(httpd_req_t* req) {
+  CSI_AUTH_OR_RETURN(req);
   /* Body is small JSON. Recognized keys:
    *   "pet_mode":    true|false  → cp.pet_mode (bool)
    *   "preset":      "sensitive"|"balanced"|"quiet" → cp.preset (int 0..2)
@@ -551,6 +671,7 @@ esp_err_t handle_settings_post(httpd_req_t* req) {
    * within that span. We temporarily nul-terminate at the closing
    * brace so strstr can't see past it, then restore the byte. Body
    * is a local buffer; mutating it is fine. */
+  bool qh_changed = false;
   if (char* qh_key = (char*)strstr(body, "\"quiet_hours\"")) {
     char* qh_open = strchr(qh_key, '{');
     if (qh_open) {
@@ -573,9 +694,9 @@ esp_err_t handle_settings_post(httpd_req_t* req) {
           v++;
           while (*v == ' ' || *v == '\t' || *v == '"') v++;
           if (strncmp(v, "true", 4) == 0) {
-            prefs.putBool("qh.en", true);  wrote_anything = true;
+            prefs.putBool("qh.en", true);  wrote_anything = true; qh_changed = true;
           } else if (strncmp(v, "false", 5) == 0) {
-            prefs.putBool("qh.en", false); wrote_anything = true;
+            prefs.putBool("qh.en", false); wrote_anything = true; qh_changed = true;
           }
         }
       }
@@ -593,11 +714,33 @@ esp_err_t handle_settings_post(httpd_req_t* req) {
         if (n > 1439) n = 1439;
         prefs.putInt(nvs, (int32_t)n);
         wrote_anything = true;
+        qh_changed = true;
       };
       put_minute("\"start_min\"", "qh.start");
       put_minute("\"end_min\"",   "qh.end");
 
       *p = saved;  /* restore for any later parsers and for cleanliness */
+    }
+  }
+
+  /* "privacy_ceiling": "p0" | "p1" | "p2". Persisted as int 0/1/2 so
+   * apply_privacy_ceiling_from_nvs() can compare against the
+   * CSI_PRIVACY_* enum directly. Unrecognised values are ignored — the
+   * existing persisted value (or P0 default) survives. */
+  bool ceiling_changed = false;
+  if (const char* k = strstr(body, "\"privacy_ceiling\"")) {
+    if (const char* v = strchr(k, ':')) {
+      v++;
+      while (*v == ' ' || *v == '\t' || *v == '"') v++;
+      int32_t val = -1;
+      if      (strncmp(v, "p0", 2) == 0) val = (int32_t)CSI_PRIVACY_P0;
+      else if (strncmp(v, "p1", 2) == 0) val = (int32_t)CSI_PRIVACY_P1;
+      else if (strncmp(v, "p2", 2) == 0) val = (int32_t)CSI_PRIVACY_P2;
+      if (val >= 0) {
+        prefs.putInt("cp.pc", val);
+        wrote_anything = true;
+        ceiling_changed = true;
+      }
     }
   }
 
@@ -612,13 +755,18 @@ esp_err_t handle_settings_post(httpd_req_t* req) {
   /* Re-init affected module so it picks up the new values on the next tick. */
   reinit_module("core.presence");
 
-  /* Re-apply Quiet Hours to the chokepoint. The dashboard's settings
-   * panel may have changed any of the three keys; rather than parse
-   * the request again, just re-read NVS via the shared helper. The
-   * next module emit on the main loop sees the new config and
-   * flushes a held_summary if we just transitioned out of an active
-   * window. */
-  apply_quiet_hours_from_nvs();
+  /* Re-apply Quiet Hours to the chokepoint only when one of the three
+   * qh.* keys actually changed. Skipping the call when nothing in that
+   * subtree moved avoids a needless NVS read + chokepoint mutation
+   * (which also triggers a held_summary flush on transition) on every
+   * unrelated POST (pet_mode, sensitivity, privacy_ceiling, etc.). The
+   * gate matches the same pattern used for the privacy ceiling below. */
+  if (qh_changed) apply_quiet_hours_from_nvs();
+
+  /* Re-apply privacy ceiling to the chokepoint so the next request to
+   * /api/csi/window or /api/tune/* reflects the new ceiling without a
+   * reboot. Cheap (single int compare + atomic store). */
+  if (ceiling_changed) apply_privacy_ceiling_from_nvs();
 
   httpd_resp_set_type(req, "application/json");
   httpd_resp_send(req, "{\"ok\":true}", -1);
@@ -626,11 +774,20 @@ esp_err_t handle_settings_post(httpd_req_t* req) {
 }
 
 esp_err_t handle_privacy_budget(httpd_req_t* req) {
+  CSI_AUTH_OR_RETURN(req);
   /* Returns the literal outbound-byte count plus the current privacy
    * ceiling so the dashboard can warm-tint the pill when the user has
    * raised the ceiling above P0. ceiling=p0 + bytes=0 → cool pill;
    * any change → warm pill. Cheap: a single 32-bit read and a
    * three-letter switch.
+   *
+   * `wired:false` is set whenever no off-device export path actually
+   * calls add_outbound_bytes() — today none do (MQTT / SD / BLE export
+   * sites haven't been retrofitted), so the counter is structurally 0
+   * regardless of activity. The dashboard reads `wired` and either hides
+   * the pill or labels it "not yet measured" so the device doesn't claim
+   * a privacy guarantee it isn't actually enforcing. Flip to true once a
+   * caller exists.
    *
    * Cache-Control: no-store. The whole point of the pill is "what is
    * the device sending right now" — a cached zero would lie. */
@@ -641,9 +798,10 @@ esp_err_t handle_privacy_budget(httpd_req_t* req) {
   /* Atomic load — the counter is updated lock-free from any export
    * path; see add_outbound_bytes() above for the threading rationale. */
   const uint32_t bytes = __atomic_load_n(&g_outbound_bytes, __ATOMIC_RELAXED);
-  char buf[96];
+  char buf[128];
   snprintf(buf, sizeof(buf),
-    "{\"bytes_today\":%lu,\"ceiling\":\"%s\",\"since_ms\":%lu}",
+    "{\"bytes_today\":%lu,\"ceiling\":\"%s\","
+     "\"since_ms\":%lu,\"wired\":false}",
     (unsigned long)bytes,
     ceiling_str,
     (unsigned long)(millis() - g_stream_started_ms));
@@ -743,14 +901,16 @@ esp_err_t handle_sense_sw(httpd_req_t* req) {
 }
 
 esp_err_t handle_sense_page(httpd_req_t* req) {
-  /* The headline Sensing dashboard. Static asset served straight from
-   * PROGMEM. The page itself fetches /api/csi/stream + /api/events/today
-   * + /api/events/dismiss + /api/csi/window for live data. No auth on the
-   * page render — everything privacy-sensitive is gated by the chokepoint's
-   * own privacy ceiling at the data endpoints. */
-  httpd_resp_set_type(req, "text/html");
-  httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
-  return httpd_resp_send(req, CSI_DASHBOARD_HTML, HTTPD_RESP_USE_STRLEN);
+  /* /sense is the legacy alias from Phase-3 staging. The canonical
+   * landing route is now / (handle_ui in canary_wap.ino), which injects
+   * the Bearer token into the dashboard HTML at request time. Issuing
+   * the same HTML here would skip that injection and the dashboard's
+   * fetch() calls would all 401. A 301 to / keeps old links working
+   * AND ensures the user lands on the token-bearing variant. */
+  httpd_resp_set_status(req, "301 Moved Permanently");
+  httpd_resp_set_hdr(req, "Location", "/");
+  httpd_resp_send(req, nullptr, 0);
+  return ESP_OK;
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -860,14 +1020,26 @@ void tune_write_value(Preferences& prefs, const TuneCoeff& c, int32_t v) {
 }
 
 esp_err_t handle_tune_page(httpd_req_t* req) {
-  /* P2 surface — no auth gate; the URL is unguessable by design and
-   * the dashboard's long-press affordance is the canonical entry. */
+  /* P2 surface. The page is a top-level navigation so we can't return
+   * a 401 — the browser would just show its default error page. Instead:
+   * if the visitor has a valid cv_session cookie, serve the Tuning Lab
+   * directly (its in-page fetches authenticate via the same cookie,
+   * sent automatically by the browser). If not, redirect to / so the
+   * pair landing kicks in; the user can long-press the device chip in
+   * the dashboard topbar to come back here once paired. */
+  if (!csi_integration::session_validate_cookie(req)) {
+    httpd_resp_set_status(req, "302 Found");
+    httpd_resp_set_hdr(req, "Location", "/");
+    httpd_resp_send(req, nullptr, 0);
+    return ESP_OK;
+  }
   httpd_resp_set_type(req, "text/html");
   httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
   return httpd_resp_send(req, TUNE_UI_HTML, HTTPD_RESP_USE_STRLEN);
 }
 
 esp_err_t handle_tune_get_coefficients(httpd_req_t* req) {
+  CSI_AUTH_OR_RETURN(req);
   httpd_resp_set_type(req, "application/json");
   httpd_resp_set_hdr(req, "Cache-Control", "no-store");
 
@@ -904,6 +1076,7 @@ esp_err_t handle_tune_get_coefficients(httpd_req_t* req) {
  * Any unrecognised key is silently ignored (P2; tinkerers are not
  * expected to need detailed feedback on typos). */
 esp_err_t handle_tune_post_coefficients(httpd_req_t* req) {
+  CSI_AUTH_OR_RETURN(req);
   httpd_resp_set_type(req, "application/json");
 
   size_t total = req->content_len;
@@ -993,6 +1166,7 @@ esp_err_t handle_tune_post_coefficients(httpd_req_t* req) {
 }
 
 esp_err_t handle_tune_get_preset(httpd_req_t* req) {
+  CSI_AUTH_OR_RETURN(req);
   /* Preset bundle: a flat JSON object mapping each coefficient's full
    * key to its current value. Identical shape to what POST consumes,
    * so a Save→Load round-trip is the identity. The bundle is local to
@@ -1025,6 +1199,7 @@ esp_err_t handle_tune_get_preset(httpd_req_t* req) {
 }
 
 esp_err_t handle_tune_post_preset(httpd_req_t* req) {
+  CSI_AUTH_OR_RETURN(req);
   /* The preset bundle uses the same key/value shape as
    * handle_tune_post_coefficients, so we can just re-use that
    * handler — it walks the body looking for known keys and writes
@@ -1125,7 +1300,214 @@ PairSlot* find_slot(const uint8_t* token) {
   return nullptr;
 }
 
+/* ──────────────────────────────────────────────────────────────────────────
+ * SESSION COOKIE STORE
+ *
+ * Issued on successful one-shot pair-token consumption (handle_ui's
+ * /?cv_pair=<hex> branch). Replaces the previous design where the device's
+ * Bearer api_token was injected into dashboard HTML — that approach made
+ * the token harvestable by anyone on the SoftAP who could `view-source`
+ * on / (per pull-request review #392 r3213361582).
+ *
+ * Each cookie is HttpOnly + SameSite=Strict, so JS can't read it (no XSS
+ * exfil) and cross-origin requests can't forge it (no CSRF). Cookie body
+ * is 32 bytes hex-encoded — 256-bit entropy, indistinguishable from
+ * random by anything an in-page script could observe.
+ *
+ * 8 slots is enough for a household worth of phones / laptops / tablets
+ * pairing concurrently. 24 h TTL matches typical "remember me" UX and
+ * caps the post-compromise window without forcing daily re-pairing.
+ *
+ * Threading: HTTP handlers serialize behind one ESP-IDF httpd worker, so
+ * no portMUX needed; matches the pair-slot store above. ────────────── */
+
+constexpr size_t   SESSION_SLOTS    = 8;
+constexpr uint32_t SESSION_TTL_MS   = 24UL * 60UL * 60UL * 1000UL;  /* 24 h */
+constexpr size_t   SESSION_TOK_BYTES   = 32;                     /* 256-bit entropy */
+constexpr size_t   SESSION_TOK_HEX_LEN = SESSION_TOK_BYTES * 2;  /* 64 hex chars */
+
+struct SessionSlot {
+  bool     active;
+  uint32_t issued_ms;
+  uint8_t  token[SESSION_TOK_BYTES];
+};
+SessionSlot g_session_slots[SESSION_SLOTS] = {};
+
+SessionSlot* pick_session_slot_for_issuance() {
+  const uint32_t now = millis();
+  /* Pass 1: prefer an empty or expired slot. */
+  for (size_t i = 0; i < SESSION_SLOTS; ++i) {
+    SessionSlot& s = g_session_slots[i];
+    if (!s.active || (now - s.issued_ms) >= SESSION_TTL_MS) return &s;
+  }
+  /* Pass 2: evict the oldest active slot. Same trade-off as the pair
+   * store — a determined attacker can churn issuances and bump a real
+   * user's session, but the legitimate user is on the AP and can re-pair
+   * by tapping the QR / "Open dashboard" link again. */
+  size_t oldest = 0;
+  for (size_t i = 1; i < SESSION_SLOTS; ++i) {
+    if ((now - g_session_slots[i].issued_ms) >
+        (now - g_session_slots[oldest].issued_ms)) {
+      oldest = i;
+    }
+  }
+  return &g_session_slots[oldest];
+}
+
+bool find_valid_session(const uint8_t* token) {
+  const uint32_t now = millis();
+  for (size_t i = 0; i < SESSION_SLOTS; ++i) {
+    SessionSlot& s = g_session_slots[i];
+    if (!s.active) continue;
+    if ((now - s.issued_ms) >= SESSION_TTL_MS) continue;
+    if (ct_eq(s.token, token, SESSION_TOK_BYTES)) return true;
+  }
+  return false;
+}
+
+/* Read the cv_session cookie out of the Cookie request header.
+ * The Cookie header is a single string of "name=value; name=value; ..."
+ * pairs. We scan for "cv_session=" and copy out exactly SESSION_TOK_HEX_LEN
+ * bytes after it. Returns false on any parse failure (header missing,
+ * cookie absent, hex too short / too long). Never sends a response. */
+bool read_session_cookie_hex(httpd_req_t* req, char* hex_out) {
+  if (!req || !hex_out) return false;
+  const size_t hdr_len = httpd_req_get_hdr_value_len(req, "Cookie");
+  if (hdr_len == 0 || hdr_len >= 512) return false;
+  /* Stack-allocate; 512 cap is a comfortable ceiling for the small
+   * cookie set this device uses. */
+  char buf[512];
+  if (httpd_req_get_hdr_value_str(req, "Cookie", buf, sizeof(buf)) != ESP_OK) {
+    return false;
+  }
+  const char* k = strstr(buf, "cv_session=");
+  if (!k) return false;
+  k += 11;  /* len("cv_session=") */
+  /* Ensure there are exactly SESSION_TOK_HEX_LEN hex chars and the
+   * value is terminated by ';' or end-of-string. Anything else is
+   * a malformed cookie and we reject it. */
+  for (size_t i = 0; i < SESSION_TOK_HEX_LEN; ++i) {
+    const char c = k[i];
+    const bool is_hex = (c >= '0' && c <= '9') ||
+                        (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+    if (!is_hex) return false;
+    hex_out[i] = c;
+  }
+  hex_out[SESSION_TOK_HEX_LEN] = '\0';
+  /* The next char must be the cookie-pair terminator. */
+  const char tail = k[SESSION_TOK_HEX_LEN];
+  return (tail == '\0' || tail == ';' || tail == ' ');
+}
+
+}  /* namespace (anonymous) */
+
+namespace csi_integration {
+
+bool session_validate_cookie(httpd_req_t* req) {
+  char hex[SESSION_TOK_HEX_LEN + 1];
+  if (!read_session_cookie_hex(req, hex)) return false;
+  uint8_t raw[SESSION_TOK_BYTES];
+  if (!hex_decode_to(hex, raw, SESSION_TOK_BYTES)) return false;
+  return find_valid_session(raw);
+}
+
+}  /* namespace csi_integration */
+
+/* File-scope trampoline forwarded to from the anonymous-namespace
+ * cv_session_validate forward decl (used by CSI_AUTH_OR_RETURN). Letting
+ * the macro call the public API directly would require putting the
+ * forward decl inside namespace csi_integration { ... } at file scope —
+ * harmless but noisier than this single-line bridge. */
+bool cv_session_validate(httpd_req_t* req) {
+  return csi_integration::session_validate_cookie(req);
+}
+
+namespace csi_integration {
+
+bool session_issue(char* hex_out, size_t out_cap) {
+  if (!hex_out || out_cap < SESSION_TOK_HEX_LEN + 1) return false;
+  SessionSlot* s = pick_session_slot_for_issuance();
+  if (!s) return false;
+  esp_fill_random(s->token, SESSION_TOK_BYTES);
+  s->issued_ms = millis();
+  s->active    = true;
+  hex_encode(s->token, SESSION_TOK_BYTES, hex_out);
+  return true;
+}
+
+/* Static so the asset lives in flash (PROGMEM-style on ESP32) and isn't
+ * counted toward heap. Two %s slots: pair-token hex × 2 (one for the
+ * <a href> and one for the on-screen URL the user can hand-type or
+ * scan from a printed QR if their captive portal is uncooperative).
+ *
+ * Microcopy doctrine matches the headline dashboard's COPY object:
+ * plain words, no jargon ("pair", "Bearer", "session" do not appear),
+ * grade ≤6th to clear the FKGL CI gate. */
+static const char SENSE_PAIR_LANDING_TMPL[] PROGMEM =
+  "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+  "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+  "<title>Canary &middot; Welcome</title>"
+  "<style>"
+    "body{font-family:system-ui,-apple-system,sans-serif;max-width:420px;"
+      "margin:60px auto;padding:24px;text-align:center;"
+      "background:#fffbec;color:#1a1605;line-height:1.5;}"
+    "h1{font-weight:500;font-size:28px;margin-bottom:8px;}"
+    "p{margin:14px 0;color:#3a311e;}"
+    "a.enter{display:inline-block;margin:24px 0 8px;padding:14px 36px;"
+      "background:#f0c319;color:#1a1605;border-radius:14px;"
+      "text-decoration:none;font-weight:500;font-size:17px;}"
+    "a.enter:active{transform:translateY(1px);}"
+    ".note{color:#6b6049;font-size:13px;margin-top:24px;}"
+    ".url{font-family:ui-monospace,Menlo,monospace;font-size:11px;"
+      "word-break:break-all;color:#6b6049;background:#f3ecd0;"
+      "padding:10px;border-radius:8px;margin-top:8px;}"
+    "@media (prefers-color-scheme:dark){"
+      "body{background:#1a1605;color:#fffbec;}"
+      "p{color:#cfc6ad;}"
+      ".note,.url{color:#a89e85;}"
+      ".url{background:#2a2310;}"
+    "}"
+  "</style></head><body>"
+  "<h1>Welcome to your Canary</h1>"
+  "<p>Open the dashboard to start sensing.</p>"
+  "<a class=\"enter\" href=\"/?cv_pair=%s\">Open dashboard</a>"
+  "<p class=\"note\">If the button does not work, paste this on the same network:</p>"
+  "<div class=\"url\">http://192.168.4.1/?cv_pair=%s</div>"
+  "<p class=\"note\">This link is good for 10 minutes and works one time.</p>"
+  "</body></html>";
+
+bool send_pair_landing(httpd_req_t* req) {
+  if (!req) return false;
+  char pair_hex[PAIR_TOK_HEX_LEN + 1];
+  if (!pair_token_issue(pair_hex, sizeof(pair_hex))) {
+    /* All slots taken AND none expirable — should be vanishingly rare.
+     * Surface a 503 with a friendly note rather than serving a dead
+     * landing page. */
+    httpd_resp_set_status(req, "503 Service Unavailable");
+    httpd_resp_set_type(req, "text/html");
+    httpd_resp_sendstr(req,
+      "<!doctype html><meta charset=\"utf-8\"><title>Canary</title>"
+      "<p style=\"font-family:system-ui;text-align:center;margin-top:80px\">"
+      "Too many people pairing right now. Please try again in a minute.</p>");
+    return true;
+  }
+  /* Two %s + the template glue. The template is ~1.3 KB, the two hex
+   * tokens add 128 bytes; 2 KB is comfortable. */
+  char body[2048];
+  const int n = snprintf(body, sizeof(body),
+                         SENSE_PAIR_LANDING_TMPL, pair_hex, pair_hex);
+  if (n <= 0 || (size_t)n >= sizeof(body)) return false;
+  httpd_resp_set_type(req, "text/html");
+  httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+  return httpd_resp_send(req, body, n) == ESP_OK;
+}
+
+}  /* namespace csi_integration */
+
+namespace {
+
 esp_err_t handle_pair_token(httpd_req_t* req) {
+  CSI_AUTH_OR_RETURN(req);
   /* Issues a fresh one-shot token. The captive-portal handler also calls
    * the C++ helper directly (it embeds the same token in the QR), but
    * having the route lets a manually-typed companion path or a future
@@ -1422,23 +1804,40 @@ bool pair_token_consume(const char* hex) {
   return true;
 }
 
-bool init(httpd_handle_t server) {
+bool init(httpd_handle_t server, const char* api_token) {
   if (g_initialized) return true;
-  if (!server) return false;
+  if (!server || !api_token || !*api_token) return false;
+
+  /* Stash the Bearer token before any handler can fire. CSI_AUTH_OR_RETURN
+   * reads g_api_token; if it's null every handler 401s, which is the
+   * correct fail-closed behavior. */
+  g_api_token = api_token;
 
   register_v1_modules();
 
+  /* Restore persisted privacy ceiling (defaults to P0 — privacy-first).
+   * Done before HAL start so the very first /api/csi/window request after
+   * boot honors the user's prior choice rather than always 403'ing. */
+  apply_privacy_ceiling_from_nvs();
+
   /* Bring up the CSI HAL. start() defers until WiFi is up; the deferred
-   * retry is silent and handled by csi_hal::process(). */
+   * retry is silent and handled by csi_hal::process().
+   *
+   * If init fails (chip lacks CSI, ESP-IDF build disabled it, etc.) we
+   * still register the HTTP routes — handle_stream sniffs g_hal_ready
+   * and returns a "sensing_unavailable" payload so the dashboard renders
+   * a clear error state instead of 404'ing. */
   csi_hal::Config cfg = csi_hal::Config::defaults();
   cfg.bandwidth_mhz     = 20;
   cfg.max_frame_rate_hz = 20;
-  if (!csi_hal::init(cfg)) {
-    Serial.println("[CSI] csi_hal::init failed; sensing disabled");
-    return false;
+  g_hal_ready = csi_hal::init(cfg);
+  if (g_hal_ready) {
+    csi_set_features_callback(on_csi_window, nullptr);
+    csi_hal::start();   /* may defer; that's fine */
+  } else {
+    Serial.println("[CSI] csi_hal::init failed; routes still registered, "
+                   "stream will return status:unavailable");
   }
-  csi_set_features_callback(on_csi_window, nullptr);
-  csi_hal::start();   /* may defer; that's fine */
 
   g_stream_started_ms = millis();
 
@@ -1617,5 +2016,6 @@ bool csi_get_stats(csi_stats_t* out) {
   if (!out) return false;
   return csi_hal::get_stats(out);
 }
+
 
 }  /* namespace csi_integration */
