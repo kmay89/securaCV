@@ -19,6 +19,8 @@
  *   9. ble.events module (spec §10) — every BLE event flows through
  *      the chokepoint, with MAC-precision fields stripped by the
  *      allow-list.
+ *  10. Quiet Hours: events during the configured window are held; one
+ *      summary row appears at window-close.
  *
  * Build:
  *   - Standalone (host x86) for CI: g++ -std=c++17 -DCSI_TEST_HOST_BUILD \
@@ -28,6 +30,7 @@
  *       firmware/common/csi/src/csi_bundler.cpp \
  *       firmware/common/csi/src/csi_witness_payload.cpp \
  *       firmware/common/csi/src/ble_events_module.cpp \
+ *       firmware/common/csi/src/meta_quiet_hours.cpp \
  *       -I firmware/common/csi/src -o /tmp/csi_invariants && /tmp/csi_invariants
  *
  * Compiles cleanly inside an ESP32 firmware build too — guarded so it does
@@ -39,11 +42,13 @@
 #include "csi_bundler.h"
 #include "csi_witness_payload.h"
 #include "ble_events_module.h"
+#include "meta_quiet_hours.h"
 
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <time.h>
 
 #ifndef CSI_TEST_HOST_BUILD
 #  if !defined(CSI_TEST_RUN_ON_DEVICE)
@@ -441,6 +446,111 @@ void test_ble_events_strip_mac_precision_fields() {
   }
 }
 
+void test_quiet_hours_holds_and_summarises() {
+  /* The Quiet Hours plan promised: "Events during the configured window
+   * are held; a single summary appears after the window closes."
+   * This test pins that contract.
+   *
+   * Strategy: pin the chokepoint's notion of minute-of-day to a known
+   * value (720 == 12:00) by computing the clock offset from this test's
+   * own monotonic time. Configure the window to cover noon (700..730).
+   * Burst 100 emits — every one must be held (no commits). Then disable
+   * the window via the setter; the setter detects the in→out transition
+   * and synthesises one held_summary row. The summary's bundled_count
+   * must equal the held count. */
+  csi_event_test_reset();
+  reset_captures();
+  csi_module_register(&TEST_MODULE);
+  csi_module_register(meta_quiet_hours_module());
+
+  /* Pin cur_min = 720 (12:00). monotonic_minutes is derived the same way
+   * the chokepoint does: clock_gettime(CLOCK_MONOTONIC) / 60. */
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  const int32_t mono_min = (int32_t)(ts.tv_sec / 60);
+  csi_event_set_clock_offset_minutes(720 - mono_min);
+
+  csi_event_set_quiet_window(700, 730, true);
+
+  csi_event_values_t v;
+  csi_event_values_init(&v);
+  v.category       = CSI_CATEGORY_EVENT;
+  v.present_fields = CSI_FIELD_STATE_NAME;
+  strncpy(v.state_name, "active", sizeof(v.state_name) - 1);
+
+  for (int i = 0; i < 100; ++i) {
+    csi_event_emit("test.module", "test_state", &v);
+  }
+  csi_event_flush_bundles();
+
+  EXPECT(g_captured_count == 0,
+         "no commits expected during the quiet window — every emit must be held");
+  EXPECT(g_witness_commit_count == 0,
+         "no witness writes expected during the quiet window");
+
+  /* Disabling the window updates state but does NOT itself flush —
+   * that's the cross-task safety contract. The next emit (which on
+   * device runs on the main loop, same task as previous emits) sees
+   * the in→out transition and synthesises the summary. */
+  csi_event_set_quiet_window(0, 0, false);
+
+  csi_event_values_t trigger;
+  csi_event_values_init(&trigger);
+  trigger.category       = CSI_CATEGORY_EVENT;
+  trigger.present_fields = CSI_FIELD_STATE_NAME;
+  strncpy(trigger.state_name, "post_qh", sizeof(trigger.state_name) - 1);
+  csi_event_emit("test.module", "test_state", &trigger);
+  csi_event_flush_bundles();
+
+  bool found_summary = false;
+  for (size_t i = 0; i < g_captured_count; ++i) {
+    if (strcmp(g_captured[i].module_id, "meta.quiet_hours") == 0
+        && strcmp(g_captured[i].type_name, "held_summary") == 0) {
+      EXPECT(g_captured[i].values.bundled_count == 100,
+             "summary bundled_count must equal the held emit count");
+      EXPECT(strcmp(g_captured[i].values.note, "quiet_hours") == 0,
+             "summary note must be \"quiet_hours\"");
+      found_summary = true;
+    }
+  }
+  EXPECT(found_summary, "exactly one held_summary row must appear at window close");
+}
+
+void test_quiet_hours_anomalies_bypass_gate() {
+  /* Anomaly events MUST fire during quiet hours — the night-time
+   * category is precisely when unusual activity matters most. */
+  csi_event_test_reset();
+  reset_captures();
+  csi_module_register(&TEST_MODULE);
+  csi_module_register(meta_quiet_hours_module());
+
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  const int32_t mono_min = (int32_t)(ts.tv_sec / 60);
+  csi_event_set_clock_offset_minutes(720 - mono_min);
+
+  csi_event_set_quiet_window(700, 730, true);
+
+  csi_event_values_t v;
+  csi_event_values_init(&v);
+  v.category       = CSI_CATEGORY_ANOMALY;   /* the bypass token */
+  v.present_fields = CSI_FIELD_STATE_NAME;
+  strncpy(v.state_name, "spike", sizeof(v.state_name) - 1);
+
+  uint32_t id = csi_event_emit("test.module", "test_state", &v);
+  csi_event_flush_bundles();
+
+  EXPECT(id != 0, "anomaly emit during quiet window must be accepted");
+  bool seen_anomaly = false;
+  for (size_t i = 0; i < g_captured_count; ++i) {
+    if (g_captured[i].category == CSI_CATEGORY_ANOMALY
+        && strcmp(g_captured[i].values.state_name, "spike") == 0) {
+      seen_anomaly = true;
+    }
+  }
+  EXPECT(seen_anomaly, "anomaly commit must reach the on_committed hook");
+}
+
 void test_per_module_ceiling() {
   csi_event_test_reset();
   reset_captures();
@@ -475,6 +585,8 @@ extern "C" int csi_event_invariants_run() {
   test_per_module_ceiling();
   test_witness_payload_includes_metadata();
   test_ble_events_strip_mac_precision_fields();
+  test_quiet_hours_holds_and_summarises();
+  test_quiet_hours_anomalies_bypass_gate();
 
   if (g_failures == 0) {
     fprintf(stderr, "[OK] csi_event invariants — all tests passed\n");

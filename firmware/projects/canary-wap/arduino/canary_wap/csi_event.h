@@ -185,6 +185,37 @@ void csi_event_set_module_ceiling(const char* module_id, uint8_t override_per_ho
  */
 void csi_event_set_clock_offset_minutes(int32_t offset_minutes);
 
+/**
+ * Configure the Quiet Hours window. While `enabled` and the current
+ * minute-of-day (derived from monotonic time + clock offset) is inside
+ * [start_min, end_min) (inclusive of midnight wrap), the chokepoint
+ * suppresses non-anomaly emits and increments an internal hold counter
+ * instead. At the first emit AFTER the window closes (or after the
+ * setter is called with config that puts the clock outside the
+ * window), the chokepoint synthesises a single `held_summary` event
+ * through the registered `meta.quiet_hours` module so the dashboard
+ * can render one row representing the suppressed window. Anomaly
+ * events (CSI_CATEGORY_ANOMALY) always pass through — the night-time
+ * category is precisely when unusual activity matters most.
+ *
+ * `start_min` and `end_min` are minutes-of-day in [0, 1440). A window
+ * may cross midnight (start > end). `start_min == end_min` disables
+ * the gate even if `enabled` is true.
+ *
+ * Thread safety: this setter performs only single-word state writes
+ * (start_min, end_min, enabled). It DOES NOT flush the held summary
+ * itself — that runs from the next emit on whichever task drives
+ * emit() (the main loop on canary-wap). This keeps the chokepoint's
+ * "emit() is single-task" invariant intact even when the host's
+ * /api/settings POST handler calls this setter from a different task
+ * than the one running module ticks. Held events accumulated under
+ * the previous config are flushed by the transition detector inside
+ * emit() the next time it runs.
+ */
+void csi_event_set_quiet_window(uint16_t start_min,
+                                uint16_t end_min,
+                                bool     enabled);
+
 /* ──────────────────────────────────────────────────────────────────────────
  * INTROSPECTION (for /api/events/today and the dashboard ribbon)
  * ────────────────────────────────────────────────────────────────────────── */

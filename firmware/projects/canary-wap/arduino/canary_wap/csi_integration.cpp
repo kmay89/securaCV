@@ -56,6 +56,7 @@
 #include <core_breathing.h>
 #include <core_activity_ribbon.h>
 #include <meta_daily_summary.h>
+#include <meta_quiet_hours.h>
 #include <anomaly_baseline.h>
 #include <ble_events_module.h>
 
@@ -201,6 +202,22 @@ void reinit_module(const char* module_id) {
   if (!m) return;
   if (m->deinit) m->deinit();
   if (m->init)   m->init(nullptr);
+}
+
+/* Read the persisted Quiet Hours range from NVS and push it into the
+ * chokepoint. Called both at boot (register_v1_modules) and on
+ * /api/settings POST. Defaults match the dashboard's UI defaults
+ * (23:00 → 07:00) so a never-set device is congruent with what a
+ * fresh installer sees. The chokepoint setter is a pure state update
+ * — held-summary flushing happens on the next emit, not here. */
+void apply_quiet_hours_from_nvs() {
+  Preferences qprefs;
+  if (!qprefs.begin(SETTINGS_NS, /*readOnly=*/true)) return;
+  const bool    qh_en    = qprefs.getBool("qh.en",    false);
+  const int32_t qh_start = qprefs.getInt ("qh.start", 23 * 60);
+  const int32_t qh_end   = qprefs.getInt ("qh.end",    7 * 60);
+  qprefs.end();
+  csi_event_set_quiet_window((uint16_t)qh_start, (uint16_t)qh_end, qh_en);
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -594,6 +611,14 @@ esp_err_t handle_settings_post(httpd_req_t* req) {
 
   /* Re-init affected module so it picks up the new values on the next tick. */
   reinit_module("core.presence");
+
+  /* Re-apply Quiet Hours to the chokepoint. The dashboard's settings
+   * panel may have changed any of the three keys; rather than parse
+   * the request again, just re-read NVS via the shared helper. The
+   * next module emit on the main loop sees the new config and
+   * flushes a held_summary if we just transitioned out of an active
+   * window. */
+  apply_quiet_hours_from_nvs();
 
   httpd_resp_set_type(req, "application/json");
   httpd_resp_send(req, "{\"ok\":true}", -1);
@@ -1135,6 +1160,11 @@ void register_v1_modules() {
   csi_module_register(core_breathing_module());
   csi_module_register(core_activity_ribbon_module());
   csi_module_register(meta_daily_summary_module());
+  /* meta.quiet_hours holds the manifest entry for the held_summary row
+   * the chokepoint synthesises at the moment a configured Quiet Hours
+   * window closes. Registering the module is what lets that synthetic
+   * emit pass the chokepoint's allow-list check. */
+  csi_module_register(meta_quiet_hours_module());
   /* Tier 3 #7: baseline-aware anomaly detector. P0, no identity, just
    * "this room rarely looks like that." Watches the same features
    * stream the four core modules see. */
@@ -1147,6 +1177,11 @@ void register_v1_modules() {
    * hardware identifiers. Helpers in ble_events_module.h are the only
    * legitimate BLE→witness path going forward. */
   csi_module_register(ble_events_module());
+
+  /* Wire the persisted Quiet Hours range into the chokepoint. The
+   * dashboard's settings panel writes qh.en / qh.start / qh.end via
+   * /api/settings POST; rebooting the device picks them back up. */
+  apply_quiet_hours_from_nvs();
 }
 
 }  /* namespace */
