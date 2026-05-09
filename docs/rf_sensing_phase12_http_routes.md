@@ -91,36 +91,32 @@ Response (200):
   "state": "training",
   "zone_name": "Back Door",
   "context": "home",
-  "training": {
-    "progress_bps": 4200,
-    "complete": false
-  },
-  "household": {
-    "paired_count": 2,
-    "enrolling": false,
-    "enrollment_ms_remaining": 0
-  },
-  "baseline": {
-    "populated_buckets": 91
-  },
-  "activity_noised": {
-    "alerts_fired": 4,
-    "events_evaluated": 1281,
-    "ambient_suppressed": 612,
-    "household_suppressed": 38
-  }
+  "training_progress_bps": 4200,
+  "training_complete": false,
+  "household_paired_count": 2,
+  "household_enrolling": false,
+  "household_enrollment_ms_remaining": 0,
+  "baseline_populated_buckets": 91,
+  "total_alerts_fired": 4,
+  "total_events_evaluated": 1281,
+  "total_ambient_suppressed": 612,
+  "total_household_suppressed": 38
 }
 ```
 
-Field rules:
+Field rules — flat, mirroring `wizard::Status` 1:1 so the handler
+serialises with no manual rename layer:
+
 - `state` ∈ `{unconfigured, pairing, training, ready}` — 1:1 with
   `wizard::SetupState`.
 - `context` ∈ `{home, away, quiet_hours, traveling}` — 1:1 with
   `notify::Context`.
-- `progress_bps` is basis points (0..10000), clamped server-side.
-- All counters under `activity_noised` are post-DP. The raw
-  (un-noised) `wizard::get_status` is **not** exposed over HTTP. If a
-  debug build exposes it, the route MUST be gated behind a
+- `training_progress_bps` is basis points (0..10000), clamped
+  server-side.
+- All four `total_*` counters are post-DP, fed by `wizard::get_status()`
+  which already calls the underlying `*_for_export` (DP-noised) paths.
+  The raw (un-noised) counters are **not** exposed over HTTP. If a
+  debug build needs them, the route MUST be gated behind a
   `FEATURE_RF_DEBUG_STATS` compile flag and never default-on.
 
 Errors:
@@ -134,10 +130,15 @@ Request:
 { "name": "Back Door" }
 ```
 
-- `name` is bounded by `wizard::MAX_ZONE_NAME_LEN - 1 = 31` chars.
-- Server trims trailing whitespace and rejects bytes < 0x20 or >= 0x7F
-  with `400 bad_request`. UI-only emoji are fine; we accept UTF-8 but
-  measure length in bytes against MAX_ZONE_NAME_LEN.
+- `name` is bounded by `wizard::MAX_ZONE_NAME_LEN - 1 = 31` *bytes*
+  (not chars) — UTF-8 multi-byte sequences eat into the budget and
+  the server measures against the byte length.
+- Server trims trailing whitespace and rejects only ASCII control
+  bytes (`< 0x20`, plus `0x7F` DEL) with `400 bad_request`. Bytes
+  `>= 0x80` are passed through so legal UTF-8 sequences (including
+  emoji) survive — they would otherwise have been rejected by the
+  earlier "reject bytes ≥ 0x7F" wording, which contradicted the
+  "accept UTF-8" claim immediately after.
 - Empty name resets the zone (delegates to `wizard::set_zone_name("")`).
 
 Response (200): the same shape as `/api/rf/status` after the change
@@ -184,14 +185,35 @@ persists to NVS.
 
 Request: no body.
 
-Calls `wizard::always_ignore_last_decision()`. Returns:
+The handler calls `wizard::always_ignore_last_decision()`. The current
+helper returns `bool` only, which collapses both failure cases — *no
+decision yet* and *last decision was a fire* — into a single `false`.
+Producing distinct reasons in the HTTP response therefore requires an
+additive change in `wizard.h` before this endpoint ships:
 
-- `200` `{ "muted": true }` on success
-- `200` `{ "muted": false, "reason": "no_decision_yet" }` if there has
-  not been a decision yet
-- `200` `{ "muted": false, "reason": "last_decision_fired" }` if the
-  last decision actually fired (we don't mute things we just alerted on
-  — the user should cool off first; deliberate UX from Phase 8)
+```c
+namespace wizard {
+enum class MuteOutcome : uint8_t {
+  Muted              = 0,
+  NoDecisionYet      = 1,
+  LastDecisionFired  = 2,
+};
+MuteOutcome always_ignore_last_decision_v2();
+}
+```
+
+The bool-returning `always_ignore_last_decision()` stays for the
+existing call sites (`wizard::tick`'s SMS-trigger pathway), so the
+v2 entry point is purely additive.
+
+Responses:
+
+- `200` `{ "muted": true }` when `MuteOutcome::Muted`
+- `200` `{ "muted": false, "reason": "no_decision_yet" }` for
+  `MuteOutcome::NoDecisionYet`
+- `200` `{ "muted": false, "reason": "last_decision_fired" }` for
+  `MuteOutcome::LastDecisionFired` (deliberate Phase-8 UX: don't mute
+  things we just alerted on; user should cool off first)
 
 This endpoint MUST NOT include the fingerprint in the response. The
 fingerprint is internal-only.
@@ -203,38 +225,65 @@ Request: no body.
 Delegates to `familiar::forget_always_ignored()`. Returns the new
 status snapshot.
 
-### 4.9 POST `/api/rf/self-test` — run conformance harness
+### 4.9 POST `/api/rf/self-test` — run conformance + red-team harness
 
 Request: no body. Bearer-auth + rate-limited (admin action).
 
-Calls `tests::run_all_conformance()` and returns the structured
-report. Schema mirrors `tests::Report`:
+Calls `tests::run_all(&report)` (NOT `run_all_conformance` alone — the
+red-team scenarios are part of the spec coverage and the response
+example below includes them). The response mirrors `tests::Report`
+field-for-field so the handler is a thin serialiser:
 
 ```json
 {
-  "passed": 11,
-  "failed": 0,
-  "results": [
-    { "name": "csi_hal::self_test",      "passed": true  },
-    { "name": "household::self_test",    "passed": true  },
-    { "name": "household::no_mac_in_slots","passed": true },
-    { "name": "familiar::self_test",     "passed": true  },
-    { "name": "baseline::self_test",     "passed": true  },
-    { "name": "notify::self_test",       "passed": true  },
-    { "name": "federated::self_test",    "passed": true  },
-    { "name": "wizard::self_test",       "passed": true  },
-    { "name": "redteam::mac_replay",     "passed": true  },
-    { "name": "redteam::cloned_rpa",     "passed": true  },
-    { "name": "redteam::baseline_poison","passed": true  }
-  ]
+  "conformance": [
+    { "name": "csi_hal::self_test",      "passed": true },
+    { "name": "household::self_test",    "passed": true },
+    { "name": "familiar::self_test",     "passed": true },
+    { "name": "baseline::self_test",     "passed": true },
+    { "name": "notify::self_test",       "passed": true },
+    { "name": "federated::self_test",    "passed": true },
+    { "name": "wizard::self_test",       "passed": true },
+    { "name": "dp::self_test",           "passed": true }
+  ],
+  "conformance_count":  8,
+  "conformance_passed": 8,
+  "red_team": [
+    { "name": "redteam::mac_replay",      "passed": true },
+    { "name": "redteam::cloned_rpa",      "passed": true },
+    { "name": "redteam::baseline_poison", "passed": true }
+  ],
+  "red_team_count":  3,
+  "red_team_passed": 3,
+  "total_ms":   142,
+  "all_passed": true
 }
 ```
 
-This endpoint runs synchronously on the HTTP task; max wall time
-budget is 2 s under nominal load. If it exceeds, the handler returns
-`500 internal` and the in-progress test continues to completion in the
-background (the next call observes a clean state because each test
-restores state on exit).
+The `*_count` / `*_passed` fields come straight from `Report.{conformance,red_team}_{count,passed}`;
+the array entries map from `Report.{conformance,red_team}[i].{name,passed}`.
+
+Concurrency: this endpoint runs synchronously on the HTTP task and
+the handler holds a process-wide busy flag (a static `bool` inside
+the handler TU, guarded by an atomic CAS — keeps the contract local
+to the HTTP layer and `tests::` stays pure). A second concurrent
+request returns `409 conflict` with `"reason": "self_test_busy"`
+rather than starting a parallel run — several of the scenarios
+mutate global module state (NVS slots, baseline buckets, federated
+peer table) and restore it before exit, so two overlapping runs
+would corrupt each other's restore step.
+
+Wall-time budget is 2 s under nominal load. The handler does NOT
+abandon a run mid-flight: aborting mid-restore would leave NVS in
+the half-restored state we're trying to prevent. The handler waits
+for `tests::run_all` to return, then if `report.total_ms > 2000`
+sends `503 unavailable` with `"reason": "self_test_overran"` AND
+the same JSON body shown above (so the caller can still see which
+scenario was slow). The busy flag releases at the same point. Per-
+scenario timeouts are out of scope for Phase 12 — `tests::` itself
+would have to grow internal time slicing for that, and none of the
+existing scenarios hit even half the budget on the canary-wap
+hardware today.
 
 ## 5. Privacy invariants
 
@@ -309,6 +358,11 @@ Implementation of this spec is "done" when:
 - [ ] `register_api_routes`'s handler-count constant
       (`base_handlers + …`) is bumped to cover the nine new routes plus
       a small headroom; a regression test verifies start succeeds.
+- [ ] **Additive `wizard.h` change**: `wizard::MuteOutcome` enum +
+      `wizard::always_ignore_last_decision_v2()` landed alongside this
+      Phase 12 implementation so §4.7 can produce its three documented
+      reasons. The bool-returning `always_ignore_last_decision()` stays
+      for `wizard::tick`'s SMS-trigger path; no caller migrates.
 - [ ] `tests::run_all_conformance()` still passes and gains a
       Phase 12 entry that exercises a representative endpoint via the
       same in-process httpd path used by other API tests.
