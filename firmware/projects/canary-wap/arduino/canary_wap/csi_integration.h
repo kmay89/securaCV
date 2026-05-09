@@ -26,9 +26,17 @@ namespace csi_integration {
  *   - WiFi AP/STA is up (so esp_wifi_set_csi_rx_cb has a context)
  *   - the HTTP server is started (we register URI handlers on it)
  *
+ * The api_token argument is the device's Bearer token (g_device.api_token_str).
+ * Every CSI HTTP handler verifies the inbound Authorization header against it
+ * via api_auth_check(), matching the handle_*_auth pattern used by /api/status,
+ * /api/chain, /api/witness, etc. The dashboard at / bootstraps the token by
+ * reading window.__CV_TOKEN, which handle_ui injects into the HTML at request
+ * time. The pointer must remain valid for the lifetime of the integration
+ * (g_device lives forever, so passing &g_device.api_token_str[0] is fine).
+ *
  * Idempotent: a second call returns immediately.
  */
-bool init(httpd_handle_t server);
+bool init(httpd_handle_t server, const char* api_token);
 
 /**
  * Per-tick pump. Call once per main-loop iteration after init().
@@ -64,6 +72,21 @@ bool csi_running();
 /** csi_hal::get_stats() bridge. Fills out frames_received,
  *  windows_emitted, frames_dropped_*, etc. Returns false on null arg. */
 bool csi_get_stats(csi_stats_t* out);
+
+/**
+ * Send a PROGMEM HTML asset with `<script>window.__CV_TOKEN="..."</script>`
+ * injected just inside <head> so the in-page JS can authenticate its
+ * fetch() calls. Both the headline dashboard (handle_ui in canary_wap.ino)
+ * and the Tuning Lab (handle_tune_page) route through here so a single
+ * code path owns the token-bootstrap contract.
+ *
+ * The asset MUST contain a literal "<head>" tag — if absent, we send
+ * unmodified (no injection) and return true; the page will then fail
+ * its fetches and show its disconnect state, which is the correct UX
+ * for "this page wasn't built to authenticate". Returns false only on
+ * httpd send failure.
+ */
+bool send_html_with_token(httpd_req_t* req, const char* html);
 
 /**
  * Optional: called by the existing CSI features callback when this firmware

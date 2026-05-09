@@ -34,6 +34,7 @@
 #include "csi_integration.h"
 #include "csi_dashboard_html.h"
 #include "tune_ui.h"
+#include "api_auth.h"             // api_auth_check() — Bearer token gate
 
 #include <Arduino.h>
 #include <Preferences.h>          // NVS-backed settings store
@@ -67,6 +68,23 @@ csi_integration::legacy_features_hook_t g_legacy_hook        = nullptr;
 csi_features_t                          g_latest_window      = {};
 bool                                    g_have_latest_window = false;
 uint32_t                                g_stream_started_ms  = 0;
+/* True iff csi_hal::init() succeeded during csi_integration::init().
+ * When false the HTTP routes are still registered (so the dashboard
+ * doesn't 404) but handle_stream returns a "sensing_unavailable"
+ * payload so the user sees a clear error instead of a stuck orb. */
+bool                                    g_hal_ready          = false;
+/* Bearer token expected on all CSI HTTP requests. Pointer into the
+ * caller's storage (g_device.api_token_str) — never freed. */
+const char*                             g_api_token          = nullptr;
+
+/* Auth guard: drop into every handler at the very top. Mirrors the
+ * handle_*_auth pattern used by /api/status, /api/chain, etc. The
+ * macro form keeps the per-handler diff to one line. */
+#define CSI_AUTH_OR_RETURN(req)                                       \
+  do {                                                                \
+    if (!g_api_token ||                                               \
+        !api_auth_check((req), g_api_token)) return ESP_OK;           \
+  } while (0)
 
 /* Privacy Budget byte counter. Increments only when host code calls
  * csi_integration::add_outbound_bytes() — i.e. when bytes go to a
@@ -179,6 +197,12 @@ const SettingKey SETTING_KEYS[] = {
   { "core.quiet_hours.enabled",          "qh.en"         },
   { "core.quiet_hours.start_min",        "qh.start"      },
   { "core.quiet_hours.end_min",          "qh.end"        },
+  /* Privacy ceiling. P0 (default, anti-snitch) blocks anything more
+   * detailed than coarse state names. P1 lets per-event scores leave
+   * the device. P2 unlocks the raw 32-dim feature window and the
+   * Tuning Lab. Stored as int (0/1/2) so the apply_*_from_nvs helper
+   * can use Preferences::getInt with a sane fallback. */
+  { "core.privacy_ceiling",              "cp.pc"         },
   /* Anomaly baseline — out-of-pattern detector tunables. Defaults
    * cover a quiet home; Tuning Lab (PR 10) exposes them as sliders. */
   { "anomaly.baseline.spike_ratio",      "ab.sr"         },
@@ -220,11 +244,31 @@ void apply_quiet_hours_from_nvs() {
   csi_event_set_quiet_window((uint16_t)qh_start, (uint16_t)qh_end, qh_en);
 }
 
+/* Restore the persisted privacy ceiling at boot. Without this every
+ * reboot reverts to P0 and the user has to re-consent to P1/P2 every
+ * power cycle, which made the Tuning Lab effectively unreachable.
+ * Default is P0 (privacy-first) — any out-of-range value falls back to
+ * P0 rather than silently elevating to a more permissive level. */
+void apply_privacy_ceiling_from_nvs() {
+  Preferences pprefs;
+  if (!pprefs.begin(SETTINGS_NS, /*readOnly=*/true)) return;
+  const int32_t raw = pprefs.getInt("cp.pc", (int32_t)CSI_PRIVACY_P0);
+  pprefs.end();
+  csi_privacy_class_t ceiling;
+  switch (raw) {
+    case (int32_t)CSI_PRIVACY_P1: ceiling = CSI_PRIVACY_P1; break;
+    case (int32_t)CSI_PRIVACY_P2: ceiling = CSI_PRIVACY_P2; break;
+    default:                      ceiling = CSI_PRIVACY_P0; break;
+  }
+  csi_event_set_privacy_ceiling(ceiling);
+}
+
 /* ──────────────────────────────────────────────────────────────────────────
  * HTTP HANDLERS
  * ────────────────────────────────────────────────────────────────────────── */
 
 esp_err_t handle_stream(httpd_req_t* req) {
+  CSI_AUTH_OR_RETURN(req);
   /* Polling-friendly snapshot. Returns the most recently committed event,
    * or an "ambient" record derived from the latest feature window if no
    * event has fired yet. The client reconnects once per second.
@@ -233,6 +277,17 @@ esp_err_t handle_stream(httpd_req_t* req) {
    * Python listener and the dashboard work unchanged when SSE lands. */
   httpd_resp_set_type(req, "application/json");
   httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
+
+  /* HAL never came up — be honest about it instead of returning the same
+   * "sensing" fallback as a healthy-but-quiet device. The dashboard maps
+   * status:"unavailable" to a clear "Sensing offline" plate. */
+  if (!g_hal_ready) {
+    const char* body = "{\"t\":0,\"status\":\"unavailable\","
+                       "\"reason\":\"hal_init_failed\","
+                       "\"category\":\"ambient\",\"state\":\"sensing\"}";
+    httpd_resp_send(req, body, -1);
+    return ESP_OK;
+  }
 
   char buf[640];
   if (g_snapshot.valid) {
@@ -303,6 +358,7 @@ esp_err_t handle_stream(httpd_req_t* req) {
 }
 
 esp_err_t handle_window(httpd_req_t* req) {
+  CSI_AUTH_OR_RETURN(req);
   /* Raw 32-dim feature vector. P2 only — the chokepoint enforces the
    * privacy ceiling, so unauthorized callers get a 403 with no data leak. */
   if (csi_event_get_privacy_ceiling() < CSI_PRIVACY_P2) {
@@ -333,6 +389,7 @@ esp_err_t handle_window(httpd_req_t* req) {
 }
 
 esp_err_t handle_events_today(httpd_req_t* req) {
+  CSI_AUTH_OR_RETURN(req);
   /* Walk the in-memory ring; emit at most 64 newest rows. Static buffer
    * so we don't blow the ESP32 task stack (csi_event_record_t is ~120 B). */
   static csi_event_record_t buffer[64];
@@ -387,6 +444,7 @@ esp_err_t handle_events_today(httpd_req_t* req) {
 }
 
 esp_err_t handle_events_dismiss(httpd_req_t* req) {
+  CSI_AUTH_OR_RETURN(req);
   /* Body is small JSON: {"event_id": <number>}. We parse with a tiny
    * scanner to avoid pulling ArduinoJson into this TU. */
   char body[96];
@@ -427,6 +485,7 @@ esp_err_t handle_events_dismiss(httpd_req_t* req) {
  * ────────────────────────────────────────────────────────────────────────── */
 
 esp_err_t handle_settings_get(httpd_req_t* req) {
+  CSI_AUTH_OR_RETURN(req);
   Preferences prefs;
   if (!prefs.begin(SETTINGS_NS, /*readOnly=*/true)) {
     /* Don't silently report defaults — the dashboard would reconcile
@@ -444,6 +503,11 @@ esp_err_t handle_settings_get(httpd_req_t* req) {
   const bool    qh_enabled  = prefs.getBool("qh.en",       false);
   const int32_t qh_start    = prefs.getInt ("qh.start",    23 * 60);  // 11 PM default
   const int32_t qh_end      = prefs.getInt ("qh.end",       7 * 60);  //  7 AM default
+  /* Privacy ceiling: persisted P0/P1/P2 choice (default P0 = anti-snitch).
+   * Read separately from the in-memory chokepoint state (which apply_*
+   * keeps in sync) so we always echo what's on disk, not what the
+   * chokepoint thinks. */
+  const int32_t privacy_raw = prefs.getInt("cp.pc", (int32_t)CSI_PRIVACY_P0);
   prefs.end();
 
   /* Map preset index back to a stable string for the dashboard. The
@@ -453,18 +517,25 @@ esp_err_t handle_settings_get(httpd_req_t* req) {
   const char* preset_str = (preset_idx == 0) ? "sensitive"
                          : (preset_idx == 2) ? "quiet" : "balanced";
 
-  char buf[256];
+  const char* privacy_str = (privacy_raw == (int32_t)CSI_PRIVACY_P2) ? "p2"
+                          : (privacy_raw == (int32_t)CSI_PRIVACY_P1) ? "p1"
+                          : "p0";
+
+  char buf[320];
   snprintf(buf, sizeof(buf),
     "{\"pet_mode\":%s,\"preset\":\"%s\",\"sensitivity\":%ld,"
-     "\"quiet_hours\":{\"enabled\":%s,\"start_min\":%ld,\"end_min\":%ld}}",
+     "\"quiet_hours\":{\"enabled\":%s,\"start_min\":%ld,\"end_min\":%ld},"
+     "\"privacy_ceiling\":\"%s\"}",
     pet_mode ? "true" : "false", preset_str, (long)sensitivity,
-    qh_enabled ? "true" : "false", (long)qh_start, (long)qh_end);
+    qh_enabled ? "true" : "false", (long)qh_start, (long)qh_end,
+    privacy_str);
   httpd_resp_set_type(req, "application/json");
   httpd_resp_send(req, buf, -1);
   return ESP_OK;
 }
 
 esp_err_t handle_settings_post(httpd_req_t* req) {
+  CSI_AUTH_OR_RETURN(req);
   /* Body is small JSON. Recognized keys:
    *   "pet_mode":    true|false  → cp.pet_mode (bool)
    *   "preset":      "sensitive"|"balanced"|"quiet" → cp.preset (int 0..2)
@@ -601,6 +672,27 @@ esp_err_t handle_settings_post(httpd_req_t* req) {
     }
   }
 
+  /* "privacy_ceiling": "p0" | "p1" | "p2". Persisted as int 0/1/2 so
+   * apply_privacy_ceiling_from_nvs() can compare against the
+   * CSI_PRIVACY_* enum directly. Unrecognised values are ignored — the
+   * existing persisted value (or P0 default) survives. */
+  bool ceiling_changed = false;
+  if (const char* k = strstr(body, "\"privacy_ceiling\"")) {
+    if (const char* v = strchr(k, ':')) {
+      v++;
+      while (*v == ' ' || *v == '\t' || *v == '"') v++;
+      int32_t val = -1;
+      if      (strncmp(v, "p0", 2) == 0) val = (int32_t)CSI_PRIVACY_P0;
+      else if (strncmp(v, "p1", 2) == 0) val = (int32_t)CSI_PRIVACY_P1;
+      else if (strncmp(v, "p2", 2) == 0) val = (int32_t)CSI_PRIVACY_P2;
+      if (val >= 0) {
+        prefs.putInt("cp.pc", val);
+        wrote_anything = true;
+        ceiling_changed = true;
+      }
+    }
+  }
+
   prefs.end();
 
   if (!wrote_anything) {
@@ -620,17 +712,31 @@ esp_err_t handle_settings_post(httpd_req_t* req) {
    * window. */
   apply_quiet_hours_from_nvs();
 
+  /* Re-apply privacy ceiling to the chokepoint so the next request to
+   * /api/csi/window or /api/tune/* reflects the new ceiling without a
+   * reboot. Cheap (single int compare + atomic store). */
+  if (ceiling_changed) apply_privacy_ceiling_from_nvs();
+
   httpd_resp_set_type(req, "application/json");
   httpd_resp_send(req, "{\"ok\":true}", -1);
   return ESP_OK;
 }
 
 esp_err_t handle_privacy_budget(httpd_req_t* req) {
+  CSI_AUTH_OR_RETURN(req);
   /* Returns the literal outbound-byte count plus the current privacy
    * ceiling so the dashboard can warm-tint the pill when the user has
    * raised the ceiling above P0. ceiling=p0 + bytes=0 → cool pill;
    * any change → warm pill. Cheap: a single 32-bit read and a
    * three-letter switch.
+   *
+   * `wired:false` is set whenever no off-device export path actually
+   * calls add_outbound_bytes() — today none do (MQTT / SD / BLE export
+   * sites haven't been retrofitted), so the counter is structurally 0
+   * regardless of activity. The dashboard reads `wired` and either hides
+   * the pill or labels it "not yet measured" so the device doesn't claim
+   * a privacy guarantee it isn't actually enforcing. Flip to true once a
+   * caller exists.
    *
    * Cache-Control: no-store. The whole point of the pill is "what is
    * the device sending right now" — a cached zero would lie. */
@@ -641,9 +747,10 @@ esp_err_t handle_privacy_budget(httpd_req_t* req) {
   /* Atomic load — the counter is updated lock-free from any export
    * path; see add_outbound_bytes() above for the threading rationale. */
   const uint32_t bytes = __atomic_load_n(&g_outbound_bytes, __ATOMIC_RELAXED);
-  char buf[96];
+  char buf[128];
   snprintf(buf, sizeof(buf),
-    "{\"bytes_today\":%lu,\"ceiling\":\"%s\",\"since_ms\":%lu}",
+    "{\"bytes_today\":%lu,\"ceiling\":\"%s\","
+     "\"since_ms\":%lu,\"wired\":false}",
     (unsigned long)bytes,
     ceiling_str,
     (unsigned long)(millis() - g_stream_started_ms));
@@ -743,14 +850,16 @@ esp_err_t handle_sense_sw(httpd_req_t* req) {
 }
 
 esp_err_t handle_sense_page(httpd_req_t* req) {
-  /* The headline Sensing dashboard. Static asset served straight from
-   * PROGMEM. The page itself fetches /api/csi/stream + /api/events/today
-   * + /api/events/dismiss + /api/csi/window for live data. No auth on the
-   * page render — everything privacy-sensitive is gated by the chokepoint's
-   * own privacy ceiling at the data endpoints. */
-  httpd_resp_set_type(req, "text/html");
-  httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
-  return httpd_resp_send(req, CSI_DASHBOARD_HTML, HTTPD_RESP_USE_STRLEN);
+  /* /sense is the legacy alias from Phase-3 staging. The canonical
+   * landing route is now / (handle_ui in canary_wap.ino), which injects
+   * the Bearer token into the dashboard HTML at request time. Issuing
+   * the same HTML here would skip that injection and the dashboard's
+   * fetch() calls would all 401. A 301 to / keeps old links working
+   * AND ensures the user lands on the token-bearing variant. */
+  httpd_resp_set_status(req, "301 Moved Permanently");
+  httpd_resp_set_hdr(req, "Location", "/");
+  httpd_resp_send(req, nullptr, 0);
+  return ESP_OK;
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -860,14 +969,18 @@ void tune_write_value(Preferences& prefs, const TuneCoeff& c, int32_t v) {
 }
 
 esp_err_t handle_tune_page(httpd_req_t* req) {
-  /* P2 surface — no auth gate; the URL is unguessable by design and
-   * the dashboard's long-press affordance is the canonical entry. */
-  httpd_resp_set_type(req, "text/html");
-  httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
-  return httpd_resp_send(req, TUNE_UI_HTML, HTTPD_RESP_USE_STRLEN);
+  /* P2 surface. The page is a top-level navigation so we can't gate it
+   * with a Bearer header; instead we inject the device's API token into
+   * the HTML at request time, and the page's fetch() calls add it to
+   * subsequent /api/tune/* requests (which DO check the header). A
+   * casual visitor on the AP can hit /tune and read the page chrome,
+   * but every action endpoint behind it is auth-gated. */
+  return csi_integration::send_html_with_token(req, TUNE_UI_HTML)
+           ? ESP_OK : ESP_FAIL;
 }
 
 esp_err_t handle_tune_get_coefficients(httpd_req_t* req) {
+  CSI_AUTH_OR_RETURN(req);
   httpd_resp_set_type(req, "application/json");
   httpd_resp_set_hdr(req, "Cache-Control", "no-store");
 
@@ -904,6 +1017,7 @@ esp_err_t handle_tune_get_coefficients(httpd_req_t* req) {
  * Any unrecognised key is silently ignored (P2; tinkerers are not
  * expected to need detailed feedback on typos). */
 esp_err_t handle_tune_post_coefficients(httpd_req_t* req) {
+  CSI_AUTH_OR_RETURN(req);
   httpd_resp_set_type(req, "application/json");
 
   size_t total = req->content_len;
@@ -993,6 +1107,7 @@ esp_err_t handle_tune_post_coefficients(httpd_req_t* req) {
 }
 
 esp_err_t handle_tune_get_preset(httpd_req_t* req) {
+  CSI_AUTH_OR_RETURN(req);
   /* Preset bundle: a flat JSON object mapping each coefficient's full
    * key to its current value. Identical shape to what POST consumes,
    * so a Save→Load round-trip is the identity. The bundle is local to
@@ -1025,6 +1140,7 @@ esp_err_t handle_tune_get_preset(httpd_req_t* req) {
 }
 
 esp_err_t handle_tune_post_preset(httpd_req_t* req) {
+  CSI_AUTH_OR_RETURN(req);
   /* The preset bundle uses the same key/value shape as
    * handle_tune_post_coefficients, so we can just re-use that
    * handler — it walks the body looking for known keys and writes
@@ -1126,6 +1242,7 @@ PairSlot* find_slot(const uint8_t* token) {
 }
 
 esp_err_t handle_pair_token(httpd_req_t* req) {
+  CSI_AUTH_OR_RETURN(req);
   /* Issues a fresh one-shot token. The captive-portal handler also calls
    * the C++ helper directly (it embeds the same token in the QR), but
    * having the route lets a manually-typed companion path or a future
@@ -1422,23 +1539,40 @@ bool pair_token_consume(const char* hex) {
   return true;
 }
 
-bool init(httpd_handle_t server) {
+bool init(httpd_handle_t server, const char* api_token) {
   if (g_initialized) return true;
-  if (!server) return false;
+  if (!server || !api_token || !*api_token) return false;
+
+  /* Stash the Bearer token before any handler can fire. CSI_AUTH_OR_RETURN
+   * reads g_api_token; if it's null every handler 401s, which is the
+   * correct fail-closed behavior. */
+  g_api_token = api_token;
 
   register_v1_modules();
 
+  /* Restore persisted privacy ceiling (defaults to P0 — privacy-first).
+   * Done before HAL start so the very first /api/csi/window request after
+   * boot honors the user's prior choice rather than always 403'ing. */
+  apply_privacy_ceiling_from_nvs();
+
   /* Bring up the CSI HAL. start() defers until WiFi is up; the deferred
-   * retry is silent and handled by csi_hal::process(). */
+   * retry is silent and handled by csi_hal::process().
+   *
+   * If init fails (chip lacks CSI, ESP-IDF build disabled it, etc.) we
+   * still register the HTTP routes — handle_stream sniffs g_hal_ready
+   * and returns a "sensing_unavailable" payload so the dashboard renders
+   * a clear error state instead of 404'ing. */
   csi_hal::Config cfg = csi_hal::Config::defaults();
   cfg.bandwidth_mhz     = 20;
   cfg.max_frame_rate_hz = 20;
-  if (!csi_hal::init(cfg)) {
-    Serial.println("[CSI] csi_hal::init failed; sensing disabled");
-    return false;
+  g_hal_ready = csi_hal::init(cfg);
+  if (g_hal_ready) {
+    csi_set_features_callback(on_csi_window, nullptr);
+    csi_hal::start();   /* may defer; that's fine */
+  } else {
+    Serial.println("[CSI] csi_hal::init failed; routes still registered, "
+                   "stream will return status:unavailable");
   }
-  csi_set_features_callback(on_csi_window, nullptr);
-  csi_hal::start();   /* may defer; that's fine */
 
   g_stream_started_ms = millis();
 
@@ -1616,6 +1750,40 @@ bool csi_running() {
 bool csi_get_stats(csi_stats_t* out) {
   if (!out) return false;
   return csi_hal::get_stats(out);
+}
+
+bool send_html_with_token(httpd_req_t* req, const char* html) {
+  if (!req || !html) return false;
+  httpd_resp_set_type(req, "text/html");
+  httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
+
+  /* Find the spot to inject. We splice immediately after the opening
+   * <head> tag so the script runs before any in-page fetch. If the
+   * asset has no <head> we send it as-is and let the page disconnect-
+   * handle its 401s — that's better than a corrupted HTML response. */
+  static constexpr const char kHead[] = "<head>";
+  static constexpr size_t     kHeadLen = sizeof(kHead) - 1;
+  const char* head_open = strstr(html, kHead);
+  if (!head_open || !g_api_token) {
+    return httpd_resp_send(req, html, HTTPD_RESP_USE_STRLEN) == ESP_OK;
+  }
+  const size_t prefix_len = (size_t)(head_open - html) + kHeadLen;
+
+  /* api_token_str is at most 35 printable chars + NUL (see canary_wap.ino:444);
+   * the surrounding script tag is ~45 chars. 128 is a comfortable ceiling. */
+  char inject[128];
+  const int inject_len = snprintf(inject, sizeof(inject),
+    "<script>window.__CV_TOKEN=\"%s\";</script>", g_api_token);
+  if (inject_len <= 0 || (size_t)inject_len >= sizeof(inject)) {
+    return httpd_resp_send(req, html, HTTPD_RESP_USE_STRLEN) == ESP_OK;
+  }
+
+  if (httpd_resp_send_chunk(req, html, prefix_len) != ESP_OK)         return false;
+  if (httpd_resp_send_chunk(req, inject, inject_len) != ESP_OK)       return false;
+  const char* tail = html + prefix_len;
+  if (httpd_resp_send_chunk(req, tail, strlen(tail)) != ESP_OK)       return false;
+  if (httpd_resp_send_chunk(req, nullptr, 0) != ESP_OK)               return false;
+  return true;
 }
 
 }  /* namespace csi_integration */

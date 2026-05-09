@@ -2202,11 +2202,15 @@ static esp_err_t handle_ui(httpd_req_t* req) {
   // The default route now lands on the headline Sensing dashboard from
   // csi_dashboard_html.h (Phase 3 of the WiFi CSI Tool plan). The legacy
   // tabbed admin dashboard is reachable at /admin via handle_legacy_ui().
-  // Cache headers off — the dashboard polls /api/csi/stream itself, the
-  // shell HTML doesn't need to be revalidated on every navigation.
+  //
+  // We delegate to csi_integration::send_html_with_token so the HTML
+  // ships with `<script>window.__CV_TOKEN="..."</script>` injected just
+  // inside <head>. The dashboard's fetch() calls add that token as a
+  // Bearer header; every CSI HTTP handler verifies it via api_auth_check.
+  // Without this injection the dashboard's polls would all 401.
   g_health.http_requests++;
-  httpd_resp_set_type(req, "text/html");
-  return httpd_resp_send(req, CSI_DASHBOARD_HTML, HTTPD_RESP_USE_STRLEN);
+  return csi_integration::send_html_with_token(req, CSI_DASHBOARD_HTML)
+           ? ESP_OK : ESP_FAIL;
 }
 
 static esp_err_t handle_legacy_ui(httpd_req_t* req) {
@@ -4705,8 +4709,11 @@ static void register_api_routes(httpd_handle_t server) {
 
   // CSI library integration: registers /api/csi/stream, /api/csi/window,
   // /api/events/today, /api/events/dismiss, registers the four v1 sensing
-  // modules, and brings up csi_hal on this WiFi context.
-  csi_integration::init(server);
+  // modules, and brings up csi_hal on this WiFi context. The api_token
+  // is the Bearer token every CSI handler verifies via api_auth_check;
+  // the dashboard at / bootstraps it through window.__CV_TOKEN injected
+  // by handle_ui below.
+  csi_integration::init(server, g_device.api_token_str);
 }
 
 static void start_http_server() {
