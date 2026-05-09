@@ -14,11 +14,10 @@
  * bridge still publishes live events through csi_event_on_committed;
  * persistence failures degrade history coverage but don't break
  * functionality. Errors are logged via Serial only when SD is
- * supposed to be available — silent when sd_is_available() is false.
+ * supposed to be available — silent when no card is mounted.
  */
 
 #include "csi_event_log.h"
-#include "hardware_state.h"   /* sd_is_available() */
 
 #include <Arduino.h>
 #include <FS.h>
@@ -27,17 +26,29 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* We deliberately do NOT pull in hardware_state.h: that header carries
+ * a non-inline file-scope definition of HardwareState g_hw and is
+ * meant to be included in exactly one TU (canary_wap.ino's). Pulling
+ * it in here would produce a duplicate-definition link error on the
+ * arduino-cli build path (PlatformIO builds a different sketch and
+ * wouldn't catch it). Going through Arduino-ESP32's SD object
+ * directly via SD.cardType() gives us the same readiness check
+ * without the cross-TU coupling. */
+
 namespace csi_event_log {
 
 namespace {
 
 constexpr const char* DIR_PATH = "/EVENTS";
 
-/* True when SD is mounted AND the directory exists. We re-check on
- * every call rather than caching because SD can hot-unplug; the cost
- * is one stat-equivalent call per event, negligible vs the write. */
+/* True when an SD card is mounted AND the directory exists. We
+ * re-check on every call rather than caching because SD can
+ * hot-unplug; the cost is one cardType() lookup + one exists() per
+ * event, negligible vs the write. SD.cardType() returns CARD_NONE
+ * when nothing is mounted, so it doubles as the readiness check
+ * without us needing to peek at hardware_state's globals. */
 bool sd_path_ready() {
-  if (!sd_is_available()) return false;
+  if (SD.cardType() == CARD_NONE) return false;
   if (!SD.exists(DIR_PATH)) {
     if (!SD.mkdir(DIR_PATH)) return false;
   }
@@ -185,7 +196,7 @@ bool parse_line(const char* line, csi_event_record_t* out) {
  * ────────────────────────────────────────────────────────────────────────── */
 
 bool init() {
-  if (!sd_is_available()) return true;   /* deferred; not an error */
+  if (SD.cardType() == CARD_NONE) return true;   /* deferred; not an error */
   if (!SD.exists(DIR_PATH)) {
     if (!SD.mkdir(DIR_PATH)) {
       Serial.println("[EVT-LOG] mkdir /EVENTS failed");
