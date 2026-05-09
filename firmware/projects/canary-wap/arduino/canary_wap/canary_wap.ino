@@ -70,6 +70,11 @@
 #include "esp_random.h"
 #include "esp_task_wdt.h"
 #include "esp_http_server.h"
+// Needed for SO_KEEPALIVE / TCP_KEEP* socket options applied to the
+// long-lived MJPEG peek stream so half-open TCP sockets get torn down
+// at the kernel layer instead of waiting on a doomed application send.
+#include "lwip/sockets.h"
+#include "lwip/inet.h"
 // TLS self-signed cert generation requires mbedtls x509write support,
 // which is not available in all ESP32 Arduino Core builds (e.g., 3.3.7).
 // Auto-detect: if the header exists, enable runtime TLS cert generation.
@@ -3021,12 +3026,12 @@ static esp_err_t handle_peek_start(httpd_req_t* req) {
 
 static esp_err_t handle_peek_stream(httpd_req_t* req) {
   g_health.http_requests++;
-  
+
   if (!g_camera_initialized) {
     httpd_resp_set_status(req, "503 Service Unavailable");
     return httpd_resp_send(req, "Camera not initialized", HTTPD_RESP_USE_STRLEN);
   }
-  
+
   // *** KEY FIX: Set peek_active to true when stream is requested ***
   g_peek_active = true;
 
@@ -3043,11 +3048,32 @@ static esp_err_t handle_peek_stream(httpd_req_t* req) {
   g_peek_fps_last         = 0;
   portEXIT_CRITICAL(&g_peek_metrics_mux);
 
+  // ── TCP keepalive on the streaming socket ─────────────────────────
+  // The MJPEG response is open-ended, so a vanished client (laptop lid
+  // closed, browser killed, WiFi roam) is invisible to the application
+  // until the next chunk send fails. SO_KEEPALIVE lets LwIP detect a
+  // dead peer in ~20 s (5 s idle + 3×5 s probes) and fail the next send
+  // with ECONNRESET, breaking us out of the loop cleanly instead of
+  // letting the worker spin on a zombie socket.
+  int sockfd = httpd_req_to_sockfd(req);
+  if (sockfd >= 0) {
+    int yes = 1;
+    setsockopt(sockfd, SOL_SOCKET, SO_KEEPALIVE, &yes, sizeof(yes));
+    int idle = 5;     // start probing after 5 s of silence
+    int intvl = 5;    // 5 s between probes
+    int cnt = 3;      // 3 lost probes -> dead
+    setsockopt(sockfd, IPPROTO_TCP, TCP_KEEPIDLE, &idle, sizeof(idle));
+    setsockopt(sockfd, IPPROTO_TCP, TCP_KEEPINTVL, &intvl, sizeof(intvl));
+    setsockopt(sockfd, IPPROTO_TCP, TCP_KEEPCNT, &cnt, sizeof(cnt));
+  }
+
   // Set proper MJPEG multipart headers
   httpd_resp_set_type(req, "multipart/x-mixed-replace; boundary=frame");
   httpd_resp_set_hdr(req, "Cache-Control", "no-store, no-cache, must-revalidate, pre-check=0, post-check=0, max-age=0");
   httpd_resp_set_hdr(req, "Pragma", "no-cache");
   httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+  httpd_resp_set_hdr(req, "Connection", "close");
+  httpd_resp_set_hdr(req, "X-Accel-Buffering", "no");
   // Note: target pacing is ~12 fps via vTaskDelay below; the actual delivered FPS
   // is measured at runtime and exposed via /api/peek/status (g_peek_fps_last).
 
@@ -4706,6 +4732,16 @@ static void start_http_server() {
     ssl_config.httpd.stack_size = 10240;  // Larger stack for TLS + camera
     ssl_config.httpd.max_uri_handlers = total_handlers;
     ssl_config.httpd.server_port = 443;
+    // Long-lived MJPEG peek streams routinely sit between sends for
+    // hundreds of ms while the camera captures the next JPEG. With the
+    // 5 s default a single WiFi retransmit storm or AP scan sweep was
+    // enough to trip send_wait_timeout and tear the socket down ~10–15 s
+    // in. The streaming loop self-throttles with vTaskDelay so a longer
+    // ceiling can't cause runaway hangs — it only lets transient hiccups
+    // recover instead of dropping the client.
+    ssl_config.httpd.recv_wait_timeout = 30;
+    ssl_config.httpd.send_wait_timeout = 30;
+    ssl_config.httpd.lru_purge_enable  = true;
 
     if (httpd_ssl_start(&g_https_server, &ssl_config) == ESP_OK) {
       Serial.println("[HTTPS] Server started on port 443");
@@ -4745,6 +4781,13 @@ static void start_http_server() {
     config.uri_match_fn = httpd_uri_match_wildcard;
     config.stack_size = 8192;
     config.max_uri_handlers = total_handlers;
+    // See HTTPS-config sibling above — same rationale. The MJPEG stream
+    // handler dominates this httpd's traffic in HTTP-only deployments,
+    // so the 5 s default was the single biggest cause of the "drops at
+    // 10-15 s" symptom users saw on the fleet manager peek tab.
+    config.recv_wait_timeout = 30;
+    config.send_wait_timeout = 30;
+    config.lru_purge_enable  = true;
 
     if (httpd_start(&g_http_server, &config) != ESP_OK) {
       log_health(SCV_LOG_ERROR, SCV_CAT_NETWORK, "HTTP server start failed", nullptr);
@@ -5168,6 +5211,14 @@ static void wifi_init_provisioning() {
 
   // Always use AP+STA mode for provisioning capability
   WiFi.mode(WIFI_AP_STA);
+
+  // Modem-sleep is on by default and adds 50–200 ms of variable latency
+  // to every TCP send. That's invisible for short JSON requests but it's
+  // exactly what made the long-lived MJPEG peek stream drop after a
+  // dozen seconds: a single sleep window stretches a chunk send past the
+  // httpd send_wait_timeout. Streaming is the headline use case here, so
+  // we keep the radio awake.
+  WiFi.setSleep(false);
 
   // Start Access Point with device-unique password.
   char ap_pass[32] = {0};
