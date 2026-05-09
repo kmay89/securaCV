@@ -890,21 +890,24 @@ static const char CSI_DASHBOARD_HTML[] PROGMEM = R"DASHBOARD(<!doctype html>
  * ──────────────────────────────────────────────────────────────────────── */
 const COPY = {
   states: {
-    sensing:   { name: 'Sensing…',       sub: "Just getting a feel for the room." },
-    empty:     { name: 'Empty',          sub: "Nobody's home right now." },
-    subtle:    { name: 'Subtle motion',  sub: "Something small is moving." },
-    quiet:     { name: 'Quiet',          sub: "Someone's here. Sitting still." },
-    quiet_bpm: { name: 'Quiet',          sub: "Someone's here. Breathing about {bpm} a minute." },
-    active:    { name: 'Active',         sub: "Lots of movement right now." },
-    together:  { name: 'Together',       sub: "More than one person." },
-    pet:       { name: 'Empty',          sub: "A small movement, probably your pet." },
+    /* Each subtitle pairs the room reading with one tiny canary beat.
+     * The bird is a deadpan presence — head tilts, preens, hums along —
+     * not a cartoon. Same data, more alive. */
+    sensing:   { name: 'Sensing…',       sub: "Tilting its head, taking the room in." },
+    empty:     { name: 'Empty',          sub: "Nobody home. The canary preens." },
+    subtle:    { name: 'Subtle motion',  sub: "Something small stirs. Head turns." },
+    quiet:     { name: 'Quiet',          sub: "Someone's here, very still. The canary hums." },
+    quiet_bpm: { name: 'Quiet',          sub: "Someone's here, breathing about {bpm} a minute. The canary hums along." },
+    active:    { name: 'Active',         sub: "Plenty going on. Canary's wide awake." },
+    together:  { name: 'Together',       sub: "More than one. The canary perks up." },
+    pet:       { name: 'Empty',          sub: "A small movement. Probably your pet — the canary doesn't fuss." },
   },
   tooltips: {
     orb:         "What the room feels like right now.",
     helpBtn:     "See what the sensor can and can't notice.",
     todayBtn:    "See everything that happened today.",
     settingsBtn: "Tweak how the sensor behaves.",
-    calibrate:   "Step out for one minute so the sensor learns your empty room.",
+    calibrate:   "Step out for one minute. The canary learns your empty room by ear.",
     sensitive:   "Picks up small movements. Best for one quiet room.",
     balanced:    "Catches normal movement. Good for most homes.",
     quiet:       "Only big movements. Best with kids, pets, or open spaces.",
@@ -918,9 +921,9 @@ const COPY = {
     ribbonCell:  "Tap a moment to see what was happening then.",
   },
   errors: {
-    disconnect:  "Can't reach the sensor. Move closer to your router and try again.",
-    calibrating: "Learning your empty room. {seconds} seconds left.",
-    calibrated:  "Got it. Your empty room is set.",
+    disconnect:  "Can't reach the canary. Move closer to your router and try again.",
+    calibrating: "The canary is learning your empty room. {seconds} seconds left.",
+    calibrated:  "Got it. The canary knows your room now.",
   },
   what: {
     title: "What the sensor can and can't see",
@@ -1287,7 +1290,7 @@ async function fetchToday() {
     const j = await r.json();
     const events = j.events || [];
     if (events.length === 0) {
-      body.innerHTML = '<p style="color:var(--fg-mute);padding:20px 0">Quiet so far today. The canary is here, listening.</p>';
+      body.innerHTML = '<p style="color:var(--fg-mute);padding:20px 0">Quiet so far today. The canary is perched, head cocked.</p>';
       return;
     }
     body.innerHTML = '';
