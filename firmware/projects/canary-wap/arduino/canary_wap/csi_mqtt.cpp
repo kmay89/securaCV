@@ -161,8 +161,14 @@ bool config_load(Config* out) {
   memset(out, 0, sizeof(*out));
   Preferences prefs;
   if (!prefs.begin(SETTINGS_NS, /*readOnly=*/true)) {
-    /* No NVS yet — treat as disabled with default port + prefix. */
-    out->port = DEFAULT_PORT;
+    /* No NVS yet (or namespace corrupt) — treat as disabled with
+     * default port + prefix. Discovery defaults to true so a fresh
+     * device with no NVS state still publishes HA auto-discovery on
+     * the first connect — without this the memset above leaves
+     * discovery=false and we'd silently break the "zero-config HA"
+     * onboarding path (PR #396 review r3213931333). */
+    out->port      = DEFAULT_PORT;
+    out->discovery = true;
     strncpy(out->prefix, DEFAULT_PREFIX, MAX_PREFIX_LEN);
     return true;
   }
@@ -872,6 +878,27 @@ esp_err_t handle_config_post(httpd_req_t* req) {
     strncpy(c.user,   buf, MAX_USER_LEN);   c.user  [MAX_USER_LEN]   = '\0';
   }
   if (json_extract_string(body, "\"prefix\"", buf, sizeof(buf))) {
+    /* Restrict prefix to a safe character set so we can splat it into
+     * the discovery JSON's stat_t / avty_t fields via %s without an
+     * escaper. JSON-unsafe (", \, control chars) would corrupt the
+     * payload; MQTT wildcards (+, #) would make the topic match
+     * unintended subscriptions; whitespace at edges trips brokers
+     * that strip-then-compare. (PR #396 review r3213931334.) Empty
+     * input falls through to the DEFAULT_PREFIX backfill below. */
+    bool prefix_ok = (buf[0] != '\0');
+    for (const char* p = buf; *p && prefix_ok; ++p) {
+      const unsigned char ch = (unsigned char)*p;
+      const bool ok = (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+                      (ch >= '0' && ch <= '9') ||
+                      ch == '_' || ch == '-' || ch == '/';
+      if (!ok) prefix_ok = false;
+    }
+    if (!prefix_ok) {
+      httpd_resp_set_status(req, "400 Bad Request");
+      httpd_resp_send(req,
+        "{\"ok\":false,\"reason\":\"prefix must be [a-zA-Z0-9_/-]+\"}", -1);
+      return ESP_OK;
+    }
     strncpy(c.prefix, buf, MAX_PREFIX_LEN); c.prefix[MAX_PREFIX_LEN] = '\0';
   }
   if (json_extract_string(body, "\"password\"", buf, sizeof(buf))) {
