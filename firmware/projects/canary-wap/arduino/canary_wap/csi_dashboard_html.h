@@ -37,8 +37,8 @@ static const char CSI_DASHBOARD_HTML[] PROGMEM = R"DASHBOARD(<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#0c0a18" media="(prefers-color-scheme: dark)">
-<meta name="theme-color" content="#f5f4ff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1a1605" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#fffbec" media="(prefers-color-scheme: light)">
 <title>Canary · Sensing</title>
 <!-- PWA shell. The SW lives at /sw.js (scope /), the manifest gives the
      dashboard an installable identity for "Add to Home Screen". Both
@@ -52,23 +52,25 @@ static const char CSI_DASHBOARD_HTML[] PROGMEM = R"DASHBOARD(<!doctype html>
     --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text",
                  "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 
-    --bg-base:        #f5f4ff;
-    --bg-veil:        rgba(255,255,255,0.55);
-    --fg:             #1a1730;
-    --fg-soft:        #5b5478;
-    --fg-mute:        #8a82a3;
-    --hairline:       rgba(26,23,48,0.10);
-    --shadow-card:    0 4px 24px rgba(60,30,160,0.10), 0 1px 3px rgba(60,30,160,0.06);
+    /* Canary-yellow base palette. Warm cream chrome, not security-alarm
+     * neon — the bird, not the coal mine. */
+    --bg-base:        #fffbec;
+    --bg-veil:        rgba(255,252,230,0.6);
+    --fg:             #2a2310;
+    --fg-soft:        #6f5f2e;
+    --fg-mute:        #a89868;
+    --hairline:       rgba(42,35,16,0.10);
+    --shadow-card:    0 4px 24px rgba(180,130,30,0.10), 0 1px 3px rgba(180,130,30,0.06);
 
     /* Hero gradients keyed off room state via [data-state] on <html> */
-    --orb-1:          #cfd6ff;
-    --orb-2:          #b9c9ff;
-    --orb-3:          #8e9eff;
-    --orb-glow:       rgba(140,158,255,0.6);
-    --bg-1:           #f5f4ff;
-    --bg-2:           #ecf2ff;
-    --bg-3:           #f9f7ff;
-    --accent:         #8e9eff;
+    --orb-1:          #fff3b0;
+    --orb-2:          #ffe26b;
+    --orb-3:          #f0c319;
+    --orb-glow:       rgba(240,195,25,0.6);
+    --bg-1:           #fffbec;
+    --bg-2:           #fff6d5;
+    --bg-3:           #fffcef;
+    --accent:         #f0c319;
 
     --orb-size:       min(72vmin, 420px);
     --pulse-dur:      4.3s; /* default inhale-exhale; replaced by JS at confirmed */
@@ -79,39 +81,42 @@ static const char CSI_DASHBOARD_HTML[] PROGMEM = R"DASHBOARD(<!doctype html>
 
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg-base:    #0c0a18;
-      --bg-veil:    rgba(20,17,40,0.55);
-      --fg:         #efeaff;
-      --fg-soft:    #b3aad6;
-      --fg-mute:    #6a6285;
-      --hairline:   rgba(255,255,255,0.10);
+      /* Warm-dark palette — like a porch lantern, not a server rack. */
+      --bg-base:    #1a1605;
+      --bg-veil:    rgba(40,32,12,0.55);
+      --fg:         #faefc4;
+      --fg-soft:    #c9b987;
+      --fg-mute:    #7a6f4d;
+      --hairline:   rgba(255,240,200,0.10);
       --shadow-card:0 8px 28px rgba(0,0,0,0.5), 0 1px 3px rgba(0,0,0,0.4);
 
-      --orb-1:      #5466b8;
-      --orb-2:      #364080;
-      --orb-3:      #1f2546;
-      --orb-glow:   rgba(120,140,255,0.45);
-      --bg-1:       #0c0a18;
-      --bg-2:       #131027;
-      --bg-3:       #0d0a1c;
+      --orb-1:      #b89a1f;
+      --orb-2:      #806a0d;
+      --orb-3:      #423605;
+      --orb-glow:   rgba(255,220,80,0.45);
+      --bg-1:       #1a1605;
+      --bg-2:       #211b0a;
+      --bg-3:       #1c1808;
     }
   }
 
-  /* State-driven theme. The JS sets <html data-state="..."> on each /api/csi/stream tick. */
-  html[data-state="empty"]    { --orb-1:#cfd6ff;--orb-2:#b9c9ff;--orb-3:#8e9eff;--orb-glow:rgba(140,158,255,.55); }
-  html[data-state="sensing"]  { --orb-1:#dad6ff;--orb-2:#c0bce5;--orb-3:#9c97c2;--orb-glow:rgba(180,170,220,.45); }
+  /* State-driven theme. All hues warm so the room feels lived-in, not
+   * surveilled. JS sets <html data-state="..."> on each /api/csi/stream
+   * tick. */
+  html[data-state="empty"]    { --orb-1:#fff3b0;--orb-2:#ffe26b;--orb-3:#f0c319;--orb-glow:rgba(240,195,25,.55); }
+  html[data-state="sensing"]  { --orb-1:#fff5d0;--orb-2:#f3e6b0;--orb-3:#d6c280;--orb-glow:rgba(214,194,128,.45); }
   html[data-state="subtle"]   { --orb-1:#ffe0c2;--orb-2:#ffc99a;--orb-3:#f9a86b;--orb-glow:rgba(249,168,107,.55); }
-  html[data-state="quiet"]    { --orb-1:#c2f0e4;--orb-2:#7ed8c0;--orb-3:#3eb89e;--orb-glow:rgba(62,184,158,.55); }
-  html[data-state="active"]   { --orb-1:#a4f4eb;--orb-2:#62e5d4;--orb-3:#1ec5b1;--orb-glow:rgba(30,197,177,.65); }
-  html[data-state="together"] { --orb-1:#cdb8ff;--orb-2:#9c87f3;--orb-3:#5e4cc5;--orb-glow:rgba(94,76,197,.55); }
+  html[data-state="quiet"]    { --orb-1:#e8f3b8;--orb-2:#cce478;--orb-3:#94b833;--orb-glow:rgba(148,184,51,.50); }
+  html[data-state="active"]   { --orb-1:#fff099;--orb-2:#ffd83d;--orb-3:#e8a90a;--orb-glow:rgba(232,169,10,.65); }
+  html[data-state="together"] { --orb-1:#ffd4b8;--orb-2:#ffaf7a;--orb-3:#e87a3a;--orb-glow:rgba(232,122,58,.55); }
 
   @media (prefers-color-scheme: dark) {
-    html[data-state="empty"]    { --orb-1:#3b4380;--orb-2:#262d5b;--orb-3:#171a36;--orb-glow:rgba(110,130,220,.45); }
-    html[data-state="sensing"]  { --orb-1:#48426a;--orb-2:#312c52;--orb-3:#1d1936;--orb-glow:rgba(150,140,200,.40); }
+    html[data-state="empty"]    { --orb-1:#705a14;--orb-2:#4a3a08;--orb-3:#2a2105;--orb-glow:rgba(255,220,80,.45); }
+    html[data-state="sensing"]  { --orb-1:#5e5230;--orb-2:#403718;--orb-3:#231e08;--orb-glow:rgba(220,200,140,.40); }
     html[data-state="subtle"]   { --orb-1:#7a4c2a;--orb-2:#522e15;--orb-3:#2c170b;--orb-glow:rgba(220,140,90,.50); }
-    html[data-state="quiet"]    { --orb-1:#1f5d4f;--orb-2:#103a30;--orb-3:#082019;--orb-glow:rgba(50,200,160,.50); }
-    html[data-state="active"]   { --orb-1:#1d7d6e;--orb-2:#0e4f44;--orb-3:#062a25;--orb-glow:rgba(30,225,190,.65); }
-    html[data-state="together"] { --orb-1:#4d3da3;--orb-2:#332884;--orb-3:#1d164a;--orb-glow:rgba(140,110,240,.55); }
+    html[data-state="quiet"]    { --orb-1:#5a6e22;--orb-2:#3a4a10;--orb-3:#202806;--orb-glow:rgba(170,210,80,.50); }
+    html[data-state="active"]   { --orb-1:#806808;--orb-2:#574504;--orb-3:#2e2502;--orb-glow:rgba(255,210,60,.65); }
+    html[data-state="together"] { --orb-1:#80451f;--orb-2:#552c10;--orb-3:#2c1707;--orb-glow:rgba(232,140,80,.55); }
   }
 
   * { box-sizing: border-box; }
@@ -896,7 +901,7 @@ const COPY = {
   },
   tooltips: {
     orb:         "What the room feels like right now.",
-    helpBtn:     "See exactly what the sensor can and can't notice.",
+    helpBtn:     "See what the sensor can and can't notice.",
     todayBtn:    "See everything that happened today.",
     settingsBtn: "Tweak how the sensor behaves.",
     calibrate:   "Step out for one minute so the sensor learns your empty room.",
@@ -904,7 +909,7 @@ const COPY = {
     balanced:    "Catches normal movement. Good for most homes.",
     quiet:       "Only big movements. Best with kids, pets, or open spaces.",
     petMode:     "Cats and small dogs breathe faster than people. Turn this on so they don't trigger 'someone's here'.",
-    quietHours:      "Hide late-night events from the ribbon. Movement is still tracked, just gently shaded.",
+    quietHours:      "Hide late-night events from the ribbon. Movement still folds into a gentle nightly summary.",
     quietHoursStart: "When quiet hours begin.",
     quietHoursEnd:   "When quiet hours end.",
     sensitivity: "Slide right to notice more. Slide left to ignore tiny movements.",
@@ -935,7 +940,7 @@ const COPY = {
       {
         step: "Step 1 of 4",
         title: "Your camera-free sixth sense for the home.",
-        body: "This little device watches the WiFi waves bouncing around your room. When something moves, the waves change. That's it.",
+        body: "This little canary listens to the WiFi waves bouncing around your room. When something moves, the waves shift. That's the whole trick.",
         primary: "Got it",
         skip: "Skip",
         // Card 1 also asks the optional Pets question — handled in JS.
@@ -943,7 +948,7 @@ const COPY = {
       },
       {
         step: "Step 2 of 4",
-        title: "Watches WiFi waves, not video.",
+        title: "Listens to WiFi, never to your camera.",
         body: "No camera. No microphone. No MAC addresses stored. Nothing leaves the device.",
         primary: "Next",
         skip: "Skip",
@@ -951,7 +956,7 @@ const COPY = {
       {
         step: "Step 3 of 4",
         title: "Best in the same room.",
-        body: "Through one wall: motion only, no breathing claims. Through a floor: depends on your home. We're honest about what the sensor can and can't see.",
+        body: "Through one wall: motion only, no breathing claims. Through a floor: depends on your home. We're honest about what the canary can and can't pick up.",
         learnMore: "What it can and can't see",
         primary: "Next",
         skip: "Skip",
@@ -959,7 +964,7 @@ const COPY = {
       {
         step: "Step 4 of 4",
         title: "One last thing — let's learn your empty room.",
-        body: "Step out of this room for a minute. The sensor will use that minute to figure out what 'empty' looks like, so it knows when somebody's actually here.",
+        body: "Step out for a minute. The canary uses that minute to learn what 'empty' looks like, so it knows when somebody's actually here.",
         primary: "Calibrate now",
         skip: "Maybe later",
       },
@@ -1282,7 +1287,7 @@ async function fetchToday() {
     const j = await r.json();
     const events = j.events || [];
     if (events.length === 0) {
-      body.innerHTML = '<p style="color:var(--fg-mute);padding:20px 0">Nothing happened yet today. The sensor is watching.</p>';
+      body.innerHTML = '<p style="color:var(--fg-mute);padding:20px 0">Quiet so far today. The canary is here, listening.</p>';
       return;
     }
     body.innerHTML = '';
