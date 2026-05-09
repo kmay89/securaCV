@@ -763,36 +763,42 @@ static void mqtt_publish_sensing_update() {
   doc["channel"]    = s.channel;
   doc["time_bucket"] = s.time_bucket;
 
-  /* Acoustic last event (cleared by TTL after 30 s). The HA value
+  /* Acoustic last event (cleared by TTL after 30 s). HA value
    * templates compare against the string here to drive smoke / CO
-   * binary sensors. Map enum → string locally to avoid pulling in
-   * securacv_audio.h here. */
+   * binary sensors. Use the actual enum names from securacv_audio.h
+   * so the mapping survives any future enum-value changes. */
   const char* ae = "none";
+#if FEATURE_ACOUSTIC_EVENTS
   switch (s.last_audio_event_type) {
-    case 1: ae = "smoke_alarm_t3"; break;
-    case 2: ae = "co_alarm_t4";    break;
+    case AUDIO_EVENT_T3_SMOKE_ALARM: ae = "smoke_alarm_t3"; break;
+    case AUDIO_EVENT_T4_CO_ALARM:    ae = "co_alarm_t4";    break;
   }
+#endif
   doc["acoustic_event"] = ae;
   doc["acoustic_conf"]  = s.last_audio_event_conf;
 
   /* Touch last event (cleared by TTL after 60 s). */
   const char* te = "none";
+#if FEATURE_TOUCH
   switch (s.last_touch_event_type) {
-    case 1: te = "silent_panic";     break;
-    case 2: te = "enclosure_tamper"; break;
-    case 3: te = "approach";         break;
+    case TOUCH_EVENT_SILENT_PANIC:     te = "silent_panic";     break;
+    case TOUCH_EVENT_ENCLOSURE_TAMPER: te = "enclosure_tamper"; break;
+    case TOUCH_EVENT_APPROACH:         te = "approach";         break;
   }
+#endif
   doc["touch_event"]   = te;
   doc["touch_conf"]    = s.last_touch_event_conf;
   doc["touch_pad"]     = s.last_touch_pad_channel;
 
   /* IR last activity (cleared by TTL after 10 s). */
   const char* ip = "none";
+#if FEATURE_IR_RMT
   switch (s.last_ir_category) {
-    case 1: ip = "nec";  break;
-    case 2: ip = "rc5";  break;
-    case 3: ip = "sony"; break;
+    case IR_PROTOCOL_NEC:  ip = "nec";  break;
+    case IR_PROTOCOL_RC5:  ip = "rc5";  break;
+    case IR_PROTOCOL_SONY: ip = "sony"; break;
   }
+#endif
   doc["ir_protocol"] = ip;
   doc["ir_bucket"]   = s.last_ir_hash_bucket;
   doc["ir_conf"]     = s.last_ir_confidence;

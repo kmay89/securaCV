@@ -372,8 +372,23 @@ bool mqtt_send_ha_discovery(const char* device_id, const char* firmware_version)
 
   Serial.println("[MQTT] Sending HA Discovery config...");
 
+  /* Track success across the ~22 entity-config publishes. PubSubClient's
+   * publish() returns false if the broker is busy, the network is
+   * unstable, or the buffer is full — silently failing here would leave
+   * an entity stuck at "Unknown" in HA until the next reconnect. We
+   * gate s_discovery_sent on `all_ok` so a transient broker hiccup
+   * forces a clean retry on the next connect.
+   *
+   * Each entity block is wrapped in `if (all_ok)` so a mid-cycle
+   * failure also skips the JsonDocument construction and serialisation
+   * for the remaining entities — saves ~half a kilobyte of stack +
+   * heap churn per skipped block when the broker drops out partway
+   * through. (The `&&` short-circuit alone wasn't enough; it only
+   * skipped the publish call, not the doc-build that came before it.) */
+  bool all_ok = true;
+
   // ── Sensor: witness_count ──
-  {
+  if (all_ok) {
     JsonDocument doc;
     doc["name"] = "Witness Count";
     doc["stat_t"] = s_topic_status;
@@ -388,11 +403,11 @@ bool mqtt_send_ha_discovery(const char* device_id, const char* firmware_version)
     add_device_info(dev, device_id, firmware_version);
     String payload;
     serializeJson(doc, payload);
-    publish_discovery("sensor", device_id, "witness_count", payload.c_str());
+    all_ok = all_ok && publish_discovery("sensor", device_id, "witness_count", payload.c_str());
   }
 
   // ── Sensor: chain_sequence ──
-  {
+  if (all_ok) {
     JsonDocument doc;
     doc["name"] = "Chain Sequence";
     doc["stat_t"] = s_topic_status;
@@ -405,11 +420,11 @@ bool mqtt_send_ha_discovery(const char* device_id, const char* firmware_version)
     add_device_info(dev, device_id, firmware_version);
     String payload;
     serializeJson(doc, payload);
-    publish_discovery("sensor", device_id, "chain_seq", payload.c_str());
+    all_ok = all_ok && publish_discovery("sensor", device_id, "chain_seq", payload.c_str());
   }
 
   // ── Sensor: uptime ──
-  {
+  if (all_ok) {
     JsonDocument doc;
     doc["name"] = "Uptime";
     doc["stat_t"] = s_topic_status;
@@ -424,11 +439,11 @@ bool mqtt_send_ha_discovery(const char* device_id, const char* firmware_version)
     add_device_info(dev, device_id, firmware_version);
     String payload;
     serializeJson(doc, payload);
-    publish_discovery("sensor", device_id, "uptime", payload.c_str());
+    all_ok = all_ok && publish_discovery("sensor", device_id, "uptime", payload.c_str());
   }
 
   // ── Sensor: free_heap ──
-  {
+  if (all_ok) {
     JsonDocument doc;
     doc["name"] = "Free Heap";
     doc["stat_t"] = s_topic_status;
@@ -443,11 +458,11 @@ bool mqtt_send_ha_discovery(const char* device_id, const char* firmware_version)
     add_device_info(dev, device_id, firmware_version);
     String payload;
     serializeJson(doc, payload);
-    publish_discovery("sensor", device_id, "free_heap", payload.c_str());
+    all_ok = all_ok && publish_discovery("sensor", device_id, "free_heap", payload.c_str());
   }
 
   // ── Sensor: gps_satellites ──
-  {
+  if (all_ok) {
     JsonDocument doc;
     doc["name"] = "GPS Satellites";
     doc["stat_t"] = s_topic_status;
@@ -460,11 +475,11 @@ bool mqtt_send_ha_discovery(const char* device_id, const char* firmware_version)
     add_device_info(dev, device_id, firmware_version);
     String payload;
     serializeJson(doc, payload);
-    publish_discovery("sensor", device_id, "gps_sats", payload.c_str());
+    all_ok = all_ok && publish_discovery("sensor", device_id, "gps_sats", payload.c_str());
   }
 
   // ── Sensor: firmware_version ──
-  {
+  if (all_ok) {
     JsonDocument doc;
     doc["name"] = "Firmware Version";
     doc["stat_t"] = s_topic_status;
@@ -478,11 +493,11 @@ bool mqtt_send_ha_discovery(const char* device_id, const char* firmware_version)
     add_device_info(dev, device_id, firmware_version);
     String payload;
     serializeJson(doc, payload);
-    publish_discovery("sensor", device_id, "fw_ver", payload.c_str());
+    all_ok = all_ok && publish_discovery("sensor", device_id, "fw_ver", payload.c_str());
   }
 
   // ── Binary Sensor: online (via LWT) ──
-  {
+  if (all_ok) {
     JsonDocument doc;
     doc["name"] = "Online";
     doc["stat_t"] = s_topic_avail;
@@ -497,11 +512,11 @@ bool mqtt_send_ha_discovery(const char* device_id, const char* firmware_version)
     add_device_info(dev, device_id, firmware_version);
     String payload;
     serializeJson(doc, payload);
-    publish_discovery("binary_sensor", device_id, "online", payload.c_str());
+    all_ok = all_ok && publish_discovery("binary_sensor", device_id, "online", payload.c_str());
   }
 
   // ── Binary Sensor: chain_valid ──
-  {
+  if (all_ok) {
     JsonDocument doc;
     doc["name"] = "Chain Valid";
     doc["stat_t"] = s_topic_status;
@@ -514,11 +529,11 @@ bool mqtt_send_ha_discovery(const char* device_id, const char* firmware_version)
     add_device_info(dev, device_id, firmware_version);
     String payload;
     serializeJson(doc, payload);
-    publish_discovery("binary_sensor", device_id, "chain_valid", payload.c_str());
+    all_ok = all_ok && publish_discovery("binary_sensor", device_id, "chain_valid", payload.c_str());
   }
 
   // ── Binary Sensor: tamper_detected ──
-  {
+  if (all_ok) {
     JsonDocument doc;
     doc["name"] = "Tamper Detected";
     doc["stat_t"] = s_topic_tamper;
@@ -532,11 +547,11 @@ bool mqtt_send_ha_discovery(const char* device_id, const char* firmware_version)
     add_device_info(dev, device_id, firmware_version);
     String payload;
     serializeJson(doc, payload);
-    publish_discovery("binary_sensor", device_id, "tamper", payload.c_str());
+    all_ok = all_ok && publish_discovery("binary_sensor", device_id, "tamper", payload.c_str());
   }
 
   // ── Binary Sensor: gps_fix ──
-  {
+  if (all_ok) {
     JsonDocument doc;
     doc["name"] = "GPS Fix";
     doc["stat_t"] = s_topic_status;
@@ -549,11 +564,11 @@ bool mqtt_send_ha_discovery(const char* device_id, const char* firmware_version)
     add_device_info(dev, device_id, firmware_version);
     String payload;
     serializeJson(doc, payload);
-    publish_discovery("binary_sensor", device_id, "gps_fix", payload.c_str());
+    all_ok = all_ok && publish_discovery("binary_sensor", device_id, "gps_fix", payload.c_str());
   }
 
   // ── Binary Sensor: sd_healthy ──
-  {
+  if (all_ok) {
     JsonDocument doc;
     doc["name"] = "SD Card Healthy";
     doc["stat_t"] = s_topic_status;
@@ -567,7 +582,7 @@ bool mqtt_send_ha_discovery(const char* device_id, const char* firmware_version)
     add_device_info(dev, device_id, firmware_version);
     String payload;
     serializeJson(doc, payload);
-    publish_discovery("binary_sensor", device_id, "sd_healthy", payload.c_str());
+    all_ok = all_ok && publish_discovery("binary_sensor", device_id, "sd_healthy", payload.c_str());
   }
 
   // ════════════════════════════════════════════════════════════════════
@@ -579,7 +594,7 @@ bool mqtt_send_ha_discovery(const char* device_id, const char* firmware_version)
   // ════════════════════════════════════════════════════════════════════
 
   // ── Sensor: activity_label (quiet / presence / motion / active) ──
-  {
+  if (all_ok) {
     JsonDocument doc;
     doc["name"] = "Activity";
     doc["stat_t"] = s_topic_sensing;
@@ -592,11 +607,11 @@ bool mqtt_send_ha_discovery(const char* device_id, const char* firmware_version)
     add_device_info(dev, device_id, firmware_version);
     String payload;
     serializeJson(doc, payload);
-    publish_discovery("sensor", device_id, "activity", payload.c_str());
+    all_ok = all_ok && publish_discovery("sensor", device_id, "activity", payload.c_str());
   }
 
   // ── Sensor: motion_score (0..100) ──
-  {
+  if (all_ok) {
     JsonDocument doc;
     doc["name"] = "Motion Score";
     doc["stat_t"] = s_topic_sensing;
@@ -610,11 +625,11 @@ bool mqtt_send_ha_discovery(const char* device_id, const char* firmware_version)
     add_device_info(dev, device_id, firmware_version);
     String payload;
     serializeJson(doc, payload);
-    publish_discovery("sensor", device_id, "motion_score", payload.c_str());
+    all_ok = all_ok && publish_discovery("sensor", device_id, "motion_score", payload.c_str());
   }
 
   // ── Sensor: breathing_score (0..100) ──
-  {
+  if (all_ok) {
     JsonDocument doc;
     doc["name"] = "Breathing Score";
     doc["stat_t"] = s_topic_sensing;
@@ -628,11 +643,11 @@ bool mqtt_send_ha_discovery(const char* device_id, const char* firmware_version)
     add_device_info(dev, device_id, firmware_version);
     String payload;
     serializeJson(doc, payload);
-    publish_discovery("sensor", device_id, "breathing_score", payload.c_str());
+    all_ok = all_ok && publish_discovery("sensor", device_id, "breathing_score", payload.c_str());
   }
 
   // ── Binary Sensor: smoke_alarm (T3 cadence) ──
-  {
+  if (all_ok) {
     JsonDocument doc;
     doc["name"] = "Smoke Alarm Pattern";
     doc["stat_t"] = s_topic_sensing;
@@ -646,11 +661,11 @@ bool mqtt_send_ha_discovery(const char* device_id, const char* firmware_version)
     add_device_info(dev, device_id, firmware_version);
     String payload;
     serializeJson(doc, payload);
-    publish_discovery("binary_sensor", device_id, "smoke_alarm", payload.c_str());
+    all_ok = all_ok && publish_discovery("binary_sensor", device_id, "smoke_alarm", payload.c_str());
   }
 
   // ── Binary Sensor: co_alarm (T4 cadence) ──
-  {
+  if (all_ok) {
     JsonDocument doc;
     doc["name"] = "CO Alarm Pattern";
     doc["stat_t"] = s_topic_sensing;
@@ -664,11 +679,11 @@ bool mqtt_send_ha_discovery(const char* device_id, const char* firmware_version)
     add_device_info(dev, device_id, firmware_version);
     String payload;
     serializeJson(doc, payload);
-    publish_discovery("binary_sensor", device_id, "co_alarm", payload.c_str());
+    all_ok = all_ok && publish_discovery("binary_sensor", device_id, "co_alarm", payload.c_str());
   }
 
   // ── Binary Sensor: silent_panic (touch long-press) ──
-  {
+  if (all_ok) {
     JsonDocument doc;
     doc["name"] = "Silent Panic";
     doc["stat_t"] = s_topic_sensing;
@@ -683,11 +698,11 @@ bool mqtt_send_ha_discovery(const char* device_id, const char* firmware_version)
     add_device_info(dev, device_id, firmware_version);
     String payload;
     serializeJson(doc, payload);
-    publish_discovery("binary_sensor", device_id, "silent_panic", payload.c_str());
+    all_ok = all_ok && publish_discovery("binary_sensor", device_id, "silent_panic", payload.c_str());
   }
 
   // ── Binary Sensor: enclosure_tamper (touch tamper OR temp drift) ──
-  {
+  if (all_ok) {
     JsonDocument doc;
     doc["name"] = "Enclosure Tamper";
     doc["stat_t"] = s_topic_sensing;
@@ -702,11 +717,11 @@ bool mqtt_send_ha_discovery(const char* device_id, const char* firmware_version)
     add_device_info(dev, device_id, firmware_version);
     String payload;
     serializeJson(doc, payload);
-    publish_discovery("binary_sensor", device_id, "enclosure_tamper", payload.c_str());
+    all_ok = all_ok && publish_discovery("binary_sensor", device_id, "enclosure_tamper", payload.c_str());
   }
 
   // ── Sensor: ir_last_protocol (NEC/RC5/Sony/none) ──
-  {
+  if (all_ok) {
     JsonDocument doc;
     doc["name"] = "Last IR Protocol";
     doc["stat_t"] = s_topic_sensing;
@@ -720,11 +735,11 @@ bool mqtt_send_ha_discovery(const char* device_id, const char* firmware_version)
     add_device_info(dev, device_id, firmware_version);
     String payload;
     serializeJson(doc, payload);
-    publish_discovery("sensor", device_id, "ir_protocol", payload.c_str());
+    all_ok = all_ok && publish_discovery("sensor", device_id, "ir_protocol", payload.c_str());
   }
 
   // ── Sensor: ir_hash_bucket (0..15, per-session salted) ──
-  {
+  if (all_ok) {
     JsonDocument doc;
     doc["name"] = "Last IR Bucket";
     doc["stat_t"] = s_topic_sensing;
@@ -738,11 +753,11 @@ bool mqtt_send_ha_discovery(const char* device_id, const char* firmware_version)
     add_device_info(dev, device_id, firmware_version);
     String payload;
     serializeJson(doc, payload);
-    publish_discovery("sensor", device_id, "ir_bucket", payload.c_str());
+    all_ok = all_ok && publish_discovery("sensor", device_id, "ir_bucket", payload.c_str());
   }
 
   // ── Sensor: wake_reason (cold_boot/timer/touch/ext0/ext1/ulp/gpio/other) ──
-  {
+  if (all_ok) {
     JsonDocument doc;
     doc["name"] = "Last Wake";
     doc["stat_t"] = s_topic_sensing;
@@ -756,11 +771,11 @@ bool mqtt_send_ha_discovery(const char* device_id, const char* firmware_version)
     add_device_info(dev, device_id, firmware_version);
     String payload;
     serializeJson(doc, payload);
-    publish_discovery("sensor", device_id, "wake_reason", payload.c_str());
+    all_ok = all_ok && publish_discovery("sensor", device_id, "wake_reason", payload.c_str());
   }
 
   // ── Sensor: rssi_dbm (CSI window mean RSSI) ──
-  {
+  if (all_ok) {
     JsonDocument doc;
     doc["name"] = "Sensing RSSI";
     doc["stat_t"] = s_topic_sensing;
@@ -775,13 +790,24 @@ bool mqtt_send_ha_discovery(const char* device_id, const char* firmware_version)
     add_device_info(dev, device_id, firmware_version);
     String payload;
     serializeJson(doc, payload);
-    publish_discovery("sensor", device_id, "sensing_rssi", payload.c_str());
+    all_ok = all_ok && publish_discovery("sensor", device_id, "sensing_rssi", payload.c_str());
   }
 
-  s_discovery_sent = true;
-  Serial.println("[MQTT] HA Discovery config sent");
-  log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "HA Discovery sent", nullptr);
-  return true;
+  /* Only latch the discovery flag if every publish succeeded; otherwise
+   * leave it false so the next reconnect cycle retries. PubSubClient
+   * publish() can fail on a busy broker, network blip, or full TX
+   * buffer, and a half-sent discovery would leave HA entities stuck at
+   * "Unknown" until the user toggled MQTT off and back on. */
+  if (all_ok) {
+    s_discovery_sent = true;
+    Serial.println("[MQTT] HA Discovery config sent");
+    log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "HA Discovery sent", nullptr);
+  } else {
+    Serial.println("[MQTT] HA Discovery: some entities failed to publish; will retry on reconnect");
+    log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK,
+               "HA Discovery partial — will retry", nullptr);
+  }
+  return all_ok;
 }
 
 #endif // FEATURE_HA_DISCOVERY
