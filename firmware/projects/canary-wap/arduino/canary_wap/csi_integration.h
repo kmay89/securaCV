@@ -74,19 +74,47 @@ bool csi_running();
 bool csi_get_stats(csi_stats_t* out);
 
 /**
- * Send a PROGMEM HTML asset with `<script>window.__CV_TOKEN="..."</script>`
- * injected just inside <head> so the in-page JS can authenticate its
- * fetch() calls. Both the headline dashboard (handle_ui in canary_wap.ino)
- * and the Tuning Lab (handle_tune_page) route through here so a single
- * code path owns the token-bootstrap contract.
- *
- * The asset MUST contain a literal "<head>" tag — if absent, we send
- * unmodified (no injection) and return true; the page will then fail
- * its fetches and show its disconnect state, which is the correct UX
- * for "this page wasn't built to authenticate". Returns false only on
- * httpd send failure.
+ * Length of the hex-encoded session cookie value (32 random bytes →
+ * 64 hex chars). Callers issuing a Set-Cookie need this to size their
+ * scratch buffers safely.
  */
-bool send_html_with_token(httpd_req_t* req, const char* html);
+constexpr size_t SESSION_COOKIE_HEX_LEN = 64;
+
+/**
+ * True if the request carries a `cv_session=<hex>` cookie that matches
+ * a live, unexpired session in the in-RAM session store. Never sends
+ * a response — caller decides what to do on failure (handle_ui shows
+ * a pair landing; CSI API handlers fall through to Bearer auth or 401).
+ *
+ * Replaces the previous design where the device's Bearer api_token was
+ * injected into dashboard HTML — that approach made the token
+ * harvestable by anyone on the SoftAP who could view-source on /
+ * (per pull-request review #392 r3213361582). Cookies are HttpOnly +
+ * SameSite=Strict, so JS can't read them and cross-origin requests
+ * can't forge them.
+ */
+bool session_validate_cookie(httpd_req_t* req);
+
+/**
+ * Mint a fresh session and write 64 hex chars + NUL to hex_out.
+ * out_cap must be >= SESSION_COOKIE_HEX_LEN + 1 (65). Returns true on
+ * success. Used by handle_ui's `?cv_pair=<token>` consumption branch:
+ * after a valid one-shot pair-token, we issue a session and bake the
+ * hex into a Set-Cookie header.
+ */
+bool session_issue(char* hex_out, size_t out_cap);
+
+/**
+ * Render the "tap to enter" landing page served by handle_ui when a
+ * visitor has neither a valid session cookie nor a pending pair-token
+ * URL. Mints a fresh pair token, embeds a /?cv_pair=<hex> link and a
+ * QR-friendly URL, and sends the response. Returns true on success.
+ *
+ * Idempotent in effect — every call mints a new pair token (rate-
+ * limited by PAIR_SLOTS), so a refresh always works even if the prior
+ * token expired or was consumed by a different tab.
+ */
+bool send_pair_landing(httpd_req_t* req);
 
 /**
  * Optional: called by the existing CSI features callback when this firmware

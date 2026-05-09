@@ -138,18 +138,12 @@ footer code{background:var(--card-hi);padding:1px 5px;border-radius:4px}
 </footer>
 
 <script>
-/* Auth helper — handle_tune_page injects window.__CV_TOKEN before this
- * script runs; cvFetch wraps fetch() so each /api/tune/* call adds the
- * Authorization header automatically. Falls back to plain fetch if the
- * token wasn't injected (those requests will then 401 from the device,
- * which is the correct fail-closed behavior). Mirrors the helper in
- * the headline dashboard. */
+/* Auth helper — every /api/tune/* request authenticates via the
+ * HttpOnly cv_session cookie set when the visitor paired through /.
+ * Browsers send the cookie automatically with every same-origin fetch,
+ * so cvFetch is just a pass-through. Mirrors the helper in the headline
+ * dashboard. */
 function cvFetch(url, opts) {
-  opts = opts || {};
-  if (window.__CV_TOKEN) {
-    opts.headers = Object.assign({}, opts.headers || {},
-      {'Authorization': 'Bearer ' + window.__CV_TOKEN});
-  }
   return fetch(url, opts);
 }
 

@@ -77,13 +77,62 @@ bool                                    g_hal_ready          = false;
  * caller's storage (g_device.api_token_str) — never freed. */
 const char*                             g_api_token          = nullptr;
 
+/* Forward decl of the file-scope cv_session_validate trampoline (defined
+ * just below the anonymous namespace, near session_validate_cookie). The
+ * macro CSI_AUTH_OR_RETURN expands inside handlers that live in this
+ * anonymous namespace, but unqualified name lookup falls through to the
+ * enclosing global scope, so this declaration is found and the linker
+ * resolves it to the file-scope definition. We can't write
+ * `namespace csi_integration { ... }` HERE because that would create a
+ * nested namespace <anonymous>::csi_integration distinct from the
+ * file-scope one (different mangled names → linker error). */
+}  /* namespace (anonymous) — close briefly to put the decl at file scope */
+
+bool cv_session_validate(httpd_req_t* req);
+
+namespace {  /* re-open anonymous so the rest of the original block continues */
+
 /* Auth guard: drop into every handler at the very top. Mirrors the
  * handle_*_auth pattern used by /api/status, /api/chain, etc. The
- * macro form keeps the per-handler diff to one line. */
+ * macro form keeps the per-handler diff to one line.
+ *
+ * Two valid auth paths:
+ *   - cv_session cookie (HttpOnly, SameSite=Strict, set by handle_ui
+ *     after a one-shot pair-token URL hand-off). This is the dashboard's
+ *     normal route — browsers send the cookie automatically with every
+ *     /api/* fetch, so the token never appears in HTML source for any
+ *     in-page script (or page-source viewer) to harvest.
+ *   - Bearer header carrying the device's persistent api_token. Reserved
+ *     for tooling: the Python listener, the canary-vision fleet UI, and
+ *     similar. Same token surface as /api/status, /api/chain, etc.
+ *
+ * Failure paths:
+ *   - g_api_token unset (init() refuses null tokens, so structurally
+ *     unreachable today; defensive 503 protects future refactors that
+ *     might register a route before init() completes).
+ *   - Neither cookie nor Bearer valid → 401 + WWW-Authenticate. The
+ *     dashboard at / catches this and re-routes through the pair flow. */
 #define CSI_AUTH_OR_RETURN(req)                                       \
   do {                                                                \
-    if (!g_api_token ||                                               \
-        !api_auth_check((req), g_api_token)) return ESP_OK;           \
+    if (!g_api_token) {                                               \
+      httpd_resp_set_status((req), "503 Service Unavailable");        \
+      httpd_resp_set_type((req), "application/json");                 \
+      httpd_resp_sendstr((req),                                       \
+        "{\"error\":\"auth_unconfigured\","                           \
+         "\"hint\":\"csi_integration::init never received an "        \
+                   "api_token\"}");                                   \
+      return ESP_OK;                                                  \
+    }                                                                 \
+    if (cv_session_validate((req))) break;                            \
+    if (api_auth_check_optional((req), g_api_token)) break;           \
+    httpd_resp_set_status((req), "401 Unauthorized");                 \
+    httpd_resp_set_type((req), "application/json");                   \
+    httpd_resp_set_hdr((req), "WWW-Authenticate",                     \
+                       "Bearer realm=\"securacv\"");                  \
+    httpd_resp_sendstr((req),                                         \
+      "{\"error\":\"unauthorized\","                                  \
+       "\"hint\":\"open / on the canary AP to pair\"}");              \
+    return ESP_OK;                                                    \
   } while (0)
 
 /* Privacy Budget byte counter. Increments only when host code calls
@@ -622,6 +671,7 @@ esp_err_t handle_settings_post(httpd_req_t* req) {
    * within that span. We temporarily nul-terminate at the closing
    * brace so strstr can't see past it, then restore the byte. Body
    * is a local buffer; mutating it is fine. */
+  bool qh_changed = false;
   if (char* qh_key = (char*)strstr(body, "\"quiet_hours\"")) {
     char* qh_open = strchr(qh_key, '{');
     if (qh_open) {
@@ -644,9 +694,9 @@ esp_err_t handle_settings_post(httpd_req_t* req) {
           v++;
           while (*v == ' ' || *v == '\t' || *v == '"') v++;
           if (strncmp(v, "true", 4) == 0) {
-            prefs.putBool("qh.en", true);  wrote_anything = true;
+            prefs.putBool("qh.en", true);  wrote_anything = true; qh_changed = true;
           } else if (strncmp(v, "false", 5) == 0) {
-            prefs.putBool("qh.en", false); wrote_anything = true;
+            prefs.putBool("qh.en", false); wrote_anything = true; qh_changed = true;
           }
         }
       }
@@ -664,6 +714,7 @@ esp_err_t handle_settings_post(httpd_req_t* req) {
         if (n > 1439) n = 1439;
         prefs.putInt(nvs, (int32_t)n);
         wrote_anything = true;
+        qh_changed = true;
       };
       put_minute("\"start_min\"", "qh.start");
       put_minute("\"end_min\"",   "qh.end");
@@ -704,13 +755,13 @@ esp_err_t handle_settings_post(httpd_req_t* req) {
   /* Re-init affected module so it picks up the new values on the next tick. */
   reinit_module("core.presence");
 
-  /* Re-apply Quiet Hours to the chokepoint. The dashboard's settings
-   * panel may have changed any of the three keys; rather than parse
-   * the request again, just re-read NVS via the shared helper. The
-   * next module emit on the main loop sees the new config and
-   * flushes a held_summary if we just transitioned out of an active
-   * window. */
-  apply_quiet_hours_from_nvs();
+  /* Re-apply Quiet Hours to the chokepoint only when one of the three
+   * qh.* keys actually changed. Skipping the call when nothing in that
+   * subtree moved avoids a needless NVS read + chokepoint mutation
+   * (which also triggers a held_summary flush on transition) on every
+   * unrelated POST (pet_mode, sensitivity, privacy_ceiling, etc.). The
+   * gate matches the same pattern used for the privacy ceiling below. */
+  if (qh_changed) apply_quiet_hours_from_nvs();
 
   /* Re-apply privacy ceiling to the chokepoint so the next request to
    * /api/csi/window or /api/tune/* reflects the new ceiling without a
@@ -969,14 +1020,22 @@ void tune_write_value(Preferences& prefs, const TuneCoeff& c, int32_t v) {
 }
 
 esp_err_t handle_tune_page(httpd_req_t* req) {
-  /* P2 surface. The page is a top-level navigation so we can't gate it
-   * with a Bearer header; instead we inject the device's API token into
-   * the HTML at request time, and the page's fetch() calls add it to
-   * subsequent /api/tune/* requests (which DO check the header). A
-   * casual visitor on the AP can hit /tune and read the page chrome,
-   * but every action endpoint behind it is auth-gated. */
-  return csi_integration::send_html_with_token(req, TUNE_UI_HTML)
-           ? ESP_OK : ESP_FAIL;
+  /* P2 surface. The page is a top-level navigation so we can't return
+   * a 401 — the browser would just show its default error page. Instead:
+   * if the visitor has a valid cv_session cookie, serve the Tuning Lab
+   * directly (its in-page fetches authenticate via the same cookie,
+   * sent automatically by the browser). If not, redirect to / so the
+   * pair landing kicks in; the user can long-press the device chip in
+   * the dashboard topbar to come back here once paired. */
+  if (!csi_integration::session_validate_cookie(req)) {
+    httpd_resp_set_status(req, "302 Found");
+    httpd_resp_set_hdr(req, "Location", "/");
+    httpd_resp_send(req, nullptr, 0);
+    return ESP_OK;
+  }
+  httpd_resp_set_type(req, "text/html");
+  httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
+  return httpd_resp_send(req, TUNE_UI_HTML, HTTPD_RESP_USE_STRLEN);
 }
 
 esp_err_t handle_tune_get_coefficients(httpd_req_t* req) {
@@ -1240,6 +1299,212 @@ PairSlot* find_slot(const uint8_t* token) {
   }
   return nullptr;
 }
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * SESSION COOKIE STORE
+ *
+ * Issued on successful one-shot pair-token consumption (handle_ui's
+ * /?cv_pair=<hex> branch). Replaces the previous design where the device's
+ * Bearer api_token was injected into dashboard HTML — that approach made
+ * the token harvestable by anyone on the SoftAP who could `view-source`
+ * on / (per pull-request review #392 r3213361582).
+ *
+ * Each cookie is HttpOnly + SameSite=Strict, so JS can't read it (no XSS
+ * exfil) and cross-origin requests can't forge it (no CSRF). Cookie body
+ * is 32 bytes hex-encoded — 256-bit entropy, indistinguishable from
+ * random by anything an in-page script could observe.
+ *
+ * 8 slots is enough for a household worth of phones / laptops / tablets
+ * pairing concurrently. 24 h TTL matches typical "remember me" UX and
+ * caps the post-compromise window without forcing daily re-pairing.
+ *
+ * Threading: HTTP handlers serialize behind one ESP-IDF httpd worker, so
+ * no portMUX needed; matches the pair-slot store above. ────────────── */
+
+constexpr size_t   SESSION_SLOTS    = 8;
+constexpr uint32_t SESSION_TTL_MS   = 24UL * 60UL * 60UL * 1000UL;  /* 24 h */
+constexpr size_t   SESSION_TOK_BYTES   = 32;                     /* 256-bit entropy */
+constexpr size_t   SESSION_TOK_HEX_LEN = SESSION_TOK_BYTES * 2;  /* 64 hex chars */
+
+struct SessionSlot {
+  bool     active;
+  uint32_t issued_ms;
+  uint8_t  token[SESSION_TOK_BYTES];
+};
+SessionSlot g_session_slots[SESSION_SLOTS] = {};
+
+SessionSlot* pick_session_slot_for_issuance() {
+  const uint32_t now = millis();
+  /* Pass 1: prefer an empty or expired slot. */
+  for (size_t i = 0; i < SESSION_SLOTS; ++i) {
+    SessionSlot& s = g_session_slots[i];
+    if (!s.active || (now - s.issued_ms) >= SESSION_TTL_MS) return &s;
+  }
+  /* Pass 2: evict the oldest active slot. Same trade-off as the pair
+   * store — a determined attacker can churn issuances and bump a real
+   * user's session, but the legitimate user is on the AP and can re-pair
+   * by tapping the QR / "Open dashboard" link again. */
+  size_t oldest = 0;
+  for (size_t i = 1; i < SESSION_SLOTS; ++i) {
+    if ((now - g_session_slots[i].issued_ms) >
+        (now - g_session_slots[oldest].issued_ms)) {
+      oldest = i;
+    }
+  }
+  return &g_session_slots[oldest];
+}
+
+bool find_valid_session(const uint8_t* token) {
+  const uint32_t now = millis();
+  for (size_t i = 0; i < SESSION_SLOTS; ++i) {
+    SessionSlot& s = g_session_slots[i];
+    if (!s.active) continue;
+    if ((now - s.issued_ms) >= SESSION_TTL_MS) continue;
+    if (ct_eq(s.token, token, SESSION_TOK_BYTES)) return true;
+  }
+  return false;
+}
+
+/* Read the cv_session cookie out of the Cookie request header.
+ * The Cookie header is a single string of "name=value; name=value; ..."
+ * pairs. We scan for "cv_session=" and copy out exactly SESSION_TOK_HEX_LEN
+ * bytes after it. Returns false on any parse failure (header missing,
+ * cookie absent, hex too short / too long). Never sends a response. */
+bool read_session_cookie_hex(httpd_req_t* req, char* hex_out) {
+  if (!req || !hex_out) return false;
+  const size_t hdr_len = httpd_req_get_hdr_value_len(req, "Cookie");
+  if (hdr_len == 0 || hdr_len >= 512) return false;
+  /* Stack-allocate; 512 cap is a comfortable ceiling for the small
+   * cookie set this device uses. */
+  char buf[512];
+  if (httpd_req_get_hdr_value_str(req, "Cookie", buf, sizeof(buf)) != ESP_OK) {
+    return false;
+  }
+  const char* k = strstr(buf, "cv_session=");
+  if (!k) return false;
+  k += 11;  /* len("cv_session=") */
+  /* Ensure there are exactly SESSION_TOK_HEX_LEN hex chars and the
+   * value is terminated by ';' or end-of-string. Anything else is
+   * a malformed cookie and we reject it. */
+  for (size_t i = 0; i < SESSION_TOK_HEX_LEN; ++i) {
+    const char c = k[i];
+    const bool is_hex = (c >= '0' && c <= '9') ||
+                        (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+    if (!is_hex) return false;
+    hex_out[i] = c;
+  }
+  hex_out[SESSION_TOK_HEX_LEN] = '\0';
+  /* The next char must be the cookie-pair terminator. */
+  const char tail = k[SESSION_TOK_HEX_LEN];
+  return (tail == '\0' || tail == ';' || tail == ' ');
+}
+
+}  /* namespace (anonymous) */
+
+namespace csi_integration {
+
+bool session_validate_cookie(httpd_req_t* req) {
+  char hex[SESSION_TOK_HEX_LEN + 1];
+  if (!read_session_cookie_hex(req, hex)) return false;
+  uint8_t raw[SESSION_TOK_BYTES];
+  if (!hex_decode_to(hex, raw, SESSION_TOK_BYTES)) return false;
+  return find_valid_session(raw);
+}
+
+}  /* namespace csi_integration */
+
+/* File-scope trampoline forwarded to from the anonymous-namespace
+ * cv_session_validate forward decl (used by CSI_AUTH_OR_RETURN). Letting
+ * the macro call the public API directly would require putting the
+ * forward decl inside namespace csi_integration { ... } at file scope —
+ * harmless but noisier than this single-line bridge. */
+bool cv_session_validate(httpd_req_t* req) {
+  return csi_integration::session_validate_cookie(req);
+}
+
+namespace csi_integration {
+
+bool session_issue(char* hex_out, size_t out_cap) {
+  if (!hex_out || out_cap < SESSION_TOK_HEX_LEN + 1) return false;
+  SessionSlot* s = pick_session_slot_for_issuance();
+  if (!s) return false;
+  esp_fill_random(s->token, SESSION_TOK_BYTES);
+  s->issued_ms = millis();
+  s->active    = true;
+  hex_encode(s->token, SESSION_TOK_BYTES, hex_out);
+  return true;
+}
+
+/* Static so the asset lives in flash (PROGMEM-style on ESP32) and isn't
+ * counted toward heap. Two %s slots: pair-token hex × 2 (one for the
+ * <a href> and one for the on-screen URL the user can hand-type or
+ * scan from a printed QR if their captive portal is uncooperative).
+ *
+ * Microcopy doctrine matches the headline dashboard's COPY object:
+ * plain words, no jargon ("pair", "Bearer", "session" do not appear),
+ * grade ≤6th to clear the FKGL CI gate. */
+static const char SENSE_PAIR_LANDING_TMPL[] PROGMEM =
+  "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+  "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+  "<title>Canary &middot; Welcome</title>"
+  "<style>"
+    "body{font-family:system-ui,-apple-system,sans-serif;max-width:420px;"
+      "margin:60px auto;padding:24px;text-align:center;"
+      "background:#fffbec;color:#1a1605;line-height:1.5;}"
+    "h1{font-weight:500;font-size:28px;margin-bottom:8px;}"
+    "p{margin:14px 0;color:#3a311e;}"
+    "a.enter{display:inline-block;margin:24px 0 8px;padding:14px 36px;"
+      "background:#f0c319;color:#1a1605;border-radius:14px;"
+      "text-decoration:none;font-weight:500;font-size:17px;}"
+    "a.enter:active{transform:translateY(1px);}"
+    ".note{color:#6b6049;font-size:13px;margin-top:24px;}"
+    ".url{font-family:ui-monospace,Menlo,monospace;font-size:11px;"
+      "word-break:break-all;color:#6b6049;background:#f3ecd0;"
+      "padding:10px;border-radius:8px;margin-top:8px;}"
+    "@media (prefers-color-scheme:dark){"
+      "body{background:#1a1605;color:#fffbec;}"
+      "p{color:#cfc6ad;}"
+      ".note,.url{color:#a89e85;}"
+      ".url{background:#2a2310;}"
+    "}"
+  "</style></head><body>"
+  "<h1>Welcome to your Canary</h1>"
+  "<p>Open the dashboard to start sensing.</p>"
+  "<a class=\"enter\" href=\"/?cv_pair=%s\">Open dashboard</a>"
+  "<p class=\"note\">If the button does not work, paste this on the same network:</p>"
+  "<div class=\"url\">http://192.168.4.1/?cv_pair=%s</div>"
+  "<p class=\"note\">This link is good for 10 minutes and works one time.</p>"
+  "</body></html>";
+
+bool send_pair_landing(httpd_req_t* req) {
+  if (!req) return false;
+  char pair_hex[PAIR_TOK_HEX_LEN + 1];
+  if (!pair_token_issue(pair_hex, sizeof(pair_hex))) {
+    /* All slots taken AND none expirable — should be vanishingly rare.
+     * Surface a 503 with a friendly note rather than serving a dead
+     * landing page. */
+    httpd_resp_set_status(req, "503 Service Unavailable");
+    httpd_resp_set_type(req, "text/html");
+    httpd_resp_sendstr(req,
+      "<!doctype html><meta charset=\"utf-8\"><title>Canary</title>"
+      "<p style=\"font-family:system-ui;text-align:center;margin-top:80px\">"
+      "Too many people pairing right now. Please try again in a minute.</p>");
+    return true;
+  }
+  /* Two %s + the template glue. The template is ~1.3 KB, the two hex
+   * tokens add 128 bytes; 2 KB is comfortable. */
+  char body[2048];
+  const int n = snprintf(body, sizeof(body),
+                         SENSE_PAIR_LANDING_TMPL, pair_hex, pair_hex);
+  if (n <= 0 || (size_t)n >= sizeof(body)) return false;
+  httpd_resp_set_type(req, "text/html");
+  httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+  return httpd_resp_send(req, body, n) == ESP_OK;
+}
+
+}  /* namespace csi_integration */
+
+namespace {
 
 esp_err_t handle_pair_token(httpd_req_t* req) {
   CSI_AUTH_OR_RETURN(req);
@@ -1752,38 +2017,5 @@ bool csi_get_stats(csi_stats_t* out) {
   return csi_hal::get_stats(out);
 }
 
-bool send_html_with_token(httpd_req_t* req, const char* html) {
-  if (!req || !html) return false;
-  httpd_resp_set_type(req, "text/html");
-  httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
-
-  /* Find the spot to inject. We splice immediately after the opening
-   * <head> tag so the script runs before any in-page fetch. If the
-   * asset has no <head> we send it as-is and let the page disconnect-
-   * handle its 401s — that's better than a corrupted HTML response. */
-  static constexpr const char kHead[] = "<head>";
-  static constexpr size_t     kHeadLen = sizeof(kHead) - 1;
-  const char* head_open = strstr(html, kHead);
-  if (!head_open || !g_api_token) {
-    return httpd_resp_send(req, html, HTTPD_RESP_USE_STRLEN) == ESP_OK;
-  }
-  const size_t prefix_len = (size_t)(head_open - html) + kHeadLen;
-
-  /* api_token_str is at most 35 printable chars + NUL (see canary_wap.ino:444);
-   * the surrounding script tag is ~45 chars. 128 is a comfortable ceiling. */
-  char inject[128];
-  const int inject_len = snprintf(inject, sizeof(inject),
-    "<script>window.__CV_TOKEN=\"%s\";</script>", g_api_token);
-  if (inject_len <= 0 || (size_t)inject_len >= sizeof(inject)) {
-    return httpd_resp_send(req, html, HTTPD_RESP_USE_STRLEN) == ESP_OK;
-  }
-
-  if (httpd_resp_send_chunk(req, html, prefix_len) != ESP_OK)         return false;
-  if (httpd_resp_send_chunk(req, inject, inject_len) != ESP_OK)       return false;
-  const char* tail = html + prefix_len;
-  if (httpd_resp_send_chunk(req, tail, strlen(tail)) != ESP_OK)       return false;
-  if (httpd_resp_send_chunk(req, nullptr, 0) != ESP_OK)               return false;
-  return true;
-}
 
 }  /* namespace csi_integration */

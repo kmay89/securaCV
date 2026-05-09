@@ -885,21 +885,18 @@ static const char CSI_DASHBOARD_HTML[] PROGMEM = R"DASHBOARD(<!doctype html>
 "use strict";
 
 /* ────────────────────────────────────────────────────────────────────────
- *  Auth helper — every CSI HTTP handler verifies a Bearer token via
- *  api_auth_check. handle_ui (canary_wap.ino) injects the token into
- *  this page as window.__CV_TOKEN before this script runs. cvFetch
- *  wraps fetch() so each call adds the Authorization header automatically.
- *  Falls back to plain fetch if the token wasn't injected (only
- *  possible if the page was loaded outside the canary's normal
- *  routes — those requests will then 401 from the device, which is
- *  the correct fail-closed behavior).
+ *  Auth helper — every CSI HTTP handler verifies an HttpOnly cv_session
+ *  cookie set by handle_ui after the user opens the pair landing. Browsers
+ *  send the cookie automatically with every same-origin fetch, so cvFetch
+ *  is just a pass-through — no headers to set, no token to embed in the
+ *  page (which used to leak via view-source on the SoftAP, see PR #392
+ *  review r3213361582). If the cookie is missing or expired the request
+ *  401s and pollStream's catch block paints the disconnect plate; the
+ *  user reloads /, lands on the pair page, and re-pairs in one tap.
  * ──────────────────────────────────────────────────────────────────────── */
 function cvFetch(url, opts) {
-  opts = opts || {};
-  if (window.__CV_TOKEN) {
-    opts.headers = Object.assign({}, opts.headers || {},
-      {'Authorization': 'Bearer ' + window.__CV_TOKEN});
-  }
+  /* Reserved as the single fetch surface so adding cookie variants
+   * (refresh-after-401, retry-once, etc.) only touches one place. */
   return fetch(url, opts);
 }
 
