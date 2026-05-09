@@ -1167,17 +1167,31 @@ var FM = (function() {
     ftch(url(dev, '/api/peek/init'), { method: 'POST' }, 8000)
       .then(function(r) {
         if (!r.ok) throw new Error('HTTP ' + r.status);
-        return r.json().catch(function() { return { ok: true }; });
+        // Older / variant firmware may answer with a non-JSON body ("OK")
+        // or a minimal {ok:true} that omits camera_initialized. Treat
+        // those as a success signal — the absence of the field is not
+        // the same as an explicit false.
+        return r.json().catch(function() { return null; });
       })
       .then(function(j) {
         if (dev !== detailDev) return;
-        if (j && j.camera_initialized) {
+        // Success criteria, in order:
+        //   1. j.camera_initialized === true              → ready
+        //   2. j.camera_initialized === false             → failure (retry/give up)
+        //   3. anything else (no JSON, j.ok===true, etc.) → ready
+        var explicitFail = j && j.camera_initialized === false;
+        if (!explicitFail) {
           setPeekState('ready', 'Camera ready');
-        } else if (attempt + 1 < PEEK_INIT_RETRY) {
+          return;
+        }
+        if (attempt + 1 < PEEK_INIT_RETRY) {
           setTimeout(function() { initCamera(attempt + 1); }, 600);
         } else {
-          var hint = (j && (j.last_init_err_name || j.last_init_label))
-            ? ' (' + esc(j.last_init_err_name || j.last_init_label) + ')'
+          // Hint text is plain text and gets escaped once by setPeekState
+          // when it lands in innerHTML — do NOT esc() it here or it
+          // double-escapes ('&' → '&amp;amp;').
+          var hint = (j.last_init_err_name || j.last_init_label)
+            ? ' (' + (j.last_init_err_name || j.last_init_label) + ')'
             : '';
           setPeekState('nocam', 'Camera unavailable' + hint);
         }
