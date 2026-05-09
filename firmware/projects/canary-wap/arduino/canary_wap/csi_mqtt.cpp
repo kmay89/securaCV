@@ -112,6 +112,12 @@ void mqtt_event_handler(void* /*handler_args*/, esp_event_base_t /*base*/,
       build_topic(topic, sizeof(topic), "status");
       const char* online = "{\"online\":true}";
       publish_raw(topic, online, strlen(online), /*retain=*/true);
+      /* HA MQTT auto-discovery: publish entity definitions so a freshly-
+       * subscribing HA sees the canary's sensors without anyone touching
+       * a config file. Order matters — status MUST land before the
+       * discovery payloads reference it as the availability topic, or
+       * the entities flicker through "unavailable" on first appearance. */
+      publish_discovery();
       /* Flag the main loop to walk the SD log and backfill any events
        * the broker missed during the outage. We don't drain here
        * because the MQTT event handler runs on its own task and a
@@ -163,6 +169,10 @@ bool config_load(Config* out) {
   out->enabled = prefs.getBool (NVS_KEY_ENABLED, false);
   out->port    = (uint16_t)prefs.getUShort(NVS_KEY_PORT, DEFAULT_PORT);
   out->tls     = prefs.getBool (NVS_KEY_TLS,     false);
+  /* Discovery defaults true on first boot — HA users get auto-pickup
+   * without a separate toggle. Non-HA users flip it off via the /mqtt
+   * settings page; the persisted bool then survives reboots. */
+  out->discovery = prefs.getBool(NVS_KEY_DISCOVERY, true);
   prefs.getString(NVS_KEY_HOST,   out->host,   MAX_HOST_LEN);
   prefs.getString(NVS_KEY_USER,   out->user,   MAX_USER_LEN);
   prefs.getString(NVS_KEY_PASS,   out->pass,   MAX_PASS_LEN);
@@ -176,13 +186,14 @@ bool config_load(Config* out) {
 bool config_save(const Config& cfg) {
   Preferences prefs;
   if (!prefs.begin(SETTINGS_NS, /*readOnly=*/false)) return false;
-  prefs.putBool  (NVS_KEY_ENABLED, cfg.enabled);
-  prefs.putString(NVS_KEY_HOST,    cfg.host);
-  prefs.putUShort(NVS_KEY_PORT,    cfg.port);
-  prefs.putString(NVS_KEY_USER,    cfg.user);
-  prefs.putString(NVS_KEY_PASS,    cfg.pass);
-  prefs.putString(NVS_KEY_PREFIX,  cfg.prefix);
-  prefs.putBool  (NVS_KEY_TLS,     cfg.tls);
+  prefs.putBool  (NVS_KEY_ENABLED,   cfg.enabled);
+  prefs.putString(NVS_KEY_HOST,      cfg.host);
+  prefs.putUShort(NVS_KEY_PORT,      cfg.port);
+  prefs.putString(NVS_KEY_USER,      cfg.user);
+  prefs.putString(NVS_KEY_PASS,      cfg.pass);
+  prefs.putString(NVS_KEY_PREFIX,    cfg.prefix);
+  prefs.putBool  (NVS_KEY_TLS,       cfg.tls);
+  prefs.putBool  (NVS_KEY_DISCOVERY, cfg.discovery);
   prefs.end();
   return true;
 }
@@ -496,6 +507,171 @@ void publish_status(bool csi_running, bool wifi_connected, int rssi_dbm) {
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
+ * Home Assistant MQTT auto-discovery
+ *
+ * Published once per CONNECTED so a freshly-subscribing HA picks up the
+ * entire entity set in one round-trip. Discovery topics live on
+ *   homeassistant/{component}/canary_{device_id}/{object_id}/config
+ * with retain=true. State topics stay on the existing
+ * securacv/{prefix}/{device_id}/{topic} surface — discovery just tells
+ * HA which value_template to extract from each.
+ *
+ * Abbreviated keys (uniq_id, stat_t, val_tpl, dev, ids, mf, mdl, sw)
+ * trim ~30% off the wire size vs the long forms; HA accepts both.
+ * Source of truth for the abbreviation table:
+ *   https://www.home-assistant.io/integrations/mqtt/#discovery-payload
+ *
+ * Entity set (12 entities) — chosen so a stock HA dashboard surfaces:
+ *   - "Is someone home?"        (binary_sensor.presence, motion class)
+ *   - "Is the canary online?"   (binary_sensor.online, connectivity class)
+ *   - Live presence state name  (sensor.state)
+ *   - Motion / breathing scores (sensors with measurement state_class)
+ *   - Heart-rate-like BPM       (sensor.bpm)
+ *   - Confidence level          (sensor.confidence)
+ *   - Witness count + chain     (sensor.witness_count / chain_length,
+ *                                total_increasing state class)
+ *   - Health: uptime + free heap + RSSI
+ * ────────────────────────────────────────────────────────────────────────── */
+
+namespace {
+
+constexpr const char* DISCOVERY_PREFIX = "homeassistant";
+
+/* Single-row description for one HA entity. Strings live in flash so
+ * the table costs ~0 RAM. Optional fields use nullptr; the emitter
+ * inserts the corresponding key only when non-null. */
+struct DiscoveryEntity {
+  const char* component;       /* "sensor" / "binary_sensor" */
+  const char* object_id;       /* unique within device, alphanumeric+_ */
+  const char* name;            /* HA entity friendly name */
+  const char* state_topic;     /* suffix appended to securacv/<id>/ */
+  const char* val_tpl;         /* Jinja over the JSON state payload */
+  const char* unit;            /* nullable unit_of_measurement */
+  const char* dev_class;       /* nullable device_class */
+  const char* state_class;     /* nullable state_class */
+  const char* icon;            /* nullable mdi: icon */
+};
+
+const DiscoveryEntity ENTITIES[] = {
+  /* Binary sensors — surfaced in the headline HA card. */
+  { "binary_sensor", "presence", "Presence", "events",
+    "{% if value_json.state and value_json.state != 'empty' %}ON{% else %}OFF{% endif %}",
+    nullptr, "motion", nullptr, "mdi:account" },
+  { "binary_sensor", "online", "Online", "status",
+    "{% if value_json.online %}ON{% else %}OFF{% endif %}",
+    nullptr, "connectivity", nullptr, nullptr },
+
+  /* Live state from /events. */
+  { "sensor", "state", "State", "events",
+    "{{ value_json.state | default('unknown') }}",
+    nullptr, nullptr, nullptr, "mdi:eye-outline" },
+  { "sensor", "confidence", "Confidence", "events",
+    "{{ value_json.confidence | default('tentative') }}",
+    nullptr, nullptr, nullptr, "mdi:gauge" },
+  { "sensor", "motion", "Motion Score", "events",
+    "{{ value_json.motion | default(0) }}",
+    nullptr, nullptr, "measurement", "mdi:run" },
+  { "sensor", "breathing", "Breathing Score", "events",
+    "{{ value_json.breathing | default(0) }}",
+    nullptr, nullptr, "measurement", "mdi:lungs" },
+  { "sensor", "bpm", "Breathing Rate", "events",
+    "{{ value_json.bpm | default(0) }}",
+    "bpm", nullptr, "measurement", "mdi:heart-pulse" },
+
+  /* Witness chain + counts (total_increasing matches HA's "this only
+   * goes up" semantic so the long-term graph integrates correctly). */
+  { "sensor", "witness_count", "Witness Records", "counts",
+    "{{ value_json.total | default(0) }}",
+    nullptr, nullptr, "total_increasing", "mdi:counter" },
+  { "sensor", "chain_length", "Chain Length", "chain",
+    "{{ value_json.length | default(0) }}",
+    "blocks", nullptr, "total_increasing", "mdi:link-variant" },
+
+  /* Device health. */
+  { "sensor", "uptime", "Uptime", "health",
+    "{{ value_json.uptime | default(0) }}",
+    "s", "duration", "measurement", nullptr },
+  { "sensor", "memory_free", "Free Memory", "health",
+    "{{ value_json.memory_free | default(0) }}",
+    "B", "data_size", "measurement", nullptr },
+  { "sensor", "rssi", "Signal Strength", "status",
+    "{{ value_json.rssi | default(0) }}",
+    "dBm", "signal_strength", "measurement", nullptr },
+};
+
+/* Emit one entity's config payload. Returns true on enqueue success.
+ * The discovery JSON is built into a fixed 768-byte buffer; current
+ * worst-case payload is ~620 bytes (state-topic entity with full
+ * device block + availability), so 768 leaves a comfortable margin. */
+bool publish_one_discovery(const DiscoveryEntity& e) {
+  const char* prefix = s_active_cfg.prefix[0] ? s_active_cfg.prefix : DEFAULT_PREFIX;
+
+  /* Topic: homeassistant/{component}/canary_<device_id>/{object_id}/config */
+  char topic[192];
+  snprintf(topic, sizeof(topic),
+           "%s/%s/canary_%s/%s/config",
+           DISCOVERY_PREFIX, e.component, s_device_id, e.object_id);
+
+  /* Build optional-field segments first so the final snprintf is one
+   * call (snprintf into a moving cursor would be more bytes of code
+   * for very little gain). */
+  char unit_kv[40]      = "";
+  char dev_class_kv[48] = "";
+  char state_class_kv[48] = "";
+  char icon_kv[48]      = "";
+  if (e.unit)        snprintf(unit_kv,        sizeof(unit_kv),        ",\"unit_of_meas\":\"%s\"", e.unit);
+  if (e.dev_class)   snprintf(dev_class_kv,   sizeof(dev_class_kv),   ",\"dev_cla\":\"%s\"",      e.dev_class);
+  if (e.state_class) snprintf(state_class_kv, sizeof(state_class_kv), ",\"stat_cla\":\"%s\"",     e.state_class);
+  if (e.icon)        snprintf(icon_kv,        sizeof(icon_kv),        ",\"ic\":\"%s\"",           e.icon);
+
+  char body[768];
+  const int n = snprintf(body, sizeof(body),
+    "{"
+      "\"name\":\"%s\","
+      "\"uniq_id\":\"canary_%s_%s\","
+      "\"stat_t\":\"%s/%s/%s\","
+      "\"val_tpl\":\"%s\","
+      "\"avty_t\":\"%s/%s/status\","
+      "\"avty_tpl\":\"{{ 'online' if value_json.online else 'offline' }}\""
+      "%s%s%s%s,"
+      "\"dev\":{"
+        "\"ids\":[\"canary_%s\"],"
+        "\"name\":\"Canary %s\","
+        "\"mf\":\"SecuraCV\","
+        "\"mdl\":\"Canary WAP\","
+        "\"sw\":\"%s\""
+      "}"
+    "}",
+    e.name,
+    s_device_id, e.object_id,
+    prefix, s_device_id, e.state_topic,
+    e.val_tpl,
+    prefix, s_device_id,
+    unit_kv, dev_class_kv, state_class_kv, icon_kv,
+    s_device_id,
+    s_device_id,
+    s_firmware_version);
+  if (n <= 0 || (size_t)n >= sizeof(body)) return false;
+  return publish_raw(topic, body, (size_t)n, /*retain=*/true);
+}
+
+}  /* namespace */
+
+/* Publish all discovery payloads. Called from MQTT_EVENT_CONNECTED
+ * AFTER the online-status publish so HA sees the device as online
+ * before the entity definitions reference its availability topic.
+ * No-op when discovery is disabled in NVS. */
+void publish_discovery() {
+  if (!s_active_cfg.discovery) return;
+  size_t ok = 0;
+  for (const DiscoveryEntity& e : ENTITIES) {
+    if (publish_one_discovery(e)) ok++;
+  }
+  Serial.printf("[MQTT] discovery: %u/%u entities announced\n",
+                (unsigned)ok, (unsigned)(sizeof(ENTITIES) / sizeof(ENTITIES[0])));
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
  * HTTP handlers
  *
  * The auth guard is delegated to a tiny wrapper so we don't pull
@@ -545,6 +721,7 @@ esp_err_t handle_config_get(httpd_req_t* req) {
       "\"user\":\"%s\","
       "\"prefix\":\"%s\","
       "\"tls\":%s,"
+      "\"discovery\":%s,"
       "\"password_set\":%s,"
       "\"connected\":%s"
     "}",
@@ -554,6 +731,7 @@ esp_err_t handle_config_get(httpd_req_t* req) {
     c.user,
     c.prefix,
     c.tls ? "true" : "false",
+    c.discovery ? "true" : "false",
     c.pass[0] ? "true" : "false",
     connected() ? "true" : "false");
   httpd_resp_set_type(req, "application/json");
@@ -662,8 +840,9 @@ esp_err_t handle_config_post(httpd_req_t* req) {
   Config c;
   config_load(&c);
 
-  json_extract_bool  (body, "\"enabled\"", &c.enabled);
-  json_extract_bool  (body, "\"tls\"",     &c.tls);
+  json_extract_bool  (body, "\"enabled\"",   &c.enabled);
+  json_extract_bool  (body, "\"tls\"",       &c.tls);
+  json_extract_bool  (body, "\"discovery\"", &c.discovery);
   long port_l = c.port;
   if (json_extract_int(body, "\"port\"", &port_l) && port_l > 0 && port_l <= 65535) {
     c.port = (uint16_t)port_l;
@@ -780,6 +959,10 @@ button.test{background:transparent;color:#3a311e;border:1px solid #d4c994;}
     <label>Topic prefix<input type="text" id="prefix" value="securacv"></label>
     <label class="row toggle"><input type="checkbox" id="tls"> Use TLS</label>
   </div>
+  <label class="row toggle">
+    <input type="checkbox" id="discovery" checked>
+    Let Home Assistant find the canary on its own
+  </label>
   <div class="actions">
     <button class="save" type="submit">Save</button>
     <button class="test" type="button" id="test">Test connection</button>
@@ -799,6 +982,7 @@ async function load(){
     user.value      = j.user || '';
     prefix.value    = j.prefix || 'securacv';
     tls.checked     = !!j.tls;
+    discovery.checked = j.discovery !== false;  /* default-on if missing */
     if (j.password_set) password.placeholder = '•••• saved (leave blank to keep)';
     document.getElementById('status').textContent = j.connected ? 'Connected to broker.' : 'Not connected.';
     document.getElementById('status').className = 'status ' + (j.connected ? 'good' : '');
@@ -814,6 +998,7 @@ f.addEventListener('submit', async (e) => {
     user: user.value,
     prefix: prefix.value.trim() || 'securacv',
     tls: tls.checked,
+    discovery: discovery.checked,
   };
   if (password.value) body.password = password.value;
   const r = await cvFetch('/api/mqtt/config', {

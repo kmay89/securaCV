@@ -44,13 +44,14 @@ namespace csi_mqtt {
 
 /* NVS keys (≤15 chars, "csi" namespace shared with the rest of the
  * dashboard's settings store). */
-constexpr const char* NVS_KEY_ENABLED = "mqtt.en";
-constexpr const char* NVS_KEY_HOST    = "mqtt.host";
-constexpr const char* NVS_KEY_PORT    = "mqtt.port";
-constexpr const char* NVS_KEY_USER    = "mqtt.user";
-constexpr const char* NVS_KEY_PASS    = "mqtt.pass";
-constexpr const char* NVS_KEY_PREFIX  = "mqtt.prefix";
-constexpr const char* NVS_KEY_TLS     = "mqtt.tls";
+constexpr const char* NVS_KEY_ENABLED   = "mqtt.en";
+constexpr const char* NVS_KEY_HOST      = "mqtt.host";
+constexpr const char* NVS_KEY_PORT      = "mqtt.port";
+constexpr const char* NVS_KEY_USER      = "mqtt.user";
+constexpr const char* NVS_KEY_PASS      = "mqtt.pass";
+constexpr const char* NVS_KEY_PREFIX    = "mqtt.prefix";
+constexpr const char* NVS_KEY_TLS       = "mqtt.tls";
+constexpr const char* NVS_KEY_DISCOVERY = "mqtt.disc";
 
 constexpr size_t MAX_HOST_LEN   = 128;
 constexpr size_t MAX_USER_LEN   = 64;
@@ -67,6 +68,16 @@ struct Config {
   char     pass[MAX_PASS_LEN + 1];
   char     prefix[MAX_PREFIX_LEN + 1];
   bool     tls;
+  /* When true, publish HA MQTT auto-discovery payloads on
+   * homeassistant/{component}/canary_<device_id>/{object_id}/config
+   * the moment we connect to the broker. HA picks them up
+   * automatically and creates entities under one device — users
+   * with only the HA MQTT integration installed see the canary
+   * without any manual sensor wiring. Defaults to true; non-HA
+   * MQTT consumers can flip it off to suppress the discovery
+   * payloads. Retained on the broker so a freshly-subscribing HA
+   * sees them whenever it comes online. */
+  bool     discovery;
 };
 
 bool config_load(Config* out);
@@ -130,6 +141,17 @@ void publish_event(uint32_t                  event_id,
  * skip it on subsequent reconnects.
  */
 bool publish_event_record(const csi_event_record_t* rec);
+
+/**
+ * Publish HA MQTT auto-discovery payloads for the canary's full entity
+ * set on `homeassistant/{component}/canary_<device_id>/{object_id}/config`.
+ * Called from MQTT_EVENT_CONNECTED after the online-status publish so
+ * HA sees the device as online before referencing it as an entity's
+ * availability topic. Retained, so a freshly-subscribing HA picks
+ * them up regardless of when it comes online. No-op when the
+ * Config.discovery toggle is false.
+ */
+void publish_discovery();
 
 /**
  * Push the witness-chain head to {prefix}/{device_id}/chain.
