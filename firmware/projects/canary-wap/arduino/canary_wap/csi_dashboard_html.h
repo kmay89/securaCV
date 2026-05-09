@@ -890,21 +890,24 @@ static const char CSI_DASHBOARD_HTML[] PROGMEM = R"DASHBOARD(<!doctype html>
  * ──────────────────────────────────────────────────────────────────────── */
 const COPY = {
   states: {
-    sensing:   { name: 'Sensing…',       sub: "Just getting a feel for the room." },
-    empty:     { name: 'Empty',          sub: "Nobody's home right now." },
-    subtle:    { name: 'Subtle motion',  sub: "Something small is moving." },
-    quiet:     { name: 'Quiet',          sub: "Someone's here. Sitting still." },
-    quiet_bpm: { name: 'Quiet',          sub: "Someone's here. Breathing about {bpm} a minute." },
-    active:    { name: 'Active',         sub: "Lots of movement right now." },
-    together:  { name: 'Together',       sub: "More than one person." },
-    pet:       { name: 'Empty',          sub: "A small movement, probably your pet." },
+    /* Each subtitle pairs the room reading with one tiny canary beat.
+     * The bird is a deadpan presence — head tilts, preens, hums along —
+     * not a cartoon. Same data, more alive. */
+    sensing:   { name: 'Sensing…',       sub: "Tilting its head, taking the room in." },
+    empty:     { name: 'Empty',          sub: "Nobody home. The canary preens." },
+    subtle:    { name: 'Subtle motion',  sub: "Something small stirs. Head turns." },
+    quiet:     { name: 'Quiet',          sub: "Someone's here, very still. The canary hums." },
+    quiet_bpm: { name: 'Quiet',          sub: "Someone's here, breathing about {bpm} a minute. The canary hums along." },
+    active:    { name: 'Active',         sub: "Plenty going on. Canary's wide awake." },
+    together:  { name: 'Together',       sub: "More than one. The canary perks up." },
+    pet:       { name: 'Empty',          sub: "A small movement. Probably your pet — the canary doesn't fuss." },
   },
   tooltips: {
     orb:         "What the room feels like right now.",
     helpBtn:     "See what the sensor can and can't notice.",
     todayBtn:    "See everything that happened today.",
     settingsBtn: "Tweak how the sensor behaves.",
-    calibrate:   "Step out for one minute so the sensor learns your empty room.",
+    calibrate:   "Step out for one minute. The canary learns your empty room by ear.",
     sensitive:   "Picks up small movements. Best for one quiet room.",
     balanced:    "Catches normal movement. Good for most homes.",
     quiet:       "Only big movements. Best with kids, pets, or open spaces.",
@@ -918,9 +921,19 @@ const COPY = {
     ribbonCell:  "Tap a moment to see what was happening then.",
   },
   errors: {
-    disconnect:  "Can't reach the sensor. Move closer to your router and try again.",
-    calibrating: "Learning your empty room. {seconds} seconds left.",
-    calibrated:  "Got it. Your empty room is set.",
+    disconnect:  "Can't reach the canary. Move closer to your router and try again.",
+  },
+  calibrate: {
+    /* The overlay's static text + the button labels. The seconds-remaining
+     * count is rendered into its own <div class="count"> sibling and is
+     * NOT a placeholder in these strings. */
+    label:    "The canary is learning your empty room.",
+    stepOut:  "Step out for a minute.",
+    btn:      "Calibrate empty room",
+    done:     "Got it. The canary knows your room now.",
+  },
+  today: {
+    empty: "Quiet so far today. The canary is perched, head cocked.",
   },
   what: {
     title: "What the sensor can and can't see",
@@ -981,6 +994,23 @@ const COPY = {
     ],
   },
 };
+
+/* ────────────────────────────────────────────────────────────────────────
+ *  Static-text hydration — the overlay's two <div class="label"> nodes
+ *  and the calibrate button label live in HTML at parse time, before any
+ *  JS runs, so they get baked-in placeholders. We replace those with
+ *  COPY.calibrate.* on script load. The microcopy doctrine ("every
+ *  user-facing string lives in COPY") then holds end-to-end.
+ * ──────────────────────────────────────────────────────────────────────── */
+(function hydrateStaticCopy() {
+  const labels = document.querySelectorAll('#calibratingMask .label');
+  if (labels.length >= 2) {
+    labels[0].textContent = COPY.calibrate.label;
+    labels[1].textContent = COPY.calibrate.stepOut;
+  }
+  const btn = document.getElementById('calibrateBtn');
+  if (btn) btn.textContent = COPY.calibrate.btn;
+})();
 
 /* ────────────────────────────────────────────────────────────────────────
  *  Tooltip plumbing — one pattern, used everywhere.
@@ -1287,7 +1317,7 @@ async function fetchToday() {
     const j = await r.json();
     const events = j.events || [];
     if (events.length === 0) {
-      body.innerHTML = '<p style="color:var(--fg-mute);padding:20px 0">Quiet so far today. The canary is here, listening.</p>';
+      body.innerHTML = '<p style="color:var(--fg-mute);padding:20px 0">' + COPY.today.empty + '</p>';
       return;
     }
     body.innerHTML = '';
@@ -1730,8 +1760,8 @@ calibrateBtn.addEventListener('click', () => {
       clearInterval(tid);
       document.body.classList.remove('is-calibrating');
       calibrateBtn.dataset.running = '0';
-      calibrateBtn.textContent = 'Got it. Your empty room is set.';
-      setTimeout(() => calibrateBtn.textContent = 'Calibrate empty room', 3000);
+      calibrateBtn.textContent = COPY.calibrate.done;
+      setTimeout(() => calibrateBtn.textContent = COPY.calibrate.btn, 3000);
     }
   }, 1000);
 });
