@@ -56,10 +56,21 @@ bool sd_path_ready() {
 }
 
 /* Drop the oldest ~25% of the file when it crosses MAX_BYTES so the
- * caller's append still succeeds. Cheap-but-not-free: reads the whole
- * file, finds a line break past the 25%-mark, rewrites everything
- * after it. Good enough for a 256 KB cap; daily rotation is the next
- * step if this ever shows up in profiles. */
+ * caller's append still succeeds. Hardened against OOM by capping the
+ * RAM buffer below the smaller of (free heap / 4, TRUNCATE_BUF_MAX);
+ * if the survivors don't fit we drop the file entirely rather than
+ * crash on an unbounded malloc (PR #395 review r3213834626). A
+ * temp-file + rename approach (fully atomic, constant memory) is the
+ * proper fix and is tracked as a follow-up — for v1 the cap-and-drop
+ * is acceptable because the only victim is the on-disk backfill
+ * window, which a busy device naturally rotates through anyway.
+ *
+ * Non-atomic on power loss: a hard cut between SD.remove(LOG_PATH)
+ * (implicit on FILE_WRITE truncate) and the rewrite loses the file.
+ * Same trade-off as init()'s cold-boot truncate — events between
+ * "last publish" and "rewrite committed" are lost. */
+constexpr size_t TRUNCATE_BUF_MAX = 32u * 1024u;
+
 bool head_truncate_if_oversized() {
   File f = SD.open(LOG_PATH, FILE_READ);
   if (!f) return true;  /* nothing to truncate */
@@ -73,9 +84,26 @@ bool head_truncate_if_oversized() {
   while (f.available()) {
     if (f.read() == '\n') break;
   }
-  /* Read the survivors into RAM. ESP32-S3 has plenty of heap; cap at
-   * MAX_BYTES so a malformed file that's somehow huge can't OOM. */
+  /* Heap-aware cap: if we can't fit the survivors AND keep a comfort
+   * margin for httpd / mqtt / wifi tasks, blow the file away rather
+   * than risk an OOM mid-write. ESP.getFreeHeap() reads the SDK's
+   * unused heap; quartering it leaves room for concurrent network
+   * activity that may need its own allocations. */
   const size_t remaining = sz - f.position();
+  const size_t heap_budget = ESP.getFreeHeap() / 4;
+  const size_t safe_cap   = TRUNCATE_BUF_MAX < heap_budget
+                              ? TRUNCATE_BUF_MAX : heap_budget;
+  if (remaining + 1 > safe_cap) {
+    f.close();
+    if (SD.remove(LOG_PATH)) {
+      Serial.printf(
+        "[EVT-LOG] log truncate skipped (would alloc %u, cap %u) — file dropped\n",
+        (unsigned)(remaining + 1), (unsigned)safe_cap);
+      return true;
+    }
+    return false;
+  }
+
   char* buf = (char*)malloc(remaining + 1);
   if (!buf) { f.close(); return false; }
   const size_t got = f.read((uint8_t*)buf, remaining);
@@ -203,6 +231,21 @@ bool init() {
       return false;
     }
   }
+  /* Truncate the log on cold boot. csi_event allocates event_ids from
+   * g_next_event_id which restarts at 1 each boot — so a log carried
+   * over from the previous boot would seed the MQTT bridge's "highest
+   * id sent" watermark to a value above current-boot ids, and any
+   * event emitted while disconnected this boot would silently fail
+   * to backfill on the next reconnect (PR #395 review r3213834315).
+   *
+   * The trade-off: events emitted between the last successful publish
+   * and a hard power cut are lost to HA. Acceptable for v1; a follow-up
+   * that NVS-persists g_next_event_id (or stamps records with
+   * boot_count) lifts this restriction and lets cross-reboot backfill
+   * stay on. csi_event_log::init() is only called from canary_wap.ino's
+   * setup() so a runtime config change (e.g. /api/mqtt/config POST →
+   * csi_mqtt::init re-run) does NOT clear the in-flight log. */
+  if (SD.exists(LOG_PATH)) SD.remove(LOG_PATH);
   return true;
 }
 

@@ -267,15 +267,17 @@ bool init(const char* device_id,
   return true;
 }
 
-/* iterate_since callback used by the backfill drain. We re-check
- * connected() before every publish so a re-disconnect mid-replay
- * stops cleanly (the next CONNECTED will set the flag again and
- * pick up where we left off — s_last_published_event_id only
- * advances on successful enqueue inside publish_event_record). */
+/* iterate_since callback used by the backfill drain. We stop iterating
+ * the moment either the broker drops OR a publish fails to enqueue
+ * (queue full, network glitch, etc.) so the watermark doesn't tick
+ * past a record that never reached HA — letting later successful
+ * publishes "skip over" the failed one would permanently lose the
+ * event on subsequent reconnects (PR #395 review r3213834314). The
+ * next CONNECTED rearms s_backfill_pending and we resume from the
+ * unchanged watermark. */
 static bool backfill_publish_cb(const csi_event_record_t* rec, void* /*user*/) {
   if (!s_connected.load(std::memory_order_relaxed)) return false;
-  publish_event_record(rec);
-  return true;
+  return publish_event_record(rec);
 }
 
 void loop() {
@@ -370,6 +372,25 @@ size_t build_event_body(char* body, size_t cap,
 }
 }  /* namespace */
 
+/* Single helper for the "publish-then-advance-watermark" pattern so the
+ * live emit and backfill-replay paths agree on what counts as "HA has
+ * seen this id" (PR #395 review r3213834627). publish_raw is the shared
+ * chokepoint that already enforces "only count successful enqueues";
+ * we just relay its outcome and advance the watermark when both the
+ * enqueue succeeded AND the new id is higher than what we already
+ * tracked. Returns the publish_raw outcome so callers can stop
+ * mid-replay (PR #395 review r3213834314). */
+static bool publish_and_advance(const char* topic,
+                                const char* body, size_t n,
+                                bool retain,
+                                uint32_t event_id) {
+  if (!publish_raw(topic, body, n, retain)) return false;
+  if (event_id > s_last_published_event_id) {
+    s_last_published_event_id = event_id;
+  }
+  return true;
+}
+
 void publish_event(uint32_t                  event_id,
                    const char*               module_id,
                    const char*               type_name,
@@ -385,18 +406,11 @@ void publish_event(uint32_t                  event_id,
       /*timestamp_ms=*/(uint32_t)millis(),
       /*bundled_count=*/1);
   if (n == 0) return;
-  if (publish_raw(topic, body, n, /*retain=*/false)) {
-    /* Advance the watermark only on successful enqueue. A failed
-     * publish stays "not yet sent" so the next reconnect's backfill
-     * picks it up from the SD log. */
-    if (event_id > s_last_published_event_id) {
-      s_last_published_event_id = event_id;
-    }
-  }
+  publish_and_advance(topic, body, n, /*retain=*/false, event_id);
 }
 
-void publish_event_record(const csi_event_record_t* rec) {
-  if (!rec) return;
+bool publish_event_record(const csi_event_record_t* rec) {
+  if (!rec) return false;
   char topic[192];
   build_topic(topic, sizeof(topic), "events");
   char body[512];
@@ -406,12 +420,8 @@ void publish_event_record(const csi_event_record_t* rec) {
   const size_t n = build_event_body(body, sizeof(body),
       rec->module_id, rec->type_name, rec->category, rec->privacy, &rec->values,
       rec->first_seen_ms, rec->bundled_count);
-  if (n == 0) return;
-  if (publish_raw(topic, body, n, /*retain=*/false)) {
-    if (rec->event_id > s_last_published_event_id) {
-      s_last_published_event_id = rec->event_id;
-    }
-  }
+  if (n == 0) return false;
+  return publish_and_advance(topic, body, n, /*retain=*/false, rec->event_id);
 }
 
 void publish_chain(uint32_t length, const uint8_t* latest_hash_32) {

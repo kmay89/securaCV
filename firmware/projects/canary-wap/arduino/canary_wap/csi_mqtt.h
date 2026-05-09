@@ -123,8 +123,13 @@ void publish_event(uint32_t                  event_id,
  * moment instead of "now") and uses the persisted bundled_count.
  * Called by the main-loop drain triggered when the MQTT bridge
  * reconnects after an outage.
+ *
+ * Returns true on successful enqueue so the backfill iterator can
+ * stop mid-replay if a publish fails — letting later successes
+ * advance the watermark past a failed record would permanently
+ * skip it on subsequent reconnects.
  */
-void publish_event_record(const csi_event_record_t* rec);
+bool publish_event_record(const csi_event_record_t* rec);
 
 /**
  * Push the witness-chain head to {prefix}/{device_id}/chain.
