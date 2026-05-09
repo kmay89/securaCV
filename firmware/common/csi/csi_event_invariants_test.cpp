@@ -14,6 +14,8 @@
  *   6. The bundler collapses 100 same-state emits within a 10-minute window
  *      into a single committed row.
  *   7. Per-module hourly ceiling caps emits past the limit.
+ *   8. The witness-chain payload string built from a committed event
+ *      includes the spec §2 metadata fields kv= / rs= / zn=.
  *
  * Build:
  *   - Standalone (host x86) for CI: g++ -std=c++17 -DCSI_TEST_HOST_BUILD \
@@ -21,6 +23,7 @@
  *       firmware/common/csi/src/csi_event.cpp \
  *       firmware/common/csi/src/csi_module.cpp \
  *       firmware/common/csi/src/csi_bundler.cpp \
+ *       firmware/common/csi/src/csi_witness_payload.cpp \
  *       -I firmware/common/csi/src -o /tmp/csi_invariants && /tmp/csi_invariants
  *
  * Compiles cleanly inside an ESP32 firmware build too — guarded so it does
@@ -30,6 +33,7 @@
 #include "csi_event.h"
 #include "csi_module.h"
 #include "csi_bundler.h"
+#include "csi_witness_payload.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -305,6 +309,57 @@ void test_bundler_collapses_burst() {
          "100 same-state emits in a tight window must collapse to ≤ 2 commits");
 }
 
+void test_witness_payload_includes_metadata() {
+  /* Spec/event_contract.md §2 mandates that every committed event carry
+   * its kernel_version, ruleset_id, and zone_id alongside the existing
+   * type / time-bucket / confidence fields. canary-wap's witness bridge
+   * builds the signed payload via csi_witness_build_payload(); this test
+   * exercises that builder directly with synthetic args and asserts the
+   * three substrings appear in the output. */
+  char buf[256];
+  int len = csi_witness_build_payload(
+    buf, sizeof(buf),
+    "core.presence", "presence_changed",
+    /*category=*/1,
+    "active", "high",
+    /*motion=*/40, /*breathing=*/0, /*bpm=*/0,
+    /*duration_sec=*/0, /*time_bucket=*/72,
+    "2.1.0-wap", "securacv:canary:v1.0", "home");
+  EXPECT(len > 0, "payload build must succeed for typical inputs");
+  EXPECT(strstr(buf, " kv=2.1.0-wap ") != nullptr,
+         "payload must contain kv=<firmware_version>");
+  EXPECT(strstr(buf, " rs=securacv:canary:v1.0 ") != nullptr,
+         "payload must contain rs=<ruleset_id>");
+  EXPECT(strstr(buf, " zn=home") != nullptr,
+         "payload must contain zn=<zone_id>");
+
+  /* Buffer-too-small must return -1 (defensive — small downstream
+   * stack frames must not silently truncate the metadata fields). */
+  char tiny[16];
+  int tiny_len = csi_witness_build_payload(
+    tiny, sizeof(tiny),
+    "core.presence", "presence_changed", 1,
+    "active", "high", 40, 0, 0, 0, 72,
+    "2.1.0-wap", "securacv:canary:v1.0", "home");
+  EXPECT(tiny_len == -1, "buffer-too-small must return -1, not a truncated payload");
+
+  /* Null / empty inputs fall back to the dash sentinel rather than
+   * skipping the field — keeps the wire format positionally stable. */
+  char fb[256];
+  int fb_len = csi_witness_build_payload(
+    fb, sizeof(fb),
+    nullptr, nullptr, 0, nullptr, nullptr,
+    0, 0, 0, 0, 0,
+    nullptr, nullptr, nullptr);
+  EXPECT(fb_len > 0, "fallback build must succeed");
+  EXPECT(strstr(fb, " kv=- ") != nullptr,
+         "missing kernel_version must render as kv=-");
+  EXPECT(strstr(fb, " rs=- ") != nullptr,
+         "missing ruleset_id must render as rs=-");
+  EXPECT(strstr(fb, " zn=-") != nullptr,
+         "missing zone_id must render as zn=-");
+}
+
 void test_per_module_ceiling() {
   csi_event_test_reset();
   reset_captures();
@@ -337,6 +392,7 @@ extern "C" int csi_event_invariants_run() {
   test_strings_are_sanitized();
   test_bundler_collapses_burst();
   test_per_module_ceiling();
+  test_witness_payload_includes_metadata();
 
   if (g_failures == 0) {
     fprintf(stderr, "[OK] csi_event invariants — all tests passed\n");
