@@ -120,6 +120,7 @@
 #include "companion_pwa.h"
 #include "csi_integration.h"     // Boot the CSI library + HTTP endpoints
 #include "csi_witness_payload.h" // Builds the witness-chain payload string
+#include <ble_events_module.h>   // spec §10 BLE event chokepoint helpers
 #include "setup_page_html.h"     // Captive-portal setup page (Tier 5 #11)
 extern "C" {
 #include "qrcodegen.h"           // Vendored Nayuki QR encoder, MIT
@@ -5723,15 +5724,23 @@ void setup() {
       Serial.println("[OK] BLE Discovery initialized — Opera advertising, Nearby scanning");
       log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "BLE Discovery initialized", nullptr);
 
+      // spec/event_contract.md §10: route the lifecycle event through
+      // the CSI chokepoint so the witness-chain row's allow-list is
+      // enforced rather than implicit.
+      ble_events_emit_initialized();
+
       ble_manager::operaStart();
       ble_manager::nearbyStart();
 
-      // Boot chirp
+      // Boot chirp. Witness-chain side: chirp_sent through the chokepoint
+      // so the wire format respects spec §10's allow-list.
       ble_manager::sendChirp(CHIRP_BOOT);
+      ble_events_emit_chirp_sent("boot");
     } else {
       Serial.println("[--] BLE Discovery initialization failed — operating without BLE discovery");
       Serial.println("[--] Check: Is the BLE antenna connected?");
       log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH, "BLE Discovery init failed", nullptr);
+      ble_events_emit_init_failed("ble_manager_init_returned_false");
     }
   } else {
     Serial.println("[--] BLE Discovery init skipped (safe mode)");

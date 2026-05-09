@@ -57,6 +57,7 @@
 #include <core_activity_ribbon.h>
 #include <meta_daily_summary.h>
 #include <anomaly_baseline.h>
+#include <ble_events_module.h>
 
 namespace {
 
@@ -1138,6 +1139,14 @@ void register_v1_modules() {
    * "this room rarely looks like that." Watches the same features
    * stream the four core modules see. */
   csi_module_register(anomaly_baseline_module());
+
+  /* spec/event_contract.md §10: BLE Discovery semantic events. The
+   * module exists so any BLE → witness-chain emit MUST go through the
+   * chokepoint, where the per-event allow-list strips fields that
+   * carry MAC addresses, RSSI at tracking precision, or stable
+   * hardware identifiers. Helpers in ble_events_module.h are the only
+   * legitimate BLE→witness path going forward. */
+  csi_module_register(ble_events_module());
 }
 
 }  /* namespace */
