@@ -6,8 +6,9 @@ The plan asks the dashboard's microcopy to read at ≤ 6th grade so it works
 for grandmas and 10-year-olds. This script computes the aggregate
 Flesch-Kincaid Grade Level across every user-facing string in
 csi_dashboard_html.h's COPY object and fails if it scores worse than the
-configured ceiling (default 7th grade — 6 is the target, one grade of
-slack absorbs noisy single-string penalties).
+configured ceiling (default 6th grade — matches the spec's target with
+no slack, since the corpus reads at ~2.7 today and any future jargon
+that pushes the aggregate past 6 deserves to be caught).
 
 We aggregate into one corpus rather than per-string because:
   - Many strings are short (1-3 words) where FKGL is meaningless.
@@ -27,7 +28,7 @@ from pathlib import Path
 DEFAULT_PATH = Path(
     "firmware/projects/canary-wap/arduino/canary_wap/csi_dashboard_html.h"
 )
-DEFAULT_MAX_GRADE = 7.0
+DEFAULT_MAX_GRADE = 6.0
 
 
 # ── Syllable counting ─────────────────────────────────────────────────────
@@ -123,7 +124,7 @@ def main() -> int:
         "--max-grade",
         type=float,
         default=DEFAULT_MAX_GRADE,
-        help="Fail if aggregate FKGL exceeds this grade (default 7.0).",
+        help="Fail if aggregate FKGL exceeds this grade (default %(default)s).",
     )
     args = p.parse_args()
 
