@@ -25,6 +25,7 @@
 
 #include "csi_mqtt.h"
 #include "csi_integration.h"
+#include "csi_event_log.h"
 #include "api_auth.h"
 
 #include <Arduino.h>
@@ -49,6 +50,21 @@ constexpr const char* DEFAULT_PREFIX = "securacv";
 
 esp_mqtt_client_handle_t s_client       = nullptr;
 std::atomic<bool>        s_connected{false};
+/* Set to true on every CONNECTED event; drained on the main loop by
+ * csi_mqtt::loop, which walks the SD log and replays anything past
+ * s_last_published_event_id. We don't backfill from inside the MQTT
+ * event callback because that fires on the MQTT task and would
+ * contend with the main loop's append() path. */
+std::atomic<bool>        s_backfill_pending{false};
+/* Highest event_id published since boot. publish_event() and the
+ * backfill replay both update it; on a clean run after an HA outage
+ * the next CONNECTED triggers iterate_since(this) which only emits
+ * the events the broker missed. Non-atomic because every read/write
+ * is on the main-loop thread. Resets to 0 on reboot, which means
+ * the first post-reboot CONNECTED replays today's full log — that's
+ * the right behavior because HA may not have seen the events
+ * between the last publish and the power cut either. */
+uint32_t                 s_last_published_event_id = 0;
 Config                   s_active_cfg   = {};
 char                     s_device_id[33]      = {};
 char                     s_firmware_version[24] = {};
@@ -96,6 +112,12 @@ void mqtt_event_handler(void* /*handler_args*/, esp_event_base_t /*base*/,
       build_topic(topic, sizeof(topic), "status");
       const char* online = "{\"online\":true}";
       publish_raw(topic, online, strlen(online), /*retain=*/true);
+      /* Flag the main loop to walk the SD log and backfill any events
+       * the broker missed during the outage. We don't drain here
+       * because the MQTT event handler runs on its own task and a
+       * file-system walk on this critical path would block reconnect
+       * fastpath callbacks. */
+      s_backfill_pending.store(true, std::memory_order_relaxed);
       break;
     }
     case MQTT_EVENT_DISCONNECTED:
@@ -245,9 +267,33 @@ bool init(const char* device_id,
   return true;
 }
 
+/* iterate_since callback used by the backfill drain. We re-check
+ * connected() before every publish so a re-disconnect mid-replay
+ * stops cleanly (the next CONNECTED will set the flag again and
+ * pick up where we left off — s_last_published_event_id only
+ * advances on successful enqueue inside publish_event_record). */
+static bool backfill_publish_cb(const csi_event_record_t* rec, void* /*user*/) {
+  if (!s_connected.load(std::memory_order_relaxed)) return false;
+  publish_event_record(rec);
+  return true;
+}
+
 void loop() {
-  /* esp_mqtt runs its own task; nothing to do here today. Reserved as
-   * the place to land the SD-backed event backfill once that lands. */
+  /* Backfill drain. esp_mqtt runs its own task and signals reconnect
+   * via s_backfill_pending; we drain on the main loop because the
+   * SD walk can take longer than the MQTT event callback should
+   * hold, and append() also runs on the main loop so we serialize
+   * naturally without a mutex. */
+  if (s_backfill_pending.exchange(false, std::memory_order_relaxed)) {
+    if (s_connected.load(std::memory_order_relaxed)) {
+      const size_t n = csi_event_log::iterate_since(
+          s_last_published_event_id, backfill_publish_cb, nullptr);
+      if (n > 0) {
+        Serial.printf("[MQTT] backfill replayed %u events past id=%lu\n",
+                      (unsigned)n, (unsigned long)s_last_published_event_id);
+      }
+    }
+  }
 }
 
 bool connected() {
@@ -269,23 +315,27 @@ bool connected() {
  * publish "" so the HA sensor's data.get("zone","") path remains
  * type-stable. ────────────────────────────────────────────────────── */
 
-void publish_event(const char*               module_id,
-                   const char*               type_name,
-                   csi_event_category_t      category,
-                   csi_privacy_class_t       privacy,
-                   const csi_event_values_t* values) {
-  if (!values) return;
-  char topic[192];
-  build_topic(topic, sizeof(topic), "events");
-
+/* Shared body builder so live publishes and backfill replays share one
+ * wire shape. timestamp_ms is the device-monotonic millisecond mark
+ * the event committed at — we publish that as the seconds figure HA
+ * stores in `timestamp` (live: now; backfill: the event's first_seen_ms).
+ * Returns the byte count written, or 0 on overflow. */
+namespace {
+size_t build_event_body(char* body, size_t cap,
+                        const char*               module_id,
+                        const char*               type_name,
+                        csi_event_category_t      category,
+                        csi_privacy_class_t       privacy,
+                        const csi_event_values_t* values,
+                        uint32_t                  timestamp_ms,
+                        uint16_t                  bundled_count) {
+  if (!values || !body || cap < 32) return 0;
   const char* cat_s = (category == CSI_CATEGORY_AMBIENT) ? "ambient"
                     : (category == CSI_CATEGORY_ANOMALY) ? "anomaly" : "event";
   const char* priv_s = (privacy == CSI_PRIVACY_P2) ? "p2"
                      : (privacy == CSI_PRIVACY_P1) ? "p1" : "p0";
-  const uint32_t ts_sec = (uint32_t)(millis() / 1000UL);
-
-  char body[512];
-  const int n = snprintf(body, sizeof(body),
+  const uint32_t ts_sec = timestamp_ms / 1000UL;
+  const int n = snprintf(body, cap,
     "{"
       "\"event_type\":\"%s\","
       "\"timestamp\":%lu,"
@@ -300,7 +350,8 @@ void publish_event(const char*               module_id,
       "\"motion\":%u,"
       "\"breathing\":%u,"
       "\"bpm\":%u,"
-      "\"duration_sec\":%u"
+      "\"duration_sec\":%u,"
+      "\"bundled\":%u"
     "}",
     values->state_name[0] ? values->state_name : "unknown",
     (unsigned long)ts_sec,
@@ -312,9 +363,55 @@ void publish_event(const char*               module_id,
     (unsigned)values->motion_score,
     (unsigned)values->breathing_score,
     (unsigned)values->breathing_rate_bpm,
-    (unsigned)values->duration_sec);
-  if (n <= 0 || (size_t)n >= sizeof(body)) return;
-  publish_raw(topic, body, (size_t)n, /*retain=*/false);
+    (unsigned)values->duration_sec,
+    (unsigned)bundled_count);
+  if (n <= 0 || (size_t)n >= cap) return 0;
+  return (size_t)n;
+}
+}  /* namespace */
+
+void publish_event(uint32_t                  event_id,
+                   const char*               module_id,
+                   const char*               type_name,
+                   csi_event_category_t      category,
+                   csi_privacy_class_t       privacy,
+                   const csi_event_values_t* values) {
+  if (!values) return;
+  char topic[192];
+  build_topic(topic, sizeof(topic), "events");
+  char body[512];
+  const size_t n = build_event_body(body, sizeof(body),
+      module_id, type_name, category, privacy, values,
+      /*timestamp_ms=*/(uint32_t)millis(),
+      /*bundled_count=*/1);
+  if (n == 0) return;
+  if (publish_raw(topic, body, n, /*retain=*/false)) {
+    /* Advance the watermark only on successful enqueue. A failed
+     * publish stays "not yet sent" so the next reconnect's backfill
+     * picks it up from the SD log. */
+    if (event_id > s_last_published_event_id) {
+      s_last_published_event_id = event_id;
+    }
+  }
+}
+
+void publish_event_record(const csi_event_record_t* rec) {
+  if (!rec) return;
+  char topic[192];
+  build_topic(topic, sizeof(topic), "events");
+  char body[512];
+  /* For backfill, anchor the timestamp at the event's first_seen_ms
+   * so HA's history places it at the right moment instead of "now".
+   * Bundled count comes straight from the on-disk record. */
+  const size_t n = build_event_body(body, sizeof(body),
+      rec->module_id, rec->type_name, rec->category, rec->privacy, &rec->values,
+      rec->first_seen_ms, rec->bundled_count);
+  if (n == 0) return;
+  if (publish_raw(topic, body, n, /*retain=*/false)) {
+    if (rec->event_id > s_last_published_event_id) {
+      s_last_published_event_id = rec->event_id;
+    }
+  }
 }
 
 void publish_chain(uint32_t length, const uint8_t* latest_hash_32) {

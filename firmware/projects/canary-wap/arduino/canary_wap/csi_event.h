@@ -245,6 +245,19 @@ size_t csi_event_recent(csi_event_record_t* out, size_t max);
 bool csi_event_find(uint32_t event_id, csi_event_record_t* out);
 
 /**
+ * Re-insert a previously-committed record into the in-memory ring.
+ * Bypasses the chokepoint, the module-pipeline emit path, and the
+ * witness-chain hook — meant for rehydrating today's history from
+ * persistent storage at boot, NOT for fresh emits (those still go
+ * through csi_event_emit). g_next_event_id is advanced to one past
+ * the largest injected event_id so subsequent emits stay monotonic.
+ *
+ * Returns false if rec is null or rec->event_id is 0 (the canonical
+ * "rejected" sentinel).
+ */
+bool csi_event_inject(const csi_event_record_t* rec);
+
+/**
  * Mark an event dismissed by the user. Increments the values->dismissed flag,
  * routes a notification to the originating module, and updates the in-memory
  * record so the dashboard can grey it out. Local-only.

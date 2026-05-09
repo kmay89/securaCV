@@ -125,6 +125,7 @@
 #include "companion_pwa.h"
 #include "csi_integration.h"     // Boot the CSI library + HTTP endpoints
 #include "csi_mqtt.h"            // Optional MQTT bridge for HA integration
+#include "csi_event_log.h"       // SD-backed event persistence + MQTT backfill
 #include "csi_witness_payload.h" // Builds the witness-chain payload string
 #include <ble_events_module.h>   // spec §10 BLE event chokepoint helpers
 #include "setup_page_html.h"     // Captive-portal setup page (Tier 5 #11)
@@ -5736,6 +5737,19 @@ void setup() {
       if (!SD.exists("/HEALTH")) SD.mkdir("/HEALTH");
       if (!SD.exists("/CHAIN")) SD.mkdir("/CHAIN");
       if (!SD.exists("/EXPORT")) SD.mkdir("/EXPORT");
+
+      // CSI event persistence: rehydrate today's ring from
+      // /EVENTS/today.ndjson so /api/events/today still has yesterday's
+      // tail before any new event commits this boot, and so the MQTT
+      // bridge has something to backfill from on its first reconnect.
+      // No-op if the file is missing or the ring API rejects the
+      // record (corrupt line, etc.) — silent and best-effort.
+      csi_event_log::init();
+      const size_t loaded = csi_event_log::load_into_ring();
+      if (loaded > 0) {
+        Serial.printf("[EVT-LOG] rehydrated %u events from /EVENTS/today.ndjson\n",
+                      (unsigned)loaded);
+      }
 
       Serial.println("[OK] SD card ready for witness records");
       log_health(SCV_LOG_INFO, SCV_CAT_STORAGE, "SD card mounted", nullptr);
