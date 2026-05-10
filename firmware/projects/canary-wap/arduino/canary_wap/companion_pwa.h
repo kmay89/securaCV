@@ -318,8 +318,20 @@ footer a{color:var(--accent);text-decoration:none}
 <div class="card" id="connect-card">
   <p class="intro">Pair your Canary in <strong>Settings &rsaquo; Bluetooth</strong> first, then tap below to open the live console.</p>
   <button class="btn btn-primary" id="connect-btn">Connect</button>
-  <div class="err" id="err-msg" role="alert"></div>
 </div>
+
+<!-- #err-msg is the BLE flow's top-level error sink, written by
+     showErr(). It must live OUTSIDE #connect-card because the connect
+     card flips to .hidden after a successful pair (see onConnect →
+     $('connect-card').classList.add('hidden')), but post-connect
+     showErr() calls (snapshot bad payload, scan bad payload, scan
+     failed, send failed) keep firing — and were previously invisible
+     to BOTH sighted and SR users (and role="alert" wouldn't fire
+     either, since AT skip live regions inside hidden ancestors).
+     Moving it to a top-level sibling of #connect-card keeps it
+     reachable for the entire post-pair lifecycle. Caught by Gemini
+     in PR #416 review. -->
+<div class="err" id="err-msg" role="alert"></div>
 
 <!-- Tab nav appears after connect; switches between Status / WiFi panels.
      Optional tab buttons start hidden; each is revealed only when the
@@ -1436,7 +1448,10 @@ async function loadOtaInputs(){
       const me = $('ota-error');
       me.textContent = 'Manifest invalid: ' + e.message;
       me.classList.add('show');
-      announce('Manifest invalid: ' + e.message + '.');
+      // No explicit announce() — #ota-error has role="alert" (added
+      // alongside this commit), so AT auto-announces the textContent
+      // change. The PR #412 announce() call here would now double up
+      // with the live-region path. Caught by Gemini in PR #416 review.
       refreshOtaStartButton();
       return;
     }
