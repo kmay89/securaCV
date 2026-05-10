@@ -878,7 +878,10 @@ footer a{color:var(--accent);text-decoration:none}
     if (/timeout|lost/i.test(raw)) {
       return 'Connected, then lost the link. Move closer to the router and try again.';
     }
-    return 'Couldn’t connect: ' + raw + '. Try again.';
+    // The failure view's h2 already says "Couldn't connect", so the
+    // sub-line just quotes the raw firmware reason and asks for a
+    // retry — no need to repeat the heading.
+    return raw + '. Try again.';
   }
 
   async function pollWifiUntilConnected() {
