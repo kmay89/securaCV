@@ -712,6 +712,102 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       .header-content { flex-direction: column; align-items: flex-start; }
       .nav-btn { font-size: 0.75rem; padding: 0.6rem 0.3rem; }
     }
+
+    /* Forced-colors mode (Windows High Contrast, accessibility tools).
+       Same playbook as the headline dashboard's pass (PR #406): the
+       browser flattens custom backgrounds + borders to the user's
+       chosen system palette, so we need explicit borders on
+       interactive controls and outline-based focus rings (box-shadow
+       does not render in this mode). The legacy admin UI carries
+       most of the project's color-encoded affordances — status
+       badges, active nav tabs, danger buttons — so the fallbacks
+       here matter more for hazard-state visibility than the
+       headline dashboard's did.
+
+       Reference: WCAG 2.1 SC 1.4.11 (Non-text Contrast) + W3C CSS
+       Color Adjust Module §3 (forced-colors). */
+    @media (forced-colors: active) {
+      /* Cards lose their bg / border / shadow when colors flatten.
+         Explicit CanvasText edges keep the panel/card structure
+         visible against Canvas. */
+      .card, .modal {
+        border: 1px solid CanvasText;
+        background: Canvas;
+      }
+      .modal-overlay { background: Canvas; }
+
+      /* Status badges encode chain / temp / GPS / SD / RF / WP via
+         color alone, which dissolves to a single Canvas color in
+         forced-colors. The badge-dot was already present as a shape
+         affordance — give the dot itself a CanvasText border so the
+         circle stays visible, and add a CanvasText border on the
+         badge container so it reads as a chip. We can't restore the
+         success/warning/danger color encoding (would require
+         fighting the system palette) but the visible chips + their
+         text labels (Chain OK / -- / GPS / etc.) carry the meaning. */
+      .badge {
+        border: 1px solid CanvasText;
+        background: Canvas;
+        color: CanvasText;
+      }
+      .badge-dot {
+        background: CanvasText;
+        border: 1px solid CanvasText;
+      }
+      /* Hazard states (warning / danger) keep the existing pulse
+         animation as a non-color cue — preserved by default since
+         the pulse is keyframe-based, not color-keyed. */
+
+      /* Nav: visible borders so tabs read as tabs even when bg is
+         flat, with Highlight for the active one. */
+      .nav-btn, .sub-nav-btn {
+        border: 1px solid ButtonText;
+      }
+      .nav-btn.active, .sub-nav-btn.active {
+        background: Highlight;
+        color: HighlightText;
+        border-color: Highlight;
+      }
+
+      /* Buttons: borders restore tap targets. The danger variant
+         loses its red bg — no system color for "danger", so we mark
+         it with a heavier 2px CanvasText border so it visually
+         differs from the other btn variants while staying legible
+         in any palette. */
+      .btn { border: 1px solid ButtonText; }
+      .btn-danger { border-width: 2px; }
+
+      /* Form inputs: replace the project's outline:none + border-
+         color trick with a real outline so the focus ring renders.
+         Inputs also get an explicit CanvasText border so they're
+         identifiable as inputs against the flattened background. */
+      .form-input, .form-select {
+        border: 1px solid CanvasText;
+        background: Canvas;
+        color: CanvasText;
+      }
+      .form-input:focus, .form-select:focus {
+        outline: 2px solid CanvasText;
+        outline-offset: 1px;
+        border-color: CanvasText;
+      }
+
+      /* Back link from PR #403: same outline-based focus ring as
+         everything else here so keyboard users get a consistent
+         indicator. */
+      .back-link:focus-visible {
+        outline: 2px solid CanvasText;
+        outline-offset: 2px;
+      }
+
+      /* Generic focus ring catches anything we didn't enumerate
+         above (modal-close, dynamically-added controls, future
+         additions). */
+      :focus-visible {
+        outline: 2px solid CanvasText;
+        outline-offset: 2px;
+      }
+    }
   </style>
 </head>
 <body>
