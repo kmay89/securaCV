@@ -838,16 +838,48 @@ footer a{color:var(--accent);text-decoration:none}
       runSelfTest();
     }, 700);
   }
-  function showFailure(reason) {
+  // showFailure() defaults to wrapping the reason as "We couldn't
+  // connect: {reason}" because the HTTP / network call-sites pass tight
+  // fragments ("HTTP 500", "Failed to fetch") that read fine with that
+  // prefix. Callers that already provide a complete sentence — like
+  // the WiFi fail-reason mapper below — opt out with { raw: true } to
+  // avoid awkward double-statements.
+  function showFailure(reason, opts) {
     $w('wiz-step-4-progress').classList.add('hidden');
     $w('wiz-step-4-success').classList.add('hidden');
     $w('wiz-step-4-failure').classList.remove('hidden');
-    $w('wiz-fail-reason').textContent = reason
-      ? ('We couldn’t connect: ' + reason)
-      : 'Check the password and try again.';
+    const raw = opts && opts.raw === true;
+    let text;
+    if (!reason) {
+      text = 'Check the password and try again.';
+    } else if (raw) {
+      text = reason;
+    } else {
+      text = 'We couldn’t connect: ' + reason;
+    }
+    $w('wiz-fail-reason').textContent = text;
     requestAnimationFrame(() => focusActiveStepHeading());
   }
   $w('wiz-fail-back').addEventListener('click', () => setStep(3));
+
+  // Map the firmware's last_fail_reason string to a complete, actionable
+  // sentence. Loose regexes so future firmware wording tweaks don't
+  // silently drop into the generic branch. The matched buckets line up
+  // with the three distinct fail modes the firmware emits
+  // (canary_wap.ino:5217-5232): auth reject, SSID not present, and
+  // post-connect timeout/loss.
+  function wifiFailMessage(raw) {
+    if (/auth|password|wrong/i.test(raw)) {
+      return 'Wrong password. Check for caps lock and try again.';
+    }
+    if (/not\s*found|no\s*ssid|no\s*network/i.test(raw)) {
+      return 'Couldn’t find that network. Check the name, or move closer to the router.';
+    }
+    if (/timeout|lost/i.test(raw)) {
+      return 'Connected, then lost the link. Move closer to the router and try again.';
+    }
+    return 'Couldn’t connect: ' + raw + '. Try again.';
+  }
 
   async function pollWifiUntilConnected() {
     const t0 = Date.now();
@@ -870,15 +902,21 @@ footer a{color:var(--accent);text-decoration:none}
             showSuccess(j.sta_ip || '');
             return;
           }
-          if (j && j.fail_reason && /AUTH_FAIL|password|wrong/i.test(j.fail_reason)) {
-            showFailure('Wrong password.');
+          // Any non-empty fail_reason is the firmware's last word on
+          // the attempt — surface it through the mapper rather than
+          // letting the wizard time out with a generic message.
+          if (j && j.fail_reason) {
+            showFailure(wifiFailMessage(j.fail_reason), { raw: true });
             return;
           }
         }
       } catch (_) { /* the AP may briefly drop while STA bring-up runs */ }
       await new Promise(res => setTimeout(res, STEP_MS));
     }
-    showFailure('Couldn’t reach your home WiFi. Move closer to the router and try again.');
+    // 90 s elapsed without a definitive answer — most likely the
+    // Canary fell off the AP we were polling on. Tell the user how to
+    // recover rather than blaming WiFi range.
+    showFailure('The Canary stopped answering. Connect to its setup network again and start over.', { raw: true });
   }
 
   // ── Card 5: pre-flight self-test ───────────────────────────────────────
