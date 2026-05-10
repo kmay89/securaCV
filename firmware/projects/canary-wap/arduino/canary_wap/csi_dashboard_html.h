@@ -1011,9 +1011,7 @@ const COPY = {
     /* The pollStream catch block picks one of these based on the actual
      * failure mode so installers can self-diagnose without serial cable
      * (audit punch-list #9). frameCount footer is the surface; the
-     * disconnect class on the page root dims the orb the same way
-     * regardless. (Don't use the literal HTML body-tag token in this
-     * comment — the microcopy lint awk uses it as a section marker.) */
+     * disconnect class on <body> dims the orb the same way regardless. */
     disconnect:  "Can't reach the canary. Move closer to your router and try again.",
     unavailable: "Sensing is offline. The canary's radio is not running.",
     unauthorized:"Session ended. Tap to pair the canary again.",
@@ -2140,13 +2138,10 @@ calibCancelBtn.addEventListener('click', () => {
     .split(',').map(s => s.trim()).filter(Boolean);
   const chosenPets = new Set(initialKinds);
 
-  /* Focus management state for the modal-dialog upgrade. (Avoid the
-   * literal HTML body-tag token in these comments — the microcopy
-   * lint awk uses it as a section marker; see csi_dashboard_html.h
-   * COPY.errors comment for the same gotcha.)
+  /* Focus management state for the modal-dialog upgrade.
    *  - s_returnFocus  : where to send focus when the user skips so
-   *                     they don't end up at the page root with no
-   *                     visible focus ring.
+   *                     they don't end up at <body> with no visible
+   *                     focus ring.
    *  - s_lastIdx      : the most recent card index render() focused
    *                     for. Comparing against the current `idx` lets
    *                     us focus the card on EVERY step transition
@@ -2205,9 +2200,9 @@ calibCancelBtn.addEventListener('click', () => {
      * readers announce the new card's accessible name (the
      * aria-labelledby="welcomeTitle" reference points at the freshly-
      * rendered <h2>) and keyboard users don't lose their place to
-     * the page root after innerHTML clobbers the DOM. Deferred to
-     * the next animation frame so the focus ring isn't visibly
-     * thrown before the spring transition.
+     * <body> after innerHTML clobbers the DOM. Deferred to the next
+     * animation frame so the focus ring isn't visibly thrown before
+     * the spring transition.
      *
      * Pet-toggle re-renders fire within the same step (idx
      * unchanged), so they fall through this block and the click
@@ -2237,11 +2232,10 @@ calibCancelBtn.addEventListener('click', () => {
       if (btn) btn.click();
     } else {
       /* Restore focus to wherever the user was before onboarding so
-       * keyboard / screen-reader users don't land on the page root
-       * with no visible focus ring after dismissing. Falls back to
-       * the help button (the natural "what's this?" entry point) if
-       * the pre-onboarding active element is gone or was just the
-       * document body. */
+       * keyboard / screen-reader users don't land on <body> with no
+       * visible focus ring after dismissing. Falls back to the help
+       * button (the natural "what's this?" entry point) if the
+       * pre-onboarding active element is gone or was just <body>. */
       if (s_returnFocus && typeof s_returnFocus.focus === 'function'
           && s_returnFocus !== document.body
           && document.contains(s_returnFocus)) {
