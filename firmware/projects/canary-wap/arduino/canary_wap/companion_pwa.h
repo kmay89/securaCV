@@ -87,7 +87,13 @@ footer a{color:var(--accent);text-decoration:none}
 .tab-btn.active{background:var(--surface-2);color:var(--text)}
 .tab-content{display:block}
 .tab-content.hidden{display:none!important}
-.ap-row{display:flex;align-items:center;gap:.6rem;padding:.65rem .5rem;border-radius:10px;cursor:pointer;-webkit-tap-highlight-color:transparent;border:1px solid transparent}
+/* .ap-row is a native <button type="button"> so Tab focuses it and
+ * Enter/Space activate it without a keydown handler. Reset strips
+ * UA button defaults (background, font, text alignment, width) that
+ * would otherwise fight the row layout — the rounded transparent
+ * border stays as the click target outline. */
+.ap-row{display:flex;align-items:center;gap:.6rem;padding:.65rem .5rem;border-radius:10px;cursor:pointer;-webkit-tap-highlight-color:transparent;border:1px solid transparent;background:transparent;color:inherit;font:inherit;text-align:left;width:100%}
+.ap-row[disabled]{cursor:default;opacity:.6}
 .ap-row:active{background:var(--surface-2)}
 .ap-row.sel{background:var(--surface-2);border-color:var(--accent)}
 .ap-meta{flex:1;min-width:0}
@@ -183,7 +189,7 @@ footer a{color:var(--accent);text-decoration:none}
    border-color: accent`. That works for the input chrome but leaves
    buttons + tab buttons without a focus ring at all. Add a generic
    accent outline so keyboard users always see where they are. */
-.btn:focus-visible, .tab-btn:focus-visible, .wiz-net-row:focus-visible{
+.btn:focus-visible, .tab-btn:focus-visible, .wiz-net-row:focus-visible, .ap-row:focus-visible{
   outline:2px solid var(--accent);
   outline-offset:2px;
 }
@@ -435,7 +441,7 @@ footer a{color:var(--accent);text-decoration:none}
     </div>
     <p class="intro">Pick a network, type the password, send. The Canary will join your home WiFi and you can close this page.</p>
     <button class="btn btn-secondary" id="scan-btn">Scan for networks</button>
-    <div id="ap-list" style="margin-top:.5rem"></div>
+    <div id="ap-list" role="group" aria-label="Heard networks" aria-busy="false" style="margin-top:.5rem"></div>
     <div id="creds-box" class="hidden" style="margin-top:.75rem">
       <input type="password" class="input" id="pw-input" placeholder="WiFi password" autocomplete="new-password" spellcheck="false">
       <div class="row-flex" style="margin-top:.5rem">
@@ -897,31 +903,57 @@ function setProvStateBadge(state, error){
 function renderApList(payload){
   const list = $('ap-list');
   if (!list) return;
+  list.setAttribute('aria-busy', 'false');
   if (!payload || !Array.isArray(payload.aps) || payload.aps.length === 0) {
     list.innerHTML = '<p class="intro" style="text-align:center">No networks heard. Try again.</p>';
+    announce('No networks heard. Try again.');
     return;
   }
   // Backend sorts by RSSI descending already; just render.
+  /* Each row is a native <button type="button"> so Tab focuses it and
+   * Enter/Space activate it. Hidden-SSID rows (ap.ssid === '') stay
+   * non-selectable in this v1 — they get the `disabled` attribute,
+   * which removes them from the Tab order automatically and stops
+   * Enter/Space from firing. Visible rows carry an aria-label that
+   * reads as one phrase ("HomeWiFi, secured WPA2, signal -55 dBm")
+   * so SR users get the row contents in one breath; the SSID / sec /
+   * RSSI sub-elements are aria-hidden so they don't double-announce. */
   list.innerHTML = payload.aps.map((ap, i) => {
     const bars = rssiBars(ap.rssi || -100);
     const sec = ap.sec || 'open';
     const safe = (s) => String(s).replace(/[<>&"']/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c]));
-    return '<div class="ap-row" data-i="' + i + '" data-ssid="' + safe(ap.ssid) + '" data-sec="' + safe(sec) + '">' +
-             '<div class="ap-meta">' +
+    const isHidden = !ap.ssid;
+    const aLabel  = (ap.ssid || 'Hidden network')
+                  + (sec === 'open' ? ', open' : ', secured ' + sec)
+                  + (ap.rssi != null ? ', signal ' + ap.rssi + ' dBm' : '');
+    return '<button type="button" class="ap-row" data-i="' + i + '" data-ssid="' + safe(ap.ssid) + '" data-sec="' + safe(sec) + '"' +
+             ' aria-label="' + safe(aLabel) + '"' +
+             (isHidden ? ' disabled' : '') + '>' +
+             '<div class="ap-meta" aria-hidden="true">' +
                '<div class="ap-ssid">' + (safe(ap.ssid) || '<em style="color:var(--muted)">(hidden)</em>') + '</div>' +
                '<div class="ap-sub">' + safe(sec) + ' · ' + (ap.rssi || '?') + ' dBm</div>' +
              '</div>' +
-             '<div class="ap-bars s' + bars + '"><span></span><span></span><span></span><span></span></div>' +
-           '</div>';
+             '<div class="ap-bars s' + bars + '" aria-hidden="true"><span></span><span></span><span></span><span></span></div>' +
+           '</button>';
   }).join('');
-  // Wire row taps. Skip rows with empty SSID (hidden networks aren't
-  // selectable in this v1 — let the user enter manually in a future
-  // PR if there's demand).
+  announce(payload.aps.length === 1
+    ? 'Heard 1 network.'
+    : 'Heard ' + payload.aps.length + ' networks.');
+  // Wire row taps. The disabled attribute already blocks hidden-SSID
+  // rows from firing click; the dataset.ssid guard below is a
+  // belt-and-suspenders for that.
   list.querySelectorAll('.ap-row').forEach(row => {
     if (!row.dataset.ssid) return;
     row.addEventListener('click', () => {
-      list.querySelectorAll('.ap-row').forEach(r => r.classList.remove('sel'));
+      /* aria-current='true' mirrors the visual `.sel` class for SR
+       * users so they hear "current" on the chosen row. Removed from
+       * other rows on every selection so only one row carries it. */
+      list.querySelectorAll('.ap-row').forEach(r => {
+        r.classList.remove('sel');
+        r.removeAttribute('aria-current');
+      });
       row.classList.add('sel');
+      row.setAttribute('aria-current', 'true');
       selectedAp = { ssid: row.dataset.ssid, sec: row.dataset.sec };
       $('creds-box').classList.remove('hidden');
       $('pw-input').focus();
@@ -932,7 +964,14 @@ function onScanResults(event){
   try {
     const text = new TextDecoder().decode(event.target.value);
     renderApList(JSON.parse(text));
-  } catch (e) { showErr('Bad scan payload: ' + e.message); }
+  } catch (e) {
+    /* Drop aria-busy on parse failure too so the spinner phrase
+     * doesn't keep being read while the error is on screen. */
+    const list = $('ap-list');
+    if (list) list.setAttribute('aria-busy', 'false');
+    showErr('Bad scan payload: ' + e.message);
+    announce('Scan failed. Try again.');
+  }
 }
 function onProvState(event){
   try {
@@ -951,7 +990,9 @@ function onProvState(event){
 async function wifiScan(){
   if (!provScanTrigger) return;
   setProvStateBadge('scanning');
-  $('ap-list').innerHTML = '<p class="intro" style="text-align:center">Scanning…</p>';
+  const list = $('ap-list');
+  list.setAttribute('aria-busy', 'true');
+  list.innerHTML = '<p class="intro" style="text-align:center">Scanning…</p>';
   // Reset prior selection so the password field doesn't hang around with a
   // stale SSID while new results render. Caught by Gemini.
   selectedAp = null;
