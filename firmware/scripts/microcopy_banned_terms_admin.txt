@@ -1,0 +1,35 @@
+# Banned terms in the legacy /admin UI (web_ui.h).
+#
+# The headline dashboard at / has a stricter banned list (CSI / RSSI /
+# threshold / etc.) calibrated for grandma / kids / parents — see
+# microcopy_banned_terms.txt. Admin is a power-user surface that
+# legitimately needs to expose RSSI bars, threshold tuning, endpoint
+# config, etc. — banning those would force awkward circumlocutions
+# that hurt the admin's intended audience.
+#
+# This narrow list catches only terms that no human-facing UI should
+# ever show, regardless of the user's technical depth:
+#
+#   - Internal subsystem names that mean nothing outside our codebase
+#     (NVS, FreeRTOS, esp-idf primitives, ISR)
+#   - Placeholder text that escaped past dev review (TODO, FIXME, XXX)
+#   - JS error stringification leaks ([object Object])
+#
+# Format: one term per line, treated as a whole word (grep -w). Lines
+# starting with # are comments. Empty lines are ignored.
+#
+# Replacements (handled inline, not enforced here):
+#   "NVS"             -> "flash" / "the canary's storage"
+#   "FreeRTOS"        -> never user-visible; describe behavior instead
+#   "esp_err_t" / etc -> never user-visible; surface the message text
+#   "ISR"             -> never user-visible; describe what fired
+#   "[object Object]" -> stringify properly (JSON.stringify or .message)
+
+NVS
+FreeRTOS
+esp_err_t
+esp_log
+ISR
+TODO
+FIXME
+XXX

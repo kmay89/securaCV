@@ -3,21 +3,32 @@
 # Microcopy lint orchestrator
 # ═══════════════════════════════════════════════════════════════════════
 #
-# Three sub-checks that gate the dashboard's user-facing copy:
+# Four sub-checks that gate the device's user-facing copy:
 #
-#   1. Plain-words audit  — banned technical jargon (CSI, RSSI, NVS, ...)
-#                           must not appear in the COPY object or HTML
-#                           body of the headline dashboard.
+#   1. Plain-words audit       — banned technical jargon (CSI, RSSI,
+#      (headline dashboard)      NVS, ...) must not appear in the COPY
+#                                object or HTML body of /. Calibrated
+#                                for grandma / kids / parents.
 #
-#   2. Tooltip coverage   — every data-tip="key" attribute resolves to a
-#                           defined entry in COPY.tooltips. Catches keys
-#                           that get renamed without updating the bank
-#                           (silent empty tooltips for the user).
+#   2. Plain-words audit       — narrow internal-jargon list (NVS,
+#      (legacy admin)            FreeRTOS, esp_err_t, TODO, ...) for
+#                                /admin's HTML body. Power-user terms
+#                                like RSSI / threshold / endpoint are
+#                                allowed since admin's audience expects
+#                                them; this check only catches terms
+#                                that no human-facing UI should show.
 #
-#   3. Reading-grade FKGL — aggregate Flesch-Kincaid across the COPY
-#                           corpus stays at or below 7th grade. The plan's
-#                           target is 6th; one grade of slack absorbs
-#                           noisy short strings.
+#   3. Tooltip coverage        — every data-tip="key" attribute on the
+#                                headline dashboard resolves to a defined
+#                                entry in COPY.tooltips. Catches keys
+#                                that get renamed without updating the
+#                                bank (silent empty tooltips).
+#
+#   4. Reading-grade FKGL      — aggregate Flesch-Kincaid across the
+#      (headline dashboard)      headline COPY corpus stays at or below
+#                                7th grade. The plan's target is 6th;
+#                                one grade of slack absorbs noisy short
+#                                strings.
 #
 # Each check is independent. A failure in any one fails the whole job.
 # Failures print a clear message describing what to fix.
@@ -30,7 +41,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DASH_HTML="$(cd "$SCRIPT_DIR/../.." && pwd)/firmware/projects/canary-wap/arduino/canary_wap/csi_dashboard_html.h"
+ADMIN_HTML="$(cd "$SCRIPT_DIR/../.." && pwd)/firmware/projects/canary-wap/arduino/canary_wap/web_ui.h"
 BANNED_TERMS="$SCRIPT_DIR/microcopy_banned_terms.txt"
+BANNED_TERMS_ADMIN="$SCRIPT_DIR/microcopy_banned_terms_admin.txt"
 
 red()    { echo -e "\033[0;31m✗ $1\033[0m"; }
 green()  { echo -e "\033[0;32m✓ $1\033[0m"; }
@@ -42,6 +55,14 @@ if [ ! -f "$DASH_HTML" ]; then
 fi
 if [ ! -f "$BANNED_TERMS" ]; then
   red "Banned-terms list not found: $BANNED_TERMS"
+  exit 2
+fi
+if [ ! -f "$ADMIN_HTML" ]; then
+  red "Admin HTML not found: $ADMIN_HTML"
+  exit 2
+fi
+if [ ! -f "$BANNED_TERMS_ADMIN" ]; then
+  red "Admin banned-terms list not found: $BANNED_TERMS_ADMIN"
   exit 2
 fi
 
@@ -108,7 +129,50 @@ else
 fi
 
 # ─────────────────────────────────────────────────────────────────────────
-# 2. Tooltip coverage
+# 2. Plain-words audit — legacy /admin (web_ui.h)
+# ─────────────────────────────────────────────────────────────────────────
+#
+# Same shape as the headline pass but against a narrower banned-terms
+# list (microcopy_banned_terms_admin.txt) calibrated for admin's
+# power-user audience: RSSI / threshold / endpoint are allowed,
+# only truly internal jargon (NVS, FreeRTOS, esp_err_t, TODO, ...)
+# is caught.
+#
+# web_ui.h's <script> tag is indented two spaces (the convention used
+# in that PROGMEM raw-string), unlike csi_dashboard_html.h's column-1
+# placement. The awk pattern accepts optional leading whitespace on
+# the section markers so both files work without per-file logic.
+# Comments like " * <body> tag handling" still don't match because
+# the leading-whitespace clause is followed by the strict
+# `<body[^>]*>[[:space:]]*$` shape — text after the `>` rules them
+# out.
+
+echo ""
+echo "── Plain-words audit (admin) ──"
+
+ADMIN_BODY=$(awk '
+  /^[[:space:]]*<body[^>]*>[[:space:]]*$/   { in_body=1; next }
+  /^[[:space:]]*<script[^>]*>[[:space:]]*$/ { in_body=0 }
+  in_body                                   { print }
+' "$ADMIN_HTML")
+
+ADMIN_HITS=$(echo "$ADMIN_BODY" \
+       | grep -wiEf <(grep -v '^#' "$BANNED_TERMS_ADMIN" | grep -v '^$' | sed 's/[[:space:]]*$//') \
+       || true)
+
+if [ -n "$ADMIN_HITS" ]; then
+  red "Admin plain-words audit FAILED — internal jargon found in admin HTML body:"
+  echo "$ADMIN_HITS" | head -20
+  echo ""
+  echo "These terms are codebase-internal and have no business in any UI."
+  echo "Suggested replacements live at the top of $BANNED_TERMS_ADMIN."
+  ERRORS=$((ERRORS + 1))
+else
+  green "Admin plain-words audit OK — no internal jargon in /admin HTML body."
+fi
+
+# ─────────────────────────────────────────────────────────────────────────
+# 3. Tooltip coverage
 # ─────────────────────────────────────────────────────────────────────────
 
 echo ""
@@ -121,7 +185,7 @@ else
 fi
 
 # ─────────────────────────────────────────────────────────────────────────
-# 3. Reading-grade FKGL (skippable if python3 missing locally)
+# 4. Reading-grade FKGL (skippable if python3 missing locally)
 # ─────────────────────────────────────────────────────────────────────────
 
 echo ""
