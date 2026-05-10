@@ -148,10 +148,35 @@ bool publish_event_record(const csi_event_record_t* rec);
  * Called from MQTT_EVENT_CONNECTED after the online-status publish so
  * HA sees the device as online before referencing it as an entity's
  * availability topic. Retained, so a freshly-subscribing HA picks
- * them up regardless of when it comes online. No-op when the
- * Config.discovery toggle is false.
+ * them up regardless of when it comes online. Internally also calls
+ * publish_triggers so the device-automation set lands in the same
+ * connect cycle. No-op when the Config.discovery toggle is false.
  */
 void publish_discovery();
+
+/**
+ * Publish HA Device Trigger discovery payloads on
+ * `homeassistant/device_automation/canary_<device_id>/{trigger_id}/config`.
+ * Called from publish_discovery. Each trigger surfaces a single
+ * type/subtype variant in HA's automation builder so users can
+ * drag-and-drop "presence became active" instead of authoring a
+ * value_template by hand.
+ */
+void publish_triggers();
+
+/**
+ * Publish empty retained payloads to every entity AND trigger config
+ * topic so HA evicts our entries from its registry. Called from
+ * MQTT_EVENT_CONNECTED when Config.discovery is FALSE — covers the
+ * "user toggled discovery off post-install" case where the previously
+ * retained payloads would otherwise linger on the broker forever and
+ * leave HA showing the entities as "unavailable".
+ *
+ * Idempotent: empty publishes to topics with no retained message are
+ * silently ignored by the broker, so we don't track "last published"
+ * state across reboots.
+ */
+void remove_discovery();
 
 /**
  * Push the witness-chain head to {prefix}/{device_id}/chain.
