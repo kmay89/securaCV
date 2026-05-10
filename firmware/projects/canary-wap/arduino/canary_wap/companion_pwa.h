@@ -1004,10 +1004,21 @@ function onProvState(event){
     // Always re-derive the header from the current state so a previous
     // "WiFi joined" doesn't stick after a subsequent failed / disconnect /
     // rate_limited. Caught by Gemini.
+    //
+    // The suffix is the only WiFi-state cue SR users get from the
+    // header — #conn-state has aria-live="polite" so changes auto-
+    // announce, but #wifi-state-badge does not. Without a per-state
+    // suffix, "failed" and "rate_limited" collapse to just the device
+    // name and SR users get no hint about why their WiFi attempt
+    // didn't take. Add a short phrase for each meaningful state.
     const base = (device && device.name) ? device.name : 'Connected';
-    $('conn-state').textContent = (data.state === 'connected')
-      ? (base + ' · WiFi joined')
-      : base;
+    let suffix = '';
+    if      (data.state === 'connected')    suffix = ' · WiFi joined';
+    else if (data.state === 'failed')       suffix = ' · WiFi join failed' + (data.error ? ': ' + data.error : '');
+    else if (data.state === 'rate_limited') suffix = ' · too many tries — wait a minute';
+    else if (data.state === 'connecting')   suffix = ' · connecting to WiFi…';
+    else if (data.state === 'scanning')     suffix = ' · scanning for networks…';
+    $('conn-state').textContent = base + suffix;
   } catch (e) {}
 }
 async function wifiScan(){
