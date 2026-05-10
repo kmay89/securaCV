@@ -92,6 +92,44 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     }
     .brand h1 { font-size: 1.25rem; font-weight: 600; letter-spacing: -0.02em; }
     .brand span { font-size: 0.75rem; color: var(--muted); display: block; }
+    /* Back link to the headline dashboard at /. Once a user clicks
+       Settings on the dashboard they land here, and prior to this
+       there was no obvious way back — only the browser's back button
+       (assuming they didn't deep-link or refresh, in which case there
+       is no history to pop). Sized + colored to mirror the other
+       header chrome so it doesn't compete with the brand. */
+    .back-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 0.85rem;
+      padding: 0.4rem 0.65rem;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,0.02);
+      transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
+    }
+    /* Hover: subtle warm-up — accent-dim border (rgba 0.15) reads as a
+       gentle hint without drawing the eye away from the brand. */
+    .back-link:hover {
+      color: var(--text);
+      background: rgba(255,255,255,0.05);
+      border-color: var(--accent-dim);
+    }
+    /* Focus-visible: solid var(--accent) so the focus ring carries
+       enough contrast against the dark header for keyboard / low-vision
+       users. Mirrors the active/focused pattern used elsewhere in this
+       UI (.tab-active, .input-focus on lines 251 + 505). PR #403
+       review r3214586081. */
+    .back-link:focus-visible {
+      color: var(--text);
+      background: rgba(255,255,255,0.05);
+      border-color: var(--accent);
+      outline: none;
+    }
+    .back-link .arrow { font-size: 1rem; line-height: 1; }
     .status-badges { display: flex; gap: 0.5rem; flex-wrap: wrap; }
     .badge {
       display: inline-flex;
@@ -708,6 +746,12 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
   <header>
     <div class="header-content">
       <div class="brand">
+        <!-- Back link before the brand so the visual hierarchy reads
+             "← Dashboard / Canary identity / status badges". The href
+             is the literal "/" — the headline dashboard route —
+             rather than history.back() so a deep-linked or
+             refreshed visitor still gets a working exit. -->
+        <a href="/" class="back-link" aria-label="Back to dashboard"><span class="arrow" aria-hidden="true">←</span><span>Dashboard</span></a>
         <div class="brand-icon">🐥</div>
         <div>
           <h1>SecuraCV Canary</h1>
