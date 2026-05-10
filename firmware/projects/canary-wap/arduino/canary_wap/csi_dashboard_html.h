@@ -471,6 +471,50 @@ static const char CSI_DASHBOARD_HTML[] PROGMEM = R"DASHBOARD(<!doctype html>
   .tinker-row label { display: flex; flex-direction: column; gap: 6px; }
   .tinker-row input[type="range"] { accent-color: var(--orb-3); }
 
+  /* ── "How is it sensing?" reveal — under the waveform legend so a
+     tester can see the live numbers behind the orb without leaving
+     the page. Same disclosure pattern as .tinker; renders as a 3-
+     column grid (label / raw / steady) on wide screens, single column
+     on narrow. The "steady" column carries the smoothed value and a
+     ±band annotation so the reader can tell, at a glance, whether
+     the room is quiet (small band) or noisy (large band). */
+  details.sense-detail {
+    border-top: 1px solid var(--hairline);
+    padding-top: 12px;
+    color: var(--fg-soft);
+    font-size: 13px;
+  }
+  details.sense-detail summary {
+    cursor: pointer; user-select: none; list-style: none; outline: none;
+    padding: 4px 0; font-weight: 500;
+  }
+  details.sense-detail summary::-webkit-details-marker { display: none; }
+  details.sense-detail[open] summary::after { content: " ▴"; }
+  details.sense-detail:not([open]) summary::after { content: " ▾"; }
+  .sense-intro {
+    margin: 6px 0 10px; color: var(--fg-mute); font-size: 12px; line-height: 1.5;
+  }
+  .sense-rows {
+    display: grid; gap: 6px 14px; align-items: baseline;
+    grid-template-columns: 1fr auto;
+  }
+  @media (min-width: 540px) {
+    .sense-rows { grid-template-columns: 1fr auto auto; }
+  }
+  .sense-rows .label { color: var(--fg-mute); }
+  .sense-rows .value { font-variant-numeric: tabular-nums; }
+  .sense-rows .value.steady { color: var(--fg-soft); }
+  .sense-rows .band {
+    color: var(--fg-mute); font-size: 11px; margin-left: 4px;
+    font-variant-numeric: tabular-nums;
+  }
+  /* On the narrow layout, the third column folds under the second.
+     We tag the band with a class so the grid-template-columns:1fr auto
+     query still leaves it readable. */
+  @media (max-width: 539px) {
+    .sense-rows .value.steady::before { content: "  ·  "; color: var(--fg-mute); }
+  }
+
   /* ── Sheets (Today + What-it-sees) ──────────────────────────────────── */
 
   .sheet-scrim {
@@ -919,6 +963,41 @@ static const char CSI_DASHBOARD_HTML[] PROGMEM = R"DASHBOARD(<!doctype html>
       <span style="margin-left:auto" id="frameCount" aria-live="polite" role="status">—</span>
     </div>
 
+    <!-- Sense-detail reveal: the live numbers a tester / curious user
+         wants to see behind the orb. Updated on every poll alongside
+         the waveform. Wrapped in a <details> so the default state is
+         collapsed and casual users never see it. role="region" with
+         a stable aria-label so screen-reader users can land on it
+         via heading navigation. -->
+    <details class="sense-detail" id="senseDetail">
+      <summary data-tip="senseDetail">How is it sensing?</summary>
+      <p class="sense-intro">A peek at the live numbers behind the orb. The "steady" reading is what the canary trusts — the moment-to-moment number wobbles, especially in noisy rooms.</p>
+      <div class="sense-rows" role="region" aria-label="Live sensing detail" aria-live="off">
+        <span class="label">Movement</span>
+        <span class="value" id="seMRaw">—</span>
+        <span class="value steady" id="seMSteady">— <span class="band" id="seMBand"></span></span>
+
+        <span class="label">Breath</span>
+        <span class="value" id="seBRaw">—</span>
+        <span class="value steady" id="seBSteady">— <span class="band" id="seBBand"></span></span>
+
+        <span class="label">Loudest</span>
+        <span class="value" id="seDom" style="grid-column:2/-1">—</span>
+
+        <span class="label">How sure</span>
+        <span class="value" id="seConf" style="grid-column:2/-1">—</span>
+
+        <span class="label">Right now</span>
+        <span class="value" id="seState" style="grid-column:2/-1">—</span>
+
+        <span class="label">Breath rate</span>
+        <span class="value" id="seBpm" style="grid-column:2/-1">—</span>
+
+        <span class="label">Last event</span>
+        <span class="value" id="seEvent" style="grid-column:2/-1">—</span>
+      </div>
+    </details>
+
     <div class="controls">
       <button class="calibrate" id="calibrateBtn" data-tip="calibrate">Calibrate empty room</button>
       <div class="segmented" role="radiogroup" aria-label="Sensitivity mode" id="modeGroup">
@@ -1085,6 +1164,7 @@ const COPY = {
     rawVector:   "For tinkerers. Shows the live numbers behind the scenes.",
     breathAudio: "Play a soft breath sound that follows the rhythm in the room. Off by default.",
     ribbonCell:  "Tap a moment to see what was happening then.",
+    senseDetail: "Live numbers behind the orb — what the canary is hearing right now.",
   },
   errors: {
     /* The pollStream catch block picks one of these based on the actual
@@ -1300,15 +1380,87 @@ function setBreathRate(bpm) {
 }
 
 /* ────────────────────────────────────────────────────────────────────────
- *  Live waveform
+ *  Live waveform — raw + smoothed + steady-state band
+ *
+ *  At 1 Hz polling the raw motion/breathing values jitter enough that
+ *  the eye reads the line as noise. We apply an exponentially-weighted
+ *  moving average (α = 0.30, ≈ 3-second time constant) so the bold
+ *  "steady" line tracks the underlying reading without the jitter, and
+ *  we shade a translucent ±1σ band around it computed from a rolling
+ *  RMS of the residuals over the last 15 seconds.
+ *
+ *  Why EMA + RMS instead of a fancier filter:
+ *    - O(1) update per sample for the EMA, O(N=15) for the band. At
+ *      1 Hz that's free.
+ *    - No model assumptions; works equally well for motion (impulse-y)
+ *      and breathing (oscillatory).
+ *    - The user-visible surface is a band, not a single number, so the
+ *      reader sees noisiness directly — no false precision.
+ *
+ *  α tuning: 0.30 was picked so a step change reaches ~95% of the new
+ *  level in ~10 seconds (one 24-hour ribbon bucket, basically). Lower
+ *  α would lag visibly behind a real "someone walked in"; higher α
+ *  reintroduces the jitter we're trying to hide.
  * ──────────────────────────────────────────────────────────────────────── */
 const HISTORY_LEN = 60;
-const motionHist = new Array(HISTORY_LEN).fill(0);
-const breathHist = new Array(HISTORY_LEN).fill(0);
+const SMOOTH_ALPHA = 0.30;       // EMA factor at 1 Hz; ~3s time constant
+const BAND_WIN     = 15;         // residual-RMS window in samples (= seconds)
+
+// Raw + smoothed history rings. Raw is what the device reported this
+// second; smoothed is the EMA running over those raws. Both are length
+// HISTORY_LEN so the canvas can draw them side by side without an
+// off-by-one between the two ring positions.
+const motionRawHist    = new Array(HISTORY_LEN).fill(0);
+const motionSmoothHist = new Array(HISTORY_LEN).fill(0);
+const breathRawHist    = new Array(HISTORY_LEN).fill(0);
+const breathSmoothHist = new Array(HISTORY_LEN).fill(0);
+
+// Persistent EMA accumulators + recent residuals. We keep just the
+// last BAND_WIN residuals so the "wobble" band tracks the present
+// noise floor, not an all-time average.
+let motionEma = 0, breathEma = 0;
+const motionResid = [];
+const breathResid = [];
 
 function pushHistory(motion, breathing) {
-  motionHist.shift(); motionHist.push(motion);
-  breathHist.shift(); breathHist.push(breathing);
+  // EMA update FIRST so the smoothed history we record is the value
+  // the rest of the UI also reads via getSenseDetailSnapshot().
+  motionEma = motionEma * (1 - SMOOTH_ALPHA) + motion    * SMOOTH_ALPHA;
+  breathEma = breathEma * (1 - SMOOTH_ALPHA) + breathing * SMOOTH_ALPHA;
+
+  motionRawHist.shift();    motionRawHist.push(motion);
+  motionSmoothHist.shift(); motionSmoothHist.push(motionEma);
+  breathRawHist.shift();    breathRawHist.push(breathing);
+  breathSmoothHist.shift(); breathSmoothHist.push(breathEma);
+
+  motionResid.push(motion    - motionEma);
+  breathResid.push(breathing - breathEma);
+  if (motionResid.length > BAND_WIN) motionResid.shift();
+  if (breathResid.length > BAND_WIN) breathResid.shift();
+}
+
+// 1-σ-equivalent band width derived from the rolling residual RMS.
+// Returns a number in the same 0..100 scale as motion/breathing so
+// it can be painted directly on the waveform canvas without rescaling.
+function residRms(arr) {
+  if (arr.length === 0) return 0;
+  let sumSq = 0;
+  for (let i = 0; i < arr.length; i++) sumSq += arr[i] * arr[i];
+  return Math.sqrt(sumSq / arr.length);
+}
+
+// Public accessor used by updateSenseDetail() — returns the freshest
+// numbers without re-walking the whole history. Centralizing this so
+// the reveal panel and the canvas can never drift out of sync.
+function getSenseDetailSnapshot() {
+  return {
+    motionRaw:    motionRawHist[HISTORY_LEN - 1] | 0,
+    motionSteady: motionEma,
+    motionBand:   residRms(motionResid),
+    breathRaw:    breathRawHist[HISTORY_LEN - 1] | 0,
+    breathSteady: breathEma,
+    breathBand:   residRms(breathResid),
+  };
 }
 
 function drawWaveform() {
@@ -1319,11 +1471,43 @@ function drawWaveform() {
   const h = canvas.height = canvas.clientHeight * (window.devicePixelRatio||1);
   ctx.clearRect(0,0,w,h);
 
+  // Convert a 0..100 scalar to a canvas y-coord. Same mapping as the
+  // original trace() so a value of 0 sits near the bottom and 100 near
+  // the top, with a 4% breathing room top and bottom.
+  const yFor = v => h - (v / 100) * (h * 0.92) - h * 0.04;
+
+  // 1) Translucent band (±RMS) around the smoothed line. We render the
+  //    band by walking forward along upperBand and backward along
+  //    lowerBand to make a closed polygon. RMS is computed once from
+  //    the most recent BAND_WIN residuals — applying it as a constant
+  //    width across the visible window is the right call: the band is
+  //    a "how noisy is the room right now" indicator, not a per-sample
+  //    Bayesian credible interval.
+  const mBand = residRms(motionResid);
+  const bBand = residRms(breathResid);
+  function band(smoothArr, sigma, fill) {
+    if (sigma < 0.5) return;  // nothing useful to draw at sub-pixel widths
+    ctx.beginPath();
+    for (let i = 0; i < smoothArr.length; i++) {
+      const x = (i / (HISTORY_LEN - 1)) * w;
+      ctx.lineTo(x, yFor(smoothArr[i] + sigma));
+    }
+    for (let i = smoothArr.length - 1; i >= 0; i--) {
+      const x = (i / (HISTORY_LEN - 1)) * w;
+      ctx.lineTo(x, yFor(smoothArr[i] - sigma));
+    }
+    ctx.closePath();
+    ctx.fillStyle = fill;
+    ctx.fill();
+  }
+
+  // 2) Single-line trace. Used for both raw (faint) and smoothed
+  //    (bold) — same mapping, different alphas / widths.
   function trace(arr, hue, alpha, width) {
     ctx.beginPath();
     for (let i = 0; i < arr.length; i++) {
       const x = (i / (HISTORY_LEN-1)) * w;
-      const y = h - (arr[i]/100) * (h * 0.92) - h * 0.04;
+      const y = yFor(arr[i]);
       if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
     }
     ctx.strokeStyle = hue;
@@ -1333,13 +1517,22 @@ function drawWaveform() {
     ctx.stroke();
     ctx.globalAlpha = 1;
   }
-  // Motion: glow + crisp
-  const motionColor   = getComputedStyle(document.documentElement).getPropertyValue('--orb-3').trim() || '#1ec5b1';
-  const breathColor   = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#8e9eff';
-  trace(motionHist, motionColor, 0.18, 8);
-  trace(motionHist, motionColor, 1.0, 2 * (window.devicePixelRatio||1));
-  trace(breathHist, breathColor, 0.18, 8);
-  trace(breathHist, breathColor, 1.0, 2 * (window.devicePixelRatio||1));
+
+  const motionColor = getComputedStyle(document.documentElement).getPropertyValue('--orb-3').trim() || '#1ec5b1';
+  const breathColor = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#8e9eff';
+  const dpr = window.devicePixelRatio || 1;
+
+  // Order back→front: band, raw faint, smoothed bold. That puts the
+  // shaded band behind both lines (so the line you trust visually
+  // sits on top of the noise envelope) and the raw line behind the
+  // smoothed (so the bold trustworthy reading is visually dominant
+  // even when the raw spikes off-band).
+  band(motionSmoothHist, mBand, motionColor + '26');   // ~15% alpha
+  band(breathSmoothHist, bBand, breathColor + '26');
+  trace(motionRawHist,    motionColor, 0.30, 1.5 * dpr);
+  trace(breathRawHist,    breathColor, 0.30, 1.5 * dpr);
+  trace(motionSmoothHist, motionColor, 1.0,  2 * dpr);
+  trace(breathSmoothHist, breathColor, 1.0,  2 * dpr);
 }
 
 function drawHeatmap() {
@@ -1437,6 +1630,106 @@ function bucketLabel(idx) {
  * ──────────────────────────────────────────────────────────────────────── */
 let lastEventId = 0;
 let latestRawVector = null;
+// Wall-clock millis when lastEventId most recently changed. Drives the
+// "Last event · 7s ago" row in the sense-detail reveal.
+let lastEventLandedAt = 0;
+// Most recent /api/csi/stream payload — kept so updateSenseDetail() can
+// re-render on the animation tick without us having to re-fetch.
+let latestStreamJ = null;
+
+// Plain-language labels for the device-side state names. Mirrors the
+// COPY.states bank but kept here as a dedicated map because the
+// sense-detail reveal labels several names (breathing_nearby) that
+// don't have their own COPY entry — they share a state with another.
+const SENSE_STATE_LABEL = {
+  empty: 'Empty', subtle: 'Subtle motion', quiet: 'Quiet',
+  active: 'Active', together: 'Together',
+  breathing_nearby: 'Quiet', breathing_lost: 'Subtle motion',
+  sensing: 'Sensing…',
+};
+// Same for confidence — we want capitalized, plain-language labels in
+// the reveal, not the raw "tentative" / "likely" / "confirmed" strings.
+const SENSE_CONF_LABEL = {
+  tentative: 'Tentative', likely: 'Likely', confirmed: 'Confirmed',
+};
+
+// Format a ±band as a short, readable suffix. We round to whole
+// numbers because the underlying motion/breathing scale is integer
+// 0..100; sub-integer band widths read as "steady" rather than as
+// noise. Returns an empty string for negligible bands so the row
+// reads cleanly when the room is calm.
+function fmtBand(v) {
+  const r = Math.round(v);
+  return r < 1 ? '' : `±${r}`;
+}
+
+// Seconds elapsed since the last event landed, formatted as "7s",
+// "2m", "—". Returns "—" if no event has landed yet so the row is
+// honest about a fresh boot rather than showing a misleading "0s".
+function fmtAgo(landedAtMs) {
+  if (!landedAtMs) return '—';
+  const sec = Math.floor((Date.now() - landedAtMs) / 1000);
+  if (sec < 0)    return '—';
+  if (sec < 60)   return sec + 's';
+  if (sec < 3600) return Math.floor(sec / 60) + 'm';
+  return Math.floor(sec / 3600) + 'h';
+}
+
+// Update the live numbers in the sense-detail reveal. Cheap enough to
+// run on every animation tick (the DOM writes only fire when the
+// expressed value actually changes). Reads the freshest history via
+// getSenseDetailSnapshot() so we never paint a value the canvas hasn't
+// also been told about.
+function updateSenseDetail() {
+  const det = document.getElementById('senseDetail');
+  // Skip the DOM walk entirely while the disclosure is collapsed —
+  // saves a handful of textContent writes per frame on slow phones.
+  if (!det || !det.open) return;
+
+  const s = getSenseDetailSnapshot();
+  const j = latestStreamJ;
+
+  const setText = (id, txt) => {
+    const el = document.getElementById(id);
+    if (el && el.textContent !== txt) el.textContent = txt;
+  };
+
+  setText('seMRaw',    String(s.motionRaw));
+  setText('seMSteady', String(Math.round(s.motionSteady)));
+  setText('seMBand',   fmtBand(s.motionBand));
+  setText('seBRaw',    String(s.breathRaw));
+  setText('seBSteady', String(Math.round(s.breathSteady)));
+  setText('seBBand',   fmtBand(s.breathBand));
+
+  // Loudest signal: prefer the device's own assessment if it sent one.
+  // Fall back to a simple compare so the row isn't blank during the
+  // pre-first-event "ambient" phase. We compare smoothed values, not
+  // raw, so a single noisy frame doesn't flip the label.
+  let dom = '—';
+  if (j && j.dominant_signal) {
+    dom = (j.dominant_signal === 'motion') ? 'Movement'
+        : (j.dominant_signal === 'breathing') ? 'Breath' : j.dominant_signal;
+  } else if (s.motionSteady > s.breathSteady + 1) dom = 'Movement';
+  else if (s.breathSteady > s.motionSteady + 1)   dom = 'Breath';
+  else if (s.motionSteady < 1 && s.breathSteady < 1) dom = '—';
+  else dom = 'Tied';
+  setText('seDom', dom);
+
+  setText('seConf',  j && j.confidence ? (SENSE_CONF_LABEL[j.confidence] || j.confidence) : '—');
+  setText('seState', j && j.state      ? (SENSE_STATE_LABEL[j.state]      || j.state)     : '—');
+  setText('seBpm',   j && j.bpm        ? `${j.bpm | 0} a minute` : '—');
+
+  // Last event row: show the id and how long ago it landed. We carry
+  // the timestamp ourselves rather than trusting j.t, because j.t is
+  // the device-side committed_ms relative to stream start, which doesn't
+  // mean much without also knowing stream-start, and the wall-clock
+  // delta is what an installer actually wants.
+  if (lastEventId) {
+    setText('seEvent', `#${lastEventId} · ${fmtAgo(lastEventLandedAt)} ago`);
+  } else {
+    setText('seEvent', '—');
+  }
+}
 
 /* Map a fetch error / non-OK response to one of the COPY.errors strings.
  * Lets every poll surface the right diagnostic to the dashboard's
@@ -1498,6 +1791,10 @@ async function pollStream() {
     const motion    = (j.motion    | 0);
     const breathing = (j.breathing | 0);
     pushHistory(motion, breathing);
+    // Stash the freshest payload so the animation tick's call to
+    // updateSenseDetail() can re-render between polls (the "ago"
+    // counter ticks every second without a new fetch).
+    latestStreamJ = j;
 
     const isEvent = (j.id !== undefined);
     if (isEvent) {
@@ -1516,6 +1813,7 @@ async function pollStream() {
       if (j.id !== lastEventId) {
         if (stateKey === 'active' || stateKey === 'subtle' || stateKey === 'together') pulseRipple();
         lastEventId = j.id;
+        lastEventLandedAt = Date.now();   // drives the "Last event · Ns ago" row
       }
       // Push current bucket intensity
       const idx = currentBucketIdx();
@@ -1524,6 +1822,7 @@ async function pollStream() {
     } else {
       setState('sensing', {confidence: j.confidence || 'tentative'});
     }
+    updateSenseDetail();
 
     document.getElementById('frameCount').textContent =
       `motion ${motion} · breathing ${breathing}`;
@@ -2463,6 +2762,12 @@ function tick() {
   drawWaveform();
   drawRibbon();
   if (latestRawVector) drawHeatmap();
+  // The reveal panel's static rows update on /api/csi/stream poll, but
+  // the "Last event · 7s ago" row needs the wall-clock to keep ticking
+  // between polls. updateSenseDetail() short-circuits when the
+  // disclosure is collapsed so the cost is a single open-flag check
+  // per frame in the common case.
+  updateSenseDetail();
   requestAnimationFrame(tick);
 }
 requestAnimationFrame(tick);
