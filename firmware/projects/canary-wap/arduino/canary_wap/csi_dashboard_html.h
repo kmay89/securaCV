@@ -504,10 +504,21 @@ static const char CSI_DASHBOARD_HTML[] PROGMEM = R"DASHBOARD(<!doctype html>
   .sense-rows .label { color: var(--fg-mute); }
   .sense-rows .value { font-variant-numeric: tabular-nums; }
   .sense-rows .value.steady { color: var(--fg-soft); }
+  /* "Loudest" / "How sure" / "Right now" / "Breath rate" / "Last event"
+     have no third column, so we span the value across columns 2..end.
+     Pulled out of inline style="grid-column:2/-1" attributes per
+     Gemini's review on PR #423 — separates layout from content. */
+  .sense-rows .value.full-width-value { grid-column: 2 / -1; }
   .sense-rows .band {
     color: var(--fg-mute); font-size: 11px; margin-left: 4px;
     font-variant-numeric: tabular-nums;
   }
+  /* When .band has no content (steady reading, RMS rounds to 0), keep
+     it from reserving a hairline of margin/space to the right of the
+     steady value. :empty matches when the inner textContent is the
+     empty string, which is exactly the state fmtBand() produces for a
+     calm room. */
+  .sense-rows .band:empty { margin-left: 0; }
   /* On the narrow layout, the third column folds under the second.
      We tag the band with a class so the grid-template-columns:1fr auto
      query still leaves it readable. */
@@ -975,26 +986,31 @@ static const char CSI_DASHBOARD_HTML[] PROGMEM = R"DASHBOARD(<!doctype html>
       <div class="sense-rows" role="region" aria-label="Live sensing detail" aria-live="off">
         <span class="label">Movement</span>
         <span class="value" id="seMRaw">—</span>
-        <span class="value steady" id="seMSteady">— <span class="band" id="seMBand"></span></span>
+        <!-- The "steady" cell holds two sibling spans (value + band) so
+             the per-tick setText writes can target each independently
+             without clobbering the other. textContent on the outer
+             container would replace both children, which is the bug
+             Codex P1 caught on the first revision of this PR. -->
+        <span class="value steady"><span id="seMSteady">—</span><span class="band" id="seMBand"></span></span>
 
         <span class="label">Breath</span>
         <span class="value" id="seBRaw">—</span>
-        <span class="value steady" id="seBSteady">— <span class="band" id="seBBand"></span></span>
+        <span class="value steady"><span id="seBSteady">—</span><span class="band" id="seBBand"></span></span>
 
         <span class="label">Loudest</span>
-        <span class="value" id="seDom" style="grid-column:2/-1">—</span>
+        <span class="value full-width-value" id="seDom">—</span>
 
         <span class="label">How sure</span>
-        <span class="value" id="seConf" style="grid-column:2/-1">—</span>
+        <span class="value full-width-value" id="seConf">—</span>
 
         <span class="label">Right now</span>
-        <span class="value" id="seState" style="grid-column:2/-1">—</span>
+        <span class="value full-width-value" id="seState">—</span>
 
         <span class="label">Breath rate</span>
-        <span class="value" id="seBpm" style="grid-column:2/-1">—</span>
+        <span class="value full-width-value" id="seBpm">—</span>
 
         <span class="label">Last event</span>
-        <span class="value" id="seEvent" style="grid-column:2/-1">—</span>
+        <span class="value full-width-value" id="seEvent">—</span>
       </div>
     </details>
 
@@ -1453,11 +1469,14 @@ function residRms(arr) {
 // numbers without re-walking the whole history. Centralizing this so
 // the reveal panel and the canvas can never drift out of sync.
 function getSenseDetailSnapshot() {
+  // Raw values are already integers — pollStream() coerces motion and
+  // breathing with `(j.motion | 0)` before pushHistory() lands them.
+  // No need to re-coerce here (Gemini review on PR #423).
   return {
-    motionRaw:    motionRawHist[HISTORY_LEN - 1] | 0,
+    motionRaw:    motionRawHist[HISTORY_LEN - 1],
     motionSteady: motionEma,
     motionBand:   residRms(motionResid),
-    breathRaw:    breathRawHist[HISTORY_LEN - 1] | 0,
+    breathRaw:    breathRawHist[HISTORY_LEN - 1],
     breathSteady: breathEma,
     breathBand:   residRms(breathResid),
   };
@@ -1487,8 +1506,15 @@ function drawWaveform() {
   const bBand = residRms(breathResid);
   function band(smoothArr, sigma, fill) {
     if (sigma < 0.5) return;  // nothing useful to draw at sub-pixel widths
+    if (smoothArr.length === 0) return;
     ctx.beginPath();
-    for (let i = 0; i < smoothArr.length; i++) {
+    // Seed the path with moveTo on the first upper sample. Without
+    // this, the implicit canvas current point is (0,0), so the first
+    // lineTo would draw an unintended segment from the origin and the
+    // closed polygon would include a triangular wedge in the top-left
+    // of the waveform (Codex P2 on the first revision of this PR).
+    ctx.moveTo(0, yFor(smoothArr[0] + sigma));
+    for (let i = 1; i < smoothArr.length; i++) {
       const x = (i / (HISTORY_LEN - 1)) * w;
       ctx.lineTo(x, yFor(smoothArr[i] + sigma));
     }
@@ -1717,7 +1743,7 @@ function updateSenseDetail() {
 
   setText('seConf',  j && j.confidence ? (SENSE_CONF_LABEL[j.confidence] || j.confidence) : '—');
   setText('seState', j && j.state      ? (SENSE_STATE_LABEL[j.state]      || j.state)     : '—');
-  setText('seBpm',   j && j.bpm        ? `${j.bpm | 0} a minute` : '—');
+  setText('seBpm',   j && j.bpm        ? `${Math.round(j.bpm)} a minute` : '—');
 
   // Last event row: show the id and how long ago it landed. We carry
   // the timestamp ourselves rather than trusting j.t, because j.t is
