@@ -914,7 +914,13 @@ static const char CSI_DASHBOARD_HTML[] PROGMEM = R"DASHBOARD(<!doctype html>
 
 <!-- First-run welcome overlay -->
 <div class="welcome-mask" id="welcomeMask">
-  <div class="welcome-card" id="welcomeCard" role="dialog" aria-labelledby="welcomeTitle"></div>
+  <!-- tabindex="-1" makes the card focusable via .focus() so render()
+       can move focus to it on every step transition; AT then announces
+       the dialog's accessible name (aria-labelledby) and the new card
+       title without trapping the user on a non-interactive element
+       (Tab cycles into the first interactive child). PR #402 review
+       r3214577894. -->
+  <div class="welcome-card" id="welcomeCard" role="dialog" aria-modal="true" aria-labelledby="welcomeTitle" tabindex="-1"></div>
 </div>
 
 <!-- Calibration overlay -->
@@ -2134,6 +2140,25 @@ calibCancelBtn.addEventListener('click', () => {
     .split(',').map(s => s.trim()).filter(Boolean);
   const chosenPets = new Set(initialKinds);
 
+  /* Focus management state for the modal-dialog upgrade. (Avoid the
+   * literal HTML body-tag token in these comments — the microcopy
+   * lint awk uses it as a section marker; see csi_dashboard_html.h
+   * COPY.errors comment for the same gotcha.)
+   *  - s_returnFocus  : where to send focus when the user skips so
+   *                     they don't end up at the page root with no
+   *                     visible focus ring.
+   *  - s_lastIdx      : the most recent card index render() focused
+   *                     for. Comparing against the current `idx` lets
+   *                     us focus the card on EVERY step transition
+   *                     (so AT announces the new card's title) while
+   *                     pet-toggle re-renders within the same step
+   *                     keep focus on the just-pressed [data-pet]
+   *                     button (PR #402 review r3214577892 /
+   *                     r3214577894). Starts at -1 so the very first
+   *                     render() (idx=0) trips the focus move. */
+  let s_returnFocus = document.activeElement;
+  let s_lastIdx     = -1;
+
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, ch => ({
       '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
@@ -2176,6 +2201,24 @@ calibCancelBtn.addEventListener('click', () => {
     cardEl.classList.remove('show');
     void cardEl.offsetWidth;   // force reflow so the show class re-triggers the spring
     cardEl.classList.add('show');
+    /* Move focus to the card on every step transition so screen
+     * readers announce the new card's accessible name (the
+     * aria-labelledby="welcomeTitle" reference points at the freshly-
+     * rendered <h2>) and keyboard users don't lose their place to
+     * the page root after innerHTML clobbers the DOM. Deferred to
+     * the next animation frame so the focus ring isn't visibly
+     * thrown before the spring transition.
+     *
+     * Pet-toggle re-renders fire within the same step (idx
+     * unchanged), so they fall through this block and the click
+     * handler's explicit re-focus on the freshly-rendered
+     * [data-pet] button takes over — keyboard users keep toggling
+     * with Space without focus jumping back to the top. PR #402
+     * reviews r3214577892 / r3214577894. */
+    if (s_lastIdx !== idx) {
+      s_lastIdx = idx;
+      requestAnimationFrame(() => cardEl.focus());
+    }
   }
 
   function finish(launchCalibrate) {
@@ -2187,9 +2230,26 @@ calibCancelBtn.addEventListener('click', () => {
     }
     document.body.classList.remove('is-onboarding');
     if (launchCalibrate) {
-      // Hand off to the existing calibrate path.
+      // Hand off to the existing calibrate path. The calibrate button's
+      // click handler manages its own focus (the calibrate overlay's
+      // controls take over), so no explicit focus move needed here.
       const btn = document.getElementById('calibrateBtn');
       if (btn) btn.click();
+    } else {
+      /* Restore focus to wherever the user was before onboarding so
+       * keyboard / screen-reader users don't land on the page root
+       * with no visible focus ring after dismissing. Falls back to
+       * the help button (the natural "what's this?" entry point) if
+       * the pre-onboarding active element is gone or was just the
+       * document body. */
+      if (s_returnFocus && typeof s_returnFocus.focus === 'function'
+          && s_returnFocus !== document.body
+          && document.contains(s_returnFocus)) {
+        s_returnFocus.focus();
+      } else {
+        const helpBtn = document.getElementById('helpBtn');
+        if (helpBtn) helpBtn.focus();
+      }
     }
   }
 
@@ -2232,6 +2292,13 @@ calibCancelBtn.addEventListener('click', () => {
         persistPetMode(true);
       }
       render();
+      /* render() blew away the DOM via innerHTML, so the pet button
+       * the user just clicked is now a different element. Find the
+       * fresh button by its data-pet id and put focus back on it so
+       * a keyboard user can keep toggling with Space without having
+       * to Tab back through the card. */
+      const restored = cardEl.querySelector('[data-pet="' + CSS.escape(id) + '"]');
+      if (restored) restored.focus();
       return;
     }
     const action = e.target.closest('[data-action]');
@@ -2256,6 +2323,58 @@ calibCancelBtn.addEventListener('click', () => {
         finish(true);
       } else {
         render();
+      }
+    }
+  });
+
+  /* Modal-dialog keyboard contract for the welcome card.
+   *
+   *   - ESC dismisses the flow as a "skip" (same as the Skip button).
+   *     Standard "get me out of here" affordance for a modal dialog.
+   *   - Tab / Shift+Tab cycles focus among the card's own focusables
+   *     so keyboard users can't accidentally tab into the (still-
+   *     rendered but masked) dashboard underneath.
+   *
+   * Gated on body.is-onboarding so the handler only fires while the
+   * welcome flow is active. The nested-sheet exception is two-layered
+   * because event ordering vs. side effects matters here:
+   *
+   *   1. e.defaultPrevented bail catches the ESC race (PR #402
+   *      review r3214577082). When the "Learn more" path opens the
+   *      What sheet on top of the card and the user presses ESC, the
+   *      sheet's keydown handler (registered earlier, in module
+   *      scope) runs first, calls preventDefault, and synchronously
+   *      removes the sheet's `.open` class. By the time this
+   *      handler runs, querySelector('.sheet.open') would return
+   *      null — so without the defaultPrevented gate, ESC would
+   *      close the sheet AND skip onboarding in one keystroke.
+   *
+   *   2. The querySelector('.sheet.open') gate covers the Tab path,
+   *      where the sheet handler only preventDefaults at boundary
+   *      cycling. Mid-sheet Tab presses leave the gate as the only
+   *      thing keeping the welcome handler from racing the sheet's
+   *      own focus management. */
+  document.addEventListener('keydown', e => {
+    if (!document.body.classList.contains('is-onboarding')) return;
+    if (e.defaultPrevented) return;  /* sheet handler already consumed it */
+    if (document.querySelector('.sheet.open')) return;  /* sheet handler wins */
+
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      finish(false);
+      return;
+    }
+    if (e.key === 'Tab') {
+      const focusables = focusableChildren(cardEl);
+      if (focusables.length === 0) return;
+      const first = focusables[0];
+      const last  = focusables[focusables.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
       }
     }
   });
