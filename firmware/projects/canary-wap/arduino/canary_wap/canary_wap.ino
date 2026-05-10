@@ -141,6 +141,7 @@ extern "C" {
 #include "household_api.h"
 #include "sys_monitor.h"
 #include "hardware_state.h"
+#include "selftest_api.h"        // GET /api/selftest — wizard pre-flight aggregator
 
 // ════════════════════════════════════════════════════════════════════════════
 // BUILD CONFIGURATION — Edit build_config.h to select profile
@@ -4770,7 +4771,7 @@ static void register_api_routes(httpd_handle_t server) {
 
 static void start_http_server() {
   // Calculate max URI handlers based on feature usage
-  const int base_handlers = 23;       // UI (/ + /admin), API (auth + public), WiFi provisioning, captive portal
+  const int base_handlers = 24;       // UI (/ + /admin), API (auth + public), WiFi provisioning, captive portal, /api/selftest
   const int camera_handlers = 6;      // Camera peek endpoints
   const int mesh_handlers = 12;       // Mesh network endpoints
   const int bluetooth_handlers = 23;  // Bluetooth API endpoints
@@ -4883,6 +4884,11 @@ register_extra_routes:
 
   httpd_uri_t wifi_reconnect = { .uri = "/api/wifi/reconnect", .method = HTTP_POST, .handler = handle_wifi_reconnect };
   httpd_register_uri_handler(active_server, &wifi_reconnect);
+
+  // Wizard pre-flight self-test (no auth — must be reachable on AP
+  // before any post-pair token exists, identical to /api/wifi/scan).
+  httpd_uri_t selftest = { .uri = "/api/selftest", .method = HTTP_GET, .handler = selftest::handle_selftest };
+  httpd_register_uri_handler(active_server, &selftest);
 
   // Captive portal detection URLs (for iOS/Android automatic redirect)
   httpd_uri_t captive1 = { .uri = "/hotspot-detect.html", .method = HTTP_GET, .handler = handle_captive_portal };
