@@ -176,6 +176,37 @@ footer a{color:var(--accent);text-decoration:none}
 .wiz-link-row{display:flex;flex-direction:column;gap:.5rem;margin-top:.75rem}
 .wiz-link-row a{display:block;padding:.7rem .85rem;background:var(--surface-2);border:1px solid var(--border);border-radius:10px;color:var(--accent);text-decoration:none;font-size:.9rem;text-align:center;font-weight:500}
 .wiz-link-row a:active{background:rgba(102,179,255,.1)}
+/* Pre-flight self-test (step 5). One row per probe: name on the
+ * left, plain-language detail in the middle, status icon on the
+ * right. The whole row is a <details> so a power user can expand
+ * any line to see structured metrics (rssi_dbm, sensor_pid, free
+ * bytes, …). The summary acts as the row, so the disclosure
+ * affordance lives on the row itself. */
+.wiz-check-list{display:flex;flex-direction:column;gap:.4rem;margin:.5rem 0 .25rem}
+.wiz-check-row{border:1px solid var(--border);border-radius:10px;background:var(--surface-2);overflow:hidden}
+.wiz-check-row > summary{display:flex;align-items:center;gap:.6rem;padding:.65rem .8rem;cursor:pointer;list-style:none;-webkit-tap-highlight-color:transparent}
+.wiz-check-row > summary::-webkit-details-marker{display:none}
+.wiz-check-row > summary::marker{display:none}
+.wiz-check-row[open] > summary{border-bottom:1px solid var(--border)}
+.wiz-check-name{flex:0 0 auto;font-size:.9rem;font-weight:500;min-width:5.5rem}
+.wiz-check-detail{flex:1;color:var(--muted);font-size:.8rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wiz-check-icon{flex:0 0 auto;width:18px;height:18px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:.7rem;line-height:1}
+.wiz-check-icon.pass{background:rgba(72,187,120,.18);color:var(--success)}
+.wiz-check-icon.fail{background:rgba(245,101,101,.18);color:var(--danger)}
+.wiz-check-icon.skip,.wiz-check-icon.absent{background:var(--surface);color:var(--muted)}
+.wiz-check-icon.unknown{background:var(--surface);color:var(--muted)}
+.wiz-check-icon.spin{background:transparent;border:2px solid var(--border);border-top-color:var(--accent);animation:wiz-spin .8s linear infinite}
+.wiz-check-meta{padding:.55rem .8rem .7rem;font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:.7rem;color:var(--text);background:var(--surface);white-space:pre-wrap;word-break:break-all}
+.wiz-check-summary{margin-top:.6rem;padding:.55rem .7rem;border-radius:8px;font-size:.8rem;text-align:center}
+.wiz-check-summary.pass{background:rgba(72,187,120,.12);color:var(--success)}
+.wiz-check-summary.fail{background:rgba(245,101,101,.12);color:var(--danger)}
+@media (forced-colors: active){
+  .wiz-check-row{border:1px solid CanvasText;background:Canvas}
+  .wiz-check-icon.pass,.wiz-check-icon.fail,.wiz-check-icon.skip,.wiz-check-icon.absent,.wiz-check-icon.unknown{background:Canvas;color:CanvasText;border:1px solid CanvasText}
+  .wiz-check-icon.fail{outline:2px solid CanvasText;outline-offset:1px}
+  .wiz-check-meta{background:Canvas;color:CanvasText;border-top:1px solid CanvasText}
+  .wiz-check-summary.pass,.wiz-check-summary.fail{background:Canvas;color:CanvasText;border:1px solid CanvasText}
+}
 
 /* Screen-reader-only utility for the off-screen #a11y-announcer.
    Uses the conventional clip-path/zero-size pattern that takes the
@@ -267,6 +298,7 @@ footer a{color:var(--accent);text-decoration:none}
     <span id="wiz-prog-2"></span>
     <span id="wiz-prog-3"></span>
     <span id="wiz-prog-4"></span>
+    <span id="wiz-prog-5"></span>
   </div>
 
   <div class="wiz-step active" id="wiz-step-1">
@@ -317,11 +349,7 @@ footer a{color:var(--accent);text-decoration:none}
     <div id="wiz-step-4-success" class="hidden">
       <div class="wiz-tick">✓</div>
       <h2 class="wiz-h" tabindex="-1">Your Canary is online.</h2>
-      <p class="wiz-sub">Joined <strong id="wiz-success-ssid">your home WiFi</strong>. Switch your phone back to the same network, then tap below to start using it.</p>
-      <div class="wiz-link-row">
-        <a id="wiz-link-mdns" href="http://canary.local/">Open canary.local</a>
-        <a id="wiz-link-ip" href="#" style="display:none"></a>
-      </div>
+      <p class="wiz-sub">Joined <strong id="wiz-success-ssid">your home WiFi</strong>. One quick check that everything's awake before we hand it back.</p>
     </div>
     <div id="wiz-step-4-failure" class="hidden">
       <div class="wiz-cross">!</div>
@@ -329,6 +357,36 @@ footer a{color:var(--accent);text-decoration:none}
       <p class="wiz-sub" id="wiz-fail-reason">Check the password and try again.</p>
       <div class="wiz-btnrow">
         <button class="btn btn-secondary" id="wiz-fail-back">Try again</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Step 5 — Pre-flight checks. We poll /api/selftest once the
+       device is on the home network and render one row per
+       subsystem (Wi-Fi / Camera / Bluetooth / SD / Microphone /
+       GPIO). Each row is a <details> the user can expand to see
+       the structured metric blob a power user wants. The whole
+       step is wrapped in role="status" + aria-live so AT users
+       hear the running → result transition without us manually
+       managing announcements per row. -->
+  <div class="wiz-step" id="wiz-step-5">
+    <div id="wiz-step-5-running">
+      <h2 class="wiz-h" tabindex="-1">Pre-flight checks</h2>
+      <p class="wiz-sub">Confirming the sensors are awake. About a second.</p>
+      <div class="wiz-spin" id="wiz-st-spin">Running checks…</div>
+    </div>
+    <div id="wiz-step-5-result" class="hidden">
+      <h2 class="wiz-h" tabindex="-1" id="wiz-st-heading">Pre-flight result</h2>
+      <p class="wiz-sub" id="wiz-st-sub">…</p>
+      <div class="wiz-check-list" id="wiz-st-list" role="group" aria-label="Pre-flight checks" aria-busy="false"></div>
+      <div class="wiz-check-summary" id="wiz-st-summary" role="status" aria-live="polite"></div>
+      <div class="wiz-link-row" id="wiz-st-links" style="display:none">
+        <a id="wiz-link-mdns" href="http://canary.local/">Open canary.local</a>
+        <a id="wiz-link-ip" href="#" style="display:none"></a>
+      </div>
+      <div class="wiz-btnrow">
+        <button class="btn btn-secondary" id="wiz-st-rerun">Run again</button>
+        <button class="btn btn-primary"   id="wiz-st-finish" style="display:none">Finish</button>
       </div>
     </div>
   </div>
@@ -523,7 +581,7 @@ footer a{color:var(--accent);text-decoration:none}
   let scanTimer = 0;
 
   function setStep(n) {
-    for (let i = 1; i <= 4; i++) {
+    for (let i = 1; i <= 5; i++) {
       $w('wiz-step-' + i).classList.toggle('active', i === n);
       const dot = $w('wiz-prog-' + i);
       dot.classList.remove('done', 'now');
@@ -756,23 +814,29 @@ footer a{color:var(--accent);text-decoration:none}
     if (msg) $w('wiz-progress-text').textContent = msg;
     if (wasHidden) requestAnimationFrame(() => focusActiveStepHeading());
   }
+  // staIp captured here is reused on step 5 for the IP fallback link
+  // — the device may not be reachable as canary.local on networks
+  // without mDNS, so we surface the raw IP next to the mDNS hostname.
+  let connectedStaIp = '';
   function showSuccess(staIp) {
+    connectedStaIp = staIp || '';
     $w('wiz-step-4-progress').classList.add('hidden');
     $w('wiz-step-4-failure').classList.add('hidden');
     $w('wiz-step-4-success').classList.remove('hidden');
     $w('wiz-success-ssid').textContent = pickedSsid || 'your home WiFi';
-    if (staIp) {
-      const link = $w('wiz-link-ip');
-      link.href = 'http://' + staIp + '/';
-      link.textContent = 'Open ' + staIp;
-      link.style.display = 'block';
-    }
     [4].forEach(i => {
       const dot = $w('wiz-prog-' + i);
       dot.classList.remove('now');
       dot.classList.add('done');
     });
     requestAnimationFrame(() => focusActiveStepHeading());
+    /* Brief breath on the success card so the user reads "Your Canary
+     * is online" before we slide to pre-flight. 700 ms is the same
+     * cadence the OTA flow uses between status transitions. */
+    setTimeout(() => {
+      setStep(5);
+      runSelfTest();
+    }, 700);
   }
   function showFailure(reason) {
     $w('wiz-step-4-progress').classList.add('hidden');
@@ -813,6 +877,158 @@ footer a{color:var(--accent);text-decoration:none}
     }
     showFailure('Couldn’t reach your home WiFi. Move closer to the router and try again.');
   }
+
+  // ── Card 5: pre-flight self-test ───────────────────────────────────────
+  // Calls /api/selftest once on entry and renders one row per probe.
+  // Each row is a <details> the user can expand to see the structured
+  // metric blob (rssi_dbm, sensor_pid, free_bytes, …). PASS/FAIL/SKIP/
+  // ABSENT all map to a small status icon so the row is scannable
+  // without reading text. We never block the wizard on a non-fail
+  // (ABSENT/SKIP); only a real FAIL prevents Finish from enabling.
+  const ICON = { pass: '✓', fail: '!', skip: '–', absent: '–', unknown: '·' };
+  const ICON_LABEL = {
+    pass:    'Pass',
+    fail:    'Needs attention',
+    skip:    'Not active',
+    absent:  'Not present',
+    unknown: 'Unknown',
+  };
+
+  function escText(s) {
+    // The detail/metric strings come from the device, but the device
+    // is on our LAN and we control the firmware; defense-in-depth
+    // says we still don't drop anything into innerHTML directly.
+    return String(s == null ? '' : s);
+  }
+
+  function renderProbes(probes) {
+    const list = $w('wiz-st-list');
+    list.setAttribute('aria-busy', 'false');
+    list.innerHTML = '';
+    for (const p of probes || []) {
+      const status = (p.status || 'unknown').toLowerCase();
+      const det = document.createElement('details');
+      det.className = 'wiz-check-row';
+      const sum = document.createElement('summary');
+      // ARIA: announce the row as "Camera, Sensor online, Pass" so SR
+      // users get the full state in one phrase. The visible icon span
+      // is aria-hidden so we don't double-announce a glyph.
+      sum.setAttribute('aria-label',
+        (p.label || p.name || 'Check') + ', ' +
+        (p.detail || '') + ', ' +
+        (ICON_LABEL[status] || 'Unknown'));
+      const nameEl = document.createElement('span');
+      nameEl.className = 'wiz-check-name';
+      nameEl.textContent = escText(p.label || p.name || 'Check');
+      const detailEl = document.createElement('span');
+      detailEl.className = 'wiz-check-detail';
+      detailEl.textContent = escText(p.detail || '');
+      const iconEl = document.createElement('span');
+      iconEl.className = 'wiz-check-icon ' + status;
+      iconEl.setAttribute('aria-hidden', 'true');
+      iconEl.textContent = ICON[status] || ICON.unknown;
+      sum.appendChild(nameEl);
+      sum.appendChild(detailEl);
+      sum.appendChild(iconEl);
+      det.appendChild(sum);
+      // Metric reveal — JSON.stringify with 2-space indent gives the
+      // power user a copy-pasteable block without us having to design
+      // a per-probe table.
+      const meta = document.createElement('div');
+      meta.className = 'wiz-check-meta';
+      const obj = Object.assign({ code: p.code }, p.metric || {});
+      try {
+        meta.textContent = JSON.stringify(obj, null, 2);
+      } catch (_) {
+        meta.textContent = '(metric unavailable)';
+      }
+      det.appendChild(meta);
+      list.appendChild(det);
+    }
+  }
+
+  function showRunning() {
+    $w('wiz-step-5-running').classList.remove('hidden');
+    $w('wiz-step-5-result').classList.add('hidden');
+    requestAnimationFrame(() => focusActiveStepHeading());
+  }
+
+  function showResult(j) {
+    $w('wiz-step-5-running').classList.add('hidden');
+    $w('wiz-step-5-result').classList.remove('hidden');
+    $w('wiz-st-heading').textContent = j.all_passed
+      ? 'Your Canary is ready.'
+      : 'A check needs your attention';
+    $w('wiz-st-sub').textContent = j.all_passed
+      ? 'Tap any row to see the technical detail. Then finish.'
+      : 'Open the row below for the detail. Re-run after fixing it.';
+    renderProbes(j.probes);
+
+    const summary = $w('wiz-st-summary');
+    summary.classList.remove('pass', 'fail');
+    summary.classList.add(j.all_passed ? 'pass' : 'fail');
+    summary.textContent = j.summary || (j.all_passed ? 'All checks passed.' : 'Checks failed.');
+
+    // CTA wiring: mDNS link is always shown (default works on most
+    // home routers), IP fallback is only shown when we captured one
+    // during step 4. Finish + links are gated on all_passed; on
+    // failure the user can still re-run.
+    const links = $w('wiz-st-links');
+    if (j.all_passed) {
+      links.style.display = 'flex';
+      const ipLink = $w('wiz-link-ip');
+      if (connectedStaIp) {
+        ipLink.href = 'http://' + connectedStaIp + '/';
+        ipLink.textContent = 'Open ' + connectedStaIp;
+        ipLink.style.display = 'block';
+      } else {
+        ipLink.style.display = 'none';
+      }
+      $w('wiz-st-finish').style.display = 'inline-flex';
+      [5].forEach(i => {
+        const dot = $w('wiz-prog-' + i);
+        dot.classList.remove('now');
+        dot.classList.add('done');
+      });
+    } else {
+      links.style.display = 'none';
+      $w('wiz-st-finish').style.display = 'none';
+    }
+    requestAnimationFrame(() => focusActiveStepHeading());
+  }
+
+  async function runSelfTest() {
+    showRunning();
+    try {
+      const r = await fetch('/api/selftest', { cache: 'no-store' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const j = await r.json();
+      showResult(j);
+    } catch (e) {
+      // Render a synthetic single-row failure so the UI is honest
+      // about what happened without crashing the wizard.
+      showResult({
+        all_passed: false,
+        summary: 'Could not reach the Canary: ' + (e && e.message ? e.message : 'unknown'),
+        probes: [{
+          name: 'fetch', label: 'Connection',
+          status: 'fail', code: -1,
+          detail: 'Self-test endpoint unreachable',
+          metric: { error: String(e && e.message || e) },
+        }],
+      });
+    }
+  }
+
+  $w('wiz-st-rerun').addEventListener('click', runSelfTest);
+  $w('wiz-st-finish').addEventListener('click', () => {
+    // Finish hands the user off to canary.local (or the IP fallback).
+    // We don't navigate programmatically — the link inside the
+    // wiz-link-row is the source of truth so the user gets the
+    // browser's normal "open in new tab" / long-press affordances.
+    const mdns = $w('wiz-link-mdns');
+    if (mdns) mdns.click();
+  });
 })();
 
 const SVC_CONSOLE   = '8fc1cee0-b162-4401-9607-c8ac21383e90';
