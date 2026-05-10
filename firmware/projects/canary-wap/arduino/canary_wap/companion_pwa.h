@@ -308,6 +308,7 @@ footer a{color:var(--accent);text-decoration:none}
       <li>Privacy-first: nothing leaves your home unless you ask.</li>
       <li>Setup takes about a minute.</li>
       <li>You'll need your home WiFi password handy.</li>
+      <li>Stay connected to this WiFi network until setup is done.</li>
     </ul>
     <div class="wiz-btnrow">
       <button class="btn btn-primary" id="wiz-go-2">Let's go</button>
