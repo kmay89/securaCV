@@ -166,12 +166,61 @@ footer a{color:var(--accent);text-decoration:none}
 .wiz-link-row{display:flex;flex-direction:column;gap:.5rem;margin-top:.75rem}
 .wiz-link-row a{display:block;padding:.7rem .85rem;background:var(--surface-2);border:1px solid var(--border);border-radius:10px;color:var(--accent);text-decoration:none;font-size:.9rem;text-align:center;font-weight:500}
 .wiz-link-row a:active{background:rgba(102,179,255,.1)}
+
+/* Screen-reader-only utility for the off-screen #a11y-announcer.
+   Uses the conventional clip-path/zero-size pattern that takes the
+   element out of layout while still letting AT read its contents. */
+.sr-only{
+  position:absolute;width:1px;height:1px;padding:0;margin:-1px;
+  overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;
+}
+
+/* Focus-visible: project's existing :focus rules use `outline:none +
+   border-color: accent`. That works for the input chrome but leaves
+   buttons + tab buttons without a focus ring at all. Add a generic
+   accent outline so keyboard users always see where they are. */
+.btn:focus-visible, .tab-btn:focus-visible, .wiz-net-row:focus-visible{
+  outline:2px solid var(--accent);
+  outline-offset:2px;
+}
+
+/* Forced-colors mode (Windows High Contrast / accessibility tools).
+   Same playbook as PR #406 (headline dashboard) and PR #407 (admin):
+   custom colors flatten to the user's chosen system palette, so we
+   need explicit borders + system colors to keep controls
+   identifiable. The companion is the most consequential surface for
+   this since it's the primary mobile install path — operators on
+   accessibility tooling reach for it before they ever see /admin.
+   Reference: WCAG 2.1 SC 1.4.11 + W3C CSS Color Adjust §3. */
+@media (forced-colors: active){
+  .btn{border:1px solid ButtonText}
+  .btn-danger{border-width:2px}                /* non-color hazard cue */
+  .input,.wiz-input{border:1px solid CanvasText;background:Canvas;color:CanvasText}
+  .input:focus,.wiz-input:focus{outline:2px solid CanvasText;outline-offset:1px;border-color:CanvasText}
+  .tab-btn{border:1px solid ButtonText}
+  .tab-btn[aria-selected="true"]{background:Highlight;color:HighlightText;border-color:Highlight}
+  .card{border:1px solid CanvasText;background:Canvas}
+  .wiz-net-list{border:1px solid CanvasText;background:Canvas}
+  .wiz-net-row{border-top-color:CanvasText}
+  .badge{border:1px solid CanvasText;background:Canvas;color:CanvasText}
+  :focus-visible{outline:2px solid CanvasText;outline-offset:2px}
+}
 </style>
 </head>
 <body>
+<!-- Single off-screen aria-live region the JS pipes status changes
+     into so screen-reader users hear connection / OTA / wizard state
+     transitions without hunting for them visually. polite (not
+     assertive) so the canary doesn't interrupt the user mid-task.
+     The announcer is positioned with the sr-only utility (defined in
+     <style>) so it occupies no layout. (Audit: companion a11y pass.) -->
+<div id="a11y-announcer" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
 <header>
   <h1>SecuraCV Canary
-    <span class="sub" id="conn-state">Not connected</span>
+    <!-- conn-state mirrors the announcer for sighted users. Marked
+         live so a screen-reader user who happens to focus the heading
+         hears the same updates the announcer pushes elsewhere. -->
+    <span class="sub" id="conn-state" aria-live="polite">Not connected</span>
   </h1>
 </header>
 
@@ -262,19 +311,26 @@ footer a{color:var(--accent);text-decoration:none}
   <div class="err" id="err-msg"></div>
 </div>
 
-<!-- Tab nav appears after connect; switches between Status / WiFi panels. -->
-<!-- Optional tab buttons start hidden; each is revealed only when the
+<!-- Tab nav appears after connect; switches between Status / WiFi panels.
+     Optional tab buttons start hidden; each is revealed only when the
      corresponding GATT service is successfully discovered on the device.
-     Older firmware that ships only the Console service shows just Status. -->
-<div class="tab-nav hidden" id="tab-nav">
-  <button class="tab-btn active" data-tab="status">Status</button>
-  <button class="tab-btn hidden" data-tab="wifi" id="tab-btn-wifi">WiFi</button>
-  <button class="tab-btn hidden" data-tab="logs" id="tab-btn-logs">Logs</button>
-  <button class="tab-btn hidden" data-tab="witness" id="tab-btn-witness">Witness</button>
-  <button class="tab-btn hidden" data-tab="ota"  id="tab-btn-ota">OTA</button>
+     Older firmware that ships only the Console service shows just Status.
+
+     ARIA tablist semantics let assistive tech recognize the row as a
+     tablist (vs. a sequence of unrelated buttons), announce each tab's
+     selection state, and surface keyboard arrow-key navigation that
+     screen-reader users expect from this pattern. showTab() in the JS
+     keeps aria-selected + tabindex in sync with the visible .active
+     class. (Audit: companion a11y pass.) -->
+<div class="tab-nav hidden" id="tab-nav" role="tablist" aria-label="Companion sections">
+  <button class="tab-btn active" data-tab="status" id="tab-btn-status" role="tab" aria-selected="true" aria-controls="tab-status" tabindex="0">Status</button>
+  <button class="tab-btn hidden" data-tab="wifi"    id="tab-btn-wifi"    role="tab" aria-selected="false" aria-controls="tab-wifi"    tabindex="-1">WiFi</button>
+  <button class="tab-btn hidden" data-tab="logs"    id="tab-btn-logs"    role="tab" aria-selected="false" aria-controls="tab-logs"    tabindex="-1">Logs</button>
+  <button class="tab-btn hidden" data-tab="witness" id="tab-btn-witness" role="tab" aria-selected="false" aria-controls="tab-witness" tabindex="-1">Witness</button>
+  <button class="tab-btn hidden" data-tab="ota"     id="tab-btn-ota"     role="tab" aria-selected="false" aria-controls="tab-ota"     tabindex="-1">OTA</button>
 </div>
 
-<div class="tab-content" id="tab-status">
+<div class="tab-content" id="tab-status" role="tabpanel" aria-labelledby="tab-btn-status" tabindex="0">
   <div class="card hidden" id="status-card">
     <div class="card-title">
       <span><span class="dot live" id="live-dot"></span>Live status</span>
@@ -292,7 +348,7 @@ footer a{color:var(--accent);text-decoration:none}
   </div>
 </div>
 
-<div class="tab-content hidden" id="tab-witness">
+<div class="tab-content hidden" id="tab-witness" role="tabpanel" aria-labelledby="tab-btn-witness" tabindex="0">
   <div class="card hidden" id="witness-card">
     <div class="card-title">
       <span>Witness chain</span>
@@ -322,7 +378,7 @@ footer a{color:var(--accent);text-decoration:none}
   </div>
 </div>
 
-<div class="tab-content hidden" id="tab-ota">
+<div class="tab-content hidden" id="tab-ota" role="tabpanel" aria-labelledby="tab-btn-ota" tabindex="0">
   <div class="card hidden" id="ota-card">
     <div class="card-title">
       <span>Firmware update</span>
@@ -351,7 +407,7 @@ footer a{color:var(--accent);text-decoration:none}
   </div>
 </div>
 
-<div class="tab-content hidden" id="tab-logs">
+<div class="tab-content hidden" id="tab-logs" role="tabpanel" aria-labelledby="tab-btn-logs" tabindex="0">
   <div class="card hidden" id="logs-card">
     <div class="card-title">
       <span>Recent events</span>
@@ -367,7 +423,7 @@ footer a{color:var(--accent);text-decoration:none}
   </div>
 </div>
 
-<div class="tab-content hidden" id="tab-wifi">
+<div class="tab-content hidden" id="tab-wifi" role="tabpanel" aria-labelledby="tab-btn-wifi" tabindex="0">
   <div class="card hidden" id="wifi-card">
     <div class="card-title">
       <span>WiFi setup</span>
@@ -1339,8 +1395,16 @@ async function startOta(){
 
 // ── tab switching ──────────────────────────────────────────────────────────
 function showTab(name){
+  /* Keep aria-selected + roving tabindex in sync with the visible
+   * .active class so AT consistently sees what's foregrounded. The
+   * tabindex roving (only the active tab is tab-stoppable, inactive
+   * are tabindex=-1 but reachable via arrow keys) is the standard
+   * tablist keyboard pattern AT / keyboard users expect. */
   document.querySelectorAll('.tab-btn').forEach(b => {
-    b.classList.toggle('active', b.dataset.tab === name);
+    const active = b.dataset.tab === name;
+    b.classList.toggle('active', active);
+    b.setAttribute('aria-selected', active ? 'true' : 'false');
+    b.setAttribute('tabindex', active ? '0' : '-1');
   });
   $('tab-status').classList.toggle('hidden', name !== 'status');
   $('tab-wifi').classList.toggle('hidden', name !== 'wifi');
@@ -1348,6 +1412,41 @@ function showTab(name){
   $('tab-witness').classList.toggle('hidden', name !== 'witness');
   $('tab-ota').classList.toggle('hidden', name !== 'ota');
 }
+
+/* Push a string into the off-screen aria-live region so screen-reader
+ * users hear status changes (connect / disconnect / OTA milestones /
+ * wizard transitions) without hunting for them visually. We toggle
+ * the text via clear-then-set on the next frame because AT
+ * implementations sometimes coalesce identical-content updates and
+ * skip the announcement. */
+function announce(msg){
+  const el = document.getElementById('a11y-announcer');
+  if (!el) return;
+  el.textContent = '';
+  requestAnimationFrame(() => { el.textContent = msg; });
+}
+
+/* Arrow-key navigation across the tablist — the keyboard shortcut
+ * that AT users expect from role="tablist". Left/Right move to the
+ * previous/next visible tab, Home/End jump to first/last. We only
+ * cycle among VISIBLE tabs (.hidden tabs are skipped) since
+ * unrelated services have hidden their entry buttons. */
+document.getElementById('tab-nav').addEventListener('keydown', e => {
+  if (!['ArrowLeft','ArrowRight','Home','End'].includes(e.key)) return;
+  const visible = Array.from(document.querySelectorAll('.tab-btn'))
+    .filter(b => !b.classList.contains('hidden'));
+  if (visible.length === 0) return;
+  const cur = visible.indexOf(document.activeElement);
+  let next = cur;
+  if (e.key === 'ArrowLeft')  next = (cur <= 0) ? visible.length - 1 : cur - 1;
+  if (e.key === 'ArrowRight') next = (cur >= visible.length - 1) ? 0 : cur + 1;
+  if (e.key === 'Home')       next = 0;
+  if (e.key === 'End')        next = visible.length - 1;
+  if (next === cur) return;
+  e.preventDefault();
+  visible[next].focus();
+  visible[next].click();   /* activates the tab via existing handler */
+});
 
 async function connect(){
   clearErr();
