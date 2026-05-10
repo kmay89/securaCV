@@ -427,7 +427,7 @@ footer a{color:var(--accent);text-decoration:none}
     <div style="display:flex;gap:.5rem;margin-bottom:.5rem">
       <button class="btn btn-secondary" id="logs-refresh-btn" style="flex:1">Refresh</button>
     </div>
-    <div class="log-list" id="logs-list" aria-label="Recent events log" aria-busy="false">
+    <div class="log-list" id="logs-list" role="group" aria-label="Recent events log" aria-busy="false">
       <p class="intro" style="text-align:center;padding:1rem 0">Tap Refresh to fetch the most recent entries.</p>
     </div>
   </div>
