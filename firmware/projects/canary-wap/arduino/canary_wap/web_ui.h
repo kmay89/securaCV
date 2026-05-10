@@ -2158,7 +2158,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
             </select>
           </div>
           <div style="display:flex;gap:0.5rem;margin-top:1rem;flex-wrap:wrap;">
-            <button class="btn btn-primary" onclick="saveConfig()" title="Save current settings to device NVS">Save Configuration</button>
+            <button class="btn btn-primary" onclick="saveConfig()" title="Save current settings to the canary's flash so they survive a reboot">Save Configuration</button>
             <button class="btn btn-danger" onclick="confirmReboot()" title="Restart the device (witness chain preserved)">Reboot Device</button>
           </div>
         </div>
