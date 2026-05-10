@@ -239,7 +239,7 @@
 // WIFI PROVISIONING
 // ════════════════════════════════════════════════════════════════
 
-#define WIFI_CONNECT_TIMEOUT_MS      15000
+#define WIFI_CONNECT_TIMEOUT_MS      30000
 #define WIFI_RECONNECT_INTERVAL_MS   30000
 
 // ════════════════════════════════════════════════════════════════

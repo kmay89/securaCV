@@ -851,7 +851,10 @@ footer a{color:var(--accent);text-decoration:none}
 
   async function pollWifiUntilConnected() {
     const t0 = Date.now();
-    const TIMEOUT_MS = 60_000;
+    // 90 s gives the wizard headroom over the 30 s firmware connect
+    // timeout — enough budget for one retry without the wizard giving
+    // up before the device does.
+    const TIMEOUT_MS = 90_000;
     const STEP_MS    = 1500;
     let attempt = 0;
     while (Date.now() - t0 < TIMEOUT_MS) {
