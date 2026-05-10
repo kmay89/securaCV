@@ -53,7 +53,11 @@ static constexpr size_t MAX_STATE_PAYLOAD   = 200;
 static constexpr size_t MAX_SSID_LEN        = 32;    // WPA2 spec
 static constexpr size_t MAX_PASSWORD_LEN    = 64;    // WPA2 spec
 static constexpr uint32_t WRITE_COOLDOWN_MS = 5000;  // 1 creds-write per 5 s
-static constexpr uint32_t HOURLY_WRITE_CAP  = 5;     // and ≤ 5 / hour
+// 10 attempts/hour gives a fumbling user room to retype a password a
+// few times without locking the BLE channel out for an hour. The 5 s
+// per-write cooldown still rate-limits brute-force, and BLE requires
+// physical proximity, so 10/hour is a comfortable security ceiling.
+static constexpr uint32_t HOURLY_WRITE_CAP  = 10;
 
 bool init(NimBLEServer* server);
 void tick();   // drives async scan completion + state notifications

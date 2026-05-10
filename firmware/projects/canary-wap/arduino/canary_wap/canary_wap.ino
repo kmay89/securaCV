@@ -599,7 +599,12 @@ static inline bool provisioning_gate_is_open() {
 static WiFiCredentials g_wifi_creds;
 static WiFiStatus g_wifi_status;
 static bool g_wifi_scan_in_progress = false;
-static const uint32_t WIFI_CONNECT_TIMEOUT_MS = 15000;
+// WiFi STA connect deadline. 30 s matches what canary-ota already uses
+// and gives slow APs (captive portal, weak DHCP, distant routers) a
+// fair shot at completing association — 15 s was tight enough that
+// users at the edge of range saw spurious "Wrong password" wizard
+// failures even with correct credentials.
+static const uint32_t WIFI_CONNECT_TIMEOUT_MS = 30000;
 static const uint32_t WIFI_RECONNECT_INTERVAL_MS = 30000;
 
 // Camera state
