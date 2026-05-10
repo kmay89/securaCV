@@ -376,7 +376,7 @@ footer a{color:var(--accent);text-decoration:none}
     <div style="margin-top:.5rem;font-size:.65rem;color:var(--muted);font-weight:700;letter-spacing:.05em;text-transform:uppercase">Device pubkey (Ed25519)</div>
     <div class="hash" id="w-pk">&mdash;</div>
     <div class="verify-row" id="verify-row" style="display:none">
-      <div class="verify-icon" id="verify-icon">&mdash;</div>
+      <div class="verify-icon" id="verify-icon" aria-hidden="true">&mdash;</div>
       <div>
         <div class="verify-text" id="verify-text">&mdash;</div>
         <div class="verify-sub" id="verify-sub">&mdash;</div>
@@ -1163,6 +1163,18 @@ function setWitnessVerify(state, text, sub) {
   icon.textContent = state === 'ok' ? '✓' : state === 'bad' ? '✗' : '!';
   $('verify-text').textContent = text;
   $('verify-sub').textContent = sub || '';
+  /* Push the verdict through the off-screen aria-live region so SR
+   * users hear it without hunting for the verify-row visually. The
+   * icon glyph (✓/✗/!) is aria-hidden because it's decorative — the
+   * `text` strings are already meaningful phrases ("Signature
+   * verified", "Signature INVALID", "No record to verify", etc.).
+   * Prefix with a state word so the verdict is unambiguous when the
+   * text is itself ambiguous (e.g. "Verification skipped" — without
+   * "Warning:" prefix, SR users can't tell if that's good or bad). */
+  const prefix = state === 'ok'  ? 'Verified: '
+              : state === 'bad' ? 'Failed: '
+                                : 'Warning: ';
+  announce(prefix + text + (sub ? '. ' + sub : '') + '.');
 }
 function shortenHash(h) {
   if (!h) return '—';
