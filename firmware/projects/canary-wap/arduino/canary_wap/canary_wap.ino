@@ -282,10 +282,21 @@ static const uint32_t SD_PERSIST_INTERVAL  = 10;      // Persist every N records
 // ════════════════════════════════════════════════════════════════════════════
 
 static const uint32_t SERIAL_CDC_WAIT_MS   = 2500;
-static const uint32_t BOOT_BUTTON_HOLD_MS  = 1200;
+// BOOT button gesture thresholds. The short-press window opens the
+// provisioning gate; the medium-hold prints a serial diagnostic; the
+// long-hold triggers factory reset. The short-press lower bound (50 ms)
+// is the debounce floor — anything quicker is mechanical bounce, not a
+// human tap. The upper bound (2000 ms) matches the "< 2 seconds" hint
+// already shown in the wizard, so a slightly slow tap still counts.
+static const uint32_t BOOT_BUTTON_HOLD_MS  = 2000;
 static const int      BOOT_BUTTON_GPIO     = 0;
-static const uint32_t BOOT_SHORT_PRESS_MS  = 200;   // min for short press (provisioning gate)
-static const uint32_t BOOT_LONG_PRESS_MS   = 3000;  // hold for factory reset
+static const uint32_t BOOT_SHORT_PRESS_MS  = 50;
+static const uint32_t BOOT_LONG_PRESS_MS   = 3000;
+// Provisioning gate stays open for this long after a BOOT press, so a
+// browser tab that polls every 2 s reliably catches it and a captive
+// portal interstitial can't time the user out. The gate is still
+// single-use: the first successful receipt fetch closes it immediately.
+static const uint32_t PROVISIONING_GATE_TTL_MS = 30000;
 
 // ════════════════════════════════════════════════════════════════════════════
 // MOTION DETECTION WITH HYSTERESIS
@@ -569,8 +580,20 @@ static uint8_t* g_tls_key_der = nullptr;
 static size_t   g_tls_key_der_len = 0;
 static char     g_tls_cert_fp_hex[65] = {0};  // SHA256 of cert for pinning
 
-// Provisioning gate (physical BOOT button)
-static volatile bool g_provisioning_gate_open = false;
+// Provisioning gate (physical BOOT button). Stores the millis() at which
+// the press landed; 0 means closed. provisioning_gate_is_open() applies
+// the TTL so the gate auto-closes after PROVISIONING_GATE_TTL_MS even if
+// the receipt is never fetched. The variable is touched from the main
+// loop task (button handler) and the HTTP server task (receipt handler),
+// so access goes through __atomic_*_n to match the pattern used for
+// other cross-task counters (see csi_integration.cpp g_outbound_bytes).
+static uint32_t g_provisioning_gate_opened_at = 0;
+
+static inline bool provisioning_gate_is_open() {
+  uint32_t opened = __atomic_load_n(&g_provisioning_gate_opened_at, __ATOMIC_RELAXED);
+  if (opened == 0) return false;
+  return (millis() - opened) < PROVISIONING_GATE_TTL_MS;
+}
 
 // WiFi provisioning state
 static WiFiCredentials g_wifi_creds;
@@ -4563,18 +4586,18 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
   }
 
   // No valid token — check physical gate
-  if (!g_provisioning_gate_open) {
+  if (!provisioning_gate_is_open()) {
     httpd_resp_set_status(req, "403 Forbidden");
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_sendstr(req,
       "{\"error\":\"physical_confirmation_required\","
       "\"hint\":\"Press the BOOT button on the device to reveal the provisioning receipt.\","
-      "\"button\":\"BOOT (short press < 2 seconds)\"}");
+      "\"button\":\"BOOT (short tap, then poll within 30 seconds)\"}");
   }
 
   // Gate is open — serve receipt and close gate
   esp_err_t result = send_provisioning_receipt(req);
-  g_provisioning_gate_open = false;
+  __atomic_store_n(&g_provisioning_gate_opened_at, 0, __ATOMIC_RELAXED);
   Serial.println("[AUTH] Provisioning receipt served. Gate closed.");
   log_health(SCV_LOG_INFO, SCV_CAT_AUTH, "Provisioning receipt served via HTTPS", nullptr);
   return result;
@@ -6074,9 +6097,15 @@ void loop() {
         print_table_header();
       }
     } else if (duration >= BOOT_SHORT_PRESS_MS) {
-      // Short press: open provisioning gate
-      g_provisioning_gate_open = true;
-      Serial.println("[AUTH] Provisioning gate OPENED (receipt available for next request)");
+      // Short press: open provisioning gate. Stamp the press time so the
+      // gate can self-close after PROVISIONING_GATE_TTL_MS. Sentinel-1
+      // guard handles the exceedingly rare case where millis() is 0.
+      uint32_t now_ms = millis();
+      __atomic_store_n(&g_provisioning_gate_opened_at,
+                       (now_ms == 0) ? 1 : now_ms,
+                       __ATOMIC_RELAXED);
+      Serial.printf("[AUTH] Provisioning gate OPENED (receipt available for %lu seconds)\n",
+                    (unsigned long)(PROVISIONING_GATE_TTL_MS / 1000));
       log_health(SCV_LOG_INFO, SCV_CAT_AUTH, "Provisioning gate opened", "BOOT button");
       // Blink LED 3x to confirm
       #ifdef LED_BUILTIN

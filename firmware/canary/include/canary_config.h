@@ -223,10 +223,10 @@
 // ════════════════════════════════════════════════════════════════
 
 #define SERIAL_CDC_WAIT_MS       2500
-#define BOOT_BUTTON_HOLD_MS      1200
-#define BOOT_SHORT_PRESS_MS      200     // Min for short press
+#define BOOT_BUTTON_HOLD_MS      2000
+#define BOOT_SHORT_PRESS_MS      50      // Debounce floor for short press
 #define BOOT_LONG_PRESS_MS       5000    // Hold for factory reset
-#define BOOT_MEDIUM_PRESS_MS     1200    // Medium hold for info print
+#define BOOT_MEDIUM_PRESS_MS     2000    // Medium hold for info print
 
 // ════════════════════════════════════════════════════════════════
 // SD CARD SPI SPEEDS
