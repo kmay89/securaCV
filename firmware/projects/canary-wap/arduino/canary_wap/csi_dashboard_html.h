@@ -972,7 +972,17 @@ const COPY = {
     ribbonCell:  "Tap a moment to see what was happening then.",
   },
   errors: {
+    /* The pollStream catch block picks one of these based on the actual
+     * failure mode so installers can self-diagnose without serial cable
+     * (audit punch-list #9). frameCount footer is the surface; the
+     * disconnect class on the page root dims the orb the same way
+     * regardless. (Don't use the literal HTML body-tag token in this
+     * comment — the microcopy lint awk uses it as a section marker.) */
     disconnect:  "Can't reach the canary. Move closer to your router and try again.",
+    unavailable: "Sensing is offline. The canary's radio is not running.",
+    unauthorized:"Session ended. Tap to pair the canary again.",
+    serverError: "The canary hit a snag. It will try again.",
+    timeout:     "No reply from the canary. Trying again…",
   },
   calibrate: {
     /* The overlay's static text + the button labels. The seconds-remaining
@@ -1315,10 +1325,50 @@ function bucketLabel(idx) {
 let lastEventId = 0;
 let latestRawVector = null;
 
+/* Map a fetch error / non-OK response to one of the COPY.errors strings.
+ * Lets every poll surface the right diagnostic to the dashboard's
+ * disconnect plate instead of the one-size-fits-all "can't reach"
+ * (audit #9). status === 0 is our convention for "fetch threw" — the
+ * browser's TypeError on network failure has no status field so we
+ * stamp it ourselves before re-throwing. */
+function disconnectMessageFor(status) {
+  if (status === 401 || status === 403) return COPY.errors.unauthorized;
+  if (status === 503)                   return COPY.errors.unavailable;
+  if (status >= 500)                    return COPY.errors.serverError;
+  if (status === 0)                     return COPY.errors.timeout;
+  return COPY.errors.disconnect;
+}
+
+/* Apply the disconnected look + a diagnostic message keyed on the
+ * status code we caught. When the failure is auth-related, also wire
+ * the frameCount footer as a clickable target that reloads / so the
+ * pair flow re-runs — saves the user from typing the URL into the
+ * address bar again. */
+function paintDisconnect(status) {
+  document.body.classList.add('disconnected');
+  const fc = document.getElementById('frameCount');
+  fc.textContent = disconnectMessageFor(status);
+  if (status === 401 || status === 403) {
+    fc.style.cursor = 'pointer';
+    fc.onclick = () => { window.location.href = '/'; };
+  } else {
+    fc.style.cursor = '';
+    fc.onclick = null;
+  }
+}
+
 async function pollStream() {
   try {
     const r = await cvFetch('/api/csi/stream', {cache: 'no-store'});
-    if (!r.ok) throw new Error('stream not ok');
+    if (!r.ok) {
+      /* Surface the HTTP status in the thrown error so the catch block
+       * can route to the right COPY string. Plain Error stringifies
+       * its message for console; we tack the status on as a property
+       * so the catch reads cleanly without parsing the message. */
+      const e = new Error('stream not ok: ' + r.status);
+      e.status = r.status;
+      throw e;
+    }
     const j = await r.json();
 
     // Device-side honest signal: when the radio HAL never came up
@@ -1328,8 +1378,7 @@ async function pollStream() {
     // copy so installers see something is actually wrong.
     if (j.status === 'unavailable') {
       setState('sensing', {confidence: 'tentative'});
-      document.body.classList.add('disconnected');
-      document.getElementById('frameCount').textContent = COPY.errors.disconnect;
+      paintDisconnect(503);  /* matches the on-wire HAL-unavailable path */
       return;
     }
 
@@ -1365,10 +1414,17 @@ async function pollStream() {
 
     document.getElementById('frameCount').textContent =
       `motion ${motion} · breathing ${breathing}`;
+    /* Clear the disconnect plate AND the click-to-pair handler the
+     * unauthorized branch may have wired in a previous tick. */
     document.body.classList.remove('disconnected');
+    const fc = document.getElementById('frameCount');
+    fc.style.cursor = '';
+    fc.onclick = null;
   } catch (err) {
-    document.body.classList.add('disconnected');
-    document.getElementById('frameCount').textContent = COPY.errors.disconnect;
+    /* fetch() throws TypeError on network failure with no .status
+     * field; stamp 0 as "no response" so disconnectMessageFor maps
+     * it to the timeout copy instead of the generic disconnect. */
+    paintDisconnect(err.status || 0);
   }
 }
 
@@ -1377,7 +1433,11 @@ async function fetchToday() {
   body.innerHTML = '<p style="color:var(--fg-mute)">Loading…</p>';
   try {
     const r = await cvFetch('/api/events/today', {cache: 'no-store'});
-    if (!r.ok) throw new Error('today fetch returned ' + r.status);
+    if (!r.ok) {
+      const e = new Error('today fetch returned ' + r.status);
+      e.status = r.status;
+      throw e;
+    }
     const j = await r.json();
     const events = j.events || [];
     if (events.length === 0) {
@@ -1436,7 +1496,14 @@ async function fetchToday() {
       });
     });
   } catch (err) {
-    body.innerHTML = '<p style="color:var(--fg-mute)">' + COPY.errors.disconnect + '</p>';
+    /* Mirror pollStream's status-aware diagnostic so the Today sheet
+     * tells the same story as the headline disconnect plate (audit
+     * #9). Also paint the headline plate so the user has a single
+     * pair-now affordance regardless of which fetch caught the
+     * failure first. */
+    const msg = disconnectMessageFor(err.status || 0);
+    body.innerHTML = '<p style="color:var(--fg-mute)">' + msg + '</p>';
+    paintDisconnect(err.status || 0);
   }
 }
 
