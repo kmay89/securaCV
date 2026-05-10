@@ -914,7 +914,7 @@ static const char CSI_DASHBOARD_HTML[] PROGMEM = R"DASHBOARD(<!doctype html>
 
 <!-- First-run welcome overlay -->
 <div class="welcome-mask" id="welcomeMask">
-  <div class="welcome-card" id="welcomeCard" role="dialog" aria-labelledby="welcomeTitle"></div>
+  <div class="welcome-card" id="welcomeCard" role="dialog" aria-modal="true" aria-labelledby="welcomeTitle"></div>
 </div>
 
 <!-- Calibration overlay -->
@@ -2134,6 +2134,21 @@ calibCancelBtn.addEventListener('click', () => {
     .split(',').map(s => s.trim()).filter(Boolean);
   const chosenPets = new Set(initialKinds);
 
+  /* Focus management state for the modal-dialog upgrade. (Avoid the
+   * literal HTML body-tag token in these comments — the microcopy
+   * lint awk uses it as a section marker; see csi_dashboard_html.h
+   * COPY.errors comment for the same gotcha.)
+   *  - s_returnFocus   : where to send focus when the user skips so
+   *                      they don't end up at the page root with no
+   *                      visible focus ring.
+   *  - s_initialFocus  : flag so render() only auto-focuses the card
+   *                      ONCE on first show — re-renders triggered by
+   *                      pet toggles preserve focus on the same
+   *                      [data-pet] button instead of jumping back to
+   *                      the top of the card. */
+  let s_returnFocus  = document.activeElement;
+  let s_initialFocus = true;
+
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, ch => ({
       '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
@@ -2176,6 +2191,21 @@ calibCancelBtn.addEventListener('click', () => {
     cardEl.classList.remove('show');
     void cardEl.offsetWidth;   // force reflow so the show class re-triggers the spring
     cardEl.classList.add('show');
+    /* Move focus into the card the first time it appears so screen
+     * readers announce the dialog and keyboard users don't have to
+     * Tab through the (still-rendered) dashboard underneath. Deferred
+     * to the next animation frame so the focus ring isn't visibly
+     * thrown before the spring transition. Subsequent re-renders
+     * (pet-toggle, next-card) preserve focus via the click handler's
+     * explicit re-focus, so we only auto-focus on the very first
+     * show. */
+    if (s_initialFocus) {
+      s_initialFocus = false;
+      requestAnimationFrame(() => {
+        const focusables = focusableChildren(cardEl);
+        if (focusables.length) focusables[0].focus();
+      });
+    }
   }
 
   function finish(launchCalibrate) {
@@ -2187,9 +2217,26 @@ calibCancelBtn.addEventListener('click', () => {
     }
     document.body.classList.remove('is-onboarding');
     if (launchCalibrate) {
-      // Hand off to the existing calibrate path.
+      // Hand off to the existing calibrate path. The calibrate button's
+      // click handler manages its own focus (the calibrate overlay's
+      // controls take over), so no explicit focus move needed here.
       const btn = document.getElementById('calibrateBtn');
       if (btn) btn.click();
+    } else {
+      /* Restore focus to wherever the user was before onboarding so
+       * keyboard / screen-reader users don't land on the page root
+       * with no visible focus ring after dismissing. Falls back to
+       * the help button (the natural "what's this?" entry point) if
+       * the pre-onboarding active element is gone or was just the
+       * document body. */
+      if (s_returnFocus && typeof s_returnFocus.focus === 'function'
+          && s_returnFocus !== document.body
+          && document.contains(s_returnFocus)) {
+        s_returnFocus.focus();
+      } else {
+        const helpBtn = document.getElementById('helpBtn');
+        if (helpBtn) helpBtn.focus();
+      }
     }
   }
 
@@ -2232,6 +2279,13 @@ calibCancelBtn.addEventListener('click', () => {
         persistPetMode(true);
       }
       render();
+      /* render() blew away the DOM via innerHTML, so the pet button
+       * the user just clicked is now a different element. Find the
+       * fresh button by its data-pet id and put focus back on it so
+       * a keyboard user can keep toggling with Space without having
+       * to Tab back through the card. */
+      const restored = cardEl.querySelector('[data-pet="' + CSS.escape(id) + '"]');
+      if (restored) restored.focus();
       return;
     }
     const action = e.target.closest('[data-action]');
@@ -2256,6 +2310,45 @@ calibCancelBtn.addEventListener('click', () => {
         finish(true);
       } else {
         render();
+      }
+    }
+  });
+
+  /* Modal-dialog keyboard contract for the welcome card.
+   *
+   *   - ESC dismisses the flow as a "skip" (same as the Skip button).
+   *     Standard "get me out of here" affordance for a modal dialog.
+   *   - Tab / Shift+Tab cycles focus among the card's own focusables
+   *     so keyboard users can't accidentally tab into the (still-
+   *     rendered but masked) dashboard underneath.
+   *
+   * Gated on body.is-onboarding so the handler only fires while the
+   * welcome flow is active. The nested-sheet exception matters: the
+   * "Learn more" path opens the What sheet on top of the card, and
+   * the global sheet keydown handler (csi_dashboard_html.h, sheet
+   * section) handles ESC/Tab for the sheet. Without this gate, ESC
+   * inside that sheet would close the sheet AND skip onboarding —
+   * the user almost certainly only wanted to close the sheet. */
+  document.addEventListener('keydown', e => {
+    if (!document.body.classList.contains('is-onboarding')) return;
+    if (document.querySelector('.sheet.open')) return;  /* sheet handler wins */
+
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      finish(false);
+      return;
+    }
+    if (e.key === 'Tab') {
+      const focusables = focusableChildren(cardEl);
+      if (focusables.length === 0) return;
+      const first = focusables[0];
+      const last  = focusables[focusables.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
       }
     }
   });
