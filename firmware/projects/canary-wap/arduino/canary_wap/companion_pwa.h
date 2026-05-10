@@ -427,7 +427,7 @@ footer a{color:var(--accent);text-decoration:none}
     <div style="display:flex;gap:.5rem;margin-bottom:.5rem">
       <button class="btn btn-secondary" id="logs-refresh-btn" style="flex:1">Refresh</button>
     </div>
-    <div class="log-list" id="logs-list">
+    <div class="log-list" id="logs-list" aria-label="Recent events log" aria-busy="false">
       <p class="intro" style="text-align:center;padding:1rem 0">Tap Refresh to fetch the most recent entries.</p>
     </div>
   </div>
@@ -1102,10 +1102,15 @@ async function requestOneLog(index){
 }
 function renderLogList(entries){
   const list = $('logs-list');
+  list.setAttribute('aria-busy', 'false');
   if (!entries.length) {
     list.innerHTML = '<p class="intro" style="text-align:center;padding:1rem 0">No log entries yet.</p>';
+    announce('No log entries yet.');
     return;
   }
+  announce(entries.length === 1
+    ? 'Showing 1 log entry.'
+    : 'Showing ' + entries.length + ' log entries.');
   list.innerHTML = entries.map(e => {
     if (!e) return '';
     const lvl = e.lvl || 'info';
@@ -1132,7 +1137,9 @@ async function fetchLogs(){
       renderLogList([]);
       return;
     }
-    $('logs-list').innerHTML = '<p class="intro" style="text-align:center;padding:1rem 0">Fetching ' + want + ' entries…</p>';
+    const list = $('logs-list');
+    list.setAttribute('aria-busy', 'true');
+    list.innerHTML = '<p class="intro" style="text-align:center;padding:1rem 0">Fetching ' + want + ' entries…</p>';
     const out = [];
     for (let i = 0; i < want; i++) {
       const entry = await requestOneLog(i);
