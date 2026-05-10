@@ -1620,9 +1620,16 @@ async function fetchPrivacyBudget() {
  * future "settings" sheet (PR audit follow-up) gets them for free. */
 let s_returnFocusEl = null;
 function focusableChildren(root) {
+  /* getClientRects().length > 0 instead of offsetParent !== null
+   * because the sheets are position:fixed — and Firefox returns null
+   * for descendants of fixed-positioned ancestors (PR #401 review
+   * r3214242791). getClientRects holds for any element that has
+   * actual layout boxes, regardless of its containing block's
+   * positioning. summary/select/textarea included for completeness
+   * so future markup changes don't silently lose focus targets. */
   return Array.from(root.querySelectorAll(
-    'button, [href], input, [tabindex]:not([tabindex="-1"])'
-  )).filter(el => !el.hasAttribute('disabled') && el.offsetParent !== null);
+    'button, [href], input, select, textarea, summary, [tabindex]:not([tabindex="-1"])'
+  )).filter(el => !el.hasAttribute('disabled') && el.getClientRects().length > 0);
 }
 function openSheet(sheet, scrim) {
   s_returnFocusEl = document.activeElement;
@@ -1645,6 +1652,17 @@ function closeSheet(sheet, scrim) {
     s_returnFocusEl.focus();
   }
   s_returnFocusEl = null;
+  /* Onboarding's "Learn more" path opens the What sheet behind a
+   * blurred welcome mask (body.welcome-paused). Clearing the class
+   * here means every dismiss path — scrim click, close button, ESC,
+   * future swipe-down — restores the welcome card instead of leaving
+   * the user stranded with a blurred background and no card to
+   * advance through. No-op when the class isn't set, so legitimate
+   * dashboard sessions are unaffected (PR #401 reviews r3214241863
+   * and r3214242793). */
+  if (sheet.id === 'whatSheet') {
+    document.body.classList.remove('welcome-paused');
+  }
 }
 
 const todaySheet = document.getElementById('todaySheet');
@@ -1669,14 +1687,7 @@ buildWhatBody();
 document.getElementById('helpBtn').addEventListener('click', () => {
   openSheet(whatSheet, whatScrim);
 });
-whatScrim.addEventListener('click', () => {
-  closeSheet(whatSheet, whatScrim);
-  // If we got here from the welcome flow's "Learn more" link, restore
-  // the welcome mask so the user lands back on the same card. No-op
-  // when the class isn't set, so legitimate dashboard visits are
-  // unaffected.
-  document.body.classList.remove('welcome-paused');
-});
+whatScrim.addEventListener('click', () => closeSheet(whatSheet, whatScrim));
 
 /* Sheet close-button delegate: every sheet's <button class="sheet-close"
  * data-sheet="..."> routes through here so we don't have to wire a
