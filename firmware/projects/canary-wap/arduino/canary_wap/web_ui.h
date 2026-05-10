@@ -2350,9 +2350,16 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
     async function requestFromDevice() {
       const s = document.getElementById('authStatus');
-      s.textContent = 'Waiting... Press BOOT button on device now.';
       s.className = 'auth-status info';
-      for (let i = 0; i < 30; i++) {
+      // Polling budget: 30 ticks × 2 s = 60 s. The device's gate TTL
+      // (advertised in the 403 body's gate_ttl_seconds) is much shorter
+      // than this budget, so a press anywhere in the 60 s window lands.
+      const POLL_INTERVAL_MS = 2000;
+      const POLL_TICKS = 30;
+      let gateTtl = 30;
+      let gotFirst403 = false;
+      s.textContent = 'Tap BOOT on the device. We listen for 60 seconds.';
+      for (let i = 0; i < POLL_TICKS; i++) {
         try {
           const resp = await fetch(API_BASE + '/api/provisioning-receipt');
           if (resp.status === 200) {
@@ -2362,10 +2369,24 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
             startDashboard();
             return;
           }
-        } catch (e) { /* network error, keep trying */ }
-        await new Promise(r => setTimeout(r, 2000));
+          if (resp.status === 403 && !gotFirst403) {
+            gotFirst403 = true;
+            try {
+              const body = await resp.json();
+              if (body && Number.isFinite(body.gate_ttl_seconds)) {
+                gateTtl = body.gate_ttl_seconds;
+              }
+            } catch (e) { /* malformed body — keep the fallback */ }
+          }
+        } catch (e) { /* network blip, keep trying */ }
+        const remaining = (POLL_TICKS - i - 1) * (POLL_INTERVAL_MS / 1000);
+        if (remaining > 0) {
+          s.textContent = 'Listening for BOOT tap — ' + remaining + 's left ' +
+                          '(device holds the press for ' + gateTtl + 's).';
+        }
+        await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
       }
-      s.textContent = 'Timeout. Press BOOT button and try again.';
+      s.textContent = "Didn't see a tap. Press BOOT and click above to try again.";
       s.className = 'auth-status error';
     }
 
