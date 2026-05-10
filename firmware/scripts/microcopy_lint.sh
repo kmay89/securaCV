@@ -110,11 +110,22 @@ USER_FACING=$(awk '
   in_body                             { print }
 ' "$DASH_HTML")
 
-# Grep banned terms (whole-word, case-insensitive). The terms file is
-# read once into a single -wEf invocation. `|| true` because grep -v
-# returns 1 on no matches; we want the inverse.
+# Grep banned terms (whole-word, case-insensitive, fixed-string).
+#   -F (fixed strings) avoids treating term metacharacters like `[` as
+#       regex (PR #408 review r3214719890). Without -F, a future term
+#       like "[object Object]" would be parsed as a character class
+#       and silently match almost anything.
+#   `^[[:space:]]*$` filters blank-or-whitespace lines so a stray
+#       indented blank doesn't pass through to grep as an empty
+#       pattern (which would match every input line).
+#   sed strips leading + trailing whitespace so a contributor who
+#       indents an entry can't break -w word-boundary matching.
+#   `|| true` because grep returns 1 on no matches; we want the
+#       inverse.
 HITS=$(echo "$USER_FACING" \
-       | grep -wiEf <(grep -v '^#' "$BANNED_TERMS" | grep -v '^$' | sed 's/[[:space:]]*$//') \
+       | grep -wiFf <(grep -v '^#' "$BANNED_TERMS" \
+                      | grep -v '^[[:space:]]*$' \
+                      | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//') \
        || true)
 
 if [ -n "$HITS" ]; then
@@ -157,7 +168,9 @@ ADMIN_BODY=$(awk '
 ' "$ADMIN_HTML")
 
 ADMIN_HITS=$(echo "$ADMIN_BODY" \
-       | grep -wiEf <(grep -v '^#' "$BANNED_TERMS_ADMIN" | grep -v '^$' | sed 's/[[:space:]]*$//') \
+       | grep -wiFf <(grep -v '^#' "$BANNED_TERMS_ADMIN" \
+                      | grep -v '^[[:space:]]*$' \
+                      | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//') \
        || true)
 
 if [ -n "$ADMIN_HITS" ]; then
