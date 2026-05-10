@@ -54,31 +54,56 @@ constexpr const char* DIR_PATH = "/EVENTS";
  * temp file is invisible to the dashboard and to MQTT backfill. */
 constexpr const char* TMP_PATH = "/EVENTS/today.ndjson.tmp";
 
+/* Forward decl so sd_path_ready can run reconcile_truncate_remnants
+ * lazily on the first ready check after a mount transition (PR #400
+ * review r3214219273 — init() runs before the user inserts the SD
+ * card, so the cleanup needs to run on the actual first-ready edge). */
+void reconcile_truncate_remnants();
+
 /* True when an SD card is mounted AND the directory exists. We
  * re-check on every call rather than caching because SD can
  * hot-unplug; the cost is one cardType() lookup + one exists() per
  * event, negligible vs the write. SD.cardType() returns CARD_NONE
  * when nothing is mounted, so it doubles as the readiness check
- * without us needing to peek at hardware_state's globals. */
+ * without us needing to peek at hardware_state's globals.
+ *
+ * The s_reconciled latch is the hot-plug recovery hook: it flips
+ * back to false whenever we see CARD_NONE, then on the next ready
+ * transition we run reconcile_truncate_remnants once before
+ * returning true. So a card inserted long after boot still gets a
+ * cleanup pass before any append() can call head_truncate. */
 bool sd_path_ready() {
-  if (SD.cardType() == CARD_NONE) return false;
+  static bool s_reconciled = false;
+  if (SD.cardType() == CARD_NONE) {
+    s_reconciled = false;
+    return false;
+  }
   if (!SD.exists(DIR_PATH)) {
     if (!SD.mkdir(DIR_PATH)) return false;
+  }
+  if (!s_reconciled) {
+    reconcile_truncate_remnants();
+    s_reconciled = true;
   }
   return true;
 }
 
 /* Drop the oldest ~25% of the file when it crosses MAX_BYTES so the
- * caller's append still succeeds. Hardened against OOM by capping the
- * RAM buffer below the smaller of (free heap / 4, TRUNCATE_BUF_MAX);
- * if the survivors don't fit we drop the file entirely rather than
- * crash on an unbounded malloc (PR #395 review r3213834626).
+ * caller's append still succeeds.
+ *
+ * Streaming copy through a fixed STREAM_BUF_SZ buffer so retention
+ * scales with MAX_BYTES rather than free heap (PR #400 review
+ * r3214219271). The previous cut allocated the entire survivor span
+ * in RAM and capped at 32 KB — which on a 256 KB log meant truncation
+ * routinely fell back to "drop the file entirely" and forfeited up
+ * to 192 KB of legitimate history. The streaming version reads and
+ * writes one buffer at a time, so even a 1 MB log truncates with the
+ * same ~1 KB stack-resident buffer.
  *
  * Crash safety: PR #400 made this atomic by writing survivors to a
  * sibling .tmp file, then committing via SD.remove(LOG_PATH) +
  * SD.rename(TMP→LOG). A power cut leaves three possible states, all
- * of which init()'s reconcile_truncate_remnants() resolves on next
- * boot:
+ * of which reconcile_truncate_remnants() resolves on next mount:
  *
  *   1. Crash during the .tmp write — LOG_PATH untouched with the
  *      original (still-oversized) contents; TMP_PATH partial. The
@@ -99,7 +124,7 @@ bool sd_path_ready() {
  * write, vs. the prior "duration of the entire rewrite loop" (tens to
  * hundreds of ms with a busy 24KB log). Dwell-time of an in-progress
  * truncate inside the kill-by-watchdog window is negligible. */
-constexpr size_t TRUNCATE_BUF_MAX = 32u * 1024u;
+constexpr size_t STREAM_BUF_SZ = 1024u;
 
 bool head_truncate_if_oversized() {
   File f = SD.open(LOG_PATH, FILE_READ);
@@ -114,52 +139,42 @@ bool head_truncate_if_oversized() {
   while (f.available()) {
     if (f.read() == '\n') break;
   }
-  /* Heap-aware cap: if we can't fit the survivors AND keep a comfort
-   * margin for httpd / mqtt / wifi tasks, blow the file away rather
-   * than risk an OOM mid-write. ESP.getFreeHeap() reads the SDK's
-   * unused heap; quartering it leaves room for concurrent network
-   * activity that may need its own allocations. */
-  const size_t remaining = sz - f.position();
-  const size_t heap_budget = ESP.getFreeHeap() / 4;
-  const size_t safe_cap   = TRUNCATE_BUF_MAX < heap_budget
-                              ? TRUNCATE_BUF_MAX : heap_budget;
-  if (remaining + 1 > safe_cap) {
-    f.close();
-    if (SD.remove(LOG_PATH)) {
-      Serial.printf(
-        "[EVT-LOG] log truncate skipped (would alloc %u, cap %u) — file dropped\n",
-        (unsigned)(remaining + 1), (unsigned)safe_cap);
-      return true;
+
+  /* Step 1: stream survivors to TMP_PATH a buffer at a time. The 1 KB
+   * buffer lives on the stack so retention never depends on free heap
+   * (PR #400 review r3214219271). FILE_WRITE truncates so a leftover
+   * .tmp from a previous crash is overwritten. If any write returns
+   * short we abort and clean the partial .tmp — the next append
+   * retries truncation from scratch, and a reboot triggers reconcile
+   * which would also clean a stranded .tmp. */
+  File w = SD.open(TMP_PATH, FILE_WRITE);
+  if (!w) { f.close(); return false; }
+
+  uint8_t stream_buf[STREAM_BUF_SZ];
+  bool stream_ok = true;
+  while (f.available()) {
+    const int n = f.read(stream_buf, sizeof(stream_buf));
+    if (n <= 0) break;  /* EOF or read error; treat as end-of-survivors */
+    if (w.write(stream_buf, (size_t)n) != (size_t)n) {
+      stream_ok = false;
+      break;
     }
+  }
+  f.close();
+  w.close();
+  if (!stream_ok) {
+    SD.remove(TMP_PATH);
     return false;
   }
-
-  char* buf = (char*)malloc(remaining + 1);
-  if (!buf) { f.close(); return false; }
-  const size_t got = f.read((uint8_t*)buf, remaining);
-  f.close();
-  buf[got] = '\0';
-
-  /* Step 1: stage the survivors at TMP_PATH. FILE_WRITE truncates so
-   * a leftover .tmp from a previous crash is overwritten. If this
-   * step fails we leave LOG_PATH untouched — the next append retries
-   * truncation from scratch, and init() cleans the partial .tmp on
-   * the next boot. */
-  File w = SD.open(TMP_PATH, FILE_WRITE);
-  if (!w) { free(buf); return false; }
-  const size_t wrote = w.write((const uint8_t*)buf, got);
-  w.close();
-  free(buf);
-  if (wrote != got) { SD.remove(TMP_PATH); return false; }
 
   /* Step 2: commit. The remove + rename pair is the irreducible non-
    * atomic window. Arduino-ESP32's SD lib's rename() fails when the
    * destination exists, hence the explicit remove first. If rename
-   * fails after the remove succeeded, init() will see TMP_PATH alone
-   * and promote it on the next boot. */
+   * fails after the remove succeeded, reconcile_truncate_remnants
+   * will see TMP_PATH alone on the next mount and promote it. */
   SD.remove(LOG_PATH);
   if (!SD.rename(TMP_PATH, LOG_PATH)) {
-    Serial.println("[EVT-LOG] truncate rename failed — init will recover on boot");
+    Serial.println("[EVT-LOG] truncate rename failed — reconcile will recover on next mount");
     return false;
   }
   return true;
@@ -315,14 +330,12 @@ bool init() {
    * PR #397 fixes the underlying issue by NVS-persisting
    * g_next_event_id (see apply_event_id_floor_from_nvs in
    * csi_integration.cpp), so the log can now survive reboots and
-   * cross-reboot MQTT backfill works correctly. */
-
-  /* PR #400: resolve any leftover state from an interrupted
-   * head_truncate_if_oversized rewrite. The reconcile call is cheap
-   * (two SD.exists() probes when nothing's broken) and safely runs
-   * before the first append, so a freshly-mounted SD always presents
-   * a clean LOG_PATH to the appender. */
-  reconcile_truncate_remnants();
+   * cross-reboot MQTT backfill works correctly.
+   *
+   * Atomic-truncate cleanup (PR #400) lives in sd_path_ready() so
+   * it runs on every fresh mount, not just at boot — a card hot-
+   * inserted after init still gets a reconcile pass before its
+   * first append. */
   return true;
 }
 
