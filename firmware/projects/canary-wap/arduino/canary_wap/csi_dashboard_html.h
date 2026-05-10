@@ -505,6 +505,15 @@ static const char CSI_DASHBOARD_HTML[] PROGMEM = R"DASHBOARD(<!doctype html>
     border-bottom: 1px solid var(--hairline);
   }
   .sheet-head h2 { margin: 0; font-size: 18px; letter-spacing: -0.01em; }
+  /* Close button is the keyboard-accessible counterpart to the
+     scrim's click-out — needed for screen-reader / keyboard users
+     who can't tap outside. Sized to mirror .iconbtn so it doesn't
+     visually fight the head layout. */
+  .sheet-close {
+    width: 32px; height: 32px; padding: 0;
+    font-size: 22px; line-height: 1;
+    margin-left: 8px;
+  }
   .privacy-pill {
     font-size: 11px; color: var(--fg-mute);
     background: var(--bg-veil);
@@ -788,32 +797,47 @@ static const char CSI_DASHBOARD_HTML[] PROGMEM = R"DASHBOARD(<!doctype html>
 <main>
   <section class="hero">
     <div class="plate">
-      <h1 class="state" id="state">Sensing…</h1>
+      <!-- aria-live on the headline so screen readers announce state
+           transitions ("Empty", "Active", …) without the user having
+           to refocus. polite (not assertive) because the canary's
+           state changes shouldn't interrupt; atomic so the whole
+           string is read on each change rather than diff'd. -->
+      <h1 class="state" id="state" aria-live="polite" aria-atomic="true">Sensing…</h1>
       <p class="sub"   id="sub">Just getting a feel for the room.</p>
       <p class="meta"  id="meta">tentative</p>
       <button class="help" id="helpBtn" aria-label="What can the sensor see?" data-tip="helpBtn">?</button>
     </div>
-    <div class="orb-wrap" id="orbWrap" data-tip="orb">
+    <!-- The orb is a pure visual mirror of the headline's state.
+         aria-hidden keeps it out of the AT tree so screen-reader
+         users hear "Empty" once instead of "Empty … decorative
+         circle". -->
+    <div class="orb-wrap" id="orbWrap" data-tip="orb" aria-hidden="true">
       <div class="orb"        id="orb"></div>
       <div class="orb-shell"  id="orbShell"></div>
       <div class="ripple"     id="ripple"></div>
     </div>
   </section>
 
-  <section class="ribbon-card">
+  <section class="ribbon-card" aria-label="Last 24 hours activity">
     <div class="ribbon-head">
       <span>Last 24 hours</span>
-      <span id="ribbonReadout">—</span>
+      <span id="ribbonReadout" aria-live="polite">—</span>
     </div>
-    <canvas id="ribbon" width="800" height="56"></canvas>
+    <!-- Canvas is a visualization; the readout span carries the
+         spoken summary. Hide the canvas itself from AT. -->
+    <canvas id="ribbon" width="800" height="56" aria-hidden="true"></canvas>
   </section>
 
   <section class="dock">
-    <canvas id="waveform" width="800" height="96"></canvas>
+    <canvas id="waveform" width="800" height="96" aria-hidden="true"></canvas>
     <div class="waveform-legend">
-      <span><span class="legend-dot motion"></span>motion</span>
-      <span><span class="legend-dot breathing"></span>breathing</span>
-      <span style="margin-left:auto" id="frameCount">—</span>
+      <span><span class="legend-dot motion" aria-hidden="true"></span>motion</span>
+      <span><span class="legend-dot breathing" aria-hidden="true"></span>breathing</span>
+      <!-- frameCount doubles as the disconnect-message surface
+           (PR #399). aria-live so the diagnostic ("Session ended.
+           Tap to pair…", "No reply from the canary…") reaches
+           screen-reader users without a manual refocus. -->
+      <span style="margin-left:auto" id="frameCount" aria-live="polite" role="status">—</span>
     </div>
 
     <div class="controls">
@@ -851,7 +875,7 @@ static const char CSI_DASHBOARD_HTML[] PROGMEM = R"DASHBOARD(<!doctype html>
           </label>
           <label style="grid-column:1/-1">
             <span>Live numbers <span data-tip="rawVector">ⓘ</span></span>
-            <canvas id="rawHeatmap" width="800" height="32" style="width:100%;height:32px;border-radius:6px;display:block;background:rgba(0,0,0,0.04)"></canvas>
+            <canvas id="rawHeatmap" width="800" height="32" style="width:100%;height:32px;border-radius:6px;display:block;background:rgba(0,0,0,0.04)" aria-hidden="true"></canvas>
           </label>
         </div>
       </details>
@@ -859,13 +883,18 @@ static const char CSI_DASHBOARD_HTML[] PROGMEM = R"DASHBOARD(<!doctype html>
   </section>
 </main>
 
-<!-- Today receipts sheet -->
-<div class="sheet-scrim" id="todayScrim"></div>
-<aside class="sheet" id="todaySheet" aria-labelledby="todayTitle">
-  <div class="sheet-grab"></div>
+<!-- Today receipts sheet.
+     role/aria-modal upgrade the <aside> to a real modal dialog so
+     screen readers announce it as such; openSheet (in JS) handles
+     focus capture + restore + Tab cycling + ESC. The scrim is purely
+     visual click-out; aria-hidden keeps it out of the AT tree. -->
+<div class="sheet-scrim" id="todayScrim" aria-hidden="true"></div>
+<aside class="sheet" id="todaySheet" role="dialog" aria-modal="true" aria-labelledby="todayTitle">
+  <div class="sheet-grab" aria-hidden="true"></div>
   <div class="sheet-head">
     <h2 id="todayTitle">Today</h2>
     <span class="privacy-pill" id="privacyPill">Today: 0 bytes left the device</span>
+    <button class="iconbtn sheet-close" data-sheet="today" aria-label="Close Today">×</button>
   </div>
   <div class="sheet-body" id="todayBody">
     <p style="color:var(--fg-mute)">Loading…</p>
@@ -873,11 +902,12 @@ static const char CSI_DASHBOARD_HTML[] PROGMEM = R"DASHBOARD(<!doctype html>
 </aside>
 
 <!-- "What it can / can't see" sheet -->
-<div class="sheet-scrim" id="whatScrim"></div>
-<aside class="sheet" id="whatSheet" aria-labelledby="whatTitle">
-  <div class="sheet-grab"></div>
+<div class="sheet-scrim" id="whatScrim" aria-hidden="true"></div>
+<aside class="sheet" id="whatSheet" role="dialog" aria-modal="true" aria-labelledby="whatTitle">
+  <div class="sheet-grab" aria-hidden="true"></div>
   <div class="sheet-head">
     <h2 id="whatTitle">What the sensor can and can't see</h2>
+    <button class="iconbtn sheet-close" data-sheet="what" aria-label="Close What the sensor can and can't see">×</button>
   </div>
   <div class="sheet-body" id="whatBody"></div>
 </aside>
@@ -1572,15 +1602,67 @@ async function fetchPrivacyBudget() {
 /* ────────────────────────────────────────────────────────────────────────
  *  Sheets
  * ──────────────────────────────────────────────────────────────────────── */
+/* Sheet open/close with the focus-management contract a real modal
+ * dialog needs (audit: a11y pass).
+ *
+ *   - openSheet  saves the previously-focused element so closeSheet
+ *                can restore it — without this, keyboard users land
+ *                back at the top of the page after dismiss.
+ *   - openSheet  moves focus to the sheet's first focusable child
+ *                (close button, by markup order) so screen readers
+ *                announce the dialog and so a Tab keeps the user
+ *                inside the modal.
+ *   - closeSheet returns focus to the trigger, which is the standard
+ *                behavior expected by most assistive tech.
+ *
+ * The Tab-cycle trap and the global ESC handler live in the
+ * keydown listener below — they're shared across all sheets so a
+ * future "settings" sheet (PR audit follow-up) gets them for free. */
+let s_returnFocusEl = null;
+function focusableChildren(root) {
+  /* getClientRects().length > 0 instead of offsetParent !== null
+   * because the sheets are position:fixed — and Firefox returns null
+   * for descendants of fixed-positioned ancestors (PR #401 review
+   * r3214242791). getClientRects holds for any element that has
+   * actual layout boxes, regardless of its containing block's
+   * positioning. summary/select/textarea included for completeness
+   * so future markup changes don't silently lose focus targets. */
+  return Array.from(root.querySelectorAll(
+    'button, [href], input, select, textarea, summary, [tabindex]:not([tabindex="-1"])'
+  )).filter(el => !el.hasAttribute('disabled') && el.getClientRects().length > 0);
+}
 function openSheet(sheet, scrim) {
+  s_returnFocusEl = document.activeElement;
   scrim.classList.add('open');
   sheet.classList.add('open');
   document.body.style.overflow = 'hidden';
+  /* Defer the focus move until the sheet's open transition has had
+   * one frame to apply, so the focus ring isn't visibly thrown
+   * before the sheet's slide-in animation. */
+  requestAnimationFrame(() => {
+    const focusables = focusableChildren(sheet);
+    if (focusables.length) focusables[0].focus();
+  });
 }
 function closeSheet(sheet, scrim) {
   scrim.classList.remove('open');
   sheet.classList.remove('open');
   document.body.style.overflow = '';
+  if (s_returnFocusEl && typeof s_returnFocusEl.focus === 'function') {
+    s_returnFocusEl.focus();
+  }
+  s_returnFocusEl = null;
+  /* Onboarding's "Learn more" path opens the What sheet behind a
+   * blurred welcome mask (body.welcome-paused). Clearing the class
+   * here means every dismiss path — scrim click, close button, ESC,
+   * future swipe-down — restores the welcome card instead of leaving
+   * the user stranded with a blurred background and no card to
+   * advance through. No-op when the class isn't set, so legitimate
+   * dashboard sessions are unaffected (PR #401 reviews r3214241863
+   * and r3214242793). */
+  if (sheet.id === 'whatSheet') {
+    document.body.classList.remove('welcome-paused');
+  }
 }
 
 const todaySheet = document.getElementById('todaySheet');
@@ -1605,13 +1687,53 @@ buildWhatBody();
 document.getElementById('helpBtn').addEventListener('click', () => {
   openSheet(whatSheet, whatScrim);
 });
-whatScrim.addEventListener('click', () => {
-  closeSheet(whatSheet, whatScrim);
-  // If we got here from the welcome flow's "Learn more" link, restore
-  // the welcome mask so the user lands back on the same card. No-op
-  // when the class isn't set, so legitimate dashboard visits are
-  // unaffected.
-  document.body.classList.remove('welcome-paused');
+whatScrim.addEventListener('click', () => closeSheet(whatSheet, whatScrim));
+
+/* Sheet close-button delegate: every sheet's <button class="sheet-close"
+ * data-sheet="..."> routes through here so we don't have to wire a
+ * listener per sheet. The data-sheet attribute keys into the sheet/
+ * scrim pair; new sheets get keyboard close for free. */
+document.addEventListener('click', e => {
+  const btn = e.target.closest('.sheet-close');
+  if (!btn) return;
+  const key = btn.dataset.sheet;
+  if (key === 'today')      closeSheet(todaySheet, todayScrim);
+  else if (key === 'what')  closeSheet(whatSheet,  whatScrim);
+});
+
+/* Global keyboard contract for the modal sheets (audit: a11y pass).
+ *
+ *   - ESC closes the topmost open sheet — the conventional "get me
+ *     out of here" key for any modal dialog.
+ *   - Tab / Shift+Tab inside an open sheet cycles focus among the
+ *     sheet's own focusables, so keyboard users can't accidentally
+ *     tab into the now-hidden background controls. */
+document.addEventListener('keydown', e => {
+  const openSheetEl = document.querySelector('.sheet.open');
+  if (!openSheetEl) return;
+
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    if (openSheetEl === todaySheet) closeSheet(todaySheet, todayScrim);
+    else if (openSheetEl === whatSheet) closeSheet(whatSheet, whatScrim);
+    return;
+  }
+
+  if (e.key === 'Tab') {
+    const focusables = focusableChildren(openSheetEl);
+    if (focusables.length === 0) return;
+    const first = focusables[0];
+    const last  = focusables[focusables.length - 1];
+    /* Wrap focus at the boundaries so Tab stays trapped inside the
+     * dialog. Standard a11y trap pattern. */
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  }
 });
 
 document.getElementById('settingsBtn').addEventListener('click', () => {
