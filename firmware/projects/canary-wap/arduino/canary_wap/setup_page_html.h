@@ -81,14 +81,14 @@ h1{margin:0 0 8px 0;font-size:22px;font-weight:600;letter-spacing:-0.02em}
 <main>
 <h1>Set up your Canary</h1>
 <p class="lead">Scan the code with your phone's camera to connect your Canary to your home WiFi. No app to install. Nothing leaves your home.</p>
-<div class="qr-card">
+<div class="qr-card" role="img" aria-label="QR code — scan with your phone camera to start Canary setup. If you can't scan, use the manual link below.">
 )HTML";
 
 const char SETUP_PAGE_HTML_TAIL_FMT[] PROGMEM = R"HTML(</div>
-<ol class="steps">
-  <li><b>1</b><span>Point your phone's camera at the code above.</span></li>
-  <li><b>2</b><span>Tap the link your phone shows. The setup page opens.</span></li>
-  <li><b>3</b><span>Pick your home WiFi and type the password.</span></li>
+<ol class="steps" role="list">
+  <li><b aria-hidden="true">1</b><span>Point your phone's camera at the code above.</span></li>
+  <li><b aria-hidden="true">2</b><span>Tap the link your phone shows. The setup page opens.</span></li>
+  <li><b aria-hidden="true">3</b><span>Pick your home WiFi and type the password.</span></li>
 </ol>
 <p class="fallback">Camera not working? <a href="%s">Tap here to set up by hand.</a></p>
 <p class="foot"><strong>SecuraCV Canary.</strong> Privacy-first sensing. Local-only by default.</p>
