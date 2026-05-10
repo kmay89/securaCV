@@ -93,7 +93,7 @@ const char SETUP_PAGE_HTML_TAIL_FMT[] PROGMEM = R"HTML(</div>
 </ol>
 <p class="fallback">Camera not working? <a href="%s">Tap here to set up by hand.</a></p>
 <p class="note">Stay connected to this WiFi network until setup is done.</p>
-<p class="foot"><strong>SecuraCV Canary.</strong> Privacy-first sensing. Local-only by default.</p>
+<p class="foot"><strong>SecuraCV Canary.</strong> Local-only by default.</p>
 </main>
 </body>
 </html>
