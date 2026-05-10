@@ -241,7 +241,7 @@ footer a{color:var(--accent);text-decoration:none}
   </div>
 
   <div class="wiz-step active" id="wiz-step-1">
-    <h2 class="wiz-h">We see your Canary</h2>
+    <h2 class="wiz-h" tabindex="-1">We see your Canary</h2>
     <p class="wiz-sub">It's awake and waiting. We'll point it at your home WiFi so it stays online when you leave the room.</p>
     <ul class="intro" style="margin:0 0 1rem;padding-left:1.1rem;line-height:1.65">
       <li>Privacy-first: nothing leaves your home unless you ask.</li>
@@ -254,7 +254,7 @@ footer a{color:var(--accent);text-decoration:none}
   </div>
 
   <div class="wiz-step" id="wiz-step-2">
-    <h2 class="wiz-h">Pick your home WiFi</h2>
+    <h2 class="wiz-h" tabindex="-1">Pick your home WiFi</h2>
     <p class="wiz-sub">Your phone won't be on this list — pick the network your Canary should join.</p>
     <div class="wiz-net-list" id="wiz-nets">
       <div class="wiz-spin">Looking for networks…</div>
@@ -266,7 +266,7 @@ footer a{color:var(--accent);text-decoration:none}
   </div>
 
   <div class="wiz-step" id="wiz-step-3">
-    <h2 class="wiz-h">Type the password</h2>
+    <h2 class="wiz-h" tabindex="-1">Type the password</h2>
     <p class="wiz-sub">Joining <strong id="wiz-picked-ssid">…</strong>. Your password is sent only to the Canary.</p>
     <input type="password" class="wiz-input" id="wiz-pw" placeholder="Network password" autocomplete="new-password" spellcheck="false">
     <label style="display:flex;gap:.5rem;align-items:center;margin-top:.5rem;color:var(--muted);font-size:.8rem">
@@ -281,13 +281,13 @@ footer a{color:var(--accent);text-decoration:none}
 
   <div class="wiz-step" id="wiz-step-4">
     <div id="wiz-step-4-progress">
-      <h2 class="wiz-h">Connecting…</h2>
+      <h2 class="wiz-h" tabindex="-1">Connecting…</h2>
       <p class="wiz-sub" id="wiz-progress-text">Talking to your Canary.</p>
       <div class="wiz-spin" id="wiz-spin">Waiting for your home WiFi.</div>
     </div>
     <div id="wiz-step-4-success" class="hidden">
       <div class="wiz-tick">✓</div>
-      <h2 class="wiz-h">Your Canary is online.</h2>
+      <h2 class="wiz-h" tabindex="-1">Your Canary is online.</h2>
       <p class="wiz-sub">Joined <strong id="wiz-success-ssid">your home WiFi</strong>. Switch your phone back to the same network, then tap below to start using it.</p>
       <div class="wiz-link-row">
         <a id="wiz-link-mdns" href="http://canary.local/">Open canary.local</a>
@@ -296,7 +296,7 @@ footer a{color:var(--accent);text-decoration:none}
     </div>
     <div id="wiz-step-4-failure" class="hidden">
       <div class="wiz-cross">!</div>
-      <h2 class="wiz-h">Couldn't connect</h2>
+      <h2 class="wiz-h" tabindex="-1">Couldn't connect</h2>
       <p class="wiz-sub" id="wiz-fail-reason">Check the password and try again.</p>
       <div class="wiz-btnrow">
         <button class="btn btn-secondary" id="wiz-fail-back">Try again</button>
@@ -489,6 +489,32 @@ footer a{color:var(--accent);text-decoration:none}
       if (i < n) dot.classList.add('done');
       else if (i === n) dot.classList.add('now');
     }
+    /* Move focus to the active step's heading on the next frame so
+     * AT announces the new card's title and keyboard users land on
+     * the new content. The .wiz-h headings each have tabindex="-1"
+     * so .focus() works on them; AT reads the heading's text + H2
+     * level via semantics. announce() pushes the same text through
+     * the off-screen live region as a belt-and-suspenders for AT
+     * setups that don't auto-announce focus moves. */
+    requestAnimationFrame(() => focusActiveStepHeading());
+  }
+
+  /* Find and focus the first visible .wiz-h inside the active step.
+   * The visibility check matters for step 4, which contains three
+   * sub-views (progress / success / failure) that each carry their
+   * own heading — we want the user to land on the one currently
+   * shown, not the first one in DOM order. getClientRects().length
+   * > 0 is the visibility test (consistent with PR #401's pattern). */
+  function focusActiveStepHeading() {
+    const active = card.querySelector('.wiz-step.active');
+    if (!active) return;
+    for (const h of active.querySelectorAll('.wiz-h')) {
+      if (h.getClientRects().length > 0) {
+        h.focus();
+        announce(h.textContent);
+        return;
+      }
+    }
   }
 
   function setErr(stepN, msg) {
@@ -633,11 +659,28 @@ footer a{color:var(--accent);text-decoration:none}
   });
 
   // ── Card 4: progress + success / failure ───────────────────────────────
+  // Each sub-view reveal calls focusActiveStepHeading() after toggling
+  // the .hidden classes so AT lands on the now-visible heading
+  // ("Connecting…" → "Your Canary is online." or "Couldn't connect"),
+  // not the stale one that was previously focused.
+  //
+  // showProgress() is also called on every poll tick (~1.5s) by
+  // pollWifiUntilConnected() to refresh the status text ("Talking
+  // to your Canary." → "Joining your home WiFi." → "Almost there…")
+  // — refocusing on every tick would steal focus and re-announce
+  // the heading repeatedly. So gate the focus call on a real
+  // hidden→visible transition of the progress sub-view. This still
+  // covers the retry path after a failure (showFailure hides the
+  // progress sub-view; re-entering via the join click handler
+  // re-shows it) without firing during steady-state polling.
   function showProgress(msg) {
-    $w('wiz-step-4-progress').classList.remove('hidden');
+    const prog = $w('wiz-step-4-progress');
+    const wasHidden = prog.classList.contains('hidden');
+    prog.classList.remove('hidden');
     $w('wiz-step-4-success').classList.add('hidden');
     $w('wiz-step-4-failure').classList.add('hidden');
     if (msg) $w('wiz-progress-text').textContent = msg;
+    if (wasHidden) requestAnimationFrame(() => focusActiveStepHeading());
   }
   function showSuccess(staIp) {
     $w('wiz-step-4-progress').classList.add('hidden');
@@ -655,6 +698,7 @@ footer a{color:var(--accent);text-decoration:none}
       dot.classList.remove('now');
       dot.classList.add('done');
     });
+    requestAnimationFrame(() => focusActiveStepHeading());
   }
   function showFailure(reason) {
     $w('wiz-step-4-progress').classList.add('hidden');
@@ -663,6 +707,7 @@ footer a{color:var(--accent);text-decoration:none}
     $w('wiz-fail-reason').textContent = reason
       ? ('We couldn’t connect: ' + reason)
       : 'Check the password and try again.';
+    requestAnimationFrame(() => focusActiveStepHeading());
   }
   $w('wiz-fail-back').addEventListener('click', () => setStep(3));
 
