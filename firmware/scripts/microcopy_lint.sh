@@ -63,25 +63,30 @@ echo "── Plain-words audit ──"
 #   - The <body> ... <script> region (HTML body, no JS)
 # Code/comments outside these legitimately use technical terms.
 #
-# The body/script section markers are line-anchored (^<body>$ and
-# ^<script>$) on purpose. The previous unanchored patterns (/<body>/
-# and /<script>/) matched ANY line containing the literal token, so
-# a JS comment like "...disconnect class on <body> dims the orb..."
-# inside the COPY block flipped in_body=1 long after the real
-# <script> open tag had already passed — leaving the awk in
-# "scan everything until EOF" mode and tripping the banned-term
-# grep on legitimate JS code (csi/preset/etc.). Three contributors
-# (PR #399, PR #401, PR #402) hit this in the same session before
-# the gotcha became obvious. Anchoring to the actual standalone
-# tags eliminates the trap because the dashboard's <body> and
-# <script> lines start at column 1 with no surrounding text.
+# The body/script section markers are line-anchored on purpose. The
+# previous unanchored patterns (/<body>/ and /<script>/) matched ANY
+# line containing the literal token, so a JS comment like
+# "...disconnect class on <body> dims the orb..." inside the COPY
+# block flipped in_body=1 long after the real <script> open tag had
+# already passed — leaving the awk in "scan everything until EOF"
+# mode and tripping the banned-term grep on legitimate JS code
+# (csi/preset/etc.). Three contributors (PR #399, PR #401, PR #402)
+# hit this in the same session before the gotcha became obvious.
+#
+# The patterns are deliberately broader than ^<body>$ — they accept:
+#   - attribute variants  : <body class="...">, <script type="module">
+#   - trailing whitespace : <body>␣␣ or <body>\r (CRLF endings)
+# while still requiring the tag to start at column 1. Comments like
+# " * disconnect class on <body> dims the orb." don't match because
+# they begin with whitespace + asterisk, not the literal tag.
+# (PR #404 reviews r3214602477, r3214602482.)
 USER_FACING=$(awk '
-  /^const COPY = \{/ { in_copy=1 }
-  in_copy            { print }
-  in_copy && /^};/   { in_copy=0 }
-  /^<body>$/         { in_body=1; next }
-  /^<script>$/       { in_body=0 }
-  in_body            { print }
+  /^const COPY = \{/                  { in_copy=1 }
+  in_copy                             { print }
+  in_copy && /^};/                    { in_copy=0 }
+  /^<body[^>]*>[[:space:]]*$/         { in_body=1; next }
+  /^<script[^>]*>[[:space:]]*$/       { in_body=0 }
+  in_body                             { print }
 ' "$DASH_HTML")
 
 # Grep banned terms (whole-word, case-insensitive). The terms file is
