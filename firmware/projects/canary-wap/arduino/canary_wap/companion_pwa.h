@@ -1368,8 +1368,25 @@ function setOtaState(state, pct, bytesLeft, errorText){
    * every notification (~per chunk) with the same `state` but evolving
    * pct/bytes, and re-announcing "Sending firmware…" each time would
    * spam the live region. Each phrase below is a full sentence so SR
-   * users get the meaning, not just the state word. */
+   * users get the meaning, not just the state word.
+   *
+   * Failure refinement: onOtaStatus fires setOtaState('failed', …)
+   * twice per BLE-driven failure — first with no errorText (just the
+   * raw status packet's state byte), then again with the synthetic
+   * 'see device serial log' explanation. Without the early-return
+   * below, the FIRST call would announce "Update failed: unknown
+   * error." (because errorText is undefined) and lock lastOtaState
+   * to 'failed', suppressing the SECOND call's correct phrasing.
+   * Skip the empty-errorText 'failed' transition while otaInProgress
+   * is true so the refinement call gets to fire. Once otaInProgress
+   * flips false (after the second call), any subsequent 'failed'
+   * with no errorText (e.g., a leftover stray packet) does announce
+   * the generic phrase — which is correct fallback behavior.
+   *
+   * Caught by chatgpt-codex-connector and gemini-code-assist on
+   * PR #412 review. */
   if (state !== lastOtaState) {
+    if (state === 'failed' && !errorText && otaInProgress) return;
     lastOtaState = state;
     if      (state === 'receiving') announce('Sending firmware to your Canary.');
     else if (state === 'verifying') announce('Verifying firmware signature.');
