@@ -68,6 +68,7 @@ h1{margin:0 0 8px 0;font-size:22px;font-weight:600;letter-spacing:-0.02em}
 }
 .fallback a{color:var(--accent);text-decoration:none;font-weight:500}
 .fallback a:hover{text-decoration:underline}
+.note{margin:14px 0 0;color:var(--muted);font-size:12px;text-align:center}
 .foot{margin-top:18px;padding-top:14px;border-top:1px solid var(--line);color:var(--muted);font-size:11px;text-align:center;line-height:1.5}
 .foot strong{color:var(--fg)}
 @media (prefers-color-scheme: light){
@@ -86,11 +87,12 @@ h1{margin:0 0 8px 0;font-size:22px;font-weight:600;letter-spacing:-0.02em}
 
 const char SETUP_PAGE_HTML_TAIL_FMT[] PROGMEM = R"HTML(</div>
 <ol class="steps" role="list">
-  <li><b aria-hidden="true">1</b><span>Point your phone's camera at the code above.</span></li>
-  <li><b aria-hidden="true">2</b><span>Tap the link your phone shows. The setup page opens.</span></li>
+  <li><b aria-hidden="true">1</b><span>Open your phone's camera and aim at the code.</span></li>
+  <li><b aria-hidden="true">2</b><span>Tap the link your camera shows to open the setup page.</span></li>
   <li><b aria-hidden="true">3</b><span>Pick your home WiFi and type the password.</span></li>
 </ol>
 <p class="fallback">Camera not working? <a href="%s">Tap here to set up by hand.</a></p>
+<p class="note">Stay connected to this WiFi network until setup is done.</p>
 <p class="foot"><strong>SecuraCV Canary.</strong> Privacy-first sensing. Local-only by default.</p>
 </main>
 </body>
