@@ -212,6 +212,14 @@ footer a{color:var(--accent);text-decoration:none}
   .card{border:1px solid CanvasText;background:Canvas}
   .wiz-net-list{border:1px solid CanvasText;background:Canvas}
   .wiz-net-row{border-top-color:CanvasText}
+  /* BLE-flow scan rows added by PRs #411 / #413: under forced-colors,
+   * the var(--surface-2)/var(--accent) selection fill is neutralized,
+   * so mirror the tablist "selected" pattern with Highlight pair so
+   * the chosen network is still visually distinct. .ap-row[disabled]
+   * (hidden-SSID rows) gets GrayText so the dimmed state survives —
+   * opacity:.6 is also dropped under forced-colors. */
+  .ap-row.sel{background:Highlight;color:HighlightText;border-color:Highlight}
+  .ap-row[disabled]{color:GrayText}
   .badge{border:1px solid CanvasText;background:Canvas;color:CanvasText}
   :focus-visible{outline:2px solid CanvasText;outline-offset:2px}
 }
