@@ -41,6 +41,19 @@ namespace {
 
 constexpr const char* DIR_PATH = "/EVENTS";
 
+/* Scratch path for the atomic-rewrite dance head_truncate_if_oversized
+ * uses. Living next to LOG_PATH (same directory) keeps both files on
+ * the same FAT cluster chain so SD.rename() stays a single directory-
+ * entry update — the only operation FAT guarantees as atomic against
+ * power loss. We never read this file from any other context; init()
+ * resolves whatever state a crash mid-rewrite leaves behind.
+ *
+ * Naming: the .tmp suffix is deliberately not part of the
+ * dashboard's served filename (which today only ever lists
+ * today.ndjson via the GET /api/events/today handler), so a stray
+ * temp file is invisible to the dashboard and to MQTT backfill. */
+constexpr const char* TMP_PATH = "/EVENTS/today.ndjson.tmp";
+
 /* True when an SD card is mounted AND the directory exists. We
  * re-check on every call rather than caching because SD can
  * hot-unplug; the cost is one cardType() lookup + one exists() per
@@ -59,16 +72,33 @@ bool sd_path_ready() {
  * caller's append still succeeds. Hardened against OOM by capping the
  * RAM buffer below the smaller of (free heap / 4, TRUNCATE_BUF_MAX);
  * if the survivors don't fit we drop the file entirely rather than
- * crash on an unbounded malloc (PR #395 review r3213834626). A
- * temp-file + rename approach (fully atomic, constant memory) is the
- * proper fix and is tracked as a follow-up — for v1 the cap-and-drop
- * is acceptable because the only victim is the on-disk backfill
- * window, which a busy device naturally rotates through anyway.
+ * crash on an unbounded malloc (PR #395 review r3213834626).
  *
- * Non-atomic on power loss: a hard cut between SD.remove(LOG_PATH)
- * (implicit on FILE_WRITE truncate) and the rewrite loses the file.
- * Same trade-off as init()'s cold-boot truncate — events between
- * "last publish" and "rewrite committed" are lost. */
+ * Crash safety: PR #400 made this atomic by writing survivors to a
+ * sibling .tmp file, then committing via SD.remove(LOG_PATH) +
+ * SD.rename(TMP→LOG). A power cut leaves three possible states, all
+ * of which init()'s reconcile_truncate_remnants() resolves on next
+ * boot:
+ *
+ *   1. Crash during the .tmp write — LOG_PATH untouched with the
+ *      original (still-oversized) contents; TMP_PATH partial. The
+ *      reconcile pass deletes TMP_PATH and the next append re-runs
+ *      this function from scratch.
+ *
+ *   2. Crash between SD.remove(LOG_PATH) and SD.rename — LOG_PATH
+ *      gone but TMP_PATH holds the complete survivors. Reconcile
+ *      promotes TMP_PATH to LOG_PATH so no events are lost.
+ *
+ *   3. Crash inside SD.rename — FAT directory-entry rename is a
+ *      single sector update on Arduino-ESP32's SD library; either
+ *      both names point at the cluster chain or only the source does,
+ *      so the outcome is observably state #2 or a fully-committed
+ *      state. Reconcile handles both.
+ *
+ * The narrow window where data CAN be lost is now ~one FAT sector
+ * write, vs. the prior "duration of the entire rewrite loop" (tens to
+ * hundreds of ms with a busy 24KB log). Dwell-time of an in-progress
+ * truncate inside the kill-by-watchdog window is negligible. */
 constexpr size_t TRUNCATE_BUF_MAX = 32u * 1024u;
 
 bool head_truncate_if_oversized() {
@@ -110,12 +140,61 @@ bool head_truncate_if_oversized() {
   f.close();
   buf[got] = '\0';
 
-  File w = SD.open(LOG_PATH, FILE_WRITE);  /* FILE_WRITE truncates */
+  /* Step 1: stage the survivors at TMP_PATH. FILE_WRITE truncates so
+   * a leftover .tmp from a previous crash is overwritten. If this
+   * step fails we leave LOG_PATH untouched — the next append retries
+   * truncation from scratch, and init() cleans the partial .tmp on
+   * the next boot. */
+  File w = SD.open(TMP_PATH, FILE_WRITE);
   if (!w) { free(buf); return false; }
   const size_t wrote = w.write((const uint8_t*)buf, got);
   w.close();
   free(buf);
-  return wrote == got;
+  if (wrote != got) { SD.remove(TMP_PATH); return false; }
+
+  /* Step 2: commit. The remove + rename pair is the irreducible non-
+   * atomic window. Arduino-ESP32's SD lib's rename() fails when the
+   * destination exists, hence the explicit remove first. If rename
+   * fails after the remove succeeded, init() will see TMP_PATH alone
+   * and promote it on the next boot. */
+  SD.remove(LOG_PATH);
+  if (!SD.rename(TMP_PATH, LOG_PATH)) {
+    Serial.println("[EVT-LOG] truncate rename failed — init will recover on boot");
+    return false;
+  }
+  return true;
+}
+
+/* Boot-time reconciliation for the atomic-rewrite states described in
+ * head_truncate_if_oversized's comment. Runs once from init(). The
+ * three observable shapes after a crash mid-rewrite are:
+ *
+ *   - Both LOG_PATH and TMP_PATH exist  → rewrite was interrupted
+ *     before remove(LOG_PATH); the .tmp is partial / stale, drop it.
+ *   - Only TMP_PATH exists              → rewrite committed
+ *     remove(LOG_PATH) but crashed before rename; promote TMP_PATH.
+ *   - Only LOG_PATH exists (or neither) → no recovery needed.
+ *
+ * No-op when SD isn't mounted; the next mount triggers init() again
+ * via the normal path. */
+void reconcile_truncate_remnants() {
+  const bool has_log = SD.exists(LOG_PATH);
+  const bool has_tmp = SD.exists(TMP_PATH);
+  if (has_log && has_tmp) {
+    if (SD.remove(TMP_PATH)) {
+      Serial.println("[EVT-LOG] cleared stale truncate scratch (.tmp)");
+    }
+  } else if (!has_log && has_tmp) {
+    if (SD.rename(TMP_PATH, LOG_PATH)) {
+      Serial.println("[EVT-LOG] recovered events from interrupted truncate");
+    } else {
+      /* Last-resort cleanup so the .tmp doesn't linger forever and
+       * confuse a future reconcile. We forfeit the survivors only
+       * when rename fails — extremely rare on a healthy card. */
+      SD.remove(TMP_PATH);
+      Serial.println("[EVT-LOG] truncate recovery rename failed — .tmp dropped");
+    }
+  }
 }
 
 /* Marshal one record to the line-delimited JSON shape documented in
@@ -237,6 +316,13 @@ bool init() {
    * g_next_event_id (see apply_event_id_floor_from_nvs in
    * csi_integration.cpp), so the log can now survive reboots and
    * cross-reboot MQTT backfill works correctly. */
+
+  /* PR #400: resolve any leftover state from an interrupted
+   * head_truncate_if_oversized rewrite. The reconcile call is cheap
+   * (two SD.exists() probes when nothing's broken) and safely runs
+   * before the first append, so a freshly-mounted SD always presents
+   * a clean LOG_PATH to the appender. */
+  reconcile_truncate_remnants();
   return true;
 }
 
