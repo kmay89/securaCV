@@ -349,6 +349,15 @@ bool connected() {
  * wire shape. timestamp_ms is the device-monotonic millisecond mark
  * the event committed at — we publish that as the seconds figure HA
  * stores in `timestamp` (live: now; backfill: the event's first_seen_ms).
+ *
+ * is_replay flips the JSON's `replay` field so HA Device Triggers can
+ * filter backfill traffic out of their match expressions and avoid
+ * re-firing automations for old events after a reconnect (PR #398
+ * review r3214114357). Live publishes pass false; publish_event_record
+ * passes true. Either way, sensors and binary_sensors that ignore the
+ * replay flag still see the up-to-date state — only the trigger path
+ * gates on it.
+ *
  * Returns the byte count written, or 0 on overflow. */
 namespace {
 size_t build_event_body(char* body, size_t cap,
@@ -358,7 +367,8 @@ size_t build_event_body(char* body, size_t cap,
                         csi_privacy_class_t       privacy,
                         const csi_event_values_t* values,
                         uint32_t                  timestamp_ms,
-                        uint16_t                  bundled_count) {
+                        uint16_t                  bundled_count,
+                        bool                      is_replay) {
   if (!values || !body || cap < 32) return 0;
   const char* cat_s = (category == CSI_CATEGORY_AMBIENT) ? "ambient"
                     : (category == CSI_CATEGORY_ANOMALY) ? "anomaly" : "event";
@@ -381,7 +391,8 @@ size_t build_event_body(char* body, size_t cap,
       "\"breathing\":%u,"
       "\"bpm\":%u,"
       "\"duration_sec\":%u,"
-      "\"bundled\":%u"
+      "\"bundled\":%u,"
+      "\"replay\":%s"
     "}",
     values->state_name[0] ? values->state_name : "unknown",
     (unsigned long)ts_sec,
@@ -394,7 +405,8 @@ size_t build_event_body(char* body, size_t cap,
     (unsigned)values->breathing_score,
     (unsigned)values->breathing_rate_bpm,
     (unsigned)values->duration_sec,
-    (unsigned)bundled_count);
+    (unsigned)bundled_count,
+    is_replay ? "true" : "false");
   if (n <= 0 || (size_t)n >= cap) return 0;
   return (size_t)n;
 }
@@ -432,7 +444,8 @@ void publish_event(uint32_t                  event_id,
   const size_t n = build_event_body(body, sizeof(body),
       module_id, type_name, category, privacy, values,
       /*timestamp_ms=*/(uint32_t)millis(),
-      /*bundled_count=*/1);
+      /*bundled_count=*/1,
+      /*is_replay=*/false);
   if (n == 0) return;
   publish_and_advance(topic, body, n, /*retain=*/false, event_id);
 }
@@ -444,10 +457,14 @@ bool publish_event_record(const csi_event_record_t* rec) {
   char body[512];
   /* For backfill, anchor the timestamp at the event's first_seen_ms
    * so HA's history places it at the right moment instead of "now".
-   * Bundled count comes straight from the on-disk record. */
+   * Bundled count comes straight from the on-disk record. is_replay
+   * marks the payload so HA Device Triggers can filter it out and
+   * avoid re-firing automations for old events (PR #398 review
+   * r3214114357). */
   const size_t n = build_event_body(body, sizeof(body),
       rec->module_id, rec->type_name, rec->category, rec->privacy, &rec->values,
-      rec->first_seen_ms, rec->bundled_count);
+      rec->first_seen_ms, rec->bundled_count,
+      /*is_replay=*/true);
   if (n == 0) return false;
   return publish_and_advance(topic, body, n, /*retain=*/false, rec->event_id);
 }
@@ -693,12 +710,6 @@ bool publish_one_discovery(const DiscoveryEntity& e) {
  * MQTT_EVENT_CONNECTED republishes the full set (retained, so HA
  * sees the latest version regardless), so an interrupted run is
  * self-healing. (PR #396 review r3213930620.) */
-/* Forward decls so the publishers can call into siblings further down
- * the file without re-ordering the table definitions (which read
- * cleanest grouped near their respective emitters). */
-void publish_triggers();
-void remove_discovery();
-
 void publish_discovery() {
   if (!s_active_cfg.discovery) return;
   size_t ok = 0;
@@ -739,26 +750,32 @@ struct DiscoveryTrigger {
   const char* payload;          /* trigger fires when val_tpl == this */
 };
 
+/* Every trigger's value_template gates on `not value_json.replay` so
+ * MQTT-reconnect backfill traffic doesn't re-fire user automations
+ * (PR #398 review r3214114357). When the gate fails, value_template
+ * returns None and HA's MQTT trigger never matches its payload —
+ * sensors and binary_sensors that ignore the replay flag still see
+ * the up-to-date state (HA's history view fills correctly). */
 const DiscoveryTrigger TRIGGERS[] = {
   /* Presence-state transitions — the stuff users actually want to wire
    * automations against ("turn on porch light when room becomes
    * empty", "alert me if presence detected after midnight", etc.). */
   { "presence_active",   "presence_changed", "active",   "events",
-    "{{ value_json.state }}", "active" },
+    "{% if not value_json.replay %}{{ value_json.state }}{% endif %}", "active" },
   { "presence_subtle",   "presence_changed", "subtle",   "events",
-    "{{ value_json.state }}", "subtle" },
+    "{% if not value_json.replay %}{{ value_json.state }}{% endif %}", "subtle" },
   { "presence_quiet",    "presence_changed", "quiet",    "events",
-    "{{ value_json.state }}", "quiet" },
+    "{% if not value_json.replay %}{{ value_json.state }}{% endif %}", "quiet" },
   { "presence_together", "presence_changed", "together", "events",
-    "{{ value_json.state }}", "together" },
+    "{% if not value_json.replay %}{{ value_json.state }}{% endif %}", "together" },
   { "presence_empty",    "presence_changed", "empty",    "events",
-    "{{ value_json.state }}", "empty" },
+    "{% if not value_json.replay %}{{ value_json.state }}{% endif %}", "empty" },
 
   /* Anomaly category fires whenever the chokepoint commits an anomaly
    * event regardless of state. Useful for security automations
    * (notify on unexpected motion in a quiet hour). */
   { "anomaly",           "anomaly",          "any",      "events",
-    "{{ value_json.category }}", "anomaly" },
+    "{% if not value_json.replay %}{{ value_json.category }}{% endif %}", "anomaly" },
 };
 
 /* Emit one trigger config payload. Returns true on enqueue success.
@@ -833,23 +850,35 @@ void publish_triggers() {
 void remove_discovery() {
   /* Empty zero-byte payload = HA "remove entity" signal. Retained so
    * a freshly-connecting HA also sees the removal and drops any
-   * cached entity definitions. */
+   * cached entity definitions.
+   *
+   * Both loops bail on the first publish_raw failure — same reasoning
+   * as publish_discovery: if esp_mqtt's queue is full or the broker
+   * dropped, remaining publishes almost certainly fail too and just
+   * burn task time + airtime (PR #398 review r3214113402). The next
+   * MQTT_EVENT_CONNECTED with discovery=false re-attempts the full
+   * removal sweep, so an interrupted run is self-healing. */
   size_t removed = 0;
+  bool ok = true;
   for (const DiscoveryEntity& e : ENTITIES) {
     char topic[192];
     const int tn = snprintf(topic, sizeof(topic),
              "%s/%s/canary_%s/%s/config",
              DISCOVERY_PREFIX, e.component, s_device_id, e.object_id);
     if (tn <= 0 || (size_t)tn >= sizeof(topic)) continue;
-    if (publish_raw(topic, "", 0, /*retain=*/true)) removed++;
+    if (!publish_raw(topic, "", 0, /*retain=*/true)) { ok = false; break; }
+    removed++;
   }
-  for (const DiscoveryTrigger& t : TRIGGERS) {
-    char topic[192];
-    const int tn = snprintf(topic, sizeof(topic),
-             "%s/device_automation/canary_%s/%s/config",
-             DISCOVERY_PREFIX, s_device_id, t.trigger_id);
-    if (tn <= 0 || (size_t)tn >= sizeof(topic)) continue;
-    if (publish_raw(topic, "", 0, /*retain=*/true)) removed++;
+  if (ok) {
+    for (const DiscoveryTrigger& t : TRIGGERS) {
+      char topic[192];
+      const int tn = snprintf(topic, sizeof(topic),
+               "%s/device_automation/canary_%s/%s/config",
+               DISCOVERY_PREFIX, s_device_id, t.trigger_id);
+      if (tn <= 0 || (size_t)tn >= sizeof(topic)) continue;
+      if (!publish_raw(topic, "", 0, /*retain=*/true)) break;
+      removed++;
+    }
   }
   Serial.printf("[MQTT] discovery removal: %u entries cleared\n",
                 (unsigned)removed);
