@@ -212,6 +212,25 @@ footer a{color:var(--accent);text-decoration:none}
   .card{border:1px solid CanvasText;background:Canvas}
   .wiz-net-list{border:1px solid CanvasText;background:Canvas}
   .wiz-net-row{border-top-color:CanvasText}
+  /* BLE-flow scan rows added by PRs #411 / #413: under forced-colors,
+   * the var(--surface-2)/var(--accent) selection fill is neutralized,
+   * so mirror the tablist "selected" pattern with Highlight pair so
+   * the chosen network is still visually distinct. .ap-row[disabled]
+   * (hidden-SSID rows) gets GrayText so the dimmed state survives —
+   * opacity:.6 is also dropped under forced-colors.
+   *
+   * .ap-bars span gets background-color:currentColor so the signal
+   * gauge bars track the surrounding text color (CanvasText / GrayText
+   * / HighlightText for default / disabled / selected). Without this,
+   * the per-bar var(--success/warning/danger) backgrounds collapse to
+   * the engine default and disabled rows would show normally-colored
+   * bars next to grayed text. .ap-row also gets a border-top to match
+   * .wiz-net-row's separator language. Caught by Gemini in PR #420
+   * review. */
+  .ap-row{border-top-color:CanvasText}
+  .ap-row.sel{background:Highlight;color:HighlightText;border-color:Highlight}
+  .ap-row[disabled]{color:GrayText}
+  .ap-bars span{background-color:currentColor}
   .badge{border:1px solid CanvasText;background:Canvas;color:CanvasText}
   :focus-visible{outline:2px solid CanvasText;outline-offset:2px}
 }
