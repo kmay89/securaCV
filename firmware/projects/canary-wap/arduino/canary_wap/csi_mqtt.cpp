@@ -112,12 +112,23 @@ void mqtt_event_handler(void* /*handler_args*/, esp_event_base_t /*base*/,
       build_topic(topic, sizeof(topic), "status");
       const char* online = "{\"online\":true}";
       publish_raw(topic, online, strlen(online), /*retain=*/true);
-      /* HA MQTT auto-discovery: publish entity definitions so a freshly-
-       * subscribing HA sees the canary's sensors without anyone touching
-       * a config file. Order matters — status MUST land before the
-       * discovery payloads reference it as the availability topic, or
-       * the entities flicker through "unavailable" on first appearance. */
-      publish_discovery();
+      /* HA MQTT auto-discovery: when discovery=true, publish entity +
+       * trigger definitions so a freshly-subscribing HA sees the
+       * canary's sensors without anyone touching a config file. Order
+       * matters — status MUST land before the discovery payloads
+       * reference it as the availability topic, or the entities
+       * flicker through "unavailable" on first appearance.
+       *
+       * When discovery=false, we still need to act: a previous run
+       * may have left retained config payloads on the broker, and HA
+       * would keep showing the entities forever as "unavailable".
+       * remove_discovery() publishes empty retained payloads to all
+       * known config topics, which HA reads as "evict this entity". */
+      if (s_active_cfg.discovery) {
+        publish_discovery();
+      } else {
+        remove_discovery();
+      }
       /* Flag the main loop to walk the SD log and backfill any events
        * the broker missed during the outage. We don't drain here
        * because the MQTT event handler runs on its own task and a
@@ -682,6 +693,12 @@ bool publish_one_discovery(const DiscoveryEntity& e) {
  * MQTT_EVENT_CONNECTED republishes the full set (retained, so HA
  * sees the latest version regardless), so an interrupted run is
  * self-healing. (PR #396 review r3213930620.) */
+/* Forward decls so the publishers can call into siblings further down
+ * the file without re-ordering the table definitions (which read
+ * cleanest grouped near their respective emitters). */
+void publish_triggers();
+void remove_discovery();
+
 void publish_discovery() {
   if (!s_active_cfg.discovery) return;
   size_t ok = 0;
@@ -691,6 +708,151 @@ void publish_discovery() {
   }
   Serial.printf("[MQTT] discovery: %u/%u entities announced\n",
                 (unsigned)ok, (unsigned)(sizeof(ENTITIES) / sizeof(ENTITIES[0])));
+  publish_triggers();
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * HA Device Triggers
+ *
+ * Exposes "this happened" events that HA's automation editor surfaces
+ * under the device's trigger picker, without users having to
+ * hand-author value_template comparisons. Each trigger fires when a
+ * matching event lands on a watched topic; HA users then drag-and-drop
+ * the trigger into the visual automation builder.
+ *
+ * Schema lives at homeassistant/device_automation/canary_<id>/{trigger}/config
+ * (retained). type/subtype is the HA convention — many entries share a
+ * `type` so they're grouped under one heading in the UI dropdown.
+ *
+ * Source of truth for the schema:
+ *   https://www.home-assistant.io/integrations/device_trigger.mqtt/
+ * ────────────────────────────────────────────────────────────────────────── */
+
+namespace {
+
+struct DiscoveryTrigger {
+  const char* trigger_id;       /* unique within device, used in the topic */
+  const char* type;             /* HA convention; groups related triggers */
+  const char* subtype;          /* HA convention; the specific variant */
+  const char* state_topic;      /* suffix appended to securacv/<id>/ */
+  const char* val_tpl;          /* Jinja that distills the JSON to a scalar */
+  const char* payload;          /* trigger fires when val_tpl == this */
+};
+
+const DiscoveryTrigger TRIGGERS[] = {
+  /* Presence-state transitions — the stuff users actually want to wire
+   * automations against ("turn on porch light when room becomes
+   * empty", "alert me if presence detected after midnight", etc.). */
+  { "presence_active",   "presence_changed", "active",   "events",
+    "{{ value_json.state }}", "active" },
+  { "presence_subtle",   "presence_changed", "subtle",   "events",
+    "{{ value_json.state }}", "subtle" },
+  { "presence_quiet",    "presence_changed", "quiet",    "events",
+    "{{ value_json.state }}", "quiet" },
+  { "presence_together", "presence_changed", "together", "events",
+    "{{ value_json.state }}", "together" },
+  { "presence_empty",    "presence_changed", "empty",    "events",
+    "{{ value_json.state }}", "empty" },
+
+  /* Anomaly category fires whenever the chokepoint commits an anomaly
+   * event regardless of state. Useful for security automations
+   * (notify on unexpected motion in a quiet hour). */
+  { "anomaly",           "anomaly",          "any",      "events",
+    "{{ value_json.category }}", "anomaly" },
+};
+
+/* Emit one trigger config payload. Returns true on enqueue success.
+ * Same wire shape principles as publish_one_discovery: abbreviated
+ * keys, full device block, validated topic. */
+bool publish_one_trigger(const DiscoveryTrigger& t) {
+  const char* prefix = s_active_cfg.prefix[0] ? s_active_cfg.prefix : DEFAULT_PREFIX;
+
+  char topic[192];
+  const int tn = snprintf(topic, sizeof(topic),
+           "%s/device_automation/canary_%s/%s/config",
+           DISCOVERY_PREFIX, s_device_id, t.trigger_id);
+  if (tn <= 0 || (size_t)tn >= sizeof(topic)) return false;
+
+  /* Triggers don't need availability or unique_id (HA dedupes by
+   * topic + type + subtype + device.ids). The payload is small;
+   * 512 bytes is comfortably above the worst case (~280 bytes). */
+  char body[512];
+  const int n = snprintf(body, sizeof(body),
+    "{"
+      "\"automation_type\":\"trigger\","
+      "\"type\":\"%s\","
+      "\"subtype\":\"%s\","
+      "\"topic\":\"%s/%s/%s\","
+      "\"val_tpl\":\"%s\","
+      "\"pl\":\"%s\","
+      "\"dev\":{"
+        "\"ids\":[\"canary_%s\"],"
+        "\"name\":\"Canary %s\","
+        "\"mf\":\"SecuraCV\","
+        "\"mdl\":\"Canary WAP\","
+        "\"sw\":\"%s\""
+      "}"
+    "}",
+    t.type, t.subtype,
+    prefix, s_device_id, t.state_topic,
+    t.val_tpl, t.payload,
+    s_device_id, s_device_id, s_firmware_version);
+  if (n <= 0 || (size_t)n >= sizeof(body)) return false;
+  return publish_raw(topic, body, (size_t)n, /*retain=*/true);
+}
+
+}  /* namespace */
+
+void publish_triggers() {
+  if (!s_active_cfg.discovery) return;
+  size_t ok = 0;
+  for (const DiscoveryTrigger& t : TRIGGERS) {
+    if (!publish_one_trigger(t)) break;
+    ok++;
+  }
+  Serial.printf("[MQTT] discovery: %u/%u triggers announced\n",
+                (unsigned)ok, (unsigned)(sizeof(TRIGGERS) / sizeof(TRIGGERS[0])));
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * Discovery removal
+ *
+ * When a user toggles discovery OFF post-install, the retained config
+ * payloads we previously sent linger on the broker forever and HA
+ * keeps showing the entities (eventually as "unavailable"). Publishing
+ * an empty retained payload to the same topic is HA's documented
+ * "remove this entity" signal — the broker evicts the retained
+ * message and HA drops the entity.
+ *
+ * We always send removals on connect when discovery=false. There's no
+ * harm in sending empty payloads to topics that have no retained
+ * message (HA simply ignores them), and we don't need to track
+ * "last published" state across reboots.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+void remove_discovery() {
+  /* Empty zero-byte payload = HA "remove entity" signal. Retained so
+   * a freshly-connecting HA also sees the removal and drops any
+   * cached entity definitions. */
+  size_t removed = 0;
+  for (const DiscoveryEntity& e : ENTITIES) {
+    char topic[192];
+    const int tn = snprintf(topic, sizeof(topic),
+             "%s/%s/canary_%s/%s/config",
+             DISCOVERY_PREFIX, e.component, s_device_id, e.object_id);
+    if (tn <= 0 || (size_t)tn >= sizeof(topic)) continue;
+    if (publish_raw(topic, "", 0, /*retain=*/true)) removed++;
+  }
+  for (const DiscoveryTrigger& t : TRIGGERS) {
+    char topic[192];
+    const int tn = snprintf(topic, sizeof(topic),
+             "%s/device_automation/canary_%s/%s/config",
+             DISCOVERY_PREFIX, s_device_id, t.trigger_id);
+    if (tn <= 0 || (size_t)tn >= sizeof(topic)) continue;
+    if (publish_raw(topic, "", 0, /*retain=*/true)) removed++;
+  }
+  Serial.printf("[MQTT] discovery removal: %u entries cleared\n",
+                (unsigned)removed);
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
