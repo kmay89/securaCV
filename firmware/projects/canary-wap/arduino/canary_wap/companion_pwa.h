@@ -663,12 +663,24 @@ footer a{color:var(--accent);text-decoration:none}
   // the .hidden classes so AT lands on the now-visible heading
   // ("Connecting…" → "Your Canary is online." or "Couldn't connect"),
   // not the stale one that was previously focused.
+  //
+  // showProgress() is also called on every poll tick (~1.5s) by
+  // pollWifiUntilConnected() to refresh the status text ("Talking
+  // to your Canary." → "Joining your home WiFi." → "Almost there…")
+  // — refocusing on every tick would steal focus and re-announce
+  // the heading repeatedly. So gate the focus call on a real
+  // hidden→visible transition of the progress sub-view. This still
+  // covers the retry path after a failure (showFailure hides the
+  // progress sub-view; re-entering via the join click handler
+  // re-shows it) without firing during steady-state polling.
   function showProgress(msg) {
-    $w('wiz-step-4-progress').classList.remove('hidden');
+    const prog = $w('wiz-step-4-progress');
+    const wasHidden = prog.classList.contains('hidden');
+    prog.classList.remove('hidden');
     $w('wiz-step-4-success').classList.add('hidden');
     $w('wiz-step-4-failure').classList.add('hidden');
     if (msg) $w('wiz-progress-text').textContent = msg;
-    requestAnimationFrame(() => focusActiveStepHeading());
+    if (wasHidden) requestAnimationFrame(() => focusActiveStepHeading());
   }
   function showSuccess(staIp) {
     $w('wiz-step-4-progress').classList.add('hidden');
