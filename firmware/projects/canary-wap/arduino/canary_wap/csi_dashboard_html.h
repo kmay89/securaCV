@@ -782,6 +782,85 @@ static const char CSI_DASHBOARD_HTML[] PROGMEM = R"DASHBOARD(<!doctype html>
   .calib-ready .accept { background: var(--orb-3); color: #1a1605; font-weight: 500; }
   .calib-ready .cancel { background: transparent; color: var(--fg-mute); border: 1px solid var(--fg-mute); }
   @media (prefers-color-scheme: dark) { .calibrating-mask { background: rgba(0,0,0,0.55); } }
+
+  /* Forced-colors mode (Windows High Contrast, accessibility tools).
+   * Browsers replace most custom colors with the user's chosen
+   * system palette here, which collapses our state-encoded gradients
+   * to a flat Canvas color and erases the orb's visual differentiation.
+   * The dashboard already announces state textually via aria-live on
+   * #state, so SR users still know what's happening — but sighted
+   * forced-colors users need explicit borders + system colors so the
+   * UI doesn't dissolve into a uniform field with invisible controls.
+   *
+   * Strategy:
+   *   - Use CSS system colors (Canvas, CanvasText, Highlight,
+   *     ButtonText) so the dashboard inherits the user's chosen
+   *     palette instead of fighting it.
+   *   - Add explicit 1-2px borders on interactive controls so they
+   *     remain identifiable as controls when their backgrounds
+   *     flatten.
+   *   - Use Highlight / HighlightText for the active mode segment
+   *     and pressed switches so state is preserved.
+   *   - Outline-based focus rings stay visible because outlines are
+   *     preserved in forced-colors mode (unlike box-shadow rings).
+   *
+   * Reference: WCAG 2.1 SC 1.4.11 (Non-text Contrast) + W3C CSS Color
+   * Adjust Module §3 (forced-colors). */
+  @media (forced-colors: active) {
+    /* The orb is purely visual — but a sighted forced-colors user
+       still expects to see SOMETHING in the hero. Render it as a
+       bordered disc so the layout doesn't collapse, and let
+       CanvasText form a clear edge against Canvas. */
+    .orb {
+      background: Canvas;
+      border: 2px solid CanvasText;
+      box-shadow: none;
+    }
+    .orb-shell, .ripple { display: none; }
+
+    /* All interactive controls get explicit ButtonText borders so
+       they remain identifiable when custom backgrounds flatten. */
+    .iconbtn, .calibrate, .help, .switch, .sheet-close,
+    .welcome-card .skip, .welcome-card .primary,
+    .welcome-card .pet-choices button,
+    .dismiss-btn {
+      border: 1px solid ButtonText;
+    }
+
+    /* Active state for the mode segments and toggled switches uses
+       Highlight so it visibly differs from the inactive treatment.
+       HighlightText pairs with Highlight for legibility on the user's
+       chosen accent color. */
+    .segmented button[aria-pressed="true"],
+    .switch[aria-checked="true"],
+    .welcome-card .pet-choices button[aria-pressed="true"] {
+      background: Highlight;
+      color: HighlightText;
+      border-color: Highlight;
+    }
+
+    /* Sheets and the welcome card need visible borders since their
+       backgrounds and backdrop blur flatten away. */
+    .sheet, .welcome-card {
+      border: 2px solid CanvasText;
+      background: Canvas;
+    }
+
+    /* Focus ring: switch from the project's box-shadow / colored-
+       border idiom to a 2px outline since outlines are guaranteed
+       to render in forced-colors mode. */
+    :focus-visible {
+      outline: 2px solid CanvasText;
+      outline-offset: 2px;
+    }
+
+    /* The disconnected plate's dim treatment uses opacity which
+       forced-colors UAs may flatten back to 1.0. Drop a visible
+       GrayText cue so the "something's wrong" signal isn't lost. */
+    body.disconnected #frameCount {
+      color: GrayText;
+    }
+  }
 </style>
 </head>
 <body>
