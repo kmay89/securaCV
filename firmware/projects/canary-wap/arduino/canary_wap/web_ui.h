@@ -110,12 +110,23 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       border: 1px solid var(--border);
       background: rgba(255,255,255,0.02);
       transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
-      margin-right: 0.75rem;
     }
-    .back-link:hover, .back-link:focus-visible {
+    /* Hover: subtle warm-up — accent-dim border (rgba 0.15) reads as a
+       gentle hint without drawing the eye away from the brand. */
+    .back-link:hover {
       color: var(--text);
       background: rgba(255,255,255,0.05);
       border-color: var(--accent-dim);
+    }
+    /* Focus-visible: solid var(--accent) so the focus ring carries
+       enough contrast against the dark header for keyboard / low-vision
+       users. Mirrors the active/focused pattern used elsewhere in this
+       UI (.tab-active, .input-focus on lines 251 + 505). PR #403
+       review r3214586081. */
+    .back-link:focus-visible {
+      color: var(--text);
+      background: rgba(255,255,255,0.05);
+      border-color: var(--accent);
       outline: none;
     }
     .back-link .arrow { font-size: 1rem; line-height: 1; }
