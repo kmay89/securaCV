@@ -269,7 +269,7 @@ footer a{color:var(--accent);text-decoration:none}
     <div class="wiz-net-list" id="wiz-nets" role="group" aria-label="Available networks" aria-busy="true">
       <div class="wiz-spin">Looking for networks…</div>
     </div>
-    <div class="err" id="wiz-step-2-err"></div>
+    <div class="err" id="wiz-step-2-err" role="alert"></div>
     <div class="wiz-btnrow">
       <button class="btn btn-secondary" id="wiz-rescan">Scan again</button>
     </div>
@@ -278,11 +278,11 @@ footer a{color:var(--accent);text-decoration:none}
   <div class="wiz-step" id="wiz-step-3">
     <h2 class="wiz-h" tabindex="-1">Type the password</h2>
     <p class="wiz-sub">Joining <strong id="wiz-picked-ssid">…</strong>. Your password is sent only to the Canary.</p>
-    <input type="password" class="wiz-input" id="wiz-pw" placeholder="Network password" autocomplete="new-password" spellcheck="false">
+    <input type="password" class="wiz-input" id="wiz-pw" placeholder="Network password" autocomplete="new-password" spellcheck="false" aria-describedby="wiz-step-3-err" aria-invalid="false">
     <label style="display:flex;gap:.5rem;align-items:center;margin-top:.5rem;color:var(--muted);font-size:.8rem">
       <input type="checkbox" id="wiz-show-pw"> Show password
     </label>
-    <div class="err" id="wiz-step-3-err"></div>
+    <div class="err" id="wiz-step-3-err" role="alert"></div>
     <div class="wiz-btnrow">
       <button class="btn btn-secondary" id="wiz-back-2">Back</button>
       <button class="btn btn-primary" id="wiz-go-4">Connect</button>
@@ -318,7 +318,7 @@ footer a{color:var(--accent);text-decoration:none}
 <div class="card" id="connect-card">
   <p class="intro">Pair your Canary in <strong>Settings &rsaquo; Bluetooth</strong> first, then tap below to open the live console.</p>
   <button class="btn btn-primary" id="connect-btn">Connect</button>
-  <div class="err" id="err-msg"></div>
+  <div class="err" id="err-msg" role="alert"></div>
 </div>
 
 <!-- Tab nav appears after connect; switches between Status / WiFi panels.
@@ -412,7 +412,7 @@ footer a{color:var(--accent);text-decoration:none}
         <span id="ota-bytes">0 / 0 B</span>
       </div>
     </div>
-    <div id="ota-error" class="err" style="margin-top:.5rem"></div>
+    <div id="ota-error" class="err" role="alert" style="margin-top:.5rem"></div>
     <p class="intro" style="font-size:.7rem;margin-top:.6rem">Don't disconnect or close this page during transfer. The device reboots into the new image automatically when the bytes verify.</p>
   </div>
 </div>
@@ -532,6 +532,17 @@ footer a{color:var(--accent);text-decoration:none}
     if (!e) return;
     if (msg) { e.textContent = msg; e.classList.add('show'); }
     else     { e.textContent = '';  e.classList.remove('show'); }
+    /* Step 3 has the password input — toggle aria-invalid on it so
+     * AT users hear "invalid entry" when they re-focus the field
+     * after a validation failure. The aria-describedby on the input
+     * already points to this err div so SR users get the message
+     * text alongside. Step 2's only "input" is the network list
+     * (rendered by renderNets), and the error there is about the
+     * scan, not user input — no aria-invalid target. */
+    if (stepN === 3) {
+      const pw = $w('wiz-pw');
+      if (pw) pw.setAttribute('aria-invalid', msg ? 'true' : 'false');
+    }
   }
 
   // ── Card 1 ─────────────────────────────────────────────────────────────
