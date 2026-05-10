@@ -824,6 +824,11 @@ let otaControl = null, otaData = null, otaStatus = null;
 let otaBinFile = null;        // File object for the .bin
 let otaManifest = null;       // parsed JSON {sha256, signature, version}
 let otaInProgress = false;
+/* Track the last announced OTA state so we only push to the live region
+ * on actual state transitions, not on every status notification (which
+ * fires repeatedly during streaming with the same `state` but updated
+ * pct/bytes_left). Initialized to 'idle' to match the static markup. */
+let lastOtaState = 'idle';
 
 const $ = (id) => document.getElementById(id);
 function showErr(msg){const e=$('err-msg');e.textContent=msg;e.classList.add('show');}
@@ -1276,6 +1281,18 @@ function setOtaState(state, pct, bytesLeft, errorText){
     const sent = otaBinFile.size - bytesLeft;
     $('ota-bytes').textContent = (sent > 0 ? sent : 0) + ' / ' + otaBinFile.size + ' B';
   }
+  /* Announce only on actual state transitions — onOtaStatus calls this
+   * every notification (~per chunk) with the same `state` but evolving
+   * pct/bytes, and re-announcing "Sending firmware…" each time would
+   * spam the live region. Each phrase below is a full sentence so SR
+   * users get the meaning, not just the state word. */
+  if (state !== lastOtaState) {
+    lastOtaState = state;
+    if      (state === 'receiving') announce('Sending firmware to your Canary.');
+    else if (state === 'verifying') announce('Verifying firmware signature.');
+    else if (state === 'rebooting') announce('Update applied. Canary is rebooting.');
+    else if (state === 'failed')    announce('Update failed: ' + (errorText || 'unknown error') + '.');
+  }
 }
 function onOtaStatus(event){
   // Packet: {state:u8, pct:u8, bytes_left:u32 LE, reserved:u16}.
@@ -1348,6 +1365,7 @@ async function loadOtaInputs(){
       const me = $('ota-error');
       me.textContent = 'Manifest invalid: ' + e.message;
       me.classList.add('show');
+      announce('Manifest invalid: ' + e.message + '.');
       refreshOtaStartButton();
       return;
     }
