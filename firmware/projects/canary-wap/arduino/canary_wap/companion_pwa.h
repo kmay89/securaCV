@@ -151,7 +151,11 @@ footer a{color:var(--accent);text-decoration:none}
 .wiz-btnrow{display:flex;gap:.5rem;margin-top:1rem}
 .wiz-btnrow .btn{flex:1}
 .wiz-net-list{max-height:280px;overflow-y:auto;margin:.5rem 0 .25rem;border:1px solid var(--border);border-radius:10px;background:var(--surface-2)}
-.wiz-net-row{display:flex;align-items:center;gap:.6rem;padding:.7rem .8rem;cursor:pointer;-webkit-tap-highlight-color:transparent;border-top:1px solid var(--border)}
+/* .wiz-net-row is a native <button type="button"> so Tab focuses it
+ * and Enter/Space activate it without a keydown handler. The reset
+ * here strips UA button defaults (background, border, font, text
+ * alignment, width) that would otherwise fight the row layout. */
+.wiz-net-row{display:flex;align-items:center;gap:.6rem;padding:.7rem .8rem;cursor:pointer;-webkit-tap-highlight-color:transparent;border-top:1px solid var(--border);background:transparent;border-left:none;border-right:none;border-bottom:none;color:inherit;font:inherit;text-align:left;width:100%}
 .wiz-net-row:first-child{border-top:none}
 .wiz-net-row:active{background:rgba(102,179,255,.1)}
 .wiz-net-name{flex:1;font-size:.95rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -256,7 +260,7 @@ footer a{color:var(--accent);text-decoration:none}
   <div class="wiz-step" id="wiz-step-2">
     <h2 class="wiz-h" tabindex="-1">Pick your home WiFi</h2>
     <p class="wiz-sub">Your phone won't be on this list — pick the network your Canary should join.</p>
-    <div class="wiz-net-list" id="wiz-nets">
+    <div class="wiz-net-list" id="wiz-nets" role="group" aria-label="Available networks" aria-busy="true">
       <div class="wiz-spin">Looking for networks…</div>
     </div>
     <div class="err" id="wiz-step-2-err"></div>
@@ -533,8 +537,10 @@ footer a{color:var(--accent);text-decoration:none}
   // ── Card 2: scan + pick ────────────────────────────────────────────────
   function renderNets(nets) {
     const list = $w('wiz-nets');
+    list.setAttribute('aria-busy', 'false');
     if (!nets || nets.length === 0) {
       list.innerHTML = '<div class="wiz-net-empty">No networks found. Move closer to your router and try again.</div>';
+      announce('No networks found.');
       return;
     }
     /* Keep raw SSIDs in JS-side arrays and reference them from the DOM
@@ -555,16 +561,31 @@ footer a{color:var(--accent);text-decoration:none}
       const s = (n.security || '').toLowerCase();
       return s !== '' && s !== 'open' && s !== 'none';
     });
+    /* Each row is a native <button type="button"> so it's tab-focusable
+     * and Enter/Space activate it without a keydown handler. The
+     * container is role="group" (set in static markup) so SR users
+     * hear "Available networks, group, with N items" before tabbing
+     * through. aria-label on each button gives SR users the full row
+     * content as a single phrase ("HomeWiFi, secured, signal -55 dBm")
+     * rather than the visual SSID/lock/RSSI fragments stitched
+     * together; the inner spans are aria-hidden so they don't
+     * double-announce. */
     list.innerHTML = nets.map((n, i) => {
-      const ssid = escHtml(rawSsids[i]);
-      const lock = isSecure[i] ? '🔒' : '';
-      const rssi = (n.rssi != null) ? escHtml(n.rssi + ' dBm') : '';
-      return '<div class="wiz-net-row" data-idx="' + i + '">'
-           + '<span class="wiz-net-name">' + (ssid || '(no name)') + '</span>'
-           + '<span class="wiz-net-lock">' + lock + '</span>'
-           + '<span class="wiz-net-rssi">' + rssi + '</span>'
-           + '</div>';
+      const ssid    = escHtml(rawSsids[i]);
+      const lock    = isSecure[i] ? '🔒' : '';
+      const rssi    = (n.rssi != null) ? escHtml(n.rssi + ' dBm') : '';
+      const aLabel  = (rawSsids[i] || '(no name)')
+                    + (isSecure[i] ? ', secured' : ', open')
+                    + (n.rssi != null ? ', signal ' + n.rssi + ' dBm' : '');
+      return '<button type="button" class="wiz-net-row" data-idx="' + i + '" aria-label="' + escHtml(aLabel) + '">'
+           + '<span class="wiz-net-name" aria-hidden="true">' + (ssid || '(no name)') + '</span>'
+           + '<span class="wiz-net-lock" aria-hidden="true">' + lock + '</span>'
+           + '<span class="wiz-net-rssi" aria-hidden="true">' + rssi + '</span>'
+           + '</button>';
     }).join('');
+    announce(nets.length === 1
+      ? 'Found 1 network.'
+      : 'Found ' + nets.length + ' networks.');
     list.querySelectorAll('.wiz-net-row').forEach(row => {
       row.addEventListener('click', () => {
         const i = Number(row.dataset.idx);
@@ -611,13 +632,18 @@ footer a{color:var(--accent);text-decoration:none}
       renderNets(dedup);
     } catch (e) {
       setErr(2, 'Scan failed: ' + e.message);
-      $w('wiz-nets').innerHTML = '<div class="wiz-net-empty">Try again in a moment.</div>';
+      const list = $w('wiz-nets');
+      list.setAttribute('aria-busy', 'false');
+      list.innerHTML = '<div class="wiz-net-empty">Try again in a moment.</div>';
+      announce('Scan failed. Try again in a moment.');
     }
   }
 
   function startScan() {
     setErr(2, '');
-    $w('wiz-nets').innerHTML = '<div class="wiz-spin">Looking for networks…</div>';
+    const list = $w('wiz-nets');
+    list.setAttribute('aria-busy', 'true');
+    list.innerHTML = '<div class="wiz-spin">Looking for networks…</div>';
     if (scanTimer) clearTimeout(scanTimer);
     pollScan();
   }
