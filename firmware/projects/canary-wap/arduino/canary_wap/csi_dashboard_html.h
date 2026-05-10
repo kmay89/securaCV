@@ -987,10 +987,9 @@ static const char CSI_DASHBOARD_HTML[] PROGMEM = R"DASHBOARD(<!doctype html>
         <span class="label">Movement</span>
         <span class="value" id="seMRaw">—</span>
         <!-- The "steady" cell holds two sibling spans (value + band) so
-             the per-tick setText writes can target each independently
-             without clobbering the other. textContent on the outer
-             container would replace both children, which is the bug
-             Codex P1 caught on the first revision of this PR. -->
+             the per-tick setText writes can target each independently.
+             textContent on the outer container would replace both
+             children. -->
         <span class="value steady"><span id="seMSteady">—</span><span class="band" id="seMBand"></span></span>
 
         <span class="label">Breath</span>
@@ -1469,9 +1468,8 @@ function residRms(arr) {
 // numbers without re-walking the whole history. Centralizing this so
 // the reveal panel and the canvas can never drift out of sync.
 function getSenseDetailSnapshot() {
-  // Raw values are already integers — pollStream() coerces motion and
-  // breathing with `(j.motion | 0)` before pushHistory() lands them.
-  // No need to re-coerce here (Gemini review on PR #423).
+  // pollStream() already coerces motion and breathing with Number()
+  // before pushHistory() lands them, so no need to re-coerce here.
   return {
     motionRaw:    motionRawHist[HISTORY_LEN - 1],
     motionSteady: motionEma,
@@ -1814,8 +1812,8 @@ async function pollStream() {
       return;
     }
 
-    const motion    = (j.motion    | 0);
-    const breathing = (j.breathing | 0);
+    const motion    = Number(j.motion);
+    const breathing = Number(j.breathing);
     pushHistory(motion, breathing);
     // Stash the freshest payload so the animation tick's call to
     // updateSenseDetail() can re-render between polls (the "ago"
