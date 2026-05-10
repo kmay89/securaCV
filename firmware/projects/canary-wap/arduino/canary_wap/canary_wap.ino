@@ -583,11 +583,14 @@ static char     g_tls_cert_fp_hex[65] = {0};  // SHA256 of cert for pinning
 // Provisioning gate (physical BOOT button). Stores the millis() at which
 // the press landed; 0 means closed. provisioning_gate_is_open() applies
 // the TTL so the gate auto-closes after PROVISIONING_GATE_TTL_MS even if
-// the receipt is never fetched.
-static volatile uint32_t g_provisioning_gate_opened_at = 0;
+// the receipt is never fetched. The variable is touched from the main
+// loop task (button handler) and the HTTP server task (receipt handler),
+// so access goes through __atomic_*_n to match the pattern used for
+// other cross-task counters (see csi_integration.cpp g_outbound_bytes).
+static uint32_t g_provisioning_gate_opened_at = 0;
 
 static inline bool provisioning_gate_is_open() {
-  uint32_t opened = g_provisioning_gate_opened_at;
+  uint32_t opened = __atomic_load_n(&g_provisioning_gate_opened_at, __ATOMIC_RELAXED);
   if (opened == 0) return false;
   return (millis() - opened) < PROVISIONING_GATE_TTL_MS;
 }
@@ -4594,7 +4597,7 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
 
   // Gate is open — serve receipt and close gate
   esp_err_t result = send_provisioning_receipt(req);
-  g_provisioning_gate_opened_at = 0;
+  __atomic_store_n(&g_provisioning_gate_opened_at, 0, __ATOMIC_RELAXED);
   Serial.println("[AUTH] Provisioning receipt served. Gate closed.");
   log_health(SCV_LOG_INFO, SCV_CAT_AUTH, "Provisioning receipt served via HTTPS", nullptr);
   return result;
@@ -6098,7 +6101,9 @@ void loop() {
       // gate can self-close after PROVISIONING_GATE_TTL_MS. Sentinel-1
       // guard handles the exceedingly rare case where millis() is 0.
       uint32_t now_ms = millis();
-      g_provisioning_gate_opened_at = (now_ms == 0) ? 1 : now_ms;
+      __atomic_store_n(&g_provisioning_gate_opened_at,
+                       (now_ms == 0) ? 1 : now_ms,
+                       __ATOMIC_RELAXED);
       Serial.printf("[AUTH] Provisioning gate OPENED (receipt available for %lu seconds)\n",
                     (unsigned long)(PROVISIONING_GATE_TTL_MS / 1000));
       log_health(SCV_LOG_INFO, SCV_CAT_AUTH, "Provisioning gate opened", "BOOT button");
