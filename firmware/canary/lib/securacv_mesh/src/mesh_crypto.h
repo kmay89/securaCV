@@ -128,6 +128,78 @@ bool ed25519_verify(const uint8_t pubkey[PUBKEY_LEN],
                     const uint8_t sig[SIGNATURE_LEN]);
 
 /* ──────────────────────────────────────────────────────────────────────────
+ * X25519 ECDH
+ *
+ * Diffie-Hellman shared-secret derivation over Curve25519. Both peers
+ * compute the same `shared` from their own privkey and the other's
+ * pubkey. The output is suitable as input to a KDF (the canary-wap
+ * pairing flow runs the shared secret through sha256_domain with a
+ * SESSION domain — that derivation lives in the pairing module, not
+ * here, so this primitive stays single-purpose).
+ *
+ * Note on key formats:
+ *   • X25519 takes 32-byte Curve25519 keys, NOT Ed25519 keys directly.
+ *     rweather's Curve25519::eval clamps the private scalar internally
+ *     so callers can pass either an Ed25519 seed (after clamping) or
+ *     an explicit Curve25519 private. Wire-format compatibility with
+ *     canary-wap requires passing the same input it expects (see
+ *     mesh_network.cpp:derive_session_key).
+ *   • shared MUST NOT be used directly as a key — always KDF first.
+ *
+ * Returns false on identity element / low-order point (a real X25519
+ * implementation defends against these; the host shim accepts anything
+ * non-zero). Sensitive intermediate state is zeroed before return.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+constexpr size_t X25519_SHARED_LEN = 32;
+
+bool x25519_derive(const uint8_t our_priv[PRIVKEY_LEN],
+                   const uint8_t peer_pub[PUBKEY_LEN],
+                   uint8_t shared_out[X25519_SHARED_LEN]);
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * ChaCha20-Poly1305 AEAD
+ *
+ * AEAD per RFC 8439: authenticates aad (associated data) + encrypts
+ * plaintext, producing ciphertext (same length as plaintext) + a 16-byte
+ * authentication tag. Decrypt fails (returns false) if the tag doesn't
+ * match — i.e. any tamper of ciphertext, aad, nonce, or key.
+ *
+ * Nonce semantics (RFC 8439 §3): MUST be unique for each (key, nonce)
+ * pair. A reused nonce under the same key fatally breaks confidentiality
+ * AND authenticity. Callers are responsible for ensuring uniqueness —
+ * the typical pattern is per-session msg-counter ∥ random.
+ *
+ * In-place encryption is safe (plaintext and ciphertext may alias). The
+ * encrypt() output is exactly ciphertext_len = plaintext_len; the tag
+ * is delivered separately so the caller controls framing.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+constexpr size_t AEAD_KEY_LEN    = 32;
+constexpr size_t AEAD_NONCE_LEN  = 12;
+constexpr size_t AEAD_TAG_LEN    = 16;
+
+bool aead_encrypt(const uint8_t key[AEAD_KEY_LEN],
+                  const uint8_t nonce[AEAD_NONCE_LEN],
+                  const uint8_t* aad, size_t aad_len,
+                  const uint8_t* plaintext, size_t pt_len,
+                  uint8_t* ciphertext_out,
+                  uint8_t tag_out[AEAD_TAG_LEN]);
+
+/* Returns false on tag mismatch. On failure plaintext_out is zeroed so
+ * the caller cannot accidentally consume forged data. */
+bool aead_decrypt(const uint8_t key[AEAD_KEY_LEN],
+                  const uint8_t nonce[AEAD_NONCE_LEN],
+                  const uint8_t* aad, size_t aad_len,
+                  const uint8_t* ciphertext, size_t ct_len,
+                  const uint8_t tag[AEAD_TAG_LEN],
+                  uint8_t* plaintext_out);
+
+/* Random AEAD-sized nonce. Sources from esp_fill_random on device, rand()
+ * on host (TEST ONLY — never use the host path for real ciphertext). */
+void aead_generate_nonce(uint8_t nonce_out[AEAD_NONCE_LEN]);
+
+/* ──────────────────────────────────────────────────────────────────────────
  * BACKEND IDENTITY
  *
  * Reports which crypto backend is active at runtime. Used by tests and
