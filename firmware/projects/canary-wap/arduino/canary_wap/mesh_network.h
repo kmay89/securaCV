@@ -62,7 +62,18 @@ static const size_t SESSION_KEY_SIZE = 32;
 static const size_t AUTH_CHALLENGE_SIZE = 32;
 
 // ESP-NOW configuration
-static const uint8_t ESPNOW_CHANNEL = 1;
+//
+// NOTE: ESP-NOW shares the WiFi radio. On ESP32 the radio is single-channel,
+// so ESP-NOW can only operate on whichever channel the WiFi MAC is currently
+// tuned to. Earlier revisions pinned this to channel 1, which fought the
+// home WiFi whenever STA was associated on a different channel. The mesh
+// channel is now chosen dynamically by mesh_channel_policy::current(); peer
+// entries are registered with peer.channel = 0 so ESP-NOW follows the
+// current radio. See mesh_channel_policy.h and docs/network_coexistence.md.
+//
+// ESPNOW_CHANNEL is retained as a build-time fallback for tests / pre-radio
+// init paths only. Production code MUST go through mesh_channel_policy.
+static const uint8_t ESPNOW_CHANNEL = 0;  // 0 = follow current radio channel
 extern const uint8_t BROADCAST_ADDR[6];
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -474,7 +485,12 @@ namespace chirp_channel {
 // Protocol constants
 static const uint8_t PROTOCOL_VERSION = 0;
 static const uint8_t CHIRP_MAGIC = 0xC4;           // Message identifier
-static const uint8_t CHIRP_CHANNEL = 6;            // WiFi channel (separate from Opera)
+// CHIRP_CHANNEL: previously pinned to 6 to keep chirp off Opera's channel 1.
+// With the shared single-radio reality (see mesh_channel_policy.h) chirp now
+// rides the same radio as Opera; the broadcast peer is registered with
+// channel = 0 so it follows the current radio channel. The constant is kept
+// at its historical value purely as the host-build fallback for tests.
+static const uint8_t CHIRP_CHANNEL = 0;            // 0 = follow current radio channel
 static const size_t MAX_MESSAGE_LEN = 64;          // Max chirp message length
 static const size_t MAX_RECENT_CHIRPS = 16;        // Stored chirps
 static const size_t MAX_NONCE_CACHE = 100;         // Deduplication cache

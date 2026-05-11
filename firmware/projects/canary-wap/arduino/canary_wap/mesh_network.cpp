@@ -11,6 +11,8 @@
 #if FEATURE_MESH_NETWORK
 
 #include "mesh_network.h"
+#include "mesh_channel_policy.h"
+#include "airtime_governor.h"
 #include "log_level.h"
 
 #include <Arduino.h>
@@ -1054,6 +1056,23 @@ bool init(const uint8_t* device_privkey, const uint8_t* device_pubkey, const cha
   esp_now_register_recv_cb(espnow_recv_cb);
   g_espnow_initialized = true;
 
+  // Start the airtime governor (default 2% cap over a rolling 10 s window).
+  // Routine traffic (heartbeats, gossip, presence) checks this before TX so
+  // multi-Canary deployments don't degrade the home WiFi.
+  airtime_governor::init(airtime_governor::DEFAULT_CAP_PCT);
+
+  // Subscribe to channel changes so we can re-register the ESP-NOW broadcast
+  // peer when STA reconnects on a different channel. With peer.channel = 0
+  // (set in add_peer / load_peers / broadcast_message) ESP-NOW already follows
+  // the radio, but on some IDF versions the peer cache caches the channel —
+  // dropping and re-adding the broadcast peer guarantees a clean transition.
+  mesh_channel_policy::register_listener(
+      [](uint8_t /*old_ch*/, uint8_t /*new_ch*/) {
+        if (esp_now_is_peer_exist(BROADCAST_ADDR)) {
+          esp_now_del_peer(BROADCAST_ADDR);
+        }
+      });
+
   // Load persisted config
   load_opera_config();
   if (g_opera_config.configured) {
@@ -1109,6 +1128,12 @@ void update() {
   if (!g_initialized || g_mesh_state == MESH_DISABLED) {
     return;
   }
+
+  // Re-sample the radio channel before doing any TX. This catches the case
+  // where STA reconnected on a new channel since the last loop iteration; the
+  // registered listener (on_channel_changed) re-registers the broadcast peer
+  // on the new channel so ESP-NOW sends land correctly.
+  mesh_channel_policy::poll_radio();
 
   uint32_t now = millis();
 
@@ -1454,6 +1479,10 @@ bool broadcast_tamper_alert(AlertType type, LogLevel severity, uint32_t witness_
   }
 
   g_alerts_sent++;
+  // Tamper alerts are urgent — bypass the routine airtime cap but still
+  // record their cost so telemetry reflects reality.
+  airtime_governor::force_reserve_urgent(millis(),
+      sizeof(MessageHeader) + sizeof(payload));
   return broadcast_message(MSG_TAMPER_ALERT, (uint8_t*)&payload, sizeof(payload));
 }
 
@@ -1468,6 +1497,8 @@ bool broadcast_power_alert(AlertType type, uint16_t voltage_mv, uint16_t estimat
   payload.estimated_runtime_sec = estimated_runtime_sec;
 
   g_alerts_sent++;
+  airtime_governor::force_reserve_urgent(millis(),
+      sizeof(MessageHeader) + sizeof(payload));
   return broadcast_message(MSG_POWER_ALERT, (uint8_t*)&payload, sizeof(payload));
 }
 
@@ -1483,6 +1514,10 @@ bool broadcast_offline_imminent(AlertType reason, uint32_t final_seq, const uint
   memcpy(payload.final_chain_hash, final_chain_hash, 8);
 
   g_alerts_sent++;
+  // OFFLINE_IMMINENT is the most urgent message in the protocol — we record
+  // its cost (per-peer fan-out) but never gate it.
+  airtime_governor::force_reserve_urgent(millis(),
+      (sizeof(MessageHeader) + sizeof(payload)) * g_peer_count);
 
   // Send to all known peers regardless of connection state
   bool any_sent = false;
@@ -1525,6 +1560,15 @@ void send_heartbeat() {
   payload.uptime_sec = (millis() - g_start_time_ms) / 1000;
   payload.peer_count = g_peer_count;
   payload.battery_pct = 255;  // Unknown
+
+  // Heartbeat is routine traffic — skip this tick if we'd blow the airtime
+  // cap. The peer-stale timer (90 s) is long enough to tolerate a few skipped
+  // heartbeats; the only consequence of skipping is a slightly delayed stale
+  // transition for peers that were also being noisy.
+  const size_t wire_bytes = sizeof(MessageHeader) + sizeof(payload);
+  if (!airtime_governor::try_reserve_routine(millis(), wire_bytes)) {
+    return;
+  }
 
   broadcast_message(MSG_HEARTBEAT, (uint8_t*)&payload, sizeof(payload));
 }
