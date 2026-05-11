@@ -94,9 +94,21 @@ Urgent traffic — tamper alerts, power-loss alerts, `OFFLINE_IMMINENT` —
 calls `force_reserve_urgent()`. It always sends, but its cost is recorded
 so the telemetry is honest.
 
-The exact number you'll see in `mesh_airtime_pct` (published via MQTT
-discovery as `sensor.securacv_{device}_mesh_airtime_pct` once the HA
-integration step lands) is **percent × 100**: 215 means 2.15%.
+The exact number you'll see is **percent**, with one decimal place — the
+wire JSON carries `airtime_pct_x100` (e.g. `215` for 2.15%) and the HA
+value_template divides by 100. Discovery is published automatically via
+the existing MQTT bridge (`firmware/projects/canary-wap/arduino/canary_wap/csi_mqtt.cpp`),
+which creates these three entities under the canary device:
+
+| Entity | Type | What it shows |
+|--------|------|---------------|
+| `sensor.canary_<id>_mesh_airtime_pct` | sensor (`%`) | Rolling 10 s airtime utilization |
+| `sensor.canary_<id>_mesh_channel` | sensor | 2.4 GHz channel the mesh is on (1–13) |
+| `binary_sensor.canary_<id>_mesh_channel_locked_to_sta` | binary_sensor | On = mesh is following your home WiFi |
+
+State is published every 30 s on `{prefix}/{device_id}/mesh`; the JSON
+payload also carries `routine_allowed`, `routine_denied`, and
+`urgent_sends` counters for deeper debugging via the MQTT Explorer.
 
 ## What this means for installers
 
@@ -110,19 +122,17 @@ integration step lands) is **percent × 100**: 215 means 2.15%.
 
 ## What's NOT solved yet
 
-This is the *first* milestone of "secure useful sensing that doesn't fight
-your WiFi." Open items that the v1.0 roadmap addresses next:
+Closed steps so far: STA-following channel policy, airtime governor,
+chirp-presence gating, HA MQTT-discovery telemetry. Remaining items from
+the v1.0 roadmap:
 
-- **Chirp's presence beacons** are not yet routed through the governor. They
-  fire every 60 s and cost ~1 ms each, so the contribution is small, but the
-  wiring belongs here once the broader Chirp refactor lands.
 - **Per-device certificates** between Canary and witnessd (vs. today's
   shared `opera_secret`) — Stream C step 2.
 - **BLE-fallback for non-urgent gossip** — when channel-conflict events
   spike, demote heartbeats to BLE GATT and keep ESP-NOW for tamper alerts
   only.
-- **HA telemetry surface** — publish `mesh_airtime_pct`, `mesh_channel`,
-  `mesh_channel_locked_to_sta` as MQTT-discovery sensors.
+- **"Add another Canary" wizard step** in the HA add-on UI, signed by an
+  existing trustee Canary.
 
 ## How to verify
 
@@ -138,12 +148,13 @@ In the field, with two Canaries paired into one Opera, both in STA on the
 home network:
 
 1. Set your router to channel 11 (or any non-default).
-2. Observe `sensor.securacv_{device}_mesh_channel` in HA — both Canaries
-   should report 11.
+2. Observe `sensor.canary_<id>_mesh_channel` in HA — both Canaries should
+   report 11 and `binary_sensor.canary_<id>_mesh_channel_locked_to_sta`
+   should be ON.
 3. Run an iperf3 flow at 30 Mbps between two laptops on the same WiFi.
 4. Tamper one Canary; the other should report the tamper event within 5 s,
    and the iperf3 throughput should drop by < 5% during the burst.
-5. Watch `sensor.securacv_{device}_mesh_airtime_pct` — should stay ≤ 2% over
-   a 10-minute average.
+5. Watch `sensor.canary_<id>_mesh_airtime_pct` — should stay ≤ 2% over a
+   10-minute average.
 
 See the v1.0 plan in this branch for the broader acceptance criteria.

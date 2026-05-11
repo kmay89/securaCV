@@ -540,6 +540,44 @@ void publish_status(bool csi_running, bool wifi_connected, int rssi_dbm) {
   publish_raw(topic, body, (size_t)n, /*retain=*/true);
 }
 
+void publish_mesh(uint16_t airtime_pct_x100,
+                  uint8_t  channel,
+                  bool     locked_to_sta,
+                  bool     locked_to_ap,
+                  bool     fallback,
+                  uint32_t routine_allowed,
+                  uint32_t routine_denied,
+                  uint32_t urgent_sends) {
+  char topic[192];
+  build_topic(topic, sizeof(topic), "mesh");
+  /* All fields are denormalized into one JSON blob so HA can build
+   * value_template expressions without cross-topic state. Retained so
+   * a freshly-subscribing HA picks up the latest snapshot regardless
+   * of when it comes online. */
+  char body[224];
+  const int n = snprintf(body, sizeof(body),
+    "{"
+      "\"airtime_pct_x100\":%u,"
+      "\"channel\":%u,"
+      "\"locked_to_sta\":%s,"
+      "\"locked_to_ap\":%s,"
+      "\"fallback\":%s,"
+      "\"routine_allowed\":%lu,"
+      "\"routine_denied\":%lu,"
+      "\"urgent_sends\":%lu"
+    "}",
+    (unsigned)airtime_pct_x100,
+    (unsigned)channel,
+    locked_to_sta ? "true" : "false",
+    locked_to_ap ? "true" : "false",
+    fallback ? "true" : "false",
+    (unsigned long)routine_allowed,
+    (unsigned long)routine_denied,
+    (unsigned long)urgent_sends);
+  if (n <= 0 || (size_t)n >= sizeof(body)) return;
+  publish_raw(topic, body, (size_t)n, /*retain=*/true);
+}
+
 /* ──────────────────────────────────────────────────────────────────────────
  * Home Assistant MQTT auto-discovery
  *
@@ -631,6 +669,26 @@ const DiscoveryEntity ENTITIES[] = {
   { "sensor", "rssi", "Signal Strength", "status",
     "{{ value_json.rssi | default(0) }}",
     "dBm", "signal_strength", "measurement", nullptr },
+
+  /* Mesh coexistence — surfaces the airtime governor + channel policy
+   * decision so installers can see in HA that the multi-Canary mesh is
+   * (a) following the home WiFi channel and (b) staying under the
+   * airtime cap. airtime_pct is the rolling 10-second utilization
+   * scaled out of x100 (215 → 2.15%). HA renders one decimal which
+   * matches the granularity the governor reports.
+   * channel_locked_to_sta is a binary_sensor (on = "channel is
+   * following your home WiFi", the only behavior installers should
+   * see steady-state on a working deployment).
+   * See docs/network_coexistence.md for the policy + verification. */
+  { "sensor", "mesh_airtime_pct", "Mesh Airtime", "mesh",
+    "{{ (value_json.airtime_pct_x100 | default(0)) / 100 }}",
+    "%", nullptr, "measurement", "mdi:radio-tower" },
+  { "sensor", "mesh_channel", "Mesh Channel", "mesh",
+    "{{ value_json.channel | default(0) }}",
+    nullptr, nullptr, "measurement", "mdi:wifi-cog" },
+  { "binary_sensor", "mesh_channel_locked_to_sta", "Mesh Follows Home WiFi", "mesh",
+    "{% if value_json.locked_to_sta %}ON{% else %}OFF{% endif %}",
+    nullptr, nullptr, nullptr, "mdi:wifi-check" },
 };
 
 /* Emit one entity's config payload. Returns true on enqueue success.
