@@ -33,6 +33,7 @@
 #include <cstdint>
 #include <cstring>
 #include <cstdlib>
+#include <vector>
 
 #ifndef CSI_TEST_HOST_BUILD
 extern "C" int test_mesh_pairing_run() { return 0; }
@@ -185,6 +186,248 @@ void test_wire_format_struct_sizes() {
 
 }  /* namespace */
 
+/* ── State-machine tests (PR 2e) ──────────────────────────────────────── */
+
+namespace {
+
+/* Two-peer simulation harness. Owns one PairingContext per side and a
+ * tiny in-flight queue so process steps can be advanced deterministically. */
+
+struct InFlight {
+  uint8_t to[6];
+  mesh_pairing::MsgType type;
+  std::vector<uint8_t> bytes;
+};
+
+/* Map an outgoing Action to a queued InFlight + a corresponding MsgType. */
+bool action_to_inflight(const mesh_pairing::Action& a, InFlight* out) {
+  using mesh_pairing::ActionType;
+  using mesh_pairing::MsgType;
+  switch (a.type) {
+    case ActionType::BROADCAST_DISCOVER:
+      std::memcpy(out->to, a.peer_mac, 6); out->type = MsgType::DISCOVER; break;
+    case ActionType::SEND_OFFER:
+      std::memcpy(out->to, a.peer_mac, 6); out->type = MsgType::OFFER;    break;
+    case ActionType::SEND_ACCEPT:
+      std::memcpy(out->to, a.peer_mac, 6); out->type = MsgType::ACCEPT;   break;
+    case ActionType::SEND_CONFIRM:
+      std::memcpy(out->to, a.peer_mac, 6); out->type = MsgType::CONFIRM;  break;
+    case ActionType::SEND_COMPLETE:
+      std::memcpy(out->to, a.peer_mac, 6); out->type = MsgType::COMPLETE; break;
+    default: return false;
+  }
+  out->bytes.assign(a.payload, a.payload + a.payload_len);
+  return true;
+}
+
+void test_full_handshake_succeeds() {
+  /* Two contexts, two long-term keypairs, two MACs. Drive the full
+   * 5-message handshake and assert the joiner ends up holding the
+   * initiator's opera_secret. */
+  mesh_pairing::PairingContext ctx_init, ctx_join;
+  mesh_pairing::context_init(ctx_init);
+  mesh_pairing::context_init(ctx_join);
+
+  uint8_t pub_i[mesh_crypto::PUBKEY_LEN], priv_i[mesh_crypto::PRIVKEY_LEN];
+  uint8_t pub_j[mesh_crypto::PUBKEY_LEN], priv_j[mesh_crypto::PRIVKEY_LEN];
+  assert(mesh_crypto::ed25519_generate_keypair(pub_i, priv_i));
+  assert(mesh_crypto::ed25519_generate_keypair(pub_j, priv_j));
+
+  uint8_t opera_secret[mesh_crypto::OPERA_SECRET_LEN];
+  for (size_t i = 0; i < sizeof(opera_secret); ++i) opera_secret[i] = (uint8_t)(0x40 + i);
+
+  const uint8_t mac_i[6] = {0xAA, 0xBB, 0xCC, 0x00, 0x00, 0x01};
+  const uint8_t mac_j[6] = {0xAA, 0xBB, 0xCC, 0x00, 0x00, 0x02};
+  (void)mac_i;  /* the joiner learns the initiator's MAC from the incoming frame */
+
+  /* 1. Joiner enters listen state. */
+  mesh_pairing::Action a;
+  a = mesh_pairing::start_joiner(ctx_join, pub_j, priv_j, /*now_ms=*/0);
+  assert(a.type == mesh_pairing::ActionType::NONE);
+
+  /* 2. Initiator broadcasts DISCOVER. */
+  a = mesh_pairing::start_initiator(ctx_init, pub_i, priv_i, opera_secret,
+                                    "MyOpera", /*now_ms=*/100);
+  assert(a.type == mesh_pairing::ActionType::BROADCAST_DISCOVER);
+  InFlight f1; assert(action_to_inflight(a, &f1));
+
+  /* 3. Joiner receives DISCOVER → emits OFFER. */
+  a = mesh_pairing::receive(ctx_join, mac_i, f1.type,
+                            f1.bytes.data(), f1.bytes.size(), 200);
+  assert(a.type == mesh_pairing::ActionType::SEND_OFFER);
+  InFlight f2; assert(action_to_inflight(a, &f2));
+  /* OFFER must be addressed to the initiator's MAC. */
+  assert(std::memcmp(f2.to, mac_i, 6) == 0);
+
+  /* 4. Initiator receives OFFER → derives session key, emits ACCEPT. */
+  a = mesh_pairing::receive(ctx_init, mac_j, f2.type,
+                            f2.bytes.data(), f2.bytes.size(), 300);
+  assert(a.type == mesh_pairing::ActionType::SEND_ACCEPT);
+  assert(a.confirmation_code != 0);   /* initiator now knows the code */
+  uint32_t code_init = a.confirmation_code;
+  InFlight f3; assert(action_to_inflight(a, &f3));
+
+  /* 5. Joiner receives ACCEPT → derives session key, surfaces code. */
+  a = mesh_pairing::receive(ctx_join, mac_i, f3.type,
+                            f3.bytes.data(), f3.bytes.size(), 400);
+  assert(a.type == mesh_pairing::ActionType::NOTIFY_CODE_READY);
+  assert(a.confirmation_code == code_init);  /* CRITICAL: both sides agree */
+  uint32_t code_join = a.confirmation_code;
+  (void)code_join;
+
+  /* 6. Both users hit "confirm" (we just call the API on both sides).
+   * Each emits SEND_CONFIRM. */
+  a = mesh_pairing::confirm_code(ctx_init, 500);
+  assert(a.type == mesh_pairing::ActionType::SEND_CONFIRM);
+  InFlight f4_i; assert(action_to_inflight(a, &f4_i));
+
+  a = mesh_pairing::confirm_code(ctx_join, 500);
+  assert(a.type == mesh_pairing::ActionType::SEND_CONFIRM);
+  InFlight f4_j; assert(action_to_inflight(a, &f4_j));
+
+  /* 7. Initiator receives joiner's CONFIRM → sends COMPLETE (encrypted
+   * opera_secret). */
+  a = mesh_pairing::receive(ctx_init, mac_j, f4_j.type,
+                            f4_j.bytes.data(), f4_j.bytes.size(), 600);
+  assert(a.type == mesh_pairing::ActionType::SEND_COMPLETE);
+  InFlight f5; assert(action_to_inflight(a, &f5));
+
+  /* 8. Joiner receives initiator's CONFIRM (sanity — should be NONE
+   * since joiner already moved into AWAITING_COMPLETE after sending
+   * its own CONFIRM). Actually re-feeding may not transition; just
+   * check it doesn't crash. */
+  a = mesh_pairing::receive(ctx_join, mac_i, f4_i.type,
+                            f4_i.bytes.data(), f4_i.bytes.size(), 600);
+  /* In our state machine the joiner moves to AWAITING_COMPLETE after
+   * its own confirm_code() call, so a peer-CONFIRM arriving now is
+   * silently dropped (state != AWAITING_CONFIRM_PEER on the joiner).
+   * That's fine — the joiner doesn't NEED to verify the initiator's
+   * confirm hash since the COMPLETE itself fails to decrypt if the
+   * session key was wrong. */
+  assert(a.type == mesh_pairing::ActionType::NONE);
+
+  /* 9. Joiner receives COMPLETE → decrypts opera_secret → NOTIFY_PAIRED. */
+  a = mesh_pairing::receive(ctx_join, mac_i, f5.type,
+                            f5.bytes.data(), f5.bytes.size(), 700);
+  assert(a.type == mesh_pairing::ActionType::NOTIFY_PAIRED);
+
+  /* 10. Joiner consumes the secret and asserts it matches the
+   * initiator's original. */
+  uint8_t got[mesh_crypto::OPERA_SECRET_LEN];
+  assert(mesh_pairing::consume_opera_secret(ctx_join, got));
+  assert(std::memcmp(got, opera_secret, mesh_crypto::OPERA_SECRET_LEN) == 0);
+  /* Second consume returns false (wiped). */
+  assert(!mesh_pairing::consume_opera_secret(ctx_join, got));
+
+  std::printf("PASS test_full_handshake_succeeds  (code=%06u)\n", code_init);
+}
+
+void test_handshake_aborts_on_tampered_confirm_hash() {
+  /* Drive the handshake to the CONFIRM step, then corrupt the joiner's
+   * confirmation_hash before the initiator receives it. Initiator must
+   * transition to FAILED. */
+  mesh_pairing::PairingContext ctx_init, ctx_join;
+  mesh_pairing::context_init(ctx_init);
+  mesh_pairing::context_init(ctx_join);
+
+  uint8_t pub_i[mesh_crypto::PUBKEY_LEN], priv_i[mesh_crypto::PRIVKEY_LEN];
+  uint8_t pub_j[mesh_crypto::PUBKEY_LEN], priv_j[mesh_crypto::PRIVKEY_LEN];
+  assert(mesh_crypto::ed25519_generate_keypair(pub_i, priv_i));
+  assert(mesh_crypto::ed25519_generate_keypair(pub_j, priv_j));
+  uint8_t secret[mesh_crypto::OPERA_SECRET_LEN] = {0};
+
+  const uint8_t mac_i[6] = {0xAA, 1, 0, 0, 0, 1};
+  const uint8_t mac_j[6] = {0xAA, 1, 0, 0, 0, 2};
+
+  mesh_pairing::start_joiner(ctx_join, pub_j, priv_j, 0);
+  mesh_pairing::Action a = mesh_pairing::start_initiator(ctx_init, pub_i, priv_i,
+                                                          secret, "X", 100);
+  InFlight f; action_to_inflight(a, &f);
+  a = mesh_pairing::receive(ctx_join, mac_i, f.type, f.bytes.data(), f.bytes.size(), 200);
+  action_to_inflight(a, &f);
+  a = mesh_pairing::receive(ctx_init, mac_j, f.type, f.bytes.data(), f.bytes.size(), 300);
+  action_to_inflight(a, &f);
+  a = mesh_pairing::receive(ctx_join, mac_i, f.type, f.bytes.data(), f.bytes.size(), 400);
+  /* Joiner now AWAITING_CONFIRM with code_ready. */
+
+  a = mesh_pairing::confirm_code(ctx_join, 500);
+  assert(a.type == mesh_pairing::ActionType::SEND_CONFIRM);
+  InFlight cf; action_to_inflight(a, &cf);
+
+  /* Tamper one bit in the confirmation_hash payload. */
+  cf.bytes[3] ^= 0x01;
+
+  /* Initiator confirms its code first to enter AWAITING_CONFIRM_PEER. */
+  a = mesh_pairing::confirm_code(ctx_init, 500);
+  assert(a.type == mesh_pairing::ActionType::SEND_CONFIRM);
+
+  /* Feed initiator the TAMPERED joiner-confirm. */
+  a = mesh_pairing::receive(ctx_init, mac_j, cf.type,
+                            cf.bytes.data(), cf.bytes.size(), 600);
+  assert(a.type == mesh_pairing::ActionType::NOTIFY_FAILED);
+  std::printf("PASS test_handshake_aborts_on_tampered_confirm_hash\n");
+}
+
+void test_timeout_after_5_minutes() {
+  mesh_pairing::PairingContext ctx;
+  mesh_pairing::context_init(ctx);
+  uint8_t pub[32], priv[32];
+  assert(mesh_crypto::ed25519_generate_keypair(pub, priv));
+  uint8_t secret[32] = {0};
+  mesh_pairing::start_initiator(ctx, pub, priv, secret, "X", /*now_ms=*/1000);
+
+  /* Just before timeout. */
+  mesh_pairing::Action a = mesh_pairing::tick(ctx, 1000 + mesh_pairing::PAIRING_TIMEOUT_MS - 1);
+  assert(a.type == mesh_pairing::ActionType::NONE);
+
+  /* At + past timeout. */
+  a = mesh_pairing::tick(ctx, 1000 + mesh_pairing::PAIRING_TIMEOUT_MS);
+  assert(a.type == mesh_pairing::ActionType::NOTIFY_FAILED);
+
+  /* Idempotent: another tick after failure is NONE. */
+  a = mesh_pairing::tick(ctx, 1000 + mesh_pairing::PAIRING_TIMEOUT_MS + 1000);
+  assert(a.type == mesh_pairing::ActionType::NONE);
+  std::printf("PASS test_timeout_after_5_minutes\n");
+}
+
+void test_cancel_wipes_state() {
+  mesh_pairing::PairingContext ctx;
+  mesh_pairing::context_init(ctx);
+  uint8_t pub[32], priv[32];
+  assert(mesh_crypto::ed25519_generate_keypair(pub, priv));
+  uint8_t secret[32] = {1, 2, 3, 4, 5};
+  mesh_pairing::start_initiator(ctx, pub, priv, secret, "X", 0);
+
+  mesh_pairing::Action a = mesh_pairing::cancel(ctx);
+  assert(a.type == mesh_pairing::ActionType::NOTIFY_FAILED);
+  /* ephem_privkey and opera_secret should be all-zero after cancel. */
+  uint8_t zero[32] = {0};
+  assert(std::memcmp(ctx.ephem_privkey, zero, 32) == 0);
+  assert(std::memcmp(ctx.opera_secret, zero, 32) == 0);
+  std::printf("PASS test_cancel_wipes_state\n");
+}
+
+void test_receive_unexpected_message_is_dropped() {
+  mesh_pairing::PairingContext ctx;
+  mesh_pairing::context_init(ctx);
+  uint8_t pub[32], priv[32];
+  assert(mesh_crypto::ed25519_generate_keypair(pub, priv));
+  mesh_pairing::start_joiner(ctx, pub, priv, 0);
+
+  /* Joiner is in AWAITING_OFFER. Feeding it a COMPLETE should be NONE. */
+  uint8_t bogus_complete[sizeof(mesh_pairing::PairCompletePayload)] = {0};
+  const uint8_t mac[6] = {0xCC, 0, 0, 0, 0, 1};
+  mesh_pairing::Action a = mesh_pairing::receive(ctx, mac, mesh_pairing::MsgType::COMPLETE,
+                                                  bogus_complete, sizeof(bogus_complete), 100);
+  assert(a.type == mesh_pairing::ActionType::NONE);
+  /* And the joiner should NOT have transitioned to FAILED — stray
+   * messages don't abort pairing. */
+  assert(ctx.state == mesh_pairing::State::AWAITING_OFFER);
+  std::printf("PASS test_receive_unexpected_message_is_dropped\n");
+}
+
+}  /* namespace */
+
 int main() {
   std::srand(0xC5101);
   test_code_deterministic();
@@ -195,6 +438,11 @@ int main() {
   test_confirmation_hash_wire_compat();
   test_confirmation_hash_distinguishes_code();
   test_wire_format_struct_sizes();
+  test_full_handshake_succeeds();
+  test_handshake_aborts_on_tampered_confirm_hash();
+  test_timeout_after_5_minutes();
+  test_cancel_wipes_state();
+  test_receive_unexpected_message_is_dropped();
   std::printf("\nALL MESH_PAIRING TESTS PASSED\n");
   return 0;
 }
