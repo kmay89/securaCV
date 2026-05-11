@@ -381,8 +381,8 @@ footer a{color:var(--accent);text-decoration:none}
       <p class="wiz-sub" id="wiz-st-sub">…</p>
       <div class="wiz-check-list" id="wiz-st-list" role="group" aria-label="Pre-flight checks" aria-busy="false"></div>
       <div class="wiz-check-summary" id="wiz-st-summary" role="status" aria-live="polite"></div>
-      <p class="wiz-sub">Setup's done. Rejoin your home WiFi on your phone, then tap a link below to open your Canary.</p>
       <div class="wiz-link-row" id="wiz-st-links" style="display:none">
+        <p class="wiz-sub" style="margin:0">Setup's done. Rejoin your home WiFi on your phone, then tap a link below to open your Canary.</p>
         <a id="wiz-link-mdns" href="http://canary.local/">Open canary.local</a>
         <a id="wiz-link-ip" href="#" style="display:none"></a>
       </div>
