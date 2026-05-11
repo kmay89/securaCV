@@ -317,7 +317,7 @@ footer a{color:var(--accent);text-decoration:none}
 
   <div class="wiz-step" id="wiz-step-2">
     <h2 class="wiz-h" tabindex="-1">Pick your home WiFi</h2>
-    <p class="wiz-sub">Your phone won't be on this list — pick the network your Canary should join.</p>
+    <p class="wiz-sub">These are the networks your Canary can see. Pick the one it should join.</p>
     <div class="wiz-net-list" id="wiz-nets" role="group" aria-label="Available networks" aria-busy="true">
       <div class="wiz-spin">Looking for networks…</div>
     </div>
@@ -350,7 +350,7 @@ footer a{color:var(--accent);text-decoration:none}
     <div id="wiz-step-4-success" class="hidden">
       <div class="wiz-tick">✓</div>
       <h2 class="wiz-h" tabindex="-1">Your Canary is online.</h2>
-      <p class="wiz-sub">Joined <strong id="wiz-success-ssid">your home WiFi</strong>. One quick check that everything's awake before we hand it back.</p>
+      <p class="wiz-sub">Joined <strong id="wiz-success-ssid">your home WiFi</strong>. Running one quick check that the sensors are awake.</p>
     </div>
     <div id="wiz-step-4-failure" class="hidden">
       <div class="wiz-cross">!</div>
@@ -381,6 +381,7 @@ footer a{color:var(--accent);text-decoration:none}
       <p class="wiz-sub" id="wiz-st-sub">…</p>
       <div class="wiz-check-list" id="wiz-st-list" role="group" aria-label="Pre-flight checks" aria-busy="false"></div>
       <div class="wiz-check-summary" id="wiz-st-summary" role="status" aria-live="polite"></div>
+      <p class="wiz-sub">Setup's done. Rejoin your home WiFi on your phone, then tap a link below to open your Canary.</p>
       <div class="wiz-link-row" id="wiz-st-links" style="display:none">
         <a id="wiz-link-mdns" href="http://canary.local/">Open canary.local</a>
         <a id="wiz-link-ip" href="#" style="display:none"></a>
