@@ -151,24 +151,6 @@ class SecuraCVCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return {"latest_event": latest_event}
 
 
-class SecuraCVMqttOnlyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
-    """Stub coordinator for MQTT-only mode (no HTTP polling)."""
-
-    def __init__(self, hass: HomeAssistant) -> None:
-        """Initialize the coordinator."""
-        super().__init__(
-            hass,
-            logger=_LOGGER,
-            name="SecuraCV",
-            update_interval=None,  # No polling — MQTT push only
-        )
-        self.data = {"latest_event": None}
-
-    async def _async_update_data(self) -> dict[str, Any]:
-        """No-op for MQTT-only mode."""
-        return self.data
-
-
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up SecuraCV from a config entry."""
     hass.data.setdefault(DOMAIN, {})
@@ -177,15 +159,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     has_kernel = setup_mode in (SETUP_MODE_KERNEL, SETUP_MODE_BOTH)
     enable_mqtt = entry.data.get(CONF_ENABLE_MQTT, False)
 
-    # Initialize coordinator based on setup mode
+    # Initialize the HTTP-API coordinator iff a kernel is configured.
+    # MQTT-only mode has no HTTP surface, so there's no coordinator to
+    # build; the kernel sensor platforms gate themselves on coordinator
+    # presence in entry_data.
     if has_kernel:
         session = async_get_clientsession(hass)
         api = SecuraCVApi(entry.data[CONF_URL], entry.data[CONF_TOKEN], session)
-        coordinator = SecuraCVCoordinator(hass, api)
+        coordinator: SecuraCVCoordinator | None = SecuraCVCoordinator(hass, api)
         await coordinator.async_config_entry_first_refresh()
     else:
         api = None
-        coordinator = SecuraCVMqttOnlyCoordinator(hass)
+        coordinator = None
 
     # Store entry data
     entry_data: dict[str, Any] = {

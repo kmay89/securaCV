@@ -43,12 +43,16 @@ async def async_setup_entry(
 ) -> None:
     """Set up SecuraCV sensors from a config entry."""
     entry_data = hass.data[DOMAIN][entry.entry_id]
-    coordinator = entry_data["coordinator"]
+    coordinator = entry_data.get("coordinator")
 
-    # Always add the kernel sensor (HTTP-based)
-    entities: list[SensorEntity] = [
-        SecuraCVKernelLastEventSensor(coordinator, entry),
-    ]
+    # The kernel HTTP-API sensor only exists when a kernel is configured
+    # (SETUP_MODE_KERNEL / SETUP_MODE_BOTH). In SETUP_MODE_MQTT the
+    # coordinator is None and entry.data has no CONF_URL — adding the
+    # sensor would KeyError on device_info and mislead the UI about a
+    # kernel that doesn't exist.
+    entities: list[SensorEntity] = []
+    if coordinator is not None:
+        entities.append(SecuraCVKernelLastEventSensor(coordinator, entry))
     async_add_entities(entities)
 
     # Optionally set up MQTT-based Canary sensors
