@@ -57,6 +57,48 @@
       "already_configured": "This integration is already configured."
     }
   },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Device key management",
+        "description": "Pin, rotate, or unpin a Canary device's Ed25519 public key. Read fingerprints from each device's /enroll page (e.g. http://canary-XXXX.local/enroll).",
+        "menu_options": {
+          "pin": "Pin a device pubkey (manual)",
+          "rotate": "Rotate a pinned device key",
+          "unpin": "Unpin a device"
+        }
+      },
+      "pin": {
+        "title": "Pin device pubkey",
+        "description": "Paste the device_id and full 64-character Ed25519 pubkey hex shown on the device's /enroll page.",
+        "data": {
+          "device_id": "Device ID",
+          "pubkey_hex": "Public key (hex)"
+        }
+      },
+      "rotate": {
+        "title": "Rotate pinned key",
+        "description": "Replace the existing pin with a new pubkey. The previous key is retained in the audit trail. The mismatch notification for this device (if any) is cleared.",
+        "data": {
+          "device_id": "Device ID",
+          "pubkey_hex": "New public key (hex)"
+        }
+      },
+      "unpin": {
+        "title": "Unpin device",
+        "description": "Drop the device's pin. The next publish will TOFU-pin to whatever pubkey arrives.",
+        "data": {
+          "device_id": "Device ID"
+        }
+      }
+    },
+    "error": {
+      "invalid_device_id": "Device ID can't be empty.",
+      "invalid_pubkey_hex": "Public key must be exactly 64 lowercase hex characters.",
+      "device_not_pinned": "No pin exists for this device_id.",
+      "trust_store_unavailable": "The trust store isn't loaded for this entry — try reloading the integration."
+    }
+  },
   "services": {
     "export_chain": {
       "name": "Export Witness Chain",

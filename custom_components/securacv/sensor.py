@@ -32,8 +32,59 @@ from .const import (
     WARNING_BATTERY_THRESHOLD_PERCENT,
     WARNING_MEMORY_THRESHOLD_BYTES,
 )
+from .device_trust import TrustStore
+from . import async_record_verify
+from .signature import verify_chain, verify_counts, verify_event
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _trust_store_for(hass: HomeAssistant, entry: ConfigEntry) -> TrustStore | None:
+    """Pull the per-entry TrustStore singleton out of hass.data."""
+    entry_data = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    if not entry_data:
+        return None
+    return entry_data.get("trust_store")
+
+
+def _verify_and_record(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    device_id: str,
+    payload: dict[str, Any],
+    verifier,
+) -> None:
+    """Run the kind-specific verifier and stamp the result so the
+    extra_state_attributes block can surface it next to the entity.
+
+    Verifier signature: `verifier(trust_store, device_id, payload) -> TrustVerdict`.
+    Failing payloads (no trust store yet, unsigned firmware) are
+    silently treated as "unverified" — we never want to drop entity
+    state on a sig issue, only annotate it. The persistent_notification
+    fan-out lives in __init__.py's async_record_verify."""
+    trust_store = _trust_store_for(hass, entry)
+    if trust_store is None:
+        return
+    verdict = verifier(trust_store, device_id, payload)
+    async_record_verify(hass, entry, device_id, verdict)
+
+
+def _trust_attrs(
+    hass: HomeAssistant, entry: ConfigEntry, device_id: str
+) -> dict[str, Any]:
+    """Return the verify-state slice that every signed-topic entity
+    surfaces as part of extra_state_attributes. Keys are kept short
+    and JSON-friendly because they show up directly in HA's UI."""
+    entry_data = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
+    verify = entry_data.get("verify", {}).get(device_id)
+    if not verify:
+        return {"verified": False, "trust_reason": "no_pubkey"}
+    return {
+        "verified": bool(verify.get("trusted")),
+        "trust_reason": verify.get("reason", "unknown"),
+        "pinned_fingerprint": verify.get("pinned_fingerprint"),
+        "received_fingerprint": verify.get("received_fingerprint"),
+    }
 
 
 async def async_setup_entry(
@@ -192,6 +243,7 @@ class SecuraCVCanarySensorBase(SensorEntity):
         """Initialize the sensor."""
         self._prefix = prefix
         self._device_id = device_id
+        self._entry = entry
         self._attr_unique_id = f"{DOMAIN}_canary_{device_id}_{key}"
         self._attr_name = name_suffix
 
@@ -231,6 +283,10 @@ class SecuraCVCanaryWitnessCountSensor(SecuraCVCanarySensorBase):
         try:
             data = json.loads(msg.payload)
             self._attr_native_value = data.get("total", data.get("count", 0))
+            _verify_and_record(self.hass, self._entry, self._device_id,
+                               data, verify_counts)
+            self._attr_extra_state_attributes = _trust_attrs(
+                self.hass, self._entry, self._device_id)
         except (json.JSONDecodeError, TypeError):
             try:
                 self._attr_native_value = int(msg.payload)
@@ -264,9 +320,12 @@ class SecuraCVCanaryChainLengthSensor(SecuraCVCanarySensorBase):
         try:
             data = json.loads(msg.payload)
             self._attr_native_value = data.get("length", data.get("chain_length", 0))
+            _verify_and_record(self.hass, self._entry, self._device_id,
+                               data, verify_chain)
             self._attr_extra_state_attributes = {
                 "latest_hash": data.get("latest_hash", ""),
                 "algorithm": data.get("algorithm", "ed25519"),
+                **_trust_attrs(self.hass, self._entry, self._device_id),
             }
         except (json.JSONDecodeError, TypeError):
             return
@@ -296,11 +355,14 @@ class SecuraCVCanaryLastEventSensor(SecuraCVCanarySensorBase):
         try:
             data = json.loads(msg.payload)
             self._attr_native_value = data.get("event_type", data.get("type", "unknown"))
+            _verify_and_record(self.hass, self._entry, self._device_id,
+                               data, verify_event)
             self._attr_extra_state_attributes = {
                 "timestamp": data.get("timestamp", ""),
                 "zone": data.get("zone", ""),
                 "confidence": data.get("confidence", ""),
                 "signed": data.get("signed", False),
+                **_trust_attrs(self.hass, self._entry, self._device_id),
             }
         except (json.JSONDecodeError, TypeError):
             payload = msg.payload.decode(errors="ignore") if isinstance(msg.payload, bytes) else str(msg.payload)

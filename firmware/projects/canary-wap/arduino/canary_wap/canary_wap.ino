@@ -125,6 +125,7 @@
 #include "companion_pwa.h"
 #include "csi_integration.h"     // Boot the CSI library + HTTP endpoints
 #include "csi_mqtt.h"            // Optional MQTT bridge for HA integration
+#include "device_signature.h"    // Ed25519 sigs over MQTT publishes (per-device PKI)
 #include "csi_event_log.h"       // SD-backed event persistence + MQTT backfill
 #include "csi_witness_payload.h" // Builds the witness-chain payload string
 #include <ble_events_module.h>   // spec §10 BLE event chokepoint helpers
@@ -4842,6 +4843,18 @@ static void register_api_routes(httpd_handle_t server) {
   httpd_uri_t legacy_ui = { .uri = "/admin", .method = HTTP_GET, .handler = handle_legacy_ui };
   httpd_register_uri_handler(server, &legacy_ui);
 
+  // Device enrollment endpoints — unauthenticated by design (pubkey +
+  // fingerprint are PUBLIC data). HA's config flow pulls /api/device/enroll
+  // to TOFU-pin the device's pubkey; the /enroll HTML page renders the
+  // fingerprint in big monospace text for an installer to read off the
+  // captive-portal page and type into HA when they want to pin manually.
+  httpd_uri_t enroll_json_uri = { .uri = "/api/device/enroll", .method = HTTP_GET,
+                                  .handler = device_identity_api::handle_enroll_json };
+  httpd_register_uri_handler(server, &enroll_json_uri);
+  httpd_uri_t enroll_html_uri = { .uri = "/enroll", .method = HTTP_GET,
+                                  .handler = device_identity_api::handle_enroll_html };
+  httpd_register_uri_handler(server, &enroll_html_uri);
+
   // Companion PWA (Web Bluetooth phone-side console). Three static assets,
   // no auth — the page itself is just HTML/JS/manifest; the BLE
   // characteristics it talks to enforce READ_ENC + READ_AUTHEN, so a
@@ -4911,6 +4924,16 @@ static void register_api_routes(httpd_handle_t server) {
   char pubkey_hex[65];
   hex_to_str(pubkey_hex, g_device.pubkey, 32);
   csi_mqtt::init(g_device.device_id, FIRMWARE_VERSION, pubkey_hex);
+
+  // Per-device Ed25519 signature service. Mounts the keypair into a
+  // dedicated module so csi_mqtt (and any future signed-egress path
+  // like SD-resync) can stamp chain/event/counts publishes with a
+  // signature HA verifies against its pinned-pubkey trust store.
+  // Must come after generate_keypair has populated g_device.{priv,pub,fp}.
+  device_signature::init(g_device.privkey,
+                         g_device.pubkey,
+                         g_device.device_id,
+                         g_device.fingerprint_hex);
 }
 
 static void start_http_server() {
