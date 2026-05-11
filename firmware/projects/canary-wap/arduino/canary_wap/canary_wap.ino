@@ -4728,6 +4728,65 @@ static esp_err_t handle_wifi_reconnect_auth(httpd_req_t* req) {
   return handle_wifi_reconnect(req);
 }
 
+// Opera-mesh auth wrappers. The /api/mesh/* family covers everything from
+// status readbacks (state, peer table, recent alerts) through state-
+// mutating control (enable/disable, pair init/join/confirm/cancel,
+// leave, remove peer, rename). All 12 endpoints are post-setup-only —
+// the mesh service doesn't start until WiFi is up — so none of them
+// have a "must work pre-token" exception like /api/wifi/scan does, and
+// none of them have a pre-credential gate like /api/wifi/connect's
+// pair_token_valid. The dashboard's secureFetch already supplies the
+// Bearer token on every call (web_ui.h:3063-3170), so wrapping mirrors
+// the same plumbing-only fix as #435 for the WiFi-mgmt handlers.
+static esp_err_t handle_mesh_status_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_mesh_status(req);
+}
+static esp_err_t handle_mesh_peers_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_mesh_peers(req);
+}
+static esp_err_t handle_mesh_alerts_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_mesh_alerts(req);
+}
+static esp_err_t handle_mesh_alerts_clear_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_mesh_alerts_clear(req);
+}
+static esp_err_t handle_mesh_enable_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_mesh_enable(req);
+}
+static esp_err_t handle_mesh_pair_start_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_mesh_pair_start(req);
+}
+static esp_err_t handle_mesh_pair_join_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_mesh_pair_join(req);
+}
+static esp_err_t handle_mesh_pair_confirm_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_mesh_pair_confirm(req);
+}
+static esp_err_t handle_mesh_pair_cancel_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_mesh_pair_cancel(req);
+}
+static esp_err_t handle_mesh_leave_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_mesh_leave(req);
+}
+static esp_err_t handle_mesh_remove_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_mesh_remove(req);
+}
+static esp_err_t handle_mesh_name_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_mesh_name(req);
+}
+
 #if FEATURE_CAMERA_PEEK
 static esp_err_t handle_peek_stream_auth(httpd_req_t* req) {
   if (!api_auth_check_or_query(req, g_device.api_token_str)) return ESP_OK;
@@ -5017,40 +5076,40 @@ register_extra_routes:
 
 #if FEATURE_MESH_NETWORK
   // Mesh network (opera) endpoints
-  httpd_uri_t mesh_status = { .uri = "/api/mesh", .method = HTTP_GET, .handler = handle_mesh_status };
+  httpd_uri_t mesh_status = { .uri = "/api/mesh", .method = HTTP_GET, .handler = handle_mesh_status_auth };
   httpd_register_uri_handler(active_server, &mesh_status);
 
-  httpd_uri_t mesh_peers = { .uri = "/api/mesh/peers", .method = HTTP_GET, .handler = handle_mesh_peers };
+  httpd_uri_t mesh_peers = { .uri = "/api/mesh/peers", .method = HTTP_GET, .handler = handle_mesh_peers_auth };
   httpd_register_uri_handler(active_server, &mesh_peers);
 
-  httpd_uri_t mesh_alerts = { .uri = "/api/mesh/alerts", .method = HTTP_GET, .handler = handle_mesh_alerts };
+  httpd_uri_t mesh_alerts = { .uri = "/api/mesh/alerts", .method = HTTP_GET, .handler = handle_mesh_alerts_auth };
   httpd_register_uri_handler(active_server, &mesh_alerts);
 
-  httpd_uri_t mesh_alerts_clear = { .uri = "/api/mesh/alerts", .method = HTTP_DELETE, .handler = handle_mesh_alerts_clear };
+  httpd_uri_t mesh_alerts_clear = { .uri = "/api/mesh/alerts", .method = HTTP_DELETE, .handler = handle_mesh_alerts_clear_auth };
   httpd_register_uri_handler(active_server, &mesh_alerts_clear);
 
-  httpd_uri_t mesh_enable = { .uri = "/api/mesh/enable", .method = HTTP_POST, .handler = handle_mesh_enable };
+  httpd_uri_t mesh_enable = { .uri = "/api/mesh/enable", .method = HTTP_POST, .handler = handle_mesh_enable_auth };
   httpd_register_uri_handler(active_server, &mesh_enable);
 
-  httpd_uri_t mesh_pair_start = { .uri = "/api/mesh/pair/start", .method = HTTP_POST, .handler = handle_mesh_pair_start };
+  httpd_uri_t mesh_pair_start = { .uri = "/api/mesh/pair/start", .method = HTTP_POST, .handler = handle_mesh_pair_start_auth };
   httpd_register_uri_handler(active_server, &mesh_pair_start);
 
-  httpd_uri_t mesh_pair_join = { .uri = "/api/mesh/pair/join", .method = HTTP_POST, .handler = handle_mesh_pair_join };
+  httpd_uri_t mesh_pair_join = { .uri = "/api/mesh/pair/join", .method = HTTP_POST, .handler = handle_mesh_pair_join_auth };
   httpd_register_uri_handler(active_server, &mesh_pair_join);
 
-  httpd_uri_t mesh_pair_confirm = { .uri = "/api/mesh/pair/confirm", .method = HTTP_POST, .handler = handle_mesh_pair_confirm };
+  httpd_uri_t mesh_pair_confirm = { .uri = "/api/mesh/pair/confirm", .method = HTTP_POST, .handler = handle_mesh_pair_confirm_auth };
   httpd_register_uri_handler(active_server, &mesh_pair_confirm);
 
-  httpd_uri_t mesh_pair_cancel = { .uri = "/api/mesh/pair/cancel", .method = HTTP_POST, .handler = handle_mesh_pair_cancel };
+  httpd_uri_t mesh_pair_cancel = { .uri = "/api/mesh/pair/cancel", .method = HTTP_POST, .handler = handle_mesh_pair_cancel_auth };
   httpd_register_uri_handler(active_server, &mesh_pair_cancel);
 
-  httpd_uri_t mesh_leave = { .uri = "/api/mesh/leave", .method = HTTP_POST, .handler = handle_mesh_leave };
+  httpd_uri_t mesh_leave = { .uri = "/api/mesh/leave", .method = HTTP_POST, .handler = handle_mesh_leave_auth };
   httpd_register_uri_handler(active_server, &mesh_leave);
 
-  httpd_uri_t mesh_remove = { .uri = "/api/mesh/remove", .method = HTTP_POST, .handler = handle_mesh_remove };
+  httpd_uri_t mesh_remove = { .uri = "/api/mesh/remove", .method = HTTP_POST, .handler = handle_mesh_remove_auth };
   httpd_register_uri_handler(active_server, &mesh_remove);
 
-  httpd_uri_t mesh_name = { .uri = "/api/mesh/name", .method = HTTP_POST, .handler = handle_mesh_name };
+  httpd_uri_t mesh_name = { .uri = "/api/mesh/name", .method = HTTP_POST, .handler = handle_mesh_name_auth };
   httpd_register_uri_handler(active_server, &mesh_name);
 #endif
 
