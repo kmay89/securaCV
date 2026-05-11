@@ -38,6 +38,7 @@
 #endif
 #if FEATURE_ACOUSTIC_EVENTS
 #include "securacv_audio.h"
+#include <Preferences.h>   /* persist mic mute across reboots */
 #endif
 #if FEATURE_TOUCH
 #include "securacv_touch.h"
@@ -570,12 +571,20 @@ static esp_err_t handle_sensing(httpd_req_t* req);
 #endif
 #endif
 
+#if FEATURE_ACOUSTIC_EVENTS
+// Microphone testability + privacy controls (see docs/getting_started_canary.md).
+static esp_err_t handle_audio_level(httpd_req_t* req);
+static esp_err_t handle_audio_mute(httpd_req_t* req);
+static esp_err_t handle_audio_test_start(httpd_req_t* req);
+static esp_err_t handle_audio_test_status(httpd_req_t* req);
+#endif
+
 bool NetworkManager::startHttpServer() {
   httpd_config_t config = HTTPD_DEFAULT_CONFIG();
   config.server_port = 80;
   config.uri_match_fn = httpd_uri_match_wildcard;
   config.stack_size = 8192;
-  config.max_uri_handlers = 25;  /* +1 for /api/sensing when FEATURE_CSI=1 */
+  config.max_uri_handlers = 29;  /* +1 sensing; +4 for the audio test endpoints */
 
   if (httpd_start(&m_http_server, &config) != ESP_OK) {
     log_health(LOG_LEVEL_ERROR, LOG_CAT_NETWORK, "HTTP server start failed", nullptr);
@@ -669,6 +678,24 @@ void NetworkManager::registerHttpHandlers() {
   #if FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS || FEATURE_TOUCH || FEATURE_IR_RMT || FEATURE_TEMP_TAMPER
   httpd_uri_t sensing_ep = { .uri = "/api/sensing", .method = HTTP_GET, .handler = handle_sensing };
   httpd_register_uri_handler(m_http_server, &sensing_ep);
+  #endif
+
+  #if FEATURE_ACOUSTIC_EVENTS
+  // Live RMS for the UI level meter — same number the hysteresis uses,
+  // not a second audio path. Returns 0 when muted.
+  httpd_uri_t audio_level = { .uri = "/api/audio/level", .method = HTTP_GET, .handler = handle_audio_level };
+  httpd_register_uri_handler(m_http_server, &audio_level);
+
+  // Hard mute (physically uninstalls the I2S driver) — persisted in NVS.
+  httpd_uri_t audio_mute_ep = { .uri = "/api/audio/mute", .method = HTTP_POST, .handler = handle_audio_mute };
+  httpd_register_uri_handler(m_http_server, &audio_mute_ep);
+
+  // Alarm-pattern self-test (relaxed thresholds, normal event callback
+  // suppressed so a TEST-button press does NOT flow into HA automations).
+  httpd_uri_t audio_test_start = { .uri = "/api/audio/test/start", .method = HTTP_POST, .handler = handle_audio_test_start };
+  httpd_register_uri_handler(m_http_server, &audio_test_start);
+  httpd_uri_t audio_test_status = { .uri = "/api/audio/test/status", .method = HTTP_GET, .handler = handle_audio_test_status };
+  httpd_register_uri_handler(m_http_server, &audio_test_status);
   #endif
 }
 
@@ -1410,6 +1437,7 @@ static esp_err_t handle_sensing(httpd_req_t* req) {
 
   JsonObject ac = doc["acoustic"].to<JsonObject>();
   ac["enabled"]     = audio_is_running();
+  ac["muted"]       = audio_is_muted();
   ac["last_event"]  = audio_event_name(s.last_audio_event_type);
   ac["confidence"]  = s.last_audio_event_conf;
   ac["cycle_count"] = s.last_audio_event_count;
@@ -1501,6 +1529,165 @@ static esp_err_t handle_sensing(httpd_req_t* req) {
   return http_send_json(req, response.c_str());
 }
 #endif // FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS
+
+#if FEATURE_ACOUSTIC_EVENTS
+// ════════════════════════════════════════════════════════════════════════════
+// AUDIO TESTABILITY + PRIVACY ENDPOINTS
+//
+// These exist so a user can (a) verify the mic is alive without setting off
+// their actual smoke alarm and (b) turn the mic off at runtime in a way they
+// can verify (the I2S driver is uninstalled and GPIO 41/42 are released).
+//
+// The "live level" endpoint exposes the SAME 20 ms RMS scalar the on/off
+// hysteresis uses — not a new audio path. Self-test mode runs the existing
+// T3/T4 matcher with relaxed timing tolerance and DOES NOT fire the normal
+// event callback, so a TEST-button press never flows into Home Assistant.
+// ════════════════════════════════════════════════════════════════════════════
+
+static esp_err_t handle_audio_level(httpd_req_t* req) {
+  if (!rate_limit_check(req, false)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  uint16_t rms = 0;
+  uint32_t age_ms = 0;
+  const bool running = audio_get_live_level(&rms, &age_ms);
+
+  /* Fetch the LIVE thresholds (which init() may have customized) rather
+   * than the compile-time defaults — keeps the UI level-meter notches
+   * accurate if a future build tunes them at runtime. */
+  audio_config_t cfg = AUDIO_CONFIG_DEFAULT;
+  audio_get_config(&cfg);
+
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["running"] = running;
+  doc["muted"]   = audio_is_muted();
+  doc["rms"]     = rms;
+  doc["rms_on_threshold"]  = cfg.rms_on_threshold;
+  doc["rms_off_threshold"] = cfg.rms_off_threshold;
+  doc["envelope_high"]     = (rms >= cfg.rms_on_threshold);
+  doc["age_ms"] = (age_ms == UINT32_MAX) ? -1L : (long)age_ms;
+
+  /* Last 8 transitions, newest first, for the cadence-trace view. */
+  audio_transition_t trans[8];
+  const size_t n = audio_get_recent_transitions(trans, 8, 0);
+  JsonArray arr = doc["transitions"].to<JsonArray>();
+  for (size_t i = 0; i < n; i++) {
+    JsonObject e = arr.add<JsonObject>();
+    e["on"]     = (bool)trans[i].is_on;
+    e["age_ms"] = trans[i].age_ms;
+    e["dur_ms"] = trans[i].dur_ms;
+  }
+
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+static esp_err_t handle_audio_mute(httpd_req_t* req) {
+  if (!rate_limit_check(req, true)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  char body[64];
+  const int recv = httpd_req_recv(req, body, sizeof(body) - 1);
+  if (recv <= 0) return http_send_error(req, 400, "empty_body");
+  body[recv] = '\0';
+
+  JsonDocument input;
+  if (deserializeJson(input, body) != DeserializationError::Ok) {
+    return http_send_error(req, 400, "invalid_json");
+  }
+  if (!input["muted"].is<bool>()) {
+    return http_send_error(req, 400, "missing_muted_bool");
+  }
+  const bool want_muted = input["muted"].as<bool>();
+
+  /* Apply at runtime. audio_mute(true) physically uninstalls I2S so the
+   * GPIOs go tri-state — a user-verifiable hardware-level mute. */
+  const bool ok = audio_mute(want_muted);
+  if (!ok && !want_muted) {
+    /* Unmute failed (I2S didn't come up). Still persist the user's
+     * intent — they may have hardware issues we can't paper over. */
+  }
+
+  /* Persist user intent. NVS key is read at boot in main.cpp. */
+  Preferences prefs;
+  if (prefs.begin("securacv", false /* read-write */)) {
+    prefs.putBool("mic_muted", want_muted);
+    prefs.end();
+  }
+
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["muted"] = audio_is_muted();
+  doc["running"] = audio_is_running();
+  doc["persisted"] = true;
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+static esp_err_t handle_audio_test_start(httpd_req_t* req) {
+  if (!rate_limit_check(req, true)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  if (audio_is_muted() || !audio_is_running()) {
+    return http_send_error(req, 400, "mic_unavailable");
+  }
+
+  /* Body is optional: { "duration_ms": N } (clamped 5_000..60_000). */
+  uint32_t duration_ms = 30000;
+  char body[64] = {0};
+  const int recv = httpd_req_recv(req, body, sizeof(body) - 1);
+  if (recv > 0) {
+    body[recv] = '\0';
+    JsonDocument input;
+    if (deserializeJson(input, body) == DeserializationError::Ok) {
+      if (input["duration_ms"].is<uint32_t>()) {
+        duration_ms = input["duration_ms"].as<uint32_t>();
+      }
+    }
+  }
+  if (duration_ms < 5000)  duration_ms = 5000;
+  if (duration_ms > 60000) duration_ms = 60000;
+
+  if (!audio_selftest_start(duration_ms)) {
+    return http_send_error(req, 500, "selftest_start_failed");
+  }
+
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["duration_ms"] = duration_ms;
+  doc["note"] = "Press your alarm's TEST button now. A match in this mode "
+                "does NOT fire any Home Assistant automation.";
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+static esp_err_t handle_audio_test_status(httpd_req_t* req) {
+  if (!rate_limit_check(req, false)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  audio_selftest_status_t st;
+  audio_selftest_status(&st);
+
+  JsonDocument doc;
+  doc["ok"]               = true;
+  doc["active"]           = (bool)st.active;
+  doc["remaining_ms"]     = st.remaining_ms;
+  doc["matched"]          = audio_event_name(st.matched_type);
+  doc["confidence"]       = st.matched_conf;
+  doc["transitions_seen"] = st.transitions_seen;
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+#endif // FEATURE_ACOUSTIC_EVENTS
 
 // ════════════════════════════════════════════════════════════════════════════
 // CONVENIENCE FUNCTIONS

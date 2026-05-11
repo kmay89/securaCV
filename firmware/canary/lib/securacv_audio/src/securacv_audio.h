@@ -107,6 +107,15 @@ typedef struct {
   uint32_t i2s_read_errors;      /* underflow / DMA error counter */
 } audio_stats_t;
 
+/* A single recent on/off transition, exposed for the UI's "show me the
+ * cadence" diagnostic. Same fields the internal matcher uses. */
+typedef struct {
+  uint8_t  is_on;        /* 1 = entered ON state, 0 = entered OFF */
+  uint8_t  reserved[3];
+  uint32_t age_ms;       /* how long ago (ms) the transition happened */
+  uint32_t dur_ms;       /* duration of the PREVIOUS state, in ms */
+} audio_transition_t;
+
 typedef void (*audio_event_cb_t)(const audio_event_t* evt);
 
 #ifdef __cplusplus
@@ -133,6 +142,49 @@ void audio_stop(void);
 bool audio_is_running(void);
 
 /* ──────────────────────────────────────────────────────────────────────────
+ * RUNTIME MUTE (user-controlled, persisted by the caller)
+ *
+ * audio_mute(true) physically uninstalls the I2S driver and releases the
+ * mic pins, so this is a hard mute the user can verify (the GPIOs are
+ * tri-stated until unmute). audio_mute(false) re-runs audio_start().
+ * audio_is_muted() reports the last-requested state regardless of
+ * whether the I2S driver could be re-opened.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+bool audio_mute(bool muted);
+bool audio_is_muted(void);
+
+/* Synchronous mute used by the boot path BEFORE the HTTP server starts,
+ * when there is provably only one task in play. Do NOT call this from
+ * any other context — use audio_mute() instead, which defers the I2S
+ * teardown to the main loop to avoid racing audio_process(). */
+bool audio_mute_sync_at_boot(bool muted);
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * SELF-TEST MODE
+ *
+ * When active, the existing T3/T4 matchers run with relaxed timing
+ * tolerance and a lower confidence floor so a user holding their alarm's
+ * TEST button at ~3 m has the best chance of being heard. Crucially, the
+ * normal event callback is NOT fired while self-test is active — we don't
+ * want a test press to flow into Home Assistant smoke automations.
+ * Auto-expires after `duration_ms` (max 60_000).
+ * ────────────────────────────────────────────────────────────────────────── */
+
+typedef struct {
+  uint8_t  active;          /* 1 = self-test running */
+  uint8_t  matched_type;    /* audio_event_type_t once matched, else 0 */
+  uint8_t  matched_conf;    /* 0..100 once matched */
+  uint8_t  reserved;
+  uint32_t remaining_ms;    /* time until auto-expiry */
+  uint32_t transitions_seen;/* on/off transitions observed during the test */
+} audio_selftest_status_t;
+
+bool audio_selftest_start(uint32_t duration_ms);
+void audio_selftest_stop(void);
+bool audio_selftest_status(audio_selftest_status_t* out);
+
+/* ──────────────────────────────────────────────────────────────────────────
  * DATA FLOW
  * ────────────────────────────────────────────────────────────────────────── */
 
@@ -154,6 +206,23 @@ int audio_process(void);
  * ────────────────────────────────────────────────────────────────────────── */
 
 bool audio_get_stats(audio_stats_t* out);
+
+/* Snapshot of the active runtime configuration. Safe to call from any
+ * task — s_cfg is written only by audio_init() at boot. */
+bool audio_get_config(audio_config_t* out);
+
+/* Most recent 20 ms RMS scalar (0..65535) the pipeline computed. This is
+ * the SAME number the on/off hysteresis uses — exposing it lets the UI
+ * draw a level meter without adding a second audio path. Returns 0 when
+ * muted or never run. `age_ms_out` reports how long ago the value was
+ * produced; the UI can grey out the meter if it's stale (> ~200 ms). */
+bool audio_get_live_level(uint16_t* rms_out, uint32_t* age_ms_out);
+
+/* Copy up to `max` most-recent transitions (newest first) into `out`,
+ * with their age relative to `now_ms_or_zero` (pass 0 to use millis()).
+ * Returns the number of transitions actually written. */
+size_t audio_get_recent_transitions(audio_transition_t* out, size_t max,
+                                    uint32_t now_ms_or_zero);
 
 /* Plain-English label for an audio_event_type_t. */
 const char* audio_event_name(uint8_t event_type);
