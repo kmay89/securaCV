@@ -1553,7 +1553,11 @@ static esp_err_t handle_audio_level(httpd_req_t* req) {
   uint32_t age_ms = 0;
   const bool running = audio_get_live_level(&rms, &age_ms);
 
-  audio_config_t cfg = AUDIO_CONFIG_DEFAULT;  /* compile-time defaults */
+  /* Fetch the LIVE thresholds (which init() may have customized) rather
+   * than the compile-time defaults — keeps the UI level-meter notches
+   * accurate if a future build tunes them at runtime. */
+  audio_config_t cfg = AUDIO_CONFIG_DEFAULT;
+  audio_get_config(&cfg);
 
   JsonDocument doc;
   doc["ok"] = true;

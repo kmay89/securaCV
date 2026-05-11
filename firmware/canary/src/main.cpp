@@ -384,21 +384,21 @@ void setup() {
       sensing_feed_audio_event(evt->event_type, evt->confidence,
                                evt->cycle_count, evt->time_bucket);
     });
-    /* Honor user-persisted mute state. NVS key "mic_muted" defaults to
-     * false (mic on). audio_mute(true) leaves the I2S driver
-     * uninstalled and GPIO 41/42 tri-stated — a verifiable hardware-
-     * level mute. audio_mute(false) starts I2S (same effect as
-     * audio_start). */
+    /* Honor user-persisted mute state. We're still single-task here —
+     * the HTTP server has not started yet — so we can safely use the
+     * synchronous boot helper that opens / skips I2S directly. After
+     * the HTTP server comes up, runtime mute calls go through the
+     * deferred audio_mute() path instead. */
     Preferences mic_prefs;
     bool persisted_mute = false;
     if (mic_prefs.begin("securacv", true /* read-only */)) {
       persisted_mute = mic_prefs.getBool("mic_muted", false);
       mic_prefs.end();
     }
-    const bool mute_ok = audio_mute(persisted_mute);
+    const bool boot_ok = audio_mute_sync_at_boot(persisted_mute);
     if (persisted_mute) {
       Serial.println("[OK] Acoustic detector held MUTED by user (NVS)");
-    } else if (mute_ok && audio_is_running()) {
+    } else if (boot_ok && audio_is_running()) {
       Serial.println("[OK] Acoustic detector armed (T3 smoke / T4 CO)");
     } else {
       Serial.println("[WARN] Acoustic detector start failed");

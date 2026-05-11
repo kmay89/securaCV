@@ -113,15 +113,28 @@ static audio_stats_t s_stats;
 
 /* Most recent 20 ms RMS scalar (and when we computed it). Exposed for the
  * live-level meter; this is the same number the on/off hysteresis uses,
- * not a second audio path. Wiped on mute / stop. */
+ * not a second audio path. Wiped on mute / stop. Accessed cross-task
+ * (main loop writes, HTTP task reads) — use __atomic_* on accessors. */
 static uint16_t s_last_rms = 0;
 static uint32_t s_last_rms_ms = 0;
 
 /* User-requested mute state. Independent of s_running: when muted, we
- * never call i2s_open() in start(); when unmuted at boot, we run normally. */
+ * never call i2s_open() in start(); when unmuted at boot, we run normally.
+ * Cross-task: HTTP writes via mute(), main loop reads. */
 static bool s_muted = false;
 
-/* Self-test mode (relaxed thresholds, normal event callback suppressed). */
+/* Cross-task action plumbing. HTTP handlers must NOT touch the I2S
+ * driver directly — that would race audio_process() in the main loop
+ * and crash at i2s_driver_uninstall(). Instead the handler atomically
+ * sets *_pending and the main loop applies it from audio_process(). */
+static bool     s_mute_request_pending = false;
+static bool     s_mute_request_value   = false;
+static bool     s_selftest_start_pending = false;
+static uint32_t s_selftest_start_duration = 0;
+static bool     s_selftest_stop_pending = false;
+
+/* Self-test mode (relaxed thresholds, normal event callback suppressed).
+ * Cross-task: main loop writes, HTTP task reads via selftest_status(). */
 static bool     s_selftest_active = false;
 static uint32_t s_selftest_deadline_ms = 0;
 static uint8_t  s_selftest_matched_type = AUDIO_EVENT_NONE;
@@ -493,62 +506,93 @@ void set_event_callback(audio_event_cb_t cb) { s_cb = cb; }
  * RUNTIME MUTE
  * ────────────────────────────────────────────────────────────────────────── */
 
+/* mute() is safe to call from any task. It records the user's intent
+ * atomically and defers the actual I2S start/stop to the next
+ * audio_process() tick in the main loop — calling i2s_driver_uninstall
+ * from an HTTP task while the main loop is mid-i2s_read would crash. */
 bool mute(bool muted) {
-  s_muted = muted;
-  if (muted) {
-    if (s_running) stop();   /* releases GPIO 41/42 via i2s_driver_uninstall */
-    log_health(LOG_LEVEL_INFO, LOG_CAT_SENSOR,
-               "Audio: mic muted by user", "I2S released");
-    return true;
-  }
   if (!s_initialized) return false;
-  if (s_running) return true;
-  const bool ok = start();
-  if (ok) {
-    log_health(LOG_LEVEL_INFO, LOG_CAT_SENSOR,
-               "Audio: mic unmuted", "I2S re-armed");
-  }
-  return ok;
+  __atomic_store_n(&s_muted, muted, __ATOMIC_RELEASE);
+  __atomic_store_n(&s_mute_request_value, muted, __ATOMIC_RELAXED);
+  __atomic_store_n(&s_mute_request_pending, true, __ATOMIC_RELEASE);
+  return true;
 }
 
-bool is_muted() { return s_muted; }
+bool is_muted() { return __atomic_load_n(&s_muted, __ATOMIC_ACQUIRE); }
+
+/* Called at boot from the main task BEFORE the HTTP server starts, so
+ * we can synchronously start/stop the I2S driver without racing anything.
+ * Used by main.cpp's boot path to honor the persisted NVS mute state. */
+bool mute_sync_at_boot(bool muted) {
+  if (!s_initialized) return false;
+  s_muted = muted;
+  /* Clear any stale pending request so the first audio_process() tick
+   * doesn't immediately toggle I2S back. */
+  __atomic_store_n(&s_mute_request_pending, false, __ATOMIC_RELAXED);
+  if (muted) {
+    if (s_running) {
+      i2s_close();
+      s_running = false;
+      memset(s_trans, 0, sizeof(s_trans));
+      s_trans_head = 0;
+      s_trans_count = 0;
+      s_envelope_high = false;
+      s_cycle_matched = false;
+      s_t3_cycles = 0;
+      s_t4_cycles = 0;
+      s_last_rms = 0;
+      s_last_rms_ms = 0;
+    }
+    log_health(LOG_LEVEL_INFO, LOG_CAT_SENSOR,
+               "Audio: mic muted at boot", "I2S not started");
+    return true;
+  }
+  if (s_running) return true;
+  return start();
+}
 
 /* ──────────────────────────────────────────────────────────────────────────
  * SELF-TEST
  * ────────────────────────────────────────────────────────────────────────── */
 
+/* Called from the HTTP task: record intent only. The deadline /
+ * active flag flip happens in audio_process() in the main loop. */
 bool selftest_start(uint32_t duration_ms) {
-  if (!s_running) return false;
+  if (__atomic_load_n(&s_muted, __ATOMIC_ACQUIRE)) return false;
+  if (!s_initialized) return false;
   if (duration_ms == 0)     duration_ms = 30000;
   if (duration_ms > 60000)  duration_ms = 60000;
-  s_selftest_matched_type = AUDIO_EVENT_NONE;
-  s_selftest_matched_conf = 0;
-  s_selftest_transitions_seen = 0;
-  s_selftest_deadline_ms = millis() + duration_ms;
-  s_selftest_active = true;
+  if (duration_ms < 5000)   duration_ms = 5000;
+  __atomic_store_n(&s_selftest_start_duration, duration_ms, __ATOMIC_RELAXED);
+  __atomic_store_n(&s_selftest_start_pending, true, __ATOMIC_RELEASE);
   return true;
 }
 
 void selftest_stop() {
-  s_selftest_active = false;
+  __atomic_store_n(&s_selftest_stop_pending, true, __ATOMIC_RELEASE);
 }
 
 bool selftest_status(audio_selftest_status_t* out) {
   if (!out) return false;
   memset(out, 0, sizeof(*out));
-  /* Auto-expire on read, so a UI that just polls /status sees the truth
-   * even if process() isn't being called for some reason. */
+  /* Snapshot reads from cross-task state. Auto-expire on read so the
+   * UI sees truth even if process() is paused for some reason —
+   * deadline_ms is only written from the main loop after the pending
+   * start flag is consumed, so reading it without atomics is safe
+   * (the read may see a slightly old deadline; that's harmless). */
+  const bool active = __atomic_load_n(&s_selftest_active, __ATOMIC_ACQUIRE);
   const uint32_t now = millis();
-  if (s_selftest_active && (int32_t)(now - s_selftest_deadline_ms) >= 0) {
-    s_selftest_active = false;
+  const uint32_t deadline = s_selftest_deadline_ms;
+  const bool expired = active && (int32_t)(now - deadline) >= 0;
+  if (expired) {
+    __atomic_store_n(&s_selftest_active, false, __ATOMIC_RELEASE);
   }
-  out->active = s_selftest_active ? 1 : 0;
-  out->matched_type = s_selftest_matched_type;
-  out->matched_conf = s_selftest_matched_conf;
-  out->remaining_ms = s_selftest_active
-                      ? (uint32_t)(s_selftest_deadline_ms - now)
-                      : 0;
-  out->transitions_seen = s_selftest_transitions_seen;
+  out->active        = (active && !expired) ? 1 : 0;
+  out->matched_type  = __atomic_load_n(&s_selftest_matched_type, __ATOMIC_RELAXED);
+  out->matched_conf  = __atomic_load_n(&s_selftest_matched_conf, __ATOMIC_RELAXED);
+  out->remaining_ms  = (active && !expired) ? (uint32_t)(deadline - now) : 0;
+  out->transitions_seen =
+      __atomic_load_n(&s_selftest_transitions_seen, __ATOMIC_RELAXED);
   return true;
 }
 
@@ -556,30 +600,54 @@ bool selftest_status(audio_selftest_status_t* out) {
  * LIVE LEVEL + TRANSITIONS (for the UI test panel)
  * ────────────────────────────────────────────────────────────────────────── */
 
+/* Callable from any task. The level scalar is published with atomic
+ * stores from the main loop; we read with __atomic_load_n. */
 bool get_live_level(uint16_t* rms_out, uint32_t* age_ms_out) {
-  if (rms_out)    *rms_out    = s_running ? s_last_rms : 0;
+  const bool running = s_running;
+  const uint16_t rms = __atomic_load_n(&s_last_rms, __ATOMIC_ACQUIRE);
+  const uint32_t ts  = __atomic_load_n(&s_last_rms_ms, __ATOMIC_RELAXED);
+  if (rms_out) *rms_out = running ? rms : 0;
   if (age_ms_out) {
-    *age_ms_out = (s_last_rms_ms == 0 || !s_running)
-                  ? UINT32_MAX
-                  : (millis() - s_last_rms_ms);
+    *age_ms_out = (ts == 0 || !running) ? UINT32_MAX : (millis() - ts);
   }
-  return s_running;
+  return running;
 }
 
+/* Callable from any task. The transition ring has a single writer
+ * (audio_process() in the main loop) and a single reader (HTTP). We
+ * read the head/count atomically so we get a consistent view of which
+ * slots are valid; the entries themselves can still be torn (a
+ * not-yet-finished write may leave dur_ms briefly inconsistent with
+ * at_ms). That's acceptable here — the transition trace is a
+ * diagnostic UI element, not a safety signal. */
 size_t get_recent_transitions(audio_transition_t* out, size_t max,
                               uint32_t now_ms_or_zero) {
   if (!out || max == 0) return 0;
   const uint32_t now = now_ms_or_zero ? now_ms_or_zero : millis();
-  const size_t n = (s_trans_count < max) ? s_trans_count : max;
+  const size_t head  = __atomic_load_n(&s_trans_head, __ATOMIC_ACQUIRE);
+  const size_t count = __atomic_load_n(&s_trans_count, __ATOMIC_ACQUIRE);
+  const size_t n = (count < max) ? count : max;
   for (size_t i = 0; i < n; i++) {
-    const Transition* t = recent(i);
-    if (!t) break;
-    out[i].is_on     = t->is_on ? 1 : 0;
+    /* Inline recent() against the snapshot we just loaded, so a
+     * concurrent push_transition() can't shift the indices under us. */
+    if (i >= count) break;
+    const size_t idx = (head + TRANS_CAP - 1 - i) % TRANS_CAP;
+    const Transition t = s_trans[idx];  /* copy by value */
+    out[i].is_on     = t.is_on ? 1 : 0;
     out[i].reserved[0] = out[i].reserved[1] = out[i].reserved[2] = 0;
-    out[i].age_ms    = (now >= t->at_ms) ? (now - t->at_ms) : 0;
-    out[i].dur_ms    = t->prev_dur_ms;
+    out[i].age_ms    = (now >= t.at_ms) ? (now - t.at_ms) : 0;
+    out[i].dur_ms    = t.prev_dur_ms;
   }
   return n;
+}
+
+/* Snapshot of the active runtime config. s_cfg is written only by
+ * init(); after that it's read-only, so a plain copy is safe across
+ * tasks. */
+bool get_config(audio_config_t* out) {
+  if (!out) return false;
+  *out = s_cfg;
+  return true;
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -587,6 +655,52 @@ size_t get_recent_transitions(audio_transition_t* out, size_t max,
  * ────────────────────────────────────────────────────────────────────────── */
 
 int process() {
+  /* Apply any cross-task requests in single-task context first — the
+   * HTTP server task must NEVER touch the I2S driver directly, because
+   * i2s_driver_uninstall() will crash if a parallel i2s_read() is in
+   * flight. The handler atomically sets *_pending; we consume them here. */
+  if (__atomic_exchange_n(&s_mute_request_pending, false, __ATOMIC_ACQUIRE)) {
+    const bool want_mute = __atomic_load_n(&s_mute_request_value, __ATOMIC_RELAXED);
+    if (want_mute && s_running) {
+      i2s_close();
+      s_running = false;
+      memset(s_trans, 0, sizeof(s_trans));
+      s_trans_head = 0;
+      s_trans_count = 0;
+      s_envelope_high = false;
+      s_cycle_matched = false;
+      s_t3_cycles = 0;
+      s_t4_cycles = 0;
+      __atomic_store_n(&s_last_rms, 0, __ATOMIC_RELEASE);
+      __atomic_store_n(&s_last_rms_ms, 0, __ATOMIC_RELEASE);
+      log_health(LOG_LEVEL_INFO, LOG_CAT_SENSOR,
+                 "Audio: mic muted by user", "I2S released");
+    } else if (!want_mute && !s_running && s_initialized) {
+      if (i2s_open()) {
+        s_running = true;
+        s_state_entered_ms = millis();
+        s_cycle_matched = false;
+        log_health(LOG_LEVEL_INFO, LOG_CAT_SENSOR,
+                   "Audio: mic unmuted", "I2S re-armed");
+      }
+    }
+  }
+
+  if (__atomic_exchange_n(&s_selftest_start_pending, false, __ATOMIC_ACQUIRE)) {
+    const uint32_t d = __atomic_load_n(&s_selftest_start_duration, __ATOMIC_RELAXED);
+    if (s_running) {
+      __atomic_store_n(&s_selftest_matched_type, AUDIO_EVENT_NONE, __ATOMIC_RELAXED);
+      __atomic_store_n(&s_selftest_matched_conf, 0, __ATOMIC_RELAXED);
+      __atomic_store_n(&s_selftest_transitions_seen, 0, __ATOMIC_RELAXED);
+      s_selftest_deadline_ms = millis() + d;
+      __atomic_store_n(&s_selftest_active, true, __ATOMIC_RELEASE);
+    }
+  }
+
+  if (__atomic_exchange_n(&s_selftest_stop_pending, false, __ATOMIC_ACQUIRE)) {
+    __atomic_store_n(&s_selftest_active, false, __ATOMIC_RELEASE);
+  }
+
   if (!s_running || !s_i2s_installed) return 0;
 
   /* Local sample buffer; wiped (full size) after RMS is computed so no
@@ -636,11 +750,12 @@ int process() {
 
     /* Hysteresis state machine on the envelope. */
     const uint32_t now = millis();
-    /* Stash the RMS scalar for the UI level meter. This is the same
+    /* Publish the RMS scalar for the UI level meter. This is the same
      * number the hysteresis uses — we're not adding a second audio path,
-     * we're just publishing the existing scalar. */
-    s_last_rms = rms;
-    s_last_rms_ms = now;
+     * we're just publishing the existing scalar with a release store so
+     * a concurrent HTTP read can pick up the value safely. */
+    __atomic_store_n(&s_last_rms, rms, __ATOMIC_RELEASE);
+    __atomic_store_n(&s_last_rms_ms, now, __ATOMIC_RELAXED);
 
     bool transition = false;
     bool entered_on = false;
@@ -666,7 +781,9 @@ int process() {
        * may now declare a fresh cycle. */
       s_cycle_matched = false;
 
-      if (s_selftest_active) s_selftest_transitions_seen++;
+      if (__atomic_load_n(&s_selftest_active, __ATOMIC_ACQUIRE)) {
+        __atomic_fetch_add(&s_selftest_transitions_seen, 1, __ATOMIC_RELAXED);
+      }
 
       /* Reset the cycle counter if we've been silent > 10 s — a fresh
        * cadence is starting. */
@@ -677,9 +794,13 @@ int process() {
     }
 
     /* Self-test auto-expiry. */
-    if (s_selftest_active && (int32_t)(now - s_selftest_deadline_ms) >= 0) {
-      s_selftest_active = false;
+    const bool st_active_now =
+        __atomic_load_n(&s_selftest_active, __ATOMIC_ACQUIRE);
+    if (st_active_now && (int32_t)(now - s_selftest_deadline_ms) >= 0) {
+      __atomic_store_n(&s_selftest_active, false, __ATOMIC_RELEASE);
     }
+    const bool relaxed = st_active_now &&
+        (int32_t)(now - s_selftest_deadline_ms) < 0;
 
     /* Cadence matching is timing-based and only meaningful right after
      * the long inter-cycle silence has elapsed. We check whenever we're
@@ -688,18 +809,20 @@ int process() {
      * 6 transitions in the ring would re-trigger every iteration). */
     if (!s_envelope_high && !s_cycle_matched &&
         (now - s_state_entered_ms) >= 1000) {
-      const bool relaxed = s_selftest_active;
       const int t3 = score_t3_cycle(now, relaxed);
       const int min_conf = relaxed ? 30 : 50;
       if (t3 >= min_conf) {
         s_t3_cycles++;
         s_stats.t3_detected++;
-        if (s_selftest_active) {
+        if (relaxed) {
           /* Test-only: record match locally, DO NOT fire the event
            * callback. The user pressed their alarm's TEST button; we
            * must not flow that into Home Assistant smoke automations. */
-          s_selftest_matched_type = AUDIO_EVENT_T3_SMOKE_ALARM;
-          s_selftest_matched_conf = (uint8_t)t3;
+          __atomic_store_n(&s_selftest_matched_type,
+                           (uint8_t)AUDIO_EVENT_T3_SMOKE_ALARM,
+                           __ATOMIC_RELAXED);
+          __atomic_store_n(&s_selftest_matched_conf,
+                           (uint8_t)t3, __ATOMIC_RELAXED);
         } else {
           try_emit_event(AUDIO_EVENT_T3_SMOKE_ALARM, (uint8_t)t3,
                          s_t3_cycles, now);
@@ -715,9 +838,12 @@ int process() {
         if (t4 >= min_conf) {
           s_t4_cycles++;
           s_stats.t4_detected++;
-          if (s_selftest_active) {
-            s_selftest_matched_type = AUDIO_EVENT_T4_CO_ALARM;
-            s_selftest_matched_conf = (uint8_t)t4;
+          if (relaxed) {
+            __atomic_store_n(&s_selftest_matched_type,
+                             (uint8_t)AUDIO_EVENT_T4_CO_ALARM,
+                             __ATOMIC_RELAXED);
+            __atomic_store_n(&s_selftest_matched_conf,
+                             (uint8_t)t4, __ATOMIC_RELAXED);
           } else {
             try_emit_event(AUDIO_EVENT_T4_CO_ALARM, (uint8_t)t4,
                            s_t4_cycles, now);
@@ -774,6 +900,7 @@ const char* audio_event_name(uint8_t t) { return audio::event_name(t); }
 
 bool audio_mute(bool muted)             { return audio::mute(muted); }
 bool audio_is_muted(void)               { return audio::is_muted(); }
+bool audio_mute_sync_at_boot(bool muted){ return audio::mute_sync_at_boot(muted); }
 
 bool audio_selftest_start(uint32_t duration_ms) {
   return audio::selftest_start(duration_ms);
@@ -782,6 +909,8 @@ void audio_selftest_stop(void)          { audio::selftest_stop(); }
 bool audio_selftest_status(audio_selftest_status_t* out) {
   return audio::selftest_status(out);
 }
+
+bool audio_get_config(audio_config_t* out) { return audio::get_config(out); }
 
 bool audio_get_live_level(uint16_t* rms_out, uint32_t* age_ms_out) {
   return audio::get_live_level(rms_out, age_ms_out);

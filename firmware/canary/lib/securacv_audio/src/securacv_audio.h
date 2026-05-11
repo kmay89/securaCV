@@ -154,6 +154,12 @@ bool audio_is_running(void);
 bool audio_mute(bool muted);
 bool audio_is_muted(void);
 
+/* Synchronous mute used by the boot path BEFORE the HTTP server starts,
+ * when there is provably only one task in play. Do NOT call this from
+ * any other context — use audio_mute() instead, which defers the I2S
+ * teardown to the main loop to avoid racing audio_process(). */
+bool audio_mute_sync_at_boot(bool muted);
+
 /* ──────────────────────────────────────────────────────────────────────────
  * SELF-TEST MODE
  *
@@ -200,6 +206,10 @@ int audio_process(void);
  * ────────────────────────────────────────────────────────────────────────── */
 
 bool audio_get_stats(audio_stats_t* out);
+
+/* Snapshot of the active runtime configuration. Safe to call from any
+ * task — s_cfg is written only by audio_init() at boot. */
+bool audio_get_config(audio_config_t* out);
 
 /* Most recent 20 ms RMS scalar (0..65535) the pipeline computed. This is
  * the SAME number the on/off hysteresis uses — exposing it lets the UI
