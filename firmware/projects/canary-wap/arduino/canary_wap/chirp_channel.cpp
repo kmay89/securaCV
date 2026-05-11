@@ -24,6 +24,7 @@
 #if FEATURE_MESH_NETWORK
 
 #include "mesh_network.h"
+#include "airtime_governor.h"
 #include "nvs_store.h"
 #include "health_log.h"
 #include <esp_now.h>
@@ -351,6 +352,17 @@ static void broadcast_message(const uint8_t* data, size_t len) {
 
 static void send_presence() {
   uint8_t buf[sizeof(ChirpHeader) + sizeof(ChirpPresencePayload)];
+
+  // Presence is routine traffic — gate it through the airtime governor
+  // so multi-device chirp deployments don't accumulate into the same
+  // budget the Opera mesh uses. If the cap would be exceeded we just
+  // skip this tick; we still bump g_last_presence_ms so the caller's
+  // 60-second cadence doesn't immediately retry on the next loop.
+  if (!airtime_governor::try_reserve_routine(millis(), sizeof(buf))) {
+    g_last_presence_ms = millis();
+    return;
+  }
+
   ChirpHeader* hdr = (ChirpHeader*)buf;
   ChirpPresencePayload* payload = (ChirpPresencePayload*)(buf + sizeof(ChirpHeader));
 

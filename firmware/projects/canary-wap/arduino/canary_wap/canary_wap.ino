@@ -134,6 +134,8 @@ extern "C" {
 }
 #include "csi_dashboard_html.h"  // CSI_DASHBOARD_HTML — the Phase-3 headline UI now served at /
 #include "mesh_network.h"
+#include "mesh_channel_policy.h"  // Channel decision (STA-follow) for MQTT telemetry
+#include "airtime_governor.h"     // Rolling airtime stats for MQTT telemetry
 #include "bluetooth_channel.h"
 #include "bluetooth_api.h"
 #include "ble_console.h"
@@ -6380,6 +6382,30 @@ void loop() {
       csi_mqtt::publish_counts(g_health.records_created);
       csi_mqtt::publish_chain(g_device.seq, g_device.chain_head);
     }
+
+    // Mesh coexistence snapshot — every 30 s, when the mesh feature is
+    // compiled in. Surfaces the airtime governor + channel policy so HA
+    // can render the entities published by csi_mqtt::publish_discovery
+    // (mesh_airtime_pct, mesh_channel, mesh_channel_locked_to_sta).
+    // Gated on FEATURE_MESH_NETWORK so non-mesh builds (canary-vision,
+    // canary-ota) don't try to read mesh state that doesn't exist.
+#if FEATURE_MESH_NETWORK
+    static uint32_t s_mqtt_mesh_ms = 0;
+    if (now - s_mqtt_mesh_ms >= 30000UL) {
+      s_mqtt_mesh_ms = now;
+      mesh_channel_policy::ChannelDecision d = mesh_channel_policy::current();
+      airtime_governor::Stats s = airtime_governor::snapshot(now);
+      csi_mqtt::publish_mesh(
+          s.airtime_pct_x100,
+          d.channel,
+          d.locked_to_sta,
+          d.locked_to_ap,
+          d.fallback,
+          s.routine_allowed,
+          s.routine_denied,
+          s.urgent_sends);
+    }
+#endif
   }
 
   // Yield before witness record creation

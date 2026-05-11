@@ -215,6 +215,37 @@ void publish_status(bool csi_running,
                     int  rssi_dbm);
 
 /**
+ * Push the mesh-coexistence snapshot to {prefix}/{device_id}/mesh —
+ * retained, periodic (~30 s). Surfaces the airtime governor and the
+ * mesh-channel-policy decision so installers can see, in Home
+ * Assistant, that the multi-Canary mesh is following the home WiFi
+ * channel and staying under its airtime cap.
+ *
+ * Caller fetches the inputs from airtime_governor::snapshot() and
+ * mesh_channel_policy::current() so this module stays free of mesh
+ * deps (csi_mqtt is the publish path, not the data source). All
+ * fields are denormalized into the JSON so HA can build templates
+ * without state across topics.
+ *
+ *   airtime_pct_x100  utilization × 100 (e.g. 215 = 2.15%)
+ *   channel           current 2.4 GHz channel (1-13)
+ *   locked_to_sta     true when the mesh is following an associated STA
+ *   locked_to_ap      true when STA is off but AP is up
+ *   fallback          true when neither STA nor AP is up (radio free)
+ *   routine_allowed   lifetime count of routine sends permitted
+ *   routine_denied    lifetime count of routine sends gated by the cap
+ *   urgent_sends      lifetime count of tamper/power/OFFLINE_IMMINENT sends
+ */
+void publish_mesh(uint16_t airtime_pct_x100,
+                  uint8_t  channel,
+                  bool     locked_to_sta,
+                  bool     locked_to_ap,
+                  bool     fallback,
+                  uint32_t routine_allowed,
+                  uint32_t routine_denied,
+                  uint32_t urgent_sends);
+
+/**
  * Register the Bearer-token accessor used by the /api/mqtt/* HTTP
  * handlers. csi_mqtt has no direct access to g_device.api_token_str,
  * so csi_integration::init wires this up at boot — same string the
