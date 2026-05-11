@@ -5115,7 +5115,7 @@ register_extra_routes:
 
 #if FEATURE_BLUETOOTH
   // Bluetooth endpoints
-  bluetooth_api::register_routes(active_server);
+  bluetooth_api::register_routes(active_server, g_device.api_token_str);
 #endif
 
 #if FEATURE_BLE
