@@ -28,9 +28,40 @@
 #include "presence_context.h"
 #include "notify.h"
 #include "ble_presence.h"
+#include "api_auth.h"
 #include <ArduinoJson.h>
 
 namespace household_api {
+
+// ════════════════════════════════════════════════════════════════════════════
+// AUTH GATE
+// ════════════════════════════════════════════════════════════════════════════
+//
+// Every /api/household and /api/presence endpoint in this module is post-
+// setup-only (the household store doesn't exist until BLE pairing has
+// happened), so there's no captive-portal flow that needs to reach these
+// routes without an API token. The doc block above promised
+// `api_auth_check` gating; this section is what makes the promise true.
+// The dashboard's secureFetch already attaches `Authorization: Bearer
+// <api_token>` on every call, so wrapping handlers is a plumbing-only fix
+// that matches the pattern used in bluetooth_api.h (#437).
+//
+// Mechanism: register_routes() stashes the API token pointer in a
+// module-local static, then wraps every real handler in the auth_gated
+// function template. The trampoline runs api_auth_check + delegates;
+// non-authenticated callers receive the standard 401 response, and the
+// real handler never runs.
+inline const char*& auth_token_storage() {
+  static const char* token = nullptr;
+  return token;
+}
+
+template<esp_err_t (*Real)(httpd_req_t*)>
+static esp_err_t auth_gated(httpd_req_t* req) {
+  const char* tok = auth_token_storage();
+  if (tok && !api_auth_check(req, tok)) return ESP_OK;
+  return Real(req);
+}
 
 static inline esp_err_t send_json(httpd_req_t* req, const char* json) {
   httpd_resp_set_type(req, "application/json");
@@ -231,18 +262,19 @@ inline esp_err_t handle_override_clear(httpd_req_t* req) {
   return send_ok(req, "override cleared");
 }
 
-inline void register_routes(httpd_handle_t server) {
-  httpd_uri_t r1 = { .uri = "/api/household",          .method = HTTP_GET,    .handler = handle_list };
+inline void register_routes(httpd_handle_t server, const char* api_token = nullptr) {
+  auth_token_storage() = api_token;
+  httpd_uri_t r1 = { .uri = "/api/household",          .method = HTTP_GET,    .handler = auth_gated<handle_list> };
   httpd_register_uri_handler(server, &r1);
-  httpd_uri_t r2 = { .uri = "/api/household/role",     .method = HTTP_POST,   .handler = handle_set_role };
+  httpd_uri_t r2 = { .uri = "/api/household/role",     .method = HTTP_POST,   .handler = auth_gated<handle_set_role> };
   httpd_register_uri_handler(server, &r2);
-  httpd_uri_t r3 = { .uri = "/api/household",          .method = HTTP_DELETE, .handler = handle_remove };
+  httpd_uri_t r3 = { .uri = "/api/household",          .method = HTTP_DELETE, .handler = auth_gated<handle_remove> };
   httpd_register_uri_handler(server, &r3);
-  httpd_uri_t r4 = { .uri = "/api/presence",           .method = HTTP_GET,    .handler = handle_presence_status };
+  httpd_uri_t r4 = { .uri = "/api/presence",           .method = HTTP_GET,    .handler = auth_gated<handle_presence_status> };
   httpd_register_uri_handler(server, &r4);
-  httpd_uri_t r5 = { .uri = "/api/presence/override",  .method = HTTP_POST,   .handler = handle_override_set };
+  httpd_uri_t r5 = { .uri = "/api/presence/override",  .method = HTTP_POST,   .handler = auth_gated<handle_override_set> };
   httpd_register_uri_handler(server, &r5);
-  httpd_uri_t r6 = { .uri = "/api/presence/override",  .method = HTTP_DELETE, .handler = handle_override_clear };
+  httpd_uri_t r6 = { .uri = "/api/presence/override",  .method = HTTP_DELETE, .handler = auth_gated<handle_override_clear> };
   httpd_register_uri_handler(server, &r6);
 }
 
