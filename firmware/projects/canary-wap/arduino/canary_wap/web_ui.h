@@ -3468,11 +3468,15 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         }).join('');
       }
 
-      // BLE presence status
+      // BLE presence status. Reads /api/presence/combined (the subsystem-
+      // level view from wifi_presence_api.h). Not /api/presence — that's
+      // owned by household_api's auto-context handler and has a different
+      // shape (effective_context, owner_seen_recently). See the route doc
+      // on handle_presence_combined for why these are distinct URIs.
       const bleStatus = document.getElementById('blePresenceStatus');
       const bleSubtitle = document.getElementById('blePresenceSubtitle');
       try {
-        const presData = await api('/api/presence');
+        const presData = await api('/api/presence/combined');
         if (presData.ble?.available) {
           bleStatus.textContent = 'BLE scanning available via BLE Discovery subsystem';
           bleSubtitle.textContent = 'Active';
