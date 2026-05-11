@@ -6,6 +6,12 @@
  * Philosophy: "Witness authority, not neighbors"
  *
  * All handlers follow the same pattern as mesh API handlers.
+ *
+ * NOT CURRENTLY WIRED UP. The register_routes() function below is unreferenced
+ * — no call site in canary_wap.ino registers these handlers with the HTTP
+ * server. If you wire this module up, you MUST add a Bearer-token auth gate
+ * before exposing /api/chirp/* endpoints (see bluetooth_api.h #437 or
+ * household_api.h #438 for the template-trampoline pattern).
  */
 
 #ifndef SECURACV_CHIRP_API_H

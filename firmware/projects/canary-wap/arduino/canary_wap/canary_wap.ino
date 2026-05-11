@@ -5133,13 +5133,13 @@ register_extra_routes:
 #endif
 
   // WiFi Presence Detection endpoints
-  wifi_presence_api::register_routes(active_server);
+  wifi_presence_api::register_routes(active_server, g_device.api_token_str);
 
   // Household roles + auto-context (Owner/Family/Guest tagging, presence)
-  household_api::register_routes(active_server);
+  household_api::register_routes(active_server, g_device.api_token_str);
 
   // Audible Chirp endpoints
-  audible_chirp_api::register_routes(active_server);
+  audible_chirp_api::register_routes(active_server, g_device.api_token_str);
 
   log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "API server started",
              g_tls_enabled ? "HTTPS port 443" : "HTTP port 80");

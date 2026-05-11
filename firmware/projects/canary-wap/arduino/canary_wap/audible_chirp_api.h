@@ -10,10 +10,26 @@
 
 #include "esp_http_server.h"
 #include "audible_chirp.h"
+#include "api_auth.h"
 #include <ArduinoJson.h>
 #include <cstring>
 
 namespace audible_chirp_api {
+
+// Auth gate. /api/audible-chirp/* endpoints are post-setup and aren't on
+// any pre-token captive-portal path, so they get the same Bearer-token
+// gate as the rest of the API. Pattern lifted from bluetooth_api.h (#437).
+inline const char*& auth_token_storage() {
+  static const char* token = nullptr;
+  return token;
+}
+
+template<esp_err_t (*Real)(httpd_req_t*)>
+static esp_err_t auth_gated(httpd_req_t* req) {
+  const char* tok = auth_token_storage();
+  if (tok && !api_auth_check(req, tok)) return ESP_OK;
+  return Real(req);
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 // HELPER
@@ -169,28 +185,29 @@ inline esp_err_t handle_chirp_config(httpd_req_t* req) {
 // ROUTE REGISTRATION
 // ════════════════════════════════════════════════════════════════════════════
 
-inline void register_routes(httpd_handle_t server) {
+inline void register_routes(httpd_handle_t server, const char* api_token = nullptr) {
+  auth_token_storage() = api_token;
   httpd_uri_t status = {
     .uri = "/api/audible-chirp", .method = HTTP_GET,
-    .handler = handle_chirp_status, .user_ctx = nullptr
+    .handler = auth_gated<handle_chirp_status>, .user_ctx = nullptr
   };
   httpd_register_uri_handler(server, &status);
 
   httpd_uri_t play = {
     .uri = "/api/audible-chirp/play", .method = HTTP_POST,
-    .handler = handle_chirp_play, .user_ctx = nullptr
+    .handler = auth_gated<handle_chirp_play>, .user_ctx = nullptr
   };
   httpd_register_uri_handler(server, &play);
 
   httpd_uri_t test = {
     .uri = "/api/audible-chirp/test", .method = HTTP_POST,
-    .handler = handle_chirp_test, .user_ctx = nullptr
+    .handler = auth_gated<handle_chirp_test>, .user_ctx = nullptr
   };
   httpd_register_uri_handler(server, &test);
 
   httpd_uri_t config = {
     .uri = "/api/audible-chirp/config", .method = HTTP_POST,
-    .handler = handle_chirp_config, .user_ctx = nullptr
+    .handler = auth_gated<handle_chirp_config>, .user_ctx = nullptr
   };
   httpd_register_uri_handler(server, &config);
 }
