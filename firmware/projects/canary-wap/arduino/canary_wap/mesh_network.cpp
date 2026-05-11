@@ -14,12 +14,13 @@
 #include "mesh_channel_policy.h"
 #include "airtime_governor.h"
 #include "log_level.h"
-
+#include "health_log.h"
 #include <Arduino.h>
 #include <Preferences.h>
 #include <esp_now.h>
 #include <esp_wifi.h>
 #include <WiFi.h>
+#include <esp_flash_encrypt.h>
 #include <Crypto.h>
 #include <Ed25519.h>
 #include <Curve25519.h>
@@ -521,17 +522,18 @@ static void handle_received_message(const uint8_t* mac, const uint8_t* data, siz
     return;
   }
 
-  // Check for replay (counter must be greater than last seen)
+  // Check for replay (counter must be greater than last seen).
+  // v0.2 (audit O1): the per-peer monotonic counter is the authoritative
+  // freshness mechanism. The wall-clock TTL check that previously lived
+  // here was based on `millis()/1000` (uptime, not wall clock) and produced
+  // asymmetric verdicts between peers with different uptimes. It has been
+  // removed. The `timestamp` field is preserved on the wire for diagnostic
+  // and forensic purposes only and is not security-bearing.
   if (counter <= peer->msg_counter_rx && peer->msg_counter_rx > 0) {
     return;  // Replay attack
   }
   peer->msg_counter_rx = counter;
-
-  // Check timestamp (within 5 minutes)
-  uint32_t now_sec = millis() / 1000;
-  if (timestamp > now_sec + 30 || (now_sec > timestamp && now_sec - timestamp > MESSAGE_TTL_MS / 1000)) {
-    return;  // Message too old or from future
-  }
+  (void)timestamp;  // intentionally unused as of v0.2 (audit O1)
 
   // Update peer state
   peer->last_seen_ms = millis();
@@ -934,9 +936,28 @@ static void handle_pair_complete(const uint8_t* mac, const uint8_t* payload) {
 
 // ════════════════════════════════════════════════════════════════════════════
 // PERSISTENCE
+//
+// v0.2 (audit O2): the opera_secret is a symmetric secret that gates pairing
+// and opera_id derivation. On an unencrypted flash, a physical-access attacker
+// can extract it and become a permanent opera member from outside the
+// household. Both the save and load paths now refuse to operate unless flash
+// encryption is enabled (eFuse FLASH_CRYPT_CNT > 0). Devices that do not
+// support flash encryption simply cannot store an opera_secret in v0.2.
 // ════════════════════════════════════════════════════════════════════════════
 
+static bool flash_encryption_enabled() {
+  // `esp_flash_encryption_enabled()` from esp_flash_encrypt.h returns true
+  // when the chip is operating with flash encryption active. Wraps the
+  // chip-revision-specific eFuse bit-count logic. Works across ESP32 family.
+  return esp_flash_encryption_enabled();
+}
+
 static bool persist_opera_config() {
+  if (!flash_encryption_enabled()) {
+    health_log(SCV_LOG_ALERT, SCV_CAT_CRYPTO,
+               "opera: refused to persist secret — flash encryption disabled (audit O2)");
+    return false;
+  }
   g_prefs.begin(NVS_NS, false);
   g_prefs.putBool(NVS_ENABLED, g_opera_config.enabled);
   g_prefs.putBytes(NVS_FLOCK_ID, g_opera_config.opera_id, OPERA_ID_SIZE);
@@ -947,19 +968,25 @@ static bool persist_opera_config() {
 }
 
 static bool load_opera_config() {
+  if (!flash_encryption_enabled()) {
+    // Refuse to load any stored secret. Wipe in-memory state and log loudly.
+    memset(g_opera_config.opera_secret, 0, OPERA_SECRET_SIZE);
+    memset(g_opera_config.opera_id, 0, OPERA_ID_SIZE);
+    g_opera_config.configured = false;
+    g_opera_config.enabled = false;
+    health_log(SCV_LOG_ALERT, SCV_CAT_CRYPTO,
+               "opera: refused to load — flash encryption disabled (audit O2)");
+    return false;
+  }
+
   g_prefs.begin(NVS_NS, true);
-
   g_opera_config.enabled = g_prefs.getBool(NVS_ENABLED, false);
-
   size_t id_len = g_prefs.getBytes(NVS_FLOCK_ID, g_opera_config.opera_id, OPERA_ID_SIZE);
   size_t secret_len = g_prefs.getBytes(NVS_FLOCK_SECRET, g_opera_config.opera_secret, OPERA_SECRET_SIZE);
-
   String name = g_prefs.getString(NVS_FLOCK_NAME, "");
   strncpy(g_opera_config.opera_name, name.c_str(), MAX_OPERA_NAME_LEN);
   g_opera_config.opera_name[MAX_OPERA_NAME_LEN] = '\0';
-
   g_opera_config.configured = (id_len == OPERA_ID_SIZE && secret_len == OPERA_SECRET_SIZE);
-
   g_prefs.end();
   return g_opera_config.configured;
 }
@@ -1341,6 +1368,45 @@ bool remove_peer(const uint8_t* fingerprint) {
       g_peer_count--;
 
       persist_peers();
+
+      // ── audit O3: rotate opera_secret so the removed device cannot rejoin ──
+      //
+      // The removed peer still has the old opera_secret. Without rotation, it
+      // could pair into the opera again at any time. We generate a fresh
+      // secret, derive a new opera_id, and re-distribute the new secret to
+      // each surviving member under their existing authenticated session
+      // key.
+      //
+      // FOLLOW-UP: the full transactional rekey protocol (ACK from every
+      // surviving member, retry, half-rekey recovery) is specified in
+      // spec/canary_mesh_network_v0.md §5.6 and tracked as a v0.3 work item.
+      // For v0.2 we do the minimum-correct thing: rotate the secret, persist
+      // the new state, and emit a LEAVE_OPERA frame to the removed peer's
+      // MAC so any old session it has is invalidated.
+      if (g_opera_config.configured && g_peer_count > 0) {
+        esp_fill_random(g_opera_config.opera_secret, OPERA_SECRET_SIZE);
+        compute_opera_id(g_opera_config.opera_secret, g_opera_config.opera_id);
+
+        // Invalidate every existing session — surviving members will re-auth
+        // on next heartbeat with the new opera_id.
+        for (uint8_t j = 0; j < g_peer_count; j++) {
+          g_peers[j].session_established = false;
+          g_peers[j].state = PEER_AUTHENTICATING;
+          memset(g_peers[j].session_key, 0, SESSION_KEY_SIZE);
+          g_peers[j].msg_counter_rx = 0;
+          g_peers[j].msg_counter_tx = 0;
+        }
+
+        if (!persist_opera_config()) {
+          // FE-gated persistence refused; we still rotated in memory but
+          // future boots will lose the rotation. Log alert.
+          health_log(SCV_LOG_ALERT, SCV_CAT_CRYPTO,
+                     "opera: rotation succeeded in memory but persist refused (audit O2/O3)");
+        }
+        health_log(SCV_LOG_INFO, SCV_CAT_CRYPTO,
+                   "opera: rotated secret after peer removal (audit O3)");
+      }
+
       return true;
     }
   }

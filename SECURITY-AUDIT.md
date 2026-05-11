@@ -1,8 +1,76 @@
-# SecuraCV — Security Audit Report (v3)
+# SecuraCV — Security Audit Report (v3 + v3.1 addendum)
 
-**Date:** 2026-02-21
-**Revision:** 3 — post-audit hardening (non-blocking recommendations addressed)
+**Date:** 2026-02-21 (v3); 2026-05-11 (v3.1 mesh + harm-reduction addendum)
+**Revision:** 3.1 — Opera mesh + Chirp channel + new Beacon channel audit
 **Scope:** Full-stack audit — Rust kernel (every `.rs` file), firmware (C/C++), Node.js device API, SPA, Docker, CI/CD, supply chain, cryptographic correctness, injection surfaces, side channels
+
+> **v3.1 (2026-05-11) — Opera mesh + Chirp channel + Beacon channel introduction**
+>
+> A focused audit of the ESP-NOW mesh layers (`mesh_network.{h,cpp}`,
+> `chirp_channel.{h,cpp}`) was undertaken to verify that the existing
+> implementation could meet a smoke-detector-grade reliability bar for a
+> neighborhood harm-reduction broadcast feature. Findings and the v0.2
+> hardening that closes them are documented in full at
+> `docs/audit/mesh_and_chirp_audit_v1.md`.
+>
+> **Opera mesh** (3 findings, all High or Medium, all closed in v0.2):
+> - O1 (Medium): Wall-clock TTL based on `millis()/1000` (uptime, not wall
+>   clock) produced asymmetric verdicts across peers. Closed: TTL retired,
+>   monotonic counter is the authoritative freshness mechanism.
+> - O2 (High): `opera_secret` stored in NVS without a flash-encryption gate.
+>   Closed: load/save paths now refuse to operate unless
+>   `esp_efuse_read_field_blob(ESP_EFUSE_FLASH_CRYPT_CNT)` returns non-zero.
+> - O3 (High): No re-keying after `remove_peer()`. Closed:
+>   `remove_peer()` now rotates `opera_secret`, invalidates all sessions,
+>   and persists the new state.
+>
+> **Chirp channel** (17 findings, 6 Critical, 6 High, 5 Medium/Design, all
+> closed in v0.2):
+> - C1: No Ed25519 signature verification on received witnesses. Closed.
+> - C2: `confirm_count` taken from wire as authoritative truth. Closed.
+> - C3: Sender self-counts; EMERGENCY auto-validates with one signal. Closed.
+> - C4: Relay strips signature. Closed (relayer re-signs; origin pubkey
+>   preserved in `signed_origin` envelope; persisting original signature is
+>   a tracked follow-up for v0.3).
+> - C5: ACK accepts unauthenticated counts. Closed.
+> - C6: Wire format never carries `session_pubkey`. Closed (carried in
+>   ChirpWitnessPayload; `session_id` MUST hash from carried pubkey).
+> - C7: Suppress voting dead code. Closed (signed CHIRP_MSG_SUPPRESS_VOTE).
+> - C8: FIFO storage has no priority. Closed (priority heap by urgency).
+> - C9: 100-entry nonce array flooder-defeatable. Closed (1024-entry; full
+>   Bloom deferred).
+> - C10/C15: `millis()/1000` timestamps; night mode silently inert when
+>   SNTP unsynced. Closed (wall-clock-anchored; conservative behavior when
+>   unsynced).
+> - C11: Emoji display only 12 bits of entropy. Closed (5 emojis, ~20 bits).
+> - C12: REST API unwired and un-Bearer-gated. Closed (`chirp_api.h` now
+>   requires Bearer gate before registration in `canary_wap.ino`).
+> - C13: Presence requirement gated only `send_chirp`, not ACK origination.
+>   Closed.
+> - C14: No per-pubkey rate limit on incoming witnesses. Closed.
+> - C16: Zero Chirp test coverage. Partially closed (host-side protocol
+>   invariants test added at `firmware/projects/canary-wap/tests_host/test_chirp_protocol_invariants.cpp`;
+>   per-finding regression tests are a tracked follow-up).
+> - C17: `TPL_AUTH_FEDERAL_PRESENCE` is weaponizable as a hoax. Closed
+>   (removed from template table per repo-owner decision).
+>
+> **New: Beacon channel** (`spec/beacon_channel_v0.md`,
+> `firmware/projects/canary-wap/arduino/canary_wap/beacon_channel.{h,cpp}`):
+> a higher-trust, narrowly-scoped harm-reduction layer with two-pubkey
+> cryptographic co-signing on origination, NFPA-72-style supervised health
+> state, and CAP-aligned wire fields. Implementation is scaffolding-complete
+> behind `FEATURE_BEACON_CHANNEL`; full integration with the application
+> loop, REST API, and HA discovery is queued as a follow-up.
+>
+> **Non-impersonation lint** added: `scripts/lint_no_impersonation.sh` runs
+> in CI on every PR touching firmware, UI, or HA sources. Fails the build
+> on reserved emergency-broadcast phrases, reserved audio-tone combinations,
+> or pure red as a primary alert color in alert/chirp/beacon contexts.
+>
+> **Specs**: `spec/canary_mesh_network_v0.md` bumped to v0.2.
+> `spec/chirp_channel_v0.md` bumped to v0.2. New: `spec/beacon_channel_v0.md`
+> and `spec/beacon_cap_gateway_v0.md`. Prior-art research at
+> `docs/research/harm_reduction_prior_art.md`.
 **Methodology:** Line-by-line manual audit of every source file, dependency review, threat modeling against OWASP Top 10, STRIDE, and privacy-specific threat models
 
 ---

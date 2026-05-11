@@ -270,3 +270,43 @@ docs(agents): clarify audit boundary vs security boundary
 ```
 
 ````
+
+---
+
+## Beacon Channel Invariants (v0.2 — must be enforced)
+
+The Beacon channel (`spec/beacon_channel_v0.md`) is the project's
+harm-reduction broadcast layer. It carries life-safety advisories with
+smoke-detector-grade reliability requirements. Any agent modifying Beacon
+firmware (`firmware/projects/canary-wap/arduino/canary_wap/beacon_channel.{h,cpp}`)
+or the Chirp v0.2 channel (`chirp_channel.{h,cpp}`) MUST observe:
+
+1. **No automatic origination.** Beacons are originated only on explicit
+   user action. Sensors (CSI, motion, audio) may prompt a human; sensors
+   must not originate.
+2. **Two-pubkey rule.** Every Beacon ALERT/UPDATE/CANCEL frame requires two
+   distinct Ed25519 signatures from two distinct device pubkeys, both in
+   the local beacon set with `trust_level != REVOKED`. Do not introduce a
+   "trusted device skips co-sign" shortcut.
+3. **No red, no reserved emergency-broadcast tones, no reserved phrasing.**
+   See `spec/beacon_cap_gateway_v0.md` §4. The
+   `scripts/lint_no_impersonation.sh` CI lint enforces this; do not bypass.
+4. **No PII on the wire.** No descriptions of people, no license plates, no
+   GPS, no MAC addresses, no `opera_id`, no household identifiers.
+   Templates only.
+5. **`scope = BCN_SCOPE_PRIVATE` always.** Never `Public`, never
+   `Restricted`. Lint-enforced.
+6. **No restoration of `TPL_AUTH_FEDERAL_PRESENCE`** or any
+   "authority/government/federal presence" template in Chirp or Beacon.
+7. **No persistence of Chirp session keys.** Session keys are ephemeral by
+   design — that's the privacy firewall between Chirp and Opera.
+8. **NVS writes of `opera_secret` and Beacon `beacon_set` require flash
+   encryption.** Both code paths refuse on FE-off devices. Do not weaken.
+9. **The Beacon audit log is append-only and chain-hashed.** Do not add a
+   "rotate" or "delete" operation; export-only.
+10. **Drills (`msgType = Exercise`) are wire-format-distinct from real
+    alerts.** Do not merge their counters or rate-limit buckets.
+
+Modifying any of the above requires updating
+`docs/audit/mesh_and_chirp_audit_v1.md` and `THREAT_MODEL.md` in the same
+PR.
