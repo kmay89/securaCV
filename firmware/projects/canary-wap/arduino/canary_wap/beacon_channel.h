@@ -75,8 +75,37 @@ enum BeaconMsgType : uint8_t {
   BEACON_MSG_SELFTEST_OK  = 4,
   BEACON_MSG_PAIR_OFFER   = 5,
   BEACON_MSG_REVOKE       = 6,
-  BEACON_MSG_COSIGN_REQ   = 7,   // device-to-device, not broadcast
+  // v0.3: cosign request / response. Encrypted to the candidate cosigner
+  // with ChaCha20-Poly1305 keyed by X25519 ECDH between device pubkeys
+  // (spec/beacon_channel_v0.md §6.3). The plaintext is the full
+  // BeaconAlertCanonical the originator wants the cosigner to sign;
+  // ciphertext + 12-byte nonce + 16-byte poly1305 tag travel inside the
+  // request body.
+  BEACON_MSG_COSIGN_REQ   = 7,
   BEACON_MSG_COSIGN_RESP  = 8,
+};
+
+// Encrypted COSIGN_REQ wire body. The full canonical (≤128 B) is
+// ChaCha20-Poly1305 encrypted to the candidate cosigner's pubkey.
+struct BeaconCosignRequestPayload {
+  uint8_t originator_fp[16];                  // who's asking
+  uint8_t candidate_cosigner_fp[16];          // who's being asked
+  uint8_t nonce[12];                          // ChaCha20 nonce (random)
+  uint8_t tag[16];                            // Poly1305 auth tag
+  uint16_t ciphertext_len;                    // length of encrypted canonical
+  uint8_t ciphertext[160];                    // encrypted BeaconAlertCanonical
+  uint8_t originator_signature[64];           // Ed25519(orig_priv, canonical)
+};
+
+// COSIGN_RESP wire body. The cosigner returns its signature over the same
+// canonical. Encrypted symmetrically so a third party can't substitute.
+struct BeaconCosignResponsePayload {
+  uint8_t originator_fp[16];
+  uint8_t cosigner_fp[16];
+  uint8_t nonce[12];
+  uint8_t tag[16];
+  uint8_t ciphertext[80];                     // 64-byte signature + 16-byte mac slot
+  uint8_t accept;                              // 1 = accepted + signed, 0 = declined
 };
 
 // CAP-aligned enums.
@@ -201,14 +230,18 @@ struct BeaconSelfTestPayload {
 };
 
 // Local beacon-set entry (NVS-persisted; FE-gated).
+// v0.3: added `x25519_pubkey` for ECDH-encrypted COSIGN_REQ/RESP messages.
+// Exchanged during pairing alongside the Ed25519 device pubkey.
 struct BeaconSetEntry {
-  uint8_t  device_pubkey[DEVICE_PUBKEY_SIZE];
+  uint8_t  device_pubkey[DEVICE_PUBKEY_SIZE];      // Ed25519 identity / signing
+  uint8_t  x25519_pubkey[DEVICE_PUBKEY_SIZE];      // X25519 for ECDH (v0.3)
   uint8_t  fingerprint[DEVICE_FP_SIZE];
   char     name[BEACON_NAME_LEN + 1];
   uint64_t paired_at;
   uint64_t last_selftest;
-  uint8_t  trust_level;     // BeaconTrustLevel
+  uint8_t  trust_level;                            // BeaconTrustLevel
   bool     valid;
+  bool     has_x25519_pubkey;                      // false for legacy v0.1 entries
 };
 
 // Local audit log entry (chain-hashed, signed).

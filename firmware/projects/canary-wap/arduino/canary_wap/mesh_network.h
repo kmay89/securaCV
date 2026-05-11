@@ -121,7 +121,12 @@ enum MessageType : uint8_t {
   MSG_PAIR_CONFIRM,
   MSG_PAIR_COMPLETE,
   MSG_LEAVE_OPERA,
-  MSG_ENCRYPTED            // Encrypted payload wrapper
+  MSG_ENCRYPTED,           // Encrypted payload wrapper
+  // v0.3 (audit O3 closure): transactional opera_secret rotation. Initiated
+  // when remove_peer() is called; old surviving members each ACK the new
+  // secret before it's committed to NVS.
+  MSG_OPERA_REKEY,         // Initiator → each surviving member; encrypted new secret
+  MSG_OPERA_REKEY_ACK      // Surviving member → initiator; confirms receipt
 };
 
 // Alert types
@@ -275,6 +280,24 @@ struct OfflineImminentPayload {
   uint8_t reason;                           // AlertType for offline reason
   uint32_t final_seq;
   uint8_t final_chain_hash[8];
+};
+
+// Opera rekey payload (v0.3, audit O3 closure).
+// Sent from the device that triggered remove_peer() to each surviving member,
+// encrypted under that member's existing session key. The receiver decrypts,
+// installs the new secret + opera_id, and replies with MSG_OPERA_REKEY_ACK.
+//
+// Format: 12-byte nonce + (32-byte secret encrypted with ChaCha20-Poly1305) +
+// 16-byte tag = 60 bytes.
+struct OperaRekeyPayload {
+  uint8_t nonce[NONCE_SIZE];
+  uint8_t encrypted_secret[OPERA_SECRET_SIZE];
+  uint8_t tag[16];
+  uint32_t rekey_id;                        // monotonically increasing; latest wins
+};
+
+struct OperaRekeyAckPayload {
+  uint32_t rekey_id;                        // echoes the rekey this ACK matches
 };
 
 // Pairing discovery broadcast
@@ -498,7 +521,10 @@ static const uint8_t CHIRP_MAGIC = 0xC4;           // Message identifier
 static const uint8_t CHIRP_CHANNEL = 0;            // 0 = follow current radio channel
 static const size_t MAX_MESSAGE_LEN = 64;          // Max chirp message length (legacy field; v0.2 uses structured fields)
 static const size_t MAX_RECENT_CHIRPS = 16;        // Stored chirps (priority heap by urgency)
-static const size_t MAX_NONCE_CACHE = 1024;        // Deduplication cache (v0.2: 10x v0.1 to defeat flood)
+// Deduplication: v0.3 switched to a 4 KB / 4-hash Bloom filter (audit C9
+// closure). The historical fixed-array constant is retained as a hint to
+// any external tool that snapshots header constants.
+static const size_t MAX_NONCE_CACHE = 1024;        // Deprecated since v0.3 — Bloom filter used instead
 static const size_t MAX_NEARBY_CACHE = 32;         // Nearby device cache
 static const size_t SESSION_ID_SIZE = 8;           // Ephemeral session ID
 static const size_t SESSION_PUBKEY_SIZE = 32;      // Ed25519 session pubkey carried in v0.2 frames
@@ -723,6 +749,12 @@ struct ReceivedChirp {
   bool     relayed;                             // Did we relay this
   bool     dismissed;                           // User dismissed locally
   bool     unverifiable_timestamp;              // Time was unsynced on receipt; display with warning badge
+  // v0.3 (audit C4 closure): original signature is preserved so that when we
+  // relay we can include the origin pubkey + origin signature in the
+  // signed_origin envelope, and downstream receivers can verify the chain
+  // end-to-end rather than trusting the relayer's attestation alone.
+  uint8_t  origin_signature[64];
+  bool     has_origin_signature;
 };
 
 // Outgoing chirp (for send queue)

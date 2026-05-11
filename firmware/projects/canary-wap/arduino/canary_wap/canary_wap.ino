@@ -169,6 +169,16 @@ extern "C" {
 #include "audible_chirp.h"
 #include "audible_chirp_api.h"
 
+// Chirp Channel v0.2 REST API (audit C12). Compiled only when mesh is on.
+#if FEATURE_MESH_NETWORK
+#include "chirp_api.h"
+#endif
+
+// Beacon Channel REST API. Compiled only when FEATURE_BEACON_CHANNEL is on.
+#if FEATURE_BEACON_CHANNEL
+#include "beacon_api.h"
+#endif
+
 // ════════════════════════════════════════════════════════════════════════════
 // VERSION & PROTOCOL (must match PWK expectations)
 // ════════════════════════════════════════════════════════════════════════════
@@ -5152,7 +5162,11 @@ register_extra_routes:
     httpd_uri_t ble_nearby = { .uri = "/api/nearby", .method = HTTP_GET, .handler = handle_ble_nearby, .user_ctx = nullptr };
     httpd_register_uri_handler(active_server, &ble_nearby);
 
-    httpd_uri_t ble_chirp_send = { .uri = "/api/chirp/send", .method = HTTP_POST, .handler = handle_ble_chirp_send, .user_ctx = nullptr };
+    // Legacy BLE-mediated chirp send. Moved off /api/chirp/send to make room
+    // for the v0.2 chirp_api::register_routes() which owns /api/chirp/*.
+    // The BLE relay path remains available at /api/ble/chirp/send for
+    // backwards compatibility with the old BLE companion app.
+    httpd_uri_t ble_chirp_send = { .uri = "/api/ble/chirp/send", .method = HTTP_POST, .handler = handle_ble_chirp_send, .user_ctx = nullptr };
     httpd_register_uri_handler(active_server, &ble_chirp_send);
   }
 #endif
@@ -5165,6 +5179,18 @@ register_extra_routes:
 
   // Audible Chirp endpoints
   audible_chirp_api::register_routes(active_server, g_device.api_token_str);
+
+#if FEATURE_MESH_NETWORK
+  // Chirp Channel v0.2 — anonymous community witness mesh (audit C12).
+  // Every endpoint Bearer-token-gated via the chirp_api template trampoline.
+  chirp_api::register_routes(active_server, g_device.api_token_str);
+#endif
+
+#if FEATURE_BEACON_CHANNEL
+  // Beacon Channel — harm-reduction broadcast with two-pubkey co-signing.
+  // Bearer-gated from day one (see spec/beacon_channel_v0.md §10).
+  beacon_api::register_routes(active_server, g_device.api_token_str);
+#endif
 
   log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "API server started",
              g_tls_enabled ? "HTTPS port 443" : "HTTP port 80");
@@ -6427,6 +6453,39 @@ void loop() {
           s.routine_allowed,
           s.routine_denied,
           s.urgent_sends);
+
+      // v0.3: also publish the Chirp NFPA-state surface for HA discovery.
+      // The Chirp ChirpState enum is mapped 1:1 to the NFPA-72 four-state
+      // model in the HA dashboard side; we publish the raw chirp state
+      // string here. Beacon publishing follows in its own gate.
+      csi_mqtt::publish_chirp_state(
+          chirp_channel::state_name(chirp_channel::get_status().state));
+    }
+#endif
+
+#if FEATURE_BEACON_CHANNEL
+    static uint32_t s_mqtt_beacon_ms = 0;
+    if (now - s_mqtt_beacon_ms >= 30000UL) {
+      s_mqtt_beacon_ms = now;
+      beacon_channel::BeaconStatus bs = beacon_channel::get_status();
+      // Beacon-class airtime is rolled into the same Stats struct via
+      // beacon_sends/beacon_airtime_us. Convert beacon airtime to pct_x100
+      // over the same 10s window as the main airtime_pct.
+      airtime_governor::Stats s = airtime_governor::snapshot(now);
+      uint64_t total_window_us = (uint64_t)airtime_governor::WINDOW_MS * 1000u;
+      uint16_t beacon_pct_x100 = total_window_us == 0 ? 0 :
+          (uint16_t)(((uint64_t)s.beacon_airtime_us * 10000ull) / total_window_us);
+      const char* active = "";
+      if (bs.active_alarm) {
+        active = "active";  // v0.3 publishes raw flag; richer mapping in v0.4
+      }
+      csi_mqtt::publish_beacon_state(
+          beacon_channel::state_name(bs.state),
+          beacon_pct_x100,
+          active,
+          s.beacon_sends,
+          bs.beacon_set_size,
+          bs.trouble_reasons);
     }
 #endif
   }

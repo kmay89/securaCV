@@ -70,9 +70,12 @@ This table is normative. Adding a new CAP category requires a Beacon template ch
 |---|---|---|---|
 | `Fire` | `Evacuate` | `BCN_EMERG_EVACUATION` or `BCN_EMERG_FIRE_VISIBLE` | Choose by severity |
 | `Health` | `Monitor` | `BCN_EMERG_MEDICAL_SCENE` | Single-incident only |
+| `Health` (event = "Multiple Casualty Incident") | `Monitor` | `BCN_EMERG_MULTIPLE_AMBULANCE` | Coordinates community awareness without identifying patients |
 | `Safety` | `Evacuate` | `BCN_EMERG_EVACUATION` | |
 | `Safety` | `Shelter` | `BCN_EMERG_SHELTER_IN_PLACE` | |
-| `Safety` | `AllClear` | `BCN_CLR_RESOLVED` | |
+| `Safety` | `AllClear` | `BCN_CLR_RESOLVED` | Default all-clear after an active alarm |
+| `Safety` | `AllClear` (post-investigation) | `BCN_CLR_SAFE` | Area confirmed safe (e.g. building cleared) |
+| `Safety` | `AllClear` (origination mistake) | `BCN_CLR_FALSE_ALARM` | Explicit false-alarm cancel — separate audit bucket |
 | `Infra` | `Avoid` | `BCN_INFRA_GAS_SMELL` | If `event` mentions gas |
 | `Infra` | `Monitor` | `BCN_INFRA_POWER_OUT` | If `event` mentions power |
 | `Met` | `Monitor` | `BCN_WX_SEVERE_WARNING` | Default |

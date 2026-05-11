@@ -246,6 +246,34 @@ void publish_mesh(uint16_t airtime_pct_x100,
                   uint32_t urgent_sends);
 
 /**
+ * Publish the Chirp channel's NFPA-72-style state as a string enum.
+ * Surfaces under topic securacv/<prefix>/<device>/chirp with
+ * `state` field consumed by sensor.canary_<id>_chirp_state.
+ *
+ * state_name: one of "Normal" | "Trouble" | "Alarm" | "Supervisory"
+ *             (or the Chirp ChirpState string from chirp_channel::state_name).
+ */
+void publish_chirp_state(const char* state_name);
+
+/**
+ * Publish the Beacon channel's NFPA-72 state surface, audit-log size,
+ * active alarm template, and beacon-only airtime utilization.
+ *
+ * state_name              one of "Normal" | "Trouble" | "Alarm" | "Supervisory"
+ * beacon_airtime_pct_x100 rolling-window airtime utilization × 100
+ * active_template         human-readable template text or "" when no active alarm
+ * beacon_sends            lifetime count of Beacon-class TX
+ * beacon_set_size         number of paired neighbor pubkeys
+ * trouble_mask            bitfield of BeaconTroubleReason values
+ */
+void publish_beacon_state(const char* state_name,
+                          uint16_t beacon_airtime_pct_x100,
+                          const char* active_template,
+                          uint32_t beacon_sends,
+                          uint8_t beacon_set_size,
+                          uint16_t trouble_mask);
+
+/**
  * Register the Bearer-token accessor used by the /api/mqtt/* HTTP
  * handlers. csi_mqtt has no direct access to g_device.api_token_str,
  * so csi_integration::init wires this up at boot — same string the
