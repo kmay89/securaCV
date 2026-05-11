@@ -36,6 +36,24 @@
 namespace mesh_crypto {
 
 /* ──────────────────────────────────────────────────────────────────────────
+ * SECURE-ZERO
+ *
+ * memset() of about-to-go-out-of-scope memory is eligible for dead-store
+ * elimination — CodeQL flagged exactly this on x25519_derive's local
+ * privkey copy. secure_zero() uses a volatile pointer + a memory-barrier
+ * inline asm so the writes can't be optimized away. Same pattern as
+ * firmware/common/csi/src/csi_hal.cpp:secure_wipe().
+ * ────────────────────────────────────────────────────────────────────────── */
+
+static void secure_zero(void* ptr, size_t len) {
+  volatile uint8_t* p = static_cast<volatile uint8_t*>(ptr);
+  while (len--) { *p++ = 0; }
+#if defined(__GNUC__) || defined(__clang__)
+  asm volatile("" ::: "memory");
+#endif
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
  * HOST-BUILD VENDORED SHA-256 (FIPS 180-4 reference, public domain)
  *
  * Used by sha256_domain() in host builds so unit tests can verify
@@ -343,13 +361,18 @@ bool x25519_derive(const uint8_t our_priv[PRIVKEY_LEN],
 #else
   /* Real X25519 via rweather's Curve25519. eval() returns false on
    * low-order / identity points; on any failure we zero the output
-   * to avoid leaking residual stack bytes. */
+   * to avoid leaking residual stack bytes.
+   *
+   * The local_priv_copy is wiped with secure_zero, NOT memset — the
+   * latter is eligible for dead-store elimination since the buffer
+   * goes out of scope immediately after (CodeQL flagged this on the
+   * earlier revision). */
   uint8_t local_priv_copy[PRIVKEY_LEN];
   memcpy(local_priv_copy, our_priv, PRIVKEY_LEN);
   bool ok = Curve25519::eval(shared_out, local_priv_copy, peer_pub);
-  memset(local_priv_copy, 0, sizeof(local_priv_copy));
+  secure_zero(local_priv_copy, sizeof(local_priv_copy));
   if (!ok || is_all_zero(shared_out, X25519_SHARED_LEN)) {
-    memset(shared_out, 0, X25519_SHARED_LEN);
+    secure_zero(shared_out, X25519_SHARED_LEN);
     return false;
   }
   return true;
@@ -424,7 +447,7 @@ static void shim_aead_tag(const uint8_t key[AEAD_KEY_LEN],
   buf[off++] = (uint8_t)ct_len;
   if (ciphertext != nullptr && ct_len > 0) { memcpy(buf + off, ciphertext, ct_len); off += ct_len; }
   sha256_domain("", buf, off, h);
-  memset(buf, 0, total);
+  secure_zero(buf, total);
   free(buf);
   memcpy(tag_out, h, AEAD_TAG_LEN);
 }
@@ -447,18 +470,24 @@ bool aead_encrypt(const uint8_t key[AEAD_KEY_LEN],
     if (stream == nullptr) return false;
     shim_aead_keystream(key, nonce, stream, pt_len);
     for (size_t i = 0; i < pt_len; ++i) ciphertext_out[i] = plaintext[i] ^ stream[i];
-    memset(stream, 0, pt_len);
+    secure_zero(stream, pt_len);
     free(stream);
   }
   shim_aead_tag(key, nonce, aad, aad_len, ciphertext_out, pt_len, tag_out);
   return true;
 #else
+  /* Match canary-wap's pattern: check setKey/setIV returns, always
+   * call clear() at end to wipe key material from the ChaChaPoly
+   * object's internal stack-allocated state. */
   ChaChaPoly chacha;
-  chacha.setKey(key, AEAD_KEY_LEN);
-  chacha.setIV(nonce, AEAD_NONCE_LEN);
+  if (!chacha.setKey(key, AEAD_KEY_LEN) || !chacha.setIV(nonce, AEAD_NONCE_LEN)) {
+    chacha.clear();
+    return false;
+  }
   if (aad_len > 0) chacha.addAuthData(aad, aad_len);
   if (pt_len > 0) chacha.encrypt(ciphertext_out, plaintext, pt_len);
   chacha.computeTag(tag_out, AEAD_TAG_LEN);
+  chacha.clear();
   return true;
 #endif
 }
@@ -492,12 +521,16 @@ bool aead_decrypt(const uint8_t key[AEAD_KEY_LEN],
   return true;
 #else
   ChaChaPoly chacha;
-  chacha.setKey(key, AEAD_KEY_LEN);
-  chacha.setIV(nonce, AEAD_NONCE_LEN);
+  if (!chacha.setKey(key, AEAD_KEY_LEN) || !chacha.setIV(nonce, AEAD_NONCE_LEN)) {
+    chacha.clear();
+    return false;
+  }
   if (aad_len > 0) chacha.addAuthData(aad, aad_len);
   if (ct_len > 0) chacha.decrypt(plaintext_out, ciphertext, ct_len);
-  if (!chacha.checkTag(tag, AEAD_TAG_LEN)) {
-    if (ct_len > 0) memset(plaintext_out, 0, ct_len);
+  const bool tag_ok = chacha.checkTag(tag, AEAD_TAG_LEN);
+  chacha.clear();
+  if (!tag_ok) {
+    if (ct_len > 0) secure_zero(plaintext_out, ct_len);
     return false;
   }
   return true;
