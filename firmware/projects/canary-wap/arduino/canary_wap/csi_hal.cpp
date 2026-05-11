@@ -143,6 +143,20 @@ static uint32_t s_window_frames = 0;
 static uint32_t s_rate_last_ms = 0;
 static uint32_t s_rate_min_gap_ms = 0;
 
+/* Channel-lock state. set_channel_lock writes; the WiFi callback reads
+ * s_observed_channel; is_channel_in_sync() compares them. */
+static uint8_t s_channel_lock = 0;
+static std::atomic<uint8_t> s_observed_channel{0};
+
+/* Watchdog state. s_last_frame_ms is set by the WiFi callback (relaxed —
+ * we only need monotonic visibility, not strict ordering). The trigger
+ * check + recovery happens in process() on the main loop. */
+static std::atomic<uint32_t> s_last_frame_ms{0};
+static uint32_t s_watchdog_timeout_ms = WATCHDOG_DEFAULT_TIMEOUT_MS;
+static WatchdogCallback s_watchdog_cb = nullptr;
+static uint32_t s_watchdog_last_recovery_ms = 0;
+static uint32_t s_watchdog_recovery_count = 0;
+
 /* ──────────────────────────────────────────────────────────────────────────
  * PRIVACY BARRIER: scrub identifying fields from the ESP-IDF info struct.
  *
@@ -241,6 +255,12 @@ static void csi_rx_cb(void* /*ctx*/, wifi_csi_info_t* info) {
   s_head.store(head + 1, std::memory_order_release);
   s_frames_received.fetch_add(1, std::memory_order_relaxed);
 
+  /* Watchdog + channel-lock observers — relaxed atomics, single-writer
+   * from this callback context. */
+  s_observed_channel.store(slot->channel, std::memory_order_relaxed);
+  s_last_frame_ms.store((uint32_t)(esp_timer_get_time() / 1000ULL),
+                        std::memory_order_relaxed);
+
   /* Note: info->mac / info->dmac / info->hdr / info->payload are owned by
    * ESP-IDF and are *not* zeroed here (that could crash the WiFi driver
    * which re-uses the buffer). The guarantee is that we do not *copy* them. */
@@ -263,6 +283,14 @@ bool init(const Config& cfg) {
   secure_wipe(s_ring, sizeof(s_ring));
   s_head.store(0);
   s_tail.store(0);
+
+  /* Watchdog + channel observability reset. We keep s_watchdog_timeout_ms
+   * and s_watchdog_cb across init() so set_watchdog() callers can configure
+   * before init(); only the runtime state is cleared. */
+  s_last_frame_ms.store(0, std::memory_order_relaxed);
+  s_observed_channel.store(0, std::memory_order_relaxed);
+  s_watchdog_last_recovery_ms = 0;
+  s_watchdog_recovery_count = 0;
 
   /* Defer the ESP-IDF registration until start(): WiFi must be initialized
    * and in a mode that receives frames. If the user calls init() before
@@ -390,6 +418,96 @@ void set_features_callback(FeaturesCallback cb) { s_cb = cb; }
  * MAIN-LOOP PUMP
  * ────────────────────────────────────────────────────────────────────────── */
 
+/* ──────────────────────────────────────────────────────────────────────────
+ * WATCHDOG INTERNAL
+ * ────────────────────────────────────────────────────────────────────────── */
+
+static void watchdog_check_and_recover() {
+  if (s_watchdog_timeout_ms == 0) return;
+  if (!s_running) return;
+
+  const uint32_t last = s_last_frame_ms.load(std::memory_order_relaxed);
+  /* No frames yet at all? Use start time as the reference point so a
+   * deferred-start that never actually got frames still trips the
+   * watchdog instead of looking quiet forever. */
+  const uint32_t ref = (last == 0) ? s_window_start_ms : last;
+  const uint32_t now = millis();
+  const uint32_t silent = now - ref;
+
+  if (silent < s_watchdog_timeout_ms) return;
+
+  /* Throttle recovery attempts so we don't slam the radio repeatedly. */
+  if (s_watchdog_last_recovery_ms != 0 &&
+      (now - s_watchdog_last_recovery_ms) < WATCHDOG_RECOVERY_MIN_MS) {
+    return;
+  }
+  s_watchdog_last_recovery_ms = now;
+  s_watchdog_recovery_count++;
+
+  CSI_LOG_WARNF("CSI silent for %ums; recovery attempt %u",
+                (unsigned)silent, (unsigned)s_watchdog_recovery_count);
+
+  if (s_watchdog_cb) s_watchdog_cb(silent, s_watchdog_recovery_count);
+
+#if SECURACV_HAVE_CSI_API
+  /* Gentle recovery: toggle the CSI rx callback. We deliberately do NOT
+   * cycle esp_wifi_stop/start — that would tear down WiFi for every
+   * peer of this device and is too invasive for a watchdog. The
+   * integration layer's callback can escalate to a full WiFi restart
+   * after N attempts if it chooses. */
+  esp_wifi_set_csi(false);
+  esp_wifi_set_csi(true);
+#endif
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * CHANNEL LOCK + WATCHDOG PUBLIC API
+ * ────────────────────────────────────────────────────────────────────────── */
+
+bool set_channel_lock(uint8_t channel) {
+  if (channel > 14) return false;
+  s_channel_lock = channel;
+  if (channel == 0) return true;
+#if SECURACV_HAVE_CSI_API
+  /* Best-effort: if WiFi is up, set the channel now. If WiFi isn't yet
+   * up the call returns an error and we just remember the intent — the
+   * driver will use the configured channel once start() is called. */
+  esp_err_t err = esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
+  if (err != ESP_OK && err != ESP_ERR_WIFI_NOT_STARTED) {
+    CSI_LOG_WARNF("set_channel_lock(%u) returned 0x%x", channel, err);
+    /* Still keep the lock — observers will report mismatch. */
+  }
+#endif
+  return true;
+}
+
+uint8_t get_channel_lock() { return s_channel_lock; }
+
+uint8_t get_observed_channel() {
+  return s_observed_channel.load(std::memory_order_relaxed);
+}
+
+bool is_channel_in_sync() {
+  if (s_channel_lock == 0) return true;
+  return s_observed_channel.load(std::memory_order_relaxed) == s_channel_lock;
+}
+
+void set_watchdog(uint32_t timeout_ms, WatchdogCallback cb) {
+  s_watchdog_timeout_ms = timeout_ms;
+  s_watchdog_cb = cb;
+}
+
+uint32_t get_watchdog_timeout_ms() { return s_watchdog_timeout_ms; }
+
+uint32_t get_ms_since_last_frame() {
+  const uint32_t last = s_last_frame_ms.load(std::memory_order_relaxed);
+  if (last == 0) return UINT32_MAX;
+  const uint32_t now = millis();
+  return now - last;
+}
+
+uint32_t get_watchdog_recovery_count() { return s_watchdog_recovery_count; }
+
 int process() {
   /* Deferred-start retry. If start() was called while WiFi wasn't ready,
    * we retry once per second here until the three esp_wifi_set_csi_* calls
@@ -414,6 +532,11 @@ int process() {
   }
 
   if (!s_running) return 0;
+
+  /* Watchdog check before draining: if we've been silent past the
+   * threshold, attempt a gentle recovery so the rest of the loop has
+   * something to do. The check is internally rate-limited. */
+  watchdog_check_and_recover();
 
   /* Drain all available frames into the feature aggregator. */
   for (;;) {
