@@ -117,6 +117,13 @@ inline esp_err_t handle_wifi_presence_stop(httpd_req_t* req) {
 }
 
 // GET /api/presence — Combined presence status (WiFi + BLE if available)
+// GET /api/presence/combined — Combined presence status (WiFi + BLE if available).
+// Lives at /api/presence/combined (not /api/presence) because household_api.h
+// owns /api/presence for the higher-level auto-context view (effective_context,
+// owner-seen-recently, manual override). ESP-IDF httpd rejects duplicate
+// (URI, method) registrations as ESP_ERR_HTTPD_HANDLER_EXISTS, so they have
+// to live at distinct URIs; the dashboard expects both shapes from their
+// respective endpoints.
 inline esp_err_t handle_presence_combined(httpd_req_t* req) {
   JsonDocument doc;
 
@@ -164,7 +171,7 @@ inline esp_err_t handle_presence_combined(httpd_req_t* req) {
 inline void register_routes(httpd_handle_t server, const char* api_token = nullptr) {
   auth_token_storage() = api_token;
   httpd_uri_t combined = {
-    .uri = "/api/presence", .method = HTTP_GET,
+    .uri = "/api/presence/combined", .method = HTTP_GET,
     .handler = auth_gated<handle_presence_combined>, .user_ctx = nullptr
   };
   httpd_register_uri_handler(server, &combined);
