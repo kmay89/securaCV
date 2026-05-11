@@ -526,6 +526,79 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     .sensing-pill--presence { background: rgba(52,199,89,0.18);  color: #34c759; }
     .sensing-pill--motion   { background: rgba(90,200,250,0.18); color: #5ac8fa; }
     .sensing-pill--active   { background: rgba(255,159,10,0.20); color: #ff9f0a; }
+    .sensing-pill--muted    { background: rgba(120,120,128,0.28); color: #c7c7cc; }
+    /* "Supplement, not a replacement" banner on the Acoustic card. */
+    .sensing-caution {
+      margin: 10px 0 0 0;
+      padding: 10px 12px;
+      border-radius: 10px;
+      background: rgba(255,159,10,0.10);
+      border: 1px solid rgba(255,159,10,0.35);
+      color: #ffb454;
+      font-size: 0.88rem;
+      line-height: 1.35;
+    }
+    .sensing-caution strong { color: #ff9f0a; }
+    /* Live RMS level meter — the SAME 20 ms scalar the hysteresis uses.
+       The two notches are the OFF (clear) and ON (alarm) thresholds. */
+    .audio-meter {
+      position: relative;
+      height: 22px;
+      background: rgba(255,255,255,0.05);
+      border-radius: 6px;
+      overflow: hidden;
+      margin: 8px 0 4px;
+    }
+    .audio-meter__fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #34c759 0%, #ffd60a 60%, #ff9f0a 90%, #ff453a 100%);
+      transition: width 120ms linear;
+    }
+    .audio-meter__notch {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      background: rgba(255,255,255,0.5);
+      pointer-events: none;
+    }
+    .audio-meter__legend {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.72rem;
+      color: var(--muted);
+    }
+    .audio-trace {
+      display: flex;
+      gap: 2px;
+      height: 28px;
+      margin-top: 8px;
+      align-items: stretch;
+    }
+    .audio-trace__seg {
+      flex: 1 1 0;
+      min-width: 6px;
+      border-radius: 3px;
+      background: rgba(120,120,128,0.25);
+    }
+    .audio-trace__seg--on { background: #ff9f0a; }
+    .audio-mic-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 8px;
+      flex-wrap: wrap;
+    }
+    .audio-mic-row__dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .audio-mic-row__dot--live   { background: #34c759; box-shadow: 0 0 6px #34c759; }
+    .audio-mic-row__dot--muted  { background: #98989d; }
+    .audio-mic-row__dot--offline{ background: #ff453a; }
     .sensing-explain {
       margin-top: 10px;
       color: var(--muted);
@@ -1036,12 +1109,21 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       <!-- Acoustic events (T3 smoke / T4 CO cadence detection) -->
       <div class="card" id="acousticCard" style="display:none;">
         <div class="card-header">
-          <div>
+          <div style="flex:1;">
             <div class="card-title">Acoustic alarms</div>
             <div class="card-subtitle">
               The radio is silent here — this card listens for the standard
               cadences every code-compliant smoke and CO alarm emits. No
               audio ever leaves the device, only the pattern match.
+            </div>
+            <div class="sensing-caution">
+              ⚠ <strong>Supplement, not a substitute.</strong> This is not a
+              UL-listed life-safety device. Keep your existing smoke and CO
+              alarms. The Canary helps a UL-listed alarm get noticed — it
+              does not replace one, and it cannot detect smoke, fire, or CO
+              directly. Reliable detection range is roughly 3 m at typical
+              alarm volume; through a closed door or in a noisy room,
+              detection becomes unreliable.
             </div>
           </div>
         </div>
@@ -1052,7 +1134,15 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
             (CO) cadences. Nothing detected.
           </div>
         </div>
-        <div class="stats-grid">
+        <div class="audio-mic-row">
+          <span id="acMicDot" class="audio-mic-row__dot audio-mic-row__dot--live" aria-hidden="true"></span>
+          <span id="acMicLabel" style="font-weight:600;">Mic live</span>
+          <span style="color:var(--muted); font-size:0.85rem; flex:1;">
+            Mute releases GPIO 41/42 at the I2S driver — verifiable, persisted across reboots.
+          </span>
+          <button class="btn btn-secondary btn-sm" id="acMicMuteBtn" onclick="toggleMicMute()">Mute microphone</button>
+        </div>
+        <div class="stats-grid" style="margin-top:14px;">
           <div class="stat-item"><div class="stat-label">T3 cycles seen</div><div class="stat-value" id="acT3">0</div></div>
           <div class="stat-item"><div class="stat-label">T4 cycles seen</div><div class="stat-value" id="acT4">0</div></div>
           <div class="stat-item"><div class="stat-label">Envelope frames</div><div class="stat-value" id="acFrames">0</div></div>
@@ -1060,6 +1150,47 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           <div class="stat-item"><div class="stat-label">Off-transitions</div><div class="stat-value" id="acOff">0</div></div>
           <div class="stat-item"><div class="stat-label">I2S errors</div><div class="stat-value" id="acErr">0</div></div>
         </div>
+        <!-- Test panel: live level meter + alarm pattern self-test.
+             Hidden by default to avoid leaving a visible "loudness number"
+             on screen in normal use; user opens it explicitly. -->
+        <details style="margin-top:14px;">
+          <summary style="cursor:pointer; color:var(--muted); font-size:0.92rem;">
+            Test the microphone
+          </summary>
+          <div style="margin-top:10px; padding:10px; background:rgba(255,255,255,0.02); border-radius:10px;">
+            <div style="font-size:0.88rem; color:var(--muted); margin-bottom:6px;">
+              <strong>Step 1 — Is the mic alive?</strong> Clap or speak near
+              the device. The bar below moves with the current 20 ms loudness
+              number — the only thing this module ever sees. The two notches
+              are the OFF (clear) and ON (alarm) thresholds.
+            </div>
+            <div class="audio-meter" id="acMeter">
+              <div class="audio-meter__fill" id="acMeterFill"></div>
+              <div class="audio-meter__notch" id="acMeterOff" style="left:5%;"></div>
+              <div class="audio-meter__notch" id="acMeterOn" style="left:12%;"></div>
+            </div>
+            <div class="audio-meter__legend">
+              <span id="acMeterRms">RMS 0</span>
+              <span id="acMeterFlags">·</span>
+            </div>
+            <div class="audio-trace" id="acTrace" title="Last 16 on/off transitions, newest on the right"></div>
+            <div style="font-size:0.88rem; color:var(--muted); margin:12px 0 6px;">
+              <strong>Step 2 — Does the pattern detector work?</strong>
+              Press the physical TEST button on your smoke or CO alarm with
+              the device within ~3 m, then click below. A match here does
+              <em>not</em> fire any Home Assistant automation — it's a
+              detection-only test.
+            </div>
+            <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+              <button class="btn btn-primary btn-sm" id="acTestBtn" onclick="startAudioSelftest()">
+                Listen for 30 s
+              </button>
+              <span id="acTestStatus" style="font-size:0.9rem; color:var(--muted);">
+                Idle.
+              </span>
+            </div>
+          </div>
+        </details>
       </div>
 
       <!-- Touch (silent panic / enclosure tamper / approach) -->
@@ -2460,8 +2591,13 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         // already been declared` at parse time, breaking refreshSensing()
         // entirely.
         const acAge = ac.last_event_age_ms;
+        const acMuted = ac.muted === true;
 
-        if (!ac.enabled) {
+        if (acMuted) {
+          acPill.className = 'sensing-pill sensing-pill--muted';
+          acPill.textContent = '🚫 Mic muted';
+          acExp.textContent = 'You have muted the microphone. The I2S driver is uninstalled and GPIO 41/42 are released. Unmute below to listen for smoke / CO alarm cadences again.';
+        } else if (!ac.enabled) {
           acPill.className = 'sensing-pill sensing-pill--offline';
           acPill.textContent = 'Mic offline';
           acExp.textContent = 'The PDM microphone failed to start. Check the device serial log.';
@@ -2477,6 +2613,24 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           acPill.className = 'sensing-pill sensing-pill--quiet';
           acPill.textContent = 'No alarms';
           acExp.textContent = 'Listening for the standard NFPA 72 (smoke) and UL 2034 (CO) cadences. Nothing detected.';
+        }
+
+        // Mic status row (dot + label + mute button).
+        const micDot = document.getElementById('acMicDot');
+        const micLabel = document.getElementById('acMicLabel');
+        const micBtn = document.getElementById('acMicMuteBtn');
+        if (acMuted) {
+          micDot.className = 'audio-mic-row__dot audio-mic-row__dot--muted';
+          micLabel.textContent = 'Mic muted';
+          micBtn.textContent = 'Unmute microphone';
+        } else if (!ac.enabled) {
+          micDot.className = 'audio-mic-row__dot audio-mic-row__dot--offline';
+          micLabel.textContent = 'Mic offline';
+          micBtn.textContent = 'Try unmute';
+        } else {
+          micDot.className = 'audio-mic-row__dot audio-mic-row__dot--live';
+          micLabel.textContent = 'Mic live';
+          micBtn.textContent = 'Mute microphone';
         }
 
         const ast = ac.stats || {};
@@ -2631,6 +2785,190 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       } else if (lpCard) {
         lpCard.style.display = 'none';
       }
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // Microphone test panel: live RMS meter + alarm-pattern self-test
+    // ════════════════════════════════════════════════════════════════
+    // The level meter publishes the SAME 20 ms RMS scalar the on/off
+    // hysteresis uses — not a new audio path. We only poll while the
+    // <details> is open AND the Sensing tab is visible, so the meter is
+    // not left running while the user is on another tab.
+    let acMeterTimer = null;
+    let acSelftestTimer = null;
+    let acMeterMaxRms = 4096;  // running auto-scale (caps at 65535)
+
+    function audioTestPanelOpen() {
+      const card = document.getElementById('acousticCard');
+      if (!card || card.style.display === 'none') return false;
+      const details = card.querySelector('details');
+      return !!(details && details.open);
+    }
+
+    async function pollAudioLevel() {
+      // Only poll while the user has the Sensing tab open AND has
+      // unfolded the test panel — never leave a "loudness number" in
+      // memory longer than the user explicitly asked for.
+      if (currentPanel !== 'sensing' || !audioTestPanelOpen()) {
+        stopAudioLevelPoll();
+        return;
+      }
+      try {
+        const r = await api('/api/audio/level', 'GET');
+        if (!r || r.ok === false) return;
+        const rms = r.rms | 0;
+        const on  = r.rms_on_threshold | 0;
+        const off = r.rms_off_threshold | 0;
+        // Auto-scale: keep the bar usable for quiet rooms too. Headroom
+        // ~2× current peak; capped at the int16 RMS ceiling.
+        if (rms > acMeterMaxRms) acMeterMaxRms = Math.min(rms * 2, 65535);
+        const denom = Math.max(acMeterMaxRms, on * 2, 800);
+        const pct = Math.min(100, Math.round(rms * 100 / denom));
+        const fill = document.getElementById('acMeterFill');
+        if (fill) fill.style.width = pct + '%';
+        const offNotch = document.getElementById('acMeterOff');
+        const onNotch  = document.getElementById('acMeterOn');
+        if (offNotch) offNotch.style.left = Math.min(99, Math.round(off * 100 / denom)) + '%';
+        if (onNotch)  onNotch.style.left  = Math.min(99, Math.round(on  * 100 / denom)) + '%';
+        const rmsEl = document.getElementById('acMeterRms');
+        if (rmsEl) rmsEl.textContent = 'RMS ' + rms;
+        const flagsEl = document.getElementById('acMeterFlags');
+        if (flagsEl) {
+          const parts = [];
+          if (r.muted) parts.push('muted');
+          else if (r.envelope_high) parts.push('ALARM-LEVEL');
+          else parts.push('quiet');
+          if (typeof r.age_ms === 'number' && r.age_ms >= 0 && r.age_ms < 5000) {
+            parts.push(r.age_ms + ' ms ago');
+          }
+          flagsEl.textContent = parts.join(' · ');
+        }
+        // Cadence trace: render the most-recent transitions as colored bars.
+        const trace = document.getElementById('acTrace');
+        if (trace && Array.isArray(r.transitions)) {
+          trace.innerHTML = '';
+          // Newest is index 0; show oldest-left → newest-right.
+          const reversed = r.transitions.slice().reverse();
+          for (const t of reversed) {
+            const seg = document.createElement('div');
+            seg.className = 'audio-trace__seg' + (t.on ? ' audio-trace__seg--on' : '');
+            seg.title = (t.on ? 'ON ' : 'OFF ') + (t.dur_ms || 0) + ' ms (age ' + (t.age_ms || 0) + ' ms)';
+            trace.appendChild(seg);
+          }
+        }
+      } catch (e) { /* harmless polling error */ }
+    }
+
+    function startAudioLevelPoll() {
+      stopAudioLevelPoll();
+      pollAudioLevel();
+      acMeterTimer = setInterval(pollAudioLevel, 200);  // 5 Hz
+    }
+    function stopAudioLevelPoll() {
+      if (acMeterTimer !== null) { clearInterval(acMeterTimer); acMeterTimer = null; }
+    }
+
+    // Bind the <details> open/close to start/stop the poller. Use a
+    // delegated listener so we don't have to find the element on every
+    // refreshSensing() call.
+    document.addEventListener('toggle', (e) => {
+      if (!e.target || e.target.tagName !== 'DETAILS') return;
+      const card = document.getElementById('acousticCard');
+      if (!card || !card.contains(e.target)) return;
+      if (e.target.open && currentPanel === 'sensing') startAudioLevelPoll();
+      else stopAudioLevelPoll();
+    }, true);
+
+    async function toggleMicMute() {
+      const btn = document.getElementById('acMicMuteBtn');
+      if (!btn) return;
+      // Best-effort read of current state — fall back to the dot class.
+      const dot = document.getElementById('acMicDot');
+      const currentlyMuted = dot && dot.classList.contains('audio-mic-row__dot--muted');
+      const wantMuted = !currentlyMuted;
+      if (wantMuted) {
+        const ok = confirm(
+          'Mute the microphone?\n\n' +
+          'While muted, the Canary will NOT detect smoke or CO alarm ' +
+          'cadences. Your existing UL-listed alarms keep working — this ' +
+          'only stops the Canary from helping notice them.\n\n' +
+          'Mute persists across reboots.'
+        );
+        if (!ok) return;
+      }
+      btn.disabled = true;
+      try {
+        const r = await api('/api/audio/mute', 'POST', { muted: wantMuted });
+        if (!r || r.ok === false) {
+          alert('Mute request failed: ' + (r && r.error ? r.error : 'unknown'));
+          return;
+        }
+        // Trigger an immediate refresh so the pill/dot update right away.
+        refreshSensing();
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function startAudioSelftest() {
+      const btn = document.getElementById('acTestBtn');
+      const statusEl = document.getElementById('acTestStatus');
+      if (!btn || !statusEl) return;
+      btn.disabled = true;
+      statusEl.textContent = 'Starting…';
+      try {
+        const r = await api('/api/audio/test/start', 'POST', { duration_ms: 30000 });
+        if (!r || r.ok === false) {
+          statusEl.textContent = 'Failed to start: ' + (r && r.error ? r.error : 'unknown');
+          btn.disabled = false;
+          return;
+        }
+        statusEl.textContent = 'Listening for an alarm cadence — press your alarm\'s TEST button now.';
+        if (acSelftestTimer !== null) clearInterval(acSelftestTimer);
+        acSelftestTimer = setInterval(pollAudioSelftest, 500);
+      } catch (e) {
+        statusEl.textContent = 'Network error.';
+        btn.disabled = false;
+      }
+    }
+
+    async function pollAudioSelftest() {
+      const statusEl = document.getElementById('acTestStatus');
+      const btn = document.getElementById('acTestBtn');
+      try {
+        const r = await api('/api/audio/test/status', 'GET');
+        if (!r) return;
+        if (r.active) {
+          const sec = Math.max(0, Math.round((r.remaining_ms || 0) / 1000));
+          const matchedNow = r.matched && r.matched !== 'none' && r.matched !== 'unknown';
+          if (matchedNow) {
+            statusEl.textContent =
+              'Matched ' + r.matched + ' (' + (r.confidence | 0) + '% confidence). ' +
+              'Continuing to listen until the test window ends — ' + sec + ' s left.';
+          } else {
+            statusEl.textContent = 'Listening… ' + sec + ' s left. Transitions seen: ' + (r.transitions_seen | 0) + '.';
+          }
+        } else {
+          // Test ended.
+          if (acSelftestTimer !== null) { clearInterval(acSelftestTimer); acSelftestTimer = null; }
+          if (btn) btn.disabled = false;
+          if (r.matched && r.matched !== 'none' && r.matched !== 'unknown') {
+            statusEl.textContent =
+              '✓ Matched ' + r.matched + ' (' + (r.confidence | 0) + '% confidence). ' +
+              'No Home Assistant automation was triggered.';
+          } else {
+            const seen = r.transitions_seen | 0;
+            if (seen === 0) {
+              statusEl.textContent =
+                '✗ No sound transitions seen at all. Move the Canary closer to your alarm or check the I2S errors stat.';
+            } else {
+              statusEl.textContent =
+                '✗ Heard ' + seen + ' on/off transitions but no T3/T4 cadence matched. ' +
+                'Possible reasons: alarm is too far away, room is too noisy, or your alarm uses a non-standard cadence.';
+            }
+          }
+        }
+      } catch (e) { /* harmless polling error */ }
     }
 
     // ════════════════════════════════════════════════════════════════

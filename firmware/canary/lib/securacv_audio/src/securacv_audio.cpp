@@ -111,6 +111,23 @@ static uint16_t s_t4_cycles = 0;
 /* Stats — updated from main loop only. */
 static audio_stats_t s_stats;
 
+/* Most recent 20 ms RMS scalar (and when we computed it). Exposed for the
+ * live-level meter; this is the same number the on/off hysteresis uses,
+ * not a second audio path. Wiped on mute / stop. */
+static uint16_t s_last_rms = 0;
+static uint32_t s_last_rms_ms = 0;
+
+/* User-requested mute state. Independent of s_running: when muted, we
+ * never call i2s_open() in start(); when unmuted at boot, we run normally. */
+static bool s_muted = false;
+
+/* Self-test mode (relaxed thresholds, normal event callback suppressed). */
+static bool     s_selftest_active = false;
+static uint32_t s_selftest_deadline_ms = 0;
+static uint8_t  s_selftest_matched_type = AUDIO_EVENT_NONE;
+static uint8_t  s_selftest_matched_conf = 0;
+static uint32_t s_selftest_transitions_seen = 0;
+
 /* ──────────────────────────────────────────────────────────────────────────
  * RMS COMPUTATION  — int64 sum-of-squares; samples wiped after each call
  * ────────────────────────────────────────────────────────────────────────── */
@@ -179,7 +196,7 @@ static const Transition* recent(size_t i_back) {
  * The inter-cycle pause is read from `now - recent(0).at_ms` once we've
  * been in OFF for at least 1.0 s, NOT from a transition's prev_dur — the
  * cycle isn't "complete" until that long pause has actually elapsed. */
-static int score_t3_cycle(uint32_t now_ms) {
+static int score_t3_cycle(uint32_t now_ms, bool relaxed) {
   const Transition* t0 = recent(0);
   const Transition* t1 = recent(1);
   const Transition* t2 = recent(2);
@@ -204,6 +221,14 @@ static int score_t3_cycle(uint32_t now_ms) {
   const int32_t pause = (int32_t)(now_ms - t0->at_ms);
   if (pause < 1000) return -1;
 
+  /* In relaxed (self-test) mode we double the beep/gap tolerance and
+   * roughly double the pause tolerance. The 0.5 s targets stay the same
+   * — we only widen the acceptance window so a user pressing their
+   * alarm's TEST button at ~3 m through soft furnishings has the best
+   * chance of matching. */
+  const int32_t beep_tol = relaxed ? 400 : 200;
+  const int32_t pause_tol = relaxed ? 1000 : 500;
+
   auto err_against = [](int32_t v, int32_t target, int32_t tol) -> int32_t {
     int32_t d = v - target;
     if (d < 0) d = -d;
@@ -211,21 +236,24 @@ static int score_t3_cycle(uint32_t now_ms) {
     return d;
   };
 
-  const int32_t e_b1 = err_against(b1, 500, 200);
-  const int32_t e_b2 = err_against(b2, 500, 200);
-  const int32_t e_b3 = err_against(b3, 500, 200);
-  const int32_t e_g12 = err_against(g12, 500, 200);
-  const int32_t e_g23 = err_against(g23, 500, 200);
-  const int32_t e_pause = err_against(pause, 1500, 500);
+  const int32_t e_b1 = err_against(b1, 500, beep_tol);
+  const int32_t e_b2 = err_against(b2, 500, beep_tol);
+  const int32_t e_b3 = err_against(b3, 500, beep_tol);
+  const int32_t e_g12 = err_against(g12, 500, beep_tol);
+  const int32_t e_g23 = err_against(g23, 500, beep_tol);
+  const int32_t e_pause = err_against(pause, 1500, pause_tol);
   if (e_b1 < 0 || e_b2 < 0 || e_b3 < 0 ||
       e_g12 < 0 || e_g23 < 0 || e_pause < 0) return -1;
 
-  /* Sum of relative errors → confidence. Max possible sum ≈ 200*5 + 500
-   * = 1500. Map 0 → 100, 1500 → 50. */
+  /* Sum of relative errors → confidence. We map total error → confidence
+   * so a perfect match still scores ~100 and the worst tolerated relaxed
+   * match still scores ~30; the normal floor is 50. */
   const int32_t total_err = e_b1 + e_b2 + e_b3 + e_g12 + e_g23 + e_pause;
-  int32_t conf = 100 - (total_err * 50 / 1500);
-  if (conf < 50)  conf = 50;
-  if (conf > 100) conf = 100;
+  const int32_t worst = beep_tol * 5 + pause_tol;     /* sum of tolerances */
+  const int32_t floor_conf = relaxed ? 30 : 50;
+  int32_t conf = 100 - (total_err * (100 - floor_conf) / worst);
+  if (conf < floor_conf) conf = floor_conf;
+  if (conf > 100)        conf = 100;
   return (int)conf;
 }
 
@@ -239,7 +267,7 @@ static int score_t3_cycle(uint32_t now_ms) {
  *   recent(1): ON  for beep 4 — prev_dur = gap 3→4 OFF
  *   ... etc, 6 more
  * Inter-cycle pause is again `now - recent(0).at_ms`. */
-static int score_t4_cycle(uint32_t now_ms) {
+static int score_t4_cycle(uint32_t now_ms, bool relaxed) {
   const Transition* t[8];
   for (int i = 0; i < 8; i++) t[i] = recent(i);
   for (int i = 0; i < 8; i++) if (!t[i]) return -1;
@@ -261,6 +289,9 @@ static int score_t4_cycle(uint32_t now_ms) {
   const int32_t pause = (int32_t)(now_ms - t[0]->at_ms);
   if (pause < 3500) return -1;  /* require most of the 5 s gap before declaring */
 
+  const int32_t beep_tol = relaxed ? 100 : 60;
+  const int32_t pause_tol = relaxed ? 2000 : 1500;
+
   auto err = [](int32_t v, int32_t target, int32_t tol) -> int32_t {
     int32_t d = v - target;
     if (d < 0) d = -d;
@@ -268,22 +299,23 @@ static int score_t4_cycle(uint32_t now_ms) {
     return d;
   };
 
-  const int32_t e_b1 = err(b1, 100, 60);
-  const int32_t e_b2 = err(b2, 100, 60);
-  const int32_t e_b3 = err(b3, 100, 60);
-  const int32_t e_b4 = err(b4, 100, 60);
-  const int32_t e_g12 = err(g12, 100, 60);
-  const int32_t e_g23 = err(g23, 100, 60);
-  const int32_t e_g34 = err(g34, 100, 60);
-  const int32_t e_pause = err(pause, 5000, 1500);
+  const int32_t e_b1 = err(b1, 100, beep_tol);
+  const int32_t e_b2 = err(b2, 100, beep_tol);
+  const int32_t e_b3 = err(b3, 100, beep_tol);
+  const int32_t e_b4 = err(b4, 100, beep_tol);
+  const int32_t e_g12 = err(g12, 100, beep_tol);
+  const int32_t e_g23 = err(g23, 100, beep_tol);
+  const int32_t e_g34 = err(g34, 100, beep_tol);
+  const int32_t e_pause = err(pause, 5000, pause_tol);
   if (e_b1 < 0 || e_b2 < 0 || e_b3 < 0 || e_b4 < 0 ||
       e_g12 < 0 || e_g23 < 0 || e_g34 < 0 || e_pause < 0) return -1;
 
   const int32_t total_err = e_b1+e_b2+e_b3+e_b4+e_g12+e_g23+e_g34+e_pause;
-  /* Max worst case ≈ 60*7 + 1500 = 1920. */
-  int32_t conf = 100 - (total_err * 50 / 1920);
-  if (conf < 50)  conf = 50;
-  if (conf > 100) conf = 100;
+  const int32_t worst = beep_tol * 7 + pause_tol;
+  const int32_t floor_conf = relaxed ? 30 : 50;
+  int32_t conf = 100 - (total_err * (100 - floor_conf) / worst);
+  if (conf < floor_conf) conf = floor_conf;
+  if (conf > 100)        conf = 100;
   return (int)conf;
 }
 
@@ -394,6 +426,14 @@ bool init(const audio_config_t& cfg) {
   s_t3_cycles = 0;
   s_t4_cycles = 0;
 
+  s_last_rms = 0;
+  s_last_rms_ms = 0;
+  s_selftest_active = false;
+  s_selftest_deadline_ms = 0;
+  s_selftest_matched_type = AUDIO_EVENT_NONE;
+  s_selftest_matched_conf = 0;
+  s_selftest_transitions_seen = 0;
+
   s_initialized = true;
   log_health(LOG_LEVEL_INFO, LOG_CAT_SENSOR,
              "Audio HAL initialized",
@@ -440,11 +480,107 @@ void stop() {
   s_cycle_matched = false;
   s_t3_cycles = 0;
   s_t4_cycles = 0;
+  /* Wipe the published level — when muted, /api/audio/level returns zero. */
+  s_last_rms = 0;
+  s_last_rms_ms = 0;
 }
 
 bool is_running() { return s_running; }
 
 void set_event_callback(audio_event_cb_t cb) { s_cb = cb; }
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * RUNTIME MUTE
+ * ────────────────────────────────────────────────────────────────────────── */
+
+bool mute(bool muted) {
+  s_muted = muted;
+  if (muted) {
+    if (s_running) stop();   /* releases GPIO 41/42 via i2s_driver_uninstall */
+    log_health(LOG_LEVEL_INFO, LOG_CAT_SENSOR,
+               "Audio: mic muted by user", "I2S released");
+    return true;
+  }
+  if (!s_initialized) return false;
+  if (s_running) return true;
+  const bool ok = start();
+  if (ok) {
+    log_health(LOG_LEVEL_INFO, LOG_CAT_SENSOR,
+               "Audio: mic unmuted", "I2S re-armed");
+  }
+  return ok;
+}
+
+bool is_muted() { return s_muted; }
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * SELF-TEST
+ * ────────────────────────────────────────────────────────────────────────── */
+
+bool selftest_start(uint32_t duration_ms) {
+  if (!s_running) return false;
+  if (duration_ms == 0)     duration_ms = 30000;
+  if (duration_ms > 60000)  duration_ms = 60000;
+  s_selftest_matched_type = AUDIO_EVENT_NONE;
+  s_selftest_matched_conf = 0;
+  s_selftest_transitions_seen = 0;
+  s_selftest_deadline_ms = millis() + duration_ms;
+  s_selftest_active = true;
+  return true;
+}
+
+void selftest_stop() {
+  s_selftest_active = false;
+}
+
+bool selftest_status(audio_selftest_status_t* out) {
+  if (!out) return false;
+  memset(out, 0, sizeof(*out));
+  /* Auto-expire on read, so a UI that just polls /status sees the truth
+   * even if process() isn't being called for some reason. */
+  const uint32_t now = millis();
+  if (s_selftest_active && (int32_t)(now - s_selftest_deadline_ms) >= 0) {
+    s_selftest_active = false;
+  }
+  out->active = s_selftest_active ? 1 : 0;
+  out->matched_type = s_selftest_matched_type;
+  out->matched_conf = s_selftest_matched_conf;
+  out->remaining_ms = s_selftest_active
+                      ? (uint32_t)(s_selftest_deadline_ms - now)
+                      : 0;
+  out->transitions_seen = s_selftest_transitions_seen;
+  return true;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * LIVE LEVEL + TRANSITIONS (for the UI test panel)
+ * ────────────────────────────────────────────────────────────────────────── */
+
+bool get_live_level(uint16_t* rms_out, uint32_t* age_ms_out) {
+  if (rms_out)    *rms_out    = s_running ? s_last_rms : 0;
+  if (age_ms_out) {
+    *age_ms_out = (s_last_rms_ms == 0 || !s_running)
+                  ? UINT32_MAX
+                  : (millis() - s_last_rms_ms);
+  }
+  return s_running;
+}
+
+size_t get_recent_transitions(audio_transition_t* out, size_t max,
+                              uint32_t now_ms_or_zero) {
+  if (!out || max == 0) return 0;
+  const uint32_t now = now_ms_or_zero ? now_ms_or_zero : millis();
+  const size_t n = (s_trans_count < max) ? s_trans_count : max;
+  for (size_t i = 0; i < n; i++) {
+    const Transition* t = recent(i);
+    if (!t) break;
+    out[i].is_on     = t->is_on ? 1 : 0;
+    out[i].reserved[0] = out[i].reserved[1] = out[i].reserved[2] = 0;
+    out[i].age_ms    = (now >= t->at_ms) ? (now - t->at_ms) : 0;
+    out[i].dur_ms    = t->prev_dur_ms;
+  }
+  return n;
+}
 
 /* ──────────────────────────────────────────────────────────────────────────
  * MAIN-LOOP PUMP
@@ -500,6 +636,12 @@ int process() {
 
     /* Hysteresis state machine on the envelope. */
     const uint32_t now = millis();
+    /* Stash the RMS scalar for the UI level meter. This is the same
+     * number the hysteresis uses — we're not adding a second audio path,
+     * we're just publishing the existing scalar. */
+    s_last_rms = rms;
+    s_last_rms_ms = now;
+
     bool transition = false;
     bool entered_on = false;
 
@@ -524,12 +666,19 @@ int process() {
        * may now declare a fresh cycle. */
       s_cycle_matched = false;
 
+      if (s_selftest_active) s_selftest_transitions_seen++;
+
       /* Reset the cycle counter if we've been silent > 10 s — a fresh
        * cadence is starting. */
       if (entered_on && prev_dur > 10000) {
         s_t3_cycles = 0;
         s_t4_cycles = 0;
       }
+    }
+
+    /* Self-test auto-expiry. */
+    if (s_selftest_active && (int32_t)(now - s_selftest_deadline_ms) >= 0) {
+      s_selftest_active = false;
     }
 
     /* Cadence matching is timing-based and only meaningful right after
@@ -539,12 +688,22 @@ int process() {
      * 6 transitions in the ring would re-trigger every iteration). */
     if (!s_envelope_high && !s_cycle_matched &&
         (now - s_state_entered_ms) >= 1000) {
-      const int t3 = score_t3_cycle(now);
-      if (t3 >= 50) {
+      const bool relaxed = s_selftest_active;
+      const int t3 = score_t3_cycle(now, relaxed);
+      const int min_conf = relaxed ? 30 : 50;
+      if (t3 >= min_conf) {
         s_t3_cycles++;
         s_stats.t3_detected++;
-        try_emit_event(AUDIO_EVENT_T3_SMOKE_ALARM, (uint8_t)t3,
-                       s_t3_cycles, now);
+        if (s_selftest_active) {
+          /* Test-only: record match locally, DO NOT fire the event
+           * callback. The user pressed their alarm's TEST button; we
+           * must not flow that into Home Assistant smoke automations. */
+          s_selftest_matched_type = AUDIO_EVENT_T3_SMOKE_ALARM;
+          s_selftest_matched_conf = (uint8_t)t3;
+        } else {
+          try_emit_event(AUDIO_EVENT_T3_SMOKE_ALARM, (uint8_t)t3,
+                         s_t3_cycles, now);
+        }
         /* Block re-firing on the same set of transitions until a new
          * on/off transition arrives. We deliberately do NOT touch
          * s_state_entered_ms — that would corrupt the next transition's
@@ -552,12 +711,17 @@ int process() {
          * misfit. */
         s_cycle_matched = true;
       } else {
-        const int t4 = score_t4_cycle(now);
-        if (t4 >= 50) {
+        const int t4 = score_t4_cycle(now, relaxed);
+        if (t4 >= min_conf) {
           s_t4_cycles++;
           s_stats.t4_detected++;
-          try_emit_event(AUDIO_EVENT_T4_CO_ALARM, (uint8_t)t4,
-                         s_t4_cycles, now);
+          if (s_selftest_active) {
+            s_selftest_matched_type = AUDIO_EVENT_T4_CO_ALARM;
+            s_selftest_matched_conf = (uint8_t)t4;
+          } else {
+            try_emit_event(AUDIO_EVENT_T4_CO_ALARM, (uint8_t)t4,
+                           s_t4_cycles, now);
+          }
           s_cycle_matched = true;
         }
       }
@@ -607,5 +771,25 @@ void audio_set_event_callback(audio_event_cb_t cb) { audio::set_event_callback(c
 int  audio_process(void)             { return audio::process(); }
 bool audio_get_stats(audio_stats_t* out) { return audio::get_stats(out); }
 const char* audio_event_name(uint8_t t) { return audio::event_name(t); }
+
+bool audio_mute(bool muted)             { return audio::mute(muted); }
+bool audio_is_muted(void)               { return audio::is_muted(); }
+
+bool audio_selftest_start(uint32_t duration_ms) {
+  return audio::selftest_start(duration_ms);
+}
+void audio_selftest_stop(void)          { audio::selftest_stop(); }
+bool audio_selftest_status(audio_selftest_status_t* out) {
+  return audio::selftest_status(out);
+}
+
+bool audio_get_live_level(uint16_t* rms_out, uint32_t* age_ms_out) {
+  return audio::get_live_level(rms_out, age_ms_out);
+}
+
+size_t audio_get_recent_transitions(audio_transition_t* out, size_t max,
+                                    uint32_t now_ms_or_zero) {
+  return audio::get_recent_transitions(out, max, now_ms_or_zero);
+}
 
 }  /* extern "C" */
