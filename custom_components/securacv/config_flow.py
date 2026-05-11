@@ -13,9 +13,9 @@ from typing import Any
 import voluptuous as vol
 
 from homeassistant import config_entries
-from homeassistant.config_entries import ConfigFlowResult
+from homeassistant.config_entries import ConfigEntry, ConfigFlowResult, OptionsFlow
 from homeassistant.const import CONF_TOKEN, CONF_URL
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import (
@@ -59,6 +59,12 @@ class SecuraCVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for SecuraCV."""
 
     VERSION = 2
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
+        """Return the OptionsFlow handler for this entry."""
+        return SecuraCVOptionsFlow(config_entry)
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -220,3 +226,192 @@ class SecuraCVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             self.context["mqtt_prefix"] = prefix
 
         return await self.async_step_mqtt_config()
+
+
+# =============================================================================
+# Options flow — device PKI management (pin / rotate / unpin)
+# =============================================================================
+#
+# The "Configure" button on the integration card opens this flow.
+# It surfaces a menu of trust-store actions; each action drills into a
+# dedicated step that takes the device_id + pubkey hex needed to apply
+# it. Storage round-trips happen through TrustStore.async_pin / rotate
+# / unpin — the flow is just the UX layer.
+#
+# We deliberately don't try to fetch /api/device/enroll from inside
+# the options flow: the device's IP isn't necessarily known to HA, and
+# the captive-portal page exists precisely so an installer can read
+# the fingerprint off any phone with WiFi reach. The pubkey hex is
+# pasted verbatim from /enroll.
+
+
+CONF_PIN_DEVICE_ID = "device_id"
+CONF_PIN_PUBKEY_HEX = "pubkey_hex"
+
+PIN_ACTION_PIN = "pin"
+PIN_ACTION_ROTATE = "rotate"
+PIN_ACTION_UNPIN = "unpin"
+
+
+def _looks_like_pubkey_hex(value: str) -> bool:
+    """64-char lowercase hex. We lowercase before checking so users
+    can paste from any case-preserving source (`/enroll` emits
+    lowercase but a manual transcription often comes back uppercase)."""
+    v = value.strip().lower()
+    if len(v) != 64:
+        return False
+    try:
+        bytes.fromhex(v)
+        return True
+    except ValueError:
+        return False
+
+
+class SecuraCVOptionsFlow(OptionsFlow):
+    """Per-entry trust-store management surface."""
+
+    def __init__(self, config_entry: ConfigEntry) -> None:
+        # `_config_entry` matches HA's recommended naming so HA core
+        # internals can introspect it. The deprecated `self.config_entry`
+        # alias is still set by the parent class.
+        self._config_entry = config_entry
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Top-level menu — pin / rotate / unpin a device key."""
+        return self.async_show_menu(
+            step_id="init",
+            menu_options=[PIN_ACTION_PIN, PIN_ACTION_ROTATE, PIN_ACTION_UNPIN],
+        )
+
+    async def async_step_pin(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Pin a device's pubkey for the first time, or replace an
+        existing TOFU pin with a manual one."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            device_id = user_input[CONF_PIN_DEVICE_ID].strip()
+            pubkey_hex = user_input[CONF_PIN_PUBKEY_HEX].strip().lower()
+            if not device_id:
+                errors["device_id"] = "invalid_device_id"
+            elif not _looks_like_pubkey_hex(pubkey_hex):
+                errors["pubkey_hex"] = "invalid_pubkey_hex"
+            else:
+                ts = self._trust_store()
+                if ts is None:
+                    errors["base"] = "trust_store_unavailable"
+                else:
+                    from .device_trust import PIN_SOURCE_MANUAL
+                    await ts.async_pin(device_id, pubkey_hex,
+                                       source=PIN_SOURCE_MANUAL)
+                    return self.async_create_entry(title="", data={})
+
+        return self.async_show_form(
+            step_id="pin",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_PIN_DEVICE_ID): str,
+                    vol.Required(CONF_PIN_PUBKEY_HEX): str,
+                }
+            ),
+            errors=errors,
+        )
+
+    async def async_step_rotate(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Replace an existing pin with a new pubkey. Same form as
+        `pin` but records the action with source=rotation, which the
+        audit-trail surface treats as an operator-confirmed change.
+        The previous pubkey is retained in TrustStore's `previous` list
+        so a postmortem can recover the old identity."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            device_id = user_input[CONF_PIN_DEVICE_ID].strip()
+            pubkey_hex = user_input[CONF_PIN_PUBKEY_HEX].strip().lower()
+            if not device_id:
+                errors["device_id"] = "invalid_device_id"
+            elif not _looks_like_pubkey_hex(pubkey_hex):
+                errors["pubkey_hex"] = "invalid_pubkey_hex"
+            else:
+                ts = self._trust_store()
+                if ts is None:
+                    errors["base"] = "trust_store_unavailable"
+                elif not ts.is_pinned(device_id):
+                    errors["device_id"] = "device_not_pinned"
+                else:
+                    await ts.async_rotate(device_id, pubkey_hex)
+                    # Clear any stuck mismatch notification for this
+                    # device so the operator's rotation takes effect
+                    # immediately on the UI side.
+                    entry_data = self.hass.data.get(
+                        DOMAIN, {}
+                    ).get(self._config_entry.entry_id)
+                    if entry_data:
+                        notified: set = entry_data.get("mismatch_notified", set())
+                        notified.difference_update(
+                            {(d, f) for (d, f) in notified if d == device_id}
+                        )
+                    return self.async_create_entry(title="", data={})
+
+        return self.async_show_form(
+            step_id="rotate",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_PIN_DEVICE_ID): str,
+                    vol.Required(CONF_PIN_PUBKEY_HEX): str,
+                }
+            ),
+            errors=errors,
+        )
+
+    async def async_step_unpin(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Drop the pin entirely. Subsequent publishes from this
+        device will TOFU-pin to whatever pubkey shows up next — useful
+        if the operator can't recover the old keypair (e.g. board
+        loss) and wants HA to start fresh."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            device_id = user_input[CONF_PIN_DEVICE_ID].strip()
+            if not device_id:
+                errors["device_id"] = "invalid_device_id"
+            else:
+                ts = self._trust_store()
+                if ts is None:
+                    errors["base"] = "trust_store_unavailable"
+                elif not await ts.async_unpin(device_id):
+                    errors["device_id"] = "device_not_pinned"
+                else:
+                    # Mirror async_step_rotate: clear any stuck mismatch-
+                    # notification dedup keys for this device. Without this,
+                    # if a spoofed fp triggered a notification before the
+                    # operator unpinned, the dedup set would permanently
+                    # suppress a future real mismatch on that same fp,
+                    # breaking the "warn loudly" guarantee on re-pin.
+                    entry_data = self.hass.data.get(
+                        DOMAIN, {}
+                    ).get(self._config_entry.entry_id)
+                    if entry_data:
+                        notified: set = entry_data.get("mismatch_notified", set())
+                        notified.difference_update(
+                            {(d, f) for (d, f) in notified if d == device_id}
+                        )
+                    return self.async_create_entry(title="", data={})
+
+        return self.async_show_form(
+            step_id="unpin",
+            data_schema=vol.Schema({vol.Required(CONF_PIN_DEVICE_ID): str}),
+            errors=errors,
+        )
+
+    def _trust_store(self):
+        """Lazy accessor — entry_data is created in async_setup_entry,
+        so it always exists by the time the options flow runs (the
+        button is only enabled after setup)."""
+        return self.hass.data.get(DOMAIN, {}).get(
+            self._config_entry.entry_id, {}
+        ).get("trust_store")

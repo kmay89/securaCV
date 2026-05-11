@@ -70,6 +70,24 @@ Import the SecuraCV Alert Blueprint for one-click notification setup:
 
 Or copy automations from `docs/homeassistant_automations.yaml` for manual setup.
 
+### Step 6: Verify per-device PKI (optional but recommended)
+
+Each Canary signs its `chain`, `events`, and `counts` MQTT publishes
+with an on-device Ed25519 key. HA auto-pins the public key the first
+time a device's health publish appears (TOFU), then verifies every
+subsequent publish.
+
+To check that verification is live: open the chain-length sensor's
+attributes — you should see `verified: true`, `trust_reason: ok`, and
+matching `pinned_fingerprint` / `received_fingerprint` values. If your
+threat model needs stricter trust than TOFU, pin the device's pubkey
+manually from **Settings → Devices & services → SecuraCV → Configure →
+Pin a device pubkey** (the fingerprint + pubkey hex are on each
+device's `/enroll` page, e.g. `http://canary-<fp>.local/enroll`).
+
+Full background, threat model, and rotation procedure: see
+[`docs/device_trust.md`](device_trust.md).
+
 ### Troubleshooting: MQTT Setup
 
 | Symptom | Check |

@@ -24,6 +24,19 @@ BIN       = test_mesh_coexistence
 CHIRP_INV_BIN = test_chirp_protocol_invariants
 CHIRP_INV_SRC = test_chirp_protocol_invariants.cpp
 
+# device_signature has a pure-stdlib subset (canonical-string builders
+# + b64url encoder) that we test on the host. The Ed25519 sign path is
+# exercised separately on the HA side (Python's `cryptography` produces
+# a sig over the same canonical string this test verifies the firmware
+# emits byte-for-byte). The Arduino Ed25519 lib is intentionally NOT
+# linked on the host — sign_chain/sign_event/sign_counts call into it
+# but they're not invoked by this test; the symbol stays unresolved
+# only at runtime, never at link time (we don't reference those
+# functions from main()).
+DEVSIG_SOURCES = test_device_signature.cpp \
+                 $(SRC_DIR)/device_signature.cpp
+DEVSIG_BIN     = test_device_signature
+
 .PHONY: all run clean
 all: run
 
@@ -33,9 +46,13 @@ $(BIN): $(SOURCES)
 $(CHIRP_INV_BIN): $(CHIRP_INV_SRC)
 	$(CXX) $(CXXFLAGS) -o $@ $(CHIRP_INV_SRC)
 
-run: $(BIN) $(CHIRP_INV_BIN)
+$(DEVSIG_BIN): $(DEVSIG_SOURCES)
+	$(CXX) $(CXXFLAGS) -o $@ $(DEVSIG_SOURCES)
+
+run: $(BIN) $(CHIRP_INV_BIN) $(DEVSIG_BIN)
 	./$(BIN)
 	./$(CHIRP_INV_BIN)
+	./$(DEVSIG_BIN)
 
 clean:
-	rm -f $(BIN) $(CHIRP_INV_BIN)
+	rm -f $(BIN) $(CHIRP_INV_BIN) $(DEVSIG_BIN)

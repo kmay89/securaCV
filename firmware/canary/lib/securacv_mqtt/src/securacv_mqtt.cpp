@@ -647,9 +647,13 @@ bool mqtt_send_ha_discovery(const char* device_id, const char* firmware_version)
   }
 
   // ── Binary Sensor: smoke_alarm (T3 cadence) ──
+  // NOTE: device_class "smoke" is correct (HA renders the right icon /
+  // automation surface), but the name MUST make clear this is a pattern
+  // match of an EXISTING smoke alarm, not a UL-listed smoke detector. The
+  // Canary cannot detect smoke directly. See docs/getting_started_canary.md.
   if (all_ok) {
     JsonDocument doc;
-    doc["name"] = "Smoke Alarm Pattern";
+    doc["name"] = "Pattern: Smoke Alarm Cadence";
     doc["stat_t"] = s_topic_sensing;
     doc["val_tpl"] =
       "{{ 'ON' if value_json.acoustic_event == 'smoke_alarm_t3' else 'OFF' }}";
@@ -665,9 +669,10 @@ bool mqtt_send_ha_discovery(const char* device_id, const char* firmware_version)
   }
 
   // ── Binary Sensor: co_alarm (T4 cadence) ──
+  // Same naming rationale as the smoke entity above.
   if (all_ok) {
     JsonDocument doc;
-    doc["name"] = "CO Alarm Pattern";
+    doc["name"] = "Pattern: CO Alarm Cadence";
     doc["stat_t"] = s_topic_sensing;
     doc["val_tpl"] =
       "{{ 'ON' if value_json.acoustic_event == 'co_alarm_t4' else 'OFF' }}";

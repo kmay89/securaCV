@@ -137,6 +137,80 @@ If your smoke / CO detector uses a non-standard cadence (rare, mostly
 older European models), the card will stay quiet — the Canary deliberately
 avoids fuzzy matching.
 
+### 5.1 · Supplement, not a substitute
+
+The Canary is **not a UL-listed life-safety device**, and the firmware
+will tell you so on the Acoustic Alarms card. It cannot detect smoke,
+fire, or CO **directly** — it only hears your existing alarms. Keep
+your code-compliant smoke and CO detectors. The Canary's job is to help
+a UL-listed alarm get *noticed* (sent to your phone via Home Assistant,
+written into the witness chain, shared across a mesh of Canaries) — not
+to replace it.
+
+### 5.2 · What it can and can't hear
+
+These are the realistic limits of the current implementation. They are
+honest because lying about safety equipment gets people hurt.
+
+| Scenario | Likely outcome |
+|---|---|
+| UL-listed alarm sounding within ~3 m, line of sight, quiet room | Reliable detection within a few alarm cycles (~10–15 s). |
+| Same alarm through a closed bedroom door | Often works but slower; detection rate drops sharply. |
+| Alarm one room over or more | **Unreliable.** Treat as a bonus, not a guarantee. |
+| Running dishwasher / TV / loud conversation in the same room as the alarm | The noise can pin the envelope into the "ON" state between beeps and break the cadence match. Move the Canary closer to the alarm if you can. |
+| Alarm with a non-standard cadence (proprietary, older European, voice annunciator) | Won't match. The Canary only recognises NFPA 72 (T3, smoke) and UL 2034 (T4, CO). |
+| Alarm's low-battery "chirp" every 30–60 s | Won't match — that's not the alarm cadence. |
+| You have no smoke or CO alarm | The Canary cannot warn you. It is not a primary detector. |
+
+The default RMS thresholds (ON = 800 / OFF = 400) are tuned for a UL
+alarm at ~85 dB SPL at 3 m in a typical room. They are compile-time
+constants in `firmware/canary/lib/securacv_audio/src/securacv_audio.h`.
+
+### 5.3 · Verifying the mic isn't recording you
+
+Privacy here is enforced structurally — the int16 PDM buffer is wiped
+inside the same call that produced it, before any other code can touch
+it (see `securacv_audio.cpp::process()`). But you shouldn't have to
+trust us; you should be able to check.
+
+- **Mute it.** The Acoustic Alarms card has a `Mute microphone` button.
+  Clicking it calls `POST /api/audio/mute`, which physically
+  uninstalls the I2S driver and releases GPIO 41/42. The card pill
+  turns grey, the level meter goes to zero, and the `enabled` field
+  in `/api/status` flips to `false`. The mute persists across reboots
+  (stored as the `mic_muted` bool in the `securacv` NVS namespace).
+- **Inspect.** Hit `GET /api/audio/level` — when muted, `running` is
+  `false` and `rms` is `0`. No audio path is open; the GPIOs are
+  tri-stated until you unmute.
+- **Reproduce.** The full audio stack is open-source. The privacy
+  contract is asserted in the doc-comment at the top of
+  `securacv_audio.h`, and the `secure_wipe()` of every PDM buffer
+  lives at `securacv_audio.cpp:495`.
+
+### 5.4 · Testing the mic
+
+Two tests, both built into the **Acoustic alarms** card under the
+collapsible **Test the microphone** section.
+
+**Step 1 — Is the mic alive?** Open the test panel. You'll see a small
+horizontal bar with two notches (the OFF and ON thresholds). Clap or
+speak near the Canary. The bar should jump well above the ON notch and
+fall back when the room is quiet. If the bar never moves, the I2S
+driver isn't running — check the device serial log for `Audio: I2S`
+errors, or check the `i2s_read_errors` counter in the stats grid.
+
+**Step 2 — Does the cadence detector work?** Put the Canary within ~3 m
+of your smoke or CO alarm, then click **Listen for 30 s**. Press the
+physical TEST button on your alarm. Within a few cycles the panel
+should report `Matched smoke_alarm_t3` or `Matched co_alarm_t4`. While
+self-test is active the matcher uses slightly relaxed timing and the
+event callback is **suppressed** — no Home Assistant automation fires
+during a test press.
+
+If nothing matches in 30 s, the panel will tell you whether it heard
+*any* sound transitions (so you can tell "mic broken" from "alarm too
+far away" from "alarm uses a non-standard cadence").
+
 ---
 
 ## 6 · The silent panic pad
@@ -310,8 +384,8 @@ The sensing entities you'll see:
 | **Motion Score** | sensor (%) | CSI motion bands |
 | **Breathing Score** | sensor (%) | CSI 0.1–0.5 Hz Goertzel |
 | **Sensing RSSI** | sensor (dBm) | CSI window mean |
-| **Smoke Alarm Pattern** | binary_sensor (smoke) | T3 cadence detected |
-| **CO Alarm Pattern** | binary_sensor (CO) | T4 cadence detected |
+| **Pattern: Smoke Alarm Cadence** | binary_sensor (smoke) | T3 cadence detected — your existing smoke alarm sounding |
+| **Pattern: CO Alarm Cadence** | binary_sensor (CO) | T4 cadence detected — your existing CO alarm sounding |
 | **Silent Panic** | binary_sensor (safety) | Touch long-press |
 | **Enclosure Tamper** | binary_sensor (tamper) | Touch tamper OR thermal drift |
 | **Last IR Protocol** | sensor (diagnostic) | NEC / RC5 / Sony / none |
@@ -323,8 +397,8 @@ uptime, free heap, GPS, online, etc.).
 
 Use these in HA automations:
 
-- *"If kitchen Canary's Smoke Alarm Pattern goes ON, push notification
-  to every phone in the house and flash bedroom lights."*
+- *"If kitchen Canary's `Pattern: Smoke Alarm Cadence` goes ON, push
+  notification to every phone in the house and flash bedroom lights."*
 - *"If any Canary's Enclosure Tamper goes ON, send Slack alert and
   start camera recording on adjacent Frigate instance."*
 - *"If bedroom Canary's Activity stays at 'quiet' from 7 am to 11 am
@@ -402,6 +476,10 @@ for evidence, **export the chain before you factory-reset** —
 | **Drop: rate-limit** climbing fast | Strong nearby 2.4 GHz interferer; move the Canary or switch your home Wi-Fi to channel 6 or 11 |
 | Gauges look noisy at low signal | Move the Canary closer to other Wi-Fi devices, or away from a metal wall behind it |
 | **Acoustic alarms** card says **Mic offline** | The PDM driver failed to start. Check serial output for an `Audio: I2S` error. Usually a hardware issue with the on-board mic. |
+| **Acoustic alarms** card says **Mic muted** | You (or someone with dashboard access) muted the mic. Click `Unmute microphone` on the card. The mute persists across reboots — it's stored in NVS as `mic_muted`. |
+| **Test the microphone** bar never moves | I2S isn't running. Check the **I2S errors** counter on the same card; check the device serial log for `Audio:` errors. If muted, the bar is intentionally zero. |
+| **Listen for 30 s** ends with "No transitions seen" | The mic is reading but no sound crossed the ON threshold. Either the alarm is too far away (move within ~3 m), the alarm is too quiet, or the mic is genuinely failing. |
+| **Listen for 30 s** sees transitions but matches nothing | Likely a non-standard alarm cadence, or the room is noisy enough that the inter-beep gaps aren't clean. The Canary only matches T3 (NFPA 72 smoke) and T4 (UL 2034 CO). |
 | Smoke alarm beeping but no event fires | Most US/EU alarms use the standard T3 cadence; UK and some older alarms use T4. Check your alarm's manual for cadence type — only T3 (smoke) and T4 (CO) are matched today. |
 | **Touch** card stuck at **Calibrating** | The pad never produced a stable reading. Check that nothing is touching the pad during the first 2 s after boot (the baseline is sampled then), and that the GPIO is actually connected to a touch-capable pin (1, 3, 4, 5, or 6). |
 | Touch panic fires randomly | Your enclosure or mounting is letting the pad float. Either ground the pad better, raise the press threshold (`TOUCH_RELATIVE_THRESHOLD_PCT` in the lib), or move to a different channel via `-DTOUCH_PIN_NUM=N`. |

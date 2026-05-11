@@ -27,6 +27,7 @@
 #include "csi_integration.h"
 #include "csi_event_log.h"
 #include "api_auth.h"
+#include "device_signature.h"
 
 #include <Arduino.h>
 #include <Preferences.h>
@@ -361,6 +362,7 @@ bool connected() {
  * Returns the byte count written, or 0 on overflow. */
 namespace {
 size_t build_event_body(char* body, size_t cap,
+                        uint32_t                  event_id,
                         const char*               module_id,
                         const char*               type_name,
                         csi_event_category_t      category,
@@ -374,9 +376,53 @@ size_t build_event_body(char* body, size_t cap,
                     : (category == CSI_CATEGORY_ANOMALY) ? "anomaly" : "event";
   const char* priv_s = (privacy == CSI_PRIVACY_P2) ? "p2"
                      : (privacy == CSI_PRIVACY_P1) ? "p1" : "p0";
+  const char* state_s = values->state_name[0] ? values->state_name : "unknown";
   const uint32_t ts_sec = timestamp_ms / 1000UL;
+
+  /* Sign the canonical (device_id, event_id, state, category, privacy,
+   * motion, breath, bpm) tuple. HA's signature.py rebuilds the same
+   * canonical string from the parsed JSON to verify. If signing fails
+   * (e.g. device_signature::init wasn't called yet on a very early
+   * boot publish) we emit the body without sig fields — HA marks the
+   * device "unverified" but still accepts the publish. */
+  char sig_b64[device_signature::SIG_B64URL_CAP] = "";
+  const bool signed_ok = device_signature::sign_event(
+      event_id, state_s, cat_s, priv_s,
+      (int)values->motion_score,
+      (int)values->breathing_score,
+      (int)values->breathing_rate_bpm,
+      sig_b64, sizeof(sig_b64));
+
+  /* Schema note: event_id is published as a top-level field so HA's
+   * sig reconstructor can read it without parsing the MQTT topic. The
+   * field is monotonic per-device — HA can also use it to detect
+   * gaps / replays alongside the sig. */
+  char sig_kv[device_signature::SIG_B64URL_CAP + 64] = "";
+  int kv_n;
+  if (signed_ok) {
+    kv_n = snprintf(sig_kv, sizeof(sig_kv),
+             ",\"v\":%d,\"alg\":\"%s\",\"fp\":\"%s\",\"sig\":\"%s\"",
+             device_signature::SCHEMA_V,
+             device_signature::ALG_NAME,
+             device_signature::fingerprint_hex(),
+             sig_b64);
+  } else {
+    kv_n = snprintf(sig_kv, sizeof(sig_kv), ",\"v\":%d",
+             device_signature::SCHEMA_V);
+  }
+  /* Truncation guard (Gemini code-review #447): a clipped sig_kv
+   * gets appended verbatim via %s below and produces an invalid
+   * JSON payload (trailing `,"sig":"AAA` with no closing quote/brace).
+   * Clear on overflow so the outer body falls through with a clean
+   * `,"v":1` segment at worst — verify-side treats that as "unsigned"
+   * and the entity is marked unverified instead of accepting garbage. */
+  if (kv_n <= 0 || (size_t)kv_n >= sizeof(sig_kv)) {
+    sig_kv[0] = '\0';
+  }
+
   const int n = snprintf(body, cap,
     "{"
+      "\"event_id\":%lu,"
       "\"event_type\":\"%s\","
       "\"timestamp\":%lu,"
       "\"zone\":\"\","
@@ -393,20 +439,23 @@ size_t build_event_body(char* body, size_t cap,
       "\"duration_sec\":%u,"
       "\"bundled\":%u,"
       "\"replay\":%s"
+      "%s"
     "}",
-    values->state_name[0] ? values->state_name : "unknown",
+    (unsigned long)event_id,
+    state_s,
     (unsigned long)ts_sec,
     values->confidence[0] ? values->confidence : "tentative",
     module_id ? module_id : "",
     type_name ? type_name : "",
     cat_s, priv_s,
-    values->state_name[0] ? values->state_name : "unknown",
+    state_s,
     (unsigned)values->motion_score,
     (unsigned)values->breathing_score,
     (unsigned)values->breathing_rate_bpm,
     (unsigned)values->duration_sec,
     (unsigned)bundled_count,
-    is_replay ? "true" : "false");
+    is_replay ? "true" : "false",
+    sig_kv);
   if (n <= 0 || (size_t)n >= cap) return 0;
   return (size_t)n;
 }
@@ -440,8 +489,13 @@ void publish_event(uint32_t                  event_id,
   if (!values) return;
   char topic[192];
   build_topic(topic, sizeof(topic), "events");
-  char body[512];
+  /* body[] grew from 512 → 768 to accommodate the new sig envelope
+   * (~120 extra bytes for v/alg/fp/sig + event_id). 768 is still
+   * comfortably below esp_mqtt's per-publish ceiling (~1.4 KB after
+   * topic + retained-flag overhead). */
+  char body[768];
   const size_t n = build_event_body(body, sizeof(body),
+      event_id,
       module_id, type_name, category, privacy, values,
       /*timestamp_ms=*/(uint32_t)millis(),
       /*bundled_count=*/1,
@@ -454,7 +508,7 @@ bool publish_event_record(const csi_event_record_t* rec) {
   if (!rec) return false;
   char topic[192];
   build_topic(topic, sizeof(topic), "events");
-  char body[512];
+  char body[768];
   /* For backfill, anchor the timestamp at the event's first_seen_ms
    * so HA's history places it at the right moment instead of "now".
    * Bundled count comes straight from the on-disk record. is_replay
@@ -462,6 +516,7 @@ bool publish_event_record(const csi_event_record_t* rec) {
    * avoid re-firing automations for old events (PR #398 review
    * r3214114357). */
   const size_t n = build_event_body(body, sizeof(body),
+      rec->event_id,
       rec->module_id, rec->type_name, rec->category, rec->privacy, &rec->values,
       rec->first_seen_ms, rec->bundled_count,
       /*is_replay=*/true);
@@ -479,10 +534,43 @@ void publish_chain(uint32_t length, const uint8_t* latest_hash_32) {
      * duplicating the loop here (PR #394 review r3213674564). */
     csi_integration::hex_encode(latest_hash_32, 32, hash_hex);
   }
-  char body[160];
-  const int n = snprintf(body, sizeof(body),
-    "{\"length\":%lu,\"latest_hash\":\"%s\",\"algorithm\":\"ed25519\"}",
-    (unsigned long)length, hash_hex);
+
+  /* PKI envelope: alongside the existing length/latest_hash fields we
+   * publish v (canonical-schema version), sig (b64url Ed25519 over the
+   * canonical "chain" message), fp (device fingerprint hex), and alg
+   * (always "ed25519" for v1). HA's signature.py reconstructs the
+   * canonical string from (length, latest_hash, device_id-from-topic)
+   * and verifies. sig is best-effort — if device_signature isn't
+   * initialized yet we publish the data without a sig and HA marks
+   * the device "unverified" but still updates state. Keeping
+   * "algorithm":"ed25519" alongside the new "alg" field so older HA
+   * builds that only read "algorithm" don't regress. */
+  char sig_b64[device_signature::SIG_B64URL_CAP] = "";
+  bool signed_ok = false;
+  if (latest_hash_32) {
+    signed_ok = device_signature::sign_chain(length, latest_hash_32,
+                                             sig_b64, sizeof(sig_b64));
+  }
+
+  char body[320];
+  int n;
+  if (signed_ok) {
+    n = snprintf(body, sizeof(body),
+      "{\"v\":%d,\"length\":%lu,\"latest_hash\":\"%s\","
+      "\"algorithm\":\"ed25519\","
+      "\"alg\":\"%s\",\"fp\":\"%s\",\"sig\":\"%s\"}",
+      device_signature::SCHEMA_V,
+      (unsigned long)length, hash_hex,
+      device_signature::ALG_NAME,
+      device_signature::fingerprint_hex(),
+      sig_b64);
+  } else {
+    n = snprintf(body, sizeof(body),
+      "{\"v\":%d,\"length\":%lu,\"latest_hash\":\"%s\","
+      "\"algorithm\":\"ed25519\"}",
+      device_signature::SCHEMA_V,
+      (unsigned long)length, hash_hex);
+  }
   if (n <= 0 || (size_t)n >= sizeof(body)) return;
   publish_raw(topic, body, (size_t)n, /*retain=*/true);
 }
@@ -515,9 +603,31 @@ void publish_health(uint32_t free_heap_bytes, uint32_t uptime_sec) {
 void publish_counts(uint32_t total) {
   char topic[192];
   build_topic(topic, sizeof(topic), "counts");
-  char body[48];
-  const int n = snprintf(body, sizeof(body),
-    "{\"total\":%lu}", (unsigned long)total);
+
+  /* Sign the total — defends against an adversary on the broker
+   * spoofing a witness count (which would make the "Witness Records"
+   * sensor lie, masking dropped or replayed records). Format mirrors
+   * publish_chain: same v/alg/fp/sig fields, omitted if signing fails. */
+  char sig_b64[device_signature::SIG_B64URL_CAP] = "";
+  const bool signed_ok = device_signature::sign_counts(total, sig_b64,
+                                                       sizeof(sig_b64));
+
+  char body[224];
+  int n;
+  if (signed_ok) {
+    n = snprintf(body, sizeof(body),
+      "{\"v\":%d,\"total\":%lu,"
+      "\"alg\":\"%s\",\"fp\":\"%s\",\"sig\":\"%s\"}",
+      device_signature::SCHEMA_V,
+      (unsigned long)total,
+      device_signature::ALG_NAME,
+      device_signature::fingerprint_hex(),
+      sig_b64);
+  } else {
+    n = snprintf(body, sizeof(body),
+      "{\"v\":%d,\"total\":%lu}",
+      device_signature::SCHEMA_V, (unsigned long)total);
+  }
   if (n <= 0 || (size_t)n >= sizeof(body)) return;
   publish_raw(topic, body, (size_t)n, /*retain=*/true);
 }

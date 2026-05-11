@@ -18,6 +18,7 @@ from homeassistant.components.binary_sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_URL
 from homeassistant.core import HomeAssistant, callback
+from typing import Any as _Any  # noqa: F401  (used in _read_trust_view signature below)
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -59,6 +60,29 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _read_trust_view(
+    hass: HomeAssistant, entry: ConfigEntry, device_id: str
+) -> dict[str, _Any]:
+    """Read the verify state stamped by sensor.py's chain handler.
+
+    Binary sensor doesn't *run* the verifier — that's sensor.py's
+    job, and re-verifying here would mean signing twice per chain
+    publish for no benefit. We just read the cached verdict from
+    entry_data so the binary sensor can ANNOTATE its state with the
+    same trust info.
+    """
+    entry_data = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
+    verify = entry_data.get("verify", {}).get(device_id)
+    if not verify:
+        return {"verified": False, "trust_reason": "no_pubkey"}
+    return {
+        "verified": bool(verify.get("trusted")),
+        "trust_reason": verify.get("reason", "unknown"),
+        "pinned_fingerprint": verify.get("pinned_fingerprint"),
+        "received_fingerprint": verify.get("received_fingerprint"),
+    }
 
 
 async def async_setup_entry(
@@ -243,6 +267,7 @@ class SecuraCVCanaryBinarySensorBase(BinarySensorEntity):
         """Initialize."""
         self._prefix = prefix
         self._device_id = device_id
+        self._entry = entry
         self._attr_unique_id = f"{DOMAIN}_canary_{device_id}_{key}"
         self._attr_name = name_suffix
 
@@ -308,11 +333,17 @@ class SecuraCVCanaryChainValidSensor(SecuraCVCanaryBinarySensorBase):
         try:
             data = json.loads(msg.payload)
             valid = data.get("valid", data.get("integrity", True))
-            self._attr_is_on = bool(valid)
+            # Sensor-side chain handler already ran verify_chain and
+            # stamped entry_data["verify"][device_id]; just read it
+            # here so chain_valid surfaces both the chain-integrity
+            # bit (the device's self-report) AND the PKI sig state.
+            trust_view = _read_trust_view(self.hass, self._entry, self._device_id)
+            self._attr_is_on = bool(valid) and trust_view["verified"]
             self._attr_extra_state_attributes = {
                 "chain_length": data.get("length", 0),
                 "latest_hash": data.get("latest_hash", ""),
                 "verification_error": data.get("error", None),
+                **trust_view,
             }
         except (json.JSONDecodeError, TypeError):
             return

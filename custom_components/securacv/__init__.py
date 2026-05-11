@@ -26,6 +26,9 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.helpers import device_registry as dr
 
+import json
+
+from .device_trust import TrustStore, TrustVerdict
 from .const import (
     DOMAIN,
     CONF_MQTT_PREFIX,
@@ -172,6 +175,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         api = None
         coordinator = None
 
+    # Trust store — persisted Ed25519 pubkey pins per device_id.
+    # Created (and storage loaded) before the MQTT subscribe so the
+    # first inbound message can already consult it for TOFU pinning.
+    trust_store = TrustStore(hass, entry.entry_id)
+    await trust_store.async_load()
+
     # Store entry data
     entry_data: dict[str, Any] = {
         "api": api,
@@ -179,6 +188,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "devices": {},
         "unsub_mqtt": [],
         "setup_mode": setup_mode,
+        "trust_store": trust_store,
+        # Per-device verify state cache. Sensors read this to set
+        # extra_state_attributes["verified"] on their entities.
+        # Shape: { device_id: { "trusted": bool, "reason": str,
+        #                       "pinned_fingerprint": str|None,
+        #                       "received_fingerprint": str|None } }
+        "verify": {},
+        # Mismatches we've already surfaced as persistent_notification —
+        # one entry per (device_id, fp) so we don't spam the user.
+        "mismatch_notified": set(),
     }
     hass.data[DOMAIN][entry.entry_id] = entry_data
 
@@ -207,6 +226,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             )
             entry_data["unsub_mqtt"].append(unsub)
             entry_data["mqtt_prefix"] = mqtt_prefix
+            # Health-topic subscription: snags the device's pubkey_hex
+            # the first time we see it and TOFU-pins via the trust
+            # store. Sensor.py also subscribes to health for its own
+            # state — that's fine, MQTT allows multiple subscribers
+            # per topic and the two callbacks operate on independent
+            # entry_data slices.
+            unsub_health = await mqtt.async_subscribe(
+                hass,
+                f"{mqtt_prefix}/+/health",
+                _async_health_for_tofu(hass, entry),
+            )
+            entry_data["unsub_mqtt"].append(unsub_health)
             _LOGGER.info("SecuraCV MQTT subscriptions active (prefix: %s)", mqtt_prefix)
         except Exception as err:
             _LOGGER.warning("MQTT setup failed, continuing without MQTT: %s", err)
@@ -277,3 +308,133 @@ def _async_device_status_received(hass: HomeAssistant, entry: ConfigEntry):
             devices[device_id]["status"] = status_payload
 
     return _callback
+
+
+# =============================================================================
+# Trust / verification helpers
+# =============================================================================
+#
+# The signed-MQTT path on the firmware side (PR adding per-device PKI)
+# stamps every chain/events/counts publish with an Ed25519 signature
+# the device produced over a canonical message. HA verifies that sig
+# against the device's pinned pubkey from the TrustStore.
+#
+# The sensor + binary_sensor handlers call `async_handle_signed_payload`
+# inside their MQTT callbacks with the parsed payload and a verifier
+# function. The helper:
+#   1. TOFU-pins on first sight (when the payload carries a pubkey we
+#      can use, via a /api/device/enroll round-trip kicked off async).
+#   2. Calls the kind-specific verifier (signature.verify_chain etc.).
+#   3. Stamps the result into entry_data["verify"][device_id] so any
+#      entity reading it can surface "verified: true/false".
+#   4. Fires a one-shot persistent_notification on mismatch (dedup'd
+#      via entry_data["mismatch_notified"]).
+#
+# We deliberately *accept* the payload regardless of verdict — the
+# scope decision is "warn loudly, accept" so a benign re-flash doesn't
+# stall a live deployment.
+
+
+def _async_health_for_tofu(hass: HomeAssistant, entry: ConfigEntry):
+    """Subscriber for `{prefix}/+/health` that TOFU-pins the device's
+    pubkey the first time it appears.
+
+    The health publish has always carried `public_key` (64-char hex)
+    because the HA dashboard's health sensor already surfaces it as an
+    attribute. We piggy-back on it for the trust store: pubkey is a
+    public value, and a hostile broker can't forge a new device's
+    first-sight pubkey without already controlling the device itself.
+    Subsequent publishes are verified against the pin; the warn-loudly-
+    accept policy handles the "device legitimately re-flashed" case.
+    """
+
+    @callback
+    def _callback(msg: mqtt.ReceiveMessage) -> None:
+        parts = msg.topic.split("/")
+        if len(parts) < 3:
+            return
+        device_id = parts[-2]
+        entry_data = hass.data[DOMAIN].get(entry.entry_id)
+        if not entry_data:
+            return
+        trust_store: TrustStore = entry_data["trust_store"]
+        if trust_store.is_pinned(device_id):
+            return
+        try:
+            payload = msg.payload.decode() if isinstance(msg.payload, bytes) else str(msg.payload)
+            data = json.loads(payload)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return
+        pubkey_hex = data.get("public_key")
+        if not pubkey_hex or not isinstance(pubkey_hex, str) or len(pubkey_hex) != 64:
+            return
+        # async_pin needs the loop; schedule as a task so the @callback
+        # context returns synchronously.
+        hass.async_create_task(
+            trust_store.async_tofu_pin_if_unknown(device_id, pubkey_hex)
+        )
+        _LOGGER.info(
+            "TOFU-pinning Canary %s with pubkey %s…", device_id, pubkey_hex[:16]
+        )
+
+    return _callback
+
+
+@callback
+def async_record_verify(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    device_id: str,
+    verdict: "TrustVerdict",
+) -> None:
+    """Stamp the verify outcome into entry_data and surface mismatches."""
+    entry_data = hass.data[DOMAIN].get(entry.entry_id)
+    if not entry_data:
+        return
+    entry_data["verify"][device_id] = {
+        "trusted": verdict.trusted,
+        "reason": verdict.reason,
+        "pinned_fingerprint": verdict.pinned_fingerprint,
+        "received_fingerprint": verdict.received_fingerprint,
+        "detail": verdict.detail,
+    }
+    if verdict.reason == "mismatch":
+        # Dedup by (device_id, received_fingerprint) so a steady stream
+        # of mismatched publishes only notifies the user once. Cleared
+        # when the operator either re-pins or unpins the device.
+        key = (device_id, verdict.received_fingerprint or "")
+        notified: set = entry_data["mismatch_notified"]
+        if key in notified:
+            return
+        notified.add(key)
+        # `persistent_notification.create` is awaitable but we're in a
+        # @callback context; schedule it on the event loop. The
+        # notification ID is stable per device so a follow-up create
+        # replaces the previous payload rather than stacking.
+        hass.async_create_task(
+            hass.services.async_call(
+                "persistent_notification",
+                "create",
+                {
+                    "title": f"SecuraCV: device {device_id} key mismatch",
+                    "message": (
+                        f"Canary `{device_id}` published with fingerprint "
+                        f"`{verdict.received_fingerprint}` but the pinned "
+                        f"fingerprint is `{verdict.pinned_fingerprint}`. "
+                        "Entities are still updating, marked as unverified. "
+                        "If you intentionally re-flashed this device, rotate "
+                        "the pin from the integration's options menu."
+                    ),
+                    "notification_id": f"securacv_mismatch_{device_id}",
+                },
+                blocking=False,
+            )
+        )
+
+
+@callback
+def async_get_trust_store(hass: HomeAssistant, entry: ConfigEntry) -> TrustStore | None:
+    entry_data = hass.data[DOMAIN].get(entry.entry_id)
+    if not entry_data:
+        return None
+    return entry_data.get("trust_store")
