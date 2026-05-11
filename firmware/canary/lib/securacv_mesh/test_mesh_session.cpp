@@ -107,64 +107,47 @@ void reset_world() {
 /* ── Test bodies ──────────────────────────────────────────────────────── */
 
 void test_start_initiator_emits_discover_init() {
+  /* PR-453 codex P1: pre-membership DISCOVER frame is now sent via
+   * mesh_transport::send_raw, which bypasses the peer-table check and
+   * routes FF:FF:FF:FF:FF:FF straight to esp_now_send (which has the
+   * FF MAC pre-registered by mesh_transport::init). Test asserts the
+   * actual wire bytes arrive at our send_hook. */
   reset_world();
   uint8_t secret[mesh_crypto::OPERA_SECRET_LEN];
   for (size_t i = 0; i < sizeof(secret); ++i) secret[i] = (uint8_t)(0x55 + i);
 
-  /* start_pairing_initiator needs an FF MAC peer registered for the
-   * BROADCAST_DISCOVER send to succeed — for THIS test it doesn't matter
-   * (we capture sends regardless). But the bridge calls send_to_peer
-   * which requires a known peer. We add the broadcast MAC manually. */
-  const uint8_t bcast[6] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
-  /* mesh_transport::add_peer rejects FF MACs by design — so for this
-   * host test we register a single placeholder peer at the broadcast
-   * MAC by going around the API: we just check that the bridge tried
-   * to send (the send_hook captures it before mesh_transport's
-   * peer-table check kicks in… actually no, send_to_peer DOES check
-   * has_peer first). Workaround: register a non-FF MAC manually so
-   * send_to_peer succeeds. The bridge calls send_to_peer(a.peer_mac,…)
-   * with peer_mac = FF for BROADCAST_DISCOVER, so we need to bypass
-   * via the test send hook directly.
-   *
-   * Simplest: register a single fake peer and confirm the bridge
-   * attempted the send (the send_hook fires regardless of mesh_transport
-   * state because we install the hook BEFORE any peer check). Actually
-   * send_to_peer's flow is: check has_peer → if no, return false; if
-   * yes, call driver_send which uses our hook. So we need a registered
-   * peer.
-   *
-   * Hack for this slice's tests: register a "broadcast surrogate" peer
-   * with MAC that has its low bit set instead of all 0xFF, then
-   * separately verify the bridge BUILT the right frame. The exact MAC
-   * for BROADCAST_DISCOVER isn't critical for this test — what matters
-   * is the wire bytes. */
-  uint8_t surrogate[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFE};
-  (void)bcast;
-  assert(mesh_transport::add_peer(surrogate));
-
-  /* mesh_pairing's BROADCAST_DISCOVER hardcodes FF:FF:FF:FF:FF:FF as the
-   * dest MAC. For the bridge to actually forward via send_to_peer, the
-   * peer table would need to contain that MAC — which mesh_transport
-   * rejects. This is the documented gap that PR 2g's broadcast_to_any
-   * API will close.
-   *
-   * For THIS test, we directly verify the pairing state machine output
-   * is correct (DISCOVER with role=INITIATOR) by walking the bridge's
-   * action_to_wire pathway end-to-end. */
   assert(mesh_session::start_pairing_initiator(secret, "MyOpera", /*now_ms=*/100));
-
-  /* The bridge will have called dispatch_action → send_to_peer(FF…, …).
-   * send_to_peer rejects unknown peer → no actual send recorded. But
-   * the pairing state still advanced. */
   assert(mesh_session::pairing_state() == mesh_pairing::State::DISCOVERING_INITIATOR);
-  std::printf("PASS test_start_initiator_emits_discover_init  (state=DISCOVERING_INITIATOR)\n");
+
+  /* Exactly one outgoing frame: PAIR_DISCOVER to FF:FF:FF:FF:FF:FF. */
+  assert(g_outs.size() == 1);
+  static const uint8_t BCAST[6] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
+  assert(std::memcmp(g_outs[0].mac, BCAST, 6) == 0);
+  /* Envelope: byte 0 = PAIR_DISCOVER (0). */
+  assert(g_outs[0].bytes[0] == static_cast<uint8_t>(mesh_session::MsgType::PAIR_DISCOVER));
+  /* Body is PairDiscoverPayload with role=INITIATOR. */
+  mesh_pairing::PairDiscoverPayload disc;
+  std::memcpy(&disc, g_outs[0].bytes.data() + 1, sizeof(disc));
+  assert(disc.role == mesh_pairing::ROLE_INITIATOR);
+  std::printf("PASS test_start_initiator_emits_discover_init  (frame_len=%zu)\n",
+              g_outs[0].bytes.size());
 }
 
 void test_start_joiner_emits_discover_join() {
   reset_world();
   assert(mesh_session::start_pairing_joiner(/*now_ms=*/100));
   assert(mesh_session::pairing_state() == mesh_pairing::State::DISCOVERING_JOINER);
-  std::printf("PASS test_start_joiner_emits_discover_join  (state=DISCOVERING_JOINER)\n");
+
+  /* Mirror of the initiator test — DISCOVER frame to FF MAC with role=JOINER. */
+  assert(g_outs.size() == 1);
+  static const uint8_t BCAST[6] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
+  assert(std::memcmp(g_outs[0].mac, BCAST, 6) == 0);
+  assert(g_outs[0].bytes[0] == static_cast<uint8_t>(mesh_session::MsgType::PAIR_DISCOVER));
+  mesh_pairing::PairDiscoverPayload disc;
+  std::memcpy(&disc, g_outs[0].bytes.data() + 1, sizeof(disc));
+  assert(disc.role == mesh_pairing::ROLE_JOINER);
+  std::printf("PASS test_start_joiner_emits_discover_join  (frame_len=%zu)\n",
+              g_outs[0].bytes.size());
 }
 
 void test_incoming_discover_triggers_offer_unicast() {
@@ -237,10 +220,10 @@ void test_envelope_msgtype_byte_is_first_byte() {
   const uint8_t joiner_mac[6] = {0xAA,0xBB,0xCC,0xDD,0xEE,0xFF};
   assert(mesh_transport::add_peer(joiner_mac));
 
-  uint8_t joiner_pub[32], joiner_priv[32];
+  uint8_t joiner_pub[mesh_crypto::PUBKEY_LEN], joiner_priv[mesh_crypto::PRIVKEY_LEN];
   assert(mesh_crypto::ed25519_generate_keypair(joiner_pub, joiner_priv));
   mesh_pairing::PairDiscoverPayload disc{};
-  std::memcpy(disc.pubkey, joiner_pub, 32);
+  std::memcpy(disc.pubkey, joiner_pub, mesh_crypto::PUBKEY_LEN);
   disc.role = mesh_pairing::ROLE_JOINER;
   uint8_t frame[1 + sizeof(disc)];
   frame[0] = 0;  /* PAIR_DISCOVER */
@@ -256,8 +239,8 @@ void test_envelope_msgtype_byte_is_first_byte() {
   mesh_pairing::PairOfferPayload offer;
   std::memcpy(&offer, g_outs[0].bytes.data() + 1, sizeof(offer));
   /* Initiator's ephemeral pubkey must be non-zero (was generated). */
-  uint8_t zero[32] = {0};
-  assert(std::memcmp(offer.ephemeral_pubkey, zero, 32) != 0);
+  uint8_t zero[mesh_crypto::PUBKEY_LEN] = {0};
+  assert(std::memcmp(offer.ephemeral_pubkey, zero, mesh_crypto::PUBKEY_LEN) != 0);
   std::printf("PASS test_envelope_msgtype_byte_is_first_byte\n");
 }
 
@@ -298,7 +281,7 @@ void test_lifecycle_idempotent() {
   reset_world();
   /* deinit then re-init should be safe. */
   mesh_session::deinit();
-  uint8_t pub[32], priv[32];
+  uint8_t pub[mesh_crypto::PUBKEY_LEN], priv[mesh_crypto::PRIVKEY_LEN];
   assert(mesh_crypto::ed25519_generate_keypair(pub, priv));
   assert(mesh_session::init(pub, priv));
   assert(mesh_session::start());

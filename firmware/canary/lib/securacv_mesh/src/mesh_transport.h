@@ -165,6 +165,19 @@ bool send_to_peer(const uint8_t mac[MESH_TRANSPORT_MAC_LEN],
  * number of peers that accepted the send. */
 size_t broadcast(const uint8_t* data, size_t len);
 
+/* Send to an arbitrary MAC, including FF:FF:FF:FF:FF:FF, WITHOUT
+ * requiring the destination to be in the peer table. Bypasses the
+ * peer-state machine. Intended for pre-membership traffic (e.g. the
+ * pairing DISCOVER frame, which must be addressed to the actual ESP-NOW
+ * broadcast MAC before any peer relationship exists).
+ *
+ * Returns false if the transport is not running or len exceeds
+ * MESH_TRANSPORT_PAYLOAD_MAX. Stats counter is the same as send_to_peer's
+ * unicast counter — broadcast_raw is not a "broadcast" in the
+ * peer-fanout sense, just a no-peer-required send. */
+bool send_raw(const uint8_t mac[MESH_TRANSPORT_MAC_LEN],
+              const uint8_t* data, size_t len);
+
 /* ──────────────────────────────────────────────────────────────────────────
  * RECEIVE + AGING
  * ────────────────────────────────────────────────────────────────────────── */

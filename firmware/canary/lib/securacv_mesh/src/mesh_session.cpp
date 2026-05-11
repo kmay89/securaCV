@@ -48,6 +48,17 @@ static CodeReadyCallback  s_code_ready_cb = nullptr;
  * INTERNAL HELPERS
  * ────────────────────────────────────────────────────────────────────────── */
 
+/* secure_zero: volatile-loop + asm memory barrier so the compiler can't
+ * dead-store-eliminate the wipe. Same pattern as mesh_crypto.cpp and
+ * mesh_pairing.cpp; file-local to keep this module standalone. */
+static inline void secure_zero(void* p, size_t n) {
+  volatile uint8_t* b = static_cast<volatile uint8_t*>(p);
+  while (n--) *b++ = 0;
+#if defined(__GNUC__) || defined(__clang__)
+  asm volatile("" ::: "memory");
+#endif
+}
+
 /* Convert mesh_pairing::MsgType (used internally by the state machine)
  * to mesh_session::MsgType (used on the wire). Today these are 1:1 by
  * design; the helper exists so a future divergence is a single edit. */
@@ -92,21 +103,12 @@ static void dispatch_action(const mesh_pairing::Action& a) {
     const size_t frame_len = MSGTYPE_HEADER_LEN + a.payload_len;
 
     if (a.type == mesh_pairing::ActionType::BROADCAST_DISCOVER) {
-      /* mesh_transport::broadcast() fans out to every paired peer.
-       * During pairing, the joiner is not yet a registered peer on the
-       * initiator side (and vice versa) — so broadcast() returns 0.
-       * For pairing-time discovery we use ESP-NOW's actual broadcast
-       * MAC (FF:FF:FF:FF:FF:FF) directly. Add it as a peer if not
-       * already; mesh_transport's add_peer rejects FF MACs so we send
-       * via the driver directly. For host-build tests that uses the
-       * test send hook which accepts any MAC. */
-      mesh_transport::send_to_peer(a.peer_mac, frame, frame_len);
-      /* NOTE: send_to_peer rejects unknown peers. For BROADCAST_DISCOVER
-       * during pairing this means it WILL fail until the bridge adds
-       * a temporary peer entry for FF:FF:FF:FF:FF:FF. That gap is
-       * acceptable for PR 2f because the host-build tests use the
-       * send_hook which intercepts before that check. PR 2g will
-       * extend mesh_transport with a `broadcast_to_any()` API. */
+      /* Pre-membership: the joiner is not yet a peer of the initiator
+       * (and vice versa), so mesh_transport::send_to_peer would reject
+       * the FF MAC. send_raw bypasses the peer-table check and routes
+       * straight to esp_now_send (which has the FF MAC pre-registered
+       * by mesh_transport::init). */
+      mesh_transport::send_raw(a.peer_mac, frame, frame_len);
     } else {
       mesh_transport::send_to_peer(a.peer_mac, frame, frame_len);
     }
@@ -125,9 +127,9 @@ static void dispatch_action(const mesh_pairing::Action& a) {
         s_paired_cb(have_secret ? opera_secret : nullptr, a.confirmation_code);
       }
       /* Wipe the local copy after the callback returns — the integration
-       * layer was responsible for persisting it. */
-      volatile uint8_t* p = (volatile uint8_t*)opera_secret;
-      for (size_t i = 0; i < sizeof(opera_secret); ++i) p[i] = 0;
+       * layer was responsible for persisting it. secure_zero (volatile +
+       * asm barrier) so the compiler can't elide this. */
+      secure_zero(opera_secret, sizeof(opera_secret));
       break;
     }
     case mesh_pairing::ActionType::NOTIFY_FAILED:
@@ -186,8 +188,7 @@ void deinit() {
   if (!s_initialized) return;
   mesh_transport::set_recv_callback(nullptr);
   mesh_pairing::context_init(s_ctx);   /* wipes ephem/session/secret */
-  volatile uint8_t* p = (volatile uint8_t*)s_device_priv;
-  for (size_t i = 0; i < sizeof(s_device_priv); ++i) p[i] = 0;
+  secure_zero(s_device_priv, sizeof(s_device_priv));
   s_paired_cb = nullptr;
   s_failed_cb = nullptr;
   s_code_ready_cb = nullptr;
