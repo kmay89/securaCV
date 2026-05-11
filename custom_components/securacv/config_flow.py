@@ -386,6 +386,20 @@ class SecuraCVOptionsFlow(OptionsFlow):
                 elif not await ts.async_unpin(device_id):
                     errors["device_id"] = "device_not_pinned"
                 else:
+                    # Mirror async_step_rotate: clear any stuck mismatch-
+                    # notification dedup keys for this device. Without this,
+                    # if a spoofed fp triggered a notification before the
+                    # operator unpinned, the dedup set would permanently
+                    # suppress a future real mismatch on that same fp,
+                    # breaking the "warn loudly" guarantee on re-pin.
+                    entry_data = self.hass.data.get(
+                        DOMAIN, {}
+                    ).get(self._config_entry.entry_id)
+                    if entry_data:
+                        notified: set = entry_data.get("mismatch_notified", set())
+                        notified.difference_update(
+                            {(d, f) for (d, f) in notified if d == device_id}
+                        )
                     return self.async_create_entry(title="", data={})
 
         return self.async_show_form(

@@ -234,6 +234,40 @@ def test_verify_event_missing_required_field():
     assert verdict.reason == "unsigned"
 
 
+def test_verify_event_non_numeric_scalar_returns_unsigned():
+    """A malformed payload — `motion='oops'` — must NOT raise out of
+    the verify path. Pre-Codex-#447-review the unguarded int() would
+    let ValueError escape the MQTT @callback and the message wouldn't
+    update entity state. Now it returns reason='unsigned' so the
+    entity continues updating, just marked unverified."""
+    hass = HomeAssistant()
+    ts = TrustStore(hass, entry_id="abc")
+    run(ts.async_load())
+    payload = {
+        "v": 1,
+        "event_id": 7, "state": "active", "category": "event", "privacy": "p1",
+        "motion": "oops",  # ← non-numeric, would have raised
+        "breathing": 0, "bpm": 0,
+        "alg": "ed25519", "fp": "0" * 16, "sig": "x" * 86,
+    }
+    verdict = verify_event(ts, "canary-1", payload)
+    assert verdict.trusted is False
+    assert verdict.reason == "unsigned"
+
+
+def test_verify_chain_non_numeric_length_returns_unsigned():
+    hass = HomeAssistant()
+    ts = TrustStore(hass, entry_id="abc")
+    run(ts.async_load())
+    verdict = verify_chain(
+        ts, "canary-1",
+        {"v": 1, "length": "abc", "latest_hash": "ff" * 32,
+         "alg": "ed25519", "fp": "0" * 16, "sig": "x" * 86},
+    )
+    assert verdict.trusted is False
+    assert verdict.reason == "unsigned"
+
+
 # ─── verify_counts ────────────────────────────────────────────────────
 
 def test_verify_counts_happy_path():

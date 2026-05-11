@@ -398,16 +398,26 @@ size_t build_event_body(char* body, size_t cap,
    * field is monotonic per-device — HA can also use it to detect
    * gaps / replays alongside the sig. */
   char sig_kv[device_signature::SIG_B64URL_CAP + 64] = "";
+  int kv_n;
   if (signed_ok) {
-    snprintf(sig_kv, sizeof(sig_kv),
+    kv_n = snprintf(sig_kv, sizeof(sig_kv),
              ",\"v\":%d,\"alg\":\"%s\",\"fp\":\"%s\",\"sig\":\"%s\"",
              device_signature::SCHEMA_V,
              device_signature::ALG_NAME,
              device_signature::fingerprint_hex(),
              sig_b64);
   } else {
-    snprintf(sig_kv, sizeof(sig_kv), ",\"v\":%d",
+    kv_n = snprintf(sig_kv, sizeof(sig_kv), ",\"v\":%d",
              device_signature::SCHEMA_V);
+  }
+  /* Truncation guard (Gemini code-review #447): a clipped sig_kv
+   * gets appended verbatim via %s below and produces an invalid
+   * JSON payload (trailing `,"sig":"AAA` with no closing quote/brace).
+   * Clear on overflow so the outer body falls through with a clean
+   * `,"v":1` segment at worst — verify-side treats that as "unsigned"
+   * and the entity is marked unverified instead of accepting garbage. */
+  if (kv_n <= 0 || (size_t)kv_n >= sizeof(sig_kv)) {
+    sig_kv[0] = '\0';
   }
 
   const int n = snprintf(body, cap,

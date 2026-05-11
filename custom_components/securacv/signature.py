@@ -197,7 +197,18 @@ def verify_chain(
         return TrustVerdict(
             trusted=False, reason="unsigned", detail="Chain payload missing fields"
         )
-    canonical = build_chain_canonical(device_id, int(length), str(latest_hash))
+    # Cast under guard — a malformed/tampered payload (e.g. length="abc") would
+    # raise ValueError out of int() and escape the @callback, blocking the
+    # entity from updating on legitimate later publishes. The whole point of
+    # the verify path is to return a verdict, never to throw.
+    try:
+        length_int = int(length)
+    except (TypeError, ValueError):
+        return TrustVerdict(
+            trusted=False, reason="unsigned",
+            detail=f"Chain payload `length` is not an integer: {length!r}",
+        )
+    canonical = build_chain_canonical(device_id, length_int, str(latest_hash))
     return _verify_with_kind(trust_store, device_id, payload, canonical)
 
 
@@ -215,16 +226,26 @@ def verify_event(
             reason="unsigned",
             detail=f"Event payload missing required fields: {required}",
         )
-    canonical = build_event_canonical(
-        device_id=device_id,
-        event_id=int(payload["event_id"]),
-        state=str(payload["state"]),
-        category=str(payload["category"]),
-        privacy=str(payload["privacy"]),
-        motion=int(payload["motion"]),
-        breath=int(payload["breathing"]),
-        bpm=int(payload["bpm"]),
-    )
+    # Same guarding rationale as verify_chain — never raise out of the
+    # verify path. Numeric fields that arrive as strings or other junk
+    # are treated as unsigned, which keeps entity state updating while
+    # surfacing the issue in the verdict's detail string.
+    try:
+        canonical = build_event_canonical(
+            device_id=device_id,
+            event_id=int(payload["event_id"]),
+            state=str(payload["state"]),
+            category=str(payload["category"]),
+            privacy=str(payload["privacy"]),
+            motion=int(payload["motion"]),
+            breath=int(payload["breathing"]),
+            bpm=int(payload["bpm"]),
+        )
+    except (TypeError, ValueError) as err:
+        return TrustVerdict(
+            trusted=False, reason="unsigned",
+            detail=f"Event payload has non-numeric scalar field: {err}",
+        )
     return _verify_with_kind(trust_store, device_id, payload, canonical)
 
 
@@ -236,5 +257,12 @@ def verify_counts(
         return TrustVerdict(
             trusted=False, reason="unsigned", detail="Counts payload missing total"
         )
-    canonical = build_counts_canonical(device_id, int(total))
+    try:
+        total_int = int(total)
+    except (TypeError, ValueError):
+        return TrustVerdict(
+            trusted=False, reason="unsigned",
+            detail=f"Counts payload `total` is not an integer: {total!r}",
+        )
+    canonical = build_counts_canonical(device_id, total_int)
     return _verify_with_kind(trust_store, device_id, payload, canonical)

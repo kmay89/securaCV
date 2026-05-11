@@ -314,14 +314,20 @@ namespace device_identity_api {
 
 namespace {
 /* Render the enrollment JSON body into out. Returns bytes written
- * (excluding NUL). Shared by both the JSON endpoint and the HTML
- * one's "Raw payload" panel. All fields come from device_signature's
- * public accessors so this handler doesn't reach into private state. */
+ * (excluding NUL), or 0 on truncation / snprintf error. Shared by
+ * both the JSON endpoint and the HTML one's "Raw payload" panel.
+ * All fields come from device_signature's public accessors so this
+ * handler doesn't reach into private state.
+ *
+ * Contract matches the canonical builders earlier in this file: a
+ * 0 return means "buffer too small, output cleared" — never a
+ * partial JSON the caller would mistake for a complete payload. */
 size_t render_enroll_json(char* out, size_t cap) {
+  if (!out || cap == 0) return 0;
   const char* fp  = device_signature::fingerprint_hex();
   const char* pk  = device_signature::pubkey_hex();
   const char* did = device_signature::device_id();
-  return (size_t)snprintf(out, cap,
+  const int n = snprintf(out, cap,
     "{"
       "\"device_id\":\"%s\","
       "\"pubkey_hex\":\"%s\","
@@ -334,6 +340,11 @@ size_t render_enroll_json(char* out, size_t cap) {
     fp  ? fp  : "",
     device_signature::ALG_NAME,
     device_signature::SCHEMA_V);
+  if (n <= 0 || (size_t)n >= cap) {
+    out[0] = '\0';
+    return 0;
+  }
+  return (size_t)n;
 }
 }  /* namespace */
 
@@ -351,6 +362,11 @@ esp_err_t handle_enroll_json(httpd_req_t* req) {
 
 esp_err_t handle_enroll_html(httpd_req_t* req) {
   char json_body[320];
+  /* render_enroll_json already returns 0 on truncation (post-fix), so
+   * a single == 0 check covers both empty + truncated. Pre-fix this
+   * was an unguarded cast that could feed a >= cap value into the
+   * outer snprintf as part of %s and produce a half-rendered <pre>
+   * panel — flagged by Gemini Code Review on PR #447. */
   const size_t jn = render_enroll_json(json_body, sizeof(json_body));
   if (jn == 0) {
     httpd_resp_send_500(req);
