@@ -184,6 +184,14 @@ namespace test {
                             const uint8_t* payload,
                             size_t          len);
   void set_send_hook(SendHook hook);
+
+  /* Hook called instead of esp_now_add_peer() under CSI_TEST_HOST_BUILD.
+   * Return false to simulate a driver-side failure (table full, OOM); the
+   * tests use this to verify add_peer() rolls back the slot when the
+   * driver rejects the peer. Pass nullptr to clear and revert to the
+   * default success behavior. */
+  using PeerAddHook = bool (*)(const uint8_t* mac);
+  void set_peer_add_hook(PeerAddHook hook);
 }
 #endif
 

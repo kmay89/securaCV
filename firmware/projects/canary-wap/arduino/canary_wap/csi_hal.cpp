@@ -144,8 +144,11 @@ static uint32_t s_rate_last_ms = 0;
 static uint32_t s_rate_min_gap_ms = 0;
 
 /* Channel-lock state. set_channel_lock writes; the WiFi callback reads
- * s_observed_channel; is_channel_in_sync() compares them. */
+ * s_observed_channel; is_channel_in_sync() compares them. The applied
+ * flag is a change-detection gate so we re-apply the lock if it was
+ * requested before WiFi was up (try_enable_csi_now retries). */
 static uint8_t s_channel_lock = 0;
+static bool    s_channel_lock_applied = true;  /* true when lock==0 or driver has it */
 static std::atomic<uint8_t> s_observed_channel{0};
 
 /* Watchdog state. s_last_frame_ms is set by the WiFi callback (relaxed —
@@ -347,6 +350,19 @@ static int try_enable_csi_now() {
     CSI_LOG_WARNF("CSI enable failed (err=0x%x)", err);
     return -1;
   }
+  /* If a channel lock was requested before WiFi was up, apply it now.
+   * Cheap idempotent op, gated by s_channel_lock_applied so we don't
+   * re-thrash the radio on every retry tick. */
+  if (s_channel_lock != 0 && !s_channel_lock_applied) {
+    esp_err_t lock_err =
+        esp_wifi_set_channel(s_channel_lock, WIFI_SECOND_CHAN_NONE);
+    if (lock_err == ESP_OK) {
+      s_channel_lock_applied = true;
+    } else {
+      CSI_LOG_WARNF("deferred set_channel_lock(%u) returned 0x%x",
+                    s_channel_lock, lock_err);
+    }
+  }
   return 1;
 #else
   (void)csi_rx_cb;  /* suppress unused-warning when CSI API is compiled out */
@@ -361,6 +377,13 @@ bool start() {
    * still coming up would each re-run try_enable_csi_now() and emit a
    * duplicate "deferred" log line. */
   if (s_running || s_start_pending) return true;
+
+  /* Reset watchdog-side timestamps so a stop/wait/start cycle doesn't
+   * see stale last-frame data and immediately trip the silence check.
+   * The cumulative recovery counter stays untouched — it's a health
+   * indicator across the session, not per-start. */
+  s_last_frame_ms.store(0, std::memory_order_relaxed);
+  s_watchdog_last_recovery_ms = 0;
 
   const int r = try_enable_csi_now();
   if (r == 1) {
@@ -467,15 +490,24 @@ static void watchdog_check_and_recover() {
 bool set_channel_lock(uint8_t channel) {
   if (channel > 14) return false;
   s_channel_lock = channel;
-  if (channel == 0) return true;
+  if (channel == 0) {
+    s_channel_lock_applied = true;   /* nothing to apply */
+    return true;
+  }
+  /* Mark unapplied so try_enable_csi_now() will pick it up if the call
+   * below couldn't (e.g. WiFi not yet started). */
+  s_channel_lock_applied = false;
 #if SECURACV_HAVE_CSI_API
-  /* Best-effort: if WiFi is up, set the channel now. If WiFi isn't yet
-   * up the call returns an error and we just remember the intent — the
-   * driver will use the configured channel once start() is called. */
   esp_err_t err = esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
-  if (err != ESP_OK && err != ESP_ERR_WIFI_NOT_STARTED) {
+  if (err == ESP_OK) {
+    s_channel_lock_applied = true;
+  } else if (err == ESP_ERR_WIFI_NOT_STARTED) {
+    /* Expected during boot — try_enable_csi_now() will re-apply once
+     * WiFi is ready. The flag stays false until that happens. */
+  } else {
     CSI_LOG_WARNF("set_channel_lock(%u) returned 0x%x", channel, err);
-    /* Still keep the lock — observers will report mismatch. */
+    /* Keep the lock recorded so is_channel_in_sync() reports the drift,
+     * but leave applied=false so a future try_enable will retry. */
   }
 #endif
   return true;

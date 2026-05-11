@@ -77,11 +77,13 @@ static const uint8_t BROADCAST_MAC[CSI_PROBE_MAC_LEN] =
 #ifdef CSI_TEST_HOST_BUILD
 static uint32_t s_test_now_ms = 0;
 static test::SendHook s_test_send_hook = nullptr;
+static test::PeerAddHook s_test_peer_add_hook = nullptr;
 static inline uint32_t now_ms() { return s_test_now_ms; }
 namespace test {
   uint32_t set_now_ms(uint32_t v) { uint32_t o = s_test_now_ms; s_test_now_ms = v; return o; }
   uint32_t get_now_ms() { return s_test_now_ms; }
   void set_send_hook(SendHook h) { s_test_send_hook = h; }
+  void set_peer_add_hook(PeerAddHook h) { s_test_peer_add_hook = h; }
 }
 static inline bool send_raw(const uint8_t* mac, const uint8_t* payload, size_t len) {
   if (s_test_send_hook) return s_test_send_hook(mac, payload, len);
@@ -148,7 +150,7 @@ static void build_packet(uint8_t* buf, size_t len) {
  * the peer is already registered (ESP_ERR_ESPNOW_EXIST). */
 static bool driver_add_peer(const uint8_t mac[CSI_PROBE_MAC_LEN]) {
 #ifdef CSI_TEST_HOST_BUILD
-  (void)mac;
+  if (s_test_peer_add_hook) return s_test_peer_add_hook(mac);
   return true;
 #else
   if (esp_now_is_peer_exist(mac)) return true;
@@ -236,11 +238,22 @@ void deinit() {
 bool start() {
   if (!s_initialized) return false;
   s_running = true;
-  /* Schedule first send for each peer at "now" so we don't have to wait
-   * a full period before the first probe. */
-  uint32_t t = now_ms();
+  /* Stagger the initial send time for each peer across one period so a
+   * batch of pre-registered peers (e.g. restored from NVS by PR 2 mesh)
+   * doesn't all transmit on the same first tick. j=0 fires immediately;
+   * subsequent peers fire at evenly-spaced phases. The steady state is
+   * preserved by the per-peer next_send_ms = now + period scheduling in
+   * process(). */
+  const uint32_t t = now_ms();
+  const size_t   peers = peer_count();
+  const uint32_t period =
+      period_ms_from_rate(effective_per_peer_rate(peers));
+  size_t j = 0;
   for (size_t i = 0; i < CSI_PROBE_MAX_PEERS; ++i) {
-    if (s_peers[i].in_use) s_peers[i].next_send_ms = t;
+    if (!s_peers[i].in_use) continue;
+    const uint32_t phase = peers > 0 ? ((uint32_t)j * period) / (uint32_t)peers : 0;
+    s_peers[i].next_send_ms = t + phase;
+    ++j;
   }
   s_next_broadcast_ms = t;
   return true;
@@ -269,13 +282,17 @@ bool add_peer(const uint8_t mac[CSI_PROBE_MAC_LEN]) {
   /* Reject broadcast MAC — it's the idle fallback, not a peer. */
   if (mac_eq(mac, BROADCAST_MAC)) return false;
   for (size_t i = 0; i < CSI_PROBE_MAX_PEERS; ++i) {
-    if (!s_peers[i].in_use) {
-      memcpy(s_peers[i].mac, mac, CSI_PROBE_MAC_LEN);
-      s_peers[i].next_send_ms = now_ms();  /* eligible immediately */
-      s_peers[i].in_use = true;
-      driver_add_peer(mac);
-      return true;
+    if (s_peers[i].in_use) continue;
+    /* Register with the ESP-NOW driver FIRST so a driver-side failure
+     * (table full, OOM) doesn't leave an orphan slot that the scheduler
+     * keeps trying to send to. Only commit our slot on success. */
+    if (!driver_add_peer(mac)) {
+      return false;
     }
+    memcpy(s_peers[i].mac, mac, CSI_PROBE_MAC_LEN);
+    s_peers[i].next_send_ms = now_ms();  /* eligible immediately */
+    s_peers[i].in_use = true;
+    return true;
   }
   return false;  /* table full */
 }

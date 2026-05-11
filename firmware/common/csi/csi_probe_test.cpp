@@ -74,6 +74,7 @@ void reset_world(const csi_probe::Config& cfg) {
   g_virtual_now = 0;
   csi_probe::test::set_now_ms(0);
   csi_probe::test::set_send_hook(record_send);
+  csi_probe::test::set_peer_add_hook(nullptr);  /* default: driver succeeds */
   assert(csi_probe::init(cfg));
   assert(csi_probe::start());
 }
@@ -283,6 +284,78 @@ void test_seq_monotonic() {
   std::printf("PASS test_seq_monotonic  (last_seq=%u)\n", prev);
 }
 
+void test_add_peer_rolls_back_on_driver_failure() {
+  /* Fix for PR review: add_peer() must not commit a slot if the ESP-NOW
+   * driver rejects the peer. Otherwise process() keeps sending to a
+   * "registered" peer the driver never accepted, causing persistent
+   * send failures while peer_count() reports a phantom entry. */
+  csi_probe::Config c = csi_probe::Config::defaults();
+  reset_world(c);
+
+  /* Inject a hook that always fails the driver-side registration. */
+  csi_probe::test::set_peer_add_hook([](const uint8_t*) { return false; });
+
+  uint8_t p[6] = {0xBE, 0xEF, 0, 0, 0, 0x01};
+  assert(!csi_probe::add_peer(p));
+  assert(csi_probe::peer_count() == 0);
+  assert(!csi_probe::has_peer(p));
+
+  /* Restore default; a subsequent add_peer with success should now
+   * register cleanly. */
+  csi_probe::test::set_peer_add_hook(nullptr);
+  assert(csi_probe::add_peer(p));
+  assert(csi_probe::peer_count() == 1);
+  std::printf("PASS test_add_peer_rolls_back_on_driver_failure\n");
+}
+
+void test_initial_sends_staggered() {
+  /* Fix for PR review: peers registered before start() must NOT all
+   * transmit on the same tick — the round-robin claim is meaningless
+   * otherwise. Phase distribution should spread the first send across
+   * one period. */
+  csi_probe::Config c = csi_probe::Config::defaults();
+  /* Defaults: rate_hz=20, period=50ms. With 4 peers, phases at
+   * 0, 12, 25, 37 ms. */
+  reset_world(c);
+  csi_probe::stop();
+  csi_probe::clear_peers();
+
+  uint8_t a[6] = {0x44, 0, 0, 0, 0, 0x01};
+  uint8_t b[6] = {0x44, 0, 0, 0, 0, 0x02};
+  uint8_t cc[6] = {0x44, 0, 0, 0, 0, 0x03};
+  uint8_t d[6] = {0x44, 0, 0, 0, 0, 0x04};
+  assert(csi_probe::add_peer(a));
+  assert(csi_probe::add_peer(b));
+  assert(csi_probe::add_peer(cc));
+  assert(csi_probe::add_peer(d));
+
+  g_sends.clear();
+  g_virtual_now = 0;
+  csi_probe::test::set_now_ms(0);
+  csi_probe::start();
+
+  /* First tick at t=0: only the j=0 peer (phase=0) should fire. */
+  csi_probe::process();
+  assert(g_sends.size() == 1);
+
+  /* Phases for 4 peers at period=50ms are 0, 12, 25, 37. Advance just
+   * shy of the second cycle (t=40, before peer 0's second send at t=50)
+   * — each peer should have fired exactly once. */
+  advance(1, 40);
+  assert(g_sends.size() == 4);
+
+  /* And those 4 sends should be on distinct MACs (one per peer). */
+  bool seen_a = false, seen_b = false, seen_c = false, seen_d = false;
+  for (const auto& s : g_sends) {
+    if (std::memcmp(s.mac, a, 6) == 0) seen_a = true;
+    else if (std::memcmp(s.mac, b, 6) == 0) seen_b = true;
+    else if (std::memcmp(s.mac, cc, 6) == 0) seen_c = true;
+    else if (std::memcmp(s.mac, d, 6) == 0) seen_d = true;
+  }
+  assert(seen_a && seen_b && seen_c && seen_d);
+  std::printf("PASS test_initial_sends_staggered  (4 peers, 1st tick=1 send, 1st period=4)\n");
+}
+
 void test_stop_halts_sends() {
   csi_probe::Config c = csi_probe::Config::defaults();
   c.broadcast_when_no_peers = true;
@@ -317,6 +390,8 @@ int main() {
   test_peer_table_bounded();
   test_remove_peer_stops_traffic();
   test_seq_monotonic();
+  test_add_peer_rolls_back_on_driver_failure();
+  test_initial_sends_staggered();
   test_stop_halts_sends();
   std::printf("\nALL CSI_PROBE TESTS PASSED\n");
   return 0;
