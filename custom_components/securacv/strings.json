@@ -61,7 +61,7 @@
     "step": {
       "init": {
         "title": "Device key management",
-        "description": "Pin, rotate, or unpin a Canary device's Ed25519 public key. Read fingerprints from each device's /enroll page (e.g. http://canary-XXXX.local/enroll).",
+        "description": "Pin, rotate, or unpin a Canary device's Ed25519 public key. Read each device's fingerprint and pubkey hex from its /enroll page on the local network.",
         "menu_options": {
           "pin": "Pin a device pubkey (manual)",
           "rotate": "Rotate a pinned device key",
