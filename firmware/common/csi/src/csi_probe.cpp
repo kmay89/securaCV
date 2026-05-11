@@ -114,6 +114,18 @@ static inline uint32_t period_ms_from_rate(uint16_t rate_hz) {
   return 1000u / clamp_rate(rate_hz);
 }
 
+/* Effective per-peer rate is the configured ceiling capped by an even
+ * share of the aggregate budget. With 1 peer = full ceiling, with 8 peers
+ * the budget gets sliced 8 ways. Returns at least 1 Hz so a peer never
+ * stops being serviced entirely. */
+static inline uint16_t effective_per_peer_rate(size_t peer_count) {
+  if (peer_count == 0) return clamp_rate(s_cfg.rate_hz);
+  uint32_t share = s_cfg.aggregate_cap_hz / peer_count;
+  if (share == 0) share = 1;
+  uint32_t r = (share < s_cfg.rate_hz) ? share : s_cfg.rate_hz;
+  return clamp_rate((uint16_t)r);
+}
+
 /* Build the probe packet. Caller supplies the buffer (sized to
  * s_cfg.payload_len). The bytes after sizeof(csi_probe_pkt_t) are zero
  * padding so the over-the-air length matches the requested payload_len.
@@ -168,6 +180,7 @@ bool init(const Config& cfg) {
 
   s_cfg = cfg;
   s_cfg.rate_hz = clamp_rate(s_cfg.rate_hz);
+  if (s_cfg.aggregate_cap_hz == 0) s_cfg.aggregate_cap_hz = 200;
   if (s_cfg.idle_rate_hz == 0) s_cfg.idle_rate_hz = 1;
   if (s_cfg.payload_len < sizeof(csi_probe_pkt_t)) {
     s_cfg.payload_len = sizeof(csi_probe_pkt_t);
@@ -303,7 +316,11 @@ void process() {
   if (!s_running) return;
 
   const uint32_t t = now_ms();
-  const uint32_t period = period_ms_from_rate(s_cfg.rate_hz);
+  /* Compute the effective per-peer rate from the aggregate budget every
+   * tick — the peer count can change at runtime (mesh pair / unpair). */
+  const size_t   peers = peer_count();
+  const uint16_t eff_rate = effective_per_peer_rate(peers);
+  const uint32_t period = period_ms_from_rate(eff_rate);
 
   uint8_t payload[CSI_PROBE_PAYLOAD_MAX];
   const size_t payload_len = s_cfg.payload_len;

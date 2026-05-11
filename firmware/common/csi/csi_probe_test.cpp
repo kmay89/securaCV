@@ -100,7 +100,8 @@ void test_broadcast_idle_rate() {
 
 void test_unicast_rate_one_peer() {
   csi_probe::Config c = csi_probe::Config::defaults();
-  c.rate_hz                = 50;       /* one unicast every 20ms */
+  /* Defaults: rate_hz=20, aggregate_cap=200. With 1 peer the effective
+   * per-peer rate is min(20, 200/1) = 20. */
   c.broadcast_when_no_peers = true;
   reset_world(c);
 
@@ -113,8 +114,8 @@ void test_unicast_rate_one_peer() {
   for (const auto& s : g_sends) {
     if (is_broadcast(s.mac)) ++broadcasts; else ++unicasts;
   }
-  /* 50 Hz with 5ms ticks → ~50 unicasts/sec. Allow ±5 jitter. */
-  assert(unicasts >= 45 && unicasts <= 55);
+  /* 20 Hz with 5ms ticks → ~20 unicasts/sec. Allow ±3 jitter. */
+  assert(unicasts >= 17 && unicasts <= 23);
   /* Broadcasts MUST be zero — we have a peer. */
   assert(broadcasts == 0);
   std::printf("PASS test_unicast_rate_one_peer  (unicasts=%zu, broadcasts=%zu)\n",
@@ -123,7 +124,7 @@ void test_unicast_rate_one_peer() {
 
 void test_three_peers_fair() {
   csi_probe::Config c = csi_probe::Config::defaults();
-  c.rate_hz = 50;
+  /* Defaults give each peer min(20, 200/3) = min(20, 66) = 20 Hz. */
   reset_world(c);
 
   uint8_t a[6] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x01};
@@ -141,11 +142,53 @@ void test_three_peers_fair() {
     else if (std::memcmp(s.mac, b, 6) == 0) ++nb;
     else if (std::memcmp(s.mac, cmac, 6) == 0) ++nc;
   }
-  /* Each peer should get ~50 sends. Allow ±5 jitter. */
-  assert(na >= 45 && na <= 55);
-  assert(nb >= 45 && nb <= 55);
-  assert(nc >= 45 && nc <= 55);
+  /* Each peer should get ~20 sends. Allow ±3 jitter. */
+  assert(na >= 17 && na <= 23);
+  assert(nb >= 17 && nb <= 23);
+  assert(nc >= 17 && nc <= 23);
   std::printf("PASS test_three_peers_fair  (a=%zu b=%zu c=%zu)\n", na, nb, nc);
+}
+
+void test_aggregate_cap_with_many_peers() {
+  /* The HIGH-severity reviewer concern: with 8 peers, the per-peer rate
+   * must be capped by the aggregate budget so the total Tx rate stays
+   * bounded. Defaults: rate_hz=20, aggregate_cap_hz=200. 8 peers →
+   * effective per-peer = min(20, 200/8) = min(20, 25) = 20. Aggregate
+   * = 8 × 20 = 160, comfortably under the 200 cap. */
+  csi_probe::Config c = csi_probe::Config::defaults();
+  reset_world(c);
+
+  for (size_t i = 0; i < 8; ++i) {
+    uint8_t m[6] = {0x77, 0, 0, 0, 0, (uint8_t)i};
+    assert(csi_probe::add_peer(m));
+  }
+
+  advance(5, 1000);  /* 1 second */
+  /* Total sends should be ~160 (8 peers × 20 Hz). */
+  assert(g_sends.size() >= 144 && g_sends.size() <= 176);
+  std::printf("PASS test_aggregate_cap_with_many_peers  (8 peers, total=%zu)\n",
+              g_sends.size());
+}
+
+void test_aggregate_cap_throttles_high_rate() {
+  /* If the user asks for 100 Hz per peer with 8 peers, the aggregate cap
+   * should pull each peer down to 200/8 = 25 Hz (which is then clamped
+   * by rate_hz=100, so we get 25 Hz per peer — total 200 Hz). */
+  csi_probe::Config c = csi_probe::Config::defaults();
+  c.rate_hz = 100;
+  c.aggregate_cap_hz = 200;
+  reset_world(c);
+
+  for (size_t i = 0; i < 8; ++i) {
+    uint8_t m[6] = {0x88, 0, 0, 0, 0, (uint8_t)i};
+    assert(csi_probe::add_peer(m));
+  }
+
+  advance(5, 1000);
+  /* Aggregate capped at 200 Hz total → ~200 sends in 1 sec. */
+  assert(g_sends.size() >= 180 && g_sends.size() <= 220);
+  std::printf("PASS test_aggregate_cap_throttles_high_rate  (8 peers @ 100Hz cap, total=%zu)\n",
+              g_sends.size());
 }
 
 void test_wire_format() {
@@ -199,7 +242,6 @@ void test_peer_table_bounded() {
 
 void test_remove_peer_stops_traffic() {
   csi_probe::Config c = csi_probe::Config::defaults();
-  c.rate_hz = 50;
   c.broadcast_when_no_peers = false;
   reset_world(c);
 
@@ -220,7 +262,6 @@ void test_remove_peer_stops_traffic() {
 
 void test_seq_monotonic() {
   csi_probe::Config c = csi_probe::Config::defaults();
-  c.rate_hz = 50;
   reset_world(c);
 
   uint8_t a[6] = {0x0A, 0, 0, 0, 0, 0x01};
@@ -244,7 +285,6 @@ void test_seq_monotonic() {
 
 void test_stop_halts_sends() {
   csi_probe::Config c = csi_probe::Config::defaults();
-  c.rate_hz = 50;
   c.broadcast_when_no_peers = true;
   c.idle_rate_hz = 10;
   reset_world(c);
@@ -271,6 +311,8 @@ int main() {
   test_broadcast_idle_rate();
   test_unicast_rate_one_peer();
   test_three_peers_fair();
+  test_aggregate_cap_with_many_peers();
+  test_aggregate_cap_throttles_high_rate();
   test_wire_format();
   test_peer_table_bounded();
   test_remove_peer_stops_traffic();

@@ -72,10 +72,19 @@ static_assert(sizeof(csi_probe_pkt_t) == 16,
  * ────────────────────────────────────────────────────────────────────────── */
 
 struct Config {
-  /* Per-peer send rate. 50 Hz default; the HAL rate-limits to ~20 Hz in
-   * the rx callback, so 50 Hz gives ~2x headroom for packet loss. Capped
-   * internally to 200 Hz to keep airtime bounded. */
+  /* Per-peer send rate ceiling. 20 Hz matches the CSI HAL's rate-limiter
+   * so we never spend airtime on frames the receiver will drop. The
+   * effective per-peer rate is min(rate_hz, aggregate_cap_hz / max(1,
+   * peer_count)) so the cost stays bounded as the peer table fills. */
   uint16_t rate_hz;
+
+  /* Aggregate Tx cap across all peers + idle broadcasts, in frames/sec.
+   * 200 Hz at 16-byte payload + 192 µs preamble at 1 Mbps is ~0.6 % of
+   * 2.4 GHz airtime — comfortably under the 2 % cap enforced by
+   * airtime_governor (#442). The mesh layer in PR 2 will additionally
+   * route every probe send through airtime_governor::try_reserve_routine()
+   * so the global cap also applies. */
+  uint16_t aggregate_cap_hz;
 
   /* If true, when no peers are registered the probe falls back to ESP-NOW
    * broadcast (FF:FF:FF:FF:FF:FF) at idle_rate_hz so CSI stays warm.
@@ -95,7 +104,8 @@ struct Config {
 
   static Config defaults() {
     return Config{
-      /* rate_hz */                 50,
+      /* rate_hz */                 20,
+      /* aggregate_cap_hz */        200,
       /* broadcast_when_no_peers */ true,
       /* idle_rate_hz */            2,
       /* payload_len */             sizeof(csi_probe_pkt_t)
