@@ -259,6 +259,145 @@ void test_active_backend_is_host_shim() {
   std::printf("PASS test_active_backend_is_host_shim\n");
 }
 
+/* ── X25519 ECDH ───────────────────────────────────────────────────────── */
+
+void test_x25519_mutual_dh_symmetric() {
+  /* The core DH property: both peers compute the same shared secret
+   * from (own_priv, peer_pub). The host shim is constructed to honor
+   * this property without doing real ECDH; the device path delegates
+   * to rweather's Curve25519::eval which has the property by construction. */
+  uint8_t priv_a[mesh_crypto::PRIVKEY_LEN], pub_a[mesh_crypto::PUBKEY_LEN];
+  uint8_t priv_b[mesh_crypto::PRIVKEY_LEN], pub_b[mesh_crypto::PUBKEY_LEN];
+  assert(mesh_crypto::ed25519_generate_keypair(pub_a, priv_a));
+  assert(mesh_crypto::ed25519_generate_keypair(pub_b, priv_b));
+  assert(std::memcmp(pub_a, pub_b, mesh_crypto::PUBKEY_LEN) != 0);
+
+  uint8_t shared_ab[mesh_crypto::X25519_SHARED_LEN];
+  uint8_t shared_ba[mesh_crypto::X25519_SHARED_LEN];
+  assert(mesh_crypto::x25519_derive(priv_a, pub_b, shared_ab));
+  assert(mesh_crypto::x25519_derive(priv_b, pub_a, shared_ba));
+  assert(std::memcmp(shared_ab, shared_ba, mesh_crypto::X25519_SHARED_LEN) == 0);
+  std::printf("PASS test_x25519_mutual_dh_symmetric\n");
+}
+
+void test_x25519_rejects_zero_pubkey() {
+  /* The all-zero point is the identity element. Real Curve25519
+   * either rejects it or yields a zero shared, which is a known
+   * weak key — both paths in mesh_crypto refuse it. */
+  uint8_t priv[mesh_crypto::PRIVKEY_LEN], pub[mesh_crypto::PUBKEY_LEN];
+  assert(mesh_crypto::ed25519_generate_keypair(pub, priv));
+  uint8_t zero_pub[mesh_crypto::PUBKEY_LEN] = {0};
+  uint8_t shared[mesh_crypto::X25519_SHARED_LEN];
+  assert(!mesh_crypto::x25519_derive(priv, zero_pub, shared));
+  /* On failure shared MUST be zeroed. */
+  for (size_t i = 0; i < mesh_crypto::X25519_SHARED_LEN; ++i) assert(shared[i] == 0);
+  std::printf("PASS test_x25519_rejects_zero_pubkey\n");
+}
+
+/* ── ChaCha20-Poly1305 AEAD ────────────────────────────────────────────── */
+
+void test_aead_encrypt_decrypt_roundtrip() {
+  uint8_t key[mesh_crypto::AEAD_KEY_LEN];
+  uint8_t nonce[mesh_crypto::AEAD_NONCE_LEN];
+  for (size_t i = 0; i < sizeof(key); ++i) key[i] = (uint8_t)i;
+  mesh_crypto::aead_generate_nonce(nonce);
+
+  const uint8_t aad[] = "associated-data";
+  const uint8_t pt[] = "hello world, this is a chacha20-poly1305 test message";
+  const size_t pt_len = sizeof(pt) - 1;
+  const size_t aad_len = sizeof(aad) - 1;
+
+  uint8_t ct[pt_len];
+  uint8_t tag[mesh_crypto::AEAD_TAG_LEN];
+  assert(mesh_crypto::aead_encrypt(key, nonce, aad, aad_len, pt, pt_len, ct, tag));
+  /* Ciphertext should differ from plaintext for nontrivial inputs. */
+  assert(std::memcmp(ct, pt, pt_len) != 0);
+
+  uint8_t recovered[pt_len];
+  assert(mesh_crypto::aead_decrypt(key, nonce, aad, aad_len, ct, pt_len, tag, recovered));
+  assert(std::memcmp(recovered, pt, pt_len) == 0);
+  std::printf("PASS test_aead_encrypt_decrypt_roundtrip\n");
+}
+
+void test_aead_rejects_tampered_ciphertext() {
+  uint8_t key[32], nonce[12];
+  for (size_t i = 0; i < 32; ++i) key[i] = (uint8_t)(i * 3);
+  mesh_crypto::aead_generate_nonce(nonce);
+  const uint8_t pt[] = "secret";
+  uint8_t ct[sizeof(pt) - 1], tag[16];
+  assert(mesh_crypto::aead_encrypt(key, nonce, nullptr, 0, pt, sizeof(pt) - 1, ct, tag));
+  /* Flip one bit. */
+  ct[2] ^= 0x04;
+  uint8_t recovered[sizeof(pt) - 1];
+  assert(!mesh_crypto::aead_decrypt(key, nonce, nullptr, 0, ct, sizeof(pt) - 1, tag, recovered));
+  /* On failure recovered must be zeroed — no forged plaintext leaks. */
+  for (size_t i = 0; i < sizeof(recovered); ++i) assert(recovered[i] == 0);
+  std::printf("PASS test_aead_rejects_tampered_ciphertext\n");
+}
+
+void test_aead_rejects_tampered_aad() {
+  uint8_t key[32], nonce[12];
+  for (size_t i = 0; i < 32; ++i) key[i] = 0xA0 ^ (uint8_t)i;
+  mesh_crypto::aead_generate_nonce(nonce);
+  const uint8_t aad_a[] = "header-A";
+  const uint8_t aad_b[] = "header-B";   /* same length, different content */
+  const uint8_t pt[] = "payload";
+  uint8_t ct[sizeof(pt) - 1], tag[16];
+  assert(mesh_crypto::aead_encrypt(key, nonce, aad_a, sizeof(aad_a) - 1,
+                                   pt, sizeof(pt) - 1, ct, tag));
+  uint8_t recovered[sizeof(pt) - 1];
+  /* Decrypt under a DIFFERENT AAD — must fail even though ciphertext + tag
+   * are bit-perfect. */
+  assert(!mesh_crypto::aead_decrypt(key, nonce, aad_b, sizeof(aad_b) - 1,
+                                    ct, sizeof(pt) - 1, tag, recovered));
+  std::printf("PASS test_aead_rejects_tampered_aad\n");
+}
+
+void test_aead_rejects_wrong_key() {
+  uint8_t key_a[32], key_b[32], nonce[12];
+  for (size_t i = 0; i < 32; ++i) { key_a[i] = (uint8_t)i; key_b[i] = (uint8_t)(i ^ 0xFF); }
+  mesh_crypto::aead_generate_nonce(nonce);
+  const uint8_t pt[] = "value";
+  uint8_t ct[sizeof(pt) - 1], tag[16];
+  assert(mesh_crypto::aead_encrypt(key_a, nonce, nullptr, 0, pt, sizeof(pt) - 1, ct, tag));
+  uint8_t recovered[sizeof(pt) - 1];
+  /* Wrong key MUST fail. */
+  assert(!mesh_crypto::aead_decrypt(key_b, nonce, nullptr, 0, ct, sizeof(pt) - 1, tag, recovered));
+  std::printf("PASS test_aead_rejects_wrong_key\n");
+}
+
+void test_aead_rejects_tampered_nonce() {
+  uint8_t key[32], nonce[12];
+  for (size_t i = 0; i < 32; ++i) key[i] = (uint8_t)(i + 1);
+  mesh_crypto::aead_generate_nonce(nonce);
+  const uint8_t pt[] = "secret";
+  uint8_t ct[sizeof(pt) - 1], tag[16];
+  assert(mesh_crypto::aead_encrypt(key, nonce, nullptr, 0, pt, sizeof(pt) - 1, ct, tag));
+  /* Flip a bit in the nonce. */
+  uint8_t bad_nonce[12]; std::memcpy(bad_nonce, nonce, 12); bad_nonce[5] ^= 0x10;
+  uint8_t recovered[sizeof(pt) - 1];
+  assert(!mesh_crypto::aead_decrypt(key, bad_nonce, nullptr, 0,
+                                    ct, sizeof(pt) - 1, tag, recovered));
+  std::printf("PASS test_aead_rejects_tampered_nonce\n");
+}
+
+void test_aead_aad_only_no_plaintext() {
+  /* Empty plaintext path — AEAD must still authenticate the AAD. */
+  uint8_t key[32], nonce[12];
+  for (size_t i = 0; i < 32; ++i) key[i] = 0;
+  mesh_crypto::aead_generate_nonce(nonce);
+  const uint8_t aad[] = "auth-only";
+  uint8_t tag[16];
+  assert(mesh_crypto::aead_encrypt(key, nonce, aad, sizeof(aad) - 1, nullptr, 0, nullptr, tag));
+  assert(mesh_crypto::aead_decrypt(key, nonce, aad, sizeof(aad) - 1, nullptr, 0, tag, nullptr));
+  /* Tampered AAD still fails. */
+  uint8_t bad_aad[] = "auth-only";
+  bad_aad[0] ^= 0x40;
+  assert(!mesh_crypto::aead_decrypt(key, nonce, bad_aad, sizeof(bad_aad) - 1,
+                                    nullptr, 0, tag, nullptr));
+  std::printf("PASS test_aead_aad_only_no_plaintext\n");
+}
+
 }  /* namespace */
 
 int main() {
@@ -276,6 +415,14 @@ int main() {
   test_ed25519_verify_rejects_tampered_message();
   test_ed25519_verify_rejects_wrong_pubkey();
   test_active_backend_is_host_shim();
+  test_x25519_mutual_dh_symmetric();
+  test_x25519_rejects_zero_pubkey();
+  test_aead_encrypt_decrypt_roundtrip();
+  test_aead_rejects_tampered_ciphertext();
+  test_aead_rejects_tampered_aad();
+  test_aead_rejects_wrong_key();
+  test_aead_rejects_tampered_nonce();
+  test_aead_aad_only_no_plaintext();
   std::printf("\nALL MESH_CRYPTO TESTS PASSED\n");
   return 0;
 }
