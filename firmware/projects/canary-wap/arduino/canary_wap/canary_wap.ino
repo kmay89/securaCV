@@ -4705,6 +4705,29 @@ static esp_err_t handle_reboot_auth(httpd_req_t* req) {
   return handle_reboot(req);
 }
 
+// WiFi-management auth wrappers. These three endpoints mutate provisioning
+// state (disable WiFi, wipe NVS-stored credentials, re-enable) and are only
+// meaningful AFTER first-setup. The dashboard's secureFetch already sends
+// `Authorization: Bearer <api_token>` on all three, but the handlers
+// themselves were originally registered without an _auth wrapper, so a
+// LAN-local curl could hit /api/wifi/forget and force a re-provisioning
+// without authenticating. (/api/wifi and /api/wifi/scan stay
+// unauthenticated by design — both are read-only and need to work during
+// captive-portal setup before any API token exists. /api/wifi/connect
+// gets its own pre-credential gate from pair_token_valid as of #434.)
+static esp_err_t handle_wifi_disconnect_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_wifi_disconnect(req);
+}
+static esp_err_t handle_wifi_forget_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_wifi_forget(req);
+}
+static esp_err_t handle_wifi_reconnect_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_wifi_reconnect(req);
+}
+
 #if FEATURE_CAMERA_PEEK
 static esp_err_t handle_peek_stream_auth(httpd_req_t* req) {
   if (!api_auth_check_or_query(req, g_device.api_token_str)) return ESP_OK;
@@ -4938,13 +4961,13 @@ register_extra_routes:
   httpd_uri_t wifi_connect = { .uri = "/api/wifi/connect", .method = HTTP_POST, .handler = handle_wifi_connect };
   httpd_register_uri_handler(active_server, &wifi_connect);
 
-  httpd_uri_t wifi_disconnect = { .uri = "/api/wifi/disconnect", .method = HTTP_POST, .handler = handle_wifi_disconnect };
+  httpd_uri_t wifi_disconnect = { .uri = "/api/wifi/disconnect", .method = HTTP_POST, .handler = handle_wifi_disconnect_auth };
   httpd_register_uri_handler(active_server, &wifi_disconnect);
 
-  httpd_uri_t wifi_forget = { .uri = "/api/wifi/forget", .method = HTTP_POST, .handler = handle_wifi_forget };
+  httpd_uri_t wifi_forget = { .uri = "/api/wifi/forget", .method = HTTP_POST, .handler = handle_wifi_forget_auth };
   httpd_register_uri_handler(active_server, &wifi_forget);
 
-  httpd_uri_t wifi_reconnect = { .uri = "/api/wifi/reconnect", .method = HTTP_POST, .handler = handle_wifi_reconnect };
+  httpd_uri_t wifi_reconnect = { .uri = "/api/wifi/reconnect", .method = HTTP_POST, .handler = handle_wifi_reconnect_auth };
   httpd_register_uri_handler(active_server, &wifi_reconnect);
 
   // Wizard pre-flight self-test (no auth — must be reachable on AP
