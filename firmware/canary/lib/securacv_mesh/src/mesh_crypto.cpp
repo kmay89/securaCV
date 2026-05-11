@@ -146,12 +146,27 @@ void sha256_domain(const char* domain,
   if (data != nullptr && data_len > 0) host_sha256::update(&ctx, data, data_len);
   host_sha256::final_out(&ctx, out);
 #else
+  /* mbedTLS 3.x (ESP-IDF 5.x) uses non-suffixed names. Each call can
+   * return non-zero on bad params; we check defensively so a future
+   * upstream API tightening or stack-use-after-free trap leaves the
+   * output buffer zeroed rather than uninitialized. */
   mbedtls_sha256_context ctx;
   mbedtls_sha256_init(&ctx);
-  mbedtls_sha256_starts(&ctx, 0);
-  if (domain_len > 0) mbedtls_sha256_update(&ctx, (const uint8_t*)domain, domain_len);
-  if (data != nullptr && data_len > 0) mbedtls_sha256_update(&ctx, data, data_len);
-  mbedtls_sha256_finish(&ctx, out);
+  int rc = mbedtls_sha256_starts(&ctx, 0);
+  if (rc == 0 && domain_len > 0) {
+    rc = mbedtls_sha256_update(&ctx, (const uint8_t*)domain, domain_len);
+  }
+  if (rc == 0 && data != nullptr && data_len > 0) {
+    rc = mbedtls_sha256_update(&ctx, data, data_len);
+  }
+  if (rc == 0) {
+    rc = mbedtls_sha256_finish(&ctx, out);
+  }
+  if (rc != 0) {
+    /* On failure, zero the output so callers don't propagate
+     * uninitialized bytes into fingerprints / signatures. */
+    memset(out, 0, SHA256_OUT_LEN);
+  }
   mbedtls_sha256_free(&ctx);
 #endif
 }

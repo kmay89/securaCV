@@ -44,16 +44,18 @@ constexpr size_t SHA256_OUT_LEN     = 32;
 constexpr size_t PUBKEY_LEN         = 32;   /* Ed25519 public key */
 constexpr size_t PRIVKEY_LEN        = 32;   /* Ed25519 private key (seed) */
 constexpr size_t SIGNATURE_LEN      = 64;   /* Ed25519 signature */
-constexpr size_t FINGERPRINT_LEN    = 16;   /* truncated SHA-256 of pubkey */
+constexpr size_t FINGERPRINT_LEN    = 8;    /* truncated SHA-256 of pubkey (wire-compat: canary-wap FINGERPRINT_SIZE) */
 constexpr size_t OPERA_ID_LEN       = 16;   /* truncated SHA-256 of opera secret */
 constexpr size_t OPERA_SECRET_LEN   = 32;   /* opera secret */
 
 /* Domain separation strings. Wire-compatible with canary-wap's mesh
- * (see DOMAIN_* constants in firmware/projects/canary-wap/arduino/
- * canary_wap/mesh_network.cpp). */
+ * (DOMAIN_* constants in firmware/projects/canary-wap/arduino/canary_wap/
+ * mesh_network.cpp:42-46). Identical byte-for-byte so paired canary +
+ * canary-wap nodes hash to the same fingerprint / opera_id and verify
+ * each other's signatures. */
 constexpr const char* DOMAIN_FINGERPRINT = "securacv:pubkey:fingerprint";
-constexpr const char* DOMAIN_OPERA_ID    = "securacv:opera:id:v1";
-constexpr const char* DOMAIN_MESSAGE     = "securacv:mesh:msg:v1";
+constexpr const char* DOMAIN_OPERA_ID    = "securacv:opera:id:v0";
+constexpr const char* DOMAIN_MESSAGE     = "securacv:mesh:message:v0";
 
 /* ──────────────────────────────────────────────────────────────────────────
  * SHA-256 (domain-separated)
@@ -76,9 +78,11 @@ void sha256_domain(const char* domain,
  * compute_opera_id(secret)     →  first OPERA_ID_LEN bytes of
  *   sha256_domain(DOMAIN_OPERA_ID, secret).
  *
- * Both are deterministic. Truncation to 16 bytes follows the canary-wap
- * convention; collision resistance is 2^64 which is the design target
- * for a sub-2^32-device home mesh.
+ * Both are deterministic. Truncation lengths match canary-wap so the
+ * wire format is identical. 8-byte (64-bit) fingerprint = 2^32 birthday
+ * bound on random collisions, which is sound for the design target
+ * (sub-100-device home mesh). The 16-byte (128-bit) opera_id has 2^64
+ * birthday resistance.
  * ────────────────────────────────────────────────────────────────────────── */
 
 void compute_fingerprint(const uint8_t pubkey[PUBKEY_LEN],

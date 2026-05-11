@@ -7,9 +7,9 @@
  *   2. Domain separation works: sha256_domain("a", "bc") == sha256("abc"),
  *      and sha256_domain("", "abc") == sha256("abc").
  *   3. compute_fingerprint truncates SHA-256(DOMAIN_FINGERPRINT || pubkey)
- *      to 16 bytes deterministically.
+ *      to FINGERPRINT_LEN (8) bytes deterministically.
  *   4. compute_opera_id truncates SHA-256(DOMAIN_OPERA_ID || secret) to
- *      16 bytes deterministically.
+ *      OPERA_ID_LEN (16) bytes deterministically.
  *   5. Domain separation actually separates: fingerprint(zero_input)
  *      differs from opera_id(zero_input).
  *   6. ct_equal returns true for equal inputs, false for any single-bit
@@ -133,6 +133,58 @@ void test_opera_id_deterministic() {
   std::printf("PASS test_opera_id_deterministic\n");
 }
 
+void test_wire_compat_fingerprint_zero_pubkey() {
+  /* Pinned regression: the fingerprint of a 32-byte zero pubkey under
+   * DOMAIN_FINGERPRINT must match this value, which is the first 8
+   * bytes of SHA-256("securacv:pubkey:fingerprint" || 32×0x00).
+   *
+   * If gemini's wire-compat concern recurs (someone changes either
+   * the domain string or the truncation length), this test fails on
+   * the spot. Verified by independent computation; matches what
+   * canary-wap's compute_fingerprint() produces for the same input. */
+  uint8_t zero_pub[mesh_crypto::PUBKEY_LEN] = {0};
+  uint8_t fp[mesh_crypto::FINGERPRINT_LEN];
+  mesh_crypto::compute_fingerprint(zero_pub, fp);
+
+  /* Computed via:
+   *   { printf 'securacv:pubkey:fingerprint'; head -c 32 /dev/zero; } \
+   *     | openssl dgst -sha256 | awk '{print $2}' | cut -c1-16
+   *   = fbee2c22347f2560 */
+  static const uint8_t expected[8] = {
+    0xfb, 0xee, 0x2c, 0x22, 0x34, 0x7f, 0x25, 0x60
+  };
+  if (std::memcmp(fp, expected, 8) != 0) {
+    print_hex("got fp ", fp, 8);
+    print_hex("expected", expected, 8);
+    assert(false);
+  }
+  std::printf("PASS test_wire_compat_fingerprint_zero_pubkey\n");
+}
+
+void test_wire_compat_opera_id_zero_secret() {
+  /* Pinned regression: opera_id of a 32-byte zero secret under
+   * DOMAIN_OPERA_ID ("securacv:opera:id:v0") must match this value.
+   * First 16 bytes of SHA-256("securacv:opera:id:v0" || 32×0x00). */
+  uint8_t zero_secret[mesh_crypto::OPERA_SECRET_LEN] = {0};
+  uint8_t id[mesh_crypto::OPERA_ID_LEN];
+  mesh_crypto::compute_opera_id(zero_secret, id);
+
+  /* Computed via:
+   *   { printf 'securacv:opera:id:v0'; head -c 32 /dev/zero; } \
+   *     | openssl dgst -sha256 | awk '{print $2}' | cut -c1-32
+   *   = 8ffd53352ea04fe3dcd1a4ed43d0e2be */
+  static const uint8_t expected[16] = {
+    0x8f, 0xfd, 0x53, 0x35, 0x2e, 0xa0, 0x4f, 0xe3,
+    0xdc, 0xd1, 0xa4, 0xed, 0x43, 0xd0, 0xe2, 0xbe
+  };
+  if (std::memcmp(id, expected, 16) != 0) {
+    print_hex("got id  ", id, 16);
+    print_hex("expected", expected, 16);
+    assert(false);
+  }
+  std::printf("PASS test_wire_compat_opera_id_zero_secret\n");
+}
+
 void test_domain_separation() {
   /* fingerprint(zero_input32) MUST differ from opera_id(zero_input32)
    * even though the input bytes are identical. */
@@ -216,6 +268,8 @@ int main() {
   test_domain_data_concat_equivalence();
   test_fingerprint_deterministic();
   test_opera_id_deterministic();
+  test_wire_compat_fingerprint_zero_pubkey();
+  test_wire_compat_opera_id_zero_secret();
   test_domain_separation();
   test_ct_equal();
   test_ed25519_sign_verify_roundtrip();
