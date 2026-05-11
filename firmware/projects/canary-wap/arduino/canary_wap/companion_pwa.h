@@ -783,7 +783,13 @@ footer a{color:var(--accent);text-decoration:none}
       });
       const j = await r.json();
       if (!r.ok || j.ok === false) {
-        showFailure((j && j.error) ? j.error : ('HTTP ' + r.status));
+        // Token-rejection errors are pre-credential, not a connection
+        // failure — render them raw so the user reads them as
+        // "your setup link is broken" rather than as the awkward
+        // "We couldn't connect: <…link broken sentence…>".
+        const isTokenErr = j && j.code === 'invalid_token';
+        showFailure((j && j.error) ? j.error : ('HTTP ' + r.status),
+                    isTokenErr ? { raw: true } : undefined);
         return;
       }
       pollWifiUntilConnected();

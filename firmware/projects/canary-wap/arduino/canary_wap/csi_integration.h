@@ -159,19 +159,27 @@ uint32_t outbound_bytes_today();
 /* ──────────────────────────────────────────────────────────────────────────
  * PAIRING TOKENS — Tier 5 #11 (captive-portal QR + companion handoff)
  *
- * The captive-portal landing page bakes a fresh one-shot pairing token into
- * the QR code (and into the manual /companion?token=<hex> fallback link).
- * The companion PWA validates that token with the device before showing
- * the WiFi credentials form, so a casual visitor on the AP can't drive
- * provisioning by guessing the URL.
+ * The captive-portal landing page bakes a fresh pairing token into the QR
+ * code (and into the manual /companion?token=<hex> fallback link). The
+ * token gates HTTP-side provisioning so a casual visitor on the AP can't
+ * drive credentials into /api/wifi/connect by guessing the URL — see the
+ * pair_token_valid() call in handle_wifi_connect (canary_wap.ino).
  *
- * Properties:
+ * Two consumers, two redemption models:
+ *   - Wizard flow (/api/wifi/connect): validate-only via pair_token_valid().
+ *     The token stays alive for the full 10-minute TTL so the wizard's
+ *     "Try again" path works after a mistyped password without forcing a
+ *     fresh QR scan. The token ages out naturally; we don't burn it.
+ *   - Dashboard auto-login (?cv_pair=<hex> on /): single-use via
+ *     pair_token_consume(). The token is exchanged for a 24 h cv_session
+ *     cookie, and the slot is burned on first redemption.
+ *
+ * Common properties:
  *   - 32 random bytes per token (256-bit entropy from esp_fill_random).
  *   - RAM-only — never persisted. A reboot invalidates every outstanding
  *     token, which is the right behaviour for "you have 10 minutes to
  *     finish onboarding" UX.
  *   - 10-minute expiry from issuance.
- *   - Single-use: pair_token_consume() invalidates the slot it matches.
  *   - Bounded slot table (4 active tokens at a time). Ninth issuance
  *     evicts the oldest unused slot.
  *

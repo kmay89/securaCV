@@ -4027,6 +4027,27 @@ static esp_err_t handle_wifi_connect(httpd_req_t* req) {
     return http_send_json(req, response.c_str());
   }
 
+  // Pairing-token gate. The captive-portal QR + manual fallback link
+  // both bake a fresh pairing token into /companion?token=<hex>, and
+  // the wizard JS forwards that token in the body of every POST here.
+  // We accept credentials only when the token is still in the live slot
+  // table — i.e. it was issued by THIS device within the last 10 minutes
+  // (see pair_token_valid + the PAIRING TOKENS doc block in
+  // csi_integration.h). pair_token_valid() rejects empty/short/wrong-hex
+  // input too, so a single call covers missing, malformed, and expired.
+  // We validate without consuming so the wizard can retry within the TTL
+  // (e.g. user mistyped the password); the token ages out on its own.
+  const char* token = body["token"] | "";
+  if (!csi_integration::pair_token_valid(token)) {
+    JsonDocument doc;
+    doc["ok"] = false;
+    doc["code"] = "invalid_token";
+    doc["error"] = "This setup link doesn't work anymore. Reopen the captive portal page to get a fresh QR code.";
+    String response;
+    serializeJson(doc, response);
+    return http_send_json(req, response.c_str());
+  }
+
   const char* ssid = body["ssid"] | "";
   const char* password = body["password"] | "";
 
