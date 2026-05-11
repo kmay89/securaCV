@@ -166,6 +166,218 @@ static_assert(sizeof(PairCompletePayload) ==
               (mesh_crypto::OPERA_SECRET_LEN + mesh_crypto::AEAD_TAG_LEN) + mesh_crypto::AEAD_NONCE_LEN,
               "PairCompletePayload wire size drifted from canary-wap");
 
+/* ──────────────────────────────────────────────────────────────────────────
+ * STATE MACHINE
+ *
+ * Pure state-machine driver. Holds no globals; the integration layer
+ * (PR 2f) keeps one PairingContext per device and shuttles bytes to/
+ * from mesh_transport. Tests can run two contexts in parallel to
+ * simulate a complete handshake host-side without I/O.
+ *
+ * The 5-message exchange (matches canary-wap mesh_network.cpp:
+ *   handle_pair_discover @748, handle_pair_offer @782,
+ *   handle_pair_accept @825, handle_pair_confirm @845):
+ *
+ *   Initiator (existing opera member)        Joiner (new device)
+ *   ─────────────────────────────────        ───────────────────
+ *   start_initiator()
+ *     → BROADCAST_DISCOVER (role=INIT) ────► (ignored: not for joiner)
+ *                                            start_joiner()
+ *   handle (DISCOVER role=JOIN) ◄────────────  → BROADCAST_DISCOVER (role=JOIN)
+ *     → SEND_OFFER (initiator ephem + pub)
+ *                            ─────────────►  handle (OFFER)
+ *                                            → derive session_key + code
+ *                                            → SEND_ACCEPT (joiner ephem + pub)
+ *                                            → NOTIFY_CODE_READY (UI prompt)
+ *   handle (ACCEPT) ◄───────────────────────
+ *     → derive session_key + code
+ *     → NOTIFY_CODE_READY (UI prompt)
+ *
+ *   confirm_code() [after user OK]           confirm_code() [after user OK]
+ *     → SEND_CONFIRM (hash) ─────────────►   handle (CONFIRM) — joiner accepts
+ *                                              the initiator's confirm hash
+ *   handle (CONFIRM) ◄──────────────────────  (joiner already moved to
+ *     → verify hash matches                   AWAITING_COMPLETE after sending
+ *     → SEND_COMPLETE (AEAD(opera_secret))►   its own confirm, so a peer-side
+ *     → tick() returns NOTIFY_PAIRED          confirm here is a no-op drop)
+ *                                            handle (COMPLETE)
+ *                                            → decrypt → NOTIFY_PAIRED
+ *
+ * On any failure or 5-minute timeout, both sides transition to FAILED
+ * and the integration layer is told via NOTIFY_FAILED.
+ *
+ * Key lifecycle:
+ *   • Ephemeral keypair: generated at start_*, wiped on terminate.
+ *   • Session key: derived from x25519 once both ephemeral pubs are
+ *     known, used to AEAD-encrypt the opera_secret on the COMPLETE
+ *     message, wiped on terminate AND on PAIRED transition.
+ *   • Opera secret: held in RAM by the initiator (loaded from NVS) and
+ *     by the joiner only between COMPLETE-receive and the integration
+ *     layer reading it out via consume_opera_secret(). The integration
+ *     layer is responsible for the NVS write + the flash-encryption
+ *     gate (canary-wap audit O2).
+ * ────────────────────────────────────────────────────────────────────────── */
+
+enum class State : uint8_t {
+  IDLE = 0,
+  DISCOVERING_INITIATOR,    /* initiator: broadcasting DISCOVER(INIT), waiting for joiner DISCOVER(JOIN) */
+  DISCOVERING_JOINER,       /* joiner:    broadcasting DISCOVER(JOIN), waiting for initiator OFFER */
+  AWAITING_ACCEPT,          /* initiator: sent OFFER, awaiting joiner ACCEPT */
+  AWAITING_CONFIRM,         /* both:      have session_key + code, awaiting user_confirm() */
+  AWAITING_CONFIRM_PEER,    /* both:      sent our CONFIRM hash, awaiting peer's CONFIRM */
+  AWAITING_COMPLETE,        /* joiner:    sent CONFIRM, awaiting encrypted opera_secret */
+  PAIRED,                   /* terminal:  success — opera_secret available on joiner */
+  FAILED,                   /* terminal:  any error path or 5-min timeout */
+};
+
+enum class ActionType : uint8_t {
+  NONE = 0,
+  BROADCAST_DISCOVER,    /* send to FF:FF:FF:FF:FF:FF (or mesh_transport::broadcast) */
+  SEND_OFFER,            /* unicast to action.peer_mac */
+  SEND_ACCEPT,
+  SEND_CONFIRM,
+  SEND_COMPLETE,
+  NOTIFY_CODE_READY,     /* UI: show 6-digit confirmation_code */
+  NOTIFY_PAIRED,         /* integration: persist opera_secret, transition to ACTIVE */
+  NOTIFY_FAILED,         /* integration: clear pairing UI; log */
+};
+
+constexpr size_t MAX_ACTION_PAYLOAD =
+    sizeof(PairCompletePayload) > sizeof(PairOfferPayload) ?
+    sizeof(PairCompletePayload) : sizeof(PairOfferPayload);
+
+struct Action {
+  ActionType type;
+  uint8_t    peer_mac[6];                          /* destination MAC, all-FF for broadcast */
+  uint8_t    payload[MAX_ACTION_PAYLOAD];          /* raw payload bytes to send */
+  size_t     payload_len;                          /* 0 if no payload */
+  uint32_t   confirmation_code;                    /* non-zero for NOTIFY_CODE_READY */
+};
+
+/* Pairing timeout. Matches canary-wap (5 min). Crossing this fires
+ * a FAILED transition + NOTIFY_FAILED action. */
+constexpr uint32_t PAIRING_TIMEOUT_MS = 5 * 60 * 1000;
+
+/* Per-context state. Treat as opaque from the integration side — only
+ * the API below should touch fields. Sized so multiple contexts can sit
+ * on the stack without pressure (~250 B). */
+struct PairingContext {
+  State    state;
+  Role     role;
+
+  /* Long-term keys, supplied at start_* time (the integration layer
+   * loads/derives these from device identity). */
+  uint8_t  device_pubkey[mesh_crypto::PUBKEY_LEN];
+  uint8_t  device_privkey[mesh_crypto::PRIVKEY_LEN];
+
+  /* Ephemeral X25519 keypair generated at start_* time. Wiped on
+   * terminate() / cancel(). */
+  uint8_t  ephem_pubkey[mesh_crypto::PUBKEY_LEN];
+  uint8_t  ephem_privkey[mesh_crypto::PRIVKEY_LEN];
+
+  /* Peer info captured during the exchange. */
+  uint8_t  peer_mac[6];
+  uint8_t  peer_pubkey[mesh_crypto::PUBKEY_LEN];
+  uint8_t  peer_ephem_pubkey[mesh_crypto::PUBKEY_LEN];
+
+  /* Derived once both ephemeral pubs known. */
+  uint8_t  session_key[SESSION_KEY_LEN];
+  uint32_t confirmation_code;
+
+  /* Initiator-only: opera_secret to distribute on COMPLETE.
+   * Joiner-only: opera_secret received via COMPLETE (consumed exactly
+   * once via consume_opera_secret() then wiped). */
+  uint8_t  opera_secret[mesh_crypto::OPERA_SECRET_LEN];
+  bool     opera_secret_present;
+
+  /* Opera display name (initiator: from config; joiner: from OFFER). */
+  char     opera_name[MAX_OPERA_NAME_LEN + 1];
+
+  /* Timeout / liveness. */
+  uint32_t started_ms;
+
+  /* Whether the user has confirmed the 6-digit code matches on both
+   * screens. Set by confirm_code(); used to gate SEND_CONFIRM. */
+  bool     user_confirmed;
+
+  /* One-shot flag: set when the initiator transitions to PAIRED after
+   * SEND_COMPLETE. The next tick() reads it, clears it, and returns
+   * NOTIFY_PAIRED so the integration layer gets a definitive success
+   * signal on the initiator side (the joiner gets it inline when
+   * COMPLETE decrypts). */
+  bool     pending_notify_paired;
+};
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * STATE-MACHINE API
+ *
+ * All entry points are pure: take ctx by reference, mutate state, and
+ * return at most one Action describing what the integration layer
+ * should do next. ActionType::NONE means "no I/O this call".
+ * ────────────────────────────────────────────────────────────────────────── */
+
+/* Initialise a context. State becomes IDLE. */
+void context_init(PairingContext& ctx);
+
+/* Begin pairing as the initiator (an existing opera member who has a
+ * valid opera_secret). Generates an ephemeral keypair and returns an
+ * Action with type=BROADCAST_DISCOVER. */
+Action start_initiator(PairingContext& ctx,
+                       const uint8_t  device_pub[mesh_crypto::PUBKEY_LEN],
+                       const uint8_t  device_priv[mesh_crypto::PRIVKEY_LEN],
+                       const uint8_t  opera_secret[mesh_crypto::OPERA_SECRET_LEN],
+                       const char*    opera_name,
+                       uint32_t       now_ms);
+
+/* Begin pairing as the joiner (a new device with no opera_secret yet).
+ * State becomes AWAITING_OFFER; no message goes out (the initiator's
+ * DISCOVER is the trigger). */
+Action start_joiner(PairingContext& ctx,
+                    const uint8_t  device_pub[mesh_crypto::PUBKEY_LEN],
+                    const uint8_t  device_priv[mesh_crypto::PRIVKEY_LEN],
+                    uint32_t       now_ms);
+
+/* Feed an incoming message into the state machine. msg_type identifies
+ * the PAIR_* phase (see message types below). Returns the next action;
+ * if the message is unexpected for the current state, returns NONE
+ * (silently dropped) — pairing isn't aborted on every stray frame
+ * because the same MAC may also be running heartbeat/etc traffic. */
+enum class MsgType : uint8_t {
+  DISCOVER = 0,
+  OFFER    = 1,
+  ACCEPT   = 2,
+  CONFIRM  = 3,
+  COMPLETE = 4,
+};
+
+Action receive(PairingContext& ctx,
+               const uint8_t  from_mac[6],
+               MsgType        msg_type,
+               const uint8_t* payload, size_t payload_len,
+               uint32_t       now_ms);
+
+/* Periodic tick from the main loop. now_ms is the current monotonic
+ * time. Returns NOTIFY_FAILED if the 5-minute timeout has elapsed
+ * since start_*, NONE otherwise. */
+Action tick(PairingContext& ctx, uint32_t now_ms);
+
+/* User-driven confirmation that the 6-digit code matches on both
+ * screens. Valid only in AWAITING_CONFIRM / AWAITING_CONFIRM_PEER.
+ * Returns SEND_CONFIRM. */
+Action confirm_code(PairingContext& ctx, uint32_t now_ms);
+
+/* Abort pairing from any state. Wipes the ephemeral key + session
+ * key + opera_secret. Returns NOTIFY_FAILED so the integration layer
+ * tears down UI. */
+Action cancel(PairingContext& ctx);
+
+/* Read out and zero the joiner's received opera_secret. Returns true
+ * if there was a secret to consume; the caller (integration layer)
+ * persists it to NVS (subject to its own flash-encryption gate per
+ * canary-wap audit O2). Idempotent — calling again returns false. */
+bool consume_opera_secret(PairingContext& ctx,
+                          uint8_t out[mesh_crypto::OPERA_SECRET_LEN]);
+
 }  /* namespace mesh_pairing */
 
 #endif  /* SECURACV_MESH_PAIRING_H */
