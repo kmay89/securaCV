@@ -13,9 +13,46 @@
 #include "esp_http_server.h"
 #include "bluetooth_channel.h"
 #include "ble_ota.h"
+#include "api_auth.h"
 #include <ArduinoJson.h>
 
 namespace bluetooth_api {
+
+// ════════════════════════════════════════════════════════════════════════════
+// AUTH GATE
+// ════════════════════════════════════════════════════════════════════════════
+//
+// Every /api/bluetooth/* endpoint in this module is post-setup-only — BLE
+// initialises after WiFi is up, so there's no captive-portal flow that
+// needs to hit these routes without an API token. The dashboard's
+// secureFetch already attaches `Authorization: Bearer <api_token>` on
+// every call, so wrapping handlers in api_auth_check is a plumbing-only
+// fix (mirrors #435/#436 for the wifi-mgmt + mesh families).
+//
+// Mechanism: register_routes() stashes the API token pointer in a
+// module-local static, then wraps every real handler in the bt_auth_gated
+// function template. The trampoline runs api_auth_check + delegates;
+// non-authenticated callers receive the standard 401 response that
+// api_auth_check writes back, and the real handler never runs.
+//
+// The template is instantiated once per real handler at compile time, so
+// the cost is one extra function-pointer indirection per request (the
+// trampoline) and zero extra heap state.
+inline const char*& auth_token_storage() {
+  static const char* token = nullptr;
+  return token;
+}
+
+template<esp_err_t (*Real)(httpd_req_t*)>
+static esp_err_t bt_auth_gated(httpd_req_t* req) {
+  const char* tok = auth_token_storage();
+  // tok == nullptr means register_routes was called without a token —
+  // historical signature. Keep the open behaviour in that case so a
+  // miswired caller doesn't lock itself out, but every in-tree caller
+  // now supplies a real token (see canary_wap.ino).
+  if (tok && !api_auth_check(req, tok)) return ESP_OK;
+  return Real(req);
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 // HELPER FUNCTIONS
@@ -587,37 +624,42 @@ static inline void register_api_handler(httpd_handle_t server, const char* uri,
   httpd_register_uri_handler(server, &route);
 }
 
-// Call this to register all Bluetooth API routes with the HTTP server
-inline void register_routes(httpd_handle_t server) {
+// Call this to register all Bluetooth API routes with the HTTP server.
+// api_token: pointer to the device's persistent api_token_str. Must outlive
+// the HTTP server (in practice: backed by g_device, lives for the process).
+// nullptr keeps the legacy open behaviour for backwards compatibility.
+inline void register_routes(httpd_handle_t server, const char* api_token = nullptr) {
+  auth_token_storage() = api_token;
+
   // GET endpoints
-  register_api_handler(server, "/api/bluetooth", HTTP_GET, handle_bluetooth_status);
-  register_api_handler(server, "/api/bluetooth/scan/results", HTTP_GET, handle_bluetooth_scan_results);
-  register_api_handler(server, "/api/bluetooth/paired", HTTP_GET, handle_bluetooth_paired_list);
-  register_api_handler(server, "/api/bluetooth/settings", HTTP_GET, handle_bluetooth_settings_get);
-  register_api_handler(server, "/api/bluetooth/ota", HTTP_GET, handle_bluetooth_ota_status);
+  register_api_handler(server, "/api/bluetooth", HTTP_GET, bt_auth_gated<handle_bluetooth_status>);
+  register_api_handler(server, "/api/bluetooth/scan/results", HTTP_GET, bt_auth_gated<handle_bluetooth_scan_results>);
+  register_api_handler(server, "/api/bluetooth/paired", HTTP_GET, bt_auth_gated<handle_bluetooth_paired_list>);
+  register_api_handler(server, "/api/bluetooth/settings", HTTP_GET, bt_auth_gated<handle_bluetooth_settings_get>);
+  register_api_handler(server, "/api/bluetooth/ota", HTTP_GET, bt_auth_gated<handle_bluetooth_ota_status>);
 
   // POST endpoints
-  register_api_handler(server, "/api/bluetooth/enable", HTTP_POST, handle_bluetooth_enable);
-  register_api_handler(server, "/api/bluetooth/disable", HTTP_POST, handle_bluetooth_disable);
-  register_api_handler(server, "/api/bluetooth/advertise/start", HTTP_POST, handle_bluetooth_advertise_start);
-  register_api_handler(server, "/api/bluetooth/advertise/stop", HTTP_POST, handle_bluetooth_advertise_stop);
-  register_api_handler(server, "/api/bluetooth/scan/start", HTTP_POST, handle_bluetooth_scan_start);
-  register_api_handler(server, "/api/bluetooth/scan/stop", HTTP_POST, handle_bluetooth_scan_stop);
-  register_api_handler(server, "/api/bluetooth/pair/start", HTTP_POST, handle_bluetooth_pair_start);
-  register_api_handler(server, "/api/bluetooth/pair/cancel", HTTP_POST, handle_bluetooth_pair_cancel);
-  register_api_handler(server, "/api/bluetooth/pair/confirm", HTTP_POST, handle_bluetooth_pair_confirm);
-  register_api_handler(server, "/api/bluetooth/pair/reject", HTTP_POST, handle_bluetooth_pair_reject);
-  register_api_handler(server, "/api/bluetooth/disconnect", HTTP_POST, handle_bluetooth_disconnect);
-  register_api_handler(server, "/api/bluetooth/settings", HTTP_POST, handle_bluetooth_settings_set);
-  register_api_handler(server, "/api/bluetooth/name", HTTP_POST, handle_bluetooth_name_set);
-  register_api_handler(server, "/api/bluetooth/power", HTTP_POST, handle_bluetooth_power_set);
-  register_api_handler(server, "/api/bluetooth/paired/trust", HTTP_POST, handle_bluetooth_paired_trust);
-  register_api_handler(server, "/api/bluetooth/paired/block", HTTP_POST, handle_bluetooth_paired_block);
+  register_api_handler(server, "/api/bluetooth/enable", HTTP_POST, bt_auth_gated<handle_bluetooth_enable>);
+  register_api_handler(server, "/api/bluetooth/disable", HTTP_POST, bt_auth_gated<handle_bluetooth_disable>);
+  register_api_handler(server, "/api/bluetooth/advertise/start", HTTP_POST, bt_auth_gated<handle_bluetooth_advertise_start>);
+  register_api_handler(server, "/api/bluetooth/advertise/stop", HTTP_POST, bt_auth_gated<handle_bluetooth_advertise_stop>);
+  register_api_handler(server, "/api/bluetooth/scan/start", HTTP_POST, bt_auth_gated<handle_bluetooth_scan_start>);
+  register_api_handler(server, "/api/bluetooth/scan/stop", HTTP_POST, bt_auth_gated<handle_bluetooth_scan_stop>);
+  register_api_handler(server, "/api/bluetooth/pair/start", HTTP_POST, bt_auth_gated<handle_bluetooth_pair_start>);
+  register_api_handler(server, "/api/bluetooth/pair/cancel", HTTP_POST, bt_auth_gated<handle_bluetooth_pair_cancel>);
+  register_api_handler(server, "/api/bluetooth/pair/confirm", HTTP_POST, bt_auth_gated<handle_bluetooth_pair_confirm>);
+  register_api_handler(server, "/api/bluetooth/pair/reject", HTTP_POST, bt_auth_gated<handle_bluetooth_pair_reject>);
+  register_api_handler(server, "/api/bluetooth/disconnect", HTTP_POST, bt_auth_gated<handle_bluetooth_disconnect>);
+  register_api_handler(server, "/api/bluetooth/settings", HTTP_POST, bt_auth_gated<handle_bluetooth_settings_set>);
+  register_api_handler(server, "/api/bluetooth/name", HTTP_POST, bt_auth_gated<handle_bluetooth_name_set>);
+  register_api_handler(server, "/api/bluetooth/power", HTTP_POST, bt_auth_gated<handle_bluetooth_power_set>);
+  register_api_handler(server, "/api/bluetooth/paired/trust", HTTP_POST, bt_auth_gated<handle_bluetooth_paired_trust>);
+  register_api_handler(server, "/api/bluetooth/paired/block", HTTP_POST, bt_auth_gated<handle_bluetooth_paired_block>);
 
   // DELETE endpoints
-  register_api_handler(server, "/api/bluetooth/scan/results", HTTP_DELETE, handle_bluetooth_scan_clear);
-  register_api_handler(server, "/api/bluetooth/paired", HTTP_DELETE, handle_bluetooth_paired_remove);
-  register_api_handler(server, "/api/bluetooth/paired/all", HTTP_DELETE, handle_bluetooth_paired_clear);
+  register_api_handler(server, "/api/bluetooth/scan/results", HTTP_DELETE, bt_auth_gated<handle_bluetooth_scan_clear>);
+  register_api_handler(server, "/api/bluetooth/paired", HTTP_DELETE, bt_auth_gated<handle_bluetooth_paired_remove>);
+  register_api_handler(server, "/api/bluetooth/paired/all", HTTP_DELETE, bt_auth_gated<handle_bluetooth_paired_clear>);
 }
 
 } // namespace bluetooth_api
