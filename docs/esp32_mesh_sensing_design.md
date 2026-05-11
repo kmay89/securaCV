@@ -30,11 +30,13 @@ Reuses existing implementation at [`firmware/projects/canary-wap/arduino/canary_
 
 ### The reliability lever: deterministic CSI via active probe
 
-Today CSI capture quality is governed by whatever beacons + STA traffic happen to fly by. The new design makes every paired Sensor send a 50 Hz unicast ESP-NOW frame to every paired peer. Each frame triggers a CSI callback on the receiver with a **known sender** on a **pinned channel**, so the 1 Hz feature window (20+ frames target) becomes deterministic instead of best-effort. This alone is the single biggest accuracy and stability improvement available on this hardware.
+Today CSI capture quality is governed by whatever beacons + STA traffic happen to fly by. The new design makes every paired Sensor send ESP-NOW unicasts to every paired peer at a peer-count-aware effective rate. The fixed knob is an **aggregate cap** (default 200 Hz total Tx, comfortably under the 2 % airtime governor introduced in #442); the per-peer rate is `min(20 Hz, aggregate_cap / max(1, peer_count))`. With 1 peer that's 20 Hz; with 8 peers it's 25 Hz capped to 20 = 20 Hz per peer for 160 Hz aggregate. 20 Hz matches the existing CSI HAL rate-limiter ceiling so we never waste airtime on frames the receiver will drop. Each frame triggers a CSI callback on the receiver with a **known sender** on a **pinned channel**, so the 1 Hz feature window (20 frames target) becomes deterministic instead of best-effort. This alone is the single biggest accuracy and stability improvement available on this hardware.
+
+Routine probe traffic is gated by `airtime_governor::try_reserve_routine()` (introduced in #442); urgent traffic (alerts) bypasses the cap via `force_reserve_urgent()`. The probe is routine.
 
 ### Channel pinning
 
-At pairing, Hub scans 2.4 GHz channels 1/6/11, picks the cleanest, and broadcasts a `MSG_CHANNEL_LOCK` to peers. All nodes WiFi-STA to the Hub's WiFi (so beacons reinforce the lock) and ESP-NOW probes go on that same channel. HT20 only — HT40 in 2.4 is too crowded and the second 20 MHz adds nothing over a typical home. If channel utilization climbs >50 % for 60 s, Hub proposes a coordinated hop.
+At pairing, Hub scans 2.4 GHz channels 1/6/11, picks the cleanest, and broadcasts a `MSG_CHANNEL_LOCK` to peers. All nodes WiFi-STA to the Hub's WiFi (so beacons reinforce the lock — see #442's STA-following channel policy) and ESP-NOW probes go on that same channel. HT20 only — HT40 in 2.4 is too crowded and the second 20 MHz adds nothing over a typical home. Channel utilization is measured via Clear Channel Assessment (CCA) busy time exposed by `esp_wifi_sta_get_ap_info()` + the airtime governor's own counters; if CCA busy >50 % for 60 s, Hub proposes a coordinated hop. The hop itself is a state-mutating operation guarded by the same RTC mutex the channel-policy module already uses (#442), so an interrupt mid-hop cannot leave peers split across channels.
 
 ### Multi-link fusion
 
@@ -85,13 +87,13 @@ Every one of these is a real failure we will see, not a hypothetical:
 
 | Failure | Detection | Recovery |
 |---|---|---|
-| 0 CSI frames for 5 s | New CSI-watchdog timer in `csi_hal` | `esp_wifi_stop()` / `esp_wifi_start()`, log to health chain |
-| AP roam / channel change | Beacon channel != pinned channel | Pause probes; rejoin on new channel; rebaseline |
+| 0 CSI frames for 5 s **(Sensor + Hub roles only — Scout has no CSI)** | New CSI-watchdog timer in `csi_hal` | Gentle: toggle `esp_wifi_set_csi(false/true)`. Escalation (full `esp_wifi_stop`/`start`) is the integration layer's call via the watchdog callback, guarded by the same single-flight mutex as `mesh_channel_policy` so concurrent recovery + channel hop cannot race. |
+| AP roam / channel change | Beacon channel != pinned channel (uses #442's STA-following policy) | Pause probes; rejoin on new channel; rebaseline |
 | DFS event (5 GHz neighbor, edge case) | RSSI cliff + frame drop spike | Same as channel-change |
 | Peer churn (node power-cycled) | Heartbeat absent >30 s | Mark peer SUSPECT; expire at 5 min; fall back to single-link |
-| Hub disappears | No `MSG_HEARTBEAT` from Hub for 60 s | Sensors continue logging locally to SD; promote a deterministic backup-Hub by lowest device_id when >=2 sensors agree |
+| Hub disappears | No `MSG_HEARTBEAT` from Hub for 60 s | Sensors continue logging locally to SD; promote a deterministic backup-Hub by lowest `device_id` among reachable peers (works in the 2-node case too — the surviving sensor with the lower id becomes Hub). |
 | Multipath shimmer | RSSI swing >8 dB without spectrum-shaped Doppler | Reject as "non-human"; do not advance presence state |
-| Mesh storm (broadcast loop) | Send-callback rate >100/s | Rate-limit + log; pause for 30 s |
+| Mesh storm (broadcast loop) | `esp_now_send` callback rate exceeds `peer_count × probe_hz × 1.5` (i.e. 50 % over expected) | Rate-limit + log; pause for 30 s |
 
 Hub failover is the only intentionally new state machine; the rest extend existing recovery paths.
 
@@ -113,7 +115,7 @@ Hub failover is the only intentionally new state machine; the rest extend existi
 - `firmware/canary/sdkconfig.defaults` — leave `CONFIG_BT_ENABLED=n` as-is; the BLE Scout build sets the override in its own env in `platformio.ini` only.
 - `firmware/canary/CONSOLIDATION.md` — expand Phase 4 to spell out the probe + fusion deliverables (currently only says "fill in stub bodies").
 - `firmware/FEATURES.md` — add rows for "Active probe", "Multi-link fusion", "BLE beacon scout", with status flips per phase.
-- `firmware/common/csi/src/csi_event_invariants_test.cpp` — extend with the three new privacy assertions.
+- `firmware/common/csi/csi_event_invariants_test.cpp` — extend with the three new privacy assertions. (File lives at the package root, not under `src/`.)
 
 ### Reused (no changes)
 - `firmware/common/csi/src/csi_features.{h,cpp}` — 32-byte int8 vector is already the right interchange format for fusion.
@@ -135,7 +137,19 @@ End-to-end testing (in order):
 7. **Channel hop** — saturate the pinned channel with a separate AP transmitter. Hub proposes hop; all peers follow; CSI resumes <30 s.
 8. **Hub failover** — power-cycle Hub. Two Sensors agree on backup-Hub election within 60 s; logs continue locally.
 9. **BLE Scout (only with `[env:full]` build)** — pair a phone as a known beacon, walk between two Scout rooms. Room-attribution event within 5 s of stable-RSSI threshold.
-10. **Privacy conformance** — `g++ -DCSI_TEST_HOST_BUILD csi_event_invariants_test.cpp` passes including the three new assertions: (a) no peer MAC in any persisted CSI feature payload, (b) Scout beacon MAC is hashed before any event emission, (c) per-link RSSI is bucketed int8 before mesh broadcast.
+10. **Privacy conformance** — runnable from the repo root:
+    ```bash
+    g++ -std=c++17 -DCSI_TEST_HOST_BUILD \
+        firmware/common/csi/csi_event_invariants_test.cpp \
+        firmware/common/csi/src/csi_event.cpp \
+        firmware/common/csi/src/csi_module.cpp \
+        firmware/common/csi/src/csi_bundler.cpp \
+        firmware/common/csi/src/csi_witness_payload.cpp \
+        firmware/common/csi/src/ble_events_module.cpp \
+        firmware/common/csi/src/meta_quiet_hours.cpp \
+        -I firmware/common/csi/src -o /tmp/csi_invariants && /tmp/csi_invariants
+    ```
+    Passes including the three new assertions: (a) no peer MAC in any persisted CSI feature payload, (b) Scout beacon MAC is hashed before any event emission, (c) per-link RSSI is bucketed int8 before mesh broadcast.
 
 A successful v1 is: tests 1–8 reliable across three separate room geometries, and `regression_check.sh` stays green.
 
