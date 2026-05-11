@@ -80,6 +80,49 @@ bool     get_stats(csi_stats_t* out);
  * into the CSI data path. */
 bool conformance_check_no_mac_in_buffers();
 
+/* ────────────────────────────────────────────────────────────────────────
+ * CHANNEL LOCK
+ *
+ * Pins the WiFi channel so ESP-NOW probes (csi_probe) and CSI rx land on
+ * the same primary channel. Set channel=0 to clear the lock.
+ *
+ * The lock is advisory: setting it records the expected channel and, if
+ * WiFi is currently up, calls esp_wifi_set_channel() with the request.
+ * In WIFI_MODE_STA with an active association this may be overridden by
+ * the AP — the observed channel is recorded from each CSI frame's
+ * rx_ctrl.channel and is_channel_in_sync() reports the truth. The Hub
+ * coordination in PR 4 acts on the in-sync signal.
+ * ──────────────────────────────────────────────────────────────────────── */
+
+bool    set_channel_lock(uint8_t channel);   /* 0 clears, 1-14 sets */
+uint8_t get_channel_lock();                  /* 0 = no lock */
+uint8_t get_observed_channel();              /* last channel seen in rx_ctrl */
+bool    is_channel_in_sync();                /* true if no lock or observed==lock */
+
+/* ────────────────────────────────────────────────────────────────────────
+ * WATCHDOG
+ *
+ * Detects CSI silence — no frames received for `timeout_ms`. When silent,
+ * fires the optional callback (for the integration layer to log to the
+ * health chain) and toggles the CSI rx callback off/on as a gentle
+ * recovery attempt. Subsequent recovery attempts are throttled to once
+ * per WATCHDOG_RECOVERY_MIN_MS (10 s).
+ *
+ * Set timeout_ms = 0 to disable. The check runs inside process() so the
+ * watchdog only fires while the main loop is alive (a hung main loop is
+ * caught by the system watchdog, which is a separate concern).
+ * ──────────────────────────────────────────────────────────────────────── */
+
+using WatchdogCallback = void (*)(uint32_t silent_ms, uint32_t attempt);
+
+constexpr uint32_t WATCHDOG_DEFAULT_TIMEOUT_MS = 5000;
+constexpr uint32_t WATCHDOG_RECOVERY_MIN_MS    = 10000;
+
+void     set_watchdog(uint32_t timeout_ms, WatchdogCallback cb);
+uint32_t get_watchdog_timeout_ms();
+uint32_t get_ms_since_last_frame();      /* UINT32_MAX if never received */
+uint32_t get_watchdog_recovery_count();  /* cumulative since init */
+
 }  /* namespace csi_hal */
 
 #endif  /* SECURACV_CSI_HAL_H */
