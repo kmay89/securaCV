@@ -1,0 +1,19 @@
+{
+    "name": "securacv_mesh",
+    "version": "0.1.0",
+    "description": "SecuraCV mesh transport — ESP-NOW peer-to-peer transport for the Opera mesh. PR 2a slice: raw transport + peer table only (no crypto, no pairing). Crypto + pairing land in subsequent slices.",
+    "keywords": ["securacv", "esp-now", "mesh", "transport"],
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/kmay89/securaCV.git"
+    },
+    "authors": [
+        {
+            "name": "Karl May",
+            "email": "karl@errerlabs.com"
+        }
+    ],
+    "license": "Apache-2.0",
+    "frameworks": "arduino",
+    "platforms": "espressif32"
+}
