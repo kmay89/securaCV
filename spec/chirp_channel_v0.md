@@ -1,8 +1,38 @@
-# Chirp Channel Protocol v0 (Community Witness Network)
+# Chirp Channel Protocol v0.2 (Community Witness Network)
 
-Status: Draft v0.1
+Status: Draft v0.2
 Intended Status: Normative
-Last Updated: 2026-02-02
+Last Updated: 2026-05-11
+
+> **v0.2 hardening summary** (see `docs/audit/mesh_and_chirp_audit_v1.md` for the
+> full findings list and `docs/research/harm_reduction_prior_art.md` for the
+> design anchors):
+>
+> - Wire format now carries `session_pubkey` (32 B) on every witness frame.
+>   Receivers verify Ed25519 signatures end-to-end and reject any frame whose
+>   `session_id` does not derive from the carried pubkey (closes audit C1, C6).
+> - `confirm_count` is no longer transmitted; receivers track confirmations
+>   locally as a set of unique confirmer `session_pubkey`s (closes audit C2, C5).
+> - Initial `confirm_count = 0`. EMERGENCY/WEATHER fast-path requires the one
+>   confirmation to come from a `session_pubkey` distinct from the
+>   originator's (closes audit C3).
+> - Relayers re-sign frames under their own session key; the original signature
+>   is preserved in a `signed_origin` envelope (closes audit C4).
+> - Suppress voting is now wire-format-real (`CHIRP_MSG_SUPPRESS_VOTE`), signed,
+>   and counts unique pubkey dismissals (closes audit C7).
+> - `TPL_AUTH_FEDERAL_PRESENCE` is removed. Such alerts must originate through
+>   the new higher-trust Beacon channel (`spec/beacon_channel_v0.md`) which
+>   requires two-pubkey co-signing.
+> - Timestamps anchored on wall clock (`time(nullptr)`); origination refused
+>   when `time(nullptr) < 1700000000` (closes audit C10, C15).
+> - Storage upgraded to a priority heap by urgency; nonce dedup upgraded to
+>   Bloom filter (closes audit C8, C9).
+> - Presence requirement now also gates ACK origination (closes audit C13).
+> - Per-pubkey rate limit on incoming witnesses (closes audit C14).
+> - `PROTOCOL_VERSION` bumped from 0 to 1.
+> - Companion spec: `spec/beacon_channel_v0.md` introduces the harm-reduction
+>   layer (life-safety templates, NFPA-72 supervised health, CAP-aligned wire
+>   fields, two-pubkey cryptographic co-signing).
 
 ## 1. Purpose and Philosophy
 
@@ -147,7 +177,7 @@ Assume attackers who want to:
 | | `AUTH_HEAVY_RESPONSE` | "heavy law enforcement response" |
 | | `AUTH_ROAD_BLOCKED_LE` | "road blocked by law enforcement" |
 | | `AUTH_HELICOPTER` | "helicopter circling area" |
-| | `AUTH_FEDERAL_PRESENCE` | "federal agents in area" |
+| | ~~`AUTH_FEDERAL_PRESENCE`~~ | **Removed in v0.2** — life-safety advisories about federal/agency presence are weaponizable as hoaxes in a low-trust soft-alert channel. If a deployment genuinely needs this signal, it must originate through the higher-trust Beacon channel (`spec/beacon_channel_v0.md`) which requires two-pubkey cryptographic co-signing. |
 | **Infrastructure** | | |
 | | `INFRA_POWER_OUT` | "power outage" |
 | | `INFRA_WATER_ISSUE` | "water service disruption" |
@@ -197,34 +227,53 @@ If the answer to #1 is "yes" or #2 is "individual" or #3 is "paranoid" - **don't
 - `EMERG_*`: Optional "[ongoing]" or "[contained]" status
 - NO descriptions of people. Ever.
 
-### 2.5.3 Defense: Witness Requirement (Sybil Resistance)
+### 2.5.3 Defense: Witness Requirement (Sybil Resistance) — v0.2
 
 **Key Insight**: A single device should not be able to broadcast to the neighborhood alone.
 
-**Rule**: Chirps only propagate beyond hop 0 after **2 independent confirmations**.
+**Rule**: Chirps only propagate beyond hop 0 after **2 independent confirmations from distinct `session_pubkey`s**.
 
 ```
 Device A sends chirp (hop 0) ──broadcast──→
-  Device B sees same thing, confirms ──→ (1 confirmation)
-  Device C sees same thing, confirms ──→ (2 confirmations)
+  Device B sees same thing, confirms ──→ (1 confirmation, pubkey_B added to confirmed_by)
+  Device C sees same thing, confirms ──→ (2 confirmations, pubkey_C added to confirmed_by)
   NOW the chirp propagates to hop 1+ ──relay──→
 ```
 
 **Confirmation Flow**:
-1. Original chirp broadcasts locally (hop 0, ~250m range)
-2. Nearby devices see it in their "pending" feed
-3. If a human on device B also witnesses the event, they tap "I see this too"
-4. After 2 confirmations, the chirp becomes "validated" and relays propagate it
-5. Unvalidated chirps expire after 5 minutes
+1. Original chirp broadcasts locally (hop 0, ~250m range). Originator does NOT
+   count itself; initial `confirm_count = 0`.
+2. Nearby devices see it in their "pending" feed.
+3. If a human on device B also witnesses the event, they tap "I see this too".
+4. Device B emits a `CHIRP_MSG_ACK` carrying B's `session_pubkey` and an Ed25519
+   signature over `(original_nonce, B.session_pubkey, ACK_CONFIRMED)`.
+5. Every receiver verifies the ACK's signature, verifies `B.session_pubkey` is
+   not the originator's pubkey, verifies `B.session_pubkey` is not already in
+   the local `confirmed_by[]` set for this chirp, and only then increments.
+6. After threshold confirmations (2 for most templates, 1 for safety templates
+   from a pubkey ≠ originator), the chirp becomes "validated" and relays
+   propagate it.
+7. Unvalidated chirps expire after 5 minutes.
 
 **Why This Works**:
-- Single bad actor can only reach ~250m (hop 0)
-- Coordinated attack needs 3+ devices in same area, all lying
-- False alarms get filtered by community validation
-- Real events naturally get confirmed by multiple witnesses
-- "Witness the witness" - collective truth
+- The `confirm_count` is no longer carried on the wire as a sender-controlled
+  field. It is local state, derived only from cryptographically authenticated
+  ACK messages with unique pubkeys.
+- Single bad actor cannot inflate the count by claiming N witnesses — every
+  claim requires a fresh signed ACK from a fresh pubkey.
+- Coordinated attack needs 3+ devices in same area, each holding a distinct
+  session_pubkey and each willing to sign an ACK. Cost is real.
+- Real events naturally get confirmed by multiple witnesses.
 
-**Exception**: `SAF_*` (safety) templates require only 1 confirmation for faster propagation, but get automatic escalating cooldown (see below).
+**Exception**: Safety-class templates (EMERGENCY, WEATHER) require only 1
+confirmation for faster propagation, but that one confirmation MUST come from
+a `session_pubkey` distinct from the originator's, and the originator does not
+count itself.
+
+**Presence requirement also applies to ACK origination**: a device must have
+been broadcasting presence beacons for `PRESENCE_REQUIRED_MS` (10 min) before
+its ACKs are accepted as confirmations. Drive-by devices cannot immediately
+push chirps over the validation threshold.
 
 ### 2.5.4 Defense: Escalating Cooldowns
 
@@ -265,26 +314,46 @@ Device leaves and returns:
 - Attacker would need to "camp" for 10 min before each attack
 - Presence beacons are passive (don't require human)
 
-### 2.5.6 Defense: Community Mute Propagation
+### 2.5.6 Defense: Community Mute Propagation — v0.2
 
-If multiple devices quickly mute/dismiss a chirp, propagate a "suppress" signal:
+If multiple devices quickly dismiss a chirp, a signed "suppress vote" propagates.
+
+**Wire format** (`CHIRP_MSG_SUPPRESS_VOTE`):
 
 ```
-Chirp arrives at 10 devices:
-  - 7 devices dismiss within 60 seconds
-  - Automatic "suppress vote" propagates
-  - Other devices auto-dismiss this chirp
-  - Chirp's confirmation count goes negative
-  - Chirp stops propagating
+chirp_suppress_vote = {
+  msg_type: 4,
+  original_nonce: bstr .size 8,           ; nonce of chirp being suppressed
+  voter_session_pubkey: bstr .size 32,
+  signature: bstr .size 64,               ; Ed25519 over canonical
+}
 ```
 
-**Threshold**: If >50% of recipients dismiss within 2 minutes, suppress propagates.
+The canonical signed input is `"securacv:chirp:suppress:v0" || original_nonce
+|| voter_session_pubkey`.
+
+**Counting rule**: every receiver maintains a `suppressed_by[]` set per chirp,
+keyed by `voter_session_pubkey`. Duplicate votes from the same pubkey count
+once. The receiver tracks `nearby_count = |g_nearby_devices|`.
+
+**Threshold**: a chirp becomes `suppressed = true` when
+`|suppressed_by| / nearby_count > 50%` and `|suppressed_by| >= 3` (small
+absolute floor to prevent suppression in very-small networks), within
+`SUPPRESS_WINDOW_MS` (default 120 s) of the chirp's `received_ms`.
+
+**Behavior when suppressed**:
+- The chirp is hidden from the receiver's UI.
+- The receiver no longer relays the chirp.
+- The receiver does not echo further suppress votes (they're not needed).
+- The suppression itself is logged to the health log but does not generate
+  further wire traffic.
 
 **Why This Works**:
-- Community self-moderates without central authority
-- Bad content gets filtered organically
-- Privacy preserved (no identity in suppress vote)
-- Legitimate content won't get mass-dismissed
+- Community self-moderates without central authority.
+- Bad content gets filtered organically.
+- Privacy preserved (only `session_pubkey` in suppress vote, not a stable
+  device identifier).
+- Legitimate content won't get mass-dismissed (50% threshold + 3-vote floor).
 
 ### 2.5.7 Defense: Time-Based Restrictions
 
@@ -325,19 +394,28 @@ Layer 6: Time restrictions (reduced night attacks)
 
 ## 3. Message Types
 
-### 3.1 Common Header
+### 3.1 Common Header — v0.2
 
 ```cddl
 chirp_message = {
-  version: 0,
+  magic: 0xC4,
+  version: 1,                         ; v0.2 wire format
   msg_type: uint,
-  session_id: bstr .size 8,       ; Ephemeral session ID
-  hop_count: uint,                 ; 0 = original, max 3
-  timestamp: uint,                 ; Unix timestamp (seconds)
-  nonce: bstr .size 8,            ; Random nonce for dedup
-  ? signature: bstr .size 64      ; Ed25519 sig (session key)
+  session_id: bstr .size 8,           ; SHA-256("securacv:chirp:session:v0" || session_pubkey)[0:8]
+  hop_count: uint,                    ; 0 = original, max 3
+  timestamp: uint,                    ; UNIX wall-clock seconds (NOT millis()/1000); originators MUST refuse to send if time(nullptr) < 1700000000
+  nonce: bstr .size 8                 ; Random nonce for dedup
 }
 ```
+
+The signature field is no longer carried on the header — each message type
+carries its own signature, scoped to the message-type-specific signed input
+(see §3.3). Receivers MUST verify every witness, ACK, suppress vote, and mute
+broadcast cryptographically; unsigned or invalid-signature frames are dropped.
+
+The originating `session_pubkey` (32 bytes) is carried in each signed message
+payload. Receivers MUST recompute `session_id` from the carried `session_pubkey`
+and drop the frame if it does not match.
 
 ### 3.2 CHIRP_PRESENCE (Discovery)
 
@@ -356,22 +434,50 @@ chirp_presence = {
 - No sensitive information shared
 - Allows UI to show "X devices nearby"
 
-### 3.3 CHIRP_WITNESS (Soft Alert)
+### 3.3 CHIRP_WITNESS (Soft Alert) — v0.2
 
-The core community alert message - **human-triggered only**:
+The core community alert message — **human-triggered only**, **template-only**,
+**signed end-to-end**:
 
 ```cddl
 chirp_witness = {
   msg_type: 1,
-  category: chirp_category,
+  template_id: uint,                  ; ChirpTemplate enum (no free text)
+  detail_slot: uint,                  ; ChirpDetailSlot enum (constrained)
   urgency: "info" / "caution" / "urgent",
-  message: tstr .size (0..64),    ; Optional brief text
-  confirm_count: uint,            ; How many humans confirmed (for relays)
-  ttl_minutes: uint               ; How long to display (5-60)
+  ttl_minutes: uint,                  ; How long to display (5-60)
+  session_pubkey: bstr .size 32,      ; Originator's session pubkey (32 B)
+  signature: bstr .size 64,           ; Ed25519 over canonical
+  ? signed_origin: signed_origin_envelope   ; Present only on relays (hop_count > 0)
 }
 
-chirp_category = "activity" / "utility" / "safety" / "community" / "all_clear"
+signed_origin_envelope = {
+  origin_pubkey: bstr .size 32,
+  origin_signature: bstr .size 64,
+}
 ```
+
+Canonical signed input (originator):
+```
+canonical = "securacv:chirp:witness:v0"
+         || nonce(8) || template_id(1) || detail_slot(1)
+         || urgency(1) || ttl_minutes(1) || timestamp(4)
+         || session_pubkey(32)
+```
+
+The `confirm_count` field from v0.1 is **removed from the wire**. Confirmation
+state is local-only and derived from `CHIRP_MSG_ACK` messages with unique
+`session_pubkey`s.
+
+Category is no longer transmitted explicitly — it is derived from
+`template_id >> 4` (high nibble of template ID indexes the category enum).
+
+On relay (hop_count > 0):
+- The relaying device sets `signed_origin = { origin_pubkey, origin_signature }`
+  preserving the original signer's identity.
+- The relaying device re-signs the canonical under its own session key, placing
+  its `session_pubkey` and `signature` in the top-level fields.
+- Receivers verify both signatures and that `origin_pubkey != session_pubkey`.
 
 **Categories**:
 - `activity`: Unusual activity observed (not accusation, just awareness)
@@ -385,21 +491,44 @@ chirp_category = "activity" / "utility" / "safety" / "community" / "all_clear"
 - `caution`: Heads up, be aware (yellow indicator)
 - `urgent`: Important, pay attention (orange indicator - NOT red/panic)
 
-### 3.4 CHIRP_ACKNOWLEDGE
+### 3.4 CHIRP_ACKNOWLEDGE — v0.2
 
-Optional acknowledgment that chirp was seen (not required):
+Acknowledgment that chirp was seen and (optionally) human-witnessed. Signed.
 
 ```cddl
 chirp_ack = {
   msg_type: 2,
-  original_nonce: bstr .size 8,   ; Nonce of chirp being ack'd
-  ack_type: "seen" / "confirmed" / "resolved"
+  original_nonce: bstr .size 8,         ; Nonce of chirp being ack'd
+  ack_type: "seen" / "confirmed" / "resolved",
+  confirmer_session_pubkey: bstr .size 32,
+  signature: bstr .size 64,             ; Ed25519 over canonical
 }
 ```
 
-- `seen`: Device received the chirp
-- `confirmed`: Human confirmed they also witness this
-- `resolved`: Situation is resolved (prompts ALL_CLEAR consideration)
+Canonical signed input:
+```
+canonical = "securacv:chirp:ack:v0"
+         || original_nonce(8) || ack_type(1) || confirmer_session_pubkey(32)
+```
+
+Receivers MUST:
+1. Verify the signature.
+2. Reject if `confirmer_session_pubkey` equals the original chirp's
+   `session_pubkey` (the originator cannot self-confirm).
+3. Reject if `confirmer_session_pubkey` is already in the local `confirmed_by[]`
+   set for this `original_nonce`.
+4. Reject if the confirmer's pubkey has not been seen in `g_nearby_devices` for
+   at least `PRESENCE_REQUIRED_MS` (drive-by ACKs do not count).
+5. Otherwise, add the pubkey to `confirmed_by[]`. If the chirp's confirmation
+   threshold is now met, mark `validated = true` and (if `relay_enabled`)
+   relay the chirp.
+
+- `seen`: device received the chirp; used for diagnostic counts only, does not
+  count as a witness confirmation.
+- `confirmed`: human confirmed they also witness this; counts as a witness
+  confirmation if it passes all checks above.
+- `resolved`: user signals the situation is resolved; treated as a local
+  dismissal and may contribute to suppress voting.
 
 ### 3.5 CHIRP_MUTE (Leave Me Alone)
 
@@ -811,6 +940,15 @@ Opera devices MUST NOT:
 
 ## 15. Changelog
 
+- v0.2 (2026-05-11): Hardening per `docs/audit/mesh_and_chirp_audit_v1.md` —
+  end-to-end signature verification (C1, C4, C6); Sybil-resistant confirmation
+  via unique-pubkey set tracking and wire-format removal of `confirm_count`
+  (C2, C3, C5); signed suppress voting wired (C7); priority storage by
+  urgency (C8); Bloom-filter dedup (C9); wall-clock-anchored timestamps with
+  conservative behavior when unsynced (C10, C15); 5-emoji session display
+  (C11); REST API Bearer-gated (C12); presence requirement on ACK origination
+  (C13); per-pubkey rate limit on incoming witnesses (C14); `TPL_AUTH_FEDERAL_PRESENCE`
+  removed (C17); host tests added (C16). `PROTOCOL_VERSION` bumped from 0 to 1.
 - v0.1 (2026-02-02): Initial draft
 
 ---

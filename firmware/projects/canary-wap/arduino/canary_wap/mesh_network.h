@@ -482,8 +482,13 @@ void get_message_stats(uint32_t* sent, uint32_t* received, uint32_t* errors);
 
 namespace chirp_channel {
 
-// Protocol constants
-static const uint8_t PROTOCOL_VERSION = 0;
+// Protocol constants.
+// v0.2 (PROTOCOL_VERSION = 1) is the security-hardened wire format introduced
+// alongside the audit findings in docs/audit/mesh_and_chirp_audit_v1.md.
+// v0.1 frames (version byte = 0) are rejected by v0.2 receivers; the change
+// is intentional and not backwards-compatible because v0.1 carried a
+// decorative-only signature field that was never verified (audit C1).
+static const uint8_t PROTOCOL_VERSION = 1;
 static const uint8_t CHIRP_MAGIC = 0xC4;           // Message identifier
 // CHIRP_CHANNEL: previously pinned to 6 to keep chirp off Opera's channel 1.
 // With the shared single-radio reality (see mesh_channel_policy.h) chirp now
@@ -491,12 +496,17 @@ static const uint8_t CHIRP_MAGIC = 0xC4;           // Message identifier
 // channel = 0 so it follows the current radio channel. The constant is kept
 // at its historical value purely as the host-build fallback for tests.
 static const uint8_t CHIRP_CHANNEL = 0;            // 0 = follow current radio channel
-static const size_t MAX_MESSAGE_LEN = 64;          // Max chirp message length
-static const size_t MAX_RECENT_CHIRPS = 16;        // Stored chirps
-static const size_t MAX_NONCE_CACHE = 100;         // Deduplication cache
+static const size_t MAX_MESSAGE_LEN = 64;          // Max chirp message length (legacy field; v0.2 uses structured fields)
+static const size_t MAX_RECENT_CHIRPS = 16;        // Stored chirps (priority heap by urgency)
+static const size_t MAX_NONCE_CACHE = 1024;        // Deduplication cache (v0.2: 10x v0.1 to defeat flood)
 static const size_t MAX_NEARBY_CACHE = 32;         // Nearby device cache
 static const size_t SESSION_ID_SIZE = 8;           // Ephemeral session ID
-static const size_t EMOJI_DISPLAY_SIZE = 19;       // 3 emojis (up to 6 bytes each) + null
+static const size_t SESSION_PUBKEY_SIZE = 32;      // Ed25519 session pubkey carried in v0.2 frames
+static const size_t EMOJI_DISPLAY_SIZE = 31;       // 5 emojis (up to 6 bytes each) + null (v0.2: lifted from 3)
+static const size_t MAX_CONFIRMERS_PER_CHIRP = 8;  // Unique pubkey set tracked per pending chirp (v0.2 Sybil resistance)
+static const uint32_t MIN_UNIX_TIME = 1700000000;  // Threshold below which time(nullptr) is treated as unsynced (v0.2)
+static const uint8_t MAX_WITNESSES_PER_PUBKEY_PER_HOUR = 4;  // v0.2 per-pubkey receive-side rate limit (C14)
+static const size_t MAX_PUBKEY_RATE_TRACK = 32;    // LRU of recent originating pubkeys for rate-limit tracking
 
 // Timing (milliseconds)
 static const uint32_t PRESENCE_INTERVAL_MS = 60000;    // Send presence every 60s
@@ -544,8 +554,10 @@ enum ChirpState : uint8_t {
 enum ChirpMsgType : uint8_t {
   CHIRP_MSG_PRESENCE = 0,  // Discovery beacon
   CHIRP_MSG_WITNESS,       // Soft alert (main message type)
-  CHIRP_MSG_ACK,           // Optional acknowledgment
-  CHIRP_MSG_MUTE           // Temporary opt-out broadcast
+  CHIRP_MSG_ACK,           // Acknowledgment (signed in v0.2)
+  CHIRP_MSG_MUTE,          // Temporary opt-out broadcast
+  CHIRP_MSG_SUPPRESS_VOTE, // v0.2: signed community suppress vote (C7)
+  CHIRP_MSG_SELFTEST_OK    // v0.2: NFPA-72-style daily health beacon (trouble surface)
 };
 
 // Chirp categories (what's happening) — Emergency-focused
@@ -574,7 +586,11 @@ enum ChirpTemplate : uint8_t {
   TPL_AUTH_HEAVY_RESPONSE      = 0x01,  // "heavy law enforcement response"
   TPL_AUTH_ROAD_BLOCKED_LE     = 0x02,  // "road blocked by law enforcement"
   TPL_AUTH_HELICOPTER          = 0x03,  // "helicopter circling area"
-  TPL_AUTH_FEDERAL_PRESENCE    = 0x04,  // "federal agents in area"
+  // 0x04 (former TPL_AUTH_FEDERAL_PRESENCE) intentionally reserved — removed
+  // in v0.2 per audit finding C17. If a deployment genuinely needs to signal
+  // federal/agency presence, it must originate through the higher-trust
+  // Beacon channel (spec/beacon_channel_v0.md) which requires two-pubkey
+  // cryptographic co-signing. Do NOT reassign this template ID.
 
   // Infrastructure (0x10-0x1F) — Systems failing
   TPL_INFRA_POWER_OUT          = 0x10,  // "power outage"
@@ -680,23 +696,33 @@ struct NearbyDevice {
   bool listening;                               // Is accepting chirps
 };
 
-// Received chirp
+// Received chirp — v0.2.
+// The confirm/dismiss counters are now derived from local pubkey-keyed sets,
+// never from wire values (audit C2, C5, C7).
 struct ReceivedChirp {
   uint8_t sender_session[SESSION_ID_SIZE];
+  uint8_t sender_pubkey[SESSION_PUBKEY_SIZE];   // v0.2: full pubkey for verification + identity-firewall checks
   char sender_emoji[EMOJI_DISPLAY_SIZE];
-  ChirpTemplate template_id;                    // Structured message (no free text)
-  ChirpDetailSlot detail;                       // Optional constrained detail
+  ChirpTemplate template_id;
+  ChirpDetailSlot detail;
   ChirpUrgency urgency;
   uint8_t hop_count;
   uint32_t received_ms;
-  uint32_t timestamp;                           // Original send time
+  uint32_t timestamp;                           // Wall-clock send time (UNIX seconds, v0.2)
   uint8_t nonce[8];
-  uint8_t confirm_count;                        // Independent witnesses
-  uint8_t dismiss_count;                        // Dismissals for suppress voting
-  bool validated;                               // Has enough confirmations to relay
-  bool suppressed;                              // Community voted to suppress
-  bool relayed;                                 // Did we relay this
-  bool dismissed;                               // User dismissed locally
+  // Confirmation set: distinct session_pubkeys that have signed a CHIRP_ACK
+  // with ack_type = CHIRP_ACK_CONFIRMED for this nonce. Bounded.
+  uint8_t  confirmed_by[MAX_CONFIRMERS_PER_CHIRP][SESSION_PUBKEY_SIZE];
+  uint8_t  confirm_count;                       // = number of valid entries in confirmed_by[]
+  // Suppress vote set: distinct session_pubkeys that have signed a
+  // CHIRP_MSG_SUPPRESS_VOTE for this nonce.
+  uint8_t  suppressed_by[MAX_CONFIRMERS_PER_CHIRP][SESSION_PUBKEY_SIZE];
+  uint8_t  suppress_count;
+  bool     validated;                           // ≥ threshold confirmations (from pubkeys ≠ originator) received
+  bool     suppressed;                          // Community voted to suppress
+  bool     relayed;                             // Did we relay this
+  bool     dismissed;                           // User dismissed locally
+  bool     unverifiable_timestamp;              // Time was unsynced on receipt; display with warning badge
 };
 
 // Outgoing chirp (for send queue)
@@ -736,27 +762,70 @@ struct ChirpPresencePayload {
   uint8_t last_chirp_age_min;                   // 255 = never
 };
 
-// Witness payload (the main alert)
+// Witness payload (the main alert) — v0.2 wire format.
+// Changes from v0.1:
+//  - Removed `confirm_count` (audit C2): receivers track confirmations locally
+//    via signed CHIRP_MSG_ACK + unique session_pubkey set, never trust wire-level
+//    counts.
+//  - Removed `category` (now derived from template_id high nibble).
+//  - Renamed `msg_len` → `template_id` and added explicit `detail_slot`;
+//    the legacy `message[]` reservation is removed.
+//  - Added `session_pubkey` (32 B) so receivers can verify the signature
+//    cryptographically (audit C1, C6).
+//  - Added `signed_origin_pubkey` + `signed_origin_signature` for relays
+//    so the original signer's attestation survives re-signing on relay
+//    (audit C4). Zeroed on hop_count==0 frames.
+//  - Top-level `signature` is now over a canonical string defined in
+//    `chirp_channel.cpp::build_witness_canonical()` and must be verified
+//    against `session_pubkey` (which itself must match the header
+//    `session_id` via SHA-256("securacv:chirp:session:v0" || pubkey)[0:8]).
 struct ChirpWitnessPayload {
-  uint8_t category;                             // ChirpCategory
-  uint8_t urgency;                              // ChirpUrgency
-  uint8_t confirm_count;                        // How many humans confirmed
+  uint8_t template_id;                              // ChirpTemplate (v0.2)
+  uint8_t detail_slot;                              // ChirpDetailSlot
+  uint8_t urgency;                                  // ChirpUrgency
   uint8_t ttl_minutes;
-  uint8_t msg_len;
-  char message[MAX_MESSAGE_LEN];                // NOT null-terminated in wire format
-  uint8_t signature[64];                        // Ed25519 session signature
+  uint8_t reserved[4];                              // pad to 8 bytes; must be zero
+  uint8_t session_pubkey[SESSION_PUBKEY_SIZE];      // 32 B Ed25519 pubkey of originator (top-level signer on relay)
+  uint8_t signature[64];                            // Ed25519 over canonical (top-level: originator on hop 0, relayer on hop >0)
+  uint8_t signed_origin_pubkey[SESSION_PUBKEY_SIZE]; // Original signer's pubkey (zero on hop 0)
+  uint8_t signed_origin_signature[64];              // Original signer's signature (zero on hop 0)
 };
 
-// Acknowledgment payload
+// Acknowledgment payload — v0.2 wire format.
+// Now carries the confirmer's session_pubkey + signature so receivers can
+// verify the ACK and dedup by pubkey (audit C5). Unsigned ACKs are rejected.
 struct ChirpAckPayload {
   uint8_t original_nonce[8];
-  uint8_t ack_type;                             // ChirpAckType
+  uint8_t ack_type;                                 // ChirpAckType
+  uint8_t reserved[3];                              // pad; must be zero
+  uint8_t confirmer_session_pubkey[SESSION_PUBKEY_SIZE];
+  uint8_t signature[64];                            // Ed25519 over canonical
 };
 
 // Mute broadcast payload
 struct ChirpMutePayload {
-  uint8_t duration_minutes;                     // 15, 30, 60, or 120
-  uint8_t reason;                               // 0=busy, 1=sleeping, 2=away, 255=none
+  uint8_t duration_minutes;                         // 15, 30, 60, or 120
+  uint8_t reason;                                   // 0=busy, 1=sleeping, 2=away, 255=none
+};
+
+// Suppress vote payload — v0.2 (audit C7).
+// Signed community vote to suppress a noise/spam chirp.
+struct ChirpSuppressVotePayload {
+  uint8_t original_nonce[8];                        // Chirp being suppressed
+  uint8_t voter_session_pubkey[SESSION_PUBKEY_SIZE];
+  uint8_t signature[64];                            // Ed25519 over canonical
+};
+
+// Self-test heartbeat payload — v0.2 (NFPA-72-style trouble surface).
+// Daily-cadence proof-of-health from a Chirp-active device. Receivers
+// track last_selftest_seen[session_pubkey] and surface Trouble if absent.
+struct ChirpSelfTestPayload {
+  uint32_t uptime_sec;
+  uint16_t free_heap_kb;
+  uint8_t  key_self_test_ok;                        // 1 if Ed25519 sign/verify round-trip OK
+  uint8_t  reserved;
+  uint8_t  session_pubkey[SESSION_PUBKEY_SIZE];
+  uint8_t  signature[64];
 };
 
 // ────────────────────────────────────────────────────────────────────────────

@@ -63,8 +63,27 @@ enum ChirpPattern : uint8_t {
   PATTERN_TAMPER,        // Rapid high-pitched — tamper detected
   PATTERN_SUCCESS,       // Pleasant ascending — operation succeeded
   PATTERN_ERROR,         // Descending buzz — operation failed
+  PATTERN_BEACON,        // Beacon-channel ALARM — distinct from PATTERN_ALERT
   PATTERN_COUNT
 };
+
+// ════════════════════════════════════════════════════════════════════════════
+// FORBIDDEN AUDIO FREQUENCIES — non-impersonation invariant
+//
+// This module MUST NOT play the protected emergency-broadcast attention
+// signal under any circumstances. See 47 CFR §10.520(d) and 47 CFR §11 for
+// the specific reserved two-tone combination. See
+// docs/research/harm_reduction_prior_art.md §2 for the full list of
+// protected phrases and audio combinations. See spec/beacon_cap_gateway_v0.md
+// §4 for the CI-enforced non-impersonation contract.
+//
+// PATTERN_BEACON below uses 1200 / 1700 / 2200 Hz sequential tones, which is
+// deliberately distinct from any reserved emergency-broadcast tone in both
+// frequency choice and playback structure (sequential, ~600 ms total — not
+// simultaneous, not 8 s). The scripts/lint_no_impersonation.sh CI lint
+// scans this file for the reserved frequency pair and fails the build if
+// they appear together in any single pattern.
+// ════════════════════════════════════════════════════════════════════════════
 
 // ════════════════════════════════════════════════════════════════════════════
 // PATTERNS
@@ -96,16 +115,25 @@ static const ChirpNote PATTERN_ERROR_NOTES[] = {
   {400, 200}, {0, 50}, {300, 300}, {0, 0}
 };
 
+// "Beacon" — Beacon-channel ALARM. Three ascending sequential tones at
+// 1200/1700/2200 Hz. Deliberately distinct from any reserved
+// emergency-broadcast attention signal (see commentary block above and
+// 47 CFR §10.520(d)). Total duration ~600 ms.
+static const ChirpNote PATTERN_BEACON_NOTES[] = {
+  {1200, 150}, {0, 50}, {1700, 150}, {0, 50}, {2200, 200}, {0, 0}
+};
+
 static const ChirpNote* PATTERNS[] = {
   PATTERN_CONFIRM_NOTES,
   PATTERN_ALERT_NOTES,
   PATTERN_TAMPER_NOTES,
   PATTERN_SUCCESS_NOTES,
-  PATTERN_ERROR_NOTES
+  PATTERN_ERROR_NOTES,
+  PATTERN_BEACON_NOTES
 };
 
 static const char* PATTERN_NAMES[] = {
-  "confirm", "alert", "tamper", "success", "error"
+  "confirm", "alert", "tamper", "success", "error", "beacon"
 };
 
 // ════════════════════════════════════════════════════════════════════════════

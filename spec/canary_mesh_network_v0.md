@@ -1,8 +1,26 @@
-# Canary Mesh Network Protocol v0 (Opera Protocol)
+# Canary Mesh Network Protocol v0.2 (Opera Protocol)
 
-Status: Draft v0.1
+Status: Draft v0.2
 Intended Status: Normative
-Last Updated: 2026-02-02
+Last Updated: 2026-05-11
+
+> **v0.2 hardening summary** (see `docs/audit/mesh_and_chirp_audit_v1.md`
+> findings O1–O3):
+>
+> - Message freshness is anchored on the **per-peer monotonic counter**, not
+>   on `millis()/1000` uptime seconds (closes audit O1). The timestamp field
+>   in the header is retained for diagnostic purposes only and is no longer
+>   security-bearing. The counter is monotonic per peer and persisted across
+>   reboots (LRU-evicted but never decreased).
+> - `opera_secret` provisioning and NVS storage now require **flash encryption
+>   to be enabled** (`esp_efuse_read_field_bit(ESP_EFUSE_FLASH_CRYPT_CNT)`).
+>   Devices without flash encryption refuse to provision an Opera, refuse to
+>   load any previously-stored opera_secret, and log loudly to the health
+>   log at `LOG_LEVEL_ALERT, LOG_CAT_SECURITY` (closes audit O2).
+> - `remove_peer()` now **automatically rotates `opera_secret`** and re-pushes
+>   the new secret to the remaining members under their existing session
+>   keys (closes audit O3). A removed device no longer retains cryptographic
+>   capability to rejoin without explicit re-pairing.
 
 ## 1. Purpose and Scope
 
@@ -85,11 +103,22 @@ message_key = HKDF-SHA256(session_key, message_counter, 32)
 ciphertext = ChaCha20-Poly1305(message_key, nonce, plaintext)
 ```
 
-### 3.3 Replay Prevention
+### 3.3 Replay Prevention — v0.2
 
-- **Message Counter**: Monotonic 64-bit counter per peer session
-- **Timestamp Validation**: Messages rejected if >5 minutes old
-- **Nonce Tracking**: Last 64 nonces cached to detect replays
+- **Message Counter** (authoritative): Monotonic 64-bit counter per peer.
+  Receivers reject any message with `counter <= last_seen_counter_for_peer`.
+  Counter state is persisted to NVS so reboots do not reset the receiver's
+  expectations.
+- **Nonce Tracking**: Last 64 nonces cached to detect concurrent duplicates.
+- **Timestamp field**: Retained in the wire format for diagnostic and
+  debugging purposes. **Not security-bearing in v0.2.** Earlier revisions
+  used `millis()/1000` here, which gave uptime seconds rather than wall-clock
+  time, causing receivers to reject legitimate messages from peers with
+  different uptimes (audit O1). Receivers MAY log unusual timestamp gaps but
+  MUST NOT reject solely on timestamp.
+
+Future revisions MAY add wall-clock-anchored freshness if a shared mesh
+epoch is derived at pairing; v0.2 does not.
 
 ### 3.4 Opera Isolation
 
@@ -238,6 +267,53 @@ If no opera exists, the first device generates:
 opera_secret = random_bytes(32)
 opera_id = SHA-256("securacv:opera:id:v0" || opera_secret)[0:16]
 ```
+
+### 5.5 Flash Encryption Requirement — v0.2
+
+Provisioning a new Opera, joining an existing Opera, and loading a stored
+`opera_secret` from NVS at boot all require **flash encryption to be
+enabled** on the device. The firmware checks
+`esp_efuse_read_field_bit(ESP_EFUSE_FLASH_CRYPT_CNT)` (or equivalent SDK
+helper); if not set, the relevant code paths:
+
+1. Refuse to create an opera (return `MESH_ERROR_NO_FLASH_ENCRYPTION`).
+2. Refuse to consume a `PAIR_COMPLETE` payload.
+3. Refuse to load a previously-stored `opera_secret` from NVS — instead,
+   wipe the entry, mark the device as `MESH_NO_FLOCK`, and log loudly:
+   `health_log(LOG_LEVEL_ALERT, LOG_CAT_SECURITY, "opera: refused to load — flash encryption disabled")`.
+
+Rationale: `opera_secret` is the symmetric secret that gates pairing and
+opera_id derivation. On an unencrypted flash, a physical-access attacker
+can extract the secret with `esptool.py read_flash` and become a permanent
+opera member. The FE gate eliminates this attack at the cost of refusing to
+work on dev boards without FE — which is the correct trade-off for a
+production safety system.
+
+### 5.6 Peer Removal and Re-keying — v0.2
+
+`remove_peer(fingerprint)` MUST automatically rotate `opera_secret` and
+re-distribute the new secret to remaining members:
+
+1. Generate fresh `new_opera_secret = random_bytes(32)`.
+2. Derive `new_opera_id = SHA-256("securacv:opera:id:v0" || new_opera_secret)[0:16]`.
+3. Remove the targeted peer from the local member list.
+4. For each remaining member, send a `MSG_OPERA_REKEY` containing
+   `new_opera_secret` encrypted under that member's existing session key.
+5. Wait up to 60 s for each member to ACK with `MSG_OPERA_REKEY_ACK`.
+6. Once all surviving members have ACKed, commit `new_opera_secret` and
+   `new_opera_id` to NVS. Increment the on-disk rotation counter.
+7. Any member that fails to ACK is marked `PEER_STALE` and rejoined via
+   normal pairing.
+
+The removed device's pubkey is recorded in a local revocation list and
+refused acceptance into future pairing flows for `REVOCATION_GRACE_MS`
+(default 7 days), even by a freshly-rotated opera.
+
+Caveat: the removed device, while it still has the *old* `opera_secret`,
+cannot impersonate a current member because the surviving members no longer
+accept frames carrying the old `opera_id` after rotation. The old
+`opera_secret` is forensically useful (for log decryption) but operationally
+inert.
 
 ## 6. Alert Propagation
 

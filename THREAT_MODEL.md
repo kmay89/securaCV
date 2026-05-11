@@ -434,3 +434,90 @@ To change any security-hardened default, a developer must:
 8. Evidence is verifiable offline without any ERRERlabs service
 9. Regression checks enforce all ten principles automatically
 10. The transparency document passes the "would Moxie sign this?" test
+
+---
+
+## Mesh Layers (v0.2 — added 2026-05-11)
+
+Three layered networks share the device's single 2.4 GHz radio. Each has a
+distinct trust model, distinct cryptographic primitives, and distinct UI
+treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
+
+### Opera mesh (household, trusted)
+
+- Persistent device Ed25519 identity, shared `opera_secret` (32 B) symmetric
+  among household devices.
+- All frames Ed25519-signed; per-peer monotonic counter for replay
+  protection (v0.2: wall-clock TTL retired per audit O1 — the counter is the
+  authoritative freshness mechanism).
+- `opera_secret` storage requires flash encryption enabled
+  (eFuse `FLASH_CRYPT_CNT > 0`); load/save paths refuse on FE-off devices
+  and log loudly (v0.2 audit O2).
+- Peer removal auto-rotates `opera_secret` and invalidates existing sessions
+  (v0.2 audit O3).
+
+### Chirp channel (anonymous, community, soft-alert)
+
+- Ephemeral session Ed25519 identity, regenerated on every enable.
+- Cryptographic privacy firewall: session keys are NOT derived from device
+  identity; chirp activity is unlinkable to Opera membership.
+- v0.2 hardening:
+  - End-to-end signature verification on every witness/ACK/suppress-vote
+    (audit C1, C4, C5, C6).
+  - `confirm_count` removed from wire; receivers track unique-pubkey
+    confirmation sets locally (audit C2, C3).
+  - Signed suppress voting wired (audit C7).
+  - Wall-clock-anchored timestamps; origination refused when SNTP
+    unsynced (audit C10, C15).
+  - Per-pubkey rate-limit on incoming witnesses (audit C14).
+  - REST API (`/api/chirp/*`) Bearer-token-gated when wired into
+    `canary_wap.ino` (audit C12).
+- Templates only, no free text. No "suspicious person", no "unfamiliar
+  vehicle", no individual descriptions. `TPL_AUTH_FEDERAL_PRESENCE` removed
+  in v0.2 (audit C17).
+
+### Beacon channel (NEW v0.2 — supervised harm-reduction)
+
+- Persistent device Ed25519 identity (same key as Opera/witness records).
+- **Two-pubkey cryptographic co-signing on origination.** Every Beacon frame
+  carries two Ed25519 signatures from two distinct device pubkeys. No
+  single compromised device can originate a Beacon. Spec:
+  `spec/beacon_channel_v0.md`.
+- Narrow life-safety template set (~13 templates). No authority/government
+  templates, no mutual-aid templates.
+- CAP-aligned wire fields. Always `scope = Private`. Never IPAWS/WEA/EAS.
+- NFPA-72-style supervised health state surface: `Normal | Trouble | Alarm |
+  Supervisory`. Daily `BEACON_MSG_SELFTEST_OK` heartbeat.
+- Append-only chain-hashed audit log of every Beacon received.
+- CAP gateway interop (inbound and outbound) specified
+  (`spec/beacon_cap_gateway_v0.md`) but not implemented in v0.
+
+### Non-impersonation contract
+
+CI-enforced via `scripts/lint_no_impersonation.sh`. The lint fails the build
+if reserved emergency-broadcast phrases, the reserved two-tone audio pair,
+or pure red as a primary alert color appear in any alert/chirp/beacon
+firmware or UI source.
+
+### Threats covered by mesh layers
+
+| Threat | Opera | Chirp | Beacon |
+|---|---|---|---|
+| Spoofed origination | yes (Ed25519) | yes (Ed25519, v0.2) | yes (dual Ed25519) |
+| Replay | yes (counter) | yes (1024-entry dedup + freshness) | yes (dedup + freshness) |
+| Sybil flood | yes (opera_id isolation) | yes (per-pubkey rate + unique-pubkey set) | yes (two-pubkey rule + audit) |
+| Physical extraction of opera_secret | yes (FE gate) | n/a | n/a |
+| Compromised device originates fake alarm | n/a | partial (suppress vote) | yes (two-pubkey rule) |
+| Reserved-tone or reserved-phrase impersonation | n/a | yes (lint) | yes (lint, color, frequencies) |
+| Hawaii-style operator error | n/a | n/a | yes (two-person rule, msgType=Exercise distinct from Alert) |
+
+### Outstanding work (tracked)
+
+- Beacon REST endpoints (`/api/beacon/*`) not yet wired into `canary_wap.ino`
+  (deferred; gated behind `FEATURE_BEACON_CHANNEL`).
+- Full transactional opera_secret rekey ACK protocol (v0.2 implements the
+  minimum-correct in-memory rotation; spec §5.6 documents the full flow for
+  v0.3).
+- Beacon pairing transport encryption.
+- Bloom-filter nonce dedup for Chirp.
+- Persistent origin signature across Chirp relays.
