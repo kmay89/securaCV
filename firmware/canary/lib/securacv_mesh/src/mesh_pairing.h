@@ -174,26 +174,34 @@ static_assert(sizeof(PairCompletePayload) ==
  * from mesh_transport. Tests can run two contexts in parallel to
  * simulate a complete handshake host-side without I/O.
  *
- * The 5-message exchange:
+ * The 5-message exchange (matches canary-wap mesh_network.cpp:
+ *   handle_pair_discover @748, handle_pair_offer @782,
+ *   handle_pair_accept @825, handle_pair_confirm @845):
  *
  *   Initiator (existing opera member)        Joiner (new device)
  *   ─────────────────────────────────        ───────────────────
  *   start_initiator()
- *     → BROADCAST_DISCOVER ───────────────►  handle (DISCOVER) [from mesh recv]
- *                                            → SEND_OFFER (ephem + dev pub)
- *   handle (OFFER) ◄───────────────────────
- *     → derive session_key + code
- *     → SEND_ACCEPT (our ephem) ─────────►   handle (ACCEPT)
+ *     → BROADCAST_DISCOVER (role=INIT) ────► (ignored: not for joiner)
+ *                                            start_joiner()
+ *   handle (DISCOVER role=JOIN) ◄────────────  → BROADCAST_DISCOVER (role=JOIN)
+ *     → SEND_OFFER (initiator ephem + pub)
+ *                            ─────────────►  handle (OFFER)
  *                                            → derive session_key + code
+ *                                            → SEND_ACCEPT (joiner ephem + pub)
  *                                            → NOTIFY_CODE_READY (UI prompt)
- *   NOTIFY_CODE_READY                        confirm_code() [after user OK]
- *   confirm_code()                             → SEND_CONFIRM (hash)
- *     → SEND_CONFIRM (hash) ─────────────►   handle (CONFIRM)
- *   handle (CONFIRM) ◄──────────────────────  verify hash matches
- *     → verify hash matches
- *     → SEND_COMPLETE (AEAD(opera_secret))►  handle (COMPLETE)
+ *   handle (ACCEPT) ◄───────────────────────
+ *     → derive session_key + code
+ *     → NOTIFY_CODE_READY (UI prompt)
+ *
+ *   confirm_code() [after user OK]           confirm_code() [after user OK]
+ *     → SEND_CONFIRM (hash) ─────────────►   handle (CONFIRM) — joiner accepts
+ *                                              the initiator's confirm hash
+ *   handle (CONFIRM) ◄──────────────────────  (joiner already moved to
+ *     → verify hash matches                   AWAITING_COMPLETE after sending
+ *     → SEND_COMPLETE (AEAD(opera_secret))►   its own confirm, so a peer-side
+ *     → tick() returns NOTIFY_PAIRED          confirm here is a no-op drop)
+ *                                            handle (COMPLETE)
  *                                            → decrypt → NOTIFY_PAIRED
- *   NOTIFY_PAIRED
  *
  * On any failure or 5-minute timeout, both sides transition to FAILED
  * and the integration layer is told via NOTIFY_FAILED.
@@ -202,7 +210,7 @@ static_assert(sizeof(PairCompletePayload) ==
  *   • Ephemeral keypair: generated at start_*, wiped on terminate.
  *   • Session key: derived from x25519 once both ephemeral pubs are
  *     known, used to AEAD-encrypt the opera_secret on the COMPLETE
- *     message, wiped on terminate.
+ *     message, wiped on terminate AND on PAIRED transition.
  *   • Opera secret: held in RAM by the initiator (loaded from NVS) and
  *     by the joiner only between COMPLETE-receive and the integration
  *     layer reading it out via consume_opera_secret(). The integration
@@ -212,14 +220,14 @@ static_assert(sizeof(PairCompletePayload) ==
 
 enum class State : uint8_t {
   IDLE = 0,
-  DISCOVERING,         /* initiator: broadcast sent, awaiting joiner OFFER */
-  AWAITING_OFFER,      /* joiner: received DISCOVER, has not yet sent OFFER */
-  AWAITING_ACCEPT,     /* initiator: sent ACCEPT, waiting for joiner CONFIRM */
-  AWAITING_CONFIRM,    /* joiner: sent OFFER (or initiator past ACCEPT) — user must approve */
-  AWAITING_CONFIRM_PEER, /* sent our CONFIRM, awaiting peer's CONFIRM hash */
-  AWAITING_COMPLETE,   /* joiner: sent CONFIRM, awaiting encrypted opera_secret */
-  PAIRED,
-  FAILED,
+  DISCOVERING_INITIATOR,    /* initiator: broadcasting DISCOVER(INIT), waiting for joiner DISCOVER(JOIN) */
+  DISCOVERING_JOINER,       /* joiner:    broadcasting DISCOVER(JOIN), waiting for initiator OFFER */
+  AWAITING_ACCEPT,          /* initiator: sent OFFER, awaiting joiner ACCEPT */
+  AWAITING_CONFIRM,         /* both:      have session_key + code, awaiting user_confirm() */
+  AWAITING_CONFIRM_PEER,    /* both:      sent our CONFIRM hash, awaiting peer's CONFIRM */
+  AWAITING_COMPLETE,        /* joiner:    sent CONFIRM, awaiting encrypted opera_secret */
+  PAIRED,                   /* terminal:  success — opera_secret available on joiner */
+  FAILED,                   /* terminal:  any error path or 5-min timeout */
 };
 
 enum class ActionType : uint8_t {
@@ -291,6 +299,13 @@ struct PairingContext {
   /* Whether the user has confirmed the 6-digit code matches on both
    * screens. Set by confirm_code(); used to gate SEND_CONFIRM. */
   bool     user_confirmed;
+
+  /* One-shot flag: set when the initiator transitions to PAIRED after
+   * SEND_COMPLETE. The next tick() reads it, clears it, and returns
+   * NOTIFY_PAIRED so the integration layer gets a definitive success
+   * signal on the initiator side (the joiner gets it inline when
+   * COMPLETE decrypts). */
+  bool     pending_notify_paired;
 };
 
 /* ──────────────────────────────────────────────────────────────────────────

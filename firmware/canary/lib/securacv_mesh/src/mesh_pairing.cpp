@@ -65,9 +65,11 @@ namespace {
 /* Bytewise memcpy alias — string.h is included via mesh_pairing.h's
  * transitive includes. Use memcpy for clarity. */
 
-/* secure_zero is private to mesh_crypto.cpp; in this file we use a
- * local volatile loop for the same purpose. */
-inline void wipe(void* p, size_t n) {
+/* secure_zero: volatile-loop + asm barrier so the compiler can't
+ * dead-store-eliminate the wipe. Same pattern as
+ * firmware/canary/lib/securacv_mesh/src/mesh_crypto.cpp:secure_zero
+ * (file-local to keep this module standalone). */
+inline void secure_zero(void* p, size_t n) {
   volatile uint8_t* b = static_cast<volatile uint8_t*>(p);
   while (n--) *b++ = 0;
 #if defined(__GNUC__) || defined(__clang__)
@@ -126,9 +128,9 @@ inline void copy_name(char* dst, size_t dst_cap, const char* src) {
 
 inline void fail(PairingContext& ctx) {
   ctx.state = State::FAILED;
-  wipe(ctx.ephem_privkey, sizeof(ctx.ephem_privkey));
-  wipe(ctx.session_key, sizeof(ctx.session_key));
-  wipe(ctx.opera_secret, sizeof(ctx.opera_secret));
+  secure_zero(ctx.ephem_privkey, sizeof(ctx.ephem_privkey));
+  secure_zero(ctx.session_key, sizeof(ctx.session_key));
+  secure_zero(ctx.opera_secret, sizeof(ctx.opera_secret));
   ctx.opera_secret_present = false;
 }
 
@@ -139,7 +141,7 @@ inline void fail(PairingContext& ctx) {
  * ────────────────────────────────────────────────────────────────────────── */
 
 void context_init(PairingContext& ctx) {
-  wipe(&ctx, sizeof(ctx));
+  secure_zero(&ctx, sizeof(ctx));
   ctx.state = State::IDLE;
   ctx.role = ROLE_NONE;
 }
@@ -164,13 +166,14 @@ Action start_initiator(PairingContext& ctx,
   copy_name(ctx.opera_name, sizeof(ctx.opera_name), opera_name);
   if (!generate_ephemeral(ctx)) { fail(ctx); return make_action(ActionType::NOTIFY_FAILED); }
   ctx.started_ms = now_ms;
-  ctx.state = State::DISCOVERING;
+  ctx.state = State::DISCOVERING_INITIATOR;
 
-  /* Build PairDiscoverPayload with our long-term pubkey + role. */
+  /* Broadcast DISCOVER(role=INITIATOR). canary-wap broadcasts every
+   * 2 s for the duration; this initial broadcast is sufficient for a
+   * one-shot pairing flow because the joiner's DISCOVER(role=JOINER)
+   * is what actually triggers the OFFER on the initiator side. */
   PairDiscoverPayload disc{};
   memcpy(disc.pubkey, ctx.device_pubkey, mesh_crypto::PUBKEY_LEN);
-  /* device_name reuses opera_name for the discover broadcast — matches
-   * canary-wap which broadcasts the device's display name. */
   copy_name(disc.device_name, sizeof(disc.device_name), ctx.opera_name);
   disc.role = ROLE_INITIATOR;
 
@@ -192,82 +195,102 @@ Action start_joiner(PairingContext& ctx,
   memcpy(ctx.device_privkey, device_priv, mesh_crypto::PRIVKEY_LEN);
   if (!generate_ephemeral(ctx)) { fail(ctx); return make_action(ActionType::NOTIFY_FAILED); }
   ctx.started_ms = now_ms;
-  ctx.state = State::AWAITING_OFFER;
-  return make_action(ActionType::NONE);
+  ctx.state = State::DISCOVERING_JOINER;
+
+  /* Broadcast DISCOVER(role=JOINER). The initiator's handle_pair_discover
+   * only acts when it sees a JOINER-role discover (canary-wap
+   * mesh_network.cpp:756); without this broadcast the initiator stays
+   * silent and pairing never starts. */
+  PairDiscoverPayload disc{};
+  memcpy(disc.pubkey, ctx.device_pubkey, mesh_crypto::PUBKEY_LEN);
+  copy_name(disc.device_name, sizeof(disc.device_name), "");
+  disc.role = ROLE_JOINER;
+
+  static const uint8_t BCAST[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+  return make_send_action(ActionType::BROADCAST_DISCOVER, BCAST, &disc, sizeof(disc));
 }
 
-/* Internal helpers for each phase of receive(). */
+/* Internal helpers for each phase of receive(). Role-semantics match
+ * canary-wap mesh_network.cpp:748-866:
+ *   • Initiator handles DISCOVER (role=JOINER)  → sends OFFER
+ *   • Joiner    handles OFFER                   → sends ACCEPT
+ *   • Initiator handles ACCEPT                  → derives session, NOTIFY_CODE_READY
+ *   • Both      handle CONFIRM                   → SEND_COMPLETE (initiator) or move to AWAITING_COMPLETE (joiner)
+ *   • Joiner    handles COMPLETE                → NOTIFY_PAIRED + opera_secret available
+ */
 namespace {
 
-Action joiner_handle_discover(PairingContext& ctx,
-                              const uint8_t from_mac[6],
-                              const uint8_t* payload, size_t payload_len) {
-  if (ctx.state != State::AWAITING_OFFER) return make_action(ActionType::NONE);
+Action initiator_handle_discover(PairingContext& ctx,
+                                 const uint8_t from_mac[6],
+                                 const uint8_t* payload, size_t payload_len) {
+  if (ctx.state != State::DISCOVERING_INITIATOR) return make_action(ActionType::NONE);
+  if (ctx.role  != ROLE_INITIATOR) return make_action(ActionType::NONE);
   if (payload_len != sizeof(PairDiscoverPayload)) return make_action(ActionType::NONE);
   const PairDiscoverPayload* disc = (const PairDiscoverPayload*)payload;
-  if (disc->role != ROLE_INITIATOR) return make_action(ActionType::NONE);
+  /* canary-wap only acts on a JOINER discover; an initiator-role
+   * discover is another initiator and is silently ignored. */
+  if (disc->role != ROLE_JOINER) return make_action(ActionType::NONE);
 
   memcpy(ctx.peer_mac, from_mac, 6);
   memcpy(ctx.peer_pubkey, disc->pubkey, mesh_crypto::PUBKEY_LEN);
 
-  /* Reply with our OFFER: our ephemeral + our long-term pubkey + a
-   * placeholder opera_name (the JOINER doesn't have one yet; canary-wap
-   * sends the device_name here). */
+  /* Send OFFER carrying OUR (initiator's) ephemeral pub + device pub.
+   * Matches canary-wap mesh_network.cpp:765-769. */
   PairOfferPayload offer{};
-  memcpy(offer.ephemeral_pubkey, ctx.ephem_pubkey, mesh_crypto::PUBKEY_LEN);
+  memcpy(offer.ephemeral_pubkey, ctx.ephem_pubkey,  mesh_crypto::PUBKEY_LEN);
   memcpy(offer.device_pubkey,    ctx.device_pubkey, mesh_crypto::PUBKEY_LEN);
-  copy_name(offer.opera_name, sizeof(offer.opera_name), "");
+  copy_name(offer.opera_name, sizeof(offer.opera_name), ctx.opera_name);
   offer.opera_member_count = 0;
 
   ctx.state = State::AWAITING_ACCEPT;
   return make_send_action(ActionType::SEND_OFFER, ctx.peer_mac, &offer, sizeof(offer));
 }
 
-Action initiator_handle_offer(PairingContext& ctx,
-                              const uint8_t from_mac[6],
-                              const uint8_t* payload, size_t payload_len) {
-  if (ctx.state != State::DISCOVERING) return make_action(ActionType::NONE);
+Action joiner_handle_offer(PairingContext& ctx,
+                           const uint8_t from_mac[6],
+                           const uint8_t* payload, size_t payload_len) {
+  if (ctx.state != State::DISCOVERING_JOINER) return make_action(ActionType::NONE);
+  if (ctx.role  != ROLE_JOINER) return make_action(ActionType::NONE);
   if (payload_len != sizeof(PairOfferPayload)) return make_action(ActionType::NONE);
   const PairOfferPayload* offer = (const PairOfferPayload*)payload;
 
   memcpy(ctx.peer_mac, from_mac, 6);
-  memcpy(ctx.peer_pubkey, offer->device_pubkey, mesh_crypto::PUBKEY_LEN);
+  memcpy(ctx.peer_pubkey,       offer->device_pubkey,    mesh_crypto::PUBKEY_LEN);
   memcpy(ctx.peer_ephem_pubkey, offer->ephemeral_pubkey, mesh_crypto::PUBKEY_LEN);
+  /* Remember the opera_name the initiator advertised so the UI can show it. */
+  copy_name(ctx.opera_name, sizeof(ctx.opera_name), offer->opera_name);
 
-  /* Now both ephemeral pubs are known on this side — derive session. */
   if (!derive_session_state(ctx)) { fail(ctx); return make_action(ActionType::NOTIFY_FAILED); }
 
-  /* Send back ACCEPT carrying OUR ephemeral so the joiner can also
-   * derive the same session. Reuses PairOfferPayload (canary-wap
-   * convention, mesh_network.cpp:803). */
+  /* Send ACCEPT carrying OUR (joiner's) ephemeral pub + device pub.
+   * Matches canary-wap mesh_network.cpp:803-815 (reuses PairOfferPayload). */
   PairAcceptPayload accept{};
-  memcpy(accept.ephemeral_pubkey, ctx.ephem_pubkey, mesh_crypto::PUBKEY_LEN);
+  memcpy(accept.ephemeral_pubkey, ctx.ephem_pubkey,  mesh_crypto::PUBKEY_LEN);
   memcpy(accept.device_pubkey,    ctx.device_pubkey, mesh_crypto::PUBKEY_LEN);
-  copy_name(accept.opera_name, sizeof(accept.opera_name), ctx.opera_name);
+  copy_name(accept.opera_name, sizeof(accept.opera_name), "");
   accept.opera_member_count = 0;
 
-  /* Initiator already knows the code — surface it to the UI now. The
-   * joiner will get its own NOTIFY_CODE_READY after receiving ACCEPT. */
+  /* Joiner has derived the session and code — surface to UI. */
   ctx.state = State::AWAITING_CONFIRM;
   Action a = make_send_action(ActionType::SEND_ACCEPT, ctx.peer_mac, &accept, sizeof(accept));
   a.confirmation_code = ctx.confirmation_code;
   return a;
 }
 
-Action joiner_handle_accept(PairingContext& ctx,
-                            const uint8_t from_mac[6],
-                            const uint8_t* payload, size_t payload_len) {
+Action initiator_handle_accept(PairingContext& ctx,
+                               const uint8_t from_mac[6],
+                               const uint8_t* payload, size_t payload_len) {
   if (ctx.state != State::AWAITING_ACCEPT) return make_action(ActionType::NONE);
+  if (ctx.role  != ROLE_INITIATOR) return make_action(ActionType::NONE);
   if (payload_len != sizeof(PairAcceptPayload)) return make_action(ActionType::NONE);
-  /* The MAC in the ACCEPT must match the peer we offered to. */
+  /* The MAC in the ACCEPT must match the peer we sent the OFFER to. */
   if (memcmp(from_mac, ctx.peer_mac, 6) != 0) return make_action(ActionType::NONE);
   const PairAcceptPayload* accept = (const PairAcceptPayload*)payload;
   memcpy(ctx.peer_ephem_pubkey, accept->ephemeral_pubkey, mesh_crypto::PUBKEY_LEN);
-  /* Remember the opera_name the initiator advertised. */
-  copy_name(ctx.opera_name, sizeof(ctx.opera_name), accept->opera_name);
 
   if (!derive_session_state(ctx)) { fail(ctx); return make_action(ActionType::NOTIFY_FAILED); }
 
+  /* Initiator now has the session_key + code — surface to UI. */
   ctx.state = State::AWAITING_CONFIRM;
   Action a = make_action(ActionType::NOTIFY_CODE_READY);
   a.confirmation_code = ctx.confirmation_code;
@@ -309,16 +332,19 @@ Action either_handle_confirm(PairingContext& ctx,
     memcpy(complete.encrypted_secret + mesh_crypto::OPERA_SECRET_LEN, tag,
            mesh_crypto::AEAD_TAG_LEN);
     memcpy(complete.nonce, nonce, mesh_crypto::AEAD_NONCE_LEN);
-    /* Initiator is done — wipe sensitive state and notify success. */
+    /* Initiator is done — wipe sensitive state and arm the success
+     * notification. The integration layer's caller sequence:
+     *   1. send the SEND_COMPLETE payload over mesh_transport
+     *   2. next tick() → NOTIFY_PAIRED (gated on pending_notify_paired) */
     ctx.state = State::PAIRED;
-    wipe(ctx.ephem_privkey, sizeof(ctx.ephem_privkey));
+    secure_zero(ctx.ephem_privkey, sizeof(ctx.ephem_privkey));
+    secure_zero(ctx.session_key,   sizeof(ctx.session_key));
+    secure_zero(ctx.opera_secret,  sizeof(ctx.opera_secret));
+    ctx.opera_secret_present = false;
+    ctx.pending_notify_paired = true;
     Action a = make_send_action(ActionType::SEND_COMPLETE, ctx.peer_mac,
                                 &complete, sizeof(complete));
-    /* The integration layer should send the SEND_COMPLETE then act on
-     * the implicit "we're done"; an explicit NOTIFY_PAIRED arrives
-     * separately on the next tick(). Caller sequence:
-     *   1. send the payload over mesh_transport
-     *   2. tick() → NOTIFY_PAIRED */
+    a.confirmation_code = ctx.confirmation_code;
     (void)now_ms;
     return a;
   } else {
@@ -347,7 +373,12 @@ Action joiner_handle_complete(PairingContext& ctx,
   }
   ctx.opera_secret_present = true;
   ctx.state = State::PAIRED;
-  wipe(ctx.ephem_privkey, sizeof(ctx.ephem_privkey));
+  /* Wipe the ephemeral private and the session_key — the AEAD has
+   * already decrypted the opera_secret into ctx.opera_secret, which
+   * the integration layer reads via consume_opera_secret() then we
+   * wipe THAT too. session_key has no further use after this point. */
+  secure_zero(ctx.ephem_privkey, sizeof(ctx.ephem_privkey));
+  secure_zero(ctx.session_key,   sizeof(ctx.session_key));
   Action a = make_action(ActionType::NOTIFY_PAIRED);
   a.confirmation_code = ctx.confirmation_code;
   return a;
@@ -365,17 +396,29 @@ Action receive(PairingContext& ctx,
     return make_action(ActionType::NONE);
   }
   switch (msg_type) {
-    case MsgType::DISCOVER: return joiner_handle_discover(ctx, from_mac, payload, payload_len);
-    case MsgType::OFFER:    return initiator_handle_offer(ctx, from_mac, payload, payload_len);
-    case MsgType::ACCEPT:   return joiner_handle_accept(ctx, from_mac, payload, payload_len);
-    case MsgType::CONFIRM:  return either_handle_confirm(ctx, from_mac, payload, payload_len, now_ms);
-    case MsgType::COMPLETE: return joiner_handle_complete(ctx, from_mac, payload, payload_len);
+    case MsgType::DISCOVER: return initiator_handle_discover(ctx, from_mac, payload, payload_len);
+    case MsgType::OFFER:    return joiner_handle_offer   (ctx, from_mac, payload, payload_len);
+    case MsgType::ACCEPT:   return initiator_handle_accept(ctx, from_mac, payload, payload_len);
+    case MsgType::CONFIRM:  return either_handle_confirm  (ctx, from_mac, payload, payload_len, now_ms);
+    case MsgType::COMPLETE: return joiner_handle_complete (ctx, from_mac, payload, payload_len);
   }
   return make_action(ActionType::NONE);
 }
 
 Action tick(PairingContext& ctx, uint32_t now_ms) {
-  if (ctx.state == State::IDLE || ctx.state == State::PAIRED || ctx.state == State::FAILED) {
+  if (ctx.state == State::IDLE || ctx.state == State::FAILED) {
+    return make_action(ActionType::NONE);
+  }
+  if (ctx.state == State::PAIRED) {
+    /* Initiator's deferred success signal — fires exactly once after
+     * SEND_COMPLETE was returned. Cleared so subsequent ticks return
+     * NONE. */
+    if (ctx.pending_notify_paired) {
+      ctx.pending_notify_paired = false;
+      Action a = make_action(ActionType::NOTIFY_PAIRED);
+      a.confirmation_code = ctx.confirmation_code;
+      return a;
+    }
     return make_action(ActionType::NONE);
   }
   if ((now_ms - ctx.started_ms) >= PAIRING_TIMEOUT_MS) {
@@ -408,7 +451,7 @@ bool consume_opera_secret(PairingContext& ctx,
   if (!ctx.opera_secret_present || out == nullptr) return false;
   if (ctx.role != ROLE_JOINER) return false;
   memcpy(out, ctx.opera_secret, mesh_crypto::OPERA_SECRET_LEN);
-  wipe(ctx.opera_secret, sizeof(ctx.opera_secret));
+  secure_zero(ctx.opera_secret, sizeof(ctx.opera_secret));
   ctx.opera_secret_present = false;
   return true;
 }
