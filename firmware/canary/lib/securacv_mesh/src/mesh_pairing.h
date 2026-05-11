@@ -80,6 +80,30 @@ constexpr uint32_t CONFIRMATION_CODE_MODULUS = 1000000;
 uint32_t compute_confirmation_code(const uint8_t session_key[SESSION_KEY_LEN]);
 
 /* ──────────────────────────────────────────────────────────────────────────
+ * CONFIRMATION HASH
+ *
+ * SHA-256(DOMAIN_PAIR_CONFIRM || session_key || code_u32_le), where
+ * code_u32_le is the little-endian byte order of compute_confirmation_code
+ * for the same session_key. Wire-compat with canary-wap mesh_network.cpp
+ * lines 856-860 (verify path) and 1448-1450 (send path).
+ *
+ * Purpose: the joiner sends this 32-byte hash inside PairConfirmPayload
+ * after the user confirms the 6-digit code matches on both screens. The
+ * initiator recomputes and compares; if any byte differs, a MITM has
+ * mutated the exchange and pairing aborts.
+ *
+ * `code` is included in the hash (rather than just the session_key) so
+ * an attacker who knows the session_key alone — e.g. an honest middlebox
+ * that proxies the X25519 exchange — still cannot forge a matching hash
+ * without also seeing both peers' randomly-chosen ephemeral keys (which
+ * is what determines the 6-digit code).
+ * ────────────────────────────────────────────────────────────────────────── */
+
+void compute_confirmation_hash(const uint8_t session_key[SESSION_KEY_LEN],
+                               uint32_t      code,
+                               uint8_t       out[mesh_crypto::SHA256_OUT_LEN]);
+
+/* ──────────────────────────────────────────────────────────────────────────
  * WIRE-FORMAT PAYLOADS
  *
  * Byte-identical to canary-wap mesh_network.h:281-304. The state
@@ -116,10 +140,10 @@ struct __attribute__((packed)) PairOfferPayload {
 using PairAcceptPayload = PairOfferPayload;
 
 struct __attribute__((packed)) PairConfirmPayload {
-  /* SHA-256("securacv:pair:confirm:v0" || session_key). Sent so the
-   * receiver can verify the sender computed the same code. The
-   * confirmation_hash is the FULL hash; the 6-digit code is just the
-   * first three bytes mod 1_000_000 for display. */
+  /* SHA-256(DOMAIN_PAIR_CONFIRM || session_key || code_u32_le).
+   * See compute_confirmation_hash() above. Sent by the joiner once the
+   * user has visually verified the 6-digit code matches on both screens;
+   * receiver recomputes and rejects on any byte difference. */
   uint8_t confirmation_hash[mesh_crypto::SHA256_OUT_LEN];
 };
 

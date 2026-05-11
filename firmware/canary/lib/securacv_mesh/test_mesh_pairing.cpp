@@ -115,6 +115,54 @@ void test_symmetric_mutual_dh_produces_same_code() {
   std::printf("PASS test_symmetric_mutual_dh_produces_same_code  (code=%06u)\n", code_a);
 }
 
+void test_confirmation_hash_wire_compat() {
+  /* Pinned regression: session_key = 32×0x00, code = 884555 (per
+   * test_wire_compat_code_zero_session_key) → confirmation_hash =
+   *
+   *   68b54b5271a8b39345ec536813944be01297d0619b844619a50759c624431ebf
+   *
+   * Computed independently:
+   *   $ { printf 'securacv:pair:confirm:v0'; head -c 32 /dev/zero;
+   *       printf '\x4b\x7f\x0d\x00'; } | openssl dgst -sha256
+   *
+   * If this fails the LE byte order, the domain string, or the input
+   * concat layout has drifted from canary-wap and pairing will fail
+   * the MITM-detection check cross-lane. */
+  uint8_t zero_key[mesh_pairing::SESSION_KEY_LEN] = {0};
+  uint8_t got[mesh_crypto::SHA256_OUT_LEN];
+  mesh_pairing::compute_confirmation_hash(zero_key, 884555u, got);
+
+  static const uint8_t expected[mesh_crypto::SHA256_OUT_LEN] = {
+    0x68, 0xb5, 0x4b, 0x52, 0x71, 0xa8, 0xb3, 0x93,
+    0x45, 0xec, 0x53, 0x68, 0x13, 0x94, 0x4b, 0xe0,
+    0x12, 0x97, 0xd0, 0x61, 0x9b, 0x84, 0x46, 0x19,
+    0xa5, 0x07, 0x59, 0xc6, 0x24, 0x43, 0x1e, 0xbf,
+  };
+  if (std::memcmp(got, expected, sizeof(expected)) != 0) {
+    std::printf("  got:      ");
+    for (size_t i = 0; i < sizeof(got); ++i) std::printf("%02x", got[i]);
+    std::printf("\n  expected: ");
+    for (size_t i = 0; i < sizeof(expected); ++i) std::printf("%02x", expected[i]);
+    std::printf("\n");
+    assert(false);
+  }
+  std::printf("PASS test_confirmation_hash_wire_compat  (68b54b52...)\n");
+}
+
+void test_confirmation_hash_distinguishes_code() {
+  /* Two different codes with the SAME session_key must produce
+   * different hashes. Mirrors the MITM-protection property: an
+   * attacker who only learns session_key (e.g. via X25519
+   * eavesdrop-and-forward) still can't fake the confirm hash without
+   * also knowing the code. */
+  uint8_t key[mesh_pairing::SESSION_KEY_LEN] = {0};
+  uint8_t h1[mesh_crypto::SHA256_OUT_LEN], h2[mesh_crypto::SHA256_OUT_LEN];
+  mesh_pairing::compute_confirmation_hash(key, 123456u, h1);
+  mesh_pairing::compute_confirmation_hash(key, 123457u, h2);
+  assert(std::memcmp(h1, h2, sizeof(h1)) != 0);
+  std::printf("PASS test_confirmation_hash_distinguishes_code\n");
+}
+
 void test_wire_format_struct_sizes() {
   /* Mirror the static_asserts in mesh_pairing.h at runtime so a CI
    * log surface flags the drift loudly instead of just a compile fail. */
@@ -144,6 +192,8 @@ int main() {
   test_code_range();
   test_wire_compat_code_zero_session_key();
   test_symmetric_mutual_dh_produces_same_code();
+  test_confirmation_hash_wire_compat();
+  test_confirmation_hash_distinguishes_code();
   test_wire_format_struct_sizes();
   std::printf("\nALL MESH_PAIRING TESTS PASSED\n");
   return 0;
