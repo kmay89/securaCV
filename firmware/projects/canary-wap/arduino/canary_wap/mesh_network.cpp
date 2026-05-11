@@ -14,12 +14,13 @@
 #include "mesh_channel_policy.h"
 #include "airtime_governor.h"
 #include "log_level.h"
-
+#include "health_log.h"
 #include <Arduino.h>
 #include <Preferences.h>
 #include <esp_now.h>
 #include <esp_wifi.h>
 #include <WiFi.h>
+#include <esp_flash_encrypt.h>
 #include <Crypto.h>
 #include <Ed25519.h>
 #include <Curve25519.h>
@@ -944,22 +945,11 @@ static void handle_pair_complete(const uint8_t* mac, const uint8_t* payload) {
 // support flash encryption simply cannot store an opera_secret in v0.2.
 // ════════════════════════════════════════════════════════════════════════════
 
-#include "esp_efuse.h"
-#include "esp_efuse_table.h"
-
 static bool flash_encryption_enabled() {
-#if defined(ESP_EFUSE_FLASH_CRYPT_CNT)
-  uint8_t cnt = 0;
-  esp_err_t err = esp_efuse_read_field_blob(ESP_EFUSE_FLASH_CRYPT_CNT, &cnt, 8);
-  if (err != ESP_OK) return false;
-  // Any non-zero count indicates flash encryption has been enabled at least once.
-  // The exact bit count semantics differ across chip revisions; non-zero is
-  // a conservative check that catches the obvious "FE never turned on" case.
-  return cnt != 0;
-#else
-  // No eFuse helper compiled in — refuse to assume FE is on.
-  return false;
-#endif
+  // `esp_flash_encryption_enabled()` from esp_flash_encrypt.h returns true
+  // when the chip is operating with flash encryption active. Wraps the
+  // chip-revision-specific eFuse bit-count logic. Works across ESP32 family.
+  return esp_flash_encryption_enabled();
 }
 
 static bool persist_opera_config() {

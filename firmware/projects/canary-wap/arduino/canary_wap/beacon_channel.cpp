@@ -40,6 +40,7 @@
 #include "health_log.h"
 #include <esp_now.h>
 #include <esp_wifi.h>
+#include <esp_flash_encrypt.h>
 #include <WiFi.h>
 #include <Preferences.h>
 #include <mbedtls/sha256.h>
@@ -142,17 +143,8 @@ static void broadcast_message(const uint8_t* data, size_t len);
 // FLASH ENCRYPTION GATE (shared rationale with Opera audit O2)
 // ════════════════════════════════════════════════════════════════════════════
 
-#include "esp_efuse.h"
-
 static bool flash_encryption_enabled() {
-#if defined(ESP_EFUSE_FLASH_CRYPT_CNT)
-  uint8_t cnt = 0;
-  esp_err_t err = esp_efuse_read_field_blob(ESP_EFUSE_FLASH_CRYPT_CNT, &cnt, 8);
-  if (err != ESP_OK) return false;
-  return cnt != 0;
-#else
-  return false;
-#endif
+  return esp_flash_encryption_enabled();
 }
 
 // ════════════════════════════════════════════════════════════════════════════
