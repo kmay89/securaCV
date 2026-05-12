@@ -5,13 +5,13 @@
  * Template-based messaging — NO free text allowed.
  * Philosophy: "Witness authority, not neighbors"
  *
- * All handlers follow the same pattern as mesh API handlers.
- *
- * NOT CURRENTLY WIRED UP. The register_routes() function below is unreferenced
- * — no call site in canary_wap.ino registers these handlers with the HTTP
- * server. If you wire this module up, you MUST add a Bearer-token auth gate
- * before exposing /api/chirp/* endpoints (see bluetooth_api.h #437 or
- * household_api.h #438 for the template-trampoline pattern).
+ * v0.2 update (audit C12 closure):
+ *   - register_routes() now Bearer-gates every endpoint via the
+ *     same template-trampoline pattern used by bluetooth_api.h (#437)
+ *     and household_api.h (#438). Callers pass the device api_token
+ *     and every handler is wrapped in chirp_auth_gated<>.
+ *   - register_routes() must be called from canary_wap.ino after the
+ *     HTTPS server is up.
  */
 
 #ifndef SECURACV_CHIRP_API_H
@@ -19,9 +19,26 @@
 
 #include "esp_http_server.h"
 #include "mesh_network.h"
+#include "api_auth.h"
 #include <ArduinoJson.h>
 
 namespace chirp_api {
+
+// ════════════════════════════════════════════════════════════════════════════
+// AUTH GATE — same template-trampoline as bluetooth_api.h (audit C12)
+// ════════════════════════════════════════════════════════════════════════════
+
+inline const char*& auth_token_storage() {
+  static const char* token = nullptr;
+  return token;
+}
+
+template<esp_err_t (*Real)(httpd_req_t*)>
+static esp_err_t chirp_auth_gated(httpd_req_t* req) {
+  const char* tok = auth_token_storage();
+  if (tok && !api_auth_check(req, tok)) return ESP_OK;
+  return Real(req);
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 // API HANDLERS
@@ -400,12 +417,21 @@ inline esp_err_t handle_chirp_ack(httpd_req_t* req) {
     sscanf(nonce_hex + i * 2, "%2hhx", &nonce[i]);
   }
 
-  // Map ack type
-  chirp_channel::ChirpAckType ack_type = chirp_channel::CHIRP_ACK_SEEN;
-  if (strcmp(ack_type_str, "confirmed") == 0) ack_type = chirp_channel::CHIRP_ACK_CONFIRMED;
-  else if (strcmp(ack_type_str, "resolved") == 0) ack_type = chirp_channel::CHIRP_ACK_RESOLVED;
-
-  bool success = chirp_channel::acknowledge_chirp(nonce, ack_type);
+  // v0.2 (audit C5 closure): the chirp public API exposes only confirm_chirp
+  // and dismiss_chirp; the legacy `acknowledge_chirp` private helper was
+  // removed because every wire-format ACK now carries a signed
+  // confirmer_session_pubkey (verified in handle_ack). SEEN ACKs are
+  // diagnostic-only and produce no local state change; we accept the
+  // request and return success without doing anything observable.
+  bool success;
+  if (strcmp(ack_type_str, "confirmed") == 0) {
+    success = chirp_channel::confirm_chirp(nonce);
+  } else if (strcmp(ack_type_str, "resolved") == 0) {
+    success = chirp_channel::dismiss_chirp(nonce);
+  } else {
+    // SEEN — no-op, but still acknowledge the request.
+    success = true;
+  }
 
   JsonDocument doc;
   doc["success"] = success;
@@ -608,113 +634,35 @@ inline esp_err_t handle_chirp_confirm(httpd_req_t* req) {
 // ROUTE REGISTRATION
 // ════════════════════════════════════════════════════════════════════════════
 
-// Call this to register all chirp API routes with the HTTP server
-inline void register_routes(httpd_handle_t server) {
-  // GET endpoints
-  httpd_uri_t chirp_status = {
-    .uri = "/api/chirp",
-    .method = HTTP_GET,
-    .handler = handle_chirp_status,
-    .user_ctx = nullptr
-  };
-  httpd_register_uri_handler(server, &chirp_status);
+static inline void register_api_handler(httpd_handle_t server, const char* uri,
+                                        httpd_method_t method,
+                                        esp_err_t (*handler)(httpd_req_t*)) {
+  httpd_uri_t route = { .uri = uri, .method = method, .handler = handler, .user_ctx = nullptr };
+  httpd_register_uri_handler(server, &route);
+}
 
-  httpd_uri_t chirp_nearby = {
-    .uri = "/api/chirp/nearby",
-    .method = HTTP_GET,
-    .handler = handle_chirp_nearby,
-    .user_ctx = nullptr
-  };
-  httpd_register_uri_handler(server, &chirp_nearby);
+// Register all chirp API routes with the HTTP server, Bearer-gated.
+// api_token: device's persistent api_token_str (must outlive the server).
+// nullptr keeps legacy open behaviour for non-production callers; production
+// callers MUST supply a real token.
+inline void register_routes(httpd_handle_t server, const char* api_token = nullptr) {
+  auth_token_storage() = api_token;
 
-  httpd_uri_t chirp_recent = {
-    .uri = "/api/chirp/recent",
-    .method = HTTP_GET,
-    .handler = handle_chirp_recent,
-    .user_ctx = nullptr
-  };
-  httpd_register_uri_handler(server, &chirp_recent);
-
-  httpd_uri_t chirp_templates = {
-    .uri = "/api/chirp/templates",
-    .method = HTTP_GET,
-    .handler = handle_chirp_templates,
-    .user_ctx = nullptr
-  };
-  httpd_register_uri_handler(server, &chirp_templates);
-
-  // POST endpoints
-  httpd_uri_t chirp_enable = {
-    .uri = "/api/chirp/enable",
-    .method = HTTP_POST,
-    .handler = handle_chirp_enable,
-    .user_ctx = nullptr
-  };
-  httpd_register_uri_handler(server, &chirp_enable);
-
-  httpd_uri_t chirp_disable = {
-    .uri = "/api/chirp/disable",
-    .method = HTTP_POST,
-    .handler = handle_chirp_disable,
-    .user_ctx = nullptr
-  };
-  httpd_register_uri_handler(server, &chirp_disable);
-
-  httpd_uri_t chirp_send = {
-    .uri = "/api/chirp/send",
-    .method = HTTP_POST,
-    .handler = handle_chirp_send,
-    .user_ctx = nullptr
-  };
-  httpd_register_uri_handler(server, &chirp_send);
-
-  httpd_uri_t chirp_ack = {
-    .uri = "/api/chirp/ack",
-    .method = HTTP_POST,
-    .handler = handle_chirp_ack,
-    .user_ctx = nullptr
-  };
-  httpd_register_uri_handler(server, &chirp_ack);
-
-  httpd_uri_t chirp_dismiss = {
-    .uri = "/api/chirp/dismiss",
-    .method = HTTP_POST,
-    .handler = handle_chirp_dismiss,
-    .user_ctx = nullptr
-  };
-  httpd_register_uri_handler(server, &chirp_dismiss);
-
-  httpd_uri_t chirp_mute = {
-    .uri = "/api/chirp/mute",
-    .method = HTTP_POST,
-    .handler = handle_chirp_mute,
-    .user_ctx = nullptr
-  };
-  httpd_register_uri_handler(server, &chirp_mute);
-
-  httpd_uri_t chirp_unmute = {
-    .uri = "/api/chirp/unmute",
-    .method = HTTP_POST,
-    .handler = handle_chirp_unmute,
-    .user_ctx = nullptr
-  };
-  httpd_register_uri_handler(server, &chirp_unmute);
-
-  httpd_uri_t chirp_confirm = {
-    .uri = "/api/chirp/confirm",
-    .method = HTTP_POST,
-    .handler = handle_chirp_confirm,
-    .user_ctx = nullptr
-  };
-  httpd_register_uri_handler(server, &chirp_confirm);
-
-  httpd_uri_t chirp_settings = {
-    .uri = "/api/chirp/settings",
-    .method = HTTP_POST,
-    .handler = handle_chirp_settings,
-    .user_ctx = nullptr
-  };
-  httpd_register_uri_handler(server, &chirp_settings);
+  // GET
+  register_api_handler(server, "/api/chirp",           HTTP_GET,  chirp_auth_gated<handle_chirp_status>);
+  register_api_handler(server, "/api/chirp/nearby",    HTTP_GET,  chirp_auth_gated<handle_chirp_nearby>);
+  register_api_handler(server, "/api/chirp/recent",    HTTP_GET,  chirp_auth_gated<handle_chirp_recent>);
+  register_api_handler(server, "/api/chirp/templates", HTTP_GET,  chirp_auth_gated<handle_chirp_templates>);
+  // POST
+  register_api_handler(server, "/api/chirp/enable",   HTTP_POST, chirp_auth_gated<handle_chirp_enable>);
+  register_api_handler(server, "/api/chirp/disable",  HTTP_POST, chirp_auth_gated<handle_chirp_disable>);
+  register_api_handler(server, "/api/chirp/send",     HTTP_POST, chirp_auth_gated<handle_chirp_send>);
+  register_api_handler(server, "/api/chirp/ack",      HTTP_POST, chirp_auth_gated<handle_chirp_ack>);
+  register_api_handler(server, "/api/chirp/dismiss",  HTTP_POST, chirp_auth_gated<handle_chirp_dismiss>);
+  register_api_handler(server, "/api/chirp/mute",     HTTP_POST, chirp_auth_gated<handle_chirp_mute>);
+  register_api_handler(server, "/api/chirp/unmute",   HTTP_POST, chirp_auth_gated<handle_chirp_unmute>);
+  register_api_handler(server, "/api/chirp/confirm",  HTTP_POST, chirp_auth_gated<handle_chirp_confirm>);
+  register_api_handler(server, "/api/chirp/settings", HTTP_POST, chirp_auth_gated<handle_chirp_settings>);
 }
 
 } // namespace chirp_api

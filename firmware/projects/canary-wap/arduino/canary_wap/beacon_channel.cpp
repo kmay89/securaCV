@@ -45,6 +45,8 @@
 #include <Preferences.h>
 #include <mbedtls/sha256.h>
 #include <Ed25519.h>
+#include <Curve25519.h>
+#include <ChaChaPoly.h>
 #include <time.h>
 #include <string.h>
 
@@ -62,6 +64,13 @@ static uint8_t g_device_privkey[DEVICE_PRIVKEY_SIZE];
 static uint8_t g_device_pubkey[DEVICE_PUBKEY_SIZE];
 static uint8_t g_device_fp[DEVICE_FP_SIZE];
 static char    g_device_name[BEACON_NAME_LEN + 1];
+// v0.3: device's X25519 keypair for ECDH-encrypted cosign exchanges. Generated
+// once at first init() and kept in RAM only (regenerable on reboot — since
+// COSIGN_REQ/RESP are ephemeral within a 60 s window, persistence isn't
+// required). The pubkey is published to beacon-set members at pair time.
+static uint8_t g_x25519_privkey[32];
+static uint8_t g_x25519_pubkey[32];
+static bool    g_x25519_ready = false;
 
 static BeaconSetEntry g_beacon_set[MAX_BEACON_SET];
 static uint8_t g_beacon_set_count = 0;
@@ -70,10 +79,15 @@ static BeaconAlertCanonical g_active_alarm;
 static bool g_active_alarm_valid = false;
 static uint64_t g_active_alarm_expires = 0;
 
-// Audit log (RAM-only in v0.1 skeleton — persistence is a follow-up).
+// Audit log: ring buffer indexed by g_audit_head (next write slot).
+// Total entries valid = min(g_audit_log_count, AUDIT_LOG_MAX).
+// When full, new entries overwrite the oldest (head wraps), and on disk
+// we update only that single NVS slot — no full-array shuffle, so
+// persistence stays in sync with RAM (gemini P1 + codex P2 closure).
 static const size_t AUDIT_LOG_MAX = 64;
 static BeaconAuditEntry g_audit_log[AUDIT_LOG_MAX];
-static size_t g_audit_log_count = 0;
+static size_t g_audit_log_count = 0;     // total entries observed (caps at MAX)
+static size_t g_audit_head = 0;          // next slot to write
 static uint8_t g_audit_chain_head[32];
 
 // Pending origination (waiting on cosigner).
@@ -117,6 +131,16 @@ static Preferences g_prefs;
 static const char* NVS_NS = "beacon";
 static const char* NVS_SET_COUNT = "set_count";
 static const char* NVS_SET_PREFIX = "set_";
+// v0.3: audit log persistence (FE-gated, same as beacon_set).
+static const char* NVS_AUDIT_COUNT = "audit_cnt";
+static const char* NVS_AUDIT_PREFIX = "aud_";
+static const char* NVS_AUDIT_HEAD = "aud_head";
+// v0.3 codex P1 closure: persist the device's X25519 keypair so paired
+// peers' stored x25519_pubkey remains valid across reboots. Without this,
+// every reboot regenerated a fresh pair and broke cosign decrypt for every
+// neighbor until the next pairing flow.
+static const char* NVS_X25519_PRIV = "x25519_priv";
+static const char* NVS_X25519_PUB  = "x25519_pub";
 
 // ════════════════════════════════════════════════════════════════════════════
 // FORWARD DECLARATIONS
@@ -145,6 +169,107 @@ static void broadcast_message(const uint8_t* data, size_t len);
 
 static bool flash_encryption_enabled() {
   return esp_flash_encryption_enabled();
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// X25519 ECDH + ChaCha20-Poly1305 — v0.3 COSIGN_REQ/RESP envelope encryption
+// ════════════════════════════════════════════════════════════════════════════
+
+static void ensure_x25519_keypair() {
+  if (g_x25519_ready) return;
+
+  // v0.3 codex P1 closure: persist the keypair so paired peers' stored
+  // x25519_pubkey stays valid across reboots. FE-gated identically to
+  // beacon_set + audit log.
+  if (flash_encryption_enabled()) {
+    g_prefs.begin(NVS_NS, true);
+    size_t got_priv = g_prefs.getBytes(NVS_X25519_PRIV, g_x25519_privkey, 32);
+    size_t got_pub  = g_prefs.getBytes(NVS_X25519_PUB,  g_x25519_pubkey,  32);
+    g_prefs.end();
+    if (got_priv == 32 && got_pub == 32) {
+      g_x25519_ready = true;
+      return;
+    }
+  }
+
+  // No keypair on disk (first boot, FE-off, or corruption): generate one
+  // and (when FE is enabled) persist it.
+  esp_fill_random(g_x25519_privkey, 32);
+  // RFC 7748 scalar clamping (so eval() produces a canonical X25519 result).
+  g_x25519_privkey[0]  &= 248;
+  g_x25519_privkey[31] &= 127;
+  g_x25519_privkey[31] |= 64;
+  // X25519 basepoint = 9. eval(out, scalar, basepoint) produces the pubkey.
+  static const uint8_t BASEPOINT[32] = { 9 };
+  if (!Curve25519::eval(g_x25519_pubkey, g_x25519_privkey, BASEPOINT)) {
+    return;
+  }
+  g_x25519_ready = true;
+
+  if (flash_encryption_enabled()) {
+    g_prefs.begin(NVS_NS, false);
+    g_prefs.putBytes(NVS_X25519_PRIV, g_x25519_privkey, 32);
+    g_prefs.putBytes(NVS_X25519_PUB,  g_x25519_pubkey,  32);
+    g_prefs.end();
+  } else {
+    health_log(SCV_LOG_ALERT, SCV_CAT_CRYPTO,
+               "beacon: X25519 keypair generated but not persisted — "
+               "FE disabled. Paired peers will lose cosign capability "
+               "on next reboot. (codex P1)");
+  }
+}
+
+static bool ecdh_session_key(const uint8_t* their_x25519_pubkey,
+                             uint8_t out_key[32]) {
+  // Compute the shared secret via X25519, then HKDF-SHA256 it down to a
+  // 32-byte session key with a domain-separated label.
+  uint8_t shared[32];
+  if (!Curve25519::eval(shared, g_x25519_privkey, their_x25519_pubkey)) {
+    return false;
+  }
+  // Domain-separate so the same shared secret can't be cross-purposed.
+  static const char LABEL[] = "securacv:beacon:cosign:v0";
+  mbedtls_sha256_context ctx;
+  mbedtls_sha256_init(&ctx);
+  mbedtls_sha256_starts(&ctx, 0);
+  mbedtls_sha256_update(&ctx, (const uint8_t*)LABEL, sizeof(LABEL) - 1);
+  mbedtls_sha256_update(&ctx, shared, 32);
+  mbedtls_sha256_finish(&ctx, out_key);
+  mbedtls_sha256_free(&ctx);
+  return true;
+}
+
+// Encrypt `plaintext_len` bytes of `plaintext` to the recipient identified by
+// `their_x25519_pubkey`. `nonce` (12 B) is written to the output; `tag` (16 B)
+// is also written. `out_ciphertext` is at least `plaintext_len` bytes.
+//
+// Returns true on success, false if ECDH failed.
+static bool cosign_encrypt(const uint8_t* their_x25519_pubkey,
+                           const uint8_t* plaintext, size_t plaintext_len,
+                           uint8_t nonce[12], uint8_t tag[16],
+                           uint8_t* out_ciphertext) {
+  uint8_t key[32];
+  if (!ecdh_session_key(their_x25519_pubkey, key)) return false;
+  esp_fill_random(nonce, 12);
+  ChaChaPoly aead;
+  aead.setKey(key, 32);
+  aead.setIV(nonce, 12);
+  aead.encrypt(out_ciphertext, plaintext, plaintext_len);
+  aead.computeTag(tag, 16);
+  return true;
+}
+
+static bool cosign_decrypt(const uint8_t* their_x25519_pubkey,
+                           const uint8_t* ciphertext, size_t ciphertext_len,
+                           const uint8_t nonce[12], const uint8_t tag[16],
+                           uint8_t* out_plaintext) {
+  uint8_t key[32];
+  if (!ecdh_session_key(their_x25519_pubkey, key)) return false;
+  ChaChaPoly aead;
+  aead.setKey(key, 32);
+  aead.setIV(nonce, 12);
+  aead.decrypt(out_plaintext, ciphertext, ciphertext_len);
+  return aead.checkTag(tag, 16);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -273,6 +398,64 @@ static bool load_beacon_set() {
   return true;
 }
 
+// v0.3 (audit follow-up): persist the audit log to NVS so that Beacon
+// alarms survive reboots. FE-gated identically to beacon_set. The log is
+// rotated in-place: at most AUDIT_LOG_MAX entries are kept, indexed by
+// `aud_head`. Each individual entry is written to its own NVS key so a
+// full read isn't required to append.
+// Persist one slot + head + count atomically (single NVS commit). When the
+// ring rotates, only the one overwritten slot has changed; head advances
+// so on reload we know where the newest entry lives.
+static bool persist_audit_entry(size_t index) {
+  if (!flash_encryption_enabled()) return false;
+  g_prefs.begin(NVS_NS, false);
+  char key[16];
+  snprintf(key, sizeof(key), "%s%u", NVS_AUDIT_PREFIX, (unsigned)index);
+  g_prefs.putBytes(key, &g_audit_log[index], sizeof(BeaconAuditEntry));
+  g_prefs.putULong(NVS_AUDIT_COUNT, g_audit_log_count);
+  g_prefs.putULong(NVS_AUDIT_HEAD, (uint32_t)g_audit_head);
+  g_prefs.end();
+  return true;
+}
+
+static bool load_audit_log() {
+  if (!flash_encryption_enabled()) {
+    g_audit_log_count = 0;
+    g_audit_head = 0;
+    return false;
+  }
+  g_prefs.begin(NVS_NS, true);
+  uint32_t cnt = g_prefs.getULong(NVS_AUDIT_COUNT, 0);
+  uint32_t head = g_prefs.getULong(NVS_AUDIT_HEAD, 0);
+  if (cnt > AUDIT_LOG_MAX) cnt = AUDIT_LOG_MAX;
+  if (head >= AUDIT_LOG_MAX) head = 0;
+  g_audit_log_count = cnt;
+  g_audit_head = head;
+  // Load every persisted slot. Slots beyond `cnt` (i.e. never written)
+  // remain zeroed from the init() memset.
+  for (size_t i = 0; i < cnt; i++) {
+    char key[16];
+    snprintf(key, sizeof(key), "%s%u", NVS_AUDIT_PREFIX, (unsigned)i);
+    g_prefs.getBytes(key, &g_audit_log[i], sizeof(BeaconAuditEntry));
+  }
+  // Re-derive the chain head from the most recently written entry
+  // (the slot at (head - 1) mod MAX when count == MAX, else slot
+  // count-1 in the pre-rotation regime).
+  if (cnt > 0) {
+    const size_t newest_idx = (head == 0) ? (cnt - 1) : (head - 1);
+    mbedtls_sha256_context ctx;
+    mbedtls_sha256_init(&ctx);
+    mbedtls_sha256_starts(&ctx, 0);
+    mbedtls_sha256_update(&ctx, g_audit_log[newest_idx].prev_audit_hash, 32);
+    mbedtls_sha256_update(&ctx, (const uint8_t*)&g_audit_log[newest_idx],
+                          sizeof(BeaconAuditEntry));
+    mbedtls_sha256_finish(&ctx, g_audit_chain_head);
+    mbedtls_sha256_free(&ctx);
+  }
+  g_prefs.end();
+  return true;
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // TROUBLE / STATE
 // ════════════════════════════════════════════════════════════════════════════
@@ -326,13 +509,18 @@ static void chain_audit_entry(BeaconAuditEntry* entry) {
   mbedtls_sha256_finish(&ctx, g_audit_chain_head);
   mbedtls_sha256_free(&ctx);
 
-  if (g_audit_log_count < AUDIT_LOG_MAX) {
-    g_audit_log[g_audit_log_count++] = *entry;
-  } else {
-    // Rotate; drop oldest.
-    memmove(&g_audit_log[0], &g_audit_log[1], sizeof(BeaconAuditEntry) * (AUDIT_LOG_MAX - 1));
-    g_audit_log[AUDIT_LOG_MAX - 1] = *entry;
-  }
+  // Ring-buffer append: write at g_audit_head, advance head, persist the
+  // single touched slot + head pointer + count. No memmove → on-disk
+  // contents stay consistent with RAM after rotation
+  // (gemini P1 + codex P2 closure).
+  const size_t written_idx = g_audit_head;
+  g_audit_log[written_idx] = *entry;
+  g_audit_head = (g_audit_head + 1) % AUDIT_LOG_MAX;
+  if (g_audit_log_count < AUDIT_LOG_MAX) g_audit_log_count++;
+
+  // Persist the single slot + the head + the count atomically per-slot.
+  // FE-gated; refuses cleanly if flash encryption is off.
+  persist_audit_entry(written_idx);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -381,8 +569,10 @@ static void emit_alert_frame() {
   // into the trailing 64 bytes of g_pending_origination.canonical's owner
   // structure — see on_cosign_resp handler.
 
-  // For this v0.1 skeleton path we emit through urgent airtime always.
-  airtime_governor::force_reserve_urgent(millis(), sizeof(buf));
+  // Beacon frames go through the distinct beacon-slot airtime accounting
+  // so HA MQTT can surface beacon.airtime_pct separately from Opera tamper
+  // alerts. force_reserve_beacon never blocks (Beacon is always urgent).
+  airtime_governor::force_reserve_beacon(millis(), sizeof(buf));
   broadcast_message(buf, sizeof(buf));
   g_pending_origination.valid = false;
 
@@ -396,6 +586,9 @@ static void emit_alert_frame() {
 
 static void handle_alert_frame(const uint8_t* data, size_t len);
 static void handle_selftest_frame(const uint8_t* data, size_t len);
+
+static void handle_cosign_req_frame(const uint8_t* data, size_t len);
+static void handle_cosign_resp_frame(const uint8_t* data, size_t len);
 
 static void on_espnow_recv(const uint8_t* mac, const uint8_t* data, int len, int8_t rssi) {
   (void)mac; (void)rssi;
@@ -415,10 +608,145 @@ static void on_espnow_recv(const uint8_t* mac, const uint8_t* data, int len, int
     case BEACON_MSG_SELFTEST_OK:
       handle_selftest_frame(data, (size_t)len);
       break;
+    case BEACON_MSG_COSIGN_REQ:
+      handle_cosign_req_frame(data, (size_t)len);
+      break;
+    case BEACON_MSG_COSIGN_RESP:
+      handle_cosign_resp_frame(data, (size_t)len);
+      break;
     default:
-      // COSIGN_REQ / COSIGN_RESP / PAIR_OFFER paths are deferred to v0.3.
+      // PAIR_OFFER / REVOKE paths are deferred to v0.3 pairing implementation.
       break;
   }
+}
+
+static void handle_cosign_req_frame(const uint8_t* data, size_t len) {
+  if (len < sizeof(BeaconHeader) + sizeof(BeaconCosignRequestPayload)) return;
+  const BeaconCosignRequestPayload* req =
+      (const BeaconCosignRequestPayload*)(data + sizeof(BeaconHeader));
+
+  // Only act if we're the addressed cosigner candidate.
+  if (memcmp(req->candidate_cosigner_fp, g_device_fp, DEVICE_FP_SIZE) != 0) return;
+
+  // Originator must be in our beacon set, not revoked, with x25519 pubkey known.
+  const BeaconSetEntry* orig = find_set_entry_by_fp(req->originator_fp);
+  if (!orig) return;
+  if (orig->trust_level == BCN_TRUST_REVOKED) return;
+  if (!orig->has_x25519_pubkey) return;
+
+  ensure_x25519_keypair();
+
+  uint8_t plaintext[sizeof(BeaconAlertCanonical)];
+  if (req->ciphertext_len != sizeof(BeaconAlertCanonical)) return;
+  if (!cosign_decrypt(orig->x25519_pubkey,
+                      req->ciphertext, req->ciphertext_len,
+                      req->nonce, req->tag, plaintext)) {
+    health_log(SCV_LOG_WARNING, SCV_CAT_NETWORK,
+               "beacon: COSIGN_REQ decrypt/auth failed (dropped)");
+    return;
+  }
+
+  BeaconAlertCanonical candidate;
+  memcpy(&candidate, plaintext, sizeof(candidate));
+
+  // Sanity: originator_fp inside canonical must match the wire field.
+  if (memcmp(candidate.originator_fp, req->originator_fp, DEVICE_FP_SIZE) != 0) return;
+  if (memcmp(candidate.cosigner_fp, g_device_fp, DEVICE_FP_SIZE) != 0) return;
+  if (candidate.scope != BCN_SCOPE_PRIVATE) return;
+
+  // Verify originator's signature.
+  uint8_t buf[64 + sizeof(BeaconAlertCanonical)];
+  size_t cl = build_alert_canonical(&candidate, buf, sizeof(buf));
+  if (cl == 0) return;
+  if (!Ed25519::verify(req->originator_signature, orig->device_pubkey, buf, cl)) {
+    health_log(SCV_LOG_WARNING, SCV_CAT_NETWORK,
+               "beacon: COSIGN_REQ originator signature invalid");
+    return;
+  }
+
+  // Stash for the local UI to display and the user to confirm via
+  // cosign_pending_request().
+  g_pending_cosign_in.valid = true;
+  g_pending_cosign_in.canonical = candidate;
+  memcpy(g_pending_cosign_in.originator_fp, req->originator_fp, DEVICE_FP_SIZE);
+  memcpy(g_pending_cosign_in.sig_originator, req->originator_signature,
+         BEACON_SIGNATURE_SIZE);
+  g_pending_cosign_in.requested_ms = millis();
+
+  if (g_cosign_request_callback) {
+    g_cosign_request_callback(&candidate, req->originator_fp);
+  }
+  health_log(SCV_LOG_INFO, SCV_CAT_NETWORK,
+             "beacon: COSIGN_REQ received and verified — awaiting user confirm");
+}
+
+static void handle_cosign_resp_frame(const uint8_t* data, size_t len) {
+  if (len < sizeof(BeaconHeader) + sizeof(BeaconCosignResponsePayload)) return;
+  const BeaconCosignResponsePayload* resp =
+      (const BeaconCosignResponsePayload*)(data + sizeof(BeaconHeader));
+
+  // Only the originator listens.
+  if (memcmp(resp->originator_fp, g_device_fp, DEVICE_FP_SIZE) != 0) return;
+  if (!g_pending_origination.valid) return;
+  if (memcmp(g_pending_origination.canonical.cosigner_fp, resp->cosigner_fp,
+             DEVICE_FP_SIZE) != 0) return;
+
+  const BeaconSetEntry* cosigner = find_set_entry_by_fp(resp->cosigner_fp);
+  if (!cosigner || cosigner->trust_level == BCN_TRUST_REVOKED) return;
+  if (!cosigner->has_x25519_pubkey) return;
+
+  uint8_t plaintext[64];
+  if (!cosign_decrypt(cosigner->x25519_pubkey,
+                      resp->ciphertext, sizeof(plaintext),
+                      resp->nonce, resp->tag, plaintext)) {
+    health_log(SCV_LOG_WARNING, SCV_CAT_NETWORK,
+               "beacon: COSIGN_RESP decrypt/auth failed");
+    return;
+  }
+
+  if (!resp->accept) {
+    health_log(SCV_LOG_INFO, SCV_CAT_NETWORK,
+               "beacon: cosigner declined; origination discarded");
+    g_pending_origination.valid = false;
+    return;
+  }
+
+  // Verify the cosigner's signature over the same canonical.
+  uint8_t buf[64 + sizeof(BeaconAlertCanonical)];
+  size_t cl = build_alert_canonical(&g_pending_origination.canonical,
+                                    buf, sizeof(buf));
+  if (cl == 0) return;
+  if (!Ed25519::verify(plaintext, cosigner->device_pubkey, buf, cl)) {
+    health_log(SCV_LOG_WARNING, SCV_CAT_NETWORK,
+               "beacon: COSIGN_RESP signature invalid");
+    return;
+  }
+
+  // Emit the dual-signed ALERT now.
+  uint8_t out[sizeof(BeaconHeader) + sizeof(BeaconAlertCanonical) +
+              2 * BEACON_SIGNATURE_SIZE];
+  memset(out, 0, sizeof(out));
+  BeaconHeader* hdr = (BeaconHeader*)out;
+  hdr->magic = BEACON_MAGIC;
+  hdr->version = PROTOCOL_VERSION;
+  hdr->msg_type = BEACON_MSG_ALERT;
+  hdr->hop_count = 0;
+  hdr->payload_len = sizeof(BeaconAlertCanonical) + 2 * BEACON_SIGNATURE_SIZE;
+  esp_fill_random(hdr->nonce, BEACON_NONCE_SIZE);
+
+  uint8_t* p = out + sizeof(BeaconHeader);
+  memcpy(p, &g_pending_origination.canonical, sizeof(BeaconAlertCanonical));
+  p += sizeof(BeaconAlertCanonical);
+  memcpy(p, g_pending_origination.sig_originator, BEACON_SIGNATURE_SIZE);
+  p += BEACON_SIGNATURE_SIZE;
+  memcpy(p, plaintext, BEACON_SIGNATURE_SIZE);  // cosigner's sig
+
+  airtime_governor::force_reserve_beacon(millis(), sizeof(out));
+  broadcast_message(out, sizeof(out));
+  g_pending_origination.valid = false;
+
+  health_log(SCV_LOG_ALERT, SCV_CAT_NETWORK,
+             "beacon: dual-signed ALERT broadcast at hop 0");
 }
 
 static void handle_alert_frame(const uint8_t* data, size_t len) {
@@ -533,12 +861,14 @@ bool init(const uint8_t* device_privkey, const uint8_t* device_pubkey,
   memset(g_audit_log, 0, sizeof(g_audit_log));
   memset(g_audit_chain_head, 0, sizeof(g_audit_chain_head));
   g_audit_log_count = 0;
+  g_audit_head = 0;
   g_active_alarm_valid = false;
   g_pending_origination.valid = false;
   g_pending_cosign_in.valid = false;
   g_beacon_set_count = 0;
 
   load_beacon_set();
+  load_audit_log();
 
   g_initialized = true;
   set_state(BEACON_STATE_DISABLED);
@@ -657,6 +987,27 @@ bool is_pairing() {
   return g_state == BEACON_STATE_PAIR_INIT || g_state == BEACON_STATE_PAIR_JOIN;
 }
 
+// Pick a candidate cosigner from the beacon set: first non-revoked entry with
+// a known X25519 pubkey (needed for the encrypted COSIGN_REQ) and a recent
+// selftest. Returns nullptr if none qualify.
+static const BeaconSetEntry* pick_cosign_candidate() {
+  uint32_t now = millis();
+  for (uint8_t i = 0; i < g_beacon_set_count; i++) {
+    const BeaconSetEntry& e = g_beacon_set[i];
+    if (!e.valid) continue;
+    if (e.trust_level == BCN_TRUST_REVOKED) continue;
+    if (!e.has_x25519_pubkey) continue;
+    // Freshness: selftest seen within COSIGN_FRESHNESS_MS.
+    if (e.last_selftest != 0 &&
+        now > (uint32_t)e.last_selftest &&
+        (now - (uint32_t)e.last_selftest) > COSIGN_FRESHNESS_MS) {
+      continue;
+    }
+    return &e;
+  }
+  return nullptr;
+}
+
 bool originate_alert(BeaconTemplate template_id, BeaconUrgency urgency,
                      BeaconSeverity severity, BeaconCertainty certainty,
                      BeaconDetailSlot detail, uint32_t ttl_minutes) {
@@ -664,6 +1015,15 @@ bool originate_alert(BeaconTemplate template_id, BeaconUrgency urgency,
   if (time(nullptr) < (time_t)MIN_UNIX_TIME) return false;
   if (g_beacon_set_count == 0) return false;  // no cosigner available
   if (!rate_check_and_record(g_device_fp)) return false;
+
+  ensure_x25519_keypair();
+
+  const BeaconSetEntry* candidate = pick_cosign_candidate();
+  if (!candidate) {
+    health_log(SCV_LOG_INFO, SCV_CAT_NETWORK,
+               "beacon: no eligible cosigner (rate/presence/x25519)");
+    return false;
+  }
 
   BeaconAlertCanonical canonical;
   memset(&canonical, 0, sizeof(canonical));
@@ -677,7 +1037,7 @@ bool originate_alert(BeaconTemplate template_id, BeaconUrgency urgency,
   canonical.scope = BCN_SCOPE_PRIVATE;
   canonical.detail_slot = (uint8_t)detail;
   memcpy(canonical.originator_fp, g_device_fp, DEVICE_FP_SIZE);
-  // cosigner_fp will be filled in by the cosigner before final emission.
+  memcpy(canonical.cosigner_fp, candidate->fingerprint, DEVICE_FP_SIZE);
 
   uint8_t buf[64 + sizeof(BeaconAlertCanonical)];
   size_t cl = build_alert_canonical(&canonical, buf, sizeof(buf));
@@ -691,29 +1051,91 @@ bool originate_alert(BeaconTemplate template_id, BeaconUrgency urgency,
   memcpy(g_pending_origination.sig_originator, sig_a, BEACON_SIGNATURE_SIZE);
   g_pending_origination.requested_ms = millis();
 
-  // Broadcast a COSIGN_REQ (in v0.1 this is unencrypted; v0.3 will wrap).
-  // For the skeleton we just log and return — actual transport of the request
-  // and receipt of the response are tracked for v0.3.
+  // v0.3 (audit follow-up): encrypt the canonical to the candidate cosigner's
+  // X25519 pubkey + broadcast the encrypted COSIGN_REQ. Per spec §6.3 the
+  // body is ChaCha20-Poly1305 over the canonical, keyed by HKDF-SHA256 of
+  // the X25519 shared secret.
+  uint8_t req_buf[sizeof(BeaconHeader) + sizeof(BeaconCosignRequestPayload)];
+  memset(req_buf, 0, sizeof(req_buf));
+  BeaconHeader* hdr = (BeaconHeader*)req_buf;
+  BeaconCosignRequestPayload* req =
+      (BeaconCosignRequestPayload*)(req_buf + sizeof(BeaconHeader));
+  hdr->magic = BEACON_MAGIC;
+  hdr->version = PROTOCOL_VERSION;
+  hdr->msg_type = BEACON_MSG_COSIGN_REQ;
+  hdr->hop_count = 0;
+  hdr->payload_len = sizeof(BeaconCosignRequestPayload);
+  esp_fill_random(hdr->nonce, BEACON_NONCE_SIZE);
+
+  memcpy(req->originator_fp, g_device_fp, DEVICE_FP_SIZE);
+  memcpy(req->candidate_cosigner_fp, candidate->fingerprint, DEVICE_FP_SIZE);
+  req->ciphertext_len = sizeof(BeaconAlertCanonical);
+  if (!cosign_encrypt(candidate->x25519_pubkey,
+                      (const uint8_t*)&canonical, sizeof(BeaconAlertCanonical),
+                      req->nonce, req->tag, req->ciphertext)) {
+    g_pending_origination.valid = false;
+    return false;
+  }
+  memcpy(req->originator_signature, sig_a, BEACON_SIGNATURE_SIZE);
+
+  airtime_governor::force_reserve_beacon(millis(), sizeof(req_buf));
+  broadcast_message(req_buf, sizeof(req_buf));
+
   health_log(SCV_LOG_INFO, SCV_CAT_NETWORK,
-             "beacon: originated alert pending cosigner (v0.1 skeleton)");
+             "beacon: encrypted COSIGN_REQ broadcast to candidate cosigner");
   return true;
 }
 
 bool cosign_pending_request(bool confirm) {
   if (!g_pending_cosign_in.valid) return false;
-  if (!confirm) {
+
+  // Look up the originator to address the encrypted response.
+  const BeaconSetEntry* orig = find_set_entry_by_fp(g_pending_cosign_in.originator_fp);
+  if (!orig || orig->trust_level == BCN_TRUST_REVOKED || !orig->has_x25519_pubkey) {
     g_pending_cosign_in.valid = false;
-    return true;
+    return false;
   }
-  // Sign the canonical and emit a COSIGN_RESP (skeleton: not actually
-  // transported in v0.1).
-  uint8_t buf[64 + sizeof(BeaconAlertCanonical)];
-  size_t cl = build_alert_canonical(&g_pending_cosign_in.canonical, buf, sizeof(buf));
-  if (cl == 0) return false;
-  uint8_t sig_b[BEACON_SIGNATURE_SIZE];
-  Ed25519::sign(sig_b, g_device_privkey, g_device_pubkey, buf, cl);
-  (void)sig_b;
+
+  ensure_x25519_keypair();
+
+  uint8_t resp_buf[sizeof(BeaconHeader) + sizeof(BeaconCosignResponsePayload)];
+  memset(resp_buf, 0, sizeof(resp_buf));
+  BeaconHeader* hdr = (BeaconHeader*)resp_buf;
+  BeaconCosignResponsePayload* resp =
+      (BeaconCosignResponsePayload*)(resp_buf + sizeof(BeaconHeader));
+  hdr->magic = BEACON_MAGIC;
+  hdr->version = PROTOCOL_VERSION;
+  hdr->msg_type = BEACON_MSG_COSIGN_RESP;
+  hdr->hop_count = 0;
+  hdr->payload_len = sizeof(BeaconCosignResponsePayload);
+  esp_fill_random(hdr->nonce, BEACON_NONCE_SIZE);
+
+  memcpy(resp->originator_fp, g_pending_cosign_in.originator_fp, DEVICE_FP_SIZE);
+  memcpy(resp->cosigner_fp, g_device_fp, DEVICE_FP_SIZE);
+  resp->accept = confirm ? 1 : 0;
+
+  // Encrypt the cosigner's signature (or zeroes on decline) back to the
+  // originator. The encrypted payload has fixed size sizeof(plaintext)=64.
+  uint8_t plaintext[64];
+  memset(plaintext, 0, sizeof(plaintext));
+  if (confirm) {
+    uint8_t buf[64 + sizeof(BeaconAlertCanonical)];
+    size_t cl = build_alert_canonical(&g_pending_cosign_in.canonical, buf, sizeof(buf));
+    if (cl == 0) { g_pending_cosign_in.valid = false; return false; }
+    Ed25519::sign(plaintext, g_device_privkey, g_device_pubkey, buf, cl);
+  }
+  if (!cosign_encrypt(orig->x25519_pubkey, plaintext, sizeof(plaintext),
+                      resp->nonce, resp->tag, resp->ciphertext)) {
+    g_pending_cosign_in.valid = false;
+    return false;
+  }
+
+  airtime_governor::force_reserve_beacon(millis(), sizeof(resp_buf));
+  broadcast_message(resp_buf, sizeof(resp_buf));
   g_pending_cosign_in.valid = false;
+  health_log(SCV_LOG_INFO, SCV_CAT_NETWORK,
+             confirm ? "beacon: COSIGN_RESP (accepted) sent"
+                     : "beacon: COSIGN_RESP (declined) sent");
   return true;
 }
 
@@ -733,8 +1155,14 @@ const BeaconAlertCanonical* get_active_alarm() {
 
 size_t get_audit_log_count() { return g_audit_log_count; }
 const BeaconAuditEntry* get_audit_log_entry(size_t index) {
+  // Oldest-first iteration over the ring buffer. When the buffer hasn't
+  // rotated (count < MAX), head == count and slot 0 is oldest; when it
+  // has rotated (count == MAX), slot `head` is oldest. Both collapse to:
+  //   slot = (head + MAX - count + index) % MAX
   if (index >= g_audit_log_count) return nullptr;
-  return &g_audit_log[index];
+  const size_t slot = (g_audit_head + AUDIT_LOG_MAX - g_audit_log_count + index)
+                      % AUDIT_LOG_MAX;
+  return &g_audit_log[slot];
 }
 
 bool emit_selftest() {

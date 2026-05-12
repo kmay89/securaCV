@@ -55,6 +55,9 @@ struct Stats {
   uint32_t routine_allowed;    // count of permitted routine sends
   uint32_t routine_denied;     // count of denied routine sends
   uint32_t urgent_sends;       // count of urgent sends (always allowed)
+  uint32_t beacon_sends;       // count of urgent sends from the Beacon channel
+                               // (distinct telemetry slot per spec/beacon_channel_v0.md §8)
+  uint32_t beacon_airtime_us;  // total Beacon airtime in window (subset of airtime_us)
 };
 
 // Estimate the airtime cost of one packet (microseconds).
@@ -73,6 +76,12 @@ bool try_reserve_routine(uint32_t now_ms, size_t bytes);
 // Force-reserve airtime for an urgent send. Always returns true; the cost
 // is still recorded so the rolling window reflects reality.
 void force_reserve_urgent(uint32_t now_ms, size_t bytes);
+
+// Force-reserve airtime for a Beacon-class urgent send. Same airtime
+// accounting as force_reserve_urgent, plus a distinct counter slot so the
+// `beacon.airtime_pct` / `beacon.frames` MQTT sensor can be surfaced
+// separately from Opera tamper/power alerts.
+void force_reserve_beacon(uint32_t now_ms, size_t bytes);
 
 // Telemetry — utilization expressed as percent × 100 (i.e. 215 = 2.15%).
 uint16_t airtime_pct_x100(uint32_t now_ms);

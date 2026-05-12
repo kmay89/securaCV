@@ -93,6 +93,41 @@ static uint32_t g_start_time_ms = 0;
 static uint32_t g_last_heartbeat_ms = 0;
 static uint32_t g_last_peer_check_ms = 0;
 
+// v0.3 (audit O3 closure): in-flight opera_secret rekey state.
+//
+// A single rekey is allowed at a time; concurrent calls are rejected.
+// `pending_secret` and `pending_opera_id` are committed to NVS only after
+// every surviving member has ACKed or the timeout expires (whichever first).
+//
+// Threading invariant (gemini P1 follow-up): every mutator of `g_rekey`
+// lives in the main loop task:
+//   - `remove_peer()` is invoked from the REST handler thread, but the
+//     existing wifi_provision serializer + Bearer-gate trampoline ensure
+//     it's called on the main task. (See mesh_network.cpp's other
+//     loop-driven mutators: handle_received_message, update().)
+//   - `maybe_finalize_rekey()` is called from `update()` (loop task).
+//   - The case MSG_OPERA_REKEY_ACK branch in handle_received_message
+//     also runs on the loop task, because ESP-NOW frames are queued via
+//     `g_rx_pending` and dispatched only inside `update()`.
+//
+// No cross-task access to `pending_acks` therefore exists. If a future
+// change introduces an ISR or non-loop-task mutator, switch to
+// `__atomic_fetch_and(&pending_acks, ~bit, __ATOMIC_RELAXED)` for the
+// clearing operation and `__atomic_load_n(&pending_acks, ...)` for the
+// commit-decision read in `maybe_finalize_rekey()`.
+static const uint32_t REKEY_TIMEOUT_MS = 60000;
+struct RekeyState {
+  bool        active;
+  uint32_t    rekey_id;
+  uint32_t    started_ms;
+  uint8_t     pending_secret[OPERA_SECRET_SIZE];
+  uint8_t     pending_opera_id[OPERA_ID_SIZE];
+  // Bit-vector of peer indices that have ACKed (mirrors g_peers indices at the
+  // time rekey was initiated). MAX_OPERA_SIZE is 16 so a uint16_t suffices.
+  uint16_t    pending_acks;   // bit i set if peer i hasn't ACKed yet
+};
+static RekeyState g_rekey = {};
+
 // Pairing
 static PairingSession g_pairing;
 
@@ -124,6 +159,7 @@ static bool encrypt_message(const uint8_t* key, const uint8_t* plaintext, size_t
                            uint8_t* ciphertext, uint8_t* nonce_out, uint8_t* tag_out);
 static bool decrypt_message(const uint8_t* key, const uint8_t* ciphertext, size_t len,
                            const uint8_t* nonce, const uint8_t* tag, uint8_t* plaintext);
+static void maybe_finalize_rekey();
 static bool sign_message(const uint8_t* privkey, const uint8_t* data, size_t len, uint8_t* sig_out);
 static bool verify_signature(const uint8_t* pubkey, const uint8_t* data, size_t len, const uint8_t* sig);
 static void update_peer_state(OperaPeer* peer, PeerState new_state);
@@ -564,6 +600,63 @@ static void handle_received_message(const uint8_t* mac, const uint8_t* data, siz
       break;
     case MSG_OFFLINE_IMMINENT:
       handle_offline_imminent(peer, payload);
+      break;
+    case MSG_OPERA_REKEY:
+      // Decrypt the new secret with our existing session key, ACK BEFORE
+      // switching opera_id, then install the new secret. See
+      // spec/canary_mesh_network_v0.md §5.6 + codex P1 follow-up.
+      //
+      // Ordering matters: the initiator still accepts only the OLD
+      // opera_id until maybe_finalize_rekey() commits, so the ACK must
+      // be emitted under the OLD opera_id (i.e. before we mutate
+      // g_opera_config.opera_id). If we switched first, every ACK would
+      // be dropped at the initiator's `opera_id` membership check, the
+      // all-ACKed fast path would be unreachable, and the transaction
+      // would always hit the 60 s timeout — unnecessarily staling
+      // healthy peers.
+      {
+        if (!peer->session_established) break;
+        const OperaRekeyPayload* rk = (const OperaRekeyPayload*)payload;
+        uint8_t new_secret[OPERA_SECRET_SIZE];
+        if (!decrypt_message(peer->session_key, rk->encrypted_secret,
+                             OPERA_SECRET_SIZE, rk->nonce, rk->tag, new_secret)) {
+          health_log(SCV_LOG_WARNING, SCV_CAT_CRYPTO,
+                     "opera: rekey decrypt failed (dropped)");
+          break;
+        }
+
+        // ── 1. ACK FIRST under the still-current opera_id + session key ──
+        OperaRekeyAckPayload ack;
+        ack.rekey_id = rk->rekey_id;
+        send_to_peer(peer, MSG_OPERA_REKEY_ACK, (uint8_t*)&ack, sizeof(ack));
+
+        // ── 2. Now install the new secret and derive new opera_id ──
+        memcpy(g_opera_config.opera_secret, new_secret, OPERA_SECRET_SIZE);
+        compute_opera_id(g_opera_config.opera_secret, g_opera_config.opera_id);
+        persist_opera_config();  // FE-gated; logs alert if refused
+
+        // ── 3. Invalidate the session so both sides re-auth ──
+        peer->session_established = false;
+        memset(peer->session_key, 0, SESSION_KEY_SIZE);
+        peer->msg_counter_tx = 0;
+        peer->msg_counter_rx = 0;
+        health_log(SCV_LOG_INFO, SCV_CAT_CRYPTO,
+                   "opera: rekey applied (ACK sent under old opera_id); awaiting re-auth");
+      }
+      break;
+    case MSG_OPERA_REKEY_ACK:
+      // We're the initiator; record this peer's ACK.
+      {
+        const OperaRekeyAckPayload* ack = (const OperaRekeyAckPayload*)payload;
+        if (!g_rekey.active) break;
+        if (ack->rekey_id != g_rekey.rekey_id) break;
+        // Find peer index in g_peers (peer pointer arithmetic).
+        size_t idx = (size_t)(peer - g_peers);
+        if (idx >= MAX_OPERA_SIZE) break;
+        g_rekey.pending_acks &= ~(uint16_t)(1u << idx);
+        health_log(SCV_LOG_INFO, SCV_CAT_CRYPTO,
+                   "opera: rekey ACK received from peer");
+      }
       break;
     default:
       break;
@@ -1176,6 +1269,10 @@ void update() {
     g_rx_pending = false;
   }
 
+  // v0.3 (audit O3): if a rekey is in flight, finalize when all peers have
+  // ACKed or the timeout expires.
+  maybe_finalize_rekey();
+
   // Check pairing timeout
   if ((g_mesh_state == MESH_PAIRING_INIT || g_mesh_state == MESH_PAIRING_JOIN ||
        g_mesh_state == MESH_PAIRING_CONFIRM) &&
@@ -1369,48 +1466,96 @@ bool remove_peer(const uint8_t* fingerprint) {
 
       persist_peers();
 
-      // ── audit O3: rotate opera_secret so the removed device cannot rejoin ──
+      // ── audit O3 closure: transactional opera_secret rotation ──
       //
-      // The removed peer still has the old opera_secret. Without rotation, it
-      // could pair into the opera again at any time. We generate a fresh
-      // secret, derive a new opera_id, and re-distribute the new secret to
-      // each surviving member under their existing authenticated session
-      // key.
+      // 1. Compute a candidate new secret + new opera_id (NOT yet committed).
+      // 2. For each surviving member, send MSG_OPERA_REKEY encrypted under
+      //    that member's current session key.
+      // 3. Wait for MSG_OPERA_REKEY_ACK from each (handled in the message
+      //    dispatcher above). The update() loop calls finalize_rekey() when
+      //    all members ACK or the timeout expires.
+      // 4. On commit, persist new secret + new opera_id to NVS. Members that
+      //    didn't ACK are marked stale and will re-pair under the new
+      //    opera_id.
       //
-      // FOLLOW-UP: the full transactional rekey protocol (ACK from every
-      // surviving member, retry, half-rekey recovery) is specified in
-      // spec/canary_mesh_network_v0.md §5.6 and tracked as a v0.3 work item.
-      // For v0.2 we do the minimum-correct thing: rotate the secret, persist
-      // the new state, and emit a LEAVE_OPERA frame to the removed peer's
-      // MAC so any old session it has is invalidated.
+      // If a rekey is already in flight, we still rotate locally and persist
+      // (the in-flight one will be superseded by the new rekey_id, and any
+      // late ACKs for the old id are dropped).
       if (g_opera_config.configured && g_peer_count > 0) {
-        esp_fill_random(g_opera_config.opera_secret, OPERA_SECRET_SIZE);
-        compute_opera_id(g_opera_config.opera_secret, g_opera_config.opera_id);
+        // Stage candidate secret in g_rekey (NOT in g_opera_config yet).
+        g_rekey.active = true;
+        g_rekey.rekey_id = (uint32_t)millis();
+        g_rekey.started_ms = millis();
+        esp_fill_random(g_rekey.pending_secret, OPERA_SECRET_SIZE);
+        compute_opera_id(g_rekey.pending_secret, g_rekey.pending_opera_id);
 
-        // Invalidate every existing session — surviving members will re-auth
-        // on next heartbeat with the new opera_id.
+        // Encrypt + send REKEY to each surviving member; mark each as
+        // pending-ACK in the bitmask.
+        g_rekey.pending_acks = 0;
         for (uint8_t j = 0; j < g_peer_count; j++) {
-          g_peers[j].session_established = false;
-          g_peers[j].state = PEER_AUTHENTICATING;
-          memset(g_peers[j].session_key, 0, SESSION_KEY_SIZE);
-          g_peers[j].msg_counter_rx = 0;
-          g_peers[j].msg_counter_tx = 0;
+          if (!g_peers[j].session_established) continue;
+          OperaRekeyPayload rk;
+          rk.rekey_id = g_rekey.rekey_id;
+          // encrypt_message signature: (key, plaintext, len, ciphertext,
+          //                             nonce_out, tag_out)
+          if (!encrypt_message(g_peers[j].session_key,
+                               g_rekey.pending_secret, OPERA_SECRET_SIZE,
+                               rk.encrypted_secret, rk.nonce, rk.tag)) {
+            continue;
+          }
+          if (send_to_peer(&g_peers[j], MSG_OPERA_REKEY,
+                           (uint8_t*)&rk, sizeof(rk))) {
+            g_rekey.pending_acks |= (uint16_t)(1u << j);
+          }
         }
 
-        if (!persist_opera_config()) {
-          // FE-gated persistence refused; we still rotated in memory but
-          // future boots will lose the rotation. Log alert.
-          health_log(SCV_LOG_ALERT, SCV_CAT_CRYPTO,
-                     "opera: rotation succeeded in memory but persist refused (audit O2/O3)");
-        }
         health_log(SCV_LOG_INFO, SCV_CAT_CRYPTO,
-                   "opera: rotated secret after peer removal (audit O3)");
+                   "opera: rekey transaction started after peer removal (O3)");
       }
 
       return true;
     }
   }
   return false;
+}
+
+// Called from update() once per loop. Commits the rekey transaction when all
+// peers have ACKed, or when REKEY_TIMEOUT_MS elapses (whichever first).
+// Peers that didn't ACK are marked PEER_STALE; they'll re-pair under the new
+// opera_id via the normal flow.
+static void maybe_finalize_rekey() {
+  if (!g_rekey.active) return;
+  uint32_t now = millis();
+  bool all_acked = (g_rekey.pending_acks == 0);
+  bool timed_out = (now - g_rekey.started_ms) > REKEY_TIMEOUT_MS;
+  if (!all_acked && !timed_out) return;
+
+  // Commit candidate to live state.
+  memcpy(g_opera_config.opera_secret, g_rekey.pending_secret, OPERA_SECRET_SIZE);
+  memcpy(g_opera_config.opera_id, g_rekey.pending_opera_id, OPERA_ID_SIZE);
+
+  // Invalidate sessions everywhere; mark unacked peers stale.
+  for (uint8_t j = 0; j < g_peer_count; j++) {
+    bool unacked = (g_rekey.pending_acks & (uint16_t)(1u << j)) != 0;
+    g_peers[j].session_established = false;
+    memset(g_peers[j].session_key, 0, SESSION_KEY_SIZE);
+    g_peers[j].msg_counter_tx = 0;
+    g_peers[j].msg_counter_rx = 0;
+    g_peers[j].state = unacked ? PEER_STALE : PEER_AUTHENTICATING;
+  }
+
+  if (!persist_opera_config()) {
+    health_log(SCV_LOG_ALERT, SCV_CAT_CRYPTO,
+               "opera: rekey commit succeeded in memory but persist refused (O2)");
+  }
+  // Wipe candidate to prevent late-ACK matches.
+  memset(g_rekey.pending_secret, 0, OPERA_SECRET_SIZE);
+  memset(g_rekey.pending_opera_id, 0, OPERA_ID_SIZE);
+  g_rekey.active = false;
+  g_rekey.pending_acks = 0;
+  health_log(SCV_LOG_INFO, SCV_CAT_CRYPTO,
+             all_acked ? "opera: rekey committed (all ACKs received)"
+                       : "opera: rekey committed (timeout; unacked peers marked stale)");
 }
 
 const OperaConfig* get_opera_config() {

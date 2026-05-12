@@ -650,6 +650,48 @@ void publish_status(bool csi_running, bool wifi_connected, int rssi_dbm) {
   publish_raw(topic, body, (size_t)n, /*retain=*/true);
 }
 
+void publish_chirp_state(const char* state_name) {
+  /* Chirp's NFPA-72-style state surface. State is a string enum produced
+   * by chirp_channel::state_name (or a derived NFPA-72 mapping in the
+   * loop). HA renders it as a single sensor with automation hooks. */
+  char topic[192];
+  build_topic(topic, sizeof(topic), "chirp");
+  char body[128];
+  const int n = snprintf(body, sizeof(body),
+    "{\"state\":\"%s\"}",
+    state_name ? state_name : "unknown");
+  if (n <= 0 || (size_t)n >= sizeof(body)) return;
+  publish_raw(topic, body, (size_t)n, /*retain=*/true);
+}
+
+void publish_beacon_state(const char* state_name,
+                          uint16_t beacon_airtime_pct_x100,
+                          const char* active_template,
+                          uint32_t beacon_sends,
+                          uint8_t beacon_set_size,
+                          uint16_t trouble_mask) {
+  char topic[192];
+  build_topic(topic, sizeof(topic), "beacon");
+  char body[256];
+  const int n = snprintf(body, sizeof(body),
+    "{"
+      "\"state\":\"%s\","
+      "\"beacon_airtime_pct_x100\":%u,"
+      "\"active_template\":\"%s\","
+      "\"beacon_sends\":%lu,"
+      "\"beacon_set_size\":%u,"
+      "\"trouble_mask\":%u"
+    "}",
+    state_name ? state_name : "unknown",
+    (unsigned)beacon_airtime_pct_x100,
+    active_template ? active_template : "",
+    (unsigned long)beacon_sends,
+    (unsigned)beacon_set_size,
+    (unsigned)trouble_mask);
+  if (n <= 0 || (size_t)n >= sizeof(body)) return;
+  publish_raw(topic, body, (size_t)n, /*retain=*/true);
+}
+
 void publish_mesh(uint16_t airtime_pct_x100,
                   uint8_t  channel,
                   bool     locked_to_sta,
@@ -799,6 +841,24 @@ const DiscoveryEntity ENTITIES[] = {
   { "binary_sensor", "mesh_channel_locked_to_sta", "Mesh Follows Home WiFi", "mesh",
     "{% if value_json.locked_to_sta %}ON{% else %}OFF{% endif %}",
     nullptr, nullptr, nullptr, "mdi:wifi-check" },
+
+  /* Chirp + Beacon NFPA-72-style state surfaces. See
+   * spec/beacon_channel_v0.md §7.2 and spec/chirp_channel_v0.md §15.
+   * Reported as a string enum: Normal | Trouble | Alarm | Supervisory.
+   * HA can attach automations on Alarm (treat like a tamper) and
+   * Trouble (treat like a warning, not an alert). */
+  { "sensor", "chirp_state", "Chirp Channel State", "chirp",
+    "{{ value_json.state | default('Normal') }}",
+    nullptr, nullptr, nullptr, "mdi:bell-ring-outline" },
+  { "sensor", "beacon_state", "Beacon Channel State", "beacon",
+    "{{ value_json.state | default('Normal') }}",
+    nullptr, nullptr, nullptr, "mdi:shield-alert-outline" },
+  { "sensor", "beacon_airtime_pct", "Beacon Airtime", "beacon",
+    "{{ (value_json.beacon_airtime_pct_x100 | default(0)) / 100 }}",
+    "%", nullptr, "measurement", "mdi:radio-tower" },
+  { "sensor", "beacon_active_template", "Beacon Active Alarm", "beacon",
+    "{{ value_json.active_template | default('') }}",
+    nullptr, nullptr, nullptr, "mdi:alarm-light-outline" },
 };
 
 /* Emit one entity's config payload. Returns true on enqueue success.

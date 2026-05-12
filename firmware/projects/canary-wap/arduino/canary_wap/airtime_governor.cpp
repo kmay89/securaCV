@@ -29,6 +29,33 @@ static uint32_t g_routine_allowed = 0;
 static uint32_t g_routine_denied = 0;
 static uint32_t g_urgent_sends = 0;
 
+// v0.3: distinct Beacon counters per spec/beacon_channel_v0.md §8 so
+// HA MQTT can surface Beacon airtime separately from Opera tamper/power.
+//
+// Threading invariant (gemini P1 follow-up): all callers of
+// `force_reserve_beacon` and `beacon_window_airtime_us` are the main loop
+// task. Specifically:
+//   - `force_reserve_beacon` is called from `emit_alert_frame` and
+//     `emit_selftest` in beacon_channel.cpp; those run from
+//     `beacon_channel::update()` (loop task) or from the
+//     `cosign_pending_request` REST path (Bearer-gated, same task).
+//   - The MQTT publish loop in canary_wap.ino reads via snapshot() and
+//     also runs on the loop task.
+// No ISR or networking-callback task mutates this state. If that
+// invariant ever needs to relax, wrap the ring updates in a critical
+// section (or atomic store) so partial reads cannot observe a torn
+// multi-word `BeaconSlot`.
+static uint32_t g_beacon_sends = 0;
+static uint32_t g_beacon_airtime_us = 0;
+struct BeaconSlot {
+  uint32_t ts_ms;
+  uint32_t airtime_us;
+};
+static constexpr size_t BEACON_RING_SIZE = 32;
+static BeaconSlot g_beacon_ring[BEACON_RING_SIZE];
+static size_t g_beacon_head = 0;
+static size_t g_beacon_count = 0;
+
 static uint8_t g_cap_pct = DEFAULT_CAP_PCT;
 
 uint32_t estimate_airtime_us(size_t bytes) {
@@ -44,10 +71,18 @@ void init(uint8_t cap_pct) {
   g_routine_allowed = 0;
   g_routine_denied = 0;
   g_urgent_sends = 0;
+  g_beacon_sends = 0;
+  g_beacon_airtime_us = 0;
+  g_beacon_head = 0;
+  g_beacon_count = 0;
   g_cap_pct = (cap_pct > 0) ? cap_pct : DEFAULT_CAP_PCT;
   for (size_t i = 0; i < RING_SIZE; i++) {
     g_ring[i].ts_ms = 0;
     g_ring[i].airtime_us = 0;
+  }
+  for (size_t i = 0; i < BEACON_RING_SIZE; i++) {
+    g_beacon_ring[i].ts_ms = 0;
+    g_beacon_ring[i].airtime_us = 0;
   }
 }
 
@@ -94,6 +129,28 @@ void force_reserve_urgent(uint32_t now_ms, size_t bytes) {
   g_urgent_sends++;
 }
 
+void force_reserve_beacon(uint32_t now_ms, size_t bytes) {
+  const uint32_t cost = estimate_airtime_us(bytes);
+  record(now_ms, cost);
+  // Distinct Beacon ring + counter.
+  g_beacon_ring[g_beacon_head].ts_ms = now_ms;
+  g_beacon_ring[g_beacon_head].airtime_us = cost;
+  g_beacon_head = (g_beacon_head + 1) % BEACON_RING_SIZE;
+  if (g_beacon_count < BEACON_RING_SIZE) g_beacon_count++;
+  g_beacon_sends++;
+}
+
+static uint32_t beacon_window_airtime_us(uint32_t now_ms) {
+  uint32_t total = 0;
+  for (size_t i = 0; i < g_beacon_count; i++) {
+    const BeaconSlot& s = g_beacon_ring[i];
+    if (s.ts_ms == 0 && s.airtime_us == 0) continue;
+    const uint32_t age = now_ms - s.ts_ms;
+    if (age <= WINDOW_MS) total += s.airtime_us;
+  }
+  return total;
+}
+
 uint16_t airtime_pct_x100(uint32_t now_ms) {
   // utilization = airtime_us / window_us; * 10000 to get pct_x100.
   const uint64_t used = window_airtime_us(now_ms);
@@ -112,6 +169,8 @@ Stats snapshot(uint32_t now_ms) {
   s.routine_allowed = g_routine_allowed;
   s.routine_denied = g_routine_denied;
   s.urgent_sends = g_urgent_sends;
+  s.beacon_sends = g_beacon_sends;
+  s.beacon_airtime_us = beacon_window_airtime_us(now_ms);
   return s;
 }
 

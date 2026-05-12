@@ -80,8 +80,29 @@ static ReceivedChirp g_recent_chirps[MAX_RECENT_CHIRPS];
 static size_t g_recent_chirp_count = 0;
 static NearbyDevice g_nearby_devices[MAX_NEARBY_CACHE];
 static size_t g_nearby_count = 0;
-static uint8_t g_nonce_cache[MAX_NONCE_CACHE][8];
-static size_t g_nonce_cache_idx = 0;
+
+// Nonce deduplication: Bloom filter (audit C9 closure).
+//
+// v0.2 used a 1024-entry circular array — robust against the original
+// "100-entry can be flushed by a 101-frame flood" attack but still
+// bounded. v0.3 switches to a 4 KB Bloom filter with 4 hash functions.
+//
+// Sizing math:
+//   - m = 32768 bits (4 KB)
+//   - k = 4 hash functions
+//   - At n = 4096 distinct nonces inserted (a 5-minute flood at ~14 fps),
+//     false positive rate ≈ (1 - e^(-kn/m))^k ≈ 0.4 %.
+//   - The filter is reset every CHIRP_TTL_MS (5 min) since chirps older
+//     than that are rejected by the freshness window anyway, capping
+//     drift over time.
+//
+// Hash functions: 4 independent SipHash-like mixes derived by taking
+// (nonce ^ salt_i) and folding to 15 bits of bit-index.
+static const size_t BLOOM_BITS = 32768;
+static const size_t BLOOM_BYTES = BLOOM_BITS / 8;
+static const uint8_t BLOOM_HASHES = 4;
+static uint8_t g_bloom[BLOOM_BYTES];
+static uint32_t g_bloom_reset_ms = 0;
 
 // Per-pubkey rate-limit tracking (audit C14).
 // LRU of recently-originating pubkeys with a sliding-hour witness count.
@@ -361,19 +382,52 @@ static void reset_cooldown_if_stale() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// NONCE DEDUPLICATION (v0.2: 1024-entry cache; full Bloom deferred to follow-up)
+// NONCE DEDUPLICATION (v0.3: 4 KB Bloom filter, audit C9 closure)
 // ════════════════════════════════════════════════════════════════════════════
 
-static bool is_nonce_seen(const uint8_t* nonce) {
-  for (size_t i = 0; i < MAX_NONCE_CACHE; i++) {
-    if (memcmp(g_nonce_cache[i], nonce, 8) == 0) return true;
+static const uint32_t BLOOM_SALTS[BLOOM_HASHES] = {
+  0xa3b1c2d4u, 0x9e7711b3u, 0x4ee21fbcu, 0xd1ec6a92u
+};
+
+static uint32_t bloom_hash(const uint8_t* nonce, uint32_t salt) {
+  // Mix 8-byte nonce with salt via two halves; standard non-crypto hash.
+  uint32_t a, b;
+  memcpy(&a, nonce, 4);
+  memcpy(&b, nonce + 4, 4);
+  a ^= salt;
+  // SplitMix64-ish 32-bit variant.
+  a ^= a >> 16; a *= 0x85ebca6bu;
+  a ^= a >> 13; a *= 0xc2b2ae35u;
+  a ^= a >> 16; a ^= b;
+  a ^= a >> 16; a *= 0x85ebca6bu;
+  a ^= a >> 13; a *= 0xc2b2ae35u;
+  a ^= a >> 16;
+  return a & (BLOOM_BITS - 1);
+}
+
+static void bloom_reset_if_due() {
+  uint32_t now = millis();
+  if (now - g_bloom_reset_ms > CHIRP_TTL_MS) {
+    memset(g_bloom, 0, BLOOM_BYTES);
+    g_bloom_reset_ms = now;
   }
-  return false;
+}
+
+static bool is_nonce_seen(const uint8_t* nonce) {
+  bloom_reset_if_due();
+  for (uint8_t i = 0; i < BLOOM_HASHES; i++) {
+    uint32_t bit = bloom_hash(nonce, BLOOM_SALTS[i]);
+    if ((g_bloom[bit / 8] & (1u << (bit & 7))) == 0) return false;
+  }
+  return true;
 }
 
 static void cache_nonce(const uint8_t* nonce) {
-  memcpy(g_nonce_cache[g_nonce_cache_idx], nonce, 8);
-  g_nonce_cache_idx = (g_nonce_cache_idx + 1) % MAX_NONCE_CACHE;
+  bloom_reset_if_due();
+  for (uint8_t i = 0; i < BLOOM_HASHES; i++) {
+    uint32_t bit = bloom_hash(nonce, BLOOM_SALTS[i]);
+    g_bloom[bit / 8] |= (uint8_t)(1u << (bit & 7));
+  }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -724,6 +778,30 @@ static void handle_witness(const uint8_t* data, size_t len, int8_t rssi) {
   chirp.dismissed = false;
   chirp.unverifiable_timestamp = unverifiable_ts;
 
+  // v0.3 (audit C4 closure): persist the original signature so that on
+  // relay we can include the full signed_origin envelope (pubkey +
+  // signature) and downstream receivers can verify end-to-end.
+  //
+  // hop_count == 0: the top-level signature IS the origin signature.
+  // hop_count > 0:  the origin signature lives in payload->signed_origin_signature
+  //                 (verified above for non-zero signatures).
+  if (hdr->hop_count == 0) {
+    memcpy(chirp.origin_signature, payload->signature, 64);
+    chirp.has_origin_signature = true;
+  } else {
+    static const uint8_t ZERO_SIG[64] = {0};
+    if (memcmp(payload->signed_origin_signature, ZERO_SIG, 64) != 0) {
+      memcpy(chirp.origin_signature, payload->signed_origin_signature, 64);
+      chirp.has_origin_signature = true;
+    } else {
+      // Upstream hop didn't include an origin signature (e.g. came from a
+      // v0.2 relayer). Leave has_origin_signature=false; our own relay will
+      // zero the envelope signature too, downgrading verifiability one hop.
+      memset(chirp.origin_signature, 0, 64);
+      chirp.has_origin_signature = false;
+    }
+  }
+
   priority_heap_insert(&chirp);
 
   if (g_chirp_callback) {
@@ -885,14 +963,22 @@ static void relay_chirp(const ReceivedChirp* chirp) {
   payload->ttl_minutes = 15;
   memcpy(payload->session_pubkey, g_session.session_pubkey, SESSION_PUBKEY_SIZE);
 
-  // FOLLOW-UP (tracked at audit C4): v0.2 carries the origin pubkey in the
-  // signed_origin envelope but leaves the origin signature zeroed because
-  // we do not yet persist the original signature in ReceivedChirp. The
-  // relayer's own signature attests that the original signature was
-  // verified at the previous hop. Tightening to full origin re-attestation
-  // requires storing the original 64-byte signature; queued for v0.3.
+  // v0.3 (audit C4 closure): include the original signer's pubkey AND
+  // signature in the signed_origin envelope so downstream verifiers can
+  // verify the chain end-to-end rather than trusting our relay attestation
+  // alone. ReceivedChirp::origin_signature is populated at receive time
+  // (hop 0: top-level signature; hop > 0: copied from signed_origin field
+  // of the upstream relay frame).
   memcpy(payload->signed_origin_pubkey, chirp->sender_pubkey, SESSION_PUBKEY_SIZE);
-  memset(payload->signed_origin_signature, 0, 64);
+  if (chirp->has_origin_signature) {
+    memcpy(payload->signed_origin_signature, chirp->origin_signature, 64);
+  } else {
+    // No origin signature available (we received this hop from a v0.2
+    // relayer that didn't carry one). Zero the field; downstream
+    // verifiers will accept the relayer's attestation but with reduced
+    // confidence (the relayed-witness soft-accept branch in handle_witness).
+    memset(payload->signed_origin_signature, 0, 64);
+  }
 
   uint8_t canonical[256];
   size_t cl = build_witness_canonical(hdr, payload,
@@ -1000,12 +1086,12 @@ bool init() {
   memset(&g_session, 0, sizeof(g_session));
   memset(g_recent_chirps, 0, sizeof(g_recent_chirps));
   memset(g_nearby_devices, 0, sizeof(g_nearby_devices));
-  memset(g_nonce_cache, 0, sizeof(g_nonce_cache));
+  memset(g_bloom, 0, sizeof(g_bloom));
+  g_bloom_reset_ms = millis();
   memset(g_pubkey_rate, 0, sizeof(g_pubkey_rate));
   memset(g_selftest_seen, 0, sizeof(g_selftest_seen));
   g_recent_chirp_count = 0;
   g_nearby_count = 0;
-  g_nonce_cache_idx = 0;
   load_settings();
   g_initialized = true;
   health_log(SCV_LOG_INFO, SCV_CAT_NETWORK, "chirp channel v0.2 initialized");
