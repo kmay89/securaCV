@@ -80,8 +80,8 @@ h1{margin:0 0 8px 0;font-size:22px;font-weight:600;letter-spacing:-0.02em}
 </head>
 <body>
 <main>
-<h1>Set up your Canary</h1>
-<p class="lead">Scan the code with your phone's camera to connect your Canary to your home WiFi. No app to install. Nothing leaves your home.</p>
+<h1>Set up your first Canary</h1>
+<p class="lead">Scan the code with your phone's camera to connect your Canary to your home WiFi. No app to install. Nothing leaves your home. Most homes use 3 or 4 &mdash; you can add the next one as soon as this one is online.</p>
 <div class="qr-card" role="img" aria-label="QR code — scan with your phone camera to start Canary setup. If you can't scan, use the manual link below.">
 )HTML";
 

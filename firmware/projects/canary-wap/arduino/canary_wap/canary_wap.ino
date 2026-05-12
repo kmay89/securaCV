@@ -5503,10 +5503,53 @@ static void wifi_init_provisioning() {
   snprintf(msg, sizeof(msg), "AP: %s", g_device.ap_ssid);
   log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, msg, g_wifi_status.ap_ip);
 
-  // Start mDNS
-  if (MDNS.begin("canary")) {
+  // Start mDNS with a per-device hostname so a multi-Canary household
+  // doesn't have two devices racing for `canary.local` (loser becomes
+  // unreachable by name). Hostname rules (RFC 6762 §16): lowercase
+  // [a-z0-9-], no leading/trailing hyphen. We derive from the device id
+  // (e.g. "canary-s3-A1B2") and lowercase it; the leading "canary-" stays
+  // human-recognizable.
+  //
+  // We also advertise the SecuraCV-specific service `_securacv._tcp` with
+  // TXT records (device_id, fw, model) so peer Canaries, the fleet
+  // manager, and the companion SPA can browse the LAN for siblings
+  // without scanning the subnet. Protocol matches
+  // canary-vision/docs/discovery.md so a single SPA build talks to both
+  // the WAP-built and the modular `canary/` builds.
+  char mdns_host[40];
+  size_t hj = 0;
+  for (size_t hi = 0; g_device.device_id[hi] != '\0' &&
+                      hj < sizeof(mdns_host) - 1; hi++) {
+    char c = g_device.device_id[hi];
+    if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+    if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-') {
+      mdns_host[hj++] = c;
+    } else {
+      mdns_host[hj++] = '-';
+    }
+  }
+  // Trim trailing hyphens.
+  while (hj > 0 && mdns_host[hj - 1] == '-') hj--;
+  // Fall back to a stable default rather than emitting an empty name.
+  if (hj == 0) {
+    const char* fb = "canary";
+    hj = strlen(fb);
+    if (hj >= sizeof(mdns_host)) hj = sizeof(mdns_host) - 1;
+    memcpy(mdns_host, fb, hj);
+  }
+  mdns_host[hj] = '\0';
+
+  if (MDNS.begin(mdns_host)) {
     MDNS.addService("http", "tcp", 80);
-    log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "mDNS started", "canary.local");
+
+    MDNS.addService("securacv", "tcp", 80);
+    MDNS.addServiceTxt("securacv", "tcp", "device_id", g_device.device_id);
+    MDNS.addServiceTxt("securacv", "tcp", "fw",        FIRMWARE_VERSION);
+    MDNS.addServiceTxt("securacv", "tcp", "model",     "XIAO ESP32S3");
+
+    char fqdn[64];
+    snprintf(fqdn, sizeof(fqdn), "%s.local", mdns_host);
+    log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "mDNS started", fqdn);
   }
 
   // Attempt to connect to home WiFi if configured
