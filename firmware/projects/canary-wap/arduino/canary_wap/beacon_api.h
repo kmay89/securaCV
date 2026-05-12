@@ -297,7 +297,13 @@ inline esp_err_t handle_originate(httpd_req_t* req) {
   JsonDocument doc;
   if (deserializeJson(doc, body)) return send_error(req, "invalid JSON");
 
-  uint8_t tpl_byte = (uint8_t)(doc["template_id"] | 0);
+  // gemini P1: template_id is mandatory. The BeaconTemplate enum starts at
+  // 0x10, so defaulting to 0 on missing key would silently produce an
+  // invalid template; reject explicitly instead.
+  if (!doc["template_id"].is<JsonVariantConst>() || doc["template_id"].isNull()) {
+    return send_error(req, "missing 'template_id'");
+  }
+  uint8_t tpl_byte = (uint8_t)doc["template_id"].as<int>();
   uint8_t urg  = parse_urgency(doc["urgency"]);
   uint8_t sev  = parse_severity(doc["severity"]);
   uint8_t cert = parse_certainty(doc["certainty"]);
@@ -332,7 +338,12 @@ inline esp_err_t handle_originate_solo(httpd_req_t* req) {
   JsonDocument doc;
   if (deserializeJson(doc, body)) return send_error(req, "invalid JSON");
 
-  uint8_t tpl_byte = (uint8_t)(doc["template_id"] | 0);
+  // gemini P1: template_id is mandatory. The BeaconTemplate enum starts at
+  // 0x10, so defaulting to 0 would silently produce an invalid template.
+  if (!doc["template_id"].is<JsonVariantConst>() || doc["template_id"].isNull()) {
+    return send_error(req, "missing 'template_id'");
+  }
+  uint8_t tpl_byte = (uint8_t)doc["template_id"].as<int>();
   uint8_t urg = parse_urgency(doc["urgency"]);
   uint8_t sev = parse_severity(doc["severity"]);
   // certainty intentionally ignored — forced to Observed in the firmware.

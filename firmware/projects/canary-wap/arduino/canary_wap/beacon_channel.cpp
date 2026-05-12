@@ -1054,7 +1054,7 @@ bool originate_alert(BeaconTemplate template_id, BeaconUrgency urgency,
   BeaconAlertCanonical canonical;
   memset(&canonical, 0, sizeof(canonical));
   canonical.effective = (uint64_t)time(nullptr);
-  canonical.expires = canonical.effective + (uint64_t)ttl_minutes * 60;
+  canonical.expires = canonical.effective + (uint64_t)ttl_minutes * 60ULL;
   canonical.template_id = (uint8_t)template_id;
   canonical.msg_type = BEACON_MSG_ALERT;
   canonical.urgency = (uint8_t)urgency;
@@ -1220,7 +1220,7 @@ bool originate_alert_solo(BeaconTemplate template_id, BeaconUrgency urgency,
   BeaconAlertCanonical canonical;
   memset(&canonical, 0, sizeof(canonical));
   canonical.effective = (uint64_t)time(nullptr);
-  canonical.expires = canonical.effective + (uint64_t)ttl_minutes * 60;
+  canonical.expires = canonical.effective + (uint64_t)ttl_minutes * 60ULL;
   canonical.template_id = (uint8_t)template_id;
   canonical.msg_type = BEACON_MSG_ALERT;
   canonical.urgency = (uint8_t)urgency;

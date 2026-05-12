@@ -80,6 +80,8 @@ static const size_t   BEACON_NAME_LEN               = 24;
 static const uint8_t BCN_FLAG_IS_EXERCISE  = 0x01;
 static const uint8_t BCN_FLAG_IS_TEST      = 0x02;
 static const uint8_t BCN_FLAG_SOLO_ORIGIN  = 0x04;
+
+enum BeaconMsgType : uint8_t {
   BEACON_MSG_ALERT        = 0,
   BEACON_MSG_UPDATE       = 1,
   BEACON_MSG_CANCEL       = 2,
