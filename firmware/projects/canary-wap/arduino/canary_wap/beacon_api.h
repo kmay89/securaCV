@@ -297,7 +297,13 @@ inline esp_err_t handle_originate(httpd_req_t* req) {
   JsonDocument doc;
   if (deserializeJson(doc, body)) return send_error(req, "invalid JSON");
 
-  uint8_t tpl_byte = (uint8_t)(doc["template_id"] | 0);
+  // gemini P1: template_id is mandatory. The BeaconTemplate enum starts at
+  // 0x10, so defaulting to 0 on missing key would silently produce an
+  // invalid template; reject explicitly instead.
+  if (!doc["template_id"].is<JsonVariantConst>() || doc["template_id"].isNull()) {
+    return send_error(req, "missing 'template_id'");
+  }
+  uint8_t tpl_byte = (uint8_t)doc["template_id"].as<int>();
   uint8_t urg  = parse_urgency(doc["urgency"]);
   uint8_t sev  = parse_severity(doc["severity"]);
   uint8_t cert = parse_certainty(doc["certainty"]);
@@ -313,6 +319,51 @@ inline esp_err_t handle_originate(httpd_req_t* req) {
       ttl);
   return ok ? send_success(req, "origination pending cosigner")
             : send_error(req, "origination refused (rate, presence, or no cosigner)");
+}
+
+// POST /api/beacon/originate-solo — single-device origination via BOOT button.
+// Spec §6.2. Body shape mirrors /api/beacon/originate but `certainty` is
+// ignored (server forces it to "Observed" per the solo invariant).
+//
+// The caller MUST be holding the physical BOOT button at the moment of
+// this call; the firmware checks the GPIO state in real time. This is the
+// load-bearing security gate for the solo path. If the button is not
+// held, the call returns 400 with reason="boot_button_not_held".
+inline esp_err_t handle_originate_solo(httpd_req_t* req) {
+  char body[256];
+  int len = httpd_req_recv(req, body, sizeof(body) - 1);
+  if (len <= 0) return send_error(req, "empty body");
+  body[len] = '\0';
+
+  JsonDocument doc;
+  if (deserializeJson(doc, body)) return send_error(req, "invalid JSON");
+
+  // gemini P1: template_id is mandatory. The BeaconTemplate enum starts at
+  // 0x10, so defaulting to 0 would silently produce an invalid template.
+  if (!doc["template_id"].is<JsonVariantConst>() || doc["template_id"].isNull()) {
+    return send_error(req, "missing 'template_id'");
+  }
+  uint8_t tpl_byte = (uint8_t)doc["template_id"].as<int>();
+  uint8_t urg = parse_urgency(doc["urgency"]);
+  uint8_t sev = parse_severity(doc["severity"]);
+  // certainty intentionally ignored — forced to Observed in the firmware.
+  uint8_t det = (uint8_t)(doc["detail"] | 0);
+  uint32_t ttl = (uint32_t)(doc["ttl_minutes"] | 15);
+
+  // Pre-check so the user gets a useful error message instead of just
+  // "origination refused (rate, presence, or no cosigner)".
+  if (!beacon_channel::boot_button_held()) {
+    return send_error(req, "boot_button_not_held");
+  }
+
+  bool ok = beacon_channel::originate_alert_solo(
+      (beacon_channel::BeaconTemplate)tpl_byte,
+      (beacon_channel::BeaconUrgency)urg,
+      (beacon_channel::BeaconSeverity)sev,
+      (beacon_channel::BeaconDetailSlot)det,
+      ttl);
+  return ok ? send_success(req, "solo ALERT broadcast (certainty=Observed)")
+            : send_error(req, "solo origination refused (rate, time-unsynced, or button released)");
 }
 
 // POST /api/beacon/cosign  body: { "confirm": true|false }
@@ -468,8 +519,9 @@ inline void register_routes(httpd_handle_t server, const char* api_token = nullp
   register_api_handler(server, "/api/beacon/pair/confirm", HTTP_POST, bcn_auth_gated<handle_pair_confirm>);
   register_api_handler(server, "/api/beacon/pair/cancel",  HTTP_POST, bcn_auth_gated<handle_pair_cancel>);
   register_api_handler(server, "/api/beacon/revoke",       HTTP_POST, bcn_auth_gated<handle_revoke>);
-  register_api_handler(server, "/api/beacon/originate",    HTTP_POST, bcn_auth_gated<handle_originate>);
-  register_api_handler(server, "/api/beacon/cosign",       HTTP_POST, bcn_auth_gated<handle_cosign>);
+  register_api_handler(server, "/api/beacon/originate",      HTTP_POST, bcn_auth_gated<handle_originate>);
+  register_api_handler(server, "/api/beacon/originate-solo", HTTP_POST, bcn_auth_gated<handle_originate_solo>);
+  register_api_handler(server, "/api/beacon/cosign",         HTTP_POST, bcn_auth_gated<handle_cosign>);
   register_api_handler(server, "/api/beacon/cancel",       HTTP_POST, bcn_auth_gated<handle_cancel>);
   register_api_handler(server, "/api/beacon/selftest",     HTTP_POST, bcn_auth_gated<handle_selftest>);
 }
