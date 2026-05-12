@@ -132,7 +132,11 @@ bool parse_and_verify(const uint8_t* frame, size_t frame_len,
     return false;
   }
 
-  *out_payload     = (payload_len > 0) ? (frame + HEADER_LEN) : nullptr;
+  if (payload_len > 0) {
+    *out_payload = frame + HEADER_LEN;
+  } else {
+    *out_payload = nullptr;
+  }
   *out_payload_len = payload_len;
   return true;
 }
