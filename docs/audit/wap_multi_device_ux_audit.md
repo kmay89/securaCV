@@ -354,3 +354,224 @@ for follow-ups.
 5. None of the changes touch the device's witness chain, signing, or
    privacy invariants. (This is microcopy + one mDNS init line. No new
    data leaves the device.)
+
+---
+
+## 9. Ring-class architecture — gap analysis
+
+After §1–§8 it is worth zooming out: are we missing categories of
+capability that any user coming from Ring, Nest, Arlo, eufy, or Wyze
+expects to find? This section maps each of those vendors' top-level
+primitives against ours, calls out the gaps, and ranks them.
+
+### 9.1 The cloud-app data model these products converged on
+
+Sources:
+[Ring Modes](https://ring.com/support/articles/p0klz/Controlling-Your-Ring-Devices-with-Modes),
+[Ring Locations](https://ring.com/support/articles/8y35i/managing-locations-in-the-ring-app),
+[All Locations Dashboard](https://ring.com/support/articles/3li18/all-locations-dashboard),
+[User Permissions](https://en-uk.ring.com/blogs/alwayshome/new-user-permissions-access-management-for-businesses-and-homes),
+[dgreif/ring](https://github.com/dgreif/ring),
+[Ooma geofencing](https://support.ooma.com/security/ooma-smart-security-geofencing/),
+[eufy unified modes wishlist](https://community.security.eufy.com/t/unified-device-modes-geofencing-beyond-homebase2/205457),
+[Arlo vs Ring 2026](https://top-home-security.com/arlo-vs-ring/),
+[Tom's Guide AI comparison](https://www.tomsguide.com/home/smart-home/which-security-camera-has-the-best-ai-we-put-six-to-the-test-from-google-ring-blink-and-others-to-find-out).
+
+Effectively every consumer security-camera app has converged on this
+shape:
+
+```
+Account
+  └── Location[]              ← top-level "Home" / "Cabin" container
+        ├── mode              ← Disarmed | Home | Away (location-wide)
+        ├── members[]         ← owner + role-based shared users
+        ├── geofence?         ← multi-phone polygon → auto-mode
+        ├── cameras[]
+        │     └── per-mode behavior matrix
+        │         (record? live-view? notify? lights?  per mode)
+        ├── doorbells[]
+        ├── sensors[]         ← contact, motion, glass-break, …
+        ├── chimes[]
+        ├── intercoms[]
+        └── timeline          ← cross-device event scrub, AI-filtered
+```
+
+Five primitives carry the whole user mental model:
+
+1. **Location** — the unit a person identifies with ("my house").
+   Always plural-capable. Devices live inside a Location, not on the
+   account.
+2. **Modes** — Disarmed / Home / Away (Ring) or Custom (Arlo) —
+   **set once at the Location, applied per-device** via a behavior
+   matrix. "All cameras record in Away, only the doorbell in Home."
+3. **Members + Permissions** — role-based, evolved past Ring's old
+   binary share. Whether a shared user can change modes is a
+   permission flag.
+4. **Geofence** — multi-phone presence. Last-out triggers Away,
+   first-in triggers Home. Phone GPS is the source of truth.
+5. **Timeline** — one scrollable event ledger across all cameras in
+   the Location, with AI labels (person / pet / vehicle / package /
+   familiar face) as filters. This is the "see everything at once"
+   surface Ring users return to daily.
+
+Beyond the five, four cross-cutting features are table stakes:
+
+- **Push notifications with snapshot + deep link.** Tap the notification,
+  app opens directly to that camera's live view.
+- **Live multi-camera grid.** Tile every camera's stream at once.
+- **Activity zones.** Pixel polygons that gate which motion fires
+  alerts.
+- **Device health dashboard.** Unified offline / battery / signal view.
+
+### 9.2 SecuraCV vs the Ring-class baseline — what we have, what we are missing
+
+Where the same primitive exists with a different mechanism (because of
+Invariants I–IV — no cloud, no video storage, no identity data, no
+telemetry), we list both columns honestly.
+
+| Category | Ring / Nest / Arlo | SecuraCV WAP today | Gap |
+|---|---|---|---|
+| **Account / identity** | Cloud account (email + password + 2FA) | Per-device API token in localStorage | **Missing**: no user/account concept above the device. No way to know "this phone owns these 8 Canaries". |
+| **Location ("Home") object** | First-class. Multi-Home supported. | `mesh_network.cpp:opera_id` exists in firmware but is not surfaced in the wizard or any UI. | **Missing in UI.** The primitive exists at the byte level; we never name it for the user. |
+| **Mode (Disarmed / Home / Away)** | Location-wide; per-device behavior matrix. | Per-device `notify::Context` (HOME / AWAY / QUIET_HOURS / TRAVELING). Each Canary holds its own. No propagation. | **Critical gap.** Tapping "Away" on one Canary does **not** flip the others. This is the most user-felt missing piece for a multi-device household. |
+| **Members / shared users** | Owner + roles, per-Location. | Every API token is full-power. No "guest" tier. | **Missing.** Family sharing and dog-walker tokens both need this. |
+| **Geofencing** | Multi-phone polygon, auto-mode. | Not implemented. | **Missing.** Privacy-preserving variant is trivial: phone-side `navigator.geolocation` + a polygon stored only on the phone; mode delta broadcast to devices. No GPS leaves phone. |
+| **Notifications: push + snapshot + deep link** | FCM/APNS, low-res thumbnail in the push, deep link to camera. | `notify.cpp` fires alerts; HA / MQTT / BLE channels exist; no Web Push, no deep links. | **Missing.** Privacy-respecting equivalent: Web Push (VAPID, no third party) with zone name + state badge + deep link to that zone's Today view. We never send pixels. |
+| **Multi-device timeline** | Single scroll across all cameras, AI-filtered. | Per-device 24h ribbon (`csi_dashboard_html.h`); no cross-device merge. | **Partial.** Scoped in §7 as the `/home` view follow-up. |
+| **Multi-camera live grid** | Native tile view. | `fleet-manager.html` has per-device peek; no grid. | **Partial.** Scoped in §7 ("Peek wall toggle"). |
+| **Activity zones** | Pixel polygons in camera frame. | Spatial zones — one Canary == one room (`wizard::zone_name`). | **Equivalent by design.** We don't have pixels, we have rooms. Different but correct for our sensor. |
+| **AI labels (person / pet / vehicle / familiar face)** | Always-on, cloud-trained. | Pet Mode toggle; `familiar.cpp` Bloom-filter pattern suppression. No persons, no faces, no vehicles. | **Intentional rejection** (Invariant II). Document, don't fix. |
+| **Device offline alerting** | "Your Front Yard cam went offline." | `mesh_alerts` tracks peer disappearance; never surfaced to phone. | **Missing the last mile.** Data is there; needs phone-side notify. |
+| **Device health dashboard** | Unified across all cameras. | `fleet-manager.html` per device; no unified roll-up. | **Partial.** Same fix as the timeline. |
+| **Snooze all** | "Pause notifications for 1 hour." | Per-device quiet hours; no household-wide snooze. | **Missing.** Tiny, high-value. |
+| **Daily summary** | Push digest. | `meta_daily_summary.cpp` exists — does it reach a UI? (TBD; not visible in any served page.) | **Built but invisible.** Surface in `/home`. |
+| **Settings backup / portability** | Cloud-mediated. Restore to a new device. | Each device's NVS is an island. Per-device `/api/export` is operational state, not setup. | **Missing.** A Household JSON the phone holds + restores. |
+| **OTA firmware updates** | Cloud-pushed, signed, automatic. | BLE OTA + signed manifests. Manual. | **Have the signing primitive.** Missing the "all my devices update overnight" flow. |
+| **Onboarding** | App-led BLE pairing or QR. | Captive-portal QR. Works, different model. | **OK.** §3.2 / §6 covers the multi-device version. |
+| **Two-way audio** | Yes. | Not in spec; mic is RF only, never streams out. | **Intentional rejection** (Invariant I). |
+| **Emergency response / monitoring** | Paid tier. | Out of scope. | **OK.** |
+| **Witness chain / tamper evidence** | Optional E2E (some). | Always-on, default. | **We are ahead.** |
+| **Telemetry / analytics** | Always-on. | None (Invariant IV). | **We are ahead.** |
+
+### 9.3 The five missing primitives, ranked
+
+Of the gaps above, five are *structural* — they don't fit elsewhere
+without inventing a new concept — and the rest are features that
+build on them. In dependency order:
+
+1. **Household primitive.** The lynchpin. A 32-byte `household_id`
+   plus an Ed25519 owner keypair, generated on the **first** device's
+   wizard, written to that device's NVS, and *handed to* subsequent
+   devices during their own wizard via a short code (or QR re-key)
+   the user reads off the dashboard. Without this:
+   - Modes cannot be unified.
+   - Roles cannot exist (whose token are we scoping?).
+   - Geofencing has no target audience.
+   - Backup / restore has nothing to back up.
+   The firmware infrastructure for this is already partly present in
+   `mesh_network.cpp` (`opera_id` is a household-equivalent key used
+   for mesh authentication); what's missing is exposing it through
+   the wizard and API.
+
+2. **Mode propagation.** Once a household exists, the phone can fan
+   out a mode change to every device by walking `/api/v1/peers` and
+   POSTing the new context. Or, better: any one device broadcasts via
+   the existing mesh transport (`mesh_broadcast_witness` already
+   exists) and peers update locally. Each Canary's `notify::Context`
+   is **already** the right per-device state — we just don't fan
+   them out today.
+
+3. **Web Push notifications with deep links and zone snapshots.**
+   Privacy-preserving variant of Ring's killer notification. The
+   "snapshot" is a state badge (`"Front Porch · Active"`) plus a
+   deep-link URL into that zone's Today sheet. No pixels. Uses VAPID
+   — no third-party push relay. Each Canary can run its own VAPID
+   subscription endpoint; the phone subscribes once per Canary via
+   the existing service worker (`companion-sw.js`).
+
+4. **Geofencing.** Pure phone-side. `navigator.geolocation` +
+   a polygon the user paints once on the `/home` view. When the
+   phone leaves the polygon, the SPA hits `POST /api/wizard/mode` (a
+   new endpoint, scoped in #2 above) on every Canary in the
+   household. **No GPS coordinate ever leaves the phone.**
+
+5. **Role-scoped tokens.** The current API token is a single power
+   class. Add `owner` (everything), `family` (status + peek + mode
+   change), `guest` (status + chain verify, no peek, no mode). Each
+   Canary stores a small ACL keyed off token prefix. Trivial NVS
+   addition. The wizard's "Share" affordance prints a one-shot QR
+   that encodes the device URL + a freshly-minted guest token.
+
+### 9.4 Sketch of the household-aware data model on the phone
+
+```js
+// localStorage["securacv_household"]
+{
+  household_id: "8a3f...",                // 32-byte hex
+  household_name: "Maple Street",
+  owner_pubkey: "ed25519:...",
+  owner_privkey: "ed25519:...",           // never sent over the wire
+  mode: "home",                           // "home" | "away" | "quiet" | "disarmed"
+  geofence: {                             // optional, phone-only
+    center: [lat, lon],                   // never POSTed anywhere
+    radius_m: 150
+  },
+  members: [
+    { role: "owner",  pubkey: "...", added_at: ... },
+    { role: "family", pubkey: "...", added_at: ... }
+  ],
+  canaries: [
+    {
+      device_id: "canary-s3-A1B2",
+      base_url: "http://canary-s3-a1b2.local",
+      token: "cv_...",                    // owner's full token for this device
+      zone_name: "Front porch",
+      added_at: ...,
+      per_mode: {                         // per-Canary behavior matrix
+        disarmed: { notify: false, peek_allowed: false },
+        home:     { notify: true,  peek_allowed: true  },
+        away:     { notify: true,  peek_allowed: true  },
+        quiet:    { notify: false, peek_allowed: true  }
+      }
+    },
+    // … up to 8
+  ]
+}
+```
+
+This object is the equivalent of Ring's "Location" — but **on the phone**,
+not in a cloud. It is signed by `owner_privkey` and the resulting blob
+is what shared-user QRs encode (minus the privkey, plus a role tag).
+
+### 9.5 Suggested PR ordering after this one
+
+| PR | Net new firmware lines | Primitive introduced |
+|---|---|---|
+| Next | ~150 | Household primitive: `wizard::household_id` + NVS key + a `GET/POST /api/v1/household` endpoint. Wizard step 1.5: "Is this the first Canary, or are you adding to an existing home?" |
+| +1 | ~80 | `POST /api/v1/mode` on every Canary; phone-side fan-out. |
+| +1 | ~600 | `/home` route serves a household-aware fleet view (port `fleet-manager.html` to PROGMEM with `/api/v1/peers` bootstrap + 24h ribbon strip). |
+| +1 | ~200 | Web Push with VAPID, zone-name snapshot, deep link. |
+| +1 | ~150 | Geofence polygon on the `/home` view; phone-side mode toggle. |
+| +1 | ~100 | Token role scopes. "Share with…" QR generator. |
+| +1 | ~80 | Device-offline cross-watch surface (peer A reports peer B missing). |
+| +1 | ~120 | Household backup JSON + restore. |
+
+This ordering keeps each PR <1 KLOC of firmware diff and lets QA bring
+up one capability per release.
+
+### 9.6 What we are deliberately *not* copying
+
+| Ring/Nest/Arlo feature | Why we say no |
+|---|---|
+| Cloud video storage | Invariant I. We never store video; nothing to upload. |
+| Familiar-face recognition | Invariant II. No identity data. |
+| Person/pet/vehicle AI labels (frame-based) | Same reason; also, we don't have frames. Pet Mode is our affordance. |
+| Always-on snapshot in push notifications | Privacy. Zone + state badge is our snapshot. |
+| Two-way audio | Mic is internal-only by design. |
+| Neighbors feed / community sharing | Privacy. Hard no. |
+| Telemetry / "improve our service" toggle | Invariant IV. |
+| Cloud-mediated emergency response | Out of scope; a Home Assistant integration handles this for users who want it. |
+
+These rejections are features, not bugs. The audit calls them out so
+future PRs don't accidentally reintroduce them under a different
+banner.
