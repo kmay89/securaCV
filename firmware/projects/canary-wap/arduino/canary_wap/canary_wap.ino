@@ -5553,7 +5553,13 @@ static void wifi_init_provisioning() {
     MDNS.addService("http", "tcp", 80);
 
     MDNS.addService("securacv", "tcp", 80);
-    MDNS.addServiceTxt("securacv", "tcp", "device_id", g_device.device_id);
+    // ESPmDNS::addServiceTxt has three overloads (char*, const char*,
+    // String). g_device.device_id is char[32], which is implicitly
+    // convertible to all three — making the call ambiguous. Cast the
+    // non-const-array argument to const char* to pick a single overload.
+    // (String literals and FIRMWARE_VERSION are const char* already and
+    // bind cleanly, so they don't need the cast.)
+    MDNS.addServiceTxt("securacv", "tcp", "device_id", (const char*)g_device.device_id);
     MDNS.addServiceTxt("securacv", "tcp", "fw",        FIRMWARE_VERSION);
     // The same firmware compiles for both XIAO ESP32S3 and XIAO ESP32C3
     // (see DEVICE_ID_PREFIX selection at lines 201-205). Advertise the

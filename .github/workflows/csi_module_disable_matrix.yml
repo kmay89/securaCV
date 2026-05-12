@@ -78,20 +78,8 @@ jobs:
           # -D flag that drops one csi_module_register() call. Build
           # success means the remaining modules don't depend on the
           # disabled one's registration.
-          set -o pipefail
           arduino-cli compile \
             --fqbn esp32:esp32:XIAO_ESP32S3 \
             --libraries firmware/common \
             --build-property "build.extra_flags=-DVALIDATION_BUILD=1 -D${{ matrix.flag }}=1" \
-            --verbose \
-            firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino 2>&1 \
-            | tee compile-${{ matrix.module }}.log
-
-      - name: Upload compile log on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: compile-log-${{ matrix.module }}
-          path: compile-${{ matrix.module }}.log
-          retention-days: 3
-          if-no-files-found: warn
+            firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino
