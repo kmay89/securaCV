@@ -40,6 +40,10 @@
 #include <stdlib.h>   /* abs() */
 #include <string.h>
 
+#ifndef CSI_TEST_HOST_BUILD
+  #include <Arduino.h>   /* millis() — extern "C" linkage */
+#endif
+
 /* ────────────────────────────────────────────────────────────────────────
  * STATIC CONFIGURATION
  *
@@ -87,10 +91,10 @@ inline uint32_t now_ms() {
   static uint32_t fake = 0;
   return fake;
 #else
-  /* On device, defer to millis() via Arduino.h. We avoid including
-   * Arduino.h directly in this header-included module by forward-
-   * declaring; the symbol is provided by the runtime. */
-  extern uint32_t millis();
+  /* On device, defer to Arduino's millis(). Arduino.h declares it
+   * with C linkage; do NOT use a bare `extern uint32_t millis()`
+   * here — that emits a mangled C++ symbol which fails to link
+   * against the C-linkage runtime symbol. */
   return millis();
 #endif
 }
