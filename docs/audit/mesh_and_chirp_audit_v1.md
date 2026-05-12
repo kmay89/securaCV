@@ -379,7 +379,7 @@ Before merging the Chirp v0.2 hardening to main:
 - [x] `tests_host/Makefile` runs in CI on every PR touching `chirp_channel.cpp`, `mesh_network.cpp`, or the specs.
 - [x] `scripts/lint_no_impersonation.sh` passes (no WEA tone frequencies, no forbidden phrases). Wired into CI.
 - [ ] Two-device hardware repro of C1, C2, C3, C5 captured (before-fix and after-fix) in `docs/audit/repro/`. **Deferred to hardware verification — see `docs/audit/hardware_verification_checklist.md`.**
-- [x] `PROTOCOL_VERSION` bump documented; older firmware refuses v1 frames gracefully. (Bumped from 0 to 1 in `mesh_network.h:493`; `chirp_channel.cpp::on_espnow_recv` strict-rejects mismatched version.)
+- [x] `PROTOCOL_VERSION` bump documented; older firmware refuses v1 frames gracefully. (Bumped from 0 to 1 in `mesh_network.h:514`; `chirp_channel.cpp::on_espnow_recv` strict-rejects mismatched version.)
 - [x] Spec `spec/chirp_channel_v0.md` updated to v0.2 with corrected wire format and removed `TPL_AUTH_FEDERAL_PRESENCE`.
 - [x] `THREAT_MODEL.md` Chirp section added.
 - [x] HA MQTT discovery surfaces `chirp.state` four-state NFPA enum (`Normal | Trouble | Alarm | Supervisory`).
@@ -409,7 +409,7 @@ The Beacon channel is the harm-reduction layer specified in `spec/beacon_channel
 
 | Finding | Severity | Fix shipped in | Code reference | Regression test |
 |---|---|---|---|---|
-| O1 | Medium | PR #450 | `mesh_network.cpp:524-535` | `test_mesh_opera_security::test_o1_counter_replay_protection` |
+| O1 | Medium | PR #450 | `mesh_network.cpp:561-572` | `test_mesh_opera_security::test_o1_counter_replay_protection` |
 | O2 | High | PR #450 | `mesh_network.cpp::flash_encryption_enabled` + `persist_opera_config`/`load_opera_config` | `test_mesh_opera_security::test_o2_load_refuses_when_fe_off` |
 | O3 | High | PR #450 (in-memory) + PR #454 (full transactional ACK) | `mesh_network.cpp::remove_peer` + `maybe_finalize_rekey` + `MSG_OPERA_REKEY{,_ACK}` cases | `test_mesh_opera_security::test_o3_rekey_commits_on_all_acks` + `test_o3_rekey_timeout_marks_unacked_stale` |
 | C1 | Critical | PR #450 | `chirp_channel.cpp::handle_witness` (Ed25519::verify against carried `session_pubkey`) | `test_chirp_protocol_invariants::test_witness_canonical_layout` |
@@ -428,7 +428,7 @@ The Beacon channel is the harm-reduction layer specified in `spec/beacon_channel
 | C14 | High | PR #450 | `chirp_channel.cpp::pubkey_rate_check_and_record` | manual flood test |
 | C15 | Medium | PR #450 | `chirp_channel.cpp::is_night_mode` (conservative when unsynced) | covered by C10 |
 | C16 | High | PR #450 (partial) + PR #454 (full per-finding suite) | `firmware/projects/canary-wap/tests_host/` | 6 host-test binaries, all green |
-| C17 | Design | PR #450 | template enum removal + reserved slot comment at `mesh_network.h:585-589` | `test_chirp_protocol_invariants::test_protocol_version_is_v02` |
+| C17 | Design | PR #450 | template enum removal + reserved slot comment at `mesh_network.h:615-619` | `test_chirp_protocol_invariants::test_protocol_version_is_v02` |
 
 ## 10. References
 
