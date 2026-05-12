@@ -37,6 +37,7 @@
 #include "csi_event.h"
 #include "csi_module.h"
 
+#include <stdlib.h>   /* abs() */
 #include <string.h>
 
 /* ────────────────────────────────────────────────────────────────────────
@@ -94,18 +95,25 @@ inline uint32_t now_ms() {
 #endif
 }
 
-/* L1 magnitude over a band of the int8 feature vector. Identical to
- * core_presence::reduce_magnitude so the two modules see the same
- * "motion present?" answer for the same input. */
+/* L1 magnitude over a band of the int8 feature vector. Byte-for-byte
+ * identical to core_presence::reduce_magnitude (cpp lines 67-78): sum
+ * of |v[lo..hi]| / n, capped at 127, returned as 0..127. The previous
+ * revision of this helper used a sum-then-rescale-to-0..100 formula
+ * which made the same MOTION_THRESHOLD (35) trigger at much weaker
+ * signals than core_presence's — caught by the codex P1 / gemini HIGH
+ * review on PR 456. The two modules MUST agree on "is there motion
+ * at all?" for a given input, because the fusion-confirmed event is
+ * meaningless if presence wouldn't even have flagged it observed. */
 inline uint8_t reduce_magnitude(const int8_t* v, int lo, int hi) {
-  int32_t s = 0;
+  int32_t sum = 0;
   for (int i = lo; i < hi; ++i) {
-    int8_t x = v[i];
-    s += (x < 0) ? -((int32_t)x) : (int32_t)x;
+    sum += abs((int32_t)v[i]);
   }
-  /* Squeeze to 0..127 then to 0..100 for emission. */
-  if (s > 127) s = 127;
-  return (uint8_t)((s * 100) / 127);
+  const int n = hi - lo;
+  if (n <= 0) return 0;
+  int32_t avg = sum / n;
+  if (avg > 127) avg = 127;
+  return (uint8_t)avg;
 }
 
 /* Find an existing link by fingerprint, or return nullptr. */
@@ -120,12 +128,17 @@ Link* find_link(const uint8_t fp[CORE_MULTILINK_FINGERPRINT_LEN]) {
 }
 
 /* Pick a slot for a new link: prefer an empty slot, otherwise evict
- * the oldest. Returns a pointer into s_links. */
+ * the oldest. Returns a pointer into s_links. The "oldest" comparison
+ * uses signed-delta arithmetic so it works correctly across the
+ * ~49-day uint32_t millis() rollover — direct `<` would mis-order
+ * timestamps that straddle the wrap. */
 Link* allocate_link() {
   Link* victim = &s_links[0];
   for (size_t i = 0; i < CORE_MULTILINK_MAX_PEERS; ++i) {
     if (!s_links[i].in_use) return &s_links[i];
-    if (s_links[i].last_seen_ms < victim->last_seen_ms) victim = &s_links[i];
+    if ((int32_t)(s_links[i].last_seen_ms - victim->last_seen_ms) < 0) {
+      victim = &s_links[i];
+    }
   }
   return victim;
 }

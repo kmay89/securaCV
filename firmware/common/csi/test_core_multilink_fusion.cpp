@@ -106,20 +106,22 @@ void register_module_once() {
 }
 
 /* Build a csi_features_t where the phase-Doppler band (v[8..11]) has
- * a magnitude that maps to roughly `target_motion_pct` after the
- * module's reduce_magnitude scaling. The reduction is L1-magnitude of
- * v[8..11], capped at 127, then *100/127. So to get target=50, set
- * |v[8]|+|v[9]|+|v[10]|+|v[11]| ≈ 127 * 50 / 100 = 63. Distribute as
- * ~16 per byte. */
-csi_features_t make_features(uint8_t target_motion_pct) {
+ * a magnitude that, after the module's average-based reduce_magnitude,
+ * returns roughly `target_avg`. Match core_presence's scaling: avg of
+ * |v[8..11]| capped at 127, so setting each bin to `target_avg`
+ * yields exactly that value back. Motion-present threshold is
+ * MOTION_THRESHOLD = 35 on this scale.
+ *
+ * time_bucket stays at 42; the spec (csi_types.h:91) defines it as
+ * "10-minute bucket (0..143)" so 42 is in-range. */
+csi_features_t make_features(uint8_t target_avg) {
   csi_features_t f;
   memset(&f, 0, sizeof(f));
-  uint8_t per_band = (uint8_t)((127 * target_motion_pct / 100 + 3) / 4);
-  if (per_band > 127) per_band = 127;
-  f.v[8]  = (int8_t)per_band;
-  f.v[9]  = (int8_t)per_band;
-  f.v[10] = (int8_t)per_band;
-  f.v[11] = (int8_t)per_band;
+  if (target_avg > 127) target_avg = 127;
+  f.v[8]  = (int8_t)target_avg;
+  f.v[9]  = (int8_t)target_avg;
+  f.v[10] = (int8_t)target_avg;
+  f.v[11] = (int8_t)target_avg;
   f.frames_in_window = 20;
   f.time_bucket      = 42;
   f.caps_observed    = CSI_CAP_HT20;
