@@ -329,6 +329,22 @@ uint8_t get_beacon_set_size();
 const BeaconSetEntry* get_beacon_set_entry(uint8_t index);
 bool revoke_beacon_set_entry(const uint8_t* fingerprint);
 
+// v0.5: auto-revoke a Beacon-set member when their device sends a tamper
+// alert (or a local tamper sensor fires on a paired neighbor's Opera
+// channel). Called from mesh_network.cpp::handle_tamper_alert. The lookup
+// computes the Beacon set's 16-byte fingerprint from the device's full
+// Ed25519 pubkey and revokes the entry if present.
+//
+// Returns true if a matching beacon set entry was found and revoked
+// (false if the device isn't paired into our Beacon set — no action
+// needed). Idempotent; safe to call multiple times.
+//
+// Threading: same single-task invariant as the rest of beacon_channel.
+// Called from the mesh_network message-dispatch path, which runs on the
+// main loop task (see mesh_network.cpp::update() and the g_rx_pending
+// queue model).
+bool on_peer_tampered(const uint8_t* device_pubkey);
+
 // Pairing flow.
 bool start_pair_init();
 bool start_pair_join();

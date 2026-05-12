@@ -315,6 +315,18 @@ or the Chirp v0.2 channel (`chirp_channel.{h,cpp}`) MUST observe:
    "rotate" or "delete" operation; export-only.
 10. **Drills (`msgType = Exercise`) are wire-format-distinct from real
     alerts.** Do not merge their counters or rate-limit buckets.
+11. **Tamper-flagged neighbors auto-revoke (v0.5).** When a paired
+    Beacon-set member sends an Opera tamper alert (`MSG_TAMPER_ALERT`),
+    `beacon_channel::on_peer_tampered(device_pubkey)` automatically
+    transitions that entry to `trust_level = REVOKED`. Do not introduce
+    a manual-only path or add a "trust them anyway, fail loud later"
+    shortcut. Recovery is operational: physically inspect the device,
+    then re-pair through the standard flow.
+12. **Audible self-test is NFPA-72 §14 cadence (v0.5).** The
+    `PATTERN_SELFTEST_OK` chirp plays monthly during waking hours
+    (06:00–22:00 local, wall clock synced) only. Do not increase the
+    cadence below monthly and do not lift the night-mode suppression —
+    a 3 AM beep is a worse failure mode than a missing chirp.
 
 Modifying any of the above requires updating
 `docs/audit/mesh_and_chirp_audit_v1.md` and `THREAT_MODEL.md` in the same

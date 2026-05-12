@@ -45,6 +45,13 @@ BEACON_ORIG_SRC = test_beacon_origination.cpp
 BEACON_SOLO_BIN = test_beacon_solo_origination
 BEACON_SOLO_SRC = test_beacon_solo_origination.cpp
 
+# v0.5: auto-revoke-on-tamper invariants for
+# mesh_network.cpp::handle_tamper_alert → beacon_channel::on_peer_tampered.
+# Uses libcrypto (OpenSSL) for SHA-256 since this test is host-side and
+# doesn't link the firmware's mbedtls.
+BEACON_TAMPER_BIN = test_beacon_tamper_revoke
+BEACON_TAMPER_SRC = test_beacon_tamper_revoke.cpp
+
 # v0.3: Opera mesh v0.2/v0.3 security invariants (O1 counter replay, O2 FE
 # gating, O3 transactional rekey commit + timeout).
 OPERA_SEC_BIN = test_mesh_opera_security
@@ -81,20 +88,24 @@ $(BEACON_ORIG_BIN): $(BEACON_ORIG_SRC)
 $(BEACON_SOLO_BIN): $(BEACON_SOLO_SRC)
 	$(CXX) $(CXXFLAGS) -o $@ $(BEACON_SOLO_SRC)
 
+$(BEACON_TAMPER_BIN): $(BEACON_TAMPER_SRC)
+	$(CXX) $(CXXFLAGS) -o $@ $(BEACON_TAMPER_SRC) -lcrypto
+
 $(OPERA_SEC_BIN): $(OPERA_SEC_SRC)
 	$(CXX) $(CXXFLAGS) -o $@ $(OPERA_SEC_SRC)
 
 $(DEVSIG_BIN): $(DEVSIG_SOURCES)
 	$(CXX) $(CXXFLAGS) -o $@ $(DEVSIG_SOURCES)
 
-run: $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN)
+run: $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN)
 	./$(BIN)
 	./$(CHIRP_INV_BIN)
 	./$(CHIRP_SEC_BIN)
 	./$(BEACON_ORIG_BIN)
 	./$(BEACON_SOLO_BIN)
+	./$(BEACON_TAMPER_BIN)
 	./$(OPERA_SEC_BIN)
 	./$(DEVSIG_BIN)
 
 clean:
-	rm -f $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN)
+	rm -f $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN)

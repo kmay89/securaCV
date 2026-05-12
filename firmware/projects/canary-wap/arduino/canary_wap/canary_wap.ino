@@ -6453,6 +6453,41 @@ void loop() {
   // Advance audible chirp state machine (non-blocking playback)
   #if FEATURE_AUDIBLE_CHIRP
   audible_chirp::update();
+
+  // v0.5: monthly NFPA-72 §14 supervised-circuit self-test chirp.
+  // Plays PATTERN_SELFTEST_OK at most once per 30 days, only during
+  // waking hours (06:00–22:00 local time, when SNTP is synced), and
+  // only when the device is operationally healthy. The 30-day window
+  // is reset on each successful play; if a play is skipped (night,
+  // unsynced, in alarm), we retry on the next loop tick.
+  {
+    static uint32_t s_last_selftest_chirp_ms = 0;
+    static const uint32_t SELFTEST_INTERVAL_MS = 30UL * 24UL * 60UL * 60UL * 1000UL;
+    const uint32_t since_last = now - s_last_selftest_chirp_ms;
+    // Initial schedule: don't fire on boot; wait at least one interval
+    // from the first call. s_last_selftest_chirp_ms == 0 case is
+    // initialized below on first eligible play.
+    if (s_last_selftest_chirp_ms == 0) {
+      s_last_selftest_chirp_ms = now;  // start the clock at first loop
+    } else if (since_last >= SELFTEST_INTERVAL_MS) {
+      // Time check: only during waking hours and only when wall clock
+      // is synced (else we'd risk chirping at 3am after a reboot).
+      time_t t = time(nullptr);
+      if (t >= 1700000000) {
+        struct tm* tm_info = localtime(&t);
+        if (tm_info) {
+          const int hour = tm_info->tm_hour;
+          const bool waking = (hour >= 6 && hour < 22);
+          if (waking) {
+            audible_chirp::start_pattern(audible_chirp::PATTERN_SELFTEST_OK);
+            s_last_selftest_chirp_ms = now;
+            log_health(SCV_LOG_INFO, SCV_CAT_SYSTEM,
+                       "self-test chirp played (NFPA-72 supervised)", nullptr);
+          }
+        }
+      }
+    }
+  }
   #endif
 
   // Update system monitor (temp, heap, alerts)

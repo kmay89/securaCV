@@ -979,6 +979,9 @@ const BeaconSetEntry* get_beacon_set_entry(uint8_t index) {
 bool revoke_beacon_set_entry(const uint8_t* fingerprint) {
   for (uint8_t i = 0; i < g_beacon_set_count; i++) {
     if (memcmp(g_beacon_set[i].fingerprint, fingerprint, DEVICE_FP_SIZE) == 0) {
+      if (g_beacon_set[i].trust_level == BCN_TRUST_REVOKED) {
+        return true;  // already revoked; idempotent
+      }
       g_beacon_set[i].trust_level = BCN_TRUST_REVOKED;
       persist_beacon_set();
       health_log(SCV_LOG_INFO, SCV_CAT_NETWORK, "beacon: set entry revoked");
@@ -986,6 +989,28 @@ bool revoke_beacon_set_entry(const uint8_t* fingerprint) {
     }
   }
   return false;
+}
+
+// v0.5: auto-revoke on neighbor tamper. Wired from mesh_network's
+// handle_tamper_alert path so a compromised paired neighbor is dropped
+// from our Beacon trust surface automatically — no manual
+// /api/beacon/revoke call required, no human-in-the-loop wait while a
+// tampered device might be emitting fraudulent Beacon co-signatures.
+//
+// The device pubkey is the same identity used by both Opera and Beacon
+// (spec/beacon_channel_v0.md §3.1). We compute the Beacon 16-byte
+// fingerprint from the full pubkey and revoke the entry.
+bool on_peer_tampered(const uint8_t* device_pubkey) {
+  uint8_t fp[DEVICE_FP_SIZE];
+  compute_fingerprint(device_pubkey, fp);
+  bool revoked = revoke_beacon_set_entry(fp);
+  if (revoked) {
+    health_log(SCV_LOG_ALERT, SCV_CAT_NETWORK,
+               "beacon: paired neighbor revoked on tamper alert (v0.5 auto-revoke)");
+    // Recompute trouble state since beacon_set membership changed.
+    recompute_trouble_reasons();
+  }
+  return revoked;
 }
 
 bool start_pair_init() {
