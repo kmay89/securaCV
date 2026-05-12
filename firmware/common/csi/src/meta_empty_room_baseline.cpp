@@ -34,6 +34,10 @@
 #include <stdlib.h>   /* abs() */
 #include <string.h>
 
+#ifndef CSI_TEST_HOST_BUILD
+  #include <Arduino.h>   /* millis() — extern "C" linkage */
+#endif
+
 namespace {
 
 enum class State : uint8_t {
@@ -69,7 +73,10 @@ inline uint32_t now_ms() {
   static uint32_t fake = 0;
   return fake;
 #else
-  extern uint32_t millis();
+  /* Arduino's millis() has C linkage (extern "C" unsigned long); use
+   * the runtime symbol via Arduino.h rather than a bare `extern uint32_t
+   * millis()` forward-declare (which would emit a mangled C++ symbol
+   * that fails to link). */
   return millis();
 #endif
 }
