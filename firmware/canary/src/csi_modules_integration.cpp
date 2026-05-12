@@ -22,6 +22,8 @@
 #include "core_activity_ribbon.h"
 #include "meta_daily_summary.h"
 #include "anomaly_baseline.h"
+#include "core_multilink_fusion.h"
+#include "meta_empty_room_baseline.h"
 
 #include <Arduino.h>
 #include <Preferences.h>
@@ -146,6 +148,13 @@ extern "C" bool securacv_csi_modules_init(void) {
   csi_module_register(core_activity_ribbon_module());
   csi_module_register(meta_daily_summary_module());
   csi_module_register(anomaly_baseline_module());
+  /* Multi-link motion confirmation (PR 3) — promotes single-link
+   * "observed" to multi-link "confirmed" when ≥2 links agree within
+   * a 3-second window. PR 3 added the module but never wired it; this
+   * PR closes that gap alongside meta.empty_room_baseline. */
+  csi_module_register(core_multilink_fusion_module());
+  /* Scheduled 10-min empty-room baseline calibration (PR 4a). */
+  csi_module_register(meta_empty_room_baseline_module());
 
   s_initialized = true;
   return true;

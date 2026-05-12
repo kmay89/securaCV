@@ -7,7 +7,7 @@
  *      accumulates windows.
  *   2. After duration_ms elapses, the mean of accumulated v[] values
  *      is exposed via meta_empty_room_baseline_get().
- *   3. "baseline_calibrated" event fires with state_name="calibrated"
+ *   3. "baseline_status" event fires with state_name="calibrated"
  *      and bundled_count = number of windows accumulated.
  *   4. cancel() mid-run wipes accumulator + emits "cancelled" event,
  *      preserves any prior baseline.
@@ -102,9 +102,11 @@ void register_module_once() {
 void fresh_world() {
   reset_captures();
   meta_empty_room_baseline_test_reset();
-  meta_empty_room_baseline_test_set_now_ms(1000);
   register_module_once();
-  meta_empty_room_baseline_test_reset();  /* clear any state init() left */
+  /* test_reset clears the virtual clock too, so re-establish AFTER the
+   * register-triggered init() so start() reads a known now_ms. */
+  meta_empty_room_baseline_test_reset();
+  meta_empty_room_baseline_test_set_now_ms(1000);
 }
 
 /* Build a csi_features_t with every v[] entry set to `value`. */
@@ -125,7 +127,7 @@ void tick_and_flush(const csi_features_t& f) {
 
 bool any_emitted_with_state(const char* state_name) {
   for (size_t i = 0; i < g_captured_count; ++i) {
-    if (strcmp(g_captured[i].type_name, "baseline_calibrated") == 0 &&
+    if (strcmp(g_captured[i].type_name, "baseline_status") == 0 &&
         strcmp(g_captured[i].values.state_name, state_name) == 0) {
       return true;
     }

@@ -99,7 +99,7 @@ void meta_empty_room_baseline_test_reset(void);
 void meta_empty_room_baseline_test_set_now_ms(uint32_t now_ms);
 
 /** Inspect the accumulator: how many windows have been added so far. */
-uint16_t meta_empty_room_baseline_test_in_progress_count(void);
+uint32_t meta_empty_room_baseline_test_in_progress_count(void);
 #endif
 
 #ifdef __cplusplus

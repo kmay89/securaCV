@@ -15,6 +15,16 @@
  *   CALIBRATING -> [duration elapses but fewer than MIN_WINDOWS
  *                   contributed] -> IDLE + "failed" event emitted +
  *                   prior baseline (if any) preserved.
+ *
+ * Threading contract: ALL entry points (start/cancel/get/is_calibrating
+ * + the module's on_tick) must be invoked from the same task as the
+ * csi_module dispatcher. This matches the existing csi_module spec
+ * (csi_module.h: "tick() is called from the main loop (NOT an ISR)").
+ * The integration layer must NOT call start()/cancel() from an ISR or
+ * a separate FreeRTOS task; doing so races against the on_tick
+ * accumulator. No atomics or mutex are added here because the
+ * cross-task path doesn't exist in production today and adding the
+ * locks would mask any future violation rather than surface it.
  */
 
 #include "meta_empty_room_baseline.h"
@@ -31,10 +41,13 @@ enum class State : uint8_t {
   CALIBRATING,
 };
 
-/* Accumulator state. Allocation-free; reset on every start(). */
+/* Accumulator state. Allocation-free; reset on every start().
+ * s_in_progress_n is uint32_t — uint16_t would overflow ~18.2 h at 1 Hz
+ * windows, and the API accepts arbitrary duration_ms (up to UINT32_MAX
+ * ms ≈ 49 days). */
 static State    s_state         = State::IDLE;
 static int32_t  s_sum[CSI_FEATURE_DIM];   /* running sum of v[] */
-static uint16_t s_in_progress_n = 0;       /* windows added so far */
+static uint32_t s_in_progress_n = 0;       /* windows added so far */
 static uint32_t s_started_ms    = 0;
 static uint32_t s_duration_ms   = META_EMPTY_ROOM_DEFAULT_DURATION_MS;
 
@@ -42,7 +55,7 @@ static uint32_t s_duration_ms   = META_EMPTY_ROOM_DEFAULT_DURATION_MS;
  * the accumulator so a cancelled / failed run doesn't clobber a good
  * baseline already in place. */
 static int8_t   s_baseline_mean[CSI_FEATURE_DIM];
-static uint16_t s_baseline_n   = 0;
+static uint32_t s_baseline_n   = 0;
 static bool     s_baseline_ok  = false;
 
 #ifdef CSI_TEST_HOST_BUILD
@@ -61,20 +74,25 @@ inline uint32_t now_ms() {
 #endif
 }
 
-void emit_status(const char* status, uint16_t windows) {
+void emit_status(const char* status, uint32_t windows) {
   csi_event_values_t v;
   csi_event_values_init(&v);
   v.category       = CSI_CATEGORY_EVENT;
   v.present_fields = CSI_FIELD_STATE_NAME | CSI_FIELD_BUNDLED_COUNT;
   strncpy(v.state_name, status, sizeof(v.state_name) - 1);
-  v.bundled_count  = windows;
-  (void)csi_event_emit("meta.empty_room_baseline", "baseline_calibrated", &v);
+  /* csi_event_values_t.bundled_count is uint16_t; cap at its max so
+   * a >65k-window calibration still produces a defined value. */
+  v.bundled_count  = (windows > UINT16_MAX) ? UINT16_MAX : (uint16_t)windows;
+  /* Event type_name is "baseline_status" rather than "baseline_calibrated"
+   * because the same event carries state_name = "calibrated" | "cancelled"
+   * | "failed". Consumers filter by state_name. */
+  (void)csi_event_emit("meta.empty_room_baseline", "baseline_status", &v);
 }
 
 void finalize_calibration() {
   if (s_in_progress_n >= META_EMPTY_ROOM_MIN_WINDOWS) {
     for (size_t i = 0; i < CSI_FEATURE_DIM; ++i) {
-      int32_t avg = s_sum[i] / s_in_progress_n;
+      int32_t avg = s_sum[i] / (int32_t)s_in_progress_n;
       if (avg >  127) avg =  127;
       if (avg < -128) avg = -128;
       s_baseline_mean[i] = (int8_t)avg;
@@ -103,19 +121,28 @@ void on_init(const csi_module_settings_t* /*settings*/) {
 }
 
 void on_tick(const csi_features_t* f) {
-  if (f == nullptr) return;
   if (s_state != State::CALIBRATING) return;
+
+  /* Deadline check FIRST so the calibration finalizes (with whatever
+   * windows have accumulated) even if the CSI stream stops mid-run.
+   * Without this, on_tick would never run past the deadline because
+   * the CSI HAL only ticks when a feature window is produced, and a
+   * stalled HAL would leave the module stuck in CALIBRATING forever.
+   *
+   * Signed-delta against (started + duration) is wrap-safe across the
+   * uint32_t millis() rollover. */
+  if ((int32_t)(now_ms() - (s_started_ms + s_duration_ms)) >= 0) {
+    finalize_calibration();
+    return;
+  }
+
+  if (f == nullptr) return;
 
   /* Accumulate this window's v[] into the running int32 sums. */
   for (size_t i = 0; i < CSI_FEATURE_DIM; ++i) {
     s_sum[i] += (int32_t)f->v[i];
   }
   s_in_progress_n++;
-
-  /* Check duration. */
-  if ((now_ms() - s_started_ms) >= s_duration_ms) {
-    finalize_calibration();
-  }
 }
 
 void on_deinit() {
@@ -126,7 +153,7 @@ void on_deinit() {
 
 static const csi_event_decl_t EVENTS[] = {
   {
-    /* type_name */          "baseline_calibrated",
+    /* type_name */          "baseline_status",
     /* allowed_fields */     CSI_FIELD_STATE_NAME
                            | CSI_FIELD_BUNDLED_COUNT
                            | CSI_FIELD_TIME_BUCKET,
@@ -172,7 +199,7 @@ bool meta_empty_room_baseline_start(uint32_t duration_ms) {
 
 void meta_empty_room_baseline_cancel(void) {
   if (s_state != State::CALIBRATING) return;
-  const uint16_t partial = s_in_progress_n;
+  const uint32_t partial = s_in_progress_n;
   memset(s_sum, 0, sizeof(s_sum));
   s_in_progress_n = 0;
   s_state         = State::IDLE;
@@ -192,7 +219,11 @@ bool meta_empty_room_baseline_get(int8_t out_mean[CSI_FEATURE_DIM],
     return false;
   }
   memcpy(out_mean, s_baseline_mean, CSI_FEATURE_DIM);
-  if (out_window_count) *out_window_count = s_baseline_n;
+  if (out_window_count) {
+    /* s_baseline_n is uint32_t now; cap to the uint16_t public field. */
+    *out_window_count = (s_baseline_n > UINT16_MAX) ? UINT16_MAX
+                                                    : (uint16_t)s_baseline_n;
+  }
   return true;
 }
 
@@ -215,7 +246,7 @@ void meta_empty_room_baseline_test_set_now_ms(uint32_t v) {
   s_test_now_set = true;
 }
 
-uint16_t meta_empty_room_baseline_test_in_progress_count(void) {
+uint32_t meta_empty_room_baseline_test_in_progress_count(void) {
   return s_in_progress_n;
 }
 #endif
