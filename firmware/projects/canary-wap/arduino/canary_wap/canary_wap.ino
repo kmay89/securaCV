@@ -5528,8 +5528,18 @@ static void wifi_init_provisioning() {
       mdns_host[hj++] = '-';
     }
   }
-  // Trim trailing hyphens.
+  // Trim trailing AND leading hyphens (RFC 6762 §16 forbids both).
+  // Matches the canonical sanitize in firmware/canary/lib/securacv_network
+  // so peer browsers get the same hostname grammar from both builds.
   while (hj > 0 && mdns_host[hj - 1] == '-') hj--;
+  {
+    size_t start = 0;
+    while (start < hj && mdns_host[start] == '-') start++;
+    if (start > 0) {
+      memmove(mdns_host, mdns_host + start, hj - start);
+      hj -= start;
+    }
+  }
   // Fall back to a stable default rather than emitting an empty name.
   if (hj == 0) {
     const char* fb = "canary";
@@ -5545,7 +5555,15 @@ static void wifi_init_provisioning() {
     MDNS.addService("securacv", "tcp", 80);
     MDNS.addServiceTxt("securacv", "tcp", "device_id", g_device.device_id);
     MDNS.addServiceTxt("securacv", "tcp", "fw",        FIRMWARE_VERSION);
+    // The same firmware compiles for both XIAO ESP32S3 and XIAO ESP32C3
+    // (see DEVICE_ID_PREFIX selection at lines 201-205). Advertise the
+    // actual hardware so the fleet manager and the SPA can pick the
+    // right capability set (e.g., the C3 has no camera).
+    #if defined(HARDWARE_XIAO_ESP32C3)
+    MDNS.addServiceTxt("securacv", "tcp", "model",     "XIAO ESP32C3");
+    #else
     MDNS.addServiceTxt("securacv", "tcp", "model",     "XIAO ESP32S3");
+    #endif
 
     char fqdn[64];
     snprintf(fqdn, sizeof(fqdn), "%s.local", mdns_host);

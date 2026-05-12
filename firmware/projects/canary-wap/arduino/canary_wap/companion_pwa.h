@@ -394,7 +394,10 @@ footer a{color:var(--accent);text-decoration:none}
         <h3 class="wiz-h" style="font-size:1rem;margin:0 0 .25rem" tabindex="-1">Most homes use 3 or 4.</h3>
         <p class="wiz-sub" style="margin:0 0 .6rem">Want to add the next room now? Each one takes about a minute. You can stop anytime &mdash; up to 8 in one home.</p>
         <details class="wiz-check-row" style="margin:0 0 .65rem">
-          <summary style="font-size:.9rem;font-weight:500">Where to put the next one</summary>
+          <summary style="font-size:.9rem;font-weight:500;display:flex;align-items:center">
+            <span style="flex:1">Where to put the next one</span>
+            <span aria-hidden="true" style="color:var(--muted);font-size:.75rem;margin-left:.5rem">▾</span>
+          </summary>
           <div class="wiz-check-meta" style="font-family:inherit;font-size:.8rem;line-height:1.5;background:var(--surface-2);color:var(--text);white-space:normal">
             <ul style="margin:0;padding-left:1.1rem">
               <li>About head height. Crossing motion reads better than overhead.</li>
@@ -1088,6 +1091,15 @@ footer a{color:var(--accent);text-decoration:none}
       } else {
         ipLink.style.display = 'none';
       }
+      // The firmware advertises mDNS under a per-device hostname
+      // (canary-s3-XXXX.local) so two Canaries on one LAN don't race
+      // for `canary.local`. The wiz-link-mdns href was hard-coded to
+      // `canary.local` in the page template; rewrite it to the actual
+      // hostname (sanitized the same way canary_wap.ino does) before
+      // showing the close-out card. Best-effort: on fetch error we
+      // leave the original href in place so the link still goes
+      // somewhere reasonable.
+      updateMdnsLinkFromDevice();
       // Default reveal: the "another room?" pane. The user picks the
       // close-out path from there.
       multi.style.display   = 'block';
@@ -1106,6 +1118,36 @@ footer a{color:var(--accent);text-decoration:none}
       $w('wiz-st-finish').style.display = 'none';
     }
     requestAnimationFrame(() => focusActiveStepHeading());
+  }
+
+  // Mirrors canary_wap.ino's sanitize loop (lowercase [a-z0-9-], any
+  // other byte becomes '-', trim leading/trailing hyphens, fall back to
+  // "canary" if empty). Kept here so the JS can construct the same
+  // hostname the device just registered with mDNS.
+  function sanitizeMdnsHostname(raw) {
+    let out = '';
+    for (const ch of String(raw || '').toLowerCase()) {
+      out += /[a-z0-9-]/.test(ch) ? ch : '-';
+    }
+    out = out.replace(/^-+|-+$/g, '');
+    return out || 'canary';
+  }
+
+  async function updateMdnsLinkFromDevice() {
+    const link = $w('wiz-link-mdns');
+    if (!link) return;
+    try {
+      const r = await fetch('/api/status', { cache: 'no-store' });
+      if (!r.ok) return;
+      const j = await r.json();
+      const id = j && j.device_id ? j.device_id : '';
+      if (!id) return;
+      const host = sanitizeMdnsHostname(id);
+      link.href = 'http://' + host + '.local/';
+      link.textContent = 'Open ' + host + '.local';
+    } catch (_) {
+      // Network blip: fall back to the static canary.local link.
+    }
   }
 
   // ── Multi-Canary close-out wiring (Step 5 result branches) ────────────

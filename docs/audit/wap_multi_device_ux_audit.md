@@ -81,7 +81,7 @@ actually live in, and it is **behind** on multi-device infrastructure:
 |---|---|---|
 | Per-device mDNS hostname | **Missing.** `canary_wap.ino:5507` calls `MDNS.begin("canary")` with a hard-coded literal. Two Canaries on the same home network race for `canary.local` and the loser is unreachable by name. | **Show-stopper for multi-device.** Fix in this PR (small, surgical). |
 | `_securacv._tcp` service advertisement | **Missing.** Only `http._tcp` is added. | Peers / SPA / fleet manager cannot discover this device by browsing. Fix in this PR. |
-| TXT records (`device_id`, `name`, `fw`, `model`) | **Missing.** | Same blast radius. Fix in this PR. |
+| TXT records (`device_id`, `fw`, `model` — `name` deferred until the zone-name wire-up lands) | **Partial.** | Three of four added in this PR; the `name` record needs a `wizard::get_zone_name` HTTP read which is part of the household-primitive PR (§9.5). |
 | `GET /api/v1/peers` peer cache | **Missing.** | Wizard can't *show* the other Canaries that exist. Deferred (large change). |
 | Active mDNS browse | **Missing.** | Same. Deferred. |
 | Wizard awareness of additional devices | **Missing.** Wizard text and steps are exclusively singular ("your Canary"), end is a single-link finish. | Fix wording + add a Step 6 CTA in this PR. |
@@ -321,7 +321,7 @@ for follow-ups.
 |---|---|---|---|
 | 1 | Per-device mDNS hostname (`canary-s3-A1B2`) + advertise `_securacv._tcp` with TXT records | `canary_wap.ino` | Two Canaries can finally coexist on `*.local`; SPAs & fleet manager can browse |
 | 2 | Wizard step 1 intro: add "Most homes use 3 or 4" bullet | `companion_pwa.h` | Frame the multi-device expectation up-front |
-| 3 | Wizard step 5: add zone-name input + "Add another Canary" CTA pair with placement card | `companion_pwa.h` | The terminal step now branches into "another room" rather than dead-ending at one device |
+| 3 | Wizard step 5: add "Add another Canary" CTA pair with placement card (zone-name input is deferred to the household-primitive PR — see §9.5) | `companion_pwa.h` | The terminal step now branches into "another room" rather than dead-ending at one device |
 | 4 | Captive-portal lead copy: "Set up your **first** Canary" + multi-device hint | `setup_page_html.h` | Sets expectations on the literal first screen |
 | 5 | This audit | `docs/audit/wap_multi_device_ux_audit.md` | Captures the orphan-page inventory and the design for follow-ups |
 
