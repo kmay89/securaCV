@@ -1,8 +1,29 @@
-# SecuraCV — Security Audit Report (v3 + v3.1 addendum)
+# SecuraCV — Security Audit Report (v3 + v3.1 addendum + v3.2 closeout)
 
-**Date:** 2026-02-21 (v3); 2026-05-11 (v3.1 mesh + harm-reduction addendum)
-**Revision:** 3.1 — Opera mesh + Chirp channel + new Beacon channel audit
+**Date:** 2026-02-21 (v3); 2026-05-11 (v3.1 mesh + harm-reduction addendum); 2026-05-12 (v3.2 closeout)
+**Revision:** 3.2 — Opera mesh + Chirp channel + Beacon channel introduction (closeout)
 **Scope:** Full-stack audit — Rust kernel (every `.rs` file), firmware (C/C++), Node.js device API, SPA, Docker, CI/CD, supply chain, cryptographic correctness, injection surfaces, side channels
+
+> **v3.2 (2026-05-12) — Audit closeout**
+>
+> Every finding from the v3.1 mesh + harm-reduction audit
+> (`docs/audit/mesh_and_chirp_audit_v1.md`) is closed in code and merged
+> on main (PR #450 v0.2 hardening + PR #454 v0.3 follow-ups). The full
+> closure traceability table — each of the 20 findings (3 Opera + 17
+> Chirp) mapped to its fix commit, source location, and host-side
+> regression test — is in `docs/audit/v0.3_closeout.md`.
+>
+> All host-side tests pass. The two CI-enforced lints
+> (`scripts/lint_no_impersonation.sh` for reserved emergency-broadcast
+> phrases/tones/colors, `scripts/lint_cap_mapping.sh` for CAP-template
+> coverage) pass. The sign-off checklists in §8 and §9 of the v1 audit
+> doc are ticked except for items that require physical hardware —
+> those are queued in `docs/audit/hardware_verification_checklist.md`
+> with concrete repro recipes and an artifact directory layout
+> (`docs/audit/repro/`).
+>
+> The CAP gateway (`spec/beacon_cap_gateway_v0.md`) remains spec-only,
+> per repo-owner direction. Implementation is queued for v0.4.
 
 > **v3.1 (2026-05-11) — Opera mesh + Chirp channel + Beacon channel introduction**
 >

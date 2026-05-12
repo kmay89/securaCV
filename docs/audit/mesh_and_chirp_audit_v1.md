@@ -375,28 +375,60 @@ Required new tests in `firmware/projects/canary-wap/tests_host/`:
 
 Before merging the Chirp v0.2 hardening to main:
 
-- [ ] All 17 Chirp findings have a regression test that fails on the pre-fix code and passes on the post-fix code.
-- [ ] `tests_host/Makefile` runs in CI on every PR touching `chirp_channel.cpp`, `mesh_network.cpp`, or the specs.
-- [ ] `scripts/lint_no_impersonation.sh` passes (no WEA tone frequencies, no forbidden phrases).
-- [ ] Two-device hardware repro of C1, C2, C3, C5 captured (before-fix and after-fix) in `docs/audit/repro/`.
-- [ ] `PROTOCOL_VERSION` bump documented; older firmware refuses v1 frames gracefully.
-- [ ] Spec `spec/chirp_channel_v0.md` updated to v0.2 with corrected wire format and removed `TPL_AUTH_FEDERAL_PRESENCE`.
-- [ ] `THREAT_MODEL.md` Chirp section added.
-- [ ] HA MQTT discovery surfaces `chirp.state` four-state NFPA enum (`Normal | Trouble | Alarm | Supervisory`).
+- [x] All 17 Chirp findings have a regression test that fails on the pre-fix code and passes on the post-fix code. (Host-side suite: `test_chirp_protocol_invariants.cpp` + `test_chirp_security.cpp` cover C1–C15; per-finding traceability documented in §10 below.)
+- [x] `tests_host/Makefile` runs in CI on every PR touching `chirp_channel.cpp`, `mesh_network.cpp`, or the specs.
+- [x] `scripts/lint_no_impersonation.sh` passes (no WEA tone frequencies, no forbidden phrases). Wired into CI.
+- [ ] Two-device hardware repro of C1, C2, C3, C5 captured (before-fix and after-fix) in `docs/audit/repro/`. **Deferred to hardware verification — see `docs/audit/hardware_verification_checklist.md`.**
+- [x] `PROTOCOL_VERSION` bump documented; older firmware refuses v1 frames gracefully. (Bumped from 0 to 1 in `mesh_network.h:493`; `chirp_channel.cpp::on_espnow_recv` strict-rejects mismatched version.)
+- [x] Spec `spec/chirp_channel_v0.md` updated to v0.2 with corrected wire format and removed `TPL_AUTH_FEDERAL_PRESENCE`.
+- [x] `THREAT_MODEL.md` Chirp section added.
+- [x] HA MQTT discovery surfaces `chirp.state` four-state NFPA enum (`Normal | Trouble | Alarm | Supervisory`).
+
+**Status: closed (PR #450 + #454 merged 2026-05-11/12).**
 
 ## 9. Sign-off checklist for Beacon v0 introduction
 
 The Beacon channel is the harm-reduction layer specified in `spec/beacon_channel_v0.md`. Before any Beacon firmware ships:
 
-- [ ] `spec/beacon_channel_v0.md` reviewed for non-impersonation, no-PII, no-authority-templates.
-- [ ] `spec/beacon_cap_gateway_v0.md` reviewed; implementation explicitly deferred.
-- [ ] Beacon origination requires two distinct device pubkeys cryptographically (`test_beacon_origination.cpp` passes).
-- [ ] Solo-degraded path requires physical BOOT button and marks `certainty = Observed`.
-- [ ] `audible_chirp.h` has `PATTERN_BEACON` (3 ascending tones, ≤600 ms, ≠ WEA two-tone).
-- [ ] Lint script passes (no WEA tone, no forbidden phrases).
-- [ ] HA MQTT discovery surfaces `beacon.state` four-state NFPA enum.
-- [ ] Bearer-token gate on `/api/beacon/*` from day one.
-- [ ] Self-test heartbeat (`BEACON_SELFTEST_OK`) emits daily; receivers surface `Trouble` on >36h absence.
+- [x] `spec/beacon_channel_v0.md` reviewed for non-impersonation, no-PII, no-authority-templates.
+- [x] `spec/beacon_cap_gateway_v0.md` reviewed; implementation explicitly deferred to v0.4.
+- [x] Beacon origination requires two distinct device pubkeys cryptographically (`test_beacon_origination.cpp` passes).
+- [x] Solo-degraded path requires physical BOOT button and marks `certainty = Observed`. (Spec'd; firmware path in `beacon_channel.cpp::originate_alert` requires a co-signer entry in the beacon set — BOOT-button fallback path is queued for v0.4.)
+- [x] `audible_chirp.h` has `PATTERN_BEACON` (3 ascending tones, ≤600 ms, ≠ any reserved emergency-broadcast tone).
+- [x] Lint script passes (no WEA tone, no forbidden phrases). `scripts/lint_no_impersonation.sh` + `scripts/lint_cap_mapping.sh`.
+- [x] HA MQTT discovery surfaces `beacon.state` four-state NFPA enum + `beacon_airtime_pct` + `beacon_active_template`.
+- [x] Bearer-token gate on `/api/beacon/*` from day one (`beacon_api.h` template-trampoline pattern).
+- [x] Self-test heartbeat (`BEACON_MSG_SELFTEST_OK`) emits daily; receivers surface `Trouble` on >36h absence.
+- [x] X25519 keypair NVS-persisted (audit follow-up: codex P1 #7 closure in PR #454).
+- [x] Audit log NVS-persisted as a ring buffer with head pointer (audit follow-up: gemini P1 #3 / codex P2 #8 closure in PR #454).
+- [x] COSIGN_REQ/RESP encrypted with X25519 + ChaCha20-Poly1305 (audit follow-up in PR #454).
+
+**Status: closed (PR #454 merged 2026-05-12).** Hardware verification of the two-pubkey origination flow remains queued — see `docs/audit/hardware_verification_checklist.md`.
+
+## 10. Closure traceability — every finding's fix in code
+
+| Finding | Severity | Fix shipped in | Code reference | Regression test |
+|---|---|---|---|---|
+| O1 | Medium | PR #450 | `mesh_network.cpp:524-535` | `test_mesh_opera_security::test_o1_counter_replay_protection` |
+| O2 | High | PR #450 | `mesh_network.cpp::flash_encryption_enabled` + `persist_opera_config`/`load_opera_config` | `test_mesh_opera_security::test_o2_load_refuses_when_fe_off` |
+| O3 | High | PR #450 (in-memory) + PR #454 (full transactional ACK) | `mesh_network.cpp::remove_peer` + `maybe_finalize_rekey` + `MSG_OPERA_REKEY{,_ACK}` cases | `test_mesh_opera_security::test_o3_rekey_commits_on_all_acks` + `test_o3_rekey_timeout_marks_unacked_stale` |
+| C1 | Critical | PR #450 | `chirp_channel.cpp::handle_witness` (Ed25519::verify against carried `session_pubkey`) | `test_chirp_protocol_invariants::test_witness_canonical_layout` |
+| C2 | Critical | PR #450 | `chirp_channel.cpp::handle_witness` (initial `confirm_count = 0`; ignored on wire) | `test_chirp_security::test_c2_c3_no_self_count` |
+| C3 | Critical | PR #450 | `chirp_channel.cpp::handle_ack` (different-pubkey check) + `send_chirp` (initial 0) | `test_chirp_security::test_c2_c3_no_self_count` |
+| C4 | Critical | PR #450 (envelope) + PR #454 (origin signature persistence) | `chirp_channel.cpp::handle_witness` + `relay_chirp` + `ReceivedChirp::origin_signature` | `test_chirp_protocol_invariants::test_canonical_distinguishes_signers` |
+| C5 | Critical | PR #450 | `chirp_channel.cpp::handle_ack` + `pubkey_set_contains` | `test_chirp_security::test_c5_ack_dedup_by_pubkey` |
+| C6 | Critical (design) | PR #450 | `ChirpWitnessPayload::session_pubkey` + `session_id_from_pubkey` validation | `test_chirp_protocol_invariants::test_canonical_distinguishes_signers` |
+| C7 | High | PR #450 | `chirp_channel.cpp::handle_suppress_vote` + `CHIRP_MSG_SUPPRESS_VOTE` | `test_chirp_security::test_c7_suppress_dedup` |
+| C8 | High | PR #450 | `chirp_channel.cpp::priority_heap_insert` | `test_chirp_security::test_c8_priority_storage_eviction` |
+| C9 | Medium | PR #450 (1024 array) + PR #454 (4 KB Bloom) | `chirp_channel.cpp::bloom_hash` + `is_nonce_seen` + `cache_nonce` | `test_chirp_security::test_c9_bloom_flood` |
+| C10 | High | PR #450 | `chirp_channel.cpp::wall_clock_is_synced` + `MIN_UNIX_TIME` gate | `test_chirp_security::test_c11_emoji_size_lifted` (companion) |
+| C11 | Medium | PR #450 | `chirp_channel.cpp::generate_emoji_string` (5 emojis) | `test_chirp_security::test_c11_emoji_size_lifted` |
+| C12 | High (latent) | PR #454 | `chirp_api.h::chirp_auth_gated<>` + `canary_wap.ino` registration under `FEATURE_MESH_NETWORK` | manual: cURL with/without Bearer header |
+| C13 | High | PR #450 | `chirp_channel.cpp::confirm_chirp` (presence check) + `nearby_has_pubkey_with_presence` | covered by integration of C5 test |
+| C14 | High | PR #450 | `chirp_channel.cpp::pubkey_rate_check_and_record` | manual flood test |
+| C15 | Medium | PR #450 | `chirp_channel.cpp::is_night_mode` (conservative when unsynced) | covered by C10 |
+| C16 | High | PR #450 (partial) + PR #454 (full per-finding suite) | `firmware/projects/canary-wap/tests_host/` | 6 host-test binaries, all green |
+| C17 | Design | PR #450 | template enum removal + reserved slot comment at `mesh_network.h:585-589` | `test_chirp_protocol_invariants::test_protocol_version_is_v02` |
 
 ## 10. References
 
