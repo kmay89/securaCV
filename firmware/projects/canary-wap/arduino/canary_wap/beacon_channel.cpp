@@ -760,15 +760,41 @@ static void handle_alert_frame(const uint8_t* data, size_t len) {
   // Scope must be Private (lint and spec invariant).
   if (canonical->scope != BCN_SCOPE_PRIVATE) return;
 
-  // Both signers must be in the local beacon set.
+  // v0.4 (spec §6.2): solo-origination frames bypass the
+  // "originator != cosigner" check because the cosigner IS the originator
+  // (the BOOT button is the cosigner). They MUST be certainty=Observed
+  // so receivers can downweight them in the UI.
+  const bool is_solo = (hdr->flags & BCN_FLAG_SOLO_ORIGIN) != 0;
+  if (is_solo) {
+    if (canonical->certainty != BCN_CERT_OBSERVED) {
+      health_log(SCV_LOG_WARNING, SCV_CAT_NETWORK,
+                 "beacon: rejected solo frame — certainty != Observed");
+      return;
+    }
+    if (memcmp(canonical->originator_fp, canonical->cosigner_fp,
+               DEVICE_FP_SIZE) != 0) {
+      health_log(SCV_LOG_WARNING, SCV_CAT_NETWORK,
+                 "beacon: rejected solo frame — originator_fp != cosigner_fp");
+      return;
+    }
+  }
+
+  // Originator must be in the local beacon set (for solo, same lookup
+  // covers the "cosigner" since they're the same pubkey).
   const BeaconSetEntry* a = find_set_entry_by_fp(canonical->originator_fp);
-  const BeaconSetEntry* b = find_set_entry_by_fp(canonical->cosigner_fp);
+  const BeaconSetEntry* b = is_solo ? a
+                                    : find_set_entry_by_fp(canonical->cosigner_fp);
   if (!a || !b) return;
   if (a->trust_level == BCN_TRUST_REVOKED) return;
   if (b->trust_level == BCN_TRUST_REVOKED) return;
-  if (memcmp(canonical->originator_fp, canonical->cosigner_fp, DEVICE_FP_SIZE) == 0) return;
+  if (!is_solo && memcmp(canonical->originator_fp, canonical->cosigner_fp,
+                         DEVICE_FP_SIZE) == 0) {
+    return;  // Standard dual-pubkey frame with collapsed signers is malformed.
+  }
 
-  // Verify both signatures over the canonical.
+  // Verify both signatures over the canonical. Solo frames carry the
+  // same signature in both slots; we still verify both to keep the
+  // accept-path uniform (any tampering with either slot is caught).
   uint8_t buf[64 + sizeof(BeaconAlertCanonical)];
   size_t cl = build_alert_canonical(canonical, buf, sizeof(buf));
   if (cl == 0) return;
@@ -1136,6 +1162,113 @@ bool cosign_pending_request(bool confirm) {
   health_log(SCV_LOG_INFO, SCV_CAT_NETWORK,
              confirm ? "beacon: COSIGN_RESP (accepted) sent"
                      : "beacon: COSIGN_RESP (declined) sent");
+  return true;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// BOOT-BUTTON SOLO ORIGINATION — v0.4 spec §6.2 closure
+//
+// Single-Canary households cannot pair a neighbor cosigner, so they would
+// otherwise be locked out of Beacon entirely. The compromise: a user who
+// physically holds the BOOT button while holding-to-send originates a
+// frame marked SOLO_ORIGIN with certainty=Observed, so receivers can
+// visibly downweight it (one notch lower in the urgency UI; "solo
+// origination" badge in the audit log).
+//
+// The physical BOOT button check is the real protection — a software-only
+// attacker who exfiltrates the device key still cannot make a remote
+// device's BOOT pin transition from idle to held without physical access.
+// Receivers don't enforce this; we rely on every device playing by the
+// protocol when it's in our local beacon_set. Compromised devices get
+// REVOKED via `revoke_beacon_set_entry()` per the standard recovery path.
+// ════════════════════════════════════════════════════════════════════════════
+
+static uint8_t g_boot_gpio = 0;  // ESP32-S3 BOOT button default
+static bool g_boot_gpio_configured = false;
+
+void set_boot_button_gpio(uint8_t gpio) {
+  g_boot_gpio = gpio;
+  g_boot_gpio_configured = false;  // re-config on next read
+}
+
+bool boot_button_held() {
+  // Configure as INPUT_PULLUP once; BOOT button pulls the pin LOW when held.
+  if (!g_boot_gpio_configured) {
+    pinMode(g_boot_gpio, INPUT_PULLUP);
+    g_boot_gpio_configured = true;
+  }
+  return digitalRead(g_boot_gpio) == LOW;
+}
+
+bool originate_alert_solo(BeaconTemplate template_id, BeaconUrgency urgency,
+                          BeaconSeverity severity, BeaconDetailSlot detail,
+                          uint32_t ttl_minutes) {
+  if (!g_enabled) return false;
+  if (time(nullptr) < (time_t)MIN_UNIX_TIME) return false;
+  if (!rate_check_and_record(g_device_fp)) return false;
+
+  // ── Physical attestation: BOOT button MUST be held right now ──
+  // This is the load-bearing security check for the solo path. The user
+  // is physically present at the device pressing BOOT; a software-only
+  // attacker cannot fake that.
+  if (!boot_button_held()) {
+    health_log(SCV_LOG_INFO, SCV_CAT_NETWORK,
+               "beacon: solo origination refused — BOOT button not held");
+    return false;
+  }
+
+  BeaconAlertCanonical canonical;
+  memset(&canonical, 0, sizeof(canonical));
+  canonical.effective = (uint64_t)time(nullptr);
+  canonical.expires = canonical.effective + (uint64_t)ttl_minutes * 60;
+  canonical.template_id = (uint8_t)template_id;
+  canonical.msg_type = BEACON_MSG_ALERT;
+  canonical.urgency = (uint8_t)urgency;
+  canonical.severity = (uint8_t)severity;
+  // Spec invariant: solo frames MUST be certainty=Observed. We force it
+  // regardless of the caller's wish so receivers can rely on this property.
+  canonical.certainty = (uint8_t)BCN_CERT_OBSERVED;
+  canonical.scope = BCN_SCOPE_PRIVATE;
+  canonical.detail_slot = (uint8_t)detail;
+  // originator and cosigner are the same device.
+  memcpy(canonical.originator_fp, g_device_fp, DEVICE_FP_SIZE);
+  memcpy(canonical.cosigner_fp,   g_device_fp, DEVICE_FP_SIZE);
+
+  uint8_t buf[64 + sizeof(BeaconAlertCanonical)];
+  size_t cl = build_alert_canonical(&canonical, buf, sizeof(buf));
+  if (cl == 0) return false;
+
+  uint8_t sig[BEACON_SIGNATURE_SIZE];
+  Ed25519::sign(sig, g_device_privkey, g_device_pubkey, buf, cl);
+
+  // Wire format: same struct as the dual-pubkey ALERT, but both signature
+  // slots carry the same Ed25519 signature, and the BCN_FLAG_SOLO_ORIGIN
+  // flag in the header tells receivers to skip the "originator != cosigner"
+  // check.
+  uint8_t out[sizeof(BeaconHeader) + sizeof(BeaconAlertCanonical) +
+              2 * BEACON_SIGNATURE_SIZE];
+  memset(out, 0, sizeof(out));
+  BeaconHeader* hdr = (BeaconHeader*)out;
+  hdr->magic = BEACON_MAGIC;
+  hdr->version = PROTOCOL_VERSION;
+  hdr->msg_type = BEACON_MSG_ALERT;
+  hdr->hop_count = 0;
+  hdr->flags = BCN_FLAG_SOLO_ORIGIN;
+  hdr->payload_len = sizeof(BeaconAlertCanonical) + 2 * BEACON_SIGNATURE_SIZE;
+  esp_fill_random(hdr->nonce, BEACON_NONCE_SIZE);
+
+  uint8_t* p = out + sizeof(BeaconHeader);
+  memcpy(p, &canonical, sizeof(BeaconAlertCanonical));
+  p += sizeof(BeaconAlertCanonical);
+  memcpy(p, sig, BEACON_SIGNATURE_SIZE);                // sig_originator
+  p += BEACON_SIGNATURE_SIZE;
+  memcpy(p, sig, BEACON_SIGNATURE_SIZE);                // sig_cosigner (same)
+
+  airtime_governor::force_reserve_beacon(millis(), sizeof(out));
+  broadcast_message(out, sizeof(out));
+
+  health_log(SCV_LOG_ALERT, SCV_CAT_NETWORK,
+             "beacon: solo ALERT broadcast (certainty=Observed)");
   return true;
 }
 

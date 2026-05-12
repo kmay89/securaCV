@@ -168,6 +168,38 @@ host tests assert they do, on real radio.
     reboot, breaking cosign decrypt at B.
   - Artifact: `docs/audit/repro/beacon/x25519_persistence/`.
 
+- [ ] **Solo origination — BOOT button held (v0.4)**
+  - Setup: one board, FE enabled, Beacon enabled. No paired
+    beacon-set neighbor (so the dual-pubkey path is unavailable).
+  - Repro: hold the BOOT button down; `POST /api/beacon/originate-solo`
+    with `template_id=0x20` (`BCN_EMERG_FIRE_VISIBLE`) and
+    `severity="Severe"`. While still holding BOOT.
+  - Post-fix expected: device emits `BEACON_MSG_ALERT` with
+    `flags & BCN_FLAG_SOLO_ORIGIN`, `certainty=Observed`,
+    `originator_fp == cosigner_fp`. A second (receiver) board with
+    the originator in its beacon set accepts the frame and surfaces
+    a "solo origination" badge in the HA `beacon_active_template`
+    sensor.
+  - Artifact: `docs/audit/repro/beacon/solo_happy/`.
+
+- [ ] **Solo origination — BOOT button NOT held (v0.4)**
+  - Setup: same as above.
+  - Repro: release the BOOT button before calling `originate-solo`.
+  - Post-fix expected: `POST /api/beacon/originate-solo` returns
+    400 with `{"error":"boot_button_not_held"}`. No frame is
+    broadcast (verify with a packet capture or by checking the
+    receiver board's audit log is unchanged).
+  - Artifact: `docs/audit/repro/beacon/solo_no_button/`.
+
+- [ ] **Solo origination — certainty=Likely tampering rejected (v0.4)**
+  - Setup: one originator board + one receiver board.
+  - Repro: craft a `BEACON_MSG_ALERT` with `BCN_FLAG_SOLO_ORIGIN`
+    set but `certainty=Likely` (not Observed). Send to receiver.
+  - Post-fix expected: receiver drops the frame and logs
+    `beacon: rejected solo frame — certainty != Observed`.
+    Receiver's `beacon_active_template` does not change.
+  - Artifact: `docs/audit/repro/beacon/solo_certainty_tamper/`.
+
 - [ ] **Audit log persistence across reboot + rotation**
   - Setup: one board, FE enabled.
   - Repro: emit ≥65 Beacon ALERTs (one above `AUDIT_LOG_MAX`),

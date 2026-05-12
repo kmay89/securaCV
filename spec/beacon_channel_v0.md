@@ -311,17 +311,56 @@ Beacon origination requires **two distinct device pubkeys** to sign the canonica
 
 If User B does not confirm within 60 s, the origination expires silently. No alert is broadcast. The originator's UI returns to normal with "no cosigner available — try again or escalate."
 
-### 6.2 Solo-degraded flow (single-device household)
+### 6.2 Solo-degraded flow (single-device household) — v0.4
 
-When the device has no paired neighbor in its beacon set (or none with `last_seen` within freshness window), the operator can still originate a Beacon via the **physical BOOT button cosigner** pattern:
+When the device has no paired neighbor in its beacon set (or none with
+`last_seen` within freshness window), the operator can still originate a
+Beacon via the **physical BOOT button cosigner** pattern:
 
-1. User holds the BOOT button down.
-2. While holding BOOT, user presses hold-to-send in the UI for 2 seconds.
-3. Device treats the simultaneous BOOT-press as the cosigner authorization. The cosigner signature is generated using a derived `boot_key` from the device's eFuse-protected unique ID, distinct from the regular device key (this prevents a software-only attacker from forging the BOOT cosignature).
-4. The canonical is constructed with `certainty = Observed` (not `Likely`, not `Confirmed`) and the `cosigner_fp` is the BOOT-key fingerprint.
-5. Receivers that recognize the device as a member of their beacon set will display the alert but with a "single-device origination" badge and at one notch lower urgency than a dual-device-co-signed Beacon.
+1. User holds the BOOT button down. (XIAO-ESP32-S3 default: GPIO 0, active
+   LOW with `INPUT_PULLUP`. Configurable via
+   `beacon_channel::set_boot_button_gpio(uint8_t)`.)
+2. While holding BOOT, user presses hold-to-send in the UI for 2 seconds
+   (REST: `POST /api/beacon/originate-solo`).
+3. Device verifies the BOOT GPIO state is LOW in real time. If the button
+   was released, the origination is refused with
+   `reason="boot_button_not_held"`. This real-time hardware check is the
+   load-bearing security gate for the solo path.
+4. The canonical is constructed with:
+   - `originator_fp` == `cosigner_fp` == this device's pubkey fingerprint
+   - `certainty = Observed` (firmware-forced; the spec invariant is
+     enforced regardless of any value the caller passes — receivers can
+     rely on this property)
+   - `msg_type = Alert` (or `Cancel`/`Exercise` per the caller's choice)
+5. The frame is wrapped in the standard `BEACON_MSG_ALERT` wire format
+   with header `flags` containing `BCN_FLAG_SOLO_ORIGIN` (bit 2 = 0x04).
+   The single Ed25519 signature is copied into both signature slots; the
+   flag tells receivers to skip the "originator != cosigner" rule.
+6. Receivers that recognize the device as a member of their beacon set:
+   - Verify the `SOLO_ORIGIN` flag is set
+   - Verify `certainty == Observed` (else reject as malformed)
+   - Verify `originator_fp == cosigner_fp` (else reject as malformed)
+   - Verify both signature slots against the originator's device pubkey
+   - Display the alert with a "solo origination" badge and at one notch
+     lower urgency than a dual-device-co-signed Beacon
 
-This makes the trust gradient visible: receivers can downweight solo Beacons without rejecting them.
+This makes the trust gradient visible: receivers can downweight solo
+Beacons without rejecting them. The Beacon audit log records the
+SOLO flag for after-action review.
+
+**Security note.** The solo path's physical-attestation property protects
+against a software-only attacker who exfiltrates the device's Ed25519
+private key: even with the private key, an attacker on a different
+device cannot remotely transition the target device's BOOT GPIO to LOW.
+It does NOT protect against a software-only attacker on the same device
+or against a physical attacker present at the device. Standard recovery
+in those scenarios is operational: any beacon-set member can
+`POST /api/beacon/revoke` to mark the compromised device
+`trust_level = REVOKED`.
+
+**Rate limit.** Solo originations count against the same
+`MAX_ORIGINATIONS_PER_PUBKEY_24H` budget as standard originations (the
+device fingerprint is identical).
 
 ### 6.3 Co-sign request encryption
 

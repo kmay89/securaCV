@@ -67,7 +67,19 @@ static const size_t   BEACON_NAME_LEN               = 24;
 // ENUMS
 // ════════════════════════════════════════════════════════════════════════════
 
-enum BeaconMsgType : uint8_t {
+// Flag bits packed into BeaconHeader.flags. Treat as bit-OR-able values.
+//   bit 0 (BCN_FLAG_IS_EXERCISE): drill, not a real alert
+//   bit 1 (BCN_FLAG_IS_TEST): system test (vs CAP status=Test)
+//   bit 2 (BCN_FLAG_SOLO_ORIGIN): single-device origination — see §6.2
+//     of spec/beacon_channel_v0.md. The cosigner is the BOOT button on
+//     the same device; cosigner_fp equals originator_fp; certainty is
+//     forced to BCN_CERT_OBSERVED so receivers can visibly downweight.
+//     Solo frames are accepted by receivers in lieu of the standard
+//     "originator != cosigner" rule, but only when the certainty
+//     constraint holds.
+static const uint8_t BCN_FLAG_IS_EXERCISE  = 0x01;
+static const uint8_t BCN_FLAG_IS_TEST      = 0x02;
+static const uint8_t BCN_FLAG_SOLO_ORIGIN  = 0x04;
   BEACON_MSG_ALERT        = 0,
   BEACON_MSG_UPDATE       = 1,
   BEACON_MSG_CANCEL       = 2,
@@ -337,6 +349,39 @@ bool originate_alert(BeaconTemplate template_id, BeaconUrgency urgency,
 // confirmed the alarm. The local device signs the canonical and emits a
 // COSIGN_RESP back to the originator.
 bool cosign_pending_request(bool confirm);
+
+// Solo-degraded origination path (spec §6.2). For genuinely single-device
+// households that have no paired Beacon-set neighbor.
+//
+// Caller MUST:
+//   - Have the physical BOOT button held DOWN at the moment of this call
+//     (firmware checks the GPIO state in real time).
+//   - Have passed the hold-to-send UI interaction (the REST handler
+//     enforces this).
+//
+// Frame produced:
+//   - originator_fp == cosigner_fp == this device's fingerprint
+//   - flags |= BCN_FLAG_SOLO_ORIGIN
+//   - certainty = BCN_CERT_OBSERVED (regardless of the parameter; the
+//     spec forbids elevation of solo frames)
+//   - single Ed25519 signature, copied into both signature slots
+//
+// Returns false if:
+//   - BOOT button is not currently held
+//   - device key self-test fails
+//   - rate limit exceeded
+//   - time is not wall-clock-synced
+bool originate_alert_solo(BeaconTemplate template_id, BeaconUrgency urgency,
+                          BeaconSeverity severity, BeaconDetailSlot detail,
+                          uint32_t ttl_minutes);
+
+// Returns the GPIO state of the BOOT button as a real-time check (no
+// debouncing — solo origination is a held-button-while-holding-to-send
+// pattern that takes ~2 s, swamping any switch bounce). Implementation
+// reads GPIO 0 on ESP32-S3 (the standard BOOT pin); other boards may
+// remap via beacon_set_boot_button_gpio(uint8_t).
+bool boot_button_held();
+void set_boot_button_gpio(uint8_t gpio);
 
 // Step 3 (back on originator, automatic): receive COSIGN_RESP, verify, emit
 // the dual-signed BEACON_MSG_ALERT at hop 0.

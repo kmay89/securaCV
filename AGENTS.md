@@ -288,6 +288,15 @@ or the Chirp v0.2 channel (`chirp_channel.{h,cpp}`) MUST observe:
    distinct Ed25519 signatures from two distinct device pubkeys, both in
    the local beacon set with `trust_level != REVOKED`. Do not introduce a
    "trusted device skips co-sign" shortcut.
+
+   **Solo-degraded exception (spec §6.2):** the single-device origination
+   path is permitted ONLY when the physical BOOT button on the device is
+   held at the moment of origination (real-time GPIO check), the frame
+   carries `BCN_FLAG_SOLO_ORIGIN` in its header, and `certainty` is
+   `Observed`. Receivers MUST verify all three invariants before
+   accepting; the spec promises this property so the UI can downweight
+   solo frames a notch. Do NOT add a software-only path that bypasses
+   the BOOT GPIO check.
 3. **No red, no reserved emergency-broadcast tones, no reserved phrasing.**
    See `spec/beacon_cap_gateway_v0.md` §4. The
    `scripts/lint_no_impersonation.sh` CI lint enforces this; do not bypass.

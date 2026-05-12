@@ -37,6 +37,14 @@ CHIRP_SEC_SRC = test_chirp_security.cpp
 BEACON_ORIG_BIN = test_beacon_origination
 BEACON_ORIG_SRC = test_beacon_origination.cpp
 
+# v0.4: Beacon solo origination (BOOT-button) invariants. Mirrors §6.2 of
+# spec/beacon_channel_v0.md — solo frames require BCN_FLAG_SOLO_ORIGIN,
+# certainty=Observed, originator_fp==cosigner_fp, and both signature slots
+# carrying the same valid signature. Also checks that the dual-pubkey
+# path still rejects collapsed signers without the flag.
+BEACON_SOLO_BIN = test_beacon_solo_origination
+BEACON_SOLO_SRC = test_beacon_solo_origination.cpp
+
 # v0.3: Opera mesh v0.2/v0.3 security invariants (O1 counter replay, O2 FE
 # gating, O3 transactional rekey commit + timeout).
 OPERA_SEC_BIN = test_mesh_opera_security
@@ -70,19 +78,23 @@ $(CHIRP_SEC_BIN): $(CHIRP_SEC_SRC)
 $(BEACON_ORIG_BIN): $(BEACON_ORIG_SRC)
 	$(CXX) $(CXXFLAGS) -o $@ $(BEACON_ORIG_SRC)
 
+$(BEACON_SOLO_BIN): $(BEACON_SOLO_SRC)
+	$(CXX) $(CXXFLAGS) -o $@ $(BEACON_SOLO_SRC)
+
 $(OPERA_SEC_BIN): $(OPERA_SEC_SRC)
 	$(CXX) $(CXXFLAGS) -o $@ $(OPERA_SEC_SRC)
 
 $(DEVSIG_BIN): $(DEVSIG_SOURCES)
 	$(CXX) $(CXXFLAGS) -o $@ $(DEVSIG_SOURCES)
 
-run: $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN)
+run: $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN)
 	./$(BIN)
 	./$(CHIRP_INV_BIN)
 	./$(CHIRP_SEC_BIN)
 	./$(BEACON_ORIG_BIN)
+	./$(BEACON_SOLO_BIN)
 	./$(OPERA_SEC_BIN)
 	./$(DEVSIG_BIN)
 
 clean:
-	rm -f $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN)
+	rm -f $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN)
