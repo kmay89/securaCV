@@ -31,9 +31,22 @@ static uint32_t g_urgent_sends = 0;
 
 // v0.3: distinct Beacon counters per spec/beacon_channel_v0.md §8 so
 // HA MQTT can surface Beacon airtime separately from Opera tamper/power.
+//
+// Threading invariant (gemini P1 follow-up): all callers of
+// `force_reserve_beacon` and `beacon_window_airtime_us` are the main loop
+// task. Specifically:
+//   - `force_reserve_beacon` is called from `emit_alert_frame` and
+//     `emit_selftest` in beacon_channel.cpp; those run from
+//     `beacon_channel::update()` (loop task) or from the
+//     `cosign_pending_request` REST path (Bearer-gated, same task).
+//   - The MQTT publish loop in canary_wap.ino reads via snapshot() and
+//     also runs on the loop task.
+// No ISR or networking-callback task mutates this state. If that
+// invariant ever needs to relax, wrap the ring updates in a critical
+// section (or atomic store) so partial reads cannot observe a torn
+// multi-word `BeaconSlot`.
 static uint32_t g_beacon_sends = 0;
 static uint32_t g_beacon_airtime_us = 0;
-// Ring buffer of (timestamp, airtime) per Beacon send for rolling-window stats.
 struct BeaconSlot {
   uint32_t ts_ms;
   uint32_t airtime_us;

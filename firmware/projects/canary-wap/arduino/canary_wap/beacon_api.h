@@ -171,9 +171,16 @@ inline esp_err_t handle_set_list(httpd_req_t* req) {
       default: m["trust_level"] = "unknown";
     }
   }
-  char buf[2048];
-  serializeJson(doc, buf);
-  return send_json(req, buf);
+  // Heap-allocate sized by measureJson + bounds-checked serializeJson
+  // (gemini P1 — avoid a 2 KB stack buffer + potential overflow).
+  const size_t needed = measureJson(doc) + 1;
+  if (needed > 4096) return send_error(req, "set list too large");
+  char* buf = (char*)malloc(needed);
+  if (!buf) return send_error(req, "out of memory");
+  serializeJson(doc, buf, needed);
+  esp_err_t rc = send_json(req, buf);
+  free(buf);
+  return rc;
 }
 
 // POST /api/beacon/pair/start
@@ -226,10 +233,61 @@ inline esp_err_t handle_revoke(httpd_req_t* req) {
       : send_error(req, "fingerprint not in set");
 }
 
+// Helper: parse CAP-aligned enum from either string label OR uint8_t code.
+// `ArduinoJson::JsonVariant | 0` returns 0 on string inputs, which would
+// silently coerce every string-typed value to 0 (= Immediate / Extreme /
+// Observed) — the WRONG behaviour for an origination endpoint.
+// gemini P1 closure: explicit string → enum mapping with a numeric fallback
+// for callers that pass the wire-format code directly.
+
+static uint8_t parse_urgency(JsonVariantConst v) {
+  if (v.is<const char*>()) {
+    const char* s = v.as<const char*>();
+    if (!strcmp(s, "Immediate")) return beacon_channel::BCN_URG_IMMEDIATE;
+    if (!strcmp(s, "Expected"))  return beacon_channel::BCN_URG_EXPECTED;
+    if (!strcmp(s, "Future"))    return beacon_channel::BCN_URG_FUTURE;
+    if (!strcmp(s, "Past"))      return beacon_channel::BCN_URG_PAST;
+    return beacon_channel::BCN_URG_UNKNOWN;
+  }
+  if (v.is<int>()) return (uint8_t)v.as<int>();
+  return beacon_channel::BCN_URG_UNKNOWN;
+}
+
+static uint8_t parse_severity(JsonVariantConst v) {
+  if (v.is<const char*>()) {
+    const char* s = v.as<const char*>();
+    if (!strcmp(s, "Extreme"))   return beacon_channel::BCN_SEV_EXTREME;
+    if (!strcmp(s, "Severe"))    return beacon_channel::BCN_SEV_SEVERE;
+    if (!strcmp(s, "Moderate"))  return beacon_channel::BCN_SEV_MODERATE;
+    if (!strcmp(s, "Minor"))     return beacon_channel::BCN_SEV_MINOR;
+    return beacon_channel::BCN_SEV_UNKNOWN;
+  }
+  if (v.is<int>()) return (uint8_t)v.as<int>();
+  return beacon_channel::BCN_SEV_UNKNOWN;
+}
+
+static uint8_t parse_certainty(JsonVariantConst v) {
+  if (v.is<const char*>()) {
+    const char* s = v.as<const char*>();
+    if (!strcmp(s, "Observed"))  return beacon_channel::BCN_CERT_OBSERVED;
+    if (!strcmp(s, "Likely"))    return beacon_channel::BCN_CERT_LIKELY;
+    if (!strcmp(s, "Possible"))  return beacon_channel::BCN_CERT_POSSIBLE;
+    if (!strcmp(s, "Unlikely"))  return beacon_channel::BCN_CERT_UNLIKELY;
+    return beacon_channel::BCN_CERT_UNKNOWN;
+  }
+  if (v.is<int>()) return (uint8_t)v.as<int>();
+  return beacon_channel::BCN_CERT_UNKNOWN;
+}
+
 // POST /api/beacon/originate  body:
 //   { "template_id": 0x23, "urgency": "Immediate",
 //     "severity": "Severe", "certainty": "Likely",
 //     "detail": 10, "ttl_minutes": 15 }
+//
+// `urgency`, `severity`, `certainty` accept either the CAP string label
+// or the numeric enum code. `template_id` and `detail` are always numeric
+// (16 templates × 256-value detail slot space — too many to enumerate as
+// strings, and clients always have the IDs from /api/beacon/set anyway).
 inline esp_err_t handle_originate(httpd_req_t* req) {
   char body[256];
   int len = httpd_req_recv(req, body, sizeof(body) - 1);
@@ -240,10 +298,10 @@ inline esp_err_t handle_originate(httpd_req_t* req) {
   if (deserializeJson(doc, body)) return send_error(req, "invalid JSON");
 
   uint8_t tpl_byte = (uint8_t)(doc["template_id"] | 0);
-  uint8_t urg = (uint8_t)(doc["urgency"] | 0);
-  uint8_t sev = (uint8_t)(doc["severity"] | 0);
-  uint8_t cert = (uint8_t)(doc["certainty"] | 0);
-  uint8_t det = (uint8_t)(doc["detail"] | 0);
+  uint8_t urg  = parse_urgency(doc["urgency"]);
+  uint8_t sev  = parse_severity(doc["severity"]);
+  uint8_t cert = parse_certainty(doc["certainty"]);
+  uint8_t det  = (uint8_t)(doc["detail"] | 0);
   uint32_t ttl = (uint32_t)(doc["ttl_minutes"] | 15);
 
   bool ok = beacon_channel::originate_alert(
@@ -304,12 +362,51 @@ inline esp_err_t handle_active(httpd_req_t* req) {
   return send_json(req, buf);
 }
 
-// GET /api/beacon/audit — full audit log (Bearer-gated; users hold-to-export)
+// GET /api/beacon/audit — paged audit log (Bearer-gated).
+//
+// Pagination query params:
+//   ?offset=N  (default 0)  — oldest-first index into the audit log
+//   ?limit=M   (default 16, capped to AUDIT_PAGE_MAX)
+//
+// gemini P1 closure: the prior implementation allocated a 4 KB buffer on
+// the stack (dangerous on ESP32) and called serializeJson without a size
+// argument (potential buffer overflow). v0.3 paginates to keep responses
+// small, sizes the heap buffer via measureJson, and uses the
+// size-checked serializeJson(doc, buf, size) overload.
+static const size_t AUDIT_PAGE_MAX = 32;
+
 inline esp_err_t handle_audit(httpd_req_t* req) {
+  // Parse query string (best-effort; absent params → defaults).
+  size_t offset = 0;
+  size_t limit = 16;
+  {
+    size_t qlen = httpd_req_get_url_query_len(req);
+    if (qlen > 0 && qlen < 128) {
+      char q[128];
+      if (httpd_req_get_url_query_str(req, q, sizeof(q)) == ESP_OK) {
+        char val[16];
+        if (httpd_query_key_value(q, "offset", val, sizeof(val)) == ESP_OK) {
+          offset = (size_t)strtoul(val, nullptr, 10);
+        }
+        if (httpd_query_key_value(q, "limit", val, sizeof(val)) == ESP_OK) {
+          limit = (size_t)strtoul(val, nullptr, 10);
+        }
+      }
+    }
+  }
+  if (limit > AUDIT_PAGE_MAX) limit = AUDIT_PAGE_MAX;
+  if (limit == 0) limit = 1;
+
+  const size_t total = beacon_channel::get_audit_log_count();
+  const size_t end = (offset + limit > total) ? total : (offset + limit);
+
   JsonDocument doc;
-  doc["count"] = (uint32_t)beacon_channel::get_audit_log_count();
+  doc["count"] = (uint32_t)total;
+  doc["offset"] = (uint32_t)offset;
+  doc["limit"] = (uint32_t)limit;
+  doc["returned"] = (uint32_t)(end > offset ? end - offset : 0);
   JsonArray arr = doc["entries"].to<JsonArray>();
-  for (size_t i = 0; i < beacon_channel::get_audit_log_count(); i++) {
+  for (size_t i = offset; i < end; i++) {
     const beacon_channel::BeaconAuditEntry* e = beacon_channel::get_audit_log_entry(i);
     if (!e) continue;
     JsonObject ent = arr.add<JsonObject>();
@@ -324,9 +421,22 @@ inline esp_err_t handle_audit(httpd_req_t* req) {
     fp_to_hex(e->canonical.originator_fp, fp_hex); ent["originator_fp"] = fp_hex;
     fp_to_hex(e->canonical.cosigner_fp, fp_hex);   ent["cosigner_fp"]   = fp_hex;
   }
-  char buf[4096];
-  serializeJson(doc, buf);
-  return send_json(req, buf);
+
+  // Size the output buffer from the document, allocate on the heap, and use
+  // the bounds-checked serializeJson overload so a doc that grew beyond
+  // measureJson's estimate cannot overflow.
+  const size_t needed = measureJson(doc) + 1;
+  // Cap the per-response size at a safe ceiling. AUDIT_PAGE_MAX=32 with
+  // ~150 bytes per entry plus header ≈ 5 KB worst-case.
+  const size_t MAX_RESPONSE = 8192;
+  if (needed > MAX_RESPONSE) return send_error(req, "response too large; reduce limit");
+
+  char* buf = (char*)malloc(needed);
+  if (!buf) return send_error(req, "out of memory");
+  serializeJson(doc, buf, needed);
+  esp_err_t rc = send_json(req, buf);
+  free(buf);
+  return rc;
 }
 
 // POST /api/beacon/selftest — force a selftest broadcast (testing aid)

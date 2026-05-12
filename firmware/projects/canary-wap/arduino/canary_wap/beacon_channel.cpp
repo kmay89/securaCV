@@ -79,10 +79,15 @@ static BeaconAlertCanonical g_active_alarm;
 static bool g_active_alarm_valid = false;
 static uint64_t g_active_alarm_expires = 0;
 
-// Audit log (RAM-only in v0.1 skeleton — persistence is a follow-up).
+// Audit log: ring buffer indexed by g_audit_head (next write slot).
+// Total entries valid = min(g_audit_log_count, AUDIT_LOG_MAX).
+// When full, new entries overwrite the oldest (head wraps), and on disk
+// we update only that single NVS slot — no full-array shuffle, so
+// persistence stays in sync with RAM (gemini P1 + codex P2 closure).
 static const size_t AUDIT_LOG_MAX = 64;
 static BeaconAuditEntry g_audit_log[AUDIT_LOG_MAX];
-static size_t g_audit_log_count = 0;
+static size_t g_audit_log_count = 0;     // total entries observed (caps at MAX)
+static size_t g_audit_head = 0;          // next slot to write
 static uint8_t g_audit_chain_head[32];
 
 // Pending origination (waiting on cosigner).
@@ -130,6 +135,12 @@ static const char* NVS_SET_PREFIX = "set_";
 static const char* NVS_AUDIT_COUNT = "audit_cnt";
 static const char* NVS_AUDIT_PREFIX = "aud_";
 static const char* NVS_AUDIT_HEAD = "aud_head";
+// v0.3 codex P1 closure: persist the device's X25519 keypair so paired
+// peers' stored x25519_pubkey remains valid across reboots. Without this,
+// every reboot regenerated a fresh pair and broke cosign decrypt for every
+// neighbor until the next pairing flow.
+static const char* NVS_X25519_PRIV = "x25519_priv";
+static const char* NVS_X25519_PUB  = "x25519_pub";
 
 // ════════════════════════════════════════════════════════════════════════════
 // FORWARD DECLARATIONS
@@ -166,13 +177,46 @@ static bool flash_encryption_enabled() {
 
 static void ensure_x25519_keypair() {
   if (g_x25519_ready) return;
-  // Curve25519 (Arduino Crypto lib) generates X25519 keypairs in its own
-  // 32-byte representation. We persist nothing here — keys are ephemeral
-  // per-boot. Re-pairing isn't required because the X25519 pubkey is
-  // advertised inside each COSIGN_REQ/RESP, and the recipient pulls it
-  // from the wire (no static lookup needed for the responding device).
-  Curve25519::dh1(g_x25519_pubkey, g_x25519_privkey);
+
+  // v0.3 codex P1 closure: persist the keypair so paired peers' stored
+  // x25519_pubkey stays valid across reboots. FE-gated identically to
+  // beacon_set + audit log.
+  if (flash_encryption_enabled()) {
+    g_prefs.begin(NVS_NS, true);
+    size_t got_priv = g_prefs.getBytes(NVS_X25519_PRIV, g_x25519_privkey, 32);
+    size_t got_pub  = g_prefs.getBytes(NVS_X25519_PUB,  g_x25519_pubkey,  32);
+    g_prefs.end();
+    if (got_priv == 32 && got_pub == 32) {
+      g_x25519_ready = true;
+      return;
+    }
+  }
+
+  // No keypair on disk (first boot, FE-off, or corruption): generate one
+  // and (when FE is enabled) persist it.
+  esp_fill_random(g_x25519_privkey, 32);
+  // RFC 7748 scalar clamping (so eval() produces a canonical X25519 result).
+  g_x25519_privkey[0]  &= 248;
+  g_x25519_privkey[31] &= 127;
+  g_x25519_privkey[31] |= 64;
+  // X25519 basepoint = 9. eval(out, scalar, basepoint) produces the pubkey.
+  static const uint8_t BASEPOINT[32] = { 9 };
+  if (!Curve25519::eval(g_x25519_pubkey, g_x25519_privkey, BASEPOINT)) {
+    return;
+  }
   g_x25519_ready = true;
+
+  if (flash_encryption_enabled()) {
+    g_prefs.begin(NVS_NS, false);
+    g_prefs.putBytes(NVS_X25519_PRIV, g_x25519_privkey, 32);
+    g_prefs.putBytes(NVS_X25519_PUB,  g_x25519_pubkey,  32);
+    g_prefs.end();
+  } else {
+    health_log(SCV_LOG_ALERT, SCV_CAT_CRYPTO,
+               "beacon: X25519 keypair generated but not persisted — "
+               "FE disabled. Paired peers will lose cosign capability "
+               "on next reboot. (codex P1)");
+  }
 }
 
 static bool ecdh_session_key(const uint8_t* their_x25519_pubkey,
@@ -180,11 +224,9 @@ static bool ecdh_session_key(const uint8_t* their_x25519_pubkey,
   // Compute the shared secret via X25519, then HKDF-SHA256 it down to a
   // 32-byte session key with a domain-separated label.
   uint8_t shared[32];
-  memcpy(out_key, their_x25519_pubkey, 32);  // input to dh2 (overwritten)
-  if (!Curve25519::dh2(out_key, g_x25519_privkey)) {
+  if (!Curve25519::eval(shared, g_x25519_privkey, their_x25519_pubkey)) {
     return false;
   }
-  memcpy(shared, out_key, 32);
   // Domain-separate so the same shared secret can't be cross-purposed.
   static const char LABEL[] = "securacv:beacon:cosign:v0";
   mbedtls_sha256_context ctx;
@@ -361,6 +403,9 @@ static bool load_beacon_set() {
 // rotated in-place: at most AUDIT_LOG_MAX entries are kept, indexed by
 // `aud_head`. Each individual entry is written to its own NVS key so a
 // full read isn't required to append.
+// Persist one slot + head + count atomically (single NVS commit). When the
+// ring rotates, only the one overwritten slot has changed; head advances
+// so on reload we know where the newest entry lives.
 static bool persist_audit_entry(size_t index) {
   if (!flash_encryption_enabled()) return false;
   g_prefs.begin(NVS_NS, false);
@@ -368,6 +413,7 @@ static bool persist_audit_entry(size_t index) {
   snprintf(key, sizeof(key), "%s%u", NVS_AUDIT_PREFIX, (unsigned)index);
   g_prefs.putBytes(key, &g_audit_log[index], sizeof(BeaconAuditEntry));
   g_prefs.putULong(NVS_AUDIT_COUNT, g_audit_log_count);
+  g_prefs.putULong(NVS_AUDIT_HEAD, (uint32_t)g_audit_head);
   g_prefs.end();
   return true;
 }
@@ -375,25 +421,33 @@ static bool persist_audit_entry(size_t index) {
 static bool load_audit_log() {
   if (!flash_encryption_enabled()) {
     g_audit_log_count = 0;
+    g_audit_head = 0;
     return false;
   }
   g_prefs.begin(NVS_NS, true);
   uint32_t cnt = g_prefs.getULong(NVS_AUDIT_COUNT, 0);
+  uint32_t head = g_prefs.getULong(NVS_AUDIT_HEAD, 0);
   if (cnt > AUDIT_LOG_MAX) cnt = AUDIT_LOG_MAX;
+  if (head >= AUDIT_LOG_MAX) head = 0;
   g_audit_log_count = cnt;
+  g_audit_head = head;
+  // Load every persisted slot. Slots beyond `cnt` (i.e. never written)
+  // remain zeroed from the init() memset.
   for (size_t i = 0; i < cnt; i++) {
     char key[16];
     snprintf(key, sizeof(key), "%s%u", NVS_AUDIT_PREFIX, (unsigned)i);
     g_prefs.getBytes(key, &g_audit_log[i], sizeof(BeaconAuditEntry));
   }
-  // Re-derive the chain head from the most recent entry's chained
-  // prev_audit_hash + that entry's own canonical content.
+  // Re-derive the chain head from the most recently written entry
+  // (the slot at (head - 1) mod MAX when count == MAX, else slot
+  // count-1 in the pre-rotation regime).
   if (cnt > 0) {
+    const size_t newest_idx = (head == 0) ? (cnt - 1) : (head - 1);
     mbedtls_sha256_context ctx;
     mbedtls_sha256_init(&ctx);
     mbedtls_sha256_starts(&ctx, 0);
-    mbedtls_sha256_update(&ctx, g_audit_log[cnt - 1].prev_audit_hash, 32);
-    mbedtls_sha256_update(&ctx, (const uint8_t*)&g_audit_log[cnt - 1],
+    mbedtls_sha256_update(&ctx, g_audit_log[newest_idx].prev_audit_hash, 32);
+    mbedtls_sha256_update(&ctx, (const uint8_t*)&g_audit_log[newest_idx],
                           sizeof(BeaconAuditEntry));
     mbedtls_sha256_finish(&ctx, g_audit_chain_head);
     mbedtls_sha256_free(&ctx);
@@ -455,18 +509,17 @@ static void chain_audit_entry(BeaconAuditEntry* entry) {
   mbedtls_sha256_finish(&ctx, g_audit_chain_head);
   mbedtls_sha256_free(&ctx);
 
-  size_t written_idx;
-  if (g_audit_log_count < AUDIT_LOG_MAX) {
-    g_audit_log[g_audit_log_count] = *entry;
-    written_idx = g_audit_log_count;
-    g_audit_log_count++;
-  } else {
-    // Rotate; drop oldest.
-    memmove(&g_audit_log[0], &g_audit_log[1], sizeof(BeaconAuditEntry) * (AUDIT_LOG_MAX - 1));
-    g_audit_log[AUDIT_LOG_MAX - 1] = *entry;
-    written_idx = AUDIT_LOG_MAX - 1;
-  }
-  // Persist incrementally; best-effort, FE-gated.
+  // Ring-buffer append: write at g_audit_head, advance head, persist the
+  // single touched slot + head pointer + count. No memmove → on-disk
+  // contents stay consistent with RAM after rotation
+  // (gemini P1 + codex P2 closure).
+  const size_t written_idx = g_audit_head;
+  g_audit_log[written_idx] = *entry;
+  g_audit_head = (g_audit_head + 1) % AUDIT_LOG_MAX;
+  if (g_audit_log_count < AUDIT_LOG_MAX) g_audit_log_count++;
+
+  // Persist the single slot + the head + the count atomically per-slot.
+  // FE-gated; refuses cleanly if flash encryption is off.
   persist_audit_entry(written_idx);
 }
 
@@ -808,6 +861,7 @@ bool init(const uint8_t* device_privkey, const uint8_t* device_pubkey,
   memset(g_audit_log, 0, sizeof(g_audit_log));
   memset(g_audit_chain_head, 0, sizeof(g_audit_chain_head));
   g_audit_log_count = 0;
+  g_audit_head = 0;
   g_active_alarm_valid = false;
   g_pending_origination.valid = false;
   g_pending_cosign_in.valid = false;
@@ -1101,8 +1155,14 @@ const BeaconAlertCanonical* get_active_alarm() {
 
 size_t get_audit_log_count() { return g_audit_log_count; }
 const BeaconAuditEntry* get_audit_log_entry(size_t index) {
+  // Oldest-first iteration over the ring buffer. When the buffer hasn't
+  // rotated (count < MAX), head == count and slot 0 is oldest; when it
+  // has rotated (count == MAX), slot `head` is oldest. Both collapse to:
+  //   slot = (head + MAX - count + index) % MAX
   if (index >= g_audit_log_count) return nullptr;
-  return &g_audit_log[index];
+  const size_t slot = (g_audit_head + AUDIT_LOG_MAX - g_audit_log_count + index)
+                      % AUDIT_LOG_MAX;
+  return &g_audit_log[slot];
 }
 
 bool emit_selftest() {

@@ -417,12 +417,21 @@ inline esp_err_t handle_chirp_ack(httpd_req_t* req) {
     sscanf(nonce_hex + i * 2, "%2hhx", &nonce[i]);
   }
 
-  // Map ack type
-  chirp_channel::ChirpAckType ack_type = chirp_channel::CHIRP_ACK_SEEN;
-  if (strcmp(ack_type_str, "confirmed") == 0) ack_type = chirp_channel::CHIRP_ACK_CONFIRMED;
-  else if (strcmp(ack_type_str, "resolved") == 0) ack_type = chirp_channel::CHIRP_ACK_RESOLVED;
-
-  bool success = chirp_channel::acknowledge_chirp(nonce, ack_type);
+  // v0.2 (audit C5 closure): the chirp public API exposes only confirm_chirp
+  // and dismiss_chirp; the legacy `acknowledge_chirp` private helper was
+  // removed because every wire-format ACK now carries a signed
+  // confirmer_session_pubkey (verified in handle_ack). SEEN ACKs are
+  // diagnostic-only and produce no local state change; we accept the
+  // request and return success without doing anything observable.
+  bool success;
+  if (strcmp(ack_type_str, "confirmed") == 0) {
+    success = chirp_channel::confirm_chirp(nonce);
+  } else if (strcmp(ack_type_str, "resolved") == 0) {
+    success = chirp_channel::dismiss_chirp(nonce);
+  } else {
+    // SEEN — no-op, but still acknowledge the request.
+    success = true;
+  }
 
   JsonDocument doc;
   doc["success"] = success;
