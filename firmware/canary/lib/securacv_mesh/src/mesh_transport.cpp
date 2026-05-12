@@ -236,6 +236,15 @@ bool init(const Config& cfg) {
     return false;
   }
   esp_now_register_recv_cb(espnow_recv_cb);
+
+  /* Register FF:FF:FF:FF:FF:FF with the ESP-NOW driver so send_raw()
+   * (used by pre-membership traffic like pairing DISCOVER) can address
+   * it. esp_now_send rejects unknown MACs with ESP_ERR_ESPNOW_NOT_FOUND;
+   * pre-registering the broadcast MAC sidesteps that. Errors are
+   * non-fatal — the actual send will just fail. */
+  static const uint8_t BCAST[MESH_TRANSPORT_MAC_LEN] =
+      {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+  driver_add_peer(BCAST);
 #endif
 
   s_initialized = true;
@@ -368,6 +377,23 @@ bool send_to_peer(const uint8_t mac[MESH_TRANSPORT_MAC_LEN],
     s_unicasts_sent.fetch_add(1, std::memory_order_relaxed);
     s_bytes_sent.fetch_add((uint32_t)len, std::memory_order_relaxed);
     peer->last_sent_ms = now_ms();
+    return true;
+  }
+  s_unicasts_failed.fetch_add(1, std::memory_order_relaxed);
+  return false;
+}
+
+bool send_raw(const uint8_t mac[MESH_TRANSPORT_MAC_LEN],
+              const uint8_t* data, size_t len) {
+  if (!s_running || data == nullptr || len == 0 || len > MESH_TRANSPORT_PAYLOAD_MAX) {
+    return false;
+  }
+  /* Bypass the peer-table check — caller is responsible for knowing
+   * that this MAC is valid (typically FF:FF:FF:FF:FF:FF for pairing-
+   * time broadcasts before any peer relationship exists). */
+  if (driver_send(mac, data, len)) {
+    s_unicasts_sent.fetch_add(1, std::memory_order_relaxed);
+    s_bytes_sent.fetch_add((uint32_t)len, std::memory_order_relaxed);
     return true;
   }
   s_unicasts_failed.fetch_add(1, std::memory_order_relaxed);
