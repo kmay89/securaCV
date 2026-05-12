@@ -5503,10 +5503,77 @@ static void wifi_init_provisioning() {
   snprintf(msg, sizeof(msg), "AP: %s", g_device.ap_ssid);
   log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, msg, g_wifi_status.ap_ip);
 
-  // Start mDNS
-  if (MDNS.begin("canary")) {
+  // Start mDNS with a per-device hostname so a multi-Canary household
+  // doesn't have two devices racing for `canary.local` (loser becomes
+  // unreachable by name). Hostname rules (RFC 6762 §16): lowercase
+  // [a-z0-9-], no leading/trailing hyphen. We derive from the device id
+  // (e.g. "canary-s3-A1B2") and lowercase it; the leading "canary-" stays
+  // human-recognizable.
+  //
+  // We also advertise the SecuraCV-specific service `_securacv._tcp` with
+  // TXT records (device_id, fw, model) so peer Canaries, the fleet
+  // manager, and the companion SPA can browse the LAN for siblings
+  // without scanning the subnet. Protocol matches
+  // canary-vision/docs/discovery.md so a single SPA build talks to both
+  // the WAP-built and the modular `canary/` builds.
+  char mdns_host[40];
+  size_t hj = 0;
+  for (size_t hi = 0; g_device.device_id[hi] != '\0' &&
+                      hj < sizeof(mdns_host) - 1; hi++) {
+    char c = g_device.device_id[hi];
+    if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+    if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-') {
+      mdns_host[hj++] = c;
+    } else {
+      mdns_host[hj++] = '-';
+    }
+  }
+  // Trim trailing AND leading hyphens (RFC 6762 §16 forbids both).
+  // Matches the canonical sanitize in firmware/canary/lib/securacv_network
+  // so peer browsers get the same hostname grammar from both builds.
+  while (hj > 0 && mdns_host[hj - 1] == '-') hj--;
+  {
+    size_t start = 0;
+    while (start < hj && mdns_host[start] == '-') start++;
+    if (start > 0) {
+      memmove(mdns_host, mdns_host + start, hj - start);
+      hj -= start;
+    }
+  }
+  // Fall back to a stable default rather than emitting an empty name.
+  if (hj == 0) {
+    const char* fb = "canary";
+    hj = strlen(fb);
+    if (hj >= sizeof(mdns_host)) hj = sizeof(mdns_host) - 1;
+    memcpy(mdns_host, fb, hj);
+  }
+  mdns_host[hj] = '\0';
+
+  if (MDNS.begin(mdns_host)) {
     MDNS.addService("http", "tcp", 80);
-    log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "mDNS started", "canary.local");
+
+    MDNS.addService("securacv", "tcp", 80);
+    // ESPmDNS::addServiceTxt has three overloads (char*, const char*,
+    // String). g_device.device_id is char[32], which is implicitly
+    // convertible to all three — making the call ambiguous. Cast the
+    // non-const-array argument to const char* to pick a single overload.
+    // (String literals and FIRMWARE_VERSION are const char* already and
+    // bind cleanly, so they don't need the cast.)
+    MDNS.addServiceTxt("securacv", "tcp", "device_id", (const char*)g_device.device_id);
+    MDNS.addServiceTxt("securacv", "tcp", "fw",        FIRMWARE_VERSION);
+    // The same firmware compiles for both XIAO ESP32S3 and XIAO ESP32C3
+    // (see DEVICE_ID_PREFIX selection at lines 201-205). Advertise the
+    // actual hardware so the fleet manager and the SPA can pick the
+    // right capability set (e.g., the C3 has no camera).
+    #if defined(HARDWARE_XIAO_ESP32C3)
+    MDNS.addServiceTxt("securacv", "tcp", "model",     "XIAO ESP32C3");
+    #else
+    MDNS.addServiceTxt("securacv", "tcp", "model",     "XIAO ESP32S3");
+    #endif
+
+    char fqdn[64];
+    snprintf(fqdn, sizeof(fqdn), "%s.local", mdns_host);
+    log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "mDNS started", fqdn);
   }
 
   // Attempt to connect to home WiFi if configured

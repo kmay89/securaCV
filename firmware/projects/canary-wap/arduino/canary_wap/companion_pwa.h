@@ -309,6 +309,7 @@ footer a{color:var(--accent);text-decoration:none}
       <li>Setup takes about a minute.</li>
       <li>You'll need your home WiFi password handy.</li>
       <li>Stay connected to this WiFi network until setup is done.</li>
+      <li>Most homes use 3 or 4 &mdash; one per room you care about. You can add the next ones after this one is online.</li>
     </ul>
     <div class="wiz-btnrow">
       <button class="btn btn-primary" id="wiz-go-2">Let's go</button>
@@ -381,8 +382,58 @@ footer a{color:var(--accent);text-decoration:none}
       <p class="wiz-sub" id="wiz-st-sub">…</p>
       <div class="wiz-check-list" id="wiz-st-list" role="group" aria-label="Pre-flight checks" aria-busy="false"></div>
       <div class="wiz-check-summary" id="wiz-st-summary" role="status" aria-live="polite"></div>
+
+      <!-- Multi-Canary branch (shown only on all_passed). Two paths:
+           "Set up another" reveals a quick how-to (#wiz-another-block);
+           "I'm done" reveals the original link-row (#wiz-st-links) and
+           finish button (#wiz-st-finish) so the single-device close-out
+           path is preserved exactly.
+           Microcopy and 5-bullet placement card sourced from
+           docs/audit/wap_multi_device_ux_audit.md §5 + §6. -->
+      <div id="wiz-multi-block" style="display:none;margin-top:.85rem">
+        <h3 class="wiz-h" style="font-size:1rem;margin:0 0 .25rem" tabindex="-1">Most homes use 3 or 4.</h3>
+        <p class="wiz-sub" style="margin:0 0 .6rem">Want to add the next room now? Each one takes about a minute. You can stop anytime &mdash; up to 8 in one home.</p>
+        <details class="wiz-check-row" style="margin:0 0 .65rem">
+          <summary style="font-size:.9rem;font-weight:500;display:flex;align-items:center">
+            <span style="flex:1">Where to put the next one</span>
+            <span aria-hidden="true" style="color:var(--muted);font-size:.75rem;margin-left:.5rem">▾</span>
+          </summary>
+          <div class="wiz-check-meta" style="font-family:inherit;font-size:.8rem;line-height:1.5;background:var(--surface-2);color:var(--text);white-space:normal">
+            <ul style="margin:0;padding-left:1.1rem">
+              <li>About head height. Crossing motion reads better than overhead.</li>
+              <li>Three meters from the last Canary. Closer and they hear each other.</li>
+              <li>One good wall away from your WiFi router.</li>
+              <li>Not behind a TV or large screen.</li>
+              <li>One Canary per room. L-shaped rooms count as two.</li>
+            </ul>
+          </div>
+        </details>
+        <div class="wiz-btnrow">
+          <button class="btn btn-secondary" id="wiz-done-here">I'm done for now</button>
+          <button class="btn btn-primary"   id="wiz-add-another">Set up another</button>
+        </div>
+      </div>
+
+      <!-- Re-entry guide for the second-and-onward Canary. Reveal only
+           when the user taps "Set up another". Pure copy + a back-out
+           link; no network calls. -->
+      <div id="wiz-another-block" style="display:none;margin-top:.85rem">
+        <h3 class="wiz-h" style="font-size:1rem;margin:0 0 .25rem" tabindex="-1">Set up the next Canary</h3>
+        <ol class="intro" style="margin:0 0 .6rem;padding-left:1.2rem;line-height:1.65">
+          <li>Power on the next Canary.</li>
+          <li>Open WiFi settings on your phone. Wait for a fresh <strong>SecuraCV-XXXX</strong> network to appear.</li>
+          <li>Tap it. The setup page opens by itself.</li>
+          <li>Scan the new code &mdash; same five steps as this one.</li>
+        </ol>
+        <p class="wiz-sub" style="margin:.25rem 0 .6rem">After it finishes, all your Canaries see each other on the home network. You can name and arrange them from the dashboard.</p>
+        <div class="wiz-btnrow">
+          <button class="btn btn-secondary" id="wiz-another-back">Back</button>
+          <button class="btn btn-primary"   id="wiz-another-open">Open this one's dashboard</button>
+        </div>
+      </div>
+
       <div class="wiz-link-row" id="wiz-st-links" style="display:none">
-        <p class="wiz-sub" style="margin:0">Setup's done. Rejoin your home WiFi on your phone, then tap a link below to open your Canary.</p>
+        <p class="wiz-sub" style="margin:0">Setup's done. Rejoin your home WiFi on your phone, then tap a link below to open your Canary. Tip: name it by its room from the dashboard's Settings sheet &mdash; the name shows up in alerts.</p>
         <a id="wiz-link-mdns" href="http://canary.local/">Open canary.local</a>
         <a id="wiz-link-ip" href="#" style="display:none"></a>
       </div>
@@ -1023,12 +1074,16 @@ footer a{color:var(--accent);text-decoration:none}
 
     // CTA wiring: mDNS link is always shown (default works on most
     // home routers), IP fallback is only shown when we captured one
-    // during step 4. Finish + links are gated on all_passed; on
-    // failure the user can still re-run.
-    const links = $w('wiz-st-links');
+    // during step 4. The multi-Canary branch (#wiz-multi-block) is
+    // shown FIRST on all_passed; the open-link row + Finish stay hidden
+    // until the user either taps "I'm done for now" or finishes the
+    // "Set up another" sub-pane. On failure both blocks stay hidden so
+    // the user can re-run before deciding anything.
+    const links     = $w('wiz-st-links');
+    const multi     = $w('wiz-multi-block');
+    const another   = $w('wiz-another-block');
+    const ipLink    = $w('wiz-link-ip');
     if (j.all_passed) {
-      links.style.display = 'flex';
-      const ipLink = $w('wiz-link-ip');
       if (connectedStaIp) {
         ipLink.href = 'http://' + connectedStaIp + '/';
         ipLink.textContent = 'Open ' + connectedStaIp;
@@ -1036,18 +1091,88 @@ footer a{color:var(--accent);text-decoration:none}
       } else {
         ipLink.style.display = 'none';
       }
-      $w('wiz-st-finish').style.display = 'inline-flex';
+      // The firmware advertises mDNS under a per-device hostname
+      // (canary-s3-XXXX.local) so two Canaries on one LAN don't race
+      // for `canary.local`. The wiz-link-mdns href was hard-coded to
+      // `canary.local` in the page template; rewrite it to the actual
+      // hostname (sanitized the same way canary_wap.ino does) before
+      // showing the close-out card. Best-effort: on fetch error we
+      // leave the original href in place so the link still goes
+      // somewhere reasonable.
+      updateMdnsLinkFromDevice();
+      // Default reveal: the "another room?" pane. The user picks the
+      // close-out path from there.
+      multi.style.display   = 'block';
+      another.style.display = 'none';
+      links.style.display   = 'none';
+      $w('wiz-st-finish').style.display = 'none';
       [5].forEach(i => {
         const dot = $w('wiz-prog-' + i);
         dot.classList.remove('now');
         dot.classList.add('done');
       });
     } else {
-      links.style.display = 'none';
+      multi.style.display   = 'none';
+      another.style.display = 'none';
+      links.style.display   = 'none';
       $w('wiz-st-finish').style.display = 'none';
     }
     requestAnimationFrame(() => focusActiveStepHeading());
   }
+
+  // Mirrors canary_wap.ino's sanitize loop (lowercase [a-z0-9-], any
+  // other byte becomes '-', trim leading/trailing hyphens, fall back to
+  // "canary" if empty). Kept here so the JS can construct the same
+  // hostname the device just registered with mDNS.
+  function sanitizeMdnsHostname(raw) {
+    let out = '';
+    for (const ch of String(raw || '').toLowerCase()) {
+      out += /[a-z0-9-]/.test(ch) ? ch : '-';
+    }
+    out = out.replace(/^-+|-+$/g, '');
+    return out || 'canary';
+  }
+
+  async function updateMdnsLinkFromDevice() {
+    const link = $w('wiz-link-mdns');
+    if (!link) return;
+    try {
+      const r = await fetch('/api/status', { cache: 'no-store' });
+      if (!r.ok) return;
+      const j = await r.json();
+      const id = j && j.device_id ? j.device_id : '';
+      if (!id) return;
+      const host = sanitizeMdnsHostname(id);
+      link.href = 'http://' + host + '.local/';
+      link.textContent = 'Open ' + host + '.local';
+    } catch (_) {
+      // Network blip: fall back to the static canary.local link.
+    }
+  }
+
+  // ── Multi-Canary close-out wiring (Step 5 result branches) ────────────
+  // Three buttons, two reveal targets, no network calls. The "I'm done"
+  // and "Open this one's dashboard" paths both end at the same place
+  // (the mDNS/IP link-row + Finish), so factor that out.
+  function showFinishLinks() {
+    $w('wiz-multi-block').style.display   = 'none';
+    $w('wiz-another-block').style.display = 'none';
+    $w('wiz-st-links').style.display      = 'flex';
+    $w('wiz-st-finish').style.display     = 'inline-flex';
+    requestAnimationFrame(() => focusActiveStepHeading());
+  }
+  $w('wiz-done-here').addEventListener('click', showFinishLinks);
+  $w('wiz-another-open').addEventListener('click', showFinishLinks);
+  $w('wiz-add-another').addEventListener('click', () => {
+    $w('wiz-multi-block').style.display   = 'none';
+    $w('wiz-another-block').style.display = 'block';
+    requestAnimationFrame(() => focusActiveStepHeading());
+  });
+  $w('wiz-another-back').addEventListener('click', () => {
+    $w('wiz-another-block').style.display = 'none';
+    $w('wiz-multi-block').style.display   = 'block';
+    requestAnimationFrame(() => focusActiveStepHeading());
+  });
 
   async function runSelfTest() {
     showRunning();
