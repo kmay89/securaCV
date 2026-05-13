@@ -6456,33 +6456,66 @@ void loop() {
 
   // v0.5: monthly NFPA-72 §14 supervised-circuit self-test chirp.
   // Plays PATTERN_SELFTEST_OK at most once per 30 days, only during
-  // waking hours (06:00–22:00 local time, when SNTP is synced), and
-  // only when the device is operationally healthy. The 30-day window
-  // is reset on each successful play; if a play is skipped (night,
-  // unsynced, in alarm), we retry on the next loop tick.
+  // waking hours (06:00–22:00 local time, when SNTP is synced),
+  // only when the device is operationally healthy (no active alarm or
+  // trouble condition on the Beacon channel — see codex P1 and gemini
+  // high-P review on #461), and only when no other chirp is playing
+  // (start_pattern would preempt an active alert otherwise).
+  //
+  // Persistence: the last-played timestamp is persisted to NVS as a
+  // unix wall-clock seconds value so reboots don't perpetually skip the
+  // 30-day cadence (codex P2 review on #461). If wall clock isn't
+  // synced yet, we don't persist anything (the value is meaningless
+  // without time-of-day).
   {
-    static uint32_t s_last_selftest_chirp_ms = 0;
-    static const uint32_t SELFTEST_INTERVAL_MS = 30UL * 24UL * 60UL * 60UL * 1000UL;
-    const uint32_t since_last = now - s_last_selftest_chirp_ms;
-    // Initial schedule: don't fire on boot; wait at least one interval
-    // from the first call. s_last_selftest_chirp_ms == 0 case is
-    // initialized below on first eligible play.
-    if (s_last_selftest_chirp_ms == 0) {
-      s_last_selftest_chirp_ms = now;  // start the clock at first loop
-    } else if (since_last >= SELFTEST_INTERVAL_MS) {
-      // Time check: only during waking hours and only when wall clock
-      // is synced (else we'd risk chirping at 3am after a reboot).
-      time_t t = time(nullptr);
-      if (t >= 1700000000) {
+    static uint32_t s_last_selftest_unix = 0;          // cached from NVS
+    static bool     s_selftest_nvs_loaded = false;
+    static const uint32_t SELFTEST_INTERVAL_S = 30UL * 24UL * 60UL * 60UL;
+
+    if (!s_selftest_nvs_loaded) {
+      uint32_t persisted = 0;
+      if (nvs_get_u32("st_chirp_at", &persisted)) {
+        s_last_selftest_unix = persisted;
+      }
+      s_selftest_nvs_loaded = true;
+    }
+
+    time_t t = time(nullptr);
+    if (t >= 1700000000) {  // SNTP synced
+      const uint32_t now_unix = (uint32_t)t;
+      // On first run (no NVS value): seed the 30-day clock at now so
+      // we don't fire immediately after a fresh provisioning.
+      if (s_last_selftest_unix == 0) {
+        s_last_selftest_unix = now_unix;
+        nvs_set_u32("st_chirp_at", s_last_selftest_unix);
+      } else if (now_unix - s_last_selftest_unix >= SELFTEST_INTERVAL_S) {
         struct tm* tm_info = localtime(&t);
         if (tm_info) {
           const int hour = tm_info->tm_hour;
           const bool waking = (hour >= 6 && hour < 22);
           if (waking) {
-            audible_chirp::start_pattern(audible_chirp::PATTERN_SELFTEST_OK);
-            s_last_selftest_chirp_ms = now;
-            log_health(SCV_LOG_INFO, SCV_CAT_SYSTEM,
-                       "self-test chirp played (NFPA-72 supervised)", nullptr);
+            // Suppress when:
+            //   - another chirp is currently playing (don't preempt an
+            //     alarm tone with the quiet self-test tone)
+            //   - Beacon is in ALARM or TROUBLE state (self-test would
+            //     mask an active life-safety alert — codex P1 + gemini)
+            bool ok_to_play = !audible_chirp::is_playing();
+            #if FEATURE_BEACON_CHANNEL
+            const beacon_channel::BeaconStatus bs = beacon_channel::get_status();
+            if (bs.state == beacon_channel::BEACON_STATE_ALARM ||
+                bs.state == beacon_channel::BEACON_STATE_TROUBLE) {
+              ok_to_play = false;
+            }
+            #endif
+            if (ok_to_play) {
+              audible_chirp::play_pattern(audible_chirp::PATTERN_SELFTEST_OK);
+              s_last_selftest_unix = now_unix;
+              nvs_set_u32("st_chirp_at", s_last_selftest_unix);
+              log_health(SCV_LOG_INFO, SCV_CAT_SYSTEM,
+                         "self-test chirp played (NFPA-72 supervised)", nullptr);
+            }
+            // If !ok_to_play, leave s_last_selftest_unix unchanged and
+            // retry on the next loop tick.
           }
         }
       }
