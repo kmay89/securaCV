@@ -146,12 +146,24 @@ void sensing_feed_audio_event(uint8_t event_type, uint8_t confidence,
   /* T3 (smoke) and T4 (CO) are emergency events; sign them into the
    * witness chain so the operator has tamper-evident proof later. The
    * `category` byte carries the low byte of cycle_count — useful to
-   * tell "alarm sounded once" from "alarm has been going for minutes." */
+   * tell "alarm sounded once" from "alarm has been going for minutes."
+   * Phase 2b transient events (knock / doorbell / glass-break) are also
+   * witness-worthy: a later operator may need a signed record of when
+   * something noisy happened, especially glass-break for insurance. */
   if (event_type == 1 /* AUDIO_EVENT_T3_SMOKE_ALARM */) {
     fire_witness(SENSING_WITNESS_AUDIO_T3, confidence, time_bucket,
                  (uint8_t)(cycle_count & 0xFF));
   } else if (event_type == 2 /* AUDIO_EVENT_T4_CO_ALARM */) {
     fire_witness(SENSING_WITNESS_AUDIO_T4, confidence, time_bucket,
+                 (uint8_t)(cycle_count & 0xFF));
+  } else if (event_type == 3 /* AUDIO_EVENT_KNOCK */) {
+    fire_witness(SENSING_WITNESS_KNOCK, confidence, time_bucket,
+                 (uint8_t)(cycle_count & 0xFF));
+  } else if (event_type == 4 /* AUDIO_EVENT_DOORBELL */) {
+    fire_witness(SENSING_WITNESS_DOORBELL, confidence, time_bucket,
+                 (uint8_t)(cycle_count & 0xFF));
+  } else if (event_type == 5 /* AUDIO_EVENT_GLASS_BREAK */) {
+    fire_witness(SENSING_WITNESS_GLASS_BREAK, confidence, time_bucket,
                  (uint8_t)(cycle_count & 0xFF));
   }
 }

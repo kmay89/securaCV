@@ -1463,6 +1463,11 @@ static esp_err_t handle_sensing(httpd_req_t* req) {
   ast["t3_detected"]      = a_stats.t3_detected;
   ast["t4_detected"]      = a_stats.t4_detected;
   ast["i2s_read_errors"]  = a_stats.i2s_read_errors;
+  #if FEATURE_ACOUSTIC_TRANSIENTS
+  ast["knock_detected"]       = a_stats.knock_detected;
+  ast["doorbell_detected"]    = a_stats.doorbell_detected;
+  ast["glass_break_detected"] = a_stats.glass_break_detected;
+  #endif
 #endif // FEATURE_ACOUSTIC_EVENTS
 
 #if FEATURE_TOUCH

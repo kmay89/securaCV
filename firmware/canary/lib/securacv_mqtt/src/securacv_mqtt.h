@@ -119,6 +119,12 @@ bool mqtt_send_ha_discovery(const char* device_id, const char* firmware_version)
 typedef void (*mqtt_mic_mute_cmd_cb_t)(bool muted);
 void mqtt_set_mic_mute_cmd_callback(mqtt_mic_mute_cmd_cb_t cb);
 
+// HA's `button` entity for the audio self-test publishes "start" to a
+// dedicated topic. Same wiring as mic mute: the MQTT lib parses and
+// fires this callback, which main.cpp wires to audio_selftest_start().
+typedef void (*mqtt_audio_test_cmd_cb_t)(void);
+void mqtt_set_audio_test_cmd_callback(mqtt_audio_test_cmd_cb_t cb);
+
 // Publish the current mute state to the dedicated retained state topic
 // (separate from the main /sensing topic so HA's `switch` entity reflects
 // changes instantly rather than waiting for the next /sensing tick).

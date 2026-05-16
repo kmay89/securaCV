@@ -2638,6 +2638,18 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           acPill.className = 'sensing-pill sensing-pill--active';
           acPill.textContent = '⚠ CO alarm pattern';
           acExp.textContent = 'UL 2034 cadence detected — your carbon monoxide alarm is sounding.';
+        } else if (evtName === 'glass_break' && acAge >= 0 && acAge < 5000) {
+          acPill.className = 'sensing-pill sensing-pill--active';
+          acPill.textContent = '💥 Glass break pattern';
+          acExp.textContent = 'Sustained high-band transient — heuristic match, NOT a UL-listed glass-break sensor. Verify before acting on it.';
+        } else if (evtName === 'doorbell' && acAge >= 0 && acAge < 5000) {
+          acPill.className = 'sensing-pill sensing-pill--active';
+          acPill.textContent = '🔔 Doorbell pattern';
+          acExp.textContent = 'Two-tone chime detected — heuristic match. Modern wireless / melodic doorbells may not register.';
+        } else if (evtName === 'knock' && acAge >= 0 && acAge < 5000) {
+          acPill.className = 'sensing-pill sensing-pill--active';
+          acPill.textContent = '🥁 Knock pattern';
+          acExp.textContent = 'Three even impulses with low-band character — heuristic match. May also fire on drum hits or hand claps.';
         } else {
           acPill.className = 'sensing-pill sensing-pill--quiet';
           acPill.textContent = 'No alarms';

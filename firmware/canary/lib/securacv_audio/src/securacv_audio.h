@@ -15,29 +15,50 @@
  *           four 100 ms beeps with 100 ms gaps, then 5 s silence
  *           (5.7 s period; common to every UL 2034 CO alarm)
  *
+ * Phase 2b (opt-in, FEATURE_ACOUSTIC_TRANSIENTS=1) adds three transient
+ * detectors that use the same 50 Hz envelope plus a single 32-bit
+ * HPF-RMS sidebanding scalar per frame:
+ *
+ *   • Knock     — 3+ short impulses in <2 s with even spacing
+ *   • Doorbell  — 2 sustained mid-band tones (200–900 ms, 50–400 ms gap)
+ *   • Glass break — sustained high-band-dominant transient ≥800 ms
+ *
  * PRIVACY BARRIER (enforced by the implementation, asserted at compile
  * time by the C-API contract — see audio_event_t below):
  *
  *   1. The PDM driver hands us 16 kHz int16 mono samples. We compute
- *      a single 32-bit RMS scalar per 20 ms window, then ZERO the
- *      sample buffer immediately. The raw samples never outlive the
- *      callback that produces them.
+ *      two scalars per 20 ms window — full-band RMS and a first-order
+ *      HPF-RMS (|x[n]-x[n-1]| stream, fc ≈ fs/4 ≈ 4 kHz) — then ZERO
+ *      the sample buffer immediately. The raw samples never outlive
+ *      the callback that produces them. The HPF state itself is two
+ *      int16 lookbacks, lives across frames but is wiped on stop().
  *   2. The RMS envelope is bucketed into a binary on/off signal with
- *      hysteresis. Only on/off transitions and their durations are
- *      retained — no envelope shape, no spectral content, no speech-
- *      band data.
+ *      hysteresis. Each transition carries one extra byte: a 0..200
+ *      ratio of (HPF-RMS / full-RMS) averaged across the ending state.
+ *      That ratio is a coarse "is this energy concentrated above or
+ *      below 4 kHz?" hint — useful for separating glass shatter from
+ *      door slam from voice, but FAR too sparse to recover spectral
+ *      shape (one byte / state transition vs. ≥40 bytes / 20 ms a true
+ *      spectrogram would need at 5 bands).
  *   3. The only thing that crosses the module boundary is a fixed-size
  *      audio_event_t containing {event_type, confidence, time_bucket,
  *      cycle_count}. No timestamps below the 10-minute daily bucket
- *      cross the barrier.
- *   4. Cadence detection is purely temporal. There is no MFCC, no
- *      classifier, no audio fingerprint. Speech is structurally
- *      impossible to recover from a binary on/off envelope.
+ *      cross the barrier. No spectral data, no transition history.
+ *   4. There is no MFCC, no neural net, no audio fingerprint. Speech
+ *      reconstruction from a binary on/off envelope plus per-transition
+ *      band-ratio bytes is structurally infeasible — DFT magnitudes
+ *      without phase are non-invertible, and at one HPF-ratio byte per
+ *      state transition (~1 Hz typical) we are orders of magnitude
+ *      below any speech-feature Nyquist rate.
  *
- * This is the "no-ML, no-IP-risk" first slice of the broader Phase 2
- * acoustic roadmap. Glass-break / doorbell / knock detection (which
- * does require a small classifier) is a separate, optional follow-up
- * and is gated behind its own feature flag.
+ * The transient detectors are heuristic by design — knock fires on
+ * regular impulse trains, doorbell on two-tone bursts, glass-break on
+ * sustained high-band noise. They are NOT a replacement for a UL/EN
+ * intrusion alarm or a TFLite-Micro classifier; they are a privacy-
+ * preserving "did something noisy just happen?" sensor with three
+ * coarse categories. Defaults are conservative (high confidence floors,
+ * long silence requirements before re-firing) to keep false-positive
+ * rate low at the cost of missing some real events.
  *
  * Copyright (c) 2026 ERRERlabs / Karl May
  * License: Apache-2.0
@@ -66,6 +87,9 @@ typedef enum {
   AUDIO_EVENT_NONE            = 0,
   AUDIO_EVENT_T3_SMOKE_ALARM  = 1,   /* NFPA 72 / ISO 8201 */
   AUDIO_EVENT_T4_CO_ALARM     = 2,   /* UL 2034 */
+  AUDIO_EVENT_KNOCK           = 3,   /* 3+ short impulses in <2 s, even cadence */
+  AUDIO_EVENT_DOORBELL        = 4,   /* 2 sustained mid-band tones (ding-dong) */
+  AUDIO_EVENT_GLASS_BREAK     = 5,   /* sustained high-band-dominant transient */
 } audio_event_type_t;
 
 /* The ONLY structure that crosses the privacy barrier. Fixed size, no
@@ -105,6 +129,9 @@ typedef struct {
   uint32_t t3_detected;          /* T3 cycles confirmed since boot */
   uint32_t t4_detected;          /* T4 cycles confirmed since boot */
   uint32_t i2s_read_errors;      /* underflow / DMA error counter */
+  uint32_t knock_detected;       /* knock patterns confirmed (Phase 2b) */
+  uint32_t doorbell_detected;    /* doorbell patterns confirmed (Phase 2b) */
+  uint32_t glass_break_detected; /* glass-break patterns confirmed (Phase 2b) */
 } audio_stats_t;
 
 /* A single recent on/off transition, exposed for the UI's "show me the

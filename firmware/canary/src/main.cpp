@@ -321,6 +321,16 @@ void setup() {
      * shared helper used by every other control path. */
     audio_save_mute_intent(muted);
   });
+
+  /* HA "Run Audio Self-Test" button: 30-second window, same gate as
+   * the dashboard's /api/audio/test/start. The selftest matcher ignores
+   * the event callback while active so a test press DOESN'T flow into
+   * smoke / CO automations — see audio.h. */
+  mqtt_set_audio_test_cmd_callback([](){
+    if (!audio_is_muted() && audio_is_running()) {
+      audio_selftest_start(30000);
+    }
+  });
   #endif
 #endif
 
@@ -829,18 +839,49 @@ static void mqtt_publish_sensing_update() {
   doc["time_bucket"] = s.time_bucket;
 
   /* Acoustic last event (cleared by TTL after 30 s). HA value
-   * templates compare against the string here to drive smoke / CO
-   * binary sensors. Use the actual enum names from securacv_audio.h
-   * so the mapping survives any future enum-value changes. */
+   * templates compare against the string here to drive smoke / CO /
+   * knock / doorbell / glass-break binary sensors. Use the actual
+   * enum names from securacv_audio.h so the mapping survives any
+   * future enum-value changes. */
   const char* ae = "none";
 #if FEATURE_ACOUSTIC_EVENTS
   switch (s.last_audio_event_type) {
     case AUDIO_EVENT_T3_SMOKE_ALARM: ae = "smoke_alarm_t3"; break;
     case AUDIO_EVENT_T4_CO_ALARM:    ae = "co_alarm_t4";    break;
+    case AUDIO_EVENT_KNOCK:          ae = "knock";          break;
+    case AUDIO_EVENT_DOORBELL:       ae = "doorbell";       break;
+    case AUDIO_EVENT_GLASS_BREAK:    ae = "glass_break";    break;
   }
 #endif
   doc["acoustic_event"] = ae;
   doc["acoustic_conf"]  = s.last_audio_event_conf;
+  /* DELIBERATELY NOT publishing acoustic_event_age_ms over MQTT —
+   * that would leak sub-second event timing to every broker
+   * subscriber and violate AGENTS.md Invariant III (only 10-min
+   * coarse buckets cross the device boundary). HA's binary_sensors
+   * therefore latch ON until the 30 s sensing-aggregator TTL clears
+   * `acoustic_event` back to "none", which is plenty fast enough for
+   * automations like "if smoke alarm cadence, push notification".
+   * The local /api/sensing endpoint DOES expose age_ms — that's
+   * localhost / LAN traffic, not a published feed. */
+#if FEATURE_ACOUSTIC_EVENTS && FEATURE_ACOUSTIC_TRANSIENTS
+  /* Diagnostic counters — drive the HA total_increasing sensors so an
+   * operator can plot alarm frequency over time. Gated by
+   * FEATURE_ACOUSTIC_TRANSIENTS so non-transient builds don't publish
+   * unused zero counters into HA's device card. */
+  audio_stats_t a_stats = {0};
+  audio_get_stats(&a_stats);
+  JsonObject ast = doc["acoustic_stats"].to<JsonObject>();
+  ast["frames_processed"]     = a_stats.frames_processed;
+  ast["on_transitions"]       = a_stats.on_transitions;
+  ast["off_transitions"]      = a_stats.off_transitions;
+  ast["t3_detected"]          = a_stats.t3_detected;
+  ast["t4_detected"]          = a_stats.t4_detected;
+  ast["i2s_read_errors"]      = a_stats.i2s_read_errors;
+  ast["knock_detected"]       = a_stats.knock_detected;
+  ast["doorbell_detected"]    = a_stats.doorbell_detected;
+  ast["glass_break_detected"] = a_stats.glass_break_detected;
+#endif
 
   /* Touch last event (cleared by TTL after 60 s). */
   const char* te = "none";
