@@ -1443,6 +1443,19 @@ static esp_err_t handle_sensing(httpd_req_t* req) {
   ac["last_event_age_ms"] =
       s.last_audio_event_ms == 0 ? -1L : (long)(millis() - s.last_audio_event_ms);
 
+  /* Last applied mute toggle — lets the dashboard show "Muted by Home
+   * Assistant · 2 min ago" so the user can tell who flipped the mic.
+   * source is 0=boot, 1=http (dashboard), 2=mqtt (Home Assistant). */
+  audio_mute_info_t mi;
+  audio_get_mute_info(&mi);
+  if (mi.age_ms != UINT32_MAX) {
+    ac["last_mute_source"]  = mi.source;
+    ac["last_mute_age_ms"]  = (long)mi.age_ms;
+  } else {
+    ac["last_mute_source"]  = -1;
+    ac["last_mute_age_ms"]  = -1L;
+  }
+
   JsonObject ast = ac["stats"].to<JsonObject>();
   ast["frames_processed"] = a_stats.frames_processed;
   ast["on_transitions"]   = a_stats.on_transitions;

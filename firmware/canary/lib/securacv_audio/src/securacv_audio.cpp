@@ -145,6 +145,13 @@ static bool     s_selftest_stop_pending = false;
  * main.cpp; routes the event into the sensing aggregator + witness chain. */
 static audio_mute_cb_t s_mute_cb = nullptr;
 
+/* Source + timestamp of the most recently APPLIED mute toggle. Surfaced
+ * through audio_get_mute_info() so the dashboard can show "Muted by
+ * Home Assistant" or "Muted by you" alongside the live mic state. */
+static uint8_t  s_last_applied_mute_source = AUDIO_MUTE_SOURCE_BOOT;
+static uint32_t s_last_applied_mute_ms     = 0;
+static bool     s_last_applied_set         = false;
+
 /* Self-test mode (relaxed thresholds, normal event callback suppressed).
  * Cross-task: main loop writes, HTTP task reads via selftest_status(). */
 static bool     s_selftest_active = false;
@@ -535,6 +542,16 @@ bool is_muted() { return __atomic_load_n(&s_muted, __ATOMIC_ACQUIRE); }
 
 void set_mute_callback(audio_mute_cb_t cb) { s_mute_cb = cb; }
 
+void get_mute_info(audio_mute_info_t* out) {
+  if (!out) return;
+  memset(out, 0, sizeof(*out));
+  const bool ever = __atomic_load_n(&s_last_applied_set, __ATOMIC_ACQUIRE);
+  if (!ever) { out->age_ms = UINT32_MAX; return; }
+  out->source = __atomic_load_n(&s_last_applied_mute_source, __ATOMIC_RELAXED);
+  const uint32_t ts = __atomic_load_n(&s_last_applied_mute_ms, __ATOMIC_ACQUIRE);
+  out->age_ms = (ts == 0) ? UINT32_MAX : (millis() - ts);
+}
+
 /* Called at boot from the main task BEFORE the HTTP server starts, so
  * we can synchronously start/stop the I2S driver without racing anything.
  * Used by main.cpp's boot path to honor the persisted NVS mute state. */
@@ -567,7 +584,16 @@ bool mute_sync_at_boot(bool muted) {
   }
   /* The boot path runs BEFORE set_mute_callback() is wired by main.cpp,
    * so we won't normally fire the callback from here. main.cpp emits a
-   * single "boot-state" witness record after wiring the callback. */
+   * single "boot-state" witness record after wiring the callback. We
+   * still record the boot-mute fact so the dashboard immediately shows
+   * "Muted at boot" instead of "Muted by ???" until the first user
+   * toggle. Only marks the state if the boot was actually muted —
+   * otherwise the field stays "never set" and the UI shows nothing. */
+  if (muted && ok) {
+    s_last_applied_mute_source = AUDIO_MUTE_SOURCE_BOOT;
+    s_last_applied_mute_ms     = millis();
+    s_last_applied_set         = true;
+  }
   return ok;
 }
 
@@ -711,7 +737,12 @@ int process() {
     /* Tell the application a real state change happened (so it can sign
      * an audit-trail event into the witness chain). We deliberately do
      * NOT fire on no-op transitions (mute when already muted, etc.). */
-    if (applied && s_mute_cb) s_mute_cb(want_mute, source);
+    if (applied) {
+      __atomic_store_n(&s_last_applied_mute_source, source, __ATOMIC_RELAXED);
+      __atomic_store_n(&s_last_applied_mute_ms,     millis(), __ATOMIC_RELEASE);
+      __atomic_store_n(&s_last_applied_set,         true,    __ATOMIC_RELEASE);
+      if (s_mute_cb) s_mute_cb(want_mute, source);
+    }
   }
 
   if (__atomic_exchange_n(&s_selftest_start_pending, false, __ATOMIC_ACQUIRE)) {
@@ -938,6 +969,8 @@ bool audio_save_mute_intent(bool muted) {
   prefs.end();
   return true;
 }
+
+void audio_get_mute_info(audio_mute_info_t* out) { audio::get_mute_info(out); }
 
 bool audio_selftest_start(uint32_t duration_ms) {
   return audio::selftest_start(duration_ms);

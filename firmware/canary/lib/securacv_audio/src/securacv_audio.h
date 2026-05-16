@@ -182,6 +182,19 @@ void audio_set_mute_callback(audio_mute_cb_t cb);
  * place. Honored at the next boot by main.cpp's audio_init block. */
 bool audio_save_mute_intent(bool muted);
 
+/* Info about the most recent applied mute toggle. `source` is one of
+ * audio_mute_source_t; `age_ms` is millis() since the toggle was applied,
+ * or UINT32_MAX if no toggle has been applied this boot. Lets the
+ * dashboard surface "Muted by Home Assistant · 2 min ago" so the user
+ * can tell who flipped the mic. */
+typedef struct {
+  uint8_t  source;     /* audio_mute_source_t */
+  uint8_t  reserved[3];
+  uint32_t age_ms;     /* since last applied toggle, UINT32_MAX if never */
+} audio_mute_info_t;
+
+void audio_get_mute_info(audio_mute_info_t* out);
+
 /* ──────────────────────────────────────────────────────────────────────────
  * SELF-TEST MODE
  *

@@ -1142,6 +1142,13 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           </span>
           <button class="btn btn-secondary btn-sm" id="acMicMuteBtn" onclick="toggleMicMute()">Mute microphone</button>
         </div>
+        <!-- Last-toggle audit line. Hidden until the API returns a real
+             source; populated by refreshLiveSensing(). Lets the user see
+             at a glance whether the dashboard, Home Assistant, or boot
+             set the current mic state. -->
+        <div id="acMicSourceRow" style="display:none; font-size:0.8rem; color:var(--muted); margin:-4px 0 8px 22px;">
+          <span id="acMicSourceText"></span>
+        </div>
         <div class="stats-grid" style="margin-top:14px;">
           <div class="stat-item"><div class="stat-label">T3 cycles seen</div><div class="stat-value" id="acT3">0</div></div>
           <div class="stat-item"><div class="stat-label">T4 cycles seen</div><div class="stat-value" id="acT4">0</div></div>
@@ -2653,6 +2660,30 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           micDot.className = 'audio-mic-row__dot audio-mic-row__dot--live';
           micLabel.textContent = 'Mic live';
           micBtn.textContent = 'Mute microphone';
+        }
+
+        // Last-toggle audit line. Backed by ac.last_mute_source (0=boot,
+        // 1=http/dashboard, 2=mqtt/HA) and ac.last_mute_age_ms. -1 means
+        // no toggle has happened this boot — hide the row entirely so we
+        // don't confuse fresh users.
+        const srcRow = document.getElementById('acMicSourceRow');
+        const srcTxt = document.getElementById('acMicSourceText');
+        const lms = ac.last_mute_source;
+        const lage = ac.last_mute_age_ms;
+        if (srcRow && srcTxt && typeof lms === 'number' && lms >= 0 && lage >= 0) {
+          const who = lms === 0 ? 'at boot'
+                    : lms === 1 ? 'from this dashboard'
+                    : lms === 2 ? 'by Home Assistant'
+                    : 'by an unknown source';
+          let when;
+          if (lage < 60000)             when = Math.round(lage / 1000)  + ' s ago';
+          else if (lage < 3600000)      when = Math.round(lage / 60000) + ' min ago';
+          else                          when = Math.round(lage / 3600000) + ' h ago';
+          const verb = acMuted ? 'Muted' : 'Unmuted';
+          srcTxt.textContent = verb + ' ' + who + ' · ' + when;
+          srcRow.style.display = '';
+        } else if (srcRow) {
+          srcRow.style.display = 'none';
         }
 
         const ast = ac.stats || {};
