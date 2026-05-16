@@ -1,0 +1,6 @@
+# PlatformIO build directory
+.pio/
+
+# IDE files
+.vscode/
+*.code-workspace
