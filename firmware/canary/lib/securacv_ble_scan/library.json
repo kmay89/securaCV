@@ -1,0 +1,22 @@
+{
+    "name": "securacv_ble_scan",
+    "version": "0.1.0",
+    "description": "SecuraCV BLE Scout — privacy-preserving room-attribution for user-paired BLE beacons. PR 5a: pure-logic primitives (hashed beacon ID, Kalman RSSI smoother, paired-beacon registry). No NimBLE dependency; that wires in via FEATURE_BLE_SCAN in PR 5b.",
+    "keywords": ["securacv", "ble", "scan", "presence", "espresense"],
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/kmay89/securaCV.git"
+    },
+    "authors": [
+        {
+            "name": "Karl May",
+            "email": "karl@errerlabs.com"
+        }
+    ],
+    "license": "Apache-2.0",
+    "frameworks": "arduino",
+    "platforms": "espressif32",
+    "dependencies": {
+        "securacv_mesh": "*"
+    }
+}
