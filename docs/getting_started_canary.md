@@ -234,6 +234,55 @@ detector works at all — not a replacement for the real-alarm test
 above. Always verify against an actual UL-listed alarm before relying
 on the detector.
 
+### 5.5 · Transient detection (knock / doorbell / glass break)
+
+Builds with `FEATURE_ACOUSTIC_TRANSIENTS=1` (the `dev` and `dev_ha`
+profiles in `platformio.ini`; off by default in `release`) add three
+opt-in heuristic detectors that ride the same 50 Hz envelope as the
+T3 / T4 cadence matcher, plus one extra scalar per frame: the
+high-passed RMS (corner ≈ 4 kHz). The privacy story does NOT change:
+the raw int16 PDM samples are still wiped inside the same call that
+produced them, no spectrogram is stored, and the only data that
+crosses the module boundary is the usual `{event_type, confidence,
+time_bucket, cycle_count}` event record.
+
+| Detector | Fires on | Conf floor | Likely false positives |
+|---|---|---|---|
+| **Knock** (`AUDIO_EVENT_KNOCK`) | 3 short impulses (30–180 ms each, 60–400 ms apart) with low-band-dominant character. | 50 | Drumming, repeated table thumps, hand claps. |
+| **Doorbell** (`AUDIO_EVENT_DOORBELL`) | 2 mid-band tones (250–900 ms each, 50–400 ms gap), trailing silence. | 60 | Two-word commands, double-beep appliance ready tones. Modern wireless / melodic doorbells with longer melodies will NOT match. |
+| **Glass break** (`AUDIO_EVENT_GLASS_BREAK`) | Single sustained ON (0.8–3 s) with high-band-dominant character (HPF/full RMS > 1.3×). | 70 | Hair-dryer, vacuum, certain HVAC fans, prolonged hissing leaks. |
+
+These are **heuristic** detectors. They are *not* replacements for a
+UL-listed glass-break sensor, a doorbell switch, or a security alarm.
+They are a "did something noisy in this category just happen?" signal
+with a low false-positive rate by virtue of the conservative confidence
+floors and trailing-silence gates, but they will miss real events that
+sit outside the spec windows above. Every match is signed into the
+witness chain just like the T3 / T4 records, so an after-the-fact
+auditor can see "at 02:31 the device flagged a glass-break event with
+73% confidence." Trust the chain, not the binary sensor.
+
+### 5.6 · Home Assistant diagnostic sensors
+
+The HA discovery payload also exposes 7 diagnostic counters under the
+device's *Diagnostic* card so you can plot rates over time:
+
+| Entity | Tracks |
+|---|---|
+| **T3 Cycles Total** | Confirmed smoke-alarm cadences since boot |
+| **T4 Cycles Total** | Confirmed CO-alarm cadences since boot |
+| **Knock Count** | Phase 2b knock matches since boot |
+| **Doorbell Count** | Phase 2b doorbell matches since boot |
+| **Glass Break Count** | Phase 2b glass-break matches since boot |
+| **Audio Frames** | Total 20 ms RMS windows processed (~50 / s while running) |
+| **I2S Read Errors** | DMA underflows / driver errors — alert if climbing |
+
+Plus a **Run Audio Self-Test** button entity that triggers the same
+30 s relaxed-tolerance window as the dashboard's *Listen for 30 s*
+button. The button can be wired into an HA automation that fires
+every Monday at 9 am to verify the detector still matches against
+your alarm's regular weekly test press.
+
 ---
 
 ## 6 · The silent panic pad

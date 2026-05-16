@@ -180,6 +180,9 @@ typedef enum {
   SENSING_WITNESS_TEMP_DRIFT      = 5,   /* internal die-temp drift */
   SENSING_WITNESS_MIC_MUTE        = 6,   /* user / HA / boot muted the mic */
   SENSING_WITNESS_MIC_UNMUTE      = 7,   /* user / HA / boot unmuted the mic */
+  SENSING_WITNESS_KNOCK           = 8,   /* Phase 2b: 3+ even impulse train */
+  SENSING_WITNESS_DOORBELL        = 9,   /* Phase 2b: two-tone chime */
+  SENSING_WITNESS_GLASS_BREAK     = 10,  /* Phase 2b: sustained HF-dominant transient */
 } sensing_witness_kind_t;
 
 typedef struct {

@@ -42,9 +42,12 @@ static char s_topic_sensing[64];
 static char s_topic_avail[64];
 static char s_topic_mic_state[64];   // retained state for the HA switch
 static char s_topic_mic_cmd[64];     // HA writes "mute"/"unmute" here
+static char s_topic_audio_test_cmd[64];  // HA writes "start" to kick selftest
 
 // Application-supplied callback for inbound mic mute commands.
 static mqtt_mic_mute_cmd_cb_t s_mic_mute_cmd_cb = nullptr;
+// Application-supplied callback for inbound audio self-test commands.
+static mqtt_audio_test_cmd_cb_t s_audio_test_cmd_cb = nullptr;
 
 // Last mic mute state the app published. Stashed so we can republish it
 // on every successful (re)connect, otherwise HA's switch entity would
@@ -80,6 +83,8 @@ static void build_topics(const char* device_id) {
   snprintf(s_topic_avail,     sizeof(s_topic_avail),     "securacv/%s/availability", device_id);
   snprintf(s_topic_mic_state, sizeof(s_topic_mic_state), "securacv/%s/mic/state", device_id);
   snprintf(s_topic_mic_cmd,   sizeof(s_topic_mic_cmd),   "securacv/%s/mic/cmd",   device_id);
+  snprintf(s_topic_audio_test_cmd, sizeof(s_topic_audio_test_cmd),
+           "securacv/%s/audio/test/cmd", device_id);
 }
 
 // Inbound MQTT message dispatcher. Currently the only subscribed topic
@@ -87,6 +92,20 @@ static void build_topics(const char* device_id) {
 // switch on `topic`.
 static void on_mqtt_message(char* topic, byte* payload, unsigned int len) {
   if (!topic || !payload) return;
+
+  // Audio self-test trigger — HA's button entity publishes literal
+  // "start" (sometimes with surrounding whitespace). Optional integer
+  // duration_ms could follow but we just use the default for now.
+  if (strcmp(topic, s_topic_audio_test_cmd) == 0) {
+    const byte* p = payload;
+    unsigned int n = len;
+    while (n > 0 && (*p == ' ' || *p == '\t' || *p == '"')) { p++; n--; }
+    if (n >= 5 && memcmp(p, "start", 5) == 0 && s_audio_test_cmd_cb) {
+      s_audio_test_cmd_cb();
+    }
+    return;
+  }
+
   if (strcmp(topic, s_topic_mic_cmd) != 0) return;
 
   // Accept exactly "mute" / "unmute" (our pl_on / pl_off) and exactly
@@ -189,6 +208,7 @@ static bool attempt_connect() {
     // have dropped the subscription).
     s_mqtt.setCallback(on_mqtt_message);
     s_mqtt.subscribe(s_topic_mic_cmd, 1);
+    s_mqtt.subscribe(s_topic_audio_test_cmd, 1);
 
     #if FEATURE_HA_DISCOVERY
     mqtt_send_ha_discovery(s_device_id, s_firmware_version);
@@ -424,6 +444,10 @@ bool mqtt_publish_mic_mute_state(bool muted) {
 
 void mqtt_set_mic_mute_cmd_callback(mqtt_mic_mute_cmd_cb_t cb) {
   s_mic_mute_cmd_cb = cb;
+}
+
+void mqtt_set_audio_test_cmd_callback(mqtt_audio_test_cmd_cb_t cb) {
+  s_audio_test_cmd_cb = cb;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -805,6 +829,142 @@ bool mqtt_send_ha_discovery(const char* device_id, const char* firmware_version)
     String payload;
     serializeJson(doc, payload);
     all_ok = all_ok && publish_discovery("binary_sensor", device_id, "co_alarm", payload.c_str());
+  }
+
+  // ── Phase 2b transient binary_sensors ──
+  // These ride the same retained /sensing topic, edge-triggered via
+  // value_template. Each one expires automatically after ~3 s of no
+  // re-trigger by checking last_event_age_ms. Heuristic detectors —
+  // see audio.h for the privacy + scope contract. NB: no device_class
+  // exactly matches "knock", "doorbell", "glass shatter" in the HA
+  // schema. We use:
+  //   • Knock     → "occupancy" (presence-style event)
+  //   • Doorbell  → "sound"     (audible event)
+  //   • Glass     → "vibration" (rendered with a shatter icon)
+  if (all_ok) {
+    JsonDocument doc;
+    doc["name"]    = "Pattern: Knock";
+    doc["stat_t"]  = s_topic_sensing;
+    doc["val_tpl"] =
+      "{{ 'ON' if value_json.acoustic_event == 'knock' and "
+      "value_json.acoustic_event_age_ms is not none and "
+      "value_json.acoustic_event_age_ms < 3000 else 'OFF' }}";
+    doc["dev_cla"] = "occupancy";
+    doc["ic"]      = "mdi:hand-back-right";
+    char uid[64];
+    snprintf(uid, sizeof(uid), "securacv_%s_knock", device_id);
+    doc["uniq_id"] = uid;
+    JsonObject dev = doc["dev"].to<JsonObject>();
+    add_device_info(dev, device_id, firmware_version);
+    String payload;
+    serializeJson(doc, payload);
+    all_ok = all_ok && publish_discovery("binary_sensor", device_id, "knock", payload.c_str());
+  }
+  if (all_ok) {
+    JsonDocument doc;
+    doc["name"]    = "Pattern: Doorbell";
+    doc["stat_t"]  = s_topic_sensing;
+    doc["val_tpl"] =
+      "{{ 'ON' if value_json.acoustic_event == 'doorbell' and "
+      "value_json.acoustic_event_age_ms is not none and "
+      "value_json.acoustic_event_age_ms < 3000 else 'OFF' }}";
+    doc["dev_cla"] = "sound";
+    doc["ic"]      = "mdi:bell-ring";
+    char uid[64];
+    snprintf(uid, sizeof(uid), "securacv_%s_doorbell", device_id);
+    doc["uniq_id"] = uid;
+    JsonObject dev = doc["dev"].to<JsonObject>();
+    add_device_info(dev, device_id, firmware_version);
+    String payload;
+    serializeJson(doc, payload);
+    all_ok = all_ok && publish_discovery("binary_sensor", device_id, "doorbell", payload.c_str());
+  }
+  if (all_ok) {
+    JsonDocument doc;
+    doc["name"]    = "Pattern: Glass Break";
+    doc["stat_t"]  = s_topic_sensing;
+    doc["val_tpl"] =
+      "{{ 'ON' if value_json.acoustic_event == 'glass_break' and "
+      "value_json.acoustic_event_age_ms is not none and "
+      "value_json.acoustic_event_age_ms < 5000 else 'OFF' }}";
+    doc["dev_cla"] = "vibration";
+    doc["ic"]      = "mdi:bottle-tonic-skull";
+    char uid[64];
+    snprintf(uid, sizeof(uid), "securacv_%s_glass_break", device_id);
+    doc["uniq_id"] = uid;
+    JsonObject dev = doc["dev"].to<JsonObject>();
+    add_device_info(dev, device_id, firmware_version);
+    String payload;
+    serializeJson(doc, payload);
+    all_ok = all_ok && publish_discovery("binary_sensor", device_id, "glass_break", payload.c_str());
+  }
+
+  // ── Phase 2b: diagnostic counters (T3 / T4 cycles, transitions, etc.) ──
+  // These let an HA dashboard plot "how often has the alarm fired this
+  // week?" or alert on "i2s_read_errors climbing rapidly". Diagnostic
+  // category so they sit under "Diagnostic" in HA's device card.
+  struct DiagSensor {
+    const char* name;
+    const char* tpl;
+    const char* uid_slug;
+    const char* icon;
+    const char* unit;
+  };
+  static const DiagSensor diags[] = {
+    { "T3 Cycles Total",   "{{ value_json.acoustic_stats.t3_detected | default(0) }}",
+      "t3_cycles", "mdi:counter", nullptr },
+    { "T4 Cycles Total",   "{{ value_json.acoustic_stats.t4_detected | default(0) }}",
+      "t4_cycles", "mdi:counter", nullptr },
+    { "Knock Count",       "{{ value_json.acoustic_stats.knock_detected | default(0) }}",
+      "knock_count", "mdi:counter", nullptr },
+    { "Doorbell Count",    "{{ value_json.acoustic_stats.doorbell_detected | default(0) }}",
+      "doorbell_count", "mdi:counter", nullptr },
+    { "Glass Break Count", "{{ value_json.acoustic_stats.glass_break_detected | default(0) }}",
+      "glass_break_count", "mdi:counter", nullptr },
+    { "Audio Frames",      "{{ value_json.acoustic_stats.frames_processed | default(0) }}",
+      "audio_frames", "mdi:waveform", "frames" },
+    { "I2S Read Errors",   "{{ value_json.acoustic_stats.i2s_read_errors | default(0) }}",
+      "i2s_errors", "mdi:alert-circle-outline", nullptr },
+  };
+  for (size_t i = 0; i < sizeof(diags) / sizeof(diags[0]) && all_ok; i++) {
+    JsonDocument doc;
+    doc["name"]    = diags[i].name;
+    doc["stat_t"]  = s_topic_sensing;
+    doc["val_tpl"] = diags[i].tpl;
+    doc["ic"]      = diags[i].icon;
+    doc["ent_cat"] = "diagnostic";
+    doc["stat_cla"] = "total_increasing";
+    if (diags[i].unit) doc["unit_of_meas"] = diags[i].unit;
+    char uid[80];
+    snprintf(uid, sizeof(uid), "securacv_%s_%s", device_id, diags[i].uid_slug);
+    doc["uniq_id"] = uid;
+    JsonObject dev = doc["dev"].to<JsonObject>();
+    add_device_info(dev, device_id, firmware_version);
+    String payload;
+    serializeJson(doc, payload);
+    all_ok = all_ok && publish_discovery("sensor", device_id, diags[i].uid_slug, payload.c_str());
+  }
+
+  // ── Phase 2b: HA Button to trigger the cadence self-test ──
+  // Lets an HA card or automation kick the device's detection self-test
+  // mode (same as the dashboard's "Listen for 30 s" button). The result
+  // is reflected in the existing acoustic_event field of /sensing; no
+  // separate result topic needed.
+  if (all_ok) {
+    JsonDocument doc;
+    doc["name"]    = "Run Audio Self-Test";
+    doc["cmd_t"]   = s_topic_audio_test_cmd;
+    doc["pl_prs"]  = "start";
+    doc["ic"]      = "mdi:test-tube";
+    doc["ent_cat"] = "diagnostic";
+    char uid[64];
+    snprintf(uid, sizeof(uid), "securacv_%s_audio_selftest", device_id);
+    doc["uniq_id"] = uid;
+    JsonObject dev = doc["dev"].to<JsonObject>();
+    add_device_info(dev, device_id, firmware_version);
+    String payload;
+    serializeJson(doc, payload);
+    all_ok = all_ok && publish_discovery("button", device_id, "audio_selftest", payload.c_str());
   }
 
   // ── Binary Sensor: silent_panic (touch long-press) ──

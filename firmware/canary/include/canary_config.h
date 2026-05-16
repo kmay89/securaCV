@@ -78,6 +78,9 @@
 #ifndef FEATURE_ACOUSTIC_EVENTS
   #define FEATURE_ACOUSTIC_EVENTS  0   // PDM mic + T3 smoke / T4 CO cadence detection
 #endif
+#ifndef FEATURE_ACOUSTIC_TRANSIENTS
+  #define FEATURE_ACOUSTIC_TRANSIENTS 0  // Phase 2b: knock / doorbell / glass-break (opt-in)
+#endif
 #ifndef FEATURE_TOUCH
   #define FEATURE_TOUCH            0   // Capacitive touch (silent panic / tamper / approach)
 #endif

@@ -94,12 +94,39 @@ static uint32_t s_state_entered_ms = 0;
  * NEXT transition's prev_dur_ms — see review thread #351. */
 static bool     s_cycle_matched = false;
 
+#if FEATURE_ACOUSTIC_TRANSIENTS
+/* Per-state-window accumulators for the band-ratio summary that we
+ * record into the next push_transition(). Reset on every transition.
+ * Frame_count gates "if we transition before even one frame elapsed
+ * we report 100 (broadband) rather than dividing by zero." */
+static uint32_t s_state_rms_sum     = 0;
+static uint32_t s_state_hpf_rms_sum = 0;
+static uint32_t s_state_frames      = 0;
+/* Latest knock / doorbell / glass-break match guard — same role as
+ * s_cycle_matched, separate flags so a T3 match doesn't block a knock
+ * match on the same set of transitions. */
+static bool     s_knock_matched      = false;
+static bool     s_doorbell_matched   = false;
+static bool     s_glass_matched      = false;
+/* Per-event-type counters surfaced through audio_stats_t. */
+static uint32_t s_knock_count        = 0;
+static uint32_t s_doorbell_count     = 0;
+static uint32_t s_glass_count        = 0;
+#endif
+
 /* Ring of recent on/off transitions (newest at head; wraps). Each entry
  * records the time we entered a state and the duration we stayed in the
  * PREVIOUS state. Capacity 16 covers two full T3 cycles (12 transitions)
  * plus headroom for noise. */
 struct Transition {
   bool     is_on;       /* true = entered ON state, false = entered OFF */
+  uint8_t  band_ratio_x100; /* (hpf_rms/full_rms) * 100 of the PREV state,
+                             * clamped 0..200. 0 means "low-band dominant"
+                             * (knock), ~100 means "broadband" (voice/music),
+                             * >130 means "high-band dominant" (glass shatter).
+                             * Only meaningful for ON→OFF transitions; on
+                             * OFF→ON transitions reflects the silent-room
+                             * noise floor and is ignored by detectors. */
   uint32_t at_ms;       /* millis() at the transition */
   uint32_t prev_dur_ms; /* duration of the PREVIOUS state */
 };
@@ -181,15 +208,50 @@ static uint16_t compute_rms(const int16_t* samples, size_t n) {
   return (uint16_t)rms;
 }
 
+#if FEATURE_ACOUSTIC_TRANSIENTS
+/* Cross-frame state for the HPF: we need the LAST sample from the
+ * previous frame so the (x[n] - x[n-1]) difference at the frame boundary
+ * is correct. Wiped on stop()/mute(). Two bytes. */
+static int16_t s_hpf_prev_last = 0;
+
+/* HPF RMS — first-order |1 - z^-1| filter (corner ≈ fs/4 ≈ 4 kHz at the
+ * 16 kHz PDM rate). Mathematically: compute RMS of d[n] = x[n] - x[n-1]
+ * across the frame. Cheap (one subtraction + one multiply per sample)
+ * and good enough to tell "concentrated above 4 kHz" (glass shatter,
+ * hi-hat) from "concentrated below 4 kHz" (knock, voice, slam).
+ *
+ * Same wipe contract as compute_rms — caller scrubs the buffer. */
+static uint16_t compute_hpf_rms(const int16_t* samples, size_t n) {
+  if (n == 0) return 0;
+  int64_t sumsq = 0;
+  int32_t prev = s_hpf_prev_last;
+  for (size_t i = 0; i < n; i++) {
+    const int32_t s = samples[i];
+    const int32_t d = s - prev;
+    sumsq += (int64_t)d * d;
+    prev = s;
+  }
+  s_hpf_prev_last = (int16_t)prev;
+  /* Divide by n (not n-1) — every sample produced a difference because
+   * we used the cross-frame s_hpf_prev_last for the first one. */
+  const uint32_t mean_sq = (uint32_t)(sumsq / (int64_t)n);
+  uint32_t hpf = isqrt_u32(mean_sq);
+  if (hpf > 0xFFFFu) hpf = 0xFFFFu;
+  return (uint16_t)hpf;
+}
+#endif  /* FEATURE_ACOUSTIC_TRANSIENTS */
+
 /* ──────────────────────────────────────────────────────────────────────────
  * TRANSITION RING
  * ────────────────────────────────────────────────────────────────────────── */
 
 static void push_transition(bool entered_on, uint32_t now_ms,
-                            uint32_t prev_dur_ms) {
-  s_trans[s_trans_head].is_on        = entered_on;
-  s_trans[s_trans_head].at_ms        = now_ms;
-  s_trans[s_trans_head].prev_dur_ms  = prev_dur_ms;
+                            uint32_t prev_dur_ms,
+                            uint8_t prev_band_ratio_x100) {
+  s_trans[s_trans_head].is_on             = entered_on;
+  s_trans[s_trans_head].at_ms             = now_ms;
+  s_trans[s_trans_head].prev_dur_ms       = prev_dur_ms;
+  s_trans[s_trans_head].band_ratio_x100   = prev_band_ratio_x100;
   s_trans_head = (s_trans_head + 1) % TRANS_CAP;
   if (s_trans_count < TRANS_CAP) s_trans_count++;
 }
@@ -351,6 +413,175 @@ static int score_t4_cycle(uint32_t now_ms, bool relaxed) {
   return (int)conf;
 }
 
+#if FEATURE_ACOUSTIC_TRANSIENTS
+/* ──────────────────────────────────────────────────────────────────────────
+ * PHASE 2b — KNOCK / DOORBELL / GLASS-BREAK DETECTORS
+ *
+ * All three run on the same OFF-with-≥1s-silence gate as T3/T4. The
+ * detectors are heuristic by design (envelope + per-state band-ratio
+ * only); see audio.h's privacy / scope contract.
+ *
+ * Knock          — exactly 3 short ON impulses (30..180 ms) with
+ *                  near-even OFF gaps (60..400 ms) and low band-ratio
+ *                  (< 130, low-band dominant — typical of knuckle/fist).
+ *                  3 ON + 2 OFF = 5 transitions back, plus the trailing
+ *                  silence we're standing in.
+ *
+ * Doorbell       — exactly 2 mid-length ON tones (250..900 ms) with a
+ *                  short OFF gap (50..400 ms), both with mid band-ratio
+ *                  (60..130 — neither knock-low nor shatter-high).
+ *                  2 ON + 1 OFF = 3 transitions back.
+ *
+ * Glass break    — exactly 1 sustained ON state (800..3000 ms) with
+ *                  HIGH band-ratio (≥ 130 — the broadband shatter
+ *                  signature shifts energy above ~4 kHz). 1 ON = 2
+ *                  transitions back (the ON-arrive and the OFF-arrive
+ *                  we're now standing past).
+ * ────────────────────────────────────────────────────────────────────────── */
+
+static int score_knock_cycle(uint32_t now_ms) {
+  /* Pattern (newest first):
+   *   t0: OFF  — prev_dur = beep3 ON duration; ratio = beep3 band-ratio
+   *   t1: ON   — prev_dur = gap2→3 OFF duration
+   *   t2: OFF  — prev_dur = beep2 ON duration; ratio = beep2 band-ratio
+   *   t3: ON   — prev_dur = gap1→2 OFF duration
+   *   t4: OFF  — prev_dur = beep1 ON duration; ratio = beep1 band-ratio
+   *
+   * After t0 we are in OFF; we require ≥ 500 ms of trailing silence
+   * before declaring a knock (otherwise a 4th impulse might still be
+   * coming). Knocks shorter than 500 ms of trailing silence are also
+   * VERY easily confused with the first 3 beeps of a T3 alarm. */
+  const Transition* t0 = recent(0);
+  const Transition* t1 = recent(1);
+  const Transition* t2 = recent(2);
+  const Transition* t3 = recent(3);
+  const Transition* t4 = recent(4);
+  if (!t0 || !t1 || !t2 || !t3 || !t4) return -1;
+  if (t0->is_on || !t1->is_on || t2->is_on || !t3->is_on || t4->is_on) return -1;
+
+  const int32_t b1 = (int32_t)t4->prev_dur_ms;
+  const int32_t g12 = (int32_t)t3->prev_dur_ms;
+  const int32_t b2 = (int32_t)t2->prev_dur_ms;
+  const int32_t g23 = (int32_t)t1->prev_dur_ms;
+  const int32_t b3 = (int32_t)t0->prev_dur_ms;
+  const int32_t trailing = (int32_t)(now_ms - t0->at_ms);
+  if (trailing < 500) return -1;
+
+  /* Beep duration window: 30..180 ms. Knuckle impulses are sharp; a
+   * 200+ ms "knock" is a slam or a TV thud, not a knock. */
+  if (b1 < 30 || b1 > 180) return -1;
+  if (b2 < 30 || b2 > 180) return -1;
+  if (b3 < 30 || b3 > 180) return -1;
+  /* Gap window: 60..400 ms. A human knocks 3–5 times per second. */
+  if (g12 < 60 || g12 > 400) return -1;
+  if (g23 < 60 || g23 > 400) return -1;
+  /* Don't fire on patterns that drag on too long — a slow drumbeat
+   * shouldn't read as a knock. */
+  const int32_t span = b1 + g12 + b2 + g23 + b3;
+  if (span > 1800) return -1;
+
+  /* Low-band dominant during the impulses (band_ratio < 130 means HPF
+   * energy is less than 1.3× full-band; impacts have most energy <2 kHz). */
+  if (t4->band_ratio_x100 >= 130) return -1;
+  if (t2->band_ratio_x100 >= 130) return -1;
+  if (t0->band_ratio_x100 >= 130) return -1;
+
+  /* Confidence: 100 minus the relative variance of beep durations and
+   * gap durations — even-tempo knocks score best. */
+  auto absdiff = [](int32_t a, int32_t b) -> int32_t {
+    int32_t d = a - b; return d < 0 ? -d : d;
+  };
+  const int32_t b_mean = (b1 + b2 + b3) / 3;
+  const int32_t b_var  = (absdiff(b1, b_mean) + absdiff(b2, b_mean) + absdiff(b3, b_mean)) / 3;
+  const int32_t g_var  = absdiff(g12, g23);
+  /* Variance ≤ 30 ms ⇒ ~100, variance ≥ 100 ms ⇒ ~50. */
+  int32_t conf = 110 - (b_var + g_var);
+  if (conf < 50) conf = 50;
+  if (conf > 100) conf = 100;
+  return (int)conf;
+}
+
+static int score_doorbell_cycle(uint32_t now_ms) {
+  /* Pattern (newest first):
+   *   t0: OFF — prev_dur = tone2 ON; ratio = tone2 band-ratio
+   *   t1: ON  — prev_dur = gap OFF duration
+   *   t2: OFF — prev_dur = tone1 ON; ratio = tone1 band-ratio
+   * Required: at least 600 ms of trailing silence (doorbells finish then quiet). */
+  const Transition* t0 = recent(0);
+  const Transition* t1 = recent(1);
+  const Transition* t2 = recent(2);
+  if (!t0 || !t1 || !t2) return -1;
+  if (t0->is_on || !t1->is_on || t2->is_on) return -1;
+
+  const int32_t tone1 = (int32_t)t2->prev_dur_ms;
+  const int32_t gap   = (int32_t)t1->prev_dur_ms;
+  const int32_t tone2 = (int32_t)t0->prev_dur_ms;
+  const int32_t trailing = (int32_t)(now_ms - t0->at_ms);
+  if (trailing < 600) return -1;
+
+  /* Tones: 250..900 ms. Shorter is a knock; longer is voice/music. */
+  if (tone1 < 250 || tone1 > 900) return -1;
+  if (tone2 < 250 || tone2 > 900) return -1;
+  /* Gap: 50..400 ms. Quicker is staccato; slower is two separate words. */
+  if (gap < 50 || gap > 400) return -1;
+
+  /* Mid band-ratio: 60..130 (neither knock-low nor shatter-high). */
+  if (t2->band_ratio_x100 < 60 || t2->band_ratio_x100 > 130) return -1;
+  if (t0->band_ratio_x100 < 60 || t0->band_ratio_x100 > 130) return -1;
+
+  /* Anti-T3 guard: a stray pair of beeps from a smoke alarm 500 ms apart
+   * would otherwise look very doorbell-like at relaxed thresholds. Bail
+   * if both tones are near 500 ms AND the gap is near 500 ms. */
+  if (tone1 > 400 && tone1 < 650 && tone2 > 400 && tone2 < 650 &&
+      gap   > 350 && gap   < 650) return -1;
+
+  auto absdiff = [](int32_t a, int32_t b) -> int32_t {
+    int32_t d = a - b; return d < 0 ? -d : d;
+  };
+  const int32_t t_var = absdiff(tone1, tone2);
+  /* Two tones within 100 ms of each other ⇒ high confidence; 400 ms ⇒ low. */
+  int32_t conf = 110 - (t_var / 3);
+  if (conf < 50) conf = 50;
+  if (conf > 100) conf = 100;
+  return (int)conf;
+}
+
+static int score_glass_break_cycle(uint32_t now_ms) {
+  /* Pattern (newest first):
+   *   t0: OFF — prev_dur = single sustained ON; ratio = ON band-ratio
+   *   t1: ON  — prev_dur = previous OFF duration (don't care, must be quiet)
+   * Required: at least 500 ms of trailing silence so we don't fire mid-noise. */
+  const Transition* t0 = recent(0);
+  const Transition* t1 = recent(1);
+  if (!t0 || !t1) return -1;
+  if (t0->is_on || !t1->is_on) return -1;
+
+  const int32_t on_dur   = (int32_t)t0->prev_dur_ms;
+  const int32_t trailing = (int32_t)(now_ms - t0->at_ms);
+  if (trailing < 500) return -1;
+
+  /* Sustained 800..3000 ms — characteristic of a full shatter (initial
+   * impact + 1–2 s of falling-glass decay). Below 800 ms is too short
+   * for a real shatter; above 3 s is some other sustained noise. */
+  if (on_dur < 800 || on_dur > 3000) return -1;
+
+  /* High band-ratio: ≥ 130 means HPF energy is at least 1.3× full-band,
+   * which happens when most of the energy sits above ~4 kHz. Glass
+   * shatter's broadband tail centers around 1–5 kHz with significant
+   * energy above 4 kHz; voice, slams, knocks all stay below. */
+  if (t0->band_ratio_x100 < 130) return -1;
+
+  /* Confidence: higher ratio + longer duration ⇒ higher confidence.
+   * Map the ratio (130..200) and duration (800..3000) into 60..100. */
+  const int32_t ratio_score = ((int32_t)t0->band_ratio_x100 - 130) * 100 / 70;
+  const int32_t dur_score   = (on_dur > 2000) ? 100 : (on_dur - 800) * 100 / 1200;
+  int32_t conf = 60 + ((ratio_score + dur_score) * 40) / 200;
+  if (conf < 60)  conf = 60;
+  if (conf > 100) conf = 100;
+  return (int)conf;
+}
+#endif  /* FEATURE_ACOUSTIC_TRANSIENTS */
+
 /* ──────────────────────────────────────────────────────────────────────────
  * EVENT EMITTER
  * ────────────────────────────────────────────────────────────────────────── */
@@ -457,6 +688,18 @@ bool init(const audio_config_t& cfg) {
   s_last_event_ms = 0;
   s_t3_cycles = 0;
   s_t4_cycles = 0;
+  #if FEATURE_ACOUSTIC_TRANSIENTS
+  s_hpf_prev_last = 0;
+  s_state_rms_sum = 0;
+  s_state_hpf_rms_sum = 0;
+  s_state_frames = 0;
+  s_knock_matched = false;
+  s_doorbell_matched = false;
+  s_glass_matched = false;
+  s_knock_count = 0;
+  s_doorbell_count = 0;
+  s_glass_count = 0;
+  #endif
 
   s_last_rms = 0;
   s_last_rms_ms = 0;
@@ -512,6 +755,18 @@ void stop() {
   s_cycle_matched = false;
   s_t3_cycles = 0;
   s_t4_cycles = 0;
+  #if FEATURE_ACOUSTIC_TRANSIENTS
+  /* Wipe the HPF state so the next start() doesn't carry sub-sample
+   * memory across a mute boundary — same privacy intent as the
+   * sample-buffer wipe. */
+  s_hpf_prev_last = 0;
+  s_state_rms_sum = 0;
+  s_state_hpf_rms_sum = 0;
+  s_state_frames = 0;
+  s_knock_matched = false;
+  s_doorbell_matched = false;
+  s_glass_matched = false;
+  #endif
   /* Wipe the published level — when muted, /api/audio/level returns zero. */
   s_last_rms = 0;
   s_last_rms_ms = 0;
@@ -797,6 +1052,13 @@ int process() {
     }
 
     const uint16_t rms = compute_rms(samples, n);
+    #if FEATURE_ACOUSTIC_TRANSIENTS
+    /* Compute the high-pass-band RMS BEFORE the wipe, while samples are
+     * still alive. The result is a single uint16 like full-RMS; we
+     * accumulate per-state averages below and only the per-transition
+     * AVERAGE ratio is retained — never the per-frame value. */
+    const uint16_t hpf_rms = compute_hpf_rms(samples, n);
+    #endif
     /* PRIVACY BARRIER: wipe the FULL buffer (not just n samples) so any
      * tail beyond the short read is also zeroed. compute_rms takes
      * `const int16_t*` precisely so it can't accidentally leave the wipe
@@ -806,6 +1068,18 @@ int process() {
     s_stats.frames_processed++;
     s_stats.envelope_samples++;
     frames_this_call++;
+
+    #if FEATURE_ACOUSTIC_TRANSIENTS
+    /* Accumulate per-state band-ratio so we can summarize the just-
+     * ended state into one byte at the next transition. Saturate the
+     * sum at 32 bits — at 16 kHz × 20 ms × 65535 max RMS we'd take
+     * thousands of seconds to overflow, but be safe. */
+    if (s_state_rms_sum < 0xF0000000UL) {
+      s_state_rms_sum     += rms;
+      s_state_hpf_rms_sum += hpf_rms;
+      s_state_frames++;
+    }
+    #endif
 
     /* Hysteresis state machine on the envelope. */
     const uint32_t now = millis();
@@ -834,11 +1108,31 @@ int process() {
     if (transition) {
       const uint32_t prev_dur = (s_state_entered_ms == 0)
                                 ? 0 : (now - s_state_entered_ms);
-      push_transition(entered_on, now, prev_dur);
+      uint8_t prev_band_ratio = 100;  /* 100 = "broadband" default */
+      #if FEATURE_ACOUSTIC_TRANSIENTS
+      /* Summarize the just-ended state's band concentration. The ratio
+       * is hpf_avg / full_avg * 100. Sums over the same frames so the
+       * mean cancels out — just divide. Skip when frames==0 (transition
+       * fired immediately at boot) or full_avg==0 (silent state — the
+       * ratio is undefined; report 100 = "no opinion"). */
+      if (s_state_frames > 0 && s_state_rms_sum > 0) {
+        const uint32_t r = (s_state_hpf_rms_sum * 100u) / s_state_rms_sum;
+        prev_band_ratio = (uint8_t)(r > 200u ? 200u : r);
+      }
+      s_state_rms_sum = 0;
+      s_state_hpf_rms_sum = 0;
+      s_state_frames = 0;
+      #endif
+      push_transition(entered_on, now, prev_dur, prev_band_ratio);
       s_state_entered_ms = now;
       /* Every new transition rearms the cadence matcher — the matcher
        * may now declare a fresh cycle. */
       s_cycle_matched = false;
+      #if FEATURE_ACOUSTIC_TRANSIENTS
+      s_knock_matched    = false;
+      s_doorbell_matched = false;
+      s_glass_matched    = false;
+      #endif
 
       if (__atomic_load_n(&s_selftest_active, __ATOMIC_ACQUIRE)) {
         __atomic_fetch_add(&s_selftest_transitions_seen, 1, __ATOMIC_RELAXED);
@@ -910,6 +1204,43 @@ int process() {
           s_cycle_matched = true;
         }
       }
+
+      #if FEATURE_ACOUSTIC_TRANSIENTS
+      /* Phase 2b detectors. These never run under self-test mode — the
+       * user pressing TEST on an alarm is what selftest_active gates,
+       * and we don't want a test press to ALSO fire a stray glass-break
+       * automation. They share the same OFF-with-1s-silence gate as
+       * T3/T4 so they only run once per "thing-then-quiet" cycle. */
+      if (!relaxed && !s_cycle_matched) {
+        if (!s_knock_matched) {
+          const int k = score_knock_cycle(now);
+          if (k >= 50) {
+            s_knock_count++;
+            s_stats.knock_detected++;
+            try_emit_event(AUDIO_EVENT_KNOCK, (uint8_t)k, s_knock_count, now);
+            s_knock_matched = true;
+          }
+        }
+        if (!s_doorbell_matched) {
+          const int d = score_doorbell_cycle(now);
+          if (d >= 60) {
+            s_doorbell_count++;
+            s_stats.doorbell_detected++;
+            try_emit_event(AUDIO_EVENT_DOORBELL, (uint8_t)d, s_doorbell_count, now);
+            s_doorbell_matched = true;
+          }
+        }
+        if (!s_glass_matched) {
+          const int g = score_glass_break_cycle(now);
+          if (g >= 70) {
+            s_glass_count++;
+            s_stats.glass_break_detected++;
+            try_emit_event(AUDIO_EVENT_GLASS_BREAK, (uint8_t)g, s_glass_count, now);
+            s_glass_matched = true;
+          }
+        }
+      }
+      #endif  /* FEATURE_ACOUSTIC_TRANSIENTS */
     }
   }
 
@@ -931,6 +1262,9 @@ const char* event_name(uint8_t type) {
     case AUDIO_EVENT_NONE:           return "none";
     case AUDIO_EVENT_T3_SMOKE_ALARM: return "smoke_alarm_t3";
     case AUDIO_EVENT_T4_CO_ALARM:    return "co_alarm_t4";
+    case AUDIO_EVENT_KNOCK:          return "knock";
+    case AUDIO_EVENT_DOORBELL:       return "doorbell";
+    case AUDIO_EVENT_GLASS_BREAK:    return "glass_break";
     default:                         return "unknown";
   }
 }
