@@ -15,6 +15,10 @@
 #include "airtime_governor.h"
 #include "log_level.h"
 #include "health_log.h"
+// v0.5: cross-namespace call into beacon_channel::on_peer_tampered from
+// handle_tamper_alert. The header is FEATURE_BEACON_CHANNEL-gated
+// internally so it's a no-op when the feature is off.
+#include "beacon_channel.h"
 #include <Arduino.h>
 #include <Preferences.h>
 #include <esp_now.h>
@@ -772,6 +776,14 @@ static void handle_tamper_alert(OperaPeer* peer, const uint8_t* payload) {
   if (g_alert_callback) {
     g_alert_callback(&mesh_alert);
   }
+
+#if FEATURE_BEACON_CHANNEL
+  // v0.5: auto-revoke this peer's Beacon trust on tamper. The pubkey is
+  // shared between Opera and Beacon identities (spec §3.1), so a single
+  // event covers both channels' trust surfaces. Side-effect-only; no-op
+  // if the peer isn't in our Beacon set.
+  beacon_channel::on_peer_tampered(peer->pubkey);
+#endif
 }
 
 static void handle_power_alert(OperaPeer* peer, const uint8_t* payload) {

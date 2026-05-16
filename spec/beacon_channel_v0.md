@@ -124,6 +124,13 @@ To revoke globally across a building, every cosigner must remove the pubkey from
 
 A `trust_level = 2` (revoked) state is supported: the pubkey is kept locally for logging purposes ("this revoked device tried to originate") but never accepted as a signer.
 
+**Auto-revoke on tamper (v0.5).** When a Beacon-set member sends an Opera-mesh tamper alert (`MSG_TAMPER_ALERT`) — meaning that device's enclosure has been opened, its motion sensor fired unexpectedly, or its physical-tamper switch closed — receivers in the Opera mesh that have the same pubkey in their Beacon set automatically transition that entry to `trust_level = REVOKED`. The hook lives at `mesh_network.cpp::handle_tamper_alert` → `beacon_channel::on_peer_tampered(device_pubkey)`. No human-in-the-loop wait. Properties:
+
+- **Idempotent**: repeated tamper alerts from the same pubkey leave the entry in `REVOKED` and don't oscillate state.
+- **Side-effect only**: if the tampered device isn't in our Beacon set, the call is a no-op.
+- **Recompute Trouble**: after revoke, `recompute_trouble_reasons()` runs so the NFPA-72 state surface reflects the diminished beacon set immediately.
+- **Recovery**: re-pairing the affected device through the normal pairing flow re-establishes trust. Operators should physically inspect the device before re-pairing — the tamper signal is meant to be acted on, not papered over.
+
 ### 3.5 Gateway pubkeys (forward-looking)
 
 Reserved: pubkeys may carry `trust_level = 1` (gateway). A gateway-trust pubkey may originate solo (no co-signer required) but only if the frame carries a verifiable second signature from the upstream feed (e.g., CAP XML-DSig). Receivers display gateway-originated frames with a clear "from gateway X" badge and **never** at higher urgency than community-originated frames. This is fully specified in `spec/beacon_cap_gateway_v0.md`; no implementation in v0.
@@ -593,8 +600,8 @@ What Beacon never shares:
 
 - **Threshold signatures (FROST or similar)** to make co-signing scale beyond pairs without bloating the wire format.
 - **Gateway operator implementation** per `spec/beacon_cap_gateway_v0.md`.
-- **Audible self-test** following NFPA 72 §14 cadence (monthly chirp confirming the device is healthy).
-- **Hardware tamper integration** — a tamper alert on a Beacon-paired device automatically downgrades it to `trust_level = 2` in the local beacon set.
+- ~~**Audible self-test** following NFPA 72 §14 cadence (monthly chirp confirming the device is healthy).~~ **Closed in v0.5** — see `audible_chirp.h::PATTERN_SELFTEST_OK_NOTES` (1500 Hz, 80 ms) + scheduling in `canary_wap.ino` main loop. 30-day cadence, suppressed at night (22:00–06:00 local) and when wall clock is unsynced.
+- ~~**Hardware tamper integration** — a tamper alert on a Beacon-paired device automatically downgrades it to `trust_level = 2` in the local beacon set.~~ **Closed in v0.5** — see §3.4 "Auto-revoke on tamper" above and `beacon_channel::on_peer_tampered`.
 
 ## 16. Changelog
 

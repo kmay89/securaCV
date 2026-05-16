@@ -200,6 +200,42 @@ host tests assert they do, on real radio.
     Receiver's `beacon_active_template` does not change.
   - Artifact: `docs/audit/repro/beacon/solo_certainty_tamper/`.
 
+- [ ] **Auto-revoke on tamper (v0.5)**
+  - Setup: three boards. A and B paired into the same Opera mesh AND
+    paired into each other's beacon set. C is the test stimulus.
+  - Repro: open A's enclosure (or whatever triggers its tamper sensor).
+    A broadcasts `MSG_TAMPER_ALERT`. B receives it.
+  - Post-fix expected: B's `beacon_channel::on_peer_tampered(A.pubkey)`
+    fires from `handle_tamper_alert`. Verify via
+    `GET /api/beacon/set` on B that A's entry now shows
+    `trust_level: "revoked"`. Verify that any subsequent Beacon frame
+    from A (originated as a happy-path test) is dropped at the trust
+    check on B with log line
+    `beacon: paired neighbor revoked on tamper alert (v0.5 auto-revoke)`.
+  - Recovery: physically inspect A; if the tamper was malicious, replace
+    or reflash; if it was operator error (opened for maintenance),
+    re-pair A through the standard pairing flow.
+  - Artifact: `docs/audit/repro/beacon/auto_revoke/`.
+
+- [ ] **Audible self-test cadence (NFPA 72 §14, v0.5)**
+  - Setup: one board with passive buzzer on the chirp GPIO. Audio
+    capture device. Set the system clock forward 30 days (`date -s` or
+    a flashed NVS field) to fast-forward the self-test schedule.
+  - Repro: let the device run; observe.
+  - Post-fix expected: a single 1500 Hz, 80 ms beep plays once per
+    30 days, only during 06:00–22:00 local time. The health log
+    records `self-test chirp played (NFPA-72 supervised)` each
+    occurrence. Spectrogram confirms NO reserved emergency-broadcast
+    frequencies are touched at any point.
+  - Negative cases to verify:
+    - Set clock to 02:00 local; advance 30 days. No chirp plays
+      (night-mode suppression). After 06:00, chirp plays on next loop.
+    - Disable SNTP; ensure no chirp plays (unsynced suppression).
+    - Trigger an active Beacon alarm and then advance 30 days. The
+      self-test is suppressed during alarm state (don't compete with
+      an emergency).
+  - Artifact: `docs/audit/repro/beacon/selftest_cadence/`.
+
 - [ ] **Audit log persistence across reboot + rotation**
   - Setup: one board, FE enabled.
   - Repro: emit ≥65 Beacon ALERTs (one above `AUDIT_LOG_MAX`),

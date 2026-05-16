@@ -64,6 +64,7 @@ enum ChirpPattern : uint8_t {
   PATTERN_SUCCESS,       // Pleasant ascending — operation succeeded
   PATTERN_ERROR,         // Descending buzz — operation failed
   PATTERN_BEACON,        // Beacon-channel ALARM — distinct from PATTERN_ALERT
+  PATTERN_SELFTEST_OK,   // NFPA 72 §14 monthly self-test confirmation — one quiet short tone
   PATTERN_COUNT
 };
 
@@ -123,17 +124,28 @@ static const ChirpNote PATTERN_BEACON_NOTES[] = {
   {1200, 150}, {0, 50}, {1700, 150}, {0, 50}, {2200, 200}, {0, 0}
 };
 
+// "Self-test OK" — NFPA 72 §14 monthly supervised-circuit confirmation
+// chirp. A single quiet short tone at 1500 Hz for 80 ms — audible enough
+// to confirm the device is alive without becoming a nuisance. Played at
+// most once per 30 days, only during waking hours (06:00-22:00 local
+// time when wall clock is synced; suppressed when unsynced or in any
+// alarm/trouble state). Scheduled in canary_wap.ino main loop.
+static const ChirpNote PATTERN_SELFTEST_OK_NOTES[] = {
+  {1500, 80}, {0, 0}
+};
+
 static const ChirpNote* PATTERNS[] = {
   PATTERN_CONFIRM_NOTES,
   PATTERN_ALERT_NOTES,
   PATTERN_TAMPER_NOTES,
   PATTERN_SUCCESS_NOTES,
   PATTERN_ERROR_NOTES,
-  PATTERN_BEACON_NOTES
+  PATTERN_BEACON_NOTES,
+  PATTERN_SELFTEST_OK_NOTES
 };
 
 static const char* PATTERN_NAMES[] = {
-  "confirm", "alert", "tamper", "success", "error", "beacon"
+  "confirm", "alert", "tamper", "success", "error", "beacon", "selftest_ok"
 };
 
 // ════════════════════════════════════════════════════════════════════════════
