@@ -40,6 +40,17 @@ static char s_topic_tamper[64];
 static char s_topic_transport[64];
 static char s_topic_sensing[64];
 static char s_topic_avail[64];
+static char s_topic_mic_state[64];   // retained state for the HA switch
+static char s_topic_mic_cmd[64];     // HA writes "mute"/"unmute" here
+
+// Application-supplied callback for inbound mic mute commands.
+static mqtt_mic_mute_cmd_cb_t s_mic_mute_cmd_cb = nullptr;
+
+// Last mic mute state the app published. Stashed so we can republish it
+// on every successful (re)connect, otherwise HA's switch entity would
+// stay "unknown" after a broker restart until the next toggle.
+static bool s_last_mic_muted = false;
+static bool s_mic_state_ever_set = false;
 
 // Reconnect backoff
 static uint32_t s_reconnect_delay_ms = MQTT_RECONNECT_MIN_MS;
@@ -67,6 +78,57 @@ static void build_topics(const char* device_id) {
   snprintf(s_topic_transport, sizeof(s_topic_transport), "securacv/%s/transport", device_id);
   snprintf(s_topic_sensing,   sizeof(s_topic_sensing),   "securacv/%s/sensing",   device_id);
   snprintf(s_topic_avail,     sizeof(s_topic_avail),     "securacv/%s/availability", device_id);
+  snprintf(s_topic_mic_state, sizeof(s_topic_mic_state), "securacv/%s/mic/state", device_id);
+  snprintf(s_topic_mic_cmd,   sizeof(s_topic_mic_cmd),   "securacv/%s/mic/cmd",   device_id);
+}
+
+// Inbound MQTT message dispatcher. Currently the only subscribed topic
+// is the mic mute command; if we add more in the future this should
+// switch on `topic`.
+static void on_mqtt_message(char* topic, byte* payload, unsigned int len) {
+  if (!topic || !payload) return;
+  if (strcmp(topic, s_topic_mic_cmd) != 0) return;
+
+  // Accept exactly "mute" / "unmute" (our pl_on / pl_off) and exactly
+  // "ON" / "OFF" (HA's default switch payload). Tolerate leading
+  // whitespace and a surrounding "..." (sometimes appears when an
+  // automation publishes a JSON-quoted string by accident). After the
+  // token we require an end-of-buffer / whitespace / quote / closing
+  // brace — without this guard, "online" would match "ON" and
+  // "offload" would match "OFF", silently toggling the mic.
+  const byte* p = payload;
+  unsigned int n = len;
+  while (n > 0 && (*p == ' ' || *p == '\t' || *p == '"')) { p++; n--; }
+
+  auto is_boundary = [](byte c) -> bool {
+    return c == ' ' || c == '\t' || c == '\r' || c == '\n' ||
+           c == '"' || c == '}' || c == '\0';
+  };
+  auto token_ends_at = [&](unsigned int tok_len) -> bool {
+    return n == tok_len || is_boundary(p[tok_len]);
+  };
+
+  bool muted = false;
+  bool recognized = false;
+  if (n >= 4 && memcmp(p, "mute", 4) == 0 && token_ends_at(4)) {
+    muted = true; recognized = true;
+  } else if (n >= 6 && memcmp(p, "unmute", 6) == 0 && token_ends_at(6)) {
+    muted = false; recognized = true;
+  } else if (n >= 3 && (p[0] == 'O' || p[0] == 'o') &&
+                       (p[1] == 'F' || p[1] == 'f') &&
+                       (p[2] == 'F' || p[2] == 'f') && token_ends_at(3)) {
+    muted = false; recognized = true;
+  } else if (n >= 2 && (p[0] == 'O' || p[0] == 'o') &&
+                       (p[1] == 'N' || p[1] == 'n') && token_ends_at(2)) {
+    muted = true; recognized = true;
+  }
+
+  if (!recognized) {
+    log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK,
+               "MQTT: unrecognised mic command payload", nullptr);
+    return;
+  }
+  if (s_mic_mute_cmd_cb) s_mic_mute_cmd_cb(muted);
 }
 
 static void build_client_id() {
@@ -122,9 +184,25 @@ static bool attempt_connect() {
 
     log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "MQTT connected", s_creds.host);
 
+    // Inbound command path: register dispatcher + subscribe to the mic
+    // mute command topic. Re-subscribed on every reconnect (broker may
+    // have dropped the subscription).
+    s_mqtt.setCallback(on_mqtt_message);
+    s_mqtt.subscribe(s_topic_mic_cmd, 1);
+
     #if FEATURE_HA_DISCOVERY
     mqtt_send_ha_discovery(s_device_id, s_firmware_version);
     #endif
+
+    // Republish the last known mic mute state so HA's switch entity
+    // doesn't sit at "unknown" after a broker restart. Skipped until
+    // the application has called mqtt_publish_mic_mute_state at least
+    // once so we know the real value.
+    if (s_mic_state_ever_set) {
+      s_mqtt.publish(s_topic_mic_state,
+                     s_last_mic_muted ? "muted" : "live",
+                     /*retain*/ true);
+    }
 
     return true;
   }
@@ -333,6 +411,19 @@ bool mqtt_publish_sensing(const char* json_payload) {
    * next publish interval. The payload is small (< 600 bytes) so
    * broker storage cost is negligible. */
   return s_mqtt.publish(s_topic_sensing, json_payload, true);
+}
+
+bool mqtt_publish_mic_mute_state(bool muted) {
+  s_last_mic_muted = muted;
+  s_mic_state_ever_set = true;
+  if (!s_mqtt.connected()) return false;
+  /* Retained so HA's switch entity reflects the right state on
+   * restart even if no toggle has happened recently. */
+  return s_mqtt.publish(s_topic_mic_state, muted ? "muted" : "live", true);
+}
+
+void mqtt_set_mic_mute_cmd_callback(mqtt_mic_mute_cmd_cb_t cb) {
+  s_mic_mute_cmd_cb = cb;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -666,6 +757,35 @@ bool mqtt_send_ha_discovery(const char* device_id, const char* firmware_version)
     String payload;
     serializeJson(doc, payload);
     all_ok = all_ok && publish_discovery("binary_sensor", device_id, "smoke_alarm", payload.c_str());
+  }
+
+  // ── Switch: microphone mute ──
+  // Gives Home Assistant a toggle for muting the on-board PDM mic.
+  // Named "Microphone Mute" (not "Microphone") so the switch semantics
+  // line up with the mdi:microphone-off icon: ON = muted, OFF = live.
+  // We deliberately do NOT retain on the command topic — retaining
+  // commands means the broker replays the last command on every
+  // (re)connect, which would silently re-apply a stale mute/unmute
+  // after a dashboard-side toggle. The retained state topic alone
+  // gives HA enough info to reconcile.
+  if (all_ok) {
+    JsonDocument doc;
+    doc["name"]    = "Microphone Mute";
+    doc["stat_t"]  = s_topic_mic_state;
+    doc["cmd_t"]   = s_topic_mic_cmd;
+    doc["pl_on"]   = "mute";     // HA "switch ON"  = muted
+    doc["pl_off"]  = "unmute";   // HA "switch OFF" = live
+    doc["stat_on"] = "muted";
+    doc["stat_off"] = "live";
+    doc["ic"]      = "mdi:microphone-off";
+    char uid[64];
+    snprintf(uid, sizeof(uid), "securacv_%s_mic_mute", device_id);
+    doc["uniq_id"] = uid;
+    JsonObject dev = doc["dev"].to<JsonObject>();
+    add_device_info(dev, device_id, firmware_version);
+    String payload;
+    serializeJson(doc, payload);
+    all_ok = all_ok && publish_discovery("switch", device_id, "mic_mute", payload.c_str());
   }
 
   // ── Binary Sensor: co_alarm (T4 cadence) ──

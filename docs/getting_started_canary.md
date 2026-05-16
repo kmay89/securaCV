@@ -185,7 +185,18 @@ trust us; you should be able to check.
 - **Reproduce.** The full audio stack is open-source. The privacy
   contract is asserted in the doc-comment at the top of
   `securacv_audio.h`, and the `secure_wipe()` of every PDM buffer
-  lives at `securacv_audio.cpp:495`.
+  lives at `securacv_audio.cpp::process()`.
+- **Audit it.** Every mute or unmute is signed into the Ed25519
+  witness chain with the source (dashboard / Home Assistant / boot)
+  and a 10-min time bucket. Export the chain (**Settings → Export →
+  Witness chain**) to see when the mic was on or off — useful if you
+  ever need to prove "the device was *not* listening at time X" or
+  "the device was un-muted before the incident."
+- **Toggle from Home Assistant.** If MQTT is configured, the
+  device exposes a `Microphone` switch entity. Flipping it from HA
+  goes through the same I2S teardown, the same NVS persistence, and
+  the same witness signature as the dashboard toggle — with the
+  source tagged `MQTT` so an auditor can tell.
 
 ### 5.4 · Testing the mic
 
@@ -210,6 +221,18 @@ during a test press.
 If nothing matches in 30 s, the panel will tell you whether it heard
 *any* sound transitions (so you can tell "mic broken" from "alarm too
 far away" from "alarm uses a non-standard cadence").
+
+**Step 3 — No alarm? Test against a synthetic tone.** Below the *Listen
+for 30 s* button there are **Play T3 (smoke)** and **Play T4 (CO)**
+buttons. They use your phone's or laptop's speakers to emit the
+standard 3.2 kHz alarm cadence — sample-accurately scheduled in the
+browser via Web Audio API. Hold the device within ~30 cm of the Canary;
+the test panel should match within a couple of cycles. **This is a
+synthetic test pattern.** Speakers and real alarms differ in frequency
+response and reverberation, so it's a fast sanity check that the
+detector works at all — not a replacement for the real-alarm test
+above. Always verify against an actual UL-listed alarm before relying
+on the detector.
 
 ---
 
@@ -391,6 +414,7 @@ The sensing entities you'll see:
 | **Last IR Protocol** | sensor (diagnostic) | NEC / RC5 / Sony / none |
 | **Last IR Bucket** | sensor (diagnostic) | 0..15 per-session salted hash |
 | **Last Wake** | sensor (diagnostic) | cold_boot / timer / touch / ext0 / ext1 / ulp |
+| **Microphone** | switch (icon `mdi:microphone-off`) | Toggle the mic mute from HA. Every flip is signed into the witness chain (audit trail). |
 
 Plus the existing 11 system entities (witness count, chain seq,
 uptime, free heap, GPS, online, etc.).

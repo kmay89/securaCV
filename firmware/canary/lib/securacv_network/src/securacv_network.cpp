@@ -38,7 +38,6 @@
 #endif
 #if FEATURE_ACOUSTIC_EVENTS
 #include "securacv_audio.h"
-#include <Preferences.h>   /* persist mic mute across reboots */
 #endif
 #if FEATURE_TOUCH
 #include "securacv_touch.h"
@@ -1444,6 +1443,19 @@ static esp_err_t handle_sensing(httpd_req_t* req) {
   ac["last_event_age_ms"] =
       s.last_audio_event_ms == 0 ? -1L : (long)(millis() - s.last_audio_event_ms);
 
+  /* Last applied mute toggle — lets the dashboard show "Muted by Home
+   * Assistant · 2 min ago" so the user can tell who flipped the mic.
+   * source is 0=boot, 1=http (dashboard), 2=mqtt (Home Assistant). */
+  audio_mute_info_t mi;
+  audio_get_mute_info(&mi);
+  if (mi.age_ms != UINT32_MAX) {
+    ac["last_mute_source"]  = mi.source;
+    ac["last_mute_age_ms"]  = (long)mi.age_ms;
+  } else {
+    ac["last_mute_source"]  = -1;
+    ac["last_mute_age_ms"]  = -1L;
+  }
+
   JsonObject ast = ac["stats"].to<JsonObject>();
   ast["frames_processed"] = a_stats.frames_processed;
   ast["on_transitions"]   = a_stats.on_transitions;
@@ -1605,25 +1617,24 @@ static esp_err_t handle_audio_mute(httpd_req_t* req) {
   const bool want_muted = input["muted"].as<bool>();
 
   /* Apply at runtime. audio_mute(true) physically uninstalls I2S so the
-   * GPIOs go tri-state — a user-verifiable hardware-level mute. */
-  const bool ok = audio_mute(want_muted);
+   * GPIOs go tri-state — a user-verifiable hardware-level mute. The
+   * source byte is recorded in the witness chain audit trail. */
+  const bool ok = audio_mute(want_muted, AUDIO_MUTE_SOURCE_HTTP);
   if (!ok && !want_muted) {
     /* Unmute failed (I2S didn't come up). Still persist the user's
      * intent — they may have hardware issues we can't paper over. */
   }
 
-  /* Persist user intent. NVS key is read at boot in main.cpp. */
-  Preferences prefs;
-  if (prefs.begin("securacv", false /* read-write */)) {
-    prefs.putBool("mic_muted", want_muted);
-    prefs.end();
-  }
+  /* Persist user intent regardless of apply result, using the shared
+   * helper so HTTP, MQTT, and any future control path stay in sync on
+   * the NVS namespace + key. */
+  const bool persisted = audio_save_mute_intent(want_muted);
 
   JsonDocument doc;
   doc["ok"] = true;
   doc["muted"] = audio_is_muted();
   doc["running"] = audio_is_running();
-  doc["persisted"] = true;
+  doc["persisted"] = persisted;
   String response;
   serializeJson(doc, response);
   return http_send_json(req, response.c_str());

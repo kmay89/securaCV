@@ -111,6 +111,19 @@ bool mqtt_publish_sensing(const char* json_payload);
 bool mqtt_send_ha_discovery(const char* device_id, const char* firmware_version);
 #endif
 
+// ── Inbound commands ────────────────────────────────────────────────────
+// Home Assistant publishes to a per-device command topic to flip the
+// matching `switch` entity. The MQTT lib subscribes and parses; the
+// application registers a callback to act on the command without the
+// MQTT lib having to depend on the audio HAL. Pass nullptr to clear.
+typedef void (*mqtt_mic_mute_cmd_cb_t)(bool muted);
+void mqtt_set_mic_mute_cmd_callback(mqtt_mic_mute_cmd_cb_t cb);
+
+// Publish the current mute state to the dedicated retained state topic
+// (separate from the main /sensing topic so HA's `switch` entity reflects
+// changes instantly rather than waiting for the next /sensing tick).
+bool mqtt_publish_mic_mute_state(bool muted);
+
 #endif // FEATURE_HA_MQTT
 
 #endif // SECURACV_MQTT_H
