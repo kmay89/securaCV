@@ -156,6 +156,17 @@ void sensing_feed_audio_event(uint8_t event_type, uint8_t confidence,
   }
 }
 
+void sensing_feed_mic_mute_event(bool muted, uint8_t source,
+                                 uint8_t time_bucket) {
+  if (!s_initialized) sensing_init();
+  /* No aggregator state field — mute is a config/audit event, not a
+   * "what is the room doing now?" signal. The witness record IS the
+   * artifact; the dashboard reads the live mic state from the audio
+   * HAL directly via /api/status. */
+  fire_witness(muted ? SENSING_WITNESS_MIC_MUTE : SENSING_WITNESS_MIC_UNMUTE,
+               /*confidence*/ 100, time_bucket, source);
+}
+
 void sensing_feed_touch_event(uint8_t event_type, uint8_t confidence,
                               uint8_t pad_channel, uint8_t time_bucket) {
   if (!s_initialized) sensing_init();

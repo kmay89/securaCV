@@ -127,6 +127,14 @@ void sensing_feed_touch_event(uint8_t event_type,
                               uint8_t pad_channel,
                               uint8_t time_bucket);
 
+/* Feed a mic mute/unmute event (from securacv_audio). Each toggle is
+ * signed into the witness chain so a later operator can verify whether,
+ * and from where, the mic was turned off. `source` is one of
+ * AUDIO_MUTE_SOURCE_BOOT / HTTP / MQTT — recorded in the category byte. */
+void sensing_feed_mic_mute_event(bool muted,
+                                 uint8_t source,
+                                 uint8_t time_bucket);
+
 /* Feed an IR appliance-activity event (NEC / RC5 / Sony from
  * securacv_ir). The hash_bucket is the 4-bit privacy-bucketed
  * HMAC of the IR payload; we don't get to see the raw payload. */
@@ -170,6 +178,8 @@ typedef enum {
   SENSING_WITNESS_TOUCH_PANIC     = 3,   /* silent panic long-press */
   SENSING_WITNESS_TOUCH_TAMPER    = 4,   /* enclosure tamper (pad disconnect) */
   SENSING_WITNESS_TEMP_DRIFT      = 5,   /* internal die-temp drift */
+  SENSING_WITNESS_MIC_MUTE        = 6,   /* user / HA / boot muted the mic */
+  SENSING_WITNESS_MIC_UNMUTE      = 7,   /* user / HA / boot unmuted the mic */
 } sensing_witness_kind_t;
 
 typedef struct {

@@ -297,6 +297,24 @@ void setup() {
 #if FEATURE_HA_MQTT
   Serial.println("[..] Initializing MQTT...");
   mqtt_init(device.device_id, FIRMWARE_VERSION);
+
+  #if FEATURE_ACOUSTIC_EVENTS
+  // HA can flip the mic mute via the discovered switch entity. The
+  // callback runs in the MQTT loop task (which IS the main task; the
+  // PubSubClient pumps from mqtt_loop()), so it can safely call into
+  // audio_mute() — that already defers the I2S teardown to
+  // audio_process() via atomic pending flags.
+  mqtt_set_mic_mute_cmd_callback([](bool muted) {
+    audio_mute(muted, AUDIO_MUTE_SOURCE_MQTT);
+    /* Persist intent so a reboot honors the HA-set state, identical
+     * to the dashboard mute path. */
+    Preferences mic_prefs;
+    if (mic_prefs.begin("securacv", false /* rw */)) {
+      mic_prefs.putBool("mic_muted", muted);
+      mic_prefs.end();
+    }
+  });
+  #endif
 #endif
 
   // Wire emergency / security sensing events into the Ed25519 witness
@@ -384,6 +402,22 @@ void setup() {
       sensing_feed_audio_event(evt->event_type, evt->confidence,
                                evt->cycle_count, evt->time_bucket);
     });
+    /* Sign every mute / unmute toggle into the witness chain. This lets
+     * a later operator verify when the mic was turned off and by what
+     * source (boot / dashboard / Home Assistant) — important if anyone
+     * ever asks "was the device listening at the time of the incident?". */
+    audio_set_mute_callback([](bool muted, uint8_t source) {
+      /* time_bucket: 10-min daily bucket, matches the convention used
+       * for the audio T3/T4 events. */
+      const uint8_t bkt = (uint8_t)((millis() / (10UL * 60UL * 1000UL)) % 144);
+      sensing_feed_mic_mute_event(muted, source, bkt);
+      /* Tell Home Assistant immediately so the switch entity reflects
+       * the new state without waiting for the next /sensing publish.
+       * No-op if MQTT isn't connected. */
+      #if FEATURE_HA_MQTT
+      mqtt_publish_mic_mute_state(muted);
+      #endif
+    });
     /* Honor user-persisted mute state. We're still single-task here —
      * the HTTP server has not started yet — so we can safely use the
      * synchronous boot helper that opens / skips I2S directly. After
@@ -398,11 +432,24 @@ void setup() {
     const bool boot_ok = audio_mute_sync_at_boot(persisted_mute);
     if (persisted_mute) {
       Serial.println("[OK] Acoustic detector held MUTED by user (NVS)");
+      /* Emit a boot-state mute record so the witness chain shows the
+       * device booted into the muted state — investigators can later
+       * tell "muted before the incident" from "muted in response to
+       * it". We only emit on the persisted-muted path; the unmuted
+       * default would flood the chain with one record per reboot. */
+      const uint8_t bkt = (uint8_t)((millis() / (10UL * 60UL * 1000UL)) % 144);
+      sensing_feed_mic_mute_event(true, AUDIO_MUTE_SOURCE_BOOT, bkt);
     } else if (boot_ok && audio_is_running()) {
       Serial.println("[OK] Acoustic detector armed (T3 smoke / T4 CO)");
     } else {
       Serial.println("[WARN] Acoustic detector start failed");
     }
+    /* Seed the MQTT-side cache with the current state. The publish
+     * itself is a no-op until the broker connection is up, but the
+     * cached value will be sent on the first successful connect. */
+    #if FEATURE_HA_MQTT
+    mqtt_publish_mic_mute_state(audio_is_muted());
+    #endif
   } else {
     Serial.println("[WARN] Acoustic detector init failed");
   }

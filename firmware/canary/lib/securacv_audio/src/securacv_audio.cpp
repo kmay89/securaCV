@@ -129,9 +129,14 @@ static bool s_muted = false;
  * sets *_pending and the main loop applies it from audio_process(). */
 static bool     s_mute_request_pending = false;
 static bool     s_mute_request_value   = false;
+static uint8_t  s_mute_request_source  = AUDIO_MUTE_SOURCE_BOOT;
 static bool     s_selftest_start_pending = false;
 static uint32_t s_selftest_start_duration = 0;
 static bool     s_selftest_stop_pending = false;
+
+/* Application callback fired when a deferred mute is applied. Set from
+ * main.cpp; routes the event into the sensing aggregator + witness chain. */
+static audio_mute_cb_t s_mute_cb = nullptr;
 
 /* Self-test mode (relaxed thresholds, normal event callback suppressed).
  * Cross-task: main loop writes, HTTP task reads via selftest_status(). */
@@ -510,15 +515,18 @@ void set_event_callback(audio_event_cb_t cb) { s_cb = cb; }
  * atomically and defers the actual I2S start/stop to the next
  * audio_process() tick in the main loop — calling i2s_driver_uninstall
  * from an HTTP task while the main loop is mid-i2s_read would crash. */
-bool mute(bool muted) {
+bool mute(bool muted, uint8_t source) {
   if (!s_initialized) return false;
   __atomic_store_n(&s_muted, muted, __ATOMIC_RELEASE);
   __atomic_store_n(&s_mute_request_value, muted, __ATOMIC_RELAXED);
+  __atomic_store_n(&s_mute_request_source, source, __ATOMIC_RELAXED);
   __atomic_store_n(&s_mute_request_pending, true, __ATOMIC_RELEASE);
   return true;
 }
 
 bool is_muted() { return __atomic_load_n(&s_muted, __ATOMIC_ACQUIRE); }
+
+void set_mute_callback(audio_mute_cb_t cb) { s_mute_cb = cb; }
 
 /* Called at boot from the main task BEFORE the HTTP server starts, so
  * we can synchronously start/stop the I2S driver without racing anything.
@@ -529,6 +537,7 @@ bool mute_sync_at_boot(bool muted) {
   /* Clear any stale pending request so the first audio_process() tick
    * doesn't immediately toggle I2S back. */
   __atomic_store_n(&s_mute_request_pending, false, __ATOMIC_RELAXED);
+  bool ok;
   if (muted) {
     if (s_running) {
       i2s_close();
@@ -545,10 +554,14 @@ bool mute_sync_at_boot(bool muted) {
     }
     log_health(LOG_LEVEL_INFO, LOG_CAT_SENSOR,
                "Audio: mic muted at boot", "I2S not started");
-    return true;
+    ok = true;
+  } else {
+    ok = s_running ? true : start();
   }
-  if (s_running) return true;
-  return start();
+  /* The boot path runs BEFORE set_mute_callback() is wired by main.cpp,
+   * so we won't normally fire the callback from here. main.cpp emits a
+   * single "boot-state" witness record after wiring the callback. */
+  return ok;
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -661,6 +674,8 @@ int process() {
    * flight. The handler atomically sets *_pending; we consume them here. */
   if (__atomic_exchange_n(&s_mute_request_pending, false, __ATOMIC_ACQUIRE)) {
     const bool want_mute = __atomic_load_n(&s_mute_request_value, __ATOMIC_RELAXED);
+    const uint8_t source = __atomic_load_n(&s_mute_request_source, __ATOMIC_RELAXED);
+    bool applied = false;
     if (want_mute && s_running) {
       i2s_close();
       s_running = false;
@@ -675,6 +690,7 @@ int process() {
       __atomic_store_n(&s_last_rms_ms, 0, __ATOMIC_RELEASE);
       log_health(LOG_LEVEL_INFO, LOG_CAT_SENSOR,
                  "Audio: mic muted by user", "I2S released");
+      applied = true;
     } else if (!want_mute && !s_running && s_initialized) {
       if (i2s_open()) {
         s_running = true;
@@ -682,8 +698,13 @@ int process() {
         s_cycle_matched = false;
         log_health(LOG_LEVEL_INFO, LOG_CAT_SENSOR,
                    "Audio: mic unmuted", "I2S re-armed");
+        applied = true;
       }
     }
+    /* Tell the application a real state change happened (so it can sign
+     * an audit-trail event into the witness chain). We deliberately do
+     * NOT fire on no-op transitions (mute when already muted, etc.). */
+    if (applied && s_mute_cb) s_mute_cb(want_mute, source);
   }
 
   if (__atomic_exchange_n(&s_selftest_start_pending, false, __ATOMIC_ACQUIRE)) {
@@ -898,9 +919,10 @@ int  audio_process(void)             { return audio::process(); }
 bool audio_get_stats(audio_stats_t* out) { return audio::get_stats(out); }
 const char* audio_event_name(uint8_t t) { return audio::event_name(t); }
 
-bool audio_mute(bool muted)             { return audio::mute(muted); }
+bool audio_mute(bool muted, uint8_t source) { return audio::mute(muted, source); }
 bool audio_is_muted(void)               { return audio::is_muted(); }
 bool audio_mute_sync_at_boot(bool muted){ return audio::mute_sync_at_boot(muted); }
+void audio_set_mute_callback(audio_mute_cb_t cb) { audio::set_mute_callback(cb); }
 
 bool audio_selftest_start(uint32_t duration_ms) {
   return audio::selftest_start(duration_ms);

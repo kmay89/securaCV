@@ -149,9 +149,19 @@ bool audio_is_running(void);
  * tri-stated until unmute). audio_mute(false) re-runs audio_start().
  * audio_is_muted() reports the last-requested state regardless of
  * whether the I2S driver could be re-opened.
+ *
+ * `source` is recorded so we can sign an audit-trail event into the
+ * witness chain — a tamperer flipping the mic off from HA leaves a
+ * different trail than the user clicking the dashboard button.
  * ────────────────────────────────────────────────────────────────────────── */
 
-bool audio_mute(bool muted);
+typedef enum {
+  AUDIO_MUTE_SOURCE_BOOT = 0,   /* applied at startup from persisted NVS */
+  AUDIO_MUTE_SOURCE_HTTP = 1,   /* user clicked the dashboard mute toggle */
+  AUDIO_MUTE_SOURCE_MQTT = 2,   /* command from Home Assistant via MQTT */
+} audio_mute_source_t;
+
+bool audio_mute(bool muted, uint8_t source);
 bool audio_is_muted(void);
 
 /* Synchronous mute used by the boot path BEFORE the HTTP server starts,
@@ -159,6 +169,13 @@ bool audio_is_muted(void);
  * any other context — use audio_mute() instead, which defers the I2S
  * teardown to the main loop to avoid racing audio_process(). */
 bool audio_mute_sync_at_boot(bool muted);
+
+/* Fired synchronously from audio_process() when a deferred mute toggle
+ * is actually applied. Always called from the main task, so the callback
+ * is free to call into other modules (sensing, witness, MQTT publish).
+ * Pass nullptr to unregister. */
+typedef void (*audio_mute_cb_t)(bool muted, uint8_t source);
+void audio_set_mute_callback(audio_mute_cb_t cb);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * SELF-TEST MODE

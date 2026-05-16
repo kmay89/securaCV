@@ -1605,8 +1605,9 @@ static esp_err_t handle_audio_mute(httpd_req_t* req) {
   const bool want_muted = input["muted"].as<bool>();
 
   /* Apply at runtime. audio_mute(true) physically uninstalls I2S so the
-   * GPIOs go tri-state — a user-verifiable hardware-level mute. */
-  const bool ok = audio_mute(want_muted);
+   * GPIOs go tri-state — a user-verifiable hardware-level mute. The
+   * source byte is recorded in the witness chain audit trail. */
+  const bool ok = audio_mute(want_muted, AUDIO_MUTE_SOURCE_HTTP);
   if (!ok && !want_muted) {
     /* Unmute failed (I2S didn't come up). Still persist the user's
      * intent — they may have hardware issues we can't paper over. */

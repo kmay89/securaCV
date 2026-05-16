@@ -1189,6 +1189,28 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
                 Idle.
               </span>
             </div>
+
+            <div style="font-size:0.88rem; color:var(--muted); margin:14px 0 6px;">
+              <strong>No alarm handy?</strong> This browser can synthesize
+              a T3 or T4 cadence so you can verify the detector works
+              without setting off a real alarm. Hold your phone or
+              laptop within ~30 cm of the Canary, click <em>Listen for
+              30 s</em> above, then start a tone below. This is a
+              <em>synthetic</em> test pattern — real alarms vary in
+              frequency and reverberation. Always also test against an
+              actual alarm before trusting the detector.
+            </div>
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+              <button class="btn btn-secondary btn-sm" id="acToneT3Btn" onclick="toggleToneT3()">
+                Play T3 (smoke)
+              </button>
+              <button class="btn btn-secondary btn-sm" id="acToneT4Btn" onclick="toggleToneT4()">
+                Play T4 (CO)
+              </button>
+              <span id="acToneStatus" style="font-size:0.85rem; color:var(--muted);">
+                Tone off.
+              </span>
+            </div>
           </div>
         </details>
       </div>
@@ -2969,6 +2991,150 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           }
         }
       } catch (e) { /* harmless polling error */ }
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // Synthetic T3 / T4 tone generator (Web Audio API)
+    // ════════════════════════════════════════════════════════════════
+    // Lets a user verify the cadence detector works without setting off
+    // a real alarm. We schedule a series of OscillatorNode start/stop
+    // events at audioCtx.currentTime offsets so the cadence is sample-
+    // accurate; a setTimeout that just turns a gain node on/off would
+    // drift across cycles and break the detector's ±200 ms tolerance.
+    //
+    // T3: three 0.5 s tones @ 3.2 kHz, 0.5 s gaps, 1.5 s pause. 4.0 s cycle.
+    // T4: four  0.1 s tones @ 3.2 kHz, 0.1 s gaps, 5.0 s pause. 5.7 s cycle.
+    //
+    // We deliberately use a single AudioContext + a fresh OscillatorNode
+    // per cycle (oscillators can only start() once per Web Audio spec).
+    let acAudioCtx = null;
+    let acTonePattern = null;       // 't3' | 't4' | null
+    let acToneScheduleAt = 0;       // currentTime of the next cycle start
+    let acToneScheduleTimer = null; // setTimeout handle that drives scheduling
+
+    function audioCtx() {
+      if (!acAudioCtx) {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        if (!Ctx) return null;
+        acAudioCtx = new Ctx();
+      }
+      return acAudioCtx;
+    }
+
+    function scheduleBeep(ctx, startSec, durSec, freqHz) {
+      const osc  = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = freqHz;
+      // Tiny 5 ms ramps so we don't get clicks that could be misread as
+      // an extra transition by the envelope tracker.
+      const ramp = 0.005;
+      gain.gain.setValueAtTime(0, startSec);
+      gain.gain.linearRampToValueAtTime(0.5, startSec + ramp);
+      gain.gain.setValueAtTime(0.5, startSec + durSec - ramp);
+      gain.gain.linearRampToValueAtTime(0, startSec + durSec);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(startSec);
+      osc.stop(startSec + durSec + 0.01);
+    }
+
+    function scheduleNextCycle() {
+      const ctx = audioCtx();
+      if (!ctx || !acTonePattern) return;
+      const t0 = acToneScheduleAt;
+      const freq = 3200;
+      let cycleLen;
+      if (acTonePattern === 't3') {
+        // 3 × (0.5 s beep + 0.5 s gap) + 1.5 s pause
+        for (let i = 0; i < 3; i++) {
+          scheduleBeep(ctx, t0 + i * 1.0, 0.5, freq);
+        }
+        cycleLen = 4.0;
+      } else {
+        // 4 × (0.1 s beep + 0.1 s gap) + 5.0 s pause
+        for (let i = 0; i < 4; i++) {
+          scheduleBeep(ctx, t0 + i * 0.2, 0.1, freq);
+        }
+        cycleLen = 5.7;
+      }
+      acToneScheduleAt = t0 + cycleLen;
+      // Schedule the next round just before this one ends so we never
+      // run dry. setTimeout drift doesn't matter — the audio events
+      // are all scheduled against currentTime in the audio context.
+      const msUntilNext = Math.max(50, (cycleLen - 0.2) * 1000);
+      acToneScheduleTimer = setTimeout(scheduleNextCycle, msUntilNext);
+    }
+
+    function startTone(pattern) {
+      const ctx = audioCtx();
+      if (!ctx) {
+        document.getElementById('acToneStatus').textContent =
+          'Web Audio not available in this browser.';
+        return false;
+      }
+      // Mobile Safari and Chrome require a resume() inside a user gesture.
+      if (ctx.state === 'suspended') ctx.resume();
+      stopTone();   /* ensure no overlap */
+      acTonePattern = pattern;
+      acToneScheduleAt = ctx.currentTime + 0.1;
+      scheduleNextCycle();
+      return true;
+    }
+
+    function stopTone() {
+      if (acToneScheduleTimer !== null) {
+        clearTimeout(acToneScheduleTimer);
+        acToneScheduleTimer = null;
+      }
+      acTonePattern = null;
+      /* Already-scheduled events finish their tail (≤ 1 s); cheaper
+       * than rebuilding the audio graph just to silence them. */
+    }
+
+    async function toggleToneT3() {
+      const btn = document.getElementById('acToneT3Btn');
+      const btn4 = document.getElementById('acToneT4Btn');
+      const st = document.getElementById('acToneStatus');
+      if (acTonePattern === 't3') {
+        stopTone();
+        btn.textContent = 'Play T3 (smoke)';
+        st.textContent = 'Tone off.';
+        return;
+      }
+      /* Auto-arm the matcher so the user doesn't have to click two
+       * buttons. Best-effort; we don't await before starting the tone. */
+      api('/api/audio/test/start', 'POST', { duration_ms: 60000 }).then(() => {
+        if (acSelftestTimer !== null) clearInterval(acSelftestTimer);
+        acSelftestTimer = setInterval(pollAudioSelftest, 500);
+        const sBtn = document.getElementById('acTestBtn');
+        if (sBtn) sBtn.disabled = true;
+      }).catch(() => {});
+      if (!startTone('t3')) return;
+      btn.textContent = 'Stop T3';
+      btn4.textContent = 'Play T4 (CO)';
+      st.textContent = 'Playing T3 (smoke) cadence — hold your device near the Canary.';
+    }
+
+    async function toggleToneT4() {
+      const btn = document.getElementById('acToneT4Btn');
+      const btn3 = document.getElementById('acToneT3Btn');
+      const st = document.getElementById('acToneStatus');
+      if (acTonePattern === 't4') {
+        stopTone();
+        btn.textContent = 'Play T4 (CO)';
+        st.textContent = 'Tone off.';
+        return;
+      }
+      api('/api/audio/test/start', 'POST', { duration_ms: 60000 }).then(() => {
+        if (acSelftestTimer !== null) clearInterval(acSelftestTimer);
+        acSelftestTimer = setInterval(pollAudioSelftest, 500);
+        const sBtn = document.getElementById('acTestBtn');
+        if (sBtn) sBtn.disabled = true;
+      }).catch(() => {});
+      if (!startTone('t4')) return;
+      btn.textContent = 'Stop T4';
+      btn3.textContent = 'Play T3 (smoke)';
+      st.textContent = 'Playing T4 (CO) cadence — hold your device near the Canary.';
     }
 
     // ════════════════════════════════════════════════════════════════
