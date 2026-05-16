@@ -488,12 +488,9 @@ static int score_knock_cycle(uint32_t now_ms) {
 
   /* Confidence: 100 minus the relative variance of beep durations and
    * gap durations — even-tempo knocks score best. */
-  auto absdiff = [](int32_t a, int32_t b) -> int32_t {
-    int32_t d = a - b; return d < 0 ? -d : d;
-  };
   const int32_t b_mean = (b1 + b2 + b3) / 3;
-  const int32_t b_var  = (absdiff(b1, b_mean) + absdiff(b2, b_mean) + absdiff(b3, b_mean)) / 3;
-  const int32_t g_var  = absdiff(g12, g23);
+  const int32_t b_var  = (abs(b1 - b_mean) + abs(b2 - b_mean) + abs(b3 - b_mean)) / 3;
+  const int32_t g_var  = abs(g12 - g23);
   /* Variance ≤ 30 ms ⇒ ~100, variance ≥ 100 ms ⇒ ~50. */
   int32_t conf = 110 - (b_var + g_var);
   if (conf < 50) conf = 50;
@@ -535,10 +532,7 @@ static int score_doorbell_cycle(uint32_t now_ms) {
   if (tone1 > 400 && tone1 < 650 && tone2 > 400 && tone2 < 650 &&
       gap   > 350 && gap   < 650) return -1;
 
-  auto absdiff = [](int32_t a, int32_t b) -> int32_t {
-    int32_t d = a - b; return d < 0 ? -d : d;
-  };
-  const int32_t t_var = absdiff(tone1, tone2);
+  const int32_t t_var = abs(tone1 - tone2);
   /* Two tones within 100 ms of each other ⇒ high confidence; 400 ms ⇒ low. */
   int32_t conf = 110 - (t_var / 3);
   if (conf < 50) conf = 50;
@@ -830,6 +824,17 @@ bool mute_sync_at_boot(bool muted) {
       s_t4_cycles = 0;
       s_last_rms = 0;
       s_last_rms_ms = 0;
+      #if FEATURE_ACOUSTIC_TRANSIENTS
+      /* Wipe the HPF carryover so the next unmute's first frame isn't
+       * compared against a stale pre-mute sample. */
+      s_hpf_prev_last = 0;
+      s_state_rms_sum = 0;
+      s_state_hpf_rms_sum = 0;
+      s_state_frames = 0;
+      s_knock_matched = false;
+      s_doorbell_matched = false;
+      s_glass_matched = false;
+      #endif
     }
     log_health(LOG_LEVEL_INFO, LOG_CAT_SENSOR,
                "Audio: mic muted at boot", "I2S not started");
@@ -976,6 +981,17 @@ int process() {
       s_t4_cycles = 0;
       __atomic_store_n(&s_last_rms, 0, __ATOMIC_RELEASE);
       __atomic_store_n(&s_last_rms_ms, 0, __ATOMIC_RELEASE);
+      #if FEATURE_ACOUSTIC_TRANSIENTS
+      /* Same rationale as stop() / mute_sync_at_boot — wipe HPF carryover
+       * and per-state accumulators so the next unmute starts clean. */
+      s_hpf_prev_last = 0;
+      s_state_rms_sum = 0;
+      s_state_hpf_rms_sum = 0;
+      s_state_frames = 0;
+      s_knock_matched = false;
+      s_doorbell_matched = false;
+      s_glass_matched = false;
+      #endif
       log_health(LOG_LEVEL_INFO, LOG_CAT_SENSOR,
                  "Audio: mic muted by user", "I2S released");
       applied = true;
@@ -984,6 +1000,15 @@ int process() {
         s_running = true;
         s_state_entered_ms = millis();
         s_cycle_matched = false;
+        #if FEATURE_ACOUSTIC_TRANSIENTS
+        /* Belt-and-suspenders — also zero on the unmute path so even if
+         * a future change skips the mute-path wipe the unmute side is
+         * guaranteed to start with no stale state. */
+        s_hpf_prev_last = 0;
+        s_state_rms_sum = 0;
+        s_state_hpf_rms_sum = 0;
+        s_state_frames = 0;
+        #endif
         log_health(LOG_LEVEL_INFO, LOG_CAT_SENSOR,
                    "Audio: mic unmuted", "I2S re-armed");
         applied = true;

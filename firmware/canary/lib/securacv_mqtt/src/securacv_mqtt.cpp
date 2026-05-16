@@ -94,13 +94,20 @@ static void on_mqtt_message(char* topic, byte* payload, unsigned int len) {
   if (!topic || !payload) return;
 
   // Audio self-test trigger — HA's button entity publishes literal
-  // "start" (sometimes with surrounding whitespace). Optional integer
-  // duration_ms could follow but we just use the default for now.
+  // "start" (sometimes with surrounding whitespace). Same token-boundary
+  // tightness as the mute parser below: require end-of-buffer or
+  // whitespace/quote/closing-brace after the 5 chars so "startfoo" or
+  // a typo'd "stardust" can't kick the matcher.
   if (strcmp(topic, s_topic_audio_test_cmd) == 0) {
     const byte* p = payload;
     unsigned int n = len;
     while (n > 0 && (*p == ' ' || *p == '\t' || *p == '"')) { p++; n--; }
-    if (n >= 5 && memcmp(p, "start", 5) == 0 && s_audio_test_cmd_cb) {
+    const bool boundary_ok = (n == 5) ||
+        (n > 5 && (p[5] == ' '  || p[5] == '\t' || p[5] == '\r' ||
+                   p[5] == '\n' || p[5] == '"'  || p[5] == '}'  ||
+                   p[5] == '\0'));
+    if (n >= 5 && memcmp(p, "start", 5) == 0 && boundary_ok &&
+        s_audio_test_cmd_cb) {
       s_audio_test_cmd_cb();
     }
     return;
@@ -831,13 +838,15 @@ bool mqtt_send_ha_discovery(const char* device_id, const char* firmware_version)
     all_ok = all_ok && publish_discovery("binary_sensor", device_id, "co_alarm", payload.c_str());
   }
 
+#if FEATURE_ACOUSTIC_TRANSIENTS
   // ── Phase 2b transient binary_sensors ──
   // These ride the same retained /sensing topic, edge-triggered via
-  // value_template. Each one expires automatically after ~3 s of no
-  // re-trigger by checking last_event_age_ms. Heuristic detectors —
-  // see audio.h for the privacy + scope contract. NB: no device_class
-  // exactly matches "knock", "doorbell", "glass shatter" in the HA
-  // schema. We use:
+  // value_template against the `acoustic_event` string. The 30 s
+  // sensing-aggregator TTL clears that string, which flips the
+  // binary_sensor back to OFF — we deliberately don't publish
+  // per-event age over MQTT (AGENTS.md Invariant III: coarse
+  // 10-min buckets only). NB: no device_class exactly matches
+  // "knock", "doorbell", "glass shatter" in the HA schema. We use:
   //   • Knock     → "occupancy" (presence-style event)
   //   • Doorbell  → "sound"     (audible event)
   //   • Glass     → "vibration" (rendered with a shatter icon)
@@ -845,10 +854,11 @@ bool mqtt_send_ha_discovery(const char* device_id, const char* firmware_version)
     JsonDocument doc;
     doc["name"]    = "Pattern: Knock";
     doc["stat_t"]  = s_topic_sensing;
+    /* Latches ON until the 30 s sensing-aggregator TTL clears
+     * `acoustic_event` back to "none". We don't publish per-event
+     * age over MQTT (AGENTS.md Invariant III). */
     doc["val_tpl"] =
-      "{{ 'ON' if value_json.acoustic_event == 'knock' and "
-      "value_json.acoustic_event_age_ms is not none and "
-      "value_json.acoustic_event_age_ms < 3000 else 'OFF' }}";
+      "{{ 'ON' if value_json.acoustic_event == 'knock' else 'OFF' }}";
     doc["dev_cla"] = "occupancy";
     doc["ic"]      = "mdi:hand-back-right";
     char uid[64];
@@ -865,9 +875,7 @@ bool mqtt_send_ha_discovery(const char* device_id, const char* firmware_version)
     doc["name"]    = "Pattern: Doorbell";
     doc["stat_t"]  = s_topic_sensing;
     doc["val_tpl"] =
-      "{{ 'ON' if value_json.acoustic_event == 'doorbell' and "
-      "value_json.acoustic_event_age_ms is not none and "
-      "value_json.acoustic_event_age_ms < 3000 else 'OFF' }}";
+      "{{ 'ON' if value_json.acoustic_event == 'doorbell' else 'OFF' }}";
     doc["dev_cla"] = "sound";
     doc["ic"]      = "mdi:bell-ring";
     char uid[64];
@@ -884,9 +892,7 @@ bool mqtt_send_ha_discovery(const char* device_id, const char* firmware_version)
     doc["name"]    = "Pattern: Glass Break";
     doc["stat_t"]  = s_topic_sensing;
     doc["val_tpl"] =
-      "{{ 'ON' if value_json.acoustic_event == 'glass_break' and "
-      "value_json.acoustic_event_age_ms is not none and "
-      "value_json.acoustic_event_age_ms < 5000 else 'OFF' }}";
+      "{{ 'ON' if value_json.acoustic_event == 'glass_break' else 'OFF' }}";
     doc["dev_cla"] = "vibration";
     doc["ic"]      = "mdi:bottle-tonic-skull";
     char uid[64];
@@ -898,11 +904,16 @@ bool mqtt_send_ha_discovery(const char* device_id, const char* firmware_version)
     serializeJson(doc, payload);
     all_ok = all_ok && publish_discovery("binary_sensor", device_id, "glass_break", payload.c_str());
   }
+#endif // FEATURE_ACOUSTIC_TRANSIENTS
 
-  // ── Phase 2b: diagnostic counters (T3 / T4 cycles, transitions, etc.) ──
+  // ── Diagnostic counters (T3 / T4 cycles, transitions, etc.) ──
   // These let an HA dashboard plot "how often has the alarm fired this
   // week?" or alert on "i2s_read_errors climbing rapidly". Diagnostic
   // category so they sit under "Diagnostic" in HA's device card.
+  // The acoustic_stats sub-object lives in /sensing only when
+  // FEATURE_ACOUSTIC_TRANSIENTS is on (see main.cpp), so we only
+  // register these counters under the same flag — otherwise HA would
+  // show "Unknown" forever.
   struct DiagSensor {
     const char* name;
     const char* tpl;
@@ -910,6 +921,7 @@ bool mqtt_send_ha_discovery(const char* device_id, const char* firmware_version)
     const char* icon;
     const char* unit;
   };
+#if FEATURE_ACOUSTIC_TRANSIENTS
   static const DiagSensor diags[] = {
     { "T3 Cycles Total",   "{{ value_json.acoustic_stats.t3_detected | default(0) }}",
       "t3_cycles", "mdi:counter", nullptr },
@@ -944,12 +956,15 @@ bool mqtt_send_ha_discovery(const char* device_id, const char* firmware_version)
     serializeJson(doc, payload);
     all_ok = all_ok && publish_discovery("sensor", device_id, diags[i].uid_slug, payload.c_str());
   }
+#endif // FEATURE_ACOUSTIC_TRANSIENTS
 
-  // ── Phase 2b: HA Button to trigger the cadence self-test ──
-  // Lets an HA card or automation kick the device's detection self-test
-  // mode (same as the dashboard's "Listen for 30 s" button). The result
-  // is reflected in the existing acoustic_event field of /sensing; no
-  // separate result topic needed.
+#if FEATURE_ACOUSTIC_EVENTS
+  // ── HA Button to trigger the cadence self-test ──
+  // Kicks the same 30 s relaxed-matcher window as the dashboard's
+  // Listen-for-30s button. The result is reflected in the existing
+  // acoustic_event field of /sensing; no separate result topic needed.
+  // Gated on FEATURE_ACOUSTIC_EVENTS so HA doesn't see a button for a
+  // capability that isn't compiled in.
   if (all_ok) {
     JsonDocument doc;
     doc["name"]    = "Run Audio Self-Test";
@@ -966,6 +981,7 @@ bool mqtt_send_ha_discovery(const char* device_id, const char* firmware_version)
     serializeJson(doc, payload);
     all_ok = all_ok && publish_discovery("button", device_id, "audio_selftest", payload.c_str());
   }
+#endif // FEATURE_ACOUSTIC_EVENTS
 
   // ── Binary Sensor: silent_panic (touch long-press) ──
   if (all_ok) {
