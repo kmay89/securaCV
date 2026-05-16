@@ -47,7 +47,10 @@ namespace ble_scout {
 
 namespace {
 
-bool                s_inited = false;
+bool                s_inited       = false;
+bool                s_scan_started = false;   /* tracks NimBLE scan-loop state separately
+                                               * so a one-time scan-start failure can
+                                               * be retried on the next init() call */
 ble_scan::Registry  s_registry;
 PresenceTracker     s_tracker;
 
@@ -164,30 +167,44 @@ const csi_module_t MODULE = {
  * ────────────────────────────────────────────────────────────────────────── */
 
 bool ble_scout_init() {
-  if (s_inited) return true;
-  if (!ble_scout_key_init()) {
-    /* Key store failed — emit a one-shot init-failed event so the
-     * dashboard / health log can surface it. */
-    emit_initialized("failed");
-    return false;
+  /* Phase 1: load the per-device key + bring up the in-RAM registry
+   * and tracker. Idempotent — only runs once. */
+  if (!s_inited) {
+    if (!ble_scout_key_init()) {
+      /* Key store failed — emit a one-shot init-failed event so the
+       * dashboard / health log can surface it. */
+      emit_initialized("failed");
+      return false;
+    }
+    ble_scan::registry_init(&s_registry);
+    presence_init(&s_tracker);
+    s_inited = true;
   }
-  ble_scan::registry_init(&s_registry);
-  presence_init(&s_tracker);
-  s_inited = true;
 
 #if BLE_SCOUT_HAS_NIMBLE
-  /* Best-effort: try to bring up the passive scanner. If the radio
-   * isn't ready (e.g. WiFi-only board, or stack not yet initialized),
-   * we still consider the Scout role "up" — the scan can be retried.
-   * The init failure is surfaced via a separate event so the
-   * dashboard can show a degraded badge. */
-  if (!nimble_scan_init() || !nimble_scan_start()) {
-    emit_initialized("scan_unavailable");
-    return true;
+  /* Phase 2: bring up the NimBLE passive scanner. Tracked separately
+   * via s_scan_started so a transient scan-start failure (e.g. the
+   * radio is mid-init during early boot) can be retried by calling
+   * ble_scout_init() again from the next CSI tick. The "ok" event
+   * fires only on the success transition; "scan_unavailable" fires
+   * on each retry attempt but the chokepoint ceiling (6/hour) keeps
+   * the wire chatter bounded. */
+  if (!s_scan_started) {
+    if (nimble_scan_init() && nimble_scan_start()) {
+      s_scan_started = true;
+      emit_initialized("ok");
+    } else {
+      emit_initialized("scan_unavailable");
+    }
+  }
+#else
+  /* Host build / FEATURE_BLE_SCAN=0 path: scan loop is absent. Emit
+   * "ok" once (the s_scan_started latch keeps it from re-firing). */
+  if (!s_scan_started) {
+    s_scan_started = true;
+    emit_initialized("ok");
   }
 #endif
-
-  emit_initialized("ok");
   return true;
 }
 
@@ -215,16 +232,15 @@ size_t ble_scout_count() {
 void ble_scout_tick(uint32_t now_ms) {
   if (!s_inited) return;
 
-  uint8_t departed_ids[4 * ble_scan::HASHED_ID_LEN];
+  /* Buffer sized to MAX_PAIRED_BEACONS so a tick that times-out every
+   * paired beacon simultaneously (e.g. the home WiFi blackout case)
+   * doesn't silently drop departed events past the first few. At
+   * 16 beacons × 16 bytes = 256 bytes on the stack — well within
+   * the tick handler's safety margin. */
+  uint8_t departed_ids[ble_scan::MAX_PAIRED_BEACONS * ble_scan::HASHED_ID_LEN];
   size_t n = presence_on_tick(&s_tracker, now_ms,
                               departed_ids,
-                              sizeof(departed_ids) / ble_scan::HASHED_ID_LEN);
-  /* Look up labels and emit. n might exceed the reported ids if many
-   * fired in the same tick; we cap reporting at the buffer size and
-   * rely on the chokepoint's ceiling to absorb any storm. */
-  if (n > sizeof(departed_ids) / ble_scan::HASHED_ID_LEN) {
-    n = sizeof(departed_ids) / ble_scan::HASHED_ID_LEN;
-  }
+                              ble_scan::MAX_PAIRED_BEACONS);
   for (size_t i = 0; i < n; ++i) {
     const ble_scan::PairedBeacon* p =
       ble_scan::registry_find(&s_registry,
