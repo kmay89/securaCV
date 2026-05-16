@@ -25,6 +25,10 @@
 #include "core_multilink_fusion.h"
 #include "meta_empty_room_baseline.h"
 
+#if defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN
+#include "ble_scout.h"
+#endif
+
 #include <Arduino.h>
 #include <Preferences.h>
 #include <string.h>
@@ -155,6 +159,21 @@ extern "C" bool securacv_csi_modules_init(void) {
   csi_module_register(core_multilink_fusion_module());
   /* Scheduled 10-min empty-room baseline calibration (PR 4a). */
   csi_module_register(meta_empty_room_baseline_module());
+
+#if defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN
+  /* BLE Scout — paired-beacon room-attribution (PR 5b). Lives in
+   * the securacv_ble_scan library; only registered when the build
+   * opts in via -DFEATURE_BLE_SCAN=1 (and pulls in NimBLE-Arduino
+   * via the [env:full] lib_deps). The module's csi_event_decl_t
+   * manifest constrains every emit to state_name/note/time_bucket
+   * — no MAC or hashed_id ever lands in an event payload. */
+  csi_module_register(ble_scout::ble_scout_module());
+  /* Load the per-device key + start the NimBLE passive scan loop.
+   * Safe to call even if NimBLE isn't actually available — the
+   * scan-loop TU is an empty file in that case and ble_scout_init
+   * still wires up the registry+tracker. */
+  ble_scout::ble_scout_init();
+#endif
 
   s_initialized = true;
   return true;
