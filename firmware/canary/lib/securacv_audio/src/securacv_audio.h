@@ -177,6 +177,11 @@ bool audio_mute_sync_at_boot(bool muted);
 typedef void (*audio_mute_cb_t)(bool muted, uint8_t source);
 void audio_set_mute_callback(audio_mute_cb_t cb);
 
+/* Persist the user's mute intent to NVS. Used by every control path
+ * (HTTP, MQTT, future ones) so the NVS namespace / key stay in one
+ * place. Honored at the next boot by main.cpp's audio_init block. */
+bool audio_save_mute_intent(bool muted);
+
 /* ──────────────────────────────────────────────────────────────────────────
  * SELF-TEST MODE
  *

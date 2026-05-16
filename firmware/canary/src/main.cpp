@@ -170,6 +170,15 @@ static void factory_reset() {
   ESP.restart();
 }
 
+// 10-minute daily time bucket (0..143), matched across audio, sensing,
+// CSI, and witness payloads so a verifier comparing two events from
+// different sensors sees consistent bucket values.
+static constexpr uint32_t TIME_BUCKET_MS = 10UL * 60UL * 1000UL;
+static constexpr uint8_t  TIME_BUCKETS_PER_DAY = 144;
+static inline uint8_t time_bucket_now() {
+  return (uint8_t)((millis() / TIME_BUCKET_MS) % TIME_BUCKETS_PER_DAY);
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // SETUP
 // ════════════════════════════════════════════════════════════════════════════
@@ -306,13 +315,9 @@ void setup() {
   // audio_process() via atomic pending flags.
   mqtt_set_mic_mute_cmd_callback([](bool muted) {
     audio_mute(muted, AUDIO_MUTE_SOURCE_MQTT);
-    /* Persist intent so a reboot honors the HA-set state, identical
-     * to the dashboard mute path. */
-    Preferences mic_prefs;
-    if (mic_prefs.begin("securacv", false /* rw */)) {
-      mic_prefs.putBool("mic_muted", muted);
-      mic_prefs.end();
-    }
+    /* Persist intent so a reboot honors the HA-set state, via the
+     * shared helper used by every other control path. */
+    audio_save_mute_intent(muted);
   });
   #endif
 #endif
@@ -407,10 +412,7 @@ void setup() {
      * source (boot / dashboard / Home Assistant) — important if anyone
      * ever asks "was the device listening at the time of the incident?". */
     audio_set_mute_callback([](bool muted, uint8_t source) {
-      /* time_bucket: 10-min daily bucket, matches the convention used
-       * for the audio T3/T4 events. */
-      const uint8_t bkt = (uint8_t)((millis() / (10UL * 60UL * 1000UL)) % 144);
-      sensing_feed_mic_mute_event(muted, source, bkt);
+      sensing_feed_mic_mute_event(muted, source, time_bucket_now());
       /* Tell Home Assistant immediately so the switch entity reflects
        * the new state without waiting for the next /sensing publish.
        * No-op if MQTT isn't connected. */
@@ -437,8 +439,7 @@ void setup() {
        * tell "muted before the incident" from "muted in response to
        * it". We only emit on the persisted-muted path; the unmuted
        * default would flood the chain with one record per reboot. */
-      const uint8_t bkt = (uint8_t)((millis() / (10UL * 60UL * 1000UL)) % 144);
-      sensing_feed_mic_mute_event(true, AUDIO_MUTE_SOURCE_BOOT, bkt);
+      sensing_feed_mic_mute_event(true, AUDIO_MUTE_SOURCE_BOOT, time_bucket_now());
     } else if (boot_ok && audio_is_running()) {
       Serial.println("[OK] Acoustic detector armed (T3 smoke / T4 CO)");
     } else {

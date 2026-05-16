@@ -89,26 +89,37 @@ static void on_mqtt_message(char* topic, byte* payload, unsigned int len) {
   if (!topic || !payload) return;
   if (strcmp(topic, s_topic_mic_cmd) != 0) return;
 
-  // Accept "mute" / "unmute" (our pl_on / pl_off) and "ON" / "OFF"
-  // (HA's default switch payload). Tolerate leading whitespace and a
-  // surrounding "..." (which appears when an automation publishes a
-  // JSON-quoted string by accident). Tiny parser, no JSON dep needed.
+  // Accept exactly "mute" / "unmute" (our pl_on / pl_off) and exactly
+  // "ON" / "OFF" (HA's default switch payload). Tolerate leading
+  // whitespace and a surrounding "..." (sometimes appears when an
+  // automation publishes a JSON-quoted string by accident). After the
+  // token we require an end-of-buffer / whitespace / quote / closing
+  // brace — without this guard, "online" would match "ON" and
+  // "offload" would match "OFF", silently toggling the mic.
   const byte* p = payload;
   unsigned int n = len;
   while (n > 0 && (*p == ' ' || *p == '\t' || *p == '"')) { p++; n--; }
 
+  auto is_boundary = [](byte c) -> bool {
+    return c == ' ' || c == '\t' || c == '\r' || c == '\n' ||
+           c == '"' || c == '}' || c == '\0';
+  };
+  auto token_ends_at = [&](unsigned int tok_len) -> bool {
+    return n == tok_len || is_boundary(p[tok_len]);
+  };
+
   bool muted = false;
   bool recognized = false;
-  if (n >= 4 && memcmp(p, "mute", 4) == 0) {
+  if (n >= 4 && memcmp(p, "mute", 4) == 0 && token_ends_at(4)) {
     muted = true; recognized = true;
-  } else if (n >= 6 && memcmp(p, "unmute", 6) == 0) {
+  } else if (n >= 6 && memcmp(p, "unmute", 6) == 0 && token_ends_at(6)) {
     muted = false; recognized = true;
   } else if (n >= 3 && (p[0] == 'O' || p[0] == 'o') &&
                        (p[1] == 'F' || p[1] == 'f') &&
-                       (p[2] == 'F' || p[2] == 'f')) {
+                       (p[2] == 'F' || p[2] == 'f') && token_ends_at(3)) {
     muted = false; recognized = true;
   } else if (n >= 2 && (p[0] == 'O' || p[0] == 'o') &&
-                       (p[1] == 'N' || p[1] == 'n')) {
+                       (p[1] == 'N' || p[1] == 'n') && token_ends_at(2)) {
     muted = true; recognized = true;
   }
 
@@ -749,22 +760,24 @@ bool mqtt_send_ha_discovery(const char* device_id, const char* firmware_version)
   }
 
   // ── Switch: microphone mute ──
-  // Gives Home Assistant a toggle for the on-board PDM mic. Writes to
-  // command_topic; device subscribes and physically uninstalls the I2S
-  // driver on "mute". State_topic carries the retained on/off state so
-  // HA reconciles correctly on restart. Every toggle is also signed
-  // into the witness chain (source=MQTT) for audit.
+  // Gives Home Assistant a toggle for muting the on-board PDM mic.
+  // Named "Microphone Mute" (not "Microphone") so the switch semantics
+  // line up with the mdi:microphone-off icon: ON = muted, OFF = live.
+  // We deliberately do NOT retain on the command topic — retaining
+  // commands means the broker replays the last command on every
+  // (re)connect, which would silently re-apply a stale mute/unmute
+  // after a dashboard-side toggle. The retained state topic alone
+  // gives HA enough info to reconcile.
   if (all_ok) {
     JsonDocument doc;
-    doc["name"]    = "Microphone";
+    doc["name"]    = "Microphone Mute";
     doc["stat_t"]  = s_topic_mic_state;
     doc["cmd_t"]   = s_topic_mic_cmd;
     doc["pl_on"]   = "mute";     // HA "switch ON"  = muted
-    doc["pl_off"]  = "unmute";
+    doc["pl_off"]  = "unmute";   // HA "switch OFF" = live
     doc["stat_on"] = "muted";
     doc["stat_off"] = "live";
     doc["ic"]      = "mdi:microphone-off";
-    doc["ret"]     = true;
     char uid[64];
     snprintf(uid, sizeof(uid), "securacv_%s_mic_mute", device_id);
     doc["uniq_id"] = uid;

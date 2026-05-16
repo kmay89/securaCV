@@ -38,7 +38,6 @@
 #endif
 #if FEATURE_ACOUSTIC_EVENTS
 #include "securacv_audio.h"
-#include <Preferences.h>   /* persist mic mute across reboots */
 #endif
 #if FEATURE_TOUCH
 #include "securacv_touch.h"
@@ -1613,18 +1612,16 @@ static esp_err_t handle_audio_mute(httpd_req_t* req) {
      * intent — they may have hardware issues we can't paper over. */
   }
 
-  /* Persist user intent. NVS key is read at boot in main.cpp. */
-  Preferences prefs;
-  if (prefs.begin("securacv", false /* read-write */)) {
-    prefs.putBool("mic_muted", want_muted);
-    prefs.end();
-  }
+  /* Persist user intent regardless of apply result, using the shared
+   * helper so HTTP, MQTT, and any future control path stay in sync on
+   * the NVS namespace + key. */
+  const bool persisted = audio_save_mute_intent(want_muted);
 
   JsonDocument doc;
   doc["ok"] = true;
   doc["muted"] = audio_is_muted();
   doc["running"] = audio_is_running();
-  doc["persisted"] = true;
+  doc["persisted"] = persisted;
   String response;
   serializeJson(doc, response);
   return http_send_json(req, response.c_str());

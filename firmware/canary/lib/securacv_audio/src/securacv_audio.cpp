@@ -19,10 +19,17 @@
 #include "securacv_audio.h"
 
 #include <Arduino.h>
+#include <Preferences.h>
 #include <string.h>
 
 #include "log_level.h"
 #include "securacv_witness.h"   /* log_health() */
+
+/* NVS namespace + key for the user's persisted mute intent. Read at
+ * boot in main.cpp's audio_init block; written here from every control
+ * path so the namespace/key live in one place. */
+static const char* NVS_NAMESPACE = "securacv";
+static const char* NVS_KEY_MIC_MUTED = "mic_muted";
 
 /* The active canary tree's canary_config.h pre-dates Phase 2; it doesn't
  * yet expose the PDM mic pins. Provide local fallbacks (matching the
@@ -923,6 +930,14 @@ bool audio_mute(bool muted, uint8_t source) { return audio::mute(muted, source);
 bool audio_is_muted(void)               { return audio::is_muted(); }
 bool audio_mute_sync_at_boot(bool muted){ return audio::mute_sync_at_boot(muted); }
 void audio_set_mute_callback(audio_mute_cb_t cb) { audio::set_mute_callback(cb); }
+
+bool audio_save_mute_intent(bool muted) {
+  Preferences prefs;
+  if (!prefs.begin(NVS_NAMESPACE, /*readOnly=*/false)) return false;
+  prefs.putBool(NVS_KEY_MIC_MUTED, muted);
+  prefs.end();
+  return true;
+}
 
 bool audio_selftest_start(uint32_t duration_ms) {
   return audio::selftest_start(duration_ms);
