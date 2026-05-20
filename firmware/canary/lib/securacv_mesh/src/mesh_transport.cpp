@@ -43,6 +43,11 @@
     #include <esp_now.h>
     #include <esp_wifi.h>
     #include <esp_err.h>
+    #include <esp_idf_version.h>  /* picks the esp_now recv-callback
+                                     signature: IDF 4.x passes mac as
+                                     a bare uint8_t*, IDF 5.x wraps it
+                                     in esp_now_recv_info_t (with rx_ctrl
+                                     for RSSI). */
   }
 #endif
 
@@ -166,9 +171,16 @@ static void transition_peer(Peer* peer, PeerState new_state) {
  * ────────────────────────────────────────────────────────────────────────── */
 
 #ifndef CSI_TEST_HOST_BUILD
-static void espnow_recv_cb(const esp_now_recv_info_t* info,
-                           const uint8_t* data, int len) {
-  if (info == nullptr || data == nullptr || len <= 0) return;
+/* Shared push helper. Both the IDF 4.x and IDF 5.x recv callbacks
+ * collapse onto this so the ring-buffer logic only lives in one place.
+ * Per-frame RSSI is only meaningful on IDF 5.x (via info->rx_ctrl);
+ * the 4.x branch passes 0 (consumers needing RSSI on that framework
+ * use esp_wifi_sta_get_rssi or read from the CSI HAL). */
+static inline void push_recv_frame(const uint8_t* mac,
+                                   const uint8_t* data,
+                                   int len,
+                                   int8_t rssi_dbm) {
+  if (mac == nullptr || data == nullptr || len <= 0) return;
   if ((size_t)len > MESH_TRANSPORT_PAYLOAD_MAX) return;
 
   const uint32_t head = s_ring_head.load(std::memory_order_relaxed);
@@ -178,15 +190,35 @@ static void espnow_recv_cb(const esp_now_recv_info_t* info,
     return;
   }
   RingSlot* slot = &s_ring[head % RING_CAP];
-  memcpy(slot->mac, info->src_addr, MESH_TRANSPORT_MAC_LEN);
+  memcpy(slot->mac, mac, MESH_TRANSPORT_MAC_LEN);
   memcpy(slot->data, data, (size_t)len);
   slot->len = (uint16_t)len;
-  /* rx_ctrl.rssi available via the recv-info struct in IDF 5.x. */
-  slot->rssi_dbm = (info->rx_ctrl ? info->rx_ctrl->rssi : 0);
+  slot->rssi_dbm = rssi_dbm;
 
   s_ring_head.store(head + 1, std::memory_order_release);
 }
-#endif
+
+/* ESP-IDF changed the esp_now recv callback signature between 4.x and
+ * 5.x. We accept either and project both into push_recv_frame so the
+ * rest of the code doesn't care. */
+#if ESP_IDF_VERSION_MAJOR >= 5
+static void espnow_recv_cb(const esp_now_recv_info_t* info,
+                           const uint8_t* data, int len) {
+  if (info == nullptr) return;
+  /* rx_ctrl.rssi available via the recv-info struct in IDF 5.x. */
+  const int8_t rssi = (info->rx_ctrl ? (int8_t)info->rx_ctrl->rssi : 0);
+  push_recv_frame(info->src_addr, data, len, rssi);
+}
+#else
+static void espnow_recv_cb(const uint8_t* mac,
+                           const uint8_t* data, int len) {
+  /* IDF 4.x esp_now recv callback does not surface RSSI; consumers
+   * that need it on this framework have to read it from a different
+   * source (e.g. esp_wifi_sta_get_rssi for the STA link). */
+  push_recv_frame(mac, data, len, 0);
+}
+#endif  /* ESP_IDF_VERSION_MAJOR */
+#endif  /* CSI_TEST_HOST_BUILD */
 
 #ifdef CSI_TEST_HOST_BUILD
 namespace test {
