@@ -96,6 +96,7 @@ NetworkManager::NetworkManager()
   memset(&m_status, 0, sizeof(m_status));
   memset(m_peers, 0, sizeof(m_peers));
   m_mdns_hostname[0] = '\0';
+  m_mdns_device_id[0] = '\0';
 }
 
 // mDNS hostname rules (RFC 6762 §16): only [a-z0-9-], must not start/end with
@@ -191,13 +192,20 @@ bool NetworkManager::begin(const char* ap_ssid, const char* ap_password,
   // resolve via DHCP hostname rather than mDNS.
   WiFi.setHostname(MDNS_HOSTNAME);
 
-  // Stash the device_id so the deferred STA_GOT_IP re-announce can
-  // repopulate the TXT records.
+  // Stash the device_id in two places:
+  //   • The file-static so the deferred STA_GOT_IP re-announce lambda
+  //     can read it (lambdas with empty captures can't see members).
+  //   • The class member so browsePeers() can self-filter by TXT record
+  //     (every device shares the same mDNS hostname now, so the old
+  //     hostname-based filter would drop legitimate peers).
   if (device_id && device_id[0]) {
     strncpy(s_mdns_device_id, device_id, sizeof(s_mdns_device_id) - 1);
     s_mdns_device_id[sizeof(s_mdns_device_id) - 1] = '\0';
+    strncpy(m_mdns_device_id, device_id, sizeof(m_mdns_device_id) - 1);
+    m_mdns_device_id[sizeof(m_mdns_device_id) - 1] = '\0';
   } else {
     s_mdns_device_id[0] = '\0';
+    m_mdns_device_id[0] = '\0';
   }
 
   // Record the active hostname for getMdnsHostname() consumers.
@@ -445,9 +453,18 @@ void NetworkManager::browsePeers() {
     String host = MDNS.hostname(i);
     if (host.length() == 0) continue;
 
-    // Filter ourselves out — we know our own hostname.
-    String me(m_mdns_hostname);
-    if (host.equalsIgnoreCase(me)) continue;
+    // TXT records are advertised by addServiceTxt() in begin(); read them
+    // back. ESPmDNS returns empty string when a key is absent.
+    String tx_id   = MDNS.txt(i, "device_id");
+    String tx_name = MDNS.txt(i, "name");
+
+    // Filter ourselves out by comparing TXT device_id, not hostname:
+    // every device shares "canary" as its mDNS hostname now (see
+    // begin()), so hostname comparison would silently drop the real
+    // peer and/or include this device in its own peer list.
+    if (m_mdns_device_id[0] != '\0' &&
+        tx_id.length() > 0 &&
+        tx_id.equalsIgnoreCase(m_mdns_device_id)) continue;
 
     IPAddress ip = MDNS.IP(i);
     char ip_str[16] = {0};
@@ -455,11 +472,6 @@ void NetworkManager::browsePeers() {
 
     char fqdn[40] = {0};
     snprintf(fqdn, sizeof(fqdn), "%s.local", host.c_str());
-
-    // TXT records are advertised by addServiceTxt() in begin(); read them
-    // back. ESPmDNS returns empty string when a key is absent.
-    String tx_id   = MDNS.txt(i, "device_id");
-    String tx_name = MDNS.txt(i, "name");
 
     const char* device_id = tx_id.length() > 0 ? tx_id.c_str() : host.c_str();
     const char* name      = tx_name.length() > 0 ? tx_name.c_str() : nullptr;

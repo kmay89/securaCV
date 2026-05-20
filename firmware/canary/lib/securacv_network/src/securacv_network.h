@@ -143,7 +143,12 @@ private:
   WiFiStatus m_status;
   httpd_handle_t m_http_server;
   bool m_scan_in_progress;
-  char m_mdns_hostname[40];
+  char m_mdns_hostname[40];      // sanitized hostname registered with mDNS
+                                  // (currently constant "canary"; see begin())
+  char m_mdns_device_id[40];     // per-device id advertised in _securacv._tcp
+                                  // TXT record. Used by browsePeers() to
+                                  // self-filter — every device shares the
+                                  // same hostname so we MUST compare TXT.
   PeerEntry m_peers[PEER_CACHE_MAX];
   uint32_t m_peers_last_browse_ms;
 };
