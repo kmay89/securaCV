@@ -81,6 +81,26 @@ void ble_scout_on_advert(const uint8_t mac[ble_scan::MAC_LEN],
  * using the CSI feature-window timestamp. */
 const ::csi_module* ble_scout_module();
 
+/* Optional mesh-broadcast hook. The integration layer registers a
+ * function pointer here; ble_scout calls it on every arrived/departed
+ * transition AFTER the local privacy-chokepoint emit, so the broadcast
+ * inherits the same allow-list filtering and rate limit.
+ *
+ * Contract:
+ *   • `arrived` is true on AWAY→PRESENT transition, false on
+ *     PRESENT→AWAY (timeout).
+ *   • `label` is the user-supplied room/beacon label (sanitized at
+ *     pair time; never carries an identifier). May be the empty
+ *     string if the paired beacon had no label.
+ *   • Called from the same task as csi_module_tick / ble_scout_tick.
+ *     Must NOT block; the mesh send path is expected to enqueue and
+ *     return immediately.
+ *   • If no callback is registered (default), events stay local. */
+typedef void (*beacon_event_broadcast_fn)(bool arrived, const char* label);
+
+/* Install a broadcast hook. Pass nullptr to unhook. Last writer wins. */
+void set_broadcast_callback(beacon_event_broadcast_fn fn);
+
 }  /* namespace ble_scout */
 
 #endif /* SECURACV_BLE_SCOUT_H */
