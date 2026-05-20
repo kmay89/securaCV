@@ -18,9 +18,15 @@
  *   nimble_scan_stop()  — release the radio (e.g. for OTA).
  */
 
-/* FEATURE_BLE_SCAN is supplied via platformio.ini build_flags. The
- * canary PIO build has no central build_config.h (unlike canary-wap),
- * so we gate purely on the -D flag + the NimBLE header's presence. */
+/* FEATURE_BLE_SCAN comes from platformio.ini build_flags in the canary
+ * PIO build and from build_config.h in canary-wap. Include build_config.h
+ * when present so the gate sees the same flag in both builds — without
+ * this, canary-wap's FULL profile would silently compile an empty TU. */
+#if defined(__has_include)
+  #if __has_include("build_config.h")
+    #include "build_config.h"
+  #endif
+#endif
 
 #if defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN \
     && !defined(CSI_TEST_HOST_BUILD) \

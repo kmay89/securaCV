@@ -29,6 +29,17 @@
   #include <Arduino.h>   /* millis() */
 #endif
 
+/* canary-wap defines FEATURE_BLE_SCAN in build_config.h, while the PIO
+ * build supplies it via -D in platformio.ini's build_flags. Pull the
+ * header in here when present so the gate below sees the same flag in
+ * both builds — without this, the canary-wap FULL profile silently
+ * compiled with BLE_SCOUT_HAS_NIMBLE=0 and never started the scan loop. */
+#if defined(__has_include)
+  #if __has_include("build_config.h")
+    #include "build_config.h"
+  #endif
+#endif
+
 /* Forward-declare the NimBLE scan-loop entry points. Defined in
  * ble_scout_nimble.cpp, which is an EMPTY translation unit unless
  * FEATURE_BLE_SCAN=1 AND NimBLEDevice.h is available. We gate the
@@ -241,7 +252,12 @@ void ble_scout_tick(uint32_t now_ms) {
   size_t n = presence_on_tick(&s_tracker, now_ms,
                               departed_ids,
                               ble_scan::MAX_PAIRED_BEACONS);
-  for (size_t i = 0; i < n; ++i) {
+  /* Defensive cap: presence_on_tick returns the count of transitions
+   * but only writes up to MAX_PAIRED_BEACONS ids into the buffer.
+   * Today the buffer is sized to match, so n ≤ MAX_PAIRED_BEACONS, but
+   * the explicit bound protects against a future buffer-size or
+   * tracker-size mismatch silently overrunning the read. */
+  for (size_t i = 0; i < n && i < ble_scan::MAX_PAIRED_BEACONS; ++i) {
     const ble_scan::PairedBeacon* p =
       ble_scan::registry_find(&s_registry,
                               departed_ids + i * ble_scan::HASHED_ID_LEN);
