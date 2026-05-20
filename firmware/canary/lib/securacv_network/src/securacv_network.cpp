@@ -96,6 +96,7 @@ NetworkManager::NetworkManager()
   memset(&m_status, 0, sizeof(m_status));
   memset(m_peers, 0, sizeof(m_peers));
   m_mdns_hostname[0] = '\0';
+  m_mdns_device_id[0] = '\0';
 }
 
 // mDNS hostname rules (RFC 6762 §16): only [a-z0-9-], must not start/end with
@@ -143,13 +144,88 @@ const char* NetworkManager::stateName(WiFiProvState s) {
   }
 }
 
+// The mDNS hostname this device advertises. Constant — RFC 6762 §9
+// conflict resolution renames the second one to canary-2.local etc.,
+// so multi-device homes still work; the SPA's _securacv._tcp browse
+// uses the device_id TXT record to distinguish them.
+static constexpr const char* MDNS_HOSTNAME = "canary";
+
+// Stash the device_id between begin() and the deferred mDNS re-init
+// triggered by the STA_GOT_IP event. The event handler is a member
+// callback; it reads this back to repopulate the TXT records on the
+// home-WiFi interface.
+static char s_mdns_device_id[40] = {0};
+
+// Helper: bring mDNS up on whichever netif is currently routable. We
+// call MDNS.end() first because ESP-IDF mDNS doesn't auto-re-announce
+// when a new netif gains an IP — it binds to the interfaces that were
+// up at begin() time and stays there. After STA gets DHCP we have to
+// end() and begin() again to advertise on the home WiFi interface.
+static void start_mdns(const char* device_id) {
+  MDNS.end();
+  if (!MDNS.begin(MDNS_HOSTNAME)) {
+    log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK,
+               "mDNS begin failed", MDNS_HOSTNAME);
+    return;
+  }
+  MDNS.addService("http", "tcp", 80);
+  MDNS.addService("securacv", "tcp", 80);
+  MDNS.addServiceTxt("securacv", "tcp", "device_id",
+                     (device_id && device_id[0]) ? device_id : MDNS_HOSTNAME);
+  MDNS.addServiceTxt("securacv", "tcp", "fw", FIRMWARE_VERSION);
+  MDNS.addServiceTxt("securacv", "tcp", "model", "XIAO ESP32S3");
+  char fqdn[48];
+  snprintf(fqdn, sizeof(fqdn), "%s.local", MDNS_HOSTNAME);
+  log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "mDNS started", fqdn);
+}
+
 bool NetworkManager::begin(const char* ap_ssid, const char* ap_password,
-                           const char* mdns_hostname) {
+                           const char* device_id) {
   // Load saved credentials
   bool has_creds = loadCredentials();
 
   // Always use AP+STA mode
   WiFi.mode(WIFI_AP_STA);
+
+  // Set the WiFi STA hostname BEFORE softAP() / begin() so DHCP also
+  // propagates "canary" to the home router — some routers/clients
+  // resolve via DHCP hostname rather than mDNS.
+  WiFi.setHostname(MDNS_HOSTNAME);
+
+  // Stash the device_id in two places:
+  //   • The file-static so the deferred STA_GOT_IP re-announce lambda
+  //     can read it (lambdas with empty captures can't see members).
+  //   • The class member so browsePeers() can self-filter by TXT record
+  //     (every device shares the same mDNS hostname now, so the old
+  //     hostname-based filter would drop legitimate peers).
+  if (device_id && device_id[0]) {
+    strncpy(s_mdns_device_id, device_id, sizeof(s_mdns_device_id) - 1);
+    s_mdns_device_id[sizeof(s_mdns_device_id) - 1] = '\0';
+    strncpy(m_mdns_device_id, device_id, sizeof(m_mdns_device_id) - 1);
+    m_mdns_device_id[sizeof(m_mdns_device_id) - 1] = '\0';
+  } else {
+    s_mdns_device_id[0] = '\0';
+    m_mdns_device_id[0] = '\0';
+  }
+
+  // Record the active hostname for getMdnsHostname() consumers.
+  sanitize_mdns_hostname(MDNS_HOSTNAME, m_mdns_hostname,
+                         sizeof(m_mdns_hostname));
+
+  // Register the STA_GOT_IP handler ONCE per boot. The lambda calls
+  // back into the singleton — no captured state.
+  static bool s_event_registered = false;
+  if (!s_event_registered) {
+    WiFi.onEvent([](arduino_event_id_t event, arduino_event_info_t /*info*/) {
+      if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
+        // STA just got DHCP. Re-init mDNS so it advertises on both
+        // AP and STA interfaces. Without this the home-WiFi side
+        // can't resolve canary.local.
+        start_mdns(s_mdns_device_id);
+      }
+    });
+    s_event_registered = true;
+  }
 
   // Start Access Point
   bool ap_ok = WiFi.softAP(ap_ssid, ap_password, AP_CHANNEL, false, AP_MAX_CONNECTIONS);
@@ -169,28 +245,10 @@ bool NetworkManager::begin(const char* ap_ssid, const char* ap_password,
   snprintf(msg, sizeof(msg), "AP: %s", ap_ssid);
   log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, msg, m_status.ap_ip);
 
-  // Start mDNS with a per-device hostname so multiple Canaries on the
-  // same home network do not collide on `canary.local`. Falls back to
-  // "canary" if no identity is supplied (legacy single-device path).
-  sanitize_mdns_hostname(mdns_hostname ? mdns_hostname : "canary",
-                         m_mdns_hostname, sizeof(m_mdns_hostname));
-  if (MDNS.begin(m_mdns_hostname)) {
-    MDNS.addService("http", "tcp", 80);
-
-    // Advertise the SecuraCV-specific service so peer Canaries (and the
-    // companion SPA) can browse the network without subnet scanning.
-    // TXT records mirror the discovery protocol in
-    // canary-vision/docs/discovery.md.
-    MDNS.addService("securacv", "tcp", 80);
-    MDNS.addServiceTxt("securacv", "tcp", "device_id",
-                       mdns_hostname ? mdns_hostname : m_mdns_hostname);
-    MDNS.addServiceTxt("securacv", "tcp", "fw", FIRMWARE_VERSION);
-    MDNS.addServiceTxt("securacv", "tcp", "model", "XIAO ESP32S3");
-
-    char fqdn[64];
-    snprintf(fqdn, sizeof(fqdn), "%s.local", m_mdns_hostname);
-    log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "mDNS started", fqdn);
-  }
+  // Bring mDNS up immediately so AP-only clients can already reach
+  // `canary.local`. The STA_GOT_IP handler above re-runs this after
+  // home-WiFi connects so the home-network interface is announced too.
+  start_mdns(s_mdns_device_id);
 
   // Attempt to connect to home WiFi if configured
   if (has_creds && m_creds.enabled) {
@@ -395,9 +453,18 @@ void NetworkManager::browsePeers() {
     String host = MDNS.hostname(i);
     if (host.length() == 0) continue;
 
-    // Filter ourselves out — we know our own hostname.
-    String me(m_mdns_hostname);
-    if (host.equalsIgnoreCase(me)) continue;
+    // TXT records are advertised by addServiceTxt() in begin(); read them
+    // back. ESPmDNS returns empty string when a key is absent.
+    String tx_id   = MDNS.txt(i, "device_id");
+    String tx_name = MDNS.txt(i, "name");
+
+    // Filter ourselves out by comparing TXT device_id, not hostname:
+    // every device shares "canary" as its mDNS hostname now (see
+    // begin()), so hostname comparison would silently drop the real
+    // peer and/or include this device in its own peer list.
+    if (m_mdns_device_id[0] != '\0' &&
+        tx_id.length() > 0 &&
+        tx_id.equalsIgnoreCase(m_mdns_device_id)) continue;
 
     IPAddress ip = MDNS.IP(i);
     char ip_str[16] = {0};
@@ -405,11 +472,6 @@ void NetworkManager::browsePeers() {
 
     char fqdn[40] = {0};
     snprintf(fqdn, sizeof(fqdn), "%s.local", host.c_str());
-
-    // TXT records are advertised by addServiceTxt() in begin(); read them
-    // back. ESPmDNS returns empty string when a key is absent.
-    String tx_id   = MDNS.txt(i, "device_id");
-    String tx_name = MDNS.txt(i, "name");
 
     const char* device_id = tx_id.length() > 0 ? tx_id.c_str() : host.c_str();
     const char* name      = tx_name.length() > 0 ? tx_name.c_str() : nullptr;
@@ -1710,8 +1772,8 @@ static esp_err_t handle_audio_test_status(httpd_req_t* req) {
 // ════════════════════════════════════════════════════════════════════════════
 
 bool network_init(const char* ap_ssid, const char* ap_password,
-                  const char* mdns_hostname) {
-  return network_get_instance().begin(ap_ssid, ap_password, mdns_hostname);
+                  const char* device_id) {
+  return network_get_instance().begin(ap_ssid, ap_password, device_id);
 }
 
 bool network_start_http() {

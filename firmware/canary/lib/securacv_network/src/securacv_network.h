@@ -81,12 +81,23 @@ public:
   NetworkManager();
 
   // Initialize WiFi provisioning (AP + optional STA).
-  // mdns_hostname is the per-device mDNS name (without the .local suffix).
-  // When null, falls back to "canary" (legacy behavior — collides if you
-  // run more than one Canary on the same network, so always pass an ID).
+  //
+  // mDNS hostname:
+  //   The device always advertises itself as `canary.local` (RFC 6762
+  //   conflict resolution handles the rare case of two Canaries on the
+  //   same network — the second one auto-renames to canary-2.local,
+  //   canary-3.local, etc., and the SPA's _securacv._tcp service browse
+  //   still finds them all). Single-device households thus get a stable,
+  //   human-typeable URL without needing to know the hex suffix.
+  //
+  // device_id:
+  //   The per-device identifier ("canary-s3-XXXX") advertised in the
+  //   _securacv._tcp TXT record. Used by the companion SPA's multi-
+  //   device wizard to distinguish individual Canaries during browse.
+  //   When null, the TXT record falls back to the mDNS hostname.
   bool begin(const char* ap_ssid,
              const char* ap_password = AP_PASSWORD_DEFAULT,
-             const char* mdns_hostname = nullptr);
+             const char* device_id = nullptr);
 
   // Returns the mDNS hostname registered for this device (without ".local").
   // Empty string if mDNS is not active.
@@ -132,7 +143,12 @@ private:
   WiFiStatus m_status;
   httpd_handle_t m_http_server;
   bool m_scan_in_progress;
-  char m_mdns_hostname[40];
+  char m_mdns_hostname[40];      // sanitized hostname registered with mDNS
+                                  // (currently constant "canary"; see begin())
+  char m_mdns_device_id[40];     // per-device id advertised in _securacv._tcp
+                                  // TXT record. Used by browsePeers() to
+                                  // self-filter — every device shares the
+                                  // same hostname so we MUST compare TXT.
   PeerEntry m_peers[PEER_CACHE_MAX];
   uint32_t m_peers_last_browse_ms;
 };
@@ -146,7 +162,7 @@ NetworkManager& network_get_instance();
 // Convenience functions
 bool network_init(const char* ap_ssid,
                   const char* ap_password = AP_PASSWORD_DEFAULT,
-                  const char* mdns_hostname = nullptr);
+                  const char* device_id = nullptr);
 bool network_start_http();
 void network_update();
 httpd_handle_t network_get_http_server();

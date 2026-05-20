@@ -121,7 +121,7 @@ Single-row-per-capability summary across every non-archived variant. This is the
 | AP mode with dynamic SSID | ✅ SecuraCV-<MAC> | ✅ | ✅ | ✅ |
 | Device-unique AP password | ✅ (derived from fingerprint) | ❌ Static default | ✅ (derived from pubkey fp) | ❌ Static default |
 | Max client limit (1) | ✅ Hardened | ❌ (4 clients) | ✅ (1 client) | ❌ (configurable) |
-| mDNS (canary-&lt;id&gt;.local + _securacv._tcp) | ✅ | ❌ | ✅ | ❌ |
+| mDNS (canary.local + _securacv._tcp, device_id in TXT record) | ✅ | ❌ | ✅ | ❌ |
 | Rate limiting on API | ✅ | ❌ | ✅ (120 req/min) | ❌ |
 | TLS (HTTPS) support | ✅ Self-signed cert | ❌ | ❌ | ❌ |
 | WiFi STA (home network connect) | ✅ | ❌ | ✅ (AP+STA dual mode) | ❌ |
