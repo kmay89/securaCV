@@ -21,6 +21,12 @@
  *      allow-list.
  *  10. Quiet Hours: events during the configured window are held; one
  *      summary row appears at window-close.
+ *  11. core.multilink_fusion (PR 3): NOTE / BREATHING_* / RSSI-derived
+ *      fields are stripped — fusion has nothing to say about identity
+ *      or single-link breathing precision.
+ *  12. ble.scout (PR 5): MOTION_SCORE, BREATHING_*, CONFIDENCE are
+ *      stripped; the user-supplied room label survives in `note` for
+ *      beacon_event ONLY (scout_initialized strips even that).
  *
  * Build:
  *   - Standalone (host x86) for CI: g++ -std=c++17 -DCSI_TEST_HOST_BUILD \
@@ -43,6 +49,8 @@
 #include "csi_witness_payload.h"
 #include "ble_events_module.h"
 #include "meta_quiet_hours.h"
+#include "core_multilink_fusion.h"
+#include "ble_scout.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -446,6 +454,171 @@ void test_ble_events_strip_mac_precision_fields() {
   }
 }
 
+void test_multilink_fusion_strips_unauthorized_fields() {
+  /* PR 3 (#456) added core.multilink_fusion. Its "motion_confirmed"
+   * manifest at core_multilink_fusion.cpp permits
+   *   STATE_NAME | CONFIDENCE | TIME_BUCKET | MOTION_SCORE
+   * | BUNDLED_COUNT | DISMISSED
+   * — and ONLY those. Three privacy hazards are intentionally absent:
+   *
+   *   1. NOTE — would let a future contributor smuggle a peer's hashed
+   *      device id, MAC fingerprint, or arbitrary diagnostic string
+   *      into the event payload. Multi-link fusion has nothing to say
+   *      that needs a free-form string field; the privacy contract
+   *      says it MUST NOT carry one.
+   *
+   *   2. BREATHING_RATE / BREATHING_SCORE — single-link breathing data
+   *      is the role of core.breathing, not the fusion module. Allowing
+   *      it here would let a fusion event carry RSSI-derived breathing
+   *      precision that single-link consumers downstream would treat
+   *      as confirmed truth.
+   *
+   * (DURATION_SEC is also outside the manifest, but the bundler's
+   * close_slot re-adds it to bundled rows as "how long was this bundle
+   * open" — legitimate metadata for any bundled event regardless of
+   * allow-list. Asserting it here would fight that intentional bundler
+   * behaviour; the NOTE / BREATHING_* checks below are what the
+   * fusion-specific privacy story actually enforces.)
+   *
+   * Future contributors changing the manifest WILL break this test.
+   * That's the point: the contract is now load-bearing. */
+  csi_event_test_reset();
+  reset_captures();
+  csi_module_register(core_multilink_fusion_module());
+
+  csi_event_values_t v;
+  csi_event_values_init(&v);
+  v.category = CSI_CATEGORY_EVENT;
+  /* Stuff every smuggleable field. */
+  v.present_fields = CSI_FIELD_STATE_NAME
+                   | CSI_FIELD_CONFIDENCE
+                   | CSI_FIELD_TIME_BUCKET
+                   | CSI_FIELD_MOTION_SCORE
+                   | CSI_FIELD_BUNDLED_COUNT
+                   | CSI_FIELD_NOTE                /* must be stripped */
+                   | CSI_FIELD_BREATHING_RATE      /* must be stripped */
+                   | CSI_FIELD_BREATHING_SCORE;    /* must be stripped */
+  strncpy(v.state_name, "motion",     sizeof(v.state_name) - 1);
+  strncpy(v.confidence, "confirmed",  sizeof(v.confidence) - 1);
+  strncpy(v.note,       "deadbeef12345678", sizeof(v.note) - 1);  /* fake peer hash */
+  v.motion_score       = 80;
+  v.bundled_count      = 3;
+  v.breathing_rate_bpm = 99;
+  v.breathing_score    = 99;
+
+  csi_event_emit("core.multilink_fusion", "motion_confirmed", &v);
+  csi_event_flush_bundles();
+
+  bool seen = false;
+  for (size_t k = 0; k < g_captured_count; ++k) {
+    if (strcmp(g_captured[k].type_name, "motion_confirmed") != 0) continue;
+    seen = true;
+    EXPECT(g_captured[k].values.note[0] == '\0',
+           "core.multilink_fusion MUST NOT carry note (no peer-id smuggling)");
+    EXPECT(g_captured[k].values.breathing_rate_bpm == 0,
+           "core.multilink_fusion MUST NOT carry breathing_rate");
+    EXPECT(g_captured[k].values.breathing_score == 0,
+           "core.multilink_fusion MUST NOT carry breathing_score");
+    EXPECT((g_captured[k].values.present_fields
+            & (CSI_FIELD_NOTE
+             | CSI_FIELD_BREATHING_RATE
+             | CSI_FIELD_BREATHING_SCORE)) == 0,
+           "disallowed bits must be cleared in present_fields");
+    /* Conversely, the allow-listed fields must survive. */
+    EXPECT(g_captured[k].values.motion_score == 80,
+           "motion_score must pass through (it IS in the allow-list)");
+  }
+  EXPECT(seen, "core.multilink_fusion must commit at least once");
+}
+
+void test_ble_scout_strips_unauthorized_fields() {
+  /* PR 5 (#463 + #465 + canary-wap port #467) added ble.scout. Its
+   * manifest in ble_scout.cpp permits two event types:
+   *
+   *   scout_initialized: STATE_NAME | TIME_BUCKET
+   *   beacon_event:      STATE_NAME | NOTE | TIME_BUCKET
+   *
+   * The Scout role MUST NOT emit:
+   *   • The beacon's hashed_id in any field (we publish room
+   *     attribution by user-supplied LABEL, not by identifier).
+   *   • The raw MAC in any field (always hashed inside on_advert,
+   *     before reaching the registry / tracker / event payload).
+   *   • Any RSSI-derived numeric (MOTION_SCORE, BREATHING_*, etc.) —
+   *     Scout has nothing to say about CSI features.
+   *
+   * This test stuffs every smuggleable field through both event
+   * types and asserts the chokepoint zeroes everything outside the
+   * allow-list. Future contributors who add e.g. RSSI to the
+   * manifest will trip this test. */
+  csi_event_test_reset();
+  reset_captures();
+  csi_module_register(ble_scout::ble_scout_module());
+
+  const char* TYPES[] = { "scout_initialized", "beacon_event" };
+  const size_t N = sizeof(TYPES) / sizeof(TYPES[0]);
+
+  for (size_t i = 0; i < N; ++i) {
+    reset_captures();
+    csi_event_values_t v;
+    csi_event_values_init(&v);
+    v.category = CSI_CATEGORY_EVENT;
+    /* Stuff every field a misbehaving Scout call could try to set.
+     * DURATION_SEC is intentionally omitted: the bundler re-adds it
+     * to closed bundle rows regardless of allow-list (see the same
+     * carve-out documented in test_ble_events_strip_mac_precision_
+     * fields), so asserting its removal would fight intentional
+     * behaviour. The fields below ARE the privacy contract. */
+    v.present_fields = CSI_FIELD_STATE_NAME
+                     | CSI_FIELD_NOTE
+                     | CSI_FIELD_TIME_BUCKET
+                     | CSI_FIELD_MOTION_SCORE
+                     | CSI_FIELD_BREATHING_SCORE
+                     | CSI_FIELD_BREATHING_RATE
+                     | CSI_FIELD_CONFIDENCE;
+    strncpy(v.state_name, "arrived",  sizeof(v.state_name) - 1);
+    strncpy(v.note,       "kitchen",  sizeof(v.note) - 1);
+    strncpy(v.confidence, "smuggled", sizeof(v.confidence) - 1);
+    v.motion_score       = 50;
+    v.breathing_score    = 50;
+    v.breathing_rate_bpm = 17;
+
+    csi_event_emit("ble.scout", TYPES[i], &v);
+    csi_event_flush_bundles();
+
+    bool seen = false;
+    for (size_t k = 0; k < g_captured_count; ++k) {
+      if (strcmp(g_captured[k].type_name, TYPES[i]) != 0) continue;
+      seen = true;
+      EXPECT(g_captured[k].values.motion_score == 0,
+             "ble.scout MUST NOT carry motion_score");
+      EXPECT(g_captured[k].values.breathing_score == 0,
+             "ble.scout MUST NOT carry breathing_score");
+      EXPECT(g_captured[k].values.breathing_rate_bpm == 0,
+             "ble.scout MUST NOT carry breathing_rate");
+      EXPECT(g_captured[k].values.confidence[0] == '\0',
+             "ble.scout MUST NOT carry confidence");
+      EXPECT((g_captured[k].values.present_fields
+              & (CSI_FIELD_MOTION_SCORE
+               | CSI_FIELD_BREATHING_SCORE
+               | CSI_FIELD_BREATHING_RATE
+               | CSI_FIELD_CONFIDENCE)) == 0,
+             "disallowed bits must be cleared in present_fields");
+
+      /* scout_initialized's manifest does NOT permit NOTE either —
+       * only the beacon_event type carries the user-supplied label. */
+      if (strcmp(TYPES[i], "scout_initialized") == 0) {
+        EXPECT(g_captured[k].values.note[0] == '\0',
+               "scout_initialized MUST NOT carry note");
+      } else {
+        /* beacon_event DOES carry the label in note. Verify it survived. */
+        EXPECT(strcmp(g_captured[k].values.note, "kitchen") == 0,
+               "beacon_event's note (room label) must pass through");
+      }
+    }
+    EXPECT(seen, "ble.scout event must commit at least once");
+  }
+}
+
 void test_quiet_hours_holds_and_summarises() {
   /* The Quiet Hours plan promised: "Events during the configured window
    * are held; a single summary appears after the window closes."
@@ -585,6 +758,11 @@ extern "C" int csi_event_invariants_run() {
   test_per_module_ceiling();
   test_witness_payload_includes_metadata();
   test_ble_events_strip_mac_precision_fields();
+  /* PR 6: pin the per-event allow-lists for core.multilink_fusion and
+   * ble.scout. Future contributors who relax either manifest will trip
+   * these. */
+  test_multilink_fusion_strips_unauthorized_fields();
+  test_ble_scout_strips_unauthorized_fields();
   test_quiet_hours_holds_and_summarises();
   test_quiet_hours_anomalies_bypass_gate();
 

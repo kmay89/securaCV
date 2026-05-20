@@ -211,11 +211,19 @@ jobs:
         #   9. ble.events (spec §10) — MAC-precision fields stripped
         #  10. Quiet Hours hold non-anomaly events; one summary at close
         #  11. Anomaly events bypass the Quiet Hours gate
+        #  12. core.multilink_fusion strips unauthorized fields (PR 3 + PR 6)
+        #  13. ble.scout strips unauthorized fields (PR 5 + PR 6)
         #
         # If a future PR (or LLM coder) breaks any of these, this job
         # fails before the firmware build even starts.
         run: |
           set -euo pipefail
+          # PR 6: link the real manifests for core.multilink_fusion (in
+          # firmware/common/csi) and ble.scout (in the canary lib) so the
+          # invariants test pins the actual allow-lists, not a synthetic
+          # stand-in. mesh_crypto.cpp is brought in because ble_scan.cpp
+          # uses sha256_domain; its CSI_TEST_HOST_BUILD path provides a
+          # vendored SHA-256 so no Arduino/mbedtls dep is needed here.
           g++ -std=c++17 -DCSI_TEST_HOST_BUILD \
               -Wall -Wextra -Wno-unused-parameter \
               firmware/common/csi/csi_event_invariants_test.cpp \
@@ -225,7 +233,15 @@ jobs:
               firmware/common/csi/src/csi_witness_payload.cpp \
               firmware/common/csi/src/ble_events_module.cpp \
               firmware/common/csi/src/meta_quiet_hours.cpp \
+              firmware/common/csi/src/core_multilink_fusion.cpp \
+              firmware/canary/lib/securacv_ble_scan/src/ble_scan.cpp \
+              firmware/canary/lib/securacv_ble_scan/src/ble_scout.cpp \
+              firmware/canary/lib/securacv_ble_scan/src/ble_scout_state.cpp \
+              firmware/canary/lib/securacv_ble_scan/src/ble_scout_key.cpp \
+              firmware/canary/lib/securacv_mesh/src/mesh_crypto.cpp \
               -I firmware/common/csi/src \
+              -I firmware/canary/lib/securacv_ble_scan/src \
+              -I firmware/canary/lib/securacv_mesh/src \
               -o /tmp/csi_invariants
 
       - name: Run host invariants test
