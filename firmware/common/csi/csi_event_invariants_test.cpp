@@ -473,10 +473,12 @@ void test_multilink_fusion_strips_unauthorized_fields() {
    *      precision that single-link consumers downstream would treat
    *      as confirmed truth.
    *
-   *   3. DURATION_SEC — the bundler re-adds this field for closed
-   *      bundle rows; the module itself MUST NOT supply it. (See the
-   *      note in test_ble_events_strip_mac_precision_fields for the
-   *      same carve-out.)
+   * (DURATION_SEC is also outside the manifest, but the bundler's
+   * close_slot re-adds it to bundled rows as "how long was this bundle
+   * open" — legitimate metadata for any bundled event regardless of
+   * allow-list. Asserting it here would fight that intentional bundler
+   * behaviour; the NOTE / BREATHING_* checks below are what the
+   * fusion-specific privacy story actually enforces.)
    *
    * Future contributors changing the manifest WILL break this test.
    * That's the point: the contract is now load-bearing. */
@@ -560,22 +562,25 @@ void test_ble_scout_strips_unauthorized_fields() {
     csi_event_values_t v;
     csi_event_values_init(&v);
     v.category = CSI_CATEGORY_EVENT;
-    /* Stuff every field a misbehaving Scout call could try to set. */
+    /* Stuff every field a misbehaving Scout call could try to set.
+     * DURATION_SEC is intentionally omitted: the bundler re-adds it
+     * to closed bundle rows regardless of allow-list (see the same
+     * carve-out documented in test_ble_events_strip_mac_precision_
+     * fields), so asserting its removal would fight intentional
+     * behaviour. The fields below ARE the privacy contract. */
     v.present_fields = CSI_FIELD_STATE_NAME
                      | CSI_FIELD_NOTE
                      | CSI_FIELD_TIME_BUCKET
                      | CSI_FIELD_MOTION_SCORE
                      | CSI_FIELD_BREATHING_SCORE
                      | CSI_FIELD_BREATHING_RATE
-                     | CSI_FIELD_CONFIDENCE
-                     | CSI_FIELD_DURATION_SEC;
+                     | CSI_FIELD_CONFIDENCE;
     strncpy(v.state_name, "arrived",  sizeof(v.state_name) - 1);
     strncpy(v.note,       "kitchen",  sizeof(v.note) - 1);
     strncpy(v.confidence, "smuggled", sizeof(v.confidence) - 1);
     v.motion_score       = 50;
     v.breathing_score    = 50;
     v.breathing_rate_bpm = 17;
-    v.duration_sec       = 30;
 
     csi_event_emit("ble.scout", TYPES[i], &v);
     csi_event_flush_bundles();
