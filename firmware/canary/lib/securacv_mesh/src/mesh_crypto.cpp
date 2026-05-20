@@ -197,7 +197,7 @@ void sha256_domain(const char* domain,
     rc = mbedtls_sha256_finish(&ctx, out);
   }
   if (rc != 0) {
-    memset(out, 0, SHA256_OUT_LEN);
+    secure_zero(out, SHA256_OUT_LEN);
   }
 #else
   /* mbedTLS 2.x — void return. The whole arduino-esp32 2.0.x project
