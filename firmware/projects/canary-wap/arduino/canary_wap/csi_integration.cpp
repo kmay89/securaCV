@@ -58,10 +58,17 @@
 #include <core_presence.h>
 #include <core_breathing.h>
 #include <core_activity_ribbon.h>
+#include <core_multilink_fusion.h>
 #include <meta_daily_summary.h>
 #include <meta_quiet_hours.h>
+#include <meta_empty_room_baseline.h>
 #include <anomaly_baseline.h>
 #include <ble_events_module.h>
+
+#include "build_config.h"
+#if FEATURE_BLE_SCAN
+#include "ble_scout.h"
+#endif
 
 namespace {
 
@@ -1872,6 +1879,23 @@ void register_v1_modules() {
   csi_module_register(anomaly_baseline_module());
 #endif
 
+  /* PR 3 — core.multilink_fusion: 2-link motion-confirmation gate.
+   * Promotes single-link "observed" to multi-link "confirmed" when ≥2
+   * links agree within a 3-second window. The .h/.cpp shipped in PR
+   * #456 but the registration was missed in this build until now; the
+   * matching gap in firmware/canary/src/csi_modules_integration.cpp
+   * was closed in PR #458. */
+#ifndef CSI_DISABLE_MODULE_CORE_MULTILINK_FUSION
+  csi_module_register(core_multilink_fusion_module());
+#endif
+
+  /* PR 4a — meta.empty_room_baseline: scheduled 10-minute "empty
+   * room" mean calibration, triggered at pairing-complete and during
+   * quiet-hours. Same registration gap as core_multilink_fusion above. */
+#ifndef CSI_DISABLE_MODULE_META_EMPTY_ROOM_BASELINE
+  csi_module_register(meta_empty_room_baseline_module());
+#endif
+
   /* spec/event_contract.md §10: BLE Discovery semantic events. The
    * module exists so any BLE → witness-chain emit MUST go through the
    * chokepoint, where the per-event allow-list strips fields that
@@ -1881,6 +1905,20 @@ void register_v1_modules() {
    * disable matrix today — the BLE stack itself is a feature flag
    * (FEATURE_BLE_DISCOVERY) controlled at a higher layer. */
   csi_module_register(ble_events_module());
+
+#if FEATURE_BLE_SCAN
+  /* BLE Scout — paired-beacon room-attribution (PR 5b ported to
+   * canary-wap). Gated behind FEATURE_BLE_SCAN so the build cost
+   * (NimBLE passive scan loop + per-device NVS key) is opt-in. The
+   * module's csi_event_decl_t manifest constrains every emit to
+   * state_name/note/time_bucket — no MAC or hashed_id ever lands in
+   * an event payload. */
+  csi_module_register(ble_scout::ble_scout_module());
+  /* Load the per-device key + start the NimBLE passive scan loop.
+   * Idempotent — safe even if the NimBLE stack isn't initialized yet
+   * (the scan-loop TU is empty in builds without NimBLEDevice.h). */
+  ble_scout::ble_scout_init();
+#endif
 
   /* Wire the persisted Quiet Hours range into the chokepoint. The
    * dashboard's settings panel writes qh.en / qh.start / qh.end via
