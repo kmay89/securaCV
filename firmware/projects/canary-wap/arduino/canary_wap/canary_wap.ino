@@ -5472,6 +5472,46 @@ static void wifi_init_provisioning() {
   // Always use AP+STA mode for provisioning capability
   WiFi.mode(WIFI_AP_STA);
 
+  // Set the WiFi STA hostname BEFORE softAP() / begin() so DHCP also
+  // propagates "canary" to the home router — some routers/clients
+  // resolve via DHCP hostname rather than mDNS. Mirrors the canonical
+  // path in firmware/canary/lib/securacv_network so peers see the
+  // same hostname grammar from both builds.
+  WiFi.setHostname("canary");
+
+  // Register the STA_GOT_IP handler ONCE per boot. ESP-IDF mDNS binds
+  // to whichever netifs are up at MDNS.begin() time and does not auto-
+  // re-announce when a new netif gains IP later. Without this, the
+  // hostname is reachable only on the AP interface — phones on the
+  // home WiFi can't resolve it. The handler tears down and restarts
+  // mDNS so the STA interface is announced too.
+  static bool s_wifi_event_registered = false;
+  if (!s_wifi_event_registered) {
+    WiFi.onEvent([](arduino_event_id_t event, arduino_event_info_t /*info*/) {
+      if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
+        MDNS.end();
+        if (MDNS.begin("canary")) {
+          MDNS.addService("http", "tcp", 80);
+          MDNS.addService("securacv", "tcp", 80);
+          MDNS.addServiceTxt("securacv", "tcp", "device_id",
+                             (const char*)g_device.device_id);
+          MDNS.addServiceTxt("securacv", "tcp", "fw", FIRMWARE_VERSION);
+          #if defined(HARDWARE_XIAO_ESP32C3)
+          MDNS.addServiceTxt("securacv", "tcp", "model", "XIAO ESP32C3");
+          #else
+          MDNS.addServiceTxt("securacv", "tcp", "model", "XIAO ESP32S3");
+          #endif
+          log_health(SCV_LOG_INFO, SCV_CAT_NETWORK,
+                     "mDNS re-announced on STA", "canary.local");
+        } else {
+          log_health(SCV_LOG_WARNING, SCV_CAT_NETWORK,
+                     "mDNS STA re-announce failed", nullptr);
+        }
+      }
+    });
+    s_wifi_event_registered = true;
+  }
+
   // Modem-sleep is on by default and adds 50–200 ms of variable latency
   // to every TCP send. That's invisible for short JSON requests but it's
   // exactly what made the long-lived MJPEG peek stream drop after a
@@ -5503,62 +5543,25 @@ static void wifi_init_provisioning() {
   snprintf(msg, sizeof(msg), "AP: %s", g_device.ap_ssid);
   log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, msg, g_wifi_status.ap_ip);
 
-  // Start mDNS with a per-device hostname so a multi-Canary household
-  // doesn't have two devices racing for `canary.local` (loser becomes
-  // unreachable by name). Hostname rules (RFC 6762 §16): lowercase
-  // [a-z0-9-], no leading/trailing hyphen. We derive from the device id
-  // (e.g. "canary-s3-A1B2") and lowercase it; the leading "canary-" stays
-  // human-recognizable.
-  //
-  // We also advertise the SecuraCV-specific service `_securacv._tcp` with
-  // TXT records (device_id, fw, model) so peer Canaries, the fleet
-  // manager, and the companion SPA can browse the LAN for siblings
-  // without scanning the subnet. Protocol matches
-  // canary-vision/docs/discovery.md so a single SPA build talks to both
-  // the WAP-built and the modular `canary/` builds.
-  char mdns_host[40];
-  size_t hj = 0;
-  for (size_t hi = 0; g_device.device_id[hi] != '\0' &&
-                      hj < sizeof(mdns_host) - 1; hi++) {
-    char c = g_device.device_id[hi];
-    if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
-    if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-') {
-      mdns_host[hj++] = c;
-    } else {
-      mdns_host[hj++] = '-';
-    }
-  }
-  // Trim trailing AND leading hyphens (RFC 6762 §16 forbids both).
-  // Matches the canonical sanitize in firmware/canary/lib/securacv_network
-  // so peer browsers get the same hostname grammar from both builds.
-  while (hj > 0 && mdns_host[hj - 1] == '-') hj--;
-  {
-    size_t start = 0;
-    while (start < hj && mdns_host[start] == '-') start++;
-    if (start > 0) {
-      memmove(mdns_host, mdns_host + start, hj - start);
-      hj -= start;
-    }
-  }
-  // Fall back to a stable default rather than emitting an empty name.
-  if (hj == 0) {
-    const char* fb = "canary";
-    hj = strlen(fb);
-    if (hj >= sizeof(mdns_host)) hj = sizeof(mdns_host) - 1;
-    memcpy(mdns_host, fb, hj);
-  }
-  mdns_host[hj] = '\0';
-
-  if (MDNS.begin(mdns_host)) {
+  // Start mDNS with the constant hostname "canary". RFC 6762 §9
+  // conflict resolution renames a second device to canary-2.local at
+  // the protocol layer, so multi-device homes still work; the SPA
+  // wizard's `_securacv._tcp` service browse uses the device_id TXT
+  // record to distinguish individual Canaries. This restores the
+  // human-typeable `http://canary.local` URL that single-device
+  // households expect, while still serving the multi-device "add
+  // another" flow via the wizard. Mirrors the canonical path in
+  // firmware/canary/lib/securacv_network so peer browsers get the
+  // same hostname grammar from both builds. Protocol matches
+  // canary-vision/docs/discovery.md so a single SPA build talks to
+  // both the WAP-built and the modular `canary/` builds.
+  if (MDNS.begin("canary")) {
     MDNS.addService("http", "tcp", 80);
-
     MDNS.addService("securacv", "tcp", 80);
     // ESPmDNS::addServiceTxt has three overloads (char*, const char*,
     // String). g_device.device_id is char[32], which is implicitly
     // convertible to all three — making the call ambiguous. Cast the
     // non-const-array argument to const char* to pick a single overload.
-    // (String literals and FIRMWARE_VERSION are const char* already and
-    // bind cleanly, so they don't need the cast.)
     MDNS.addServiceTxt("securacv", "tcp", "device_id", (const char*)g_device.device_id);
     MDNS.addServiceTxt("securacv", "tcp", "fw",        FIRMWARE_VERSION);
     // The same firmware compiles for both XIAO ESP32S3 and XIAO ESP32C3
@@ -5570,10 +5573,9 @@ static void wifi_init_provisioning() {
     #else
     MDNS.addServiceTxt("securacv", "tcp", "model",     "XIAO ESP32S3");
     #endif
-
-    char fqdn[64];
-    snprintf(fqdn, sizeof(fqdn), "%s.local", mdns_host);
-    log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "mDNS started", fqdn);
+    log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "mDNS started", "canary.local");
+  } else {
+    log_health(SCV_LOG_WARNING, SCV_CAT_NETWORK, "mDNS begin failed", "canary");
   }
 
   // Attempt to connect to home WiFi if configured

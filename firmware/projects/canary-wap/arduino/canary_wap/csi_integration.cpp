@@ -58,8 +58,10 @@
 #include <core_presence.h>
 #include <core_breathing.h>
 #include <core_activity_ribbon.h>
+#include <core_multilink_fusion.h>
 #include <meta_daily_summary.h>
 #include <meta_quiet_hours.h>
+#include <meta_empty_room_baseline.h>
 #include <anomaly_baseline.h>
 #include <ble_events_module.h>
 
@@ -1870,6 +1872,23 @@ void register_v1_modules() {
    * stream the four core modules see. */
 #ifndef CSI_DISABLE_MODULE_ANOMALY_BASELINE
   csi_module_register(anomaly_baseline_module());
+#endif
+
+  /* PR 3 — core.multilink_fusion: 2-link motion-confirmation gate.
+   * Promotes single-link "observed" to multi-link "confirmed" when ≥2
+   * links agree within a 3-second window. The .h/.cpp shipped in PR
+   * #456 but the registration was missed in this build until now; the
+   * matching gap in firmware/canary/src/csi_modules_integration.cpp
+   * was closed in PR #458. */
+#ifndef CSI_DISABLE_MODULE_CORE_MULTILINK_FUSION
+  csi_module_register(core_multilink_fusion_module());
+#endif
+
+  /* PR 4a — meta.empty_room_baseline: scheduled 10-minute "empty
+   * room" mean calibration, triggered at pairing-complete and during
+   * quiet-hours. Same registration gap as core_multilink_fusion above. */
+#ifndef CSI_DISABLE_MODULE_META_EMPTY_ROOM_BASELINE
+  csi_module_register(meta_empty_room_baseline_module());
 #endif
 
   /* spec/event_contract.md §10: BLE Discovery semantic events. The
