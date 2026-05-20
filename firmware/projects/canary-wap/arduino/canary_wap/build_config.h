@@ -98,6 +98,7 @@
   #define FEATURE_MESH_NETWORK  0
   #define FEATURE_BLUETOOTH     0
   #define FEATURE_BLE           0   // BLE Discovery (Opera/Chirp/Nearby)
+  #define FEATURE_BLE_SCAN      0   // BLE Scout — paired-beacon room attribution (PR 5)
   #define FEATURE_SYS_MONITOR   0
   #define FEATURE_WIFI_PRESENCE 0   // WiFi probe request presence detection
   #define FEATURE_AUDIBLE_CHIRP 0   // Local audible/visual alert tones
@@ -129,6 +130,7 @@
   #define FEATURE_MESH_NETWORK  0   // Skip mesh (saves ~15s)
   #define FEATURE_BLUETOOTH     HW_HAS_BLE   // BLE pairing channel (NimBLE)
   #define FEATURE_BLE           0   // Skip Opera/Chirp/Nearby discovery (saves ~25s)
+  #define FEATURE_BLE_SCAN      0   // BLE Scout disabled by default — opt-in via FULL build
   #define FEATURE_SYS_MONITOR   1
   #define FEATURE_WIFI_PRESENCE 1   // WiFi probe request presence detection
   #define FEATURE_AUDIBLE_CHIRP 1   // Local audible/visual alert tones
@@ -158,6 +160,7 @@
   // both XIAO ESP32-S3 and XIAO ESP32-C3 (both BLE 5.0 capable).
   #define FEATURE_BLUETOOTH     HW_HAS_BLE
   #define FEATURE_BLE           1   // BLE Discovery (Opera/Chirp/Nearby) — works on both S3 and C3
+  #define FEATURE_BLE_SCAN      HW_HAS_BLE   // BLE Scout — paired-beacon room attribution
   #define FEATURE_SYS_MONITOR   1
   #define FEATURE_WIFI_PRESENCE 1   // WiFi probe request presence detection
   #define FEATURE_AUDIBLE_CHIRP 1   // Local audible/visual alert tones

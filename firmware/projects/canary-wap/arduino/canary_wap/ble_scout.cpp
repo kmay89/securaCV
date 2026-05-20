@@ -1,0 +1,277 @@
+/*
+ * SecuraCV Canary — BLE Scout integration module — Implementation
+ *
+ * Compiles on host (CSI_TEST_HOST_BUILD) — pure-logic glue only.
+ * The NimBLE scan loop lives in ble_scout_nimble.cpp and is the only
+ * TU that links against the Bluetooth stack.
+ *
+ * Privacy invariants enforced here:
+ *   1. Raw 6-byte MAC enters ble_scout_on_advert() and ble_scout_pair()
+ *      ONLY. It is hashed immediately and the raw bytes never reach
+ *      the registry, the tracker, or any event field.
+ *   2. Events emitted ("scout_initialized", "beacon_arrived",
+ *      "beacon_departed") carry only the privacy-chokepoint's
+ *      allow-listed fields. No hashed_id is published in v1 either —
+ *      the label travels in the note field (sanitized ASCII at the
+ *      chokepoint) and consumers correlate via label only.
+ */
+
+#include "ble_scout.h"
+#include "ble_scout_state.h"
+#include "ble_scout_key.h"
+
+#include "csi_event.h"
+#include "csi_module.h"
+
+#include <string.h>
+
+#ifndef CSI_TEST_HOST_BUILD
+  #include <Arduino.h>   /* millis() */
+#endif
+
+/* Forward-declare the NimBLE scan-loop entry points. Defined in
+ * ble_scout_nimble.cpp, which is an EMPTY translation unit unless
+ * FEATURE_BLE_SCAN=1 AND NimBLEDevice.h is available. We gate the
+ * call site with the same condition so dev/release builds (no NimBLE
+ * in lib_deps) don't try to link against absent symbols. */
+#if defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN \
+    && !defined(CSI_TEST_HOST_BUILD) \
+    && __has_include(<NimBLEDevice.h>)
+  #define BLE_SCOUT_HAS_NIMBLE 1
+  namespace ble_scout { bool nimble_scan_init(); bool nimble_scan_start(); }
+#else
+  #define BLE_SCOUT_HAS_NIMBLE 0
+#endif
+
+namespace ble_scout {
+
+namespace {
+
+bool                s_inited       = false;
+bool                s_scan_started = false;   /* tracks NimBLE scan-loop state separately
+                                               * so a one-time scan-start failure can
+                                               * be retried on the next init() call */
+ble_scan::Registry  s_registry;
+PresenceTracker     s_tracker;
+
+inline uint32_t now_ms_impl() {
+#ifdef CSI_TEST_HOST_BUILD
+  /* Host build: presence_on_tick is driven by an explicit
+   * caller-supplied timestamp via ble_scout_tick(); this fallback
+   * isn't reached in the host test path. */
+  return 0;
+#else
+  return millis();
+#endif
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * Event emission helpers
+ *
+ * Note: hashed_id is NOT placed in the note field. We carry only the
+ * user-supplied label (already sanitized at pair time) so the wire
+ * format contains zero secret-derived bytes. This matches the design
+ * doc's "events expose room-attribution, never beacon identity."
+ * ────────────────────────────────────────────────────────────────────────── */
+
+void copy_label_to_note(csi_event_values_t* v, const char* label) {
+  if (label == nullptr || label[0] == '\0') return;
+  v->present_fields |= CSI_FIELD_NOTE;
+  strncpy(v->note, label, sizeof(v->note) - 1);
+  v->note[sizeof(v->note) - 1] = '\0';
+}
+
+void emit_arrived(const char* label) {
+  csi_event_values_t v;
+  csi_event_values_init(&v);
+  v.category       = CSI_CATEGORY_EVENT;
+  v.present_fields = CSI_FIELD_STATE_NAME | CSI_FIELD_TIME_BUCKET;
+  strncpy(v.state_name, "arrived", sizeof(v.state_name) - 1);
+  v.state_name[sizeof(v.state_name) - 1] = '\0';
+  copy_label_to_note(&v, label);
+  (void)csi_event_emit("ble.scout", "beacon_event", &v);
+}
+
+void emit_departed(const char* label) {
+  csi_event_values_t v;
+  csi_event_values_init(&v);
+  v.category       = CSI_CATEGORY_EVENT;
+  v.present_fields = CSI_FIELD_STATE_NAME | CSI_FIELD_TIME_BUCKET;
+  strncpy(v.state_name, "departed", sizeof(v.state_name) - 1);
+  v.state_name[sizeof(v.state_name) - 1] = '\0';
+  copy_label_to_note(&v, label);
+  (void)csi_event_emit("ble.scout", "beacon_event", &v);
+}
+
+void emit_initialized(const char* status) {
+  csi_event_values_t v;
+  csi_event_values_init(&v);
+  v.category       = CSI_CATEGORY_EVENT;
+  v.present_fields = CSI_FIELD_STATE_NAME | CSI_FIELD_TIME_BUCKET;
+  strncpy(v.state_name, status, sizeof(v.state_name) - 1);
+  v.state_name[sizeof(v.state_name) - 1] = '\0';
+  (void)csi_event_emit("ble.scout", "scout_initialized", &v);
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * csi_module manifest — registered by csi_modules_integration.cpp
+ * ────────────────────────────────────────────────────────────────────────── */
+
+void module_init(const csi_module_settings_t* /*s*/) {
+  /* ble_scout_init() is called separately from main.cpp (it needs to
+   * happen after NVS + WiFi-radio are up; csi_modules_init() runs
+   * earlier in the boot path). This callback is a no-op so the
+   * registry runtime sees a well-formed module. */
+}
+
+void module_tick(const csi_features_t* /*f*/) {
+  /* on_tick fires once per CSI window (~1 Hz). That's the same
+   * cadence we want for the LOST_MS lapsed-beacon check. */
+  if (!s_inited) return;
+  ble_scout_tick(now_ms_impl());
+}
+
+const csi_event_decl_t EVENTS[] = {
+  {
+    /* type_name */                "scout_initialized",
+    /* allowed_fields */            CSI_FIELD_STATE_NAME
+                                  | CSI_FIELD_TIME_BUCKET,
+    /* privacy */                   CSI_PRIVACY_P0,
+    /* default_ceiling_per_hour */  6,
+  },
+  {
+    /* type_name */                "beacon_event",
+    /* allowed_fields */            CSI_FIELD_STATE_NAME    /* "arrived" | "departed" */
+                                  | CSI_FIELD_NOTE          /* sanitized label */
+                                  | CSI_FIELD_TIME_BUCKET,
+    /* privacy */                   CSI_PRIVACY_P0,
+    /* default_ceiling_per_hour */  24,                     /* 1/min per beacon, bundled */
+  },
+};
+
+const csi_module_t MODULE = {
+  /* id */                  "ble.scout",
+  /* default_privacy */     CSI_PRIVACY_P0,
+  /* events */              EVENTS,
+  /* event_count */         sizeof(EVENTS) / sizeof(EVENTS[0]),
+  /* init */                module_init,
+  /* tick */                module_tick,
+  /* on_event_dismissed */  nullptr,
+  /* deinit */              nullptr,
+};
+
+}  /* namespace */
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * PUBLIC API
+ * ────────────────────────────────────────────────────────────────────────── */
+
+bool ble_scout_init() {
+  /* Phase 1: load the per-device key + bring up the in-RAM registry
+   * and tracker. Idempotent — only runs once. */
+  if (!s_inited) {
+    if (!ble_scout_key_init()) {
+      /* Key store failed — emit a one-shot init-failed event so the
+       * dashboard / health log can surface it. */
+      emit_initialized("failed");
+      return false;
+    }
+    ble_scan::registry_init(&s_registry);
+    presence_init(&s_tracker);
+    s_inited = true;
+  }
+
+#if BLE_SCOUT_HAS_NIMBLE
+  /* Phase 2: bring up the NimBLE passive scanner. Tracked separately
+   * via s_scan_started so a transient scan-start failure (e.g. the
+   * radio is mid-init during early boot) can be retried by calling
+   * ble_scout_init() again from the next CSI tick. The "ok" event
+   * fires only on the success transition; "scan_unavailable" fires
+   * on each retry attempt but the chokepoint ceiling (6/hour) keeps
+   * the wire chatter bounded. */
+  if (!s_scan_started) {
+    if (nimble_scan_init() && nimble_scan_start()) {
+      s_scan_started = true;
+      emit_initialized("ok");
+    } else {
+      emit_initialized("scan_unavailable");
+    }
+  }
+#else
+  /* Host build / FEATURE_BLE_SCAN=0 path: scan loop is absent. Emit
+   * "ok" once (the s_scan_started latch keeps it from re-firing). */
+  if (!s_scan_started) {
+    s_scan_started = true;
+    emit_initialized("ok");
+  }
+#endif
+  return true;
+}
+
+bool ble_scout_pair(const uint8_t mac[ble_scan::MAC_LEN],
+                    const char*   label) {
+  if (!s_inited || mac == nullptr) return false;
+
+  uint8_t hashed[ble_scan::HASHED_ID_LEN];
+  if (!ble_scout_key_hash_beacon(mac, hashed)) return false;
+
+  return ble_scan::registry_add(&s_registry, hashed, label);
+}
+
+bool ble_scout_unpair(const uint8_t hashed_id[ble_scan::HASHED_ID_LEN]) {
+  if (!s_inited) return false;
+  presence_forget(&s_tracker, hashed_id);
+  return ble_scan::registry_remove(&s_registry, hashed_id);
+}
+
+size_t ble_scout_count() {
+  if (!s_inited) return 0;
+  return ble_scan::registry_count(&s_registry);
+}
+
+void ble_scout_tick(uint32_t now_ms) {
+  if (!s_inited) return;
+
+  /* Buffer sized to MAX_PAIRED_BEACONS so a tick that times-out every
+   * paired beacon simultaneously (e.g. the home WiFi blackout case)
+   * doesn't silently drop departed events past the first few. At
+   * 16 beacons × 16 bytes = 256 bytes on the stack — well within
+   * the tick handler's safety margin. */
+  uint8_t departed_ids[ble_scan::MAX_PAIRED_BEACONS * ble_scan::HASHED_ID_LEN];
+  size_t n = presence_on_tick(&s_tracker, now_ms,
+                              departed_ids,
+                              ble_scan::MAX_PAIRED_BEACONS);
+  for (size_t i = 0; i < n; ++i) {
+    const ble_scan::PairedBeacon* p =
+      ble_scan::registry_find(&s_registry,
+                              departed_ids + i * ble_scan::HASHED_ID_LEN);
+    emit_departed(p ? p->label : "");
+  }
+}
+
+void ble_scout_on_advert(const uint8_t mac[ble_scan::MAC_LEN],
+                         int8_t        rssi_dbm,
+                         uint32_t      now_ms) {
+  if (!s_inited || mac == nullptr) return;
+
+  uint8_t hashed[ble_scan::HASHED_ID_LEN];
+  if (!ble_scout_key_hash_beacon(mac, hashed)) return;
+
+  /* Drop adverts from non-paired beacons in O(N) registry lookup.
+   * MAX_PAIRED_BEACONS=16 so this is ≤16 16-byte memcmps per advert —
+   * sub-microsecond on ESP32-S3. */
+  const ble_scan::PairedBeacon* paired =
+    ble_scan::registry_find(&s_registry, hashed);
+  if (paired == nullptr) return;
+
+  PresenceEvent e = presence_on_advert(&s_tracker, hashed, rssi_dbm, now_ms);
+  if (e == PresenceEvent::ARRIVED)  emit_arrived(paired->label);
+  /* DEPARTED isn't emitted here — it's a timer event surfaced by
+   * ble_scout_tick(). on_advert only ever produces ARRIVED. */
+}
+
+const ::csi_module* ble_scout_module() {
+  return &MODULE;
+}
+
+}  /* namespace ble_scout */

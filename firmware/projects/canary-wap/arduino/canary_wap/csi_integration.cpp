@@ -65,6 +65,11 @@
 #include <anomaly_baseline.h>
 #include <ble_events_module.h>
 
+#include "build_config.h"
+#if FEATURE_BLE_SCAN
+#include "ble_scout.h"
+#endif
+
 namespace {
 
 bool                                    g_initialized        = false;
@@ -1900,6 +1905,20 @@ void register_v1_modules() {
    * disable matrix today — the BLE stack itself is a feature flag
    * (FEATURE_BLE_DISCOVERY) controlled at a higher layer. */
   csi_module_register(ble_events_module());
+
+#if FEATURE_BLE_SCAN
+  /* BLE Scout — paired-beacon room-attribution (PR 5b ported to
+   * canary-wap). Gated behind FEATURE_BLE_SCAN so the build cost
+   * (NimBLE passive scan loop + per-device NVS key) is opt-in. The
+   * module's csi_event_decl_t manifest constrains every emit to
+   * state_name/note/time_bucket — no MAC or hashed_id ever lands in
+   * an event payload. */
+  csi_module_register(ble_scout::ble_scout_module());
+  /* Load the per-device key + start the NimBLE passive scan loop.
+   * Idempotent — safe even if the NimBLE stack isn't initialized yet
+   * (the scan-loop TU is empty in builds without NimBLEDevice.h). */
+  ble_scout::ble_scout_init();
+#endif
 
   /* Wire the persisted Quiet Hours range into the chokepoint. The
    * dashboard's settings panel writes qh.en / qh.start / qh.end via
