@@ -275,9 +275,11 @@ void setup() {
 #if FEATURE_WIFI_AP
   Serial.println("[..] Starting WiFi Access Point...");
   NetworkManager& net = network_get_instance();
-  // Pass device_id as the mDNS hostname so each Canary on a shared home
-  // network is reachable at its own canary-<id>.local — fixes hostname
-  // collisions when a homeowner has more than one Canary.
+  // The device always advertises as `canary.local`; device_id goes into
+  // the _securacv._tcp TXT record so the SPA wizard can distinguish
+  // multiple Canaries during its service browse. RFC 6762 §9 handles
+  // the rare two-on-one-network hostname collision by auto-renaming
+  // the second device to canary-2.local etc.
   if (net.begin(device.ap_ssid, g_ap_password, device.device_id)) {
     Serial.println("[OK] WiFi AP active");
 #if FEATURE_HTTP_SERVER
