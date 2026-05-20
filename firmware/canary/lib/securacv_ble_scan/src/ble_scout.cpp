@@ -264,7 +264,13 @@ void ble_scout_tick(uint32_t now_ms) {
   size_t n = presence_on_tick(&s_tracker, now_ms,
                               departed_ids,
                               ble_scan::MAX_PAIRED_BEACONS);
-  for (size_t i = 0; i < n; ++i) {
+  /* Defensive cap: presence_on_tick returns the count of transitions
+   * but only writes up to MAX_PAIRED_BEACONS ids into the buffer.
+   * Today the buffer matches, so n ≤ MAX_PAIRED_BEACONS, but the
+   * explicit bound localizes the invariant and protects against a
+   * future buffer-size / tracker-size mismatch silently overrunning
+   * the read. */
+  for (size_t i = 0; i < n && i < ble_scan::MAX_PAIRED_BEACONS; ++i) {
     const ble_scan::PairedBeacon* p =
       ble_scan::registry_find(&s_registry,
                               departed_ids + i * ble_scan::HASHED_ID_LEN);

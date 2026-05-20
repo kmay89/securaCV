@@ -89,12 +89,17 @@ const ::csi_module* ble_scout_module();
  * Contract:
  *   • `arrived` is true on AWAY→PRESENT transition, false on
  *     PRESENT→AWAY (timeout).
- *   • `label` is the user-supplied room/beacon label (sanitized at
- *     pair time; never carries an identifier). May be the empty
+ *   • `label` is the user-supplied room/beacon label, sanitized to
+ *     printable ASCII (0x20..0x7E) at pair time by ble_scan::
+ *     registry_add. It never carries an identifier. May be the empty
  *     string if the paired beacon had no label.
- *   • Called from the same task as csi_module_tick / ble_scout_tick.
- *     Must NOT block; the mesh send path is expected to enqueue and
- *     return immediately.
+ *   • THREADING: this callback may be invoked from EITHER the main
+ *     loop (via ble_scout_tick → emit_departed) OR the NimBLE host
+ *     task (via the scan callback → ble_scout_on_advert →
+ *     emit_arrived). The integration's send path MUST be safe under
+ *     both task contexts — typically a non-blocking enqueue into a
+ *     mesh transport ring buffer that the WiFi task drains. Do NOT
+ *     do heavy work, allocate, take locks, or block here.
  *   • If no callback is registered (default), events stay local. */
 typedef void (*beacon_event_broadcast_fn)(bool arrived, const char* label);
 
