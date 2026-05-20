@@ -173,8 +173,9 @@ static void start_mdns(const char* device_id) {
                      (device_id && device_id[0]) ? device_id : MDNS_HOSTNAME);
   MDNS.addServiceTxt("securacv", "tcp", "fw", FIRMWARE_VERSION);
   MDNS.addServiceTxt("securacv", "tcp", "model", "XIAO ESP32S3");
-  log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK,
-             "mDNS started", MDNS_HOSTNAME ".local");
+  char fqdn[48];
+  snprintf(fqdn, sizeof(fqdn), "%s.local", MDNS_HOSTNAME);
+  log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "mDNS started", fqdn);
 }
 
 bool NetworkManager::begin(const char* ap_ssid, const char* ap_password,
