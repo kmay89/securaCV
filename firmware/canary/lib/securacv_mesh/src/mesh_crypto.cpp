@@ -24,7 +24,12 @@
   #include <Arduino.h>
   extern "C" {
     #include <mbedtls/sha256.h>
-    #include <esp_system.h>  /* esp_fill_random */
+    #include <esp_system.h>      /* esp_fill_random */
+    #include <esp_idf_version.h> /* ESP_IDF_VERSION_MAJOR — picks between
+                                    mbedTLS 2.x void-return (IDF 4.x;
+                                    arduino-esp32 2.0.x, the canary PIO
+                                    target today) and mbedTLS 3.x int-
+                                    return (IDF 5.x; arduino-esp32 3.x). */
   }
   /* rweather/Crypto is pulled in by canary platformio.ini. Headers are
    * top-level on the include path. */
@@ -166,12 +171,21 @@ void sha256_domain(const char* domain,
   if (data != nullptr && data_len > 0) host_sha256::update(&ctx, data, data_len);
   host_sha256::final_out(&ctx, out);
 #else
-  /* mbedTLS 3.x (ESP-IDF 5.x) uses non-suffixed names. Each call can
-   * return non-zero on bad params; we check defensively so a future
-   * upstream API tightening or stack-use-after-free trap leaves the
-   * output buffer zeroed rather than uninitialized. */
+  /* mbedTLS API differs between IDF 4.x and IDF 5.x:
+   *   • IDF 5.x (mbedTLS 3.x; arduino-esp32 3.x): non-suffixed names
+   *     return int — error-checking path.
+   *   • IDF 4.x (mbedTLS 2.x; arduino-esp32 2.0.x, this build today):
+   *     non-suffixed names return void; the _ret variants are the
+   *     int-returning ones but were REMOVED in mbedTLS 3.x. To stay
+   *     portable across both, we branch on ESP_IDF_VERSION_MAJOR.
+   * The same domain-separation contract holds either way:
+   * SHA-256("<domain>" || data) → out[32]. */
   mbedtls_sha256_context ctx;
   mbedtls_sha256_init(&ctx);
+#if ESP_IDF_VERSION_MAJOR >= 5
+  /* mbedTLS 3.x — defensive return checks so a future upstream API
+   * tightening or stack-use-after-free trap leaves the output buffer
+   * zeroed rather than uninitialized. */
   int rc = mbedtls_sha256_starts(&ctx, 0);
   if (rc == 0 && domain_len > 0) {
     rc = mbedtls_sha256_update(&ctx, (const uint8_t*)domain, domain_len);
@@ -183,12 +197,24 @@ void sha256_domain(const char* domain,
     rc = mbedtls_sha256_finish(&ctx, out);
   }
   if (rc != 0) {
-    /* On failure, zero the output so callers don't propagate
-     * uninitialized bytes into fingerprints / signatures. */
     memset(out, 0, SHA256_OUT_LEN);
   }
-  mbedtls_sha256_free(&ctx);
+#else
+  /* mbedTLS 2.x — void return. The whole arduino-esp32 2.0.x project
+   * (beacon_channel.cpp, rf_presence.cpp, ble_ota.cpp, canary-wap's
+   * mesh_network.cpp) calls these without checks; we match that
+   * convention here. */
+  mbedtls_sha256_starts(&ctx, 0);
+  if (domain_len > 0) {
+    mbedtls_sha256_update(&ctx, (const uint8_t*)domain, domain_len);
+  }
+  if (data != nullptr && data_len > 0) {
+    mbedtls_sha256_update(&ctx, data, data_len);
+  }
+  mbedtls_sha256_finish(&ctx, out);
 #endif
+  mbedtls_sha256_free(&ctx);
+#endif  /* CSI_TEST_HOST_BUILD */
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
