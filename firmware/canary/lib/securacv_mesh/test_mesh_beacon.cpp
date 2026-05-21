@@ -14,6 +14,8 @@
  *   7. decode rejects:
  *        • null pointers
  *        • frames shorter than PAYLOAD_LEN
+ *        • frames LONGER than PAYLOAD_LEN (smuggling defense — the
+ *          wire format is strictly fixed-size)
  *        • too-small label_buf_cap
  *        • malformed label_len > MAX_LABEL_BYTES
  *   8. decode forwards an unknown state byte verbatim (forward compat).
@@ -39,7 +41,12 @@ extern "C" int test_mesh_beacon_run() { return 0; }
 namespace {
 
 void test_layout_arrived_with_label() {
-  uint8_t buf[mesh_beacon::PAYLOAD_LEN] = {0xFF};   /* poison */
+  /* memset the WHOLE buffer to 0xFF so the tail-must-be-zero check
+   * below is actually testing the encoder's zero-fill behavior.
+   * `uint8_t buf[N] = {0xFF}` only sets buf[0]; the compiler zero-
+   * initializes the rest, which would defeat the check. */
+  uint8_t buf[mesh_beacon::PAYLOAD_LEN];
+  std::memset(buf, 0xFF, sizeof(buf));
   assert(mesh_beacon::encode(mesh_beacon::BeaconState::ARRIVED,
                              "kitchen", buf, sizeof(buf)));
   assert(buf[0] == 0);                       /* ARRIVED */
@@ -148,6 +155,23 @@ void test_decode_rejects_short_frame() {
   std::printf("PASS test_decode_rejects_short_frame\n");
 }
 
+void test_decode_rejects_oversize_frame() {
+  /* Wire format is strictly 25 bytes. A 30-byte payload (e.g., a
+   * future sender smuggling trailing data inside the signed envelope)
+   * must be rejected so receivers don't silently use only the first
+   * 25 bytes and treat the rest as approved-by-signature ambient
+   * noise. */
+  uint8_t buf[mesh_beacon::PAYLOAD_LEN + 5] = {0};
+  buf[0] = 0;   /* ARRIVED */
+  buf[1] = 4;
+  std::memcpy(buf + 2, "test", 4);
+
+  mesh_beacon::BeaconState s;
+  char lbl[mesh_beacon::MAX_LABEL_BYTES + 1];
+  assert(!mesh_beacon::decode(buf, sizeof(buf), &s, lbl, sizeof(lbl)));
+  std::printf("PASS test_decode_rejects_oversize_frame\n");
+}
+
 void test_decode_rejects_small_label_buf() {
   uint8_t buf[mesh_beacon::PAYLOAD_LEN] = {0};
   mesh_beacon::BeaconState s;
@@ -197,6 +221,7 @@ int main() {
   test_null_label_is_empty();
   test_encode_rejects_null_buf();
   test_decode_rejects_short_frame();
+  test_decode_rejects_oversize_frame();
   test_decode_rejects_small_label_buf();
   test_decode_rejects_malformed_label_len();
   test_decode_forwards_unknown_state();

@@ -86,7 +86,9 @@ bool encode(BeaconState     state,
  *
  * Returns false if:
  *   • any input pointer is null
- *   • `in_len` < PAYLOAD_LEN (truncated frame)
+ *   • `in_len` != PAYLOAD_LEN (the wire format is strictly fixed-size;
+ *     trailing bytes would be a smuggling vector since the envelope
+ *     signature covers them but downstream consumers don't see them)
  *   • `label_buf_cap` < MAX_LABEL_BYTES + 1
  *   • `label_len` field exceeds MAX_LABEL_BYTES (frame is malformed) */
 bool decode(const uint8_t*  in_buf,

@@ -49,7 +49,14 @@ bool decode(const uint8_t*  in_buf,
   if (in_buf == nullptr || out_state == nullptr || label_buf == nullptr) {
     return false;
   }
-  if (in_len < PAYLOAD_LEN) return false;
+  /* Strict length: the wire format is a fixed 25 bytes. Accepting
+   * longer frames would let a sender smuggle trailing bytes that
+   * receivers silently ignore — a forward-compat hazard and a real
+   * security concern (the trailing bytes participate in the envelope
+   * signature, but downstream consumers wouldn't see them). Future
+   * BEACON_EVENT v2 with a longer payload should claim its own
+   * MsgType, not extend this one. */
+  if (in_len != PAYLOAD_LEN) return false;
   if (label_buf_cap < MAX_LABEL_BYTES + 1) return false;
 
   const uint8_t state_byte = in_buf[0];
