@@ -208,6 +208,42 @@ void test_registry_idempotent_relabel() {
   std::printf("PASS test_registry_idempotent_relabel\n");
 }
 
+void test_registry_label_sanitization() {
+  /* PR 5c added a mesh-broadcast callback that forwards the label.
+   * Pre-PR-5c the label only reached external consumers through
+   * csi_event_emit, which sanitizes strings at the chokepoint; the
+   * new callback bypasses that path. Defense: sanitize the label
+   * at the single boundary input (registry_add) so EVERY consumer
+   * sees printable-ASCII-only.
+   *
+   * This test pins the contract: control bytes (0x01, 0x1F),
+   * high-bit / non-ASCII bytes (0xC3), and DEL (0x7F) all get
+   * replaced with '?'. Printable bytes (0x20..0x7E) pass through. */
+  ble_scan::Registry r;
+  ble_scan::registry_init(&r);
+
+  uint8_t id[ble_scan::HASHED_ID_LEN];
+  make_id(id, 0x40);
+  /* Mix printable + control + high-bit. Use unsigned char + cast for
+   * the literal so 0xC3 (= 195) doesn't trip -Wnarrowing on plain
+   * signed char arrays. */
+  const unsigned char dirty[] = { 'k', 'i', 't', 0x01, 'c', 'h', 0xC3, 'e', 'n', 0x7F, 0 };
+  assert(ble_scan::registry_add(&r, id, (const char*)dirty));
+
+  const ble_scan::PairedBeacon* p = ble_scan::registry_find(&r, id);
+  assert(p != nullptr);
+  assert(std::strcmp(p->label, "kit?ch?en?") == 0);
+
+  /* Re-pair (idempotent path) with another dirty label — also sanitized. */
+  const unsigned char dirty2[] = { 'o', 'f', 0x1F, 'f', 'i', 'c', 'e', 0 };
+  assert(ble_scan::registry_add(&r, id, (const char*)dirty2));
+  p = ble_scan::registry_find(&r, id);
+  assert(p != nullptr);
+  assert(std::strcmp(p->label, "of?fice") == 0);
+
+  std::printf("PASS test_registry_label_sanitization\n");
+}
+
 }  /* namespace */
 
 int main() {
@@ -221,6 +257,7 @@ int main() {
   test_registry_add_find_remove_roundtrip();
   test_registry_bounded();
   test_registry_idempotent_relabel();
+  test_registry_label_sanitization();
   std::printf("\nALL BLE_SCAN TESTS PASSED\n");
   return 0;
 }

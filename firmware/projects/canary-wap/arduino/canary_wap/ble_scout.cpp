@@ -64,6 +64,7 @@ bool                s_scan_started = false;   /* tracks NimBLE scan-loop state s
                                                * be retried on the next init() call */
 ble_scan::Registry  s_registry;
 PresenceTracker     s_tracker;
+beacon_event_broadcast_fn s_broadcast_cb = nullptr;
 
 inline uint32_t now_ms_impl() {
 #ifdef CSI_TEST_HOST_BUILD
@@ -101,6 +102,14 @@ void emit_arrived(const char* label) {
   v.state_name[sizeof(v.state_name) - 1] = '\0';
   copy_label_to_note(&v, label);
   (void)csi_event_emit("ble.scout", "beacon_event", &v);
+  /* Mesh broadcast (PR 5c). Runs AFTER the local emit so the broadcast
+   * inherits any chokepoint rate-limiting / privacy filtering decisions
+   * by construction — if the local event was rate-limited, the broadcast
+   * still happens (mesh has its own rate budget), but both pull from the
+   * same label which is already sanitized at pair time. */
+  if (s_broadcast_cb != nullptr) {
+    s_broadcast_cb(/*arrived=*/true, label != nullptr ? label : "");
+  }
 }
 
 void emit_departed(const char* label) {
@@ -112,6 +121,9 @@ void emit_departed(const char* label) {
   v.state_name[sizeof(v.state_name) - 1] = '\0';
   copy_label_to_note(&v, label);
   (void)csi_event_emit("ble.scout", "beacon_event", &v);
+  if (s_broadcast_cb != nullptr) {
+    s_broadcast_cb(/*arrived=*/false, label != nullptr ? label : "");
+  }
 }
 
 void emit_initialized(const char* status) {
@@ -254,9 +266,10 @@ void ble_scout_tick(uint32_t now_ms) {
                               ble_scan::MAX_PAIRED_BEACONS);
   /* Defensive cap: presence_on_tick returns the count of transitions
    * but only writes up to MAX_PAIRED_BEACONS ids into the buffer.
-   * Today the buffer is sized to match, so n ≤ MAX_PAIRED_BEACONS, but
-   * the explicit bound protects against a future buffer-size or
-   * tracker-size mismatch silently overrunning the read. */
+   * Today the buffer matches, so n ≤ MAX_PAIRED_BEACONS, but the
+   * explicit bound localizes the invariant and protects against a
+   * future buffer-size / tracker-size mismatch silently overrunning
+   * the read. */
   for (size_t i = 0; i < n && i < ble_scan::MAX_PAIRED_BEACONS; ++i) {
     const ble_scan::PairedBeacon* p =
       ble_scan::registry_find(&s_registry,
@@ -288,6 +301,14 @@ void ble_scout_on_advert(const uint8_t mac[ble_scan::MAC_LEN],
 
 const ::csi_module* ble_scout_module() {
   return &MODULE;
+}
+
+void set_broadcast_callback(beacon_event_broadcast_fn fn) {
+  /* Last writer wins; pass nullptr to unhook. The store/read is plain
+   * because both happen from the same task (the integration layer
+   * installs at boot from setup(), and emit_arrived/departed run from
+   * ble_scout_tick / on_advert — both on the main loop). */
+  s_broadcast_cb = fn;
 }
 
 }  /* namespace ble_scout */

@@ -108,6 +108,28 @@ static PairedBeacon* registry_find_mut(Registry* r,
   return nullptr;
 }
 
+/* Copy `src` into `dst[cap]`, replacing any non-printable-ASCII byte
+ * with '?' and truncating to cap-1. dst is always NUL-terminated.
+ *
+ * The label is a single boundary input — once we paired with it, it
+ * flows to the csi_event note field AND the PR 5c broadcast callback
+ * AND eventually any mesh wire payload. The csi_event chokepoint
+ * sanitizes strings at emit time (test_strings_are_sanitized), but
+ * the broadcast callback bypasses that path. Sanitizing here, once,
+ * means EVERY consumer sees the same printable-only string and the
+ * mesh wire format can't carry control bytes smuggled through the
+ * pairing UI. Mirrors the chokepoint's "printable ASCII only" rule
+ * (codepoints 0x20..0x7E inclusive). */
+static void sanitize_label(char* dst, size_t cap, const char* src) {
+  if (cap == 0) return;
+  size_t j = 0;
+  for (size_t i = 0; src != nullptr && src[i] != '\0' && j + 1 < cap; ++i) {
+    const unsigned char c = (unsigned char)src[i];
+    dst[j++] = (c >= 0x20 && c <= 0x7E) ? (char)c : '?';
+  }
+  dst[j] = '\0';
+}
+
 bool registry_add(Registry* r,
                   const uint8_t hashed_id[HASHED_ID_LEN],
                   const char*   label) {
@@ -118,8 +140,7 @@ bool registry_add(Registry* r,
   PairedBeacon* existing = registry_find_mut(r, hashed_id);
   if (existing != nullptr) {
     if (label != nullptr) {
-      strncpy(existing->label, label, MAX_LABEL_LEN);
-      existing->label[MAX_LABEL_LEN] = '\0';
+      sanitize_label(existing->label, sizeof(existing->label), label);
     }
     return true;
   }
@@ -129,8 +150,7 @@ bool registry_add(Registry* r,
     if (!r->slots[i].in_use) {
       memcpy(r->slots[i].hashed_id, hashed_id, HASHED_ID_LEN);
       if (label != nullptr) {
-        strncpy(r->slots[i].label, label, MAX_LABEL_LEN);
-        r->slots[i].label[MAX_LABEL_LEN] = '\0';
+        sanitize_label(r->slots[i].label, sizeof(r->slots[i].label), label);
       } else {
         r->slots[i].label[0] = '\0';
       }

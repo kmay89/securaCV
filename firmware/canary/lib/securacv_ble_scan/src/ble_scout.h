@@ -81,6 +81,31 @@ void ble_scout_on_advert(const uint8_t mac[ble_scan::MAC_LEN],
  * using the CSI feature-window timestamp. */
 const ::csi_module* ble_scout_module();
 
+/* Optional mesh-broadcast hook. The integration layer registers a
+ * function pointer here; ble_scout calls it on every arrived/departed
+ * transition AFTER the local privacy-chokepoint emit, so the broadcast
+ * inherits the same allow-list filtering and rate limit.
+ *
+ * Contract:
+ *   • `arrived` is true on AWAY→PRESENT transition, false on
+ *     PRESENT→AWAY (timeout).
+ *   • `label` is the user-supplied room/beacon label, sanitized to
+ *     printable ASCII (0x20..0x7E) at pair time by ble_scan::
+ *     registry_add. It never carries an identifier. May be the empty
+ *     string if the paired beacon had no label.
+ *   • THREADING: this callback may be invoked from EITHER the main
+ *     loop (via ble_scout_tick → emit_departed) OR the NimBLE host
+ *     task (via the scan callback → ble_scout_on_advert →
+ *     emit_arrived). The integration's send path MUST be safe under
+ *     both task contexts — typically a non-blocking enqueue into a
+ *     mesh transport ring buffer that the WiFi task drains. Do NOT
+ *     do heavy work, allocate, take locks, or block here.
+ *   • If no callback is registered (default), events stay local. */
+typedef void (*beacon_event_broadcast_fn)(bool arrived, const char* label);
+
+/* Install a broadcast hook. Pass nullptr to unhook. Last writer wins. */
+void set_broadcast_callback(beacon_event_broadcast_fn fn);
+
 }  /* namespace ble_scout */
 
 #endif /* SECURACV_BLE_SCOUT_H */
