@@ -43,16 +43,21 @@
 #include "securacv_csi.h"
 #include "csi_modules_integration.h"
 
-#if FEATURE_MESH_NETWORK
-#include "mesh_transport.h"
-#include "mesh_session.h"
-#endif
 /* Bridge the canary HAL's csi_features_t into the common module
  * pipeline. Both structs share the same int8 vector + telemetry layout;
  * the assertion below is the wire-protocol guarantee that a refactor of
  * either side breaks the build instead of scrambling features at runtime. */
 static_assert(sizeof(csi_features_t) == 36,
               "canary HAL csi_features_t must be 32 (vector) + 2 (frames) + 1 (bucket) + 1 (caps) bytes");
+#endif
+
+#if FEATURE_MESH_NETWORK
+/* Mesh layer headers — independent of FEATURE_CSI. Building with
+ * FEATURE_MESH_NETWORK=1 and FEATURE_CSI=0 is a supported combination
+ * (e.g. a Hub-only role without CSI sensing) so these must NOT live
+ * inside the CSI gate. */
+#include "mesh_transport.h"
+#include "mesh_session.h"
 #endif
 
 #if FEATURE_ACOUSTIC_EVENTS
