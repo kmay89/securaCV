@@ -44,6 +44,7 @@
 #include <Arduino.h>
 #include <Preferences.h>
 #include <string.h>
+#include <atomic>
 
 namespace {
 
@@ -125,18 +126,73 @@ const char* nvs_key_for(const char* full_key) {
  * main.cpp init lands, the chain lights up end-to-end with no further
  * code changes. */
 
+/* Single-producer single-consumer ring that marshals beacon events
+ * from the (possibly cross-task) ble_scout broadcast callback into
+ * the main loop, where mesh_session::send_beacon_event is allowed to
+ * run per PR 5c-3's threading contract.
+ *
+ * Producer: on_scout_beacon_event_outbound runs from EITHER the main
+ * loop (ble_scout_tick → emit_departed) OR the NimBLE host task
+ * (ble_scout_on_advert → emit_arrived). The lock-free SPSC pattern
+ * (atomic head/tail, fixed-size ring) lets the producer enqueue
+ * without taking a mutex; the only shared mutation is the head
+ * counter's atomic store, which doesn't mask threading violations
+ * — it IS the marshaling primitive, mirroring mesh_transport's recv
+ * ring (mesh_transport.cpp uses the same shape).
+ *
+ * Consumer: drain_outbound_beacon_queue() runs at the top of
+ * securacv_csi_modules_feed (called from main loop on every CSI
+ * window). It pops every queued event and invokes mesh_session::
+ * send_beacon_event under the right task context. */
+struct OutboundBeaconEvent {
+  bool                       arrived;
+  char                       label[mesh_beacon::MAX_LABEL_BYTES + 1];
+};
+constexpr size_t OUTBOUND_QUEUE_CAP = 8;
+static OutboundBeaconEvent  s_outbound_queue[OUTBOUND_QUEUE_CAP];
+static std::atomic<uint32_t> s_outbound_head{0};
+static std::atomic<uint32_t> s_outbound_tail{0};
+static std::atomic<uint32_t> s_outbound_dropped{0};
+
 static void on_scout_beacon_event_outbound(bool arrived, const char* label) {
-  /* Same task as ble_scout's emit path (main loop). send_beacon_event
-   * is also main-loop-only per its threading contract; if ble_scout's
-   * own broadcast callback is ever invoked from the NimBLE host task
-   * (today only emit_arrived from on_advert; emit_departed runs from
-   * ble_scout_tick on the main loop), the integration layer is what
-   * marshals back to the main loop. PR 5c-3 contract pins this. */
-  mesh_session::send_beacon_event(
-      arrived ? mesh_beacon::BeaconState::ARRIVED
-              : mesh_beacon::BeaconState::DEPARTED,
-      label,
-      (uint32_t)millis());
+  /* Producer side — runs from EITHER main loop or NimBLE host task.
+   * Only memory operations here are a load on the tail, a memcpy
+   * into a slot the consumer doesn't touch until we release-store
+   * the head, and the atomic release-store itself. No locks. */
+  const uint32_t head = s_outbound_head.load(std::memory_order_relaxed);
+  const uint32_t tail = s_outbound_tail.load(std::memory_order_acquire);
+  if ((head - tail) >= OUTBOUND_QUEUE_CAP) {
+    /* Ring full — drop and count. Bounded loss is acceptable here
+     * (BLE scout's chokepoint ceiling already rate-limits to 24/hr
+     * per beacon, so back-pressure to 8 in-flight is generous). */
+    s_outbound_dropped.fetch_add(1, std::memory_order_relaxed);
+    return;
+  }
+  OutboundBeaconEvent* slot = &s_outbound_queue[head % OUTBOUND_QUEUE_CAP];
+  slot->arrived = arrived;
+  if (label != nullptr) {
+    strncpy(slot->label, label, sizeof(slot->label) - 1);
+    slot->label[sizeof(slot->label) - 1] = '\0';
+  } else {
+    slot->label[0] = '\0';
+  }
+  s_outbound_head.store(head + 1, std::memory_order_release);
+}
+
+static void drain_outbound_beacon_queue() {
+  /* Consumer side — main loop only. */
+  for (;;) {
+    const uint32_t tail = s_outbound_tail.load(std::memory_order_relaxed);
+    const uint32_t head = s_outbound_head.load(std::memory_order_acquire);
+    if (tail == head) break;
+    const OutboundBeaconEvent& slot = s_outbound_queue[tail % OUTBOUND_QUEUE_CAP];
+    mesh_session::send_beacon_event(
+        slot.arrived ? mesh_beacon::BeaconState::ARRIVED
+                     : mesh_beacon::BeaconState::DEPARTED,
+        slot.label,
+        (uint32_t)millis());
+    s_outbound_tail.store(tail + 1, std::memory_order_release);
+  }
 }
 
 static void on_peer_beacon_event_inbound(
@@ -277,6 +333,18 @@ extern "C" bool securacv_csi_modules_init(void) {
 
 extern "C" void securacv_csi_modules_feed(const void* features_blob) {
   if (!s_initialized || !features_blob) return;
+
+#if defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN \
+    && defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
+  /* Drain the outbound beacon queue BEFORE running modules so that
+   * any events the previous main-loop pass enqueued (or that the
+   * NimBLE host task enqueued asynchronously) get broadcast on the
+   * same tick. The drain runs on the main loop — same task as the
+   * CSI dispatcher — satisfying mesh_session::send_beacon_event's
+   * threading contract. */
+  drain_outbound_beacon_queue();
+#endif
+
   /* Both csi_features_t structs are layout-identical (same field order,
    * same int8/uint16/uint8 widths). The library's csi_types.h
    * static-asserts the 32-byte vector width and we trust the canary HAL
