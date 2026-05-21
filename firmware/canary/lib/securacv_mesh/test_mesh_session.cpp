@@ -405,9 +405,11 @@ void test_send_beacon_event_counter_monotonic() {
                                          "office", 22000));
   assert(g_outs.size() == 3);
 
-  /* counter is LE 64-bit at offset 1 (session prefix) + VERSION_LEN(1)
-   * + MSG_TYPE_LEN(1) + OPERA_ID_LEN(16) + FINGERPRINT_LEN(8) = 27. */
-  const size_t cnt_off = 1 + 1 + 1 + 16 + 8;
+  /* counter is LE 64-bit; offset = session-prefix(1) + envelope
+   * OFFSET_COUNTER. Use the canonical constant from mesh_envelope.h
+   * rather than hand-rolled 1+1+16+8. */
+  const size_t cnt_off = mesh_session::MSGTYPE_HEADER_LEN
+                       + mesh_envelope::OFFSET_COUNTER;
   uint64_t prev = 1;   /* prior test left counter at 1 */
   for (const auto& f : g_outs) {
     uint64_t c = 0;
@@ -660,7 +662,11 @@ void test_beacon_event_forged_signature_dropped() {
   /* Flip a single bit in the payload (offset = 1 session + 38 header
    * + 0 payload-start). This invalidates the signature but leaves the
    * sender_fp lookup successful — so the verify step is the dropper. */
-  frame[1 + mesh_envelope::HEADER_LEN] ^= 0x01;
+  /* Flip the first payload byte, located at session-prefix + envelope
+   * OFFSET_PAYLOAD. The flip invalidates the signature but leaves the
+   * sender_fp peek successful, so the parse_and_verify step is the
+   * drop point. */
+  frame[mesh_session::MSGTYPE_HEADER_LEN + mesh_envelope::OFFSET_PAYLOAD] ^= 0x01;
 
   uint8_t mac[6] = {0x77, 0x77, 0x77, 0x77, 0x77, 0x77};
   assert(mesh_transport::add_peer(mac));
@@ -718,8 +724,9 @@ void test_deinit_clears_opera_auth_state() {
   assert(mesh_session::send_beacon_event(mesh_beacon::BeaconState::ARRIVED,
                                          "fresh", 2000));
   assert(g_outs.size() == 1);
-  /* counter LE at offset 1 + 1 + 1 + 16 + 8 = 27. */
-  const size_t cnt_off = 1 + 1 + 1 + 16 + 8;
+  /* counter at session-prefix + envelope OFFSET_COUNTER, LE 64-bit. */
+  const size_t cnt_off = mesh_session::MSGTYPE_HEADER_LEN
+                       + mesh_envelope::OFFSET_COUNTER;
   uint64_t c = 0;
   for (size_t i = 0; i < 8; ++i) {
     c |= ((uint64_t)g_outs[0].bytes[cnt_off + i]) << (8 * i);

@@ -230,10 +230,10 @@ static void on_opera_frame(const uint8_t* data, size_t len) {
   const size_t   env_len   = len   - MSGTYPE_HEADER_LEN;
   if (env_len < mesh_envelope::MIN_FRAME_LEN) return;
 
-  /* Step 2: peek sender_fp. Header layout (LE): version(1) +
-   * msg_type(1) + opera_id(16) + sender_fp(8) + counter(8) +
-   * timestamp(4) — sender_fp starts at offset 1+1+16 = 18. */
-  const uint8_t* sender_fp_in_frame = env + 1 + 1 + mesh_envelope::OPERA_ID_LEN;
+  /* Step 2: peek sender_fp via the canonical offset constant rather
+   * than hand-rolled byte arithmetic — keeps the header layout pinned
+   * in mesh_envelope.h. */
+  const uint8_t* sender_fp_in_frame = env + mesh_envelope::OFFSET_SENDER_FP;
 
   TrustedPeer* peer = find_trusted_peer(sender_fp_in_frame);
   if (peer == nullptr) return;            /* unknown sender */
