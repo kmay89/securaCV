@@ -201,6 +201,59 @@ bool send_beacon_event(mesh_beacon::BeaconState state,
                        const char*              label,
                        uint32_t                 now_ms);
 
+/* ──────────────────────────────────────────────────────────────────────────
+ * RECEIVE-SIDE DISPATCH (PR 5c-4)
+ *
+ * Opera-authenticated frames (mesh_session MsgType >= 16) carry a full
+ * mesh_envelope::Header + payload + Ed25519 signature. Verifying a
+ * frame requires the SENDER'S pubkey; the integration layer registers
+ * the pubkeys of peer Canaries it has paired with via
+ * register_trusted_peer(). Each entry tracks a per-peer monotonic
+ * last_counter for replay defense.
+ *
+ * On a verified BEACON_EVENT frame, mesh_session decodes the payload
+ * (state, label) and invokes the handler set via
+ * set_beacon_event_handler(). The handler runs on the same task as
+ * mesh_transport::process() (the main loop) — safe to call into
+ * csi_event, log_health, etc.
+ *
+ * Frames are silently dropped (no error feedback) when:
+ *   • sender_fp doesn't match any trusted peer (unknown sender);
+ *   • Ed25519 signature verification fails (forged or corrupted);
+ *   • counter <= last_counter for that peer (replay);
+ *   • opera_id in the header doesn't match our own (cross-opera leak —
+ *     impossible if both sides paired together but defensive anyway);
+ *   • payload length doesn't match the BEACON_EVENT wire format.
+ *
+ * register_trusted_peer() — copies the 32-byte pubkey into the local
+ * table, computes its fingerprint, and zeroes the per-peer
+ * last_counter. Returns false if the table is full
+ * (MAX_TRUSTED_PEERS) OR the same pubkey is already registered (the
+ * call would otherwise reset last_counter and allow replay). Idempotent
+ * across boots: persist the same pubkey list and last_counter to NVS
+ * (PR 5c-5 / PR 4b will add the NVS persistence).
+ *
+ * clear_trusted_peers() — wipes the table. Used on opera-secret-
+ * rotation and at deinit().
+ * ────────────────────────────────────────────────────────────────────────── */
+
+constexpr size_t MAX_TRUSTED_PEERS = 8;
+
+bool   register_trusted_peer(const uint8_t pubkey[mesh_crypto::PUBKEY_LEN]);
+void   clear_trusted_peers();
+size_t trusted_peer_count();
+
+/* Beacon-event receiver callback. `sender_fp` lets the handler
+ * correlate events with the Scout that sent them (each paired Scout
+ * has a unique fingerprint). `label` is sanitized printable ASCII —
+ * the chokepoint contract at the sender side guarantees this. */
+typedef void (*beacon_event_received_fn)(
+    const uint8_t              sender_fp[mesh_crypto::FINGERPRINT_LEN],
+    mesh_beacon::BeaconState   state,
+    const char*                label);
+
+void set_beacon_event_handler(beacon_event_received_fn fn);
+
 }  /* namespace mesh_session */
 
 #endif  /* SECURACV_MESH_SESSION_H */
