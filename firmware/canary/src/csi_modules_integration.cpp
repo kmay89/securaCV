@@ -29,6 +29,18 @@
 #include "ble_scout.h"
 #endif
 
+/* The Scout broadcast hook calls into mesh_session::send_beacon_event
+ * when both FEATURE_BLE_SCAN and FEATURE_MESH_NETWORK are enabled at
+ * compile time. Pulling in the mesh_session header unconditionally
+ * would force the LDF chain to include the securacv_mesh library in
+ * every env — keep it inside the #if so dev/release/minimal builds
+ * stay lean. */
+#if defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN \
+    && defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
+#include "mesh_session.h"
+#include "mesh_beacon.h"
+#endif
+
 #include <Arduino.h>
 #include <Preferences.h>
 #include <string.h>
@@ -82,6 +94,79 @@ const char* nvs_key_for(const char* full_key) {
   }
   return nullptr;
 }
+
+#if defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN \
+    && defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
+/* ──────────────────────────────────────────────────────────────────────────
+ * BLE SCOUT ↔ MESH GLUE (PR 5c integration)
+ *
+ * Connects the three pieces shipped over PRs 5c-1..5c-4:
+ *   1. ble_scout's emit_arrived/departed transition fires the broadcast
+ *      hook (PR 5c-1).
+ *   2. The hook forwards to mesh_session::send_beacon_event, which builds
+ *      and signs a BEACON_EVENT envelope (PR 5c-3) carrying the wire
+ *      format from mesh_beacon (PR 5c-2).
+ *   3. On the receive side, mesh_session::on_opera_frame routes inbound
+ *      BEACON_EVENT frames into the handler installed via
+ *      set_beacon_event_handler — peer table lookup + signature verify
+ *      + replay defense (PR 5c-4).
+ *
+ * The forwarder is intentionally minimal: mesh_session::send_beacon_event
+ * already short-circuits if !has_opera_secret() or the session isn't
+ * running, so we don't duplicate the precondition checks here. The
+ * receive handler likewise just logs — the deeper "what does the Hub
+ * DO with a beacon_event" question is PR 4b's territory.
+ *
+ * NOTE: mesh_session::init() is NOT yet called from main.cpp setup() —
+ * that wiring is a follow-up PR (it needs correct boot ordering against
+ * WiFi for ESP-NOW to bind). Until then the callbacks register but the
+ * send-side returns false (early-out) and the receive-side never fires
+ * (no transport recv). The integration is staged here so the moment
+ * main.cpp init lands, the chain lights up end-to-end with no further
+ * code changes. */
+
+static void on_scout_beacon_event_outbound(bool arrived, const char* label) {
+  /* Same task as ble_scout's emit path (main loop). send_beacon_event
+   * is also main-loop-only per its threading contract; if ble_scout's
+   * own broadcast callback is ever invoked from the NimBLE host task
+   * (today only emit_arrived from on_advert; emit_departed runs from
+   * ble_scout_tick on the main loop), the integration layer is what
+   * marshals back to the main loop. PR 5c-3 contract pins this. */
+  mesh_session::send_beacon_event(
+      arrived ? mesh_beacon::BeaconState::ARRIVED
+              : mesh_beacon::BeaconState::DEPARTED,
+      label,
+      (uint32_t)millis());
+}
+
+static void on_peer_beacon_event_inbound(
+    const uint8_t              sender_fp[mesh_crypto::FINGERPRINT_LEN],
+    mesh_beacon::BeaconState   state,
+    const char*                label) {
+  /* Convert the 8-byte fingerprint to printable hex for the log line.
+   * Inbound events are rate-limited at the wire (Scout's chokepoint
+   * 24/hr ceiling) so we don't need an additional rate gate here. */
+  char fp_hex[2 * mesh_crypto::FINGERPRINT_LEN + 1];
+  static const char HEX[] = "0123456789abcdef";
+  for (size_t i = 0; i < mesh_crypto::FINGERPRINT_LEN; ++i) {
+    fp_hex[2 * i]     = HEX[(sender_fp[i] >> 4) & 0xF];
+    fp_hex[2 * i + 1] = HEX[ sender_fp[i]       & 0xF];
+  }
+  fp_hex[2 * mesh_crypto::FINGERPRINT_LEN] = '\0';
+
+  /* Use stderr/Serial fallback for now — the integration with
+   * log_health (which is in securacv_witness) would create a circular
+   * dep between csi_modules_integration and the witness lib. PR 4b's
+   * Hub coordination work will move this into a proper logged event
+   * surface on the dashboard. */
+  Serial.printf("[ble.scout.peer] fp=%s state=%s label=\"%s\"\n",
+                fp_hex,
+                state == mesh_beacon::BeaconState::ARRIVED ? "arrived"
+                : state == mesh_beacon::BeaconState::DEPARTED ? "departed"
+                : "?",
+                label ? label : "");
+}
+#endif  /* FEATURE_BLE_SCAN && FEATURE_MESH_NETWORK */
 
 }  /* namespace */
 
@@ -173,7 +258,18 @@ extern "C" bool securacv_csi_modules_init(void) {
    * scan-loop TU is an empty file in that case and ble_scout_init
    * still wires up the registry+tracker. */
   ble_scout::ble_scout_init();
+
+#if defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
+  /* PR 5c integration — wire the Scout broadcast hook to the mesh
+   * sender, and install a receiver handler for inbound BEACON_EVENT
+   * frames from peer Scouts. Both callbacks are no-ops in practice
+   * until main.cpp lands the mesh_session::init() call (follow-up);
+   * registering them here keeps the chain ready to light up the
+   * moment that wiring arrives. */
+  ble_scout::set_broadcast_callback(&on_scout_beacon_event_outbound);
+  mesh_session::set_beacon_event_handler(&on_peer_beacon_event_inbound);
 #endif
+#endif  /* FEATURE_BLE_SCAN */
 
   s_initialized = true;
   return true;
