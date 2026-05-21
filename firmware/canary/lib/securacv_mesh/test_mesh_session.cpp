@@ -413,7 +413,7 @@ void test_send_beacon_event_counter_monotonic() {
   uint64_t prev = 1;   /* prior test left counter at 1 */
   for (const auto& f : g_outs) {
     uint64_t c = 0;
-    for (size_t i = 0; i < 8; ++i) {
+    for (size_t i = 0; i < mesh_envelope::COUNTER_LEN; ++i) {
       c |= ((uint64_t)f.bytes[cnt_off + i]) << (8 * i);
     }
     assert(c > prev);
@@ -659,13 +659,11 @@ void test_beacon_event_forged_signature_dropped() {
       frame, sizeof(frame));
   assert(flen > 0);
 
-  /* Flip a single bit in the payload (offset = 1 session + 38 header
-   * + 0 payload-start). This invalidates the signature but leaves the
-   * sender_fp lookup successful — so the verify step is the dropper. */
-  /* Flip the first payload byte, located at session-prefix + envelope
-   * OFFSET_PAYLOAD. The flip invalidates the signature but leaves the
-   * sender_fp peek successful, so the parse_and_verify step is the
-   * drop point. */
+  /* Flip the first payload byte, located at session-prefix +
+   * mesh_envelope::OFFSET_PAYLOAD (the canonical header-layout
+   * constant — see mesh_envelope.h). The flip invalidates the
+   * signature but leaves the sender_fp peek successful, so the
+   * parse_and_verify step is what drops the frame. */
   frame[mesh_session::MSGTYPE_HEADER_LEN + mesh_envelope::OFFSET_PAYLOAD] ^= 0x01;
 
   uint8_t mac[6] = {0x77, 0x77, 0x77, 0x77, 0x77, 0x77};
@@ -728,7 +726,7 @@ void test_deinit_clears_opera_auth_state() {
   const size_t cnt_off = mesh_session::MSGTYPE_HEADER_LEN
                        + mesh_envelope::OFFSET_COUNTER;
   uint64_t c = 0;
-  for (size_t i = 0; i < 8; ++i) {
+  for (size_t i = 0; i < mesh_envelope::COUNTER_LEN; ++i) {
     c |= ((uint64_t)g_outs[0].bytes[cnt_off + i]) << (8 * i);
   }
   assert(c == 1);
