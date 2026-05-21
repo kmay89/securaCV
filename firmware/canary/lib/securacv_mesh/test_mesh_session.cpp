@@ -420,6 +420,64 @@ void test_send_beacon_event_counter_monotonic() {
   std::printf("PASS test_send_beacon_event_counter_monotonic\n");
 }
 
+void test_deinit_clears_opera_auth_state() {
+  /* Regression for the codex P1 missed at PR #472 merge time: deinit()
+   * did not clear the opera-auth bookkeeping, so a deinit()/init()
+   * cycle would leave has_opera_secret() returning true from the
+   * previous run, and the next send_beacon_event() would sign with
+   * a stale opera_id / fingerprint and a continuing counter. */
+  reset_world();
+
+  /* Stand up a fresh session and set an opera secret. */
+  mesh_session::deinit();
+  uint8_t pub[mesh_crypto::PUBKEY_LEN];
+  uint8_t priv[mesh_crypto::PRIVKEY_LEN];
+  assert(mesh_crypto::ed25519_generate_keypair(pub, priv));
+  assert(mesh_session::init(pub, priv));
+  assert(mesh_session::start());
+
+  uint8_t opera_secret[mesh_crypto::OPERA_SECRET_LEN];
+  for (size_t i = 0; i < sizeof(opera_secret); ++i) opera_secret[i] = (uint8_t)(0xA0 + i);
+  assert(mesh_session::set_opera_secret(opera_secret));
+  assert(mesh_session::has_opera_secret());
+
+  /* Tear down, then re-init with a different keypair. has_opera_secret
+   * must report false until set_opera_secret() is called again. */
+  mesh_session::deinit();
+  assert(!mesh_session::has_opera_secret());
+
+  uint8_t pub2[mesh_crypto::PUBKEY_LEN];
+  uint8_t priv2[mesh_crypto::PRIVKEY_LEN];
+  assert(mesh_crypto::ed25519_generate_keypair(pub2, priv2));
+  assert(mesh_session::init(pub2, priv2));
+  assert(mesh_session::start());
+  assert(!mesh_session::has_opera_secret());
+
+  /* send_beacon_event must refuse before the new set_opera_secret(). */
+  uint8_t peer_mac[6] = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0x05};
+  assert(mesh_transport::add_peer(peer_mac));
+  g_outs.clear();
+  assert(!mesh_session::send_beacon_event(mesh_beacon::BeaconState::ARRIVED,
+                                          "stale", 1000));
+  assert(g_outs.empty());
+
+  /* After set_opera_secret() with the SAME secret but a different
+   * keypair, the counter restarts at 0 and the next send produces
+   * counter=1 (not a continuation from the prior session). */
+  assert(mesh_session::set_opera_secret(opera_secret));
+  assert(mesh_session::send_beacon_event(mesh_beacon::BeaconState::ARRIVED,
+                                         "fresh", 2000));
+  assert(g_outs.size() == 1);
+  /* counter LE at offset 1 + 1 + 1 + 16 + 8 = 27. */
+  const size_t cnt_off = 1 + 1 + 1 + 16 + 8;
+  uint64_t c = 0;
+  for (size_t i = 0; i < 8; ++i) {
+    c |= ((uint64_t)g_outs[0].bytes[cnt_off + i]) << (8 * i);
+  }
+  assert(c == 1);
+  std::printf("PASS test_deinit_clears_opera_auth_state\n");
+}
+
 }  /* namespace */
 
 int main() {
@@ -434,6 +492,7 @@ int main() {
   test_send_beacon_event_rejected_without_opera_secret();
   test_send_beacon_event_signs_and_broadcasts();
   test_send_beacon_event_counter_monotonic();
+  test_deinit_clears_opera_auth_state();
   std::printf("\nALL MESH_SESSION TESTS PASSED\n");
   return 0;
 }
