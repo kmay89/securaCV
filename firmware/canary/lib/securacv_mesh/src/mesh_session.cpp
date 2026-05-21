@@ -57,6 +57,21 @@ static uint8_t  s_opera_id [mesh_crypto::OPERA_ID_LEN];
 static uint8_t  s_sender_fp[mesh_crypto::FINGERPRINT_LEN];
 static uint64_t s_outbound_counter   = 0;
 
+/* Receive-side state (PR 5c-4). Trusted-peer table — small fixed
+ * array indexed by sender_fp at recv time, with a per-peer monotonic
+ * last_counter for replay defense. Entries are populated by the
+ * integration layer via register_trusted_peer() after pairing
+ * succeeds. Wiped on deinit() and on clear_trusted_peers(). */
+struct TrustedPeer {
+  uint8_t  sender_fp [mesh_crypto::FINGERPRINT_LEN];
+  uint8_t  pubkey    [mesh_crypto::PUBKEY_LEN];
+  uint64_t last_counter;
+  bool     in_use;
+};
+static TrustedPeer s_trusted_peers[MAX_TRUSTED_PEERS];
+
+static beacon_event_received_fn s_beacon_event_cb = nullptr;
+
 /* ──────────────────────────────────────────────────────────────────────────
  * INTERNAL HELPERS
  * ────────────────────────────────────────────────────────────────────────── */
@@ -153,31 +168,137 @@ static void dispatch_action(const mesh_pairing::Action& a) {
   }
 }
 
+/* PR 5c-4 helper: look up a trusted peer by sender_fp. Returns nullptr
+ * if no match. O(N) with N=MAX_TRUSTED_PEERS=8 — sub-microsecond. */
+static TrustedPeer* find_trusted_peer(
+    const uint8_t sender_fp[mesh_crypto::FINGERPRINT_LEN]) {
+  for (size_t i = 0; i < MAX_TRUSTED_PEERS; ++i) {
+    if (!s_trusted_peers[i].in_use) continue;
+    if (mesh_crypto::ct_equal(s_trusted_peers[i].sender_fp, sender_fp,
+                              mesh_crypto::FINGERPRINT_LEN)) {
+      return &s_trusted_peers[i];
+    }
+  }
+  return nullptr;
+}
+
+/* Dispatch a verified opera-authenticated frame by envelope msg_type.
+ * Called from on_opera_frame after parse_and_verify + counter check
+ * have both passed. */
+static void dispatch_verified(const TrustedPeer&         peer,
+                              const mesh_envelope::Header& hdr,
+                              const uint8_t*             payload,
+                              size_t                     payload_len) {
+  switch (static_cast<mesh_envelope::MsgType>(hdr.msg_type)) {
+    case mesh_envelope::MsgType::BEACON_EVENT: {
+      if (s_beacon_event_cb == nullptr) return;
+      mesh_beacon::BeaconState state;
+      char                     label[mesh_beacon::MAX_LABEL_BYTES + 1];
+      if (!mesh_beacon::decode(payload, payload_len,
+                               &state, label, sizeof(label))) {
+        return;   /* malformed payload — drop silently */
+      }
+      s_beacon_event_cb(peer.sender_fp, state, label);
+      break;
+    }
+    /* HEARTBEAT, CSI_FEATURES, TAMPER_ALERT, etc. — receivers land in
+     * later PRs (4b Hub coordination). Until then drop silently rather
+     * than reject; senders that ship without listeners just see the
+     * frames evaporate, which matches the chokepoint's "no observer →
+     * no leak" posture. */
+    default:
+      break;
+  }
+}
+
+/* PR 5c-4: handle an opera-authenticated frame (type_byte >= 16). The
+ * full signed envelope (38B header + payload + 64B signature) starts
+ * at data + 1. We must:
+ *   1. Validate frame_len is at least HEADER_LEN + SIG_LEN.
+ *   2. Peek the sender_fp from the header without verifying yet.
+ *   3. Look up the trusted peer by sender_fp.
+ *   4. parse_and_verify with that peer's pubkey.
+ *   5. Reject if opera_id doesn't match our own (cross-opera leak).
+ *   6. Reject if counter <= peer.last_counter (replay).
+ *   7. Update peer.last_counter and dispatch by msg_type.
+ *
+ * Steps 1-7 ALL drop silently on failure — there's no error feedback
+ * to the (possibly malicious) sender. */
+static void on_opera_frame(const uint8_t* data, size_t len) {
+  /* data[0] is the session msg-type byte; the envelope starts at +1. */
+  const uint8_t* env       = data + MSGTYPE_HEADER_LEN;
+  const size_t   env_len   = len   - MSGTYPE_HEADER_LEN;
+  if (env_len < mesh_envelope::MIN_FRAME_LEN) return;
+
+  /* Step 2: peek sender_fp. Header layout (LE): version(1) +
+   * msg_type(1) + opera_id(16) + sender_fp(8) + counter(8) +
+   * timestamp(4) — sender_fp starts at offset 1+1+16 = 18. */
+  const uint8_t* sender_fp_in_frame = env + 1 + 1 + mesh_envelope::OPERA_ID_LEN;
+
+  TrustedPeer* peer = find_trusted_peer(sender_fp_in_frame);
+  if (peer == nullptr) return;            /* unknown sender */
+
+  /* Step 4: parse + signature verify. */
+  mesh_envelope::Header  hdr;
+  const uint8_t*         payload     = nullptr;
+  size_t                 payload_len = 0;
+  if (!mesh_envelope::parse_and_verify(env, env_len, peer->pubkey,
+                                       &hdr, &payload, &payload_len)) {
+    return;                                /* forged or corrupt */
+  }
+
+  /* Step 5: cross-opera leak. parse_and_verify already checked version
+   * and signature; we additionally check the opera_id matches ours so
+   * a different opera that happened to pair with this same sender
+   * pubkey can't deliver events into our world. */
+  if (!s_opera_id_set) return;
+  if (!mesh_crypto::ct_equal(hdr.opera_id, s_opera_id,
+                             mesh_crypto::OPERA_ID_LEN)) {
+    return;
+  }
+
+  /* Step 6: replay defense — strict monotonic counter per-peer. The
+   * sender's outbound counter increments per send (PR 5c-3); the
+   * receiver tracks last_counter per peer. counter==last_counter is
+   * a replay; only counter>last_counter advances. */
+  if (hdr.counter <= peer->last_counter) return;
+  peer->last_counter = hdr.counter;
+
+  /* Step 7: dispatch by envelope msg_type. */
+  dispatch_verified(*peer, hdr, payload, payload_len);
+}
+
 /* mesh_transport recv callback. Decodes the 1-byte MsgType envelope
- * and routes to mesh_pairing::receive(). */
+ * and routes to either the pairing state machine (type_byte <= 4) or
+ * the opera-authenticated dispatch (type_byte >= 16). */
 static void on_transport_recv(const uint8_t mac[6],
                               const uint8_t* data, size_t len,
                               int8_t /*rssi*/) {
   if (!s_running || data == nullptr || len < MSGTYPE_HEADER_LEN) return;
   const uint8_t type_byte = data[0];
 
-  /* Only PAIR_* msg types are routable in PR 2f. Higher values are
-   * reserved for PR 2g (opera-authenticated traffic) and are silently
-   * dropped here today. */
-  if (type_byte > static_cast<uint8_t>(MsgType::PAIR_COMPLETE)) return;
+  /* PAIR_* (0..4) — pre-membership pairing traffic, no envelope. */
+  if (type_byte <= static_cast<uint8_t>(MsgType::PAIR_COMPLETE)) {
+    const mesh_pairing::MsgType pair_type =
+        static_cast<mesh_pairing::MsgType>(type_byte);
+    const uint8_t* payload     = data + MSGTYPE_HEADER_LEN;
+    const size_t   payload_len = len  - MSGTYPE_HEADER_LEN;
+    /* now_ms isn't readily available in this callback context, but
+     * mesh_pairing::receive uses it only for the tamper-path nothing-
+     * else, so 0 is acceptable. The tick() path supplies a real now_ms
+     * for timeout enforcement. */
+    mesh_pairing::Action a = mesh_pairing::receive(s_ctx, mac, pair_type,
+                                                    payload, payload_len, 0);
+    dispatch_action(a);
+    return;
+  }
 
-  const mesh_pairing::MsgType pair_type =
-      static_cast<mesh_pairing::MsgType>(type_byte);
-  const uint8_t* payload = data + MSGTYPE_HEADER_LEN;
-  const size_t   payload_len = len - MSGTYPE_HEADER_LEN;
+  /* 5..15 — reserved for future pairing extensions. Drop silently. */
+  if (type_byte < static_cast<uint8_t>(mesh_envelope::MsgType::HEARTBEAT)) return;
 
-  /* now_ms isn't readily available in this callback context, but
-   * mesh_pairing::receive uses it only for the tamper-path nothing-
-   * else, so 0 is acceptable. The tick() path supplies a real now_ms
-   * for timeout enforcement. */
-  mesh_pairing::Action a = mesh_pairing::receive(s_ctx, mac, pair_type,
-                                                  payload, payload_len, 0);
-  dispatch_action(a);
+  /* >=16 — opera-authenticated traffic. PR 5c-4 routes it here; the
+   * peer table + signature verify + replay check happen inside. */
+  on_opera_frame(data, len);
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -215,6 +336,14 @@ void deinit() {
   secure_zero(s_opera_id,  sizeof(s_opera_id));
   secure_zero(s_sender_fp, sizeof(s_sender_fp));
   s_outbound_counter = 0;
+  /* PR 5c-4: wipe the trusted-peer table + handler so a deinit()/init()
+   * cycle doesn't carry stale peers or replay counters into the next
+   * session. The pubkeys aren't secret but the staleness alone would
+   * let an attacker that scraped a paired peer's pubkey replay any
+   * recorded frame whose counter is <= the cached last_counter — a
+   * real (if narrow) freshness violation. */
+  memset(s_trusted_peers, 0, sizeof(s_trusted_peers));
+  s_beacon_event_cb = nullptr;
   s_running = false;
   s_initialized = false;
 }
@@ -365,6 +494,60 @@ bool send_beacon_event(mesh_beacon::BeaconState state,
    * so the caller can choose to retry / queue. */
   const size_t n = mesh_transport::broadcast(session_frame, 1 + env_len);
   return n > 0;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * PR 5c-4 — TRUSTED PEER TABLE + BEACON_EVENT RECEIVER
+ * ────────────────────────────────────────────────────────────────────────── */
+
+bool register_trusted_peer(const uint8_t pubkey[mesh_crypto::PUBKEY_LEN]) {
+  if (pubkey == nullptr) return false;
+
+  /* Compute fingerprint once so we can both dedup and use it as the
+   * lookup key. */
+  uint8_t fp[mesh_crypto::FINGERPRINT_LEN];
+  mesh_crypto::compute_fingerprint(pubkey, fp);
+
+  /* Dedup: refuse re-registration of the same pubkey. Otherwise a
+   * naive re-register call would zero last_counter and re-open the
+   * replay window between (old last_counter, 0]. Callers that NEED
+   * to rotate a peer's pubkey should clear_trusted_peers() first
+   * and re-add the entire set. */
+  for (size_t i = 0; i < MAX_TRUSTED_PEERS; ++i) {
+    if (s_trusted_peers[i].in_use &&
+        mesh_crypto::ct_equal(s_trusted_peers[i].sender_fp, fp,
+                              mesh_crypto::FINGERPRINT_LEN)) {
+      return false;
+    }
+  }
+
+  /* Find a free slot. */
+  for (size_t i = 0; i < MAX_TRUSTED_PEERS; ++i) {
+    if (!s_trusted_peers[i].in_use) {
+      memcpy(s_trusted_peers[i].pubkey,    pubkey, mesh_crypto::PUBKEY_LEN);
+      memcpy(s_trusted_peers[i].sender_fp, fp,     sizeof(fp));
+      s_trusted_peers[i].last_counter = 0;
+      s_trusted_peers[i].in_use       = true;
+      return true;
+    }
+  }
+  return false;   /* table full */
+}
+
+void clear_trusted_peers() {
+  memset(s_trusted_peers, 0, sizeof(s_trusted_peers));
+}
+
+size_t trusted_peer_count() {
+  size_t n = 0;
+  for (size_t i = 0; i < MAX_TRUSTED_PEERS; ++i) {
+    if (s_trusted_peers[i].in_use) ++n;
+  }
+  return n;
+}
+
+void set_beacon_event_handler(beacon_event_received_fn fn) {
+  s_beacon_event_cb = fn;
 }
 
 }  /* namespace mesh_session */

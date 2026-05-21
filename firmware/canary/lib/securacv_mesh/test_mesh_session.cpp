@@ -420,6 +420,256 @@ void test_send_beacon_event_counter_monotonic() {
   std::printf("PASS test_send_beacon_event_counter_monotonic\n");
 }
 
+/* ────────────────────────────────────────────────────────────────────────
+ * PR 5c-4 — receive-side dispatch
+ * ──────────────────────────────────────────────────────────────────────── */
+
+struct ReceivedEvent {
+  uint8_t                   sender_fp[mesh_crypto::FINGERPRINT_LEN];
+  mesh_beacon::BeaconState  state;
+  char                      label[mesh_beacon::MAX_LABEL_BYTES + 1];
+};
+std::vector<ReceivedEvent> g_received;
+
+void on_beacon_event_received(const uint8_t* sender_fp,
+                              mesh_beacon::BeaconState state,
+                              const char* label) {
+  ReceivedEvent r;
+  std::memcpy(r.sender_fp, sender_fp, sizeof(r.sender_fp));
+  r.state = state;
+  std::strncpy(r.label, label ? label : "", sizeof(r.label) - 1);
+  r.label[sizeof(r.label) - 1] = '\0';
+  g_received.push_back(r);
+}
+
+/* Helper: build a signed BEACON_EVENT session frame (1 + 38 + 25 + 64
+ * = 128 bytes) for `sender_pub`/`sender_priv`. Returns the frame bytes
+ * in `out_frame` (must be at least 128 bytes). */
+size_t build_beacon_frame(const uint8_t sender_pub[mesh_crypto::PUBKEY_LEN],
+                          const uint8_t sender_priv[mesh_crypto::PRIVKEY_LEN],
+                          const uint8_t opera_secret[mesh_crypto::OPERA_SECRET_LEN],
+                          uint64_t counter,
+                          mesh_beacon::BeaconState state,
+                          const char* label,
+                          uint8_t* out_frame, size_t out_cap) {
+  /* Encode payload. */
+  uint8_t payload[mesh_beacon::PAYLOAD_LEN];
+  if (!mesh_beacon::encode(state, label, payload, sizeof(payload))) return 0;
+
+  /* Build header. */
+  mesh_envelope::Header h;
+  h.version  = mesh_envelope::PROTOCOL_VERSION;
+  h.msg_type = static_cast<uint8_t>(mesh_envelope::MsgType::BEACON_EVENT);
+  mesh_crypto::compute_opera_id(opera_secret, h.opera_id);
+  mesh_crypto::compute_fingerprint(sender_pub, h.sender_fp);
+  h.counter   = counter;
+  h.timestamp = 12345;
+
+  /* Serialize+sign. Out goes after the 1-byte session prefix. */
+  if (out_cap < 1 + mesh_envelope::MAX_FRAME_LEN) return 0;
+  out_frame[0] = static_cast<uint8_t>(mesh_envelope::MsgType::BEACON_EVENT);
+  const size_t n = mesh_envelope::serialize_signed(
+      h, payload, sizeof(payload), sender_priv, sender_pub,
+      out_frame + 1, out_cap - 1);
+  if (n == 0) return 0;
+  return 1 + n;
+}
+
+void test_register_trusted_peer_basic() {
+  reset_world();
+  assert(mesh_session::trusted_peer_count() == 0);
+
+  uint8_t peer_pub[mesh_crypto::PUBKEY_LEN];
+  uint8_t peer_priv[mesh_crypto::PRIVKEY_LEN];
+  assert(mesh_crypto::ed25519_generate_keypair(peer_pub, peer_priv));
+  assert(mesh_session::register_trusted_peer(peer_pub));
+  assert(mesh_session::trusted_peer_count() == 1);
+
+  /* Dedup: re-registering the same pubkey returns false. */
+  assert(!mesh_session::register_trusted_peer(peer_pub));
+  assert(mesh_session::trusted_peer_count() == 1);
+
+  mesh_session::clear_trusted_peers();
+  assert(mesh_session::trusted_peer_count() == 0);
+  std::printf("PASS test_register_trusted_peer_basic\n");
+}
+
+void test_beacon_event_roundtrip() {
+  /* Stand up the receiver session with its own keypair + opera_secret. */
+  reset_world();
+  mesh_session::deinit();
+
+  uint8_t rx_pub[mesh_crypto::PUBKEY_LEN];
+  uint8_t rx_priv[mesh_crypto::PRIVKEY_LEN];
+  assert(mesh_crypto::ed25519_generate_keypair(rx_pub, rx_priv));
+  assert(mesh_session::init(rx_pub, rx_priv));
+  assert(mesh_session::start());
+
+  uint8_t opera_secret[mesh_crypto::OPERA_SECRET_LEN];
+  for (size_t i = 0; i < sizeof(opera_secret); ++i) opera_secret[i] = (uint8_t)(0xE0 + i);
+  assert(mesh_session::set_opera_secret(opera_secret));
+
+  /* Sender keypair — register as trusted on the receiver side. */
+  uint8_t tx_pub[mesh_crypto::PUBKEY_LEN];
+  uint8_t tx_priv[mesh_crypto::PRIVKEY_LEN];
+  assert(mesh_crypto::ed25519_generate_keypair(tx_pub, tx_priv));
+  assert(mesh_session::register_trusted_peer(tx_pub));
+
+  g_received.clear();
+  mesh_session::set_beacon_event_handler(on_beacon_event_received);
+
+  /* Build + inject a signed BEACON_EVENT frame from the sender. */
+  uint8_t frame[1 + mesh_envelope::MAX_FRAME_LEN];
+  const size_t flen = build_beacon_frame(
+      tx_pub, tx_priv, opera_secret, /*counter=*/7,
+      mesh_beacon::BeaconState::ARRIVED, "kitchen",
+      frame, sizeof(frame));
+  assert(flen > 0);
+
+  uint8_t mac[6] = {0x10, 0x20, 0x30, 0x40, 0x50, 0x60};
+  /* mesh_transport's drain_ring only forwards frames whose source MAC
+   * is a known peer; add_peer registers it so the dispatch fires. */
+  assert(mesh_transport::add_peer(mac));
+  mesh_transport::test::inject_recv(mac, frame, flen, -55);
+  mesh_transport::process();   /* drains the recv ring → on_transport_recv */
+
+  assert(g_received.size() == 1);
+  assert(g_received[0].state == mesh_beacon::BeaconState::ARRIVED);
+  assert(std::strcmp(g_received[0].label, "kitchen") == 0);
+  /* sender_fp matches compute_fingerprint(tx_pub). */
+  uint8_t expected_fp[mesh_crypto::FINGERPRINT_LEN];
+  mesh_crypto::compute_fingerprint(tx_pub, expected_fp);
+  assert(std::memcmp(g_received[0].sender_fp, expected_fp, sizeof(expected_fp)) == 0);
+  std::printf("PASS test_beacon_event_roundtrip\n");
+}
+
+void test_beacon_event_replay_dropped() {
+  /* Continues from the prior test's state — same receiver, same sender,
+   * but inject the SAME frame (counter=7) twice. The replay must be
+   * dropped silently. */
+  g_received.clear();
+
+  uint8_t tx_pub[mesh_crypto::PUBKEY_LEN];
+  uint8_t tx_priv[mesh_crypto::PRIVKEY_LEN];
+  assert(mesh_crypto::ed25519_generate_keypair(tx_pub, tx_priv));
+  mesh_session::clear_trusted_peers();   /* fresh start */
+  assert(mesh_session::register_trusted_peer(tx_pub));
+
+  uint8_t opera_secret[mesh_crypto::OPERA_SECRET_LEN];
+  for (size_t i = 0; i < sizeof(opera_secret); ++i) opera_secret[i] = (uint8_t)(0xE0 + i);
+
+  uint8_t frame[1 + mesh_envelope::MAX_FRAME_LEN];
+  const size_t flen = build_beacon_frame(
+      tx_pub, tx_priv, opera_secret, /*counter=*/1,
+      mesh_beacon::BeaconState::ARRIVED, "replay",
+      frame, sizeof(frame));
+  assert(flen > 0);
+
+  uint8_t mac[6] = {0x11, 0x22, 0x33, 0x44, 0x55, 0x66};
+  assert(mesh_transport::add_peer(mac));   /* required by drain_ring */
+  mesh_transport::test::inject_recv(mac, frame, flen, -55);
+  mesh_transport::process();
+  /* Inject the IDENTICAL frame again. */
+  mesh_transport::test::inject_recv(mac, frame, flen, -55);
+  mesh_transport::process();
+
+  /* Only one event should have been delivered. */
+  assert(g_received.size() == 1);
+
+  /* A NEWER counter from the same peer DOES pass through. */
+  uint8_t frame2[1 + mesh_envelope::MAX_FRAME_LEN];
+  const size_t flen2 = build_beacon_frame(
+      tx_pub, tx_priv, opera_secret, /*counter=*/2,
+      mesh_beacon::BeaconState::DEPARTED, "replay",
+      frame2, sizeof(frame2));
+  assert(flen2 > 0);
+  mesh_transport::test::inject_recv(mac, frame2, flen2, -55);
+  mesh_transport::process();
+  assert(g_received.size() == 2);
+  assert(g_received[1].state == mesh_beacon::BeaconState::DEPARTED);
+
+  std::printf("PASS test_beacon_event_replay_dropped\n");
+}
+
+void test_beacon_event_unknown_sender_dropped() {
+  reset_world();
+  mesh_session::deinit();
+
+  uint8_t rx_pub[mesh_crypto::PUBKEY_LEN];
+  uint8_t rx_priv[mesh_crypto::PRIVKEY_LEN];
+  assert(mesh_crypto::ed25519_generate_keypair(rx_pub, rx_priv));
+  assert(mesh_session::init(rx_pub, rx_priv));
+  assert(mesh_session::start());
+
+  uint8_t opera_secret[mesh_crypto::OPERA_SECRET_LEN];
+  for (size_t i = 0; i < sizeof(opera_secret); ++i) opera_secret[i] = (uint8_t)(0xF0 + i);
+  assert(mesh_session::set_opera_secret(opera_secret));
+
+  /* DO NOT register the sender. */
+  uint8_t tx_pub[mesh_crypto::PUBKEY_LEN];
+  uint8_t tx_priv[mesh_crypto::PRIVKEY_LEN];
+  assert(mesh_crypto::ed25519_generate_keypair(tx_pub, tx_priv));
+
+  g_received.clear();
+  mesh_session::set_beacon_event_handler(on_beacon_event_received);
+
+  uint8_t frame[1 + mesh_envelope::MAX_FRAME_LEN];
+  const size_t flen = build_beacon_frame(
+      tx_pub, tx_priv, opera_secret, /*counter=*/1,
+      mesh_beacon::BeaconState::ARRIVED, "intruder",
+      frame, sizeof(frame));
+  assert(flen > 0);
+
+  uint8_t mac[6] = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF};
+  assert(mesh_transport::add_peer(mac));
+  mesh_transport::test::inject_recv(mac, frame, flen, -55);
+  mesh_transport::process();
+  assert(g_received.empty());
+  std::printf("PASS test_beacon_event_unknown_sender_dropped\n");
+}
+
+void test_beacon_event_forged_signature_dropped() {
+  reset_world();
+  mesh_session::deinit();
+
+  uint8_t rx_pub[mesh_crypto::PUBKEY_LEN];
+  uint8_t rx_priv[mesh_crypto::PRIVKEY_LEN];
+  assert(mesh_crypto::ed25519_generate_keypair(rx_pub, rx_priv));
+  assert(mesh_session::init(rx_pub, rx_priv));
+  assert(mesh_session::start());
+
+  uint8_t opera_secret[mesh_crypto::OPERA_SECRET_LEN];
+  for (size_t i = 0; i < sizeof(opera_secret); ++i) opera_secret[i] = (uint8_t)(0xC0 + i);
+  assert(mesh_session::set_opera_secret(opera_secret));
+
+  uint8_t tx_pub[mesh_crypto::PUBKEY_LEN];
+  uint8_t tx_priv[mesh_crypto::PRIVKEY_LEN];
+  assert(mesh_crypto::ed25519_generate_keypair(tx_pub, tx_priv));
+  assert(mesh_session::register_trusted_peer(tx_pub));
+
+  g_received.clear();
+  mesh_session::set_beacon_event_handler(on_beacon_event_received);
+
+  uint8_t frame[1 + mesh_envelope::MAX_FRAME_LEN];
+  const size_t flen = build_beacon_frame(
+      tx_pub, tx_priv, opera_secret, /*counter=*/1,
+      mesh_beacon::BeaconState::ARRIVED, "tamper",
+      frame, sizeof(frame));
+  assert(flen > 0);
+
+  /* Flip a single bit in the payload (offset = 1 session + 38 header
+   * + 0 payload-start). This invalidates the signature but leaves the
+   * sender_fp lookup successful — so the verify step is the dropper. */
+  frame[1 + mesh_envelope::HEADER_LEN] ^= 0x01;
+
+  uint8_t mac[6] = {0x77, 0x77, 0x77, 0x77, 0x77, 0x77};
+  assert(mesh_transport::add_peer(mac));
+  mesh_transport::test::inject_recv(mac, frame, flen, -55);
+  mesh_transport::process();
+  assert(g_received.empty());
+  std::printf("PASS test_beacon_event_forged_signature_dropped\n");
+}
+
 void test_deinit_clears_opera_auth_state() {
   /* Regression for the codex P1 missed at PR #472 merge time: deinit()
    * did not clear the opera-auth bookkeeping, so a deinit()/init()
@@ -493,6 +743,11 @@ int main() {
   test_send_beacon_event_signs_and_broadcasts();
   test_send_beacon_event_counter_monotonic();
   test_deinit_clears_opera_auth_state();
+  test_register_trusted_peer_basic();
+  test_beacon_event_roundtrip();
+  test_beacon_event_replay_dropped();
+  test_beacon_event_unknown_sender_dropped();
+  test_beacon_event_forged_signature_dropped();
   std::printf("\nALL MESH_SESSION TESTS PASSED\n");
   return 0;
 }
