@@ -42,6 +42,11 @@
 #if FEATURE_CSI
 #include "securacv_csi.h"
 #include "csi_modules_integration.h"
+
+#if FEATURE_MESH_NETWORK
+#include "mesh_transport.h"
+#include "mesh_session.h"
+#endif
 /* Bridge the canary HAL's csi_features_t into the common module
  * pipeline. Both structs share the same int8 vector + telemetry layout;
  * the assertion below is the wire-protocol guarantee that a refactor of
@@ -288,6 +293,33 @@ void setup() {
 #endif
   } else {
     Serial.println("[WARN] WiFi AP failed to start");
+  }
+#endif
+
+#if FEATURE_MESH_NETWORK
+  /* Mesh layer bring-up — must happen AFTER WiFi (ESP-NOW binds the
+   * shared radio). mesh_transport handles peer table + ESP-NOW recv
+   * ring; mesh_session bridges pairing + opera-authenticated traffic
+   * (sign/verify for BEACON_EVENT, HEARTBEAT, etc.).
+   *
+   * No pairing is triggered here — that's the integration layer's
+   * job once the user kicks off "pair another Canary" from the UI.
+   * Until pairing succeeds + opera_secret is loaded, mesh_session's
+   * send_beacon_event short-circuits (PR 5c-3 contract) and the
+   * receive dispatch silently drops unknown senders (PR 5c-4). The
+   * SPSC outbound queue in csi_modules_integration.cpp drains
+   * harmlessly during that warm-up.
+   *
+   * Logging only — no health-chain rows for boot-time mesh init;
+   * the chokepoint sees nothing if no events are emitted. */
+  Serial.println("[..] Starting mesh layer...");
+  if (mesh_transport::init(mesh_transport::Config::defaults()) &&
+      mesh_transport::start() &&
+      mesh_session::init(device.pubkey, device.privkey) &&
+      mesh_session::start()) {
+    Serial.println("[OK] Mesh layer active (mesh_transport + mesh_session)");
+  } else {
+    Serial.println("[WARN] Mesh layer init failed — broadcast disabled");
   }
 #endif
 
@@ -582,6 +614,19 @@ void setup() {
 void loop() {
 #if FEATURE_WATCHDOG
   esp_task_wdt_reset();
+#endif
+
+#if FEATURE_MESH_NETWORK
+  /* Drive the mesh stack from the main loop:
+   *   mesh_transport::process() drains the ESP-NOW recv ring and ages
+   *     peer state. Calling this is what surfaces inbound frames to
+   *     mesh_session::on_transport_recv → on_opera_frame (PR 5c-4).
+   *   mesh_session::process(now_ms) drives mesh_pairing::tick (5-min
+   *     pairing timeout + initiator NOTIFY_PAIRED) and dispatches any
+   *     pending actions.
+   * Both are no-ops until init() succeeds. */
+  mesh_transport::process();
+  mesh_session::process((uint32_t)millis());
 #endif
 
   // Handle serial commands
