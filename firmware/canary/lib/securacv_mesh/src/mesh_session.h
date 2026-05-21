@@ -155,23 +155,39 @@ void process(uint32_t now_ms);
  * After pairing has succeeded, the integration layer calls
  * set_opera_secret() with the 32-byte secret that pairing distributed
  * (or the persisted one loaded from NVS on a subsequent boot).
- * mesh_session caches the derived opera_id (16 bytes) and uses it to
- * stamp every opera-authenticated outbound frame.
+ * mesh_session derives + caches the 16-byte opera_id and the 8-byte
+ * sender fingerprint; the 32-byte secret itself is NOT retained in
+ * module state. The caller may zero its own copy of the secret as
+ * soon as set_opera_secret() returns. (PR 5c-4 will move the cached
+ * opera_id/sender_fp into a flash-encryption-gated NVS slot to match
+ * opera_secret's existing hygiene; PR 5c-3 keeps them in module RAM
+ * for the life of the process.)
  *
- *   set_opera_secret() — call ONCE per process. The secret is copied
- *   into module state; the caller may zero its own buffer afterwards.
- *   The secret stays in mesh_session RAM for the life of the process
- *   (PR 5c-3 keeps it in-memory; PR 5c-4 / PR 4b will move the cache
- *   into a flash-encryption-gated NVS slot to match opera_secret's
- *   existing hygiene). Returns false on null pointer.
+ *   set_opera_secret() — call ONCE per process (idempotent — calling
+ *   again with the same secret is harmless; calling with a different
+ *   secret rebinds, which the integration layer SHOULD NOT do mid-
+ *   session). Returns false if called before init() or on null pointer.
+ *   The secret is CONSUMED: only opera_id + sender_fp survive past
+ *   the call.
  *
  *   send_beacon_event() — build a signed envelope carrying a BLE
  *   Scout beacon-event payload (state + label, see mesh_beacon.h)
  *   and broadcast it to every paired peer.
  *
+ *     Threading: MUST be invoked from the same task as process()
+ *     (the main loop). The outbound counter is incremented without
+ *     synchronization. Integrations whose source of beacon events
+ *     might run cross-task (e.g. ble_scout's broadcast callback when
+ *     ble_scout_on_advert is reached from the NimBLE host task) MUST
+ *     marshal the call back to the main loop themselves — typically
+ *     by enqueuing a (state, label) tuple and draining it from the
+ *     main loop tick. Do NOT add a mutex/atomic here; per the
+ *     project's threading rule, that would mask violations rather
+ *     than surface them.
+ *
  *     Returns false if set_opera_secret() has not been called, if
  *     the underlying envelope serialization fails, or if the
- *     broadcast had no peers to send to. Sender_fp is derived from
+ *     broadcast had no peers to send to. sender_fp is derived from
  *     the device pubkey passed to init().
  * ────────────────────────────────────────────────────────────────────────── */
 

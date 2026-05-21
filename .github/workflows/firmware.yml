@@ -269,6 +269,91 @@ jobs:
       - name: Run host witness round-trip test
         run: /tmp/csi_roundtrip
 
+  # ──────────────────────────────────────────────────────────────────
+  # Mesh + Scout host test suites
+  #
+  # Each securacv_mesh and securacv_ble_scan TU has a host-build test
+  # that compiles standalone (no Arduino / mbedtls / NimBLE dep — every
+  # device-only call is gated by CSI_TEST_HOST_BUILD with a vendored
+  # fallback). Run them all on every PR so a future contributor can't
+  # silently break wire-format encoding, pairing state machine, signed-
+  # envelope verification, BLE Scout state-machine timing, or the
+  # arrived/departed broadcast hook contract.
+  #
+  # New tests added to either lib should be appended to this list.
+  # ──────────────────────────────────────────────────────────────────
+  mesh-scout-host-tests:
+    name: Mesh + Scout Host Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build + run all mesh + ble_scan host tests
+        # Each test links the minimum source set it needs. ble_scout.cpp
+        # pulls in csi_event/module/bundler (its emit_arrived flows
+        # through the chokepoint), so suites that don't exercise the
+        # Scout integration deliberately exclude it from their link
+        # set — keeps each test's link surface honest. Every suite
+        # ends with an "ALL ... PASSED" marker; the grep makes a
+        # silent-pass failure mode visible.
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/host_tests
+
+          MESH_SRC=firmware/canary/lib/securacv_mesh/src
+          BLE_SRC=firmware/canary/lib/securacv_ble_scan/src
+          COMMON_SRC=firmware/common/csi/src
+          CXXFLAGS="-std=c++17 -DCSI_TEST_HOST_BUILD -Wall -Wextra -Wno-unused-parameter"
+
+          run_test() {
+            local name=$1; shift
+            g++ $CXXFLAGS "$@" -o /tmp/host_tests/test_$name
+            /tmp/host_tests/test_$name | tee /tmp/host_tests/test_$name.log
+            grep -q "ALL .* PASSED" /tmp/host_tests/test_$name.log
+          }
+
+          # securacv_mesh suites — 6 as of PR 5c-3. Each test links
+          # against every mesh src TU so internal symbols resolve.
+          for t in mesh_crypto mesh_envelope mesh_pairing mesh_session \
+                   mesh_transport mesh_beacon; do
+            run_test $t \
+              firmware/canary/lib/securacv_mesh/test_${t}.cpp \
+              $MESH_SRC/*.cpp \
+              -I $MESH_SRC
+          done
+
+          # ble_scan + ble_scout_state — pure-logic, only link
+          # ble_scan.cpp / ble_scout_state.cpp from the lib, plus
+          # mesh_crypto.cpp for sha256_domain.
+          run_test ble_scan \
+            firmware/canary/lib/securacv_ble_scan/test_ble_scan.cpp \
+            $BLE_SRC/ble_scan.cpp \
+            $MESH_SRC/mesh_crypto.cpp \
+            -I $BLE_SRC -I $MESH_SRC
+
+          run_test ble_scout_state \
+            firmware/canary/lib/securacv_ble_scan/test_ble_scout_state.cpp \
+            $BLE_SRC/ble_scout_state.cpp \
+            $BLE_SRC/ble_scan.cpp \
+            $MESH_SRC/mesh_crypto.cpp \
+            -I $BLE_SRC -I $MESH_SRC
+
+          # ble_scout_broadcast exercises the chokepoint path inside
+          # emit_arrived/departed, so it pulls in csi_event + module
+          # + bundler + witness_payload from common/csi/src.
+          run_test ble_scout_broadcast \
+            firmware/canary/lib/securacv_ble_scan/test_ble_scout_broadcast.cpp \
+            $BLE_SRC/ble_scan.cpp \
+            $BLE_SRC/ble_scout.cpp \
+            $BLE_SRC/ble_scout_state.cpp \
+            $BLE_SRC/ble_scout_key.cpp \
+            $MESH_SRC/mesh_crypto.cpp \
+            $COMMON_SRC/csi_event.cpp \
+            $COMMON_SRC/csi_module.cpp \
+            $COMMON_SRC/csi_bundler.cpp \
+            $COMMON_SRC/csi_witness_payload.cpp \
+            -I $BLE_SRC -I $MESH_SRC -I $COMMON_SRC
+
   microcopy-lint:
     name: Dashboard Microcopy Lint
     runs-on: ubuntu-latest

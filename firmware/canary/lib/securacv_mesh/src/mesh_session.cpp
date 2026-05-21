@@ -45,6 +45,18 @@ static PairedCallback     s_paired_cb     = nullptr;
 static FailedCallback     s_failed_cb     = nullptr;
 static CodeReadyCallback  s_code_ready_cb = nullptr;
 
+/* Opera-authenticated broadcast state (PR 5c-3). Declared here at file
+ * scope alongside the other lifecycle-managed state so deinit() can
+ * wipe it in one place. Without that wipe a deinit()/init() cycle
+ * leaves has_opera_secret() returning true from the prior run and the
+ * next send_beacon_event() would sign frames with a stale opera_id /
+ * sender_fp / continuing counter (codex P1 catch on #472 — missed at
+ * merge time, addressed in this PR). */
+static bool     s_opera_id_set       = false;
+static uint8_t  s_opera_id [mesh_crypto::OPERA_ID_LEN];
+static uint8_t  s_sender_fp[mesh_crypto::FINGERPRINT_LEN];
+static uint64_t s_outbound_counter   = 0;
+
 /* ──────────────────────────────────────────────────────────────────────────
  * INTERNAL HELPERS
  * ────────────────────────────────────────────────────────────────────────── */
@@ -193,6 +205,16 @@ void deinit() {
   s_paired_cb = nullptr;
   s_failed_cb = nullptr;
   s_code_ready_cb = nullptr;
+  /* PR 5c-3 follow-up: clear opera-auth state so a deinit()/init()
+   * cycle starts clean — without this, has_opera_secret() would lie
+   * about a stale opera_id from the prior run. The opera_id and
+   * sender_fp aren't secret (they're advertised in every signed
+   * broadcast) but the staleness alone causes incorrect identity
+   * binding on the next send. */
+  s_opera_id_set     = false;
+  secure_zero(s_opera_id,  sizeof(s_opera_id));
+  secure_zero(s_sender_fp, sizeof(s_sender_fp));
+  s_outbound_counter = 0;
   s_running = false;
   s_initialized = false;
 }
@@ -268,12 +290,12 @@ void process(uint32_t now_ms) {
 /* ──────────────────────────────────────────────────────────────────────────
  * OPERA-AUTHENTICATED BROADCAST (PR 5c-3)
  *
- * Three pieces of state added here:
+ * The supporting state lives at the top of this TU alongside the
+ * other lifecycle-managed state so deinit() can wipe it in one place.
  *
  *   s_opera_id_set   — false until set_opera_secret() succeeds.
- *   s_opera_id       — 16 bytes; sha256_domain(DOMAIN_OPERA_ID,
- *                      opera_secret) truncated. Cached so we don't
- *                      re-hash on every send.
+ *   s_opera_id       — 16 bytes; sha256_domain(DOMAIN_OPERA_ID, secret)
+ *                      truncated. Cached so we don't re-hash on every send.
  *   s_sender_fp      — 8 bytes; sha256_domain(DOMAIN_FINGERPRINT,
  *                      s_device_pub) truncated. Cached at first
  *                      set_opera_secret() since device_pub doesn't
@@ -283,10 +305,6 @@ void process(uint32_t now_ms) {
  *                      reboot doesn't replay-reset counters at peers.
  * ────────────────────────────────────────────────────────────────────────── */
 
-static bool     s_opera_id_set       = false;
-static uint8_t  s_opera_id [mesh_crypto::OPERA_ID_LEN];
-static uint8_t  s_sender_fp[mesh_crypto::FINGERPRINT_LEN];
-static uint64_t s_outbound_counter   = 0;
 
 bool set_opera_secret(const uint8_t opera_secret[mesh_crypto::OPERA_SECRET_LEN]) {
   if (opera_secret == nullptr) return false;
