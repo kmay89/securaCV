@@ -76,6 +76,20 @@ constexpr size_t HEADER_LEN       = VERSION_LEN + MSG_TYPE_LEN
                                   + COUNTER_LEN  + TIMESTAMP_LEN;
 constexpr size_t SIGNATURE_LEN    = mesh_crypto::SIGNATURE_LEN;      /* 64 */
 
+/* Header field byte offsets inside the signed envelope. Callers that
+ * need to peek a single field without invoking parse_and_verify (e.g.
+ * the receive dispatch peeks sender_fp to look up the verifying key
+ * BEFORE the signature can be checked) should use these constants
+ * rather than hand-rolled `1 + 1 + 16 + 8` arithmetic — keeps the
+ * layout pinned in one place. */
+constexpr size_t OFFSET_VERSION   = 0;
+constexpr size_t OFFSET_MSG_TYPE  = OFFSET_VERSION   + VERSION_LEN;     /*  1 */
+constexpr size_t OFFSET_OPERA_ID  = OFFSET_MSG_TYPE  + MSG_TYPE_LEN;    /*  2 */
+constexpr size_t OFFSET_SENDER_FP = OFFSET_OPERA_ID  + OPERA_ID_LEN;    /* 18 */
+constexpr size_t OFFSET_COUNTER   = OFFSET_SENDER_FP + FINGERPRINT_LEN; /* 26 */
+constexpr size_t OFFSET_TIMESTAMP = OFFSET_COUNTER   + COUNTER_LEN;     /* 34 */
+constexpr size_t OFFSET_PAYLOAD   = HEADER_LEN;                         /* 38 */
+
 /* Minimum on-the-wire frame size: header + signature, zero-byte payload. */
 constexpr size_t MIN_FRAME_LEN    = HEADER_LEN + SIGNATURE_LEN;       /* 102 */
 
