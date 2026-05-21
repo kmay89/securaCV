@@ -21,6 +21,7 @@
  */
 
 #include "mesh_session.h"
+#include "mesh_envelope.h"
 
 #include <string.h>
 
@@ -262,6 +263,90 @@ void process(uint32_t now_ms) {
   if (!s_running) return;
   mesh_pairing::Action a = mesh_pairing::tick(s_ctx, now_ms);
   dispatch_action(a);
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * OPERA-AUTHENTICATED BROADCAST (PR 5c-3)
+ *
+ * Three pieces of state added here:
+ *
+ *   s_opera_id_set   — false until set_opera_secret() succeeds.
+ *   s_opera_id       — 16 bytes; sha256_domain(DOMAIN_OPERA_ID,
+ *                      opera_secret) truncated. Cached so we don't
+ *                      re-hash on every send.
+ *   s_sender_fp      — 8 bytes; sha256_domain(DOMAIN_FINGERPRINT,
+ *                      s_device_pub) truncated. Cached at first
+ *                      set_opera_secret() since device_pub doesn't
+ *                      change post-init().
+ *   s_outbound_counter — monotonic per-process. PR 5c-3 keeps it in
+ *                      RAM only; PR 5c-4 will persist to NVS so a
+ *                      reboot doesn't replay-reset counters at peers.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+static bool     s_opera_id_set       = false;
+static uint8_t  s_opera_id [mesh_crypto::OPERA_ID_LEN];
+static uint8_t  s_sender_fp[mesh_crypto::FINGERPRINT_LEN];
+static uint64_t s_outbound_counter   = 0;
+
+bool set_opera_secret(const uint8_t opera_secret[mesh_crypto::OPERA_SECRET_LEN]) {
+  if (opera_secret == nullptr) return false;
+  if (!s_initialized) return false;   /* device keypair must be loaded first */
+
+  mesh_crypto::compute_opera_id(opera_secret, s_opera_id);
+  mesh_crypto::compute_fingerprint(s_device_pub, s_sender_fp);
+  s_opera_id_set = true;
+  return true;
+}
+
+bool has_opera_secret() {
+  return s_opera_id_set;
+}
+
+bool send_beacon_event(mesh_beacon::BeaconState state,
+                       const char*              label,
+                       uint32_t                 now_ms) {
+  if (!s_initialized || !s_running) return false;
+  if (!s_opera_id_set)             return false;
+
+  /* 1. Encode the 25-byte BEACON_EVENT payload. */
+  uint8_t payload[mesh_beacon::PAYLOAD_LEN];
+  if (!mesh_beacon::encode(state, label, payload, sizeof(payload))) {
+    return false;
+  }
+
+  /* 2. Build the envelope header. The outbound counter is bumped FIRST
+   * so two simultaneous calls (which shouldn't happen — single-task
+   * discipline — but the increment is local anyway) produce distinct
+   * counters. */
+  mesh_envelope::Header header;
+  header.version   = mesh_envelope::PROTOCOL_VERSION;
+  header.msg_type  = static_cast<uint8_t>(mesh_envelope::MsgType::BEACON_EVENT);
+  memcpy(header.opera_id,  s_opera_id,  sizeof(header.opera_id));
+  memcpy(header.sender_fp, s_sender_fp, sizeof(header.sender_fp));
+  header.counter   = ++s_outbound_counter;
+  header.timestamp = now_ms;
+
+  /* 3. Serialize + sign. The signed frame is HEADER_LEN(38) +
+   * PAYLOAD_LEN(25) + SIGNATURE_LEN(64) = 127 bytes. We then prepend
+   * a 1-byte session msg type so the same wire dispatch that handles
+   * PAIR_* frames can route this too: receivers see frame[0]=22 and
+   * forward frame[1..] into mesh_envelope::parse_and_verify (peer-
+   * table lookup added in PR 5c-4 / PR 4b). */
+  uint8_t session_frame[1 + mesh_envelope::MAX_FRAME_LEN];
+  session_frame[0] = static_cast<uint8_t>(mesh_envelope::MsgType::BEACON_EVENT);
+  const size_t env_len = mesh_envelope::serialize_signed(
+      header, payload, sizeof(payload),
+      s_device_priv, s_device_pub,
+      session_frame + 1, sizeof(session_frame) - 1);
+  if (env_len == 0) return false;
+
+  /* 4. Broadcast to every paired peer. mesh_transport::broadcast
+   * returns the number of peers that accepted; 0 means no peers
+   * known yet (legitimate during early boot before pairing). We
+   * still consider that a failure for the send_beacon_event return
+   * so the caller can choose to retry / queue. */
+  const size_t n = mesh_transport::broadcast(session_frame, 1 + env_len);
+  return n > 0;
 }
 
 }  /* namespace mesh_session */

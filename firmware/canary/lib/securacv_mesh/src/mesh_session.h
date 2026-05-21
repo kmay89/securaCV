@@ -58,6 +58,7 @@
 
 #include "mesh_pairing.h"
 #include "mesh_transport.h"
+#include "mesh_beacon.h"
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
@@ -147,6 +148,42 @@ uint32_t            pairing_confirmation_code();
  * ────────────────────────────────────────────────────────────────────────── */
 
 void process(uint32_t now_ms);
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * OPERA-AUTHENTICATED BROADCAST (PR 5c-3)
+ *
+ * After pairing has succeeded, the integration layer calls
+ * set_opera_secret() with the 32-byte secret that pairing distributed
+ * (or the persisted one loaded from NVS on a subsequent boot).
+ * mesh_session caches the derived opera_id (16 bytes) and uses it to
+ * stamp every opera-authenticated outbound frame.
+ *
+ *   set_opera_secret() — call ONCE per process. The secret is copied
+ *   into module state; the caller may zero its own buffer afterwards.
+ *   The secret stays in mesh_session RAM for the life of the process
+ *   (PR 5c-3 keeps it in-memory; PR 5c-4 / PR 4b will move the cache
+ *   into a flash-encryption-gated NVS slot to match opera_secret's
+ *   existing hygiene). Returns false on null pointer.
+ *
+ *   send_beacon_event() — build a signed envelope carrying a BLE
+ *   Scout beacon-event payload (state + label, see mesh_beacon.h)
+ *   and broadcast it to every paired peer.
+ *
+ *     Returns false if set_opera_secret() has not been called, if
+ *     the underlying envelope serialization fails, or if the
+ *     broadcast had no peers to send to. Sender_fp is derived from
+ *     the device pubkey passed to init().
+ * ────────────────────────────────────────────────────────────────────────── */
+
+bool set_opera_secret(const uint8_t opera_secret[mesh_crypto::OPERA_SECRET_LEN]);
+
+/* True iff set_opera_secret() has been called successfully. Integrations
+ * check this before wiring the broadcast callback. */
+bool has_opera_secret();
+
+bool send_beacon_event(mesh_beacon::BeaconState state,
+                       const char*              label,
+                       uint32_t                 now_ms);
 
 }  /* namespace mesh_session */
 

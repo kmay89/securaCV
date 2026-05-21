@@ -32,6 +32,8 @@
  */
 
 #include "mesh_session.h"
+#include "mesh_envelope.h"
+#include "mesh_beacon.h"
 
 #include <cassert>
 #include <cstdio>
@@ -292,6 +294,132 @@ void test_lifecycle_idempotent() {
   std::printf("PASS test_lifecycle_idempotent\n");
 }
 
+/* ────────────────────────────────────────────────────────────────────────
+ * PR 5c-3 — send_beacon_event
+ * ──────────────────────────────────────────────────────────────────────── */
+
+void test_send_beacon_event_rejected_without_opera_secret() {
+  reset_world();
+
+  /* No set_opera_secret() call → send must fail. */
+  assert(!mesh_session::has_opera_secret());
+  assert(!mesh_session::send_beacon_event(mesh_beacon::BeaconState::ARRIVED,
+                                          "kitchen", /*now_ms=*/1000));
+  assert(g_outs.empty());
+  std::printf("PASS test_send_beacon_event_rejected_without_opera_secret\n");
+}
+
+void test_send_beacon_event_signs_and_broadcasts() {
+  reset_world();
+
+  /* Pull the device pubkey/privkey out of reset_world's static state
+   * by regenerating one locally and re-init'ing the session. We need
+   * pub for parse_and_verify and for compute_fingerprint comparison. */
+  mesh_session::deinit();
+  uint8_t pub[mesh_crypto::PUBKEY_LEN];
+  uint8_t priv[mesh_crypto::PRIVKEY_LEN];
+  assert(mesh_crypto::ed25519_generate_keypair(pub, priv));
+  assert(mesh_session::init(pub, priv));
+  assert(mesh_session::start());
+  g_outs.clear();
+
+  /* Provide an opera_secret + add a peer so the broadcast has a target. */
+  uint8_t opera_secret[mesh_crypto::OPERA_SECRET_LEN];
+  for (size_t i = 0; i < sizeof(opera_secret); ++i) opera_secret[i] = (uint8_t)(i + 1);
+  assert(mesh_session::set_opera_secret(opera_secret));
+  assert(mesh_session::has_opera_secret());
+
+  /* Add a paired peer so mesh_transport::broadcast has someone to send to. */
+  uint8_t peer_mac[6] = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0x01};
+  assert(mesh_transport::add_peer(peer_mac));
+
+  /* Send. */
+  assert(mesh_session::send_beacon_event(mesh_beacon::BeaconState::ARRIVED,
+                                         "kitchen", /*now_ms=*/12345));
+
+  /* One frame should have been captured by the send hook. */
+  assert(g_outs.size() == 1);
+  const auto& f = g_outs[0];
+
+  /* Wire shape: [session_msg_type=22 (1B)] [Header(38B)] [Payload(25B)] [Sig(64B)]
+   * = 128 bytes total. */
+  const size_t expected_len = 1
+      + mesh_envelope::HEADER_LEN
+      + mesh_beacon::PAYLOAD_LEN
+      + mesh_envelope::SIGNATURE_LEN;
+  assert(f.bytes.size() == expected_len);
+  assert(f.bytes[0] == static_cast<uint8_t>(mesh_envelope::MsgType::BEACON_EVENT));
+
+  /* Verify the signed envelope (frame minus the leading session byte). */
+  mesh_envelope::Header  hdr;
+  const uint8_t*         payload = nullptr;
+  size_t                 payload_len = 0;
+  assert(mesh_envelope::parse_and_verify(
+      f.bytes.data() + 1, f.bytes.size() - 1,
+      pub, &hdr, &payload, &payload_len));
+  assert(hdr.version  == mesh_envelope::PROTOCOL_VERSION);
+  assert(hdr.msg_type == static_cast<uint8_t>(mesh_envelope::MsgType::BEACON_EVENT));
+  assert(payload_len  == mesh_beacon::PAYLOAD_LEN);
+
+  /* sender_fp matches our pubkey's fingerprint. */
+  uint8_t expected_fp[mesh_crypto::FINGERPRINT_LEN];
+  mesh_crypto::compute_fingerprint(pub, expected_fp);
+  assert(std::memcmp(hdr.sender_fp, expected_fp, sizeof(expected_fp)) == 0);
+
+  /* opera_id matches the derivation from the secret we provided. */
+  uint8_t expected_oid[mesh_crypto::OPERA_ID_LEN];
+  mesh_crypto::compute_opera_id(opera_secret, expected_oid);
+  assert(std::memcmp(hdr.opera_id, expected_oid, sizeof(expected_oid)) == 0);
+
+  /* Counter is monotonic and starts at 1 on first send. */
+  assert(hdr.counter == 1);
+
+  /* timestamp matches what the caller passed in. */
+  assert(hdr.timestamp == 12345);
+
+  /* Payload decodes to (ARRIVED, "kitchen"). */
+  mesh_beacon::BeaconState got_state;
+  char                     got_label[mesh_beacon::MAX_LABEL_BYTES + 1];
+  assert(mesh_beacon::decode(payload, payload_len,
+                             &got_state, got_label, sizeof(got_label)));
+  assert(got_state == mesh_beacon::BeaconState::ARRIVED);
+  assert(std::strcmp(got_label, "kitchen") == 0);
+
+  std::printf("PASS test_send_beacon_event_signs_and_broadcasts\n");
+}
+
+void test_send_beacon_event_counter_monotonic() {
+  /* Continues from the prior test's state — counter started at 1 and
+   * the AA:...:01 peer is in the table. Don't add more peers; one peer
+   * is enough to verify the counter increments per send (each broadcast
+   * iterates all peers, so adding peers would multiply the captured
+   * frame count without changing the monotonicity contract). */
+  g_outs.clear();
+
+  /* Three sends. Counters should be 2, 3, 4 on the captured frames. */
+  assert(mesh_session::send_beacon_event(mesh_beacon::BeaconState::DEPARTED,
+                                         "office", 20000));
+  assert(mesh_session::send_beacon_event(mesh_beacon::BeaconState::ARRIVED,
+                                         "office", 21000));
+  assert(mesh_session::send_beacon_event(mesh_beacon::BeaconState::DEPARTED,
+                                         "office", 22000));
+  assert(g_outs.size() == 3);
+
+  /* counter is LE 64-bit at offset 1 (session prefix) + VERSION_LEN(1)
+   * + MSG_TYPE_LEN(1) + OPERA_ID_LEN(16) + FINGERPRINT_LEN(8) = 27. */
+  const size_t cnt_off = 1 + 1 + 1 + 16 + 8;
+  uint64_t prev = 1;   /* prior test left counter at 1 */
+  for (const auto& f : g_outs) {
+    uint64_t c = 0;
+    for (size_t i = 0; i < 8; ++i) {
+      c |= ((uint64_t)f.bytes[cnt_off + i]) << (8 * i);
+    }
+    assert(c > prev);
+    prev = c;
+  }
+  std::printf("PASS test_send_beacon_event_counter_monotonic\n");
+}
+
 }  /* namespace */
 
 int main() {
@@ -303,6 +431,9 @@ int main() {
   test_unknown_msgtype_is_silently_dropped();
   test_cancel_pairing_fires_failed_callback();
   test_lifecycle_idempotent();
+  test_send_beacon_event_rejected_without_opera_secret();
+  test_send_beacon_event_signs_and_broadcasts();
+  test_send_beacon_event_counter_monotonic();
   std::printf("\nALL MESH_SESSION TESTS PASSED\n");
   return 0;
 }
