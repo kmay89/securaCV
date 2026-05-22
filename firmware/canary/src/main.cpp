@@ -58,6 +58,7 @@ static_assert(sizeof(csi_features_t) == 36,
  * inside the CSI gate. */
 #include "mesh_transport.h"
 #include "mesh_session.h"
+#include "mesh_state.h"
 #endif
 
 #if FEATURE_ACOUSTIC_EVENTS
@@ -112,6 +113,37 @@ static void print_banner();
 static void print_status();
 static void handle_boot_button();
 static void derive_ap_password(const uint8_t fingerprint[8], char* password, size_t len);
+
+#if FEATURE_MESH_NETWORK
+/* Mesh PairedCallback. Fires from mesh_session::process() on the main
+ * loop when the pairing state machine reaches PAIRED. On the JOINER
+ * side, `secret` carries the freshly-distributed opera_secret. The
+ * INITIATOR side passes `secret == nullptr` because the initiator
+ * already had the secret when start_pairing_initiator() was called
+ * (its persistence is the integration layer's responsibility before
+ * pairing kicks off). */
+static void on_pairing_succeeded(const uint8_t* secret, uint32_t code) {
+  if (secret == nullptr) {
+    Serial.printf("[OK] Paired as initiator (code=%06u) — opera_secret "
+                  "already persisted before start_pairing\n", code);
+    return;
+  }
+  /* Joiner: persist FIRST so a power cut between save and set leaves
+   * the right NVS state on next boot. set_opera_secret is in-memory
+   * only and would be lost on a reboot before save completes. */
+  if (mesh_state::save_opera_secret(secret)) {
+    if (mesh_session::set_opera_secret(secret)) {
+      Serial.printf("[OK] Paired as joiner (code=%06u) — opera_secret "
+                    "persisted + active\n", code);
+    } else {
+      Serial.println("[WARN] Paired but mesh_session rejected opera_secret");
+    }
+  } else {
+    Serial.println("[WARN] Paired but failed to persist opera_secret to NVS "
+                   "(flash encryption off? see mesh_state::save_opera_secret)");
+  }
+}
+#endif
 
 #if FEATURE_HA_MQTT
 static void mqtt_publish_status_update();
@@ -323,6 +355,41 @@ void setup() {
       mesh_session::init(device.pubkey, device.privkey) &&
       mesh_session::start()) {
     Serial.println("[OK] Mesh layer active (mesh_transport + mesh_session)");
+
+    /* Load the persisted opera_secret (if any) and feed it to
+     * mesh_session so this boot can immediately send/receive
+     * BEACON_EVENT frames without re-pairing. The local buffer is
+     * wiped after the call — mesh_session derives + caches the
+     * 16-byte opera_id and 8-byte sender_fp and does NOT retain
+     * the 32-byte secret. mesh_state::load_opera_secret returns
+     * false on first-boot / factory-reset / FE-disabled devices —
+     * those flows leave the firmware in an unpaired state and the
+     * Scout broadcast queue drains harmlessly. */
+    uint8_t opera_secret_buf[mesh_crypto::OPERA_SECRET_LEN];
+    if (mesh_state::load_opera_secret(opera_secret_buf)) {
+      if (mesh_session::set_opera_secret(opera_secret_buf)) {
+        Serial.println("[OK] Opera secret loaded — mesh broadcast enabled");
+      } else {
+        Serial.println("[WARN] mesh_session rejected loaded opera_secret");
+      }
+      /* Wipe immediately — the secret lives only in mesh_session
+       * (as derived opera_id+sender_fp) after this point. The
+       * volatile write loop + memory barrier prevents the compiler
+       * from eliminating the wipe via dead-store elimination. */
+      volatile uint8_t* p = (volatile uint8_t*)opera_secret_buf;
+      for (size_t i = 0; i < sizeof(opera_secret_buf); ++i) p[i] = 0;
+#if defined(__GNUC__) || defined(__clang__)
+      asm volatile("" ::: "memory");
+#endif
+    }
+
+    /* Wire the PairedCallback so a successful pairing flow persists
+     * the opera_secret to NVS and immediately seeds mesh_session
+     * with it. Only the joiner-side callback receives a non-null
+     * secret (the initiator already had it before starting pairing;
+     * its persistence is the integration layer's responsibility
+     * before calling start_pairing_initiator). */
+    mesh_session::set_paired_callback(&on_pairing_succeeded);
   } else {
     Serial.println("[WARN] Mesh layer init failed — broadcast disabled");
   }
