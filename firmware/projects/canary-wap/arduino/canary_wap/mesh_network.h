@@ -24,6 +24,7 @@
 #include <esp_now.h>
 #endif
 #include "log_level.h"
+#include "mesh_beacon.h"   // BEACON_EVENT wire format (PR canary-wap parity)
 
 // ════════════════════════════════════════════════════════════════════════════
 // CONFIGURATION
@@ -126,7 +127,12 @@ enum MessageType : uint8_t {
   // when remove_peer() is called; old surviving members each ACK the new
   // secret before it's committed to NVS.
   MSG_OPERA_REKEY,         // Initiator → each surviving member; encrypted new secret
-  MSG_OPERA_REKEY_ACK      // Surviving member → initiator; confirms receipt
+  MSG_OPERA_REKEY_ACK,     // Surviving member → initiator; confirms receipt
+  // PR (canary-wap parity): BLE Scout's arrived/departed transitions
+  // broadcast to peer Canaries as a signed envelope carrying the
+  // 25-byte mesh_beacon::Payload (state + label). Receivers decode
+  // and forward to mesh_network::set_beacon_event_handler.
+  MSG_BEACON_EVENT
 };
 
 // Alert types
@@ -484,6 +490,42 @@ void send_heartbeat();
 
 // Get message statistics
 void get_message_stats(uint32_t* sent, uint32_t* received, uint32_t* errors);
+
+// ════════════════════════════════════════════════════════════════════════════
+// BEACON EVENT (BLE Scout → mesh broadcast)
+//
+// canary-wap parity for the PIO mesh_session::send_beacon_event /
+// on_opera_frame chain. Wire format lives in mesh_beacon.h; this
+// API just calls send_to_peer for every paired peer in g_peers
+// with the encoded payload + MSG_BEACON_EVENT type byte. Receivers
+// decode and dispatch through the handler installed via
+// set_beacon_event_handler.
+//
+// Threading: send_beacon_event MUST be called from the main loop
+// (same task as update()). Outbound counter mutation lives inside
+// each OperaPeer struct — sequential per-peer access only. If the
+// caller's source of beacon events runs cross-task (e.g. ble_scout's
+// broadcast callback from the NimBLE host task) the integration
+// layer marshals through a queue before calling here.
+// ════════════════════════════════════════════════════════════════════════════
+
+// Broadcast a signed BEACON_EVENT to every connected peer. Returns
+// the number of peers that accepted the send (mesh_transport-style
+// semantics). Returns 0 if no opera_secret is loaded, no peers are
+// connected, or label is too long for the wire format.
+size_t send_beacon_event(mesh_beacon::BeaconState state,
+                         const char*              label);
+
+// Receive callback: invoked from the main loop when a verified
+// MSG_BEACON_EVENT is decoded. `sender_fp` is the 8-byte peer
+// fingerprint (already validated against g_peers); `label` is
+// printable ASCII per the chokepoint contract.
+typedef void (*beacon_event_handler_fn)(
+    const uint8_t              sender_fp[FINGERPRINT_SIZE],
+    mesh_beacon::BeaconState   state,
+    const char*                label);
+
+void set_beacon_event_handler(beacon_event_handler_fn fn);
 
 } // namespace mesh_network
 

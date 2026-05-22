@@ -80,6 +80,12 @@ static OperaConfig g_opera_config;
 static OperaPeer g_peers[MAX_OPERA_SIZE];
 static uint8_t g_peer_count = 0;
 
+// BLE-Scout BEACON_EVENT handler (canary-wap parity for PIO
+// mesh_session::set_beacon_event_handler). nullptr means inbound
+// events get decoded then dropped silently — the integration
+// layer wires this in csi_integration.cpp.
+static beacon_event_handler_fn g_beacon_event_handler = nullptr;
+
 // Mesh state
 static MeshState g_mesh_state = MESH_DISABLED;
 static bool g_espnow_initialized = false;
@@ -660,6 +666,22 @@ static void handle_received_message(const uint8_t* mac, const uint8_t* data, siz
         g_rekey.pending_acks &= ~(uint16_t)(1u << idx);
         health_log(SCV_LOG_INFO, SCV_CAT_CRYPTO,
                    "opera: rekey ACK received from peer");
+      }
+      break;
+    case MSG_BEACON_EVENT:
+      // canary-wap parity for PIO mesh_session::on_opera_frame's
+      // BEACON_EVENT branch (PR 5c-4). Sig/opera_id/counter checks
+      // already happened above (handle_received_message validates the
+      // signed envelope before dispatching by msg_type). All we do
+      // here is decode the 25-byte payload and forward to the
+      // integration layer via the installed handler.
+      if (g_beacon_event_handler != nullptr) {
+        mesh_beacon::BeaconState state;
+        char label[mesh_beacon::MAX_LABEL_BYTES + 1];
+        if (mesh_beacon::decode(payload, payload_len,
+                                &state, label, sizeof(label))) {
+          g_beacon_event_handler(peer->fingerprint, state, label);
+        }
       }
       break;
     default:
@@ -1800,6 +1822,41 @@ void get_message_stats(uint32_t* sent, uint32_t* received, uint32_t* errors) {
   if (sent) *sent = g_messages_sent;
   if (received) *received = g_messages_received;
   if (errors) *errors = g_message_errors;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// BEACON EVENT — canary-wap parity for PIO send_beacon_event +
+// set_beacon_event_handler. Encodes the 25-byte payload via
+// mesh_beacon::encode and calls send_to_peer for every connected
+// peer in g_peers. Reuses ALL of the existing send_to_peer envelope
+// machinery (Ed25519 sign + counter + opera_id), so wire-format
+// parity with the PIO build is automatic.
+// ════════════════════════════════════════════════════════════════════════════
+
+size_t send_beacon_event(mesh_beacon::BeaconState state, const char* label) {
+  if (!g_opera_config.configured) return 0;
+
+  uint8_t payload[mesh_beacon::PAYLOAD_LEN];
+  if (!mesh_beacon::encode(state, label, payload, sizeof(payload))) {
+    return 0;
+  }
+
+  size_t accepted = 0;
+  for (uint8_t i = 0; i < g_peer_count; ++i) {
+    if (g_peers[i].state >= PEER_CONNECTED) {
+      if (send_to_peer(&g_peers[i], MSG_BEACON_EVENT,
+                       payload, sizeof(payload))) {
+        ++accepted;
+      }
+    }
+  }
+  return accepted;
+}
+
+void set_beacon_event_handler(beacon_event_handler_fn fn) {
+  // Last writer wins. Same task as update() per the threading
+  // contract documented in mesh_network.h.
+  g_beacon_event_handler = fn;
 }
 
 } // namespace mesh_network
