@@ -151,10 +151,23 @@ bool save_trusted_peer(const uint8_t pubkey[mesh_crypto::PUBKEY_LEN]) {
   if (!prefs.begin(NVS_NAMESPACE, /*readOnly=*/false)) return false;
 
   uint8_t blob[PEERS_BLOB_MAX];
-  const size_t cur_bytes = prefs.getBytes(NVS_KEY_PEERS, blob, sizeof(blob));
-  /* getBytes returns 0 when absent OR on real error; either way we
-   * treat as "no peers yet" and start a fresh list. The subsequent
-   * putBytes either succeeds or we propagate the failure. */
+  size_t cur_bytes = 0;
+  /* getBytes returning 0 is AMBIGUOUS: key absent OR real read
+   * failure (key type mismatch, hardware fault, blob larger than
+   * buffer). Treating "failure" as "no peers yet" would silently
+   * overwrite the existing list with just our new pubkey — peer-
+   * list LOSS. isKey() disambiguates: if the key is absent, this
+   * is a legitimate first-add; if present but getBytes returns 0,
+   * propagate the read failure. */
+  if (prefs.isKey(NVS_KEY_PEERS)) {
+    cur_bytes = prefs.getBytes(NVS_KEY_PEERS, blob, sizeof(blob));
+    if (cur_bytes == 0 || cur_bytes % mesh_crypto::PUBKEY_LEN != 0) {
+      /* Real read failure OR partial-write recovery. Fail loud
+       * rather than risk clobbering whatever the user had. */
+      prefs.end();
+      return false;
+    }
+  }
   const size_t cur_count = cur_bytes / mesh_crypto::PUBKEY_LEN;
 
   /* Dedup against existing entries — re-adding the same pubkey is a
@@ -205,11 +218,22 @@ bool load_trusted_peers(uint8_t* out_pubkeys,
     *out_count = 0;
     return false;
   }
-  const size_t got = prefs.getBytes(NVS_KEY_PEERS, out_pubkeys, out_buf_cap);
+  /* isKey() before getBytes() so a real read failure (got==0 with
+   * the key present) reports false instead of silently appearing
+   * as an empty list. Empty-list-by-design is fine; empty-list-
+   * because-NVS-broke is not, and callers can't tell otherwise. */
+  size_t got = 0;
+  if (prefs.isKey(NVS_KEY_PEERS)) {
+    got = prefs.getBytes(NVS_KEY_PEERS, out_pubkeys, out_buf_cap);
+    if (got == 0) {
+      prefs.end();
+      *out_count = 0;
+      return false;   /* key present but read failed */
+    }
+  }
   prefs.end();
   /* Reject malformed blobs (anything not a multiple of PUBKEY_LEN
-   * means a partial write happened; treat as zero peers rather than
-   * trust truncated data). */
+   * means a partial write happened — don't trust truncated data). */
   if (got % mesh_crypto::PUBKEY_LEN != 0) {
     *out_count = 0;
     return false;
