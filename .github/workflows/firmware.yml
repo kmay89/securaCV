@@ -312,10 +312,11 @@ jobs:
             grep -q "ALL .* PASSED" /tmp/host_tests/test_$name.log
           }
 
-          # securacv_mesh suites — 6 as of PR 5c-3. Each test links
-          # against every mesh src TU so internal symbols resolve.
+          # securacv_mesh suites — 7 of them now (mesh_state added with
+          # opera_secret NVS persistence). Each test links against
+          # every mesh src TU so internal symbols resolve.
           for t in mesh_crypto mesh_envelope mesh_pairing mesh_session \
-                   mesh_transport mesh_beacon; do
+                   mesh_transport mesh_beacon mesh_state; do
             run_test $t \
               firmware/canary/lib/securacv_mesh/test_${t}.cpp \
               $MESH_SRC/*.cpp \
