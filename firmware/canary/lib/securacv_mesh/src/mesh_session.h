@@ -139,6 +139,21 @@ void cancel_pairing         ();
 mesh_pairing::State pairing_state();
 uint32_t            pairing_confirmation_code();
 
+/* Copy the peer's Ed25519 pubkey into `out` if the pairing state
+ * machine has captured one (i.e. at least the OFFER/ACCEPT exchange
+ * has completed). Returns true on copy, false if no peer pubkey is
+ * available yet (state < AWAITING_CONFIRM) or out is null.
+ *
+ * The integration layer calls this from its PairedCallback to:
+ *   • Persist the peer to NVS via mesh_state::save_trusted_peer().
+ *   • Immediately register it via register_trusted_peer() so this
+ *     boot's receive path accepts frames from the just-paired peer
+ *     without waiting for the next reboot.
+ *
+ * Threading: must be called from the same task as process() (main
+ * loop) — same task the PairedCallback fires from. */
+bool get_paired_peer_pubkey(uint8_t out[mesh_crypto::PUBKEY_LEN]);
+
 /* ──────────────────────────────────────────────────────────────────────────
  * MAIN LOOP
  *
