@@ -125,4 +125,139 @@ bool clear_opera_secret() {
 #endif
 }
 
+/* ──────────────────────────────────────────────────────────────────────────
+ * TRUSTED-PEER LIST
+ * ────────────────────────────────────────────────────────────────────────── */
+
+#ifndef CSI_TEST_HOST_BUILD
+constexpr const char* NVS_KEY_PEERS = "trusted_peers";
+constexpr size_t      PEERS_BLOB_MAX = MAX_TRUSTED_PEERS * mesh_crypto::PUBKEY_LEN;
+#endif
+
+bool save_trusted_peer(const uint8_t pubkey[mesh_crypto::PUBKEY_LEN]) {
+  if (pubkey == nullptr) return false;
+
+#ifdef CSI_TEST_HOST_BUILD
+  return true;
+#else
+  if (!flash_encryption_enabled()) {
+    Serial.println("[ALERT][mesh_state] refused save_trusted_peer — "
+                   "flash encryption disabled (audit O2 / AGENTS.md)");
+    return false;
+  }
+
+  /* Read-modify-write: load current list, dedup, append, store. */
+  Preferences prefs;
+  if (!prefs.begin(NVS_NAMESPACE, /*readOnly=*/false)) return false;
+
+  uint8_t blob[PEERS_BLOB_MAX];
+  size_t cur_bytes = 0;
+  /* getBytes returning 0 is AMBIGUOUS: key absent OR real read
+   * failure (key type mismatch, hardware fault, blob larger than
+   * buffer). Treating "failure" as "no peers yet" would silently
+   * overwrite the existing list with just our new pubkey — peer-
+   * list LOSS. isKey() disambiguates: if the key is absent, this
+   * is a legitimate first-add; if present but getBytes returns 0,
+   * propagate the read failure. */
+  if (prefs.isKey(NVS_KEY_PEERS)) {
+    cur_bytes = prefs.getBytes(NVS_KEY_PEERS, blob, sizeof(blob));
+    if (cur_bytes == 0 || cur_bytes % mesh_crypto::PUBKEY_LEN != 0) {
+      /* Real read failure OR partial-write recovery. Fail loud
+       * rather than risk clobbering whatever the user had. */
+      prefs.end();
+      return false;
+    }
+  }
+  const size_t cur_count = cur_bytes / mesh_crypto::PUBKEY_LEN;
+
+  /* Dedup against existing entries — re-adding the same pubkey is a
+   * no-op success, NOT an append that would silently fill the table. */
+  for (size_t i = 0; i < cur_count; ++i) {
+    if (mesh_crypto::ct_equal(blob + i * mesh_crypto::PUBKEY_LEN,
+                              pubkey, mesh_crypto::PUBKEY_LEN)) {
+      prefs.end();
+      return true;
+    }
+  }
+  if (cur_count >= MAX_TRUSTED_PEERS) {
+    prefs.end();
+    return false;   /* table full + new pubkey — refuse */
+  }
+
+  memcpy(blob + cur_count * mesh_crypto::PUBKEY_LEN,
+         pubkey, mesh_crypto::PUBKEY_LEN);
+  const size_t new_bytes = (cur_count + 1) * mesh_crypto::PUBKEY_LEN;
+  const size_t put = prefs.putBytes(NVS_KEY_PEERS, blob, new_bytes);
+  prefs.end();
+  return put == new_bytes;
+#endif
+}
+
+bool load_trusted_peers(uint8_t* out_pubkeys,
+                        size_t   out_buf_cap,
+                        size_t*  out_count) {
+  if (out_pubkeys == nullptr || out_count == nullptr) return false;
+  if (out_buf_cap < MAX_TRUSTED_PEERS * mesh_crypto::PUBKEY_LEN) return false;
+
+#ifdef CSI_TEST_HOST_BUILD
+  /* Host stub: deterministic empty list. */
+  *out_count = 0;
+  return true;
+#else
+  if (!flash_encryption_enabled()) {
+    /* Mirror load_opera_secret: refuse to surface persisted peers
+     * when FE is off. Boot as if the list were empty. */
+    Serial.println("[ALERT][mesh_state] refused load_trusted_peers — "
+                   "flash encryption disabled (audit O2 / AGENTS.md)");
+    *out_count = 0;
+    return false;
+  }
+
+  Preferences prefs;
+  if (!prefs.begin(NVS_NAMESPACE, /*readOnly=*/true)) {
+    *out_count = 0;
+    return false;
+  }
+  /* isKey() before getBytes() so a real read failure (got==0 with
+   * the key present) reports false instead of silently appearing
+   * as an empty list. Empty-list-by-design is fine; empty-list-
+   * because-NVS-broke is not, and callers can't tell otherwise. */
+  size_t got = 0;
+  if (prefs.isKey(NVS_KEY_PEERS)) {
+    got = prefs.getBytes(NVS_KEY_PEERS, out_pubkeys, out_buf_cap);
+    if (got == 0) {
+      prefs.end();
+      *out_count = 0;
+      return false;   /* key present but read failed */
+    }
+  }
+  prefs.end();
+  /* Reject malformed blobs (anything not a multiple of PUBKEY_LEN
+   * means a partial write happened — don't trust truncated data). */
+  if (got % mesh_crypto::PUBKEY_LEN != 0) {
+    *out_count = 0;
+    return false;
+  }
+  const size_t n = got / mesh_crypto::PUBKEY_LEN;
+  *out_count = (n > MAX_TRUSTED_PEERS) ? MAX_TRUSTED_PEERS : n;
+  return true;
+#endif
+}
+
+bool clear_trusted_peers() {
+#ifdef CSI_TEST_HOST_BUILD
+  return true;
+#else
+  Preferences prefs;
+  if (!prefs.begin(NVS_NAMESPACE, /*readOnly=*/false)) return false;
+  bool ok = prefs.remove(NVS_KEY_PEERS);
+  if (!ok) {
+    /* Same isKey() idempotency dance as clear_opera_secret. */
+    ok = !prefs.isKey(NVS_KEY_PEERS);
+  }
+  prefs.end();
+  return ok;
+#endif
+}
+
 }  /* namespace mesh_state */

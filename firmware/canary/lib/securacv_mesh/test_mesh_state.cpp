@@ -68,12 +68,61 @@ void test_null_pointer_handling() {
   std::printf("PASS test_null_pointer_handling\n");
 }
 
+void test_trusted_peers_load_empty_on_host() {
+  /* Host stub: load_trusted_peers always reports zero peers and
+   * succeeds. Callers iterate i=0..count and skip when count==0. */
+  uint8_t buf[mesh_state::MAX_TRUSTED_PEERS * mesh_crypto::PUBKEY_LEN];
+  std::memset(buf, 0xCC, sizeof(buf));
+  size_t count = 99;   /* poison */
+  assert(mesh_state::load_trusted_peers(buf, sizeof(buf), &count));
+  assert(count == 0);
+  std::printf("PASS test_trusted_peers_load_empty_on_host\n");
+}
+
+void test_trusted_peers_save_and_clear_on_host() {
+  uint8_t pubkey[mesh_crypto::PUBKEY_LEN];
+  for (size_t i = 0; i < sizeof(pubkey); ++i) pubkey[i] = (uint8_t)(0x40 + i);
+  assert(mesh_state::save_trusted_peer(pubkey));     /* host: no-op success */
+  assert(mesh_state::clear_trusted_peers());          /* host: no-op success */
+  /* Host stub stays empty after save — same stateless design as
+   * opera_secret. Tests that need a populated peer set use
+   * mesh_session::register_trusted_peer() directly. */
+  uint8_t buf[mesh_state::MAX_TRUSTED_PEERS * mesh_crypto::PUBKEY_LEN];
+  size_t count = 0;
+  assert(mesh_state::load_trusted_peers(buf, sizeof(buf), &count));
+  assert(count == 0);
+  std::printf("PASS test_trusted_peers_save_and_clear_on_host\n");
+}
+
+void test_trusted_peers_null_handling() {
+  uint8_t buf[mesh_state::MAX_TRUSTED_PEERS * mesh_crypto::PUBKEY_LEN];
+  size_t count = 0;
+  assert(!mesh_state::save_trusted_peer(nullptr));
+  assert(!mesh_state::load_trusted_peers(nullptr, sizeof(buf), &count));
+  assert(!mesh_state::load_trusted_peers(buf, sizeof(buf), nullptr));
+  std::printf("PASS test_trusted_peers_null_handling\n");
+}
+
+void test_trusted_peers_load_buffer_too_small() {
+  /* The buffer must hold MAX_TRUSTED_PEERS * PUBKEY_LEN bytes minimum.
+   * A smaller buffer must be rejected so a caller can't accidentally
+   * truncate the loaded list. */
+  uint8_t small[mesh_crypto::PUBKEY_LEN];   /* room for ONE peer */
+  size_t count = 0;
+  assert(!mesh_state::load_trusted_peers(small, sizeof(small), &count));
+  std::printf("PASS test_trusted_peers_load_buffer_too_small\n");
+}
+
 }  /* namespace */
 
 int main() {
   test_load_returns_false_on_host();
   test_save_and_clear_return_true_on_host();
   test_null_pointer_handling();
+  test_trusted_peers_load_empty_on_host();
+  test_trusted_peers_save_and_clear_on_host();
+  test_trusted_peers_null_handling();
+  test_trusted_peers_load_buffer_too_small();
   std::printf("\nALL MESH_STATE TESTS PASSED\n");
   return 0;
 }

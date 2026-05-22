@@ -96,6 +96,60 @@ bool load_opera_secret(uint8_t out[mesh_crypto::OPERA_SECRET_LEN]);
  * On the host build, always returns true (no-op success). */
 bool clear_opera_secret();
 
+/* ──────────────────────────────────────────────────────────────────────────
+ * TRUSTED-PEER PUBKEY PERSISTENCE
+ *
+ * The receive side of mesh_session needs to know the Ed25519 pubkey of
+ * every paired peer to verify inbound BEACON_EVENT envelopes. Without
+ * persistence, every boot starts with an empty peer table and RX is
+ * effectively dead until the user manually re-pairs every device.
+ *
+ * On-disk layout: a single 256-byte NVS blob "trusted_peers" holding
+ * up to MAX_TRUSTED_PEERS × 32 = 256 concatenated pubkey bytes. The
+ * stored length tells us how many peers are populated.
+ *
+ * Same flash-encryption gate as opera_secret: the pubkeys themselves
+ * aren't secret, but the bond between this device and its set of
+ * trusted peers IS sensitive metadata (an attacker who reads the
+ * unencrypted partition learns the household graph). canary-wap's
+ * opera_config persistence applies the same posture.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+constexpr size_t MAX_TRUSTED_PEERS = 8;   /* mirrors mesh_session value */
+
+/* Add `pubkey` to the persisted trusted-peer list. Dedups: if an
+ * identical pubkey is already stored, returns true without
+ * re-writing (idempotent). Returns false on:
+ *   • null pointer
+ *   • flash encryption disabled
+ *   • table already full (count == MAX_TRUSTED_PEERS, pubkey new)
+ *   • NVS read/write failure
+ *
+ * On the host build, always returns true (no-op success). */
+bool save_trusted_peer(const uint8_t pubkey[mesh_crypto::PUBKEY_LEN]);
+
+/* Load up to MAX_TRUSTED_PEERS pubkeys into `out_pubkeys`. The buffer
+ * must be at least `MAX_TRUSTED_PEERS * PUBKEY_LEN` (= 256) bytes.
+ * On success, `*out_count` is set to the actual number of peers
+ * (0..MAX_TRUSTED_PEERS) and the corresponding contiguous bytes in
+ * out_pubkeys are populated.
+ *
+ * Returns false on null pointer, FE disabled, NVS read failure, or
+ * buffer too small. On "no peers persisted" (first boot / factory
+ * reset), returns true with *out_count = 0.
+ *
+ * On the host build, always returns true with *out_count = 0
+ * (deterministic empty list for tests). */
+bool load_trusted_peers(uint8_t* out_pubkeys,
+                        size_t   out_buf_cap,
+                        size_t*  out_count);
+
+/* Erase the persisted trusted-peer list. Used on factory reset and
+ * "un-pair all" UI. Idempotent — succeeds if the list was empty.
+ *
+ * On the host build, always returns true (no-op success). */
+bool clear_trusted_peers();
+
 }  /* namespace mesh_state */
 
 #endif  /* SECURACV_MESH_STATE_H */
