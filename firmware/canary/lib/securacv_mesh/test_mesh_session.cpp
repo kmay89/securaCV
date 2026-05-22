@@ -733,6 +733,32 @@ void test_deinit_clears_opera_auth_state() {
   std::printf("PASS test_deinit_clears_opera_auth_state\n");
 }
 
+void test_get_paired_peer_pubkey_gated_by_state() {
+  /* Before pairing reaches AWAITING_CONFIRM, the peer_pubkey field
+   * in PairingContext is zero-initialized — exposing it would let
+   * the integration layer act on stale (or absent) data. The
+   * accessor returns false in DISCOVERING / OFFERED / etc. states
+   * and only succeeds once OFFER/ACCEPT has populated peer_pubkey. */
+  reset_world();
+
+  uint8_t buf[mesh_crypto::PUBKEY_LEN];
+  std::memset(buf, 0xCC, sizeof(buf));
+
+  /* DISCOVERING_INITIATOR — no peer pubkey captured yet. */
+  assert(mesh_session::start_pairing_initiator(
+      /*opera_secret=*/(const uint8_t[]){0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+                                          0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+      "test-opera", /*now_ms=*/1000));
+  assert(!mesh_session::get_paired_peer_pubkey(buf));
+  /* Poison must be intact — accessor MUST NOT touch out on failure. */
+  for (size_t i = 0; i < sizeof(buf); ++i) assert(buf[i] == 0xCC);
+
+  /* nullptr arg also returns false. */
+  assert(!mesh_session::get_paired_peer_pubkey(nullptr));
+
+  std::printf("PASS test_get_paired_peer_pubkey_gated_by_state\n");
+}
+
 }  /* namespace */
 
 int main() {
@@ -748,6 +774,7 @@ int main() {
   test_send_beacon_event_signs_and_broadcasts();
   test_send_beacon_event_counter_monotonic();
   test_deinit_clears_opera_auth_state();
+  test_get_paired_peer_pubkey_gated_by_state();
   test_register_trusted_peer_basic();
   test_beacon_event_roundtrip();
   test_beacon_event_replay_dropped();

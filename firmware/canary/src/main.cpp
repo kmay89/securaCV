@@ -153,6 +153,38 @@ static void on_pairing_succeeded(const uint8_t* secret, uint32_t code) {
      * registering this callback, but the contract permits a failure. */
     Serial.println("[ERR] Paired but mesh_session rejected opera_secret");
   }
+
+  /* Register the just-paired peer's pubkey so this boot's receive
+   * path accepts their BEACON_EVENT frames, AND persist it so a
+   * future reboot also accepts them. The same "save first, set
+   * unconditionally" posture as opera_secret: a save failure
+   * (typically FE off) degrades reboot survivability, not the
+   * active session. */
+  uint8_t peer_pub[mesh_crypto::PUBKEY_LEN];
+  if (mesh_session::get_paired_peer_pubkey(peer_pub)) {
+    const bool peer_save_ok = mesh_state::save_trusted_peer(peer_pub);
+    const bool peer_set_ok  = mesh_session::register_trusted_peer(peer_pub);
+    if (peer_save_ok && peer_set_ok) {
+      Serial.println("[OK] Peer pubkey persisted + registered for RX");
+    } else if (peer_set_ok && !peer_save_ok) {
+      Serial.println("[WARN] Peer registered for this boot but NVS persist "
+                     "failed — receive will need to re-pair after reboot");
+    } else if (!peer_set_ok && peer_save_ok) {
+      /* register_trusted_peer returns false in two distinct cases:
+       *   • table full (MAX_TRUSTED_PEERS=8 reached with a new pubkey)
+       *   • duplicate registration (pubkey already in the in-memory
+       *     table — typical on the post-first-paired-callback path
+       *     because save_trusted_peer + the boot-time
+       *     load_trusted_peers chain may already have registered it). */
+      Serial.println("[WARN] Peer pubkey persisted but mesh_session register "
+                     "failed (table full or already registered)");
+    } else {
+      Serial.println("[ERR] Failed to persist OR register peer pubkey");
+    }
+  } else {
+    Serial.println("[WARN] Paired but mesh_session has no peer pubkey "
+                   "available — receive from this peer won't work");
+  }
 }
 #endif
 
@@ -397,12 +429,46 @@ void setup() {
 #endif
     }
 
+    /* Load persisted trusted peers (#480) and register each so this
+     * boot's receive path can verify inbound BEACON_EVENT frames
+     * from peers paired in previous sessions. Empty-list (first
+     * boot / factory reset) is fine — mesh_session::on_opera_frame
+     * silently drops unknown senders, and the dashboard / UI will
+     * trigger pairing to populate. */
+    {
+      uint8_t peers_buf[mesh_state::MAX_TRUSTED_PEERS
+                        * mesh_crypto::PUBKEY_LEN];
+      size_t peers_count = 0;
+      if (mesh_state::load_trusted_peers(peers_buf, sizeof(peers_buf),
+                                         &peers_count)) {
+        size_t registered = 0;
+        for (size_t i = 0; i < peers_count; ++i) {
+          if (mesh_session::register_trusted_peer(
+                  peers_buf + i * mesh_crypto::PUBKEY_LEN)) {
+            ++registered;
+          }
+        }
+        if (peers_count > 0) {
+          Serial.printf("[OK] Registered %u/%u trusted peer pubkeys from NVS\n",
+                        (unsigned)registered, (unsigned)peers_count);
+        }
+      }
+      /* Wipe the local buffer — pubkeys aren't secret per se but a
+       * "no useful data on the stack after init" posture matches
+       * the opera_secret wipe just above. */
+      volatile uint8_t* pp = (volatile uint8_t*)peers_buf;
+      for (size_t i = 0; i < sizeof(peers_buf); ++i) pp[i] = 0;
+#if defined(__GNUC__) || defined(__clang__)
+      asm volatile("" ::: "memory");
+#endif
+    }
+
     /* Wire the PairedCallback so a successful pairing flow persists
-     * the opera_secret to NVS and immediately seeds mesh_session
-     * with it. Only the joiner-side callback receives a non-null
-     * secret (the initiator already had it before starting pairing;
-     * its persistence is the integration layer's responsibility
-     * before calling start_pairing_initiator). */
+     * the opera_secret + peer pubkey to NVS and immediately seeds
+     * mesh_session with them. Only the joiner-side callback receives
+     * a non-null secret (the initiator already had it before starting
+     * pairing; its persistence is the integration layer's
+     * responsibility before calling start_pairing_initiator). */
     mesh_session::set_paired_callback(&on_pairing_succeeded);
   } else {
     Serial.println("[WARN] Mesh layer init failed — broadcast disabled");

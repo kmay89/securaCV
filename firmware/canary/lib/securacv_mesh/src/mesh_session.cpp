@@ -406,6 +406,24 @@ void cancel_pairing() {
 mesh_pairing::State pairing_state()        { return s_ctx.state; }
 uint32_t            pairing_confirmation_code() { return s_ctx.confirmation_code; }
 
+bool get_paired_peer_pubkey(uint8_t out[mesh_crypto::PUBKEY_LEN]) {
+  if (out == nullptr) return false;
+  /* peer_pubkey is captured at OFFER (initiator side) / ACCEPT
+   * (joiner side); both happen well before PAIRED. We gate on
+   * AWAITING_CONFIRM-or-later so the accessor doesn't expose a
+   * stale buffer from a prior pairing attempt before the new one
+   * has populated it. */
+  switch (s_ctx.state) {
+    case mesh_pairing::State::AWAITING_CONFIRM:
+    case mesh_pairing::State::AWAITING_CONFIRM_PEER:
+    case mesh_pairing::State::PAIRED:
+      memcpy(out, s_ctx.peer_pubkey, mesh_crypto::PUBKEY_LEN);
+      return true;
+    default:
+      return false;
+  }
+}
+
 /* ──────────────────────────────────────────────────────────────────────────
  * MAIN LOOP
  * ────────────────────────────────────────────────────────────────────────── */
