@@ -51,9 +51,16 @@
 namespace mesh_state {
 
 /* Persist the 32-byte opera_secret to NVS. Overwrites any existing
- * value (re-pairing replaces the household secret cleanly). Returns
- * false on null pointer OR NVS write failure. On the host build,
- * always returns true (no-op success — tests don't write NVS).
+ * value (re-pairing replaces the household secret cleanly).
+ *
+ * Returns false on:
+ *   • null pointer
+ *   • flash encryption disabled on this device (AGENTS.md project
+ *     invariant — refuse to persist secrets on FE-off hardware)
+ *   • NVS write failure (corrupt partition / hardware fault)
+ *
+ * On the host build, always returns true (no-op success — tests use
+ * mesh_session's in-memory set_opera_secret() API instead).
  *
  * The caller is responsible for wiping its OWN copy of `secret`
  * after this call — mesh_state does not retain a copy in module RAM. */
@@ -61,8 +68,15 @@ bool save_opera_secret(const uint8_t secret[mesh_crypto::OPERA_SECRET_LEN]);
 
 /* Load the persisted opera_secret into `out`. Returns:
  *   true   — secret was present and copied into out[].
- *   false  — no secret persisted (first boot, factory-reset state),
- *            OR NVS read failed, OR out is null.
+ *   false  — any of:
+ *              * out is null
+ *              * flash encryption disabled (refuse to load too —
+ *                matches canary-wap's symmetric load+save FE gate)
+ *              * no secret persisted (first boot, factory-reset state)
+ *              * NVS read failure
+ *
+ * On failure the contents of out[] are NOT modified — callers can
+ * poison-fill their buffer beforehand to detect spurious writes.
  *
  * On the host build, ALWAYS returns false (no persistence stub).
  * Production code should treat false as "this device hasn't paired
@@ -70,8 +84,14 @@ bool save_opera_secret(const uint8_t secret[mesh_crypto::OPERA_SECRET_LEN]);
 bool load_opera_secret(uint8_t out[mesh_crypto::OPERA_SECRET_LEN]);
 
 /* Erase the persisted opera_secret. Use on factory reset or
- * "un-pair from this opera" UI. Returns false on NVS failure;
- * succeeds idempotently if no secret was stored.
+ * "un-pair from this opera" UI.
+ *
+ * Returns true when:
+ *   • the key was removed successfully, OR
+ *   • the key was already absent (idempotent — factory-reset semantics)
+ *
+ * Returns false when the NVS partition can't be opened OR a real
+ * remove failed (key still present after remove returned false).
  *
  * On the host build, always returns true (no-op success). */
 bool clear_opera_secret();
