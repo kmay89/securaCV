@@ -170,10 +170,14 @@ static void on_pairing_succeeded(const uint8_t* secret, uint32_t code) {
       Serial.println("[WARN] Peer registered for this boot but NVS persist "
                      "failed — receive will need to re-pair after reboot");
     } else if (!peer_set_ok && peer_save_ok) {
-      /* Could be the table is already full (dedup returned false on
-       * a brand-new pubkey because MAX_TRUSTED_PEERS was hit). */
+      /* register_trusted_peer returns false in two distinct cases:
+       *   • table full (MAX_TRUSTED_PEERS=8 reached with a new pubkey)
+       *   • duplicate registration (pubkey already in the in-memory
+       *     table — typical on the post-first-paired-callback path
+       *     because save_trusted_peer + the boot-time
+       *     load_trusted_peers chain may already have registered it). */
       Serial.println("[WARN] Peer pubkey persisted but mesh_session register "
-                     "failed (table full?)");
+                     "failed (table full or already registered)");
     } else {
       Serial.println("[ERR] Failed to persist OR register peer pubkey");
     }
