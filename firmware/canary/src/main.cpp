@@ -128,19 +128,30 @@ static void on_pairing_succeeded(const uint8_t* secret, uint32_t code) {
                   "already persisted before start_pairing\n", code);
     return;
   }
-  /* Joiner: persist FIRST so a power cut between save and set leaves
-   * the right NVS state on next boot. set_opera_secret is in-memory
-   * only and would be lost on a reboot before save completes. */
-  if (mesh_state::save_opera_secret(secret)) {
-    if (mesh_session::set_opera_secret(secret)) {
-      Serial.printf("[OK] Paired as joiner (code=%06u) — opera_secret "
-                    "persisted + active\n", code);
-    } else {
-      Serial.println("[WARN] Paired but mesh_session rejected opera_secret");
-    }
+  /* Joiner side: persist FIRST so a power cut between save and set
+   * leaves the right NVS state on next boot. THEN set in-memory
+   * UNCONDITIONALLY so the active session works even when persistence
+   * fails — typical on FE-disabled dev hardware where save refuses
+   * by design. Persistence failure should degrade reboot survivability
+   * (user has to re-pair after reboot), not disable the current
+   * session that just successfully paired. */
+  const bool save_ok = mesh_state::save_opera_secret(secret);
+  const bool set_ok  = mesh_session::set_opera_secret(secret);
+
+  if (save_ok && set_ok) {
+    Serial.printf("[OK] Paired as joiner (code=%06u) — opera_secret "
+                  "persisted + active\n", code);
+  } else if (set_ok && !save_ok) {
+    /* Active session works; reboot won't survive. Most likely FE off. */
+    Serial.printf("[WARN] Paired as joiner (code=%06u) — active for this "
+                  "boot but NVS persist failed (flash encryption off? see "
+                  "mesh_state::save_opera_secret); device will need to "
+                  "re-pair after reboot\n", code);
   } else {
-    Serial.println("[WARN] Paired but failed to persist opera_secret to NVS "
-                   "(flash encryption off? see mesh_state::save_opera_secret)");
+    /* set_opera_secret rejection means mesh_session isn't initialized
+     * — shouldn't happen here because main.cpp init'd it before
+     * registering this callback, but the contract permits a failure. */
+    Serial.println("[ERR] Paired but mesh_session rejected opera_secret");
   }
 }
 #endif
@@ -372,10 +383,13 @@ void setup() {
       } else {
         Serial.println("[WARN] mesh_session rejected loaded opera_secret");
       }
-      /* Wipe immediately — the secret lives only in mesh_session
-       * (as derived opera_id+sender_fp) after this point. The
-       * volatile write loop + memory barrier prevents the compiler
-       * from eliminating the wipe via dead-store elimination. */
+    }
+    /* Wipe UNCONDITIONALLY — even when load_opera_secret returns false,
+     * a partial-read on the NVS-failure path could leave sensitive
+     * bytes in the buffer. The volatile write loop + memory barrier
+     * prevents the compiler from eliminating the wipe via dead-store
+     * elimination. */
+    {
       volatile uint8_t* p = (volatile uint8_t*)opera_secret_buf;
       for (size_t i = 0; i < sizeof(opera_secret_buf); ++i) p[i] = 0;
 #if defined(__GNUC__) || defined(__clang__)
