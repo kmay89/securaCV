@@ -8,7 +8,7 @@
     "start": "node server.js"
   },
   "dependencies": {
-    "express": "^4.18.0"
+    "express": "^4.22.2"
   },
   "devDependencies": {
     "tweetnacl": "^1.0.3"
