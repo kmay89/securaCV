@@ -1870,8 +1870,9 @@ void on_scout_beacon_event_outbound(bool arrived, const char* label) {
    * drop when the queue is full — bounded loss (ble_scout's chokepoint
    * already caps emissions at 24/hr per beacon, so 8 in-flight is
    * generous). */
-  if (s_outbound_queue == nullptr) return;
-  OutboundBeaconEvent ev;
+  QueueHandle_t q = __atomic_load_n(&s_outbound_queue, __ATOMIC_ACQUIRE);
+  if (q == nullptr) return;
+  OutboundBeaconEvent ev = {};
   ev.arrived = arrived;
   if (label != nullptr) {
     strncpy(ev.label, label, sizeof(ev.label) - 1);
@@ -1879,14 +1880,15 @@ void on_scout_beacon_event_outbound(bool arrived, const char* label) {
   } else {
     ev.label[0] = '\0';
   }
-  (void)xQueueSend(s_outbound_queue, &ev, 0);
+  (void)xQueueSend(q, &ev, 0);
 }
 
 void drain_outbound_beacon_queue() {
   /* Consumer — main loop only. */
-  if (s_outbound_queue == nullptr) return;
+  QueueHandle_t q = __atomic_load_n(&s_outbound_queue, __ATOMIC_ACQUIRE);
+  if (q == nullptr) return;
   OutboundBeaconEvent ev;
-  while (xQueueReceive(s_outbound_queue, &ev, 0) == pdTRUE) {
+  while (xQueueReceive(q, &ev, 0) == pdTRUE) {
     mesh_network::send_beacon_event(
         ev.arrived ? mesh_beacon::BeaconState::ARRIVED
                    : mesh_beacon::BeaconState::DEPARTED,
@@ -2032,9 +2034,15 @@ void register_v1_modules() {
    * re-init (the function is documented as safely re-entrant after a
    * /api/settings POST — keep the existing queue rather than orphaning
    * any in-flight events). */
-  if (s_outbound_queue == nullptr) {
-    s_outbound_queue = xQueueCreate(OUTBOUND_QUEUE_CAP,
-                                    sizeof(OutboundBeaconEvent));
+  if (__atomic_load_n(&s_outbound_queue, __ATOMIC_ACQUIRE) == nullptr) {
+    QueueHandle_t q = xQueueCreate(OUTBOUND_QUEUE_CAP,
+                                   sizeof(OutboundBeaconEvent));
+    QueueHandle_t expected = nullptr;
+    if (q != nullptr && !__atomic_compare_exchange_n(
+            &s_outbound_queue, &expected, q,
+            false, __ATOMIC_RELEASE, __ATOMIC_RELAXED)) {
+      vQueueDelete(q);
+    }
   }
   ble_scout::set_broadcast_callback(&on_scout_beacon_event_outbound);
   mesh_network::set_beacon_event_handler(&on_peer_beacon_event_inbound);
