@@ -86,6 +86,7 @@ static uint8_t g_peer_count = 0;
 // layer wires this in csi_integration.cpp.
 static beacon_event_handler_fn g_beacon_event_handler = nullptr;
 static channel_lock_handler_fn g_channel_lock_handler = nullptr;
+static hub_election_handler_fn g_hub_election_handler = nullptr;
 
 // Mesh state
 static MeshState g_mesh_state = MESH_DISABLED;
@@ -692,6 +693,16 @@ static void handle_received_message(const uint8_t* mac, const uint8_t* data, siz
         if (mesh_channel_hop::decode(payload, payload_len,
                                      &channel, &reason)) {
           g_channel_lock_handler(peer->fingerprint, channel, reason);
+        }
+      }
+      break;
+    case MSG_HUB_ELECTION:
+      if (g_hub_election_handler != nullptr) {
+        mesh_hub_election::Event event;
+        uint8_t                  elected_fp[mesh_hub_election::FINGERPRINT_LEN];
+        if (mesh_hub_election::decode(payload, payload_len,
+                                      &event, elected_fp)) {
+          g_hub_election_handler(peer->fingerprint, event, elected_fp);
         }
       }
       break;
@@ -1896,6 +1907,33 @@ size_t send_channel_lock(uint8_t channel, mesh_channel_hop::Reason reason) {
 
 void set_channel_lock_handler(channel_lock_handler_fn fn) {
   g_channel_lock_handler = fn;
+}
+
+size_t send_hub_election(mesh_hub_election::Event event,
+                         const uint8_t fingerprint[FINGERPRINT_SIZE]) {
+  if (!g_opera_config.configured) return 0;
+
+  uint8_t payload[mesh_hub_election::PAYLOAD_LEN];
+  if (!mesh_hub_election::encode(event, fingerprint,
+                                 payload, sizeof(payload))) {
+    return 0;
+  }
+
+  size_t accepted = 0;
+  for (uint8_t i = 0; i < g_peer_count; ++i) {
+    if (g_peers[i].state >= PEER_CONNECTED) {
+      if (!send_to_peer(&g_peers[i], MSG_HUB_ELECTION,
+                        payload, sizeof(payload))) {
+        break;
+      }
+      ++accepted;
+    }
+  }
+  return accepted;
+}
+
+void set_hub_election_handler(hub_election_handler_fn fn) {
+  g_hub_election_handler = fn;
 }
 
 } // namespace mesh_network
