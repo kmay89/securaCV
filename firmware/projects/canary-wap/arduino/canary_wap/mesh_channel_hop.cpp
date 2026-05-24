@@ -52,13 +52,15 @@ HopTracker make_tracker(uint16_t threshold_pct_x100,
   t.above_since_ms      = 0;
   t.last_hop_ms         = 0;
   t.tracking_above      = false;
+  t.has_hopped          = false;
   t.armed               = true;
   return t;
 }
 
 bool tick(HopTracker& t, uint32_t now_ms, uint16_t airtime_pct_x100) {
   if (!t.armed) {
-    if (t.last_hop_ms != 0 && (now_ms - t.last_hop_ms) >= t.cooldown_ms) {
+    if (t.has_hopped &&
+        (int32_t)(now_ms - t.last_hop_ms) >= (int32_t)t.cooldown_ms) {
       t.armed = true;
     }
     return false;
@@ -69,7 +71,7 @@ bool tick(HopTracker& t, uint32_t now_ms, uint16_t airtime_pct_x100) {
       t.above_since_ms = now_ms;
       t.tracking_above = true;
     }
-    if ((now_ms - t.above_since_ms) >= t.sustain_ms) {
+    if ((int32_t)(now_ms - t.above_since_ms) >= (int32_t)t.sustain_ms) {
       return true;
     }
   } else {
@@ -81,6 +83,7 @@ bool tick(HopTracker& t, uint32_t now_ms, uint16_t airtime_pct_x100) {
 void reset(HopTracker& t, uint32_t now_ms) {
   t.tracking_above = false;
   t.last_hop_ms    = now_ms;
+  t.has_hopped     = true;
   t.armed          = false;
 }
 

@@ -92,8 +92,9 @@ struct HopTracker {
   uint32_t cooldown_ms;          /* silence after a hop before re-arming */
 
   uint32_t above_since_ms;       /* valid only when tracking_above==true */
-  uint32_t last_hop_ms;          /* 0 = never hopped */
+  uint32_t last_hop_ms;          /* valid only when has_hopped==true */
   bool     tracking_above;       /* true = above threshold, timing */
+  bool     has_hopped;           /* true after first reset() */
   bool     armed;                /* true = watching; false = in cooldown */
 };
 

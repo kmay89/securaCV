@@ -138,7 +138,10 @@ enum MessageType : uint8_t {
   // 2-byte mesh_channel_hop::Payload (channel + reason). Receivers
   // apply csi_hal::set_channel_lock() and forward to
   // mesh_network::set_channel_lock_handler.
-  MSG_CHANNEL_LOCK
+  // Note: this numbering is for canary-wap's outer frame type byte,
+  // separate from mesh_envelope::MsgType (PIO's inner signed header).
+  // The two don't interop on the same mesh so the values need not match.
+  MSG_CHANNEL_LOCK = 20
 };
 
 // Alert types

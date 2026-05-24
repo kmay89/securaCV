@@ -1884,10 +1884,11 @@ size_t send_channel_lock(uint8_t channel, mesh_channel_hop::Reason reason) {
   size_t accepted = 0;
   for (uint8_t i = 0; i < g_peer_count; ++i) {
     if (g_peers[i].state >= PEER_CONNECTED) {
-      if (send_to_peer(&g_peers[i], MSG_CHANNEL_LOCK,
-                       payload, sizeof(payload))) {
-        ++accepted;
+      if (!send_to_peer(&g_peers[i], MSG_CHANNEL_LOCK,
+                        payload, sizeof(payload))) {
+        break;
       }
+      ++accepted;
     }
   }
   return accepted;
