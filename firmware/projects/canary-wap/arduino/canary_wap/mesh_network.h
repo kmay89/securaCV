@@ -24,7 +24,8 @@
 #include <esp_now.h>
 #endif
 #include "log_level.h"
-#include "mesh_beacon.h"   // BEACON_EVENT wire format (PR canary-wap parity)
+#include "mesh_beacon.h"        // BEACON_EVENT wire format (PR canary-wap parity)
+#include "mesh_channel_hop.h"  // CHANNEL_LOCK wire format + HopTracker (PR 4b)
 
 // ════════════════════════════════════════════════════════════════════════════
 // CONFIGURATION
@@ -132,7 +133,12 @@ enum MessageType : uint8_t {
   // broadcast to peer Canaries as a signed envelope carrying the
   // 25-byte mesh_beacon::Payload (state + label). Receivers decode
   // and forward to mesh_network::set_beacon_event_handler.
-  MSG_BEACON_EVENT
+  MSG_BEACON_EVENT,
+  // PR 4b: Hub → peers coordinated channel-hop proposal.
+  // 2-byte mesh_channel_hop::Payload (channel + reason). Receivers
+  // apply csi_hal::set_channel_lock() and forward to
+  // mesh_network::set_channel_lock_handler.
+  MSG_CHANNEL_LOCK
 };
 
 // Alert types
@@ -526,6 +532,24 @@ typedef void (*beacon_event_handler_fn)(
     const char*                label);
 
 void set_beacon_event_handler(beacon_event_handler_fn fn);
+
+// ════════════════════════════════════════════════════════════════════════════
+// CHANNEL LOCK — coordinated channel-hop (PR 4b)
+//
+// The Hub broadcasts a CHANNEL_LOCK to all peers when channel utilization
+// exceeds the threshold. Receivers should call csi_hal::set_channel_lock().
+//
+// Threading: send_channel_lock MUST be called from the main loop.
+// ════════════════════════════════════════════════════════════════════════════
+
+size_t send_channel_lock(uint8_t channel, mesh_channel_hop::Reason reason);
+
+typedef void (*channel_lock_handler_fn)(
+    const uint8_t              sender_fp[FINGERPRINT_SIZE],
+    uint8_t                    channel,
+    mesh_channel_hop::Reason   reason);
+
+void set_channel_lock_handler(channel_lock_handler_fn fn);
 
 } // namespace mesh_network
 

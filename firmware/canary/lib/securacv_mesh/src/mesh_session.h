@@ -59,6 +59,7 @@
 #include "mesh_pairing.h"
 #include "mesh_transport.h"
 #include "mesh_beacon.h"
+#include "mesh_channel_hop.h"
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
@@ -268,6 +269,31 @@ typedef void (*beacon_event_received_fn)(
     const char*                label);
 
 void set_beacon_event_handler(beacon_event_received_fn fn);
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * CHANNEL LOCK — coordinated channel-hop (PR 4b)
+ *
+ * The Hub broadcasts a CHANNEL_LOCK frame to all peers when channel
+ * utilization exceeds the threshold. Receivers should call
+ * csi_hal::set_channel_lock() with the proposed channel.
+ *
+ * send_channel_lock() works identically to send_beacon_event(): builds
+ * a signed envelope, broadcasts to all trusted peers.
+ *
+ * Threading: send MUST be called from the main loop; the receive handler
+ * runs on the same task as mesh_transport::process().
+ * ────────────────────────────────────────────────────────────────────────── */
+
+bool send_channel_lock(uint8_t channel,
+                       mesh_channel_hop::Reason reason,
+                       uint32_t now_ms);
+
+typedef void (*channel_lock_received_fn)(
+    const uint8_t              sender_fp[mesh_crypto::FINGERPRINT_LEN],
+    uint8_t                    channel,
+    mesh_channel_hop::Reason   reason);
+
+void set_channel_lock_handler(channel_lock_received_fn fn);
 
 }  /* namespace mesh_session */
 

@@ -113,7 +113,8 @@ enum class MsgType : uint8_t {
   OFFLINE_IMMINENT = 20,
   WITNESS_RECORD = 21,
   BEACON_EVENT   = 22,   /* PR 5c — ble.scout arrived/departed broadcast */
-  /* 23..255 reserved for future use. */
+  CHANNEL_LOCK   = 23,   /* PR 4b — coordinated channel-hop proposal */
+  /* 24..255 reserved for future use. */
 };
 
 /* ──────────────────────────────────────────────────────────────────────────
