@@ -81,6 +81,20 @@
 #include <freertos/queue.h>
 #endif
 
+/* PR 4b integration — channel-hop coordinator. Needs mesh_network
+ * (for send_channel_lock + set_channel_lock_handler), csi_hal (for
+ * set_channel_lock on receive), airtime_governor (for utilization),
+ * and the channel-hop wire format + HopTracker. Gated on just
+ * FEATURE_MESH_NETWORK — no BLE dependency. */
+#if FEATURE_MESH_NETWORK
+#if !(FEATURE_BLE_SCAN)
+#include "mesh_network.h"
+#endif
+#include "mesh_channel_hop.h"
+#include "airtime_governor.h"
+#include <csi_hal.h>
+#endif
+
 namespace {
 
 bool                                    g_initialized        = false;
@@ -1917,6 +1931,61 @@ void on_peer_beacon_event_inbound(
 }
 #endif  /* FEATURE_BLE_SCAN && FEATURE_MESH_NETWORK */
 
+#if FEATURE_MESH_NETWORK
+/* ──────────────────────────────────────────────────────────────────────────
+ * CHANNEL-HOP COORDINATOR (PR 4b integration)
+ *
+ * Hub side: tick the HopTracker every main-loop pass with the current
+ * airtime utilization from airtime_governor. When utilization exceeds
+ * 50% for 60 s continuously, select the next non-overlapping channel
+ * and broadcast CHANNEL_LOCK to all peers. Apply the channel lock
+ * locally too (csi_hal::set_channel_lock) so Hub and peers converge.
+ *
+ * Peer side: on receiving CHANNEL_LOCK, apply the proposed channel
+ * via csi_hal::set_channel_lock. Log the event.
+ *
+ * Both sides: the channel lock is advisory — if WiFi STA is associated
+ * to an AP on a different channel, the AP wins. is_channel_in_sync()
+ * reports the truth.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+mesh_channel_hop::HopTracker s_hop_tracker =
+    mesh_channel_hop::make_tracker(5000, 60000, 120000);
+
+void channel_hop_tick(uint32_t now_ms) {
+  uint16_t util = airtime_governor::airtime_pct_x100(now_ms);
+  if (!mesh_channel_hop::tick(s_hop_tracker, now_ms, util)) return;
+
+  uint8_t current = csi_hal::get_channel_lock();
+  if (current == 0) current = csi_hal::get_observed_channel();
+  uint8_t next = mesh_channel_hop::next_channel(current);
+  if (next == 0) next = 6;
+
+  size_t n = mesh_network::send_channel_lock(
+      next, mesh_channel_hop::Reason::UTILIZATION);
+  csi_hal::set_channel_lock(next);
+  mesh_channel_hop::reset(s_hop_tracker, now_ms);
+
+  Serial.printf("[mesh.channel] hop %u→%u (util=%u.%02u%%, peers=%u)\n",
+                current, next,
+                (unsigned)(util / 100), (unsigned)(util % 100),
+                (unsigned)n);
+}
+
+void on_peer_channel_lock(
+    const uint8_t              sender_fp[mesh_network::FINGERPRINT_SIZE],
+    uint8_t                    channel,
+    mesh_channel_hop::Reason   reason) {
+  csi_hal::set_channel_lock(channel);
+
+  char fp_hex[2 * mesh_network::FINGERPRINT_SIZE + 1];
+  csi_integration::hex_encode(sender_fp, mesh_network::FINGERPRINT_SIZE, fp_hex);
+
+  Serial.printf("[mesh.channel] lock ch=%u reason=%u from fp=%s\n",
+                channel, (unsigned)reason, fp_hex);
+}
+#endif  /* FEATURE_MESH_NETWORK */
+
 esp_err_t handle_pair_token(httpd_req_t* req) {
   CSI_AUTH_OR_RETURN(req);
   /* Issues a fresh one-shot token. The captive-portal handler also calls
@@ -2047,6 +2116,14 @@ void register_v1_modules() {
   ble_scout::set_broadcast_callback(&on_scout_beacon_event_outbound);
   mesh_network::set_beacon_event_handler(&on_peer_beacon_event_inbound);
 #endif
+#endif
+
+#if FEATURE_MESH_NETWORK
+  /* PR 4b — install the channel-lock receiver. When a peer (Hub)
+   * broadcasts CHANNEL_LOCK, on_peer_channel_lock applies the
+   * proposed channel via csi_hal::set_channel_lock(). The Hub-side
+   * tick (channel_hop_tick) runs from loop() below. */
+  mesh_network::set_channel_lock_handler(&on_peer_channel_lock);
 #endif
 
   /* Wire the persisted Quiet Hours range into the chokepoint. The
@@ -2529,6 +2606,10 @@ void loop() {
    * get broadcast on the same main-loop pass. Drain runs in main task
    * context — satisfies mesh_network::send_beacon_event's contract. */
   drain_outbound_beacon_queue();
+#endif
+
+#if FEATURE_MESH_NETWORK
+  channel_hop_tick(millis());
 #endif
 
   csi_hal::process();

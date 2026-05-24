@@ -41,6 +41,18 @@
 #include "mesh_beacon.h"
 #endif
 
+/* PR 4b — channel-hop coordinator. Needs mesh_session (for
+ * send_channel_lock + set_channel_lock_handler), csi_hal (for
+ * set_channel_lock on receive), and the channel-hop wire format +
+ * HopTracker. Gated on just FEATURE_MESH_NETWORK. */
+#if defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
+#if !(defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN)
+#include "mesh_session.h"
+#endif
+#include "mesh_channel_hop.h"
+#include "csi_hal.h"
+#endif
+
 #include <Arduino.h>
 #include <Preferences.h>
 #include <string.h>
@@ -218,6 +230,53 @@ static void on_peer_beacon_event_inbound(
 }
 #endif  /* FEATURE_BLE_SCAN && FEATURE_MESH_NETWORK */
 
+#if defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
+/* ──────────────────────────────────────────────────────────────────────────
+ * CHANNEL-HOP COORDINATOR (PR 4b integration)
+ *
+ * Hub side: tick the HopTracker every main-loop pass with the current
+ * airtime utilization. When utilization exceeds 50% for 60 s, select
+ * the next non-overlapping channel and broadcast CHANNEL_LOCK.
+ *
+ * Peer side: on receiving CHANNEL_LOCK, apply the proposed channel
+ * via csi_hal::set_channel_lock and log.
+ *
+ * The PIO build doesn't have airtime_governor — tick with 0 so the
+ * tracker never fires on its own. The receive side still works: a
+ * canary-wap Hub can coordinate PIO peers.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+static mesh_channel_hop::HopTracker s_hop_tracker =
+    mesh_channel_hop::make_tracker(5000, 60000, 120000);
+
+static void channel_hop_tick(uint32_t now_ms) {
+  /* PIO build has no airtime_governor — pass 0 so the Hub-side
+   * proposal logic is inert. PIO nodes act as peers that follow
+   * channel locks from a canary-wap Hub. */
+  if (!mesh_channel_hop::tick(s_hop_tracker, now_ms, 0)) return;
+  /* If the tracker fires (impossible with util=0 but defensive): */
+  mesh_channel_hop::reset(s_hop_tracker, now_ms);
+}
+
+static void on_peer_channel_lock(
+    const uint8_t              sender_fp[mesh_crypto::FINGERPRINT_LEN],
+    uint8_t                    channel,
+    mesh_channel_hop::Reason   reason) {
+  csi_hal::set_channel_lock(channel);
+
+  char fp_hex[2 * mesh_crypto::FINGERPRINT_LEN + 1];
+  static const char HEX[] = "0123456789abcdef";
+  for (size_t i = 0; i < mesh_crypto::FINGERPRINT_LEN; ++i) {
+    fp_hex[2 * i]     = HEX[(sender_fp[i] >> 4) & 0xF];
+    fp_hex[2 * i + 1] = HEX[ sender_fp[i]       & 0xF];
+  }
+  fp_hex[2 * mesh_crypto::FINGERPRINT_LEN] = '\0';
+
+  Serial.printf("[mesh.channel] lock ch=%u reason=%u from fp=%s\n",
+                channel, (unsigned)reason, fp_hex);
+}
+#endif  /* FEATURE_MESH_NETWORK */
+
 }  /* namespace */
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -332,6 +391,10 @@ extern "C" bool securacv_csi_modules_init(void) {
 #endif
 #endif  /* FEATURE_BLE_SCAN */
 
+#if defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
+  mesh_session::set_channel_lock_handler(&on_peer_channel_lock);
+#endif
+
   s_initialized = true;
   return true;
 }
@@ -348,6 +411,10 @@ extern "C" void securacv_csi_modules_feed(const void* features_blob) {
    * CSI dispatcher — satisfying mesh_session::send_beacon_event's
    * threading contract. */
   drain_outbound_beacon_queue();
+#endif
+
+#if defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
+  channel_hop_tick((uint32_t)millis());
 #endif
 
   /* Both csi_features_t structs are layout-identical (same field order,
