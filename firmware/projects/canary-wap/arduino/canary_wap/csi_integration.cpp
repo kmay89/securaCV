@@ -70,6 +70,17 @@
 #include "ble_scout.h"
 #endif
 
+/* PR 5c integration — wire the Scout broadcast hook to the mesh
+ * sender, and install a receiver handler for inbound BEACON_EVENT
+ * frames. mesh_network.h owns both APIs; only pulled in when both
+ * feature flags are live so dev/minimal builds stay lean. */
+#if FEATURE_BLE_SCAN && FEATURE_MESH_NETWORK
+#include "mesh_network.h"
+#include "mesh_beacon.h"
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+#endif
+
 namespace {
 
 bool                                    g_initialized        = false;
@@ -1815,6 +1826,95 @@ bool send_pair_landing(httpd_req_t* req) {
 
 namespace {
 
+#if FEATURE_BLE_SCAN && FEATURE_MESH_NETWORK
+/* ──────────────────────────────────────────────────────────────────────────
+ * BLE SCOUT ↔ MESH GLUE (canary-wap parity for PIO PR #476)
+ *
+ * Connects the three pieces shipped over the PR 5c series, ported to
+ * canary-wap:
+ *   1. ble_scout's emit_arrived/departed transition fires the broadcast
+ *      hook installed below.
+ *   2. The hook forwards to mesh_network::send_beacon_event, which builds
+ *      and signs a BEACON_EVENT envelope carrying the wire format from
+ *      mesh_beacon.
+ *   3. On the receive side, mesh_network::handle_received_message routes
+ *      verified MSG_BEACON_EVENT frames into the handler installed via
+ *      set_beacon_event_handler — peer table lookup + signature verify
+ *      + replay defense.
+ *
+ * The forwarder is intentionally minimal: mesh_network::send_beacon_event
+ * already short-circuits if no opera_secret is loaded or no peers are
+ * connected, so we don't duplicate the precondition checks here. The
+ * receive handler likewise just logs — the deeper "what does the Hub
+ * DO with a beacon_event" question is PR 4b's territory.
+ *
+ * Threading: ble_scout's broadcast callback runs from EITHER the main
+ * loop (ble_scout_tick → emit_departed) OR the NimBLE host task
+ * (ble_scout_on_advert → emit_arrived) — see ble_scout.h THREADING
+ * contract. That is multi-producer-single-consumer (MPSC) by
+ * construction, not SPSC. A FreeRTOS queue is MPSC-safe by design
+ * (xQueueSend acquires the queue's internal lock), so use it as the
+ * marshaling primitive instead of a hand-rolled atomic ring — the
+ * latter would race on `head` between the two producer tasks. */
+struct OutboundBeaconEvent {
+  bool arrived;
+  char label[mesh_beacon::MAX_LABEL_BYTES + 1];
+};
+constexpr size_t  OUTBOUND_QUEUE_CAP = 8;
+QueueHandle_t     s_outbound_queue   = nullptr;
+
+void on_scout_beacon_event_outbound(bool arrived, const char* label) {
+  /* Producer — main loop OR NimBLE host task. xQueueSend is safe under
+   * concurrent producers and from any task context (not from ISR; the
+   * NimBLE host task is a task, not an ISR). Timeout 0 = non-blocking
+   * drop when the queue is full — bounded loss (ble_scout's chokepoint
+   * already caps emissions at 24/hr per beacon, so 8 in-flight is
+   * generous). */
+  if (s_outbound_queue == nullptr) return;
+  OutboundBeaconEvent ev;
+  ev.arrived = arrived;
+  if (label != nullptr) {
+    strncpy(ev.label, label, sizeof(ev.label) - 1);
+    ev.label[sizeof(ev.label) - 1] = '\0';
+  } else {
+    ev.label[0] = '\0';
+  }
+  (void)xQueueSend(s_outbound_queue, &ev, 0);
+}
+
+void drain_outbound_beacon_queue() {
+  /* Consumer — main loop only. */
+  if (s_outbound_queue == nullptr) return;
+  OutboundBeaconEvent ev;
+  while (xQueueReceive(s_outbound_queue, &ev, 0) == pdTRUE) {
+    mesh_network::send_beacon_event(
+        ev.arrived ? mesh_beacon::BeaconState::ARRIVED
+                   : mesh_beacon::BeaconState::DEPARTED,
+        ev.label);
+  }
+}
+
+void on_peer_beacon_event_inbound(
+    const uint8_t            sender_fp[mesh_network::FINGERPRINT_SIZE],
+    mesh_beacon::BeaconState state,
+    const char*              label) {
+  /* Inbound events are rate-limited at the wire (Scout's chokepoint
+   * 24/hr ceiling) so no extra rate gate here. Logging-only for now
+   * — Hub-side aggregation lands with PR 4b. Uses the canonical
+   * csi_integration::hex_encode helper rather than spawning a local
+   * duplicate (per the docstring in csi_integration.h:210). */
+  char fp_hex[2 * mesh_network::FINGERPRINT_SIZE + 1];
+  csi_integration::hex_encode(sender_fp, mesh_network::FINGERPRINT_SIZE, fp_hex);
+
+  Serial.printf("[ble.scout.peer] fp=%s state=%s label=\"%s\"\n",
+                fp_hex,
+                state == mesh_beacon::BeaconState::ARRIVED ? "arrived"
+                : state == mesh_beacon::BeaconState::DEPARTED ? "departed"
+                : "?",
+                label ? label : "");
+}
+#endif  /* FEATURE_BLE_SCAN && FEATURE_MESH_NETWORK */
+
 esp_err_t handle_pair_token(httpd_req_t* req) {
   CSI_AUTH_OR_RETURN(req);
   /* Issues a fresh one-shot token. The captive-portal handler also calls
@@ -1918,6 +2018,27 @@ void register_v1_modules() {
    * Idempotent — safe even if the NimBLE stack isn't initialized yet
    * (the scan-loop TU is empty in builds without NimBLEDevice.h). */
   ble_scout::ble_scout_init();
+
+#if FEATURE_MESH_NETWORK
+  /* Wire the Scout broadcast hook into the mesh, and install a
+   * receiver for inbound BEACON_EVENT frames. mesh_network's pairing
+   * + opera-secret bootstrap is already brought up by canary_wap.ino
+   * setup() — the moment a peer is paired, send_beacon_event lights
+   * up end-to-end. Until then send_beacon_event returns 0 (no peers
+   * or no opera_secret) and the handler is dormant.
+   *
+   * Create the FreeRTOS queue first so the broadcast callback has
+   * somewhere to push to from the NimBLE host task. Idempotent across
+   * re-init (the function is documented as safely re-entrant after a
+   * /api/settings POST — keep the existing queue rather than orphaning
+   * any in-flight events). */
+  if (s_outbound_queue == nullptr) {
+    s_outbound_queue = xQueueCreate(OUTBOUND_QUEUE_CAP,
+                                    sizeof(OutboundBeaconEvent));
+  }
+  ble_scout::set_broadcast_callback(&on_scout_beacon_event_outbound);
+  mesh_network::set_beacon_event_handler(&on_peer_beacon_event_inbound);
+#endif
 #endif
 
   /* Wire the persisted Quiet Hours range into the chokepoint. The
@@ -2393,6 +2514,14 @@ bool init(httpd_handle_t server, const char* api_token) {
 
 void loop() {
   if (!g_initialized) return;
+
+#if FEATURE_BLE_SCAN && FEATURE_MESH_NETWORK
+  /* Drain the outbound beacon queue first so events the previous tick
+   * enqueued (or that the NimBLE host task enqueued asynchronously)
+   * get broadcast on the same main-loop pass. Drain runs in main task
+   * context — satisfies mesh_network::send_beacon_event's contract. */
+  drain_outbound_beacon_queue();
+#endif
 
   csi_hal::process();
 
