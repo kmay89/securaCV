@@ -1963,6 +1963,8 @@ void channel_hop_tick(uint32_t now_ms) {
 
   size_t n = mesh_network::send_channel_lock(
       next, mesh_channel_hop::Reason::UTILIZATION);
+  if (n == 0) return;
+
   csi_hal::set_channel_lock(next);
   mesh_channel_hop::reset(s_hop_tracker, now_ms);
 

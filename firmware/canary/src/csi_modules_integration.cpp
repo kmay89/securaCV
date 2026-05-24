@@ -113,6 +113,18 @@ const char* nvs_key_for(const char* full_key) {
   return nullptr;
 }
 
+#if defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
+static void format_fingerprint(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
+                               char out[2 * mesh_crypto::FINGERPRINT_LEN + 1]) {
+  static const char HEX[] = "0123456789abcdef";
+  for (size_t i = 0; i < mesh_crypto::FINGERPRINT_LEN; ++i) {
+    out[2 * i]     = HEX[(fp[i] >> 4) & 0xF];
+    out[2 * i + 1] = HEX[ fp[i]       & 0xF];
+  }
+  out[2 * mesh_crypto::FINGERPRINT_LEN] = '\0';
+}
+#endif
+
 #if defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN \
     && defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
 /* ──────────────────────────────────────────────────────────────────────────
@@ -205,22 +217,8 @@ static void on_peer_beacon_event_inbound(
     const uint8_t              sender_fp[mesh_crypto::FINGERPRINT_LEN],
     mesh_beacon::BeaconState   state,
     const char*                label) {
-  /* Convert the 8-byte fingerprint to printable hex for the log line.
-   * Inbound events are rate-limited at the wire (Scout's chokepoint
-   * 24/hr ceiling) so we don't need an additional rate gate here. */
   char fp_hex[2 * mesh_crypto::FINGERPRINT_LEN + 1];
-  static const char HEX[] = "0123456789abcdef";
-  for (size_t i = 0; i < mesh_crypto::FINGERPRINT_LEN; ++i) {
-    fp_hex[2 * i]     = HEX[(sender_fp[i] >> 4) & 0xF];
-    fp_hex[2 * i + 1] = HEX[ sender_fp[i]       & 0xF];
-  }
-  fp_hex[2 * mesh_crypto::FINGERPRINT_LEN] = '\0';
-
-  /* Use stderr/Serial fallback for now — the integration with
-   * log_health (which is in securacv_witness) would create a circular
-   * dep between csi_modules_integration and the witness lib. PR 4b's
-   * Hub coordination work will move this into a proper logged event
-   * surface on the dashboard. */
+  format_fingerprint(sender_fp, fp_hex);
   Serial.printf("[ble.scout.peer] fp=%s state=%s label=\"%s\"\n",
                 fp_hex,
                 state == mesh_beacon::BeaconState::ARRIVED ? "arrived"
@@ -265,12 +263,7 @@ static void on_peer_channel_lock(
   csi_hal::set_channel_lock(channel);
 
   char fp_hex[2 * mesh_crypto::FINGERPRINT_LEN + 1];
-  static const char HEX[] = "0123456789abcdef";
-  for (size_t i = 0; i < mesh_crypto::FINGERPRINT_LEN; ++i) {
-    fp_hex[2 * i]     = HEX[(sender_fp[i] >> 4) & 0xF];
-    fp_hex[2 * i + 1] = HEX[ sender_fp[i]       & 0xF];
-  }
-  fp_hex[2 * mesh_crypto::FINGERPRINT_LEN] = '\0';
+  format_fingerprint(sender_fp, fp_hex);
 
   Serial.printf("[mesh.channel] lock ch=%u reason=%u from fp=%s\n",
                 channel, (unsigned)reason, fp_hex);
