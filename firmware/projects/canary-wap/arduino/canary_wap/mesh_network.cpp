@@ -85,6 +85,7 @@ static uint8_t g_peer_count = 0;
 // events get decoded then dropped silently — the integration
 // layer wires this in csi_integration.cpp.
 static beacon_event_handler_fn g_beacon_event_handler = nullptr;
+static channel_lock_handler_fn g_channel_lock_handler = nullptr;
 
 // Mesh state
 static MeshState g_mesh_state = MESH_DISABLED;
@@ -681,6 +682,16 @@ static void handle_received_message(const uint8_t* mac, const uint8_t* data, siz
         if (mesh_beacon::decode(payload, payload_len,
                                 &state, label, sizeof(label))) {
           g_beacon_event_handler(peer->fingerprint, state, label);
+        }
+      }
+      break;
+    case MSG_CHANNEL_LOCK:
+      if (g_channel_lock_handler != nullptr) {
+        uint8_t                  channel;
+        mesh_channel_hop::Reason reason;
+        if (mesh_channel_hop::decode(payload, payload_len,
+                                     &channel, &reason)) {
+          g_channel_lock_handler(peer->fingerprint, channel, reason);
         }
       }
       break;
@@ -1854,9 +1865,37 @@ size_t send_beacon_event(mesh_beacon::BeaconState state, const char* label) {
 }
 
 void set_beacon_event_handler(beacon_event_handler_fn fn) {
-  // Last writer wins. Same task as update() per the threading
-  // contract documented in mesh_network.h.
   g_beacon_event_handler = fn;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// CHANNEL LOCK — PR 4b coordinated channel-hop broadcast.
+// Same send_to_peer envelope machinery as BEACON_EVENT above.
+// ════════════════════════════════════════════════════════════════════════════
+
+size_t send_channel_lock(uint8_t channel, mesh_channel_hop::Reason reason) {
+  if (!g_opera_config.configured) return 0;
+
+  uint8_t payload[mesh_channel_hop::PAYLOAD_LEN];
+  if (!mesh_channel_hop::encode(channel, reason, payload, sizeof(payload))) {
+    return 0;
+  }
+
+  size_t accepted = 0;
+  for (uint8_t i = 0; i < g_peer_count; ++i) {
+    if (g_peers[i].state >= PEER_CONNECTED) {
+      if (!send_to_peer(&g_peers[i], MSG_CHANNEL_LOCK,
+                        payload, sizeof(payload))) {
+        break;
+      }
+      ++accepted;
+    }
+  }
+  return accepted;
+}
+
+void set_channel_lock_handler(channel_lock_handler_fn fn) {
+  g_channel_lock_handler = fn;
 }
 
 } // namespace mesh_network

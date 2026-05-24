@@ -316,7 +316,7 @@ jobs:
           # opera_secret NVS persistence). Each test links against
           # every mesh src TU so internal symbols resolve.
           for t in mesh_crypto mesh_envelope mesh_pairing mesh_session \
-                   mesh_transport mesh_beacon mesh_state; do
+                   mesh_transport mesh_beacon mesh_state mesh_channel_hop; do
             run_test $t \
               firmware/canary/lib/securacv_mesh/test_${t}.cpp \
               $MESH_SRC/*.cpp \

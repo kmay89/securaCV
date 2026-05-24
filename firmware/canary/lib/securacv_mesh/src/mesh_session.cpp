@@ -71,6 +71,7 @@ struct TrustedPeer {
 static TrustedPeer s_trusted_peers[MAX_TRUSTED_PEERS];
 
 static beacon_event_received_fn s_beacon_event_cb = nullptr;
+static channel_lock_received_fn s_channel_lock_cb = nullptr;
 
 /* ──────────────────────────────────────────────────────────────────────────
  * INTERNAL HELPERS
@@ -201,11 +202,17 @@ static void dispatch_verified(const TrustedPeer&         peer,
       s_beacon_event_cb(peer.sender_fp, state, label);
       break;
     }
-    /* HEARTBEAT, CSI_FEATURES, TAMPER_ALERT, etc. — receivers land in
-     * later PRs (4b Hub coordination). Until then drop silently rather
-     * than reject; senders that ship without listeners just see the
-     * frames evaporate, which matches the chokepoint's "no observer →
-     * no leak" posture. */
+    case mesh_envelope::MsgType::CHANNEL_LOCK: {
+      if (s_channel_lock_cb == nullptr) return;
+      uint8_t                    channel;
+      mesh_channel_hop::Reason   reason;
+      if (!mesh_channel_hop::decode(payload, payload_len,
+                                    &channel, &reason)) {
+        return;
+      }
+      s_channel_lock_cb(peer.sender_fp, channel, reason);
+      break;
+    }
     default:
       break;
   }
@@ -344,6 +351,7 @@ void deinit() {
    * real (if narrow) freshness violation. */
   memset(s_trusted_peers, 0, sizeof(s_trusted_peers));
   s_beacon_event_cb = nullptr;
+  s_channel_lock_cb = nullptr;
   s_running = false;
   s_initialized = false;
 }
@@ -566,6 +574,41 @@ size_t trusted_peer_count() {
 
 void set_beacon_event_handler(beacon_event_received_fn fn) {
   s_beacon_event_cb = fn;
+}
+
+bool send_channel_lock(uint8_t channel,
+                       mesh_channel_hop::Reason reason,
+                       uint32_t now_ms) {
+  if (!s_initialized || !s_running) return false;
+  if (!s_opera_id_set)             return false;
+
+  uint8_t payload[mesh_channel_hop::PAYLOAD_LEN];
+  if (!mesh_channel_hop::encode(channel, reason, payload, sizeof(payload))) {
+    return false;
+  }
+
+  mesh_envelope::Header header;
+  header.version   = mesh_envelope::PROTOCOL_VERSION;
+  header.msg_type  = static_cast<uint8_t>(mesh_envelope::MsgType::CHANNEL_LOCK);
+  memcpy(header.opera_id,  s_opera_id,  sizeof(header.opera_id));
+  memcpy(header.sender_fp, s_sender_fp, sizeof(header.sender_fp));
+  header.counter   = ++s_outbound_counter;
+  header.timestamp = now_ms;
+
+  uint8_t session_frame[1 + mesh_envelope::MAX_FRAME_LEN];
+  session_frame[0] = static_cast<uint8_t>(mesh_envelope::MsgType::CHANNEL_LOCK);
+  const size_t env_len = mesh_envelope::serialize_signed(
+      header, payload, sizeof(payload),
+      s_device_priv, s_device_pub,
+      session_frame + 1, sizeof(session_frame) - 1);
+  if (env_len == 0) return false;
+
+  const size_t n = mesh_transport::broadcast(session_frame, 1 + env_len);
+  return n > 0;
+}
+
+void set_channel_lock_handler(channel_lock_received_fn fn) {
+  s_channel_lock_cb = fn;
 }
 
 }  /* namespace mesh_session */
