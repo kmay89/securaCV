@@ -44,7 +44,12 @@
 #include <Arduino.h>
 #include <Preferences.h>
 #include <string.h>
-#include <atomic>
+
+#if defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN \
+    && defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+#endif
 
 namespace {
 
@@ -126,19 +131,18 @@ const char* nvs_key_for(const char* full_key) {
  * main.cpp init lands, the chain lights up end-to-end with no further
  * code changes. */
 
-/* Single-producer single-consumer ring that marshals beacon events
- * from the (possibly cross-task) ble_scout broadcast callback into
- * the main loop, where mesh_session::send_beacon_event is allowed to
- * run per PR 5c-3's threading contract.
+/* FreeRTOS queue that marshals beacon events from the (possibly
+ * cross-task) ble_scout broadcast callback into the main loop,
+ * where mesh_session::send_beacon_event is allowed to run per
+ * PR 5c-3's threading contract.
  *
- * Producer: on_scout_beacon_event_outbound runs from EITHER the main
- * loop (ble_scout_tick → emit_departed) OR the NimBLE host task
- * (ble_scout_on_advert → emit_arrived). The lock-free SPSC pattern
- * (atomic head/tail, fixed-size ring) lets the producer enqueue
- * without taking a mutex; the only shared mutation is the head
- * counter's atomic store, which doesn't mask threading violations
- * — it IS the marshaling primitive, mirroring mesh_transport's recv
- * ring (mesh_transport.cpp uses the same shape).
+ * Producer: on_scout_beacon_event_outbound runs from EITHER the
+ * main loop (ble_scout_tick → emit_departed) OR the NimBLE host
+ * task (ble_scout_on_advert → emit_arrived). That is MPSC by
+ * construction. xQueueSend is MPSC-safe (acquires the queue's
+ * internal lock), so two concurrent producers from different tasks
+ * cannot race — unlike the previous hand-rolled atomic ring, which
+ * was a correct SPSC primitive but wrong for the declared usage.
  *
  * Consumer: drain_outbound_beacon_queue() runs at the top of
  * securacv_csi_modules_feed (called from main loop on every CSI
@@ -148,50 +152,38 @@ struct OutboundBeaconEvent {
   bool                       arrived;
   char                       label[mesh_beacon::MAX_LABEL_BYTES + 1];
 };
-constexpr size_t OUTBOUND_QUEUE_CAP = 8;
-static OutboundBeaconEvent  s_outbound_queue[OUTBOUND_QUEUE_CAP];
-static std::atomic<uint32_t> s_outbound_head{0};
-static std::atomic<uint32_t> s_outbound_tail{0};
-static std::atomic<uint32_t> s_outbound_dropped{0};
+constexpr size_t  OUTBOUND_QUEUE_CAP = 8;
+static QueueHandle_t s_outbound_queue = nullptr;
 
 static void on_scout_beacon_event_outbound(bool arrived, const char* label) {
-  /* Producer side — runs from EITHER main loop or NimBLE host task.
-   * Only memory operations here are a load on the tail, a memcpy
-   * into a slot the consumer doesn't touch until we release-store
-   * the head, and the atomic release-store itself. No locks. */
-  const uint32_t head = s_outbound_head.load(std::memory_order_relaxed);
-  const uint32_t tail = s_outbound_tail.load(std::memory_order_acquire);
-  if ((head - tail) >= OUTBOUND_QUEUE_CAP) {
-    /* Ring full — drop and count. Bounded loss is acceptable here
-     * (BLE scout's chokepoint ceiling already rate-limits to 24/hr
-     * per beacon, so back-pressure to 8 in-flight is generous). */
-    s_outbound_dropped.fetch_add(1, std::memory_order_relaxed);
-    return;
-  }
-  OutboundBeaconEvent* slot = &s_outbound_queue[head % OUTBOUND_QUEUE_CAP];
-  slot->arrived = arrived;
+  /* Producer — main loop OR NimBLE host task. xQueueSend is safe
+   * under concurrent producers and from any task context (not from
+   * ISR; the NimBLE host task is a task, not an ISR). Timeout 0 =
+   * non-blocking drop when the queue is full — bounded loss
+   * (ble_scout's chokepoint already caps emissions at 24/hr per
+   * beacon, so 8 in-flight is generous). */
+  if (s_outbound_queue == nullptr) return;
+  OutboundBeaconEvent ev;
+  ev.arrived = arrived;
   if (label != nullptr) {
-    strncpy(slot->label, label, sizeof(slot->label) - 1);
-    slot->label[sizeof(slot->label) - 1] = '\0';
+    strncpy(ev.label, label, sizeof(ev.label) - 1);
+    ev.label[sizeof(ev.label) - 1] = '\0';
   } else {
-    slot->label[0] = '\0';
+    ev.label[0] = '\0';
   }
-  s_outbound_head.store(head + 1, std::memory_order_release);
+  (void)xQueueSend(s_outbound_queue, &ev, 0);
 }
 
 static void drain_outbound_beacon_queue() {
-  /* Consumer side — main loop only. */
-  for (;;) {
-    const uint32_t tail = s_outbound_tail.load(std::memory_order_relaxed);
-    const uint32_t head = s_outbound_head.load(std::memory_order_acquire);
-    if (tail == head) break;
-    const OutboundBeaconEvent& slot = s_outbound_queue[tail % OUTBOUND_QUEUE_CAP];
+  /* Consumer — main loop only. */
+  if (s_outbound_queue == nullptr) return;
+  OutboundBeaconEvent ev;
+  while (xQueueReceive(s_outbound_queue, &ev, 0) == pdTRUE) {
     mesh_session::send_beacon_event(
-        slot.arrived ? mesh_beacon::BeaconState::ARRIVED
+        ev.arrived ? mesh_beacon::BeaconState::ARRIVED
                      : mesh_beacon::BeaconState::DEPARTED,
-        slot.label,
+        ev.label,
         (uint32_t)millis());
-    s_outbound_tail.store(tail + 1, std::memory_order_release);
   }
 }
 
@@ -318,10 +310,15 @@ extern "C" bool securacv_csi_modules_init(void) {
 #if defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
   /* PR 5c integration — wire the Scout broadcast hook to the mesh
    * sender, and install a receiver handler for inbound BEACON_EVENT
-   * frames from peer Scouts. Both callbacks are no-ops in practice
-   * until main.cpp lands the mesh_session::init() call (follow-up);
-   * registering them here keeps the chain ready to light up the
-   * moment that wiring arrives. */
+   * frames from peer Scouts. Create the FreeRTOS queue first so the
+   * broadcast callback has somewhere to push to from the NimBLE host
+   * task. Idempotent across re-init (securacv_csi_modules_init may
+   * re-run after a /api/settings POST — keep the existing queue
+   * rather than orphaning any in-flight events). */
+  if (s_outbound_queue == nullptr) {
+    s_outbound_queue = xQueueCreate(OUTBOUND_QUEUE_CAP,
+                                    sizeof(OutboundBeaconEvent));
+  }
   ble_scout::set_broadcast_callback(&on_scout_beacon_event_outbound);
   mesh_session::set_beacon_event_handler(&on_peer_beacon_event_inbound);
 #endif
