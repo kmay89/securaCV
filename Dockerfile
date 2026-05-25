@@ -5,6 +5,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     libgstreamer1.0-dev \
     libgstreamer-plugins-base1.0-dev \
+    libseccomp-dev \
     pkg-config \
   && rm -rf /var/lib/apt/lists/*
 
@@ -32,6 +33,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gstreamer1.0-plugins-good \
     gstreamer1.0-plugins-bad \
     libgstreamer1.0-0 \
+    libseccomp2 \
   && rm -rf /var/lib/apt/lists/*
 
 RUN groupadd --system --gid 1001 witness && \

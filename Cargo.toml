@@ -1,6 +1,6 @@
 [package]
 name = "witness-kernel"
-version = "0.3.1"
+version = "0.5.0"
 edition = "2021"
 license = "Apache-2.0"
 description = "Privacy Witness Kernel (PWK) - witnessd + tools + break_glass"
@@ -27,7 +27,6 @@ pqcrypto-dilithium = { version = "0.5", optional = true }
 pqcrypto-traits = { version = "0.3", optional = true }
 pqcrypto-kyber = { version = "0.7", optional = true }
 ctrlc = "3.4"
-indicatif = { path = "vendor/indicatif" }
 image = { version = "0.25", default-features = false, features = ["jpeg"], optional = true }
 ureq = { version = "2.9", optional = true }
 url = { version = "2.5", optional = true }
@@ -100,3 +99,7 @@ path = "src/bin/event_mqtt_bridge.rs"
 [[bin]]
 name = "witness_api"
 path = "src/bin/witness_api.rs"
+
+[[bin]]
+name = "grove_vision2_ingest"
+path = "src/bin/grove_vision2_ingest.rs"

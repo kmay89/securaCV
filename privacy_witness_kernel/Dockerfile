@@ -46,10 +46,10 @@ COPY --from=builder /build/target/release/export_events /usr/local/bin/
 COPY --from=builder /build/target/release/export_verify /usr/local/bin/
 
 # Copy add-on scripts and wizard
-COPY homeassistant/run.sh /run.sh
-COPY homeassistant/discover_cameras.sh /usr/local/bin/
-COPY homeassistant/serve_wizard.py /usr/local/bin/
-COPY homeassistant/wizard/ /usr/local/share/securacv-wizard/
+COPY privacy_witness_kernel/run.sh /run.sh
+COPY privacy_witness_kernel/discover_cameras.sh /usr/local/bin/
+COPY privacy_witness_kernel/serve_wizard.py /usr/local/bin/
+COPY privacy_witness_kernel/wizard/ /usr/local/share/securacv-wizard/
 RUN chmod +x /run.sh /usr/local/bin/discover_cameras.sh /usr/local/bin/serve_wizard.py
 
 # Data directories

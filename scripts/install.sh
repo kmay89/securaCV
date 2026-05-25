@@ -261,6 +261,19 @@ install_addon() {
     return 0
   }
   log_ok "Privacy Witness Kernel add-on installed"
+
+  log_info "Starting Privacy Witness Kernel add-on…"
+  ha addons start "$SECURACV_ADDON_SLUG" || {
+    log_warn "Could not start add-on automatically."
+    log_warn "Start manually: Settings → Add-ons → Privacy Witness Kernel → Start"
+    return 0
+  }
+
+  if addon_wait_state "$SECURACV_ADDON_SLUG" "started" 60; then
+    log_ok "Privacy Witness Kernel running (setup wizard is now available)"
+  else
+    log_warn "Add-on did not start within 60 s — check logs if needed"
+  fi
 }
 
 # ---------------------------------------------------------------------------
