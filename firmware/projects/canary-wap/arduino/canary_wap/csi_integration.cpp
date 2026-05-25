@@ -2010,14 +2010,19 @@ bool     s_self_fp_valid = false;
 bool     s_is_coordinator = false;
 
 void evaluate_coordinator() {
-  if (!s_self_fp_valid) return;
+  if (!s_self_fp_valid) {
+    s_self_fp_valid = mesh_network::get_self_fingerprint(s_self_fp);
+    if (!s_self_fp_valid) return;
+  }
 
   const uint8_t* lowest = s_self_fp;
 
   for (uint8_t i = 0; i < mesh_network::get_peer_count(); ++i) {
     const mesh_network::OperaPeer* peer = mesh_network::get_peer(i);
     if (peer == nullptr) continue;
-    if (peer->state < mesh_network::PEER_CONNECTED) continue;
+    if (peer->state != mesh_network::PEER_CONNECTED &&
+        peer->state != mesh_network::PEER_STALE &&
+        peer->state != mesh_network::PEER_ALERT) continue;
     if (mesh_hub_election::compare_fingerprints(peer->fingerprint, lowest) < 0) {
       lowest = peer->fingerprint;
     }
@@ -2033,13 +2038,6 @@ void evaluate_coordinator() {
   } else if (!s_is_coordinator && was_coordinator) {
     Serial.println("[mesh.election] demoted from coordinator");
   }
-}
-
-void on_peer_state_changed(const mesh_network::OperaPeer* peer,
-                           mesh_network::PeerState old_state,
-                           mesh_network::PeerState new_state) {
-  (void)peer; (void)old_state; (void)new_state;
-  evaluate_coordinator();
 }
 
 void on_peer_hub_election(
@@ -2200,11 +2198,6 @@ void register_v1_modules() {
    * tick (channel_hop_tick) runs from loop() below. */
   mesh_network::set_channel_lock_handler(&on_peer_channel_lock);
   mesh_network::set_hub_election_handler(&on_peer_hub_election);
-  mesh_network::set_peer_state_callback(&on_peer_state_changed);
-  s_self_fp_valid = mesh_network::get_self_fingerprint(s_self_fp);
-  if (s_self_fp_valid) {
-    evaluate_coordinator();
-  }
 #endif
 
   /* Wire the persisted Quiet Hours range into the chokepoint. The
@@ -2690,8 +2683,16 @@ void loop() {
 #endif
 
 #if FEATURE_MESH_NETWORK
-  if (s_is_coordinator) {
-    channel_hop_tick(millis());
+  {
+    static uint32_t s_last_election_eval_ms = 0;
+    uint32_t now = millis();
+    if ((int32_t)(now - s_last_election_eval_ms) >= 5000) {
+      s_last_election_eval_ms = now;
+      evaluate_coordinator();
+    }
+    if (s_is_coordinator) {
+      channel_hop_tick(now);
+    }
   }
 #endif
 
