@@ -110,7 +110,7 @@ impl Drop for TestApi {
 
 #[test]
 fn api_rejects_missing_token() -> Result<()> {
-    let api = TestApi::new(|kernel, cfg| add_test_event(kernel, cfg))?;
+    let api = TestApi::new(add_test_event)?;
 
     let mut stream = TcpStream::connect(api.handle().addr)?;
     let request = "GET /events HTTP/1.1\r\nHost: localhost\r\n\r\n";
@@ -123,7 +123,7 @@ fn api_rejects_missing_token() -> Result<()> {
 
 #[test]
 fn api_returns_export_events_without_identifiers() -> Result<()> {
-    let api = TestApi::new(|kernel, cfg| add_test_event(kernel, cfg))?;
+    let api = TestApi::new(add_test_event)?;
     let token = api.handle().token.clone();
 
     let mut stream = TcpStream::connect(api.handle().addr)?;
@@ -158,7 +158,7 @@ fn api_health_endpoint_is_public() -> Result<()> {
 
 #[test]
 fn api_latest_event_endpoint_returns_event() -> Result<()> {
-    let api = TestApi::new(|kernel, cfg| add_test_event(kernel, cfg))?;
+    let api = TestApi::new(add_test_event)?;
     let token = api.handle().token.clone();
 
     let mut stream = TcpStream::connect(api.handle().addr)?;

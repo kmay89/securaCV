@@ -73,7 +73,8 @@ fn seed_break_glass(kernel: &mut Kernel, ruleset_hash: [u8; 32]) -> Result<Break
             public_key: signing_key.verifying_key().to_bytes(),
         }],
     )?;
-    let (result, receipt) = BreakGlass::authorize(&policy, &request, &[approval.clone()], bucket);
+    let (result, receipt) =
+        BreakGlass::authorize(&policy, &request, std::slice::from_ref(&approval), bucket);
     let mut token = result?;
     let receipt_entry_hash = kernel.log_break_glass_receipt(&receipt, &[approval])?;
     kernel.sign_break_glass_token(&mut token, receipt_entry_hash)?;

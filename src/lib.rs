@@ -2317,6 +2317,12 @@ pub struct Frame {
     pub features_hash: [u8; 32],
 }
 
+// Re-exports for CLI/tools
+pub use break_glass::{
+    approvals_commitment, Approval, BreakGlass, BreakGlassOutcome, BreakGlassReceipt,
+    BreakGlassToken, QuorumPolicy, TrusteeEntry, TrusteeId, UnlockRequest,
+};
+
 // -------------------- Conformance Tests --------------------
 
 #[cfg(test)]
@@ -3158,9 +3164,3 @@ mod tests {
         Ok(())
     }
 }
-
-// Re-exports for CLI/tools
-pub use break_glass::{
-    approvals_commitment, Approval, BreakGlass, BreakGlassOutcome, BreakGlassReceipt,
-    BreakGlassToken, QuorumPolicy, TrusteeEntry, TrusteeId, UnlockRequest,
-};

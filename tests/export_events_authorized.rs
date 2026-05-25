@@ -98,7 +98,8 @@ fn export_succeeds_with_break_glass_token() -> Result<()> {
 
     let bucket = TimeBucket::now(600)?;
     let (request, approval, policy) = authorize_export(&cfg, bucket)?;
-    let (result, receipt) = BreakGlass::authorize(&policy, &request, &[approval.clone()], bucket);
+    let (result, receipt) =
+        BreakGlass::authorize(&policy, &request, std::slice::from_ref(&approval), bucket);
     let mut token = result.expect("token");
     let receipt_entry_hash = kernel.log_break_glass_receipt(&receipt, &[approval])?;
     kernel.sign_break_glass_token(&mut token, receipt_entry_hash)?;
@@ -136,7 +137,8 @@ fn export_bundle_verifies_and_detects_tampering() -> Result<()> {
 
     let bucket = TimeBucket::now(600)?;
     let (request, approval, policy) = authorize_export(&cfg, bucket)?;
-    let (result, receipt) = BreakGlass::authorize(&policy, &request, &[approval.clone()], bucket);
+    let (result, receipt) =
+        BreakGlass::authorize(&policy, &request, std::slice::from_ref(&approval), bucket);
     let mut token = result.expect("token");
     let receipt_entry_hash = kernel.log_break_glass_receipt(&receipt, &[approval])?;
     kernel.sign_break_glass_token(&mut token, receipt_entry_hash)?;

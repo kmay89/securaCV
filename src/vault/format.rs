@@ -317,7 +317,7 @@ mod tests {
         let oversized_len = (MAX_ENVELOPE_ID_LEN + 100) as u32;
         malicious.extend_from_slice(&oversized_len.to_le_bytes());
         // Add dummy data for the ID
-        malicious.extend_from_slice(&vec![b'a'; MAX_ENVELOPE_ID_LEN + 100]);
+        malicious.extend_from_slice(&[b'a'; MAX_ENVELOPE_ID_LEN + 100]);
         // Add ruleset hash (32 bytes)
         malicious.extend_from_slice(&[0u8; 32]);
         // Add nonce (12 bytes)
@@ -366,7 +366,7 @@ mod tests {
                            // Write an algorithm length that exceeds the maximum
         let oversized_len = (MAX_ALG_LEN + 100) as u32;
         malicious.extend_from_slice(&oversized_len.to_le_bytes());
-        malicious.extend_from_slice(&vec![b'a'; MAX_ALG_LEN + 100]);
+        malicious.extend_from_slice(&[b'a'; MAX_ALG_LEN + 100]);
 
         let result = EnvelopeV2::decode(&malicious);
         assert!(result.is_err());
