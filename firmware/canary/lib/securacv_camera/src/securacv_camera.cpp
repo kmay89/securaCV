@@ -38,12 +38,33 @@ const char* framesize_name(framesize_t size) {
   }
 }
 
+const char* sensor_model_name(uint16_t pid) {
+  switch (pid) {
+    case 0x2640: case 0x26:  return "OV2640";
+    case 0x3660: case 0x36:  return "OV3660";
+    case 0x5640:             return "OV5640";
+    default:                 return "Unknown";
+  }
+}
+
+// Apply one named field from a JSON object if present.
+static bool apply_int_setting(sensor_t* s, const JsonObject& body, const char* key,
+                              int (*setter)(sensor_t*, int), int min_val, int max_val) {
+  if (!body[key].is<int>()) return false;
+  int v = body[key].as<int>();
+  if (v < min_val) v = min_val;
+  if (v > max_val) v = max_val;
+  setter(s, v);
+  return true;
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // CAMERA MANAGER IMPLEMENTATION
 // ════════════════════════════════════════════════════════════════════════════
 
 CameraManager::CameraManager()
-  : m_initialized(false), m_peek_active(false), m_framesize(FRAMESIZE_VGA) {}
+  : m_initialized(false), m_peek_active(false), m_framesize(FRAMESIZE_VGA),
+    m_frame_delay_ms(40), m_metrics{}, m_metrics_mux(portMUX_INITIALIZER_UNLOCKED) {}
 
 // Build a camera_config_t with all pin/clock fields populated. Critically
 // zero-initialized so newer ESP-IDF fields (sccb_i2c_port, etc.) start clean
@@ -76,9 +97,7 @@ static camera_config_t make_base_config() {
   return cfg;
 }
 
-// Apply the same surveillance-tuned defaults as the WAP firmware so the new
-// lib-based image matches behavior once it ships.
-static void apply_default_sensor_tuning() {
+void CameraManager::applyDefaultSensorTuning() {
   sensor_t* s = esp_camera_sensor_get();
   if (!s) return;
   s->set_brightness(s, 0);
@@ -103,7 +122,6 @@ static void apply_default_sensor_tuning() {
   s->set_hmirror(s, 0);
   s->set_vflip(s, 0);
   s->set_colorbar(s, 0);
-  // Sensor-specific corrections last so they win over the neutral defaults.
   if (s->id.PID == OV3660_PID) {
     s->set_vflip(s, 1);
     s->set_brightness(s, 1);
@@ -112,13 +130,10 @@ static void apply_default_sensor_tuning() {
 }
 
 bool CameraManager::begin() {
-  // Force PSRAM init in case the board variant left it disabled. No-op on
-  // boards where the ROM already turned PSRAM on.
   psramInit();
   bool psram_ok = psramFound();
   Serial.printf("[CAMERA] PSRAM: %s\n", psram_ok ? "found" : "not found");
 
-  // Multi-stage attempt: most-capable → most-conservative.
   camera_config_t attempts[3];
   const char*     labels[3];
   int n = 0;
@@ -167,7 +182,7 @@ bool CameraManager::begin() {
 
   m_framesize = attempts[chosen].frame_size;
   m_initialized = true;
-  apply_default_sensor_tuning();
+  applyDefaultSensorTuning();
   Serial.printf("[CAMERA] Initialized (%s) for peek/preview\n", labels[chosen]);
   return true;
 }
@@ -178,6 +193,13 @@ void CameraManager::end() {
     m_initialized = false;
     m_peek_active = false;
   }
+}
+
+bool CameraManager::reinit() {
+  bool was_active = m_peek_active;
+  end();
+  if (was_active) delay(150);
+  return begin();
 }
 
 bool CameraManager::setResolution(framesize_t size) {
@@ -210,6 +232,175 @@ void CameraManager::returnFrame(camera_fb_t* fb) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// STREAM METRICS
+// ════════════════════════════════════════════════════════════════════════════
+
+void CameraManager::resetMetrics() {
+  uint32_t now = millis();
+  portENTER_CRITICAL(&m_metrics_mux);
+  memset(&m_metrics, 0, sizeof(m_metrics));
+  m_metrics.stream_start_ms  = now;
+  m_metrics.fps_window_start = now;
+  portEXIT_CRITICAL(&m_metrics_mux);
+}
+
+void CameraManager::recordFrame(uint32_t frame_bytes) {
+  uint32_t t_ms = millis();
+  portENTER_CRITICAL(&m_metrics_mux);
+  m_metrics.last_frame_bytes = frame_bytes;
+  m_metrics.last_frame_ms    = t_ms;
+  m_metrics.total_bytes     += frame_bytes;
+  m_metrics.frame_count++;
+  m_metrics.fps_window_count++;
+  uint32_t window_elapsed = t_ms - m_metrics.fps_window_start;
+  if (window_elapsed >= 1000) {
+    m_metrics.fps_last         = (m_metrics.fps_window_count * 1000U) / window_elapsed;
+    m_metrics.fps_window_count = 0;
+    m_metrics.fps_window_start = t_ms;
+  }
+  portEXIT_CRITICAL(&m_metrics_mux);
+}
+
+PeekMetrics CameraManager::snapshotMetrics() {
+  PeekMetrics copy;
+  portENTER_CRITICAL(&m_metrics_mux);
+  copy = m_metrics;
+  portEXIT_CRITICAL(&m_metrics_mux);
+  return copy;
+}
+
+void CameraManager::setFrameDelay(uint32_t ms) {
+  if (ms < 20)  ms = 20;
+  if (ms > 500) ms = 500;
+  m_frame_delay_ms = ms;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// SENSOR INFO
+// ════════════════════════════════════════════════════════════════════════════
+
+uint16_t CameraManager::getSensorPID() const {
+  sensor_t* s = esp_camera_sensor_get();
+  return s ? s->id.PID : 0;
+}
+
+const char* CameraManager::getSensorModelName() const {
+  return sensor_model_name(getSensorPID());
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// SENSOR PARAMETER READ / WRITE
+// ════════════════════════════════════════════════════════════════════════════
+
+bool CameraManager::getSensorParams(JsonDocument& doc) {
+  sensor_t* s = esp_camera_sensor_get();
+  if (!s) return false;
+
+  doc["ok"]              = true;
+  doc["sensor_pid"]      = s->id.PID;
+  doc["sensor_model"]    = sensor_model_name(s->id.PID);
+  doc["framesize"]       = s->status.framesize;
+  doc["quality"]         = s->status.quality;
+  doc["brightness"]      = s->status.brightness;
+  doc["contrast"]        = s->status.contrast;
+  doc["saturation"]      = s->status.saturation;
+  doc["sharpness"]       = s->status.sharpness;
+  doc["denoise"]         = s->status.denoise;
+  doc["special_effect"]  = s->status.special_effect;
+  doc["wb_mode"]         = s->status.wb_mode;
+  doc["awb"]             = s->status.awb;
+  doc["awb_gain"]        = s->status.awb_gain;
+  doc["aec"]             = s->status.aec;
+  doc["aec2"]            = s->status.aec2;
+  doc["ae_level"]        = s->status.ae_level;
+  doc["aec_value"]       = s->status.aec_value;
+  doc["agc"]             = s->status.agc;
+  doc["agc_gain"]        = s->status.agc_gain;
+  doc["gainceiling"]     = s->status.gainceiling;
+  doc["bpc"]             = s->status.bpc;
+  doc["wpc"]             = s->status.wpc;
+  doc["raw_gma"]         = s->status.raw_gma;
+  doc["lenc"]            = s->status.lenc;
+  doc["hmirror"]         = s->status.hmirror;
+  doc["vflip"]           = s->status.vflip;
+  doc["dcw"]             = s->status.dcw;
+  doc["colorbar"]        = s->status.colorbar;
+  doc["frame_delay_ms"]  = m_frame_delay_ms;
+
+  return true;
+}
+
+bool CameraManager::applySensorParams(const JsonObject& obj) {
+  sensor_t* s = esp_camera_sensor_get();
+  if (!s) return false;
+
+  // JPEG quality — also read back from sensor
+  if (obj["quality"].is<int>()) {
+    int q = obj["quality"].as<int>();
+    if (q < 0) q = 0; if (q > 63) q = 63;
+    s->set_quality(s, q);
+  }
+
+  // Image tuning (range -2..2)
+  apply_int_setting(s, obj, "brightness",     s->set_brightness,     -2,  2);
+  apply_int_setting(s, obj, "contrast",       s->set_contrast,       -2,  2);
+  apply_int_setting(s, obj, "saturation",     s->set_saturation,     -2,  2);
+  apply_int_setting(s, obj, "sharpness",      s->set_sharpness,      -2,  2);
+  apply_int_setting(s, obj, "denoise",        s->set_denoise,         0, 255);
+  apply_int_setting(s, obj, "special_effect", s->set_special_effect,  0,  6);
+  apply_int_setting(s, obj, "ae_level",       s->set_ae_level,       -2,  2);
+
+  // White balance
+  apply_int_setting(s, obj, "wb_mode",        s->set_wb_mode,         0,  4);
+  apply_int_setting(s, obj, "awb",            s->set_whitebal,        0,  1);
+  apply_int_setting(s, obj, "awb_gain",       s->set_awb_gain,        0,  1);
+
+  // Exposure
+  apply_int_setting(s, obj, "aec",            s->set_exposure_ctrl,   0,  1);
+  apply_int_setting(s, obj, "aec2",           s->set_aec2,            0,  1);
+  apply_int_setting(s, obj, "aec_value",      s->set_aec_value,       0, 1200);
+
+  // Gain
+  apply_int_setting(s, obj, "agc",            s->set_gain_ctrl,       0,  1);
+  apply_int_setting(s, obj, "agc_gain",       s->set_agc_gain,        0, 30);
+  if (obj["gainceiling"].is<int>()) {
+    int g = obj["gainceiling"].as<int>();
+    if (g < 0) g = 0; if (g > 6) g = 6;
+    s->set_gainceiling(s, (gainceiling_t)g);
+  }
+
+  // Image cleanup
+  apply_int_setting(s, obj, "bpc",            s->set_bpc,             0,  1);
+  apply_int_setting(s, obj, "wpc",            s->set_wpc,             0,  1);
+  apply_int_setting(s, obj, "raw_gma",        s->set_raw_gma,         0,  1);
+  apply_int_setting(s, obj, "lenc",           s->set_lenc,            0,  1);
+  apply_int_setting(s, obj, "dcw",            s->set_dcw,             0,  1);
+
+  // Orientation + diagnostics
+  apply_int_setting(s, obj, "hmirror",        s->set_hmirror,         0,  1);
+  apply_int_setting(s, obj, "vflip",          s->set_vflip,           0,  1);
+  apply_int_setting(s, obj, "colorbar",       s->set_colorbar,        0,  1);
+
+  // Stream pacing (not a sensor setting, but lives here so the UI can tune FPS)
+  if (obj["frame_delay_ms"].is<int>()) {
+    setFrameDelay(obj["frame_delay_ms"].as<int>());
+  }
+
+  // Reset to surveillance defaults if requested
+  if (obj["reset_defaults"].is<bool>() && obj["reset_defaults"].as<bool>()) {
+    applyDefaultSensorTuning();
+    m_frame_delay_ms = 40;
+  }
+
+  return true;
+}
+
+void CameraManager::resetSensorDefaults() {
+  applyDefaultSensorTuning();
+  m_frame_delay_ms = 40;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // CONVENIENCE FUNCTIONS
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -227,6 +418,10 @@ bool camera_is_peek_active() {
 
 void camera_set_peek_active(bool active) {
   camera_get_instance().setPeekActive(active);
+}
+
+bool camera_reinit() {
+  return camera_get_instance().reinit();
 }
 
 #endif // FEATURE_CAMERA_PEEK
