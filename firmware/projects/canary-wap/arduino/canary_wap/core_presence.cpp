@@ -19,9 +19,11 @@
 namespace {
 
 /* csi_features_t.v[] layout — mirrored from csi_features.h:11-18 */
-constexpr int IDX_DOPPLER_BASE      = 8;   /* phase-Doppler bands [8..11] */
-constexpr int IDX_BREATHING_FFT_BASE = 12; /* breathing FFT       [12..19] */
-constexpr int IDX_RSSI_MEAN          = 20; /* RSSI stats          [20..23] */
+constexpr int IDX_DOPPLER_BASE       = 8;   /* phase-Doppler bands [8..11] */
+constexpr int IDX_BREATHING_FFT_BASE = 12;  /* breathing FFT       [12..19] */
+constexpr int IDX_RSSI_MEAN          = 20;  /* RSSI stats          [20..23] */
+constexpr int IDX_RSSI_MAX           = 22;
+constexpr int IDX_RSSI_MIN           = 23;
 
 /* State machine. */
 enum State {
@@ -44,6 +46,13 @@ uint8_t  s_motion_threshold      = 35;           /* 0..127, tunable */
 uint8_t  s_active_threshold      = 75;           /* 0..127 */
 uint8_t  s_breathing_threshold   = 30;           /* 0..127 */
 uint16_t s_pet_mode_required_win = 30;           /* 30 windows ~= 30 seconds */
+
+/* Multipath shimmer filter: RSSI swing >threshold WITHOUT Doppler
+ * is a non-human artifact (HVAC, neighbor WiFi, fan). Reject by
+ * returning STATE_EMPTY so presence doesn't advance. */
+uint8_t  s_shimmer_rssi_swing   = 8;            /* dB swing threshold */
+uint8_t  s_shimmer_doppler_floor = 30;           /* Doppler below this = no real motion */
+bool     s_shimmer_enabled       = true;
 
 /* Manifest — defines exactly which fields the chokepoint will let through. */
 const csi_event_decl_t EVENTS[] = {
@@ -147,6 +156,11 @@ void on_init(const csi_module_settings_t* s) {
       s, "core.presence.breathing_threshold", clamp_threshold(base_breathing + offset));
 
   s_pet_mode_required_win= (uint16_t)csi_module_settings_int (s, "core.presence.pet_mode_seconds",    30);
+
+  s_shimmer_rssi_swing   = (uint8_t)csi_module_settings_int(s, "core.presence.shimmer_rssi_swing",   8);
+  s_shimmer_doppler_floor= (uint8_t)csi_module_settings_int(s, "core.presence.shimmer_doppler_floor",30);
+  s_shimmer_enabled      = csi_module_settings_bool(s, "core.presence.shimmer_enabled", true);
+
   s_current_state        = STATE_EMPTY;
   s_windows_in_state     = 0;
 }
@@ -176,13 +190,25 @@ void emit_state_change(State new_state, uint8_t motion, uint8_t breathing) {
   (void)csi_event_emit("core.presence", "presence_changed", &v);
 }
 
+bool is_shimmer(const csi_features_t* f, uint8_t motion) {
+  if (!s_shimmer_enabled) return false;
+  const int8_t rssi_max = f->v[IDX_RSSI_MAX];
+  const int8_t rssi_min = f->v[IDX_RSSI_MIN];
+  const int swing = (int)rssi_max - (int)rssi_min;
+  return swing > (int)s_shimmer_rssi_swing && motion < s_shimmer_doppler_floor;
+}
+
 void on_tick(const csi_features_t* f) {
   if (!f) return;
 
   const uint8_t motion    = reduce_magnitude(f->v, IDX_DOPPLER_BASE, IDX_DOPPLER_BASE + 4);
   const uint8_t breathing = reduce_magnitude(f->v, IDX_BREATHING_FFT_BASE, IDX_BREATHING_FFT_BASE + 8);
 
-  const State target = derive_target_state(motion, breathing, s_windows_in_state);
+  /* Multipath shimmer rejection: large RSSI swing without Doppler is
+   * a non-human artifact. Treat as empty so presence doesn't advance. */
+  const State target = is_shimmer(f, motion)
+      ? STATE_EMPTY
+      : derive_target_state(motion, breathing, s_windows_in_state);
 
   if (target != s_current_state) {
     /* Hysteresis: require 2 consecutive windows of the new target before
