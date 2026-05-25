@@ -1922,11 +1922,10 @@ size_t send_hub_election(mesh_hub_election::Event event,
   size_t accepted = 0;
   for (uint8_t i = 0; i < g_peer_count; ++i) {
     if (g_peers[i].state >= PEER_CONNECTED) {
-      if (!send_to_peer(&g_peers[i], MSG_HUB_ELECTION,
-                        payload, sizeof(payload))) {
-        break;
+      if (send_to_peer(&g_peers[i], MSG_HUB_ELECTION,
+                       payload, sizeof(payload))) {
+        ++accepted;
       }
-      ++accepted;
     }
   }
   return accepted;

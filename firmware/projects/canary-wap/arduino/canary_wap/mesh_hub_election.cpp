@@ -52,6 +52,11 @@ void on_hub_heartbeat(HubMonitor& m, uint32_t now_ms) {
 }
 
 bool tick(HubMonitor& m, uint32_t now_ms) {
+  /* hub_known guard is checked FIRST intentionally: if no Hub heartbeat
+   * was ever received, there is no deadline to check — the node hasn't
+   * joined a mesh with a Hub yet. This differs from the data-stream
+   * pattern where a deadline should fire even on stall, because here
+   * "no Hub ever seen" means "nothing to fail over from". */
   if (!m.hub_known) return false;
   if (m.absence_fired) return false;
   if ((int32_t)(now_ms - m.last_hub_heartbeat_ms) >= (int32_t)m.timeout_ms) {
