@@ -433,7 +433,11 @@ impl KemKeypair {
         use pqcrypto_traits::kem::SecretKey as _;
         let (public, secret) = pqcrypto_mlkem::mlkem768::keypair();
         let secret_bytes = zeroize::Zeroizing::new(secret.as_bytes().to_vec());
-        Self { public, secret, secret_bytes }
+        Self {
+            public,
+            secret,
+            secret_bytes,
+        }
     }
 
     pub fn public_bytes(&self) -> Vec<u8> {
@@ -452,7 +456,11 @@ impl KemKeypair {
         let secret = pqcrypto_mlkem::mlkem768::SecretKey::from_bytes(secret)
             .map_err(|_| anyhow!("invalid KEM secret key"))?;
         let secret_bytes = zeroize::Zeroizing::new(secret.as_bytes().to_vec());
-        Ok(Self { public, secret, secret_bytes })
+        Ok(Self {
+            public,
+            secret,
+            secret_bytes,
+        })
     }
 }
 
