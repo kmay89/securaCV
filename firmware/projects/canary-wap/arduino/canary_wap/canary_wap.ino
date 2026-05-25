@@ -545,6 +545,10 @@ static uint32_t       g_state_entered_ms = 0;
 static uint32_t       g_pending_state_ms = 0;
 static WitnessRecord  g_last_record;
 static SystemHealth   g_health;
+
+typedef void (*pre_reboot_fn)();
+static pre_reboot_fn g_pre_reboot_hook = nullptr;
+
 // NVS access is now encapsulated in NvsManager singleton (see nvs_store.h)
 
 static RingBuffer<2048> g_gps_rb;
@@ -2767,9 +2771,7 @@ static esp_err_t handle_reboot(httpd_req_t* req) {
   serializeJson(doc, response);
   http_send_json(req, response.c_str());
   
-#if FEATURE_MESH_NETWORK
-  mesh_network::save_replay_counters();
-#endif
+  if (g_pre_reboot_hook) g_pre_reboot_hook();
   delay(500);
   ESP.restart();
   return ESP_OK;
@@ -6081,6 +6083,7 @@ void setup() {
       });
 
       mesh_network::load_replay_counters();
+      g_pre_reboot_hook = []() { mesh_network::save_replay_counters(); };
 
       mesh_network::set_peer_state_callback([](const mesh_network::OperaPeer* peer,
                                                mesh_network::PeerState old_state,
