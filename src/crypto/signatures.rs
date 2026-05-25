@@ -13,6 +13,7 @@ use pqcrypto_traits::sign::{
 
 pub const ED25519_SCHEME_ID: &str = "ed25519";
 pub const PQ_SCHEME_MLDSA44: &str = "mldsa44";
+const PQ_SCHEME_DILITHIUM2_LEGACY: &str = "dilithium2";
 
 // Domain separation strings use a shared prefix scheme aligned with firmware.
 // Firmware uses "securacv:fw:chain:v1" for its hash chain.
@@ -316,7 +317,9 @@ fn verify_pq_signature(
     let Some(signature) = signatures.pq_signature.as_ref() else {
         return Err(anyhow!("pq signature missing"));
     };
-    if signature.scheme_id != PQ_SCHEME_MLDSA44 {
+    if signature.scheme_id != PQ_SCHEME_MLDSA44
+        && signature.scheme_id != PQ_SCHEME_DILITHIUM2_LEGACY
+    {
         return Err(anyhow!(
             "unsupported pq signature scheme: {}",
             signature.scheme_id

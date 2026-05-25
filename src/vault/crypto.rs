@@ -169,24 +169,42 @@ pub fn decrypt_v2(
     kem_keypair: Option<&KemKeypair>,
 ) -> Result<Vec<u8>> {
     let aad = envelope.aad.clone();
-    let dek = recover_dek(envelope, master_key, kem_keypair)?;
-
-    // Wrap DEK in guard to ensure zeroization on all paths including errors
-    let dek_guard = DekGuard(dek);
 
     if envelope.ciphertext.len() < 16 {
-        // dek_guard will be dropped and zeroized here
         return Err(anyhow!("vault ciphertext truncated"));
     }
     let tag_offset = envelope.ciphertext.len() - 16;
-    let mut ciphertext = envelope.ciphertext[..tag_offset].to_vec();
     let tag = &envelope.ciphertext[tag_offset..];
 
-    decrypt_payload(&dek_guard.0, &envelope.nonce, &aad, &mut ciphertext, tag)?;
+    // Try KEM-based decryption first. ML-KEM-768 uses implicit rejection
+    // (FO transform), so decapsulating a legacy Kyber768 ciphertext returns
+    // a wrong shared secret instead of an error. We detect this at the AEAD
+    // level: if the derived DEK produces an auth tag mismatch, fall back to
+    // classical_wrap.
+    if envelope.kem_alg == KEM_ALG_ML_KEM_768 {
+        if let Some(kp) = kem_keypair {
+            if let Ok(shared_secret) = kem_decapsulate(kp, &envelope.kem_ct) {
+                let dek_guard = DekGuard(kdf_dek(&shared_secret, &envelope.kdf_info));
+                let mut ciphertext = envelope.ciphertext[..tag_offset].to_vec();
+                if decrypt_payload(&dek_guard.0, &envelope.nonce, &aad, &mut ciphertext, tag)
+                    .is_ok()
+                {
+                    return Ok(ciphertext);
+                }
+            }
+        }
+    }
 
-    // dek_guard will be dropped and zeroized here
+    // Fallback: classical key wrap (handles legacy Kyber768 hybrid envelopes
+    // and classical-only envelopes).
+    if let Some(wrap) = &envelope.classical_wrap {
+        let dek_guard = DekGuard(unwrap_dek(master_key, &envelope.aad, wrap)?);
+        let mut ciphertext = envelope.ciphertext[..tag_offset].to_vec();
+        decrypt_payload(&dek_guard.0, &envelope.nonce, &aad, &mut ciphertext, tag)?;
+        return Ok(ciphertext);
+    }
 
-    Ok(ciphertext)
+    Err(anyhow!("vault envelope decryption failed"))
 }
 
 fn encrypt_payload(
@@ -274,44 +292,6 @@ fn derive_dek(
             })
         }
     }
-}
-
-fn recover_dek(
-    envelope: &EnvelopeV2,
-    master_key: &[u8; 32],
-    kem_keypair: Option<&KemKeypair>,
-) -> Result<[u8; 32]> {
-    // Try KEM decapsulation for PQ/Hybrid envelopes
-    if envelope.kem_alg == KEM_ALG_ML_KEM_768 {
-        let kem_result = kem_keypair
-            .ok_or_else(|| anyhow!("vault KEM keypair missing for PQ envelope"))
-            .and_then(|kp| kem_decapsulate(kp, &envelope.kem_ct));
-
-        match kem_result {
-            Ok(shared_secret) => {
-                return Ok(kdf_dek(&shared_secret, &envelope.kdf_info));
-            }
-            Err(kem_err) => {
-                // In hybrid mode, fall back to classical unwrap if KEM fails
-                if let Some(wrap) = &envelope.classical_wrap {
-                    log::warn!(
-                        "KEM decapsulation failed, falling back to classical unwrap: {}",
-                        kem_err
-                    );
-                    return unwrap_dek(master_key, &envelope.aad, wrap);
-                }
-                // Pure PQ mode with no fallback
-                return Err(kem_err);
-            }
-        }
-    }
-
-    // Classical-only envelope
-    if let Some(wrap) = &envelope.classical_wrap {
-        return unwrap_dek(master_key, &envelope.aad, wrap);
-    }
-
-    Err(anyhow!("vault envelope lacks usable key wrap"))
 }
 
 fn random_dek() -> [u8; 32] {
