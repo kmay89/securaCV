@@ -983,7 +983,7 @@ mod tests {
 
         cmd_policy_set(
             1,
-            &[trustee_entry.clone()],
+            std::slice::from_ref(&trustee_entry),
             &db_path.to_string_lossy(),
             ruleset_id,
             device_key_seed,
