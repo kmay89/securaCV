@@ -419,30 +419,33 @@ fn decrypt_in_place(
 #[derive(Clone, Debug)]
 pub struct KemKeypair {
     #[cfg(feature = "pqc-vault")]
-    pub public: pqcrypto_kyber::kyber768::PublicKey,
+    pub public: pqcrypto_mlkem::mlkem768::PublicKey,
     #[cfg(feature = "pqc-vault")]
-    pub secret: pqcrypto_kyber::kyber768::SecretKey,
+    pub secret: pqcrypto_mlkem::mlkem768::SecretKey,
 }
 
 #[cfg(feature = "pqc-vault")]
 impl KemKeypair {
     pub fn generate() -> Self {
-        let (public, secret) = pqcrypto_kyber::kyber768::keypair();
+        let (public, secret) = pqcrypto_mlkem::mlkem768::keypair();
         Self { public, secret }
     }
 
     pub fn public_bytes(&self) -> Vec<u8> {
+        use pqcrypto_traits::kem::PublicKey;
         self.public.as_bytes().to_vec()
     }
 
     pub fn secret_bytes(&self) -> Vec<u8> {
+        use pqcrypto_traits::kem::SecretKey;
         self.secret.as_bytes().to_vec()
     }
 
     pub fn from_bytes(public: &[u8], secret: &[u8]) -> Result<Self> {
-        let public = pqcrypto_kyber::kyber768::PublicKey::from_bytes(public)
+        use pqcrypto_traits::kem::{PublicKey as _, SecretKey as _};
+        let public = pqcrypto_mlkem::mlkem768::PublicKey::from_bytes(public)
             .map_err(|_| anyhow!("invalid KEM public key"))?;
-        let secret = pqcrypto_kyber::kyber768::SecretKey::from_bytes(secret)
+        let secret = pqcrypto_mlkem::mlkem768::SecretKey::from_bytes(secret)
             .map_err(|_| anyhow!("invalid KEM secret key"))?;
         Ok(Self { public, secret })
     }
@@ -471,7 +474,7 @@ fn kem_encapsulate(kem: &KemKeypair) -> Result<(Vec<u8>, Vec<u8>)> {
     #[cfg(feature = "pqc-vault")]
     {
         use pqcrypto_traits::kem::{Ciphertext, PublicKey, SharedSecret};
-        let (shared, ct) = pqcrypto_kyber::kyber768::encapsulate(&kem.public);
+        let (shared, ct) = pqcrypto_mlkem::mlkem768::encapsulate(&kem.public);
         return Ok((ct.as_bytes().to_vec(), shared.as_bytes().to_vec()));
     }
     #[cfg(not(feature = "pqc-vault"))]
@@ -485,9 +488,9 @@ fn kem_decapsulate(kem: &KemKeypair, kem_ct: &[u8]) -> Result<Vec<u8>> {
     #[cfg(feature = "pqc-vault")]
     {
         use pqcrypto_traits::kem::{Ciphertext, SharedSecret};
-        let ct = pqcrypto_kyber::kyber768::Ciphertext::from_bytes(kem_ct)
+        let ct = pqcrypto_mlkem::mlkem768::Ciphertext::from_bytes(kem_ct)
             .map_err(|_| anyhow!("invalid KEM ciphertext"))?;
-        let shared = pqcrypto_kyber::kyber768::decapsulate(&ct, &kem.secret);
+        let shared = pqcrypto_mlkem::mlkem768::decapsulate(&ct, &kem.secret);
         return Ok(shared.as_bytes().to_vec());
     }
     #[cfg(not(feature = "pqc-vault"))]

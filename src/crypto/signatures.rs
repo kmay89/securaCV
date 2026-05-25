@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 #[cfg(feature = "pqc-signatures")]
-use pqcrypto_dilithium::dilithium2::{self, DetachedSignature, PublicKey, SecretKey};
+use pqcrypto_mldsa::mldsa44::{self, DetachedSignature, PublicKey, SecretKey};
 #[cfg(feature = "pqc-signatures")]
 use pqcrypto_traits::sign::{
     DetachedSignature as PqDetachedSignature, PublicKey as PqPublicKeyTrait,
@@ -12,7 +12,7 @@ use pqcrypto_traits::sign::{
 };
 
 pub const ED25519_SCHEME_ID: &str = "ed25519";
-pub const PQ_SCHEME_DILITHIUM2: &str = "dilithium2";
+pub const PQ_SCHEME_MLDSA44: &str = "mldsa44";
 
 // Domain separation strings use a shared prefix scheme aligned with firmware.
 // Firmware uses "securacv:fw:chain:v1" for its hash chain.
@@ -122,7 +122,7 @@ pub struct PqKeypair {
 #[cfg(feature = "pqc-signatures")]
 impl PqKeypair {
     pub fn generate() -> Self {
-        let (public_key, secret_key) = dilithium2::keypair();
+        let (public_key, secret_key) = mldsa44::keypair();
         Self {
             public_key,
             secret_key,
@@ -288,9 +288,9 @@ fn sign_pq(signing_hash: &[u8; 32], keys: &SignatureKeys<'_>) -> Result<Option<P
     #[cfg(feature = "pqc-signatures")]
     {
         if let Some(secret_key) = keys.pq {
-            let signature = dilithium2::detached_sign(signing_hash, secret_key);
+            let signature = mldsa44::detached_sign(signing_hash, secret_key);
             return Ok(Some(PqSignature {
-                scheme_id: PQ_SCHEME_DILITHIUM2.to_string(),
+                scheme_id: PQ_SCHEME_MLDSA44.to_string(),
                 signature: signature.as_bytes().to_vec(),
             }));
         }
@@ -312,7 +312,7 @@ fn verify_pq_signature(
     let Some(signature) = signatures.pq_signature.as_ref() else {
         return Err(anyhow!("pq signature missing"));
     };
-    if signature.scheme_id != PQ_SCHEME_DILITHIUM2 {
+    if signature.scheme_id != PQ_SCHEME_MLDSA44 {
         return Err(anyhow!(
             "unsupported pq signature scheme: {}",
             signature.scheme_id
@@ -324,7 +324,7 @@ fn verify_pq_signature(
         let public_key = pq_public_key.ok_or_else(|| anyhow!("pq public key is required"))?;
         let detached = DetachedSignature::from_bytes(&signature.signature)
             .map_err(|e| anyhow!("invalid pq signature bytes: {}", e))?;
-        dilithium2::verify_detached_signature(&detached, signing_hash, public_key)
+        mldsa44::verify_detached_signature(&detached, signing_hash, public_key)
             .map_err(|e| anyhow!("pq signature verification failed: {}", e))
     }
     #[cfg(not(feature = "pqc-signatures"))]
