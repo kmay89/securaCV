@@ -60,6 +60,7 @@
 #include "mesh_transport.h"
 #include "mesh_beacon.h"
 #include "mesh_channel_hop.h"
+#include "mesh_hub_election.h"
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
@@ -294,6 +295,25 @@ typedef void (*channel_lock_received_fn)(
     mesh_channel_hop::Reason   reason);
 
 void set_channel_lock_handler(channel_lock_received_fn fn);
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * HUB ELECTION — failover broadcast (PR 4c)
+ *
+ * When a sensor detects Hub absence, it broadcasts HUB_ELECTION with
+ * the elected fingerprint. Peers verify the election is deterministic
+ * (lowest fingerprint wins) and adopt the new Hub.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+bool send_hub_election(mesh_hub_election::Event event,
+                       const uint8_t fingerprint[mesh_crypto::FINGERPRINT_LEN],
+                       uint32_t now_ms);
+
+typedef void (*hub_election_received_fn)(
+    const uint8_t              sender_fp[mesh_crypto::FINGERPRINT_LEN],
+    mesh_hub_election::Event   event,
+    const uint8_t              elected_fp[mesh_crypto::FINGERPRINT_LEN]);
+
+void set_hub_election_handler(hub_election_received_fn fn);
 
 }  /* namespace mesh_session */
 

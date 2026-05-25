@@ -25,7 +25,8 @@
 #endif
 #include "log_level.h"
 #include "mesh_beacon.h"        // BEACON_EVENT wire format (PR canary-wap parity)
-#include "mesh_channel_hop.h"  // CHANNEL_LOCK wire format + HopTracker (PR 4b)
+#include "mesh_channel_hop.h"   // CHANNEL_LOCK wire format + HopTracker (PR 4b)
+#include "mesh_hub_election.h"  // HUB_ELECTION wire format + HubMonitor (PR 4c)
 
 // ════════════════════════════════════════════════════════════════════════════
 // CONFIGURATION
@@ -141,7 +142,9 @@ enum MessageType : uint8_t {
   // Note: this numbering is for canary-wap's outer frame type byte,
   // separate from mesh_envelope::MsgType (PIO's inner signed header).
   // The two don't interop on the same mesh so the values need not match.
-  MSG_CHANNEL_LOCK = 20
+  MSG_CHANNEL_LOCK = 20,
+  // PR 4c: Hub failover election broadcast.
+  MSG_HUB_ELECTION = 21
 };
 
 // Alert types
@@ -553,6 +556,24 @@ typedef void (*channel_lock_handler_fn)(
     mesh_channel_hop::Reason   reason);
 
 void set_channel_lock_handler(channel_lock_handler_fn fn);
+
+// ════════════════════════════════════════════════════════════════════════════
+// HUB ELECTION — failover broadcast (PR 4c)
+//
+// When the Hub's heartbeat is absent for 60s, sensors self-elect by
+// lowest fingerprint and broadcast HUB_ELECTION. Peers verify the
+// election is deterministic.
+// ════════════════════════════════════════════════════════════════════════════
+
+size_t send_hub_election(mesh_hub_election::Event event,
+                         const uint8_t fingerprint[FINGERPRINT_SIZE]);
+
+typedef void (*hub_election_handler_fn)(
+    const uint8_t              sender_fp[FINGERPRINT_SIZE],
+    mesh_hub_election::Event   event,
+    const uint8_t              elected_fp[FINGERPRINT_SIZE]);
+
+void set_hub_election_handler(hub_election_handler_fn fn);
 
 } // namespace mesh_network
 

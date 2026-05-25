@@ -114,7 +114,8 @@ enum class MsgType : uint8_t {
   WITNESS_RECORD = 21,
   BEACON_EVENT   = 22,   /* PR 5c — ble.scout arrived/departed broadcast */
   CHANNEL_LOCK   = 23,   /* PR 4b — coordinated channel-hop proposal */
-  /* 24..255 reserved for future use. */
+  HUB_ELECTION   = 24,   /* PR 4c — Hub failover election broadcast */
+  /* 25..255 reserved for future use. */
 };
 
 /* ──────────────────────────────────────────────────────────────────────────
