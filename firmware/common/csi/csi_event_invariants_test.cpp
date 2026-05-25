@@ -763,8 +763,8 @@ void test_per_module_ceiling() {
  * ────────────────────────────────────────────────────────────────────────── */
 void test_no_peer_mac_in_feature_vector() {
   /* Structural: the feature vector is exactly 32 bytes of int8. */
-  static_assert(sizeof(csi_features_t::v) == 32,
-                "feature vector must be exactly 32 int8 bytes");
+  static_assert(sizeof(csi_features_t::v) == CSI_FEATURE_DIM,
+                "feature vector must be exactly CSI_FEATURE_DIM int8 bytes");
   static_assert(sizeof(csi_features_t::v[0]) == 1,
                 "each feature element must be 1 byte (int8)");
 
@@ -780,7 +780,7 @@ void test_no_peer_mac_in_feature_vector() {
   csi_features_t f;
   memset(&f, 0, sizeof(f));
   int mac_like_runs = 0;
-  for (int i = 0; i <= 32 - 6; ++i) {
+  for (int i = 0; i <= CSI_FEATURE_DIM - 6; ++i) {
     bool nonzero = true;
     for (int j = 0; j < 6; ++j) {
       if (f.v[i + j] == 0) { nonzero = false; break; }
@@ -840,17 +840,8 @@ void test_rssi_bucketed_int8() {
   static_assert(sizeof(csi_features_t::v[23]) == 1,
                 "RSSI min must be int8 (1 byte)");
 
-  /* Runtime check: a feature vector's RSSI fields can't exceed int8 range. */
-  csi_features_t f;
-  memset(&f, 0, sizeof(f));
-  f.v[20] = -45;   /* typical RSSI mean */
-  f.v[21] = 3;     /* typical std */
-  f.v[22] = -40;   /* max */
-  f.v[23] = -50;   /* min */
-  EXPECT(f.v[20] >= -128 && f.v[20] <= 127,
-         "RSSI mean must fit int8 range");
-  EXPECT(f.v[22] - f.v[23] <= 127,
-         "RSSI swing must fit int8 difference");
+  /* The type system guarantees int8 range — no runtime check needed.
+   * The static_asserts above are the enforceable contract. */
 }
 
 }  /* namespace */
