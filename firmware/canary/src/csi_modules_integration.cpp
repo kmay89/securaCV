@@ -54,6 +54,7 @@
 #include "csi_hal.h"
 #endif
 
+#include "csi_hal.h"
 #include <Arduino.h>
 #include <Preferences.h>
 #include <string.h>
@@ -287,11 +288,31 @@ static void on_peer_hub_election(
 }
 #endif  /* FEATURE_MESH_NETWORK */
 
-/* CSI watchdog: the PIO build's securacv_csi library does not expose
- * csi_hal's watchdog API. The watchdog is wired in the canary-wap
- * build (csi_integration.cpp) where csi_hal.cpp is compiled as part
- * of the sketch. PIO nodes rely on the default 5 s watchdog that
- * fires the internal CSI rx toggle — no callback needed. */
+/* ──────────────────────────────────────────────────────────────────────────
+ * CSI WATCHDOG CALLBACK
+ *
+ * csi_hal's watchdog detects 0 frames for 5 s and toggles the CSI rx
+ * callback as a gentle recovery. This callback logs the event and
+ * escalates to a full csi_hal::stop()/start() after 3 consecutive
+ * failures.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+constexpr uint32_t WATCHDOG_ESCALATE_AFTER = 3;
+static uint32_t s_watchdog_consecutive = 0;
+
+static void on_csi_watchdog(uint32_t silent_ms, uint32_t attempt) {
+  ++s_watchdog_consecutive;
+  Serial.printf("[csi.watchdog] silent %ums, attempt %u (consecutive %u)\n",
+                (unsigned)silent_ms, (unsigned)attempt,
+                (unsigned)s_watchdog_consecutive);
+
+  if (s_watchdog_consecutive >= WATCHDOG_ESCALATE_AFTER) {
+    Serial.printf("[csi.watchdog] escalating: csi_hal stop/start\n");
+    csi_hal::stop();
+    csi_hal::start();
+    s_watchdog_consecutive = 0;
+  }
+}
 
 }  /* namespace */
 
@@ -412,12 +433,17 @@ extern "C" bool securacv_csi_modules_init(void) {
   mesh_session::set_hub_election_handler(&on_peer_hub_election);
 #endif
 
+  csi_hal::set_watchdog(csi_hal::WATCHDOG_DEFAULT_TIMEOUT_MS,
+                        &on_csi_watchdog);
+
   s_initialized = true;
   return true;
 }
 
 extern "C" void securacv_csi_modules_feed(const void* features_blob) {
   if (!s_initialized || !features_blob) return;
+
+  s_watchdog_consecutive = 0;
 
 #if defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN \
     && defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK

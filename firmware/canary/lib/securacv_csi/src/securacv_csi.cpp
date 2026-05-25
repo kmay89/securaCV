@@ -94,6 +94,7 @@ static std::atomic<uint32_t> s_frames_received{0};
 static std::atomic<uint32_t> s_frames_dropped_rssi{0};
 static std::atomic<uint32_t> s_frames_dropped_rate{0};
 static std::atomic<uint32_t> s_frames_dropped_full{0};
+static std::atomic<uint32_t> s_last_frame_ms{0};
 static std::atomic<uint32_t> s_windows_emitted{0};
 static std::atomic<uint32_t> s_windows_degraded{0};
 
@@ -431,6 +432,7 @@ static void csi_rx_cb(void* /*ctx*/, wifi_csi_info_t* info) {
 
   s_head.store(head + 1, std::memory_order_release);
   s_frames_received.fetch_add(1, std::memory_order_relaxed);
+  s_last_frame_ms.store(millis(), std::memory_order_relaxed);
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -757,3 +759,128 @@ uint32_t csi_get_caps(void)           { return csi::get_caps(); }
 bool     csi_get_stats(csi_stats_t* o){ return csi::get_stats(o); }
 
 }  /* extern "C" */
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * csi_hal NAMESPACE SHIM
+ *
+ * The canary-wap build uses firmware/common/csi/src/csi_hal.cpp directly.
+ * PIO cannot link that file (double-registration of esp_wifi_set_csi_rx_cb
+ * would crash). This shim implements the csi_hal:: symbols the integration
+ * layer needs, forwarding to the existing csi:: internals above and adding
+ * the channel-lock + watchdog state that csi_hal.h declares.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+#define SECURACV_CSI_TYPES_H
+#include "csi_hal.h"
+
+namespace csi_hal {
+
+static uint8_t s_channel_lock = 0;
+static bool    s_channel_lock_applied = false;
+
+static uint32_t              s_wd_timeout_ms = WATCHDOG_DEFAULT_TIMEOUT_MS;
+static WatchdogCallback      s_wd_cb = nullptr;
+static uint32_t              s_wd_last_recovery_ms = 0;
+static uint32_t              s_wd_recovery_count = 0;
+
+bool init(const Config&) {
+  return true;
+}
+
+void deinit() {
+  csi::deinit();
+}
+
+bool start() {
+  csi::s_last_frame_ms.store(0, std::memory_order_relaxed);
+  s_wd_last_recovery_ms = 0;
+  return csi::start();
+}
+
+void stop() {
+  csi::stop();
+}
+
+bool is_running() {
+  return csi::is_running();
+}
+
+void set_features_callback(FeaturesCallback cb) {
+  csi::set_features_callback(cb);
+}
+
+int process() {
+  int n = csi::process();
+
+  /* Watchdog check — same logic as common/csi_hal.cpp. */
+  if (s_wd_timeout_ms == 0) return n;
+  if (!csi::is_running()) return n;
+
+  const uint32_t last = csi::s_last_frame_ms.load(std::memory_order_relaxed);
+  const uint32_t ref = (last == 0) ? csi::s_window_start_ms : last;
+  const uint32_t now = millis();
+  if ((int32_t)(now - ref) < (int32_t)s_wd_timeout_ms) return n;
+
+  if (s_wd_last_recovery_ms != 0 &&
+      (int32_t)(now - s_wd_last_recovery_ms) < (int32_t)WATCHDOG_RECOVERY_MIN_MS) {
+    return n;
+  }
+  s_wd_last_recovery_ms = now;
+  s_wd_recovery_count++;
+
+  Serial.printf("[csi_hal] CSI silent for %ums; recovery attempt %u\n",
+                (unsigned)(now - ref), (unsigned)s_wd_recovery_count);
+
+  if (s_wd_cb) s_wd_cb(now - ref, s_wd_recovery_count);
+
+#if SECURACV_HAVE_CSI_API
+  esp_wifi_set_csi(false);
+  esp_wifi_set_csi(true);
+#endif
+
+  return n;
+}
+
+bool get_stats(csi_stats_t* out) {
+  return csi::get_stats(out);
+}
+
+bool set_channel_lock(uint8_t channel) {
+  if (channel > 14) return false;
+  s_channel_lock = channel;
+  if (channel == 0) { s_channel_lock_applied = true; return true; }
+  s_channel_lock_applied = false;
+#if SECURACV_HAVE_CSI_API
+  esp_err_t err = esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
+  if (err == ESP_OK) s_channel_lock_applied = true;
+#endif
+  return true;
+}
+
+uint8_t get_channel_lock() { return s_channel_lock; }
+
+uint8_t get_observed_channel() {
+  return csi::features::s_last_channel;
+}
+
+bool is_channel_in_sync() {
+  if (s_channel_lock == 0) return true;
+  return csi::features::s_last_channel == s_channel_lock;
+}
+
+void set_watchdog(uint32_t timeout_ms, WatchdogCallback cb) {
+  s_wd_timeout_ms = timeout_ms;
+  s_wd_cb = cb;
+}
+
+uint32_t get_watchdog_timeout_ms() { return s_wd_timeout_ms; }
+
+uint32_t get_ms_since_last_frame() {
+  const uint32_t last = csi::s_last_frame_ms.load(std::memory_order_relaxed);
+  if (last == 0) return UINT32_MAX;
+  return millis() - last;
+}
+
+uint32_t get_watchdog_recovery_count() { return s_wd_recovery_count; }
+
+}  /* namespace csi_hal */
