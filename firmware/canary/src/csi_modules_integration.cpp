@@ -50,6 +50,7 @@
 #include "mesh_session.h"
 #endif
 #include "mesh_channel_hop.h"
+#include "mesh_hub_election.h"
 #include "csi_hal.h"
 #endif
 
@@ -268,6 +269,22 @@ static void on_peer_channel_lock(
   Serial.printf("[mesh.channel] lock ch=%u reason=%u from fp=%s\n",
                 channel, (unsigned)reason, fp_hex);
 }
+
+static void on_peer_hub_election(
+    const uint8_t              sender_fp[mesh_crypto::FINGERPRINT_LEN],
+    mesh_hub_election::Event   event,
+    const uint8_t              elected_fp[mesh_crypto::FINGERPRINT_LEN]) {
+  char sender_hex[2 * mesh_crypto::FINGERPRINT_LEN + 1];
+  char elected_hex[2 * mesh_crypto::FINGERPRINT_LEN + 1];
+  format_fingerprint(sender_fp, sender_hex);
+  format_fingerprint(elected_fp, elected_hex);
+
+  Serial.printf("[mesh.election] %s from fp=%s elected=%s\n",
+                event == mesh_hub_election::Event::HUB_ELECTED ? "elected"
+                : event == mesh_hub_election::Event::HUB_ABSENT ? "absent"
+                : "?",
+                sender_hex, elected_hex);
+}
 #endif  /* FEATURE_MESH_NETWORK */
 
 }  /* namespace */
@@ -386,6 +403,7 @@ extern "C" bool securacv_csi_modules_init(void) {
 
 #if defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
   mesh_session::set_channel_lock_handler(&on_peer_channel_lock);
+  mesh_session::set_hub_election_handler(&on_peer_hub_election);
 #endif
 
   s_initialized = true;
