@@ -137,6 +137,12 @@ bool start();
 void stop();
 bool is_running();
 
+/* Pause/resume probe sends without tearing down state. While paused,
+ * process() skips all sends. Used during channel-hop recovery to avoid
+ * probing on the wrong channel. */
+void set_paused(bool paused);
+bool is_paused();
+
 /* ──────────────────────────────────────────────────────────────────────────
  * PEER REGISTRY
  *
