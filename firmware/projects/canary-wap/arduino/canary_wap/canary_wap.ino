@@ -2767,6 +2767,9 @@ static esp_err_t handle_reboot(httpd_req_t* req) {
   serializeJson(doc, response);
   http_send_json(req, response.c_str());
   
+#if FEATURE_MESH_NETWORK
+  mesh_network::save_replay_counters();
+#endif
   delay(500);
   ESP.restart();
   return ESP_OK;
@@ -6437,7 +6440,8 @@ void loop() {
   {
     static uint32_t s_last_replay_save_ms = 0;
     uint32_t now = millis();
-    if ((int32_t)(now - s_last_replay_save_ms) >= 300000) {
+    constexpr uint32_t REPLAY_SAVE_INTERVAL_MS = 300000;
+    if ((int32_t)(now - s_last_replay_save_ms) >= (int32_t)REPLAY_SAVE_INTERVAL_MS) {
       s_last_replay_save_ms = now;
       mesh_network::save_replay_counters();
     }
