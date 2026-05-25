@@ -56,7 +56,6 @@
 
 #include <Arduino.h>
 #include <Preferences.h>
-#include <esp_wifi.h>
 #include <string.h>
 
 #if defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN \
@@ -296,17 +295,20 @@ static void on_peer_hub_election(
  * escalates to a full WiFi restart after 3 consecutive failures.
  * ────────────────────────────────────────────────────────────────────────── */
 
-constexpr uint32_t WATCHDOG_ESCALATE_ATTEMPT = 3;
+constexpr uint32_t WATCHDOG_ESCALATE_AFTER = 3;
+static uint32_t s_watchdog_consecutive = 0;
 
 static void on_csi_watchdog(uint32_t silent_ms, uint32_t attempt) {
-  Serial.printf("[csi.watchdog] silent %ums, attempt %u\n",
-                (unsigned)silent_ms, (unsigned)attempt);
+  ++s_watchdog_consecutive;
+  Serial.printf("[csi.watchdog] silent %ums, attempt %u (consecutive %u)\n",
+                (unsigned)silent_ms, (unsigned)attempt,
+                (unsigned)s_watchdog_consecutive);
 
-  if (attempt > 0 && (attempt % WATCHDOG_ESCALATE_ATTEMPT) == 0) {
-    Serial.printf("[csi.watchdog] escalating: WiFi stop/start (attempt %u)\n",
-                  (unsigned)attempt);
-    esp_wifi_stop();
-    esp_wifi_start();
+  if (s_watchdog_consecutive >= WATCHDOG_ESCALATE_AFTER) {
+    Serial.printf("[csi.watchdog] escalating: csi_hal stop/start\n");
+    csi_hal::stop();
+    csi_hal::start();
+    s_watchdog_consecutive = 0;
   }
 }
 
@@ -438,6 +440,8 @@ extern "C" bool securacv_csi_modules_init(void) {
 
 extern "C" void securacv_csi_modules_feed(const void* features_blob) {
   if (!s_initialized || !features_blob) return;
+
+  s_watchdog_consecutive = 0;
 
 #if defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN \
     && defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK

@@ -42,7 +42,6 @@
 #include <Preferences.h>          // NVS-backed settings store
 #include <esp_http_server.h>
 #include <esp_random.h>           // esp_fill_random() — pairing token entropy
-#include <esp_wifi.h>             // esp_wifi_stop/start — watchdog escalation
 #include <string.h>
 #include <stdlib.h>
 
@@ -338,6 +337,7 @@ void calibration_observe(const csi_features_t* features) {
 
 void on_csi_window(const csi_features_t* features, void* /*user*/) {
   if (!features) return;
+  s_watchdog_consecutive = 0;
   g_latest_window      = *features;
   g_have_latest_window = true;
   /* Calibration runs in parallel with the normal module pipeline so a
@@ -1941,17 +1941,20 @@ void on_peer_beacon_event_inbound(
  * escalates to a full WiFi restart after 3 consecutive failures.
  * ────────────────────────────────────────────────────────────────────────── */
 
-constexpr uint32_t WATCHDOG_ESCALATE_ATTEMPT = 3;
+constexpr uint32_t WATCHDOG_ESCALATE_AFTER = 3;
+uint32_t s_watchdog_consecutive = 0;
 
 void on_csi_watchdog(uint32_t silent_ms, uint32_t attempt) {
-  Serial.printf("[csi.watchdog] silent %ums, attempt %u\n",
-                (unsigned)silent_ms, (unsigned)attempt);
+  ++s_watchdog_consecutive;
+  Serial.printf("[csi.watchdog] silent %ums, attempt %u (consecutive %u)\n",
+                (unsigned)silent_ms, (unsigned)attempt,
+                (unsigned)s_watchdog_consecutive);
 
-  if (attempt > 0 && (attempt % WATCHDOG_ESCALATE_ATTEMPT) == 0) {
-    Serial.printf("[csi.watchdog] escalating: WiFi stop/start (attempt %u)\n",
-                  (unsigned)attempt);
-    esp_wifi_stop();
-    esp_wifi_start();
+  if (s_watchdog_consecutive >= WATCHDOG_ESCALATE_AFTER) {
+    Serial.printf("[csi.watchdog] escalating: csi_hal stop/start\n");
+    csi_hal::stop();
+    csi_hal::start();
+    s_watchdog_consecutive = 0;
   }
 }
 
