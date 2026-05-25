@@ -116,6 +116,7 @@ impl SignatureSet {
 #[derive(Clone, Debug)]
 pub struct PqKeypair {
     pub public_key: PublicKey,
+    secret_key_bytes: zeroize::Zeroizing<Vec<u8>>,
     pub secret_key: SecretKey,
 }
 
@@ -123,8 +124,10 @@ pub struct PqKeypair {
 impl PqKeypair {
     pub fn generate() -> Self {
         let (public_key, secret_key) = mldsa44::keypair();
+        let secret_key_bytes = zeroize::Zeroizing::new(secret_key.as_bytes().to_vec());
         Self {
             public_key,
+            secret_key_bytes,
             secret_key,
         }
     }
@@ -132,11 +135,13 @@ impl PqKeypair {
     pub fn from_bytes(public_key: &[u8], secret_key: &[u8]) -> Result<Self> {
         let public_key = PublicKey::from_bytes(public_key)
             .map_err(|e| anyhow!("invalid pq public key bytes: {}", e))?;
-        let secret_key = SecretKey::from_bytes(secret_key)
+        let sk = SecretKey::from_bytes(secret_key)
             .map_err(|e| anyhow!("invalid pq secret key bytes: {}", e))?;
+        let secret_key_bytes = zeroize::Zeroizing::new(sk.as_bytes().to_vec());
         Ok(Self {
             public_key,
-            secret_key,
+            secret_key_bytes,
+            secret_key: sk,
         })
     }
 
@@ -145,7 +150,7 @@ impl PqKeypair {
     }
 
     pub fn secret_key_bytes(&self) -> Vec<u8> {
-        self.secret_key.as_bytes().to_vec()
+        self.secret_key_bytes.to_vec()
     }
 }
 
@@ -213,14 +218,13 @@ pub fn verify_with_domain(
     let pq_result = verify_pq_signature(&signing_hash, signatures, pq_public_key);
 
     match mode {
-        SignatureMode::Compat => match (ed_result, pq_result) {
-            (Ok(_), _) | (_, Ok(_)) => Ok(()),
-            (Err(ed_err), Err(pq_err)) => Err(anyhow!(
-                "signature verification failed: ed25519_error={}, pq_error={}",
-                ed_err,
-                pq_err
-            )),
-        },
+        SignatureMode::Compat => {
+            ed_result?;
+            if pq_result.is_err() && signatures.pq_signature.is_some() {
+                pq_result?;
+            }
+            Ok(())
+        }
         SignatureMode::Strict => {
             ed_result?;
             pq_result?;

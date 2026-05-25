@@ -177,7 +177,11 @@ mod linux {
         }
 
         if pid == 0 {
-            unsafe { close(fds[0]) };
+            unsafe {
+                close(fds[0]);
+                // Prevent core dumps that could leak inherited key material.
+                libc::prctl(libc::PR_SET_DUMPABLE, 0, 0, 0, 0);
+            }
             let response = match install_filter().and_then(|_| f()) {
                 Ok(value) => SandboxResponse::Ok(value),
                 Err(err) => SandboxResponse::Err(format!("{err:#}")),
