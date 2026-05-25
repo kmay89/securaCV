@@ -477,6 +477,25 @@ bool CameraManager::applyPreset(const char* name) {
     s->set_whitebal(s, 1);
     s->set_wb_mode(s, 0);
     m_frame_delay_ms = 100;
+  } else if (strcmp(name, "dynamic") == 0) {
+    // All auto features at their most responsive — let the sensor ISP
+    // continuously adapt to changing light without manual intervention.
+    s->set_brightness(s, 0);
+    s->set_contrast(s, 0);
+    s->set_saturation(s, 0);
+    s->set_exposure_ctrl(s, 1);  // AEC on
+    s->set_aec2(s, 1);          // DSP-level AEC on
+    s->set_ae_level(s, 0);
+    s->set_gain_ctrl(s, 1);     // AGC on
+    s->set_gainceiling(s, (gainceiling_t)GAINCEILING_8X);
+    s->set_whitebal(s, 1);      // AWB on
+    s->set_awb_gain(s, 1);      // AWB gain on
+    s->set_wb_mode(s, 0);       // Auto WB mode
+    s->set_bpc(s, 1);
+    s->set_wpc(s, 1);
+    s->set_raw_gma(s, 1);
+    s->set_lenc(s, 1);
+    m_frame_delay_ms = 40;
   } else {
     return false;
   }

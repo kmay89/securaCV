@@ -1400,6 +1400,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         <div style="margin-top:1rem;">
           <div class="form-label">Scene Presets</div>
           <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+            <button class="btn btn-sm btn-primary" onclick="applyPreset('dynamic')">Dynamic Auto</button>
             <button class="btn btn-sm" onclick="applyPreset('indoor')">Indoor</button>
             <button class="btn btn-sm" onclick="applyPreset('outdoor')">Outdoor</button>
             <button class="btn btn-sm" onclick="applyPreset('low_light')">Low Light</button>
