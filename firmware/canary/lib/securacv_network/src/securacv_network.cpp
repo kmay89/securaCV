@@ -1284,6 +1284,10 @@ static esp_err_t handle_peek_resolution(httpd_req_t* req) {
     return http_send_error(req, 503, "camera_not_initialized");
   }
 
+  if (req->content_len >= 64) {
+    return http_send_error(req, 413, "payload_too_large");
+  }
+
   char content[64] = {0};
   int ret = httpd_req_recv(req, content, sizeof(content) - 1);
   if (ret <= 0) {
@@ -1360,6 +1364,10 @@ static esp_err_t handle_peek_sensor_set(httpd_req_t* req) {
   CameraManager& cam = camera_get_instance();
   if (!cam.isInitialized()) {
     return http_send_error(req, 503, "camera_not_initialized");
+  }
+
+  if (req->content_len >= 512) {
+    return http_send_error(req, 413, "payload_too_large");
   }
 
   char content[512] = {0};

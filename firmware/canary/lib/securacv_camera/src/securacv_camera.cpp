@@ -202,9 +202,11 @@ void CameraManager::end() {
 }
 
 bool CameraManager::reinit() {
-  bool was_active = m_peek_active;
+  if (m_peek_active) {
+    m_peek_active = false;
+    delay(150);
+  }
   end();
-  if (was_active) delay(150);
   return begin();
 }
 

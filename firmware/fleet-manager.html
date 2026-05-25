@@ -1113,7 +1113,7 @@ var FM = (function() {
       '<div style="margin-top:0.85rem;padding:0.75rem;background:rgba(0,0,0,0.15);border-radius:8px;">' +
         '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem;">' +
           '<span style="font-size:0.73rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.04em;">Image Controls</span>' +
-          '<button class="btn btn-sm" onclick="fmResetSensor()">Reset</button>' +
+          '<button class="btn btn-sm" onclick="FM._fmResetSensor()">Reset</button>' +
         '</div>' +
         '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:0.5rem 1rem;font-size:0.78rem;">' +
           '<label style="color:var(--muted);">Brightness: <span id="fmBrtV">--</span>' +
@@ -1523,7 +1523,8 @@ var FM = (function() {
     removeCurrent: removeCurrent,
     hideModal:     hideModal,
     _fmSlider:     fmSlider,
-    _fmToggle:     fmToggle
+    _fmToggle:     fmToggle,
+    _fmResetSensor: fmResetSensor
   };
 
 })();
