@@ -195,6 +195,7 @@ bool init(const Config& cfg) {
   memset(s_peers, 0, sizeof(s_peers));
   s_seq = 0;
   s_next_broadcast_ms = 0;
+  s_paused = false;
   s_unicasts_sent = s_unicasts_failed = 0;
   s_broadcasts_sent = s_broadcasts_failed = 0;
   s_ticks_skipped_rate = s_ticks_skipped_idle = 0;
@@ -266,7 +267,23 @@ void stop() {
 
 bool is_running() { return s_running; }
 
-void set_paused(bool paused) { s_paused = paused; }
+void set_paused(bool paused) {
+  if (s_paused && !paused && s_running) {
+    const uint32_t t = now_ms();
+    const size_t peers = peer_count();
+    const uint32_t period =
+        period_ms_from_rate(effective_per_peer_rate(peers));
+    size_t j = 0;
+    for (size_t i = 0; i < CSI_PROBE_MAX_PEERS; ++i) {
+      if (!s_peers[i].in_use) continue;
+      const uint32_t phase = peers > 0 ? ((uint32_t)j * period) / (uint32_t)peers : 0;
+      s_peers[i].next_send_ms = t + phase;
+      ++j;
+    }
+    s_next_broadcast_ms = t;
+  }
+  s_paused = paused;
+}
 bool is_paused() { return s_paused; }
 
 /* ──────────────────────────────────────────────────────────────────────────

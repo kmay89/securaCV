@@ -2042,6 +2042,10 @@ void channel_recovery_tick() {
                     csi_hal::get_channel_lock(),
                     csi_hal::get_observed_channel());
     }
+    uint8_t observed = csi_hal::get_observed_channel();
+    if (observed != 0 && observed != csi_hal::get_channel_lock()) {
+      csi_hal::set_channel_lock(observed);
+    }
   } else if (s_channel_desync_detected) {
     s_channel_desync_detected = false;
     csi_probe::set_paused(false);
