@@ -397,6 +397,10 @@ const SettingKey SETTING_KEYS[] = {
   { "core.presence.active_threshold",    "cp.at"         },
   { "core.presence.breathing_threshold", "cp.bt"         },
   { "core.presence.pet_mode_seconds",    "cp.ps"         },
+  /* shimmer filter */
+  { "core.presence.shimmer_rssi_swing",  "cp.srs"        },
+  { "core.presence.shimmer_doppler_floor","cp.sdf"       },
+  { "core.presence.shimmer_enabled",     "cp.se"         },
   { "core.breathing.lock_threshold",     "cb.lt"         },
   { "core.breathing.confirm_seconds",    "cb.cs"         },
   /* Quiet Hours — a single time range (minutes-of-day, 0..1439) that
