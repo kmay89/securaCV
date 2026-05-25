@@ -42,6 +42,7 @@
 #include <Preferences.h>          // NVS-backed settings store
 #include <esp_http_server.h>
 #include <esp_random.h>           // esp_fill_random() — pairing token entropy
+#include <esp_wifi.h>             // esp_wifi_stop/start — watchdog escalation
 #include <string.h>
 #include <stdlib.h>
 
@@ -1932,6 +1933,28 @@ void on_peer_beacon_event_inbound(
 }
 #endif  /* FEATURE_BLE_SCAN && FEATURE_MESH_NETWORK */
 
+/* ──────────────────────────────────────────────────────────────────────────
+ * CSI WATCHDOG CALLBACK
+ *
+ * csi_hal's watchdog detects 0 frames for 5 s and toggles the CSI rx
+ * callback as a gentle recovery. This callback logs the event and
+ * escalates to a full WiFi restart after 3 consecutive failures.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+constexpr uint32_t WATCHDOG_ESCALATE_ATTEMPT = 3;
+
+void on_csi_watchdog(uint32_t silent_ms, uint32_t attempt) {
+  Serial.printf("[csi.watchdog] silent %ums, attempt %u\n",
+                (unsigned)silent_ms, (unsigned)attempt);
+
+  if (attempt > 0 && (attempt % WATCHDOG_ESCALATE_ATTEMPT) == 0) {
+    Serial.printf("[csi.watchdog] escalating: WiFi stop/start (attempt %u)\n",
+                  (unsigned)attempt);
+    esp_wifi_stop();
+    esp_wifi_start();
+  }
+}
+
 #if FEATURE_MESH_NETWORK
 /* ──────────────────────────────────────────────────────────────────────────
  * CHANNEL-HOP COORDINATOR (PR 4b integration)
@@ -2204,6 +2227,9 @@ void register_v1_modules() {
    * dashboard's settings panel writes qh.en / qh.start / qh.end via
    * /api/settings POST; rebooting the device picks them back up. */
   apply_quiet_hours_from_nvs();
+
+  csi_hal::set_watchdog(csi_hal::WATCHDOG_DEFAULT_TIMEOUT_MS,
+                        &on_csi_watchdog);
 }
 
 }  /* namespace */

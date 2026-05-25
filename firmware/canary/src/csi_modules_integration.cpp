@@ -56,6 +56,7 @@
 
 #include <Arduino.h>
 #include <Preferences.h>
+#include <esp_wifi.h>
 #include <string.h>
 
 #if defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN \
@@ -287,6 +288,28 @@ static void on_peer_hub_election(
 }
 #endif  /* FEATURE_MESH_NETWORK */
 
+/* ──────────────────────────────────────────────────────────────────────────
+ * CSI WATCHDOG CALLBACK
+ *
+ * csi_hal's watchdog detects 0 frames for 5 s and toggles the CSI rx
+ * callback as a gentle recovery. This callback logs the event and
+ * escalates to a full WiFi restart after 3 consecutive failures.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+constexpr uint32_t WATCHDOG_ESCALATE_ATTEMPT = 3;
+
+static void on_csi_watchdog(uint32_t silent_ms, uint32_t attempt) {
+  Serial.printf("[csi.watchdog] silent %ums, attempt %u\n",
+                (unsigned)silent_ms, (unsigned)attempt);
+
+  if (attempt > 0 && (attempt % WATCHDOG_ESCALATE_ATTEMPT) == 0) {
+    Serial.printf("[csi.watchdog] escalating: WiFi stop/start (attempt %u)\n",
+                  (unsigned)attempt);
+    esp_wifi_stop();
+    esp_wifi_start();
+  }
+}
+
 }  /* namespace */
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -405,6 +428,9 @@ extern "C" bool securacv_csi_modules_init(void) {
   mesh_session::set_channel_lock_handler(&on_peer_channel_lock);
   mesh_session::set_hub_election_handler(&on_peer_hub_election);
 #endif
+
+  csi_hal::set_watchdog(csi_hal::WATCHDOG_DEFAULT_TIMEOUT_MS,
+                        &on_csi_watchdog);
 
   s_initialized = true;
   return true;
