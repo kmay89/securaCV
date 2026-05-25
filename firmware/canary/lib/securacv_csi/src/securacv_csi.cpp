@@ -770,25 +770,18 @@ bool     csi_get_stats(csi_stats_t* o){ return csi::get_stats(o); }
  * the channel-lock + watchdog state that csi_hal.h declares.
  * ────────────────────────────────────────────────────────────────────────── */
 
+#define SECURACV_CSI_TYPES_H
 #include "csi_hal.h"
 
 namespace csi_hal {
 
 static uint8_t s_channel_lock = 0;
 static bool    s_channel_lock_applied = false;
-static uint8_t s_observed_channel = 0;
 
 static uint32_t              s_wd_timeout_ms = WATCHDOG_DEFAULT_TIMEOUT_MS;
 static WatchdogCallback      s_wd_cb = nullptr;
 static uint32_t              s_wd_last_recovery_ms = 0;
 static uint32_t              s_wd_recovery_count = 0;
-
-Config Config::defaults() {
-  Config c;
-  c.bandwidth_mhz = 20;
-  c.max_frame_rate_hz = 20;
-  return c;
-}
 
 bool init(const Config&) {
   return true;
