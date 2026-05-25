@@ -122,6 +122,24 @@ static void derive_ap_password(const uint8_t fingerprint[8], char* password, siz
  * already had the secret when start_pairing_initiator() was called
  * (its persistence is the integration layer's responsibility before
  * pairing kicks off). */
+static void persist_replay_counters() {
+#if FEATURE_MESH_NETWORK
+  uint8_t fps[mesh_session::MAX_TRUSTED_PEERS][mesh_crypto::FINGERPRINT_LEN];
+  uint64_t ctrs[mesh_session::MAX_TRUSTED_PEERS];
+  const size_t n = mesh_session::get_replay_counters(fps, ctrs,
+                                                     mesh_session::MAX_TRUSTED_PEERS);
+  if (n == 0) return;
+  const size_t save_count = (n > mesh_state::MAX_REPLAY_ENTRIES)
+                          ? mesh_state::MAX_REPLAY_ENTRIES : n;
+  mesh_state::ReplayEntry entries[mesh_state::MAX_REPLAY_ENTRIES];
+  for (size_t i = 0; i < save_count; ++i) {
+    memcpy(entries[i].fingerprint, fps[i], mesh_crypto::FINGERPRINT_LEN);
+    entries[i].last_counter = ctrs[i];
+  }
+  mesh_state::save_replay_counters(entries, save_count);
+#endif
+}
+
 static void on_pairing_succeeded(const uint8_t* secret, uint32_t code) {
   if (secret == nullptr) {
     Serial.printf("[OK] Paired as initiator (code=%06u) — opera_secret "
@@ -463,6 +481,29 @@ void setup() {
 #endif
     }
 
+    /* Restore per-peer replay counters from NVS so replay defense
+     * survives reboots. Must run AFTER register_trusted_peer so the
+     * peer table is populated for restore_replay_counter to look up. */
+    {
+      mesh_state::ReplayEntry entries[mesh_state::MAX_REPLAY_ENTRIES];
+      size_t count = 0;
+      if (mesh_state::load_replay_counters(entries,
+                                           mesh_state::MAX_REPLAY_ENTRIES,
+                                           &count)) {
+        size_t restored = 0;
+        for (size_t i = 0; i < count; ++i) {
+          if (mesh_session::restore_replay_counter(
+                  entries[i].fingerprint, entries[i].last_counter)) {
+            ++restored;
+          }
+        }
+        if (count > 0) {
+          Serial.printf("[OK] Restored %u/%u replay counters from NVS\n",
+                        (unsigned)restored, (unsigned)count);
+        }
+      }
+    }
+
     /* Wire the PairedCallback so a successful pairing flow persists
      * the opera_secret + peer pubkey to NVS and immediately seeds
      * mesh_session with them. Only the joiner-side callback receives
@@ -779,6 +820,15 @@ void loop() {
    * Both are no-ops until init() succeeds. */
   mesh_transport::process();
   mesh_session::process((uint32_t)millis());
+
+  {
+    static uint32_t s_last_replay_save_ms = 0;
+    const uint32_t now = millis();
+    if ((int32_t)(now - s_last_replay_save_ms) >= 300000) {
+      s_last_replay_save_ms = now;
+      persist_replay_counters();
+    }
+  }
 #endif
 
   // Handle serial commands

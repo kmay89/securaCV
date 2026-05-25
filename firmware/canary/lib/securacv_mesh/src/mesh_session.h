@@ -260,6 +260,19 @@ bool   register_trusted_peer(const uint8_t pubkey[mesh_crypto::PUBKEY_LEN]);
 void   clear_trusted_peers();
 size_t trusted_peer_count();
 
+/* Snapshot the per-peer replay counters for NVS persistence.
+ * out must hold at least MAX_TRUSTED_PEERS entries. Returns the
+ * number of in-use entries written. */
+size_t get_replay_counters(uint8_t (*out_fps)[mesh_crypto::FINGERPRINT_LEN],
+                           uint64_t* out_counters,
+                           size_t    out_cap);
+
+/* Restore a peer's last_counter from NVS. Looks up by fingerprint;
+ * updates if found AND the persisted counter > current. Returns true
+ * if the counter was updated. */
+bool   restore_replay_counter(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
+                              uint64_t counter);
+
 /* Beacon-event receiver callback. `sender_fp` lets the handler
  * correlate events with the Scout that sent them (each paired Scout
  * has a unique fingerprint). `label` is sanitized printable ASCII —

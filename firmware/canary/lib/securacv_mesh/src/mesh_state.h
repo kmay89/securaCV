@@ -150,6 +150,32 @@ bool load_trusted_peers(uint8_t* out_pubkeys,
  * On the host build, always returns true (no-op success). */
 bool clear_trusted_peers();
 
+/* ──────────────────────────────────────────────────────────────────────────
+ * REPLAY COUNTERS — per-peer last_counter persistence
+ *
+ * Stores the per-peer (fingerprint[8], last_counter[8]) table to NVS
+ * so replay defense survives reboots. Without persistence, a reboot
+ * resets all counters to 0, opening a narrow replay window for any
+ * frames recorded before the reboot whose counter > 0.
+ *
+ * Flash-encryption gated (same as opera_secret + trusted_peers).
+ * ────────────────────────────────────────────────────────────────────────── */
+
+struct ReplayEntry {
+  uint8_t  fingerprint[mesh_crypto::FINGERPRINT_LEN];
+  uint64_t last_counter;
+};
+
+constexpr size_t MAX_REPLAY_ENTRIES = 8;
+
+bool save_replay_counters(const ReplayEntry* entries, size_t count);
+
+bool load_replay_counters(ReplayEntry* out_entries,
+                          size_t       out_cap,
+                          size_t*      out_count);
+
+bool clear_replay_counters();
+
 }  /* namespace mesh_state */
 
 #endif  /* SECURACV_MESH_STATE_H */

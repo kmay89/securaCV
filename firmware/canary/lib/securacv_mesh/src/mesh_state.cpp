@@ -260,4 +260,94 @@ bool clear_trusted_peers() {
 #endif
 }
 
+/* ──────────────────────────────────────────────────────────────────────────
+ * REPLAY COUNTERS
+ * ────────────────────────────────────────────────────────────────────────── */
+
+#ifndef CSI_TEST_HOST_BUILD
+constexpr const char* NVS_KEY_REPLAY = "replay_ctrs";
+constexpr size_t ENTRY_SIZE = mesh_crypto::FINGERPRINT_LEN + sizeof(uint64_t);
+#endif
+
+bool save_replay_counters(const ReplayEntry* entries, size_t count) {
+#ifdef CSI_TEST_HOST_BUILD
+  (void)entries; (void)count;
+  return true;
+#else
+  if (entries == nullptr && count > 0) return false;
+  if (count > MAX_REPLAY_ENTRIES) return false;
+  if (!esp_flash_encryption_enabled()) return false;
+
+  Preferences prefs;
+  if (!prefs.begin(NVS_NAMESPACE, /*readOnly=*/false)) return false;
+
+  uint8_t blob[MAX_REPLAY_ENTRIES * ENTRY_SIZE];
+  size_t offset = 0;
+  for (size_t i = 0; i < count; ++i) {
+    memcpy(blob + offset, entries[i].fingerprint, mesh_crypto::FINGERPRINT_LEN);
+    offset += mesh_crypto::FINGERPRINT_LEN;
+    memcpy(blob + offset, &entries[i].last_counter, sizeof(uint64_t));
+    offset += sizeof(uint64_t);
+  }
+
+  const size_t put = prefs.putBytes(NVS_KEY_REPLAY, blob, offset);
+  prefs.end();
+  return put == offset;
+#endif
+}
+
+bool load_replay_counters(ReplayEntry* out_entries,
+                          size_t       out_cap,
+                          size_t*      out_count) {
+#ifdef CSI_TEST_HOST_BUILD
+  if (out_count) *out_count = 0;
+  return true;
+#else
+  if (out_entries == nullptr || out_count == nullptr) return false;
+  if (out_cap < MAX_REPLAY_ENTRIES) return false;
+  if (!esp_flash_encryption_enabled()) return false;
+
+  Preferences prefs;
+  if (!prefs.begin(NVS_NAMESPACE, /*readOnly=*/true)) return false;
+
+  if (!prefs.isKey(NVS_KEY_REPLAY)) {
+    *out_count = 0;
+    prefs.end();
+    return true;
+  }
+
+  uint8_t blob[MAX_REPLAY_ENTRIES * ENTRY_SIZE];
+  const size_t got = prefs.getBytes(NVS_KEY_REPLAY, blob, sizeof(blob));
+  prefs.end();
+
+  if (got == 0 || (got % ENTRY_SIZE) != 0) {
+    *out_count = 0;
+    return got == 0;
+  }
+
+  size_t n = got / ENTRY_SIZE;
+  if (n > MAX_REPLAY_ENTRIES) n = MAX_REPLAY_ENTRIES;
+  for (size_t i = 0; i < n; ++i) {
+    const size_t off = i * ENTRY_SIZE;
+    memcpy(out_entries[i].fingerprint, blob + off, mesh_crypto::FINGERPRINT_LEN);
+    memcpy(&out_entries[i].last_counter, blob + off + mesh_crypto::FINGERPRINT_LEN, sizeof(uint64_t));
+  }
+  *out_count = n;
+  return true;
+#endif
+}
+
+bool clear_replay_counters() {
+#ifdef CSI_TEST_HOST_BUILD
+  return true;
+#else
+  Preferences prefs;
+  if (!prefs.begin(NVS_NAMESPACE, /*readOnly=*/false)) return false;
+  bool ok = prefs.remove(NVS_KEY_REPLAY);
+  if (!ok) ok = !prefs.isKey(NVS_KEY_REPLAY);
+  prefs.end();
+  return ok;
+#endif
+}
+
 }  /* namespace mesh_state */

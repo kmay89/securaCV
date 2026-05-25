@@ -585,6 +585,36 @@ size_t trusted_peer_count() {
   return n;
 }
 
+size_t get_replay_counters(uint8_t (*out_fps)[mesh_crypto::FINGERPRINT_LEN],
+                           uint64_t* out_counters,
+                           size_t    out_cap) {
+  if (out_fps == nullptr || out_counters == nullptr) return 0;
+  size_t n = 0;
+  for (size_t i = 0; i < MAX_TRUSTED_PEERS && n < out_cap; ++i) {
+    if (!s_trusted_peers[i].in_use) continue;
+    memcpy(out_fps[n], s_trusted_peers[i].sender_fp, mesh_crypto::FINGERPRINT_LEN);
+    out_counters[n] = s_trusted_peers[i].last_counter;
+    ++n;
+  }
+  return n;
+}
+
+bool restore_replay_counter(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
+                            uint64_t counter) {
+  if (fp == nullptr) return false;
+  for (size_t i = 0; i < MAX_TRUSTED_PEERS; ++i) {
+    if (!s_trusted_peers[i].in_use) continue;
+    if (memcmp(s_trusted_peers[i].sender_fp, fp, mesh_crypto::FINGERPRINT_LEN) == 0) {
+      if (counter > s_trusted_peers[i].last_counter) {
+        s_trusted_peers[i].last_counter = counter;
+        return true;
+      }
+      return false;
+    }
+  }
+  return false;
+}
+
 void set_beacon_event_handler(beacon_event_received_fn fn) {
   s_beacon_event_cb = fn;
 }
