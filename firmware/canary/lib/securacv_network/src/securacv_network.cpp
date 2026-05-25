@@ -1390,7 +1390,17 @@ static esp_err_t handle_peek_sensor_set(httpd_req_t* req) {
   }
   JsonObject obj = body.as<JsonObject>();
 
-  cam.applySensorParams(obj);
+  // Apply a named preset if requested (overrides individual fields)
+  if (obj["preset"].is<const char*>()) {
+    const char* preset = obj["preset"].as<const char*>();
+    if (cam.applyPreset(preset)) {
+      log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "Preset applied", preset);
+    } else {
+      return http_send_error(req, 400, "unknown_preset");
+    }
+  } else {
+    cam.applySensorParams(obj);
+  }
   log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "Sensor params updated", nullptr);
 
   // Echo back current state so the UI doesn't need a second round-trip.

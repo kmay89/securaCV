@@ -79,6 +79,7 @@ public:
   bool getSensorParams(JsonDocument& doc);
   bool applySensorParams(const JsonObject& obj);
   void resetSensorDefaults();
+  bool applyPreset(const char* name);
 
 private:
   void applyDefaultSensorTuning();

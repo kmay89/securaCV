@@ -413,6 +413,99 @@ void CameraManager::resetSensorDefaults() {
   m_frame_delay_ms = 40;
 }
 
+bool CameraManager::applyPreset(const char* name) {
+  sensor_t* s = esp_camera_sensor_get();
+  if (!s || !name) return false;
+
+  #define SAFE_SET(f, val) do { if (s->f) s->f(s, val); } while (0)
+
+  if (strcmp(name, "indoor") == 0) {
+    SAFE_SET(set_brightness, 0);
+    SAFE_SET(set_contrast, 0);
+    SAFE_SET(set_saturation, 0);
+    SAFE_SET(set_exposure_ctrl, 1);
+    SAFE_SET(set_aec2, 1);
+    SAFE_SET(set_ae_level, 0);
+    SAFE_SET(set_gain_ctrl, 1);
+    SAFE_SET(set_gainceiling, (gainceiling_t)GAINCEILING_4X);
+    SAFE_SET(set_whitebal, 1);
+    SAFE_SET(set_wb_mode, 3);  // Office
+    m_frame_delay_ms = 40;
+  } else if (strcmp(name, "outdoor") == 0) {
+    SAFE_SET(set_brightness, 0);
+    SAFE_SET(set_contrast, 1);
+    SAFE_SET(set_saturation, 1);
+    SAFE_SET(set_exposure_ctrl, 1);
+    SAFE_SET(set_aec2, 1);
+    SAFE_SET(set_ae_level, -1);
+    SAFE_SET(set_gain_ctrl, 1);
+    SAFE_SET(set_gainceiling, (gainceiling_t)GAINCEILING_2X);
+    SAFE_SET(set_whitebal, 1);
+    SAFE_SET(set_wb_mode, 1);  // Sunny
+    m_frame_delay_ms = 40;
+  } else if (strcmp(name, "low_light") == 0) {
+    SAFE_SET(set_brightness, 1);
+    SAFE_SET(set_contrast, 1);
+    SAFE_SET(set_saturation, -1);
+    SAFE_SET(set_exposure_ctrl, 1);
+    SAFE_SET(set_aec2, 1);
+    SAFE_SET(set_ae_level, 2);
+    SAFE_SET(set_aec_value, 600);
+    SAFE_SET(set_gain_ctrl, 1);
+    SAFE_SET(set_gainceiling, (gainceiling_t)GAINCEILING_16X);
+    SAFE_SET(set_whitebal, 1);
+    SAFE_SET(set_wb_mode, 0);  // Auto
+    m_frame_delay_ms = 80;
+  } else if (strcmp(name, "high_contrast") == 0) {
+    SAFE_SET(set_brightness, 0);
+    SAFE_SET(set_contrast, 2);
+    SAFE_SET(set_saturation, 0);
+    SAFE_SET(set_exposure_ctrl, 1);
+    SAFE_SET(set_aec2, 1);
+    SAFE_SET(set_ae_level, 0);
+    SAFE_SET(set_gain_ctrl, 1);
+    SAFE_SET(set_gainceiling, (gainceiling_t)GAINCEILING_4X);
+    SAFE_SET(set_whitebal, 1);
+    SAFE_SET(set_wb_mode, 0);
+    m_frame_delay_ms = 40;
+  } else if (strcmp(name, "night") == 0) {
+    SAFE_SET(set_brightness, 2);
+    SAFE_SET(set_contrast, 2);
+    SAFE_SET(set_saturation, -2);
+    SAFE_SET(set_exposure_ctrl, 0);
+    SAFE_SET(set_aec_value, 1200);
+    SAFE_SET(set_gain_ctrl, 0);
+    SAFE_SET(set_agc_gain, 20);
+    SAFE_SET(set_whitebal, 1);
+    SAFE_SET(set_wb_mode, 0);
+    m_frame_delay_ms = 100;
+  } else if (strcmp(name, "dynamic") == 0) {
+    SAFE_SET(set_brightness, 0);
+    SAFE_SET(set_contrast, 0);
+    SAFE_SET(set_saturation, 0);
+    SAFE_SET(set_exposure_ctrl, 1);
+    SAFE_SET(set_aec2, 1);
+    SAFE_SET(set_ae_level, 0);
+    SAFE_SET(set_gain_ctrl, 1);
+    SAFE_SET(set_gainceiling, (gainceiling_t)GAINCEILING_8X);
+    SAFE_SET(set_whitebal, 1);
+    SAFE_SET(set_awb_gain, 1);
+    SAFE_SET(set_wb_mode, 0);
+    SAFE_SET(set_bpc, 1);
+    SAFE_SET(set_wpc, 1);
+    SAFE_SET(set_raw_gma, 1);
+    SAFE_SET(set_lenc, 1);
+    m_frame_delay_ms = 40;
+  } else {
+    #undef SAFE_SET
+    return false;
+  }
+  #undef SAFE_SET
+
+  loadOrientationFromNvs();
+  return true;
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // ORIENTATION NVS PERSISTENCE
 // ════════════════════════════════════════════════════════════════════════════
