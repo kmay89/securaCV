@@ -122,8 +122,8 @@ fn main() -> Result<()> {
         .unwrap_or_else(|| PathBuf::from(DEFAULT_VAULT_PATH));
 
     let device_key_seed = match args.seed {
-        Some(seed) => format!("devkey:demo:{}", seed),
-        None => "devkey:demo".to_string(),
+        Some(seed) => format!("devkey:demo:seed:{:032}", seed),
+        None => "devkey:demo:0000000000000000000000".to_string(),
     };
 
     stage("open kernel + vault");
