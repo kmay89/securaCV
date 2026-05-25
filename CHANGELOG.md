@@ -1,6 +1,6 @@
 # Changelog
 
-## [1.0.0] - 2026-05-25
+## [1.0.0] - Unreleased
 
 ### What v1.0 means
 
