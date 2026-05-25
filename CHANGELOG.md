@@ -1,5 +1,62 @@
 # Changelog
 
+## [1.0.0] - Unreleased
+
+### What v1.0 means
+
+This is the first minimally credible release: every documented feature works
+end-to-end, the install path succeeds on the first try, and the test suite
+passes cleanly. It is **not** feature-complete — see "Explicitly deferred"
+below.
+
+### What's included
+
+- **Privacy Witness Kernel** (Rust): hash-chained, Ed25519-signed append-only
+  event log with break-glass N-of-M quorum access, vault sealing, event
+  contract enforcement, module sandboxing (seccomp on Linux).
+- **9 CLI binaries**: witnessd, log_verify, break_glass, export_events,
+  export_verify, frigate_bridge, event_mqtt_bridge, witness_api,
+  grove_vision2_ingest.
+- **Home Assistant integration** (HACS): 3 setup modes (MQTT / Kernel HTTP /
+  both), MQTT auto-discovery, device PKI trust management (TOFU + manual pin +
+  rotation), 5 sensor types, 11 binary sensor types (tamper + transport),
+  Ed25519 signature verification, diagnostics.
+- **Home Assistant add-on**: first-run setup wizard with preflight checks,
+  camera TCP test, Frigate config generation, post-setup health verification,
+  two operating modes (Frigate integration, standalone RTSP).
+- **Install script**: single `curl | bash` command installs Mosquitto, Frigate,
+  integration, add-on, generates device key, deploys automations + dashboard.
+- **Firmware** (ESP32): canary-vision (ESP32-C3 + Grove Vision AI V2),
+  canary-wap (XIAO ESP32-S3 Sense) — BLE discovery, Chirp community alerts,
+  Beacon harm-reduction broadcast, Opera mesh networking, OTA updates.
+- **Detection backends**: stub (testing), CPU (background subtraction),
+  Tract ONNX (local inference).
+- **Frame sources**: RTSP (GStreamer/FFmpeg), V4L2, ESP32 HTTP, local files.
+- **Automations**: daily digest, pattern-break alerts, integrity failure alerts.
+- **CI**: Rust tests + clippy, firmware builds, HACS/hassfest validation,
+  SBOM generation, secrets scanning, CodeQL analysis, release workflow.
+
+### Explicitly deferred (not in v1.0)
+
+- Multi-camera standalone mode (currently single-camera only in standalone;
+  Frigate mode supports multiple cameras via Frigate's own config)
+- LoRa transport
+- SCQCS audio transport
+- CAP gateway interop (specification exists, implementation deferred)
+- GPU-accelerated detection
+- Tract detection confidence threshold override (hardcoded at 0.5)
+- Pre-built Docker images on ghcr.io / Docker Hub
+- Custom Lovelace card (uses standard HA entities)
+
+### Known limitations
+
+- v1 e2e pipeline verification (`verify_pipeline.sh`) requires a live
+  docker-compose stack with Frigate + Mosquitto — not automated in CI.
+- The HA add-on builds from source inside the container, which is slow on
+  first install (~5-10 min on Pi 4). Pre-built images are planned for v1.1.
+- Standalone RTSP mode processes one camera at a time. For multi-camera,
+  use Frigate mode.
+
 ## [0.5.0] - 2026-05-12
 
 ### Added — harm-reduction broadcast layer (Beacon channel) + audit artifacts
