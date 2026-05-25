@@ -21,8 +21,14 @@ jobs:
     - name: Rustfmt
       run: cargo fmt --check
     - name: Clippy
-      run: cargo clippy -- -D warnings
+      run: cargo clippy --all-targets -- -D warnings
     - name: Build
       run: cargo build --verbose
     - name: Run tests
       run: cargo test --verbose
+    - name: Build with no default features
+      run: cargo check --no-default-features
+    - name: Build with PQC features
+      run: cargo check --features pqc-signatures,pqc-vault,pqc-tls
+    - name: Test with PQC features
+      run: cargo test --features pqc-signatures,pqc-vault
