@@ -787,6 +787,8 @@ fn connect_mqtt(
     options.set_clean_start(true);
     if let Some(user) = username {
         options.set_credentials(user, password.unwrap_or_default());
+    } else {
+        log::warn!("MQTT connecting without authentication; set --mqtt-username/--mqtt-password for production use");
     }
     let will = rumqttc::v5::mqttbytes::v5::LastWill::new(
         will_topic,

@@ -43,8 +43,7 @@ fn main() -> Result<()> {
         log::info!("event api capability token written to {}", path.display());
     } else {
         log::warn!(
-            "event api capability token (handle securely): {}",
-            api_handle.token
+            "event api capability token not written to file; use --api-token-path to persist it safely"
         );
     }
     log::info!("witness_api running. serving {}", cfg.db_path);

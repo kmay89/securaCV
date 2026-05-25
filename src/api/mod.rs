@@ -526,12 +526,21 @@ impl HttpRequest {
 }
 
 fn write_token_file(path: &Path, token: &str) -> Result<()> {
-    std::fs::write(path, format!("{token}\n"))?;
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        let perms = std::fs::Permissions::from_mode(0o600);
-        std::fs::set_permissions(path, perms)?;
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)?;
+        f.write_all(format!("{token}\n").as_bytes())?;
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(path, format!("{token}\n"))?;
     }
     Ok(())
 }

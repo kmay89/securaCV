@@ -3,6 +3,7 @@ use chacha20poly1305::{
     aead::{AeadInPlace, KeyInit},
     ChaCha20Poly1305, Key, Nonce, Tag,
 };
+use rand::rngs::OsRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -84,7 +85,7 @@ pub fn seal_v1(
     master_key: &[u8; 32],
 ) -> Result<EnvelopeV1> {
     let mut nonce = [0u8; 12];
-    rand::thread_rng().fill_bytes(&mut nonce);
+    OsRng.fill_bytes(&mut nonce);
     let mut ciphertext = clear.to_vec();
     let tag = encrypt_in_place(
         master_key,
@@ -140,7 +141,7 @@ pub fn seal_v2(
     let dek_guard = DekGuard(derived.dek);
 
     let mut nonce = vec![0u8; 12];
-    rand::thread_rng().fill_bytes(&mut nonce);
+    OsRng.fill_bytes(&mut nonce);
     let mut ciphertext = clear.to_vec();
     let tag = encrypt_payload(&dek_guard.0, &nonce, &aad, &mut ciphertext)?;
 
@@ -168,24 +169,42 @@ pub fn decrypt_v2(
     kem_keypair: Option<&KemKeypair>,
 ) -> Result<Vec<u8>> {
     let aad = envelope.aad.clone();
-    let dek = recover_dek(envelope, master_key, kem_keypair)?;
-
-    // Wrap DEK in guard to ensure zeroization on all paths including errors
-    let dek_guard = DekGuard(dek);
 
     if envelope.ciphertext.len() < 16 {
-        // dek_guard will be dropped and zeroized here
         return Err(anyhow!("vault ciphertext truncated"));
     }
     let tag_offset = envelope.ciphertext.len() - 16;
-    let mut ciphertext = envelope.ciphertext[..tag_offset].to_vec();
     let tag = &envelope.ciphertext[tag_offset..];
 
-    decrypt_payload(&dek_guard.0, &envelope.nonce, &aad, &mut ciphertext, tag)?;
+    // Try KEM-based decryption first. ML-KEM-768 uses implicit rejection
+    // (FO transform), so decapsulating a legacy Kyber768 ciphertext returns
+    // a wrong shared secret instead of an error. We detect this at the AEAD
+    // level: if the derived DEK produces an auth tag mismatch, fall back to
+    // classical_wrap.
+    if envelope.kem_alg == KEM_ALG_ML_KEM_768 {
+        if let Some(kp) = kem_keypair {
+            if let Ok(shared_secret) = kem_decapsulate(kp, &envelope.kem_ct) {
+                let dek_guard = DekGuard(kdf_dek(&shared_secret, &envelope.kdf_info));
+                let mut ciphertext = envelope.ciphertext[..tag_offset].to_vec();
+                if decrypt_payload(&dek_guard.0, &envelope.nonce, &aad, &mut ciphertext, tag)
+                    .is_ok()
+                {
+                    return Ok(ciphertext);
+                }
+            }
+        }
+    }
 
-    // dek_guard will be dropped and zeroized here
+    // Fallback: classical key wrap (handles legacy Kyber768 hybrid envelopes
+    // and classical-only envelopes).
+    if let Some(wrap) = &envelope.classical_wrap {
+        let dek_guard = DekGuard(unwrap_dek(master_key, &envelope.aad, wrap)?);
+        let mut ciphertext = envelope.ciphertext[..tag_offset].to_vec();
+        decrypt_payload(&dek_guard.0, &envelope.nonce, &aad, &mut ciphertext, tag)?;
+        return Ok(ciphertext);
+    }
 
-    Ok(ciphertext)
+    Err(anyhow!("vault envelope decryption failed"))
 }
 
 fn encrypt_payload(
@@ -257,7 +276,7 @@ fn derive_dek(
                 kem_keypair.ok_or_else(|| anyhow!("vault KEM keypair missing for PQ mode"))?;
             let (kem_ct, shared_secret) = kem_encapsulate(kem_keypair)?;
             let mut kdf_info = vec![0u8; 32];
-            rand::thread_rng().fill_bytes(&mut kdf_info);
+            OsRng.fill_bytes(&mut kdf_info);
             let dek = kdf_dek(&shared_secret, &kdf_info);
             let classical_wrap = if matches!(mode, VaultCryptoMode::Hybrid) {
                 Some(wrap_dek(master_key, envelope_id, ruleset_hash, &dek)?)
@@ -275,47 +294,9 @@ fn derive_dek(
     }
 }
 
-fn recover_dek(
-    envelope: &EnvelopeV2,
-    master_key: &[u8; 32],
-    kem_keypair: Option<&KemKeypair>,
-) -> Result<[u8; 32]> {
-    // Try KEM decapsulation for PQ/Hybrid envelopes
-    if envelope.kem_alg == KEM_ALG_ML_KEM_768 {
-        let kem_result = kem_keypair
-            .ok_or_else(|| anyhow!("vault KEM keypair missing for PQ envelope"))
-            .and_then(|kp| kem_decapsulate(kp, &envelope.kem_ct));
-
-        match kem_result {
-            Ok(shared_secret) => {
-                return Ok(kdf_dek(&shared_secret, &envelope.kdf_info));
-            }
-            Err(kem_err) => {
-                // In hybrid mode, fall back to classical unwrap if KEM fails
-                if let Some(wrap) = &envelope.classical_wrap {
-                    log::warn!(
-                        "KEM decapsulation failed, falling back to classical unwrap: {}",
-                        kem_err
-                    );
-                    return unwrap_dek(master_key, &envelope.aad, wrap);
-                }
-                // Pure PQ mode with no fallback
-                return Err(kem_err);
-            }
-        }
-    }
-
-    // Classical-only envelope
-    if let Some(wrap) = &envelope.classical_wrap {
-        return unwrap_dek(master_key, &envelope.aad, wrap);
-    }
-
-    Err(anyhow!("vault envelope lacks usable key wrap"))
-}
-
 fn random_dek() -> [u8; 32] {
     let mut dek = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut dek);
+    OsRng.fill_bytes(&mut dek);
     dek
 }
 
@@ -333,7 +314,7 @@ fn wrap_dek(
     dek: &[u8; 32],
 ) -> Result<Vec<u8>> {
     let mut nonce = [0u8; 12];
-    rand::thread_rng().fill_bytes(&mut nonce);
+    OsRng.fill_bytes(&mut nonce);
     let mut ciphertext = dek.to_vec();
     let aad = wrap_aad(envelope_id, ruleset_hash);
     let tag = encrypt_payload(master_key, &nonce, &aad, &mut ciphertext)?;
@@ -419,32 +400,47 @@ fn decrypt_in_place(
 #[derive(Clone, Debug)]
 pub struct KemKeypair {
     #[cfg(feature = "pqc-vault")]
-    pub public: pqcrypto_kyber::kyber768::PublicKey,
+    pub public: pqcrypto_mlkem::mlkem768::PublicKey,
     #[cfg(feature = "pqc-vault")]
-    pub secret: pqcrypto_kyber::kyber768::SecretKey,
+    pub secret: pqcrypto_mlkem::mlkem768::SecretKey,
+    #[cfg(feature = "pqc-vault")]
+    secret_bytes: zeroize::Zeroizing<Vec<u8>>,
 }
 
 #[cfg(feature = "pqc-vault")]
 impl KemKeypair {
     pub fn generate() -> Self {
-        let (public, secret) = pqcrypto_kyber::kyber768::keypair();
-        Self { public, secret }
+        use pqcrypto_traits::kem::SecretKey as _;
+        let (public, secret) = pqcrypto_mlkem::mlkem768::keypair();
+        let secret_bytes = zeroize::Zeroizing::new(secret.as_bytes().to_vec());
+        Self {
+            public,
+            secret,
+            secret_bytes,
+        }
     }
 
     pub fn public_bytes(&self) -> Vec<u8> {
+        use pqcrypto_traits::kem::PublicKey;
         self.public.as_bytes().to_vec()
     }
 
     pub fn secret_bytes(&self) -> Vec<u8> {
-        self.secret.as_bytes().to_vec()
+        self.secret_bytes.to_vec()
     }
 
     pub fn from_bytes(public: &[u8], secret: &[u8]) -> Result<Self> {
-        let public = pqcrypto_kyber::kyber768::PublicKey::from_bytes(public)
+        use pqcrypto_traits::kem::{PublicKey as _, SecretKey as _};
+        let public = pqcrypto_mlkem::mlkem768::PublicKey::from_bytes(public)
             .map_err(|_| anyhow!("invalid KEM public key"))?;
-        let secret = pqcrypto_kyber::kyber768::SecretKey::from_bytes(secret)
+        let secret = pqcrypto_mlkem::mlkem768::SecretKey::from_bytes(secret)
             .map_err(|_| anyhow!("invalid KEM secret key"))?;
-        Ok(Self { public, secret })
+        let secret_bytes = zeroize::Zeroizing::new(secret.as_bytes().to_vec());
+        Ok(Self {
+            public,
+            secret,
+            secret_bytes,
+        })
     }
 }
 
@@ -471,7 +467,7 @@ fn kem_encapsulate(kem: &KemKeypair) -> Result<(Vec<u8>, Vec<u8>)> {
     #[cfg(feature = "pqc-vault")]
     {
         use pqcrypto_traits::kem::{Ciphertext, PublicKey, SharedSecret};
-        let (shared, ct) = pqcrypto_kyber::kyber768::encapsulate(&kem.public);
+        let (shared, ct) = pqcrypto_mlkem::mlkem768::encapsulate(&kem.public);
         return Ok((ct.as_bytes().to_vec(), shared.as_bytes().to_vec()));
     }
     #[cfg(not(feature = "pqc-vault"))]
@@ -485,9 +481,9 @@ fn kem_decapsulate(kem: &KemKeypair, kem_ct: &[u8]) -> Result<Vec<u8>> {
     #[cfg(feature = "pqc-vault")]
     {
         use pqcrypto_traits::kem::{Ciphertext, SharedSecret};
-        let ct = pqcrypto_kyber::kyber768::Ciphertext::from_bytes(kem_ct)
+        let ct = pqcrypto_mlkem::mlkem768::Ciphertext::from_bytes(kem_ct)
             .map_err(|_| anyhow!("invalid KEM ciphertext"))?;
-        let shared = pqcrypto_kyber::kyber768::decapsulate(&ct, &kem.secret);
+        let shared = pqcrypto_mlkem::mlkem768::decapsulate(&ct, &kem.secret);
         return Ok(shared.as_bytes().to_vec());
     }
     #[cfg(not(feature = "pqc-vault"))]
