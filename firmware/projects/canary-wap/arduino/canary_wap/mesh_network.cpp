@@ -1498,6 +1498,12 @@ const OperaPeer* get_peer_by_fingerprint(const uint8_t* fingerprint) {
   return find_peer_by_fingerprint(fingerprint);
 }
 
+bool get_self_fingerprint(uint8_t out[FINGERPRINT_SIZE]) {
+  if (!g_espnow_initialized || g_device_pubkey == nullptr) return false;
+  memcpy(out, g_device_fingerprint, FINGERPRINT_SIZE);
+  return true;
+}
+
 uint8_t get_online_peer_count() {
   uint8_t count = 0;
   for (uint8_t i = 0; i < g_peer_count; i++) {

@@ -420,6 +420,10 @@ const OperaPeer* get_peer(uint8_t index);
 // Get peer by fingerprint
 const OperaPeer* get_peer_by_fingerprint(const uint8_t* fingerprint);
 
+// Get this device's own fingerprint (first 8 bytes of SHA-256 of pubkey).
+// Returns false if mesh is not initialized.
+bool get_self_fingerprint(uint8_t out[FINGERPRINT_SIZE]);
+
 // Get online peer count
 uint8_t get_online_peer_count();
 

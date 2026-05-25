@@ -91,6 +91,7 @@
 #include "mesh_network.h"
 #endif
 #include "mesh_channel_hop.h"
+#include "mesh_hub_election.h"
 #include "airtime_governor.h"
 #include <csi_hal.h>
 #endif
@@ -1986,6 +1987,78 @@ void on_peer_channel_lock(
   Serial.printf("[mesh.channel] lock ch=%u reason=%u from fp=%s\n",
                 channel, (unsigned)reason, fp_hex);
 }
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * HUB FAILOVER ELECTION (PR 4c integration)
+ *
+ * Coordinator role is held by the live node with the lowest fingerprint.
+ * On peer state changes (CONNECTED → OFFLINE), we re-evaluate who the
+ * coordinator is. If we are the new coordinator (our fingerprint is
+ * lowest among all CONNECTED peers + self), broadcast HUB_ELECTED.
+ *
+ * The coordinator runs channel_hop_tick (already wired above). Non-
+ * coordinator nodes skip the Hub-side tick (they still respond to
+ * CHANNEL_LOCK frames as peers).
+ *
+ * "Self fingerprint" is the first 8 bytes of the SHA-256 of our
+ * Ed25519 pubkey — same derivation mesh_crypto uses. We compute it
+ * once at init and cache it.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+uint8_t  s_self_fp[mesh_hub_election::FINGERPRINT_LEN] = {0};
+bool     s_self_fp_valid = false;
+bool     s_is_coordinator = false;
+
+void evaluate_coordinator() {
+  if (!s_self_fp_valid) return;
+
+  const uint8_t* lowest = s_self_fp;
+
+  for (uint8_t i = 0; i < mesh_network::get_peer_count(); ++i) {
+    const mesh_network::OperaPeer* peer = mesh_network::get_peer(i);
+    if (peer == nullptr) continue;
+    if (peer->state < mesh_network::PEER_CONNECTED) continue;
+    if (mesh_hub_election::compare_fingerprints(peer->fingerprint, lowest) < 0) {
+      lowest = peer->fingerprint;
+    }
+  }
+
+  bool was_coordinator = s_is_coordinator;
+  s_is_coordinator = (mesh_hub_election::compare_fingerprints(lowest, s_self_fp) == 0);
+
+  if (s_is_coordinator && !was_coordinator) {
+    mesh_network::send_hub_election(
+        mesh_hub_election::Event::HUB_ELECTED, s_self_fp);
+    Serial.println("[mesh.election] promoted to coordinator (lowest fp)");
+  } else if (!s_is_coordinator && was_coordinator) {
+    Serial.println("[mesh.election] demoted from coordinator");
+  }
+}
+
+void on_peer_state_changed(const mesh_network::OperaPeer* peer,
+                           mesh_network::PeerState old_state,
+                           mesh_network::PeerState new_state) {
+  (void)peer; (void)old_state; (void)new_state;
+  evaluate_coordinator();
+}
+
+void on_peer_hub_election(
+    const uint8_t              sender_fp[mesh_network::FINGERPRINT_SIZE],
+    mesh_hub_election::Event   event,
+    const uint8_t              elected_fp[mesh_network::FINGERPRINT_SIZE]) {
+  char sender_hex[2 * mesh_network::FINGERPRINT_SIZE + 1];
+  char elected_hex[2 * mesh_network::FINGERPRINT_SIZE + 1];
+  csi_integration::hex_encode(sender_fp, mesh_network::FINGERPRINT_SIZE, sender_hex);
+  csi_integration::hex_encode(elected_fp, mesh_network::FINGERPRINT_SIZE, elected_hex);
+
+  Serial.printf("[mesh.election] %s from fp=%s elected=%s\n",
+                event == mesh_hub_election::Event::HUB_ELECTED ? "elected"
+                : event == mesh_hub_election::Event::HUB_ABSENT ? "absent"
+                : "?",
+                sender_hex, elected_hex);
+
+  evaluate_coordinator();
+}
 #endif  /* FEATURE_MESH_NETWORK */
 
 esp_err_t handle_pair_token(httpd_req_t* req) {
@@ -2126,6 +2199,12 @@ void register_v1_modules() {
    * proposed channel via csi_hal::set_channel_lock(). The Hub-side
    * tick (channel_hop_tick) runs from loop() below. */
   mesh_network::set_channel_lock_handler(&on_peer_channel_lock);
+  mesh_network::set_hub_election_handler(&on_peer_hub_election);
+  mesh_network::set_peer_state_callback(&on_peer_state_changed);
+  s_self_fp_valid = mesh_network::get_self_fingerprint(s_self_fp);
+  if (s_self_fp_valid) {
+    evaluate_coordinator();
+  }
 #endif
 
   /* Wire the persisted Quiet Hours range into the chokepoint. The
@@ -2611,7 +2690,9 @@ void loop() {
 #endif
 
 #if FEATURE_MESH_NETWORK
-  channel_hop_tick(millis());
+  if (s_is_coordinator) {
+    channel_hop_tick(millis());
+  }
 #endif
 
   csi_hal::process();
