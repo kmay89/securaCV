@@ -485,11 +485,11 @@ size_t broadcast(const uint8_t* data, size_t len) {
   if (!s_running || data == nullptr || len == 0 || len > MESH_TRANSPORT_PAYLOAD_MAX) {
     return 0;
   }
-  if (!storm_gate()) return 0;
   const uint32_t now = now_ms();
   size_t sent = 0;
   for (size_t i = 0; i < MESH_TRANSPORT_MAX_PEERS; ++i) {
     if (!s_peers[i].in_use) continue;
+    if (!storm_gate()) break;
     if (driver_send(s_peers[i].mac, data, len)) {
       ++sent;
       s_peers[i].last_sent_ms = now;

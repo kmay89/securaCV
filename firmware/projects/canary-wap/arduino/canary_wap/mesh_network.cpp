@@ -439,6 +439,7 @@ static bool send_raw_message(const uint8_t* mac, const uint8_t* data, size_t len
   if (!g_espnow_initialized || len > MAX_MESSAGE_SIZE) {
     return false;
   }
+  if (!storm_gate()) return false;
 
   esp_err_t result = esp_now_send(mac, data, len);
   if (result == ESP_OK) {
@@ -453,7 +454,6 @@ static bool send_to_peer(OperaPeer* peer, MessageType type, const uint8_t* paylo
   if (!peer || !g_opera_config.configured) {
     return false;
   }
-  if (!storm_gate()) return false;
 
   // Build message
   uint8_t msg[MAX_MESSAGE_SIZE];
