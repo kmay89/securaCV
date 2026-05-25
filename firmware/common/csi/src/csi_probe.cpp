@@ -53,6 +53,7 @@ struct PeerEntry {
 
 static bool       s_initialized = false;
 static bool       s_running = false;
+static bool       s_paused  = false;
 static Config     s_cfg = Config::defaults();
 static PeerEntry  s_peers[CSI_PROBE_MAX_PEERS];
 static uint32_t   s_seq = 0;
@@ -265,6 +266,9 @@ void stop() {
 
 bool is_running() { return s_running; }
 
+void set_paused(bool paused) { s_paused = paused; }
+bool is_paused() { return s_paused; }
+
 /* ──────────────────────────────────────────────────────────────────────────
  * PEER REGISTRY
  * ────────────────────────────────────────────────────────────────────────── */
@@ -330,7 +334,7 @@ size_t peer_count() {
  * ────────────────────────────────────────────────────────────────────────── */
 
 void process() {
-  if (!s_running) return;
+  if (!s_running || s_paused) return;
 
   const uint32_t t = now_ms();
   /* Compute the effective per-peer rate from the aggregate budget every

@@ -94,6 +94,7 @@
 #include "mesh_hub_election.h"
 #include "airtime_governor.h"
 #include <csi_hal.h>
+#include <csi_probe.h>
 #include <core_multilink_fusion.h>
 #endif
 
@@ -2020,6 +2021,36 @@ void on_peer_channel_lock(
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
+ * AP ROAM / CHANNEL RECOVERY
+ *
+ * Detects when the observed CSI channel diverges from the pinned
+ * channel lock (AP roam, DFS event, or neighbor interference).
+ * Pauses probes, re-applies the channel lock to the new observed
+ * channel, resumes probes, and logs. Checked every 5s from loop().
+ * ────────────────────────────────────────────────────────────────────────── */
+
+bool s_channel_desync_detected = false;
+
+void channel_recovery_tick() {
+  if (csi_hal::get_channel_lock() == 0) return;
+
+  if (!csi_hal::is_channel_in_sync()) {
+    if (!s_channel_desync_detected) {
+      s_channel_desync_detected = true;
+      csi_probe::set_paused(true);
+      Serial.printf("[mesh.channel] desync: lock=%u observed=%u — probes paused\n",
+                    csi_hal::get_channel_lock(),
+                    csi_hal::get_observed_channel());
+    }
+  } else if (s_channel_desync_detected) {
+    s_channel_desync_detected = false;
+    csi_probe::set_paused(false);
+    Serial.printf("[mesh.channel] resync: ch=%u — probes resumed\n",
+                  csi_hal::get_observed_channel());
+  }
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
  * HUB FAILOVER ELECTION (PR 4c integration)
  *
  * Coordinator role is held by the live node with the lowest fingerprint.
@@ -2735,6 +2766,7 @@ void loop() {
       s_last_election_eval_ms = now;
       evaluate_coordinator();
       expire_offline_fusion_links();
+      channel_recovery_tick();
     }
     if (s_is_coordinator) {
       channel_hop_tick(now);
