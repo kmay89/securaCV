@@ -799,7 +799,7 @@ void deinit() {
 }
 
 bool start() {
-  s_last_frame_ms.store(0, std::memory_order_relaxed);
+  csi::s_last_frame_ms.store(0, std::memory_order_relaxed);
   s_wd_last_recovery_ms = 0;
   return csi::start();
 }
@@ -812,7 +812,7 @@ bool is_running() {
   return csi::is_running();
 }
 
-void set_features_callback(FeaturesCallback cb, void*) {
+void set_features_callback(FeaturesCallback cb) {
   csi::set_features_callback(cb);
 }
 
@@ -823,8 +823,8 @@ int process() {
   if (s_wd_timeout_ms == 0) return n;
   if (!csi::is_running()) return n;
 
-  const uint32_t last = s_last_frame_ms.load(std::memory_order_relaxed);
-  const uint32_t ref = (last == 0) ? s_window_start_ms : last;
+  const uint32_t last = csi::s_last_frame_ms.load(std::memory_order_relaxed);
+  const uint32_t ref = (last == 0) ? csi::s_window_start_ms : last;
   const uint32_t now = millis();
   if ((int32_t)(now - ref) < (int32_t)s_wd_timeout_ms) return n;
 
@@ -867,12 +867,12 @@ bool set_channel_lock(uint8_t channel) {
 uint8_t get_channel_lock() { return s_channel_lock; }
 
 uint8_t get_observed_channel() {
-  return features::s_last_channel;
+  return csi::features::s_last_channel;
 }
 
 bool is_channel_in_sync() {
   if (s_channel_lock == 0) return true;
-  return features::s_last_channel == s_channel_lock;
+  return csi::features::s_last_channel == s_channel_lock;
 }
 
 void set_watchdog(uint32_t timeout_ms, WatchdogCallback cb) {
@@ -883,7 +883,7 @@ void set_watchdog(uint32_t timeout_ms, WatchdogCallback cb) {
 uint32_t get_watchdog_timeout_ms() { return s_wd_timeout_ms; }
 
 uint32_t get_ms_since_last_frame() {
-  const uint32_t last = s_last_frame_ms.load(std::memory_order_relaxed);
+  const uint32_t last = csi::s_last_frame_ms.load(std::memory_order_relaxed);
   if (last == 0) return UINT32_MAX;
   return millis() - last;
 }
