@@ -492,3 +492,160 @@ fn kem_decapsulate(kem: &KemKeypair, kem_ct: &[u8]) -> Result<Vec<u8>> {
         Err(anyhow!("pqc-vault feature not enabled"))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn aad_roundtrip() {
+        let envelope_id = "incident-42";
+        let ruleset_hash = [7u8; 32];
+        let encoded = encode_aad(envelope_id, &ruleset_hash);
+        let decoded = decode_aad(&encoded).unwrap();
+        assert_eq!(decoded.envelope_id, envelope_id);
+        assert_eq!(decoded.ruleset_hash, ruleset_hash);
+    }
+
+    #[test]
+    fn aad_rejects_truncated_input() {
+        assert!(decode_aad(&[0, 0, 0]).is_err());
+        assert!(decode_aad(&[]).is_err());
+    }
+
+    #[test]
+    fn seal_v1_roundtrip() {
+        let key = [42u8; 32];
+        let clear = b"privacy-preserving payload";
+        let envelope = seal_v1("test-env", [1u8; 32], clear, &key).unwrap();
+        let decrypted = decrypt_v1(&envelope, &key).unwrap();
+        assert_eq!(decrypted, clear);
+    }
+
+    #[test]
+    fn seal_v1_wrong_key_fails() {
+        let key = [42u8; 32];
+        let envelope = seal_v1("test-env", [1u8; 32], b"secret", &key).unwrap();
+        let wrong_key = [99u8; 32];
+        assert!(decrypt_v1(&envelope, &wrong_key).is_err());
+    }
+
+    #[test]
+    fn seal_v2_classical_roundtrip() {
+        let key = [42u8; 32];
+        let clear = b"v2 payload";
+        let envelope = seal_v2(
+            "test-v2",
+            [2u8; 32],
+            clear,
+            VaultCryptoMode::Classical,
+            &key,
+            None,
+        )
+        .unwrap();
+        let decrypted = decrypt_v2(&envelope, &key, None).unwrap();
+        assert_eq!(decrypted, clear);
+    }
+
+    #[test]
+    fn seal_v2_wrong_key_fails() {
+        let key = [42u8; 32];
+        let envelope = seal_v2(
+            "test-v2",
+            [2u8; 32],
+            b"secret",
+            VaultCryptoMode::Classical,
+            &key,
+            None,
+        )
+        .unwrap();
+        assert!(decrypt_v2(&envelope, &[99u8; 32], None).is_err());
+    }
+
+    #[test]
+    fn seal_v2_tampered_ciphertext_fails() {
+        let key = [42u8; 32];
+        let mut envelope = seal_v2(
+            "test-v2",
+            [2u8; 32],
+            b"secret",
+            VaultCryptoMode::Classical,
+            &key,
+            None,
+        )
+        .unwrap();
+        envelope.ciphertext[0] ^= 0xFF;
+        assert!(decrypt_v2(&envelope, &key, None).is_err());
+    }
+
+    #[test]
+    fn seal_v2_different_envelopes_produce_different_nonces() {
+        let key = [42u8; 32];
+        let e1 = seal_v2(
+            "env-1",
+            [1u8; 32],
+            b"data",
+            VaultCryptoMode::Classical,
+            &key,
+            None,
+        )
+        .unwrap();
+        let e2 = seal_v2(
+            "env-2",
+            [2u8; 32],
+            b"data",
+            VaultCryptoMode::Classical,
+            &key,
+            None,
+        )
+        .unwrap();
+        assert_ne!(e1.nonce, e2.nonce);
+    }
+
+    #[test]
+    fn wrap_unwrap_dek_roundtrip() {
+        let master_key = [11u8; 32];
+        let dek = [22u8; 32];
+        let aad = encode_aad("wrap-test", &[3u8; 32]);
+        let wrapped = wrap_dek(&master_key, "wrap-test", &[3u8; 32], &dek).unwrap();
+        let unwrapped = unwrap_dek(&master_key, &aad, &wrapped).unwrap();
+        assert_eq!(unwrapped, dek);
+    }
+
+    #[test]
+    fn wrap_dek_wrong_key_fails() {
+        let master_key = [11u8; 32];
+        let dek = [22u8; 32];
+        let aad = encode_aad("wrap-test", &[3u8; 32]);
+        let wrapped = wrap_dek(&master_key, "wrap-test", &[3u8; 32], &dek).unwrap();
+        assert!(unwrap_dek(&[99u8; 32], &aad, &wrapped).is_err());
+    }
+
+    #[test]
+    fn kdf_dek_deterministic() {
+        let secret = [5u8; 32];
+        let info = b"test-context";
+        let d1 = kdf_dek(&secret, info);
+        let d2 = kdf_dek(&secret, info);
+        assert_eq!(d1, d2);
+
+        let d3 = kdf_dek(&secret, b"different-context");
+        assert_ne!(d1, d3);
+    }
+
+    #[test]
+    fn decrypt_v2_rejects_truncated_ciphertext() {
+        let key = [42u8; 32];
+        let mut envelope = seal_v2(
+            "trunc",
+            [1u8; 32],
+            b"data",
+            VaultCryptoMode::Classical,
+            &key,
+            None,
+        )
+        .unwrap();
+        envelope.ciphertext = vec![0u8; 10]; // less than 16 (tag size)
+        assert!(decrypt_v2(&envelope, &key, None).is_err());
+    }
+}
