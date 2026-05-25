@@ -10,9 +10,14 @@
 #include "securacv_witness.h"
 
 #if defined(CONFIG_IDF_TARGET_ESP32S3)
+#include "esp_idf_version.h"
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+#include <driver/temperature_sensor.h>
+#else
 extern "C" {
   #include <driver/temp_sensor.h>
 }
+#endif
 #define HAVE_TEMP_SENSOR 1
 #else
 #define HAVE_TEMP_SENSOR 0
@@ -265,6 +270,7 @@ void CameraManager::resetMetrics() {
   portEXIT_CRITICAL(&m_metrics_mux);
   m_last_good_frame_ms = now;
   m_thermal_state = THERMAL_NORMAL;
+  m_frame_delay_ms = m_user_frame_delay_ms;
   m_last_thermal_check_ms = 0;
 }
 
@@ -574,29 +580,63 @@ void CameraManager::checkThermal() {
   m_last_thermal_check_ms = now;
 
 #if HAVE_TEMP_SENSOR
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+  static temperature_sensor_handle_t s_tsens = nullptr;
+  if (!s_tsens) {
+    temperature_sensor_config_t cfg = TEMPERATURE_SENSOR_CONFIG_DEFAULT(10, 95);
+    if (temperature_sensor_install(&cfg, &s_tsens) == ESP_OK) {
+      temperature_sensor_enable(s_tsens);
+    }
+  }
   float temp_c = 0.0f;
-  if (temp_sensor_read_celsius(&temp_c) != ESP_OK) return;
+  if (!s_tsens || temperature_sensor_get_celsius(s_tsens, &temp_c) != ESP_OK) return;
   m_die_temp_c = (int8_t)temp_c;
+#else
+  static bool s_tsens_started = false;
+  if (!s_tsens_started) {
+    temp_sensor_config_t cfg = TSENS_CONFIG_DEFAULT();
+    cfg.dac_offset = TSENS_DAC_L2;
+    if (temp_sensor_set_config(cfg) == ESP_OK && temp_sensor_start() == ESP_OK) {
+      s_tsens_started = true;
+    }
+  }
+  float temp_c = 0.0f;
+  if (!s_tsens_started || temp_sensor_read_celsius(&temp_c) != ESP_OK) return;
+  m_die_temp_c = (int8_t)temp_c;
+#endif
 #else
   return;
 #endif
 
   ThermalState prev = m_thermal_state;
 
-  if (m_die_temp_c >= THERMAL_PAUSE_TEMP_C) {
-    m_thermal_state = THERMAL_PAUSED;
+  if (m_thermal_state == THERMAL_PAUSED) {
+    if (m_die_temp_c < THERMAL_PAUSE_TEMP_C - THERMAL_RECOVER_MARGIN_C) {
+      m_thermal_state = THERMAL_THROTTLED;
+    }
+  } else if (m_thermal_state == THERMAL_THROTTLED) {
+    if (m_die_temp_c >= THERMAL_PAUSE_TEMP_C) {
+      m_thermal_state = THERMAL_PAUSED;
+    } else if (m_die_temp_c < THERMAL_THROTTLE_TEMP_C - THERMAL_RECOVER_MARGIN_C) {
+      m_thermal_state = THERMAL_NORMAL;
+    }
+  } else {
+    if (m_die_temp_c >= THERMAL_PAUSE_TEMP_C) {
+      m_thermal_state = THERMAL_PAUSED;
+    } else if (m_die_temp_c >= THERMAL_THROTTLE_TEMP_C) {
+      m_thermal_state = THERMAL_THROTTLED;
+    }
+  }
+
+  if (m_thermal_state == THERMAL_PAUSED) {
     m_frame_delay_ms = 500;
-  } else if (m_die_temp_c >= THERMAL_THROTTLE_TEMP_C) {
-    m_thermal_state = THERMAL_THROTTLED;
+  } else if (m_thermal_state == THERMAL_THROTTLED) {
     uint32_t throttled = m_user_frame_delay_ms * 3;
     if (throttled < 120) throttled = 120;
     if (throttled > 500) throttled = 500;
     m_frame_delay_ms = throttled;
-  } else if (m_die_temp_c < THERMAL_THROTTLE_TEMP_C - THERMAL_RECOVER_MARGIN_C) {
-    if (m_thermal_state != THERMAL_NORMAL) {
-      m_thermal_state = THERMAL_NORMAL;
-      m_frame_delay_ms = m_user_frame_delay_ms;
-    }
+  } else {
+    m_frame_delay_ms = m_user_frame_delay_ms;
   }
 
   if (prev != m_thermal_state) {
