@@ -29,6 +29,24 @@ That's it. Camera clips will appear in Frigate with a **verified ✓** badge per
 
 ---
 
+## Building from source (developers)
+
+```bash
+# Prerequisites (Ubuntu/Debian)
+sudo apt-get install build-essential libseccomp-dev pkg-config
+
+# Run the demo
+cargo run --bin demo
+
+# Verify the log
+cargo run --bin log_verify -- --db demo_witness.db
+```
+
+For RTSP camera support, also install GStreamer or FFmpeg dev libraries — see the
+[RTSP setup section](#rtsp-camera-setup) below.
+
+---
+
 ## How It Works (for normal people)
 
 - Your cameras record clips locally via **Frigate** (an open-source NVR)

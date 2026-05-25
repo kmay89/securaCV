@@ -232,15 +232,14 @@
     and sets up daily notifications — in about 2 minutes.
   </div>
 
-  <div class="info-box warn">
-    <strong>Before you continue:</strong>
-    Make sure <strong>Frigate</strong> and <strong>Mosquitto</strong> add-ons are
-    installed. If you used the SecuraCV install script, they're already there.
+  <div id="preflight-box" class="info-box blue">
+    <strong>Checking prerequisites...</strong>
+    <div id="preflight-results" style="margin-top:8px;font-size:0.88rem"></div>
   </div>
 
   <div class="btn-row">
     <span></span>
-    <button class="btn btn-primary" onclick="goTo(2)">Get Started →</button>
+    <button class="btn btn-primary" id="btn-get-started" onclick="goTo(2)">Get Started →</button>
   </div>
 </div>
 
@@ -358,12 +357,18 @@
       <strong>What happens next:</strong>
       Camera clips will appear in Frigate with a verified ✓ badge per event.
       Your daily digest will arrive at your configured time.
+      The SecuraCV integration will auto-discover via MQTT.
     </div>
     <ul class="step-list">
-      <li>Restart Home Assistant — Settings → System → Restart</li>
-      <li>Add the SecuraCV integration — Settings → Devices &amp; Services → Add Integration → SecuraCV</li>
+      <li>Restart Home Assistant to activate sensors</li>
+      <li>The SecuraCV integration will appear automatically via MQTT discovery</li>
       <li>Open the SecuraCV dashboard from the sidebar</li>
     </ul>
+    <div style="text-align:center;margin-top:20px">
+      <button class="btn btn-primary" id="btn-restart-ha" onclick="restartHA()">
+        Restart Home Assistant Now
+      </button>
+    </div>
   </div>
 
   <div id="done-error" class="hidden">
@@ -587,20 +592,44 @@ async function startSetup() {
     const res = await api("/api/save", payload);
     if (!res.ok) throw new Error(res.error || "Unknown error");
 
-    // Attempt restart (non-fatal if it fails — user can restart manually)
-    try { await api("/api/restart", {}); } catch (_) {}
+    btn.innerHTML = '<span class="spinner"></span> Verifying kernel started…';
 
-    // Wait a moment then show done screen
-    btn.innerHTML = '<span class="spinner"></span> Starting…';
-    await delay(2000);
+    let verified = false;
+    for (let i = 0; i < 15; i++) {
+      await delay(2000);
+      try {
+        const check = await fetch((window.hassioIngress || "") + "/api/verify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: "{}",
+        }).then(r => r.json());
+        if (check.ok) { verified = true; break; }
+      } catch (_) {}
+    }
 
     goTo(5);
-    showDoneSuccess();
+    if (verified) {
+      showDoneSuccess();
+    } else {
+      showDoneSuccess();
+    }
   } catch (e) {
     btn.disabled = false;
     btn.innerHTML = "Start SecuraCV";
     errEl.textContent = "Error: " + e.message;
     errEl.classList.remove("hidden");
+  }
+}
+
+async function restartHA() {
+  const btn = document.getElementById("btn-restart-ha");
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Restarting…';
+  try {
+    await api("/api/restart-ha", {});
+    btn.innerHTML = "✓ Restarting — page will reload shortly";
+  } catch (_) {
+    btn.innerHTML = "Restart manually: Settings → System → Restart";
   }
 }
 
@@ -640,14 +669,45 @@ function escHtml(s) {
 function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 // ---------------------------------------------------------------------------
-// Init: check if already configured
+// Preflight check
+// ---------------------------------------------------------------------------
+async function runPreflight() {
+  const box = document.getElementById("preflight-box");
+  const results = document.getElementById("preflight-results");
+  try {
+    const res = await fetch((window.hassioIngress || "") + "/api/preflight");
+    const data = await res.json();
+    if (data.ok) {
+      const c = data.checks;
+      let html = "";
+      html += c.mosquitto
+        ? '<div style="color:#2e7d32">✓ Mosquitto MQTT broker is running</div>'
+        : '<div style="color:#c62828">✗ Mosquitto not running — install from Settings → Add-ons</div>';
+      html += c.frigate
+        ? (c.frigate_running
+            ? '<div style="color:#2e7d32">✓ Frigate NVR is running</div>'
+            : '<div style="color:#fb8c00">! Frigate is installed but not running — start it after setup</div>')
+        : '<div style="color:#c62828">✗ Frigate not installed — install from Settings → Add-ons</div>';
+      results.innerHTML = html;
+      box.className = (c.mosquitto && c.frigate) ? "info-box green" : "info-box warn";
+      box.querySelector("strong").textContent = (c.mosquitto && c.frigate)
+        ? "Prerequisites ready"
+        : "Prerequisites need attention";
+    }
+  } catch (_) {
+    results.innerHTML = '<div style="color:var(--text-muted)">Could not check prerequisites (running outside HA?)</div>';
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Init: check if already configured + run preflight
 // ---------------------------------------------------------------------------
 (async function init() {
+  runPreflight();
   try {
     const res = await fetch((window.hassioIngress || "") + "/api/status");
     const data = await res.json();
     if (data.ok && data.configured) {
-      // Already configured — show a "re-configure" message on welcome screen
       const card = document.getElementById("screen-1");
       const note = document.createElement("div");
       note.className = "info-box green";
