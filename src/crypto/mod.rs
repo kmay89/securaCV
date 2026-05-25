@@ -151,6 +151,9 @@ mod tests {
     fn device_key_path_strips_file_prefix_and_query() {
         let path = device_key_path_for_db("file:/data/witness.db?mode=rwc").unwrap();
         assert_eq!(path, PathBuf::from("/data/witness.ed25519.seed"));
+
+        let path = device_key_path_for_db("file:///data/witness.db?mode=rwc").unwrap();
+        assert_eq!(path, PathBuf::from("/data/witness.ed25519.seed"));
     }
 
     #[test]
@@ -182,24 +185,27 @@ mod tests {
     fn load_or_create_uses_provided_seed() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("provided.seed");
+        let test_seed = "devkey:a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6";
 
-        let seed = load_or_create_device_seed(&path, Some("devkey:abc123")).unwrap();
-        assert_eq!(seed, "devkey:abc123");
+        let seed = load_or_create_device_seed(&path, Some(test_seed)).unwrap();
+        assert_eq!(seed, test_seed);
 
-        let reload = load_or_create_device_seed(&path, Some("devkey:abc123")).unwrap();
-        assert_eq!(reload, "devkey:abc123");
+        let reload = load_or_create_device_seed(&path, Some(test_seed)).unwrap();
+        assert_eq!(reload, test_seed);
     }
 
     #[test]
     fn load_or_create_rejects_mismatched_seed() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("mismatch.seed");
+        let original = "devkey:original_seed_value_with_enough_entropy";
+        let different = "devkey:different_seed_value_with_enough_entropy";
 
-        load_or_create_device_seed(&path, Some("devkey:original")).unwrap();
+        load_or_create_device_seed(&path, Some(original)).unwrap();
 
-        let result = load_or_create_device_seed(&path, Some("devkey:different"));
+        let result = load_or_create_device_seed(&path, Some(different));
         assert!(result.is_err());
-        assert!(format!("{}", result.unwrap_err()).contains("mismatch"));
+        assert!(result.unwrap_err().to_string().contains("mismatch"));
     }
 
     #[test]
@@ -217,7 +223,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("perms.seed");
 
-        load_or_create_device_seed(&path, Some("devkey:test")).unwrap();
+        load_or_create_device_seed(&path, Some("devkey:perms_test_seed_with_entropy")).unwrap();
 
         let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600, "seed file should be mode 0600");
