@@ -463,8 +463,10 @@ mod tests {
                 public_key: signing_key.verifying_key().to_bytes(),
             }],
         )?;
-        let (_, receipt) = BreakGlass::authorize(&policy, &request, &[approval.clone()], bucket);
-        let _entry_hash = kernel.append_break_glass_receipt(&receipt, &[approval.clone()])?;
+        let (_, receipt) =
+            BreakGlass::authorize(&policy, &request, std::slice::from_ref(&approval), bucket);
+        let _entry_hash =
+            kernel.append_break_glass_receipt(&receipt, std::slice::from_ref(&approval))?;
 
         kernel
             .conn
@@ -521,7 +523,8 @@ mod tests {
             request.request_hash(),
             bob_signature.to_vec(),
         );
-        let (_, receipt) = BreakGlass::authorize(&policy, &request, &[approval.clone()], bucket);
+        let (_, receipt) =
+            BreakGlass::authorize(&policy, &request, std::slice::from_ref(&approval), bucket);
         let _entry_hash = kernel.append_break_glass_receipt(&receipt, &[approval])?;
 
         let public_key_hex = hex::encode(kernel.device_key_for_verify_only());
@@ -575,7 +578,8 @@ mod tests {
             request.request_hash(),
             bad_signature.to_vec(),
         );
-        let (_, receipt) = BreakGlass::authorize(&policy, &request, &[approval.clone()], bucket);
+        let (_, receipt) =
+            BreakGlass::authorize(&policy, &request, std::slice::from_ref(&approval), bucket);
         let _entry_hash = kernel.append_break_glass_receipt(&receipt, &[approval])?;
 
         let public_key_hex = hex::encode(kernel.device_key_for_verify_only());

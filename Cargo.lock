@@ -3580,7 +3580,7 @@ dependencies = [
  "rumqttc",
  "rusqlite",
  "rustls",
- "rustls-pemfile",
+ "rustls-pki-types",
  "serde",
  "serde_json",
  "sha2",

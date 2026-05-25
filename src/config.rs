@@ -732,21 +732,23 @@ mod tests {
 
     #[test]
     fn detect_config_accepts_tract_model() {
-        let mut file = WitnessdConfigFile::default();
-        file.detect = Some(DetectConfigFile {
-            backend: Some("tract".to_string()),
-            tract_model: Some(PathBuf::from("/tmp/model.onnx")),
-        });
-        file.ingest = Some(IngestConfigFile {
-            backend: Some("rtsp".to_string()),
-        });
-        file.rtsp = Some(RtspConfigFile {
-            url: Some("rtsp://example.com/stream".to_string()),
-            target_fps: Some(DEFAULT_RTSP_FPS),
-            width: Some(DEFAULT_RTSP_WIDTH),
-            height: Some(DEFAULT_RTSP_HEIGHT),
-            backend: Some(DEFAULT_RTSP_BACKEND.to_string()),
-        });
+        let file = WitnessdConfigFile {
+            detect: Some(DetectConfigFile {
+                backend: Some("tract".to_string()),
+                tract_model: Some(PathBuf::from("/tmp/model.onnx")),
+            }),
+            ingest: Some(IngestConfigFile {
+                backend: Some("rtsp".to_string()),
+            }),
+            rtsp: Some(RtspConfigFile {
+                url: Some("rtsp://example.com/stream".to_string()),
+                target_fps: Some(DEFAULT_RTSP_FPS),
+                width: Some(DEFAULT_RTSP_WIDTH),
+                height: Some(DEFAULT_RTSP_HEIGHT),
+                backend: Some(DEFAULT_RTSP_BACKEND.to_string()),
+            }),
+            ..WitnessdConfigFile::default()
+        };
         let config = WitnessdConfig::from_file(file).expect("config should parse");
         assert_eq!(config.detect.backend, DetectBackendPreference::Tract);
         assert_eq!(
