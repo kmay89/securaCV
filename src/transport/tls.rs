@@ -225,8 +225,8 @@ impl TlsConfig {
         let mut root_store = rustls::RootCertStore::empty();
 
         if let Some(ca_bytes) = &self.materials.ca {
-            // Parse PEM certificates - fail loudly on any parse error
-            let certs = rustls_pemfile::certs(&mut ca_bytes.as_slice())
+            use rustls_pki_types::pem::PemObject;
+            let certs = rustls_pki_types::CertificateDer::pem_slice_iter(ca_bytes)
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|e| anyhow!("failed to parse CA certificate from PEM: {}", e))?;
             for cert in certs {
@@ -253,12 +253,12 @@ impl TlsConfig {
 
         // Configure client authentication (mTLS) if provided
         let config = if let Some((cert_bytes, key_bytes)) = &self.materials.client_auth {
-            let certs = rustls_pemfile::certs(&mut cert_bytes.as_slice())
+            use rustls_pki_types::pem::PemObject;
+            let certs = rustls_pki_types::CertificateDer::pem_slice_iter(cert_bytes)
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|e| anyhow!("failed to parse client certificate from PEM: {}", e))?;
-            let key = rustls_pemfile::private_key(&mut key_bytes.as_slice())
-                .map_err(|e| anyhow!("failed to parse private key from PEM: {}", e))?
-                .ok_or_else(|| anyhow!("no private key found in PEM file"))?;
+            let key = rustls_pki_types::PrivateKeyDer::from_pem_slice(key_bytes)
+                .map_err(|e| anyhow!("failed to parse private key from PEM: {}", e))?;
             builder
                 .with_client_auth_cert(certs, key)
                 .map_err(|e| anyhow!("failed to configure TLS client auth: {}", e))?
