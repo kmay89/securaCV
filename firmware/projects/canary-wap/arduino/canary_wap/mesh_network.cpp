@@ -105,6 +105,43 @@ static uint32_t g_start_time_ms = 0;
 static uint32_t g_last_heartbeat_ms = 0;
 static uint32_t g_last_peer_check_ms = 0;
 
+// Storm limiter — prevents broadcast-loop storms
+static constexpr uint32_t STORM_THRESHOLD_PER_SEC = 100;
+static constexpr uint32_t STORM_PAUSE_MS          = 30000;
+static uint32_t g_storm_window_start_ms = 0;
+static uint32_t g_storm_window_count    = 0;
+static uint32_t g_storm_pause_until_ms  = 0;
+static uint32_t g_storm_trigger_count   = 0;
+
+static bool storm_gate() {
+  const uint32_t now = millis();
+  if (g_storm_pause_until_ms != 0 &&
+      (int32_t)(now - g_storm_pause_until_ms) < 0) {
+    return false;
+  }
+  if (g_storm_pause_until_ms != 0) {
+    g_storm_pause_until_ms = 0;
+    g_storm_window_count = 0;
+    g_storm_window_start_ms = now;
+  }
+  if ((int32_t)(now - g_storm_window_start_ms) >= 1000) {
+    g_storm_window_start_ms = now;
+    g_storm_window_count = 0;
+  }
+  ++g_storm_window_count;
+  if (g_storm_window_count > STORM_THRESHOLD_PER_SEC) {
+    g_storm_pause_until_ms = now + STORM_PAUSE_MS;
+    ++g_storm_trigger_count;
+    Serial.printf("[mesh.storm] rate %u/s > %u; pausing %us (trigger #%u)\n",
+                  (unsigned)g_storm_window_count,
+                  (unsigned)STORM_THRESHOLD_PER_SEC,
+                  (unsigned)(STORM_PAUSE_MS / 1000),
+                  (unsigned)g_storm_trigger_count);
+    return false;
+  }
+  return true;
+}
+
 // v0.3 (audit O3 closure): in-flight opera_secret rekey state.
 //
 // A single rekey is allowed at a time; concurrent calls are rejected.
@@ -416,6 +453,7 @@ static bool send_to_peer(OperaPeer* peer, MessageType type, const uint8_t* paylo
   if (!peer || !g_opera_config.configured) {
     return false;
   }
+  if (!storm_gate()) return false;
 
   // Build message
   uint8_t msg[MAX_MESSAGE_SIZE];

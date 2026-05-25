@@ -167,6 +167,53 @@ static void transition_peer(Peer* peer, PeerState new_state) {
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
+ * STORM LIMITER
+ *
+ * Prevents broadcast-loop storms from saturating the ESP-NOW queue.
+ * Tracks send count in a rolling 1-second window. When the rate
+ * exceeds STORM_THRESHOLD_PER_SEC, all sends are paused for
+ * STORM_PAUSE_MS. Checked at the top of every send path.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+static constexpr uint32_t STORM_THRESHOLD_PER_SEC = 100;
+static constexpr uint32_t STORM_PAUSE_MS          = 30000;
+static uint32_t s_storm_window_start_ms = 0;
+static uint32_t s_storm_window_count    = 0;
+static uint32_t s_storm_pause_until_ms  = 0;
+static uint32_t s_storm_trigger_count   = 0;
+
+static bool storm_gate() {
+  const uint32_t now = now_ms();
+  if (s_storm_pause_until_ms != 0 &&
+      (int32_t)(now - s_storm_pause_until_ms) < 0) {
+    return false;
+  }
+  if (s_storm_pause_until_ms != 0) {
+    s_storm_pause_until_ms = 0;
+    s_storm_window_count = 0;
+    s_storm_window_start_ms = now;
+  }
+  if ((int32_t)(now - s_storm_window_start_ms) >= 1000) {
+    s_storm_window_start_ms = now;
+    s_storm_window_count = 0;
+  }
+  ++s_storm_window_count;
+  if (s_storm_window_count > STORM_THRESHOLD_PER_SEC) {
+    s_storm_pause_until_ms = now + STORM_PAUSE_MS;
+    ++s_storm_trigger_count;
+#if !defined(CSI_TEST_HOST_BUILD)
+    Serial.printf("[mesh.storm] rate %u/s > %u; pausing %us (trigger #%u)\n",
+                  (unsigned)s_storm_window_count,
+                  (unsigned)STORM_THRESHOLD_PER_SEC,
+                  (unsigned)(STORM_PAUSE_MS / 1000),
+                  (unsigned)s_storm_trigger_count);
+#endif
+    return false;
+  }
+  return true;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
  * ESP-NOW RECV CALLBACK (WiFi task)
  * ────────────────────────────────────────────────────────────────────────── */
 
@@ -403,6 +450,7 @@ bool send_to_peer(const uint8_t mac[MESH_TRANSPORT_MAC_LEN],
   if (!s_running || data == nullptr || len == 0 || len > MESH_TRANSPORT_PAYLOAD_MAX) {
     return false;
   }
+  if (!storm_gate()) return false;
   Peer* peer = find_peer_by_mac_internal(mac);
   if (peer == nullptr) return false;
   if (driver_send(mac, data, len)) {
@@ -420,6 +468,7 @@ bool send_raw(const uint8_t mac[MESH_TRANSPORT_MAC_LEN],
   if (!s_running || data == nullptr || len == 0 || len > MESH_TRANSPORT_PAYLOAD_MAX) {
     return false;
   }
+  if (!storm_gate()) return false;
   /* Bypass the peer-table check — caller is responsible for knowing
    * that this MAC is valid (typically FF:FF:FF:FF:FF:FF for pairing-
    * time broadcasts before any peer relationship exists). */
@@ -436,6 +485,7 @@ size_t broadcast(const uint8_t* data, size_t len) {
   if (!s_running || data == nullptr || len == 0 || len > MESH_TRANSPORT_PAYLOAD_MAX) {
     return 0;
   }
+  if (!storm_gate()) return 0;
   const uint32_t now = now_ms();
   size_t sent = 0;
   for (size_t i = 0; i < MESH_TRANSPORT_MAX_PEERS; ++i) {
