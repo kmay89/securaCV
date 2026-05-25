@@ -129,12 +129,14 @@ static void persist_replay_counters() {
   const size_t n = mesh_session::get_replay_counters(fps, ctrs,
                                                      mesh_session::MAX_TRUSTED_PEERS);
   if (n == 0) return;
+  const size_t save_count = (n > mesh_state::MAX_REPLAY_ENTRIES)
+                          ? mesh_state::MAX_REPLAY_ENTRIES : n;
   mesh_state::ReplayEntry entries[mesh_state::MAX_REPLAY_ENTRIES];
-  for (size_t i = 0; i < n && i < mesh_state::MAX_REPLAY_ENTRIES; ++i) {
+  for (size_t i = 0; i < save_count; ++i) {
     memcpy(entries[i].fingerprint, fps[i], mesh_crypto::FINGERPRINT_LEN);
     entries[i].last_counter = ctrs[i];
   }
-  mesh_state::save_replay_counters(entries, n);
+  mesh_state::save_replay_counters(entries, save_count);
 #endif
 }
 
