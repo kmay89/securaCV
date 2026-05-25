@@ -24,6 +24,8 @@
 
 #if FEATURE_CAMERA_PEEK
 #include "securacv_camera.h"
+#include <lwip/sockets.h>
+#include <netinet/tcp.h>
 #endif
 
 #if FEATURE_OTA_UPDATE
@@ -627,9 +629,15 @@ static esp_err_t handle_peek_start(httpd_req_t* req);
 static esp_err_t handle_peek_stream(httpd_req_t* req);
 static esp_err_t handle_peek_stop(httpd_req_t* req);
 static esp_err_t handle_peek_status(httpd_req_t* req);
+static esp_err_t handle_peek_init(httpd_req_t* req);
+static esp_err_t handle_peek_resolution(httpd_req_t* req);
+static esp_err_t handle_peek_sensor_get(httpd_req_t* req);
+static esp_err_t handle_peek_sensor_set(httpd_req_t* req);
+static esp_err_t handle_peek_snapshot(httpd_req_t* req);
+#endif
+
 #if FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS || FEATURE_TOUCH || FEATURE_IR_RMT || FEATURE_TEMP_TAMPER
 static esp_err_t handle_sensing(httpd_req_t* req);
-#endif
 #endif
 
 #if FEATURE_ACOUSTIC_EVENTS
@@ -645,7 +653,10 @@ bool NetworkManager::startHttpServer() {
   config.server_port = 80;
   config.uri_match_fn = httpd_uri_match_wildcard;
   config.stack_size = 8192;
-  config.max_uri_handlers = 29;  /* +1 sensing; +4 for the audio test endpoints */
+  config.max_uri_handlers = 36;
+  config.recv_wait_timeout = 30;
+  config.send_wait_timeout = 30;
+  config.lru_purge_enable  = true;
 
   if (httpd_start(&m_http_server, &config) != ESP_OK) {
     log_health(LOG_LEVEL_ERROR, LOG_CAT_NETWORK, "HTTP server start failed", nullptr);
@@ -734,6 +745,21 @@ void NetworkManager::registerHttpHandlers() {
 
   httpd_uri_t peek_status = { .uri = "/api/peek/status", .method = HTTP_GET, .handler = handle_peek_status };
   httpd_register_uri_handler(m_http_server, &peek_status);
+
+  httpd_uri_t peek_init = { .uri = "/api/peek/init", .method = HTTP_POST, .handler = handle_peek_init };
+  httpd_register_uri_handler(m_http_server, &peek_init);
+
+  httpd_uri_t peek_res = { .uri = "/api/peek/resolution", .method = HTTP_POST, .handler = handle_peek_resolution };
+  httpd_register_uri_handler(m_http_server, &peek_res);
+
+  httpd_uri_t peek_sensor_g = { .uri = "/api/peek/sensor", .method = HTTP_GET, .handler = handle_peek_sensor_get };
+  httpd_register_uri_handler(m_http_server, &peek_sensor_g);
+
+  httpd_uri_t peek_sensor_s = { .uri = "/api/peek/sensor", .method = HTTP_POST, .handler = handle_peek_sensor_set };
+  httpd_register_uri_handler(m_http_server, &peek_sensor_s);
+
+  httpd_uri_t peek_snap = { .uri = "/api/peek/snapshot", .method = HTTP_GET, .handler = handle_peek_snapshot };
+  httpd_register_uri_handler(m_http_server, &peek_snap);
   #endif
 
   #if FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS || FEATURE_TOUCH || FEATURE_IR_RMT || FEATURE_TEMP_TAMPER
@@ -1100,10 +1126,26 @@ static esp_err_t handle_peek_stream(httpd_req_t* req) {
   }
 
   cam.setPeekActive(true);
+  cam.resetMetrics();
+
+  // TCP keepalive so a vanished client (laptop lid closed, browser killed)
+  // is detected in ~20s instead of spinning on a zombie socket.
+  int sockfd = httpd_req_to_sockfd(req);
+  if (sockfd >= 0) {
+    int yes = 1;
+    setsockopt(sockfd, SOL_SOCKET, SO_KEEPALIVE, &yes, sizeof(yes));
+    int idle = 5, intvl = 5, cnt = 3;
+    setsockopt(sockfd, IPPROTO_TCP, TCP_KEEPIDLE, &idle, sizeof(idle));
+    setsockopt(sockfd, IPPROTO_TCP, TCP_KEEPINTVL, &intvl, sizeof(intvl));
+    setsockopt(sockfd, IPPROTO_TCP, TCP_KEEPCNT, &cnt, sizeof(cnt));
+  }
 
   httpd_resp_set_type(req, "multipart/x-mixed-replace; boundary=frame");
-  httpd_resp_set_hdr(req, "Cache-Control", "no-store, no-cache, must-revalidate");
+  httpd_resp_set_hdr(req, "Cache-Control", "no-store, no-cache, must-revalidate, pre-check=0, post-check=0, max-age=0");
+  httpd_resp_set_hdr(req, "Pragma", "no-cache");
   httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+  httpd_resp_set_hdr(req, "Connection", "close");
+  httpd_resp_set_hdr(req, "X-Accel-Buffering", "no");
 
   while (cam.isPeekActive()) {
     camera_fb_t* fb = cam.captureFrame();
@@ -1129,15 +1171,22 @@ static esp_err_t handle_peek_stream(httpd_req_t* req) {
       break;
     }
 
+    uint32_t frame_bytes = (uint32_t)fb->len;
     res = httpd_resp_send_chunk(req, "\r\n", 2);
     cam.returnFrame(fb);
 
+    if (res == ESP_OK) {
+      cam.recordFrame(frame_bytes);
+    }
     if (res != ESP_OK) break;
 
     #if FEATURE_WATCHDOG
     esp_task_wdt_reset();
     #endif
-    vTaskDelay(pdMS_TO_TICKS(80));
+    uint32_t pace = cam.getFrameDelay();
+    if (pace < 20)  pace = 20;
+    if (pace > 500) pace = 500;
+    vTaskDelay(pdMS_TO_TICKS(pace));
   }
 
   cam.setPeekActive(false);
@@ -1169,10 +1218,216 @@ static esp_err_t handle_peek_status(httpd_req_t* req) {
   doc["peek_active"] = cam.isPeekActive();
   doc["resolution"] = (int)cam.getResolution();
   doc["resolution_name"] = cam.getResolutionName();
+  doc["sensor_model"] = cam.getSensorModelName();
+  doc["frame_delay_ms"] = cam.getFrameDelay();
+
+  PeekMetrics m = cam.snapshotMetrics();
+  doc["frame_count"]      = m.frame_count;
+  doc["last_frame_bytes"] = m.last_frame_bytes;
+  doc["total_bytes"]      = m.total_bytes;
+  doc["fps"]              = m.fps_last;
+  if (m.stream_start_ms > 0 && m.frame_count > 0) {
+    uint32_t elapsed = millis() - m.stream_start_ms;
+    if (elapsed > 0) {
+      doc["stream_uptime_ms"] = elapsed;
+      doc["avg_kbps"] = (uint32_t)((m.total_bytes * 8ULL) / elapsed);
+    }
+  }
 
   String response;
   serializeJson(doc, response);
   return http_send_json(req, response.c_str());
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// PEEK INIT — POST /api/peek/init
+// ════════════════════════════════════════════════════════════════════════════
+
+static esp_err_t handle_peek_init(httpd_req_t* req) {
+  if (!rate_limit_check(req, true)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "Camera re-init requested", nullptr);
+
+  CameraManager& cam = camera_get_instance();
+  bool ok = cam.reinit();
+
+  JsonDocument doc;
+  doc["ok"] = ok;
+  doc["camera_initialized"] = cam.isInitialized();
+  if (ok) {
+    doc["resolution_name"] = cam.getResolutionName();
+    doc["sensor_model"] = cam.getSensorModelName();
+    log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "Camera re-init succeeded", nullptr);
+  } else {
+    doc["error"] = "Camera initialization failed";
+    log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK, "Camera re-init failed", nullptr);
+  }
+
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// PEEK RESOLUTION — POST /api/peek/resolution
+// ════════════════════════════════════════════════════════════════════════════
+
+static esp_err_t handle_peek_resolution(httpd_req_t* req) {
+  if (!rate_limit_check(req, true)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  CameraManager& cam = camera_get_instance();
+  if (!cam.isInitialized()) {
+    return http_send_error(req, 503, "camera_not_initialized");
+  }
+
+  if (req->content_len >= 64) {
+    return http_send_error(req, 413, "payload_too_large");
+  }
+
+  char content[64] = {0};
+  int ret = httpd_req_recv(req, content, sizeof(content) - 1);
+  if (ret <= 0) {
+    return http_send_error(req, 400, "no_body");
+  }
+
+  JsonDocument body;
+  if (deserializeJson(body, content) != DeserializationError::Ok) {
+    return http_send_error(req, 400, "invalid_json");
+  }
+
+  int size = body["size"] | -1;
+  if (size < 0 || size > FRAMESIZE_UXGA) {
+    return http_send_error(req, 400, "invalid_resolution");
+  }
+
+  bool was_active = cam.isPeekActive();
+  cam.setPeekActive(false);
+  vTaskDelay(pdMS_TO_TICKS(100));
+
+  bool success = cam.setResolution((framesize_t)size);
+
+  if (was_active && success) {
+    cam.setPeekActive(true);
+  }
+
+  JsonDocument doc;
+  doc["ok"] = success;
+  if (success) {
+    doc["resolution"] = size;
+    doc["resolution_name"] = cam.getResolutionName();
+    log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "Resolution changed", cam.getResolutionName());
+  } else {
+    doc["error"] = "Failed to set resolution";
+  }
+
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// PEEK SENSOR — GET /api/peek/sensor
+// ════════════════════════════════════════════════════════════════════════════
+
+static esp_err_t handle_peek_sensor_get(httpd_req_t* req) {
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  CameraManager& cam = camera_get_instance();
+  if (!cam.isInitialized()) {
+    return http_send_error(req, 503, "camera_not_initialized");
+  }
+
+  JsonDocument doc;
+  if (!cam.getSensorParams(doc)) {
+    return http_send_error(req, 500, "sensor_read_failed");
+  }
+
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// PEEK SENSOR — POST /api/peek/sensor
+// ════════════════════════════════════════════════════════════════════════════
+
+static esp_err_t handle_peek_sensor_set(httpd_req_t* req) {
+  if (!rate_limit_check(req, true)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  CameraManager& cam = camera_get_instance();
+  if (!cam.isInitialized()) {
+    return http_send_error(req, 503, "camera_not_initialized");
+  }
+
+  if (req->content_len >= 512) {
+    return http_send_error(req, 413, "payload_too_large");
+  }
+
+  char content[512] = {0};
+  int total = 0;
+  while (total < (int)sizeof(content) - 1) {
+    int r = httpd_req_recv(req, content + total, sizeof(content) - 1 - total);
+    if (r <= 0) break;
+    total += r;
+  }
+  if (total <= 0) {
+    return http_send_error(req, 400, "no_body");
+  }
+
+  JsonDocument body;
+  if (deserializeJson(body, content) != DeserializationError::Ok) {
+    return http_send_error(req, 400, "invalid_json");
+  }
+  if (!body.is<JsonObject>()) {
+    return http_send_error(req, 400, "body_must_be_object");
+  }
+  JsonObject obj = body.as<JsonObject>();
+
+  cam.applySensorParams(obj);
+  log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "Sensor params updated", nullptr);
+
+  // Echo back current state so the UI doesn't need a second round-trip.
+  JsonDocument doc;
+  cam.getSensorParams(doc);
+
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// PEEK SNAPSHOT — GET /api/peek/snapshot
+// ════════════════════════════════════════════════════════════════════════════
+
+static esp_err_t handle_peek_snapshot(httpd_req_t* req) {
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  CameraManager& cam = camera_get_instance();
+  if (!cam.isInitialized()) {
+    return http_send_error(req, 503, "camera_not_initialized");
+  }
+
+  camera_fb_t* fb = cam.captureFrame();
+  if (!fb) {
+    return http_send_error(req, 500, "frame_capture_failed");
+  }
+
+  httpd_resp_set_type(req, "image/jpeg");
+  httpd_resp_set_hdr(req, "Content-Disposition", "inline; filename=peek.jpg");
+  httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+  httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+
+  esp_err_t res = httpd_resp_send(req, (const char*)fb->buf, fb->len);
+  cam.returnFrame(fb);
+  return res;
 }
 #endif
 

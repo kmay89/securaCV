@@ -1033,6 +1033,68 @@ var FM = (function() {
   var PEEK_BACKOFF_MAX = 6000;
   var PEEK_INIT_RETRY  = 2;   // /api/peek/init attempts before showing "no camera"
 
+  var fmSensorTimer = null;
+  var fmSensorPatch = {};
+
+  function fmFlushSensor() {
+    fmSensorTimer = null;
+    var patch = fmSensorPatch;
+    fmSensorPatch = {};
+    if (!detailDev || Object.keys(patch).length === 0) return;
+    ftch(url(detailDev, '/api/peek/sensor'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch)
+    }, 5000)
+      .then(function(r) { return r.ok ? r.json() : null; })
+      .then(function(d) { if (d && d.ok) fmApplySensor(d); })
+      .catch(function() {});
+  }
+  function fmQueueSensor(p) {
+    for (var k in p) fmSensorPatch[k] = p[k];
+    if (!fmSensorTimer) fmSensorTimer = setTimeout(fmFlushSensor, 200);
+  }
+  function fmSlider(field, val, spanId) {
+    var v = parseInt(val, 10);
+    var el = $(spanId); if (el) el.textContent = String(v);
+    var o = {}; o[field] = v; fmQueueSensor(o);
+  }
+  function fmToggle(field, checked) {
+    var o = {}; o[field] = checked ? 1 : 0; fmQueueSensor(o);
+  }
+  function fmApplySensor(d) {
+    if (!d || !d.ok) return;
+    var sets = [
+      ['fmBrt', 'fmBrtV', 'brightness'],
+      ['fmCon', 'fmConV', 'contrast'],
+      ['fmSat', 'fmSatV', 'saturation']
+    ];
+    for (var i = 0; i < sets.length; i++) {
+      var sl = $(sets[i][0]); if (sl && d[sets[i][2]] != null) sl.value = d[sets[i][2]];
+      var sp = $(sets[i][1]); if (sp && d[sets[i][2]] != null) sp.textContent = d[sets[i][2]];
+    }
+    var hm = $('fmHmir'); if (hm) hm.checked = !!d.hmirror;
+    var vf = $('fmVflip'); if (vf) vf.checked = !!d.vflip;
+  }
+  function fmRefreshSensor() {
+    if (!detailDev) return;
+    ftch(url(detailDev, '/api/peek/sensor'), null, 5000)
+      .then(function(r) { return r.ok ? r.json() : null; })
+      .then(function(d) { if (d && d.ok) fmApplySensor(d); })
+      .catch(function() {});
+  }
+  function fmResetSensor() {
+    if (!detailDev) return;
+    ftch(url(detailDev, '/api/peek/sensor'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{"reset_defaults":true}'
+    }, 5000)
+      .then(function(r) { return r.ok ? r.json() : null; })
+      .then(function(d) { if (d && d.ok) fmApplySensor(d); })
+      .catch(function() {});
+  }
+
   function renderPeekTab() {
     var c = $('tb-peek');
     c.innerHTML =
@@ -1048,6 +1110,27 @@ var FM = (function() {
         '<button class="btn btn-sm" id="pkRetry" style="display:none">Retry</button>' +
         '<span class="peek-status" id="pkStatus"></span>' +
       '</div>' +
+      '<div style="margin-top:0.85rem;padding:0.75rem;background:rgba(0,0,0,0.15);border-radius:8px;">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem;">' +
+          '<span style="font-size:0.73rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.04em;">Image Controls</span>' +
+          '<button class="btn btn-sm" onclick="FM._fmResetSensor()">Reset</button>' +
+        '</div>' +
+        '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:0.5rem 1rem;font-size:0.78rem;">' +
+          '<label style="color:var(--muted);">Brightness: <span id="fmBrtV">--</span>' +
+            '<input type="range" id="fmBrt" min="-2" max="2" step="1" style="width:100%;" oninput="FM._fmSlider(\'brightness\',this.value,\'fmBrtV\')">' +
+          '</label>' +
+          '<label style="color:var(--muted);">Contrast: <span id="fmConV">--</span>' +
+            '<input type="range" id="fmCon" min="-2" max="2" step="1" style="width:100%;" oninput="FM._fmSlider(\'contrast\',this.value,\'fmConV\')">' +
+          '</label>' +
+          '<label style="color:var(--muted);">Saturation: <span id="fmSatV">--</span>' +
+            '<input type="range" id="fmSat" min="-2" max="2" step="1" style="width:100%;" oninput="FM._fmSlider(\'saturation\',this.value,\'fmSatV\')">' +
+          '</label>' +
+        '</div>' +
+        '<div style="display:flex;gap:1rem;margin-top:0.5rem;font-size:0.78rem;color:var(--muted);">' +
+          '<label><input type="checkbox" id="fmHmir" onchange="FM._fmToggle(\'hmirror\',this.checked)"> H-mirror</label>' +
+          '<label><input type="checkbox" id="fmVflip" onchange="FM._fmToggle(\'vflip\',this.checked)"> V-flip</label>' +
+        '</div>' +
+      '</div>' +
       '<p style="font-size:0.72rem;color:var(--muted);margin-top:0.5rem">' +
         'Privacy: streaming only for positioning. No frames are stored or transmitted beyond this browser tab. ' +
         'SecuraCV records semantic events, not video.</p>';
@@ -1061,6 +1144,7 @@ var FM = (function() {
 
     setPeekState('initializing', 'Preparing camera…');
     ensureCameraReady();
+    fmRefreshSensor();
   }
 
   function setPeekState(state, msg) {
@@ -1437,7 +1521,10 @@ var FM = (function() {
     refreshDetail: refreshDetail,
     exportCurrent: exportCurrent,
     removeCurrent: removeCurrent,
-    hideModal:     hideModal
+    hideModal:     hideModal,
+    _fmSlider:     fmSlider,
+    _fmToggle:     fmToggle,
+    _fmResetSensor: fmResetSensor
   };
 
 })();
