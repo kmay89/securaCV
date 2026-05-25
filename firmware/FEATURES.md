@@ -51,6 +51,13 @@ Single-row-per-capability summary across every non-archived variant. This is the
 | RF presence detection | ❌ | ✅ | ⚠️ | ❌ | ➖ | ✅ |
 | WiFi CSI sensing (motion / breathing / micro-activity) | ✅ | ✅ | ❌ | ❌ | ➖ | ❌ |
 | CSI module pipeline + privacy chokepoint + 10-min bundler (v1: presence, breathing, ribbon, daily summary, anomaly) | ✅ | ✅ | ❌ | ❌ | ➖ | ❌ |
+| CSI active probe (50 Hz ESP-NOW unicast, deterministic frame rate) | ✅ | ✅ | ❌ | ❌ | ➖ | ❌ |
+| Multi-link fusion (2-link confirmation gate, motion direction, breathing median) | ✅ | ✅ | ❌ | ❌ | ➖ | ❌ |
+| Multipath shimmer filter (RSSI swing >8 dB without Doppler → reject) | ✅ | ✅ | ❌ | ❌ | ➖ | ❌ |
+| CSI watchdog (5 s silence → rx toggle; 3× escalation → WiFi restart) | ✅ | ✅ | ❌ | ❌ | ➖ | ❌ |
+| Coordinated channel-hop (Hub proposes, peers follow, 50% util × 60 s trigger) | ✅ | ✅ | ❌ | ❌ | ➖ | ❌ |
+| Hub failover election (lowest fingerprint wins, deterministic, no voting) | ⚠️ | ✅ | ❌ | ❌ | ➖ | ❌ |
+| Empty-room auto-calibration (10-min baseline, NVS-persisted) | ✅ | ✅ | ❌ | ❌ | ➖ | ❌ |
 | Acoustic alarm-cadence detection (T3 smoke / T4 CO) | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
 | Capacitive touch (silent panic / enclosure tamper) | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
 | Native deep-sleep HAL (esp_sleep_* abstraction; ULP-RISC-V capable) | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
