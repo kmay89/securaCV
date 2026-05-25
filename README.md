@@ -164,6 +164,10 @@ Device firmware lives under `firmware/`.
 
 - **Canary Vision (ESP32-C3 + Grove Vision AI V2)**: `firmware/projects/canary-vision/`  
   PlatformIO project that publishes privacy-preserving semantic events and Home Assistant MQTT discovery.
+- **Canary WAP (ESP32-S3 / XIAO ESP32-S3 Sense)**: `firmware/projects/canary-wap/`  
+  Arduino-based variant with WiFi CSI sensing, mesh networking (Opera Protocol), and BLE-Scout integration.
+- **Canary OTA**: `firmware/projects/canary-ota/`  
+  Over-the-air update infrastructure for deployed Canary devices.
 
 ## Release Gate (v1 Tagging)
 
