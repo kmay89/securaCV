@@ -1,0 +1,11 @@
+App(
+    appid="securacv_scanner",
+    name="SecuraCV Scanner",
+    apptype=FlipperAppType.EXTERNAL,
+    entry_point="securacv_scanner_app",
+    requires=["gui", "bt"],
+    stack_size=2 * 1024,
+    fap_category="Bluetooth",
+    fap_version="1.0",
+    fap_description="Scan for SecuraCV Canary devices and decode BLE debug beacons",
+)
