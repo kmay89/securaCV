@@ -929,4 +929,34 @@ mod tests {
         // Test valid characters are accepted
         assert!(sanitize_envelope_id("valid-envelope_id-123").is_ok());
     }
+
+    #[test]
+    fn decrypt_v2_classical_fallback_on_bad_kem_ct() -> Result<()> {
+        use crate::vault::crypto::{decrypt_v2, seal_v2, KemKeypair};
+        let master_key = [12u8; 32];
+        let clear = b"secret payload";
+
+        let mut envelope = seal_v2(
+            "incident-fallback",
+            [12u8; 32],
+            clear,
+            VaultCryptoMode::Classical,
+            &master_key,
+            None,
+        )?;
+
+        // Simulate a legacy hybrid envelope: set kem_alg to ML-KEM-768 with
+        // garbage KEM ciphertext. With a real keypair, decrypt_v2 will attempt
+        // KEM decapsulation (implicit rejection returns wrong shared secret),
+        // derive a wrong DEK, fail AEAD tag verification, then fall back to
+        // classical_wrap.
+        envelope.kem_alg = "ml-kem-768".to_string();
+        envelope.kem_ct = vec![0xBA; 1088];
+        envelope.kdf_info = vec![0x01; 16];
+
+        let kp = KemKeypair::generate();
+        let result = decrypt_v2(&envelope, &master_key, Some(&kp))?;
+        assert_eq!(result, clear);
+        Ok(())
+    }
 }
