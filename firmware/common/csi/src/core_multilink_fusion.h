@@ -71,6 +71,19 @@ void core_multilink_fusion_ingest_peer_features(
     const uint8_t fingerprint[CORE_MULTILINK_FINGERPRINT_LEN],
     const csi_features_t* features);
 
+/**
+ * Explicitly expire a peer link by fingerprint.
+ *
+ * Called by the integration layer when a mesh peer goes OFFLINE or is
+ * removed. Clears the link's in_use flag so it no longer counts toward
+ * the confirmation gate and the slot is immediately available for reuse.
+ *
+ * Returns true if the fingerprint was found and expired, false if not
+ * found (no-op — the peer was never ingested or already expired).
+ */
+bool core_multilink_fusion_expire_link(
+    const uint8_t fingerprint[CORE_MULTILINK_FINGERPRINT_LEN]);
+
 /* ──────────────────────────────────────────────────────────────────────────
  * TEST HOOKS (host build only)
  * ────────────────────────────────────────────────────────────────────────── */

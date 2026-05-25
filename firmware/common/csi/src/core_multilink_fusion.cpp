@@ -258,6 +258,15 @@ const csi_module_t* core_multilink_fusion_module(void) {
   return &MODULE;
 }
 
+bool core_multilink_fusion_expire_link(
+    const uint8_t fingerprint[CORE_MULTILINK_FINGERPRINT_LEN]) {
+  if (fingerprint == nullptr) return false;
+  Link* link = find_link(fingerprint);
+  if (link == nullptr) return false;
+  link->in_use = false;
+  return true;
+}
+
 void core_multilink_fusion_ingest_peer_features(
     const uint8_t fingerprint[CORE_MULTILINK_FINGERPRINT_LEN],
     const csi_features_t* features) {

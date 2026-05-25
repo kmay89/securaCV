@@ -94,6 +94,7 @@
 #include "mesh_hub_election.h"
 #include "airtime_governor.h"
 #include <csi_hal.h>
+#include <core_multilink_fusion.h>
 #endif
 
 namespace {
@@ -2039,6 +2040,17 @@ uint8_t  s_self_fp[mesh_hub_election::FINGERPRINT_LEN] = {0};
 bool     s_self_fp_valid = false;
 bool     s_is_coordinator = false;
 
+void expire_offline_fusion_links() {
+  for (uint8_t i = 0; i < mesh_network::get_peer_count(); ++i) {
+    const mesh_network::OperaPeer* peer = mesh_network::get_peer(i);
+    if (peer == nullptr) continue;
+    if (peer->state == mesh_network::PEER_OFFLINE ||
+        peer->state == mesh_network::PEER_REMOVED) {
+      core_multilink_fusion_expire_link(peer->fingerprint);
+    }
+  }
+}
+
 void evaluate_coordinator() {
   if (!s_self_fp_valid) {
     s_self_fp_valid = mesh_network::get_self_fingerprint(s_self_fp);
@@ -2722,6 +2734,7 @@ void loop() {
     if ((int32_t)(now - s_last_election_eval_ms) >= 5000) {
       s_last_election_eval_ms = now;
       evaluate_coordinator();
+      expire_offline_fusion_links();
     }
     if (s_is_coordinator) {
       channel_hop_tick(now);
