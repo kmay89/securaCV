@@ -434,20 +434,13 @@ mod tests {
             signature: vec![0xAB; 64],
         });
 
-        let result = verify_with_domain(
-            DOMAIN_SEALED_LOG_ENTRY,
-            &signing_key.verifying_key(),
-            &entry_hash,
-            &sig_set,
-            SignatureMode::Compat,
-            None,
+        let signing_hash = domain_separated_hash(DOMAIN_SEALED_LOG_ENTRY, &entry_hash);
+        let result = verify_pq_signature(&signing_hash, &sig_set, None);
+        let err = result.unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            !msg.contains("unsupported pq signature scheme"),
+            "dilithium2 scheme ID should be accepted, got: {msg}"
         );
-        if let Err(e) = result {
-            let msg = format!("{e}");
-            assert!(
-                !msg.contains("unsupported pq signature scheme"),
-                "dilithium2 scheme ID should be accepted, got: {msg}"
-            );
-        }
     }
 }
