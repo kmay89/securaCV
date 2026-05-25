@@ -6,8 +6,13 @@
  */
 
 #include "securacv_camera.h"
+#include <Preferences.h>
 
 #if FEATURE_CAMERA_PEEK
+
+static const char* NVS_CAM_NS = "scv_cam";
+static const char* NVS_KEY_HMIRROR = "hmirror";
+static const char* NVS_KEY_VFLIP   = "vflip";
 
 // ════════════════════════════════════════════════════════════════════════════
 // GLOBAL INSTANCE
@@ -183,6 +188,7 @@ bool CameraManager::begin() {
   m_framesize = attempts[chosen].frame_size;
   m_initialized = true;
   applyDefaultSensorTuning();
+  loadOrientationFromNvs();
   Serial.printf("[CAMERA] Initialized (%s) for peek/preview\n", labels[chosen]);
   return true;
 }
@@ -376,9 +382,12 @@ bool CameraManager::applySensorParams(const JsonObject& obj) {
   apply_int_setting(s, obj, "lenc",           s->set_lenc,            0,  1);
   apply_int_setting(s, obj, "dcw",            s->set_dcw,             0,  1);
 
-  // Orientation + diagnostics
-  apply_int_setting(s, obj, "hmirror",        s->set_hmirror,         0,  1);
-  apply_int_setting(s, obj, "vflip",          s->set_vflip,           0,  1);
+  // Orientation — persisted to NVS (physical mounting constants)
+  bool orientation_changed = false;
+  if (apply_int_setting(s, obj, "hmirror", s->set_hmirror, 0, 1)) orientation_changed = true;
+  if (apply_int_setting(s, obj, "vflip",   s->set_vflip,   0, 1)) orientation_changed = true;
+  if (orientation_changed) saveOrientationToNvs();
+
   apply_int_setting(s, obj, "colorbar",       s->set_colorbar,        0,  1);
 
   // Stream pacing (not a sensor setting, but lives here so the UI can tune FPS)
@@ -386,9 +395,10 @@ bool CameraManager::applySensorParams(const JsonObject& obj) {
     setFrameDelay(obj["frame_delay_ms"].as<int>());
   }
 
-  // Reset to surveillance defaults if requested
+  // Reset to surveillance defaults if requested (preserves saved orientation)
   if (obj["reset_defaults"].is<bool>() && obj["reset_defaults"].as<bool>()) {
     applyDefaultSensorTuning();
+    loadOrientationFromNvs();
     m_frame_delay_ms = 40;
   }
 
@@ -397,7 +407,42 @@ bool CameraManager::applySensorParams(const JsonObject& obj) {
 
 void CameraManager::resetSensorDefaults() {
   applyDefaultSensorTuning();
+  loadOrientationFromNvs();
   m_frame_delay_ms = 40;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// ORIENTATION NVS PERSISTENCE
+// ════════════════════════════════════════════════════════════════════════════
+
+void CameraManager::loadOrientationFromNvs() {
+  sensor_t* s = esp_camera_sensor_get();
+  if (!s) return;
+
+  Preferences prefs;
+  if (!prefs.begin(NVS_CAM_NS, true)) return;
+
+  if (prefs.isKey(NVS_KEY_HMIRROR)) {
+    s->set_hmirror(s, prefs.getUChar(NVS_KEY_HMIRROR, 0));
+  }
+  if (prefs.isKey(NVS_KEY_VFLIP)) {
+    s->set_vflip(s, prefs.getUChar(NVS_KEY_VFLIP, 0));
+  }
+  prefs.end();
+}
+
+void CameraManager::saveOrientationToNvs() {
+  sensor_t* s = esp_camera_sensor_get();
+  if (!s) return;
+
+  Preferences prefs;
+  if (!prefs.begin(NVS_CAM_NS, false)) return;
+
+  prefs.putUChar(NVS_KEY_HMIRROR, s->status.hmirror ? 1 : 0);
+  prefs.putUChar(NVS_KEY_VFLIP,   s->status.vflip   ? 1 : 0);
+  prefs.end();
+  Serial.printf("[CAMERA] Orientation saved: hmirror=%d vflip=%d\n",
+                s->status.hmirror, s->status.vflip);
 }
 
 // ════════════════════════════════════════════════════════════════════════════

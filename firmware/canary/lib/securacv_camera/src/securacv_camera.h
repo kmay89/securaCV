@@ -82,6 +82,8 @@ public:
 
 private:
   void applyDefaultSensorTuning();
+  void loadOrientationFromNvs();
+  void saveOrientationToNvs();
 
   bool m_initialized;
   volatile bool m_peek_active;
