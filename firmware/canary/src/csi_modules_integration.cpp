@@ -51,9 +51,9 @@
 #endif
 #include "mesh_channel_hop.h"
 #include "mesh_hub_election.h"
-#include "csi_hal.h"
 #endif
 
+#include "csi_hal.h"
 #include <Arduino.h>
 #include <Preferences.h>
 #include <string.h>

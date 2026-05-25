@@ -103,6 +103,7 @@ csi_integration::legacy_features_hook_t g_legacy_hook        = nullptr;
 csi_features_t                          g_latest_window      = {};
 bool                                    g_have_latest_window = false;
 uint32_t                                g_stream_started_ms  = 0;
+uint32_t                                s_watchdog_consecutive = 0;
 /* True iff csi_hal::init() succeeded during csi_integration::init().
  * When false the HTTP routes are still registered (so the dashboard
  * doesn't 404) but handle_stream returns a "sensing_unavailable"
@@ -1942,7 +1943,6 @@ void on_peer_beacon_event_inbound(
  * ────────────────────────────────────────────────────────────────────────── */
 
 constexpr uint32_t WATCHDOG_ESCALATE_AFTER = 3;
-uint32_t s_watchdog_consecutive = 0;
 
 void on_csi_watchdog(uint32_t silent_ms, uint32_t attempt) {
   ++s_watchdog_consecutive;
