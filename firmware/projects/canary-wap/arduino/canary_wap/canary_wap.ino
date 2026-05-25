@@ -2767,6 +2767,9 @@ static esp_err_t handle_reboot(httpd_req_t* req) {
   serializeJson(doc, response);
   http_send_json(req, response.c_str());
   
+#if FEATURE_MESH_NETWORK
+  mesh_network::save_replay_counters();
+#endif
   delay(500);
   ESP.restart();
   return ESP_OK;
@@ -6077,6 +6080,8 @@ void setup() {
         log_health((LogLevel)alert->severity, SCV_CAT_MESH, "Opera alert received", detail);
       });
 
+      mesh_network::load_replay_counters();
+
       mesh_network::set_peer_state_callback([](const mesh_network::OperaPeer* peer,
                                                mesh_network::PeerState old_state,
                                                mesh_network::PeerState new_state) {
@@ -6432,6 +6437,15 @@ void loop() {
   // Update mesh network
   #if FEATURE_MESH_NETWORK
   mesh_network::update();
+  {
+    static uint32_t s_last_replay_save_ms = 0;
+    uint32_t now = millis();
+    constexpr uint32_t REPLAY_SAVE_INTERVAL_MS = 300000;
+    if ((int32_t)(now - s_last_replay_save_ms) >= (int32_t)REPLAY_SAVE_INTERVAL_MS) {
+      s_last_replay_save_ms = now;
+      mesh_network::save_replay_counters();
+    }
+  }
   #endif
 
   // Update Bluetooth (legacy channel)
