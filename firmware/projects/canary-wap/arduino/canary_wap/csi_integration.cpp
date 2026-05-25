@@ -103,6 +103,7 @@ csi_integration::legacy_features_hook_t g_legacy_hook        = nullptr;
 csi_features_t                          g_latest_window      = {};
 bool                                    g_have_latest_window = false;
 uint32_t                                g_stream_started_ms  = 0;
+uint32_t                                s_watchdog_consecutive = 0;
 /* True iff csi_hal::init() succeeded during csi_integration::init().
  * When false the HTTP routes are still registered (so the dashboard
  * doesn't 404) but handle_stream returns a "sensing_unavailable"
@@ -337,6 +338,7 @@ void calibration_observe(const csi_features_t* features) {
 
 void on_csi_window(const csi_features_t* features, void* /*user*/) {
   if (!features) return;
+  s_watchdog_consecutive = 0;
   g_latest_window      = *features;
   g_have_latest_window = true;
   /* Calibration runs in parallel with the normal module pipeline so a
@@ -1932,6 +1934,30 @@ void on_peer_beacon_event_inbound(
 }
 #endif  /* FEATURE_BLE_SCAN && FEATURE_MESH_NETWORK */
 
+/* ──────────────────────────────────────────────────────────────────────────
+ * CSI WATCHDOG CALLBACK
+ *
+ * csi_hal's watchdog detects 0 frames for 5 s and toggles the CSI rx
+ * callback as a gentle recovery. This callback logs the event and
+ * escalates to a full WiFi restart after 3 consecutive failures.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+constexpr uint32_t WATCHDOG_ESCALATE_AFTER = 3;
+
+void on_csi_watchdog(uint32_t silent_ms, uint32_t attempt) {
+  ++s_watchdog_consecutive;
+  Serial.printf("[csi.watchdog] silent %ums, attempt %u (consecutive %u)\n",
+                (unsigned)silent_ms, (unsigned)attempt,
+                (unsigned)s_watchdog_consecutive);
+
+  if (s_watchdog_consecutive >= WATCHDOG_ESCALATE_AFTER) {
+    Serial.printf("[csi.watchdog] escalating: csi_hal stop/start\n");
+    csi_hal::stop();
+    csi_hal::start();
+    s_watchdog_consecutive = 0;
+  }
+}
+
 #if FEATURE_MESH_NETWORK
 /* ──────────────────────────────────────────────────────────────────────────
  * CHANNEL-HOP COORDINATOR (PR 4b integration)
@@ -2204,6 +2230,9 @@ void register_v1_modules() {
    * dashboard's settings panel writes qh.en / qh.start / qh.end via
    * /api/settings POST; rebooting the device picks them back up. */
   apply_quiet_hours_from_nvs();
+
+  csi_hal::set_watchdog(csi_hal::WATCHDOG_DEFAULT_TIMEOUT_MS,
+                        &on_csi_watchdog);
 }
 
 }  /* namespace */

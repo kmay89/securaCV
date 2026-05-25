@@ -287,6 +287,12 @@ static void on_peer_hub_election(
 }
 #endif  /* FEATURE_MESH_NETWORK */
 
+/* CSI watchdog: the PIO build's securacv_csi library does not expose
+ * csi_hal's watchdog API. The watchdog is wired in the canary-wap
+ * build (csi_integration.cpp) where csi_hal.cpp is compiled as part
+ * of the sketch. PIO nodes rely on the default 5 s watchdog that
+ * fires the internal CSI rx toggle — no callback needed. */
+
 }  /* namespace */
 
 /* ──────────────────────────────────────────────────────────────────────────
