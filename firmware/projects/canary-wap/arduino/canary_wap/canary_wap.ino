@@ -2771,7 +2771,8 @@ static esp_err_t handle_reboot(httpd_req_t* req) {
   serializeJson(doc, response);
   http_send_json(req, response.c_str());
   
-  if (g_pre_reboot_hook) g_pre_reboot_hook();
+  pre_reboot_fn hook = __atomic_load_n(&g_pre_reboot_hook, __ATOMIC_ACQUIRE);
+  if (hook) hook();
   delay(500);
   ESP.restart();
   return ESP_OK;
@@ -6083,7 +6084,8 @@ void setup() {
       });
 
       mesh_network::load_replay_counters();
-      g_pre_reboot_hook = []() { mesh_network::save_replay_counters(); };
+      pre_reboot_fn hook = []() { mesh_network::save_replay_counters(); };
+      __atomic_store_n(&g_pre_reboot_hook, hook, __ATOMIC_RELEASE);
 
       mesh_network::set_peer_state_callback([](const mesh_network::OperaPeer* peer,
                                                mesh_network::PeerState old_state,
