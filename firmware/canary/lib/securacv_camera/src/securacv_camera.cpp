@@ -55,7 +55,7 @@ const char* sensor_model_name(uint16_t pid) {
 // Apply one named field from a JSON object if present.
 static bool apply_int_setting(sensor_t* s, const JsonObject& body, const char* key,
                               int (*setter)(sensor_t*, int), int min_val, int max_val) {
-  if (!body[key].is<int>()) return false;
+  if (!body[key].is<int>() || !setter) return false;
   int v = body[key].as<int>();
   if (v < min_val) v = min_val;
   if (v > max_val) v = max_val;
@@ -343,7 +343,7 @@ bool CameraManager::applySensorParams(const JsonObject& obj) {
   if (!s) return false;
 
   // JPEG quality — also read back from sensor
-  if (obj["quality"].is<int>()) {
+  if (obj["quality"].is<int>() && s->set_quality) {
     int q = obj["quality"].as<int>();
     if (q < 0) q = 0; if (q > 63) q = 63;
     s->set_quality(s, q);
@@ -371,7 +371,7 @@ bool CameraManager::applySensorParams(const JsonObject& obj) {
   // Gain
   apply_int_setting(s, obj, "agc",            s->set_gain_ctrl,       0,  1);
   apply_int_setting(s, obj, "agc_gain",       s->set_agc_gain,        0, 30);
-  if (obj["gainceiling"].is<int>()) {
+  if (obj["gainceiling"].is<int>() && s->set_gainceiling) {
     int g = obj["gainceiling"].as<int>();
     if (g < 0) g = 0; if (g > 6) g = 6;
     s->set_gainceiling(s, (gainceiling_t)g);

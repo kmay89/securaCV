@@ -1493,6 +1493,26 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           <img id="snapshotImg" style="max-width:100%;border-radius:8px;border:1px solid var(--border);" alt="Snapshot">
         </div>
       </div>
+
+      <!-- Camera Info — live stream metrics from /api/peek/status -->
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Stream Metrics</div>
+            <div class="card-subtitle">Updates every second while streaming</div>
+          </div>
+          <span id="camInfoLive" class="badge info" style="display:none;"><span class="badge-dot"></span>LIVE</span>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:0.6rem 1rem;font-size:0.82rem;">
+          <div><div style="color:var(--muted);font-size:0.7rem;text-transform:uppercase;letter-spacing:0.05em;">Sensor</div><div id="camSensor">--</div></div>
+          <div><div style="color:var(--muted);font-size:0.7rem;text-transform:uppercase;letter-spacing:0.05em;">Resolution</div><div id="camRes">--</div></div>
+          <div><div style="color:var(--muted);font-size:0.7rem;text-transform:uppercase;letter-spacing:0.05em;">Frame Rate</div><div id="camFps">idle</div></div>
+          <div><div style="color:var(--muted);font-size:0.7rem;text-transform:uppercase;letter-spacing:0.05em;">Last Frame</div><div id="camLastFrame">idle</div></div>
+          <div><div style="color:var(--muted);font-size:0.7rem;text-transform:uppercase;letter-spacing:0.05em;">Throughput</div><div id="camKbps">idle</div></div>
+          <div><div style="color:var(--muted);font-size:0.7rem;text-transform:uppercase;letter-spacing:0.05em;">Frames Sent</div><div id="camFrameCount">idle</div></div>
+          <div><div style="color:var(--muted);font-size:0.7rem;text-transform:uppercase;letter-spacing:0.05em;">Stream Uptime</div><div id="camUptime">idle</div></div>
+        </div>
+      </div>
     </div>
 
     <!-- Opera Panel (Mesh Network) -->
@@ -2327,9 +2347,10 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       else if (panel === 'sensing') refreshSensing();
       else if (panel === 'status') refreshLiveSensing();
 
-      // Stop peek stream when leaving peek panel
-      if (panel !== 'peek' && peekActive) {
-        stopPeek();
+      // Stop peek stream and metrics polling when leaving peek panel
+      if (panel !== 'peek') {
+        stopCamInfoPolling();
+        if (peekActive) stopPeek();
       }
     }
 
@@ -2366,14 +2387,18 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     
     async function refreshPeekStatus() {
       const data = await api('/api/peek/status');
-      if (data.ok) {
+      if (data && data.ok) {
+        const wasReady = cameraReady;
         cameraReady = data.camera_initialized;
         peekActive = data.peek_active;
         if (typeof data.resolution !== 'undefined') {
           currentResolution = data.resolution;
           updateResolutionUI();
         }
+        applyCameraInfo(data);
         updatePeekUI();
+        if (peekActive) startCamInfoPolling(); else stopCamInfoPolling();
+        if (cameraReady && !wasReady) refreshSensorState();
       }
     }
     
@@ -2474,13 +2499,15 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       peekActive = true;
       btn.disabled = false;
       updatePeekUI();
+      setTimeout(refreshPeekStatus, 300);
     }
-    
+
     async function stopPeek() {
       const stream = document.getElementById('peekStream');
 
       // Set peekActive false BEFORE clearing src to prevent onerror from showing error
       peekActive = false;
+      stopCamInfoPolling();
 
       // Clear the stream source (this triggers onerror, but peekActive is false so it won't show error)
       stream.src = '';
@@ -2489,6 +2516,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       await api('/api/peek/stop', 'POST');
 
       updatePeekUI();
+      refreshPeekStatus();
     }
     
     async function takeSnapshot() {
@@ -2552,6 +2580,61 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       } else {
         alert('Failed to set resolution: ' + (data.error || 'Unknown error'));
       }
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // STREAM METRICS — 1s polling while streaming
+    // ══════════════════════════════════════════════════════════════════
+    let camInfoTimer = null;
+
+    function fmtBytes(n) {
+      if (n == null || isNaN(n)) return '--';
+      if (n < 1024) return n + ' B';
+      if (n < 1024*1024) return (n/1024).toFixed(1) + ' KB';
+      return (n/1048576).toFixed(2) + ' MB';
+    }
+    function fmtDuration(ms) {
+      if (!ms || ms < 0) return '--';
+      const s = Math.floor(ms / 1000);
+      if (s < 60) return s + 's';
+      const m = Math.floor(s / 60);
+      return m + 'm ' + (s % 60) + 's';
+    }
+
+    function applyCameraInfo(data) {
+      if (!data || !data.ok) return;
+      setText('camSensor', data.sensor_model || '--');
+      setText('camRes', data.resolution_name || '--');
+
+      const hasMetrics = data.frame_count != null && data.frame_count > 0;
+      const live = document.getElementById('camInfoLive');
+
+      if (data.peek_active) {
+        setText('camFps', data.fps != null ? data.fps + ' fps' : '--');
+        setText('camLastFrame', fmtBytes(data.last_frame_bytes));
+        setText('camKbps', data.avg_kbps != null ? data.avg_kbps + ' kbps' : '--');
+        setText('camFrameCount', String(data.frame_count));
+        setText('camUptime', fmtDuration(data.stream_uptime_ms));
+        if (live) { live.textContent = 'LIVE'; live.className = 'badge info'; live.style.display = 'inline-flex'; }
+      } else if (hasMetrics) {
+        setText('camFps', data.fps != null ? data.fps + ' fps' : '--');
+        setText('camLastFrame', fmtBytes(data.last_frame_bytes));
+        setText('camKbps', data.avg_kbps != null ? data.avg_kbps + ' kbps' : '--');
+        setText('camFrameCount', String(data.frame_count));
+        setText('camUptime', fmtDuration(data.stream_uptime_ms));
+        if (live) { live.textContent = 'LAST STREAM'; live.className = 'badge'; live.style.display = 'inline-flex'; }
+      } else {
+        ['camFps','camLastFrame','camKbps','camFrameCount','camUptime'].forEach(id => setText(id, 'idle'));
+        if (live) live.style.display = 'none';
+      }
+    }
+
+    function startCamInfoPolling() {
+      if (camInfoTimer) return;
+      camInfoTimer = setInterval(refreshPeekStatus, 1000);
+    }
+    function stopCamInfoPolling() {
+      if (camInfoTimer) { clearInterval(camInfoTimer); camInfoTimer = null; }
     }
 
     // ══════════════════════════════════════════════════════════════════

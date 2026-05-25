@@ -850,6 +850,7 @@ var FM = (function() {
 
   function closeDetail() {
     $('overlay').classList.remove('active');
+    fmStopMetrics();
     stopPeek();
     detailDev = null;
   }
@@ -1095,6 +1096,50 @@ var FM = (function() {
       .catch(function() {});
   }
 
+  var fmMetricsTimer = null;
+
+  function fmFmtBytes(n) {
+    if (n == null || isNaN(n)) return '--';
+    if (n < 1024) return n + ' B';
+    if (n < 1048576) return (n/1024).toFixed(1) + ' KB';
+    return (n/1048576).toFixed(2) + ' MB';
+  }
+  function fmFmtDur(ms) {
+    if (!ms || ms < 0) return '--';
+    var s = Math.floor(ms / 1000);
+    if (s < 60) return s + 's';
+    var m = Math.floor(s / 60);
+    return m + 'm ' + (s % 60) + 's';
+  }
+  function fmApplyMetrics(d) {
+    var strip = $('pkMetrics');
+    if (!strip) return;
+    if (d && (d.peek_active || (d.frame_count && d.frame_count > 0))) {
+      strip.style.display = '';
+      var fps = $('pkFps'); if (fps) fps.textContent = d.fps != null ? d.fps + ' fps' : '--';
+      var fr = $('pkFrame2'); if (fr) fr.textContent = fmFmtBytes(d.last_frame_bytes);
+      var kb = $('pkKbps'); if (kb) kb.textContent = d.avg_kbps != null ? d.avg_kbps + ' kbps' : '--';
+      var fc = $('pkFCount'); if (fc) fc.textContent = d.frame_count != null ? String(d.frame_count) : '--';
+      var up = $('pkUptime'); if (up) up.textContent = fmFmtDur(d.stream_uptime_ms);
+    } else {
+      strip.style.display = 'none';
+    }
+  }
+  function fmPollMetrics() {
+    if (!detailDev || !peekActive) { fmStopMetrics(); return; }
+    ftch(url(detailDev, '/api/peek/status'), null, 3000)
+      .then(function(r) { return r.ok ? r.json() : null; })
+      .then(function(d) { if (d && d.ok) fmApplyMetrics(d); })
+      .catch(function() {});
+  }
+  function fmStartMetrics() {
+    if (fmMetricsTimer) return;
+    fmMetricsTimer = setInterval(fmPollMetrics, 1000);
+  }
+  function fmStopMetrics() {
+    if (fmMetricsTimer) { clearInterval(fmMetricsTimer); fmMetricsTimer = null; }
+  }
+
   function renderPeekTab() {
     var c = $('tb-peek');
     c.innerHTML =
@@ -1129,6 +1174,15 @@ var FM = (function() {
         '<div style="display:flex;gap:1rem;margin-top:0.5rem;font-size:0.78rem;color:var(--muted);">' +
           '<label><input type="checkbox" id="fmHmir" onchange="FM._fmToggle(\'hmirror\',this.checked)"> H-mirror</label>' +
           '<label><input type="checkbox" id="fmVflip" onchange="FM._fmToggle(\'vflip\',this.checked)"> V-flip</label>' +
+        '</div>' +
+      '</div>' +
+      '<div id="pkMetrics" style="margin-top:0.65rem;padding:0.5rem 0.75rem;background:rgba(0,0,0,0.15);border-radius:8px;display:none;">' +
+        '<div style="display:flex;gap:1.2rem;flex-wrap:wrap;font-size:0.73rem;">' +
+          '<span style="color:var(--muted);">FPS: <span id="pkFps" style="color:var(--accent);font-family:var(--mono);">--</span></span>' +
+          '<span style="color:var(--muted);">Frame: <span id="pkFrame2" style="color:var(--accent);font-family:var(--mono);">--</span></span>' +
+          '<span style="color:var(--muted);">Bitrate: <span id="pkKbps" style="color:var(--accent);font-family:var(--mono);">--</span></span>' +
+          '<span style="color:var(--muted);">Frames: <span id="pkFCount" style="color:var(--accent);font-family:var(--mono);">--</span></span>' +
+          '<span style="color:var(--muted);">Uptime: <span id="pkUptime" style="color:var(--accent);font-family:var(--mono);">--</span></span>' +
         '</div>' +
       '</div>' +
       '<p style="font-size:0.72rem;color:var(--muted);margin-top:0.5rem">' +
@@ -1208,6 +1262,9 @@ var FM = (function() {
     if (ov)    ov.classList.toggle('show', showOverlay);
     if (ovT && msg) ovT.textContent = msg;
     if (live)  live.classList.toggle('show', liveDot);
+
+    if (state === 'live') fmStartMetrics();
+    else if (state === 'ready' || state === 'idle' || state === 'error' || state === 'nocam') { fmStopMetrics(); fmPollMetrics(); }
   }
 
   // Probe + (if needed) re-init the camera so Start "just works".
