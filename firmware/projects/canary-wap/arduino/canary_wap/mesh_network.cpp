@@ -1953,6 +1953,58 @@ void set_channel_lock_handler(channel_lock_handler_fn fn) {
   g_channel_lock_handler = fn;
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// REPLAY COUNTER PERSISTENCE
+// ════════════════════════════════════════════════════════════════════════════
+
+static const char* NVS_REPLAY_KEY = "replay_ctrs";
+constexpr size_t REPLAY_ENTRY_SIZE = FINGERPRINT_SIZE + sizeof(uint64_t);
+
+bool save_replay_counters() {
+  if (g_peer_count == 0) return true;
+  g_prefs.begin(NVS_NS, false);
+  uint8_t blob[MAX_OPERA_SIZE * REPLAY_ENTRY_SIZE];
+  size_t offset = 0;
+  for (uint8_t i = 0; i < g_peer_count; ++i) {
+    memcpy(blob + offset, g_peers[i].fingerprint, FINGERPRINT_SIZE);
+    offset += FINGERPRINT_SIZE;
+    memcpy(blob + offset, &g_peers[i].msg_counter_rx, sizeof(uint64_t));
+    offset += sizeof(uint64_t);
+  }
+  size_t put = g_prefs.putBytes(NVS_REPLAY_KEY, blob, offset);
+  g_prefs.end();
+  return put == offset;
+}
+
+bool load_replay_counters() {
+  g_prefs.begin(NVS_NS, true);
+  if (!g_prefs.isKey(NVS_REPLAY_KEY)) {
+    g_prefs.end();
+    return true;
+  }
+  uint8_t blob[MAX_OPERA_SIZE * REPLAY_ENTRY_SIZE];
+  size_t got = g_prefs.getBytes(NVS_REPLAY_KEY, blob, sizeof(blob));
+  g_prefs.end();
+
+  if (got == 0 || (got % REPLAY_ENTRY_SIZE) != 0) return got == 0;
+  size_t n = got / REPLAY_ENTRY_SIZE;
+
+  for (size_t e = 0; e < n; ++e) {
+    const uint8_t* fp = blob + e * REPLAY_ENTRY_SIZE;
+    uint64_t counter;
+    memcpy(&counter, fp + FINGERPRINT_SIZE, sizeof(uint64_t));
+    for (uint8_t i = 0; i < g_peer_count; ++i) {
+      if (memcmp(g_peers[i].fingerprint, fp, FINGERPRINT_SIZE) == 0) {
+        if (counter > g_peers[i].msg_counter_rx) {
+          g_peers[i].msg_counter_rx = counter;
+        }
+        break;
+      }
+    }
+  }
+  return true;
+}
+
 size_t send_hub_election(mesh_hub_election::Event event,
                          const uint8_t fingerprint[FINGERPRINT_SIZE]) {
   if (!g_opera_config.configured) return 0;

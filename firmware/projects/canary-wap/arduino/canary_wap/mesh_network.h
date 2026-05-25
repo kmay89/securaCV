@@ -508,6 +508,17 @@ void send_heartbeat();
 void get_message_stats(uint32_t* sent, uint32_t* received, uint32_t* errors);
 
 // ════════════════════════════════════════════════════════════════════════════
+// REPLAY COUNTER PERSISTENCE
+//
+// Save/load per-peer msg_counter_rx to NVS so replay defense survives
+// reboots. Called from canary_wap.ino at boot (load) and periodically
+// from loop (save every 5 min) + on clean shutdown.
+// ════════════════════════════════════════════════════════════════════════════
+
+bool save_replay_counters();
+bool load_replay_counters();
+
+// ════════════════════════════════════════════════════════════════════════════
 // BEACON EVENT (BLE Scout → mesh broadcast)
 //
 // canary-wap parity for the PIO mesh_session::send_beacon_event /
