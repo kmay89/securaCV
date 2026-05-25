@@ -34,6 +34,22 @@ struct PeekMetrics {
 };
 
 // ════════════════════════════════════════════════════════════════════════════
+// THERMAL STATE
+// ════════════════════════════════════════════════════════════════════════════
+
+enum ThermalState : uint8_t {
+  THERMAL_NORMAL    = 0,
+  THERMAL_THROTTLED = 1,
+  THERMAL_PAUSED    = 2
+};
+
+#define THERMAL_THROTTLE_TEMP_C   70
+#define THERMAL_PAUSE_TEMP_C      80
+#define THERMAL_RECOVER_MARGIN_C   5
+#define THERMAL_CHECK_INTERVAL_MS  5000
+#define FREEZE_TIMEOUT_MS          10000
+
+// ════════════════════════════════════════════════════════════════════════════
 // CAMERA MANAGER
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -67,9 +83,19 @@ public:
   void recordFrame(uint32_t frame_bytes);
   PeekMetrics snapshotMetrics();
 
-  // Frame pacing
-  uint32_t getFrameDelay() const { return m_frame_delay_ms; }
+  // Frame pacing (returns thermal-adjusted value during throttling)
+  uint32_t getFrameDelay() const;
   void setFrameDelay(uint32_t ms);
+  uint32_t getUserFrameDelay() const { return m_user_frame_delay_ms; }
+
+  // Thermal management — call periodically during streaming
+  void checkThermal();
+  ThermalState getThermalState() const { return m_thermal_state; }
+  int8_t getDieTempC() const { return m_die_temp_c; }
+
+  // Freeze detection — call when frame capture fails
+  bool checkFreeze(uint32_t now_ms);
+  uint16_t getFreezeCount() const { return m_freeze_count; }
 
   // Sensor info
   uint16_t getSensorPID() const;
@@ -90,9 +116,19 @@ private:
   volatile bool m_peek_active;
   framesize_t m_framesize;
   uint32_t m_frame_delay_ms;
+  uint32_t m_user_frame_delay_ms;
 
   PeekMetrics m_metrics;
   portMUX_TYPE m_metrics_mux;
+
+  // Thermal state
+  ThermalState m_thermal_state;
+  int8_t m_die_temp_c;
+  uint32_t m_last_thermal_check_ms;
+
+  // Freeze detection
+  uint32_t m_last_good_frame_ms;
+  uint16_t m_freeze_count;
 };
 
 // ════════════════════════════════════════════════════════════════════════════

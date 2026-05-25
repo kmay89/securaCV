@@ -7,6 +7,16 @@
 
 #include "securacv_camera.h"
 #include <Preferences.h>
+#include "securacv_witness.h"
+
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+extern "C" {
+  #include <driver/temp_sensor.h>
+}
+#define HAVE_TEMP_SENSOR 1
+#else
+#define HAVE_TEMP_SENSOR 0
+#endif
 
 #if FEATURE_CAMERA_PEEK
 
@@ -69,7 +79,10 @@ static bool apply_int_setting(sensor_t* s, const JsonObject& body, const char* k
 
 CameraManager::CameraManager()
   : m_initialized(false), m_peek_active(false), m_framesize(FRAMESIZE_VGA),
-    m_frame_delay_ms(40), m_metrics{}, m_metrics_mux(portMUX_INITIALIZER_UNLOCKED) {}
+    m_frame_delay_ms(40), m_user_frame_delay_ms(40),
+    m_metrics{}, m_metrics_mux(portMUX_INITIALIZER_UNLOCKED),
+    m_thermal_state(THERMAL_NORMAL), m_die_temp_c(0),
+    m_last_thermal_check_ms(0), m_last_good_frame_ms(0), m_freeze_count(0) {}
 
 // Build a camera_config_t with all pin/clock fields populated. Critically
 // zero-initialized so newer ESP-IDF fields (sccb_i2c_port, etc.) start clean
@@ -250,10 +263,14 @@ void CameraManager::resetMetrics() {
   m_metrics.stream_start_ms  = now;
   m_metrics.fps_window_start = now;
   portEXIT_CRITICAL(&m_metrics_mux);
+  m_last_good_frame_ms = now;
+  m_thermal_state = THERMAL_NORMAL;
+  m_last_thermal_check_ms = 0;
 }
 
 void CameraManager::recordFrame(uint32_t frame_bytes) {
   uint32_t t_ms = millis();
+  m_last_good_frame_ms = t_ms;
   portENTER_CRITICAL(&m_metrics_mux);
   m_metrics.last_frame_bytes = frame_bytes;
   m_metrics.last_frame_ms    = t_ms;
@@ -280,7 +297,14 @@ PeekMetrics CameraManager::snapshotMetrics() {
 void CameraManager::setFrameDelay(uint32_t ms) {
   if (ms < 20)  ms = 20;
   if (ms > 500) ms = 500;
-  m_frame_delay_ms = ms;
+  m_user_frame_delay_ms = ms;
+  if (m_thermal_state == THERMAL_NORMAL) {
+    m_frame_delay_ms = ms;
+  }
+}
+
+uint32_t CameraManager::getFrameDelay() const {
+  return m_frame_delay_ms;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -538,6 +562,83 @@ void CameraManager::saveOrientationToNvs() {
   prefs.end();
   Serial.printf("[CAMERA] Orientation saved: hmirror=%d vflip=%d\n",
                 s->status.hmirror, s->status.vflip);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// THERMAL MANAGEMENT
+// ════════════════════════════════════════════════════════════════════════════
+
+void CameraManager::checkThermal() {
+  uint32_t now = millis();
+  if (now - m_last_thermal_check_ms < THERMAL_CHECK_INTERVAL_MS) return;
+  m_last_thermal_check_ms = now;
+
+#if HAVE_TEMP_SENSOR
+  float temp_c = 0.0f;
+  if (temp_sensor_read_celsius(&temp_c) != ESP_OK) return;
+  m_die_temp_c = (int8_t)temp_c;
+#else
+  return;
+#endif
+
+  ThermalState prev = m_thermal_state;
+
+  if (m_die_temp_c >= THERMAL_PAUSE_TEMP_C) {
+    m_thermal_state = THERMAL_PAUSED;
+    m_frame_delay_ms = 500;
+  } else if (m_die_temp_c >= THERMAL_THROTTLE_TEMP_C) {
+    m_thermal_state = THERMAL_THROTTLED;
+    uint32_t throttled = m_user_frame_delay_ms * 3;
+    if (throttled < 120) throttled = 120;
+    if (throttled > 500) throttled = 500;
+    m_frame_delay_ms = throttled;
+  } else if (m_die_temp_c < THERMAL_THROTTLE_TEMP_C - THERMAL_RECOVER_MARGIN_C) {
+    if (m_thermal_state != THERMAL_NORMAL) {
+      m_thermal_state = THERMAL_NORMAL;
+      m_frame_delay_ms = m_user_frame_delay_ms;
+    }
+  }
+
+  if (prev != m_thermal_state) {
+    const char* states[] = {"normal", "throttled", "paused"};
+    Serial.printf("[CAMERA] Thermal: %s (die=%d°C)\n",
+                  states[m_thermal_state], m_die_temp_c);
+    log_health(m_thermal_state == THERMAL_NORMAL ? LOG_LEVEL_INFO : LOG_LEVEL_WARNING,
+               LOG_CAT_SENSOR, "Camera thermal state change",
+               states[m_thermal_state]);
+  }
+}
+
+bool CameraManager::checkFreeze(uint32_t now_ms) {
+  if (m_last_good_frame_ms == 0) {
+    m_last_good_frame_ms = now_ms;
+    return false;
+  }
+
+  if (now_ms - m_last_good_frame_ms < FREEZE_TIMEOUT_MS) {
+    return false;
+  }
+
+  m_freeze_count++;
+  Serial.printf("[CAMERA] Freeze detected (%u ms since last frame) — attempting recovery\n",
+                now_ms - m_last_good_frame_ms);
+  log_health(LOG_LEVEL_WARNING, LOG_CAT_SENSOR, "Camera freeze detected", nullptr);
+
+  if (m_peek_active) {
+    m_peek_active = false;
+    delay(100);
+  }
+  end();
+  delay(200);
+  bool ok = begin();
+  m_last_good_frame_ms = millis();
+
+  if (ok) {
+    log_health(LOG_LEVEL_INFO, LOG_CAT_SENSOR, "Camera freeze recovery succeeded", nullptr);
+  } else {
+    log_health(LOG_LEVEL_ERROR, LOG_CAT_SENSOR, "Camera freeze recovery failed", nullptr);
+  }
+  return ok;
 }
 
 // ════════════════════════════════════════════════════════════════════════════

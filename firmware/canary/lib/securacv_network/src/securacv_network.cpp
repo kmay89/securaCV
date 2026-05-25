@@ -1148,8 +1148,23 @@ static esp_err_t handle_peek_stream(httpd_req_t* req) {
   httpd_resp_set_hdr(req, "X-Accel-Buffering", "no");
 
   while (cam.isPeekActive()) {
+    cam.checkThermal();
+
+    if (cam.getThermalState() == THERMAL_PAUSED) {
+      vTaskDelay(pdMS_TO_TICKS(500));
+      #if FEATURE_WATCHDOG
+      esp_task_wdt_reset();
+      #endif
+      continue;
+    }
+
     camera_fb_t* fb = cam.captureFrame();
     if (!fb) {
+      if (cam.checkFreeze(millis())) {
+        cam.setPeekActive(true);
+      } else if (!cam.isInitialized()) {
+        break;
+      }
       vTaskDelay(pdMS_TO_TICKS(100));
       continue;
     }
@@ -1233,6 +1248,11 @@ static esp_err_t handle_peek_status(httpd_req_t* req) {
       doc["avg_kbps"] = (uint32_t)((m.total_bytes * 8ULL) / elapsed);
     }
   }
+
+  const char* thermal_names[] = {"normal", "throttled", "paused"};
+  doc["thermal_state"]  = thermal_names[cam.getThermalState()];
+  doc["die_temp_c"]     = cam.getDieTempC();
+  doc["freeze_count"]   = cam.getFreezeCount();
 
   String response;
   serializeJson(doc, response);
