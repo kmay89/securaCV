@@ -39,7 +39,7 @@ ouroboros = { version = "0.18", optional = true }
 tract-onnx = { version = "0.21", optional = true }
 rustls = { version = "0.23", optional = true, features = ["aws_lc_rs"] }
 webpki-roots = { version = "0.26", optional = true }
-rustls-pki-types = { version = "1.10", optional = true, features = ["std"] }
+rustls-pki-types = { version = "1.10", optional = true, features = ["std", "pem"] }
 subtle = "2.5"
 
 [dev-dependencies]
