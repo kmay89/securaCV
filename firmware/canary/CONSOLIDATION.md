@@ -1,6 +1,6 @@
 # Canary Consolidation Plan
 
-**Status:** Phase 2.5 in progress (Phases 1 ✅ #305, 2 ✅ #306)
+**Status:** Phase 4 complete (Phases 1 ✅ #305, 2 ✅ #306, 4 ✅ mesh sensing v1)
 **Created:** 2026-04-17
 **Owner:** firmware maintainers
 **Companion docs:** [VARIANT_POLICY.md](../VARIANT_POLICY.md), [FEATURES.md](../FEATURES.md), [FIRMWARE_VARIANT_AUDIT.md](../FIRMWARE_VARIANT_AUDIT.md)
@@ -105,11 +105,57 @@ Phases are ordered by **security impact first**, then **blast radius**, then **r
 - Port the BOOT-button provisioning gate so `/api/provisioning-receipt` is gated by a physical button press.
 - Flip gaps #10 and #11.
 
-### Phase 4 — Mesh + chirp + RF presence bodies
+### Phase 4 — Mesh + CSI mesh sensing v1 ✅
 
-- Fill in the `.cpp` bodies for the existing mesh/chirp/rf_presence header-only stubs in `common/` or new `securacv_mesh` lib.
-- Bring the now-fixed real ESP-NOW RSSI forwarding from canary-wap (see commit `bd16077`).
-- Flip gaps #6, #8, #9.
+Delivered across PRs #465–#494 (ESP32 Mesh Sensing Design plan):
+
+**securacv_mesh library** (`firmware/canary/lib/securacv_mesh/`):
+- ✅ Ported from `canary-wap/mesh_network.cpp` (1540 LOC monolith → modular PIO lib)
+- ✅ Ed25519 device auth, ChaCha20-Poly1305 AEAD, 6-char pairing code
+- ✅ ESP-IDF 4.x / 5.x compat via `ESP_IDF_VERSION_MAJOR` guards
+- ✅ Opera-authenticated envelope: HEARTBEAT, CSI_FEATURES, TAMPER_ALERT, POWER_ALERT, OFFLINE_IMMINENT, WITNESS_RECORD, BEACON_EVENT, CHANNEL_LOCK, HUB_ELECTION
+- ✅ NVS persistence for opera_secret + trusted-peer pubkeys (flash-encryption gated)
+- ✅ 9 host test suites in CI (crypto, envelope, pairing, session, transport, beacon, state, channel_hop, hub_election)
+
+**BLE Scout** (`firmware/canary/lib/securacv_ble_scan/`):
+- ✅ Passive NimBLE scan, hashed MAC (HMAC-SHA256 per-device key), Kalman RSSI
+- ✅ Paired-beacon registry with printable-ASCII label sanitization
+- ✅ Broadcast hook → mesh via MPSC FreeRTOS queue (atomic pointer + CAS creation)
+- ✅ 3 host test suites in CI (ble_scan, ble_scout_state, ble_scout_broadcast)
+
+**CSI active probe** (`firmware/common/csi/src/csi_probe.{h,cpp}`):
+- ✅ 50 Hz unicast ESP-NOW frames for deterministic CSI collection
+
+**Multi-link fusion** (`firmware/common/csi/src/core_multilink_fusion.{h,cpp}`):
+- ✅ 2-link confirmation gate, motion direction, breathing median
+
+**Channel-hop coordination** (`mesh_channel_hop.{h,cpp}`):
+- ✅ HopTracker: airtime >50% for 60s → next_channel (1→6→11→1)
+- ✅ CHANNEL_LOCK signed broadcast, peers apply csi_hal::set_channel_lock()
+- ✅ Coordinator election gates channel-hop to lowest-fingerprint live node
+
+**Hub failover election** (`mesh_hub_election.{h,cpp}`):
+- ✅ HubMonitor: Hub heartbeat absent 60s → deterministic election (lowest fingerprint wins)
+- ✅ HUB_ELECTION signed broadcast, no voting protocol needed
+- ✅ Coordinator role evaluates every 5s on peer state changes
+
+**CSI watchdog + WiFi recovery**:
+- ✅ 5s silence → CSI rx toggle (gentle); 3× consecutive → csi_hal::stop/start (escalation)
+- ✅ PIO csi_hal shim in securacv_csi for full watchdog + channel-lock parity
+
+**Empty-room auto-calibration** (`meta_empty_room_baseline.{h,cpp}`):
+- ✅ 10-min baseline, quiet-hours triggered, NVS-persisted
+
+**Multipath shimmer filter** (in `core_presence.cpp`):
+- ✅ RSSI swing >8 dB without Doppler → reject as non-human
+
+**Privacy conformance** (15 assertions in `csi_event_invariants_test.cpp`):
+- ✅ No peer MAC in feature payloads, beacon MAC hashed, RSSI bucketed int8
+
+**Canary-wap parity**: all wire formats, dispatch, and integration glue byte-synced.
+
+Gap #6 flipped to ⚠️ (mesh body present, chirp + RF presence still header-only).
+Gaps #8, #9 deferred to Phase 4b (chirp + RF presence bodies).
 
 ### Phase 5 — BLE discovery (feature-flagged)
 
