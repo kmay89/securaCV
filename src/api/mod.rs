@@ -563,3 +563,24 @@ fn latest_event(artifact: &crate::ExportArtifact) -> Option<&crate::ExportEvent>
         .flat_map(|bucket| &bucket.events)
         .last()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[cfg(unix)]
+    fn token_file_created_with_restricted_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test-token");
+        write_token_file(&path, "secret-token-value").unwrap();
+
+        let metadata = std::fs::metadata(&path).unwrap();
+        let mode = metadata.permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "token file should be created with mode 0600");
+
+        let contents = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(contents, "secret-token-value\n");
+    }
+}

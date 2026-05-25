@@ -343,3 +343,111 @@ fn verify_pq_signature(
         ))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ed25519_dalek::SigningKey;
+
+    fn test_keys() -> (SigningKey, [u8; 32]) {
+        let signing_key = SigningKey::from_bytes(&[42u8; 32]);
+        let entry_hash = [1u8; 32];
+        (signing_key, entry_hash)
+    }
+
+    #[test]
+    fn compat_mode_requires_ed25519() {
+        let (signing_key, entry_hash) = test_keys();
+        let keys = SignatureKeys::new(&signing_key);
+        let sig_set = sign_with_domain(DOMAIN_SEALED_LOG_ENTRY, &keys, &entry_hash).unwrap();
+
+        let mut bad_sig_set = sig_set.clone();
+        bad_sig_set.ed25519_signature[0] ^= 0xFF;
+
+        let result = verify_with_domain(
+            DOMAIN_SEALED_LOG_ENTRY,
+            &signing_key.verifying_key(),
+            &entry_hash,
+            &bad_sig_set,
+            SignatureMode::Compat,
+            None,
+        );
+        assert!(
+            result.is_err(),
+            "Compat mode must reject bad Ed25519 signature"
+        );
+    }
+
+    #[test]
+    fn compat_mode_accepts_missing_pq() {
+        let (signing_key, entry_hash) = test_keys();
+        let keys = SignatureKeys::new(&signing_key);
+        let sig_set = sign_with_domain(DOMAIN_SEALED_LOG_ENTRY, &keys, &entry_hash).unwrap();
+
+        let result = verify_with_domain(
+            DOMAIN_SEALED_LOG_ENTRY,
+            &signing_key.verifying_key(),
+            &entry_hash,
+            &sig_set,
+            SignatureMode::Compat,
+            None,
+        );
+        assert!(
+            result.is_ok(),
+            "Compat mode should accept valid Ed25519 without PQ"
+        );
+    }
+
+    #[test]
+    fn compat_mode_rejects_bad_pq_when_present() {
+        let (signing_key, entry_hash) = test_keys();
+        let keys = SignatureKeys::new(&signing_key);
+        let mut sig_set = sign_with_domain(DOMAIN_SEALED_LOG_ENTRY, &keys, &entry_hash).unwrap();
+
+        sig_set.pq_signature = Some(PqSignature {
+            scheme_id: PQ_SCHEME_MLDSA44.to_string(),
+            signature: vec![0xDE; 64],
+        });
+
+        let result = verify_with_domain(
+            DOMAIN_SEALED_LOG_ENTRY,
+            &signing_key.verifying_key(),
+            &entry_hash,
+            &sig_set,
+            SignatureMode::Compat,
+            None,
+        );
+        assert!(
+            result.is_err(),
+            "Compat mode must reject bad PQ signature when present"
+        );
+    }
+
+    #[test]
+    fn legacy_dilithium2_scheme_id_not_rejected_as_unsupported() {
+        let (signing_key, entry_hash) = test_keys();
+        let keys = SignatureKeys::new(&signing_key);
+        let mut sig_set = sign_with_domain(DOMAIN_SEALED_LOG_ENTRY, &keys, &entry_hash).unwrap();
+
+        sig_set.pq_signature = Some(PqSignature {
+            scheme_id: "dilithium2".to_string(),
+            signature: vec![0xAB; 64],
+        });
+
+        let result = verify_with_domain(
+            DOMAIN_SEALED_LOG_ENTRY,
+            &signing_key.verifying_key(),
+            &entry_hash,
+            &sig_set,
+            SignatureMode::Compat,
+            None,
+        );
+        if let Err(e) = result {
+            let msg = format!("{e}");
+            assert!(
+                !msg.contains("unsupported pq signature scheme"),
+                "dilithium2 scheme ID should be accepted, got: {msg}"
+            );
+        }
+    }
+}
