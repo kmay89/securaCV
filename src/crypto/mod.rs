@@ -132,3 +132,114 @@ fn write_seed_file(path: &Path, seed: &str) -> Result<bool> {
         .map_err(|e| anyhow!("failed to write device key seed {}: {}", path.display(), e))?;
     Ok(true)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn device_key_path_rejects_memory_db() {
+        let result = device_key_path_for_db(":memory:");
+        assert!(result.is_err());
+        assert!(
+            format!("{}", result.unwrap_err()).contains(":memory:"),
+            "error should mention :memory:"
+        );
+    }
+
+    #[test]
+    fn device_key_path_strips_file_prefix_and_query() {
+        let path = device_key_path_for_db("file:/data/witness.db?mode=rwc").unwrap();
+        assert_eq!(path, PathBuf::from("/data/witness.ed25519.seed"));
+
+        let path = device_key_path_for_db("file:///data/witness.db?mode=rwc").unwrap();
+        assert_eq!(path, PathBuf::from("/data/witness.ed25519.seed"));
+    }
+
+    #[test]
+    fn device_key_path_plain_db() {
+        let path = device_key_path_for_db("witness.db").unwrap();
+        assert_eq!(path, PathBuf::from("witness.ed25519.seed"));
+    }
+
+    #[test]
+    fn device_key_path_rejects_empty() {
+        assert!(device_key_path_for_db("").is_err());
+        assert!(device_key_path_for_db("file:").is_err());
+    }
+
+    #[test]
+    fn load_or_create_generates_seed() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.seed");
+
+        let seed = load_or_create_device_seed(&path, None).unwrap();
+        assert!(seed.starts_with("devkey:"));
+        assert_eq!(seed.len(), "devkey:".len() + 64);
+
+        let reload = load_or_create_device_seed(&path, None).unwrap();
+        assert_eq!(seed, reload, "reloaded seed should match");
+    }
+
+    #[test]
+    fn load_or_create_uses_provided_seed() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("provided.seed");
+        let test_seed = "devkey:a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6";
+
+        let seed = load_or_create_device_seed(&path, Some(test_seed)).unwrap();
+        assert_eq!(seed, test_seed);
+
+        let reload = load_or_create_device_seed(&path, Some(test_seed)).unwrap();
+        assert_eq!(reload, test_seed);
+    }
+
+    #[test]
+    fn load_or_create_rejects_mismatched_seed() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mismatch.seed");
+        let original = "devkey:original_seed_value_with_enough_entropy";
+        let different = "devkey:different_seed_value_with_enough_entropy";
+
+        load_or_create_device_seed(&path, Some(original)).unwrap();
+
+        let result = load_or_create_device_seed(&path, Some(different));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("mismatch"));
+    }
+
+    #[test]
+    fn load_or_create_rejects_empty_seed() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("empty.seed");
+        assert!(load_or_create_device_seed(&path, Some("")).is_err());
+        assert!(load_or_create_device_seed(&path, Some("   ")).is_err());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn seed_file_created_with_restricted_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("perms.seed");
+
+        load_or_create_device_seed(&path, Some("devkey:perms_test_seed_with_entropy")).unwrap();
+
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "seed file should be mode 0600");
+    }
+
+    #[test]
+    fn seed_file_not_overwritten_on_race() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("race.seed");
+
+        fs::write(&path, "devkey:first\n").unwrap();
+
+        let result = write_seed_file(&path, "devkey:second").unwrap();
+        assert!(!result, "write should return false when file exists");
+
+        let contents = fs::read_to_string(&path).unwrap();
+        assert_eq!(contents.trim(), "devkey:first");
+    }
+}
