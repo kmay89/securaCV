@@ -648,4 +648,36 @@ mod tests {
         envelope.ciphertext = vec![0u8; 10]; // less than 16 (tag size)
         assert!(decrypt_v2(&envelope, &key, None).is_err());
     }
+
+    #[test]
+    #[cfg(feature = "pqc-vault")]
+    fn seal_v2_pq_and_hybrid_roundtrip() {
+        let key = [42u8; 32];
+        let clear = b"pq payload";
+        let kp = KemKeypair::generate();
+
+        let envelope_pq = seal_v2(
+            "test-pq",
+            [3u8; 32],
+            clear,
+            VaultCryptoMode::Pq,
+            &key,
+            Some(&kp),
+        )
+        .unwrap();
+        let decrypted_pq = decrypt_v2(&envelope_pq, &key, Some(&kp)).unwrap();
+        assert_eq!(decrypted_pq, clear);
+
+        let envelope_hybrid = seal_v2(
+            "test-hybrid",
+            [4u8; 32],
+            clear,
+            VaultCryptoMode::Hybrid,
+            &key,
+            Some(&kp),
+        )
+        .unwrap();
+        let decrypted_hybrid = decrypt_v2(&envelope_hybrid, &key, Some(&kp)).unwrap();
+        assert_eq!(decrypted_hybrid, clear);
+    }
 }
