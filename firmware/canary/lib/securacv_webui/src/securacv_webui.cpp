@@ -1396,6 +1396,18 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           <button class="btn btn-ghost" onclick="refreshPeekStatus()">Refresh Status</button>
         </div>
 
+        <!-- Presets -->
+        <div style="margin-top:1rem;">
+          <div class="form-label">Scene Presets</div>
+          <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+            <button class="btn btn-sm" onclick="applyPreset('indoor')">Indoor</button>
+            <button class="btn btn-sm" onclick="applyPreset('outdoor')">Outdoor</button>
+            <button class="btn btn-sm" onclick="applyPreset('low_light')">Low Light</button>
+            <button class="btn btn-sm" onclick="applyPreset('night')">Night</button>
+            <button class="btn btn-sm" onclick="applyPreset('high_contrast')">High Contrast</button>
+          </div>
+        </div>
+
         <!-- Resolution Control -->
         <div style="margin-top:1rem;">
           <div class="form-label">Resolution</div>
@@ -2709,6 +2721,11 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
     async function resetSensorDefaults() {
       const data = await api('/api/peek/sensor', 'POST', { reset_defaults: true });
+      if (data && data.ok) applySensorState(data);
+    }
+
+    async function applyPreset(name) {
+      const data = await api('/api/peek/sensor', 'POST', { preset: name });
       if (data && data.ok) applySensorState(data);
     }
 

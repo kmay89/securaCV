@@ -413,6 +413,78 @@ void CameraManager::resetSensorDefaults() {
   m_frame_delay_ms = 40;
 }
 
+bool CameraManager::applyPreset(const char* name) {
+  sensor_t* s = esp_camera_sensor_get();
+  if (!s || !name) return false;
+
+  if (strcmp(name, "indoor") == 0) {
+    s->set_brightness(s, 0);
+    s->set_contrast(s, 0);
+    s->set_saturation(s, 0);
+    s->set_exposure_ctrl(s, 1);
+    s->set_aec2(s, 1);
+    s->set_ae_level(s, 0);
+    s->set_gain_ctrl(s, 1);
+    s->set_gainceiling(s, (gainceiling_t)GAINCEILING_4X);
+    s->set_whitebal(s, 1);
+    s->set_wb_mode(s, 3);  // Office
+    m_frame_delay_ms = 40;
+  } else if (strcmp(name, "outdoor") == 0) {
+    s->set_brightness(s, 0);
+    s->set_contrast(s, 1);
+    s->set_saturation(s, 1);
+    s->set_exposure_ctrl(s, 1);
+    s->set_aec2(s, 1);
+    s->set_ae_level(s, -1);
+    s->set_gain_ctrl(s, 1);
+    s->set_gainceiling(s, (gainceiling_t)GAINCEILING_2X);
+    s->set_whitebal(s, 1);
+    s->set_wb_mode(s, 1);  // Sunny
+    m_frame_delay_ms = 40;
+  } else if (strcmp(name, "low_light") == 0) {
+    s->set_brightness(s, 1);
+    s->set_contrast(s, 1);
+    s->set_saturation(s, -1);
+    s->set_exposure_ctrl(s, 1);
+    s->set_aec2(s, 1);
+    s->set_ae_level(s, 2);
+    s->set_aec_value(s, 600);
+    s->set_gain_ctrl(s, 1);
+    s->set_gainceiling(s, (gainceiling_t)GAINCEILING_16X);
+    s->set_whitebal(s, 1);
+    s->set_wb_mode(s, 0);  // Auto
+    m_frame_delay_ms = 80;
+  } else if (strcmp(name, "high_contrast") == 0) {
+    s->set_brightness(s, 0);
+    s->set_contrast(s, 2);
+    s->set_saturation(s, 0);
+    s->set_exposure_ctrl(s, 1);
+    s->set_aec2(s, 1);
+    s->set_ae_level(s, 0);
+    s->set_gain_ctrl(s, 1);
+    s->set_gainceiling(s, (gainceiling_t)GAINCEILING_4X);
+    s->set_whitebal(s, 1);
+    s->set_wb_mode(s, 0);
+    m_frame_delay_ms = 40;
+  } else if (strcmp(name, "night") == 0) {
+    s->set_brightness(s, 2);
+    s->set_contrast(s, 2);
+    s->set_saturation(s, -2);
+    s->set_exposure_ctrl(s, 0);
+    s->set_aec_value(s, 1200);
+    s->set_gain_ctrl(s, 0);
+    s->set_agc_gain(s, 20);
+    s->set_whitebal(s, 1);
+    s->set_wb_mode(s, 0);
+    m_frame_delay_ms = 100;
+  } else {
+    return false;
+  }
+
+  loadOrientationFromNvs();
+  return true;
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // ORIENTATION NVS PERSISTENCE
 // ════════════════════════════════════════════════════════════════════════════

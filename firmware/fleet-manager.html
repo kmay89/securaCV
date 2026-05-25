@@ -1095,6 +1095,17 @@ var FM = (function() {
       .then(function(d) { if (d && d.ok) fmApplySensor(d); })
       .catch(function() {});
   }
+  function fmPreset(name) {
+    if (!detailDev) return;
+    ftch(url(detailDev, '/api/peek/sensor'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ preset: name })
+    }, 5000)
+      .then(function(r) { return r.ok ? r.json() : null; })
+      .then(function(d) { if (d && d.ok) fmApplySensor(d); })
+      .catch(function() {});
+  }
 
   var fmMetricsTimer = null;
 
@@ -1174,6 +1185,16 @@ var FM = (function() {
         '<div style="display:flex;gap:1rem;margin-top:0.5rem;font-size:0.78rem;color:var(--muted);">' +
           '<label><input type="checkbox" id="fmHmir" onchange="FM._fmToggle(\'hmirror\',this.checked)"> H-mirror</label>' +
           '<label><input type="checkbox" id="fmVflip" onchange="FM._fmToggle(\'vflip\',this.checked)"> V-flip</label>' +
+        '</div>' +
+        '<div style="margin-top:0.6rem;">' +
+          '<div style="font-size:0.68rem;color:var(--muted);margin-bottom:0.3rem;">PRESETS</div>' +
+          '<div style="display:flex;gap:0.35rem;flex-wrap:wrap;">' +
+            '<button class="btn btn-sm" onclick="FM._fmPreset(\'indoor\')">Indoor</button>' +
+            '<button class="btn btn-sm" onclick="FM._fmPreset(\'outdoor\')">Outdoor</button>' +
+            '<button class="btn btn-sm" onclick="FM._fmPreset(\'low_light\')">Low Light</button>' +
+            '<button class="btn btn-sm" onclick="FM._fmPreset(\'night\')">Night</button>' +
+            '<button class="btn btn-sm" onclick="FM._fmPreset(\'high_contrast\')">Hi-Con</button>' +
+          '</div>' +
         '</div>' +
       '</div>' +
       '<div id="pkMetrics" style="margin-top:0.65rem;padding:0.5rem 0.75rem;background:rgba(0,0,0,0.15);border-radius:8px;display:none;">' +
@@ -1581,7 +1602,8 @@ var FM = (function() {
     hideModal:     hideModal,
     _fmSlider:     fmSlider,
     _fmToggle:     fmToggle,
-    _fmResetSensor: fmResetSensor
+    _fmResetSensor: fmResetSensor,
+    _fmPreset:     fmPreset
   };
 
 })();
