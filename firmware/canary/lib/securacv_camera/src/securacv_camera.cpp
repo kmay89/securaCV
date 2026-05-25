@@ -417,88 +417,90 @@ bool CameraManager::applyPreset(const char* name) {
   sensor_t* s = esp_camera_sensor_get();
   if (!s || !name) return false;
 
+  #define SAFE_SET(f, val) do { if (s->f) s->f(s, val); } while (0)
+
   if (strcmp(name, "indoor") == 0) {
-    s->set_brightness(s, 0);
-    s->set_contrast(s, 0);
-    s->set_saturation(s, 0);
-    s->set_exposure_ctrl(s, 1);
-    s->set_aec2(s, 1);
-    s->set_ae_level(s, 0);
-    s->set_gain_ctrl(s, 1);
-    s->set_gainceiling(s, (gainceiling_t)GAINCEILING_4X);
-    s->set_whitebal(s, 1);
-    s->set_wb_mode(s, 3);  // Office
+    SAFE_SET(set_brightness, 0);
+    SAFE_SET(set_contrast, 0);
+    SAFE_SET(set_saturation, 0);
+    SAFE_SET(set_exposure_ctrl, 1);
+    SAFE_SET(set_aec2, 1);
+    SAFE_SET(set_ae_level, 0);
+    SAFE_SET(set_gain_ctrl, 1);
+    SAFE_SET(set_gainceiling, (gainceiling_t)GAINCEILING_4X);
+    SAFE_SET(set_whitebal, 1);
+    SAFE_SET(set_wb_mode, 3);  // Office
     m_frame_delay_ms = 40;
   } else if (strcmp(name, "outdoor") == 0) {
-    s->set_brightness(s, 0);
-    s->set_contrast(s, 1);
-    s->set_saturation(s, 1);
-    s->set_exposure_ctrl(s, 1);
-    s->set_aec2(s, 1);
-    s->set_ae_level(s, -1);
-    s->set_gain_ctrl(s, 1);
-    s->set_gainceiling(s, (gainceiling_t)GAINCEILING_2X);
-    s->set_whitebal(s, 1);
-    s->set_wb_mode(s, 1);  // Sunny
+    SAFE_SET(set_brightness, 0);
+    SAFE_SET(set_contrast, 1);
+    SAFE_SET(set_saturation, 1);
+    SAFE_SET(set_exposure_ctrl, 1);
+    SAFE_SET(set_aec2, 1);
+    SAFE_SET(set_ae_level, -1);
+    SAFE_SET(set_gain_ctrl, 1);
+    SAFE_SET(set_gainceiling, (gainceiling_t)GAINCEILING_2X);
+    SAFE_SET(set_whitebal, 1);
+    SAFE_SET(set_wb_mode, 1);  // Sunny
     m_frame_delay_ms = 40;
   } else if (strcmp(name, "low_light") == 0) {
-    s->set_brightness(s, 1);
-    s->set_contrast(s, 1);
-    s->set_saturation(s, -1);
-    s->set_exposure_ctrl(s, 1);
-    s->set_aec2(s, 1);
-    s->set_ae_level(s, 2);
-    s->set_aec_value(s, 600);
-    s->set_gain_ctrl(s, 1);
-    s->set_gainceiling(s, (gainceiling_t)GAINCEILING_16X);
-    s->set_whitebal(s, 1);
-    s->set_wb_mode(s, 0);  // Auto
+    SAFE_SET(set_brightness, 1);
+    SAFE_SET(set_contrast, 1);
+    SAFE_SET(set_saturation, -1);
+    SAFE_SET(set_exposure_ctrl, 1);
+    SAFE_SET(set_aec2, 1);
+    SAFE_SET(set_ae_level, 2);
+    SAFE_SET(set_aec_value, 600);
+    SAFE_SET(set_gain_ctrl, 1);
+    SAFE_SET(set_gainceiling, (gainceiling_t)GAINCEILING_16X);
+    SAFE_SET(set_whitebal, 1);
+    SAFE_SET(set_wb_mode, 0);  // Auto
     m_frame_delay_ms = 80;
   } else if (strcmp(name, "high_contrast") == 0) {
-    s->set_brightness(s, 0);
-    s->set_contrast(s, 2);
-    s->set_saturation(s, 0);
-    s->set_exposure_ctrl(s, 1);
-    s->set_aec2(s, 1);
-    s->set_ae_level(s, 0);
-    s->set_gain_ctrl(s, 1);
-    s->set_gainceiling(s, (gainceiling_t)GAINCEILING_4X);
-    s->set_whitebal(s, 1);
-    s->set_wb_mode(s, 0);
+    SAFE_SET(set_brightness, 0);
+    SAFE_SET(set_contrast, 2);
+    SAFE_SET(set_saturation, 0);
+    SAFE_SET(set_exposure_ctrl, 1);
+    SAFE_SET(set_aec2, 1);
+    SAFE_SET(set_ae_level, 0);
+    SAFE_SET(set_gain_ctrl, 1);
+    SAFE_SET(set_gainceiling, (gainceiling_t)GAINCEILING_4X);
+    SAFE_SET(set_whitebal, 1);
+    SAFE_SET(set_wb_mode, 0);
     m_frame_delay_ms = 40;
   } else if (strcmp(name, "night") == 0) {
-    s->set_brightness(s, 2);
-    s->set_contrast(s, 2);
-    s->set_saturation(s, -2);
-    s->set_exposure_ctrl(s, 0);
-    s->set_aec_value(s, 1200);
-    s->set_gain_ctrl(s, 0);
-    s->set_agc_gain(s, 20);
-    s->set_whitebal(s, 1);
-    s->set_wb_mode(s, 0);
+    SAFE_SET(set_brightness, 2);
+    SAFE_SET(set_contrast, 2);
+    SAFE_SET(set_saturation, -2);
+    SAFE_SET(set_exposure_ctrl, 0);
+    SAFE_SET(set_aec_value, 1200);
+    SAFE_SET(set_gain_ctrl, 0);
+    SAFE_SET(set_agc_gain, 20);
+    SAFE_SET(set_whitebal, 1);
+    SAFE_SET(set_wb_mode, 0);
     m_frame_delay_ms = 100;
   } else if (strcmp(name, "dynamic") == 0) {
-    // All auto features at their most responsive — let the sensor ISP
-    // continuously adapt to changing light without manual intervention.
-    s->set_brightness(s, 0);
-    s->set_contrast(s, 0);
-    s->set_saturation(s, 0);
-    s->set_exposure_ctrl(s, 1);  // AEC on
-    s->set_aec2(s, 1);          // DSP-level AEC on
-    s->set_ae_level(s, 0);
-    s->set_gain_ctrl(s, 1);     // AGC on
-    s->set_gainceiling(s, (gainceiling_t)GAINCEILING_8X);
-    s->set_whitebal(s, 1);      // AWB on
-    s->set_awb_gain(s, 1);      // AWB gain on
-    s->set_wb_mode(s, 0);       // Auto WB mode
-    s->set_bpc(s, 1);
-    s->set_wpc(s, 1);
-    s->set_raw_gma(s, 1);
-    s->set_lenc(s, 1);
+    SAFE_SET(set_brightness, 0);
+    SAFE_SET(set_contrast, 0);
+    SAFE_SET(set_saturation, 0);
+    SAFE_SET(set_exposure_ctrl, 1);
+    SAFE_SET(set_aec2, 1);
+    SAFE_SET(set_ae_level, 0);
+    SAFE_SET(set_gain_ctrl, 1);
+    SAFE_SET(set_gainceiling, (gainceiling_t)GAINCEILING_8X);
+    SAFE_SET(set_whitebal, 1);
+    SAFE_SET(set_awb_gain, 1);
+    SAFE_SET(set_wb_mode, 0);
+    SAFE_SET(set_bpc, 1);
+    SAFE_SET(set_wpc, 1);
+    SAFE_SET(set_raw_gma, 1);
+    SAFE_SET(set_lenc, 1);
     m_frame_delay_ms = 40;
   } else {
+    #undef SAFE_SET
     return false;
   }
+  #undef SAFE_SET
 
   loadOrientationFromNvs();
   return true;
