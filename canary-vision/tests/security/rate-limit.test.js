@@ -49,7 +49,7 @@ describe('D9: Rate Limiting', () => {
   it('D9: Auth lockout after 5 failed attempts', async () => {
     const server = await startServer({
       devMode: true,
-      rateLimit: { authFailLimit: 5, authLockoutMs: 60000 },
+      rateLimit: { authFailLimit: 5, authLockoutBaseMs: 60000 },
     });
 
     try {
@@ -75,7 +75,7 @@ describe('D9: Rate Limiting', () => {
     const LOCKOUT_MS = 200; // Short window for testing
     const server = await startServer({
       devMode: true,
-      rateLimit: { authFailLimit: 5, authLockoutMs: LOCKOUT_MS },
+      rateLimit: { authFailLimit: 5, authLockoutBaseMs: LOCKOUT_MS, authLockoutCapMs: LOCKOUT_MS },
     });
 
     try {
