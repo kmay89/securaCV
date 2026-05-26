@@ -215,12 +215,11 @@ static inline void scv_rssi_push(scv_device_t* dev, int8_t rssi) {
         dev->rssi_graph_count++;
     }
 
-    if(dev->rssi_sample_count == 1) {
-        dev->rssi_min = rssi;
-        dev->rssi_max = rssi;
-    } else {
-        if(rssi < dev->rssi_min) dev->rssi_min = rssi;
-        if(rssi > dev->rssi_max) dev->rssi_max = rssi;
+    dev->rssi_min = dev->rssi_history[0];
+    dev->rssi_max = dev->rssi_history[0];
+    for(uint8_t i = 1; i < dev->rssi_sample_count; i++) {
+        if(dev->rssi_history[i] < dev->rssi_min) dev->rssi_min = dev->rssi_history[i];
+        if(dev->rssi_history[i] > dev->rssi_max) dev->rssi_max = dev->rssi_history[i];
     }
 
     int32_t sum = 0;
