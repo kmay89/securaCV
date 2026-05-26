@@ -43,8 +43,8 @@ typedef struct {
   uint32_t layer3_cooldown_ms;
   uint16_t sustained_backoff_ms;
   uint8_t  sustained_threshold;
-  uint16_t thermal_rest_ms;
-  uint8_t  duty_cycle_pct;
+  uint16_t duty_cycle_ms;
+  uint8_t  duty_active_pct;
 } vision_config_t;
 
 #define VISION_CONFIG_DEFAULT { \
@@ -57,8 +57,8 @@ typedef struct {
   /*.layer3_cooldown_ms*/     5000,  \
   /*.sustained_backoff_ms*/   1000,  \
   /*.sustained_threshold*/    10,    \
-  /*.thermal_rest_ms*/        5000,  \
-  /*.duty_cycle_pct*/         50     \
+  /*.duty_cycle_ms*/          10000, \
+  /*.duty_active_pct*/        50     \
 }
 
 #define VISION_GRID_COLS  10
