@@ -672,8 +672,12 @@ fn cmd_unseal(
         crypto_mode,
     })?;
     let verifying_key = device_public_key_from_db(&conn)?;
+    #[cfg(feature = "pqc-signatures")]
+    let pq_pk = crate::device_pq_public_key_from_db(&conn).ok();
+    #[cfg(not(feature = "pqc-signatures"))]
+    let pq_pk: Option<crate::crypto::signatures::PqPublicKey> = None;
     let clear = vault.unseal(envelope, &mut token, ruleset_hash, &verifying_key, |hash| {
-        break_glass_receipt_outcome_for_verifier(&conn, &verifying_key, hash, None)
+        break_glass_receipt_outcome_for_verifier(&conn, &verifying_key, hash, pq_pk.as_ref())
     })?;
 
     let sanitized = crate::vault::sanitize_envelope_id(envelope)?;

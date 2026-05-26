@@ -256,8 +256,9 @@ fn main() -> Result<()> {
 
             if !vault_sealed {
                 let conn = &kernel.conn;
+                let pq_pk = kernel.device_pq_public_key_ref();
                 let outcome = |hash: &[u8; 32]| {
-                    break_glass_receipt_outcome_for_verifier(conn, &verifying_key, hash, None)
+                    break_glass_receipt_outcome_for_verifier(conn, &verifying_key, hash, pq_pk)
                 };
                 let _meta = vault.seal_frame(
                     DEFAULT_VAULT_ENVELOPE_ID,

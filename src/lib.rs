@@ -1854,7 +1854,7 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         self.device_key.verifying_key().to_bytes()
     }
 
-    fn device_pq_public_key_ref(&self) -> Option<&PqPublicKey> {
+    pub fn device_pq_public_key_ref(&self) -> Option<&PqPublicKey> {
         #[cfg(feature = "pqc-signatures")]
         {
             return self.device_pq_key.as_ref().map(|key| &key.public_key);
