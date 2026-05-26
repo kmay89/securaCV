@@ -226,7 +226,7 @@ pub fn generate(
 /// Minimal base64 encoder (no external dependency).
 fn base64_encode(data: &[u8]) -> String {
     const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity((data.len() + 2) / 3 * 4);
+    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {
         let b0 = chunk[0] as u32;
         let b1 = if chunk.len() > 1 { chunk[1] as u32 } else { 0 };
@@ -260,7 +260,7 @@ mod tests {
         for y in (h / 4)..(3 * h / 4) {
             for x in (w / 4)..(3 * w / 4) {
                 let idx = ((y * w + x) * 3) as usize;
-                pixels[idx] = 200;     // R
+                pixels[idx] = 200; // R
                 pixels[idx + 1] = 200; // G
                 pixels[idx + 2] = 200; // B
             }
