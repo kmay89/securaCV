@@ -89,8 +89,8 @@ typedef struct __attribute__((packed)) {
     uint8_t  checksum;          // XOR of bytes 2-18
 } ble_debug_payload_t;
 
-_Static_assert(sizeof(ble_debug_payload_t) == BLE_DEBUG_PAYLOAD_LEN,
-               "debug beacon payload must be 20 bytes");
+static_assert(sizeof(ble_debug_payload_t) == BLE_DEBUG_PAYLOAD_LEN,
+              "debug beacon payload must be 20 bytes");
 
 // ============================================================================
 // API
