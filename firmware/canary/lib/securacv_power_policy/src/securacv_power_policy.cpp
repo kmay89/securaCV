@@ -104,21 +104,27 @@ static void apply_battery_saver() {
 
 static void apply_emergency() {
   s_features.wifi_ap       = false;
-  s_features.wifi_sta      = false;
+  /* WiFi STA stays on so panic events can still reach HA via MQTT.
+   * Without this, a silent-panic touch event gets witnessed locally
+   * but never leaves the device — defeating the safety purpose. */
+  s_features.wifi_sta      = true;
   s_features.http_server   = false;
   s_features.camera_peek   = false;
   s_features.csi           = false;
-  s_features.acoustic      = false;
+  /* Acoustic stays on: T3 smoke / T4 CO are life-safety events that
+   * must not be suppressed by battery state. The PDM mic draws ~1 mA
+   * — acceptable even in emergency mode. */
+  s_features.acoustic      = true;
   s_features.touch         = true;
   s_features.ir_rmt        = false;
   s_features.temp_tamper   = true;
   s_features.vision        = false;
   s_features.gnss          = false;
-  s_features.mqtt          = false;
+  s_features.mqtt          = true;
   s_features.mesh          = false;
   s_features.record_interval_ms = 60000;
   s_features.cpu_freq_mhz  = 80;
-  s_features.wifi_ps_mode   = 0;
+  s_features.wifi_ps_mode   = 2;  /* WIFI_PS_MAX_MODEM — aggressive sleep */
 }
 
 static void apply_usb_only() {
@@ -372,6 +378,17 @@ const char* policy_mode_name(power_mode_t mode) {
 
 void policy_set_mode(power_mode_t mode) {
   using namespace policy;
+  /* SECURITY: reject manual transitions to EMERGENCY/SHUTDOWN.
+   * These modes disable most sensors, creating unwitnessed windows.
+   * An attacker with API access could force the device blind by
+   * setting EMERGENCY mode. Only the battery state machine (auto
+   * mode) can trigger these — not REST API, not serial commands. */
+  if (mode == PMODE_EMERGENCY || mode == PMODE_SHUTDOWN) {
+    log_health(LOG_LEVEL_WARNING, LOG_CAT_SYSTEM,
+               "Power policy: manual EMERGENCY/SHUTDOWN rejected",
+               "only auto-mode can trigger these");
+    return;
+  }
   s_cfg.auto_mode = false;
   transition_to(mode);
 }

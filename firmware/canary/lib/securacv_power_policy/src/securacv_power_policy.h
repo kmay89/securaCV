@@ -144,7 +144,12 @@ power_mode_t policy_get_mode(void);
 const char* policy_mode_name(power_mode_t mode);
 
 /* Override the mode manually. Disables auto-mode until the next
- * call to policy_set_auto(true) or reboot. */
+ * call to policy_set_auto(true) or reboot.
+ *
+ * SECURITY: EMERGENCY and SHUTDOWN modes are rejected — they disable
+ * most sensors and create unwitnessed windows. An attacker with API
+ * access must not be able to blind the device. Only the automatic
+ * battery-driven evaluation path can trigger these modes. */
 void policy_set_mode(power_mode_t mode);
 
 /* Enable/disable automatic mode transitions. */
