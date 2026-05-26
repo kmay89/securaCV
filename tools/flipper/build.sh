@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+APP_DIR="$SCRIPT_DIR/securacv_scanner"
+DIST_DIR="$SCRIPT_DIR/dist"
+
+usage() {
+  cat <<EOF
+SecuraCV Flipper Zero FAP Build Script
+
+Usage: $0 [firmware]
+
+Firmware targets:
+  official     Official Flipper firmware (release channel) [default]
+  dev          Official Flipper firmware (dev channel)
+  unleashed    Unleashed firmware (DarkFlippers)
+  momentum     Momentum firmware (Next-Flip)
+  all          Build for all targets
+
+Prerequisites:
+  pip install ufbt
+
+Examples:
+  $0              # Build for official release
+  $0 unleashed    # Build for Unleashed
+  $0 all          # Build for all firmware variants
+EOF
+  exit 0
+}
+
+build_target() {
+  local target="$1"
+  local label="$2"
+
+  echo "=== Building for $label ==="
+
+  case "$target" in
+    official)
+      ufbt update --channel=release
+      ;;
+    dev)
+      ufbt update --channel=dev
+      ;;
+    unleashed)
+      ufbt update --index-url="https://github.com/DarkFlippers/unleashed-firmware/releases/latest/download/ufbt-index.json"
+      ;;
+    momentum)
+      ufbt update --index-url="https://github.com/Next-Flip/Momentum-Firmware/releases/latest/download/ufbt-index.json"
+      ;;
+    *)
+      echo "Unknown target: $target" >&2
+      exit 1
+      ;;
+  esac
+
+  cd "$APP_DIR"
+  ufbt
+
+  mkdir -p "$DIST_DIR"
+  find . -name "*.fap" -exec cp {} "$DIST_DIR/securacv_scanner-${target}.fap" \;
+  echo "  -> $DIST_DIR/securacv_scanner-${target}.fap"
+  echo ""
+}
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  usage
+fi
+
+TARGET="${1:-official}"
+
+if ! command -v ufbt &>/dev/null; then
+  echo "Error: ufbt not found. Install with: pip install ufbt" >&2
+  exit 1
+fi
+
+if [[ "$TARGET" == "all" ]]; then
+  build_target official "Official (Release)"
+  build_target dev "Official (Dev)"
+  build_target unleashed "Unleashed"
+  build_target momentum "Momentum"
+  echo "=== All builds complete ==="
+  echo "FAP files in: $DIST_DIR/"
+  ls -la "$DIST_DIR/"*.fap
+else
+  case "$TARGET" in
+    official)   build_target official "Official (Release)" ;;
+    dev)        build_target dev "Official (Dev)" ;;
+    unleashed)  build_target unleashed "Unleashed" ;;
+    momentum)   build_target momentum "Momentum" ;;
+    *)          echo "Unknown target: $TARGET. Use: official, dev, unleashed, momentum, all" >&2; exit 1 ;;
+  esac
+fi
