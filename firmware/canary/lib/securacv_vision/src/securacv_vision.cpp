@@ -230,10 +230,20 @@ static constexpr int kModelInputH = 96;
 static constexpr int kTensorArenaSize = 136 * 1024;
 
 static uint8_t* s_tensor_arena = nullptr;
+static tflite::AllOpsResolver* s_resolver = nullptr;
 static tflite::MicroInterpreter* s_interpreter = nullptr;
 static bool s_model_loaded = false;
 
+static void layer3_deinit() {
+  delete s_interpreter; s_interpreter = nullptr;
+  delete s_resolver;    s_resolver = nullptr;
+  if (s_tensor_arena) { free(s_tensor_arena); s_tensor_arena = nullptr; }
+  s_model_loaded = false;
+}
+
 static bool layer3_init() {
+  layer3_deinit();
+
   s_tensor_arena = (uint8_t*)ps_malloc(kTensorArenaSize);
   if (!s_tensor_arena) {
     Serial.println("[VISION] Layer 3: PSRAM alloc failed for tensor arena");
@@ -243,23 +253,20 @@ static bool layer3_init() {
   const tflite::Model* model = tflite::GetModel(g_person_detect_model_data);
   if (model->version() != TFLITE_SCHEMA_VERSION) {
     Serial.println("[VISION] Layer 3: model version mismatch");
-    free(s_tensor_arena);
-    s_tensor_arena = nullptr;
+    layer3_deinit();
     return false;
   }
 
-  static tflite::AllOpsResolver resolver;
-  static tflite::MicroInterpreter interpreter(model, resolver,
+  s_resolver = new tflite::AllOpsResolver();
+  s_interpreter = new tflite::MicroInterpreter(model, *s_resolver,
     s_tensor_arena, kTensorArenaSize);
 
-  if (interpreter.AllocateTensors() != kTfLiteOk) {
+  if (s_interpreter->AllocateTensors() != kTfLiteOk) {
     Serial.println("[VISION] Layer 3: AllocateTensors failed");
-    free(s_tensor_arena);
-    s_tensor_arena = nullptr;
+    layer3_deinit();
     return false;
   }
 
-  s_interpreter = &interpreter;
   s_model_loaded = true;
   Serial.println("[VISION] Layer 3: TFLite person model loaded");
   return true;
@@ -342,12 +349,7 @@ void vision_deinit() {
     vision::s_rgb_buf = nullptr;
   }
 #if FEATURE_VISION_TFLITE
-  if (vision::s_tensor_arena) {
-    free(vision::s_tensor_arena);
-    vision::s_tensor_arena = nullptr;
-  }
-  vision::s_interpreter = nullptr;
-  vision::s_model_loaded = false;
+  vision::layer3_deinit();
 #endif
   vision::s_initialized = false;
 }
@@ -366,6 +368,7 @@ bool vision_start() {
 void vision_stop() {
   if (vision::s_motion_active) {
     vision::s_motion_active = false;
+    vision::s_stats.motion_active = false;
     vision::emit_event(VISION_EVENT_MOTION_END, 0, 0);
   }
   vision::s_running = false;
