@@ -1116,45 +1116,32 @@ static esp_err_t handle_peek_start(httpd_req_t* req) {
   return http_send_json(req, response.c_str());
 }
 
-static esp_err_t handle_peek_stream(httpd_req_t* req) {
-  if (!auth_gate(req)) return ESP_OK;
-  witness_get_health().http_requests++;
+// ════════════════════════════════════════════════════════════════════════════
+// PEEK STREAM — Async worker task
+//
+// The MJPEG loop runs in its own FreeRTOS task so the httpd worker is
+// free to service /api/peek/status, /api/peek/sensor, etc. while the
+// stream is active.
+// ════════════════════════════════════════════════════════════════════════════
+
+static TaskHandle_t s_stream_task = nullptr;
+
+struct StreamTaskCtx {
+  httpd_req_t* async_req;
+};
+
+static void stream_task_fn(void* param) {
+  StreamTaskCtx* ctx = (StreamTaskCtx*)param;
+  httpd_req_t* req = ctx->async_req;
+  delete ctx;
 
   CameraManager& cam = camera_get_instance();
-  if (!cam.isInitialized()) {
-    return httpd_resp_send(req, "Camera not initialized", HTTPD_RESP_USE_STRLEN);
-  }
-
-  cam.setPeekActive(true);
-  cam.resetMetrics();
-
-  // TCP keepalive so a vanished client (laptop lid closed, browser killed)
-  // is detected in ~20s instead of spinning on a zombie socket.
-  int sockfd = httpd_req_to_sockfd(req);
-  if (sockfd >= 0) {
-    int yes = 1;
-    setsockopt(sockfd, SOL_SOCKET, SO_KEEPALIVE, &yes, sizeof(yes));
-    int idle = 5, intvl = 5, cnt = 3;
-    setsockopt(sockfd, IPPROTO_TCP, TCP_KEEPIDLE, &idle, sizeof(idle));
-    setsockopt(sockfd, IPPROTO_TCP, TCP_KEEPINTVL, &intvl, sizeof(intvl));
-    setsockopt(sockfd, IPPROTO_TCP, TCP_KEEPCNT, &cnt, sizeof(cnt));
-  }
-
-  httpd_resp_set_type(req, "multipart/x-mixed-replace; boundary=frame");
-  httpd_resp_set_hdr(req, "Cache-Control", "no-store, no-cache, must-revalidate, pre-check=0, post-check=0, max-age=0");
-  httpd_resp_set_hdr(req, "Pragma", "no-cache");
-  httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-  httpd_resp_set_hdr(req, "Connection", "close");
-  httpd_resp_set_hdr(req, "X-Accel-Buffering", "no");
 
   while (cam.isPeekActive()) {
     cam.checkThermal();
 
     if (cam.getThermalState() == THERMAL_PAUSED) {
       vTaskDelay(pdMS_TO_TICKS(500));
-      #if FEATURE_WATCHDOG
-      esp_task_wdt_reset();
-      #endif
       continue;
     }
 
@@ -1195,9 +1182,6 @@ static esp_err_t handle_peek_stream(httpd_req_t* req) {
     }
     if (res != ESP_OK) break;
 
-    #if FEATURE_WATCHDOG
-    esp_task_wdt_reset();
-    #endif
     uint32_t pace = cam.getFrameDelay();
     if (pace < 20)  pace = 20;
     if (pace > 500) pace = 500;
@@ -1206,8 +1190,67 @@ static esp_err_t handle_peek_stream(httpd_req_t* req) {
 
   cam.setPeekActive(false);
   httpd_resp_send_chunk(req, NULL, 0);
+  httpd_req_async_handler_complete(req);
   log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "Peek stream ended", nullptr);
 
+  s_stream_task = nullptr;
+  vTaskDelete(nullptr);
+}
+
+static esp_err_t handle_peek_stream(httpd_req_t* req) {
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  CameraManager& cam = camera_get_instance();
+  if (!cam.isInitialized()) {
+    return httpd_resp_send(req, "Camera not initialized", HTTPD_RESP_USE_STRLEN);
+  }
+
+  if (s_stream_task != nullptr) {
+    cam.setPeekActive(false);
+    vTaskDelay(pdMS_TO_TICKS(200));
+  }
+
+  cam.setPeekActive(true);
+  cam.resetMetrics();
+
+  int sockfd = httpd_req_to_sockfd(req);
+  if (sockfd >= 0) {
+    int yes = 1;
+    setsockopt(sockfd, SOL_SOCKET, SO_KEEPALIVE, &yes, sizeof(yes));
+    int idle = 5, intvl = 5, cnt = 3;
+    setsockopt(sockfd, IPPROTO_TCP, TCP_KEEPIDLE, &idle, sizeof(idle));
+    setsockopt(sockfd, IPPROTO_TCP, TCP_KEEPINTVL, &intvl, sizeof(intvl));
+    setsockopt(sockfd, IPPROTO_TCP, TCP_KEEPCNT, &cnt, sizeof(cnt));
+  }
+
+  httpd_resp_set_type(req, "multipart/x-mixed-replace; boundary=frame");
+  httpd_resp_set_hdr(req, "Cache-Control", "no-store, no-cache, must-revalidate, pre-check=0, post-check=0, max-age=0");
+  httpd_resp_set_hdr(req, "Pragma", "no-cache");
+  httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+  httpd_resp_set_hdr(req, "Connection", "close");
+  httpd_resp_set_hdr(req, "X-Accel-Buffering", "no");
+
+  httpd_req_t* async_req = nullptr;
+  esp_err_t err = httpd_req_async_handler_begin(req, &async_req);
+  if (err != ESP_OK || !async_req) {
+    log_health(LOG_LEVEL_ERROR, LOG_CAT_NETWORK, "Async handler begin failed", nullptr);
+    cam.setPeekActive(false);
+    return httpd_resp_send(req, "Async init failed", HTTPD_RESP_USE_STRLEN);
+  }
+
+  StreamTaskCtx* ctx = new StreamTaskCtx{async_req};
+  BaseType_t rc = xTaskCreatePinnedToCore(
+    stream_task_fn, "peek_stream", 6144, ctx, 5, &s_stream_task, tskNO_AFFINITY);
+  if (rc != pdPASS) {
+    delete ctx;
+    httpd_req_async_handler_complete(async_req);
+    cam.setPeekActive(false);
+    log_health(LOG_LEVEL_ERROR, LOG_CAT_NETWORK, "Stream task creation failed", nullptr);
+    return ESP_FAIL;
+  }
+
+  log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "Peek stream started (async)", nullptr);
   return ESP_OK;
 }
 
