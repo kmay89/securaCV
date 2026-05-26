@@ -692,6 +692,20 @@ html, body {
   position: relative;
 }
 
+.event-card-thumb {
+  background: #000;
+  overflow: hidden;
+  padding: 0;
+}
+
+.event-thumb-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  image-rendering: pixelated;
+}
+
 .event-card-icon.type-person {
   background: linear-gradient(135deg, rgba(245, 166, 35, 0.35), rgba(255, 149, 0, 0.12));
 }
@@ -936,6 +950,17 @@ html, body {
 .event-detail-hero {
   text-align: center;
   padding: 24px 16px;
+}
+
+.event-detail-hero-thumb {
+  width: 100%;
+  max-width: 320px;
+  height: auto;
+  border-radius: var(--radius-md);
+  margin: 0 auto 12px;
+  display: block;
+  background: #000;
+  image-rendering: pixelated;
 }
 
 .event-detail-hero-icon {
