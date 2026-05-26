@@ -169,7 +169,7 @@ void setup() {
                      g_witness_chain.pubkey_fingerprint[6],
                      g_witness_chain.pubkey_fingerprint[7]);
         } else {
-            snprintf(fp_hex, sizeof(fp_hex), "0000");
+            strcpy(fp_hex, "0000");
         }
         ble_debug_beacon_init(fp_hex);
     }
