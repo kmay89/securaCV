@@ -99,9 +99,13 @@
   #define FEATURE_BLUETOOTH     0
   #define FEATURE_BLE           0   // BLE Discovery (Opera/Chirp/Nearby)
   #define FEATURE_BLE_SCAN      0   // BLE Scout — paired-beacon room attribution (PR 5)
+  #define FEATURE_BLE_STATUS    0   // BLE GATT status service (battery/health/chain)
   #define FEATURE_SYS_MONITOR   0
   #define FEATURE_WIFI_PRESENCE 0   // WiFi probe request presence detection
   #define FEATURE_AUDIBLE_CHIRP 0   // Local audible/visual alert tones
+  #define FEATURE_DATA_MGMT     0   // SD log rotation, chain backup/restore
+  #define FEATURE_POWER_MONITOR 1   // Battery voltage + SoC monitoring (always on)
+  #define FEATURE_POWER_POLICY  0   // Smart battery power modes (DEV/FULL only)
 
   #define DEBUG_NMEA            0
   #define DEBUG_CBOR            0
@@ -131,9 +135,13 @@
   #define FEATURE_BLUETOOTH     HW_HAS_BLE   // BLE pairing channel (NimBLE)
   #define FEATURE_BLE           0   // Skip Opera/Chirp/Nearby discovery (saves ~25s)
   #define FEATURE_BLE_SCAN      0   // BLE Scout disabled by default — opt-in via FULL build
+  #define FEATURE_BLE_STATUS    FEATURE_BLUETOOTH   // BLE GATT status service (needs NimBLE server)
   #define FEATURE_SYS_MONITOR   1
   #define FEATURE_WIFI_PRESENCE 1   // WiFi probe request presence detection
   #define FEATURE_AUDIBLE_CHIRP 1   // Local audible/visual alert tones
+  #define FEATURE_DATA_MGMT     1   // SD log rotation, chain backup/restore
+  #define FEATURE_POWER_MONITOR 1   // Battery voltage + SoC monitoring
+  #define FEATURE_POWER_POLICY  1   // Smart battery power modes
 
   #define DEBUG_NMEA            0
   #define DEBUG_CBOR            0
@@ -161,9 +169,13 @@
   #define FEATURE_BLUETOOTH     HW_HAS_BLE
   #define FEATURE_BLE           1   // BLE Discovery (Opera/Chirp/Nearby) — works on both S3 and C3
   #define FEATURE_BLE_SCAN      HW_HAS_BLE   // BLE Scout — paired-beacon room attribution
+  #define FEATURE_BLE_STATUS    1   // BLE GATT status service (battery/health/chain)
   #define FEATURE_SYS_MONITOR   1
   #define FEATURE_WIFI_PRESENCE 1   // WiFi probe request presence detection
   #define FEATURE_AUDIBLE_CHIRP 1   // Local audible/visual alert tones
+  #define FEATURE_DATA_MGMT     1   // SD log rotation, chain backup/restore
+  #define FEATURE_POWER_MONITOR 1   // Battery voltage + SoC monitoring
+  #define FEATURE_POWER_POLICY  1   // Smart battery power modes
 
   #define DEBUG_NMEA            0
   #define DEBUG_CBOR            0

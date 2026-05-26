@@ -145,6 +145,7 @@ extern "C" {
 #include "sys_monitor.h"
 #include "hardware_state.h"
 #include "selftest_api.h"        // GET /api/selftest — wizard pre-flight aggregator
+#include "data_mgmt_api.h"      // SD rotation, chain backup/restore, integrity verify
 
 // ════════════════════════════════════════════════════════════════════════════
 // BUILD CONFIGURATION — Edit build_config.h to select profile
@@ -160,6 +161,9 @@ extern "C" {
 // BLE Discovery Subsystem (Opera/Chirp/Nearby)
 #include "ble_config.h"
 #include "ble_manager.h"
+
+// BLE GATT Status Service (battery/health/chain over GATT)
+#include "ble_status_api.h"
 
 // WiFi Presence Detection (probe request monitoring)
 #include "wifi_presence.h"
@@ -180,6 +184,14 @@ extern "C" {
 #endif
 
 #include "setup_wizard.h"
+
+// Power monitoring and battery policy engine
+#if FEATURE_POWER_MONITOR
+#include "power_monitor.h"
+#endif
+#if FEATURE_POWER_POLICY
+#include "power_policy.h"
+#endif
 
 // ════════════════════════════════════════════════════════════════════════════
 // VERSION & PROTOCOL (must match PWK expectations)
@@ -5863,6 +5875,9 @@ static void print_help() {
   Serial.println("│ c     : Show camera status          │");
   Serial.println("│ m     : Show system monitor         │");
   Serial.println("│         (temp, heap, PSRAM)         │");
+  Serial.println("│ r     : Show data management stats  │");
+  Serial.println("│ b     : Show battery status         │");
+  Serial.println("│ p     : Show power policy           │");
   Serial.println("└─────────────────────────────────────┘");
 }
 
@@ -5915,6 +5930,27 @@ static void handle_serial_commands() {
         sys_monitor::print_status();
         #else
         Serial.println("System monitor not enabled");
+        #endif
+        break;
+      case 'r':
+        #if FEATURE_DATA_MGMT && FEATURE_SD_STORAGE
+        datamgmt::print_status();
+        #else
+        Serial.println("Data management not enabled");
+        #endif
+        break;
+      case 'b':
+        #if FEATURE_POWER_MONITOR
+        power_monitor::print_status();
+        #else
+        Serial.println("Power monitor not enabled");
+        #endif
+        break;
+      case 'p':
+        #if FEATURE_POWER_POLICY
+        power_policy::print_status();
+        #else
+        Serial.println("Power policy not enabled");
         #endif
         break;
       case '\r':
@@ -6154,6 +6190,24 @@ void setup() {
       // and firmware version so its snapshot JSON identifies us. Both
       // are owned by the .ino — the module copies into its own buffers.
       ble_console::set_device_metadata(g_device.fingerprint_hex, FIRMWARE_VERSION);
+
+      // BLE GATT Status Service — register on the shared NimBLE server
+      // created by bluetooth_channel. Exposes battery, health, chain,
+      // and SD status to companion phones over standard GATT.
+      #if FEATURE_BLE_STATUS
+      {
+        NimBLEServer* ble_server = NimBLEDevice::getServer();
+        if (ble_server) {
+          if (ble_status::init(ble_server, g_device.device_id, FIRMWARE_VERSION,
+                               &g_device.seq)) {
+            Serial.println("[OK] BLE GATT status service registered");
+            log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "BLE status service started", nullptr);
+          } else {
+            Serial.println("[--] BLE GATT status service init failed");
+          }
+        }
+      }
+      #endif
     } else {
       Serial.println("[--] Bluetooth init failed");
     }
@@ -6246,6 +6300,49 @@ void setup() {
   log_health(SCV_LOG_INFO, SCV_CAT_SYSTEM, "System monitor initialized", nullptr);
   #endif
 
+  // Initialize Data Management (SD rotation, chain backup, integrity verify)
+  #if FEATURE_DATA_MGMT && FEATURE_SD_STORAGE
+  Serial.println("[..] Initializing data management...");
+  datamgmt::init();
+  {
+    datamgmt::datamgmt_stats_t dm_stats;
+    if (datamgmt::get_stats(&dm_stats)) {
+      Serial.printf("[OK] Data mgmt: %u witness, %u health files, backup=%s\n",
+                    (unsigned)dm_stats.witness_files,
+                    (unsigned)dm_stats.health_files,
+                    dm_stats.backup_exists ? "yes" : "no");
+    }
+  }
+  log_health(SCV_LOG_INFO, SCV_CAT_STORAGE, "Data management initialized", nullptr);
+  #endif
+
+  // Initialize Power Monitor (battery voltage, SoC, charge state)
+  #if FEATURE_POWER_MONITOR
+  Serial.println("[..] Initializing power monitor...");
+  power_monitor::init(log_health);
+  {
+    PowerState pwr;
+    if (power_monitor::get_state(&pwr)) {
+      Serial.printf("[OK] Power monitor: %s, %umV, %u%% SoC, %s\n",
+                    power_monitor::mode_name(pwr.monitor_mode),
+                    pwr.voltage_mv,
+                    pwr.soc_pct,
+                    power_monitor::charge_state_name(pwr.charge_state));
+    } else {
+      Serial.println("[OK] Power monitor initialized");
+    }
+  }
+  log_health(SCV_LOG_INFO, SCV_CAT_SYSTEM, "Power monitor initialized", nullptr);
+  #endif
+
+  // Initialize Power Policy Engine (battery-aware feature gating)
+  #if FEATURE_POWER_POLICY
+  Serial.println("[..] Initializing power policy engine...");
+  power_policy::init(log_health);
+  Serial.printf("[OK] Power policy: %s\n", power_policy::mode_name(power_policy::get_mode()));
+  log_health(SCV_LOG_INFO, SCV_CAT_SYSTEM, "Power policy initialized", nullptr);
+  #endif
+
   // ════════════════════════════════════════════════════════════════════════════
   // PHASE 4: GNSS — Initialize serial, probe only if not in safe mode
   // In safe mode, GPS probing is skipped to avoid potential hangs from
@@ -6325,7 +6422,7 @@ void setup() {
                 WiFi.softAPIP().toString().c_str());
   #endif
   Serial.println("╠══════════════════════════════════════════════════════════════╣");
-  Serial.println("║  Commands: h=help i=identity s=status t=time g=gps c=cam m=sys║");
+  Serial.println("║  Commands: h=help i=id s=stat t=time g=gps c=cam m=sys b=batt p=pwr║");
   Serial.println("║  Token + WiFi credentials are printed above on every boot      ║");
   Serial.println("║  Hold  BOOT (>3s)   = factory reset                           ║");
   Serial.println("╚══════════════════════════════════════════════════════════════╝");
@@ -6503,6 +6600,11 @@ void loop() {
   bluetooth_channel::update();
   #endif
 
+  // Update BLE GATT status characteristics (rate-limited internally)
+  #if FEATURE_BLE_STATUS
+  ble_status::update();
+  #endif
+
   // Update BLE Discovery (Opera/Chirp/Nearby)
   #if FEATURE_BLE
   if (ble_manager::isAvailable()) {
@@ -6589,9 +6691,24 @@ void loop() {
   }
   #endif
 
-  // Update system monitor (temp, heap, alerts)
+  // Update system monitor (temp, heap, alerts, degradation, SD health)
   #if FEATURE_SYS_MONITOR
   sys_monitor::update(log_health);
+  #endif
+
+  // Data management auto-processing (rate-limited: rotation every 5 min, backup every hour)
+  #if FEATURE_DATA_MGMT && FEATURE_SD_STORAGE
+  datamgmt::process(g_device.chain_head, g_device.seq);
+  #endif
+
+  // Update power monitor (ADC sample, SoC, charge state)
+  #if FEATURE_POWER_MONITOR
+  power_monitor::process();
+  #endif
+
+  // Update power policy (mode transitions, feature gating)
+  #if FEATURE_POWER_POLICY
+  power_policy::process();
   #endif
 
   // Drain CSI ring, finalize 1-Hz feature windows, dispatch to v1 modules.
