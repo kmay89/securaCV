@@ -53,6 +53,18 @@ typedef struct {
 #define SCV_RSSI_HISTORY_LEN 8
 #define SCV_GRAPH_LEN        64
 
+typedef enum {
+    SCV_ZONE_UNKNOWN = 0,
+    SCV_ZONE_NEAR,
+    SCV_ZONE_MID,
+    SCV_ZONE_FAR,
+    SCV_ZONE_LOST,
+} scv_proximity_zone_t;
+
+#define SCV_ZONE_NEAR_THRESHOLD (-50)
+#define SCV_ZONE_MID_THRESHOLD  (-70)
+#define SCV_ZONE_FAR_THRESHOLD  (-90)
+
 typedef struct {
     char     name[32];
     int8_t   rssi;
@@ -74,6 +86,9 @@ typedef struct {
     int8_t   rssi_graph[SCV_GRAPH_LEN];
     uint8_t  rssi_graph_idx;
     uint8_t  rssi_graph_count;
+
+    // Proximity tracking
+    scv_proximity_zone_t zone;
 } scv_device_t;
 
 // ============================================================================
@@ -274,5 +289,26 @@ static inline void scv_format_distance(uint16_t dm, char* buf, size_t buf_len) {
         snprintf(buf, buf_len, "%d.%dm", dm / 10, dm % 10);
     } else {
         snprintf(buf, buf_len, "0.%dm", dm);
+    }
+}
+
+// ============================================================================
+// PROXIMITY ZONES
+// ============================================================================
+
+static inline scv_proximity_zone_t scv_classify_zone(int8_t avg_rssi) {
+    if(avg_rssi > SCV_ZONE_NEAR_THRESHOLD) return SCV_ZONE_NEAR;
+    if(avg_rssi > SCV_ZONE_MID_THRESHOLD)  return SCV_ZONE_MID;
+    if(avg_rssi > SCV_ZONE_FAR_THRESHOLD)  return SCV_ZONE_FAR;
+    return SCV_ZONE_LOST;
+}
+
+static inline const char* scv_zone_label(scv_proximity_zone_t zone) {
+    switch(zone) {
+        case SCV_ZONE_NEAR: return "N";
+        case SCV_ZONE_MID:  return "M";
+        case SCV_ZONE_FAR:  return "F";
+        case SCV_ZONE_LOST: return "L";
+        default:            return "?";
     }
 }
