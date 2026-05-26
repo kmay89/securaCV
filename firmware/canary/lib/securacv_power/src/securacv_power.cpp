@@ -611,7 +611,7 @@ void power_graceful_shutdown(void) {
   cbor.write_text("cyc");  cbor.write_uint(s_state.charge_cycles);
 
   WitnessRecord rec;
-  witness_create_record(payload, cbor.size(), RECORD_TAMPER_ALERT, &rec);
+  witness_create_record(payload, cbor.size(), RECORD_POWER_SHUTDOWN, &rec);
 
   /* Flush chain state to NVS and SD. */
   witness_persist_chain_state();
