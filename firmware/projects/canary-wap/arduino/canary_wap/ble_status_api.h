@@ -43,6 +43,9 @@
 #include <NimBLEDevice.h>
 #include "sys_monitor.h"
 #include "hardware_state.h"
+#if FEATURE_POWER_MONITOR
+#include "power_monitor.h"
+#endif
 
 // ════════════════════════════════════════════════════════════════════════════
 // BLE SERVICE UUIDs — must match PIO's securacv_ble_status.h
@@ -238,9 +241,17 @@ static void update() {
   g_connected = connected;
 
   // ── Battery level ──────────────────────────────────────────────────
-  // WAP doesn't have a power monitor like PIO, so we report 0 (unknown).
-  // When a battery sensor is added, update this block.
-  // No-op for now — the characteristic keeps its last-set value (0).
+#if FEATURE_POWER_MONITOR
+  {
+    PowerState pwr;
+    if (power_monitor::get_state(&pwr)) {
+      uint8_t soc = pwr.soc_pct;
+      if (soc > 100) soc = 100;
+      g_battery_char->setValue(&soc, 1);
+      if (connected) g_battery_char->notify();
+    }
+  }
+#endif
 
   // ── Chain sequence ─────────────────────────────────────────────────
   if (g_chain_seq_ptr) {

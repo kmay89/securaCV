@@ -432,10 +432,7 @@ bool datamgmt_verify_chain(chain_verify_result_t* result) {
     return false;
   }
 
-  /* Collect filenames in sorted order using the same batch approach.
-   * For verification we walk ALL files, processing BATCH_SIZE at a time. */
-  static constexpr size_t V_BATCH = 32;
-  static constexpr size_t V_NAME  = 48;
+  static constexpr size_t V_NAME = 48;
 
   uint8_t prev_chain_hash[32];
   bool have_prev = false;
@@ -445,117 +442,70 @@ bool datamgmt_verify_chain(chain_verify_result_t* result) {
   uint32_t sig_failures    = 0;
   bool     chain_intact    = true;
 
-  /* We need to walk the directory in sorted order. Collect all names
-   * in batches, sort each batch, process it. For a truly ordered walk
-   * we'd need all names sorted globally; since filenames are
-   * timestamped and we process in sorted batches, each batch is
-   * internally ordered. For full correctness across batches we rely on
-   * the FAT directory enumeration returning entries in creation order
-   * for timestamped filenames. This is a best-effort approach that
-   * works for the expected filename patterns. */
+  /* Walk files in globally sorted order using an O(n^2) selection
+   * approach: on each iteration, scan the directory for the
+   * lexicographically smallest filename greater than the last one
+   * processed. This uses constant stack memory regardless of file
+   * count, and guarantees correct chain-hash continuity checking
+   * across any number of files. */
 
-  char names[V_BATCH][V_NAME];
-  size_t collected = 0;
+  char last_processed[V_NAME] = {0};
+  char next_name[V_NAME];
 
-  /* First pass: collect all names. We close and reopen to walk
-   * in sorted order per batch. This is O(n) in directory size. */
-  for (File entry = dir.openNextFile(); entry;
-       entry = dir.openNextFile()) {
-    if (entry.isDirectory()) {
+  for (;;) {
+    /* Find the smallest filename > last_processed. */
+    next_name[0] = '\0';
+
+    dir.rewindDirectory();
+    for (File entry = dir.openNextFile(); entry;
+         entry = dir.openNextFile()) {
+      if (entry.isDirectory()) { entry.close(); continue; }
+      const char* n = entry.name();
+      const char* slash = strrchr(n, '/');
+      const char* base = slash ? (slash + 1) : n;
       entry.close();
-      continue;
-    }
 
-    const char* n = entry.name();
-    const char* slash = strrchr(n, '/');
-    const char* base = slash ? (slash + 1) : n;
-    strncpy(names[collected], base, V_NAME - 1);
-    names[collected][V_NAME - 1] = '\0';
-    collected++;
-    entry.close();
-
-    if (collected >= V_BATCH) {
-      /* Sort this batch. */
-      datamgmt::sort_names(names, collected);
-
-      /* Verify each record in this batch. */
-      for (size_t i = 0; i < collected; i++) {
-        char path[V_NAME + 16];
-        snprintf(path, sizeof(path), "/WITNESS/%s", names[i]);
-
-        File rf = SD.open(path, FILE_READ);
-        if (!rf) continue;
-
-        /* Read the record — WitnessRecord is written as a raw struct
-         * by the witness/storage layer. */
-        WitnessRecord rec;
-        size_t rd = rf.read((uint8_t*)&rec, sizeof(rec));
-        rf.close();
-
-        if (rd < sizeof(rec)) continue;
-
-        records_checked++;
-
-        /* Verify Ed25519 signature. */
-        if (witness_verify_record(&rec)) {
-          records_valid++;
-        } else {
-          sig_failures++;
-          chain_intact = false;
-        }
-
-        /* Check chain hash continuity. */
-        if (have_prev) {
-          if (memcmp(rec.prev_hash, prev_chain_hash, 32) != 0) {
-            chain_breaks++;
-            chain_intact = false;
-          }
-        }
-        memcpy(prev_chain_hash, rec.chain_hash, 32);
-        have_prev = true;
+      if (strcmp(base, last_processed) <= 0) continue;
+      if (next_name[0] == '\0' || strcmp(base, next_name) < 0) {
+        strncpy(next_name, base, V_NAME - 1);
+        next_name[V_NAME - 1] = '\0';
       }
-
-      collected = 0;
     }
-  }
-  dir.close();
 
-  /* Process any remaining names in the last partial batch. */
-  if (collected > 0) {
-    datamgmt::sort_names(names, collected);
+    if (next_name[0] == '\0') break;
+    strncpy(last_processed, next_name, V_NAME);
 
-    for (size_t i = 0; i < collected; i++) {
-      char path[V_NAME + 16];
-      snprintf(path, sizeof(path), "/WITNESS/%s", names[i]);
+    char path[V_NAME + 16];
+    snprintf(path, sizeof(path), "/WITNESS/%s", next_name);
 
-      File rf = SD.open(path, FILE_READ);
-      if (!rf) continue;
+    File rf = SD.open(path, FILE_READ);
+    if (!rf) continue;
 
-      WitnessRecord rec;
-      size_t rd = rf.read((uint8_t*)&rec, sizeof(rec));
-      rf.close();
+    WitnessRecord rec;
+    size_t rd = rf.read((uint8_t*)&rec, sizeof(rec));
+    rf.close();
 
-      if (rd < sizeof(rec)) continue;
+    if (rd < sizeof(rec)) continue;
 
-      records_checked++;
+    records_checked++;
 
-      if (witness_verify_record(&rec)) {
-        records_valid++;
-      } else {
-        sig_failures++;
+    if (witness_verify_record(&rec)) {
+      records_valid++;
+    } else {
+      sig_failures++;
+      chain_intact = false;
+    }
+
+    if (have_prev) {
+      if (memcmp(rec.prev_hash, prev_chain_hash, 32) != 0) {
+        chain_breaks++;
         chain_intact = false;
       }
-
-      if (have_prev) {
-        if (memcmp(rec.prev_hash, prev_chain_hash, 32) != 0) {
-          chain_breaks++;
-          chain_intact = false;
-        }
-      }
-      memcpy(prev_chain_hash, rec.chain_hash, 32);
-      have_prev = true;
     }
+    memcpy(prev_chain_hash, rec.chain_hash, 32);
+    have_prev = true;
   }
+  dir.close();
 
   result->records_checked    = records_checked;
   result->records_valid      = records_valid;

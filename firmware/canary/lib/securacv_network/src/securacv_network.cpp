@@ -541,11 +541,6 @@ void NetworkManager::checkConnection() {
         /* Base 2 s, doubles each attempt, capped at 30 s. */
         uint32_t backoff_ms = 2000UL << (attempt > 0 ? (attempt - 1) : 0);
         if (backoff_ms > 30000UL) backoff_ms = 30000UL;
-        /* Fall back to the configured constant when it's larger (the
-         * original 30 s WIFI_RECONNECT_INTERVAL_MS acts as a floor so
-         * we never reconnect faster than the board expects). */
-        if (backoff_ms < WIFI_RECONNECT_INTERVAL_MS)
-          backoff_ms = WIFI_RECONNECT_INTERVAL_MS;
 
         if (m_creds.configured && m_creds.enabled &&
             now - m_status.last_connect_ms > backoff_ms) {
