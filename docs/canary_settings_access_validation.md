@@ -17,7 +17,6 @@ Confirm that Settings is easy to reach without weakening the threat model:
 - Browser cache is not pinned to an older firmware page. Use a private window if unsure.
 - Device is reachable at one of:
   - `http://canary.local`
-  - `http://canary-<id>.local`
   - `http://192.168.4.1`
 
 ## Test Matrix
@@ -44,4 +43,4 @@ Confirm that Settings is easy to reach without weakening the threat model:
 ## Notes
 
 - `canary.local/settings` intentionally serves the UI shell before auth. The authorization boundary is the API layer, not the static HTML route.
-- If `.local` resolution fails on Android or some routers, use `192.168.4.1` or the unique `canary-<id>.local` hostname shown in the boot banner.
+- If `.local` resolution fails on Android or some routers, use `192.168.4.1` as shown in the boot banner.
