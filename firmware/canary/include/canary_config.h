@@ -108,6 +108,9 @@
 #ifndef FEATURE_POWER_POLICY
   #define FEATURE_POWER_POLICY     1   // Runtime power mode engine (auto sleep/throttle by battery)
 #endif
+#ifndef FEATURE_SETUP_WIZARD
+  #define FEATURE_SETUP_WIZARD     1   // First-time setup detection, captive portal, device naming
+#endif
 
 // ════════════════════════════════════════════════════════════════
 // DEBUG FLAG DEFAULTS
@@ -276,6 +279,8 @@
 #define NVS_KEY_BATT_CYC  "batt_cycles"
 #define NVS_KEY_BATT_MAX  "batt_max_mv"
 #define NVS_KEY_BATT_MIN  "batt_min_mv"
+#define NVS_KEY_SETUP_OK  "setup_ok"
+#define NVS_KEY_DEV_NAME  "dev_name"
 
 // ════════════════════════════════════════════════════════════════
 // MQTT (Home Assistant)

@@ -1,0 +1,19 @@
+{
+    "name": "securacv_setup",
+    "version": "0.1.0",
+    "description": "SecuraCV First-Time Setup — detects first boot via NVS, drives the captive portal setup wizard, manages device naming, and coordinates the onboarding flow (WiFi config, optional BLE provisioning).",
+    "keywords": ["securacv", "esp32-s3", "setup", "captive-portal", "onboarding"],
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/kmay89/securaCV.git"
+    },
+    "authors": [
+        {
+            "name": "Karl May",
+            "email": "karl@errerlabs.com"
+        }
+    ],
+    "license": "Apache-2.0",
+    "frameworks": "arduino",
+    "platforms": "espressif32"
+}

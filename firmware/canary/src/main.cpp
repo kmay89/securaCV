@@ -90,6 +90,11 @@ static_assert(sizeof(csi_features_t) == 36,
 #include "securacv_power_policy.h"
 #endif
 
+#if FEATURE_SETUP_WIZARD
+#include "securacv_setup.h"
+#include <WiFi.h>
+#endif
+
 /* All five sensing sources feed a single aggregator. The header is
  * include-guarded, so one unconditional include is the right shape;
  * sensing_init() is also idempotent so each feature block can call it
@@ -458,23 +463,50 @@ void setup() {
   }
 #endif
 
+  // Initialize first-time setup detection and device naming
+#if FEATURE_SETUP_WIZARD
+  setup_init();
+  {
+    char dev_name[SETUP_DEVICE_NAME_MAX + 1];
+    if (setup_get_device_name(dev_name, sizeof(dev_name))) {
+      Serial.printf("[OK] Device name: %s\n", dev_name);
+    }
+  }
+#endif
+
   // Start WiFi Access Point and HTTP server
 #if FEATURE_WIFI_AP
-  Serial.println("[..] Starting WiFi Access Point...");
-  NetworkManager& net = network_get_instance();
-  // The device always advertises as `canary.local`; device_id goes into
-  // the _securacv._tcp TXT record so the SPA wizard can distinguish
-  // multiple Canaries during its service browse. RFC 6762 §9 handles
-  // the rare two-on-one-network hostname collision by auto-renaming
-  // the second device to canary-2.local etc.
-  if (net.begin(device.ap_ssid, g_ap_password, device.device_id)) {
-    Serial.println("[OK] WiFi AP active");
-#if FEATURE_HTTP_SERVER
-    Serial.println("[..] Starting HTTP server...");
-    net.startHttpServer();
+  {
+#if FEATURE_SETUP_WIZARD
+    const char* ap_ssid = device.ap_ssid;
+    char setup_ssid[32];
+    if (setup_is_first_boot()) {
+      size_t id_len = strlen(device.device_id);
+      const char* suffix = (id_len >= 4) ? (device.device_id + id_len - 4) : device.device_id;
+      snprintf(setup_ssid, sizeof(setup_ssid), "SecuraCV-Setup-%s", suffix);
+      ap_ssid = setup_ssid;
+      Serial.printf("[..] SETUP MODE: AP SSID = %s\n", ap_ssid);
+    }
+#else
+    const char* ap_ssid = device.ap_ssid;
 #endif
-  } else {
-    Serial.println("[WARN] WiFi AP failed to start");
+    Serial.println("[..] Starting WiFi Access Point...");
+    NetworkManager& net = network_get_instance();
+    if (net.begin(ap_ssid, g_ap_password, device.device_id)) {
+      Serial.println("[OK] WiFi AP active");
+#if FEATURE_HTTP_SERVER
+      Serial.println("[..] Starting HTTP server...");
+      net.startHttpServer();
+#endif
+#if FEATURE_SETUP_WIZARD
+      if (setup_is_active()) {
+        setup_start_captive_portal();
+        Serial.println("[OK] Captive portal active — connect to configure");
+      }
+#endif
+    } else {
+      Serial.println("[WARN] WiFi AP failed to start");
+    }
   }
 #endif
 
@@ -884,6 +916,14 @@ void setup() {
   Serial.println("║               WITNESS DEVICE READY                           ║");
   Serial.println("╠══════════════════════════════════════════════════════════════╣");
   Serial.printf("║  Device ID  : %-45s  ║\n", device.device_id);
+#if FEATURE_SETUP_WIZARD
+  {
+    char banner_name[SETUP_DEVICE_NAME_MAX + 1];
+    if (setup_get_device_name(banner_name, sizeof(banner_name))) {
+      Serial.printf("║  Name       : %-45s  ║\n", banner_name);
+    }
+  }
+#endif
 #if FEATURE_WIFI_AP
   NetworkManager& network = network_get_instance();
   Serial.printf("║  WiFi AP    : %-45s  ║\n", device.ap_ssid);
@@ -955,6 +995,19 @@ void loop() {
 
   // Handle boot button (info print, factory reset)
   handle_boot_button();
+
+#if FEATURE_SETUP_WIZARD
+  if (setup_is_active()) {
+    setup_dns_process();
+    setup_check_timeout();
+    if (WiFi.status() == WL_CONNECTED) {
+      setup_mark_complete();
+      Serial.println("[OK] Setup complete — WiFi connected, rebooting...");
+      delay(1000);
+      ESP.restart();
+    }
+  }
+#endif
 
   // Update GPS
   s_gps.update();
