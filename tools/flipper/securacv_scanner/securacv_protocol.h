@@ -244,7 +244,7 @@ static inline uint16_t scv_estimate_distance_dm(int16_t rssi_avg_x10) {
     // 10^(diff/20) approximation using integer math:
     // 2^(diff * 3.32 / 10) ~ 2^(diff/3)
     // This gives rough distance in decimeters
-    uint16_t dm = 10;
+    uint16_t dm;
     if(diff < 10) dm = 10;
     else if(diff < 15) dm = 18;
     else if(diff < 20) dm = 32;
