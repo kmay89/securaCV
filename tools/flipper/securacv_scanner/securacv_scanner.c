@@ -10,8 +10,9 @@
  *
  * Controls:
  *   Up/Down    — scroll device list
- *   OK         — show device detail
- *   Left/Right — toggle between detail and signal graph
+ *   OK         — show device detail / short press
+ *   OK (long)  — toggle pin on selected device (scan list)
+ *   Left/Right — cycle sort mode (scan list) / toggle detail/graph
  *   Back       — return to list / exit app
  */
 
@@ -69,6 +70,15 @@ typedef enum {
     VIEW_SIGNAL_GRAPH,
 } AppView;
 
+typedef enum {
+    SORT_RSSI,
+    SORT_NAME,
+    SORT_LAST_SEEN,
+    SORT_COUNT,
+} SortMode;
+
+static const char* sort_mode_labels[] = {"RSSI", "Name", "Recent"};
+
 typedef struct {
     FuriMutex* mutex;
     ViewPort* view_port;
@@ -88,6 +98,7 @@ typedef struct {
     int8_t selected_index;
     int8_t scroll_offset;
     bool scanning;
+    SortMode sort_mode;
 } SecuraCVApp;
 
 // ============================================================================
@@ -162,13 +173,21 @@ static scv_device_t* add_or_update_device(SecuraCVApp* app, const AppEvent* evt)
 
     if(!dev) {
         if(app->device_count >= MAX_DEVICES) {
-            // Evict oldest device
+            // Evict oldest unpinned device; fall back to oldest overall
             uint32_t oldest_ms = UINT32_MAX;
             uint8_t oldest_idx = 0;
             for(uint8_t i = 0; i < app->device_count; i++) {
-                if(app->devices[i].last_seen_ms < oldest_ms) {
+                if(!app->devices[i].pinned && app->devices[i].last_seen_ms < oldest_ms) {
                     oldest_ms = app->devices[i].last_seen_ms;
                     oldest_idx = i;
+                }
+            }
+            if(oldest_ms == UINT32_MAX) {
+                for(uint8_t i = 0; i < app->device_count; i++) {
+                    if(app->devices[i].last_seen_ms < oldest_ms) {
+                        oldest_ms = app->devices[i].last_seen_ms;
+                        oldest_idx = i;
+                    }
                 }
             }
             dev = &app->devices[oldest_idx];
@@ -202,7 +221,8 @@ static void expire_stale_devices(SecuraCVApp* app) {
     uint32_t now = furi_get_tick();
     uint8_t i = 0;
     while(i < app->device_count) {
-        if(now - app->devices[i].last_seen_ms > DEVICE_TIMEOUT_MS) {
+        if(!app->devices[i].pinned &&
+           now - app->devices[i].last_seen_ms > DEVICE_TIMEOUT_MS) {
             if(i < app->selected_index) {
                 app->selected_index--;
             } else if(i == app->selected_index) {
@@ -229,6 +249,68 @@ static void expire_stale_devices(SecuraCVApp* app) {
     }
 
     furi_mutex_release(app->mutex);
+}
+
+// ============================================================================
+// DEVICE SORTING
+// ============================================================================
+
+static void sort_devices(SecuraCVApp* app) {
+    if(app->device_count < 2) return;
+
+    char selected_name[32] = {0};
+    if(app->selected_index >= 0 && app->selected_index < app->device_count) {
+        strncpy(selected_name, app->devices[app->selected_index].name,
+                sizeof(selected_name) - 1);
+    }
+
+    for(uint8_t i = 0; i < app->device_count - 1; i++) {
+        for(uint8_t j = i + 1; j < app->device_count; j++) {
+            bool swap = false;
+            scv_device_t* a = &app->devices[i];
+            scv_device_t* b = &app->devices[j];
+
+            switch(app->sort_mode) {
+                case SORT_RSSI: {
+                    int8_t a_rssi = a->rssi_sample_count > 0
+                        ? (int8_t)(a->rssi_avg / 10) : a->rssi;
+                    int8_t b_rssi = b->rssi_sample_count > 0
+                        ? (int8_t)(b->rssi_avg / 10) : b->rssi;
+                    swap = b_rssi > a_rssi;
+                    break;
+                }
+                case SORT_NAME:
+                    swap = strcmp(a->name, b->name) > 0;
+                    break;
+                case SORT_LAST_SEEN:
+                    swap = b->last_seen_ms > a->last_seen_ms;
+                    break;
+                default:
+                    break;
+            }
+
+            if(swap) {
+                scv_device_t tmp = *a;
+                *a = *b;
+                *b = tmp;
+            }
+        }
+    }
+
+    // Restore selection to the same device by name
+    if(selected_name[0]) {
+        for(uint8_t i = 0; i < app->device_count; i++) {
+            if(strcmp(app->devices[i].name, selected_name) == 0) {
+                app->selected_index = i;
+                if(app->selected_index < app->scroll_offset) {
+                    app->scroll_offset = app->selected_index;
+                } else if(app->selected_index >= app->scroll_offset + MAX_VISIBLE) {
+                    app->scroll_offset = app->selected_index - MAX_VISIBLE + 1;
+                }
+                break;
+            }
+        }
+    }
 }
 
 // ============================================================================
@@ -303,8 +385,8 @@ static void draw_scan_list(Canvas* canvas, SecuraCVApp* app) {
 
     canvas_set_font(canvas, FontSecondary);
     char status[32];
-    snprintf(status, sizeof(status), "%d device%s found",
-             app->device_count, app->device_count == 1 ? "" : "s");
+    snprintf(status, sizeof(status), "%d %s",
+             app->device_count, sort_mode_labels[app->sort_mode]);
     canvas_draw_str_aligned(canvas, SCREEN_WIDTH, 10, AlignRight, AlignBottom, status);
 
     canvas_draw_line(canvas, 0, 13, SCREEN_WIDTH, 13);
@@ -336,7 +418,8 @@ static void draw_scan_list(Canvas* canvas, SecuraCVApp* app) {
         canvas_set_font(canvas, FontSecondary);
 
         char name_buf[16];
-        snprintf(name_buf, sizeof(name_buf), "%.15s", dev->name);
+        snprintf(name_buf, sizeof(name_buf), "%s%.13s",
+                 dev->pinned ? "*" : "", dev->name);
         canvas_draw_str(canvas, 2, y + 8, name_buf);
 
         if(dev->is_debug_mode) {
@@ -580,6 +663,18 @@ static void input_callback(InputEvent* input_event, void* ctx) {
 // ============================================================================
 
 static void handle_input(SecuraCVApp* app, InputEvent* event) {
+    if(event->type == InputTypeLong && event->key == InputKeyOk &&
+       app->current_view == VIEW_SCAN_LIST) {
+        furi_mutex_acquire(app->mutex, FuriWaitForever);
+        if(app->device_count > 0 && app->selected_index < app->device_count) {
+            app->devices[app->selected_index].pinned =
+                !app->devices[app->selected_index].pinned;
+        }
+        furi_mutex_release(app->mutex);
+        view_port_update(app->view_port);
+        return;
+    }
+
     if(event->type != InputTypePress && event->type != InputTypeRepeat) return;
 
     furi_mutex_acquire(app->mutex, FuriWaitForever);
@@ -607,6 +702,14 @@ static void handle_input(SecuraCVApp* app, InputEvent* event) {
                     if(app->device_count > 0) {
                         app->current_view = VIEW_DEVICE_DETAIL;
                     }
+                    break;
+                case InputKeyLeft:
+                    app->sort_mode = (app->sort_mode + SORT_COUNT - 1) % SORT_COUNT;
+                    sort_devices(app);
+                    break;
+                case InputKeyRight:
+                    app->sort_mode = (app->sort_mode + 1) % SORT_COUNT;
+                    sort_devices(app);
                     break;
                 case InputKeyBack:
                     app->running = false;
@@ -760,6 +863,9 @@ int32_t securacv_scanner_app(void* p) {
 
             case AppEventTypeTick:
                 expire_stale_devices(app);
+                furi_mutex_acquire(app->mutex, FuriWaitForever);
+                sort_devices(app);
+                furi_mutex_release(app->mutex);
                 view_port_update(app->view_port);
                 break;
         }
