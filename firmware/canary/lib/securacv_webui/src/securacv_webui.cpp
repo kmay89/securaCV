@@ -3162,23 +3162,33 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           if (viBadge) viBadge.style.display = 'none';
         }
 
-        // Zone grid visualization (10x8) — 80 cells, zone 1..80
+        // Zone grid heatmap (10x8) — per-block luminance intensity
         const VISION_ZONES = 80;
         if (viGrid && !viGrid.dataset.built) {
           viGrid.innerHTML = '';
           for (let i = 0; i < VISION_ZONES; i++) {
             const cell = document.createElement('div');
-            cell.style.cssText = 'aspect-ratio:1;border-radius:2px;background:var(--border);transition:background 0.3s;';
+            cell.style.cssText = 'aspect-ratio:1;border-radius:2px;background:var(--border);transition:background 0.4s;';
             viGrid.appendChild(cell);
           }
           viGrid.dataset.built = '1';
         }
         if (viGrid) {
-          const activeIdx = ((viObj.last_event === 'motion' || viObj.last_event === 'person') ? (viObj.zone || 0) : 0) - 1;
-          const hitColor = viObj.last_event === 'person' ? 'var(--danger)' : 'var(--accent)';
+          const grid = viObj.grid || [];
+          const age = viObj.last_event_age_ms;
+          const isPerson = viObj.last_event === 'person' && age >= 0 && age < 5000;
           const cells = viGrid.children;
           for (let i = 0; i < cells.length; i++) {
-            cells[i].style.background = (i === activeIdx) ? hitColor : 'var(--border)';
+            const v = grid[i] || 0;
+            if (v < 3) {
+              cells[i].style.background = 'var(--border)';
+            } else {
+              const t = Math.min(v / 80, 1);
+              const h = isPerson ? (0 + t * 10) : (180 - t * 20);
+              const s = 60 + t * 30;
+              const l = 15 + t * 40;
+              cells[i].style.background = 'hsl(' + h + ',' + s + '%,' + l + '%)';
+            }
           }
         }
 
