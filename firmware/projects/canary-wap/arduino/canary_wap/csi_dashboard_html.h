@@ -2144,10 +2144,9 @@ document.addEventListener('keydown', e => {
 
 document.getElementById('settingsBtn').addEventListener('click', () => {
   // The legacy tabbed admin dashboard now lives at /admin. The dashboard
-  // is the headline route at /, so the Settings button points users
-  // toward the deeper power-user surface (camera peek, witness export,
-  // device-level config, etc.).
-  window.location.href = '/admin';
+  // is the headline route at /, so /settings deep-links to that deeper
+  // power-user surface with the Settings panel already selected.
+  window.location.href = '/settings';
 });
 
 /* ────────────────────────────────────────────────────────────────────────

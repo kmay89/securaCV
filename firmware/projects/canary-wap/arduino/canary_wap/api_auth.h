@@ -21,6 +21,12 @@
 #include <Arduino.h>
 #include "esp_http_server.h"
 
+// Optional bridge supplied by csi_integration.cpp. A valid HttpOnly
+// cv_session cookie is an API credential for browser UI calls, so users
+// who already opened the paired dashboard do not have to reveal or retype
+// the long-lived API token when they click Settings.
+extern bool cv_session_validate(httpd_req_t* req) __attribute__((weak));
+
 // ═══════════════════════════════════════════════════════════════════
 // CONFIGURATION
 // ═══════════════════════════════════════════════════════════════════
@@ -138,6 +144,11 @@ static void auth_redact_token(const char* token, char* out, size_t out_len) {
 // The caller should return ESP_OK immediately if this returns false.
 
 static bool api_auth_check(httpd_req_t* req, const char* expected_token) {
+  if (cv_session_validate && cv_session_validate(req)) {
+    auth_record_success();
+    return true;
+  }
+
   // ── Check lockout ──
   if (auth_is_locked_out()) {
     uint32_t remaining = g_auth.lockout_until_ms - millis();
@@ -226,6 +237,8 @@ static bool api_auth_check(httpd_req_t* req, const char* expected_token) {
 // (e.g., provisioning-receipt).
 
 static bool api_auth_check_optional(httpd_req_t* req, const char* expected_token) {
+  if (cv_session_validate && cv_session_validate(req)) return true;
+
   size_t auth_len = httpd_req_get_hdr_value_len(req, "Authorization");
   if (auth_len == 0) return false;
 
