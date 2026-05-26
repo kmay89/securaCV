@@ -182,6 +182,8 @@ function witnessRoutes(state) {
     res.json(results);
   });
 
+  let lastPurgeTime = 0;
+
   router.delete('/api/v1/witness', (req, res) => {
     if (req.query.confirm !== 'true') {
       return res.status(400).json({
@@ -189,6 +191,15 @@ function witnessRoutes(state) {
         message: 'Add ?confirm=true to purge all witness records. This is irreversible.',
       });
     }
+
+    const now = Date.now();
+    if (now - lastPurgeTime < 300000) {
+      return res.status(429).json({
+        error: 'rate_limited',
+        message: 'Purge allowed once per 5 minutes.',
+      });
+    }
+    lastPurgeTime = now;
 
     const count = state.witnessRecords.length;
     state.witnessRecords.length = 0;

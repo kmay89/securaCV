@@ -5,7 +5,11 @@ const { Router } = require('express');
 function redactUrl(url) {
   try {
     const parsed = new URL(url);
-    return parsed.origin + parsed.pathname;
+    const segments = parsed.pathname.split('/').map((seg, idx) => {
+      if (idx > 2 && seg.length > 8) return '********';
+      return seg;
+    });
+    return parsed.origin + segments.join('/');
   } catch {
     return '(invalid URL)';
   }

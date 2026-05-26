@@ -43,7 +43,17 @@ function sendWebhook(url, payload, attempt = 0) {
       timeout: TIMEOUT_MS,
     }, (res) => {
       let data = '';
-      res.on('data', (chunk) => { data += chunk; });
+      let bytesRead = 0;
+      const MAX_RESPONSE_BYTES = 64 * 1024;
+      res.on('data', (chunk) => {
+        bytesRead += chunk.length;
+        if (bytesRead > MAX_RESPONSE_BYTES) {
+          res.destroy();
+          retry(new Error('Response size limit exceeded'));
+          return;
+        }
+        data += chunk;
+      });
       res.on('end', () => {
         if (handled) return;
         handled = true;
