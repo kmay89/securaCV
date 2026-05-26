@@ -551,6 +551,7 @@ var EventsState = {
   isLoading: false,
   refreshTimer: null,
   expandedClusters: {},
+  _sessionSeq: 0,
 };
 
 function fetchAllWitnessRecords() {
@@ -1416,7 +1417,8 @@ function renderEventsView() {
   }
   EventsState.expandedClusters = {};
   EventsState.activeFilter = 'all';
-  var sessionId = Math.random();
+  EventsState._sessionSeq++;
+  var sessionId = EventsState._sessionSeq;
   EventsState.currentSessionId = sessionId;
 
   var devices = CanaryStorage.getDevices();
