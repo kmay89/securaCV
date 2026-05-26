@@ -27,7 +27,7 @@ describe('D4: Chrome PNA Preflight', () => {
     assert.equal(res.status, 204);
     assert.equal(res.headers['access-control-allow-private-network'], 'true');
     assert.equal(res.headers['private-network-access-name'], 'Canary Vision (Front Porch)');
-    assert.equal(res.headers['private-network-access-id'], 'AA:BB:CC:DD:EE:01');
+    assert.equal(res.headers['private-network-access-id'], '497c8741e5287cde');
   });
 
   it('D4: Non-PNA OPTIONS does not include PNA headers', async () => {
