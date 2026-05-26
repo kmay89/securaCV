@@ -1449,29 +1449,6 @@ function renderWitnessView(deviceId) {
     },
   }));
 
-  actions.appendChild(el('button', {
-    className: 'btn btn-block',
-    textContent: 'Purge All Records',
-    style: 'margin-top: 0.5rem; color: var(--color-error)',
-    onClick: function () {
-      if (!confirm('Permanently delete all witness records? This cannot be undone.')) return;
-      CanaryAPI.request(device.base_url, '/api/v1/witness?confirm=true', { method: 'DELETE' })
-        .then(function (res) {
-          while (alertArea.firstChild) alertArea.removeChild(alertArea.firstChild);
-          alertArea.appendChild(el('div', {
-            className: 'alert alert-success',
-            textContent: res.purged + ' records purged.',
-          }));
-          while (recordList.firstChild) recordList.removeChild(recordList.firstChild);
-          recordList.appendChild(el('div', { className: 'empty-state', textContent: 'No records.' }));
-        })
-        .catch(function (err) {
-          while (alertArea.firstChild) alertArea.removeChild(alertArea.firstChild);
-          alertArea.appendChild(el('div', { className: 'alert alert-error', textContent: err.message }));
-        });
-    },
-  }));
-
   content.appendChild(actions);
 
   // Record list

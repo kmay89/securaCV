@@ -5,8 +5,10 @@ const crypto = require('node:crypto');
 /**
  * Computes SHA-256 hash for a witness record.
  */
-function computeHash(seq, prevHash, timestamp, eventType, zone) {
-  const data = `${seq}:${prevHash}:${timestamp}:${eventType}:${zone}`;
+function computeHash(seq, prevHash, timestamp, eventType, zone, timeSource, gpsTimestamp) {
+  const ts = timeSource || 'device_clock';
+  const gps = gpsTimestamp || '';
+  const data = `${seq}:${prevHash}:${timestamp}:${eventType}:${zone}:${ts}:${gps}`;
   return crypto.createHash('sha256').update(data).digest('hex');
 }
 

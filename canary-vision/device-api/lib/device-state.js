@@ -213,7 +213,22 @@ function createDeviceState(overrides = {}) {
       : '0'.repeat(64);
 
     const timestamp = new Date().toISOString();
-    const data = `${witnessSeq}:${prevHash}:${timestamp}:${eventType}:${zone}`;
+
+    let timeSource = 'device_clock';
+    let gpsTimestamp = '';
+    let gpsFix = '';
+    let gpsSats = 0;
+    let gpsAge = 0;
+
+    if (gpsState && gpsState.fix_age_ms < 30000) {
+      timeSource = 'gps_utc';
+      gpsTimestamp = gpsState.utc;
+      gpsFix = gpsState.fix_quality;
+      gpsSats = gpsState.satellites;
+      gpsAge = gpsState.fix_age_ms;
+    }
+
+    const data = `${witnessSeq}:${prevHash}:${timestamp}:${eventType}:${zone}:${timeSource}:${gpsTimestamp}`;
     const hash = crypto.createHash('sha256').update(data).digest('hex');
     const signature = crypto.sign(undefined, Buffer.from(hash), privateKey).toString('hex');
 
@@ -225,16 +240,15 @@ function createDeviceState(overrides = {}) {
       event_type: eventType,
       zone,
       signature,
-      time_source: 'device_clock',
+      time_source: timeSource,
       thumbnail: generateMockEdgeThumbnail(eventType, witnessSeq),
     };
 
-    if (gpsState && gpsState.fix_age_ms < 30000) {
-      record.time_source = 'gps_utc';
-      record.gps_timestamp = gpsState.utc;
-      record.gps_fix_quality = gpsState.fix_quality;
-      record.gps_satellites = gpsState.satellites;
-      record.gps_fix_age_ms = gpsState.fix_age_ms;
+    if (timeSource === 'gps_utc') {
+      record.gps_timestamp = gpsTimestamp;
+      record.gps_fix_quality = gpsFix;
+      record.gps_satellites = gpsSats;
+      record.gps_fix_age_ms = gpsAge;
     }
 
     witnessRecords.push(record);
