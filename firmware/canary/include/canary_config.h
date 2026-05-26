@@ -102,6 +102,9 @@
 #ifndef FEATURE_VISION_TFLITE
   #define FEATURE_VISION_TFLITE    0   // Layer 3: TFLite person classifier (opt-in, ~250KB flash)
 #endif
+#ifndef FEATURE_POWER_MONITOR
+  #define FEATURE_POWER_MONITOR    1   // Battery voltage + charge state + SoC (ADC or inference)
+#endif
 
 // ════════════════════════════════════════════════════════════════
 // DEBUG FLAG DEFAULTS
@@ -266,6 +269,10 @@
 #define NVS_KEY_WIFI_PASS "wifi_pass"
 #define NVS_KEY_WIFI_EN   "wifi_en"
 #define NVS_KEY_TOKEN     "api_token"
+#define NVS_KEY_BATT_CAP  "batt_cap"
+#define NVS_KEY_BATT_CYC  "batt_cycles"
+#define NVS_KEY_BATT_MAX  "batt_max_mv"
+#define NVS_KEY_BATT_MIN  "batt_min_mv"
 
 // ════════════════════════════════════════════════════════════════
 // MQTT (Home Assistant)

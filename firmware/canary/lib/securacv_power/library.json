@@ -1,0 +1,19 @@
+{
+    "name": "securacv_power",
+    "version": "0.1.0",
+    "description": "SecuraCV Power Management — battery voltage monitoring via ADC with software-inference fallback, charge state detection, SoC estimation, power policy engine, and graceful brownout shutdown. Dual-mode: hardware voltage divider on GPIO 1 for accurate readings, or trend-based inference when no divider is wired.",
+    "keywords": ["securacv", "esp32-s3", "battery", "power", "adc", "charging"],
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/kmay89/securaCV.git"
+    },
+    "authors": [
+        {
+            "name": "Karl May",
+            "email": "karl@errerlabs.com"
+        }
+    ],
+    "license": "Apache-2.0",
+    "frameworks": "arduino",
+    "platforms": "espressif32"
+}
