@@ -483,7 +483,7 @@ static void render_callback(Canvas* canvas, void* ctx) {
 static void input_callback(InputEvent* input_event, void* ctx) {
     SecuraCVApp* app = (SecuraCVApp*)ctx;
     AppEvent event = {.type = AppEventTypeInput, .input = *input_event};
-    furi_message_queue_put(app->event_queue, &event, 0);
+    furi_message_queue_put(app->event_queue, &event, FuriWaitForever);
 }
 
 // ============================================================================
