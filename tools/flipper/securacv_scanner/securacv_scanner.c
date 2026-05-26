@@ -207,13 +207,22 @@ static void expire_stale_devices(SecuraCVApp* app) {
     uint8_t i = 0;
     while(i < app->device_count) {
         if(now - app->devices[i].last_seen_ms > DEVICE_TIMEOUT_MS) {
-            // Shift remaining devices down
+            if(i < app->selected_index) {
+                app->selected_index--;
+            } else if(i == app->selected_index) {
+                if(app->current_view == VIEW_DEVICE_DETAIL) {
+                    app->current_view = VIEW_SCAN_LIST;
+                }
+            }
+            if(i < app->scroll_offset && app->scroll_offset > 0) {
+                app->scroll_offset--;
+            }
+
             for(uint8_t j = i; j < app->device_count - 1; j++) {
                 app->devices[j] = app->devices[j + 1];
             }
             app->device_count--;
 
-            // Fix selection index
             if(app->selected_index >= app->device_count && app->device_count > 0) {
                 app->selected_index = app->device_count - 1;
             }
@@ -514,8 +523,11 @@ static void handle_input(SecuraCVApp* app, InputEvent* event) {
 
 static bool ble_scanner_start(SecuraCVApp* app) {
     app->bt = furi_record_open(RECORD_BT);
+    if(!app->bt) {
+        app->scanning = false;
+        return false;
+    }
 
-    // Request exclusive BLE access — disconnects phone app
     bt_disconnect(app->bt);
     furi_delay_ms(200);
 
@@ -559,7 +571,7 @@ int32_t securacv_scanner_app(void* p) {
         return -1;
     }
 
-    app->event_queue = furi_message_queue_alloc(16, sizeof(AppEvent));
+    app->event_queue = furi_message_queue_alloc(64, sizeof(AppEvent));
     if(!app->event_queue) {
         furi_mutex_free(app->mutex);
         free(app);
@@ -594,6 +606,15 @@ int32_t securacv_scanner_app(void* p) {
 
     // Periodic tick for device expiry and UI refresh
     app->tick_timer = furi_timer_alloc(tick_timer_callback, FuriTimerTypePeriodic, app);
+    if(!app->tick_timer) {
+        gui_remove_view_port(app->gui, app->view_port);
+        furi_record_close(RECORD_GUI);
+        view_port_free(app->view_port);
+        furi_message_queue_free(app->event_queue);
+        furi_mutex_free(app->mutex);
+        free(app);
+        return -1;
+    }
     furi_timer_start(app->tick_timer, 3000);
 
     // Start BLE scanning
