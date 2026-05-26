@@ -144,6 +144,7 @@ static inline bool scv_is_debug_mode(const char* name) {
  */
 static inline bool scv_parse_debug_beacon(const uint8_t* data, size_t len,
                                            scv_debug_beacon_t* out) {
+    if(!out) return false;
     memset(out, 0, sizeof(*out));
     out->valid = false;
 
