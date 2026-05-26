@@ -26,6 +26,15 @@ function detectSequenceGaps(records) {
   return gaps;
 }
 
+function computeTimeSourceDistribution(records) {
+  const dist = {};
+  for (const r of records) {
+    const src = r.time_source || 'device_clock';
+    dist[src] = (dist[src] || 0) + 1;
+  }
+  return dist;
+}
+
 function detectTimingAnomalies(records) {
   const anomalies = [];
   for (let i = 1; i < records.length; i++) {
@@ -82,6 +91,7 @@ function witnessRoutes(state) {
         last_timestamp: records.length > 0 ? records[records.length - 1].timestamp : null,
         sequence_gaps: detectSequenceGaps(records),
         timing_anomalies: detectTimingAnomalies(records),
+        time_source_distribution: computeTimeSourceDistribution(records),
       },
 
       public_key_pem: pubKeyPem,
@@ -95,7 +105,13 @@ function witnessRoutes(state) {
           + '(1) Recompute each record hash as SHA-256("seq:prev_hash:timestamp:event_type:zone"). '
           + '(2) Verify prev_hash links to the preceding record. '
           + '(3) Verify each Ed25519 signature against the hash using the public key above. '
-          + '(4) Recompute export_digest as SHA-256 of all "seq:hash:signature\\n" concatenated.',
+          + '(4) Recompute export_digest as SHA-256 of all "seq:hash:signature\\n" concatenated. '
+          + '(5) Check time_source per record: gps_utc timestamps are satellite-derived (no internet), '
+          + 'device_clock timestamps are from the local system clock.',
+        time_sources: {
+          gps_utc: 'UTC time from GNSS satellite signal (atomic clock accuracy, internet-independent)',
+          device_clock: 'Local device clock (may drift without GPS or NTP sync)',
+        },
         tools: 'openssl, node:crypto, or any Ed25519 + SHA-256 implementation',
       },
     };

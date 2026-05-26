@@ -140,6 +140,9 @@ function createDeviceState(overrides = {}) {
   // Webhook callback (set by server after dispatcher is created)
   let onWitnessRecord = null;
 
+  // GPS state (optional — null when no GPS module present)
+  let gpsState = null;
+
   function addWitnessRecord(eventType, zone) {
     witnessSeq++;
     const prevHash = witnessRecords.length > 0
@@ -159,7 +162,16 @@ function createDeviceState(overrides = {}) {
       event_type: eventType,
       zone,
       signature,
+      time_source: 'device_clock',
     };
+
+    if (gpsState && gpsState.fix_age_ms < 30000) {
+      record.time_source = 'gps_utc';
+      record.gps_timestamp = gpsState.utc;
+      record.gps_fix_quality = gpsState.fix_quality;
+      record.gps_satellites = gpsState.satellites;
+      record.gps_fix_age_ms = gpsState.fix_age_ms;
+    }
 
     witnessRecords.push(record);
     addLog('INFO', `Witness: ${eventType} in ${zone} (seq ${witnessSeq})`);
@@ -207,6 +219,8 @@ function createDeviceState(overrides = {}) {
     addLog,
     addWitnessRecord,
     setOnWitnessRecord(cb) { onWitnessRecord = cb; },
+    setGpsState(state) { gpsState = state; },
+    getGpsState() { return gpsState; },
     getUptime() {
       return Math.floor((Date.now() - startTime) / 1000);
     },

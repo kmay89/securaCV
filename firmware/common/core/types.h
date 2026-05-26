@@ -169,6 +169,26 @@ typedef enum {
 } record_type_t;
 
 /**
+ * @brief Time source for witness records
+ */
+typedef enum {
+    TIME_SOURCE_DEVICE = 0,         // Local millis() / system clock
+    TIME_SOURCE_GPS_UTC = 1,        // GNSS satellite-derived UTC
+    TIME_SOURCE_RTC_SYNCED = 2,     // RTC previously synced to GPS
+} time_source_t;
+
+/**
+ * @brief GPS time attestation (optional, zeroed when unavailable)
+ */
+typedef struct {
+    bool available;                 // GPS time was available at record creation
+    gnss_time_t utc;                // GPS UTC time (valid only if available)
+    gps_fix_quality_t fix_quality;  // Fix quality at capture time
+    uint8_t satellites;             // Satellites used
+    uint32_t fix_age_ms;            // Age of GPS fix in ms
+} witness_gps_time_t;
+
+/**
  * @brief Witness record structure
  */
 typedef struct {
@@ -181,6 +201,8 @@ typedef struct {
     uint8_t signature[64];          // Ed25519 signature
     size_t payload_len;             // Payload length
     bool verified;                  // Self-verification passed
+    time_source_t time_source;      // Origin of timestamp
+    witness_gps_time_t gps_time;    // GPS attestation (zeroed if unavailable)
 } witness_record_t;
 
 // ============================================================================
