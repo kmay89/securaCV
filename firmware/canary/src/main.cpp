@@ -92,6 +92,7 @@ static_assert(sizeof(csi_features_t) == 36,
 
 #if FEATURE_SETUP_WIZARD
 #include "securacv_setup.h"
+#include <WiFi.h>
 #endif
 
 /* All five sensing sources feed a single aggregator. The header is

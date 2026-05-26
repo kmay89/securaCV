@@ -163,7 +163,7 @@ void setup_dns_process(void) {
   int len = s_dns_udp.read(buf, sizeof(buf));
   if (len < 12) return;
 
-  dns_respond(buf, len, s_dns_udp.remoteIP(), s_dns_udp.remotePort());
+  dns_respond(buf, (size_t)len, s_dns_udp.remoteIP(), s_dns_udp.remotePort());
 }
 
 bool setup_start_captive_portal(void) {
