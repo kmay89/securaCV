@@ -1290,7 +1290,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         <div class="card-header">
           <div>
             <div class="card-title">Vision Detection</div>
-            <div class="card-subtitle">3-layer cascaded pipeline. Click grid cells to mask zones.</div>
+            <div class="card-subtitle">3-layer cascaded pipeline. Drag across grid cells to mask/unmask zones.</div>
           </div>
           <span id="visionBadge" class="badge" style="display:none;"><span class="badge-dot"></span><span id="visionBadgeText">Idle</span></span>
         </div>
@@ -1298,7 +1298,13 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           <div id="visionPill" class="sensing-pill sensing-pill--quiet">Idle</div>
           <div id="visionExplain" class="sensing-explain">Waiting for motion events.</div>
         </div>
-        <div style="display:grid;grid-template-columns:repeat(10, 1fr);gap:2px;margin:0.75rem 0;padding:0 0.5rem;" id="visionGrid"></div>
+        <div style="display:grid;grid-template-columns:repeat(10, 1fr);gap:2px;margin:0.75rem 0;padding:0 0.5rem;user-select:none;-webkit-user-select:none;touch-action:none;" id="visionGrid"></div>
+        <div style="display:flex;gap:6px;padding:0 0.5rem 0.5rem;font-size:0.72rem;">
+          <button class="badge" style="cursor:pointer;border:none;" onclick="viMaskAll()">All</button>
+          <button class="badge" style="cursor:pointer;border:none;" onclick="viMaskNone()">None</button>
+          <button class="badge" style="cursor:pointer;border:none;" onclick="viMaskInvert()">Invert</button>
+          <span id="viMaskCount" style="color:var(--muted);line-height:1.8;margin-left:auto;"></span>
+        </div>
         <div class="stats-grid">
           <div class="stat-item"><div class="stat-label">Frames</div><div class="stat-value" id="viFrames">0</div></div>
           <div class="stat-item"><div class="stat-label">L1 pass</div><div class="stat-value" id="viL1">0</div></div>
@@ -3166,14 +3172,14 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           if (viBadge) viBadge.style.display = 'none';
         }
 
-        // Zone grid heatmap (10x8) — click to toggle zone mask
+        // Zone grid heatmap (10x8) — drag to paint/erase zone mask
         const VISION_ZONES = 80;
         if (viGrid && !viGrid.dataset.built) {
           viGrid.innerHTML = '';
           for (let i = 0; i < VISION_ZONES; i++) {
             const cell = document.createElement('div');
-            cell.style.cssText = 'aspect-ratio:1;border-radius:2px;background:var(--border);transition:background 0.4s,opacity 0.3s;cursor:pointer;position:relative;';
-            cell.onclick = ((idx) => () => viToggleZone(idx))(i);
+            cell.style.cssText = 'aspect-ratio:1;border-radius:2px;background:var(--border);transition:background 0.4s,opacity 0.3s;cursor:pointer;';
+            cell.dataset.zi = i;
             viGrid.appendChild(cell);
           }
           viGrid.dataset.built = '1';
@@ -3372,13 +3378,89 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       else stopAudioLevelPoll();
     }, true);
 
-    // ─── Vision zone mask + config sliders ──────────────────────────
+    // ─── Vision zone mask (drag-paint) + config sliders ────────────
     let viZoneMask = [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
+    let viPainting = false;
+    let viPaintVal = 1;
+    let viPaintDirty = false;
 
-    async function viToggleZone(idx) {
-      const byteIdx = idx >> 3;
-      const bit = 1 << (idx & 7);
-      viZoneMask[byteIdx] ^= bit;
+    function viZoneEnabled(idx) { return (viZoneMask[idx >> 3] >> (idx & 7)) & 1; }
+    function viZoneSet(idx, val) {
+      const b = idx >> 3, m = 1 << (idx & 7);
+      if (val) viZoneMask[b] |= m; else viZoneMask[b] &= ~m;
+    }
+
+    function viPaintCell(idx) {
+      if (viZoneEnabled(idx) === viPaintVal) return;
+      viZoneSet(idx, viPaintVal);
+      viPaintDirty = true;
+      const g = document.getElementById('visionGrid');
+      if (g && g.children[idx]) g.children[idx].style.opacity = viPaintVal ? '1' : '0.25';
+      viUpdateMaskCount();
+    }
+
+    function viCellFromEvent(e) {
+      const t = e.touches ? document.elementFromPoint(e.touches[0].clientX, e.touches[0].clientY) : e.target;
+      if (!t || t.dataset.zi === undefined) return -1;
+      return parseInt(t.dataset.zi, 10);
+    }
+
+    async function viFlushMask() {
+      if (!viPaintDirty) return;
+      viPaintDirty = false;
+      const r = await api('/api/vision/config', 'POST', { zone_mask: viZoneMask });
+      if (r && r.ok) viApplyConfig(r);
+    }
+
+    function viUpdateMaskCount() {
+      const el = document.getElementById('viMaskCount');
+      if (!el) return;
+      let n = 0;
+      for (let i = 0; i < 80; i++) if (viZoneEnabled(i)) n++;
+      el.textContent = n + '/80 active';
+    }
+
+    (function() {
+      const g = document.getElementById('visionGrid');
+      if (!g) return;
+      function onDown(e) {
+        const idx = viCellFromEvent(e);
+        if (idx < 0) return;
+        e.preventDefault();
+        viPainting = true;
+        viPaintVal = viZoneEnabled(idx) ? 0 : 1;
+        viPaintCell(idx);
+      }
+      function onMove(e) {
+        if (!viPainting) return;
+        const idx = viCellFromEvent(e);
+        if (idx >= 0) viPaintCell(idx);
+      }
+      function onUp() {
+        if (!viPainting) return;
+        viPainting = false;
+        viFlushMask();
+      }
+      g.addEventListener('mousedown', onDown);
+      g.addEventListener('mouseover', onMove);
+      g.addEventListener('touchstart', onDown, { passive: false });
+      g.addEventListener('touchmove', onMove, { passive: false });
+      document.addEventListener('mouseup', onUp);
+      document.addEventListener('touchend', onUp);
+    })();
+
+    async function viMaskAll() {
+      viZoneMask = [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
+      const r = await api('/api/vision/config', 'POST', { zone_mask: viZoneMask });
+      if (r && r.ok) viApplyConfig(r);
+    }
+    async function viMaskNone() {
+      viZoneMask = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+      const r = await api('/api/vision/config', 'POST', { zone_mask: viZoneMask });
+      if (r && r.ok) viApplyConfig(r);
+    }
+    async function viMaskInvert() {
+      for (let i = 0; i < 10; i++) viZoneMask[i] ^= 0xFF;
       const r = await api('/api/vision/config', 'POST', { zone_mask: viZoneMask });
       if (r && r.ok) viApplyConfig(r);
     }
@@ -3402,7 +3484,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           if (lbl) lbl.textContent = cfg[key] + f.suffix;
         }
       }
-      if (cfg.zone_mask) viZoneMask = cfg.zone_mask.slice();
+      if (cfg.zone_mask) { viZoneMask = cfg.zone_mask.slice(); viUpdateMaskCount(); }
       const card = document.getElementById('visionSettingsCard');
       if (card) card.dataset.loaded = '1';
       const ss = document.getElementById('viSaveStatus');
