@@ -179,6 +179,8 @@ extern "C" {
 #include "beacon_api.h"
 #endif
 
+#include "setup_wizard.h"
+
 // ════════════════════════════════════════════════════════════════════════════
 // VERSION & PROTOCOL (must match PWK expectations)
 // ════════════════════════════════════════════════════════════════════════════
@@ -5544,7 +5546,15 @@ static void wifi_init_provisioning() {
   if (!resolve_ap_password(ap_pass, sizeof(ap_pass))) {
     return;
   }
-  bool ap_ok = WiFi.softAP(g_device.ap_ssid, ap_pass, AP_CHANNEL, false, AP_MAX_CLIENTS);
+  const char* ap_ssid = g_device.ap_ssid;
+  char setup_ssid[32];
+  if (setup_wizard::is_first_boot()) {
+    setup_wizard::get_setup_ssid(g_device.device_id, setup_ssid, sizeof(setup_ssid));
+    ap_ssid = setup_ssid;
+    Serial.printf("[..] SETUP MODE: AP SSID = %s\n", ap_ssid);
+  }
+
+  bool ap_ok = WiFi.softAP(ap_ssid, ap_pass, AP_CHANNEL, false, AP_MAX_CLIENTS);
 
   if (!ap_ok) {
     log_health(SCV_LOG_ERROR, SCV_CAT_NETWORK, "WiFi AP start failed", nullptr);
@@ -5558,8 +5568,13 @@ static void wifi_init_provisioning() {
   snprintf(g_wifi_status.ap_ip, sizeof(g_wifi_status.ap_ip),
            "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
 
+  if (setup_wizard::is_active()) {
+    setup_wizard::start_captive_portal();
+    Serial.println("[OK] Captive portal active");
+  }
+
   char msg[64];
-  snprintf(msg, sizeof(msg), "AP: %s", g_device.ap_ssid);
+  snprintf(msg, sizeof(msg), "AP: %s", ap_ssid);
   log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, msg, g_wifi_status.ap_ip);
 
   // Start mDNS with the constant hostname "canary". RFC 6762 §9
@@ -5945,6 +5960,12 @@ void setup() {
     Serial.println();
   }
 
+  setup_wizard::init();
+  {
+    const char* dn = setup_wizard::get_device_name();
+    if (dn) Serial.printf("[OK] Device name: %s\n", dn);
+  }
+
   fix_init(&g_fix);
   utc_init(&g_gps_utc);
   memset(&g_last_record, 0, sizeof(g_last_record));
@@ -6320,6 +6341,11 @@ void loop() {
   #if FEATURE_WATCHDOG
   esp_task_wdt_reset();
   #endif
+
+  if (setup_wizard::is_active()) {
+    setup_wizard::dns_process();
+    setup_wizard::check_timeout();
+  }
 
   // ════════════════════════════════════════════════════════════════════════════
   // HARDWARE STATE MANAGEMENT — Update safe mode, track stability
