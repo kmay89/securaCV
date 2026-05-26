@@ -16,7 +16,6 @@
 
 #include <furi.h>
 #include <furi_hal_bt.h>
-#include <furi_hal_random.h>
 #include <gui/gui.h>
 #include <gui/view_port.h>
 #include <bt/bt_service/bt.h>
@@ -34,12 +33,6 @@
 #define LINE_HEIGHT       10
 #define MAX_VISIBLE       5
 
-// BLE advertising data type codes (Bluetooth Core Spec)
-#define AD_TYPE_FLAGS              0x01
-#define AD_TYPE_INCOMPLETE_16     0x02
-#define AD_TYPE_COMPLETE_16       0x03
-#define AD_TYPE_INCOMPLETE_128    0x06
-#define AD_TYPE_COMPLETE_128      0x07
 #define AD_TYPE_SHORT_NAME        0x08
 #define AD_TYPE_COMPLETE_NAME     0x09
 #define AD_TYPE_MANUFACTURER_DATA 0xFF
@@ -394,8 +387,10 @@ static void draw_device_detail(Canvas* canvas, SecuraCVApp* app) {
 
         char sig_line[40];
         int8_t avg = dev->rssi_sample_count > 0 ? (int8_t)(dev->rssi_avg / 10) : dev->rssi;
+        int16_t quality_input = dev->rssi_sample_count > 0
+            ? dev->rssi_avg : (int16_t)(dev->rssi * 10);
         snprintf(sig_line, sizeof(sig_line), "RSSI: %d dBm  %s",
-                 avg, scv_signal_quality(dev->rssi_avg));
+                 avg, scv_signal_quality(quality_input));
         canvas_draw_str(canvas, 2, 50, sig_line);
 
         if(dev->rssi_sample_count > 1) {
