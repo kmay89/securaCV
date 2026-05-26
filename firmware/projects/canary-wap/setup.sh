@@ -14,7 +14,6 @@ set -euo pipefail
 #   ./setup.sh check        # Check dependencies
 #
 
-set -e
 
 # Colors
 RED='\033[0;31m'

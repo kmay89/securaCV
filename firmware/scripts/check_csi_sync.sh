@@ -11,7 +11,6 @@ set -euo pipefail
 #
 # Exits non-zero if any file differs or is missing on either side.
 
-set -euo pipefail
 
 CANONICAL="firmware/common/csi/src"
 STAGED="firmware/projects/canary-wap/arduino/canary_wap"

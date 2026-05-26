@@ -14,7 +14,6 @@ set -euo pipefail
 # Copyright (c) 2026 ERRERlabs / Karl May
 # License: Apache-2.0
 
-set -euo pipefail
 
 # Configuration
 CANARY_IP="${CANARY_IP:-${1:-192.168.4.1}}"

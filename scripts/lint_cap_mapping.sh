@@ -12,7 +12,6 @@ set -euo pipefail
 # tuple, and the spec table is normative — adding/removing templates
 # requires a spec-table change in the same PR.
 
-set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
