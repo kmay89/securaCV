@@ -123,7 +123,20 @@ function witnessRoutes(state) {
     res.json(envelope);
   });
 
+  router.post('/api/v1/witness/stream/ticket', (req, res) => {
+    const ticket = state.issueSseTicket();
+    res.json({ ticket, expires_in_seconds: 30 });
+  });
+
   router.get('/api/v1/witness/stream', (req, res) => {
+    const ticket = req.query.ticket;
+    if (!ticket || !state.consumeSseTicket(ticket)) {
+      return res.status(401).json({
+        error: 'ticket_invalid',
+        message: 'Valid SSE ticket required. Obtain one via POST /api/v1/witness/stream/ticket',
+      });
+    }
+
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',

@@ -35,10 +35,12 @@ function tokenHash(token) {
 
 function authMiddleware(state) {
   return (req, res, next) => {
-    var token = req.headers['x-canary-token'];
-    if (!token && req.query && req.query.token) {
-      token = req.query.token;
+    // SSE stream uses ticket auth, not token auth
+    if (req.path === '/v1/witness/stream' && req.query.ticket) {
+      return next();
     }
+
+    const token = req.headers['x-canary-token'];
 
     if (token === undefined || token === null) {
       if (typeof res.recordAuthFailure === 'function') {

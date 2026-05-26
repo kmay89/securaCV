@@ -354,6 +354,35 @@ function createDeviceState(overrides = {}) {
   addLog('INFO', 'Peer discovered: canary-b1c2 (Garage)');
   addLog('INFO', 'Peer discovered: canary-d4e5 (Back Yard)');
 
+  // SSE ticket store: short-lived, single-use tickets for EventSource auth
+  const sseTickets = new Map();
+  const SSE_TICKET_TTL_MS = 30 * 1000; // 30 seconds to use
+
+  function issueSseTicket() {
+    const ticket = 'sset_' + crypto.randomBytes(24).toString('hex');
+    sseTickets.set(ticket, { issued: Date.now(), used: false });
+    return ticket;
+  }
+
+  function consumeSseTicket(ticket) {
+    const entry = sseTickets.get(ticket);
+    if (!entry) return false;
+    if (entry.used) { sseTickets.delete(ticket); return false; }
+    if (Date.now() - entry.issued > SSE_TICKET_TTL_MS) { sseTickets.delete(ticket); return false; }
+    entry.used = true;
+    sseTickets.delete(ticket);
+    return true;
+  }
+
+  // Periodically clean expired tickets
+  const ticketCleanup = setInterval(() => {
+    const now = Date.now();
+    for (const [t, e] of sseTickets.entries()) {
+      if (now - e.issued > SSE_TICKET_TTL_MS * 2) sseTickets.delete(t);
+    }
+  }, 60000);
+  if (ticketCleanup.unref) ticketCleanup.unref();
+
   // Seed witness records with activity sessions
   const seedRecord = (type, zone, sessionId) => {
     const r = addWitnessRecord(type, zone);
@@ -387,6 +416,8 @@ function createDeviceState(overrides = {}) {
     addLog,
     addWitnessRecord,
     tryEmitEvent,
+    issueSseTicket,
+    consumeSseTicket,
     getActiveSessions() { return Array.from(activeSessions.values()); },
     setOnWitnessRecord(cb) { onWitnessRecord = cb; },
     getOnWitnessRecord() { return onWitnessRecord; },
