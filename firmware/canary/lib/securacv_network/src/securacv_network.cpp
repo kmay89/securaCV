@@ -1194,7 +1194,7 @@ static void stream_task_fn(void* param) {
   httpd_sess_trigger_close(server, sockfd);
   log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "Peek stream ended", nullptr);
 
-  s_stream_task = nullptr;
+  __atomic_store_n(&s_stream_task, (TaskHandle_t)nullptr, __ATOMIC_SEQ_CST);
   vTaskDelete(nullptr);
 }
 
@@ -1207,9 +1207,18 @@ static esp_err_t handle_peek_stream(httpd_req_t* req) {
     return httpd_resp_send(req, "Camera not initialized", HTTPD_RESP_USE_STRLEN);
   }
 
-  if (s_stream_task != nullptr) {
+  // Wait for any prior stream task to fully exit before starting a new one.
+  if (__atomic_load_n(&s_stream_task, __ATOMIC_SEQ_CST) != nullptr) {
     cam.setPeekActive(false);
-    vTaskDelay(pdMS_TO_TICKS(200));
+    int timeout_ms = 2000;
+    while (__atomic_load_n(&s_stream_task, __ATOMIC_SEQ_CST) != nullptr && timeout_ms > 0) {
+      vTaskDelay(pdMS_TO_TICKS(10));
+      timeout_ms -= 10;
+    }
+    if (__atomic_load_n(&s_stream_task, __ATOMIC_SEQ_CST) != nullptr) {
+      log_health(LOG_LEVEL_ERROR, LOG_CAT_NETWORK, "Old stream task failed to exit", nullptr);
+      return httpd_resp_send(req, "Previous stream still active", HTTPD_RESP_USE_STRLEN);
+    }
   }
 
   cam.setPeekActive(true);
@@ -1242,14 +1251,16 @@ static esp_err_t handle_peek_stream(httpd_req_t* req) {
 
   httpd_handle_t server = req->handle;
   StreamTaskCtx* ctx = new StreamTaskCtx{sockfd, server};
+  TaskHandle_t new_task = nullptr;
   BaseType_t rc = xTaskCreatePinnedToCore(
-    stream_task_fn, "peek_stream", 6144, ctx, 5, &s_stream_task, tskNO_AFFINITY);
+    stream_task_fn, "peek_stream", 6144, ctx, 5, &new_task, tskNO_AFFINITY);
   if (rc != pdPASS) {
     delete ctx;
     cam.setPeekActive(false);
     log_health(LOG_LEVEL_ERROR, LOG_CAT_NETWORK, "Stream task creation failed", nullptr);
-    return ESP_FAIL;
+    return httpd_resp_send(req, "Task creation failed", HTTPD_RESP_USE_STRLEN);
   }
+  __atomic_store_n(&s_stream_task, new_task, __ATOMIC_SEQ_CST);
 
   log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "Peek stream started (async)", nullptr);
   // Return without closing — the task owns the socket now.
