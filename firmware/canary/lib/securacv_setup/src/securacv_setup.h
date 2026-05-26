@@ -32,6 +32,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
 
 #define SETUP_DEVICE_NAME_MAX  32
 #define SETUP_TIMEOUT_MS       (15UL * 60UL * 1000UL)

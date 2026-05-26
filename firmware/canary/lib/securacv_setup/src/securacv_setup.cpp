@@ -17,7 +17,7 @@
 #include "log_level.h"
 #include "securacv_witness.h"
 
-namespace setup {
+namespace setup_wiz {
 
 static bool s_initialized = false;
 static bool s_first_boot = false;
@@ -30,14 +30,6 @@ static constexpr uint16_t DNS_PORT = 53;
 
 static char s_device_name[SETUP_DEVICE_NAME_MAX + 1] = {0};
 
-/* ──────────────────────────────────────────────────────────────────────────
- * DNS CAPTIVE PORTAL
- *
- * Minimal DNS server that resolves every query to 192.168.4.1 (the AP
- * IP). This triggers the captive-portal detection on iOS/Android/macOS/
- * Windows, which opens the "sign in to network" sheet automatically.
- * ────────────────────────────────────────────────────────────────────────── */
-
 static void dns_respond(const uint8_t* query, size_t len, IPAddress client_ip, uint16_t client_port) {
   if (len < 12) return;
 
@@ -47,14 +39,8 @@ static void dns_respond(const uint8_t* query, size_t len, IPAddress client_ip, u
 
   memcpy(response, query, len);
 
-  /* Set QR=1 (response), AA=1 (authoritative), preserve RD, RCODE=0. */
   response[2] = 0x84 | (query[2] & 0x01);
   response[3] = 0x00;
-
-  /* ANCOUNT = 1, NSCOUNT = 0, ARCOUNT = 0. Zeroing NSCOUNT/ARCOUNT
-   * is critical — EDNS0 clients set ARCOUNT=1 in queries, and leaving
-   * it non-zero without an Additional section makes the response
-   * malformed, causing iOS/Android to reject the captive portal. */
   response[6] = 0x00;
   response[7] = 0x01;
   response[8] = 0x00;
@@ -63,51 +49,27 @@ static void dns_respond(const uint8_t* query, size_t len, IPAddress client_ip, u
   response[11] = 0x00;
 
   size_t pos = len;
-
-  /* Name pointer to the question name (offset 12). */
-  response[pos++] = 0xC0;
-  response[pos++] = 0x0C;
-
-  /* Type A (1). */
-  response[pos++] = 0x00;
-  response[pos++] = 0x01;
-
-  /* Class IN (1). */
-  response[pos++] = 0x00;
-  response[pos++] = 0x01;
-
-  /* TTL = 60 seconds. */
-  response[pos++] = 0x00;
-  response[pos++] = 0x00;
-  response[pos++] = 0x00;
-  response[pos++] = 0x3C;
-
-  /* RDLENGTH = 4 (IPv4). */
-  response[pos++] = 0x00;
-  response[pos++] = 0x04;
-
-  /* RDATA = AP IP address. */
-  response[pos++] = ap_ip[0];
-  response[pos++] = ap_ip[1];
-  response[pos++] = ap_ip[2];
-  response[pos++] = ap_ip[3];
+  response[pos++] = 0xC0; response[pos++] = 0x0C;
+  response[pos++] = 0x00; response[pos++] = 0x01;
+  response[pos++] = 0x00; response[pos++] = 0x01;
+  response[pos++] = 0x00; response[pos++] = 0x00;
+  response[pos++] = 0x00; response[pos++] = 0x3C;
+  response[pos++] = 0x00; response[pos++] = 0x04;
+  response[pos++] = ap_ip[0]; response[pos++] = ap_ip[1];
+  response[pos++] = ap_ip[2]; response[pos++] = ap_ip[3];
 
   s_dns_udp.beginPacket(client_ip, client_port);
   s_dns_udp.write(response, pos);
   s_dns_udp.endPacket();
 }
 
-}  /* namespace setup */
+}  /* namespace setup_wiz */
 
-
-/* ──────────────────────────────────────────────────────────────────────────
- * C API
- * ────────────────────────────────────────────────────────────────────────── */
 
 extern "C" {
 
 bool setup_init(void) {
-  using namespace setup;
+  using namespace setup_wiz;
   if (s_initialized) return true;
 
   Preferences prefs;
@@ -131,15 +93,15 @@ bool setup_init(void) {
 }
 
 bool setup_is_first_boot(void) {
-  return setup::s_first_boot;
+  return setup_wiz::s_first_boot;
 }
 
 bool setup_is_active(void) {
-  return setup::s_active;
+  return setup_wiz::s_active;
 }
 
 void setup_mark_complete(void) {
-  using namespace setup;
+  using namespace setup_wiz;
   Preferences prefs;
   if (prefs.begin("securacv", false)) {
     prefs.putBool("setup_ok", true);
@@ -153,7 +115,7 @@ void setup_mark_complete(void) {
 }
 
 void setup_dns_process(void) {
-  using namespace setup;
+  using namespace setup_wiz;
   if (!s_dns_running) return;
 
   int pkt_size = s_dns_udp.parsePacket();
@@ -167,7 +129,7 @@ void setup_dns_process(void) {
 }
 
 bool setup_start_captive_portal(void) {
-  using namespace setup;
+  using namespace setup_wiz;
   if (s_dns_running) return true;
   if (s_dns_udp.begin(DNS_PORT)) {
     s_dns_running = true;
@@ -179,14 +141,14 @@ bool setup_start_captive_portal(void) {
 }
 
 void setup_stop_captive_portal(void) {
-  using namespace setup;
+  using namespace setup_wiz;
   if (!s_dns_running) return;
   s_dns_udp.stop();
   s_dns_running = false;
 }
 
 void setup_check_timeout(void) {
-  using namespace setup;
+  using namespace setup_wiz;
   if (!s_active) return;
   if ((millis() - s_started_ms) >= SETUP_TIMEOUT_MS) {
     s_active = false;
@@ -200,17 +162,17 @@ void setup_check_timeout(void) {
 
 bool setup_get_device_name(char* out, size_t len) {
   if (!out || len == 0) return false;
-  if (setup::s_device_name[0] == '\0') {
+  if (setup_wiz::s_device_name[0] == '\0') {
     out[0] = '\0';
     return false;
   }
-  strncpy(out, setup::s_device_name, len - 1);
+  strncpy(out, setup_wiz::s_device_name, len - 1);
   out[len - 1] = '\0';
   return true;
 }
 
 bool setup_set_device_name(const char* name) {
-  using namespace setup;
+  using namespace setup_wiz;
   if (!name) return false;
   size_t nlen = strlen(name);
   if (nlen == 0 || nlen > SETUP_DEVICE_NAME_MAX) return false;
