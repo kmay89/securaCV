@@ -61,6 +61,9 @@ result_t ble_debug_beacon_init(const char* fingerprint_hex) {
     snprintf(s_debug_name, sizeof(s_debug_name), "SCV-DBG-%s",
              fingerprint_hex ? fingerprint_hex : "0000");
 
+    // Update the advertised device name so scanners see SCV-DBG-XXXX
+    ble_mgr_set_device_name(s_debug_name);
+
     s_active = true;
     s_error = BLE_DEBUG_ERR_NONE;
     s_chain_verify = 0xFF;
@@ -81,6 +84,9 @@ result_t ble_debug_beacon_deinit(void) {
 
 void ble_debug_beacon_build_payload(ble_debug_payload_t* out,
                                      const system_health_t* health) {
+    if (!out || !health) {
+        return;
+    }
     memset(out, 0, sizeof(*out));
 
     // Company ID (little-endian 0xFFFF)
@@ -147,9 +153,8 @@ result_t ble_debug_beacon_update(const system_health_t* health) {
     ble_debug_payload_t payload;
     ble_debug_beacon_build_payload(&payload, health);
 
-    // Update BLE manufacturer data via the BLE manager
-    // The BLE stack will include this in advertising packets
-    ble_mgr_notify((const uint8_t*)&payload, sizeof(payload));
+    // Update manufacturer-specific advertising data visible to passive scanners
+    ble_mgr_set_manufacturer_data((const uint8_t*)&payload, sizeof(payload));
 
     return RESULT_OK;
 }

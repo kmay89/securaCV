@@ -132,9 +132,9 @@ void setup() {
     app_init_hardware();
     app_init_storage();
     app_init_witness();
-    app_init_network();
 
-    // Check for debug beacon activation
+    // Detect debug beacon activation BEFORE network init so BLE starts
+    // with the correct device name (SCV-DBG-XXXX vs SecuraCV-Canary)
     #if FEATURE_BLUETOOTH
     {
         #if FEATURE_BLE_DEBUG
@@ -154,14 +154,23 @@ void setup() {
             }
         }
         #endif
+    }
+    #endif
 
-        if (g_ble_debug_active) {
-            char fp_hex[5];
+    app_init_network();
+
+    // Initialize debug beacon after BLE is running
+    #if FEATURE_BLUETOOTH
+    if (g_ble_debug_active) {
+        char fp_hex[5];
+        if (g_health.crypto_healthy) {
             snprintf(fp_hex, sizeof(fp_hex), "%02x%02x",
                      g_witness_chain.pubkey_fingerprint[6],
                      g_witness_chain.pubkey_fingerprint[7]);
-            ble_debug_beacon_init(fp_hex);
+        } else {
+            strcpy(fp_hex, "0000");
         }
+        ble_debug_beacon_init(fp_hex);
     }
     #endif
 
@@ -398,7 +407,9 @@ static void app_init_network() {
     // Initialize Bluetooth
     #if FEATURE_BLUETOOTH
     ble_config_t ble_cfg = BLE_CONFIG_DEFAULT;
-    ble_cfg.device_name = CONFIG_BLE_DEVICE_NAME;
+    ble_cfg.device_name = g_ble_debug_active
+        ? CONFIG_BLE_DEBUG_NAME_PREFIX
+        : CONFIG_BLE_DEVICE_NAME;
     ble_cfg.device_id = witness_chain_device_id(&g_witness_chain);
     ble_cfg.public_key = g_witness_chain.public_key;
     ble_cfg.tx_power = CONFIG_BLE_TX_POWER;
@@ -406,7 +417,7 @@ static void app_init_network() {
 
     if (ble_mgr_init(&ble_cfg) == RESULT_OK) {
         ble_mgr_start_advertising();
-        LOG_I("Bluetooth started");
+        LOG_I("Bluetooth started%s", g_ble_debug_active ? " (debug mode)" : "");
         g_health.ble_active = true;
     }
     #endif

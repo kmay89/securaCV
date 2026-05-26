@@ -283,6 +283,33 @@ result_t ble_mgr_indicate(uint16_t conn_handle, const uint8_t* data, size_t len)
 result_t ble_mgr_update_status(const char* status);
 
 // ============================================================================
+// ADVERTISING DATA
+// ============================================================================
+
+/**
+ * @brief Set manufacturer-specific advertising data
+ *
+ * Updates the manufacturer data included in BLE advertising packets.
+ * Visible to passive scanners without requiring a connection.
+ *
+ * @param data Manufacturer data (including company ID)
+ * @param len Data length (max 26 bytes to fit advertising payload)
+ * @return RESULT_OK on success
+ */
+result_t ble_mgr_set_manufacturer_data(const uint8_t* data, size_t len);
+
+/**
+ * @brief Update the advertised device name
+ *
+ * Restarts advertising with the new name. Existing connections
+ * are not affected.
+ *
+ * @param name New device name (null-terminated, max 29 chars)
+ * @return RESULT_OK on success
+ */
+result_t ble_mgr_set_device_name(const char* name);
+
+// ============================================================================
 // PROCESSING
 // ============================================================================
 
