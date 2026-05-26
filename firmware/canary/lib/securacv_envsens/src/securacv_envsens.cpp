@@ -71,7 +71,7 @@ static envsens_stats_t s_stats = {0};
 static temperature_sensor_handle_t s_tsens_handle = nullptr;
 
 static bool peripheral_open() {
-  temperature_sensor_config_t cfg = TEMPERATURE_SENSOR_CONFIG_DEFAULT(10, 80);
+  temperature_sensor_config_t cfg = TEMPERATURE_SENSOR_CONFIG_DEFAULT(-10, 80);
   esp_err_t err = temperature_sensor_install(&cfg, &s_tsens_handle);
   if (err != ESP_OK) {
     char d[32]; snprintf(d, sizeof(d), "install err=0x%x", (unsigned)err);
