@@ -48,7 +48,8 @@ jobs:
         run: ufbt update --channel=${{ matrix.channel }}
 
       - name: Build FAP
-        run: ufbt -C tools/flipper/securacv_scanner
+        working-directory: tools/flipper/securacv_scanner
+        run: ufbt
 
       - name: Collect artifact
         run: |
