@@ -129,8 +129,10 @@ result_t ble_debug_beacon_update(const system_health_t* health) {
     if (!s_active) {
         return RESULT_NOT_INITIALIZED;
     }
+    if (!health) {
+        return RESULT_ERROR;
+    }
 
-    // Update chain height from witness records
     s_chain_height = (uint16_t)(health->records_created & 0xFFFF);
 
     // Detect error conditions

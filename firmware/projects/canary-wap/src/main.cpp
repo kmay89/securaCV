@@ -142,6 +142,7 @@ void setup() {
         LOG_I("BLE debug beacon enabled (compile-time)");
         #else
         // Runtime activation: hold BOOT button (GPIO 0) during startup
+        pinMode(0, INPUT_PULLUP);
         if (digitalRead(0) == LOW) {
             uint32_t hold_start = millis();
             while (digitalRead(0) == LOW &&
