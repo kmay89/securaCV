@@ -60,6 +60,26 @@ static const float BLOCK_EMA_ALPHA = 0.05f;
 #define DECODE_H 120
 static uint8_t* s_gray_buf = nullptr;
 
+// Thumbnail snapshot (40x30, updated after each decode)
+static uint8_t s_thumb[VISION_THUMB_W * VISION_THUMB_H] = {};
+static bool s_thumb_valid = false;
+
+static void update_thumbnail() {
+  if (!s_gray_buf) return;
+  const int sx = DECODE_W / VISION_THUMB_W;
+  const int sy = DECODE_H / VISION_THUMB_H;
+  for (int y = 0; y < VISION_THUMB_H; y++) {
+    for (int x = 0; x < VISION_THUMB_W; x++) {
+      uint32_t sum = 0;
+      for (int dy = 0; dy < sy; dy++)
+        for (int dx = 0; dx < sx; dx++)
+          sum += s_gray_buf[(y * sy + dy) * DECODE_W + x * sx + dx];
+      s_thumb[y * VISION_THUMB_W + x] = (uint8_t)(sum / (sx * sy));
+    }
+  }
+  s_thumb_valid = true;
+}
+
 // Motion state
 static bool s_motion_active = false;
 
@@ -465,6 +485,8 @@ bool vision_process() {
     return false;
   }
 
+  vision::update_thumbnail();
+
   vision::MotionResult motion = vision::layer2_check(vision::s_gray_buf);
   if (!motion.detected) {
     vision::s_consecutive_l2 = 0;
@@ -550,6 +572,13 @@ bool vision_load_config_from_nvs(vision_config_t* out) {
   return read == sizeof(vision_config_t);
 }
 
+bool vision_get_thumbnail(uint8_t* out, size_t cap) {
+  if (!out || cap < VISION_THUMB_W * VISION_THUMB_H) return false;
+  if (!vision::s_thumb_valid) return false;
+  memcpy(out, vision::s_thumb, VISION_THUMB_W * VISION_THUMB_H);
+  return true;
+}
+
 #else /* !FEATURE_VISION_DETECT */
 
 bool vision_init(const vision_config_t*) { return false; }
@@ -564,5 +593,6 @@ bool vision_get_config(vision_config_t*) { return false; }
 bool vision_set_config(const vision_config_t*) { return false; }
 bool vision_save_config_to_nvs() { return false; }
 bool vision_load_config_from_nvs(vision_config_t*) { return false; }
+bool vision_get_thumbnail(uint8_t*, size_t) { return false; }
 
 #endif /* FEATURE_VISION_DETECT */

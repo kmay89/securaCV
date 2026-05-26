@@ -647,6 +647,7 @@ static esp_err_t handle_sensing(httpd_req_t* req);
 static esp_err_t handle_vision_config_get(httpd_req_t* req);
 static esp_err_t handle_vision_config_set(httpd_req_t* req);
 static esp_err_t handle_vision_config_save(httpd_req_t* req);
+static esp_err_t handle_vision_thumbnail(httpd_req_t* req);
 #endif
 
 #if FEATURE_ACOUSTIC_EVENTS
@@ -785,6 +786,9 @@ void NetworkManager::registerHttpHandlers() {
 
   httpd_uri_t vision_cfg_save = { .uri = "/api/vision/config/save", .method = HTTP_POST, .handler = handle_vision_config_save };
   httpd_register_uri_handler(m_http_server, &vision_cfg_save);
+
+  httpd_uri_t vision_thumb = { .uri = "/api/vision/thumbnail", .method = HTTP_GET, .handler = handle_vision_thumbnail };
+  httpd_register_uri_handler(m_http_server, &vision_thumb);
   #endif
 
   #if FEATURE_ACOUSTIC_EVENTS
@@ -2159,6 +2163,24 @@ static esp_err_t handle_vision_config_save(httpd_req_t* req) {
   String response;
   serializeJson(doc, response);
   return http_send_json(req, response.c_str());
+}
+
+static esp_err_t handle_vision_thumbnail(httpd_req_t* req) {
+  if (!rate_limit_check(req, false)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  uint8_t buf[VISION_THUMB_W * VISION_THUMB_H];
+  if (!vision_get_thumbnail(buf, sizeof(buf))) {
+    return http_send_error(req, 503, "no_thumbnail");
+  }
+
+  httpd_resp_set_type(req, "application/octet-stream");
+  httpd_resp_set_hdr(req, "X-Width", "40");
+  httpd_resp_set_hdr(req, "X-Height", "30");
+  httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+  httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+  return httpd_resp_send(req, (const char*)buf, sizeof(buf));
 }
 #endif // FEATURE_VISION_DETECT
 

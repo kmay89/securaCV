@@ -1298,6 +1298,9 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           <div id="visionPill" class="sensing-pill sensing-pill--quiet">Idle</div>
           <div id="visionExplain" class="sensing-explain">Waiting for motion events.</div>
         </div>
+        <div style="text-align:center;padding:0 0.5rem;">
+          <canvas id="viThumb" width="40" height="30" style="width:100%;max-width:320px;border-radius:4px;image-rendering:pixelated;background:var(--border);"></canvas>
+        </div>
         <div style="display:grid;grid-template-columns:repeat(10, 1fr);gap:2px;margin:0.75rem 0;padding:0 0.5rem;user-select:none;-webkit-user-select:none;touch-action:none;" id="visionGrid"></div>
         <div style="display:flex;gap:6px;padding:0 0.5rem 0.5rem;font-size:0.72rem;">
           <button class="badge" style="cursor:pointer;border:none;" onclick="viMaskAll()">All</button>
@@ -3143,7 +3146,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       const viCard = document.getElementById('visionCard');
       const viObj = data.vision;
       if (viObj) {
-        if (viCard) viCard.style.display = '';
+        if (viCard) { viCard.style.display = ''; viStartThumb(); }
         const viPill = document.getElementById('visionPill');
         const viExp  = document.getElementById('visionExplain');
         const viBadge = document.getElementById('visionBadge');
@@ -3215,6 +3218,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         set('viPerson', vst.person_events || 0);
       } else if (viCard) {
         viCard.style.display = 'none';
+        viStopThumb();
       }
 
       // Show/hide vision settings card alongside the detection card
@@ -3463,6 +3467,36 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       for (let i = 0; i < 10; i++) viZoneMask[i] ^= 0xFF;
       const r = await api('/api/vision/config', 'POST', { zone_mask: viZoneMask });
       if (r && r.ok) viApplyConfig(r);
+    }
+
+    // ─── Vision thumbnail ─────────────────────────────────────────
+    let viThumbTimer = null;
+    async function viRefreshThumb() {
+      try {
+        const hdrs = {};
+        if (CV_TOKEN && CV_TOKEN.charAt(0) !== '_') hdrs['Authorization'] = 'Bearer ' + CV_TOKEN;
+        const res = await fetch(API_BASE + '/api/vision/thumbnail', { headers: hdrs });
+        if (!res.ok) return;
+        const buf = new Uint8Array(await res.arrayBuffer());
+        const c = document.getElementById('viThumb');
+        if (!c || buf.length !== 1200) return;
+        const ctx = c.getContext('2d');
+        const img = ctx.createImageData(40, 30);
+        for (let i = 0; i < 1200; i++) {
+          const p = i * 4;
+          img.data[p] = img.data[p+1] = img.data[p+2] = buf[i];
+          img.data[p+3] = 255;
+        }
+        ctx.putImageData(img, 0, 0);
+      } catch (e) {}
+    }
+    function viStartThumb() {
+      if (viThumbTimer) return;
+      viRefreshThumb();
+      viThumbTimer = setInterval(viRefreshThumb, 1500);
+    }
+    function viStopThumb() {
+      if (viThumbTimer) { clearInterval(viThumbTimer); viThumbTimer = null; }
     }
 
     const viFields = {
