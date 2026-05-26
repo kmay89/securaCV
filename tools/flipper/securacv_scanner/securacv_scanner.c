@@ -16,7 +16,6 @@
 
 #include <furi.h>
 #include <furi_hal_bt.h>
-#include <furi_hal_random.h>
 #include <gui/gui.h>
 #include <gui/view_port.h>
 #include <bt/bt_service/bt.h>
@@ -34,12 +33,6 @@
 #define LINE_HEIGHT       10
 #define MAX_VISIBLE       5
 
-// BLE advertising data type codes (Bluetooth Core Spec)
-#define AD_TYPE_FLAGS              0x01
-#define AD_TYPE_INCOMPLETE_16     0x02
-#define AD_TYPE_COMPLETE_16       0x03
-#define AD_TYPE_INCOMPLETE_128    0x06
-#define AD_TYPE_COMPLETE_128      0x07
 #define AD_TYPE_SHORT_NAME        0x08
 #define AD_TYPE_COMPLETE_NAME     0x09
 #define AD_TYPE_MANUFACTURER_DATA 0xFF
@@ -187,6 +180,7 @@ static scv_device_t* add_or_update_device(SecuraCVApp* app, const AppEvent* evt)
     dev->rssi = evt->ble.rssi;
     dev->is_debug_mode = scv_is_debug_mode(evt->ble.name);
     dev->last_seen_ms = furi_get_tick();
+    scv_rssi_push(dev, evt->ble.rssi);
 
     if(evt->ble.has_mfg_data) {
         scv_debug_beacon_t parsed;
@@ -339,18 +333,21 @@ static void draw_scan_list(Canvas* canvas, SecuraCVApp* app) {
 
         canvas_set_font(canvas, FontSecondary);
 
-        char name_buf[20];
-        snprintf(name_buf, sizeof(name_buf), "%.19s", dev->name);
+        char name_buf[16];
+        snprintf(name_buf, sizeof(name_buf), "%.15s", dev->name);
         canvas_draw_str(canvas, 2, y + 8, name_buf);
 
         if(dev->is_debug_mode) {
-            canvas_draw_str(canvas, 80, y + 8, "DBG");
+            canvas_draw_str(canvas, 68, y + 8, "DBG");
         }
 
-        draw_rssi_bar(canvas, SCREEN_WIDTH - 14, y + 1, dev->rssi);
+        int8_t display_rssi = dev->rssi_sample_count > 0
+            ? (int8_t)(dev->rssi_avg / 10)
+            : dev->rssi;
+        draw_rssi_bar(canvas, SCREEN_WIDTH - 14, y + 1, display_rssi);
 
         char rssi_buf[8];
-        snprintf(rssi_buf, sizeof(rssi_buf), "%d", dev->rssi);
+        snprintf(rssi_buf, sizeof(rssi_buf), "%d", display_rssi);
         canvas_draw_str(canvas, SCREEN_WIDTH - 30, y + 8, rssi_buf);
 
         if(idx == app->selected_index) {
@@ -377,19 +374,35 @@ static void draw_device_detail(Canvas* canvas, SecuraCVApp* app) {
 
     canvas_set_font(canvas, FontPrimary);
     canvas_draw_str(canvas, 0, 10, dev->name);
-    draw_rssi_bar(canvas, SCREEN_WIDTH - 14, 2, dev->rssi);
+    int8_t hdr_rssi = dev->rssi_sample_count > 0
+        ? (int8_t)(dev->rssi_avg / 10) : dev->rssi;
+    draw_rssi_bar(canvas, SCREEN_WIDTH - 14, 2, hdr_rssi);
     canvas_draw_line(canvas, 0, 13, SCREEN_WIDTH, 13);
 
     canvas_set_font(canvas, FontSecondary);
 
     if(!dev->has_debug_data || !dev->debug.valid) {
         canvas_draw_str(canvas, 2, 26, "No debug beacon data");
-        canvas_draw_str(canvas, 2, 38, "Activate debug mode on");
-        canvas_draw_str(canvas, 2, 48, "the Canary (hold BOOT 3s)");
+        canvas_draw_str(canvas, 2, 38, "Hold BOOT 3s on Canary");
 
-        char rssi_line[32];
-        snprintf(rssi_line, sizeof(rssi_line), "RSSI: %d dBm", dev->rssi);
-        canvas_draw_str(canvas, 2, SCREEN_HEIGHT - 2, rssi_line);
+        char sig_line[40];
+        int8_t avg = dev->rssi_sample_count > 0 ? (int8_t)(dev->rssi_avg / 10) : dev->rssi;
+        int16_t quality_input = dev->rssi_sample_count > 0
+            ? dev->rssi_avg : (int16_t)(dev->rssi * 10);
+        snprintf(sig_line, sizeof(sig_line), "RSSI: %d dBm  %s",
+                 avg, scv_signal_quality(quality_input));
+        canvas_draw_str(canvas, 2, 50, sig_line);
+
+        if(dev->rssi_sample_count > 1) {
+            char range_line[40];
+            uint16_t dm = scv_estimate_distance_dm(dev->rssi_avg);
+            char dist_buf[8];
+            scv_format_distance(dm, dist_buf, sizeof(dist_buf));
+            snprintf(range_line, sizeof(range_line), "Range:%d/%d n=%d ~%s",
+                     dev->rssi_min, dev->rssi_max,
+                     dev->rssi_sample_count, dist_buf);
+            canvas_draw_str(canvas, 2, SCREEN_HEIGHT - 2, range_line);
+        }
         return;
     }
 
@@ -429,6 +442,14 @@ static void draw_device_detail(Canvas* canvas, SecuraCVApp* app) {
         canvas_set_font(canvas, FontPrimary);
         canvas_draw_str_aligned(canvas, SCREEN_WIDTH / 2, SCREEN_HEIGHT - 2,
                                 AlignCenter, AlignBottom, "!! TAMPER !!");
+    } else if(dev->rssi_sample_count > 0) {
+        uint16_t dm = scv_estimate_distance_dm(dev->rssi_avg);
+        char dist_buf[8];
+        scv_format_distance(dm, dist_buf, sizeof(dist_buf));
+        snprintf(line, sizeof(line), "%ddBm %s ~%s",
+                 (int)(dev->rssi_avg / 10),
+                 scv_signal_quality(dev->rssi_avg), dist_buf);
+        canvas_draw_str(canvas, 2, SCREEN_HEIGHT - 2, line);
     }
 }
 
@@ -462,7 +483,7 @@ static void render_callback(Canvas* canvas, void* ctx) {
 static void input_callback(InputEvent* input_event, void* ctx) {
     SecuraCVApp* app = (SecuraCVApp*)ctx;
     AppEvent event = {.type = AppEventTypeInput, .input = *input_event};
-    furi_message_queue_put(app->event_queue, &event, 0);
+    furi_message_queue_put(app->event_queue, &event, FuriWaitForever);
 }
 
 // ============================================================================
