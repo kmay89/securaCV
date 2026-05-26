@@ -1898,9 +1898,25 @@ function renderEventCard(cluster, index) {
   // Main row
   var row = el('div', { className: 'event-card-row' });
 
-  // Icon thumbnail
-  var iconEl = el('div', { className: 'event-card-icon ' + meta.cssClass });
-  iconEl.appendChild(el('span', { textContent: meta.icon }));
+  // Thumbnail or icon fallback
+  var latestEvent = cluster.events[cluster.events.length - 1];
+  var hasThumbnail = latestEvent && latestEvent.thumbnail;
+  var iconEl;
+
+  if (hasThumbnail) {
+    iconEl = el('div', { className: 'event-card-icon event-card-thumb' });
+    var thumbImg = el('img', {
+      className: 'event-thumb-img',
+      src: latestEvent.thumbnail,
+    });
+    thumbImg.setAttribute('alt', meta.label + ' edge detection');
+    thumbImg.setAttribute('loading', 'lazy');
+    iconEl.appendChild(thumbImg);
+  } else {
+    iconEl = el('div', { className: 'event-card-icon ' + meta.cssClass });
+    iconEl.appendChild(el('span', { textContent: meta.icon }));
+  }
+
   if (cluster.count > 1) {
     iconEl.appendChild(el('span', { className: 'event-cluster-badge', textContent: '×' + cluster.count }));
   }
@@ -2086,9 +2102,19 @@ function renderEventDetailView(eventId) {
 
     // Hero header card
     var heroCard = el('div', { className: 'card event-detail-hero' });
-    var heroIcon = el('div', { className: 'event-detail-hero-icon ' + meta.cssClass });
-    heroIcon.appendChild(el('span', { textContent: meta.icon }));
-    heroCard.appendChild(heroIcon);
+    var heroThumbEvent = events[events.length - 1];
+    if (heroThumbEvent && heroThumbEvent.thumbnail) {
+      var heroThumb = el('img', {
+        className: 'event-detail-hero-thumb',
+        src: heroThumbEvent.thumbnail,
+      });
+      heroThumb.setAttribute('alt', meta.label + ' edge detection');
+      heroCard.appendChild(heroThumb);
+    } else {
+      var heroIcon = el('div', { className: 'event-detail-hero-icon ' + meta.cssClass });
+      heroIcon.appendChild(el('span', { textContent: meta.icon }));
+      heroCard.appendChild(heroIcon);
+    }
 
     var heroTitle = cluster && cluster.count > 1
       ? cluster.count + ' ' + meta.label + ' Events'

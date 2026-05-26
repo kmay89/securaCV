@@ -143,6 +143,69 @@ function createDeviceState(overrides = {}) {
   // GPS state (optional — null when no GPS module present)
   let gpsState = null;
 
+  function generateMockEdgeThumbnail(eventType, seq) {
+    const W = 256, H = 192;
+    const pixels = Buffer.alloc(W * H);
+    const seed = seq * 7 + 13;
+
+    // Simulate scene edges: horizontal lines for ground/horizon
+    for (let x = 0; x < W; x++) {
+      const horizonY = 90 + ((seed + x * 3) % 20) - 10;
+      if (horizonY >= 0 && horizonY < H) pixels[horizonY * W + x] = 80 + (x % 40);
+    }
+
+    // Vertical edges for doorway/wall structure
+    const wallX1 = 40 + (seed % 30);
+    const wallX2 = W - 40 - (seed % 30);
+    for (let y = 20; y < H - 20; y++) {
+      if (wallX1 < W) pixels[y * W + wallX1] = 60 + (y % 30);
+      if (wallX2 < W) pixels[y * W + wallX2] = 60 + (y % 30);
+    }
+
+    // Object silhouette based on event type
+    let objX, objY, objW, objH;
+    if (eventType === 'person_detected') {
+      objW = 30 + (seed % 15); objH = 70 + (seed % 20);
+      objX = 80 + (seed % 80); objY = H - objH - 30;
+      for (let a = 0; a < 360; a += 10) {
+        const px = Math.round(objX + objW / 2 + 8 * Math.cos(a * Math.PI / 180));
+        const py = Math.round(objY - 5 + 8 * Math.sin(a * Math.PI / 180));
+        if (px >= 0 && px < W && py >= 0 && py < H) pixels[py * W + px] = 180;
+      }
+    } else if (eventType === 'vehicle_detected') {
+      objW = 80 + (seed % 30); objH = 40 + (seed % 15);
+      objX = 50 + (seed % 60); objY = H - objH - 25;
+    } else if (eventType === 'animal_detected') {
+      objW = 35 + (seed % 15); objH = 25 + (seed % 10);
+      objX = 90 + (seed % 70); objY = H - objH - 20;
+    } else {
+      objW = 20; objH = 20;
+      objX = 100 + (seed % 50); objY = 80 + (seed % 40);
+    }
+
+    for (let x = objX; x < Math.min(objX + objW, W); x++) {
+      if (objY >= 0 && objY < H) pixels[objY * W + x] = 220;
+      const botY = Math.min(objY + objH, H - 1);
+      pixels[botY * W + x] = 220;
+    }
+    for (let y = objY; y < Math.min(objY + objH, H); y++) {
+      if (objX >= 0 && objX < W) pixels[y * W + objX] = 220;
+      const rightX = Math.min(objX + objW, W - 1);
+      pixels[y * W + rightX] = 220;
+    }
+
+    for (let y = objY + 2; y < Math.min(objY + objH - 2, H); y++) {
+      for (let x = objX + 2; x < Math.min(objX + objW - 2, W); x++) {
+        const noise = ((x * 7 + y * 13 + seed) % 100);
+        if (noise < 15) pixels[y * W + x] = 100 + (noise * 8);
+      }
+    }
+
+    const header = `P5\n${W} ${H}\n255\n`;
+    const pgm = Buffer.concat([Buffer.from(header), pixels]);
+    return 'data:image/x-portable-graymap;base64,' + pgm.toString('base64');
+  }
+
   function addWitnessRecord(eventType, zone) {
     witnessSeq++;
     const prevHash = witnessRecords.length > 0
@@ -163,6 +226,7 @@ function createDeviceState(overrides = {}) {
       zone,
       signature,
       time_source: 'device_clock',
+      thumbnail: generateMockEdgeThumbnail(eventType, witnessSeq),
     };
 
     if (gpsState && gpsState.fix_age_ms < 30000) {

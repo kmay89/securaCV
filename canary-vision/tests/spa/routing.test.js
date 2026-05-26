@@ -26,6 +26,7 @@ describe('SPA Routing', () => {
       '/device/:id',
       '/device/:id/config/:section',
       '/device/:id/logs',
+      '/device/:id/witness',
       '/events',
       '/events/:id',
       '/settings',

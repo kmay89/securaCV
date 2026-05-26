@@ -182,6 +182,27 @@ impl<'a> InferenceView<'a> {
         guard.detect(&self.frame.data, self.frame.width, self.frame.height)
     }
 
+    /// Generate a privacy-preserving edge thumbnail from this frame.
+    ///
+    /// Applies Sobel edge detection (a lossy derivative transform) to produce
+    /// an image showing shapes and boundaries without identity-bearing features.
+    /// The transform is mathematically irreversible: absolute intensity, color,
+    /// and fine texture are discarded.
+    ///
+    /// This does NOT export raw bytes — only the edge-detected result leaves.
+    pub fn generate_thumbnail(
+        &self,
+        detections: &[crate::detect::Detection],
+    ) -> crate::thumbnail::EdgeThumbnail {
+        crate::thumbnail::generate(
+            &self.frame.data,
+            self.frame.width,
+            self.frame.height,
+            detections,
+            self.frame.timestamp_bucket,
+        )
+    }
+
     /// Attempt to export raw bytes. This MUST fail in normal operation.
     pub fn try_export_bytes(&self) -> Result<Vec<u8>> {
         RawMediaBoundary::deny_export("InferenceView cannot export raw bytes")

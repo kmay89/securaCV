@@ -55,6 +55,7 @@ pub mod ingest;
 pub mod log;
 pub mod module_runtime;
 pub mod storage;
+pub mod thumbnail;
 pub mod transport;
 pub mod vault;
 pub mod verify;
