@@ -123,6 +123,48 @@ function witnessRoutes(state) {
     res.json(envelope);
   });
 
+  router.get('/api/v1/witness/stream', (req, res) => {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+
+    res.write('event: connected\ndata: {"status":"connected"}\n\n');
+
+    const heartbeatInterval = setInterval(() => {
+      res.write(':heartbeat\n\n');
+    }, 15000);
+
+    const sseClients = state._sseClients || (state._sseClients = new Set());
+    const client = { res };
+    sseClients.add(client);
+
+    if (!state._sseHooked) {
+      state._sseHooked = true;
+      state._prevCb = state.getOnWitnessRecord();
+      state.setOnWitnessRecord((record) => {
+        if (state._prevCb) state._prevCb(record);
+        for (const c of sseClients) {
+          try {
+            c.res.write('event: witness\ndata: ' + JSON.stringify(record) + '\n\n');
+          } catch { /* client disconnected */ }
+        }
+      });
+    }
+
+    req.on('close', () => {
+      clearInterval(heartbeatInterval);
+      sseClients.delete(client);
+      if (sseClients.size === 0 && state._sseHooked) {
+        state.setOnWitnessRecord(state._prevCb);
+        state._sseHooked = false;
+        state._prevCb = null;
+      }
+    });
+  });
+
   router.post('/api/v1/witness/verify', (req, res) => {
     const records = state.witnessRecords;
     const results = {

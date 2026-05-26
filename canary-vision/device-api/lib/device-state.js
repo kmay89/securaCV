@@ -389,6 +389,7 @@ function createDeviceState(overrides = {}) {
     tryEmitEvent,
     getActiveSessions() { return Array.from(activeSessions.values()); },
     setOnWitnessRecord(cb) { onWitnessRecord = cb; },
+    getOnWitnessRecord() { return onWitnessRecord; },
     setGpsState(state) { gpsState = state; },
     getGpsState() { return gpsState; },
     getUptime() {
