@@ -1982,6 +1982,21 @@ static esp_err_t handle_sensing(httpd_req_t* req) {
   for (int i = 0; i < VISION_GRID_TOTAL; i++) {
     grid.add(v_stats.block_intensity[i]);
   }
+
+  vision_history_entry_t hist[VISION_HISTORY_SIZE];
+  int hist_n = vision_get_history(hist, VISION_HISTORY_SIZE);
+  if (hist_n > 0) {
+    uint32_t now_ms = millis();
+    const char* htypes[] = {"none", "motion", "motion_end", "person"};
+    JsonArray events = vis["events"].to<JsonArray>();
+    for (int i = 0; i < hist_n; i++) {
+      JsonObject e = events.add<JsonObject>();
+      e["type"] = htypes[hist[i].event_type < 4 ? hist[i].event_type : 0];
+      e["confidence"] = hist[i].confidence;
+      e["zone"] = hist[i].zone;
+      e["age_ms"] = (long)(now_ms - hist[i].timestamp_ms);
+    }
+  }
 #endif // FEATURE_VISION_DETECT
 
 #if FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS || FEATURE_TOUCH || FEATURE_IR_RMT || FEATURE_TEMP_TAMPER

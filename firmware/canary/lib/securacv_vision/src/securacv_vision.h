@@ -82,6 +82,15 @@ typedef struct {
   uint8_t  block_intensity[VISION_GRID_TOTAL];
 } vision_stats_t;
 
+#define VISION_HISTORY_SIZE 16
+
+typedef struct {
+  uint8_t  event_type;
+  uint8_t  confidence;
+  uint8_t  zone;
+  uint32_t timestamp_ms;
+} vision_history_entry_t;
+
 typedef void (*vision_event_cb_t)(const vision_event_t* evt);
 
 #ifdef __cplusplus
@@ -110,6 +119,8 @@ bool vision_save_config_to_nvs(void);
 bool vision_load_config_from_nvs(vision_config_t* out);
 
 bool vision_get_thumbnail(uint8_t* out, size_t cap);
+
+int vision_get_history(vision_history_entry_t* out, int max_entries);
 
 #ifdef __cplusplus
 }
