@@ -84,11 +84,14 @@ static void update_thumbnail() {
 static vision_history_entry_t s_history[VISION_HISTORY_SIZE] = {};
 static int s_history_head = 0;
 static int s_history_count = 0;
+static portMUX_TYPE s_history_mux = portMUX_INITIALIZER_UNLOCKED;
 
 static void history_push(uint8_t type, uint8_t confidence, uint8_t zone) {
+  portENTER_CRITICAL(&s_history_mux);
   s_history[s_history_head] = { type, confidence, zone, millis() };
   s_history_head = (s_history_head + 1) % VISION_HISTORY_SIZE;
   if (s_history_count < VISION_HISTORY_SIZE) s_history_count++;
+  portEXIT_CRITICAL(&s_history_mux);
 }
 
 // Motion state
@@ -593,11 +596,13 @@ bool vision_get_thumbnail(uint8_t* out, size_t cap) {
 
 int vision_get_history(vision_history_entry_t* out, int max_entries) {
   if (!out || max_entries <= 0) return 0;
+  portENTER_CRITICAL(&vision::s_history_mux);
   int n = vision::s_history_count < max_entries ? vision::s_history_count : max_entries;
   int start = (vision::s_history_head - vision::s_history_count + VISION_HISTORY_SIZE) % VISION_HISTORY_SIZE;
   for (int i = 0; i < n; i++) {
     out[i] = vision::s_history[(start + (vision::s_history_count - n) + i) % VISION_HISTORY_SIZE];
   }
+  portEXIT_CRITICAL(&vision::s_history_mux);
   return n;
 }
 

@@ -3229,7 +3229,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           for (let i = evts.length - 1; i >= 0; i--) {
             const e = evts[i];
             const cls = e.type === 'person' ? 'vi-evt--person' : e.type === 'motion' ? 'vi-evt--motion' : 'vi-evt--end';
-            const age = e.age_ms < 1000 ? '<1s' : e.age_ms < 60000 ? Math.round(e.age_ms/1000)+'s' : Math.round(e.age_ms/60000)+'m';
+            const age = e.age_ms < 1000 ? '<1s' : e.age_ms < 60000 ? Math.round(e.age_ms/1000)+'s' : e.age_ms < 3600000 ? Math.round(e.age_ms/60000)+'m' : e.age_ms < 86400000 ? Math.round(e.age_ms/3600000)+'h' : Math.round(e.age_ms/86400000)+'d';
             const chip = document.createElement('div');
             chip.className = 'vi-evt ' + cls;
             chip.innerHTML = '<b>' + e.type + '</b><br>' + age + ' ago · z' + e.zone + ' · ' + e.confidence + '%';
