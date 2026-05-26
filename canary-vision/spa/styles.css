@@ -865,3 +865,68 @@ html, body {
     transform: translateY(0);
   }
 }
+
+/* Pull-to-refresh */
+.ptr-container {
+  position: relative;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+
+.ptr-indicator {
+  position: absolute;
+  top: -48px;
+  left: 0;
+  right: 0;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--color-text-muted);
+  transition: opacity 0.2s ease;
+  pointer-events: none;
+}
+
+.ptr-indicator .ptr-arrow {
+  display: inline-block;
+  font-size: 16px;
+  transition: transform 0.2s ease;
+}
+
+.ptr-indicator.armed .ptr-arrow {
+  transform: rotate(180deg);
+}
+
+.ptr-indicator.refreshing .ptr-arrow {
+  display: none;
+}
+
+.ptr-indicator .ptr-spinner {
+  display: none;
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--color-border);
+  border-top-color: var(--color-accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.ptr-indicator.refreshing .ptr-spinner {
+  display: inline-block;
+}
+
+.ptr-content {
+  transition: transform 0.3s cubic-bezier(0.2, 0, 0, 1);
+  will-change: transform;
+}
+
+.ptr-content.pulling {
+  transition: none;
+}
+
+.ptr-content.snapping {
+  transition: transform 0.3s cubic-bezier(0.2, 0, 0, 1);
+}

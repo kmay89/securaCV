@@ -451,6 +451,83 @@ var Router = {
   }
 };
 
+// --------------- Pull-to-Refresh ---------------
+
+function setupPullToRefresh(scrollContainer, contentWrap, indicator, onRefresh) {
+  var THRESHOLD = 60;
+  var MAX_PULL = 100;
+  var startY = 0;
+  var pulling = false;
+  var refreshing = false;
+
+  function onTouchStart(e) {
+    if (refreshing) return;
+    if (scrollContainer.scrollTop > 0) return;
+    startY = e.touches[0].clientY;
+    pulling = false;
+  }
+
+  function onTouchMove(e) {
+    if (refreshing) return;
+    if (scrollContainer.scrollTop > 0) { reset(); return; }
+    var deltaY = e.touches[0].clientY - startY;
+    if (deltaY < 0) { reset(); return; }
+
+    // Rubber-band: diminishing returns past threshold
+    var pull = Math.min(MAX_PULL, deltaY * 0.5);
+    if (pull > 10) {
+      pulling = true;
+      contentWrap.className = 'ptr-content pulling';
+      contentWrap.style.transform = 'translateY(' + pull + 'px)';
+      indicator.style.opacity = Math.min(1, pull / THRESHOLD);
+      if (pull >= THRESHOLD) {
+        indicator.className = 'ptr-indicator armed';
+      } else {
+        indicator.className = 'ptr-indicator';
+      }
+      e.preventDefault();
+    }
+  }
+
+  function onTouchEnd() {
+    if (refreshing || !pulling) return;
+    var current = parseFloat(contentWrap.style.transform.replace('translateY(', '').replace('px)', '')) || 0;
+
+    if (current >= THRESHOLD) {
+      refreshing = true;
+      indicator.className = 'ptr-indicator refreshing';
+      indicator.style.opacity = '1';
+      contentWrap.className = 'ptr-content snapping';
+      contentWrap.style.transform = 'translateY(48px)';
+
+      onRefresh(function done() {
+        refreshing = false;
+        reset();
+      });
+    } else {
+      reset();
+    }
+  }
+
+  function reset() {
+    pulling = false;
+    contentWrap.className = 'ptr-content snapping';
+    contentWrap.style.transform = 'translateY(0)';
+    indicator.className = 'ptr-indicator';
+    indicator.style.opacity = '0';
+  }
+
+  scrollContainer.addEventListener('touchstart', onTouchStart, { passive: true });
+  scrollContainer.addEventListener('touchmove', onTouchMove, { passive: false });
+  scrollContainer.addEventListener('touchend', onTouchEnd, { passive: true });
+
+  return function teardown() {
+    scrollContainer.removeEventListener('touchstart', onTouchStart);
+    scrollContainer.removeEventListener('touchmove', onTouchMove);
+    scrollContainer.removeEventListener('touchend', onTouchEnd);
+  };
+}
+
 // --------------- Event Timeline ---------------
 
 var EVENT_TYPE_META = {
@@ -1307,8 +1384,19 @@ function renderEventsView() {
   app.appendChild(renderHeader('Events', false, false));
   app.appendChild(renderNav('#/events'));
 
-  var content = el('div', { className: 'content' });
-  app.appendChild(content);
+  // Pull-to-refresh wrapper
+  var ptrContainer = el('div', { className: 'content ptr-container' });
+  var ptrIndicator = el('div', { className: 'ptr-indicator' }, [
+    el('span', { className: 'ptr-arrow', textContent: '↓' }),
+    el('div', { className: 'ptr-spinner' }),
+    el('span', { className: 'ptr-label', textContent: 'Pull to refresh' }),
+  ]);
+  var ptrContent = el('div', { className: 'ptr-content' });
+  ptrContainer.appendChild(ptrIndicator);
+  ptrContainer.appendChild(ptrContent);
+  app.appendChild(ptrContainer);
+
+  var content = ptrContent;
 
   // Clear any previous refresh timer and listener
   if (EventsState.refreshTimer) {
@@ -1318,6 +1406,10 @@ function renderEventsView() {
   if (EventsState.onHashChange) {
     window.removeEventListener('hashchange', EventsState.onHashChange);
     EventsState.onHashChange = null;
+  }
+  if (EventsState.ptrTeardown) {
+    EventsState.ptrTeardown();
+    EventsState.ptrTeardown = null;
   }
   EventsState.expandedClusters = {};
   EventsState.activeFilter = 'all';
@@ -1343,20 +1435,30 @@ function renderEventsView() {
     el('span', { textContent: 'Fetching events from ' + devices.length + ' device' + (devices.length > 1 ? 's' : '') + '…' }),
   ]));
 
-  function loadAndRender() {
+  function refreshData() {
     return fetchAllWitnessRecords().then(function (data) {
       EventsState.deviceResults = data.results;
       EventsState.allRecords = data.allRecords;
       EventsState.clusters = clusterEvents(data.allRecords);
       EventsState.filteredClusters = applyEventsFilter(EventsState.clusters, EventsState.activeFilter);
       renderEventsContent(content, data);
-    }).catch(function () {
+    });
+  }
+
+  function loadAndRender() {
+    return refreshData().catch(function () {
       renderEventsContent(content, { results: [], allRecords: [] });
     });
   }
 
   loadAndRender().then(function () {
     if ((window.location.hash || '') !== '#/events') return;
+
+    // Set up pull-to-refresh
+    EventsState.ptrTeardown = setupPullToRefresh(ptrContainer, ptrContent, ptrIndicator, function (done) {
+      refreshData().then(done).catch(done);
+    });
+
     // Auto-refresh every 30 seconds
     EventsState.refreshTimer = setInterval(function () {
       var currentHash = window.location.hash || '';
@@ -1365,13 +1467,7 @@ function renderEventsView() {
         EventsState.refreshTimer = null;
         return;
       }
-      fetchAllWitnessRecords().then(function (data) {
-        EventsState.deviceResults = data.results;
-        EventsState.allRecords = data.allRecords;
-        EventsState.clusters = clusterEvents(data.allRecords);
-        EventsState.filteredClusters = applyEventsFilter(EventsState.clusters, EventsState.activeFilter);
-        renderEventsContent(content, data);
-      });
+      refreshData();
     }, 30000);
   });
 
@@ -1381,6 +1477,10 @@ function renderEventsView() {
       if (EventsState.refreshTimer) {
         clearInterval(EventsState.refreshTimer);
         EventsState.refreshTimer = null;
+      }
+      if (EventsState.ptrTeardown) {
+        EventsState.ptrTeardown();
+        EventsState.ptrTeardown = null;
       }
       window.removeEventListener('hashchange', EventsState.onHashChange);
       EventsState.onHashChange = null;
