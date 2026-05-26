@@ -13,6 +13,7 @@
  *   OK         — show device detail
  *   Left/Right — toggle between detail and signal graph
  *   Back       — return to list / exit app
+ *   Back (long)— toggle proximity alerts (scan list)
  */
 
 #include <furi.h>
@@ -20,6 +21,7 @@
 #include <gui/gui.h>
 #include <gui/view_port.h>
 #include <bt/bt_service/bt.h>
+#include <notification/notification_messages.h>
 
 #include "securacv_protocol.h"
 
@@ -74,6 +76,7 @@ typedef struct {
     ViewPort* view_port;
     Gui* gui;
     Bt* bt;
+    NotificationApp* notifications;
     FuriMessageQueue* event_queue;
     FuriTimer* tick_timer;
     bool running;
@@ -88,6 +91,8 @@ typedef struct {
     int8_t selected_index;
     int8_t scroll_offset;
     bool scanning;
+    SortMode sort_mode;
+    bool alerts_enabled;
 } SecuraCVApp;
 
 // ============================================================================
@@ -184,6 +189,12 @@ static scv_device_t* add_or_update_device(SecuraCVApp* app, const AppEvent* evt)
     dev->last_seen_ms = furi_get_tick();
     scv_rssi_push(dev, evt->ble.rssi);
 
+    // Zone transition detection
+    int8_t avg = dev->rssi_sample_count > 0 ? (int8_t)(dev->rssi_avg / 10) : dev->rssi;
+    scv_proximity_zone_t new_zone = scv_classify_zone(avg);
+    scv_proximity_zone_t old_zone = dev->zone;
+    dev->zone = new_zone;
+
     if(evt->ble.has_mfg_data) {
         scv_debug_beacon_t parsed;
         if(scv_parse_debug_beacon(evt->ble.mfg_data, evt->ble.mfg_data_len, &parsed)) {
@@ -193,6 +204,18 @@ static scv_device_t* add_or_update_device(SecuraCVApp* app, const AppEvent* evt)
     }
 
     furi_mutex_release(app->mutex);
+
+    if(app->alerts_enabled && old_zone != SCV_ZONE_UNKNOWN && new_zone != old_zone) {
+        if(new_zone == SCV_ZONE_NEAR) {
+            notification_message(app->notifications, &sequence_single_vibro);
+            notification_message(app->notifications, &sequence_blink_green_100);
+        } else if(new_zone == SCV_ZONE_LOST ||
+                  (new_zone > old_zone)) {
+            notification_message(app->notifications, &sequence_double_vibro);
+            notification_message(app->notifications, &sequence_blink_red_100);
+        }
+    }
+
     return dev;
 }
 
@@ -303,8 +326,9 @@ static void draw_scan_list(Canvas* canvas, SecuraCVApp* app) {
 
     canvas_set_font(canvas, FontSecondary);
     char status[32];
-    snprintf(status, sizeof(status), "%d device%s found",
-             app->device_count, app->device_count == 1 ? "" : "s");
+    snprintf(status, sizeof(status), "%d %s%s",
+             app->device_count, sort_mode_labels[app->sort_mode],
+             app->alerts_enabled ? " ALT" : "");
     canvas_draw_str_aligned(canvas, SCREEN_WIDTH, 10, AlignRight, AlignBottom, status);
 
     canvas_draw_line(canvas, 0, 13, SCREEN_WIDTH, 13);
@@ -339,8 +363,13 @@ static void draw_scan_list(Canvas* canvas, SecuraCVApp* app) {
         snprintf(name_buf, sizeof(name_buf), "%.15s", dev->name);
         canvas_draw_str(canvas, 2, y + 8, name_buf);
 
+        int label_x = 68;
         if(dev->is_debug_mode) {
-            canvas_draw_str(canvas, 68, y + 8, "DBG");
+            canvas_draw_str(canvas, label_x, y + 8, "DBG");
+            label_x += 18;
+        }
+        if(app->alerts_enabled && dev->zone != SCV_ZONE_UNKNOWN) {
+            canvas_draw_str(canvas, label_x, y + 8, scv_zone_label(dev->zone));
         }
 
         int8_t display_rssi = dev->rssi_sample_count > 0
@@ -580,6 +609,28 @@ static void input_callback(InputEvent* input_event, void* ctx) {
 // ============================================================================
 
 static void handle_input(SecuraCVApp* app, InputEvent* event) {
+    if(event->type == InputTypeLong && event->key == InputKeyOk &&
+       app->current_view == VIEW_SCAN_LIST) {
+        furi_mutex_acquire(app->mutex, FuriWaitForever);
+        if(app->device_count > 0 && app->selected_index < app->device_count) {
+            app->devices[app->selected_index].pinned =
+                !app->devices[app->selected_index].pinned;
+        }
+        furi_mutex_release(app->mutex);
+        view_port_update(app->view_port);
+        return;
+    }
+
+    if(event->type == InputTypeLong && event->key == InputKeyBack &&
+       app->current_view == VIEW_SCAN_LIST) {
+        app->alerts_enabled = !app->alerts_enabled;
+        if(app->alerts_enabled) {
+            notification_message(app->notifications, &sequence_single_vibro);
+        }
+        view_port_update(app->view_port);
+        return;
+    }
+
     if(event->type != InputTypePress && event->type != InputTypeRepeat) return;
 
     furi_mutex_acquire(app->mutex, FuriWaitForever);
@@ -702,6 +753,7 @@ int32_t securacv_scanner_app(void* p) {
     app->current_view = VIEW_SCAN_LIST;
     app->selected_index = 0;
     app->scroll_offset = 0;
+    app->notifications = furi_record_open(RECORD_NOTIFICATION);
 
     // Set up GUI
     app->view_port = view_port_alloc();
@@ -771,6 +823,7 @@ int32_t securacv_scanner_app(void* p) {
     ble_scanner_stop(app);
     gui_remove_view_port(app->gui, app->view_port);
     furi_record_close(RECORD_GUI);
+    furi_record_close(RECORD_NOTIFICATION);
     view_port_free(app->view_port);
     furi_message_queue_free(app->event_queue);
     furi_mutex_free(app->mutex);
