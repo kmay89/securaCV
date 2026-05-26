@@ -2015,6 +2015,8 @@ static void vision_config_to_json(JsonDocument& doc, const vision_config_t& cfg)
   doc["sustained_threshold"]    = cfg.sustained_threshold;
   doc["duty_cycle_ms"]          = cfg.duty_cycle_ms;
   doc["duty_active_pct"]        = cfg.duty_active_pct;
+  JsonArray mask = doc["zone_mask"].to<JsonArray>();
+  for (int i = 0; i < 10; i++) mask.add(cfg.zone_mask[i]);
   doc["running"]                = vision_is_running();
 #if FEATURE_VISION_TFLITE
   doc["tflite_available"]       = true;
@@ -2022,7 +2024,7 @@ static void vision_config_to_json(JsonDocument& doc, const vision_config_t& cfg)
   doc["tflite_available"]       = false;
 #endif
   vision_config_t n;
-  doc["saved"] = vision_load_config_from_nvs(&n) &&
+  bool match = vision_load_config_from_nvs(&n) &&
       n.jpeg_delta_pct        == cfg.jpeg_delta_pct &&
       n.block_change_pct      == cfg.block_change_pct &&
       n.person_confidence_min == cfg.person_confidence_min &&
@@ -2034,6 +2036,8 @@ static void vision_config_to_json(JsonDocument& doc, const vision_config_t& cfg)
       n.sustained_threshold   == cfg.sustained_threshold &&
       n.duty_cycle_ms         == cfg.duty_cycle_ms &&
       n.duty_active_pct       == cfg.duty_active_pct;
+  for (int i = 0; match && i < 10; i++) match = n.zone_mask[i] == cfg.zone_mask[i];
+  doc["saved"] = match;
 }
 
 static esp_err_t handle_vision_config_get(httpd_req_t* req) {
@@ -2114,6 +2118,12 @@ static esp_err_t handle_vision_config_set(httpd_req_t* req) {
       cfg.duty_cycle_ms = constrain(obj["duty_cycle_ms"].as<int>(), 1000, 60000);
     if (obj["duty_active_pct"].is<int>())
       cfg.duty_active_pct = constrain(obj["duty_active_pct"].as<int>(), 10, 100);
+    if (obj["zone_mask"].is<JsonArray>()) {
+      JsonArray zm = obj["zone_mask"].as<JsonArray>();
+      for (int i = 0; i < 10 && i < (int)zm.size(); i++) {
+        if (zm[i].is<int>()) cfg.zone_mask[i] = (uint8_t)zm[i].as<int>();
+      }
+    }
   }
 
   vision_set_config(&cfg);

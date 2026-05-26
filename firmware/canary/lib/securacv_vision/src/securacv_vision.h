@@ -45,6 +45,7 @@ typedef struct {
   uint8_t  sustained_threshold;
   uint16_t duty_cycle_ms;
   uint8_t  duty_active_pct;
+  uint8_t  zone_mask[10];
 } vision_config_t;
 
 #define VISION_CONFIG_DEFAULT { \
@@ -58,7 +59,9 @@ typedef struct {
   /*.sustained_backoff_ms*/   1000,  \
   /*.sustained_threshold*/    10,    \
   /*.duty_cycle_ms*/          10000, \
-  /*.duty_active_pct*/        50     \
+  /*.duty_active_pct*/        50,    \
+  /*.zone_mask*/              { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, \
+                                0xFF, 0xFF, 0xFF, 0xFF, 0xFF } \
 }
 
 #define VISION_GRID_COLS  10

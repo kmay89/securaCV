@@ -1290,7 +1290,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         <div class="card-header">
           <div>
             <div class="card-title">Vision Detection</div>
-            <div class="card-subtitle">3-layer cascaded pipeline: JPEG delta, block luminance, person classifier</div>
+            <div class="card-subtitle">3-layer cascaded pipeline. Click grid cells to mask zones.</div>
           </div>
           <span id="visionBadge" class="badge" style="display:none;"><span class="badge-dot"></span><span id="visionBadgeText">Idle</span></span>
         </div>
@@ -3166,13 +3166,14 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           if (viBadge) viBadge.style.display = 'none';
         }
 
-        // Zone grid heatmap (10x8) — per-block luminance intensity
+        // Zone grid heatmap (10x8) — click to toggle zone mask
         const VISION_ZONES = 80;
         if (viGrid && !viGrid.dataset.built) {
           viGrid.innerHTML = '';
           for (let i = 0; i < VISION_ZONES; i++) {
             const cell = document.createElement('div');
-            cell.style.cssText = 'aspect-ratio:1;border-radius:2px;background:var(--border);transition:background 0.4s;';
+            cell.style.cssText = 'aspect-ratio:1;border-radius:2px;background:var(--border);transition:background 0.4s,opacity 0.3s;cursor:pointer;position:relative;';
+            cell.onclick = ((idx) => () => viToggleZone(idx))(i);
             viGrid.appendChild(cell);
           }
           viGrid.dataset.built = '1';
@@ -3181,10 +3182,12 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           const grid = viObj.grid || [];
           const age = viObj.last_event_age_ms;
           const isPerson = viObj.last_event === 'person' && age >= 0 && age < 5000;
+          const zm = viZoneMask;
           const cells = viGrid.children;
           for (let i = 0; i < cells.length; i++) {
+            const enabled = (zm[i >> 3] >> (i & 7)) & 1;
             const v = grid[i] || 0;
-            if (v < 3) {
+            if (v < 3 || !enabled) {
               cells[i].style.background = 'var(--border)';
             } else {
               const t = Math.min(v / 80, 1);
@@ -3193,6 +3196,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
               const l = 15 + t * 40;
               cells[i].style.background = 'hsl(' + h + ',' + s + '%,' + l + '%)';
             }
+            cells[i].style.opacity = enabled ? '1' : '0.25';
           }
         }
 
@@ -3368,7 +3372,17 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       else stopAudioLevelPoll();
     }, true);
 
-    // ─── Vision config sliders ───────────────────────────────────────
+    // ─── Vision zone mask + config sliders ──────────────────────────
+    let viZoneMask = [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
+
+    async function viToggleZone(idx) {
+      const byteIdx = idx >> 3;
+      const bit = 1 << (idx & 7);
+      viZoneMask[byteIdx] ^= bit;
+      const r = await api('/api/vision/config', 'POST', { zone_mask: viZoneMask });
+      if (r && r.ok) viApplyConfig(r);
+    }
+
     const viFields = {
       jpeg_delta_pct:       { el: 'viJpeg',    lbl: 'viTJpeg',     suffix: '%' },
       block_change_pct:     { el: 'viBlock',    lbl: 'viTBlock',    suffix: '%' },
@@ -3388,6 +3402,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           if (lbl) lbl.textContent = cfg[key] + f.suffix;
         }
       }
+      if (cfg.zone_mask) viZoneMask = cfg.zone_mask.slice();
       const card = document.getElementById('visionSettingsCard');
       if (card) card.dataset.loaded = '1';
       const ss = document.getElementById('viSaveStatus');
