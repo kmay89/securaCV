@@ -9,9 +9,10 @@
  * BLE API: Bt service + furi_hal_bt GAP observer
  *
  * Controls:
- *   Up/Down — scroll device list
- *   OK      — show device detail (if debug beacon available)
- *   Back    — return to list / exit app
+ *   Up/Down    — scroll device list
+ *   OK         — show device detail
+ *   Left/Right — toggle between detail and signal graph
+ *   Back       — return to list / exit app
  */
 
 #include <furi.h>
@@ -65,6 +66,7 @@ typedef struct {
 typedef enum {
     VIEW_SCAN_LIST,
     VIEW_DEVICE_DETAIL,
+    VIEW_SIGNAL_GRAPH,
 } AppView;
 
 typedef struct {
@@ -204,7 +206,7 @@ static void expire_stale_devices(SecuraCVApp* app) {
             if(i < app->selected_index) {
                 app->selected_index--;
             } else if(i == app->selected_index) {
-                if(app->current_view == VIEW_DEVICE_DETAIL) {
+                if(app->current_view != VIEW_SCAN_LIST) {
                     app->current_view = VIEW_SCAN_LIST;
                 }
             }
@@ -393,12 +395,14 @@ static void draw_device_detail(Canvas* canvas, SecuraCVApp* app) {
                  avg, scv_signal_quality(quality_input));
         canvas_draw_str(canvas, 2, 50, sig_line);
 
+        canvas_draw_str_aligned(canvas, SCREEN_WIDTH - 1, SCREEN_HEIGHT - 2,
+                                AlignRight, AlignBottom, "Graph>");
         if(dev->rssi_sample_count > 1) {
-            char range_line[40];
+            char range_line[32];
             uint16_t dm = scv_estimate_distance_dm(dev->rssi_avg);
             char dist_buf[8];
             scv_format_distance(dm, dist_buf, sizeof(dist_buf));
-            snprintf(range_line, sizeof(range_line), "Range:%d/%d n=%d ~%s",
+            snprintf(range_line, sizeof(range_line), "%d/%d n=%d ~%s",
                      dev->rssi_min, dev->rssi_max,
                      dev->rssi_sample_count, dist_buf);
             canvas_draw_str(canvas, 2, SCREEN_HEIGHT - 2, range_line);
@@ -450,7 +454,90 @@ static void draw_device_detail(Canvas* canvas, SecuraCVApp* app) {
                  (int)(dev->rssi_avg / 10),
                  scv_signal_quality(dev->rssi_avg), dist_buf);
         canvas_draw_str(canvas, 2, SCREEN_HEIGHT - 2, line);
+        canvas_draw_str_aligned(canvas, SCREEN_WIDTH - 1, SCREEN_HEIGHT - 2,
+                                AlignRight, AlignBottom, "Graph>");
     }
+}
+
+// ============================================================================
+// DRAW: SIGNAL GRAPH
+// ============================================================================
+
+#define GRAPH_X       0
+#define GRAPH_Y       15
+#define GRAPH_W       128
+#define GRAPH_H       36
+#define RSSI_FLOOR    (-100)
+#define RSSI_CEIL     (-30)
+
+static void draw_signal_graph(Canvas* canvas, SecuraCVApp* app) {
+    if(app->selected_index < 0 || app->selected_index >= app->device_count) return;
+    scv_device_t* dev = &app->devices[app->selected_index];
+
+    // Header
+    canvas_set_font(canvas, FontPrimary);
+    canvas_draw_str(canvas, 0, 10, dev->name);
+    int8_t hdr_rssi = dev->rssi_sample_count > 0
+        ? (int8_t)(dev->rssi_avg / 10) : dev->rssi;
+    draw_rssi_bar(canvas, SCREEN_WIDTH - 14, 2, hdr_rssi);
+    canvas_draw_line(canvas, 0, 13, SCREEN_WIDTH, 13);
+
+    // Graph frame
+    canvas_draw_frame(canvas, GRAPH_X, GRAPH_Y, GRAPH_W, GRAPH_H);
+
+    // Y-axis labels (left margin)
+    canvas_set_font(canvas, FontSecondary);
+    canvas_draw_str(canvas, 1, GRAPH_Y + 7, "-30");
+    canvas_draw_str(canvas, 1, GRAPH_Y + GRAPH_H - 1, "-100");
+
+    if(dev->rssi_graph_count == 0) {
+        canvas_draw_str_aligned(canvas, SCREEN_WIDTH / 2, GRAPH_Y + GRAPH_H / 2,
+                                AlignCenter, AlignCenter, "No data");
+        return;
+    }
+
+    // Draw bars after label margin, each 2px wide, right-aligned
+    int graph_inner_x = GRAPH_X + 21;
+    int graph_inner_w = GRAPH_W - 22;
+    int graph_inner_h = GRAPH_H - 2;
+    int max_bars = graph_inner_w / 2;
+    int bars_to_draw = dev->rssi_graph_count < max_bars
+        ? dev->rssi_graph_count : max_bars;
+
+    int rssi_range = RSSI_CEIL - RSSI_FLOOR;
+
+    for(int i = 0; i < bars_to_draw; i++) {
+        int sample_idx = (int)dev->rssi_graph_idx - bars_to_draw + i;
+        if(sample_idx < 0) sample_idx += SCV_GRAPH_LEN;
+
+        int8_t val = dev->rssi_graph[sample_idx];
+        if(val < RSSI_FLOOR) val = RSSI_FLOOR;
+        if(val > RSSI_CEIL) val = RSSI_CEIL;
+
+        int bar_h = ((val - RSSI_FLOOR) * graph_inner_h) / rssi_range;
+        if(bar_h < 1) bar_h = 1;
+
+        int bar_x = graph_inner_x + graph_inner_w - (bars_to_draw - i) * 2;
+        int bar_y = GRAPH_Y + 1 + graph_inner_h - bar_h;
+
+        canvas_draw_box(canvas, bar_x, bar_y, 2, bar_h);
+    }
+
+    // Footer: avg RSSI, quality, distance
+    canvas_set_font(canvas, FontSecondary);
+    char footer[40];
+    uint16_t dm = scv_estimate_distance_dm(dev->rssi_avg);
+    char dist_buf[8];
+    scv_format_distance(dm, dist_buf, sizeof(dist_buf));
+    snprintf(footer, sizeof(footer), "%ddBm %s ~%s  n=%d",
+             (int)(dev->rssi_avg / 10),
+             scv_signal_quality(dev->rssi_avg),
+             dist_buf, dev->rssi_graph_count);
+    canvas_draw_str(canvas, 2, SCREEN_HEIGHT - 2, footer);
+
+    // Navigation hint
+    canvas_draw_str_aligned(canvas, SCREEN_WIDTH - 1, SCREEN_HEIGHT - 2,
+                            AlignRight, AlignBottom, "<Info");
 }
 
 // ============================================================================
@@ -470,6 +557,9 @@ static void render_callback(Canvas* canvas, void* ctx) {
             break;
         case VIEW_DEVICE_DETAIL:
             draw_device_detail(canvas, app);
+            break;
+        case VIEW_SIGNAL_GRAPH:
+            draw_signal_graph(canvas, app);
             break;
     }
 
@@ -530,6 +620,16 @@ static void handle_input(SecuraCVApp* app, InputEvent* event) {
         case VIEW_DEVICE_DETAIL:
             if(event->key == InputKeyBack) {
                 app->current_view = VIEW_SCAN_LIST;
+            } else if(event->key == InputKeyLeft || event->key == InputKeyRight) {
+                app->current_view = VIEW_SIGNAL_GRAPH;
+            }
+            break;
+
+        case VIEW_SIGNAL_GRAPH:
+            if(event->key == InputKeyBack) {
+                app->current_view = VIEW_SCAN_LIST;
+            } else if(event->key == InputKeyLeft || event->key == InputKeyRight) {
+                app->current_view = VIEW_DEVICE_DETAIL;
             }
             break;
     }
