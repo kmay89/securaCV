@@ -1892,7 +1892,297 @@ function renderEventCard(cluster, index) {
     }
   });
 
+  // "View Details" link in detail panel
+  var detailLink = el('button', {
+    className: 'btn btn-secondary btn-block mt-12 event-detail-link',
+    textContent: 'View Full Details',
+    onClick: function (e) {
+      e.stopPropagation();
+      Router.navigate('#/events/' + cluster.id);
+    }
+  });
+  detailInner.appendChild(detailLink);
+
   return card;
+}
+
+function renderEventDetailView(eventId) {
+  var app = clearApp();
+  app.appendChild(renderHeader('Event Detail', true, false));
+
+  var content = el('div', { className: 'content' });
+  app.appendChild(content);
+
+  // Try to find the event in cached state first
+  var record = null;
+  for (var i = 0; i < EventsState.allRecords.length; i++) {
+    if (EventsState.allRecords[i].hash === eventId) {
+      record = EventsState.allRecords[i];
+      break;
+    }
+  }
+
+  // Also look up the cluster this event belongs to
+  var cluster = null;
+  for (var c = 0; c < EventsState.clusters.length; c++) {
+    if (EventsState.clusters[c].id === eventId) {
+      cluster = EventsState.clusters[c];
+      break;
+    }
+    for (var e = 0; e < EventsState.clusters[c].events.length; e++) {
+      if (EventsState.clusters[c].events[e].hash === eventId) {
+        cluster = EventsState.clusters[c];
+        if (!record) record = EventsState.clusters[c].events[e];
+        break;
+      }
+    }
+    if (cluster) break;
+  }
+
+  if (!record && !cluster) {
+    content.appendChild(el('div', { className: 'empty-state' }, [
+      el('h2', { textContent: 'Event Not Found' }),
+      el('p', { textContent: 'This event may have expired or the device is not reachable.' }),
+      el('button', {
+        className: 'btn btn-primary',
+        textContent: 'Back to Events',
+        onClick: function () { Router.navigate('#/events'); }
+      }),
+    ]));
+    return;
+  }
+
+  // Use the cluster if available, otherwise build a single-event pseudo-cluster
+  var events = cluster ? cluster.events : [record];
+  var primaryRecord = record || events[0];
+  var meta = EVENT_TYPE_META[primaryRecord.event_type] || EVENT_TYPE_META.motion_detected;
+
+  // Hero header card
+  var heroCard = el('div', { className: 'card event-detail-hero' });
+  var heroIcon = el('div', { className: 'event-detail-hero-icon ' + meta.cssClass });
+  heroIcon.appendChild(el('span', { textContent: meta.icon }));
+  heroCard.appendChild(heroIcon);
+
+  var heroTitle = cluster && cluster.count > 1
+    ? cluster.count + ' ' + meta.label + ' Events'
+    : meta.label + ' Detected';
+  heroCard.appendChild(el('h2', { className: 'event-detail-hero-title', textContent: heroTitle }));
+  heroCard.appendChild(el('div', { className: 'event-detail-hero-meta', textContent: primaryRecord.device_name + ' · ' + primaryRecord.zone }));
+  heroCard.appendChild(el('div', { className: 'event-detail-hero-time', textContent: formatEventTime(primaryRecord._ts) }));
+  content.appendChild(heroCard);
+
+  // Zone visualization
+  var device = CanaryStorage.getDevice(primaryRecord.device_id);
+  if (device) {
+    var zoneCard = el('div', { className: 'card' });
+    zoneCard.appendChild(el('div', { className: 'card-title mb-8', textContent: 'Detection Zone' }));
+
+    var zoneCanvas = el('div', { className: 'zone-viz' });
+    var zoneGrid = el('div', { className: 'zone-grid' });
+
+    // Fetch zone config to render polygon
+    CanaryAPI.request(device.base_url, '/api/v1/config/detection')
+      .then(function (data) {
+        var zones = (data.zones || []);
+        var matchedZone = null;
+        for (var z = 0; z < zones.length; z++) {
+          if (zones[z].name === primaryRecord.zone) {
+            matchedZone = zones[z];
+            break;
+          }
+        }
+
+        if (matchedZone && matchedZone.points && matchedZone.points.length > 0) {
+          // Draw zone polygon as SVG
+          var svgNs = 'http://www.w3.org/2000/svg';
+          var svg = document.createElementNS(svgNs, 'svg');
+          svg.setAttribute('viewBox', '0 0 100 100');
+          svg.setAttribute('class', 'zone-svg');
+
+          // Background grid
+          for (var gx = 0; gx <= 100; gx += 20) {
+            var gridLine = document.createElementNS(svgNs, 'line');
+            gridLine.setAttribute('x1', gx); gridLine.setAttribute('y1', 0);
+            gridLine.setAttribute('x2', gx); gridLine.setAttribute('y2', 100);
+            gridLine.setAttribute('class', 'zone-grid-line');
+            svg.appendChild(gridLine);
+          }
+          for (var gy = 0; gy <= 100; gy += 20) {
+            var gridLineH = document.createElementNS(svgNs, 'line');
+            gridLineH.setAttribute('x1', 0); gridLineH.setAttribute('y1', gy);
+            gridLineH.setAttribute('x2', 100); gridLineH.setAttribute('y2', gy);
+            gridLineH.setAttribute('class', 'zone-grid-line');
+            svg.appendChild(gridLineH);
+          }
+
+          // Zone polygon
+          var pointsStr = matchedZone.points.map(function (p) { return p[0] + ',' + p[1]; }).join(' ');
+          var polygon = document.createElementNS(svgNs, 'polygon');
+          polygon.setAttribute('points', pointsStr);
+          polygon.setAttribute('class', 'zone-polygon ' + meta.cssClass);
+          svg.appendChild(polygon);
+
+          // Zone label
+          var cx = 0, cy = 0;
+          for (var pi = 0; pi < matchedZone.points.length; pi++) {
+            cx += matchedZone.points[pi][0]; cy += matchedZone.points[pi][1];
+          }
+          cx /= matchedZone.points.length; cy /= matchedZone.points.length;
+
+          var label = document.createElementNS(svgNs, 'text');
+          label.setAttribute('x', cx); label.setAttribute('y', cy);
+          label.setAttribute('class', 'zone-label');
+          label.textContent = matchedZone.name;
+          svg.appendChild(label);
+
+          zoneCanvas.appendChild(svg);
+        } else {
+          zoneCanvas.appendChild(el('div', {
+            className: 'card-subtitle',
+            textContent: 'Zone "' + primaryRecord.zone + '" — full frame'
+          }));
+        }
+      })
+      .catch(function () {
+        zoneCanvas.appendChild(el('div', {
+          className: 'card-subtitle',
+          textContent: 'Zone: ' + primaryRecord.zone
+        }));
+      });
+
+    zoneCard.appendChild(zoneCanvas);
+    content.appendChild(zoneCard);
+  }
+
+  // Events timeline (individual events in cluster)
+  if (events.length > 1) {
+    var timelineCard = el('div', { className: 'card' });
+    timelineCard.appendChild(el('div', { className: 'card-title mb-8', textContent: 'Event Timeline' }));
+
+    var timeline = el('div', { className: 'event-detail-timeline' });
+    for (var t = 0; t < events.length; t++) {
+      var evt = events[t];
+      var evtMeta = EVENT_TYPE_META[evt.event_type] || EVENT_TYPE_META.motion_detected;
+      var isLast = t === events.length - 1;
+
+      var timelineItem = el('div', { className: 'timeline-item' + (isLast ? ' timeline-item-last' : '') });
+      var dot = el('div', { className: 'timeline-dot ' + evtMeta.cssClass });
+      timelineItem.appendChild(dot);
+      if (!isLast) {
+        timelineItem.appendChild(el('div', { className: 'timeline-line' }));
+      }
+
+      var timelineBody = el('div', { className: 'timeline-body' });
+      timelineBody.appendChild(el('div', { className: 'timeline-label', textContent: evtMeta.icon + ' ' + evtMeta.label + ' Detected' }));
+      timelineBody.appendChild(el('div', {
+        className: 'timeline-time',
+        textContent: evt._ts.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' })
+      }));
+      timelineItem.appendChild(timelineBody);
+      timeline.appendChild(timelineItem);
+    }
+    timelineCard.appendChild(timeline);
+    content.appendChild(timelineCard);
+  }
+
+  // Witness chain card
+  var chainCard = el('div', { className: 'card' });
+  chainCard.appendChild(el('div', { className: 'card-title mb-8', textContent: 'Witness Chain' }));
+
+  var chainGrid = el('div', { className: 'event-detail-chain' });
+
+  for (var r = 0; r < events.length; r++) {
+    var rec = events[r];
+    var recSection = el('div', { className: 'chain-record' });
+
+    recSection.appendChild(el('div', { className: 'event-detail-row' }, [
+      el('span', { className: 'event-detail-label', textContent: 'Sequence' }),
+      el('span', { className: 'event-detail-value', textContent: String(rec.seq) }),
+    ]));
+
+    recSection.appendChild(el('div', { className: 'event-detail-row' }, [
+      el('span', { className: 'event-detail-label', textContent: 'Timestamp' }),
+      el('span', { className: 'event-detail-value', textContent: rec.timestamp }),
+    ]));
+
+    recSection.appendChild(el('div', { className: 'event-detail-row' }, [
+      el('span', { className: 'event-detail-label', textContent: 'Hash' }),
+      el('span', { className: 'event-detail-value', textContent: rec.hash || '—' }),
+    ]));
+
+    recSection.appendChild(el('div', { className: 'event-detail-row' }, [
+      el('span', { className: 'event-detail-label', textContent: 'Prev Hash' }),
+      el('span', { className: 'event-detail-value', textContent: rec.prev_hash || '—' }),
+    ]));
+
+    recSection.appendChild(el('div', { className: 'event-detail-row' }, [
+      el('span', { className: 'event-detail-label', textContent: 'Signature' }),
+      el('span', { className: 'event-detail-value', textContent: rec.signature ? rec.signature.substring(0, 24) + '…' : '—' }),
+    ]));
+
+    if (r < events.length - 1) {
+      recSection.appendChild(el('div', { className: 'chain-arrow', textContent: '↓' }));
+    }
+
+    chainGrid.appendChild(recSection);
+  }
+
+  // Chain integrity status
+  var chainValid = true;
+  var sortedEvts = events.slice().sort(function (a, b) { return a.seq - b.seq; });
+  for (var cv = 1; cv < sortedEvts.length; cv++) {
+    if (!sortedEvts[cv].prev_hash || !sortedEvts[cv - 1].hash ||
+        sortedEvts[cv].prev_hash !== sortedEvts[cv - 1].hash) {
+      chainValid = false;
+      break;
+    }
+  }
+
+  chainCard.appendChild(chainGrid);
+  chainCard.appendChild(el('div', { className: 'event-detail-row mt-12' }, [
+    el('span', { className: 'event-detail-label', textContent: 'Chain Integrity' }),
+    el('span', {
+      className: chainValid ? 'event-detail-value chain-verified' : 'event-detail-value chain-unverified',
+      textContent: chainValid ? '✓ Linked' : '⚠ Gap detected'
+    }),
+  ]));
+  chainCard.appendChild(el('div', { className: 'event-detail-row' }, [
+    el('span', { className: 'event-detail-label', textContent: 'Signing Algorithm' }),
+    el('span', { className: 'event-detail-value', textContent: 'Ed25519' }),
+  ]));
+
+  content.appendChild(chainCard);
+
+  // Deep-link / share section
+  var shareCard = el('div', { className: 'card' });
+  shareCard.appendChild(el('div', { className: 'card-title mb-8', textContent: 'Deep Link' }));
+  var deepLink = window.location.origin + window.location.pathname + '#/events/' + eventId;
+  var linkDisplay = el('div', { className: 'token-display', textContent: deepLink });
+  shareCard.appendChild(linkDisplay);
+
+  var copyBtn = el('button', {
+    className: 'btn btn-secondary btn-block mt-12',
+    textContent: 'Copy Link',
+    onClick: function () {
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(deepLink).then(function () {
+          copyBtn.textContent = '✓ Copied';
+          setTimeout(function () { copyBtn.textContent = 'Copy Link'; }, 2000);
+        });
+      }
+    }
+  });
+  shareCard.appendChild(copyBtn);
+  content.appendChild(shareCard);
+
+  // Link to device
+  if (device) {
+    content.appendChild(el('button', {
+      className: 'btn btn-secondary btn-block mt-12',
+      textContent: 'View Device: ' + (device.name || device.id),
+      onClick: function () { Router.navigate('#/device/' + device.id); }
+    }));
+  }
 }
 
 function renderSettingsView() {
@@ -1957,6 +2247,7 @@ Router.register('/device/:id', renderDeviceView);
 Router.register('/device/:id/config/:section', renderConfigView);
 Router.register('/device/:id/logs', renderLogsView);
 Router.register('/events', renderEventsView);
+Router.register('/events/:id', renderEventDetailView);
 Router.register('/settings', renderSettingsView);
 
 // --------------- Init ---------------
