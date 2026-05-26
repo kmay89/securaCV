@@ -1,0 +1,19 @@
+{
+    "name": "securacv_diagnostics",
+    "version": "0.1.0",
+    "description": "SecuraCV System Diagnostics — heap/stack watermark monitoring with automatic feature degradation, SD card health tracking, boot self-test suite, and runtime diagnostics export. Prevents field crashes by proactively shedding features under memory pressure.",
+    "keywords": ["securacv", "esp32-s3", "diagnostics", "heap", "selftest", "health"],
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/kmay89/securaCV.git"
+    },
+    "authors": [
+        {
+            "name": "Karl May",
+            "email": "karl@errerlabs.com"
+        }
+    ],
+    "license": "Apache-2.0",
+    "frameworks": "arduino",
+    "platforms": "espressif32"
+}

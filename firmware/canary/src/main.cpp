@@ -95,6 +95,10 @@ static_assert(sizeof(csi_features_t) == 36,
 #include <WiFi.h>
 #endif
 
+#if FEATURE_DIAGNOSTICS
+#include "securacv_diagnostics.h"
+#endif
+
 /* All five sensing sources feed a single aggregator. The header is
  * include-guarded, so one unconditional include is the right shape;
  * sensing_init() is also idempotent so each feature block can call it
@@ -908,6 +912,19 @@ void setup() {
   // Log boot event
   log_health(LOG_LEVEL_INFO, LOG_CAT_SYSTEM, "Device boot complete", FIRMWARE_VERSION);
 
+  // Initialize diagnostics and run boot self-test
+#if FEATURE_DIAGNOSTICS
+  diag_init();
+  {
+    uint8_t score = diag_run_selftest();
+    Serial.printf("[OK] Self-test: %u%% health score\n", score);
+    if (score < 70) {
+      log_health(LOG_LEVEL_WARNING, LOG_CAT_SYSTEM,
+                 "Low self-test score", nullptr);
+    }
+  }
+#endif
+
   g_last_record_ms = millis();
 
   // Print ready banner
@@ -1050,13 +1067,22 @@ void loop() {
   // Runtime policy gates — the policy engine decides which sensors run
   // based on battery state. If policy isn't compiled in, all features
   // run unconditionally (same as PMODE_PLUGGED_IN).
+  // Heap degradation provides a second gate: under memory pressure,
+  // memory-hungry features are shed even if the policy allows them.
 #if FEATURE_POWER_POLICY
   const policy_features_t* pf = policy_get_features();
 #endif
+#if FEATURE_DIAGNOSTICS
+  degrade_level_t dl = diag_get_degrade_level();
+#endif
 
+  // Memory-hungry features: shed at CRITICAL or above.
 #if FEATURE_CSI
   #if FEATURE_POWER_POLICY
   if (pf->csi)
+  #endif
+  #if FEATURE_DIAGNOSTICS
+  if (dl < DEGRADE_CRITICAL)
   #endif
   csi::process();
 #endif
@@ -1065,12 +1091,29 @@ void loop() {
   #if FEATURE_POWER_POLICY
   if (pf->acoustic)
   #endif
+  #if FEATURE_DIAGNOSTICS
+  if (dl < DEGRADE_CRITICAL)
+  #endif
   audio_process();
 #endif
 
+#if FEATURE_VISION_DETECT
+  #if FEATURE_POWER_POLICY
+  if (pf->vision)
+  #endif
+  #if FEATURE_DIAGNOSTICS
+  if (dl < DEGRADE_CRITICAL)
+  #endif
+  vision_process();
+#endif
+
+  // Lightweight features: shed only at EMERGENCY.
 #if FEATURE_TOUCH
   #if FEATURE_POWER_POLICY
   if (pf->touch)
+  #endif
+  #if FEATURE_DIAGNOSTICS
+  if (dl < DEGRADE_EMERGENCY)
   #endif
   touch_process();
 #endif
@@ -1079,6 +1122,9 @@ void loop() {
   #if FEATURE_POWER_POLICY
   if (pf->ir_rmt)
   #endif
+  #if FEATURE_DIAGNOSTICS
+  if (dl < DEGRADE_EMERGENCY)
+  #endif
   ir_process();
 #endif
 
@@ -1086,14 +1132,10 @@ void loop() {
   #if FEATURE_POWER_POLICY
   if (pf->temp_tamper)
   #endif
-  envsens_process();
-#endif
-
-#if FEATURE_VISION_DETECT
-  #if FEATURE_POWER_POLICY
-  if (pf->vision)
+  #if FEATURE_DIAGNOSTICS
+  if (dl < DEGRADE_EMERGENCY)
   #endif
-  vision_process();
+  envsens_process();
 #endif
 
 #if FEATURE_POWER_MONITOR
@@ -1136,6 +1178,10 @@ void loop() {
   } else if (policy_should_deep_sleep()) {
     policy_ack_deep_sleep();
   }
+#endif
+
+#if FEATURE_DIAGNOSTICS
+  diag_process();
 #endif
 
   // Age out stale sensing events (TTL decay across all sources). One
@@ -1474,6 +1520,9 @@ static void handle_serial_commands() {
 #if FEATURE_POWER_POLICY
       Serial.println("  p - Power policy status");
 #endif
+#if FEATURE_DIAGNOSTICS
+      Serial.println("  d - Diagnostics (heap, SD, self-test)");
+#endif
 #if FEATURE_HA_MQTT
       Serial.println("  m - MQTT status");
 #endif
@@ -1572,6 +1621,42 @@ static void handle_serial_commands() {
                       pol.features.mesh);
       } else {
         Serial.println("  Not initialized");
+      }
+      Serial.println();
+      break;
+    }
+#endif
+
+#if FEATURE_DIAGNOSTICS
+    case 'd':
+    case 'D': {
+      diag_snapshot_t snap;
+      Serial.println("\n=== Diagnostics ===");
+      if (diag_get_snapshot(&snap)) {
+        Serial.printf("  Heap: %u free, %u min, %u largest block\n",
+                      snap.heap.free_heap, snap.heap.min_heap,
+                      snap.heap.largest_block);
+        Serial.printf("  PSRAM: %u / %u free\n",
+                      snap.heap.psram_free, snap.heap.psram_total);
+        Serial.printf("  Fragmentation: %u%%\n", snap.heap.fragmentation_pct);
+        Serial.printf("  Stack HWM: %u words\n", snap.heap.stack_hwm_main);
+        const char* dlabel = "none";
+        switch (snap.heap.degrade_level) {
+          case DEGRADE_WARN:      dlabel = "warn"; break;
+          case DEGRADE_CRITICAL:  dlabel = "critical"; break;
+          case DEGRADE_EMERGENCY: dlabel = "emergency"; break;
+        }
+        Serial.printf("  Degradation: %s\n", dlabel);
+        Serial.printf("  SD: %s (%u%% used, %u writes, %u errors)\n",
+                      snap.sd.mounted ? "mounted" : "not mounted",
+                      snap.sd.usage_pct, snap.sd.total_writes,
+                      snap.sd.write_errors);
+        if (snap.selftest.has_run) {
+          Serial.printf("  Self-test: %u/%u passed (%u%% health)\n",
+                        snap.selftest.passed_count, snap.selftest.total_count,
+                        snap.selftest.health_score);
+        }
+        Serial.printf("  Reset reason: %u\n", snap.reset_reason);
       }
       Serial.println();
       break;
