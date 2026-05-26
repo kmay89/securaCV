@@ -9,6 +9,7 @@
 
 #include <Arduino.h>
 #include <string.h>
+#include <Preferences.h>
 #include <esp_system.h>
 #include <esp_heap_caps.h>
 
@@ -18,6 +19,10 @@
 
 #if FEATURE_SD_STORAGE
 #include <SD.h>
+#endif
+
+#if FEATURE_WIFI_AP
+#include <WiFi.h>
 #endif
 
 namespace diag {
