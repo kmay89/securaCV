@@ -51,6 +51,7 @@ typedef struct {
 } scv_debug_beacon_t;
 
 #define SCV_RSSI_HISTORY_LEN 8
+#define SCV_GRAPH_LEN        64
 
 typedef struct {
     char     name[32];
@@ -60,13 +61,18 @@ typedef struct {
     scv_debug_beacon_t debug;
     uint32_t last_seen_ms;
 
-    // Signal analysis
+    // Signal analysis (8-sample window for averaging)
     int8_t   rssi_history[SCV_RSSI_HISTORY_LEN];
     uint8_t  rssi_history_idx;
     uint8_t  rssi_sample_count;
     int16_t  rssi_avg;          // x10 for one decimal place
     int8_t   rssi_min;
     int8_t   rssi_max;
+
+    // Graph buffer (64-sample ring for visual display)
+    int8_t   rssi_graph[SCV_GRAPH_LEN];
+    uint8_t  rssi_graph_idx;
+    uint8_t  rssi_graph_count;
 } scv_device_t;
 
 // ============================================================================
@@ -201,6 +207,12 @@ static inline void scv_rssi_push(scv_device_t* dev, int8_t rssi) {
     dev->rssi_history_idx = (dev->rssi_history_idx + 1) % SCV_RSSI_HISTORY_LEN;
     if(dev->rssi_sample_count < SCV_RSSI_HISTORY_LEN) {
         dev->rssi_sample_count++;
+    }
+
+    dev->rssi_graph[dev->rssi_graph_idx] = rssi;
+    dev->rssi_graph_idx = (dev->rssi_graph_idx + 1) % SCV_GRAPH_LEN;
+    if(dev->rssi_graph_count < SCV_GRAPH_LEN) {
+        dev->rssi_graph_count++;
     }
 
     if(dev->rssi_sample_count == 1) {
