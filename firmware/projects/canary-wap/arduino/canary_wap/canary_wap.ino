@@ -2304,8 +2304,8 @@ static esp_err_t handle_ui(httpd_req_t* req) {
 static esp_err_t handle_legacy_ui(httpd_req_t* req) {
   // The original tabbed administrator dashboard. Reachable at /admin so
   // the canary-wap fleet keeps a familiar surface for power-user tasks
-  // (camera peek, witness export, fine-grained tabs) while / is reserved
-  // for the headline sensing experience.
+  // (camera peek, witness export, fine-grained tabs), and at /settings
+  // for a direct route to device settings from the headline dashboard.
   g_health.http_requests++;
   httpd_resp_set_type(req, "text/html");
   return httpd_resp_send(req, CANARY_UI_HTML, HTTPD_RESP_USE_STRLEN);
@@ -4654,6 +4654,14 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
   }
 
   // Gate is open — serve receipt and close gate
+  char session_hex[csi_integration::SESSION_COOKIE_HEX_LEN + 1];
+  if (csi_integration::session_issue(session_hex, sizeof(session_hex))) {
+    char cookie_hdr[160];
+    snprintf(cookie_hdr, sizeof(cookie_hdr),
+      "cv_session=%s; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400",
+      session_hex);
+    httpd_resp_set_hdr(req, "Set-Cookie", cookie_hdr);
+  }
   esp_err_t result = send_provisioning_receipt(req);
   __atomic_store_n(&g_provisioning_gate_opened_at, 0, __ATOMIC_RELAXED);
   Serial.println("[AUTH] Provisioning receipt served. Gate closed.");
@@ -4855,11 +4863,14 @@ static esp_err_t handle_system_metrics_auth(httpd_req_t* req) {
 // Register all route handlers on a given httpd server handle
 static void register_api_routes(httpd_handle_t server) {
   // UI — no auth required. / serves the headline Sensing dashboard;
-  // /admin keeps the legacy tabbed dashboard reachable for power-user tasks.
+  // /admin keeps the legacy tabbed dashboard reachable for power-user tasks,
+  // and /settings deep-links to its Settings tab.
   httpd_uri_t ui = { .uri = "/", .method = HTTP_GET, .handler = handle_ui };
   httpd_register_uri_handler(server, &ui);
   httpd_uri_t legacy_ui = { .uri = "/admin", .method = HTTP_GET, .handler = handle_legacy_ui };
   httpd_register_uri_handler(server, &legacy_ui);
+  httpd_uri_t settings_ui = { .uri = "/settings", .method = HTTP_GET, .handler = handle_legacy_ui };
+  httpd_register_uri_handler(server, &settings_ui);
 
   // Device enrollment endpoints — unauthenticated by design (pubkey +
   // fingerprint are PUBLIC data). HA's config flow pulls /api/device/enroll
@@ -4956,7 +4967,7 @@ static void register_api_routes(httpd_handle_t server) {
 
 static void start_http_server() {
   // Calculate max URI handlers based on feature usage
-  const int base_handlers = 24;       // UI (/ + /admin), API (auth + public), WiFi provisioning, captive portal, /api/selftest
+  const int base_handlers = 25;       // UI (/ + /admin + /settings), API (auth + public), WiFi provisioning, captive portal, /api/selftest
   const int camera_handlers = 6;      // Camera peek endpoints
   const int mesh_handlers = 12;       // Mesh network endpoints
   const int bluetooth_handlers = 23;  // Bluetooth API endpoints
