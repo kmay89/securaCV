@@ -2067,7 +2067,8 @@ static esp_err_t handle_vision_config_set(httpd_req_t* req) {
   }
 
   if (obj["reset"].is<bool>() && obj["reset"].as<bool>()) {
-    cfg = (vision_config_t)VISION_CONFIG_DEFAULT;
+    vision_config_t defaults = VISION_CONFIG_DEFAULT;
+    cfg = defaults;
   } else {
     if (obj["jpeg_delta_pct"].is<int>())
       cfg.jpeg_delta_pct = constrain(obj["jpeg_delta_pct"].as<int>(), 1, 100);

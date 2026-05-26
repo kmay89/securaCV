@@ -3386,13 +3386,15 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     }
 
     let viDebounce = null;
+    let viPending = {};
     function viSlider(field, value, lblId, suffix) {
       const lbl = document.getElementById(lblId);
       if (lbl) lbl.textContent = value + suffix;
+      viPending[field] = parseInt(value, 10);
       clearTimeout(viDebounce);
       viDebounce = setTimeout(async () => {
-        const body = {};
-        body[field] = parseInt(value, 10);
+        const body = Object.assign({}, viPending);
+        viPending = {};
         const r = await api('/api/vision/config', 'POST', body);
         if (r && r.ok) viApplyConfig(r);
       }, 300);
