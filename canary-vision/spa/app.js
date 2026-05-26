@@ -1153,10 +1153,16 @@ function renderDeviceView(deviceId) {
   ]);
   content.appendChild(sections);
 
-  // Logs link
+  // Logs & Witness links
   content.appendChild(el('div', { className: 'card cursor-pointer' }, [
     el('a', { href: '#/device/' + deviceId + '/logs', className: 'card-link' }, [
       el('span', { textContent: 'View Logs' }),
+      el('span', { className: 'arrow', textContent: '\u203A' }),
+    ]),
+  ]));
+  content.appendChild(el('div', { className: 'card cursor-pointer' }, [
+    el('a', { href: '#/device/' + deviceId + '/witness', className: 'card-link' }, [
+      el('span', { textContent: 'Witness Chain' }),
       el('span', { className: 'arrow', textContent: '\u203A' }),
     ]),
   ]));
@@ -1380,6 +1386,127 @@ function renderLogsView(deviceId) {
     .catch(function (err) {
       while (logContainer.firstChild) logContainer.removeChild(logContainer.firstChild);
       logContainer.appendChild(el('div', { className: 'alert alert-error', textContent: err.message }));
+    });
+}
+
+function renderWitnessView(deviceId) {
+  var app = clearApp();
+  var device = CanaryStorage.getDevice(deviceId);
+  if (!device) { renderNotFound(); return; }
+
+  app.appendChild(renderHeader('Witness Chain', true, false));
+
+  var content = el('div', { className: 'content' });
+  var alertArea = el('div', { id: 'witness-alert' });
+  content.appendChild(alertArea);
+
+  // Action buttons
+  var actions = el('div', { className: 'card' }, [
+    el('div', { className: 'card-title mb-8', textContent: 'Actions' }),
+  ]);
+
+  actions.appendChild(el('button', {
+    className: 'btn btn-primary btn-block',
+    textContent: 'Verify Chain Integrity',
+    onClick: function () {
+      while (alertArea.firstChild) alertArea.removeChild(alertArea.firstChild);
+      alertArea.appendChild(el('div', { className: 'alert', textContent: 'Verifying...' }));
+      CanaryAPI.request(device.base_url, '/api/v1/witness/verify', { method: 'POST' })
+        .then(function (res) {
+          while (alertArea.firstChild) alertArea.removeChild(alertArea.firstChild);
+          var cls = res.integrity === 'ok' ? 'alert-success' : 'alert-error';
+          var msg = res.valid + '/' + res.total + ' records valid — ' + res.integrity;
+          alertArea.appendChild(el('div', { className: 'alert ' + cls, textContent: msg }));
+        })
+        .catch(function (err) {
+          while (alertArea.firstChild) alertArea.removeChild(alertArea.firstChild);
+          alertArea.appendChild(el('div', { className: 'alert alert-error', textContent: err.message }));
+        });
+    },
+  }));
+
+  actions.appendChild(el('button', {
+    className: 'btn btn-block',
+    textContent: 'Export Chain (JSON)',
+    style: 'margin-top: 0.5rem',
+    onClick: function () {
+      CanaryAPI.request(device.base_url, '/api/v1/witness/export')
+        .then(function (data) {
+          var blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+          var url = URL.createObjectURL(blob);
+          var a = document.createElement('a');
+          a.href = url;
+          a.download = 'witness-chain-' + device.device_id + '.json';
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+        })
+        .catch(function (err) {
+          while (alertArea.firstChild) alertArea.removeChild(alertArea.firstChild);
+          alertArea.appendChild(el('div', { className: 'alert alert-error', textContent: err.message }));
+        });
+    },
+  }));
+
+  actions.appendChild(el('button', {
+    className: 'btn btn-block',
+    textContent: 'Purge All Records',
+    style: 'margin-top: 0.5rem; color: var(--color-error)',
+    onClick: function () {
+      if (!confirm('Permanently delete all witness records? This cannot be undone.')) return;
+      CanaryAPI.request(device.base_url, '/api/v1/witness?confirm=true', { method: 'DELETE' })
+        .then(function (res) {
+          while (alertArea.firstChild) alertArea.removeChild(alertArea.firstChild);
+          alertArea.appendChild(el('div', {
+            className: 'alert alert-success',
+            textContent: res.purged + ' records purged.',
+          }));
+          while (recordList.firstChild) recordList.removeChild(recordList.firstChild);
+          recordList.appendChild(el('div', { className: 'empty-state', textContent: 'No records.' }));
+        })
+        .catch(function (err) {
+          while (alertArea.firstChild) alertArea.removeChild(alertArea.firstChild);
+          alertArea.appendChild(el('div', { className: 'alert alert-error', textContent: err.message }));
+        });
+    },
+  }));
+
+  content.appendChild(actions);
+
+  // Record list
+  var recordList = el('div', { id: 'witness-records' });
+  recordList.appendChild(el('div', { className: 'loading' }, [
+    el('div', { className: 'spinner' }),
+    'Loading records...',
+  ]));
+  content.appendChild(recordList);
+  app.appendChild(content);
+
+  CanaryAPI.request(device.base_url, '/api/v1/witness?last=50')
+    .then(function (data) {
+      while (recordList.firstChild) recordList.removeChild(recordList.firstChild);
+      var records = data.records || [];
+      if (records.length === 0) {
+        recordList.appendChild(el('div', { className: 'empty-state', textContent: 'No witness records.' }));
+        return;
+      }
+      records.reverse().forEach(function (r) {
+        var card = el('div', { className: 'card' }, [
+          el('div', { className: 'card-title', textContent: '#' + r.seq + ' ' + r.event_type }),
+          el('div', { className: 'card-subtitle', textContent: r.zone + ' — ' + r.timestamp }),
+          el('div', {
+            className: 'token-display',
+            style: 'font-size: 0.7rem; word-break: break-all; margin-top: 0.25rem',
+            textContent: r.hash,
+          }),
+        ]);
+        recordList.appendChild(card);
+      });
+    })
+    .catch(function (err) {
+      while (recordList.firstChild) recordList.removeChild(recordList.firstChild);
+      recordList.appendChild(el('div', { className: 'alert alert-error', textContent: err.message }));
     });
 }
 
@@ -2258,6 +2385,7 @@ Router.register('/canaries/add', renderAddCanaryView);
 Router.register('/device/:id', renderDeviceView);
 Router.register('/device/:id/config/:section', renderConfigView);
 Router.register('/device/:id/logs', renderLogsView);
+Router.register('/device/:id/witness', renderWitnessView);
 Router.register('/events', renderEventsView);
 Router.register('/events/:id', renderEventDetailView);
 Router.register('/settings', renderSettingsView);

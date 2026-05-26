@@ -196,7 +196,8 @@ void witness_persist_chain_state() {
 // RECORD CREATION
 // ════════════════════════════════════════════════════════════════════════════
 
-bool witness_create_record(const uint8_t* payload, size_t len, RecordType type, WitnessRecord* out) {
+bool witness_create_record_gps(const uint8_t* payload, size_t len, RecordType type,
+                               const GpsTimeAttestation* gps, WitnessRecord* out) {
   // Hash payload
   uint8_t payload_hash[32];
   sha256_domain("securacv:fw:payload:v1", payload, len, payload_hash);
@@ -206,6 +207,15 @@ bool witness_create_record(const uint8_t* payload, size_t len, RecordType type, 
   update_chain(payload_hash, tb, out);
   out->type = type;
   out->payload_len = len;
+
+  // GPS time attestation
+  if (gps && gps->available && gps->fix_age_ms < 30000) {
+    out->time_source = TIME_SRC_GPS_UTC;
+    out->gps_time = *gps;
+  } else {
+    out->time_source = TIME_SRC_DEVICE;
+    memset(&out->gps_time, 0, sizeof(out->gps_time));
+  }
 
   // Sign chain hash
   crypto_sign(g_device.privkey, g_device.pubkey, out->chain_hash, 32, out->signature);
@@ -231,6 +241,10 @@ bool witness_create_record(const uint8_t* payload, size_t len, RecordType type, 
   #endif
 
   return true;
+}
+
+bool witness_create_record(const uint8_t* payload, size_t len, RecordType type, WitnessRecord* out) {
+  return witness_create_record_gps(payload, len, type, NULL, out);
 }
 
 bool witness_verify_record(const WitnessRecord* rec) {

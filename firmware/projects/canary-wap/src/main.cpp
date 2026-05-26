@@ -479,14 +479,31 @@ static void app_process_records() {
     if (now - g_last_record_ms >= CONFIG_RECORD_INTERVAL_MS) {
         g_last_record_ms = now;
 
-        // Build witness event payload
-        // (In production, this would include GPS data, state, etc.)
         witness_record_t record;
-        uint8_t payload[64];
+        uint8_t payload[128];
         size_t payload_len = 0;
 
-        // Add timestamp and state to payload
-        // ... payload building code ...
+        // Payload byte 0: time source flag
+        #if FEATURE_GNSS
+        bool gps_time_valid = g_gnss_parser.time.valid &&
+            (now - g_gnss_parser.time.last_update_ms) < 30000;
+        payload[payload_len++] = gps_time_valid ? 0x01 : 0x00;
+        if (gps_time_valid) {
+            // Bytes 1-7: GPS UTC (year_hi, year_lo, mon, day, hr, min, sec)
+            payload[payload_len++] = (uint8_t)(g_gnss_parser.time.year >> 8);
+            payload[payload_len++] = (uint8_t)(g_gnss_parser.time.year & 0xFF);
+            payload[payload_len++] = g_gnss_parser.time.month;
+            payload[payload_len++] = g_gnss_parser.time.day;
+            payload[payload_len++] = g_gnss_parser.time.hour;
+            payload[payload_len++] = g_gnss_parser.time.minute;
+            payload[payload_len++] = g_gnss_parser.time.second;
+            // Byte 8: fix quality, Byte 9: satellites
+            payload[payload_len++] = (uint8_t)g_gnss_parser.fix.quality;
+            payload[payload_len++] = g_gnss_parser.fix.satellites;
+        }
+        #else
+        payload[payload_len++] = 0x00;
+        #endif
 
         if (witness_chain_create_record(&g_witness_chain, RECORD_TYPE_WITNESS_EVENT,
                                         payload, payload_len, &record) == RESULT_OK) {

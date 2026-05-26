@@ -35,6 +35,25 @@ enum RecordType : uint8_t {
   RECORD_POWER_SHUTDOWN   = 4,
 };
 
+enum TimeSource : uint8_t {
+  TIME_SRC_DEVICE   = 0,
+  TIME_SRC_GPS_UTC  = 1,
+  TIME_SRC_RTC_SYNC = 2,
+};
+
+struct GpsTimeAttestation {
+  bool        available;
+  uint16_t    year;
+  uint8_t     month;
+  uint8_t     day;
+  uint8_t     hour;
+  uint8_t     minute;
+  uint8_t     second;
+  uint8_t     fix_quality;
+  uint8_t     satellites;
+  uint32_t    fix_age_ms;
+};
+
 struct WitnessRecord {
   uint32_t    seq;
   uint32_t    time_bucket;
@@ -45,6 +64,8 @@ struct WitnessRecord {
   uint8_t     signature[64];
   size_t      payload_len;
   bool        verified;
+  TimeSource  time_source;
+  GpsTimeAttestation gps_time;
 };
 
 struct DeviceIdentity {
@@ -141,6 +162,10 @@ bool witness_provision_device();
 
 // Create a witness record with given payload
 bool witness_create_record(const uint8_t* payload, size_t len, RecordType type, WitnessRecord* out);
+
+// Create a witness record with GPS time attestation (pass NULL for no GPS)
+bool witness_create_record_gps(const uint8_t* payload, size_t len, RecordType type,
+                               const GpsTimeAttestation* gps, WitnessRecord* out);
 
 // Verify record signature
 bool witness_verify_record(const WitnessRecord* rec);
