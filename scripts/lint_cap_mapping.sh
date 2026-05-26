@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -euo pipefail
 # securaCV CAP-mapping conformance lint
 #
 # Verifies that every Beacon template ID declared in

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -euo pipefail
 # SecuraCV Easy Install
 # Installs Frigate + Mosquitto + SecuraCV on Home Assistant OS in one command.
 #

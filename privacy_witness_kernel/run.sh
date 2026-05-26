@@ -1,4 +1,5 @@
 #!/usr/bin/with-contenv bashio
+set -euo pipefail
 # Privacy Witness Kernel - Home Assistant Add-on Entry Script
 # Supports two modes:
 # - standalone: Process RTSP streams directly

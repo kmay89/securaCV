@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # ═══════════════════════════════════════════════════════════════════════════
 # SecuraCV MQTT End-to-End Test
 #

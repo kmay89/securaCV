@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -euo pipefail
 #
 # Guards against drift between the canonical CSI library at
 # firmware/common/csi/src/ and the committed copy that lives next to the

@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 #
 # SecuraCV Canary — OTA Auto-Deploy Script (Linux/macOS)
 #

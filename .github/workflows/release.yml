@@ -84,6 +84,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: HACS Validation
-        uses: hacs/action@main
+        uses: hacs/action@v2
         with:
           category: integration

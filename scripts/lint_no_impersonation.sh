@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -euo pipefail
 # securaCV non-impersonation lint
 #
 # Enforces the non-impersonation contract in
