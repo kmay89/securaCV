@@ -41,6 +41,12 @@ const DEFAULT_CONFIG = {
     zones: [
       { name: 'front', points: [[0, 0], [100, 0], [100, 100], [0, 100]] },
     ],
+    suppression: {
+      enabled: true,
+      cooldown_seconds: 300,
+      session_timeout_seconds: 60,
+      motion_cooldown_seconds: 600,
+    },
   },
   integrations: {
     mqtt_enabled: false,
@@ -142,6 +148,85 @@ function createDeviceState(overrides = {}) {
 
   // GPS state (optional — null when no GPS module present)
   let gpsState = null;
+
+  // Event suppression engine
+  const activeSessions = new Map();
+  let sessionIdCounter = 0;
+
+  function getSuppressionConfig() {
+    return config.detection.suppression || {};
+  }
+
+  function getCooldownForType(eventType) {
+    const supp = getSuppressionConfig();
+    if (eventType === 'motion_detected') {
+      return (supp.motion_cooldown_seconds ?? 600) * 1000;
+    }
+    return (supp.cooldown_seconds ?? 300) * 1000;
+  }
+
+  function getSessionTimeout() {
+    const supp = getSuppressionConfig();
+    return (supp.session_timeout_seconds ?? 60) * 1000;
+  }
+
+  function sessionKey(eventType, zone) {
+    return eventType + ':' + zone;
+  }
+
+  function tryEmitEvent(eventType, zone) {
+    const supp = getSuppressionConfig();
+    if (supp.enabled === false) {
+      return addWitnessRecord(eventType, zone);
+    }
+
+    const now = Date.now();
+    const key = sessionKey(eventType, zone);
+    const existing = activeSessions.get(key);
+
+    if (existing) {
+      const sessionAge = now - existing.lastSeen;
+      const cooldown = getCooldownForType(eventType);
+
+      if (sessionAge < getSessionTimeout()) {
+        existing.lastSeen = now;
+        existing.suppressedCount++;
+        addLog('DEBUG', `Suppressed ${eventType} in ${zone} (session ${existing.sessionId}, ${existing.suppressedCount} suppressed)`);
+        return null;
+      }
+
+      if (sessionAge < cooldown) {
+        existing.suppressedCount++;
+        addLog('DEBUG', `Cooldown: ${eventType} in ${zone} (${Math.round((cooldown - sessionAge) / 1000)}s remaining)`);
+        return null;
+      }
+
+      // Session expired + cooldown elapsed — close old session, start new one
+      const closedSession = existing;
+      activeSessions.delete(key);
+      if (closedSession.suppressedCount > 0) {
+        addLog('INFO', `Session ${closedSession.sessionId} ended: ${closedSession.suppressedCount} events suppressed`);
+      }
+    }
+
+    // Start new activity session
+    sessionIdCounter++;
+    const session = {
+      sessionId: 'sess_' + sessionIdCounter,
+      eventType,
+      zone,
+      startedAt: now,
+      lastSeen: now,
+      suppressedCount: 0,
+    };
+    activeSessions.set(key, session);
+
+    const record = addWitnessRecord(eventType, zone);
+    if (record) {
+      record.activity_session = session.sessionId;
+    }
+    return record;
+  }
 
   function generateMockEdgeThumbnail(eventType, seq) {
     const W = 256, H = 192;
@@ -269,17 +354,22 @@ function createDeviceState(overrides = {}) {
   addLog('INFO', 'Peer discovered: canary-b1c2 (Garage)');
   addLog('INFO', 'Peer discovered: canary-d4e5 (Back Yard)');
 
-  // Seed witness records
-  addWitnessRecord('person_detected', 'front');
-  addWitnessRecord('motion_detected', 'front');
-  addWitnessRecord('person_detected', 'front');
-  addWitnessRecord('vehicle_detected', 'front');
-  addWitnessRecord('motion_detected', 'front');
-  addWitnessRecord('person_detected', 'front');
-  addWitnessRecord('motion_detected', 'front');
-  addWitnessRecord('animal_detected', 'front');
-  addWitnessRecord('person_detected', 'front');
-  addWitnessRecord('motion_detected', 'front');
+  // Seed witness records with activity sessions
+  const seedRecord = (type, zone, sessionId) => {
+    const r = addWitnessRecord(type, zone);
+    if (r && sessionId) r.activity_session = sessionId;
+    return r;
+  };
+  seedRecord('person_detected', 'front', 'sess_demo_1');
+  seedRecord('motion_detected', 'front', 'sess_demo_1');
+  seedRecord('person_detected', 'front', 'sess_demo_1');
+  seedRecord('vehicle_detected', 'front', 'sess_demo_2');
+  seedRecord('motion_detected', 'front', 'sess_demo_2');
+  seedRecord('person_detected', 'front', 'sess_demo_3');
+  seedRecord('motion_detected', 'front', 'sess_demo_3');
+  seedRecord('animal_detected', 'front', 'sess_demo_4');
+  seedRecord('person_detected', 'front', 'sess_demo_5');
+  seedRecord('motion_detected', 'front', 'sess_demo_5');
 
   return {
     device,
@@ -296,6 +386,8 @@ function createDeviceState(overrides = {}) {
     peers: structuredClone(overrides.peers || DEFAULT_PEERS),
     addLog,
     addWitnessRecord,
+    tryEmitEvent,
+    getActiveSessions() { return Array.from(activeSessions.values()); },
     setOnWitnessRecord(cb) { onWitnessRecord = cb; },
     setGpsState(state) { gpsState = state; },
     getGpsState() { return gpsState; },

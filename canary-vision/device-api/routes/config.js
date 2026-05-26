@@ -31,6 +31,34 @@ function validateConfigValues(section, data) {
         errors.push('motion_sensitivity must be an integer between 1 and 10');
       }
     }
+    if (detection && detection.suppression !== undefined) {
+      const supp = detection.suppression;
+      if (typeof supp !== 'object' || supp === null) {
+        errors.push('suppression must be an object');
+      } else {
+        if (supp.enabled !== undefined && typeof supp.enabled !== 'boolean') {
+          errors.push('suppression.enabled must be a boolean');
+        }
+        if (supp.cooldown_seconds !== undefined) {
+          const c = supp.cooldown_seconds;
+          if (!Number.isInteger(c) || c < 0 || c > 3600) {
+            errors.push('suppression.cooldown_seconds must be an integer between 0 and 3600');
+          }
+        }
+        if (supp.session_timeout_seconds !== undefined) {
+          const t = supp.session_timeout_seconds;
+          if (!Number.isInteger(t) || t < 0 || t > 600) {
+            errors.push('suppression.session_timeout_seconds must be an integer between 0 and 600');
+          }
+        }
+        if (supp.motion_cooldown_seconds !== undefined) {
+          const m = supp.motion_cooldown_seconds;
+          if (!Number.isInteger(m) || m < 0 || m > 3600) {
+            errors.push('suppression.motion_cooldown_seconds must be an integer between 0 and 3600');
+          }
+        }
+      }
+    }
   }
 
   if (section === 'network' || (!section && data.network)) {

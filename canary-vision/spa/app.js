@@ -596,41 +596,67 @@ function clusterEvents(records) {
   var sorted = records.slice().sort(function (a, b) { return a._ts - b._ts; });
   var WINDOW_MS = 3 * 60 * 1000;
   var clusters = [];
+  var sessionMap = {};
 
   for (var i = 0; i < sorted.length; i++) {
     var rec = sorted[i];
     var merged = false;
 
-    for (var c = clusters.length - 1; c >= 0; c--) {
-      var cluster = clusters[c];
-      if (cluster.device_id === rec.device_id &&
-          cluster.zone === rec.zone &&
-          (rec._ts - cluster.lastTime) < WINDOW_MS) {
-        cluster.events.push(rec);
-        cluster.lastTime = rec._ts;
-        cluster.count = cluster.events.length;
-        var meta = EVENT_TYPE_META[rec.event_type];
-        var curMeta = EVENT_TYPE_META[cluster.primaryType];
-        if (meta && curMeta && meta.priority > curMeta.priority) {
-          cluster.primaryType = rec.event_type;
+    // Prefer activity_session grouping when the device provides it
+    if (rec.activity_session) {
+      var sessKey = rec.device_id + ':' + rec.activity_session;
+      if (sessionMap[sessKey] !== undefined) {
+        var sessCluster = clusters[sessionMap[sessKey]];
+        sessCluster.events.push(rec);
+        sessCluster.lastTime = rec._ts;
+        sessCluster.count = sessCluster.events.length;
+        var sm = EVENT_TYPE_META[rec.event_type];
+        var scm = EVENT_TYPE_META[sessCluster.primaryType];
+        if (sm && scm && sm.priority > scm.priority) {
+          sessCluster.primaryType = rec.event_type;
         }
         merged = true;
-        break;
+      }
+    }
+
+    // Fall back to time-window clustering (only for records without a session)
+    if (!merged && !rec.activity_session) {
+      for (var c = clusters.length - 1; c >= 0; c--) {
+        var cluster = clusters[c];
+        if (cluster.device_id === rec.device_id &&
+            cluster.zone === rec.zone &&
+            (rec._ts - cluster.lastTime) < WINDOW_MS) {
+          cluster.events.push(rec);
+          cluster.lastTime = rec._ts;
+          cluster.count = cluster.events.length;
+          var meta = EVENT_TYPE_META[rec.event_type];
+          var curMeta = EVENT_TYPE_META[cluster.primaryType];
+          if (meta && curMeta && meta.priority > curMeta.priority) {
+            cluster.primaryType = rec.event_type;
+          }
+          merged = true;
+          break;
+        }
       }
     }
 
     if (!merged) {
-      clusters.push({
+      var newCluster = {
         id: rec.hash || (rec.device_id + '-' + rec.seq),
         device_id: rec.device_id,
         device_name: rec.device_name,
         zone: rec.zone,
         primaryType: rec.event_type,
+        activitySession: rec.activity_session || null,
         events: [rec],
         firstTime: rec._ts,
         lastTime: rec._ts,
         count: 1,
-      });
+      };
+      clusters.push(newCluster);
+      if (rec.activity_session) {
+        sessionMap[rec.device_id + ':' + rec.activity_session] = clusters.length - 1;
+      }
     }
   }
 
