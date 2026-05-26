@@ -475,12 +475,13 @@ function setupPullToRefresh(scrollContainer, contentWrap, indicator, onRefresh) 
 
     // Rubber-band: diminishing returns past threshold
     var pull = Math.min(MAX_PULL, deltaY * 0.5);
-    if (pull > 10) {
+    if (pulling || pull > 10) {
       pulling = true;
+      var displayPull = Math.max(0, pull);
       contentWrap.className = 'ptr-content pulling';
-      contentWrap.style.transform = 'translateY(' + pull + 'px)';
-      indicator.style.opacity = Math.min(1, pull / THRESHOLD);
-      if (pull >= THRESHOLD) {
+      contentWrap.style.transform = 'translateY(' + displayPull + 'px)';
+      indicator.style.opacity = Math.min(1, displayPull / THRESHOLD);
+      if (displayPull >= THRESHOLD) {
         indicator.className = 'ptr-indicator armed';
       } else {
         indicator.className = 'ptr-indicator';
@@ -520,11 +521,13 @@ function setupPullToRefresh(scrollContainer, contentWrap, indicator, onRefresh) 
   scrollContainer.addEventListener('touchstart', onTouchStart, { passive: true });
   scrollContainer.addEventListener('touchmove', onTouchMove, { passive: false });
   scrollContainer.addEventListener('touchend', onTouchEnd, { passive: true });
+  scrollContainer.addEventListener('touchcancel', reset, { passive: true });
 
   return function teardown() {
     scrollContainer.removeEventListener('touchstart', onTouchStart);
     scrollContainer.removeEventListener('touchmove', onTouchMove);
     scrollContainer.removeEventListener('touchend', onTouchEnd);
+    scrollContainer.removeEventListener('touchcancel', reset);
   };
 }
 
@@ -1413,6 +1416,8 @@ function renderEventsView() {
   }
   EventsState.expandedClusters = {};
   EventsState.activeFilter = 'all';
+  var sessionId = Math.random();
+  EventsState.currentSessionId = sessionId;
 
   var devices = CanaryStorage.getDevices();
 
@@ -1452,6 +1457,7 @@ function renderEventsView() {
   }
 
   loadAndRender().then(function () {
+    if (EventsState.currentSessionId !== sessionId) return;
     if ((window.location.hash || '') !== '#/events') return;
 
     // Set up pull-to-refresh
@@ -1490,6 +1496,10 @@ function renderEventsView() {
 }
 
 function renderEventsContent(container, data) {
+  var scrollContainer = container.parentNode;
+  var savedScroll = scrollContainer ? scrollContainer.scrollTop : 0;
+  EventsState.chainIntegrityCache = {};
+
   while (container.firstChild) container.removeChild(container.firstChild);
 
   var results = data.results;
@@ -1506,7 +1516,7 @@ function renderEventsContent(container, data) {
   }
 
   // Summary card
-  container.appendChild(renderEventsSummary(allRecords, totalDevices, onlineDevices, offlineNames));
+  container.appendChild(renderEventsSummary(allRecords, totalDevices, onlineDevices, offlineNames, container));
 
   // Density bar (only show if there are records today)
   var todayCounts = countTodayByType(allRecords);
@@ -1519,9 +1529,13 @@ function renderEventsContent(container, data) {
 
   // Event list
   renderEventList(container);
+
+  if (scrollContainer) {
+    scrollContainer.scrollTop = savedScroll;
+  }
 }
 
-function renderEventsSummary(allRecords, totalDevices, onlineDevices, offlineNames) {
+function renderEventsSummary(allRecords, totalDevices, onlineDevices, offlineNames, contentContainer) {
   var todayCounts = countTodayByType(allRecords);
   var card = el('div', { className: 'card events-summary' });
 
@@ -1540,8 +1554,7 @@ function renderEventsSummary(allRecords, totalDevices, onlineDevices, offlineNam
         EventsState.allRecords = freshData.allRecords;
         EventsState.clusters = clusterEvents(freshData.allRecords);
         EventsState.filteredClusters = applyEventsFilter(EventsState.clusters, EventsState.activeFilter);
-        var content = refreshBtn.closest('.content') || refreshBtn.parentNode.parentNode.parentNode;
-        renderEventsContent(content, freshData);
+        renderEventsContent(contentContainer, freshData);
       }).catch(function () {
         refreshBtn.className = 'refresh-btn';
       });
@@ -1826,20 +1839,25 @@ function renderEventCard(cluster, index) {
     el('span', { className: 'event-detail-value', textContent: lastEvt.hash ? lastEvt.hash.substring(0, 16) + '…' : '—' }),
   ]));
 
-  // Chain linkage — verify against the full per-device stream, not just this cluster,
-  // since witness prev_hash links to the immediately preceding record in the device chain
-  // regardless of zone or time window.
-  var deviceRecords = EventsState.allRecords.filter(function (r) {
-    return r.device_id === cluster.device_id;
-  }).sort(function (a, b) { return a.seq - b.seq; });
+  // Chain linkage — cached per device since it's the same result for every cluster on that device
+  if (!EventsState.chainIntegrityCache) {
+    EventsState.chainIntegrityCache = {};
+  }
+  var chainValid = EventsState.chainIntegrityCache[cluster.device_id];
+  if (chainValid === undefined) {
+    var deviceRecords = EventsState.allRecords.filter(function (r) {
+      return r.device_id === cluster.device_id;
+    }).sort(function (a, b) { return a.seq - b.seq; });
 
-  var chainValid = true;
-  for (var v = 1; v < deviceRecords.length; v++) {
-    if (!deviceRecords[v].prev_hash || !deviceRecords[v - 1].hash ||
-        deviceRecords[v].prev_hash !== deviceRecords[v - 1].hash) {
-      chainValid = false;
-      break;
+    chainValid = true;
+    for (var v = 1; v < deviceRecords.length; v++) {
+      if (!deviceRecords[v].prev_hash || !deviceRecords[v - 1].hash ||
+          deviceRecords[v].prev_hash !== deviceRecords[v - 1].hash) {
+        chainValid = false;
+        break;
+      }
     }
+    EventsState.chainIntegrityCache[cluster.device_id] = chainValid;
   }
 
   chainSection.appendChild(el('div', { className: 'event-detail-row' }, [
