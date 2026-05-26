@@ -646,6 +646,7 @@ static esp_err_t handle_sensing(httpd_req_t* req);
 #if FEATURE_VISION_DETECT
 static esp_err_t handle_vision_config_get(httpd_req_t* req);
 static esp_err_t handle_vision_config_set(httpd_req_t* req);
+static esp_err_t handle_vision_config_save(httpd_req_t* req);
 #endif
 
 #if FEATURE_ACOUSTIC_EVENTS
@@ -781,6 +782,9 @@ void NetworkManager::registerHttpHandlers() {
 
   httpd_uri_t vision_cfg_s = { .uri = "/api/vision/config", .method = HTTP_POST, .handler = handle_vision_config_set };
   httpd_register_uri_handler(m_http_server, &vision_cfg_s);
+
+  httpd_uri_t vision_cfg_save = { .uri = "/api/vision/config/save", .method = HTTP_POST, .handler = handle_vision_config_save };
+  httpd_register_uri_handler(m_http_server, &vision_cfg_save);
   #endif
 
   #if FEATURE_ACOUSTIC_EVENTS
@@ -2011,12 +2015,29 @@ static void vision_config_to_json(JsonDocument& doc, const vision_config_t& cfg)
   doc["sustained_threshold"]    = cfg.sustained_threshold;
   doc["duty_cycle_ms"]          = cfg.duty_cycle_ms;
   doc["duty_active_pct"]        = cfg.duty_active_pct;
+  JsonArray mask = doc["zone_mask"].to<JsonArray>();
+  for (int i = 0; i < 10; i++) mask.add(cfg.zone_mask[i]);
   doc["running"]                = vision_is_running();
 #if FEATURE_VISION_TFLITE
   doc["tflite_available"]       = true;
 #else
   doc["tflite_available"]       = false;
 #endif
+  vision_config_t n;
+  bool match = vision_load_config_from_nvs(&n) &&
+      n.jpeg_delta_pct        == cfg.jpeg_delta_pct &&
+      n.block_change_pct      == cfg.block_change_pct &&
+      n.person_confidence_min == cfg.person_confidence_min &&
+      n.luminance_threshold   == cfg.luminance_threshold &&
+      n.process_interval_ms   == cfg.process_interval_ms &&
+      n.motion_hold_ms        == cfg.motion_hold_ms &&
+      n.layer3_cooldown_ms    == cfg.layer3_cooldown_ms &&
+      n.sustained_backoff_ms  == cfg.sustained_backoff_ms &&
+      n.sustained_threshold   == cfg.sustained_threshold &&
+      n.duty_cycle_ms         == cfg.duty_cycle_ms &&
+      n.duty_active_pct       == cfg.duty_active_pct;
+  for (int i = 0; match && i < 10; i++) match = n.zone_mask[i] == cfg.zone_mask[i];
+  doc["saved"] = match;
 }
 
 static esp_err_t handle_vision_config_get(httpd_req_t* req) {
@@ -2097,10 +2118,40 @@ static esp_err_t handle_vision_config_set(httpd_req_t* req) {
       cfg.duty_cycle_ms = constrain(obj["duty_cycle_ms"].as<int>(), 1000, 60000);
     if (obj["duty_active_pct"].is<int>())
       cfg.duty_active_pct = constrain(obj["duty_active_pct"].as<int>(), 10, 100);
+    if (obj["zone_mask"].is<JsonArray>()) {
+      JsonArray zm = obj["zone_mask"].as<JsonArray>();
+      for (int i = 0; i < 10 && i < (int)zm.size(); i++) {
+        if (zm[i].is<int>()) cfg.zone_mask[i] = (uint8_t)zm[i].as<int>();
+      }
+    }
   }
 
   vision_set_config(&cfg);
   log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "Vision config updated", nullptr);
+
+  JsonDocument doc;
+  vision_config_to_json(doc, cfg);
+
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+static esp_err_t handle_vision_config_save(httpd_req_t* req) {
+  if (!rate_limit_check(req, true)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  vision_config_t cfg;
+  if (!vision_get_config(&cfg)) {
+    return http_send_error(req, 503, "vision_not_initialized");
+  }
+
+  bool ok = vision_save_config_to_nvs();
+  if (!ok) {
+    return http_send_error(req, 500, "nvs_write_failed");
+  }
+  log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "Vision config saved to NVS", nullptr);
 
   JsonDocument doc;
   vision_config_to_json(doc, cfg);
