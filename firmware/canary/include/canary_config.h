@@ -96,6 +96,12 @@
 #ifndef FEATURE_SENSING_WITNESS
   #define FEATURE_SENSING_WITNESS  0   // Sign emergency/security sensing events into witness chain
 #endif
+#ifndef FEATURE_VISION_DETECT
+  #define FEATURE_VISION_DETECT    0   // 3-layer cascaded vision detection (motion + person)
+#endif
+#ifndef FEATURE_VISION_TFLITE
+  #define FEATURE_VISION_TFLITE    0   // Layer 3: TFLite person classifier (opt-in, ~250KB flash)
+#endif
 
 // ════════════════════════════════════════════════════════════════
 // DEBUG FLAG DEFAULTS

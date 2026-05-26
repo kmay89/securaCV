@@ -50,6 +50,9 @@
 #if FEATURE_TEMP_TAMPER
 #include "securacv_envsens.h"
 #endif
+#if FEATURE_VISION_DETECT
+#include "securacv_vision.h"
+#endif
 /* Lowpower HAL is always compiled when any sensing is on, so the
  * Sensing endpoint can surface the wake reason and capability bits. */
 #if FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS || FEATURE_TOUCH || FEATURE_IR_RMT || FEATURE_TEMP_TAMPER
@@ -1932,6 +1935,28 @@ static esp_err_t handle_sensing(httpd_req_t* req) {
   est["baseline_c"]    = (int)e_stats.baseline_c_rounded;
   est["last_c"]        = (int)e_stats.last_c_rounded;
 #endif // FEATURE_TEMP_TAMPER
+
+#if FEATURE_VISION_DETECT
+  JsonObject vis = doc["vision"].to<JsonObject>();
+  vis["enabled"]        = vision_is_running();
+  const char* vtypes[] = {"none", "motion", "motion_end", "person"};
+  vis["last_event"]     = vtypes[s.last_vision_event_type < 4 ? s.last_vision_event_type : 0];
+  vis["confidence"]     = s.last_vision_confidence;
+  vis["zone"]           = s.last_vision_zone;
+  vis["last_event_age_ms"] =
+      s.last_vision_event_ms == 0 ? -1L : (long)(millis() - s.last_vision_event_ms);
+
+  vision_stats_t v_stats = {};
+  vision_get_stats(&v_stats);
+  JsonObject vst = vis["stats"].to<JsonObject>();
+  vst["frames_analyzed"] = v_stats.frames_analyzed;
+  vst["layer1_passes"]   = v_stats.layer1_passes;
+  vst["layer2_passes"]   = v_stats.layer2_passes;
+  vst["layer3_passes"]   = v_stats.layer3_passes;
+  vst["motion_events"]   = v_stats.motion_events;
+  vst["person_events"]   = v_stats.person_events;
+  vst["motion_active"]   = v_stats.motion_active;
+#endif // FEATURE_VISION_DETECT
 
 #if FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS || FEATURE_TOUCH || FEATURE_IR_RMT || FEATURE_TEMP_TAMPER
   /* Lowpower wake reason + capability bits — useful for the installer
