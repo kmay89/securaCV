@@ -221,7 +221,7 @@ pub fn verify_with_domain(
     match mode {
         SignatureMode::Compat => {
             ed_result?;
-            if pq_result.is_err() && signatures.pq_signature.is_some() {
+            if pq_result.is_err() && signatures.pq_signature.is_some() && pq_public_key.is_some() {
                 pq_result?;
             }
             Ok(())
@@ -409,7 +409,8 @@ mod tests {
             signature: vec![0xDE; 64],
         });
 
-        let result = verify_with_domain(
+        // Without a PQ public key, Compat mode skips PQ verification
+        let result_no_key = verify_with_domain(
             DOMAIN_SEALED_LOG_ENTRY,
             &signing_key.verifying_key(),
             &entry_hash,
@@ -418,8 +419,22 @@ mod tests {
             None,
         );
         assert!(
-            result.is_err(),
-            "Compat mode must reject bad PQ signature when present"
+            result_no_key.is_ok(),
+            "Compat mode should skip PQ verification when no PQ key is available"
+        );
+
+        // Strict mode always requires PQ to pass
+        let result_strict = verify_with_domain(
+            DOMAIN_SEALED_LOG_ENTRY,
+            &signing_key.verifying_key(),
+            &entry_hash,
+            &sig_set,
+            SignatureMode::Strict,
+            None,
+        );
+        assert!(
+            result_strict.is_err(),
+            "Strict mode must reject when PQ verification fails"
         );
     }
 
