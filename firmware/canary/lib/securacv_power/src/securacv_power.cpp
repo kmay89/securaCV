@@ -20,6 +20,7 @@
 
 #include "log_level.h"
 #include "securacv_witness.h"
+#include "securacv_crypto.h"
 
 #include <esp_adc_cal.h>
 #include <esp_idf_version.h>
