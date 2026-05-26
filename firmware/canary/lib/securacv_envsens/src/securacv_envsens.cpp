@@ -19,18 +19,19 @@
 #include "log_level.h"
 #include "securacv_witness.h"   /* log_health() */
 
-/* The internal temp sensor is on-die for every ESP32 family member;
- * the driver header layout differs across IDF major versions. We
- * compile against IDF 4.4's driver/temp_sensor.h which is what
- * arduino-esp32 v2.0.14 ships. If a future port lands on IDF 5+, the
- * NEW_TEMP_API branch below is the upgrade path. */
+#include <esp_idf_version.h>
+
 #if defined(CONFIG_IDF_TARGET_ESP32S3) || defined(CONFIG_IDF_TARGET_ESP32S2) || \
     defined(CONFIG_IDF_TARGET_ESP32C3)
   #define SECURACV_HAVE_ENVSENS 1
-  extern "C" {
-    #include <driver/temp_sensor.h>
-    #include <esp_err.h>
-  }
+  #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+    #include <driver/temperature_sensor.h>
+  #else
+    extern "C" {
+      #include <driver/temp_sensor.h>
+    }
+  #endif
+  #include <esp_err.h>
 #else
   #define SECURACV_HAVE_ENVSENS 0
 #endif
@@ -65,12 +66,54 @@ static envsens_stats_t s_stats = {0};
 
 #if SECURACV_HAVE_ENVSENS
 
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+
+static temperature_sensor_handle_t s_tsens_handle = nullptr;
+
 static bool peripheral_open() {
-  /* IDF 4.4 temp_sensor: configure → start. Range +50..+125 °C is the
-   * sensor's "high" range; +(-10)..+80 °C is the "default" range that
-   * better matches a household. */
+  temperature_sensor_config_t cfg = TEMPERATURE_SENSOR_CONFIG_DEFAULT(10, 80);
+  esp_err_t err = temperature_sensor_install(&cfg, &s_tsens_handle);
+  if (err != ESP_OK) {
+    char d[32]; snprintf(d, sizeof(d), "install err=0x%x", (unsigned)err);
+    log_health(LOG_LEVEL_WARNING, LOG_CAT_SENSOR,
+               "Envsens: temp install failed", d);
+    return false;
+  }
+  err = temperature_sensor_enable(s_tsens_handle);
+  if (err != ESP_OK) {
+    char d[32]; snprintf(d, sizeof(d), "enable err=0x%x", (unsigned)err);
+    log_health(LOG_LEVEL_WARNING, LOG_CAT_SENSOR,
+               "Envsens: temp enable failed", d);
+    temperature_sensor_uninstall(s_tsens_handle);
+    s_tsens_handle = nullptr;
+    return false;
+  }
+  return true;
+}
+
+static void peripheral_close() {
+  if (s_tsens_handle) {
+    temperature_sensor_disable(s_tsens_handle);
+    temperature_sensor_uninstall(s_tsens_handle);
+    s_tsens_handle = nullptr;
+  }
+}
+
+static int16_t peripheral_read_t10() {
+  if (!s_tsens_handle) return 0x7FFF;
+  float c = 0.0f;
+  esp_err_t err = temperature_sensor_get_celsius(s_tsens_handle, &c);
+  if (err != ESP_OK) return 0x7FFF;
+  if (c > 3000.0f) c = 3000.0f;
+  if (c < -3000.0f) c = -3000.0f;
+  return (int16_t)(c * 10.0f);
+}
+
+#else /* IDF 4.x */
+
+static bool peripheral_open() {
   temp_sensor_config_t cfg = TSENS_CONFIG_DEFAULT();
-  cfg.dac_offset = TSENS_DAC_L2;   /* covers -10..+80 °C */
+  cfg.dac_offset = TSENS_DAC_L2;
   cfg.clk_div    = 6;
   esp_err_t err = temp_sensor_set_config(cfg);
   if (err != ESP_OK) {
@@ -93,16 +136,16 @@ static void peripheral_close() {
   temp_sensor_stop();
 }
 
-/* Returns temperature in tenths of °C (signed int16). 0x7FFF on error. */
 static int16_t peripheral_read_t10() {
   float c = 0.0f;
   esp_err_t err = temp_sensor_read_celsius(&c);
   if (err != ESP_OK) return 0x7FFF;
-  /* Clamp to int16 range with one decimal of resolution. */
   if (c > 3000.0f) c = 3000.0f;
   if (c < -3000.0f) c = -3000.0f;
   return (int16_t)(c * 10.0f);
 }
+
+#endif /* ESP_IDF_VERSION */
 
 #else  /* !SECURACV_HAVE_ENVSENS */
 
