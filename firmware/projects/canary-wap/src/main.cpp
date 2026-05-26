@@ -507,6 +507,16 @@ static void app_process_records() {
 
         if (witness_chain_create_record(&g_witness_chain, RECORD_TYPE_WITNESS_EVENT,
                                         payload, payload_len, &record) == RESULT_OK) {
+            #if FEATURE_GNSS
+            if (gps_time_valid) {
+                record.time_source = TIME_SOURCE_GPS_UTC;
+                record.gps_time.available = true;
+                record.gps_time.utc = g_gnss_parser.time;
+                record.gps_time.fix_quality = g_gnss_parser.fix.quality;
+                record.gps_time.satellites = g_gnss_parser.fix.satellites;
+                record.gps_time.fix_age_ms = now - g_gnss_parser.time.last_update_ms;
+            }
+            #endif
             g_health.records_created++;
 
             // Store to SD if available

@@ -11,7 +11,8 @@
  * Controls:
  *   Up/Down    — scroll device list
  *   OK         — show device detail
- *   Left/Right — toggle between detail and signal graph
+ *   Left/Right — cycle sort (list) / toggle detail/graph
+ *   Right(long)— open settings (scan list)
  *   Back       — return to list / exit app
  *   Back (long)— toggle proximity alerts (scan list)
  */
@@ -30,7 +31,6 @@
 // ============================================================================
 
 #define MAX_DEVICES       16
-#define DEVICE_TIMEOUT_MS 15000
 #define SCREEN_WIDTH      128
 #define SCREEN_HEIGHT     64
 #define LINE_HEIGHT       10
@@ -69,7 +69,29 @@ typedef enum {
     VIEW_SCAN_LIST,
     VIEW_DEVICE_DETAIL,
     VIEW_SIGNAL_GRAPH,
+    VIEW_SETTINGS,
 } AppView;
+
+typedef enum {
+    SCAN_CONTINUOUS,
+    SCAN_BALANCED,
+    SCAN_LOW_POWER,
+    SCAN_MODE_COUNT,
+} ScanMode;
+
+static const char* scan_mode_labels[] = {"Continuous", "Balanced", "Low Power"};
+static const uint16_t scan_on_ms[]  = {0, 3000, 2000};
+static const uint16_t scan_off_ms[] = {0, 3000, 8000};
+
+typedef enum {
+    SETTING_SCAN_MODE,
+    SETTING_TIMEOUT,
+    SETTING_COUNT,
+} SettingIndex;
+
+static const uint16_t timeout_options[] = {10000, 15000, 30000, 60000};
+static const char* timeout_labels[] = {"10s", "15s", "30s", "60s"};
+#define TIMEOUT_OPTION_COUNT 4
 
 typedef struct {
     FuriMutex* mutex;
@@ -93,6 +115,13 @@ typedef struct {
     bool scanning;
     SortMode sort_mode;
     bool alerts_enabled;
+
+    // Scan settings
+    ScanMode scan_mode;
+    uint8_t timeout_idx;
+    uint32_t duty_cycle_ms;
+    bool duty_scan_active;
+    SettingIndex settings_cursor;
 } SecuraCVApp;
 
 // ============================================================================
@@ -167,13 +196,29 @@ static scv_device_t* add_or_update_device(SecuraCVApp* app, const AppEvent* evt)
 
     if(!dev) {
         if(app->device_count >= MAX_DEVICES) {
-            // Evict oldest device
-            uint32_t oldest_ms = UINT32_MAX;
+            // Evict oldest unpinned device; fall back to oldest overall
+            // Uses subtraction-based age for 32-bit rollover safety
+            uint32_t now_evict = furi_get_tick();
+            uint32_t max_age = 0;
             uint8_t oldest_idx = 0;
+            bool found_unpinned = false;
             for(uint8_t i = 0; i < app->device_count; i++) {
-                if(app->devices[i].last_seen_ms < oldest_ms) {
-                    oldest_ms = app->devices[i].last_seen_ms;
-                    oldest_idx = i;
+                if(!app->devices[i].pinned) {
+                    uint32_t age = now_evict - app->devices[i].last_seen_ms;
+                    if(!found_unpinned || age > max_age) {
+                        max_age = age;
+                        oldest_idx = i;
+                        found_unpinned = true;
+                    }
+                }
+            }
+            if(!found_unpinned) {
+                for(uint8_t i = 0; i < app->device_count; i++) {
+                    uint32_t age = now_evict - app->devices[i].last_seen_ms;
+                    if(i == 0 || age > max_age) {
+                        max_age = age;
+                        oldest_idx = i;
+                    }
                 }
             }
             dev = &app->devices[oldest_idx];
@@ -225,7 +270,9 @@ static void expire_stale_devices(SecuraCVApp* app) {
     uint32_t now = furi_get_tick();
     uint8_t i = 0;
     while(i < app->device_count) {
-        if(now - app->devices[i].last_seen_ms > DEVICE_TIMEOUT_MS) {
+        uint32_t timeout = timeout_options[app->timeout_idx];
+        if(!app->devices[i].pinned &&
+           now - app->devices[i].last_seen_ms > timeout) {
             if(i < app->selected_index) {
                 app->selected_index--;
             } else if(i == app->selected_index) {
@@ -569,6 +616,46 @@ static void draw_signal_graph(Canvas* canvas, SecuraCVApp* app) {
 }
 
 // ============================================================================
+// DRAW: SETTINGS
+// ============================================================================
+
+static void draw_settings(Canvas* canvas, SecuraCVApp* app) {
+    canvas_set_font(canvas, FontPrimary);
+    canvas_draw_str(canvas, 0, 10, "Settings");
+    canvas_draw_line(canvas, 0, 13, SCREEN_WIDTH, 13);
+
+    canvas_set_font(canvas, FontSecondary);
+    int y = 26;
+
+    // Scan Mode
+    if(app->settings_cursor == SETTING_SCAN_MODE) {
+        canvas_draw_box(canvas, 0, y - 8, SCREEN_WIDTH, LINE_HEIGHT);
+        canvas_set_color(canvas, ColorWhite);
+    }
+    char line[40];
+    snprintf(line, sizeof(line), "Scan: <%s>", scan_mode_labels[app->scan_mode]);
+    canvas_draw_str(canvas, 2, y, line);
+    if(app->settings_cursor == SETTING_SCAN_MODE) {
+        canvas_set_color(canvas, ColorBlack);
+    }
+    y += LINE_HEIGHT + 2;
+
+    // Device Timeout
+    if(app->settings_cursor == SETTING_TIMEOUT) {
+        canvas_draw_box(canvas, 0, y - 8, SCREEN_WIDTH, LINE_HEIGHT);
+        canvas_set_color(canvas, ColorWhite);
+    }
+    snprintf(line, sizeof(line), "Timeout: <%s>", timeout_labels[app->timeout_idx]);
+    canvas_draw_str(canvas, 2, y, line);
+    if(app->settings_cursor == SETTING_TIMEOUT) {
+        canvas_set_color(canvas, ColorBlack);
+    }
+
+    canvas_draw_str_aligned(canvas, SCREEN_WIDTH / 2, SCREEN_HEIGHT - 2,
+                            AlignCenter, AlignBottom, "Back to return");
+}
+
+// ============================================================================
 // DRAW CALLBACK
 // ============================================================================
 
@@ -588,6 +675,9 @@ static void render_callback(Canvas* canvas, void* ctx) {
             break;
         case VIEW_SIGNAL_GRAPH:
             draw_signal_graph(canvas, app);
+            break;
+        case VIEW_SETTINGS:
+            draw_settings(canvas, app);
             break;
     }
 
@@ -627,6 +717,16 @@ static void handle_input(SecuraCVApp* app, InputEvent* event) {
         if(app->alerts_enabled) {
             notification_message(app->notifications, &sequence_single_vibro);
         }
+        view_port_update(app->view_port);
+        return;
+    }
+
+    if(event->type == InputTypeLong && event->key == InputKeyRight &&
+       app->current_view == VIEW_SCAN_LIST) {
+        furi_mutex_acquire(app->mutex, FuriWaitForever);
+        app->current_view = VIEW_SETTINGS;
+        app->settings_cursor = SETTING_SCAN_MODE;
+        furi_mutex_release(app->mutex);
         view_port_update(app->view_port);
         return;
     }
@@ -682,6 +782,34 @@ static void handle_input(SecuraCVApp* app, InputEvent* event) {
                 app->current_view = VIEW_DEVICE_DETAIL;
             }
             break;
+
+        case VIEW_SETTINGS:
+            switch(event->key) {
+                case InputKeyUp:
+                    if(app->settings_cursor > 0) app->settings_cursor--;
+                    break;
+                case InputKeyDown:
+                    if(app->settings_cursor < SETTING_COUNT - 1) app->settings_cursor++;
+                    break;
+                case InputKeyLeft:
+                case InputKeyRight: {
+                    int dir = (event->key == InputKeyRight) ? 1 : -1;
+                    if(app->settings_cursor == SETTING_SCAN_MODE) {
+                        app->scan_mode = (app->scan_mode + SCAN_MODE_COUNT + dir) % SCAN_MODE_COUNT;
+                        app->duty_cycle_ms = 0;
+                        app->duty_scan_active = true;
+                    } else if(app->settings_cursor == SETTING_TIMEOUT) {
+                        app->timeout_idx = (app->timeout_idx + TIMEOUT_OPTION_COUNT + dir) % TIMEOUT_OPTION_COUNT;
+                    }
+                    break;
+                }
+                case InputKeyBack:
+                    app->current_view = VIEW_SCAN_LIST;
+                    break;
+                default:
+                    break;
+            }
+            break;
     }
 
     furi_mutex_release(app->mutex);
@@ -726,6 +854,42 @@ static void ble_scanner_stop(SecuraCVApp* app) {
 }
 
 // ============================================================================
+// DUTY CYCLE MANAGEMENT
+// ============================================================================
+
+static void duty_cycle_update(SecuraCVApp* app) {
+    if(app->scan_mode == SCAN_CONTINUOUS) {
+        if(!app->scanning && app->bt) {
+            furi_hal_bt_start_observer(ble_observer_callback, app);
+            app->scanning = true;
+            app->bt_locked = true;
+        }
+        return;
+    }
+
+    uint16_t on_ms = scan_on_ms[app->scan_mode];
+    uint16_t off_ms = scan_off_ms[app->scan_mode];
+    uint32_t cycle_total = on_ms + off_ms;
+
+    bool should_scan = app->duty_cycle_ms < on_ms;
+
+    app->duty_cycle_ms += 1000;
+    if(app->duty_cycle_ms >= cycle_total) {
+        app->duty_cycle_ms = 0;
+    }
+
+    if(should_scan && !app->scanning && app->bt) {
+        furi_hal_bt_start_observer(ble_observer_callback, app);
+        app->scanning = true;
+        app->bt_locked = true;
+    } else if(!should_scan && app->scanning) {
+        furi_hal_bt_stop_observer();
+        app->scanning = false;
+        app->bt_locked = false;
+    }
+}
+
+// ============================================================================
 // APP ENTRY POINT
 // ============================================================================
 
@@ -753,6 +917,8 @@ int32_t securacv_scanner_app(void* p) {
     app->current_view = VIEW_SCAN_LIST;
     app->selected_index = 0;
     app->scroll_offset = 0;
+    app->timeout_idx = 1;  // 15s default
+    app->duty_scan_active = true;
     app->notifications = furi_record_open(RECORD_NOTIFICATION);
 
     // Set up GUI
@@ -787,7 +953,7 @@ int32_t securacv_scanner_app(void* p) {
         free(app);
         return -1;
     }
-    furi_timer_start(app->tick_timer, 3000);
+    furi_timer_start(app->tick_timer, 1000);
 
     // Start BLE scanning
     ble_scanner_start(app);
@@ -812,6 +978,10 @@ int32_t securacv_scanner_app(void* p) {
 
             case AppEventTypeTick:
                 expire_stale_devices(app);
+                duty_cycle_update(app);
+                furi_mutex_acquire(app->mutex, FuriWaitForever);
+                sort_devices(app);
+                furi_mutex_release(app->mutex);
                 view_port_update(app->view_port);
                 break;
         }

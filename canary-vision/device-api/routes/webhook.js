@@ -6,7 +6,7 @@ function redactUrl(url) {
   try {
     const parsed = new URL(url);
     const segments = parsed.pathname.split('/').map((seg, idx) => {
-      if (idx > 2 && seg.length > 8) return '********';
+      if (idx >= 2 && seg.length > 8) return '********';
       return seg;
     });
     return parsed.origin + segments.join('/');

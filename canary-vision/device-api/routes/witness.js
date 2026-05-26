@@ -102,7 +102,7 @@ function witnessRoutes(state) {
 
       verification_instructions: {
         description: 'To independently verify this chain: '
-          + '(1) Recompute each record hash as SHA-256("seq:prev_hash:timestamp:event_type:zone"). '
+          + '(1) Recompute each record hash as SHA-256("seq:prev_hash:timestamp:event_type:zone:time_source:gps_timestamp"). '
           + '(2) Verify prev_hash links to the preceding record. '
           + '(3) Verify each Ed25519 signature against the hash using the public key above. '
           + '(4) Recompute export_digest as SHA-256 of all "seq:hash:signature\\n" concatenated. '
@@ -138,7 +138,8 @@ function witnessRoutes(state) {
     for (let i = 0; i < records.length; i++) {
       const r = records[i];
       const expectedPrev = i > 0 ? records[i - 1].hash : '0'.repeat(64);
-      const expectedHash = computeHash(r.seq, expectedPrev, r.timestamp, r.event_type, r.zone);
+      const expectedHash = computeHash(r.seq, expectedPrev, r.timestamp, r.event_type, r.zone,
+                                       r.time_source, r.gps_timestamp);
 
       let valid = true;
 
@@ -180,32 +181,6 @@ function witnessRoutes(state) {
     state.addLog('INFO', `Witness chain verified: ${results.valid}/${results.total} valid, ` +
       `${results.sequence_gaps.length} gaps, ${results.timing_anomalies.length} anomalies`);
     res.json(results);
-  });
-
-  let lastPurgeTime = 0;
-
-  router.delete('/api/v1/witness', (req, res) => {
-    if (req.query.confirm !== 'true') {
-      return res.status(400).json({
-        error: 'confirmation_required',
-        message: 'Add ?confirm=true to purge all witness records. This is irreversible.',
-      });
-    }
-
-    const now = Date.now();
-    if (now - lastPurgeTime < 300000) {
-      return res.status(429).json({
-        error: 'rate_limited',
-        message: 'Purge allowed once per 5 minutes.',
-      });
-    }
-    lastPurgeTime = now;
-
-    const count = state.witnessRecords.length;
-    state.witnessRecords.length = 0;
-    state.addLog('WARN', `Witness chain purged (${count} records deleted)`);
-
-    res.json({ ok: true, purged: count });
   });
 
   return router;
