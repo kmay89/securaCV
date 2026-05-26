@@ -87,7 +87,7 @@ bool ble_status_init(void) {
 #endif
 
   NimBLEDevice::init(ble_name);
-  NimBLEDevice::setPower(ESP_PWR_LVL_P3);  /* +3 dBm — moderate range */
+  NimBLEDevice::setPower(3);  /* +3 dBm — moderate range */
 
   s_server = NimBLEDevice::createServer();
   if (!s_server) {

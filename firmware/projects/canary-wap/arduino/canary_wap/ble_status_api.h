@@ -273,12 +273,17 @@ static void update() {
   }
 
   // ── Uptime ─────────────────────────────────────────────────────────
-  // Pull from sys_monitor's global metrics (uptime_sec is updated by
-  // sys_monitor::update() which runs in the main loop).
+#if FEATURE_SYS_MONITOR
   {
     uint32_t up = g_sys_metrics.uptime_sec;
     g_uptime_char->setValue(up);
   }
+#else
+  {
+    uint32_t up = millis() / 1000;
+    g_uptime_char->setValue(up);
+  }
+#endif
 
   // ── SD usage percent ───────────────────────────────────────────────
   // Derive from hardware_state's cached SD size/free values.
