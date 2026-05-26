@@ -10,6 +10,8 @@
 #include <Arduino.h>
 #include <string.h>
 #include <Preferences.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #include <esp_system.h>
 #include <esp_heap_caps.h>
 
@@ -58,13 +60,26 @@ static void check_degradation() {
   degrade_level_t prev = s_degrade;
   uint32_t free = s_heap.free_heap;
 
-  if (free < DIAG_HEAP_EMERGENCY_BYTES) {
+  // Apply hysteresis: when already at a level, require crossing
+  // threshold + hysteresis to recover, preventing flapping.
+  uint32_t emergency_limit = DIAG_HEAP_EMERGENCY_BYTES;
+  uint32_t critical_limit  = DIAG_HEAP_CRITICAL_BYTES;
+  uint32_t warn_limit      = DIAG_HEAP_WARN_BYTES;
+
+  if (prev == DEGRADE_EMERGENCY)
+    emergency_limit += DIAG_HEAP_HYSTERESIS;
+  if (prev >= DEGRADE_CRITICAL)
+    critical_limit += DIAG_HEAP_HYSTERESIS;
+  if (prev >= DEGRADE_WARN)
+    warn_limit += DIAG_HEAP_HYSTERESIS;
+
+  if (free < emergency_limit) {
     s_degrade = DEGRADE_EMERGENCY;
-  } else if (free < DIAG_HEAP_CRITICAL_BYTES) {
+  } else if (free < critical_limit) {
     s_degrade = DEGRADE_CRITICAL;
-  } else if (free < DIAG_HEAP_WARN_BYTES) {
+  } else if (free < warn_limit) {
     s_degrade = DEGRADE_WARN;
-  } else if (free > DIAG_HEAP_WARN_BYTES + DIAG_HEAP_HYSTERESIS) {
+  } else {
     s_degrade = DEGRADE_NONE;
   }
 
@@ -93,15 +108,22 @@ static void update_sd() {
 #if FEATURE_SD_STORAGE
   s_sd.mounted = SD.cardType() != CARD_NONE;
   if (s_sd.mounted) {
-    uint64_t total = SD.totalBytes();
-    uint64_t used  = SD.usedBytes();
-    s_sd.total_bytes_kb = (uint32_t)(total / 1024);
-    s_sd.used_bytes_kb  = (uint32_t)(used / 1024);
-    if (total > 0) {
-      s_sd.usage_pct = (uint8_t)(used * 100 / total);
+    // SD.totalBytes()/usedBytes() trigger slow FATFS volume scans;
+    // rate-limit to once every 10 minutes to avoid main-loop stalls.
+    static uint32_t last_space_check_ms = 0;
+    uint32_t now = millis();
+    if (last_space_check_ms == 0 || (int32_t)(now - last_space_check_ms) >= 600000) {
+      last_space_check_ms = now;
+      uint64_t total = SD.totalBytes();
+      uint64_t used  = SD.usedBytes();
+      s_sd.total_bytes_kb = (uint32_t)(total / 1024);
+      s_sd.used_bytes_kb  = (uint32_t)(used / 1024);
+      if (total > 0) {
+        s_sd.usage_pct = (uint8_t)(used * 100 / total);
+      }
+      s_sd.space_warning  = (s_sd.usage_pct >= 90);
+      s_sd.space_critical = (s_sd.usage_pct >= 98);
     }
-    s_sd.space_warning  = (s_sd.usage_pct >= 90);
-    s_sd.space_critical = (s_sd.usage_pct >= 98);
   }
 #endif
 }
@@ -155,7 +177,9 @@ static bool test_temp() {
 }
 
 static bool test_uptime() {
-  return millis() > 1000;
+  uint32_t start = millis();
+  delay(1);
+  return (int32_t)(millis() - start) > 0;
 }
 
 static bool test_watchdog() {
@@ -240,8 +264,8 @@ bool diag_get_sd(diag_sd_t* out) {
 
 void diag_record_sd_write(bool success) {
   using namespace diag;
-  s_sd.total_writes++;
-  if (!success) s_sd.write_errors++;
+  __atomic_fetch_add(&s_sd.total_writes, 1, __ATOMIC_RELAXED);
+  if (!success) __atomic_fetch_add(&s_sd.write_errors, 1, __ATOMIC_RELAXED);
 }
 
 uint8_t diag_run_selftest(void) {

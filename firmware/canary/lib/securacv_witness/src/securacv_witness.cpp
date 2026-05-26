@@ -10,6 +10,10 @@
 #include "securacv_auth.h"
 #include "canary_config.h"
 
+#if FEATURE_DIAGNOSTICS
+#include "securacv_diagnostics.h"
+#endif
+
 #include <Arduino.h>
 #include <Crypto.h>
 #include <Ed25519.h>
@@ -228,6 +232,9 @@ bool witness_create_record(const uint8_t* payload, size_t len, RecordType type, 
 
   #if FEATURE_SD_STORAGE
   g_health.sd_writes++;
+  #if FEATURE_DIAGNOSTICS
+  diag_record_sd_write(true);
+  #endif
   #endif
 
   return true;

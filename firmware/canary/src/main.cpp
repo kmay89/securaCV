@@ -1076,9 +1076,13 @@ void loop() {
   degrade_level_t dl = diag_get_degrade_level();
 #endif
 
+  // Memory-hungry features: shed at CRITICAL or above.
 #if FEATURE_CSI
   #if FEATURE_POWER_POLICY
   if (pf->csi)
+  #endif
+  #if FEATURE_DIAGNOSTICS
+  if (dl < DEGRADE_CRITICAL)
   #endif
   csi::process();
 #endif
@@ -1087,12 +1091,29 @@ void loop() {
   #if FEATURE_POWER_POLICY
   if (pf->acoustic)
   #endif
+  #if FEATURE_DIAGNOSTICS
+  if (dl < DEGRADE_CRITICAL)
+  #endif
   audio_process();
 #endif
 
+#if FEATURE_VISION_DETECT
+  #if FEATURE_POWER_POLICY
+  if (pf->vision)
+  #endif
+  #if FEATURE_DIAGNOSTICS
+  if (dl < DEGRADE_CRITICAL)
+  #endif
+  vision_process();
+#endif
+
+  // Lightweight features: shed only at EMERGENCY.
 #if FEATURE_TOUCH
   #if FEATURE_POWER_POLICY
   if (pf->touch)
+  #endif
+  #if FEATURE_DIAGNOSTICS
+  if (dl < DEGRADE_EMERGENCY)
   #endif
   touch_process();
 #endif
@@ -1101,6 +1122,9 @@ void loop() {
   #if FEATURE_POWER_POLICY
   if (pf->ir_rmt)
   #endif
+  #if FEATURE_DIAGNOSTICS
+  if (dl < DEGRADE_EMERGENCY)
+  #endif
   ir_process();
 #endif
 
@@ -1108,14 +1132,10 @@ void loop() {
   #if FEATURE_POWER_POLICY
   if (pf->temp_tamper)
   #endif
-  envsens_process();
-#endif
-
-#if FEATURE_VISION_DETECT
-  #if FEATURE_POWER_POLICY
-  if (pf->vision)
+  #if FEATURE_DIAGNOSTICS
+  if (dl < DEGRADE_EMERGENCY)
   #endif
-  vision_process();
+  envsens_process();
 #endif
 
 #if FEATURE_POWER_MONITOR
@@ -1620,13 +1640,13 @@ static void handle_serial_commands() {
                       snap.heap.psram_free, snap.heap.psram_total);
         Serial.printf("  Fragmentation: %u%%\n", snap.heap.fragmentation_pct);
         Serial.printf("  Stack HWM: %u words\n", snap.heap.stack_hwm_main);
-        const char* dl = "none";
+        const char* dlabel = "none";
         switch (snap.heap.degrade_level) {
-          case 1: dl = "warn"; break;
-          case 2: dl = "critical"; break;
-          case 3: dl = "emergency"; break;
+          case DEGRADE_WARN:      dlabel = "warn"; break;
+          case DEGRADE_CRITICAL:  dlabel = "critical"; break;
+          case DEGRADE_EMERGENCY: dlabel = "emergency"; break;
         }
-        Serial.printf("  Degradation: %s\n", dl);
+        Serial.printf("  Degradation: %s\n", dlabel);
         Serial.printf("  SD: %s (%u%% used, %u writes, %u errors)\n",
                       snap.sd.mounted ? "mounted" : "not mounted",
                       snap.sd.usage_pct, snap.sd.total_writes,
