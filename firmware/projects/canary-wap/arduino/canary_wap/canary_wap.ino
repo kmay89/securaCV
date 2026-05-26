@@ -4657,10 +4657,12 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
   char session_hex[csi_integration::SESSION_COOKIE_HEX_LEN + 1];
   if (csi_integration::session_issue(session_hex, sizeof(session_hex))) {
     char cookie_hdr[160];
-    snprintf(cookie_hdr, sizeof(cookie_hdr),
+    int cookie_len = snprintf(cookie_hdr, sizeof(cookie_hdr),
       "cv_session=%s; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400",
       session_hex);
-    httpd_resp_set_hdr(req, "Set-Cookie", cookie_hdr);
+    if (cookie_len > 0 && (size_t)cookie_len < sizeof(cookie_hdr)) {
+      httpd_resp_set_hdr(req, "Set-Cookie", cookie_hdr);
+    }
   }
   esp_err_t result = send_provisioning_receipt(req);
   __atomic_store_n(&g_provisioning_gate_opened_at, 0, __ATOMIC_RELAXED);
@@ -4967,8 +4969,8 @@ static void register_api_routes(httpd_handle_t server) {
 
 static void start_http_server() {
   // Calculate max URI handlers based on feature usage
-  const int base_handlers = 25;       // UI (/ + /admin + /settings), API (auth + public), WiFi provisioning, captive portal, /api/selftest
-  const int camera_handlers = 6;      // Camera peek endpoints
+  const int base_handlers = 30;       // UI (/ + /admin + /settings), API (auth + public), WiFi provisioning, captive portal, /api/selftest
+  const int camera_handlers = 9;      // Camera peek endpoints
   const int mesh_handlers = 12;       // Mesh network endpoints
   const int bluetooth_handlers = 23;  // Bluetooth API endpoints
   const int ble_discovery_handlers = 3; // BLE discovery (Opera/Chirp/Nearby) endpoints
