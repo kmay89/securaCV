@@ -1281,6 +1281,30 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         </div>
       </div>
 
+      <!-- Vision detection -->
+      <div class="card" id="visionCard" style="display:none;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Vision Detection</div>
+            <div class="card-subtitle">3-layer cascaded pipeline: JPEG delta, block luminance, person classifier</div>
+          </div>
+          <span id="visionBadge" class="badge" style="display:none;"><span class="badge-dot"></span><span id="visionBadgeText">Idle</span></span>
+        </div>
+        <div id="visionHero" style="text-align:center; padding:14px 16px;">
+          <div id="visionPill" class="sensing-pill sensing-pill--quiet">Idle</div>
+          <div id="visionExplain" class="sensing-explain">Waiting for motion events.</div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(10, 1fr);gap:2px;margin:0.75rem 0;padding:0 0.5rem;" id="visionGrid"></div>
+        <div class="stats-grid">
+          <div class="stat-item"><div class="stat-label">Frames</div><div class="stat-value" id="viFrames">0</div></div>
+          <div class="stat-item"><div class="stat-label">L1 pass</div><div class="stat-value" id="viL1">0</div></div>
+          <div class="stat-item"><div class="stat-label">L2 pass</div><div class="stat-value" id="viL2">0</div></div>
+          <div class="stat-item"><div class="stat-label">L3 pass</div><div class="stat-value" id="viL3">0</div></div>
+          <div class="stat-item"><div class="stat-label">Motion events</div><div class="stat-value" id="viMotion">0</div></div>
+          <div class="stat-item"><div class="stat-label">Person events</div><div class="stat-value" id="viPerson">0</div></div>
+        </div>
+      </div>
+
       <!-- Internal temperature drift (tamper) -->
       <div class="card" id="tempCard" style="display:none;">
         <div class="card-header">
@@ -3050,6 +3074,73 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       }
 
       // ─── Thermal drift (internal die temp) ─────────────────────────
+      // ─── Vision detection ────────────────────────────────────────────
+      const viCard = document.getElementById('visionCard');
+      const viObj = data.vision;
+      if (viObj) {
+        if (viCard) viCard.style.display = '';
+        const viPill = document.getElementById('visionPill');
+        const viExp  = document.getElementById('visionExplain');
+        const viBadge = document.getElementById('visionBadge');
+        const viBadgeText = document.getElementById('visionBadgeText');
+        const viGrid = document.getElementById('visionGrid');
+
+        if (!viObj.enabled) {
+          viPill.className = 'sensing-pill sensing-pill--offline';
+          viPill.textContent = 'Disabled';
+          viExp.textContent = 'Vision detection is not running.';
+          if (viBadge) viBadge.style.display = 'none';
+        } else if (viObj.last_event === 'person') {
+          viPill.className = 'sensing-pill sensing-pill--active';
+          viPill.textContent = 'Person detected';
+          viExp.textContent = 'Zone ' + (viObj.zone || '?') + ' — confidence ' + (viObj.confidence || 0) + '%';
+          if (viBadge) { viBadge.style.display = 'inline-flex'; viBadge.className = 'badge danger'; viBadgeText.textContent = 'PERSON'; }
+        } else if (viObj.last_event === 'motion') {
+          viPill.className = 'sensing-pill sensing-pill--active';
+          viPill.textContent = 'Motion detected';
+          viExp.textContent = 'Zone ' + (viObj.zone || '?') + ' — confidence ' + (viObj.confidence || 0) + '%';
+          if (viBadge) { viBadge.style.display = 'inline-flex'; viBadge.className = 'badge warning'; viBadgeText.textContent = 'MOTION'; }
+        } else {
+          viPill.className = 'sensing-pill sensing-pill--quiet';
+          viPill.textContent = 'Idle';
+          viExp.textContent = 'No motion detected.';
+          if (viBadge) viBadge.style.display = 'none';
+        }
+
+        // Zone grid visualization (10x8)
+        if (viGrid && !viGrid.dataset.built) {
+          viGrid.innerHTML = '';
+          for (let i = 0; i < 80; i++) {
+            const cell = document.createElement('div');
+            cell.style.cssText = 'aspect-ratio:1;border-radius:2px;background:var(--border);transition:background 0.3s;';
+            cell.dataset.zone = String(i + 1);
+            viGrid.appendChild(cell);
+          }
+          viGrid.dataset.built = '1';
+        }
+        if (viGrid) {
+          const activeZone = (viObj.last_event === 'motion' || viObj.last_event === 'person') ? (viObj.zone || 0) : 0;
+          const cells = viGrid.children;
+          for (let i = 0; i < cells.length; i++) {
+            if (parseInt(cells[i].dataset.zone) === activeZone) {
+              cells[i].style.background = viObj.last_event === 'person' ? 'var(--danger)' : 'var(--accent)';
+            } else {
+              cells[i].style.background = 'var(--border)';
+            }
+          }
+        }
+
+        const vst = viObj.stats || {};
+        set('viFrames', vst.frames_analyzed || 0);
+        set('viL1',     vst.layer1_passes || 0);
+        set('viL2',     vst.layer2_passes || 0);
+        set('viL3',     vst.layer3_passes || 0);
+        set('viMotion', vst.motion_events || 0);
+        set('viPerson', vst.person_events || 0);
+      } else if (viCard) {
+        viCard.style.display = 'none';
+      }
+
       const thCard = document.getElementById('tempCard');
       const tempObj = data.temp;
       if (tempObj) {
