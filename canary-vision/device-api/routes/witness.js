@@ -137,16 +137,15 @@ function witnessRoutes(state) {
       res.write(':heartbeat\n\n');
     }, 15000);
 
-    const originalCb = state.getOnWitnessRecord();
     const sseClients = state._sseClients || (state._sseClients = new Set());
     const client = { res };
     sseClients.add(client);
 
     if (!state._sseHooked) {
       state._sseHooked = true;
-      const prevCb = state.getOnWitnessRecord();
+      state._prevCb = state.getOnWitnessRecord();
       state.setOnWitnessRecord((record) => {
-        if (prevCb) prevCb(record);
+        if (state._prevCb) state._prevCb(record);
         for (const c of sseClients) {
           try {
             c.res.write('event: witness\ndata: ' + JSON.stringify(record) + '\n\n');
@@ -158,6 +157,11 @@ function witnessRoutes(state) {
     req.on('close', () => {
       clearInterval(heartbeatInterval);
       sseClients.delete(client);
+      if (sseClients.size === 0 && state._sseHooked) {
+        state.setOnWitnessRecord(state._prevCb);
+        state._sseHooked = false;
+        state._prevCb = null;
+      }
     });
   });
 

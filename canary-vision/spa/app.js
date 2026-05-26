@@ -797,8 +797,15 @@ function connectEventStreams(devices, contentContainer) {
             record._ts = new Date(record.timestamp);
             if (!record.timestamp || isNaN(record._ts.getTime())) return;
 
-            // Add to state
+            // Deduplicate
+            var exists = EventsState.allRecords.some(function (r) {
+              return r.hash === record.hash || (r.device_id === record.device_id && r.seq === record.seq);
+            });
+            if (exists) return;
+
+            // Add and maintain sorted order
             EventsState.allRecords.unshift(record);
+            EventsState.allRecords.sort(function (a, b) { return b._ts - a._ts; });
             EventsState.clusters = clusterEvents(EventsState.allRecords);
             EventsState.filteredClusters = applyEventsFilter(EventsState.clusters, EventsState.activeFilter);
 
@@ -819,9 +826,10 @@ function connectEventStreams(devices, contentContainer) {
         });
 
         source.addEventListener('error', function () {
-          source.close();
-          var idx = EventsState.eventSources.indexOf(source);
-          if (idx !== -1) EventsState.eventSources.splice(idx, 1);
+          if (source.readyState === EventSource.CLOSED) {
+            var idx = EventsState.eventSources.indexOf(source);
+            if (idx !== -1) EventsState.eventSources.splice(idx, 1);
+          }
         });
 
         EventsState.eventSources.push(source);
@@ -1703,7 +1711,7 @@ function renderEventsView() {
         EventsState.refreshTimer = null;
         return;
       }
-      if (EventsState.eventSources.length === 0) {
+      if (EventsState.eventSources.length < devices.length) {
         refreshData();
       }
     }, 30000);
