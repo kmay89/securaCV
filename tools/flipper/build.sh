@@ -43,10 +43,14 @@ build_target() {
       ufbt update --channel=dev
       ;;
     unleashed)
-      ufbt update --index-url="https://github.com/DarkFlippers/unleashed-firmware/releases/latest/download/ufbt-index.json"
+      echo "Note: Unleashed requires manual SDK setup. Trying latest release index..."
+      ufbt update --index-url="https://up.unleashedflip.com/directory.json" || \
+        { echo "Unleashed SDK unavailable. Build with official SDK instead."; ufbt update --channel=release; }
       ;;
     momentum)
-      ufbt update --index-url="https://github.com/Next-Flip/Momentum-Firmware/releases/latest/download/ufbt-index.json"
+      echo "Note: Momentum requires manual SDK setup. Trying latest release index..."
+      ufbt update --index-url="https://up.momentum-fw.dev/firmware/directory.json" || \
+        { echo "Momentum SDK unavailable. Build with official SDK instead."; ufbt update --channel=release; }
       ;;
     *)
       echo "Unknown target: $target" >&2
@@ -54,8 +58,7 @@ build_target() {
       ;;
   esac
 
-  cd "$APP_DIR"
-  ufbt
+  ufbt -C "$APP_DIR"
 
   mkdir -p "$DIST_DIR"
   find . -name "*.fap" -exec cp {} "$DIST_DIR/securacv_scanner-${target}.fap" \;

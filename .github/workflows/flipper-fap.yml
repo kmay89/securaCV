@@ -27,21 +27,11 @@ jobs:
       matrix:
         include:
           - firmware: official
-            sdk: release
+            channel: release
             label: Official
           - firmware: official-dev
-            sdk: dev
+            channel: dev
             label: Official (Dev)
-          - firmware: unleashed
-            sdk: https://github.com/DarkFlippers/unleashed-firmware
-            label: Unleashed
-          - firmware: momentum
-            sdk: https://github.com/Next-Flip/Momentum-Firmware
-            label: Momentum
-
-    defaults:
-      run:
-        working-directory: tools/flipper/securacv_scanner
 
     steps:
       - uses: actions/checkout@v4
@@ -55,36 +45,21 @@ jobs:
         run: pip install ufbt
 
       - name: Set up SDK (${{ matrix.label }})
-        run: |
-          if [[ "${{ matrix.sdk }}" == "release" ]]; then
-            ufbt update --channel=release
-          elif [[ "${{ matrix.sdk }}" == "dev" ]]; then
-            ufbt update --channel=dev
-          else
-            ufbt update --index-url="${{ matrix.sdk }}/releases/latest/download/ufbt-index.json"
-          fi
+        run: ufbt update --channel=${{ matrix.channel }}
 
       - name: Build FAP
-        run: ufbt
+        run: ufbt -C tools/flipper/securacv_scanner
 
-      - name: Get SDK info
-        id: sdk_info
+      - name: Collect artifact
         run: |
-          SDK_VER=$(ufbt status | grep -oP 'SDK version: \K.*' || echo "unknown")
-          echo "sdk_version=$SDK_VER" >> $GITHUB_OUTPUT
-
-      - name: Rename artifact
-        run: |
-          mkdir -p dist
-          cp dist/*.fap "dist/securacv_scanner-${{ matrix.firmware }}.fap" 2>/dev/null || \
-          cp build/*.fap "dist/securacv_scanner-${{ matrix.firmware }}.fap" 2>/dev/null || \
-          find . -name "*.fap" -exec cp {} "dist/securacv_scanner-${{ matrix.firmware }}.fap" \;
+          mkdir -p tools/flipper/dist
+          find tools/flipper/securacv_scanner -name "*.fap" -exec cp {} "tools/flipper/dist/securacv_scanner-${{ matrix.firmware }}.fap" \;
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: securacv_scanner-${{ matrix.firmware }}
-          path: tools/flipper/securacv_scanner/dist/*.fap
+          path: tools/flipper/dist/*.fap
           if-no-files-found: error
 
   release-faps:
