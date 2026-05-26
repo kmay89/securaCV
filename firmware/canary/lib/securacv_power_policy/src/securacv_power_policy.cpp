@@ -13,6 +13,7 @@
 #include <Arduino.h>
 #include <string.h>
 
+#include "canary_config.h"
 #include "log_level.h"
 #include "securacv_witness.h"
 #include "securacv_power.h"
@@ -31,6 +32,9 @@ static uint32_t s_mode_entered_ms = 0;
 static uint32_t s_transitions = 0;
 static bool s_deep_sleep_pending = false;
 static uint32_t s_last_deep_sleep_ms = 0;
+
+static power_mode_t s_pending_mode = PMODE_PLUGGED_IN;
+static uint32_t s_pending_since = 0;
 
 static policy_features_t s_features = {};
 
@@ -236,18 +240,34 @@ bool policy_init(const policy_config_t* cfg) {
   if (s_initialized) return true;
   s_cfg = cfg ? *cfg : (policy_config_t)POLICY_CONFIG_DEFAULT;
 
-  s_mode = PMODE_PLUGGED_IN;
-  s_prev_mode = PMODE_PLUGGED_IN;
+  /* Evaluate the actual power state at boot so we don't start in
+   * PMODE_PLUGGED_IN for 2+ seconds on a low-battery wake — that
+   * wastes energy and can brownout marginal cells. */
+  power_state_t pwr;
+  power_mode_t initial_mode = PMODE_PLUGGED_IN;
+  if (power_get_state(&pwr)) {
+    initial_mode = evaluate(&pwr);
+  }
+
+  s_mode = initial_mode;
+  s_prev_mode = initial_mode;
   s_mode_entered_ms = millis();
   s_transitions = 0;
   s_deep_sleep_pending = false;
   s_last_deep_sleep_ms = 0;
+  s_pending_mode = initial_mode;
+  s_pending_since = 0;
 
-  apply_mode(PMODE_PLUGGED_IN);
+  apply_mode(initial_mode);
+  set_cpu_freq(s_features.cpu_freq_mhz);
+  if (s_features.wifi_ap || s_features.wifi_sta) {
+    set_wifi_ps(s_features.wifi_ps_mode);
+  }
 
   s_initialized = true;
   log_health(LOG_LEVEL_INFO, LOG_CAT_SYSTEM,
-             "Power policy engine initialized", nullptr);
+             "Power policy engine initialized",
+             policy_mode_name(initial_mode));
   return true;
 }
 
@@ -273,11 +293,9 @@ bool policy_process(void) {
 
   power_mode_t target = evaluate(&pwr);
 
-  /* Hysteresis: require the target mode to be stable for 3 seconds
-   * before transitioning, unless it's a downgrade (more urgent). */
-  static power_mode_t s_pending_mode = PMODE_PLUGGED_IN;
-  static uint32_t s_pending_since = 0;
-
+  /* Hysteresis: require the target mode to be stable before
+   * transitioning. Downgrades (more urgent) need 2s; upgrades
+   * (less urgent, avoid flapping) need 5s. */
   if (target != s_mode) {
     bool is_downgrade = (target > s_mode);
     if (target == s_pending_mode) {
@@ -295,14 +313,20 @@ bool policy_process(void) {
     s_pending_mode = s_mode;
   }
 
-  /* Deep sleep scheduling for EMERGENCY mode. */
-  if (s_mode == PMODE_EMERGENCY) {
+  /* Deep sleep scheduling for EMERGENCY mode. Re-check power state
+   * right before arming sleep — if USB was just plugged in, the
+   * evaluate() call above will have set target to PLUGGED_IN and
+   * the hysteresis timer is already ticking. But for extra safety,
+   * never request sleep while charging. */
+  if (s_mode == PMODE_EMERGENCY && !power_is_charging()) {
     uint32_t awake_ms = millis() - s_mode_entered_ms;
     uint32_t since_last = millis() - s_last_deep_sleep_ms;
     if (awake_ms > (s_cfg.emergency_wake_sec * 1000UL) &&
         since_last > (s_cfg.emergency_wake_sec * 1000UL)) {
       s_deep_sleep_pending = true;
     }
+  } else {
+    s_deep_sleep_pending = false;
   }
 
   /* Shutdown mode triggers graceful shutdown. */

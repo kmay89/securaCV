@@ -1060,14 +1060,15 @@ void loop() {
 #if FEATURE_POWER_POLICY
   policy_process();
 
-  if (policy_should_deep_sleep()) {
+  if (policy_should_deep_sleep() && !power_is_charging()) {
     Serial.println("[..] Power policy: entering deep sleep cycle...");
     witness_persist_chain_state();
-    lowpower_arm_wake_timer(
-        (uint64_t)55ULL * 1000000ULL);
+    lowpower_arm_wake_timer(55ULL * 1000000ULL);
     lowpower_arm_wake_touch();
     policy_ack_deep_sleep();
     lowpower_enter_deep_sleep();
+  } else if (policy_should_deep_sleep()) {
+    policy_ack_deep_sleep();
   }
 #endif
 
