@@ -2,6 +2,15 @@
 
 const { Router } = require('express');
 
+function redactUrl(url) {
+  try {
+    const parsed = new URL(url);
+    return parsed.origin + parsed.pathname;
+  } catch {
+    return '(invalid URL)';
+  }
+}
+
 function webhookRoutes(state, webhookDispatcher) {
   const router = Router();
 
@@ -14,7 +23,7 @@ function webhookRoutes(state, webhookDispatcher) {
       });
     }
 
-    state.addLog('INFO', `Testing webhook: ${url}`);
+    state.addLog('INFO', `Testing webhook: ${redactUrl(url)}`);
 
     webhookDispatcher.test(url)
       .then((result) => {

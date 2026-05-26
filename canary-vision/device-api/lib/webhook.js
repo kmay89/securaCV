@@ -19,6 +19,19 @@ function sendWebhook(url, payload, attempt = 0) {
 
     const transport = parsed.protocol === 'https:' ? https : http;
     const body = JSON.stringify(payload);
+    let handled = false;
+
+    function retry(err) {
+      if (handled) return;
+      handled = true;
+      if (attempt < MAX_RETRIES) {
+        setTimeout(() => {
+          sendWebhook(url, payload, attempt + 1).then(resolve, reject);
+        }, RETRY_DELAY_MS * (attempt + 1));
+      } else {
+        reject(err);
+      }
+    }
 
     const req = transport.request(parsed, {
       method: 'POST',
@@ -32,37 +45,23 @@ function sendWebhook(url, payload, attempt = 0) {
       let data = '';
       res.on('data', (chunk) => { data += chunk; });
       res.on('end', () => {
+        if (handled) return;
+        handled = true;
         if (res.statusCode >= 200 && res.statusCode < 300) {
           resolve({ status: res.statusCode, body: data });
-        } else if (attempt < MAX_RETRIES && res.statusCode >= 500) {
-          setTimeout(() => {
-            sendWebhook(url, payload, attempt + 1).then(resolve, reject);
-          }, RETRY_DELAY_MS * (attempt + 1));
+        } else if (res.statusCode >= 500) {
+          retry(new Error(`Webhook returned ${res.statusCode}`));
         } else {
           reject(new Error(`Webhook returned ${res.statusCode}`));
         }
       });
     });
 
-    req.on('error', (err) => {
-      if (attempt < MAX_RETRIES) {
-        setTimeout(() => {
-          sendWebhook(url, payload, attempt + 1).then(resolve, reject);
-        }, RETRY_DELAY_MS * (attempt + 1));
-      } else {
-        reject(err);
-      }
-    });
+    req.on('error', (err) => { retry(err); });
 
     req.on('timeout', () => {
       req.destroy();
-      if (attempt < MAX_RETRIES) {
-        setTimeout(() => {
-          sendWebhook(url, payload, attempt + 1).then(resolve, reject);
-        }, RETRY_DELAY_MS * (attempt + 1));
-      } else {
-        reject(new Error('Webhook request timed out'));
-      }
+      retry(new Error('Webhook request timed out'));
     });
 
     req.write(body);
