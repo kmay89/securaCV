@@ -235,6 +235,14 @@ void sensing_feed_vision_event(uint8_t event_type, uint8_t confidence,
   }
 }
 
+void sensing_feed_power_event(uint8_t charge_state, uint8_t soc_pct,
+                              uint8_t time_bucket) {
+  if (!s_initialized) sensing_init();
+  (void)charge_state;
+  (void)soc_pct;
+  (void)time_bucket;
+}
+
 void sensing_feed_csi(const csi_features_t* features) {
   if (features == nullptr) return;
   if (!s_initialized) sensing_init();

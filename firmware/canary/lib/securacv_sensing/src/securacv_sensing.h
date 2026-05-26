@@ -160,6 +160,12 @@ void sensing_feed_vision_event(uint8_t event_type,
                                uint8_t zone,
                                uint8_t time_bucket);
 
+/* Feed a power-state change event (from securacv_power). The
+ * charge_state is one of the charge_state_t enum values. */
+void sensing_feed_power_event(uint8_t charge_state,
+                              uint8_t soc_pct,
+                              uint8_t time_bucket);
+
 /* Apply TTL decay; call from the main loop at 1–10 Hz. */
 void sensing_tick(void);
 
@@ -198,6 +204,7 @@ typedef enum {
   SENSING_WITNESS_GLASS_BREAK     = 10,  /* Phase 2b: sustained HF-dominant transient */
   SENSING_WITNESS_VISION_MOTION   = 11,  /* camera motion detected (Layer 2) */
   SENSING_WITNESS_VISION_PERSON   = 12,  /* person detected (Layer 3 TFLite) */
+  SENSING_WITNESS_POWER_SHUTDOWN  = 13,  /* battery critical — graceful shutdown */
 } sensing_witness_kind_t;
 
 typedef struct {

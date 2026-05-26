@@ -82,6 +82,10 @@ static_assert(sizeof(csi_features_t) == 36,
 #include "securacv_vision.h"
 #endif
 
+#if FEATURE_POWER_MONITOR
+#include "securacv_power.h"
+#endif
+
 /* All five sensing sources feed a single aggregator. The header is
  * include-guarded, so one unconditional include is the right shape;
  * sensing_init() is also idempotent so each feature block can call it
@@ -94,6 +98,8 @@ static_assert(sizeof(csi_features_t) == 36,
  * how main.cpp learns the wake reason on boot. Whether deep-sleep is
  * actually entered is gated separately by FEATURE_DEEP_SLEEP. */
 #include "securacv_lowpower.h"
+
+#include <esp_system.h>
 
 // ════════════════════════════════════════════════════════════════════════════
 // GLOBALS
@@ -315,6 +321,53 @@ void setup() {
       Serial.println();
     }
   }
+
+  // Track reset reason for diagnostics and battery health inference
+  {
+    esp_reset_reason_t rst = esp_reset_reason();
+    const char* rst_name = "unknown";
+    switch (rst) {
+      case ESP_RST_POWERON:  rst_name = "power_on"; break;
+      case ESP_RST_SW:       rst_name = "software"; break;
+      case ESP_RST_PANIC:    rst_name = "panic"; break;
+      case ESP_RST_INT_WDT:  rst_name = "int_wdt"; break;
+      case ESP_RST_TASK_WDT: rst_name = "task_wdt"; break;
+      case ESP_RST_WDT:      rst_name = "wdt"; break;
+      case ESP_RST_DEEPSLEEP: rst_name = "deep_sleep"; break;
+      case ESP_RST_BROWNOUT: rst_name = "brownout"; break;
+      case ESP_RST_SDIO:     rst_name = "sdio"; break;
+      default: break;
+    }
+    Serial.printf("[..] Reset reason: %s\n", rst_name);
+    if (rst == ESP_RST_BROWNOUT || rst == ESP_RST_PANIC ||
+        rst == ESP_RST_INT_WDT || rst == ESP_RST_TASK_WDT || rst == ESP_RST_WDT) {
+      log_health(LOG_LEVEL_WARNING, LOG_CAT_SYSTEM,
+                 "Abnormal reset detected", rst_name);
+    }
+  }
+
+  // Initialize battery/power monitoring (ADC on GPIO 1 or software inference)
+#if FEATURE_POWER_MONITOR
+  {
+    power_config_t pwr_cfg = POWER_CONFIG_DEFAULT;
+    if (power_init(&pwr_cfg)) {
+      power_set_event_callback([](const power_event_t* evt) {
+        if (evt->event_type == POWER_EVENT_CRITICAL_BATTERY) {
+          power_graceful_shutdown();
+        }
+      });
+      if (power_start()) {
+        Serial.printf("[OK] Power monitor: %s mode, %u mAh capacity\n",
+                      power_is_charging() ? "USB" : "battery",
+                      pwr_cfg.capacity_mah);
+      } else {
+        Serial.println("[WARN] Power monitor start failed");
+      }
+    } else {
+      Serial.println("[WARN] Power monitor init failed");
+    }
+  }
+#endif
 
   // Check for factory reset: hold BOOT button during startup
   pinMode(BOOT_BUTTON_GPIO, INPUT_PULLUP);
@@ -817,6 +870,21 @@ void setup() {
     Serial.printf("║  mDNS       : %-45s  ║\n", mdns_url);
   }
 #endif
+#if FEATURE_POWER_MONITOR
+  {
+    power_state_t pwr;
+    if (power_get_state(&pwr) && pwr.divider_detected) {
+      char batt_str[48];
+      snprintf(batt_str, sizeof(batt_str), "%u mV (%u%%) %s",
+               pwr.voltage_mv, pwr.soc_pct,
+               pwr.charge_state == 1 ? "charging" :
+               pwr.charge_state == 2 ? "full" : "on battery");
+      Serial.printf("║  Battery  : %-45s  ║\n", batt_str);
+    } else {
+      Serial.printf("║  Battery  : %-45s  ║\n", "monitoring (SW inference)");
+    }
+  }
+#endif
   Serial.println("╠══════════════════════════════════════════════════════════════╣");
   Serial.println("║  Commands: h=help, i=identity, s=status, g=gps               ║");
   Serial.println("║  BOOT: short=info, 5s hold=factory reset                     ║");
@@ -931,6 +999,20 @@ void loop() {
 
 #if FEATURE_VISION_DETECT
   vision_process();
+#endif
+
+#if FEATURE_POWER_MONITOR
+  power_process();
+  {
+    power_state_t pwr;
+    if (power_get_state(&pwr)) {
+      health.battery_mv    = pwr.voltage_mv;
+      health.battery_soc   = pwr.soc_pct;
+      health.charge_state  = pwr.charge_state;
+      health.power_source  = pwr.power_source;
+      health.battery_trend = pwr.trend_mv_per_min;
+    }
+  }
 #endif
 
   // Age out stale sensing events (TTL decay across all sources). One
@@ -1061,6 +1143,22 @@ static void mqtt_publish_status_update() {
   doc["sd_healthy"] = health.sd_healthy;
   doc["chain_valid"] = (health.verify_failures == 0);
   doc["firmware"] = FIRMWARE_VERSION;
+#if FEATURE_POWER_MONITOR
+  doc["battery_mv"] = health.battery_mv;
+  doc["battery_soc"] = health.battery_soc;
+  {
+    const char* cs = "unknown";
+    switch (health.charge_state) {
+      case 1: cs = "charging"; break;
+      case 2: cs = "full"; break;
+      case 3: cs = "discharging"; break;
+      case 4: cs = "low"; break;
+      case 5: cs = "critical"; break;
+      case 6: cs = "no_battery"; break;
+    }
+    doc["charge_state"] = cs;
+  }
+#endif
 
   String payload;
   serializeJson(doc, payload);
@@ -1089,6 +1187,18 @@ static void mqtt_publish_health_update() {
   doc["boot_count"] = device.boot_count;
   doc["firmware_version"] = FIRMWARE_VERSION;
   doc["tamper_detected"] = device.tamper_active;
+#if FEATURE_POWER_MONITOR
+  doc["battery_mv"] = health.battery_mv;
+  doc["battery_soc"] = health.battery_soc;
+  doc["battery_trend"] = health.battery_trend;
+  doc["charge_cycles"] = 0;
+  {
+    power_state_t pwr;
+    if (power_get_state(&pwr)) {
+      doc["charge_cycles"] = pwr.charge_cycles;
+    }
+  }
+#endif
 
   String payload;
   serializeJson(doc, payload);
@@ -1224,6 +1334,9 @@ static void handle_serial_commands() {
       Serial.println("  s - Status");
       Serial.println("  g - GPS info");
       Serial.println("  r - Reboot");
+#if FEATURE_POWER_MONITOR
+      Serial.println("  b - Battery status");
+#endif
 #if FEATURE_HA_MQTT
       Serial.println("  m - MQTT status");
 #endif
@@ -1263,6 +1376,40 @@ static void handle_serial_commands() {
       Serial.println();
       break;
     }
+
+#if FEATURE_POWER_MONITOR
+    case 'b':
+    case 'B': {
+      power_state_t pwr;
+      Serial.println("\n=== Battery ===");
+      if (power_get_state(&pwr)) {
+        Serial.printf("  Mode: %s\n", pwr.divider_detected ? "HW ADC" : "SW inference");
+        Serial.printf("  Voltage: %u mV\n", pwr.voltage_mv);
+        Serial.printf("  SoC: %u%%\n", pwr.soc_pct);
+        const char* cs = "unknown";
+        switch (pwr.charge_state) {
+          case 1: cs = "charging"; break;
+          case 2: cs = "full"; break;
+          case 3: cs = "discharging"; break;
+          case 4: cs = "low"; break;
+          case 5: cs = "critical"; break;
+      case 6: cs = "no_battery"; break;
+        }
+        Serial.printf("  State: %s\n", cs);
+        Serial.printf("  Trend: %+d mV/min\n", pwr.trend_mv_per_min);
+        Serial.printf("  Capacity: %u mAh\n", pwr.capacity_mah);
+        Serial.printf("  Cycles: %u\n", pwr.charge_cycles);
+        Serial.printf("  Extremes: %u–%u mV\n",
+                      pwr.min_voltage_mv == 0xFFFF ? 0 : pwr.min_voltage_mv,
+                      pwr.max_voltage_mv);
+        Serial.printf("  Samples: %u\n", pwr.samples_taken);
+      } else {
+        Serial.println("  Not initialized");
+      }
+      Serial.println();
+      break;
+    }
+#endif
 
 #if FEATURE_HA_MQTT
     case 'm':
@@ -1331,6 +1478,33 @@ static void print_status() {
 
 #if FEATURE_HA_MQTT
   Serial.printf("  MQTT: %s\n", mqtt_connected() ? "Connected" : "Disconnected");
+#endif
+
+#if FEATURE_POWER_MONITOR
+  {
+    power_state_t pwr;
+    if (power_get_state(&pwr)) {
+      const char* cs = "unknown";
+      switch (pwr.charge_state) {
+        case 1: cs = "charging"; break;
+        case 2: cs = "full"; break;
+        case 3: cs = "discharging"; break;
+        case 4: cs = "low"; break;
+        case 5: cs = "critical"; break;
+      case 6: cs = "no_battery"; break;
+      }
+      Serial.printf("  Battery: %u mV (%u%%) [%s]",
+                    pwr.voltage_mv, pwr.soc_pct, cs);
+      if (pwr.divider_detected) {
+        Serial.print(" (HW ADC)");
+      } else {
+        Serial.print(" (SW inference)");
+      }
+      Serial.println();
+      Serial.printf("  Trend: %+d mV/min, cycles: %u\n",
+                    pwr.trend_mv_per_min, pwr.charge_cycles);
+    }
+  }
 #endif
 
   Serial.println();

@@ -32,6 +32,7 @@ enum RecordType : uint8_t {
   RECORD_WITNESS_EVENT    = 1,
   RECORD_TAMPER_ALERT     = 2,
   RECORD_STATE_CHANGE     = 3,
+  RECORD_POWER_SHUTDOWN   = 4,
 };
 
 struct WitnessRecord {
@@ -90,6 +91,11 @@ struct SystemHealth {
   bool     crypto_healthy;
   bool     sd_healthy;
   bool     wifi_active;
+  uint16_t battery_mv;
+  uint8_t  battery_soc;
+  uint8_t  charge_state;
+  uint8_t  power_source;
+  int16_t  battery_trend;
 };
 
 // Health log ring buffer entry

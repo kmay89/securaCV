@@ -184,12 +184,17 @@
 // POWER MANAGEMENT
 // ============================================================================
 
-// Battery monitoring (if connected via voltage divider)
-#define VBAT_PIN                (-1)  // Not available on base board
-#define VBAT_DIVIDER_RATIO      2.0f  // If using external divider
+// Battery monitoring via ADC1 on GPIO 1 (D0/A0).
+// Requires a 2:1 voltage divider (two 100K resistors) from VBAT to
+// this pin for accurate readings. The securacv_power library auto-
+// detects whether the divider is present and falls back to software
+// inference if not.
+#define VBAT_PIN                1     // GPIO 1 (D0/A0) — ADC1_CH0
+#define VBAT_DIVIDER_RATIO      2.0f  // Two 100K resistors in series
 
-// USB power detect
-#define USB_POWER_DETECT_PIN    (-1)  // Not available directly
+// USB power detect — not directly available on XIAO; the power
+// library infers USB presence from voltage trends.
+#define USB_POWER_DETECT_PIN    (-1)
 
 // ============================================================================
 // BOARD CAPABILITIES (for conditional compilation)

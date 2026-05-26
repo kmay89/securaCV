@@ -79,6 +79,7 @@ const char* record_type_name(RecordType t) {
     case RECORD_WITNESS_EVENT:    return "EVNT";
     case RECORD_TAMPER_ALERT:     return "TAMP";
     case RECORD_STATE_CHANGE:     return "STCH";
+    case RECORD_POWER_SHUTDOWN:   return "PWSD";
     default:                      return "???";
   }
 }
