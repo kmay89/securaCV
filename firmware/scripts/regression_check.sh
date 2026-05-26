@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -euo pipefail
 # ═══════════════════════════════════════════════════════════════════
 # SecuraCV Canary — Regression Guard
 #
@@ -9,7 +10,6 @@
 # Exit 1 = regression detected
 # ═══════════════════════════════════════════════════════════════════
 
-set -euo pipefail
 
 # Resolve repo root (works from any working directory)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

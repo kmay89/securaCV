@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # ═══════════════════════════════════════════════════════════════════════════
 # SecuraCV MQTT End-to-End Test
 #
@@ -10,7 +11,6 @@
 #   MQTT_HOST=192.168.1.10 ./tests/mqtt_e2e_test.sh
 # ═══════════════════════════════════════════════════════════════════════════
 
-set -euo pipefail
 
 MQTT_HOST="${MQTT_HOST:-localhost}"
 MQTT_PORT="${MQTT_PORT:-1883}"

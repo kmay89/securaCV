@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -euo pipefail
 #
 # Guards against drift between the canonical CSI library at
 # firmware/common/csi/src/ and the committed copy that lives next to the
@@ -10,7 +11,6 @@
 #
 # Exits non-zero if any file differs or is missing on either side.
 
-set -euo pipefail
 
 CANONICAL="firmware/common/csi/src"
 STAGED="firmware/projects/canary-wap/arduino/canary_wap"

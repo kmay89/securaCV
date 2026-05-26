@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -euo pipefail
 # ═══════════════════════════════════════════════════════════════════════
 # Microcopy lint orchestrator
 # ═══════════════════════════════════════════════════════════════════════
@@ -37,7 +38,6 @@
 # Locally: SKIP_FKGL=1 firmware/scripts/microcopy_lint.sh   # if no python
 #
 
-set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DASH_HTML="$(cd "$SCRIPT_DIR/../.." && pwd)/firmware/projects/canary-wap/arduino/canary_wap/csi_dashboard_html.h"

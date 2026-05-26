@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 #
 # SecuraCV Canary WAP - Setup Script
 #
@@ -13,7 +14,6 @@
 #   ./setup.sh check        # Check dependencies
 #
 
-set -e
 
 # Colors
 RED='\033[0;31m'

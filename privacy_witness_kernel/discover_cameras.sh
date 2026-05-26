@@ -1,4 +1,5 @@
 #!/bin/sh
+set -eu
 # Discover cameras from go2rtc API
 # go2rtc is the standard RTSP proxy used by Home Assistant
 #

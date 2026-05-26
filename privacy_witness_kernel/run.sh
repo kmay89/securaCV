@@ -1,4 +1,5 @@
 #!/usr/bin/with-contenv bashio
+set -euo pipefail
 # Privacy Witness Kernel - Home Assistant Add-on Entry Script
 # Supports two modes:
 # - standalone: Process RTSP streams directly
@@ -7,7 +8,6 @@
 # Both modes can optionally publish events to MQTT with HA Discovery for
 # automatic entity creation in Home Assistant.
 
-set -e
 
 CONFIG_FILE="/config/witness_config.json"
 DB_PATH="/config/witness.db"
@@ -104,7 +104,8 @@ start_mqtt_publisher() {
     bashio::log.info "Starting MQTT event publisher with HA Discovery..."
 
     # Read MQTT publish configuration
-    local PUBLISH_HOST PUBLISH_PORT PUBLISH_USER PUBLISH_PASS PUBLISH_PREFIX DISCOVERY_PREFIX
+    local PUBLISH_HOST PUBLISH_PORT PUBLISH_PREFIX DISCOVERY_PREFIX
+    local PUBLISH_USER="" PUBLISH_PASS=""
 
     if bashio::config.has_value 'mqtt_publish.host'; then
         PUBLISH_HOST=$(bashio::config 'mqtt_publish.host')
