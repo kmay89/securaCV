@@ -3175,7 +3175,8 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         }
         if (viGrid) {
           const grid = viObj.grid || [];
-          const isPerson = viObj.last_event === 'person';
+          const age = viObj.last_event_age_ms;
+          const isPerson = viObj.last_event === 'person' && age >= 0 && age < 5000;
           const cells = viGrid.children;
           for (let i = 0; i < cells.length; i++) {
             const v = grid[i] || 0;

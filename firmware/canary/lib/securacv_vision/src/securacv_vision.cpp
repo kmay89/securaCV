@@ -172,7 +172,9 @@ static MotionResult layer2_check(const uint8_t* gray) {
         s_stats.block_intensity[idx] = 0;
       } else {
         int delta = abs((int)current_blocks[idx] - (int)s_block_baseline[idx]);
-        s_stats.block_intensity[idx] = (uint8_t)(delta > 255 ? 255 : delta);
+        uint8_t fresh = (uint8_t)(delta > 255 ? 255 : delta);
+        uint8_t decayed = (uint8_t)(s_stats.block_intensity[idx] * 3 / 4);
+        s_stats.block_intensity[idx] = fresh > decayed ? fresh : decayed;
         changed[idx] = delta > s_cfg.luminance_threshold;
         if (changed[idx]) {
           changed_count++;
