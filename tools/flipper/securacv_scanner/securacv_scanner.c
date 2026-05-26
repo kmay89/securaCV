@@ -402,9 +402,8 @@ static void draw_device_detail(Canvas* canvas, SecuraCVApp* app) {
             uint16_t dm = scv_estimate_distance_dm(dev->rssi_avg);
             char dist_buf[8];
             scv_format_distance(dm, dist_buf, sizeof(dist_buf));
-            snprintf(range_line, sizeof(range_line), "%d/%d n=%d ~%s",
-                     dev->rssi_min, dev->rssi_max,
-                     dev->rssi_sample_count, dist_buf);
+            snprintf(range_line, sizeof(range_line), "%d/%d ~%s",
+                     dev->rssi_min, dev->rssi_max, dist_buf);
             canvas_draw_str(canvas, 2, SCREEN_HEIGHT - 2, range_line);
         }
         return;
@@ -497,8 +496,8 @@ static void draw_signal_graph(Canvas* canvas, SecuraCVApp* app) {
     }
 
     // Draw bars after label margin, each 2px wide, right-aligned
-    int graph_inner_x = GRAPH_X + 21;
-    int graph_inner_w = GRAPH_W - 22;
+    int graph_inner_x = GRAPH_X + 25;
+    int graph_inner_w = GRAPH_W - 26;
     int graph_inner_h = GRAPH_H - 2;
     int max_bars = graph_inner_w / 2;
     int bars_to_draw = dev->rssi_graph_count < max_bars
@@ -529,10 +528,10 @@ static void draw_signal_graph(Canvas* canvas, SecuraCVApp* app) {
     uint16_t dm = scv_estimate_distance_dm(dev->rssi_avg);
     char dist_buf[8];
     scv_format_distance(dm, dist_buf, sizeof(dist_buf));
-    snprintf(footer, sizeof(footer), "%ddBm %s ~%s  n=%d",
+    snprintf(footer, sizeof(footer), "%ddBm %s ~%s",
              (int)(dev->rssi_avg / 10),
              scv_signal_quality(dev->rssi_avg),
-             dist_buf, dev->rssi_graph_count);
+             dist_buf);
     canvas_draw_str(canvas, 2, SCREEN_HEIGHT - 2, footer);
 
     // Navigation hint
@@ -573,7 +572,7 @@ static void render_callback(Canvas* canvas, void* ctx) {
 static void input_callback(InputEvent* input_event, void* ctx) {
     SecuraCVApp* app = (SecuraCVApp*)ctx;
     AppEvent event = {.type = AppEventTypeInput, .input = *input_event};
-    furi_message_queue_put(app->event_queue, &event, FuriWaitForever);
+    furi_message_queue_put(app->event_queue, &event, 0);
 }
 
 // ============================================================================
