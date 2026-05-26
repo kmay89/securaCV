@@ -9,7 +9,7 @@
  *   PLUGGED_IN      USB power, all features at full rate.
  *   BATTERY_NORMAL  Battery > 50%, camera off, reduced poll rates.
  *   BATTERY_SAVER   Battery 15-50%, WiFi power save, CSI off.
- *   EMERGENCY       Battery 5-15%, deep sleep cycles, witness-only.
+ *   LOW_POWER       Battery 5-15%, deep sleep cycles, minimal sensing.
  *   SHUTDOWN        Battery < 5%, graceful chain closure + deep sleep.
  *
  * The engine reads from securacv_power (battery state) and writes
@@ -35,7 +35,7 @@ typedef enum {
   PMODE_PLUGGED_IN      = 0,
   PMODE_BATTERY_NORMAL  = 1,
   PMODE_BATTERY_SAVER   = 2,
-  PMODE_EMERGENCY       = 3,
+  PMODE_LOW_POWER       = 3,
   PMODE_SHUTDOWN        = 4,
   PMODE_USB_ONLY        = 5,
 } power_mode_t;
@@ -74,10 +74,10 @@ typedef struct {
 typedef struct {
   uint8_t  normal_threshold_pct;
   uint8_t  saver_threshold_pct;
-  uint8_t  emergency_threshold_pct;
+  uint8_t  low_power_threshold_pct;
   uint8_t  shutdown_threshold_pct;
-  uint32_t emergency_wake_sec;
-  uint32_t emergency_sleep_sec;
+  uint32_t low_power_wake_sec;
+  uint32_t low_power_sleep_sec;
   uint32_t shutdown_wake_interval_sec;
   bool     auto_mode;
 } policy_config_t;
@@ -85,10 +85,10 @@ typedef struct {
 #define POLICY_CONFIG_DEFAULT { \
     /*.normal_threshold_pct*/       50,   \
     /*.saver_threshold_pct*/        15,   \
-    /*.emergency_threshold_pct*/    5,    \
+    /*.low_power_threshold_pct*/    5,    \
     /*.shutdown_threshold_pct*/     3,    \
-    /*.emergency_wake_sec*/         5,    \
-    /*.emergency_sleep_sec*/        55,   \
+    /*.low_power_wake_sec*/         5,    \
+    /*.low_power_sleep_sec*/        55,   \
     /*.shutdown_wake_interval_sec*/ 1800, \
     /*.auto_mode*/                  true  \
 }
@@ -146,7 +146,7 @@ const char* policy_mode_name(power_mode_t mode);
 /* Override the mode manually. Disables auto-mode until the next
  * call to policy_set_auto(true) or reboot.
  *
- * SECURITY: EMERGENCY and SHUTDOWN modes are rejected — they disable
+ * SECURITY: LOW_POWER and SHUTDOWN modes are rejected — they disable
  * most sensors and create unwitnessed windows. An attacker with API
  * access must not be able to blind the device. Only the automatic
  * battery-driven evaluation path can trigger these modes. */

@@ -102,7 +102,7 @@ static void apply_battery_saver() {
   s_features.wifi_ps_mode   = 2;  /* WIFI_PS_MAX_MODEM */
 }
 
-static void apply_emergency() {
+static void apply_low_power() {
   s_features.wifi_ap       = false;
   /* WiFi STA stays on so panic events can still reach HA via MQTT.
    * Without this, a silent-panic touch event gets witnessed locally
@@ -113,7 +113,7 @@ static void apply_emergency() {
   s_features.csi           = false;
   /* Acoustic stays on: T3 smoke / T4 CO are life-safety events that
    * must not be suppressed by battery state. The PDM mic draws ~1 mA
-   * — acceptable even in emergency mode. */
+   * — acceptable even in low-power mode. */
   s_features.acoustic      = true;
   s_features.touch         = true;
   s_features.ir_rmt        = false;
@@ -136,8 +136,8 @@ static void apply_mode(power_mode_t mode) {
     case PMODE_PLUGGED_IN:     apply_plugged_in(); break;
     case PMODE_BATTERY_NORMAL: apply_battery_normal(); break;
     case PMODE_BATTERY_SAVER:  apply_battery_saver(); break;
-    case PMODE_EMERGENCY:      apply_emergency(); break;
-    case PMODE_SHUTDOWN:       apply_emergency(); break;
+    case PMODE_LOW_POWER:      apply_low_power(); break;
+    case PMODE_SHUTDOWN:       apply_low_power(); break;
     case PMODE_USB_ONLY:       apply_usb_only(); break;
     default:                   apply_plugged_in(); break;
   }
@@ -226,7 +226,7 @@ static power_mode_t evaluate(const power_state_t* pwr) {
 
   uint8_t soc = pwr->soc_pct;
   if (soc <= s_cfg.shutdown_threshold_pct) return PMODE_SHUTDOWN;
-  if (soc <= s_cfg.emergency_threshold_pct) return PMODE_EMERGENCY;
+  if (soc <= s_cfg.low_power_threshold_pct) return PMODE_LOW_POWER;
   if (soc <= s_cfg.saver_threshold_pct) return PMODE_BATTERY_SAVER;
   if (soc <= s_cfg.normal_threshold_pct) return PMODE_BATTERY_NORMAL;
   return PMODE_PLUGGED_IN;
@@ -319,16 +319,16 @@ bool policy_process(void) {
     s_pending_mode = s_mode;
   }
 
-  /* Deep sleep scheduling for EMERGENCY mode. Re-check power state
+  /* Deep sleep scheduling for LOW_POWER mode. Re-check power state
    * right before arming sleep — if USB was just plugged in, the
    * evaluate() call above will have set target to PLUGGED_IN and
    * the hysteresis timer is already ticking. But for extra safety,
    * never request sleep while charging. */
-  if (s_mode == PMODE_EMERGENCY && !power_is_charging()) {
+  if (s_mode == PMODE_LOW_POWER && !power_is_charging()) {
     uint32_t awake_ms = millis() - s_mode_entered_ms;
     uint32_t since_last = millis() - s_last_deep_sleep_ms;
-    if (awake_ms > (s_cfg.emergency_wake_sec * 1000UL) &&
-        since_last > (s_cfg.emergency_wake_sec * 1000UL)) {
+    if (awake_ms > (s_cfg.low_power_wake_sec * 1000UL) &&
+        since_last > (s_cfg.low_power_wake_sec * 1000UL)) {
       s_deep_sleep_pending = true;
     }
   } else {
@@ -369,7 +369,7 @@ const char* policy_mode_name(power_mode_t mode) {
     case PMODE_PLUGGED_IN:     return "plugged_in";
     case PMODE_BATTERY_NORMAL: return "battery_normal";
     case PMODE_BATTERY_SAVER:  return "battery_saver";
-    case PMODE_EMERGENCY:      return "emergency";
+    case PMODE_LOW_POWER:      return "low_power";
     case PMODE_SHUTDOWN:       return "shutdown";
     case PMODE_USB_ONLY:       return "usb_only";
     default:                   return "unknown";
@@ -378,14 +378,14 @@ const char* policy_mode_name(power_mode_t mode) {
 
 void policy_set_mode(power_mode_t mode) {
   using namespace policy;
-  /* SECURITY: reject manual transitions to EMERGENCY/SHUTDOWN.
+  /* SECURITY: reject manual transitions to LOW_POWER/SHUTDOWN.
    * These modes disable most sensors, creating unwitnessed windows.
    * An attacker with API access could force the device blind by
-   * setting EMERGENCY mode. Only the battery state machine (auto
+   * setting LOW_POWER mode. Only the battery state machine (auto
    * mode) can trigger these — not REST API, not serial commands. */
-  if (mode == PMODE_EMERGENCY || mode == PMODE_SHUTDOWN) {
+  if (mode == PMODE_LOW_POWER || mode == PMODE_SHUTDOWN) {
     log_health(LOG_LEVEL_WARNING, LOG_CAT_SYSTEM,
-               "Power policy: manual EMERGENCY/SHUTDOWN rejected",
+               "Power policy: manual LOW_POWER/SHUTDOWN rejected",
                "only auto-mode can trigger these");
     return;
   }
