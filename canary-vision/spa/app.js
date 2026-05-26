@@ -552,6 +552,8 @@ var EventsState = {
   refreshTimer: null,
   expandedClusters: {},
   _sessionSeq: 0,
+  eventSources: [],
+  pendingLiveEvents: 0,
 };
 
 function fetchAllWitnessRecords() {
@@ -760,6 +762,98 @@ function countTodayByType(records) {
     }
   }
   return counts;
+}
+
+// --------------- Live Event Streaming ---------------
+
+function closeEventStreams() {
+  for (var i = 0; i < EventsState.eventSources.length; i++) {
+    try { EventsState.eventSources[i].close(); } catch (e) { /* ignore */ }
+  }
+  EventsState.eventSources = [];
+  EventsState.pendingLiveEvents = 0;
+}
+
+function connectEventStreams(devices, contentContainer) {
+  closeEventStreams();
+
+  for (var d = 0; d < devices.length; d++) {
+    (function (device) {
+      if (!isPrivateUrl(device.base_url)) return;
+
+      var token = device.token;
+      if (!token) return;
+
+      var url = device.base_url + '/api/v1/witness/stream?token=' + encodeURIComponent(token);
+
+      try {
+        var source = new EventSource(url);
+
+        source.addEventListener('witness', function (e) {
+          try {
+            var record = JSON.parse(e.data);
+            record.device_id = device.id;
+            record.device_name = device.name || device.id;
+            record._ts = new Date(record.timestamp);
+            if (!record.timestamp || isNaN(record._ts.getTime())) return;
+
+            // Add to state
+            EventsState.allRecords.unshift(record);
+            EventsState.clusters = clusterEvents(EventsState.allRecords);
+            EventsState.filteredClusters = applyEventsFilter(EventsState.clusters, EventsState.activeFilter);
+
+            // Check if user is scrolled down
+            var scrollContainer = contentContainer.parentNode;
+            var isScrolledDown = scrollContainer && scrollContainer.scrollTop > 100;
+
+            if (isScrolledDown) {
+              EventsState.pendingLiveEvents++;
+              showLiveBanner(contentContainer);
+            } else {
+              renderEventsContent(contentContainer, {
+                results: EventsState.deviceResults,
+                allRecords: EventsState.allRecords,
+              });
+            }
+          } catch (err) { /* ignore malformed events */ }
+        });
+
+        source.addEventListener('error', function () {
+          source.close();
+          var idx = EventsState.eventSources.indexOf(source);
+          if (idx !== -1) EventsState.eventSources.splice(idx, 1);
+        });
+
+        EventsState.eventSources.push(source);
+      } catch (err) { /* EventSource not supported or URL invalid */ }
+    })(devices[d]);
+  }
+}
+
+function showLiveBanner(contentContainer) {
+  var existing = contentContainer.querySelector('.live-banner');
+  if (existing) {
+    existing.textContent = EventsState.pendingLiveEvents + ' new event' +
+      (EventsState.pendingLiveEvents !== 1 ? 's' : '');
+    return;
+  }
+
+  var banner = el('div', {
+    className: 'live-banner',
+    textContent: EventsState.pendingLiveEvents + ' new event' +
+      (EventsState.pendingLiveEvents !== 1 ? 's' : ''),
+    onClick: function () {
+      EventsState.pendingLiveEvents = 0;
+      var scrollContainer = contentContainer.parentNode;
+      if (scrollContainer) scrollContainer.scrollTop = 0;
+      renderEventsContent(contentContainer, {
+        results: EventsState.deviceResults,
+        allRecords: EventsState.allRecords,
+      });
+    }
+  });
+
+  contentContainer.insertBefore(banner, contentContainer.firstChild);
 }
 
 // --------------- Views ---------------
@@ -1532,7 +1626,7 @@ function renderEventsView() {
 
   var content = ptrContent;
 
-  // Clear any previous refresh timer and listener
+  // Clear any previous state
   if (EventsState.refreshTimer) {
     clearInterval(EventsState.refreshTimer);
     EventsState.refreshTimer = null;
@@ -1545,6 +1639,7 @@ function renderEventsView() {
     EventsState.ptrTeardown();
     EventsState.ptrTeardown = null;
   }
+  closeEventStreams();
   EventsState.expandedClusters = {};
   EventsState.activeFilter = 'all';
   EventsState._sessionSeq++;
@@ -1597,7 +1692,10 @@ function renderEventsView() {
       refreshData().then(done).catch(done);
     });
 
-    // Auto-refresh every 30 seconds
+    // Connect SSE streams to all devices for live events
+    connectEventStreams(devices, content);
+
+    // Fallback polling every 30s for devices that don't support SSE
     EventsState.refreshTimer = setInterval(function () {
       var currentHash = window.location.hash || '';
       if (currentHash !== '#/events') {
@@ -1605,11 +1703,13 @@ function renderEventsView() {
         EventsState.refreshTimer = null;
         return;
       }
-      refreshData();
+      if (EventsState.eventSources.length === 0) {
+        refreshData();
+      }
     }, 30000);
   });
 
-  // Clean up timer on navigation
+  // Clean up on navigation
   EventsState.onHashChange = function () {
     if ((window.location.hash || '') !== '#/events') {
       if (EventsState.refreshTimer) {
@@ -1620,6 +1720,7 @@ function renderEventsView() {
         EventsState.ptrTeardown();
         EventsState.ptrTeardown = null;
       }
+      closeEventStreams();
       window.removeEventListener('hashchange', EventsState.onHashChange);
       EventsState.onHashChange = null;
     }

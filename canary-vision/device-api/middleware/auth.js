@@ -35,7 +35,10 @@ function tokenHash(token) {
 
 function authMiddleware(state) {
   return (req, res, next) => {
-    const token = req.headers['x-canary-token'];
+    var token = req.headers['x-canary-token'];
+    if (!token && req.query && req.query.token) {
+      token = req.query.token;
+    }
 
     if (token === undefined || token === null) {
       if (typeof res.recordAuthFailure === 'function') {
