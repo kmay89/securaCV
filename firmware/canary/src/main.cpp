@@ -880,6 +880,9 @@ void setup() {
   Serial.println("[..] Initializing vision detection...");
   sensing_init();
   vision_config_t vision_cfg = VISION_CONFIG_DEFAULT;
+  if (vision_load_config_from_nvs(&vision_cfg)) {
+    Serial.println("[OK] Vision config loaded from NVS");
+  }
   if (vision_init(&vision_cfg)) {
     vision_set_event_callback([](const vision_event_t* evt) {
       sensing_feed_vision_event(evt->event_type, evt->confidence,

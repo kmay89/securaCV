@@ -1316,10 +1316,14 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
             <div class="card-title">Vision Tuning</div>
             <div class="card-subtitle">
               Adjust detection thresholds and timing live. Changes take
-              effect immediately but are not persisted across reboots.
+              effect immediately. Click Save to persist across reboots.
             </div>
           </div>
-          <button id="viResetBtn" class="badge" style="cursor:pointer;border:none;font-size:0.7rem;" onclick="viResetDefaults()">Reset defaults</button>
+          <div style="display:flex;gap:6px;align-items:center;">
+            <span id="viSaveStatus" style="font-size:0.7rem;color:var(--muted);"></span>
+            <button id="viSaveBtn" class="badge" style="cursor:pointer;border:none;font-size:0.7rem;" onclick="viSaveConfig()">Save</button>
+            <button id="viResetBtn" class="badge" style="cursor:pointer;border:none;font-size:0.7rem;" onclick="viResetDefaults()">Reset defaults</button>
+          </div>
         </div>
         <div style="padding:0 1rem 1rem;">
           <div class="vi-tune">
@@ -3386,6 +3390,9 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       }
       const card = document.getElementById('visionSettingsCard');
       if (card) card.dataset.loaded = '1';
+      const ss = document.getElementById('viSaveStatus');
+      if (ss) ss.textContent = cfg.saved ? 'Saved' : 'Unsaved changes';
+      if (ss) ss.style.color = cfg.saved ? 'var(--success)' : 'var(--warning)';
     }
 
     async function viLoadConfig() {
@@ -3401,6 +3408,8 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       const lbl = document.getElementById(lblId);
       if (lbl) lbl.textContent = value + suffix;
       viPending[field] = parseInt(value, 10);
+      const ss = document.getElementById('viSaveStatus');
+      if (ss) { ss.textContent = 'Unsaved changes'; ss.style.color = 'var(--warning)'; }
       clearTimeout(viDebounce);
       viDebounce = setTimeout(async () => {
         const body = Object.assign({}, viPending);
@@ -3408,6 +3417,17 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         const r = await api('/api/vision/config', 'POST', body);
         if (r && r.ok) viApplyConfig(r);
       }, 300);
+    }
+
+    async function viSaveConfig() {
+      const btn = document.getElementById('viSaveBtn');
+      if (btn) btn.disabled = true;
+      try {
+        const r = await api('/api/vision/config/save', 'POST', {});
+        if (r && r.ok) viApplyConfig(r);
+      } finally {
+        if (btn) btn.disabled = false;
+      }
     }
 
     async function viResetDefaults() {

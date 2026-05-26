@@ -646,6 +646,7 @@ static esp_err_t handle_sensing(httpd_req_t* req);
 #if FEATURE_VISION_DETECT
 static esp_err_t handle_vision_config_get(httpd_req_t* req);
 static esp_err_t handle_vision_config_set(httpd_req_t* req);
+static esp_err_t handle_vision_config_save(httpd_req_t* req);
 #endif
 
 #if FEATURE_ACOUSTIC_EVENTS
@@ -781,6 +782,9 @@ void NetworkManager::registerHttpHandlers() {
 
   httpd_uri_t vision_cfg_s = { .uri = "/api/vision/config", .method = HTTP_POST, .handler = handle_vision_config_set };
   httpd_register_uri_handler(m_http_server, &vision_cfg_s);
+
+  httpd_uri_t vision_cfg_save = { .uri = "/api/vision/config/save", .method = HTTP_POST, .handler = handle_vision_config_save };
+  httpd_register_uri_handler(m_http_server, &vision_cfg_save);
   #endif
 
   #if FEATURE_ACOUSTIC_EVENTS
@@ -2017,6 +2021,9 @@ static void vision_config_to_json(JsonDocument& doc, const vision_config_t& cfg)
 #else
   doc["tflite_available"]       = false;
 #endif
+  vision_config_t nvs_cfg;
+  doc["saved"] = vision_load_config_from_nvs(&nvs_cfg) &&
+                 memcmp(&nvs_cfg, &cfg, sizeof(vision_config_t)) == 0;
 }
 
 static esp_err_t handle_vision_config_get(httpd_req_t* req) {
@@ -2101,6 +2108,30 @@ static esp_err_t handle_vision_config_set(httpd_req_t* req) {
 
   vision_set_config(&cfg);
   log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "Vision config updated", nullptr);
+
+  JsonDocument doc;
+  vision_config_to_json(doc, cfg);
+
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+static esp_err_t handle_vision_config_save(httpd_req_t* req) {
+  if (!rate_limit_check(req, true)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  vision_config_t cfg;
+  if (!vision_get_config(&cfg)) {
+    return http_send_error(req, 503, "vision_not_initialized");
+  }
+
+  bool ok = vision_save_config_to_nvs();
+  if (!ok) {
+    return http_send_error(req, 500, "nvs_write_failed");
+  }
+  log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "Vision config saved to NVS", nullptr);
 
   JsonDocument doc;
   vision_config_to_json(doc, cfg);

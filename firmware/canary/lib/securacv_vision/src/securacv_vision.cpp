@@ -16,6 +16,7 @@
 #include "securacv_witness.h"
 #include "esp_camera.h"
 #include "img_converters.h"
+#include <Preferences.h>
 
 #if FEATURE_VISION_TFLITE
 #include "tensorflow/lite/micro/all_ops_resolver.h"
@@ -523,6 +524,29 @@ bool vision_set_config(const vision_config_t* cfg) {
   return true;
 }
 
+static const char* NVS_VISION_NS  = "scv_vis";
+static const char* NVS_KEY_CONFIG = "cfg";
+
+bool vision_save_config_to_nvs() {
+  if (!vision::s_initialized) return false;
+  Preferences prefs;
+  if (!prefs.begin(NVS_VISION_NS, false)) return false;
+  size_t written = prefs.putBytes(NVS_KEY_CONFIG, &vision::s_cfg, sizeof(vision_config_t));
+  prefs.end();
+  Serial.printf("[VISION] Config saved to NVS (%u bytes)\n", (unsigned)written);
+  return written == sizeof(vision_config_t);
+}
+
+bool vision_load_config_from_nvs(vision_config_t* out) {
+  if (!out) return false;
+  Preferences prefs;
+  if (!prefs.begin(NVS_VISION_NS, true)) return false;
+  if (!prefs.isKey(NVS_KEY_CONFIG)) { prefs.end(); return false; }
+  size_t read = prefs.getBytes(NVS_KEY_CONFIG, out, sizeof(vision_config_t));
+  prefs.end();
+  return read == sizeof(vision_config_t);
+}
+
 #else /* !FEATURE_VISION_DETECT */
 
 bool vision_init(const vision_config_t*) { return false; }
@@ -535,5 +559,7 @@ bool vision_process() { return false; }
 bool vision_get_stats(vision_stats_t*) { return false; }
 bool vision_get_config(vision_config_t*) { return false; }
 bool vision_set_config(const vision_config_t*) { return false; }
+bool vision_save_config_to_nvs() { return false; }
+bool vision_load_config_from_nvs(vision_config_t*) { return false; }
 
 #endif /* FEATURE_VISION_DETECT */

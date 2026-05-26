@@ -99,6 +99,9 @@ bool vision_get_stats(vision_stats_t* out);
 bool vision_get_config(vision_config_t* out);
 bool vision_set_config(const vision_config_t* cfg);
 
+bool vision_save_config_to_nvs(void);
+bool vision_load_config_from_nvs(vision_config_t* out);
+
 #ifdef __cplusplus
 }
 #endif
