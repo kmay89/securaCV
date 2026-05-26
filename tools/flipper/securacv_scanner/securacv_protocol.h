@@ -50,6 +50,8 @@ typedef struct {
     bool     valid;             // parsing succeeded
 } scv_debug_beacon_t;
 
+#define SCV_RSSI_HISTORY_LEN 8
+
 typedef struct {
     char     name[32];
     int8_t   rssi;
@@ -57,6 +59,14 @@ typedef struct {
     bool     has_debug_data;
     scv_debug_beacon_t debug;
     uint32_t last_seen_ms;
+
+    // Signal analysis
+    int8_t   rssi_history[SCV_RSSI_HISTORY_LEN];
+    uint8_t  rssi_history_idx;
+    uint8_t  rssi_sample_count;
+    int16_t  rssi_avg;          // x10 for one decimal place
+    int8_t   rssi_min;
+    int8_t   rssi_max;
 } scv_device_t;
 
 // ============================================================================
@@ -179,5 +189,78 @@ static inline void scv_format_uptime(uint32_t sec, char* buf, size_t buf_len) {
     } else {
         snprintf(buf, buf_len, "%02lu:%02lu:%02lu",
                  (unsigned long)h, (unsigned long)m, (unsigned long)s);
+    }
+}
+
+// ============================================================================
+// SIGNAL ANALYSIS
+// ============================================================================
+
+static inline void scv_rssi_push(scv_device_t* dev, int8_t rssi) {
+    dev->rssi_history[dev->rssi_history_idx] = rssi;
+    dev->rssi_history_idx = (dev->rssi_history_idx + 1) % SCV_RSSI_HISTORY_LEN;
+    if(dev->rssi_sample_count < SCV_RSSI_HISTORY_LEN) {
+        dev->rssi_sample_count++;
+    }
+
+    if(dev->rssi_sample_count == 1) {
+        dev->rssi_min = rssi;
+        dev->rssi_max = rssi;
+    } else {
+        if(rssi < dev->rssi_min) dev->rssi_min = rssi;
+        if(rssi > dev->rssi_max) dev->rssi_max = rssi;
+    }
+
+    int32_t sum = 0;
+    for(uint8_t i = 0; i < dev->rssi_sample_count; i++) {
+        sum += dev->rssi_history[i];
+    }
+    dev->rssi_avg = (int16_t)((sum * 10) / dev->rssi_sample_count);
+}
+
+static inline const char* scv_signal_quality(int16_t rssi_avg_x10) {
+    int16_t avg = rssi_avg_x10 / 10;
+    if(avg > -50) return "Excellent";
+    if(avg > -65) return "Good";
+    if(avg > -80) return "Fair";
+    if(avg > -95) return "Weak";
+    return "Very Weak";
+}
+
+/**
+ * @brief Estimate distance from RSSI using log-distance path loss model
+ *
+ * Uses measured power of -59 dBm at 1 meter (typical BLE) and
+ * path loss exponent of 2.0 (free space). Returns distance in
+ * decimeters (tenths of a meter) to avoid floating point.
+ */
+static inline uint16_t scv_estimate_distance_dm(int16_t rssi_avg_x10) {
+    int16_t avg = rssi_avg_x10 / 10;
+    int16_t measured_power = -59;
+    int16_t diff = measured_power - avg;
+
+    if(diff <= 0) return 1; // < 1m, clamp to 0.1m
+
+    // 10^(diff/20) approximation using integer math:
+    // 2^(diff * 3.32 / 10) ~ 2^(diff/3)
+    // This gives rough distance in decimeters
+    uint16_t dm = 10;
+    if(diff < 10) dm = 10;
+    else if(diff < 15) dm = 18;
+    else if(diff < 20) dm = 32;
+    else if(diff < 25) dm = 56;
+    else if(diff < 30) dm = 100;
+    else if(diff < 35) dm = 180;
+    else if(diff < 40) dm = 320;
+    else dm = 999;
+
+    return dm;
+}
+
+static inline void scv_format_distance(uint16_t dm, char* buf, size_t buf_len) {
+    if(dm >= 100) {
+        snprintf(buf, buf_len, "%d.%dm", dm / 10, dm % 10);
+    } else {
+        snprintf(buf, buf_len, "0.%dm", dm);
     }
 }
