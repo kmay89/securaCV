@@ -487,6 +487,8 @@ function fetchAllWitnessRecords() {
           r.device_name = device.name || device.id;
           r._ts = new Date(r.timestamp);
           return r;
+        }).filter(function (r) {
+          return r.timestamp && !isNaN(r._ts.getTime());
         });
         return { device: device, records: records, error: null };
       })
@@ -1279,10 +1281,14 @@ function renderEventsView() {
   var content = el('div', { className: 'content' });
   app.appendChild(content);
 
-  // Clear any previous refresh timer
+  // Clear any previous refresh timer and listener
   if (EventsState.refreshTimer) {
     clearInterval(EventsState.refreshTimer);
     EventsState.refreshTimer = null;
+  }
+  if (EventsState.onHashChange) {
+    window.removeEventListener('hashchange', EventsState.onHashChange);
+    EventsState.onHashChange = null;
   }
   EventsState.expandedClusters = {};
   EventsState.activeFilter = 'all';
@@ -1321,6 +1327,7 @@ function renderEventsView() {
   }
 
   loadAndRender().then(function () {
+    if ((window.location.hash || '') !== '#/events') return;
     // Auto-refresh every 30 seconds
     EventsState.refreshTimer = setInterval(function () {
       var currentHash = window.location.hash || '';
@@ -1340,16 +1347,17 @@ function renderEventsView() {
   });
 
   // Clean up timer on navigation
-  var onHashChange = function () {
+  EventsState.onHashChange = function () {
     if ((window.location.hash || '') !== '#/events') {
       if (EventsState.refreshTimer) {
         clearInterval(EventsState.refreshTimer);
         EventsState.refreshTimer = null;
       }
-      window.removeEventListener('hashchange', onHashChange);
+      window.removeEventListener('hashchange', EventsState.onHashChange);
+      EventsState.onHashChange = null;
     }
   };
-  window.addEventListener('hashchange', onHashChange);
+  window.addEventListener('hashchange', EventsState.onHashChange);
 }
 
 function renderEventsContent(container, data) {
@@ -1395,6 +1403,7 @@ function renderEventsSummary(allRecords, totalDevices, onlineDevices, offlineNam
     className: 'refresh-btn',
     textContent: '↻',
     onClick: function () {
+      if (refreshBtn.classList.contains('spinning')) return;
       refreshBtn.className = 'refresh-btn spinning';
       fetchAllWitnessRecords().then(function (freshData) {
         refreshBtn.className = 'refresh-btn';
@@ -1688,15 +1697,19 @@ function renderEventCard(cluster, index) {
     el('span', { className: 'event-detail-value', textContent: lastEvt.hash ? lastEvt.hash.substring(0, 16) + '…' : '—' }),
   ]));
 
-  // Chain linkage
+  // Chain linkage — verify against the full per-device stream, not just this cluster,
+  // since witness prev_hash links to the immediately preceding record in the device chain
+  // regardless of zone or time window.
+  var deviceRecords = EventsState.allRecords.filter(function (r) {
+    return r.device_id === cluster.device_id;
+  }).sort(function (a, b) { return a.seq - b.seq; });
+
   var chainValid = true;
-  if (cluster.events.length > 1) {
-    var sortedEvts = cluster.events.slice().sort(function (a, b) { return a.seq - b.seq; });
-    for (var v = 1; v < sortedEvts.length; v++) {
-      if (sortedEvts[v].prev_hash !== sortedEvts[v - 1].hash) {
-        chainValid = false;
-        break;
-      }
+  for (var v = 1; v < deviceRecords.length; v++) {
+    if (!deviceRecords[v].prev_hash || !deviceRecords[v - 1].hash ||
+        deviceRecords[v].prev_hash !== deviceRecords[v - 1].hash) {
+      chainValid = false;
+      break;
     }
   }
 
