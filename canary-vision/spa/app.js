@@ -451,6 +451,210 @@ var Router = {
   }
 };
 
+// --------------- Event Timeline ---------------
+
+var EVENT_TYPE_META = {
+  person_detected:  { icon: '🚶', label: 'Person',  cssClass: 'type-person',  priority: 4 },
+  vehicle_detected: { icon: '🚗', label: 'Vehicle', cssClass: 'type-vehicle', priority: 3 },
+  animal_detected:  { icon: '🐾', label: 'Animal',  cssClass: 'type-animal',  priority: 2 },
+  motion_detected:  { icon: '💨', label: 'Motion',  cssClass: 'type-motion',  priority: 1 },
+};
+
+var EVENT_TYPE_PRIORITY = ['person_detected', 'vehicle_detected', 'animal_detected', 'motion_detected'];
+
+var EventsState = {
+  allRecords: [],
+  clusters: [],
+  filteredClusters: [],
+  deviceResults: [],
+  activeFilter: 'all',
+  isLoading: false,
+  refreshTimer: null,
+  expandedClusters: {},
+};
+
+function fetchAllWitnessRecords() {
+  var devices = CanaryStorage.getDevices();
+  if (devices.length === 0) {
+    return Promise.resolve({ results: [], allRecords: [] });
+  }
+
+  var promises = devices.map(function (device) {
+    return CanaryAPI.request(device.base_url, '/api/v1/witness?last=100')
+      .then(function (data) {
+        var records = (data.records || []).map(function (r) {
+          r.device_id = device.id;
+          r.device_name = device.name || device.id;
+          r._ts = new Date(r.timestamp);
+          return r;
+        }).filter(function (r) {
+          return r.timestamp && !isNaN(r._ts.getTime());
+        });
+        return { device: device, records: records, error: null };
+      })
+      .catch(function (err) {
+        return { device: device, records: [], error: err };
+      });
+  });
+
+  return Promise.all(promises).then(function (results) {
+    var allRecords = [];
+    for (var i = 0; i < results.length; i++) {
+      for (var j = 0; j < results[i].records.length; j++) {
+        allRecords.push(results[i].records[j]);
+      }
+    }
+    allRecords.sort(function (a, b) { return b._ts - a._ts; });
+    return { results: results, allRecords: allRecords };
+  });
+}
+
+function clusterEvents(records) {
+  if (records.length === 0) return [];
+
+  var sorted = records.slice().sort(function (a, b) { return a._ts - b._ts; });
+  var WINDOW_MS = 3 * 60 * 1000;
+  var clusters = [];
+
+  for (var i = 0; i < sorted.length; i++) {
+    var rec = sorted[i];
+    var merged = false;
+
+    for (var c = clusters.length - 1; c >= 0; c--) {
+      var cluster = clusters[c];
+      if (cluster.device_id === rec.device_id &&
+          cluster.zone === rec.zone &&
+          (rec._ts - cluster.lastTime) < WINDOW_MS) {
+        cluster.events.push(rec);
+        cluster.lastTime = rec._ts;
+        cluster.count = cluster.events.length;
+        var meta = EVENT_TYPE_META[rec.event_type];
+        var curMeta = EVENT_TYPE_META[cluster.primaryType];
+        if (meta && curMeta && meta.priority > curMeta.priority) {
+          cluster.primaryType = rec.event_type;
+        }
+        merged = true;
+        break;
+      }
+    }
+
+    if (!merged) {
+      clusters.push({
+        id: rec.hash || (rec.device_id + '-' + rec.seq),
+        device_id: rec.device_id,
+        device_name: rec.device_name,
+        zone: rec.zone,
+        primaryType: rec.event_type,
+        events: [rec],
+        firstTime: rec._ts,
+        lastTime: rec._ts,
+        count: 1,
+      });
+    }
+  }
+
+  clusters.sort(function (a, b) { return b.lastTime - a.lastTime; });
+  return clusters;
+}
+
+function applyEventsFilter(clusters, filter) {
+  if (filter === 'all') return clusters;
+  return clusters.filter(function (c) {
+    if (EVENT_TYPE_META[filter]) {
+      for (var i = 0; i < c.events.length; i++) {
+        if (c.events[i].event_type === filter) return true;
+      }
+      return false;
+    }
+    return c.device_id === filter;
+  });
+}
+
+function formatEventTime(date) {
+  var now = new Date();
+  var diffMs = now - date;
+  var diffMin = Math.floor(diffMs / 60000);
+
+  if (diffMin < 1) return 'Just now';
+  if (diffMin < 60) return diffMin + ' min ago';
+
+  var isToday = date.toDateString() === now.toDateString();
+  var yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  var isYesterday = date.toDateString() === yesterday.toDateString();
+
+  var timeStr = date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+
+  if (isToday) return timeStr;
+  if (isYesterday) return 'Yesterday, ' + timeStr;
+
+  return date.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' }) + ', ' + timeStr;
+}
+
+function formatDayLabel(date) {
+  var now = new Date();
+  if (date.toDateString() === now.toDateString()) return 'Today';
+  var yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  if (date.toDateString() === yesterday.toDateString()) return 'Yesterday';
+  return date.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
+function buildDensityBuckets(records) {
+  var now = new Date();
+  var startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  var buckets = [];
+  for (var i = 0; i < 48; i++) {
+    buckets.push({ count: 0, types: {} });
+  }
+
+  for (var j = 0; j < records.length; j++) {
+    var rec = records[j];
+    if (rec._ts >= startOfDay && rec._ts <= now) {
+      var minutesSinceMidnight = (rec._ts - startOfDay) / 60000;
+      var bucketIdx = Math.min(47, Math.floor(minutesSinceMidnight / 30));
+      buckets[bucketIdx].count++;
+      buckets[bucketIdx].types[rec.event_type] = (buckets[bucketIdx].types[rec.event_type] || 0) + 1;
+    }
+  }
+
+  var maxCount = 0;
+  for (var k = 0; k < buckets.length; k++) {
+    if (buckets[k].count > maxCount) maxCount = buckets[k].count;
+  }
+
+  return { buckets: buckets, maxCount: maxCount };
+}
+
+function getDominantType(typesObj) {
+  var best = 'motion_detected';
+  var bestPriority = 0;
+  var keys = Object.keys(typesObj);
+  for (var i = 0; i < keys.length; i++) {
+    var meta = EVENT_TYPE_META[keys[i]];
+    if (meta && meta.priority > bestPriority) {
+      bestPriority = meta.priority;
+      best = keys[i];
+    }
+  }
+  return best;
+}
+
+function countTodayByType(records) {
+  var now = new Date();
+  var startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  var counts = { total: 0, person_detected: 0, vehicle_detected: 0, animal_detected: 0, motion_detected: 0 };
+  for (var i = 0; i < records.length; i++) {
+    if (records[i]._ts >= startOfDay) {
+      counts.total++;
+      if (counts[records[i].event_type] !== undefined) {
+        counts[records[i].event_type]++;
+      }
+    }
+  }
+  return counts;
+}
+
 // --------------- Views ---------------
 
 function renderHeader(title, showBack, showSettings) {
@@ -1102,12 +1306,473 @@ function renderEventsView() {
   var app = clearApp();
   app.appendChild(renderHeader('Events', false, false));
   app.appendChild(renderNav('#/events'));
-  app.appendChild(el('div', { className: 'content' }, [
-    el('div', { className: 'empty-state' }, [
-      el('h2', { textContent: 'Coming Soon' }),
-      el('p', { textContent: 'Event aggregation across your Canary fleet is under development.' }),
-    ]),
+
+  var content = el('div', { className: 'content' });
+  app.appendChild(content);
+
+  // Clear any previous refresh timer and listener
+  if (EventsState.refreshTimer) {
+    clearInterval(EventsState.refreshTimer);
+    EventsState.refreshTimer = null;
+  }
+  if (EventsState.onHashChange) {
+    window.removeEventListener('hashchange', EventsState.onHashChange);
+    EventsState.onHashChange = null;
+  }
+  EventsState.expandedClusters = {};
+  EventsState.activeFilter = 'all';
+
+  var devices = CanaryStorage.getDevices();
+
+  if (devices.length === 0) {
+    content.appendChild(el('div', { className: 'empty-state' }, [
+      el('h2', { textContent: 'No Canaries Yet' }),
+      el('p', { textContent: 'Add a Canary device to start seeing events here.' }),
+      el('button', {
+        className: 'btn btn-primary',
+        textContent: 'Add Canary',
+        onClick: function () { Router.navigate('#/canaries/add'); }
+      }),
+    ]));
+    return;
+  }
+
+  // Loading state
+  content.appendChild(el('div', { className: 'loading' }, [
+    el('div', { className: 'spinner' }),
+    el('span', { textContent: 'Fetching events from ' + devices.length + ' device' + (devices.length > 1 ? 's' : '') + '…' }),
   ]));
+
+  function loadAndRender() {
+    return fetchAllWitnessRecords().then(function (data) {
+      EventsState.deviceResults = data.results;
+      EventsState.allRecords = data.allRecords;
+      EventsState.clusters = clusterEvents(data.allRecords);
+      EventsState.filteredClusters = applyEventsFilter(EventsState.clusters, EventsState.activeFilter);
+      renderEventsContent(content, data);
+    }).catch(function () {
+      renderEventsContent(content, { results: [], allRecords: [] });
+    });
+  }
+
+  loadAndRender().then(function () {
+    if ((window.location.hash || '') !== '#/events') return;
+    // Auto-refresh every 30 seconds
+    EventsState.refreshTimer = setInterval(function () {
+      var currentHash = window.location.hash || '';
+      if (currentHash !== '#/events') {
+        clearInterval(EventsState.refreshTimer);
+        EventsState.refreshTimer = null;
+        return;
+      }
+      fetchAllWitnessRecords().then(function (data) {
+        EventsState.deviceResults = data.results;
+        EventsState.allRecords = data.allRecords;
+        EventsState.clusters = clusterEvents(data.allRecords);
+        EventsState.filteredClusters = applyEventsFilter(EventsState.clusters, EventsState.activeFilter);
+        renderEventsContent(content, data);
+      });
+    }, 30000);
+  });
+
+  // Clean up timer on navigation
+  EventsState.onHashChange = function () {
+    if ((window.location.hash || '') !== '#/events') {
+      if (EventsState.refreshTimer) {
+        clearInterval(EventsState.refreshTimer);
+        EventsState.refreshTimer = null;
+      }
+      window.removeEventListener('hashchange', EventsState.onHashChange);
+      EventsState.onHashChange = null;
+    }
+  };
+  window.addEventListener('hashchange', EventsState.onHashChange);
+}
+
+function renderEventsContent(container, data) {
+  while (container.firstChild) container.removeChild(container.firstChild);
+
+  var results = data.results;
+  var allRecords = data.allRecords;
+  var totalDevices = results.length;
+  var onlineDevices = 0;
+  var offlineNames = [];
+  for (var i = 0; i < results.length; i++) {
+    if (!results[i].error) {
+      onlineDevices++;
+    } else {
+      offlineNames.push(results[i].device.name || results[i].device.id);
+    }
+  }
+
+  // Summary card
+  container.appendChild(renderEventsSummary(allRecords, totalDevices, onlineDevices, offlineNames));
+
+  // Density bar (only show if there are records today)
+  var todayCounts = countTodayByType(allRecords);
+  if (todayCounts.total > 0) {
+    container.appendChild(renderDensityBar(allRecords));
+  }
+
+  // Filter chips
+  container.appendChild(renderFilterChips(container, data));
+
+  // Event list
+  renderEventList(container);
+}
+
+function renderEventsSummary(allRecords, totalDevices, onlineDevices, offlineNames) {
+  var todayCounts = countTodayByType(allRecords);
+  var card = el('div', { className: 'card events-summary' });
+
+  var headerRow = el('div', { className: 'card-header' });
+  headerRow.appendChild(el('div', { className: 'card-title', textContent: 'Today' }));
+
+  var refreshBtn = el('button', {
+    className: 'refresh-btn',
+    textContent: '↻',
+    onClick: function () {
+      if (refreshBtn.classList.contains('spinning')) return;
+      refreshBtn.className = 'refresh-btn spinning';
+      fetchAllWitnessRecords().then(function (freshData) {
+        refreshBtn.className = 'refresh-btn';
+        EventsState.deviceResults = freshData.results;
+        EventsState.allRecords = freshData.allRecords;
+        EventsState.clusters = clusterEvents(freshData.allRecords);
+        EventsState.filteredClusters = applyEventsFilter(EventsState.clusters, EventsState.activeFilter);
+        var content = refreshBtn.closest('.content') || refreshBtn.parentNode.parentNode.parentNode;
+        renderEventsContent(content, freshData);
+      }).catch(function () {
+        refreshBtn.className = 'refresh-btn';
+      });
+    }
+  });
+  headerRow.appendChild(refreshBtn);
+  card.appendChild(headerRow);
+
+  if (todayCounts.total === 0) {
+    var reassurance = el('div', { className: 'events-reassurance' });
+    reassurance.appendChild(el('span', { className: 'shield', textContent: '🛡️' }));
+    reassurance.appendChild(el('h3', { textContent: 'All Quiet' }));
+    reassurance.appendChild(el('p', { textContent: 'No events detected across your fleet today.' }));
+    card.appendChild(reassurance);
+  } else {
+    var grid = el('div', { className: 'stats-grid' });
+    grid.appendChild(el('div', { className: 'stat-item' }, [
+      el('div', { className: 'stat-value', textContent: String(todayCounts.total) }),
+      el('div', { className: 'stat-label', textContent: 'Events Today' }),
+    ]));
+    grid.appendChild(el('div', { className: 'stat-item' }, [
+      el('div', { className: 'stat-value', textContent: String(todayCounts.person_detected) }),
+      el('div', { className: 'stat-label', textContent: 'People' }),
+    ]));
+    grid.appendChild(el('div', { className: 'stat-item' }, [
+      el('div', { className: 'stat-value', textContent: onlineDevices + ' / ' + totalDevices }),
+      el('div', { className: 'stat-label', textContent: 'Devices Active' }),
+    ]));
+
+    var lastEventTime = allRecords.length > 0 ? formatEventTime(allRecords[0]._ts) : '—';
+    grid.appendChild(el('div', { className: 'stat-item' }, [
+      el('div', { className: 'stat-value', textContent: lastEventTime }),
+      el('div', { className: 'stat-label', textContent: 'Last Event' }),
+    ]));
+    card.appendChild(grid);
+  }
+
+  if (offlineNames.length > 0) {
+    card.appendChild(el('div', {
+      className: 'events-offline-note',
+      textContent: '⚠ Could not reach: ' + offlineNames.join(', ')
+    }));
+  }
+
+  return card;
+}
+
+function renderDensityBar(records) {
+  var data = buildDensityBuckets(records);
+  var container = el('div', { className: 'density-bar-container' });
+  container.appendChild(el('div', { className: 'density-bar-title', textContent: 'Activity' }));
+
+  var bar = el('div', { className: 'density-bar' });
+  var now = new Date();
+  var startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  var currentBucket = Math.min(47, Math.floor((now - startOfDay) / (30 * 60000)));
+
+  for (var i = 0; i < 48; i++) {
+    var bucket = data.buckets[i];
+    var heightPct = data.maxCount > 0 ? Math.max(5, (bucket.count / data.maxCount) * 100) : 5;
+    var cssClass = 'density-bucket';
+
+    if (bucket.count > 0) {
+      var dominant = getDominantType(bucket.types);
+      cssClass += ' ' + EVENT_TYPE_META[dominant].cssClass;
+    }
+
+    if (i > currentBucket) {
+      heightPct = 0;
+    }
+
+    var bucketEl = el('div', { className: cssClass });
+    bucketEl.style.height = bucket.count > 0 ? heightPct + '%' : '2px';
+    if (i > currentBucket) {
+      bucketEl.style.visibility = 'hidden';
+    }
+    bar.appendChild(bucketEl);
+  }
+
+  // "Now" line
+  var nowPct = ((now - startOfDay) / (24 * 60 * 60000)) * 100;
+  var nowLine = el('div', { className: 'density-now-line' });
+  nowLine.style.left = Math.min(100, nowPct) + '%';
+  bar.appendChild(nowLine);
+
+  container.appendChild(bar);
+
+  var labels = el('div', { className: 'density-labels' });
+  var labelTexts = ['12a', '6a', '12p', '6p', 'Now'];
+  for (var l = 0; l < labelTexts.length; l++) {
+    labels.appendChild(el('span', { textContent: labelTexts[l] }));
+  }
+  container.appendChild(labels);
+
+  return container;
+}
+
+function renderFilterChips(contentContainer, data) {
+  var chipsRow = el('div', { className: 'filter-chips' });
+
+  var filters = [
+    { key: 'all', label: 'All' },
+    { key: 'person_detected', label: '🚶 Person' },
+    { key: 'vehicle_detected', label: '🚗 Vehicle' },
+    { key: 'animal_detected', label: '🐾 Animal' },
+    { key: 'motion_detected', label: '💨 Motion' },
+  ];
+
+  // Add device filters if multiple devices
+  var deviceIds = {};
+  for (var i = 0; i < EventsState.allRecords.length; i++) {
+    var rec = EventsState.allRecords[i];
+    deviceIds[rec.device_id] = rec.device_name;
+  }
+  var uniqueDevices = Object.keys(deviceIds);
+  if (uniqueDevices.length > 1) {
+    for (var d = 0; d < uniqueDevices.length; d++) {
+      filters.push({ key: uniqueDevices[d], label: deviceIds[uniqueDevices[d]] });
+    }
+  }
+
+  for (var f = 0; f < filters.length; f++) {
+    (function (filter) {
+      var chip = el('button', {
+        className: 'filter-chip' + (EventsState.activeFilter === filter.key ? ' active' : ''),
+        textContent: filter.label,
+        onClick: function () {
+          EventsState.activeFilter = filter.key;
+          EventsState.filteredClusters = applyEventsFilter(EventsState.clusters, filter.key);
+
+          // Update chip active states
+          var chips = chipsRow.querySelectorAll('.filter-chip');
+          for (var c = 0; c < chips.length; c++) {
+            chips[c].className = 'filter-chip';
+          }
+          chip.className = 'filter-chip active';
+
+          // Re-render the event list only
+          var existingList = contentContainer.querySelector('.events-list');
+          if (existingList) {
+            contentContainer.removeChild(existingList);
+          }
+          renderEventList(contentContainer);
+        }
+      });
+      chipsRow.appendChild(chip);
+    })(filters[f]);
+  }
+
+  return chipsRow;
+}
+
+function renderEventList(container) {
+  var existing = container.querySelector('.events-list');
+  if (existing) container.removeChild(existing);
+
+  var listEl = el('div', { className: 'events-list' });
+  var clusters = EventsState.filteredClusters;
+
+  if (clusters.length === 0) {
+    var emptyMsg = EventsState.activeFilter !== 'all'
+      ? 'No events match this filter.'
+      : 'No events recorded yet.';
+    listEl.appendChild(el('div', { className: 'empty-state' }, [
+      el('p', { textContent: emptyMsg, style: 'padding: 20px 0;' }),
+    ]));
+    container.appendChild(listEl);
+    return;
+  }
+
+  // Group by day
+  var currentDay = '';
+  var dayCount = 0;
+  var dayLabel = null;
+
+  for (var i = 0; i < clusters.length; i++) {
+    var cluster = clusters[i];
+    var dayKey = cluster.lastTime.toDateString();
+
+    if (dayKey !== currentDay) {
+      // Count events for this day
+      dayCount = 0;
+      for (var dc = i; dc < clusters.length; dc++) {
+        if (clusters[dc].lastTime.toDateString() === dayKey) {
+          dayCount += clusters[dc].count;
+        } else {
+          break;
+        }
+      }
+
+      currentDay = dayKey;
+      var sep = el('div', { className: 'day-separator' });
+      sep.appendChild(el('span', { textContent: formatDayLabel(cluster.lastTime) }));
+      sep.appendChild(el('span', { className: 'day-count', textContent: dayCount + ' event' + (dayCount !== 1 ? 's' : '') }));
+      listEl.appendChild(sep);
+    }
+
+    var card = renderEventCard(cluster, i);
+    listEl.appendChild(card);
+  }
+
+  container.appendChild(listEl);
+}
+
+function renderEventCard(cluster, index) {
+  var meta = EVENT_TYPE_META[cluster.primaryType] || EVENT_TYPE_META.motion_detected;
+  var isExpanded = EventsState.expandedClusters[cluster.id] || false;
+
+  var card = el('div', { className: 'event-card' + (isExpanded ? ' expanded' : '') });
+  card.style.animationDelay = Math.min(index * 0.04, 0.5) + 's';
+
+  // Main row
+  var row = el('div', { className: 'event-card-row' });
+
+  // Icon thumbnail
+  var iconEl = el('div', { className: 'event-card-icon ' + meta.cssClass });
+  iconEl.appendChild(el('span', { textContent: meta.icon }));
+  if (cluster.count > 1) {
+    iconEl.appendChild(el('span', { className: 'event-cluster-badge', textContent: '×' + cluster.count }));
+  }
+  row.appendChild(iconEl);
+
+  // Body
+  var body = el('div', { className: 'event-card-body' });
+  var title = cluster.count > 1
+    ? cluster.count + ' ' + meta.label + ' Events'
+    : meta.label + ' Detected';
+  body.appendChild(el('div', { className: 'event-card-title', textContent: title }));
+  body.appendChild(el('div', { className: 'event-card-meta', textContent: cluster.device_name + ' · ' + cluster.zone }));
+  body.appendChild(el('div', { className: 'event-card-time', textContent: formatEventTime(cluster.lastTime) }));
+  row.appendChild(body);
+
+  // Chevron
+  row.appendChild(el('span', { className: 'event-card-chevron', textContent: '›' }));
+
+  card.appendChild(row);
+
+  // Detail panel
+  var detail = el('div', { className: 'event-card-detail' });
+  var detailInner = el('div', { className: 'event-detail-inner' });
+
+  // Sub-events (if clustered)
+  if (cluster.count > 1) {
+    var subSection = el('div', { className: 'event-detail-section' });
+    subSection.appendChild(el('div', { className: 'event-detail-section-title', textContent: 'Events in Cluster' }));
+    var subList = el('div', { className: 'event-detail-subevents' });
+    for (var s = 0; s < cluster.events.length; s++) {
+      var evt = cluster.events[s];
+      var evtMeta = EVENT_TYPE_META[evt.event_type] || EVENT_TYPE_META.motion_detected;
+      var subRow = el('div', { className: 'event-detail-subevent' });
+      subRow.appendChild(el('span', { className: 'subevent-dot ' + evtMeta.cssClass }));
+      subRow.appendChild(el('span', { textContent: evtMeta.label }));
+      subRow.appendChild(el('span', {
+        textContent: evt._ts.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' }),
+        style: 'margin-left: auto; color: var(--color-text-muted); font-size: 11px;'
+      }));
+      subList.appendChild(subRow);
+    }
+    subSection.appendChild(subList);
+    detailInner.appendChild(subSection);
+  }
+
+  // Witness chain info
+  var chainSection = el('div', { className: 'event-detail-section' });
+  chainSection.appendChild(el('div', { className: 'event-detail-section-title', textContent: 'Witness Chain' }));
+
+  var firstEvt = cluster.events[0];
+  var lastEvt = cluster.events[cluster.events.length - 1];
+
+  // Sequence range
+  var seqRange = cluster.count > 1
+    ? 'seq ' + firstEvt.seq + '–' + lastEvt.seq
+    : 'seq ' + firstEvt.seq;
+  chainSection.appendChild(el('div', { className: 'event-detail-row' }, [
+    el('span', { className: 'event-detail-label', textContent: 'Sequence' }),
+    el('span', { className: 'event-detail-value', textContent: seqRange }),
+  ]));
+
+  // Hash
+  chainSection.appendChild(el('div', { className: 'event-detail-row' }, [
+    el('span', { className: 'event-detail-label', textContent: 'Hash' }),
+    el('span', { className: 'event-detail-value', textContent: lastEvt.hash ? lastEvt.hash.substring(0, 16) + '…' : '—' }),
+  ]));
+
+  // Chain linkage — verify against the full per-device stream, not just this cluster,
+  // since witness prev_hash links to the immediately preceding record in the device chain
+  // regardless of zone or time window.
+  var deviceRecords = EventsState.allRecords.filter(function (r) {
+    return r.device_id === cluster.device_id;
+  }).sort(function (a, b) { return a.seq - b.seq; });
+
+  var chainValid = true;
+  for (var v = 1; v < deviceRecords.length; v++) {
+    if (!deviceRecords[v].prev_hash || !deviceRecords[v - 1].hash ||
+        deviceRecords[v].prev_hash !== deviceRecords[v - 1].hash) {
+      chainValid = false;
+      break;
+    }
+  }
+
+  chainSection.appendChild(el('div', { className: 'event-detail-row' }, [
+    el('span', { className: 'event-detail-label', textContent: 'Chain Integrity' }),
+    el('span', {
+      className: chainValid ? 'event-detail-value chain-verified' : 'event-detail-value chain-unverified',
+      textContent: chainValid ? '✓ Verified' : '⚠ Gap detected'
+    }),
+  ]));
+
+  // Signature note
+  chainSection.appendChild(el('div', { className: 'event-detail-row' }, [
+    el('span', { className: 'event-detail-label', textContent: 'Signature' }),
+    el('span', { className: 'event-detail-value', textContent: 'Ed25519 · on-device' }),
+  ]));
+
+  detailInner.appendChild(chainSection);
+  detail.appendChild(detailInner);
+  card.appendChild(detail);
+
+  // Click to expand/collapse
+  row.addEventListener('click', function () {
+    var wasExpanded = card.className.indexOf('expanded') !== -1;
+    if (wasExpanded) {
+      card.className = 'event-card';
+      EventsState.expandedClusters[cluster.id] = false;
+    } else {
+      card.className = 'event-card expanded';
+      EventsState.expandedClusters[cluster.id] = true;
+    }
+  });
+
+  return card;
 }
 
 function renderSettingsView() {
