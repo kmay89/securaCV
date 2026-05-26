@@ -480,8 +480,9 @@ void setup() {
     const char* ap_ssid = device.ap_ssid;
     char setup_ssid[32];
     if (setup_is_first_boot()) {
-      snprintf(setup_ssid, sizeof(setup_ssid), "SecuraCV-Setup-%s",
-               device.device_id + strlen(device.device_id) - 4);
+      size_t id_len = strlen(device.device_id);
+      const char* suffix = (id_len >= 4) ? (device.device_id + id_len - 4) : device.device_id;
+      snprintf(setup_ssid, sizeof(setup_ssid), "SecuraCV-Setup-%s", suffix);
       ap_ssid = setup_ssid;
       Serial.printf("[..] SETUP MODE: AP SSID = %s\n", ap_ssid);
     }
@@ -998,6 +999,12 @@ void loop() {
   if (setup_is_active()) {
     setup_dns_process();
     setup_check_timeout();
+    if (WiFi.status() == WL_CONNECTED) {
+      setup_mark_complete();
+      Serial.println("[OK] Setup complete — WiFi connected, rebooting...");
+      delay(1000);
+      ESP.restart();
+    }
   }
 #endif
 

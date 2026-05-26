@@ -47,13 +47,20 @@ static void dns_respond(const uint8_t* query, size_t len, IPAddress client_ip, u
 
   memcpy(response, query, len);
 
-  /* Set QR=1 (response), AA=1 (authoritative), RCODE=0 (no error). */
-  response[2] = 0x84;
+  /* Set QR=1 (response), AA=1 (authoritative), preserve RD, RCODE=0. */
+  response[2] = 0x84 | (query[2] & 0x01);
   response[3] = 0x00;
 
-  /* ANCOUNT = 1. */
+  /* ANCOUNT = 1, NSCOUNT = 0, ARCOUNT = 0. Zeroing NSCOUNT/ARCOUNT
+   * is critical — EDNS0 clients set ARCOUNT=1 in queries, and leaving
+   * it non-zero without an Additional section makes the response
+   * malformed, causing iOS/Android to reject the captive portal. */
   response[6] = 0x00;
   response[7] = 0x01;
+  response[8] = 0x00;
+  response[9] = 0x00;
+  response[10] = 0x00;
+  response[11] = 0x00;
 
   size_t pos = len;
 
@@ -153,7 +160,7 @@ void setup_dns_process(void) {
   if (pkt_size <= 0) return;
 
   uint8_t buf[512];
-  size_t len = (size_t)s_dns_udp.read(buf, sizeof(buf));
+  int len = s_dns_udp.read(buf, sizeof(buf));
   if (len < 12) return;
 
   dns_respond(buf, len, s_dns_udp.remoteIP(), s_dns_udp.remotePort());
@@ -185,7 +192,9 @@ void setup_check_timeout(void) {
     s_active = false;
     setup_stop_captive_portal();
     log_health(LOG_LEVEL_INFO, LOG_CAT_SYSTEM,
-               "Setup timeout", "reverting to normal operation");
+               "Setup timeout", "rebooting to normal operation");
+    delay(500);
+    ESP.restart();
   }
 }
 

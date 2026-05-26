@@ -6345,6 +6345,12 @@ void loop() {
   if (setup_wizard::is_active()) {
     setup_wizard::dns_process();
     setup_wizard::check_timeout();
+    if (WiFi.status() == WL_CONNECTED) {
+      setup_wizard::mark_complete();
+      Serial.println("[OK] Setup complete — WiFi connected, rebooting...");
+      delay(1000);
+      ESP.restart();
+    }
   }
 
   // ════════════════════════════════════════════════════════════════════════════

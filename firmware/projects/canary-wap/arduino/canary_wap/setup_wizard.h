@@ -88,18 +88,22 @@ inline void dns_process() {
   if (pkt_size <= 0) return;
 
   uint8_t buf[512];
-  size_t len = (size_t)s_dns_udp.read(buf, sizeof(buf));
+  int len = s_dns_udp.read(buf, sizeof(buf));
   if (len < 12) return;
 
   IPAddress ap_ip = WiFi.softAPIP();
   uint8_t response[512];
-  if (len > sizeof(response) - 16) return;
+  if ((size_t)len > sizeof(response) - 16) return;
 
   memcpy(response, buf, len);
-  response[2] = 0x84;
+  response[2] = 0x84 | (buf[2] & 0x01);
   response[3] = 0x00;
   response[6] = 0x00;
   response[7] = 0x01;
+  response[8] = 0x00;
+  response[9] = 0x00;
+  response[10] = 0x00;
+  response[11] = 0x00;
 
   size_t pos = len;
   response[pos++] = 0xC0; response[pos++] = 0x0C;
@@ -121,6 +125,8 @@ inline void check_timeout() {
   if ((millis() - s_started_ms) >= SETUP_TIMEOUT_MS) {
     s_active = false;
     stop_captive_portal();
+    delay(500);
+    ESP.restart();
   }
 }
 
