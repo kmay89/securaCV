@@ -100,6 +100,13 @@ typedef struct {
    * Last tamper_temp_drift event. */
   uint8_t  last_temp_drift_conf;    /* 0..100 */
   uint32_t last_temp_drift_ms;
+
+  /* ── Vision detection events (Phase 6) ────────────────────────
+   * Last motion/person detection. Zone is a 1-based grid index. */
+  uint8_t  last_vision_event_type;  /* vision_event_type_t (0..3) */
+  uint8_t  last_vision_confidence;  /* 0..100 */
+  uint8_t  last_vision_zone;        /* 1-based grid index */
+  uint32_t last_vision_event_ms;
 } sensing_state_t;
 
 /* Initialize the aggregator. Idempotent. */
@@ -147,6 +154,12 @@ void sensing_feed_ir_event(uint8_t category,
 void sensing_feed_temp_drift_event(uint8_t confidence,
                                    uint8_t time_bucket);
 
+/* Feed a vision detection event (from securacv_vision). */
+void sensing_feed_vision_event(uint8_t event_type,
+                               uint8_t confidence,
+                               uint8_t zone,
+                               uint8_t time_bucket);
+
 /* Apply TTL decay; call from the main loop at 1–10 Hz. */
 void sensing_tick(void);
 
@@ -183,6 +196,8 @@ typedef enum {
   SENSING_WITNESS_KNOCK           = 8,   /* Phase 2b: 3+ even impulse train */
   SENSING_WITNESS_DOORBELL        = 9,   /* Phase 2b: two-tone chime */
   SENSING_WITNESS_GLASS_BREAK     = 10,  /* Phase 2b: sustained HF-dominant transient */
+  SENSING_WITNESS_VISION_MOTION   = 11,  /* camera motion detected (Layer 2) */
+  SENSING_WITNESS_VISION_PERSON   = 12,  /* person detected (Layer 3 TFLite) */
 } sensing_witness_kind_t;
 
 typedef struct {

@@ -220,6 +220,21 @@ void sensing_feed_temp_drift_event(uint8_t confidence, uint8_t time_bucket) {
   fire_witness(SENSING_WITNESS_TEMP_DRIFT, confidence, time_bucket, 0);
 }
 
+void sensing_feed_vision_event(uint8_t event_type, uint8_t confidence,
+                               uint8_t zone, uint8_t time_bucket) {
+  if (!s_initialized) sensing_init();
+  s_state.last_vision_event_type = event_type;
+  s_state.last_vision_confidence = confidence;
+  s_state.last_vision_zone       = zone;
+  s_state.last_vision_event_ms   = millis();
+  s_state.time_bucket            = time_bucket;
+  if (event_type == 1) {
+    fire_witness(SENSING_WITNESS_VISION_MOTION, confidence, time_bucket, zone);
+  } else if (event_type == 3) {
+    fire_witness(SENSING_WITNESS_VISION_PERSON, confidence, time_bucket, zone);
+  }
+}
+
 void sensing_feed_csi(const csi_features_t* features) {
   if (features == nullptr) return;
   if (!s_initialized) sensing_init();
@@ -287,6 +302,17 @@ void sensing_tick(void) {
       (millis() - s_state.last_temp_drift_ms) > TEMP_DRIFT_TTL_MS) {
     s_state.last_temp_drift_conf = 0;
     s_state.last_temp_drift_ms   = 0;
+  }
+
+  /* Age out vision events: motion 10s, person 30s. */
+  if (s_state.last_vision_event_ms != 0) {
+    uint32_t vision_ttl = (s_state.last_vision_event_type == 3) ? 30000 : 10000;
+    if ((millis() - s_state.last_vision_event_ms) > vision_ttl) {
+      s_state.last_vision_event_type = 0;
+      s_state.last_vision_confidence = 0;
+      s_state.last_vision_zone       = 0;
+      s_state.last_vision_event_ms   = 0;
+    }
   }
 
   if (s_state.last_window_ms == 0) return;

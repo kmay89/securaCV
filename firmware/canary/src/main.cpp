@@ -78,6 +78,10 @@ static_assert(sizeof(csi_features_t) == 36,
 #include "securacv_envsens.h"
 #endif
 
+#if FEATURE_VISION_DETECT
+#include "securacv_vision.h"
+#endif
+
 /* All five sensing sources feed a single aggregator. The header is
  * include-guarded, so one unconditional include is the right shape;
  * sensing_init() is also idempotent so each feature block can call it
@@ -755,6 +759,26 @@ void setup() {
   }
 #endif
 
+  // Initialize vision detection pipeline
+#if FEATURE_VISION_DETECT
+  Serial.println("[..] Initializing vision detection...");
+  sensing_init();
+  vision_config_t vision_cfg = VISION_CONFIG_DEFAULT;
+  if (vision_init(&vision_cfg)) {
+    vision_set_event_callback([](const vision_event_t* evt) {
+      sensing_feed_vision_event(evt->event_type, evt->confidence,
+                                evt->zone, evt->time_bucket);
+    });
+    if (vision_start()) {
+      Serial.println("[OK] Vision detection armed (3-layer cascade)");
+    } else {
+      Serial.println("[WARN] Vision detection start failed");
+    }
+  } else {
+    Serial.println("[WARN] Vision detection init failed");
+  }
+#endif
+
   // Create boot attestation record
   Serial.println("[..] Creating boot attestation record...");
   uint8_t boot_payload[64];
@@ -903,6 +927,10 @@ void loop() {
   // Pump envsens: sample internal die temp once per minute, run drift
   // detector. Cheap — at most one read per process() call.
   envsens_process();
+#endif
+
+#if FEATURE_VISION_DETECT
+  vision_process();
 #endif
 
   // Age out stale sensing events (TTL decay across all sources). One
