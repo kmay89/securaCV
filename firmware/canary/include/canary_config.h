@@ -114,6 +114,12 @@
 #ifndef FEATURE_DIAGNOSTICS
   #define FEATURE_DIAGNOSTICS      1   // Heap monitoring, SD health, self-test, feature degradation
 #endif
+#ifndef FEATURE_DATA_MGMT
+  #define FEATURE_DATA_MGMT        1   // SD log rotation, chain backup/restore, integrity verification
+#endif
+#ifndef FEATURE_BLE_STATUS
+  #define FEATURE_BLE_STATUS       1   // BLE GATT status service (battery, health, chain over BLE)
+#endif
 
 // ════════════════════════════════════════════════════════════════
 // DEBUG FLAG DEFAULTS
@@ -282,6 +288,10 @@
 #define NVS_KEY_BATT_CYC  "batt_cycles"
 #define NVS_KEY_BATT_MAX  "batt_max_mv"
 #define NVS_KEY_BATT_MIN  "batt_min_mv"
+#define NVS_KEY_BATT_RT   "batt_rt_min"   // total runtime on battery (minutes)
+#define NVS_KEY_BATT_SOC  "batt_soc_min"  // all-time lowest SoC %
+#define NVS_KEY_BATT_BO   "batt_bo_cnt"   // brownout reset count
+#define NVS_KEY_BATT_FC   "batt_fc_ms"    // last full charge millis()
 #define NVS_KEY_SETUP_OK  "setup_ok"
 #define NVS_KEY_DEV_NAME  "dev_name"
 

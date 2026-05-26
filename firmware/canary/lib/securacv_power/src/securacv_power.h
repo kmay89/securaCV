@@ -130,6 +130,20 @@ typedef struct {
 typedef void (*power_event_cb_t)(const power_event_t* evt);
 
 /* ────────────────────────────────────────────────────────────────────────── */
+/*  BATTERY HEALTH HISTORY (NVS-persisted)                                   */
+/* ────────────────────────────────────────────────────────────────────────── */
+
+typedef struct {
+  uint32_t charge_cycles;       /* full charge→discharge cycles */
+  uint32_t total_runtime_min;   /* total minutes on battery */
+  uint16_t voltage_min_mv;      /* all-time minimum voltage seen */
+  uint16_t voltage_max_mv;      /* all-time maximum voltage seen */
+  uint8_t  soc_min_pct;         /* lowest SoC ever recorded */
+  uint32_t brownout_count;      /* number of brownout resets */
+  uint32_t last_full_charge_ms; /* millis() of last full charge detected */
+} power_history_t;
+
+/* ────────────────────────────────────────────────────────────────────────── */
 /*  C API                                                                    */
 /* ────────────────────────────────────────────────────────────────────────── */
 
@@ -164,6 +178,11 @@ void power_graceful_shutdown(void);
 bool power_is_critical(void);
 
 bool power_is_charging(void);
+
+/* Battery health history — accumulated stats persisted to NVS.
+ * Call power_persist_history() periodically (e.g. every 10 min). */
+bool power_get_history(power_history_t* out);
+void power_persist_history(void);
 
 #ifdef __cplusplus
 }

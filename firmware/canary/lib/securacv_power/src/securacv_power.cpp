@@ -34,6 +34,7 @@
 #endif
 
 #include <esp_sleep.h>
+#include <esp_system.h>
 #include "securacv_lowpower.h"
 
 namespace power {
@@ -124,6 +125,11 @@ static constexpr uint16_t CYCLE_HIGH_MV = 4100;
 
 /* No-battery detection */
 static uint8_t s_no_battery_count = 0;
+
+/* Battery health history (NVS-persisted) */
+static power_history_t s_history = {};
+static uint32_t s_runtime_accum_ms = 0;    /* sub-minute accumulator */
+static uint32_t s_runtime_last_ms  = 0;    /* last millis() for runtime tracking */
 
 /* ──────────────────────────────────────────────────────────────────────────
  * ADC PERIPHERAL
@@ -450,7 +456,25 @@ static void load_nvs_state() {
     s_state.capacity_mah = prefs.getUShort("batt_cap", s_cfg.capacity_mah);
     s_state.max_voltage_mv = prefs.getUShort("batt_max_mv", 0);
     s_state.min_voltage_mv = prefs.getUShort("batt_min_mv", 0xFFFF);
+
+    /* Battery health history fields */
+    s_history.charge_cycles     = s_state.charge_cycles;
+    s_history.total_runtime_min = prefs.getUInt("batt_rt_min", 0);
+    s_history.voltage_min_mv    = s_state.min_voltage_mv;
+    s_history.voltage_max_mv    = s_state.max_voltage_mv;
+    s_history.soc_min_pct       = prefs.getUChar("batt_soc_min", 100);
+    s_history.brownout_count    = prefs.getUInt("batt_bo_cnt", 0);
+    s_history.last_full_charge_ms = prefs.getUInt("batt_fc_ms", 0);
+
     prefs.end();
+  }
+
+  /* Detect brownout reset and increment count */
+  {
+    esp_reset_reason_t rst = esp_reset_reason();
+    if (rst == ESP_RST_BROWNOUT) {
+      s_history.brownout_count++;
+    }
   }
 }
 
@@ -657,6 +681,36 @@ bool power_process(void) {
   /* Periodically persist voltage extremes. */
   save_voltage_extremes();
 
+  /* Track battery runtime — only accumulate when on battery. */
+  if (s_state.power_source == POWER_SOURCE_BATTERY) {
+    if (s_runtime_last_ms != 0) {
+      uint32_t delta = now - s_runtime_last_ms;
+      s_runtime_accum_ms += delta;
+      /* Roll over full minutes into the history counter. */
+      while (s_runtime_accum_ms >= 60000) {
+        s_runtime_accum_ms -= 60000;
+        s_history.total_runtime_min++;
+      }
+    }
+  }
+  s_runtime_last_ms = now;
+
+  /* Track all-time SoC minimum (only meaningful in HW ADC mode). */
+  if (s_state.monitor_mode == POWER_MODE_HW_ADC &&
+      s_state.soc_pct < s_history.soc_min_pct) {
+    s_history.soc_min_pct = s_state.soc_pct;
+  }
+
+  /* Keep history in sync with running state. */
+  s_history.charge_cycles  = s_state.charge_cycles;
+  s_history.voltage_min_mv = s_state.min_voltage_mv;
+  s_history.voltage_max_mv = s_state.max_voltage_mv;
+
+  /* Detect full charge for history timestamp. */
+  if (s_state.charge_state == CHARGE_STATE_FULL) {
+    s_history.last_full_charge_ms = now;
+  }
+
   return true;
 }
 
@@ -722,6 +776,27 @@ bool power_is_critical(void) {
 
 bool power_is_charging(void) {
   return power::s_state.charge_state == CHARGE_STATE_CHARGING;
+}
+
+bool power_get_history(power_history_t* out) {
+  if (!out || !power::s_initialized) return false;
+  *out = power::s_history;
+  return true;
+}
+
+void power_persist_history(void) {
+  using namespace power;
+  if (!s_initialized) return;
+  Preferences prefs;
+  if (prefs.begin("securacv", false)) {
+    prefs.putUInt("batt_rt_min",  s_history.total_runtime_min);
+    prefs.putUChar("batt_soc_min", s_history.soc_min_pct);
+    prefs.putUInt("batt_bo_cnt",  s_history.brownout_count);
+    prefs.putUInt("batt_fc_ms",   s_history.last_full_charge_ms);
+    /* charge_cycles and voltage extremes are already persisted by
+     * track_charge_cycle() and save_voltage_extremes(). */
+    prefs.end();
+  }
 }
 
 }  /* extern "C" */
