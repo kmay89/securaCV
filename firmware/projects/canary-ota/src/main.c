@@ -295,7 +295,7 @@ void app_main(void)
         // Continue anyway for OTA self-test (it will fail gracefully)
     } else {
         char ip_str[16];
-        wifi_sta_get_ip(ip_str);
+        wifi_sta_get_ip(ip_str, sizeof(ip_str));
         ESP_LOGI(TAG, "WiFi connected! IP: %s", ip_str);
     }
 

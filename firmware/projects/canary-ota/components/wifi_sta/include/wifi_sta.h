@@ -108,7 +108,7 @@ bool wifi_sta_is_connected(void);
  * @param ip_str Buffer to store IP address string (at least 16 bytes)
  * @return ESP_OK if connected and IP retrieved, ESP_ERR_INVALID_STATE if not connected
  */
-esp_err_t wifi_sta_get_ip(char *ip_str);
+esp_err_t wifi_sta_get_ip(char *ip_str, size_t ip_str_size);
 
 /**
  * @brief Get WiFi signal strength (RSSI)

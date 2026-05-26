@@ -384,9 +384,9 @@ bool wifi_sta_is_connected(void)
     return s_status == WIFI_STA_CONNECTED;
 }
 
-esp_err_t wifi_sta_get_ip(char *ip_str)
+esp_err_t wifi_sta_get_ip(char *ip_str, size_t ip_str_size)
 {
-    if (ip_str == NULL) {
+    if (ip_str == NULL || ip_str_size == 0) {
         return ESP_ERR_INVALID_ARG;
     }
 
@@ -400,7 +400,7 @@ esp_err_t wifi_sta_get_ip(char *ip_str)
         return err;
     }
 
-    sprintf(ip_str, IPSTR, IP2STR(&ip_info.ip));
+    snprintf(ip_str, ip_str_size, IPSTR, IP2STR(&ip_info.ip));
     return ESP_OK;
 }
 
