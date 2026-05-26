@@ -2515,6 +2515,112 @@ static esp_err_t handle_system_metrics(httpd_req_t* req) {
 }
 #endif
 
+// ────────────────────────────────────────────────────────────────────────────
+// GET /api/diagnostics — heap snapshot + SD health + degradation level
+// ────────────────────────────────────────────────────────────────────────────
+
+#if FEATURE_SYS_MONITOR
+static esp_err_t handle_diagnostics(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  sys_monitor::DegradeLevel degrade = sys_monitor::get_degrade_level();
+  sys_monitor::SDHealthStats sd_h = sys_monitor::get_sd_health();
+
+  char buf[512];
+  int len = snprintf(buf, sizeof(buf),
+    "{"
+    "\"ok\":true,"
+    "\"heap\":{"
+      "\"free\":%u,"
+      "\"min_free\":%u,"
+      "\"largest_block\":%u,"
+      "\"total\":%u"
+    "},"
+    "\"degradation\":{"
+      "\"level\":%u,"
+      "\"level_name\":\"%s\""
+    "},"
+    "\"sd_health\":{"
+      "\"total_writes\":%u,"
+      "\"write_errors\":%u,"
+      "\"usage_pct\":%u,"
+      "\"space_warning\":%s,"
+      "\"space_critical\":%s"
+    "},"
+    "\"uptime_sec\":%u"
+    "}",
+    (unsigned)sys_monitor::g_sys_metrics.heap_free,
+    (unsigned)sys_monitor::g_sys_metrics.heap_min_free,
+    (unsigned)sys_monitor::g_sys_metrics.heap_largest_block,
+    (unsigned)sys_monitor::g_sys_metrics.heap_total,
+    (unsigned)degrade,
+    sys_monitor::degrade_level_name(degrade),
+    (unsigned)sd_h.total_writes,
+    (unsigned)sd_h.write_errors,
+    (unsigned)sd_h.usage_pct,
+    sd_h.space_warning  ? "true" : "false",
+    sd_h.space_critical ? "true" : "false",
+    (unsigned)sys_monitor::g_sys_metrics.uptime_sec);
+
+  if (len <= 0 || len >= (int)sizeof(buf)) {
+    return http_send_json(req, "{\"ok\":false,\"error\":\"buffer overflow\"}");
+  }
+
+  return http_send_json(req, buf);
+}
+#endif
+
+// ────────────────────────────────────────────────────────────────────────────
+// GET /api/battery/history — battery health stats
+// ────────────────────────────────────────────────────────────────────────────
+
+#if FEATURE_POWER_MONITOR
+static esp_err_t handle_battery_history(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  PowerState pwr;
+  if (!power_monitor::get_state(&pwr)) {
+    return http_send_json(req, "{\"ok\":false,\"error\":\"power monitor unavailable\"}");
+  }
+
+  char buf[512];
+  int len = snprintf(buf, sizeof(buf),
+    "{"
+    "\"ok\":true,"
+    "\"voltage_mv\":%u,"
+    "\"soc_pct\":%u,"
+    "\"charge_state\":\"%s\","
+    "\"monitor_mode\":\"%s\","
+    "\"battery_present\":%s,"
+    "\"divider_detected\":%s,"
+    "\"samples_taken\":%u,"
+    "\"min_voltage_mv\":%u,"
+    "\"max_voltage_mv\":%u,"
+    "\"trend_mv_per_min\":%d,"
+    "\"charge_cycles\":%u,"
+    "\"uptime_sec\":%u"
+    "}",
+    (unsigned)pwr.voltage_mv,
+    (unsigned)pwr.soc_pct,
+    power_monitor::charge_state_name(pwr.charge_state),
+    power_monitor::mode_name(pwr.monitor_mode),
+    pwr.battery_present ? "true" : "false",
+    pwr.divider_detected ? "true" : "false",
+    (unsigned)pwr.samples_taken,
+    (unsigned)pwr.min_voltage_mv,
+    (unsigned)pwr.max_voltage_mv,
+    (int)pwr.trend_mv_per_min,
+    (unsigned)pwr.charge_cycles,
+    (unsigned)(millis() / 1000));
+
+  if (len <= 0 || len >= (int)sizeof(buf)) {
+    return http_send_json(req, "{\"ok\":false,\"error\":\"buffer overflow\"}");
+  }
+
+  return http_send_json(req, buf);
+}
+#endif
+
 static esp_err_t handle_chain(httpd_req_t* req) {
   g_health.http_requests++;
 
@@ -4874,6 +4980,17 @@ static esp_err_t handle_system_metrics_auth(httpd_req_t* req) {
   if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
   return handle_system_metrics(req);
 }
+static esp_err_t handle_diagnostics_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_diagnostics(req);
+}
+#endif
+
+#if FEATURE_POWER_MONITOR
+static esp_err_t handle_battery_history_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_battery_history(req);
+}
 #endif
 
 // Register all route handlers on a given httpd server handle
@@ -4926,6 +5043,14 @@ static void register_api_routes(httpd_handle_t server) {
 #if FEATURE_SYS_MONITOR
   httpd_uri_t sys_metrics = { .uri = "/api/system", .method = HTTP_GET, .handler = handle_system_metrics_auth };
   httpd_register_uri_handler(server, &sys_metrics);
+
+  httpd_uri_t diagnostics = { .uri = "/api/diagnostics", .method = HTTP_GET, .handler = handle_diagnostics_auth };
+  httpd_register_uri_handler(server, &diagnostics);
+#endif
+
+#if FEATURE_POWER_MONITOR
+  httpd_uri_t battery_history = { .uri = "/api/battery/history", .method = HTTP_GET, .handler = handle_battery_history_auth };
+  httpd_register_uri_handler(server, &battery_history);
 #endif
 
   httpd_uri_t chain = { .uri = "/api/chain", .method = HTTP_GET, .handler = handle_chain_auth };
@@ -4983,7 +5108,7 @@ static void register_api_routes(httpd_handle_t server) {
 
 static void start_http_server() {
   // Calculate max URI handlers based on feature usage
-  const int base_handlers = 30;       // UI (/ + /admin + /settings), API (auth + public), WiFi provisioning, captive portal, /api/selftest
+  const int base_handlers = 32;       // UI (/ + /admin + /settings), API (auth + public), WiFi provisioning, captive portal, /api/selftest, /api/diagnostics, /api/battery/history
   const int camera_handlers = 9;      // Camera peek endpoints
   const int mesh_handlers = 12;       // Mesh network endpoints
   const int bluetooth_handlers = 23;  // Bluetooth API endpoints
@@ -6422,7 +6547,7 @@ void setup() {
                 WiFi.softAPIP().toString().c_str());
   #endif
   Serial.println("╠══════════════════════════════════════════════════════════════╣");
-  Serial.println("║  Commands: h=help i=id s=stat t=time g=gps c=cam m=sys b=batt p=pwr║");
+  Serial.println("║  Commands: h=help i=id s=stat t=time g=gps c=cam m=sys r=data b=bat║");
   Serial.println("║  Token + WiFi credentials are printed above on every boot      ║");
   Serial.println("║  Hold  BOOT (>3s)   = factory reset                           ║");
   Serial.println("╚══════════════════════════════════════════════════════════════╝");
