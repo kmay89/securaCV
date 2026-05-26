@@ -1,0 +1,19 @@
+{
+    "name": "securacv_power_policy",
+    "version": "0.1.0",
+    "description": "SecuraCV Power Policy Engine — runtime state machine that selects operating modes (plugged_in, battery_normal, battery_saver, emergency, shutdown) based on battery state and power source. Controls feature enablement, CPU frequency, WiFi power save, sleep modes, and witness record intervals to maximize battery life.",
+    "keywords": ["securacv", "esp32-s3", "power", "policy", "sleep", "battery"],
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/kmay89/securaCV.git"
+    },
+    "authors": [
+        {
+            "name": "Karl May",
+            "email": "karl@errerlabs.com"
+        }
+    ],
+    "license": "Apache-2.0",
+    "frameworks": "arduino",
+    "platforms": "espressif32"
+}

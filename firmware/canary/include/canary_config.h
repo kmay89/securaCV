@@ -105,6 +105,9 @@
 #ifndef FEATURE_POWER_MONITOR
   #define FEATURE_POWER_MONITOR    1   // Battery voltage + charge state + SoC (ADC or inference)
 #endif
+#ifndef FEATURE_POWER_POLICY
+  #define FEATURE_POWER_POLICY     1   // Runtime power mode engine (auto sleep/throttle by battery)
+#endif
 
 // ════════════════════════════════════════════════════════════════
 // DEBUG FLAG DEFAULTS

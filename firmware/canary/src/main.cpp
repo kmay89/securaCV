@@ -86,6 +86,10 @@ static_assert(sizeof(csi_features_t) == 36,
 #include "securacv_power.h"
 #endif
 
+#if FEATURE_POWER_POLICY
+#include "securacv_power_policy.h"
+#endif
+
 /* All five sensing sources feed a single aggregator. The header is
  * include-guarded, so one unconditional include is the right shape;
  * sensing_init() is also idempotent so each feature block can call it
@@ -365,6 +369,29 @@ void setup() {
       }
     } else {
       Serial.println("[WARN] Power monitor init failed");
+    }
+  }
+#endif
+
+  // Initialize power policy engine (auto-adjusts features by battery level)
+#if FEATURE_POWER_POLICY
+  {
+    policy_config_t pol_cfg = POLICY_CONFIG_DEFAULT;
+    if (policy_init(&pol_cfg)) {
+      policy_set_mode_change_callback([](power_mode_t prev, power_mode_t next) {
+        uint8_t payload[64];
+        CborWriter cbor(payload, sizeof(payload));
+        cbor.write_map(3);
+        cbor.write_text("type"); cbor.write_text("power_mode_change");
+        cbor.write_text("from"); cbor.write_uint(prev);
+        cbor.write_text("to");   cbor.write_uint(next);
+        WitnessRecord rec;
+        witness_create_record(payload, cbor.size(), RECORD_STATE_CHANGE, &rec);
+      });
+      Serial.printf("[OK] Power policy engine: %s mode\n",
+                    policy_mode_name(policy_get_mode()));
+    } else {
+      Serial.println("[WARN] Power policy init failed");
     }
   }
 #endif
@@ -967,37 +994,52 @@ void loop() {
   network_get_instance().checkConnection();
 #endif
 
+  // Runtime policy gates — the policy engine decides which sensors run
+  // based on battery state. If policy isn't compiled in, all features
+  // run unconditionally (same as PMODE_PLUGGED_IN).
+#if FEATURE_POWER_POLICY
+  const policy_features_t* pf = policy_get_features();
+#endif
+
 #if FEATURE_CSI
-  // Pump CSI: drain ring, finalize windows, fire feature callback into
-  // sensing_feed_csi().
+  #if FEATURE_POWER_POLICY
+  if (pf->csi)
+  #endif
   csi::process();
 #endif
 
 #if FEATURE_ACOUSTIC_EVENTS
-  // Pump audio: drain I2S DMA, compute RMS envelope, run cadence FSM,
-  // fire event callback into sensing_feed_audio_event() on T3/T4 match.
+  #if FEATURE_POWER_POLICY
+  if (pf->acoustic)
+  #endif
   audio_process();
 #endif
 
 #if FEATURE_TOUCH
-  // Pump touch: read filtered pad value at 20 Hz, run panic/tamper/
-  // approach state machines, fire event callback on confirmed match.
+  #if FEATURE_POWER_POLICY
+  if (pf->touch)
+  #endif
   touch_process();
 #endif
 
 #if FEATURE_IR_RMT
-  // Pump IR: drain RMT ring, decode NEC/RC5/Sony, hash payload to
-  // privacy bucket, fire on confirmed match.
+  #if FEATURE_POWER_POLICY
+  if (pf->ir_rmt)
+  #endif
   ir_process();
 #endif
 
 #if FEATURE_TEMP_TAMPER
-  // Pump envsens: sample internal die temp once per minute, run drift
-  // detector. Cheap — at most one read per process() call.
+  #if FEATURE_POWER_POLICY
+  if (pf->temp_tamper)
+  #endif
   envsens_process();
 #endif
 
 #if FEATURE_VISION_DETECT
+  #if FEATURE_POWER_POLICY
+  if (pf->vision)
+  #endif
   vision_process();
 #endif
 
@@ -1012,6 +1054,20 @@ void loop() {
       health.power_source  = pwr.power_source;
       health.battery_trend = pwr.trend_mv_per_min;
     }
+  }
+#endif
+
+#if FEATURE_POWER_POLICY
+  policy_process();
+
+  if (policy_should_deep_sleep()) {
+    Serial.println("[..] Power policy: entering deep sleep cycle...");
+    witness_persist_chain_state();
+    lowpower_arm_wake_timer(
+        (uint64_t)55ULL * 1000000ULL);
+    lowpower_arm_wake_touch();
+    policy_ack_deep_sleep();
+    lowpower_enter_deep_sleep();
   }
 #endif
 
@@ -1052,7 +1108,13 @@ void loop() {
 #endif
 
   // Create witness records at interval
-  if (now - g_last_record_ms >= RECORD_INTERVAL_MS) {
+  {
+#if FEATURE_POWER_POLICY
+    uint32_t rec_interval = policy_get_features()->record_interval_ms;
+#else
+    uint32_t rec_interval = RECORD_INTERVAL_MS;
+#endif
+  if (now - g_last_record_ms >= rec_interval) {
     g_last_record_ms = now;
 
     // Build witness event payload
@@ -1082,6 +1144,7 @@ void loop() {
       log_health(LOG_LEVEL_ERROR, LOG_CAT_WITNESS, "Record creation failed", nullptr);
     }
   }
+  } /* rec_interval scope */
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1308,6 +1371,10 @@ static void mqtt_publish_sensing_update() {
    * compiled in (see top of file). */
   doc["wake_reason"] = lowpower_wake_reason_name(lowpower_get_wake_reason());
 
+#if FEATURE_POWER_POLICY
+  doc["power_mode"] = policy_mode_name(policy_get_mode());
+#endif
+
   String payload;
   serializeJson(doc, payload);
   mqtt_publish_sensing(payload.c_str());
@@ -1336,6 +1403,9 @@ static void handle_serial_commands() {
       Serial.println("  r - Reboot");
 #if FEATURE_POWER_MONITOR
       Serial.println("  b - Battery status");
+#endif
+#if FEATURE_POWER_POLICY
+      Serial.println("  p - Power policy status");
 #endif
 #if FEATURE_HA_MQTT
       Serial.println("  m - MQTT status");
@@ -1411,6 +1481,36 @@ static void handle_serial_commands() {
     }
 #endif
 
+#if FEATURE_POWER_POLICY
+    case 'p':
+    case 'P': {
+      policy_state_t pol;
+      Serial.println("\n=== Power Policy ===");
+      if (policy_get_state(&pol)) {
+        Serial.printf("  Mode: %s\n", policy_mode_name((power_mode_t)pol.mode));
+        Serial.printf("  Previous: %s\n", policy_mode_name((power_mode_t)pol.prev_mode));
+        Serial.printf("  Auto: %s\n", pol.auto_mode ? "yes" : "no (manual override)");
+        Serial.printf("  Transitions: %u\n", pol.transitions);
+        Serial.printf("  Record interval: %u ms\n", pol.features.record_interval_ms);
+        Serial.printf("  CPU freq: %u MHz\n", pol.features.cpu_freq_mhz);
+        Serial.printf("  WiFi PS: %u\n", pol.features.wifi_ps_mode);
+        Serial.println("  Features:");
+        Serial.printf("    WiFi=%d CSI=%d Audio=%d Touch=%d IR=%d\n",
+                      pol.features.wifi_ap, pol.features.csi,
+                      pol.features.acoustic, pol.features.touch,
+                      pol.features.ir_rmt);
+        Serial.printf("    Camera=%d Vision=%d GPS=%d MQTT=%d Mesh=%d\n",
+                      pol.features.camera_peek, pol.features.vision,
+                      pol.features.gnss, pol.features.mqtt,
+                      pol.features.mesh);
+      } else {
+        Serial.println("  Not initialized");
+      }
+      Serial.println();
+      break;
+    }
+#endif
+
 #if FEATURE_HA_MQTT
     case 'm':
     case 'M':
@@ -1478,6 +1578,10 @@ static void print_status() {
 
 #if FEATURE_HA_MQTT
   Serial.printf("  MQTT: %s\n", mqtt_connected() ? "Connected" : "Disconnected");
+#endif
+
+#if FEATURE_POWER_POLICY
+  Serial.printf("  Power mode: %s\n", policy_mode_name(policy_get_mode()));
 #endif
 
 #if FEATURE_POWER_MONITOR
