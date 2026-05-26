@@ -164,6 +164,10 @@ bool policy_should_deep_sleep(void);
  * wake from deep sleep to reset the pending flag). */
 void policy_ack_deep_sleep(void);
 
+/* Get the configured deep sleep duration in seconds for low-power
+ * mode cycling. main.cpp uses this to arm the wake timer. */
+uint32_t policy_get_sleep_duration_sec(void);
+
 #ifdef __cplusplus
 }
 #endif

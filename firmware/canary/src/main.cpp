@@ -1061,6 +1061,7 @@ void loop() {
   policy_process();
 
   if (policy_should_deep_sleep() && !power_is_charging()) {
+    uint32_t sleep_sec = policy_get_sleep_duration_sec();
     {
       power_state_t pwr;
       power_get_state(&pwr);
@@ -1069,13 +1070,13 @@ void loop() {
       sl_cbor.write_map(3);
       sl_cbor.write_text("type"); sl_cbor.write_text("deep_sleep_entry");
       sl_cbor.write_text("soc");  sl_cbor.write_uint(pwr.soc_pct);
-      sl_cbor.write_text("dur");  sl_cbor.write_uint(55);
+      sl_cbor.write_text("dur");  sl_cbor.write_uint(sleep_sec);
       WitnessRecord sl_rec;
       witness_create_record(sl_payload, sl_cbor.size(),
                             RECORD_STATE_CHANGE, &sl_rec);
     }
     witness_persist_chain_state();
-    lowpower_arm_wake_timer(55ULL * 1000000ULL);
+    lowpower_arm_wake_timer((uint64_t)sleep_sec * 1000000ULL);
     lowpower_arm_wake_touch();
     policy_ack_deep_sleep();
     lowpower_enter_deep_sleep();

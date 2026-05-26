@@ -228,8 +228,7 @@ static power_mode_t evaluate(const power_state_t* pwr) {
   if (soc <= s_cfg.shutdown_threshold_pct) return PMODE_SHUTDOWN;
   if (soc <= s_cfg.low_power_threshold_pct) return PMODE_LOW_POWER;
   if (soc <= s_cfg.saver_threshold_pct) return PMODE_BATTERY_SAVER;
-  if (soc <= s_cfg.normal_threshold_pct) return PMODE_BATTERY_NORMAL;
-  return PMODE_PLUGGED_IN;
+  return PMODE_BATTERY_NORMAL;
 }
 
 }  /* namespace policy */
@@ -408,6 +407,10 @@ bool policy_should_deep_sleep(void) {
 void policy_ack_deep_sleep(void) {
   policy::s_deep_sleep_pending = false;
   policy::s_last_deep_sleep_ms = millis();
+}
+
+uint32_t policy_get_sleep_duration_sec(void) {
+  return policy::s_cfg.low_power_sleep_sec;
 }
 
 }  /* extern "C" */
