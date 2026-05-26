@@ -916,7 +916,7 @@ static void handle_offline_imminent(OperaPeer* peer, const uint8_t* payload) {
   // Format chain hash as hex
   char hash_hex[17];
   for (int i = 0; i < 8; i++) {
-    sprintf(hash_hex + i * 2, "%02x", alert->final_chain_hash[i]);
+    snprintf(hash_hex + i * 2, sizeof(hash_hex) - i * 2, "%02x", alert->final_chain_hash[i]);
   }
   snprintf(mesh_alert.detail, sizeof(mesh_alert.detail), "Final seq: %u, hash: %s",
            alert->final_seq, hash_hex);
@@ -1463,7 +1463,7 @@ MeshStatus get_status() {
 
   // Format opera ID as hex
   for (size_t i = 0; i < OPERA_ID_SIZE; i++) {
-    sprintf(status.opera_id_hex + i * 2, "%02x", g_opera_config.opera_id[i]);
+    snprintf(status.opera_id_hex + i * 2, sizeof(status.opera_id_hex) - i * 2, "%02x", g_opera_config.opera_id[i]);
   }
   status.opera_id_hex[OPERA_ID_SIZE * 2] = '\0';
 
@@ -1708,7 +1708,7 @@ bool start_pairing_initiator(const char* opera_name) {
     if (opera_name) {
       strncpy(g_opera_config.opera_name, opera_name, MAX_OPERA_NAME_LEN);
     } else {
-      strcpy(g_opera_config.opera_name, "My Canary Opera");
+      strncpy(g_opera_config.opera_name, "My Canary Opera", MAX_OPERA_NAME_LEN);
     }
     g_opera_config.opera_name[MAX_OPERA_NAME_LEN] = '\0';
 

@@ -3730,7 +3730,7 @@ static esp_err_t handle_mesh_peers(httpd_req_t* req) {
 
     char fp_hex[17];
     for (int j = 0; j < 8; j++) {
-      sprintf(fp_hex + j * 2, "%02X", peer->fingerprint[j]);
+      snprintf(fp_hex + j * 2, sizeof(fp_hex) - j * 2, "%02X", peer->fingerprint[j]);
     }
     p["fingerprint"] = fp_hex;
 
@@ -6215,7 +6215,7 @@ void setup() {
     if (sys_monitor::g_sys_metrics.psram_available) {
       sys_monitor::format_bytes(sys_monitor::g_sys_metrics.psram_total, psram_str, sizeof(psram_str));
     } else {
-      strcpy(psram_str, "N/A");
+      snprintf(psram_str, sizeof(psram_str), "N/A");
     }
     Serial.printf("[OK] System monitor: %.1fC, Heap: %uKB, PSRAM: %s\n",
                   sys_monitor::g_sys_metrics.temp_celsius,

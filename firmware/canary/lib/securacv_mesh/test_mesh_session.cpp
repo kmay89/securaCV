@@ -176,7 +176,8 @@ void test_incoming_discover_triggers_offer_unicast() {
 
   mesh_pairing::PairDiscoverPayload disc{};
   std::memcpy(disc.pubkey, joiner_pub, mesh_crypto::PUBKEY_LEN);
-  std::strcpy(disc.device_name, "Joiner");
+  std::strncpy(disc.device_name, "Joiner", sizeof(disc.device_name) - 1);
+  disc.device_name[sizeof(disc.device_name) - 1] = '\0';
   disc.role = mesh_pairing::ROLE_JOINER;
 
   uint8_t frame[1 + sizeof(disc)];
