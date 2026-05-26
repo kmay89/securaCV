@@ -673,7 +673,7 @@ fn cmd_unseal(
     })?;
     let verifying_key = device_public_key_from_db(&conn)?;
     let clear = vault.unseal(envelope, &mut token, ruleset_hash, &verifying_key, |hash| {
-        break_glass_receipt_outcome_for_verifier(&conn, &verifying_key, hash)
+        break_glass_receipt_outcome_for_verifier(&conn, &verifying_key, hash, None)
     })?;
 
     let sanitized = crate::vault::sanitize_envelope_id(envelope)?;

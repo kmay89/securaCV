@@ -1854,6 +1854,17 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         self.device_key.verifying_key().to_bytes()
     }
 
+    fn device_pq_public_key_ref(&self) -> Option<&PqPublicKey> {
+        #[cfg(feature = "pqc-signatures")]
+        {
+            return self.device_pq_key.as_ref().map(|key| &key.public_key);
+        }
+        #[cfg(not(feature = "pqc-signatures"))]
+        {
+            None
+        }
+    }
+
     pub fn device_pq_public_key_for_verify_only(&self) -> Option<Vec<u8>> {
         #[cfg(feature = "pqc-signatures")]
         {
@@ -1881,6 +1892,7 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
             &self.conn,
             &self.device_verifying_key(),
             &receipt_entry_hash,
+            self.device_pq_public_key_ref(),
         )?;
         if !matches!(outcome, break_glass::BreakGlassOutcome::Granted) {
             return Err(anyhow!("cannot sign break-glass token for denied receipt"));
@@ -1896,6 +1908,7 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
             &self.conn,
             &self.device_verifying_key(),
             receipt_entry_hash,
+            self.device_pq_public_key_ref(),
         )
     }
 }
@@ -2040,6 +2053,7 @@ pub fn break_glass_receipt_outcome_for_verifier(
     conn: &Connection,
     verifying_key: &VerifyingKey,
     receipt_entry_hash: &[u8; 32],
+    pq_public_key: Option<&PqPublicKey>,
 ) -> Result<break_glass::BreakGlassOutcome> {
     let mut stmt = conn.prepare(
         "SELECT payload_json, prev_hash, entry_hash, signature, pq_signature, pq_scheme FROM break_glass_receipts WHERE entry_hash = ?1 LIMIT 1",
@@ -2082,7 +2096,7 @@ pub fn break_glass_receipt_outcome_for_verifier(
         &entry_hash,
         &signature_set,
         SignatureMode::Compat,
-        None,
+        pq_public_key,
         DOMAIN_BREAK_GLASS_RECEIPT,
     )?;
     let receipt: break_glass::BreakGlassReceipt = serde_json::from_str(&payload)?;
