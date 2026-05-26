@@ -258,7 +258,7 @@ static inline uint16_t scv_estimate_distance_dm(int16_t rssi_avg_x10) {
 }
 
 static inline void scv_format_distance(uint16_t dm, char* buf, size_t buf_len) {
-    if(dm >= 100) {
+    if(dm >= 10) {
         snprintf(buf, buf_len, "%d.%dm", dm / 10, dm % 10);
     } else {
         snprintf(buf, buf_len, "0.%dm", dm);
