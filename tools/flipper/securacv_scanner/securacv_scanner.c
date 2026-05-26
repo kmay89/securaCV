@@ -10,10 +10,10 @@
  *
  * Controls:
  *   Up/Down    — scroll device list
- *   OK         — show device detail / short press
- *   OK (long)  — toggle pin on selected device (scan list)
- *   Left/Right — cycle sort mode (scan list) / toggle detail/graph
+ *   OK         — show device detail
+ *   Left/Right — toggle between detail and signal graph
  *   Back       — return to list / exit app
+ *   Back (long)— toggle proximity alerts (scan list)
  */
 
 #include <furi.h>
@@ -21,6 +21,7 @@
 #include <gui/gui.h>
 #include <gui/view_port.h>
 #include <bt/bt_service/bt.h>
+#include <notification/notification_messages.h>
 
 #include "securacv_protocol.h"
 
@@ -70,20 +71,12 @@ typedef enum {
     VIEW_SIGNAL_GRAPH,
 } AppView;
 
-typedef enum {
-    SORT_RSSI,
-    SORT_NAME,
-    SORT_LAST_SEEN,
-    SORT_COUNT,
-} SortMode;
-
-static const char* sort_mode_labels[] = {"RSSI", "Name", "Recent"};
-
 typedef struct {
     FuriMutex* mutex;
     ViewPort* view_port;
     Gui* gui;
     Bt* bt;
+    NotificationApp* notifications;
     FuriMessageQueue* event_queue;
     FuriTimer* tick_timer;
     bool running;
@@ -99,6 +92,7 @@ typedef struct {
     int8_t scroll_offset;
     bool scanning;
     SortMode sort_mode;
+    bool alerts_enabled;
 } SecuraCVApp;
 
 // ============================================================================
@@ -173,21 +167,13 @@ static scv_device_t* add_or_update_device(SecuraCVApp* app, const AppEvent* evt)
 
     if(!dev) {
         if(app->device_count >= MAX_DEVICES) {
-            // Evict oldest unpinned device; fall back to oldest overall
+            // Evict oldest device
             uint32_t oldest_ms = UINT32_MAX;
             uint8_t oldest_idx = 0;
             for(uint8_t i = 0; i < app->device_count; i++) {
-                if(!app->devices[i].pinned && app->devices[i].last_seen_ms < oldest_ms) {
+                if(app->devices[i].last_seen_ms < oldest_ms) {
                     oldest_ms = app->devices[i].last_seen_ms;
                     oldest_idx = i;
-                }
-            }
-            if(oldest_ms == UINT32_MAX) {
-                for(uint8_t i = 0; i < app->device_count; i++) {
-                    if(app->devices[i].last_seen_ms < oldest_ms) {
-                        oldest_ms = app->devices[i].last_seen_ms;
-                        oldest_idx = i;
-                    }
                 }
             }
             dev = &app->devices[oldest_idx];
@@ -203,6 +189,12 @@ static scv_device_t* add_or_update_device(SecuraCVApp* app, const AppEvent* evt)
     dev->last_seen_ms = furi_get_tick();
     scv_rssi_push(dev, evt->ble.rssi);
 
+    // Zone transition detection
+    int8_t avg = dev->rssi_sample_count > 0 ? (int8_t)(dev->rssi_avg / 10) : dev->rssi;
+    scv_proximity_zone_t new_zone = scv_classify_zone(avg);
+    scv_proximity_zone_t old_zone = dev->zone;
+    dev->zone = new_zone;
+
     if(evt->ble.has_mfg_data) {
         scv_debug_beacon_t parsed;
         if(scv_parse_debug_beacon(evt->ble.mfg_data, evt->ble.mfg_data_len, &parsed)) {
@@ -212,6 +204,18 @@ static scv_device_t* add_or_update_device(SecuraCVApp* app, const AppEvent* evt)
     }
 
     furi_mutex_release(app->mutex);
+
+    if(app->alerts_enabled && old_zone != SCV_ZONE_UNKNOWN && new_zone != old_zone) {
+        if(new_zone == SCV_ZONE_NEAR) {
+            notification_message(app->notifications, &sequence_single_vibro);
+            notification_message(app->notifications, &sequence_blink_green_100);
+        } else if(new_zone == SCV_ZONE_LOST ||
+                  (new_zone > old_zone)) {
+            notification_message(app->notifications, &sequence_double_vibro);
+            notification_message(app->notifications, &sequence_blink_red_100);
+        }
+    }
+
     return dev;
 }
 
@@ -221,8 +225,7 @@ static void expire_stale_devices(SecuraCVApp* app) {
     uint32_t now = furi_get_tick();
     uint8_t i = 0;
     while(i < app->device_count) {
-        if(!app->devices[i].pinned &&
-           now - app->devices[i].last_seen_ms > DEVICE_TIMEOUT_MS) {
+        if(now - app->devices[i].last_seen_ms > DEVICE_TIMEOUT_MS) {
             if(i < app->selected_index) {
                 app->selected_index--;
             } else if(i == app->selected_index) {
@@ -249,68 +252,6 @@ static void expire_stale_devices(SecuraCVApp* app) {
     }
 
     furi_mutex_release(app->mutex);
-}
-
-// ============================================================================
-// DEVICE SORTING
-// ============================================================================
-
-static void sort_devices(SecuraCVApp* app) {
-    if(app->device_count < 2) return;
-
-    char selected_name[32] = {0};
-    if(app->selected_index >= 0 && app->selected_index < app->device_count) {
-        strncpy(selected_name, app->devices[app->selected_index].name,
-                sizeof(selected_name) - 1);
-    }
-
-    for(uint8_t i = 0; i < app->device_count - 1; i++) {
-        for(uint8_t j = i + 1; j < app->device_count; j++) {
-            bool swap = false;
-            scv_device_t* a = &app->devices[i];
-            scv_device_t* b = &app->devices[j];
-
-            switch(app->sort_mode) {
-                case SORT_RSSI: {
-                    int8_t a_rssi = a->rssi_sample_count > 0
-                        ? (int8_t)(a->rssi_avg / 10) : a->rssi;
-                    int8_t b_rssi = b->rssi_sample_count > 0
-                        ? (int8_t)(b->rssi_avg / 10) : b->rssi;
-                    swap = b_rssi > a_rssi;
-                    break;
-                }
-                case SORT_NAME:
-                    swap = strcmp(a->name, b->name) > 0;
-                    break;
-                case SORT_LAST_SEEN:
-                    swap = b->last_seen_ms > a->last_seen_ms;
-                    break;
-                default:
-                    break;
-            }
-
-            if(swap) {
-                scv_device_t tmp = *a;
-                *a = *b;
-                *b = tmp;
-            }
-        }
-    }
-
-    // Restore selection to the same device by name
-    if(selected_name[0]) {
-        for(uint8_t i = 0; i < app->device_count; i++) {
-            if(strcmp(app->devices[i].name, selected_name) == 0) {
-                app->selected_index = i;
-                if(app->selected_index < app->scroll_offset) {
-                    app->scroll_offset = app->selected_index;
-                } else if(app->selected_index >= app->scroll_offset + MAX_VISIBLE) {
-                    app->scroll_offset = app->selected_index - MAX_VISIBLE + 1;
-                }
-                break;
-            }
-        }
-    }
 }
 
 // ============================================================================
@@ -385,8 +326,9 @@ static void draw_scan_list(Canvas* canvas, SecuraCVApp* app) {
 
     canvas_set_font(canvas, FontSecondary);
     char status[32];
-    snprintf(status, sizeof(status), "%d %s",
-             app->device_count, sort_mode_labels[app->sort_mode]);
+    snprintf(status, sizeof(status), "%d %s%s",
+             app->device_count, sort_mode_labels[app->sort_mode],
+             app->alerts_enabled ? " ALT" : "");
     canvas_draw_str_aligned(canvas, SCREEN_WIDTH, 10, AlignRight, AlignBottom, status);
 
     canvas_draw_line(canvas, 0, 13, SCREEN_WIDTH, 13);
@@ -418,12 +360,16 @@ static void draw_scan_list(Canvas* canvas, SecuraCVApp* app) {
         canvas_set_font(canvas, FontSecondary);
 
         char name_buf[16];
-        snprintf(name_buf, sizeof(name_buf), "%s%.13s",
-                 dev->pinned ? "*" : "", dev->name);
+        snprintf(name_buf, sizeof(name_buf), "%.15s", dev->name);
         canvas_draw_str(canvas, 2, y + 8, name_buf);
 
+        int label_x = 68;
         if(dev->is_debug_mode) {
-            canvas_draw_str(canvas, 68, y + 8, "DBG");
+            canvas_draw_str(canvas, label_x, y + 8, "DBG");
+            label_x += 18;
+        }
+        if(app->alerts_enabled && dev->zone != SCV_ZONE_UNKNOWN) {
+            canvas_draw_str(canvas, label_x, y + 8, scv_zone_label(dev->zone));
         }
 
         int8_t display_rssi = dev->rssi_sample_count > 0
@@ -675,6 +621,16 @@ static void handle_input(SecuraCVApp* app, InputEvent* event) {
         return;
     }
 
+    if(event->type == InputTypeLong && event->key == InputKeyBack &&
+       app->current_view == VIEW_SCAN_LIST) {
+        app->alerts_enabled = !app->alerts_enabled;
+        if(app->alerts_enabled) {
+            notification_message(app->notifications, &sequence_single_vibro);
+        }
+        view_port_update(app->view_port);
+        return;
+    }
+
     if(event->type != InputTypePress && event->type != InputTypeRepeat) return;
 
     furi_mutex_acquire(app->mutex, FuriWaitForever);
@@ -702,14 +658,6 @@ static void handle_input(SecuraCVApp* app, InputEvent* event) {
                     if(app->device_count > 0) {
                         app->current_view = VIEW_DEVICE_DETAIL;
                     }
-                    break;
-                case InputKeyLeft:
-                    app->sort_mode = (app->sort_mode + SORT_COUNT - 1) % SORT_COUNT;
-                    sort_devices(app);
-                    break;
-                case InputKeyRight:
-                    app->sort_mode = (app->sort_mode + 1) % SORT_COUNT;
-                    sort_devices(app);
                     break;
                 case InputKeyBack:
                     app->running = false;
@@ -805,6 +753,7 @@ int32_t securacv_scanner_app(void* p) {
     app->current_view = VIEW_SCAN_LIST;
     app->selected_index = 0;
     app->scroll_offset = 0;
+    app->notifications = furi_record_open(RECORD_NOTIFICATION);
 
     // Set up GUI
     app->view_port = view_port_alloc();
@@ -863,9 +812,6 @@ int32_t securacv_scanner_app(void* p) {
 
             case AppEventTypeTick:
                 expire_stale_devices(app);
-                furi_mutex_acquire(app->mutex, FuriWaitForever);
-                sort_devices(app);
-                furi_mutex_release(app->mutex);
                 view_port_update(app->view_port);
                 break;
         }
@@ -877,6 +823,7 @@ int32_t securacv_scanner_app(void* p) {
     ble_scanner_stop(app);
     gui_remove_view_port(app->gui, app->view_port);
     furi_record_close(RECORD_GUI);
+    furi_record_close(RECORD_NOTIFICATION);
     view_port_free(app->view_port);
     furi_message_queue_free(app->event_queue);
     furi_mutex_free(app->mutex);
