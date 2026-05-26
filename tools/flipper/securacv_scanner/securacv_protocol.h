@@ -58,6 +58,7 @@ typedef struct {
     int8_t   rssi;
     bool     is_debug_mode;
     bool     has_debug_data;
+    bool     pinned;
     scv_debug_beacon_t debug;
     uint32_t last_seen_ms;
 
