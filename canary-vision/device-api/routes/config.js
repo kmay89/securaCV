@@ -36,6 +36,9 @@ function validateConfigValues(section, data) {
       if (typeof supp !== 'object' || supp === null) {
         errors.push('suppression must be an object');
       } else {
+        if (supp.enabled !== undefined && typeof supp.enabled !== 'boolean') {
+          errors.push('suppression.enabled must be a boolean');
+        }
         if (supp.cooldown_seconds !== undefined) {
           const c = supp.cooldown_seconds;
           if (!Number.isInteger(c) || c < 0 || c > 3600) {

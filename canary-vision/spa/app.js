@@ -619,8 +619,8 @@ function clusterEvents(records) {
       }
     }
 
-    // Fall back to time-window clustering
-    if (!merged) {
+    // Fall back to time-window clustering (only for records without a session)
+    if (!merged && !rec.activity_session) {
       for (var c = clusters.length - 1; c >= 0; c--) {
         var cluster = clusters[c];
         if (cluster.device_id === rec.device_id &&

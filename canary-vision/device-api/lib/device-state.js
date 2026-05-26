@@ -160,14 +160,14 @@ function createDeviceState(overrides = {}) {
   function getCooldownForType(eventType) {
     const supp = getSuppressionConfig();
     if (eventType === 'motion_detected') {
-      return (supp.motion_cooldown_seconds || 600) * 1000;
+      return (supp.motion_cooldown_seconds ?? 600) * 1000;
     }
-    return (supp.cooldown_seconds || 300) * 1000;
+    return (supp.cooldown_seconds ?? 300) * 1000;
   }
 
   function getSessionTimeout() {
     const supp = getSuppressionConfig();
-    return (supp.session_timeout_seconds || 60) * 1000;
+    return (supp.session_timeout_seconds ?? 60) * 1000;
   }
 
   function sessionKey(eventType, zone) {
@@ -176,7 +176,7 @@ function createDeviceState(overrides = {}) {
 
   function tryEmitEvent(eventType, zone) {
     const supp = getSuppressionConfig();
-    if (!supp.enabled) {
+    if (supp.enabled === false) {
       return addWitnessRecord(eventType, zone);
     }
 
@@ -196,7 +196,6 @@ function createDeviceState(overrides = {}) {
       }
 
       if (sessionAge < cooldown) {
-        existing.lastSeen = now;
         existing.suppressedCount++;
         addLog('DEBUG', `Cooldown: ${eventType} in ${zone} (${Math.round((cooldown - sessionAge) / 1000)}s remaining)`);
         return null;
