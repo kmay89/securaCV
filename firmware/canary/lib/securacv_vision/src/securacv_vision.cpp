@@ -497,6 +497,18 @@ bool vision_get_stats(vision_stats_t* out) {
   return true;
 }
 
+bool vision_get_config(vision_config_t* out) {
+  if (!out || !vision::s_initialized) return false;
+  *out = vision::s_cfg;
+  return true;
+}
+
+bool vision_set_config(const vision_config_t* cfg) {
+  if (!cfg || !vision::s_initialized) return false;
+  vision::s_cfg = *cfg;
+  return true;
+}
+
 #else /* !FEATURE_VISION_DETECT */
 
 bool vision_init(const vision_config_t*) { return false; }
@@ -507,5 +519,7 @@ bool vision_is_running() { return false; }
 void vision_set_event_callback(vision_event_cb_t) {}
 bool vision_process() { return false; }
 bool vision_get_stats(vision_stats_t*) { return false; }
+bool vision_get_config(vision_config_t*) { return false; }
+bool vision_set_config(const vision_config_t*) { return false; }
 
 #endif /* FEATURE_VISION_DETECT */

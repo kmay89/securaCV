@@ -607,6 +607,10 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       margin-left: auto;
       margin-right: auto;
     }
+    .vi-tune { margin-bottom: 0.75rem; }
+    .vi-tune label { display:block; font-size:0.85rem; color:var(--muted); margin-bottom:4px; }
+    .vi-tune label span { color:var(--fg); font-weight:600; }
+    .vi-tune input[type=range] { width:100%; accent-color:var(--accent); }
     .sensing-gauges {
       display: grid;
       grid-template-columns: repeat(3, minmax(140px, 1fr));
@@ -1302,6 +1306,57 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           <div class="stat-item"><div class="stat-label">L3 pass</div><div class="stat-value" id="viL3">0</div></div>
           <div class="stat-item"><div class="stat-label">Motion events</div><div class="stat-value" id="viMotion">0</div></div>
           <div class="stat-item"><div class="stat-label">Person events</div><div class="stat-value" id="viPerson">0</div></div>
+        </div>
+      </div>
+
+      <!-- Vision settings (tuning card) -->
+      <div class="card" id="visionSettingsCard" style="display:none;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Vision Tuning</div>
+            <div class="card-subtitle">
+              Adjust detection thresholds and timing live. Changes take
+              effect immediately but are not persisted across reboots.
+            </div>
+          </div>
+          <button id="viResetBtn" class="badge" style="cursor:pointer;border:none;font-size:0.7rem;" onclick="viResetDefaults()">Reset defaults</button>
+        </div>
+        <div style="padding:0 1rem 1rem;">
+          <div class="vi-tune">
+            <label>L1 — JPEG delta threshold <span id="viTJpeg">15</span>%</label>
+            <input type="range" id="viJpeg" min="1" max="100" step="1" value="15"
+                   oninput="viSlider('jpeg_delta_pct', this.value, 'viTJpeg', '%')">
+          </div>
+          <div class="vi-tune">
+            <label>L2 — Block change threshold <span id="viTBlock">20</span>%</label>
+            <input type="range" id="viBlock" min="1" max="100" step="1" value="20"
+                   oninput="viSlider('block_change_pct', this.value, 'viTBlock', '%')">
+          </div>
+          <div class="vi-tune">
+            <label>L2 — Luminance delta <span id="viTLum">20</span></label>
+            <input type="range" id="viLum" min="1" max="255" step="1" value="20"
+                   oninput="viSlider('luminance_threshold', this.value, 'viTLum', '')">
+          </div>
+          <div class="vi-tune">
+            <label>L3 — Person confidence <span id="viTPerson">60</span>%</label>
+            <input type="range" id="viPerson2" min="1" max="100" step="1" value="60"
+                   oninput="viSlider('person_confidence_min', this.value, 'viTPerson', '%')">
+          </div>
+          <div class="vi-tune">
+            <label>Sample interval <span id="viTInterval">200</span> ms</label>
+            <input type="range" id="viInterval" min="50" max="5000" step="50" value="200"
+                   oninput="viSlider('process_interval_ms', this.value, 'viTInterval', ' ms')">
+          </div>
+          <div class="vi-tune">
+            <label>Motion hold <span id="viTHold">3000</span> ms</label>
+            <input type="range" id="viHold" min="500" max="30000" step="500" value="3000"
+                   oninput="viSlider('motion_hold_ms', this.value, 'viTHold', ' ms')">
+          </div>
+          <div class="vi-tune">
+            <label>Duty cycle <span id="viTDuty">50</span>% active</label>
+            <input type="range" id="viDuty" min="10" max="100" step="5" value="50"
+                   oninput="viSlider('duty_active_pct', this.value, 'viTDuty', '% active')">
+          </div>
         </div>
       </div>
 
@@ -3138,6 +3193,17 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         viCard.style.display = 'none';
       }
 
+      // Show/hide vision settings card alongside the detection card
+      const viSettingsCard = document.getElementById('visionSettingsCard');
+      if (viObj && viObj.enabled) {
+        if (viSettingsCard) {
+          viSettingsCard.style.display = '';
+          if (!viSettingsCard.dataset.loaded) viLoadConfig();
+        }
+      } else if (viSettingsCard) {
+        viSettingsCard.style.display = 'none';
+      }
+
       const thCard = document.getElementById('tempCard');
       const tempObj = data.temp;
       if (tempObj) {
@@ -3287,6 +3353,55 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       if (e.target.open && currentPanel === 'sensing') startAudioLevelPoll();
       else stopAudioLevelPoll();
     }, true);
+
+    // ─── Vision config sliders ───────────────────────────────────────
+    const viFields = {
+      jpeg_delta_pct:       { el: 'viJpeg',    lbl: 'viTJpeg',     suffix: '%' },
+      block_change_pct:     { el: 'viBlock',    lbl: 'viTBlock',    suffix: '%' },
+      luminance_threshold:  { el: 'viLum',      lbl: 'viTLum',      suffix: '' },
+      person_confidence_min:{ el: 'viPerson2',  lbl: 'viTPerson',   suffix: '%' },
+      process_interval_ms:  { el: 'viInterval', lbl: 'viTInterval', suffix: ' ms' },
+      motion_hold_ms:       { el: 'viHold',     lbl: 'viTHold',     suffix: ' ms' },
+      duty_active_pct:      { el: 'viDuty',     lbl: 'viTDuty',     suffix: '% active' },
+    };
+
+    function viApplyConfig(cfg) {
+      for (const [key, f] of Object.entries(viFields)) {
+        if (cfg[key] !== undefined) {
+          const el = document.getElementById(f.el);
+          const lbl = document.getElementById(f.lbl);
+          if (el) el.value = cfg[key];
+          if (lbl) lbl.textContent = cfg[key] + f.suffix;
+        }
+      }
+      const card = document.getElementById('visionSettingsCard');
+      if (card) card.dataset.loaded = '1';
+    }
+
+    async function viLoadConfig() {
+      try {
+        const cfg = await api('/api/vision/config');
+        if (cfg && cfg.ok) viApplyConfig(cfg);
+      } catch (e) {}
+    }
+
+    let viDebounce = null;
+    function viSlider(field, value, lblId, suffix) {
+      const lbl = document.getElementById(lblId);
+      if (lbl) lbl.textContent = value + suffix;
+      clearTimeout(viDebounce);
+      viDebounce = setTimeout(async () => {
+        const body = {};
+        body[field] = parseInt(value, 10);
+        const r = await api('/api/vision/config', 'POST', body);
+        if (r && r.ok) viApplyConfig(r);
+      }, 300);
+    }
+
+    async function viResetDefaults() {
+      const r = await api('/api/vision/config', 'POST', { reset: true });
+      if (r && r.ok) viApplyConfig(r);
+    }
 
     async function toggleMicMute() {
       const btn = document.getElementById('acMicMuteBtn');

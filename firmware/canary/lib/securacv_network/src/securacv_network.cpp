@@ -643,6 +643,11 @@ static esp_err_t handle_peek_snapshot(httpd_req_t* req);
 static esp_err_t handle_sensing(httpd_req_t* req);
 #endif
 
+#if FEATURE_VISION_DETECT
+static esp_err_t handle_vision_config_get(httpd_req_t* req);
+static esp_err_t handle_vision_config_set(httpd_req_t* req);
+#endif
+
 #if FEATURE_ACOUSTIC_EVENTS
 // Microphone testability + privacy controls (see docs/getting_started_canary.md).
 static esp_err_t handle_audio_level(httpd_req_t* req);
@@ -768,6 +773,14 @@ void NetworkManager::registerHttpHandlers() {
   #if FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS || FEATURE_TOUCH || FEATURE_IR_RMT || FEATURE_TEMP_TAMPER
   httpd_uri_t sensing_ep = { .uri = "/api/sensing", .method = HTTP_GET, .handler = handle_sensing };
   httpd_register_uri_handler(m_http_server, &sensing_ep);
+  #endif
+
+  #if FEATURE_VISION_DETECT
+  httpd_uri_t vision_cfg_g = { .uri = "/api/vision/config", .method = HTTP_GET, .handler = handle_vision_config_get };
+  httpd_register_uri_handler(m_http_server, &vision_cfg_g);
+
+  httpd_uri_t vision_cfg_s = { .uri = "/api/vision/config", .method = HTTP_POST, .handler = handle_vision_config_set };
+  httpd_register_uri_handler(m_http_server, &vision_cfg_s);
   #endif
 
   #if FEATURE_ACOUSTIC_EVENTS
@@ -1974,6 +1987,123 @@ static esp_err_t handle_sensing(httpd_req_t* req) {
   return http_send_json(req, response.c_str());
 }
 #endif // FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS
+
+#if FEATURE_VISION_DETECT
+// ════════════════════════════════════════════════════════════════════════════
+// VISION CONFIG — GET/POST /api/vision/config
+// ════════════════════════════════════════════════════════════════════════════
+
+static void vision_config_to_json(JsonDocument& doc, const vision_config_t& cfg) {
+  doc["ok"] = true;
+  doc["jpeg_delta_pct"]         = cfg.jpeg_delta_pct;
+  doc["block_change_pct"]       = cfg.block_change_pct;
+  doc["person_confidence_min"]  = cfg.person_confidence_min;
+  doc["luminance_threshold"]    = cfg.luminance_threshold;
+  doc["process_interval_ms"]    = cfg.process_interval_ms;
+  doc["motion_hold_ms"]         = cfg.motion_hold_ms;
+  doc["layer3_cooldown_ms"]     = cfg.layer3_cooldown_ms;
+  doc["sustained_backoff_ms"]   = cfg.sustained_backoff_ms;
+  doc["sustained_threshold"]    = cfg.sustained_threshold;
+  doc["duty_cycle_ms"]          = cfg.duty_cycle_ms;
+  doc["duty_active_pct"]        = cfg.duty_active_pct;
+  doc["running"]                = vision_is_running();
+#if FEATURE_VISION_TFLITE
+  doc["tflite_available"]       = true;
+#else
+  doc["tflite_available"]       = false;
+#endif
+}
+
+static esp_err_t handle_vision_config_get(httpd_req_t* req) {
+  if (!rate_limit_check(req, false)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  vision_config_t cfg;
+  if (!vision_get_config(&cfg)) {
+    return http_send_error(req, 503, "vision_not_initialized");
+  }
+
+  JsonDocument doc;
+  vision_config_to_json(doc, cfg);
+
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+static esp_err_t handle_vision_config_set(httpd_req_t* req) {
+  if (!rate_limit_check(req, true)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  if (req->content_len >= 512) {
+    return http_send_error(req, 413, "payload_too_large");
+  }
+
+  char content[512] = {0};
+  int total = 0;
+  while (total < (int)sizeof(content) - 1) {
+    int r = httpd_req_recv(req, content + total, sizeof(content) - 1 - total);
+    if (r <= 0) break;
+    total += r;
+  }
+  if (total <= 0) {
+    return http_send_error(req, 400, "no_body");
+  }
+
+  JsonDocument body;
+  if (deserializeJson(body, content) != DeserializationError::Ok) {
+    return http_send_error(req, 400, "invalid_json");
+  }
+  if (!body.is<JsonObject>()) {
+    return http_send_error(req, 400, "body_must_be_object");
+  }
+  JsonObject obj = body.as<JsonObject>();
+
+  vision_config_t cfg;
+  if (!vision_get_config(&cfg)) {
+    return http_send_error(req, 503, "vision_not_initialized");
+  }
+
+  if (obj["reset"].is<bool>() && obj["reset"].as<bool>()) {
+    cfg = (vision_config_t)VISION_CONFIG_DEFAULT;
+  } else {
+    if (obj["jpeg_delta_pct"].is<int>())
+      cfg.jpeg_delta_pct = constrain(obj["jpeg_delta_pct"].as<int>(), 1, 100);
+    if (obj["block_change_pct"].is<int>())
+      cfg.block_change_pct = constrain(obj["block_change_pct"].as<int>(), 1, 100);
+    if (obj["person_confidence_min"].is<int>())
+      cfg.person_confidence_min = constrain(obj["person_confidence_min"].as<int>(), 1, 100);
+    if (obj["luminance_threshold"].is<int>())
+      cfg.luminance_threshold = constrain(obj["luminance_threshold"].as<int>(), 1, 255);
+    if (obj["process_interval_ms"].is<int>())
+      cfg.process_interval_ms = constrain(obj["process_interval_ms"].as<int>(), 50, 5000);
+    if (obj["motion_hold_ms"].is<int>())
+      cfg.motion_hold_ms = constrain(obj["motion_hold_ms"].as<int>(), 500, 30000);
+    if (obj["layer3_cooldown_ms"].is<int>())
+      cfg.layer3_cooldown_ms = constrain(obj["layer3_cooldown_ms"].as<int>(), 1000, 60000);
+    if (obj["sustained_backoff_ms"].is<int>())
+      cfg.sustained_backoff_ms = constrain(obj["sustained_backoff_ms"].as<int>(), 100, 10000);
+    if (obj["sustained_threshold"].is<int>())
+      cfg.sustained_threshold = constrain(obj["sustained_threshold"].as<int>(), 1, 255);
+    if (obj["duty_cycle_ms"].is<int>())
+      cfg.duty_cycle_ms = constrain(obj["duty_cycle_ms"].as<int>(), 1000, 60000);
+    if (obj["duty_active_pct"].is<int>())
+      cfg.duty_active_pct = constrain(obj["duty_active_pct"].as<int>(), 10, 100);
+  }
+
+  vision_set_config(&cfg);
+  log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "Vision config updated", nullptr);
+
+  JsonDocument doc;
+  vision_config_to_json(doc, cfg);
+
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+#endif // FEATURE_VISION_DETECT
 
 #if FEATURE_ACOUSTIC_EVENTS
 // ════════════════════════════════════════════════════════════════════════════

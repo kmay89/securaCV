@@ -95,6 +95,9 @@ bool vision_process(void);
 
 bool vision_get_stats(vision_stats_t* out);
 
+bool vision_get_config(vision_config_t* out);
+bool vision_set_config(const vision_config_t* cfg);
+
 #ifdef __cplusplus
 }
 #endif
