@@ -15,6 +15,7 @@
 #include "securacv_camera.h"
 #include "securacv_witness.h"
 #include "esp_camera.h"
+#include "img_converters.h"
 
 #if FEATURE_VISION_TFLITE
 #include "tensorflow/lite/micro/all_ops_resolver.h"
@@ -22,11 +23,6 @@
 #include "tensorflow/lite/schema/schema_generated.h"
 #include "person_detect_model.h"
 #endif
-
-// ESP32 ROM JPEG decoder
-extern "C" {
-  #include "esp_jpg_decode.h"
-}
 
 namespace vision {
 
@@ -40,6 +36,13 @@ static vision_stats_t    s_stats = {};
 static uint32_t s_last_process_ms   = 0;
 static uint32_t s_motion_start_ms   = 0;
 static uint32_t s_last_layer3_ms    = 0;
+
+// Thermal duty cycle — alternate between active and rest periods
+static uint32_t s_duty_cycle_start  = 0;
+static bool     s_duty_resting      = false;
+
+// Sustained activity backoff
+static uint8_t  s_consecutive_l2    = 0;
 
 // Layer 1: JPEG size EMA
 static float   s_jpeg_size_ema = 0.0f;
@@ -74,44 +77,25 @@ static void emit_event(vision_event_type_t type, uint8_t confidence, uint8_t zon
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// JPEG DECODE CALLBACK (ESP32 ROM decoder)
+// JPEG → GRAYSCALE DECODE
 // ════════════════════════════════════════════════════════════════════════════
 
-struct JpgDecodeCtx {
-  uint8_t* out;
-  int      out_w;
-  int      out_h;
-};
-
-static bool jpg_output_cb(void* arg, uint16_t x, uint16_t y,
-                          uint16_t w, uint16_t h, uint8_t* data) {
-  JpgDecodeCtx* ctx = (JpgDecodeCtx*)arg;
-  for (uint16_t row = 0; row < h; row++) {
-    int dst_y = y + row;
-    if (dst_y >= ctx->out_h) break;
-    for (uint16_t col = 0; col < w; col++) {
-      int dst_x = x + col;
-      if (dst_x >= ctx->out_w) continue;
-      int src_idx = (row * w + col) * 3;
-      uint8_t r = data[src_idx];
-      uint8_t g = data[src_idx + 1];
-      uint8_t b = data[src_idx + 2];
-      ctx->out[dst_y * ctx->out_w + dst_x] = (uint8_t)((r * 77 + g * 150 + b * 29) >> 8);
-    }
-  }
-  return true;
-}
+// RGB888 temporary buffer for JPEG decode (PSRAM-allocated once)
+static uint8_t* s_rgb_buf = nullptr;
+#define RGB_BUF_SIZE (DECODE_W * DECODE_H * 3)
 
 static bool decode_jpeg_to_gray(const uint8_t* jpg, size_t jpg_len,
                                 uint8_t* gray, int w, int h) {
-  JpgDecodeCtx ctx = { gray, w, h };
-  esp_err_t err = esp_jpg_decode(jpg_len, JPG_SCALE_NONE,
-                                 [](void*, uint8_t* src, size_t len, size_t* out) -> bool {
-                                   *out = len;
-                                   return true;
-                                 },
-                                 jpg_output_cb, &ctx);
-  return err == ESP_OK;
+  if (!s_rgb_buf) {
+    s_rgb_buf = (uint8_t*)ps_malloc(RGB_BUF_SIZE);
+    if (!s_rgb_buf) return false;
+  }
+  if (!fmt2rgb888(jpg, jpg_len, PIXFORMAT_JPEG, s_rgb_buf)) return false;
+  for (int i = 0; i < w * h; i++) {
+    int si = i * 3;
+    gray[i] = (uint8_t)((s_rgb_buf[si] * 77 + s_rgb_buf[si+1] * 150 + s_rgb_buf[si+2] * 29) >> 8);
+  }
+  return true;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -341,6 +325,10 @@ void vision_deinit() {
     free(vision::s_gray_buf);
     vision::s_gray_buf = nullptr;
   }
+  if (vision::s_rgb_buf) {
+    free(vision::s_rgb_buf);
+    vision::s_rgb_buf = nullptr;
+  }
 #if FEATURE_VISION_TFLITE
   if (vision::s_tensor_arena) {
     free(vision::s_tensor_arena);
@@ -356,6 +344,9 @@ bool vision_start() {
   if (!vision::s_initialized) return false;
   vision::s_running = true;
   vision::s_last_process_ms = millis();
+  vision::s_duty_cycle_start = millis();
+  vision::s_duty_resting = false;
+  vision::s_consecutive_l2 = 0;
   Serial.println("[VISION] Detection started");
   return true;
 }
@@ -380,20 +371,50 @@ bool vision_process() {
   if (!vision::s_running) return false;
 
   uint32_t now = millis();
-  if (now - vision::s_last_process_ms < vision::s_cfg.process_interval_ms) return false;
+
+  // Thermal duty cycle: alternate active/rest periods to limit heat
+  // generation. When duty_cycle_pct=50, run for 5s then rest for 5s.
+  if (vision::s_duty_cycle_start == 0) vision::s_duty_cycle_start = now;
+  uint32_t active_ms = (uint32_t)vision::s_cfg.thermal_rest_ms *
+                       vision::s_cfg.duty_cycle_pct / 100;
+  uint32_t cycle_ms  = vision::s_cfg.thermal_rest_ms;
+  uint32_t elapsed   = now - vision::s_duty_cycle_start;
+  if (elapsed >= cycle_ms) {
+    vision::s_duty_cycle_start = now;
+    vision::s_duty_resting = false;
+    elapsed = 0;
+  }
+  if (elapsed >= active_ms && !vision::s_duty_resting) {
+    vision::s_duty_resting = true;
+  }
+  if (vision::s_duty_resting) return false;
+
+  // Rate limit: base interval, extended by backoff during sustained activity
+  uint32_t interval = vision::s_cfg.process_interval_ms;
+  if (vision::s_consecutive_l2 >= vision::s_cfg.sustained_threshold) {
+    interval = vision::s_cfg.sustained_backoff_ms;
+  }
+  if (now - vision::s_last_process_ms < interval) return false;
   vision::s_last_process_ms = now;
 
   CameraManager& cam = camera_get_instance();
   if (!cam.isInitialized()) return false;
 
-  // Don't compete with active streaming for camera frames
   if (cam.isPeekActive()) return false;
 
-  // Don't run during thermal throttle/pause
   if (cam.getThermalState() != THERMAL_NORMAL) return false;
 
+  // Temporarily switch to QQVGA for lightweight vision capture, then restore.
+  framesize_t saved_res = cam.getResolution();
+  if (saved_res != FRAMESIZE_QQVGA) {
+    cam.setResolution(FRAMESIZE_QQVGA);
+  }
+
   camera_fb_t* fb = cam.captureFrame();
-  if (!fb) return false;
+  if (!fb) {
+    if (saved_res != FRAMESIZE_QQVGA) cam.setResolution(saved_res);
+    return false;
+  }
 
   vision::s_stats.frames_analyzed++;
 
@@ -401,6 +422,7 @@ bool vision_process() {
   bool l1_pass = vision::layer1_check(fb->len);
   if (!l1_pass) {
     cam.returnFrame(fb);
+    if (saved_res != FRAMESIZE_QQVGA) cam.setResolution(saved_res);
     // Check if motion should end (held for motion_hold_ms)
     if (vision::s_motion_active &&
         now - vision::s_motion_start_ms > vision::s_cfg.motion_hold_ms) {
@@ -416,11 +438,13 @@ bool vision_process() {
   bool decoded = vision::decode_jpeg_to_gray(fb->buf, fb->len,
                                               vision::s_gray_buf, DECODE_W, DECODE_H);
   cam.returnFrame(fb);
+  if (saved_res != FRAMESIZE_QQVGA) cam.setResolution(saved_res);
 
   if (!decoded) return false;
 
   vision::MotionResult motion = vision::layer2_check(vision::s_gray_buf);
   if (!motion.detected) {
+    vision::s_consecutive_l2 = 0;
     if (vision::s_motion_active &&
         now - vision::s_motion_start_ms > vision::s_cfg.motion_hold_ms) {
       vision::s_motion_active = false;
@@ -430,6 +454,7 @@ bool vision_process() {
     return false;
   }
   vision::s_stats.layer2_passes++;
+  if (vision::s_consecutive_l2 < 255) vision::s_consecutive_l2++;
 
   // Fire motion event
   if (!vision::s_motion_active) {
