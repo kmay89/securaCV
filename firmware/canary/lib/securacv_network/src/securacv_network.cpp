@@ -2170,7 +2170,7 @@ static esp_err_t handle_vision_thumbnail(httpd_req_t* req) {
   if (!auth_gate(req)) return ESP_OK;
   witness_get_health().http_requests++;
 
-  static uint8_t buf[VISION_THUMB_W * VISION_THUMB_H];
+  uint8_t buf[VISION_THUMB_W * VISION_THUMB_H];
   if (!vision_get_thumbnail(buf, sizeof(buf))) {
     return http_send_error(req, 503, "no_thumbnail");
   }

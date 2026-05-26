@@ -3473,7 +3473,9 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     let viThumbTimer = null;
     async function viRefreshThumb() {
       try {
-        const res = await fetch('/api/vision/thumbnail');
+        const hdrs = {};
+        if (CV_TOKEN && CV_TOKEN.charAt(0) !== '_') hdrs['Authorization'] = 'Bearer ' + CV_TOKEN;
+        const res = await fetch(API_BASE + '/api/vision/thumbnail', { headers: hdrs });
         if (!res.ok) return;
         const buf = new Uint8Array(await res.arrayBuffer());
         const c = document.getElementById('viThumb');
