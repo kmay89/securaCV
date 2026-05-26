@@ -124,9 +124,9 @@ static void draw_scan_list(Canvas* canvas, SecuraCVApp* app) {
 
         canvas_set_font(canvas, FontSecondary);
 
-        // Device name (truncated)
+        // Device name (truncated, precision limits read length)
         char name_buf[20];
-        snprintf(name_buf, sizeof(name_buf), "%s", dev->name);
+        snprintf(name_buf, sizeof(name_buf), "%.19s", dev->name);
         canvas_draw_str(canvas, 2, y + 8, name_buf);
 
         // Debug indicator
@@ -277,7 +277,7 @@ static void handle_input(SecuraCVApp* app, InputEvent* event) {
                     }
                     break;
                 case InputKeyDown:
-                    if(app->selected_index < app->device_count - 1) {
+                    if(app->device_count > 0 && app->selected_index < app->device_count - 1) {
                         app->selected_index++;
                         if(app->selected_index >= app->scroll_offset + MAX_VISIBLE) {
                             app->scroll_offset = app->selected_index - MAX_VISIBLE + 1;
@@ -342,10 +342,22 @@ int32_t securacv_scanner_app(void* p) {
     UNUSED(p);
 
     SecuraCVApp* app = malloc(sizeof(SecuraCVApp));
+    if(!app) return -1;
     memset(app, 0, sizeof(*app));
 
     app->mutex = furi_mutex_alloc(FuriMutexTypeNormal);
+    if(!app->mutex) {
+        free(app);
+        return -1;
+    }
+
     app->event_queue = furi_message_queue_alloc(8, sizeof(InputEvent));
+    if(!app->event_queue) {
+        furi_mutex_free(app->mutex);
+        free(app);
+        return -1;
+    }
+
     app->running = true;
     app->current_view = VIEW_SCAN_LIST;
     app->selected_index = 0;
@@ -354,20 +366,32 @@ int32_t securacv_scanner_app(void* p) {
 
     // Set up GUI
     app->view_port = view_port_alloc();
+    if(!app->view_port) {
+        furi_message_queue_free(app->event_queue);
+        furi_mutex_free(app->mutex);
+        free(app);
+        return -1;
+    }
     view_port_draw_callback_set(app->view_port, render_callback, app);
     view_port_input_callback_set(app->view_port, input_callback, app);
 
     app->gui = furi_record_open(RECORD_GUI);
+    if(!app->gui) {
+        view_port_free(app->view_port);
+        furi_message_queue_free(app->event_queue);
+        furi_mutex_free(app->mutex);
+        free(app);
+        return -1;
+    }
     gui_add_view_port(app->gui, app->view_port, GuiLayerFullscreen);
 
-    // Main event loop
+    // Main event loop — view_port_update is called by handle_input on
+    // state changes; no need to redraw every iteration.
     InputEvent event;
     while(app->running) {
         if(furi_message_queue_get(app->event_queue, &event, 100) == FuriStatusOk) {
             handle_input(app, &event);
         }
-
-        view_port_update(app->view_port);
     }
 
     // Cleanup
