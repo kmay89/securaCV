@@ -1154,6 +1154,7 @@ static void mqtt_publish_status_update() {
       case 3: cs = "discharging"; break;
       case 4: cs = "low"; break;
       case 5: cs = "critical"; break;
+      case 6: cs = "no_battery"; break;
     }
     doc["charge_state"] = cs;
   }
@@ -1392,6 +1393,7 @@ static void handle_serial_commands() {
           case 3: cs = "discharging"; break;
           case 4: cs = "low"; break;
           case 5: cs = "critical"; break;
+      case 6: cs = "no_battery"; break;
         }
         Serial.printf("  State: %s\n", cs);
         Serial.printf("  Trend: %+d mV/min\n", pwr.trend_mv_per_min);
@@ -1489,6 +1491,7 @@ static void print_status() {
         case 3: cs = "discharging"; break;
         case 4: cs = "low"; break;
         case 5: cs = "critical"; break;
+      case 6: cs = "no_battery"; break;
       }
       Serial.printf("  Battery: %u mV (%u%%) [%s]",
                     pwr.voltage_mv, pwr.soc_pct, cs);

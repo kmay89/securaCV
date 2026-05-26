@@ -45,6 +45,20 @@ namespace power {
 static constexpr uint16_t DIVIDER_DETECT_MIN_MV = 1200;
 static constexpr uint16_t DIVIDER_DETECT_MAX_MV = 2300;
 
+/* Valid LiPo voltage range. Readings outside this with a divider
+ * present indicate no battery is connected (USB-only power, or
+ * VBUS bleeding through the charger IC to the battery pads). */
+static constexpr uint16_t LIPO_VALID_MIN_MV = 2800;
+static constexpr uint16_t LIPO_VALID_MAX_MV = 4350;
+
+/* If the divider reads above this, the battery pads are likely seeing
+ * VBUS (~5V) through the charger rather than an actual cell. */
+static constexpr uint16_t VBUS_BLEED_THRESHOLD_MV = 4400;
+
+/* Number of consecutive out-of-range readings before declaring
+ * no battery present (avoids transient glitches on hot-plug). */
+static constexpr uint8_t  NO_BATTERY_CONFIRM_COUNT = 5;
+
 static constexpr uint8_t  MEDIAN_WINDOW = 16;
 
 /* LiPo discharge curve: voltage (mV) → SoC (%). Piecewise linear
@@ -107,6 +121,9 @@ static uint8_t  s_trend_count = 0;
 static bool s_was_below_cycle_threshold = false;
 static constexpr uint16_t CYCLE_LOW_MV  = 3800;
 static constexpr uint16_t CYCLE_HIGH_MV = 4100;
+
+/* No-battery detection */
+static uint8_t s_no_battery_count = 0;
 
 /* ──────────────────────────────────────────────────────────────────────────
  * ADC PERIPHERAL
@@ -291,7 +308,40 @@ static void emit_event(power_event_type_t type) {
  * CHARGE STATE MACHINE
  * ────────────────────────────────────────────────────────────────────────── */
 
+static void check_battery_presence(uint16_t battery_mv) {
+  if (s_state.monitor_mode == POWER_MODE_USB_ONLY) return;
+  if (!s_state.divider_detected) return;
+
+  bool out_of_range = (battery_mv < LIPO_VALID_MIN_MV ||
+                       battery_mv > VBUS_BLEED_THRESHOLD_MV);
+  if (out_of_range) {
+    if (s_no_battery_count < NO_BATTERY_CONFIRM_COUNT) {
+      s_no_battery_count++;
+    }
+    if (s_no_battery_count >= NO_BATTERY_CONFIRM_COUNT && s_state.battery_present) {
+      s_state.battery_present = false;
+      s_state.charge_state = CHARGE_STATE_NO_BATTERY;
+      s_state.power_source = POWER_SOURCE_USB_ONLY;
+      s_state.soc_pct = 0;
+      s_state.monitor_mode = POWER_MODE_USB_ONLY;
+      log_health(LOG_LEVEL_INFO, LOG_CAT_SENSOR,
+                 "Power: no battery detected", "USB-only mode");
+      emit_event(POWER_EVENT_STATE_CHANGE);
+    }
+  } else {
+    s_no_battery_count = 0;
+    if (!s_state.battery_present) {
+      s_state.battery_present = true;
+      s_state.monitor_mode = POWER_MODE_HW_ADC;
+      log_health(LOG_LEVEL_INFO, LOG_CAT_SENSOR,
+                 "Power: battery detected", "HW ADC mode");
+    }
+  }
+}
+
 static void update_charge_state(uint16_t battery_mv) {
+  if (s_state.charge_state == CHARGE_STATE_NO_BATTERY) return;
+
   charge_state_t prev = (charge_state_t)s_state.charge_state;
   charge_state_t next = prev;
   int16_t trend = s_state.trend_mv_per_min;
@@ -308,7 +358,7 @@ static void update_charge_state(uint16_t battery_mv) {
     } else {
       next = CHARGE_STATE_DISCHARGING;
     }
-  } else {
+  } else if (s_state.monitor_mode == POWER_MODE_SW_INFERENCE) {
     if (trend > 3) {
       next = CHARGE_STATE_CHARGING;
     } else if (trend < -3) {
@@ -364,6 +414,7 @@ static void update_charge_state(uint16_t battery_mv) {
     case CHARGE_STATE_DISCHARGING: name = "discharging"; break;
     case CHARGE_STATE_LOW:         name = "low"; break;
     case CHARGE_STATE_CRITICAL:    name = "critical"; break;
+    case CHARGE_STATE_NO_BATTERY:  name = "no_battery"; break;
     default: break;
   }
   log_health(LOG_LEVEL_INFO, LOG_CAT_SENSOR,
@@ -439,6 +490,7 @@ bool power_init(const power_config_t* cfg) {
   s_trend_idx = 0;
   s_trend_count = 0;
   s_was_below_cycle_threshold = false;
+  s_no_battery_count = 0;
 
   load_nvs_state();
 
@@ -480,21 +532,43 @@ bool power_start(void) {
   if (valid > 0) {
     uint16_t avg_mv = (uint16_t)(sum / valid);
     if (avg_mv >= DIVIDER_DETECT_MIN_MV && avg_mv <= DIVIDER_DETECT_MAX_MV) {
-      s_state.monitor_mode = POWER_MODE_HW_ADC;
-      s_state.divider_detected = true;
-      log_health(LOG_LEVEL_INFO, LOG_CAT_SENSOR,
-                 "Power: voltage divider detected", "HW ADC mode");
+      /* Divider present. Check if the battery voltage makes sense. */
+      uint16_t batt_mv = (uint16_t)(avg_mv * s_cfg.divider_ratio);
+      if (batt_mv >= LIPO_VALID_MIN_MV && batt_mv <= LIPO_VALID_MAX_MV) {
+        s_state.monitor_mode = POWER_MODE_HW_ADC;
+        s_state.divider_detected = true;
+        s_state.battery_present = true;
+        log_health(LOG_LEVEL_INFO, LOG_CAT_SENSOR,
+                   "Power: voltage divider + battery detected", "HW ADC mode");
+      } else {
+        /* Divider present but voltage out of LiPo range — USB-only. */
+        s_state.monitor_mode = POWER_MODE_USB_ONLY;
+        s_state.divider_detected = true;
+        s_state.battery_present = false;
+        s_state.charge_state = CHARGE_STATE_NO_BATTERY;
+        s_state.power_source = POWER_SOURCE_USB_ONLY;
+        log_health(LOG_LEVEL_INFO, LOG_CAT_SENSOR,
+                   "Power: divider present, no battery", "USB-only mode");
+      }
     } else {
+      /* No divider — fall back to software inference. We can't tell
+       * if a battery is present without hardware. Assume USB power. */
       s_state.monitor_mode = POWER_MODE_SW_INFERENCE;
       s_state.divider_detected = false;
+      s_state.battery_present = false;
+      s_state.power_source = POWER_SOURCE_USB_ONLY;
+      s_state.charge_state = CHARGE_STATE_NO_BATTERY;
       log_health(LOG_LEVEL_INFO, LOG_CAT_SENSOR,
-                 "Power: no divider detected", "SW inference mode");
+                 "Power: no divider detected", "USB-only (add divider for battery monitoring)");
     }
   } else {
-    s_state.monitor_mode = POWER_MODE_SW_INFERENCE;
+    s_state.monitor_mode = POWER_MODE_USB_ONLY;
     s_state.divider_detected = false;
+    s_state.battery_present = false;
+    s_state.power_source = POWER_SOURCE_USB_ONLY;
+    s_state.charge_state = CHARGE_STATE_NO_BATTERY;
     log_health(LOG_LEVEL_WARNING, LOG_CAT_SENSOR,
-               "Power: ADC read failed", "SW inference mode");
+               "Power: ADC read failed", "USB-only mode");
   }
 
   s_running = true;
@@ -546,6 +620,15 @@ bool power_process(void) {
   s_state.last_sample_ms = now;
   s_state.samples_taken++;
 
+  /* Check if a battery is actually connected. Catches USB-only setups
+   * where the divider reads VBUS bleed-through rather than a LiPo cell,
+   * and setups where no battery is soldered to the pads at all. */
+  check_battery_presence(battery_mv);
+
+  /* If no battery, skip SoC/charge/cycle tracking — the voltage
+   * reading is meaningless and would produce false critical alerts. */
+  if (s_state.charge_state == CHARGE_STATE_NO_BATTERY) return true;
+
   /* Update voltage extremes. */
   if (battery_mv > s_state.max_voltage_mv)
     s_state.max_voltage_mv = battery_mv;
@@ -553,7 +636,7 @@ bool power_process(void) {
     s_state.min_voltage_mv = battery_mv;
 
   /* SoC calculation (only meaningful in HW ADC mode). */
-  if (s_state.divider_detected) {
+  if (s_state.monitor_mode == POWER_MODE_HW_ADC) {
     s_state.soc_pct = voltage_to_soc(battery_mv);
   }
 
@@ -567,7 +650,7 @@ bool power_process(void) {
   update_charge_state(battery_mv);
 
   /* Track charge cycles. */
-  if (s_state.divider_detected) {
+  if (s_state.monitor_mode == POWER_MODE_HW_ADC) {
     track_charge_cycle(battery_mv);
   }
 
@@ -597,6 +680,7 @@ void power_set_capacity_mah(uint16_t mah) {
 
 void power_graceful_shutdown(void) {
   using namespace power;
+  if (!s_state.battery_present) return;
   log_health(LOG_LEVEL_ALERT, LOG_CAT_SYSTEM,
              "Power: graceful shutdown — battery critical", nullptr);
 
@@ -632,7 +716,8 @@ void power_graceful_shutdown(void) {
 }
 
 bool power_is_critical(void) {
-  return power::s_state.charge_state == CHARGE_STATE_CRITICAL;
+  return power::s_state.battery_present &&
+         power::s_state.charge_state == CHARGE_STATE_CRITICAL;
 }
 
 bool power_is_charging(void) {

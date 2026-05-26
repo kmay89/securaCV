@@ -40,12 +40,14 @@
 typedef enum {
   POWER_MODE_HW_ADC        = 0,
   POWER_MODE_SW_INFERENCE  = 1,
+  POWER_MODE_USB_ONLY      = 2,
 } power_monitor_mode_t;
 
 typedef enum {
   POWER_SOURCE_UNKNOWN     = 0,
   POWER_SOURCE_USB         = 1,
   POWER_SOURCE_BATTERY     = 2,
+  POWER_SOURCE_USB_ONLY    = 3,
 } power_source_t;
 
 typedef enum {
@@ -55,6 +57,7 @@ typedef enum {
   CHARGE_STATE_DISCHARGING = 3,
   CHARGE_STATE_LOW         = 4,
   CHARGE_STATE_CRITICAL    = 5,
+  CHARGE_STATE_NO_BATTERY  = 6,
 } charge_state_t;
 
 typedef enum {
@@ -110,6 +113,7 @@ typedef struct {
   uint16_t          min_voltage_mv;
   uint32_t          samples_taken;
   bool              divider_detected;
+  bool              battery_present;
 } power_state_t;
 
 /* ────────────────────────────────────────────────────────────────────────── */
