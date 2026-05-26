@@ -2021,9 +2021,19 @@ static void vision_config_to_json(JsonDocument& doc, const vision_config_t& cfg)
 #else
   doc["tflite_available"]       = false;
 #endif
-  vision_config_t nvs_cfg;
-  doc["saved"] = vision_load_config_from_nvs(&nvs_cfg) &&
-                 memcmp(&nvs_cfg, &cfg, sizeof(vision_config_t)) == 0;
+  vision_config_t n;
+  doc["saved"] = vision_load_config_from_nvs(&n) &&
+      n.jpeg_delta_pct        == cfg.jpeg_delta_pct &&
+      n.block_change_pct      == cfg.block_change_pct &&
+      n.person_confidence_min == cfg.person_confidence_min &&
+      n.luminance_threshold   == cfg.luminance_threshold &&
+      n.process_interval_ms   == cfg.process_interval_ms &&
+      n.motion_hold_ms        == cfg.motion_hold_ms &&
+      n.layer3_cooldown_ms    == cfg.layer3_cooldown_ms &&
+      n.sustained_backoff_ms  == cfg.sustained_backoff_ms &&
+      n.sustained_threshold   == cfg.sustained_threshold &&
+      n.duty_cycle_ms         == cfg.duty_cycle_ms &&
+      n.duty_active_pct       == cfg.duty_active_pct;
 }
 
 static esp_err_t handle_vision_config_get(httpd_req_t* req) {
