@@ -29,7 +29,7 @@ describe('D3: Restrictive CORS', () => {
     assert.equal(res.headers['access-control-allow-origin'], undefined);
   });
 
-  it('D3: CORS headers present for registered peer origin', async () => {
+  it('D3: No CORS headers for peer origin (lateral movement prevention)', async () => {
     const res = await request(server.url + '/api/v1/info', {
       headers: {
         Host: '127.0.0.1',
@@ -38,7 +38,8 @@ describe('D3: Restrictive CORS', () => {
       },
     });
     assert.equal(res.status, 200);
-    assert.equal(res.headers['access-control-allow-origin'], 'http://canary-b1c2.local');
+    assert.equal(res.headers['access-control-allow-origin'], undefined,
+      'Peer origin must NOT get CORS headers (lateral movement vector)');
   });
 
   it('D3: No CORS headers for unknown origin', async () => {
@@ -67,7 +68,7 @@ describe('D3: Restrictive CORS', () => {
       'Access-Control-Allow-Origin must NEVER be *');
   });
 
-  it('D3: OPTIONS preflight for registered peer returns correct headers', async () => {
+  it('D3: OPTIONS preflight for peer origin returns no CORS (lateral movement prevention)', async () => {
     const res = await request(server.url + '/api/v1/info', {
       method: 'OPTIONS',
       headers: {
@@ -77,9 +78,8 @@ describe('D3: Restrictive CORS', () => {
       },
     });
     assert.equal(res.status, 204);
-    assert.equal(res.headers['access-control-allow-origin'], 'http://canary-b1c2.local');
-    assert.ok(res.headers['access-control-allow-methods'].includes('GET'));
-    assert.ok(res.headers['access-control-allow-headers'].includes('X-Canary-Token'));
+    assert.equal(res.headers['access-control-allow-origin'], undefined,
+      'Peer origin preflight must NOT get CORS headers');
   });
 
   it('D3: OPTIONS preflight for unknown origin returns no CORS', async () => {

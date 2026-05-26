@@ -555,7 +555,9 @@ pub const EXPORT_EVENTS_ENVELOPE_ID: &str = "export:events";
 pub fn validate_zone_id(zone_id: &str) -> Result<()> {
     // Compile once for hot paths.
     static ZONE_ID_RE: OnceLock<regex::Regex> = OnceLock::new();
-    let re = ZONE_ID_RE.get_or_init(|| regex::Regex::new(r"^zone:[a-z0-9_-]{1,64}$").unwrap());
+    let re = ZONE_ID_RE.get_or_init(|| {
+        regex::Regex::new(r"^zone:[a-z0-9_-]{1,64}$").expect("valid zone ID regex")
+    });
 
     // Strict allowlist: zone:<1..64 of [a-z0-9_-]>
     let zid = zone_id.to_lowercase();

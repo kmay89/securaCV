@@ -64,6 +64,9 @@
 #ifndef DEBUG_CHIRP
 #define DEBUG_CHIRP                 0   // Print chirp channel details
 #endif
+#ifndef DEBUG_BLE_BEACON
+#define DEBUG_BLE_BEACON            0   // Print debug beacon updates
+#endif
 
 // ============================================================================
 // TIMING & PRIVACY
@@ -130,6 +133,13 @@
 #define CONFIG_BLE_PAIRABLE             1
 #define CONFIG_BLE_REQUIRE_BONDING      0
 #define CONFIG_BLE_ADV_INTERVAL_MS      100
+
+// BLE debug beacon (activate with BOOT button hold or compile flag)
+#ifndef FEATURE_BLE_DEBUG
+#define FEATURE_BLE_DEBUG               0
+#endif
+#define CONFIG_BLE_DEBUG_NAME_PREFIX    "SCV-DBG-"
+#define CONFIG_BLE_DEBUG_UPDATE_MS      5000
 
 // ============================================================================
 // RF PRESENCE CONFIGURATION

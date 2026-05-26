@@ -817,18 +817,18 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     <div class="auth-box">
       <div class="auth-brand">
         <h2>SecuraCV Canary Dashboard</h2>
-        <p>Enter your API token to connect</p>
+        <p>Use your saved session, API token, or one BOOT tap</p>
       </div>
       <div class="form-group">
         <label class="form-label">API Token</label>
         <input type="text" class="form-input" id="tokenInput" placeholder="cv_..." autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" style="font-family:var(--mono);letter-spacing:0.02em;">
-        <p style="font-size:0.7rem;color:var(--muted);margin-top:0.3rem;">Type the token exactly as displayed — don't substitute 0/O or 1/I/l. (New tokens omit those glyphs; older tokens may still contain them.)</p>
+        <p style="font-size:0.7rem;color:var(--muted);margin-top:0.3rem;">Paste the token from the device receipt or Serial output. It starts with <code>cv_</code>. Type it exactly as shown.</p>
       </div>
       <button class="btn btn-primary" style="width:100%" onclick="connectWithToken()">Connect</button>
       <div class="auth-divider">or</div>
-      <button class="btn btn-secondary" style="width:100%" onclick="requestFromDevice()">Request from Device</button>
+      <button class="btn btn-secondary" style="width:100%" onclick="requestFromDevice()">Use BOOT Tap Once</button>
       <p style="font-size:0.72rem;color:var(--muted);text-align:center;margin-top:0.5rem;">
-        Press BOOT button on device, then click above
+        Click the button, then short-tap BOOT on the Canary within 60 seconds.
       </p>
       <div class="auth-status" id="authStatus"></div>
       <div class="auth-footer">
@@ -2328,6 +2328,23 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       document.getElementById('authStatus').className = 'auth-status';
     }
 
+    async function resumeExistingSession() {
+      const s = document.getElementById('authStatus');
+      s.textContent = 'Checking for a saved dashboard session...';
+      s.className = 'auth-status info';
+      try {
+        const resp = await fetch(API_BASE + '/api/status', { cache: 'no-store' });
+        if (resp.ok) {
+          hideAuthModal();
+          startDashboard();
+          return true;
+        }
+      } catch (e) { /* offline or not paired yet */ }
+      s.textContent = 'Paste an API token, or use BOOT Tap Once to fetch it from the device.';
+      s.className = 'auth-status info';
+      return false;
+    }
+
     async function connectWithToken() {
       const input = document.getElementById('tokenInput').value.trim();
       if (!input.startsWith('cv_')) {
@@ -2358,7 +2375,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       const POLL_TICKS = 30;
       let gateTtl = 30;
       let gotFirst403 = false;
-      s.textContent = 'Tap BOOT on the device. We listen for 60 seconds.';
+      s.textContent = 'Now short-tap BOOT on the device. Listening for 60 seconds.';
       for (let i = 0; i < POLL_TICKS; i++) {
         try {
           const resp = await fetch(API_BASE + '/api/provisioning-receipt');
@@ -2425,6 +2442,38 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       if (!window._refreshInterval) {
         window._refreshInterval = setInterval(refreshAll, 5000);
       }
+      if (!window._statusInterval) {
+        window._statusInterval = setInterval(refreshStatus, 2000);
+      }
+      if (!window._systemHealthInterval) {
+        window._systemHealthInterval = setInterval(refreshSystemHealth, 5000);
+      }
+      if (!window._rfInterval) {
+        window._rfInterval = setInterval(refreshRfStatus, 3000);
+      }
+      if (!window._wifiInterval) {
+        window._wifiInterval = setInterval(loadWifiStatus, 5000);
+      }
+      if (!window._panelInterval) {
+        window._panelInterval = setInterval(() => {
+          if (currentPanel === 'presence') { refreshPresence(); refreshHousehold(); refreshWifiPresence(); }
+          else if (currentPanel === 'records' && currentRecordsTab === 'logs') loadLogs();
+          else if (currentPanel === 'records' && currentRecordsTab === 'witness') loadWitness();
+          else if (currentPanel === 'community' && currentCommunityTab === 'opera') refreshOpera();
+          else if (currentPanel === 'community' && currentCommunityTab === 'chirp') refreshChirpStatus();
+          else if (currentPanel === 'settings' && currentSettingsTab === 'bluetooth') refreshBtStatus();
+        }, 5000);
+      }
+      if (!window._dashboardInitialLoadDone) {
+        window._dashboardInitialLoadDone = true;
+        loadWifiStatus();
+        refreshOpera();
+        refreshChirpStatus();
+        refreshBtStatus();
+        loadBtSettings();
+        loadBtPairedDevices();
+        updateResolutionUI();
+      }
     }
 
     let currentPanel = 'status';
@@ -2442,21 +2491,27 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       btn.addEventListener('click', () => switchPanel(btn.dataset.panel));
     });
 
-    function switchPanel(panel) {
+    function switchPanel(panel, loadPanel = true) {
       document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
       document.querySelector(`[data-panel="${panel}"]`).classList.add('active');
       document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
       document.getElementById(`panel-${panel}`).classList.add('active');
       currentPanel = panel;
 
-      if (panel === 'records') { loadLogs(); loadWitness(); }
-      else if (panel === 'camera') { refreshPeekStatus(); refreshSensorState(); }
-      else if (panel === 'presence') { refreshPresence(); refreshHousehold(); refreshWifiPresence(); refreshAudibleChirpStatus(); }
-      else if (panel === 'community') { refreshOpera(); refreshChirpStatus(); refreshBleDiscovery(); }
-      else if (panel === 'settings') { loadWifiStatus(); refreshBtStatus(); loadBtPairedDevices(); refreshBtOtaStatus(); loadRfSettings(); }
+      if (loadPanel) {
+        if (panel === 'records') { loadLogs(); loadWitness(); }
+        else if (panel === 'camera') { refreshPeekStatus(); refreshSensorState(); }
+        else if (panel === 'presence') { refreshPresence(); refreshHousehold(); refreshWifiPresence(); refreshAudibleChirpStatus(); }
+        else if (panel === 'community') { refreshOpera(); refreshChirpStatus(); refreshBleDiscovery(); }
+        else if (panel === 'settings') { loadWifiStatus(); refreshBtStatus(); loadBtPairedDevices(); refreshBtOtaStatus(); loadRfSettings(); }
+      }
 
       if (panel !== 'camera' && peekActive) stopPeek();
       if (panel !== 'camera') stopCamInfoPolling();
+    }
+
+    function initialPanelFromPath() {
+      return window.location.pathname.replace(/\/+$/, '') === '/settings' ? 'settings' : 'status';
     }
 
     function switchCommunityTab(tab) {
@@ -4212,32 +4267,10 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     // ══════════════════════════════════════════════════════════════════
     // INIT
     // ══════════════════════════════════════════════════════════════════
-    refreshStatus();
-    refreshSystemHealth();
-    loadChain();
-    refreshRfStatus();
-    refreshWifiPresence();
-    refreshAudibleChirpStatus();
-    loadWifiStatus();
-    refreshOpera();
-    refreshChirpStatus();
-    refreshBtStatus();
-    loadBtSettings();
-    loadBtPairedDevices();
+    const initialPanel = initialPanelFromPath();
+    if (initialPanel !== currentPanel) switchPanel(initialPanel, false);
     updateResolutionUI();
-
-    setInterval(refreshStatus, 2000);
-    setInterval(refreshSystemHealth, 5000);
-    setInterval(refreshRfStatus, 3000);
-    setInterval(loadWifiStatus, 5000);
-    setInterval(() => {
-      if (currentPanel === 'presence') { refreshPresence(); refreshHousehold(); refreshWifiPresence(); }
-      else if (currentPanel === 'records' && currentRecordsTab === 'logs') loadLogs();
-      else if (currentPanel === 'records' && currentRecordsTab === 'witness') loadWitness();
-      else if (currentPanel === 'community' && currentCommunityTab === 'opera') refreshOpera();
-      else if (currentPanel === 'community' && currentCommunityTab === 'chirp') refreshChirpStatus();
-      else if (currentPanel === 'settings' && currentSettingsTab === 'bluetooth') refreshBtStatus();
-    }, 5000);
+    resumeExistingSession();
   </script>
 </body>
 </html>
