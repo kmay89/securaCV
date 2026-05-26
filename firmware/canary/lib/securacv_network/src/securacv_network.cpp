@@ -1121,18 +1121,31 @@ static esp_err_t handle_peek_start(httpd_req_t* req) {
 //
 // The MJPEG loop runs in its own FreeRTOS task so the httpd worker is
 // free to service /api/peek/status, /api/peek/sensor, etc. while the
-// stream is active.
+// stream is active. Uses raw socket writes (IDF 4.4 compatible) since
+// httpd_req_async_handler_begin/complete requires IDF 5.x.
 // ════════════════════════════════════════════════════════════════════════════
 
 static TaskHandle_t s_stream_task = nullptr;
 
 struct StreamTaskCtx {
-  httpd_req_t* async_req;
+  int sockfd;
+  httpd_handle_t server;
 };
+
+static bool sock_send_all(int fd, const char* buf, size_t len) {
+  while (len > 0) {
+    int sent = send(fd, buf, len, 0);
+    if (sent <= 0) return false;
+    buf += sent;
+    len -= sent;
+  }
+  return true;
+}
 
 static void stream_task_fn(void* param) {
   StreamTaskCtx* ctx = (StreamTaskCtx*)param;
-  httpd_req_t* req = ctx->async_req;
+  int sockfd = ctx->sockfd;
+  httpd_handle_t server = ctx->server;
   delete ctx;
 
   CameraManager& cam = camera_get_instance();
@@ -1161,26 +1174,15 @@ static void stream_task_fn(void* param) {
       "--frame\r\nContent-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n",
       (unsigned)fb->len);
 
-    esp_err_t res = httpd_resp_send_chunk(req, part_buf, part_len);
-    if (res != ESP_OK) {
-      cam.returnFrame(fb);
-      break;
-    }
-
-    res = httpd_resp_send_chunk(req, (const char*)fb->buf, fb->len);
-    if (res != ESP_OK) {
-      cam.returnFrame(fb);
-      break;
-    }
+    bool ok = sock_send_all(sockfd, part_buf, part_len);
+    if (ok) ok = sock_send_all(sockfd, (const char*)fb->buf, fb->len);
+    if (ok) ok = sock_send_all(sockfd, "\r\n", 2);
 
     uint32_t frame_bytes = (uint32_t)fb->len;
-    res = httpd_resp_send_chunk(req, "\r\n", 2);
     cam.returnFrame(fb);
 
-    if (res == ESP_OK) {
-      cam.recordFrame(frame_bytes);
-    }
-    if (res != ESP_OK) break;
+    if (!ok) break;
+    cam.recordFrame(frame_bytes);
 
     uint32_t pace = cam.getFrameDelay();
     if (pace < 20)  pace = 20;
@@ -1189,8 +1191,7 @@ static void stream_task_fn(void* param) {
   }
 
   cam.setPeekActive(false);
-  httpd_resp_send_chunk(req, NULL, 0);
-  httpd_req_async_handler_complete(req);
+  httpd_sess_trigger_close(server, sockfd);
   log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "Peek stream ended", nullptr);
 
   s_stream_task = nullptr;
@@ -1215,15 +1216,20 @@ static esp_err_t handle_peek_stream(httpd_req_t* req) {
   cam.resetMetrics();
 
   int sockfd = httpd_req_to_sockfd(req);
-  if (sockfd >= 0) {
-    int yes = 1;
-    setsockopt(sockfd, SOL_SOCKET, SO_KEEPALIVE, &yes, sizeof(yes));
-    int idle = 5, intvl = 5, cnt = 3;
-    setsockopt(sockfd, IPPROTO_TCP, TCP_KEEPIDLE, &idle, sizeof(idle));
-    setsockopt(sockfd, IPPROTO_TCP, TCP_KEEPINTVL, &intvl, sizeof(intvl));
-    setsockopt(sockfd, IPPROTO_TCP, TCP_KEEPCNT, &cnt, sizeof(cnt));
+  if (sockfd < 0) {
+    cam.setPeekActive(false);
+    return http_send_error(req, 500, "socket_error");
   }
 
+  int yes = 1;
+  setsockopt(sockfd, SOL_SOCKET, SO_KEEPALIVE, &yes, sizeof(yes));
+  int idle = 5, intvl = 5, cnt = 3;
+  setsockopt(sockfd, IPPROTO_TCP, TCP_KEEPIDLE, &idle, sizeof(idle));
+  setsockopt(sockfd, IPPROTO_TCP, TCP_KEEPINTVL, &intvl, sizeof(intvl));
+  setsockopt(sockfd, IPPROTO_TCP, TCP_KEEPCNT, &cnt, sizeof(cnt));
+
+  // Send HTTP response headers synchronously via httpd, then hand the
+  // socket to the worker task for raw MJPEG frame writes.
   httpd_resp_set_type(req, "multipart/x-mixed-replace; boundary=frame");
   httpd_resp_set_hdr(req, "Cache-Control", "no-store, no-cache, must-revalidate, pre-check=0, post-check=0, max-age=0");
   httpd_resp_set_hdr(req, "Pragma", "no-cache");
@@ -1231,26 +1237,22 @@ static esp_err_t handle_peek_stream(httpd_req_t* req) {
   httpd_resp_set_hdr(req, "Connection", "close");
   httpd_resp_set_hdr(req, "X-Accel-Buffering", "no");
 
-  httpd_req_t* async_req = nullptr;
-  esp_err_t err = httpd_req_async_handler_begin(req, &async_req);
-  if (err != ESP_OK || !async_req) {
-    log_health(LOG_LEVEL_ERROR, LOG_CAT_NETWORK, "Async handler begin failed", nullptr);
-    cam.setPeekActive(false);
-    return httpd_resp_send(req, "Async init failed", HTTPD_RESP_USE_STRLEN);
-  }
+  // Send a zero-length chunk to flush the headers to the client.
+  httpd_resp_send_chunk(req, "", 0);
 
-  StreamTaskCtx* ctx = new StreamTaskCtx{async_req};
+  httpd_handle_t server = req->handle;
+  StreamTaskCtx* ctx = new StreamTaskCtx{sockfd, server};
   BaseType_t rc = xTaskCreatePinnedToCore(
     stream_task_fn, "peek_stream", 6144, ctx, 5, &s_stream_task, tskNO_AFFINITY);
   if (rc != pdPASS) {
     delete ctx;
-    httpd_req_async_handler_complete(async_req);
     cam.setPeekActive(false);
     log_health(LOG_LEVEL_ERROR, LOG_CAT_NETWORK, "Stream task creation failed", nullptr);
     return ESP_FAIL;
   }
 
   log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "Peek stream started (async)", nullptr);
+  // Return without closing — the task owns the socket now.
   return ESP_OK;
 }
 
