@@ -111,6 +111,9 @@
 #ifndef FEATURE_SETUP_WIZARD
   #define FEATURE_SETUP_WIZARD     1   // First-time setup detection, captive portal, device naming
 #endif
+#ifndef FEATURE_DIAGNOSTICS
+  #define FEATURE_DIAGNOSTICS      1   // Heap monitoring, SD health, self-test, feature degradation
+#endif
 
 // ════════════════════════════════════════════════════════════════
 // DEBUG FLAG DEFAULTS
