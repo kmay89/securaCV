@@ -61,6 +61,10 @@
 #include "chirp/chirp_channel.h"
 #endif
 
+#if FEATURE_BLUETOOTH
+#include "bluetooth/ble_debug_beacon.h"
+#endif
+
 #include "witness/witness_chain.h"
 
 // ============================================================================
@@ -82,6 +86,10 @@ static gnss_parser_t g_gnss_parser;
 static uint32_t g_last_record_ms = 0;
 static uint32_t g_last_verify_ms = 0;
 static uint32_t g_last_health_log_ms = 0;
+#if FEATURE_BLUETOOTH
+static uint32_t g_last_debug_beacon_ms = 0;
+static bool g_ble_debug_active = false;
+#endif
 
 // ============================================================================
 // FORWARD DECLARATIONS
@@ -124,7 +132,47 @@ void setup() {
     app_init_hardware();
     app_init_storage();
     app_init_witness();
+
+    // Detect debug beacon activation BEFORE network init so BLE starts
+    // with the correct device name (SCV-DBG-XXXX vs SecuraCV-Canary)
+    #if FEATURE_BLUETOOTH
+    {
+        #if FEATURE_BLE_DEBUG
+        g_ble_debug_active = true;
+        LOG_I("BLE debug beacon enabled (compile-time)");
+        #else
+        // Runtime activation: hold BOOT button (GPIO 0) during startup
+        if (digitalRead(0) == LOW) {
+            uint32_t hold_start = millis();
+            while (digitalRead(0) == LOW &&
+                   (millis() - hold_start) < CONFIG_BOOT_BUTTON_HOLD_MS) {
+                delay(10);
+            }
+            if ((millis() - hold_start) >= CONFIG_BOOT_BUTTON_HOLD_MS) {
+                g_ble_debug_active = true;
+                LOG_I("BLE debug beacon enabled (button hold)");
+            }
+        }
+        #endif
+    }
+    #endif
+
     app_init_network();
+
+    // Initialize debug beacon after BLE is running
+    #if FEATURE_BLUETOOTH
+    if (g_ble_debug_active) {
+        char fp_hex[5];
+        if (g_health.crypto_healthy) {
+            snprintf(fp_hex, sizeof(fp_hex), "%02x%02x",
+                     g_witness_chain.pubkey_fingerprint[6],
+                     g_witness_chain.pubkey_fingerprint[7]);
+        } else {
+            strcpy(fp_hex, "0000");
+        }
+        ble_debug_beacon_init(fp_hex);
+    }
+    #endif
 
     g_initialized = true;
     g_health.uptime_sec = 0;
@@ -181,6 +229,14 @@ void loop() {
     // Process chirp channel
     #if FEATURE_CHIRP
     chirp_process();
+    #endif
+
+    // Update BLE debug beacon
+    #if FEATURE_BLUETOOTH
+    if (g_ble_debug_active && (now - g_last_debug_beacon_ms >= CONFIG_BLE_DEBUG_UPDATE_MS)) {
+        g_last_debug_beacon_ms = now;
+        ble_debug_beacon_update(&g_health);
+    }
     #endif
 
     // Feed watchdog
@@ -351,7 +407,9 @@ static void app_init_network() {
     // Initialize Bluetooth
     #if FEATURE_BLUETOOTH
     ble_config_t ble_cfg = BLE_CONFIG_DEFAULT;
-    ble_cfg.device_name = CONFIG_BLE_DEVICE_NAME;
+    ble_cfg.device_name = g_ble_debug_active
+        ? CONFIG_BLE_DEBUG_NAME_PREFIX
+        : CONFIG_BLE_DEVICE_NAME;
     ble_cfg.device_id = witness_chain_device_id(&g_witness_chain);
     ble_cfg.public_key = g_witness_chain.public_key;
     ble_cfg.tx_power = CONFIG_BLE_TX_POWER;
@@ -359,7 +417,7 @@ static void app_init_network() {
 
     if (ble_mgr_init(&ble_cfg) == RESULT_OK) {
         ble_mgr_start_advertising();
-        LOG_I("Bluetooth started");
+        LOG_I("Bluetooth started%s", g_ble_debug_active ? " (debug mode)" : "");
         g_health.ble_active = true;
     }
     #endif
