@@ -1026,6 +1026,35 @@ function renderConfigForm(container, device, section, config) {
         });
     },
   }));
+
+  if (section === 'integrations') {
+    container.appendChild(el('button', {
+      className: 'btn btn-block',
+      textContent: 'Test Webhook',
+      style: 'margin-top: 0.5rem',
+      onClick: function () {
+        var alertArea = document.getElementById('config-alert');
+        while (alertArea.firstChild) alertArea.removeChild(alertArea.firstChild);
+        alertArea.appendChild(el('div', { className: 'alert', textContent: 'Sending test webhook...' }));
+
+        CanaryAPI.request(device.base_url, '/api/v1/webhook/test', { method: 'POST' })
+          .then(function (res) {
+            while (alertArea.firstChild) alertArea.removeChild(alertArea.firstChild);
+            alertArea.appendChild(el('div', {
+              className: 'alert alert-success',
+              textContent: 'Webhook test succeeded (HTTP ' + res.status + ')',
+            }));
+          })
+          .catch(function (err) {
+            while (alertArea.firstChild) alertArea.removeChild(alertArea.firstChild);
+            alertArea.appendChild(el('div', {
+              className: 'alert alert-error',
+              textContent: 'Webhook test failed: ' + err.message,
+            }));
+          });
+      },
+    }));
+  }
 }
 
 function renderLogsView(deviceId) {

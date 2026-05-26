@@ -16,6 +16,8 @@ const witnessRoutes = require('./routes/witness');
 const peersRoutes = require('./routes/peers');
 const rebootRoutes = require('./routes/reboot');
 const updateRoutes = require('./routes/update');
+const webhookRoutes = require('./routes/webhook');
+const { createWebhookDispatcher } = require('./lib/webhook');
 
 function createApp(options = {}) {
   const state = createDeviceState({
@@ -60,7 +62,13 @@ function createApp(options = {}) {
   // 8. Auth (401) — applies to all /api/* routes
   app.use('/api', authMiddleware(state));
 
-  // 9. Route handlers
+  // 9. Webhook dispatcher
+  const webhookDispatcher = createWebhookDispatcher(state);
+  state.setOnWitnessRecord((record) => {
+    webhookDispatcher.dispatch('witness_event', record);
+  });
+
+  // 10. Route handlers
   app.use(infoRoutes(state));
   app.use(configRoutes(state));
   app.use(logsRoutes(state));
@@ -68,6 +76,7 @@ function createApp(options = {}) {
   app.use(peersRoutes(state));
   app.use(rebootRoutes(state));
   app.use(updateRoutes(state));
+  app.use(webhookRoutes(state, webhookDispatcher));
 
   // 404 for unmatched API routes
   app.use('/api', (req, res) => {

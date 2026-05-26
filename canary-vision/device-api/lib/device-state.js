@@ -137,6 +137,9 @@ function createDeviceState(overrides = {}) {
     if (logs.length > 1000) logs.shift();
   }
 
+  // Webhook callback (set by server after dispatcher is created)
+  let onWitnessRecord = null;
+
   function addWitnessRecord(eventType, zone) {
     witnessSeq++;
     const prevHash = witnessRecords.length > 0
@@ -160,6 +163,11 @@ function createDeviceState(overrides = {}) {
 
     witnessRecords.push(record);
     addLog('INFO', `Witness: ${eventType} in ${zone} (seq ${witnessSeq})`);
+
+    if (onWitnessRecord) {
+      onWitnessRecord(record);
+    }
+
     return record;
   }
 
@@ -198,6 +206,7 @@ function createDeviceState(overrides = {}) {
     peers: structuredClone(overrides.peers || DEFAULT_PEERS),
     addLog,
     addWitnessRecord,
+    setOnWitnessRecord(cb) { onWitnessRecord = cb; },
     getUptime() {
       return Math.floor((Date.now() - startTime) / 1000);
     },
