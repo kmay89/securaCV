@@ -197,18 +197,26 @@ static scv_device_t* add_or_update_device(SecuraCVApp* app, const AppEvent* evt)
     if(!dev) {
         if(app->device_count >= MAX_DEVICES) {
             // Evict oldest unpinned device; fall back to oldest overall
-            uint32_t oldest_ms = UINT32_MAX;
+            // Uses subtraction-based age for 32-bit rollover safety
+            uint32_t now_evict = furi_get_tick();
+            uint32_t max_age = 0;
             uint8_t oldest_idx = 0;
+            bool found_unpinned = false;
             for(uint8_t i = 0; i < app->device_count; i++) {
-                if(!app->devices[i].pinned && app->devices[i].last_seen_ms < oldest_ms) {
-                    oldest_ms = app->devices[i].last_seen_ms;
-                    oldest_idx = i;
+                if(!app->devices[i].pinned) {
+                    uint32_t age = now_evict - app->devices[i].last_seen_ms;
+                    if(!found_unpinned || age > max_age) {
+                        max_age = age;
+                        oldest_idx = i;
+                        found_unpinned = true;
+                    }
                 }
             }
-            if(oldest_ms == UINT32_MAX) {
+            if(!found_unpinned) {
                 for(uint8_t i = 0; i < app->device_count; i++) {
-                    if(app->devices[i].last_seen_ms < oldest_ms) {
-                        oldest_ms = app->devices[i].last_seen_ms;
+                    uint32_t age = now_evict - app->devices[i].last_seen_ms;
+                    if(i == 0 || age > max_age) {
+                        max_age = age;
                         oldest_idx = i;
                     }
                 }
