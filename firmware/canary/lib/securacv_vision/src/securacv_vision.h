@@ -75,6 +75,7 @@ typedef struct {
   bool     motion_active;
   uint8_t  last_zone;
   uint8_t  last_confidence;
+  uint8_t  block_intensity[VISION_GRID_TOTAL];
 } vision_stats_t;
 
 typedef void (*vision_event_cb_t)(const vision_event_t* evt);

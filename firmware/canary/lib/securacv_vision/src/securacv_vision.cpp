@@ -169,8 +169,10 @@ static MotionResult layer2_check(const uint8_t* gray) {
 
       if (!s_block_baseline_set) {
         changed[idx] = false;
+        s_stats.block_intensity[idx] = 0;
       } else {
         int delta = abs((int)current_blocks[idx] - (int)s_block_baseline[idx]);
+        s_stats.block_intensity[idx] = (uint8_t)(delta > 255 ? 255 : delta);
         changed[idx] = delta > s_cfg.luminance_threshold;
         if (changed[idx]) {
           changed_count++;
@@ -382,6 +384,13 @@ void vision_set_event_callback(vision_event_cb_t cb) {
   vision::s_cb = cb;
 }
 
+static void decay_grid() {
+  for (int i = 0; i < VISION_GRID_TOTAL; i++) {
+    vision::s_stats.block_intensity[i] =
+        (uint8_t)(vision::s_stats.block_intensity[i] * 3 / 4);
+  }
+}
+
 bool vision_process() {
   if (!vision::s_running) return false;
 
@@ -428,7 +437,7 @@ bool vision_process() {
   bool l1_pass = vision::layer1_check(fb->len);
   if (!l1_pass) {
     cam.returnFrame(fb);
-    // Check if motion should end (held for motion_hold_ms)
+    decay_grid();
     if (vision::s_motion_active &&
         now - vision::s_motion_start_ms > vision::s_cfg.motion_hold_ms) {
       vision::s_motion_active = false;
@@ -445,7 +454,10 @@ bool vision_process() {
                                                DECODE_W, DECODE_H);
   cam.returnFrame(fb);
 
-  if (!decoded) return false;
+  if (!decoded) {
+    decay_grid();
+    return false;
+  }
 
   vision::MotionResult motion = vision::layer2_check(vision::s_gray_buf);
   if (!motion.detected) {

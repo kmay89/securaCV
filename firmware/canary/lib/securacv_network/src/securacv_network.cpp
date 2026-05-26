@@ -1969,6 +1969,11 @@ static esp_err_t handle_sensing(httpd_req_t* req) {
   vst["motion_events"]   = v_stats.motion_events;
   vst["person_events"]   = v_stats.person_events;
   vst["motion_active"]   = v_stats.motion_active;
+
+  JsonArray grid = vis["grid"].to<JsonArray>();
+  for (int i = 0; i < VISION_GRID_TOTAL; i++) {
+    grid.add(v_stats.block_intensity[i]);
+  }
 #endif // FEATURE_VISION_DETECT
 
 #if FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS || FEATURE_TOUCH || FEATURE_IR_RMT || FEATURE_TEMP_TAMPER
