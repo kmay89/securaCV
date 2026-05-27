@@ -3366,24 +3366,31 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           viGrid.dataset.built = '1';
         }
         if (viGrid) {
-          const grid = viObj.grid || [];
-          const age = viObj.last_event_age_ms;
-          const isPerson = viObj.last_event === 'person' && age >= 0 && age < 5000;
-          const zm = viZoneMask;
           const cells = viGrid.children;
-          for (let i = 0; i < cells.length; i++) {
-            const enabled = (zm[i >> 3] >> (i & 7)) & 1;
-            const v = grid[i] || 0;
-            if (v < 3 || !enabled) {
+          if (!viObj.enabled) {
+            for (let i = 0; i < cells.length; i++) {
               cells[i].style.background = 'var(--border)';
-            } else {
-              const t = Math.min(v / 80, 1);
-              const h = isPerson ? (0 + t * 10) : (180 - t * 20);
-              const s = 60 + t * 30;
-              const l = 15 + t * 40;
-              cells[i].style.background = 'hsl(' + h + ',' + s + '%,' + l + '%)';
+              cells[i].style.opacity = '0.25';
             }
-            cells[i].style.opacity = enabled ? '1' : '0.25';
+          } else {
+            const grid = viObj.grid || [];
+            const age = viObj.last_event_age_ms;
+            const isPerson = viObj.last_event === 'person' && age >= 0 && age < 5000;
+            const zm = viZoneMask;
+            for (let i = 0; i < cells.length; i++) {
+              const enabled = (zm[i >> 3] >> (i & 7)) & 1;
+              const v = grid[i] || 0;
+              if (v < 3 || !enabled) {
+                cells[i].style.background = 'var(--border)';
+              } else {
+                const t = Math.min(v / 80, 1);
+                const h = isPerson ? (0 + t * 10) : (180 - t * 20);
+                const s = 60 + t * 30;
+                const l = 15 + t * 40;
+                cells[i].style.background = 'hsl(' + h + ',' + s + '%,' + l + '%)';
+              }
+              cells[i].style.opacity = enabled ? '1' : '0.25';
+            }
           }
         }
 
@@ -3835,6 +3842,16 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       const btn = document.getElementById('viSaveBtn');
       if (btn) btn.disabled = true;
       try {
+        // Flush any pending debounced slider changes first
+        if (viDebounce) {
+          clearTimeout(viDebounce);
+          viDebounce = null;
+          if (Object.keys(viPending).length > 0) {
+            const body = Object.assign({}, viPending);
+            viPending = {};
+            await api('/api/vision/config', 'POST', body);
+          }
+        }
         const r = await api('/api/vision/config/save', 'POST', {});
         if (r && r.ok) viApplyConfig(r);
       } finally {
