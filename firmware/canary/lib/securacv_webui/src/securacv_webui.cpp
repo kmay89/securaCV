@@ -974,7 +974,6 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         Logs<span class="count" id="logsCount" style="display:none">0</span>
       </button>
       <button class="nav-btn" data-panel="witness">Witness</button>
-      <button class="nav-btn" data-panel="timeline">Timeline</button>
       <button class="nav-btn" data-panel="settings">Settings</button>
       <button class="nav-btn" data-panel="bluetooth">Bluetooth</button>
     </nav>
@@ -2177,31 +2176,6 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       </div>
     </div>
 
-    <!-- Timeline Panel -->
-    <div class="panel" id="panel-timeline">
-      <div class="card">
-        <div class="card-header">
-          <div>
-            <div class="card-title">Event Timeline</div>
-            <div class="card-subtitle" id="timelineSubtitle">Recent witness events with thumbnails</div>
-          </div>
-          <div style="display:flex;gap:4px">
-            <select id="timelineFilter" onchange="refreshTimeline()" style="font-size:12px;padding:4px 8px;border-radius:6px;border:1px solid var(--border)">
-              <option value="all">All Events</option>
-              <option value="person_detected">Person</option>
-              <option value="vehicle_detected">Vehicle</option>
-              <option value="animal_detected">Animal</option>
-              <option value="motion_detected">Motion</option>
-            </select>
-            <button class="btn btn-primary btn-sm" onclick="refreshTimeline()">↻</button>
-          </div>
-        </div>
-        <div id="timelineList" style="max-height:500px;overflow-y:auto">
-          <div class="loading"><div class="spinner"></div></div>
-        </div>
-      </div>
-    </div>
-
     <!-- Settings Panel -->
     <div class="panel" id="panel-settings">
       <!-- WiFi Configuration Card -->
@@ -2629,19 +2603,22 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
       if (panel === 'logs') loadLogs();
       else if (panel === 'witness') loadWitness();
-      else if (panel === 'timeline') refreshTimeline();
+      else if (panel === 'timeline') loadTimeline();
       else if (panel === 'peek') { refreshPeekStatus(); refreshSensorState(); }
       else if (panel === 'opera') refreshOpera();
       else if (panel === 'community') refreshChirpStatus();
       else if (panel === 'bluetooth') { refreshBtStatus(); loadBtPairedDevices(); }
       else if (panel === 'sensing') refreshSensing();
-      else if (panel === 'timeline') loadTimeline();
       else if (panel === 'status') refreshLiveSensing();
 
       // Stop peek stream and metrics polling when leaving peek panel
       if (panel !== 'peek') {
         stopCamInfoPolling();
         if (peekActive) stopPeek();
+      }
+      // Stop timeline auto-refresh when leaving timeline panel
+      if (panel !== 'timeline') {
+        clearInterval(timelineRefreshTimer);
       }
     }
 
@@ -4269,6 +4246,11 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       4: { name: 'Presence', icon: '📡', css: 'presence' },
       5: { name: 'Mesh Event', icon: '🌐', css: 'witness' },
       6: { name: 'Chirp', icon: '🐦', css: 'chirp' },
+      'BOOT': { name: 'Boot Attestation', icon: '⚡', css: 'boot' },
+      'EVNT': { name: 'Witness Event', icon: '👁', css: 'witness' },
+      'TAMP': { name: 'Tamper Alert', icon: '🚨', css: 'tamper' },
+      'STCH': { name: 'State Change', icon: '🔄', css: 'witness' },
+      'PWSD': { name: 'Power Shutdown', icon: '⏻', css: 'witness' },
     };
 
     function truncHash(h, n) {
@@ -4276,7 +4258,13 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       return h.length > n ? h.substring(0, n) + '…' : h;
     }
 
+    let timelineLoading = false;
     async function loadTimeline() {
+      if (timelineLoading) return;
+      timelineLoading = true;
+      try { await _loadTimelineImpl(); } finally { timelineLoading = false; }
+    }
+    async function _loadTimelineImpl() {
       timelinePage = 0;
       timelineRecords = [];
       const list = document.getElementById('timelineList');
@@ -4290,6 +4278,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       if (!chainData || !chainData.ok) {
         list.innerHTML = '<div class="empty-state"><div class="empty-icon">⏱</div><p>No timeline data available</p></div>';
         document.getElementById('timelineIntegrity').style.display = 'none';
+        clearInterval(timelineRefreshTimer);
         return;
       }
 
@@ -4301,8 +4290,8 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       const intIcon = document.getElementById('timelineIntegrityIcon');
       const intText = document.getElementById('timelineIntegrityText');
 
-      const seq = chainData.sequence || (statusData.ok ? statusData.chain_seq : 0);
-      const count = (statusData.ok ? statusData.witness_count : 0) || seq;
+      const seq = chainData.sequence != null ? chainData.sequence : (statusData.ok ? statusData.chain_seq : 0);
+      const count = statusData.ok && statusData.witness_count != null ? statusData.witness_count : seq;
 
       if (statusData.ok && statusData.crypto_healthy) {
         integrity.className = 'tl-integrity valid';
@@ -4353,7 +4342,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         if (!res.ok) throw new Error(res.status);
         const blob = await res.blob();
         const url = URL.createObjectURL(blob);
-        hero.innerHTML = '<img src="' + url + '" alt="Latest snapshot" onload="URL.revokeObjectURL(this.src)">' +
+        hero.innerHTML = '<img src="' + url + '" alt="Latest snapshot" onload="URL.revokeObjectURL(this.src)" onerror="URL.revokeObjectURL(this.src)">' +
           '<div class="tl-hero-overlay">Latest snapshot</div>';
       } catch (e) {
         hero.innerHTML = '<div class="tl-hero-placeholder">Camera offline</div>';
@@ -4382,8 +4371,8 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         if (!isLast) html += '<div class="tl-line"></div>';
         html += '<div class="tl-body">';
         html += '<div class="tl-title">' + typeInfo.icon + ' ' + typeInfo.name + '</div>';
-        html += '<div class="tl-meta">#' + (r.seq || '?') + ' · TB:' + (r.time_bucket || '--') + ' · ' + timeSrc + '</div>';
-        html += '<div class="tl-chain-badge">' + verified + ' ' + truncHash(hash, 12) + '</div>';
+        html += '<div class="tl-meta">#' + escapeHtml(String(r.seq || '?')) + ' · TB:' + escapeHtml(String(r.time_bucket || '--')) + ' · ' + timeSrc + '</div>';
+        html += '<div class="tl-chain-badge">' + verified + ' ' + escapeHtml(truncHash(hash, 12)) + '</div>';
         html += '</div>';
 
         html += '</div>';
@@ -4393,6 +4382,9 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     }
 
     async function loadMoreTimeline() {
+      // Pagination placeholder — /api/chain currently returns only the
+      // latest block.  A future /api/chain?page=N endpoint will populate
+      // additional records here.
       timelinePage++;
       document.getElementById('timelineLoadMore').style.display = 'none';
     }

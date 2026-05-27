@@ -177,11 +177,15 @@ void setup() {
 
     // Build the SSID for display in serial scenes
     char ssid_buf[64];
-    snprintf(ssid_buf, sizeof(ssid_buf), "%s%s",
-             CONFIG_AP_SSID_PREFIX,
-             witness_chain_device_id(&g_witness_chain) + strlen(CONFIG_DEVICE_ID_PREFIX));
+    const char* dev_id = witness_chain_device_id(&g_witness_chain);
+    size_t prefix_len = strlen(CONFIG_DEVICE_ID_PREFIX);
+    const char* suffix = (strncmp(dev_id, CONFIG_DEVICE_ID_PREFIX, prefix_len) == 0)
+                         ? dev_id + prefix_len : dev_id;
+    snprintf(ssid_buf, sizeof(ssid_buf), "%s%s", CONFIG_AP_SSID_PREFIX, suffix);
 
-    app_print_scene_network(ssid_buf);
+    if (g_health.wifi_active) {
+        app_print_scene_network(ssid_buf);
+    }
 
     // Initialize debug beacon after BLE is running
     #if FEATURE_BLUETOOTH
@@ -189,8 +193,8 @@ void setup() {
         char fp_hex[5];
         if (g_health.crypto_healthy) {
             snprintf(fp_hex, sizeof(fp_hex), "%02x%02x",
-                     g_witness_chain.pubkey_fingerprint[6],
-                     g_witness_chain.pubkey_fingerprint[7]);
+                     g_witness_chain.fingerprint[6],
+                     g_witness_chain.fingerprint[7]);
         } else {
             strcpy(fp_hex, "0000");
         }
@@ -436,10 +440,10 @@ static void app_print_scene_chain() {
     Serial.printf( "    Integrity   %s\n", g_health.crypto_healthy ? "verified" : "check required");
     if (g_health.crypto_healthy) {
         Serial.printf("    Key         %02x%02x%02x%02x...  (Ed25519 public key prefix)\n",
-                       g_witness_chain.pubkey_fingerprint[0],
-                       g_witness_chain.pubkey_fingerprint[1],
-                       g_witness_chain.pubkey_fingerprint[2],
-                       g_witness_chain.pubkey_fingerprint[3]);
+                       g_witness_chain.fingerprint[0],
+                       g_witness_chain.fingerprint[1],
+                       g_witness_chain.fingerprint[2],
+                       g_witness_chain.fingerprint[3]);
     }
     Serial.println();
 }
