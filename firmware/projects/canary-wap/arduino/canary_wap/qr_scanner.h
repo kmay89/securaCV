@@ -29,6 +29,12 @@ static struct quirc* s_qr   = nullptr;
 static uint8_t*      s_rgb  = nullptr;
 static uint8_t*      s_gray = nullptr;
 
+inline void deinit() {
+  if (s_qr)   { quirc_destroy(s_qr); s_qr = nullptr; }
+  if (s_rgb)  { free(s_rgb);  s_rgb = nullptr; }
+  if (s_gray) { free(s_gray); s_gray = nullptr; }
+}
+
 inline bool init() {
   if (s_qr) return true;
 
@@ -48,12 +54,6 @@ inline bool init() {
     return false;
   }
   return true;
-}
-
-inline void deinit() {
-  if (s_qr)   { quirc_destroy(s_qr); s_qr = nullptr; }
-  if (s_rgb)  { free(s_rgb);  s_rgb = nullptr; }
-  if (s_gray) { free(s_gray); s_gray = nullptr; }
 }
 
 // Decode one camera frame. Returns 1 if QR found (payload copied to out),
