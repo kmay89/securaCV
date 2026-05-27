@@ -57,11 +57,12 @@ void boot_note(const char* text) {
 // ============================================================================
 
 void boot_scene_banner(const boot_info_t* info) {
+    if (!info) return;
     out("\n\n");
     out("              ,_,          Waking up...\n");
     out("             (o.o)\n");
-    out("             /| |\\         %s\n", info->product_name);
-    out("              d b          v%s\n", info->fw_version);
+    out("             /| |\\         %s\n", info->product_name ? info->product_name : "--");
+    out("              d b          v%s\n", info->fw_version ? info->fw_version : "--");
     boot_blank();
     out("    This is your privacy witness device.\n");
     out("    It creates tamper-proof records of what it\n");
@@ -69,7 +70,7 @@ void boot_scene_banner(const boot_info_t* info) {
     boot_blank();
     boot_kv("Type",  info->device_type);
     boot_kv("Model", info->model);
-    boot_kvf("Built", "%s %s", info->build_date, info->build_time);
+    boot_kvf("Built", "%s %s", info->build_date ? info->build_date : "--", info->build_time ? info->build_time : "--");
     if (info->mac_address)
         boot_kv("MAC", info->mac_address);
     boot_separator();
@@ -77,6 +78,7 @@ void boot_scene_banner(const boot_info_t* info) {
 }
 
 void boot_scene_hardware(const boot_info_t* info) {
+    if (!info) return;
     out("              ,_,\n");
     out("             (o.o) ?       Checking the hardware...\n");
     out("             (  >)\n");
@@ -84,7 +86,7 @@ void boot_scene_hardware(const boot_info_t* info) {
     boot_separator();
 
     boot_kv("Board", info->board_name);
-    boot_kvf("Chip",  "%s rev %u", info->chip_model, (unsigned)info->chip_revision);
+    boot_kvf("Chip",  "%s rev %u", info->chip_model ? info->chip_model : "--", (unsigned)info->chip_revision);
     boot_kvf("CPU",   "%u MHz, %u core(s)", (unsigned)info->cpu_freq_mhz, (unsigned)info->cpu_cores);
     boot_note("(the brain — higher MHz = faster thinking)");
     boot_kvf("Flash", "%u MB", (unsigned)info->flash_mb);
