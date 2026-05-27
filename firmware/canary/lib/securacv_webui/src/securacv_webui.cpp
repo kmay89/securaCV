@@ -456,6 +456,123 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       color: var(--success);
     }
     
+    /* Timeline Panel */
+    .timeline-container {
+      position: relative;
+      padding-left: 20px;
+      max-height: 600px;
+      overflow-y: auto;
+    }
+    .tl-entry {
+      position: relative;
+      padding-bottom: 1rem;
+      display: flex;
+      gap: 0.75rem;
+      align-items: flex-start;
+    }
+    .tl-entry:last-child { padding-bottom: 0; }
+    .tl-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--accent);
+      flex-shrink: 0;
+      margin-top: 5px;
+      position: relative;
+      z-index: 1;
+    }
+    .tl-dot.boot { background: var(--info); }
+    .tl-dot.tamper { background: var(--danger); }
+    .tl-dot.presence { background: var(--warning); }
+    .tl-dot.witness { background: var(--accent); }
+    .tl-dot.chirp { background: var(--success); }
+    .tl-line {
+      position: absolute;
+      left: 4px;
+      top: 16px;
+      bottom: 0;
+      width: 2px;
+      background: var(--border);
+    }
+    .tl-body { flex: 1; min-width: 0; }
+    .tl-title {
+      font-size: 0.85rem;
+      font-weight: 500;
+      color: var(--text);
+    }
+    .tl-meta {
+      font-size: 0.7rem;
+      color: var(--muted);
+      font-family: var(--mono);
+      margin-top: 0.15rem;
+    }
+    .tl-chain-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.25rem;
+      padding: 0.15rem 0.4rem;
+      border-radius: 4px;
+      font-size: 0.65rem;
+      font-family: var(--mono);
+      background: var(--accent-dim);
+      color: var(--accent);
+      margin-top: 0.25rem;
+    }
+    .tl-thumb {
+      width: 64px;
+      height: 48px;
+      border-radius: 6px;
+      object-fit: cover;
+      flex-shrink: 0;
+      background: rgba(0,0,0,0.3);
+      border: 1px solid var(--border);
+    }
+    .tl-integrity {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.6rem;
+      background: rgba(0,0,0,0.2);
+      border-radius: 8px;
+      margin-bottom: 1rem;
+      font-size: 0.8rem;
+    }
+    .tl-integrity.valid { border-left: 3px solid var(--success); }
+    .tl-integrity.broken { border-left: 3px solid var(--danger); }
+    .tl-load-more { text-align: center; padding: 0.75rem; }
+    .tl-hero {
+      position: relative;
+      border-radius: 8px;
+      overflow: hidden;
+      margin-bottom: 1rem;
+      background: rgba(0,0,0,0.3);
+      aspect-ratio: 4/3;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .tl-hero img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    .tl-hero-overlay {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      padding: 0.5rem 0.75rem;
+      background: linear-gradient(transparent, rgba(0,0,0,0.7));
+      font-size: 0.75rem;
+      color: #fff;
+    }
+    .tl-hero-placeholder {
+      color: var(--muted);
+      font-size: 0.8rem;
+      text-align: center;
+      padding: 2rem;
+    }
+
     /* Panels */
     .panel { display: none; }
     .panel.active { display: block; }
@@ -840,6 +957,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
   <div class="container">
     <nav>
       <button class="nav-btn active" data-panel="status">Status</button>
+      <button class="nav-btn" data-panel="timeline">Timeline</button>
       <button class="nav-btn" data-panel="sensing">Sensing</button>
       <button class="nav-btn" data-panel="peek">Peek</button>
       <button class="nav-btn" data-panel="opera">
@@ -1024,6 +1142,41 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
             <div class="gps-label">HDOP</div>
             <div class="gps-value" id="gpsHdop">--</div>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Timeline Panel — witness record event history with thumbnails -->
+    <div class="panel" id="panel-timeline">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Witness Timeline</div>
+            <div class="card-subtitle" id="timelineSubtitle">Cryptographically signed event history</div>
+          </div>
+          <button class="btn btn-ghost btn-sm" onclick="loadTimeline()">Refresh</button>
+        </div>
+
+        <!-- Thumbnail hero (latest camera snapshot) -->
+        <div class="tl-hero" id="timelineHero">
+          <div class="tl-hero-placeholder" id="timelineHeroPlaceholder">
+            No camera preview available
+          </div>
+        </div>
+
+        <!-- Chain integrity indicator -->
+        <div id="timelineIntegrity" class="tl-integrity valid" style="display:none;">
+          <span id="timelineIntegrityIcon"></span>
+          <span id="timelineIntegrityText"></span>
+        </div>
+
+        <!-- Scrollable timeline -->
+        <div class="timeline-container" id="timelineList">
+          <div class="loading"><div class="spinner"></div></div>
+        </div>
+
+        <div class="tl-load-more" id="timelineLoadMore" style="display:none;">
+          <button class="btn btn-secondary" onclick="loadMoreTimeline()">Load More</button>
         </div>
       </div>
     </div>
@@ -2450,6 +2603,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       else if (panel === 'community') refreshChirpStatus();
       else if (panel === 'bluetooth') { refreshBtStatus(); loadBtPairedDevices(); }
       else if (panel === 'sensing') refreshSensing();
+      else if (panel === 'timeline') loadTimeline();
       else if (panel === 'status') refreshLiveSensing();
 
       // Stop peek stream and metrics polling when leaving peek panel
@@ -4047,6 +4201,145 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       } else {
         alert('Export failed: ' + (data.error || 'Unknown error'));
       }
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // TIMELINE PANEL
+    // ══════════════════════════════════════════════════════════════════
+
+    let timelinePage = 0;
+    const TIMELINE_PAGE_SIZE = 20;
+    let timelineRecords = [];
+    let timelineRefreshTimer = null;
+
+    const RECORD_TYPES = {
+      0: { name: 'Boot Attestation', icon: '⚡', css: 'boot' },
+      1: { name: 'Witness Event', icon: '👁', css: 'witness' },
+      2: { name: 'Tamper Alert', icon: '🚨', css: 'tamper' },
+      3: { name: 'State Change', icon: '🔄', css: 'witness' },
+      4: { name: 'Presence', icon: '📡', css: 'presence' },
+      5: { name: 'Mesh Event', icon: '🌐', css: 'witness' },
+      6: { name: 'Chirp', icon: '🐦', css: 'chirp' },
+    };
+
+    function truncHash(h, n) {
+      if (!h) return '---';
+      return h.length > n ? h.substring(0, n) + '…' : h;
+    }
+
+    async function loadTimeline() {
+      timelinePage = 0;
+      timelineRecords = [];
+      const list = document.getElementById('timelineList');
+      list.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+
+      const [chainData, statusData] = await Promise.all([
+        api('/api/chain'),
+        api('/api/status')
+      ]);
+
+      if (!chainData || !chainData.ok) {
+        list.innerHTML = '<div class="empty-state"><div class="empty-icon">⏱</div><p>No timeline data available</p></div>';
+        document.getElementById('timelineIntegrity').style.display = 'none';
+        return;
+      }
+
+      // Update hero thumbnail if camera is available
+      refreshTimelineHero();
+
+      // Show chain integrity indicator
+      const integrity = document.getElementById('timelineIntegrity');
+      const intIcon = document.getElementById('timelineIntegrityIcon');
+      const intText = document.getElementById('timelineIntegrityText');
+
+      const seq = chainData.sequence || (statusData.ok ? statusData.chain_seq : 0);
+      const count = (statusData.ok ? statusData.witness_count : 0) || seq;
+
+      if (statusData.ok && statusData.crypto_healthy) {
+        integrity.className = 'tl-integrity valid';
+        intIcon.textContent = '✓';
+        intText.textContent = 'Chain intact · Seq #' + seq + ' · ' + count + ' records';
+      } else {
+        integrity.className = 'tl-integrity broken';
+        intIcon.textContent = '⚠';
+        intText.textContent = 'Chain integrity could not be verified';
+      }
+      integrity.style.display = 'flex';
+
+      // Build timeline from blocks
+      const blocks = chainData.blocks || [];
+      timelineRecords = blocks;
+
+      document.getElementById('timelineSubtitle').textContent =
+        blocks.length + ' record' + (blocks.length !== 1 ? 's' : '') +
+        ' · Chain head: ' + truncHash(chainData.chain_head || '', 12);
+
+      renderTimeline(blocks);
+
+      document.getElementById('timelineLoadMore').style.display =
+        blocks.length >= TIMELINE_PAGE_SIZE ? 'block' : 'none';
+
+      // Start auto-refresh while timeline panel is active
+      clearInterval(timelineRefreshTimer);
+      timelineRefreshTimer = setInterval(() => {
+        if (currentPanel === 'timeline') loadTimeline();
+        else clearInterval(timelineRefreshTimer);
+      }, 5000);
+    }
+
+    function refreshTimelineHero() {
+      const hero = document.getElementById('timelineHero');
+      const placeholder = document.getElementById('timelineHeroPlaceholder');
+
+      if (cameraReady) {
+        hero.innerHTML = '<img src="' + API_BASE + '/api/peek/snapshot?t=' + Date.now() +
+          '" alt="Latest snapshot" onerror="this.parentElement.innerHTML=\'<div class=tl-hero-placeholder>Camera offline</div>\'">' +
+          '<div class="tl-hero-overlay">Latest camera snapshot</div>';
+      } else {
+        hero.innerHTML = '<div class="tl-hero-placeholder">Camera not available — thumbnails disabled</div>';
+      }
+    }
+
+    function renderTimeline(records) {
+      const list = document.getElementById('timelineList');
+
+      if (!records.length) {
+        list.innerHTML = '<div class="empty-state"><div class="empty-icon">⏱</div><p>No witness records yet</p></div>';
+        return;
+      }
+
+      let html = '';
+      for (let i = 0; i < records.length; i++) {
+        const r = records[i];
+        const typeInfo = RECORD_TYPES[r.type_id] || RECORD_TYPES[r.type] || RECORD_TYPES[1];
+        const isLast = i === records.length - 1;
+        const timeSrc = r.time_source === 'gps' ? '🛰 GPS' : '⏱ Device';
+        const hash = r.hash || r.chain_hash || '';
+        const verified = r.verified ? '✓' : '⚠';
+
+        html += '<div class="tl-entry">';
+        html += '<div class="tl-dot ' + typeInfo.css + '"></div>';
+        if (!isLast) html += '<div class="tl-line"></div>';
+        html += '<div class="tl-body">';
+        html += '<div class="tl-title">' + typeInfo.icon + ' ' + typeInfo.name + '</div>';
+        html += '<div class="tl-meta">#' + (r.seq || '?') + ' · TB:' + (r.time_bucket || '--') + ' · ' + timeSrc + '</div>';
+        html += '<div class="tl-chain-badge">' + verified + ' ' + truncHash(hash, 12) + '</div>';
+        html += '</div>';
+
+        if (cameraReady && i === 0) {
+          html += '<img class="tl-thumb" src="' + API_BASE + '/api/peek/snapshot?w=64&t=' + Date.now() +
+            '" alt="" loading="lazy" onerror="this.style.display=\'none\'">';
+        }
+
+        html += '</div>';
+      }
+
+      list.innerHTML = html;
+    }
+
+    async function loadMoreTimeline() {
+      timelinePage++;
+      document.getElementById('timelineLoadMore').style.display = 'none';
     }
 
     // Acknowledgment
