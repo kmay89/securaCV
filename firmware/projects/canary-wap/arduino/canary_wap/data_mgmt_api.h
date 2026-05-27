@@ -31,6 +31,12 @@
 #include "log_level.h"
 #include "health_log.h"
 #include "hardware_state.h"
+#include <mbedtls/md.h>
+
+// Forward declaration — defined in canary_wap.ino
+static void hmac_sha256(const uint8_t* key, size_t key_len,
+                        const uint8_t* data, size_t data_len,
+                        uint8_t out[32]);
 
 // ════════════════════════════════════════════════════════════════════════════
 // FEATURE GATE
@@ -252,8 +258,8 @@ inline uint32_t rotate_dir(const char* dir_path, uint32_t max_files) {
 // ════════════════════════════════════════════════════════════════════════════
 
 inline bool backup_chain(const uint8_t* chain_head, uint32_t seq,
-                         const uint8_t* privkey = nullptr) {
-  if (!sd_is_available()) return false;
+                         const uint8_t* privkey) {
+  if (!privkey || !sd_is_available()) return false;
 
   uint8_t buf[BACKUP_SIZE];
   memset(buf, 0, sizeof(buf));
@@ -269,11 +275,9 @@ inline bool backup_chain(const uint8_t* chain_head, uint32_t seq,
   memcpy(buf + 12, chain_head, 32);
 
   // HMAC-SHA256 of payload bytes 0..43, keyed by device private key
-  if (privkey) {
-    uint8_t hmac[32];
-    hmac_sha256(privkey, 32, buf, BACKUP_PAYLOAD, hmac);
-    memcpy(buf + BACKUP_PAYLOAD, hmac, 32);
-  }
+  uint8_t hmac[32];
+  hmac_sha256(privkey, 32, buf, BACKUP_PAYLOAD, hmac);
+  memcpy(buf + BACKUP_PAYLOAD, hmac, 32);
 
   // Ensure /CHAIN directory exists.
   if (!SD.exists("/sd/CHAIN")) SD.mkdir("/sd/CHAIN");
@@ -306,7 +310,7 @@ inline bool backup_chain(const uint8_t* chain_head, uint32_t seq,
 // ════════════════════════════════════════════════════════════════════════════
 
 inline bool restore_chain(uint8_t* chain_head_out, uint32_t* seq_out,
-                          const uint8_t* privkey = nullptr) {
+                          const uint8_t* privkey) {
   if (!sd_is_available()) return false;
 
   File f = SD.open("/sd/CHAIN/backup.bin", FILE_READ);
@@ -336,7 +340,12 @@ inline bool restore_chain(uint8_t* chain_head_out, uint32_t* seq_out,
   }
 
   // Validate HMAC-SHA256
-  if (privkey) {
+  if (!privkey) {
+    log_health(SCV_LOG_ERROR, SCV_CAT_STORAGE,
+               "Chain restore: no privkey for HMAC", nullptr);
+    return false;
+  }
+  {
     uint8_t calc_hmac[32];
     hmac_sha256(privkey, 32, buf, BACKUP_PAYLOAD, calc_hmac);
     if (memcmp(buf + BACKUP_PAYLOAD, calc_hmac, 32) != 0) {
@@ -597,8 +606,8 @@ inline void init() {
 // ════════════════════════════════════════════════════════════════════════════
 
 inline bool process(const uint8_t* chain_head, uint32_t seq,
-                    const uint8_t* privkey = nullptr) {
-  if (!s_initialized) return false;
+                    const uint8_t* privkey) {
+  if (!s_initialized || !privkey) return false;
 
   uint32_t now = millis();
   if ((int32_t)(now - s_last_process_ms) < (int32_t)PROCESS_INTERVAL_MS) {
