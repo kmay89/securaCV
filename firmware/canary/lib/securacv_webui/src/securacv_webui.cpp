@@ -856,6 +856,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         Logs<span class="count" id="logsCount" style="display:none">0</span>
       </button>
       <button class="nav-btn" data-panel="witness">Witness</button>
+      <button class="nav-btn" data-panel="timeline">Timeline</button>
       <button class="nav-btn" data-panel="settings">Settings</button>
       <button class="nav-btn" data-panel="bluetooth">Bluetooth</button>
     </nav>
@@ -2023,6 +2024,31 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       </div>
     </div>
 
+    <!-- Timeline Panel -->
+    <div class="panel" id="panel-timeline">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Event Timeline</div>
+            <div class="card-subtitle" id="timelineSubtitle">Recent witness events with thumbnails</div>
+          </div>
+          <div style="display:flex;gap:4px">
+            <select id="timelineFilter" onchange="refreshTimeline()" style="font-size:12px;padding:4px 8px;border-radius:6px;border:1px solid var(--border)">
+              <option value="all">All Events</option>
+              <option value="person_detected">Person</option>
+              <option value="vehicle_detected">Vehicle</option>
+              <option value="animal_detected">Animal</option>
+              <option value="motion_detected">Motion</option>
+            </select>
+            <button class="btn btn-primary btn-sm" onclick="refreshTimeline()">↻</button>
+          </div>
+        </div>
+        <div id="timelineList" style="max-height:500px;overflow-y:auto">
+          <div class="loading"><div class="spinner"></div></div>
+        </div>
+      </div>
+    </div>
+
     <!-- Settings Panel -->
     <div class="panel" id="panel-settings">
       <!-- WiFi Configuration Card -->
@@ -2450,6 +2476,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
       if (panel === 'logs') loadLogs();
       else if (panel === 'witness') loadWitness();
+      else if (panel === 'timeline') refreshTimeline();
       else if (panel === 'peek') { refreshPeekStatus(); refreshSensorState(); }
       else if (panel === 'opera') refreshOpera();
       else if (panel === 'community') refreshChirpStatus();
@@ -4069,6 +4096,85 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       } else {
         alert('Export failed: ' + (data.error || 'Unknown error'));
       }
+    }
+
+    // Timeline
+    const EVENT_ICONS = {
+      person_detected:  '🚶',
+      vehicle_detected: '🚗',
+      animal_detected:  '🐾',
+      motion_detected:  '💨',
+      boot_attestation: '🔑',
+    };
+
+    const EVENT_COLORS = {
+      person_detected:  '#e74c3c',
+      vehicle_detected: '#f39c12',
+      animal_detected:  '#27ae60',
+      motion_detected:  '#3498db',
+      boot_attestation: '#9b59b6',
+    };
+
+    function esc(s) {
+      const d = document.createElement('div');
+      d.textContent = s;
+      return d.innerHTML;
+    }
+
+    async function refreshTimeline() {
+      const list = document.getElementById('timelineList');
+      const filter = document.getElementById('timelineFilter').value;
+      list.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+
+      const data = await api('/api/witness?last=50');
+      if (!data || !data.records) {
+        list.innerHTML = '<div style="padding:16px;text-align:center;color:var(--text-secondary)">No witness records yet</div>';
+        return;
+      }
+
+      let records = data.records.slice().reverse();
+      if (filter !== 'all') {
+        records = records.filter(r => r.event_type === filter);
+      }
+
+      if (records.length === 0) {
+        list.innerHTML = '<div style="padding:16px;text-align:center;color:var(--text-secondary)">No matching events</div>';
+        return;
+      }
+
+      document.getElementById('timelineSubtitle').textContent =
+        records.length + ' event' + (records.length !== 1 ? 's' : '') + ' shown';
+
+      let html = '<div style="padding:8px 16px">';
+      records.forEach((r, i) => {
+        const icon = EVENT_ICONS[r.event_type] || '📋';
+        const color = EVENT_COLORS[r.event_type] || '#888';
+        const rawLabel = (r.event_type || 'unknown').replace(/_/g, ' ');
+        const label = rawLabel.charAt(0).toUpperCase() + rawLabel.slice(1);
+        const ts = r.timestamp ? new Date(r.timestamp).toLocaleString() : '—';
+        const isLast = i === records.length - 1;
+        const safeZone = esc(r.zone || '');
+        const safeHash = esc((r.hash || '').slice(0, 16));
+        const timeSrc = r.time_source === 'gps_utc' ? ' 🛰' : '';
+        let thumbHtml = '';
+        if (r.thumbnail && typeof r.thumbnail === 'string' && r.thumbnail.startsWith('data:image/')) {
+          thumbHtml = '<img src="' + esc(r.thumbnail) + '" alt="edge" style="width:64px;height:48px;border-radius:4px;object-fit:cover;margin-top:4px;border:1px solid var(--border)" loading="lazy">';
+        }
+
+        html += '<div style="display:flex;gap:12px;min-height:60px">';
+        html += '<div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0">';
+        html += '<div style="width:12px;height:12px;border-radius:50%;background:' + color + ';border:2px solid var(--bg-primary);box-shadow:0 0 0 2px ' + color + '40"></div>';
+        if (!isLast) html += '<div style="width:2px;flex:1;background:var(--border)"></div>';
+        html += '</div>';
+        html += '<div style="padding-bottom:16px;flex:1">';
+        html += '<div style="font-weight:600;font-size:13px">' + icon + ' ' + esc(label) + timeSrc + '</div>';
+        html += '<div style="font-size:11px;color:var(--text-secondary)">' + esc(ts) + ' · seq ' + Number(r.seq) + ' · ' + safeZone + '</div>';
+        html += '<div style="font-size:10px;color:var(--text-secondary);font-family:monospace;margin-top:2px">' + safeHash + '…</div>';
+        html += thumbHtml;
+        html += '</div></div>';
+      });
+      html += '</div>';
+      list.innerHTML = html;
     }
 
     // Acknowledgment
