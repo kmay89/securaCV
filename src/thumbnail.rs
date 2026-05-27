@@ -173,7 +173,7 @@ pub fn overlay_bounding_boxes(edges: &mut [u8], w: u16, h: u16, detections: &[De
     let w = w as usize;
     let h = h as usize;
 
-    if edges.len() < w * h {
+    if w == 0 || h == 0 || edges.len() < w * h {
         return;
     }
 

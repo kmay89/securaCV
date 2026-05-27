@@ -105,13 +105,9 @@ static portMUX_TYPE s_history_mux = portMUX_INITIALIZER_UNLOCKED;
 
 static void history_push(uint8_t type, uint8_t confidence, uint8_t zone) {
   portENTER_CRITICAL(&s_history_mux);
-  int head = s_history_head;
-  int count = s_history_count;
-  s_history[head] = { type, confidence, zone, millis() };
-  head = (head + 1) % VISION_HISTORY_SIZE;
-  if (count < VISION_HISTORY_SIZE) count++;
-  __atomic_store_n(&s_history_head, head, __ATOMIC_RELEASE);
-  __atomic_store_n(&s_history_count, count, __ATOMIC_RELEASE);
+  s_history[s_history_head] = { type, confidence, zone, millis() };
+  s_history_head = (s_history_head + 1) % VISION_HISTORY_SIZE;
+  if (s_history_count < VISION_HISTORY_SIZE) s_history_count++;
   portEXIT_CRITICAL(&s_history_mux);
 }
 
@@ -735,13 +731,15 @@ bool vision_get_thumbnail(uint8_t* out, size_t cap) {
 
 int vision_get_history(vision_history_entry_t* out, int max_entries) {
   if (!out || max_entries <= 0) return 0;
-  int count = __atomic_load_n(&vision::s_history_count, __ATOMIC_ACQUIRE);
-  int head  = __atomic_load_n(&vision::s_history_head, __ATOMIC_ACQUIRE);
+  portENTER_CRITICAL(&vision::s_history_mux);
+  int count = vision::s_history_count;
+  int head  = vision::s_history_head;
   int n = count < max_entries ? count : max_entries;
   int start = (head - count + VISION_HISTORY_SIZE) % VISION_HISTORY_SIZE;
   for (int i = 0; i < n; i++) {
     out[i] = vision::s_history[(start + (count - n) + i) % VISION_HISTORY_SIZE];
   }
+  portEXIT_CRITICAL(&vision::s_history_mux);
   return n;
 }
 
