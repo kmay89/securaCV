@@ -2172,9 +2172,9 @@ static esp_err_t handle_vision_config_get(httpd_req_t* req) {
   JsonDocument doc;
   vision_config_to_json(doc, cfg);
 
-  String response;
-  serializeJson(doc, response);
-  return http_send_json(req, response.c_str());
+  char response[1024];
+  serializeJson(doc, response, sizeof(response));
+  return http_send_json(req, response);
 }
 
 static esp_err_t handle_vision_config_set(httpd_req_t* req) {
@@ -2261,9 +2261,9 @@ static esp_err_t handle_vision_config_set(httpd_req_t* req) {
   JsonDocument doc;
   vision_config_to_json(doc, cfg);
 
-  String response;
-  serializeJson(doc, response);
-  return http_send_json(req, response.c_str());
+  char response[1024];
+  serializeJson(doc, response, sizeof(response));
+  return http_send_json(req, response);
 }
 
 static esp_err_t handle_vision_config_save(httpd_req_t* req) {
@@ -2285,9 +2285,9 @@ static esp_err_t handle_vision_config_save(httpd_req_t* req) {
   JsonDocument doc;
   vision_config_to_json(doc, cfg);
 
-  String response;
-  serializeJson(doc, response);
-  return http_send_json(req, response.c_str());
+  char response[1024];
+  serializeJson(doc, response, sizeof(response));
+  return http_send_json(req, response);
 }
 
 static esp_err_t handle_vision_thumbnail(httpd_req_t* req) {
