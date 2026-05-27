@@ -1192,3 +1192,38 @@ html, body {
     transform: translateY(0);
   }
 }
+
+/* Fleet Health Dashboard */
+.fleet-health-card {
+  border-left: 3px solid var(--color-accent);
+}
+
+.fleet-device-status {
+  font-size: 12px;
+  margin-top: 2px;
+  display: block;
+}
+
+.fleet-device-stats {
+  margin-top: 8px;
+}
+
+.fleet-device-stats-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.fleet-stat-chip {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  background: var(--color-bg);
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.fleet-device-events {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  margin-top: 6px;
+}
