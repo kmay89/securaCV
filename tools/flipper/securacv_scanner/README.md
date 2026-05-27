@@ -1,5 +1,17 @@
 # SecuraCV Scanner — Flipper Zero Application
 
+> **SHELVED — NOT BUILDABLE**
+>
+> This application requires BLE observer/scanner (central) mode, which the
+> official Flipper Zero firmware SDK has never exposed to external FAP
+> applications. The `furi_hal_bt_start_observer()` function used here does
+> not exist in any version of the official, Unleashed, or Momentum firmware.
+> The app cannot be compiled or run on real hardware.
+>
+> The Flipper's STM32WB55 supports observer mode at the HCI level, but the
+> firmware deliberately restricts FAPs to peripheral-only BLE. Until this
+> changes upstream, this code is provided as a reference implementation only.
+
 BLE scanner for SecuraCV Canary devices. Discovers nearby Canaries via
 the BLE GAP observer API and decodes debug beacon manufacturer data to
 display device health on the Flipper Zero screen.
