@@ -9,6 +9,7 @@
 #include "securacv_witness.h"
 #include "securacv_crypto.h"
 #include "securacv_auth.h"
+#include "securacv_setup.h"
 
 #if FEATURE_WIFI_AP || FEATURE_HTTP_SERVER
 
@@ -1768,6 +1769,11 @@ static esp_err_t handle_wifi_connect(httpd_req_t* req) {
   net.setCredentials(creds);
   net.saveCredentials();
   net.connectToHome();
+
+  // Mark first-time setup as complete now that WiFi credentials are saved
+  if (setup_is_active()) {
+    setup_mark_complete();
+  }
 
   JsonDocument doc;
   doc["ok"] = true;

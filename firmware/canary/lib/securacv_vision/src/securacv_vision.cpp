@@ -732,10 +732,12 @@ bool vision_get_thumbnail(uint8_t* out, size_t cap) {
 int vision_get_history(vision_history_entry_t* out, int max_entries) {
   if (!out || max_entries <= 0) return 0;
   portENTER_CRITICAL(&vision::s_history_mux);
-  int n = vision::s_history_count < max_entries ? vision::s_history_count : max_entries;
-  int start = (vision::s_history_head - vision::s_history_count + VISION_HISTORY_SIZE) % VISION_HISTORY_SIZE;
+  int count = vision::s_history_count;
+  int head  = vision::s_history_head;
+  int n = count < max_entries ? count : max_entries;
+  int start = (head - count + VISION_HISTORY_SIZE) % VISION_HISTORY_SIZE;
   for (int i = 0; i < n; i++) {
-    out[i] = vision::s_history[(start + (vision::s_history_count - n) + i) % VISION_HISTORY_SIZE];
+    out[i] = vision::s_history[(start + (count - n) + i) % VISION_HISTORY_SIZE];
   }
   portEXIT_CRITICAL(&vision::s_history_mux);
   return n;

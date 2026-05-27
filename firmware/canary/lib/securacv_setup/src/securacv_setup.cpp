@@ -151,7 +151,14 @@ void setup_check_timeout(void) {
   using namespace setup_wiz;
   if (!s_active) return;
   if ((millis() - s_started_ms) >= SETUP_TIMEOUT_MS) {
+    // Persist setup_ok so the device doesn't re-enter setup on reboot
+    Preferences prefs;
+    if (prefs.begin("securacv", false)) {
+      prefs.putBool("setup_ok", true);
+      prefs.end();
+    }
     s_active = false;
+    s_first_boot = false;
     setup_stop_captive_portal();
     log_health(LOG_LEVEL_INFO, LOG_CAT_SYSTEM,
                "Setup timeout", "rebooting to normal operation");

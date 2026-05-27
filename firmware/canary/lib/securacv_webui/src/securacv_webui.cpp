@@ -3601,7 +3601,12 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     }
 
     function viCellFromEvent(e) {
-      const t = e.touches ? document.elementFromPoint(e.touches[0].clientX, e.touches[0].clientY) : e.target;
+      var t;
+      if (e.touches && e.touches[0]) {
+        t = document.elementFromPoint(e.touches[0].clientX, e.touches[0].clientY);
+      } else {
+        t = e.target;
+      }
       if (!t || t.dataset.zi === undefined) return -1;
       return parseInt(t.dataset.zi, 10);
     }
@@ -3682,6 +3687,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       const g = document.getElementById('visionGrid');
       if (!g) return;
       function onDown(e) {
+        if (e.button !== undefined && e.button !== 0) return;
         const idx = viCellFromEvent(e);
         if (idx < 0) return;
         e.preventDefault();
@@ -3694,6 +3700,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         viPaintCell(idx);
       }
       function onMove(e) {
+        if (viPainting && !e.touches && e.buttons === 0) { viPainting = false; viFlushMask(); return; }
         if (!viPainting) return;
         const idx = viCellFromEvent(e);
         if (idx >= 0) viPaintCell(idx);
@@ -3712,18 +3719,32 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       document.addEventListener('touchend', onUp);
     })();
 
+    function viSyncGridOpacities() {
+      if (viSensMode) return;
+      const g = document.getElementById('visionGrid');
+      if (!g) return;
+      for (let i = 0; i < 80 && i < g.children.length; i++) {
+        g.children[i].style.opacity = viZoneEnabled(i) ? '1' : '0.25';
+      }
+    }
     async function viMaskAll() {
       viZoneMask = [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
+      viUpdateMaskCount();
+      viSyncGridOpacities();
       const r = await api('/api/vision/config', 'POST', { zone_mask: viZoneMask });
       if (r && r.ok) viApplyConfig(r);
     }
     async function viMaskNone() {
       viZoneMask = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+      viUpdateMaskCount();
+      viSyncGridOpacities();
       const r = await api('/api/vision/config', 'POST', { zone_mask: viZoneMask });
       if (r && r.ok) viApplyConfig(r);
     }
     async function viMaskInvert() {
       for (let i = 0; i < 10; i++) viZoneMask[i] ^= 0xFF;
+      viUpdateMaskCount();
+      viSyncGridOpacities();
       const r = await api('/api/vision/config', 'POST', { zone_mask: viZoneMask });
       if (r && r.ok) viApplyConfig(r);
     }
@@ -3752,7 +3773,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     function viStartThumb() {
       if (viThumbTimer) return;
       viRefreshThumb();
-      viThumbTimer = setInterval(viRefreshThumb, 1500);
+      viThumbTimer = setInterval(viRefreshThumb, 5000);
     }
     function viStopThumb() {
       if (viThumbTimer) { clearInterval(viThumbTimer); viThumbTimer = null; }
@@ -3777,7 +3798,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           if (lbl) lbl.textContent = cfg[key] + f.suffix;
         }
       }
-      if (cfg.zone_mask) { viZoneMask = cfg.zone_mask.slice(); viUpdateMaskCount(); }
+      if (cfg.zone_mask) { viZoneMask = cfg.zone_mask.slice(); viUpdateMaskCount(); viSyncGridOpacities(); }
       if (cfg.zone_sensitivity) { viZoneSens = cfg.zone_sensitivity.slice(); if (viSensMode) viRenderSensGrid(); }
       const card = document.getElementById('visionSettingsCard');
       if (card) card.dataset.loaded = '1';
