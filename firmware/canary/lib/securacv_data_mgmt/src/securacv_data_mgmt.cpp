@@ -306,7 +306,7 @@ bool datamgmt_backup_chain(void) {
    * Prevents an attacker with SD access from forging a backup to
    * roll back the chain to a previous state. */
   uint8_t hmac[32];
-  if (!hmac_sha256(dev.privkey, 64, buf, BACKUP_PAYLOAD, hmac)) {
+  if (!hmac_sha256(dev.privkey, 32, buf, BACKUP_PAYLOAD, hmac)) {
     log_health(LOG_LEVEL_ERROR, LOG_CAT_STORAGE,
                "Chain backup: HMAC failed", nullptr);
     return false;
@@ -378,7 +378,7 @@ bool datamgmt_restore_chain(void) {
   /* Validate HMAC-SHA256 using device private key. */
   DeviceIdentity& dev = witness_get_device();
   uint8_t calc_hmac[32];
-  if (!hmac_sha256(dev.privkey, 64, buf, BACKUP_PAYLOAD, calc_hmac)) {
+  if (!hmac_sha256(dev.privkey, 32, buf, BACKUP_PAYLOAD, calc_hmac)) {
     log_health(LOG_LEVEL_ERROR, LOG_CAT_STORAGE,
                "Chain restore: HMAC compute failed", nullptr);
     return false;
@@ -517,17 +517,22 @@ bool datamgmt_verify_chain(chain_verify_result_t* result) {
   }
   dir.close();
 
+  bool was_capped = (records_checked >= VERIFY_MAX_RECORDS);
+
   result->records_checked    = records_checked;
   result->records_valid      = records_valid;
   result->chain_breaks       = chain_breaks;
   result->signature_failures = sig_failures;
   result->chain_intact       = chain_intact;
+  result->partial            = was_capped;
 
-  char detail[64];
-  snprintf(detail, sizeof(detail), "%u checked, %u valid, %u breaks",
+  char detail[80];
+  snprintf(detail, sizeof(detail), "%u checked, %u valid, %u breaks%s",
            (unsigned)records_checked, (unsigned)records_valid,
-           (unsigned)chain_breaks);
-  log_health(LOG_LEVEL_INFO, LOG_CAT_CHAIN,
+           (unsigned)chain_breaks,
+           was_capped ? " (partial — capped)" : "");
+  log_health(was_capped ? LOG_LEVEL_WARNING : LOG_LEVEL_INFO,
+             LOG_CAT_CHAIN,
              "Chain verification complete", detail);
 
   return true;

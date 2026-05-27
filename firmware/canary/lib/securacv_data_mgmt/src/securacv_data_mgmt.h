@@ -32,6 +32,7 @@ typedef struct {
   uint32_t chain_breaks;
   uint32_t signature_failures;
   bool     chain_intact;
+  bool     partial;          /* true if capped before all records were checked */
 } chain_verify_result_t;
 
 /* ────────────────────────────────────────────────────────────────────────── */
