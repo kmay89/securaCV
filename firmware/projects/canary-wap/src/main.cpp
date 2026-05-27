@@ -654,9 +654,12 @@ static void app_init_network() {
             .max_connections = CONFIG_AP_MAX_CLIENTS,
             .auth = WIFI_AUTH_WPA2_PSK,
         };
+        const char* dev_id_ap = witness_chain_device_id(&g_witness_chain);
+        size_t ap_prefix_len = strlen(CONFIG_DEVICE_ID_PREFIX);
+        const char* ap_suffix = (strncmp(dev_id_ap, CONFIG_DEVICE_ID_PREFIX, ap_prefix_len) == 0)
+                                ? dev_id_ap + ap_prefix_len : dev_id_ap;
         snprintf(ap_cfg.ssid, sizeof(ap_cfg.ssid), "%s%s",
-                 CONFIG_AP_SSID_PREFIX,
-                 witness_chain_device_id(&g_witness_chain) + strlen(CONFIG_DEVICE_ID_PREFIX));
+                 CONFIG_AP_SSID_PREFIX, ap_suffix);
         strncpy(ap_cfg.password, CONFIG_AP_PASSWORD_DEFAULT, sizeof(ap_cfg.password));
 
         if (hal_wifi_start_ap(&ap_cfg) == 0) {

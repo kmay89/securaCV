@@ -2046,7 +2046,7 @@ static esp_err_t handle_sensing(httpd_req_t* req) {
   JsonObject vis = doc["vision"].to<JsonObject>();
   vis["enabled"]        = vision_is_running();
   const char* vtypes[] = {"none", "motion", "motion_end", "person", "tamper", "obj_removed"};
-  vis["last_event"]     = vtypes[s.last_vision_event_type < 4 ? s.last_vision_event_type : 0];
+  vis["last_event"]     = vtypes[s.last_vision_event_type < 6 ? s.last_vision_event_type : 0];
   vis["confidence"]     = s.last_vision_confidence;
   vis["zone"]           = s.last_vision_zone;
   vis["last_event_age_ms"] =
@@ -2126,6 +2126,8 @@ static void vision_config_to_json(JsonDocument& doc, const vision_config_t& cfg)
   for (int i = 0; i < 10; i++) mask.add(cfg.zone_mask[i]);
   JsonArray sens = doc["zone_sensitivity"].to<JsonArray>();
   for (int i = 0; i < VISION_GRID_TOTAL; i++) sens.add(cfg.zone_sensitivity[i]);
+  doc["adaptive_enabled"]       = (int)cfg.adaptive_enabled;
+  doc["tamper_hold_frames"]     = (int)cfg.tamper_hold_frames;
   doc["running"]                = vision_is_running();
 #if FEATURE_VISION_TFLITE
   doc["tflite_available"]       = true;
@@ -2146,6 +2148,8 @@ static void vision_config_to_json(JsonDocument& doc, const vision_config_t& cfg)
       n.duty_cycle_ms         == cfg.duty_cycle_ms &&
       n.duty_active_pct       == cfg.duty_active_pct;
   for (int i = 0; match && i < 10; i++) match = n.zone_mask[i] == cfg.zone_mask[i];
+  if (match) match = memcmp(cfg.zone_sensitivity, n.zone_sensitivity, sizeof(cfg.zone_sensitivity)) == 0;
+  if (match) match = n.adaptive_enabled == cfg.adaptive_enabled && n.tamper_hold_frames == cfg.tamper_hold_frames;
   doc["saved"] = match;
 }
 
@@ -2239,6 +2243,10 @@ static esp_err_t handle_vision_config_set(httpd_req_t* req) {
         if (zs[i].is<int>()) cfg.zone_sensitivity[i] = (uint8_t)constrain(zs[i].as<int>(), 0, 255);
       }
     }
+    if (obj["adaptive_enabled"].is<int>())
+      cfg.adaptive_enabled = obj["adaptive_enabled"].as<int>() ? 1 : 0;
+    if (obj["tamper_hold_frames"].is<int>())
+      cfg.tamper_hold_frames = constrain(obj["tamper_hold_frames"].as<int>(), 5, 100);
   }
 
   vision_set_config(&cfg);
