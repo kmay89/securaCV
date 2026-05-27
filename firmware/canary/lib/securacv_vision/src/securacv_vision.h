@@ -26,6 +26,7 @@ typedef enum {
   VISION_EVENT_MOTION_END = 2,
   VISION_EVENT_PERSON     = 3,
   VISION_EVENT_TAMPER     = 4,
+  VISION_EVENT_OBJ_REMOVED = 5,
 } vision_event_type_t;
 
 typedef struct {
@@ -87,6 +88,7 @@ typedef struct {
   uint8_t  last_confidence;
   uint8_t  block_intensity[VISION_GRID_TOTAL];
   uint32_t tamper_events;
+  uint32_t obj_removed_events;
 } vision_stats_t;
 
 #define VISION_HISTORY_SIZE 16

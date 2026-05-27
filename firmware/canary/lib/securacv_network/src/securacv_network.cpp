@@ -2045,7 +2045,7 @@ static esp_err_t handle_sensing(httpd_req_t* req) {
 #if FEATURE_VISION_DETECT
   JsonObject vis = doc["vision"].to<JsonObject>();
   vis["enabled"]        = vision_is_running();
-  const char* vtypes[] = {"none", "motion", "motion_end", "person", "tamper"};
+  const char* vtypes[] = {"none", "motion", "motion_end", "person", "tamper", "obj_removed"};
   vis["last_event"]     = vtypes[s.last_vision_event_type < 4 ? s.last_vision_event_type : 0];
   vis["confidence"]     = s.last_vision_confidence;
   vis["zone"]           = s.last_vision_zone;
@@ -2064,6 +2064,7 @@ static esp_err_t handle_sensing(httpd_req_t* req) {
   vst["motion_active"]   = v_stats.motion_active;
   vst["tamper_events"]   = v_stats.tamper_events;
   vst["tamper_active"]   = v_stats.tamper_active;
+  vst["obj_removed_events"] = v_stats.obj_removed_events;
 
   JsonArray grid = vis["grid"].to<JsonArray>();
   for (int i = 0; i < VISION_GRID_TOTAL; i++) {
@@ -2074,11 +2075,11 @@ static esp_err_t handle_sensing(httpd_req_t* req) {
   int hist_n = vision_get_history(hist, VISION_HISTORY_SIZE);
   if (hist_n > 0) {
     uint32_t now_ms = millis();
-    const char* htypes[] = {"none", "motion", "motion_end", "person", "tamper"};
+    const char* htypes[] = {"none", "motion", "motion_end", "person", "tamper", "obj_removed"};
     JsonArray events = vis["events"].to<JsonArray>();
     for (int i = 0; i < hist_n; i++) {
       JsonObject e = events.add<JsonObject>();
-      e["type"] = htypes[hist[i].event_type < 5 ? hist[i].event_type : 0];
+      e["type"] = htypes[hist[i].event_type < 6 ? hist[i].event_type : 0];
       e["confidence"] = hist[i].confidence;
       e["zone"] = hist[i].zone;
       e["age_ms"] = (long)(now_ms - hist[i].timestamp_ms);
