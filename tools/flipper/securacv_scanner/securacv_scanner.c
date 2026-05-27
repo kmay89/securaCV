@@ -301,11 +301,9 @@ static int cmp_last_seen(const void* a, const void* b) {
     const scv_device_t* da = (const scv_device_t*)a;
     const scv_device_t* db = (const scv_device_t*)b;
     if(da->pinned != db->pinned) return db->pinned - da->pinned;
-    uint32_t now = furi_get_tick();
-    uint32_t age_a = now - da->last_seen_ms;
-    uint32_t age_b = now - db->last_seen_ms;
-    if(age_a < age_b) return -1;
-    if(age_a > age_b) return 1;
+    int32_t delta = (int32_t)(da->last_seen_ms - db->last_seen_ms);
+    if(delta > 0) return -1;
+    if(delta < 0) return 1;
     return 0;
 }
 
@@ -797,10 +795,9 @@ static void draw_settings(Canvas* canvas, SecuraCVApp* app) {
         canvas_set_color(canvas, ColorBlack);
     }
 
-    y += LINE_HEIGHT + 4;
-    canvas_draw_line(canvas, 8, y - 6, 120, y - 6);
-    canvas_draw_str_aligned(canvas, SCREEN_WIDTH / 2, y,
-                            AlignCenter, AlignCenter, "OK: About  Bk: Back");
+    canvas_draw_line(canvas, 8, 55, 120, 55);
+    canvas_draw_str_aligned(canvas, SCREEN_WIDTH / 2, SCREEN_HEIGHT - 1,
+                            AlignCenter, AlignBottom, "OK: About  Bk: Back");
 }
 
 // ============================================================================
