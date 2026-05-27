@@ -1152,7 +1152,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         <div class="card-header">
           <div>
             <div class="card-title">Witness Timeline</div>
-            <div class="card-subtitle" id="timelineSubtitle">Cryptographically signed event history</div>
+            <div class="card-subtitle" id="timelineSubtitle">Signed event history</div>
           </div>
           <button class="btn btn-ghost btn-sm" onclick="loadTimeline()">Refresh</button>
         </div>
@@ -4294,9 +4294,9 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       if (cameraReady) {
         hero.innerHTML = '<img src="' + API_BASE + '/api/peek/snapshot?t=' + Date.now() +
           '" alt="Latest snapshot" onerror="this.parentElement.innerHTML=\'<div class=tl-hero-placeholder>Camera offline</div>\'">' +
-          '<div class="tl-hero-overlay">Latest camera snapshot</div>';
+          '<div class="tl-hero-overlay">Latest snapshot</div>';
       } else {
-        hero.innerHTML = '<div class="tl-hero-placeholder">Camera not available — thumbnails disabled</div>';
+        hero.innerHTML = '<div class="tl-hero-placeholder">No camera</div>';
       }
     }
 

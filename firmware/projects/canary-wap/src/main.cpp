@@ -103,7 +103,7 @@ static void app_process_gnss(void);
 static void app_process_records(void);
 static void app_process_health(void);
 
-// Canary ASCII art scenes — printed to serial during boot
+// Boot sequence serial output
 static void app_print_scene_banner(void);
 static void app_print_scene_hardware(void);
 static void app_print_scene_features(void);
@@ -129,7 +129,6 @@ void setup() {
     }
     #endif
 
-    // Scene 1: Canary waking up banner
     app_print_scene_banner();
 
     // Initialize HAL
@@ -138,13 +137,8 @@ void setup() {
         return;
     }
 
-    // Scene 2: Hardware discovery
     app_print_scene_hardware();
-
-    // Scene 3: Feature checklist
     app_print_scene_features();
-
-    // Scene 4: Protocol info
     app_print_scene_protocol();
 
     // Initialize subsystems
@@ -152,7 +146,6 @@ void setup() {
     app_init_storage();
     app_init_witness();
 
-    // Scene 6: Witness chain info
     app_print_scene_chain();
 
     // Detect debug beacon activation BEFORE network init so BLE starts
@@ -188,7 +181,6 @@ void setup() {
              CONFIG_AP_SSID_PREFIX,
              witness_chain_device_id(&g_witness_chain) + strlen(CONFIG_DEVICE_ID_PREFIX));
 
-    // Scene 5: Network info
     app_print_scene_network(ssid_buf);
 
     // Initialize debug beacon after BLE is running
@@ -209,10 +201,7 @@ void setup() {
     g_initialized = true;
     g_health.uptime_sec = 0;
 
-    // Scene 7: The singing canary!
     app_print_scene_ready();
-
-    // Scene 8: Getting started guide
     app_print_scene_guide(ssid_buf);
 }
 
@@ -288,200 +277,162 @@ void loop() {
 // ============================================================================
 
 // ============================================================================
-// CANARY ASCII ART SCENES
-// Themed serial output inspired by Flipper Zero's dolphin mascot.
-// The canary "wakes up" through boot and "sings" when operational.
+// SERIAL BOOT SEQUENCE
 // ============================================================================
 
 static void app_print_scene_banner() {
     Serial.println();
     Serial.println();
-    Serial.println(F("                      ."));
-    Serial.println(F("                     /|\\"));
-    Serial.println(F("                    / | \\       ___"));
-    Serial.println(F("                   /  |  \\     (o o)"));
-    Serial.println(F("                  /___|___\\   /(   )\\"));
-    Serial.println(F("                     |||      ^ ^ ^ ^"));
-    Serial.println(F("                     |||"));
-    Serial.println(F("    +====================================================+"));
-    Serial.println(F("    |                                                    |"));
-    Serial.println(F("    |        .:*~*:. S E C U R A C V .:*~*:.            |"));
-    Serial.println(F("    |                                                    |"));
-    Serial.printf( "    |          C A N A R Y   W A P   v%-18s|\n", FW_VERSION_STRING);
-    Serial.println(F("    |          Privacy-Preserving Witness Device         |"));
-    Serial.println(F("    |                                                    |"));
-    Serial.println(F("    |       \"What the canary witnesses,                  |"));
-    Serial.println(F("    |             the chain remembers.\"                  |"));
-    Serial.println(F("    |                                                    |"));
-    Serial.printf( "    |          Built: %-15s %-10s   |\n", FW_BUILD_DATE, FW_BUILD_TIME);
-    Serial.println(F("    |                                                    |"));
-    Serial.println(F("    +====================================================+"));
+    Serial.println(F("         ,_,"));
+    Serial.println(F("        (o.o)"));
+    Serial.println(F("        /| |\\"));
+    Serial.println(F("         d b"));
+    Serial.println();
+    Serial.println(F("    SecuraCV Canary WAP"));
+    Serial.printf( "    v%s   %s %s\n", FW_VERSION_STRING, FW_BUILD_DATE, FW_BUILD_TIME);
+    Serial.println();
+    Serial.println(F("    ------------------------------------------------"));
     Serial.println();
 }
 
 static void app_print_scene_hardware() {
-    Serial.println();
-    Serial.println(F("            ,_,"));
-    Serial.println(F("           (o o)  ?         H A R D W A R E"));
-    Serial.println(F("           (  >)~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"));
-    Serial.printf( "            \" \"   Board     : %s\n", BOARD_NAME);
-    Serial.printf( "                  CPU       : %u MHz\n", (unsigned)ESP.getCpuFreqMHz());
-    Serial.printf( "                  Flash     : %u MB\n", (unsigned)(ESP.getFlashChipSize() / (1024 * 1024)));
+    Serial.println(F("    HARDWARE"));
+    Serial.println(F("    ------------------------------------------------"));
+    Serial.printf( "    Board       %s\n", BOARD_NAME);
+    Serial.printf( "    CPU         %u MHz\n", (unsigned)ESP.getCpuFreqMHz());
+    Serial.printf( "    Flash       %u MB\n", (unsigned)(ESP.getFlashChipSize() / (1024 * 1024)));
     if (psramFound()) {
-        Serial.printf( "                  PSRAM     : %u KB (Octal-SPI)\n", (unsigned)(ESP.getPsramSize() / 1024));
+        Serial.printf( "    PSRAM       %u KB  Octal-SPI\n", (unsigned)(ESP.getPsramSize() / 1024));
     } else {
-        Serial.println(F("                  PSRAM     : Not detected"));
+        Serial.println(F("    PSRAM       --"));
     }
-    Serial.printf( "                  SDK       : %s\n", ESP.getSdkVersion());
-    Serial.println(F("           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"));
+    Serial.printf( "    SDK         %s\n", ESP.getSdkVersion());
     Serial.println();
 }
 
 static void app_print_scene_features() {
-    Serial.println();
-    Serial.println(F("                  ,_,"));
-    Serial.println(F("            ___  (o o)   F E A T U R E S"));
-    Serial.println(F("           |   |/ / |~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"));
+    Serial.println(F("    MODULES"));
+    Serial.println(F("    ------------------------------------------------"));
 
     #if FEATURE_GNSS
-    Serial.print(F("           | * |    |  [*] GPS/GNSS"));
+    Serial.print(F("    + GPS/GNSS"));
     #else
-    Serial.print(F("           | . |    |  [ ] GPS/GNSS"));
+    Serial.print(F("    - GPS/GNSS"));
     #endif
     #if FEATURE_WIFI_AP
-    Serial.println(F("         [*] WiFi AP+STA"));
+    Serial.println(F("            + WiFi AP/STA"));
     #else
-    Serial.println(F("         [ ] WiFi AP+STA"));
+    Serial.println(F("            - WiFi AP/STA"));
     #endif
 
     #if FEATURE_SD_STORAGE
-    Serial.print(F("           | * |    |  [*] SD Storage"));
+    Serial.print(F("    + SD Storage"));
     #else
-    Serial.print(F("           | . |    |  [ ] SD Storage"));
+    Serial.print(F("    - SD Storage"));
     #endif
     #if FEATURE_HTTP_SERVER
-    Serial.println(F("        [*] HTTP Server"));
+    Serial.println(F("          + HTTP Server"));
     #else
-    Serial.println(F("        [ ] HTTP Server"));
+    Serial.println(F("          - HTTP Server"));
     #endif
 
     #if FEATURE_CAMERA_PEEK
-    Serial.print(F("           | * |    |  [*] Camera Peek"));
+    Serial.print(F("    + Camera"));
     #else
-    Serial.print(F("           | . |    |  [ ] Camera Peek"));
+    Serial.print(F("    - Camera"));
     #endif
     #if FEATURE_MESH_NETWORK
-    Serial.println(F("      [*] Opera Mesh"));
+    Serial.println(F("              + Opera Mesh"));
     #else
-    Serial.println(F("      [ ] Opera Mesh"));
+    Serial.println(F("              - Opera Mesh"));
     #endif
 
     #if FEATURE_BLUETOOTH
-    Serial.print(F("           | * |    |  [*] Bluetooth"));
+    Serial.print(F("    + Bluetooth"));
     #else
-    Serial.print(F("           | . |    |  [ ] Bluetooth"));
+    Serial.print(F("    - Bluetooth"));
     #endif
     #if FEATURE_RF_PRESENCE
-    Serial.println(F("        [*] RF Presence"));
+    Serial.println(F("           + RF Presence"));
     #else
-    Serial.println(F("        [ ] RF Presence"));
+    Serial.println(F("           - RF Presence"));
     #endif
 
     #if FEATURE_CHIRP
-    Serial.print(F("           | * |    |  [*] Chirp Relay"));
+    Serial.print(F("    + Chirp"));
     #else
-    Serial.print(F("           | . |    |  [ ] Chirp Relay"));
+    Serial.print(F("    - Chirp"));
     #endif
     #if FEATURE_WATCHDOG
-    Serial.printf("      [*] Watchdog (%ds)\n", CONFIG_WATCHDOG_TIMEOUT_SEC);
+    Serial.printf("               + Watchdog %ds\n", CONFIG_WATCHDOG_TIMEOUT_SEC);
     #else
-    Serial.println(F("      [ ] Watchdog"));
+    Serial.println(F("               - Watchdog"));
     #endif
 
-    Serial.println(F("           |___|____|~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"));
     Serial.println();
 }
 
 static void app_print_scene_protocol() {
-    Serial.println();
-    Serial.println(F("           ,_,"));
-    Serial.println(F("          (o o)  C R Y P T O   P R O T O C O L"));
-    Serial.println(F("           | |  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"));
-    Serial.printf( "          [===]   Witness    : %s\n", PWK_PROTOCOL_VERSION);
-    Serial.printf( "          |   |   Chain      : %s\n", CHAIN_ALGORITHM);
-    Serial.printf( "          | @ |   Signature  : %s\n", SIGNATURE_ALGORITHM);
-    Serial.printf( "          |   |   Ruleset    : %s\n", RULESET_ID);
-    Serial.println(F("          [===]~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"));
+    Serial.println(F("    PROTOCOL"));
+    Serial.println(F("    ------------------------------------------------"));
+    Serial.printf( "    Witness     %s\n", PWK_PROTOCOL_VERSION);
+    Serial.printf( "    Chain       %s\n", CHAIN_ALGORITHM);
+    Serial.printf( "    Signature   %s\n", SIGNATURE_ALGORITHM);
+    Serial.printf( "    Ruleset     %s\n", RULESET_ID);
     Serial.println();
 }
 
 static void app_print_scene_network(const char* ssid) {
-    Serial.println();
-    Serial.println(F("                ,_,  ))"));
-    Serial.println(F("               (o o)  ))    N E T W O R K"));
-    Serial.println(F("              ~~|~|~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"));
-    Serial.printf( "           (((  | |   WiFi AP   : %s\n", ssid);
-    Serial.printf( "            ((  | |   Password  : %s\n", CONFIG_AP_PASSWORD_DEFAULT);
-    Serial.println(F("             (  | |   Dashboard : http://canary.local"));
-    Serial.printf( "                | |   Fallback  : http://%s\n", WiFi.softAPIP().toString().c_str());
-    Serial.println(F("                |_|   mDNS      : canary.local"));
-    Serial.println(F("              ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"));
+    Serial.println(F("    NETWORK"));
+    Serial.println(F("    ------------------------------------------------"));
+    Serial.printf( "    AP          %s\n", ssid);
+    Serial.printf( "    Password    %s\n", CONFIG_AP_PASSWORD_DEFAULT);
+    Serial.println(F("    Dashboard   http://canary.local"));
+    Serial.printf( "    IP          http://%s\n", WiFi.softAPIP().toString().c_str());
     Serial.println();
 }
 
 static void app_print_scene_chain() {
-    Serial.println();
-    Serial.println(F("           ,_,"));
-    Serial.println(F("          (o o)   W I T N E S S   C H A I N"));
-    Serial.println(F("           |#|  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"));
-    Serial.printf( "          [###]   Device ID  : %s\n", witness_chain_device_id(&g_witness_chain));
-    Serial.printf( "          |###|   Sequence   : %u\n", witness_chain_sequence(&g_witness_chain));
-    Serial.printf( "          |###|   Boot       : #%u\n", witness_chain_boot_count(&g_witness_chain));
-    Serial.printf( "          [###]   Integrity  : %s\n", g_health.crypto_healthy ? "* INTACT" : "! CHECK REQUIRED");
-    Serial.println(F("           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"));
+    Serial.println(F("    WITNESS CHAIN"));
+    Serial.println(F("    ------------------------------------------------"));
+    Serial.printf( "    Device      %s\n", witness_chain_device_id(&g_witness_chain));
+    Serial.printf( "    Sequence    %u\n", witness_chain_sequence(&g_witness_chain));
+    Serial.printf( "    Boot        #%u\n", witness_chain_boot_count(&g_witness_chain));
+    Serial.printf( "    Integrity   %s\n", g_health.crypto_healthy ? "verified" : "check required");
     Serial.println();
 }
 
 static void app_print_scene_ready() {
     Serial.println();
-    Serial.println(F("    +====================================================+"));
-    Serial.println(F("    |                                                    |"));
-    Serial.println(F("    |                   ,_,    ~  ~  ~                   |"));
-    Serial.println(F("    |                  (o o)  ~ SINGING ~                |"));
-    Serial.println(F("    |                 /(> <)\\  ~  ~  ~                   |"));
-    Serial.println(F("    |                  ^ | ^                             |"));
-    Serial.println(F("    |                    |                               |"));
-    Serial.println(F("    |    * * *  C A N A R Y   I S   S I N G I N G  * * *|"));
-    Serial.println(F("    |                                                    |"));
-    Serial.println(F("    |       All systems operational - witnessing now      |"));
-    Serial.println(F("    |                                                    |"));
-    Serial.println(F("    +====================================================+"));
+    Serial.println(F("    ================================================"));
+    Serial.println();
+    Serial.println(F("                   ,_,    "));
+    Serial.println(F("                  (o.o)  ~~"));
+    Serial.println(F("                 /(> <)\\ ~~~~"));
+    Serial.println(F("                  d | b  ~~~~~~"));
+    Serial.println();
+    Serial.println(F("           Canary is singing."));
+    Serial.println(F("           All systems operational."));
+    Serial.println();
+    Serial.println(F("    ================================================"));
     Serial.println();
 }
 
 static void app_print_scene_guide(const char* ssid) {
+    Serial.println(F("    CONNECT"));
+    Serial.println(F("    ------------------------------------------------"));
+    Serial.printf( "    1  Join WiFi    %s\n", ssid);
+    Serial.printf( "       Password     %s\n", CONFIG_AP_PASSWORD_DEFAULT);
     Serial.println();
-    Serial.println(F("        ,_,"));
-    Serial.println(F("       (o o)    G E T T I N G   S T A R T E D"));
-    Serial.println(F("        |>|   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"));
-    Serial.println(F("        | |"));
-    Serial.println(F("        | |     1. Connect to WiFi:"));
-    Serial.printf( "        | |        SSID: %s\n", ssid);
-    Serial.printf( "        | |        Pass: %s\n", CONFIG_AP_PASSWORD_DEFAULT);
-    Serial.println(F("        | |"));
-    Serial.println(F("        | |     2. Open your browser:"));
-    Serial.println(F("        | |        http://canary.local"));
-    Serial.printf( "        | |        (or http://%s)\n", WiFi.softAPIP().toString().c_str());
-    Serial.println(F("        | |"));
-    Serial.println(F("        | |     3. Explore the dashboard:"));
-    Serial.println(F("        | |        * Timeline  - live witness records"));
-    Serial.println(F("        | |        * Peek      - camera positioning"));
-    Serial.println(F("        | |        * Sensing   - RF presence detection"));
-    Serial.println(F("        | |        * Settings  - home WiFi setup"));
-    Serial.println(F("        | |"));
-    Serial.println(F("       /| |\\    The canary watches. The chain remembers."));
-    Serial.println(F("       ~~~~~  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"));
+    Serial.println(F("    2  Open         http://canary.local"));
+    Serial.printf( "       or           http://%s\n", WiFi.softAPIP().toString().c_str());
     Serial.println();
+    Serial.println(F("    3  Dashboard    Timeline   witness records"));
+    Serial.println(F("                    Peek       camera positioning"));
+    Serial.println(F("                    Sensing    RF presence"));
+    Serial.println(F("                    Settings   home WiFi setup"));
+    Serial.println();
+    Serial.println(F("    ------------------------------------------------"));
     Serial.println();
 }
 
@@ -812,31 +763,29 @@ static void app_process_health() {
 
         Serial.println();
         if (h > 0)
-            Serial.printf("    ~~ ,_, ~~ Health | %uh %um %us ~~~~~~~~~~~~~~~~~~\n", h, m, s);
+            Serial.printf("    -- %uh%02um%02us ", h, m, s);
         else
-            Serial.printf("    ~~ ,_, ~~ Health | %um %us ~~~~~~~~~~~~~~~~~~~~~~\n", m, s);
-        Serial.printf(  "      (o o)   Heap: %uK/%uK | Records: %u | OK: %u\n",
-                        g_health.free_heap / 1024, g_health.min_heap / 1024,
-                        g_health.records_created, g_health.records_verified);
+            Serial.printf("    -- %um%02us ", m, s);
+
+        Serial.printf("heap %uK/%uK  rec %u  ok %u",
+                       g_health.free_heap / 1024, g_health.min_heap / 1024,
+                       g_health.records_created, g_health.records_verified);
 
         #if FEATURE_GNSS
         const gnss_fix_t* fix = gnss_parser_get_fix(&g_gnss_parser);
-        Serial.printf(  "       ~~     GPS: %s (%u sat)",
-                        fix->valid ? "3D fix" : "no fix", fix->satellites);
-        #else
-        Serial.print(   "       ~~    ");
+        Serial.printf("  gps:%s(%u)",
+                       fix->valid ? "3D" : "--", fix->satellites);
         #endif
 
         #if FEATURE_SD_STORAGE
-        Serial.printf(" | SD: %uwr", g_health.sd_writes);
+        Serial.printf("  sd:%u", g_health.sd_writes);
         #endif
 
         #if FEATURE_MESH_NETWORK
-        Serial.printf(" | Mesh: %u", g_health.mesh_messages_sent);
+        Serial.printf("  mesh:%u", g_health.mesh_messages_sent);
         #endif
 
         Serial.println();
-        Serial.println(F("    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"));
 
         LOG_I("Health: uptime=%us heap=%u/%u records=%u verified=%u",
               g_health.uptime_sec, g_health.free_heap, g_health.min_heap,
