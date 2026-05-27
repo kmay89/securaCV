@@ -4631,7 +4631,6 @@ static esp_err_t handle_qr_scan_start(httpd_req_t* req) {
   }
 
 #if FEATURE_CAMERA_PEEK
-  extern volatile bool g_peek_active;
   if (g_peek_active) {
     return http_send_json(req, "{\"ok\":false,\"error\":\"Camera is busy with peek stream\"}");
   }
