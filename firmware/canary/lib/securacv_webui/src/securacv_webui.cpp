@@ -729,6 +729,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     .vi-evt--person { background:rgba(252,129,129,0.15); color:var(--danger); }
     .vi-evt--end    { background:rgba(120,120,128,0.12); color:var(--muted); }
     .vi-evt--tamper { background:rgba(255,165,0,0.18); color:#e89900; }
+    .vi-evt--removed { background:rgba(168,85,247,0.15); color:#a855f7; }
     .vi-tune { margin-bottom: 0.75rem; }
     .vi-tune label { display:block; font-size:0.85rem; color:var(--muted); margin-bottom:4px; }
     .vi-tune label span { color:var(--fg); font-weight:600; }
@@ -1475,6 +1476,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           <div class="stat-item"><div class="stat-label">Motion events</div><div class="stat-value" id="viMotion">0</div></div>
           <div class="stat-item"><div class="stat-label">Person events</div><div class="stat-value" id="viPerson">0</div></div>
           <div class="stat-item"><div class="stat-label">Tamper events</div><div class="stat-value" id="viTamper">0</div></div>
+          <div class="stat-item"><div class="stat-label">Removed</div><div class="stat-value" id="viRemoved">0</div></div>
         </div>
         <div id="viTimeline" style="display:flex;gap:4px;overflow-x:auto;padding:0.5rem;scrollbar-width:thin;"></div>
       </div>
@@ -3356,6 +3358,11 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           viPill.textContent = 'Camera tamper';
           viExp.textContent = 'Camera may be obstructed or moved.';
           if (viBadge) { viBadge.style.display = 'inline-flex'; viBadge.className = 'badge danger'; viBadgeText.textContent = 'TAMPER'; }
+        } else if (viObj.last_event === 'obj_removed') {
+          viPill.className = 'sensing-pill sensing-pill--active';
+          viPill.textContent = 'Object removed';
+          viExp.textContent = 'Something was removed from zone ' + (viObj.zone || '?') + '.';
+          if (viBadge) { viBadge.style.display = 'inline-flex'; viBadge.className = 'badge warning'; viBadgeText.textContent = 'REMOVED'; }
         } else if (viObj.last_event === 'motion') {
           viPill.className = 'sensing-pill sensing-pill--active';
           viPill.textContent = 'Motion detected';
@@ -3410,6 +3417,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         set('viMotion', vst.motion_events || 0);
         set('viPerson', vst.person_events || 0);
         set('viTamper', vst.tamper_events || 0);
+        set('viRemoved', vst.obj_removed_events || 0);
 
         const tl = document.getElementById('viTimeline');
         const evts = viObj.events || [];
@@ -3417,7 +3425,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           tl.innerHTML = '';
           for (let i = evts.length - 1; i >= 0; i--) {
             const e = evts[i];
-            const cls = e.type === 'tamper' ? 'vi-evt--tamper' : e.type === 'person' ? 'vi-evt--person' : e.type === 'motion' ? 'vi-evt--motion' : 'vi-evt--end';
+            const cls = e.type === 'obj_removed' ? 'vi-evt--removed' : e.type === 'tamper' ? 'vi-evt--tamper' : e.type === 'person' ? 'vi-evt--person' : e.type === 'motion' ? 'vi-evt--motion' : 'vi-evt--end';
             const age = e.age_ms < 1000 ? '<1s' : e.age_ms < 60000 ? Math.round(e.age_ms/1000)+'s' : e.age_ms < 3600000 ? Math.round(e.age_ms/60000)+'m' : e.age_ms < 86400000 ? Math.round(e.age_ms/3600000)+'h' : Math.round(e.age_ms/86400000)+'d';
             const chip = document.createElement('div');
             chip.className = 'vi-evt ' + cls;

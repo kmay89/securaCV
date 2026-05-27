@@ -64,6 +64,14 @@ static const float BLOCK_EMA_ALPHA = 0.05f;
 static const float VAR_EMA_ALPHA   = 0.02f;
 static const float MIN_STDDEV      = 5.0f;
 
+// Object removal: long-term stable baseline (very slow EMA)
+static float   s_longterm_baseline[VISION_GRID_TOTAL] = {};
+static bool    s_longterm_set = false;
+static const float LONGTERM_EMA_ALPHA = 0.001f;
+static const float OBJ_DIVERGE_THRESH = 25.0f;
+static const float OBJ_REVERT_THRESH  = 8.0f;
+static uint8_t s_obj_present[VISION_GRID_TOTAL] = {};
+
 // Grayscale decode buffer (160x120 = 19200 bytes)
 #define DECODE_W 160
 #define DECODE_H 120
@@ -199,10 +207,12 @@ struct MotionResult {
   uint8_t confidence;
   uint8_t zone;
   uint8_t changed_count;
+  bool    obj_removed;
+  uint8_t obj_removed_zone;
 };
 
 static MotionResult layer2_check(const uint8_t* gray) {
-  MotionResult result = { false, 0, 0, 0 };
+  MotionResult result = { false, 0, 0, 0, false, 0 };
 
   int block_w = DECODE_W / VISION_GRID_COLS;
   int block_h = DECODE_H / VISION_GRID_ROWS;
@@ -257,22 +267,54 @@ static MotionResult layer2_check(const uint8_t* gray) {
   }
 
   // Update baseline with EMA + per-block variance tracking
+  int obj_removed_count = 0;
+  int obj_cx = 0, obj_cy = 0;
   for (int i = 0; i < VISION_GRID_TOTAL; i++) {
+    float cur = (float)current_blocks[i];
     if (!s_block_baseline_set) {
       s_block_baseline[i] = current_blocks[i];
       s_block_var[i] = 0.0f;
     } else {
-      float diff = (float)current_blocks[i] - (float)s_block_baseline[i];
+      float diff = cur - (float)s_block_baseline[i];
       s_block_var[i] = s_block_var[i] * (1.0f - VAR_EMA_ALPHA) + diff * diff * VAR_EMA_ALPHA;
       s_block_baseline[i] = (uint8_t)(
-        (float)s_block_baseline[i] * (1.0f - BLOCK_EMA_ALPHA) +
-        (float)current_blocks[i] * BLOCK_EMA_ALPHA);
+        (float)s_block_baseline[i] * (1.0f - BLOCK_EMA_ALPHA) + cur * BLOCK_EMA_ALPHA);
+    }
+
+    // Long-term baseline for object removal detection
+    if (!s_longterm_set) {
+      s_longterm_baseline[i] = cur;
+      s_obj_present[i] = 0;
+    } else {
+      float lt_delta = fabsf(cur - s_longterm_baseline[i]);
+      if (s_obj_present[i] == 0 && lt_delta > OBJ_DIVERGE_THRESH) {
+        s_obj_present[i] = 1;
+      } else if (s_obj_present[i] == 1 && lt_delta < OBJ_REVERT_THRESH) {
+        s_obj_present[i] = 0;
+        obj_removed_count++;
+        obj_cx += i % VISION_GRID_COLS;
+        obj_cy += i / VISION_GRID_COLS;
+      }
+      // Only update long-term baseline when block is stable
+      if (s_obj_present[i] == 0) {
+        s_longterm_baseline[i] = s_longterm_baseline[i] * (1.0f - LONGTERM_EMA_ALPHA)
+                                 + cur * LONGTERM_EMA_ALPHA;
+      }
     }
   }
 
   if (!s_block_baseline_set) {
     s_block_baseline_set = true;
+    s_longterm_set = true;
     return result;
+  }
+
+  // Object removal: multiple blocks reverted simultaneously
+  if (obj_removed_count >= 3) {
+    result.obj_removed = true;
+    result.obj_removed_zone = (uint8_t)(
+      (obj_cy / obj_removed_count) * VISION_GRID_COLS +
+      (obj_cx / obj_removed_count) + 1);
   }
 
   // Global illumination filter: if >80% of blocks changed, it's lighting
@@ -422,6 +464,7 @@ bool vision_init(const vision_config_t* cfg) {
   memset(&vision::s_stats, 0, sizeof(vision::s_stats));
   vision::s_jpeg_baseline_set = false;
   vision::s_block_baseline_set = false;
+  vision::s_longterm_set = false;
   vision::s_motion_active = false;
   vision::s_initialized = true;
   Serial.println("[VISION] Initialized — 3-layer cascade ready");
@@ -562,6 +605,13 @@ bool vision_process() {
     log_health(LOG_LEVEL_WARN, LOG_CAT_SENSOR, "Vision: camera tamper detected", nullptr);
   }
 
+  // Object removal: blocks reverted from diverged to stable long-term baseline
+  if (motion.obj_removed) {
+    vision::s_stats.obj_removed_events++;
+    vision::emit_event(VISION_EVENT_OBJ_REMOVED, 80, motion.obj_removed_zone);
+    log_health(LOG_LEVEL_INFO, LOG_CAT_SENSOR, "Vision: object removed from scene", nullptr);
+  }
+
   if (!motion.detected) {
     vision::s_consecutive_l2 = 0;
     if (vision::s_motion_active &&
@@ -571,7 +621,7 @@ bool vision_process() {
       vision::s_stats.last_confidence = 0;
       vision::emit_event(VISION_EVENT_MOTION_END, 0, 0);
     }
-    return false;
+    return motion.obj_removed;
   }
   vision::s_stats.layer2_passes++;
   if (vision::s_consecutive_l2 < 255) vision::s_consecutive_l2++;
