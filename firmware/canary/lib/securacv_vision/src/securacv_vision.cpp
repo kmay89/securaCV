@@ -702,18 +702,23 @@ bool vision_load_config_from_nvs(vision_config_t* out) {
   if (!prefs.isKey(NVS_KEY_CONFIG)) { prefs.end(); return false; }
   const size_t current_size = sizeof(vision_config_t);
   const size_t min_size = current_size - VISION_GRID_TOTAL;
-  // Zero-initialize so new fields get safe defaults
-  memset(out, 0, current_size);
-  size_t read = prefs.getBytes(NVS_KEY_CONFIG, out, current_size);
+  vision_config_t tmp;
+  memset(&tmp, 0, sizeof(tmp));
+  size_t read = prefs.getBytes(NVS_KEY_CONFIG, &tmp, current_size);
   prefs.end();
-  if (read == current_size) return true;
+  if (read == current_size) {
+    *out = tmp;
+    return true;
+  }
   // Accept old (smaller) blobs: fields present are loaded, new trailing
   // fields (zone_sensitivity) remain zero-initialized from memset above.
   if (read >= min_size) {
+    *out = tmp;
     Serial.printf("[VISION] NVS config migrated: %u -> %u bytes\n",
                   (unsigned)read, (unsigned)current_size);
     return true;
   }
+  // Blob too old/corrupt — caller's struct is untouched (preserves defaults)
   return false;
 }
 

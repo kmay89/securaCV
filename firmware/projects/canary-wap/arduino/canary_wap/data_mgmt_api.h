@@ -422,6 +422,7 @@ inline bool verify_chain(chain_verify_result_t* result,
   char (*names)[V_NAME] = (char (*)[V_NAME])malloc(alloc_size);
   if (!names) { dir.close(); return false; }
   size_t collected = 0;
+  size_t total_files = 0;
 
   for (File entry = dir.openNextFile(); entry; entry = dir.openNextFile()) {
     if (entry.isDirectory()) { entry.close(); continue; }
@@ -429,6 +430,7 @@ inline bool verify_chain(chain_verify_result_t* result,
     const char* slash = strrchr(n, '/');
     const char* base = slash ? (slash + 1) : n;
     entry.close();
+    total_files++;
 
     if (collected < VERIFY_MAX_RECORDS) {
       size_t insert_pos = collected;
@@ -493,7 +495,7 @@ inline bool verify_chain(chain_verify_result_t* result,
   }
   free(names);
 
-  bool was_capped = (records_checked >= VERIFY_MAX_RECORDS);
+  bool was_capped = (total_files > collected);
   if (was_capped) chain_intact = false;
 
   result->records_checked    = records_checked;
