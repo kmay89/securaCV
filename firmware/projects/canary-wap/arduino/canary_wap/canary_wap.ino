@@ -4534,20 +4534,14 @@ static void qr_scan_task_fn(void* param) {
 
   sensor_t* sensor = esp_camera_sensor_get();
   int orig_framesize = sensor ? sensor->status.framesize : -1;
-  int orig_pixformat = sensor ? sensor->pixformat : -1;
-  if (sensor) {
-    sensor->set_framesize(sensor, FRAMESIZE_QVGA);
-    sensor->set_pixformat(sensor, PIXFORMAT_GRAYSCALE);
-  }
+  if (sensor) sensor->set_framesize(sensor, FRAMESIZE_QVGA);
 
   bool scanner_ready = qr_scanner::init();
   if (!scanner_ready) {
     strncpy(g_qr_scan_error, "Scanner init failed", sizeof(g_qr_scan_error));
     g_qr_scan_active = false;
-    if (sensor) {
-      if (orig_pixformat >= 0) sensor->set_pixformat(sensor, (pixformat_t)orig_pixformat);
-      if (orig_framesize >= 0) sensor->set_framesize(sensor, (framesize_t)orig_framesize);
-    }
+    if (sensor && orig_framesize >= 0)
+      sensor->set_framesize(sensor, (framesize_t)orig_framesize);
     g_qr_scan_task = nullptr;
     vTaskDelete(nullptr);
     return;
@@ -4621,12 +4615,8 @@ static void qr_scan_task_fn(void* param) {
   }
 
   qr_scanner::deinit();
-  if (sensor) {
-    if (orig_pixformat >= 0)
-      sensor->set_pixformat(sensor, (pixformat_t)orig_pixformat);
-    if (orig_framesize >= 0)
-      sensor->set_framesize(sensor, (framesize_t)orig_framesize);
-  }
+  if (sensor && orig_framesize >= 0)
+    sensor->set_framesize(sensor, (framesize_t)orig_framesize);
 
   g_qr_scan_active = false;
   g_qr_scan_task = nullptr;
