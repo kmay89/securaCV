@@ -85,7 +85,9 @@ typedef struct {
     bool     has_debug_data;
     bool     pinned;
     scv_debug_beacon_t debug;
+    uint32_t first_seen_ms;
     uint32_t last_seen_ms;
+    uint32_t beacon_count;
 
     // Signal analysis (8-sample window for averaging)
     int8_t   rssi_history[SCV_RSSI_HISTORY_LEN];
