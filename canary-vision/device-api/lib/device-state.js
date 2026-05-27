@@ -222,7 +222,7 @@ function createDeviceState(overrides = {}) {
 
     if (gpsState && gpsState.fix_age_ms < 30000) {
       timeSource = 'gps_utc';
-      gpsTimestamp = gpsState.utc;
+      gpsTimestamp = gpsState.utc || '';
       gpsFix = gpsState.fix_quality;
       gpsSats = gpsState.satellites;
       gpsAge = gpsState.fix_age_ms;

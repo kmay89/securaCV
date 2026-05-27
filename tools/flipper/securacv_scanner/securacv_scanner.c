@@ -301,8 +301,11 @@ static int cmp_last_seen(const void* a, const void* b) {
     const scv_device_t* da = (const scv_device_t*)a;
     const scv_device_t* db = (const scv_device_t*)b;
     if(da->pinned != db->pinned) return db->pinned - da->pinned;
-    if(db->last_seen_ms > da->last_seen_ms) return 1;
-    if(db->last_seen_ms < da->last_seen_ms) return -1;
+    uint32_t now = furi_get_tick();
+    uint32_t age_a = now - da->last_seen_ms;
+    uint32_t age_b = now - db->last_seen_ms;
+    if(age_a < age_b) return -1;
+    if(age_a > age_b) return 1;
     return 0;
 }
 
