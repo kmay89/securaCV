@@ -528,6 +528,7 @@ function playNotificationFeedback(eventType) {
       osc.type = 'sine';
       osc.start();
       osc.stop(ctx.currentTime + 0.15);
+      osc.onended = function () { ctx.close(); };
     } catch (e) { /* audio not available */ }
   }
 }
@@ -539,6 +540,7 @@ function getUnseenEventCount() {
 }
 
 function incrementUnseenEvents() {
+  if ((window.location.hash || '') === '#/events') return;
   _unseenEventCount++;
   updateNavBadge();
 }
@@ -2664,7 +2666,7 @@ function renderSettingsView() {
     type: 'time',
     value: prefs.quiet_hours_start,
     onChange: function () {
-      prefs.quiet_hours_start = startInput.value;
+      prefs.quiet_hours_start = this.value;
       saveNotifPrefs(prefs);
     }
   });
@@ -2678,7 +2680,7 @@ function renderSettingsView() {
     type: 'time',
     value: prefs.quiet_hours_end,
     onChange: function () {
-      prefs.quiet_hours_end = endInput.value;
+      prefs.quiet_hours_end = this.value;
       saveNotifPrefs(prefs);
     }
   });
@@ -2732,6 +2734,38 @@ Router.register('/settings', renderSettingsView);
 
 // --------------- Init ---------------
 
+var _lastKnownSeqs = {};
+
+function backgroundEventCheck() {
+  if ((window.location.hash || '') === '#/events') return;
+  var devices = CanaryStorage.getDevices();
+  if (devices.length === 0) return;
+
+  devices.forEach(function (device) {
+    if (!device.token || !isPrivateUrl(device.base_url)) return;
+    CanaryAPI.request(device.base_url, '/api/v1/witness?last=1')
+      .then(function (data) {
+        var records = data.records || [];
+        if (records.length === 0) return;
+        var latest = records[records.length - 1];
+        var key = device.id;
+        if (_lastKnownSeqs[key] !== undefined && latest.seq > _lastKnownSeqs[key]) {
+          var newCount = latest.seq - _lastKnownSeqs[key];
+          for (var n = 0; n < newCount; n++) {
+            if (shouldNotify(latest.event_type)) {
+              incrementUnseenEvents();
+            }
+          }
+          if (newCount > 0 && shouldNotify(latest.event_type)) {
+            playNotificationFeedback(latest.event_type);
+          }
+        }
+        _lastKnownSeqs[key] = latest.seq;
+      })
+      .catch(function () { /* device offline */ });
+  });
+}
+
 window.addEventListener('hashchange', function () { Router.resolve(); });
 window.addEventListener('DOMContentLoaded', function () {
   // Rehydrate expiry timers for existing sessions
@@ -2741,5 +2775,22 @@ window.addEventListener('DOMContentLoaded', function () {
       CanarySession.scheduleExpiry(devices[i].id);
     }
   }
+
+  // Initialize last known seqs for badge tracking
+  devices.forEach(function (device) {
+    if (!device.token || !isPrivateUrl(device.base_url)) return;
+    CanaryAPI.request(device.base_url, '/api/v1/witness?last=1')
+      .then(function (data) {
+        var records = data.records || [];
+        if (records.length > 0) {
+          _lastKnownSeqs[device.id] = records[records.length - 1].seq;
+        }
+      })
+      .catch(function () { /* ignore */ });
+  });
+
+  // Background poll for badge updates every 30s
+  setInterval(backgroundEventCheck, 30000);
+
   Router.resolve();
 });
