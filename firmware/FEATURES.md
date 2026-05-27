@@ -186,9 +186,9 @@ Single-row-per-capability summary across every non-archived variant. This is the
 | `GET /api/nearby` | ✅ | ❌ | ❌ | ❌ |
 | `POST /api/chirp/send` | ✅ | ❌ | ❌ | ❌ |
 | `GET /api/download` | ✅ | ❌ | ❌ | ❌ |
-| `GET /api/diagnostics` (heap, SD health, degradation, selftest) | ✅ | ✅ | ❌ | ❌ |
-| `GET /api/selftest` (re-run self-test suite on demand) | ✅ | ✅ | ❌ | ❌ |
-| `GET /api/battery/history` (NVS-persisted battery health stats) | ✅ | ✅ | ❌ | ❌ |
+| `GET /api/diagnostics` (heap, SD health, degradation, selftest) | ✅ | ✅ | ✅ | ❌ |
+| `GET /api/selftest` (re-run self-test suite on demand) | ✅ | ✅ | ✅ | ❌ |
+| `GET /api/battery/history` (NVS-persisted battery health stats) | ✅ | ✅ | ✅ | ❌ |
 | `GET /api/sensing` (per-source sensor telemetry) | ✅ | ❌ | ❌ | ❌ |
 
 ## Camera Peek Feature
