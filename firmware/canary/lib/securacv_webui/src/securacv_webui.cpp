@@ -3601,7 +3601,12 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     }
 
     function viCellFromEvent(e) {
-      const t = e.touches ? document.elementFromPoint(e.touches[0].clientX, e.touches[0].clientY) : e.target;
+      var t;
+      if (e.touches && e.touches[0]) {
+        t = document.elementFromPoint(e.touches[0].clientX, e.touches[0].clientY);
+      } else {
+        t = e.target;
+      }
       if (!t || t.dataset.zi === undefined) return -1;
       return parseInt(t.dataset.zi, 10);
     }
@@ -3682,6 +3687,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       const g = document.getElementById('visionGrid');
       if (!g) return;
       function onDown(e) {
+        if (e.button !== undefined && e.button !== 0) return;
         const idx = viCellFromEvent(e);
         if (idx < 0) return;
         e.preventDefault();
@@ -3694,6 +3700,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         viPaintCell(idx);
       }
       function onMove(e) {
+        if (viPainting && e.buttons === 0) { viPainting = false; viFlushMask(); return; }
         if (!viPainting) return;
         const idx = viCellFromEvent(e);
         if (idx >= 0) viPaintCell(idx);
