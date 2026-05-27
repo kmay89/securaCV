@@ -1132,10 +1132,12 @@ function renderCanariesView() {
   var completed = 0;
 
   function updateFleetSummary() {
-    var onlineEl = document.getElementById('fleet-online');
-    var eventsEl = document.getElementById('fleet-events');
-    var uptimeEl = document.getElementById('fleet-uptime');
-    var signalEl = document.getElementById('fleet-signal');
+    if (!document.body.contains(fleetCard)) return;
+
+    var onlineEl = fleetCard.querySelector('#fleet-online');
+    var eventsEl = fleetCard.querySelector('#fleet-events');
+    var uptimeEl = fleetCard.querySelector('#fleet-uptime');
+    var signalEl = fleetCard.querySelector('#fleet-signal');
     if (onlineEl) onlineEl.textContent = onlineCount + ' / ' + devices.length;
     if (eventsEl) eventsEl.textContent = String(totalEvents);
     if (uptimeEl) {
@@ -1156,29 +1158,11 @@ function renderCanariesView() {
   devices.forEach(function (device) {
     var dc = deviceCards[device.id];
 
-    // Fetch info + recent events in parallel
-    var infoReq = CanaryAPI.request(device.base_url, '/api/v1/info')
+    // Fetch device info first; only fetch witness records if auth succeeds
+    CanaryAPI.request(device.base_url, '/api/v1/info')
       .then(function (info) {
-        return { info: info, error: null };
-      })
-      .catch(function (err) {
-        return { info: null, error: err };
-      });
+        if (!document.body.contains(dc.card)) return;
 
-    var eventsReq = CanaryAPI.request(device.base_url, '/api/v1/witness?last=100')
-      .then(function (data) {
-        return { records: data.records || [], error: null };
-      })
-      .catch(function () {
-        return { records: [], error: true };
-      });
-
-    Promise.all([infoReq, eventsReq]).then(function (results) {
-      var infoResult = results[0];
-      var eventsResult = results[1];
-
-      if (infoResult.info) {
-        var info = infoResult.info;
         onlineCount++;
         totalUptime += info.uptime_s || 0;
         totalRssi += info.wifi_rssi || 0;
@@ -1203,29 +1187,41 @@ function renderCanariesView() {
             style: rssiClass,
           }),
         ]));
-      } else {
+
+        updateFleetSummary();
+
+        // Only fetch events after successful auth to avoid lockout
+        return CanaryAPI.request(device.base_url, '/api/v1/witness?last=100');
+      })
+      .then(function (data) {
+        if (!data || !document.body.contains(dc.card)) return;
+        var records = data.records || [];
+
+        var now = new Date();
+        var startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        var todayCount = 0;
+        for (var i = 0; i < records.length; i++) {
+          var ts = new Date(records[i].timestamp);
+          if (ts >= startOfDay) todayCount++;
+        }
+        totalEvents += todayCount;
+
+        if (todayCount > 0 && dc.stats) {
+          dc.stats.appendChild(el('div', { className: 'fleet-device-events', textContent: todayCount + ' events today' }));
+        }
+
+        updateFleetSummary();
+      })
+      .catch(function (err) {
+        if (!document.body.contains(dc.card)) return;
+
         dc.dot.className = 'status-dot offline';
-        dc.label.textContent = infoResult.error && infoResult.error.status === 401 ? 'Auth Error' : 'Offline';
+        dc.label.textContent = err && err.status === 401 ? 'Auth Error' : 'Offline';
         dc.label.style.color = 'var(--color-error)';
-      }
 
-      // Count today's events
-      var now = new Date();
-      var startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      var todayCount = 0;
-      for (var i = 0; i < eventsResult.records.length; i++) {
-        var ts = new Date(eventsResult.records[i].timestamp);
-        if (ts >= startOfDay) todayCount++;
-      }
-      totalEvents += todayCount;
-
-      if (todayCount > 0 && dc.stats) {
-        dc.stats.appendChild(el('div', { className: 'fleet-device-events', textContent: todayCount + ' events today' }));
-      }
-
-      completed++;
-      updateFleetSummary();
-    });
+        completed++;
+        updateFleetSummary();
+      });
   });
 
   if (devices.length > 0) {
