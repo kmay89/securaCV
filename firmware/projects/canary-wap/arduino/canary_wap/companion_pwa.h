@@ -302,15 +302,8 @@ footer a{color:var(--accent);text-decoration:none}
   </div>
 
   <div class="wiz-step active" id="wiz-step-1">
-    <h2 class="wiz-h" tabindex="-1">We see your Canary</h2>
-    <p class="wiz-sub">It's awake and waiting. We'll point it at your home WiFi so it stays online when you leave the room.</p>
-    <ul class="intro" style="margin:0 0 1rem;padding-left:1.1rem;line-height:1.65">
-      <li>Privacy-first: nothing leaves your home unless you ask.</li>
-      <li>Setup takes about a minute.</li>
-      <li>You'll need your home WiFi password handy.</li>
-      <li>Stay connected to this WiFi network until setup is done.</li>
-      <li>Most homes use 3 or 4 &mdash; one per room you care about. You can add the next ones after this one is online.</li>
-    </ul>
+    <h2 class="wiz-h" tabindex="-1">Connect your Canary to WiFi</h2>
+    <p class="wiz-sub">Have your home WiFi password ready. Stay on this network until setup finishes.</p>
     <div class="wiz-btnrow">
       <button class="btn btn-primary" id="wiz-go-2">Let's go</button>
     </div>
@@ -423,7 +416,6 @@ footer a{color:var(--accent);text-decoration:none}
           <li>Power on the next Canary.</li>
           <li>Open WiFi settings on your phone. Wait for a fresh <strong>SecuraCV-XXXX</strong> network to appear.</li>
           <li>Tap it. The setup page opens by itself.</li>
-          <li>Scan the new code &mdash; same five steps as this one.</li>
         </ol>
         <p class="wiz-sub" style="margin:.25rem 0 .6rem">After it finishes, all your Canaries see each other on the home network. You can name and arrange them from the dashboard.</p>
         <div class="wiz-btnrow">

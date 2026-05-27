@@ -98,12 +98,17 @@ typedef enum {
     SETTING_SCAN_MODE,
     SETTING_TIMEOUT,
     SETTING_SORT,
+    SETTING_RSSI_FILTER,
     SETTING_COUNT,
 } SettingIndex;
 
 static const uint16_t timeout_options[] = {10000, 15000, 30000, 60000};
 static const char* timeout_labels[] = {"10s", "15s", "30s", "60s"};
 #define TIMEOUT_OPTION_COUNT 4
+
+static const int8_t rssi_filter_options[] = {-120, -90, -70, -50};
+static const char* rssi_filter_labels[] = {"All", ">-90", ">-70", ">-50"};
+#define RSSI_FILTER_COUNT 4
 
 typedef struct {
     FuriMutex* mutex;
@@ -131,6 +136,7 @@ typedef struct {
     // Scan settings
     ScanMode scan_mode;
     uint8_t timeout_idx;
+    uint8_t rssi_filter_idx;
     uint32_t duty_cycle_ms;
     bool duty_scan_active;
     SettingIndex settings_cursor;
@@ -243,12 +249,14 @@ static scv_device_t* add_or_update_device(SecuraCVApp* app, const AppEvent* evt)
             dev = &app->devices[app->device_count++];
         }
         memset(dev, 0, sizeof(*dev));
+        dev->first_seen_ms = furi_get_tick();
     }
 
     strncpy(dev->name, evt->ble.name, sizeof(dev->name) - 1);
     dev->rssi = evt->ble.rssi;
     dev->is_debug_mode = scv_is_debug_mode(evt->ble.name);
     dev->last_seen_ms = furi_get_tick();
+    dev->beacon_count++;
     scv_rssi_push(dev, evt->ble.rssi);
 
     // Zone transition detection
@@ -367,6 +375,9 @@ static void ble_observer_callback(const uint8_t* ad_data, uint8_t ad_len,
     // Filter: only process SecuraCV devices
     if(!scv_is_securacv_device(name)) return;
 
+    // Filter: RSSI threshold
+    if(rssi < rssi_filter_options[app->rssi_filter_idx]) return;
+
     // Build event to send to main loop
     AppEvent event = {.type = AppEventTypeBleDevice};
     strncpy(event.ble.name, name, sizeof(event.ble.name) - 1);
@@ -456,11 +467,11 @@ static void draw_about(Canvas* canvas, SecuraCVApp* app) {
     canvas_draw_line(canvas, 8, 23, 120, 23);
 
     int y = 32;
-    canvas_draw_str(canvas, 4, y, "U/D Scroll  L/R Sort");
+    canvas_draw_str(canvas, 4, y, "U/D Scroll   L/R Sort");
     y += 9;
-    canvas_draw_str(canvas, 4, y, "OK  Detail  >Hold Cfg");
+    canvas_draw_str(canvas, 4, y, "OK Detail  >Hold Cfg");
     y += 9;
-    canvas_draw_str(canvas, 4, y, "Bk  Exit    BkHold Alt");
+    canvas_draw_str(canvas, 4, y, "U/D in detail: cycle dev");
 
     char stats[32];
     snprintf(stats, sizeof(stats), "%lu beacons  %d devs",
@@ -592,28 +603,34 @@ static void draw_device_detail(Canvas* canvas, SecuraCVApp* app) {
     canvas_set_font(canvas, FontSecondary);
 
     if(!dev->has_debug_data || !dev->debug.valid) {
-        canvas_draw_str(canvas, 2, 26, "No debug beacon data");
-        canvas_draw_str(canvas, 2, 38, "Hold BOOT 3s on Canary");
-
         char sig_line[40];
         int8_t avg = dev->rssi_sample_count > 0 ? (int8_t)(dev->rssi_avg / 10) : dev->rssi;
         int16_t quality_input = dev->rssi_sample_count > 0
             ? dev->rssi_avg : (int16_t)(dev->rssi * 10);
         snprintf(sig_line, sizeof(sig_line), "RSSI: %d dBm  %s",
                  avg, scv_signal_quality(quality_input));
-        canvas_draw_str(canvas, 2, 50, sig_line);
+        canvas_draw_str(canvas, 2, 26, sig_line);
 
-        canvas_draw_str_aligned(canvas, SCREEN_WIDTH - 1, SCREEN_HEIGHT - 2,
-                                AlignRight, AlignBottom, "Graph>");
         if(dev->rssi_sample_count > 1) {
-            char range_line[32];
             uint16_t dm = scv_estimate_distance_dm(dev->rssi_avg);
             char dist_buf[8];
             scv_format_distance(dm, dist_buf, sizeof(dist_buf));
-            snprintf(range_line, sizeof(range_line), "%d/%d ~%s",
+            snprintf(sig_line, sizeof(sig_line), "Range: %d/%d  ~%s",
                      dev->rssi_min, dev->rssi_max, dist_buf);
-            canvas_draw_str(canvas, 2, SCREEN_HEIGHT - 2, range_line);
+            canvas_draw_str(canvas, 2, 36, sig_line);
         }
+
+        uint32_t age_sec = (furi_get_tick() - dev->first_seen_ms) / 1000;
+        uint32_t bpm = (age_sec > 0) ? (dev->beacon_count * 60 / age_sec) : 0;
+        char age_buf[16];
+        scv_format_uptime(age_sec, age_buf, sizeof(age_buf));
+        snprintf(sig_line, sizeof(sig_line), "Age:%s  %lu/min  #%lu",
+                 age_buf, (unsigned long)bpm, (unsigned long)dev->beacon_count);
+        canvas_draw_str(canvas, 2, 46, sig_line);
+
+        canvas_draw_str(canvas, 2, SCREEN_HEIGHT - 2, "Hold BOOT 3s for DBG");
+        canvas_draw_str_aligned(canvas, SCREEN_WIDTH - 1, SCREEN_HEIGHT - 2,
+                                AlignRight, AlignBottom, "Graph>");
         return;
     }
 
@@ -794,6 +811,18 @@ static void draw_settings(Canvas* canvas, SecuraCVApp* app) {
     if(app->settings_cursor == SETTING_SORT) {
         canvas_set_color(canvas, ColorBlack);
     }
+    y += LINE_HEIGHT + 2;
+
+    // RSSI Filter
+    if(app->settings_cursor == SETTING_RSSI_FILTER) {
+        canvas_draw_box(canvas, 0, y - 8, SCREEN_WIDTH, LINE_HEIGHT);
+        canvas_set_color(canvas, ColorWhite);
+    }
+    snprintf(line, sizeof(line), "RSSI: <%s>", rssi_filter_labels[app->rssi_filter_idx]);
+    canvas_draw_str(canvas, 2, y, line);
+    if(app->settings_cursor == SETTING_RSSI_FILTER) {
+        canvas_set_color(canvas, ColorBlack);
+    }
 
     canvas_draw_line(canvas, 8, 55, 120, 55);
     canvas_draw_str_aligned(canvas, SCREEN_WIDTH / 2, SCREEN_HEIGHT - 1,
@@ -931,6 +960,17 @@ static void handle_input(SecuraCVApp* app, InputEvent* event) {
                 app->current_view = VIEW_SCAN_LIST;
             } else if(event->key == InputKeyLeft || event->key == InputKeyRight) {
                 app->current_view = VIEW_SIGNAL_GRAPH;
+            } else if(event->key == InputKeyUp && app->selected_index > 0) {
+                app->selected_index--;
+                if(app->selected_index < app->scroll_offset) {
+                    app->scroll_offset = app->selected_index;
+                }
+            } else if(event->key == InputKeyDown &&
+                       app->selected_index < app->device_count - 1) {
+                app->selected_index++;
+                if(app->selected_index >= app->scroll_offset + MAX_VISIBLE) {
+                    app->scroll_offset = app->selected_index - MAX_VISIBLE + 1;
+                }
             }
             break;
 
@@ -939,6 +979,17 @@ static void handle_input(SecuraCVApp* app, InputEvent* event) {
                 app->current_view = VIEW_SCAN_LIST;
             } else if(event->key == InputKeyLeft || event->key == InputKeyRight) {
                 app->current_view = VIEW_DEVICE_DETAIL;
+            } else if(event->key == InputKeyUp && app->selected_index > 0) {
+                app->selected_index--;
+                if(app->selected_index < app->scroll_offset) {
+                    app->scroll_offset = app->selected_index;
+                }
+            } else if(event->key == InputKeyDown &&
+                       app->selected_index < app->device_count - 1) {
+                app->selected_index++;
+                if(app->selected_index >= app->scroll_offset + MAX_VISIBLE) {
+                    app->scroll_offset = app->selected_index - MAX_VISIBLE + 1;
+                }
             }
             break;
 
@@ -961,6 +1012,8 @@ static void handle_input(SecuraCVApp* app, InputEvent* event) {
                         app->timeout_idx = (app->timeout_idx + TIMEOUT_OPTION_COUNT + dir) % TIMEOUT_OPTION_COUNT;
                     } else if(app->settings_cursor == SETTING_SORT) {
                         app->sort_mode = (app->sort_mode + SortModeCount + dir) % SortModeCount;
+                    } else if(app->settings_cursor == SETTING_RSSI_FILTER) {
+                        app->rssi_filter_idx = (app->rssi_filter_idx + RSSI_FILTER_COUNT + dir) % RSSI_FILTER_COUNT;
                     }
                     break;
                 }

@@ -724,6 +724,10 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       margin-left: auto;
       margin-right: auto;
     }
+    .vi-evt { flex:0 0 auto; padding:4px 8px; border-radius:6px; font-size:0.7rem; line-height:1.3; white-space:nowrap; }
+    .vi-evt--motion { background:rgba(79,209,197,0.15); color:var(--accent); }
+    .vi-evt--person { background:rgba(252,129,129,0.15); color:var(--danger); }
+    .vi-evt--end    { background:rgba(120,120,128,0.12); color:var(--muted); }
     .vi-tune { margin-bottom: 0.75rem; }
     .vi-tune label { display:block; font-size:0.85rem; color:var(--muted); margin-bottom:4px; }
     .vi-tune label span { color:var(--fg); font-weight:600; }
@@ -970,6 +974,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         Logs<span class="count" id="logsCount" style="display:none">0</span>
       </button>
       <button class="nav-btn" data-panel="witness">Witness</button>
+      <button class="nav-btn" data-panel="timeline">Timeline</button>
       <button class="nav-btn" data-panel="settings">Settings</button>
       <button class="nav-btn" data-panel="bluetooth">Bluetooth</button>
     </nav>
@@ -1469,6 +1474,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           <div class="stat-item"><div class="stat-label">Motion events</div><div class="stat-value" id="viMotion">0</div></div>
           <div class="stat-item"><div class="stat-label">Person events</div><div class="stat-value" id="viPerson">0</div></div>
         </div>
+        <div id="viTimeline" style="display:flex;gap:4px;overflow-x:auto;padding:0.5rem;scrollbar-width:thin;"></div>
       </div>
 
       <!-- Vision settings (tuning card) -->
@@ -2171,6 +2177,31 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       </div>
     </div>
 
+    <!-- Timeline Panel -->
+    <div class="panel" id="panel-timeline">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Event Timeline</div>
+            <div class="card-subtitle" id="timelineSubtitle">Recent witness events with thumbnails</div>
+          </div>
+          <div style="display:flex;gap:4px">
+            <select id="timelineFilter" onchange="refreshTimeline()" style="font-size:12px;padding:4px 8px;border-radius:6px;border:1px solid var(--border)">
+              <option value="all">All Events</option>
+              <option value="person_detected">Person</option>
+              <option value="vehicle_detected">Vehicle</option>
+              <option value="animal_detected">Animal</option>
+              <option value="motion_detected">Motion</option>
+            </select>
+            <button class="btn btn-primary btn-sm" onclick="refreshTimeline()">↻</button>
+          </div>
+        </div>
+        <div id="timelineList" style="max-height:500px;overflow-y:auto">
+          <div class="loading"><div class="spinner"></div></div>
+        </div>
+      </div>
+    </div>
+
     <!-- Settings Panel -->
     <div class="panel" id="panel-settings">
       <!-- WiFi Configuration Card -->
@@ -2598,6 +2629,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
       if (panel === 'logs') loadLogs();
       else if (panel === 'witness') loadWitness();
+      else if (panel === 'timeline') refreshTimeline();
       else if (panel === 'peek') { refreshPeekStatus(); refreshSensorState(); }
       else if (panel === 'opera') refreshOpera();
       else if (panel === 'community') refreshChirpStatus();
@@ -3370,6 +3402,23 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         set('viL3',     vst.layer3_passes || 0);
         set('viMotion', vst.motion_events || 0);
         set('viPerson', vst.person_events || 0);
+
+        const tl = document.getElementById('viTimeline');
+        const evts = viObj.events || [];
+        if (tl && evts.length > 0) {
+          tl.innerHTML = '';
+          for (let i = evts.length - 1; i >= 0; i--) {
+            const e = evts[i];
+            const cls = e.type === 'person' ? 'vi-evt--person' : e.type === 'motion' ? 'vi-evt--motion' : 'vi-evt--end';
+            const age = e.age_ms < 1000 ? '<1s' : e.age_ms < 60000 ? Math.round(e.age_ms/1000)+'s' : e.age_ms < 3600000 ? Math.round(e.age_ms/60000)+'m' : e.age_ms < 86400000 ? Math.round(e.age_ms/3600000)+'h' : Math.round(e.age_ms/86400000)+'d';
+            const chip = document.createElement('div');
+            chip.className = 'vi-evt ' + cls;
+            chip.innerHTML = '<b>' + e.type + '</b><br>' + age + ' ago · z' + e.zone + ' · ' + e.confidence + '%';
+            tl.appendChild(chip);
+          }
+        } else if (tl) {
+          tl.innerHTML = '<span style="color:var(--muted);font-size:0.75rem;padding:4px;">No events yet</span>';
+        }
       } else if (viCard) {
         viCard.style.display = 'none';
         viStopThumb();
