@@ -576,7 +576,7 @@ bool vision_process() {
 
   // ── Layer 1: JPEG size delta ──────────────────────────────────────
   bool l1_pass = vision::layer1_check(fb->len);
-  if (!l1_pass) {
+  if (!l1_pass && vision::s_tamper_counter == 0) {
     cam.returnFrame(fb);
     decay_grid();
     if (vision::s_motion_active &&
@@ -588,7 +588,7 @@ bool vision_process() {
     }
     return false;
   }
-  vision::s_stats.layer1_passes++;
+  if (l1_pass) vision::s_stats.layer1_passes++;
 
   // ── Layer 2: Block luminance motion ───────────────────────────────
   bool decoded = vision::decode_and_downsample(fb, vision::s_gray_buf,
