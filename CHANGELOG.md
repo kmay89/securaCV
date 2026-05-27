@@ -57,6 +57,65 @@ below.
 - Standalone RTSP mode processes one camera at a time. For multi-camera,
   use Frigate mode.
 
+## [2.1.0] - 2026-05-27
+
+### Added — Production Feature Plan (Phases 0-6) for ESP32-S3 Canary firmware
+
+Seven-phase plan completing the firmware's production-readiness across both
+PlatformIO (canary/) and Arduino WAP (canary-wap/) builds with full parity.
+
+**New PlatformIO libraries:**
+
+- **securacv_power** — Battery ADC (2:1 voltage divider on GPIO 1), 16-point
+  LiPo discharge curve for SoC, software inference fallback, charge state
+  machine with hysteresis, graceful brownout shutdown, battery health history
+  persisted to NVS (charge cycles, voltage extremes, brownout count).
+- **securacv_power_policy** — 6-mode runtime state machine (PLUGGED_IN,
+  BATTERY_NORMAL, BATTERY_SAVER, LOW_POWER, SHUTDOWN, USB_ONLY). Per-mode
+  CPU frequency scaling, WiFi power save, record interval tuning, progressive
+  feature gating. Deep sleep cycling in emergency mode.
+- **securacv_setup** — First-boot captive portal with DNS hijack, device
+  naming, 15-minute timeout. NVS flag persists setup completion.
+- **securacv_diagnostics** — Heap monitoring (free/min/largest block/PSRAM/
+  stack HWM/fragmentation), 3-level automatic feature degradation with 5KB
+  hysteresis, SD health tracking (atomic write/error counters, space warnings),
+  10-test boot self-test suite (NVS, heap, PSRAM, crypto, SD, WiFi, temp,
+  uptime, watchdog, chain).
+- **securacv_ble_status** — NimBLE GATT server with standard Battery Service
+  (0x180F) and custom SecuraCV service exposing device name, firmware version,
+  chain sequence, health score, degradation level, uptime, SD usage over BLE.
+- **securacv_data_mgmt** — SD log rotation (witness 500, health 200, auto at
+  85% SD usage), chain backup/restore with HMAC-SHA256 integrity (keyed by
+  device private key), chain integrity verification (Ed25519 + hash continuity,
+  capped at 100 records with watchdog yield), witness record export to /EXPORT/.
+
+**New WAP header-only ports (full parity):**
+power_monitor.h, power_policy.h, ble_status_api.h, data_mgmt_api.h, plus
+sys_monitor.h enhanced with heap degradation levels and SD health tracking.
+
+**New REST API endpoints (both builds):**
+- `GET /api/diagnostics` — full diagnostic snapshot as JSON
+- `GET /api/selftest` — re-run self-test suite on demand
+- `GET /api/battery/history` — NVS-persisted battery health stats
+
+**New serial commands:** `b` (battery), `p` (power policy), `d` (diagnostics),
+`r` (data management).
+
+**New feature flags:** FEATURE_POWER_MONITOR, FEATURE_POWER_POLICY,
+FEATURE_SETUP_WIZARD, FEATURE_DIAGNOSTICS, FEATURE_BLE_STATUS,
+FEATURE_DATA_MGMT.
+
+### Security hardening
+
+- Chain backup uses HMAC-SHA256 (was CRC-32) — prevents SD-level forgery
+- Chain verification capped at 100 records with delay(1) yield — prevents
+  watchdog timeout on large directories
+- BLE GATT characteristics are read-only (no write/auth bypass possible)
+- New REST endpoints (/api/diagnostics, /api/battery/history) auth-gated with
+  rate limiting. Note: WAP's /api/selftest is intentionally unauthenticated
+  (reachable on the captive-portal AP during setup, by design)
+- Power policy rejects manual override to LOW_POWER/SHUTDOWN (anti-blinding)
+
 ## [0.5.0] - 2026-05-12
 
 ### Added — harm-reduction broadcast layer (Beacon channel) + audit artifacts

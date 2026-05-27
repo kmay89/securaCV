@@ -1,6 +1,6 @@
 # SecuraCV Canary Firmware — Feature Audit Matrix
 
-**Last updated:** 2026-04-17
+**Last updated:** 2026-05-27
 **Original audit:** 2026-02-20
 **Companion docs:** [VARIANT_POLICY.md](VARIANT_POLICY.md) (lifecycle labels), [FIRMWARE_VARIANT_AUDIT.md](FIRMWARE_VARIANT_AUDIT.md) (risk analysis)
 
@@ -66,6 +66,20 @@ Single-row-per-capability summary across every non-archived variant. This is the
 | Sensing events signed into Ed25519 witness chain (T3/T4/panic/tamper/temp) | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
 | Home Assistant MQTT auto-discovery for sensing entities (11 entities) | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
 | Sensing dashboard panel (gauges + acoustic + touch + IR + temp + power) | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
+| Battery power monitor (ADC + software inference, SoC, charge state) | ✅ | ✅ | ❌ | ❌ | ➖ | ❌ |
+| Power policy engine (6-mode battery-driven feature gating) | ✅ | ✅ | ❌ | ❌ | ➖ | ❌ |
+| First-time setup wizard (captive portal, device naming, NVS flag) | ✅ | ✅ | ❌ | ❌ | ➖ | ❌ |
+| Heap monitoring + automatic feature degradation (3-level with hysteresis) | ✅ | ✅ | ❌ | ❌ | ➖ | ❌ |
+| SD card health tracking (write/error counters, space warnings) | ✅ | ✅ | ❌ | ❌ | ➖ | ❌ |
+| Boot self-test suite (10 subsystem probes, 0-100% health score) | ✅ | ✅ | ❌ | ❌ | ➖ | ❌ |
+| BLE GATT status service (battery + health + chain over BLE) | ✅ | ✅ | ❌ | ❌ | ➖ | ❌ |
+| WiFi power save (modem sleep on battery, TX power control) | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
+| WiFi auto-reconnect with exponential backoff | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
+| SD log rotation (witness 500, health 200, auto-rotate at 85% SD) | ✅ | ✅ | ❌ | ❌ | ➖ | ❌ |
+| Chain backup/restore (NVS ↔ SD, HMAC-SHA256 integrity) | ✅ | ✅ | ❌ | ❌ | ➖ | ❌ |
+| Chain integrity verification (Ed25519 sig + hash continuity walk) | ✅ | ✅ | ❌ | ❌ | ➖ | ❌ |
+| Witness record export to /EXPORT/ | ✅ | ✅ | ❌ | ❌ | ➖ | ❌ |
+| Battery health history (NVS-persisted charge cycles, voltage extremes) | ✅ | ✅ | ❌ | ❌ | ➖ | ❌ |
 | Chirp channel (broadcast beacon) | ⚠️ | ✅ | ⚠️ | ❌ | ➖ | ✅ |
 | MQTT publish + HA Discovery | ✅ | ❌ | ❌ | ✅ | ➖ | ❌ |
 | OTA A/B with rollback safety | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ |
@@ -172,6 +186,10 @@ Single-row-per-capability summary across every non-archived variant. This is the
 | `GET /api/nearby` | ✅ | ❌ | ❌ | ❌ |
 | `POST /api/chirp/send` | ✅ | ❌ | ❌ | ❌ |
 | `GET /api/download` | ✅ | ❌ | ❌ | ❌ |
+| `GET /api/diagnostics` (heap, SD health, degradation, selftest) | ✅ | ✅ | ❌ | ❌ |
+| `GET /api/selftest` (re-run self-test suite on demand) | ✅ | ✅ | ❌ | ❌ |
+| `GET /api/battery/history` (NVS-persisted battery health stats) | ✅ | ✅ | ❌ | ❌ |
+| `GET /api/sensing` (per-source sensor telemetry) | ✅ | ❌ | ❌ | ❌ |
 
 ## Camera Peek Feature
 
