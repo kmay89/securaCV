@@ -36,9 +36,9 @@ async def async_get_config_entry_diagnostics(
             entry_trust = trust_store.get(device_id)
             if entry_trust:
                 trust_info[device_id] = {
-                    "pinned": bool(entry_trust.get("fingerprint")),
-                    "pin_source": entry_trust.get("pin_source", "unknown"),
-                    "fingerprint": entry_trust.get("fingerprint", "")[:16] + "…" if entry_trust.get("fingerprint") else None,
+                    "pinned": bool(entry_trust.fingerprint_hex),
+                    "pin_source": getattr(entry_trust, "pin_source", "unknown"),
+                    "fingerprint": entry_trust.fingerprint_hex[:16] + "…" if entry_trust.fingerprint_hex else None,
                 }
 
     verify_info: dict[str, Any] = {}

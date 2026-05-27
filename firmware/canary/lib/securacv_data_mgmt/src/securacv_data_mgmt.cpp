@@ -518,6 +518,7 @@ bool datamgmt_verify_chain(chain_verify_result_t* result) {
   dir.close();
 
   bool was_capped = (records_checked >= VERIFY_MAX_RECORDS);
+  if (was_capped) chain_intact = false;
 
   result->records_checked    = records_checked;
   result->records_valid      = records_valid;

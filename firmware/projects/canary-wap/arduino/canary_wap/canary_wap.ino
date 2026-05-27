@@ -4488,7 +4488,7 @@ static esp_err_t handle_captive_portal(httpd_req_t* req) {
   /* Redirect straight to the companion wizard — the user is already on
    * their phone and already on this AP, so the old QR intermediary page
    * added a dead-end step.  Use HTTPS when available. */
-  const char* scheme = g_https_server ? "https" : "http";
+  const char* scheme = "http";
   char location[180];
   snprintf(location, sizeof(location),
            "%s://192.168.4.1/companion?token=%s", scheme, tok_hex);
