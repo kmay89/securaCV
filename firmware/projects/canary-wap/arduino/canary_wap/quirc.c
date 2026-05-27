@@ -78,8 +78,8 @@ int quirc_resize(struct quirc *q, int w, int h)
 
 	/* compute the "old" (i.e. currently allocated) and the "new"
 	   (i.e. requested) image dimensions */
-	size_t olddim = q->w * q->h;
-	size_t newdim = w * h;
+	size_t olddim = (size_t)q->w * (size_t)q->h;
+	size_t newdim = (size_t)w * (size_t)h;
 	size_t min = (olddim < newdim ? olddim : newdim);
 
 	/*

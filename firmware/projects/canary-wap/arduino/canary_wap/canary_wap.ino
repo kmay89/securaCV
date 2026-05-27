@@ -133,9 +133,6 @@
 extern "C" {
 #include "qrcodegen.h"           // Vendored Nayuki QR encoder, MIT
 }
-#if FEATURE_QR_PROVISION
-#include "qr_scanner.h"          // Camera-based QR decoder for WiFi provisioning
-#endif
 #include "csi_dashboard_html.h"  // CSI_DASHBOARD_HTML — the Phase-3 headline UI now served at /
 #include "mesh_network.h"
 #include "mesh_channel_policy.h"  // Channel decision (STA-follow) for MQTT telemetry
@@ -160,6 +157,10 @@ extern "C" {
 // ════════════════════════════════════════════════════════════════════════════
 
 #include "build_config.h"
+
+#if FEATURE_QR_PROVISION
+#include "qr_scanner.h"
+#endif
 
 // BLE Discovery Subsystem (Opera/Chirp/Nearby)
 #include "ble_config.h"
