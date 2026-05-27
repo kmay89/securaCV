@@ -12,8 +12,10 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <stdlib.h>
 #include <string.h>
 #include "esp_camera.h"
+#include "esp_heap_caps.h"
 
 extern "C" {
 #include "quirc.h"
