@@ -296,7 +296,10 @@ static void app_print_scene_banner() {
     Serial.println(F("    It creates tamper-proof records of what it"));
     Serial.println(F("    sees, so nobody can change the story later."));
     Serial.println();
-    Serial.printf( "    Built %s %s\n", FW_BUILD_DATE, FW_BUILD_TIME);
+    Serial.printf( "    Type        %s\n", CONFIG_DEVICE_TYPE);
+    Serial.printf( "    Model       %s\n", CONFIG_MODEL);
+    Serial.printf( "    Built       %s %s\n", FW_BUILD_DATE, FW_BUILD_TIME);
+    Serial.printf( "    MAC         %s\n", WiFi.macAddress().c_str());
     Serial.println(F("    ------------------------------------------------"));
     Serial.println();
 }
@@ -308,14 +311,22 @@ static void app_print_scene_hardware() {
     Serial.println(F("              \" \"          What am I running on?"));
     Serial.println(F("    ------------------------------------------------"));
     Serial.printf( "    Board       %s\n", BOARD_NAME);
-    Serial.printf( "    CPU         %u MHz\n", (unsigned)ESP.getCpuFreqMHz());
-    Serial.printf( "    Flash       %u MB  (stores the firmware)\n", (unsigned)(ESP.getFlashChipSize() / (1024 * 1024)));
+    Serial.printf( "    Chip        %s rev %u\n", ESP.getChipModel(), (unsigned)ESP.getChipRevision());
+    Serial.printf( "    CPU         %u MHz, %u core(s)\n", (unsigned)ESP.getCpuFreqMHz(), (unsigned)ESP.getChipCores());
+    Serial.println(F("                (the brain — higher MHz = faster thinking)"));
+    Serial.printf( "    Flash       %u MB\n", (unsigned)(ESP.getFlashChipSize() / (1024 * 1024)));
+    Serial.println(F("                (permanent storage, like a hard drive)"));
     if (psramFound()) {
-        Serial.printf( "    PSRAM       %u KB  (extra working memory)\n", (unsigned)(ESP.getPsramSize() / 1024));
+        Serial.printf( "    PSRAM       %u KB total, %u KB free\n",
+                       (unsigned)(ESP.getPsramSize() / 1024), (unsigned)(ESP.getFreePsram() / 1024));
+        Serial.println(F("                (extra memory for big tasks like camera)"));
     } else {
         Serial.println(F("    PSRAM       not found"));
     }
+    Serial.printf( "    Heap        %u KB free at boot\n", (unsigned)(ESP.getFreeHeap() / 1024));
+    Serial.println(F("                (working memory — like a desk to work on)"));
     Serial.printf( "    SDK         %s\n", ESP.getSdkVersion());
+    Serial.println(F("                (the software toolkit this firmware uses)"));
     Serial.println();
 }
 
@@ -328,60 +339,67 @@ static void app_print_scene_features() {
     Serial.println(F("    ------------------------------------------------"));
 
     #if FEATURE_GNSS
-    Serial.print(F("    + GPS/GNSS"));
+    Serial.println(F("    + GPS/GNSS       knows where it is on Earth"));
     #else
-    Serial.print(F("    - GPS/GNSS"));
+    Serial.println(F("    - GPS/GNSS"));
     #endif
     #if FEATURE_WIFI_AP
-    Serial.println(F("            + WiFi AP/STA"));
+    Serial.println(F("    + WiFi AP/STA    creates its own WiFi + joins yours"));
     #else
-    Serial.println(F("            - WiFi AP/STA"));
+    Serial.println(F("    - WiFi AP/STA"));
     #endif
-
     #if FEATURE_SD_STORAGE
-    Serial.print(F("    + SD Storage"));
+    Serial.println(F("    + SD Storage     saves records to a memory card"));
     #else
-    Serial.print(F("    - SD Storage"));
+    Serial.println(F("    - SD Storage"));
     #endif
     #if FEATURE_HTTP_SERVER
-    Serial.println(F("          + HTTP Server"));
+    Serial.println(F("    + HTTP Server    runs a web dashboard you can visit"));
     #else
-    Serial.println(F("          - HTTP Server"));
+    Serial.println(F("    - HTTP Server"));
     #endif
-
     #if FEATURE_CAMERA_PEEK
-    Serial.print(F("    + Camera"));
+    Serial.println(F("    + Camera         live preview for aiming the device"));
     #else
-    Serial.print(F("    - Camera"));
+    Serial.println(F("    - Camera"));
     #endif
     #if FEATURE_MESH_NETWORK
-    Serial.println(F("              + Opera Mesh"));
+    Serial.println(F("    + Opera Mesh     talks to other canaries nearby"));
     #else
-    Serial.println(F("              - Opera Mesh"));
+    Serial.println(F("    - Opera Mesh"));
     #endif
-
     #if FEATURE_BLUETOOTH
-    Serial.print(F("    + Bluetooth"));
+    Serial.println(F("    + Bluetooth      pairs with your phone for setup"));
     #else
-    Serial.print(F("    - Bluetooth"));
+    Serial.println(F("    - Bluetooth"));
     #endif
     #if FEATURE_RF_PRESENCE
-    Serial.println(F("           + RF Presence"));
+    Serial.println(F("    + RF Presence    detects people nearby using radio"));
     #else
-    Serial.println(F("           - RF Presence"));
+    Serial.println(F("    - RF Presence"));
     #endif
-
     #if FEATURE_CHIRP
-    Serial.print(F("    + Chirp"));
+    Serial.println(F("    + Chirp          relays alerts from the community"));
     #else
-    Serial.print(F("    - Chirp"));
+    Serial.println(F("    - Chirp"));
     #endif
     #if FEATURE_WATCHDOG
-    Serial.printf("               + Watchdog %ds\n", CONFIG_WATCHDOG_TIMEOUT_SEC);
+    Serial.printf("    + Watchdog %ds    auto-restarts if something freezes\n", CONFIG_WATCHDOG_TIMEOUT_SEC);
     #else
-    Serial.println(F("               - Watchdog"));
+    Serial.println(F("    - Watchdog"));
     #endif
 
+    Serial.println();
+    Serial.println(F("    Timing: how often the canary creates records"));
+    Serial.println(F("    ------------------------------------------------"));
+    Serial.printf( "    Record rate   every %u ms\n", CONFIG_RECORD_INTERVAL_MS);
+    Serial.println(F("                  (creates 1 signed witness record per second)"));
+    Serial.printf( "    Time bucket   %u ms\n", CONFIG_TIME_BUCKET_MS);
+    Serial.println(F("                  (rounds timestamps so exact times stay private)"));
+    Serial.printf( "    Self-verify   every %u seconds\n", CONFIG_VERIFY_INTERVAL_SEC);
+    Serial.println(F("                  (the canary checks its own math is correct)"));
+    Serial.printf( "    SD persist    every %u records\n", CONFIG_SD_PERSIST_INTERVAL);
+    Serial.println(F("                  (saves a batch to the SD card at once)"));
     Serial.println();
 }
 
@@ -393,9 +411,15 @@ static void app_print_scene_protocol() {
     Serial.println(F("              | |          so it can't be forged."));
     Serial.println(F("    ------------------------------------------------"));
     Serial.printf( "    Witness     %s\n", PWK_PROTOCOL_VERSION);
+    Serial.println(F("                (the Privacy Witness Kernel protocol version)"));
     Serial.printf( "    Chain       %s\n", CHAIN_ALGORITHM);
+    Serial.println(F("                (how records are linked — like a chain of"));
+    Serial.println(F("                 paper clips where removing one breaks all)"));
     Serial.printf( "    Signature   %s\n", SIGNATURE_ALGORITHM);
+    Serial.println(F("                (the math that proves a record is genuine,"));
+    Serial.println(F("                 like a wax seal on a letter)"));
     Serial.printf( "    Ruleset     %s\n", RULESET_ID);
+    Serial.println(F("                (the set of rules this device follows)"));
     Serial.println();
 }
 
@@ -407,9 +431,16 @@ static void app_print_scene_chain() {
     Serial.println(F("              |=|          like pages in a sealed book."));
     Serial.println(F("    ------------------------------------------------"));
     Serial.printf( "    Device      %s\n", witness_chain_device_id(&g_witness_chain));
-    Serial.printf( "    Sequence    %u\n", witness_chain_sequence(&g_witness_chain));
-    Serial.printf( "    Boot        #%u\n", witness_chain_boot_count(&g_witness_chain));
+    Serial.printf( "    Sequence    %u  (next record number)\n", witness_chain_sequence(&g_witness_chain));
+    Serial.printf( "    Boot        #%u  (times this device has started)\n", witness_chain_boot_count(&g_witness_chain));
     Serial.printf( "    Integrity   %s\n", g_health.crypto_healthy ? "verified" : "check required");
+    if (g_health.crypto_healthy) {
+        Serial.printf("    Key         %02x%02x%02x%02x...  (Ed25519 public key prefix)\n",
+                       g_witness_chain.pubkey_fingerprint[0],
+                       g_witness_chain.pubkey_fingerprint[1],
+                       g_witness_chain.pubkey_fingerprint[2],
+                       g_witness_chain.pubkey_fingerprint[3]);
+    }
     Serial.println();
 }
 
@@ -422,8 +453,22 @@ static void app_print_scene_network(const char* ssid) {
     Serial.println(F("    ------------------------------------------------"));
     Serial.printf( "    WiFi name   %s\n", ssid);
     Serial.printf( "    Password    %s\n", CONFIG_AP_PASSWORD_DEFAULT);
+    Serial.printf( "    Channel     %d  (WiFi radio channel, up to %d devices at once)\n", CONFIG_AP_CHANNEL, CONFIG_AP_MAX_CLIENTS);
     Serial.println(F("    Dashboard   http://canary.local"));
+    Serial.println(F("                (type this in your browser to see the dashboard)"));
     Serial.printf( "    Direct IP   http://%s\n", WiFi.softAPIP().toString().c_str());
+    Serial.println(F("                (use this if canary.local doesn't work)"));
+    Serial.printf( "    HTTP port   %d\n", CONFIG_HTTP_PORT);
+    Serial.println(F("    mDNS        canary.local  (service: _securacv._tcp)"));
+    Serial.println(F("                (mDNS lets your device find the canary by name"));
+    Serial.println(F("                 instead of remembering a number like 192.168.4.1)"));
+    #if FEATURE_BLUETOOTH
+    Serial.printf( "    BLE name    %s\n", CONFIG_BLE_DEVICE_NAME);
+    Serial.println(F("                (how the canary appears on Bluetooth scans)"));
+    #endif
+    #if FEATURE_GNSS
+    Serial.printf( "    GNSS baud   %u  (speed the GPS module talks at)\n", CONFIG_GNSS_BAUD);
+    #endif
     Serial.println();
 }
 
@@ -466,6 +511,36 @@ static void app_print_scene_guide(const char* ssid) {
     Serial.println(F("       Peek      - aim the camera"));
     Serial.println(F("       Sensing   - see who's nearby (via RF)"));
     Serial.println(F("       Settings  - connect to your home WiFi"));
+    Serial.println();
+    Serial.println(F("    REST API — for developers, scripts, and tinkerers:"));
+    Serial.println(F("    (These are web addresses you can visit or call"));
+    Serial.println(F("     from code. Add them after http://canary.local)"));
+    Serial.println(F("    ------------------------------------------------"));
+    Serial.println(F("    GET  /api/status          is the device healthy?"));
+    Serial.println(F("    GET  /api/chain           latest witness chain info"));
+    Serial.println(F("    GET  /api/logs            recent event log"));
+    Serial.println(F("    POST /api/export          download all signed records"));
+    Serial.println(F("    GET  /api/wifi/scan       see nearby WiFi networks"));
+    Serial.println(F("    POST /api/wifi/connect    join your home WiFi"));
+    Serial.println(F("    GET  /api/peek/stream     live camera video feed"));
+    Serial.println(F("    GET  /api/peek/snapshot   take one photo"));
+    Serial.println(F("    GET  /api/sensing         who's nearby? (RF data)"));
+    Serial.println(F("    GET  /api/diagnostics     everything about this device"));
+    Serial.println(F("    GET  /api/selftest        run a hardware check"));
+    Serial.println(F("    POST /api/reboot          restart the canary"));
+    Serial.println();
+    Serial.println(F("    Serial monitor — what you're reading right now:"));
+    Serial.println(F("    ------------------------------------------------"));
+    Serial.printf( "    Baud rate   %u  (the speed of this text connection)\n", CONFIG_SERIAL_BAUD);
+    Serial.println(F("    Health      a status line prints every 60 seconds"));
+    Serial.println(F("                so you know the canary is still alive"));
+    Serial.println(F("    Debug mode  for much more detail, rebuild with:"));
+    Serial.println(F("                  pio run -e canary-wap-debug"));
+    Serial.println(F("                this turns on verbose logging for"));
+    Serial.println(F("                every subsystem (GPS, BLE, mesh, etc.)"));
+    Serial.println(F("    BLE debug   hold the BOOT button during power-on"));
+    Serial.printf( "                for %u seconds to activate a special\n", CONFIG_BOOT_BUTTON_HOLD_MS / 1000);
+    Serial.println(F("                Bluetooth debug beacon"));
     Serial.println();
     Serial.println(F("    ------------------------------------------------"));
     Serial.println();
@@ -798,28 +873,31 @@ static void app_process_health() {
 
         Serial.println();
         if (h > 0)
-            Serial.printf("    ,_, %uh %um %us up", h, m, s);
+            Serial.printf("    ,_, Alive %uh %um %us", h, m, s);
         else
-            Serial.printf("    ,_, %um %us up", m, s);
+            Serial.printf("    ,_, Alive %um %us", m, s);
 
-        Serial.printf(" | %u records | %u verified | heap %uK/%uK",
-                       g_health.records_created, g_health.records_verified,
+        Serial.printf(" | %u records created | %u self-checks passed",
+                       g_health.records_created, g_health.records_verified);
+        Serial.println();
+        Serial.printf("        Memory %uK free (lowest: %uK)",
                        g_health.free_heap / 1024, g_health.min_heap / 1024);
 
         #if FEATURE_GNSS
         const gnss_fix_t* fix = gnss_parser_get_fix(&g_gnss_parser);
         if (fix->valid)
-            Serial.printf(" | gps %u sats", fix->satellites);
+            Serial.printf(" | GPS locked (%u satellites)", fix->satellites);
         else
-            Serial.print(" | gps searching");
+            Serial.print(" | GPS searching...");
         #endif
 
         #if FEATURE_SD_STORAGE
-        Serial.printf(" | %u writes", g_health.sd_writes);
+        Serial.printf(" | SD %u writes", g_health.sd_writes);
         #endif
 
         #if FEATURE_MESH_NETWORK
-        Serial.printf(" | mesh %u", g_health.mesh_messages_sent);
+        if (g_health.mesh_messages_sent > 0)
+            Serial.printf(" | Mesh %u msgs", g_health.mesh_messages_sent);
         #endif
 
         Serial.println();
