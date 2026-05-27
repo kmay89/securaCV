@@ -62,6 +62,7 @@ struct chain_verify_result_t {
   uint32_t chain_breaks;
   uint32_t signature_failures;
   bool     chain_intact;
+  bool     partial;
 };
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -82,15 +83,16 @@ struct datamgmt_stats_t {
 //
 // Offset  Size  Description
 // 0       4     magic (0x53434256 "SCVB")
-// 4       4     version (1)
+// 4       4     version (2)
 // 8       4     seq
 // 12      32    chain_head hash
-// 44      4     CRC-32 of bytes 0..43
+// 44      32    HMAC-SHA256 of bytes 0..43 (keyed by device privkey)
 // ════════════════════════════════════════════════════════════════════════════
 
 static const uint32_t BACKUP_MAGIC   = 0x53434256;
-static const uint32_t BACKUP_VERSION = 1;
-static const size_t   BACKUP_SIZE    = 48;
+static const uint32_t BACKUP_VERSION = 2;
+static const size_t   BACKUP_PAYLOAD = 44;
+static const size_t   BACKUP_SIZE    = 76;  // 44 payload + 32 HMAC
 
 // ════════════════════════════════════════════════════════════════════════════
 // RATE LIMITS
@@ -119,21 +121,6 @@ static uint32_t s_health_files      = 0;
 static uint32_t s_files_rotated     = 0;
 static uint32_t s_last_rotation_ms  = 0;
 static bool     s_backup_exists     = false;
-
-// ════════════════════════════════════════════════════════════════════════════
-// CRC-32 (bit-by-bit, no lookup table — saves ~1 KB flash)
-// ════════════════════════════════════════════════════════════════════════════
-
-inline uint32_t crc32_simple(const uint8_t* data, size_t len) {
-  uint32_t crc = 0xFFFFFFFF;
-  for (size_t i = 0; i < len; i++) {
-    crc ^= data[i];
-    for (int b = 0; b < 8; b++) {
-      crc = (crc >> 1) ^ (0xEDB88320 & (-(int32_t)(crc & 1)));
-    }
-  }
-  return ~crc;
-}
 
 // ════════════════════════════════════════════════════════════════════════════
 // SD USAGE HELPER
@@ -264,7 +251,8 @@ inline uint32_t rotate_dir(const char* dir_path, uint32_t max_files) {
 // Needs the live chain_head and seq from the caller (the .ino owns these).
 // ════════════════════════════════════════════════════════════════════════════
 
-inline bool backup_chain(const uint8_t* chain_head, uint32_t seq) {
+inline bool backup_chain(const uint8_t* chain_head, uint32_t seq,
+                         const uint8_t* privkey = nullptr) {
   if (!sd_is_available()) return false;
 
   uint8_t buf[BACKUP_SIZE];
@@ -280,9 +268,12 @@ inline bool backup_chain(const uint8_t* chain_head, uint32_t seq) {
   // Chain head hash (32 bytes)
   memcpy(buf + 12, chain_head, 32);
 
-  // CRC-32 of bytes 0..43
-  uint32_t crc = crc32_simple(buf, 44);
-  memcpy(buf + 44, &crc, 4);
+  // HMAC-SHA256 of payload bytes 0..43, keyed by device private key
+  if (privkey) {
+    uint8_t hmac[32];
+    hmac_sha256(privkey, 32, buf, BACKUP_PAYLOAD, hmac);
+    memcpy(buf + BACKUP_PAYLOAD, hmac, 32);
+  }
 
   // Ensure /CHAIN directory exists.
   if (!SD.exists("/sd/CHAIN")) SD.mkdir("/sd/CHAIN");
@@ -314,7 +305,8 @@ inline bool backup_chain(const uint8_t* chain_head, uint32_t seq) {
 // responsible for writing them back to NVS.
 // ════════════════════════════════════════════════════════════════════════════
 
-inline bool restore_chain(uint8_t* chain_head_out, uint32_t* seq_out) {
+inline bool restore_chain(uint8_t* chain_head_out, uint32_t* seq_out,
+                          const uint8_t* privkey = nullptr) {
   if (!sd_is_available()) return false;
 
   File f = SD.open("/sd/CHAIN/backup.bin", FILE_READ);
@@ -343,14 +335,15 @@ inline bool restore_chain(uint8_t* chain_head_out, uint32_t* seq_out) {
     return false;
   }
 
-  // Validate CRC
-  uint32_t stored_crc;
-  memcpy(&stored_crc, buf + 44, 4);
-  uint32_t calc_crc = crc32_simple(buf, 44);
-  if (stored_crc != calc_crc) {
-    log_health(SCV_LOG_ERROR, SCV_CAT_STORAGE,
-               "Chain restore: CRC mismatch", nullptr);
-    return false;
+  // Validate HMAC-SHA256
+  if (privkey) {
+    uint8_t calc_hmac[32];
+    hmac_sha256(privkey, 32, buf, BACKUP_PAYLOAD, calc_hmac);
+    if (memcmp(buf + BACKUP_PAYLOAD, calc_hmac, 32) != 0) {
+      log_health(SCV_LOG_ERROR, SCV_CAT_STORAGE,
+                 "Chain restore: HMAC mismatch (tampered?)", nullptr);
+      return false;
+    }
   }
 
   // Extract fields
@@ -398,9 +391,8 @@ inline bool verify_chain(chain_verify_result_t* result,
     return false;
   }
 
-  // Batch constants (stack-local to avoid heap)
-  static const size_t V_BATCH = 32;
-  static const size_t V_NAME  = 48;
+  static const size_t V_NAME = 48;
+  static const uint32_t VERIFY_MAX_RECORDS = 100;
 
   uint8_t prev_chain_hash[32];
   bool have_prev = false;
@@ -410,97 +402,93 @@ inline bool verify_chain(chain_verify_result_t* result,
   uint32_t sig_failures    = 0;
   bool     chain_intact    = true;
 
-  char names[V_BATCH][V_NAME];
-  size_t collected = 0;
+  // Globally-sorted selection walk: find the lexicographically
+  // smallest filename greater than the last processed one each
+  // iteration. O(n^2) but constant memory and correct ordering.
+  // Capped at VERIFY_MAX_RECORDS to prevent watchdog timeout.
+  char last_processed[V_NAME] = {0};
+  char next_name[V_NAME];
 
-  // Lambda to process a batch of sorted filenames
-  auto process_batch = [&](size_t count) {
-    sort_names(reinterpret_cast<char(*)[MAX_NAME_LEN]>(names), count);
+  for (;;) {
+    if (records_checked >= VERIFY_MAX_RECORDS) break;
 
-    for (size_t i = 0; i < count; i++) {
-      char path[V_NAME + 16];
-      snprintf(path, sizeof(path), "/sd/WITNESS/%s", names[i]);
-
-      File rf = SD.open(path, FILE_READ);
-      if (!rf) continue;
-
-      // Read enough for chain hash linkage check (first 96 bytes covers
-      // seq + prev_hash + chain_hash in the standard witness record layout).
-      // We read the whole file for signature verification when available.
-      uint8_t rec_buf[512];
-      size_t rd = rf.read(rec_buf, sizeof(rec_buf));
-      rf.close();
-
-      if (rd < 68) continue;  // Too small to have seq + prev_hash + chain_hash
-
-      records_checked++;
-
-      // Verify signature if callback provided
-      if (verify_fn) {
-        if (verify_fn(rec_buf, rd)) {
-          records_valid++;
-        } else {
-          sig_failures++;
-          chain_intact = false;
-        }
-      } else {
-        records_valid++;  // No verifier = assume valid
-      }
-
-      // Check chain hash continuity.
-      // Standard layout: bytes 4..35 = prev_hash, bytes 36..67 = chain_hash
-      if (have_prev && rd >= 68) {
-        if (memcmp(rec_buf + 4, prev_chain_hash, 32) != 0) {
-          chain_breaks++;
-          chain_intact = false;
-        }
-      }
-      if (rd >= 68) {
-        memcpy(prev_chain_hash, rec_buf + 36, 32);
-        have_prev = true;
-      }
-    }
-  };
-
-  // Walk directory, collecting filenames in batches
-  for (File entry = dir.openNextFile(); entry;
-       entry = dir.openNextFile()) {
-    if (entry.isDirectory()) {
+    next_name[0] = '\0';
+    dir.rewindDirectory();
+    for (File entry = dir.openNextFile(); entry;
+         entry = dir.openNextFile()) {
+      if (entry.isDirectory()) { entry.close(); continue; }
+      const char* n = entry.name();
+      const char* slash = strrchr(n, '/');
+      const char* base = slash ? (slash + 1) : n;
       entry.close();
-      continue;
+
+      if (strcmp(base, last_processed) <= 0) continue;
+      if (next_name[0] == '\0' || strcmp(base, next_name) < 0) {
+        strncpy(next_name, base, V_NAME - 1);
+        next_name[V_NAME - 1] = '\0';
+      }
     }
 
-    const char* n = entry.name();
-    const char* slash = strrchr(n, '/');
-    const char* base = slash ? (slash + 1) : n;
-    strncpy(names[collected], base, V_NAME - 1);
-    names[collected][V_NAME - 1] = '\0';
-    collected++;
-    entry.close();
+    if (next_name[0] == '\0') break;
+    strncpy(last_processed, next_name, V_NAME);
 
-    if (collected >= V_BATCH) {
-      process_batch(collected);
-      collected = 0;
+    char path[V_NAME + 16];
+    snprintf(path, sizeof(path), "/sd/WITNESS/%s", next_name);
+
+    File rf = SD.open(path, FILE_READ);
+    if (!rf) continue;
+
+    uint8_t rec_buf[512];
+    size_t rd = rf.read(rec_buf, sizeof(rec_buf));
+    rf.close();
+
+    if (rd < 68) continue;
+
+    records_checked++;
+
+    if (verify_fn) {
+      if (verify_fn(rec_buf, rd)) {
+        records_valid++;
+      } else {
+        sig_failures++;
+        chain_intact = false;
+      }
+    } else {
+      records_valid++;
     }
+
+    // Check chain hash continuity (bytes 4..35 = prev_hash, 36..67 = chain_hash)
+    if (have_prev && rd >= 68) {
+      if (memcmp(rec_buf + 4, prev_chain_hash, 32) != 0) {
+        chain_breaks++;
+        chain_intact = false;
+      }
+    }
+    if (rd >= 68) {
+      memcpy(prev_chain_hash, rec_buf + 36, 32);
+      have_prev = true;
+    }
+
+    if ((records_checked % 10) == 0) delay(1);
   }
   dir.close();
 
-  // Process any remaining names in the last partial batch
-  if (collected > 0) {
-    process_batch(collected);
-  }
+  bool was_capped = (records_checked >= VERIFY_MAX_RECORDS);
 
   result->records_checked    = records_checked;
   result->records_valid      = records_valid;
   result->chain_breaks       = chain_breaks;
   result->signature_failures = sig_failures;
   result->chain_intact       = chain_intact;
+  result->partial            = was_capped;
 
-  char detail[64];
-  snprintf(detail, sizeof(detail), "%u checked, %u valid, %u breaks",
+  char detail[80];
+  snprintf(detail, sizeof(detail), "%u checked, %u valid, %u breaks%s",
            (unsigned)records_checked, (unsigned)records_valid,
-           (unsigned)chain_breaks);
-  log_health(SCV_LOG_INFO, SCV_CAT_CHAIN,
+           (unsigned)chain_breaks,
+           was_capped ? " (partial)" : "");
+  log_health(was_capped ? SCV_LOG_WARNING : SCV_LOG_INFO,
+             SCV_CAT_CHAIN,
              "Chain verification complete", detail);
 
   return true;
@@ -608,7 +596,8 @@ inline void init() {
 // chain_head and seq must be supplied by the caller (the .ino owns them).
 // ════════════════════════════════════════════════════════════════════════════
 
-inline bool process(const uint8_t* chain_head, uint32_t seq) {
+inline bool process(const uint8_t* chain_head, uint32_t seq,
+                    const uint8_t* privkey = nullptr) {
   if (!s_initialized) return false;
 
   uint32_t now = millis();
@@ -649,7 +638,7 @@ inline bool process(const uint8_t* chain_head, uint32_t seq) {
   // Periodic chain backup (every hour)
   if ((int32_t)(now - s_last_backup_ms) >= (int32_t)BACKUP_INTERVAL_MS ||
       s_last_backup_ms == 0) {
-    backup_chain(chain_head, seq);
+    backup_chain(chain_head, seq, privkey);
   }
 
   return true;
