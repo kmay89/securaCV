@@ -133,6 +133,9 @@
 extern "C" {
 #include "qrcodegen.h"           // Vendored Nayuki QR encoder, MIT
 }
+#if FEATURE_QR_PROVISION
+#include "qr_scanner.h"          // Camera-based QR decoder for WiFi provisioning
+#endif
 #include "csi_dashboard_html.h"  // CSI_DASHBOARD_HTML — the Phase-3 headline UI now served at /
 #include "mesh_network.h"
 #include "mesh_channel_policy.h"  // Channel decision (STA-follow) for MQTT telemetry
@@ -4067,6 +4070,10 @@ static esp_err_t handle_wifi_status(httpd_req_t* req) {
     doc["connected_sec"] = (millis() - g_wifi_status.connected_since_ms) / 1000;
   }
 
+#if FEATURE_QR_PROVISION
+  doc["qr_provision"] = true;
+#endif
+
   String response;
   serializeJson(doc, response);
   return http_send_json(req, response.c_str());
@@ -4507,6 +4514,190 @@ static esp_err_t handle_captive_portal(httpd_req_t* req) {
     location, location);
   return httpd_resp_sendstr(req, body);
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// QR-CODE WIFI PROVISIONING (camera scans QR from phone)
+// ════════════════════════════════════════════════════════════════════════════
+
+#if FEATURE_QR_PROVISION
+
+static volatile bool     g_qr_scan_active  = false;
+static volatile bool     g_qr_scan_success = false;
+static char              g_qr_scanned_ssid[33] = {};
+static char              g_qr_scan_error[64] = {};
+static char              g_qr_scan_token[csi_integration::PAIR_TOKEN_HEX_LEN + 1] = {};
+static TaskHandle_t      g_qr_scan_task = nullptr;
+static constexpr uint32_t QR_SCAN_TIMEOUT_MS = 60000;
+
+static void qr_scan_task_fn(void* param) {
+  (void)param;
+
+  sensor_t* sensor = esp_camera_sensor_get();
+  int orig_framesize = sensor ? sensor->status.framesize : -1;
+  if (sensor) sensor->set_framesize(sensor, FRAMESIZE_QVGA);
+
+  bool scanner_ready = qr_scanner::init();
+  if (!scanner_ready) {
+    strncpy(g_qr_scan_error, "Scanner init failed", sizeof(g_qr_scan_error));
+    g_qr_scan_active = false;
+    if (sensor && orig_framesize >= 0)
+      sensor->set_framesize(sensor, (framesize_t)orig_framesize);
+    g_qr_scan_task = nullptr;
+    vTaskDelete(nullptr);
+    return;
+  }
+
+  uint32_t start = millis();
+  char payload[512];
+
+  while (g_qr_scan_active) {
+    if (millis() - start > QR_SCAN_TIMEOUT_MS) {
+      strncpy(g_qr_scan_error, "timeout", sizeof(g_qr_scan_error));
+      break;
+    }
+
+    camera_fb_t* fb = esp_camera_fb_get();
+    if (!fb) {
+      vTaskDelay(pdMS_TO_TICKS(50));
+      continue;
+    }
+
+    int result = qr_scanner::scan_frame(fb, payload, sizeof(payload));
+    esp_camera_fb_return(fb);
+
+    if (result == 1) {
+      char ssid[33] = {};
+      char pass[65] = {};
+      char qr_token[csi_integration::PAIR_TOKEN_HEX_LEN + 1] = {};
+      bool parsed = false;
+
+      if (qr_scanner::parse_securacv(payload, ssid, sizeof(ssid),
+                                     pass, sizeof(pass),
+                                     qr_token, sizeof(qr_token))) {
+        parsed = true;
+        const char* tok = qr_token[0] ? qr_token : g_qr_scan_token;
+        if (!csi_integration::pair_token_valid(tok)) {
+          strncpy(g_qr_scan_error, "Invalid token in QR", sizeof(g_qr_scan_error));
+          memset(pass, 0, sizeof(pass));
+          break;
+        }
+      } else if (qr_scanner::parse_wifi(payload, ssid, sizeof(ssid),
+                                        pass, sizeof(pass))) {
+        parsed = true;
+        if (!csi_integration::pair_token_valid(g_qr_scan_token)) {
+          strncpy(g_qr_scan_error, "Session token expired", sizeof(g_qr_scan_error));
+          memset(pass, 0, sizeof(pass));
+          break;
+        }
+      }
+
+      if (parsed && ssid[0]) {
+        strncpy(g_wifi_creds.ssid, ssid, sizeof(g_wifi_creds.ssid) - 1);
+        strncpy(g_wifi_creds.password, pass, sizeof(g_wifi_creds.password) - 1);
+        g_wifi_creds.configured = true;
+        g_wifi_creds.enabled = true;
+        wifi_save_credentials();
+        g_wifi_status.last_fail_reason[0] = '\0';
+        wifi_connect_to_home();
+
+        strncpy(g_qr_scanned_ssid, ssid, sizeof(g_qr_scanned_ssid) - 1);
+        g_qr_scan_success = true;
+        log_health(SCV_LOG_INFO, SCV_CAT_NETWORK,
+                   "WiFi credentials applied via QR scan", ssid);
+      }
+
+      memset(pass, 0, sizeof(pass));
+      memset(payload, 0, sizeof(payload));
+      break;
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(100));
+  }
+
+  qr_scanner::deinit();
+  if (sensor && orig_framesize >= 0)
+    sensor->set_framesize(sensor, (framesize_t)orig_framesize);
+
+  g_qr_scan_active = false;
+  g_qr_scan_task = nullptr;
+  vTaskDelete(nullptr);
+}
+
+static esp_err_t handle_qr_scan_start(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  if (g_qr_scan_active) {
+    return http_send_json(req, "{\"ok\":false,\"error\":\"Scan already active\"}");
+  }
+
+#if FEATURE_CAMERA_PEEK
+  extern volatile bool g_peek_active;
+  if (g_peek_active) {
+    return http_send_json(req, "{\"ok\":false,\"error\":\"Camera is busy with peek stream\"}");
+  }
+#endif
+
+  char body[256];
+  int len = httpd_req_recv(req, body, sizeof(body) - 1);
+  if (len <= 0) {
+    httpd_resp_set_status(req, "400 Bad Request");
+    return http_send_json(req, "{\"ok\":false,\"error\":\"Missing request body\"}");
+  }
+  body[len] = '\0';
+
+  JsonDocument doc;
+  if (deserializeJson(doc, body)) {
+    httpd_resp_set_status(req, "400 Bad Request");
+    return http_send_json(req, "{\"ok\":false,\"error\":\"Invalid JSON\"}");
+  }
+
+  const char* token = doc["token"] | "";
+  if (!csi_integration::pair_token_valid(token)) {
+    return http_send_json(req, "{\"ok\":false,\"code\":\"invalid_token\","
+      "\"error\":\"This setup link has expired. Reconnect to the SecuraCV network to start over.\"}");
+  }
+
+  g_qr_scan_success = false;
+  g_qr_scan_error[0] = '\0';
+  g_qr_scanned_ssid[0] = '\0';
+  strncpy(g_qr_scan_token, token, sizeof(g_qr_scan_token) - 1);
+  g_qr_scan_active = true;
+
+  BaseType_t created = xTaskCreatePinnedToCore(
+    qr_scan_task_fn, "qr_scan", 8192, nullptr, 1, &g_qr_scan_task, 0);
+
+  if (created != pdPASS) {
+    g_qr_scan_active = false;
+    return http_send_json(req, "{\"ok\":false,\"error\":\"Could not start scan task\"}");
+  }
+
+  return http_send_json(req, "{\"ok\":true,\"scanning\":true}");
+}
+
+static esp_err_t handle_qr_scan_status(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["scanning"] = (bool)g_qr_scan_active;
+  doc["success"] = (bool)g_qr_scan_success;
+  if (g_qr_scanned_ssid[0])
+    doc["ssid"] = g_qr_scanned_ssid;
+  if (g_qr_scan_error[0])
+    doc["error"] = g_qr_scan_error;
+
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+static esp_err_t handle_qr_scan_stop(httpd_req_t* req) {
+  g_health.http_requests++;
+  g_qr_scan_active = false;
+  return http_send_json(req, "{\"ok\":true}");
+}
+
+#endif // FEATURE_QR_PROVISION
 
 // ════════════════════════════════════════════════════════════════════════════
 // BLE DISCOVERY API HANDLERS (Opera/Chirp/Nearby)
@@ -5135,6 +5326,15 @@ register_extra_routes:
   // before any post-pair token exists, identical to /api/wifi/scan).
   httpd_uri_t selftest = { .uri = "/api/selftest", .method = HTTP_GET, .handler = selftest::handle_selftest };
   httpd_register_uri_handler(active_server, &selftest);
+
+#if FEATURE_QR_PROVISION
+  httpd_uri_t qr_start  = { .uri = "/api/wifi/qr-scan", .method = HTTP_POST,   .handler = handle_qr_scan_start };
+  httpd_uri_t qr_status = { .uri = "/api/wifi/qr-scan", .method = HTTP_GET,    .handler = handle_qr_scan_status };
+  httpd_uri_t qr_stop   = { .uri = "/api/wifi/qr-scan", .method = HTTP_DELETE, .handler = handle_qr_scan_stop };
+  httpd_register_uri_handler(active_server, &qr_start);
+  httpd_register_uri_handler(active_server, &qr_status);
+  httpd_register_uri_handler(active_server, &qr_stop);
+#endif
 
   // Captive portal detection URLs (for iOS/Android automatic redirect)
   httpd_uri_t captive1 = { .uri = "/hotspot-detect.html", .method = HTTP_GET, .handler = handle_captive_portal };

@@ -106,6 +106,7 @@
   #define FEATURE_DATA_MGMT     0   // SD log rotation, chain backup/restore
   #define FEATURE_POWER_MONITOR 1   // Battery voltage + SoC monitoring (always on)
   #define FEATURE_POWER_POLICY  0   // Smart battery power modes (DEV/FULL only)
+  #define FEATURE_QR_PROVISION  0   // Camera-based WiFi QR provisioning
 
   #define DEBUG_NMEA            0
   #define DEBUG_CBOR            0
@@ -142,6 +143,7 @@
   #define FEATURE_DATA_MGMT     1   // SD log rotation, chain backup/restore
   #define FEATURE_POWER_MONITOR 1   // Battery voltage + SoC monitoring
   #define FEATURE_POWER_POLICY  1   // Smart battery power modes
+  #define FEATURE_QR_PROVISION  0   // Camera may not be in DEV build
 
   #define DEBUG_NMEA            0
   #define DEBUG_CBOR            0
@@ -176,6 +178,7 @@
   #define FEATURE_DATA_MGMT     1   // SD log rotation, chain backup/restore
   #define FEATURE_POWER_MONITOR 1   // Battery voltage + SoC monitoring
   #define FEATURE_POWER_POLICY  1   // Smart battery power modes
+  #define FEATURE_QR_PROVISION  HW_HAS_CAMERA   // Camera-based WiFi QR provisioning
 
   #define DEBUG_NMEA            0
   #define DEBUG_CBOR            0
