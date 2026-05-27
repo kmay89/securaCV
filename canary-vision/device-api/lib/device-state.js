@@ -360,17 +360,15 @@ function createDeviceState(overrides = {}) {
 
   function issueSseTicket() {
     const ticket = 'sset_' + crypto.randomBytes(24).toString('hex');
-    sseTickets.set(ticket, { issued: Date.now(), used: false });
+    sseTickets.set(ticket, { issued: Date.now() });
     return ticket;
   }
 
   function consumeSseTicket(ticket) {
     const entry = sseTickets.get(ticket);
     if (!entry) return false;
-    if (entry.used) { sseTickets.delete(ticket); return false; }
-    if (Date.now() - entry.issued > SSE_TICKET_TTL_MS) { sseTickets.delete(ticket); return false; }
-    entry.used = true;
     sseTickets.delete(ticket);
+    if (Date.now() - entry.issued > SSE_TICKET_TTL_MS) return false;
     return true;
   }
 

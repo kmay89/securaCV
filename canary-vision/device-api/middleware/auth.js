@@ -35,7 +35,8 @@ function tokenHash(token) {
 
 function authMiddleware(state) {
   return (req, res, next) => {
-    // SSE stream uses ticket auth, not token auth
+    // SSE stream uses ticket auth, not token auth.
+    // req.path is relative to the mount point (/api), so it's /v1/... not /api/v1/...
     if (req.path === '/v1/witness/stream' && req.query.ticket) {
       return next();
     }
