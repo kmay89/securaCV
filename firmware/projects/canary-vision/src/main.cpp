@@ -15,6 +15,7 @@
 #include "canary/log.h"
 #include "canary/topics.h"
 #include "canary/types.h"
+#include "boot/boot_banner.h"
 
 #include "canary/net/wifi_mgr.h"
 #include "canary/net/mqtt_mgr.h"
@@ -109,26 +110,71 @@ static void publish_event_json(
   canary::net::publish_event(TOPICS, msg);
 }
 
+static void vision_serial_write(const char* str) {
+  canary::dbg_serial().print(str);
+}
+
 void setup() {
   canary::dbg_serial().begin(115200);
   delay(600);
 
-  TOPICS = build_topics();
+  boot_set_output(vision_serial_write);
 
-  canary::log_line("BOOT", "SecuraCV Canary Vision starting...");
-  canary::log_header("BOOT");
-  canary::dbg_serial().printf(
-    "Device=%s Type=%s FW=%s\n",
-    DEVICE_ID,
-    DEVICE_TYPE,
-    CANARY_FW_VERSION
-  );
+  boot_info_t bi = {};
+  bi.product_name  = "SecuraCV Canary Vision";
+  bi.fw_version    = CANARY_FW_VERSION;
+  bi.build_date    = __DATE__;
+  bi.build_time    = __TIME__;
+  bi.device_type   = DEVICE_TYPE;
+  bi.model         = MODEL;
+  bi.mac_address   = WiFi.macAddress().c_str();
+  bi.board_name    = "ESP32-C3-DevKitM-1";
+  bi.chip_model    = ESP.getChipModel();
+  bi.chip_revision = (uint8_t)ESP.getChipRevision();
+  bi.cpu_freq_mhz  = (uint16_t)ESP.getCpuFreqMHz();
+  bi.cpu_cores     = (uint8_t)ESP.getChipCores();
+  bi.flash_mb      = (uint32_t)(ESP.getFlashChipSize() / (1024 * 1024));
+  bi.psram_found   = psramFound();
+  bi.psram_total_kb = (uint32_t)(ESP.getPsramSize() / 1024);
+  bi.psram_free_kb  = (uint32_t)(ESP.getFreePsram() / 1024);
+  bi.heap_free_kb   = (uint32_t)(ESP.getFreeHeap() / 1024);
+  bi.sdk_version    = ESP.getSdkVersion();
+
+  boot_scene_banner(&bi);
+  boot_scene_hardware(&bi);
+
+  // Vision-specific config
+  printf("              ,_,\n");
+  printf("             (^.^)         What can I see?\n");
+  printf("              |#|\n");
+  printf("             [###]\n");
+  boot_separator();
+  boot_kv("Sensor",  "Grove Vision AI V2 (SSCMA)");
+  boot_kvf("Target",  "class %d  (person detection)", PERSON_TARGET);
+  boot_kvf("Score",   ">= %d%%  (confidence threshold)", SCORE_MIN);
+  boot_kvf("Lost",    "%lu ms  (timeout before 'person left')", (unsigned long)LOST_TIMEOUT_MS);
+  boot_kvf("Dwell",   "%lu ms  (lingering detection)", (unsigned long)DWELL_START_MS);
+  boot_kvf("Voxel",   "%ux%u grid (%dx%d frame)", VOXEL_COLS, VOXEL_ROWS, FRAME_W, FRAME_H);
+  boot_kvf("Rate",    "every %lu ms", (unsigned long)INVOKE_PERIOD_MS);
+  boot_blank();
+
+  TOPICS = build_topics();
 
   fsm.reset();
 
   canary::net::wifi_init_or_reboot();
   canary::net::mqtt_init(TOPICS);
   canary::vision::init();
+
+  // MQTT connection
+  printf("              ,_,  ))\n");
+  printf("             (o.o)  ))     Connecting to MQTT...\n");
+  printf("              | |\n");
+  boot_separator();
+  boot_kv("Device ID", DEVICE_ID);
+  boot_kvf("Heartbeat", "every %lu ms", (unsigned long)HEARTBEAT_MS);
+  boot_kv("HA prefix", HA_DISCOVERY_PREFIX);
+  boot_blank();
 
   canary::net::mqtt_reconnect_blocking();
   canary::net::ha_discovery_publish_once(TOPICS);
@@ -143,7 +189,7 @@ void setup() {
   last_invoke_ms = canary::ms_now();
   last_heartbeat_ms = canary::ms_now();
 
-  canary::log_line("RUN", "Loop started.");
+  boot_scene_ready();
 }
 
 void loop() {
