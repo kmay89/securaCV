@@ -390,6 +390,9 @@ static TempAlertState evaluate_temp_state(float temp, TempAlertState current) {
 
 // ────────────────────────────────────────────────────────────────────────────
 
+static void update_degradation();
+static void update_sd_health();
+
 void update(void (*log_callback)(LogLevel, LogCategory, const char*, const char*)) {
   uint32_t now = millis();
 
