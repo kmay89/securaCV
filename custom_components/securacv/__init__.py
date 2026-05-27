@@ -295,17 +295,55 @@ def _async_device_status_received(hass: HomeAssistant, entry: ConfigEntry):
             _LOGGER.info("Discovered SecuraCV Canary device: %s", device_id)
             devices[device_id] = {"status": status_payload}
 
-            # Register Canary in device registry
+            # Parse status for device info enrichment
+            fw_version = None
+            hw_version = None
+            config_url = None
+            friendly_name = None
+            try:
+                status_data = json.loads(status_payload) if isinstance(status_payload, str) else {}
+                fw_version = status_data.get("firmware_version") or status_data.get("fw_version")
+                hw_version = status_data.get("hardware") or status_data.get("board")
+                friendly_name = status_data.get("device_name") or status_data.get("name")
+                ap_ip = status_data.get("ap_ip") or status_data.get("ip")
+                if ap_ip:
+                    config_url = f"http://{ap_ip}"
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+            display_name = friendly_name or f"SecuraCV Canary {device_id}"
+
             dev_registry = dr.async_get(hass)
             dev_registry.async_get_or_create(
                 config_entry_id=entry.entry_id,
                 identifiers={(DOMAIN, f"canary_{device_id}")},
                 manufacturer=MANUFACTURER,
                 model=MODEL_CANARY,
-                name=f"SecuraCV Canary {device_id}",
+                name=display_name,
+                sw_version=fw_version,
+                hw_version=hw_version,
+                configuration_url=config_url,
             )
         else:
             devices[device_id]["status"] = status_payload
+
+            try:
+                status_data = json.loads(status_payload) if isinstance(status_payload, str) else {}
+                fw = status_data.get("firmware_version") or status_data.get("fw_version")
+                if fw and fw != devices[device_id].get("_last_fw"):
+                    devices[device_id]["_last_fw"] = fw
+                    dev_registry = dr.async_get(hass)
+                    hw = status_data.get("hardware") or status_data.get("board")
+                    ap_ip = status_data.get("ap_ip") or status_data.get("ip")
+                    dev_registry.async_get_or_create(
+                        config_entry_id=entry.entry_id,
+                        identifiers={(DOMAIN, f"canary_{device_id}")},
+                        sw_version=fw,
+                        hw_version=hw,
+                        configuration_url=f"http://{ap_ip}" if ap_ip else None,
+                    )
+            except (json.JSONDecodeError, TypeError):
+                pass
 
     return _callback
 
