@@ -27,6 +27,14 @@
 #include "securacv_protocol.h"
 
 // ============================================================================
+// BRANDING & VERSION
+// ============================================================================
+
+#define APP_NAME          "SecuraCV Canary"
+#define APP_VERSION       "2.1.0"
+#define APP_AUTHOR        "SecuraCV"
+
+// ============================================================================
 // CONSTANTS
 // ============================================================================
 
@@ -35,6 +43,7 @@
 #define SCREEN_HEIGHT     64
 #define LINE_HEIGHT       10
 #define MAX_VISIBLE       5
+#define SPLASH_DURATION_MS 1500
 
 #define AD_TYPE_SHORT_NAME        0x08
 #define AD_TYPE_COMPLETE_NAME     0x09
@@ -66,10 +75,12 @@ typedef struct {
 // ============================================================================
 
 typedef enum {
+    VIEW_SPLASH,
     VIEW_SCAN_LIST,
     VIEW_DEVICE_DETAIL,
     VIEW_SIGNAL_GRAPH,
     VIEW_SETTINGS,
+    VIEW_ABOUT,
 } AppView;
 
 typedef enum {
@@ -86,6 +97,7 @@ static const uint16_t scan_off_ms[] = {0, 3000, 8000};
 typedef enum {
     SETTING_SCAN_MODE,
     SETTING_TIMEOUT,
+    SETTING_SORT,
     SETTING_COUNT,
 } SettingIndex;
 
@@ -122,6 +134,11 @@ typedef struct {
     uint32_t duty_cycle_ms;
     bool duty_scan_active;
     SettingIndex settings_cursor;
+
+    // Splash & animation
+    uint32_t splash_start_ms;
+    uint8_t tick_count;
+    uint32_t total_beacons;
 } SecuraCVApp;
 
 // ============================================================================
@@ -284,8 +301,9 @@ static int cmp_last_seen(const void* a, const void* b) {
     const scv_device_t* da = (const scv_device_t*)a;
     const scv_device_t* db = (const scv_device_t*)b;
     if(da->pinned != db->pinned) return db->pinned - da->pinned;
-    if(db->last_seen_ms > da->last_seen_ms) return 1;
-    if(db->last_seen_ms < da->last_seen_ms) return -1;
+    int32_t delta = (int32_t)(da->last_seen_ms - db->last_seen_ms);
+    if(delta > 0) return -1;
+    if(delta < 0) return 1;
     return 0;
 }
 
@@ -396,32 +414,108 @@ static void draw_rssi_bar(Canvas* canvas, int x, int y, int8_t rssi) {
 }
 
 // ============================================================================
+// DRAW: SPLASH SCREEN
+// ============================================================================
+
+static void draw_splash(Canvas* canvas, SecuraCVApp* app) {
+    UNUSED(app);
+
+    canvas_draw_frame(canvas, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+    canvas_draw_frame(canvas, 1, 1, SCREEN_WIDTH - 2, SCREEN_HEIGHT - 2);
+
+    canvas_set_font(canvas, FontPrimary);
+    canvas_draw_str_aligned(canvas, SCREEN_WIDTH / 2, 18, AlignCenter, AlignCenter, APP_NAME);
+
+    canvas_set_font(canvas, FontSecondary);
+    canvas_draw_str_aligned(canvas, SCREEN_WIDTH / 2, 30, AlignCenter, AlignCenter,
+                            "BLE Scanner");
+
+    canvas_draw_line(canvas, 30, 36, 98, 36);
+
+    canvas_draw_str_aligned(canvas, SCREEN_WIDTH / 2, 44, AlignCenter, AlignCenter,
+                            "v" APP_VERSION);
+
+    canvas_draw_str_aligned(canvas, SCREEN_WIDTH / 2, 58, AlignCenter, AlignCenter,
+                            "Initializing BLE...");
+}
+
+// ============================================================================
+// DRAW: ABOUT SCREEN
+// ============================================================================
+
+static void draw_about(Canvas* canvas, SecuraCVApp* app) {
+    canvas_draw_frame(canvas, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+
+    canvas_set_font(canvas, FontPrimary);
+    canvas_draw_str_aligned(canvas, SCREEN_WIDTH / 2, 10, AlignCenter, AlignBottom, APP_NAME);
+
+    canvas_set_font(canvas, FontSecondary);
+    canvas_draw_str_aligned(canvas, SCREEN_WIDTH / 2, 20, AlignCenter, AlignBottom,
+                            "v" APP_VERSION "  " APP_AUTHOR);
+
+    canvas_draw_line(canvas, 8, 23, 120, 23);
+
+    int y = 32;
+    canvas_draw_str(canvas, 4, y, "U/D Scroll  L/R Sort");
+    y += 9;
+    canvas_draw_str(canvas, 4, y, "OK  Detail  >Hold Cfg");
+    y += 9;
+    canvas_draw_str(canvas, 4, y, "Bk  Exit    BkHold Alt");
+
+    char stats[32];
+    snprintf(stats, sizeof(stats), "%lu beacons  %d devs",
+             (unsigned long)app->total_beacons, app->device_count);
+    canvas_draw_str_aligned(canvas, SCREEN_WIDTH / 2, SCREEN_HEIGHT - 2,
+                            AlignCenter, AlignBottom, stats);
+}
+
+// ============================================================================
+// DRAW: SCAN STATUS INDICATOR
+// ============================================================================
+
+static void draw_scan_indicator(Canvas* canvas, bool scanning, uint8_t tick) {
+    int x = SCREEN_WIDTH - 4;
+    int y = 13;
+    if(scanning) {
+        uint8_t phase = tick % 4;
+        int r = 1 + phase;
+        canvas_draw_disc(canvas, x, y, r > 3 ? 3 : r);
+    } else {
+        canvas_draw_frame(canvas, x - 1, y - 1, 3, 3);
+    }
+}
+
+// ============================================================================
 // DRAW: SCAN LIST
 // ============================================================================
 
 static void draw_scan_list(Canvas* canvas, SecuraCVApp* app) {
     canvas_set_font(canvas, FontPrimary);
-    canvas_draw_str(canvas, 0, 10, "SecuraCV Scanner");
+    canvas_draw_str(canvas, 0, 10, APP_NAME);
 
     canvas_set_font(canvas, FontSecondary);
     char status[32];
-    snprintf(status, sizeof(status), "%d %s%s",
+    snprintf(status, sizeof(status), "%d <%s>%s",
              app->device_count, sort_mode_labels[app->sort_mode],
              app->alerts_enabled ? " ALT" : "");
     canvas_draw_str_aligned(canvas, SCREEN_WIDTH, 10, AlignRight, AlignBottom, status);
 
     canvas_draw_line(canvas, 0, 13, SCREEN_WIDTH, 13);
+    draw_scan_indicator(canvas, app->scanning, app->tick_count);
 
     if(app->device_count == 0) {
         canvas_set_font(canvas, FontSecondary);
-        canvas_draw_str_aligned(canvas, SCREEN_WIDTH / 2, 34,
+        canvas_draw_str_aligned(canvas, SCREEN_WIDTH / 2, 30,
                                 AlignCenter, AlignCenter,
-                                app->scanning ? "Scanning..." : "No devices");
+                                app->scanning ? "Scanning..." : "Paused");
         if(app->scanning) {
-            canvas_draw_str_aligned(canvas, SCREEN_WIDTH / 2, 46,
+            canvas_draw_str_aligned(canvas, SCREEN_WIDTH / 2, 42,
                                     AlignCenter, AlignCenter,
                                     "Looking for SCV-* BLE");
         }
+        canvas_draw_str_aligned(canvas, SCREEN_WIDTH / 2, SCREEN_HEIGHT - 2,
+                                AlignCenter, AlignBottom,
+                                ">Hold:Cfg  BkHold:Alt");
         return;
     }
 
@@ -438,9 +532,15 @@ static void draw_scan_list(Canvas* canvas, SecuraCVApp* app) {
 
         canvas_set_font(canvas, FontSecondary);
 
+        int name_x = 2;
+        if(dev->pinned) {
+            canvas_draw_str(canvas, 2, y + 8, "*");
+            name_x = 8;
+        }
+
         char name_buf[16];
-        snprintf(name_buf, sizeof(name_buf), "%.15s", dev->name);
-        canvas_draw_str(canvas, 2, y + 8, name_buf);
+        snprintf(name_buf, sizeof(name_buf), "%.14s", dev->name);
+        canvas_draw_str(canvas, name_x, y + 8, name_buf);
 
         int label_x = 68;
         if(dev->is_debug_mode) {
@@ -653,7 +753,7 @@ static void draw_signal_graph(Canvas* canvas, SecuraCVApp* app) {
 
 static void draw_settings(Canvas* canvas, SecuraCVApp* app) {
     canvas_set_font(canvas, FontPrimary);
-    canvas_draw_str(canvas, 0, 10, "Settings");
+    canvas_draw_str(canvas, 0, 10, "Canary Settings");
     canvas_draw_line(canvas, 0, 13, SCREEN_WIDTH, 13);
 
     canvas_set_font(canvas, FontSecondary);
@@ -682,9 +782,22 @@ static void draw_settings(Canvas* canvas, SecuraCVApp* app) {
     if(app->settings_cursor == SETTING_TIMEOUT) {
         canvas_set_color(canvas, ColorBlack);
     }
+    y += LINE_HEIGHT + 2;
 
-    canvas_draw_str_aligned(canvas, SCREEN_WIDTH / 2, SCREEN_HEIGHT - 2,
-                            AlignCenter, AlignBottom, "Back to return");
+    // Sort Mode
+    if(app->settings_cursor == SETTING_SORT) {
+        canvas_draw_box(canvas, 0, y - 8, SCREEN_WIDTH, LINE_HEIGHT);
+        canvas_set_color(canvas, ColorWhite);
+    }
+    snprintf(line, sizeof(line), "Sort: <%s>", sort_mode_labels[app->sort_mode]);
+    canvas_draw_str(canvas, 2, y, line);
+    if(app->settings_cursor == SETTING_SORT) {
+        canvas_set_color(canvas, ColorBlack);
+    }
+
+    canvas_draw_line(canvas, 8, 55, 120, 55);
+    canvas_draw_str_aligned(canvas, SCREEN_WIDTH / 2, SCREEN_HEIGHT - 1,
+                            AlignCenter, AlignBottom, "OK: About  Bk: Back");
 }
 
 // ============================================================================
@@ -699,6 +812,9 @@ static void render_callback(Canvas* canvas, void* ctx) {
     canvas_clear(canvas);
 
     switch(app->current_view) {
+        case VIEW_SPLASH:
+            draw_splash(canvas, app);
+            break;
         case VIEW_SCAN_LIST:
             draw_scan_list(canvas, app);
             break;
@@ -710,6 +826,9 @@ static void render_callback(Canvas* canvas, void* ctx) {
             break;
         case VIEW_SETTINGS:
             draw_settings(canvas, app);
+            break;
+        case VIEW_ABOUT:
+            draw_about(canvas, app);
             break;
     }
 
@@ -791,6 +910,14 @@ static void handle_input(SecuraCVApp* app, InputEvent* event) {
                         app->current_view = VIEW_DEVICE_DETAIL;
                     }
                     break;
+                case InputKeyLeft:
+                    app->sort_mode = (app->sort_mode + SortModeCount - 1) % SortModeCount;
+                    sort_devices(app);
+                    break;
+                case InputKeyRight:
+                    app->sort_mode = (app->sort_mode + 1) % SortModeCount;
+                    sort_devices(app);
+                    break;
                 case InputKeyBack:
                     app->running = false;
                     break;
@@ -832,14 +959,31 @@ static void handle_input(SecuraCVApp* app, InputEvent* event) {
                         app->duty_scan_active = true;
                     } else if(app->settings_cursor == SETTING_TIMEOUT) {
                         app->timeout_idx = (app->timeout_idx + TIMEOUT_OPTION_COUNT + dir) % TIMEOUT_OPTION_COUNT;
+                    } else if(app->settings_cursor == SETTING_SORT) {
+                        app->sort_mode = (app->sort_mode + SortModeCount + dir) % SortModeCount;
                     }
                     break;
                 }
+                case InputKeyOk:
+                    app->current_view = VIEW_ABOUT;
+                    break;
                 case InputKeyBack:
                     app->current_view = VIEW_SCAN_LIST;
                     break;
                 default:
                     break;
+            }
+            break;
+
+        case VIEW_ABOUT:
+            if(event->key == InputKeyBack || event->key == InputKeyOk) {
+                app->current_view = VIEW_SCAN_LIST;
+            }
+            break;
+
+        case VIEW_SPLASH:
+            if(event->key == InputKeyOk || event->key == InputKeyBack) {
+                app->current_view = VIEW_SCAN_LIST;
             }
             break;
     }
@@ -946,10 +1090,11 @@ int32_t securacv_scanner_app(void* p) {
     }
 
     app->running = true;
-    app->current_view = VIEW_SCAN_LIST;
+    app->current_view = VIEW_SPLASH;
+    app->splash_start_ms = furi_get_tick();
     app->selected_index = 0;
     app->scroll_offset = 0;
-    app->timeout_idx = 1;  // 15s default
+    app->timeout_idx = 1;
     app->duty_scan_active = true;
     app->notifications = furi_record_open(RECORD_NOTIFICATION);
 
@@ -1005,10 +1150,16 @@ int32_t securacv_scanner_app(void* p) {
 
             case AppEventTypeBleDevice:
                 add_or_update_device(app, &event);
+                app->total_beacons++;
                 view_port_update(app->view_port);
                 break;
 
             case AppEventTypeTick:
+                app->tick_count++;
+                if(app->current_view == VIEW_SPLASH &&
+                   furi_get_tick() - app->splash_start_ms >= SPLASH_DURATION_MS) {
+                    app->current_view = VIEW_SCAN_LIST;
+                }
                 expire_stale_devices(app);
                 duty_cycle_update(app);
                 furi_mutex_acquire(app->mutex, FuriWaitForever);
