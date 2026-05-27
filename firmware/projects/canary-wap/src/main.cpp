@@ -178,8 +178,47 @@ void setup() {
     g_initialized = true;
     g_health.uptime_sec = 0;
 
-    LOG_I("Initialization complete. Device ID: %s",
-          witness_chain_device_id(&g_witness_chain));
+    // Print boot banner with connection instructions
+    {
+        const char* dev_id = witness_chain_device_id(&g_witness_chain);
+        Serial.println();
+        Serial.println(F("╔══════════════════════════════════════════════════════════════╗"));
+        Serial.println(F("║            SecuraCV Canary WAP — WITNESS READY              ║"));
+        Serial.println(F("╠══════════════════════════════════════════════════════════════╣"));
+        Serial.printf( "║  Device ID  : %-46s║\n", dev_id);
+        Serial.printf( "║  Firmware   : %-46s║\n", FW_VERSION_STRING);
+        Serial.printf( "║  Board      : %-46s║\n", BOARD_NAME);
+        Serial.printf( "║  CPU Freq   : %d MHz    Free Heap: %lu KB%*s║\n",
+                       CONFIG_CPU_FREQ_MHZ, (unsigned long)(hal_free_heap() / 1024), 18, "");
+        #if FEATURE_WIFI_AP
+        Serial.printf( "║  WiFi AP    : %-46s║\n",
+                       g_health.wifi_active ? CONFIG_AP_SSID_PREFIX : "(disabled)");
+        Serial.printf( "║  Dashboard  : http://%-39s║\n",
+                       g_health.wifi_active ? "192.168.4.1" : "(no network)");
+        #endif
+        Serial.printf( "║  Crypto     : %-46s║\n",
+                       g_health.crypto_healthy ? "Ed25519 + SHA-256 (OK)" : "DEGRADED");
+        Serial.printf( "║  Witness    : seq %u, chain height %u%*s║\n",
+                       g_witness_chain.sequence, g_witness_chain.chain_height,
+                       (int)(40 - snprintf(NULL, 0, "seq %u, chain height %u",
+                             g_witness_chain.sequence, g_witness_chain.chain_height)), "");
+        #if FEATURE_GNSS
+        Serial.println(F("║  GPS        : UART initialized, waiting for fix             ║"));
+        #endif
+        #if FEATURE_SD_STORAGE
+        Serial.printf( "║  SD Card    : %-46s║\n",
+                       g_health.sd_healthy ? "mounted (witness log active)" : "not detected");
+        #endif
+        #if FEATURE_BLUETOOTH
+        Serial.printf( "║  Bluetooth  : %-46s║\n",
+                       g_ble_debug_active ? "active (debug beacon ON)" : "active");
+        #endif
+        Serial.println(F("╠══════════════════════════════════════════════════════════════╣"));
+        Serial.println(F("║  Serial: 115200 baud | Monitor: canary_monitor.py           ║"));
+        Serial.println(F("║  Web UI: connect to WiFi AP, open http://192.168.4.1        ║"));
+        Serial.println(F("╚══════════════════════════════════════════════════════════════╝"));
+        Serial.println();
+    }
 }
 
 // ============================================================================
