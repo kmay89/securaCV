@@ -897,18 +897,32 @@ function connectEventStreams(devices, contentContainer) {
   }
 }
 
+function insertSorted(arr, record, maxLen) {
+  var lo = 0, hi = arr.length;
+  while (lo < hi) {
+    var mid = (lo + hi) >>> 1;
+    if (arr[mid]._ts > record._ts) lo = mid + 1;
+    else hi = mid;
+  }
+  arr.splice(lo, 0, record);
+  if (arr.length > maxLen) arr.length = maxLen;
+}
+
 function connectDeviceStream(device, contentContainer) {
   if ((window.location.hash || '') !== '#/events') return;
+
+  var sessionId = EventsState.currentSessionId;
 
   CanaryAPI.request(device.base_url, '/api/v1/witness/stream/ticket', { method: 'POST' })
     .then(function (data) {
       if (!data.ticket) return;
-      if ((window.location.hash || '') !== '#/events') return;
+      if (EventsState.currentSessionId !== sessionId) return;
 
       var url = device.base_url + '/api/v1/witness/stream?ticket=' + encodeURIComponent(data.ticket);
       var source = new EventSource(url);
 
       source.addEventListener('witness', function (e) {
+        if (EventsState.currentSessionId !== sessionId) { source.close(); return; }
         try {
           var record = JSON.parse(e.data);
           record.device_id = device.id;
@@ -921,8 +935,7 @@ function connectDeviceStream(device, contentContainer) {
           });
           if (exists) return;
 
-          EventsState.allRecords.unshift(record);
-          EventsState.allRecords.sort(function (a, b) { return b._ts - a._ts; });
+          insertSorted(EventsState.allRecords, record, 5000);
           EventsState.clusters = clusterEvents(EventsState.allRecords);
           EventsState.filteredClusters = applyEventsFilter(EventsState.clusters, EventsState.activeFilter);
 
@@ -931,6 +944,7 @@ function connectDeviceStream(device, contentContainer) {
             playNotificationFeedback(record.event_type);
           }
 
+          if (!document.body.contains(contentContainer)) return;
           var scrollContainer = contentContainer.parentNode;
           var isScrolledDown = scrollContainer && scrollContainer.scrollTop > 100;
 
@@ -948,12 +962,14 @@ function connectDeviceStream(device, contentContainer) {
 
       source.addEventListener('error', function () {
         if (source.readyState === EventSource.CLOSED) {
+          source.close();
           var idx = EventsState.eventSources.indexOf(source);
           if (idx !== -1) EventsState.eventSources.splice(idx, 1);
-          // Reconnect with a fresh ticket after a short delay
-          setTimeout(function () {
-            connectDeviceStream(device, contentContainer);
-          }, 3000);
+          if (EventsState.currentSessionId === sessionId) {
+            setTimeout(function () {
+              connectDeviceStream(device, contentContainer);
+            }, 3000);
+          }
         }
       });
 
@@ -1581,7 +1597,7 @@ function renderDeviceView(deviceId) {
       CanaryStorage.updateDevice(deviceId, { last_info: info });
       var grid = document.getElementById('device-stats');
       if (grid) {
-        var uptimeHrs = Math.floor(info.uptime_s / 3600);
+        var uptimeHrs = Math.floor((info.uptime_s || 0) / 3600);
         var items = grid.querySelectorAll('.stat-item');
         items[0].querySelector('.stat-value').textContent = uptimeHrs + 'h';
         items[1].querySelector('.stat-value').textContent = info.wifi_rssi + ' dBm';
@@ -1682,7 +1698,10 @@ function renderConfigForm(container, device, section, config) {
       Object.keys(inputs).forEach(function (key) {
         var inp = inputs[key];
         if (inp.type === 'boolean') body[key] = inp.el.checked;
-        else if (inp.type === 'number') body[key] = parseInt(inp.el.value, 10);
+        else if (inp.type === 'number') {
+          var parsed = parseInt(inp.el.value, 10);
+          body[key] = isNaN(parsed) ? 0 : parsed;
+        }
         else body[key] = inp.el.value;
       });
 
@@ -1765,7 +1784,10 @@ function renderLogsView(deviceId) {
       data.logs.forEach(function (log) {
         var entry = el('div', { className: 'log-entry' }, [
           el('span', { className: 'log-ts', textContent: log.ts.substring(11, 19) }),
-          el('span', { className: 'log-level ' + log.level, textContent: log.level }),
+          el('span', {
+            className: 'log-level ' + (['INFO', 'WARN', 'ERROR', 'DEBUG'].indexOf(log.level) !== -1 ? log.level : 'INFO'),
+            textContent: log.level
+          }),
           el('span', { className: 'log-msg', textContent: log.msg }),
         ]);
         logContainer.appendChild(entry);
