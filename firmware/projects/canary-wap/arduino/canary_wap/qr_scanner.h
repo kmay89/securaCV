@@ -18,12 +18,6 @@
 
 extern "C" {
 #include "quirc.h"
-
-/* fmt2rgb888 is provided by the esp32-camera component's img_converters.
- * Declare it here so we don't depend on the header's include path,
- * which varies between Arduino core versions and PlatformIO. */
-bool fmt2rgb888(const uint8_t *src_buf, size_t src_len,
-                pixformat_t format, uint8_t *rgb_buf);
 }
 
 namespace qr_scanner {
