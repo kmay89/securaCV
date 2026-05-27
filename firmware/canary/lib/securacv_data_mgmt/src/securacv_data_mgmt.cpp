@@ -16,6 +16,7 @@
 #include "canary_config.h"
 #include "log_level.h"
 #include "securacv_witness.h"
+#include "securacv_crypto.h"
 
 #if FEATURE_SD_STORAGE
 #include "securacv_storage.h"
@@ -59,23 +60,13 @@ static constexpr size_t MAX_NAME_LEN   = 48;
  * 4       4     version (1)
  * 8       4     seq
  * 12      32    chain_head hash
- * 44      4     CRC-32 of bytes 0..43
+ * 44      32    HMAC-SHA256 of bytes 0..43 (keyed by device privkey)
  * ────────────────────────────────────────────────────────────────────────── */
 
 static constexpr uint32_t BACKUP_MAGIC   = 0x53434256;
-static constexpr uint32_t BACKUP_VERSION = 1;
-static constexpr size_t   BACKUP_SIZE    = 48;
-
-static uint32_t crc32_simple(const uint8_t* data, size_t len) {
-  uint32_t crc = 0xFFFFFFFF;
-  for (size_t i = 0; i < len; i++) {
-    crc ^= data[i];
-    for (int b = 0; b < 8; b++) {
-      crc = (crc >> 1) ^ (0xEDB88320 & (-(int32_t)(crc & 1)));
-    }
-  }
-  return ~crc;
-}
+static constexpr uint32_t BACKUP_VERSION = 2;
+static constexpr size_t   BACKUP_PAYLOAD = 44;
+static constexpr size_t   BACKUP_SIZE    = 76;  /* 44 payload + 32 HMAC */
 
 /* ──────────────────────────────────────────────────────────────────────────
  * SD USAGE CHECK
@@ -311,9 +302,16 @@ bool datamgmt_backup_chain(void) {
   /* Chain head hash (32 bytes) */
   memcpy(buf + 12, dev.chain_head, 32);
 
-  /* CRC-32 of bytes 0..43 */
-  uint32_t crc = crc32_simple(buf, 44);
-  memcpy(buf + 44, &crc, 4);
+  /* HMAC-SHA256 of payload bytes 0..43, keyed by device private key.
+   * Prevents an attacker with SD access from forging a backup to
+   * roll back the chain to a previous state. */
+  uint8_t hmac[32];
+  if (!hmac_sha256(dev.privkey, 64, buf, BACKUP_PAYLOAD, hmac)) {
+    log_health(LOG_LEVEL_ERROR, LOG_CAT_STORAGE,
+               "Chain backup: HMAC failed", nullptr);
+    return false;
+  }
+  memcpy(buf + BACKUP_PAYLOAD, hmac, 32);
 
   /* Ensure /CHAIN directory exists. */
   if (!SD.exists("/CHAIN")) SD.mkdir("/CHAIN");
@@ -377,13 +375,17 @@ bool datamgmt_restore_chain(void) {
     return false;
   }
 
-  /* Validate CRC */
-  uint32_t stored_crc;
-  memcpy(&stored_crc, buf + 44, 4);
-  uint32_t calc_crc = crc32_simple(buf, 44);
-  if (stored_crc != calc_crc) {
+  /* Validate HMAC-SHA256 using device private key. */
+  DeviceIdentity& dev = witness_get_device();
+  uint8_t calc_hmac[32];
+  if (!hmac_sha256(dev.privkey, 64, buf, BACKUP_PAYLOAD, calc_hmac)) {
     log_health(LOG_LEVEL_ERROR, LOG_CAT_STORAGE,
-               "Chain restore: CRC mismatch", nullptr);
+               "Chain restore: HMAC compute failed", nullptr);
+    return false;
+  }
+  if (memcmp(buf + BACKUP_PAYLOAD, calc_hmac, 32) != 0) {
+    log_health(LOG_LEVEL_ERROR, LOG_CAT_STORAGE,
+               "Chain restore: HMAC mismatch (tampered?)", nullptr);
     return false;
   }
 
@@ -391,9 +393,6 @@ bool datamgmt_restore_chain(void) {
   uint32_t seq;
   memcpy(&seq, buf + 8, 4);
 
-  /* Restore into the live device identity. The witness module owns
-   * persistence to NVS via witness_persist_chain_state(). */
-  DeviceIdentity& dev = witness_get_device();
   dev.seq = seq;
   memcpy(dev.chain_head, buf + 12, 32);
 
@@ -433,6 +432,7 @@ bool datamgmt_verify_chain(chain_verify_result_t* result) {
   }
 
   static constexpr size_t V_NAME = 48;
+  static constexpr uint32_t VERIFY_MAX_RECORDS = 100;
 
   uint8_t prev_chain_hash[32];
   bool have_prev = false;
@@ -447,12 +447,18 @@ bool datamgmt_verify_chain(chain_verify_result_t* result) {
    * lexicographically smallest filename greater than the last one
    * processed. This uses constant stack memory regardless of file
    * count, and guarantees correct chain-hash continuity checking
-   * across any number of files. */
+   * across any number of files.
+   *
+   * Capped at VERIFY_MAX_RECORDS to prevent watchdog timeout on
+   * large directories (O(n^2) directory scans). Full verification
+   * of 500+ files should use an offline tool. */
 
   char last_processed[V_NAME] = {0};
   char next_name[V_NAME];
 
   for (;;) {
+    if (records_checked >= VERIFY_MAX_RECORDS) break;
+
     /* Find the smallest filename > last_processed. */
     next_name[0] = '\0';
 
@@ -504,6 +510,10 @@ bool datamgmt_verify_chain(chain_verify_result_t* result) {
     }
     memcpy(prev_chain_hash, rec.chain_hash, 32);
     have_prev = true;
+
+    /* Yield to prevent watchdog timeout — Ed25519 verify + SD I/O
+     * can take 10-20ms per record. */
+    if ((records_checked % 10) == 0) delay(1);
   }
   dir.close();
 
