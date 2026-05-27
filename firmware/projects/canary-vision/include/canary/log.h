@@ -3,13 +3,10 @@
 
 namespace canary {
 
-// ESP32-C3 does NOT reliably provide `Serial`
+// With ARDUINO_USB_CDC_ON_BOOT disabled for C3 (see common_esp32c3),
+// Serial is UART0 on both C3 and S3 — no special case needed.
 static inline HardwareSerial& dbg_serial() {
-#if defined(ARDUINO_ARCH_ESP32) && defined(CONFIG_IDF_TARGET_ESP32C3)
-  return Serial0;
-#else
   return Serial;
-#endif
 }
 
 static inline uint32_t ms_now() { return millis(); }
