@@ -32,9 +32,13 @@ void boot_linef(const char* fmt, ...) {
     char buf[256];
     va_list args;
     va_start(args, fmt);
-    vsnprintf(buf, sizeof(buf), fmt, args);
+    int len = vsnprintf(buf, sizeof(buf) - 1, fmt, args);
     va_end(args);
-    out("%s\n", buf);
+    if (len < 0) len = 0;
+    else if (len >= (int)sizeof(buf) - 1) len = (int)sizeof(buf) - 2;
+    buf[len] = '\n';
+    buf[len + 1] = '\0';
+    if (s_write) { s_write(buf); } else { printf("%s", buf); }
 }
 
 void boot_kv(const char* key, const char* value) {

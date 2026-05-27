@@ -195,7 +195,7 @@ void setup() {
   boot_scene_ready(
       "It will publish presence events via MQTT",
       "to Home Assistant for real-time monitoring.",
-      "Nobody can alter these records after the fact."
+      NULL
   );
 }
 
