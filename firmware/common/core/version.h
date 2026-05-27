@@ -16,10 +16,10 @@ extern "C" {
 // ============================================================================
 
 #define FW_VERSION_MAJOR    2
-#define FW_VERSION_MINOR    0
-#define FW_VERSION_PATCH    1
+#define FW_VERSION_MINOR    1
+#define FW_VERSION_PATCH    0
 
-#define FW_VERSION_STRING   "2.0.1"
+#define FW_VERSION_STRING   "2.1.0"
 
 // Build timestamp (set by build system)
 #ifndef FW_BUILD_DATE

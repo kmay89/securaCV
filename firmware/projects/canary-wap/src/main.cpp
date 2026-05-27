@@ -103,6 +103,16 @@ static void app_process_gnss(void);
 static void app_process_records(void);
 static void app_process_health(void);
 
+// Boot sequence serial output
+static void app_print_scene_banner(void);
+static void app_print_scene_hardware(void);
+static void app_print_scene_features(void);
+static void app_print_scene_protocol(void);
+static void app_print_scene_network(const char* ssid);
+static void app_print_scene_chain(void);
+static void app_print_scene_ready(void);
+static void app_print_scene_guide(const char* ssid);
+
 // ============================================================================
 // SETUP
 // ============================================================================
@@ -119,8 +129,7 @@ void setup() {
     }
     #endif
 
-    LOG_I("SecuraCV Canary WAP v%s starting...", FW_VERSION_STRING);
-    LOG_I("Board: %s", BOARD_NAME);
+    app_print_scene_banner();
 
     // Initialize HAL
     if (hal_init() != HAL_OK) {
@@ -128,10 +137,16 @@ void setup() {
         return;
     }
 
+    app_print_scene_hardware();
+    app_print_scene_features();
+    app_print_scene_protocol();
+
     // Initialize subsystems
     app_init_hardware();
     app_init_storage();
     app_init_witness();
+
+    app_print_scene_chain();
 
     // Detect debug beacon activation BEFORE network init so BLE starts
     // with the correct device name (SCV-DBG-XXXX vs SecuraCV-Canary)
@@ -160,6 +175,14 @@ void setup() {
 
     app_init_network();
 
+    // Build the SSID for display in serial scenes
+    char ssid_buf[64];
+    snprintf(ssid_buf, sizeof(ssid_buf), "%s%s",
+             CONFIG_AP_SSID_PREFIX,
+             witness_chain_device_id(&g_witness_chain) + strlen(CONFIG_DEVICE_ID_PREFIX));
+
+    app_print_scene_network(ssid_buf);
+
     // Initialize debug beacon after BLE is running
     #if FEATURE_BLUETOOTH
     if (g_ble_debug_active) {
@@ -178,59 +201,8 @@ void setup() {
     g_initialized = true;
     g_health.uptime_sec = 0;
 
-    // Print boot banner with connection instructions
-    {
-        const char* dev_id = witness_chain_device_id(&g_witness_chain);
-        Serial.println();
-        Serial.println(F("╔══════════════════════════════════════════════════════════════╗"));
-        Serial.println(F("║            SecuraCV Canary WAP — WITNESS READY              ║"));
-        Serial.println(F("╠══════════════════════════════════════════════════════════════╣"));
-        Serial.printf( "║  Device ID  : %-46s║\n", dev_id);
-        Serial.printf( "║  Firmware   : %-46s║\n", FW_VERSION_STRING);
-        Serial.printf( "║  Board      : %-46s║\n", BOARD_NAME);
-        {
-            char line_buf[48];
-            snprintf(line_buf, sizeof(line_buf), "%d MHz    Free Heap: %lu KB",
-                     CONFIG_CPU_FREQ_MHZ, (unsigned long)(hal_free_heap() / 1024));
-            Serial.printf("║  CPU Freq   : %-46s║\n", line_buf);
-        }
-        #if FEATURE_WIFI_AP
-        {
-            char ssid_buf[48];
-            snprintf(ssid_buf, sizeof(ssid_buf), "%s%s",
-                     CONFIG_AP_SSID_PREFIX,
-                     dev_id + strlen(CONFIG_DEVICE_ID_PREFIX));
-            Serial.printf("║  WiFi AP    : %-46s║\n",
-                          g_health.wifi_active ? ssid_buf : "(disabled)");
-            Serial.printf("║  Dashboard  : %-46s║\n",
-                          g_health.wifi_active ? "http://192.168.4.1" : "(no network)");
-        }
-        #endif
-        Serial.printf( "║  Crypto     : %-46s║\n",
-                       g_health.crypto_healthy ? "Ed25519 + SHA-256 (OK)" : "DEGRADED");
-        {
-            char witness_buf[48];
-            snprintf(witness_buf, sizeof(witness_buf), "seq %u, chain height %u",
-                     g_witness_chain.sequence, g_witness_chain.chain_height);
-            Serial.printf("║  Witness    : %-46s║\n", witness_buf);
-        }
-        #if FEATURE_GNSS
-        Serial.println(F("║  GPS        : UART initialized, waiting for fix             ║"));
-        #endif
-        #if FEATURE_SD_STORAGE
-        Serial.printf( "║  SD Card    : %-46s║\n",
-                       g_health.sd_healthy ? "mounted (witness log active)" : "not detected");
-        #endif
-        #if FEATURE_BLUETOOTH
-        Serial.printf( "║  Bluetooth  : %-46s║\n",
-                       g_ble_debug_active ? "active (debug beacon ON)" : "active");
-        #endif
-        Serial.println(F("╠══════════════════════════════════════════════════════════════╣"));
-        Serial.println(F("║  Serial: 115200 baud | Monitor: canary_monitor.py           ║"));
-        Serial.println(F("║  Web UI: connect to WiFi AP, open http://192.168.4.1        ║"));
-        Serial.println(F("╚══════════════════════════════════════════════════════════════╝"));
-        Serial.println();
-    }
+    app_print_scene_ready();
+    app_print_scene_guide(ssid_buf);
 }
 
 // ============================================================================
@@ -298,6 +270,280 @@ void loop() {
 
     // Small delay to prevent tight loop
     delay(10);
+}
+
+// ============================================================================
+// INITIALIZATION FUNCTIONS
+// ============================================================================
+
+// ============================================================================
+// SERIAL BOOT SEQUENCE
+//
+// The canary guides the user through each boot stage, explaining
+// what the device is doing in plain language. Each scene uses a
+// small bird illustration that visually matches the current step.
+// ============================================================================
+
+static void app_print_scene_banner() {
+    Serial.println();
+    Serial.println();
+    Serial.println(F("              ,_,          Waking up..."));
+    Serial.println(F("             (o.o)"));
+    Serial.println(F("             /| |\\         SecuraCV Canary WAP"));
+    Serial.printf( "              d b          v%s\n", FW_VERSION_STRING);
+    Serial.println();
+    Serial.println(F("    This is your privacy witness device."));
+    Serial.println(F("    It creates tamper-proof records of what it"));
+    Serial.println(F("    sees, so nobody can change the story later."));
+    Serial.println();
+    Serial.printf( "    Type        %s\n", CONFIG_DEVICE_TYPE);
+    Serial.printf( "    Model       %s\n", CONFIG_MODEL);
+    Serial.printf( "    Built       %s %s\n", FW_BUILD_DATE, FW_BUILD_TIME);
+    Serial.printf( "    MAC         %s\n", WiFi.macAddress().c_str());
+    Serial.println(F("    ------------------------------------------------"));
+    Serial.println();
+}
+
+static void app_print_scene_hardware() {
+    Serial.println(F("              ,_,"));
+    Serial.println(F("             (o.o) ?       Checking the hardware..."));
+    Serial.println(F("             (  >)"));
+    Serial.println(F("              \" \"          What am I running on?"));
+    Serial.println(F("    ------------------------------------------------"));
+    Serial.printf( "    Board       %s\n", BOARD_NAME);
+    Serial.printf( "    Chip        %s rev %u\n", ESP.getChipModel(), (unsigned)ESP.getChipRevision());
+    Serial.printf( "    CPU         %u MHz, %u core(s)\n", (unsigned)ESP.getCpuFreqMHz(), (unsigned)ESP.getChipCores());
+    Serial.println(F("                (the brain — higher MHz = faster thinking)"));
+    Serial.printf( "    Flash       %u MB\n", (unsigned)(ESP.getFlashChipSize() / (1024 * 1024)));
+    Serial.println(F("                (permanent storage, like a hard drive)"));
+    if (psramFound()) {
+        Serial.printf( "    PSRAM       %u KB total, %u KB free\n",
+                       (unsigned)(ESP.getPsramSize() / 1024), (unsigned)(ESP.getFreePsram() / 1024));
+        Serial.println(F("                (extra memory for big tasks like camera)"));
+    } else {
+        Serial.println(F("    PSRAM       not found"));
+    }
+    Serial.printf( "    Heap        %u KB free at boot\n", (unsigned)(ESP.getFreeHeap() / 1024));
+    Serial.println(F("                (working memory — like a desk to work on)"));
+    Serial.printf( "    SDK         %s\n", ESP.getSdkVersion());
+    Serial.println(F("                (the software toolkit this firmware uses)"));
+    Serial.println();
+}
+
+static void app_print_scene_features() {
+    Serial.println(F("                  ,_,"));
+    Serial.println(F("            ___  (o.o)     What can I do?"));
+    Serial.println(F("           | . |/ /"));
+    Serial.println(F("           | . |          Each + is a feature that's"));
+    Serial.println(F("           |___|          turned on in this build."));
+    Serial.println(F("    ------------------------------------------------"));
+
+    #if FEATURE_GNSS
+    Serial.println(F("    + GPS/GNSS       knows where it is on Earth"));
+    #else
+    Serial.println(F("    - GPS/GNSS"));
+    #endif
+    #if FEATURE_WIFI_AP
+    Serial.println(F("    + WiFi AP/STA    creates its own WiFi + joins yours"));
+    #else
+    Serial.println(F("    - WiFi AP/STA"));
+    #endif
+    #if FEATURE_SD_STORAGE
+    Serial.println(F("    + SD Storage     saves records to a memory card"));
+    #else
+    Serial.println(F("    - SD Storage"));
+    #endif
+    #if FEATURE_HTTP_SERVER
+    Serial.println(F("    + HTTP Server    runs a web dashboard you can visit"));
+    #else
+    Serial.println(F("    - HTTP Server"));
+    #endif
+    #if FEATURE_CAMERA_PEEK
+    Serial.println(F("    + Camera         live preview for aiming the device"));
+    #else
+    Serial.println(F("    - Camera"));
+    #endif
+    #if FEATURE_MESH_NETWORK
+    Serial.println(F("    + Opera Mesh     talks to other canaries nearby"));
+    #else
+    Serial.println(F("    - Opera Mesh"));
+    #endif
+    #if FEATURE_BLUETOOTH
+    Serial.println(F("    + Bluetooth      pairs with your phone for setup"));
+    #else
+    Serial.println(F("    - Bluetooth"));
+    #endif
+    #if FEATURE_RF_PRESENCE
+    Serial.println(F("    + RF Presence    detects people nearby using radio"));
+    #else
+    Serial.println(F("    - RF Presence"));
+    #endif
+    #if FEATURE_CHIRP
+    Serial.println(F("    + Chirp          relays alerts from the community"));
+    #else
+    Serial.println(F("    - Chirp"));
+    #endif
+    #if FEATURE_WATCHDOG
+    Serial.printf("    + Watchdog %ds    auto-restarts if something freezes\n", CONFIG_WATCHDOG_TIMEOUT_SEC);
+    #else
+    Serial.println(F("    - Watchdog"));
+    #endif
+
+    Serial.println();
+    Serial.println(F("    Timing: how often the canary creates records"));
+    Serial.println(F("    ------------------------------------------------"));
+    Serial.printf( "    Record rate   every %u ms\n", CONFIG_RECORD_INTERVAL_MS);
+    Serial.println(F("                  (creates 1 signed witness record per second)"));
+    Serial.printf( "    Time bucket   %u ms\n", CONFIG_TIME_BUCKET_MS);
+    Serial.println(F("                  (rounds timestamps so exact times stay private)"));
+    Serial.printf( "    Self-verify   every %u seconds\n", CONFIG_VERIFY_INTERVAL_SEC);
+    Serial.println(F("                  (the canary checks its own math is correct)"));
+    Serial.printf( "    SD persist    every %u records\n", CONFIG_SD_PERSIST_INTERVAL);
+    Serial.println(F("                  (saves a batch to the SD card at once)"));
+    Serial.println();
+}
+
+static void app_print_scene_protocol() {
+    Serial.println(F("              ,_,"));
+    Serial.println(F("             (o.o)         Setting up the locks..."));
+    Serial.println(F("              |#|"));
+    Serial.println(F("             [###]         Every record gets signed"));
+    Serial.println(F("              | |          so it can't be forged."));
+    Serial.println(F("    ------------------------------------------------"));
+    Serial.printf( "    Witness     %s\n", PWK_PROTOCOL_VERSION);
+    Serial.println(F("                (the Privacy Witness Kernel protocol version)"));
+    Serial.printf( "    Chain       %s\n", CHAIN_ALGORITHM);
+    Serial.println(F("                (how records are linked — like a chain of"));
+    Serial.println(F("                 paper clips where removing one breaks all)"));
+    Serial.printf( "    Signature   %s\n", SIGNATURE_ALGORITHM);
+    Serial.println(F("                (the math that proves a record is genuine,"));
+    Serial.println(F("                 like a wax seal on a letter)"));
+    Serial.printf( "    Ruleset     %s\n", RULESET_ID);
+    Serial.println(F("                (the set of rules this device follows)"));
+    Serial.println();
+}
+
+static void app_print_scene_chain() {
+    Serial.println(F("              ,_,"));
+    Serial.println(F("             (o.o)         Resuming the witness chain..."));
+    Serial.println(F("              |=|"));
+    Serial.println(F("             [===]         Each record links to the last,"));
+    Serial.println(F("              |=|          like pages in a sealed book."));
+    Serial.println(F("    ------------------------------------------------"));
+    Serial.printf( "    Device      %s\n", witness_chain_device_id(&g_witness_chain));
+    Serial.printf( "    Sequence    %u  (next record number)\n", witness_chain_sequence(&g_witness_chain));
+    Serial.printf( "    Boot        #%u  (times this device has started)\n", witness_chain_boot_count(&g_witness_chain));
+    Serial.printf( "    Integrity   %s\n", g_health.crypto_healthy ? "verified" : "check required");
+    if (g_health.crypto_healthy) {
+        Serial.printf("    Key         %02x%02x%02x%02x...  (Ed25519 public key prefix)\n",
+                       g_witness_chain.pubkey_fingerprint[0],
+                       g_witness_chain.pubkey_fingerprint[1],
+                       g_witness_chain.pubkey_fingerprint[2],
+                       g_witness_chain.pubkey_fingerprint[3]);
+    }
+    Serial.println();
+}
+
+static void app_print_scene_network(const char* ssid) {
+    Serial.println(F("              ,_,  ))"));
+    Serial.println(F("             (o.o)  ))     Broadcasting..."));
+    Serial.println(F("              | |"));
+    Serial.println(F("              | |          Your canary is now a WiFi"));
+    Serial.println(F("              d b          hotspot you can connect to."));
+    Serial.println(F("    ------------------------------------------------"));
+    Serial.printf( "    WiFi name   %s\n", ssid);
+    Serial.printf( "    Password    %s\n", CONFIG_AP_PASSWORD_DEFAULT);
+    Serial.printf( "    Channel     %d  (WiFi radio channel, up to %d devices at once)\n", CONFIG_AP_CHANNEL, CONFIG_AP_MAX_CLIENTS);
+    Serial.println(F("    Dashboard   http://canary.local"));
+    Serial.println(F("                (type this in your browser to see the dashboard)"));
+    Serial.printf( "    Direct IP   http://%s\n", WiFi.softAPIP().toString().c_str());
+    Serial.println(F("                (use this if canary.local doesn't work)"));
+    Serial.printf( "    HTTP port   %d\n", CONFIG_HTTP_PORT);
+    Serial.println(F("    mDNS        canary.local  (service: _securacv._tcp)"));
+    Serial.println(F("                (mDNS lets your device find the canary by name"));
+    Serial.println(F("                 instead of remembering a number like 192.168.4.1)"));
+    #if FEATURE_BLUETOOTH
+    Serial.printf( "    BLE name    %s\n", CONFIG_BLE_DEVICE_NAME);
+    Serial.println(F("                (how the canary appears on Bluetooth scans)"));
+    #endif
+    #if FEATURE_GNSS
+    Serial.printf( "    GNSS baud   %u  (speed the GPS module talks at)\n", CONFIG_GNSS_BAUD);
+    #endif
+    Serial.println();
+}
+
+static void app_print_scene_ready() {
+    Serial.println();
+    Serial.println(F("    ================================================"));
+    Serial.println();
+    Serial.println(F("                   ,_,"));
+    Serial.println(F("                  (o.o)  ~~"));
+    Serial.println(F("                 /(> <)\\ ~~~~"));
+    Serial.println(F("                  d | b  ~~~~~~"));
+    Serial.println();
+    Serial.println(F("    The canary is singing. Everything is working."));
+    Serial.println();
+    Serial.println(F("    It will now create a signed witness record"));
+    Serial.println(F("    every second and store it to the SD card."));
+    Serial.println(F("    Nobody can alter these records after the fact."));
+    Serial.println();
+    Serial.println(F("    ================================================"));
+    Serial.println();
+}
+
+static void app_print_scene_guide(const char* ssid) {
+    Serial.println(F("              ,_,"));
+    Serial.println(F("             (o.o) !       How to connect:"));
+    Serial.println(F("              |>|"));
+    Serial.println(F("              | |"));
+    Serial.println(F("    ------------------------------------------------"));
+    Serial.println();
+    Serial.printf( "    1. On your phone or laptop, join the WiFi\n");
+    Serial.printf( "       network called \"%s\"\n", ssid);
+    Serial.printf( "       and enter the password: %s\n", CONFIG_AP_PASSWORD_DEFAULT);
+    Serial.println();
+    Serial.println(F("    2. Open a web browser and go to:"));
+    Serial.println(F("       http://canary.local"));
+    Serial.printf( "       (or try http://%s)\n", WiFi.softAPIP().toString().c_str());
+    Serial.println();
+    Serial.println(F("    3. From the dashboard you can:"));
+    Serial.println(F("       Timeline  - see the witness record history"));
+    Serial.println(F("       Peek      - aim the camera"));
+    Serial.println(F("       Sensing   - see who's nearby (via RF)"));
+    Serial.println(F("       Settings  - connect to your home WiFi"));
+    Serial.println();
+    Serial.println(F("    REST API — for developers, scripts, and tinkerers:"));
+    Serial.println(F("    (These are web addresses you can visit or call"));
+    Serial.println(F("     from code. Add them after http://canary.local)"));
+    Serial.println(F("    ------------------------------------------------"));
+    Serial.println(F("    GET  /api/status          is the device healthy?"));
+    Serial.println(F("    GET  /api/chain           latest witness chain info"));
+    Serial.println(F("    GET  /api/logs            recent event log"));
+    Serial.println(F("    POST /api/export          download all signed records"));
+    Serial.println(F("    GET  /api/wifi/scan       see nearby WiFi networks"));
+    Serial.println(F("    POST /api/wifi/connect    join your home WiFi"));
+    Serial.println(F("    GET  /api/peek/stream     live camera video feed"));
+    Serial.println(F("    GET  /api/peek/snapshot   take one photo"));
+    Serial.println(F("    GET  /api/sensing         who's nearby? (RF data)"));
+    Serial.println(F("    GET  /api/diagnostics     everything about this device"));
+    Serial.println(F("    GET  /api/selftest        run a hardware check"));
+    Serial.println(F("    POST /api/reboot          restart the canary"));
+    Serial.println();
+    Serial.println(F("    Serial monitor — what you're reading right now:"));
+    Serial.println(F("    ------------------------------------------------"));
+    Serial.printf( "    Baud rate   %u  (the speed of this text connection)\n", CONFIG_SERIAL_BAUD);
+    Serial.println(F("    Health      a status line prints every 60 seconds"));
+    Serial.println(F("                so you know the canary is still alive"));
+    Serial.println(F("    Debug mode  for much more detail, rebuild with:"));
+    Serial.println(F("                  pio run -e canary-wap-debug"));
+    Serial.println(F("                this turns on verbose logging for"));
+    Serial.println(F("                every subsystem (GPS, BLE, mesh, etc.)"));
+    Serial.println(F("    BLE debug   hold the BOOT button during power-on"));
+    Serial.printf( "                for %u seconds to activate a special\n", CONFIG_BOOT_BUTTON_HOLD_MS / 1000);
+    Serial.println(F("                Bluetooth debug beacon"));
+    Serial.println();
+    Serial.println(F("    ------------------------------------------------"));
+    Serial.println();
 }
 
 // ============================================================================
@@ -619,6 +865,42 @@ static void app_process_health() {
     // Log health metrics periodically
     if (now - g_last_health_log_ms >= 60000) {  // Every minute
         g_last_health_log_ms = now;
+
+        uint32_t up = g_health.uptime_sec;
+        uint32_t h = up / 3600;
+        uint32_t m = (up % 3600) / 60;
+        uint32_t s = up % 60;
+
+        Serial.println();
+        if (h > 0)
+            Serial.printf("    ,_, Alive %uh %um %us", h, m, s);
+        else
+            Serial.printf("    ,_, Alive %um %us", m, s);
+
+        Serial.printf(" | %u records created | %u self-checks passed",
+                       g_health.records_created, g_health.records_verified);
+        Serial.println();
+        Serial.printf("        Memory %uK free (lowest: %uK)",
+                       g_health.free_heap / 1024, g_health.min_heap / 1024);
+
+        #if FEATURE_GNSS
+        const gnss_fix_t* fix = gnss_parser_get_fix(&g_gnss_parser);
+        if (fix->valid)
+            Serial.printf(" | GPS locked (%u satellites)", fix->satellites);
+        else
+            Serial.print(" | GPS searching...");
+        #endif
+
+        #if FEATURE_SD_STORAGE
+        Serial.printf(" | SD %u writes", g_health.sd_writes);
+        #endif
+
+        #if FEATURE_MESH_NETWORK
+        if (g_health.mesh_messages_sent > 0)
+            Serial.printf(" | Mesh %u msgs", g_health.mesh_messages_sent);
+        #endif
+
+        Serial.println();
 
         LOG_I("Health: uptime=%us heap=%u/%u records=%u verified=%u",
               g_health.uptime_sec, g_health.free_heap, g_health.min_heap,
