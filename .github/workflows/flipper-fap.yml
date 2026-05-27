@@ -28,26 +28,46 @@ jobs:
       matrix:
         include:
           - firmware: official
-            channel: release
-            label: Official (Release)
+            tag: "1.4.3"
+            label: Official 1.4.3
           - firmware: official-dev
-            channel: dev
+            tag: "dev"
             label: Official (Dev)
 
     steps:
       - uses: actions/checkout@v4
-
-      - name: Build FAP
-        uses: flipperdevices/flipperzero-ufbt-action@v0.1
-        id: build-app
         with:
-          app-dir: tools/flipper/securacv_scanner
-          sdk-channel: ${{ matrix.channel }}
+          path: app
+
+      - name: Clone Flipper firmware
+        uses: actions/checkout@v4
+        with:
+          repository: flipperdevices/flipperzero-firmware
+          ref: ${{ matrix.tag }}
+          path: firmware
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Link app into firmware
+        run: |
+          mkdir -p firmware/applications_user
+          ln -s "$GITHUB_WORKSPACE/app/tools/flipper/securacv_scanner" firmware/applications_user/securacv_scanner
+          ls -la firmware/applications_user/securacv_scanner/
+
+      - name: Build FAP with fbt
+        working-directory: firmware
+        run: |
+          ./fbt fap_securacv_scanner COMPACT=1
 
       - name: Collect artifact
         run: |
           mkdir -p dist
-          cp ${{ steps.build-app.outputs.fap-artifacts }}/*.fap "dist/securacv_scanner-${{ matrix.firmware }}.fap"
+          find firmware/build -name "securacv_scanner.fap" -exec cp {} "dist/securacv_scanner-${{ matrix.firmware }}.fap" \;
           ls -la dist/
 
       - name: Upload artifact
