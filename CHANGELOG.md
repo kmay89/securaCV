@@ -111,7 +111,9 @@ FEATURE_DATA_MGMT.
 - Chain verification capped at 100 records with delay(1) yield — prevents
   watchdog timeout on large directories
 - BLE GATT characteristics are read-only (no write/auth bypass possible)
-- All REST endpoints auth-gated with rate limiting
+- New REST endpoints (/api/diagnostics, /api/battery/history) auth-gated with
+  rate limiting. Note: WAP's /api/selftest is intentionally unauthenticated
+  (reachable on the captive-portal AP during setup, by design)
 - Power policy rejects manual override to LOW_POWER/SHUTDOWN (anti-blinding)
 
 ## [0.5.0] - 2026-05-12
