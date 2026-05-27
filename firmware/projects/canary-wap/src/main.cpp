@@ -211,7 +211,11 @@ void setup() {
     g_initialized = true;
     g_health.uptime_sec = 0;
 
-    boot_scene_ready();
+    boot_scene_ready(
+        "It will now create a signed witness record",
+        "every second and store it to the SD card.",
+        "Nobody can alter these records after the fact."
+    );
     app_print_scene_guide(ssid_buf);
 }
 
@@ -318,11 +322,11 @@ static boot_info_t app_collect_boot_info() {
 }
 
 static void app_print_scene_features() {
-    printf("                  ,_,\n");
-    printf("            ___  (o.o)     What can I do?\n");
-    printf("           | . |/ /\n");
-    printf("           | . |          Each + is a feature that's\n");
-    printf("           |___|          turned on in this build.\n");
+    boot_line("                  ,_,");
+    boot_line("            ___  (o.o)     What can I do?");
+    boot_line("           | . |/ /");
+    boot_line("           | . |          Each + is a feature that's");
+    boot_line("           |___|          turned on in this build.");
     boot_separator();
 
     #if FEATURE_GNSS
@@ -377,7 +381,7 @@ static void app_print_scene_features() {
     #endif
 
     boot_blank();
-    printf("    Timing: how often the canary creates records\n");
+    boot_line("    Timing: how often the canary creates records");
     boot_separator();
     boot_kvf("Record rate", "every %u ms", CONFIG_RECORD_INTERVAL_MS);
     boot_note("(creates 1 signed witness record per second)");
@@ -391,11 +395,11 @@ static void app_print_scene_features() {
 }
 
 static void app_print_scene_protocol() {
-    printf("              ,_,\n");
-    printf("             (o.o)         Setting up the locks...\n");
-    printf("              |#|\n");
-    printf("             [###]         Every record gets signed\n");
-    printf("              | |          so it can't be forged.\n");
+    boot_line("              ,_,");
+    boot_line("             (o.o)         Setting up the locks...");
+    boot_line("              |#|");
+    boot_line("             [###]         Every record gets signed");
+    boot_line("              | |          so it can't be forged.");
     boot_separator();
     boot_kv("Witness",   PWK_PROTOCOL_VERSION);
     boot_note("(the Privacy Witness Kernel protocol version)");
@@ -411,11 +415,11 @@ static void app_print_scene_protocol() {
 }
 
 static void app_print_scene_chain() {
-    printf("              ,_,\n");
-    printf("             (o.o)         Resuming the witness chain...\n");
-    printf("              |=|\n");
-    printf("             [===]         Each record links to the last,\n");
-    printf("              |=|          like pages in a sealed book.\n");
+    boot_line("              ,_,");
+    boot_line("             (o.o)         Resuming the witness chain...");
+    boot_line("              |=|");
+    boot_line("             [===]         Each record links to the last,");
+    boot_line("              |=|          like pages in a sealed book.");
     boot_separator();
     boot_kv("Device", witness_chain_device_id(&g_witness_chain));
     boot_kvf("Sequence", "%u  (next record number)", witness_chain_sequence(&g_witness_chain));
@@ -432,11 +436,11 @@ static void app_print_scene_chain() {
 }
 
 static void app_print_scene_network(const char* ssid) {
-    printf("              ,_,  ))\n");
-    printf("             (o.o)  ))     Broadcasting...\n");
-    printf("              | |\n");
-    printf("              | |          Your canary is now a WiFi\n");
-    printf("              d b          hotspot you can connect to.\n");
+    boot_line("              ,_,  ))");
+    boot_line("             (o.o)  ))     Broadcasting...");
+    boot_line("              | |");
+    boot_line("              | |          Your canary is now a WiFi");
+    boot_line("              d b          hotspot you can connect to.");
     boot_separator();
     boot_kv("WiFi name", ssid);
     boot_kv("Password",  CONFIG_AP_PASSWORD_DEFAULT);
@@ -461,53 +465,53 @@ static void app_print_scene_network(const char* ssid) {
 }
 
 static void app_print_scene_guide(const char* ssid) {
-    printf("              ,_,\n");
-    printf("             (o.o) !       How to connect:\n");
-    printf("              |>|\n");
-    printf("              | |\n");
+    boot_line("              ,_,");
+    boot_line("             (o.o) !       How to connect:");
+    boot_line("              |>|");
+    boot_line("              | |");
     boot_separator();
     boot_blank();
-    printf("    1. On your phone or laptop, join the WiFi\n");
-    printf("       network called \"%s\"\n", ssid);
-    printf("       and enter the password: %s\n", CONFIG_AP_PASSWORD_DEFAULT);
+    boot_line("    1. On your phone or laptop, join the WiFi");
+    boot_linef("       network called \"%s\"", ssid);
+    boot_linef("       and enter the password: %s", CONFIG_AP_PASSWORD_DEFAULT);
     boot_blank();
-    printf("    2. Open a web browser and go to:\n");
-    printf("       http://canary.local\n");
-    printf("       (or try http://%s)\n", WiFi.softAPIP().toString().c_str());
+    boot_line("    2. Open a web browser and go to:");
+    boot_line("       http://canary.local");
+    boot_linef("       (or try http://%s)", WiFi.softAPIP().toString().c_str());
     boot_blank();
-    printf("    3. From the dashboard you can:\n");
-    printf("       Timeline  - see the witness record history\n");
-    printf("       Peek      - aim the camera\n");
-    printf("       Sensing   - see who's nearby (via RF)\n");
-    printf("       Settings  - connect to your home WiFi\n");
+    boot_line("    3. From the dashboard you can:");
+    boot_line("       Timeline  - see the witness record history");
+    boot_line("       Peek      - aim the camera");
+    boot_line("       Sensing   - see who's nearby (via RF)");
+    boot_line("       Settings  - connect to your home WiFi");
     boot_blank();
-    printf("    REST API — for developers, scripts, and tinkerers:\n");
-    printf("    (These are web addresses you can visit or call\n");
-    printf("     from code. Add them after http://canary.local)\n");
+    boot_line("    REST API \xe2\x80\x94 for developers, scripts, and tinkerers:");
+    boot_line("    (These are web addresses you can visit or call");
+    boot_line("     from code. Add them after http://canary.local)");
     boot_separator();
-    printf("    GET  /api/status          is the device healthy?\n");
-    printf("    GET  /api/chain           latest witness chain info\n");
-    printf("    GET  /api/logs            recent event log\n");
-    printf("    POST /api/export          download all signed records\n");
-    printf("    GET  /api/wifi/scan       see nearby WiFi networks\n");
-    printf("    POST /api/wifi/connect    join your home WiFi\n");
-    printf("    GET  /api/peek/stream     live camera video feed\n");
-    printf("    GET  /api/peek/snapshot   take one photo\n");
-    printf("    GET  /api/sensing         who's nearby? (RF data)\n");
-    printf("    GET  /api/diagnostics     everything about this device\n");
-    printf("    GET  /api/selftest        run a hardware check\n");
-    printf("    POST /api/reboot          restart the canary\n");
+    boot_line("    GET  /api/status          is the device healthy?");
+    boot_line("    GET  /api/chain           latest witness chain info");
+    boot_line("    GET  /api/logs            recent event log");
+    boot_line("    POST /api/export          download all signed records");
+    boot_line("    GET  /api/wifi/scan       see nearby WiFi networks");
+    boot_line("    POST /api/wifi/connect    join your home WiFi");
+    boot_line("    GET  /api/peek/stream     live camera video feed");
+    boot_line("    GET  /api/peek/snapshot   take one photo");
+    boot_line("    GET  /api/sensing         who's nearby? (RF data)");
+    boot_line("    GET  /api/diagnostics     everything about this device");
+    boot_line("    GET  /api/selftest        run a hardware check");
+    boot_line("    POST /api/reboot          restart the canary");
     boot_blank();
-    printf("    Serial monitor — what you're reading right now:\n");
+    boot_line("    Serial monitor \xe2\x80\x94 what you're reading right now:");
     boot_separator();
     boot_kvf("Baud rate", "%u  (the speed of this text connection)", CONFIG_SERIAL_BAUD);
-    printf("    Health      a status line prints every 60 seconds\n");
+    boot_line("    Health      a status line prints every 60 seconds");
     boot_note("so you know the canary is still alive");
-    printf("    Debug mode  for much more detail, rebuild with:\n");
+    boot_line("    Debug mode  for much more detail, rebuild with:");
     boot_note("  pio run -e canary-wap-debug");
     boot_note("this turns on verbose logging for");
     boot_note("every subsystem (GPS, BLE, mesh, etc.)");
-    printf("    BLE debug   hold the BOOT button during power-on\n");
+    boot_line("    BLE debug   hold the BOOT button during power-on");
     boot_kvf("",  "for %u seconds to activate a special", CONFIG_BOOT_BUTTON_HOLD_MS / 1000);
     boot_note("Bluetooth debug beacon");
     boot_blank();

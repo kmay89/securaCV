@@ -28,6 +28,15 @@ void boot_blank(void) { out("\n"); }
 
 void boot_line(const char* text) { out("%s\n", text); }
 
+void boot_linef(const char* fmt, ...) {
+    char buf[256];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, args);
+    va_end(args);
+    out("%s\n", buf);
+}
+
 void boot_kv(const char* key, const char* value) {
     out("    %-12s%s\n", key, value ? value : "--");
 }
@@ -107,7 +116,7 @@ void boot_scene_hardware(const boot_info_t* info) {
     boot_blank();
 }
 
-void boot_scene_ready(void) {
+void boot_scene_ready(const char* msg1, const char* msg2, const char* msg3) {
     boot_blank();
     out("    ================================================\n");
     boot_blank();
@@ -118,9 +127,9 @@ void boot_scene_ready(void) {
     boot_blank();
     out("    The canary is singing. Everything is working.\n");
     boot_blank();
-    out("    It will now create a signed witness record\n");
-    out("    every second and store it to the SD card.\n");
-    out("    Nobody can alter these records after the fact.\n");
+    if (msg1) out("    %s\n", msg1);
+    if (msg2) out("    %s\n", msg2);
+    if (msg3) out("    %s\n", msg3);
     boot_blank();
     out("    ================================================\n");
     boot_blank();

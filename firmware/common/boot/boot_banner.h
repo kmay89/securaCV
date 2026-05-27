@@ -49,7 +49,7 @@ typedef struct {
 
 void boot_scene_banner(const boot_info_t* info);
 void boot_scene_hardware(const boot_info_t* info);
-void boot_scene_ready(void);
+void boot_scene_ready(const char* msg1, const char* msg2, const char* msg3);
 
 // ============================================================================
 // FORMATTING HELPERS — for building custom per-project scenes
@@ -58,6 +58,7 @@ void boot_scene_ready(void);
 void boot_separator(void);
 void boot_blank(void);
 void boot_line(const char* text);
+void boot_linef(const char* fmt, ...);
 void boot_kv(const char* key, const char* value);
 void boot_kvf(const char* key, const char* fmt, ...);
 void boot_feature(bool enabled, const char* name, const char* desc);
