@@ -4115,6 +4115,12 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       boot_attestation: '#9b59b6',
     };
 
+    function esc(s) {
+      const d = document.createElement('div');
+      d.textContent = s;
+      return d.innerHTML;
+    }
+
     async function refreshTimeline() {
       const list = document.getElementById('timelineList');
       const filter = document.getElementById('timelineFilter').value;
@@ -4143,13 +4149,17 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       records.forEach((r, i) => {
         const icon = EVENT_ICONS[r.event_type] || '📋';
         const color = EVENT_COLORS[r.event_type] || '#888';
-        const label = (r.event_type || 'unknown').replace(/_/g, ' ');
+        const rawLabel = (r.event_type || 'unknown').replace(/_/g, ' ');
+        const label = rawLabel.charAt(0).toUpperCase() + rawLabel.slice(1);
         const ts = r.timestamp ? new Date(r.timestamp).toLocaleString() : '—';
         const isLast = i === records.length - 1;
-        const thumbHtml = r.thumbnail
-          ? '<img src="' + r.thumbnail + '" alt="edge" style="width:64px;height:48px;border-radius:4px;object-fit:cover;margin-top:4px;border:1px solid var(--border)" loading="lazy">'
-          : '';
+        const safeZone = esc(r.zone || '');
+        const safeHash = esc((r.hash || '').slice(0, 16));
         const timeSrc = r.time_source === 'gps_utc' ? ' 🛰' : '';
+        let thumbHtml = '';
+        if (r.thumbnail && typeof r.thumbnail === 'string' && r.thumbnail.startsWith('data:image/')) {
+          thumbHtml = '<img src="' + esc(r.thumbnail) + '" alt="edge" style="width:64px;height:48px;border-radius:4px;object-fit:cover;margin-top:4px;border:1px solid var(--border)" loading="lazy">';
+        }
 
         html += '<div style="display:flex;gap:12px;min-height:60px">';
         html += '<div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0">';
@@ -4157,9 +4167,9 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         if (!isLast) html += '<div style="width:2px;flex:1;background:var(--border)"></div>';
         html += '</div>';
         html += '<div style="padding-bottom:16px;flex:1">';
-        html += '<div style="font-weight:600;font-size:13px">' + icon + ' ' + label + timeSrc + '</div>';
-        html += '<div style="font-size:11px;color:var(--text-secondary)">' + ts + ' · seq ' + r.seq + ' · ' + r.zone + '</div>';
-        html += '<div style="font-size:10px;color:var(--text-secondary);font-family:monospace;margin-top:2px">' + (r.hash || '').slice(0, 16) + '…</div>';
+        html += '<div style="font-weight:600;font-size:13px">' + icon + ' ' + esc(label) + timeSrc + '</div>';
+        html += '<div style="font-size:11px;color:var(--text-secondary)">' + esc(ts) + ' · seq ' + Number(r.seq) + ' · ' + safeZone + '</div>';
+        html += '<div style="font-size:10px;color:var(--text-secondary);font-family:monospace;margin-top:2px">' + safeHash + '…</div>';
         html += thumbHtml;
         html += '</div></div>';
       });

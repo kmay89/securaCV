@@ -188,20 +188,32 @@ void setup() {
         Serial.printf( "║  Device ID  : %-46s║\n", dev_id);
         Serial.printf( "║  Firmware   : %-46s║\n", FW_VERSION_STRING);
         Serial.printf( "║  Board      : %-46s║\n", BOARD_NAME);
-        Serial.printf( "║  CPU Freq   : %d MHz    Free Heap: %lu KB%*s║\n",
-                       CONFIG_CPU_FREQ_MHZ, (unsigned long)(hal_free_heap() / 1024), 18, "");
+        {
+            char line_buf[48];
+            snprintf(line_buf, sizeof(line_buf), "%d MHz    Free Heap: %lu KB",
+                     CONFIG_CPU_FREQ_MHZ, (unsigned long)(hal_free_heap() / 1024));
+            Serial.printf("║  CPU Freq   : %-46s║\n", line_buf);
+        }
         #if FEATURE_WIFI_AP
-        Serial.printf( "║  WiFi AP    : %-46s║\n",
-                       g_health.wifi_active ? CONFIG_AP_SSID_PREFIX : "(disabled)");
-        Serial.printf( "║  Dashboard  : http://%-39s║\n",
-                       g_health.wifi_active ? "192.168.4.1" : "(no network)");
+        {
+            char ssid_buf[48];
+            snprintf(ssid_buf, sizeof(ssid_buf), "%s%s",
+                     CONFIG_AP_SSID_PREFIX,
+                     dev_id + strlen(CONFIG_DEVICE_ID_PREFIX));
+            Serial.printf("║  WiFi AP    : %-46s║\n",
+                          g_health.wifi_active ? ssid_buf : "(disabled)");
+            Serial.printf("║  Dashboard  : %-46s║\n",
+                          g_health.wifi_active ? "http://192.168.4.1" : "(no network)");
+        }
         #endif
         Serial.printf( "║  Crypto     : %-46s║\n",
                        g_health.crypto_healthy ? "Ed25519 + SHA-256 (OK)" : "DEGRADED");
-        Serial.printf( "║  Witness    : seq %u, chain height %u%*s║\n",
-                       g_witness_chain.sequence, g_witness_chain.chain_height,
-                       (int)(40 - snprintf(NULL, 0, "seq %u, chain height %u",
-                             g_witness_chain.sequence, g_witness_chain.chain_height)), "");
+        {
+            char witness_buf[48];
+            snprintf(witness_buf, sizeof(witness_buf), "seq %u, chain height %u",
+                     g_witness_chain.sequence, g_witness_chain.chain_height);
+            Serial.printf("║  Witness    : %-46s║\n", witness_buf);
+        }
         #if FEATURE_GNSS
         Serial.println(F("║  GPS        : UART initialized, waiting for fix             ║"));
         #endif
