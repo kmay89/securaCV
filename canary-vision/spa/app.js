@@ -780,62 +780,71 @@ function connectEventStreams(devices, contentContainer) {
   for (var d = 0; d < devices.length; d++) {
     (function (device) {
       if (!isPrivateUrl(device.base_url)) return;
+      if (!device.token) return;
 
-      var token = device.token;
-      if (!token) return;
-
-      var url = device.base_url + '/api/v1/witness/stream?token=' + encodeURIComponent(token);
-
-      try {
-        var source = new EventSource(url);
-
-        source.addEventListener('witness', function (e) {
-          try {
-            var record = JSON.parse(e.data);
-            record.device_id = device.id;
-            record.device_name = device.name || device.id;
-            record._ts = new Date(record.timestamp);
-            if (!record.timestamp || isNaN(record._ts.getTime())) return;
-
-            // Deduplicate
-            var exists = EventsState.allRecords.some(function (r) {
-              return r.hash === record.hash || (r.device_id === record.device_id && r.seq === record.seq);
-            });
-            if (exists) return;
-
-            // Add and maintain sorted order
-            EventsState.allRecords.unshift(record);
-            EventsState.allRecords.sort(function (a, b) { return b._ts - a._ts; });
-            EventsState.clusters = clusterEvents(EventsState.allRecords);
-            EventsState.filteredClusters = applyEventsFilter(EventsState.clusters, EventsState.activeFilter);
-
-            // Check if user is scrolled down
-            var scrollContainer = contentContainer.parentNode;
-            var isScrolledDown = scrollContainer && scrollContainer.scrollTop > 100;
-
-            if (isScrolledDown) {
-              EventsState.pendingLiveEvents++;
-              showLiveBanner(contentContainer);
-            } else {
-              renderEventsContent(contentContainer, {
-                results: EventsState.deviceResults,
-                allRecords: EventsState.allRecords,
-              });
-            }
-          } catch (err) { /* ignore malformed events */ }
-        });
-
-        source.addEventListener('error', function () {
-          if (source.readyState === EventSource.CLOSED) {
-            var idx = EventsState.eventSources.indexOf(source);
-            if (idx !== -1) EventsState.eventSources.splice(idx, 1);
-          }
-        });
-
-        EventsState.eventSources.push(source);
-      } catch (err) { /* EventSource not supported or URL invalid */ }
+      connectDeviceStream(device, contentContainer);
     })(devices[d]);
   }
+}
+
+function connectDeviceStream(device, contentContainer) {
+  if ((window.location.hash || '') !== '#/events') return;
+
+  CanaryAPI.request(device.base_url, '/api/v1/witness/stream/ticket', { method: 'POST' })
+    .then(function (data) {
+      if (!data.ticket) return;
+      if ((window.location.hash || '') !== '#/events') return;
+
+      var url = device.base_url + '/api/v1/witness/stream?ticket=' + encodeURIComponent(data.ticket);
+      var source = new EventSource(url);
+
+      source.addEventListener('witness', function (e) {
+        try {
+          var record = JSON.parse(e.data);
+          record.device_id = device.id;
+          record.device_name = device.name || device.id;
+          record._ts = new Date(record.timestamp);
+          if (!record.timestamp || isNaN(record._ts.getTime())) return;
+
+          var exists = EventsState.allRecords.some(function (r) {
+            return r.hash === record.hash || (r.device_id === record.device_id && r.seq === record.seq);
+          });
+          if (exists) return;
+
+          EventsState.allRecords.unshift(record);
+          EventsState.allRecords.sort(function (a, b) { return b._ts - a._ts; });
+          EventsState.clusters = clusterEvents(EventsState.allRecords);
+          EventsState.filteredClusters = applyEventsFilter(EventsState.clusters, EventsState.activeFilter);
+
+          var scrollContainer = contentContainer.parentNode;
+          var isScrolledDown = scrollContainer && scrollContainer.scrollTop > 100;
+
+          if (isScrolledDown) {
+            EventsState.pendingLiveEvents++;
+            showLiveBanner(contentContainer);
+          } else {
+            renderEventsContent(contentContainer, {
+              results: EventsState.deviceResults,
+              allRecords: EventsState.allRecords,
+            });
+          }
+        } catch (err) { /* ignore malformed events */ }
+      });
+
+      source.addEventListener('error', function () {
+        if (source.readyState === EventSource.CLOSED) {
+          var idx = EventsState.eventSources.indexOf(source);
+          if (idx !== -1) EventsState.eventSources.splice(idx, 1);
+          // Reconnect with a fresh ticket after a short delay
+          setTimeout(function () {
+            connectDeviceStream(device, contentContainer);
+          }, 3000);
+        }
+      });
+
+      EventsState.eventSources.push(source);
+    })
+    .catch(function () { /* device doesn't support SSE tickets — polling fallback */ });
 }
 
 function showLiveBanner(contentContainer) {
