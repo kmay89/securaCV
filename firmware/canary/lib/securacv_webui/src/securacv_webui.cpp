@@ -4287,16 +4287,27 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       }, 5000);
     }
 
-    function refreshTimelineHero() {
+    async function refreshTimelineHero() {
       const hero = document.getElementById('timelineHero');
-      const placeholder = document.getElementById('timelineHeroPlaceholder');
 
-      if (cameraReady) {
-        hero.innerHTML = '<img src="' + API_BASE + '/api/peek/snapshot?t=' + Date.now() +
-          '" alt="Latest snapshot" onerror="this.parentElement.innerHTML=\'<div class=tl-hero-placeholder>Camera offline</div>\'">' +
-          '<div class="tl-hero-overlay">Latest snapshot</div>';
-      } else {
+      if (!cameraReady) {
         hero.innerHTML = '<div class="tl-hero-placeholder">No camera</div>';
+        return;
+      }
+
+      try {
+        const opts = { headers: {} };
+        if (CV_TOKEN && CV_TOKEN.charAt(0) !== '_') {
+          opts.headers['Authorization'] = 'Bearer ' + CV_TOKEN;
+        }
+        const res = await fetch(API_BASE + '/api/peek/snapshot?t=' + Date.now(), opts);
+        if (!res.ok) throw new Error(res.status);
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        hero.innerHTML = '<img src="' + url + '" alt="Latest snapshot" onload="URL.revokeObjectURL(this.src)">' +
+          '<div class="tl-hero-overlay">Latest snapshot</div>';
+      } catch (e) {
+        hero.innerHTML = '<div class="tl-hero-placeholder">Camera offline</div>';
       }
     }
 
@@ -4325,11 +4336,6 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         html += '<div class="tl-meta">#' + (r.seq || '?') + ' · TB:' + (r.time_bucket || '--') + ' · ' + timeSrc + '</div>';
         html += '<div class="tl-chain-badge">' + verified + ' ' + truncHash(hash, 12) + '</div>';
         html += '</div>';
-
-        if (cameraReady && i === 0) {
-          html += '<img class="tl-thumb" src="' + API_BASE + '/api/peek/snapshot?w=64&t=' + Date.now() +
-            '" alt="" loading="lazy" onerror="this.style.display=\'none\'">';
-        }
 
         html += '</div>';
       }
