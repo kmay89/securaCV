@@ -1465,6 +1465,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           <button class="badge" style="cursor:pointer;border:none;" onclick="viMaskAll()">All</button>
           <button class="badge" style="cursor:pointer;border:none;" onclick="viMaskNone()">None</button>
           <button class="badge" style="cursor:pointer;border:none;" onclick="viMaskInvert()">Invert</button>
+          <button class="badge" id="viSensBtn" style="cursor:pointer;border:none;" onclick="viToggleSensMode()">Sensitivity</button>
           <span id="viMaskCount" style="color:var(--muted);line-height:1.8;margin-left:auto;"></span>
         </div>
         <div class="stats-grid">
@@ -3608,8 +3609,65 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     async function viFlushMask() {
       if (!viPaintDirty) return;
       viPaintDirty = false;
-      const r = await api('/api/vision/config', 'POST', { zone_mask: viZoneMask });
+      const payload = viSensMode
+        ? { zone_sensitivity: viZoneSens }
+        : { zone_mask: viZoneMask };
+      const r = await api('/api/vision/config', 'POST', payload);
       if (r && r.ok) viApplyConfig(r);
+    }
+
+    // ─── Zone sensitivity mode ─────────────────────────────────────
+    let viSensMode = false;
+    let viZoneSens = new Array(80).fill(0);
+    const viSensLevels = [0, 10, 20, 40, 60];
+    const viSensLabels = ['Auto', 'High', 'Med', 'Low', 'Min'];
+    const viSensColors = ['', 'rgba(79,209,197,0.5)', 'rgba(79,209,197,0.3)', 'rgba(255,165,0,0.3)', 'rgba(252,129,129,0.3)'];
+
+    function viToggleSensMode() {
+      viSensMode = !viSensMode;
+      const btn = document.getElementById('viSensBtn');
+      if (btn) btn.style.background = viSensMode ? 'var(--accent)' : '';
+      if (btn) btn.style.color = viSensMode ? '#000' : '';
+      viRenderSensGrid();
+      const el = document.getElementById('viMaskCount');
+      if (el) el.textContent = viSensMode ? 'Tap to cycle sensitivity' : '';
+      if (!viSensMode) viUpdateMaskCount();
+    }
+
+    function viRenderSensGrid() {
+      const g = document.getElementById('visionGrid');
+      if (!g) return;
+      for (let i = 0; i < 80 && i < g.children.length; i++) {
+        const c = g.children[i];
+        if (viSensMode) {
+          const li = viSensLevels.indexOf(viZoneSens[i]);
+          const si = li >= 0 ? li : 0;
+          c.style.background = viSensColors[si] || 'var(--border)';
+          c.style.opacity = '1';
+          c.textContent = viSensLabels[si] || '';
+          c.style.fontSize = '0.55rem';
+          c.style.lineHeight = '1';
+          c.style.display = 'flex';
+          c.style.alignItems = 'center';
+          c.style.justifyContent = 'center';
+        } else {
+          c.textContent = '';
+          c.style.fontSize = '';
+          c.style.lineHeight = '';
+          c.style.display = '';
+          c.style.alignItems = '';
+          c.style.justifyContent = '';
+          c.style.opacity = viZoneEnabled(i) ? '1' : '0.25';
+        }
+      }
+    }
+
+    function viSensClick(idx) {
+      const cur = viZoneSens[idx];
+      const ci = viSensLevels.indexOf(cur);
+      viZoneSens[idx] = viSensLevels[(ci + 1) % viSensLevels.length];
+      viPaintDirty = true;
+      viRenderSensGrid();
     }
 
     function viUpdateMaskCount() {
@@ -3627,6 +3685,10 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         const idx = viCellFromEvent(e);
         if (idx < 0) return;
         e.preventDefault();
+        if (viSensMode) {
+          viSensClick(idx);
+          return;
+        }
         viPainting = true;
         viPaintVal = viZoneEnabled(idx) ? 0 : 1;
         viPaintCell(idx);
@@ -3637,6 +3699,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         if (idx >= 0) viPaintCell(idx);
       }
       function onUp() {
+        if (viSensMode && viPaintDirty) { viFlushMask(); return; }
         if (!viPainting) return;
         viPainting = false;
         viFlushMask();
@@ -3715,6 +3778,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         }
       }
       if (cfg.zone_mask) { viZoneMask = cfg.zone_mask.slice(); viUpdateMaskCount(); }
+      if (cfg.zone_sensitivity) { viZoneSens = cfg.zone_sensitivity.slice(); if (viSensMode) viRenderSensGrid(); }
       const card = document.getElementById('visionSettingsCard');
       if (card) card.dataset.loaded = '1';
       const ss = document.getElementById('viSaveStatus');

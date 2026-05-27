@@ -36,6 +36,10 @@ typedef struct {
   uint8_t time_bucket;
 } vision_event_t;
 
+#define VISION_GRID_COLS  10
+#define VISION_GRID_ROWS   8
+#define VISION_GRID_TOTAL (VISION_GRID_COLS * VISION_GRID_ROWS)
+
 typedef struct {
   uint8_t  jpeg_delta_pct;
   uint8_t  block_change_pct;
@@ -51,6 +55,7 @@ typedef struct {
   uint8_t  zone_mask[10];
   uint8_t  adaptive_enabled;
   uint8_t  tamper_hold_frames;
+  uint8_t  zone_sensitivity[VISION_GRID_TOTAL];
 } vision_config_t;
 
 #define VISION_CONFIG_DEFAULT { \
@@ -68,12 +73,9 @@ typedef struct {
   /*.zone_mask*/              { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, \
                                 0xFF, 0xFF, 0xFF, 0xFF, 0xFF }, \
   /*.adaptive_enabled*/       1,     \
-  /*.tamper_hold_frames*/     25     \
+  /*.tamper_hold_frames*/     25,    \
+  /*.zone_sensitivity*/       {}     \
 }
-
-#define VISION_GRID_COLS  10
-#define VISION_GRID_ROWS   8
-#define VISION_GRID_TOTAL (VISION_GRID_COLS * VISION_GRID_ROWS)
 
 typedef struct {
   uint32_t frames_analyzed;

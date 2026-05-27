@@ -2124,6 +2124,8 @@ static void vision_config_to_json(JsonDocument& doc, const vision_config_t& cfg)
   doc["duty_active_pct"]        = cfg.duty_active_pct;
   JsonArray mask = doc["zone_mask"].to<JsonArray>();
   for (int i = 0; i < 10; i++) mask.add(cfg.zone_mask[i]);
+  JsonArray sens = doc["zone_sensitivity"].to<JsonArray>();
+  for (int i = 0; i < VISION_GRID_TOTAL; i++) sens.add(cfg.zone_sensitivity[i]);
   doc["running"]                = vision_is_running();
 #if FEATURE_VISION_TFLITE
   doc["tflite_available"]       = true;
@@ -2229,6 +2231,12 @@ static esp_err_t handle_vision_config_set(httpd_req_t* req) {
       JsonArray zm = obj["zone_mask"].as<JsonArray>();
       for (int i = 0; i < 10 && i < (int)zm.size(); i++) {
         if (zm[i].is<int>()) cfg.zone_mask[i] = (uint8_t)zm[i].as<int>();
+      }
+    }
+    if (obj["zone_sensitivity"].is<JsonArray>()) {
+      JsonArray zs = obj["zone_sensitivity"].as<JsonArray>();
+      for (int i = 0; i < VISION_GRID_TOTAL && i < (int)zs.size(); i++) {
+        if (zs[i].is<int>()) cfg.zone_sensitivity[i] = (uint8_t)constrain(zs[i].as<int>(), 0, 255);
       }
     }
   }
