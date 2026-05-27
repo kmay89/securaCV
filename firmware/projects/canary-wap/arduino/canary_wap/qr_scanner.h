@@ -15,7 +15,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include "esp_camera.h"
-#include "esp_heap_caps.h"
 
 extern "C" {
 #include "quirc.h"
@@ -48,15 +47,8 @@ inline bool init() {
     return false;
   }
 
-  s_rgb  = (uint8_t*)heap_caps_malloc(SCAN_W * SCAN_H * 3,
-                                      MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-  s_gray = (uint8_t*)heap_caps_malloc(SCAN_W * SCAN_H,
-                                      MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-  if (!s_rgb || !s_gray) {
-    /* PSRAM unavailable — try regular heap */
-    if (!s_rgb)  s_rgb  = (uint8_t*)malloc(SCAN_W * SCAN_H * 3);
-    if (!s_gray) s_gray = (uint8_t*)malloc(SCAN_W * SCAN_H);
-  }
+  s_rgb  = (uint8_t*)malloc(SCAN_W * SCAN_H * 3);
+  s_gray = (uint8_t*)malloc(SCAN_W * SCAN_H);
   if (!s_rgb || !s_gray) {
     deinit();
     return false;
