@@ -19,7 +19,9 @@
 #include <Arduino.h>
 #include <esp_mac.h>
 #include <esp_system.h>
+#include <SD.h>
 #include "log_level.h"
+#include "hardware_state.h"
 
 // ════════════════════════════════════════════════════════════════════════════
 // FEATURE FLAG
@@ -191,6 +193,60 @@ const char* format_bytes(uint32_t bytes, char* buf, size_t buf_size);
  */
 const char* format_uptime(uint32_t seconds, char* buf, size_t buf_size);
 
+// ════════════════════════════════════════════════════════════════════════════
+// HEAP DEGRADATION LEVELS — thresholds match PIO's securacv_diagnostics
+// ════════════════════════════════════════════════════════════════════════════
+
+static const uint32_t HEAP_WARN_BYTES       = 30000;
+static const uint32_t HEAP_CRITICAL_BYTES   = 15000;
+static const uint32_t HEAP_EMERGENCY_BYTES  = 10000;
+static const uint32_t HEAP_HYSTERESIS       = 5000;
+
+enum DegradeLevel : uint8_t {
+  DEGRADE_NONE      = 0,
+  DEGRADE_WARN      = 1,   // < 30 KB free
+  DEGRADE_CRITICAL  = 2,   // < 15 KB free
+  DEGRADE_EMERGENCY = 3    // < 10 KB free
+};
+
+// ════════════════════════════════════════════════════════════════════════════
+// SD HEALTH TRACKING
+// ════════════════════════════════════════════════════════════════════════════
+
+struct SDHealthStats {
+  uint32_t total_writes;      // Total SD write operations
+  uint32_t write_errors;      // Total SD write errors
+  uint8_t  usage_pct;         // SD card usage percentage (0-100)
+  bool     space_warning;     // Usage >= 90%
+  bool     space_critical;    // Usage >= 98%
+};
+
+// ════════════════════════════════════════════════════════════════════════════
+// DEGRADATION & SD HEALTH API
+// ════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Get current heap degradation level.
+ * Main loop can use this to gate memory-hungry features.
+ */
+DegradeLevel get_degrade_level();
+
+/**
+ * Get human-readable name for a degradation level.
+ */
+const char* degrade_level_name(DegradeLevel level);
+
+/**
+ * Record an SD write operation (success or failure).
+ * Uses atomic counters — safe to call from any context.
+ */
+void record_sd_write(bool success);
+
+/**
+ * Get current SD health statistics.
+ */
+SDHealthStats get_sd_health();
+
 } // namespace sys_monitor
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -334,6 +390,9 @@ static TempAlertState evaluate_temp_state(float temp, TempAlertState current) {
 
 // ────────────────────────────────────────────────────────────────────────────
 
+static void update_degradation();
+static void update_sd_health();
+
 void update(void (*log_callback)(LogLevel, LogCategory, const char*, const char*)) {
   uint32_t now = millis();
 
@@ -417,6 +476,12 @@ void update(void (*log_callback)(LogLevel, LogCategory, const char*, const char*
       }
     }
   }
+
+  // Update heap degradation level (check every update cycle)
+  update_degradation();
+
+  // Update SD health stats (internally rate-limited to every 10 min)
+  update_sd_health();
 
   // Periodic status logging
   if (now - g_sys_metrics.last_log_ms >= METRICS_LOG_INTERVAL_MS) {
@@ -831,6 +896,104 @@ size_t get_json(char* buf, size_t buf_size) {
   );
 
   return (len > 0 && len < (int)buf_size) ? len : 0;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// HEAP DEGRADATION
+// ────────────────────────────────────────────────────────────────────────────
+
+// Internal state for degradation tracking
+static DegradeLevel s_degrade_level = DEGRADE_NONE;
+
+static void update_degradation() {
+  DegradeLevel prev = s_degrade_level;
+  uint32_t free = g_sys_metrics.heap_free;
+
+  // Apply hysteresis: when already at a level, require crossing
+  // threshold + hysteresis to recover, preventing flapping.
+  uint32_t emergency_limit = HEAP_EMERGENCY_BYTES;
+  uint32_t critical_limit  = HEAP_CRITICAL_BYTES;
+  uint32_t warn_limit      = HEAP_WARN_BYTES;
+
+  if (prev == DEGRADE_EMERGENCY)
+    emergency_limit += HEAP_HYSTERESIS;
+  if (prev >= DEGRADE_CRITICAL)
+    critical_limit += HEAP_HYSTERESIS;
+  if (prev >= DEGRADE_WARN)
+    warn_limit += HEAP_HYSTERESIS;
+
+  if (free < emergency_limit) {
+    s_degrade_level = DEGRADE_EMERGENCY;
+  } else if (free < critical_limit) {
+    s_degrade_level = DEGRADE_CRITICAL;
+  } else if (free < warn_limit) {
+    s_degrade_level = DEGRADE_WARN;
+  } else {
+    s_degrade_level = DEGRADE_NONE;
+  }
+
+  if (s_degrade_level != prev) {
+    Serial.printf("[SYS] Heap degradation: %s -> %s (free=%u)\n",
+                  degrade_level_name(prev),
+                  degrade_level_name(s_degrade_level),
+                  (unsigned)free);
+  }
+}
+
+DegradeLevel get_degrade_level() {
+  return s_degrade_level;
+}
+
+const char* degrade_level_name(DegradeLevel level) {
+  switch (level) {
+    case DEGRADE_NONE:      return "NONE";
+    case DEGRADE_WARN:      return "WARN";
+    case DEGRADE_CRITICAL:  return "CRITICAL";
+    case DEGRADE_EMERGENCY: return "EMERGENCY";
+    default:                return "UNKNOWN";
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// SD HEALTH TRACKING
+// ────────────────────────────────────────────────────────────────────────────
+
+static SDHealthStats s_sd_health = {};
+static uint32_t s_sd_space_check_ms = 0;
+
+// Rate limit for SD space checks (every 10 minutes)
+static const uint32_t SD_SPACE_CHECK_INTERVAL_MS = 10UL * 60UL * 1000UL;
+
+void record_sd_write(bool success) {
+  __atomic_fetch_add(&s_sd_health.total_writes, 1, __ATOMIC_RELAXED);
+  if (!success) {
+    __atomic_fetch_add(&s_sd_health.write_errors, 1, __ATOMIC_RELAXED);
+  }
+}
+
+static void update_sd_health() {
+  // Only check SD space periodically to avoid slow FATFS volume scans
+  uint32_t now = millis();
+  if (s_sd_space_check_ms != 0 &&
+      (int32_t)(now - s_sd_space_check_ms) < (int32_t)SD_SPACE_CHECK_INTERVAL_MS) {
+    return;
+  }
+  s_sd_space_check_ms = now;
+
+  // Check if SD is available via hardware_state
+  if (!sd_is_available()) return;
+
+  uint64_t total = SD.totalBytes();
+  uint64_t used  = SD.usedBytes();
+  if (total > 0) {
+    s_sd_health.usage_pct = (uint8_t)(used * 100 / total);
+  }
+  s_sd_health.space_warning  = (s_sd_health.usage_pct >= 90);
+  s_sd_health.space_critical = (s_sd_health.usage_pct >= 98);
+}
+
+SDHealthStats get_sd_health() {
+  return s_sd_health;
 }
 
 } // namespace sys_monitor

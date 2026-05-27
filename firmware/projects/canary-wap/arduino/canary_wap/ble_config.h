@@ -49,6 +49,16 @@
   #endif
 #endif
 
+// FEATURE_BLE_STATUS gates the BLE GATT status service (ble_status_api.h).
+// Requires FEATURE_BLUETOOTH (the NimBLE server it registers on). Auto-
+// disable if NimBLE is missing or the BLUETOOTH channel is off.
+#if defined(FEATURE_BLE_STATUS) && FEATURE_BLE_STATUS
+  #if !defined(FEATURE_BLUETOOTH) || !FEATURE_BLUETOOTH
+    #undef  FEATURE_BLE_STATUS
+    #define FEATURE_BLE_STATUS 0
+  #endif
+#endif
+
 // Sub-feature flags (only relevant if FEATURE_BLE == 1)
 #define FEATURE_BLE_OPERA     1   // Server/advertising mode (presence)
 #define FEATURE_BLE_CHIRP     1   // Broadcast alert mode (connectionless)

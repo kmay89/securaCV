@@ -1,0 +1,19 @@
+{
+    "name": "securacv_ble_status",
+    "version": "0.1.0",
+    "description": "SecuraCV BLE GATT Status Service — exposes battery level, device health, chain sequence, firmware version, and degradation state over Bluetooth Low Energy so a companion phone can read device status without WiFi. Uses NimBLE with standard Battery Service (0x180F) and a custom SecuraCV service.",
+    "keywords": ["securacv", "esp32-s3", "ble", "gatt", "nimble", "status", "battery"],
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/kmay89/securaCV.git"
+    },
+    "authors": [
+        {
+            "name": "Karl May",
+            "email": "karl@errerlabs.com"
+        }
+    ],
+    "license": "Apache-2.0",
+    "frameworks": "arduino",
+    "platforms": "espressif32"
+}

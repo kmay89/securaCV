@@ -1,0 +1,19 @@
+{
+    "name": "securacv_data_mgmt",
+    "version": "0.1.0",
+    "description": "SecuraCV Data Management — SD log rotation with configurable file limits, chain state backup/restore (NVS to SD), Ed25519 chain integrity verification, and witness record export for USB retrieval. Prevents SD exhaustion in long-running deployments.",
+    "keywords": ["securacv", "esp32-s3", "data-management", "log-rotation", "chain-backup", "integrity"],
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/kmay89/securaCV.git"
+    },
+    "authors": [
+        {
+            "name": "Karl May",
+            "email": "karl@errerlabs.com"
+        }
+    ],
+    "license": "Apache-2.0",
+    "frameworks": "arduino",
+    "platforms": "espressif32"
+}

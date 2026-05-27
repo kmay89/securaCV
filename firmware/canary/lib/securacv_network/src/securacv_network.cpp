@@ -58,6 +58,12 @@
 #if FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS || FEATURE_TOUCH || FEATURE_IR_RMT || FEATURE_TEMP_TAMPER
 #include "securacv_lowpower.h"
 #endif
+#if FEATURE_DIAGNOSTICS
+#include "securacv_diagnostics.h"
+#endif
+#if FEATURE_POWER_MONITOR
+#include "securacv_power.h"
+#endif
 
 // ════════════════════════════════════════════════════════════════════════════
 // GLOBAL INSTANCE
@@ -515,19 +521,76 @@ void NetworkManager::checkConnection() {
       if (!WiFi.isConnected()) {
         m_status.state = WIFI_PROV_FAILED;
         log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK, "WiFi connection lost", nullptr);
+      } else {
+        /* Reset attempt counter on sustained connection so the next
+         * disconnect starts backoff from scratch. */
+        if (m_status.connect_attempts > 0) {
+          m_status.connect_attempts = 0;
+        }
       }
       break;
 
     case WIFI_PROV_FAILED:
-      if (m_creds.configured && m_creds.enabled &&
-          now - m_status.last_connect_ms > WIFI_RECONNECT_INTERVAL_MS) {
-        connectToHome();
+      /* Exponential backoff: 2 s → 4 s → 8 s → 16 s → 30 s cap.
+       * m_status.connect_attempts counts consecutive failures since the
+       * last successful connection. connectToHome() increments it; a
+       * successful WIFI_PROV_CONNECTED transition above resets it to 0. */
+      {
+        uint32_t attempt = m_status.connect_attempts;
+        if (attempt > 5) attempt = 5;
+        /* Base 2 s, doubles each attempt, capped at 30 s. */
+        uint32_t backoff_ms = 2000UL << (attempt > 0 ? (attempt - 1) : 0);
+        if (backoff_ms > 30000UL) backoff_ms = 30000UL;
+
+        if (m_creds.configured && m_creds.enabled &&
+            now - m_status.last_connect_ms > backoff_ms) {
+          connectToHome();
+        }
       }
       break;
 
     default:
       break;
   }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// WIFI POWER MANAGEMENT
+// ════════════════════════════════════════════════════════════════════════════
+
+#include <esp_wifi.h>
+
+void network_set_wifi_power_save(bool enable) {
+  wifi_ps_type_t ps = enable ? WIFI_PS_MIN_MODEM : WIFI_PS_NONE;
+  esp_err_t err = esp_wifi_set_ps(ps);
+  if (err == ESP_OK) {
+    log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK,
+               enable ? "WiFi modem sleep enabled" : "WiFi modem sleep disabled",
+               nullptr);
+  } else {
+    log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK,
+               "WiFi power save set failed", nullptr);
+  }
+}
+
+void network_set_tx_power(int8_t dbm) {
+  /* esp_wifi_set_max_tx_power() takes quarter-dBm units (int8_t).
+   * Valid range for ESP32-S3: 8 (2 dBm) .. 84 (21 dBm). */
+  if (dbm < 8)  dbm = 8;
+  if (dbm > 84) dbm = 84;
+  esp_err_t err = esp_wifi_set_max_tx_power(dbm);
+  if (err == ESP_OK) {
+    char msg[40];
+    snprintf(msg, sizeof(msg), "WiFi TX power set to %d (x0.25 dBm)", dbm);
+    log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, msg, nullptr);
+  } else {
+    log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK,
+               "WiFi TX power set failed", nullptr);
+  }
+}
+
+bool network_is_sta_connected(void) {
+  return WiFi.isConnected();
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -658,12 +721,21 @@ static esp_err_t handle_audio_test_start(httpd_req_t* req);
 static esp_err_t handle_audio_test_status(httpd_req_t* req);
 #endif
 
+#if FEATURE_DIAGNOSTICS
+static esp_err_t handle_diagnostics(httpd_req_t* req);
+static esp_err_t handle_selftest(httpd_req_t* req);
+#endif
+
+#if FEATURE_POWER_MONITOR
+static esp_err_t handle_battery_history(httpd_req_t* req);
+#endif
+
 bool NetworkManager::startHttpServer() {
   httpd_config_t config = HTTPD_DEFAULT_CONFIG();
   config.server_port = 80;
   config.uri_match_fn = httpd_uri_match_wildcard;
   config.stack_size = 8192;
-  config.max_uri_handlers = 36;
+  config.max_uri_handlers = 40;
   config.recv_wait_timeout = 30;
   config.send_wait_timeout = 30;
   config.lru_purge_enable  = true;
@@ -807,6 +879,19 @@ void NetworkManager::registerHttpHandlers() {
   httpd_register_uri_handler(m_http_server, &audio_test_start);
   httpd_uri_t audio_test_status = { .uri = "/api/audio/test/status", .method = HTTP_GET, .handler = handle_audio_test_status };
   httpd_register_uri_handler(m_http_server, &audio_test_status);
+  #endif
+
+  #if FEATURE_DIAGNOSTICS
+  httpd_uri_t diag_ep = { .uri = "/api/diagnostics", .method = HTTP_GET, .handler = handle_diagnostics };
+  httpd_register_uri_handler(m_http_server, &diag_ep);
+
+  httpd_uri_t selftest_ep = { .uri = "/api/selftest", .method = HTTP_GET, .handler = handle_selftest };
+  httpd_register_uri_handler(m_http_server, &selftest_ep);
+  #endif
+
+  #if FEATURE_POWER_MONITOR
+  httpd_uri_t batt_hist_ep = { .uri = "/api/battery/history", .method = HTTP_GET, .handler = handle_battery_history };
+  httpd_register_uri_handler(m_http_server, &batt_hist_ep);
   #endif
 }
 
@@ -2341,6 +2426,183 @@ static esp_err_t handle_audio_test_status(httpd_req_t* req) {
   return http_send_json(req, response.c_str());
 }
 #endif // FEATURE_ACOUSTIC_EVENTS
+
+// ════════════════════════════════════════════════════════════════════════════
+// DIAGNOSTICS DASHBOARD HANDLERS
+// ════════════════════════════════════════════════════════════════════════════
+
+#if FEATURE_DIAGNOSTICS
+
+// GET /api/diagnostics — Full diagnostic snapshot as JSON
+static esp_err_t handle_diagnostics(httpd_req_t* req) {
+  if (!rate_limit_check(req)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  diag_snapshot_t snap;
+  if (!diag_get_snapshot(&snap)) {
+    return http_send_error(req, 500, "diagnostics_unavailable");
+  }
+
+  const char* degrade_name = "none";
+  switch (snap.heap.degrade_level) {
+    case DEGRADE_WARN:      degrade_name = "warn"; break;
+    case DEGRADE_CRITICAL:  degrade_name = "critical"; break;
+    case DEGRADE_EMERGENCY: degrade_name = "emergency"; break;
+  }
+
+  /* Build JSON with snprintf into a stack buffer. This avoids
+   * ArduinoJson heap allocation during a diagnostics call when
+   * memory pressure is the very thing being diagnosed. */
+  char buf[2048];
+  int pos = 0;
+
+  /* heap */
+  pos += snprintf(buf + pos, sizeof(buf) - pos,
+    "{\"heap\":{\"free\":%u,\"min\":%u,\"largest_block\":%u,"
+    "\"psram_free\":%u,\"psram_total\":%u,"
+    "\"stack_hwm\":%u,\"fragmentation_pct\":%u,"
+    "\"degrade_level\":\"%s\"},",
+    snap.heap.free_heap, snap.heap.min_heap, snap.heap.largest_block,
+    snap.heap.psram_free, snap.heap.psram_total,
+    snap.heap.stack_hwm_main, snap.heap.fragmentation_pct,
+    degrade_name);
+
+  /* sd */
+  pos += snprintf(buf + pos, sizeof(buf) - pos,
+    "\"sd\":{\"mounted\":%s,\"usage_pct\":%u,"
+    "\"total_writes\":%u,\"write_errors\":%u,"
+    "\"space_warning\":%s,\"space_critical\":%s},",
+    snap.sd.mounted ? "true" : "false",
+    snap.sd.usage_pct, snap.sd.total_writes, snap.sd.write_errors,
+    snap.sd.space_warning ? "true" : "false",
+    snap.sd.space_critical ? "true" : "false");
+
+  /* selftest */
+  pos += snprintf(buf + pos, sizeof(buf) - pos,
+    "\"selftest\":{\"has_run\":%s,\"health_score\":%u,"
+    "\"passed\":%u,\"total\":%u,\"tests\":[",
+    snap.selftest.has_run ? "true" : "false",
+    snap.selftest.health_score,
+    snap.selftest.passed_count, snap.selftest.total_count);
+
+  for (uint8_t i = 0; i < snap.selftest.total_count && i < SELFTEST_COUNT; i++) {
+    if (i > 0) pos += snprintf(buf + pos, sizeof(buf) - pos, ",");
+    pos += snprintf(buf + pos, sizeof(buf) - pos,
+      "{\"name\":\"%s\",\"passed\":%s,\"ms\":%u}",
+      snap.selftest.tests[i].name ? snap.selftest.tests[i].name : "unknown",
+      snap.selftest.tests[i].passed ? "true" : "false",
+      snap.selftest.tests[i].duration_ms);
+    if ((size_t)pos >= sizeof(buf) - 64) break;  /* safety margin */
+  }
+
+  pos += snprintf(buf + pos, sizeof(buf) - pos, "]},");
+
+  /* system */
+  pos += snprintf(buf + pos, sizeof(buf) - pos,
+    "\"system\":{\"uptime_sec\":%u,\"boot_count\":%u,"
+    "\"reset_reason\":%u,\"firmware\":\"%s\"}}",
+    snap.uptime_sec, snap.boot_count,
+    snap.reset_reason, FIRMWARE_VERSION);
+
+  return http_send_json(req, buf);
+}
+
+// GET /api/selftest — Re-run self-test and return results
+static esp_err_t handle_selftest(httpd_req_t* req) {
+  if (!rate_limit_check(req, true)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  /* Run self-test (blocks ~2-5 seconds). */
+  uint8_t score = diag_run_selftest();
+
+  selftest_report_t report;
+  if (!diag_get_selftest(&report)) {
+    return http_send_error(req, 500, "selftest_failed");
+  }
+
+  char buf[1024];
+  int pos = 0;
+
+  pos += snprintf(buf + pos, sizeof(buf) - pos,
+    "{\"ok\":true,\"health_score\":%u,"
+    "\"passed\":%u,\"total\":%u,\"tests\":[",
+    score, report.passed_count, report.total_count);
+
+  for (uint8_t i = 0; i < report.total_count && i < SELFTEST_COUNT; i++) {
+    if (i > 0) pos += snprintf(buf + pos, sizeof(buf) - pos, ",");
+    pos += snprintf(buf + pos, sizeof(buf) - pos,
+      "{\"name\":\"%s\",\"passed\":%s,\"ms\":%u}",
+      report.tests[i].name ? report.tests[i].name : "unknown",
+      report.tests[i].passed ? "true" : "false",
+      report.tests[i].duration_ms);
+    if ((size_t)pos >= sizeof(buf) - 64) break;
+  }
+
+  pos += snprintf(buf + pos, sizeof(buf) - pos, "]}");
+
+  return http_send_json(req, buf);
+}
+
+#endif // FEATURE_DIAGNOSTICS
+
+#if FEATURE_POWER_MONITOR
+
+// GET /api/battery/history — Battery health history from NVS
+static esp_err_t handle_battery_history(httpd_req_t* req) {
+  if (!rate_limit_check(req)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  power_state_t pwr;
+  power_history_t hist;
+
+  bool have_state = power_get_state(&pwr);
+  bool have_hist  = power_get_history(&hist);
+
+  if (!have_state && !have_hist) {
+    return http_send_error(req, 500, "power_unavailable");
+  }
+
+  char buf[512];
+  int pos = 0;
+
+  pos += snprintf(buf + pos, sizeof(buf) - pos,
+    "{\"ok\":true,\"charge_cycles\":%u,"
+    "\"total_runtime_min\":%u,"
+    "\"voltage_min_mv\":%u,"
+    "\"voltage_max_mv\":%u,"
+    "\"soc_min_pct\":%u,"
+    "\"brownout_count\":%u,"
+    "\"last_full_charge_ms\":%u,",
+    have_hist ? hist.charge_cycles : (have_state ? pwr.charge_cycles : 0u),
+    have_hist ? hist.total_runtime_min : 0u,
+    have_hist ? (hist.voltage_min_mv == 0xFFFF ? 0u : (unsigned)hist.voltage_min_mv) :
+                (have_state && pwr.min_voltage_mv != 0xFFFF ? (unsigned)pwr.min_voltage_mv : 0u),
+    have_hist ? (unsigned)hist.voltage_max_mv :
+                (have_state ? (unsigned)pwr.max_voltage_mv : 0u),
+    have_hist ? (unsigned)hist.soc_min_pct : 100u,
+    have_hist ? hist.brownout_count : 0u,
+    have_hist ? hist.last_full_charge_ms : 0u);
+
+  /* Current state for context. */
+  if (have_state) {
+    pos += snprintf(buf + pos, sizeof(buf) - pos,
+      "\"current\":{\"voltage_mv\":%u,\"soc_pct\":%u,"
+      "\"charge_state\":%u,\"trend_mv_per_min\":%d,"
+      "\"samples_taken\":%u}}",
+      pwr.voltage_mv, pwr.soc_pct,
+      pwr.charge_state, pwr.trend_mv_per_min,
+      pwr.samples_taken);
+  } else {
+    pos += snprintf(buf + pos, sizeof(buf) - pos, "\"current\":null}");
+  }
+
+  return http_send_json(req, buf);
+}
+
+#endif // FEATURE_POWER_MONITOR
 
 // ════════════════════════════════════════════════════════════════════════════
 // CONVENIENCE FUNCTIONS

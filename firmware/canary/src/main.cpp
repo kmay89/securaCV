@@ -99,6 +99,14 @@ static_assert(sizeof(csi_features_t) == 36,
 #include "securacv_diagnostics.h"
 #endif
 
+#if FEATURE_DATA_MGMT
+#include "securacv_data_mgmt.h"
+#endif
+
+#if FEATURE_BLE_STATUS
+#include "securacv_ble_status.h"
+#endif
+
 /* All five sensing sources feed a single aggregator. The header is
  * include-guarded, so one unconditional include is the right shape;
  * sensing_init() is also idempotent so each feature block can call it
@@ -928,6 +936,43 @@ void setup() {
   }
 #endif
 
+  // Initialize data management (log rotation, chain backup, integrity)
+#if FEATURE_DATA_MGMT
+  if (datamgmt_init()) {
+    datamgmt_stats_t dm_stats;
+    if (datamgmt_get_stats(&dm_stats)) {
+      Serial.printf("[OK] Data mgmt: %u witness, %u health files, backup=%s\n",
+                    (unsigned)dm_stats.witness_files,
+                    (unsigned)dm_stats.health_files,
+                    dm_stats.backup_exists ? "yes" : "no");
+    }
+  } else {
+    Serial.println("[WARN] Data management init failed");
+  }
+#endif
+
+  // Initialize BLE GATT status service (battery, health, chain over BLE)
+#if FEATURE_BLE_STATUS
+  Serial.println("[..] Initializing BLE status service...");
+  if (ble_status_init()) {
+    Serial.println("[OK] BLE GATT status service active");
+  } else {
+    Serial.println("[WARN] BLE status service init failed");
+  }
+#endif
+
+  // Enable WiFi modem sleep when running on battery to save ~20 mA
+#if FEATURE_WIFI_AP && FEATURE_POWER_MONITOR
+  {
+    power_state_t pwr_ps;
+    if (power_get_state(&pwr_ps) &&
+        pwr_ps.power_source == POWER_SOURCE_BATTERY) {
+      network_set_wifi_power_save(true);
+      Serial.println("[OK] WiFi modem sleep enabled (battery power)");
+    }
+  }
+#endif
+
   g_last_record_ms = millis();
 
   // Print ready banner
@@ -973,7 +1018,7 @@ void setup() {
   }
 #endif
   Serial.println("╠══════════════════════════════════════════════════════════════╣");
-  Serial.println("║  Commands: h=help, i=identity, s=status, g=gps               ║");
+  Serial.println("║  Commands: h=help, i=identity, s=status, g=gps, r=data       ║");
   Serial.println("║  BOOT: short=info, 5s hold=factory reset                     ║");
   Serial.println("╚══════════════════════════════════════════════════════════════╝");
   Serial.println();
@@ -1153,6 +1198,14 @@ void loop() {
       health.battery_trend = pwr.trend_mv_per_min;
     }
   }
+  /* Persist battery health history every 10 minutes. */
+  {
+    static uint32_t s_last_batt_hist_ms = 0;
+    if ((int32_t)(now - s_last_batt_hist_ms) >= 600000) {
+      s_last_batt_hist_ms = now;
+      power_persist_history();
+    }
+  }
 #endif
 
 #if FEATURE_POWER_POLICY
@@ -1185,6 +1238,14 @@ void loop() {
 
 #if FEATURE_DIAGNOSTICS
   diag_process();
+#endif
+
+#if FEATURE_DATA_MGMT
+  datamgmt_process();
+#endif
+
+#if FEATURE_BLE_STATUS
+  ble_status_update();
 #endif
 
   // Age out stale sensing events (TTL decay across all sources). One
@@ -1516,7 +1577,9 @@ static void handle_serial_commands() {
       Serial.println("  i - Device identity");
       Serial.println("  s - Status");
       Serial.println("  g - GPS info");
-      Serial.println("  r - Reboot");
+#if FEATURE_DATA_MGMT
+      Serial.println("  r - Data management (rotation, backup, files)");
+#endif
 #if FEATURE_POWER_MONITOR
       Serial.println("  b - Battery status");
 #endif
@@ -1529,6 +1592,7 @@ static void handle_serial_commands() {
 #if FEATURE_HA_MQTT
       Serial.println("  m - MQTT status");
 #endif
+      Serial.println("  x - Reboot");
       Serial.println();
       break;
 
@@ -1675,8 +1739,40 @@ static void handle_serial_commands() {
       break;
 #endif
 
+#if FEATURE_DATA_MGMT
     case 'r':
-    case 'R':
+    case 'R': {
+      datamgmt_stats_t dm;
+      Serial.println("\n=== Data Management ===");
+      if (datamgmt_get_stats(&dm)) {
+        Serial.printf("  Witness files: %u (max %u)\n",
+                      (unsigned)dm.witness_files, DATAMGMT_MAX_WITNESS_FILES);
+        Serial.printf("  Health files:  %u (max %u)\n",
+                      (unsigned)dm.health_files, DATAMGMT_MAX_HEALTH_FILES);
+        Serial.printf("  Files rotated: %u total\n",
+                      (unsigned)dm.files_rotated_total);
+        if (dm.last_rotation_ms > 0) {
+          uint32_t ago = (millis() - dm.last_rotation_ms) / 1000;
+          Serial.printf("  Last rotation: %us ago\n", (unsigned)ago);
+        } else {
+          Serial.println("  Last rotation: none");
+        }
+        Serial.printf("  Chain backup:  %s\n",
+                      dm.backup_exists ? "yes" : "no");
+        if (dm.last_backup_ms > 0) {
+          uint32_t ago = (millis() - dm.last_backup_ms) / 1000;
+          Serial.printf("  Last backup:   %us ago\n", (unsigned)ago);
+        }
+      } else {
+        Serial.println("  Not initialized");
+      }
+      Serial.println();
+      break;
+    }
+#endif
+
+    case 'x':
+    case 'X':
       Serial.println("\nRebooting...");
       witness_persist_chain_state();
 #if FEATURE_HA_MQTT

@@ -145,6 +145,7 @@ extern "C" {
 #include "sys_monitor.h"
 #include "hardware_state.h"
 #include "selftest_api.h"        // GET /api/selftest — wizard pre-flight aggregator
+#include "data_mgmt_api.h"      // SD rotation, chain backup/restore, integrity verify
 
 // ════════════════════════════════════════════════════════════════════════════
 // BUILD CONFIGURATION — Edit build_config.h to select profile
@@ -160,6 +161,9 @@ extern "C" {
 // BLE Discovery Subsystem (Opera/Chirp/Nearby)
 #include "ble_config.h"
 #include "ble_manager.h"
+
+// BLE GATT Status Service (battery/health/chain over GATT)
+#include "ble_status_api.h"
 
 // WiFi Presence Detection (probe request monitoring)
 #include "wifi_presence.h"
@@ -180,6 +184,14 @@ extern "C" {
 #endif
 
 #include "setup_wizard.h"
+
+// Power monitoring and battery policy engine
+#if FEATURE_POWER_MONITOR
+#include "power_monitor.h"
+#endif
+#if FEATURE_POWER_POLICY
+#include "power_policy.h"
+#endif
 
 // ════════════════════════════════════════════════════════════════════════════
 // VERSION & PROTOCOL (must match PWK expectations)
@@ -2497,6 +2509,112 @@ static esp_err_t handle_system_metrics(httpd_req_t* req) {
 
   if (len == 0) {
     return http_send_json(req, "{\"ok\":false,\"error\":\"Failed to generate metrics\"}");
+  }
+
+  return http_send_json(req, buf);
+}
+#endif
+
+// ────────────────────────────────────────────────────────────────────────────
+// GET /api/diagnostics — heap snapshot + SD health + degradation level
+// ────────────────────────────────────────────────────────────────────────────
+
+#if FEATURE_SYS_MONITOR
+static esp_err_t handle_diagnostics(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  sys_monitor::DegradeLevel degrade = sys_monitor::get_degrade_level();
+  sys_monitor::SDHealthStats sd_h = sys_monitor::get_sd_health();
+
+  char buf[512];
+  int len = snprintf(buf, sizeof(buf),
+    "{"
+    "\"ok\":true,"
+    "\"heap\":{"
+      "\"free\":%u,"
+      "\"min_free\":%u,"
+      "\"largest_block\":%u,"
+      "\"total\":%u"
+    "},"
+    "\"degradation\":{"
+      "\"level\":%u,"
+      "\"level_name\":\"%s\""
+    "},"
+    "\"sd_health\":{"
+      "\"total_writes\":%u,"
+      "\"write_errors\":%u,"
+      "\"usage_pct\":%u,"
+      "\"space_warning\":%s,"
+      "\"space_critical\":%s"
+    "},"
+    "\"uptime_sec\":%u"
+    "}",
+    (unsigned)sys_monitor::g_sys_metrics.heap_free,
+    (unsigned)sys_monitor::g_sys_metrics.heap_min_free,
+    (unsigned)sys_monitor::g_sys_metrics.heap_largest_block,
+    (unsigned)sys_monitor::g_sys_metrics.heap_total,
+    (unsigned)degrade,
+    sys_monitor::degrade_level_name(degrade),
+    (unsigned)sd_h.total_writes,
+    (unsigned)sd_h.write_errors,
+    (unsigned)sd_h.usage_pct,
+    sd_h.space_warning  ? "true" : "false",
+    sd_h.space_critical ? "true" : "false",
+    (unsigned)sys_monitor::g_sys_metrics.uptime_sec);
+
+  if (len <= 0 || len >= (int)sizeof(buf)) {
+    return http_send_json(req, "{\"ok\":false,\"error\":\"buffer overflow\"}");
+  }
+
+  return http_send_json(req, buf);
+}
+#endif
+
+// ────────────────────────────────────────────────────────────────────────────
+// GET /api/battery/history — battery health stats
+// ────────────────────────────────────────────────────────────────────────────
+
+#if FEATURE_POWER_MONITOR
+static esp_err_t handle_battery_history(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  PowerState pwr;
+  if (!power_monitor::get_state(&pwr)) {
+    return http_send_json(req, "{\"ok\":false,\"error\":\"power monitor unavailable\"}");
+  }
+
+  char buf[512];
+  int len = snprintf(buf, sizeof(buf),
+    "{"
+    "\"ok\":true,"
+    "\"voltage_mv\":%u,"
+    "\"soc_pct\":%u,"
+    "\"charge_state\":\"%s\","
+    "\"monitor_mode\":\"%s\","
+    "\"battery_present\":%s,"
+    "\"divider_detected\":%s,"
+    "\"samples_taken\":%u,"
+    "\"min_voltage_mv\":%u,"
+    "\"max_voltage_mv\":%u,"
+    "\"trend_mv_per_min\":%d,"
+    "\"charge_cycles\":%u,"
+    "\"uptime_sec\":%u"
+    "}",
+    (unsigned)pwr.voltage_mv,
+    (unsigned)pwr.soc_pct,
+    power_monitor::charge_state_name(pwr.charge_state),
+    power_monitor::mode_name(pwr.monitor_mode),
+    pwr.battery_present ? "true" : "false",
+    pwr.divider_detected ? "true" : "false",
+    (unsigned)pwr.samples_taken,
+    (unsigned)pwr.min_voltage_mv,
+    (unsigned)pwr.max_voltage_mv,
+    (int)pwr.trend_mv_per_min,
+    (unsigned)pwr.charge_cycles,
+    (unsigned)(millis() / 1000));
+
+  if (len <= 0 || len >= (int)sizeof(buf)) {
+    return http_send_json(req, "{\"ok\":false,\"error\":\"buffer overflow\"}");
   }
 
   return http_send_json(req, buf);
@@ -4862,6 +4980,17 @@ static esp_err_t handle_system_metrics_auth(httpd_req_t* req) {
   if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
   return handle_system_metrics(req);
 }
+static esp_err_t handle_diagnostics_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_diagnostics(req);
+}
+#endif
+
+#if FEATURE_POWER_MONITOR
+static esp_err_t handle_battery_history_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_battery_history(req);
+}
 #endif
 
 // Register all route handlers on a given httpd server handle
@@ -4914,6 +5043,14 @@ static void register_api_routes(httpd_handle_t server) {
 #if FEATURE_SYS_MONITOR
   httpd_uri_t sys_metrics = { .uri = "/api/system", .method = HTTP_GET, .handler = handle_system_metrics_auth };
   httpd_register_uri_handler(server, &sys_metrics);
+
+  httpd_uri_t diagnostics = { .uri = "/api/diagnostics", .method = HTTP_GET, .handler = handle_diagnostics_auth };
+  httpd_register_uri_handler(server, &diagnostics);
+#endif
+
+#if FEATURE_POWER_MONITOR
+  httpd_uri_t battery_history = { .uri = "/api/battery/history", .method = HTTP_GET, .handler = handle_battery_history_auth };
+  httpd_register_uri_handler(server, &battery_history);
 #endif
 
   httpd_uri_t chain = { .uri = "/api/chain", .method = HTTP_GET, .handler = handle_chain_auth };
@@ -4971,7 +5108,7 @@ static void register_api_routes(httpd_handle_t server) {
 
 static void start_http_server() {
   // Calculate max URI handlers based on feature usage
-  const int base_handlers = 30;       // UI (/ + /admin + /settings), API (auth + public), WiFi provisioning, captive portal, /api/selftest
+  const int base_handlers = 32;       // UI (/ + /admin + /settings), API (auth + public), WiFi provisioning, captive portal, /api/selftest, /api/diagnostics, /api/battery/history
   const int camera_handlers = 9;      // Camera peek endpoints
   const int mesh_handlers = 12;       // Mesh network endpoints
   const int bluetooth_handlers = 23;  // Bluetooth API endpoints
@@ -5863,6 +6000,9 @@ static void print_help() {
   Serial.println("│ c     : Show camera status          │");
   Serial.println("│ m     : Show system monitor         │");
   Serial.println("│         (temp, heap, PSRAM)         │");
+  Serial.println("│ r     : Show data management stats  │");
+  Serial.println("│ b     : Show battery status         │");
+  Serial.println("│ p     : Show power policy           │");
   Serial.println("└─────────────────────────────────────┘");
 }
 
@@ -5915,6 +6055,27 @@ static void handle_serial_commands() {
         sys_monitor::print_status();
         #else
         Serial.println("System monitor not enabled");
+        #endif
+        break;
+      case 'r':
+        #if FEATURE_DATA_MGMT && FEATURE_SD_STORAGE
+        datamgmt::print_status();
+        #else
+        Serial.println("Data management not enabled");
+        #endif
+        break;
+      case 'b':
+        #if FEATURE_POWER_MONITOR
+        power_monitor::print_status();
+        #else
+        Serial.println("Power monitor not enabled");
+        #endif
+        break;
+      case 'p':
+        #if FEATURE_POWER_POLICY
+        power_policy::print_status();
+        #else
+        Serial.println("Power policy not enabled");
         #endif
         break;
       case '\r':
@@ -6154,6 +6315,24 @@ void setup() {
       // and firmware version so its snapshot JSON identifies us. Both
       // are owned by the .ino — the module copies into its own buffers.
       ble_console::set_device_metadata(g_device.fingerprint_hex, FIRMWARE_VERSION);
+
+      // BLE GATT Status Service — register on the shared NimBLE server
+      // created by bluetooth_channel. Exposes battery, health, chain,
+      // and SD status to companion phones over standard GATT.
+      #if FEATURE_BLE_STATUS
+      {
+        NimBLEServer* ble_server = NimBLEDevice::getServer();
+        if (ble_server) {
+          if (ble_status::init(ble_server, g_device.device_id, FIRMWARE_VERSION,
+                               &g_device.seq)) {
+            Serial.println("[OK] BLE GATT status service registered");
+            log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "BLE status service started", nullptr);
+          } else {
+            Serial.println("[--] BLE GATT status service init failed");
+          }
+        }
+      }
+      #endif
     } else {
       Serial.println("[--] Bluetooth init failed");
     }
@@ -6246,6 +6425,49 @@ void setup() {
   log_health(SCV_LOG_INFO, SCV_CAT_SYSTEM, "System monitor initialized", nullptr);
   #endif
 
+  // Initialize Data Management (SD rotation, chain backup, integrity verify)
+  #if FEATURE_DATA_MGMT && FEATURE_SD_STORAGE
+  Serial.println("[..] Initializing data management...");
+  datamgmt::init();
+  {
+    datamgmt::datamgmt_stats_t dm_stats;
+    if (datamgmt::get_stats(&dm_stats)) {
+      Serial.printf("[OK] Data mgmt: %u witness, %u health files, backup=%s\n",
+                    (unsigned)dm_stats.witness_files,
+                    (unsigned)dm_stats.health_files,
+                    dm_stats.backup_exists ? "yes" : "no");
+    }
+  }
+  log_health(SCV_LOG_INFO, SCV_CAT_STORAGE, "Data management initialized", nullptr);
+  #endif
+
+  // Initialize Power Monitor (battery voltage, SoC, charge state)
+  #if FEATURE_POWER_MONITOR
+  Serial.println("[..] Initializing power monitor...");
+  power_monitor::init(log_health);
+  {
+    PowerState pwr;
+    if (power_monitor::get_state(&pwr)) {
+      Serial.printf("[OK] Power monitor: %s, %umV, %u%% SoC, %s\n",
+                    power_monitor::mode_name(pwr.monitor_mode),
+                    pwr.voltage_mv,
+                    pwr.soc_pct,
+                    power_monitor::charge_state_name(pwr.charge_state));
+    } else {
+      Serial.println("[OK] Power monitor initialized");
+    }
+  }
+  log_health(SCV_LOG_INFO, SCV_CAT_SYSTEM, "Power monitor initialized", nullptr);
+  #endif
+
+  // Initialize Power Policy Engine (battery-aware feature gating)
+  #if FEATURE_POWER_POLICY
+  Serial.println("[..] Initializing power policy engine...");
+  power_policy::init(log_health);
+  Serial.printf("[OK] Power policy: %s\n", power_policy::mode_name(power_policy::get_mode()));
+  log_health(SCV_LOG_INFO, SCV_CAT_SYSTEM, "Power policy initialized", nullptr);
+  #endif
+
   // ════════════════════════════════════════════════════════════════════════════
   // PHASE 4: GNSS — Initialize serial, probe only if not in safe mode
   // In safe mode, GPS probing is skipped to avoid potential hangs from
@@ -6325,7 +6547,7 @@ void setup() {
                 WiFi.softAPIP().toString().c_str());
   #endif
   Serial.println("╠══════════════════════════════════════════════════════════════╣");
-  Serial.println("║  Commands: h=help i=identity s=status t=time g=gps c=cam m=sys║");
+  Serial.println("║  Commands: h=help i=id s=stat t=time g=gps c=cam m=sys r=data b=bat║");
   Serial.println("║  Token + WiFi credentials are printed above on every boot      ║");
   Serial.println("║  Hold  BOOT (>3s)   = factory reset                           ║");
   Serial.println("╚══════════════════════════════════════════════════════════════╝");
@@ -6503,6 +6725,11 @@ void loop() {
   bluetooth_channel::update();
   #endif
 
+  // Update BLE GATT status characteristics (rate-limited internally)
+  #if FEATURE_BLE_STATUS
+  ble_status::update();
+  #endif
+
   // Update BLE Discovery (Opera/Chirp/Nearby)
   #if FEATURE_BLE
   if (ble_manager::isAvailable()) {
@@ -6589,9 +6816,24 @@ void loop() {
   }
   #endif
 
-  // Update system monitor (temp, heap, alerts)
+  // Update system monitor (temp, heap, alerts, degradation, SD health)
   #if FEATURE_SYS_MONITOR
   sys_monitor::update(log_health);
+  #endif
+
+  // Data management auto-processing (rate-limited: rotation every 5 min, backup every hour)
+  #if FEATURE_DATA_MGMT && FEATURE_SD_STORAGE
+  datamgmt::process(g_device.chain_head, g_device.seq);
+  #endif
+
+  // Update power monitor (ADC sample, SoC, charge state)
+  #if FEATURE_POWER_MONITOR
+  power_monitor::process();
+  #endif
+
+  // Update power policy (mode transitions, feature gating)
+  #if FEATURE_POWER_POLICY
+  power_policy::process();
   #endif
 
   // Drain CSI ring, finalize 1-Hz feature windows, dispatch to v1 modules.
