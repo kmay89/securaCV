@@ -911,7 +911,8 @@ static void handle_input(SecuraCVApp* app, InputEvent* event) {
         return;
     }
 
-    if(event->type != InputTypePress && event->type != InputTypeRepeat) return;
+    if(event->type != InputTypePress && event->type != InputTypeRepeat &&
+       event->type != InputTypeShort) return;
 
     furi_mutex_acquire(app->mutex, FuriWaitForever);
 
@@ -935,7 +936,9 @@ static void handle_input(SecuraCVApp* app, InputEvent* event) {
                     }
                     break;
                 case InputKeyOk:
-                    if(app->device_count > 0) {
+                    // Use InputTypeShort (fires on release if not long-press) so that
+                    // long-press pin toggle has time to register before view switches.
+                    if(event->type == InputTypeShort && app->device_count > 0) {
                         app->current_view = VIEW_DEVICE_DETAIL;
                     }
                     break;
