@@ -92,6 +92,10 @@ pub fn downscale_grayscale(
     let dh = dst_h as u32;
     let mut out = vec![0u8; (dw * dh) as usize];
 
+    if src_w == 0 || src_h == 0 || dw == 0 || dh == 0 || pixels.is_empty() {
+        return out;
+    }
+
     let x_ratio = src_w as f32 / dw as f32;
     let y_ratio = src_h as f32 / dh as f32;
 
@@ -125,6 +129,10 @@ pub fn sobel_edges(gray: &[u8], w: u16, h: u16) -> Vec<u8> {
     let w = w as usize;
     let h = h as usize;
     let mut out = vec![0u8; w * h];
+
+    if w < 2 || h < 2 || gray.len() < w * h {
+        return out;
+    }
 
     // Skip border pixels (1px on each side)
     for y in 1..(h - 1) {
@@ -165,9 +173,22 @@ pub fn overlay_bounding_boxes(edges: &mut [u8], w: u16, h: u16, detections: &[De
     let w = w as usize;
     let h = h as usize;
 
+    if edges.len() < w * h {
+        return;
+    }
+
     for det in detections {
-        let x0 = (det.x * w as f32) as usize;
-        let y0 = (det.y * h as f32) as usize;
+        if !det.x.is_finite() || !det.y.is_finite() || !det.w.is_finite() || !det.h.is_finite() {
+            continue;
+        }
+
+        // Skip detections entirely off-screen
+        if det.x >= 1.0 || det.y >= 1.0 || det.x + det.w <= 0.0 || det.y + det.h <= 0.0 {
+            continue;
+        }
+
+        let x0 = (det.x * w as f32).max(0.0) as usize;
+        let y0 = (det.y * h as f32).max(0.0) as usize;
         let x1 = ((det.x + det.w) * w as f32).min(w as f32 - 1.0) as usize;
         let y1 = ((det.y + det.h) * h as f32).min(h as f32 - 1.0) as usize;
 

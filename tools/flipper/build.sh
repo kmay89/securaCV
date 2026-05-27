@@ -62,7 +62,7 @@ build_target() {
   ufbt
 
   mkdir -p "$DIST_DIR"
-  find "$APP_DIR" -name "*.fap" -exec cp {} "$DIST_DIR/securacv_scanner-${target}.fap" \;
+  cp "$APP_DIR/build/latest/securacv_scanner.fap" "$DIST_DIR/securacv_scanner-${target}.fap"
   echo "  -> $DIST_DIR/securacv_scanner-${target}.fap"
   echo ""
 }
