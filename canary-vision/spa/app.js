@@ -1058,40 +1058,171 @@ function renderCanariesView() {
         onClick: function () { Router.navigate('#/canaries/add'); }
       }),
     ]));
-  } else {
-    devices.forEach(function (device) {
-      var card = el('div', { className: 'card cursor-pointer' });
-      card.addEventListener('click', function () {
-        Router.navigate('#/device/' + device.id);
-      });
-
-      var header = el('div', { className: 'card-header' }, [
-        el('div', {}, [
-          el('div', { className: 'card-title', textContent: device.name || device.id }),
-          el('div', { className: 'card-subtitle', textContent: device.base_url }),
-        ]),
-        el('span', { className: 'status-dot online' }),
-      ]);
-      card.appendChild(header);
-
-      var tokenRow = el('div', { className: 'token-display', textContent: maskToken(device.token) });
-      card.appendChild(tokenRow);
-
-      content.appendChild(card);
-    });
-
-    content.appendChild(el('button', {
-      className: 'btn btn-secondary btn-block mt-12',
-      textContent: '+ Add Canary',
-      onClick: function () { Router.navigate('#/canaries/add'); },
-    }));
-
-    // Discovered-but-not-yet-added peers slot in below the fleet list.
-    // The container is populated asynchronously so the view paints fast.
-    content.appendChild(el('div', { id: 'discovered-peers' }));
+    app.appendChild(content);
+    return;
   }
 
+  // Fleet health summary (populated async)
+  var fleetCard = el('div', { className: 'card fleet-health-card' });
+  fleetCard.appendChild(el('div', { className: 'card-title mb-8', textContent: 'Fleet Health' }));
+  var fleetStats = el('div', { className: 'stats-grid', id: 'fleet-stats' });
+  fleetStats.appendChild(el('div', { className: 'stat-item' }, [
+    el('div', { className: 'stat-value', id: 'fleet-online', textContent: '--' }),
+    el('div', { className: 'stat-label', textContent: 'Online' }),
+  ]));
+  fleetStats.appendChild(el('div', { className: 'stat-item' }, [
+    el('div', { className: 'stat-value', id: 'fleet-events', textContent: '--' }),
+    el('div', { className: 'stat-label', textContent: 'Events Today' }),
+  ]));
+  fleetStats.appendChild(el('div', { className: 'stat-item' }, [
+    el('div', { className: 'stat-value', id: 'fleet-uptime', textContent: '--' }),
+    el('div', { className: 'stat-label', textContent: 'Avg Uptime' }),
+  ]));
+  fleetStats.appendChild(el('div', { className: 'stat-item' }, [
+    el('div', { className: 'stat-value', id: 'fleet-signal', textContent: '--' }),
+    el('div', { className: 'stat-label', textContent: 'Avg Signal' }),
+  ]));
+  fleetCard.appendChild(fleetStats);
+  content.appendChild(fleetCard);
+
+  // Device cards
+  var deviceCards = {};
+  devices.forEach(function (device) {
+    var statusDot = el('span', { className: 'status-dot warning' });
+    var statusLabel = el('span', {
+      className: 'fleet-device-status',
+      textContent: 'Checking…',
+    });
+    var statsRow = el('div', { className: 'fleet-device-stats' });
+
+    var card = el('div', { className: 'card fleet-device-card cursor-pointer' });
+    card.addEventListener('click', function () {
+      Router.navigate('#/device/' + device.id);
+    });
+
+    var header = el('div', { className: 'card-header' }, [
+      el('div', {}, [
+        el('div', { className: 'card-title', textContent: device.name || device.id }),
+        statusLabel,
+      ]),
+      statusDot,
+    ]);
+    card.appendChild(header);
+    card.appendChild(statsRow);
+
+    content.appendChild(card);
+    deviceCards[device.id] = { card: card, dot: statusDot, label: statusLabel, stats: statsRow };
+  });
+
+  content.appendChild(el('button', {
+    className: 'btn btn-secondary btn-block mt-12',
+    textContent: '+ Add Canary',
+    onClick: function () { Router.navigate('#/canaries/add'); },
+  }));
+
+  content.appendChild(el('div', { id: 'discovered-peers' }));
   app.appendChild(content);
+
+  // Fetch health data from all devices in parallel
+  var onlineCount = 0;
+  var totalUptime = 0;
+  var totalRssi = 0;
+  var rssiCount = 0;
+  var totalEvents = 0;
+  var completed = 0;
+
+  function updateFleetSummary() {
+    if (!document.body.contains(fleetCard)) return;
+
+    var onlineEl = fleetCard.querySelector('#fleet-online');
+    var eventsEl = fleetCard.querySelector('#fleet-events');
+    var uptimeEl = fleetCard.querySelector('#fleet-uptime');
+    var signalEl = fleetCard.querySelector('#fleet-signal');
+    if (onlineEl) onlineEl.textContent = onlineCount + ' / ' + devices.length;
+    if (eventsEl) eventsEl.textContent = String(totalEvents);
+    if (uptimeEl) {
+      var avgHrs = rssiCount > 0 ? Math.floor(totalUptime / rssiCount / 3600) : 0;
+      uptimeEl.textContent = avgHrs + 'h';
+    }
+    if (signalEl) {
+      signalEl.textContent = rssiCount > 0 ? Math.round(totalRssi / rssiCount) + ' dBm' : '—';
+    }
+
+    if (onlineEl) {
+      onlineEl.style.color = onlineCount === devices.length
+        ? 'var(--color-success)'
+        : onlineCount > 0 ? 'var(--color-warning)' : 'var(--color-error)';
+    }
+  }
+
+  devices.forEach(function (device) {
+    var dc = deviceCards[device.id];
+
+    // Fetch device info first; only fetch witness records if auth succeeds
+    CanaryAPI.request(device.base_url, '/api/v1/info')
+      .then(function (info) {
+        if (!document.body.contains(dc.card)) return;
+
+        onlineCount++;
+        totalUptime += info.uptime_s || 0;
+        totalRssi += info.wifi_rssi || 0;
+        rssiCount++;
+
+        dc.dot.className = 'status-dot online';
+        dc.label.textContent = 'Online';
+        dc.label.style.color = 'var(--color-success)';
+
+        var uptimeH = Math.floor((info.uptime_s || 0) / 3600);
+        var rssiVal = info.wifi_rssi || 0;
+        var rssiClass = rssiVal > -50 ? 'color: var(--color-success)' :
+                        rssiVal > -70 ? 'color: var(--color-warning)' :
+                        'color: var(--color-error)';
+
+        dc.stats.appendChild(el('div', { className: 'fleet-device-stats-row' }, [
+          el('span', { textContent: 'v' + (info.firmware_version || '?'), className: 'fleet-stat-chip' }),
+          el('span', { textContent: uptimeH + 'h up', className: 'fleet-stat-chip' }),
+          el('span', {
+            textContent: rssiVal + ' dBm',
+            className: 'fleet-stat-chip',
+            style: rssiClass,
+          }),
+        ]));
+
+        updateFleetSummary();
+
+        // Only fetch events after successful auth to avoid lockout
+        return CanaryAPI.request(device.base_url, '/api/v1/witness?last=100');
+      })
+      .then(function (data) {
+        if (!data || !document.body.contains(dc.card)) return;
+        var records = data.records || [];
+
+        var now = new Date();
+        var startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        var todayCount = 0;
+        for (var i = 0; i < records.length; i++) {
+          var ts = new Date(records[i].timestamp);
+          if (ts >= startOfDay) todayCount++;
+        }
+        totalEvents += todayCount;
+
+        if (todayCount > 0 && dc.stats) {
+          dc.stats.appendChild(el('div', { className: 'fleet-device-events', textContent: todayCount + ' events today' }));
+        }
+
+        updateFleetSummary();
+      })
+      .catch(function (err) {
+        if (!document.body.contains(dc.card)) return;
+
+        dc.dot.className = 'status-dot offline';
+        dc.label.textContent = err && err.status === 401 ? 'Auth Error' : 'Offline';
+        dc.label.style.color = 'var(--color-error)';
+
+        completed++;
+        updateFleetSummary();
+      });
+  });
 
   if (devices.length > 0) {
     refreshDiscoveredPeers(devices);
