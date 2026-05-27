@@ -1,6 +1,6 @@
 App(
     appid="securacv_scanner",
-    name="SecuraCV Scanner",
+    name="SecuraCV Canary",
     apptype=FlipperAppType.EXTERNAL,
     entry_point="securacv_scanner_app",
     requires=["gui", "bt"],
