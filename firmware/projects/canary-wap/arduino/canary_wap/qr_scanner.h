@@ -96,6 +96,8 @@ inline int scan_frame(camera_fb_t* fb, char* payload_out, size_t payload_cap) {
       if (len >= payload_cap) len = payload_cap - 1;
       memcpy(payload_out, s_data->payload, len);
       payload_out[len] = '\0';
+      volatile uint8_t* p = (volatile uint8_t*)s_data->payload;
+      for (size_t j = 0; j < sizeof(s_data->payload); j++) p[j] = 0;
       return 1;
     }
   }
