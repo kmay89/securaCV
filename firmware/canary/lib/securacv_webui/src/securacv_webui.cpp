@@ -728,6 +728,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     .vi-evt--motion { background:rgba(79,209,197,0.15); color:var(--accent); }
     .vi-evt--person { background:rgba(252,129,129,0.15); color:var(--danger); }
     .vi-evt--end    { background:rgba(120,120,128,0.12); color:var(--muted); }
+    .vi-evt--tamper { background:rgba(255,165,0,0.18); color:#e89900; }
     .vi-tune { margin-bottom: 0.75rem; }
     .vi-tune label { display:block; font-size:0.85rem; color:var(--muted); margin-bottom:4px; }
     .vi-tune label span { color:var(--fg); font-weight:600; }
@@ -1473,6 +1474,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           <div class="stat-item"><div class="stat-label">L3 pass</div><div class="stat-value" id="viL3">0</div></div>
           <div class="stat-item"><div class="stat-label">Motion events</div><div class="stat-value" id="viMotion">0</div></div>
           <div class="stat-item"><div class="stat-label">Person events</div><div class="stat-value" id="viPerson">0</div></div>
+          <div class="stat-item"><div class="stat-label">Tamper events</div><div class="stat-value" id="viTamper">0</div></div>
         </div>
         <div id="viTimeline" style="display:flex;gap:4px;overflow-x:auto;padding:0.5rem;scrollbar-width:thin;"></div>
       </div>
@@ -3349,6 +3351,11 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           viPill.textContent = 'Person detected';
           viExp.textContent = 'Zone ' + (viObj.zone || '?') + ' — confidence ' + (viObj.confidence || 0) + '%';
           if (viBadge) { viBadge.style.display = 'inline-flex'; viBadge.className = 'badge danger'; viBadgeText.textContent = 'PERSON'; }
+        } else if (viObj.last_event === 'tamper') {
+          viPill.className = 'sensing-pill sensing-pill--alert';
+          viPill.textContent = 'Camera tamper';
+          viExp.textContent = 'Camera may be obstructed or moved.';
+          if (viBadge) { viBadge.style.display = 'inline-flex'; viBadge.className = 'badge danger'; viBadgeText.textContent = 'TAMPER'; }
         } else if (viObj.last_event === 'motion') {
           viPill.className = 'sensing-pill sensing-pill--active';
           viPill.textContent = 'Motion detected';
@@ -3402,6 +3409,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         set('viL3',     vst.layer3_passes || 0);
         set('viMotion', vst.motion_events || 0);
         set('viPerson', vst.person_events || 0);
+        set('viTamper', vst.tamper_events || 0);
 
         const tl = document.getElementById('viTimeline');
         const evts = viObj.events || [];
@@ -3409,7 +3417,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           tl.innerHTML = '';
           for (let i = evts.length - 1; i >= 0; i--) {
             const e = evts[i];
-            const cls = e.type === 'person' ? 'vi-evt--person' : e.type === 'motion' ? 'vi-evt--motion' : 'vi-evt--end';
+            const cls = e.type === 'tamper' ? 'vi-evt--tamper' : e.type === 'person' ? 'vi-evt--person' : e.type === 'motion' ? 'vi-evt--motion' : 'vi-evt--end';
             const age = e.age_ms < 1000 ? '<1s' : e.age_ms < 60000 ? Math.round(e.age_ms/1000)+'s' : e.age_ms < 3600000 ? Math.round(e.age_ms/60000)+'m' : e.age_ms < 86400000 ? Math.round(e.age_ms/3600000)+'h' : Math.round(e.age_ms/86400000)+'d';
             const chip = document.createElement('div');
             chip.className = 'vi-evt ' + cls;
