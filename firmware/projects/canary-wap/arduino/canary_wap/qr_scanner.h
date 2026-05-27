@@ -28,11 +28,15 @@ static constexpr int SCAN_H = 240;
 static struct quirc* s_qr   = nullptr;
 static uint8_t*      s_rgb  = nullptr;
 static uint8_t*      s_gray = nullptr;
+static struct quirc_code* s_code = nullptr;
+static struct quirc_data* s_data = nullptr;
 
 inline void deinit() {
   if (s_qr)   { quirc_destroy(s_qr); s_qr = nullptr; }
   if (s_rgb)  { free(s_rgb);  s_rgb = nullptr; }
   if (s_gray) { free(s_gray); s_gray = nullptr; }
+  if (s_code) { free(s_code); s_code = nullptr; }
+  if (s_data) { free(s_data); s_data = nullptr; }
 }
 
 inline bool init() {
@@ -49,7 +53,9 @@ inline bool init() {
 
   s_rgb  = (uint8_t*)malloc(SCAN_W * SCAN_H * 3);
   s_gray = (uint8_t*)malloc(SCAN_W * SCAN_H);
-  if (!s_rgb || !s_gray) {
+  s_code = (struct quirc_code*)malloc(sizeof(struct quirc_code));
+  s_data = (struct quirc_data*)malloc(sizeof(struct quirc_data));
+  if (!s_rgb || !s_gray || !s_code || !s_data) {
     deinit();
     return false;
   }
@@ -59,7 +65,7 @@ inline bool init() {
 // Decode one camera frame. Returns 1 if QR found (payload copied to out),
 // 0 if no QR detected, -1 on decode error.
 inline int scan_frame(camera_fb_t* fb, char* payload_out, size_t payload_cap) {
-  if (!s_qr || !s_rgb || !s_gray || !fb) return -1;
+  if (!s_qr || !s_rgb || !s_gray || !s_code || !s_data || !fb) return -1;
   if ((int)fb->width > SCAN_W || (int)fb->height > SCAN_H) return -1;
 
   int w = (int)fb->width;
@@ -84,14 +90,14 @@ inline int scan_frame(camera_fb_t* fb, char* payload_out, size_t payload_cap) {
 
   int count = quirc_count(s_qr);
   for (int i = 0; i < count; i++) {
-    struct quirc_code code;
-    struct quirc_data data;
-    quirc_extract(s_qr, i, &code);
-    if (quirc_decode(&code, &data) == QUIRC_SUCCESS) {
-      size_t len = (size_t)data.payload_len;
+    quirc_extract(s_qr, i, s_code);
+    if (quirc_decode(s_code, s_data) == QUIRC_SUCCESS) {
+      size_t len = (size_t)s_data->payload_len;
       if (len >= payload_cap) len = payload_cap - 1;
-      memcpy(payload_out, data.payload, len);
+      memcpy(payload_out, s_data->payload, len);
       payload_out[len] = '\0';
+      volatile uint8_t* p = (volatile uint8_t*)s_data->payload;
+      for (size_t j = 0; j < sizeof(s_data->payload); j++) p[j] = 0;
       return 1;
     }
   }

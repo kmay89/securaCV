@@ -4664,7 +4664,7 @@ static esp_err_t handle_qr_scan_start(httpd_req_t* req) {
   g_qr_scan_active = true;
 
   BaseType_t created = xTaskCreatePinnedToCore(
-    qr_scan_task_fn, "qr_scan", 8192, nullptr, 1, &g_qr_scan_task, 0);
+    qr_scan_task_fn, "qr_scan", 16384, nullptr, 1, &g_qr_scan_task, 0);
 
   if (created != pdPASS) {
     g_qr_scan_active = false;
