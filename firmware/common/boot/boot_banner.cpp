@@ -26,6 +26,8 @@ void boot_separator(void) {
 
 void boot_blank(void) { out("\n"); }
 
+void boot_line(const char* text) { out("%s\n", text); }
+
 void boot_kv(const char* key, const char* value) {
     out("    %-12s%s\n", key, value ? value : "--");
 }

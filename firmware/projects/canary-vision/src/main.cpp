@@ -121,6 +121,8 @@ void setup() {
 
   boot_set_output(vision_serial_write);
 
+  String mac_str = WiFi.macAddress();
+
   boot_info_t bi = {};
   bi.product_name  = "SecuraCV Canary Vision";
   bi.fw_version    = CANARY_FW_VERSION;
@@ -128,7 +130,7 @@ void setup() {
   bi.build_time    = __TIME__;
   bi.device_type   = DEVICE_TYPE;
   bi.model         = MODEL;
-  bi.mac_address   = WiFi.macAddress().c_str();
+  bi.mac_address   = mac_str.c_str();
   bi.board_name    = "ESP32-C3-DevKitM-1";
   bi.chip_model    = ESP.getChipModel();
   bi.chip_revision = (uint8_t)ESP.getChipRevision();
@@ -145,10 +147,10 @@ void setup() {
   boot_scene_hardware(&bi);
 
   // Vision-specific config
-  printf("              ,_,\n");
-  printf("             (^.^)         What can I see?\n");
-  printf("              |#|\n");
-  printf("             [###]\n");
+  boot_line("              ,_,");
+  boot_line("             (^.^)         What can I see?");
+  boot_line("              |#|");
+  boot_line("             [###]");
   boot_separator();
   boot_kv("Sensor",  "Grove Vision AI V2 (SSCMA)");
   boot_kvf("Target",  "class %d  (person detection)", PERSON_TARGET);
@@ -168,9 +170,9 @@ void setup() {
   canary::vision::init();
 
   // MQTT connection
-  printf("              ,_,  ))\n");
-  printf("             (o.o)  ))     Connecting to MQTT...\n");
-  printf("              | |\n");
+  boot_line("              ,_,  ))");
+  boot_line("             (o.o)  ))     Connecting to MQTT...");
+  boot_line("              | |");
   boot_separator();
   boot_kv("Device ID", DEVICE_ID);
   boot_kvf("Heartbeat", "every %lu ms", (unsigned long)HEARTBEAT_MS);

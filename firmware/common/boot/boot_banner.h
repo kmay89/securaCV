@@ -57,6 +57,7 @@ void boot_scene_ready(void);
 
 void boot_separator(void);
 void boot_blank(void);
+void boot_line(const char* text);
 void boot_kv(const char* key, const char* value);
 void boot_kvf(const char* key, const char* fmt, ...);
 void boot_feature(bool enabled, const char* name, const char* desc);
