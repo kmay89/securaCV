@@ -8,6 +8,7 @@
 #include "securacv_vision.h"
 #include <Arduino.h>
 #include <string.h>
+#include <math.h>
 #include "canary_config.h"
 
 #if FEATURE_VISION_DETECT
@@ -19,7 +20,7 @@
 #include <Preferences.h>
 
 #if FEATURE_VISION_TFLITE
-#include "tensorflow/lite/micro/all_ops_resolver.h"
+#include "tensorflow/lite/micro/micro_mutable_op_resolver.h"
 #include "tensorflow/lite/micro/micro_interpreter.h"
 #include "tensorflow/lite/schema/schema_generated.h"
 #include "person_detect_model.h"
@@ -45,15 +46,23 @@ static bool     s_duty_resting      = false;
 // Sustained activity backoff
 static uint8_t  s_consecutive_l2    = 0;
 
-// Layer 1: JPEG size EMA
+// Scene tamper detection — sustained global change counter
+static uint8_t  s_tamper_counter = 0;
+static bool     s_tamper_fired   = false;
+
+// Layer 1: JPEG size EMA + adaptive variance
 static float   s_jpeg_size_ema = 0.0f;
+static float   s_jpeg_var_ema  = 0.0f;
 static bool    s_jpeg_baseline_set = false;
 static const float JPEG_EMA_ALPHA = 0.1f;
 
-// Layer 2: Block luminance baseline
+// Layer 2: Block luminance baseline + adaptive variance
 static uint8_t s_block_baseline[VISION_GRID_TOTAL] = {};
+static float   s_block_var[VISION_GRID_TOTAL] = {};
 static bool    s_block_baseline_set = false;
 static const float BLOCK_EMA_ALPHA = 0.05f;
+static const float VAR_EMA_ALPHA   = 0.02f;
+static const float MIN_STDDEV      = 5.0f;
 
 // Grayscale decode buffer (160x120 = 19200 bytes)
 #define DECODE_W 160
@@ -153,18 +162,31 @@ static bool decode_and_downsample(camera_fb_t* fb, uint8_t* gray,
 static bool layer1_check(size_t frame_bytes) {
   if (!s_jpeg_baseline_set) {
     s_jpeg_size_ema = (float)frame_bytes;
+    s_jpeg_var_ema  = 0.0f;
     s_jpeg_baseline_set = true;
     return false;
   }
 
   float current = (float)frame_bytes;
-  float delta_pct = 0.0f;
-  if (s_jpeg_size_ema > 100.0f) {
-    delta_pct = fabsf(current - s_jpeg_size_ema) / s_jpeg_size_ema * 100.0f;
-  }
+  float delta = fabsf(current - s_jpeg_size_ema);
+
+  // Update variance EMA: tracks squared deviation from mean
+  float sq_dev = (current - s_jpeg_size_ema) * (current - s_jpeg_size_ema);
+  s_jpeg_var_ema = s_jpeg_var_ema * (1.0f - VAR_EMA_ALPHA) + sq_dev * VAR_EMA_ALPHA;
 
   s_jpeg_size_ema = s_jpeg_size_ema * (1.0f - JPEG_EMA_ALPHA) + current * JPEG_EMA_ALPHA;
 
+  if (s_cfg.adaptive_enabled && s_jpeg_size_ema > 100.0f) {
+    float stddev = sqrtf(s_jpeg_var_ema);
+    if (stddev < MIN_STDDEV) stddev = MIN_STDDEV;
+    float k = (float)s_cfg.jpeg_delta_pct / 10.0f;
+    return delta > k * stddev;
+  }
+
+  float delta_pct = 0.0f;
+  if (s_jpeg_size_ema > 100.0f) {
+    delta_pct = delta / s_jpeg_size_ema * 100.0f;
+  }
   return delta_pct >= (float)s_cfg.jpeg_delta_pct;
 }
 
@@ -211,7 +233,17 @@ static MotionResult layer2_check(const uint8_t* gray) {
         uint8_t fresh = (uint8_t)(delta > 255 ? 255 : delta);
         uint8_t decayed = (uint8_t)(s_stats.block_intensity[idx] * 3 / 4);
         s_stats.block_intensity[idx] = fresh > decayed ? fresh : decayed;
-        changed[idx] = delta > s_cfg.luminance_threshold;
+
+        int thresh = s_cfg.luminance_threshold;
+        if (s_cfg.adaptive_enabled) {
+          float stddev = sqrtf(s_block_var[idx]);
+          if (stddev < MIN_STDDEV) stddev = MIN_STDDEV;
+          float k = (float)s_cfg.luminance_threshold / 10.0f;
+          thresh = (int)(k * stddev);
+          if (thresh < 3) thresh = 3;
+        }
+        changed[idx] = delta > thresh;
+
         if (changed[idx] && !(s_cfg.zone_mask[idx / 8] & (1 << (idx % 8)))) {
           changed[idx] = false;
         }
@@ -224,11 +256,14 @@ static MotionResult layer2_check(const uint8_t* gray) {
     }
   }
 
-  // Update baseline with EMA
+  // Update baseline with EMA + per-block variance tracking
   for (int i = 0; i < VISION_GRID_TOTAL; i++) {
     if (!s_block_baseline_set) {
       s_block_baseline[i] = current_blocks[i];
+      s_block_var[i] = 0.0f;
     } else {
+      float diff = (float)current_blocks[i] - (float)s_block_baseline[i];
+      s_block_var[i] = s_block_var[i] * (1.0f - VAR_EMA_ALPHA) + diff * diff * VAR_EMA_ALPHA;
       s_block_baseline[i] = (uint8_t)(
         (float)s_block_baseline[i] * (1.0f - BLOCK_EMA_ALPHA) +
         (float)current_blocks[i] * BLOCK_EMA_ALPHA);
@@ -241,8 +276,15 @@ static MotionResult layer2_check(const uint8_t* gray) {
   }
 
   // Global illumination filter: if >80% of blocks changed, it's lighting
+  // or camera tamper — track sustained global change for tamper detection
   if (changed_count > (VISION_GRID_TOTAL * 80 / 100)) {
+    if (s_tamper_counter < 255) s_tamper_counter++;
     return result;
+  }
+  s_tamper_counter = 0;
+  if (s_tamper_fired) {
+    s_tamper_fired = false;
+    s_stats.tamper_active = false;
   }
 
   int threshold = VISION_GRID_TOTAL * s_cfg.block_change_pct / 100;
@@ -273,7 +315,7 @@ static constexpr int kModelInputH = 96;
 static constexpr int kTensorArenaSize = 136 * 1024;
 
 static uint8_t* s_tensor_arena = nullptr;
-static tflite::AllOpsResolver* s_resolver = nullptr;
+static tflite::MicroMutableOpResolver<6>* s_resolver = nullptr;
 static tflite::MicroInterpreter* s_interpreter = nullptr;
 static bool s_model_loaded = false;
 
@@ -300,7 +342,13 @@ static bool layer3_init() {
     return false;
   }
 
-  s_resolver = new tflite::AllOpsResolver();
+  s_resolver = new tflite::MicroMutableOpResolver<6>();
+  s_resolver->AddConv2D();
+  s_resolver->AddDepthwiseConv2D();
+  s_resolver->AddAveragePool2D();
+  s_resolver->AddReshape();
+  s_resolver->AddSoftmax();
+  s_resolver->AddFullyConnected();
   s_interpreter = new tflite::MicroInterpreter(model, *s_resolver,
     s_tensor_arena, kTensorArenaSize);
 
@@ -503,6 +551,17 @@ bool vision_process() {
   vision::update_thumbnail();
 
   vision::MotionResult motion = vision::layer2_check(vision::s_gray_buf);
+
+  // Scene tamper: sustained global illumination change (camera covered/moved)
+  if (vision::s_tamper_counter >= vision::s_cfg.tamper_hold_frames &&
+      !vision::s_tamper_fired) {
+    vision::s_tamper_fired = true;
+    vision::s_stats.tamper_active = true;
+    vision::s_stats.tamper_events++;
+    vision::emit_event(VISION_EVENT_TAMPER, 100, 0);
+    log_health(LOG_LEVEL_WARN, LOG_CAT_SENSOR, "Vision: camera tamper detected", nullptr);
+  }
+
   if (!motion.detected) {
     vision::s_consecutive_l2 = 0;
     if (vision::s_motion_active &&

@@ -25,6 +25,7 @@ typedef enum {
   VISION_EVENT_MOTION     = 1,
   VISION_EVENT_MOTION_END = 2,
   VISION_EVENT_PERSON     = 3,
+  VISION_EVENT_TAMPER     = 4,
 } vision_event_type_t;
 
 typedef struct {
@@ -47,6 +48,8 @@ typedef struct {
   uint16_t duty_cycle_ms;
   uint8_t  duty_active_pct;
   uint8_t  zone_mask[10];
+  uint8_t  adaptive_enabled;
+  uint8_t  tamper_hold_frames;
 } vision_config_t;
 
 #define VISION_CONFIG_DEFAULT { \
@@ -62,7 +65,9 @@ typedef struct {
   /*.duty_cycle_ms*/          10000, \
   /*.duty_active_pct*/        50,    \
   /*.zone_mask*/              { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, \
-                                0xFF, 0xFF, 0xFF, 0xFF, 0xFF } \
+                                0xFF, 0xFF, 0xFF, 0xFF, 0xFF }, \
+  /*.adaptive_enabled*/       1,     \
+  /*.tamper_hold_frames*/     25     \
 }
 
 #define VISION_GRID_COLS  10
@@ -77,9 +82,11 @@ typedef struct {
   uint32_t motion_events;
   uint32_t person_events;
   bool     motion_active;
+  bool     tamper_active;
   uint8_t  last_zone;
   uint8_t  last_confidence;
   uint8_t  block_intensity[VISION_GRID_TOTAL];
+  uint32_t tamper_events;
 } vision_stats_t;
 
 #define VISION_HISTORY_SIZE 16
