@@ -44,11 +44,11 @@ v1 is "minimally credible," not feature complete:
 
 | Step | Deliverable | Est. Effort |
 |------|-------------|-------------|
-| A1 | `DetectorBackend` trait + `BackendRegistry` | 3-5 days |
-| A2 | Port `StubBackend` | 1-2 days |
-| A3 | `TractBackend` loads model + runs forward pass | 3-5 days |
-| A4 | `TractBackend` produces correct boxes for test model | 3-5 days |
-| A5 | Integration with `InferenceView` | 2-3 days |
+| A1 | **Done:** `DetectorBackend` trait + `BackendRegistry` | ✅ |
+| A2 | **Done:** Port `StubBackend` (+ bonus `CpuBackend`) | ✅ |
+| A3 | **Done:** `TractBackend` loads model + runs forward pass | ✅ |
+| A4 | **Done:** `TractBackend` produces correct boxes for test model | ✅ |
+| A5 | **Done:** Integration with `InferenceView` + registry routing | ✅ |
 
 **Total:** ~2-3 weeks
 
@@ -124,12 +124,12 @@ Integration testing
 ## Acceptance Criteria
 
 ### Must have:
-- [ ] `cargo test` passes
-- [ ] `StubBackend` works for motion detection
-- [ ] `TractBackend` loads a model and runs forward pass
-- [ ] `TractBackend` produces correct bounding boxes for a known test model
-- [ ] Log entries are Ed25519 signed
-- [ ] `log_verify` validates signatures and catches tampering
+- [x] `cargo test` passes
+- [x] `StubBackend` works for motion detection
+- [x] `TractBackend` loads a model and runs forward pass
+- [x] `TractBackend` produces correct bounding boxes for a known test model
+- [x] Log entries are Ed25519 signed
+- [x] `log_verify` validates signatures and catches tampering
 - [ ] Can process video from file
 - [ ] Documentation states audit boundary vs security boundary
 
