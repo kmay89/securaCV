@@ -4470,6 +4470,87 @@ static esp_err_t handle_wifi_reconnect(httpd_req_t* req) {
   return http_send_json(req, response.c_str());
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// FLEET QR — server-side SVG QR code for provisioning new Canaries
+// ════════════════════════════════════════════════════════════════════════════
+
+static esp_err_t handle_fleet_qr(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  char qs[256] = {};
+  char ssid[33] = {};
+  char pass[65] = {};
+
+  if (httpd_req_get_url_query_str(req, qs, sizeof(qs)) != ESP_OK) {
+    httpd_resp_set_status(req, "400 Bad Request");
+    httpd_resp_set_type(req, "text/plain");
+    return httpd_resp_send(req, "Missing query parameters", -1);
+  }
+
+  if (httpd_query_key_value(qs, "ssid", ssid, sizeof(ssid)) != ESP_OK
+      || ssid[0] == '\0') {
+    httpd_resp_set_status(req, "400 Bad Request");
+    httpd_resp_set_type(req, "text/plain");
+    return httpd_resp_send(req, "ssid is required", -1);
+  }
+  httpd_query_key_value(qs, "pass", pass, sizeof(pass));
+
+  // Build SECURACV: payload
+  char payload[256];
+  snprintf(payload, sizeof(payload), "SECURACV:S:%s;P:%s;;", ssid, pass);
+
+  // Use version 1-10 range (enough for short payloads, small QR)
+  static constexpr int QR_MAX_VER = 10;
+  uint8_t qr[qrcodegen_BUFFER_LEN_FOR_VERSION(QR_MAX_VER)];
+  uint8_t tmp[qrcodegen_BUFFER_LEN_FOR_VERSION(QR_MAX_VER)];
+
+  if (!qrcodegen_encodeText(payload, tmp, qr,
+      qrcodegen_Ecc_MEDIUM, 1, QR_MAX_VER,
+      qrcodegen_Mask_AUTO, true)) {
+    httpd_resp_set_status(req, "500 Internal Server Error");
+    httpd_resp_set_type(req, "text/plain");
+    return httpd_resp_send(req, "QR encode failed", -1);
+  }
+
+  int size = qrcodegen_getSize(qr);
+  int border = 2;
+  int total = size + border * 2;
+
+  // Stream SVG — header + per-module dark cells as rects + footer
+  httpd_resp_set_type(req, "image/svg+xml");
+  httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+
+  char line[128];
+  snprintf(line, sizeof(line),
+    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 %d %d'"
+    " shape-rendering='crispEdges'>",
+    total, total);
+  httpd_resp_sendstr_chunk(req, line);
+
+  snprintf(line, sizeof(line),
+    "<rect width='%d' height='%d' fill='#fff'/>", total, total);
+  httpd_resp_sendstr_chunk(req, line);
+
+  for (int y = 0; y < size; y++) {
+    for (int x = 0; x < size; x++) {
+      if (qrcodegen_getModule(qr, x, y)) {
+        snprintf(line, sizeof(line),
+          "<rect x='%d' y='%d' width='1' height='1'/>",
+          x + border, y + border);
+        httpd_resp_sendstr_chunk(req, line);
+      }
+    }
+  }
+
+  httpd_resp_sendstr_chunk(req, "</svg>");
+  return httpd_resp_send_chunk(req, nullptr, 0);
+}
+
+static esp_err_t handle_fleet_qr_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_fleet_qr(req);
+}
+
 /* Captive-portal handler (iOS/Android/Windows probe URLs).
  *
  * Mints a one-shot pairing token and 302-redirects to the companion
@@ -5375,6 +5456,10 @@ register_extra_routes:
   httpd_uri_t peek_init = { .uri = "/api/peek/init", .method = HTTP_POST, .handler = handle_peek_init_auth };
   httpd_register_uri_handler(active_server, &peek_init);
 #endif
+
+  // Fleet provisioning QR code
+  httpd_uri_t fleet_qr = { .uri = "/api/fleet/qr", .method = HTTP_GET, .handler = handle_fleet_qr_auth };
+  httpd_register_uri_handler(active_server, &fleet_qr);
 
 #if FEATURE_MESH_NETWORK
   // Mesh network (opera) endpoints
