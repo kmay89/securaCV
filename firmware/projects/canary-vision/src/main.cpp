@@ -9,6 +9,7 @@
 */
 
 #include <Arduino.h>
+#include <WiFi.h>
 
 #include "canary/config.h"
 #include "canary/version.h"
