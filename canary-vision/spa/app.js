@@ -897,17 +897,29 @@ function connectEventStreams(devices, contentContainer) {
   }
 }
 
+function insertSorted(arr, record, maxLen) {
+  var lo = 0, hi = arr.length;
+  while (lo < hi) {
+    var mid = (lo + hi) >>> 1;
+    if (arr[mid]._ts > record._ts) lo = mid + 1;
+    else hi = mid;
+  }
+  arr.splice(lo, 0, record);
+  if (arr.length > maxLen) arr.length = maxLen;
+}
+
 function connectDeviceStream(device, contentContainer) {
   if ((window.location.hash || '') !== '#/events') return;
+
+  var sessionId = EventsState.currentSessionId;
 
   CanaryAPI.request(device.base_url, '/api/v1/witness/stream/ticket', { method: 'POST' })
     .then(function (data) {
       if (!data.ticket) return;
-      if ((window.location.hash || '') !== '#/events') return;
+      if (EventsState.currentSessionId !== sessionId) return;
 
       var url = device.base_url + '/api/v1/witness/stream?ticket=' + encodeURIComponent(data.ticket);
       var source = new EventSource(url);
-      var sessionId = EventsState.currentSessionId;
 
       source.addEventListener('witness', function (e) {
         if (EventsState.currentSessionId !== sessionId) { source.close(); return; }
@@ -923,10 +935,7 @@ function connectDeviceStream(device, contentContainer) {
           });
           if (exists) return;
 
-          EventsState.allRecords.unshift(record);
-          EventsState.allRecords.sort(function (a, b) { return b._ts - a._ts; });
-          // Cap array to prevent unbounded growth
-          if (EventsState.allRecords.length > 5000) EventsState.allRecords.length = 5000;
+          insertSorted(EventsState.allRecords, record, 5000);
           EventsState.clusters = clusterEvents(EventsState.allRecords);
           EventsState.filteredClusters = applyEventsFilter(EventsState.clusters, EventsState.activeFilter);
 
