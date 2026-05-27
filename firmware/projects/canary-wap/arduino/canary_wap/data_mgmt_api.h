@@ -411,38 +411,51 @@ inline bool verify_chain(chain_verify_result_t* result,
   uint32_t sig_failures    = 0;
   bool     chain_intact    = true;
 
-  // Globally-sorted selection walk: find the lexicographically
-  // smallest filename greater than the last processed one each
-  // iteration. O(n^2) but constant memory and correct ordering.
+  // Single-pass sorted collection: walk the directory once, collecting
+  // filenames into a heap-allocated array sorted via insertion sort.
   // Capped at VERIFY_MAX_RECORDS to prevent watchdog timeout.
-  char last_processed[V_NAME] = {0};
-  char next_name[V_NAME];
+  size_t alloc_size = VERIFY_MAX_RECORDS * V_NAME;
+  if (alloc_size > ESP.getFreeHeap() / 4) {
+    dir.close();
+    return false;
+  }
+  char (*names)[V_NAME] = (char (*)[V_NAME])malloc(alloc_size);
+  if (!names) { dir.close(); return false; }
+  size_t collected = 0;
+  size_t total_files = 0;
 
-  for (;;) {
-    if (records_checked >= VERIFY_MAX_RECORDS) break;
+  for (File entry = dir.openNextFile(); entry; entry = dir.openNextFile()) {
+    if (entry.isDirectory()) { entry.close(); continue; }
+    const char* n = entry.name();
+    const char* slash = strrchr(n, '/');
+    const char* base = slash ? (slash + 1) : n;
+    entry.close();
+    total_files++;
 
-    next_name[0] = '\0';
-    dir.rewindDirectory();
-    for (File entry = dir.openNextFile(); entry;
-         entry = dir.openNextFile()) {
-      if (entry.isDirectory()) { entry.close(); continue; }
-      const char* n = entry.name();
-      const char* slash = strrchr(n, '/');
-      const char* base = slash ? (slash + 1) : n;
-      entry.close();
-
-      if (strcmp(base, last_processed) <= 0) continue;
-      if (next_name[0] == '\0' || strcmp(base, next_name) < 0) {
-        strncpy(next_name, base, V_NAME - 1);
-        next_name[V_NAME - 1] = '\0';
+    if (collected < VERIFY_MAX_RECORDS) {
+      size_t insert_pos = collected;
+      while (insert_pos > 0 && strcmp(names[insert_pos - 1], base) > 0) {
+        memcpy(names[insert_pos], names[insert_pos - 1], V_NAME);
+        insert_pos--;
       }
+      strncpy(names[insert_pos], base, V_NAME - 1);
+      names[insert_pos][V_NAME - 1] = '\0';
+      collected++;
+    } else if (strcmp(base, names[VERIFY_MAX_RECORDS - 1]) < 0) {
+      size_t insert_pos = VERIFY_MAX_RECORDS - 1;
+      while (insert_pos > 0 && strcmp(names[insert_pos - 1], base) > 0) {
+        memcpy(names[insert_pos], names[insert_pos - 1], V_NAME);
+        insert_pos--;
+      }
+      strncpy(names[insert_pos], base, V_NAME - 1);
+      names[insert_pos][V_NAME - 1] = '\0';
     }
+  }
+  dir.close();
 
-    if (next_name[0] == '\0') break;
-    strncpy(last_processed, next_name, V_NAME);
-
+  for (size_t i = 0; i < collected; i++) {
     char path[V_NAME + 16];
-    snprintf(path, sizeof(path), "/sd/WITNESS/%s", next_name);
+    snprintf(path, sizeof(path), "/sd/WITNESS/%s", names[i]);
 
     File rf = SD.open(path, FILE_READ);
     if (!rf) continue;
@@ -480,9 +493,10 @@ inline bool verify_chain(chain_verify_result_t* result,
 
     if ((records_checked % 10) == 0) delay(1);
   }
-  dir.close();
+  free(names);
 
-  bool was_capped = (records_checked >= VERIFY_MAX_RECORDS);
+  bool was_capped = (total_files > collected);
+  if (was_capped) chain_intact = false;
 
   result->records_checked    = records_checked;
   result->records_valid      = records_valid;

@@ -515,9 +515,23 @@ bool datamgmt_verify_chain(chain_verify_result_t* result) {
      * can take 10-20ms per record. */
     if ((records_checked % 10) == 0) delay(1);
   }
+  // Check if more records exist beyond the cap
+  bool more_exist = false;
+  if (records_checked >= VERIFY_MAX_RECORDS) {
+    dir.rewindDirectory();
+    for (File entry = dir.openNextFile(); entry; entry = dir.openNextFile()) {
+      if (entry.isDirectory()) { entry.close(); continue; }
+      const char* n = entry.name();
+      const char* slash = strrchr(n, '/');
+      const char* base = slash ? (slash + 1) : n;
+      entry.close();
+      if (strcmp(base, last_processed) > 0) { more_exist = true; break; }
+    }
+  }
   dir.close();
 
-  bool was_capped = (records_checked >= VERIFY_MAX_RECORDS);
+  bool was_capped = more_exist;
+  if (was_capped) chain_intact = false;
 
   result->records_checked    = records_checked;
   result->records_valid      = records_valid;

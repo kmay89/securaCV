@@ -72,6 +72,9 @@ SPLASH_FILE = ARTWORK_DIR / "splash_serial.txt"
 LOG_PATTERN = re.compile(
     r"^\[([IWEDV])\]\s+(\w+):\s+(.*)$"
 )
+HEALTH_LOG_PATTERN = re.compile(
+    r"^\[(WARN|ERROR|ALERT|TAMPER|INFO)/(\w+)\]\s+(.*)$"
+)
 STATUS_PATTERN = re.compile(
     r"^\[(OK|\.\.|\!\!|WARN|ERR)\]\s+(.*)$"
 )
@@ -386,6 +389,30 @@ class LogParser:
         match = LOG_PATTERN.match(stripped)
         if match:
             level, tag, msg = match.groups()
+            color = LEVEL_COLORS.get(level, Color.RESET)
+            level_name = LEVEL_NAMES.get(level, level)
+
+            if level == "E":
+                self.health.errors_seen += 1
+            elif level == "W":
+                self.health.warnings_seen += 1
+
+            self._extract_data(msg)
+
+            colored = (
+                f"{Color.DIM}[{Color.RESET}{color}{level_name:<5}{Color.RESET}"
+                f"{Color.DIM}]{Color.RESET} "
+                f"{Color.BOLD}{Color.BLUE}{tag}{Color.RESET}: "
+                f"{color}{msg}{Color.RESET}"
+            )
+            return colored, stripped
+
+        # Check for firmware health log format: [WARN/CATEGORY] message
+        match = HEALTH_LOG_PATTERN.match(stripped)
+        if match:
+            severity, tag, msg = match.groups()
+            level_map = {"WARN": "W", "ERROR": "E", "ALERT": "E", "TAMPER": "E", "INFO": "I"}
+            level = level_map.get(severity, "I")
             color = LEVEL_COLORS.get(level, Color.RESET)
             level_name = LEVEL_NAMES.get(level, level)
 
@@ -885,6 +912,8 @@ class CanaryMonitor:
                 continue
 
             line_buffer += data
+            if len(line_buffer) > 8192:
+                line_buffer = line_buffer[-4096:]
 
             # Process complete lines
             while b"\n" in line_buffer:
@@ -967,7 +996,8 @@ def main():
     args = parser.parse_args()
 
     # Print splash
-    print_splash()
+    if not args.raw and not args.list_ports:
+        print_splash()
 
     if args.list_ports:
         list_serial_ports()

@@ -285,8 +285,14 @@ static MotionResult layer2_check(const uint8_t* gray) {
     }
 
     // Long-term baseline for object removal detection
+    bool zone_enabled = (s_cfg.zone_mask[i / 8] >> (i % 8)) & 1;
     if (!s_longterm_set) {
       s_longterm_baseline[i] = cur;
+      s_obj_present[i] = 0;
+    } else if (!zone_enabled) {
+      // Disabled zone: keep long-term baseline updated but skip removal tracking
+      s_longterm_baseline[i] = s_longterm_baseline[i] * (1.0f - LONGTERM_EMA_ALPHA)
+                               + cur * LONGTERM_EMA_ALPHA;
       s_obj_present[i] = 0;
     } else {
       float lt_delta = fabsf(cur - s_longterm_baseline[i]);
@@ -570,7 +576,7 @@ bool vision_process() {
 
   // ── Layer 1: JPEG size delta ──────────────────────────────────────
   bool l1_pass = vision::layer1_check(fb->len);
-  if (!l1_pass) {
+  if (!l1_pass && vision::s_tamper_counter == 0) {
     cam.returnFrame(fb);
     decay_grid();
     if (vision::s_motion_active &&
@@ -582,7 +588,7 @@ bool vision_process() {
     }
     return false;
   }
-  vision::s_stats.layer1_passes++;
+  if (l1_pass) vision::s_stats.layer1_passes++;
 
   // ── Layer 2: Block luminance motion ───────────────────────────────
   bool decoded = vision::decode_and_downsample(fb, vision::s_gray_buf,
@@ -694,9 +700,26 @@ bool vision_load_config_from_nvs(vision_config_t* out) {
   Preferences prefs;
   if (!prefs.begin(NVS_VISION_NS, true)) return false;
   if (!prefs.isKey(NVS_KEY_CONFIG)) { prefs.end(); return false; }
-  size_t read = prefs.getBytes(NVS_KEY_CONFIG, out, sizeof(vision_config_t));
+  const size_t current_size = sizeof(vision_config_t);
+  const size_t min_size = current_size - VISION_GRID_TOTAL;
+  vision_config_t tmp;
+  memset(&tmp, 0, sizeof(tmp));
+  size_t read = prefs.getBytes(NVS_KEY_CONFIG, &tmp, current_size);
   prefs.end();
-  return read == sizeof(vision_config_t);
+  if (read == current_size) {
+    *out = tmp;
+    return true;
+  }
+  // Accept old (smaller) blobs: fields present are loaded, new trailing
+  // fields (zone_sensitivity) remain zero-initialized from memset above.
+  if (read >= min_size) {
+    *out = tmp;
+    Serial.printf("[VISION] NVS config migrated: %u -> %u bytes\n",
+                  (unsigned)read, (unsigned)current_size);
+    return true;
+  }
+  // Blob too old/corrupt — caller's struct is untouched (preserves defaults)
+  return false;
 }
 
 bool vision_get_thumbnail(uint8_t* out, size_t cap) {

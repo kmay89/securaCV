@@ -1014,6 +1014,20 @@ static void handle_input(SecuraCVApp* app, InputEvent* event) {
                         app->sort_mode = (app->sort_mode + SortModeCount + dir) % SortModeCount;
                     } else if(app->settings_cursor == SETTING_RSSI_FILTER) {
                         app->rssi_filter_idx = (app->rssi_filter_idx + RSSI_FILTER_COUNT + dir) % RSSI_FILTER_COUNT;
+                        // Prune existing devices that fall below the new threshold
+                        int8_t threshold = rssi_filter_options[app->rssi_filter_idx];
+                        for(int i = app->device_count - 1; i >= 0; i--) {
+                            if(app->devices[i].rssi < threshold && !app->devices[i].pinned) {
+                                for(int j = i; j < app->device_count - 1; j++) {
+                                    app->devices[j] = app->devices[j + 1];
+                                }
+                                app->device_count--;
+                                if(app->selected_index >= app->device_count && app->device_count > 0) {
+                                    app->selected_index = app->device_count - 1;
+                                }
+                            }
+                        }
+                        if(app->selected_index < 0) app->selected_index = 0;
                     }
                     break;
                 }
