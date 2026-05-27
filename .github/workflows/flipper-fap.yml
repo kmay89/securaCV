@@ -39,14 +39,17 @@ jobs:
         with:
           path: app
 
-      - name: Clone Flipper firmware
+      - name: Clone Flipper firmware (${{ matrix.tag }})
         uses: actions/checkout@v4
         with:
           repository: flipperdevices/flipperzero-firmware
           ref: ${{ matrix.tag }}
           path: firmware
-          submodules: recursive
           fetch-depth: 1
+
+      - name: Initialize submodules
+        working-directory: firmware
+        run: git submodule update --init --depth 1
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -57,12 +60,17 @@ jobs:
         run: |
           mkdir -p firmware/applications_user
           ln -s "$GITHUB_WORKSPACE/app/tools/flipper/securacv_scanner" firmware/applications_user/securacv_scanner
+          echo "=== App directory ==="
           ls -la firmware/applications_user/securacv_scanner/
+          echo "=== application.fam ==="
+          cat firmware/applications_user/securacv_scanner/application.fam
 
-      - name: Build FAP with fbt
+      - name: Build FAP
         working-directory: firmware
         run: |
-          ./fbt fap_securacv_scanner COMPACT=1
+          echo "=== Starting build ==="
+          ./fbt fap_securacv_scanner COMPACT=1 2>&1
+          echo "=== Build complete ==="
 
       - name: Collect artifact
         run: |
