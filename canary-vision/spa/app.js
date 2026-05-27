@@ -451,6 +451,114 @@ var Router = {
   }
 };
 
+// --------------- Notification Preferences ---------------
+
+var NOTIF_PREFS_KEY = 'canary_notif_prefs';
+
+var DEFAULT_NOTIF_PREFS = {
+  enabled: true,
+  sound: false,
+  vibrate: true,
+  person_detected: true,
+  vehicle_detected: true,
+  animal_detected: true,
+  motion_detected: false,
+  quiet_hours_enabled: false,
+  quiet_hours_start: '22:00',
+  quiet_hours_end: '07:00',
+};
+
+function getNotifPrefs() {
+  try {
+    var raw = localStorage.getItem(NOTIF_PREFS_KEY);
+    if (raw) {
+      var parsed = JSON.parse(raw);
+      var prefs = {};
+      var keys = Object.keys(DEFAULT_NOTIF_PREFS);
+      for (var i = 0; i < keys.length; i++) {
+        prefs[keys[i]] = parsed[keys[i]] !== undefined ? parsed[keys[i]] : DEFAULT_NOTIF_PREFS[keys[i]];
+      }
+      return prefs;
+    }
+  } catch (e) { /* ignore */ }
+  return Object.assign({}, DEFAULT_NOTIF_PREFS);
+}
+
+function saveNotifPrefs(prefs) {
+  try {
+    localStorage.setItem(NOTIF_PREFS_KEY, JSON.stringify(prefs));
+  } catch (e) { /* ignore */ }
+}
+
+function isQuietHoursActive(prefs) {
+  if (!prefs.quiet_hours_enabled) return false;
+  var now = new Date();
+  var hhmm = (now.getHours() < 10 ? '0' : '') + now.getHours() + ':' +
+             (now.getMinutes() < 10 ? '0' : '') + now.getMinutes();
+  var start = prefs.quiet_hours_start;
+  var end = prefs.quiet_hours_end;
+  if (start <= end) {
+    return hhmm >= start && hhmm < end;
+  }
+  return hhmm >= start || hhmm < end;
+}
+
+function shouldNotify(eventType) {
+  var prefs = getNotifPrefs();
+  if (!prefs.enabled) return false;
+  if (isQuietHoursActive(prefs)) return false;
+  return prefs[eventType] !== false;
+}
+
+function playNotificationFeedback(eventType) {
+  var prefs = getNotifPrefs();
+  if (prefs.vibrate && navigator.vibrate) {
+    var pattern = eventType === 'person_detected' ? [100, 50, 100] : [80];
+    navigator.vibrate(pattern);
+  }
+  if (prefs.sound) {
+    try {
+      var ctx = new (window.AudioContext || window.webkitAudioContext)();
+      var osc = ctx.createOscillator();
+      var gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      gain.gain.value = 0.1;
+      osc.frequency.value = eventType === 'person_detected' ? 880 : 660;
+      osc.type = 'sine';
+      osc.start();
+      osc.stop(ctx.currentTime + 0.15);
+    } catch (e) { /* audio not available */ }
+  }
+}
+
+var _unseenEventCount = 0;
+
+function getUnseenEventCount() {
+  return _unseenEventCount;
+}
+
+function incrementUnseenEvents() {
+  _unseenEventCount++;
+  updateNavBadge();
+}
+
+function clearUnseenEvents() {
+  _unseenEventCount = 0;
+  updateNavBadge();
+}
+
+function updateNavBadge() {
+  var badge = document.getElementById('events-badge');
+  if (!badge) return;
+  if (_unseenEventCount > 0) {
+    badge.textContent = _unseenEventCount > 99 ? '99+' : String(_unseenEventCount);
+    badge.style.display = 'inline-flex';
+  } else {
+    badge.style.display = 'none';
+  }
+}
+
 // --------------- Pull-to-Refresh ---------------
 
 function setupPullToRefresh(scrollContainer, contentWrap, indicator, onRefresh) {
@@ -816,6 +924,11 @@ function connectDeviceStream(device, contentContainer) {
           EventsState.clusters = clusterEvents(EventsState.allRecords);
           EventsState.filteredClusters = applyEventsFilter(EventsState.clusters, EventsState.activeFilter);
 
+          if (shouldNotify(record.event_type)) {
+            incrementUnseenEvents();
+            playNotificationFeedback(record.event_type);
+          }
+
           var scrollContainer = contentContainer.parentNode;
           var isScrolledDown = scrollContainer && scrollContainer.scrollTop > 100;
 
@@ -911,11 +1024,16 @@ function renderNav(active) {
   ];
 
   return el('nav', { className: 'nav' }, tabs.map(function (tab) {
-    var link = el('a', {
-      href: tab.hash,
-      textContent: tab.label,
-    });
+    var link = el('a', { href: tab.hash });
     if (tab.hash === active) link.className = 'active';
+    link.appendChild(document.createTextNode(tab.label));
+    if (tab.hash === '#/events') {
+      var badge = el('span', { id: 'events-badge', className: 'nav-badge' });
+      badge.style.display = 'none';
+      link.appendChild(badge);
+      if (tab.hash === active) clearUnseenEvents();
+      setTimeout(updateNavBadge, 0);
+    }
     return link;
   }));
 }
@@ -2494,6 +2612,81 @@ function renderSettingsView() {
     el('div', { className: 'card-title mb-8', textContent: 'Devices' }),
     el('div', { className: 'card-subtitle', textContent: devices.length + ' device(s) configured' }),
   ]));
+
+  // Notification preferences
+  var prefs = getNotifPrefs();
+  var notifCard = el('div', { className: 'card' });
+  notifCard.appendChild(el('div', { className: 'card-title mb-8', textContent: 'Notifications' }));
+
+  function makeToggle(label, key, prefs, onChange) {
+    var row = el('div', { className: 'toggle-row' });
+    row.appendChild(el('span', { className: 'toggle-label', textContent: label }));
+    var toggle = el('label', { className: 'toggle' });
+    var checkbox = el('input', { type: 'checkbox' });
+    checkbox.checked = prefs[key];
+    checkbox.addEventListener('change', function () {
+      prefs[key] = checkbox.checked;
+      saveNotifPrefs(prefs);
+      if (onChange) onChange(checkbox.checked);
+    });
+    toggle.appendChild(checkbox);
+    toggle.appendChild(el('span', { className: 'toggle-slider' }));
+    row.appendChild(toggle);
+    return row;
+  }
+
+  notifCard.appendChild(makeToggle('Notifications Enabled', 'enabled', prefs));
+  notifCard.appendChild(makeToggle('Sound', 'sound', prefs));
+  notifCard.appendChild(makeToggle('Vibration', 'vibrate', prefs));
+
+  notifCard.appendChild(el('div', {
+    className: 'card-subtitle mt-12 mb-8',
+    textContent: 'Notify for event types:',
+    style: 'font-weight: 500; color: var(--color-text);',
+  }));
+  notifCard.appendChild(makeToggle('🚶 Person', 'person_detected', prefs));
+  notifCard.appendChild(makeToggle('🚗 Vehicle', 'vehicle_detected', prefs));
+  notifCard.appendChild(makeToggle('🐾 Animal', 'animal_detected', prefs));
+  notifCard.appendChild(makeToggle('💨 Motion', 'motion_detected', prefs));
+
+  notifCard.appendChild(el('div', {
+    className: 'card-subtitle mt-12 mb-8',
+    textContent: 'Quiet Hours:',
+    style: 'font-weight: 500; color: var(--color-text);',
+  }));
+  notifCard.appendChild(makeToggle('Enable Quiet Hours', 'quiet_hours_enabled', prefs));
+
+  var quietRow = el('div', { className: 'form-group', style: 'display: flex; gap: 12px; margin-top: 8px;' });
+  var startGroup = el('div', { style: 'flex: 1;' });
+  startGroup.appendChild(el('label', { className: 'form-label', textContent: 'Start' }));
+  var startInput = el('input', {
+    className: 'form-input',
+    type: 'time',
+    value: prefs.quiet_hours_start,
+    onChange: function () {
+      prefs.quiet_hours_start = startInput.value;
+      saveNotifPrefs(prefs);
+    }
+  });
+  startGroup.appendChild(startInput);
+  quietRow.appendChild(startGroup);
+
+  var endGroup = el('div', { style: 'flex: 1;' });
+  endGroup.appendChild(el('label', { className: 'form-label', textContent: 'End' }));
+  var endInput = el('input', {
+    className: 'form-input',
+    type: 'time',
+    value: prefs.quiet_hours_end,
+    onChange: function () {
+      prefs.quiet_hours_end = endInput.value;
+      saveNotifPrefs(prefs);
+    }
+  });
+  endGroup.appendChild(endInput);
+  quietRow.appendChild(endGroup);
+  notifCard.appendChild(quietRow);
+
+  content.appendChild(notifCard);
 
   content.appendChild(el('button', {
     className: 'btn btn-danger btn-block mt-20',
