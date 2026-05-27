@@ -3772,7 +3772,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     function viStartThumb() {
       if (viThumbTimer) return;
       viRefreshThumb();
-      viThumbTimer = setInterval(viRefreshThumb, 1500);
+      viThumbTimer = setInterval(viRefreshThumb, 5000);
     }
     function viStopThumb() {
       if (viThumbTimer) { clearInterval(viThumbTimer); viThumbTimer = null; }
