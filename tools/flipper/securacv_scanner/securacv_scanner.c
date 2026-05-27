@@ -264,6 +264,38 @@ static scv_device_t* add_or_update_device(SecuraCVApp* app, const AppEvent* evt)
     return dev;
 }
 
+static int cmp_rssi(const void* a, const void* b) {
+    const scv_device_t* da = (const scv_device_t*)a;
+    const scv_device_t* db = (const scv_device_t*)b;
+    if(da->pinned != db->pinned) return db->pinned - da->pinned;
+    int8_t ra = da->rssi_sample_count > 0 ? (int8_t)(da->rssi_avg / 10) : da->rssi;
+    int8_t rb = db->rssi_sample_count > 0 ? (int8_t)(db->rssi_avg / 10) : db->rssi;
+    return rb - ra;
+}
+
+static int cmp_name(const void* a, const void* b) {
+    const scv_device_t* da = (const scv_device_t*)a;
+    const scv_device_t* db = (const scv_device_t*)b;
+    if(da->pinned != db->pinned) return db->pinned - da->pinned;
+    return strcmp(da->name, db->name);
+}
+
+static int cmp_last_seen(const void* a, const void* b) {
+    const scv_device_t* da = (const scv_device_t*)a;
+    const scv_device_t* db = (const scv_device_t*)b;
+    if(da->pinned != db->pinned) return db->pinned - da->pinned;
+    if(db->last_seen_ms > da->last_seen_ms) return 1;
+    if(db->last_seen_ms < da->last_seen_ms) return -1;
+    return 0;
+}
+
+static void sort_devices(SecuraCVApp* app) {
+    if(app->device_count < 2) return;
+    typedef int (*cmp_fn)(const void*, const void*);
+    cmp_fn fns[] = {cmp_rssi, cmp_name, cmp_last_seen};
+    qsort(app->devices, app->device_count, sizeof(scv_device_t), fns[app->sort_mode]);
+}
+
 static void expire_stale_devices(SecuraCVApp* app) {
     furi_mutex_acquire(app->mutex, FuriWaitForever);
 
