@@ -6823,7 +6823,7 @@ void loop() {
 
   // Data management auto-processing (rate-limited: rotation every 5 min, backup every hour)
   #if FEATURE_DATA_MGMT && FEATURE_SD_STORAGE
-  datamgmt::process(g_device.chain_head, g_device.seq);
+  datamgmt::process(g_device.chain_head, g_device.seq, g_device.privkey);
   #endif
 
   // Update power monitor (ADC sample, SoC, charge state)
