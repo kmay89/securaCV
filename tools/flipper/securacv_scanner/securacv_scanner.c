@@ -86,6 +86,7 @@ static const uint16_t scan_off_ms[] = {0, 3000, 8000};
 typedef enum {
     SETTING_SCAN_MODE,
     SETTING_TIMEOUT,
+    SETTING_SORT,
     SETTING_COUNT,
 } SettingIndex;
 
@@ -405,7 +406,7 @@ static void draw_scan_list(Canvas* canvas, SecuraCVApp* app) {
 
     canvas_set_font(canvas, FontSecondary);
     char status[32];
-    snprintf(status, sizeof(status), "%d %s%s",
+    snprintf(status, sizeof(status), "%d <%s>%s",
              app->device_count, sort_mode_labels[app->sort_mode],
              app->alerts_enabled ? " ALT" : "");
     canvas_draw_str_aligned(canvas, SCREEN_WIDTH, 10, AlignRight, AlignBottom, status);
@@ -682,6 +683,18 @@ static void draw_settings(Canvas* canvas, SecuraCVApp* app) {
     if(app->settings_cursor == SETTING_TIMEOUT) {
         canvas_set_color(canvas, ColorBlack);
     }
+    y += LINE_HEIGHT + 2;
+
+    // Sort Mode
+    if(app->settings_cursor == SETTING_SORT) {
+        canvas_draw_box(canvas, 0, y - 8, SCREEN_WIDTH, LINE_HEIGHT);
+        canvas_set_color(canvas, ColorWhite);
+    }
+    snprintf(line, sizeof(line), "Sort: <%s>", sort_mode_labels[app->sort_mode]);
+    canvas_draw_str(canvas, 2, y, line);
+    if(app->settings_cursor == SETTING_SORT) {
+        canvas_set_color(canvas, ColorBlack);
+    }
 
     canvas_draw_str_aligned(canvas, SCREEN_WIDTH / 2, SCREEN_HEIGHT - 2,
                             AlignCenter, AlignBottom, "Back to return");
@@ -791,6 +804,14 @@ static void handle_input(SecuraCVApp* app, InputEvent* event) {
                         app->current_view = VIEW_DEVICE_DETAIL;
                     }
                     break;
+                case InputKeyLeft:
+                    app->sort_mode = (app->sort_mode + SortModeCount - 1) % SortModeCount;
+                    sort_devices(app);
+                    break;
+                case InputKeyRight:
+                    app->sort_mode = (app->sort_mode + 1) % SortModeCount;
+                    sort_devices(app);
+                    break;
                 case InputKeyBack:
                     app->running = false;
                     break;
@@ -832,6 +853,8 @@ static void handle_input(SecuraCVApp* app, InputEvent* event) {
                         app->duty_scan_active = true;
                     } else if(app->settings_cursor == SETTING_TIMEOUT) {
                         app->timeout_idx = (app->timeout_idx + TIMEOUT_OPTION_COUNT + dir) % TIMEOUT_OPTION_COUNT;
+                    } else if(app->settings_cursor == SETTING_SORT) {
+                        app->sort_mode = (app->sort_mode + SortModeCount + dir) % SortModeCount;
                     }
                     break;
                 }
