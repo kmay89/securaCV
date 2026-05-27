@@ -244,11 +244,14 @@ static MotionResult layer2_check(const uint8_t* gray) {
         uint8_t decayed = (uint8_t)(s_stats.block_intensity[idx] * 3 / 4);
         s_stats.block_intensity[idx] = fresh > decayed ? fresh : decayed;
 
-        int thresh = s_cfg.luminance_threshold;
+        int base_thresh = s_cfg.zone_sensitivity[idx] > 0
+                          ? (int)s_cfg.zone_sensitivity[idx]
+                          : (int)s_cfg.luminance_threshold;
+        int thresh = base_thresh;
         if (s_cfg.adaptive_enabled) {
           float stddev = sqrtf(s_block_var[idx]);
           if (stddev < MIN_STDDEV) stddev = MIN_STDDEV;
-          float k = (float)s_cfg.luminance_threshold / 10.0f;
+          float k = (float)base_thresh / 10.0f;
           thresh = (int)(k * stddev);
           if (thresh < 3) thresh = 3;
         }
