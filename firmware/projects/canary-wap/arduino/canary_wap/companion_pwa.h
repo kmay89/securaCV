@@ -302,10 +302,26 @@ footer a{color:var(--accent);text-decoration:none}
   </div>
 
   <div class="wiz-step active" id="wiz-step-1">
-    <h2 class="wiz-h" tabindex="-1">Connect your Canary to WiFi</h2>
-    <p class="wiz-sub">Have your home WiFi password ready. Stay on this network until setup finishes.</p>
-    <div class="wiz-btnrow">
-      <button class="btn btn-primary" id="wiz-go-2">Let's go</button>
+    <div id="wiz-welcome-view">
+      <h2 class="wiz-h" tabindex="-1">Connect your Canary to WiFi</h2>
+      <p class="wiz-sub">Have your home WiFi password ready. Stay on this network until setup finishes.</p>
+      <div class="wiz-btnrow">
+        <button class="btn btn-primary" id="wiz-go-2">Let's go</button>
+      </div>
+      <div id="wiz-qr-offer" class="hidden" style="text-align:center;margin-top:.75rem">
+        <p style="color:var(--muted);font-size:.8rem;margin:0 0 .4rem">or</p>
+        <button class="btn btn-secondary" id="wiz-qr-start" style="font-size:.85rem">I have a WiFi QR code</button>
+      </div>
+    </div>
+    <div id="wiz-qr-mode" class="hidden">
+      <h2 class="wiz-h" tabindex="-1">Show the QR code</h2>
+      <p class="wiz-sub">Hold a WiFi QR code up to your Canary's camera lens &mdash; about 15&nbsp;cm away.</p>
+      <p style="color:var(--muted);font-size:.8rem;margin:0 0 .75rem;line-height:1.45">You can find one in your phone's WiFi settings (Android: Settings &rsaquo; WiFi &rsaquo; tap your network &rsaquo; Share) or on your router's label.</p>
+      <div class="wiz-spin" id="wiz-qr-spin">Looking for a QR code&hellip;</div>
+      <div class="err" id="wiz-qr-err" role="alert"></div>
+      <div class="wiz-btnrow">
+        <button class="btn btn-secondary" id="wiz-qr-back">Type password instead</button>
+      </div>
     </div>
   </div>
 
@@ -684,6 +700,99 @@ footer a{color:var(--accent);text-decoration:none}
     setStep(2);
     startScan();
   });
+
+  // ── Card 1b: QR scan mode ─────────────────────────────────────────────
+  let qrPollTimer = 0;
+
+  fetch('/api/wifi').then(r => r.json()).then(j => {
+    if (j.qr_provision) {
+      const offer = $w('wiz-qr-offer');
+      if (offer) offer.classList.remove('hidden');
+    }
+  }).catch(() => {});
+
+  function showQrMode() {
+    const welcome = $w('wiz-welcome-view');
+    const qrMode = $w('wiz-qr-mode');
+    if (welcome) welcome.classList.add('hidden');
+    if (qrMode) qrMode.classList.remove('hidden');
+    const qrErr = $w('wiz-qr-err');
+    if (qrErr) { qrErr.textContent = ''; qrErr.classList.remove('show'); }
+    const spin = $w('wiz-qr-spin');
+    if (spin) spin.style.display = '';
+    announce('Looking for a QR code.');
+  }
+
+  function hideQrMode() {
+    const welcome = $w('wiz-welcome-view');
+    const qrMode = $w('wiz-qr-mode');
+    if (welcome) welcome.classList.remove('hidden');
+    if (qrMode) qrMode.classList.add('hidden');
+    if (qrPollTimer) { clearInterval(qrPollTimer); qrPollTimer = 0; }
+  }
+
+  function showQrError(msg) {
+    const spin = $w('wiz-qr-spin');
+    if (spin) spin.style.display = 'none';
+    const err = $w('wiz-qr-err');
+    if (err) { err.textContent = msg; err.classList.add('show'); }
+    announce(msg);
+  }
+
+  function pollQrScan() {
+    qrPollTimer = setInterval(async () => {
+      try {
+        const r = await fetch('/api/wifi/qr-scan');
+        const j = await r.json();
+        if (j.success) {
+          clearInterval(qrPollTimer); qrPollTimer = 0;
+          announce('QR code found. Connecting to ' + (j.ssid || 'your network') + '.');
+          setStep(4);
+          showProgress('Connecting to ' + (j.ssid || 'your WiFi') + '.');
+          pollWifiUntilConnected();
+        } else if (!j.scanning) {
+          clearInterval(qrPollTimer); qrPollTimer = 0;
+          showQrError(j.error === 'timeout'
+            ? 'Couldn’t find a QR code. Make sure the code fills most of the camera’s view.'
+            : (j.error || 'Scan stopped.'));
+        }
+      } catch (e) {
+        clearInterval(qrPollTimer); qrPollTimer = 0;
+        showQrError('Lost connection to your Canary.');
+      }
+    }, 800);
+  }
+
+  if ($w('wiz-qr-start')) {
+    $w('wiz-qr-start').addEventListener('click', async () => {
+      showQrMode();
+      try {
+        const r = await fetch('/api/wifi/qr-scan', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ token: token }),
+        });
+        const j = await r.json();
+        if (!j.ok) {
+          showQrError(j.error || 'Could not start scanner.');
+          return;
+        }
+        pollQrScan();
+      } catch (e) {
+        showQrError('Could not reach your Canary.');
+      }
+    });
+  }
+
+  if ($w('wiz-qr-back')) {
+    $w('wiz-qr-back').addEventListener('click', async () => {
+      if (qrPollTimer) { clearInterval(qrPollTimer); qrPollTimer = 0; }
+      try { await fetch('/api/wifi/qr-scan', { method: 'DELETE' }); } catch (e) {}
+      hideQrMode();
+      setStep(2);
+      startScan();
+    });
+  }
 
   // ── Card 2: scan + pick ────────────────────────────────────────────────
   function renderNets(nets) {
