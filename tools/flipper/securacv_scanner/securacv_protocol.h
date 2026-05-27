@@ -65,6 +65,19 @@ typedef enum {
 #define SCV_ZONE_MID_THRESHOLD  (-70)
 #define SCV_ZONE_FAR_THRESHOLD  (-90)
 
+typedef enum {
+    SortByRSSI = 0,
+    SortByName,
+    SortByLastSeen,
+    SortModeCount,
+} SortMode;
+
+static const char* const sort_mode_labels[] = {
+    [SortByRSSI]     = "RSSI",
+    [SortByName]     = "Name",
+    [SortByLastSeen] = "Seen",
+};
+
 typedef struct {
     char     name[32];
     int8_t   rssi;

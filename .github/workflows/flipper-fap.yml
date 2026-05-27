@@ -1,0 +1,86 @@
+name: Flipper Zero FAP Build
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'tools/flipper/**'
+      - '.github/workflows/flipper-fap.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'tools/flipper/**'
+      - '.github/workflows/flipper-fap.yml'
+  release:
+    types: [published]
+  workflow_dispatch:
+
+concurrency:
+  group: flipper-fap-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-fap:
+    name: Build FAP (${{ matrix.label }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - firmware: official
+            channel: release
+            label: Official (Release)
+          - firmware: official-dev
+            channel: dev
+            label: Official (Dev)
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install ufbt
+        run: pip install ufbt
+
+      - name: Set up SDK (${{ matrix.label }})
+        run: ufbt update --channel=${{ matrix.channel }}
+
+      - name: Build FAP
+        working-directory: tools/flipper/securacv_scanner
+        run: ufbt
+
+      - name: Collect artifact
+        run: |
+          mkdir -p dist
+          find tools/flipper/securacv_scanner -name "*.fap" -exec cp {} "dist/securacv_scanner-${{ matrix.firmware }}.fap" \;
+          ls -la dist/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: securacv_scanner-${{ matrix.firmware }}
+          path: dist/*.fap
+          if-no-files-found: error
+
+  release-faps:
+    name: Attach FAPs to Release
+    needs: build-fap
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: faps
+          merge-multiple: true
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: faps/*.fap
