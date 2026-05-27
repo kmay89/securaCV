@@ -32,11 +32,39 @@ automatically restored when the app exits.
 - Flipper Zero with official firmware 1.x
 - [ufbt](https://github.com/flipperdevices/flipperzero-ufbt) (micro Flipper Build Tool)
 
+## Install ufbt
+
+```bash
+pip install ufbt
+```
+
+If your shell reports `command not found: ufbt` after installing, the pip
+scripts directory is not on your PATH. Add it:
+
+```bash
+# macOS (Python installed via Xcode CLT or python.org)
+export PATH="$HOME/Library/Python/3.9/bin:$PATH"
+
+# Linux / macOS (pip --user install)
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Add the appropriate line to `~/.zshrc` or `~/.bashrc` to make it permanent.
+
 ## Build
 
 ```bash
 cd tools/flipper/securacv_scanner
 ufbt build
+```
+
+Or use the multi-firmware build script from the parent directory:
+
+```bash
+cd tools/flipper
+./build.sh            # official firmware (default)
+./build.sh unleashed  # Unleashed firmware
+./build.sh all        # all firmware variants
 ```
 
 ## Install
