@@ -611,7 +611,7 @@ async function startSetup() {
     if (verified) {
       showDoneSuccess();
     } else {
-      showDoneSuccess();
+      showDoneError("Verification timed out — the kernel did not report healthy in time. Check the add-on / install logs to confirm SecuraCV started correctly.");
     }
   } catch (e) {
     btn.disabled = false;

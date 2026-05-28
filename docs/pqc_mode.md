@@ -30,8 +30,10 @@ domain separation (per log type) to prevent cross-context reuse.
 ### Verification Modes
 
 - **Compat**: Ed25519 must verify. PQ signature is validated only if present
-  (legacy entries without PQ signatures pass). Also accepts legacy
-  `"dilithium2"` scheme identifiers from pre-migration data.
+  (legacy entries without PQ signatures pass). The legacy `"dilithium2"` scheme
+  identifier from pre-migration data is accepted (treated as an alias and not
+  rejected as unsupported); the signature bytes are still verified with the
+  ML-DSA-44 verifier — there is no separate legacy Dilithium2 algorithm.
 - **Strict**: require **both Ed25519 _and_ PQ** signatures to verify.
 
 Strict mode fails if a PQ signature is missing or if the verifier does not have
@@ -53,7 +55,7 @@ Uses **ML-KEM-768** (FIPS 203) via the `pqcrypto-mlkem` crate.
 
 When enabled, vault envelopes can use hybrid encryption:
 
-- **Classical**: AES/ChaCha20 with master-key-wrapped DEK
+- **Classical**: ChaCha20Poly1305 with master-key-wrapped DEK
 - **PQ**: KEM-encapsulated DEK (ML-KEM-768)
 - **Hybrid**: Both classical wrap and KEM ciphertext; decryption tries KEM
   first, falls back to classical if AEAD verification fails (handles legacy

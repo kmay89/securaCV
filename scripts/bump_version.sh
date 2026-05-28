@@ -20,8 +20,9 @@ ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 
 echo "Bumping version to ${NEW_VERSION}..."
 
-# 1. Cargo.toml
-sed -i "s/^version = \".*\"/version = \"${NEW_VERSION}\"/" "${ROOT}/Cargo.toml"
+# 1. Cargo.toml — only the first occurrence (package version, not deps).
+# The .bak + rm form is portable across GNU and BSD/macOS sed.
+sed -i.bak "0,/^version = \".*\"[[:space:]]*\$/s//version = \"${NEW_VERSION}\"/" "${ROOT}/Cargo.toml" && rm -f "${ROOT}/Cargo.toml.bak"
 echo "  ✓ Cargo.toml"
 
 # 2. HA integration manifest
