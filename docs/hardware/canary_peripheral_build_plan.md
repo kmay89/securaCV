@@ -1,6 +1,6 @@
 # Canary Peripheral Build Plan & Bill of Materials
 
-> **Document:** SCV-HW-BOM-0001 · **Revision:** A (2026-05-28) · **Status:** Released
+> **Document:** SCV-HW-BOM-0001 · **Revision:** B (2026-05-28) · **Status:** Released
 > **Scope:** Audible chirp (buzzer), status LED, and operator input/tamper
 > peripherals — plus battery and enclosure — for the SecuraCV **Canary WAP**
 > (XIAO ESP32-S3 Sense) and **Canary Vision** (ESP32-C3 + Grove Vision AI V2)
@@ -106,9 +106,9 @@ RoHS) lives in the CSVs. This table is the human-readable summary.
 
 | # | RefDes | Qty | Req? | Part | Notes |
 |---|--------|-----|------|------|-------|
-| 1 | U1 | 1 | **Required** | Seeed XIAO ESP32-S3 Sense | MPN 113991115; camera + mic onboard |
+| 1 | U1 | 1 | **Required** | Seeed XIAO ESP32-S3 Sense | MPN **102010469**; −40…+65 °C; camera + mic onboard |
 | 2 | — | 1 | **Required** | USB-C cable, **data-capable** | Not charge-only |
-| 3 | — | 1 | **Required** | microSD card, 4 GB+, FAT32 | Append-only witness log |
+| 3 | SD1 | 1 | **Required** | microSD, **high-endurance** 32 GB+, FAT32 | 24/7 write-rated (SanDisk High/MAX Endurance) — not a consumer card |
 | 4 | BZ1 | 1 | Optional | Passive magnetic/piezo buzzer | `CHIRP_GPIO`=2; 1–3 kHz patterns |
 | 5 | Q1 | 1 | Optional | N-ch MOSFET buzzer driver (2N7002) | Only for magnetic buzzers >10 mA |
 | 6 | R1 | 1 | Optional | 100 Ω series (buzzer) | Inrush limit |
@@ -117,15 +117,16 @@ RoHS) lives in the CSVs. This table is the human-readable summary.
 | 9 | C1 | 1 | Optional | 0.1 µF X7R decoupling (WS2812) | Local bypass |
 | 10 | SW2 | 1 | Optional | Reed switch **or** Hall sensor | Tamper; `TAMPER_PIN`=4, INPUT_PULLUP |
 | 11 | MAG1 | 1 | Optional | Magnet for reed/Hall | Pairs with SW2 |
-| 12 | SW1 | 1 | Optional | 6 mm tactile button | Multifn; or reuse onboard BOOT |
-| 13 | TP1 | 1 | Optional | Cap-touch electrode (Cu pad/foil) | ESP32-S3 native touch on GPIO5 |
+| 12 | SW1 | 1 | Optional | 6 mm tactile button (indoor) | Multifn; reuse onboard BOOT; sealed IP67 alt for outdoor |
+| 13 | TP1 | 1 | Optional | Cap-touch electrode (Cu pad/foil) | Native touch on GPIO5; **senses through sealed wall** (best outdoor input) |
 | 14 | R6 | 1 | Optional | 1 kΩ touch series (ESD) | Recommended for touch |
-| 15 | BT1 | 1 | Optional | 3.7 V LiPo, JST-PH 2.0 | 1100–2000 mAh typical |
+| 15 | BT1 | 1 | Optional | Battery — **chemistry per climate** (see §9) | LiPo indoor; LiFePO4 / Li-SOCl2 outdoor |
 | 16 | R4,R5 | 2 | Optional | 100 kΩ 1% (VBAT divider) | Enables battery sense |
-| 17 | M1 | 1 | Optional | L76K GNSS module | UART 9600, D6/D7 |
-| 18 | ENC1 | 1 | Optional | ABS/PC enclosure, IP54+ | Light-pipe + acoustic vent |
-| 19 | LP1 | 1 | Optional | Light pipe | LED to enclosure face |
-| 20 | ANT1 | 1 | Optional | External 2.4 GHz u.FL antenna | If onboard antenna insufficient |
+| 17 | M1 | 1 | Optional | L76K GNSS module | UART 9600, D6/D7; −40…+85 °C |
+| 18 | ENC1 | 1 | Optional | **Polycarbonate** enclosure, IP66/NEMA 4X, UV-stab (Hammond 1554/1555) | −40…+110 °C; clear-lid option = camera window |
+| 18a | VENT1 | 1 | Optional | GORE adhesive acoustic/protective vent | Buzzer sound out + pressure equalization, keeps IP rating |
+| 19 | LP1 | 1 | Optional | Light pipe (gasketed) | LED to enclosure face |
+| 20 | ANT1 | 1 | Optional | External 2.4 GHz u.FL antenna | If onboard insufficient; IP bulkhead for outdoor |
 
 ### 4.2 Canary Vision
 
@@ -138,8 +139,8 @@ RoHS) lives in the CSVs. This table is the human-readable summary.
 | 5 | DLED1 | 1 | Optional | WS2812B RGB LED | `EXT_LED`=GPIO3 (onboard `LED_BUILTIN`=GPIO8) |
 | 6 | SW1 | 1 | Optional | 6 mm tactile button | Or reuse onboard BOOT (GPIO9) |
 | 7 | BZ1 | 1 | Optional | Passive buzzer (**unpopulated**) | `BUZZER_PIN_DEFAULT`=2; needs firmware fork |
-| 8 | BT1 | 1 | Optional | 3.7 V LiPo + DC-DC | C3 DevKit has no LiPo charger — see §6.5 |
-| 9 | ENC1 | 1 | Optional | Enclosure (sensor window required) | Clear/IR-pass aperture for camera |
+| 8 | BT1 | 1 | Optional | Battery + external charger/DC-DC | C3 DevKit has **no charger** — see §6.5 & §9 |
+| 9 | ENC1 | 1 | Optional | **Polycarbonate** enclosure w/ **clear lid** | Hammond 1554/1555 + clear lid = camera window; UV-stab IP66 |
 
 ---
 
@@ -227,20 +228,32 @@ strong pull at boot) · ADC2/GPIO5 is shared with WiFi.
   wall for a no-moving-parts, weather-resistant control.
 
 ### 6.5 Battery (BT1) & monitoring
-- XIAO ESP32-S3 has **onboard LiPo charge pads (BAT+/BAT−)**; connect a 3.7 V
-  LiPo via JST-PH 2.0. The C3 DevKitM-1 has **no charger** — add an external
-  charge/boost module if battery-powering Vision.
+- XIAO ESP32-S3 has an **onboard charger sized for Li-ion/LiPo (4.2 V)** on the
+  BAT+/BAT− pads; connect a 3.7 V LiPo via JST-PH 2.0. The C3 DevKitM-1 has
+  **no charger** — add an external charge/boost module if battery-powering Vision.
+- **Chemistry is climate-dependent — see §9.** The onboard charger is LiPo/Li-ion
+  only; **it will not correctly charge LiFePO4** (3.6 V) — outdoor/wide-temp
+  builds need an external charge controller (or a Li-SOCl2 primary cell with a
+  buck and no charging at all).
 - Battery sense: `VBAT → R4(100 kΩ) → GPIO1(A0) → R5(100 kΩ) → GND`
   (`VBAT_DIVIDER_RATIO = 2.0`). The firmware auto-detects whether the divider is
   present and falls back to software estimation if not.
 - Observe LiPo safety: use cells with integral protection (PCM), respect JST
-  polarity, and never charge unattended outside spec.
+  polarity, never charge unattended outside spec, and **never charge a LiPo below
+  0 °C** (lithium plating) — many bare charge ICs do not enforce this, so add a
+  thermistor cutoff for anywhere it can freeze.
 
 ### 6.6 Enclosure (ENC1)
-- Choose an ABS/PC box (IP54+ for outdoor-adjacent use) sized for the board plus
-  battery. Provide: a **light-pipe** (`LP1`) from DLED1 to the face, an
-  **acoustic vent** in front of BZ1, a **camera/sensor window** (clear or
-  IR-passing) for camera-equipped variants, and a USB-C access port.
+- **Indoor / bench:** a general-purpose ABS box (e.g., Hammond 1551) is fine.
+  **Outdoor / unconditioned:** use a **UV-stabilized polycarbonate** enclosure
+  rated **IP66/67, NEMA 4X** (Hammond **1554/1555** — −40…+110 °C, IK08, UL
+  listed). The 1551 ABS box originally listed is **indoor-only** and is *not*
+  the outdoor part.
+- Provide: a **light-pipe** (`LP1`, gasketed) from DLED1 to the face; for the
+  buzzer, a **GORE adhesive acoustic vent** (`VENT1`) instead of a bare hole —
+  it passes sound and equalizes pressure while keeping IP67/68; a **camera/sensor
+  window** (the **clear-lid** 1554/1555 option is ideal — keep it untinted for
+  the camera); and a sealed USB-C access port or pigtail gland.
 - Mount the tamper magnet on the lid so opening the enclosure separates `MAG1`
   from `SW2`. A 3D-printable enclosure (STL) is a planned follow-up and is out
   of scope for this revision.
@@ -289,7 +302,57 @@ duty-cycled records / modem-sleep. **Validate empirically.**
 
 ---
 
-## 9 · Compliance & quality notes
+## 9 · Climate & environmental durability
+
+A Canary may live anywhere from a hallway to an exposed wall. **The MCU is the
+easy part** (−40…+65 °C for the XIAO ESP32-S3 Sense; −40…+85 °C for the C3) —
+the limiting components are the **battery, enclosure, microSD, and any exposed
+mechanical input**. Pick a deployment tier and source accordingly.
+
+### 9.1 Per-part environmental rating
+
+| Part | Temp range | Outdoor verdict | Action for harsh climate |
+|------|-----------|-----------------|--------------------------|
+| XIAO ESP32-S3 Sense (U1) | −40…+65 °C | OK | Watch self-heating in a sealed box; the camera runs warm |
+| ESP32-C3 DevKitM-1 (U1, Vision) | −40…+85 °C | OK | — |
+| **LiPo battery (default BT1)** | charge **0…45 °C**, discharge −20…60 °C | ❌ **not for sub-freezing/hot** | Switch chemistry (§9.2) |
+| LiFePO4 (BT1-ALT1) | charge 0…55 °C, discharge −20…60 °C | ⚠️ better in heat | Add low-temp charge cutoff; needs external charger |
+| Li-SOCl2 primary (BT1-ALT2) | −40…+85 °C | ✅ best wide-temp | Non-rechargeable; buck regulator |
+| microSD, high-endurance (SD1) | −25…+85 °C (industrial −40) | ✅ | Use High/MAX Endurance; avoid consumer cards |
+| Reed switch (SW2) | −40…+125 °C, hermetic | ✅ excellent | Preferred tamper sensor outdoors |
+| Neodymium magnet (MAG1) | demag > ~80 °C; corrodes bare | ⚠️ | Ni/epoxy coating; SmCo if hot |
+| Tactile button B3F (SW1) | not sealed | ❌ outdoors | Sealed IP67 button, or use cap-touch (TP1) |
+| **Cap-touch pad (TP1)** | n/a | ✅ **best outdoor input** | Sense through a sealed wall — no opening at all |
+| Piezo buzzer (BZ1) | sealed variants to IP67 | ✅ | Sealed piezo or mount behind GORE vent |
+| ABS enclosure (Hammond 1551) | indoor, UL94-HB | ❌ outdoors | Use polycarbonate 1554/1555 |
+| **Polycarbonate enclosure (1554/1555)** | −40…+110 °C, IP66/67/68, UV-stab | ✅ | The outdoor enclosure |
+| GORE acoustic vent (VENT1) | IP67/68 ePTFE | ✅ | Keeps sealing while buzzer/pressure breathe |
+
+### 9.2 Battery decision (the #1 climate trap)
+
+> A LiPo is the convenient default because the XIAO charges it directly — but it
+> is the **wrong part for anywhere that freezes or bakes.** Charging a LiPo below
+> 0 °C plates lithium and permanently damages it; sustained heat swells it.
+
+| Deployment | Recommended chemistry | Why |
+|------------|----------------------|-----|
+| Indoor / climate-controlled | **LiPo** (default BT1) | Charges off the onboard XIAO charger; simplest |
+| Outdoor, occasionally freezing, mains/solar topped | **LiFePO4** + low-temp-cutoff charger | Safer in heat, long cycle life; **external charger required** |
+| Remote / set-and-forget / extreme temp | **Li-SOCl2 primary** (e.g., Tadiran) | −40…+85 °C, ~years of shelf life, ultra-low self-discharge; not rechargeable |
+
+In all rechargeable cases, gate charging on a battery thermistor so the device
+never charges out of the safe window — bare charge ICs typically do not.
+
+### 9.3 Sealing & condensation
+- Target **IP66/IP67** for outdoor; pair every penetration (LED, buzzer, button,
+  antenna, USB-C) with a gasket, gland, or GORE vent — a single bare hole voids
+  the rating.
+- Add the **GORE vent** even on otherwise "sealed" boxes: it equalizes pressure
+  across day/night thermal cycling so the gaskets don't get sucked in and so
+  condensation can escape. Consider a small desiccant pack inside.
+- Conformal-coat the PCB and the WS2812 for high-humidity / coastal sites.
+
+## 10 · Compliance & quality notes
 
 - **RoHS / REACH:** prefer RoHS-compliant, REACH-SVHC-free parts; the
   `RoHS` column in the CSVs flags each line. Mark NRND/EOL parts in `Lifecycle`.
@@ -304,7 +367,7 @@ duty-cycled records / modem-sleep. **Validate empirically.**
 
 ---
 
-## 10 · Sourcing & revision
+## 11 · Sourcing & revision
 
 - Distributor SKUs in the CSVs (Mouser / DigiKey / LCSC) are **indicative** and
   were not live-verified at authoring time — confirm availability, MOQ, and
@@ -316,6 +379,7 @@ duty-cycled records / modem-sleep. **Validate empirically.**
 | Rev | Date | Author | Change |
 |-----|------|--------|--------|
 | A | 2026-05-28 | SecuraCV | Initial release: WAP + Vision peripheral BOM. |
+| B | 2026-05-28 | SecuraCV | Sourcing review: corrected MCU SKU (102010469), high-endurance microSD, polycarbonate IP66 enclosure (1554/1555), climate-tiered battery guidance, GORE vent; added §9 environmental durability. |
 
 ### References
 - Buzzer driver: [`audible_chirp.h`](../../firmware/projects/canary-wap/arduino/canary_wap/audible_chirp.h)
