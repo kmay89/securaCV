@@ -17,6 +17,11 @@ If your Canary did not come with a card, the password is also burned into
 the device and shown on the serial console at first boot — see *Recovering
 the password* at the bottom of this page.
 
+Building your own from parts? See the
+[Canary Peripheral Build Plan & BOM](hardware/canary_peripheral_build_plan.md)
+for what to buy (buzzer, status LED, button/tamper/touch, battery, enclosure)
+and how it wires up.
+
 ---
 
 ## 1 · Plug in

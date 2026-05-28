@@ -169,6 +169,8 @@ Device firmware lives under `firmware/`.
 - **Canary OTA**: `firmware/projects/canary-ota/`  
   Over-the-air update infrastructure for deployed Canary devices.
 
+**Hardware build plan & BOM:** to build a Canary from parts — audible chirp (buzzer), status LED, button/tamper/touch inputs, battery, and enclosure — see [`docs/hardware/`](docs/hardware/) ([build plan & BOM](docs/hardware/canary_peripheral_build_plan.md)).
+
 ## Release Gate (v1 Tagging)
 
 Before tagging any v1 release, the Home Assistant + Frigate MQTT pipeline must be verified end-to-end. Complete the v1 verification checklist in `docs/integrations/home-assistant-frigate-mqtt.md` and ensure `integrations/ha_frigate_mqtt/verify_pipeline.sh` succeeds with exit code `0` against a live stack. A v1 tag is blocked until this verification passes.
