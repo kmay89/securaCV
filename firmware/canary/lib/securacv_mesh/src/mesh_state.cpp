@@ -399,12 +399,18 @@ bool load_elected_hub(uint8_t out[mesh_crypto::FINGERPRINT_LEN]) {
     return false;
   }
 
+  /* Read into a temporary first so a partial/failed NVS read never
+   * touches the caller's buffer — the documented contract is that out[]
+   * is left untouched on any false return. */
   Preferences prefs;
   if (!prefs.begin(NVS_NAMESPACE, /*readOnly=*/true)) return false;
-  const size_t got = prefs.getBytes(NVS_KEY_HUB, out,
+  uint8_t temp[mesh_crypto::FINGERPRINT_LEN];
+  const size_t got = prefs.getBytes(NVS_KEY_HUB, temp,
                                     mesh_crypto::FINGERPRINT_LEN);
   prefs.end();
-  return got == mesh_crypto::FINGERPRINT_LEN;
+  if (got != mesh_crypto::FINGERPRINT_LEN) return false;
+  memcpy(out, temp, mesh_crypto::FINGERPRINT_LEN);
+  return true;
 #endif
 }
 
