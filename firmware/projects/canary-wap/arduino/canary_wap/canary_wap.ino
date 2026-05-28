@@ -5934,13 +5934,11 @@ static void wifi_init_provisioning() {
   if (!resolve_ap_password(ap_pass, sizeof(ap_pass))) {
     return;
   }
+  // One stable SSID for the lifetime of the device — the same name during
+  // first-boot setup and in steady state. The softAP is always brought up
+  // (AP+STA mode, never torn down after the STA joins home WiFi), so the WAP
+  // keeps broadcasting this network at all times.
   const char* ap_ssid = g_device.ap_ssid;
-  char setup_ssid[32];
-  if (setup_wizard::is_first_boot()) {
-    setup_wizard::get_setup_ssid(g_device.device_id, setup_ssid, sizeof(setup_ssid));
-    ap_ssid = setup_ssid;
-    Serial.printf("[..] SETUP MODE: AP SSID = %s\n", ap_ssid);
-  }
 
   bool ap_ok = WiFi.softAP(ap_ssid, ap_pass, AP_CHANNEL, false, AP_MAX_CLIENTS);
 
