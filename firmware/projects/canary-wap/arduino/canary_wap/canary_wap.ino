@@ -4616,9 +4616,11 @@ static esp_err_t handle_fleet_qr_auth(httpd_req_t* req) {
  * and already on this AP, so the old QR intermediary page was a
  * dead-end step — this gets them straight to WiFi setup.
  *
- * When HTTPS is available the redirect points to https://…, but the
- * probe URLs themselves stay on the HTTP (port 80) server because
- * iOS/Android send captive-portal probes over plain HTTP.
+ * The redirect always targets http:// (never the self-signed HTTPS cert):
+ * captive-portal mini-browsers refuse untrusted certs and would render a
+ * blank page. The DNS interception that drives this handler only runs during
+ * first-boot setup, where the device is HTTP-only (TLS init is skipped, see
+ * setup()), so the whole setup flow completes over plain HTTP.
  *
  * Privacy: no outbound bytes — everything is served from the device.
  */
@@ -4634,11 +4636,11 @@ static esp_err_t handle_captive_portal(httpd_req_t* req) {
 
   /* Redirect straight to the companion wizard — the user is already on
    * their phone and already on this AP, so the old QR intermediary page
-   * added a dead-end step.  Use HTTPS when available. */
-  const char* scheme = "http";
+   * added a dead-end step. Always http:// — captive-portal browsers can't
+   * load the self-signed HTTPS cert. */
   char location[180];
   snprintf(location, sizeof(location),
-           "%s://192.168.4.1/companion?token=%s", scheme, tok_hex);
+           "http://192.168.4.1/companion?token=%s", tok_hex);
 
   httpd_resp_set_status(req, "302 Found");
   httpd_resp_set_hdr(req, "Location", location);
@@ -6524,8 +6526,14 @@ void setup() {
   #endif
   
   // ── TLS Certificate Initialization ──
+  // Skip TLS during first-boot setup: the captive-portal flow runs over plain
+  // HTTP on the AP, and a self-signed cert makes captive-portal mini-browsers
+  // (iOS CNA, Android) render a blank white screen. There's no sensitive data
+  // before WiFi is configured and the AP is the security boundary, so HTTP-only
+  // is safe here. Setup completes → reboot → this runs with setup inactive and
+  // HTTPS comes up normally for the dashboard and WiFi provisioning.
   #if FEATURE_WIFI_AP && FEATURE_HTTP_SERVER
-  if (g_device.initialized) {
+  if (g_device.initialized && !setup_wizard::is_active()) {
     if (init_tls_cert()) {
       g_tls_enabled = true;
     } else {
@@ -6533,6 +6541,8 @@ void setup() {
       Serial.println("[WARN] API traffic is NOT encrypted.");
       g_tls_enabled = false;
     }
+  } else if (setup_wizard::is_active()) {
+    Serial.println("[..] SETUP MODE: HTTP-only so the captive portal renders");
   }
   #endif
 
