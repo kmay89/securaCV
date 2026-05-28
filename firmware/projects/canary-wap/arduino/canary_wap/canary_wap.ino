@@ -2285,22 +2285,40 @@ static esp_err_t handle_ui(httpd_req_t* req) {
   //      which mints a new pair token and offers a one-tap link.
   g_health.http_requests++;
 
-  // Branch 0: first-boot setup. Opening canary.local should land on the setup
-  // wizard, not the dashboard. Mint a one-shot pairing token and redirect to
-  // the companion wizard, which switches into setup mode when it sees ?token=…
-  // in the URL. The wizard runs in the user's real browser (reached by typing
-  // canary.local), never in the captive-portal mini-browser.
+  // Branch 0: first-boot setup. canary.local (or the 192.168.4.1 fallback link)
+  // should land on the setup wizard — but the captive DNS hijack points *every*
+  // domain at this IP, so captive-portal assistants probing the root of foreign
+  // domains also hit "/". Gate on the Host header: only a request that actually
+  // asked for canary.local / 192.168.4.1 is the user's real browser, so mint a
+  // token and redirect it to the wizard. Anything else gets the plain static
+  // page — redirecting a captive mini-browser to the SPA is the white screen
+  // this PR exists to fix.
   if (setup_wizard::is_active()) {
-    char tok_hex[csi_integration::PAIR_TOKEN_HEX_LEN + 1];
-    if (csi_integration::pair_token_issue(tok_hex, sizeof(tok_hex))) {
-      char location[128];
-      snprintf(location, sizeof(location), "/companion?token=%s", tok_hex);
-      httpd_resp_set_status(req, "302 Found");
-      httpd_resp_set_hdr(req, "Location", location);
-      httpd_resp_set_hdr(req, "Cache-Control", "no-cache, no-store, must-revalidate");
-      return httpd_resp_send(req, nullptr, 0);
+    char host[64] = {0};
+    bool direct = false;
+    if (httpd_req_get_hdr_value_str(req, "Host", host, sizeof(host)) == ESP_OK) {
+      direct = (strstr(host, "canary.local") != nullptr) ||
+               (strstr(host, "192.168.4.1") != nullptr);
     }
-    // Token mint failed — fall through to the normal dashboard landing.
+    if (direct) {
+      char tok_hex[csi_integration::PAIR_TOKEN_HEX_LEN + 1];
+      if (csi_integration::pair_token_issue(tok_hex, sizeof(tok_hex))) {
+        char location[128];
+        snprintf(location, sizeof(location), "/companion?token=%s", tok_hex);
+        httpd_resp_set_status(req, "302 Found");
+        httpd_resp_set_hdr(req, "Location", location);
+        httpd_resp_set_hdr(req, "Cache-Control", "no-cache, no-store, must-revalidate");
+        return httpd_resp_send(req, nullptr, 0);
+      }
+      // Token mint failed — fall through to the normal dashboard landing.
+    } else {
+      // Captive-portal probe (foreign Host via DNS hijack): serve the plain
+      // static "open canary.local" instruction, never the SPA.
+      httpd_resp_set_status(req, "200 OK");
+      httpd_resp_set_type(req, "text/html; charset=utf-8");
+      httpd_resp_set_hdr(req, "Cache-Control", "no-cache, no-store, must-revalidate");
+      return httpd_resp_send(req, CAPTIVE_PORTAL_HTML, HTTPD_RESP_USE_STRLEN);
+    }
   }
 
   // Branch 1: existing valid session.

@@ -33,7 +33,7 @@ const char CAPTIVE_PORTAL_HTML[] PROGMEM = R"HTML(<!DOCTYPE html>
 <style>
 :root{--bg:#0b0d10;--fg:#f0f2f5;--muted:#a0a8b0;--accent:#7cdcff;--card:rgba(255,255,255,.05);--line:rgba(255,255,255,.10)}
 *{box-sizing:border-box}
-html,body{margin:0;min-height:100dvh;background:radial-gradient(1200px 800px at 50% -100px,#1a2030 0%,var(--bg) 60%) fixed;color:var(--fg);font:16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+html,body{margin:0;min-height:100vh;min-height:100dvh;background:radial-gradient(1200px 800px at 50% -100px,#1a2030 0%,var(--bg) 60%) fixed;color:var(--fg);font:16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
 body{display:flex;align-items:center;justify-content:center;padding:24px}
 main{max-width:480px;width:100%;background:var(--card);border:1px solid var(--line);border-radius:24px;padding:28px 24px;text-align:center;backdrop-filter:blur(18px) saturate(160%);box-shadow:0 30px 80px -30px rgba(0,0,0,.6)}
 h1{margin:0 0 10px;font-size:22px;font-weight:600;letter-spacing:-.02em}
