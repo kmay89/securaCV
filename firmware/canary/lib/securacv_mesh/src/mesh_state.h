@@ -176,6 +176,43 @@ bool load_replay_counters(ReplayEntry* out_entries,
 
 bool clear_replay_counters();
 
+/* ──────────────────────────────────────────────────────────────────────────
+ * ELECTED-HUB FINGERPRINT — failover continuity across reboots
+ *
+ * Hub failover (mesh_hub_election) deterministically elects the live
+ * peer with the lowest 8-byte fingerprint when the Hub's heartbeat is
+ * absent. The election itself is stateless — every node recomputes the
+ * same winner — but the *result* is worth persisting: after a reboot a
+ * node that re-joins the mesh already knows who the current coordinator
+ * is, so it neither re-broadcasts a redundant election for a Hub that
+ * is still up nor sits through a cold 60 s absence window before it has
+ * any notion of the coordinator. The stored value is the elected Hub's
+ * 8-byte fingerprint (mesh_crypto::FINGERPRINT_LEN).
+ *
+ * The fingerprint is not itself a secret — it is derivable from the
+ * trusted-peer set — but it is persisted under the same flash-encryption
+ * gate as the rest of this namespace for posture consistency: the
+ * coordinator identity is household-graph metadata of the same class as
+ * the trusted-peer list it is drawn from.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+/* Persist the elected Hub's fingerprint. Overwrites any prior value.
+ * Returns false on null pointer, flash encryption disabled, or NVS
+ * write failure. On the host build, always returns true (no-op). */
+bool save_elected_hub(const uint8_t fingerprint[mesh_crypto::FINGERPRINT_LEN]);
+
+/* Load the persisted elected-Hub fingerprint into `out`. Returns:
+ *   true  — a fingerprint was present and copied into out[].
+ *   false — null pointer, FE disabled, nothing persisted (first boot /
+ *           factory reset), or NVS read failure.
+ * On failure out[] is left untouched. On the host build, always
+ * returns false (no persistence stub). */
+bool load_elected_hub(uint8_t out[mesh_crypto::FINGERPRINT_LEN]);
+
+/* Erase the persisted elected-Hub fingerprint. Idempotent — succeeds
+ * if already absent. On the host build, always returns true. */
+bool clear_elected_hub();
+
 }  /* namespace mesh_state */
 
 #endif  /* SECURACV_MESH_STATE_H */
