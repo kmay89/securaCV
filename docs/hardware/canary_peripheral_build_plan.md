@@ -6,6 +6,16 @@
 > (XIAO ESP32-S3 Sense) and **Canary Vision** (ESP32-C3 + Grove Vision AI V2)
 > witness devices.
 > **Audience:** Hardware builders, integrators, and procurement.
+>
+> **Disclaimer:** This document is informational only and provided **"as is"
+> with no warranty of any kind**. Verify every part against current manufacturer
+> datasheets and comply with all applicable safety codes and regulations. The
+> **lithium-battery guidance is safety-critical — read §6.5 and the §9.2 safety
+> notice in full.** Any design that powers, charges, or encloses a battery
+> should be reviewed and validated by a qualified engineer and certified where
+> required before deployment. SecuraCV and the authors accept no liability for
+> any damage, injury, or loss arising from use of this information; **you assume
+> all risk.**
 
 A SecuraCV **Canary** is a small witness device that watches the *shape* of an
 environment — RF presence, motion, optionally person detection — without ever
@@ -228,6 +238,24 @@ strong pull at boot) · ADC2/GPIO5 is shared with WiFi.
   wall for a no-moving-parts, weather-resistant control.
 
 ### 6.5 Battery (BT1) & monitoring
+
+> ⚠️ **Battery safety — read before sourcing or wiring any cell.**
+> Lithium cells (LiPo, Li-ion, LiFePO4, Li-SOCl2) can **vent, catch fire, or
+> rupture** if over-charged, over-discharged, short-circuited, charged outside
+> their rated temperature window, physically damaged, or paired with the wrong
+> charger. Treat the guidance below as a **starting point only** — it does **not**
+> replace the cell and charger manufacturers' datasheets, safety data sheets, or
+> instructions, nor applicable standards (**IEC 62133, UL 2054/1642, UN 38.3**
+> for transport, plus local fire/electrical codes).
+> - Use **only certified cells/packs with integral protection (PCM/BMS)** and a
+>   charger matched to the **exact** chemistry and voltage. Never use bare,
+>   uncertified, salvaged, or damaged cells.
+> - Charge **temperature-gated** (battery thermistor / BMS), within the
+>   manufacturer's window, and **never unattended outside spec.**
+> - Have any battery power/charge/enclosure design **reviewed by a qualified
+>   engineer** and certified where required. SecuraCV provides no warranty and
+>   accepts no liability — **you assume all risk** (see document disclaimer).
+
 - XIAO ESP32-S3 has an **onboard charger sized for Li-ion/LiPo (4.2 V)** on the
   BAT+/BAT− pads; connect a 3.7 V LiPo via JST-PH 2.0. The C3 DevKitM-1 has
   **no charger** — add an external charge/boost module if battery-powering Vision.
@@ -340,8 +368,17 @@ mechanical input**. Pick a deployment tier and source accordingly.
 | Outdoor, occasionally freezing, mains/solar topped | **LiFePO4** + low-temp-cutoff charger | Safer in heat, long cycle life; **external charger required** |
 | Remote / set-and-forget / extreme temp | **Li-SOCl2 primary** (e.g., Tadiran) | −40…+85 °C, ~years of shelf life, ultra-low self-discharge; not rechargeable |
 
-In all rechargeable cases, gate charging on a battery thermistor so the device
-never charges out of the safe window — bare charge ICs typically do not.
+> ⚠️ **Safety notice.** The chemistries above differ in their hazards as well as
+> their temperature range; selecting one does **not** make a design safe.
+> Re-read the **battery safety box in §6.5** and follow the cell/charger
+> manufacturer datasheets and the standards listed there. Use certified,
+> protection-equipped cells/packs and a chemistry-matched, temperature-gated
+> charger; have the design reviewed by a qualified engineer. This table is
+> guidance, **not** a safety certification, and carries no warranty.
+
+In all rechargeable cases, charging must be **temperature-gated** (battery
+thermistor / BMS) to the manufacturer's safe window — bare charge ICs typically
+are not, so do not rely on them alone.
 
 ### 9.3 Sealing & condensation
 - Target **IP66/IP67** for outdoor; pair every penetration (LED, buzzer, button,
@@ -362,8 +399,12 @@ never charges out of the safe window — bare charge ICs typically do not.
   reserved alert tones (**47 CFR §10 / §11**). A firmware build check fails if a
   reserved frequency pair is introduced — do not retune the buzzer patterns
   without re-reading `audible_chirp.h`.
-- **Lithium battery:** ship/transport LiPo cells per applicable UN 38.3 / local
-  regulations; use protected cells.
+- **Lithium battery (safety-critical):** use only certified cells/packs with
+  integral protection (PCM/BMS) meeting **IEC 62133 / UL 2054 / UL 1642**; charge
+  only with a chemistry-matched, temperature-gated charger; transport per
+  **UN 38.3** and local regulations; recycle per local e-waste rules. See the
+  full battery safety notice in **§6.5** and the document disclaimer. This
+  document is informational and confers no warranty or safety certification.
 
 ---
 
