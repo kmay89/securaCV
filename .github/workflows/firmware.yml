@@ -119,6 +119,16 @@ jobs:
           chmod +x firmware/scripts/check_csi_sync.sh
           firmware/scripts/check_csi_sync.sh
 
+      - name: Verify boot banner copies in canary-wap sketch dir match canonical source
+        # Same committed-copy pattern as the CSI library: the boot banner lives
+        # at firmware/common/boot/ (canonical) and is copied next to the sketch
+        # so GitHub zip downloads compile out of the box without setup.sh. The
+        # arduino-cli CI build above passes --libraries firmware/common, which
+        # masks a missing sketch-local copy, so this guard catches the drift.
+        run: |
+          chmod +x firmware/scripts/check_boot_sync.sh
+          firmware/scripts/check_boot_sync.sh
+
   regression-check:
     name: Regression Guards
     runs-on: ubuntu-latest
