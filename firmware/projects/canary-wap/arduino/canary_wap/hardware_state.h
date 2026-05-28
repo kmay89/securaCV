@@ -615,6 +615,18 @@ bool reset_is_crash(esp_reset_reason_t r) {
          r == ESP_RST_BROWNOUT;
 }
 
+// Optional hook invoked immediately before any safe-mode-initiated reboot
+// (auto-recovery or manual retry). The application sets this to flush
+// volatile state — chiefly the witness chain head/seq — to NVS. Without it
+// a recovery reboot would roll the chain back to the last throttled persist
+// and reuse sequence numbers, breaking the tamper-evidence guarantee.
+typedef void (*safe_mode_pre_reboot_fn)();
+safe_mode_pre_reboot_fn g_safe_mode_pre_reboot = nullptr;
+
+inline void safe_mode_flush_before_reboot() {
+  if (g_safe_mode_pre_reboot) g_safe_mode_pre_reboot();
+}
+
 bool safe_mode_check() {
   g_hw_nvs.begin("hw_state", false);
 
@@ -680,7 +692,16 @@ void safe_mode_update() {
   // stable for the recovery window. The subtraction is overflow-safe.
   if (g_hw.safe_mode) {
     if ((now - g_hw.safe_mode_entered_ms) > hw_config::SAFE_MODE_RECOVERY_MS) {
-      g_hw_nvs.begin("hw_state", false);
+      // If NVS won't open we can't read/advance the bounded-recovery budget;
+      // rebooting blindly would risk an unbounded loop, so stay in safe mode.
+      if (!g_hw_nvs.begin("hw_state", false)) {
+        static bool nvs_logged = false;
+        if (!nvs_logged) {
+          Serial.println("[SAFE] NVS unavailable - staying in safe mode to avoid an unbounded reboot loop");
+          nvs_logged = true;
+        }
+        return;
+      }
       uint8_t recoveries = g_hw_nvs.getUChar(hw_config::NVS_RECOVERY_COUNT, 0);
 
       // Bounded: if full operation keeps crashing back into safe mode, stop
@@ -702,8 +723,9 @@ void safe_mode_update() {
       Serial.printf("[SAFE] Stable %us - recovery attempt %u/%u, rebooting to restore full operation\n",
                     hw_config::SAFE_MODE_RECOVERY_MS / 1000,
                     recoveries + 1, hw_config::SAFE_MODE_MAX_RECOVERIES);
-      safe_mode_clear();   // clears safe_mode flag + rapid_count, NOT recov_count
-      delay(100);          // let serial flush before the reset
+      safe_mode_clear();             // clears safe_mode flag + rapid_count, NOT recov_count
+      safe_mode_flush_before_reboot();  // persist witness chain so seq isn't reused
+      delay(100);                    // let serial flush before the reset
       ESP.restart();
     }
   } else {
@@ -753,7 +775,8 @@ void safe_mode_force_retry() {
   g_hw_nvs.end();
 
   safe_mode_clear();
-  delay(100);  // let serial + HTTP response flush before the reset
+  safe_mode_flush_before_reboot();  // persist witness chain so seq isn't reused
+  delay(500);  // let serial + HTTP response flush over Wi-Fi before the reset
   ESP.restart();
 }
 

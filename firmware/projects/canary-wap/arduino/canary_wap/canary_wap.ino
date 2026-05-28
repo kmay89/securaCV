@@ -6288,6 +6288,17 @@ void setup() {
 
   pinMode(BOOT_BUTTON_GPIO, INPUT_PULLUP);
 
+  // Flush the witness chain (and mesh replay counters) before any safe-mode
+  // recovery/retry reboot, mirroring the /api/reboot path. Without this a
+  // recovery reboot rolls the chain back to the last throttled persist and
+  // reuses sequence numbers. Read at reboot time, so the mesh hook set later
+  // in setup() is picked up too.
+  g_safe_mode_pre_reboot = []() {
+    persist_chain_state();
+    pre_reboot_fn hook = __atomic_load_n(&g_pre_reboot_hook, __ATOMIC_ACQUIRE);
+    if (hook) hook();
+  };
+
   // ════════════════════════════════════════════════════════════════════════════
   // PHASE 2: Watchdog — Configure but don't panic on peripheral failures
   // ════════════════════════════════════════════════════════════════════════════
