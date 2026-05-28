@@ -123,11 +123,11 @@
 #include "api_auth.h"
 #include "wap_server.h"
 // Ship the dashboard/settings/companion HTML as pre-gzipped byte arrays
-// (web_assets_gz.h) instead of the raw PROGMEM literals — saves ~336 KB of
-// app-partition flash. Defining this guard compiles the uncompressed copies in
-// web_ui.h / csi_dashboard_html.h / companion_pwa.h out of the binary; those
-// files remain the editable source of truth (regen via gen_web_assets_gz.py).
-#define CANARY_WEB_ASSETS_GZIPPED 1
+// instead of the raw PROGMEM literals — saves ~336 KB of app-partition flash.
+// The CANARY_WEB_ASSETS_GZIPPED guard (defined in build_config.h, which the
+// asset headers self-include) compiles the uncompressed copies out of the
+// binary; those files stay the editable source of truth (regen via
+// gen_web_assets_gz.py).
 #include "web_assets_gz.h"
 #include "web_ui.h"
 #include "companion_pwa.h"
@@ -2272,6 +2272,28 @@ static esp_err_t http_send_error(httpd_req_t* req, int status_code, const char* 
   return http_send_json(req, response);
 }
 
+// The dashboard/settings/companion pages ship only as gzip (the uncompressed
+// copies are compiled out to save flash). Every browser sends
+// "Accept-Encoding: gzip", but a client that doesn't (e.g. plain `curl`
+// without --compressed) would otherwise receive unreadable bytes. Serve the
+// gzip body to capable clients; reply 406 with a hint to everyone else.
+static esp_err_t send_gzip_html(httpd_req_t* req, const uint8_t* gz, size_t gz_len) {
+  char accept_enc[128] = {0};
+  bool accepts_gzip =
+      httpd_req_get_hdr_value_str(req, "Accept-Encoding", accept_enc,
+                                  sizeof(accept_enc)) == ESP_OK &&
+      strstr(accept_enc, "gzip") != nullptr;
+  if (!accepts_gzip) {
+    httpd_resp_set_status(req, "406 Not Acceptable");
+    httpd_resp_set_type(req, "text/plain");
+    return httpd_resp_sendstr(
+        req, "This page is gzip-encoded. Use a client that accepts gzip "
+             "(browsers do; for curl pass --compressed).");
+  }
+  httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
+  return httpd_resp_send(req, (const char*)gz, gz_len);
+}
+
 static esp_err_t handle_ui(httpd_req_t* req) {
   // The default route now lands on the headline Sensing dashboard from
   // csi_dashboard_html.h (Phase 3 of the WiFi CSI Tool plan). The legacy
@@ -2296,8 +2318,7 @@ static esp_err_t handle_ui(httpd_req_t* req) {
   if (csi_integration::session_validate_cookie(req)) {
     httpd_resp_set_type(req, "text/html");
     httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
-    httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
-    return httpd_resp_send(req, (const char*)CSI_DASHBOARD_HTML_GZ, CSI_DASHBOARD_HTML_GZ_LEN);
+    return send_gzip_html(req, CSI_DASHBOARD_HTML_GZ, CSI_DASHBOARD_HTML_GZ_LEN);
   }
 
   // Branch 2: one-shot pair-token consumption.
@@ -2335,8 +2356,7 @@ static esp_err_t handle_legacy_ui(httpd_req_t* req) {
   // for a direct route to device settings from the headline dashboard.
   g_health.http_requests++;
   httpd_resp_set_type(req, "text/html");
-  httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
-  return httpd_resp_send(req, (const char*)CANARY_UI_HTML_GZ, CANARY_UI_HTML_GZ_LEN);
+  return send_gzip_html(req, CANARY_UI_HTML_GZ, CANARY_UI_HTML_GZ_LEN);
 }
 
 // ── Companion PWA (Web Bluetooth) ───────────────────────────────────────────
@@ -2352,8 +2372,7 @@ static esp_err_t handle_companion_html(httpd_req_t* req) {
   // Cache aggressively in the browser; the service worker will revalidate
   // network-first when it can reach us, so updates land within one visit.
   httpd_resp_set_hdr(req, "Cache-Control", "public, max-age=3600");
-  httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
-  return httpd_resp_send(req, (const char*)COMPANION_HTML_GZ, COMPANION_HTML_GZ_LEN);
+  return send_gzip_html(req, COMPANION_HTML_GZ, COMPANION_HTML_GZ_LEN);
 }
 
 static esp_err_t handle_companion_sw(httpd_req_t* req) {

@@ -15,6 +15,7 @@
 #ifndef SECURACV_WEB_UI_H
 #define SECURACV_WEB_UI_H
 
+#include "build_config.h"  // CANARY_WEB_ASSETS_GZIPPED
 #include <Arduino.h>
 
 // Source of truth for the dashboard/settings UI. Compiled out in normal builds:

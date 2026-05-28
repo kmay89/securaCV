@@ -30,6 +30,7 @@
 #ifndef SECURACV_CSI_DASHBOARD_HTML_H
 #define SECURACV_CSI_DASHBOARD_HTML_H
 
+#include "build_config.h"  // CANARY_WEB_ASSETS_GZIPPED
 #include <Arduino.h>
 
 // Source of truth for the headline dashboard. Compiled out in normal builds:

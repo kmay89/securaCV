@@ -17,6 +17,7 @@ binary. Re-run this after editing any of the source HTML files:
 """
 
 import gzip
+import io
 import re
 import sys
 from pathlib import Path
@@ -64,7 +65,11 @@ def main() -> int:
         raw = (HERE / fname).read_text(encoding="utf-8")
         body = extract(raw, delim)
         # mtime=0 keeps the output byte-stable across regenerations.
-        comp = gzip.compress(body, compresslevel=9, mtime=0)
+        # GzipFile (not gzip.compress(mtime=...)) so this runs on Python < 3.8.
+        buf = io.BytesIO()
+        with gzip.GzipFile(fileobj=buf, mode="wb", compresslevel=9, mtime=0) as gz:
+            gz.write(body)
+        comp = buf.getvalue()
         blocks.append(f"// {name}: {len(body)} B raw -> {len(comp)} B gzip "
                       f"(from {fname})\n{emit_array(name, comp)}")
         summary.append((name, len(body), len(comp)))
@@ -79,7 +84,10 @@ def main() -> int:
         + "\n\n".join(blocks)
         + "\n\n#endif  // SECURACV_WEB_ASSETS_GZ_H\n"
     )
-    OUT.write_text(header, encoding="utf-8")
+    # newline="\n" forces LF on all platforms (Path.write_text would emit CRLF
+    # on Windows, causing spurious diffs).
+    with open(OUT, "w", encoding="utf-8", newline="\n") as f:
+        f.write(header)
 
     total_raw = sum(s[1] for s in summary)
     total_gz = sum(s[2] for s in summary)

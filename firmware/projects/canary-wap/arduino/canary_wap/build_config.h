@@ -16,6 +16,18 @@
 #define SECURACV_BUILD_CONFIG_H
 
 // ════════════════════════════════════════════════════════════════════════════
+// WEB ASSET STRATEGY
+// ════════════════════════════════════════════════════════════════════════════
+// Ship the large dashboard/settings/companion HTML as pre-gzipped byte arrays
+// (web_assets_gz.h) and compile the raw PROGMEM literals out of the binary —
+// saves ~336 KB of app-partition flash. Defined here, a globally included
+// config header, so EVERY translation unit that pulls in web_ui.h /
+// csi_dashboard_html.h / companion_pwa.h sees it and never compiles its own
+// uncompressed duplicate. Those asset headers #include build_config.h
+// themselves, so the guard holds regardless of include order.
+#define CANARY_WEB_ASSETS_GZIPPED 1
+
+// ════════════════════════════════════════════════════════════════════════════
 // HARDWARE TARGET SELECTION — Uncomment exactly ONE
 // ════════════════════════════════════════════════════════════════════════════
 

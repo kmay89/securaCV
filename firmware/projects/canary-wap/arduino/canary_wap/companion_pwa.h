@@ -34,6 +34,7 @@
 #ifndef SECURACV_COMPANION_PWA_H
 #define SECURACV_COMPANION_PWA_H
 
+#include "build_config.h"  // CANARY_WEB_ASSETS_GZIPPED
 #include <Arduino.h>
 
 // ────────────────────────────────────────────────────────────────────────────
