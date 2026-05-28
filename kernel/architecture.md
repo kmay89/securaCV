@@ -149,6 +149,16 @@ External components (UI, dashboard, CLI, integrations) are untrusted:
 
 They interact only through defined APIs.
 
+#### Sensor adapters (least-trusted producers)
+Sensor adapters (see `spec/sensor_adapter_contract_v0.md`) are external, untrusted **producers**.
+Like `frigate_bridge` today, they run outside the kernel TCB and are treated as careless or
+malicious. They produce only coarse `Claim` values; they hold no privileged path, cannot open the
+database/network/filesystem unless they declare the capability, and their **sole egress** is the
+trusted Adapter Host building a `CandidateEvent` and calling `append_event_checked` — the same
+choke point and the same three gates (allowlist, contract enforcer, zone policy) as every other
+producer. The adapter trait is an audit boundary; the Contract Enforcer is the security boundary.
+Adapters add breadth of producers, never new query surface or new privilege.
+
 ---
 
 ## 4. Enforcement Map (Where Each Invariant Lives)

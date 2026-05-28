@@ -17,6 +17,15 @@ below.
 - **9 CLI binaries**: witnessd, log_verify, break_glass, export_events,
   export_verify, frigate_bridge, event_mqtt_bridge, witness_api,
   grove_vision2_ingest.
+- **Sensor Adapter framework** (`src/adapter/`): an open, vendor-neutral interface that
+  generalizes the `frigate_bridge` pattern so any source (acoustic/impulse, PIR/contact,
+  presence, generic MQTT/webhook sensors, Frigate) can feed coarse, privacy-preserving claims
+  into the same `append_event_checked` choke point — broad integration with no vendor lock-in and
+  no new privilege. Includes the `adapter_host` binary (config-driven, one daemon, many adapters),
+  Frigate + generic MQTT reference adapters, and the normative
+  `spec/sensor_adapter_contract_v0.md` / `spec/witness_mesh_os_v0.md`. Expanded the event
+  vocabulary with `acoustic_impulse_in_zone`, `presence_in_restricted_zone`,
+  `vehicle_presence_after_hours`, `contact_state_change`, and `object_removed_from_zone`.
 - **Home Assistant integration** (HACS): 3 setup modes (MQTT / Kernel HTTP /
   both), MQTT auto-discovery, device PKI trust management (TOFU + manual pin +
   rotation), 5 sensor types, 11 binary sensor types (tamper + transport),
