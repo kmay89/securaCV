@@ -129,7 +129,7 @@
 #include "csi_event_log.h"       // SD-backed event persistence + MQTT backfill
 #include "csi_witness_payload.h" // Builds the witness-chain payload string
 #include <ble_events_module.h>   // spec §10 BLE event chokepoint helpers
-#include "setup_page_html.h"     // Captive-portal setup page (Tier 5 #11)
+#include "setup_page_html.h"     // Static captive-portal "open canary.local" page
 extern "C" {
 #include "qrcodegen.h"           // Vendored Nayuki QR encoder, MIT
 }
@@ -2283,6 +2283,24 @@ static esp_err_t handle_ui(httpd_req_t* req) {
   //      dashboard" landing page (csi_integration::send_pair_landing),
   //      which mints a new pair token and offers a one-tap link.
   g_health.http_requests++;
+
+  // Branch 0: first-boot setup. Opening canary.local should land on the setup
+  // wizard, not the dashboard. Mint a one-shot pairing token and redirect to
+  // the companion wizard, which switches into setup mode when it sees ?token=…
+  // in the URL. The wizard runs in the user's real browser (reached by typing
+  // canary.local), never in the captive-portal mini-browser.
+  if (setup_wizard::is_active()) {
+    char tok_hex[csi_integration::PAIR_TOKEN_HEX_LEN + 1];
+    if (csi_integration::pair_token_issue(tok_hex, sizeof(tok_hex))) {
+      char location[128];
+      snprintf(location, sizeof(location), "/companion?token=%s", tok_hex);
+      httpd_resp_set_status(req, "302 Found");
+      httpd_resp_set_hdr(req, "Location", location);
+      httpd_resp_set_hdr(req, "Cache-Control", "no-cache, no-store, must-revalidate");
+      return httpd_resp_send(req, nullptr, 0);
+    }
+    // Token mint failed — fall through to the normal dashboard landing.
+  }
 
   // Branch 1: existing valid session.
   if (csi_integration::session_validate_cookie(req)) {
@@ -4610,50 +4628,21 @@ static esp_err_t handle_fleet_qr_auth(httpd_req_t* req) {
 
 /* Captive-portal handler (iOS/Android/Windows probe URLs).
  *
- * Mints a one-shot pairing token and 302-redirects to the companion
- * wizard at /companion?token=<hex>. The user is already on their phone
- * and already on this AP, so the old QR intermediary page was a
- * dead-end step — this gets them straight to WiFi setup.
+ * Serves a plain static page that tells the user to open `canary.local` in
+ * their real browser, where the setup wizard runs. We deliberately do NOT
+ * render the wizard SPA here: captive-portal mini-browsers (iOS CNA, Android
+ * sign-in sheet) are too stripped-down to run it and just show a blank white
+ * screen. Returning 200 + a real page (not the 204/Success probe token) keeps
+ * the captive sheet visible so the user reads the instruction.
  *
- * The redirect always targets http:// (never the self-signed HTTPS cert):
- * captive-portal mini-browsers refuse untrusted certs and would render a
- * blank page. The DNS interception that drives this handler only runs during
- * first-boot setup, where the device is HTTP-only (TLS init is skipped, see
- * setup()), so the whole setup flow completes over plain HTTP.
- *
- * Privacy: no outbound bytes — everything is served from the device.
+ * Privacy: no outbound bytes — the page is served from the device.
  */
 static esp_err_t handle_captive_portal(httpd_req_t* req) {
   g_health.http_requests++;
-
-  char tok_hex[csi_integration::PAIR_TOKEN_HEX_LEN + 1];
-  if (!csi_integration::pair_token_issue(tok_hex, sizeof(tok_hex))) {
-    httpd_resp_set_status(req, "503 Service Unavailable");
-    httpd_resp_set_type(req, "text/plain");
-    return httpd_resp_send(req, "Setup is busy. Try again in a moment.", -1);
-  }
-
-  /* Redirect straight to the companion wizard — the user is already on
-   * their phone and already on this AP, so the old QR intermediary page
-   * added a dead-end step. Always http:// — captive-portal browsers can't
-   * load the self-signed HTTPS cert. */
-  char location[180];
-  snprintf(location, sizeof(location),
-           "http://192.168.4.1/companion?token=%s", tok_hex);
-
-  httpd_resp_set_status(req, "302 Found");
-  httpd_resp_set_hdr(req, "Location", location);
+  httpd_resp_set_status(req, "200 OK");
+  httpd_resp_set_type(req, "text/html; charset=utf-8");
   httpd_resp_set_hdr(req, "Cache-Control", "no-cache, no-store, must-revalidate");
-  httpd_resp_set_type(req, "text/html");
-
-  char body[512];
-  snprintf(body, sizeof(body),
-    "<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
-    "<meta http-equiv=\"refresh\" content=\"0;url=%s\">"
-    "</head><body><p>Redirecting&hellip; <a href=\"%s\">Tap here</a> "
-    "if nothing happens.</p></body></html>",
-    location, location);
-  return httpd_resp_sendstr(req, body);
+  return httpd_resp_send(req, CAPTIVE_PORTAL_HTML, HTTPD_RESP_USE_STRLEN);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
