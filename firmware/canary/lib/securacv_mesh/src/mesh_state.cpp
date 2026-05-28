@@ -320,9 +320,13 @@ bool load_replay_counters(ReplayEntry* out_entries,
   const size_t got = prefs.getBytes(NVS_KEY_REPLAY, blob, sizeof(blob));
   prefs.end();
 
+  /* The key exists (isKey() above succeeded), so a zero-byte read is a
+   * real NVS read failure, not an empty-but-valid blob: save_replay_counters
+   * never persists a zero-length blob. Treat got==0 as failure so callers
+   * skip the restore instead of silently dropping replay history as success. */
   if (got == 0 || (got % ENTRY_SIZE) != 0) {
     *out_count = 0;
-    return got == 0;
+    return false;
   }
 
   size_t n = got / ENTRY_SIZE;
