@@ -4,10 +4,10 @@
  * Arduino-compatible equivalent of firmware/canary/lib/securacv_setup/.
  * Single-header implementation following the WAP's existing pattern.
  *
- * On first boot (NVS "setup_ok" absent), the AP SSID is
- * "SecuraCV-XXXX" and a captive-portal DNS server redirects
- * all queries to 192.168.4.1, triggering the phone's "sign in to
- * network" dialog. Setup completes when WiFi credentials are saved.
+ * On first boot (NVS "setup_ok" absent), a captive-portal DNS server
+ * redirects all queries to 192.168.4.1, triggering the phone's "sign in to
+ * network" dialog. The AP SSID ("SecuraCV-XXXX") is the same in setup and in
+ * steady state. Setup completes when WiFi credentials are saved.
  *
  * Copyright (c) 2026 ERRERlabs / Karl May
  * License: Apache-2.0
@@ -144,13 +144,6 @@ inline bool set_device_name(const char* name) {
     prefs.end();
   }
   return true;
-}
-
-inline void get_setup_ssid(const char* device_id, char* out, size_t len) {
-  const char* suffix = device_id;
-  size_t dlen = strlen(device_id);
-  if (dlen > 4) suffix = device_id + dlen - 4;
-  snprintf(out, len, "SecuraCV-%s", suffix);
 }
 
 }  /* namespace setup_wizard */
