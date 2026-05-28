@@ -192,7 +192,11 @@ void setup() {
   last_invoke_ms = canary::ms_now();
   last_heartbeat_ms = canary::ms_now();
 
-  boot_scene_ready();
+  boot_scene_ready(
+      "It will publish presence events via MQTT",
+      "to Home Assistant for real-time monitoring.",
+      NULL
+  );
 }
 
 void loop() {
