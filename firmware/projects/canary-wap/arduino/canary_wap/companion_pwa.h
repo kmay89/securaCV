@@ -40,6 +40,11 @@
 // HTML
 // ────────────────────────────────────────────────────────────────────────────
 
+// Source of truth for the companion PWA page. Compiled out in normal builds:
+// the binary ships the gzip copy from web_assets_gz.h (CANARY_WEB_ASSETS_GZIPPED).
+// The small service-worker + manifest assets below stay uncompressed.
+// Regenerate with gen_web_assets_gz.py after editing the HTML below.
+#if !defined(CANARY_WEB_ASSETS_GZIPPED)
 static const char COMPANION_HTML[] PROGMEM = R"COMPANIONHTML(<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -2412,6 +2417,7 @@ if ('serviceWorker' in navigator) {
 </body>
 </html>
 )COMPANIONHTML";
+#endif  // !CANARY_WEB_ASSETS_GZIPPED
 
 // ────────────────────────────────────────────────────────────────────────────
 // SERVICE WORKER

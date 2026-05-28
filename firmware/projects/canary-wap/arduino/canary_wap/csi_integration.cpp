@@ -32,7 +32,6 @@
  */
 
 #include "csi_integration.h"
-#include "csi_dashboard_html.h"
 #include "tune_ui.h"
 #include "csi_mqtt.h"             // optional MQTT bridge (publishes events)
 #include "csi_event_log.h"        // SD-backed event persistence + backfill

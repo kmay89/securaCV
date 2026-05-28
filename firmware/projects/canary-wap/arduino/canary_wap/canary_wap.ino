@@ -122,6 +122,13 @@
 #include "nvs_store.h"
 #include "api_auth.h"
 #include "wap_server.h"
+// Ship the dashboard/settings/companion HTML as pre-gzipped byte arrays
+// (web_assets_gz.h) instead of the raw PROGMEM literals — saves ~336 KB of
+// app-partition flash. Defining this guard compiles the uncompressed copies in
+// web_ui.h / csi_dashboard_html.h / companion_pwa.h out of the binary; those
+// files remain the editable source of truth (regen via gen_web_assets_gz.py).
+#define CANARY_WEB_ASSETS_GZIPPED 1
+#include "web_assets_gz.h"
 #include "web_ui.h"
 #include "companion_pwa.h"
 #include "csi_integration.h"     // Boot the CSI library + HTTP endpoints
@@ -2289,7 +2296,8 @@ static esp_err_t handle_ui(httpd_req_t* req) {
   if (csi_integration::session_validate_cookie(req)) {
     httpd_resp_set_type(req, "text/html");
     httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
-    return httpd_resp_send(req, CSI_DASHBOARD_HTML, HTTPD_RESP_USE_STRLEN);
+    httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
+    return httpd_resp_send(req, (const char*)CSI_DASHBOARD_HTML_GZ, CSI_DASHBOARD_HTML_GZ_LEN);
   }
 
   // Branch 2: one-shot pair-token consumption.
@@ -2327,7 +2335,8 @@ static esp_err_t handle_legacy_ui(httpd_req_t* req) {
   // for a direct route to device settings from the headline dashboard.
   g_health.http_requests++;
   httpd_resp_set_type(req, "text/html");
-  return httpd_resp_send(req, CANARY_UI_HTML, HTTPD_RESP_USE_STRLEN);
+  httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
+  return httpd_resp_send(req, (const char*)CANARY_UI_HTML_GZ, CANARY_UI_HTML_GZ_LEN);
 }
 
 // ── Companion PWA (Web Bluetooth) ───────────────────────────────────────────
@@ -2343,7 +2352,8 @@ static esp_err_t handle_companion_html(httpd_req_t* req) {
   // Cache aggressively in the browser; the service worker will revalidate
   // network-first when it can reach us, so updates land within one visit.
   httpd_resp_set_hdr(req, "Cache-Control", "public, max-age=3600");
-  return httpd_resp_send(req, COMPANION_HTML, HTTPD_RESP_USE_STRLEN);
+  httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
+  return httpd_resp_send(req, (const char*)COMPANION_HTML_GZ, COMPANION_HTML_GZ_LEN);
 }
 
 static esp_err_t handle_companion_sw(httpd_req_t* req) {
