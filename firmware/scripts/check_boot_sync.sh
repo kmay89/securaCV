@@ -6,14 +6,18 @@ set -euo pipefail
 # canary-wap Arduino sketch (so fresh GitHub zip downloads compile without
 # anyone having to run setup.sh first).
 #
-# Run from the repo root:
+# Can be run from any directory (the repo root is resolved from the script's
+# own location):
 #   firmware/scripts/check_boot_sync.sh
 #
 # Exits non-zero if either file differs or is missing on either side.
 
 
-CANONICAL="firmware/common/boot"
-STAGED="firmware/projects/canary-wap/arduino/canary_wap"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+
+CANONICAL="${REPO_ROOT}/firmware/common/boot"
+STAGED="${REPO_ROOT}/firmware/projects/canary-wap/arduino/canary_wap"
 
 if [ ! -d "$CANONICAL" ]; then
     echo "::error::Canonical boot banner source dir not found: $CANONICAL"
