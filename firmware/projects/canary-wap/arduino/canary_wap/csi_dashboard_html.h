@@ -2218,10 +2218,10 @@ function rssiBars(rssi) {
   ).join('')}</span>`;
 }
 
-async function fetchFleetPeers() {
+async function fetchFleetPeers(signal) {
   const el = document.getElementById('fleetPeerList');
   try {
-    const r = await cvFetch('/api/mesh/peers', {cache: 'no-store'});
+    const r = await cvFetch('/api/mesh/peers', {cache: 'no-store', signal});
     if (!r.ok) {
       el.innerHTML = '<p class="fleet-peer-empty">Mesh not available.</p>';
       return;
@@ -2238,7 +2238,10 @@ async function fetchFleetPeers() {
         ` &middot; <span style="opacity:.6">${escapeHTML(p.state)}</span>`;
       return `<div class="fleet-peer"><div><div class="name">${name}</div><div class="meta">${fp}${state}</div></div><div>${rssiBars(p.rssi)}</div></div>`;
     }).join('');
-  } catch {
+  } catch (e) {
+    /* A reopen aborts the prior in-flight request — that's expected, not
+     * an error, so leave the existing list in place. */
+    if (e && e.name === 'AbortError') return;
     el.innerHTML = '<p class="fleet-peer-empty">Could not reach the mesh service.</p>';
   }
 }
@@ -2257,16 +2260,22 @@ async function prefillFleetSsid() {
  * paired Canaries appear without reopening. The loop self-terminates the
  * moment the sheet loses its .open class, which covers every close path
  * (scrim, close button, ESC) without per-path wiring. A generation token
- * invalidates any prior loop on reopen — even one mid-fetch — so closing
- * and reopening never leaves two loops hammering the endpoint. Recursive
- * setTimeout (not setInterval) so a slow fetch can't pile up requests on
- * the device's tiny httpd worker pool — same rationale as pollLoop. */
+ * invalidates any prior loop on reopen so we never schedule two loops.
+ * The AbortController cancels any still-in-flight /api/mesh/peers request
+ * on reopen too, so a hung fetch can't accumulate against the device's
+ * tiny httpd worker pool across repeated close/reopen. Recursive
+ * setTimeout (not setInterval) for the same anti-pile-up reason as
+ * pollLoop. */
 let fleetPollGen = 0;
+let fleetPollAbort = null;
 function startFleetPoll() {
   const gen = ++fleetPollGen;
+  if (fleetPollAbort) fleetPollAbort.abort();
+  fleetPollAbort = new AbortController();
+  const signal = fleetPollAbort.signal;
   (async function loop() {
     if (gen !== fleetPollGen || !fleetSheet.classList.contains('open')) return;
-    try { await fetchFleetPeers(); }
+    try { await fetchFleetPeers(signal); }
     finally {
       if (gen === fleetPollGen && fleetSheet.classList.contains('open')) {
         setTimeout(loop, 5000);
