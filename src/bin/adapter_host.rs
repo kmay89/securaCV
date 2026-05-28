@@ -44,7 +44,11 @@ use witness_kernel::adapter::{AdapterHost, AdapterHostConfig, ClaimKind};
 use witness_kernel::{KernelConfig, ZonePolicy, MIN_BUCKET_SIZE_S};
 
 #[derive(Parser, Debug)]
-#[command(author, version, about = "Run vendor-neutral sensor adapters into the witness kernel")]
+#[command(
+    author,
+    version,
+    about = "Run vendor-neutral sensor adapters into the witness kernel"
+)]
 struct Args {
     /// Path to the adapter host TOML config.
     #[arg(long, env = "ADAPTER_HOST_CONFIG", default_value = "adapter_host.toml")]
@@ -142,7 +146,10 @@ fn main() -> Result<()> {
         ));
     }
     if file.adapter.is_empty() {
-        return Err(anyhow!("no [[adapter]] entries configured in {}", args.config));
+        return Err(anyhow!(
+            "no [[adapter]] entries configured in {}",
+            args.config
+        ));
     }
 
     let device_key_seed =
@@ -234,7 +241,12 @@ fn spawn_mqtt_forwarder(
     tx: Sender<(String, Vec<u8>)>,
 ) {
     thread::spawn(move || loop {
-        match connect(&client_id, &broker_addr, username.as_deref(), password.as_deref()) {
+        match connect(
+            &client_id,
+            &broker_addr,
+            username.as_deref(),
+            password.as_deref(),
+        ) {
             Ok((client, mut connection)) => {
                 for topic in &topics {
                     if let Err(e) = client.subscribe(topic, QoS::AtLeastOnce) {

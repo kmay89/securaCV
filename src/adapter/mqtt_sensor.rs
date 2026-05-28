@@ -64,11 +64,7 @@ pub struct SensorRoute {
 }
 
 impl SensorRoute {
-    pub fn new(
-        topic: impl Into<String>,
-        kind: ClaimKind,
-        zone_label: impl Into<String>,
-    ) -> Self {
+    pub fn new(topic: impl Into<String>, kind: ClaimKind, zone_label: impl Into<String>) -> Self {
         Self {
             topic: topic.into(),
             kind,
@@ -138,7 +134,10 @@ impl MqttSensorAdapter {
             return None;
         }
 
-        let zone_label = parsed.zone.clone().unwrap_or_else(|| route.zone_label.clone());
+        let zone_label = parsed
+            .zone
+            .clone()
+            .unwrap_or_else(|| route.zone_label.clone());
         Some(Claim::new(route.kind, zone_label, confidence))
     }
 }
@@ -202,8 +201,11 @@ mod tests {
 
     #[test]
     fn unrouted_topic_yields_nothing() {
-        let (adapter, _tx) =
-            MqttSensorAdapter::new(vec![SensorRoute::new("a/b", ClaimKind::ContactStateChange, "z")]);
+        let (adapter, _tx) = MqttSensorAdapter::new(vec![SensorRoute::new(
+            "a/b",
+            ClaimKind::ContactStateChange,
+            "z",
+        )]);
         assert!(adapter.message_to_claim("x/y", b"ON").is_none());
     }
 

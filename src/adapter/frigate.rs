@@ -16,9 +16,7 @@ use anyhow::Result;
 
 use crate::adapter::contract::{AdapterDescriptor, Claim, ClaimKind};
 use crate::adapter::SensorAdapter;
-use crate::transport::frigate::{
-    map_label_to_event_type, parse_frigate_event, parse_review_event,
-};
+use crate::transport::frigate::{map_label_to_event_type, parse_frigate_event, parse_review_event};
 use crate::EventType;
 
 /// Default Frigate labels processed when none are configured (matches `frigate_bridge`).
@@ -73,10 +71,13 @@ impl FrigateAdapter {
         let allowed_labels = if allowed_labels.is_empty() {
             DEFAULT_LABELS.iter().map(|s| s.to_string()).collect()
         } else {
-            allowed_labels.into_iter().map(|l| l.to_lowercase()).collect()
+            allowed_labels
+                .into_iter()
+                .map(|l| l.to_lowercase())
+                .collect()
         };
-        let allowed_cameras = allowed_cameras
-            .map(|cams| cams.into_iter().map(|c| c.to_lowercase()).collect());
+        let allowed_cameras =
+            allowed_cameras.map(|cams| cams.into_iter().map(|c| c.to_lowercase()).collect());
         (
             Self {
                 rx,
@@ -173,8 +174,11 @@ mod tests {
     #[test]
     fn poll_drains_fed_messages() {
         let (mut adapter, tx) = FrigateAdapter::new(None, vec![], 0.5);
-        tx.send(("frigate/events".to_string(), EVENT_PERSON.as_bytes().to_vec()))
-            .unwrap();
+        tx.send((
+            "frigate/events".to_string(),
+            EVENT_PERSON.as_bytes().to_vec(),
+        ))
+        .unwrap();
         let claims = adapter.poll().expect("poll");
         assert_eq!(claims.len(), 1);
         // Drained: next poll is empty.
