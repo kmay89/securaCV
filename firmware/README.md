@@ -214,9 +214,14 @@ Features:
 - Add/remove Canary devices by IP address
 - Fleet health overview (online/offline, chain integrity)
 - Individual device drill-down (status, logs, chain, camera peek)
+- **Identify** a device (blink its LED + chirp) to physically locate it
 - Pagination for 50+ device fleets
 - Persistent device list via localStorage
 - Works offline (no cloud dependencies)
+
+For the end-to-end multi-device wizard (naming devices, `canary.local`
+catch-all behaviour, Identify), see
+[`docs/onboarding_multiple_canaries.md`](../docs/onboarding_multiple_canaries.md).
 
 ---
 

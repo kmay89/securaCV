@@ -102,6 +102,12 @@ A single Canary covers a typical room well. **Two Canaries on either end
 of a hallway** unlock cross-device direction sensing — see the Mesh tab
 once your second device is paired.
 
+> Adding a second (or third) Canary? See
+> [Onboarding Multiple Canaries](onboarding_multiple_canaries.md) — it covers
+> naming each device (`canary-kitchen.local`), how `canary.local` behaves with
+> several devices, and the **Identify** button that blinks a specific device so
+> you can tell them apart.
+
 ---
 
 ## 5 · Listening for alarms

@@ -105,6 +105,8 @@
 
 #include <WiFi.h>
 #include <ESPmDNS.h>
+#include "mdns.h"               // IDF mDNS C API — delegated hostname for canary.local catch-all
+#include "esp_idf_version.h"    // ESP_IDF_VERSION gate for mdns_delegate_hostname_add (>= 4.4)
 #include <FS.h>
 #include <SD.h>
 #include <SPI.h>
@@ -498,6 +500,7 @@ struct DeviceIdentity {
   bool     tamper_active;
   char     device_id[32];
   char     ap_ssid[32];
+  char     mdns_hostname[40];    // unique mDNS host label, e.g. "canary-kitchen" / "canary-aabb"
   // API security fields (added for SAP integration)
   char     api_token_str[36];    // "cv_" + 32 base62 chars + null
   char     ap_password[16];      // device-unique AP password "cv-XXXXX"
@@ -728,6 +731,8 @@ static void wifi_init_provisioning();
 static void wifi_connect_to_home();
 static void wifi_check_connection();
 static const char* wifi_state_name(WiFiProvState s);
+static void claim_catch_all_hostname();
+static void generate_mdns_hostname(char* out, size_t cap);
 
 // ════════════════════════════════════════════════════════════════════════════
 // UTILITY FUNCTIONS
@@ -858,6 +863,54 @@ static void generate_ap_ssid(char* out, size_t cap) {
   uint8_t mac[6];
   esp_read_mac(mac, ESP_MAC_WIFI_STA);
   snprintf(out, cap, "SecuraCV-%02X%02X", mac[4], mac[5]);
+}
+
+// mDNS hostname rules (RFC 6762 §16 / RFC 1123): a single DNS label may only
+// contain [a-z0-9-] and must not start or end with a hyphen. Lowercase the
+// input and replace any other byte with '-'. Mirrors sanitize_mdns_hostname()
+// in firmware/canary/lib/securacv_network/src/securacv_network.cpp so both
+// builds advertise the same hostname grammar.
+static void sanitize_mdns_label(const char* in, char* out, size_t cap) {
+  if (cap == 0) return;
+  size_t j = 0;
+  for (size_t i = 0; in && in[i] && j < cap - 1; i++) {
+    char c = in[i];
+    if (c >= 'A' && c <= 'Z') c = c - 'A' + 'a';
+    if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-') {
+      out[j++] = c;
+    } else {
+      out[j++] = '-';
+    }
+  }
+  while (j > 0 && out[j - 1] == '-') j--;       // trim trailing hyphens
+  size_t start = 0;
+  while (start < j && out[start] == '-') start++; // trim leading hyphens
+  if (start > 0) { memmove(out, out + start, j - start); j -= start; }
+  out[j] = '\0';
+}
+
+// Build the unique, stable mDNS hostname this device advertises. A user-set
+// friendly name (captured during setup, stored in NVS "dev_name") wins and
+// yields a memorable "canary-<name>" (e.g. "canary-kitchen"); otherwise we
+// fall back to the MAC-derived "canary-aabb". This is what makes a second
+// Canary "just work": every device owns a distinct <host>.local, while the
+// bare "canary.local" stays available as a single-device catch-all (see the
+// delegated-hostname claim in wifi_init_provisioning()).
+static void generate_mdns_hostname(char* out, size_t cap) {
+  if (cap == 0) return;
+  const char* friendly = setup_wizard::get_device_name();
+  if (friendly && friendly[0]) {
+    char label[setup_wizard::DEVICE_NAME_MAX + 1];
+    sanitize_mdns_label(friendly, label, sizeof(label));
+    if (label[0]) {
+      // Reserve room for the "canary-" prefix; total label must stay <= 63.
+      snprintf(out, cap, "canary-%s", label);
+      return;
+    }
+  }
+  uint8_t mac[6];
+  esp_read_mac(mac, ESP_MAC_WIFI_STA);
+  snprintf(out, cap, "canary-%02x%02x", mac[4], mac[5]);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -4239,8 +4292,8 @@ static esp_err_t handle_wifi_scan(httpd_req_t* req) {
 static esp_err_t handle_wifi_connect(httpd_req_t* req) {
   g_health.http_requests++;
 
-  // Read body
-  char content[256] = {0};
+  // Read body (sized for ssid + password + token + optional device_name)
+  char content[384] = {0};
   int ret = httpd_req_recv(req, content, sizeof(content) - 1);
 
   if (ret <= 0) {
@@ -4302,6 +4355,21 @@ static esp_err_t handle_wifi_connect(httpd_req_t* req) {
     String response;
     serializeJson(doc, response);
     return http_send_json(req, response.c_str());
+  }
+
+  // Optional friendly device name (e.g. "kitchen"). When present it both
+  // persists to NVS ("dev_name") and becomes this device's unique mDNS
+  // hostname canary-<name>.local, so multiple Canaries are easy to tell apart.
+  // We only accept a name that survives RFC-1123 sanitization (otherwise it
+  // would yield an empty/degenerate label); silently ignore an unusable name
+  // rather than failing the whole WiFi save.
+  const char* device_name = body["device_name"] | "";
+  if (strlen(device_name) > 0 && strlen(device_name) <= setup_wizard::DEVICE_NAME_MAX) {
+    char probe[setup_wizard::DEVICE_NAME_MAX + 1];
+    sanitize_mdns_label(device_name, probe, sizeof(probe));
+    if (probe[0] && setup_wizard::set_device_name(device_name)) {
+      generate_mdns_hostname(g_device.mdns_hostname, sizeof(g_device.mdns_hostname));
+    }
   }
 
   // Save credentials
@@ -4947,10 +5015,13 @@ static esp_err_t handle_ble_chirp_send(httpd_req_t* req) {
 static esp_err_t handle_device_info(httpd_req_t* req) {
   g_health.http_requests++;
 
-  char json[512];
+  const char* dev_name = setup_wizard::get_device_name();
+  char json[640];
   snprintf(json, sizeof(json),
     "{"
     "\"device_id\":\"%s\","
+    "\"device_name\":\"%s\","
+    "\"mdns_host\":\"%s\","
     "\"firmware\":\"%s\","
     "\"pubkey_fp\":\"%s\","
     "\"mac\":\"%s\","
@@ -4961,6 +5032,8 @@ static esp_err_t handle_device_info(httpd_req_t* req) {
     "\"provisioning_gate\":\"physical_button\""
     "}",
     g_device.device_id,
+    dev_name ? dev_name : "",
+    g_device.mdns_hostname,
     FIRMWARE_VERSION,
     g_device.fingerprint_hex,
     WiFi.macAddress().c_str(),
@@ -5082,6 +5155,134 @@ static esp_err_t handle_https_redirect(httpd_req_t* req) {
 
 // Register all route handlers on a given server handle
 static void register_api_routes(httpd_handle_t server);
+
+// ════════════════════════════════════════════════════════════════════════════
+// API: IDENTIFY — "locate this device" (Philips Hue identify analogue)
+//
+// Flashes LED_BUILTIN in a distinct triple-blink + plays the "I'm here" chirp
+// for a bounded window so a user onboarding several Canaries can physically
+// pick out exactly which box is responding. Fully non-blocking: a millis-based
+// scheduler re-arms PATTERN_IDENTIFY from loop() until the window expires, so
+// the HTTP server and witness loop stay responsive the whole time.
+// ════════════════════════════════════════════════════════════════════════════
+
+static uint32_t g_identify_until_ms    = 0;   // 0 = inactive
+static uint32_t g_identify_next_rep_ms = 0;
+
+static void start_identify(uint32_t duration_ms) {
+  if (duration_ms < 1000)  duration_ms = 1000;
+  if (duration_ms > 60000) duration_ms = 60000;
+  g_identify_until_ms    = millis() + duration_ms;
+  g_identify_next_rep_ms = millis();   // fire the first cycle immediately
+  log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "Identify requested", g_device.mdns_hostname);
+}
+
+// Drive from loop(). Re-arms the identify pattern every ~1.5s while active.
+static void identify_tick() {
+  if (g_identify_until_ms == 0) return;
+  uint32_t now = millis();
+  if ((int32_t)(now - g_identify_until_ms) >= 0) {  // window elapsed
+    g_identify_until_ms = 0;
+    return;
+  }
+#if FEATURE_AUDIBLE_CHIRP
+  if ((int32_t)(now - g_identify_next_rep_ms) >= 0 && !audible_chirp::is_playing()) {
+    audible_chirp::play_pattern(audible_chirp::PATTERN_IDENTIFY);
+    g_identify_next_rep_ms = now + 1500;
+  }
+#endif
+}
+
+static esp_err_t handle_identify(httpd_req_t* req) {
+  if (!api_auth_check_or_query(req, g_device.api_token_str)) return ESP_OK;
+  g_health.http_requests++;
+
+  uint32_t duration_ms = 15000;  // default ~15s, like Hue's identify
+  char content[128] = {0};
+  int ret = httpd_req_recv(req, content, sizeof(content) - 1);
+  if (ret > 0) {
+    JsonDocument body;
+    if (deserializeJson(body, content) == DeserializationError::Ok && body["duration_ms"].is<uint32_t>()) {
+      duration_ms = body["duration_ms"].as<uint32_t>();
+    }
+  }
+
+  start_identify(duration_ms);
+
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["duration_ms"] = (g_identify_until_ms > millis()) ? (g_identify_until_ms - millis()) : 0;
+#if FEATURE_AUDIBLE_CHIRP
+  doc["visual_only"] = audible_chirp::is_visual_only();
+#else
+  doc["visual_only"] = true;
+#endif
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+// Re-announce mDNS with the current unique hostname + TXT records and re-assert
+// the canary.local catch-all. Used after a rename so the new name takes effect
+// without a reboot. Mirrors the announce block in wifi_init_provisioning().
+static void mdns_reannounce() {
+  MDNS.end();
+  if (!MDNS.begin(g_device.mdns_hostname)) {
+    log_health(SCV_LOG_WARNING, SCV_CAT_NETWORK, "mDNS re-announce failed", g_device.mdns_hostname);
+    return;
+  }
+  MDNS.addService("http", "tcp", 80);
+  MDNS.addService("securacv", "tcp", 80);
+  MDNS.addServiceTxt("securacv", "tcp", "device_id", (const char*)g_device.device_id);
+  MDNS.addServiceTxt("securacv", "tcp", "fw",        FIRMWARE_VERSION);
+  MDNS.addServiceTxt("securacv", "tcp", "host",      (const char*)g_device.mdns_hostname);
+  MDNS.addServiceTxt("securacv", "tcp", "name",
+                     setup_wizard::get_device_name() ? setup_wizard::get_device_name() : "");
+  #if defined(HARDWARE_XIAO_ESP32C3)
+  MDNS.addServiceTxt("securacv", "tcp", "model", "XIAO ESP32C3");
+  #else
+  MDNS.addServiceTxt("securacv", "tcp", "model", "XIAO ESP32S3");
+  #endif
+  claim_catch_all_hostname();
+}
+
+// API: rename this device after onboarding. Sets the friendly name (NVS
+// "dev_name"), regenerates the unique mDNS hostname canary-<name>.local, and
+// re-announces mDNS so the new name resolves without a reboot.
+static esp_err_t handle_device_name(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  g_health.http_requests++;
+
+  char content[128] = {0};
+  int ret = httpd_req_recv(req, content, sizeof(content) - 1);
+  JsonDocument doc;
+  if (ret <= 0) { doc["ok"] = false; doc["error"] = "No body"; }
+  else {
+    JsonDocument body;
+    const char* name = nullptr;
+    if (deserializeJson(body, content) == DeserializationError::Ok) {
+      name = body["name"] | "";
+    }
+    char probe[setup_wizard::DEVICE_NAME_MAX + 1] = {0};
+    if (name) sanitize_mdns_label(name, probe, sizeof(probe));
+    if (!name || strlen(name) == 0 || strlen(name) > setup_wizard::DEVICE_NAME_MAX || !probe[0]) {
+      doc["ok"] = false;
+      doc["error"] = "Invalid name (1-32 chars, letters/digits/hyphen)";
+    } else if (!setup_wizard::set_device_name(name)) {
+      doc["ok"] = false;
+      doc["error"] = "Could not save name";
+    } else {
+      generate_mdns_hostname(g_device.mdns_hostname, sizeof(g_device.mdns_hostname));
+      mdns_reannounce();
+      doc["ok"] = true;
+      doc["device_name"] = setup_wizard::get_device_name();
+      doc["mdns_host"] = g_device.mdns_hostname;
+    }
+  }
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
 
 // ── Auth-wrapped handler helpers ──
 // These wrappers add Bearer token authentication to existing handlers.
@@ -5507,6 +5708,15 @@ register_extra_routes:
   httpd_uri_t wifi_reconnect = { .uri = "/api/wifi/reconnect", .method = HTTP_POST, .handler = handle_wifi_reconnect_auth };
   httpd_register_uri_handler(active_server, &wifi_reconnect);
 
+  // Identify ("blink + chirp this device"). Auth via Bearer header OR ?token=
+  // so the fleet manager can locate a device without custom headers.
+  httpd_uri_t identify = { .uri = "/api/identify", .method = HTTP_POST, .handler = handle_identify };
+  httpd_register_uri_handler(active_server, &identify);
+
+  // Rename this device → canary-<name>.local (Bearer-gated).
+  httpd_uri_t device_name = { .uri = "/api/device-name", .method = HTTP_POST, .handler = handle_device_name };
+  httpd_register_uri_handler(active_server, &device_name);
+
   // Wizard pre-flight self-test (no auth — must be reachable on AP
   // before any post-pair token exists, identical to /api/wifi/scan).
   httpd_uri_t selftest = { .uri = "/api/selftest", .method = HTTP_GET, .handler = selftest::handle_selftest };
@@ -5919,6 +6129,68 @@ static bool resolve_ap_password(char* out_password, size_t out_len) {
 #endif
 }
 
+// Claim the bare "canary.local" catch-all in ADDITION to our unique
+// canary-<name>.local, so single-device homes keep the easy-to-type URL while
+// multi-device homes never collide. Strategy: first-wins. We probe the
+// network; if another Canary already answers canary.local we leave it alone
+// and rely solely on our unique hostname. Otherwise we register "canary" as a
+// delegated mDNS hostname pointing at our live interface addresses (AP always,
+// STA when joined to home WiFi). The unique hostname set via MDNS.begin() is
+// unaffected either way, so this can only ever ADD reachability.
+static void claim_catch_all_hostname() {
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 4, 0)
+  IPAddress existing = MDNS.queryHost("canary", 600);
+  bool taken_by_other = ((uint32_t)existing != 0) &&
+                        existing != WiFi.softAPIP() &&
+                        existing != WiFi.localIP();
+  if (taken_by_other) {
+    log_health(SCV_LOG_INFO, SCV_CAT_NETWORK,
+               "canary.local catch-all already claimed by a peer",
+               "serving unique hostname only");
+    return;
+  }
+
+  // Address list lives in static storage; the mDNS component copies it, but
+  // keeping it static is harmless and avoids any lifetime ambiguity.
+  static mdns_ip_addr_t ap_node;
+  static mdns_ip_addr_t sta_node;
+  mdns_ip_addr_t* head = nullptr;
+
+  IPAddress ap_ip = WiFi.softAPIP();
+  if ((uint32_t)ap_ip != 0) {
+    memset(&ap_node, 0, sizeof(ap_node));
+    ap_node.addr.type = ESP_IPADDR_TYPE_V4;
+    ap_node.addr.u_addr.ip4.addr = (uint32_t)ap_ip;
+    ap_node.next = head;
+    head = &ap_node;
+  }
+  IPAddress sta_ip = WiFi.localIP();
+  if ((uint32_t)sta_ip != 0) {
+    memset(&sta_node, 0, sizeof(sta_node));
+    sta_node.addr.type = ESP_IPADDR_TYPE_V4;
+    sta_node.addr.u_addr.ip4.addr = (uint32_t)sta_ip;
+    sta_node.next = head;
+    head = &sta_node;
+  }
+  if (!head) return;
+
+  mdns_delegate_hostname_remove("canary");  // idempotent across re-announce
+  if (mdns_delegate_hostname_add("canary", head) == ESP_OK) {
+    log_health(SCV_LOG_INFO, SCV_CAT_NETWORK,
+               "canary.local catch-all claimed", g_device.mdns_hostname);
+  } else {
+    log_health(SCV_LOG_WARNING, SCV_CAT_NETWORK,
+               "canary.local catch-all add failed", nullptr);
+  }
+#else
+  // mdns_delegate_hostname_add requires ESP-IDF >= 4.4. On older cores the
+  // device is still reachable at its unique canary-<name>.local; the bare
+  // canary.local catch-all is simply not advertised.
+  log_health(SCV_LOG_INFO, SCV_CAT_NETWORK,
+             "canary.local catch-all unavailable on this core", g_device.mdns_hostname);
+#endif
+}
+
 static void wifi_init_provisioning() {
   memset(&g_wifi_status, 0, sizeof(g_wifi_status));
 
@@ -5929,11 +6201,12 @@ static void wifi_init_provisioning() {
   WiFi.mode(WIFI_AP_STA);
 
   // Set the WiFi STA hostname BEFORE softAP() / begin() so DHCP also
-  // propagates "canary" to the home router — some routers/clients
-  // resolve via DHCP hostname rather than mDNS. Mirrors the canonical
-  // path in firmware/canary/lib/securacv_network so peers see the
-  // same hostname grammar from both builds.
-  WiFi.setHostname("canary");
+  // propagates the device's UNIQUE name (e.g. "canary-kitchen") to the home
+  // router — some routers/clients resolve via DHCP hostname rather than mDNS,
+  // and a unique name there is what stops two Canaries showing up identically
+  // in the router's client list. The bare "canary.local" catch-all is added
+  // separately as a delegated mDNS hostname (see claim_catch_all_hostname()).
+  WiFi.setHostname(g_device.mdns_hostname);
 
   // Register the STA_GOT_IP handler ONCE per boot. ESP-IDF mDNS binds
   // to whichever netifs are up at MDNS.begin() time and does not auto-
@@ -5946,19 +6219,26 @@ static void wifi_init_provisioning() {
     WiFi.onEvent([](arduino_event_id_t event, arduino_event_info_t /*info*/) {
       if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
         MDNS.end();
-        if (MDNS.begin("canary")) {
+        if (MDNS.begin(g_device.mdns_hostname)) {
           MDNS.addService("http", "tcp", 80);
           MDNS.addService("securacv", "tcp", 80);
           MDNS.addServiceTxt("securacv", "tcp", "device_id",
                              (const char*)g_device.device_id);
           MDNS.addServiceTxt("securacv", "tcp", "fw", FIRMWARE_VERSION);
+          // Advertise the unique host label and the friendly name so the SPA
+          // and fleet manager can show a human name and resolve the exact
+          // <host>.local even when several Canaries are on the LAN.
+          MDNS.addServiceTxt("securacv", "tcp", "host", (const char*)g_device.mdns_hostname);
+          MDNS.addServiceTxt("securacv", "tcp", "name",
+                             setup_wizard::get_device_name() ? setup_wizard::get_device_name() : "");
           #if defined(HARDWARE_XIAO_ESP32C3)
           MDNS.addServiceTxt("securacv", "tcp", "model", "XIAO ESP32C3");
           #else
           MDNS.addServiceTxt("securacv", "tcp", "model", "XIAO ESP32S3");
           #endif
+          claim_catch_all_hostname();  // re-assert canary.local on the home LAN
           log_health(SCV_LOG_INFO, SCV_CAT_NETWORK,
-                     "mDNS re-announced on STA", "canary.local");
+                     "mDNS re-announced on STA", g_device.mdns_hostname);
         } else {
           log_health(SCV_LOG_WARNING, SCV_CAT_NETWORK,
                      "mDNS STA re-announce failed", nullptr);
@@ -6010,19 +6290,18 @@ static void wifi_init_provisioning() {
   snprintf(msg, sizeof(msg), "AP: %s", ap_ssid);
   log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, msg, g_wifi_status.ap_ip);
 
-  // Start mDNS with the constant hostname "canary". RFC 6762 §9
-  // conflict resolution renames a second device to canary-2.local at
-  // the protocol layer, so multi-device homes still work; the SPA
-  // wizard's `_securacv._tcp` service browse uses the device_id TXT
-  // record to distinguish individual Canaries. This restores the
-  // human-typeable `http://canary.local` URL that single-device
-  // households expect, while still serving the multi-device "add
-  // another" flow via the wizard. Mirrors the canonical path in
-  // firmware/canary/lib/securacv_network so peer browsers get the
-  // same hostname grammar from both builds. Protocol matches
-  // canary-vision/docs/discovery.md so a single SPA build talks to
-  // both the WAP-built and the modular `canary/` builds.
-  if (MDNS.begin("canary")) {
+  // Start mDNS with this device's UNIQUE hostname (e.g. canary-kitchen or
+  // canary-aabb). Each Canary owns a distinct <host>.local, so a second
+  // device never collides with the first — the previous behaviour hardcoded
+  // "canary" for every unit and relied on RFC 6762 §9 conflict renaming,
+  // which the ESPmDNS wrapper does not perform reliably. The bare
+  // "canary.local" catch-all is then claimed separately (first-wins) by
+  // claim_catch_all_hostname() so single-device homes keep the easy URL. The
+  // SPA wizard's `_securacv._tcp` browse uses the device_id/host/name TXT
+  // records to distinguish individual Canaries. Mirrors the hostname grammar
+  // in firmware/canary/lib/securacv_network and canary-vision/docs/discovery.md
+  // so one SPA build talks to both the WAP and modular `canary/` builds.
+  if (MDNS.begin(g_device.mdns_hostname)) {
     MDNS.addService("http", "tcp", 80);
     MDNS.addService("securacv", "tcp", 80);
     // ESPmDNS::addServiceTxt has three overloads (char*, const char*,
@@ -6031,6 +6310,10 @@ static void wifi_init_provisioning() {
     // non-const-array argument to const char* to pick a single overload.
     MDNS.addServiceTxt("securacv", "tcp", "device_id", (const char*)g_device.device_id);
     MDNS.addServiceTxt("securacv", "tcp", "fw",        FIRMWARE_VERSION);
+    // Unique host label + optional friendly name (see STA re-announce above).
+    MDNS.addServiceTxt("securacv", "tcp", "host",      (const char*)g_device.mdns_hostname);
+    MDNS.addServiceTxt("securacv", "tcp", "name",
+                       setup_wizard::get_device_name() ? setup_wizard::get_device_name() : "");
     // The same firmware compiles for both XIAO ESP32S3 and XIAO ESP32C3
     // (see DEVICE_ID_PREFIX selection at lines 201-205). Advertise the
     // actual hardware so the fleet manager and the SPA can pick the
@@ -6040,9 +6323,10 @@ static void wifi_init_provisioning() {
     #else
     MDNS.addServiceTxt("securacv", "tcp", "model",     "XIAO ESP32S3");
     #endif
-    log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "mDNS started", "canary.local");
+    claim_catch_all_hostname();  // also answer the bare canary.local if free
+    log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "mDNS started", g_device.mdns_hostname);
   } else {
-    log_health(SCV_LOG_WARNING, SCV_CAT_NETWORK, "mDNS begin failed", "canary");
+    log_health(SCV_LOG_WARNING, SCV_CAT_NETWORK, "mDNS begin failed", g_device.mdns_hostname);
   }
 
   // Attempt to connect to home WiFi if configured
@@ -6077,6 +6361,7 @@ static bool provision_device() {
   // Generate device ID from MAC
   generate_device_id(g_device.device_id, sizeof(g_device.device_id));
   generate_ap_ssid(g_device.ap_ssid, sizeof(g_device.ap_ssid));
+  generate_mdns_hostname(g_device.mdns_hostname, sizeof(g_device.mdns_hostname));
   g_device.first_boot = false;
 
   // Try to load existing key
@@ -7080,6 +7365,12 @@ void loop() {
   #if FEATURE_WIFI_PRESENCE
   wifi_presence::process_queue();
   #endif
+
+  // Advance the identify "locate me" scheduler (re-arms the blink+chirp
+  // pattern for its window; cheap no-op when inactive). The LED/buzzer output
+  // is produced by audible_chirp::update() below, so identify is effective on
+  // builds with FEATURE_AUDIBLE_CHIRP enabled (the default dev/release set).
+  identify_tick();
 
   // Advance audible chirp state machine (non-blocking playback)
   #if FEATURE_AUDIBLE_CHIRP
