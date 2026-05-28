@@ -13,6 +13,11 @@
 #   arduino-cli      : arduino-cli compile --profile xiao_sense
 #                      arduino-cli upload  --profile xiao_sense -p /dev/ttyACM0
 #
+# No `default_profile:` on purpose — that would push `arduino-cli compile` into
+# profile mode for everyone, which rejects/ignores the explicit --fqbn,
+# --libraries and --build-property flags the CI Arduino build relies on. The
+# profile is opt-in via --profile (or the IDE dropdown) instead.
+#
 # NOTE: this profile pins the board default partition (default_8MB, 3 MB app).
 # If a build ever reports the binary exceeds the app partition, append
 # ,PartitionScheme=max_app_8MB to the fqbn (7.9 MB app, but disables OTA).
@@ -30,5 +35,3 @@ profiles:
     libraries:
       - ArduinoJson
       - Crypto
-
-default_profile: xiao_sense
