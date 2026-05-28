@@ -116,12 +116,7 @@ mod spinner {
     impl Drop for ProgressBar {
         fn drop(&mut self) {
             self.state.running.store(false, Ordering::SeqCst);
-            if let Some(handle) = self
-                .handle
-                .lock()
-                .expect("spinner handle lock")
-                .take()
-            {
+            if let Some(handle) = self.handle.lock().expect("spinner handle lock").take() {
                 let _ = handle.join();
             }
         }
