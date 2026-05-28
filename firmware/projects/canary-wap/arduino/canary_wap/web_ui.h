@@ -56,6 +56,12 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       line-height: 1.5;
     }
     .container { max-width: 960px; margin: 0 auto; padding: 1rem; }
+    .safe-mode-bar { display: none; max-width: 960px; margin: 1rem auto 0; padding: 0.75rem 1rem;
+      background: var(--warning-dim); border: 1px solid var(--warning); border-radius: 8px;
+      color: var(--warning); align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+    .safe-mode-bar.show { display: flex; }
+    .safe-mode-bar .smb-text { flex: 1; min-width: 220px; font-size: 0.85rem; line-height: 1.35; }
+    .safe-mode-bar .smb-text strong { display: block; margin-bottom: 0.15rem; }
 
     /* Header */
     header {
@@ -864,6 +870,17 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       </div>
     </div>
   </header>
+
+  <div class="safe-mode-bar" id="safeModeBar">
+    <div class="smb-text">
+      <strong>⚠️ Safe mode active</strong>
+      Optional peripherals are disabled after repeated crashes — core witness
+      functions are still running. The device auto-reboots after it stays
+      stable; if it keeps crashing back into safe mode it stops here. Fix the
+      device, then retry a full boot.
+    </div>
+    <button class="btn btn-secondary btn-sm" onclick="retryFullBoot()">Retry full boot</button>
+  </div>
 
   <div class="container">
     <!-- Clean 5-Tab Navigation -->
@@ -2576,6 +2593,9 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       if (data.gps) updateGps(data.gps);
       updateBadges(data);
 
+      const safeBar = document.getElementById('safeModeBar');
+      if (safeBar) safeBar.classList.toggle('show', !!data.safe_mode);
+
       const unacked = data.unacked_count || 0;
       const recordsCount = document.getElementById('recordsCount');
       if (unacked > 0) { recordsCount.textContent = unacked; recordsCount.style.display = 'inline-flex'; }
@@ -4246,6 +4266,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     }
 
     function confirmReboot() { if (confirm('Reboot device?')) { api('/api/reboot', 'POST'); alert('Rebooting...'); } }
+    function retryFullBoot() { if (confirm('Retry a full boot? The device will reboot and re-enable all peripherals.')) { api('/api/safe-mode/retry', 'POST'); alert('Rebooting into full operation...'); } }
     async function rotateOldLogs() { if (confirm('Delete logs > 30 days?')) { const data = await api('/api/logs/rotate', 'POST', { max_age_days: 30 }); alert(data.ok ? `Rotated ${data.deleted_count || 0}` : 'Failed'); } }
 
     // ══════════════════════════════════════════════════════════════════
