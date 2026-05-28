@@ -156,33 +156,54 @@ RoHS) lives in the CSVs. This table is the human-readable summary.
 
 ## 5 · Pin allocation map
 
-All values below are taken **verbatim** from the board pin headers and the
-chirp driver — they are the firmware defaults, so a board wired this way needs
-no code changes.
+The GPIO assignments below are the **firmware pin defaults**. **Wiring alone is
+not enough for every peripheral** — the **Firmware support** column states what
+the *current* firmware actually does with each pin:
+
+- ✅ **Driven** — actively used by the shipping canary-wap firmware today.
+- 🔧 **Library** — driver code exists but must be enabled/wired into the build (and
+  may need a pin override).
+- 📋 **Pin only** — the pin macro is defined, but **no code consumes it yet**;
+  the peripheral needs firmware work before it functions.
 
 ### 5.1 Canary WAP — XIAO ESP32-S3 Sense
 Source: [`pins.h`](../../firmware/boards/xiao-esp32s3-sense/pins/pins.h),
 [`audible_chirp.h`](../../firmware/projects/canary-wap/arduino/canary_wap/audible_chirp.h)
 
-| Peripheral | RefDes | XIAO pin | GPIO | Direction / mode | Firmware symbol |
-|------------|--------|----------|------|------------------|-----------------|
-| Passive buzzer | BZ1 | D1 | 2 | LEDC PWM out | `CHIRP_GPIO = 2` |
-| External RGB LED | DLED1 | D2 | 3 | Digital out (active HIGH) | `EXT_LED_PIN_DEFAULT = 3` |
-| Tamper switch | SW2 | D3 | 4 | Input, `INPUT_PULLUP`, active LOW | `TAMPER_PIN_DEFAULT = 4` |
-| Cap-touch pad | TP1 | D4 | 5 | Touch (touch-capable GPIO) | (touch peripheral) |
-| Multifunction button | SW1 | BOOT | 0 | Input, active LOW | `BOOT_BUTTON_PIN = 0` |
-| Battery sense | — | D0 / A0 | 1 | ADC1_CH0, 2:1 divider | `VBAT_PIN = 1`, `VBAT_DIVIDER_RATIO = 2.0` |
-| Onboard status LED | — | — | 21 | Digital (fallback) | `LED_BUILTIN = 21` |
+| Peripheral | RefDes | XIAO pin | GPIO | Mode / symbol | Firmware support |
+|------------|--------|----------|------|---------------|------------------|
+| Passive buzzer | BZ1 | D1 | 2 | LEDC PWM; `CHIRP_GPIO = 2` | ✅ Driven (`FEATURE_AUDIBLE_CHIRP`) |
+| Onboard status LED | — | — | 21 | `LED_BUILTIN = 21` | ✅ Driven (chirp visual fallback) |
+| Multifunction button | SW1 | BOOT | 0 | Input active LOW; `BOOT_BUTTON_PIN = 0` | ✅ Driven (beacon presence gate) |
+| Battery sense | — | D0 / A0 | 1 | ADC1_CH0, 2:1 divider; `VBAT_PIN = 1` | ✅ Driven (`FEATURE_POWER_MONITOR`) |
+| Cap-touch pad | TP1 | D3 | **4** | Native touch; `TOUCH_PIN_NUM = 4` | 🔧 Library (`securacv_touch`; see note) |
+| Tamper switch | SW2 | D3 | **4** | Input `INPUT_PULLUP`; `TAMPER_PIN_DEFAULT = 4` | 📋 Pin only (`FEATURE_TAMPER_GPIO` not yet consumed) |
+| External RGB LED | DLED1 | D2 | 3 | Digital out; `EXT_LED_PIN_DEFAULT = 3` | 📋 Pin only (not driven in canary-wap today) |
 
 **Reserved — do not repurpose:** D6/D7 (GPIO43/44) = L76K GNSS UART · D8–D10
 (GPIO7/8/9) = microSD SPI · GPIO21 = SD CS / onboard LED · camera (GPIO10–18,
 38–48) and PDM mic (GPIO41/42) are hardwired · GPIO26–33 = flash/PSRAM bus.
 
-> **Pin budget:** with buzzer (2), RGB LED (3), tamper (4) and touch (5)
-> populated, **all four optional inputs/outputs coexist** without touching any
-> reserved pin. The multifunction button reuses BOOT (GPIO0), so it costs no
-> expansion pin. Battery sense shares D0/A0 (GPIO1) — fine, since it is analog
-> and read-only.
+> **⚠️ Touch ↔ tamper pin collision.** Both the touch lib (`TOUCH_PIN_NUM`) and
+> the tamper input (`TAMPER_PIN_DEFAULT`) **default to GPIO4 (D3)** — they cannot
+> share it. To populate **both**, keep the reed tamper on D3/GPIO4 and move the
+> touch pad to **D4/GPIO5** with a build flag `-DTOUCH_PIN_NUM=5` (GPIO5 is
+> touch-capable), or vice-versa. With only one of them, GPIO4 is the no-override
+> default.
+>
+> **⚠️ Firmware status, not just wiring.** Buzzer, onboard LED, BOOT button and
+> battery sense work on the shipping canary-wap firmware. **Touch** is provided
+> by the `securacv_touch` library (currently wired into the `firmware/canary`
+> PlatformIO build, not the canary-wap Arduino sketch) — enabling it on
+> canary-wap requires integrating that library. **Tamper** (`FEATURE_TAMPER_GPIO`)
+> and the **external RGB LED** (`EXT_LED_PIN_DEFAULT`) are **pin definitions with
+> no consuming code yet** — fitting the hardware reserves the pin but the feature
+> needs firmware support before it does anything. Treat these three as
+> *build-to-spec, enable-in-firmware* rather than drop-in.
+>
+> **Pin budget:** the assignments above (buzzer 2, RGB LED 3, tamper/touch 4 with
+> the override for the second, BOOT 0, battery A0/GPIO1) fit without touching any
+> reserved pin.
 
 ### 5.2 Canary Vision — ESP32-C3
 Source: [`firmware/boards/esp32-c3/pins/pins.h`](../../firmware/boards/esp32-c3/pins/pins.h)
@@ -215,6 +236,10 @@ strong pull at boot) · ADC2/GPIO5 is shared with WiFi.
   muffled below useful SPL.
 
 ### 6.2 RGB status LED (DLED1)
+> **Firmware:** the WAP firmware does not drive `EXT_LED_PIN_DEFAULT` today — the
+> active indicator is the onboard `LED_BUILTIN` (GPIO21). Wiring DLED1 reserves
+> the pin; lighting it requires adding RGB driver code. Wire it as below so the
+> board is ready.
 - WS2812B `DIN` ← GPIO3 through `R2` (330 Ω). Place `C1` (0.1 µF) across the
   pixel's V+/GND right at the package.
 - The chip is 5 V-native but operates on the XIAO's 3.3 V logic in practice; for
@@ -222,18 +247,27 @@ strong pull at boot) · ADC2/GPIO5 is shared with WiFi.
   on-board pixel). Active-HIGH per `EXT_LED_ACTIVE = HIGH`.
 
 ### 6.3 Tamper switch (SW2)
-- Reed/Hall between GPIO4 and GND. Firmware sets `INPUT_PULLUP`, active LOW
+> **Firmware:** `FEATURE_TAMPER_GPIO` / `TAMPER_PIN_DEFAULT` are defined but **not
+> yet consumed** by the WAP firmware — setting the flag does not currently poll
+> the pin or emit a tamper event. Fitting SW2 prepares the hardware; emitting
+> events needs firmware support (or use the touch-based enclosure-tamper mode in
+> `securacv_touch`, which *is* implemented). Note GPIO4 is shared with the touch
+> default — see the §5.1 collision note.
+- Reed/Hall between GPIO4 and GND, wired for `INPUT_PULLUP`, active LOW
   (`TAMPER_ACTIVE = LOW`) — so a **normally-closed** sensor held shut by `MAG1`
   reads "closed/secure," and opening the enclosure (magnet leaves) trips it.
 - The internal pull-up is sufficient; external `R3` (10 kΩ) only if you want a
-  stiffer pull or external filtering. Enable `FEATURE_TAMPER_GPIO = 1`.
+  stiffer pull or external filtering.
 
 ### 6.4 Multifunction button (SW1) & cap-touch (TP1)
 - **Button:** the firmware already gates physical-presence actions on the BOOT
   button (`boot_button_held()`, hold ≥ `CONFIG_BOOT_BUTTON_HOLD_MS = 2000` ms).
   Fit `SW1` in parallel with BOOT to GND for a panel-mountable button, or simply
   use the board's BOOT button — no extra wiring.
-- **Touch:** route a small copper pad/foil `TP1` to GPIO5 through `R6` (1 kΩ,
+- **Touch:** the `securacv_touch` library (panic long-press, enclosure-tamper
+  drift, proximity) defaults to **GPIO4** (`TOUCH_PIN_NUM = 4`). It is wired into
+  the `firmware/canary` PlatformIO build; integrate it into canary-wap to use it.
+  Route a small copper pad/foil `TP1` to the chosen touch GPIO through `R6` (1 kΩ,
   ESD) and keep a ground guard ring away from it. Sealable behind the enclosure
   wall for a no-moving-parts, weather-resistant control.
 
