@@ -4674,14 +4674,26 @@ static esp_err_t handle_fleet_qr_auth(httpd_req_t* req) {
   return handle_fleet_qr(req);
 }
 
-/* Captive-portal handler (iOS/Android/Windows probe URLs).
+/* Apple connectivity probe (captive.apple.com /hotspot-detect.html, etc.).
  *
- * Serves a plain static page that tells the user to open `canary.local` in
- * their real browser, where the setup wizard runs. We deliberately do NOT
- * render the wizard SPA here: captive-portal mini-browsers (iOS CNA, Android
- * sign-in sheet) are too stripped-down to run it and just show a blank white
- * screen. Returning 200 + a real page (not the 204/Success probe token) keeps
- * the captive sheet visible so the user reads the instruction.
+ * The OS connectivity probes decide whether the phone *stays* on our AP, and
+ * the right answer is platform-specific (the "hybrid" strategy):
+ *
+ *   • Apple (this handler) — return the plain instruction page, NOT the
+ *     "<TITLE>Success</TITLE>" token Apple looks for. That pops the Captive
+ *     Network Assistant sheet, which renders this static page fine and tells
+ *     the user to open canary.local. iOS/macOS keep the Wi-Fi association
+ *     while the sheet is up and offer "Use Without Internet" on dismiss, so
+ *     Apple devices never disconnect — we get guidance *and* a live link.
+ *   • Android (handle_captive_204) — answer 204 so Android marks the AP
+ *     "validated/online" and never shows the no-internet sheet or falls back
+ *     to cellular. Returning a page here is what stranded Android users
+ *     before they could reach canary.local.
+ *   • Windows (handle_captive_msft) — answer the NCSI success strings.
+ *
+ * We deliberately do NOT render the wizard SPA in any probe: captive
+ * mini-browsers are too stripped-down to run it and just show a blank white
+ * screen.
  *
  * Privacy: no outbound bytes — the page is served from the device.
  */
@@ -4691,6 +4703,40 @@ static esp_err_t handle_captive_portal(httpd_req_t* req) {
   httpd_resp_set_type(req, "text/html; charset=utf-8");
   httpd_resp_set_hdr(req, "Cache-Control", "no-cache, no-store, must-revalidate");
   return httpd_resp_send(req, CAPTIVE_PORTAL_HTML, HTTPD_RESP_USE_STRLEN);
+}
+
+/* Android connectivity probe (/generate_204, /gen_204).
+ *
+ * Android marks a network "validated / has internet" only when its probe
+ * gets HTTP 204 No Content. Anything else (a 200 page or a redirect) trips
+ * the "Sign in to network" sheet and then the "Wi-Fi has no internet" state
+ * that routes traffic over cellular and eventually drops the AP — exactly the
+ * disconnect that stranded users before they reached canary.local. So we
+ * answer 204: online, stay connected, no sheet. Android users are guided to
+ * canary.local by the AP name and the setup instructions, not a popup.
+ */
+static esp_err_t handle_captive_204(httpd_req_t* req) {
+  g_health.http_requests++;
+  httpd_resp_set_status(req, "204 No Content");
+  httpd_resp_set_hdr(req, "Cache-Control", "no-cache, no-store, must-revalidate");
+  return httpd_resp_send(req, nullptr, 0);
+}
+
+/* Windows NCSI probes (/connecttest.txt, /ncsi.txt).
+ *
+ * Windows' Network Connectivity Status Indicator expects an exact body:
+ * "Microsoft Connect Test" from connecttest.txt and "Microsoft NCSI" from
+ * ncsi.txt. Returning these marks the network online so Windows keeps the
+ * adapter on the AP instead of flagging "No Internet" and de-prioritising it.
+ */
+static esp_err_t handle_captive_msft(httpd_req_t* req) {
+  g_health.http_requests++;
+  const char* body = (strstr(req->uri, "ncsi") != nullptr)
+                       ? "Microsoft NCSI"
+                       : "Microsoft Connect Test";
+  httpd_resp_set_type(req, "text/plain");
+  httpd_resp_set_hdr(req, "Cache-Control", "no-cache, no-store, must-revalidate");
+  return httpd_resp_send(req, body, HTTPD_RESP_USE_STRLEN);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -5385,7 +5431,7 @@ static void register_api_routes(httpd_handle_t server) {
 
 static void start_http_server() {
   // Calculate max URI handlers based on feature usage
-  const int base_handlers = 32;       // UI (/ + /admin + /settings), API (auth + public), WiFi provisioning, captive portal, /api/selftest, /api/diagnostics, /api/battery/history
+  const int base_handlers = 35;       // UI (/ + /admin + /settings), API (auth + public), WiFi provisioning, captive/connectivity probes (Apple x2, Android x2, Windows x2), /api/selftest, /api/diagnostics, /api/battery/history
   const int camera_handlers = 9;      // Camera peek endpoints
   const int mesh_handlers = 12;       // Mesh network endpoints
   const int bluetooth_handlers = 23;  // Bluetooth API endpoints
@@ -5428,17 +5474,26 @@ static void start_http_server() {
       httpd_config_t redirect_config = HTTPD_DEFAULT_CONFIG();
       redirect_config.server_port = 80;
       redirect_config.uri_match_fn = httpd_uri_match_wildcard;
-      redirect_config.max_uri_handlers = 5;
+      redirect_config.max_uri_handlers = 10;
 
       if (httpd_start(&g_http_server, &redirect_config) == ESP_OK) {
-        // Captive portal probes must stay on HTTP — iOS/Android send
-        // them over plain HTTP and a TLS redirect breaks detection.
-        httpd_uri_t cp1 = { .uri = "/hotspot-detect.html", .method = HTTP_GET, .handler = handle_captive_portal };
-        httpd_register_uri_handler(g_http_server, &cp1);
-        httpd_uri_t cp2 = { .uri = "/generate_204", .method = HTTP_GET, .handler = handle_captive_portal };
-        httpd_register_uri_handler(g_http_server, &cp2);
-        httpd_uri_t cp3 = { .uri = "/connecttest.txt", .method = HTTP_GET, .handler = handle_captive_portal };
-        httpd_register_uri_handler(g_http_server, &cp3);
+        // Connectivity probes must stay on plain HTTP — the OS never sends
+        // them over TLS, and a TLS redirect breaks detection. Each platform
+        // gets the answer that keeps it connected (see handle_captive_portal):
+        // Apple → instruction page (pops the CNA sheet, never disconnects);
+        // Android → 204; Windows → NCSI success strings.
+        httpd_uri_t cp_apple   = { .uri = "/hotspot-detect.html",        .method = HTTP_GET, .handler = handle_captive_portal };
+        httpd_register_uri_handler(g_http_server, &cp_apple);
+        httpd_uri_t cp_apple2  = { .uri = "/library/test/success.html",  .method = HTTP_GET, .handler = handle_captive_portal };
+        httpd_register_uri_handler(g_http_server, &cp_apple2);
+        httpd_uri_t cp_android = { .uri = "/generate_204",              .method = HTTP_GET, .handler = handle_captive_204 };
+        httpd_register_uri_handler(g_http_server, &cp_android);
+        httpd_uri_t cp_android2= { .uri = "/gen_204",                   .method = HTTP_GET, .handler = handle_captive_204 };
+        httpd_register_uri_handler(g_http_server, &cp_android2);
+        httpd_uri_t cp_win     = { .uri = "/connecttest.txt",           .method = HTTP_GET, .handler = handle_captive_msft };
+        httpd_register_uri_handler(g_http_server, &cp_win);
+        httpd_uri_t cp_win2    = { .uri = "/ncsi.txt",                  .method = HTTP_GET, .handler = handle_captive_msft };
+        httpd_register_uri_handler(g_http_server, &cp_win2);
         // Everything else redirects to HTTPS
         httpd_uri_t redirect_all = { .uri = "/*", .method = HTTP_GET, .handler = handle_https_redirect };
         httpd_register_uri_handler(g_http_server, &redirect_all);
@@ -5521,15 +5576,28 @@ register_extra_routes:
   httpd_register_uri_handler(active_server, &qr_stop);
 #endif
 
-  // Captive portal detection URLs (for iOS/Android automatic redirect)
-  httpd_uri_t captive1 = { .uri = "/hotspot-detect.html", .method = HTTP_GET, .handler = handle_captive_portal };
-  httpd_register_uri_handler(active_server, &captive1);
+  // Connectivity-probe URLs, answered per-platform to keep the phone on the
+  // AP (see handle_captive_portal): Apple → instruction page (pops the CNA
+  // sheet, never disconnects); Android → 204; Windows → NCSI success strings.
+  // (In HTTPS mode these also live on the port-80 redirect server above; the
+  // OS only ever probes over plain HTTP.)
+  httpd_uri_t captive_apple   = { .uri = "/hotspot-detect.html",       .method = HTTP_GET, .handler = handle_captive_portal };
+  httpd_register_uri_handler(active_server, &captive_apple);
 
-  httpd_uri_t captive2 = { .uri = "/generate_204", .method = HTTP_GET, .handler = handle_captive_portal };
-  httpd_register_uri_handler(active_server, &captive2);
+  httpd_uri_t captive_apple2  = { .uri = "/library/test/success.html", .method = HTTP_GET, .handler = handle_captive_portal };
+  httpd_register_uri_handler(active_server, &captive_apple2);
 
-  httpd_uri_t captive3 = { .uri = "/connecttest.txt", .method = HTTP_GET, .handler = handle_captive_portal };
-  httpd_register_uri_handler(active_server, &captive3);
+  httpd_uri_t captive_android = { .uri = "/generate_204",             .method = HTTP_GET, .handler = handle_captive_204 };
+  httpd_register_uri_handler(active_server, &captive_android);
+
+  httpd_uri_t captive_android2= { .uri = "/gen_204",                  .method = HTTP_GET, .handler = handle_captive_204 };
+  httpd_register_uri_handler(active_server, &captive_android2);
+
+  httpd_uri_t captive_win     = { .uri = "/connecttest.txt",          .method = HTTP_GET, .handler = handle_captive_msft };
+  httpd_register_uri_handler(active_server, &captive_win);
+
+  httpd_uri_t captive_win2    = { .uri = "/ncsi.txt",                 .method = HTTP_GET, .handler = handle_captive_msft };
+  httpd_register_uri_handler(active_server, &captive_win2);
 
 #if FEATURE_CAMERA_PEEK
   // Camera peek endpoints (auth required for all peek operations)

@@ -2,12 +2,18 @@
  * @file setup_page_html.h
  * @brief Static captive-portal landing page.
  *
- * Captive-portal mini-browsers (iOS Captive Network Assistant, Android's
- * sign-in sheet) are stripped-down webviews that can't reliably run the
- * companion setup wizard's SPA — trying to render it there is what produced
- * the blank white screen. So the captive page is intentionally plain static
- * HTML with a single job: tell the user to open `canary.local` in their real
- * browser, where the wizard runs. No JavaScript, no redirect, no QR.
+ * This page is shown to Apple's Captive Network Assistant (and to any browser
+ * that lands on a hijacked-domain root during setup). Android and Windows are
+ * instead answered with their connectivity-probe success tokens (204 / NCSI)
+ * so they keep the AP connection alive — see the captive handlers in
+ * canary_wap.ino for the per-platform "hybrid" strategy.
+ *
+ * Captive-portal mini-browsers (the iOS CNA sheet) are stripped-down webviews
+ * that can't reliably run the companion setup wizard's SPA — trying to render
+ * it there is what produced the blank white screen. So the captive page is
+ * intentionally plain static HTML with a single job: tell the user to open
+ * `canary.local` in their real browser, where the wizard runs. No JavaScript,
+ * no redirect, no QR.
  *
  * canary.local is shown as instruction text (type it in your browser). A
  * clickable 192.168.4.1 fallback is offered too: the numeric IP always
