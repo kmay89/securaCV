@@ -354,4 +354,77 @@ bool clear_replay_counters() {
 #endif
 }
 
+/* ──────────────────────────────────────────────────────────────────────────
+ * ELECTED-HUB FINGERPRINT
+ *
+ * Fixed-length (FINGERPRINT_LEN = 8) blob, same write/load/clear shape
+ * and flash-encryption gate as opera_secret. NVS key "elected_hub" is
+ * 11 chars (within the 15-char ESP32 NVS key budget).
+ * ────────────────────────────────────────────────────────────────────────── */
+
+#ifndef CSI_TEST_HOST_BUILD
+constexpr const char* NVS_KEY_HUB = "elected_hub";
+#endif
+
+bool save_elected_hub(const uint8_t fingerprint[mesh_crypto::FINGERPRINT_LEN]) {
+  if (fingerprint == nullptr) return false;
+
+#ifdef CSI_TEST_HOST_BUILD
+  return true;
+#else
+  if (!flash_encryption_enabled()) {
+    Serial.println("[ALERT][mesh_state] refused save_elected_hub — "
+                   "flash encryption disabled (audit O2 / AGENTS.md)");
+    return false;
+  }
+
+  Preferences prefs;
+  if (!prefs.begin(NVS_NAMESPACE, /*readOnly=*/false)) return false;
+  const size_t put = prefs.putBytes(NVS_KEY_HUB, fingerprint,
+                                    mesh_crypto::FINGERPRINT_LEN);
+  prefs.end();
+  return put == mesh_crypto::FINGERPRINT_LEN;
+#endif
+}
+
+bool load_elected_hub(uint8_t out[mesh_crypto::FINGERPRINT_LEN]) {
+  if (out == nullptr) return false;
+
+#ifdef CSI_TEST_HOST_BUILD
+  return false;
+#else
+  if (!flash_encryption_enabled()) {
+    Serial.println("[ALERT][mesh_state] refused load_elected_hub — "
+                   "flash encryption disabled (audit O2 / AGENTS.md)");
+    return false;
+  }
+
+  /* Read into a temporary first so a partial/failed NVS read never
+   * touches the caller's buffer — the documented contract is that out[]
+   * is left untouched on any false return. */
+  Preferences prefs;
+  if (!prefs.begin(NVS_NAMESPACE, /*readOnly=*/true)) return false;
+  uint8_t temp[mesh_crypto::FINGERPRINT_LEN];
+  const size_t got = prefs.getBytes(NVS_KEY_HUB, temp,
+                                    mesh_crypto::FINGERPRINT_LEN);
+  prefs.end();
+  if (got != mesh_crypto::FINGERPRINT_LEN) return false;
+  memcpy(out, temp, mesh_crypto::FINGERPRINT_LEN);
+  return true;
+#endif
+}
+
+bool clear_elected_hub() {
+#ifdef CSI_TEST_HOST_BUILD
+  return true;
+#else
+  Preferences prefs;
+  if (!prefs.begin(NVS_NAMESPACE, /*readOnly=*/false)) return false;
+  bool ok = prefs.remove(NVS_KEY_HUB);
+  if (!ok) ok = !prefs.isKey(NVS_KEY_HUB);
+  prefs.end();
+  return ok;
+#endif
+}
+
 }  /* namespace mesh_state */
