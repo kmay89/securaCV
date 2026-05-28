@@ -6359,6 +6359,7 @@ void setup() {
 
   // ── Canary boot banner ──────────────────────────────────────────────────
   {
+    String mac_str = WiFi.macAddress();
     boot_info_t bi = {};
     bi.product_name  = "SecuraCV Canary WAP";
     bi.fw_version    = FIRMWARE_VERSION;
@@ -6366,7 +6367,7 @@ void setup() {
     bi.build_time    = __TIME__;
     bi.device_type   = DEVICE_TYPE;
     bi.model         = "XIAO ESP32S3 Sense";
-    bi.mac_address   = WiFi.macAddress().c_str();
+    bi.mac_address   = mac_str.c_str();
     bi.board_name    = "XIAO ESP32S3";
     bi.chip_model    = ESP.getChipModel();
     bi.chip_revision = (uint8_t)ESP.getChipRevision();
