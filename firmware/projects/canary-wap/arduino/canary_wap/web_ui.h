@@ -1437,6 +1437,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           <button class="btn btn-secondary btn-sm" onclick="playAudibleChirp('alert')" title="Play rising three-tone alert">Alert</button>
           <button class="btn btn-secondary btn-sm" onclick="playAudibleChirp('success')" title="Play pleasant ascending tone">Success</button>
           <button class="btn btn-secondary btn-sm" onclick="playAudibleChirp('error')" title="Play descending error tone">Error</button>
+          <button class="btn btn-secondary btn-sm" onclick="identifyDevice()" title="Flash this device's LED and chirp for 15s so you can locate it — like Philips Hue identify">Identify</button>
         </div>
         <div id="chirpHwResult" style="margin-top:0.5rem;font-size:0.8rem;min-height:1.2em;"></div>
         <div style="margin-top:0.75rem;font-size:0.8rem;color:var(--muted);">
@@ -1946,6 +1947,10 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
             <div class="form-group">
               <label class="form-label">Password</label>
               <input type="password" class="form-input" id="wifiPassword" placeholder="WiFi password">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Device name <span style="color:var(--muted);font-weight:normal;">(optional — makes it canary-&lt;name&gt;.local)</span></label>
+              <input type="text" class="form-input" id="wifiDeviceName" placeholder="e.g. kitchen" maxlength="32" autocapitalize="off" autocorrect="off">
             </div>
             <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
               <button class="btn btn-primary" onclick="connectWifi()" id="wifiConnectBtn">Connect</button>
@@ -3619,6 +3624,25 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       refreshAudibleChirpStatus();
     }
 
+    // Locate-this-device: triple-blink the LED + "I'm here" chirp for ~15s,
+    // the way Philips Hue's "identify" flashes a specific bulb. Handy when
+    // several Canaries are on the network and you need to know which is which.
+    async function identifyDevice() {
+      const result = document.getElementById('chirpHwResult');
+      if (result) { result.style.color = 'var(--muted)'; result.textContent = 'Identifying — watch for the blinking LED…'; }
+      const data = await api('/api/identify', 'POST', { duration_ms: 15000 });
+      if (result) {
+        if (data && data.ok) {
+          result.style.color = 'var(--success)';
+          result.textContent = 'Identifying for ' + Math.round((data.duration_ms || 15000) / 1000) + 's';
+        } else {
+          result.style.color = 'var(--danger)';
+          result.textContent = 'Failed: ' + ((data && data.error) || 'Unknown error');
+        }
+        setTimeout(() => { result.textContent = ''; }, 4000);
+      }
+    }
+
     // ══════════════════════════════════════════════════════════════════
     // WIFI
     // ══════════════════════════════════════════════════════════════════
@@ -3736,6 +3760,8 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     async function connectWifi() {
       const ssid = document.getElementById('wifiSsidInput').value.trim() || document.getElementById('wifiSsidSelect').value;
       const password = document.getElementById('wifiPassword').value;
+      const deviceNameEl = document.getElementById('wifiDeviceName');
+      const deviceName = deviceNameEl ? deviceNameEl.value.trim() : '';
       if (!ssid) { alert('Enter network name'); return; }
 
       // Hide any previous failure banner; the firmware will repopulate it
@@ -3745,7 +3771,9 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
       document.getElementById('wifiProgress').style.display = 'block';
       document.getElementById('wifiProgressText').textContent = 'Connecting…';
-      const data = await api('/api/wifi/connect', 'POST', { ssid, password });
+      const connectBody = { ssid, password };
+      if (deviceName) connectBody.device_name = deviceName;
+      const data = await api('/api/wifi/connect', 'POST', connectBody);
       if (!data.ok) {
         document.getElementById('wifiProgress').style.display = 'none';
         alert('Failed: ' + (data.error || 'unknown error'));

@@ -65,6 +65,7 @@ enum ChirpPattern : uint8_t {
   PATTERN_ERROR,         // Descending buzz — operation failed
   PATTERN_BEACON,        // Beacon-channel ALARM — distinct from PATTERN_ALERT
   PATTERN_SELFTEST_OK,   // NFPA 72 §14 monthly self-test confirmation — one quiet short tone
+  PATTERN_IDENTIFY,      // "Locate me" — triple LED blink + two-beep confirm (Hue-style identify)
   PATTERN_COUNT
 };
 
@@ -134,6 +135,17 @@ static const ChirpNote PATTERN_SELFTEST_OK_NOTES[] = {
   {1500, 80}, {0, 0}
 };
 
+// "Identify" — locate-this-device signal (Philips Hue "identify" analogue).
+// Three quick LED-only blinks (freq==1 lights LED_BUILTIN without sound) then
+// the familiar "I'm here" two-beep confirm at 2000 Hz. One cycle is ~1.3 s;
+// the /api/identify scheduler in canary_wap.ino re-arms it every ~1.5 s for
+// the requested window (default 15 s) so a user onboarding multiple Canaries
+// can physically pick out exactly which box is responding.
+static const ChirpNote PATTERN_IDENTIFY_NOTES[] = {
+  {1, 120}, {0, 90}, {1, 120}, {0, 90}, {1, 120}, {0, 400},
+  {2000, 100}, {0, 50}, {2000, 100}, {0, 0}
+};
+
 static const ChirpNote* PATTERNS[] = {
   PATTERN_CONFIRM_NOTES,
   PATTERN_ALERT_NOTES,
@@ -141,11 +153,12 @@ static const ChirpNote* PATTERNS[] = {
   PATTERN_SUCCESS_NOTES,
   PATTERN_ERROR_NOTES,
   PATTERN_BEACON_NOTES,
-  PATTERN_SELFTEST_OK_NOTES
+  PATTERN_SELFTEST_OK_NOTES,
+  PATTERN_IDENTIFY_NOTES
 };
 
 static const char* PATTERN_NAMES[] = {
-  "confirm", "alert", "tamper", "success", "error", "beacon", "selftest_ok"
+  "confirm", "alert", "tamper", "success", "error", "beacon", "selftest_ok", "identify"
 };
 
 // ════════════════════════════════════════════════════════════════════════════
