@@ -2104,9 +2104,12 @@ static esp_err_t handle_sensing(httpd_req_t* req) {
   lp["caps"] = lowpower_get_caps();
 #endif
 
-  char response[3072];
-  serializeJson(doc, response, sizeof(response));
-  return http_send_json(req, response);
+  char* response = (char*)malloc(3072);
+  if (!response) return ESP_ERR_NO_MEM;
+  serializeJson(doc, response, 3072);
+  esp_err_t err = http_send_json(req, response);
+  free(response);
+  return err;
 }
 #endif // FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS
 
