@@ -153,13 +153,13 @@ static void format_fingerprint(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
  * receive handler likewise just logs — the deeper "what does the Hub
  * DO with a beacon_event" question is PR 4b's territory.
  *
- * NOTE: mesh_session::init() is NOT yet called from main.cpp setup() —
- * that wiring is a follow-up PR (it needs correct boot ordering against
- * WiFi for ESP-NOW to bind). Until then the callbacks register but the
- * send-side returns false (early-out) and the receive-side never fires
- * (no transport recv). The integration is staged here so the moment
- * main.cpp init lands, the chain lights up end-to-end with no further
- * code changes. */
+ * NOTE: mesh_session::init() / ::start() are now called from main.cpp
+ * setup() (see main.cpp:542-546, guarded by FEATURE_MESH_NETWORK) with
+ * the correct boot ordering against WiFi for ESP-NOW to bind, and
+ * mesh_transport::process() / mesh_session::process() run each loop
+ * iteration (main.cpp:1045-1046). The callbacks registered below are
+ * therefore live end-to-end when FEATURE_MESH_NETWORK=1: the send-side
+ * broadcasts and the receive-side dispatches inbound frames. */
 
 /* FreeRTOS queue that marshals beacon events from the (possibly
  * cross-task) ble_scout broadcast callback into the main loop,
