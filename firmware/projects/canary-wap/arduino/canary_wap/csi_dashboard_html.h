@@ -2253,10 +2253,32 @@ async function prefillFleetSsid() {
   } catch {}
 }
 
+/* Refresh the peer list every 5s while the Fleet sheet is open so newly
+ * paired Canaries appear without reopening. The loop self-terminates the
+ * moment the sheet loses its .open class, which covers every close path
+ * (scrim, close button, ESC) without per-path wiring. A generation token
+ * invalidates any prior loop on reopen — even one mid-fetch — so closing
+ * and reopening never leaves two loops hammering the endpoint. Recursive
+ * setTimeout (not setInterval) so a slow fetch can't pile up requests on
+ * the device's tiny httpd worker pool — same rationale as pollLoop. */
+let fleetPollGen = 0;
+function startFleetPoll() {
+  const gen = ++fleetPollGen;
+  (async function loop() {
+    if (gen !== fleetPollGen || !fleetSheet.classList.contains('open')) return;
+    try { await fetchFleetPeers(); }
+    finally {
+      if (gen === fleetPollGen && fleetSheet.classList.contains('open')) {
+        setTimeout(loop, 5000);
+      }
+    }
+  })();
+}
+
 document.getElementById('fleetBtn').addEventListener('click', () => {
-  fetchFleetPeers();
   prefillFleetSsid();
   openSheet(fleetSheet, fleetScrim);
+  startFleetPoll();
 });
 fleetScrim.addEventListener('click', () => closeSheet(fleetSheet, fleetScrim));
 
