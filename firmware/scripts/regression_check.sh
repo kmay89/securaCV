@@ -432,7 +432,12 @@ for wui in $(find "$FIRMWARE_DIR" -name "web_ui.h" 2>/dev/null); do
   LINES=$(wc -l < "$wui")
   BYTES=$(wc -c < "$wui")
   REL_PATH="${wui#$FIRMWARE_DIR/}"
-  if [ "$BYTES" -gt 65536 ]; then
+  # If a sibling web_assets_gz.h exists, the raw literal is compiled out
+  # (CANARY_WEB_ASSETS_GZIPPED) and the binary ships the gzip copy — so the
+  # raw header size is no longer the flash footprint, only source-of-truth size.
+  if [ -f "$(dirname "$wui")/web_assets_gz.h" ]; then
+    check_pass "$REL_PATH source: ${LINES} lines, ${BYTES} bytes (shipped gzip — see web_assets_gz.h)"
+  elif [ "$BYTES" -gt 65536 ]; then
     check_warn "$REL_PATH is ${BYTES} bytes (>64KB) — may cause PROGMEM issues"
     blue "  Consider: Split into web_ui_css.h + web_ui_js.h + web_ui_html.h"
   else

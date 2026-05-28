@@ -15,8 +15,13 @@
 #ifndef SECURACV_WEB_UI_H
 #define SECURACV_WEB_UI_H
 
+#include "build_config.h"  // CANARY_WEB_ASSETS_GZIPPED
 #include <Arduino.h>
 
+// Source of truth for the dashboard/settings UI. Compiled out in normal builds:
+// the binary ships the gzip copy from web_assets_gz.h (CANARY_WEB_ASSETS_GZIPPED).
+// Regenerate with gen_web_assets_gz.py after editing the HTML below.
+#if !defined(CANARY_WEB_ASSETS_GZIPPED)
 static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -4291,5 +4296,6 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 </body>
 </html>
 )rawliteral";
+#endif  // !CANARY_WEB_ASSETS_GZIPPED
 
 #endif // SECURACV_WEB_UI_H
