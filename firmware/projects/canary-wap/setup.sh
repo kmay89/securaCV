@@ -250,6 +250,24 @@ setup_arduino() {
         print_warn "CSI library not found at ${csi_src} — sketch will not compile until firmware/common/csi/src/ is restored"
     fi
 
+    # Stage the shared boot banner library next to the sketch. The sketch does
+    # `#include <boot_banner.h>`; like the CSI library it must be flattened into
+    # the sketch directory because Arduino IDE only searches the sketch dir and
+    # globally installed libraries.
+    local boot_src="${FIRMWARE_ROOT}/common/boot"
+    if [ -d "$boot_src" ]; then
+        cp "${boot_src}/boot_banner.h" "${arduino_dir}/" 2>/dev/null || true
+        cp "${boot_src}/boot_banner.cpp" "${arduino_dir}/" 2>/dev/null || true
+        if [ -f "${arduino_dir}/boot_banner.h" ]; then
+            print_success "Copied boot banner library"
+        else
+            print_error "Failed to stage boot banner files to ${arduino_dir}"
+            return 1
+        fi
+    else
+        print_warn "Boot banner not found at ${boot_src} — sketch will not compile until firmware/common/boot/ is restored"
+    fi
+
     print_success "Arduino IDE setup complete!"
     echo ""
     echo "Arduino IDE Instructions:"

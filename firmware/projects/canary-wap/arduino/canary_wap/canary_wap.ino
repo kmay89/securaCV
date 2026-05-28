@@ -115,6 +115,7 @@
 
 #include "esp_camera.h"
 
+#include <boot_banner.h>
 #include "log_level.h"
 #include "health_log.h"
 #include "sd_storage.h"
@@ -6356,12 +6357,32 @@ void setup() {
   Serial.begin(115200);
   serial_wait_for_cdc(SERIAL_CDC_WAIT_MS);
 
-  Serial.println();
-  Serial.println("╔══════════════════════════════════════════════════════════════╗");
-  Serial.println("║     SecuraCV Canary — Production Witness Device              ║");
-  Serial.println("║     Privacy Witness Kernel (PWK) Compatible                  ║");
-  Serial.println("║     Version 2.1.0 — Hardware Resilience Update               ║");
-  Serial.println("╚══════════════════════════════════════════════════════════════╝");
+  // ── Canary boot banner ──────────────────────────────────────────────────
+  {
+    String mac_str = WiFi.macAddress();
+    boot_info_t bi = {};
+    bi.product_name  = "SecuraCV Canary WAP";
+    bi.fw_version    = FIRMWARE_VERSION;
+    bi.build_date    = __DATE__;
+    bi.build_time    = __TIME__;
+    bi.device_type   = DEVICE_TYPE;
+    bi.model         = "XIAO ESP32S3 Sense";
+    bi.mac_address   = mac_str.c_str();
+    bi.board_name    = "XIAO ESP32S3";
+    bi.chip_model    = ESP.getChipModel();
+    bi.chip_revision = (uint8_t)ESP.getChipRevision();
+    bi.cpu_freq_mhz  = (uint16_t)ESP.getCpuFreqMHz();
+    bi.cpu_cores     = (uint8_t)ESP.getChipCores();
+    bi.flash_mb      = (uint32_t)(ESP.getFlashChipSize() / (1024 * 1024));
+    bi.psram_found   = psramFound();
+    bi.psram_total_kb = (uint32_t)(ESP.getPsramSize() / 1024);
+    bi.psram_free_kb  = (uint32_t)(ESP.getFreePsram() / 1024);
+    bi.heap_free_kb   = (uint32_t)(ESP.getFreeHeap() / 1024);
+    bi.sdk_version    = ESP.getSdkVersion();
+
+    boot_scene_banner(&bi);
+    boot_scene_hardware(&bi);
+  }
 
   // ════════════════════════════════════════════════════════════════════════════
   // PHASE 0: Hardware State & Safe Mode Check (CRITICAL - do this first)
@@ -6805,23 +6826,25 @@ void setup() {
   Serial.println("╚══════════════════════════════════════════════════════════════╝");
   print_quick_connect_details("[PROV] Quick connect:");
 
-  Serial.println();
-  Serial.println("╔══════════════════════════════════════════════════════════════╗");
-  Serial.println("║               WITNESS DEVICE READY                           ║");
-  Serial.println("╠══════════════════════════════════════════════════════════════╣");
-  Serial.printf("║  Device ID  : %-45s  ║\n", g_device.device_id);
-  Serial.printf("║  WiFi AP    : %-45s  ║\n", g_device.ap_ssid);
-  Serial.printf("║  Password   : %-45s  ║\n", g_device.ap_password);
+  boot_scene_ready(
+      "It will now create a signed witness record",
+      "every second and store it to the SD card.",
+      "Nobody can alter these records after the fact."
+  );
+  boot_separator();
+  boot_kv("Device ID", g_device.device_id);
+  boot_kv("WiFi AP",   g_device.ap_ssid);
+  boot_kv("Password",  g_device.ap_password);
   #if FEATURE_WIFI_AP
-  Serial.printf("║  Dashboard  : %s://%-36s  ║\n",
-                g_tls_enabled ? "https" : "http",
-                WiFi.softAPIP().toString().c_str());
+  boot_kvf("Dashboard", "%s://%s",
+           g_tls_enabled ? "https" : "http",
+           WiFi.softAPIP().toString().c_str());
   #endif
-  Serial.println("╠══════════════════════════════════════════════════════════════╣");
-  Serial.println("║  Commands: h=help i=id s=stat t=time g=gps c=cam m=sys r=data b=bat║");
-  Serial.println("║  Token + WiFi credentials are printed above on every boot      ║");
-  Serial.println("║  Hold  BOOT (>3s)   = factory reset                           ║");
-  Serial.println("╚══════════════════════════════════════════════════════════════╝");
+  boot_blank();
+  boot_line("    Commands: h=help i=id s=stat t=time g=gps c=cam m=sys r=data b=bat");
+  boot_line("    Token + WiFi credentials are printed above on every boot");
+  boot_line("    Hold  BOOT (>3s)   = factory reset");
+  boot_separator();
   Serial.println();
   print_table_header();
 }
