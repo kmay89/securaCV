@@ -621,6 +621,64 @@ static const char CSI_DASHBOARD_HTML[] PROGMEM = R"DASHBOARD(<!doctype html>
   .what-row .capability { color: var(--fg-soft); }
   .what-foot { margin-top: 14px; color: var(--fg-mute); font-size: 13px; }
 
+  /* ── Fleet sheet ──────────────────────────────────────────────────────── */
+
+  .fleet-section { margin-bottom: 24px; }
+  .fleet-section:last-child { margin-bottom: 0; }
+  .fleet-label {
+    margin: 0 0 10px; font-size: 13px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.04em;
+    color: var(--fg-mute);
+  }
+  .fleet-hint {
+    margin: 0 0 14px; font-size: 14px; color: var(--fg-soft); line-height: 1.45;
+  }
+  .fleet-peer-list { display: grid; gap: 8px; }
+  .fleet-peer {
+    display: grid; grid-template-columns: 1fr auto;
+    align-items: center; gap: 12px;
+    padding: 10px 14px;
+    border: 1px solid var(--hairline);
+    border-radius: 12px;
+    background: var(--bg-veil);
+  }
+  .fleet-peer .name { font-weight: 500; }
+  .fleet-peer .meta { font-size: 12px; color: var(--fg-mute); }
+  .fleet-peer .rssi-bar {
+    display: inline-flex; gap: 2px; align-items: flex-end; height: 16px;
+  }
+  .rssi-bar span {
+    width: 3px; border-radius: 1px;
+    background: var(--fg-mute); opacity: .25;
+  }
+  .rssi-bar span.on { opacity: 1; background: var(--accent); }
+  .fleet-peer-empty { color: var(--fg-mute); font-size: 14px; padding: 8px 0; }
+  .fleet-form { display: grid; gap: 12px; }
+  .fleet-field {
+    display: grid; gap: 4px;
+    font-size: 13px; font-weight: 500; color: var(--fg-soft);
+  }
+  .fleet-field input {
+    border: 1px solid var(--hairline);
+    border-radius: 10px; padding: 10px 14px;
+    background: var(--bg-veil);
+    color: var(--fg); font: inherit; font-size: 15px;
+    outline: none; transition: border-color .2s;
+  }
+  .fleet-field input:focus { border-color: var(--accent); }
+  .fleet-qr-wrap {
+    margin-top: 18px; text-align: center;
+  }
+  .fleet-qr-img {
+    display: inline-block; width: 200px; height: 200px;
+    border-radius: 12px; overflow: hidden;
+    background: #fff;
+  }
+  .fleet-qr-img svg { width: 100%; height: 100%; }
+  .fleet-qr-caption {
+    margin: 10px 0 0; font-size: 13px; color: var(--fg-mute);
+  }
+
   /* ── Tooltips (one pattern, used everywhere via data-tip) ───────────── */
 
   .tip-bubble {
@@ -924,6 +982,7 @@ static const char CSI_DASHBOARD_HTML[] PROGMEM = R"DASHBOARD(<!doctype html>
   <div class="brand">SecuraCV<span class="device" id="device-id">canary</span></div>
   <div class="topbar-actions">
     <button class="iconbtn" id="todayBtn" data-tip="todayBtn">Today</button>
+    <button class="iconbtn" id="fleetBtn" data-tip="fleetBtn">Fleet</button>
     <button class="iconbtn" id="settingsBtn" data-tip="settingsBtn">Settings</button>
   </div>
 </header>
@@ -1085,6 +1144,43 @@ static const char CSI_DASHBOARD_HTML[] PROGMEM = R"DASHBOARD(<!doctype html>
   <div class="sheet-body" id="whatBody"></div>
 </aside>
 
+<!-- Fleet provisioning sheet -->
+<div class="sheet-scrim" id="fleetScrim" aria-hidden="true"></div>
+<aside class="sheet" id="fleetSheet" role="dialog" aria-modal="true" aria-labelledby="fleetTitle">
+  <div class="sheet-grab" aria-hidden="true"></div>
+  <div class="sheet-head">
+    <h2 id="fleetTitle">Fleet</h2>
+    <button class="iconbtn sheet-close" data-sheet="fleet" aria-label="Close Fleet">&#xd7;</button>
+  </div>
+  <div class="sheet-body" id="fleetBody">
+    <section class="fleet-section" id="fleetPeersSection">
+      <h3 class="fleet-label">Canaries on this network</h3>
+      <div id="fleetPeerList" class="fleet-peer-list">
+        <p style="color:var(--fg-mute)">Loading&hellip;</p>
+      </div>
+    </section>
+    <section class="fleet-section">
+      <h3 class="fleet-label">Provision a new Canary</h3>
+      <p class="fleet-hint">Generate a QR code that a new Canary can scan to join your WiFi.</p>
+      <div class="fleet-form">
+        <label class="fleet-field">
+          <span>Network name</span>
+          <input type="text" id="fleetSsid" maxlength="32" autocomplete="off" spellcheck="false">
+        </label>
+        <label class="fleet-field">
+          <span>Password</span>
+          <input type="password" id="fleetPass" maxlength="63" autocomplete="off">
+        </label>
+        <button class="calibrate" id="fleetGenBtn" style="margin-top:4px">Generate QR</button>
+      </div>
+      <div id="fleetQrWrap" class="fleet-qr-wrap" style="display:none">
+        <div id="fleetQrImg" class="fleet-qr-img"></div>
+        <p class="fleet-qr-caption">Point a new Canary's camera at this code.</p>
+      </div>
+    </section>
+  </div>
+</aside>
+
 <!-- First-run welcome overlay -->
 <div class="welcome-mask" id="welcomeMask">
   <!-- tabindex="-1" makes the card focusable via .focus() so render()
@@ -1166,6 +1262,7 @@ const COPY = {
     orb:         "What the room feels like right now.",
     helpBtn:     "See what the sensor can and can't notice.",
     todayBtn:    "See everything that happened today.",
+    fleetBtn:    "See your flock and set up new Canaries.",
     settingsBtn: "Tweak how the sensor behaves.",
     calibrate:   "Step out for one minute. The canary learns your empty room by ear.",
     sensitive:   "Picks up small movements. Best for one quiet room.",
@@ -2095,6 +2192,92 @@ document.getElementById('helpBtn').addEventListener('click', () => {
 });
 whatScrim.addEventListener('click', () => closeSheet(whatSheet, whatScrim));
 
+const fleetSheet = document.getElementById('fleetSheet');
+const fleetScrim = document.getElementById('fleetScrim');
+
+/* Peer names are set by other devices on the mesh, so they're untrusted
+ * input rendered via innerHTML — escape to prevent stored XSS. */
+function escapeHTML(s) {
+  const d = document.createElement('div');
+  d.textContent = s == null ? '' : String(s);
+  return d.innerHTML;
+}
+
+function rssiToClass(rssi) {
+  if (rssi > -50) return 4;
+  if (rssi > -65) return 3;
+  if (rssi > -80) return 2;
+  return 1;
+}
+
+function rssiBars(rssi) {
+  const bars = rssiToClass(rssi);
+  const heights = [4, 7, 11, 16];
+  return `<span class="rssi-bar">${heights.map((h, i) =>
+    `<span style="height:${h}px" class="${i < bars ? 'on' : ''}"></span>`
+  ).join('')}</span>`;
+}
+
+async function fetchFleetPeers() {
+  const el = document.getElementById('fleetPeerList');
+  try {
+    const r = await cvFetch('/api/mesh/peers', {cache: 'no-store'});
+    if (!r.ok) {
+      el.innerHTML = '<p class="fleet-peer-empty">Mesh not available.</p>';
+      return;
+    }
+    const j = await r.json();
+    if (!j.peers || j.peers.length === 0) {
+      el.innerHTML = '<p class="fleet-peer-empty">No other Canaries found yet.</p>';
+      return;
+    }
+    el.innerHTML = j.peers.map(p => {
+      const name = escapeHTML(p.name || 'Unknown');
+      const fp = escapeHTML((p.fingerprint || '').slice(0, 8));
+      const state = p.state === 'connected' ? '' :
+        ` &middot; <span style="opacity:.6">${escapeHTML(p.state)}</span>`;
+      return `<div class="fleet-peer"><div><div class="name">${name}</div><div class="meta">${fp}${state}</div></div><div>${rssiBars(p.rssi)}</div></div>`;
+    }).join('');
+  } catch {
+    el.innerHTML = '<p class="fleet-peer-empty">Could not reach the mesh service.</p>';
+  }
+}
+
+async function prefillFleetSsid() {
+  try {
+    const r = await cvFetch('/api/wifi', {cache: 'no-store'});
+    if (!r.ok) return;
+    const j = await r.json();
+    const inp = document.getElementById('fleetSsid');
+    if (inp && j.sta_ssid && !inp.value) inp.value = j.sta_ssid;
+  } catch {}
+}
+
+document.getElementById('fleetBtn').addEventListener('click', () => {
+  fetchFleetPeers();
+  prefillFleetSsid();
+  openSheet(fleetSheet, fleetScrim);
+});
+fleetScrim.addEventListener('click', () => closeSheet(fleetSheet, fleetScrim));
+
+document.getElementById('fleetGenBtn').addEventListener('click', async () => {
+  const ssid = document.getElementById('fleetSsid').value.trim();
+  const pass = document.getElementById('fleetPass').value;
+  if (!ssid) { document.getElementById('fleetSsid').focus(); return; }
+  const wrap = document.getElementById('fleetQrWrap');
+  const img = document.getElementById('fleetQrImg');
+  const params = new URLSearchParams({ssid, pass});
+  try {
+    const r = await cvFetch(`/api/fleet/qr?${params}`, {cache: 'no-store'});
+    if (!r.ok) { img.innerHTML = '<p style="color:#c00;padding:20px">Failed</p>'; wrap.style.display = ''; return; }
+    img.innerHTML = await r.text();
+    wrap.style.display = '';
+  } catch {
+    img.innerHTML = '<p style="color:#c00;padding:20px">Network error</p>';
+    wrap.style.display = '';
+  }
+});
+
 /* Sheet close-button delegate: every sheet's <button class="sheet-close"
  * data-sheet="..."> routes through here so we don't have to wire a
  * listener per sheet. The data-sheet attribute keys into the sheet/
@@ -2105,6 +2288,7 @@ document.addEventListener('click', e => {
   const key = btn.dataset.sheet;
   if (key === 'today')      closeSheet(todaySheet, todayScrim);
   else if (key === 'what')  closeSheet(whatSheet,  whatScrim);
+  else if (key === 'fleet') closeSheet(fleetSheet, fleetScrim);
 });
 
 /* Global keyboard contract for the modal sheets (audit: a11y pass).
@@ -2122,6 +2306,7 @@ document.addEventListener('keydown', e => {
     e.preventDefault();
     if (openSheetEl === todaySheet) closeSheet(todaySheet, todayScrim);
     else if (openSheetEl === whatSheet) closeSheet(whatSheet, whatScrim);
+    else if (openSheetEl === fleetSheet) closeSheet(fleetSheet, fleetScrim);
     return;
   }
 
