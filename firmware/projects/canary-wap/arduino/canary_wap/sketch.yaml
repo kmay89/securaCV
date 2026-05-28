@@ -1,0 +1,34 @@
+# Arduino sketch project file (build profile) for the SecuraCV Canary WAP.
+#
+# Why this exists: the XIAO ESP32-S3 board definition in arduino-esp32 ships
+# with its PSRAM menu defaulting to "Disabled". The OV2640 camera needs the
+# board's 8 MB OPI PSRAM to stream above QVGA, so a fresh checkout flashed with
+# the stock Tools-menu defaults silently falls back to QVGA-in-DRAM. Pinning
+# PSRAM=opi here makes the essential board settings travel with the sketch
+# instead of living in each developer's per-board IDE preferences.
+#
+# Usage:
+#   Arduino IDE 2.3+ : open canary_wap.ino, pick "xiao_sense" from the profile
+#                      dropdown in the toolbar — board + PSRAM are applied for you.
+#   arduino-cli      : arduino-cli compile --profile xiao_sense
+#                      arduino-cli upload  --profile xiao_sense -p /dev/ttyACM0
+#
+# NOTE: this profile pins the board default partition (default_8MB, 3 MB app).
+# If a build ever reports the binary exceeds the app partition, append
+# ,PartitionScheme=max_app_8MB to the fqbn (7.9 MB app, but disables OTA).
+
+profiles:
+  xiao_sense:
+    notes: XIAO ESP32-S3 Sense — OPI PSRAM enabled (required for camera streaming)
+    fqbn: esp32:esp32:XIAO_ESP32S3:PSRAM=opi,FlashSize=8M,CDCOnBoot=default,USBMode=hwcdc
+    platforms:
+      - platform: esp32:esp32 (3.3.8)
+        platform_index_url: https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+    # esp_camera and NimBLE ship inside the esp32 core (3.x) — only the two
+    # external libraries below need declaring. This matches the set the CI
+    # arduino-cli build installs.
+    libraries:
+      - ArduinoJson
+      - Crypto
+
+default_profile: xiao_sense
