@@ -2439,17 +2439,12 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
     function startDashboard() {
       refreshAll();
+      // refreshAll() already polls refreshStatus / refreshSystemHealth /
+      // refreshRfStatus every 5s, so dedicated intervals for those three
+      // functions would just double up the work (and the network traffic).
+      // Keep only the single aggregate interval here.
       if (!window._refreshInterval) {
         window._refreshInterval = setInterval(refreshAll, 5000);
-      }
-      if (!window._statusInterval) {
-        window._statusInterval = setInterval(refreshStatus, 2000);
-      }
-      if (!window._systemHealthInterval) {
-        window._systemHealthInterval = setInterval(refreshSystemHealth, 5000);
-      }
-      if (!window._rfInterval) {
-        window._rfInterval = setInterval(refreshRfStatus, 3000);
       }
       if (!window._wifiInterval) {
         window._wifiInterval = setInterval(loadWifiStatus, 5000);

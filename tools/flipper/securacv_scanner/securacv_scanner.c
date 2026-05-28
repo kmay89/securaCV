@@ -911,9 +911,20 @@ static void handle_input(SecuraCVApp* app, InputEvent* event) {
         return;
     }
 
-    if(event->type != InputTypePress && event->type != InputTypeRepeat) return;
+    if(event->type != InputTypePress && event->type != InputTypeRepeat &&
+       event->type != InputTypeShort) return;
 
     furi_mutex_acquire(app->mutex, FuriWaitForever);
+
+    // Only InputKeyOk in VIEW_SCAN_LIST consumes InputTypeShort (for the
+    // tap-vs-long-press pin gesture). Every other key/view acts on
+    // InputTypePress, so letting InputTypeShort through would double-trigger
+    // them (e.g. scroll twice, or Back transitioning then exiting).
+    if(event->type == InputTypeShort &&
+       !(event->key == InputKeyOk && app->current_view == VIEW_SCAN_LIST)) {
+        furi_mutex_release(app->mutex);
+        return;
+    }
 
     switch(app->current_view) {
         case VIEW_SCAN_LIST:
@@ -935,7 +946,9 @@ static void handle_input(SecuraCVApp* app, InputEvent* event) {
                     }
                     break;
                 case InputKeyOk:
-                    if(app->device_count > 0) {
+                    // Use InputTypeShort (fires on release if not long-press) so that
+                    // long-press pin toggle has time to register before view switches.
+                    if(event->type == InputTypeShort && app->device_count > 0) {
                         app->current_view = VIEW_DEVICE_DETAIL;
                     }
                     break;

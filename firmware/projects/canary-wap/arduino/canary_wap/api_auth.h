@@ -144,8 +144,13 @@ static void auth_redact_token(const char* token, char* out, size_t out_len) {
 // The caller should return ESP_OK immediately if this returns false.
 
 static bool api_auth_check(httpd_req_t* req, const char* expected_token) {
+  // A valid session cookie authenticates the request, but it must NOT
+  // reset the Bearer-token failure lockout. Otherwise an attacker who
+  // happens to hold (or can mint) a session cookie could clear the
+  // consecutive_failures backoff between token guesses, neutralizing the
+  // brute-force protection. Only a successful Bearer token comparison
+  // calls auth_record_success() (see below).
   if (cv_session_validate && cv_session_validate(req)) {
-    auth_record_success();
     return true;
   }
 
@@ -287,6 +292,13 @@ static void auth_stats_json(char* buf, size_t buf_len) {
 
 
 static bool api_auth_check_or_query(httpd_req_t* req, const char* expected_token, const char* query_key = "token") {
+  // Session-cookie auth grants access but must not reset the token
+  // failure lockout (see api_auth_check). Check it first, separately
+  // from the token paths, so it never clears consecutive_failures.
+  if (cv_session_validate && cv_session_validate(req)) {
+    return true;
+  }
+
   if (api_auth_check_optional(req, expected_token)) {
     auth_record_success();
     return true;

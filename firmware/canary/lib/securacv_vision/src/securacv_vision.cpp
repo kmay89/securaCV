@@ -512,6 +512,7 @@ void vision_stop() {
   if (vision::s_motion_active) {
     vision::s_motion_active = false;
     vision::s_stats.motion_active = false;
+    vision::s_stats.last_confidence = 0;
     vision::emit_event(VISION_EVENT_MOTION_END, 0, 0);
   }
   vision::s_running = false;
