@@ -74,7 +74,33 @@ fi
 TARGET="${1:-official}"
 
 if ! command -v ufbt &>/dev/null; then
-  echo "Error: ufbt not found. Install with: pip install ufbt" >&2
+  echo "Error: ufbt not found." >&2
+  # Check common pip user-install locations
+  PIP_BIN=""
+  for candidate in \
+    "$HOME/Library/Python/3.*/bin" \
+    "$HOME/.local/bin"; do
+    # shellcheck disable=SC2086
+    for dir in $candidate; do
+      if [[ -x "$dir/ufbt" ]]; then
+        PIP_BIN="$dir"
+        break 2
+      fi
+    done
+  done
+
+  if [[ -n "$PIP_BIN" ]]; then
+    echo "" >&2
+    echo "Found ufbt at: $PIP_BIN/ufbt" >&2
+    echo "It is not on your PATH. Fix with:" >&2
+    echo "" >&2
+    echo "  export PATH=\"$PIP_BIN:\$PATH\"" >&2
+    echo "" >&2
+    echo "To make it permanent, add that line to your shell profile (~/.zshrc or ~/.bashrc)." >&2
+  else
+    echo "Install with: pip install ufbt" >&2
+    echo "If already installed, ensure the pip scripts directory is on your PATH." >&2
+  fi
   exit 1
 fi
 

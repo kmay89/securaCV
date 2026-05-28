@@ -1,5 +1,17 @@
 # SecuraCV Scanner — Flipper Zero Application
 
+> **SHELVED — NOT BUILDABLE**
+>
+> This application requires BLE observer/scanner (central) mode, which the
+> official Flipper Zero firmware SDK has never exposed to external FAP
+> applications. The `furi_hal_bt_start_observer()` function used here does
+> not exist in any version of the official, Unleashed, or Momentum firmware.
+> The app cannot be compiled or run on real hardware.
+>
+> The Flipper's STM32WB55 supports observer mode at the HCI level, but the
+> firmware deliberately restricts FAPs to peripheral-only BLE. Until this
+> changes upstream, this code is provided as a reference implementation only.
+
 BLE scanner for SecuraCV Canary devices. Discovers nearby Canaries via
 the BLE GAP observer API and decodes debug beacon manufacturer data to
 display device health on the Flipper Zero screen.
@@ -32,11 +44,39 @@ automatically restored when the app exits.
 - Flipper Zero with official firmware 1.x
 - [ufbt](https://github.com/flipperdevices/flipperzero-ufbt) (micro Flipper Build Tool)
 
+## Install ufbt
+
+```bash
+pip install ufbt
+```
+
+If your shell reports `command not found: ufbt` after installing, the pip
+scripts directory is not on your PATH. Add it:
+
+```bash
+# macOS (Python installed via Xcode CLT or python.org)
+export PATH="$HOME/Library/Python/3.9/bin:$PATH"
+
+# Linux / macOS (pip --user install)
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Add the appropriate line to `~/.zshrc` or `~/.bashrc` to make it permanent.
+
 ## Build
 
 ```bash
 cd tools/flipper/securacv_scanner
 ufbt build
+```
+
+Or use the multi-firmware build script from the parent directory:
+
+```bash
+cd tools/flipper
+./build.sh            # official firmware (default)
+./build.sh unleashed  # Unleashed firmware
+./build.sh all        # all firmware variants
 ```
 
 ## Install
