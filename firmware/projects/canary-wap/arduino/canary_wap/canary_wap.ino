@@ -4474,6 +4474,31 @@ static esp_err_t handle_wifi_reconnect(httpd_req_t* req) {
 // FLEET QR — server-side SVG QR code for provisioning new Canaries
 // ════════════════════════════════════════════════════════════════════════════
 
+// ESP-IDF's httpd_query_key_value does not percent-decode values, so a
+// password like "p@ss word" arrives as "p%40ss+word". Decode in place:
+// '+' → space, "%XX" → byte. Safe to run on the same buffer since the
+// decoded form is never longer than the encoded form.
+static void url_decode_inplace(char* s) {
+  char* w = s;
+  for (const char* r = s; *r; ) {
+    if (*r == '%' && isxdigit((unsigned char)r[1]) && isxdigit((unsigned char)r[2])) {
+      auto hex = [](char c) -> int {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+        return c - 'A' + 10;
+      };
+      *w++ = (char)((hex(r[1]) << 4) | hex(r[2]));
+      r += 3;
+    } else if (*r == '+') {
+      *w++ = ' ';
+      r++;
+    } else {
+      *w++ = *r++;
+    }
+  }
+  *w = '\0';
+}
+
 static esp_err_t handle_fleet_qr(httpd_req_t* req) {
   g_health.http_requests++;
 
@@ -4494,6 +4519,9 @@ static esp_err_t handle_fleet_qr(httpd_req_t* req) {
     return httpd_resp_send(req, "ssid is required", -1);
   }
   httpd_query_key_value(qs, "pass", pass, sizeof(pass));
+
+  url_decode_inplace(ssid);
+  url_decode_inplace(pass);
 
   // Build SECURACV: payload
   char payload[256];
@@ -4516,33 +4544,40 @@ static esp_err_t handle_fleet_qr(httpd_req_t* req) {
   int border = 2;
   int total = size + border * 2;
 
-  // Stream SVG — header + per-module dark cells as rects + footer
   httpd_resp_set_type(req, "image/svg+xml");
   httpd_resp_set_hdr(req, "Cache-Control", "no-store");
 
-  char line[128];
-  snprintf(line, sizeof(line),
-    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 %d %d'"
-    " shape-rendering='crispEdges'>",
-    total, total);
-  httpd_resp_sendstr_chunk(req, line);
+  // Buffer SVG markup and flush in ~1KB chunks rather than one TCP write
+  // per dark module — a QR can have hundreds of modules, and per-module
+  // chunked writes overwhelm the ESP32 httpd. Each appended fragment is
+  // at most ~48 bytes, so flush whenever fewer than 64 bytes remain.
+  char buf[1024];
+  int len = 0;
+  auto flush = [&]() {
+    if (len > 0) { httpd_resp_send_chunk(req, buf, len); len = 0; }
+  };
 
-  snprintf(line, sizeof(line),
-    "<rect width='%d' height='%d' fill='#fff'/>", total, total);
-  httpd_resp_sendstr_chunk(req, line);
+  int n = snprintf(buf + len, sizeof(buf) - len,
+    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 %d %d'"
+    " shape-rendering='crispEdges'><rect width='%d' height='%d' fill='#fff'/>",
+    total, total, total, total);
+  if (n > 0 && n < (int)(sizeof(buf) - len)) len += n;
 
   for (int y = 0; y < size; y++) {
     for (int x = 0; x < size; x++) {
       if (qrcodegen_getModule(qr, x, y)) {
-        snprintf(line, sizeof(line),
-          "<rect x='%d' y='%d' width='1' height='1'/>",
-          x + border, y + border);
-        httpd_resp_sendstr_chunk(req, line);
+        if ((int)sizeof(buf) - len < 64) flush();
+        n = snprintf(buf + len, sizeof(buf) - len,
+          "<rect x='%d' y='%d' width='1' height='1'/>", x + border, y + border);
+        if (n > 0 && n < (int)(sizeof(buf) - len)) len += n;
       }
     }
   }
 
-  httpd_resp_sendstr_chunk(req, "</svg>");
+  if ((int)sizeof(buf) - len < 16) flush();
+  n = snprintf(buf + len, sizeof(buf) - len, "</svg>");
+  if (n > 0 && n < (int)(sizeof(buf) - len)) len += n;
+  flush();
   return httpd_resp_send_chunk(req, nullptr, 0);
 }
 

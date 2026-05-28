@@ -2195,6 +2195,14 @@ whatScrim.addEventListener('click', () => closeSheet(whatSheet, whatScrim));
 const fleetSheet = document.getElementById('fleetSheet');
 const fleetScrim = document.getElementById('fleetScrim');
 
+/* Peer names are set by other devices on the mesh, so they're untrusted
+ * input rendered via innerHTML — escape to prevent stored XSS. */
+function escapeHTML(s) {
+  const d = document.createElement('div');
+  d.textContent = s == null ? '' : String(s);
+  return d.innerHTML;
+}
+
 function rssiToClass(rssi) {
   if (rssi > -50) return 4;
   if (rssi > -65) return 3;
@@ -2224,9 +2232,11 @@ async function fetchFleetPeers() {
       return;
     }
     el.innerHTML = j.peers.map(p => {
+      const name = escapeHTML(p.name || 'Unknown');
+      const fp = escapeHTML((p.fingerprint || '').slice(0, 8));
       const state = p.state === 'connected' ? '' :
-        ` &middot; <span style="opacity:.6">${p.state}</span>`;
-      return `<div class="fleet-peer"><div><div class="name">${p.name || 'Unknown'}</div><div class="meta">${p.fingerprint.slice(0,8)}${state}</div></div><div>${rssiBars(p.rssi)}</div></div>`;
+        ` &middot; <span style="opacity:.6">${escapeHTML(p.state)}</span>`;
+      return `<div class="fleet-peer"><div><div class="name">${name}</div><div class="meta">${fp}${state}</div></div><div>${rssiBars(p.rssi)}</div></div>`;
     }).join('');
   } catch {
     el.innerHTML = '<p class="fleet-peer-empty">Could not reach the mesh service.</p>';
