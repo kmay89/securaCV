@@ -2218,10 +2218,10 @@ function rssiBars(rssi) {
   ).join('')}</span>`;
 }
 
-async function fetchFleetPeers() {
+async function fetchFleetPeers(signal) {
   const el = document.getElementById('fleetPeerList');
   try {
-    const r = await cvFetch('/api/mesh/peers', {cache: 'no-store'});
+    const r = await cvFetch('/api/mesh/peers', {cache: 'no-store', signal});
     if (!r.ok) {
       el.innerHTML = '<p class="fleet-peer-empty">Mesh not available.</p>';
       return;
@@ -2238,7 +2238,10 @@ async function fetchFleetPeers() {
         ` &middot; <span style="opacity:.6">${escapeHTML(p.state)}</span>`;
       return `<div class="fleet-peer"><div><div class="name">${name}</div><div class="meta">${fp}${state}</div></div><div>${rssiBars(p.rssi)}</div></div>`;
     }).join('');
-  } catch {
+  } catch (e) {
+    /* A reopen aborts the prior in-flight request — that's expected, not
+     * an error, so leave the existing list in place. */
+    if (e && e.name === 'AbortError') return;
     el.innerHTML = '<p class="fleet-peer-empty">Could not reach the mesh service.</p>';
   }
 }
@@ -2253,10 +2256,38 @@ async function prefillFleetSsid() {
   } catch {}
 }
 
+/* Refresh the peer list every 5s while the Fleet sheet is open so newly
+ * paired Canaries appear without reopening. The loop self-terminates the
+ * moment the sheet loses its .open class, which covers every close path
+ * (scrim, close button, ESC) without per-path wiring. A generation token
+ * invalidates any prior loop on reopen so we never schedule two loops.
+ * The AbortController cancels any still-in-flight /api/mesh/peers request
+ * on reopen too, so a hung fetch can't accumulate against the device's
+ * tiny httpd worker pool across repeated close/reopen. Recursive
+ * setTimeout (not setInterval) for the same anti-pile-up reason as
+ * pollLoop. */
+let fleetPollGen = 0;
+let fleetPollAbort = null;
+function startFleetPoll() {
+  const gen = ++fleetPollGen;
+  if (fleetPollAbort) fleetPollAbort.abort();
+  fleetPollAbort = new AbortController();
+  const signal = fleetPollAbort.signal;
+  (async function loop() {
+    if (gen !== fleetPollGen || !fleetSheet.classList.contains('open')) return;
+    try { await fetchFleetPeers(signal); }
+    finally {
+      if (gen === fleetPollGen && fleetSheet.classList.contains('open')) {
+        setTimeout(loop, 5000);
+      }
+    }
+  })();
+}
+
 document.getElementById('fleetBtn').addEventListener('click', () => {
-  fetchFleetPeers();
   prefillFleetSsid();
   openSheet(fleetSheet, fleetScrim);
+  startFleetPoll();
 });
 fleetScrim.addEventListener('click', () => closeSheet(fleetSheet, fleetScrim));
 
