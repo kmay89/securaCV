@@ -4615,9 +4615,11 @@ static esp_err_t handle_fleet_qr_auth(httpd_req_t* req) {
  * and already on this AP, so the old QR intermediary page was a
  * dead-end step — this gets them straight to WiFi setup.
  *
- * When HTTPS is available the redirect points to https://…, but the
- * probe URLs themselves stay on the HTTP (port 80) server because
- * iOS/Android send captive-portal probes over plain HTTP.
+ * The redirect always targets http:// (never the self-signed HTTPS cert):
+ * captive-portal mini-browsers refuse untrusted certs and would render a
+ * blank page. The companion wizard + its provisioning API are served on
+ * port 80 even in HTTPS mode (see register_captive_http_routes) so the whole
+ * setup flow completes over plain HTTP.
  *
  * Privacy: no outbound bytes — everything is served from the device.
  */
@@ -4633,11 +4635,11 @@ static esp_err_t handle_captive_portal(httpd_req_t* req) {
 
   /* Redirect straight to the companion wizard — the user is already on
    * their phone and already on this AP, so the old QR intermediary page
-   * added a dead-end step.  Use HTTPS when available. */
-  const char* scheme = "http";
+   * added a dead-end step. Always http:// — captive-portal browsers can't
+   * load the self-signed HTTPS cert. */
   char location[180];
   snprintf(location, sizeof(location),
-           "%s://192.168.4.1/companion?token=%s", scheme, tok_hex);
+           "http://192.168.4.1/companion?token=%s", tok_hex);
 
   httpd_resp_set_status(req, "302 Found");
   httpd_resp_set_hdr(req, "Location", location);
@@ -5344,6 +5346,44 @@ static void register_api_routes(httpd_handle_t server) {
                          g_device.fingerprint_hex);
 }
 
+#if SECURACV_HAS_HTTPS_SERVER
+// Captive-portal setup flow must stay reachable over plain HTTP. When TLS is
+// on, the port-80 server otherwise 301-redirects every path to the self-signed
+// HTTPS cert — and captive-portal mini-browsers (iOS CNA, Android) refuse to
+// load an untrusted cert, so the user just sees a white screen. Serving the
+// companion wizard and the WiFi-provisioning API it calls directly on port 80
+// lets first-time setup finish without a cert prompt. These handlers are also
+// registered on the HTTPS server for post-setup use; registering them here too
+// is harmless (each httpd instance owns its own handler table). Must be called
+// BEFORE the "/*" redirect so the exact URIs win the match.
+static void register_captive_http_routes(httpd_handle_t srv) {
+  httpd_uri_t comp_html = { .uri = "/companion", .method = HTTP_GET, .handler = handle_companion_html };
+  httpd_register_uri_handler(srv, &comp_html);
+  httpd_uri_t comp_sw = { .uri = "/companion-sw.js", .method = HTTP_GET, .handler = handle_companion_sw };
+  httpd_register_uri_handler(srv, &comp_sw);
+  httpd_uri_t comp_man = { .uri = "/companion-manifest.webmanifest", .method = HTTP_GET, .handler = handle_companion_manifest };
+  httpd_register_uri_handler(srv, &comp_man);
+
+  httpd_uri_t wifi_status = { .uri = "/api/wifi", .method = HTTP_GET, .handler = handle_wifi_status };
+  httpd_register_uri_handler(srv, &wifi_status);
+  httpd_uri_t wifi_scan = { .uri = "/api/wifi/scan", .method = HTTP_GET, .handler = handle_wifi_scan };
+  httpd_register_uri_handler(srv, &wifi_scan);
+  httpd_uri_t wifi_connect = { .uri = "/api/wifi/connect", .method = HTTP_POST, .handler = handle_wifi_connect };
+  httpd_register_uri_handler(srv, &wifi_connect);
+  httpd_uri_t selftest = { .uri = "/api/selftest", .method = HTTP_GET, .handler = selftest::handle_selftest };
+  httpd_register_uri_handler(srv, &selftest);
+
+#if FEATURE_QR_PROVISION
+  httpd_uri_t qr_start  = { .uri = "/api/wifi/qr-scan", .method = HTTP_POST,   .handler = handle_qr_scan_start };
+  httpd_register_uri_handler(srv, &qr_start);
+  httpd_uri_t qr_status = { .uri = "/api/wifi/qr-scan", .method = HTTP_GET,    .handler = handle_qr_scan_status };
+  httpd_register_uri_handler(srv, &qr_status);
+  httpd_uri_t qr_stop   = { .uri = "/api/wifi/qr-scan", .method = HTTP_DELETE, .handler = handle_qr_scan_stop };
+  httpd_register_uri_handler(srv, &qr_stop);
+#endif
+}
+#endif // SECURACV_HAS_HTTPS_SERVER
+
 static void start_http_server() {
   // Calculate max URI handlers based on feature usage
   const int base_handlers = 32;       // UI (/ + /admin + /settings), API (auth + public), WiFi provisioning, captive portal, /api/selftest, /api/diagnostics, /api/battery/history
@@ -5389,7 +5429,8 @@ static void start_http_server() {
       httpd_config_t redirect_config = HTTPD_DEFAULT_CONFIG();
       redirect_config.server_port = 80;
       redirect_config.uri_match_fn = httpd_uri_match_wildcard;
-      redirect_config.max_uri_handlers = 5;
+      // 3 probes + companion (3) + provisioning API (4) + QR (3) + 2 redirects.
+      redirect_config.max_uri_handlers = 20;
 
       if (httpd_start(&g_http_server, &redirect_config) == ESP_OK) {
         // Captive portal probes must stay on HTTP — iOS/Android send
@@ -5400,6 +5441,11 @@ static void start_http_server() {
         httpd_register_uri_handler(g_http_server, &cp2);
         httpd_uri_t cp3 = { .uri = "/connecttest.txt", .method = HTTP_GET, .handler = handle_captive_portal };
         httpd_register_uri_handler(g_http_server, &cp3);
+        // The companion setup wizard + the WiFi-provisioning API it calls
+        // must also stay on HTTP, or the captive portal redirect below bounces
+        // the user to the self-signed HTTPS cert (white screen in iOS/Android
+        // captive browsers). Registered before "/*" so the exact URIs win.
+        register_captive_http_routes(g_http_server);
         // Everything else redirects to HTTPS
         httpd_uri_t redirect_all = { .uri = "/*", .method = HTTP_GET, .handler = handle_https_redirect };
         httpd_register_uri_handler(g_http_server, &redirect_all);

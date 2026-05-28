@@ -4,7 +4,7 @@
  * Detects whether the device has been set up before (NVS flag) and
  * drives the onboarding flow:
  *
- *   1. First boot: AP SSID becomes "SecuraCV-Setup-XXXX", web UI
+ *   1. First boot: AP SSID becomes "SecuraCV-XXXX", web UI
  *      redirects to a mobile-optimized setup wizard, captive portal
  *      DNS intercept triggers the phone's "sign in to network" dialog.
  *
