@@ -329,18 +329,26 @@ static void on_peer_hub_election(
    * winner isn't settled yet — so we only record HUB_ELECTED. */
   if (event != mesh_hub_election::Event::HUB_ELECTED) return;
 
+  /* s_current_hub_fp mirrors what is actually persisted in NVS, so the
+   * de-dup below skips re-writing a hub we've already stored. It is
+   * updated ONLY after a successful save: if a save fails (transient
+   * NVS fault, or flash encryption disabled), the cache stays stale so
+   * the next identical HUB_ELECTED frame retries the write rather than
+   * silently short-circuiting and never persisting at all. */
   if (s_has_current_hub &&
       mesh_hub_election::compare_fingerprints(s_current_hub_fp,
                                               elected_fp) == 0) {
-    return;  /* unchanged — skip the NVS write (flash-wear de-dup) */
+    return;  /* already persisted this winner — skip the NVS write */
   }
 
-  memcpy(s_current_hub_fp, elected_fp, sizeof(s_current_hub_fp));
-  s_has_current_hub = true;
-  if (!mesh_state::save_elected_hub(elected_fp)) {
+  if (mesh_state::save_elected_hub(elected_fp)) {
+    memcpy(s_current_hub_fp, elected_fp, sizeof(s_current_hub_fp));
+    s_has_current_hub = true;
+  } else {
     /* Non-fatal: failover still works from the live election broadcast;
      * we just won't have the hint cached across the next reboot (e.g.
-     * flash encryption disabled on a dev board). */
+     * flash encryption disabled on a dev board). Leave the cache
+     * untouched so a later election re-attempts the persist. */
     Serial.println("[mesh.election] note: elected hub not persisted "
                    "(NVS write refused or failed)");
   }
