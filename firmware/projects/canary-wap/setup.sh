@@ -286,10 +286,15 @@ setup_arduino() {
     echo "   - NimBLE-Arduino by h2zero (version 2.3.8 or later — DO NOT use 1.x)"
     echo ""
     echo "3. Board Settings (Tools menu):"
-    echo "   - Board: ESP32S3 Dev Module (or XIAO ESP32S3)"
+    echo "   - Board: XIAO_ESP32S3 (or ESP32S3 Dev Module)"
     echo "   - USB CDC On Boot: Enabled"
     echo "   - Flash Size: 8MB"
-    echo "   - PSRAM: OPI PSRAM"
+    echo "   - PSRAM: OPI PSRAM   <-- DEFAULTS TO 'Disabled'. The camera falls"
+    echo "                            back to QVGA-in-DRAM unless you set this!"
+    echo ""
+    echo "   Tip: Arduino IDE 2.3+ can apply these for you — open the sketch and"
+    echo "        pick the 'xiao_sense' profile (from sketch.yaml) in the toolbar"
+    echo "        dropdown instead of setting each Tools-menu option by hand."
     echo ""
     echo "4. Open the sketch:"
     echo "   ${arduino_dir}/canary_wap.ino"
@@ -315,6 +320,11 @@ setup_arduino() {
             arduino-cli lib install "NimBLE-Arduino"
 
             print_success "Arduino CLI setup complete!"
+            echo ""
+            print_info "Build/upload with PSRAM baked in (uses the sketch.yaml profile):"
+            echo "    arduino-cli compile --profile xiao_sense ${arduino_dir}"
+            echo "    arduino-cli upload  --profile xiao_sense -p <PORT> ${arduino_dir}"
+            print_info "Or via make (same PSRAM-enabled FQBN):  make arduino-build / make arduino-upload"
         fi
     fi
 }
