@@ -1993,7 +1993,10 @@ bool load_replay_counters() {
   size_t got = g_prefs.getBytes(NVS_REPLAY_KEY, blob, sizeof(blob));
   g_prefs.end();
 
-  if (got == 0 || (got % REPLAY_ENTRY_SIZE) != 0) return got == 0;
+  // Key exists (isKey above), so got==0 is a real read failure, not an
+  // empty-but-valid blob (save_replay_counters never writes zero bytes).
+  // Fail closed so we skip the restore instead of dropping replay history.
+  if (got == 0 || (got % REPLAY_ENTRY_SIZE) != 0) return false;
   size_t n = got / REPLAY_ENTRY_SIZE;
 
   for (size_t e = 0; e < n; ++e) {
