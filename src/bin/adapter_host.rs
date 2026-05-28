@@ -248,25 +248,30 @@ fn spawn_mqtt_forwarder(
             password.as_deref(),
         ) {
             Ok((client, mut connection)) => {
+                let mut sub_failed = false;
                 for topic in &topics {
                     if let Err(e) = client.subscribe(topic, QoS::AtLeastOnce) {
-                        log::warn!("subscribe to {topic} failed: {e}");
-                    } else {
-                        log::info!("[{client_id}] subscribed to {topic}");
+                        log::warn!("[{client_id}] subscribe to {topic} failed: {e}");
+                        sub_failed = true;
+                        break;
                     }
+                    log::info!("[{client_id}] subscribed to {topic}");
                 }
-                for event in connection.iter() {
-                    match event {
-                        Ok(Event::Incoming(Incoming::Publish(p))) => {
-                            let topic = String::from_utf8_lossy(&p.topic).to_string();
-                            if tx.send((topic, p.payload.to_vec())).is_err() {
-                                return; // host dropped the adapter; stop forwarding.
+                // Reconnect rather than run with missing subscriptions.
+                if !sub_failed {
+                    for event in connection.iter() {
+                        match event {
+                            Ok(Event::Incoming(Incoming::Publish(p))) => {
+                                let topic = String::from_utf8_lossy(&p.topic).to_string();
+                                if tx.send((topic, p.payload.to_vec())).is_err() {
+                                    return; // host dropped the adapter; stop forwarding.
+                                }
                             }
-                        }
-                        Ok(_) => {}
-                        Err(e) => {
-                            log::warn!("[{client_id}] mqtt error: {e}");
-                            break;
+                            Ok(_) => {}
+                            Err(e) => {
+                                log::warn!("[{client_id}] mqtt error: {e}");
+                                break;
+                            }
                         }
                     }
                 }
@@ -287,6 +292,11 @@ fn connect(
         .rsplit_once(':')
         .ok_or_else(|| anyhow!("broker addr must be host:port, got {broker_addr}"))?;
     let port: u16 = port.parse().context("parsing broker port")?;
+    // Strip IPv6 brackets (e.g. "[::1]") for the loopback check and the rumqttc host.
+    let host = host
+        .strip_prefix('[')
+        .and_then(|h| h.strip_suffix(']'))
+        .unwrap_or(host);
     if host != "127.0.0.1" && host != "localhost" && host != "::1" {
         log::warn!("connecting to non-loopback broker {host}; ensure the network is trusted");
     }

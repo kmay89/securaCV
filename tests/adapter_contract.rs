@@ -154,6 +154,27 @@ fn below_confidence_floor_is_dropped_silently() {
 }
 
 #[test]
+fn multiple_adapters_of_same_type_all_register() {
+    let mut host = setup_host(0.0);
+    let (a1, _tx1) = MqttSensorAdapter::new(vec![SensorRoute::new(
+        "s/1",
+        ClaimKind::ContactStateChange,
+        "z1",
+    )]);
+    let (a2, _tx2) = MqttSensorAdapter::new(vec![SensorRoute::new(
+        "s/2",
+        ClaimKind::ContactStateChange,
+        "z2",
+    )]);
+    host.register(a1);
+    host.register(a2);
+    // Both instances coexist — the second does not replace the first under a shared name.
+    assert_eq!(host.adapter_count(), 2);
+    // Polling both is fine (no claims fed => zero sealed, no panic).
+    assert_eq!(host.run_once().expect("run_once"), 0);
+}
+
+#[test]
 fn duplicate_claim_in_same_bucket_is_deduplicated() {
     let mut host = setup_host(0.0);
     let desc = permissive_descriptor();

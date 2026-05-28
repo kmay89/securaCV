@@ -114,14 +114,16 @@ impl MqttSensorAdapter {
     pub fn message_to_claim(&self, topic: &str, payload: &[u8]) -> Option<Claim> {
         let route = self.routes.iter().find(|r| r.topic == topic)?;
 
-        // Try JSON first; fall back to a bare-string interpretation.
+        // Parse JSON first; `is_json_object` reflects whether parsing actually succeeded, so a
+        // malformed payload that merely starts with '{' is NOT treated as a triggered object.
         let raw = std::str::from_utf8(payload).ok()?;
-        let parsed: SensorPayload = serde_json::from_str(raw).unwrap_or_default();
+        let (parsed, is_json_object) = serde_json::from_str::<SensorPayload>(raw)
+            .map(|p| (p, true))
+            .unwrap_or((SensorPayload::default(), false));
 
-        let is_json_object = raw.trim_start().starts_with('{');
         let state_truthy = match (&parsed.state, is_json_object) {
             (Some(s), _) => Self::parse_truthy(s),
-            (None, true) => true, // JSON object without explicit state => triggered
+            (None, true) => true, // valid JSON object without explicit state => triggered
             (None, false) => Self::parse_truthy(raw),
         };
 
@@ -207,6 +209,21 @@ mod tests {
             "z",
         )]);
         assert!(adapter.message_to_claim("x/y", b"ON").is_none());
+    }
+
+    #[test]
+    fn malformed_json_does_not_trigger_truthy_route() {
+        let mut route = SensorRoute::new(
+            "sensors/door/contact",
+            ClaimKind::ContactStateChange,
+            "front_door",
+        );
+        route.require_truthy_state = true;
+        let (adapter, _tx) = MqttSensorAdapter::new(vec![route]);
+        // Truncated/invalid JSON that starts with '{' must NOT be treated as a triggered object.
+        assert!(adapter
+            .message_to_claim("sensors/door/contact", br#"{"state":"off"#)
+            .is_none());
     }
 
     #[test]

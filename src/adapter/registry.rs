@@ -24,14 +24,14 @@ impl AdapterRegistry {
         }
     }
 
-    /// Register an adapter by its [`name`](crate::adapter::SensorAdapter::name).
-    /// Re-registering the same name replaces the adapter but keeps its position in poll order.
+    /// Register an adapter. Each registration gets a unique key derived from the adapter's
+    /// [`name`](crate::adapter::SensorAdapter::name) plus a monotonic index, so multiple
+    /// instances of the same adapter type (e.g. two `mqtt_sensor` blocks) all coexist and are
+    /// each polled — registering never silently replaces an earlier instance.
     pub fn register<A: SensorAdapter + 'static>(&mut self, adapter: A) {
-        let name = adapter.name().to_string();
-        if !self.adapters.contains_key(&name) {
-            self.order.push(name.clone());
-        }
-        self.adapters.insert(name, Arc::new(Mutex::new(adapter)));
+        let key = format!("{}#{}", adapter.name(), self.order.len());
+        self.order.push(key.clone());
+        self.adapters.insert(key, Arc::new(Mutex::new(adapter)));
     }
 
     /// Get an adapter handle by name.

@@ -80,6 +80,17 @@ impl AdapterHost {
         desc: &AdapterDescriptor,
         claim: &Claim,
     ) -> Result<Option<Event>> {
+        // Fail closed: an adapter that requests a forbidden capability (Filesystem/Network) must
+        // never have a claim sealed, regardless of how it was registered. Mirrors
+        // `CapabilityBoundaryRuntime::validate_descriptor` for modules.
+        if let Some(cap) = desc.requested_capabilities.first() {
+            return Err(anyhow!(
+                "conformance: adapter {} requested forbidden capability {:?}",
+                desc.id,
+                cap
+            ));
+        }
+
         // Coarse host-level confidence floor (NaN-safe: NaN comparisons are false, so NaN passes
         // here and is rejected authoritatively by the kernel's bounds check).
         if claim.confidence < self.config.min_confidence {
@@ -137,13 +148,23 @@ impl AdapterHost {
                 Some(a) => a,
                 None => continue,
             };
+            // A single failing or poisoned adapter must not starve the others this cycle.
             let (desc, claims) = {
-                let mut guard = adapter
-                    .lock()
-                    .map_err(|_| anyhow!("adapter '{}' lock poisoned", name))?;
+                let mut guard = match adapter.lock() {
+                    Ok(g) => g,
+                    Err(_) => {
+                        log::warn!("adapter '{}' lock poisoned; skipping", name);
+                        continue;
+                    }
+                };
                 let desc = guard.descriptor();
-                let claims = guard.poll()?;
-                (desc, claims)
+                match guard.poll() {
+                    Ok(claims) => (desc, claims),
+                    Err(e) => {
+                        log::warn!("adapter '{}' poll failed: {}; skipping", name, e);
+                        continue;
+                    }
+                }
             };
             for claim in claims {
                 match self.process_claim(desc, &claim) {
