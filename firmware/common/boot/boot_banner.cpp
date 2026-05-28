@@ -1,4 +1,4 @@
-#include "boot/boot_banner.h"
+#include "boot_banner.h"
 #include <stdio.h>
 #include <stdarg.h>
 #include <string.h>

@@ -115,7 +115,7 @@
 
 #include "esp_camera.h"
 
-#include "boot/boot_banner.h"
+#include <boot_banner.h>
 #include "log_level.h"
 #include "health_log.h"
 #include "sd_storage.h"
