@@ -43,12 +43,14 @@ namespace hw_config {
   // Safe mode protection
   static const uint32_t SAFE_MODE_WINDOW_MS     = 60000;  // 60 second window
   static const uint8_t  SAFE_MODE_REBOOT_LIMIT  = 3;      // 3 reboots in window triggers safe mode
-  static const uint32_t SAFE_MODE_RECOVERY_MS   = 300000; // 5 minutes stable to clear safe mode
+  static const uint32_t SAFE_MODE_RECOVERY_MS   = 60000;  // 60s stable in safe mode before a recovery reboot
+  static const uint8_t  SAFE_MODE_MAX_RECOVERIES = 3;     // Bounded auto-reboot attempts before staying in safe mode
 
   // NVS keys for boot tracking
   static const char* NVS_BOOT_TIMES      = "boot_times";   // Array of recent boot timestamps
   static const char* NVS_SAFE_MODE       = "safe_mode";    // Safe mode flag
   static const char* NVS_SAFE_MODE_TIME  = "safe_time";    // When safe mode was entered
+  static const char* NVS_RECOVERY_COUNT  = "recov_count";  // Auto-reboot recovery attempts used
 }
 
 // ============================================================================
@@ -247,6 +249,13 @@ void safe_mode_enter(const char* reason);
  * Clear safe mode (after user intervention or recovery period).
  */
 void safe_mode_clear();
+
+/**
+ * User-initiated escape from a maxed-out safe mode: reset the recovery
+ * budget and reboot into full operation. Reachable from the dashboard
+ * since the WiFi AP + HTTP server keep running in safe mode.
+ */
+void safe_mode_force_retry();
 
 /**
  * Check if in safe mode.
@@ -594,14 +603,21 @@ bool safe_mode_check() {
   // Check if we should enter safe mode
   if (rapid_count >= hw_config::SAFE_MODE_REBOOT_LIMIT) {
     if (!g_hw.safe_mode) {
-      safe_mode_enter("Rapid reboot detected");
+      safe_mode_enter("Rapid reboot detected");  // sets safe_mode_entered_ms
+    } else {
+      // Already in safe mode from a previous session — measure the recovery
+      // window from this boot rather than the memset-zero default.
+      g_hw.safe_mode_entered_ms = millis();
     }
     return true;
   }
 
   // If we were in safe mode and now booting normally, stay in safe mode
-  // until recovery period passes
+  // until the recovery period passes. Measure that period from this boot —
+  // safe mode was entered in a previous session, so the in-RAM entry time
+  // would otherwise be 0 and the recovery timer would be meaningless.
   if (g_hw.safe_mode) {
+    g_hw.safe_mode_entered_ms = millis();
     Serial.println("[SAFE] Still in safe mode from previous session");
     return true;
   }
@@ -615,18 +631,43 @@ void safe_mode_update() {
   // Track stability
   g_hw.last_stable_ms = now;
 
-  // If in safe mode, check if we can clear it
+  // If in safe mode, attempt a bounded recovery once the device has been
+  // stable for the recovery window. The subtraction is overflow-safe.
   if (g_hw.safe_mode) {
-    // After SAFE_MODE_RECOVERY_MS of stable operation, clear safe mode
-    if (now > hw_config::SAFE_MODE_RECOVERY_MS) {
-      Serial.println("[SAFE] Recovery period complete - clearing safe mode");
-      safe_mode_clear();
+    if ((now - g_hw.safe_mode_entered_ms) > hw_config::SAFE_MODE_RECOVERY_MS) {
+      g_hw_nvs.begin("hw_state", false);
+      uint8_t recoveries = g_hw_nvs.getUChar(hw_config::NVS_RECOVERY_COUNT, 0);
+
+      // Bounded: if full operation keeps crashing back into safe mode, stop
+      // rebooting and stay here (stable, dashboard reachable) for a human.
+      if (recoveries >= hw_config::SAFE_MODE_MAX_RECOVERIES) {
+        g_hw_nvs.end();
+        static bool logged = false;
+        if (!logged) {
+          Serial.println("[SAFE] Max recovery attempts reached - staying in safe mode. "
+                         "Fix the device, then use 'Retry full boot' on the dashboard.");
+          logged = true;
+        }
+        return;
+      }
+
+      g_hw_nvs.putUChar(hw_config::NVS_RECOVERY_COUNT, recoveries + 1);
+      g_hw_nvs.end();
+
+      Serial.printf("[SAFE] Stable %us - recovery attempt %u/%u, rebooting to restore full operation\n",
+                    hw_config::SAFE_MODE_RECOVERY_MS / 1000,
+                    recoveries + 1, hw_config::SAFE_MODE_MAX_RECOVERIES);
+      safe_mode_clear();   // clears safe_mode flag + rapid_count, NOT recov_count
+      delay(100);          // let serial flush before the reset
+      ESP.restart();
     }
   } else {
-    // Not in safe mode - clear rapid boot counter after stable operation
+    // Not in safe mode - after a stable full-operation window, reset BOTH
+    // counters so a transient fault self-heals and the recovery budget returns.
     if (now > hw_config::SAFE_MODE_WINDOW_MS && g_hw.rapid_boot_count > 0) {
       g_hw_nvs.begin("hw_state", false);
       g_hw_nvs.putUChar("rapid_count", 0);
+      g_hw_nvs.putUChar(hw_config::NVS_RECOVERY_COUNT, 0);
       g_hw_nvs.end();
       g_hw.rapid_boot_count = 0;
     }
@@ -657,6 +698,18 @@ void safe_mode_clear() {
   g_hw_nvs.putBool(hw_config::NVS_SAFE_MODE, false);
   g_hw_nvs.putUChar("rapid_count", 0);
   g_hw_nvs.end();
+}
+
+void safe_mode_force_retry() {
+  Serial.println("[SAFE] Manual retry requested - resetting recovery budget and rebooting");
+
+  g_hw_nvs.begin("hw_state", false);
+  g_hw_nvs.putUChar(hw_config::NVS_RECOVERY_COUNT, 0);
+  g_hw_nvs.end();
+
+  safe_mode_clear();
+  delay(100);  // let serial + HTTP response flush before the reset
+  ESP.restart();
 }
 
 // ────────────────────────────────────────────────────────────────────────────

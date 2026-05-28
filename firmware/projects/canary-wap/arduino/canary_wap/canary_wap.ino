@@ -2902,6 +2902,26 @@ static esp_err_t handle_reboot(httpd_req_t* req) {
   return ESP_OK;
 }
 
+// Manual escape from a maxed-out safe mode: reset the recovery budget and
+// reboot into full operation. The dashboard surfaces this once the device
+// has exhausted its automatic recovery attempts.
+static esp_err_t handle_safe_mode_retry(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  log_health(SCV_LOG_NOTICE, SCV_CAT_USER, "Safe mode retry requested", nullptr);
+
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["message"] = "Resetting recovery budget and rebooting...";
+
+  String response;
+  serializeJson(doc, response);
+  http_send_json(req, response.c_str());
+
+  safe_mode_force_retry();  // resets recov_count + clears safe mode, then ESP.restart()
+  return ESP_OK;
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // CAMERA PEEK (Live Preview for Setup) — FIXED VERSION
 // ════════════════════════════════════════════════════════════════════════════
@@ -4946,6 +4966,11 @@ static esp_err_t handle_reboot_auth(httpd_req_t* req) {
   return handle_reboot(req);
 }
 
+static esp_err_t handle_safe_mode_retry_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_safe_mode_retry(req);
+}
+
 // WiFi-management auth wrappers. These three endpoints mutate provisioning
 // state (disable WiFi, wipe NVS-stored credentials, re-enable) and are only
 // meaningful AFTER first-setup. The dashboard's secureFetch already sends
@@ -5168,6 +5193,9 @@ static void register_api_routes(httpd_handle_t server) {
 
   httpd_uri_t reboot = { .uri = "/api/reboot", .method = HTTP_POST, .handler = handle_reboot_auth };
   httpd_register_uri_handler(server, &reboot);
+
+  httpd_uri_t safe_retry = { .uri = "/api/safe-mode/retry", .method = HTTP_POST, .handler = handle_safe_mode_retry_auth };
+  httpd_register_uri_handler(server, &safe_retry);
 
   // CSI library integration: registers /api/csi/stream, /api/csi/window,
   // /api/events/today, /api/events/dismiss, registers the four v1 sensing
@@ -6225,7 +6253,8 @@ void setup() {
     Serial.println("╔══════════════════════════════════════════════════════════════╗");
     Serial.println("║  ⚠️  SAFE MODE ACTIVE — Optional peripherals disabled         ║");
     Serial.println("║  Repeated crashes detected. Core witness functions only.     ║");
-    Serial.println("║  Device will auto-recover after 5 minutes of stability.      ║");
+    Serial.println("║  Auto-reboots after 60s stable; if it keeps crashing back    ║");
+    Serial.println("║  it stays here — use 'Retry full boot' on the dashboard.     ║");
     Serial.println("╚══════════════════════════════════════════════════════════════╝");
     Serial.println();
   }
