@@ -2397,6 +2397,8 @@ static esp_err_t handle_status(httpd_req_t* req) {
   // ═══════════════════════════════════════════════════════════════════════════
 
   doc["safe_mode"] = g_hw.safe_mode;
+  doc["last_reset"] = reset_reason_name(g_hw.last_reset_reason);
+  doc["last_reset_crash"] = g_hw.last_reset_was_crash;
 
   // GPS status (using hardware state - non-blocking, graceful degradation)
   doc["gps_healthy"] = g_hw.gps_available;

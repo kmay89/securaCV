@@ -23,6 +23,7 @@
 #include <SD.h>
 #include <SPI.h>
 #include <Preferences.h>
+#include <esp_system.h>   // esp_reset_reason()
 
 // ============================================================================
 // CONFIGURATION
@@ -126,9 +127,11 @@ struct HardwareState {
 
   // === Safe Mode ===
   bool     safe_mode;             // In safe mode (optional peripherals disabled)
-  uint8_t  rapid_boot_count;      // Recent boot count
+  uint8_t  rapid_boot_count;      // Consecutive crash reboots (panic/watchdog/brownout)
   uint32_t safe_mode_entered_ms;  // When safe mode was entered
   uint32_t last_stable_ms;        // Last known stable operation time
+  esp_reset_reason_t last_reset_reason;  // Why the chip last reset
+  bool     last_reset_was_crash;  // Did the last reset look like a crash?
 };
 
 // Global hardware state instance
@@ -581,29 +584,71 @@ void sd_update_space_cache() {
 // SAFE MODE FUNCTIONS
 // ────────────────────────────────────────────────────────────────────────────
 
+// Human-readable name for the chip's last reset cause.
+const char* reset_reason_name(esp_reset_reason_t r) {
+  switch (r) {
+    case ESP_RST_POWERON:   return "power-on";
+    case ESP_RST_EXT:       return "external-pin";
+    case ESP_RST_SW:        return "software";
+    case ESP_RST_PANIC:     return "panic";
+    case ESP_RST_INT_WDT:   return "int-watchdog";
+    case ESP_RST_TASK_WDT:  return "task-watchdog";
+    case ESP_RST_WDT:       return "other-watchdog";
+    case ESP_RST_DEEPSLEEP: return "deep-sleep";
+    case ESP_RST_BROWNOUT:  return "brownout";
+    case ESP_RST_SDIO:      return "sdio";
+    default:                return "unknown";
+  }
+}
+
+// Only resets that signal an actual fault count toward safe mode. A user
+// toggling power, pressing reset, replugging USB, or our own ESP.restart()
+// must NOT push the device toward safe mode — otherwise routine handling
+// trips the boot-loop guard. Brownout counts because disabling the optional
+// peripherals (camera inrush, BLE/WiFi radios) reduces current draw and can
+// itself break a brownout loop on a marginal supply.
+bool reset_is_crash(esp_reset_reason_t r) {
+  return r == ESP_RST_PANIC   ||
+         r == ESP_RST_INT_WDT ||
+         r == ESP_RST_TASK_WDT ||
+         r == ESP_RST_WDT     ||
+         r == ESP_RST_BROWNOUT;
+}
+
 bool safe_mode_check() {
   g_hw_nvs.begin("hw_state", false);
 
   // Read previous safe mode flag
   g_hw.safe_mode = g_hw_nvs.getBool(hw_config::NVS_SAFE_MODE, false);
 
-  // To detect rapid reboots without a real-time clock, we increment a counter
-  // in NVS on each boot. This counter is reset to zero in `safe_mode_update()`
-  // after the device has been stable for SAFE_MODE_WINDOW_MS.
+  // Classify why the chip reset. Without a real-time clock we count
+  // consecutive *crash* reboots (panic / watchdog / brownout) in NVS; the
+  // counter is cleared in `safe_mode_update()` once the device runs stably
+  // for SAFE_MODE_WINDOW_MS. Benign resets (power-on, reset button, USB
+  // replug, our own ESP.restart()) are logged but do not advance the count.
+  g_hw.last_reset_reason = esp_reset_reason();
+  g_hw.last_reset_was_crash = reset_is_crash(g_hw.last_reset_reason);
+
   uint8_t rapid_count = g_hw_nvs.getUChar("rapid_count", 0);
 
-  rapid_count++;
+  if (g_hw.last_reset_was_crash) {
+    rapid_count++;
+    g_hw_nvs.putUChar("rapid_count", rapid_count);
+    Serial.printf("[SAFE] Crash reset (%s) - consecutive crash count %u/%u\n",
+                  reset_reason_name(g_hw.last_reset_reason),
+                  rapid_count, hw_config::SAFE_MODE_REBOOT_LIMIT);
+  } else {
+    Serial.printf("[SAFE] Clean reset (%s) - not counted toward safe mode\n",
+                  reset_reason_name(g_hw.last_reset_reason));
+  }
   g_hw.rapid_boot_count = rapid_count;
-
-  // Store updated count
-  g_hw_nvs.putUChar("rapid_count", rapid_count);
 
   g_hw_nvs.end();
 
   // Check if we should enter safe mode
   if (rapid_count >= hw_config::SAFE_MODE_REBOOT_LIMIT) {
     if (!g_hw.safe_mode) {
-      safe_mode_enter("Rapid reboot detected");  // sets safe_mode_entered_ms
+      safe_mode_enter("Repeated crash reboots detected");  // sets safe_mode_entered_ms
     } else {
       // Already in safe mode from a previous session — measure the recovery
       // window from this boot rather than the memset-zero default.
@@ -720,7 +765,10 @@ void hw_state_print() {
   Serial.println();
   Serial.println("=== HARDWARE STATE ===");
   Serial.printf("  Safe Mode: %s\n", g_hw.safe_mode ? "YES" : "no");
-  Serial.printf("  Rapid Boot Count: %d/%d\n", g_hw.rapid_boot_count, hw_config::SAFE_MODE_REBOOT_LIMIT);
+  Serial.printf("  Last Reset: %s (%s)\n",
+                reset_reason_name(g_hw.last_reset_reason),
+                g_hw.last_reset_was_crash ? "crash" : "clean");
+  Serial.printf("  Crash Reboot Count: %d/%d\n", g_hw.rapid_boot_count, hw_config::SAFE_MODE_REBOOT_LIMIT);
   Serial.println();
   Serial.printf("  GPS: %s (%s)\n",
                 g_hw.gps_available ? "available" : "absent",
@@ -749,6 +797,8 @@ size_t hw_state_json(char* buf, size_t buf_size) {
     "{"
     "\"safe_mode\":%s,"
     "\"rapid_boot_count\":%d,"
+    "\"last_reset\":\"%s\","
+    "\"last_reset_crash\":%s,"
     "\"gps\":{"
       "\"available\":%s,"
       "\"state\":\"%s\","
@@ -766,6 +816,8 @@ size_t hw_state_json(char* buf, size_t buf_size) {
     "}",
     g_hw.safe_mode ? "true" : "false",
     g_hw.rapid_boot_count,
+    reset_reason_name(g_hw.last_reset_reason),
+    g_hw.last_reset_was_crash ? "true" : "false",
     g_hw.gps_available ? "true" : "false",
     gps_state_name(g_hw.gps_state),
     g_hw.gps_ever_detected ? "true" : "false",

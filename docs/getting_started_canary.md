@@ -544,7 +544,7 @@ for evidence, **export the chain before you factory-reset** —
 | Symptom | Likely cause |
 |---|---|
 | Phone can't see `SecuraCV-XXXX` | Power LED off → check USB cable. (Safe mode does *not* hide the network — the Wi-Fi AP keeps running.) |
-| Dashboard shows a yellow **Safe mode active** bar | The Canary cycled power / rebooted several times in quick succession and disabled optional peripherals (camera, SD, mesh, BLE, presence, GPS) to protect the core witness functions. It auto-reboots once it has run stably for ~60 s. If a persistent fault keeps crashing it back into safe mode it stops retrying and stays put — fix the underlying issue (reseat the SD card, check power), then click **Retry full boot** on the bar. |
+| Dashboard shows a yellow **Safe mode active** bar | The Canary *crashed* (firmware panic / watchdog / brownout) several times in a row and disabled optional peripherals (camera, SD, mesh, BLE, presence, GPS) to protect the core witness functions. Ordinary power cycling, unplugging, or pressing reset does **not** trigger this — only genuine crashes do. It auto-reboots once it has run stably for ~60 s. If a persistent fault keeps crashing it back into safe mode it stops retrying and stays put — fix the underlying issue (reseat the SD card, check power), then click **Retry full boot** on the bar. |
 | `canary.local` doesn't load | Some Android versions don't resolve `.local`; use the IP address from your Wi-Fi settings |
 | Sensing pill stays **Offline** | This build was compiled without CSI; check **Settings → About → Build features** |
 | **Drop: rate-limit** climbing fast | Strong nearby 2.4 GHz interferer; move the Canary or switch your home Wi-Fi to channel 6 or 11 |
