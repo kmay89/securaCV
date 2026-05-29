@@ -201,3 +201,30 @@ describe('POST /api/v1/witness/verify — shared-verifier reuse', () => {
     assert.ok(res.json.evidence_envelope.whole_envelope_digest);
   });
 });
+
+describe('crypto-heavy endpoints are rate-limited (DoS hardening)', () => {
+  let server, client;
+  // Tighten the dedicated limiter so the test is fast and deterministic.
+  before(async () => {
+    server = await startServer({ devMode: true });
+    server.state.envelopeRateLimit = { limit: 3, windowMs: 60000 };
+    client = createClient(server.url, TEST_TOKEN);
+  });
+  after(async () => { await server.close(); });
+
+  it('returns 429 once the per-route limit is exceeded', async () => {
+    let sawLimited = false;
+    // Limit is 3; the 4th request within the window must be refused.
+    for (let i = 0; i < 5; i++) {
+      const res = await client.get('/api/v1/witness/envelope');
+      if (res.status === 429) {
+        sawLimited = true;
+        assert.equal(res.json.error, 'rate_limited');
+        assert.ok(res.headers['retry-after'], 'should set Retry-After');
+        break;
+      }
+      assert.equal(res.status, 200);
+    }
+    assert.ok(sawLimited, 'expected a 429 after exceeding the dedicated envelope rate limit');
+  });
+});
