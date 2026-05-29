@@ -21,3 +21,17 @@ jobs:
       run: node --test viewer/verify_core.test.js
     - name: Offline viewer is up to date (no drift from verify_core.js)
       run: node viewer/build.mjs --check
+
+  canary-bridge:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+    - name: Install canary-vision deps
+      working-directory: canary-vision
+      run: npm install --workspaces
+    - name: Envelope-bridge tests (build + shared-verifier reuse)
+      working-directory: canary-vision
+      run: node --test tests/api/envelope-bridge.test.js

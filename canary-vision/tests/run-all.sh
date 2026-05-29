@@ -27,6 +27,7 @@ node --test tests/api/info.test.js
 node --test tests/api/config.test.js
 node --test tests/api/logs.test.js
 node --test tests/api/witness.test.js
+node --test tests/api/envelope-bridge.test.js
 node --test tests/api/peers.test.js
 node --test tests/api/reboot.test.js
 node --test tests/api/update.test.js

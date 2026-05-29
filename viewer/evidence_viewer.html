@@ -385,6 +385,27 @@ function serExportReceipt(r) {
     `"batch_size":${serInt(r.batch_size)},"artifact_hash":${serBytes(r.artifact_hash)}}`;
 }
 
+// Sealed-log records are stored as the literal `payload_json` string and hashed verbatim by both
+// verifiers, so the builder must serialize them in serde tagged-enum field order:
+// `{"record_type":...,<variant fields>}`. (The Event variant carries `correlation_token`, which the
+// canary bridge always leaves null — the firmware-side correlation tokens are not exported.)
+function serSealedEvent(e) {
+  return `{"record_type":"event","event_type":${serEnum(e.event_type)},` +
+    `"time_bucket":${serTimeBucket(e.time_bucket)},"zone_id":${serStr(e.zone_id)},` +
+    `"confidence":${serF32(e.confidence)},` +
+    `"correlation_token":${e.correlation_token == null ? 'null' : serBytes(e.correlation_token)},` +
+    `"kernel_version":${serStr(e.kernel_version)},"ruleset_id":${serStr(e.ruleset_id)},` +
+    `"ruleset_hash":${serBytes(e.ruleset_hash)}}`;
+}
+
+function serSealedFailure(f) {
+  return `{"record_type":"failure","failure_type":${serEnum(f.failure_type)},` +
+    `"time_bucket":${serTimeBucket(f.time_bucket)},` +
+    `"details":${f.details == null ? 'null' : serStr(f.details)},` +
+    `"kernel_version":${serStr(f.kernel_version)},"ruleset_id":${serStr(f.ruleset_id)},` +
+    `"ruleset_hash":${serBytes(f.ruleset_hash)}}`;
+}
+
 // ---- envelope digest -----------------------------------------------------
 
 async function computeWholeEnvelopeDigest(envelope) {
@@ -590,6 +611,20 @@ const api = {
   bytesToHex,
   hexToBytes,
   V1_MANIFEST,
+  ENVELOPE_FORMAT,
+  ENVELOPE_VERSION,
+  // Low-level primitives reused by the envelope *builder* (canary-vision bridge) so that
+  // construction and verification share one implementation — the bytes a device signs are
+  // produced by the exact code that later checks them. See canary-vision/device-api/lib/envelope-bridge.js.
+  sha256,
+  hashEntry,
+  serExportEvent,
+  serExportFailure,
+  serExportArtifact,
+  serExportReceipt,
+  serSealedEvent,
+  serSealedFailure,
+  utf8,
 };
 
 if (typeof module !== 'undefined' && module.exports) module.exports = api;

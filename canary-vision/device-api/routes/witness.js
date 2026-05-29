@@ -3,6 +3,8 @@
 const crypto = require('node:crypto');
 const { Router } = require('express');
 const { computeHash, verifySignature } = require('../lib/witness-chain');
+const { buildEvidenceEnvelope, EnvelopeBridgeError } = require('../lib/envelope-bridge');
+const V = require('../../../viewer/verify_core');
 
 function computeExportDigest(records) {
   const h = crypto.createHash('sha256');
@@ -123,6 +125,37 @@ function witnessRoutes(state) {
     res.json(envelope);
   });
 
+  // Canonical evidence envelope: the privacy-coarsened, self-verifying interchange format
+  // (securacv-evidence-envelope v1). Unlike /export (the raw witness-chain-v1 dump), this strips
+  // precise timestamps / GPS / thumbnails and can be reviewed in viewer/evidence_viewer.html or
+  // verified by the Rust envelope_verify CLI. The bridge fails closed if any forbidden field would
+  // leak, surfaced here as HTTP 422 so the operator knows the raw chain still holds precise data.
+  router.get('/api/v1/witness/envelope', async (req, res) => {
+    let bucketS = parseInt(req.query.bucket_s, 10);
+    if (!Number.isInteger(bucketS)) bucketS = undefined;
+    try {
+      const envelope = await buildEvidenceEnvelope({
+        records: state.witnessRecords,
+        publicKey: state.publicKey,
+        privateKey: state.privateKey,
+        device: state.device,
+        bucketS,
+      });
+      const exportedAt = new Date().toISOString();
+      res.setHeader('Content-Type', 'application/json');
+      res.setHeader('Content-Disposition',
+        `attachment; filename="evidence-envelope-${state.device.device_id}-${exportedAt.slice(0, 10)}.json"`);
+      res.json(envelope);
+    } catch (err) {
+      if (err instanceof EnvelopeBridgeError) {
+        state.addLog('WARN', `Evidence envelope refused: ${err.message}`);
+        return res.status(422).json({ error: 'coarsening_failed', message: err.message });
+      }
+      state.addLog('ERROR', `Evidence envelope build failed: ${err.message}`);
+      return res.status(500).json({ error: 'envelope_build_failed', message: err.message });
+    }
+  });
+
   router.post('/api/v1/witness/stream/ticket', (req, res) => {
     const ticket = state.issueSseTicket();
     res.json({ ticket, expires_in_seconds: 30 });
@@ -178,7 +211,7 @@ function witnessRoutes(state) {
     });
   });
 
-  router.post('/api/v1/witness/verify', (req, res) => {
+  router.post('/api/v1/witness/verify', async (req, res) => {
     const records = state.witnessRecords;
     const results = {
       total: records.length,
@@ -231,6 +264,35 @@ function witnessRoutes(state) {
       results.integrity = 'valid_with_warnings';
     } else {
       results.integrity = 'compromised';
+    }
+
+    // Also verify the canonical evidence envelope using the SAME verifier the offline viewer runs
+    // (viewer/verify_core.js) — so "the device says it's intact" and "an independent reviewer says
+    // it's intact" are produced by one implementation, not two that could diverge. This is
+    // best-effort: a coarsening refusal (precise data still in the raw chain) is reported, not fatal.
+    try {
+      const envelope = await buildEvidenceEnvelope({
+        records,
+        publicKey: state.publicKey,
+        privateKey: state.privateKey,
+        device: state.device,
+      });
+      const report = await V.verifyEnvelope(envelope);
+      results.evidence_envelope = {
+        status: report.status,
+        ok: report.ok,
+        whole_envelope_digest: report.whole_envelope_digest,
+        sealed_events: report.sealed_events,
+        checks: report.checks,
+        warnings: report.warnings,
+        error: report.error,
+      };
+    } catch (err) {
+      results.evidence_envelope = {
+        status: err instanceof EnvelopeBridgeError ? 'coarsening_failed' : 'error',
+        ok: false,
+        error: err.message,
+      };
     }
 
     state.addLog('INFO', `Witness chain verified: ${results.valid}/${results.total} valid, ` +
