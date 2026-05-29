@@ -144,6 +144,26 @@ static void test_dropped_inputs() {
   auto q = make_query({"canary"}, QTYPE_A);
   CHECK(captive_dns::build_response(q.data(), q.size(), AP_IP, out, q.size() + 10) == 0,
         "undersized out buffer → drop, no overflow");
+
+  // Truncated QNAME: label claims length 10 but only 3 bytes follow. The walk
+  // must not read past the packet, and the question is incomplete → drop.
+  std::vector<uint8_t> trunc_qname = {
+    0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x0A, 'a', 'b', 'c',  // length 10, but the packet ends after 3 bytes
+  };
+  CHECK(captive_dns::build_response(trunc_qname.data(), trunc_qname.size(),
+                                    AP_IP, out, sizeof(out)) == 0,
+        "truncated QNAME (overshooting label) dropped");
+
+  // Packet ends after the 0x00 terminator with fewer than 4 bytes of
+  // QTYPE+QCLASS → incomplete question, drop.
+  std::vector<uint8_t> trunc_qtype = {
+    0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x03, 'a', 'b', 'c', 0x00, 0x00, 0x01,  // only 2 bytes after the null
+  };
+  CHECK(captive_dns::build_response(trunc_qtype.data(), trunc_qtype.size(),
+                                    AP_IP, out, sizeof(out)) == 0,
+        "truncated QTYPE/QCLASS dropped");
 }
 
 int main() {

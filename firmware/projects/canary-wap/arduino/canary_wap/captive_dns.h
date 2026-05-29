@@ -45,15 +45,19 @@ inline size_t build_response(const uint8_t* query, size_t qlen,
   if (qlen + 16 > out_cap) return 0;             // no room for header+answer
 
   // Walk the first QNAME to its QTYPE. Query QNAMEs aren't compressed, so each
-  // label is [len][bytes], terminated by a zero-length label.
+  // label is [len][bytes], terminated by a zero-length label. The loop only
+  // dereferences query[q] while q < qlen, and a label whose length overshoots
+  // the packet simply leaves q >= qlen — caught by the bounds check below, so
+  // there's no out-of-bounds read regardless of the label bytes.
   size_t q = 12;
   while (q < qlen && query[q] != 0x00) {
     q += (size_t)query[q] + 1;
   }
-  uint16_t qtype = 0;
-  if (q + 2 < qlen) {                            // 0x00, then QTYPE(2) QCLASS(2)
-    qtype = ((uint16_t)query[q + 1] << 8) | query[q + 2];
-  }
+  // Require the 0x00 terminator plus a full QTYPE(2)+QCLASS(2) within bounds.
+  // A truncated or malformed question (overshooting label, or a packet that
+  // ends before QTYPE/QCLASS) is dropped rather than half-parsed.
+  if (q + 4 >= qlen) return 0;
+  uint16_t qtype = ((uint16_t)query[q + 1] << 8) | query[q + 2];
 
   memcpy(out, query, qlen);
   out[2] = 0x84 | (query[2] & 0x01);             // QR=1, AA=1, preserve RD
