@@ -249,3 +249,66 @@ SCQCS_PANIC = "panic"           # Emergency tone burst
 SCQCS_TAMPER = "tamper"         # Tamper alert tone
 SCQCS_WITNESS = "witness"       # Witness event tone
 SCQCS_HEARTBEAT = "heartbeat"   # Periodic chirp for presence
+
+# =============================================================================
+# Witness Event Type Metadata
+# Maps coarse, privacy-preserving event_type claims (emitted by the kernel and
+# its sensor adapters - see spec/sensor_adapter_contract_v0.md) to a friendly
+# label and Material Design icon for the Home Assistant "single pane of glass".
+# These are claims, never identities: no plates, faces, or precise location.
+# =============================================================================
+EVENT_TYPE_METADATA = {
+    "boundary_crossing_object_large": {
+        "label": "Large object crossed boundary",
+        "icon": "mdi:car",
+    },
+    "boundary_crossing_object_small": {
+        "label": "Small object crossed boundary",
+        "icon": "mdi:paw",
+    },
+    "acoustic_impulse_in_zone": {
+        "label": "Acoustic impulse in zone",
+        "icon": "mdi:waveform",
+    },
+    "presence_in_restricted_zone": {
+        "label": "Presence in restricted zone",
+        "icon": "mdi:account-alert",
+    },
+    "vehicle_presence_after_hours": {
+        "label": "Vehicle presence after hours",
+        "icon": "mdi:car-clock",
+    },
+    "contact_state_change": {
+        "label": "Contact state change",
+        "icon": "mdi:door",
+    },
+    "object_removed_from_zone": {
+        "label": "Object removed from zone",
+        "icon": "mdi:package-variant-closed-remove",
+    },
+}
+
+DEFAULT_EVENT_ICON = "mdi:shield-eye"
+
+
+def event_type_metadata(event_type: str | None) -> dict[str, str]:
+    """Return {'label', 'icon'} for an event_type, with a sensible default.
+
+    Accepts both snake_case (e.g. "acoustic_impulse_in_zone") and the kernel's
+    CamelCase enum form (e.g. "AcousticImpulseInZone").
+    """
+    if not event_type:
+        return {"label": "Unknown", "icon": DEFAULT_EVENT_ICON}
+    key = event_type.strip()
+    if key not in EVENT_TYPE_METADATA:
+        # Normalize CamelCase -> snake_case so kernel enum names also resolve.
+        snake = ""
+        for i, ch in enumerate(key):
+            if ch.isupper() and i > 0:
+                snake += "_"
+            snake += ch.lower()
+        key = snake
+    meta = EVENT_TYPE_METADATA.get(key)
+    if meta is None:
+        return {"label": event_type, "icon": DEFAULT_EVENT_ICON}
+    return meta

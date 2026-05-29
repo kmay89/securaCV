@@ -19,12 +19,13 @@ use crate::transport::sanitize_zone_name;
 use crate::{
     CandidateEvent, EventType, InferenceBackend, ModuleCapability, ModuleDescriptor, TimeBucket,
 };
+use serde::{Deserialize, Serialize};
 
 /// A vendor-neutral, semantic claim kind. Intentionally a *closed* vocabulary of coarse
 /// claims: there is no plate/face/embedding variant and no free-form text, by construction.
 ///
 /// Each `ClaimKind` maps 1:1 to an [`EventType`] via [`claim_kind_to_event_type`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ClaimKind {
     /// A vehicle-sized object crossed a zone boundary.
     LargeObjectBoundaryCrossing,
@@ -91,7 +92,7 @@ pub fn claim_kind_to_event_type(kind: ClaimKind) -> EventType {
 ///
 /// The only egress for a `Claim` is the host handing a derived [`CandidateEvent`] to
 /// `Kernel::append_event_checked`. Adapters never write to the log.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Claim {
     /// What kind of coarse event occurred.
     pub kind: ClaimKind,

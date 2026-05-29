@@ -70,3 +70,27 @@ topic = "sensors/server_room/door"
 kind = "contact_state_change"
 zone = "server_room"
 require_truthy_state = true   # only emit on ON/open/true payloads
+
+# ---------------------------------------------------------------------------
+# Adapter: HTTP webhook ingress
+# The lowest-friction option: NO MQTT broker required. Any device or script that
+# can make an HTTP POST becomes a witness source. The request PATH is the route
+# key; the body is parsed like the mqtt_sensor payload. For example:
+#   curl -X POST http://127.0.0.1:8800/sensors/garage/acoustic -d '{"confidence":0.8}'
+# ---------------------------------------------------------------------------
+[[adapter]]
+type = "webhook"
+listen_addr = "127.0.0.1:8800"   # loopback by default
+# sandbox = true                 # parse request bodies inside the seccomp sandbox
+
+[[adapter.route]]
+topic = "/sensors/garage/acoustic"   # matched against the request path
+kind = "acoustic_impulse_in_zone"
+zone = "garage"
+
+# ---------------------------------------------------------------------------
+# Optional hardening: set `sandbox = true` on ANY adapter above to run its
+# payload parsing inside the kernel's seccomp sandbox (forbidden filesystem/
+# network syscalls are denied even if the parser is compromised). Opt-in
+# because of the per-poll fork cost; recommended for internet-facing inputs.
+# ---------------------------------------------------------------------------

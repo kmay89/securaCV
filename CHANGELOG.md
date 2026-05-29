@@ -26,6 +26,13 @@ below.
   `spec/sensor_adapter_contract_v0.md` / `spec/witness_mesh_os_v0.md`. Expanded the event
   vocabulary with `acoustic_impulse_in_zone`, `presence_in_restricted_zone`,
   `vehicle_presence_after_hours`, `contact_state_change`, and `object_removed_from_zone`.
+  - **Webhook ingress adapter** (`adapter-webhook`): a std-only HTTP `POST` listener so any
+    device/script can register a sensor with a single `curl` — no MQTT broker required.
+  - **Optional seccomp sandboxing** (`adapter-sandbox`, `with_sandbox(true)`): adapters can parse
+    untrusted payloads inside the kernel's forked seccomp sandbox, upgrading the adapter audit
+    boundary toward a security boundary for the parse step.
+  - **Home Assistant surfacing**: the new claim types render in the "Last Event" sensor with
+    friendly labels and per-type icons (`EVENT_TYPE_METADATA` in `const.py`).
 - **Home Assistant integration** (HACS): 3 setup modes (MQTT / Kernel HTTP /
   both), MQTT auto-discovery, device PKI trust management (TOFU + manual pin +
   rotation), 5 sensor types, 11 binary sensor types (tamper + transport),

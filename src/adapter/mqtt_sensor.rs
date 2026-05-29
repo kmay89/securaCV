@@ -85,17 +85,98 @@ struct SensorPayload {
 /// A `(topic, payload)` message fed to the adapter.
 pub type SensorMessage = (String, Vec<u8>);
 
+fn parse_truthy(s: &str) -> bool {
+    matches!(
+        s.trim().to_lowercase().as_str(),
+        "on" | "1" | "true" | "open" | "opened" | "detected" | "active"
+    )
+}
+
+/// Pure transform shared by the MQTT and webhook adapters: map one `(topic/path, payload)`
+/// message to at most one claim using a routing table. No I/O — safe to run in the sandbox.
+pub fn route_message(routes: &[SensorRoute], topic: &str, payload: &[u8]) -> Option<Claim> {
+    let route = routes.iter().find(|r| r.topic == topic)?;
+
+    // Parse JSON first; `is_json_object` reflects whether parsing actually succeeded, so a
+    // malformed payload that merely starts with '{' is NOT treated as a triggered object.
+    let raw = std::str::from_utf8(payload).ok()?;
+    let (parsed, is_json_object) = serde_json::from_str::<SensorPayload>(raw)
+        .map(|p| (p, true))
+        .unwrap_or((SensorPayload::default(), false));
+
+    let state_truthy = match (&parsed.state, is_json_object) {
+        (Some(s), _) => parse_truthy(s),
+        (None, true) => true, // valid JSON object without explicit state => triggered
+        (None, false) => parse_truthy(raw),
+    };
+
+    if route.require_truthy_state && !state_truthy {
+        return None;
+    }
+
+    let confidence = parsed.confidence.unwrap_or(1.0);
+    if confidence < route.min_confidence {
+        return None;
+    }
+
+    let zone_label = parsed
+        .zone
+        .clone()
+        .unwrap_or_else(|| route.zone_label.clone());
+    Some(Claim::new(route.kind, zone_label, confidence))
+}
+
+/// Parse a batch of messages, optionally inside the seccomp sandbox. Shared by both adapters.
+pub(crate) fn parse_messages(
+    routes: &[SensorRoute],
+    msgs: &[SensorMessage],
+    sandbox: bool,
+) -> Result<Vec<Claim>> {
+    let do_parse = || {
+        let mut out = Vec::new();
+        for (topic, payload) in msgs {
+            if let Some(claim) = route_message(routes, topic, payload) {
+                out.push(claim);
+            }
+        }
+        Ok(out)
+    };
+    #[cfg(feature = "adapter-sandbox")]
+    {
+        if sandbox {
+            return crate::adapter::sandbox::parse_in_sandbox(do_parse);
+        }
+    }
+    let _ = sandbox;
+    do_parse()
+}
+
 /// Generic MQTT sensor adapter.
 pub struct MqttSensorAdapter {
     rx: Receiver<SensorMessage>,
     routes: Vec<SensorRoute>,
+    sandbox: bool,
 }
 
 impl MqttSensorAdapter {
     /// Build the adapter from a routing table; returns the feeding [`Sender`].
     pub fn new(routes: Vec<SensorRoute>) -> (Self, Sender<SensorMessage>) {
         let (tx, rx) = channel();
-        (Self { rx, routes }, tx)
+        (
+            Self {
+                rx,
+                routes,
+                sandbox: false,
+            },
+            tx,
+        )
+    }
+
+    /// Opt in to running payload parsing inside the seccomp sandbox (requires the
+    /// `adapter-sandbox` feature; no effect otherwise).
+    pub fn with_sandbox(mut self, enabled: bool) -> Self {
+        self.sandbox = enabled;
+        self
     }
 
     /// Topics this adapter wants subscribed (for the feeder/binary).
@@ -103,44 +184,9 @@ impl MqttSensorAdapter {
         self.routes.iter().map(|r| r.topic.clone()).collect()
     }
 
-    fn parse_truthy(s: &str) -> bool {
-        matches!(
-            s.trim().to_lowercase().as_str(),
-            "on" | "1" | "true" | "open" | "opened" | "detected" | "active"
-        )
-    }
-
     /// Pure transform: map one message to at most one claim, per the routing table.
     pub fn message_to_claim(&self, topic: &str, payload: &[u8]) -> Option<Claim> {
-        let route = self.routes.iter().find(|r| r.topic == topic)?;
-
-        // Parse JSON first; `is_json_object` reflects whether parsing actually succeeded, so a
-        // malformed payload that merely starts with '{' is NOT treated as a triggered object.
-        let raw = std::str::from_utf8(payload).ok()?;
-        let (parsed, is_json_object) = serde_json::from_str::<SensorPayload>(raw)
-            .map(|p| (p, true))
-            .unwrap_or((SensorPayload::default(), false));
-
-        let state_truthy = match (&parsed.state, is_json_object) {
-            (Some(s), _) => Self::parse_truthy(s),
-            (None, true) => true, // valid JSON object without explicit state => triggered
-            (None, false) => Self::parse_truthy(raw),
-        };
-
-        if route.require_truthy_state && !state_truthy {
-            return None;
-        }
-
-        let confidence = parsed.confidence.unwrap_or(1.0);
-        if confidence < route.min_confidence {
-            return None;
-        }
-
-        let zone_label = parsed
-            .zone
-            .clone()
-            .unwrap_or_else(|| route.zone_label.clone());
-        Some(Claim::new(route.kind, zone_label, confidence))
+        route_message(&self.routes, topic, payload)
     }
 }
 
@@ -154,13 +200,14 @@ impl SensorAdapter for MqttSensorAdapter {
     }
 
     fn poll(&mut self) -> Result<Vec<Claim>> {
-        let mut out = Vec::new();
-        while let Ok((topic, payload)) = self.rx.try_recv() {
-            if let Some(claim) = self.message_to_claim(&topic, &payload) {
-                out.push(claim);
-            }
+        let mut msgs = Vec::new();
+        while let Ok(msg) = self.rx.try_recv() {
+            msgs.push(msg);
         }
-        Ok(out)
+        if msgs.is_empty() {
+            return Ok(Vec::new());
+        }
+        parse_messages(&self.routes, &msgs, self.sandbox)
     }
 }
 
