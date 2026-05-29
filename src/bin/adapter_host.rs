@@ -36,8 +36,7 @@ use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
-use rumqttc::v5::mqttbytes::QoS;
-use rumqttc::v5::{Client, Event, Incoming, MqttOptions};
+use rumqttc::{Client, Event, Incoming, MqttOptions, QoS};
 use serde::Deserialize;
 
 use witness_kernel::adapter::ble_presence::{BlePresenceAdapter, BleRoom};
@@ -641,7 +640,7 @@ fn connect(
     broker_addr: &str,
     username: Option<&str>,
     password: Option<&str>,
-) -> Result<(Client, rumqttc::v5::Connection)> {
+) -> Result<(Client, rumqttc::Connection)> {
     let (host, port) = broker_addr
         .rsplit_once(':')
         .ok_or_else(|| anyhow!("broker addr must be host:port, got {broker_addr}"))?;
@@ -654,12 +653,12 @@ fn connect(
     if host != "127.0.0.1" && host != "localhost" && host != "::1" {
         log::warn!("connecting to non-loopback broker {host}; ensure the network is trusted");
     }
-    let mut options = MqttOptions::new(client_id, host, port);
-    options.set_keep_alive(Duration::from_secs(60));
+    let mut options = MqttOptions::new(client_id, (host, port));
+    options.set_keep_alive(60);
     options.set_clean_start(true);
     if let Some(user) = username {
-        options.set_credentials(user, password.unwrap_or_default());
+        options.set_credentials(user, password.unwrap_or_default().to_string());
     }
-    let (client, connection) = Client::new(options, 10);
+    let (client, connection) = rumqttc::ClientBuilder::new(options).capacity(10).build();
     Ok((client, connection))
 }

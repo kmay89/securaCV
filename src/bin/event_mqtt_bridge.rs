@@ -13,7 +13,7 @@
 
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
-use rumqttc::v5::{mqttbytes::QoS, Client, Connection, Event, MqttOptions};
+use rumqttc::{Client, Connection, MqttOptions, QoS};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::io::IsTerminal;
@@ -209,7 +209,7 @@ impl MqttRuntime {
         let handle = std::thread::spawn(move || {
             for event in connection.iter() {
                 match event {
-                    Ok(Event::Incoming(_)) | Ok(Event::Outgoing(_)) => {}
+                    Ok(_) => {}
                     Err(e) => {
                         log::warn!("MQTT connection error: {}", e);
                         break;
@@ -782,15 +782,15 @@ fn connect_mqtt(
     password: Option<&str>,
     will_topic: &str,
 ) -> Result<MqttRuntime> {
-    let mut options = MqttOptions::new(client_id, &endpoint.host, endpoint.port);
-    options.set_keep_alive(Duration::from_secs(60));
+    let mut options = MqttOptions::new(client_id, (endpoint.host.as_str(), endpoint.port));
+    options.set_keep_alive(60);
     options.set_clean_start(true);
     if let Some(user) = username {
-        options.set_credentials(user, password.unwrap_or_default());
+        options.set_credentials(user, password.unwrap_or_default().to_string());
     } else {
         log::warn!("MQTT connecting without authentication; set --mqtt-username/--mqtt-password for production use");
     }
-    let will = rumqttc::v5::mqttbytes::v5::LastWill::new(
+    let will = rumqttc::LastWill::new(
         will_topic,
         PAYLOAD_OFFLINE.as_bytes().to_vec(),
         QoS::AtLeastOnce,
@@ -800,7 +800,7 @@ fn connect_mqtt(
     options.set_last_will(will);
     options.set_transport(tls_config.build_transport(endpoint)?);
 
-    let (client, connection) = Client::new(options, 10);
+    let (client, connection) = rumqttc::ClientBuilder::new(options).capacity(10).build();
     log::info!(
         "Connected to MQTT broker (TLS: {}, backend: {}, auth: {})",
         endpoint.use_tls,

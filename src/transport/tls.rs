@@ -187,7 +187,7 @@ impl TlsConfig {
                      Use --mqtt-use-tls or mqtts:// scheme to enable TLS."
                 ));
             }
-            return Ok(Transport::tcp());
+            return Ok(Transport::Tcp);
         }
 
         match self.backend {
@@ -211,7 +211,11 @@ impl TlsConfig {
             )
         })?;
 
-        Ok(Transport::tls(ca, self.materials.client_auth.clone(), None))
+        Ok(Transport::Tls(rumqttc::TlsConfiguration::Simple {
+            ca,
+            alpn: None,
+            client_auth: self.materials.client_auth.clone(),
+        }))
     }
 
     /// Build hybrid PQ TLS transport.
@@ -269,9 +273,9 @@ impl TlsConfig {
         ::log::info!("TLS configured with hybrid PQ key exchange (X25519Kyber768Draft00)");
 
         // rumqttc accepts a custom rustls ClientConfig
-        Ok(Transport::tls_with_config(
-            rumqttc::TlsConfiguration::Rustls(Arc::new(config)),
-        ))
+        Ok(Transport::Tls(rumqttc::TlsConfiguration::Rustls(Arc::new(
+            config,
+        ))))
     }
 
     /// Build hybrid PQ TLS transport (stub when feature disabled).

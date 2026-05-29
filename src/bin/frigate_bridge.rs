@@ -12,7 +12,7 @@
 
 use anyhow::{anyhow, Result};
 use clap::Parser;
-use rumqttc::v5::{mqttbytes::QoS, Client, Connection, Event, Incoming, MqttOptions};
+use rumqttc::{Client, Connection, Event, Incoming, MqttOptions, QoS};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -469,15 +469,15 @@ fn connect_mqtt(
     username: Option<&str>,
     password: Option<&str>,
 ) -> Result<(Client, Connection)> {
-    let mut options = MqttOptions::new(client_id, &endpoint.host, endpoint.port);
-    options.set_keep_alive(Duration::from_secs(60));
+    let mut options = MqttOptions::new(client_id, (endpoint.host.as_str(), endpoint.port));
+    options.set_keep_alive(60);
     options.set_clean_start(true);
     if let Some(user) = username {
-        options.set_credentials(user, password.unwrap_or_default());
+        options.set_credentials(user, password.unwrap_or_default().to_string());
     }
     options.set_transport(tls_config.build_transport(endpoint)?);
 
-    let (client, connection) = Client::new(options, 10);
+    let (client, connection) = rumqttc::ClientBuilder::new(options).capacity(10).build();
     log::info!(
         "Connected to MQTT broker (TLS: {}, backend: {}, auth: {})",
         endpoint.use_tls,
