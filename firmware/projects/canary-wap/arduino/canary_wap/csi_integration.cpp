@@ -649,10 +649,30 @@ esp_err_t handle_window(httpd_req_t* req) {
 
 esp_err_t handle_events_today(httpd_req_t* req) {
   CSI_AUTH_OR_RETURN(req);
-  /* Walk the in-memory ring; emit at most 64 newest rows. Static buffer
-   * so we don't blow the ESP32 task stack (csi_event_record_t is ~120 B). */
-  static csi_event_record_t buffer[64];
-  size_t n = csi_event_recent(buffer, sizeof(buffer) / sizeof(buffer[0]));
+  /* Walk the in-memory ring; emit at most 64 newest rows.
+   *
+   * The 64-row snapshot is ~7.5 KB (csi_event_record_t is ~120 B). A stack
+   * buffer that large would blow the httpd task stack, but a plain static
+   * array lands in internal DRAM .bss — the segment the FULL build was
+   * overflowing (`region 'dram0_0_seg' overflowed by 64 bytes`). Park the
+   * scratchpad in PSRAM instead (the XIAO ESP32-S3 ships 8 MB OPI PSRAM,
+   * pinned on in sketch.yaml), falling back to internal RAM on parts without
+   * PSRAM. Allocated once and retained for the process lifetime — function-
+   * ally identical to the old static buffer, just no longer charged against
+   * dram0_0_seg. */
+  static constexpr size_t kEventRows = 64;
+  static csi_event_record_t* buffer = nullptr;
+  if (buffer == nullptr) {
+    buffer = (csi_event_record_t*)ps_malloc(kEventRows * sizeof(csi_event_record_t));
+    if (buffer == nullptr) {
+      buffer = (csi_event_record_t*)malloc(kEventRows * sizeof(csi_event_record_t));
+    }
+    if (buffer == nullptr) {
+      httpd_resp_set_status(req, "500 Internal Server Error");
+      return httpd_resp_send(req, "{\"ok\":false,\"reason\":\"oom\"}", -1);
+    }
+  }
+  size_t n = csi_event_recent(buffer, kEventRows);
 
   httpd_resp_set_type(req, "application/json");
   httpd_resp_send_chunk(req, "{\"events\":[", 11);
