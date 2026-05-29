@@ -32,3 +32,21 @@ jobs:
       run: cargo check --features pqc-signatures,pqc-vault,pqc-tls
     - name: Test with PQC features
       run: cargo test --features pqc-signatures,pqc-vault
+
+  ingest-ffmpeg:
+    name: Ingest (ffmpeg file decode)
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install ffmpeg + libav dev libraries
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ffmpeg \
+          libavutil-dev libavformat-dev libavcodec-dev libavfilter-dev \
+          libavdevice-dev libswscale-dev libswresample-dev
+    - name: Clippy (ingest-file-ffmpeg)
+      run: cargo clippy --features ingest-file-ffmpeg --bin ingest_run -- -D warnings
+    - name: Build ingest_run
+      run: cargo build --features ingest-file-ffmpeg --bin ingest_run
+    - name: Test file ingestion (decodes the committed mp4 fixture)
+      run: cargo test --features ingest-file-ffmpeg --bin ingest_run

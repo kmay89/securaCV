@@ -28,7 +28,7 @@ pub(crate) struct FfmpegFileSource {
 impl FfmpegFileSource {
     pub(crate) fn new(config: FileConfig) -> Result<Self> {
         ffmpeg::init().context("initialize ffmpeg")?;
-        let mut input = ffmpeg::format::input(&config.path)
+        let input = ffmpeg::format::input(&config.path)
             .with_context(|| format!("failed to open file input '{}' with ffmpeg", config.path))?;
         let input_stream = input
             .streams()
@@ -87,7 +87,10 @@ impl FfmpegFileSource {
                 .send_packet(&packet)
                 .context("send packet to ffmpeg decoder")?;
 
-            while self.decoder.receive_frame(&mut decoded).is_ok() {
+            // Return the first decoded frame from this packet. The decoder
+            // may buffer additional frames; the next next_frame() call drains
+            // them before sending a new packet.
+            if self.decoder.receive_frame(&mut decoded).is_ok() {
                 self.scaler
                     .run(&decoded, &mut rgb_frame)
                     .context("scale frame to RGB")?;
@@ -166,11 +169,11 @@ fn frame_to_pixels(frame: &ffmpeg::frame::Video) -> Result<(Vec<u8>, u32, u32)> 
     let width = frame.width();
     let height = frame.height();
     let row_bytes = (width as usize) * 3;
-    let stride = frame.stride(0) as usize;
+    let stride = frame.stride(0);
     let data = frame.data(0);
 
     if stride == row_bytes {
-        return Ok((data.to_vec(), width as u32, height as u32));
+        return Ok((data.to_vec(), width, height));
     }
 
     let mut pixels = Vec::with_capacity(row_bytes * height as usize);
@@ -183,5 +186,5 @@ fn frame_to_pixels(frame: &ffmpeg::frame::Video) -> Result<(Vec<u8>, u32, u32)> 
         );
     }
 
-    Ok((pixels, width as u32, height as u32))
+    Ok((pixels, width, height))
 }

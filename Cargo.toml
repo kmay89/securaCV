@@ -123,3 +123,8 @@ required-features = [
 [[bin]]
 name = "tamper_demo"
 path = "src/bin/tamper_demo.rs"
+
+[[bin]]
+name = "ingest_run"
+path = "src/bin/ingest_run.rs"
+required-features = ["ingest-file-ffmpeg"]
