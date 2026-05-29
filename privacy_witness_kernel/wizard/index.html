@@ -74,7 +74,7 @@
 
   /* ---- Form elements ---- */
   label { display: block; font-size: 0.85rem; font-weight: 600; color: var(--text-muted); margin-bottom: 4px; }
-  input[type=text], input[type=number], input[type=time], select {
+  input[type=text], input[type=number], input[type=time], input[type=password], select {
     width: 100%;
     padding: 10px 14px;
     border: 1.5px solid var(--border);
@@ -369,6 +369,11 @@
         Restart Home Assistant Now
       </button>
     </div>
+    <div style="text-align:center;margin-top:12px">
+      <button class="btn btn-secondary btn-sm" onclick="openMeshWizard()">
+        🐦 Add another Canary
+      </button>
+    </div>
   </div>
 
   <div id="done-error" class="hidden">
@@ -383,6 +388,94 @@
 
   <div class="btn-row" style="justify-content:center;margin-top:28px">
     <button class="btn btn-secondary btn-sm" onclick="goTo(1)">Start Over</button>
+  </div>
+</div>
+
+<!-- ================================================================
+     "Add another Canary" pairing wizard (standalone, not part of the
+     numbered setup progress). Pairs an EXISTING (initiator) Canary with
+     a NEW (joiner) Canary over the local mesh, with visual 6-digit code
+     confirmation. address+token are entered here per-device and are
+     never persisted.
+     ================================================================ -->
+<div class="card hidden" id="screen-mesh">
+  <h2 style="margin-bottom:4px">Add another Canary</h2>
+  <p style="color:var(--text-muted);margin-bottom:20px;font-size:0.92rem">
+    Pair a new Canary into your existing opera. Enter the address (IP or
+    host) and API token for the Canary that is <em>already</em> set up and
+    for the <em>new</em> Canary you are adding. Both must be on this
+    network. The token is sent only to the device and is never saved.
+  </p>
+
+  <!-- Step 1: device details form -->
+  <div id="mesh-form">
+    <div class="camera-card">
+      <div class="camera-card-header"><strong>Existing Canary (initiator)</strong></div>
+      <div class="field">
+        <label>Address</label>
+        <input type="text" id="mesh-init-addr" placeholder="192.168.1.50 or canary-abc.local">
+      </div>
+      <div class="field">
+        <label>API token</label>
+        <input type="password" id="mesh-init-token" placeholder="cv_…">
+      </div>
+    </div>
+    <div class="camera-card">
+      <div class="camera-card-header"><strong>New Canary (joiner)</strong></div>
+      <div class="field">
+        <label>Address</label>
+        <input type="text" id="mesh-join-addr" placeholder="192.168.1.51 or canary-xyz.local">
+      </div>
+      <div class="field">
+        <label>API token</label>
+        <input type="password" id="mesh-join-token" placeholder="cv_…">
+      </div>
+    </div>
+    <div class="info-box red hidden" id="mesh-error"></div>
+    <div class="btn-row" style="margin-top:20px">
+      <button class="btn btn-secondary btn-sm" onclick="closeMeshWizard()">Back</button>
+      <button class="btn btn-primary" id="mesh-start-btn" onclick="meshStartPairing()">Start Pairing</button>
+    </div>
+  </div>
+
+  <!-- Step 2: in-progress / code confirmation -->
+  <div id="mesh-progress" class="hidden">
+    <div id="mesh-status-line" class="done-sub" style="margin-top:8px">
+      <span class="spinner"></span> Pairing in progress…
+    </div>
+
+    <div id="mesh-codes" class="hidden">
+      <p style="text-align:center;margin-bottom:8px">
+        Confirm these 6-digit codes match on <strong>both</strong> Canaries:
+      </p>
+      <div class="btn-row" style="justify-content:center;gap:24px">
+        <div style="text-align:center">
+          <div style="font-size:0.8rem;color:var(--text-muted)">Existing</div>
+          <div style="font-size:2rem;font-weight:700;letter-spacing:3px" id="mesh-code-init">------</div>
+        </div>
+        <div style="text-align:center">
+          <div style="font-size:0.8rem;color:var(--text-muted)">New</div>
+          <div style="font-size:2rem;font-weight:700;letter-spacing:3px" id="mesh-code-join">------</div>
+        </div>
+      </div>
+      <div class="btn-row" style="justify-content:center;margin-top:20px">
+        <button class="btn btn-primary" id="mesh-confirm-btn" onclick="meshConfirm()">Codes match — confirm</button>
+      </div>
+    </div>
+
+    <div class="btn-row" style="justify-content:center;margin-top:20px">
+      <button class="btn btn-secondary btn-sm" onclick="meshCancel()">Cancel</button>
+    </div>
+  </div>
+
+  <!-- Step 3: success -->
+  <div id="mesh-done" class="hidden">
+    <div class="done-icon">✅</div>
+    <div class="done-title">Canary added.</div>
+    <div class="done-sub">The new Canary has joined your opera.</div>
+    <div class="btn-row" style="justify-content:center;margin-top:20px">
+      <button class="btn btn-secondary btn-sm" onclick="closeMeshWizard()">Done</button>
+    </div>
   </div>
 </div>
 
@@ -642,6 +735,219 @@ function showDoneError(msg) {
   document.getElementById("done-error").classList.remove("hidden");
   document.getElementById("done-success").classList.add("hidden");
   document.getElementById("done-error-detail").textContent = msg;
+}
+
+// ---------------------------------------------------------------------------
+// "Add another Canary" pairing wizard
+//
+// Drives a two-device mesh pairing through the add-on proxy routes
+// (/api/mesh/pair/* and /api/mesh/status). The initiator + joiner
+// address/token are entered in the form and passed in each request body;
+// they are never persisted. The 6-digit codes from both devices are
+// shown for visual match before confirm.
+// ---------------------------------------------------------------------------
+let meshInit = null;   // {address, token}
+let meshJoin = null;
+let meshPolling = false;
+
+function openMeshWizard() {
+  document.getElementById(`screen-${currentStep}`).classList.add("hidden");
+  document.getElementById("screen-mesh").classList.remove("hidden");
+  // Reset sub-views.
+  document.getElementById("mesh-form").classList.remove("hidden");
+  document.getElementById("mesh-progress").classList.add("hidden");
+  document.getElementById("mesh-codes").classList.add("hidden");
+  document.getElementById("mesh-done").classList.add("hidden");
+  document.getElementById("mesh-error").classList.add("hidden");
+}
+
+function closeMeshWizard() {
+  meshPolling = false;
+  document.getElementById("screen-mesh").classList.add("hidden");
+  document.getElementById(`screen-${currentStep}`).classList.remove("hidden");
+}
+
+function meshShowError(msg) {
+  const el = document.getElementById("mesh-error");
+  el.textContent = msg;
+  el.classList.remove("hidden");
+}
+
+async function meshStartPairing() {
+  const initAddr = document.getElementById("mesh-init-addr").value.trim();
+  const initTok  = document.getElementById("mesh-init-token").value;
+  const joinAddr = document.getElementById("mesh-join-addr").value.trim();
+  const joinTok  = document.getElementById("mesh-join-token").value;
+
+  document.getElementById("mesh-error").classList.add("hidden");
+  if (!initAddr || !joinAddr) {
+    meshShowError("Both Canary addresses are required.");
+    return;
+  }
+  meshInit = { address: initAddr, token: initTok };
+  meshJoin = { address: joinAddr, token: joinTok };
+
+  const btn = document.getElementById("mesh-start-btn");
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Starting…';
+
+  // Initiator starts pairing (add-another), joiner joins. A network error
+  // (fetch reject / non-JSON body) throws out of api(); catch it so the UI
+  // never freezes with the button stuck disabled.
+  try {
+    const r1 = await api("/api/mesh/pair/start", meshInit);
+    if (!r1.ok) { meshStartFailed(r1.error || "Existing Canary refused to start pairing"); return; }
+    const r2 = await api("/api/mesh/pair/join", meshJoin);
+    if (!r2.ok) {
+      // The initiator is already in pairing mode; cancel it (best effort) so
+      // an immediate retry isn't blocked until the initiator's own timeout.
+      try { await api("/api/mesh/pair/cancel", meshInit); } catch (e) { /* best effort */ }
+      meshStartFailed(r2.error || "New Canary refused to join");
+      return;
+    }
+  } catch (e) {
+    // Unknown which side is mid-pairing after a network fault; cancel both.
+    try { await api("/api/mesh/pair/cancel", meshInit); } catch (_) {}
+    try { await api("/api/mesh/pair/cancel", meshJoin); } catch (_) {}
+    meshStartFailed("Network error contacting a Canary: " + ((e && e.message) || e));
+    return;
+  }
+
+  document.getElementById("mesh-form").classList.add("hidden");
+  document.getElementById("mesh-progress").classList.remove("hidden");
+  meshPollForCodes();
+}
+
+function meshStartFailed(msg) {
+  const btn = document.getElementById("mesh-start-btn");
+  btn.disabled = false;
+  btn.innerHTML = "Start Pairing";
+  meshShowError(msg);
+}
+
+// Abandon an in-flight poll: hide progress, restore the form, surface why.
+function meshPollFailed(msg) {
+  meshPolling = false;
+  document.getElementById("mesh-progress").classList.add("hidden");
+  document.getElementById("mesh-codes").classList.add("hidden");
+  document.getElementById("mesh-form").classList.remove("hidden");
+  meshStartFailed(msg);
+}
+
+async function meshPollForCodes() {
+  meshPolling = true;
+  let fails = 0;  // consecutive unreachable/non-ok status reads
+  for (let i = 0; i < 60 && meshPolling; i++) {
+    await delay(2000);
+    let si, sj;
+    try {
+      si = await api("/api/mesh/status", meshInit);
+      sj = await api("/api/mesh/status", meshJoin);
+    } catch (e) {
+      if (++fails >= 5) { meshPollFailed("A Canary became unreachable. Check the network and try again."); return; }
+      continue;
+    }
+    if (!si.ok || !sj.ok) {
+      if (++fails >= 5) { meshPollFailed("A Canary stopped responding. Try again."); return; }
+      continue;
+    }
+    fails = 0;
+    if (si.state === "PAIRING_CONFIRM" && sj.state === "PAIRING_CONFIRM" &&
+        si.pairing_code != null && sj.pairing_code != null) {
+      const ci = String(si.pairing_code).padStart(6, "0");
+      const cj = String(sj.pairing_code).padStart(6, "0");
+      // Both devices derive the SAME 6-digit code from the shared session key
+      // (spec §5.3). A mismatch is exactly the wrong-device / MITM case this
+      // out-of-band step exists to catch — refuse to offer confirmation and
+      // abort the pairing rather than let a click bypass the only OOB check.
+      if (ci !== cj) {
+        try { await api("/api/mesh/pair/cancel", meshInit); } catch (e) {}
+        try { await api("/api/mesh/pair/cancel", meshJoin); } catch (e) {}
+        meshPollFailed("Pairing codes do not match (" + ci + " vs " + cj +
+          ") — possible wrong device or tampered link. Pairing aborted.");
+        return;
+      }
+      document.getElementById("mesh-code-init").textContent = ci;
+      document.getElementById("mesh-code-join").textContent = cj;
+      document.getElementById("mesh-codes").classList.remove("hidden");
+      document.getElementById("mesh-status-line").innerHTML =
+        "Both Canaries are showing the same code.";
+      return;
+    }
+    if (si.state === "ACTIVE" && sj.state === "ACTIVE") {
+      // Already completed (e.g. confirmed out-of-band).
+      meshShowSuccess();
+      return;
+    }
+  }
+  if (meshPolling) {
+    meshPollFailed("Timed out waiting for the pairing code. Try again.");
+  }
+}
+
+async function meshConfirm() {
+  if (!meshInit || !meshJoin) { meshShowError("Pairing is not in progress."); return; }
+  const btn = document.getElementById("mesh-confirm-btn");
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Confirming…';
+  document.getElementById("mesh-codes").classList.add("hidden");
+  document.getElementById("mesh-status-line").innerHTML =
+    '<span class="spinner"></span> Completing pairing…';
+
+  // Confirm both ends; report which one rejected so the failure isn't
+  // masked by the generic "did not complete" timeout below.
+  try {
+    const c1 = await api("/api/mesh/pair/confirm", meshInit);
+    const c2 = await api("/api/mesh/pair/confirm", meshJoin);
+    if (!c1.ok || !c2.ok) {
+      const which = !c1.ok ? "existing" : "new";
+      meshPollFailed("The " + which + " Canary rejected the confirmation: " +
+        ((!c1.ok ? c1.error : c2.error) || "unknown error"));
+      return;
+    }
+  } catch (e) {
+    meshPollFailed("Network error during confirm: " + ((e && e.message) || e));
+    return;
+  }
+
+  // Poll until both report ACTIVE.
+  meshPolling = true;
+  let fails = 0;
+  for (let i = 0; i < 30 && meshPolling; i++) {
+    await delay(2000);
+    let si, sj;
+    try {
+      si = await api("/api/mesh/status", meshInit);
+      sj = await api("/api/mesh/status", meshJoin);
+    } catch (e) {
+      if (++fails >= 5) { meshPollFailed("A Canary became unreachable while completing. Try again."); return; }
+      continue;
+    }
+    if (si.ok && sj.ok && si.state === "ACTIVE" && sj.state === "ACTIVE") {
+      meshShowSuccess();
+      return;
+    }
+  }
+  if (meshPolling) {
+    meshPollFailed("Pairing did not complete. Check both Canaries and retry.");
+  }
+}
+
+function meshShowSuccess() {
+  meshPolling = false;
+  document.getElementById("mesh-progress").classList.add("hidden");
+  document.getElementById("mesh-done").classList.remove("hidden");
+}
+
+async function meshCancel() {
+  meshPolling = false;
+  // Best-effort cancel on both ends; never let a network error trap the user
+  // in the wizard.
+  try {
+    if (meshInit) await api("/api/mesh/pair/cancel", meshInit);
+    if (meshJoin) await api("/api/mesh/pair/cancel", meshJoin);
+  } catch (e) { /* ignore — closing regardless */ }
+  closeMeshWizard();
 }
 
 // ---------------------------------------------------------------------------

@@ -34,6 +34,7 @@ from .const import (
     CONF_MQTT_PREFIX,
     CONF_ENABLE_MQTT,
     CONF_SETUP_MODE,
+    CONF_ADAPTER_STATS_URL,
     TOPIC_STATUS,
     MANUFACTURER,
     MODEL_KERNEL,
@@ -154,6 +155,35 @@ class SecuraCVCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return {"latest_event": latest_event}
 
 
+class SecuraCVAdapterStatsCoordinator(DataUpdateCoordinator[dict[str, Any]]):
+    """Polls the adapter_host read-only stats endpoint (operational counters only)."""
+
+    def __init__(
+        self, hass: HomeAssistant, url: str, session: aiohttp.ClientSession
+    ) -> None:
+        """Initialize the coordinator."""
+        super().__init__(
+            hass,
+            logger=_LOGGER,
+            name="SecuraCV Adapter Stats",
+            update_interval=DEFAULT_UPDATE_INTERVAL,
+        )
+        self._url = url.rstrip("/")
+        self._session = session
+
+    async def _async_update_data(self) -> dict[str, Any]:
+        """Fetch the per-adapter stats JSON. Returns {} only on an empty body."""
+        try:
+            async with self._session.get(self._url, timeout=10) as resp:
+                if resp.status != 200:
+                    raise UpdateFailed(f"stats endpoint status {resp.status}")
+                # The endpoint sends application/json; tolerate a missing/odd content-type.
+                return await resp.json(content_type=None)
+        # ValueError covers a misconfigured URL (e.g. missing scheme) raised by aiohttp.
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as err:
+            raise UpdateFailed(f"unable to reach adapter stats endpoint: {err}") from err
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up SecuraCV from a config entry."""
     hass.data.setdefault(DOMAIN, {})
@@ -175,6 +205,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         api = None
         coordinator = None
 
+    # Optional adapter_host stats endpoint (read-only operational counters). Setup must not fail
+    # if it is unreachable, so we use a tolerant refresh rather than first_refresh.
+    adapter_stats_url = entry.data.get(CONF_ADAPTER_STATS_URL)
+    adapter_stats_coordinator: SecuraCVAdapterStatsCoordinator | None = None
+    if adapter_stats_url:
+        adapter_stats_coordinator = SecuraCVAdapterStatsCoordinator(
+            hass, adapter_stats_url, async_get_clientsession(hass)
+        )
+        await adapter_stats_coordinator.async_refresh()
+
     # Trust store — persisted Ed25519 pubkey pins per device_id.
     # Created (and storage loaded) before the MQTT subscribe so the
     # first inbound message can already consult it for TOFU pinning.
@@ -185,6 +225,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     entry_data: dict[str, Any] = {
         "api": api,
         "coordinator": coordinator,
+        "adapter_stats_coordinator": adapter_stats_coordinator,
         "devices": {},
         "unsub_mqtt": [],
         "setup_mode": setup_mode,

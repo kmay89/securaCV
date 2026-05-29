@@ -56,6 +56,34 @@ void compute_confirmation_hash(const uint8_t session_key[SESSION_KEY_LEN],
   mesh_crypto::sha256_domain(DOMAIN_PAIR_CONFIRM, buf, sizeof(buf), out);
 }
 
+const char* mesh_state_name(bool   enabled,
+                            bool   has_opera,
+                            State  pairing_state,
+                            size_t peers_online) {
+  /* Pairing precedence: an in-progress flow always overrides the
+   * steady-state classification so the UI shows the pairing screen.
+   * PAIRED / FAILED are terminal — by the time the integration layer
+   * has reacted to them the context is back to IDLE for the steady
+   * states, so they do not map to a PAIRING_* string here. */
+  switch (pairing_state) {
+    case State::DISCOVERING_INITIATOR:
+    case State::AWAITING_ACCEPT:
+      return "PAIRING_INIT";
+    case State::DISCOVERING_JOINER:
+    case State::AWAITING_COMPLETE:
+      return "PAIRING_JOIN";
+    case State::AWAITING_CONFIRM:
+    case State::AWAITING_CONFIRM_PEER:
+      return "PAIRING_CONFIRM";
+    default:
+      break;   /* IDLE / PAIRED / FAILED → fall through to steady state */
+  }
+
+  if (!enabled)   return "DISABLED";
+  if (!has_opera) return "NO_FLOCK";
+  return peers_online > 0 ? "ACTIVE" : "CONNECTING";
+}
+
 /* ──────────────────────────────────────────────────────────────────────────
  * STATE-MACHINE INTERNALS
  * ────────────────────────────────────────────────────────────────────────── */

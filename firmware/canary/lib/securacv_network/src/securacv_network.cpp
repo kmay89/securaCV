@@ -66,6 +66,19 @@
 #include "securacv_power.h"
 #endif
 
+// Mesh REST API (PR-8). Gated on FEATURE_MESH_NETWORK — the dev/release
+// CI envs build with this OFF, so these handlers get no CI compile
+// coverage; the JSON-building logic is therefore factored into the pure
+// mesh_api builders, which the securacv_mesh host tests exercise.
+#if defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
+#include "mesh_session.h"
+#include "mesh_state.h"
+#include "mesh_transport.h"
+#include "mesh_crypto.h"
+#include "mesh_api.h"
+#include <esp_flash_encrypt.h>
+#endif
+
 // ════════════════════════════════════════════════════════════════════════════
 // GLOBAL INSTANCE
 // ════════════════════════════════════════════════════════════════════════════
@@ -731,12 +744,30 @@ static esp_err_t handle_selftest(httpd_req_t* req);
 static esp_err_t handle_battery_history(httpd_req_t* req);
 #endif
 
+#if defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
+// Mesh / opera REST API (PR-8). Six endpoints only — status, peers, and
+// the four pairing steps. remove/leave/name/enable/alerts-DELETE are
+// deferred (see spec/canary_mesh_network_v0.md §8).
+static esp_err_t handle_mesh_status(httpd_req_t* req);
+static esp_err_t handle_mesh_peers(httpd_req_t* req);
+static esp_err_t handle_mesh_pair_start(httpd_req_t* req);
+static esp_err_t handle_mesh_pair_join(httpd_req_t* req);
+static esp_err_t handle_mesh_pair_confirm(httpd_req_t* req);
+static esp_err_t handle_mesh_pair_cancel(httpd_req_t* req);
+#endif
+
 bool NetworkManager::startHttpServer() {
   httpd_config_t config = HTTPD_DEFAULT_CONFIG();
   config.server_port = 80;
   config.uri_match_fn = httpd_uri_match_wildcard;
   config.stack_size = 8192;
+  // 40 base + 6 mesh endpoints (PR-8) when the mesh feature is compiled
+  // in. Each registered httpd_uri_t needs a slot.
+  #if defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
+  config.max_uri_handlers = 46;
+  #else
   config.max_uri_handlers = 40;
+  #endif
   config.recv_wait_timeout = 30;
   config.send_wait_timeout = 30;
   config.lru_purge_enable  = true;
@@ -893,6 +924,27 @@ void NetworkManager::registerHttpHandlers() {
   #if FEATURE_POWER_MONITOR
   httpd_uri_t batt_hist_ep = { .uri = "/api/battery/history", .method = HTTP_GET, .handler = handle_battery_history };
   httpd_register_uri_handler(m_http_server, &batt_hist_ep);
+  #endif
+
+  #if defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
+  // Mesh / opera REST API (PR-8). 6 endpoints — see spec §8.
+  httpd_uri_t mesh_status_ep = { .uri = "/api/mesh", .method = HTTP_GET, .handler = handle_mesh_status };
+  httpd_register_uri_handler(m_http_server, &mesh_status_ep);
+
+  httpd_uri_t mesh_peers_ep = { .uri = "/api/mesh/peers", .method = HTTP_GET, .handler = handle_mesh_peers };
+  httpd_register_uri_handler(m_http_server, &mesh_peers_ep);
+
+  httpd_uri_t mesh_pair_start_ep = { .uri = "/api/mesh/pair/start", .method = HTTP_POST, .handler = handle_mesh_pair_start };
+  httpd_register_uri_handler(m_http_server, &mesh_pair_start_ep);
+
+  httpd_uri_t mesh_pair_join_ep = { .uri = "/api/mesh/pair/join", .method = HTTP_POST, .handler = handle_mesh_pair_join };
+  httpd_register_uri_handler(m_http_server, &mesh_pair_join_ep);
+
+  httpd_uri_t mesh_pair_confirm_ep = { .uri = "/api/mesh/pair/confirm", .method = HTTP_POST, .handler = handle_mesh_pair_confirm };
+  httpd_register_uri_handler(m_http_server, &mesh_pair_confirm_ep);
+
+  httpd_uri_t mesh_pair_cancel_ep = { .uri = "/api/mesh/pair/cancel", .method = HTTP_POST, .handler = handle_mesh_pair_cancel };
+  httpd_register_uri_handler(m_http_server, &mesh_pair_cancel_ep);
   #endif
 }
 
@@ -2646,6 +2698,215 @@ static esp_err_t handle_battery_history(httpd_req_t* req) {
 }
 
 #endif // FEATURE_POWER_MONITOR
+
+// ════════════════════════════════════════════════════════════════════════════
+// MESH / OPERA REST API (PR-8)
+//
+// Six endpoints, all auth-gated + rate-limited, all using the existing
+// {ok:...} JSON convention via http_send_json / http_send_error:
+//
+//   GET  /api/mesh              — opera status (refreshOpera reads this)
+//   GET  /api/mesh/peers        — peer list
+//   POST /api/mesh/pair/start   — begin pairing as the initiator (add another)
+//   POST /api/mesh/pair/join    — begin pairing as the joiner (new device)
+//   POST /api/mesh/pair/confirm — user confirmed the 6-digit code matches
+//   POST /api/mesh/pair/cancel  — abort an in-progress pairing
+//
+// The JSON-rendering for the two GET endpoints lives in the pure
+// mesh_api builders so the response shape stays under host-test coverage
+// even though CI compiles FEATURE_MESH_NETWORK out (dev/release envs).
+//
+// MAC↔fingerprint join limitation: the persisted trusted-peer set keys
+// on Ed25519 pubkey (→ fingerprint), while the live transport peer table
+// keys on MAC. There is no stored mapping between the two, so per-peer
+// state / last_seen / rssi are best-effort placeholders here (state
+// "OFFLINE", rssi 0). Documented in spec/canary_mesh_network_v0.md §8.
+// ════════════════════════════════════════════════════════════════════════════
+
+#if defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
+
+// Number of online peers from the live transport table (peers seen within
+// the transport's ACTIVE window). Used for the status state mapping.
+static size_t mesh_count_online_peers() {
+  mesh_transport::Peer peers[16];
+  const size_t n = mesh_transport::list_peers(peers, sizeof(peers) / sizeof(peers[0]));
+  size_t online = 0;
+  for (size_t i = 0; i < n; ++i) {
+    if (peers[i].in_use && peers[i].state == mesh_transport::PeerState::ACTIVE) {
+      ++online;
+    }
+  }
+  return online;
+}
+
+static esp_err_t handle_mesh_status(httpd_req_t* req) {
+  if (!rate_limit_check(req)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  const bool has_opera = mesh_session::has_opera();
+
+  uint8_t opera_id[mesh_crypto::OPERA_ID_LEN];
+  const bool have_id = mesh_session::get_opera_id(opera_id);
+
+  char opera_name[mesh_pairing::MAX_OPERA_NAME_LEN + 1];
+  mesh_session::get_opera_name(opera_name, sizeof(opera_name));
+
+  const mesh_pairing::State pstate = mesh_session::pairing_state();
+  const size_t peers_total  = mesh_session::trusted_peer_count();
+  const size_t peers_online = mesh_count_online_peers();
+
+  // alerts_received: opera-level alert count is not yet tracked in the
+  // PIO mesh session (deferred with the alerts endpoints) — report 0.
+  const uint32_t alerts_received = 0;
+  const uint32_t pairing_code    = mesh_session::pairing_confirmation_code();
+
+  char body[512];
+  if (!mesh_api::build_mesh_status_json(
+          body, sizeof(body),
+          /*enabled=*/true, has_opera,
+          have_id ? opera_id : nullptr,
+          opera_name, pstate,
+          peers_total, peers_online, alerts_received, pairing_code)) {
+    return http_send_error(req, 500, "encode_failed");
+  }
+  return http_send_json(req, body);
+}
+
+static esp_err_t handle_mesh_peers(httpd_req_t* req) {
+  if (!rate_limit_check(req)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  // Trusted peers are the durable membership set (pubkeys). The live
+  // transport table is keyed on MAC, with no stored MAC↔pubkey mapping,
+  // so per-peer liveness is a best-effort placeholder (see section
+  // header + spec §8).
+  uint8_t pubkeys[mesh_state::MAX_TRUSTED_PEERS * mesh_crypto::PUBKEY_LEN];
+  size_t  count = 0;
+  if (!mesh_state::load_trusted_peers(pubkeys, sizeof(pubkeys), &count)) {
+    return http_send_error(req, 500, "load_failed");
+  }
+  if (count > mesh_state::MAX_TRUSTED_PEERS) count = mesh_state::MAX_TRUSTED_PEERS;
+
+  mesh_api::PeerView views[mesh_state::MAX_TRUSTED_PEERS];
+  for (size_t i = 0; i < count; ++i) {
+    uint8_t fp[mesh_crypto::FINGERPRINT_LEN];
+    mesh_crypto::compute_fingerprint(pubkeys + i * mesh_crypto::PUBKEY_LEN, fp);
+    static const char kHex[] = "0123456789abcdef";
+    for (size_t b = 0; b < mesh_crypto::FINGERPRINT_LEN; ++b) {
+      views[i].fingerprint[2 * b]     = kHex[(fp[b] >> 4) & 0xF];
+      views[i].fingerprint[2 * b + 1] = kHex[fp[b] & 0xF];
+    }
+    views[i].fingerprint[mesh_crypto::FINGERPRINT_LEN * 2] = '\0';
+    views[i].name[0]      = '\0';          // best-effort: name unknown
+    views[i].state        = "OFFLINE";     // no MAC↔fingerprint join
+    views[i].last_seen_sec = 0xFFFFFFFFu;  // "never" (UI shows 'never')
+    views[i].rssi          = 0;
+  }
+
+  char body[1024];
+  if (!mesh_api::build_mesh_peers_json(body, sizeof(body), views, count)) {
+    return http_send_error(req, 500, "encode_failed");
+  }
+  return http_send_json(req, body);
+}
+
+static esp_err_t handle_mesh_pair_start(httpd_req_t* req) {
+  if (!rate_limit_check(req, true)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  // Flash-encryption gate: refuse to touch the opera_secret on FE-off
+  // hardware (matches mesh_state's load/save posture).
+  if (!esp_flash_encryption_enabled()) {
+    return http_send_error(req, 400, "no_flash_encryption");
+  }
+
+  // "Add another" — an opera already exists. Load its secret straight
+  // from NVS into a local buffer, hand it to the pairing initiator, then
+  // zero the buffer. If no opera is persisted, there is nothing to add to.
+  uint8_t opera_secret[mesh_crypto::OPERA_SECRET_LEN];
+  if (!mesh_state::load_opera_secret(opera_secret)) {
+    return http_send_error(req, 400, "no_opera");
+  }
+
+  char opera_name[mesh_pairing::MAX_OPERA_NAME_LEN + 1];
+  mesh_session::get_opera_name(opera_name, sizeof(opera_name));
+
+  const bool ok = mesh_session::start_pairing_initiator(
+      opera_secret, opera_name, millis());
+
+  // Zero the local secret copy regardless of outcome.
+  volatile uint8_t* z = opera_secret;
+  for (size_t i = 0; i < sizeof(opera_secret); ++i) z[i] = 0;
+
+  if (!ok) {
+    return http_send_error(req, 400, "pair_start_failed");
+  }
+
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["state"] = "PAIRING_INIT";
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+static esp_err_t handle_mesh_pair_join(httpd_req_t* req) {
+  if (!rate_limit_check(req, true)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  // Flash-encryption gate: the joiner will receive + persist the
+  // opera_secret on success, so refuse on FE-off hardware up front.
+  if (!esp_flash_encryption_enabled()) {
+    return http_send_error(req, 400, "no_flash_encryption");
+  }
+
+  if (!mesh_session::start_pairing_joiner(millis())) {
+    return http_send_error(req, 400, "pair_join_failed");
+  }
+
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["state"] = "PAIRING_JOIN";
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+static esp_err_t handle_mesh_pair_confirm(httpd_req_t* req) {
+  if (!rate_limit_check(req, true)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  if (!mesh_session::confirm_pairing_code(millis())) {
+    return http_send_error(req, 400, "confirm_failed");
+  }
+
+  JsonDocument doc;
+  doc["ok"] = true;
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+static esp_err_t handle_mesh_pair_cancel(httpd_req_t* req) {
+  if (!rate_limit_check(req, true)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  mesh_session::cancel_pairing();
+
+  JsonDocument doc;
+  doc["ok"] = true;
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+#endif // FEATURE_MESH_NETWORK
 
 // ════════════════════════════════════════════════════════════════════════════
 // CONVENIENCE FUNCTIONS

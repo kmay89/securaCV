@@ -247,8 +247,10 @@ static void update() {
     if (power_monitor::get_state(&pwr)) {
       uint8_t soc = pwr.soc_pct;
       if (soc > 100) soc = 100;
-      g_battery_char->setValue(&soc, 1);
-      if (connected) g_battery_char->notify();
+      if (g_batt_level_char) {
+        g_batt_level_char->setValue(&soc, 1);
+        if (connected) g_batt_level_char->notify();
+      }
     }
   }
 #endif
@@ -275,7 +277,7 @@ static void update() {
   // ── Uptime ─────────────────────────────────────────────────────────
 #if FEATURE_SYS_MONITOR
   {
-    uint32_t up = g_sys_metrics.uptime_sec;
+    uint32_t up = sys_monitor::g_sys_metrics.uptime_sec;
     g_uptime_char->setValue(up);
   }
 #else
