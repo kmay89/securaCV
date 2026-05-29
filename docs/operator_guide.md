@@ -99,9 +99,15 @@ cargo run --bin break_glass -- unseal \
 Write a local artifact with coarse time buckets and batched events (no precise timestamps or
 identity selectors):
 
+Export is gated on a break-glass authorization: `--break-glass-token` is required and takes the
+token file produced by the break-glass `authorize` step above (`--output-token`).
+
 ```bash
 DEVICE_KEY_SEED=devkey:your-seed \
-  cargo run --bin export_events -- --db-path witness.db --output witness_export.json
+  cargo run --bin export_events -- \
+  --db-path witness.db \
+  --break-glass-token /path/to/break_glass.token \
+  --output witness_export.json
 ```
 
 `export_events` emits a single JSON artifact with batched buckets, applying default jitter and

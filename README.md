@@ -12,8 +12,10 @@ Clips stay on your hardware. They auto-delete. The only thing that persists is a
 tamper-proof log that proves nobody — including you — altered the record.
 
 - **No subscription.** It runs on your own hardware. There is no monthly fee, ever.
-- **Private by design.** No faces, no plates, no precise timestamps — privacy is enforced
-  in code, not promised in a policy. It *can't* be used to spy on you, even by us.
+- **Private by design.** No faces, no plates, no precise timestamps — the kernel turns camera
+  detections into semantic events and never persists raw frames, with the privacy rules written
+  in code and spec rather than promised in a policy. (Detection backends are an *audited*
+  boundary, not a sandbox — see [`AGENTS.md`](AGENTS.md).)
 - **Tamper-proof proof.** Every event is cryptographically signed and hash-chained. If anyone
   alters the record, the signature breaks and verification fails.
 
@@ -48,7 +50,8 @@ curl -fsSL https://raw.githubusercontent.com/kmay89/securaCV/main/scripts/instal
 **3.** Follow the setup wizard — open the Privacy Witness Kernel add-on from
 Settings → Add-ons → Privacy Witness Kernel → Open Web UI.
 
-That's it. Camera clips will appear in Frigate with a **verified ✓** badge per event.
+That's it. Your Frigate clips keep recording as usual, and each detected event shows up in
+Home Assistant with a **verified ✓** witness status (hash-chain + signature checked).
 
 ### What you need
 
