@@ -100,9 +100,12 @@ static PairingSession g_pairing = {};
 // by confirm_pairing()/reject_pairing()/cancel_pairing(). Without this, the
 // only way to satisfy the host's pairing flow was to call injectConfirmPasskey
 // from inside the callback itself, which forced an auto-yes that bypassed the
-// MITM check. NimBLEConnInfo is a thin POD wrapping ble_gap_conn_desc — safe
-// to copy by value.
-static NimBLEConnInfo g_pending_pair_info{};
+// MITM check. NimBLEConnInfo is a thin wrapper around ble_gap_conn_desc — safe
+// to copy by value, but NimBLE-Arduino 2.x makes its default constructor
+// private, so we can't keep a default-constructed static. Hold a heap copy
+// instead: it's only ever copy-constructed from the live connInfo, and the
+// nullptr/non-null state doubles as the "pending" flag's backing store.
+static NimBLEConnInfo* g_pending_pair_info = nullptr;
 static bool g_pending_pair_active = false;
 
 // Active connection handle so update() can poll RSSI / MTU without keeping
@@ -334,7 +337,8 @@ class ServerCallbacks : public NimBLEServerCallbacks {
     // on both screens before we tell NimBLE to accept — this is the bit that
     // closes Man-In-The-Middle. We stash the conn info and surface the PIN to
     // the SPA; confirm_pairing()/reject_pairing()/cancel_pairing() drain it.
-    g_pending_pair_info = connInfo;
+    delete g_pending_pair_info;
+    g_pending_pair_info = new NimBLEConnInfo(connInfo);
     g_pending_pair_active = true;
 
     g_pairing.state = PAIR_CONFIRMING;
@@ -944,8 +948,10 @@ bool start_pairing() {
 void cancel_pairing() {
   // Drain any pending Numeric-Comparison so NimBLE doesn't sit indefinitely
   // waiting on injectConfirmPasskey. A reject closes the bond attempt cleanly.
-  if (g_pending_pair_active) {
-    NimBLEDevice::injectConfirmPasskey(g_pending_pair_info, false);
+  if (g_pending_pair_active && g_pending_pair_info) {
+    NimBLEDevice::injectConfirmPasskey(*g_pending_pair_info, false);
+    delete g_pending_pair_info;
+    g_pending_pair_info = nullptr;
     g_pending_pair_active = false;
   }
   if (g_pairing.state == PAIR_NONE) return;
@@ -970,7 +976,9 @@ bool confirm_pairing(uint32_t pin) {
   if (pin != g_pairing.pin_code) {
     log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH,
                "Pairing PIN mismatch — rejecting", nullptr);
-    NimBLEDevice::injectConfirmPasskey(g_pending_pair_info, false);
+    NimBLEDevice::injectConfirmPasskey(*g_pending_pair_info, false);
+    delete g_pending_pair_info;
+    g_pending_pair_info = nullptr;
     g_pending_pair_active = false;
     g_pairing.state = PAIR_FAILED;
     if (g_pair_callback) g_pair_callback(&g_pairing);
@@ -978,7 +986,9 @@ bool confirm_pairing(uint32_t pin) {
   }
 
   g_pairing.user_confirmed = true;
-  NimBLEDevice::injectConfirmPasskey(g_pending_pair_info, true);
+  NimBLEDevice::injectConfirmPasskey(*g_pending_pair_info, true);
+  delete g_pending_pair_info;
+  g_pending_pair_info = nullptr;
   g_pending_pair_active = false;
   log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH,
              "Pairing PIN confirmed by user", nullptr);
@@ -986,8 +996,10 @@ bool confirm_pairing(uint32_t pin) {
 }
 
 bool reject_pairing() {
-  if (g_pending_pair_active) {
-    NimBLEDevice::injectConfirmPasskey(g_pending_pair_info, false);
+  if (g_pending_pair_active && g_pending_pair_info) {
+    NimBLEDevice::injectConfirmPasskey(*g_pending_pair_info, false);
+    delete g_pending_pair_info;
+    g_pending_pair_info = nullptr;
     g_pending_pair_active = false;
   }
   if (g_pairing.state == PAIR_NONE) return false;
