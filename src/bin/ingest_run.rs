@@ -70,6 +70,15 @@ fn random_seed() -> String {
 }
 
 fn run(args: &Args) -> Result<Summary> {
+    // Each run generates a fresh random device key, which derives the
+    // SQLCipher DB key. Reopening an existing db with a new key would fail,
+    // so start from a clean database (this is a batch tool, not a daemon).
+    if std::path::Path::new(&args.db).exists() {
+        let _ = std::fs::remove_file(&args.db);
+        let _ = std::fs::remove_file(format!("{}-wal", args.db));
+        let _ = std::fs::remove_file(format!("{}-shm", args.db));
+    }
+
     let cfg = KernelConfig {
         db_path: args.db.clone(),
         ruleset_id: RULESET_ID.to_string(),

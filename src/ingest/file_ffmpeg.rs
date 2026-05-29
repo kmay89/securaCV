@@ -23,6 +23,7 @@ pub(crate) struct FfmpegFileSource {
     last_frame_at: Option<Instant>,
     connected_at: Option<Instant>,
     last_error: Option<String>,
+    eof_sent: bool,
 }
 
 impl FfmpegFileSource {
@@ -63,6 +64,7 @@ impl FfmpegFileSource {
             last_frame_at: None,
             connected_at: None,
             last_error: None,
+            eof_sent: false,
         })
     }
 
@@ -76,44 +78,74 @@ impl FfmpegFileSource {
         self.poll_timeout()?;
 
         let mut decoded = ffmpeg::frame::Video::empty();
-        let mut rgb_frame = ffmpeg::frame::Video::empty();
 
-        for (stream, packet) in self.input.packets() {
-            if stream.index() != self.stream_index {
-                continue;
+        // Canonical ffmpeg decode loop: drain decoded frames first, only
+        // sending a new packet when the decoder needs more input. At EOF the
+        // decoder is flushed once so its buffered tail frames are not lost.
+        loop {
+            if self.decoder.receive_frame(&mut decoded).is_ok() {
+                return self.build_frame(&decoded);
             }
 
-            self.decoder
-                .send_packet(&packet)
-                .context("send packet to ffmpeg decoder")?;
-
-            // Return the first decoded frame from this packet. The decoder
-            // may buffer additional frames; the next next_frame() call drains
-            // them before sending a new packet.
-            if self.decoder.receive_frame(&mut decoded).is_ok() {
-                self.scaler
-                    .run(&decoded, &mut rgb_frame)
-                    .context("scale frame to RGB")?;
-                let (pixels, width, height) = frame_to_pixels(&rgb_frame)?;
-
-                self.frame_count += 1;
-                self.last_frame_at = Some(Instant::now());
-
-                let timestamp_bucket = TimeBucket::now_10min()?;
-                let features_hash = compute_features_hash(&pixels, self.frame_count);
-
-                return Ok(RawFrame::new(
-                    pixels,
-                    width,
-                    height,
-                    timestamp_bucket,
-                    features_hash,
-                ));
+            match self.read_video_packet()? {
+                Some(packet) => {
+                    self.decoder
+                        .send_packet(&packet)
+                        .context("send packet to ffmpeg decoder")?;
+                }
+                None => {
+                    if !self.eof_sent {
+                        self.decoder
+                            .send_eof()
+                            .context("flush ffmpeg decoder at EOF")?;
+                        self.eof_sent = true;
+                        continue;
+                    }
+                    self.last_error = Some("file ended without frames".to_string());
+                    anyhow::bail!("file ended without frames");
+                }
             }
         }
+    }
 
-        self.last_error = Some("file ended without frames".to_string());
-        anyhow::bail!("file ended without frames")
+    /// Read the next packet belonging to the selected video stream, skipping
+    /// packets from other streams. Returns `None` at end of file.
+    fn read_video_packet(&mut self) -> Result<Option<ffmpeg::codec::packet::Packet>> {
+        let mut packets = self.input.packets();
+        loop {
+            match packets.next() {
+                Some((stream, packet)) => {
+                    if stream.index() == self.stream_index {
+                        return Ok(Some(packet));
+                    }
+                }
+                None => return Ok(None),
+            }
+        }
+    }
+
+    /// Scale a decoded frame to RGB24 and wrap it in a `RawFrame` with a
+    /// coarsened capture timestamp and feature hash.
+    fn build_frame(&mut self, decoded: &ffmpeg::frame::Video) -> Result<RawFrame> {
+        let mut rgb_frame = ffmpeg::frame::Video::empty();
+        self.scaler
+            .run(decoded, &mut rgb_frame)
+            .context("scale frame to RGB")?;
+        let (pixels, width, height) = frame_to_pixels(&rgb_frame)?;
+
+        self.frame_count += 1;
+        self.last_frame_at = Some(Instant::now());
+
+        let timestamp_bucket = TimeBucket::now_10min()?;
+        let features_hash = compute_features_hash(&pixels, self.frame_count);
+
+        Ok(RawFrame::new(
+            pixels,
+            width,
+            height,
+            timestamp_bucket,
+            features_hash,
+        ))
     }
 
     pub(crate) fn is_healthy(&self) -> bool {
