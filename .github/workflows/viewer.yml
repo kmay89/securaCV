@@ -35,3 +35,13 @@ jobs:
     - name: Envelope-bridge tests (build + shared-verifier reuse)
       working-directory: canary-vision
       run: node --test tests/api/envelope-bridge.test.js
+
+  selftest-ui:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+    - name: Pre-flight self-test UI logic (probe×status hint matrix)
+      run: node --test firmware/projects/canary-wap/arduino/canary_wap/selftest_ui.test.js

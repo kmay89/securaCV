@@ -10,10 +10,18 @@
  *   wifi        — STA connection state, RSSI, SSID
  *   camera      — sensor present + initialized + last init err
  *   bluetooth   — NimBLE stack up + at least one sub-feature active
+ *   gps         — optional NMEA module: detected / has-fix / absent
  *   sd          — mounted + free space
+ *   power       — optional battery: SoC + charge state, or USB-only ABSENT
  *   microphone  — present iff PDM mic compiled in (currently absent on
  *                 canary-wap; reports ABSENT cleanly so the UI greys it)
+ *   buzzer      — audible-chirp subsystem up (FEATURE_AUDIBLE_CHIRP)
+ *   tamper      — tamper input armed iff FEATURE_TAMPER_GPIO, else ABSENT
  *   gpio        — boot button readable + not stuck (sanity)
+ *
+ * Optional peripherals (gps/power/buzzer/tamper) only ever report
+ * PASS/SKIP/ABSENT — never FAIL — so a missing optional part can never
+ * gate setup. "all_passed" counts FAIL only.
  *
  * Header-only on purpose, matching the *_api.h pattern already in this
  * directory (bluetooth_api.h, chirp_api.h, audible_chirp_api.h, …).
@@ -45,6 +53,12 @@
 #include "ble_manager.h"
 #include "hardware_state.h"
 #include "sd_storage.h"
+// Optional-peripheral probes. All three are header-only and self-guard on
+// their FEATURE_* flags (power_monitor is always compiled; audible_chirp
+// ships a no-op stub namespace when FEATURE_AUDIBLE_CHIRP is 0), so it is
+// safe to include them here unconditionally.
+#include "power_monitor.h"
+#include "audible_chirp.h"
 
 // Camera state lives in the .ino (g_camera_initialized,
 // g_peek_sensor_pid, g_peek_last_init_err, g_peek_last_init_label,
@@ -93,7 +107,7 @@ struct ProbeResult {
   // populates fields directly on the JsonObject we hand it.
 };
 
-static const size_t MAX_PROBES = 6;
+static const size_t MAX_PROBES = 10;
 
 struct Report {
   ProbeResult probes[MAX_PROBES];
@@ -323,17 +337,143 @@ inline void probe_gpio(ProbeResult* r, JsonObject metric) {
 }
 
 // ─────────────────────────────────────────────────────────────────────
+// Optional peripherals — these are honest about absence: a board with no
+// GPS / no battery / no buzzer reports ABSENT (greyed, non-blocking), and
+// only ever PASS/SKIP/ABSENT — never FAIL — so a missing optional part can
+// never gate setup. The user-facing "what to look into" guidance lives in
+// the companion UI's hint matrix, keyed by these probe names + statuses.
+// ─────────────────────────────────────────────────────────────────────
+
+inline void probe_gps(ProbeResult* r, JsonObject metric) {
+  r->name  = "gps";
+  r->label = "GPS";
+
+  metric["state"]        = gps_state_name(g_hw.gps_state);
+  metric["available"]    = g_hw.gps_available;
+  metric["ever_detected"] = g_hw.gps_ever_detected;
+
+  if (g_hw.gps_available && g_hw.gps_state == GPS_HAS_FIX) {
+    r->status = Status::PASS;
+    r->code   = 0;
+    set_detail(r, "Fix acquired");
+  } else if (g_hw.gps_state == GPS_DETECTED ||
+             g_hw.gps_state == GPS_LOST_FIX ||
+             g_hw.gps_ever_detected) {
+    // Module is wired but hasn't locked on yet. Not a failure — GPS needs
+    // sky view and a minute or two. SKIP keeps it greyed-but-noted.
+    r->status = Status::SKIP;
+    r->code   = 0;
+    set_detail(r, "Module detected · waiting for fix");
+  } else {
+    r->status = Status::ABSENT;
+    r->code   = 0;
+    set_detail(r, "No GPS module attached");
+  }
+}
+
+inline void probe_power(ProbeResult* r, JsonObject metric) {
+  r->name  = "power";
+  r->label = "Battery";
+
+  PowerState ps{};
+  const bool ok = power_monitor::get_state(&ps);
+
+  metric["initialized"] = ok;
+  if (ok) {
+    metric["monitor_mode"]     = power_monitor::mode_name(ps.monitor_mode);
+    metric["charge_state"]     = power_monitor::charge_state_name(ps.charge_state);
+    metric["soc_pct"]          = ps.soc_pct;
+    metric["voltage_mv"]       = ps.voltage_mv;
+    metric["battery_present"]  = ps.battery_present;
+    metric["divider_detected"] = ps.divider_detected;
+  }
+
+  if (!ok) {
+    // Monitor hasn't sampled yet (very early boot) — report ABSENT rather
+    // than FAIL; battery state simply isn't known.
+    r->status = Status::ABSENT;
+    r->code   = 0;
+    set_detail(r, "Battery state not available yet");
+  } else if (!ps.battery_present || ps.charge_state == CHARGE_STATE_NO_BATTERY) {
+    r->status = Status::ABSENT;
+    r->code   = 0;
+    set_detail(r, "On USB power · no battery");
+  } else {
+    // Battery is present. A low/critical level is real-world information,
+    // not a pre-flight failure (the device runs fine on USB while it
+    // charges), so we PASS and let the detail + UI hint carry the nuance.
+    r->status = Status::PASS;
+    r->code   = (int32_t)ps.soc_pct;
+    set_detail(r, "Battery %u%% · %s",
+               (unsigned)ps.soc_pct,
+               power_monitor::charge_state_name(ps.charge_state));
+  }
+}
+
+inline void probe_buzzer(ProbeResult* r, JsonObject metric) {
+  r->name  = "buzzer";
+  r->label = "Buzzer";
+
+#if FEATURE_AUDIBLE_CHIRP
+  const bool avail = audible_chirp::is_available();
+  metric["available"]   = avail;
+  metric["visual_only"] = audible_chirp::is_visual_only();
+  metric["gpio"]        = audible_chirp::get_gpio();
+
+  if (avail) {
+    // The alert subsystem (LEDC tone + LED fallback) is up. We can't sense
+    // whether a *physical* passive buzzer is wired — there's no feedback
+    // line — so we PASS the subsystem and let the UI hint nudge the user to
+    // play a test tone to confirm they actually hear it.
+    r->status = Status::PASS;
+    r->code   = 0;
+    set_detail(r, "Alert tones ready");
+  } else {
+    r->status = Status::SKIP;
+    r->code   = 0;
+    set_detail(r, "Alert tones not started");
+  }
+#else
+  metric["compiled_in"] = false;
+  r->status = Status::ABSENT;
+  r->code   = 0;
+  set_detail(r, "Not built into this firmware");
+#endif
+}
+
+inline void probe_tamper(ProbeResult* r, JsonObject metric) {
+  r->name  = "tamper";
+  r->label = "Tamper";
+
+#if FEATURE_TAMPER_GPIO
+  // Tamper monitoring is compiled in. There is no standalone pin-read driver
+  // exposed yet, so we report it as armed rather than claiming a specific
+  // line state we can't read here.
+  metric["enabled"] = true;
+  r->status = Status::SKIP;
+  r->code   = 0;
+  set_detail(r, "Tamper monitoring armed");
+#else
+  metric["enabled"] = false;
+  r->status = Status::ABSENT;
+  r->code   = 0;
+  set_detail(r, "Tamper monitoring not enabled");
+#endif
+}
+
+// ─────────────────────────────────────────────────────────────────────
 // Aggregator
 // ─────────────────────────────────────────────────────────────────────
 
 inline bool run_to_json(JsonDocument& doc) {
   const uint32_t t0 = millis();
 
-  // Six rows in stable order so the wizard UI doesn't reshuffle row
+  // Ten rows in stable order so the wizard UI doesn't reshuffle row
   // positions between polls. Order matches the user's mental model:
-  // network → vision → radio → storage → audio → low-level pins.
+  // network → vision → radios → storage → power → audio → security → pins.
   const char* const ORDER[MAX_PROBES] = {
-    "wifi", "camera", "bluetooth", "sd", "microphone", "gpio"
+    "wifi", "camera", "bluetooth", "gps", "sd",
+    "power", "microphone", "buzzer", "tamper", "gpio"
   };
   (void)ORDER;  // documentation-only; the calls below are the truth
 
@@ -359,8 +499,12 @@ inline bool run_to_json(JsonDocument& doc) {
   push(probe_wifi);
   push(probe_camera);
   push(probe_bluetooth);
+  push(probe_gps);
   push(probe_sd);
+  push(probe_power);
   push(probe_microphone);
+  push(probe_buzzer);
+  push(probe_tamper);
   push(probe_gpio);
 
   const uint32_t total_ms = millis() - t0;
@@ -384,9 +528,12 @@ inline bool run_to_json(JsonDocument& doc) {
              (unsigned)pass_n, (unsigned)(pass_n + fail_n),
              (unsigned)absent_n);
   } else {
+    // Verb has to agree with the count: "1 check needs" vs "2 checks need".
     snprintf(summary, sizeof(summary),
-             "%u check%s need attention",
-             (unsigned)fail_n, fail_n == 1 ? "" : "s");
+             "%u check%s need%s attention",
+             (unsigned)fail_n,
+             fail_n == 1 ? ""  : "s",
+             fail_n == 1 ? "s" : "");
   }
   doc["summary"] = summary;
 
