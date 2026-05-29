@@ -67,11 +67,17 @@ The pattern: keep the *harm-reduction signal*, drop the *identity / tracking / q
   MQTT (firmware already in `firmware/`) becomes a witness source.
 - **One binary, many adapters.** `adapter_host` registers every configured adapter and runs one
   shared host loop — operators run a single daemon, not N bespoke bridges.
-- **No new heavy dependencies.** The reference adapters ride on `rumqttc`, already a dependency;
-  ML stays optional behind `backend-tract`; there are no cloud SDKs.
+- **No broker required, either.** The webhook adapter accepts a plain HTTP `POST`, so a sensor or
+  script can register with a single `curl` — no MQTT broker to stand up. Lowest possible DIY barrier.
+- **No new heavy dependencies.** The reference adapters ride on `rumqttc` (already a dependency)
+  and the std library (webhook listener); ML stays optional behind `backend-tract`; no cloud SDKs.
 - **Reuse existing gear.** Frigate (free NVR), ESP32, any MQTT-speaking sensor, cheap PIR/contact
   switches; ALPR cameras can be *down-reduced* to presence rather than discarded.
-- **The pane of glass already exists.** Home Assistant (free) + the read-only Event API.
+- **The pane of glass already exists.** Home Assistant (free) + the read-only Event API. New claim
+  types (acoustic, presence, contact, after-hours, removal) surface there with friendly labels and
+  icons out of the box.
+- **Opt-in hardening.** Any adapter can parse untrusted payloads inside the kernel's seccomp
+  sandbox (`sandbox = true`), so a compromised parser still cannot touch the filesystem or network.
 
 ## 6. What this is NOT (guardrails)
 
@@ -83,6 +89,8 @@ producers, never new privilege**. "Do it all" here means *integrate everything, 
 ## 7. Reference implementation & specs
 
 - Normative contract: `spec/sensor_adapter_contract_v0.md`
-- Code: `src/adapter/` (`contract.rs`, `registry.rs`, `host.rs`, `frigate.rs`, `mqtt_sensor.rs`),
-  binary `src/bin/adapter_host.rs`, example config `adapter_host.example.toml`.
-- Conformance tests: `tests/adapter_contract.rs`, `tests/adapter_cannot_bypass_enforcer.rs`.
+- Code: `src/adapter/` (`contract.rs`, `registry.rs`, `host.rs`, `sandbox.rs`, and the `frigate.rs`,
+  `mqtt_sensor.rs`, `webhook.rs` adapters), binary `src/bin/adapter_host.rs`, example config
+  `adapter_host.example.toml`.
+- Conformance tests: `tests/adapter_contract.rs`, `tests/adapter_cannot_bypass_enforcer.rs`,
+  `tests/adapter_webhook_sandbox.rs`.

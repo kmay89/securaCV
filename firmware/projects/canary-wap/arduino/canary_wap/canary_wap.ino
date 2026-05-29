@@ -2386,7 +2386,13 @@ static esp_err_t handle_ui(httpd_req_t* req) {
       char tok_hex[csi_integration::PAIR_TOKEN_HEX_LEN + 1];
       if (csi_integration::pair_token_issue(tok_hex, sizeof(tok_hex))) {
         char location[128];
-        snprintf(location, sizeof(location), "/companion?token=%s", tok_hex);
+        // Defense-in-depth: a truncated Location would redirect to a malformed
+        // (and unauthenticated) URI, so bail out rather than emit it.
+        if (snprintf(location, sizeof(location), "/companion?token=%s", tok_hex) >= (int)sizeof(location)) {
+          httpd_resp_set_status(req, "500 Internal Server Error");
+          httpd_resp_set_type(req, "text/plain");
+          return httpd_resp_send(req, "Setup link error. Try again.", HTTPD_RESP_USE_STRLEN);
+        }
         httpd_resp_set_status(req, "302 Found");
         httpd_resp_set_hdr(req, "Location", location);
         httpd_resp_set_hdr(req, "Cache-Control", "no-cache, no-store, must-revalidate");

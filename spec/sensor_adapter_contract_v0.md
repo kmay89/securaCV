@@ -114,6 +114,21 @@ sanitization — lifted out of `frigate_bridge` so every adapter shares it. **Th
 method that writes an event to the log bypassing the Contract Enforcer.** A claim is the *only*
 egress, and every claim passes all three gates.
 
+### 4.1 Optional sandboxing (audit → security boundary)
+
+The realistic attack surface in an adapter is parsing attacker-controlled bytes (MQTT payloads,
+webhook bodies, NVR JSON) into claims. Adapters MAY run that parse step inside the same hardened
+seccomp sandbox the kernel uses for modules (`module_runtime::sandbox::run_in_sandbox`): the parse
+executes in a short-lived forked child that physically cannot open files or sockets, and the
+resulting `Vec<Claim>` is serialized back. This is provided by `adapter::sandbox::parse_in_sandbox`
+behind the `adapter-sandbox` feature and exposed per adapter via `with_sandbox(true)`.
+
+Sandboxing is **opt-in** for adapters (unlike module sandboxing, which is mandatory) because
+adapters are out-of-TCB producers and the per-call fork has a cost; operators enable it for
+adapters whose parsers they do not fully trust. When enabled it upgrades the audit boundary toward
+a real security boundary for the parse step. Channel receipt and kernel writes remain in the
+trusted parent.
+
 ---
 
 ## 5. Per-Invariant Preservation at the Adapter Boundary (Normative)
@@ -162,6 +177,7 @@ An adapter is conforming only if:
 - It never retains, emits, or logs raw media, identity, or precise time/location.
 
 The reference implementation lives in `src/adapter/` (`contract.rs`, `registry.rs`, `host.rs`,
-`frigate.rs`, `mqtt_sensor.rs`) with conformance tests in `tests/adapter_contract.rs` and
-`tests/adapter_cannot_bypass_enforcer.rs`. The positioning and capability-mapping rationale is in
+`sandbox.rs`, and the `frigate.rs`, `mqtt_sensor.rs`, `webhook.rs` adapters) with conformance tests
+in `tests/adapter_contract.rs`, `tests/adapter_cannot_bypass_enforcer.rs`, and
+`tests/adapter_webhook_sandbox.rs`. The positioning and capability-mapping rationale is in
 `spec/witness_mesh_os_v0.md`.

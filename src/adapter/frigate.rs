@@ -53,6 +53,7 @@ pub struct FrigateAdapter {
     allowed_cameras: Option<Vec<String>>,
     allowed_labels: Vec<String>,
     min_confidence: f64,
+    sandbox: bool,
 }
 
 impl FrigateAdapter {
@@ -84,9 +85,17 @@ impl FrigateAdapter {
                 allowed_cameras,
                 allowed_labels,
                 min_confidence,
+                sandbox: false,
             },
             tx,
         )
+    }
+
+    /// Opt in to running payload parsing inside the seccomp sandbox (requires the
+    /// `adapter-sandbox` feature; no effect otherwise).
+    pub fn with_sandbox(mut self, enabled: bool) -> Self {
+        self.sandbox = enabled;
+        self
     }
 
     /// Pure transform: parse one Frigate payload into zero or more claims, applying the
@@ -139,14 +148,31 @@ impl SensorAdapter for FrigateAdapter {
     }
 
     fn poll(&mut self) -> Result<Vec<Claim>> {
-        let mut out = Vec::new();
-        while let Ok((topic, payload)) = self.rx.try_recv() {
-            match self.parse_to_claims(&topic, &payload) {
-                Ok(mut claims) => out.append(&mut claims),
-                Err(e) => log::debug!("frigate adapter skipped payload: {}", e),
+        let _ = self.sandbox; // read unconditionally; only consulted under `adapter-sandbox`.
+        let mut msgs = Vec::new();
+        while let Ok(msg) = self.rx.try_recv() {
+            msgs.push(msg);
+        }
+        if msgs.is_empty() {
+            return Ok(Vec::new());
+        }
+        let parse_all = || {
+            let mut out = Vec::new();
+            for (topic, payload) in &msgs {
+                match self.parse_to_claims(topic, payload) {
+                    Ok(mut claims) => out.append(&mut claims),
+                    Err(e) => log::debug!("frigate adapter skipped payload: {}", e),
+                }
+            }
+            Ok(out)
+        };
+        #[cfg(feature = "adapter-sandbox")]
+        {
+            if self.sandbox {
+                return crate::adapter::sandbox::parse_in_sandbox(parse_all);
             }
         }
-        Ok(out)
+        parse_all()
     }
 }
 
