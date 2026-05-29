@@ -70,25 +70,31 @@ override cannot redirect it to `0.103.x` — that crosses the semver-incompatibl
 - **Bug:** parsing attacker-controlled input with the RFC 2822 format can
   exhaust the stack via deeply nested, deprecated format features. Fixed in
   `time 0.3.47`.
-- **Where:** `time 0.3.41`, transitive via `tract-onnx` (ONNX inference) and
-  `liquid` (templating).
-- **Why securaCV is not exposed:** the firmware/host code uses only
-  `std::time` (the standard library) — it never calls the `time` crate's
-  `Rfc2822` parser or `format_description` APIs on untrusted input.
-- **Why it isn't simply patched:** the latest *stable* `tract` (`0.21.15`)
-  pins `time = ">=0.3.23, <0.3.42"`, and every version in that allowed range
-  is vulnerable, so `0.3.47` cannot be selected. Only the unstable
-  `tract 0.23.0-dev` pre-release relaxes the bound — a breaking major upgrade
-  we will not take on a security product for an unreachable advisory.
-  Dependabot's "patch available" flag does not account for this ceiling; its
-  auto-bump PR would fail to resolve.
+- **Where:** `time` is a **build-time dependency only**. It is pulled by
+  `liquid` (a templating engine), which is itself a `[build-dependencies]` of
+  `tract-linalg` — the codegen step of the `tract-onnx` inference engine. That
+  whole `tract` subtree is behind the optional, non-default `backend-tract`
+  feature, so it is absent from default builds entirely.
+- **Why securaCV is not exposed:** `time` never ships in any runtime binary —
+  it runs only during compilation of `tract-linalg`'s build script, which
+  parses no untrusted input. The RFC 2822 DoS requires runtime parsing of
+  attacker-controlled input, which cannot happen here. (For completeness, the
+  runtime code in `src/` uses only `std::time`, never the `time` crate.)
+- **Fix is available, pending a `tract` major bump:** bumping `tract-onnx`
+  `0.21 → 0.22` (a published *stable* release) updates `tract-linalg` to
+  `0.22.1`, which drops the old `time < 0.3.42` ceiling and lets `time`
+  resolve to `0.3.47` — verified at the lock level. It is not applied here
+  because the `0.21 → 0.22` major bump touches the optional `backend-tract`
+  detector (`src/detect/backends/tract.rs`) and must be build-verified first.
+  Tracked below.
 
 ### Tracking
 
 - Watch `rumqttc` for a release that bumps its `rustls-webpki` dependency to
   the `0.103.x` line (clears Group 1).
-- Watch `tract` for a stable release that relaxes its `time < 0.3.42` bound
-  (clears Group 2).
+- `tract`: bump `tract-onnx` `0.21 → 0.22` (the stable `0.22.1` line relaxes
+  the `time < 0.3.42` bound, enabling `time 0.3.47`) once the `backend-tract`
+  detector is verified to build against the new major version (clears Group 2).
 - When either lands, bump, drop the corresponding entry here, and re-run the
   audit. Until then these alerts are dismissed as "vulnerable code not in the
   execution path."
