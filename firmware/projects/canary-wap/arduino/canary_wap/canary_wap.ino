@@ -6355,9 +6355,16 @@ static void wifi_init_provisioning() {
   snprintf(g_wifi_status.ap_ip, sizeof(g_wifi_status.ap_ip),
            "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
 
-  if (setup_wizard::is_active()) {
-    setup_wizard::start_captive_portal();
-    Serial.println("[OK] Captive portal active");
+  // Bring up the captive DNS redirector for the whole life of the AP, not
+  // just first-boot setup. The softAP is always on (AP+STA, never torn down),
+  // so a phone joining the management AP after provisioning — e.g. because
+  // home WiFi dropped — still resolves canary.local to the device instead of
+  // being flagged "no internet" and disconnected. The setup wizard's
+  // landing/timeout logic stays separately gated on is_active().
+  if (setup_wizard::start_captive_portal()) {
+    Serial.println(setup_wizard::is_active()
+                     ? "[OK] Captive DNS active (first-boot setup)"
+                     : "[OK] Captive DNS active (AP management)");
   }
 
   char msg[64];
@@ -7261,8 +7268,11 @@ void loop() {
   esp_task_wdt_reset();
   #endif
 
+  // Service the captive DNS redirector whenever it's up (it self-guards on
+  // s_dns_running), so it answers AP clients in steady state too — not only
+  // while the first-boot wizard is active.
+  setup_wizard::dns_process();
   if (setup_wizard::is_active()) {
-    setup_wizard::dns_process();
     setup_wizard::check_timeout();
     if (WiFi.status() == WL_CONNECTED) {
       setup_wizard::mark_complete();

@@ -48,9 +48,11 @@ use pqcrypto_traits::sign::PublicKey as PqPublicKeyTrait;
 pub mod adapter;
 pub mod api;
 pub mod break_glass;
+pub mod canonical_json;
 pub mod config;
 pub mod crypto;
 pub mod detect;
+pub mod envelope;
 pub mod frame;
 pub mod ingest;
 pub mod log;
@@ -66,6 +68,7 @@ pub use adapter::{
     SensorAdapter,
 };
 pub use detect::{Detection, DetectionResult, SizeClass};
+pub use envelope::{verify_envelope, EnvelopeReport, EvidenceEnvelope, IntegrityStatus};
 pub use frame::{
     select_inference_backend, BackendSelection, CpuDetector, Detector, DetectorBackend,
     DeviceCapabilities, FrameBuffer, InferenceBackend, InferenceView, RawFrame, StubDetector,
@@ -1744,6 +1747,75 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         })
     }
 
+    /// Assemble a canonical [`EvidenceEnvelope`] (`profile: "full"`) from an already-built
+    /// export bundle plus the device's four ledgers. See `spec/evidence_envelope.md`.
+    pub fn evidence_envelope_from_bundle(
+        &self,
+        bundle: ExportBundle,
+        ruleset_id: &str,
+        kernel_version: &str,
+        expected_ruleset_hash: [u8; 32],
+    ) -> Result<EvidenceEnvelope> {
+        let parts = envelope::EnvelopeParts {
+            kernel_version: kernel_version.to_string(),
+            ruleset_id: ruleset_id.to_string(),
+            ruleset_hash: expected_ruleset_hash,
+            device_public_key: bundle.device_public_key,
+            pq_public_key: bundle.pq_public_key,
+            artifact: bundle.artifact,
+            export_receipt_entry: bundle.receipt_entry,
+            sealed_events: envelope::read_sealed_events(&self.conn)?,
+            break_glass_receipts: envelope::read_break_glass_receipts(&self.conn)?,
+            export_receipts: envelope::read_export_receipts(&self.conn)?,
+            checkpoint: envelope::read_checkpoint(&self.conn)?,
+        };
+        EvidenceEnvelope::assemble(parts)
+    }
+
+    /// Build a canonical evidence envelope under break-glass authorization (the deliberate,
+    /// receipted disclosure path). Mirrors [`Self::export_events_bundle_authorized`].
+    pub fn build_evidence_envelope_authorized(
+        &mut self,
+        expected_ruleset_hash: [u8; 32],
+        options: ExportOptions,
+        ruleset_id: &str,
+        kernel_version: &str,
+        token: &mut break_glass::BreakGlassToken,
+    ) -> Result<EvidenceEnvelope> {
+        let bundle = self.export_events_bundle_authorized(expected_ruleset_hash, options, token)?;
+        self.evidence_envelope_from_bundle(
+            bundle,
+            ruleset_id,
+            kernel_version,
+            expected_ruleset_hash,
+        )
+    }
+
+    /// Build a canonical evidence envelope for local-only API access (no break-glass).
+    /// The caller MUST enforce capability-token access control.
+    pub fn build_evidence_envelope_for_api(
+        &mut self,
+        expected_ruleset_hash: [u8; 32],
+        options: ExportOptions,
+        ruleset_id: &str,
+        kernel_version: &str,
+    ) -> Result<EvidenceEnvelope> {
+        let artifact = self.export_events_for_api(expected_ruleset_hash, options)?;
+        let receipt_entry = self.latest_export_receipt_entry()?;
+        let bundle = ExportBundle {
+            artifact,
+            receipt_entry,
+            device_public_key: self.device_key_for_verify_only(),
+            pq_public_key: self.device_pq_public_key_for_verify_only(),
+        };
+        self.evidence_envelope_from_bundle(
+            bundle,
+            ruleset_id,
+            kernel_version,
+            expected_ruleset_hash,
+        )
+    }
+
     /// Export events sequentially, grouped into coarse time buckets with batching and jitter.
     fn export_events_sequential_unchecked(
         &mut self,
@@ -2552,6 +2624,201 @@ mod tests {
         assert!(!contains_key(&value, "created_at"));
         assert!(!contains_key(&value, "timestamp"));
         assert!(!contains_key(&value, "correlation_token"));
+        Ok(())
+    }
+
+    fn seal_one_event(kernel: &mut Kernel, cfg: &KernelConfig, zone: &str) -> Result<()> {
+        let desc = ModuleDescriptor {
+            id: "test_module",
+            allowed_event_types: &[EventType::BoundaryCrossingObjectLarge],
+            requested_capabilities: &[],
+            supported_backends: &[InferenceBackend::Stub],
+        };
+        let cand = CandidateEvent {
+            event_type: EventType::BoundaryCrossingObjectLarge,
+            time_bucket: TimeBucket {
+                start_epoch_s: 600,
+                size_s: TEN_MINUTES_S,
+            },
+            zone_id: zone.to_string(),
+            confidence: 0.5,
+            correlation_token: None,
+        };
+        kernel.append_event_checked(
+            &desc,
+            cand,
+            &cfg.kernel_version,
+            &cfg.ruleset_id,
+            cfg.ruleset_hash,
+        )?;
+        Ok(())
+    }
+
+    fn build_test_envelope() -> Result<EvidenceEnvelope> {
+        let (mut kernel, cfg) = setup_test_kernel()?;
+        seal_one_event(&mut kernel, &cfg, "zone:a")?;
+        seal_one_event(&mut kernel, &cfg, "zone:b")?;
+        kernel.build_evidence_envelope_for_api(
+            cfg.ruleset_hash,
+            ExportOptions {
+                jitter_s: 0,
+                ..ExportOptions::default()
+            },
+            &cfg.ruleset_id,
+            &cfg.kernel_version,
+        )
+    }
+
+    #[test]
+    fn evidence_envelope_builds_and_verifies() -> Result<()> {
+        let envelope = build_test_envelope()?;
+        assert_eq!(envelope.envelope_format, envelope::ENVELOPE_FORMAT);
+        assert_eq!(envelope.envelope_version, envelope::ENVELOPE_VERSION);
+        assert_eq!(envelope.ledgers.sealed_events.count, 2);
+        assert_eq!(envelope.ledgers.export_receipts.count, 1);
+        assert_eq!(envelope.disclosure.profile, "full");
+
+        let report = verify_envelope(&envelope, SignatureMode::Compat)?;
+        assert_eq!(report.sealed_events, 2);
+        assert_eq!(report.export_receipts, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn evidence_envelope_survives_json_round_trip() -> Result<()> {
+        let envelope = build_test_envelope()?;
+        let json = serde_json::to_string(&envelope)?;
+        let parsed: EvidenceEnvelope = serde_json::from_str(&json)?;
+        // Digest must be stable across (de)serialization, and verification must still pass.
+        assert_eq!(parsed.whole_envelope_digest, envelope.whole_envelope_digest);
+        verify_envelope(&parsed, SignatureMode::Compat)?;
+        Ok(())
+    }
+
+    #[test]
+    fn evidence_envelope_detects_metadata_tamper_via_digest() -> Result<()> {
+        let mut envelope = build_test_envelope()?;
+        // Tamper a field WITHOUT recomputing the digest: the digest check must fail.
+        envelope.provenance.kernel_version = "evil".to_string();
+        let err = verify_envelope(&envelope, SignatureMode::Compat).unwrap_err();
+        assert!(
+            format!("{err}").contains("whole_envelope_digest mismatch"),
+            "unexpected error: {err}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn evidence_envelope_detects_payload_tamper_at_chain_level() -> Result<()> {
+        let mut envelope = build_test_envelope()?;
+        // Corrupt a sealed-event payload, then RE-COMPUTE the digest so the digest check
+        // passes and we exercise the per-entry hash/chain verification path instead.
+        envelope.ledgers.sealed_events.entries[0]
+            .payload_json
+            .push(' ');
+        envelope.whole_envelope_digest = envelope::compute_whole_envelope_digest(&envelope)?;
+        let err = verify_envelope(&envelope, SignatureMode::Compat).unwrap_err();
+        assert!(
+            format!("{err}").contains("sealed_events"),
+            "unexpected error: {err}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn evidence_envelope_detects_broken_chain_link() -> Result<()> {
+        let mut envelope = build_test_envelope()?;
+        // Flip a byte in the second entry's prev_hash, then refresh the digest.
+        envelope.ledgers.sealed_events.entries[1].prev_hash[0] ^= 0xff;
+        envelope.whole_envelope_digest = envelope::compute_whole_envelope_digest(&envelope)?;
+        let err = verify_envelope(&envelope, SignatureMode::Compat).unwrap_err();
+        assert!(
+            format!("{err}").contains("sealed_events"),
+            "unexpected error: {err}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn evidence_envelope_detects_forged_ledger_count() -> Result<()> {
+        let mut envelope = build_test_envelope()?;
+        // Lie about the entry count while leaving the real entries intact, then refresh the
+        // digest (which is not a signature). The summary check must still catch it.
+        envelope.ledgers.sealed_events.count = 99;
+        envelope.whole_envelope_digest = envelope::compute_whole_envelope_digest(&envelope)?;
+        let err = verify_envelope(&envelope, SignatureMode::Compat).unwrap_err();
+        assert!(
+            format!("{err}").contains("sealed_events count mismatch"),
+            "unexpected error: {err}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn evidence_envelope_detects_forged_head_hash() -> Result<()> {
+        let mut envelope = build_test_envelope()?;
+        envelope.ledgers.sealed_events.head_hash = Some([0xab; 32]);
+        envelope.whole_envelope_digest = envelope::compute_whole_envelope_digest(&envelope)?;
+        let err = verify_envelope(&envelope, SignatureMode::Compat).unwrap_err();
+        assert!(
+            format!("{err}").contains("sealed_events head_hash"),
+            "unexpected error: {err}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn evidence_envelope_rejects_tampered_manifest() -> Result<()> {
+        let mut envelope = build_test_envelope()?;
+        // Weaken a carried rule, then refresh the digest. Must be rejected before signatures.
+        envelope.manifest.signature_domains.sealed_log_entry = "evil:domain".to_string();
+        envelope.whole_envelope_digest = envelope::compute_whole_envelope_digest(&envelope)?;
+        let err = verify_envelope(&envelope, SignatureMode::Compat).unwrap_err();
+        assert!(
+            format!("{err}").contains("manifest"),
+            "unexpected error: {err}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn evidence_envelope_detects_provenance_ruleset_mismatch() -> Result<()> {
+        let mut envelope = build_test_envelope()?;
+        envelope.provenance.ruleset_hash[0] ^= 0xff;
+        envelope.whole_envelope_digest = envelope::compute_whole_envelope_digest(&envelope)?;
+        let err = verify_envelope(&envelope, SignatureMode::Compat).unwrap_err();
+        assert!(
+            format!("{err}").contains("ruleset_hash"),
+            "unexpected error: {err}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn evidence_envelope_omits_forbidden_fields() -> Result<()> {
+        let envelope = build_test_envelope()?;
+
+        fn contains_key(value: &serde_json::Value, key: &str) -> bool {
+            match value {
+                serde_json::Value::Object(map) => {
+                    map.iter().any(|(k, v)| k == key || contains_key(v, key))
+                }
+                serde_json::Value::Array(items) => items.iter().any(|v| contains_key(v, key)),
+                _ => false,
+            }
+        }
+
+        // The coarse artifact view must never carry precise time or identity fields.
+        let artifact_value = serde_json::to_value(&envelope.artifact)?;
+        assert!(!contains_key(&artifact_value, "timestamp"));
+        assert!(!contains_key(&artifact_value, "created_at"));
+        assert!(!contains_key(&artifact_value, "correlation_token"));
+        // The manifest must advertise these as forbidden.
+        assert!(envelope
+            .manifest
+            .forbidden_fields
+            .iter()
+            .any(|f| f == "precise_timestamp"));
         Ok(())
     }
 

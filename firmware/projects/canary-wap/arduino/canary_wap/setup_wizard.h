@@ -4,10 +4,17 @@
  * Arduino-compatible equivalent of firmware/canary/lib/securacv_setup/.
  * Single-header implementation following the WAP's existing pattern.
  *
- * On first boot (NVS "setup_ok" absent), a captive-portal DNS server
- * redirects all queries to 192.168.4.1, triggering the phone's "sign in to
- * network" dialog. The AP SSID ("SecuraCV-XXXX") is the same in setup and in
- * steady state. Setup completes when WiFi credentials are saved.
+ * A captive-portal DNS server redirects all A-record queries to 192.168.4.1
+ * so canary.local (and any typed hostname) lands on the device. It runs for
+ * the whole lifetime of the always-on AP — not just first boot — so a phone
+ * that joins the management AP after provisioning (e.g. home WiFi dropped)
+ * still resolves the device instead of being flagged "no internet" and
+ * disconnected. The AP SSID ("SecuraCV-XXXX") is the same in setup and in
+ * steady state.
+ *
+ * The first-boot *wizard* (NVS "setup_ok" absent → is_active()) is a separate
+ * concern layered on top: it gates the setup-vs-dashboard landing and the
+ * 15-minute setup timeout. Setup completes when WiFi credentials are saved.
  *
  * Copyright (c) 2026 ERRERlabs / Karl May
  * License: Apache-2.0
@@ -19,6 +26,8 @@
 #include <Preferences.h>
 #include <WiFi.h>
 #include <WiFiUdp.h>
+
+#include "captive_dns.h"   // pure DNS response builder (host-tested)
 
 namespace setup_wizard {
 
@@ -92,31 +101,14 @@ inline void dns_process() {
   if (len < 12) return;
 
   IPAddress ap_ip = WiFi.softAPIP();
+  uint8_t ip[4] = { ap_ip[0], ap_ip[1], ap_ip[2], ap_ip[3] };
   uint8_t response[512];
-  if ((size_t)len > sizeof(response) - 16) return;
-
-  memcpy(response, buf, len);
-  response[2] = 0x84 | (buf[2] & 0x01);
-  response[3] = 0x00;
-  response[6] = 0x00;
-  response[7] = 0x01;
-  response[8] = 0x00;
-  response[9] = 0x00;
-  response[10] = 0x00;
-  response[11] = 0x00;
-
-  size_t pos = len;
-  response[pos++] = 0xC0; response[pos++] = 0x0C;
-  response[pos++] = 0x00; response[pos++] = 0x01;
-  response[pos++] = 0x00; response[pos++] = 0x01;
-  response[pos++] = 0x00; response[pos++] = 0x00;
-  response[pos++] = 0x00; response[pos++] = 0x3C;
-  response[pos++] = 0x00; response[pos++] = 0x04;
-  response[pos++] = ap_ip[0]; response[pos++] = ap_ip[1];
-  response[pos++] = ap_ip[2]; response[pos++] = ap_ip[3];
+  size_t out_len = captive_dns::build_response(buf, (size_t)len, ip,
+                                               response, sizeof(response));
+  if (out_len == 0) return;
 
   s_dns_udp.beginPacket(s_dns_udp.remoteIP(), s_dns_udp.remotePort());
-  s_dns_udp.write(response, pos);
+  s_dns_udp.write(response, out_len);
   s_dns_udp.endPacket();
 }
 

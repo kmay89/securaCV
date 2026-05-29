@@ -31,6 +31,8 @@ from .const import (
     CRITICAL_BATTERY_THRESHOLD_PERCENT,
     WARNING_BATTERY_THRESHOLD_PERCENT,
     WARNING_MEMORY_THRESHOLD_BYTES,
+    DEFAULT_EVENT_ICON,
+    event_type_metadata,
 )
 from .device_trust import TrustStore
 from . import async_record_verify
@@ -185,7 +187,6 @@ class SecuraCVKernelLastEventSensor(CoordinatorEntity, SensorEntity):
     """Sensor for latest event from the Privacy Witness Kernel (HTTP API)."""
 
     _attr_name = "SecuraCV Last Event"
-    _attr_icon = "mdi:shield-eye"
     _attr_has_entity_name = True
 
     def __init__(self, coordinator, entry: ConfigEntry) -> None:
@@ -193,6 +194,14 @@ class SecuraCVKernelLastEventSensor(CoordinatorEntity, SensorEntity):
         super().__init__(coordinator)
         self._entry = entry
         self._attr_unique_id = f"{DOMAIN}_{entry.entry_id}_latest_event"
+
+    @property
+    def icon(self) -> str:
+        """Icon reflects the latest event type, so the dashboard reads at a glance."""
+        # coordinator.data may be None before the first successful update.
+        if self.coordinator.data and (event := self.coordinator.data.get("latest_event")):
+            return event_type_metadata(event.get("event_type"))["icon"]
+        return DEFAULT_EVENT_ICON
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -220,6 +229,8 @@ class SecuraCVKernelLastEventSensor(CoordinatorEntity, SensorEntity):
             return None
         keys = ("zone_id", "time_bucket", "confidence", "kernel_version", "ruleset_id")
         attrs = {key: event[key] for key in keys if key in event}
+        # Human-readable label for the coarse claim, for nicer dashboard display.
+        attrs["friendly_event"] = event_type_metadata(event.get("event_type"))["label"]
         return attrs or None
 
 

@@ -61,6 +61,8 @@ stub-frame-source = []
 backend-tract = ["tract-onnx"]
 adapter-frigate = []
 adapter-mqtt-sensor = []
+adapter-webhook = ["adapter-mqtt-sensor"]
+adapter-sandbox = []
 pqc-signatures = ["pqcrypto-mldsa", "pqcrypto-traits"]
 pqc-vault = ["pqcrypto-mlkem", "pqcrypto-traits"]
 pqc-tls = ["rustls", "webpki-roots", "rustls-pki-types"]
@@ -109,4 +111,13 @@ path = "src/bin/grove_vision2_ingest.rs"
 [[bin]]
 name = "adapter_host"
 path = "src/bin/adapter_host.rs"
-required-features = ["adapter-frigate", "adapter-mqtt-sensor"]
+required-features = [
+    "adapter-frigate",
+    "adapter-mqtt-sensor",
+    "adapter-webhook",
+    "adapter-sandbox",
+]
+
+[[bin]]
+name = "tamper_demo"
+path = "src/bin/tamper_demo.rs"

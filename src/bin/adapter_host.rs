@@ -40,6 +40,7 @@ use serde::Deserialize;
 
 use witness_kernel::adapter::frigate::FrigateAdapter;
 use witness_kernel::adapter::mqtt_sensor::{MqttSensorAdapter, SensorRoute};
+use witness_kernel::adapter::webhook::{self, WebhookAdapter};
 use witness_kernel::adapter::{AdapterHost, AdapterHostConfig, ClaimKind};
 use witness_kernel::{KernelConfig, ZonePolicy, MIN_BUCKET_SIZE_S};
 
@@ -82,11 +83,16 @@ struct FileConfig {
     adapter: Vec<AdapterCfg>,
 }
 
+fn default_webhook_addr() -> String {
+    "127.0.0.1:8800".to_string()
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum AdapterCfg {
     Frigate(FrigateCfg),
     MqttSensor(MqttSensorCfg),
+    Webhook(WebhookCfg),
 }
 
 #[derive(Debug, Deserialize)]
@@ -105,6 +111,8 @@ struct FrigateCfg {
     mqtt_username: Option<String>,
     #[serde(default)]
     mqtt_password: Option<String>,
+    #[serde(default)]
+    sandbox: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -117,6 +125,18 @@ struct MqttSensorCfg {
     mqtt_username: Option<String>,
     #[serde(default)]
     mqtt_password: Option<String>,
+    #[serde(default)]
+    sandbox: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct WebhookCfg {
+    #[serde(default = "default_webhook_addr")]
+    listen_addr: String,
+    #[serde(default)]
+    route: Vec<RouteCfg>,
+    #[serde(default)]
+    sandbox: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -128,6 +148,21 @@ struct RouteCfg {
     min_confidence: f32,
     #[serde(default)]
     require_truthy_state: bool,
+}
+
+/// Build a `SensorRoute` list from config, validating claim kinds.
+fn build_routes(routes: &[RouteCfg]) -> Result<Vec<SensorRoute>> {
+    routes
+        .iter()
+        .map(|r| {
+            let kind = ClaimKind::from_str_opt(&r.kind)
+                .ok_or_else(|| anyhow!("unknown claim kind '{}'", r.kind))?;
+            let mut route = SensorRoute::new(r.topic.clone(), kind, r.zone.clone());
+            route.min_confidence = r.min_confidence;
+            route.require_truthy_state = r.require_truthy_state;
+            Ok(route)
+        })
+        .collect()
 }
 
 fn main() -> Result<()> {
@@ -184,6 +219,7 @@ fn main() -> Result<()> {
                     fc.labels.clone(),
                     fc.min_confidence.unwrap_or(0.5),
                 );
+                let adapter = adapter.with_sandbox(fc.sandbox);
                 spawn_mqtt_forwarder(
                     format!("adapter_host_frigate_{idx}"),
                     fc.mqtt_broker_addr,
@@ -193,19 +229,12 @@ fn main() -> Result<()> {
                     tx,
                 );
                 host.register(adapter);
-                log::info!("registered frigate adapter #{idx}");
+                log::info!("registered frigate adapter #{idx} (sandbox={})", fc.sandbox);
             }
             AdapterCfg::MqttSensor(mc) => {
-                let mut routes = Vec::new();
-                for r in &mc.route {
-                    let kind = ClaimKind::from_str_opt(&r.kind)
-                        .ok_or_else(|| anyhow!("unknown claim kind '{}'", r.kind))?;
-                    let mut route = SensorRoute::new(r.topic.clone(), kind, r.zone.clone());
-                    route.min_confidence = r.min_confidence;
-                    route.require_truthy_state = r.require_truthy_state;
-                    routes.push(route);
-                }
+                let routes = build_routes(&mc.route)?;
                 let (adapter, tx) = MqttSensorAdapter::new(routes);
+                let adapter = adapter.with_sandbox(mc.sandbox);
                 let topics = adapter.topics();
                 spawn_mqtt_forwarder(
                     format!("adapter_host_sensor_{idx}"),
@@ -216,7 +245,27 @@ fn main() -> Result<()> {
                     tx,
                 );
                 host.register(adapter);
-                log::info!("registered mqtt_sensor adapter #{idx}");
+                log::info!(
+                    "registered mqtt_sensor adapter #{idx} (sandbox={})",
+                    mc.sandbox
+                );
+            }
+            AdapterCfg::Webhook(wc) => {
+                let routes = build_routes(&wc.route)?;
+                let (adapter, tx) = WebhookAdapter::new(routes);
+                let adapter = adapter.with_sandbox(wc.sandbox);
+                let listen_addr = wc.listen_addr.clone();
+                thread::spawn(move || {
+                    if let Err(e) = webhook::serve(&listen_addr, tx) {
+                        log::error!("webhook listener on {listen_addr} exited: {e}");
+                    }
+                });
+                host.register(adapter);
+                log::info!(
+                    "registered webhook adapter #{idx} on {} (sandbox={})",
+                    wc.listen_addr,
+                    wc.sandbox
+                );
             }
         }
     }
