@@ -20,11 +20,14 @@
 
 pub mod contract;
 pub mod host;
+pub mod observability;
 pub mod registry;
 
 #[cfg(feature = "adapter-sandbox")]
 pub mod sandbox;
 
+#[cfg(feature = "adapter-ble-presence")]
+pub mod ble_presence;
 #[cfg(feature = "adapter-frigate")]
 pub mod frigate;
 #[cfg(feature = "adapter-mqtt-sensor")]

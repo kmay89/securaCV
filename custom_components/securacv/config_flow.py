@@ -23,6 +23,7 @@ from .const import (
     CONF_MQTT_PREFIX,
     CONF_ENABLE_MQTT,
     CONF_SETUP_MODE,
+    CONF_ADAPTER_STATS_URL,
     DEFAULT_KERNEL_URL,
     DEFAULT_MQTT_PREFIX,
     SETUP_MODE_MQTT,
@@ -142,20 +143,21 @@ class SecuraCVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 await self.async_set_unique_id(user_input[CONF_URL])
                 self._abort_if_unique_id_configured()
 
-                return self.async_create_entry(
-                    title="SecuraCV",
-                    data={
-                        CONF_URL: user_input[CONF_URL],
-                        CONF_TOKEN: user_input[CONF_TOKEN],
-                        CONF_ENABLE_MQTT: False,
-                        CONF_SETUP_MODE: SETUP_MODE_KERNEL,
-                    },
-                )
+                data = {
+                    CONF_URL: user_input[CONF_URL],
+                    CONF_TOKEN: user_input[CONF_TOKEN],
+                    CONF_ENABLE_MQTT: False,
+                    CONF_SETUP_MODE: SETUP_MODE_KERNEL,
+                }
+                if user_input.get(CONF_ADAPTER_STATS_URL):
+                    data[CONF_ADAPTER_STATS_URL] = user_input[CONF_ADAPTER_STATS_URL]
+                return self.async_create_entry(title="SecuraCV", data=data)
 
         data_schema = vol.Schema(
             {
                 vol.Required(CONF_URL, default=DEFAULT_KERNEL_URL): str,
                 vol.Required(CONF_TOKEN): str,
+                vol.Optional(CONF_ADAPTER_STATS_URL): str,
             }
         )
 
@@ -182,24 +184,25 @@ class SecuraCVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 await self.async_set_unique_id(user_input[CONF_URL])
                 self._abort_if_unique_id_configured()
 
-                return self.async_create_entry(
-                    title="SecuraCV",
-                    data={
-                        CONF_URL: user_input[CONF_URL],
-                        CONF_TOKEN: user_input[CONF_TOKEN],
-                        CONF_ENABLE_MQTT: True,
-                        CONF_MQTT_PREFIX: user_input.get(
-                            CONF_MQTT_PREFIX, DEFAULT_MQTT_PREFIX
-                        ),
-                        CONF_SETUP_MODE: SETUP_MODE_BOTH,
-                    },
-                )
+                data = {
+                    CONF_URL: user_input[CONF_URL],
+                    CONF_TOKEN: user_input[CONF_TOKEN],
+                    CONF_ENABLE_MQTT: True,
+                    CONF_MQTT_PREFIX: user_input.get(
+                        CONF_MQTT_PREFIX, DEFAULT_MQTT_PREFIX
+                    ),
+                    CONF_SETUP_MODE: SETUP_MODE_BOTH,
+                }
+                if user_input.get(CONF_ADAPTER_STATS_URL):
+                    data[CONF_ADAPTER_STATS_URL] = user_input[CONF_ADAPTER_STATS_URL]
+                return self.async_create_entry(title="SecuraCV", data=data)
 
         data_schema = vol.Schema(
             {
                 vol.Required(CONF_URL, default=DEFAULT_KERNEL_URL): str,
                 vol.Required(CONF_TOKEN): str,
                 vol.Optional(CONF_MQTT_PREFIX, default=DEFAULT_MQTT_PREFIX): str,
+                vol.Optional(CONF_ADAPTER_STATS_URL): str,
             }
         )
 

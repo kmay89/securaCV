@@ -27,11 +27,13 @@
         "description": "Enter the connection details for your SecuraCV Privacy Witness Kernel.\n\nThe kernel runs as a Home Assistant add-on, Docker container, or standalone service.",
         "data": {
           "url": "Kernel URL",
-          "token": "API Token"
+          "token": "API Token",
+          "adapter_stats_url": "Adapter Host stats URL (optional)"
         },
         "data_description": {
           "url": "URL of the Privacy Witness Kernel Event API (e.g., http://privacy_witness_kernel:8799)",
-          "token": "Bearer token from the kernel's api_token file"
+          "token": "Bearer token from the kernel's api_token file",
+          "adapter_stats_url": "Read-only adapter_host stats endpoint, e.g. http://adapter-host:8799 — surfaces per-adapter health as a diagnostic sensor."
         }
       },
       "both": {
@@ -40,12 +42,14 @@
         "data": {
           "url": "Kernel URL",
           "token": "API Token",
-          "mqtt_prefix": "MQTT Topic Prefix"
+          "mqtt_prefix": "MQTT Topic Prefix",
+          "adapter_stats_url": "Adapter Host stats URL (optional)"
         },
         "data_description": {
           "url": "URL of the Privacy Witness Kernel Event API",
           "token": "Bearer token from the kernel's api_token file",
-          "mqtt_prefix": "MQTT topic prefix for Canary devices (default: securacv)"
+          "mqtt_prefix": "MQTT topic prefix for Canary devices (default: securacv)",
+          "adapter_stats_url": "Read-only adapter_host stats endpoint, e.g. http://adapter-host:8799 — surfaces per-adapter health as a diagnostic sensor."
         }
       }
     },

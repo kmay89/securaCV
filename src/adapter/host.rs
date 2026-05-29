@@ -12,15 +12,38 @@
 //! (allowlist, contract, zone policy) remain the security boundary; the host is convenience
 //! plumbing lifted out of the bespoke `frigate_bridge` so every adapter shares it.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, Result};
+use serde::Serialize;
 
 use crate::adapter::contract::{claim_to_candidate, AdapterDescriptor, Claim};
 use crate::adapter::registry::AdapterRegistry;
 use crate::adapter::SensorAdapter;
 use crate::{Event, Kernel, TimeBucket};
+
+/// Per-adapter runtime counters, surfaced for observability (see [`AdapterHost::stats_snapshot`]).
+///
+/// These are operational metrics only — counts and a coarse timestamp, never event content — so
+/// exposing them does not widen the privacy surface.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct AdapterStats {
+    /// Times this adapter has been polled.
+    pub polls: u64,
+    /// Claims the adapter produced across all polls.
+    pub claims_emitted: u64,
+    /// Claims that were sealed into the log.
+    pub claims_sealed: u64,
+    /// Claims dropped by the host (confidence floor or per-bucket dedup).
+    pub claims_filtered: u64,
+    /// Claims rejected by the kernel's gates (a fail-closed `FailureEvent` was recorded).
+    pub claims_rejected: u64,
+    /// Poll calls that returned an error.
+    pub poll_errors: u64,
+    /// Unix epoch (seconds) of the most recently sealed event, or 0 if none.
+    pub last_seal_epoch_s: u64,
+}
 
 /// Configuration for an [`AdapterHost`].
 pub struct AdapterHostConfig {
@@ -43,6 +66,8 @@ pub struct AdapterHost {
     registry: AdapterRegistry,
     /// dedup map: key -> bucket start epoch where the claim was last accepted.
     recent: HashMap<String, u64>,
+    /// per-adapter runtime counters, keyed by adapter name.
+    stats: BTreeMap<String, AdapterStats>,
 }
 
 impl AdapterHost {
@@ -52,7 +77,14 @@ impl AdapterHost {
             config,
             registry: AdapterRegistry::new(),
             recent: HashMap::new(),
+            stats: BTreeMap::new(),
         }
+    }
+
+    /// Snapshot of per-adapter counters, keyed by adapter name. Cheap to clone; intended for a
+    /// diagnostic endpoint or periodic logging.
+    pub fn stats_snapshot(&self) -> BTreeMap<String, AdapterStats> {
+        self.stats.clone()
     }
 
     /// Register an adapter to be polled by [`run_once`](Self::run_once) / [`run_loop`](Self::run_loop).
@@ -162,15 +194,27 @@ impl AdapterHost {
                     Ok(claims) => (desc, claims),
                     Err(e) => {
                         log::warn!("adapter '{}' poll failed: {}; skipping", name, e);
+                        self.stats.entry(name.clone()).or_default().poll_errors += 1;
                         continue;
                     }
                 }
             };
+            let stat = self.stats.entry(name.clone()).or_default();
+            stat.polls += 1;
+            stat.claims_emitted += claims.len() as u64;
             for claim in claims {
                 match self.process_claim(desc, &claim) {
-                    Ok(Some(_)) => written += 1,
-                    Ok(None) => {}
-                    Err(e) => log::warn!("adapter '{}' claim rejected: {}", name, e),
+                    Ok(Some(_)) => {
+                        written += 1;
+                        let stat = self.stats.entry(name.clone()).or_default();
+                        stat.claims_sealed += 1;
+                        stat.last_seal_epoch_s = now_epoch_s();
+                    }
+                    Ok(None) => self.stats.entry(name.clone()).or_default().claims_filtered += 1,
+                    Err(e) => {
+                        log::warn!("adapter '{}' claim rejected: {}", name, e);
+                        self.stats.entry(name.clone()).or_default().claims_rejected += 1;
+                    }
                 }
             }
         }
@@ -178,12 +222,42 @@ impl AdapterHost {
     }
 
     /// Run forever, polling every `poll_interval`. Per-cycle errors are logged, not fatal.
+    /// A one-line per-adapter stats summary is logged at INFO roughly once a minute.
     pub fn run_loop(&mut self, poll_interval: Duration) -> Result<()> {
+        let log_every = stats_log_interval_cycles(poll_interval);
+        let mut cycle: u64 = 0;
         loop {
             if let Err(e) = self.run_once() {
                 log::warn!("adapter host poll cycle failed: {}", e);
             }
+            cycle += 1;
+            if cycle.is_multiple_of(log_every) {
+                self.log_stats_summary();
+            }
             std::thread::sleep(poll_interval);
         }
     }
+
+    /// Emit a compact per-adapter stats line at INFO.
+    pub fn log_stats_summary(&self) {
+        for (name, s) in &self.stats {
+            log::info!(
+                "adapter '{}' stats: polls={} emitted={} sealed={} filtered={} rejected={} poll_errors={}",
+                name, s.polls, s.claims_emitted, s.claims_sealed, s.claims_filtered, s.claims_rejected, s.poll_errors
+            );
+        }
+    }
+}
+
+fn now_epoch_s() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// How many poll cycles approximate one minute, for the periodic stats log (>= 1).
+fn stats_log_interval_cycles(poll_interval: Duration) -> u64 {
+    let secs = poll_interval.as_secs().max(1);
+    (60 / secs).max(1)
 }

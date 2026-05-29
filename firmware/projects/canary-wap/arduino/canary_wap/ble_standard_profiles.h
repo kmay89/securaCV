@@ -136,9 +136,14 @@ inline void register_all(NimBLEServer* server,
                          uint16_t appearance = GAP_APPEARANCE_CAMERA,
                          uint8_t initial_battery_pct = 100) {
   if (!server) return;
-  // GAP appearance is a global property on NimBLEDevice (advertised in
-  // the GAP service that NimBLE auto-creates), not a service of its own.
-  NimBLEDevice::setAppearance(appearance);
+  // GAP appearance is carried in the advertisement data. NimBLE-Arduino 2.x
+  // exposes it via the advertising object (there is no
+  // NimBLEDevice::setAppearance); the value is folded into the adv payload
+  // when advertising (re)starts. Guard the pointer — getAdvertising() can
+  // return nullptr if the controller hasn't initialised advertising yet.
+  if (NimBLEAdvertising* adv = NimBLEDevice::getAdvertising()) {
+    adv->setAppearance(appearance);
+  }
   register_dis(server, manufacturer, model, serial,
                fw_revision, hw_revision, sw_revision);
   register_battery(server, initial_battery_pct);

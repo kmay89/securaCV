@@ -373,6 +373,15 @@ jobs:
             $COMMON_SRC/csi_witness_payload.cpp \
             -I $BLE_SRC -I $MESH_SRC -I $COMMON_SRC
 
+      - name: Build + run canary-wap project host tests
+        # The canary-wap project keeps its own host-test Makefile (mesh
+        # coexistence, chirp/beacon invariants, device signature, and the
+        # captive-portal DNS response builder). Its `run` target builds and
+        # runs every suite; each test exits non-zero on failure, so make's
+        # exit code gates the job. Needs libcrypto for the beacon tamper
+        # suite — preinstalled on ubuntu-latest.
+        run: make -C firmware/projects/canary-wap/tests_host
+
   microcopy-lint:
     name: Dashboard Microcopy Lint
     runs-on: ubuntu-latest
