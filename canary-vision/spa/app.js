@@ -652,6 +652,42 @@ var EVENT_TYPE_META = {
 
 var EVENT_TYPE_PRIORITY = ['person_detected', 'vehicle_detected', 'animal_detected', 'motion_detected'];
 
+// Canonical envelope events use the kernel's EventType enum (src/lib.rs), not the raw device
+// strings. Map them back to friendly labels + the existing timeline dot classes so the in-app
+// verified timeline shares the visual language of the live events view. Unknown variants fall back
+// to a neutral label rather than guessing.
+var ENVELOPE_EVENT_META = {
+  BoundaryCrossingObjectLarge:  { icon: '🚶', label: 'Large object crossing',  cssClass: 'type-person' },
+  BoundaryCrossingObjectSmall:  { icon: '💨', label: 'Small object / motion',  cssClass: 'type-motion' },
+  AcousticImpulseInZone:        { icon: '🔊', label: 'Acoustic impulse',       cssClass: 'type-motion' },
+  PresenceInRestrictedZone:     { icon: '⛔', label: 'Presence (restricted)',  cssClass: 'type-person' },
+  VehiclePresenceAfterHours:    { icon: '🚗', label: 'Vehicle (after hours)',  cssClass: 'type-vehicle' },
+  ContactStateChange:           { icon: '🚪', label: 'Contact state change',   cssClass: 'type-motion' },
+  ObjectRemovedFromZone:        { icon: '📦', label: 'Object removed',          cssClass: 'type-animal' },
+};
+
+function envelopeEventMeta(eventType) {
+  return ENVELOPE_EVENT_META[eventType] ||
+    { icon: '•', label: String(eventType || 'unknown'), cssClass: 'type-motion' };
+}
+
+// Render a coarse {start_epoch_s, size_s} bucket as a human window in UTC. The whole point of the
+// canonical envelope is that this is COARSE — no exact second — so we show the bucket span, not a
+// precise instant.
+function formatTimeBucket(tb) {
+  if (!tb || typeof tb.start_epoch_s !== 'number') return '—';
+  var start = new Date(tb.start_epoch_s * 1000);
+  var end = new Date((tb.start_epoch_s + (tb.size_s || 0)) * 1000);
+  function hm(d) {
+    return ('0' + d.getUTCHours()).slice(-2) + ':' + ('0' + d.getUTCMinutes()).slice(-2);
+  }
+  var date = start.getUTCFullYear() + '-' + ('0' + (start.getUTCMonth() + 1)).slice(-2) + '-' +
+    ('0' + start.getUTCDate()).slice(-2);
+  var mins = Math.round((tb.size_s || 0) / 60);
+  return date + ' ' + hm(start) + '–' + hm(end) + ' UTC (' + mins + ' min window)';
+}
+
+
 var EventsState = {
   allRecords: [],
   clusters: [],
@@ -1799,6 +1835,142 @@ function renderLogsView(deviceId) {
     });
 }
 
+// Collect the verified, coarsened events from a canonical envelope's signed sealed_events ledger,
+// flattened and sorted by time bucket. We render from the SEALED LEDGER (the signed record), not
+// the artifact projection, so the timeline reflects exactly what was cryptographically attested.
+function envelopeTimelineEvents(envelope) {
+  var entries = (envelope && envelope.ledgers && envelope.ledgers.sealed_events &&
+    envelope.ledgers.sealed_events.entries) || [];
+  var events = [];
+  entries.forEach(function (entry) {
+    var rec;
+    try { rec = JSON.parse(entry.payload_json); } catch (e) { return; }
+    if (!rec || typeof rec !== 'object') return;
+    if (rec.record_type === 'failure' || rec.failure_type !== undefined) {
+      events.push({ failure: true, type: rec.failure_type, time_bucket: rec.time_bucket });
+    } else {
+      events.push({
+        failure: false,
+        type: rec.event_type,
+        zone: rec.zone_id,
+        time_bucket: rec.time_bucket,
+      });
+    }
+  });
+  events.sort(function (a, b) {
+    var sa = (a.time_bucket && a.time_bucket.start_epoch_s) || 0;
+    var sb = (b.time_bucket && b.time_bucket.start_epoch_s) || 0;
+    return sb - sa; // newest first
+  });
+  return events;
+}
+
+// Build the integrity banner from the device's shared-verifier report (the /witness/verify
+// response carries an `evidence_envelope` block produced by viewer/verify_core.js server-side).
+// `displayedDigest` is the whole_envelope_digest of the envelope actually being rendered: the
+// integrity report and the timeline are built from two independent requests, so a witness record
+// arriving between them could make the report describe a DIFFERENT envelope than the one shown. We
+// only claim "verified" when the two digests match; otherwise we surface a mismatch warning and let
+// the operator re-load, rather than painting a green banner over an unrelated timeline.
+function renderEnvelopeIntegrityBanner(verifyReport, displayedDigest) {
+  var ee = verifyReport && verifyReport.evidence_envelope;
+  if (!ee) {
+    return el('div', { className: 'alert alert-warning',
+      textContent: 'Integrity status unavailable for this bundle.' });
+  }
+  var digestsMatch = !displayedDigest || !ee.whole_envelope_digest ||
+    ee.whole_envelope_digest === displayedDigest;
+  if (!digestsMatch) {
+    return el('div', { className: 'alert alert-warning' }, [
+      el('div', { className: 'timeline-label',
+        textContent: '⚠ Integrity report does not match the displayed bundle' }),
+      el('div', { className: 'timeline-time',
+        textContent: 'The chain changed between fetching the timeline and verifying it. Reload to re-verify.' }),
+    ]);
+  }
+  var cls = ee.ok ? (ee.status === 'ok' ? 'alert-success' : 'alert-warning') : 'alert-error';
+  var label = ee.ok
+    ? (ee.status === 'ok' ? '✓ Verified — integrity intact' : '✓ Verified — with notes')
+    : '✗ Not verified — bundle rejected';
+  var children = [el('div', { className: 'timeline-label', textContent: label })];
+  if (ee.whole_envelope_digest) {
+    children.push(el('div', {
+      className: 'token-display',
+      style: 'font-size: 0.7rem; word-break: break-all; margin-top: 0.25rem',
+      textContent: 'fingerprint ' + ee.whole_envelope_digest,
+    }));
+  }
+  if (!ee.ok && ee.error) {
+    children.push(el('div', { className: 'timeline-time', textContent: ee.error }));
+  }
+  return el('div', { className: 'alert ' + cls }, children);
+}
+
+// Render the verified, privacy-coarsened timeline from a canonical envelope into `container`.
+// `verifyReport` is the device's /witness/verify response (shared-verifier integrity result).
+function renderVerifiedTimeline(container, envelope, verifyReport) {
+  while (container.firstChild) container.removeChild(container.firstChild);
+
+  // Bind the integrity claim to the envelope actually shown (guards against a chain change between
+  // the /envelope and /verify requests).
+  container.appendChild(renderEnvelopeIntegrityBanner(
+    verifyReport, envelope && envelope.whole_envelope_digest));
+
+  if (!envelope) {
+    container.appendChild(el('div', { className: 'alert alert-error',
+      textContent: 'No envelope data available.' }));
+    return;
+  }
+
+  // Provenance summary — what produced this, and under which ruleset.
+  var p = envelope.provenance || {};
+  var prov = el('div', { className: 'card' }, [
+    el('div', { className: 'card-title mb-8', textContent: 'Provenance' }),
+    el('div', { className: 'card-subtitle', textContent: 'Kernel: ' + (p.kernel_version || '—') }),
+    el('div', { className: 'card-subtitle', textContent: 'Ruleset: ' + (p.ruleset_id || '—') }),
+    el('div', {
+      className: 'token-display',
+      style: 'font-size: 0.7rem; word-break: break-all; margin-top: 0.25rem',
+      textContent: 'device key ' + (p.device_public_key || '—'),
+    }),
+  ]);
+  container.appendChild(prov);
+
+  var events = envelopeTimelineEvents(envelope);
+  var card = el('div', { className: 'card' }, [
+    el('div', { className: 'card-title mb-8', textContent: 'Verified Timeline (' + events.length + ')' }),
+    el('div', { className: 'card-subtitle mb-8',
+      textContent: 'Coarse time buckets, no precise timestamps · zone-level only · from the signed ledger' }),
+  ]);
+
+  if (events.length === 0) {
+    card.appendChild(el('div', { className: 'empty-state', textContent: 'No verified events in this bundle.' }));
+    container.appendChild(card);
+    return;
+  }
+
+  var timeline = el('div', { className: 'event-detail-timeline' });
+  events.forEach(function (ev, i) {
+    var isLast = i === events.length - 1;
+    var item = el('div', { className: 'timeline-item' + (isLast ? ' timeline-item-last' : '') });
+    var meta = ev.failure
+      ? { icon: '⚠️', label: 'Gap: ' + (ev.type || 'failure'), cssClass: 'type-motion' }
+      : envelopeEventMeta(ev.type);
+    item.appendChild(el('div', { className: 'timeline-dot ' + meta.cssClass }));
+    if (!isLast) item.appendChild(el('div', { className: 'timeline-line' }));
+    var body = el('div', { className: 'timeline-body' });
+    body.appendChild(el('div', { className: 'timeline-label', textContent: meta.icon + ' ' + meta.label }));
+    if (!ev.failure) {
+      body.appendChild(el('div', { className: 'timeline-time', textContent: 'Zone: ' + (ev.zone || '—') }));
+    }
+    body.appendChild(el('div', { className: 'timeline-time', textContent: formatTimeBucket(ev.time_bucket) }));
+    item.appendChild(body);
+    timeline.appendChild(item);
+  });
+  card.appendChild(timeline);
+  container.appendChild(card);
+}
+
 function renderWitnessView(deviceId) {
   var app = clearApp();
   var device = CanaryStorage.getDevice(deviceId);
@@ -1887,7 +2059,43 @@ function renderWitnessView(deviceId) {
     },
   }));
 
+  // Verified, privacy-coarsened timeline (from the canonical evidence envelope). This is the
+  // in-app counterpart to the offline viewer: the same signed bundle, rendered here with its
+  // integrity status, so an operator can review the attested events without leaving the app.
+  var timelineSection = el('div', { id: 'witness-timeline' });
+  var timelineBtn = el('button', {
+    className: 'btn btn-block',
+    textContent: 'View Verified Timeline',
+    style: 'margin-top: 0.5rem',
+    title: 'Render the privacy-coarsened, cryptographically verified events from the evidence envelope',
+    onClick: function () {
+      // Guard against overlapping requests from rapid clicks (race conditions / stale overwrites).
+      if (timelineBtn.disabled) return;
+      timelineBtn.disabled = true;
+      while (timelineSection.firstChild) timelineSection.removeChild(timelineSection.firstChild);
+      timelineSection.appendChild(el('div', { className: 'loading' }, [
+        el('div', { className: 'spinner' }), 'Building and verifying evidence envelope...',
+      ]));
+      // Fetch the envelope and its integrity report together; the device builds + signs the
+      // envelope and runs the shared verifier (viewer/verify_core.js) server-side.
+      Promise.all([
+        CanaryAPI.request(device.base_url, '/api/v1/witness/envelope'),
+        CanaryAPI.request(device.base_url, '/api/v1/witness/verify', { method: 'POST' }),
+      ]).then(function (results) {
+        timelineBtn.disabled = false;
+        renderVerifiedTimeline(timelineSection, results[0], results[1]);
+      }).catch(function (err) {
+        timelineBtn.disabled = false;
+        while (timelineSection.firstChild) timelineSection.removeChild(timelineSection.firstChild);
+        timelineSection.appendChild(el('div', { className: 'alert alert-error',
+          textContent: err.message || 'Failed to load verified timeline' }));
+      });
+    },
+  });
+  actions.appendChild(timelineBtn);
+
   content.appendChild(actions);
+  content.appendChild(timelineSection);
 
   // Record list
   var recordList = el('div', { id: 'witness-records' });
@@ -1895,6 +2103,8 @@ function renderWitnessView(deviceId) {
     el('div', { className: 'spinner' }),
     'Loading records...',
   ]));
+  content.appendChild(el('div', { className: 'card-title mb-8', style: 'margin-top: 1rem',
+    textContent: 'Raw chain records' }));
   content.appendChild(recordList);
   app.appendChild(content);
 

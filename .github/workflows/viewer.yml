@@ -35,6 +35,9 @@ jobs:
     - name: Envelope-bridge tests (build + shared-verifier reuse)
       working-directory: canary-vision
       run: node --test tests/api/envelope-bridge.test.js
+    - name: SPA verified-timeline tests (in-app envelope rendering)
+      working-directory: canary-vision
+      run: node --test tests/spa/verified-timeline.test.js
 
   selftest-ui:
     runs-on: ubuntu-latest
