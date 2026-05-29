@@ -168,9 +168,14 @@ drift (the `confidence: f32` hazard).
 
 `CJSON` ("securacv-cjson-v1") is the canonical serialization:
 - Object keys sorted by UTF-16 code-unit order; no insignificant whitespace.
-- Strings escaped per RFC 8785 (JSON Canonicalization Scheme).
+- Strings escaped per RFC 8785 §3.2.2.2, which mirrors ECMAScript `JSON.stringify`: the
+  two-character escapes `\"` `\\` `\b` `\t` `\n` `\f` `\r` are used for those characters, and any
+  other control character in U+0000–U+001F is emitted as `\uHHHH` (lowercase hex). (These short
+  escapes are required, not forbidden — they are exactly what a JS verifier produces.)
 - Only objects, arrays, strings, booleans, null, and **integers** are permitted; floating-point
-  numbers are rejected at serialization time.
+  numbers are rejected at serialization time. Integers MUST be within the JavaScript safe-integer
+  range (±(2^53−1)); out-of-range integers are rejected, since the JS verifier parses numbers as
+  IEEE-754 doubles and would otherwise lose precision and diverge.
 
 This is a deliberate subset of RFC 8785 that is trivially reproducible in JavaScript
 (`JSON.stringify` with a recursive key-sorting replacer over integer/string values).

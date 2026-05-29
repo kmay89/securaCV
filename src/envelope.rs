@@ -51,7 +51,7 @@ pub struct EvidenceEnvelope {
     pub whole_envelope_digest: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EvidenceManifest {
     pub permitted_fields: Vec<String>,
     pub forbidden_fields: Vec<String>,
@@ -62,13 +62,13 @@ pub struct EvidenceManifest {
     pub signature_schemes: SignatureSchemes,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TimeGranularity {
     pub min_bucket_s: u32,
     pub default_bucket_s: u32,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SignatureDomains {
     pub sealed_log_entry: String,
     pub checkpoint: String,
@@ -76,7 +76,7 @@ pub struct SignatureDomains {
     pub export_receipt: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SignatureSchemes {
     pub classical: String,
     pub pq: String,
@@ -358,6 +358,16 @@ pub fn verify_envelope(envelope: &EvidenceEnvelope, mode: SignatureMode) -> Resu
         ));
     }
 
+    // The manifest carries the rules used to interpret the bundle ("rules travel with the
+    // data"). For a v1 envelope it MUST equal the canonical v1 manifest; otherwise a forged
+    // bundle could claim weaker domains/hash rules (with a recomputed digest) yet still pass.
+    // This keeps the manifest the verifier reads identical to the constants it verifies with.
+    if envelope.manifest != EvidenceManifest::v1() {
+        return Err(anyhow!(
+            "manifest does not match the canonical v1 manifest for envelope_version 1"
+        ));
+    }
+
     // 1. Digest integrity.
     let expected_digest = compute_whole_envelope_digest(envelope)?;
     if expected_digest != envelope.whole_envelope_digest {
@@ -393,7 +403,7 @@ pub fn verify_envelope(envelope: &EvidenceEnvelope, mode: SignatureMode) -> Resu
             &e.signatures,
         )
     });
-    verify_linear_chain(
+    let sealed_head = verify_linear_chain(
         sealed_iter,
         sealed_start,
         DOMAIN_SEALED_LOG_ENTRY,
@@ -402,6 +412,13 @@ pub fn verify_envelope(envelope: &EvidenceEnvelope, mode: SignatureMode) -> Resu
         pq_key.as_ref(),
         "sealed_events",
         &mut pq_checked,
+    )?;
+    validate_ledger_summary(
+        "sealed_events",
+        envelope.ledgers.sealed_events.entries.len(),
+        envelope.ledgers.sealed_events.count,
+        envelope.ledgers.sealed_events.head_hash,
+        sealed_head,
     )?;
 
     // 4. Checkpoint signature.
@@ -431,7 +448,7 @@ pub fn verify_envelope(envelope: &EvidenceEnvelope, mode: SignatureMode) -> Resu
                 &e.signatures,
             )
         });
-    verify_linear_chain(
+    let bg_head = verify_linear_chain(
         bg_iter,
         [0u8; 32],
         DOMAIN_BREAK_GLASS_RECEIPT,
@@ -440,6 +457,13 @@ pub fn verify_envelope(envelope: &EvidenceEnvelope, mode: SignatureMode) -> Resu
         pq_key.as_ref(),
         "break_glass_receipts",
         &mut pq_checked,
+    )?;
+    validate_ledger_summary(
+        "break_glass_receipts",
+        envelope.ledgers.break_glass_receipts.entries.len(),
+        envelope.ledgers.break_glass_receipts.count,
+        envelope.ledgers.break_glass_receipts.head_hash,
+        bg_head,
     )?;
     let (mut granted, mut denied) = (0u64, 0u64);
     for entry in &envelope.ledgers.break_glass_receipts.entries {
@@ -468,7 +492,7 @@ pub fn verify_envelope(envelope: &EvidenceEnvelope, mode: SignatureMode) -> Resu
             &e.signatures,
         )
     });
-    verify_linear_chain(
+    let exp_head = verify_linear_chain(
         exp_iter,
         [0u8; 32],
         DOMAIN_EXPORT_RECEIPT,
@@ -478,12 +502,25 @@ pub fn verify_envelope(envelope: &EvidenceEnvelope, mode: SignatureMode) -> Resu
         "export_receipts",
         &mut pq_checked,
     )?;
+    validate_ledger_summary(
+        "export_receipts",
+        envelope.ledgers.export_receipts.entries.len(),
+        envelope.ledgers.export_receipts.count,
+        envelope.ledgers.export_receipts.head_hash,
+        exp_head,
+    )?;
 
     // 7. Artifact binding + export-receipt entry signature.
     let artifact_bytes = serde_json::to_vec(&envelope.artifact)?;
     let artifact_hash: [u8; 32] = Sha256::digest(&artifact_bytes).into();
     if artifact_hash != envelope.export_receipt_entry.receipt.artifact_hash {
         return Err(anyhow!("export artifact hash mismatch"));
+    }
+    // Provenance must be consistent with the signed export receipt.
+    if envelope.provenance.ruleset_hash != envelope.export_receipt_entry.receipt.ruleset_hash {
+        return Err(anyhow!(
+            "provenance ruleset_hash does not match the signed export receipt ruleset_hash"
+        ));
     }
     let receipt_payload = serde_json::to_string(&envelope.export_receipt_entry.receipt)?;
     let computed_entry_hash = hash_entry(
@@ -527,13 +564,46 @@ pub fn verify_envelope(envelope: &EvidenceEnvelope, mode: SignatureMode) -> Resu
 
     Ok(EnvelopeReport {
         status,
-        sealed_events: envelope.ledgers.sealed_events.count,
+        // Report verified counts (validated to equal the declared summary above).
+        sealed_events: envelope.ledgers.sealed_events.entries.len() as u64,
         break_glass_granted: granted,
         break_glass_denied: denied,
-        export_receipts: envelope.ledgers.export_receipts.count,
+        export_receipts: envelope.ledgers.export_receipts.entries.len() as u64,
         pq_checked,
         warnings,
     })
+}
+
+/// Validate a ledger's declared summary (`count`, `head_hash`) against the entries that were
+/// actually verified. The summary fields are not individually signed, so they must be checked
+/// against the verified chain to prevent a forged bundle from misreporting its contents.
+fn validate_ledger_summary(
+    ledger_name: &str,
+    entries_len: usize,
+    declared_count: u64,
+    declared_head: Option<[u8; 32]>,
+    computed_head: [u8; 32],
+) -> Result<()> {
+    if declared_count != entries_len as u64 {
+        return Err(anyhow!(
+            "{} count mismatch: declared={}, actual={}",
+            ledger_name,
+            declared_count,
+            entries_len
+        ));
+    }
+    let expected_head = if entries_len == 0 {
+        None
+    } else {
+        Some(computed_head)
+    };
+    if declared_head != expected_head {
+        return Err(anyhow!(
+            "{} head_hash does not match the verified chain head",
+            ledger_name
+        ));
+    }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]

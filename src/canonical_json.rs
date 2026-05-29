@@ -20,6 +20,10 @@ use serde_json::Value;
 /// The canonicalization scheme identifier recorded in the envelope manifest.
 pub const CANONICALIZATION_ID: &str = "securacv-cjson-v1";
 
+/// `Number.MAX_SAFE_INTEGER` (2^53 - 1). Integers must stay within ±this so the JS verifier,
+/// which parses numbers as IEEE-754 doubles, reproduces the digest exactly.
+const MAX_SAFE_INTEGER: i64 = 9_007_199_254_740_991;
+
 /// Serialize a [`serde_json::Value`] to canonical bytes.
 ///
 /// # Errors
@@ -41,6 +45,19 @@ fn write_value(value: &Value, out: &mut Vec<u8>) -> Result<()> {
             if n.is_f64() {
                 return Err(anyhow!(
                     "canonical JSON does not permit floating-point numbers (got {n})"
+                ));
+            }
+            // Reject integers outside the JS safe-integer range. The offline verifier parses
+            // numbers as IEEE-754 doubles, which lose precision beyond 2^53-1, so an out-of-range
+            // integer would silently produce a different digest cross-language.
+            let in_range = match (n.as_i64(), n.as_u64()) {
+                (Some(v), _) => (-MAX_SAFE_INTEGER..=MAX_SAFE_INTEGER).contains(&v),
+                (None, Some(v)) => v <= MAX_SAFE_INTEGER as u64,
+                _ => false,
+            };
+            if !in_range {
+                return Err(anyhow!(
+                    "integer {n} is outside the JavaScript safe-integer range (±2^53-1)"
                 ));
             }
             out.extend_from_slice(n.to_string().as_bytes());
@@ -146,11 +163,21 @@ mod tests {
 
     #[test]
     fn integers_are_exact() {
-        let v = json!({ "n": 9007199254740993u64 });
+        // Largest value still inside the JS safe-integer range (2^53 - 1).
+        let v = json!({ "n": 9007199254740991u64 });
         assert_eq!(
             to_canonical_bytes(&v).unwrap(),
-            br#"{"n":9007199254740993}"#
+            br#"{"n":9007199254740991}"#
         );
+    }
+
+    #[test]
+    fn rejects_integers_outside_js_safe_range() {
+        let too_big = json!({ "n": 9007199254740992u64 });
+        assert!(format!("{}", to_canonical_bytes(&too_big).unwrap_err()).contains("safe-integer"));
+
+        let too_small = json!({ "n": -9007199254740992i64 });
+        assert!(format!("{}", to_canonical_bytes(&too_small).unwrap_err()).contains("safe-integer"));
     }
 
     #[test]

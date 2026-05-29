@@ -2722,6 +2722,61 @@ mod tests {
     }
 
     #[test]
+    fn evidence_envelope_detects_forged_ledger_count() -> Result<()> {
+        let mut envelope = build_test_envelope()?;
+        // Lie about the entry count while leaving the real entries intact, then refresh the
+        // digest (which is not a signature). The summary check must still catch it.
+        envelope.ledgers.sealed_events.count = 99;
+        envelope.whole_envelope_digest = envelope::compute_whole_envelope_digest(&envelope)?;
+        let err = verify_envelope(&envelope, SignatureMode::Compat).unwrap_err();
+        assert!(
+            format!("{err}").contains("sealed_events count mismatch"),
+            "unexpected error: {err}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn evidence_envelope_detects_forged_head_hash() -> Result<()> {
+        let mut envelope = build_test_envelope()?;
+        envelope.ledgers.sealed_events.head_hash = Some([0xab; 32]);
+        envelope.whole_envelope_digest = envelope::compute_whole_envelope_digest(&envelope)?;
+        let err = verify_envelope(&envelope, SignatureMode::Compat).unwrap_err();
+        assert!(
+            format!("{err}").contains("sealed_events head_hash"),
+            "unexpected error: {err}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn evidence_envelope_rejects_tampered_manifest() -> Result<()> {
+        let mut envelope = build_test_envelope()?;
+        // Weaken a carried rule, then refresh the digest. Must be rejected before signatures.
+        envelope.manifest.signature_domains.sealed_log_entry = "evil:domain".to_string();
+        envelope.whole_envelope_digest = envelope::compute_whole_envelope_digest(&envelope)?;
+        let err = verify_envelope(&envelope, SignatureMode::Compat).unwrap_err();
+        assert!(
+            format!("{err}").contains("manifest"),
+            "unexpected error: {err}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn evidence_envelope_detects_provenance_ruleset_mismatch() -> Result<()> {
+        let mut envelope = build_test_envelope()?;
+        envelope.provenance.ruleset_hash[0] ^= 0xff;
+        envelope.whole_envelope_digest = envelope::compute_whole_envelope_digest(&envelope)?;
+        let err = verify_envelope(&envelope, SignatureMode::Compat).unwrap_err();
+        assert!(
+            format!("{err}").contains("ruleset_hash"),
+            "unexpected error: {err}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn evidence_envelope_omits_forbidden_fields() -> Result<()> {
         let envelope = build_test_envelope()?;
 
