@@ -55,8 +55,19 @@ struct ProbeResponse {
   const char* body;          // NCSI string for Windows; nullptr otherwise
 };
 
-inline bool path_equals(const char* path, const char* lit) {
-  return path != nullptr && std::strcmp(path, lit) == 0;
+// True when the path component of `path` — everything before a '?' query or
+// '#' fragment, or the whole string if neither is present — exactly equals
+// `lit`. Probe URLs sometimes carry a cache-busting query (e.g.
+// /generate_204?ts=...), and req->uri includes it, so an exact strcmp would
+// misroute those; matching the path component keeps them on the right
+// per-platform response (the behavior the old unconditional handlers had).
+inline bool path_is(const char* path, const char* lit) {
+  if (path == nullptr || lit == nullptr) return false;
+  size_t i = 0;
+  for (; lit[i] != '\0'; ++i) {
+    if (path[i] != lit[i]) return false;  // diverged (also catches path ending early)
+  }
+  return path[i] == '\0' || path[i] == '?' || path[i] == '#';
 }
 
 inline bool path_contains(const char* path, const char* needle) {
@@ -65,22 +76,24 @@ inline bool path_contains(const char* path, const char* needle) {
 
 // The Windows NCSI body for a probe path: "Microsoft NCSI" for ncsi.txt,
 // "Microsoft Connect Test" otherwise (connecttest.txt). Mirrors the firmware's
-// strstr(uri, "ncsi") branch exactly.
+// strstr(uri, "ncsi") branch exactly (substring, so a query string is fine).
 inline const char* windows_ncsi_body(const char* path) {
   return path_contains(path, "ncsi") ? NCSI_NCSI_BODY : NCSI_CONNECTTEST_BODY;
 }
 
 // Classify a request path into the probe platform whose connectivity check it
-// is. Recognises the exact URIs the firmware registers; anything else → None.
+// is. Recognises the exact probe URIs the firmware registers — matching the
+// path component, so a trailing query string (req->uri keeps it) still routes
+// to the right platform; anything else → None.
 inline ProbeKind classify(const char* path) {
-  if (path_equals(path, "/hotspot-detect.html") ||
-      path_equals(path, "/library/test/success.html")) {
+  if (path_is(path, "/hotspot-detect.html") ||
+      path_is(path, "/library/test/success.html")) {
     return ProbeKind::AppleInstructionPage;
   }
-  if (path_equals(path, "/generate_204") || path_equals(path, "/gen_204")) {
+  if (path_is(path, "/generate_204") || path_is(path, "/gen_204")) {
     return ProbeKind::AndroidNoContent;
   }
-  if (path_equals(path, "/connecttest.txt") || path_equals(path, "/ncsi.txt")) {
+  if (path_is(path, "/connecttest.txt") || path_is(path, "/ncsi.txt")) {
     return ProbeKind::WindowsNcsiBody;
   }
   return ProbeKind::None;

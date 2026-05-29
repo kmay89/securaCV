@@ -67,8 +67,31 @@ static void test_classify_unknown_and_null() {
   CHECK(captive_probe::classify("/") == ProbeKind::None, "/ → None");
   CHECK(captive_probe::classify("/api/status") == ProbeKind::None, "/api/status → None");
   CHECK(captive_probe::classify("/generate_204x") == ProbeKind::None,
-        "near-miss path is exact-matched, not substring → None");
+        "near-miss path (extra char) is path-matched, not prefix → None");
   CHECK(captive_probe::classify(nullptr) == ProbeKind::None, "nullptr path → None (no deref)");
+}
+
+// req->uri carries the query string, and some OS probes append a cache-buster.
+// classify() must match the path component so those don't fall through to the
+// fallback (the regression Codex caught on the first cut).
+static void test_classify_with_query_string() {
+  std::printf("test_classify_with_query_string\n");
+  CHECK(captive_probe::classify("/generate_204?ts=1700000000") == ProbeKind::AndroidNoContent,
+        "/generate_204?ts=... → Android (not the Apple fallback)");
+  CHECK(captive_probe::classify("/connecttest.txt?foo=bar") == ProbeKind::WindowsNcsiBody,
+        "/connecttest.txt?foo=bar → Windows");
+  CHECK(captive_probe::classify("/ncsi.txt?x=1") == ProbeKind::WindowsNcsiBody,
+        "/ncsi.txt?x=1 → Windows");
+  CHECK(captive_probe::classify("/hotspot-detect.html?c=1") == ProbeKind::AppleInstructionPage,
+        "/hotspot-detect.html?... → Apple");
+  CHECK(captive_probe::classify("/gen_204#frag") == ProbeKind::AndroidNoContent,
+        "fragment delimiter also ends the path component");
+  // The full per-platform response must follow through, not just the kind.
+  ProbeResponse r = captive_probe::respond("/generate_204?ts=42");
+  CHECK(r.kind == ProbeKind::AndroidNoContent && r.body == nullptr,
+        "respond() on a queried Android probe still yields the 204");
+  CHECK(streq(captive_probe::respond("/ncsi.txt?x=1").body, "Microsoft NCSI"),
+        "respond() on a queried ncsi probe still yields the NCSI body");
 }
 
 static void test_windows_ncsi_body() {
@@ -130,6 +153,7 @@ int main() {
   test_classify_android();
   test_classify_windows();
   test_classify_unknown_and_null();
+  test_classify_with_query_string();
   test_windows_ncsi_body();
   test_respond_apple();
   test_respond_android();
