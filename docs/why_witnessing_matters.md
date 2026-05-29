@@ -5,6 +5,10 @@
 Foundational rationale document for SecuraCV.  
 This document explains *why* cryptographically verifiable, non-surveillant perception is not optional for autonomous and semi-autonomous systems that interact with the physical world.
 
+> **Related:** This is the systems-level rationale. For a plain-language
+> explainer aimed at council members, trustees, and journalists, see
+> [`why_this_matters.md`](../why_this_matters.md).
+
 ---
 
 ## 1. The Problem This Document Addresses

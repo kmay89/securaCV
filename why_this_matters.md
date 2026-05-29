@@ -1,6 +1,11 @@
 # Why This Matters  
 ### A plain-language explanation of the Privacy Witness Camera
 
+> **Related:** This is the plain-language explainer for non-technical readers
+> (council members, trustees, journalists). For the systems-level rationale —
+> why tamper-evident perception is essential infrastructure for autonomous
+> systems — see [`docs/why_witnessing_matters.md`](docs/why_witnessing_matters.md).
+
 This document explains a new kind of camera system designed for public and shared spaces.
 It is written for:
 - City council members and procurement committees

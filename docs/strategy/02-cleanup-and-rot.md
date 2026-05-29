@@ -6,6 +6,28 @@ is not a useful signal — rot here means *duplication, scratch files, frozen sn
 stray binaries*. **Overall repo health is good**; source code has no TODO/FIXME/DEPRECATED
 markers and the test suites are all live.
 
+## Status (actioned)
+
+Most of this list has now been actioned across two PRs:
+
+- **Done (#625):** removed `firmware/projects/_archive/canary-wap-snapshot/` and the
+  `codex-*.md` scratch files.
+- **Done (this PR):** moved the long-form security docs (`SECURITY_MODEL.md`,
+  `THREAT_MODEL.md`, `SECURITY-AUDIT.md`) under `docs/security/` — keeping root
+  `SECURITY.md` as the policy entry point and updating the Regression Guards CI
+  check, `secure_defaults.h`, the PR template, and all cross-references so the
+  evidence-export invariant stays enforced; relocated the root `.MP4` into
+  `brands/`; folded `brands_submission/` under `brands/submission/`.
+- **Corrected flag — canary-vision link:** the README link was **not** broken —
+  `docs/security.md` resolves correctly relative to `canary-vision/`. Only the
+  `SECURITY.md` mention was non-clickable; it is now a proper link.
+- **Corrected flag — philosophy docs:** `why_this_matters.md` (root) and
+  `docs/why_witnessing_matters.md` are **not** near-duplicates — they target
+  different audiences (plain-language explainer vs. systems-level rationale).
+  Both are kept, now reciprocally cross-linked instead of stubbed.
+- **Deferred:** root `spec.md` consolidation, whitepaper "derived" marker, and
+  `AGENTS.md` review remain open (low priority).
+
 ## Flagged candidates
 
 | Path | What it is | Why flagged | Confidence | Recommendation |
