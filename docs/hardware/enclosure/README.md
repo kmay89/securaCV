@@ -1,4 +1,4 @@
-# Canary WAP — 3D-Printable Enclosure (v0.3)
+# Canary WAP — 3D-Printable Enclosure (v0.4)
 
 Parametric, printable cases for the Canary WAP (XIAO ESP32-S3 Sense), referenced
 as a "future add" in the [Peripheral Build Plan](../canary_peripheral_build_plan.md)
@@ -48,6 +48,14 @@ screw posts** so the whole interior prints as one rigid piece with good bed
 adhesion. The cavity is sized to guarantee the posts sit in real corners clear of
 the PCB (this enlarged the compact variant).
 
+**v0.4 — screwless board retention:** four **cantilever snap clips** along the
+board's long edges hold the PCB down by clicking over its top — **no screws to
+mount the board**. The board drops onto the standoffs and the clips snap over the
+edge; a 45° lead-in cams them open on insertion. The screw posts still take the
+**lid** screws. Tune `clip_t`/`clip_hook` to your material, or set
+`board_clips = false` to omit them. (The lid screws remain optional too — the lip
+already locates the lid; the clips are purely for the board.)
+
 > ⚠️ **Still a reference — verify before printing.** Seeed publishes the PCB
 > outline but not every component height; the camera-lens/LED/buzzer positions on
 > the lid are nominal. **Measure your board and test-print the lid first.** A
@@ -59,7 +67,8 @@ the PCB (this enlarged the compact variant).
 
 | Feature | Where | Notes |
 |---------|-------|-------|
-| Board cradle | base | 4 standoffs lift the PCB `standoff_h` (3 mm) off the floor |
+| Board cradle | base | 4 standoffs + perimeter frame lift the PCB `standoff_h` (3 mm) off the floor |
+| **Board snap clips** | base, board long edges | 4 cantilever tabs hook over the PCB — it **clicks in, held with no screws** |
 | Battery bay | base (battery variant only) | low rim cradles a 503450 LiPo beside the board |
 | **USB-C port** | base, −X wall | 10.5 × 6.5 mm, centred on PCB-top height |
 | **Camera/sensor window** | lid | `cam_win_d` (9 mm) — keep optically clear |
@@ -92,6 +101,8 @@ Tamper magnet), then F6 → Export.
 | `cam_dx/dy`, `lp_dx/dy`, `vent_dx/dy`, `mag_dx/dy` | — | Feature positions **from board centre** — set from a real measurement |
 | `usb_w/h/z` | 10.5/6.5/0 | Align to your USB-C cable boot |
 | `fit_gap` | 0.20 | Lid-to-base clearance; tune for your printer |
+| `board_clips` | true | Snap tabs that retain the PCB without screws (set false to omit) |
+| `clip_t` / `clip_hook` | 1.5 / 0.8 | Tab flex vs. grip — thin/less for brittle PLA, thicker for a firmer click |
 
 ## Suggested print settings
 
@@ -104,7 +115,9 @@ Tamper magnet), then F6 → Export.
 
 1. (battery variant) Drop the LiPo in the bay; route to the XIAO BAT pads.
    **Read the battery safety notice in build plan §6.5 first.**
-2. Seat the PCB on the standoffs, USB-C aligned to the wall cutout.
+2. **Press the PCB straight down** until the four edge clips snap over it,
+   USB-C aligned to the wall cutout — no screws needed for the board. (To remove,
+   gently splay the clips outward and lift.)
 3. Press a 6 mm magnet into the lid pocket; add a GORE vent over the seat if
    sealing; insert a light pipe in the LED port.
 4. Close the lid (lip nests into the base) and drive 4 × M2 screws.

@@ -83,6 +83,14 @@ mag_h          = 3.2;
 mag_dx         = -6.0;
 mag_dy         = 5.0;
 
+/* [Board snap clips] — press-fit retention so the PCB clicks in with NO screws */
+board_clips    = true;  // cantilever tabs hook over the board's two long edges
+clip_w         = 6.0;   // tab width (along the board edge)
+clip_t         = 1.5;   // beam thickness — thinner = easier flex (tune to your material)
+clip_hook      = 0.8;   // how far the lip overhangs the board top
+clip_hook_h    = 1.2;   // lip + 45° lead-in height above the board top
+clip_clear     = 0.25;  // gap between tab inner face and the board edge
+
 /* [Quality] */
 $fn = 64;
 
@@ -132,6 +140,22 @@ module floorrib(a, b, w) {
         translate([a[0], a[1], floor_t]) cylinder(d = w, h = standoff_h);
         translate([b[0], b[1], floor_t]) cylinder(d = w, h = standoff_h);
     }
+}
+
+// Cantilever snap clip on a board long edge: a beam from the floor with a lip that
+// hooks over the board top. The board cams the lip out on the 45° lead-in, then it
+// snaps back. `cx` = position along the edge; `sy` = +1/-1 selects the +y/-y edge.
+//   profile (u = outward from board edge, v = z): beam + inward hook + lead-in chamfer.
+module boardclip(cx, sy) {
+    bt = floor_t + standoff_h + board_h;   // board top surface (lip sits here)
+    tp = bt + clip_hook_h;                 // top of the clip
+    pts = [ [clip_clear, floor_t], [clip_clear + clip_t, floor_t],
+            [clip_clear + clip_t, tp], [clip_clear, tp],
+            [-clip_hook, bt], [clip_clear, bt] ];
+    ey = board_cy + sy * board_w/2;        // the board edge this clip guards
+    translate([cx, ey, 0]) scale([1, sy, 1]) translate([-clip_w/2, 0, 0])
+        rotate([0, 0, 90]) rotate([90, 0, 0])
+            linear_extrude(height = clip_w) polygon(pts);
 }
 
 // ----------------------------------------------------------------------------
@@ -187,6 +211,12 @@ module base() {
             if (inner_l/2 - abs(c[0]) < 6) floorrib(c, [sign(c[0])*(inner_l/2-0.3), c[1]], 2.6);
             if (inner_w/2 - abs(c[1]) < 6) floorrib(c, [c[0], sign(c[1])*(inner_w/2-0.3)], 2.6);
         }
+
+        // press-fit snap clips over the board's two long edges (no screws to hold the PCB)
+        if (board_clips)
+            for (sy = [1, -1])
+                for (cx = [board_cx - board_l/4, board_cx + board_l/4])
+                    boardclip(cx, sy);
 
         // battery cradle rim on the floor (kept strictly inside the cavity)
         if (batt_enable)
