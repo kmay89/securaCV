@@ -25,7 +25,7 @@ SCAN_DIRS=(
 )
 
 # Phrases forbidden in user-visible strings. We allow them in documentation
-# (docs/, spec/, README.md, SECURITY-*.md, THREAT_MODEL.md) where they're
+# (docs/ — including docs/security/ —, spec/, README.md) where they're
 # referenced as prior-art names, but never in firmware or UI strings.
 FORBIDDEN_PHRASES=(
   'Wireless Emergency Alert'

@@ -329,5 +329,5 @@ or the Chirp v0.2 channel (`chirp_channel.{h,cpp}`) MUST observe:
     a 3 AM beep is a worse failure mode than a missing chirp.
 
 Modifying any of the above requires updating
-`docs/audit/mesh_and_chirp_audit_v1.md` and `THREAT_MODEL.md` in the same
+`docs/audit/mesh_and_chirp_audit_v1.md` and `docs/security/THREAT_MODEL.md` in the same
 PR.

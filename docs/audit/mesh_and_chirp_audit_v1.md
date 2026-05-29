@@ -21,7 +21,7 @@ Methodology:
 3. Cross-check spec promises against code reality.
 4. Map findings to a remediation in this branch.
 
-Threat model recap (from `THREAT_MODEL.md` and `SECURITY_MODEL.md`):
+Threat model recap (from `docs/security/THREAT_MODEL.md` and `docs/security/SECURITY_MODEL.md`):
 
 - Adversaries include casual neighbors, motivated single attackers with cheap ESP32 hardware in RF range, institutional actors with compelled cooperation, and supply-chain compromise.
 - Defended: log tampering, silent modification, post-hoc falsification.
@@ -81,7 +81,7 @@ if (timestamp > now_sec + 30 ||
 
 `OperaConfig.opera_secret[32]` is the 32-byte symmetric secret from which `opera_id` is derived and which gates pairing. If the device's flash is not encrypted (ESP32 flash encryption is opt-in, not on by default outside production builds), a physical-access attacker can pull the secret with `esptool.py read_flash` and become a permanent opera member from outside the household.
 
-**Fix in this branch:** in `mesh_network::init`, call `esp_efuse_read_field_bit(ESP_EFUSE_FLASH_CRYPT_CNT)` (or the equivalent SDK helper) and refuse to load/save the opera_secret if flash encryption is not active. Log loudly to the health log at `LOG_LEVEL_ALERT, LOG_CAT_SECURITY`. Document the requirement in `spec/canary_mesh_network_v0.md` and `SECURITY_MODEL.md`.
+**Fix in this branch:** in `mesh_network::init`, call `esp_efuse_read_field_bit(ESP_EFUSE_FLASH_CRYPT_CNT)` (or the equivalent SDK helper) and refuse to load/save the opera_secret if flash encryption is not active. Log loudly to the health log at `LOG_LEVEL_ALERT, LOG_CAT_SECURITY`. Document the requirement in `spec/canary_mesh_network_v0.md` and `docs/security/SECURITY_MODEL.md`.
 
 ### O3 — No re-keying after `remove_peer()` (High)
 
@@ -381,7 +381,7 @@ Before merging the Chirp v0.2 hardening to main:
 - [ ] Two-device hardware repro of C1, C2, C3, C5 captured (before-fix and after-fix) in `docs/audit/repro/`. **Deferred to hardware verification — see `docs/audit/hardware_verification_checklist.md`.**
 - [x] `PROTOCOL_VERSION` bump documented; older firmware refuses v1 frames gracefully. (Bumped from 0 to 1 in `mesh_network.h:514`; `chirp_channel.cpp::on_espnow_recv` strict-rejects mismatched version.)
 - [x] Spec `spec/chirp_channel_v0.md` updated to v0.2 with corrected wire format and removed `TPL_AUTH_FEDERAL_PRESENCE`.
-- [x] `THREAT_MODEL.md` Chirp section added.
+- [x] `docs/security/THREAT_MODEL.md` Chirp section added.
 - [x] HA MQTT discovery surfaces `chirp.state` four-state NFPA enum (`Normal | Trouble | Alarm | Supervisory`).
 
 **Status: closed (PR #450 + #454 merged 2026-05-11/12).**
@@ -437,7 +437,7 @@ The Beacon channel is the harm-reduction layer specified in `spec/beacon_channel
 - `spec/beacon_channel_v0.md` — new harm-reduction channel spec (this branch).
 - `spec/beacon_cap_gateway_v0.md` — CAP interop spec (this branch; implementation deferred).
 - `docs/research/harm_reduction_prior_art.md` — prior-art research brief (this branch).
-- `THREAT_MODEL.md`, `SECURITY_MODEL.md`, `SECURITY-AUDIT.md`, `AGENTS.md` — existing threat & policy docs.
+- `docs/security/THREAT_MODEL.md`, `docs/security/SECURITY_MODEL.md`, `docs/security/SECURITY-AUDIT.md`, `AGENTS.md` — existing threat & policy docs.
 - OASIS CAP 1.2 / ITU-T X.1303 — Common Alerting Protocol.
 - NFPA 72 §10.4, §10.6 — Supervised circuits, trouble vs alarm vs supervisory states.
 - FHWA MUTCD §2L — Dynamic Message Sign guidance.
