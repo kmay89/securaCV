@@ -43,4 +43,21 @@ pub trait DetectorBackend: Send {
     fn warm_up(&mut self) -> Result<()> {
         Ok(())
     }
+
+    /// Export cross-frame detector state so it can survive the sandbox boundary.
+    ///
+    /// `detect` runs inside a forked, seccomp-restricted child process. Any
+    /// mutation it makes to `self` (e.g. a previous-frame hash for motion
+    /// detection) lives only in the child's copy-on-write memory and is lost
+    /// when the child exits. The runtime calls `export_state` in the child
+    /// after `detect` and `import_state` in the parent to carry that state
+    /// forward. Stateless backends keep the default (no state).
+    fn export_state(&self) -> Option<Vec<u8>> {
+        None
+    }
+
+    /// Restore state previously produced by `export_state`. Default: no-op.
+    fn import_state(&mut self, _state: &[u8]) -> Result<()> {
+        Ok(())
+    }
 }
