@@ -46,13 +46,28 @@ network and enter the **AP password** from your card. (The password is
 *not* `password` and *not* the device ID — it's the eight-character
 string printed under the QR code.)
 
-Once joined, your phone will automatically open the Canary's dashboard.
-If it doesn't, open Safari (or any browser) and visit:
+Your phone will **stay** connected — the Canary answers your phone's
+"is there internet here?" check so it won't drop the network or warn you
+that there's no internet. (There isn't, by design: the Canary never
+phones home. It just keeps the connection so you can reach it.)
+
+Now open a browser and visit:
 
 > **http://canary.local**
 
-…or, if your network is unusual, the IP address shown in your Wi-Fi
-settings (typically `192.168.4.1`).
+- **iPhone / iPad / Mac:** a "Sign in" panel may pop up first with the
+  same instruction — you can read it and then open Safari, or just tap
+  *Cancel → Use Without Internet* and go to `canary.local`. `canary.local`
+  works reliably here.
+- **Android:** no pop-up appears (that's normal — it's what keeps you
+  connected). Open Chrome and type `canary.local`. Some Android browsers
+  don't resolve `.local` names; if the page doesn't load, use the numeric
+  address instead:
+
+> **http://192.168.4.1**
+
+`192.168.4.1` always works, on every phone. It's the safe fallback any
+time `canary.local` doesn't load.
 
 That's it. You're now talking to the device.
 
@@ -556,7 +571,8 @@ for evidence, **export the chain before you factory-reset** —
 |---|---|
 | Phone can't see `SecuraCV-XXXX` | Power LED off → check USB cable. (Safe mode does *not* hide the network — the Wi-Fi AP keeps running.) |
 | Dashboard shows a yellow **Safe mode active** bar | The Canary *crashed* (firmware panic / watchdog / brownout) several times in a row and disabled optional peripherals (camera, SD, mesh, BLE, presence, GPS) to protect the core witness functions. Ordinary power cycling, unplugging, or pressing reset does **not** trigger this — only genuine crashes do. It auto-reboots once it has run stably for ~60 s. If a persistent fault keeps crashing it back into safe mode it stops retrying and stays put — fix the underlying issue (reseat the SD card, check power), then click **Retry full boot** on the bar. |
-| `canary.local` doesn't load | Some Android versions don't resolve `.local`; use the IP address from your Wi-Fi settings |
+| `canary.local` doesn't load | Some Android browsers don't resolve `.local` names. Use **http://192.168.4.1** instead — it works on every phone. |
+| Phone drops the Wi-Fi or warns "no internet" | This shouldn't happen on current firmware (the Canary answers the connectivity check to stay connected). If it does, update the firmware, then reconnect. |
 | Sensing pill stays **Offline** | This build was compiled without CSI; check **Settings → About → Build features** |
 | **Drop: rate-limit** climbing fast | Strong nearby 2.4 GHz interferer; move the Canary or switch your home Wi-Fi to channel 6 or 11 |
 | Gauges look noisy at low signal | Move the Canary closer to other Wi-Fi devices, or away from a metal wall behind it |
