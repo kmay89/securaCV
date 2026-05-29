@@ -699,7 +699,7 @@ void setup() {
   // and temp drift get signed — high-rate informational events (CSI
   // windows, IR button presses) are deliberately NOT witnessed.
 #if FEATURE_SENSING_WITNESS && \
-    (FEATURE_ACOUSTIC_EVENTS || FEATURE_TOUCH || FEATURE_TEMP_TAMPER)
+    (FEATURE_ACOUSTIC_EVENTS || FEATURE_TOUCH || FEATURE_TEMP_TAMPER || FEATURE_VISION_DETECT)
   sensing_init();  /* idempotent — make sure the aggregator is up */
   sensing_set_witness_callback([](const sensing_witness_event_t* we) {
     /* Build a small CBOR payload — same shape across all five kinds
@@ -719,7 +719,8 @@ void setup() {
      * out. Everything else uses RECORD_WITNESS_EVENT. */
     const RecordType rt =
         (we->kind == SENSING_WITNESS_TOUCH_TAMPER ||
-         we->kind == SENSING_WITNESS_TEMP_DRIFT)
+         we->kind == SENSING_WITNESS_TEMP_DRIFT  ||
+         we->kind == SENSING_WITNESS_VISION_TAMPER)
             ? RECORD_TAMPER_ALERT
             : RECORD_WITNESS_EVENT;
 

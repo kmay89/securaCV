@@ -37,6 +37,15 @@ static HealthLogRingEntry g_health_log_ring[HEALTH_LOG_RING_SIZE];
 static size_t g_health_log_ring_head = 0;
 static size_t g_health_log_ring_count = 0;
 
+// Recent witness record ring — display-only, for serving GET /api/witness?last=N.
+// The tamper-evident guarantee lives in the hash chain (chain_head/NVS + signatures),
+// NOT this ring; it is bounded RAM and intentionally volatile across reboot. Full
+// history remains in the signed SD chain. Mirrors the health-log ring pattern above.
+static const size_t WITNESS_RECORD_RING_SIZE = 32;
+static WitnessRecord g_record_ring[WITNESS_RECORD_RING_SIZE];
+static size_t g_record_ring_head = 0;
+static size_t g_record_ring_count = 0;
+
 // ════════════════════════════════════════════════════════════════════════════
 // GLOBAL STATE ACCESSORS
 // ════════════════════════════════════════════════════════════════════════════
@@ -50,6 +59,10 @@ float witness_get_speed_ema() { return g_speed_ema; }
 HealthLogRingEntry* witness_get_health_log_ring() { return g_health_log_ring; }
 size_t witness_get_health_log_count() { return g_health_log_ring_count; }
 size_t witness_get_health_log_head() { return g_health_log_ring_head; }
+
+WitnessRecord* witness_get_record_ring() { return g_record_ring; }
+size_t witness_get_record_count() { return g_record_ring_count; }
+size_t witness_get_record_head() { return g_record_ring_head; }
 
 // ════════════════════════════════════════════════════════════════════════════
 // UTILITIES
@@ -234,6 +247,13 @@ bool witness_create_record_gps(const uint8_t* payload, size_t len, RecordType ty
 
   g_health.records_created++;
   g_health.records_verified++;
+
+  // Append to the display-only recent-record ring (newest overwrites oldest).
+  // Shared by both create paths; the chain integrity itself lives in the hash
+  // chain, so losing this ring on reboot is harmless.
+  g_record_ring[g_record_ring_head] = *out;
+  g_record_ring_head = (g_record_ring_head + 1) % WITNESS_RECORD_RING_SIZE;
+  if (g_record_ring_count < WITNESS_RECORD_RING_SIZE) g_record_ring_count++;
 
   // Persist chain state periodically
   if ((g_device.seq - g_device.seq_persisted) >= SD_PERSIST_INTERVAL) {

@@ -205,6 +205,9 @@ typedef enum {
   SENSING_WITNESS_VISION_MOTION   = 11,  /* camera motion detected (Layer 2) */
   SENSING_WITNESS_VISION_PERSON   = 12,  /* person detected (Layer 3 TFLite) */
   SENSING_WITNESS_POWER_SHUTDOWN  = 13,  /* battery critical — graceful shutdown */
+  SENSING_WITNESS_VISION_TAMPER   = 14,  /* camera tamper/blinding (Layer 1 sustained global change) */
+  SENSING_WITNESS_VISION_OBJ_REMOVED = 15, /* monitored object removed from scene (long-term baseline) */
+  /* Append-only: numeric values are signed into CBOR witness payloads — never renumber. */
 } sensing_witness_kind_t;
 
 typedef struct {

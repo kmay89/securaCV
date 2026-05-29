@@ -3,7 +3,7 @@
 const crypto = require('node:crypto');
 const { Router } = require('express');
 const { computeHash, verifySignature } = require('../lib/witness-chain');
-const { buildEvidenceEnvelope, EnvelopeBridgeError } = require('../lib/envelope-bridge');
+const { buildEvidenceEnvelope, EnvelopeBridgeError, EVENT_TYPE_MAP } = require('../lib/envelope-bridge');
 const V = require('../../../viewer/verify_core');
 
 function computeExportDigest(records) {
@@ -58,15 +58,18 @@ function detectTimingAnomalies(records) {
 // expensive than a plain read and warrant their own cap on top of the global limiter in server.js.
 // Kept dependency-free and in the same in-house style as middleware/rate-limit.js (the project
 // intentionally ships with only express). Per-IP sliding window with bounded, LRU-evicted state.
-// Config is read from `state.envelopeRateLimit` at request time so it stays overridable in tests.
-function expensiveRouteLimiter(state) {
+// Config is read from `state[configKey]` at request time so it stays overridable in tests.
+// `configKey` selects which state field holds the {limit, windowMs} override (the envelope routes
+// use `envelopeRateLimit`; the simulate trigger uses `simulateRateLimit`), and the defaults apply
+// when that field is unset.
+function expensiveRouteLimiter(state, { configKey = 'envelopeRateLimit', defaultLimit = 6, defaultWindowMs = 60000 } = {}) {
   const maxEntries = 64;
   const hits = new Map(); // ip -> number[] (timestamps)
 
   return function limiter(req, res, next) {
-    const cfg = (state && state.envelopeRateLimit) || {};
-    const limit = cfg.limit || 6;
-    const windowMs = cfg.windowMs || 60000;
+    const cfg = (state && state[configKey]) || {};
+    const limit = cfg.limit || defaultLimit;
+    const windowMs = cfg.windowMs || defaultWindowMs;
     const ip = req.ip || (req.socket && req.socket.remoteAddress) || 'unknown';
     const now = Date.now();
     let arr = hits.get(ip);
@@ -83,7 +86,7 @@ function expensiveRouteLimiter(state) {
       hits.set(ip, arr);
       return res.status(429).json({
         error: 'rate_limited',
-        message: 'Too many evidence-verification requests. Please slow down.',
+        message: 'Too many requests on a rate-limited endpoint. Please slow down.',
         retry_after: retryAfter,
       });
     }
@@ -99,6 +102,20 @@ function witnessRoutes(state) {
   // Stricter cap for the Ed25519/SHA-256-heavy envelope + verify endpoints (DoS hardening).
   const envelopeLimiter = expensiveRouteLimiter(state);
 
+  // Hard ceiling on the on-demand event trigger so a buggy/hostile client can't overwhelm the
+  // device with injected events (the "triggers" axis of don't-overwhelm-the-device). Default
+  // 6 events / 10s; overridable in tests via `state.simulateRateLimit`.
+  const simulateLimiter = expensiveRouteLimiter(state, { configKey: 'simulateRateLimit', defaultWindowMs: 10000 });
+
+  // The trigger endpoint may only mint event types the canonical evidence envelope can name
+  // (envelope-bridge EVENT_TYPE_MAP). Importing the keys — rather than hand-copying — keeps the
+  // allowlist from drifting from what `buildEvidenceEnvelope` will accept, so every simulated
+  // record stays coarsenable/exportable. It also rejects any identifying/forbidden type.
+  const ALLOWED_EVENT_TYPES = new Set(Object.keys(EVENT_TYPE_MAP));
+  // A zone is a short opaque local id — never free text / an address. Identical to the pattern
+  // envelope-bridge.js enforces, so a simulated record can never fail envelope coarsening.
+  const ZONE_ID_RE = /^[a-z0-9][a-z0-9_:-]{0,63}$/;
+
   router.get('/api/v1/witness', (req, res) => {
     let last = parseInt(req.query.last, 10) || 20;
     last = Math.min(Math.max(1, last), 100);
@@ -106,6 +123,60 @@ function witnessRoutes(state) {
     res.json({
       records: state.witnessRecords.slice(-last),
     });
+  });
+
+  // On-demand camera-event trigger. Injects a single, already-decided semantic vision event into
+  // the witness chain — mirroring what the ESP32S3 constrained-processor vision pipeline produces
+  // at runtime — so events flow through signing/hash-chaining/SSE into the SPA timeline live.
+  //
+  // It does NO camera capture or detection work (one Ed25519 sign + hash only), so it cannot raise
+  // device load. Three flood guards: (1) simulateLimiter caps trigger volume; (2) the default path
+  // honours tryEmitEvent's activity-session suppression/cooldown; (3) `force` (suppression bypass)
+  // is devMode-only. event_type is allowlisted to envelope-nameable, non-identifying types.
+  router.post('/api/v1/witness/simulate', simulateLimiter, (req, res) => {
+    const body = (req.body && typeof req.body === 'object') ? req.body : {};
+    const eventType = body.event_type;
+    const zone = body.zone === undefined ? 'front' : body.zone;
+
+    if (typeof eventType !== 'string' || !ALLOWED_EVENT_TYPES.has(eventType)) {
+      return res.status(400).json({
+        error: 'invalid_event_type',
+        message: 'event_type must be one of the supported semantic vision events.',
+        allowed: Array.from(ALLOWED_EVENT_TYPES),
+      });
+    }
+
+    if (typeof zone !== 'string' || !ZONE_ID_RE.test(zone)) {
+      return res.status(400).json({
+        error: 'invalid_zone',
+        message: 'zone must be a short local id matching /^[a-z0-9][a-z0-9_:-]{0,63}$/ (no free text).',
+      });
+    }
+
+    // `confidence` is accepted for API symmetry with the firmware event but deliberately NOT
+    // persisted: the raw record has no confidence field and computeHash() does not include one,
+    // so adding it would break chain verification / envelope coarsening.
+
+    // `force` bypasses suppression for deterministic tests/demos — gated to devMode so a
+    // production-style caller can never sidestep the cooldown to flood the chain.
+    const force = body.force === true && state.device.devMode === true;
+
+    const record = force
+      ? state.addWitnessRecord(eventType, zone)
+      : state.tryEmitEvent(eventType, zone);
+
+    if (!record) {
+      return res.status(202).json({
+        suppressed: true,
+        reason: 'activity_session_or_cooldown',
+        event_type: eventType,
+        zone,
+      });
+    }
+
+    // SSE fan-out to connected timeline clients happens automatically via the onWitnessRecord
+    // hook installed by the /stream handler — no extra wiring here.
+    return res.status(201).json({ record });
   });
 
   router.get('/api/v1/witness/export', (req, res) => {

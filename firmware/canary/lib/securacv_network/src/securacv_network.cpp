@@ -680,6 +680,7 @@ static bool auth_gate(httpd_req_t* req) {
 static esp_err_t handle_ui(httpd_req_t* req);
 static esp_err_t handle_status(httpd_req_t* req);
 static esp_err_t handle_chain(httpd_req_t* req);
+static esp_err_t handle_witness(httpd_req_t* req);
 static esp_err_t handle_logs(httpd_req_t* req);
 static esp_err_t handle_log_ack(httpd_req_t* req);
 static esp_err_t handle_ack_all(httpd_req_t* req);
@@ -761,12 +762,12 @@ bool NetworkManager::startHttpServer() {
   config.server_port = 80;
   config.uri_match_fn = httpd_uri_match_wildcard;
   config.stack_size = 8192;
-  // 40 base + 6 mesh endpoints (PR-8) when the mesh feature is compiled
-  // in. Each registered httpd_uri_t needs a slot.
+  // 41 base (incl. /api/witness) + 6 mesh endpoints (PR-8) when the mesh
+  // feature is compiled in. Each registered httpd_uri_t needs a slot.
   #if defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
-  config.max_uri_handlers = 46;
+  config.max_uri_handlers = 47;
   #else
-  config.max_uri_handlers = 40;
+  config.max_uri_handlers = 41;
   #endif
   config.recv_wait_timeout = 30;
   config.send_wait_timeout = 30;
@@ -800,6 +801,9 @@ void NetworkManager::registerHttpHandlers() {
 
   httpd_uri_t chain = { .uri = "/api/chain", .method = HTTP_GET, .handler = handle_chain };
   httpd_register_uri_handler(m_http_server, &chain);
+
+  httpd_uri_t witness = { .uri = "/api/witness", .method = HTTP_GET, .handler = handle_witness };
+  httpd_register_uri_handler(m_http_server, &witness);
 
   httpd_uri_t logs = { .uri = "/api/logs", .method = HTTP_GET, .handler = handle_logs };
   httpd_register_uri_handler(m_http_server, &logs);
@@ -1093,6 +1097,62 @@ static esp_err_t handle_chain(httpd_req_t* req) {
     block["hash"] = hash;
     block["type"] = record_type_name(last.type);
     block["verified"] = last.verified;
+  }
+
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+// Serve the recent witness-record ring for the timeline UI. The ring is bounded
+// (display-only); the tamper-evident guarantee lives in the hash chain, and full
+// history is available via /api/export. Reads only in-RAM state — no SD, no camera.
+static esp_err_t handle_witness(httpd_req_t* req) {
+  if (!rate_limit_check(req)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  WitnessRecord* ring = witness_get_record_ring();
+  const size_t total = witness_get_record_count();
+  const size_t head  = witness_get_record_head();
+  const size_t ring_size = 32;  // mirrors WITNESS_RECORD_RING_SIZE
+
+  // Optional ?last=N — clamp to [1, total]; default to all available records.
+  size_t want = total;
+  size_t qlen = httpd_req_get_url_query_len(req);
+  if (qlen > 0 && qlen < 128) {
+    char query[128];
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
+      char val[12];
+      if (httpd_query_key_value(query, "last", val, sizeof(val)) == ESP_OK) {
+        int n = atoi(val);
+        if (n > 0 && (size_t)n < want) want = (size_t)n;
+      }
+    }
+  }
+
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["total"] = total;
+
+  JsonArray records = doc["records"].to<JsonArray>();
+
+  // Emit chronological (oldest→newest) for the most recent `want` records so the UI's
+  // slice(-50).reverse() shows newest first. Oldest of the window sits at this index:
+  const size_t start = total - want;
+  for (size_t j = start; j < total; j++) {
+    const size_t idx = (head + ring_size - total + j) % ring_size;
+    WitnessRecord& rec = ring[idx];
+
+    JsonObject r = records.add<JsonObject>();
+    r["seq"] = rec.seq;
+    r["type_name"] = record_type_name(rec.type);
+    char hash[65];
+    hex_to_str(hash, rec.chain_hash, 32);
+    r["chain_hash"] = hash;
+    r["time_bucket"] = rec.time_bucket;
+    r["payload_len"] = (uint32_t)rec.payload_len;
+    r["verified"] = rec.verified;
   }
 
   String response;

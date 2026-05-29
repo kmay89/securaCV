@@ -201,6 +201,12 @@ HealthLogRingEntry* witness_get_health_log_ring();
 size_t witness_get_health_log_count();
 size_t witness_get_health_log_head();
 
+// Recent witness-record ring (display-only; serves GET /api/witness?last=N).
+// Bounded and volatile across reboot — integrity lives in the hash chain, not here.
+WitnessRecord* witness_get_record_ring();
+size_t witness_get_record_count();
+size_t witness_get_record_head();
+
 // ════════════════════════════════════════════════════════════════════════════
 // UTILITIES
 // ════════════════════════════════════════════════════════════════════════════
