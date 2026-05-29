@@ -187,7 +187,7 @@ See [FEATURES.md](FEATURES.md) for the complete feature audit matrix and [VARIAN
 | **PlatformIO (canary-wap/)** | `projects/canary-wap/` | COMPATIBILITY | Uses common headers |
 | **canary-vision** | `projects/canary-vision/` | SPECIALIZED | ESP32-C3 + Grove Vision AI + MQTT/HA |
 | **canary-ota** | `projects/canary-ota/` | SPECIALIZED | OTA A/B subsystem |
-| **WAP Snapshot** | `projects/_archive/canary-wap-snapshot/` | ARCHIVED | Frozen 2026-02-20; read-only reference |
+| **WAP Snapshot** | _(removed)_ | REMOVED | Frozen 2026-02-20, deleted 2026-05-29; history in git |
 
 ### PlatformIO Build Environments (canary/)
 
