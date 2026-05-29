@@ -136,13 +136,21 @@ Multiple libraries were found for "SD.h"
 ```
 
 It appears because one or more standalone `SD` libraries are also installed
-in your sketchbook (`~/Documents/Arduino/libraries/SD`) or global libraries
-folder (`~/Library/Arduino15/libraries/SD` on macOS). The ESP32 build needs
-the *core-bundled* `SD`, so the extra copies are redundant. To silence the
-warning, delete the unused standalone copies — for example on macOS:
+in a user libraries folder. The exact location depends on your IDE version
+and platform — on macOS the candidates are:
+
+- `~/Documents/Arduino/libraries/SD` — IDE 1.x sketchbook
+- `~/Arduino/libraries/SD` — IDE 2.x sketchbook
+- `~/Library/Arduino15/libraries/SD` — Library-Manager / data dir
+
+Check the `Not used:` lines in your own build output for the real paths — they
+tell you exactly which copies the compiler skipped. The ESP32 build needs the
+*core-bundled* `SD`, so those standalone copies are redundant. To silence the
+warning, delete the ones the build reported as unused — for example on macOS:
 
 ```sh
 rm -rf ~/Documents/Arduino/libraries/SD
+rm -rf ~/Arduino/libraries/SD
 rm -rf ~/Library/Arduino15/libraries/SD
 ```
 
