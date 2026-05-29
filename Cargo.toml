@@ -117,3 +117,7 @@ required-features = [
     "adapter-webhook",
     "adapter-sandbox",
 ]
+
+[[bin]]
+name = "tamper_demo"
+path = "src/bin/tamper_demo.rs"
