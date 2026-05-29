@@ -42,16 +42,14 @@ verify the reasoning. Each entry records why securaCV is not exposed and
 either the fix applied or why a bump is not yet possible.
 
 > Verification done with the live crates.io index on 2026-05-29. All five
-> open Dependabot alerts are transitive and fall into the two groups below:
-> Group 1 (four `rustls-webpki` alerts) has no upstream fix yet; Group 2
-> (`time`) is resolved by the dependency bump in this change.
+> open Dependabot alerts were transitive and are now **resolved** by the two
+> dependency migrations recorded below.
 
-### Group 1 — `rustls-webpki 0.102.8` (1 High, 1 Moderate, 2 Low)
+### Group 1 — `rustls-webpki 0.102.8` (1 High, 1 Moderate, 2 Low) — RESOLVED
 
 Four alerts, all on the same crate version: `rustls-webpki 0.102.8`, pulled
-transitively by `rumqttc 0.25.1` (the MQTT-over-TLS client). The other copy
-in the tree, `rustls-webpki 0.103.13` (via `rustls 0.23`), is on the current
-release.
+transitively by `rumqttc 0.25.1` (the MQTT-over-TLS client). A second copy,
+`rustls-webpki 0.103.13` (via `rustls 0.23`), was already on the patched line.
 
 - **High** — DoS via panic on a malformed CRL `BIT STRING`. `bit_string_flags()`
   in `der.rs` underflows on content `[0x00]`, reachable through
@@ -62,20 +60,24 @@ release.
 - **Low** — name constraints were accepted for certificates asserting a
   wildcard name.
 
-**Why securaCV is not exposed:** every one of these lives in CRL-revocation
+**Why securaCV was not exposed:** every one of these lives in CRL-revocation
 or name-constraint code. The CRL paths run only when an application opts in by
 passing `RevocationOptions` to `verify_for_usage()`; the name-constraint paths
 run only *after* signature verification and require a misissued certificate
-from a trusted CA. securaCV uses none of this — there is no `RevocationOptions`,
-`CertRevocationList`, or direct `webpki` use anywhere in `src/`, and `rumqttc`
-performs standard server-certificate verification only. The vulnerable code is
-never invoked.
+from a trusted CA. securaCV used none of this — there is no `RevocationOptions`,
+`CertRevocationList`, or direct `webpki` use anywhere in `src/`, and the MQTT
+client performs standard server-certificate verification only.
 
-**Why it isn't simply patched:** there is no fixed `0.102.x` release
-(`0.102.8` is the newest on that line), and `rumqttc 0.25.1` (the latest
-published version) hard-pins `rustls-webpki = "0.102"`. A `[patch.crates-io]`
-override cannot redirect it to `0.103.x` — that crosses the semver-incompatible
-`0.102 → 0.103` boundary, which cargo rejects.
+**Fix applied:** there is no fixed `0.102.x` release and `rumqttc 0.25.1` (the
+last release of that crate) hard-pins `rustls-webpki = "0.102"`, so the only
+way to drop the vulnerable copy was to move off `rumqttc 0.25`. Migrated to its
+maintained successor, **`rumqttc-next 0.33`** (re-exports `rumqttc-v5-next`),
+which depends on the patched `rustls-webpki 0.103.13`. `rustls-webpki 0.102.8`
+is now absent from `Cargo.lock` entirely. We were already on rumqttc's v5 API,
+so this was a v5→v5 port (namespace, `MqttOptions::new`/`Broker`,
+`set_keep_alive(u16)`, `ClientBuilder`, `Transport::Tls`). Build-verified with
+`cargo check` across the default bins, the `adapter_host` feature set, and
+`pqc-tls`.
 
 ### Group 2 — `time` stack exhaustion (Moderate) — RESOLVED
 
@@ -97,13 +99,13 @@ override cannot redirect it to `0.103.x` — that crosses the semver-incompatibl
   `backend-tract` detector (`src/detect/backends/tract.rs`) compiles unchanged
   against the new major version.
 
-### Tracking
+### Status
 
-- Watch `rumqttc` for a release that bumps its `rustls-webpki` dependency to
-  the `0.103.x` line (clears Group 1).
-- When it lands, bump, drop the Group 1 entry here, and re-run the audit.
-  Until then those four alerts are dismissed as "vulnerable code not in the
-  execution path."
+All five alerts above are resolved by dependency migrations (no securaCV code
+was ever on a reachable path). Both vulnerable crate versions —
+`rustls-webpki 0.102.8` and `time 0.3.41` — are absent from `Cargo.lock`. This
+section is retained as an audit record; remove entries once the corresponding
+Dependabot alerts are closed.
 
 ## Non-goals
 
