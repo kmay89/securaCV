@@ -317,8 +317,10 @@ strong pull at boot) · ADC2/GPIO5 is shared with WiFi.
   window** (the **clear-lid** 1554/1555 option is ideal — keep it untinted for
   the camera); and a sealed USB-C access port or pigtail gland.
 - Mount the tamper magnet on the lid so opening the enclosure separates `MAG1`
-  from `SW2`. A 3D-printable enclosure (STL) is a planned follow-up and is out
-  of scope for this revision.
+  from `SW2`. A **parametric 3D-printable enclosure** (OpenSCAD source + ready
+  STLs, with light-pipe, buzzer vent, camera window and magnet pocket) is
+  available in [`enclosure/`](./enclosure/) — a v0.1 reference to verify against
+  your hardware before printing.
 
 ---
 
