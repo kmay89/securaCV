@@ -169,20 +169,18 @@ impl FfmpegFileSource {
     }
 
     fn frame_timeout(&self) -> Duration {
-        let base_ms = if self.config.target_fps == 0 {
-            500
-        } else {
-            (1000 / self.config.target_fps).saturating_mul(4)
-        };
+        let base_ms = 1000u32
+            .checked_div(self.config.target_fps)
+            .map(|per_frame| per_frame.saturating_mul(4))
+            .unwrap_or(500);
         Duration::from_millis(base_ms.max(500) as u64)
     }
 
     fn health_grace(&self) -> Duration {
-        let base_ms = if self.config.target_fps == 0 {
-            2_000
-        } else {
-            (1000 / self.config.target_fps).saturating_mul(6)
-        };
+        let base_ms = 1000u32
+            .checked_div(self.config.target_fps)
+            .map(|per_frame| per_frame.saturating_mul(6))
+            .unwrap_or(2_000);
         Duration::from_millis(base_ms.max(2_000) as u64)
     }
 
