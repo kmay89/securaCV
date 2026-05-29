@@ -31,16 +31,24 @@
 // HARDWARE TARGET SELECTION — Uncomment exactly ONE
 // ════════════════════════════════════════════════════════════════════════════
 
+// May be selected externally via -DHARDWARE_XIAO_ESP32S3 / -DHARDWARE_XIAO_ESP32C3
+// (e.g. PlatformIO build_flags). Arduino IDE users: leave the default below.
+#if !defined(HARDWARE_XIAO_ESP32S3) && !defined(HARDWARE_XIAO_ESP32C3)
 #define HARDWARE_XIAO_ESP32S3   // XIAO ESP32-S3 Sense (dual-core, camera, PSRAM)
 // #define HARDWARE_XIAO_ESP32C3   // XIAO ESP32-C3 (single-core RISC-V, BLE 5.0 only)
+#endif
 
 // ════════════════════════════════════════════════════════════════════════════
 // BUILD PROFILE SELECTION — Uncomment exactly ONE
 // ════════════════════════════════════════════════════════════════════════════
 
+// May be selected externally via -DBUILD_PROFILE_MINIMAL / _DEV / _FULL
+// (e.g. PlatformIO build_flags). Arduino IDE users: leave the default below.
+#if !defined(BUILD_PROFILE_MINIMAL) && !defined(BUILD_PROFILE_DEV) && !defined(BUILD_PROFILE_FULL)
 // #define BUILD_PROFILE_MINIMAL   // Fastest build: crypto + GPS only (~45s)
 // #define BUILD_PROFILE_DEV       // Development: + WiFi + HTTP + SD (~90s)
 #define BUILD_PROFILE_FULL      // Full features: + Mesh + BLE (~150s)
+#endif
 
 
 // Security guardrails

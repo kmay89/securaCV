@@ -21,31 +21,31 @@
 // ════════════════════════════════════════════════════════════════
 // Set FEATURE_BLE to 0 to compile without ANY BLE code (removes binary blobs)
 // When 0, all BLE headers become no-ops
-//
-// Auto-detect: if NimBLE library is not installed, force-disable BLE
-// regardless of build profile setting. This prevents build failures
-// in environments without the library (e.g., CI with Arduino Core only).
 #ifndef FEATURE_BLE
 #define FEATURE_BLE           1
 #endif
 
-#if FEATURE_BLE && !__has_include(<NimBLEDevice.h>)
-  #undef  FEATURE_BLE
-  #define FEATURE_BLE 0
-  #ifdef SECURACV_EMIT_BUILD_BANNER
-    #pragma message "NimBLEDevice.h not found — FEATURE_BLE auto-disabled"
-  #endif
-#endif
-
-// FEATURE_BLUETOOTH gates the BLE pairing/advertising channel
-// (bluetooth_channel.cpp + bluetooth_api.h). Like FEATURE_BLE above, it
-// requires NimBLE — auto-disable if the library is missing so CI builds
-// without the lib still link.
-#if defined(FEATURE_BLUETOOTH) && FEATURE_BLUETOOTH && !__has_include(<NimBLEDevice.h>)
-  #undef  FEATURE_BLUETOOTH
-  #define FEATURE_BLUETOOTH 0
-  #ifdef SECURACV_EMIT_BUILD_BANNER
-    #pragma message "NimBLEDevice.h not found — FEATURE_BLUETOOTH auto-disabled"
+// NimBLE presence check.
+//
+// A device build that wants BLE but can't see <NimBLEDevice.h> must FAIL
+// LOUDLY — silently disabling BLE is the documented past bug (devices shipped
+// with "BLE unavailable in this build" because the library wasn't installed).
+// Only an explicit host/CI compile-check build (-DSECURACV_HOST_BUILD or the
+// CI's -DVALIDATION_BUILD) may stub BLE out to a no-op so off-target / no-radio
+// builds still link. A real device build sets neither, so the #error fires.
+#if (FEATURE_BLE || (defined(FEATURE_BLUETOOTH) && FEATURE_BLUETOOTH)) && !__has_include(<NimBLEDevice.h>)
+  #if defined(SECURACV_HOST_BUILD) || defined(VALIDATION_BUILD)
+    #undef  FEATURE_BLE
+    #define FEATURE_BLE 0
+    #ifdef FEATURE_BLUETOOTH
+      #undef  FEATURE_BLUETOOTH
+      #define FEATURE_BLUETOOTH 0
+    #endif
+    #ifdef SECURACV_EMIT_BUILD_BANNER
+      #pragma message "NimBLEDevice.h not found — BLE stubbed out (host/validation build)"
+    #endif
+  #else
+    #error "NimBLE-Arduino not found but BLE is enabled. Install it (PlatformIO: lib_deps = h2zero/NimBLE-Arduino@^2.3.8 ; Arduino: arduino-cli lib install \"NimBLE-Arduino\"), or build a non-BLE profile (-DBUILD_PROFILE_MINIMAL), or set -DSECURACV_HOST_BUILD for off-target tests."
   #endif
 #endif
 
