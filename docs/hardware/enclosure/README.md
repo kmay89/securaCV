@@ -1,83 +1,101 @@
-# Canary WAP — 3D-Printable Enclosure (v0.1)
+# Canary WAP — 3D-Printable Enclosure (v0.2)
 
-A parametric, printable case for the Canary WAP (XIAO ESP32-S3 Sense + LiPo),
-the enclosure referenced as a "future add" in the
-[Peripheral Build Plan](../canary_peripheral_build_plan.md) (§6.6). Authored in
-[OpenSCAD](https://openscad.org) so every dimension is a tweakable parameter.
+Parametric, printable cases for the Canary WAP (XIAO ESP32-S3 Sense), referenced
+as a "future add" in the [Peripheral Build Plan](../canary_peripheral_build_plan.md)
+(§6.6). Authored in [OpenSCAD](https://openscad.org) so every dimension is a
+tweakable parameter, with rendered print-ready STLs committed alongside.
 
-![Enclosure preview — base and lid](./preview_all.png)
+Two variants from one source (`variant = "battery" | "compact"`):
+
+| Variant | Outer size | Battery | Use |
+|---------|-----------|---------|-----|
+| **battery** | ≈ **80 × 39 × 17 mm** | LiPo bay beside the board | Standalone / portable Canary |
+| **compact** | ≈ **27 × 24 × 17 mm** | none (USB-powered) | Smallest footprint, mains/USB powered |
+
+![Battery variant — base and lid](./preview_all.png)
+![Compact variant — base and lid](./preview_compact.png)
 
 | | |
 |---|---|
-| **Source** | [`canary_wap_enclosure.scad`](./canary_wap_enclosure.scad) (parametric) |
-| **Print-ready** | [`canary_wap_enclosure_base.stl`](./canary_wap_enclosure_base.stl), [`canary_wap_enclosure_lid.stl`](./canary_wap_enclosure_lid.stl) |
-| **Outer size (defaults)** | ≈ **80 × 39 × 17 mm** (base 15 mm + lid 2 mm) |
+| **Source** | [`canary_wap_enclosure.scad`](./canary_wap_enclosure.scad) (parametric, both variants) |
+| **Battery STLs** | [`..._battery_base.stl`](./canary_wap_enclosure_battery_base.stl), [`..._battery_lid.stl`](./canary_wap_enclosure_battery_lid.stl) |
+| **Compact STLs** | [`..._compact_base.stl`](./canary_wap_enclosure_compact_base.stl), [`..._compact_lid.stl`](./canary_wap_enclosure_compact_lid.stl) |
 | **Fasteners** | 4 × **M2** self-tapping screws (8–10 mm) into the corner posts |
 
-> ⚠️ **This is a v0.1 reference — verify before printing.** Defaults are *nominal*
-> for the XIAO ESP32-S3 Sense (PCB ≈ 21 × 17.8 mm) and a 503450-class LiPo, but
-> the camera-lens position, LED location, USB-C connector height and your exact
-> battery vary. **Measure your hardware, adjust the parameters, and test-print the
-> lid first** (it carries the fiddly features). Treat it as a starting point, not
-> a finished product. For weatherproofing, see the climate/IP guidance in the
-> build plan §9 — a printed case is *not* IP-rated on its own.
+## Dimensional basis (verified)
 
-## What's in the box (literally)
+These dimensions were reconciled against **Seeed's official spec** and a
+**reference enclosure STL** supplied for this work:
+
+| Source | Figure | Used for |
+|--------|--------|----------|
+| Seeed XIAO ESP32-S3 ([p-5627](https://www.seeedstudio.com/XIAO-ESP32S3-p-5627.html)) | PCB **21.0 × 17.5 mm**, 2.54 mm pitch, USB-C on a short edge | `board_l`, `board_w`, USB position |
+| Reference case STL (`smallest_esp32_V2`) | bbox **20.0 × 35.1 × 9.8 mm**, internal cavity ≈ 9.8 mm deep, board sits 17.5 mm-width across, extra length = USB-C cable clearance | sanity check on cavity depth + USB-only footprint → the **compact** variant |
+
+Changes from v0.1: `board_w` corrected 17.8 → **17.5 mm** (Seeed official); USB-C
+opening widened to **10.5 × 6.5 mm** to clear a real cable boot (the connector
+body is ~8.9 × 3.2 mm); added the **compact** variant.
+
+> ⚠️ **Still a reference — verify before printing.** Seeed publishes the PCB
+> outline but not every component height; the camera-lens/LED/buzzer positions on
+> the lid are nominal. **Measure your board and test-print the lid first.** A
+> printed case is **not IP-rated** on its own — see climate/IP guidance in build
+> plan §9. The compact variant assumes a **plain XIAO ESP32-S3** (lower profile);
+> if you fit the **Sense** camera, keep `board_stack_h ≈ 8` or raise it.
+
+## What's in the box (both variants)
 
 | Feature | Where | Notes |
 |---------|-------|-------|
-| Board cradle | base, USB end | 4 standoffs lift the PCB `standoff_h` (3 mm) off the floor |
-| Battery bay | base, far end | low rim cradles a 503450 LiPo beside the board |
-| **USB-C port** | base, −X wall | centred on the PCB-top height |
-| **Camera/sensor window** | lid | `cam_win_d` (9 mm) aperture — keep optically clear |
+| Board cradle | base | 4 standoffs lift the PCB `standoff_h` (3 mm) off the floor |
+| Battery bay | base (battery variant only) | low rim cradles a 503450 LiPo beside the board |
+| **USB-C port** | base, −X wall | 10.5 × 6.5 mm, centred on PCB-top height |
+| **Camera/sensor window** | lid | `cam_win_d` (9 mm) — keep optically clear |
 | **Light-pipe / LED port** | lid | `lp_d` (3.2 mm) over the status LED |
-| **Buzzer + pressure vent** | lid | recessed seat for a GORE adhesive vent + a ring of sound/pressure holes |
-| **Tamper-magnet pocket** | lid underside | blind pocket holds a 6 mm magnet over the board's reed/Hall switch |
+| **Buzzer + pressure vent** | lid | recessed seat for a GORE adhesive vent + ring of sound/pressure holes |
+| **Tamper-magnet pocket** | lid underside | blind pocket holds a 6 mm magnet over the reed/Hall switch |
 | Screw lid | 4 corners | countersunk M2 into self-tapping posts; lip nests into the base |
 
 ## Render / regenerate the STLs
 
-Requires OpenSCAD (CLI). Use the helper script or call directly:
+Requires OpenSCAD (CLI). The helper renders all four:
 
 ```bash
-./render.sh                 # writes both STLs
-# or:
-openscad --export-format binstl -o canary_wap_enclosure_base.stl -D 'part="base"' canary_wap_enclosure.scad
-openscad --export-format binstl -o canary_wap_enclosure_lid.stl  -D 'part="lid"'  canary_wap_enclosure.scad
+./render.sh
+# or one part of one variant:
+openscad --export-format binstl -o out.stl -D 'variant="compact"' -D 'part="lid"' canary_wap_enclosure.scad
 ```
 
-Open `canary_wap_enclosure.scad` in the OpenSCAD GUI to tune parameters with the
-Customizer (they're grouped: Board, Battery, Shell, Standoffs, Ports, Lid
-features, Tamper magnet), then F6 → Export.
+Open the `.scad` in the OpenSCAD GUI to tune parameters with the Customizer
+(grouped: What-to-render, Board, Battery, Shell, Standoffs, Ports, Lid features,
+Tamper magnet), then F6 → Export.
 
 ## Key parameters to check first
 
 | Param | Default | Why you'd change it |
 |-------|--------:|---------------------|
-| `board_stack_h` | 8.0 | Height clearance above the PCB (camera/B2B stack). Too low → lid won't close |
-| `batt_l/w/h` | 50/34/6 | Match **your** cell; set `batt_enable=false` for USB-only |
-| `cam_dx/dy`, `lp_dx/dy`, `vent_dx/dy`, `mag_dx/dy` | — | Feature positions **from the board centre** — set from a real measurement |
-| `usb_w/h/z` | 9.5/4.5/0 | Align the cutout to your USB-C connector |
-| `fit_gap` | 0.20 | Lid-to-base clearance; loosen for a tighter printer, tighten for a sloppy one |
-| `screw_d` | 2.0 | M2 self-tap; widen ~0.2 mm if you thread inserts instead |
+| `variant` | `"battery"` | `"compact"` drops the battery bay and shrinks the box |
+| `board_stack_h` | 8.0 | Clearance above the PCB. ~8 covers the Sense camera; a plain board needs ~4–5 |
+| `batt_l/w/h` | 50/34/6 | Match **your** cell (battery variant) |
+| `cam_dx/dy`, `lp_dx/dy`, `vent_dx/dy`, `mag_dx/dy` | — | Feature positions **from board centre** — set from a real measurement |
+| `usb_w/h/z` | 10.5/6.5/0 | Align to your USB-C cable boot |
+| `fit_gap` | 0.20 | Lid-to-base clearance; tune for your printer |
 
 ## Suggested print settings
 
-- **Material:** PETG or ASA for any heat/UV exposure (PLA only for indoor/bench).
+- **Material:** PETG or ASA for heat/UV exposure (PLA only for indoor/bench).
 - **Layer height:** 0.2 mm. **Walls:** 3 perimeters. **Infill:** 20–30 %.
-- **Orientation:** print both parts flat, **open side up** (base cavity up, lid
-  features up) — no supports needed.
-- **Camera window:** keep it a clean circle; glue in a thin clear acrylic/glass
-  disc if you need to seal it.
+- **Orientation:** both parts flat, open side up — no supports.
+- **Camera window:** keep it a clean circle; glue in a thin clear disc to seal.
 
 ## Assembly
 
-1. Drop the LiPo into the battery bay; route its lead to the XIAO BAT pads.
-   **Read the battery safety notice in the build plan §6.5 first.**
-2. Seat the PCB on the four standoffs, USB-C aligned to the wall cutout.
-3. Press a 6 mm magnet into the lid pocket; stick a GORE vent over the vent seat
-   if sealing; insert a light pipe in the LED port.
-4. Close the lid (lip nests into the base) and drive 4 × M2 screws into the posts.
+1. (battery variant) Drop the LiPo in the bay; route to the XIAO BAT pads.
+   **Read the battery safety notice in build plan §6.5 first.**
+2. Seat the PCB on the standoffs, USB-C aligned to the wall cutout.
+3. Press a 6 mm magnet into the lid pocket; add a GORE vent over the seat if
+   sealing; insert a light pipe in the LED port.
+4. Close the lid (lip nests into the base) and drive 4 × M2 screws.
 
 ## Links
 - [Peripheral Build Plan & BOM](../canary_peripheral_build_plan.md) — parts, wiring, climate/IP guidance

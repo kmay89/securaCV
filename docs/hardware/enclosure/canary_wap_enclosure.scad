@@ -18,17 +18,19 @@
 // ============================================================================
 
 /* [What to render] */
-part = "all";  // ["base","lid","all"]
+part    = "all";      // ["base","lid","all"]
+variant = "battery";  // ["battery","compact"]  battery = LiPo bay beside board; compact = USB-only small case
 
-/* [Board] */
-board_l        = 21.0;  // XIAO PCB length (USB end to far end, along X)
-board_w        = 17.8;  // XIAO PCB width (along Y)
+/* [Board] — Seeed XIAO ESP32-S3 official: PCB 21.0 x 17.5 mm, 2.54 mm pitch */
+board_l        = 21.0;  // XIAO PCB length (USB end to far end, along X) — Seeed official
+board_w        = 17.5;  // XIAO PCB width (along Y) — Seeed official
 board_h        = 1.2;   // PCB thickness
-board_stack_h  = 8.0;   // tallest thing above the PCB (camera / B2B stack)
+board_stack_h  = 8.0;   // tallest thing above the PCB. ~8 covers the Sense camera stack;
+                        //   a plain XIAO ESP32-S3 (no camera) needs only ~4-5 — lower it then.
 board_clear    = 0.6;   // per-side clearance around the PCB
 
 /* [Battery compartment] */
-batt_enable    = true;
+batt_enable    = (variant == "battery");  // compact variant omits the LiPo bay
 batt_l         = 50.0;  // LiPo length  (503450 ~ 50 x 34 x 5 mm)
 batt_w         = 34.0;  // LiPo width
 batt_h         = 6.0;   // LiPo thickness
@@ -52,8 +54,8 @@ screw_head_d   = 4.0;   // countersink on lid
 screw_head_h   = 2.0;
 
 /* [USB-C port] — on the board's USB end (-X short wall) */
-usb_w          = 9.5;
-usb_h          = 4.5;
+usb_w          = 10.5;  // opening width: clears a typical USB-C cable boot (connector body ~8.9 mm)
+usb_h          = 6.5;   // opening height: boot clearance (connector body ~3.2 mm) — slim if cable is bare
 usb_z          = 0.0;   // extra lift relative to PCB-top centring
 
 /* [Lid features] — offsets are measured FROM THE BOARD CENTRE (mm). Measure your board! */
