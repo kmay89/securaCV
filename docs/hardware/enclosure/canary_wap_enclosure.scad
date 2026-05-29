@@ -81,7 +81,7 @@ corner_r       = 3.0;   // outside corner radius
 standoff_h     = 3.0;   // PCB sits this high off the floor (clearance for bottom parts)
 standoff_d     = 4.0;
 post_d         = 5.0;   // corner screw posts (lid screws thread into these)
-screw_d        = 2.0;   // M2 self-tapping pilot
+screw_d        = 1.6;   // M2 self-tapping pilot — 1.6 mm so threads bite (2.0 = no grip)
 screw_head_d   = 4.0;   // countersink on lid
 screw_head_h   = 2.0;
 
@@ -140,7 +140,8 @@ extra_l      = batt_zone_l + gps_zone_l;                 // internal bays append
 post_corner  = post_d + 1.5;                 // clearance so a screw post sits in the corner, clear of the board
 
 // cavity must hold the board + any bays AND leave true corners for the screw posts
-inner_l = max(board_zone_l + extra_l + 1.0, board_l + 2*post_corner);
+// (+post_corner on length so the far bay ends before the +X corner posts)
+inner_l = max(board_zone_l + extra_l + (extra_l > 0 ? post_corner : 0) + 1.0, board_l + 2*post_corner);
 inner_w = max(board_w + 2*board_clear, e_battery ? batt_w : 0, e_gps ? gps_w : 0, board_w + 2*post_corner) + 1.0;
 cav_h   = standoff_h + board_h + board_stack_h + 1.0;   // internal height above floor
 
@@ -181,6 +182,11 @@ module floorrib(a, b, w) {
         translate([a[0], a[1], floor_t]) cylinder(d = w, h = standoff_h);
         translate([b[0], b[1], floor_t]) cylinder(d = w, h = standoff_h);
     }
+}
+
+// transverse rib across the cavity floor (bounds a battery bay; walls cradle the sides)
+module divrib(x) {
+    translate([x - 0.6, -(inner_w - 0.6)/2, floor_t]) cube([1.2, inner_w - 0.6, 2.0]);
 }
 
 // Cantilever snap clip on a board long edge: a beam from the floor with a lip that
@@ -263,16 +269,14 @@ module base() {
                 for (cx = [board_cx - board_l/4, board_cx + board_l/4])
                     boardclip(cx, sy);
 
-        // battery cradle rim on the floor (kept strictly inside the cavity)
-        if (e_battery)
-            translate([batt_cx, 0, floor_t])
-                difference() {
-                    rrect(min(batt_l + 2.4, batt_zone_l - 0.5),
-                          min(batt_w + 2.4, inner_w - 0.5), 1.0, 1.4);
-                    rrect(batt_l + 0.8, batt_w + 0.8, 0.5, 3);
-                }
+        // battery: the snug side walls cradle the cell; two transverse ribs bound its length
+        // (a full rim would self-delete here and the cell would foul the corner posts)
+        if (e_battery) {
+            divrib(batt_cx - batt_l/2 - 0.6);
+            divrib(batt_cx + batt_l/2 + 0.6);
+        }
 
-        // GPS module cradle rim
+        // GPS module cradle rim (narrow module, so a proper rim is fine)
         if (e_gps)
             translate([gps_cx, 0, floor_t])
                 difference() {
@@ -336,6 +340,9 @@ module lid() {
             for (p = post_xy())
                 translate([p[0], p[1], -lip_h - 0.1])
                     cylinder(d = post_d + 1.2, h = lip_h + 0.2);
+            // notch the lip at the USB end so the cable plug/overmold clears it
+            translate([-inner_l/2, board_cy, -lip_h/2])
+                cube([lip_t * 4, usb_w + 4, lip_h + 0.2], center = true);
         }
 
         // tamper magnet pocket (blind, opens downward)

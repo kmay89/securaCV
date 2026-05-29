@@ -30,7 +30,7 @@ The two committed example presets:
 
 | Preset | Outer size | What's on it |
 |--------|-----------|--------------|
-| **battery_full** | ≈ **80 × 39 × 17 mm** | camera + buzzer + LED + LiPo bay + GPS bay + tamper |
+| **battery_full** | ≈ **86 × 39 × 17 mm** | camera + buzzer + LED + LiPo bay + GPS bay + tamper |
 | **compact_plain** | ≈ **38 × 36 × 17 mm** | plain board (no camera), buzzer + LED, USB-powered |
 
 > Corner posts always sit in **true corners beside the board** (a 17.5 mm PCB +
@@ -82,6 +82,13 @@ plus `preset`. Toggling a peripheral adds/removes its lid cutout or internal bay
 and **resizes the box** (e.g. enabling GPS appends a module bay; disabling the
 camera shortens the cavity). Added a **clip test coupon** (`part = "coupon"`) so
 you can dial in the snap fit before printing the whole case.
+
+**v0.6 — mechanical fixes (from review):** M2 self-tap pilot tightened
+`2.0 → 1.6 mm` so threads actually bite; the broken battery cradle rim (its inner
+cut deleted its own walls and the cell fouled the corner posts) is replaced with
+**two transverse ribs** — the snug side walls cradle the cell and the case is
+lengthened so the bay clears the +X screw posts; and the **lid lip is notched at
+the USB end** so the cable plug/overmold can't jam it.
 
 > ⚠️ **Still a reference — verify before printing.** Seeed publishes the PCB
 > outline but not every component height; the camera-lens/LED/buzzer positions on
