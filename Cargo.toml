@@ -94,6 +94,10 @@ name = "export_verify"
 path = "src/bin/export_verify.rs"
 
 [[bin]]
+name = "envelope_verify"
+path = "src/bin/envelope_verify.rs"
+
+[[bin]]
 name = "frigate_bridge"
 path = "src/bin/frigate_bridge.rs"
 
