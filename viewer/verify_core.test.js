@@ -48,6 +48,19 @@ describe('envelope verification parity', () => {
     assert.equal(report.status, 'valid_with_warnings'); // PQ-not-checked warning
     assert.equal(report.sealed_events, 3);
     assert.equal(report.export_receipts, 1);
+    // The artifact must be bound to the signed hash (incl. an integer-valued f32 confidence of 1.0).
+    assert.ok(report.checks.some((c) => /artifact bound/i.test(c)), 'artifact-binding check should run');
+  });
+
+  it('rejects a tampered artifact even when the digest is recomputed (P1)', async () => {
+    const envelope = loadFixture('valid_envelope.json');
+    // Doctor the human-readable artifact (swap a zone) and refresh the digest so the only thing
+    // that can catch it is the artifact-to-signed-hash binding.
+    envelope.artifact.batches[0].buckets[0].events[0].zone_id = 'zone:forged';
+    envelope.whole_envelope_digest = await V.computeWholeEnvelopeDigest(envelope);
+    const report = await V.verifyEnvelope(envelope);
+    assert.equal(report.ok, false);
+    assert.match(report.error, /artifact hash mismatch/);
   });
 
   it('rejects a tampered payload (chain break)', async () => {

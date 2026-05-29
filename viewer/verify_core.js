@@ -146,6 +146,68 @@ async function verifyEd25519(pubKeyBytes, signatureBytes, message) {
   return globalThis.crypto.subtle.verify('Ed25519', key, signatureBytes, message);
 }
 
+// ---- serde-faithful serialization (for hashing the artifact and receipt) -------------
+// These reproduce `serde_json::to_vec(...)` byte-for-byte: struct field order is fixed (NOT the
+// input JSON's key order), integers print bare, and the single float field (`confidence`, an f32)
+// is formatted to match serde/ryu. Empirically, re-stringifying serde's f32 text in JS matches
+// for every value except integer-valued floats, where serde writes "1.0"/"0.0" — handled below.
+
+function serInt(n) {
+  if (typeof n !== 'number' || !Number.isInteger(n)) throw new Error('expected integer, got ' + n);
+  return String(n);
+}
+
+function serF32(v) {
+  if (typeof v !== 'number' || !isFinite(v)) throw new Error('invalid f32 value: ' + v);
+  if (Number.isInteger(v)) return v.toFixed(1); // serde prints 1.0f32 as "1.0", 0.0f32 as "0.0"
+  const s = String(v);
+  if (s.indexOf('e') !== -1 || s.indexOf('E') !== -1) {
+    throw new Error('f32 value uses exponent notation; cannot reproduce serde bytes: ' + s);
+  }
+  return s;
+}
+
+const serBytes = (arr) => '[' + Array.from(arr, serInt).join(',') + ']';
+const serStr = (s) => canonicalString(s); // serde-compatible escaping
+function serEnum(v) {
+  if (typeof v !== 'string') throw new Error('expected unit enum string');
+  return serStr(v);
+}
+const serTimeBucket = (tb) => `{"start_epoch_s":${serInt(tb.start_epoch_s)},"size_s":${serInt(tb.size_s)}}`;
+
+function serExportEvent(e) {
+  return `{"event_type":${serEnum(e.event_type)},"time_bucket":${serTimeBucket(e.time_bucket)},` +
+    `"zone_id":${serStr(e.zone_id)},"confidence":${serF32(e.confidence)},` +
+    `"kernel_version":${serStr(e.kernel_version)},"ruleset_id":${serStr(e.ruleset_id)},` +
+    `"ruleset_hash":${serBytes(e.ruleset_hash)}}`;
+}
+
+function serExportFailure(f) {
+  return `{"failure_type":${serEnum(f.failure_type)},"time_bucket":${serTimeBucket(f.time_bucket)},` +
+    `"details":${f.details == null ? 'null' : serStr(f.details)},` +
+    `"kernel_version":${serStr(f.kernel_version)},"ruleset_id":${serStr(f.ruleset_id)},` +
+    `"ruleset_hash":${serBytes(f.ruleset_hash)}}`;
+}
+
+function serExportBucket(b) {
+  return `{"time_bucket":${serTimeBucket(b.time_bucket)},` +
+    `"events":[${b.events.map(serExportEvent).join(',')}],` +
+    `"failures":[${b.failures.map(serExportFailure).join(',')}]}`;
+}
+
+const serExportBatch = (bt) => `{"buckets":[${bt.buckets.map(serExportBucket).join(',')}]}`;
+
+function serExportArtifact(a) {
+  return `{"batches":[${a.batches.map(serExportBatch).join(',')}],` +
+    `"max_events_per_batch":${serInt(a.max_events_per_batch)},` +
+    `"jitter_s":${serInt(a.jitter_s)},"jitter_step_s":${serInt(a.jitter_step_s)}}`;
+}
+
+function serExportReceipt(r) {
+  return `{"time_bucket":${serTimeBucket(r.time_bucket)},"ruleset_hash":${serBytes(r.ruleset_hash)},` +
+    `"batch_size":${serInt(r.batch_size)},"artifact_hash":${serBytes(r.artifact_hash)}}`;
+}
+
 // ---- envelope digest -----------------------------------------------------
 
 async function computeWholeEnvelopeDigest(envelope) {
@@ -234,21 +296,25 @@ async function verifyEnvelope(envelope) {
     export_receipts: 0,
     pq_checked: false,
     warnings: [],
+    checks: [],
     whole_envelope_digest: envelope && envelope.whole_envelope_digest,
   };
   try {
     if (envelope.envelope_format !== ENVELOPE_FORMAT) throw new Error(`unknown envelope_format: ${envelope.envelope_format}`);
     if (envelope.envelope_version !== ENVELOPE_VERSION) throw new Error(`unsupported envelope_version ${envelope.envelope_version}`);
+    result.checks.push('Envelope format and version recognized');
 
     // Manifest must equal the canonical v1 manifest ("rules travel with the data").
     if (canonicalize(envelope.manifest) !== canonicalize(V1_MANIFEST)) {
       throw new Error('manifest does not match the canonical v1 manifest for envelope_version 1');
     }
+    result.checks.push('Manifest matches the canonical v1 ruleset');
 
     const expectedDigest = await computeWholeEnvelopeDigest(envelope);
     if (expectedDigest !== envelope.whole_envelope_digest) {
       throw new Error(`whole_envelope_digest mismatch: computed=${expectedDigest}, stored=${envelope.whole_envelope_digest}`);
     }
+    result.checks.push('Bundle fingerprint recomputed and matches');
 
     const pubKey = hexToBytes(envelope.provenance.device_public_key);
     const domains = envelope.manifest.signature_domains;
@@ -259,6 +325,8 @@ async function verifyEnvelope(envelope) {
     const sealed = envelope.ledgers.sealed_events;
     const sealedHead = await verifyLinearChain(sealed.entries, sealedStart, domains.sealed_log_entry, pubKey, 'sealed_events');
     validateSummary('sealed_events', sealed.entries.length, sealed.count, sealed.head_hash, sealedHead);
+    result.checks.push(`Sealed-event hash chain intact (${sealed.entries.length} ${sealed.entries.length === 1 ? 'entry' : 'entries'})`);
+    result.checks.push('Device Ed25519 signatures valid on every sealed event');
 
     // Checkpoint signature.
     if (cp) {
@@ -266,6 +334,7 @@ async function verifyEnvelope(envelope) {
       const msg = await domainSeparatedHash(domains.checkpoint, head);
       const sig = Uint8Array.from(cp.signatures.ed25519_signature);
       if (!(await verifyEd25519(pubKey, sig, msg))) throw new Error('checkpoint signature verification failed');
+      result.checks.push('Checkpoint signature valid (chain continuity across pruning)');
     }
 
     // Break-glass receipts.
@@ -282,6 +351,7 @@ async function verifyEnvelope(envelope) {
       if (receipt.outcome === 'Granted' || (receipt.outcome && receipt.outcome.Granted !== undefined)) result.break_glass_granted++;
       else result.break_glass_denied++;
     }
+    if (bg.entries.length > 0) result.checks.push(`Break-glass receipts verified (${bg.entries.length})`);
 
     // Export receipts.
     const exp = envelope.ledgers.export_receipts;
@@ -293,20 +363,26 @@ async function verifyEnvelope(envelope) {
       throw new Error('provenance ruleset_hash does not match the signed export receipt ruleset_hash');
     }
 
-    // Export-receipt entry: the receipt has no floating-point fields, so JSON.stringify
-    // reproduces serde's exact bytes (same field order, integer-only), letting JS re-derive and
-    // verify the signed entry_hash. (The coarse `artifact` projection is NOT re-hashed in JS,
-    // because it carries `confidence` floats; the authoritative, fully-verified evidence is the
-    // signed `sealed_events` ledger above, which the viewer renders from. The artifact's hash is
-    // bound by this signed receipt and by the whole_envelope_digest.)
+    // Bind the human-readable artifact to the signed receipt: recompute its hash exactly as the
+    // device did (serde-faithful bytes) and require it to equal the signed artifact_hash. Without
+    // this, a tampered `artifact` would pass — the offline viewer must not bless doctored contents.
+    const artifactHash = await sha256(utf8(serExportArtifact(envelope.artifact)));
+    if (!bytesEqual(artifactHash, toBytes(envelope.export_receipt_entry.receipt.artifact_hash))) {
+      throw new Error('export artifact hash mismatch');
+    }
+    result.checks.push('Human-readable artifact bound to the signed export hash');
+
+    // Export-receipt entry: serialize the receipt in serde field order (NOT the input JSON's key
+    // order) so a key-reordered-but-equivalent bundle still re-derives the signed entry_hash.
     const rEntry = envelope.export_receipt_entry;
-    const computedEntryHash = await hashEntry(toBytes(rEntry.prev_hash), JSON.stringify(rEntry.receipt));
+    const computedEntryHash = await hashEntry(toBytes(rEntry.prev_hash), serExportReceipt(rEntry.receipt));
     if (!bytesEqual(computedEntryHash, toBytes(rEntry.entry_hash))) {
       throw new Error('export receipt entry_hash mismatch');
     }
     const rMsg = await domainSeparatedHash(domains.export_receipt, toBytes(rEntry.entry_hash));
     const rSig = Uint8Array.from(rEntry.signatures.ed25519_signature);
     if (!(await verifyEd25519(pubKey, rSig, rMsg))) throw new Error('export receipt signature verification failed');
+    result.checks.push('Export receipt signature valid (provenance bound)');
 
     // Warnings & status.
     if (envelope.provenance.pq_public_key) result.warnings.push('post-quantum signatures present but not verified in this offline viewer');

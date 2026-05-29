@@ -11,17 +11,27 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const PLACEHOLDER = '/*__VERIFY_CORE__*/';
+const CORE_PLACEHOLDER = '/*__VERIFY_CORE__*/';
+// Includes the ` null` fallback so the un-built template is still valid JS, and the built file
+// becomes `const SAMPLE_ENVELOPE = {…};` rather than `= {…} null;`.
+const SAMPLE_PLACEHOLDER = '/*__SAMPLE_ENVELOPE__*/ null';
 
 const template = readFileSync(join(here, 'template.html'), 'utf8');
 const core = readFileSync(join(here, 'verify_core.js'), 'utf8');
+// A real, valid fixture doubles as the in-page "Try the sample bundle" demo, so the demo can
+// never drift from what the verifier actually accepts.
+const sample = readFileSync(join(here, '..', 'tests', 'fixtures', 'envelope', 'valid_envelope.json'), 'utf8').trim();
 
-if (!template.includes(PLACEHOLDER)) {
-  console.error('template.html is missing the ' + PLACEHOLDER + ' placeholder');
-  process.exit(2);
+for (const p of [CORE_PLACEHOLDER, SAMPLE_PLACEHOLDER]) {
+  if (!template.includes(p)) {
+    console.error('template.html is missing the ' + p + ' placeholder');
+    process.exit(2);
+  }
 }
 
-const output = template.replace(PLACEHOLDER, () => core);
+const output = template
+  .replace(CORE_PLACEHOLDER, () => core)
+  .replace(SAMPLE_PLACEHOLDER, () => sample);
 const outPath = join(here, 'evidence_viewer.html');
 
 if (process.argv.includes('--check')) {

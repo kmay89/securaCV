@@ -48,7 +48,10 @@ fn main() -> anyhow::Result<()> {
         requested_capabilities: &[],
         supported_backends: &[InferenceBackend::Stub],
     };
-    for (i, zone) in ["zone:a", "zone:b", "zone:a"].iter().enumerate() {
+    // Use varied confidences, including an integer-valued 1.0, so the fixtures exercise the
+    // cross-language f32 formatting edge cases in the JS artifact-binding check.
+    let samples = [("zone:a", 1.0f32), ("zone:b", 0.85), ("zone:a", 0.8734212)];
+    for (i, (zone, confidence)) in samples.iter().enumerate() {
         let cand = CandidateEvent {
             event_type: EventType::BoundaryCrossingObjectLarge,
             time_bucket: TimeBucket {
@@ -56,7 +59,7 @@ fn main() -> anyhow::Result<()> {
                 size_s: 600,
             },
             zone_id: zone.to_string(),
-            confidence: 0.5,
+            confidence: *confidence,
             correlation_token: None,
         };
         kernel.append_event_checked(
