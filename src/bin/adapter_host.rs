@@ -29,6 +29,7 @@
 //! ```
 
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::thread;
 use std::time::Duration;
@@ -40,8 +41,62 @@ use rumqttc::v5::{Client, Event, Incoming, MqttOptions};
 use serde::Deserialize;
 
 use witness_kernel::adapter::ble_presence::{BlePresenceAdapter, BleRoom};
-use witness_kernel::adapter::frigate::FrigateAdapter;
+use witness_kernel::adapter::frigate::{FrigateAdapter, FrigateFilter};
 use witness_kernel::adapter::mqtt_sensor::{MqttSensorAdapter, SensorRoute};
+
+/// Set by the SIGHUP handler; the run loop drains it to reload the config.
+static RELOAD_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+/// A closure that applies a matching new [`AdapterCfg`] to a live adapter (hot-reload).
+type Reloader = Box<dyn Fn(&AdapterCfg) -> Result<()>>;
+
+/// Install a SIGHUP handler that requests a config reload (Linux only; no-op elsewhere).
+fn install_reload_handler() {
+    #[cfg(target_os = "linux")]
+    {
+        extern "C" fn on_sighup(_sig: libc::c_int) {
+            RELOAD_REQUESTED.store(true, Ordering::SeqCst);
+        }
+        // Cast through the fn-pointer type before the integer sighandler_t.
+        let handler = on_sighup as extern "C" fn(libc::c_int);
+        unsafe {
+            libc::signal(libc::SIGHUP, handler as libc::sighandler_t);
+        }
+        log::info!("SIGHUP will reload adapter routes/filters and min_confidence");
+    }
+}
+
+/// Re-read the config and apply the hot-reloadable parts (host `min_confidence` and each adapter's
+/// routes/rooms/filters). Topology changes (count/type/listener/auth) require a restart and are
+/// logged, not applied. Never fatal: a bad file is logged and the daemon keeps running.
+fn apply_reload(config_path: &str, host: &mut AdapterHost, reloaders: &[Reloader]) {
+    let file = match std::fs::read_to_string(config_path)
+        .map_err(anyhow::Error::from)
+        .and_then(|raw| toml::from_str::<FileConfig>(&raw).map_err(anyhow::Error::from))
+    {
+        Ok(f) => f,
+        Err(e) => {
+            log::warn!("config reload failed (keeping current config): {e}");
+            return;
+        }
+    };
+
+    host.set_min_confidence(file.min_confidence);
+    if file.adapter.len() != reloaders.len() {
+        log::warn!(
+            "config reload: adapter count changed ({} -> {}); restart to apply topology changes",
+            reloaders.len(),
+            file.adapter.len()
+        );
+    } else {
+        for (idx, (reloader, cfg)) in reloaders.iter().zip(file.adapter.iter()).enumerate() {
+            if let Err(e) = reloader(cfg) {
+                log::warn!("config reload: adapter #{idx} not live-reloadable: {e}");
+            }
+        }
+    }
+    log::info!("config reloaded (min_confidence + adapter routes/filters)");
+}
 use witness_kernel::adapter::webhook::{
     self, RateLimit, WebhookAdapter, WebhookAuth, WebhookOptions,
 };
@@ -175,6 +230,9 @@ struct WebhookCfg {
     /// PEM private key for TLS.
     #[serde(default)]
     tls_key: Option<String>,
+    /// PEM CA bundle for mutual TLS: clients must present a cert chaining to it. Requires TLS.
+    #[serde(default)]
+    tls_client_ca: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -295,6 +353,7 @@ fn main() -> Result<()> {
     };
     let mut host = AdapterHost::new(kernel, host_cfg);
 
+    let mut reloaders: Vec<Reloader> = Vec::new();
     for (idx, cfg) in file.adapter.into_iter().enumerate() {
         match cfg {
             AdapterCfg::Frigate(fc) => {
@@ -304,6 +363,18 @@ fn main() -> Result<()> {
                     fc.min_confidence.unwrap_or(0.5),
                 );
                 let adapter = adapter.with_sandbox(fc.sandbox);
+                let filter = adapter.filter_handle();
+                reloaders.push(Box::new(move |c| {
+                    let AdapterCfg::Frigate(fc) = c else {
+                        return Err(anyhow!("adapter type changed at this position"));
+                    };
+                    *filter.lock().expect("frigate filter mutex") = FrigateFilter::new(
+                        fc.cameras.clone(),
+                        fc.labels.clone(),
+                        fc.min_confidence.unwrap_or(0.5),
+                    );
+                    Ok(())
+                }));
                 spawn_mqtt_forwarder(
                     format!("adapter_host_frigate_{idx}"),
                     fc.mqtt_broker_addr,
@@ -319,6 +390,27 @@ fn main() -> Result<()> {
                 let routes = build_routes(&mc.route)?;
                 let (adapter, tx) = MqttSensorAdapter::new(routes);
                 let adapter = adapter.with_sandbox(mc.sandbox);
+                let handle = adapter.routes_handle();
+                // Topics subscribed at startup. The MQTT forwarder subscribes once on connect, so a
+                // reload can change route *attributes* (kind/zone/confidence/truthy) live, but
+                // adding/removing/renaming a topic needs a restart to (un)subscribe.
+                let subscribed: std::collections::BTreeSet<String> =
+                    mc.route.iter().map(|r| r.topic.clone()).collect();
+                reloaders.push(Box::new(move |c| {
+                    let AdapterCfg::MqttSensor(mc) = c else {
+                        return Err(anyhow!("adapter type changed at this position"));
+                    };
+                    let new_topics: std::collections::BTreeSet<String> =
+                        mc.route.iter().map(|r| r.topic.clone()).collect();
+                    if new_topics != subscribed {
+                        log::warn!(
+                            "mqtt_sensor topic set changed on reload; added/removed topics require \
+                             a restart to (un)subscribe (attributes for existing topics applied)"
+                        );
+                    }
+                    *handle.lock().expect("routes mutex") = build_routes(&mc.route)?;
+                    Ok(())
+                }));
                 let topics = adapter.topics();
                 spawn_mqtt_forwarder(
                     format!("adapter_host_sensor_{idx}"),
@@ -338,32 +430,60 @@ fn main() -> Result<()> {
                 let routes = build_routes(&wc.route)?;
                 let (adapter, tx) = WebhookAdapter::new(routes);
                 let adapter = adapter.with_sandbox(wc.sandbox);
+                let handle = adapter.routes_handle();
+                reloaders.push(Box::new(move |c| {
+                    let AdapterCfg::Webhook(wc) = c else {
+                        return Err(anyhow!("adapter type changed at this position"));
+                    };
+                    *handle.lock().expect("routes mutex") = build_routes(&wc.route)?;
+                    Ok(())
+                }));
                 let options = build_webhook_options(&wc);
                 let authed = !matches!(options.auth, WebhookAuth::None);
                 let rate_limited = options.rate_limit.is_some();
                 let listen_addr = wc.listen_addr.clone();
 
-                // TLS when both cert and key are configured; plaintext otherwise.
+                // TLS when both cert and key are configured; a client-CA adds mutual TLS.
                 let tls = match (&wc.tls_cert, &wc.tls_key) {
                     (Some(cert), Some(key)) => {
-                        let config = webhook::load_server_config(Path::new(cert), Path::new(key))
+                        let config = match &wc.tls_client_ca {
+                            Some(ca) => webhook::load_server_config_mtls(
+                                Path::new(cert),
+                                Path::new(key),
+                                Path::new(ca),
+                            )
                             .with_context(|| {
-                            format!("loading webhook TLS materials for adapter #{idx}")
-                        })?;
+                                format!("loading webhook mTLS materials for adapter #{idx}")
+                            })?,
+                            None => webhook::load_server_config(Path::new(cert), Path::new(key))
+                                .with_context(|| {
+                                    format!("loading webhook TLS materials for adapter #{idx}")
+                                })?,
+                        };
+                        let label = if wc.tls_client_ca.is_some() {
+                            "mutual"
+                        } else {
+                            "yes"
+                        };
                         thread::spawn(move || {
                             if let Err(e) = webhook::serve_tls(&listen_addr, tx, options, config) {
                                 log::error!("webhook TLS listener on {listen_addr} exited: {e}");
                             }
                         });
-                        true
+                        label
                     }
                     (None, None) => {
+                        if wc.tls_client_ca.is_some() {
+                            return Err(anyhow!(
+                                "webhook adapter #{idx}: tls_client_ca requires tls_cert and tls_key"
+                            ));
+                        }
                         thread::spawn(move || {
                             if let Err(e) = webhook::serve_with_options(&listen_addr, tx, options) {
                                 log::error!("webhook listener on {listen_addr} exited: {e}");
                             }
                         });
-                        false
+                        "no"
                     }
                     _ => {
                         return Err(anyhow!(
@@ -389,6 +509,18 @@ fn main() -> Result<()> {
                     .collect();
                 let (adapter, tx) = BlePresenceAdapter::new(rooms);
                 let adapter = adapter.with_sandbox(bc.sandbox);
+                let handle = adapter.rooms_handle();
+                reloaders.push(Box::new(move |c| {
+                    let AdapterCfg::BlePresence(bc) = c else {
+                        return Err(anyhow!("adapter type changed at this position"));
+                    };
+                    *handle.lock().expect("rooms mutex") = bc
+                        .room
+                        .iter()
+                        .map(|r| BleRoom::new(r.room.clone(), r.zone.clone(), r.max_distance))
+                        .collect();
+                    Ok(())
+                }));
                 spawn_mqtt_forwarder(
                     format!("adapter_host_ble_{idx}"),
                     bc.mqtt_broker_addr,
@@ -415,27 +547,33 @@ fn main() -> Result<()> {
 
     let poll = Duration::from_secs(file.poll_interval_secs);
 
-    // With a stats endpoint configured, run the loop here so we can refresh the shared snapshot
-    // each cycle; otherwise defer to the host's built-in loop.
-    let Some(stats_addr) = file.stats_addr.clone() else {
-        return host.run_loop(poll);
-    };
-    let stats = observability::shared_stats();
-    let serve_stats = stats.clone();
-    thread::spawn(move || {
-        if let Err(e) = observability::serve_stats(&stats_addr, serve_stats) {
-            log::error!("adapter stats endpoint on {stats_addr} exited: {e}");
-        }
+    // SIGHUP-triggered config reload (routes/filters + min_confidence) without restarting.
+    install_reload_handler();
+
+    // Optional read-only stats endpoint, refreshed each cycle from the host snapshot.
+    let stats = file.stats_addr.clone().map(|stats_addr| {
+        let stats = observability::shared_stats();
+        let serve_stats = stats.clone();
+        thread::spawn(move || {
+            if let Err(e) = observability::serve_stats(&stats_addr, serve_stats) {
+                log::error!("adapter stats endpoint on {stats_addr} exited: {e}");
+            }
+        });
+        stats
     });
+
     let log_every = (60 / file.poll_interval_secs.max(1)).max(1);
     let mut cycle: u64 = 0;
     loop {
+        if RELOAD_REQUESTED.swap(false, Ordering::SeqCst) {
+            apply_reload(&args.config, &mut host, &reloaders);
+        }
         if let Err(e) = host.run_once() {
             log::warn!("adapter host poll cycle failed: {e}");
         }
-        if let Ok(json) = serde_json::to_string(&host.stats_snapshot()) {
+        if let Some(stats) = &stats {
             if let Ok(mut g) = stats.lock() {
-                *g = json;
+                *g = host.stats_snapshot();
             }
         }
         cycle += 1;

@@ -307,7 +307,7 @@ static WEBHOOK_DESCRIPTOR: AdapterDescriptor = AdapterDescriptor {
 /// [`Sender`] on a background thread, and register the adapter with the host.
 pub struct WebhookAdapter {
     rx: Receiver<SensorMessage>,
-    routes: Vec<SensorRoute>,
+    routes: crate::adapter::mqtt_sensor::SharedRoutes,
     sandbox: bool,
 }
 
@@ -319,7 +319,7 @@ impl WebhookAdapter {
         (
             Self {
                 rx,
-                routes,
+                routes: Arc::new(Mutex::new(routes)),
                 sandbox: false,
             },
             tx,
@@ -333,9 +333,14 @@ impl WebhookAdapter {
         self
     }
 
+    /// Handle to the live routing table, for hot-reload by the host.
+    pub fn routes_handle(&self) -> crate::adapter::mqtt_sensor::SharedRoutes {
+        Arc::clone(&self.routes)
+    }
+
     /// Pure transform: map one request `(path, body)` to at most one claim.
     pub fn message_to_claim(&self, path: &str, body: &[u8]) -> Option<Claim> {
-        route_message(&self.routes, path, body)
+        route_message(&self.routes.lock().expect("routes mutex"), path, body)
     }
 }
 
@@ -356,7 +361,8 @@ impl SensorAdapter for WebhookAdapter {
         if msgs.is_empty() {
             return Ok(Vec::new());
         }
-        parse_messages(&self.routes, &msgs, self.sandbox)
+        let routes = self.routes.lock().expect("routes mutex");
+        parse_messages(&routes, &msgs, self.sandbox)
     }
 }
 
@@ -592,29 +598,59 @@ pub mod tls {
     use std::sync::Arc;
 
     use anyhow::Context;
-    use rustls::ServerConfig;
+    use rustls::pki_types::CertificateDer;
+    use rustls::server::WebPkiClientVerifier;
+    use rustls::{RootCertStore, ServerConfig};
 
-    /// Load a rustls [`ServerConfig`] from PEM cert-chain and private-key files.
-    pub fn load_server_config(cert_pem: &Path, key_pem: &Path) -> Result<Arc<ServerConfig>> {
-        let mut cert_rd = IoBufReader::new(
-            File::open(cert_pem)
-                .with_context(|| format!("opening TLS cert {}", cert_pem.display()))?,
+    fn load_certs(path: &Path) -> Result<Vec<CertificateDer<'static>>> {
+        let mut rd = IoBufReader::new(
+            File::open(path).with_context(|| format!("opening {}", path.display()))?,
         );
-        let certs =
-            rustls_pemfile::certs(&mut cert_rd).collect::<std::result::Result<Vec<_>, _>>()?;
+        let certs = rustls_pemfile::certs(&mut rd).collect::<std::result::Result<Vec<_>, _>>()?;
         if certs.is_empty() {
-            anyhow::bail!("no certificates found in {}", cert_pem.display());
+            anyhow::bail!("no certificates found in {}", path.display());
         }
-        let mut key_rd = IoBufReader::new(
-            File::open(key_pem)
-                .with_context(|| format!("opening TLS key {}", key_pem.display()))?,
+        Ok(certs)
+    }
+
+    fn load_key(path: &Path) -> Result<rustls::pki_types::PrivateKeyDer<'static>> {
+        let mut rd = IoBufReader::new(
+            File::open(path).with_context(|| format!("opening TLS key {}", path.display()))?,
         );
-        let key = rustls_pemfile::private_key(&mut key_rd)?
-            .ok_or_else(|| anyhow::anyhow!("no private key found in {}", key_pem.display()))?;
+        rustls_pemfile::private_key(&mut rd)?
+            .ok_or_else(|| anyhow::anyhow!("no private key found in {}", path.display()))
+    }
+
+    /// Load a rustls [`ServerConfig`] from PEM cert-chain and private-key files (no client auth).
+    pub fn load_server_config(cert_pem: &Path, key_pem: &Path) -> Result<Arc<ServerConfig>> {
         let config = ServerConfig::builder()
             .with_no_client_auth()
-            .with_single_cert(certs, key)
+            .with_single_cert(load_certs(cert_pem)?, load_key(key_pem)?)
             .context("building TLS server config")?;
+        Ok(Arc::new(config))
+    }
+
+    /// Load a mutual-TLS [`ServerConfig`]: clients must present a certificate chaining to one of the
+    /// certs in `client_ca_pem`. This authenticates machine-to-machine senders by certificate, with
+    /// no shared secret crossing the wire.
+    pub fn load_server_config_mtls(
+        cert_pem: &Path,
+        key_pem: &Path,
+        client_ca_pem: &Path,
+    ) -> Result<Arc<ServerConfig>> {
+        let mut roots = RootCertStore::empty();
+        for ca in load_certs(client_ca_pem)? {
+            roots
+                .add(ca)
+                .with_context(|| format!("adding client CA from {}", client_ca_pem.display()))?;
+        }
+        let verifier = WebPkiClientVerifier::builder(Arc::new(roots))
+            .build()
+            .context("building client-certificate verifier")?;
+        let config = ServerConfig::builder()
+            .with_client_cert_verifier(verifier)
+            .with_single_cert(load_certs(cert_pem)?, load_key(key_pem)?)
+            .context("building mTLS server config")?;
         Ok(Arc::new(config))
     }
 
@@ -653,7 +689,7 @@ pub mod tls {
 }
 
 #[cfg(feature = "adapter-webhook-tls")]
-pub use tls::{load_server_config, serve_listener_tls, serve_tls};
+pub use tls::{load_server_config, load_server_config_mtls, serve_listener_tls, serve_tls};
 
 #[cfg(test)]
 mod tests {
@@ -821,6 +857,13 @@ mod tests {
         assert!(super::tls::load_server_config(
             Path::new("/no/such.crt"),
             Path::new("/no/such.key")
+        )
+        .is_err());
+        // mTLS likewise fails closed on a missing client CA.
+        assert!(super::tls::load_server_config_mtls(
+            Path::new("/no/such.crt"),
+            Path::new("/no/such.key"),
+            Path::new("/no/such.ca")
         )
         .is_err());
     }

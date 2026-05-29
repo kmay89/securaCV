@@ -46,13 +46,48 @@ static FRIGATE_DESCRIPTOR: AdapterDescriptor = AdapterDescriptor {
 /// A `(topic, payload)` message fed to the adapter.
 pub type FrigateMessage = (String, Vec<u8>);
 
+/// Camera/label/confidence filters, shared with the host so they can be hot-reloaded.
+#[derive(Clone)]
+pub struct FrigateFilter {
+    pub allowed_cameras: Option<Vec<String>>,
+    pub allowed_labels: Vec<String>,
+    pub min_confidence: f64,
+}
+
+impl FrigateFilter {
+    /// Normalize a filter: lowercase camera/label names; empty labels fall back to
+    /// [`DEFAULT_LABELS`].
+    pub fn new(
+        allowed_cameras: Option<Vec<String>>,
+        allowed_labels: Vec<String>,
+        min_confidence: f64,
+    ) -> Self {
+        let allowed_labels = if allowed_labels.is_empty() {
+            DEFAULT_LABELS.iter().map(|s| s.to_string()).collect()
+        } else {
+            allowed_labels
+                .into_iter()
+                .map(|l| l.to_lowercase())
+                .collect()
+        };
+        let allowed_cameras =
+            allowed_cameras.map(|cams| cams.into_iter().map(|c| c.to_lowercase()).collect());
+        Self {
+            allowed_cameras,
+            allowed_labels,
+            min_confidence,
+        }
+    }
+}
+
+/// Shared, hot-reloadable filter handle.
+pub type SharedFrigateFilter = std::sync::Arc<std::sync::Mutex<FrigateFilter>>;
+
 /// Frigate NVR adapter. Construct with [`FrigateAdapter::new`] and feed it via the returned
 /// [`Sender`].
 pub struct FrigateAdapter {
     rx: Receiver<FrigateMessage>,
-    allowed_cameras: Option<Vec<String>>,
-    allowed_labels: Vec<String>,
-    min_confidence: f64,
+    filter: SharedFrigateFilter,
     sandbox: bool,
 }
 
@@ -69,22 +104,11 @@ impl FrigateAdapter {
         min_confidence: f64,
     ) -> (Self, Sender<FrigateMessage>) {
         let (tx, rx) = channel();
-        let allowed_labels = if allowed_labels.is_empty() {
-            DEFAULT_LABELS.iter().map(|s| s.to_string()).collect()
-        } else {
-            allowed_labels
-                .into_iter()
-                .map(|l| l.to_lowercase())
-                .collect()
-        };
-        let allowed_cameras =
-            allowed_cameras.map(|cams| cams.into_iter().map(|c| c.to_lowercase()).collect());
+        let filter = FrigateFilter::new(allowed_cameras, allowed_labels, min_confidence);
         (
             Self {
                 rx,
-                allowed_cameras,
-                allowed_labels,
-                min_confidence,
+                filter: std::sync::Arc::new(std::sync::Mutex::new(filter)),
                 sandbox: false,
             },
             tx,
@@ -98,44 +122,55 @@ impl FrigateAdapter {
         self
     }
 
+    /// Handle to the live filter, for hot-reload by the host.
+    pub fn filter_handle(&self) -> SharedFrigateFilter {
+        std::sync::Arc::clone(&self.filter)
+    }
+
     /// Pure transform: parse one Frigate payload into zero or more claims, applying the
     /// camera/label/confidence filters. Reuses `transport::frigate`.
     pub fn parse_to_claims(&self, topic: &str, payload: &[u8]) -> Result<Vec<Claim>> {
-        let parsed = if topic.contains("/reviews") {
-            parse_review_event(payload)?
-        } else {
-            parse_frigate_event(payload)?
-        };
-
-        if let Some(allowed) = &self.allowed_cameras {
-            if !allowed.contains(&parsed.camera.to_lowercase()) {
-                return Ok(vec![]);
-            }
-        }
-
-        if !self.allowed_labels.contains(&parsed.label.to_lowercase()) {
-            return Ok(vec![]);
-        }
-
-        if parsed.confidence < self.min_confidence {
-            return Ok(vec![]);
-        }
-
-        let kind = match map_label_to_event_type(&parsed.label) {
-            EventType::BoundaryCrossingObjectLarge => ClaimKind::LargeObjectBoundaryCrossing,
-            // Everything else Frigate maps to a "small" crossing.
-            _ => ClaimKind::SmallObjectBoundaryCrossing,
-        };
-
-        // Prefer the first Frigate zone; fall back to the camera name. The host sanitizes it.
-        let zone_label = parsed
-            .zones
-            .first()
-            .cloned()
-            .unwrap_or_else(|| parsed.camera.clone());
-
-        Ok(vec![Claim::new(kind, zone_label, parsed.confidence as f32)])
+        let filter = self.filter.lock().expect("frigate filter mutex");
+        parse_with_filter(&filter, topic, payload)
     }
+}
+
+/// Pure, I/O-free transform applying a [`FrigateFilter`] (safe to run in the sandbox).
+fn parse_with_filter(filter: &FrigateFilter, topic: &str, payload: &[u8]) -> Result<Vec<Claim>> {
+    let parsed = if topic.contains("/reviews") {
+        parse_review_event(payload)?
+    } else {
+        parse_frigate_event(payload)?
+    };
+
+    if let Some(allowed) = &filter.allowed_cameras {
+        if !allowed.contains(&parsed.camera.to_lowercase()) {
+            return Ok(vec![]);
+        }
+    }
+
+    if !filter.allowed_labels.contains(&parsed.label.to_lowercase()) {
+        return Ok(vec![]);
+    }
+
+    if parsed.confidence < filter.min_confidence {
+        return Ok(vec![]);
+    }
+
+    let kind = match map_label_to_event_type(&parsed.label) {
+        EventType::BoundaryCrossingObjectLarge => ClaimKind::LargeObjectBoundaryCrossing,
+        // Everything else Frigate maps to a "small" crossing.
+        _ => ClaimKind::SmallObjectBoundaryCrossing,
+    };
+
+    // Prefer the first Frigate zone; fall back to the camera name. The host sanitizes it.
+    let zone_label = parsed
+        .zones
+        .first()
+        .cloned()
+        .unwrap_or_else(|| parsed.camera.clone());
+
+    Ok(vec![Claim::new(kind, zone_label, parsed.confidence as f32)])
 }
 
 impl SensorAdapter for FrigateAdapter {
@@ -156,10 +191,12 @@ impl SensorAdapter for FrigateAdapter {
         if msgs.is_empty() {
             return Ok(Vec::new());
         }
+        // Snapshot the filter so we don't hold the lock across the sandbox fork.
+        let filter = self.filter.lock().expect("frigate filter mutex").clone();
         let parse_all = || {
             let mut out = Vec::new();
             for (topic, payload) in &msgs {
-                match self.parse_to_claims(topic, payload) {
+                match parse_with_filter(&filter, topic, payload) {
                     Ok(mut claims) => out.append(&mut claims),
                     Err(e) => log::debug!("frigate adapter skipped payload: {}", e),
                 }
