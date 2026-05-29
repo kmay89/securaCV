@@ -28,6 +28,7 @@
 //! zone = "garage"
 //! ```
 
+use std::path::Path;
 use std::sync::mpsc::Sender;
 use std::thread;
 use std::time::Duration;
@@ -155,6 +156,10 @@ struct WebhookCfg {
     /// over `auth_token` if both are set.
     #[serde(default)]
     hmac_secret: Option<String>,
+    /// Enable HMAC replay protection with this window (seconds): requires `X-Timestamp` + `X-Nonce`
+    /// bound into the signature. Only meaningful with `hmac_secret`.
+    #[serde(default)]
+    hmac_replay_window_secs: Option<u64>,
     /// Per-path sustained rate (requests/minute). Enables rate limiting when set.
     #[serde(default)]
     rate_limit_per_min: Option<f64>,
@@ -164,6 +169,12 @@ struct WebhookCfg {
     /// Connection worker-pool size (0 / unset = default).
     #[serde(default)]
     workers: Option<usize>,
+    /// PEM cert chain for TLS (must be set together with `tls_key`).
+    #[serde(default)]
+    tls_cert: Option<String>,
+    /// PEM private key for TLS.
+    #[serde(default)]
+    tls_key: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -203,7 +214,10 @@ struct RouteCfg {
 /// Translate webhook config into runtime [`WebhookOptions`].
 fn build_webhook_options(wc: &WebhookCfg) -> WebhookOptions {
     let auth = if let Some(secret) = &wc.hmac_secret {
-        WebhookAuth::Hmac(secret.clone().into_bytes())
+        WebhookAuth::Hmac {
+            secret: secret.clone().into_bytes(),
+            replay_window: wc.hmac_replay_window_secs.map(Duration::from_secs),
+        }
     } else if let Some(token) = &wc.auth_token {
         WebhookAuth::Bearer(token.clone())
     } else {
@@ -328,18 +342,43 @@ fn main() -> Result<()> {
                 let authed = !matches!(options.auth, WebhookAuth::None);
                 let rate_limited = options.rate_limit.is_some();
                 let listen_addr = wc.listen_addr.clone();
-                thread::spawn(move || {
-                    if let Err(e) = webhook::serve_with_options(&listen_addr, tx, options) {
-                        log::error!("webhook listener on {listen_addr} exited: {e}");
+
+                // TLS when both cert and key are configured; plaintext otherwise.
+                let tls = match (&wc.tls_cert, &wc.tls_key) {
+                    (Some(cert), Some(key)) => {
+                        let config = webhook::load_server_config(Path::new(cert), Path::new(key))
+                            .with_context(|| {
+                            format!("loading webhook TLS materials for adapter #{idx}")
+                        })?;
+                        thread::spawn(move || {
+                            if let Err(e) = webhook::serve_tls(&listen_addr, tx, options, config) {
+                                log::error!("webhook TLS listener on {listen_addr} exited: {e}");
+                            }
+                        });
+                        true
                     }
-                });
+                    (None, None) => {
+                        thread::spawn(move || {
+                            if let Err(e) = webhook::serve_with_options(&listen_addr, tx, options) {
+                                log::error!("webhook listener on {listen_addr} exited: {e}");
+                            }
+                        });
+                        false
+                    }
+                    _ => {
+                        return Err(anyhow!(
+                            "webhook adapter #{idx}: tls_cert and tls_key must be set together"
+                        ))
+                    }
+                };
                 host.register(adapter);
                 log::info!(
-                    "registered webhook adapter #{idx} on {} (sandbox={}, auth={}, rate_limited={})",
+                    "registered webhook adapter #{idx} on {} (sandbox={}, auth={}, rate_limited={}, tls={})",
                     wc.listen_addr,
                     wc.sandbox,
                     authed,
-                    rate_limited
+                    rate_limited,
+                    tls
                 );
             }
             AdapterCfg::BlePresence(bc) => {

@@ -67,7 +67,7 @@ This document is **normative** where it reflects canonical specifications and **
 | [15. Governance, Contributions, and Security](#15-governance-contributions-and-security) | [`CONTRIBUTING.md`](https://github.com/kmay89/securaCV/blob/main/CONTRIBUTING.md)<br>[`SECURITY.md`](https://github.com/kmay89/securaCV/blob/main/SECURITY.md) |
 | [16. Release Discipline and Roadmap](#16-release-discipline-and-roadmap) | [`v1-roadmap.md`](https://github.com/kmay89/securaCV/blob/main/v1-roadmap.md)<br>[`CHANGELOG.md`](https://github.com/kmay89/securaCV/blob/main/CHANGELOG.md) |
 | [17. Appendix A: Tooling and Verification Utilities](#17-appendix-a-tooling-and-verification-utilities) | [`log_verify_README.md`](https://github.com/kmay89/securaCV/blob/main/log_verify_README.md) |
-| [18. Appendix B: AI and Agent Interaction](#18-appendix-b-ai-and-agent-interaction) | [`AGENTS.md`](https://github.com/kmay89/securaCV/blob/main/AGENTS.md)<br>[`codex-prompt.md`](https://github.com/kmay89/securaCV/blob/main/codex-prompt.md)<br>[`codex-plan.md`](https://github.com/kmay89/securaCV/blob/main/codex-plan.md) |
+| [18. Appendix B: AI and Agent Interaction](#18-appendix-b-ai-and-agent-interaction) | [`AGENTS.md`](https://github.com/kmay89/securaCV/blob/main/AGENTS.md) |
 
 ---
 
@@ -316,7 +316,7 @@ These tools operate independently and validate integrity guarantees.
 
 # 18. Appendix B: AI and Agent Interaction
 
-**Sources:** [`AGENTS.md`](https://github.com/kmay89/securaCV/blob/main/AGENTS.md), [`codex-prompt.md`](https://github.com/kmay89/securaCV/blob/main/codex-prompt.md), [`codex-plan.md`](https://github.com/kmay89/securaCV/blob/main/codex-plan.md)
+**Sources:** [`AGENTS.md`](https://github.com/kmay89/securaCV/blob/main/AGENTS.md)
 
 The project includes guidance for AI and automated agents interacting with the codebase.
 
