@@ -3,7 +3,7 @@
 # Run with:
 #   DEVICE_KEY_SEED=$(openssl rand -hex 32) \
 #     cargo run --bin adapter_host \
-#     --features adapter-frigate,adapter-mqtt-sensor,adapter-webhook,adapter-ble-presence,adapter-sandbox \
+#     --features adapter-frigate,adapter-mqtt-sensor,adapter-webhook,adapter-webhook-tls,adapter-ble-presence,adapter-sandbox \
 #     -- --config adapter_host.toml
 #
 # The adapter host runs many vendor-neutral sensor adapters behind one daemon. Every claim flows
@@ -25,10 +25,18 @@ poll_interval_secs = 1
 # Coarse confidence floor; claims below this are dropped before reaching the kernel.
 min_confidence = 0.5
 
-# Optional read-only stats/health endpoint. Serves per-adapter counters as JSON at "/" and a
-# liveness check at "/healthz" (operational counts only, never event content). Consume it from
-# Home Assistant with a built-in `rest` sensor — see the snippet at the bottom of this file.
+# Optional read-only stats/health endpoint (operational counts only, never event content):
+#   GET /          per-adapter counters as JSON
+#   GET /metrics   Prometheus text exposition format (scrape into Grafana/Alertmanager)
+#   GET /healthz   liveness ("ok")
+# The SecuraCV Home Assistant integration can surface this automatically as a diagnostic sensor —
+# set the same URL as "Adapter Host stats URL" during setup.
 # stats_addr = "127.0.0.1:8799"
+
+# Send SIGHUP (`kill -HUP <pid>`) to reload this file without restarting: host `min_confidence`
+# and each adapter's route/room/filter *attributes* (claim kind, zone, confidence, thresholds) are
+# applied live, as are webhook request-path routes. Changing an mqtt_sensor's subscribed MQTT
+# *topic* (or adding/removing adapters, listen addresses, auth, or TLS) still requires a restart.
 
 # ---------------------------------------------------------------------------
 # Adapter: Frigate NVR
@@ -95,6 +103,25 @@ listen_addr = "127.0.0.1:8800"   # loopback by default
 # hmac_secret = "change-me"      # require: X-Signature: sha256=<HMAC-SHA256(secret, body)>
 #                                #   sig=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$SECRET" -hex | sed 's/^.* //')
 #                                #   curl -H "X-Signature: sha256=$sig" -d "$BODY" http://host:8800/path
+#
+# HMAC replay protection (only with hmac_secret). When set, the client must also send X-Timestamp
+# (unix seconds, within the window) and a unique X-Nonce, and sign "<timestamp>.<nonce>.<path>.<body>"
+# (the path is bound in so a signature can't be replayed against a different route):
+#   ts=$(date +%s); nonce=$(openssl rand -hex 8); path=/sensors/garage/acoustic
+#   sig=$(printf '%s.%s.%s.%s' "$ts" "$nonce" "$path" "$BODY" | openssl dgst -sha256 -hmac "$SECRET" -hex | sed 's/^.* //')
+#   curl -H "X-Timestamp: $ts" -H "X-Nonce: $nonce" -H "X-Signature: sha256=$sig" -d "$BODY" "http://host:8800$path"
+# hmac_replay_window_secs = 300
+#
+# TLS — strongly recommended for any non-loopback listener, so bearer tokens aren't sent in the
+# clear. Set both; generate a cert with e.g.
+#   openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -nodes -subj "/CN=host"
+# tls_cert = "/etc/securacv/webhook_cert.pem"
+# tls_key  = "/etc/securacv/webhook_key.pem"
+#
+# Mutual TLS — strongest option for machine-to-machine sensors: clients must present a certificate
+# chaining to this CA bundle (no shared secret on the wire). Requires tls_cert + tls_key. The CA
+# must be a v3 cert with basicConstraints CA:TRUE.
+# tls_client_ca = "/etc/securacv/webhook_client_ca.pem"
 #
 # Rate limiting (per request path, token bucket). Excess requests get 429.
 # rate_limit_per_min = 120       # sustained requests/minute per path

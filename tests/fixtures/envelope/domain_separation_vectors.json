@@ -1,0 +1,77 @@
+{
+  "description": "Inputs/outputs of domain_separated_hash = SHA256(le32(len(domain))||domain||entry_hash)",
+  "vectors": [
+    {
+      "domain": "securacv:pwk:sealed-log-entry:v2",
+      "domain_name": "sealed_log_entry",
+      "entry_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+      "signing_hash": "93f9714f4ba6dd7948adcf030c26b0b13f84076997fae34da5607688aa21cd3f"
+    },
+    {
+      "domain": "securacv:pwk:sealed-log-entry:v2",
+      "domain_name": "sealed_log_entry",
+      "entry_hash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "signing_hash": "d638a9c244207fdd574e9c81e17f02a3e8be9d94a5de51968a5cd1d6e378ca2e"
+    },
+    {
+      "domain": "securacv:pwk:sealed-log-entry:v2",
+      "domain_name": "sealed_log_entry",
+      "entry_hash": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "signing_hash": "854eba1fcc06e7f472893fa71605e19bd31e1b13ce3cd41a4b9bc373d1f68bdb"
+    },
+    {
+      "domain": "securacv:pwk:sealed-log-checkpoint:v2",
+      "domain_name": "checkpoint",
+      "entry_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+      "signing_hash": "0bba20be975dc51be21c8e75471ea762c364d0cc4c444454b9f7b5031b1efc81"
+    },
+    {
+      "domain": "securacv:pwk:sealed-log-checkpoint:v2",
+      "domain_name": "checkpoint",
+      "entry_hash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "signing_hash": "bddf53966c13c9a0243455a12a985d5c9ada37f4ddf3de067b8194b0369a6fda"
+    },
+    {
+      "domain": "securacv:pwk:sealed-log-checkpoint:v2",
+      "domain_name": "checkpoint",
+      "entry_hash": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "signing_hash": "780c3b7db0e726e6bbaaffefd75fe857a64bb136794e001f53aeb75057ef23a8"
+    },
+    {
+      "domain": "securacv:pwk:break-glass-receipt:v2",
+      "domain_name": "break_glass",
+      "entry_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+      "signing_hash": "7ae5e91c272cdea177695b1ae27a78adf7d136b5a952f9e2d7b5ee71b3f2f308"
+    },
+    {
+      "domain": "securacv:pwk:break-glass-receipt:v2",
+      "domain_name": "break_glass",
+      "entry_hash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "signing_hash": "fc2ef6f4702a195e0828669f971508eb98bd536db299fee880e5918914468ce0"
+    },
+    {
+      "domain": "securacv:pwk:break-glass-receipt:v2",
+      "domain_name": "break_glass",
+      "entry_hash": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "signing_hash": "ca13519a2f5a6af4f96ba2a3e917ca04b7dca2052b4dcef245afdee03a72c856"
+    },
+    {
+      "domain": "securacv:pwk:export-receipt:v2",
+      "domain_name": "export_receipt",
+      "entry_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+      "signing_hash": "c0976dabf9af15326aa3087b8015d6bfa5d45b85954ca1acd97e101b518bfaa4"
+    },
+    {
+      "domain": "securacv:pwk:export-receipt:v2",
+      "domain_name": "export_receipt",
+      "entry_hash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "signing_hash": "0288482def15c90e0507160f8b923807e24398fd101a4815dc005a254a04da4a"
+    },
+    {
+      "domain": "securacv:pwk:export-receipt:v2",
+      "domain_name": "export_receipt",
+      "entry_hash": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "signing_hash": "6831c5f0830fbebce75efff84afccb5490f2e1caa56229753e7b5d335667f7d2"
+    }
+  ]
+}

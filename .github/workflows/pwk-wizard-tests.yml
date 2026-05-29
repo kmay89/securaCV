@@ -1,0 +1,45 @@
+name: PWK Wizard Tests
+
+# Scoped to the Privacy Witness Kernel add-on only. Runs the pairing-
+# wizard proxy unit tests (PR-8). Intentionally does NOT run the
+# custom_components/securacv tests, which are not wired into CI and may
+# be red. Triggers only on changes under privacy_witness_kernel/** so it
+# stays off the firmware build path.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'privacy_witness_kernel/**'
+      - '.github/workflows/pwk-wizard-tests.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'privacy_witness_kernel/**'
+      - '.github/workflows/pwk-wizard-tests.yml'
+
+# Read-only token: this workflow only checks out the repo and runs tests.
+permissions:
+  contents: read
+
+concurrency:
+  group: pwk-wizard-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  wizard-tests:
+    name: Wizard Proxy Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install pytest
+        run: pip install pytest
+
+      - name: Run wizard tests
+        run: pytest privacy_witness_kernel/tests/ -v

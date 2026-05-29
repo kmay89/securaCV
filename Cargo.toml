@@ -36,10 +36,11 @@ gstreamer-video = { version = "0.23", optional = true }
 ffmpeg-next = { version = "6.0", optional = true }
 v4l = { version = "0.14", optional = true }
 ouroboros = { version = "0.18", optional = true }
-tract-onnx = { version = "0.21", optional = true }
+tract-onnx = { version = "0.22", optional = true }
 rustls = { version = "0.23", optional = true, features = ["aws_lc_rs"] }
 webpki-roots = { version = "0.26", optional = true }
 rustls-pki-types = { version = "1.10", optional = true, features = ["std"] }
+rustls-pemfile = { version = "2.1", optional = true }
 subtle = "2.5"
 
 [dev-dependencies]
@@ -62,6 +63,7 @@ backend-tract = ["tract-onnx"]
 adapter-frigate = []
 adapter-mqtt-sensor = []
 adapter-webhook = ["adapter-mqtt-sensor"]
+adapter-webhook-tls = ["adapter-webhook", "rustls", "rustls-pemfile", "rustls-pki-types"]
 adapter-ble-presence = []
 adapter-sandbox = []
 pqc-signatures = ["pqcrypto-mldsa", "pqcrypto-traits"]
@@ -94,6 +96,10 @@ name = "export_verify"
 path = "src/bin/export_verify.rs"
 
 [[bin]]
+name = "envelope_verify"
+path = "src/bin/envelope_verify.rs"
+
+[[bin]]
 name = "frigate_bridge"
 path = "src/bin/frigate_bridge.rs"
 
@@ -116,6 +122,7 @@ required-features = [
     "adapter-frigate",
     "adapter-mqtt-sensor",
     "adapter-webhook",
+    "adapter-webhook-tls",
     "adapter-ble-presence",
     "adapter-sandbox",
 ]

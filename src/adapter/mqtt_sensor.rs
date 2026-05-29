@@ -152,9 +152,12 @@ pub(crate) fn parse_messages(
 }
 
 /// Generic MQTT sensor adapter.
+/// A routing table shared with the host so it can be hot-reloaded without restarting the adapter.
+pub type SharedRoutes = std::sync::Arc<std::sync::Mutex<Vec<SensorRoute>>>;
+
 pub struct MqttSensorAdapter {
     rx: Receiver<SensorMessage>,
-    routes: Vec<SensorRoute>,
+    routes: SharedRoutes,
     sandbox: bool,
 }
 
@@ -165,7 +168,7 @@ impl MqttSensorAdapter {
         (
             Self {
                 rx,
-                routes,
+                routes: std::sync::Arc::new(std::sync::Mutex::new(routes)),
                 sandbox: false,
             },
             tx,
@@ -179,14 +182,24 @@ impl MqttSensorAdapter {
         self
     }
 
+    /// Handle to the live routing table, for hot-reload by the host.
+    pub fn routes_handle(&self) -> SharedRoutes {
+        std::sync::Arc::clone(&self.routes)
+    }
+
     /// Topics this adapter wants subscribed (for the feeder/binary).
     pub fn topics(&self) -> Vec<String> {
-        self.routes.iter().map(|r| r.topic.clone()).collect()
+        self.routes
+            .lock()
+            .expect("routes mutex")
+            .iter()
+            .map(|r| r.topic.clone())
+            .collect()
     }
 
     /// Pure transform: map one message to at most one claim, per the routing table.
     pub fn message_to_claim(&self, topic: &str, payload: &[u8]) -> Option<Claim> {
-        route_message(&self.routes, topic, payload)
+        route_message(&self.routes.lock().expect("routes mutex"), topic, payload)
     }
 }
 
@@ -207,7 +220,8 @@ impl SensorAdapter for MqttSensorAdapter {
         if msgs.is_empty() {
             return Ok(Vec::new());
         }
-        parse_messages(&self.routes, &msgs, self.sandbox)
+        let routes = self.routes.lock().expect("routes mutex");
+        parse_messages(&routes, &msgs, self.sandbox)
     }
 }
 
