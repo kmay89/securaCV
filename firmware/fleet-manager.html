@@ -166,6 +166,14 @@ header {
 }
 .dev-card:hover .dev-rm { opacity: 1; }
 .dev-rm:hover { color: var(--danger); background: var(--danger-dim); }
+.dev-id {
+  position: absolute; top: 0.4rem; right: 2.0rem;
+  background: none; border: none; color: var(--muted); cursor: pointer;
+  font-size: 0.95rem; line-height: 1; padding: 0.15rem 0.3rem; border-radius: 4px;
+  opacity: 0; transition: opacity 0.15s;
+}
+.dev-card:hover .dev-id { opacity: 1; }
+.dev-id:hover { color: var(--accent); background: var(--accent-dim, rgba(80,160,255,0.12)); }
 
 /* Pagination */
 .pag { display: flex; align-items: center; justify-content: center; gap: 0.35rem; padding: 0.75rem 0; }
@@ -422,6 +430,8 @@ footer strong { color: var(--text); font-weight: 500; }
            autocomplete="off" spellcheck="false" />
     <input class="input input-label" id="inLabel" type="text"
            placeholder="Label (optional)" autocomplete="off" spellcheck="false" />
+    <input class="input input-label" id="inToken" type="password"
+           placeholder="API token (optional, for Identify)" autocomplete="off" spellcheck="false" />
     <button class="btn btn-primary" onclick="FM.addDevice()">+ Add Device</button>
   </div>
 
@@ -453,6 +463,7 @@ footer strong { color: var(--text); font-weight: 500; }
       <h2 id="dTitle">Device</h2>
       <div class="detail-hdr-actions">
         <button class="btn btn-sm" onclick="FM.refreshDetail()"><span class="btn-icon">&#x21BB;</span> Refresh</button>
+        <button class="btn btn-sm" onclick="FM.identifyCurrent()"><span class="btn-icon">&#x1F50D;</span> Identify</button>
         <button class="btn btn-sm" onclick="FM.exportCurrent()"><span class="btn-icon">&#x2913;</span> Export</button>
         <button class="btn btn-sm btn-danger" onclick="FM.removeCurrent()">Remove</button>
       </div>
@@ -572,9 +583,9 @@ var FM = (function() {
     } catch(e) { return []; }
   }
 
-  function mkDev(host, label) {
+  function mkDev(host, label, token) {
     return {
-      host: norm(host), label: label || '',
+      host: norm(host), label: label || '', token: token || '',
       online: false, data: null, lastSeen: null, error: null, fetching: false
     };
   }
@@ -586,6 +597,29 @@ var FM = (function() {
   function url(dev, path) {
     return 'http://' + dev.host + path;
   }
+
+  // Locate a physical device: triple-blink its LED + chirp for ~15s (the
+  // device's /api/identify). Auth is via ?token= when a per-device API token
+  // was stored; without one the device falls back to its session-cookie auth
+  // (works if you've opened that device's dashboard in this browser).
+  function identifyDevice(dev) {
+    if (!dev) return;
+    var path = '/api/identify' + (dev.token ? '?token=' + encodeURIComponent(dev.token) : '');
+    ftch(url(dev, path), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ duration_ms: 15000 })
+    }).then(function(r) {
+      if (r.ok) toast('Identifying ' + (dev.label || dev.host) + ' — watch for the blinking LED', 'ok');
+      else if (r.status === 401) toast('Identify needs an API token for ' + (dev.label || dev.host), 'err');
+      else toast('Identify failed (HTTP ' + r.status + ')', 'err');
+    }).catch(function() { toast('Could not reach ' + (dev.label || dev.host), 'err'); });
+  }
+
+  function identify(idx) {
+    if (idx >= 0 && idx < devices.length) identifyDevice(devices[idx]);
+  }
+  function identifyCurrent() { identifyDevice(detailDev); }
 
   // ── Fetch with timeout + retry ─────────────────────────────────
   function ftch(u, opts, ms) {
@@ -718,6 +752,7 @@ var FM = (function() {
 
       html += '<div class="dev-card ' + cls + '" data-i="' + gi + '">';
       html += '<button class="dev-rm" data-rm="' + gi + '" title="Remove">&times;</button>';
+      html += '<button class="dev-id" data-id="' + gi + '" title="Identify — blink this device\'s LED so you can find it">&#x1F50D;</button>';
       html += '<div class="dev-top"><div>';
       html += '<div class="dev-name">' + esc(name) + '</div>';
       html += '<div class="dev-host">' + esc(d.host) + (ssid ? ' &middot; ' + esc(ssid) : '') + '</div>';
@@ -790,6 +825,7 @@ var FM = (function() {
     $('grid').querySelectorAll('.dev-card').forEach(function(c) {
       c.addEventListener('click', function(ev) {
         if (ev.target.classList.contains('dev-rm') || ev.target.closest('.dev-rm')) return;
+        if (ev.target.classList.contains('dev-id') || ev.target.closest('.dev-id')) return;
         openDetail(parseInt(this.getAttribute('data-i'), 10));
       });
     });
@@ -800,6 +836,12 @@ var FM = (function() {
         confirm('Remove Device',
           'Remove "' + esc(devices[idx].label || devices[idx].host) + '" from fleet?',
           function() { removeDev(idx); });
+      });
+    });
+    $('grid').querySelectorAll('.dev-id').forEach(function(b) {
+      b.addEventListener('click', function(ev) {
+        ev.stopPropagation();
+        identify(parseInt(this.getAttribute('data-id'), 10));
       });
     });
   }
@@ -818,11 +860,14 @@ var FM = (function() {
       if (devices[i].host === n) { toast('Already in fleet: ' + n, 'err'); return; }
     }
     var label = $('inLabel').value.trim();
-    var dev = mkDev(n, label);
+    var tokenEl = $('inToken');
+    var token = tokenEl ? tokenEl.value.trim() : '';
+    var dev = mkDev(n, label, token);
     devices.push(dev);
     save();
     $('inHost').value = '';
     $('inLabel').value = '';
+    if (tokenEl) tokenEl.value = '';
     page = Math.max(0, Math.ceil(devices.length / PAGE_SIZE) - 1);
     poll(dev).then(renderAll);
     renderAll();
@@ -1600,6 +1645,8 @@ var FM = (function() {
     refreshDetail: refreshDetail,
     exportCurrent: exportCurrent,
     removeCurrent: removeCurrent,
+    identify:      identify,
+    identifyCurrent: identifyCurrent,
     hideModal:     hideModal,
     _fmSlider:     fmSlider,
     _fmToggle:     fmToggle,

@@ -261,6 +261,34 @@
 
 ---
 
+## Networking & Captive Portal
+
+### Captive-portal probes are per-platform — answer them, don't blanket-redirect
+- **What happened:** During first-boot setup, phones connected to the
+  `SecuraCV-XXXX` AP but then dropped it (or routed everything over cellular,
+  so `canary.local` stopped resolving) before the user could finish setup.
+- **Root cause:** Every OS connectivity-check URL was answered with a 200 +
+  HTML instruction page, including Android's `/generate_204`. Android only
+  treats a network as "validated/online" when that probe returns **HTTP 204
+  No Content**; any other response flips it to "Wi-Fi has no internet,"
+  which de-prioritises the AP and eventually disassociates.
+- **Fix:** Answer probes per-platform (the "hybrid" strategy):
+  - **Apple** (`/hotspot-detect.html`, `/library/test/success.html`) → the
+    instruction page. This pops the Captive Network Assistant sheet (which
+    renders static HTML fine), and iOS/macOS keep the association while it's
+    open, so they never disconnect — guidance *and* a live link.
+  - **Android** (`/generate_204`, `/gen_204`) → **204 No Content**. No sheet,
+    no cellular fallback, stays connected. User opens `canary.local` manually.
+  - **Windows** (`/connecttest.txt`, `/ncsi.txt`) → exact NCSI bodies
+    `Microsoft Connect Test` / `Microsoft NCSI`.
+- **Gotcha:** Probes are always sent over **plain HTTP** — keep these handlers
+  on the port-80 server, never behind the HTTP→HTTPS redirect, or detection
+  breaks. `canary.local` itself resolves via mDNS on the AP netif plus the
+  setup DNS hijack for non-`.local` lookups.
+- **Date learned:** 2026-05
+
+---
+
 ## How to Add an Entry
 
 When you encounter a bug, regression, or hard-won lesson:

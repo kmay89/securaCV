@@ -71,6 +71,18 @@ change.
 | PSRAM | **OPI PSRAM** |
 | Upload Speed | 921600 |
 
+> **⚠️ PSRAM defaults to "Disabled"** in the XIAO_ESP32S3 board definition. If
+> you leave it, the camera boots but silently falls back to QVGA-in-DRAM (you'll
+> see `[CAMERA] PSRAM: not found` in the serial log). You **must** set
+> **PSRAM → OPI PSRAM** for full-resolution streaming.
+>
+> **Skip the manual settings:** Arduino IDE 2.3+ reads the committed
+> [`sketch.yaml`](sketch.yaml) — open the sketch and select the **`xiao_sense`**
+> profile from the toolbar dropdown to apply the board + PSRAM options
+> automatically. On the command line: `arduino-cli compile --profile xiao_sense`
+> (or `make arduino-build` from `firmware/projects/canary-wap`, which uses the
+> same PSRAM-enabled FQBN).
+
 ### 3. Library Dependencies
 
 Install via **Tools > Manage Libraries**:

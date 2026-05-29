@@ -1961,7 +1961,14 @@ static const char* NVS_REPLAY_KEY = "replay_ctrs";
 constexpr size_t REPLAY_ENTRY_SIZE = FINGERPRINT_SIZE + sizeof(uint64_t);
 
 bool save_replay_counters() {
-  if (g_peer_count == 0) return true;
+  if (g_peer_count == 0) {
+    // No peers remain: drop any stale replay blob so a later re-pair can't
+    // restore counters that belong to peers that no longer exist.
+    g_prefs.begin(NVS_NS, false);
+    if (g_prefs.isKey(NVS_REPLAY_KEY)) g_prefs.remove(NVS_REPLAY_KEY);
+    g_prefs.end();
+    return true;
+  }
   g_prefs.begin(NVS_NS, false);
   uint8_t blob[MAX_OPERA_SIZE * REPLAY_ENTRY_SIZE];
   size_t offset = 0;
@@ -1986,7 +1993,10 @@ bool load_replay_counters() {
   size_t got = g_prefs.getBytes(NVS_REPLAY_KEY, blob, sizeof(blob));
   g_prefs.end();
 
-  if (got == 0 || (got % REPLAY_ENTRY_SIZE) != 0) return got == 0;
+  // Key exists (isKey above), so got==0 is a real read failure, not an
+  // empty-but-valid blob (save_replay_counters never writes zero bytes).
+  // Fail closed so we skip the restore instead of dropping replay history.
+  if (got == 0 || (got % REPLAY_ENTRY_SIZE) != 0) return false;
   size_t n = got / REPLAY_ENTRY_SIZE;
 
   for (size_t e = 0; e < n; ++e) {

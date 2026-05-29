@@ -17,6 +17,11 @@ If your Canary did not come with a card, the password is also burned into
 the device and shown on the serial console at first boot — see *Recovering
 the password* at the bottom of this page.
 
+Building your own from parts? See the
+[Canary Peripheral Build Plan & BOM](hardware/canary_peripheral_build_plan.md)
+for what to buy (buzzer, status LED, button/tamper/touch, battery, enclosure)
+and how it wires up.
+
 ---
 
 ## 1 · Plug in
@@ -101,6 +106,12 @@ The Canary uses Wi-Fi radio reflections. A few rules of thumb:
 A single Canary covers a typical room well. **Two Canaries on either end
 of a hallway** unlock cross-device direction sensing — see the Mesh tab
 once your second device is paired.
+
+> Adding a second (or third) Canary? See
+> [Onboarding Multiple Canaries](onboarding_multiple_canaries.md) — it covers
+> naming each device (`canary-kitchen.local`), how `canary.local` behaves with
+> several devices, and the **Identify** button that blinks a specific device so
+> you can tell them apart.
 
 ---
 

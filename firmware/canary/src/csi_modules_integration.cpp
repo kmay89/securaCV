@@ -51,6 +51,7 @@
 #endif
 #include "mesh_channel_hop.h"
 #include "mesh_hub_election.h"
+#include "mesh_state.h"      /* save/load elected-hub fingerprint (PR-3) */
 #include "csi_hal.h"
 #endif
 
@@ -153,13 +154,13 @@ static void format_fingerprint(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
  * receive handler likewise just logs — the deeper "what does the Hub
  * DO with a beacon_event" question is PR 4b's territory.
  *
- * NOTE: mesh_session::init() is NOT yet called from main.cpp setup() —
- * that wiring is a follow-up PR (it needs correct boot ordering against
- * WiFi for ESP-NOW to bind). Until then the callbacks register but the
- * send-side returns false (early-out) and the receive-side never fires
- * (no transport recv). The integration is staged here so the moment
- * main.cpp init lands, the chain lights up end-to-end with no further
- * code changes. */
+ * NOTE: mesh_session::init() / ::start() are now called from main.cpp
+ * setup() (see main.cpp:542-546, guarded by FEATURE_MESH_NETWORK) with
+ * the correct boot ordering against WiFi for ESP-NOW to bind, and
+ * mesh_transport::process() / mesh_session::process() run each loop
+ * iteration (main.cpp:1045-1046). The callbacks registered below are
+ * therefore live end-to-end when FEATURE_MESH_NETWORK=1: the send-side
+ * broadcasts and the receive-side dispatches inbound frames. */
 
 /* FreeRTOS queue that marshals beacon events from the (possibly
  * cross-task) ble_scout broadcast callback into the main loop,
@@ -275,6 +276,39 @@ static void on_peer_channel_lock(
                 channel, (unsigned)reason, fp_hex);
 }
 
+/* ──────────────────────────────────────────────────────────────────────────
+ * ELECTED-HUB STATE (PR-3)
+ *
+ * Tracks the most recently elected coordinator fingerprint in RAM and
+ * mirrors it to NVS (mesh_state) so failover continuity survives a
+ * reboot. The RAM copy also de-dups NVS writes: an election broadcast
+ * naming the same Hub we already recorded is a no-op for flash, which
+ * matters because elections can re-fire on every peer state change.
+ *
+ * Consumer note: the elected-Hub identity is currently surfaced via the
+ * boot log + this persisted record. Acting on it (HubMonitor instance,
+ * coordinator role adoption) is the remaining piece of full hub failover
+ * in the PIO build, tracked separately — see docs/mesh_esp_now_evaluation.md.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+static uint8_t s_current_hub_fp[mesh_crypto::FINGERPRINT_LEN] = {0};
+static bool    s_has_current_hub = false;
+
+/* Load any persisted elected-Hub fingerprint into the RAM cache. Called
+ * once from init so a post-reboot node starts with the last-known
+ * coordinator instead of an empty slot. */
+static void restore_elected_hub_from_nvs() {
+  uint8_t fp[mesh_crypto::FINGERPRINT_LEN];
+  if (mesh_state::load_elected_hub(fp)) {
+    memcpy(s_current_hub_fp, fp, sizeof(s_current_hub_fp));
+    s_has_current_hub = true;
+    char fp_hex[2 * mesh_crypto::FINGERPRINT_LEN + 1];
+    format_fingerprint(s_current_hub_fp, fp_hex);
+    Serial.printf("[mesh.election] restored elected hub fp=%s from NVS\n",
+                  fp_hex);
+  }
+}
+
 static void on_peer_hub_election(
     const uint8_t              sender_fp[mesh_crypto::FINGERPRINT_LEN],
     mesh_hub_election::Event   event,
@@ -289,6 +323,35 @@ static void on_peer_hub_election(
                 : event == mesh_hub_election::Event::HUB_ABSENT ? "absent"
                 : "?",
                 sender_hex, elected_hex);
+
+  /* Persist the result of a completed election. HUB_ABSENT is the
+   * "I no longer hear the Hub" signal that opens an election — the
+   * winner isn't settled yet — so we only record HUB_ELECTED. */
+  if (event != mesh_hub_election::Event::HUB_ELECTED) return;
+
+  /* s_current_hub_fp mirrors what is actually persisted in NVS, so the
+   * de-dup below skips re-writing a hub we've already stored. It is
+   * updated ONLY after a successful save: if a save fails (transient
+   * NVS fault, or flash encryption disabled), the cache stays stale so
+   * the next identical HUB_ELECTED frame retries the write rather than
+   * silently short-circuiting and never persisting at all. */
+  if (s_has_current_hub &&
+      mesh_hub_election::compare_fingerprints(s_current_hub_fp,
+                                              elected_fp) == 0) {
+    return;  /* already persisted this winner — skip the NVS write */
+  }
+
+  if (mesh_state::save_elected_hub(elected_fp)) {
+    memcpy(s_current_hub_fp, elected_fp, sizeof(s_current_hub_fp));
+    s_has_current_hub = true;
+  } else {
+    /* Non-fatal: failover still works from the live election broadcast;
+     * we just won't have the hint cached across the next reboot (e.g.
+     * flash encryption disabled on a dev board). Leave the cache
+     * untouched so a later election re-attempts the persist. */
+    Serial.println("[mesh.election] note: elected hub not persisted "
+                   "(NVS write refused or failed)");
+  }
 }
 #endif  /* FEATURE_MESH_NETWORK */
 
@@ -435,6 +498,9 @@ extern "C" bool securacv_csi_modules_init(void) {
 #if defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
   mesh_session::set_channel_lock_handler(&on_peer_channel_lock);
   mesh_session::set_hub_election_handler(&on_peer_hub_election);
+  /* Seed the elected-hub cache from NVS so a rebooted node already
+   * knows the coordinator and de-dups the first redundant election. */
+  restore_elected_hub_from_nvs();
 #endif
 
   csi_hal::set_watchdog(csi_hal::WATCHDOG_DEFAULT_TIMEOUT_MS,

@@ -113,6 +113,36 @@ void test_trusted_peers_load_buffer_too_small() {
   std::printf("PASS test_trusted_peers_load_buffer_too_small\n");
 }
 
+void test_elected_hub_load_returns_false_on_host() {
+  /* Host stub: no NVS — load always reports false (no persisted hub)
+   * and MUST NOT touch the output buffer on that false path. */
+  uint8_t buf[mesh_crypto::FINGERPRINT_LEN];
+  std::memset(buf, 0xCC, sizeof(buf));   /* poison */
+  assert(!mesh_state::load_elected_hub(buf));
+  for (size_t i = 0; i < sizeof(buf); ++i) {
+    assert(buf[i] == 0xCC);
+  }
+  std::printf("PASS test_elected_hub_load_returns_false_on_host\n");
+}
+
+void test_elected_hub_save_and_clear_on_host() {
+  uint8_t fp[mesh_crypto::FINGERPRINT_LEN];
+  for (size_t i = 0; i < sizeof(fp); ++i) fp[i] = (uint8_t)(0x10 + i);
+  assert(mesh_state::save_elected_hub(fp));   /* host stub success */
+  assert(mesh_state::clear_elected_hub());     /* host stub success */
+  /* Stateless host stub: load still reports nothing persisted. */
+  uint8_t buf[mesh_crypto::FINGERPRINT_LEN] = {0};
+  assert(!mesh_state::load_elected_hub(buf));
+  std::printf("PASS test_elected_hub_save_and_clear_on_host\n");
+}
+
+void test_elected_hub_null_handling() {
+  assert(!mesh_state::save_elected_hub(nullptr));
+  assert(!mesh_state::load_elected_hub(nullptr));
+  /* clear has no pointer argument; nothing to test for null. */
+  std::printf("PASS test_elected_hub_null_handling\n");
+}
+
 }  /* namespace */
 
 int main() {
@@ -123,6 +153,9 @@ int main() {
   test_trusted_peers_save_and_clear_on_host();
   test_trusted_peers_null_handling();
   test_trusted_peers_load_buffer_too_small();
+  test_elected_hub_load_returns_false_on_host();
+  test_elected_hub_save_and_clear_on_host();
+  test_elected_hub_null_handling();
   std::printf("\nALL MESH_STATE TESTS PASSED\n");
   return 0;
 }

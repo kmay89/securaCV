@@ -322,6 +322,9 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
             url = cam.get("url", "")
             if not url:
                 continue
+            # Sanitize URL: take only the first line to prevent YAML injection
+            # via embedded newlines corrupting the generated config.
+            url = url.splitlines()[0] if url else ""
             lines += [
                 f"  {name}:",
                 "    ffmpeg:",

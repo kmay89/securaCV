@@ -8,6 +8,10 @@
 # are NOT gitignored — they are committed copies of firmware/common/csi/src/
 # so a fresh GitHub zip download builds without running setup.sh. The
 # scripts/check_csi_sync.sh CI guard keeps the two copies identical.
+#
+# The boot banner files (boot_banner.h, boot_banner.cpp) follow the same
+# pattern: committed copies of firmware/common/boot/ kept in sync by the
+# scripts/check_boot_sync.sh CI guard. Not gitignored.
 pins.h
 camera.h
 config.h

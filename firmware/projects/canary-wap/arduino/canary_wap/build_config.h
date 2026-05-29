@@ -16,19 +16,39 @@
 #define SECURACV_BUILD_CONFIG_H
 
 // ════════════════════════════════════════════════════════════════════════════
+// WEB ASSET STRATEGY
+// ════════════════════════════════════════════════════════════════════════════
+// Ship the large dashboard/settings/companion HTML as pre-gzipped byte arrays
+// (web_assets_gz.h) and compile the raw PROGMEM literals out of the binary —
+// saves ~336 KB of app-partition flash. Defined here, a globally included
+// config header, so EVERY translation unit that pulls in web_ui.h /
+// csi_dashboard_html.h / companion_pwa.h sees it and never compiles its own
+// uncompressed duplicate. Those asset headers #include build_config.h
+// themselves, so the guard holds regardless of include order.
+#define CANARY_WEB_ASSETS_GZIPPED 1
+
+// ════════════════════════════════════════════════════════════════════════════
 // HARDWARE TARGET SELECTION — Uncomment exactly ONE
 // ════════════════════════════════════════════════════════════════════════════
 
+// May be selected externally via -DHARDWARE_XIAO_ESP32S3 / -DHARDWARE_XIAO_ESP32C3
+// (e.g. PlatformIO build_flags). Arduino IDE users: leave the default below.
+#if !defined(HARDWARE_XIAO_ESP32S3) && !defined(HARDWARE_XIAO_ESP32C3)
 #define HARDWARE_XIAO_ESP32S3   // XIAO ESP32-S3 Sense (dual-core, camera, PSRAM)
 // #define HARDWARE_XIAO_ESP32C3   // XIAO ESP32-C3 (single-core RISC-V, BLE 5.0 only)
+#endif
 
 // ════════════════════════════════════════════════════════════════════════════
 // BUILD PROFILE SELECTION — Uncomment exactly ONE
 // ════════════════════════════════════════════════════════════════════════════
 
+// May be selected externally via -DBUILD_PROFILE_MINIMAL / _DEV / _FULL
+// (e.g. PlatformIO build_flags). Arduino IDE users: leave the default below.
+#if !defined(BUILD_PROFILE_MINIMAL) && !defined(BUILD_PROFILE_DEV) && !defined(BUILD_PROFILE_FULL)
 // #define BUILD_PROFILE_MINIMAL   // Fastest build: crypto + GPS only (~45s)
 // #define BUILD_PROFILE_DEV       // Development: + WiFi + HTTP + SD (~90s)
 #define BUILD_PROFILE_FULL      // Full features: + Mesh + BLE (~150s)
+#endif
 
 
 // Security guardrails

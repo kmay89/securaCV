@@ -79,6 +79,15 @@ make monitor
 
 </details>
 
+> **One firmware, two toolchains.** Both paths build the *same* sources —
+> `arduino/canary_wap/`. PlatformIO points its `src_dir` at the sketch, so
+> `make build` (`pio run`) and the Arduino IDE produce identical firmware,
+> including the full BLE stack. The build profile (FULL/DEV/MINIMAL) and
+> hardware target default in `arduino/canary_wap/build_config.h`; PlatformIO
+> overrides them per-env via `-DBUILD_PROFILE_*` / `-DHARDWARE_*` build flags.
+> BLE requires NimBLE-Arduino 2.x — if it's missing the build now stops with a
+> clear error instead of silently shipping with Bluetooth disabled.
+
 ### 3. Connect to Your Device
 
 1. Connect to WiFi: **SecuraCV-XXXX**

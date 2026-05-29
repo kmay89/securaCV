@@ -2,12 +2,18 @@
  * @file setup_page_html.h
  * @brief Static captive-portal landing page.
  *
- * Captive-portal mini-browsers (iOS Captive Network Assistant, Android's
- * sign-in sheet) are stripped-down webviews that can't reliably run the
- * companion setup wizard's SPA — trying to render it there is what produced
- * the blank white screen. So the captive page is intentionally plain static
- * HTML with a single job: tell the user to open `canary.local` in their real
- * browser, where the wizard runs. No JavaScript, no redirect, no QR.
+ * This page is shown to Apple's Captive Network Assistant (and to any browser
+ * that lands on a hijacked-domain root during setup). Android and Windows are
+ * instead answered with their connectivity-probe success tokens (204 / NCSI)
+ * so they keep the AP connection alive — see the captive handlers in
+ * canary_wap.ino for the per-platform "hybrid" strategy.
+ *
+ * Captive-portal mini-browsers (the iOS CNA sheet) are stripped-down webviews
+ * that can't reliably run the companion setup wizard's SPA — trying to render
+ * it there is what produced the blank white screen. So the captive page is
+ * intentionally plain static HTML with a single job: tell the user to open
+ * `canary.local` in their real browser, where the wizard runs. No JavaScript,
+ * no redirect, no QR.
  *
  * canary.local is shown as instruction text (type it in your browser). The
  * numeric 192.168.4.1 fallback is shown the same way — as text to type, NOT a
@@ -37,7 +43,7 @@ const char CAPTIVE_PORTAL_HTML[] PROGMEM = R"HTML(<!DOCTYPE html>
 <style>
 :root{--bg:#0b0d10;--fg:#f0f2f5;--muted:#a0a8b0;--accent:#7cdcff;--card:rgba(255,255,255,.05);--line:rgba(255,255,255,.10)}
 *{box-sizing:border-box}
-html,body{margin:0;min-height:100dvh;background:radial-gradient(1200px 800px at 50% -100px,#1a2030 0%,var(--bg) 60%) fixed;color:var(--fg);font:16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+html,body{margin:0;min-height:100vh;min-height:100dvh;background:radial-gradient(1200px 800px at 50% -100px,#1a2030 0%,var(--bg) 60%) fixed;color:var(--fg);font:16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
 body{display:flex;align-items:center;justify-content:center;padding:24px}
 main{max-width:480px;width:100%;background:var(--card);border:1px solid var(--line);border-radius:24px;padding:28px 24px;text-align:center;backdrop-filter:blur(18px) saturate(160%);box-shadow:0 30px 80px -30px rgba(0,0,0,.6)}
 h1{margin:0 0 10px;font-size:22px;font-weight:600;letter-spacing:-.02em}

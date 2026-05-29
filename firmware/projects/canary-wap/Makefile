@@ -23,7 +23,11 @@
 # Configuration
 BOARD ?= seeed_xiao_esp32s3
 PORT ?= auto
-ARDUINO_FQBN ?= esp32:esp32:esp32s3
+# XIAO ESP32-S3 Sense. The board's PSRAM menu defaults to "Disabled", so the
+# OPI PSRAM the OV2640 camera needs is OFF unless we pin PSRAM=opi here — a
+# bare esp32:esp32:esp32s3 / XIAO_ESP32S3 FQBN flashes a no-PSRAM binary that
+# falls back to QVGA-in-DRAM at runtime.
+ARDUINO_FQBN ?= esp32:esp32:XIAO_ESP32S3:PSRAM=opi,FlashSize=8M,CDCOnBoot=default,USBMode=hwcdc
 ARDUINO_DIR ?= arduino/canary_wap
 
 # Default target

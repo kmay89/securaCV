@@ -123,7 +123,10 @@ Events reference space only via **local zone identifiers**.
 
 - `vehicle_presence_after_hours`
 - `boundary_crossing_object_large`
-- `human_presence_in_restricted_zone`
+- `boundary_crossing_object_small`
+- `acoustic_impulse_in_zone`
+- `presence_in_restricted_zone`
+- `contact_state_change`
 - `object_removed_from_zone`
 - `forced_entry_detected`
 
@@ -215,3 +218,32 @@ The following semantic events are emitted by the BLE Discovery subsystem
 - Chirp received events include the sender's device ID prefix (from pubkey hash)
 - RSSI values MAY be included for proximity context but MUST NOT be stored
   with enough precision to enable tracking
+
+---
+
+## 11. Sensor Adapter Event Vocabulary
+
+The following `event_type` values are emitted by vendor-neutral sensor adapters
+(see `spec/sensor_adapter_contract_v0.md`) and fed into the witness chain as new records.
+They are coarse, non-identifying claims and obey every constraint above.
+
+| Event Type | Description |
+|-----------|-------------|
+| `boundary_crossing_object_large` | A vehicle-sized object crossed a zone boundary |
+| `boundary_crossing_object_small` | A small object (animal, package, bicycle) crossed a zone boundary |
+| `acoustic_impulse_in_zone` | A coarse acoustic impulse was sensed in a zone (no waveform, no direction) |
+| `presence_in_restricted_zone` | A presence was sensed in an operator-designated restricted zone (no identity) |
+| `vehicle_presence_after_hours` | A vehicle-sized presence during operator-configured "after hours" (no plate/make/model) |
+| `contact_state_change` | A binary contact/open-close change (door, gate, window, enclosure) |
+| `object_removed_from_zone` | An object previously present in a zone is no longer present |
+
+### Claim → Event Flow
+
+Adapters do not emit events directly. They emit a narrower, pre-sanitized `Claim` (kind +
+raw zone label + confidence). The trusted Adapter Host stamps a coarse `TimeBucket`, sanitizes
+the zone label into a `zone_id`, maps the claim kind to one of the event types above, and submits
+the result through the **same** `Kernel::append_event_checked` choke point used by every other
+producer. The kernel's contract enforcement is authoritative; an adapter cannot bypass it.
+
+New adapter event types MAY be added only via a ruleset change and only if they remain coarse and
+non-identifying. Forbidden claims (§5) remain forbidden regardless of source.

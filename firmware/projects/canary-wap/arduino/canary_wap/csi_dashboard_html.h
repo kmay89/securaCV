@@ -30,8 +30,13 @@
 #ifndef SECURACV_CSI_DASHBOARD_HTML_H
 #define SECURACV_CSI_DASHBOARD_HTML_H
 
+#include "build_config.h"  // CANARY_WEB_ASSETS_GZIPPED
 #include <Arduino.h>
 
+// Source of truth for the headline dashboard. Compiled out in normal builds:
+// the binary ships the gzip copy from web_assets_gz.h (CANARY_WEB_ASSETS_GZIPPED).
+// Regenerate with gen_web_assets_gz.py after editing the HTML below.
+#if !defined(CANARY_WEB_ASSETS_GZIPPED)
 static const char CSI_DASHBOARD_HTML[] PROGMEM = R"DASHBOARD(<!doctype html>
 <html lang="en" data-state="sensing">
 <head>
@@ -3100,5 +3105,6 @@ if ('serviceWorker' in navigator) {
 </body>
 </html>
 )DASHBOARD";
+#endif  // !CANARY_WEB_ASSETS_GZIPPED
 
 #endif /* SECURACV_CSI_DASHBOARD_HTML_H */

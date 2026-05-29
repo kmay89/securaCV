@@ -32,7 +32,6 @@
  */
 
 #include "csi_integration.h"
-#include "csi_dashboard_html.h"
 #include "tune_ui.h"
 #include "csi_mqtt.h"             // optional MQTT bridge (publishes events)
 #include "csi_event_log.h"        // SD-backed event persistence + backfill
@@ -1301,6 +1300,11 @@ const TuneCoeff TUNE_COEFFS[] = {
   { "core.presence.breathing_threshold", "core.presence",  "Breathing threshold",                       TK_INT,     5,    120,  30, "core.presence" },
   { "core.presence.pet_mode",            "core.presence",  "Pet mode",                                  TK_BOOL,    0,    1,    0,  "core.presence" },
   { "core.presence.pet_mode_seconds",    "core.presence",  "Pet-mode confirm window (sec)",             TK_INT,     5,    120,  30, "core.presence" },
+  /* Multipath shimmer rejection — large RSSI swing without Doppler is
+   * reflection noise, not motion. Defaults mirror core_presence.cpp. */
+  { "core.presence.shimmer_enabled",     "core.presence",  "Shimmer rejection enabled",                 TK_BOOL,    0,    1,    1,  "core.presence" },
+  { "core.presence.shimmer_rssi_swing",  "core.presence",  "Shimmer RSSI swing threshold (dB)",         TK_INT,     1,    50,   8,  "core.presence" },
+  { "core.presence.shimmer_doppler_floor","core.presence", "Shimmer Doppler floor",                     TK_INT,     1,    120,  30, "core.presence" },
 
   /* Breathing — Goertzel band lock parameters. */
   { "core.breathing.lock_threshold",     "core.breathing", "Lock threshold",                            TK_INT,     5,    120,  30, "core.breathing" },
