@@ -1,4 +1,4 @@
-# Canary WAP — 3D-Printable Enclosure (v0.2)
+# Canary WAP — 3D-Printable Enclosure (v0.3)
 
 Parametric, printable cases for the Canary WAP (XIAO ESP32-S3 Sense), referenced
 as a "future add" in the [Peripheral Build Plan](../canary_peripheral_build_plan.md)
@@ -10,7 +10,12 @@ Two variants from one source (`variant = "battery" | "compact"`):
 | Variant | Outer size | Battery | Use |
 |---------|-----------|---------|-----|
 | **battery** | ≈ **80 × 39 × 17 mm** | LiPo bay beside the board | Standalone / portable Canary |
-| **compact** | ≈ **27 × 24 × 17 mm** | none (USB-powered) | Smallest footprint, mains/USB powered |
+| **compact** | ≈ **38 × 36 × 17 mm** | none (USB-powered) | Smaller footprint, mains/USB powered |
+
+> The compact case is sized so the **four M2 screw posts sit in true corners
+> beside the board** (a 17.5 mm-wide PCB plus a post each side needs ≈ 30 mm) —
+> that's why it isn't as tiny as the bare-board reference, which relied on
+> snap-fit clips rather than corner screws.
 
 ![Battery variant — base and lid](./preview_all.png)
 ![Compact variant — base and lid](./preview_compact.png)
@@ -35,6 +40,13 @@ These dimensions were reconciled against **Seeed's official spec** and a
 Changes from v0.1: `board_w` corrected 17.8 → **17.5 mm** (Seeed official); USB-C
 opening widened to **10.5 × 6.5 mm** to clear a real cable boot (the connector
 body is ~8.9 × 3.2 mm); added the **compact** variant.
+
+**v0.3 — printability & connected structure:** the four corner **screw posts are
+now fused to both adjacent walls** with gussets (no thin free-standing towers),
+and the **board standoffs are joined into a perimeter frame and ribbed to the
+screw posts** so the whole interior prints as one rigid piece with good bed
+adhesion. The cavity is sized to guarantee the posts sit in real corners clear of
+the PCB (this enlarged the compact variant).
 
 > ⚠️ **Still a reference — verify before printing.** Seeed publishes the PCB
 > outline but not every component height; the camera-lens/LED/buzzer positions on

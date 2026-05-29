@@ -91,9 +91,11 @@ $fn = 64;
 // ----------------------------------------------------------------------------
 board_zone_l = board_l + 2*board_clear;
 batt_zone_l  = batt_enable ? (batt_gap + batt_l) : 0;
+post_corner  = post_d + 1.5;                 // clearance so a screw post sits in the corner, clear of the board
 
-inner_l = board_zone_l + batt_zone_l + 1.0;
-inner_w = max(board_w + 2*board_clear, batt_enable ? batt_w : 0) + 1.0;
+// cavity must hold the board/battery AND leave true corners for the screw posts
+inner_l = max(board_zone_l + batt_zone_l + 1.0, board_l + 2*post_corner);
+inner_w = max(board_w + 2*board_clear, batt_enable ? batt_w : 0, board_w + 2*post_corner) + 1.0;
 cav_h   = standoff_h + board_h + board_stack_h + 1.0;   // internal height above floor
 
 out_l  = inner_l + 2*wall_t;
@@ -101,7 +103,7 @@ out_w  = inner_w + 2*wall_t;
 base_h = floor_t + cav_h;
 
 pcb_z   = floor_t + standoff_h;                 // absolute z of PCB underside
-board_cx = -inner_l/2 + board_clear + board_l/2 + 0.5;   // board centre X
+board_cx = batt_enable ? (-inner_l/2 + board_clear + board_l/2 + 0.5) : 0;  // USB-biased w/ battery, centred when compact
 board_cy = 0;
 batt_cx  = inner_l/2 - batt_l/2 - 0.5;          // battery centre X
 
@@ -122,35 +124,68 @@ function post_xy() = [
     [-inner_l/2 + post_d/2 + 0.2, -inner_w/2 + post_d/2 + 0.2],
 ];
 
+function _d2(a, b) = pow(a[0]-b[0], 2) + pow(a[1]-b[1], 2);
+
+// solid web between two floor points at standoff height (a connecting rib)
+module floorrib(a, b, w) {
+    hull() {
+        translate([a[0], a[1], floor_t]) cylinder(d = w, h = standoff_h);
+        translate([b[0], b[1], floor_t]) cylinder(d = w, h = standoff_h);
+    }
+}
+
 // ----------------------------------------------------------------------------
 //  BASE
 // ----------------------------------------------------------------------------
 module base() {
+    bx = board_l/2 - standoff_d/2;
+    by = board_w/2 - standoff_d/2;
+    corners = [ [board_cx+bx, board_cy+by], [board_cx+bx, board_cy-by],
+                [board_cx-bx, board_cy-by], [board_cx-bx, board_cy+by] ];   // standoff/board-rest corners
+    posts    = post_xy();
+    gusset_h = max(2, cav_h - lip_h - 1.0);   // keep wall gussets below where the lid lip nests
+
     union() {
         // hollow shell with the USB-C wall opening
         difference() {
             rrect(out_l, out_w, corner_r, base_h);
-            // cavity
             translate([0, 0, floor_t])
                 rrect(inner_l, inner_w, max(0.1, corner_r - wall_t), cav_h + 1);
-            // USB-C cutout on the -X short wall, centred on PCB-top height
             translate([-out_l/2, board_cy, pcb_z + board_h + usb_h/2 + usb_z])
                 cube([wall_t*3, usb_w, usb_h], center = true);
         }
 
-        // PCB standoffs rise from the floor at the board corners
-        bx = board_l/2 - standoff_d/2;
-        by = board_w/2 - standoff_d/2;
-        for (sx = [bx, -bx], sy = [by, -by])
-            translate([board_cx + sx, board_cy + sy, floor_t])
-                cylinder(d = standoff_d, h = standoff_h);
-
-        // corner screw posts with self-tapping pilots
+        // corner screw posts — fused to BOTH adjacent walls by gussets (no free-standing towers),
+        // with self-tapping pilots
         difference() {
-            for (p = post_xy())
-                translate([p[0], p[1], floor_t]) cylinder(d = post_d, h = cav_h);
-            for (p = post_xy())
-                translate([p[0], p[1], floor_t + 2.0]) cylinder(d = screw_d, h = cav_h);
+            union() {
+                for (p = posts) translate([p[0], p[1], floor_t]) cylinder(d = post_d, h = cav_h);
+                for (p = posts) {
+                    sx = sign(p[0]); sy = sign(p[1]);
+                    hull() {  // web to the X wall
+                        translate([p[0], p[1], floor_t]) cylinder(d = post_d, h = gusset_h);
+                        translate([sx*(inner_l/2 - 0.3), p[1], floor_t]) cylinder(d = 2, h = gusset_h);
+                    }
+                    hull() {  // web to the Y wall
+                        translate([p[0], p[1], floor_t]) cylinder(d = post_d, h = gusset_h);
+                        translate([p[0], sy*(inner_w/2 - 0.3), floor_t]) cylinder(d = 2, h = gusset_h);
+                    }
+                }
+            }
+            for (p = posts) translate([p[0], p[1], floor_t + 2.0]) cylinder(d = screw_d, h = cav_h);
+        }
+
+        // board support: standoffs + a perimeter frame + ribs that tie it into the screw posts
+        for (c = corners) translate([c[0], c[1], floor_t]) cylinder(d = standoff_d, h = standoff_h);
+        for (i = [0:3]) floorrib(corners[i], corners[(i+1) % 4], 2.6);          // perimeter cradle frame
+        for (c = corners) {
+            // connect each standoff to the screw post in its quadrant, when reasonably close
+            np = [ sign(c[0]) * (inner_l/2 - post_d/2 - 0.2),
+                   sign(c[1]) * (inner_w/2 - post_d/2 - 0.2) ];
+            if (_d2(c, np) <= 196) floorrib(c, np, 2.6);                        // tie to post (<=14 mm)
+            // short anchor ribs to nearby walls (helps mid-board standoffs in the battery variant)
+            if (inner_l/2 - abs(c[0]) < 6) floorrib(c, [sign(c[0])*(inner_l/2-0.3), c[1]], 2.6);
+            if (inner_w/2 - abs(c[1]) < 6) floorrib(c, [c[0], sign(c[1])*(inner_w/2-0.3)], 2.6);
         }
 
         // battery cradle rim on the floor (kept strictly inside the cavity)
