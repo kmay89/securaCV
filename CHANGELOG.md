@@ -33,6 +33,17 @@ below.
     boundary toward a security boundary for the parse step.
   - **Home Assistant surfacing**: the new claim types render in the "Last Event" sensor with
     friendly labels and per-type icons (`EVENT_TYPE_METADATA` in `const.py`).
+  - **Webhook authentication + rate limiting + worker pool**: the webhook ingress (the one
+    untrusted, network-facing surface) supports constant-time `Authorization: Bearer` or
+    HMAC-SHA256 body-signature auth, per-path token-bucket rate limiting (`429`), and a bounded
+    connection worker pool (`503` when saturated) that ends the unbounded per-connection thread
+    spawn.
+  - **BLE presence adapter** (`adapter-ble-presence`): turns ESPresense-style room-presence MQTT
+    feeds into coarse presence claims, deliberately discarding device identity.
+  - **Adapter observability**: per-adapter counters (polls/emitted/sealed/filtered/rejected +
+    last-seal time) on the host, a periodic stats log, and an optional read-only `/stats` +
+    `/healthz` HTTP endpoint (`stats_addr`) for Home Assistant `rest` diagnostic sensors —
+    operational counts only, never event content.
 - **Home Assistant integration** (HACS): 3 setup modes (MQTT / Kernel HTTP /
   both), MQTT auto-discovery, device PKI trust management (TOFU + manual pin +
   rotation), 5 sensor types, 11 binary sensor types (tamper + transport),

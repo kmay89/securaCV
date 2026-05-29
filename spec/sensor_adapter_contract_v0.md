@@ -177,7 +177,16 @@ An adapter is conforming only if:
 - It never retains, emits, or logs raw media, identity, or precise time/location.
 
 The reference implementation lives in `src/adapter/` (`contract.rs`, `registry.rs`, `host.rs`,
-`sandbox.rs`, and the `frigate.rs`, `mqtt_sensor.rs`, `webhook.rs` adapters) with conformance tests
-in `tests/adapter_contract.rs`, `tests/adapter_cannot_bypass_enforcer.rs`, and
-`tests/adapter_webhook_sandbox.rs`. The positioning and capability-mapping rationale is in
+`sandbox.rs`, `observability.rs`, and the `frigate.rs`, `mqtt_sensor.rs`, `webhook.rs`,
+`ble_presence.rs` adapters) with conformance tests in `tests/adapter_contract.rs`,
+`tests/adapter_cannot_bypass_enforcer.rs`, `tests/adapter_webhook_sandbox.rs`, and
+`tests/adapter_increment4.rs`. The positioning and capability-mapping rationale is in
 `spec/witness_mesh_os_v0.md`.
+
+The webhook ingress, being the one untrusted network-facing surface, additionally supports
+constant-time **authentication** (`Authorization: Bearer` or HMAC-SHA256 body signatures), per-path
+**rate limiting** (token bucket → `429`), and a bounded **worker pool** (→ `503` when saturated) so
+it remains an *audit* boundary that cannot be turned into a privilege or availability hole. None of
+these widen kernel privilege; they protect the producer side. Per-adapter operational counters
+(polls/sealed/rejected) are exposed read-only via `observability::serve_stats` — counts only, never
+event content.
