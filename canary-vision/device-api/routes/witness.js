@@ -3,6 +3,8 @@
 const crypto = require('node:crypto');
 const { Router } = require('express');
 const { computeHash, verifySignature } = require('../lib/witness-chain');
+const { buildEvidenceEnvelope, EnvelopeBridgeError } = require('../lib/envelope-bridge');
+const V = require('../../../viewer/verify_core');
 
 function computeExportDigest(records) {
   const h = crypto.createHash('sha256');
@@ -51,8 +53,51 @@ function detectTimingAnomalies(records) {
   return anomalies;
 }
 
+// Dedicated, stricter rate limiter for the crypto-heavy endpoints. Building/verifying an evidence
+// envelope runs Ed25519 sign+verify and SHA-256 over every record, so these routes are far more
+// expensive than a plain read and warrant their own cap on top of the global limiter in server.js.
+// Kept dependency-free and in the same in-house style as middleware/rate-limit.js (the project
+// intentionally ships with only express). Per-IP sliding window with bounded, LRU-evicted state.
+// Config is read from `state.envelopeRateLimit` at request time so it stays overridable in tests.
+function expensiveRouteLimiter(state) {
+  const maxEntries = 64;
+  const hits = new Map(); // ip -> number[] (timestamps)
+
+  return function limiter(req, res, next) {
+    const cfg = (state && state.envelopeRateLimit) || {};
+    const limit = cfg.limit || 6;
+    const windowMs = cfg.windowMs || 60000;
+    const ip = req.ip || (req.socket && req.socket.remoteAddress) || 'unknown';
+    const now = Date.now();
+    let arr = hits.get(ip);
+    if (!arr) {
+      if (hits.size >= maxEntries) hits.delete(hits.keys().next().value); // LRU evict
+      arr = [];
+    } else {
+      hits.delete(ip); // re-insert to mark most-recently-used
+    }
+    while (arr.length > 0 && arr[0] <= now - windowMs) arr.shift();
+    if (arr.length >= limit) {
+      const retryAfter = Math.ceil((arr[0] + windowMs - now) / 1000);
+      res.setHeader('Retry-After', String(retryAfter));
+      hits.set(ip, arr);
+      return res.status(429).json({
+        error: 'rate_limited',
+        message: 'Too many evidence-verification requests. Please slow down.',
+        retry_after: retryAfter,
+      });
+    }
+    arr.push(now);
+    hits.set(ip, arr);
+    return next();
+  };
+}
+
 function witnessRoutes(state) {
   const router = Router();
+
+  // Stricter cap for the Ed25519/SHA-256-heavy envelope + verify endpoints (DoS hardening).
+  const envelopeLimiter = expensiveRouteLimiter(state);
 
   router.get('/api/v1/witness', (req, res) => {
     let last = parseInt(req.query.last, 10) || 20;
@@ -123,6 +168,37 @@ function witnessRoutes(state) {
     res.json(envelope);
   });
 
+  // Canonical evidence envelope: the privacy-coarsened, self-verifying interchange format
+  // (securacv-evidence-envelope v1). Unlike /export (the raw witness-chain-v1 dump), this strips
+  // precise timestamps / GPS / thumbnails and can be reviewed in viewer/evidence_viewer.html or
+  // verified by the Rust envelope_verify CLI. The bridge fails closed if any forbidden field would
+  // leak, surfaced here as HTTP 422 so the operator knows the raw chain still holds precise data.
+  router.get('/api/v1/witness/envelope', envelopeLimiter, async (req, res) => {
+    let bucketS = parseInt(req.query.bucket_s, 10);
+    if (!Number.isInteger(bucketS)) bucketS = undefined;
+    try {
+      const envelope = await buildEvidenceEnvelope({
+        records: state.witnessRecords,
+        publicKey: state.publicKey,
+        privateKey: state.privateKey,
+        device: state.device,
+        bucketS,
+      });
+      const exportedAt = new Date().toISOString();
+      res.setHeader('Content-Type', 'application/json');
+      res.setHeader('Content-Disposition',
+        `attachment; filename="evidence-envelope-${state.device.device_id}-${exportedAt.slice(0, 10)}.json"`);
+      res.json(envelope);
+    } catch (err) {
+      if (err instanceof EnvelopeBridgeError) {
+        state.addLog('WARN', `Evidence envelope refused: ${err.message}`);
+        return res.status(422).json({ error: 'coarsening_failed', message: err.message });
+      }
+      state.addLog('ERROR', `Evidence envelope build failed: ${err.message}`);
+      return res.status(500).json({ error: 'envelope_build_failed', message: err.message });
+    }
+  });
+
   router.post('/api/v1/witness/stream/ticket', (req, res) => {
     const ticket = state.issueSseTicket();
     res.json({ ticket, expires_in_seconds: 30 });
@@ -178,7 +254,7 @@ function witnessRoutes(state) {
     });
   });
 
-  router.post('/api/v1/witness/verify', (req, res) => {
+  router.post('/api/v1/witness/verify', envelopeLimiter, async (req, res) => {
     const records = state.witnessRecords;
     const results = {
       total: records.length,
@@ -231,6 +307,35 @@ function witnessRoutes(state) {
       results.integrity = 'valid_with_warnings';
     } else {
       results.integrity = 'compromised';
+    }
+
+    // Also verify the canonical evidence envelope using the SAME verifier the offline viewer runs
+    // (viewer/verify_core.js) — so "the device says it's intact" and "an independent reviewer says
+    // it's intact" are produced by one implementation, not two that could diverge. This is
+    // best-effort: a coarsening refusal (precise data still in the raw chain) is reported, not fatal.
+    try {
+      const envelope = await buildEvidenceEnvelope({
+        records,
+        publicKey: state.publicKey,
+        privateKey: state.privateKey,
+        device: state.device,
+      });
+      const report = await V.verifyEnvelope(envelope);
+      results.evidence_envelope = {
+        status: report.status,
+        ok: report.ok,
+        whole_envelope_digest: report.whole_envelope_digest,
+        sealed_events: report.sealed_events,
+        checks: report.checks,
+        warnings: report.warnings,
+        error: report.error,
+      };
+    } catch (err) {
+      results.evidence_envelope = {
+        status: err instanceof EnvelopeBridgeError ? 'coarsening_failed' : 'error',
+        ok: false,
+        error: err.message,
+      };
     }
 
     state.addLog('INFO', `Witness chain verified: ${results.valid}/${results.total} valid, ` +

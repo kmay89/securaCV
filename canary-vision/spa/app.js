@@ -1859,6 +1859,34 @@ function renderWitnessView(deviceId) {
     },
   }));
 
+  actions.appendChild(el('button', {
+    className: 'btn btn-block',
+    textContent: 'Export Evidence Envelope',
+    style: 'margin-top: 0.5rem',
+    title: 'Privacy-coarsened, self-verifying bundle — open in the offline evidence viewer',
+    onClick: function () {
+      while (alertArea.firstChild) alertArea.removeChild(alertArea.firstChild);
+      CanaryAPI.request(device.base_url, '/api/v1/witness/envelope')
+        .then(function (data) {
+          var blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+          var url = URL.createObjectURL(blob);
+          var a = document.createElement('a');
+          a.href = url;
+          a.download = 'evidence-envelope-' + device.device_id + '.json';
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+        })
+        .catch(function (err) {
+          while (alertArea.firstChild) alertArea.removeChild(alertArea.firstChild);
+          // A 422 means coarsening refused to emit (precise data still in the raw chain).
+          var msg = err.message || 'Envelope export failed';
+          alertArea.appendChild(el('div', { className: 'alert alert-error', textContent: msg }));
+        });
+    },
+  }));
+
   content.appendChild(actions);
 
   // Record list
