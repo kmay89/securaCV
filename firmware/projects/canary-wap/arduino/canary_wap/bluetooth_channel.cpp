@@ -969,6 +969,14 @@ void cancel_pairing() {
 bool confirm_pairing(uint32_t pin) {
   if (g_pairing.state != PAIR_CONFIRMING) return false;
   if (!g_pending_pair_active) return false;
+  // The heap copy can be null if the `new` in onConfirmPassKey failed (ESP32
+  // Arduino builds run with exceptions off, so operator new returns nullptr
+  // rather than throwing). Bail before dereferencing — we have nothing to
+  // inject and NimBLE will time the bond attempt out on its own.
+  if (!g_pending_pair_info) {
+    g_pending_pair_active = false;
+    return false;
+  }
 
   // The SPA sends back the same six digits we showed it. A mismatch means
   // either a bug in the SPA, a stale request, or an active attacker trying

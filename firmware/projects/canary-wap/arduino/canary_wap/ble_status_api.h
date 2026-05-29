@@ -247,8 +247,10 @@ static void update() {
     if (power_monitor::get_state(&pwr)) {
       uint8_t soc = pwr.soc_pct;
       if (soc > 100) soc = 100;
-      g_batt_level_char->setValue(&soc, 1);
-      if (connected) g_batt_level_char->notify();
+      if (g_batt_level_char) {
+        g_batt_level_char->setValue(&soc, 1);
+        if (connected) g_batt_level_char->notify();
+      }
     }
   }
 #endif
