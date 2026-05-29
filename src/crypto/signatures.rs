@@ -256,7 +256,13 @@ pub fn verify_ed25519_only(
         .map_err(|e| anyhow!("signature verification failed: {}", e))
 }
 
-fn domain_separated_hash(domain: &str, entry_hash: &[u8; 32]) -> [u8; 32] {
+/// Compute the domain-separated signing hash for a chain entry.
+///
+/// This is the exact preimage that is Ed25519/ML-DSA-signed:
+/// `SHA256( le32(len(domain)) || domain_utf8 || entry_hash )`.
+/// The offline JavaScript verifier (`viewer/verify_core.js`) MUST reproduce this byte layout
+/// exactly; `tests/fixtures/envelope/domain_separation_vectors.json` pins it cross-language.
+pub fn domain_separated_hash(domain: &str, entry_hash: &[u8; 32]) -> [u8; 32] {
     let mut hasher = Sha256::new();
     let domain_bytes = domain.as_bytes();
     hasher.update((domain_bytes.len() as u32).to_le_bytes());

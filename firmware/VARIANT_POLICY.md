@@ -29,10 +29,11 @@ Every firmware variant is labelled with exactly one of the following statuses:
 | [`firmware/projects/canary-wap/`](./projects/canary-wap) | **COMPATIBILITY** | XIAO ESP32-S3 Sense | Arduino-IDE-first monolithic sketch, feature-rich WAP UX | Backport from `firmware/canary` when viable |
 | [`firmware/projects/canary-vision/`](./projects/canary-vision) | **SPECIALIZED** | ESP32-C3 + Grove Vision AI V2 | Person detection + MQTT/HA publishing | This tree (scope: vision + MQTT) |
 | [`firmware/projects/canary-ota/`](./projects/canary-ota) | **SPECIALIZED** | ESP32 family | OTA A/B update subsystem + rollback safety | This tree (scope: OTA) |
-| [`firmware/projects/_archive/canary-wap-snapshot/`](./projects/_archive/canary-wap-snapshot) | **ARCHIVED** | XIAO ESP32-S3 Sense | Frozen reference (2026-02-20) of the WAP sketch before modularization | None — do not edit |
 | [`firmware/common/`](./common) | shared | all | Board-agnostic module headers and implementations | ACTIVE tree changes drive this |
 | [`firmware/boards/`](./boards) | shared | all | Pin maps + capability flags per board | Added alongside new board bring-up |
 | [`firmware/configs/`](./configs) | shared | all | Product composition (feature flags, build profiles) | Updated with ACTIVE tree |
+
+> **Removed:** the `canary-wap-snapshot` ARCHIVED tree (formerly `firmware/projects/_archive/canary-wap-snapshot/`, frozen 2026-02-20) was deleted on 2026-05-29. Its history remains in git; the WAP UX it captured lives on in the COMPATIBILITY tree (`firmware/projects/canary-wap/`) and the ACTIVE tree (`firmware/canary/`). The archiving process and `archive-guard` CI job below remain in force for any future archived trees.
 
 ---
 

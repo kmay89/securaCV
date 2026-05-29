@@ -11,7 +11,7 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_URL
+from homeassistant.const import CONF_URL, EntityCategory
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -106,6 +106,11 @@ async def async_setup_entry(
     entities: list[SensorEntity] = []
     if coordinator is not None:
         entities.append(SecuraCVKernelLastEventSensor(coordinator, entry))
+    adapter_stats_coordinator = entry_data.get("adapter_stats_coordinator")
+    if adapter_stats_coordinator is not None:
+        entities.append(
+            SecuraCVAdapterStatsSensor(adapter_stats_coordinator, entry)
+        )
     async_add_entities(entities)
 
     # Optionally set up MQTT-based Canary sensors
@@ -232,6 +237,72 @@ class SecuraCVKernelLastEventSensor(CoordinatorEntity, SensorEntity):
         # Human-readable label for the coarse claim, for nicer dashboard display.
         attrs["friendly_event"] = event_type_metadata(event.get("event_type"))["label"]
         return attrs or None
+
+
+class SecuraCVAdapterStatsSensor(CoordinatorEntity, SensorEntity):
+    """Diagnostic sensor surfacing adapter_host per-adapter counters.
+
+    State is the total number of sealed events across all adapters; the full per-adapter breakdown
+    (and totals) is exposed as attributes. Operational counts only — no event content.
+    """
+
+    _attr_name = "SecuraCV Adapter Host"
+    _attr_icon = "mdi:hub"
+    _attr_has_entity_name = True
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    _COUNTERS = (
+        "claims_emitted",
+        "claims_sealed",
+        "claims_filtered",
+        "claims_rejected",
+        "poll_errors",
+    )
+
+    def __init__(self, coordinator, entry: ConfigEntry) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator)
+        self._entry = entry
+        self._attr_unique_id = f"{DOMAIN}_{entry.entry_id}_adapter_stats"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Group adapter-host diagnostics under their own device."""
+        return DeviceInfo(
+            identifiers={(DOMAIN, f"{self._entry.entry_id}_adapter_host")},
+            manufacturer=MANUFACTURER,
+            model="SecuraCV Adapter Host",
+            name="SecuraCV Adapter Host",
+        )
+
+    @staticmethod
+    def _adapters(data: Any) -> dict[str, dict[str, Any]]:
+        if not isinstance(data, dict):
+            return {}
+        return {k: v for k, v in data.items() if isinstance(v, dict)}
+
+    @property
+    def native_value(self) -> int | None:
+        """Total sealed events across all adapters."""
+        adapters = self._adapters(self.coordinator.data)
+        if not adapters:
+            return None
+        # `or 0` guards against a null value in the JSON (not just an absent key).
+        return sum(int(s.get("claims_sealed") or 0) for s in adapters.values())
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        """Per-adapter breakdown plus totals."""
+        adapters = self._adapters(self.coordinator.data)
+        if not adapters:
+            return None
+        attrs: dict[str, Any] = {"adapters": len(adapters), "per_adapter": adapters}
+        for counter in self._COUNTERS:
+            attrs[f"total_{counter}"] = sum(
+                int(s.get(counter) or 0) for s in adapters.values()
+            )
+        return attrs
 
 
 # =============================================================================

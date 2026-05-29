@@ -33,6 +33,25 @@ below.
     boundary toward a security boundary for the parse step.
   - **Home Assistant surfacing**: the new claim types render in the "Last Event" sensor with
     friendly labels and per-type icons (`EVENT_TYPE_METADATA` in `const.py`).
+  - **Webhook authentication + rate limiting + worker pool**: the webhook ingress (the one
+    untrusted, network-facing surface) supports constant-time `Authorization: Bearer` or
+    HMAC-SHA256 body-signature auth, per-path token-bucket rate limiting (`429`), and a bounded
+    connection worker pool (`503` when saturated) that ends the unbounded per-connection thread
+    spawn.
+  - **BLE presence adapter** (`adapter-ble-presence`): turns ESPresense-style room-presence MQTT
+    feeds into coarse presence claims, deliberately discarding device identity.
+  - **Adapter observability**: per-adapter counters (polls/emitted/sealed/filtered/rejected +
+    last-seal time) on the host, a periodic stats log, and an optional read-only `/stats` +
+    `/healthz` HTTP endpoint (`stats_addr`) — operational counts only, never event content.
+  - **Webhook TLS** (`adapter-webhook-tls`): optional rustls TLS on the webhook listener
+    (`tls_cert`/`tls_key`), so bearer tokens aren't sent in clear on non-loopback deployments.
+  - **HMAC replay protection**: opt-in `X-Timestamp` + `X-Nonce` bound into the signature
+    (`hmac_replay_window_secs`), rejecting replayed or stale signed requests.
+  - **Home Assistant native adapter-stats sensor**: configuring an "Adapter Host stats URL" adds a
+    diagnostic sensor (per-adapter counters as attributes) via a dedicated coordinator — no
+    hand-written YAML needed.
+  - **Parser fuzz sweep** (`tests/adapter_parser_fuzz.rs`): seeded, panic-free robustness tests
+    over the untrusted webhook/mqtt/BLE/Frigate parsers.
 - **Home Assistant integration** (HACS): 3 setup modes (MQTT / Kernel HTTP /
   both), MQTT auto-discovery, device PKI trust management (TOFU + manual pin +
   rotation), 5 sensor types, 11 binary sensor types (tamper + transport),
@@ -92,6 +111,18 @@ PlatformIO (canary/) and Arduino WAP (canary-wap/) builds with full parity.
   feature gating. Deep sleep cycling in emergency mode.
 - **securacv_setup** — First-boot captive portal with DNS hijack, device
   naming, 15-minute timeout. NVS flag persists setup completion.
+  - **Stays-connected onboarding**: OS connectivity probes are answered
+    per-platform so the phone never flags the AP "no internet" and
+    disconnects mid-setup — Apple gets the instruction page (Captive Network
+    Assistant sheet), Android gets `204 No Content`, Windows gets the exact
+    NCSI bodies. The captive DNS redirector runs for the whole life of the
+    always-on AP (not just first boot), so rejoining the management AP after
+    provisioning works too. The redirector answers only `A` queries and
+    returns NODATA for `AAAA`/`HTTPS`, so `canary.local` resolves promptly on
+    Android Chrome; `192.168.4.1` is the always-works fallback. The pure
+    response logic is extracted into host-unit-tested headers — the DNS builder
+    (`captive_dns.h`) and the per-platform probe policy (`captive_probe.h`,
+    driving a single `handle_captive_probe` handler) — both run in CI.
 - **securacv_diagnostics** — Heap monitoring (free/min/largest block/PSRAM/
   stack HWM/fragmentation), 3-level automatic feature degradation with 5KB
   hysteresis, SD health tracking (atomic write/error counters, space warnings),
