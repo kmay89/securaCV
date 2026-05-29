@@ -2697,7 +2697,7 @@ mod tests {
         // passes and we exercise the per-entry hash/chain verification path instead.
         envelope.ledgers.sealed_events.entries[0]
             .payload_json
-            .push_str(" ");
+            .push(' ');
         envelope.whole_envelope_digest = envelope::compute_whole_envelope_digest(&envelope)?;
         let err = verify_envelope(&envelope, SignatureMode::Compat).unwrap_err();
         assert!(
