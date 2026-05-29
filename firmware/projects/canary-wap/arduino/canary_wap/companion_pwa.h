@@ -189,11 +189,16 @@ footer a{color:var(--accent);text-decoration:none}
  * bytes, …). The summary acts as the row, so the disclosure
  * affordance lives on the row itself. */
 .wiz-check-list{display:flex;flex-direction:column;gap:.4rem;margin:.5rem 0 .25rem}
+/* Each row is a bordered box wrapping a <details> disclosure plus, when the
+ * probe is actionable, an always-visible hint line. The hint lives OUTSIDE
+ * the <details> (a closed <details> doesn't render its children) so the
+ * "what to look into" guidance is visible without the user expanding the
+ * row; the raw metric JSON stays tucked inside the disclosure. */
 .wiz-check-row{border:1px solid var(--border);border-radius:10px;background:var(--surface-2);overflow:hidden}
-.wiz-check-row > summary{display:flex;align-items:center;gap:.6rem;padding:.65rem .8rem;cursor:pointer;list-style:none;-webkit-tap-highlight-color:transparent}
-.wiz-check-row > summary::-webkit-details-marker{display:none}
-.wiz-check-row > summary::marker{display:none}
-.wiz-check-row[open] > summary{border-bottom:1px solid var(--border)}
+.wiz-check-row > details > summary{display:flex;align-items:center;gap:.6rem;padding:.65rem .8rem;cursor:pointer;list-style:none;-webkit-tap-highlight-color:transparent}
+.wiz-check-row > details > summary::-webkit-details-marker{display:none}
+.wiz-check-row > details > summary::marker{display:none}
+.wiz-check-row > details[open] > summary{border-bottom:1px solid var(--border)}
 .wiz-check-name{flex:0 0 auto;font-size:.9rem;font-weight:500;min-width:5.5rem}
 .wiz-check-detail{flex:1;color:var(--muted);font-size:.8rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .wiz-check-icon{flex:0 0 auto;width:18px;height:18px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:.7rem;line-height:1}
@@ -206,11 +211,19 @@ footer a{color:var(--accent);text-decoration:none}
 .wiz-check-summary{margin-top:.6rem;padding:.55rem .7rem;border-radius:8px;font-size:.8rem;text-align:center}
 .wiz-check-summary.pass{background:rgba(72,187,120,.12);color:var(--success)}
 .wiz-check-summary.fail{background:rgba(245,101,101,.12);color:var(--danger)}
+/* "What to do" / "what to look into" guidance line. Always-visible sibling
+ * of the disclosure inside the row box. FAIL rows lead with a danger-colored
+ * "What to do:"; informational (absent/skip) rows lead with a muted "Note:". */
+.wiz-check-hint{padding:.55rem .8rem .65rem;font-size:.8rem;line-height:1.45;color:var(--text);background:var(--surface);border-top:1px solid var(--border);white-space:normal}
+.wiz-check-hint strong{color:var(--muted);font-weight:600}
+.wiz-check-hint.fail strong{color:var(--danger)}
 @media (forced-colors: active){
   .wiz-check-row{border:1px solid CanvasText;background:Canvas}
   .wiz-check-icon.pass,.wiz-check-icon.fail,.wiz-check-icon.skip,.wiz-check-icon.absent,.wiz-check-icon.unknown{background:Canvas;color:CanvasText;border:1px solid CanvasText}
   .wiz-check-icon.fail{outline:2px solid CanvasText;outline-offset:1px}
   .wiz-check-meta{background:Canvas;color:CanvasText;border-top:1px solid CanvasText}
+  .wiz-check-hint{background:Canvas;color:CanvasText;border-top:1px solid CanvasText}
+  .wiz-check-hint strong{color:CanvasText}
   .wiz-check-summary.pass,.wiz-check-summary.fail{background:Canvas;color:CanvasText;border:1px solid CanvasText}
 }
 
@@ -398,6 +411,15 @@ footer a{color:var(--accent);text-decoration:none}
       <div class="wiz-check-list" id="wiz-st-list" role="group" aria-label="Pre-flight checks" aria-busy="false"></div>
       <div class="wiz-check-summary" id="wiz-st-summary" role="status" aria-live="polite"></div>
 
+      <!-- Shown only when a check fails. Explains that greyed rows are
+           normal and that the user is not stuck: they can fix-and-rerun
+           or continue to the dashboard anyway. -->
+      <p class="wiz-sub" id="wiz-st-failnote" style="display:none;margin-top:.6rem">
+        Greyed rows (like Camera or Microphone) just mean that feature isn't on this device &mdash; that's normal.
+        Fix anything marked in red and tap <strong>Run again</strong>, or <strong>Continue anyway</strong> to open your Canary now.
+        You can re-run these checks any time from the dashboard.
+      </p>
+
       <!-- Multi-Canary branch (shown only on all_passed). Two paths:
            "Set up another" reveals a quick how-to (#wiz-another-block);
            "I'm done" reveals the original link-row (#wiz-st-links) and
@@ -453,6 +475,7 @@ footer a{color:var(--accent);text-decoration:none}
       </div>
       <div class="wiz-btnrow">
         <button class="btn btn-secondary" id="wiz-st-rerun">Run again</button>
+        <button class="btn btn-secondary" id="wiz-st-continue" style="display:none">Continue anyway</button>
         <button class="btn btn-primary"   id="wiz-st-finish" style="display:none">Finish</button>
       </div>
     </div>
@@ -1095,14 +1118,106 @@ footer a{color:var(--accent);text-decoration:none}
   // ABSENT all map to a small status icon so the row is scannable
   // without reading text. We never block the wizard on a non-fail
   // (ABSENT/SKIP); only a real FAIL prevents Finish from enabling.
-  const ICON = { pass: '✓', fail: '!', skip: '–', absent: '–', unknown: '·' };
-  const ICON_LABEL = {
-    pass:    'Pass',
-    fail:    'Needs attention',
-    skip:    'Not active',
-    absent:  'Not present',
-    unknown: 'Unknown',
-  };
+  /* SELFTEST_LOGIC:BEGIN — pure, DOM-free decision logic for the pre-flight
+     self-test. This block is extracted verbatim and evaluated under Node by
+     selftest_ui.test.js to unit-test every probe×status permutation, so it
+     must NOT reference the DOM, `window`, `navigator`, or any wizard state —
+     it takes a probe/report object in and returns plain values. The DOM
+     rendering below consumes it via the destructured aliases. */
+  const SelftestLogic = (function () {
+    const ICON = { pass: '✓', fail: '!', skip: '–', absent: '–', unknown: '·' };
+    const ICON_LABEL = {
+      pass:    'Pass',
+      fail:    'Needs attention',
+      skip:    'Not active',
+      absent:  'Not present',
+      unknown: 'Unknown',
+    };
+
+    // Plain-language "what to look into" guidance, keyed by probe name. Each
+    // entry is a function of the probe so we can tailor wording to the exact
+    // status (and, for battery, the charge level in p.metric). Returning ''
+    // means "nothing to do" and the row renders without a hint. Per product
+    // decision, ABSENT optional peripherals are informational + how-to and
+    // NEVER block setup — they just earn a "Note:" line telling the user
+    // what they'd gain by adding the part. FAIL rows earn a "What to do:".
+    const num = (p, k) => (p && p.metric && typeof p.metric[k] === 'number') ? p.metric[k] : null;
+    const HINT = {
+      wifi: (p) => p.status === 'fail'
+        ? 'The Canary could not reach Wi-Fi. Go back a step and re-check your network name and password, then run the checks again.'
+        : '',
+      camera: (p) => {
+        if (p.status === 'fail') return 'The camera stopped responding. Unplug the Canary for five seconds, power it back on, then tap Run again.';
+        if (p.status === 'absent') return 'No camera was found. If your board is a XIAO Sense, reseat the camera ribbon and re-run. If your board has no camera, this is expected — you can continue.';
+        return '';
+      },
+      bluetooth: (p) => {
+        if (p.status === 'fail') return 'Bluetooth didn\'t start. Unplug the Canary for five seconds and power it back on, then tap Run again. If it keeps failing, this unit\'s Bluetooth may be faulty — you can still continue; Wi-Fi features work without it.';
+        if (p.status === 'absent') return 'Bluetooth isn\'t built into this firmware. That\'s expected on minimal builds — you can continue.';
+        return '';
+      },
+      gps: (p) => {
+        if (p.status === 'fail') return 'The GPS module stopped responding. Check its TX/RX wiring, then tap Run again.';
+        if (p.status === 'skip') return 'A GPS module is attached but hasn\'t locked on yet. Give it a few minutes with a clear view of the sky (near a window), then Run again. GPS is optional — you can continue meanwhile.';
+        if (p.status === 'absent') return 'No GPS module is attached. GPS is optional — location stamping just stays off. If you wired one, check the TX/RX wiring and re-run.';
+        return '';
+      },
+      sd: (p) => {
+        if (p.status === 'fail') return 'The SD card couldn\'t be read. Reseat it, or try another microSD card formatted as FAT32, then tap Run again.';
+        if (p.status === 'absent') return 'No SD card is inserted. Insert a microSD card formatted as FAT32 to keep recordings and the witness log on-device. The Canary still runs without one, but stores less history.';
+        return '';
+      },
+      power: (p) => {
+        if (p.status === 'absent') return 'Running on USB power with no battery detected. That\'s fine for a plugged-in spot. To add battery backup, connect a LiPo to the JST connector and re-run.';
+        const soc = num(p, 'soc_pct');
+        if (p.status === 'pass' && soc != null && soc <= 15) return 'Battery is low — connect the USB-C cable to charge it.';
+        return '';
+      },
+      microphone: () => '',
+      buzzer: (p) => {
+        if (p.status === 'pass') return 'We can\'t detect a physical buzzer from here. Play a test tone from the dashboard to confirm you can hear alerts; if you can\'t, alerts fall back to blinking the LED.';
+        if (p.status === 'skip') return 'Alert tones haven\'t started. To get an audible chirp, wire a passive buzzer to the chirp pin and re-run; otherwise alerts blink the LED.';
+        if (p.status === 'absent') return 'Audible alerts aren\'t built into this firmware. You can continue — alerts surface in the app instead.';
+        return '';
+      },
+      tamper: (p) => {
+        if (p.status === 'absent') return 'Tamper monitoring isn\'t enabled in this build. It\'s optional — to get physical-tamper alerts, enable the tamper input and wire a reed/contact switch to the tamper pin.';
+        return '';
+      },
+      gpio: (p) => (p.status === 'fail' || p.status === 'skip')
+        ? 'A pin looked stuck. Make sure nothing is pressing the BOOT button on the Canary, then tap Run again.'
+        : '',
+      fetch: () => 'Reconnect your phone to the Canary\'s setup Wi-Fi network (it starts with SecuraCV-), then tap Run again.',
+    };
+
+    function hintFor(p) {
+      const fn = HINT[((p && p.name) || '').toLowerCase()];
+      if (!fn) return '';
+      try { return fn(p) || ''; } catch (_) { return ''; }
+    }
+
+    // The lead-in label for a hint depends on whether the row is a hard
+    // failure ("What to do:") or just informational guidance ("Note:").
+    function leadFor(status) {
+      return (String(status).toLowerCase() === 'fail') ? 'What to do: ' : 'Note: ';
+    }
+
+    // Heading + sub copy for the result screen. all_passed mirrors the
+    // server's verdict (FAIL count == 0); ABSENT/SKIP never flip it.
+    function verdict(j) {
+      return (j && j.all_passed)
+        ? { heading: 'Your Canary is ready.',
+            sub: 'Tap any row to see the technical detail. Then finish.' }
+        : { heading: 'A check needs your attention',
+            sub: 'Open the row below for the detail. Re-run after fixing it.' };
+    }
+
+    return { ICON, ICON_LABEL, hintFor, leadFor, verdict };
+  })();
+  if (typeof module !== 'undefined' && module.exports) { module.exports = SelftestLogic; }
+  /* SELFTEST_LOGIC:END */
+
+  const { ICON, ICON_LABEL, hintFor, leadFor, verdict } = SelftestLogic;
 
   function escText(s) {
     // The detail/metric strings come from the device, but the device
@@ -1117,8 +1232,13 @@ footer a{color:var(--accent);text-decoration:none}
     list.innerHTML = '';
     for (const p of probes || []) {
       const status = (p.status || 'unknown').toLowerCase();
+      // Bordered row box wraps the disclosure + (optional) always-visible
+      // hint. The hint sits OUTSIDE <details> so guidance shows without the
+      // user expanding the row; the metric JSON stays inside the disclosure.
+      const row = document.createElement('div');
+      row.className = 'wiz-check-row';
+
       const det = document.createElement('details');
-      det.className = 'wiz-check-row';
       const sum = document.createElement('summary');
       // ARIA: announce the row as "Camera, Sensor online, Pass" so SR
       // users get the full state in one phrase. The visible icon span
@@ -1153,7 +1273,22 @@ footer a{color:var(--accent);text-decoration:none}
         meta.textContent = '(metric unavailable)';
       }
       det.appendChild(meta);
-      list.appendChild(det);
+      row.appendChild(det);
+
+      // Plain-language guidance: "What to do:" for failures, "Note:" for
+      // informational/optional rows (e.g. no SD card, USB-only power, no
+      // GPS). Always visible so the user never has to dig for it.
+      const hint = hintFor(p);
+      if (hint) {
+        const hintEl = document.createElement('div');
+        hintEl.className = 'wiz-check-hint' + (status === 'fail' ? ' fail' : '');
+        const lead = document.createElement('strong');
+        lead.textContent = leadFor(status);
+        hintEl.appendChild(lead);
+        hintEl.appendChild(document.createTextNode(escText(hint)));
+        row.appendChild(hintEl);
+      }
+      list.appendChild(row);
     }
   }
 
@@ -1166,12 +1301,9 @@ footer a{color:var(--accent);text-decoration:none}
   function showResult(j) {
     $w('wiz-step-5-running').classList.add('hidden');
     $w('wiz-step-5-result').classList.remove('hidden');
-    $w('wiz-st-heading').textContent = j.all_passed
-      ? 'Your Canary is ready.'
-      : 'A check needs your attention';
-    $w('wiz-st-sub').textContent = j.all_passed
-      ? 'Tap any row to see the technical detail. Then finish.'
-      : 'Open the row below for the detail. Re-run after fixing it.';
+    const v = verdict(j);
+    $w('wiz-st-heading').textContent = v.heading;
+    $w('wiz-st-sub').textContent = v.sub;
     renderProbes(j.probes);
 
     const summary = $w('wiz-st-summary');
@@ -1184,34 +1316,25 @@ footer a{color:var(--accent);text-decoration:none}
     // during step 4. The multi-Canary branch (#wiz-multi-block) is
     // shown FIRST on all_passed; the open-link row + Finish stay hidden
     // until the user either taps "I'm done for now" or finishes the
-    // "Set up another" sub-pane. On failure both blocks stay hidden so
-    // the user can re-run before deciding anything.
+    // "Set up another" sub-pane. On failure the user is NOT stuck: the
+    // per-row "What to do" hints tell them how to fix it, and a
+    // "Continue anyway" button lets them open the dashboard regardless
+    // (a failed pre-flight is a heads-up, not a hard gate — the device
+    // still boots and its working subsystems are usable).
     const links     = $w('wiz-st-links');
     const multi     = $w('wiz-multi-block');
     const another   = $w('wiz-another-block');
-    const ipLink    = $w('wiz-link-ip');
+    const failnote  = $w('wiz-st-failnote');
+    const cont      = $w('wiz-st-continue');
     if (j.all_passed) {
-      if (connectedStaIp) {
-        ipLink.href = 'http://' + connectedStaIp + '/';
-        ipLink.textContent = 'Open ' + connectedStaIp;
-        ipLink.style.display = 'block';
-      } else {
-        ipLink.style.display = 'none';
-      }
-      // The firmware advertises mDNS under a per-device hostname
-      // (canary-s3-XXXX.local) so two Canaries on one LAN don't race
-      // for `canary.local`. The wiz-link-mdns href was hard-coded to
-      // `canary.local` in the page template; rewrite it to the actual
-      // hostname (sanitized the same way canary_wap.ino does) before
-      // showing the close-out card. Best-effort: on fetch error we
-      // leave the original href in place so the link still goes
-      // somewhere reasonable.
-      updateMdnsLinkFromDevice();
+      prepareFinishLinks();
       // Default reveal: the "another room?" pane. The user picks the
       // close-out path from there.
-      multi.style.display   = 'block';
-      another.style.display = 'none';
-      links.style.display   = 'none';
+      multi.style.display    = 'block';
+      another.style.display  = 'none';
+      links.style.display    = 'none';
+      failnote.style.display = 'none';
+      cont.style.display     = 'none';
       $w('wiz-st-finish').style.display = 'none';
       [5].forEach(i => {
         const dot = $w('wiz-prog-' + i);
@@ -1219,9 +1342,13 @@ footer a{color:var(--accent);text-decoration:none}
         dot.classList.add('done');
       });
     } else {
-      multi.style.display   = 'none';
-      another.style.display = 'none';
-      links.style.display   = 'none';
+      // Keep the close-out panes hidden until the user explicitly opts to
+      // continue, but DO offer the escape hatch + guidance up front.
+      multi.style.display    = 'none';
+      another.style.display  = 'none';
+      links.style.display    = 'none';
+      failnote.style.display = 'block';
+      cont.style.display     = 'inline-flex';
       $w('wiz-st-finish').style.display = 'none';
     }
     requestAnimationFrame(() => focusActiveStepHeading());
@@ -1257,6 +1384,24 @@ footer a{color:var(--accent);text-decoration:none}
     }
   }
 
+  // Point the close-out links at the right place. The IP fallback is only
+  // shown when we captured one during step 4; the mDNS link is rewritten
+  // from the device's actual per-device hostname (canary-s3-XXXX.local) so
+  // two Canaries on one LAN don't race for `canary.local`. Best-effort: on
+  // fetch error the static canary.local link stays in place. Used by both
+  // the all-passed close-out and the "Continue anyway" failure escape hatch.
+  function prepareFinishLinks() {
+    const ipLink = $w('wiz-link-ip');
+    if (connectedStaIp) {
+      ipLink.href = 'http://' + connectedStaIp + '/';
+      ipLink.textContent = 'Open ' + connectedStaIp;
+      ipLink.style.display = 'block';
+    } else {
+      ipLink.style.display = 'none';
+    }
+    updateMdnsLinkFromDevice();
+  }
+
   // ── Multi-Canary close-out wiring (Step 5 result branches) ────────────
   // Three buttons, two reveal targets, no network calls. The "I'm done"
   // and "Open this one's dashboard" paths both end at the same place
@@ -1264,6 +1409,8 @@ footer a{color:var(--accent);text-decoration:none}
   function showFinishLinks() {
     $w('wiz-multi-block').style.display   = 'none';
     $w('wiz-another-block').style.display = 'none';
+    $w('wiz-st-failnote').style.display   = 'none';
+    $w('wiz-st-continue').style.display   = 'none';
     $w('wiz-st-links').style.display      = 'flex';
     $w('wiz-st-finish').style.display     = 'inline-flex';
     requestAnimationFrame(() => focusActiveStepHeading());
@@ -1305,6 +1452,18 @@ footer a{color:var(--accent);text-decoration:none}
   }
 
   $w('wiz-st-rerun').addEventListener('click', runSelfTest);
+  // Escape hatch on failure: a failed pre-flight is a heads-up, not a hard
+  // gate. "Continue anyway" prepares the close-out links and drops the user
+  // into the same Finish path the all-passed flow uses, so they're never
+  // stuck behind a check they've chosen to live with (or can only fix from
+  // the dashboard). We also relax the heading so it reads as resolved.
+  $w('wiz-st-continue').addEventListener('click', () => {
+    prepareFinishLinks();
+    $w('wiz-st-heading').textContent = 'Continuing setup';
+    $w('wiz-st-sub').textContent =
+      'You can re-run these checks any time from the dashboard. Open your Canary below.';
+    showFinishLinks();
+  });
   $w('wiz-st-finish').addEventListener('click', () => {
     // Finish hands the user off to canary.local (or the IP fallback).
     // We don't navigate programmatically — the link inside the
