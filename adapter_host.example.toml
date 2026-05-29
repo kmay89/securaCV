@@ -25,12 +25,17 @@ poll_interval_secs = 1
 # Coarse confidence floor; claims below this are dropped before reaching the kernel.
 min_confidence = 0.5
 
-# Optional read-only stats/health endpoint. Serves per-adapter counters as JSON at "/" and a
-# liveness check at "/healthz" (operational counts only, never event content). The SecuraCV Home
-# Assistant integration can surface this automatically as a diagnostic sensor — set the same URL as
-# "Adapter Host stats URL" during setup. (Or scrape it with a built-in `rest` sensor; see the
-# snippet at the bottom of this file.)
+# Optional read-only stats/health endpoint (operational counts only, never event content):
+#   GET /          per-adapter counters as JSON
+#   GET /metrics   Prometheus text exposition format (scrape into Grafana/Alertmanager)
+#   GET /healthz   liveness ("ok")
+# The SecuraCV Home Assistant integration can surface this automatically as a diagnostic sensor —
+# set the same URL as "Adapter Host stats URL" during setup.
 # stats_addr = "127.0.0.1:8799"
+
+# Send SIGHUP (`kill -HUP <pid>`) to reload this file without restarting: host `min_confidence`
+# and each adapter's routes / rooms / filters are applied live. Topology changes (adding/removing
+# adapters, changing listen addresses, auth, or TLS) still require a restart.
 
 # ---------------------------------------------------------------------------
 # Adapter: Frigate NVR
@@ -111,6 +116,11 @@ listen_addr = "127.0.0.1:8800"   # loopback by default
 #   openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -nodes -subj "/CN=host"
 # tls_cert = "/etc/securacv/webhook_cert.pem"
 # tls_key  = "/etc/securacv/webhook_key.pem"
+#
+# Mutual TLS — strongest option for machine-to-machine sensors: clients must present a certificate
+# chaining to this CA bundle (no shared secret on the wire). Requires tls_cert + tls_key. The CA
+# must be a v3 cert with basicConstraints CA:TRUE.
+# tls_client_ca = "/etc/securacv/webhook_client_ca.pem"
 #
 # Rate limiting (per request path, token bucket). Excess requests get 429.
 # rate_limit_per_min = 120       # sustained requests/minute per path

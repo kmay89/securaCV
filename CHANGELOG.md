@@ -52,6 +52,13 @@ below.
     hand-written YAML needed.
   - **Parser fuzz sweep** (`tests/adapter_parser_fuzz.rs`): seeded, panic-free robustness tests
     over the untrusted webhook/mqtt/BLE/Frigate parsers.
+  - **Webhook mutual TLS**: optional client-certificate auth (`tls_client_ca`) — machine-to-machine
+    sensors authenticate by certificate, with no shared secret on the wire.
+  - **Prometheus metrics**: the stats endpoint serves `/metrics` (text exposition format) alongside
+    JSON `/` and `/healthz`, for Grafana/Alertmanager scraping.
+  - **SIGHUP config hot-reload**: `adapter_host` reloads `min_confidence` and each adapter's
+    routes/rooms/filters live on SIGHUP, without restarting listeners or dropping connections;
+    topology changes still require a restart.
 - **Home Assistant integration** (HACS): 3 setup modes (MQTT / Kernel HTTP /
   both), MQTT auto-discovery, device PKI trust management (TOFU + manual pin +
   rotation), 5 sensor types, 11 binary sensor types (tamper + transport),

@@ -180,19 +180,20 @@ The reference implementation lives in `src/adapter/` (`contract.rs`, `registry.r
 `sandbox.rs`, `observability.rs`, and the `frigate.rs`, `mqtt_sensor.rs`, `webhook.rs`,
 `ble_presence.rs` adapters) with conformance tests in `tests/adapter_contract.rs`,
 `tests/adapter_cannot_bypass_enforcer.rs`, `tests/adapter_webhook_sandbox.rs`,
-`tests/adapter_increment4.rs`, and `tests/adapter_parser_fuzz.rs`. The positioning and
-capability-mapping rationale is in `spec/witness_mesh_os_v0.md`.
+`tests/adapter_increment4.rs`, `tests/adapter_parser_fuzz.rs`, and `tests/adapter_increment6.rs`.
+The positioning and capability-mapping rationale is in `spec/witness_mesh_os_v0.md`.
 
 The webhook ingress, being the one untrusted network-facing surface, additionally supports
 constant-time **authentication** (`Authorization: Bearer` or HMAC-SHA256 body signatures, with
 optional **replay protection** binding `X-Timestamp` + `X-Nonce` + request path into the MAC),
-optional **TLS**
-(feature `adapter-webhook-tls`, so bearer tokens are not sent in clear), per-path **rate limiting**
-(token bucket → `429`), and a bounded **worker pool** (→ `503` when saturated) so it remains an
-*audit* boundary that cannot be turned into a privilege or availability hole. None of these widen
-kernel privilege; they protect the producer side. Per-adapter operational counters
-(polls/sealed/rejected) are exposed read-only via `observability::serve_stats` — counts only, never
-event content — and the Home Assistant integration can surface them as a diagnostic sensor.
+optional **TLS** and **mutual TLS** (client-certificate auth; feature `adapter-webhook-tls`),
+per-path **rate limiting** (token bucket → `429`), and a bounded **worker pool** (→ `503` when
+saturated) so it remains an *audit* boundary that cannot be turned into a privilege or availability
+hole. None of these widen kernel privilege; they protect the producer side. Per-adapter operational
+counters (polls/sealed/rejected) are exposed read-only via `observability::serve_stats` as JSON,
+**Prometheus** (`/metrics`), and `/healthz` — counts only, never event content — and the Home
+Assistant integration can surface them as a diagnostic sensor. The `adapter_host` daemon reloads
+routes/filters and `min_confidence` live on **SIGHUP** without restarting listeners.
 
 The untrusted parsers (`route_message`, `ble_presence`, Frigate JSON) are covered by a
 panic-free robustness sweep in `tests/adapter_parser_fuzz.rs`.

@@ -81,9 +81,11 @@ The pattern: keep the *harm-reduction signal*, drop the *identity / tracking / q
   stats endpoint.
 - **Opt-in hardening.** Any adapter can parse untrusted payloads inside the kernel's seccomp
   sandbox (`sandbox = true`), so a compromised parser still cannot touch the filesystem or network.
-  The webhook ingress adds authentication (Bearer / HMAC with optional replay protection), optional
-  TLS, per-path rate limiting, and a bounded worker pool, since it is the one untrusted
+  The webhook ingress adds authentication (Bearer / HMAC with optional replay protection), TLS and
+  mutual TLS, per-path rate limiting, and a bounded worker pool, since it is the one untrusted
   network-facing surface; its parsers are covered by a panic-free fuzz sweep.
+- **Operable.** Per-adapter health is exposed as JSON, Prometheus `/metrics`, and `/healthz`; the
+  daemon hot-reloads routes/filters and `min_confidence` on SIGHUP without dropping connections.
 
 ## 6. What this is NOT (guardrails)
 
@@ -99,4 +101,5 @@ producers, never new privilege**. "Do it all" here means *integrate everything, 
   and the `frigate.rs`, `mqtt_sensor.rs`, `webhook.rs`, `ble_presence.rs` adapters), binary
   `src/bin/adapter_host.rs`, example config `adapter_host.example.toml`.
 - Conformance tests: `tests/adapter_contract.rs`, `tests/adapter_cannot_bypass_enforcer.rs`,
-  `tests/adapter_webhook_sandbox.rs`, `tests/adapter_increment4.rs`, `tests/adapter_parser_fuzz.rs`.
+  `tests/adapter_webhook_sandbox.rs`, `tests/adapter_increment4.rs`, `tests/adapter_parser_fuzz.rs`,
+  `tests/adapter_increment6.rs`.
