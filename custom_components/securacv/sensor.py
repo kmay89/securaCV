@@ -198,7 +198,8 @@ class SecuraCVKernelLastEventSensor(CoordinatorEntity, SensorEntity):
     @property
     def icon(self) -> str:
         """Icon reflects the latest event type, so the dashboard reads at a glance."""
-        if event := self.coordinator.data.get("latest_event"):
+        # coordinator.data may be None before the first successful update.
+        if self.coordinator.data and (event := self.coordinator.data.get("latest_event")):
             return event_type_metadata(event.get("event_type"))["icon"]
         return DEFAULT_EVENT_ICON
 

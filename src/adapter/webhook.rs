@@ -21,6 +21,7 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream, ToSocketAddrs};
 use std::sync::mpsc::{channel, Receiver, Sender};
+use std::thread;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -32,7 +33,11 @@ use crate::EventType;
 
 /// Maximum accepted request body, in bytes. Webhook payloads are tiny status messages.
 const MAX_BODY: usize = 64 * 1024;
-/// Per-connection read timeout so a slow/stuck client cannot tie up the accept loop forever.
+/// Maximum bytes read for the request line or any single header line (anti-OOM).
+const MAX_LINE: u64 = 1024;
+/// Maximum total bytes across all header lines (anti-OOM).
+const MAX_HEADER_BYTES: usize = 8 * 1024;
+/// Per-connection read timeout so a slow/stuck client cannot tie up its handler forever.
 const READ_TIMEOUT: Duration = Duration::from_secs(10);
 
 static WEBHOOK_DESCRIPTOR: AdapterDescriptor = AdapterDescriptor {
@@ -132,13 +137,20 @@ pub fn serve(addr: impl ToSocketAddrs, tx: Sender<SensorMessage>) -> Result<()> 
 }
 
 /// Serve an already-bound listener (see [`bind`]).
+///
+/// Each connection is handled on its own thread so a slow or stuck client cannot block delivery
+/// of webhooks from other sensors (avoids head-of-line blocking / a trivial DoS). Per-connection
+/// reads are bounded (line/header/body limits + a read timeout).
 pub fn serve_listener(listener: TcpListener, tx: Sender<SensorMessage>) -> Result<()> {
     for stream in listener.incoming() {
         match stream {
             Ok(s) => {
-                if let Err(e) = handle_connection(s, &tx) {
-                    log::debug!("webhook connection error: {e}");
-                }
+                let tx = tx.clone();
+                thread::spawn(move || {
+                    if let Err(e) = handle_connection(s, &tx) {
+                        log::debug!("webhook connection error: {e}");
+                    }
+                });
             }
             Err(e) => log::warn!("webhook accept error: {e}"),
         }
@@ -150,20 +162,33 @@ fn handle_connection(stream: TcpStream, tx: &Sender<SensorMessage>) -> Result<()
     stream.set_read_timeout(Some(READ_TIMEOUT))?;
     let mut reader = BufReader::new(stream);
 
-    // Request line: "METHOD SP PATH SP HTTP/1.1".
+    // Request line: "METHOD SP PATH SP HTTP/1.1". Bounded read to prevent OOM from a client that
+    // never sends a newline.
     let mut request_line = String::new();
-    reader.read_line(&mut request_line)?;
+    if reader
+        .by_ref()
+        .take(MAX_LINE)
+        .read_line(&mut request_line)?
+        == 0
+    {
+        return Ok(()); // client closed before sending anything
+    }
     let mut parts = request_line.split_whitespace();
     let method = parts.next().unwrap_or("").to_string();
     let raw_path = parts.next().unwrap_or("/").to_string();
 
-    // Headers — we only need Content-Length.
+    // Headers — we only need Content-Length. Each line and the total header size are bounded.
     let mut content_length: usize = 0;
+    let mut headers_read: usize = 0;
     loop {
         let mut line = String::new();
-        let n = reader.read_line(&mut line)?;
+        let n = reader.by_ref().take(MAX_LINE).read_line(&mut line)?;
         if n == 0 || line == "\r\n" || line == "\n" {
             break;
+        }
+        headers_read += n;
+        if headers_read > MAX_HEADER_BYTES {
+            return write_response(reader.get_mut(), 400, "headers too large");
         }
         let lower = line.to_lowercase();
         if let Some(value) = lower.strip_prefix("content-length:") {
@@ -192,6 +217,7 @@ fn handle_connection(stream: TcpStream, tx: &Sender<SensorMessage>) -> Result<()
 fn write_response(stream: &mut TcpStream, code: u16, body: &str) -> Result<()> {
     let reason = match code {
         204 => "No Content",
+        400 => "Bad Request",
         405 => "Method Not Allowed",
         413 => "Payload Too Large",
         _ => "OK",
