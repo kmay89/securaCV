@@ -28,11 +28,13 @@ Use the GitHub issue form for structured reports:
 Transitive dependencies occasionally carry published advisories that are
 reachable in the crate but **not in any path securaCV actually executes**.
 These are tracked here rather than silently dismissed, so an auditor can
-verify the reasoning. Each entry records why securaCV is not exposed and why
-a simple version bump is not yet possible.
+verify the reasoning. Each entry records why securaCV is not exposed and
+either the fix applied or why a bump is not yet possible.
 
 > Verification done with the live crates.io index on 2026-05-29. All five
-> open Dependabot alerts are transitive and fall into the two groups below.
+> open Dependabot alerts are transitive and fall into the two groups below:
+> Group 1 (four `rustls-webpki` alerts) has no upstream fix yet; Group 2
+> (`time`) is resolved by the dependency bump in this change.
 
 ### Group 1 — `rustls-webpki 0.102.8` (1 High, 1 Moderate, 2 Low)
 
@@ -65,38 +67,32 @@ published version) hard-pins `rustls-webpki = "0.102"`. A `[patch.crates-io]`
 override cannot redirect it to `0.103.x` — that crosses the semver-incompatible
 `0.102 → 0.103` boundary, which cargo rejects.
 
-### Group 2 — `time 0.3.41` stack exhaustion (Moderate)
+### Group 2 — `time` stack exhaustion (Moderate) — RESOLVED
 
 - **Bug:** parsing attacker-controlled input with the RFC 2822 format can
   exhaust the stack via deeply nested, deprecated format features. Fixed in
   `time 0.3.47`.
-- **Where:** `time` is a **build-time dependency only**. It is pulled by
-  `liquid` (a templating engine), which is itself a `[build-dependencies]` of
-  `tract-linalg` — the codegen step of the `tract-onnx` inference engine. That
-  whole `tract` subtree is behind the optional, non-default `backend-tract`
-  feature, so it is absent from default builds entirely.
-- **Why securaCV is not exposed:** `time` never ships in any runtime binary —
-  it runs only during compilation of `tract-linalg`'s build script, which
-  parses no untrusted input. The RFC 2822 DoS requires runtime parsing of
-  attacker-controlled input, which cannot happen here. (For completeness, the
-  runtime code in `src/` uses only `std::time`, never the `time` crate.)
-- **Fix is available, pending a `tract` major bump:** bumping `tract-onnx`
-  `0.21 → 0.22` (a published *stable* release) updates `tract-linalg` to
-  `0.22.1`, which drops the old `time < 0.3.42` ceiling and lets `time`
-  resolve to `0.3.47` — verified at the lock level. It is not applied here
-  because the `0.21 → 0.22` major bump touches the optional `backend-tract`
-  detector (`src/detect/backends/tract.rs`) and must be build-verified first.
-  Tracked below.
+- **Where it came from:** `time` is a **build-time dependency only**. It was
+  pulled by `liquid` (a templating engine), which is itself a
+  `[build-dependencies]` of `tract-linalg` — the codegen step of the
+  `tract-onnx` inference engine, behind the optional, non-default
+  `backend-tract` feature.
+- **Why securaCV was never exposed:** `time` never shipped in any runtime
+  binary — it ran only during compilation of `tract-linalg`'s build script,
+  which parses no untrusted input. (The runtime code in `src/` uses only
+  `std::time`, never the `time` crate.)
+- **Fix applied:** bumped `tract-onnx` `0.21 → 0.22` (stable `0.22.1`), which
+  drops the old `time < 0.3.42` ceiling and lets `time` resolve to `0.3.47`.
+  Verified with `cargo check --tests --features backend-tract` — the
+  `backend-tract` detector (`src/detect/backends/tract.rs`) compiles unchanged
+  against the new major version.
 
 ### Tracking
 
 - Watch `rumqttc` for a release that bumps its `rustls-webpki` dependency to
   the `0.103.x` line (clears Group 1).
-- `tract`: bump `tract-onnx` `0.21 → 0.22` (the stable `0.22.1` line relaxes
-  the `time < 0.3.42` bound, enabling `time 0.3.47`) once the `backend-tract`
-  detector is verified to build against the new major version (clears Group 2).
-- When either lands, bump, drop the corresponding entry here, and re-run the
-  audit. Until then these alerts are dismissed as "vulnerable code not in the
+- When it lands, bump, drop the Group 1 entry here, and re-run the audit.
+  Until then those four alerts are dismissed as "vulnerable code not in the
   execution path."
 
 ## Non-goals
