@@ -206,11 +206,19 @@ footer a{color:var(--accent);text-decoration:none}
 .wiz-check-summary{margin-top:.6rem;padding:.55rem .7rem;border-radius:8px;font-size:.8rem;text-align:center}
 .wiz-check-summary.pass{background:rgba(72,187,120,.12);color:var(--success)}
 .wiz-check-summary.fail{background:rgba(245,101,101,.12);color:var(--danger)}
+/* "What to do" remediation block. Rendered inside a failing/needs-action
+ * row ABOVE the raw metric JSON so the user sees plain-language guidance
+ * first. Failing rows are auto-expanded (see renderProbes) so this is
+ * visible without the user having to discover the disclosure. */
+.wiz-check-hint{padding:.55rem .8rem .65rem;font-size:.8rem;line-height:1.45;color:var(--text);background:var(--surface);border-top:1px solid var(--border);white-space:normal}
+.wiz-check-hint strong{color:var(--danger);font-weight:600}
 @media (forced-colors: active){
   .wiz-check-row{border:1px solid CanvasText;background:Canvas}
   .wiz-check-icon.pass,.wiz-check-icon.fail,.wiz-check-icon.skip,.wiz-check-icon.absent,.wiz-check-icon.unknown{background:Canvas;color:CanvasText;border:1px solid CanvasText}
   .wiz-check-icon.fail{outline:2px solid CanvasText;outline-offset:1px}
   .wiz-check-meta{background:Canvas;color:CanvasText;border-top:1px solid CanvasText}
+  .wiz-check-hint{background:Canvas;color:CanvasText;border-top:1px solid CanvasText}
+  .wiz-check-hint strong{color:CanvasText}
   .wiz-check-summary.pass,.wiz-check-summary.fail{background:Canvas;color:CanvasText;border:1px solid CanvasText}
 }
 
@@ -398,6 +406,15 @@ footer a{color:var(--accent);text-decoration:none}
       <div class="wiz-check-list" id="wiz-st-list" role="group" aria-label="Pre-flight checks" aria-busy="false"></div>
       <div class="wiz-check-summary" id="wiz-st-summary" role="status" aria-live="polite"></div>
 
+      <!-- Shown only when a check fails. Explains that greyed rows are
+           normal and that the user is not stuck: they can fix-and-rerun
+           or continue to the dashboard anyway. -->
+      <p class="wiz-sub" id="wiz-st-failnote" style="display:none;margin-top:.6rem">
+        Greyed rows (like Camera or Microphone) just mean that feature isn't on this device &mdash; that's normal.
+        Fix anything marked in red and tap <strong>Run again</strong>, or <strong>Continue anyway</strong> to open your Canary now.
+        You can re-run these checks any time from the dashboard.
+      </p>
+
       <!-- Multi-Canary branch (shown only on all_passed). Two paths:
            "Set up another" reveals a quick how-to (#wiz-another-block);
            "I'm done" reveals the original link-row (#wiz-st-links) and
@@ -453,6 +470,7 @@ footer a{color:var(--accent);text-decoration:none}
       </div>
       <div class="wiz-btnrow">
         <button class="btn btn-secondary" id="wiz-st-rerun">Run again</button>
+        <button class="btn btn-secondary" id="wiz-st-continue" style="display:none">Continue anyway</button>
         <button class="btn btn-primary"   id="wiz-st-finish" style="display:none">Finish</button>
       </div>
     </div>
@@ -1104,6 +1122,41 @@ footer a{color:var(--accent);text-decoration:none}
     unknown: 'Unknown',
   };
 
+  // Plain-language "what to do" guidance, keyed by probe name. Shown only
+  // for rows the user can act on (FAIL always; a couple of actionable
+  // SKIPs). Each entry returns a string given the probe so we can tailor
+  // the wording to the specific status/detail when it helps. Returning ''
+  // (or no entry) means "no guidance needed" and the row renders without a
+  // hint block. Kept terse and non-technical — the raw metric JSON stays
+  // available under the same row for anyone who wants it.
+  const HINT = {
+    wifi: (p) => p.status === 'fail'
+      ? 'The Canary could not reach Wi-Fi. Go back a step and re-check your network name and password, then run the checks again.'
+      : '',
+    camera: (p) => p.status === 'fail'
+      ? 'The camera stopped responding. Unplug the Canary for five seconds, power it back on, then tap Run again.'
+      : (p.status === 'absent'
+        ? 'No camera was found. If your board has one, reseat the camera ribbon and re-run. If it has no camera, this is expected — you can continue.'
+        : ''),
+    bluetooth: (p) => p.status === 'fail'
+      ? 'Bluetooth didn\'t start. Unplug the Canary for five seconds and power it back on, then tap Run again. If it keeps failing, this unit\'s Bluetooth may be faulty — you can still continue; Wi-Fi features work without it.'
+      : '',
+    sd: (p) => p.status === 'fail'
+      ? 'The SD card couldn\'t be read. Reseat it, or try another microSD card formatted as FAT32, then tap Run again.'
+      : '',
+    microphone: () => '',
+    gpio: (p) => (p.status === 'fail' || p.status === 'skip')
+      ? 'A pin looked stuck. Make sure nothing is pressing the BOOT button on the Canary, then tap Run again.'
+      : '',
+    fetch: () => 'Reconnect your phone to the Canary\'s setup Wi-Fi network (it starts with SecuraCV-), then tap Run again.',
+  };
+
+  function hintFor(p) {
+    const fn = HINT[(p.name || '').toLowerCase()];
+    if (!fn) return '';
+    try { return fn(p) || ''; } catch (_) { return ''; }
+  }
+
   function escText(s) {
     // The detail/metric strings come from the device, but the device
     // is on our LAN and we control the firmware; defense-in-depth
@@ -1141,6 +1194,21 @@ footer a{color:var(--accent);text-decoration:none}
       sum.appendChild(detailEl);
       sum.appendChild(iconEl);
       det.appendChild(sum);
+      // "What to do" — plain-language remediation. Rendered above the raw
+      // metric JSON so guidance comes first. A failing row is auto-opened
+      // so the user sees the guidance without having to find the
+      // disclosure; passing rows stay collapsed to keep the list scannable.
+      const hint = hintFor(p);
+      if (hint) {
+        const hintEl = document.createElement('div');
+        hintEl.className = 'wiz-check-hint';
+        const lead = document.createElement('strong');
+        lead.textContent = (status === 'fail') ? 'What to do: ' : 'Note: ';
+        hintEl.appendChild(lead);
+        hintEl.appendChild(document.createTextNode(escText(hint)));
+        det.appendChild(hintEl);
+        if (status === 'fail') det.open = true;
+      }
       // Metric reveal — JSON.stringify with 2-space indent gives the
       // power user a copy-pasteable block without us having to design
       // a per-probe table.
@@ -1184,34 +1252,25 @@ footer a{color:var(--accent);text-decoration:none}
     // during step 4. The multi-Canary branch (#wiz-multi-block) is
     // shown FIRST on all_passed; the open-link row + Finish stay hidden
     // until the user either taps "I'm done for now" or finishes the
-    // "Set up another" sub-pane. On failure both blocks stay hidden so
-    // the user can re-run before deciding anything.
+    // "Set up another" sub-pane. On failure the user is NOT stuck: the
+    // per-row "What to do" hints tell them how to fix it, and a
+    // "Continue anyway" button lets them open the dashboard regardless
+    // (a failed pre-flight is a heads-up, not a hard gate — the device
+    // still boots and its working subsystems are usable).
     const links     = $w('wiz-st-links');
     const multi     = $w('wiz-multi-block');
     const another   = $w('wiz-another-block');
-    const ipLink    = $w('wiz-link-ip');
+    const failnote  = $w('wiz-st-failnote');
+    const cont      = $w('wiz-st-continue');
     if (j.all_passed) {
-      if (connectedStaIp) {
-        ipLink.href = 'http://' + connectedStaIp + '/';
-        ipLink.textContent = 'Open ' + connectedStaIp;
-        ipLink.style.display = 'block';
-      } else {
-        ipLink.style.display = 'none';
-      }
-      // The firmware advertises mDNS under a per-device hostname
-      // (canary-s3-XXXX.local) so two Canaries on one LAN don't race
-      // for `canary.local`. The wiz-link-mdns href was hard-coded to
-      // `canary.local` in the page template; rewrite it to the actual
-      // hostname (sanitized the same way canary_wap.ino does) before
-      // showing the close-out card. Best-effort: on fetch error we
-      // leave the original href in place so the link still goes
-      // somewhere reasonable.
-      updateMdnsLinkFromDevice();
+      prepareFinishLinks();
       // Default reveal: the "another room?" pane. The user picks the
       // close-out path from there.
-      multi.style.display   = 'block';
-      another.style.display = 'none';
-      links.style.display   = 'none';
+      multi.style.display    = 'block';
+      another.style.display  = 'none';
+      links.style.display    = 'none';
+      failnote.style.display = 'none';
+      cont.style.display     = 'none';
       $w('wiz-st-finish').style.display = 'none';
       [5].forEach(i => {
         const dot = $w('wiz-prog-' + i);
@@ -1219,9 +1278,13 @@ footer a{color:var(--accent);text-decoration:none}
         dot.classList.add('done');
       });
     } else {
-      multi.style.display   = 'none';
-      another.style.display = 'none';
-      links.style.display   = 'none';
+      // Keep the close-out panes hidden until the user explicitly opts to
+      // continue, but DO offer the escape hatch + guidance up front.
+      multi.style.display    = 'none';
+      another.style.display  = 'none';
+      links.style.display    = 'none';
+      failnote.style.display = 'block';
+      cont.style.display     = 'inline-flex';
       $w('wiz-st-finish').style.display = 'none';
     }
     requestAnimationFrame(() => focusActiveStepHeading());
@@ -1257,6 +1320,24 @@ footer a{color:var(--accent);text-decoration:none}
     }
   }
 
+  // Point the close-out links at the right place. The IP fallback is only
+  // shown when we captured one during step 4; the mDNS link is rewritten
+  // from the device's actual per-device hostname (canary-s3-XXXX.local) so
+  // two Canaries on one LAN don't race for `canary.local`. Best-effort: on
+  // fetch error the static canary.local link stays in place. Used by both
+  // the all-passed close-out and the "Continue anyway" failure escape hatch.
+  function prepareFinishLinks() {
+    const ipLink = $w('wiz-link-ip');
+    if (connectedStaIp) {
+      ipLink.href = 'http://' + connectedStaIp + '/';
+      ipLink.textContent = 'Open ' + connectedStaIp;
+      ipLink.style.display = 'block';
+    } else {
+      ipLink.style.display = 'none';
+    }
+    updateMdnsLinkFromDevice();
+  }
+
   // ── Multi-Canary close-out wiring (Step 5 result branches) ────────────
   // Three buttons, two reveal targets, no network calls. The "I'm done"
   // and "Open this one's dashboard" paths both end at the same place
@@ -1264,6 +1345,8 @@ footer a{color:var(--accent);text-decoration:none}
   function showFinishLinks() {
     $w('wiz-multi-block').style.display   = 'none';
     $w('wiz-another-block').style.display = 'none';
+    $w('wiz-st-failnote').style.display   = 'none';
+    $w('wiz-st-continue').style.display   = 'none';
     $w('wiz-st-links').style.display      = 'flex';
     $w('wiz-st-finish').style.display     = 'inline-flex';
     requestAnimationFrame(() => focusActiveStepHeading());
@@ -1305,6 +1388,18 @@ footer a{color:var(--accent);text-decoration:none}
   }
 
   $w('wiz-st-rerun').addEventListener('click', runSelfTest);
+  // Escape hatch on failure: a failed pre-flight is a heads-up, not a hard
+  // gate. "Continue anyway" prepares the close-out links and drops the user
+  // into the same Finish path the all-passed flow uses, so they're never
+  // stuck behind a check they've chosen to live with (or can only fix from
+  // the dashboard). We also relax the heading so it reads as resolved.
+  $w('wiz-st-continue').addEventListener('click', () => {
+    prepareFinishLinks();
+    $w('wiz-st-heading').textContent = 'Continuing setup';
+    $w('wiz-st-sub').textContent =
+      'You can re-run these checks any time from the dashboard. Open your Canary below.';
+    showFinishLinks();
+  });
   $w('wiz-st-finish').addEventListener('click', () => {
     // Finish hands the user off to canary.local (or the IP fallback).
     // We don't navigate programmatically — the link inside the

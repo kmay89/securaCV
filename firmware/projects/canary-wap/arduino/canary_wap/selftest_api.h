@@ -384,9 +384,12 @@ inline bool run_to_json(JsonDocument& doc) {
              (unsigned)pass_n, (unsigned)(pass_n + fail_n),
              (unsigned)absent_n);
   } else {
+    // Verb has to agree with the count: "1 check needs" vs "2 checks need".
     snprintf(summary, sizeof(summary),
-             "%u check%s need attention",
-             (unsigned)fail_n, fail_n == 1 ? "" : "s");
+             "%u check%s need%s attention",
+             (unsigned)fail_n,
+             fail_n == 1 ? ""  : "s",
+             fail_n == 1 ? "s" : "");
   }
   doc["summary"] = summary;
 
