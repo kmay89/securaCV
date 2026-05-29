@@ -11,6 +11,7 @@ const crypto = require('node:crypto');
 const path = require('node:path');
 
 const { buildEvidenceEnvelope, EnvelopeBridgeError } = require('../../device-api/lib/envelope-bridge');
+const { computeHash, signHash } = require('../../device-api/lib/witness-chain');
 const V = require(path.join(__dirname, '..', '..', '..', 'viewer', 'verify_core.js'));
 const { startServer, TEST_TOKEN } = require('../helpers/start-server');
 const { createClient } = require('../helpers/test-client');
@@ -19,23 +20,47 @@ function makeKeys() { return crypto.generateKeyPairSync('ed25519'); }
 const DEVICE = { device_id: 'canary-a3f7', name: 'Front Porch', firmware_version: '0.4.1' };
 const T0 = Date.parse('2026-05-29T12:34:56.789Z');
 
-// Realistic raw records: they carry precise data exactly as the device produces it.
-function rawRecords() {
+// Mint a properly hash-chained, Ed25519-signed raw witness chain (mirrors device-state.js's
+// addWitnessRecord) so the bridge's source-chain validation accepts it. Each spec is
+// { zone, event_type, timestamp, extra? } — `extra` adds precise fields the bridge must strip.
+function signedChain(privateKey, specs) {
+  const records = [];
+  let prevHash = '0'.repeat(64);
+  for (let i = 0; i < specs.length; i++) {
+    const s = specs[i];
+    const timeSource = s.extra && s.extra.gps_timestamp ? 'gps_utc' : 'device_clock';
+    const gpsTimestamp = (s.extra && s.extra.gps_timestamp) || '';
+    const hash = computeHash(i + 1, prevHash, s.timestamp, s.event_type, s.zone, timeSource, gpsTimestamp);
+    const record = {
+      seq: i + 1, hash, prev_hash: prevHash, timestamp: s.timestamp,
+      event_type: s.event_type, zone: s.zone, signature: signHash(hash, privateKey),
+      time_source: timeSource, ...(s.extra || {}),
+    };
+    records.push(record);
+    prevHash = hash;
+  }
+  return records;
+}
+
+// Realistic specs: carry precise data exactly as the device produces it (thumbnail + GPS).
+function rawSpecs() {
   return [
-    { seq: 1, zone: 'front', event_type: 'person_detected', timestamp: new Date(T0).toISOString(),
-      time_source: 'gps_utc', thumbnail: 'data:image/x-portable-graymap;base64,AAAA',
-      gps_timestamp: '2026-05-29T12:34:56Z', gps_fix_quality: 'good', gps_satellites: 9, gps_fix_age_ms: 1200 },
-    { seq: 2, zone: 'drive', event_type: 'vehicle_detected', timestamp: new Date(T0 + 5000).toISOString(),
-      time_source: 'device_clock', thumbnail: 'data:image/x-portable-graymap;base64,BBBB' },
-    { seq: 3, zone: 'front', event_type: 'motion_detected', timestamp: new Date(T0 + 700000).toISOString(),
-      time_source: 'device_clock', thumbnail: 'data:image/x-portable-graymap;base64,CCCC' },
+    { zone: 'front', event_type: 'person_detected', timestamp: new Date(T0).toISOString(),
+      extra: { thumbnail: 'data:image/x-portable-graymap;base64,AAAA', gps_timestamp: '2026-05-29T12:34:56Z',
+        gps_fix_quality: 'good', gps_satellites: 9, gps_fix_age_ms: 1200 } },
+    { zone: 'drive', event_type: 'vehicle_detected', timestamp: new Date(T0 + 5000).toISOString(),
+      extra: { thumbnail: 'data:image/x-portable-graymap;base64,BBBB' } },
+    { zone: 'front', event_type: 'motion_detected', timestamp: new Date(T0 + 700000).toISOString(),
+      extra: { thumbnail: 'data:image/x-portable-graymap;base64,CCCC' } },
   ];
 }
+
+function rawRecords(privateKey) { return signedChain(privateKey, rawSpecs()); }
 
 describe('envelope bridge — construction & verification', () => {
   it('produces an envelope the shared verifier accepts', async () => {
     const { publicKey, privateKey } = makeKeys();
-    const env = await buildEvidenceEnvelope({ records: rawRecords(), publicKey, privateKey, device: DEVICE, nowMs: T0 });
+    const env = await buildEvidenceEnvelope({ records: rawRecords(privateKey), publicKey, privateKey, device: DEVICE, nowMs: T0 });
     const report = await V.verifyEnvelope(env);
     assert.equal(report.ok, true, report.error);
     assert.equal(report.sealed_events, 3);
@@ -46,7 +71,7 @@ describe('envelope bridge — construction & verification', () => {
 
   it('strips every forbidden field (privacy coarsening)', async () => {
     const { publicKey, privateKey } = makeKeys();
-    const env = await buildEvidenceEnvelope({ records: rawRecords(), publicKey, privateKey, device: DEVICE, nowMs: T0 });
+    const env = await buildEvidenceEnvelope({ records: rawRecords(privateKey), publicKey, privateKey, device: DEVICE, nowMs: T0 });
     const s = JSON.stringify(env);
     assert.ok(!s.includes('thumbnail'), 'thumbnail must not survive');
     assert.ok(!s.includes('gps_'), 'GPS fields must not survive');
@@ -56,7 +81,7 @@ describe('envelope bridge — construction & verification', () => {
 
   it('buckets timestamps to a coarse grid (default 600s)', async () => {
     const { publicKey, privateKey } = makeKeys();
-    const env = await buildEvidenceEnvelope({ records: rawRecords(), publicKey, privateKey, device: DEVICE, nowMs: T0 });
+    const env = await buildEvidenceEnvelope({ records: rawRecords(privateKey), publicKey, privateKey, device: DEVICE, nowMs: T0 });
     const buckets = env.artifact.batches[0].buckets;
     // seq 1 & 2 are 5s apart -> same bucket; seq 3 is ~11.6 min later -> next bucket.
     assert.equal(buckets.length, 2);
@@ -68,7 +93,8 @@ describe('envelope bridge — construction & verification', () => {
 
   it('rejects an unmappable event type', async () => {
     const { publicKey, privateKey } = makeKeys();
-    const records = [{ seq: 1, zone: 'front', event_type: 'alien_landing', timestamp: new Date(T0).toISOString() }];
+    const records = signedChain(privateKey, [
+      { zone: 'front', event_type: 'alien_landing', timestamp: new Date(T0).toISOString() }]);
     await assert.rejects(
       buildEvidenceEnvelope({ records, publicKey, privateKey, device: DEVICE }),
       EnvelopeBridgeError,
@@ -77,10 +103,51 @@ describe('envelope bridge — construction & verification', () => {
 
   it('rejects an unparseable timestamp', async () => {
     const { publicKey, privateKey } = makeKeys();
-    const records = [{ seq: 1, zone: 'front', event_type: 'person_detected', timestamp: 'not-a-date' }];
+    const records = signedChain(privateKey, [
+      { zone: 'front', event_type: 'person_detected', timestamp: 'not-a-date' }]);
     await assert.rejects(
       buildEvidenceEnvelope({ records, publicKey, privateKey, device: DEVICE }),
       EnvelopeBridgeError,
+    );
+  });
+
+  it('refuses a free-text zone id (privacy: no addresses/names)', async () => {
+    const { publicKey, privateKey } = makeKeys();
+    const records = signedChain(privateKey, [
+      { zone: '123 Main St, Apt 4', event_type: 'person_detected', timestamp: new Date(T0).toISOString() }]);
+    await assert.rejects(
+      buildEvidenceEnvelope({ records, publicKey, privateKey, device: DEVICE }),
+      /non-local zone id/,
+    );
+  });
+
+  it('refuses a tampered source chain (no laundering)', async () => {
+    const { publicKey, privateKey } = makeKeys();
+    const records = rawRecords(privateKey);
+    records[1].zone = 'back'; // mutate after signing -> hash no longer matches
+    await assert.rejects(
+      buildEvidenceEnvelope({ records, publicKey, privateKey, device: DEVICE }),
+      /raw chain broken/,
+    );
+  });
+
+  it('refuses a source chain with a sequence gap', async () => {
+    const { publicKey, privateKey } = makeKeys();
+    const records = rawRecords(privateKey);
+    records.splice(1, 1); // drop seq 2 -> gap (and prev_hash break)
+    await assert.rejects(
+      buildEvidenceEnvelope({ records, publicKey, privateKey, device: DEVICE }),
+      /raw chain/,
+    );
+  });
+
+  it('refuses a source chain signed by a different key', async () => {
+    const { publicKey } = makeKeys();
+    const other = makeKeys();
+    const records = rawRecords(other.privateKey); // valid chain, wrong signer
+    await assert.rejects(
+      buildEvidenceEnvelope({ records, publicKey, privateKey: other.privateKey, device: DEVICE }),
+      /invalid device signature/,
     );
   });
 
@@ -94,9 +161,9 @@ describe('envelope bridge — construction & verification', () => {
 
   it('rejects a tampered envelope (sealed event mutated after signing)', async () => {
     const { publicKey, privateKey } = makeKeys();
-    const env = await buildEvidenceEnvelope({ records: rawRecords(), publicKey, privateKey, device: DEVICE, nowMs: T0 });
+    const env = await buildEvidenceEnvelope({ records: rawRecords(privateKey), publicKey, privateKey, device: DEVICE, nowMs: T0 });
     env.ledgers.sealed_events.entries[0].payload_json =
-      env.ledgers.sealed_events.entries[0].payload_json.replace('"zone:', '"zoneX:').replace('front', 'forged');
+      env.ledgers.sealed_events.entries[0].payload_json.replace('zone:a', 'zone:x').replace('front', 'forged');
     env.whole_envelope_digest = await V.computeWholeEnvelopeDigest(env);
     const report = await V.verifyEnvelope(env);
     assert.equal(report.ok, false);

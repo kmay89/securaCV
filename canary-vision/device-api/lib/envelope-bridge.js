@@ -20,6 +20,7 @@ const crypto = require('node:crypto');
 const path = require('node:path');
 
 const V = require(path.join(__dirname, '..', '..', '..', 'viewer', 'verify_core.js'));
+const { computeHash, verifySignature } = require('./witness-chain');
 
 // Signature domains (mirror of src/crypto/signatures.rs). Pulled from the manifest the verifier
 // pins, so they cannot drift.
@@ -56,10 +57,45 @@ const DROPPED_RAW_FIELDS = [
 const FORBIDDEN_OUTPUT_MARKERS = ['thumbnail', 'gps_', 'time_source'];
 const MILLISECOND_ISO_RE = /\d{2}:\d{2}:\d{2}\.\d{3}Z/;
 
+// A canonical zone identifier is a short, opaque local ID — NOT free text. Coarsening must never
+// pass through an operator-typed address, room, or person name. We accept lowercase
+// alnum/dash/underscore/colon tokens (e.g. "front", "zone:a", "drive_1"), bounded in length.
+// Anything else is refused rather than disclosed.
+const ZONE_ID_RE = /^[a-z0-9][a-z0-9_:-]{0,63}$/;
+
 class EnvelopeBridgeError extends Error {
   constructor(message) {
     super(message);
     this.name = 'EnvelopeBridgeError';
+  }
+}
+
+// Validate the RAW witness chain before coarsening: recompute each record's hash, check it links to
+// its predecessor, and verify the device signature. A tampered/reordered/gappy source chain must be
+// refused — otherwise re-sealing it would launder a compromised chain into a verifier-OK envelope.
+// Mirrors the checks in POST /api/v1/witness/verify (lib/witness-chain.js).
+function assertRawChainIntact(records, publicKey) {
+  for (let i = 0; i < records.length; i++) {
+    const r = records[i];
+    const expectedPrev = i > 0 ? records[i - 1].hash : '0'.repeat(64);
+    if (r.prev_hash !== expectedPrev) {
+      throw new EnvelopeBridgeError(
+        `raw chain broken at seq ${r.seq}: prev_hash does not link to the preceding record`);
+    }
+    const expectedHash = computeHash(
+      r.seq, expectedPrev, r.timestamp, r.event_type, r.zone, r.time_source, r.gps_timestamp);
+    if (r.hash !== expectedHash) {
+      throw new EnvelopeBridgeError(`raw chain broken at seq ${r.seq}: record hash mismatch (tampered record)`);
+    }
+    if (i > 0 && r.seq !== records[i - 1].seq + 1) {
+      throw new EnvelopeBridgeError(
+        `raw chain has a sequence gap before seq ${r.seq}; refusing to export a gappy chain without explicit gap records`);
+    }
+    let sigOk = false;
+    try { sigOk = verifySignature(r.hash, r.signature, publicKey); } catch { sigOk = false; }
+    if (!sigOk) {
+      throw new EnvelopeBridgeError(`raw chain broken at seq ${r.seq}: invalid device signature`);
+    }
   }
 }
 
@@ -117,6 +153,11 @@ function sealedEventFor(raw, bucketS, provenance) {
   if (typeof raw.zone !== 'string' || raw.zone.length === 0) {
     throw new EnvelopeBridgeError(`record seq ${raw.seq} has no zone`);
   }
+  if (!ZONE_ID_RE.test(raw.zone)) {
+    throw new EnvelopeBridgeError(
+      `record seq ${raw.seq} has a non-local zone id "${raw.zone}"; the canonical envelope only carries ` +
+      `opaque local zone identifiers, not free text (which could disclose an address, room, or name)`);
+  }
   return {
     event_type: eventType,
     time_bucket: timeBucketFor(raw.timestamp, bucketS),
@@ -161,6 +202,9 @@ async function buildEvidenceEnvelope(opts) {
     ruleset_hash: rulesetHash(rulesetId),
   };
   const pubKeyRaw = rawPublicKey(publicKey);
+
+  // Validate the source chain BEFORE coarsening so we never re-seal a tampered/gappy chain.
+  assertRawChainIntact(records, publicKey);
 
   // ---- sealed_events ledger: coarsen each raw record, chain + sign it ----
   const sealedEntries = [];
