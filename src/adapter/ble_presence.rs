@@ -102,8 +102,7 @@ fn room_to_claim(rooms: &[BleRoom], topic: &str, payload: &[u8]) -> Option<Claim
     let room = rooms
         .iter()
         .find(|r| r.room.eq_ignore_ascii_case(room_segment))?;
-    let raw = std::str::from_utf8(payload).ok()?;
-    let parsed: BlePayload = serde_json::from_str(raw).ok()?;
+    let parsed: BlePayload = serde_json::from_slice(payload).ok()?;
     let distance = parsed.distance?;
     // NaN-safe: `NaN <= x` is false, so a garbage distance never asserts presence.
     if distance <= room.max_distance {

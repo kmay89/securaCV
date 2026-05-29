@@ -39,9 +39,14 @@ pub fn serve_stats(addr: impl ToSocketAddrs, stats: SharedStats) -> Result<()> {
     for stream in listener.incoming() {
         match stream {
             Ok(s) => {
-                if let Err(e) = handle(s, &stats) {
-                    log::debug!("stats connection error: {e}");
-                }
+                // One thread per connection so a slow/idle client cannot block other readers
+                // (e.g. Home Assistant) for up to READ_TIMEOUT.
+                let stats = Arc::clone(&stats);
+                std::thread::spawn(move || {
+                    if let Err(e) = handle(s, &stats) {
+                        log::debug!("stats connection error: {e}");
+                    }
+                });
             }
             Err(e) => log::warn!("stats accept error: {e}"),
         }

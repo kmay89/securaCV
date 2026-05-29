@@ -153,7 +153,13 @@ fn authorized(
                     .or_else(|| h.strip_prefix("bearer "))
             });
             match token {
-                Some(t) => t.trim().as_bytes().ct_eq(expected.as_bytes()).into(),
+                // Compare SHA-256 digests so the comparison is over fixed-length inputs and does
+                // not leak the expected token's length via an early-out on a length mismatch.
+                Some(t) => {
+                    let got = Sha256::digest(t.trim().as_bytes());
+                    let want = Sha256::digest(expected.as_bytes());
+                    got.ct_eq(&want).into()
+                }
                 None => false,
             }
         }
@@ -398,15 +404,21 @@ fn handle_connection(stream: TcpStream, shared: &Shared) -> Result<()> {
         return write_response(reader.get_mut(), 413, "payload too large");
     }
 
+    // Bearer auth does not need the body, so reject before reading it: otherwise an
+    // unauthenticated client could advertise a large body, drip it until READ_TIMEOUT, and tie up
+    // a worker. HMAC must defer (it signs the body) and is checked after the read.
+    if matches!(shared.auth, WebhookAuth::Bearer(_))
+        && !authorized(&shared.auth, authorization.as_deref(), None, &[])
+    {
+        return write_response(reader.get_mut(), 401, "unauthorized");
+    }
+
     let mut body = vec![0u8; content_length];
     reader.read_exact(&mut body)?;
 
-    if !authorized(
-        &shared.auth,
-        authorization.as_deref(),
-        signature.as_deref(),
-        &body,
-    ) {
+    if matches!(shared.auth, WebhookAuth::Hmac(_))
+        && !authorized(&shared.auth, None, signature.as_deref(), &body)
+    {
         return write_response(reader.get_mut(), 401, "unauthorized");
     }
 
