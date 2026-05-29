@@ -12,8 +12,8 @@ Purpose: identify which firmware path is currently most active and most user-fri
   - Modular architecture, active recent commits, integrated AP + onboarding APIs (`/api/wifi/*`, `/api/mqtt/*`), and modern dashboard UI.
 - **COMPATIBILITY (Arduino-first) path:** [`firmware/projects/canary-wap/arduino/canary_wap`](./projects/canary-wap/arduino/canary_wap)
   - Functionally rich and very UI-heavy, but monolithic and high maintenance cost.
-- **ARCHIVED:** [`firmware/projects/_archive/canary-wap-snapshot`](./projects/_archive/canary-wap-snapshot)
-  - Frozen 2026-02-20. Protected by a build-time `#error` and by the `archive-guard` CI job. Security fixes (removed fallback AP password, `SECURACV_RELEASE_BUILD` guards) were backported before archival so the frozen tree is not a residual liability.
+- **REMOVED:** `firmware/projects/_archive/canary-wap-snapshot` (deleted 2026-05-29)
+  - Archived 2026-02-20, then removed from the tree on 2026-05-29; history remains in git. Security fixes (removed fallback AP password, `SECURACV_RELEASE_BUILD` guards) had been backported before archival, so no residual liability remained at deletion.
 - **SPECIALIZED tracks (not primary WAP UX path):**
   - [`firmware/projects/canary-vision`](./projects/canary-vision) (ESP32-C3 + Vision AI, MQTT-focused)
   - [`firmware/projects/canary-ota`](./projects/canary-ota) (OTA A/B subsystem)
@@ -26,7 +26,7 @@ Purpose: identify which firmware path is currently most active and most user-fri
 |---|---|---|---|---|---|---|
 | `firmware/canary` | ACTIVE | Main ESP32-S3 witness firmware (modular libs) | Recent feature work in 2026-02 for MQTT + WiFi STA, plus storage counter implementation 2026-04 | **High** (modern dashboard in `securacv_webui`) | **High** (WiFi scan/connect + MQTT config HTTP APIs) | Low |
 | `firmware/projects/canary-wap` | COMPATIBILITY | Arduino-IDE-first WAP sketch (PlatformIO + Arduino) | Security hardening + real ESP-NOW RSSI landed 2026-04 | High (large embedded dashboard) | Medium/High (rich feature set, heavier maintenance) | Medium |
-| `firmware/projects/_archive/canary-wap-snapshot` | ARCHIVED | Frozen reference of WAP sketch | Frozen 2026-02-20 by policy | Medium (same copied UI) | Low (not intended as evolving source) | **Contained** (build-gated + CI archive-guard) |
+| `firmware/projects/_archive/canary-wap-snapshot` _(removed 2026-05-29)_ | REMOVED | Frozen reference of WAP sketch | Archived 2026-02-20, deleted 2026-05-29 | n/a | n/a | **Removed** (history in git) |
 | `firmware/projects/canary-vision` | SPECIALIZED | Vision events + MQTT/HA integration | Active security hardening in 2026-02 | Low (no primary local onboarding UI focus) | Medium (good integration story, less local setup UX) | Medium |
 | `firmware/projects/canary-ota` | SPECIALIZED | OTA framework and rollback safety | Active in 2026-02 | N/A (not a WAP UX product) | N/A | Low/Medium |
 | `firmware/common` + `firmware/configs` + `firmware/boards` | shared | Shared platform layers | Mixed cadence | N/A | N/A | Low |
@@ -62,17 +62,15 @@ Conclusion:
 - Keep as **compatibility lane**, not primary innovation lane.
 - Prefer backporting from `firmware/canary` only when needed.
 
-### 3) `firmware/projects/_archive/canary-wap-snapshot` is contained
+### 3) `firmware/projects/_archive/canary-wap-snapshot` was removed
 
 Why:
 - Previously a duplicate of the WAP Arduino code with the same large UI payload, at high risk of silent drift.
-- Now sits under `projects/_archive/` and is:
-  - gated at compile time by `#error "archived, define SECURACV_ALLOW_ARCHIVED_BUILD to override"`
-  - hardened pre-archival: the dead fallback AP password `"witness2026"` has been removed and `SECURACV_RELEASE_BUILD` guards mirror the ACTIVE WAP tree
-  - protected by the `archive-guard` job in `.github/workflows/firmware.yml`, which fails on any edit to `firmware/projects/_archive/**` without `[archive-edit]` in the PR title/body or commit message.
+- It was first contained under `projects/_archive/`: gated at compile time by `#error "archived, define SECURACV_ALLOW_ARCHIVED_BUILD to override"`, hardened pre-archival (the dead fallback AP password `"witness2026"` removed and `SECURACV_RELEASE_BUILD` guards mirrored from the ACTIVE WAP tree), and protected by the `archive-guard` CI job.
+- On 2026-05-29 it was deleted outright. Its full history remains recoverable from git, and the `archive-guard` job in `.github/workflows/firmware.yml` stays in place to govern any future archived trees.
 
 Conclusion:
-- **Frozen and auditable.** No further maintenance expected per [VARIANT_POLICY.md](VARIANT_POLICY.md).
+- **Removed; history in git.** No further maintenance applies. The WAP UX it captured lives on in the COMPATIBILITY tree (`firmware/projects/canary-wap/`).
 
 ### 4) `canary-vision` and `canary-ota` remain SPECIALIZED
 
@@ -90,7 +88,7 @@ Conclusion:
 | Action | Status |
 |---|---|
 | 1. Declare canonical firmware owner path (`firmware/canary`) | ✅ Codified in [VARIANT_POLICY.md](VARIANT_POLICY.md) |
-| 2. Freeze snapshot tree | ✅ Moved to `projects/_archive/` with build-time `#error` |
+| 2. Freeze snapshot tree | ✅ Archived 2026-02-20 (`projects/_archive/`, build-time `#error`); tree removed 2026-05-29 (history in git) |
 | 3. Add duplicate-drift / archive-edit CI guard | ✅ `archive-guard` job in `.github/workflows/firmware.yml` |
 | 4. Create support policy per firmware path | ✅ [VARIANT_POLICY.md](VARIANT_POLICY.md) |
 | 5. Unify UX contract tests (onboarding acceptance) | ⏳ Planned (tracked separately) |
@@ -102,7 +100,7 @@ Conclusion:
 
 - **Primary product track:** `firmware/canary` (ACTIVE)
 - **Secondary/compatibility track:** `firmware/projects/canary-wap` (COMPATIBILITY)
-- **Archive/frozen:** `firmware/projects/_archive/canary-wap-snapshot` (ARCHIVED)
+- **Removed:** `firmware/projects/_archive/canary-wap-snapshot` (archived 2026-02-20, deleted 2026-05-29 — history in git)
 - **Specialized companion tracks:** `firmware/projects/canary-vision`, `firmware/projects/canary-ota` (SPECIALIZED)
 
 This structure minimizes rot while keeping Arduino-first accessibility and preserving specialized integration projects. Lifecycle transitions are now governed by [VARIANT_POLICY.md](VARIANT_POLICY.md); feature parity is tracked in [FEATURES.md](FEATURES.md).

@@ -13,7 +13,7 @@
 | **canary-wap (PIO)** | `firmware/projects/canary-wap/` | COMPATIBILITY |
 | **canary-vision** | `firmware/projects/canary-vision/` | SPECIALIZED |
 | **canary-ota** | `firmware/projects/canary-ota/` | SPECIALIZED |
-| **snapshot (archived)** | `firmware/projects/_archive/canary-wap-snapshot/` | ARCHIVED (build-gated) |
+| **snapshot (removed)** | _(deleted 2026-05-29; history in git)_ | REMOVED (was ARCHIVED 2026-02-20) |
 
 ## Legend
 
@@ -95,7 +95,7 @@ Single-row-per-capability summary across every non-archived variant. This is the
 
 ## Detailed Per-Subsystem Tables
 
-> **Note:** The tables below originate from the 2026-02-20 audit and use **WAP Snapshot** as the original canonical reference column. That tree is now **ARCHIVED** (see [VARIANT_POLICY.md](VARIANT_POLICY.md)); the dashboard above reflects the current post-archive state. The detailed tables are preserved as a historical parity record and for granular triage; when adding new capability rows, mirror them into the dashboard first.
+> **Note:** The tables below originate from the 2026-02-20 audit and use **WAP Snapshot** as the original canonical reference column. That tree was archived on 2026-02-20 and **removed from the repository on 2026-05-29** (its history remains in git); the dashboard above reflects the current state. The **WAP Snapshot** columns are retained below purely as a historical parity record; when adding new capability rows, mirror them into the dashboard first.
 
 ## Core Cryptographic Witness Chain
 
@@ -326,7 +326,7 @@ Single-row-per-capability summary across every non-archived variant. This is the
 
 ## Summary
 
-Post-archive (2026-04), the ACTIVE canonical tree is `firmware/canary/` (PlatformIO). The WAP Snapshot remains as a frozen reference under `firmware/projects/_archive/canary-wap-snapshot/` and no longer accepts new work.
+Post-archive (2026-04), the ACTIVE canonical tree is `firmware/canary/` (PlatformIO). The WAP Snapshot tree — archived 2026-02-20 — was removed from the repository on 2026-05-29; its history remains in git and the WAP UX it captured lives on in the COMPATIBILITY tree (`firmware/projects/canary-wap/`).
 
 - **canary-wap Arduino (COMPATIBILITY)**: ~100% WAP parity; recently hardened (real ESP-NOW RSSI 2026-04, SD flush-on-unmount 2026-04).
 - **canary (PIO, ACTIVE)**: ~88% feature parity — modular libs, MQTT + HA Discovery, WiFi STA, export, storage status counters (2026-04), HKDF-derived bearer token gating every SPA-driven endpoint (2026-04). Gaps: camera streaming, full GPS motion FSM, some web UI tabs.
