@@ -22,10 +22,15 @@ pub mod contract;
 pub mod host;
 pub mod registry;
 
+#[cfg(feature = "adapter-sandbox")]
+pub mod sandbox;
+
 #[cfg(feature = "adapter-frigate")]
 pub mod frigate;
 #[cfg(feature = "adapter-mqtt-sensor")]
 pub mod mqtt_sensor;
+#[cfg(feature = "adapter-webhook")]
+pub mod webhook;
 
 pub use contract::{
     claim_kind_to_event_type, claim_to_candidate, AdapterDescriptor, Claim, ClaimKind,
