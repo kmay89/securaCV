@@ -198,7 +198,7 @@
 
 > These are non-negotiable. They override convenience, features, roadmap
 > priorities, and business considerations. Any code change that violates
-> a principle is a security defect. See `THREAT_MODEL.md` for full details.
+> a principle is a security defect. See `docs/security/THREAT_MODEL.md` for full details.
 
 ### Private keys must never leave the device
 - **Principle:** The Ed25519 private key has no export, backup, or read interface

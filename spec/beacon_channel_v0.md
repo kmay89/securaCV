@@ -590,7 +590,7 @@ What Beacon never shares:
 
 | Threat | Why not |
 |---|---|
-| Fully compromised host firmware | Beyond scope of any protocol — `THREAT_MODEL.md` explicitly out of scope |
+| Fully compromised host firmware | Beyond scope of any protocol — `docs/security/THREAT_MODEL.md` explicitly out of scope |
 | Coordinated compromise of two paired devices | Acknowledged — co-signing is a force multiplier, not a magic shield. Recovery is operational (revoke the compromised pubkeys). |
 | Radio jamming | Physical-layer attack, outside protocol scope. Beacon falls into `Trouble` if airtime saturated. |
 | Long-range RF triangulation of beacon-set members | Acknowledged. Fingerprints are persistent identifiers; this is the same trade-off the existing Opera mesh accepts. |

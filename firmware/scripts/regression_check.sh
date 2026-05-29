@@ -244,7 +244,7 @@ if [ -n "$OUTBOUND_HITS" ]; then
   check_warn "Possible outbound network connections detected — verify these are gated by feature flags"
   echo "$OUTBOUND_HITS" | while read -r line; do blue "  $line"; done
   blue "  Principle 2: Device must make ZERO outbound connections by default"
-  blue "  See: THREAT_MODEL.md → Principle 2: Zero Phone-Home"
+  blue "  See: docs/security/THREAT_MODEL.md → Principle 2: Zero Phone-Home"
 else
   check_pass "No ungated outbound network connection patterns found"
 fi
@@ -266,7 +266,7 @@ if [ -n "$PRIVKEY_LEAK" ]; then
   check_fail "Private key may be leaking to log/API/export — CRITICAL security violation"
   echo "$PRIVKEY_LEAK" | while read -r line; do blue "  $line"; done
   blue "  Principle 1: Keys NEVER leave the device"
-  blue "  See: THREAT_MODEL.md → Principle 1: Keys Never Leave the Device"
+  blue "  See: docs/security/THREAT_MODEL.md → Principle 1: Keys Never Leave the Device"
 else
   check_pass "No private key references in log/API/export contexts"
 fi
@@ -327,31 +327,31 @@ if [ -f "$CANARY_DIR/include/secure_defaults.h" ]; then
   fi
 else
   check_fail "secure_defaults.h is missing! Security defaults must be centralized."
-  blue "  See: THREAT_MODEL.md → Implementation Review Checklist"
+  blue "  See: docs/security/THREAT_MODEL.md → Implementation Review Checklist"
 fi
 
 echo ""
 
-# ── Check: SECURITY_MODEL.md exists ──────────────────────────
+# ── Check: docs/security/SECURITY_MODEL.md exists ────────────
 echo "── Documentation: Security Model ──"
 
 REPO_ROOT="$(cd "$FIRMWARE_DIR/.." && pwd)"
-if [ -f "$REPO_ROOT/SECURITY_MODEL.md" ]; then
-  SM_LINES=$(wc -l < "$REPO_ROOT/SECURITY_MODEL.md")
+if [ -f "$REPO_ROOT/docs/security/SECURITY_MODEL.md" ]; then
+  SM_LINES=$(wc -l < "$REPO_ROOT/docs/security/SECURITY_MODEL.md")
   if [ "$SM_LINES" -lt 20 ]; then
-    check_fail "SECURITY_MODEL.md seems incomplete ($SM_LINES lines)"
+    check_fail "docs/security/SECURITY_MODEL.md seems incomplete ($SM_LINES lines)"
   else
-    check_pass "SECURITY_MODEL.md exists ($SM_LINES lines)"
+    check_pass "docs/security/SECURITY_MODEL.md exists ($SM_LINES lines)"
   fi
 else
-  check_fail "SECURITY_MODEL.md is missing — must be included in every evidence export"
+  check_fail "docs/security/SECURITY_MODEL.md is missing — must be included in every evidence export"
 fi
 
-if [ -f "$REPO_ROOT/THREAT_MODEL.md" ]; then
-  TM_LINES=$(wc -l < "$REPO_ROOT/THREAT_MODEL.md")
-  check_pass "THREAT_MODEL.md exists ($TM_LINES lines)"
+if [ -f "$REPO_ROOT/docs/security/THREAT_MODEL.md" ]; then
+  TM_LINES=$(wc -l < "$REPO_ROOT/docs/security/THREAT_MODEL.md")
+  check_pass "docs/security/THREAT_MODEL.md exists ($TM_LINES lines)"
 else
-  check_warn "THREAT_MODEL.md is missing — needed for developer/auditor reference"
+  check_warn "docs/security/THREAT_MODEL.md is missing — needed for developer/auditor reference"
 fi
 
 echo ""

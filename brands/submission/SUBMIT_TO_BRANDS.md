@@ -32,7 +32,7 @@ git checkout -b add-securacv-brand
 
 ```bash
 mkdir -p custom_integrations/securacv
-cp /path/to/securaCV/brands_submission/custom_integrations/securacv/* custom_integrations/securacv/
+cp /path/to/securaCV/brands/submission/custom_integrations/securacv/* custom_integrations/securacv/
 ```
 
 ### 4. Commit and push

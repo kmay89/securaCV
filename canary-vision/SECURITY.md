@@ -43,7 +43,7 @@ Out of scope:
 
 ### Security Architecture
 
-See `docs/security.md` for the full threat model and security decisions.
+See [`docs/security.md`](docs/security.md) for the full threat model and security decisions.
 
 ### Philosophy
 
