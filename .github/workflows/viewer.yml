@@ -1,0 +1,20 @@
+name: Evidence Viewer
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  viewer:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+    - name: Cross-language verifier parity tests
+      run: node --test viewer/verify_core.test.js
+    - name: Offline viewer is up to date (no drift from verify_core.js)
+      run: node viewer/build.mjs --check
