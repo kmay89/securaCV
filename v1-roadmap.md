@@ -69,7 +69,15 @@ Rationale: Signed log is easier to demonstrate end-to-end without designing enve
 | B1 | **Done:** Ed25519 log signing in kernel + CLI paths | ✅ |
 | B2 | Device key generation + secure storage (replace seed-derived key) | 3-5 days |
 | B3 | **Done:** `log_verify` validates Ed25519 signatures | ✅ |
-| B4 | Tampering demo (modify log, verify fails) | 1-2 days |
+| B4 | **Done:** Tampering demo (`tamper_demo` binary: modify log, verify fails) | ✅ |
+
+**B2 note:** Deferred. Software-only "encrypted at rest" key storage adds
+little on an unattended device that must auto-decrypt at boot — the real
+bar (hardware-backed keys via TPM/Secure Element) needs hardware to
+validate. The prerequisite architectural fix is decoupling the SQLCipher
+DB key from the device identity key (`derive_db_encryption_key` currently
+derives the DB key from the signing key), which is what would unblock safe
+key rotation.
 
 **Total:** ~2-3 weeks
 
