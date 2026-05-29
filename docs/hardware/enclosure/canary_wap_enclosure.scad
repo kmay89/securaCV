@@ -18,23 +18,55 @@
 // ============================================================================
 
 /* [What to render] */
-part    = "all";      // ["base","lid","all"]
-variant = "battery";  // ["battery","compact"]  battery = LiPo bay beside board; compact = USB-only small case
+part   = "all";       // ["base","lid","all","coupon"]   (coupon = small clip-fit test piece)
+
+/* [Preset] — quick configs; choose "custom" to use the Peripherals checkboxes */
+preset = "custom";    // ["custom","battery_full","compact_plain"]
+
+/* [Peripherals you have — tick what is fitted (applied when preset = custom)] */
+opt_camera  = true;   // XIAO *Sense* camera   -> lid sensor window + taller cavity (off = plain XIAO ESP32-S3)
+opt_buzzer  = true;   // piezo buzzer          -> lid vent + GORE seat
+opt_led     = true;   // external status LED   -> light-pipe port
+opt_battery = true;   // LiPo                  -> battery bay (enlarges the case)
+opt_gps     = false;  // L76K GPS module       -> internal module bay
+opt_tamper  = true;   // reed/Hall + magnet    -> lid magnet pocket
+opt_touch   = false;  // cap-touch pad         -> thinned "touch window" on the lid
+opt_antenna = false;  // external u.FL antenna -> side bulkhead hole
+
+// effective flags (a preset overrides the checkboxes above)
+function _pre(c,f,p) = (preset=="battery_full") ? f : (preset=="compact_plain") ? p : c;
+e_camera  = _pre(opt_camera,  true,  false);
+e_buzzer  = _pre(opt_buzzer,  true,  true);
+e_led     = _pre(opt_led,     true,  true);
+e_battery = _pre(opt_battery, true,  false);
+e_gps     = _pre(opt_gps,     true,  false);
+e_tamper  = _pre(opt_tamper,  true,  false);
+e_touch   = _pre(opt_touch,   false, false);
+e_antenna = _pre(opt_antenna, false, false);
 
 /* [Board] — Seeed XIAO ESP32-S3 official: PCB 21.0 x 17.5 mm, 2.54 mm pitch */
-board_l        = 21.0;  // XIAO PCB length (USB end to far end, along X) — Seeed official
-board_w        = 17.5;  // XIAO PCB width (along Y) — Seeed official
+board_l        = 21.0;  // PCB length (USB end to far end, along X)
+board_w        = 17.5;  // PCB width (along Y)
 board_h        = 1.2;   // PCB thickness
-board_stack_h  = 8.0;   // tallest thing above the PCB. ~8 covers the Sense camera stack;
-                        //   a plain XIAO ESP32-S3 (no camera) needs only ~4-5 — lower it then.
 board_clear    = 0.6;   // per-side clearance around the PCB
+stack_camera   = 8.0;   // headroom above the PCB with the Sense camera
+stack_plain    = 4.5;   // headroom above the PCB for a plain XIAO ESP32-S3
+board_stack_h  = e_camera ? stack_camera : stack_plain;
 
-/* [Battery compartment] */
-batt_enable    = (variant == "battery");  // compact variant omits the LiPo bay
-batt_l         = 50.0;  // LiPo length  (503450 ~ 50 x 34 x 5 mm)
-batt_w         = 34.0;  // LiPo width
-batt_h         = 6.0;   // LiPo thickness
+/* [Battery] (LiPo, placed beside the board) */
+batt_l         = 50.0;  // 503450 ~ 50 x 34 x 5 mm
+batt_w         = 34.0;
+batt_h         = 6.0;
 batt_gap       = 2.5;   // gap between board zone and battery zone
+
+/* [GPS module] (L76K, internal bay after the board/battery) */
+gps_l          = 16.0;
+gps_w          = 16.0;
+gps_h          = 4.0;
+gps_gap        = 2.5;
+
+/* [Antenna] external u.FL/SMA bulkhead hole on the far (+X) wall */
+ant_d          = 6.5;
 
 /* [Shell] */
 wall_t         = 2.0;   // side wall thickness
@@ -75,9 +107,13 @@ vent_ring_d    = 6.0;
 vent_holes     = 6;
 vent_dx        = 7.0;
 vent_dy        = -4.0;
+// Cap-touch window — local thinning so capacitance couples through the lid (when opt_touch)
+touch_d        = 12.0;
+touch_wall     = 0.8;   // remaining lid thickness at the pad
+touch_dx       = -3.0;
+touch_dy       = -5.0;
 
 /* [Tamper magnet] — blind pocket on the LID underside, over the board's reed/Hall switch */
-mag_enable     = true;
 mag_d          = 6.4;   // 6 mm magnet + fit
 mag_h          = 3.2;
 mag_dx         = -6.0;
@@ -98,12 +134,14 @@ $fn = 64;
 //  Derived geometry
 // ----------------------------------------------------------------------------
 board_zone_l = board_l + 2*board_clear;
-batt_zone_l  = batt_enable ? (batt_gap + batt_l) : 0;
+batt_zone_l  = e_battery ? (batt_gap + batt_l) : 0;
+gps_zone_l   = e_gps     ? (gps_gap  + gps_l)  : 0;
+extra_l      = batt_zone_l + gps_zone_l;                 // internal bays appended after the board
 post_corner  = post_d + 1.5;                 // clearance so a screw post sits in the corner, clear of the board
 
-// cavity must hold the board/battery AND leave true corners for the screw posts
-inner_l = max(board_zone_l + batt_zone_l + 1.0, board_l + 2*post_corner);
-inner_w = max(board_w + 2*board_clear, batt_enable ? batt_w : 0, board_w + 2*post_corner) + 1.0;
+// cavity must hold the board + any bays AND leave true corners for the screw posts
+inner_l = max(board_zone_l + extra_l + 1.0, board_l + 2*post_corner);
+inner_w = max(board_w + 2*board_clear, e_battery ? batt_w : 0, e_gps ? gps_w : 0, board_w + 2*post_corner) + 1.0;
 cav_h   = standoff_h + board_h + board_stack_h + 1.0;   // internal height above floor
 
 out_l  = inner_l + 2*wall_t;
@@ -111,9 +149,12 @@ out_w  = inner_w + 2*wall_t;
 base_h = floor_t + cav_h;
 
 pcb_z   = floor_t + standoff_h;                 // absolute z of PCB underside
-board_cx = batt_enable ? (-inner_l/2 + board_clear + board_l/2 + 0.5) : 0;  // USB-biased w/ battery, centred when compact
+has_bay = e_battery || e_gps;
+board_cx = has_bay ? (-inner_l/2 + board_clear + board_l/2 + 0.5) : 0;  // USB-biased w/ a bay, else centred
 board_cy = 0;
-batt_cx  = inner_l/2 - batt_l/2 - 0.5;          // battery centre X
+zone0    = -inner_l/2 + board_zone_l + 0.5;     // x where the appended bays begin
+batt_cx  = zone0 + batt_gap + batt_l/2;         // battery bay centre
+gps_cx   = zone0 + batt_zone_l + gps_gap + gps_l/2;   // GPS bay centre (after battery, if any)
 
 // ----------------------------------------------------------------------------
 //  Helpers
@@ -177,6 +218,10 @@ module base() {
                 rrect(inner_l, inner_w, max(0.1, corner_r - wall_t), cav_h + 1);
             translate([-out_l/2, board_cy, pcb_z + board_h + usb_h/2 + usb_z])
                 cube([wall_t*3, usb_w, usb_h], center = true);
+            // external antenna bulkhead hole on the far (+X) wall
+            if (e_antenna)
+                translate([out_l/2, board_cy, pcb_z + 2])
+                    rotate([0, 90, 0]) cylinder(d = ant_d, h = wall_t*4, center = true);
         }
 
         // corner screw posts — fused to BOTH adjacent walls by gussets (no free-standing towers),
@@ -219,12 +264,21 @@ module base() {
                     boardclip(cx, sy);
 
         // battery cradle rim on the floor (kept strictly inside the cavity)
-        if (batt_enable)
+        if (e_battery)
             translate([batt_cx, 0, floor_t])
                 difference() {
                     rrect(min(batt_l + 2.4, batt_zone_l - 0.5),
                           min(batt_w + 2.4, inner_w - 0.5), 1.0, 1.4);
                     rrect(batt_l + 0.8, batt_w + 0.8, 0.5, 3);
+                }
+
+        // GPS module cradle rim
+        if (e_gps)
+            translate([gps_cx, 0, floor_t])
+                difference() {
+                    rrect(min(gps_l + 2.4, gps_zone_l - 0.5),
+                          min(gps_w + 2.4, inner_w - 0.5), 1.0, 1.4);
+                    rrect(gps_l + 0.8, gps_w + 0.8, 0.5, 3);
                 }
     }
 }
@@ -251,13 +305,16 @@ module lid() {
     vnt = [board_cx + vent_dx, board_cy + vent_dy];
     mag = [board_cx + mag_dx, board_cy + mag_dy];
 
+    tch = [board_cx + touch_dx, board_cy + touch_dy];
+
     union() {
         difference() {
             rrect(out_l, out_w, corner_r, lid_t);
 
-            translate([cam[0], cam[1], -1]) cylinder(d = cam_win_d, h = lid_t + 2);   // camera window
-            translate([lp[0],  lp[1],  -1]) cylinder(d = lp_d,      h = lid_t + 2);   // light pipe
-            vent_cluster(vnt[0], vnt[1]);                                             // buzzer vent
+            if (e_camera) translate([cam[0], cam[1], -1]) cylinder(d = cam_win_d, h = lid_t + 2);  // camera window
+            if (e_led)    translate([lp[0],  lp[1],  -1]) cylinder(d = lp_d,      h = lid_t + 2);  // light pipe
+            if (e_buzzer) vent_cluster(vnt[0], vnt[1]);                                            // buzzer vent
+            if (e_touch)  translate([tch[0], tch[1], -1]) cylinder(d = touch_d, h = lid_t - touch_wall + 1); // touch window (blind thinning)
 
             // countersunk lid screws over the posts
             for (p = post_xy()) {
@@ -282,7 +339,7 @@ module lid() {
         }
 
         // tamper magnet pocket (blind, opens downward)
-        if (mag_enable)
+        if (e_tamper)
             translate([mag[0], mag[1], -mag_h])
                 difference() {
                     cylinder(d = mag_d + 2.4, h = mag_h);
@@ -292,10 +349,29 @@ module lid() {
 }
 
 // ----------------------------------------------------------------------------
+//  CLIP TEST COUPON — print this alone to tune clip_t / clip_hook / clip_clear.
+//  A short channel the width of the board, with a snap clip on each long edge:
+//  press a 1.2 mm scrap (or the real board edge) in and feel the click.
+// ----------------------------------------------------------------------------
+module coupon() {
+    cl = 26;                                       // coupon length
+    ww = board_w + 2*(clip_clear + clip_t) + 6;    // floor width (clips + margin)
+    union() {
+        linear_extrude(floor_t) offset(1) offset(-1) square([cl, ww], center = true);  // floor
+        for (sy = [1, -1])                          // board-rest rails at the edge line
+            translate([-cl/2, sy*(board_w/2 - standoff_d/2) - standoff_d/2, floor_t])
+                cube([cl, standoff_d, standoff_h]);
+        boardclip(0,  1);                           // a clip on each long edge (uses board_w/board_cy)
+        boardclip(0, -1);
+    }
+}
+
+// ----------------------------------------------------------------------------
 //  Layout
 // ----------------------------------------------------------------------------
-if (part == "base") base();
-else if (part == "lid") translate([0, 0, lid_t]) rotate([180, 0, 0]) lid();   // printable orientation
+if      (part == "coupon") coupon();
+else if (part == "base")   base();
+else if (part == "lid")    translate([0, 0, lid_t]) rotate([180, 0, 0]) lid();   // printable orientation
 else {
     base();
     translate([0, out_w + 8, 0]) translate([0, 0, lid_t]) rotate([180, 0, 0]) lid();

@@ -1,30 +1,50 @@
-# Canary WAP — 3D-Printable Enclosure (v0.4)
+# Canary WAP — 3D-Printable Enclosure (v0.5)
 
-Parametric, printable cases for the Canary WAP (XIAO ESP32-S3 Sense), referenced
+Parametric, printable case for the Canary WAP (XIAO ESP32-S3 Sense), referenced
 as a "future add" in the [Peripheral Build Plan](../canary_peripheral_build_plan.md)
-(§6.6). Authored in [OpenSCAD](https://openscad.org) so every dimension is a
-tweakable parameter, with rendered print-ready STLs committed alongside.
+(§6.6). Authored in [OpenSCAD](https://openscad.org), and built as a **configurator**:
+tick the peripherals you fitted and the case rebuilds itself — adding the right
+bays, ports and cutouts and resizing to suit.
 
-Two variants from one source (`variant = "battery" | "compact"`):
+## Configure it (you tick what you have)
 
-| Variant | Outer size | Battery | Use |
-|---------|-----------|---------|-----|
-| **battery** | ≈ **80 × 39 × 17 mm** | LiPo bay beside the board | Standalone / portable Canary |
-| **compact** | ≈ **38 × 36 × 17 mm** | none (USB-powered) | Smaller footprint, mains/USB powered |
+Open `canary_wap_enclosure.scad` in the **OpenSCAD GUI** → the **Customizer**
+panel shows your options as checkboxes. Tick what's on your device:
 
-> The compact case is sized so the **four M2 screw posts sit in true corners
-> beside the board** (a 17.5 mm-wide PCB plus a post each side needs ≈ 30 mm) —
-> that's why it isn't as tiny as the bare-board reference, which relied on
-> snap-fit clips rather than corner screws.
+| Checkbox | When ticked, the case adds… |
+|----------|------------------------------|
+| `opt_camera` | sensor **window** on the lid + extra internal height (Sense camera). Off ⇒ shorter cavity for a plain XIAO |
+| `opt_buzzer` | **vent** (hole-ring + GORE seat) on the lid |
+| `opt_led` | **light-pipe** port on the lid |
+| `opt_battery` | **LiPo bay** beside the board (enlarges the case) |
+| `opt_gps` | internal **GPS module bay** (L76K) |
+| `opt_tamper` | **magnet pocket** on the lid underside |
+| `opt_touch` | thinned **touch window** on the lid (capacitive sensing through the wall) |
+| `opt_antenna` | **bulkhead hole** in the side wall for a u.FL/SMA antenna |
 
-![Battery variant — base and lid](./preview_all.png)
-![Compact variant — base and lid](./preview_compact.png)
+Prefer a one-click starting point? Set **`preset`** to `battery_full` or
+`compact_plain` (overrides the checkboxes), or leave it `custom` to use them.
+Then set `part` to `base`, `lid`, `all`, or `coupon` and export.
+
+The two committed example presets:
+
+| Preset | Outer size | What's on it |
+|--------|-----------|--------------|
+| **battery_full** | ≈ **80 × 39 × 17 mm** | camera + buzzer + LED + LiPo bay + GPS bay + tamper |
+| **compact_plain** | ≈ **38 × 36 × 17 mm** | plain board (no camera), buzzer + LED, USB-powered |
+
+> Corner posts always sit in **true corners beside the board** (a 17.5 mm PCB +
+> a post each side needs ≈ 30 mm) — that's why even the compact case isn't as
+> tiny as the bare-board reference, which used snap clips instead of screws.
+
+![battery_full preset — base and lid](./preview_all.png)
+![compact_plain preset — base and lid](./preview_compact.png)
 
 | | |
 |---|---|
-| **Source** | [`canary_wap_enclosure.scad`](./canary_wap_enclosure.scad) (parametric, both variants) |
-| **Battery STLs** | [`..._battery_base.stl`](./canary_wap_enclosure_battery_base.stl), [`..._battery_lid.stl`](./canary_wap_enclosure_battery_lid.stl) |
-| **Compact STLs** | [`..._compact_base.stl`](./canary_wap_enclosure_compact_base.stl), [`..._compact_lid.stl`](./canary_wap_enclosure_compact_lid.stl) |
+| **Source** | [`canary_wap_enclosure.scad`](./canary_wap_enclosure.scad) (configurator) |
+| **Example STLs** | [`..._battery_base/lid.stl`](./canary_wap_enclosure_battery_base.stl), [`..._compact_base/lid.stl`](./canary_wap_enclosure_compact_base.stl) |
+| **Clip test coupon** | [`..._clip_coupon.stl`](./canary_wap_enclosure_clip_coupon.stl) — print first to tune the snap fit |
 | **Fasteners** | 4 × **M2** self-tapping screws (8–10 mm) into the corner posts |
 
 ## Dimensional basis (verified)
@@ -56,53 +76,62 @@ edge; a 45° lead-in cams them open on insertion. The screw posts still take the
 `board_clips = false` to omit them. (The lid screws remain optional too — the lip
 already locates the lid; the clips are purely for the board.)
 
+**v0.5 — peripheral configurator + clip coupon:** the case is now driven by
+**peripheral checkboxes** (`opt_camera/buzzer/led/battery/gps/tamper/touch/antenna`)
+plus `preset`. Toggling a peripheral adds/removes its lid cutout or internal bay
+and **resizes the box** (e.g. enabling GPS appends a module bay; disabling the
+camera shortens the cavity). Added a **clip test coupon** (`part = "coupon"`) so
+you can dial in the snap fit before printing the whole case.
+
 > ⚠️ **Still a reference — verify before printing.** Seeed publishes the PCB
 > outline but not every component height; the camera-lens/LED/buzzer positions on
-> the lid are nominal. **Measure your board and test-print the lid first.** A
-> printed case is **not IP-rated** on its own — see climate/IP guidance in build
-> plan §9. The compact variant assumes a **plain XIAO ESP32-S3** (lower profile);
-> if you fit the **Sense** camera, keep `board_stack_h ≈ 8` or raise it.
+> the lid are nominal. **Print the clip coupon and test-fit, then measure your
+> board and check the lid** before the full box. A printed case is **not IP-rated**
+> on its own — see climate/IP guidance in build plan §9.
 
-## What's in the box (both variants)
+## What's in the box (features appear when their peripheral is ticked)
 
-| Feature | Where | Notes |
-|---------|-------|-------|
-| Board cradle | base | 4 standoffs + perimeter frame lift the PCB `standoff_h` (3 mm) off the floor |
-| **Board snap clips** | base, board long edges | 4 cantilever tabs hook over the PCB — it **clicks in, held with no screws** |
-| Battery bay | base (battery variant only) | low rim cradles a 503450 LiPo beside the board |
-| **USB-C port** | base, −X wall | 10.5 × 6.5 mm, centred on PCB-top height |
-| **Camera/sensor window** | lid | `cam_win_d` (9 mm) — keep optically clear |
-| **Light-pipe / LED port** | lid | `lp_d` (3.2 mm) over the status LED |
-| **Buzzer + pressure vent** | lid | recessed seat for a GORE adhesive vent + ring of sound/pressure holes |
-| **Tamper-magnet pocket** | lid underside | blind pocket holds a 6 mm magnet over the reed/Hall switch |
-| Screw lid | 4 corners | countersunk M2 into self-tapping posts; lip nests into the base |
+| Feature | Where | Toggle |
+|---------|-------|--------|
+| Board cradle + frame | base | always (standoffs + perimeter frame, PCB `standoff_h` off the floor) |
+| **Board snap clips** | base, long edges | `board_clips` — 4 tabs hook over the PCB, **clicks in, no screws** |
+| **USB-C port** | base, −X wall | always (10.5 × 6.5 mm, PCB-top height) |
+| Battery bay | base | `opt_battery` |
+| GPS module bay | base | `opt_gps` |
+| Antenna bulkhead | base, +X wall | `opt_antenna` |
+| **Camera/sensor window** | lid | `opt_camera` |
+| **Light-pipe / LED port** | lid | `opt_led` |
+| **Buzzer + pressure vent** | lid | `opt_buzzer` (GORE seat + hole-ring) |
+| **Cap-touch window** | lid | `opt_touch` (thinned to `touch_wall`) |
+| **Tamper-magnet pocket** | lid underside | `opt_tamper` |
+| Screw lid | 4 corners | countersunk M2 into self-tapping posts; lip nests into base |
 
 ## Render / regenerate the STLs
 
-Requires OpenSCAD (CLI). The helper renders all four:
+Requires OpenSCAD (CLI). The helper renders both example presets + the coupon:
 
 ```bash
 ./render.sh
-# or one part of one variant:
-openscad --export-format binstl -o out.stl -D 'variant="compact"' -D 'part="lid"' canary_wap_enclosure.scad
+# or build your own config directly:
+openscad --export-format binstl -o my_base.stl \
+    -D 'preset="custom"' -D 'opt_gps=true' -D 'opt_camera=false' -D 'part="base"' \
+    canary_wap_enclosure.scad
+# or the clip test coupon:
+openscad --export-format binstl -o coupon.stl -D 'part="coupon"' canary_wap_enclosure.scad
 ```
-
-Open the `.scad` in the OpenSCAD GUI to tune parameters with the Customizer
-(grouped: What-to-render, Board, Battery, Shell, Standoffs, Ports, Lid features,
-Tamper magnet), then F6 → Export.
 
 ## Key parameters to check first
 
 | Param | Default | Why you'd change it |
 |-------|--------:|---------------------|
-| `variant` | `"battery"` | `"compact"` drops the battery bay and shrinks the box |
-| `board_stack_h` | 8.0 | Clearance above the PCB. ~8 covers the Sense camera; a plain board needs ~4–5 |
-| `batt_l/w/h` | 50/34/6 | Match **your** cell (battery variant) |
-| `cam_dx/dy`, `lp_dx/dy`, `vent_dx/dy`, `mag_dx/dy` | — | Feature positions **from board centre** — set from a real measurement |
+| `opt_*` | see table | **Tick the peripherals you fitted** — the case adapts |
+| `preset` | `"custom"` | `battery_full` / `compact_plain` one-click configs (override the checkboxes) |
+| `part` | `"all"` | `base` / `lid` / `all` / **`coupon`** (clip-fit tester) |
+| `batt_l/w/h`, `gps_l/w/h` | — | Match **your** cell / GPS module |
+| `cam_dx/dy`, `lp_dx/dy`, `vent_dx/dy`, `mag_dx/dy`, `touch_dx/dy` | — | Feature positions **from board centre** — set from a real measurement |
 | `usb_w/h/z` | 10.5/6.5/0 | Align to your USB-C cable boot |
 | `fit_gap` | 0.20 | Lid-to-base clearance; tune for your printer |
-| `board_clips` | true | Snap tabs that retain the PCB without screws (set false to omit) |
-| `clip_t` / `clip_hook` | 1.5 / 0.8 | Tab flex vs. grip — thin/less for brittle PLA, thicker for a firmer click |
+| `clip_t` / `clip_hook` | 1.5 / 0.8 | Tab flex vs. grip — tune on the **coupon** first |
 
 ## Suggested print settings
 
