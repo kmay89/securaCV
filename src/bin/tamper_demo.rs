@@ -126,6 +126,12 @@ fn run(db_path: &str) -> Result<()> {
             "UPDATE sealed_events SET payload_json = '{\"tampered\":\"by attacker\"}' WHERE id = 2",
             [],
         )?;
+        if changed != 1 {
+            return Err(anyhow::anyhow!(
+                "failed to tamper: expected 1 row modified, got {}",
+                changed
+            ));
+        }
         println!("      modified {} row(s) directly in the DB", changed);
     }
 
