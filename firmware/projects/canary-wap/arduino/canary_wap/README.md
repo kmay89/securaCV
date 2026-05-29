@@ -121,6 +121,35 @@ Edit `build_config.h` to select your build profile:
 - Use MINIMAL profile during development iteration
 - Don't close Arduino IDE between builds (keeps cache warm)
 
+### 7. Troubleshooting
+
+**`Multiple libraries were found for "SD.h"`**
+
+This is a *warning*, not an error — the build still succeeds. The compiler
+correctly picks the ESP32 core's bundled `SD` library:
+
+```
+Multiple libraries were found for "SD.h"
+  Used:     .../packages/esp32/hardware/esp32/<ver>/libraries/SD   <- correct
+  Not used: .../Arduino15/libraries/SD
+  Not used: .../Documents/Arduino/libraries/SD
+```
+
+It appears because one or more standalone `SD` libraries are also installed
+in your sketchbook (`~/Documents/Arduino/libraries/SD`) or global libraries
+folder (`~/Library/Arduino15/libraries/SD` on macOS). The ESP32 build needs
+the *core-bundled* `SD`, so the extra copies are redundant. To silence the
+warning, delete the unused standalone copies — for example on macOS:
+
+```sh
+rm -rf ~/Documents/Arduino/libraries/SD
+rm -rf ~/Library/Arduino15/libraries/SD
+```
+
+Leave the `.../packages/esp32/.../libraries/SD` copy in place — that's the one
+the build uses. (`arduino-cli` reports the same warning and resolves it the
+same way; no sketch change is needed.)
+
 ## Connecting to Your Canary
 
 1. Upload the sketch to your XIAO ESP32-S3
