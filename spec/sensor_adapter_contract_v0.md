@@ -179,14 +179,20 @@ An adapter is conforming only if:
 The reference implementation lives in `src/adapter/` (`contract.rs`, `registry.rs`, `host.rs`,
 `sandbox.rs`, `observability.rs`, and the `frigate.rs`, `mqtt_sensor.rs`, `webhook.rs`,
 `ble_presence.rs` adapters) with conformance tests in `tests/adapter_contract.rs`,
-`tests/adapter_cannot_bypass_enforcer.rs`, `tests/adapter_webhook_sandbox.rs`, and
-`tests/adapter_increment4.rs`. The positioning and capability-mapping rationale is in
-`spec/witness_mesh_os_v0.md`.
+`tests/adapter_cannot_bypass_enforcer.rs`, `tests/adapter_webhook_sandbox.rs`,
+`tests/adapter_increment4.rs`, and `tests/adapter_parser_fuzz.rs`. The positioning and
+capability-mapping rationale is in `spec/witness_mesh_os_v0.md`.
 
 The webhook ingress, being the one untrusted network-facing surface, additionally supports
-constant-time **authentication** (`Authorization: Bearer` or HMAC-SHA256 body signatures), per-path
-**rate limiting** (token bucket → `429`), and a bounded **worker pool** (→ `503` when saturated) so
-it remains an *audit* boundary that cannot be turned into a privilege or availability hole. None of
-these widen kernel privilege; they protect the producer side. Per-adapter operational counters
+constant-time **authentication** (`Authorization: Bearer` or HMAC-SHA256 body signatures, with
+optional **replay protection** binding `X-Timestamp` + `X-Nonce` + request path into the MAC),
+optional **TLS**
+(feature `adapter-webhook-tls`, so bearer tokens are not sent in clear), per-path **rate limiting**
+(token bucket → `429`), and a bounded **worker pool** (→ `503` when saturated) so it remains an
+*audit* boundary that cannot be turned into a privilege or availability hole. None of these widen
+kernel privilege; they protect the producer side. Per-adapter operational counters
 (polls/sealed/rejected) are exposed read-only via `observability::serve_stats` — counts only, never
-event content.
+event content — and the Home Assistant integration can surface them as a diagnostic sensor.
+
+The untrusted parsers (`route_message`, `ble_presence`, Frigate JSON) are covered by a
+panic-free robustness sweep in `tests/adapter_parser_fuzz.rs`.

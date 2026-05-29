@@ -10,6 +10,8 @@ DOMAIN = "securacv"
 CONF_MQTT_PREFIX = "mqtt_prefix"
 CONF_ENABLE_MQTT = "enable_mqtt"
 CONF_SETUP_MODE = "setup_mode"
+# Optional URL of an adapter_host read-only stats endpoint (e.g. http://host:8799).
+CONF_ADAPTER_STATS_URL = "adapter_stats_url"
 
 # Setup modes
 SETUP_MODE_MQTT = "mqtt"

@@ -42,8 +42,16 @@ below.
     feeds into coarse presence claims, deliberately discarding device identity.
   - **Adapter observability**: per-adapter counters (polls/emitted/sealed/filtered/rejected +
     last-seal time) on the host, a periodic stats log, and an optional read-only `/stats` +
-    `/healthz` HTTP endpoint (`stats_addr`) for Home Assistant `rest` diagnostic sensors —
-    operational counts only, never event content.
+    `/healthz` HTTP endpoint (`stats_addr`) — operational counts only, never event content.
+  - **Webhook TLS** (`adapter-webhook-tls`): optional rustls TLS on the webhook listener
+    (`tls_cert`/`tls_key`), so bearer tokens aren't sent in clear on non-loopback deployments.
+  - **HMAC replay protection**: opt-in `X-Timestamp` + `X-Nonce` bound into the signature
+    (`hmac_replay_window_secs`), rejecting replayed or stale signed requests.
+  - **Home Assistant native adapter-stats sensor**: configuring an "Adapter Host stats URL" adds a
+    diagnostic sensor (per-adapter counters as attributes) via a dedicated coordinator — no
+    hand-written YAML needed.
+  - **Parser fuzz sweep** (`tests/adapter_parser_fuzz.rs`): seeded, panic-free robustness tests
+    over the untrusted webhook/mqtt/BLE/Frigate parsers.
 - **Home Assistant integration** (HACS): 3 setup modes (MQTT / Kernel HTTP /
   both), MQTT auto-discovery, device PKI trust management (TOFU + manual pin +
   rotation), 5 sensor types, 11 binary sensor types (tamper + transport),

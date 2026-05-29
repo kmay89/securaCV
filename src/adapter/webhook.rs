@@ -24,7 +24,7 @@ use std::net::{TcpListener, TcpStream, ToSocketAddrs};
 use std::sync::mpsc::{channel, sync_channel, Receiver, Sender, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use sha2::{Digest, Sha256};
@@ -46,6 +46,21 @@ const READ_TIMEOUT: Duration = Duration::from_secs(10);
 /// Default size of the connection worker pool.
 const DEFAULT_WORKERS: usize = 16;
 
+/// A bidirectional stream a worker can serve over (plain `TcpStream` or a TLS session).
+trait ReadWrite: Read + Write {}
+impl<T: Read + Write> ReadWrite for T {}
+
+/// Converts an accepted `TcpStream` into a served stream (identity for plaintext, a TLS handshake
+/// wrapper when TLS is enabled). Run in the worker, not the accept loop, so handshakes don't block
+/// `accept`.
+type StreamWrap =
+    Arc<dyn Fn(TcpStream) -> std::io::Result<Box<dyn ReadWrite + Send>> + Send + Sync>;
+
+/// Identity wrap: serve the TCP stream directly (no TLS).
+fn plain_wrap() -> StreamWrap {
+    Arc::new(|tcp| Ok(Box::new(tcp) as Box<dyn ReadWrite + Send>))
+}
+
 /// Authentication required of inbound webhook requests.
 ///
 /// The webhook is the one untrusted, network-facing ingress, so on anything but loopback an
@@ -57,9 +72,18 @@ pub enum WebhookAuth {
     None,
     /// Require `Authorization: Bearer <token>` matching this shared token.
     Bearer(String),
-    /// Require `X-Signature: sha256=<hex>` = HMAC-SHA256(secret, body). Also authenticates the
-    /// body, so a replayed body cannot be altered.
-    Hmac(Vec<u8>),
+    /// Require `X-Signature: sha256=<hex>` HMAC of the request, keyed by `secret`.
+    ///
+    /// With `replay_window = None` the signature covers the body only (simplest scheme). With
+    /// `replay_window = Some(w)` the request must also carry `X-Timestamp` (unix seconds, within
+    /// `±w` of now) and a unique `X-Nonce`, and the signature covers
+    /// `"<timestamp>.<nonce>.<path>.<body>"` — binding the timestamp, nonce, and request path into
+    /// the MAC so a captured request cannot be replayed (the nonce is rejected on reuse, the
+    /// timestamp expires, and a signature for one route can't be reused against another).
+    Hmac {
+        secret: Vec<u8>,
+        replay_window: Option<Duration>,
+    },
 }
 
 /// A simple per-key token bucket: `capacity` burst, refilled at `refill_per_sec`.
@@ -80,6 +104,15 @@ pub struct WebhookOptions {
     pub workers: usize,
 }
 
+/// Headers relevant to authentication, extracted from a request.
+#[derive(Default)]
+struct AuthHeaders {
+    authorization: Option<String>,
+    signature: Option<String>,
+    timestamp: Option<String>,
+    nonce: Option<String>,
+}
+
 /// Shared state for connection workers.
 struct Shared {
     tx: Sender<SensorMessage>,
@@ -87,6 +120,8 @@ struct Shared {
     rate_limit: Option<RateLimit>,
     /// per-path token buckets: path -> (tokens, last_refill).
     buckets: Mutex<HashMap<String, (f64, Instant)>>,
+    /// recently-seen HMAC nonces (for replay rejection): nonce -> first-seen instant.
+    seen_nonces: Mutex<HashMap<String, Instant>>,
 }
 
 impl Shared {
@@ -108,6 +143,88 @@ impl Shared {
             false
         }
     }
+
+    /// Verify the HMAC scheme for a request, including replay protection when configured.
+    ///
+    /// In the replay-protected mode the request `path` is bound into the MAC, so a signed payload
+    /// captured for one route cannot be replayed against a different route sharing the same secret.
+    fn verify_hmac(&self, h: &AuthHeaders, path: &str, body: &[u8]) -> bool {
+        let WebhookAuth::Hmac {
+            secret,
+            replay_window,
+        } = &self.auth
+        else {
+            return false;
+        };
+        let Some(provided) = h
+            .signature
+            .as_deref()
+            .and_then(|s| s.trim().strip_prefix("sha256="))
+            .map(str::trim)
+        else {
+            return false;
+        };
+
+        let Some(window) = replay_window else {
+            // Body-only signature.
+            let expected = hex::encode(hmac_sha256(secret, body));
+            return ct_eq_str(provided, &expected);
+        };
+
+        // Replay-protected: require a fresh timestamp and an unused nonce, both bound into the MAC.
+        let (Some(ts_raw), Some(nonce)) = (h.timestamp.as_deref(), h.nonce.as_deref()) else {
+            return false;
+        };
+        let (ts_raw, nonce) = (ts_raw.trim(), nonce.trim());
+        if nonce.is_empty() {
+            return false;
+        }
+        let Ok(ts) = ts_raw.parse::<u64>() else {
+            return false;
+        };
+        if now_epoch_s().abs_diff(ts) > window.as_secs() {
+            return false;
+        }
+
+        // Sign "<timestamp>.<nonce>.<path>.<body>" — binding the route so a captured signature
+        // cannot be replayed against a different path.
+        let mut signed =
+            Vec::with_capacity(ts_raw.len() + nonce.len() + path.len() + body.len() + 3);
+        signed.extend_from_slice(ts_raw.as_bytes());
+        signed.push(b'.');
+        signed.extend_from_slice(nonce.as_bytes());
+        signed.push(b'.');
+        signed.extend_from_slice(path.as_bytes());
+        signed.push(b'.');
+        signed.extend_from_slice(body);
+        let expected = hex::encode(hmac_sha256(secret, &signed));
+        if !ct_eq_str(provided, &expected) {
+            return false;
+        }
+
+        // Signature is valid: reject if the nonce was already used inside the window.
+        let mut seen = self.seen_nonces.lock().expect("nonce cache mutex");
+        let now = Instant::now();
+        seen.retain(|_, &mut t| now.saturating_duration_since(t) < window.saturating_mul(2));
+        if seen.contains_key(nonce) {
+            return false;
+        }
+        seen.insert(nonce.to_string(), now);
+        true
+    }
+}
+
+/// Current unix time in seconds (0 on clock error).
+fn now_epoch_s() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Constant-time comparison of two equal-purpose strings (used for fixed-length hex digests).
+fn ct_eq_str(a: &str, b: &str) -> bool {
+    a.as_bytes().ct_eq(b.as_bytes()).into()
 }
 
 /// HMAC-SHA256 over `msg` keyed by `key` (RFC 2104), using the always-present `sha2` dependency.
@@ -137,13 +254,9 @@ fn hmac_sha256(key: &[u8], msg: &[u8]) -> [u8; 32] {
     outer.finalize().into()
 }
 
-/// Constant-time authentication check. `body` is only needed for the HMAC scheme.
-fn authorized(
-    auth: &WebhookAuth,
-    authorization: Option<&str>,
-    signature: Option<&str>,
-    body: &[u8],
-) -> bool {
+/// Stateless auth check for the schemes that don't need the body or shared state (None, Bearer).
+/// HMAC is handled by [`Shared::verify_hmac`].
+fn authorized(auth: &WebhookAuth, authorization: Option<&str>) -> bool {
     match auth {
         WebhookAuth::None => true,
         WebhookAuth::Bearer(expected) => {
@@ -163,18 +276,7 @@ fn authorized(
                 None => false,
             }
         }
-        WebhookAuth::Hmac(secret) => {
-            let provided = signature
-                .and_then(|h| h.trim().strip_prefix("sha256="))
-                .map(str::trim);
-            match provided {
-                Some(hexsig) => {
-                    let expected_hex = hex::encode(hmac_sha256(secret, body));
-                    hexsig.as_bytes().ct_eq(expected_hex.as_bytes()).into()
-                }
-                None => false,
-            }
-        }
+        WebhookAuth::Hmac { .. } => false,
     }
 }
 
@@ -300,17 +402,29 @@ pub fn serve_listener_with_options(
     tx: Sender<SensorMessage>,
     options: WebhookOptions,
 ) -> Result<()> {
-    let workers = if options.workers == 0 {
-        DEFAULT_WORKERS
-    } else {
-        options.workers
-    };
     let shared = Arc::new(Shared {
         tx,
         auth: options.auth,
         rate_limit: options.rate_limit,
         buckets: Mutex::new(HashMap::new()),
+        seen_nonces: Mutex::new(HashMap::new()),
     });
+    run_pool(listener, shared, options.workers, plain_wrap())
+}
+
+/// Dispatch accepted connections to a fixed worker pool over a bounded queue. `wrap` adapts each
+/// raw `TcpStream` into the served stream (plaintext or TLS).
+fn run_pool(
+    listener: TcpListener,
+    shared: Arc<Shared>,
+    workers: usize,
+    wrap: StreamWrap,
+) -> Result<()> {
+    let workers = if workers == 0 {
+        DEFAULT_WORKERS
+    } else {
+        workers
+    };
 
     // Bounded hand-off queue: the accept loop is the producer, the pool are consumers.
     let (job_tx, job_rx) = sync_channel::<TcpStream>(workers.saturating_mul(2));
@@ -318,19 +432,34 @@ pub fn serve_listener_with_options(
     for _ in 0..workers {
         let job_rx = Arc::clone(&job_rx);
         let shared = Arc::clone(&shared);
+        let wrap = Arc::clone(&wrap);
         thread::spawn(move || loop {
             // Hold the lock only across recv; release before handling so peers can pick up work.
             let job = {
                 let guard = job_rx.lock().expect("webhook job queue mutex");
                 guard.recv()
             };
-            match job {
+            let tcp = match job {
+                Ok(tcp) => tcp,
+                Err(_) => break, // listener dropped the sender
+            };
+            // Bound reads, writes, and the TLS handshake on the underlying socket so a client that
+            // stalls mid-read or refuses to read the response cannot tie up a worker forever.
+            if let Err(e) = tcp.set_read_timeout(Some(READ_TIMEOUT)) {
+                log::debug!("webhook set_read_timeout failed: {e}");
+                continue;
+            }
+            if let Err(e) = tcp.set_write_timeout(Some(READ_TIMEOUT)) {
+                log::debug!("webhook set_write_timeout failed: {e}");
+                continue;
+            }
+            match wrap(tcp) {
                 Ok(stream) => {
                     if let Err(e) = handle_connection(stream, &shared) {
                         log::debug!("webhook connection error: {e}");
                     }
                 }
-                Err(_) => break, // listener dropped the sender
+                Err(e) => log::debug!("webhook stream setup failed: {e}"),
             }
         });
     }
@@ -351,8 +480,7 @@ pub fn serve_listener_with_options(
     Ok(())
 }
 
-fn handle_connection(stream: TcpStream, shared: &Shared) -> Result<()> {
-    stream.set_read_timeout(Some(READ_TIMEOUT))?;
+fn handle_connection<S: Read + Write>(stream: S, shared: &Shared) -> Result<()> {
     let mut reader = BufReader::new(stream);
 
     // Request line: "METHOD SP PATH SP HTTP/1.1". Bounded read to prevent OOM from a client that
@@ -373,8 +501,7 @@ fn handle_connection(stream: TcpStream, shared: &Shared) -> Result<()> {
     // Headers. Match names case-insensitively but preserve values (tokens/signatures are
     // case-sensitive). Each line and the total header size are bounded.
     let mut content_length: usize = 0;
-    let mut authorization: Option<String> = None;
-    let mut signature: Option<String> = None;
+    let mut headers = AuthHeaders::default();
     let mut headers_read: usize = 0;
     loop {
         let mut line = String::new();
@@ -390,8 +517,10 @@ fn handle_connection(stream: TcpStream, shared: &Shared) -> Result<()> {
             let value = value.trim();
             match name.trim().to_ascii_lowercase().as_str() {
                 "content-length" => content_length = value.parse().unwrap_or(0),
-                "authorization" => authorization = Some(value.to_string()),
-                "x-signature" => signature = Some(value.to_string()),
+                "authorization" => headers.authorization = Some(value.to_string()),
+                "x-signature" => headers.signature = Some(value.to_string()),
+                "x-timestamp" => headers.timestamp = Some(value.to_string()),
+                "x-nonce" => headers.nonce = Some(value.to_string()),
                 _ => {}
             }
         }
@@ -404,26 +533,23 @@ fn handle_connection(stream: TcpStream, shared: &Shared) -> Result<()> {
         return write_response(reader.get_mut(), 413, "payload too large");
     }
 
-    // Bearer auth does not need the body, so reject before reading it: otherwise an
+    // Bearer/None auth does not need the body, so reject before reading it: otherwise an
     // unauthenticated client could advertise a large body, drip it until READ_TIMEOUT, and tie up
     // a worker. HMAC must defer (it signs the body) and is checked after the read.
-    if matches!(shared.auth, WebhookAuth::Bearer(_))
-        && !authorized(&shared.auth, authorization.as_deref(), None, &[])
-    {
+    let is_hmac = matches!(shared.auth, WebhookAuth::Hmac { .. });
+    if !is_hmac && !authorized(&shared.auth, headers.authorization.as_deref()) {
         return write_response(reader.get_mut(), 401, "unauthorized");
     }
 
     let mut body = vec![0u8; content_length];
     reader.read_exact(&mut body)?;
 
-    if matches!(shared.auth, WebhookAuth::Hmac(_))
-        && !authorized(&shared.auth, None, signature.as_deref(), &body)
-    {
+    // Strip any query string so routing (and the replay-protected signature) keys on the bare path.
+    let path = raw_path.split('?').next().unwrap_or(&raw_path).to_string();
+
+    if is_hmac && !shared.verify_hmac(&headers, &path, &body) {
         return write_response(reader.get_mut(), 401, "unauthorized");
     }
-
-    // Strip any query string so routing keys on the bare path.
-    let path = raw_path.split('?').next().unwrap_or(&raw_path).to_string();
 
     if !shared.rate_ok(&path) {
         return write_response(reader.get_mut(), 429, "too many requests");
@@ -434,7 +560,7 @@ fn handle_connection(stream: TcpStream, shared: &Shared) -> Result<()> {
     write_response(reader.get_mut(), 204, "")
 }
 
-fn write_response(stream: &mut TcpStream, code: u16, body: &str) -> Result<()> {
+fn write_response<W: Write>(stream: &mut W, code: u16, body: &str) -> Result<()> {
     let reason = match code {
         204 => "No Content",
         400 => "Bad Request",
@@ -453,6 +579,81 @@ fn write_response(stream: &mut TcpStream, code: u16, body: &str) -> Result<()> {
     stream.flush()?;
     Ok(())
 }
+
+/// TLS support for the webhook listener (feature `adapter-webhook-tls`). Bearer tokens cross the
+/// network in plaintext otherwise, so TLS is the natural complement to webhook authentication for
+/// any non-loopback deployment.
+#[cfg(feature = "adapter-webhook-tls")]
+pub mod tls {
+    use super::*;
+    use std::fs::File;
+    use std::io::BufReader as IoBufReader;
+    use std::path::Path;
+    use std::sync::Arc;
+
+    use anyhow::Context;
+    use rustls::ServerConfig;
+
+    /// Load a rustls [`ServerConfig`] from PEM cert-chain and private-key files.
+    pub fn load_server_config(cert_pem: &Path, key_pem: &Path) -> Result<Arc<ServerConfig>> {
+        let mut cert_rd = IoBufReader::new(
+            File::open(cert_pem)
+                .with_context(|| format!("opening TLS cert {}", cert_pem.display()))?,
+        );
+        let certs =
+            rustls_pemfile::certs(&mut cert_rd).collect::<std::result::Result<Vec<_>, _>>()?;
+        if certs.is_empty() {
+            anyhow::bail!("no certificates found in {}", cert_pem.display());
+        }
+        let mut key_rd = IoBufReader::new(
+            File::open(key_pem)
+                .with_context(|| format!("opening TLS key {}", key_pem.display()))?,
+        );
+        let key = rustls_pemfile::private_key(&mut key_rd)?
+            .ok_or_else(|| anyhow::anyhow!("no private key found in {}", key_pem.display()))?;
+        let config = ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(certs, key)
+            .context("building TLS server config")?;
+        Ok(Arc::new(config))
+    }
+
+    /// Like [`serve_with_options`](super::serve_with_options) but over TLS.
+    pub fn serve_tls(
+        addr: impl ToSocketAddrs,
+        tx: Sender<SensorMessage>,
+        options: WebhookOptions,
+        config: Arc<ServerConfig>,
+    ) -> Result<()> {
+        serve_listener_tls(super::bind(addr)?, tx, options, config)
+    }
+
+    /// Serve an already-bound listener over TLS. The handshake runs in the worker (not the accept
+    /// loop) and is bounded by the per-connection read timeout.
+    pub fn serve_listener_tls(
+        listener: TcpListener,
+        tx: Sender<SensorMessage>,
+        options: WebhookOptions,
+        config: Arc<ServerConfig>,
+    ) -> Result<()> {
+        let shared = Arc::new(Shared {
+            tx,
+            auth: options.auth,
+            rate_limit: options.rate_limit,
+            buckets: Mutex::new(HashMap::new()),
+            seen_nonces: Mutex::new(HashMap::new()),
+        });
+        let wrap: StreamWrap = Arc::new(move |tcp: TcpStream| {
+            let conn = rustls::ServerConnection::new(Arc::clone(&config))
+                .map_err(std::io::Error::other)?;
+            Ok(Box::new(rustls::StreamOwned::new(conn, tcp)) as Box<dyn ReadWrite + Send>)
+        });
+        run_pool(listener, shared, options.workers, wrap)
+    }
+}
+
+#[cfg(feature = "adapter-webhook-tls")]
+pub use tls::{load_server_config, serve_listener_tls, serve_tls};
 
 #[cfg(test)]
 mod tests {
@@ -495,19 +696,29 @@ mod tests {
         assert!(adapter.message_to_claim("/unknown", b"{}").is_none());
     }
 
+    fn test_shared(auth: WebhookAuth, rate_limit: Option<RateLimit>) -> Shared {
+        Shared {
+            tx: channel().0,
+            auth,
+            rate_limit,
+            buckets: Mutex::new(HashMap::new()),
+            seen_nonces: Mutex::new(HashMap::new()),
+        }
+    }
+
     #[test]
     fn auth_none_allows_everything() {
-        assert!(authorized(&WebhookAuth::None, None, None, b""));
+        assert!(authorized(&WebhookAuth::None, None));
     }
 
     #[test]
     fn bearer_auth_requires_matching_token() {
         let auth = WebhookAuth::Bearer("s3cret".to_string());
-        assert!(authorized(&auth, Some("Bearer s3cret"), None, b""));
-        assert!(authorized(&auth, Some("bearer s3cret"), None, b"")); // case-insensitive scheme
-        assert!(!authorized(&auth, Some("Bearer wrong"), None, b""));
-        assert!(!authorized(&auth, Some("s3cret"), None, b"")); // missing scheme
-        assert!(!authorized(&auth, None, None, b"")); // missing header
+        assert!(authorized(&auth, Some("Bearer s3cret")));
+        assert!(authorized(&auth, Some("bearer s3cret"))); // case-insensitive scheme
+        assert!(!authorized(&auth, Some("Bearer wrong")));
+        assert!(!authorized(&auth, Some("s3cret"))); // missing scheme
+        assert!(!authorized(&auth, None)); // missing header
     }
 
     #[test]
@@ -515,18 +726,103 @@ mod tests {
         let secret = b"shared-key".to_vec();
         let body = br#"{"confidence":0.8}"#;
         let sig = format!("sha256={}", hex::encode(hmac_sha256(&secret, body)));
-        let auth = WebhookAuth::Hmac(secret);
-        assert!(authorized(&auth, None, Some(&sig), body));
-        // Tampered body invalidates the signature.
-        assert!(!authorized(
-            &auth,
+        let shared = test_shared(
+            WebhookAuth::Hmac {
+                secret,
+                replay_window: None,
+            },
             None,
-            Some(&sig),
+        );
+        let headers = AuthHeaders {
+            signature: Some(sig),
+            ..Default::default()
+        };
+        // Body-only mode ignores the path argument.
+        assert!(shared.verify_hmac(&headers, "/p", body));
+        // Tampered body invalidates the signature.
+        assert!(!shared.verify_hmac(&headers, "/p", br#"{"confidence":0.9}"#));
+        // Missing / malformed signature header.
+        assert!(!shared.verify_hmac(&AuthHeaders::default(), "/p", body));
+        assert!(!shared.verify_hmac(
+            &AuthHeaders {
+                signature: Some("deadbeef".to_string()),
+                ..Default::default()
+            },
+            "/p",
+            body
+        ));
+    }
+
+    #[test]
+    fn hmac_replay_protection() {
+        let secret = b"shared-key".to_vec();
+        let body = br#"{"confidence":0.8}"#;
+        let window = Duration::from_secs(300);
+        let shared = test_shared(
+            WebhookAuth::Hmac {
+                secret: secret.clone(),
+                replay_window: Some(window),
+            },
+            None,
+        );
+
+        let now = now_epoch_s();
+        let path = "/sensors/garage/acoustic";
+        let signed = |ts: u64, nonce: &str, path: &str| {
+            let mut m = Vec::new();
+            m.extend_from_slice(ts.to_string().as_bytes());
+            m.push(b'.');
+            m.extend_from_slice(nonce.as_bytes());
+            m.push(b'.');
+            m.extend_from_slice(path.as_bytes());
+            m.push(b'.');
+            m.extend_from_slice(body);
+            format!("sha256={}", hex::encode(hmac_sha256(&secret, &m)))
+        };
+        let headers = |ts: u64, nonce: &str, path: &str| AuthHeaders {
+            signature: Some(signed(ts, nonce, path)),
+            timestamp: Some(ts.to_string()),
+            nonce: Some(nonce.to_string()),
+            ..Default::default()
+        };
+
+        // Fresh, signed request with a unique nonce is accepted once.
+        assert!(shared.verify_hmac(&headers(now, "nonce-1", path), path, body));
+        // Replaying the exact same request (same nonce) is rejected.
+        assert!(!shared.verify_hmac(&headers(now, "nonce-1", path), path, body));
+        // A different nonce is accepted.
+        assert!(shared.verify_hmac(&headers(now, "nonce-2", path), path, body));
+        // Stale timestamp (outside the window) is rejected even with a fresh nonce.
+        assert!(!shared.verify_hmac(&headers(now - 1000, "nonce-3", path), path, body));
+        // A signature for one path replayed against a different path is rejected.
+        assert!(!shared.verify_hmac(&headers(now, "nonce-x", path), "/other", body));
+        // Missing timestamp/nonce is rejected.
+        assert!(!shared.verify_hmac(
+            &AuthHeaders {
+                signature: Some(signed(now, "nonce-4", path)),
+                ..Default::default()
+            },
+            path,
+            body
+        ));
+        // Tampered body invalidates the signature.
+        assert!(!shared.verify_hmac(
+            &headers(now, "nonce-5", path),
+            path,
             br#"{"confidence":0.9}"#
         ));
-        // Missing / malformed signature header.
-        assert!(!authorized(&auth, None, None, body));
-        assert!(!authorized(&auth, None, Some("deadbeef"), body));
+    }
+
+    #[cfg(feature = "adapter-webhook-tls")]
+    #[test]
+    fn tls_load_missing_files_errors() {
+        use std::path::Path;
+        // Fails closed when the cert/key are absent (never silently serves plaintext).
+        assert!(super::tls::load_server_config(
+            Path::new("/no/such.crt"),
+            Path::new("/no/such.key")
+        )
+        .is_err());
     }
 
     #[test]
@@ -541,15 +837,13 @@ mod tests {
 
     #[test]
     fn token_bucket_limits_then_refills() {
-        let shared = Shared {
-            tx: channel().0,
-            auth: WebhookAuth::None,
-            rate_limit: Some(RateLimit {
+        let shared = test_shared(
+            WebhookAuth::None,
+            Some(RateLimit {
                 capacity: 2.0,
                 refill_per_sec: 1000.0,
             }),
-            buckets: Mutex::new(HashMap::new()),
-        };
+        );
         // Burst capacity of 2 on a path, then throttled.
         assert!(shared.rate_ok("/a"));
         assert!(shared.rate_ok("/a"));
