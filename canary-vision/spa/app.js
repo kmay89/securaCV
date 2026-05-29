@@ -1839,12 +1839,13 @@ function renderLogsView(deviceId) {
 // flattened and sorted by time bucket. We render from the SEALED LEDGER (the signed record), not
 // the artifact projection, so the timeline reflects exactly what was cryptographically attested.
 function envelopeTimelineEvents(envelope) {
-  var entries = (envelope.ledgers && envelope.ledgers.sealed_events &&
+  var entries = (envelope && envelope.ledgers && envelope.ledgers.sealed_events &&
     envelope.ledgers.sealed_events.entries) || [];
   var events = [];
   entries.forEach(function (entry) {
     var rec;
     try { rec = JSON.parse(entry.payload_json); } catch (e) { return; }
+    if (!rec || typeof rec !== 'object') return;
     if (rec.record_type === 'failure' || rec.failure_type !== undefined) {
       events.push({ failure: true, type: rec.failure_type, time_bucket: rec.time_bucket });
     } else {
@@ -1866,11 +1867,26 @@ function envelopeTimelineEvents(envelope) {
 
 // Build the integrity banner from the device's shared-verifier report (the /witness/verify
 // response carries an `evidence_envelope` block produced by viewer/verify_core.js server-side).
-function renderEnvelopeIntegrityBanner(verifyReport) {
+// `displayedDigest` is the whole_envelope_digest of the envelope actually being rendered: the
+// integrity report and the timeline are built from two independent requests, so a witness record
+// arriving between them could make the report describe a DIFFERENT envelope than the one shown. We
+// only claim "verified" when the two digests match; otherwise we surface a mismatch warning and let
+// the operator re-load, rather than painting a green banner over an unrelated timeline.
+function renderEnvelopeIntegrityBanner(verifyReport, displayedDigest) {
   var ee = verifyReport && verifyReport.evidence_envelope;
   if (!ee) {
     return el('div', { className: 'alert alert-warning',
       textContent: 'Integrity status unavailable for this bundle.' });
+  }
+  var digestsMatch = !displayedDigest || !ee.whole_envelope_digest ||
+    ee.whole_envelope_digest === displayedDigest;
+  if (!digestsMatch) {
+    return el('div', { className: 'alert alert-warning' }, [
+      el('div', { className: 'timeline-label',
+        textContent: '⚠ Integrity report does not match the displayed bundle' }),
+      el('div', { className: 'timeline-time',
+        textContent: 'The chain changed between fetching the timeline and verifying it. Reload to re-verify.' }),
+    ]);
   }
   var cls = ee.ok ? (ee.status === 'ok' ? 'alert-success' : 'alert-warning') : 'alert-error';
   var label = ee.ok
@@ -1895,7 +1911,16 @@ function renderEnvelopeIntegrityBanner(verifyReport) {
 function renderVerifiedTimeline(container, envelope, verifyReport) {
   while (container.firstChild) container.removeChild(container.firstChild);
 
-  container.appendChild(renderEnvelopeIntegrityBanner(verifyReport));
+  // Bind the integrity claim to the envelope actually shown (guards against a chain change between
+  // the /envelope and /verify requests).
+  container.appendChild(renderEnvelopeIntegrityBanner(
+    verifyReport, envelope && envelope.whole_envelope_digest));
+
+  if (!envelope) {
+    container.appendChild(el('div', { className: 'alert alert-error',
+      textContent: 'No envelope data available.' }));
+    return;
+  }
 
   // Provenance summary — what produced this, and under which ruleset.
   var p = envelope.provenance || {};
@@ -2038,12 +2063,15 @@ function renderWitnessView(deviceId) {
   // in-app counterpart to the offline viewer: the same signed bundle, rendered here with its
   // integrity status, so an operator can review the attested events without leaving the app.
   var timelineSection = el('div', { id: 'witness-timeline' });
-  actions.appendChild(el('button', {
+  var timelineBtn = el('button', {
     className: 'btn btn-block',
     textContent: 'View Verified Timeline',
     style: 'margin-top: 0.5rem',
     title: 'Render the privacy-coarsened, cryptographically verified events from the evidence envelope',
     onClick: function () {
+      // Guard against overlapping requests from rapid clicks (race conditions / stale overwrites).
+      if (timelineBtn.disabled) return;
+      timelineBtn.disabled = true;
       while (timelineSection.firstChild) timelineSection.removeChild(timelineSection.firstChild);
       timelineSection.appendChild(el('div', { className: 'loading' }, [
         el('div', { className: 'spinner' }), 'Building and verifying evidence envelope...',
@@ -2054,14 +2082,17 @@ function renderWitnessView(deviceId) {
         CanaryAPI.request(device.base_url, '/api/v1/witness/envelope'),
         CanaryAPI.request(device.base_url, '/api/v1/witness/verify', { method: 'POST' }),
       ]).then(function (results) {
+        timelineBtn.disabled = false;
         renderVerifiedTimeline(timelineSection, results[0], results[1]);
       }).catch(function (err) {
+        timelineBtn.disabled = false;
         while (timelineSection.firstChild) timelineSection.removeChild(timelineSection.firstChild);
         timelineSection.appendChild(el('div', { className: 'alert alert-error',
           textContent: err.message || 'Failed to load verified timeline' }));
       });
     },
-  }));
+  });
+  actions.appendChild(timelineBtn);
 
   content.appendChild(actions);
   content.appendChild(timelineSection);

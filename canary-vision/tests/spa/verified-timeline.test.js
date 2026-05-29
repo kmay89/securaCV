@@ -58,6 +58,16 @@ describe('SPA verified-timeline helpers', () => {
     assert.equal(typeof app.ENVELOPE_EVENT_META, 'object');
   });
 
+  it('handles null / malformed envelopes without throwing', () => {
+    // (Arrays cross the VM realm boundary, so assert on length rather than deepEqual reference.)
+    assert.equal(app.envelopeTimelineEvents(null).length, 0);
+    assert.equal(app.envelopeTimelineEvents({}).length, 0);
+    assert.equal(app.envelopeTimelineEvents({ ledgers: {} }).length, 0);
+    // A payload_json of literal "null" or invalid JSON must not crash the loop.
+    const env = { ledgers: { sealed_events: { entries: [{ payload_json: 'null' }, { payload_json: '{bad' }] } } };
+    assert.equal(app.envelopeTimelineEvents(env).length, 0);
+  });
+
   it('maps kernel EventType variants to friendly labels', () => {
     assert.equal(app.envelopeEventMeta('VehiclePresenceAfterHours').label, 'Vehicle (after hours)');
     assert.equal(app.envelopeEventMeta('BoundaryCrossingObjectLarge').cssClass, 'type-person');
