@@ -99,10 +99,11 @@ listen_addr = "127.0.0.1:8800"   # loopback by default
 #                                #   curl -H "X-Signature: sha256=$sig" -d "$BODY" http://host:8800/path
 #
 # HMAC replay protection (only with hmac_secret). When set, the client must also send X-Timestamp
-# (unix seconds, within the window) and a unique X-Nonce, and sign "<timestamp>.<nonce>.<body>":
-#   ts=$(date +%s); nonce=$(openssl rand -hex 8)
-#   sig=$(printf '%s.%s.%s' "$ts" "$nonce" "$BODY" | openssl dgst -sha256 -hmac "$SECRET" -hex | sed 's/^.* //')
-#   curl -H "X-Timestamp: $ts" -H "X-Nonce: $nonce" -H "X-Signature: sha256=$sig" -d "$BODY" ...
+# (unix seconds, within the window) and a unique X-Nonce, and sign "<timestamp>.<nonce>.<path>.<body>"
+# (the path is bound in so a signature can't be replayed against a different route):
+#   ts=$(date +%s); nonce=$(openssl rand -hex 8); path=/sensors/garage/acoustic
+#   sig=$(printf '%s.%s.%s.%s' "$ts" "$nonce" "$path" "$BODY" | openssl dgst -sha256 -hmac "$SECRET" -hex | sed 's/^.* //')
+#   curl -H "X-Timestamp: $ts" -H "X-Nonce: $nonce" -H "X-Signature: sha256=$sig" -d "$BODY" "http://host:8800$path"
 # hmac_replay_window_secs = 300
 #
 # TLS — strongly recommended for any non-loopback listener, so bearer tokens aren't sent in the

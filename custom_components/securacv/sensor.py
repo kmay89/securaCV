@@ -288,7 +288,8 @@ class SecuraCVAdapterStatsSensor(CoordinatorEntity, SensorEntity):
         adapters = self._adapters(self.coordinator.data)
         if not adapters:
             return None
-        return sum(int(s.get("claims_sealed", 0)) for s in adapters.values())
+        # `or 0` guards against a null value in the JSON (not just an absent key).
+        return sum(int(s.get("claims_sealed") or 0) for s in adapters.values())
 
     @property
     def extra_state_attributes(self) -> dict[str, Any] | None:
@@ -299,7 +300,7 @@ class SecuraCVAdapterStatsSensor(CoordinatorEntity, SensorEntity):
         attrs: dict[str, Any] = {"adapters": len(adapters), "per_adapter": adapters}
         for counter in self._COUNTERS:
             attrs[f"total_{counter}"] = sum(
-                int(s.get(counter, 0)) for s in adapters.values()
+                int(s.get(counter) or 0) for s in adapters.values()
             )
         return attrs
 

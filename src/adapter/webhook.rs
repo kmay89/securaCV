@@ -76,9 +76,10 @@ pub enum WebhookAuth {
     ///
     /// With `replay_window = None` the signature covers the body only (simplest scheme). With
     /// `replay_window = Some(w)` the request must also carry `X-Timestamp` (unix seconds, within
-    /// `±w` of now) and a unique `X-Nonce`, and the signature covers `"<timestamp>.<nonce>.<body>"`
-    /// — binding both into the MAC so a captured request cannot be replayed (the nonce is rejected
-    /// on reuse and the timestamp expires).
+    /// `±w` of now) and a unique `X-Nonce`, and the signature covers
+    /// `"<timestamp>.<nonce>.<path>.<body>"` — binding the timestamp, nonce, and request path into
+    /// the MAC so a captured request cannot be replayed (the nonce is rejected on reuse, the
+    /// timestamp expires, and a signature for one route can't be reused against another).
     Hmac {
         secret: Vec<u8>,
         replay_window: Option<Duration>,
@@ -144,7 +145,10 @@ impl Shared {
     }
 
     /// Verify the HMAC scheme for a request, including replay protection when configured.
-    fn verify_hmac(&self, h: &AuthHeaders, body: &[u8]) -> bool {
+    ///
+    /// In the replay-protected mode the request `path` is bound into the MAC, so a signed payload
+    /// captured for one route cannot be replayed against a different route sharing the same secret.
+    fn verify_hmac(&self, h: &AuthHeaders, path: &str, body: &[u8]) -> bool {
         let WebhookAuth::Hmac {
             secret,
             replay_window,
@@ -182,10 +186,15 @@ impl Shared {
             return false;
         }
 
-        let mut signed = Vec::with_capacity(ts_raw.len() + nonce.len() + body.len() + 2);
+        // Sign "<timestamp>.<nonce>.<path>.<body>" — binding the route so a captured signature
+        // cannot be replayed against a different path.
+        let mut signed =
+            Vec::with_capacity(ts_raw.len() + nonce.len() + path.len() + body.len() + 3);
         signed.extend_from_slice(ts_raw.as_bytes());
         signed.push(b'.');
         signed.extend_from_slice(nonce.as_bytes());
+        signed.push(b'.');
+        signed.extend_from_slice(path.as_bytes());
         signed.push(b'.');
         signed.extend_from_slice(body);
         let expected = hex::encode(hmac_sha256(secret, &signed));
@@ -196,7 +205,7 @@ impl Shared {
         // Signature is valid: reject if the nonce was already used inside the window.
         let mut seen = self.seen_nonces.lock().expect("nonce cache mutex");
         let now = Instant::now();
-        seen.retain(|_, &mut t| now.duration_since(t) < window.saturating_mul(2));
+        seen.retain(|_, &mut t| now.saturating_duration_since(t) < window.saturating_mul(2));
         if seen.contains_key(nonce) {
             return false;
         }
@@ -434,9 +443,14 @@ fn run_pool(
                 Ok(tcp) => tcp,
                 Err(_) => break, // listener dropped the sender
             };
-            // Bound reads (and the TLS handshake) on the underlying socket.
+            // Bound reads, writes, and the TLS handshake on the underlying socket so a client that
+            // stalls mid-read or refuses to read the response cannot tie up a worker forever.
             if let Err(e) = tcp.set_read_timeout(Some(READ_TIMEOUT)) {
                 log::debug!("webhook set_read_timeout failed: {e}");
+                continue;
+            }
+            if let Err(e) = tcp.set_write_timeout(Some(READ_TIMEOUT)) {
+                log::debug!("webhook set_write_timeout failed: {e}");
                 continue;
             }
             match wrap(tcp) {
@@ -530,12 +544,12 @@ fn handle_connection<S: Read + Write>(stream: S, shared: &Shared) -> Result<()> 
     let mut body = vec![0u8; content_length];
     reader.read_exact(&mut body)?;
 
-    if is_hmac && !shared.verify_hmac(&headers, &body) {
+    // Strip any query string so routing (and the replay-protected signature) keys on the bare path.
+    let path = raw_path.split('?').next().unwrap_or(&raw_path).to_string();
+
+    if is_hmac && !shared.verify_hmac(&headers, &path, &body) {
         return write_response(reader.get_mut(), 401, "unauthorized");
     }
-
-    // Strip any query string so routing keys on the bare path.
-    let path = raw_path.split('?').next().unwrap_or(&raw_path).to_string();
 
     if !shared.rate_ok(&path) {
         return write_response(reader.get_mut(), 429, "too many requests");
@@ -723,16 +737,18 @@ mod tests {
             signature: Some(sig),
             ..Default::default()
         };
-        assert!(shared.verify_hmac(&headers, body));
+        // Body-only mode ignores the path argument.
+        assert!(shared.verify_hmac(&headers, "/p", body));
         // Tampered body invalidates the signature.
-        assert!(!shared.verify_hmac(&headers, br#"{"confidence":0.9}"#));
+        assert!(!shared.verify_hmac(&headers, "/p", br#"{"confidence":0.9}"#));
         // Missing / malformed signature header.
-        assert!(!shared.verify_hmac(&AuthHeaders::default(), body));
+        assert!(!shared.verify_hmac(&AuthHeaders::default(), "/p", body));
         assert!(!shared.verify_hmac(
             &AuthHeaders {
                 signature: Some("deadbeef".to_string()),
                 ..Default::default()
             },
+            "/p",
             body
         ));
     }
@@ -751,40 +767,50 @@ mod tests {
         );
 
         let now = now_epoch_s();
-        let signed = |ts: u64, nonce: &str| {
+        let path = "/sensors/garage/acoustic";
+        let signed = |ts: u64, nonce: &str, path: &str| {
             let mut m = Vec::new();
             m.extend_from_slice(ts.to_string().as_bytes());
             m.push(b'.');
             m.extend_from_slice(nonce.as_bytes());
             m.push(b'.');
+            m.extend_from_slice(path.as_bytes());
+            m.push(b'.');
             m.extend_from_slice(body);
             format!("sha256={}", hex::encode(hmac_sha256(&secret, &m)))
         };
-        let headers = |ts: u64, nonce: &str| AuthHeaders {
-            signature: Some(signed(ts, nonce)),
+        let headers = |ts: u64, nonce: &str, path: &str| AuthHeaders {
+            signature: Some(signed(ts, nonce, path)),
             timestamp: Some(ts.to_string()),
             nonce: Some(nonce.to_string()),
             ..Default::default()
         };
 
         // Fresh, signed request with a unique nonce is accepted once.
-        assert!(shared.verify_hmac(&headers(now, "nonce-1"), body));
+        assert!(shared.verify_hmac(&headers(now, "nonce-1", path), path, body));
         // Replaying the exact same request (same nonce) is rejected.
-        assert!(!shared.verify_hmac(&headers(now, "nonce-1"), body));
+        assert!(!shared.verify_hmac(&headers(now, "nonce-1", path), path, body));
         // A different nonce is accepted.
-        assert!(shared.verify_hmac(&headers(now, "nonce-2"), body));
+        assert!(shared.verify_hmac(&headers(now, "nonce-2", path), path, body));
         // Stale timestamp (outside the window) is rejected even with a fresh nonce.
-        assert!(!shared.verify_hmac(&headers(now - 1000, "nonce-3"), body));
+        assert!(!shared.verify_hmac(&headers(now - 1000, "nonce-3", path), path, body));
+        // A signature for one path replayed against a different path is rejected.
+        assert!(!shared.verify_hmac(&headers(now, "nonce-x", path), "/other", body));
         // Missing timestamp/nonce is rejected.
         assert!(!shared.verify_hmac(
             &AuthHeaders {
-                signature: Some(signed(now, "nonce-4")),
+                signature: Some(signed(now, "nonce-4", path)),
                 ..Default::default()
             },
+            path,
             body
         ));
         // Tampered body invalidates the signature.
-        assert!(!shared.verify_hmac(&headers(now, "nonce-5"), br#"{"confidence":0.9}"#));
+        assert!(!shared.verify_hmac(
+            &headers(now, "nonce-5", path),
+            path,
+            br#"{"confidence":0.9}"#
+        ));
     }
 
     #[cfg(feature = "adapter-webhook-tls")]

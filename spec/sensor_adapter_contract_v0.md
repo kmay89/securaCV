@@ -185,7 +185,8 @@ capability-mapping rationale is in `spec/witness_mesh_os_v0.md`.
 
 The webhook ingress, being the one untrusted network-facing surface, additionally supports
 constant-time **authentication** (`Authorization: Bearer` or HMAC-SHA256 body signatures, with
-optional **replay protection** binding `X-Timestamp` + `X-Nonce` into the MAC), optional **TLS**
+optional **replay protection** binding `X-Timestamp` + `X-Nonce` + request path into the MAC),
+optional **TLS**
 (feature `adapter-webhook-tls`, so bearer tokens are not sent in clear), per-path **rate limiting**
 (token bucket → `429`), and a bounded **worker pool** (→ `503` when saturated) so it remains an
 *audit* boundary that cannot be turned into a privilege or availability hole. None of these widen

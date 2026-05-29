@@ -179,7 +179,8 @@ class SecuraCVAdapterStatsCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     raise UpdateFailed(f"stats endpoint status {resp.status}")
                 # The endpoint sends application/json; tolerate a missing/odd content-type.
                 return await resp.json(content_type=None)
-        except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+        # ValueError covers a misconfigured URL (e.g. missing scheme) raised by aiohttp.
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as err:
             raise UpdateFailed(f"unable to reach adapter stats endpoint: {err}") from err
 
 
