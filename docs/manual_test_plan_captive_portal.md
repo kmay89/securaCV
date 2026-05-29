@@ -16,7 +16,16 @@ hardware and real OS supplicants can exercise.
 ## How the firmware behaves (reference)
 - **AP SSID** is `SecuraCV-XXXX` (last 4 hex of the MAC) in both setup and
   steady state. The softAP is always on (AP+STA) and does **not** NAT.
-- **Per-platform connectivity probes** (always on plain HTTP, port 80):
+- **Transport**: the dashboard / setup wizard / provisioning flow is served
+  over **HTTPS on port 443** (TLS, self-signed cert generated on-device).
+  Plain **HTTP port 80 returns a 301 redirect to HTTPS** for everything
+  *except* the OS connectivity-probe paths below, which are answered in the
+  clear so the supplicant's probe succeeds. So a browser pointed at
+  `canary.local` / `192.168.4.1` lands on `http://` → 301 → `https://`, and
+  the first visit shows a self-signed-cert warning that the tester accepts.
+  (`wap_server.h`: `HTTPS_PORT = 443`, `HTTP_PORT = 80` → "redirect to HTTPS".)
+- **Per-platform connectivity probes** (always on plain HTTP, port 80, **not**
+  redirected):
   - Apple `/hotspot-detect.html`, `/library/test/success.html` → instruction
     HTML (pops the Captive Network Assistant sheet; iOS/macOS keep the
     association while it's open).
@@ -53,8 +62,9 @@ hardware and real OS supplicants can exercise.
 - A "Sign in to network" sheet appears showing the instruction page.
 - Wi-Fi does **not** drop and is **not** marked "No Internet Connection"
   while the sheet is open.
-- Opening Safari → `canary.local` loads the setup/dashboard. `http://192.168.4.1`
-  also loads.
+- Opening Safari → `canary.local` redirects to HTTPS (`https://canary.local`,
+  301 from port 80) and, after accepting the self-signed-cert warning, loads
+  the setup/dashboard. `https://192.168.4.1` also loads.
 
 #### A2) Android (Chrome)
 **Action**
@@ -66,8 +76,9 @@ hardware and real OS supplicants can exercise.
 - Status bar shows connected; **no** "Wi-Fi has no internet" warning, and the
   phone does **not** silently switch back to cellular.
 - In Chrome, `canary.local` resolves and loads **promptly** (no multi-second
-  stall from AAAA/HTTPS probes). If `.local` fails on the device's Android
-  version, `http://192.168.4.1` loads immediately.
+  stall from AAAA/HTTPS probes), redirecting to HTTPS (accept the self-signed
+  cert). If `.local` fails on the device's Android version,
+  `https://192.168.4.1` loads immediately.
 
 #### A3) Windows
 **Action**
@@ -75,7 +86,8 @@ hardware and real OS supplicants can exercise.
 
 **Expected**
 - Network shows connected (may show limited connectivity, but not flapping).
-- `http://192.168.4.1` loads; `canary.local` loads if the host supports mDNS.
+- `https://192.168.4.1` loads (port 80 → 301 → HTTPS; accept the self-signed
+  cert); `canary.local` loads if the host supports mDNS.
 
 ### B) Complete provisioning
 **Action**
@@ -99,11 +111,12 @@ hardware and real OS supplicants can exercise.
 ### D) `canary.local` over home Wi-Fi (STA / mDNS)
 **Action**
 - With the Canary joined to home Wi-Fi and your phone/laptop on that **same**
-  home network (not the AP), open `http://canary.local`.
+  home network (not the AP), open `https://canary.local`.
 
 **Expected**
-- Resolves to the Canary (via the delegated `canary.local` mDNS catch-all).
-- `http://canary-<name>.local` (the unique hostname, e.g. `canary-kitchen.local`)
+- Resolves to the Canary (via the delegated `canary.local` mDNS catch-all) and
+  loads over HTTPS (port 80 → 301 → HTTPS; accept the self-signed cert).
+- `https://canary-<name>.local` (the unique hostname, e.g. `canary-kitchen.local`)
   also resolves.
 - With two Canaries on the LAN, `canary.local` resolves to whichever claimed
   it first; each still has its unique `canary-<name>.local`.
@@ -138,8 +151,8 @@ Record per platform (✅ / ❌ / N/A):
 
 ## Notes
 - Android `.local` resolution depends on the browser/OS version; the
-  `192.168.4.1` fallback is the guaranteed path and is documented for users in
-  `docs/getting_started_canary.md` §2.
+  `https://192.168.4.1` fallback is the guaranteed path and is documented for
+  users in `docs/getting_started_canary.md` §2.
 - If a phone *does* disconnect on current firmware, capture the OS/version and
   the probe URL it hit — the per-platform handlers live on the port-80 server
   and must never sit behind the HTTP→HTTPS redirect (see
