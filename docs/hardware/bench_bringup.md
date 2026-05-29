@@ -16,7 +16,7 @@ Two of the three features need **zero extra parts** — they're already on the b
 | Feature | What you need | Why |
 |---------|---------------|-----|
 | 🔊 **Chirp** | **One passive buzzer** | The only feature that needs an external part. Driven on GPIO2 (`CHIRP_GPIO`) via `FEATURE_AUDIBLE_CHIRP`. |
-| 💡 **LED** | **nothing** | The onboard `LED_BUILTIN` (GPIO21) already blinks as the chirp's visual fallback. |
+| 💡 **LED** | **nothing** | The onboard `LED_BUILTIN` (GPIO21) is the chirp's *visual fallback* and the *identify* blink — test it via identify / visual-only mode (see below). |
 | 🔘 **Button** | **nothing** | The onboard **BOOT** button (GPIO0) is already the presence/test gate (`boot_button_held()`). |
 
 So a first test is really just **a board + a buzzer + a way to connect them.**
@@ -80,15 +80,31 @@ prove the chirp works. Add them once the basics sing — full list in the
 2. **Build & upload** (PlatformIO or Arduino IDE) — see
    [`getting_started_canary.md`](../getting_started_canary.md) and
    [`esp32_s3_setup.md`](../esp32_s3_setup.md) for the toolchain.
-3. **Listen on boot.** You should hear **`PATTERN_CONFIRM`** — two short 2 kHz
-   beeps ("I'm here") — and see the onboard LED blink. **Chirp + LED confirmed.**
-4. **Exercise it on demand.** Once on the AP, fire the test route:
+3. **Test the chirp — listen on boot.** You should hear **`PATTERN_CONFIRM`** —
+   two short 2 kHz beeps ("I'm here"). **Chirp confirmed.**
+   > With a buzzer connected the LED does **not** blink during the confirm tones
+   > — that's expected, not a failure. The onboard LED is the *no-buzzer
+   > fallback* and the *identify* signal (next step), not a companion to every
+   > tone.
+4. **Test the LED.** Trigger the identify signal, which does a **triple LED-only
+   blink** (`PATTERN_IDENTIFY`) regardless of the buzzer:
+   ```
+   POST http://canary.local/api/audible-chirp/play   {"pattern":"identify"}
+   ```
+   (or tap **Identify** in the dashboard). Alternatively, flip to visual-only so
+   *every* pattern blinks the LED instead of sounding:
+   ```
+   POST http://canary.local/api/audible-chirp/config  {"visual_only": true}
+   ```
+   **LED confirmed.**
+5. **Test the chirp on demand.** Fire the quick test route (replays confirm):
    ```
    POST http://canary.local/api/audible-chirp/test
    ```
-   It replays the confirm pattern. (If you set an API token, include it.)
-5. **Button path.** Hold **BOOT** to trigger the presence/beacon gate
-   (`CONFIG_BOOT_BUTTON_HOLD_MS = 2000` ms) and confirm the firmware reacts.
+   (If you set an API token, include it.)
+6. **Test the button.** Hold **BOOT** to trigger the presence/beacon gate
+   (`BOOT_BUTTON_HOLD_MS = 2000` ms, in `canary_wap.ino`) and confirm the
+   firmware reacts.
 
 ---
 
@@ -96,9 +112,10 @@ prove the chirp works. Add them once the basics sing — full list in the
 
 | Symptom | Likely cause | Fix |
 |---------|--------------|-----|
-| Total silence, LED still blinks | Built with **MINIMAL** | Rebuild with DEV or FULL (`FEATURE_AUDIBLE_CHIRP`) |
+| Total silence on boot | Built with **MINIMAL** | Rebuild with DEV or FULL (`FEATURE_AUDIBLE_CHIRP`) |
 | Faint click only, no tone | **Active** buzzer fitted, or buzzer off-resonance | Use a **passive** piezo; confirm 1–3 kHz part |
-| Nothing at all (no LED either) | Power / flash / cable | Use a **data** USB-C cable; check serial console at boot |
+| No beep **and** no LED on identify | Power / flash / cable | Use a **data** USB-C cable; check serial console at boot |
+| LED never blinks but buzzer works | Looking for the LED during tones | Use the **identify** pattern or `visual_only:true` (step 4) — tones don't drive the LED |
 | Tone but very quiet | Buzzer unbaffled on the bench | Normal — SPL improves with an enclosure vent later |
 | `test` route 404 / 401 | Wrong profile or missing token | DEV/FULL enables the route; pass the API token if set |
 
