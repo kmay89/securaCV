@@ -45,6 +45,7 @@ use crate::crypto::signatures::PqSecretKey;
 #[cfg(feature = "pqc-signatures")]
 use pqcrypto_traits::sign::PublicKey as PqPublicKeyTrait;
 
+pub mod adapter;
 pub mod api;
 pub mod break_glass;
 pub mod config;
@@ -60,6 +61,10 @@ pub mod transport;
 pub mod vault;
 pub mod verify;
 
+pub use adapter::{
+    claim_kind_to_event_type, AdapterDescriptor, AdapterHost, AdapterRegistry, Claim, ClaimKind,
+    SensorAdapter,
+};
 pub use detect::{Detection, DetectionResult, SizeClass};
 pub use frame::{
     select_inference_backend, BackendSelection, CpuDetector, Detector, DetectorBackend,
@@ -318,6 +323,19 @@ impl TimeBucket {
 pub enum EventType {
     BoundaryCrossingObjectLarge,
     BoundaryCrossingObjectSmall,
+    /// A coarse acoustic impulse (e.g. impact/discharge-like sound) was sensed in a zone.
+    /// No waveform, direction, or precise time is ever retained — only the claim.
+    AcousticImpulseInZone,
+    /// A presence was sensed in an operator-designated restricted zone.
+    /// Carries no identity, appearance, or trajectory.
+    PresenceInRestrictedZone,
+    /// A vehicle-sized presence was sensed during operator-configured "after hours".
+    /// Carries no plate, make, model, color, or cross-zone linkage.
+    VehiclePresenceAfterHours,
+    /// A binary contact/open-close state change (door, gate, window, enclosure).
+    ContactStateChange,
+    /// An object previously present in a zone is no longer present (removal).
+    ObjectRemovedFromZone,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
