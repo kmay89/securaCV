@@ -287,6 +287,39 @@
   setup DNS hijack for non-`.local` lookups.
 - **Date learned:** 2026-05
 
+### Captive DNS redirector must answer A queries only — NODATA for AAAA/HTTPS
+- **What happened:** Even with the per-platform probes, `canary.local` and the
+  redirect resolved slowly or not at all on Android Chrome.
+- **Root cause:** The setup DNS responder appended an **A record to every
+  query regardless of QTYPE**. Android Chrome fires `AAAA` (type 28) and
+  `HTTPS`/SVCB (type 65) lookups in parallel with the `A` query; replying to
+  those with an A-record answer is malformed, so the client waits/retries
+  instead of falling back to IPv4.
+- **Fix:** Parse the question's QTYPE. Answer the redirect A record only for
+  `A` (type 1) queries; for everything else return **NOERROR with ANCOUNT=0
+  (NODATA)** so the client immediately falls back to its A lookup. QNAMEs in
+  queries aren't compressed, so a simple label walk finds the QTYPE.
+- **Date learned:** 2026-05
+
+### The captive DNS redirector runs for the AP's lifetime, not just first boot
+- **What happened:** After provisioning, a phone joining the always-on
+  management AP (e.g. because home WiFi dropped) hit the disconnect again —
+  the per-platform probe handlers existed but were never reached.
+- **Root cause:** The probe domains (`connectivitycheck.gstatic.com`, etc.)
+  only resolve to the device when the captive DNS hijack is running, and it
+  was gated on `setup_wizard::is_active()` — true only on first boot. With no
+  hijack, the probe never reached the device's 204 handler, so the OS saw "no
+  internet" and disconnected.
+- **Fix:** Start the DNS redirector whenever the AP comes up and service
+  `dns_process()` in `loop()` unconditionally (it self-guards on
+  `s_dns_running`). The first-boot *wizard* (landing gate + 15-min timeout)
+  stays separately gated on `is_active()`.
+- **Why it's safe:** The softAP doesn't NAT, so AP clients have no upstream
+  regardless; hijacking all A queries to the device is the intended captive
+  behavior, not a regression. The device's own outbound DNS is unaffected (it
+  uses the STA's resolver, never the local port-53 listener).
+- **Date learned:** 2026-05
+
 ---
 
 ## How to Add an Entry
