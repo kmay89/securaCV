@@ -52,6 +52,14 @@ below.
     hand-written YAML needed.
   - **Parser fuzz sweep** (`tests/adapter_parser_fuzz.rs`): seeded, panic-free robustness tests
     over the untrusted webhook/mqtt/BLE/Frigate parsers.
+  - **Webhook mutual TLS**: optional client-certificate auth (`tls_client_ca`) — machine-to-machine
+    sensors authenticate by certificate, with no shared secret on the wire.
+  - **Prometheus metrics**: the stats endpoint serves `/metrics` (text exposition format) alongside
+    JSON `/` and `/healthz`, for Grafana/Alertmanager scraping.
+  - **SIGHUP config hot-reload**: `adapter_host` reloads `min_confidence` and each adapter's
+    route/room/filter attributes (and webhook paths) live on SIGHUP, without restarting listeners
+    or dropping connections; changing an mqtt_sensor's subscribed topic, or adapter topology,
+    still requires a restart (and is logged).
 - **Home Assistant integration** (HACS): 3 setup modes (MQTT / Kernel HTTP /
   both), MQTT auto-discovery, device PKI trust management (TOFU + manual pin +
   rotation), 5 sensor types, 11 binary sensor types (tamper + transport),
@@ -119,8 +127,10 @@ PlatformIO (canary/) and Arduino WAP (canary-wap/) builds with full parity.
     always-on AP (not just first boot), so rejoining the management AP after
     provisioning works too. The redirector answers only `A` queries and
     returns NODATA for `AAAA`/`HTTPS`, so `canary.local` resolves promptly on
-    Android Chrome; `192.168.4.1` is the always-works fallback. Pure DNS
-    builder (`captive_dns.h`) is host-unit-tested in CI.
+    Android Chrome; `192.168.4.1` is the always-works fallback. The pure
+    response logic is extracted into host-unit-tested headers — the DNS builder
+    (`captive_dns.h`) and the per-platform probe policy (`captive_probe.h`,
+    driving a single `handle_captive_probe` handler) — both run in CI.
 - **securacv_diagnostics** — Heap monitoring (free/min/largest block/PSRAM/
   stack HWM/fragmentation), 3-level automatic feature degradation with 5KB
   hysteresis, SD health tracking (atomic write/error counters, space warnings),

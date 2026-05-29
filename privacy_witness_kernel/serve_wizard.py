@@ -19,6 +19,7 @@ Endpoints:
 import http.server
 import json
 import os
+import re
 import socket
 import sys
 import urllib.request
@@ -58,6 +59,50 @@ def _supervisor_request(method: str, path: str, data: dict | None = None) -> dic
         raise RuntimeError(f"Supervisor API error {exc.code}: {body_text}") from exc
     except Exception as exc:
         raise RuntimeError(f"Supervisor API unreachable: {exc}") from exc
+
+
+def _canary_request(address: str, token: str, method: str, path: str,
+                    data: dict | None = None) -> dict:
+    """Make an authenticated request to a Canary device's REST API.
+
+    Mirrors _supervisor_request but targets a per-request device address
+    on the trusted LAN, authenticating with the device's bearer token.
+
+    The address + token are supplied transiently by the pairing wizard
+    (they are NOT persisted in the add-on config). Communication is
+    plaintext HTTP on the local network — see the security note in
+    spec/canary_mesh_network_v0.md §8.
+
+    Returns the device's JSON response on success, or a dict shaped like
+    {"ok": False, "error": ...} on any transport/HTTP error so the
+    wizard front-end can branch on `ok` uniformly.
+
+    The bearer token is NEVER logged.
+    """
+    if not address:
+        return {"ok": False, "error": "Missing device address"}
+    # SSRF hardening: the address is user-supplied (the LAN device the user is
+    # pairing), but it must be a bare host[:port] (hostname or IPv4, optional
+    # port). Reject anything carrying a scheme, path, query, fragment, or
+    # embedded credentials so a crafted value can't redirect the request away
+    # from the hardcoded `path`.
+    if not re.fullmatch(r"[A-Za-z0-9.\-]+(?::\d{1,5})?", address):
+        return {"ok": False, "error": "Invalid device address"}
+    url = f"http://{address}{path}"
+    body = json.dumps(data).encode() if data is not None else None
+    headers = {"Content-Type": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(url, data=body, method=method, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            raw = resp.read().decode()
+            return json.loads(raw) if raw else {"ok": True}
+    except urllib.error.HTTPError as exc:
+        body_text = exc.read().decode(errors="replace")
+        return {"ok": False, "error": f"Device HTTP error {exc.code}: {body_text}"}
+    except Exception as exc:
+        return {"ok": False, "error": f"Device unreachable: {exc}"}
 
 
 def get_addon_options() -> dict:
@@ -179,8 +224,44 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
             self._json_response(self._handle_verify())
         elif path == "/api/restart-ha":
             self._json_response(self._handle_restart_ha())
+        # ── "Add another Canary" pairing-wizard device proxies ──────────
+        # Each reads {address, token} from the body and forwards to the
+        # named device on the trusted LAN. address+token are transient
+        # (never persisted, never logged). All four pairing steps forward
+        # a POST; status/peers forward a GET (GET-with-body is awkward in
+        # this server, so the wizard POSTs {address, token} here and we
+        # translate to the device's GET).
+        elif path == "/api/mesh/pair/start":
+            self._json_response(self._handle_mesh_proxy(payload, "POST", "/api/mesh/pair/start"))
+        elif path == "/api/mesh/pair/join":
+            self._json_response(self._handle_mesh_proxy(payload, "POST", "/api/mesh/pair/join"))
+        elif path == "/api/mesh/pair/confirm":
+            self._json_response(self._handle_mesh_proxy(payload, "POST", "/api/mesh/pair/confirm"))
+        elif path == "/api/mesh/pair/cancel":
+            self._json_response(self._handle_mesh_proxy(payload, "POST", "/api/mesh/pair/cancel"))
+        elif path == "/api/mesh/status":
+            self._json_response(self._handle_mesh_proxy(payload, "GET", "/api/mesh"))
+        elif path == "/api/mesh/peers":
+            self._json_response(self._handle_mesh_proxy(payload, "GET", "/api/mesh/peers"))
         else:
             self._send_error(404, "Unknown endpoint")
+
+    # ------------------------------------------------------------------
+    def _handle_mesh_proxy(self, payload: dict, method: str, device_path: str) -> dict:
+        """Forward a mesh/pairing call to a Canary device.
+
+        Resolves {address, token} from the wizard request body (NOT from
+        add-on config — these come from the wizard form per-request). For
+        POST forwards an empty JSON body to the device (the device reads
+        nothing else from the body); for GET no body is sent. The bearer
+        token is never logged.
+        """
+        address = payload.get("address", "")
+        token = payload.get("token", "")
+        if not address:
+            return {"ok": False, "error": "Missing device address"}
+        data = {} if method == "POST" else None
+        return _canary_request(address, token, method, device_path, data)
 
     # ------------------------------------------------------------------
     def _handle_status(self) -> dict:

@@ -214,6 +214,34 @@ bool set_opera_secret(const uint8_t opera_secret[mesh_crypto::OPERA_SECRET_LEN])
  * check this before wiring the broadcast callback. */
 bool has_opera_secret();
 
+/* ──────────────────────────────────────────────────────────────────────────
+ * STATUS ACCESSORS  (PR-8 — Mesh REST API)
+ *
+ * Thin, read-only getters the GET /api/mesh + GET /api/mesh/peers handlers
+ * need. They expose only what those endpoints surface; nothing here
+ * mutates network state.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+/* Copy the cached 16-byte opera_id into `out`. Returns true iff an opera
+ * secret has been set (i.e. has_opera_secret()); on false `out` is left
+ * untouched. The opera_id is derived + cached in set_opera_secret() — the
+ * 32-byte secret itself is never retained in module RAM. */
+bool get_opera_id(uint8_t out[mesh_crypto::OPERA_ID_LEN]);
+
+/* Convenience alias for has_opera_secret() — reads naturally in the
+ * status handler ("does this device belong to an opera?"). */
+bool has_opera();
+
+/* RAM-only opera display name. set_opera_name() caches into a module-
+ * static buffer (NOT persisted to NVS — opera_name is cosmetic and the
+ * mesh layer deliberately keeps no extra NVS keys for it). The name is
+ * known at opera-create / opera-join time; on a fresh boot before any
+ * pairing has run this cycle, get_opera_name() returns an empty string.
+ * get_opera_name() always null-terminates `out` (writes "" when cap>0
+ * and no name is cached). */
+void set_opera_name(const char* name);
+void get_opera_name(char* out, size_t cap);
+
 bool send_beacon_event(mesh_beacon::BeaconState state,
                        const char*              label,
                        uint32_t                 now_ms);

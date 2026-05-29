@@ -87,10 +87,15 @@ key rotation.
 
 | Step | Deliverable | Est. Effort |
 |------|-------------|-------------|
-| C1 | File reader (mp4→frames) as test harness | 3-5 days |
-| C2 | Pixel format handling (NV12→RGB) | 2-3 days |
-| C3 | Timestamp coarsening at capture | 1-2 days |
-| C4 | GStreamer RTSP source (optional, after file works) | 5-7 days |
+| C1 | **Done:** File reader (mp4→frames) via ffmpeg `FileSource` | ✅ |
+| C2 | **Done:** Pixel format handling (NV12→RGB; ffmpeg swscale to RGB24) | ✅ |
+| C3 | **Done:** Timestamp coarsening at capture (`TimeBucket::now_10min`) | ✅ |
+| C4 | GStreamer/FFmpeg RTSP source | ✅ (implemented, feature-gated) |
+
+**Roundtrip proven:** the `ingest_run` binary processes a real mp4 end to
+end (file → frames → RGB → detection → signed events → verify), exercised
+in CI against a committed mp4 fixture. Run it with
+`cargo run --features ingest-file-ffmpeg --bin ingest_run -- --video clip.mp4`.
 
 **Total:** ~2-3 weeks
 
@@ -138,7 +143,7 @@ Integration testing
 - [x] `TractBackend` produces correct bounding boxes for a known test model
 - [x] Log entries are Ed25519 signed
 - [x] `log_verify` validates signatures and catches tampering
-- [ ] Can process video from file
+- [x] Can process video from file
 - [ ] Documentation states audit boundary vs security boundary
 
 ### Nice to have:

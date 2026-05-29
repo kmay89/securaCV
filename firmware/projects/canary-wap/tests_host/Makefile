@@ -76,6 +76,13 @@ DEVSIG_BIN     = test_device_signature
 CAPTIVE_DNS_BIN = test_captive_dns
 CAPTIVE_DNS_SRC = test_captive_dns.cpp
 
+# Captive-portal connectivity-probe policy (captive_probe.h). Pure header — the
+# test includes it directly and asserts path classification + the per-platform
+# response descriptor (Apple HTML page, Android 204, Windows NCSI body), the
+# same logic handle_captive_probe() serves in the firmware.
+CAPTIVE_PROBE_BIN = test_captive_probe
+CAPTIVE_PROBE_SRC = test_captive_probe.cpp
+
 .PHONY: all run clean
 all: run
 
@@ -106,7 +113,10 @@ $(DEVSIG_BIN): $(DEVSIG_SOURCES)
 $(CAPTIVE_DNS_BIN): $(CAPTIVE_DNS_SRC)
 	$(CXX) $(CXXFLAGS) -o $@ $(CAPTIVE_DNS_SRC)
 
-run: $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN)
+$(CAPTIVE_PROBE_BIN): $(CAPTIVE_PROBE_SRC)
+	$(CXX) $(CXXFLAGS) -o $@ $(CAPTIVE_PROBE_SRC)
+
+run: $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN)
 	./$(BIN)
 	./$(CHIRP_INV_BIN)
 	./$(CHIRP_SEC_BIN)
@@ -116,6 +126,7 @@ run: $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_B
 	./$(OPERA_SEC_BIN)
 	./$(DEVSIG_BIN)
 	./$(CAPTIVE_DNS_BIN)
+	./$(CAPTIVE_PROBE_BIN)
 
 clean:
-	rm -f $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN)
+	rm -f $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN)
