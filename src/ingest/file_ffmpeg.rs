@@ -75,8 +75,11 @@ impl FfmpegFileSource {
     }
 
     pub(crate) fn next_frame(&mut self) -> Result<RawFrame> {
-        self.poll_timeout()?;
-
+        // No inter-frame stall timeout here: this is a file, not a live
+        // stream. The elapsed time between next_frame() calls reflects how
+        // fast the *caller* consumes frames (per-frame sandbox fork +
+        // signing), not a stalled source, so timing it out would spuriously
+        // abort a slow but healthy run.
         let mut decoded = ffmpeg::frame::Video::empty();
 
         // Canonical ffmpeg decode loop: drain decoded frames first, only
@@ -168,30 +171,12 @@ impl FfmpegFileSource {
         }
     }
 
-    fn frame_timeout(&self) -> Duration {
-        let base_ms = 1000u32
-            .checked_div(self.config.target_fps)
-            .map(|per_frame| per_frame.saturating_mul(4))
-            .unwrap_or(500);
-        Duration::from_millis(base_ms.max(500) as u64)
-    }
-
     fn health_grace(&self) -> Duration {
         let base_ms = 1000u32
             .checked_div(self.config.target_fps)
             .map(|per_frame| per_frame.saturating_mul(6))
             .unwrap_or(2_000);
         Duration::from_millis(base_ms.max(2_000) as u64)
-    }
-
-    fn poll_timeout(&mut self) -> Result<()> {
-        if let Some(last_frame_at) = self.last_frame_at {
-            if last_frame_at.elapsed() > self.frame_timeout() {
-                self.last_error = Some("file ingestion stalled".to_string());
-                anyhow::bail!("file ingestion stalled");
-            }
-        }
-        Ok(())
     }
 }
 

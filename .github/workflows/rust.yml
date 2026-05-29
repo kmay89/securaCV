@@ -45,7 +45,7 @@ jobs:
     - name: Install ffmpeg + libav dev libraries
       run: |
         sudo apt-get update
-        sudo apt-get install -y ffmpeg \
+        sudo apt-get install -y ffmpeg libseccomp-dev \
           libavutil-dev libavformat-dev libavcodec-dev libavfilter-dev \
           libavdevice-dev libswscale-dev libswresample-dev
     - name: Clippy (ingest-file-ffmpeg)

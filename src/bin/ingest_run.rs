@@ -15,9 +15,9 @@ use clap::{Parser, ValueEnum};
 use witness_kernel::crypto::signatures::SignatureMode;
 use witness_kernel::detect::{BackendRegistry, CpuBackend, StubBackend};
 use witness_kernel::{
-    device_public_key_from_db, verify, BackendSelection, CapabilityBoundaryRuntime,
-    DeviceCapabilities, FileConfig, FileSource, InferenceBackend, Kernel, KernelConfig, Module,
-    ZoneCrossingModule, ZonePolicy,
+    device_public_key_from_db, signing_key_from_seed, verify, BackendSelection,
+    CapabilityBoundaryRuntime, DeviceCapabilities, FileConfig, FileSource, InferenceBackend,
+    Kernel, KernelConfig, Module, ZoneCrossingModule, ZonePolicy,
 };
 
 const RULESET_ID: &str = "ruleset:ingest";
@@ -46,6 +46,12 @@ struct Args {
     /// Safety cap on frames processed (0 = unlimited, stop at EOF).
     #[arg(long, default_value_t = 0)]
     max_frames: u64,
+    /// Device key seed. The output DB is SQLCipher-encrypted with a key
+    /// derived from this seed. Supply a stable seed (and keep it secret) if
+    /// you need to reopen/verify the DB later; otherwise a fresh random seed
+    /// is used per run and the DB is single-use (verified in-process here).
+    #[arg(long)]
+    device_key_seed: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
@@ -60,6 +66,11 @@ struct Summary {
     candidates: u64,
     events: u64,
     verified: u64,
+    /// Whether the device key seed was caller-supplied (reproducible/reopenable)
+    /// or randomly generated per run (single-use DB).
+    seed_supplied: bool,
+    /// Hex SQLCipher key needed to reopen the DB with `log_verify --db-key`.
+    db_key: String,
 }
 
 fn random_seed() -> String {
@@ -79,13 +90,19 @@ fn run(args: &Args) -> Result<Summary> {
         let _ = std::fs::remove_file(format!("{}-shm", args.db));
     }
 
+    let seed_supplied = args.device_key_seed.is_some();
+    let device_key_seed = args.device_key_seed.clone().unwrap_or_else(random_seed);
+    let db_key =
+        witness_kernel::derive_db_encryption_key(&signing_key_from_seed(&device_key_seed)?)
+            .to_string();
+
     let cfg = KernelConfig {
         db_path: args.db.clone(),
         ruleset_id: RULESET_ID.to_string(),
         ruleset_hash: KernelConfig::ruleset_hash_from_id(RULESET_ID),
         kernel_version: env!("CARGO_PKG_VERSION").to_string(),
         retention: std::time::Duration::from_secs(60 * 60 * 24 * 7),
-        device_key_seed: random_seed(),
+        device_key_seed,
         zone_policy: ZonePolicy::default(),
     };
     let mut kernel = Kernel::open(&cfg)?;
@@ -181,6 +198,8 @@ fn run(args: &Args) -> Result<Summary> {
         candidates,
         events,
         verified,
+        seed_supplied,
+        db_key,
     })
 }
 
@@ -196,8 +215,22 @@ fn main() -> Result<()> {
     println!("  events verified  : {}", s.verified);
     println!("  log db           : {}", args.db);
     println!();
+    // The DB is SQLCipher-encrypted with a key derived from the device key
+    // seed. log_verify must be given that key via --db-key, otherwise it
+    // cannot open the database. The in-process verification above already
+    // confirmed all events before the key left memory.
     println!("verify independently with:");
-    println!("  cargo run --bin log_verify -- --db {}", args.db);
+    println!(
+        "  cargo run --bin log_verify -- --db {} --db-key {}",
+        args.db, s.db_key
+    );
+    if !s.seed_supplied {
+        println!();
+        println!(
+            "note: a random device key seed was used, so this DB is single-use. \
+             Pass --device-key-seed <seed> for a reproducible, reopenable log."
+        );
+    }
     Ok(())
 }
 
@@ -240,6 +273,7 @@ mod tests {
             zone: "zone:test".to_string(),
             backend: Backend::Cpu,
             max_frames: 0,
+            device_key_seed: None,
         };
 
         let s = run(&args).expect("ingest should succeed on the fixture mp4");
