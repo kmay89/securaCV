@@ -121,6 +121,43 @@ Edit `build_config.h` to select your build profile:
 - Use MINIMAL profile during development iteration
 - Don't close Arduino IDE between builds (keeps cache warm)
 
+### 7. Troubleshooting
+
+**`Multiple libraries were found for "SD.h"`**
+
+This is a *warning*, not an error — the build still succeeds. The compiler
+correctly picks the ESP32 core's bundled `SD` library:
+
+```
+Multiple libraries were found for "SD.h"
+  Used:     .../packages/esp32/hardware/esp32/<ver>/libraries/SD   <- correct
+  Not used: .../Arduino15/libraries/SD
+  Not used: .../Documents/Arduino/libraries/SD
+```
+
+It appears because one or more standalone `SD` libraries are also installed
+in a user libraries folder. The exact location depends on your IDE version
+and platform — on macOS the candidates are:
+
+- `~/Documents/Arduino/libraries/SD` — IDE 1.x sketchbook
+- `~/Arduino/libraries/SD` — IDE 2.x sketchbook
+- `~/Library/Arduino15/libraries/SD` — Library-Manager / data dir
+
+Check the `Not used:` lines in your own build output for the real paths — they
+tell you exactly which copies the compiler skipped. The ESP32 build needs the
+*core-bundled* `SD`, so those standalone copies are redundant. To silence the
+warning, delete the ones the build reported as unused — for example on macOS:
+
+```sh
+rm -rf ~/Documents/Arduino/libraries/SD
+rm -rf ~/Arduino/libraries/SD
+rm -rf ~/Library/Arduino15/libraries/SD
+```
+
+Leave the `.../packages/esp32/.../libraries/SD` copy in place — that's the one
+the build uses. (`arduino-cli` reports the same warning and resolves it the
+same way; no sketch change is needed.)
+
 ## Connecting to Your Canary
 
 1. Upload the sketch to your XIAO ESP32-S3
