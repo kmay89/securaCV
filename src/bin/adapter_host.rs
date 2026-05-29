@@ -38,10 +38,13 @@ use rumqttc::v5::mqttbytes::QoS;
 use rumqttc::v5::{Client, Event, Incoming, MqttOptions};
 use serde::Deserialize;
 
+use witness_kernel::adapter::ble_presence::{BlePresenceAdapter, BleRoom};
 use witness_kernel::adapter::frigate::FrigateAdapter;
 use witness_kernel::adapter::mqtt_sensor::{MqttSensorAdapter, SensorRoute};
-use witness_kernel::adapter::webhook::{self, WebhookAdapter};
-use witness_kernel::adapter::{AdapterHost, AdapterHostConfig, ClaimKind};
+use witness_kernel::adapter::webhook::{
+    self, RateLimit, WebhookAdapter, WebhookAuth, WebhookOptions,
+};
+use witness_kernel::adapter::{observability, AdapterHost, AdapterHostConfig, ClaimKind};
 use witness_kernel::{KernelConfig, ZonePolicy, MIN_BUCKET_SIZE_S};
 
 #[derive(Parser, Debug)]
@@ -79,6 +82,9 @@ struct FileConfig {
     poll_interval_secs: u64,
     #[serde(default)]
     min_confidence: f32,
+    /// Optional `host:port` for the read-only adapter stats/health endpoint.
+    #[serde(default)]
+    stats_addr: Option<String>,
     #[serde(default)]
     adapter: Vec<AdapterCfg>,
 }
@@ -87,12 +93,17 @@ fn default_webhook_addr() -> String {
     "127.0.0.1:8800".to_string()
 }
 
+fn default_espresense_topic() -> String {
+    "espresense/devices/#".to_string()
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum AdapterCfg {
     Frigate(FrigateCfg),
     MqttSensor(MqttSensorCfg),
     Webhook(WebhookCfg),
+    BlePresence(BleCfg),
 }
 
 #[derive(Debug, Deserialize)]
@@ -137,6 +148,45 @@ struct WebhookCfg {
     route: Vec<RouteCfg>,
     #[serde(default)]
     sandbox: bool,
+    /// Require `Authorization: Bearer <token>` matching this value.
+    #[serde(default)]
+    auth_token: Option<String>,
+    /// Require `X-Signature: sha256=<hmac>` over the body, keyed by this secret. Takes precedence
+    /// over `auth_token` if both are set.
+    #[serde(default)]
+    hmac_secret: Option<String>,
+    /// Per-path sustained rate (requests/minute). Enables rate limiting when set.
+    #[serde(default)]
+    rate_limit_per_min: Option<f64>,
+    /// Per-path burst capacity (defaults to one minute's worth of `rate_limit_per_min`).
+    #[serde(default)]
+    rate_burst: Option<f64>,
+    /// Connection worker-pool size (0 / unset = default).
+    #[serde(default)]
+    workers: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BleCfg {
+    #[serde(default = "default_broker")]
+    mqtt_broker_addr: String,
+    #[serde(default = "default_espresense_topic")]
+    topic: String,
+    #[serde(default)]
+    room: Vec<BleRoomCfg>,
+    #[serde(default)]
+    mqtt_username: Option<String>,
+    #[serde(default)]
+    mqtt_password: Option<String>,
+    #[serde(default)]
+    sandbox: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct BleRoomCfg {
+    room: String,
+    zone: String,
+    max_distance: f64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -148,6 +198,26 @@ struct RouteCfg {
     min_confidence: f32,
     #[serde(default)]
     require_truthy_state: bool,
+}
+
+/// Translate webhook config into runtime [`WebhookOptions`].
+fn build_webhook_options(wc: &WebhookCfg) -> WebhookOptions {
+    let auth = if let Some(secret) = &wc.hmac_secret {
+        WebhookAuth::Hmac(secret.clone().into_bytes())
+    } else if let Some(token) = &wc.auth_token {
+        WebhookAuth::Bearer(token.clone())
+    } else {
+        WebhookAuth::None
+    };
+    let rate_limit = wc.rate_limit_per_min.map(|rpm| RateLimit {
+        capacity: wc.rate_burst.unwrap_or_else(|| rpm.max(1.0)),
+        refill_per_sec: rpm / 60.0,
+    });
+    WebhookOptions {
+        auth,
+        rate_limit,
+        workers: wc.workers.unwrap_or(0),
+    }
 }
 
 /// Build a `SensorRoute` list from config, validating claim kinds.
@@ -254,17 +324,44 @@ fn main() -> Result<()> {
                 let routes = build_routes(&wc.route)?;
                 let (adapter, tx) = WebhookAdapter::new(routes);
                 let adapter = adapter.with_sandbox(wc.sandbox);
+                let options = build_webhook_options(&wc);
+                let authed = !matches!(options.auth, WebhookAuth::None);
+                let rate_limited = options.rate_limit.is_some();
                 let listen_addr = wc.listen_addr.clone();
                 thread::spawn(move || {
-                    if let Err(e) = webhook::serve(&listen_addr, tx) {
+                    if let Err(e) = webhook::serve_with_options(&listen_addr, tx, options) {
                         log::error!("webhook listener on {listen_addr} exited: {e}");
                     }
                 });
                 host.register(adapter);
                 log::info!(
-                    "registered webhook adapter #{idx} on {} (sandbox={})",
+                    "registered webhook adapter #{idx} on {} (sandbox={}, auth={}, rate_limited={})",
                     wc.listen_addr,
-                    wc.sandbox
+                    wc.sandbox,
+                    authed,
+                    rate_limited
+                );
+            }
+            AdapterCfg::BlePresence(bc) => {
+                let rooms: Vec<BleRoom> = bc
+                    .room
+                    .iter()
+                    .map(|r| BleRoom::new(r.room.clone(), r.zone.clone(), r.max_distance))
+                    .collect();
+                let (adapter, tx) = BlePresenceAdapter::new(rooms);
+                let adapter = adapter.with_sandbox(bc.sandbox);
+                spawn_mqtt_forwarder(
+                    format!("adapter_host_ble_{idx}"),
+                    bc.mqtt_broker_addr,
+                    bc.mqtt_username,
+                    bc.mqtt_password,
+                    vec![bc.topic],
+                    tx,
+                );
+                host.register(adapter);
+                log::info!(
+                    "registered ble_presence adapter #{idx} (sandbox={})",
+                    bc.sandbox
                 );
             }
         }
@@ -276,7 +373,38 @@ fn main() -> Result<()> {
         file.bucket_size_secs,
         file.poll_interval_secs
     );
-    host.run_loop(Duration::from_secs(file.poll_interval_secs))
+
+    let poll = Duration::from_secs(file.poll_interval_secs);
+
+    // With a stats endpoint configured, run the loop here so we can refresh the shared snapshot
+    // each cycle; otherwise defer to the host's built-in loop.
+    let Some(stats_addr) = file.stats_addr.clone() else {
+        return host.run_loop(poll);
+    };
+    let stats = observability::shared_stats();
+    let serve_stats = stats.clone();
+    thread::spawn(move || {
+        if let Err(e) = observability::serve_stats(&stats_addr, serve_stats) {
+            log::error!("adapter stats endpoint on {stats_addr} exited: {e}");
+        }
+    });
+    let log_every = (60 / file.poll_interval_secs.max(1)).max(1);
+    let mut cycle: u64 = 0;
+    loop {
+        if let Err(e) = host.run_once() {
+            log::warn!("adapter host poll cycle failed: {e}");
+        }
+        if let Ok(json) = serde_json::to_string(&host.stats_snapshot()) {
+            if let Ok(mut g) = stats.lock() {
+                *g = json;
+            }
+        }
+        cycle += 1;
+        if cycle.is_multiple_of(log_every) {
+            host.log_stats_summary();
+        }
+        thread::sleep(poll);
+    }
 }
 
 /// Spawn a background thread that connects to MQTT, subscribes to `topics`, and forwards every

@@ -18,13 +18,17 @@
 //! Gated behind the `adapter-webhook` feature (which implies `adapter-mqtt-sensor` for the shared
 //! routing types).
 
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream, ToSocketAddrs};
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc::{channel, sync_channel, Receiver, Sender, TrySendError};
+use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
+use sha2::{Digest, Sha256};
+use subtle::ConstantTimeEq;
 
 use crate::adapter::contract::{AdapterDescriptor, Claim, ClaimKind};
 use crate::adapter::mqtt_sensor::{parse_messages, route_message, SensorMessage, SensorRoute};
@@ -39,6 +43,134 @@ const MAX_LINE: u64 = 1024;
 const MAX_HEADER_BYTES: usize = 8 * 1024;
 /// Per-connection read timeout so a slow/stuck client cannot tie up its handler forever.
 const READ_TIMEOUT: Duration = Duration::from_secs(10);
+/// Default size of the connection worker pool.
+const DEFAULT_WORKERS: usize = 16;
+
+/// Authentication required of inbound webhook requests.
+///
+/// The webhook is the one untrusted, network-facing ingress, so on anything but loopback an
+/// operator should require a secret. Both schemes are checked in constant time.
+#[derive(Clone, Default)]
+pub enum WebhookAuth {
+    /// No authentication (suitable only for loopback / trusted-LAN deployments).
+    #[default]
+    None,
+    /// Require `Authorization: Bearer <token>` matching this shared token.
+    Bearer(String),
+    /// Require `X-Signature: sha256=<hex>` = HMAC-SHA256(secret, body). Also authenticates the
+    /// body, so a replayed body cannot be altered.
+    Hmac(Vec<u8>),
+}
+
+/// A simple per-key token bucket: `capacity` burst, refilled at `refill_per_sec`.
+#[derive(Clone, Copy)]
+pub struct RateLimit {
+    pub capacity: f64,
+    pub refill_per_sec: f64,
+}
+
+/// Tuning for [`serve_with_options`] / [`serve_listener_with_options`].
+#[derive(Clone, Default)]
+pub struct WebhookOptions {
+    /// Authentication scheme (default: none).
+    pub auth: WebhookAuth,
+    /// Optional per-path rate limit (default: unlimited).
+    pub rate_limit: Option<RateLimit>,
+    /// Worker pool size; `0` selects [`DEFAULT_WORKERS`].
+    pub workers: usize,
+}
+
+/// Shared state for connection workers.
+struct Shared {
+    tx: Sender<SensorMessage>,
+    auth: WebhookAuth,
+    rate_limit: Option<RateLimit>,
+    /// per-path token buckets: path -> (tokens, last_refill).
+    buckets: Mutex<HashMap<String, (f64, Instant)>>,
+}
+
+impl Shared {
+    /// Token-bucket admission for one request on `path`. Returns `true` if allowed.
+    fn rate_ok(&self, path: &str) -> bool {
+        let Some(rl) = self.rate_limit else {
+            return true;
+        };
+        let now = Instant::now();
+        let mut map = self.buckets.lock().expect("rate bucket mutex");
+        let entry = map.entry(path.to_string()).or_insert((rl.capacity, now));
+        let elapsed = now.duration_since(entry.1).as_secs_f64();
+        entry.1 = now;
+        entry.0 = (entry.0 + elapsed * rl.refill_per_sec).min(rl.capacity);
+        if entry.0 >= 1.0 {
+            entry.0 -= 1.0;
+            true
+        } else {
+            false
+        }
+    }
+}
+
+/// HMAC-SHA256 over `msg` keyed by `key` (RFC 2104), using the always-present `sha2` dependency.
+fn hmac_sha256(key: &[u8], msg: &[u8]) -> [u8; 32] {
+    const BLOCK: usize = 64;
+    let mut k = [0u8; BLOCK];
+    if key.len() > BLOCK {
+        k[..32].copy_from_slice(&Sha256::digest(key));
+    } else {
+        k[..key.len()].copy_from_slice(key);
+    }
+    let mut ipad = [0x36u8; BLOCK];
+    let mut opad = [0x5cu8; BLOCK];
+    for i in 0..BLOCK {
+        ipad[i] ^= k[i];
+        opad[i] ^= k[i];
+    }
+    let inner = {
+        let mut h = Sha256::new();
+        h.update(ipad);
+        h.update(msg);
+        h.finalize()
+    };
+    let mut outer = Sha256::new();
+    outer.update(opad);
+    outer.update(inner);
+    outer.finalize().into()
+}
+
+/// Constant-time authentication check. `body` is only needed for the HMAC scheme.
+fn authorized(
+    auth: &WebhookAuth,
+    authorization: Option<&str>,
+    signature: Option<&str>,
+    body: &[u8],
+) -> bool {
+    match auth {
+        WebhookAuth::None => true,
+        WebhookAuth::Bearer(expected) => {
+            let token = authorization.and_then(|h| {
+                let h = h.trim();
+                h.strip_prefix("Bearer ")
+                    .or_else(|| h.strip_prefix("bearer "))
+            });
+            match token {
+                Some(t) => t.trim().as_bytes().ct_eq(expected.as_bytes()).into(),
+                None => false,
+            }
+        }
+        WebhookAuth::Hmac(secret) => {
+            let provided = signature
+                .and_then(|h| h.trim().strip_prefix("sha256="))
+                .map(str::trim);
+            match provided {
+                Some(hexsig) => {
+                    let expected_hex = hex::encode(hmac_sha256(secret, body));
+                    hexsig.as_bytes().ct_eq(expected_hex.as_bytes()).into()
+                }
+                None => false,
+            }
+        }
+    }
+}
 
 static WEBHOOK_DESCRIPTOR: AdapterDescriptor = AdapterDescriptor {
     id: "webhook_adapter",
@@ -131,34 +263,89 @@ pub fn bind(addr: impl ToSocketAddrs) -> Result<TcpListener> {
 }
 
 /// Run a blocking HTTP listener that forwards each `POST`/`PUT` request as `(path, body)` into
-/// `tx`. Intended to be spawned on its own thread. Returns only on a fatal bind error.
+/// `tx`, with no authentication or rate limiting. Returns only on a fatal bind error.
 pub fn serve(addr: impl ToSocketAddrs, tx: Sender<SensorMessage>) -> Result<()> {
-    serve_listener(bind(addr)?, tx)
+    serve_with_options(addr, tx, WebhookOptions::default())
 }
 
-/// Serve an already-bound listener (see [`bind`]).
-///
-/// Each connection is handled on its own thread so a slow or stuck client cannot block delivery
-/// of webhooks from other sensors (avoids head-of-line blocking / a trivial DoS). Per-connection
-/// reads are bounded (line/header/body limits + a read timeout).
+/// Like [`serve`], with authentication / rate-limit / worker-pool tuning.
+pub fn serve_with_options(
+    addr: impl ToSocketAddrs,
+    tx: Sender<SensorMessage>,
+    options: WebhookOptions,
+) -> Result<()> {
+    serve_listener_with_options(bind(addr)?, tx, options)
+}
+
+/// Serve an already-bound listener (see [`bind`]) with default options.
 pub fn serve_listener(listener: TcpListener, tx: Sender<SensorMessage>) -> Result<()> {
-    for stream in listener.incoming() {
-        match stream {
-            Ok(s) => {
-                let tx = tx.clone();
-                thread::spawn(move || {
-                    if let Err(e) = handle_connection(s, &tx) {
+    serve_listener_with_options(listener, tx, WebhookOptions::default())
+}
+
+/// Serve an already-bound listener with explicit [`WebhookOptions`].
+///
+/// Connections are dispatched to a fixed-size worker pool over a bounded queue, so a slow or
+/// stuck client cannot block delivery of webhooks from other sensors (head-of-line blocking) and
+/// a connection flood cannot spawn unbounded threads. When the queue is saturated the listener
+/// fast-rejects with `503`. Per-connection reads are bounded (line/header/body limits + timeout),
+/// and each request is authenticated and rate-limited per [`WebhookOptions`].
+pub fn serve_listener_with_options(
+    listener: TcpListener,
+    tx: Sender<SensorMessage>,
+    options: WebhookOptions,
+) -> Result<()> {
+    let workers = if options.workers == 0 {
+        DEFAULT_WORKERS
+    } else {
+        options.workers
+    };
+    let shared = Arc::new(Shared {
+        tx,
+        auth: options.auth,
+        rate_limit: options.rate_limit,
+        buckets: Mutex::new(HashMap::new()),
+    });
+
+    // Bounded hand-off queue: the accept loop is the producer, the pool are consumers.
+    let (job_tx, job_rx) = sync_channel::<TcpStream>(workers.saturating_mul(2));
+    let job_rx = Arc::new(Mutex::new(job_rx));
+    for _ in 0..workers {
+        let job_rx = Arc::clone(&job_rx);
+        let shared = Arc::clone(&shared);
+        thread::spawn(move || loop {
+            // Hold the lock only across recv; release before handling so peers can pick up work.
+            let job = {
+                let guard = job_rx.lock().expect("webhook job queue mutex");
+                guard.recv()
+            };
+            match job {
+                Ok(stream) => {
+                    if let Err(e) = handle_connection(stream, &shared) {
                         log::debug!("webhook connection error: {e}");
                     }
-                });
+                }
+                Err(_) => break, // listener dropped the sender
             }
+        });
+    }
+
+    for stream in listener.incoming() {
+        match stream {
+            Ok(s) => match job_tx.try_send(s) {
+                Ok(()) => {}
+                Err(TrySendError::Full(mut s)) => {
+                    log::warn!("webhook overloaded; rejecting connection with 503");
+                    let _ = write_response(&mut s, 503, "server busy");
+                }
+                Err(TrySendError::Disconnected(_)) => break,
+            },
             Err(e) => log::warn!("webhook accept error: {e}"),
         }
     }
     Ok(())
 }
 
-fn handle_connection(stream: TcpStream, tx: &Sender<SensorMessage>) -> Result<()> {
+fn handle_connection(stream: TcpStream, shared: &Shared) -> Result<()> {
     stream.set_read_timeout(Some(READ_TIMEOUT))?;
     let mut reader = BufReader::new(stream);
 
@@ -177,8 +364,11 @@ fn handle_connection(stream: TcpStream, tx: &Sender<SensorMessage>) -> Result<()
     let method = parts.next().unwrap_or("").to_string();
     let raw_path = parts.next().unwrap_or("/").to_string();
 
-    // Headers — we only need Content-Length. Each line and the total header size are bounded.
+    // Headers. Match names case-insensitively but preserve values (tokens/signatures are
+    // case-sensitive). Each line and the total header size are bounded.
     let mut content_length: usize = 0;
+    let mut authorization: Option<String> = None;
+    let mut signature: Option<String> = None;
     let mut headers_read: usize = 0;
     loop {
         let mut line = String::new();
@@ -190,9 +380,14 @@ fn handle_connection(stream: TcpStream, tx: &Sender<SensorMessage>) -> Result<()
         if headers_read > MAX_HEADER_BYTES {
             return write_response(reader.get_mut(), 400, "headers too large");
         }
-        let lower = line.to_lowercase();
-        if let Some(value) = lower.strip_prefix("content-length:") {
-            content_length = value.trim().parse().unwrap_or(0);
+        if let Some((name, value)) = line.split_once(':') {
+            let value = value.trim();
+            match name.trim().to_ascii_lowercase().as_str() {
+                "content-length" => content_length = value.parse().unwrap_or(0),
+                "authorization" => authorization = Some(value.to_string()),
+                "x-signature" => signature = Some(value.to_string()),
+                _ => {}
+            }
         }
     }
 
@@ -206,11 +401,24 @@ fn handle_connection(stream: TcpStream, tx: &Sender<SensorMessage>) -> Result<()
     let mut body = vec![0u8; content_length];
     reader.read_exact(&mut body)?;
 
+    if !authorized(
+        &shared.auth,
+        authorization.as_deref(),
+        signature.as_deref(),
+        &body,
+    ) {
+        return write_response(reader.get_mut(), 401, "unauthorized");
+    }
+
     // Strip any query string so routing keys on the bare path.
     let path = raw_path.split('?').next().unwrap_or(&raw_path).to_string();
 
+    if !shared.rate_ok(&path) {
+        return write_response(reader.get_mut(), 429, "too many requests");
+    }
+
     // A full channel/dropped receiver is not fatal for the request.
-    let _ = tx.send((path, body));
+    let _ = shared.tx.send((path, body));
     write_response(reader.get_mut(), 204, "")
 }
 
@@ -218,8 +426,11 @@ fn write_response(stream: &mut TcpStream, code: u16, body: &str) -> Result<()> {
     let reason = match code {
         204 => "No Content",
         400 => "Bad Request",
+        401 => "Unauthorized",
         405 => "Method Not Allowed",
         413 => "Payload Too Large",
+        429 => "Too Many Requests",
+        503 => "Service Unavailable",
         _ => "OK",
     };
     let response = format!(
@@ -270,5 +481,71 @@ mod tests {
     fn unrouted_path_yields_nothing() {
         let (adapter, _tx) = WebhookAdapter::new(vec![route()]);
         assert!(adapter.message_to_claim("/unknown", b"{}").is_none());
+    }
+
+    #[test]
+    fn auth_none_allows_everything() {
+        assert!(authorized(&WebhookAuth::None, None, None, b""));
+    }
+
+    #[test]
+    fn bearer_auth_requires_matching_token() {
+        let auth = WebhookAuth::Bearer("s3cret".to_string());
+        assert!(authorized(&auth, Some("Bearer s3cret"), None, b""));
+        assert!(authorized(&auth, Some("bearer s3cret"), None, b"")); // case-insensitive scheme
+        assert!(!authorized(&auth, Some("Bearer wrong"), None, b""));
+        assert!(!authorized(&auth, Some("s3cret"), None, b"")); // missing scheme
+        assert!(!authorized(&auth, None, None, b"")); // missing header
+    }
+
+    #[test]
+    fn hmac_auth_validates_body_signature() {
+        let secret = b"shared-key".to_vec();
+        let body = br#"{"confidence":0.8}"#;
+        let sig = format!("sha256={}", hex::encode(hmac_sha256(&secret, body)));
+        let auth = WebhookAuth::Hmac(secret);
+        assert!(authorized(&auth, None, Some(&sig), body));
+        // Tampered body invalidates the signature.
+        assert!(!authorized(
+            &auth,
+            None,
+            Some(&sig),
+            br#"{"confidence":0.9}"#
+        ));
+        // Missing / malformed signature header.
+        assert!(!authorized(&auth, None, None, body));
+        assert!(!authorized(&auth, None, Some("deadbeef"), body));
+    }
+
+    #[test]
+    fn rfc2104_hmac_test_vector() {
+        // RFC 4231 test case 2: key="Jefe", data="what do ya want for nothing?".
+        let mac = hmac_sha256(b"Jefe", b"what do ya want for nothing?");
+        assert_eq!(
+            hex::encode(mac),
+            "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
+        );
+    }
+
+    #[test]
+    fn token_bucket_limits_then_refills() {
+        let shared = Shared {
+            tx: channel().0,
+            auth: WebhookAuth::None,
+            rate_limit: Some(RateLimit {
+                capacity: 2.0,
+                refill_per_sec: 1000.0,
+            }),
+            buckets: Mutex::new(HashMap::new()),
+        };
+        // Burst capacity of 2 on a path, then throttled.
+        assert!(shared.rate_ok("/a"));
+        assert!(shared.rate_ok("/a"));
+        assert!(!shared.rate_ok("/a"));
+        // A different path has its own independent bucket.
+        assert!(shared.rate_ok("/b"));
+        // After enough wall-clock time, /a refills.
+        std::thread::sleep(Duration::from_millis(5));
+        assert!(shared.rate_ok("/a"));
     }
 }

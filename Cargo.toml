@@ -62,6 +62,7 @@ backend-tract = ["tract-onnx"]
 adapter-frigate = []
 adapter-mqtt-sensor = []
 adapter-webhook = ["adapter-mqtt-sensor"]
+adapter-ble-presence = []
 adapter-sandbox = []
 pqc-signatures = ["pqcrypto-mldsa", "pqcrypto-traits"]
 pqc-vault = ["pqcrypto-mlkem", "pqcrypto-traits"]
@@ -115,5 +116,6 @@ required-features = [
     "adapter-frigate",
     "adapter-mqtt-sensor",
     "adapter-webhook",
+    "adapter-ble-presence",
     "adapter-sandbox",
 ]
