@@ -34,8 +34,9 @@ min_confidence = 0.5
 # stats_addr = "127.0.0.1:8799"
 
 # Send SIGHUP (`kill -HUP <pid>`) to reload this file without restarting: host `min_confidence`
-# and each adapter's routes / rooms / filters are applied live. Topology changes (adding/removing
-# adapters, changing listen addresses, auth, or TLS) still require a restart.
+# and each adapter's route/room/filter *attributes* (claim kind, zone, confidence, thresholds) are
+# applied live, as are webhook request-path routes. Changing an mqtt_sensor's subscribed MQTT
+# *topic* (or adding/removing adapters, listen addresses, auth, or TLS) still requires a restart.
 
 # ---------------------------------------------------------------------------
 # Adapter: Frigate NVR

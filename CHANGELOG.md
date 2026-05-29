@@ -57,8 +57,9 @@ below.
   - **Prometheus metrics**: the stats endpoint serves `/metrics` (text exposition format) alongside
     JSON `/` and `/healthz`, for Grafana/Alertmanager scraping.
   - **SIGHUP config hot-reload**: `adapter_host` reloads `min_confidence` and each adapter's
-    routes/rooms/filters live on SIGHUP, without restarting listeners or dropping connections;
-    topology changes still require a restart.
+    route/room/filter attributes (and webhook paths) live on SIGHUP, without restarting listeners
+    or dropping connections; changing an mqtt_sensor's subscribed topic, or adapter topology,
+    still requires a restart (and is logged).
 - **Home Assistant integration** (HACS): 3 setup modes (MQTT / Kernel HTTP /
   both), MQTT auto-discovery, device PKI trust management (TOFU + manual pin +
   rotation), 5 sensor types, 11 binary sensor types (tamper + transport),

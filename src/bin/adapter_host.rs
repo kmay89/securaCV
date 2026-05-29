@@ -391,10 +391,23 @@ fn main() -> Result<()> {
                 let (adapter, tx) = MqttSensorAdapter::new(routes);
                 let adapter = adapter.with_sandbox(mc.sandbox);
                 let handle = adapter.routes_handle();
+                // Topics subscribed at startup. The MQTT forwarder subscribes once on connect, so a
+                // reload can change route *attributes* (kind/zone/confidence/truthy) live, but
+                // adding/removing/renaming a topic needs a restart to (un)subscribe.
+                let subscribed: std::collections::BTreeSet<String> =
+                    mc.route.iter().map(|r| r.topic.clone()).collect();
                 reloaders.push(Box::new(move |c| {
                     let AdapterCfg::MqttSensor(mc) = c else {
                         return Err(anyhow!("adapter type changed at this position"));
                     };
+                    let new_topics: std::collections::BTreeSet<String> =
+                        mc.route.iter().map(|r| r.topic.clone()).collect();
+                    if new_topics != subscribed {
+                        log::warn!(
+                            "mqtt_sensor topic set changed on reload; added/removed topics require \
+                             a restart to (un)subscribe (attributes for existing topics applied)"
+                        );
+                    }
                     *handle.lock().expect("routes mutex") = build_routes(&mc.route)?;
                     Ok(())
                 }));

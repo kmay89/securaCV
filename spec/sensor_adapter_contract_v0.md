@@ -193,7 +193,9 @@ hole. None of these widen kernel privilege; they protect the producer side. Per-
 counters (polls/sealed/rejected) are exposed read-only via `observability::serve_stats` as JSON,
 **Prometheus** (`/metrics`), and `/healthz` — counts only, never event content — and the Home
 Assistant integration can surface them as a diagnostic sensor. The `adapter_host` daemon reloads
-routes/filters and `min_confidence` live on **SIGHUP** without restarting listeners.
+route/filter *attributes* (kind/zone/confidence) and `min_confidence` live on **SIGHUP** without
+restarting listeners; changing an `mqtt_sensor`'s subscribed MQTT topic still needs a restart (the
+forwarder subscribes once on connect).
 
 The untrusted parsers (`route_message`, `ble_presence`, Frigate JSON) are covered by a
 panic-free robustness sweep in `tests/adapter_parser_fuzz.rs`.
