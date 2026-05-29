@@ -8,10 +8,12 @@ Windows, during first-boot setup, in steady state after provisioning, and over
 home Wi-Fi (STA) once joined.
 
 This is the on-device sign-off for the captive-portal work landed in #611,
-#622, and #626. The DNS response logic itself is covered by host unit tests
-(`firmware/projects/canary-wap/tests_host/test_captive_dns.cpp`, run by the
-"Mesh + Scout Host Tests" CI job); this plan covers the parts only real
-hardware and real OS supplicants can exercise.
+#622, and #626. The pure response logic is covered by host unit tests — the
+DNS redirector by `tests_host/test_captive_dns.cpp` and the per-platform probe
+policy (Apple page / Android 204 / Windows NCSI body) by
+`tests_host/test_captive_probe.cpp`, both run by the firmware host-tests CI
+job; this plan covers the parts only real hardware and real OS supplicants can
+exercise.
 
 ## How the firmware behaves (reference)
 - **AP SSID** is `SecuraCV-XXXX` (last 4 hex of the MAC) in both setup and

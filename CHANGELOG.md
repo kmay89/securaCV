@@ -119,8 +119,10 @@ PlatformIO (canary/) and Arduino WAP (canary-wap/) builds with full parity.
     always-on AP (not just first boot), so rejoining the management AP after
     provisioning works too. The redirector answers only `A` queries and
     returns NODATA for `AAAA`/`HTTPS`, so `canary.local` resolves promptly on
-    Android Chrome; `192.168.4.1` is the always-works fallback. Pure DNS
-    builder (`captive_dns.h`) is host-unit-tested in CI.
+    Android Chrome; `192.168.4.1` is the always-works fallback. The pure
+    response logic is extracted into host-unit-tested headers — the DNS builder
+    (`captive_dns.h`) and the per-platform probe policy (`captive_probe.h`,
+    driving a single `handle_captive_probe` handler) — both run in CI.
 - **securacv_diagnostics** — Heap monitoring (free/min/largest block/PSRAM/
   stack HWM/fragmentation), 3-level automatic feature degradation with 5KB
   hysteresis, SD health tracking (atomic write/error counters, space warnings),
