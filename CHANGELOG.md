@@ -111,6 +111,16 @@ PlatformIO (canary/) and Arduino WAP (canary-wap/) builds with full parity.
   feature gating. Deep sleep cycling in emergency mode.
 - **securacv_setup** — First-boot captive portal with DNS hijack, device
   naming, 15-minute timeout. NVS flag persists setup completion.
+  - **Stays-connected onboarding**: OS connectivity probes are answered
+    per-platform so the phone never flags the AP "no internet" and
+    disconnects mid-setup — Apple gets the instruction page (Captive Network
+    Assistant sheet), Android gets `204 No Content`, Windows gets the exact
+    NCSI bodies. The captive DNS redirector runs for the whole life of the
+    always-on AP (not just first boot), so rejoining the management AP after
+    provisioning works too. The redirector answers only `A` queries and
+    returns NODATA for `AAAA`/`HTTPS`, so `canary.local` resolves promptly on
+    Android Chrome; `192.168.4.1` is the always-works fallback. Pure DNS
+    builder (`captive_dns.h`) is host-unit-tested in CI.
 - **securacv_diagnostics** — Heap monitoring (free/min/largest block/PSRAM/
   stack HWM/fragmentation), 3-level automatic feature degradation with 5KB
   hysteresis, SD health tracking (atomic write/error counters, space warnings),
