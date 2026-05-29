@@ -87,6 +87,11 @@ impl AdapterHost {
         self.stats.clone()
     }
 
+    /// Update the host-level confidence floor (used for live config reload).
+    pub fn set_min_confidence(&mut self, min_confidence: f32) {
+        self.config.min_confidence = min_confidence;
+    }
+
     /// Register an adapter to be polled by [`run_once`](Self::run_once) / [`run_loop`](Self::run_loop).
     pub fn register<A: SensorAdapter + 'static>(&mut self, adapter: A) {
         self.registry.register(adapter);

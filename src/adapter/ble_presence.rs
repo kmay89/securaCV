@@ -62,9 +62,12 @@ struct BlePayload {
 
 /// BLE presence adapter. Construct with [`BlePresenceAdapter::new`] and feed it via the returned
 /// [`Sender`] (typically from an MQTT forwarder subscribed to `espresense/devices/#`).
+/// A room table shared with the host so it can be hot-reloaded without restarting the adapter.
+pub type SharedRooms = std::sync::Arc<std::sync::Mutex<Vec<BleRoom>>>;
+
 pub struct BlePresenceAdapter {
     rx: Receiver<BleMessage>,
-    rooms: Vec<BleRoom>,
+    rooms: SharedRooms,
     sandbox: bool,
 }
 
@@ -75,7 +78,7 @@ impl BlePresenceAdapter {
         (
             Self {
                 rx,
-                rooms,
+                rooms: std::sync::Arc::new(std::sync::Mutex::new(rooms)),
                 sandbox: false,
             },
             tx,
@@ -89,10 +92,15 @@ impl BlePresenceAdapter {
         self
     }
 
+    /// Handle to the live room table, for hot-reload by the host.
+    pub fn rooms_handle(&self) -> SharedRooms {
+        std::sync::Arc::clone(&self.rooms)
+    }
+
     /// Pure transform: map one `(topic, payload)` to a presence claim if the room is configured
     /// and the reported distance is within threshold.
     pub fn message_to_claim(&self, topic: &str, payload: &[u8]) -> Option<Claim> {
-        room_to_claim(&self.rooms, topic, payload)
+        room_to_claim(&self.rooms.lock().expect("rooms mutex"), topic, payload)
     }
 }
 
@@ -134,10 +142,12 @@ impl SensorAdapter for BlePresenceAdapter {
         if msgs.is_empty() {
             return Ok(Vec::new());
         }
+        // Snapshot the rooms so we don't hold the lock across the sandbox fork.
+        let rooms = self.rooms.lock().expect("rooms mutex").clone();
         let parse_all = || {
             let mut out = Vec::new();
             for (topic, payload) in &msgs {
-                if let Some(claim) = room_to_claim(&self.rooms, topic, payload) {
+                if let Some(claim) = room_to_claim(&rooms, topic, payload) {
                     out.push(claim);
                 }
             }
