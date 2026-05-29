@@ -88,21 +88,37 @@ static bool init(const char* deviceIdHash, const char* fwVersion,
         snprintf(bleName, sizeof(bleName), "%s0000", BLE_DEVICE_NAME_PREFIX);
     }
 
-    // NimBLEDevice::init() can fail if BLE hardware is unavailable.
-    // Without external antenna connected to the IPEX connector,
-    // init may succeed but advertising won't reach other devices.
-    // XIAO ESP32-C3: MUST connect the included WiFi/BLE antenna to IPEX connector.
-    // XIAO ESP32-S3: Has onboard antenna, but external antenna improves range.
-    NimBLEDevice::init(bleName);
+    // Single NimBLE init owner. When the bluetooth_channel (pairing/console)
+    // feature is compiled in, it runs first in setup() and already brought the
+    // stack up — owning the GAP device name, TX power, MTU and security. NimBLE
+    // 2.x init() is idempotent, so calling it again here was a no-op that
+    // SILENTLY DROPPED our intended name (the stack keeps the first name set,
+    // i.e. "SecuraCV-Canary"), and the unconditional setPower(9) clobbered
+    // bluetooth_channel's NVS-configured power. So: only bring the stack up
+    // ourselves when nobody else has, and propagate a real failure instead of
+    // assuming success.
+    //
+    // NimBLEDevice::init() can fail if BLE hardware is unavailable. Without the
+    // external antenna on the IPEX connector, init may succeed but advertising
+    // won't reach far. XIAO ESP32-C3 REQUIRES the antenna; XIAO ESP32-S3 has an
+    // onboard antenna (external improves range).
+    if (!NimBLEDevice::isInitialized()) {
+        if (!NimBLEDevice::init(bleName)) {
+            Serial.println("[BLE] NimBLE init failed — BLE Discovery unavailable");
+            g_ble_available = false;
+            return false;
+        }
+        // Sole owner of the stack — set TX power here. NimBLE 2.x setPower takes
+        // the dBm value directly (int8_t); +9 dBm is the max valid on S3/C3.
+        // DO NOT pass ESP_PWR_LVL_* — those are indexes, not dBm.
+        NimBLEDevice::setPower(9);
+    }
 
-    // Set transmit power to maximum for range. NimBLE 2.x setPower takes the
-    // dBm value directly (int8_t) — DO NOT pass the ESP_PWR_LVL_* enum, those
-    // values are indexes (P9 == 9 here happens to coincide, but P3 == 7, etc.)
-    // and would set the wrong power on other levels. +9 dBm is valid on both
-    // ESP32-S3 and ESP32-C3.
-    NimBLEDevice::setPower(9);
-
-    g_ble_available = true;
+    g_ble_available = NimBLEDevice::isInitialized();
+    if (!g_ble_available) {
+        Serial.println("[BLE] NimBLE stack not initialized — BLE Discovery unavailable");
+        return false;
+    }
 
     // Initialize Opera (server/advertising)
     #if FEATURE_BLE_OPERA

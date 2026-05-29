@@ -86,7 +86,13 @@ static BluetoothSettings g_settings = {
   .allow_pairing = true,
   .require_pin = true,
   .device_name = "SecuraCV-Canary",
-  .tx_power = 3,
+  // +9 dBm: the radio max valid on ESP32-S3/C3. This is now the single source
+  // of BLE TX power for the whole firmware. It defaults to +9 to preserve the
+  // power the device actually ran at before — ble_manager::init() used to
+  // unconditionally bump every combined build to +9 after this struct's old
+  // default of +3, so +3 never took effect in practice. Devices with an
+  // explicit NVS override keep that value (now correctly honored).
+  .tx_power = 9,
   .inactivity_timeout_ms = INACTIVITY_TIMEOUT_MS,
   .notify_on_connect = true,
   .long_range_mode = false
@@ -611,11 +617,24 @@ bool init() {
   load_settings();
   load_paired_devices();
 
-  // Initialize NimBLE
-  NimBLEDevice::init(g_settings.device_name);
+  // Initialize NimBLE. This is the single NimBLEDevice::init() owner for the
+  // firmware: it runs before ble_manager::init() in setup() and owns the GAP
+  // device name, TX power, MTU and security config. NimBLE 2.x init() returns
+  // false when the controller/host stack can't come up (BT compiled out, radio
+  // unavailable, or a coexistence/heap failure). Previously the result was
+  // ignored and the code marched on to createServer() — which then returned
+  // null and crashed on the first g_server->... deref. Treat a failed init as a
+  // hard failure so the caller degrades gracefully (the documented contract).
+  if (!NimBLEDevice::init(g_settings.device_name)) {
+    log_health(SCV_LOG_ERROR, SCV_CAT_BLUETOOTH, "NimBLE init failed", nullptr);
+    set_state(BT_DISABLED);
+    return false;
+  }
   // NimBLE 2.x takes the dBm value directly (int8_t). Don't pass the
   // ESP_PWR_LVL_* enum here — those values are indexes (e.g. P3 == 7), not
-  // dBm, and would set the radio to a different power than intended.
+  // dBm, and would set the radio to a different power than intended. This is
+  // the ONLY place TX power is set; ble_manager no longer overrides it (it
+  // used to bump every combined build to +9 dBm, ignoring this NVS setting).
   NimBLEDevice::setPower(g_settings.tx_power);
 
   // Bump default ATT MTU to 247 (244-byte payload). The default is 23
@@ -639,8 +658,17 @@ bool init() {
   NimBLEDevice::setSecurityAuth(true, true, true);  // bonding, MITM, SC
   NimBLEDevice::setSecurityIOCap(BLE_HS_IO_DISPLAY_YESNO);
 
-  // Create server
+  // Create server. createServer() returns null if the host stack rejected the
+  // request (out of GATT resources / not initialized). Bail out cleanly rather
+  // than dereferencing null on the createService() line below, and release the
+  // stack we just brought up so a later retry starts from a clean slate.
   g_server = NimBLEDevice::createServer();
+  if (!g_server) {
+    log_health(SCV_LOG_ERROR, SCV_CAT_BLUETOOTH, "NimBLE createServer null", nullptr);
+    set_state(BT_DISABLED);
+    NimBLEDevice::deinit(true);
+    return false;
+  }
   g_server->setCallbacks(&g_server_callbacks);
 
   // Create service
