@@ -104,6 +104,38 @@ def test_canary_request_missing_address():
     assert "address" in result["error"].lower()
 
 
+@pytest.mark.parametrize(
+    "address",
+    [
+        "evil.com/api/other",   # embedded path -> would override hardcoded path
+        "user@evil.com",        # embedded credentials / host confusion
+        "http://evil.com",      # embedded scheme
+        "host:99999x",          # malformed port
+        "1.2.3.4 5.6.7.8",      # whitespace
+    ],
+)
+def test_canary_request_rejects_malformed_address(address, monkeypatch):
+    # SSRF hardening: a malformed address must be rejected BEFORE any request
+    # is made, so urlopen should never be called.
+    def _must_not_call(*a, **k):  # pragma: no cover - asserts it isn't reached
+        raise AssertionError("urlopen called for a rejected address")
+
+    monkeypatch.setattr(serve_wizard.urllib.request, "urlopen", _must_not_call)
+    result = serve_wizard._canary_request(address, "tok", "GET", "/api/mesh", None)
+    assert result["ok"] is False
+    assert "address" in result["error"].lower()
+
+
+@pytest.mark.parametrize("address", ["192.168.1.50", "canary.local", "10.0.0.5:80"])
+def test_canary_request_accepts_bare_host(address, monkeypatch):
+    captured: dict = {}
+    monkeypatch.setattr(
+        serve_wizard.urllib.request, "urlopen", _capture_urlopen(captured)
+    )
+    serve_wizard._canary_request(address, "tok", "GET", "/api/mesh", None)
+    assert captured["req"].full_url == f"http://{address}/api/mesh"
+
+
 def test_canary_request_omits_auth_header_when_no_token(monkeypatch):
     captured: dict = {}
     monkeypatch.setattr(

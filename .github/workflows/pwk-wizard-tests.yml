@@ -18,6 +18,10 @@ on:
       - 'privacy_witness_kernel/**'
       - '.github/workflows/pwk-wizard-tests.yml'
 
+# Read-only token: this workflow only checks out the repo and runs tests.
+permissions:
+  contents: read
+
 concurrency:
   group: pwk-wizard-${{ github.ref }}
   cancel-in-progress: true

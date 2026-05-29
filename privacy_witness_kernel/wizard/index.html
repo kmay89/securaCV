@@ -798,8 +798,17 @@ async function meshStartPairing() {
     const r1 = await api("/api/mesh/pair/start", meshInit);
     if (!r1.ok) { meshStartFailed(r1.error || "Existing Canary refused to start pairing"); return; }
     const r2 = await api("/api/mesh/pair/join", meshJoin);
-    if (!r2.ok) { meshStartFailed(r2.error || "New Canary refused to join"); return; }
+    if (!r2.ok) {
+      // The initiator is already in pairing mode; cancel it (best effort) so
+      // an immediate retry isn't blocked until the initiator's own timeout.
+      try { await api("/api/mesh/pair/cancel", meshInit); } catch (e) { /* best effort */ }
+      meshStartFailed(r2.error || "New Canary refused to join");
+      return;
+    }
   } catch (e) {
+    // Unknown which side is mid-pairing after a network fault; cancel both.
+    try { await api("/api/mesh/pair/cancel", meshInit); } catch (_) {}
+    try { await api("/api/mesh/pair/cancel", meshJoin); } catch (_) {}
     meshStartFailed("Network error contacting a Canary: " + ((e && e.message) || e));
     return;
   }
@@ -845,13 +854,24 @@ async function meshPollForCodes() {
     fails = 0;
     if (si.state === "PAIRING_CONFIRM" && sj.state === "PAIRING_CONFIRM" &&
         si.pairing_code != null && sj.pairing_code != null) {
-      document.getElementById("mesh-code-init").textContent =
-        String(si.pairing_code).padStart(6, "0");
-      document.getElementById("mesh-code-join").textContent =
-        String(sj.pairing_code).padStart(6, "0");
+      const ci = String(si.pairing_code).padStart(6, "0");
+      const cj = String(sj.pairing_code).padStart(6, "0");
+      // Both devices derive the SAME 6-digit code from the shared session key
+      // (spec §5.3). A mismatch is exactly the wrong-device / MITM case this
+      // out-of-band step exists to catch — refuse to offer confirmation and
+      // abort the pairing rather than let a click bypass the only OOB check.
+      if (ci !== cj) {
+        try { await api("/api/mesh/pair/cancel", meshInit); } catch (e) {}
+        try { await api("/api/mesh/pair/cancel", meshJoin); } catch (e) {}
+        meshPollFailed("Pairing codes do not match (" + ci + " vs " + cj +
+          ") — possible wrong device or tampered link. Pairing aborted.");
+        return;
+      }
+      document.getElementById("mesh-code-init").textContent = ci;
+      document.getElementById("mesh-code-join").textContent = cj;
       document.getElementById("mesh-codes").classList.remove("hidden");
       document.getElementById("mesh-status-line").innerHTML =
-        "Both Canaries are showing a code.";
+        "Both Canaries are showing the same code.";
       return;
     }
     if (si.state === "ACTIVE" && sj.state === "ACTIVE") {

@@ -19,6 +19,7 @@ Endpoints:
 import http.server
 import json
 import os
+import re
 import socket
 import sys
 import urllib.request
@@ -80,6 +81,13 @@ def _canary_request(address: str, token: str, method: str, path: str,
     """
     if not address:
         return {"ok": False, "error": "Missing device address"}
+    # SSRF hardening: the address is user-supplied (the LAN device the user is
+    # pairing), but it must be a bare host[:port] (hostname or IPv4, optional
+    # port). Reject anything carrying a scheme, path, query, fragment, or
+    # embedded credentials so a crafted value can't redirect the request away
+    # from the hardcoded `path`.
+    if not re.fullmatch(r"[A-Za-z0-9.\-]+(?::\d{1,5})?", address):
+        return {"ok": False, "error": "Invalid device address"}
     url = f"http://{address}{path}"
     body = json.dumps(data).encode() if data is not None else None
     headers = {"Content-Type": "application/json"}
