@@ -13,7 +13,7 @@
 
 ### Security Review (required for ALL changes)
 
-> Reference: `THREAT_MODEL.md` — The Ten Security Principles
+> Reference: `docs/security/THREAT_MODEL.md` — The Ten Security Principles
 
 #### Cryptographic Review
 - [ ] No new cryptographic primitives introduced without justification
@@ -26,7 +26,7 @@
 - [ ] No new outbound network connections (Principle 2: Zero Phone-Home)
 - [ ] No new identifier leaks — MAC, serial number, OUI (Principle 3)
 - [ ] No raw biometric/location data stored without coarsening
-- [ ] No new data collection without disclosure in `SECURITY_MODEL.md`
+- [ ] No new data collection without disclosure in `docs/security/SECURITY_MODEL.md`
 - [ ] Presence detection: MACs hashed, no raw SSID storage
 
 #### Trust Review
@@ -60,8 +60,8 @@
 - [ ] Justification documented in this PR description
 - [ ] Entry added to `firmware/LESSONS_LEARNED.md`
 - [ ] Verified change does not affect the most vulnerable user class
-- [ ] `THREAT_MODEL.md` updated if threat model changed
-- [ ] `SECURITY_MODEL.md` updated if user-facing guarantees changed
+- [ ] `docs/security/THREAT_MODEL.md` updated if threat model changed
+- [ ] `docs/security/SECURITY_MODEL.md` updated if user-facing guarantees changed
 
 ### Lessons Learned
 - [ ] If this PR fixes a bug, add an entry to `firmware/LESSONS_LEARNED.md`

@@ -7,11 +7,11 @@
  * To weaken any default, a developer MUST:
  *   1. Document the justification in the commit message
  *   2. Add an entry to firmware/LESSONS_LEARNED.md
- *   3. Get explicit approval referencing THREAT_MODEL.md
+ *   3. Get explicit approval referencing docs/security/THREAT_MODEL.md
  *   4. Verify the change does not affect the most vulnerable user class
  *
- * See: THREAT_MODEL.md — "The Ten Security Principles"
- * See: SECURITY_MODEL.md — User-facing security guarantees
+ * See: docs/security/THREAT_MODEL.md — "The Ten Security Principles"
+ * See: docs/security/SECURITY_MODEL.md — User-facing security guarantees
  *
  * Copyright (c) 2026 ERRERlabs / Karl May
  * License: Apache-2.0

@@ -43,6 +43,18 @@ impl DetectorBackend for CpuBackend {
             Ok(DetectionResult::default())
         }
     }
+
+    fn export_state(&self) -> Option<Vec<u8>> {
+        self.last_hash.map(|hash| hash.to_vec())
+    }
+
+    fn import_state(&mut self, state: &[u8]) -> Result<()> {
+        let hash: [u8; 32] = state
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("cpu backend: invalid state length"))?;
+        self.last_hash = Some(hash);
+        Ok(())
+    }
 }
 
 #[cfg(test)]

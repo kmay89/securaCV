@@ -309,7 +309,7 @@ Every route handler in Phase 12 MUST satisfy:
    documented in the response. We do not coarsen or hash it; the user's
    choice to put an identifier there is theirs to make.
 
-`/THREAT_MODEL.md` Principle 3 (no new identifier leaks) is the spec
+`/docs/security/THREAT_MODEL.md` Principle 3 (no new identifier leaks) is the spec
 checklist this section satisfies.
 
 ## 6. Error model

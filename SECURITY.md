@@ -1,4 +1,14 @@
-# Security Model
+# Security Policy
+
+This file is the **security policy and vulnerability-reporting** entry point.
+The long-form security documents live under [`docs/security/`](docs/security/):
+
+| Document | Purpose |
+|----------|---------|
+| [`docs/security/SECURITY_MODEL.md`](docs/security/SECURITY_MODEL.md) | User-facing security guarantees (included in every evidence export) |
+| [`docs/security/THREAT_MODEL.md`](docs/security/THREAT_MODEL.md) | The Ten Security Principles + implementation review checklist |
+| [`docs/security/SECURITY-AUDIT.md`](docs/security/SECURITY-AUDIT.md) | Historical security-audit reports |
+| [`spec/threat_model.md`](spec/threat_model.md) | Canonical protocol-level threat model |
 
 This project treats the following as adversarial by default:
 
