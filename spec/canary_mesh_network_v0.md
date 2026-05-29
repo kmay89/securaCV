@@ -417,6 +417,53 @@ PEER_REMOVED        → Removed from opera (pending deletion)
 }
 ```
 
+### 8.3 v0 Implementation Notes (PR-8)
+
+The first REST implementation (PlatformIO `firmware/canary`, gated on
+`FEATURE_MESH_NETWORK`) ships the **pairing happy-path only**. The following
+diverge from §8.1/§8.2 above and are reconciled here rather than in the
+normative tables, which describe the eventual target shape.
+
+**Endpoints implemented now (6):** `GET /api/mesh`, `GET /api/mesh/peers`,
+and `POST /api/mesh/pair/{start,join,confirm,cancel}`. All require a valid
+`Authorization: Bearer` token and pass through the same rate limiter as the
+rest of the REST API.
+
+**Endpoints deferred to a follow-up PR:** `GET /api/mesh/alerts`,
+`POST /api/mesh/leave`, and `POST /api/mesh/remove/:fp`. `remove` is
+deliberately deferred because §5.6 requires that removing a peer
+**atomically rotate `opera_secret` and re-key the surviving members**
+(`MSG_OPERA_REKEY` + ACK). That transaction is already implemented in the
+canary-wap tree (`firmware/projects/canary-wap/.../mesh_network.cpp`) but is
+not yet ported to the PlatformIO mesh layer. Shipping a `remove` endpoint
+that drops a peer from the local table *without* re-keying would be a
+security misrepresentation — the removed device would retain a working
+`opera_secret` — so the endpoint is omitted entirely rather than shipped as
+a no-op. The web UI tolerates these routes 404ing.
+
+**`GET /api/mesh` field set:** the implementation emits the exact fields the
+canary web UI consumes — `ok, state, opera_id, opera_name, has_opera,
+enabled, peers_total, peers_online, alerts_received, pairing_code` — rather
+than the illustrative shape in §8.2. `pairing_code` is included **only** when
+`state == "PAIRING_CONFIRM"`; it is never present in any other state so the
+6-digit confirmation value (§5.3) is not exposed before the out-of-band
+visual-match step.
+
+**Peer fields:** `fingerprint` is derived from the persisted trusted-peer
+public keys (`mesh_crypto::fingerprint`). `name` is best-effort and may be
+empty (the UI falls back to "Unknown Device"); per-peer `name` and
+`alerts_received` attribution are placeholders pending a peer-metadata store.
+`state`/`last_seen_sec`/`rssi` are best-effort joins against the ESP-NOW
+transport peer table (keyed by MAC), so a trusted peer with no current
+transport entry may report default liveness values.
+
+**Add-on → device bridge:** the Home Assistant "Add another Canary" wizard
+(`privacy_witness_kernel/serve_wizard.py` + `wizard/index.html`) forwards
+pairing calls to each Canary's REST API. The device address and bearer token
+are entered transiently in the wizard form and passed per-request; they are
+**not** persisted to add-on config. The bearer token is transmitted over
+plaintext HTTP on the assumed-trusted LAN and is never logged.
+
 ## 9. UI Requirements
 
 ### 9.1 Mesh Panel

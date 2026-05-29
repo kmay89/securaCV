@@ -34,6 +34,8 @@
 #include "mesh_session.h"
 #include "mesh_envelope.h"
 #include "mesh_beacon.h"
+#include "mesh_api.h"
+#include "mesh_state.h"
 
 #include <cassert>
 #include <cstdio>
@@ -760,6 +762,186 @@ void test_get_paired_peer_pubkey_gated_by_state() {
   std::printf("PASS test_get_paired_peer_pubkey_gated_by_state\n");
 }
 
+/* ── PR-8: status accessors + mesh REST API JSON builders ─────────────── */
+
+void test_get_opera_id_matches_compute() {
+  /* get_opera_id() must hand back exactly the opera_id mesh_crypto
+   * derives from the secret (same value set_opera_secret cached). */
+  reset_world();
+
+  uint8_t out[mesh_crypto::OPERA_ID_LEN];
+  /* Before any secret is set, get_opera_id returns false and leaves out
+   * untouched. */
+  std::memset(out, 0x7E, sizeof(out));
+  assert(!mesh_session::has_opera());
+  assert(!mesh_session::get_opera_id(out));
+  for (size_t i = 0; i < sizeof(out); ++i) assert(out[i] == 0x7E);
+
+  uint8_t secret[mesh_crypto::OPERA_SECRET_LEN];
+  for (size_t i = 0; i < sizeof(secret); ++i) secret[i] = (uint8_t)(0x10 + i);
+  assert(mesh_session::set_opera_secret(secret));
+  assert(mesh_session::has_opera());
+
+  assert(mesh_session::get_opera_id(out));
+  uint8_t expect[mesh_crypto::OPERA_ID_LEN];
+  mesh_crypto::compute_opera_id(secret, expect);
+  assert(std::memcmp(out, expect, sizeof(out)) == 0);
+  /* nullptr is rejected. */
+  assert(!mesh_session::get_opera_id(nullptr));
+  std::printf("PASS test_get_opera_id_matches_compute\n");
+}
+
+void test_set_get_opera_name_ram_only() {
+  reset_world();
+  char buf[mesh_pairing::MAX_OPERA_NAME_LEN + 1];
+
+  /* Fresh session: empty name, always null-terminated. */
+  std::memset(buf, 0x5A, sizeof(buf));
+  mesh_session::get_opera_name(buf, sizeof(buf));
+  assert(buf[0] == '\0');
+
+  mesh_session::set_opera_name("Living Room Opera");
+  mesh_session::get_opera_name(buf, sizeof(buf));
+  assert(std::strcmp(buf, "Living Room Opera") == 0);
+
+  /* Over-long name is truncated to capacity, still null-terminated. */
+  char longname[mesh_pairing::MAX_OPERA_NAME_LEN + 16];
+  std::memset(longname, 'A', sizeof(longname) - 1);
+  longname[sizeof(longname) - 1] = '\0';
+  mesh_session::set_opera_name(longname);
+  mesh_session::get_opera_name(buf, sizeof(buf));
+  assert(std::strlen(buf) == mesh_pairing::MAX_OPERA_NAME_LEN);
+
+  /* nullptr clears. */
+  mesh_session::set_opera_name(nullptr);
+  mesh_session::get_opera_name(buf, sizeof(buf));
+  assert(buf[0] == '\0');
+  std::printf("PASS test_set_get_opera_name_ram_only\n");
+}
+
+void test_mesh_state_name_mapping() {
+  using S = mesh_pairing::State;
+  /* Pairing precedence wins over steady-state classification. */
+  assert(std::strcmp(mesh_pairing::mesh_state_name(true, true, S::DISCOVERING_INITIATOR, 5), "PAIRING_INIT") == 0);
+  assert(std::strcmp(mesh_pairing::mesh_state_name(true, true, S::AWAITING_ACCEPT, 5), "PAIRING_INIT") == 0);
+  assert(std::strcmp(mesh_pairing::mesh_state_name(true, false, S::DISCOVERING_JOINER, 0), "PAIRING_JOIN") == 0);
+  assert(std::strcmp(mesh_pairing::mesh_state_name(true, false, S::AWAITING_COMPLETE, 0), "PAIRING_JOIN") == 0);
+  assert(std::strcmp(mesh_pairing::mesh_state_name(true, true, S::AWAITING_CONFIRM, 0), "PAIRING_CONFIRM") == 0);
+  assert(std::strcmp(mesh_pairing::mesh_state_name(true, true, S::AWAITING_CONFIRM_PEER, 0), "PAIRING_CONFIRM") == 0);
+
+  /* Steady states (IDLE / PAIRED / FAILED fall through). */
+  assert(std::strcmp(mesh_pairing::mesh_state_name(false, true, S::IDLE, 3), "DISABLED") == 0);
+  assert(std::strcmp(mesh_pairing::mesh_state_name(true, false, S::IDLE, 0), "NO_FLOCK") == 0);
+  assert(std::strcmp(mesh_pairing::mesh_state_name(true, true, S::IDLE, 0), "CONNECTING") == 0);
+  assert(std::strcmp(mesh_pairing::mesh_state_name(true, true, S::IDLE, 2), "ACTIVE") == 0);
+  assert(std::strcmp(mesh_pairing::mesh_state_name(true, true, S::PAIRED, 1), "ACTIVE") == 0);
+  std::printf("PASS test_mesh_state_name_mapping\n");
+}
+
+void test_build_mesh_status_json_active() {
+  uint8_t opera_id[mesh_crypto::OPERA_ID_LEN];
+  for (size_t i = 0; i < sizeof(opera_id); ++i) opera_id[i] = (uint8_t)(0xA0 + i);
+
+  char buf[512];
+  assert(mesh_api::build_mesh_status_json(
+      buf, sizeof(buf), /*enabled=*/true, /*has_opera=*/true,
+      opera_id, "Home", mesh_pairing::State::IDLE,
+      /*peers_total=*/3, /*peers_online=*/2, /*alerts=*/7, /*code=*/123456));
+
+  /* Field presence + the exact strings the UI reads. */
+  assert(std::strstr(buf, "\"ok\":true") != nullptr);
+  assert(std::strstr(buf, "\"state\":\"ACTIVE\"") != nullptr);
+  assert(std::strstr(buf, "\"opera_id\":\"a0a1a2a3a4a5a6a7a8a9aaabacadaeaf\"") != nullptr);
+  assert(std::strstr(buf, "\"opera_name\":\"Home\"") != nullptr);
+  assert(std::strstr(buf, "\"has_opera\":true") != nullptr);
+  assert(std::strstr(buf, "\"enabled\":true") != nullptr);
+  assert(std::strstr(buf, "\"peers_total\":3") != nullptr);
+  assert(std::strstr(buf, "\"peers_online\":2") != nullptr);
+  assert(std::strstr(buf, "\"alerts_received\":7") != nullptr);
+  /* No pairing_code leak outside PAIRING_CONFIRM. */
+  assert(std::strstr(buf, "pairing_code") == nullptr);
+  std::printf("PASS test_build_mesh_status_json_active\n");
+}
+
+void test_build_mesh_status_json_pairing_code_only_in_confirm() {
+  char buf[512];
+  /* PAIRING_CONFIRM → code present. */
+  assert(mesh_api::build_mesh_status_json(
+      buf, sizeof(buf), true, true, nullptr, "X",
+      mesh_pairing::State::AWAITING_CONFIRM, 1, 0, 0, /*code=*/42));
+  assert(std::strstr(buf, "\"state\":\"PAIRING_CONFIRM\"") != nullptr);
+  assert(std::strstr(buf, "\"pairing_code\":42") != nullptr);
+
+  /* PAIRING_INIT → NO code (early-leak guard). */
+  assert(mesh_api::build_mesh_status_json(
+      buf, sizeof(buf), true, true, nullptr, "X",
+      mesh_pairing::State::DISCOVERING_INITIATOR, 1, 0, 0, /*code=*/42));
+  assert(std::strstr(buf, "\"state\":\"PAIRING_INIT\"") != nullptr);
+  assert(std::strstr(buf, "pairing_code") == nullptr);
+  std::printf("PASS test_build_mesh_status_json_pairing_code_only_in_confirm\n");
+}
+
+void test_build_mesh_status_json_escapes_name() {
+  char buf[512];
+  /* A name with a quote must not break the JSON envelope. */
+  assert(mesh_api::build_mesh_status_json(
+      buf, sizeof(buf), true, false, nullptr, "Evil\"name",
+      mesh_pairing::State::IDLE, 0, 0, 0, 0));
+  assert(std::strstr(buf, "\"opera_name\":\"Evil\\\"name\"") != nullptr);
+  std::printf("PASS test_build_mesh_status_json_escapes_name\n");
+}
+
+void test_build_mesh_status_json_no_opera_empty_id() {
+  char buf[512];
+  assert(mesh_api::build_mesh_status_json(
+      buf, sizeof(buf), true, false, nullptr, "",
+      mesh_pairing::State::IDLE, 0, 0, 0, 0));
+  assert(std::strstr(buf, "\"state\":\"NO_FLOCK\"") != nullptr);
+  assert(std::strstr(buf, "\"opera_id\":\"\"") != nullptr);
+  assert(std::strstr(buf, "\"has_opera\":false") != nullptr);
+  std::printf("PASS test_build_mesh_status_json_no_opera_empty_id\n");
+}
+
+void test_build_mesh_peers_json() {
+  mesh_api::PeerView views[2];
+  std::strcpy(views[0].fingerprint, "0011223344556677");
+  std::strcpy(views[0].name, "Kitchen");
+  views[0].state = "CONNECTED";
+  views[0].last_seen_sec = 12;
+  views[0].rssi = -42;
+  std::strcpy(views[1].fingerprint, "8899aabbccddeeff");
+  views[1].name[0] = '\0';
+  views[1].state = "OFFLINE";
+  views[1].last_seen_sec = 0xFFFFFFFFu;
+  views[1].rssi = 0;
+
+  char buf[1024];
+  assert(mesh_api::build_mesh_peers_json(buf, sizeof(buf), views, 2));
+  assert(std::strstr(buf, "\"ok\":true") != nullptr);
+  assert(std::strstr(buf, "\"fingerprint\":\"0011223344556677\"") != nullptr);
+  assert(std::strstr(buf, "\"name\":\"Kitchen\"") != nullptr);
+  assert(std::strstr(buf, "\"state\":\"CONNECTED\"") != nullptr);
+  assert(std::strstr(buf, "\"rssi\":-42") != nullptr);
+  assert(std::strstr(buf, "\"fingerprint\":\"8899aabbccddeeff\"") != nullptr);
+  assert(std::strstr(buf, "\"name\":\"\"") != nullptr);
+
+  /* Empty peer list still yields a valid envelope. */
+  assert(mesh_api::build_mesh_peers_json(buf, sizeof(buf), nullptr, 0));
+  assert(std::strcmp(buf, "{\"ok\":true,\"peers\":[]}") == 0);
+  std::printf("PASS test_build_mesh_peers_json\n");
+}
+
+void test_build_mesh_json_buffer_too_small() {
+  char tiny[8];
+  /* status + peers both must fail cleanly (false) on overflow, not
+   * scribble past the buffer. */
+  assert(!mesh_api::build_mesh_status_json(
+      tiny, sizeof(tiny), true, true, nullptr, "name",
+      mesh_pairing::State::IDLE, 0, 0, 0, 0));
+  assert(!mesh_api::build_mesh_peers_json(tiny, sizeof(tiny), nullptr, 0));
+  std::printf("PASS test_build_mesh_json_buffer_too_small\n");
+}
+
 }  /* namespace */
 
 int main() {
@@ -781,6 +963,16 @@ int main() {
   test_beacon_event_replay_dropped();
   test_beacon_event_unknown_sender_dropped();
   test_beacon_event_forged_signature_dropped();
+  /* PR-8 — status accessors + REST API JSON builders. */
+  test_get_opera_id_matches_compute();
+  test_set_get_opera_name_ram_only();
+  test_mesh_state_name_mapping();
+  test_build_mesh_status_json_active();
+  test_build_mesh_status_json_pairing_code_only_in_confirm();
+  test_build_mesh_status_json_escapes_name();
+  test_build_mesh_status_json_no_opera_empty_id();
+  test_build_mesh_peers_json();
+  test_build_mesh_json_buffer_too_small();
   std::printf("\nALL MESH_SESSION TESTS PASSED\n");
   return 0;
 }

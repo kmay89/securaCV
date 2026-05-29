@@ -230,6 +230,35 @@ enum class State : uint8_t {
   FAILED,                   /* terminal:  any error path or 5-min timeout */
 };
 
+/* ──────────────────────────────────────────────────────────────────────────
+ * UI STATE MAPPING  (PR-8 — Mesh REST API)
+ *
+ * The web UI's opera panel + the HA pairing wizard both read a single
+ * `state` string from GET /api/mesh and branch on it. The exact strings
+ * the UI checks (securacv_webui.cpp refreshOpera / startPairingPoll) are:
+ *
+ *   "DISABLED"        — mesh feature compiled out / disabled
+ *   "NO_FLOCK"        — mesh enabled, but no opera joined yet
+ *   "CONNECTING"      — opera joined, no peers online yet
+ *   "ACTIVE"          — opera joined, ≥1 peer online
+ *   "PAIRING_INIT"    — pairing in progress, initiator side (pre-confirm)
+ *   "PAIRING_JOIN"    — pairing in progress, joiner side (pre-confirm)
+ *   "PAIRING_CONFIRM" — both sides have the 6-digit code, awaiting user OK
+ *
+ * mesh_state_name() resolves these from the inputs the status handler has
+ * on hand. It is a pure function (no I/O, no globals) so host tests can
+ * pin the mapping without standing up the whole network stack. The
+ * pairing-state precedence is: an in-progress pairing flow always wins
+ * over the steady-state DISABLED/NO_FLOCK/CONNECTING/ACTIVE classification,
+ * because the UI swaps to the pairing screen whenever state starts with
+ * "PAIRING".
+ * ────────────────────────────────────────────────────────────────────────── */
+
+const char* mesh_state_name(bool        enabled,
+                            bool        has_opera,
+                            State       pairing_state,
+                            size_t      peers_online);
+
 enum class ActionType : uint8_t {
   NONE = 0,
   BROADCAST_DISCOVER,    /* send to FF:FF:FF:FF:FF:FF (or mesh_transport::broadcast) */

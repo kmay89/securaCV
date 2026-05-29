@@ -57,6 +57,13 @@ static uint8_t  s_opera_id [mesh_crypto::OPERA_ID_LEN];
 static uint8_t  s_sender_fp[mesh_crypto::FINGERPRINT_LEN];
 static uint64_t s_outbound_counter   = 0;
 
+/* RAM-only opera display name (PR-8). Cosmetic — surfaced by GET
+ * /api/mesh so the UI can label the opera. Deliberately NOT persisted to
+ * NVS (no extra key); on a cold boot it stays empty until pairing
+ * repopulates it. Wiped on deinit() alongside the other opera-auth
+ * state so a deinit()/init() cycle starts with no stale name. */
+static char     s_opera_name[mesh_pairing::MAX_OPERA_NAME_LEN + 1] = {0};
+
 /* Receive-side state (PR 5c-4). Trusted-peer table — small fixed
  * array indexed by sender_fp at recv time, with a per-peer monotonic
  * last_counter for replay defense. Entries are populated by the
@@ -150,6 +157,11 @@ static void dispatch_action(const mesh_pairing::Action& a) {
       if (s_code_ready_cb) s_code_ready_cb(a.confirmation_code);
       break;
     case mesh_pairing::ActionType::NOTIFY_PAIRED: {
+      /* Cache the opera name the joiner learned from the OFFER (the
+       * initiator already cached its own at start_pairing_initiator;
+       * re-caching here is harmless and is the only place the joiner
+       * sees it). RAM-only — never written to NVS. */
+      set_opera_name(s_ctx.opera_name);
       uint8_t opera_secret[mesh_crypto::OPERA_SECRET_LEN];
       const bool have_secret =
           mesh_pairing::consume_opera_secret(s_ctx, opera_secret);
@@ -355,6 +367,7 @@ void deinit() {
   secure_zero(s_opera_id,  sizeof(s_opera_id));
   secure_zero(s_sender_fp, sizeof(s_sender_fp));
   s_outbound_counter = 0;
+  s_opera_name[0]    = '\0';
   /* PR 5c-4: wipe the trusted-peer table + handler so a deinit()/init()
    * cycle doesn't carry stale peers or replay counters into the next
    * session. The pubkeys aren't secret but the staleness alone would
@@ -397,6 +410,10 @@ bool start_pairing_initiator(const uint8_t opera_secret[mesh_crypto::OPERA_SECRE
       mesh_pairing::start_initiator(s_ctx, s_device_pub, s_device_priv,
                                     opera_secret, opera_name, now_ms);
   if (a.type == mesh_pairing::ActionType::NONE) return false;
+  /* Cache the opera display name for GET /api/mesh. The initiator knows
+   * it up front (it's the existing opera's name); the joiner learns it
+   * from the OFFER and caches it on NOTIFY_PAIRED. RAM-only. */
+  set_opera_name(opera_name);
   dispatch_action(a);
   return true;
 }
@@ -486,6 +503,28 @@ bool set_opera_secret(const uint8_t opera_secret[mesh_crypto::OPERA_SECRET_LEN])
 
 bool has_opera_secret() {
   return s_opera_id_set;
+}
+
+bool get_opera_id(uint8_t out[mesh_crypto::OPERA_ID_LEN]) {
+  if (out == nullptr || !s_opera_id_set) return false;
+  memcpy(out, s_opera_id, mesh_crypto::OPERA_ID_LEN);
+  return true;
+}
+
+bool has_opera() {
+  return has_opera_secret();
+}
+
+void set_opera_name(const char* name) {
+  if (name == nullptr) { s_opera_name[0] = '\0'; return; }
+  strncpy(s_opera_name, name, sizeof(s_opera_name) - 1);
+  s_opera_name[sizeof(s_opera_name) - 1] = '\0';
+}
+
+void get_opera_name(char* out, size_t cap) {
+  if (out == nullptr || cap == 0) return;
+  strncpy(out, s_opera_name, cap - 1);
+  out[cap - 1] = '\0';
 }
 
 bool send_beacon_event(mesh_beacon::BeaconState state,
