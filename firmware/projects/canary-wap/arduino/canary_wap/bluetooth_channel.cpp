@@ -887,8 +887,11 @@ bool start_scan(uint32_t duration_ms) {
   g_scanning = true;
   set_state(BT_SCANNING);
 
-  // Start scan (non-blocking with callback)
-  g_scanner->start(duration_ms / 1000, false);
+  // Start scan (non-blocking with callback). NimBLE-Arduino 2.x takes the
+  // scan duration in MILLISECONDS (it was seconds in 1.x), so pass duration_ms
+  // directly — dividing by 1000 here made the controller stop scanning ~1000x
+  // too early while g_scanning stayed true until the manual timeout.
+  g_scanner->start(duration_ms, false);
 
   log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "BLE scan started",
              String(duration_ms / 1000).c_str());
