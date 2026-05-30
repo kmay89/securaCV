@@ -4575,6 +4575,10 @@ static esp_err_t handle_wifi_disconnect(httpd_req_t* req) {
   WiFi.disconnect(false);
   g_wifi_creds.enabled = false;
   g_wifi_status.state = WIFI_PROV_AP_ONLY;
+  // The management AP may have been dropped after the STA link went healthy
+  // (see wifi_drop_ap). Bring it back before tearing down STA so the device
+  // stays reachable for re-provisioning instead of going dark until a reboot.
+  wifi_raise_ap();
 
   // Update NVS
   NvsManager& nvs = NvsManager::instance();
@@ -5989,6 +5993,10 @@ static bool wifi_clear_credentials() {
   memset(&g_wifi_creds, 0, sizeof(g_wifi_creds));
   g_wifi_status.state = WIFI_PROV_AP_ONLY;
   g_wifi_status.last_fail_reason[0] = '\0';
+  // Forgetting creds drops back to AP-only provisioning; ensure the management
+  // AP is up (it may have been torn down once the STA link was healthy) so the
+  // device remains reachable after the home network is forgotten.
+  wifi_raise_ap();
 
   log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "WiFi credentials cleared", nullptr);
   return true;
@@ -6074,6 +6082,7 @@ static void wifi_drop_ap() {
   WiFi.softAPdisconnect(true);   // stop the SoftAP and release its netif
   WiFi.mode(WIFI_STA);
   g_wifi_status.ap_active = false;
+  setup_wizard::stop_captive_portal();  // AP is gone — stop the captive DNS poller (frees CPU)
   log_health(SCV_LOG_INFO, SCV_CAT_NETWORK,
              "AP dropped — STA up, BLE-stable mode", g_wifi_status.sta_ip);
 }
@@ -6086,8 +6095,11 @@ static void wifi_raise_ap() {
   char ap_pass[32] = {0};
   if (!resolve_ap_password(ap_pass, sizeof(ap_pass))) return;
   WiFi.mode(WIFI_AP_STA);
-  if (!WiFi.softAP(g_device.ap_ssid, ap_pass, AP_CHANNEL, false, AP_MAX_CLIENTS)) {
+  bool ap_ok = WiFi.softAP(g_device.ap_ssid, ap_pass, AP_CHANNEL, false, AP_MAX_CLIENTS);
+  secure_zero(ap_pass, sizeof(ap_pass));  // wipe the AP password from the stack (DCE-safe)
+  if (!ap_ok) {
     log_health(SCV_LOG_ERROR, SCV_CAT_NETWORK, "AP re-raise failed", nullptr);
+    WiFi.mode(WIFI_STA);  // don't leave the radio half-configured in AP_STA with no AP up
     return;
   }
   g_wifi_status.ap_active = true;
@@ -6382,6 +6394,7 @@ static void wifi_init_provisioning() {
   const char* ap_ssid = g_device.ap_ssid;
 
   bool ap_ok = WiFi.softAP(ap_ssid, ap_pass, AP_CHANNEL, false, AP_MAX_CLIENTS);
+  secure_zero(ap_pass, sizeof(ap_pass));  // wipe the AP password from the stack (DCE-safe)
 
   if (!ap_ok) {
     log_health(SCV_LOG_ERROR, SCV_CAT_NETWORK, "WiFi AP start failed", nullptr);
