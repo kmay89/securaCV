@@ -3,7 +3,10 @@
  * @brief Implementation of the privacy chokepoint, in-memory ring, and the
  *        glue between modules, the bundler, and the host commit hooks.
  *
- * Allocation policy: zero. All buffers are static, sized at compile time.
+ * Allocation policy: near-zero. Buffers are static and compile-time sized,
+ * with one exception — the ~60 KB event ring is lazily ps_malloc'd into PSRAM
+ * (see g_ring / ring_ensure) so it is not charged against the internal-DRAM
+ * .bss segment, which the full build was tipping into overflow.
  *
  * Concurrency: emits originate from the main loop (the CSI HAL features
  * callback drives module ticks which call emit()); commits happen on the
@@ -25,6 +28,7 @@
 
 #include <string.h>
 #include <stdint.h>
+#include <stdlib.h>   /* malloc fallback when PSRAM is unavailable / host build */
 
 #ifdef ARDUINO
   #include <Arduino.h>
@@ -78,8 +82,8 @@ extern "C" void csi_module_record_emission_(uint32_t event_id, const char* modul
  * summary's walk. The witness chain is the source of truth for forensic
  * recall; this ring is just what the live UI scrolls over.
  *
- * 512 rows × ~120 B = ~60 KB. Comfortable on ESP32-S3 with PSRAM. The
- * meta.daily_summary module walks at most 64 rows of this cache, so a
+ * 512 rows × ~120 B = ~60 KB, lazily allocated in PSRAM (see ring_ensure).
+ * The meta.daily_summary module walks at most 64 rows of this cache, so a
  * 512-row ring gives it ~85 % chance of seeing the entire day even when
  * multiple modules emit at their default 6/hour ceiling concurrently.
  * For exact daily counts beyond the cache, walk the witness chain. */
@@ -95,8 +99,34 @@ extern "C" void csi_module_record_emission_(uint32_t event_id, const char* modul
 
 namespace {
 
-csi_event_record_t  g_ring[CSI_EVENT_RING_CAP] = {};
+/* The event ring is ~60 KB (CSI_EVENT_RING_CAP rows × sizeof(record)). As a
+ * static array that lands in internal DRAM .bss and was tipping dram0_0_seg
+ * into overflow. Park it in PSRAM (the XIAO ESP32-S3 ships 8 MB OPI PSRAM,
+ * pinned in sketch.yaml) via ps_malloc, falling back to internal RAM on parts
+ * without PSRAM. Allocated once, lazily, and retained for the process lifetime
+ * — functionally identical to the old static buffer, just no longer charged
+ * against dram0_0_seg. Mirrors handle_events_today() in csi_integration.cpp. */
+csi_event_record_t* g_ring = nullptr;
 size_t              g_ring_head = 0;   /* next write slot */
+
+constexpr size_t kRingBytes =
+    (size_t)CSI_EVENT_RING_CAP * sizeof(csi_event_record_t);
+
+/* Allocate the ring on first use. Returns false only if both PSRAM and the
+ * internal-RAM fallback are exhausted, in which case ring-backed introspection
+ * degrades gracefully — the durable witness chain is unaffected. Callers hold
+ * the RingLock, so this one-time allocation is race-free. */
+bool ring_ensure() {
+  if (g_ring) return true;
+#ifdef ARDUINO
+  g_ring = (csi_event_record_t*)ps_malloc(kRingBytes);
+  if (!g_ring) g_ring = (csi_event_record_t*)malloc(kRingBytes);
+#else
+  g_ring = (csi_event_record_t*)malloc(kRingBytes);
+#endif
+  if (g_ring) memset(g_ring, 0, kRingBytes);
+  return g_ring != nullptr;
+}
 uint32_t            g_next_event_id = 1;
 csi_privacy_class_t g_privacy_ceiling = CSI_PRIVACY_P0;
 
@@ -307,6 +337,7 @@ void persist_to_ring(uint32_t                  event_id,
                      csi_privacy_class_t       privacy,
                      const csi_event_values_t* values) {
   RingLock _lock;
+  if (!ring_ensure()) return;
   csi_event_record_t* rec = &g_ring[g_ring_head];
   memset(rec, 0, sizeof(*rec));
   rec->event_id      = event_id;
@@ -490,6 +521,7 @@ void csi_event_flush_bundles(void) {
 size_t csi_event_recent(csi_event_record_t* out, size_t max) {
   if (!out || max == 0) return 0;
   RingLock _lock;
+  if (!g_ring) return 0;   /* never allocated ⇒ no events to report */
   size_t copied = 0;
   /* Walk backwards from the head, skipping empty slots. */
   for (size_t step = 0; step < CSI_EVENT_RING_CAP && copied < max; ++step) {
@@ -503,6 +535,7 @@ size_t csi_event_recent(csi_event_record_t* out, size_t max) {
 bool csi_event_find(uint32_t event_id, csi_event_record_t* out) {
   if (event_id == 0 || !out) return false;
   RingLock _lock;
+  if (!g_ring) return false;   /* never allocated ⇒ event cannot exist */
   for (size_t i = 0; i < CSI_EVENT_RING_CAP; ++i) {
     if (g_ring[i].event_id == event_id) {
       *out = g_ring[i];
@@ -517,6 +550,7 @@ bool csi_event_dismiss(uint32_t event_id) {
   bool found = false;
   {
     RingLock _lock;
+    if (!g_ring) return false;   /* never allocated ⇒ nothing to dismiss */
     for (size_t i = 0; i < CSI_EVENT_RING_CAP; ++i) {
       if (g_ring[i].event_id == event_id) {
         g_ring[i].values.dismissed = 1;
@@ -535,7 +569,7 @@ bool csi_event_dismiss(uint32_t event_id) {
 
 void csi_event_test_reset(void) {
   RingLock _lock;
-  memset(g_ring, 0, sizeof(g_ring));
+  if (g_ring) memset(g_ring, 0, kRingBytes);   /* leave unallocated rings lazy */
   g_ring_head = 0;
   g_next_event_id = 1;
   g_privacy_ceiling = CSI_PRIVACY_P0;
