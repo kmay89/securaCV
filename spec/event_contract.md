@@ -247,3 +247,14 @@ producer. The kernel's contract enforcement is authoritative; an adapter cannot 
 
 New adapter event types MAY be added only via a ruleset change and only if they remain coarse and
 non-identifying. Forbidden claims (§5) remain forbidden regardless of source.
+
+### On-Device Vision Contributions
+
+The Canary firmware's on-device vision cascade (`securacv_vision`) contributes coarse witness
+records for camera **motion**, **person presence**, **camera tamper/blinding**, and
+**object removal** — each carrying only a coarse `time_bucket` and a local zone, never frames,
+boxes, or identity. These reuse existing semantics: object removal corresponds to
+`object_removed_from_zone` (already listed above) and camera tamper is recorded under the existing
+tamper-alert record class — **no new canonical event types are introduced**. The vision module
+emits at most one record per detected transition (single-fire latches), so it cannot flood the
+chain.

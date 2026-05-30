@@ -228,10 +228,19 @@ void sensing_feed_vision_event(uint8_t event_type, uint8_t confidence,
   s_state.last_vision_zone       = zone;
   s_state.last_vision_event_ms   = millis();
   s_state.time_bucket            = time_bucket;
+  /* event_type values mirror vision_event_type_t (securacv_vision.h):
+   * 1 MOTION, 3 PERSON, 4 TAMPER, 5 OBJ_REMOVED. MOTION_END (2) is a UI
+   * state transition, not witness-worthy. The cascade's own single-fire
+   * latches (s_tamper_fired / object-revert gate) keep these from firing
+   * per-frame, so this stays quiet without extra suppression here. */
   if (event_type == 1) {
     fire_witness(SENSING_WITNESS_VISION_MOTION, confidence, time_bucket, zone);
   } else if (event_type == 3) {
     fire_witness(SENSING_WITNESS_VISION_PERSON, confidence, time_bucket, zone);
+  } else if (event_type == 4) {
+    fire_witness(SENSING_WITNESS_VISION_TAMPER, confidence, time_bucket, zone);
+  } else if (event_type == 5) {
+    fire_witness(SENSING_WITNESS_VISION_OBJ_REMOVED, confidence, time_bucket, zone);
   }
 }
 
