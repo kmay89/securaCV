@@ -285,6 +285,14 @@ static const uint32_t SD_SPI_SLOW = 1000000;
 static const int   AP_CHANNEL          = 1;
 static const int   AP_MAX_CLIENTS      = 1;  // Hardened: max 1 client for security
 
+// Once the STA has held its association to the home network for this long, the
+// management SoftAP is torn down so the single 2.4 GHz radio runs STA + BLE —
+// Espressif's stable (Y) coexistence combo — instead of AP + STA + BLE, which
+// the RF-coexistence support matrix rates C1 (supported but unstable) once a
+// client is joined to the AP. The AP is re-raised automatically if the STA
+// link drops (see wifi_raise_ap / wifi_drop_ap). See docs/esp32s3_ble_wap_audit.md.
+static const uint32_t AP_DROP_GRACE_MS = 8000;
+
 // ════════════════════════════════════════════════════════════════════════════
 // CAMERA CONFIG (XIAO ESP32-S3 Sense only — ESP32-C3 has no camera interface)
 // ════════════════════════════════════════════════════════════════════════════
@@ -731,6 +739,9 @@ static bool wifi_clear_credentials();
 static void wifi_init_provisioning();
 static void wifi_connect_to_home();
 static void wifi_check_connection();
+static void wifi_drop_ap();
+static void wifi_raise_ap();
+static bool resolve_ap_password(char* out_password, size_t out_len);
 static const char* wifi_state_name(WiFiProvState s);
 static void claim_catch_all_hostname();
 static void generate_mdns_hostname(char* out, size_t cap);
@@ -4564,6 +4575,10 @@ static esp_err_t handle_wifi_disconnect(httpd_req_t* req) {
   WiFi.disconnect(false);
   g_wifi_creds.enabled = false;
   g_wifi_status.state = WIFI_PROV_AP_ONLY;
+  // The management AP may have been dropped after the STA link went healthy
+  // (see wifi_drop_ap). Bring it back before tearing down STA so the device
+  // stays reachable for re-provisioning instead of going dark until a reboot.
+  wifi_raise_ap();
 
   // Update NVS
   NvsManager& nvs = NvsManager::instance();
@@ -5978,6 +5993,10 @@ static bool wifi_clear_credentials() {
   memset(&g_wifi_creds, 0, sizeof(g_wifi_creds));
   g_wifi_status.state = WIFI_PROV_AP_ONLY;
   g_wifi_status.last_fail_reason[0] = '\0';
+  // Forgetting creds drops back to AP-only provisioning; ensure the management
+  // AP is up (it may have been torn down once the STA link was healthy) so the
+  // device remains reachable after the home network is forgotten.
+  wifi_raise_ap();
 
   log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "WiFi credentials cleared", nullptr);
   return true;
@@ -6054,6 +6073,44 @@ static void wifi_connect_to_home() {
   WiFi.begin(g_wifi_creds.ssid, g_wifi_creds.password);
 }
 
+// F4 (coexistence): tear down the management SoftAP once the STA link is
+// healthy so the single 2.4 GHz radio runs STA + BLE (Espressif's stable Y
+// combo) instead of AP + STA + BLE (rated C1/unstable with a client joined).
+// Idempotent — a no-op if the AP is already down.
+static void wifi_drop_ap() {
+  if (!(WiFi.getMode() & WIFI_MODE_AP)) return;  // already STA-only
+  WiFi.softAPdisconnect(true);   // stop the SoftAP and release its netif
+  WiFi.mode(WIFI_STA);
+  g_wifi_status.ap_active = false;
+  setup_wizard::stop_captive_portal();  // AP is gone — stop the captive DNS poller (frees CPU)
+  log_health(SCV_LOG_INFO, SCV_CAT_NETWORK,
+             "AP dropped — STA up, BLE-stable mode", g_wifi_status.sta_ip);
+}
+
+// F4: bring the management SoftAP back up (e.g. the home WiFi link was lost)
+// without re-running the whole provisioning path, so the device stays reachable
+// at canary.local for reconfiguration. Idempotent — a no-op if the AP is up.
+static void wifi_raise_ap() {
+  if (WiFi.getMode() & WIFI_MODE_AP) return;  // already up
+  char ap_pass[32] = {0};
+  if (!resolve_ap_password(ap_pass, sizeof(ap_pass))) return;
+  WiFi.mode(WIFI_AP_STA);
+  bool ap_ok = WiFi.softAP(g_device.ap_ssid, ap_pass, AP_CHANNEL, false, AP_MAX_CLIENTS);
+  secure_zero(ap_pass, sizeof(ap_pass));  // wipe the AP password from the stack (DCE-safe)
+  if (!ap_ok) {
+    log_health(SCV_LOG_ERROR, SCV_CAT_NETWORK, "AP re-raise failed", nullptr);
+    WiFi.mode(WIFI_STA);  // don't leave the radio half-configured in AP_STA with no AP up
+    return;
+  }
+  g_wifi_status.ap_active = true;
+  g_health.wifi_active = true;
+  IPAddress ip = WiFi.softAPIP();
+  snprintf(g_wifi_status.ap_ip, sizeof(g_wifi_status.ap_ip),
+           "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
+  setup_wizard::start_captive_portal();  // restart captive DNS for the re-raised AP
+  log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "AP re-raised — STA link down", g_wifi_status.ap_ip);
+}
+
 static void wifi_check_connection() {
   uint32_t now = millis();
 
@@ -6107,6 +6164,16 @@ static void wifi_check_connection() {
         snprintf(g_wifi_status.last_fail_reason, sizeof(g_wifi_status.last_fail_reason),
                  "%s", "Connection lost");
         log_health(SCV_LOG_WARNING, SCV_CAT_NETWORK, "WiFi connection lost", nullptr);
+        // F4: STA link gone — re-raise the management AP so the device stays
+        // reachable for reconfiguration while it retries the home network.
+        wifi_raise_ap();
+      } else if ((WiFi.getMode() & WIFI_MODE_AP) &&
+                 now - g_wifi_status.connected_since_ms > AP_DROP_GRACE_MS) {
+        // F4: STA has held the home link past the grace window — drop the AP so
+        // the radio runs the stable STA+BLE coexistence combo. The grace window
+        // lets the just-provisioned phone see the "connected" result before its
+        // AP association is dropped.
+        wifi_drop_ap();
       }
       break;
 
@@ -6241,10 +6308,21 @@ static void claim_catch_all_hostname() {
 static void wifi_init_provisioning() {
   memset(&g_wifi_status, 0, sizeof(g_wifi_status));
 
+  // Note on Wi-Fi/BLE coexistence: SW coexistence is enabled by the
+  // arduino-esp32 core build and the single 2.4 GHz radio is already
+  // time-sliced with a BALANCE preference by default (the legacy
+  // esp_coex_preference_set() knob is deprecated in IDF5 and would only
+  // re-assert that default). The meaningful stability lever here is the radio
+  // *mode*: we leave AP+STA+BLE (rated C1/unstable) by dropping the AP once the
+  // STA link is healthy — see wifi_check_connection() / wifi_drop_ap().
+
   // Load saved credentials
   bool has_creds = wifi_load_credentials();
 
-  // Always use AP+STA mode for provisioning capability
+  // Bring up AP+STA for provisioning: the SoftAP serves the captive portal /
+  // local management UI while the STA associates to the home network. Once the
+  // STA link is healthy the AP is dropped (wifi_check_connection → wifi_drop_ap)
+  // so the radio runs the stable STA+BLE coexistence combo.
   WiFi.mode(WIFI_AP_STA);
 
   // Set the WiFi STA hostname BEFORE softAP() / begin() so DHCP also
@@ -6309,12 +6387,14 @@ static void wifi_init_provisioning() {
     return;
   }
   // One stable SSID for the lifetime of the device — the same name during
-  // first-boot setup and in steady state. The softAP is always brought up
-  // (AP+STA mode, never torn down after the STA joins home WiFi), so the WAP
-  // keeps broadcasting this network at all times.
+  // first-boot setup and in steady state. The SoftAP is broadcast while the
+  // device is unprovisioned or its STA link is down; once the STA holds the
+  // home network past AP_DROP_GRACE_MS the AP is torn down for radio stability
+  // and automatically re-raised on STA loss (wifi_raise_ap / wifi_drop_ap).
   const char* ap_ssid = g_device.ap_ssid;
 
   bool ap_ok = WiFi.softAP(ap_ssid, ap_pass, AP_CHANNEL, false, AP_MAX_CLIENTS);
+  secure_zero(ap_pass, sizeof(ap_pass));  // wipe the AP password from the stack (DCE-safe)
 
   if (!ap_ok) {
     log_health(SCV_LOG_ERROR, SCV_CAT_NETWORK, "WiFi AP start failed", nullptr);
@@ -6329,11 +6409,12 @@ static void wifi_init_provisioning() {
            "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
 
   // Bring up the captive DNS redirector for the whole life of the AP, not
-  // just first-boot setup. The softAP is always on (AP+STA, never torn down),
-  // so a phone joining the management AP after provisioning — e.g. because
-  // home WiFi dropped — still resolves canary.local to the device instead of
-  // being flagged "no internet" and disconnected. The setup wizard's
-  // landing/timeout logic stays separately gated on is_active().
+  // just first-boot setup, so a phone joining the management AP (during setup,
+  // or after home WiFi dropped and the AP was re-raised) resolves canary.local
+  // to the device instead of being flagged "no internet" and disconnected. The
+  // captive portal is restarted by wifi_raise_ap() whenever the AP comes back.
+  // The setup wizard's landing/timeout logic stays separately gated on
+  // is_active().
   if (setup_wizard::start_captive_portal()) {
     Serial.println(setup_wizard::is_active()
                      ? "[OK] Captive DNS active (first-boot setup)"
