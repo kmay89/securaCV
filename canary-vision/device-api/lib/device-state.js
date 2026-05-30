@@ -263,6 +263,10 @@ function createDeviceState(overrides = {}) {
     } else if (eventType === 'animal_detected') {
       objW = 35 + (seed % 15); objH = 25 + (seed % 10);
       objX = 90 + (seed % 70); objY = H - objH - 20;
+    } else if (eventType === 'object_removed') {
+      // A package-sized footprint where an object used to be.
+      objW = 40 + (seed % 20); objH = 35 + (seed % 15);
+      objX = 70 + (seed % 70); objY = H - objH - 25;
     } else {
       objW = 20; objH = 20;
       objX = 100 + (seed % 50); objY = 80 + (seed % 40);

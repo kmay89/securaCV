@@ -37,6 +37,7 @@ const EVENT_TYPE_MAP = {
   person_detected: 'BoundaryCrossingObjectLarge',
   vehicle_detected: 'VehiclePresenceAfterHours',
   animal_detected: 'BoundaryCrossingObjectSmall',
+  object_removed: 'ObjectRemovedFromZone',
 };
 
 // Raw-record fields that are precise/forbidden and must be DROPPED during coarsening. The builder
