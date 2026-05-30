@@ -203,9 +203,11 @@ size_t witness_get_health_log_head();
 
 // Recent witness-record ring (display-only; serves GET /api/witness?last=N).
 // Bounded and volatile across reboot — integrity lives in the hash chain, not here.
-WitnessRecord* witness_get_record_ring();
+// Reads go through witness_copy_record_at() so a concurrent write can't be observed torn.
+size_t witness_get_record_ring_size();
 size_t witness_get_record_count();
 size_t witness_get_record_head();
+bool   witness_copy_record_at(size_t ring_index, WitnessRecord* out);
 
 // ════════════════════════════════════════════════════════════════════════════
 // UTILITIES

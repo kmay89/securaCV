@@ -1112,10 +1112,9 @@ static esp_err_t handle_witness(httpd_req_t* req) {
   if (!auth_gate(req)) return ESP_OK;
   witness_get_health().http_requests++;
 
-  WitnessRecord* ring = witness_get_record_ring();
+  const size_t ring_size = witness_get_record_ring_size();
   const size_t total = witness_get_record_count();
   const size_t head  = witness_get_record_head();
-  const size_t ring_size = 32;  // mirrors WITNESS_RECORD_RING_SIZE
 
   // Optional ?last=N — clamp to [1, total]; default to all available records.
   size_t want = total;
@@ -1138,16 +1137,18 @@ static esp_err_t handle_witness(httpd_req_t* req) {
   JsonArray records = doc["records"].to<JsonArray>();
 
   // Emit chronological (oldest→newest) for the most recent `want` records so the UI's
-  // slice(-50).reverse() shows newest first. Oldest of the window sits at this index:
+  // slice(-50).reverse() shows newest first. Each slot is copied under the ring lock so a
+  // concurrent record write can't be observed torn. Oldest of the window sits at this index:
+  char hash[65];
   const size_t start = total - want;
   for (size_t j = start; j < total; j++) {
     const size_t idx = (head + ring_size - total + j) % ring_size;
-    WitnessRecord& rec = ring[idx];
+    WitnessRecord rec;
+    if (!witness_copy_record_at(idx, &rec)) continue;
 
     JsonObject r = records.add<JsonObject>();
     r["seq"] = rec.seq;
     r["type_name"] = record_type_name(rec.type);
-    char hash[65];
     hex_to_str(hash, rec.chain_hash, 32);
     r["chain_hash"] = hash;
     r["time_bucket"] = rec.time_bucket;

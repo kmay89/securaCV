@@ -45,6 +45,10 @@ static const size_t WITNESS_RECORD_RING_SIZE = 32;
 static WitnessRecord g_record_ring[WITNESS_RECORD_RING_SIZE];
 static size_t g_record_ring_head = 0;
 static size_t g_record_ring_count = 0;
+// The ring is written from the record-creation task and read from the HTTP server task on the
+// other core; a WitnessRecord copy is not atomic, so guard both with a short critical section
+// (same approach as the vision history ring). The chain's integrity does not depend on this ring.
+static portMUX_TYPE g_record_ring_mux = portMUX_INITIALIZER_UNLOCKED;
 
 // ════════════════════════════════════════════════════════════════════════════
 // GLOBAL STATE ACCESSORS
@@ -60,9 +64,19 @@ HealthLogRingEntry* witness_get_health_log_ring() { return g_health_log_ring; }
 size_t witness_get_health_log_count() { return g_health_log_ring_count; }
 size_t witness_get_health_log_head() { return g_health_log_ring_head; }
 
-WitnessRecord* witness_get_record_ring() { return g_record_ring; }
+size_t witness_get_record_ring_size() { return WITNESS_RECORD_RING_SIZE; }
 size_t witness_get_record_count() { return g_record_ring_count; }
 size_t witness_get_record_head() { return g_record_ring_head; }
+
+// Copy one ring slot under the lock so a reader on the HTTP task never observes a torn record
+// mid-write. Returns false for an out-of-range index.
+bool witness_copy_record_at(size_t ring_index, WitnessRecord* out) {
+  if (out == nullptr || ring_index >= WITNESS_RECORD_RING_SIZE) return false;
+  portENTER_CRITICAL(&g_record_ring_mux);
+  *out = g_record_ring[ring_index];
+  portEXIT_CRITICAL(&g_record_ring_mux);
+  return true;
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 // UTILITIES
@@ -215,6 +229,8 @@ void witness_persist_chain_state() {
 
 bool witness_create_record_gps(const uint8_t* payload, size_t len, RecordType type,
                                const GpsTimeAttestation* gps, WitnessRecord* out) {
+  if (out == nullptr) return false;
+
   // Hash payload
   uint8_t payload_hash[32];
   sha256_domain("securacv:fw:payload:v1", payload, len, payload_hash);
@@ -251,9 +267,11 @@ bool witness_create_record_gps(const uint8_t* payload, size_t len, RecordType ty
   // Append to the display-only recent-record ring (newest overwrites oldest).
   // Shared by both create paths; the chain integrity itself lives in the hash
   // chain, so losing this ring on reboot is harmless.
+  portENTER_CRITICAL(&g_record_ring_mux);
   g_record_ring[g_record_ring_head] = *out;
   g_record_ring_head = (g_record_ring_head + 1) % WITNESS_RECORD_RING_SIZE;
   if (g_record_ring_count < WITNESS_RECORD_RING_SIZE) g_record_ring_count++;
+  portEXIT_CRITICAL(&g_record_ring_mux);
 
   // Persist chain state periodically
   if ((g_device.seq - g_device.seq_persisted) >= SD_PERSIST_INTERVAL) {

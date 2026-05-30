@@ -134,6 +134,14 @@ function witnessRoutes(state) {
   // honours tryEmitEvent's activity-session suppression/cooldown; (3) `force` (suppression bypass)
   // is devMode-only. event_type is allowlisted to envelope-nameable, non-identifying types.
   router.post('/api/v1/witness/simulate', simulateLimiter, (req, res) => {
+    // Minting signed, hash-chained witness records is a test/demo affordance only. Outside dev
+    // mode the whole path is disabled (404) so a real deployment can never inject synthetic
+    // "evidence" into the witness chain / timeline / export — suppression and rate limits cap
+    // volume but cannot make an injected event trustworthy.
+    if (!state.device.devMode) {
+      return res.status(404).json({ error: 'not_found' });
+    }
+
     const body = (req.body && typeof req.body === 'object') ? req.body : {};
     const eventType = body.event_type;
     const zone = body.zone === undefined ? 'front' : body.zone;
@@ -157,9 +165,9 @@ function witnessRoutes(state) {
     // persisted: the raw record has no confidence field and computeHash() does not include one,
     // so adding it would break chain verification / envelope coarsening.
 
-    // `force` bypasses suppression for deterministic tests/demos — gated to devMode so a
-    // production-style caller can never sidestep the cooldown to flood the chain.
-    const force = body.force === true && state.device.devMode === true;
+    // `force` bypasses suppression for deterministic tests/demos. The endpoint is already
+    // devMode-only (above), so this never applies in a real deployment.
+    const force = body.force === true;
 
     const record = force
       ? state.addWitnessRecord(eventType, zone)

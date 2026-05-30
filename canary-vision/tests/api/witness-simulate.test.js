@@ -16,12 +16,21 @@ const ALLOWED = Object.keys(EVENT_TYPE_MAP);
 // single-use ticket passed as a query param.
 function waitForWitnessSse(baseUrl, ticket, wantSeq, timeoutMs = 3000) {
   return new Promise((resolve, reject) => {
+    let timer;
+    let req;
+    // Single settle path so the timeout timer and socket are always cleaned up.
+    const settle = (fn, arg) => {
+      if (timer) { clearTimeout(timer); timer = null; }
+      if (req && !req.destroyed) req.destroy();
+      fn(arg);
+    };
+
     const url = new URL(baseUrl + '/api/v1/witness/stream?ticket=' + encodeURIComponent(ticket));
-    const req = http.get({
+    req = http.get({
       hostname: url.hostname, port: url.port, path: url.pathname + url.search,
       headers: { Host: '127.0.0.1' },
     }, (res) => {
-      if (res.statusCode !== 200) { reject(new Error('stream status ' + res.statusCode)); return; }
+      if (res.statusCode !== 200) { settle(reject, new Error('stream status ' + res.statusCode)); return; }
       let buf = '';
       res.on('data', (chunk) => {
         buf += chunk.toString();
@@ -35,16 +44,16 @@ function waitForWitnessSse(baseUrl, ticket, wantSeq, timeoutMs = 3000) {
             if (dataLine) {
               try {
                 const record = JSON.parse(dataLine.slice('data: '.length));
-                if (record.seq === wantSeq) { req.destroy(); resolve(record); return; }
+                if (record.seq === wantSeq) { settle(resolve, record); return; }
               } catch { /* ignore non-JSON frames */ }
             }
           }
         }
       });
     });
-    req.on('error', (e) => { /* destroyed after success */ if (!req.destroyed) reject(e); });
-    const t = setTimeout(() => { req.destroy(); reject(new Error('SSE timeout')); }, timeoutMs);
-    if (t.unref) t.unref();
+    req.on('error', (e) => { if (!req.destroyed) settle(reject, e); });
+    timer = setTimeout(() => settle(reject, new Error('SSE timeout')), timeoutMs);
+    if (timer.unref) timer.unref();
   });
 }
 
@@ -146,6 +155,31 @@ describe('POST /api/v1/witness/simulate', () => {
     assert.equal(verify.status, 200);
     assert.ok(verify.json.evidence_envelope, 'verify response carries an evidence-envelope report');
     assert.equal(verify.json.evidence_envelope.ok, true, 'envelope still coarsens — no unmappable type leaked in');
+  });
+});
+
+describe('POST /api/v1/witness/simulate — disabled outside dev mode', () => {
+  let server, client;
+
+  before(async () => {
+    server = await startServer({ devMode: false });
+    client = createClient(server.url, TOKEN);
+  });
+
+  after(async () => {
+    await server.close();
+  });
+
+  it('returns 404 (no event minting) when devMode is off', async () => {
+    const before = server.state.witnessRecords.length;
+    // With devMode off, host-validation only accepts the device IP as Host (not 127.0.0.1).
+    const res = await client.post(
+      '/api/v1/witness/simulate',
+      { event_type: 'person_detected', zone: 'front', force: true },
+      { host: server.state.device.ip },
+    );
+    assert.equal(res.status, 404);
+    assert.equal(server.state.witnessRecords.length, before, 'no record was minted');
   });
 });
 
