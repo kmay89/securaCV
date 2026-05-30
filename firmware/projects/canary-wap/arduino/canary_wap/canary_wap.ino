@@ -6858,6 +6858,30 @@ void setup() {
     Serial.println();
   }
 
+  // Surface the cause of the last reset so power faults stop masquerading as
+  // peripheral failures. A brownout (3.3V rail sag under the WiFi+BLE+camera
+  // current spike) typically presents as "BLE/WiFi init failed" or a boot loop
+  // into safe mode — logging it explicitly points field triage at the power
+  // supply / bulk decoupling rather than the firmware. The full reset reason is
+  // also surfaced in sys_monitor's status JSON. See docs/esp32s3_power_resilience.md.
+  switch (esp_reset_reason()) {
+    case ESP_RST_BROWNOUT:
+      log_health(SCV_LOG_ERROR, SCV_CAT_SYSTEM,
+                 "Last reset: brownout (supply voltage sag)",
+                 "Check 3.3V rail capacity + bulk decoupling — not a firmware fault");
+      break;
+    case ESP_RST_PANIC:
+      log_health(SCV_LOG_WARNING, SCV_CAT_SYSTEM, "Last reset: panic (firmware crash)", nullptr);
+      break;
+    case ESP_RST_INT_WDT:
+    case ESP_RST_TASK_WDT:
+    case ESP_RST_WDT:
+      log_health(SCV_LOG_WARNING, SCV_CAT_SYSTEM, "Last reset: watchdog timeout", nullptr);
+      break;
+    default:
+      break;
+  }
+
   setup_wizard::init();
   {
     const char* dn = setup_wizard::get_device_name();

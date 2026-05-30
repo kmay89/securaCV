@@ -81,11 +81,16 @@ bool nimble_scan_init() {
 
   /* Bring up the NimBLE stack. NimBLEDevice::init() is documented as
    * idempotent in NimBLE-Arduino 2.x — safe to call even if another
-   * module already initialized the stack. The name is intentionally
-   * generic ("securacv-scout") because the Scout role never
+   * module already initialized the stack. It returns bool in 2.x; false
+   * means the controller/host stack failed to come up (BT compiled out, no
+   * radio, or a coexistence/heap failure), so propagate that instead of
+   * marching on to getScan() and dereferencing a null scanner. The name is
+   * intentionally generic ("securacv-scout") because the Scout role never
    * advertises; the name is only visible if a future build enables
    * advertising, which this TU does not. */
-  NimBLEDevice::init("securacv-scout");
+  if (!NimBLEDevice::init("securacv-scout")) {
+    return false;
+  }
 
   s_scanner = NimBLEDevice::getScan();
   if (!s_scanner) return false;
