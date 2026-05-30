@@ -165,8 +165,10 @@ describe('POST /api/v1/witness/simulate', () => {
     const env = await client.get('/api/v1/witness/envelope');
     assert.equal(env.status, 200);
     // Traverse the structured sealed events rather than substring-matching the whole envelope,
-    // so this can't pass on an incidental string in metadata/version fields.
-    const events = env.json.artifact.batches.flatMap((b) => b.events);
+    // so this can't pass on an incidental string in metadata/version fields. Shape is
+    // artifact.batches[].buckets[].events[].
+    const events = env.json.artifact.batches.flatMap(
+      (b) => b.buckets.flatMap((bucket) => bucket.events));
     assert.ok(events.some((e) => e.event_type === 'ObjectRemovedFromZone'),
       'envelope carries the canonical ObjectRemovedFromZone claim for the removed-object event');
   });
