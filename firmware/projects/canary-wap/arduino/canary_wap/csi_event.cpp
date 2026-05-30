@@ -521,7 +521,7 @@ void csi_event_flush_bundles(void) {
 size_t csi_event_recent(csi_event_record_t* out, size_t max) {
   if (!out || max == 0) return 0;
   RingLock _lock;
-  if (!ring_ensure()) return 0;
+  if (!g_ring) return 0;   /* never allocated ⇒ no events to report */
   size_t copied = 0;
   /* Walk backwards from the head, skipping empty slots. */
   for (size_t step = 0; step < CSI_EVENT_RING_CAP && copied < max; ++step) {
@@ -535,7 +535,7 @@ size_t csi_event_recent(csi_event_record_t* out, size_t max) {
 bool csi_event_find(uint32_t event_id, csi_event_record_t* out) {
   if (event_id == 0 || !out) return false;
   RingLock _lock;
-  if (!ring_ensure()) return false;
+  if (!g_ring) return false;   /* never allocated ⇒ event cannot exist */
   for (size_t i = 0; i < CSI_EVENT_RING_CAP; ++i) {
     if (g_ring[i].event_id == event_id) {
       *out = g_ring[i];
@@ -550,7 +550,7 @@ bool csi_event_dismiss(uint32_t event_id) {
   bool found = false;
   {
     RingLock _lock;
-    if (!ring_ensure()) return false;
+    if (!g_ring) return false;   /* never allocated ⇒ nothing to dismiss */
     for (size_t i = 0; i < CSI_EVENT_RING_CAP; ++i) {
       if (g_ring[i].event_id == event_id) {
         g_ring[i].values.dismissed = 1;
@@ -569,7 +569,7 @@ bool csi_event_dismiss(uint32_t event_id) {
 
 void csi_event_test_reset(void) {
   RingLock _lock;
-  if (ring_ensure()) memset(g_ring, 0, kRingBytes);
+  if (g_ring) memset(g_ring, 0, kRingBytes);   /* leave unallocated rings lazy */
   g_ring_head = 0;
   g_next_event_id = 1;
   g_privacy_ceiling = CSI_PRIVACY_P0;
