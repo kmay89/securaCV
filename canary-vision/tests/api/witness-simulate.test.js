@@ -156,6 +156,17 @@ describe('POST /api/v1/witness/simulate', () => {
     assert.ok(verify.json.evidence_envelope, 'verify response carries an evidence-envelope report');
     assert.equal(verify.json.evidence_envelope.ok, true, 'envelope still coarsens — no unmappable type leaked in');
   });
+
+  it('maps object_removed to the canonical ObjectRemovedFromZone in the envelope', async () => {
+    const sim = await client.post('/api/v1/witness/simulate', { event_type: 'object_removed', zone: 'porch', force: true });
+    assert.equal(sim.status, 201);
+    assert.equal(sim.json.record.event_type, 'object_removed');
+
+    const env = await client.get('/api/v1/witness/envelope');
+    assert.equal(env.status, 200);
+    assert.ok(JSON.stringify(env.json).includes('ObjectRemovedFromZone'),
+      'envelope carries the canonical ObjectRemovedFromZone claim for the removed-object event');
+  });
 });
 
 describe('POST /api/v1/witness/simulate — disabled outside dev mode', () => {
