@@ -899,7 +899,7 @@ function getDominantType(typesObj) {
 function countTodayByType(records) {
   var now = new Date();
   var startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  var counts = { total: 0, person_detected: 0, vehicle_detected: 0, animal_detected: 0, motion_detected: 0 };
+  var counts = { total: 0, person_detected: 0, vehicle_detected: 0, object_removed: 0, animal_detected: 0, motion_detected: 0 };
   for (var i = 0; i < records.length; i++) {
     if (records[i]._ts >= startOfDay) {
       counts.total++;
@@ -2421,6 +2421,7 @@ function renderFilterChips(contentContainer, data) {
     { key: 'all', label: 'All' },
     { key: 'person_detected', label: '🚶 Person' },
     { key: 'vehicle_detected', label: '🚗 Vehicle' },
+    { key: 'object_removed', label: '📦 Object removed' },
     { key: 'animal_detected', label: '🐾 Animal' },
     { key: 'motion_detected', label: '💨 Motion' },
   ];
