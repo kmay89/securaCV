@@ -460,8 +460,12 @@ var DEFAULT_NOTIF_PREFS = {
   sound: false,
   vibrate: true,
   person_detected: true,
+  presence_restricted: true,
   vehicle_detected: true,
+  object_removed: true,
+  acoustic_impulse: true,
   animal_detected: true,
+  contact_changed: false,
   motion_detected: false,
   quiet_hours_enabled: false,
   quiet_hours_start: '22:00',
@@ -903,7 +907,9 @@ function getDominantType(typesObj) {
 function countTodayByType(records) {
   var now = new Date();
   var startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  var counts = { total: 0, person_detected: 0, presence_restricted: 0, vehicle_detected: 0, object_removed: 0, acoustic_impulse: 0, animal_detected: 0, contact_changed: 0, motion_detected: 0 };
+  // Build the per-type tallies from EVENT_TYPE_META so this never drifts as types are added.
+  var counts = { total: 0 };
+  Object.keys(EVENT_TYPE_META).forEach(function (key) { counts[key] = 0; });
   for (var i = 0; i < records.length; i++) {
     if (records[i]._ts >= startOfDay) {
       counts.total++;
@@ -2421,17 +2427,15 @@ function renderDensityBar(records) {
 function renderFilterChips(contentContainer, data) {
   var chipsRow = el('div', { className: 'filter-chips' });
 
-  var filters = [
-    { key: 'all', label: 'All' },
-    { key: 'person_detected', label: '🚶 Person' },
-    { key: 'presence_restricted', label: '⛔ Restricted zone' },
-    { key: 'vehicle_detected', label: '🚗 Vehicle' },
-    { key: 'object_removed', label: '📦 Object removed' },
-    { key: 'acoustic_impulse', label: '🔊 Acoustic impulse' },
-    { key: 'animal_detected', label: '🐾 Animal' },
-    { key: 'contact_changed', label: '🚪 Contact change' },
-    { key: 'motion_detected', label: '💨 Motion' },
-  ];
+  // Derive the type chips from EVENT_TYPE_META (highest priority first) so any new event type is
+  // automatically filterable without touching this list.
+  var filters = [{ key: 'all', label: 'All' }];
+  Object.keys(EVENT_TYPE_META)
+    .sort(function (a, b) { return EVENT_TYPE_META[b].priority - EVENT_TYPE_META[a].priority; })
+    .forEach(function (key) {
+      var meta = EVENT_TYPE_META[key];
+      filters.push({ key: key, label: meta.icon + ' ' + meta.label });
+    });
 
   // Add device filters if multiple devices
   var deviceIds = {};
@@ -3046,10 +3050,14 @@ function renderSettingsView() {
     textContent: 'Notify for event types:',
     style: 'font-weight: 500; color: var(--color-text);',
   }));
-  notifCard.appendChild(makeToggle('🚶 Person', 'person_detected', prefs));
-  notifCard.appendChild(makeToggle('🚗 Vehicle', 'vehicle_detected', prefs));
-  notifCard.appendChild(makeToggle('🐾 Animal', 'animal_detected', prefs));
-  notifCard.appendChild(makeToggle('💨 Motion', 'motion_detected', prefs));
+  // Derive the per-type toggles from EVENT_TYPE_META (highest priority first) so the settings
+  // list stays in sync with the event vocabulary automatically when new types are added.
+  Object.keys(EVENT_TYPE_META)
+    .sort(function (a, b) { return EVENT_TYPE_META[b].priority - EVENT_TYPE_META[a].priority; })
+    .forEach(function (key) {
+      var meta = EVENT_TYPE_META[key];
+      notifCard.appendChild(makeToggle(meta.icon + ' ' + meta.label, key, prefs));
+    });
 
   notifCard.appendChild(el('div', {
     className: 'card-subtitle mt-12 mb-8',
