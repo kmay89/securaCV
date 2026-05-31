@@ -11,17 +11,22 @@ Both required for v1. CV flexibility without real crypto is just a detection pip
 
 ## Current State
 
+> _Refreshed 2026-05-31 against the source tree. The earlier table predated the Stream A/B/C
+> work below and was stale (it still said detection was "Only StubDetector", the vault was "not
+> wired", and RTSP was "synthetic frames only" — all since superseded). Statuses below cite the
+> code that backs them._
+
 | Component | Status | Reality |
 |-----------|--------|---------|
 | Frame isolation | ✅ Works | Type-level enforcement is real |
 | Hash-chained log | ✅ Works | `log_verify` proves integrity |
 | Event contract | ✅ Works | Allowlist enforced |
 | Break-glass structure | ✅ Works | Policy storage + approval flow |
-| Detection | ⚠️ Hardcoded | Only `StubDetector`, no model flexibility |
+| Detection | ✅ Works (stub is the default) | `DetectorBackend` trait + `BackendRegistry`; `StubBackend`/`CpuBackend`/`TractBackend` (ONNX via `tract`). Default build registers the motion stub; `TractBackend` is feature-gated (`backend-tract`) and needs a `--model` (tests: `tests/tract_backend.rs`). |
 | Signatures | ✅ Works | Ed25519 signatures on log + `log_verify` checks |
-| Vault encryption | ⚠️ Placeholder | Structure exists, not wired |
-| RTSP ingestion | ⚠️ Stub | Synthetic frames only |
-| Backend sandboxing | ❌ Missing | Backends run with full privileges |
+| Vault sealing | ✅ Wired (opt-in) | `witnessd` seals buffered frames via `seal_latest_frame()` → `Vault::seal_frame()` with real `VaultCryptoMode::{Classical,Pq,Hybrid}`; gated on a valid `BREAK_GLASS_SEAL_TOKEN`. Remaining work is key management + setup UX, not the encryption. |
+| RTSP ingestion | ✅ Implemented (feature-gated) | `rtsp-ffmpeg` / `rtsp-gstreamer` sources (`src/ingest/rtsp*.rs`); file-ingest roundtrip exercised in CI. |
+| Sandboxing | ⚠️ Partial (by design) | Optional seccomp sandbox for adapter/module payload parsing (`with_sandbox`, `src/adapter/sandbox.rs`); detection backends remain a trusted/*audited* boundary by design (see `AGENTS.md`). |
 
 ---
 
@@ -58,11 +63,12 @@ v1 is "minimally credible," not feature complete:
 
 **v1 choice: Ed25519 signed log** (not encrypted vault)
 
-Rationale: Signed log is easier to demonstrate end-to-end without designing envelope formats and media storage semantics. Vault structure remains present but inactive for v1.
+Rationale: Signed log is easier to demonstrate end-to-end without designing envelope formats and media storage semantics. The vault seal path is wired into `witnessd` (opt-in via `BREAK_GLASS_SEAL_TOKEN`); v1 leads with the signed log for the headline end-to-end demo, with vault sealing available as the optional sealed-evidence path.
 
 **Remaining crypto gaps to close:**
 - Device key handling is still seed-derived from config, not hardware-backed or rotated.
-- Vault encryption remains unwired (structure only).
+- Vault sealing is wired but opt-in/UX-gated; the remaining gap is key management (see the
+  device-key item above) and a trustee/seal setup UI — not the encryption itself.
 
 | Step | Deliverable | Est. Effort |
 |------|-------------|-------------|
@@ -127,7 +133,8 @@ Integration testing
 
 - **WASM sandboxing** — backends are trusted, must be audited
 - **GPU acceleration** — `ort` backend is v1.1
-- **Encrypted vault** — structure present, wiring is v1.1
+- **Encrypted-vault UX / key management** — sealing is wired (opt-in); the trustee/seal setup UI
+  and hardware-backed keys are v1.1
 - **Real-time performance guarantees** — benchmark, don't promise
 - **RTSP** — file reader first, RTSP is stretch goal
 - **Remote attestation** — future
@@ -154,7 +161,7 @@ Integration testing
 - [ ] GPU acceleration
 - [ ] WASM sandboxing
 - [ ] Face/plate detection (forbidden by design)
-- [ ] Encrypted vault (v1.1)
+- [ ] Encrypted-vault setup UX + hardware-backed keys (v1.1) — sealing itself is already wired
 
 ---
 
