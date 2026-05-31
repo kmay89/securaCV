@@ -644,14 +644,18 @@ function setupPullToRefresh(scrollContainer, contentWrap, indicator, onRefresh) 
 // --------------- Event Timeline ---------------
 
 var EVENT_TYPE_META = {
-  person_detected:  { icon: '🚶', label: 'Person',  cssClass: 'type-person',  priority: 4 },
-  vehicle_detected: { icon: '🚗', label: 'Vehicle', cssClass: 'type-vehicle', priority: 3 },
-  object_removed:   { icon: '📦', label: 'Object removed', cssClass: 'type-object-removed', priority: 3 },
-  animal_detected:  { icon: '🐾', label: 'Animal',  cssClass: 'type-animal',  priority: 2 },
-  motion_detected:  { icon: '💨', label: 'Motion',  cssClass: 'type-motion',  priority: 1 },
+  person_detected:     { icon: '🚶', label: 'Person',  cssClass: 'type-person',  priority: 4 },
+  presence_restricted: { icon: '⛔', label: 'Restricted zone', cssClass: 'type-restricted', priority: 4 },
+  vehicle_detected:    { icon: '🚗', label: 'Vehicle', cssClass: 'type-vehicle', priority: 3 },
+  object_removed:      { icon: '📦', label: 'Object removed', cssClass: 'type-object-removed', priority: 3 },
+  acoustic_impulse:    { icon: '🔊', label: 'Acoustic impulse', cssClass: 'type-acoustic', priority: 3 },
+  animal_detected:     { icon: '🐾', label: 'Animal',  cssClass: 'type-animal',  priority: 2 },
+  contact_changed:     { icon: '🚪', label: 'Contact change', cssClass: 'type-contact', priority: 2 },
+  motion_detected:     { icon: '💨', label: 'Motion',  cssClass: 'type-motion',  priority: 1 },
 };
 
-var EVENT_TYPE_PRIORITY = ['person_detected', 'vehicle_detected', 'animal_detected', 'motion_detected'];
+var EVENT_TYPE_PRIORITY = ['person_detected', 'presence_restricted', 'vehicle_detected',
+  'object_removed', 'acoustic_impulse', 'animal_detected', 'contact_changed', 'motion_detected'];
 
 // Canonical envelope events use the kernel's EventType enum (src/lib.rs), not the raw device
 // strings. Map them back to friendly labels + the existing timeline dot classes so the in-app
@@ -660,10 +664,10 @@ var EVENT_TYPE_PRIORITY = ['person_detected', 'vehicle_detected', 'animal_detect
 var ENVELOPE_EVENT_META = {
   BoundaryCrossingObjectLarge:  { icon: '🚶', label: 'Large object crossing',  cssClass: 'type-person' },
   BoundaryCrossingObjectSmall:  { icon: '💨', label: 'Small object / motion',  cssClass: 'type-motion' },
-  AcousticImpulseInZone:        { icon: '🔊', label: 'Acoustic impulse',       cssClass: 'type-motion' },
-  PresenceInRestrictedZone:     { icon: '⛔', label: 'Presence (restricted)',  cssClass: 'type-person' },
+  AcousticImpulseInZone:        { icon: '🔊', label: 'Acoustic impulse',       cssClass: 'type-acoustic' },
+  PresenceInRestrictedZone:     { icon: '⛔', label: 'Presence (restricted)',  cssClass: 'type-restricted' },
   VehiclePresenceAfterHours:    { icon: '🚗', label: 'Vehicle (after hours)',  cssClass: 'type-vehicle' },
-  ContactStateChange:           { icon: '🚪', label: 'Contact state change',   cssClass: 'type-motion' },
+  ContactStateChange:           { icon: '🚪', label: 'Contact state change',   cssClass: 'type-contact' },
   ObjectRemovedFromZone:        { icon: '📦', label: 'Object removed',          cssClass: 'type-object-removed' },
 };
 
@@ -899,7 +903,7 @@ function getDominantType(typesObj) {
 function countTodayByType(records) {
   var now = new Date();
   var startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  var counts = { total: 0, person_detected: 0, vehicle_detected: 0, object_removed: 0, animal_detected: 0, motion_detected: 0 };
+  var counts = { total: 0, person_detected: 0, presence_restricted: 0, vehicle_detected: 0, object_removed: 0, acoustic_impulse: 0, animal_detected: 0, contact_changed: 0, motion_detected: 0 };
   for (var i = 0; i < records.length; i++) {
     if (records[i]._ts >= startOfDay) {
       counts.total++;
@@ -2420,9 +2424,12 @@ function renderFilterChips(contentContainer, data) {
   var filters = [
     { key: 'all', label: 'All' },
     { key: 'person_detected', label: '🚶 Person' },
+    { key: 'presence_restricted', label: '⛔ Restricted zone' },
     { key: 'vehicle_detected', label: '🚗 Vehicle' },
     { key: 'object_removed', label: '📦 Object removed' },
+    { key: 'acoustic_impulse', label: '🔊 Acoustic impulse' },
     { key: 'animal_detected', label: '🐾 Animal' },
+    { key: 'contact_changed', label: '🚪 Contact change' },
     { key: 'motion_detected', label: '💨 Motion' },
   ];
 

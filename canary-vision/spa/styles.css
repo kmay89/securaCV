@@ -17,6 +17,9 @@
   --color-error: #ff3b30;
   --color-info: #5ac8fa;
   --color-removed: #af52de;
+  --color-restricted: #ff3b30;
+  --color-acoustic: #ffcc00;
+  --color-contact: #5856d6;
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 16px;
@@ -605,6 +608,9 @@ html, body {
 .density-bucket.type-vehicle { background: var(--color-info); }
 .density-bucket.type-animal { background: var(--color-success); }
 .density-bucket.type-object-removed { background: var(--color-removed); }
+.density-bucket.type-restricted { background: var(--color-restricted); }
+.density-bucket.type-acoustic { background: var(--color-acoustic); }
+.density-bucket.type-contact { background: var(--color-contact); }
 .density-bucket.type-motion { background: var(--color-text-muted); }
 
 .density-now-line {
@@ -745,6 +751,18 @@ html, body {
 
 .event-card-icon.type-object-removed {
   background: linear-gradient(135deg, rgba(175, 82, 222, 0.35), rgba(142, 68, 173, 0.12));
+}
+
+.event-card-icon.type-restricted {
+  background: linear-gradient(135deg, rgba(255, 59, 48, 0.35), rgba(215, 38, 28, 0.12));
+}
+
+.event-card-icon.type-acoustic {
+  background: linear-gradient(135deg, rgba(255, 204, 0, 0.35), rgba(204, 163, 0, 0.12));
+}
+
+.event-card-icon.type-contact {
+  background: linear-gradient(135deg, rgba(88, 86, 214, 0.35), rgba(64, 62, 168, 0.12));
 }
 
 .event-card-icon.type-motion {
@@ -896,6 +914,9 @@ html, body {
 .subevent-dot.type-vehicle { background: var(--color-info); }
 .subevent-dot.type-animal { background: var(--color-success); }
 .subevent-dot.type-object-removed { background: var(--color-removed); }
+.subevent-dot.type-restricted { background: var(--color-restricted); }
+.subevent-dot.type-acoustic { background: var(--color-acoustic); }
+.subevent-dot.type-contact { background: var(--color-contact); }
 .subevent-dot.type-motion { background: var(--color-text-muted); }
 
 /* Animations */
@@ -1020,6 +1041,18 @@ html, body {
   background: linear-gradient(135deg, rgba(175, 82, 222, 0.35), rgba(142, 68, 173, 0.12));
 }
 
+.event-detail-hero-icon.type-restricted {
+  background: linear-gradient(135deg, rgba(255, 59, 48, 0.35), rgba(215, 38, 28, 0.12));
+}
+
+.event-detail-hero-icon.type-acoustic {
+  background: linear-gradient(135deg, rgba(255, 204, 0, 0.35), rgba(204, 163, 0, 0.12));
+}
+
+.event-detail-hero-icon.type-contact {
+  background: linear-gradient(135deg, rgba(88, 86, 214, 0.35), rgba(64, 62, 168, 0.12));
+}
+
 .event-detail-hero-icon.type-motion {
   background: linear-gradient(135deg, rgba(153, 153, 153, 0.3), rgba(102, 102, 102, 0.1));
 }
@@ -1082,6 +1115,21 @@ html, body {
   stroke: var(--color-removed);
 }
 
+.zone-polygon.type-restricted {
+  fill: rgba(255, 59, 48, 0.2);
+  stroke: var(--color-restricted);
+}
+
+.zone-polygon.type-acoustic {
+  fill: rgba(255, 204, 0, 0.2);
+  stroke: var(--color-acoustic);
+}
+
+.zone-polygon.type-contact {
+  fill: rgba(88, 86, 214, 0.2);
+  stroke: var(--color-contact);
+}
+
 .zone-polygon.type-motion {
   fill: rgba(153, 153, 153, 0.15);
   stroke: var(--color-text-muted);
@@ -1127,6 +1175,9 @@ html, body {
 .timeline-dot.type-vehicle { background: var(--color-info); }
 .timeline-dot.type-animal { background: var(--color-success); }
 .timeline-dot.type-object-removed { background: var(--color-removed); }
+.timeline-dot.type-restricted { background: var(--color-restricted); }
+.timeline-dot.type-acoustic { background: var(--color-acoustic); }
+.timeline-dot.type-contact { background: var(--color-contact); }
 .timeline-dot.type-motion { background: var(--color-text-muted); }
 
 .timeline-line {
