@@ -72,9 +72,15 @@ Source of truth: `spec/invariants.md`. A re-implementation that violates any inv
   `Camera (RTSP/V4L2/ESP32/Frigate-MQTT) → witnessd (in-memory frame → detect → contract
   enforcement) → hash-chained, Ed25519-signed, SQLCipher log (+ sealed vault for sensitive
   payloads) → Home Assistant (sensors, verification, digest, alerts) → phone (HA Companion push)`.
-  Every event producer (camera detector, sensor adapters, firmware, BLE/vision) MUST funnel
-  through the **single choke point** `Kernel::append_event_checked` (see `spec/event_contract.md`
-  §11); contract enforcement there is authoritative and cannot be bypassed.
+  Every **host-side** event producer (camera detector, sensor adapters, Frigate/MQTT bridges)
+  MUST funnel through the **single choke point** `Kernel::append_event_checked`
+  (`src/lib.rs:1202`; called from `adapter/host.rs`, `bin/{witnessd,frigate_bridge,
+  grove_vision2_ingest,ingest_run}.rs`); contract enforcement there is authoritative and cannot be
+  bypassed by any host producer. **Firmware is a separate trust domain:** canary-wap/canary-vision
+  are C/C++ and do **not** call this Rust function — they produce and **independently sign** their
+  own witness records and achieve contract *parity* by construction (same coarse vocabulary, no
+  identity/MAC, Ed25519), per REQ-FW-020 and `spec/event_contract.md` §11. A rebuild MUST NOT
+  assume the Rust enforcer covers firmware-originated events.
 
 ### L0.4 Repository topology (rebuild map)
 | Path | Component | Language/runtime | Entry |
@@ -107,7 +113,7 @@ Source of truth: `spec/invariants.md`. A re-implementation that violates any inv
 - **REQ-KRNL-001 (Implemented):** Events are appended to a hash-chained, append-only log. Each
   entry hashes its predecessor (`hash_entry`); altering any entry breaks the chain.
 - **REQ-KRNL-002 (Implemented):** Every entry is **Ed25519-signed**; the device signing key is
-  required at runtime and MUST reject the MVP placeholder seed (`src/lib.rs:815, 2017`;
+  required at runtime and MUST reject the MVP placeholder seed (`src/lib.rs:815, 2016`;
   test `device_key_seed_rejects_mvp_placeholder` at `src/lib.rs:2948`).
 - **REQ-KRNL-003 (Implemented):** Persistence is **SQLCipher** (encrypted SQLite). The DB
   encryption key is currently derived from the device signing key via `derive_db_encryption_key`
@@ -166,10 +172,15 @@ Source of truth: `spec/invariants.md`. A re-implementation that violates any inv
 - **REQ-KRNL-040 (Implemented):** Break-glass requires **N-of-M quorum** trustee approval;
   policy storage + approval flow + immutable, externally-verifiable receipts
   (`src/break_glass/`, `BreakGlassReceipt`, `approvals_commitment`).
-- **REQ-KRNL-041 (Partial):** Vault envelope **structure** exists (`src/vault/format.rs`,
-  `src/vault/crypto.rs`) but encryption is **not wired into the live event path** for v1 (the v1
-  crypto choice is the signed log, not the encrypted vault). A rebuild MUST keep the structure but
-  mark sealing inactive unless completing it.
+- **REQ-KRNL-041 (Implemented, opt-in):** The vault **is wired** into the live `witnessd` path
+  (corrected after code review — see flag report F-05). `witnessd` constructs `Vault::new` with a
+  `VaultCryptoMode` (`{Classical,Pq,Hybrid}`, `src/vault/crypto.rs`), buffers pre-roll frames in a
+  bounded ring, and on boundary events seals the latest buffered frame via `seal_latest_frame()` →
+  `vault.seal_frame()` (`src/bin/witnessd.rs:87-98,111,180,237-255,471-490`). Sealing is **opt-in
+  and gated**: it runs only when `BREAK_GLASS_SEAL_TOKEN` supplies a valid token JSON and a frame
+  is buffered (Invariant I/V: drain requires a break-glass token). A rebuild MUST implement the
+  seal path; the remaining work is UX/config (no setup UI; crypto-mode default + key handling tie
+  into REQ-KRNL-072), not the encryption itself.
 
 #### A.6 Evidence envelope & canonical JSON (interchange format — reproduce exactly)
 - **REQ-KRNL-050 (Implemented):** A single versioned, self-verifying **evidence envelope**
@@ -299,7 +310,7 @@ Source of truth: `spec/invariants.md`. A re-implementation that violates any inv
   (`firmware/projects/canary-wap/FLASH_MEMORY_ANALYSIS.md`.)
 - **REQ-FW-031 (Config — caution):** The canary-wap Arduino build does **not pin a PartitionScheme**
   (board default ~3 MB app). Other firmware trees ship **divergent** partition tables — see flag
-  report REQ-FW-070. A rebuild MUST choose one deliberate scheme per deployment (8 MB or 16 MB
+  report F-06. A rebuild MUST choose one deliberate scheme per deployment (8 MB or 16 MB
   flash) and document it.
 - **REQ-FW-032 (Implemented):** Large CSI/scratch buffers MUST live in **PSRAM**, not DRAM (recent
   fixes moved the 90 KB CSI event ring and `/api/events/today` scratch buffer to PSRAM to clear

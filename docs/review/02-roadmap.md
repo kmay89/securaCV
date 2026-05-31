@@ -29,7 +29,7 @@ near-term "nice-to-have." Treat all of those as **post-focus**.
 | Stream A detection "Done" (A1–A5 ✅), "produces correct boxes", "registry routing" | Trait+registry real; **default is StubBackend** (frame-hash motion). Tract is feature-gated, off by default, threshold hardcoded 0.5 (F-01) | Re-open: bundle a model, enable `backend-tract` on the witnessd path, or relabel default as motion-only |
 | B1/B3/B4 signing/verify "Done" ✅ | True and tested (REQ-KRNL-001/004) | Keep |
 | B2 device key "deferred" | Correct; also DB key coupled to signing key (F-04) | Schedule in P3 with hardware keys |
-| Vault "Placeholder, not wired" | Correct (F-05) | Keep deferred or wire; stop implying sealing in README |
+| Vault "Placeholder, not wired" | **Stale** — vault sealing is actually wired into `witnessd` (opt-in via `BREAK_GLASS_SEAL_TOKEN`), real crypto modes (F-05, corrected) | Update roadmap to "wired, opt-in"; build seal/trustee UX (P2) |
 | C1–C4 ingestion "Done" / RTSP "feature-gated" | File roundtrip real; **two RTSP impls** (F-11); RTSP still listed unchecked in acceptance | Pick one RTSP path; update acceptance boxes |
 | (omitted) | Post-quantum `pqc-*`, full **Sensor Adapter** framework, webhook TLS/mTLS/Prometheus all shipped but **absent from roadmap** (F-13) | Rewrite roadmap to reflect shipped scope |
 | "9 CLI binaries" (CHANGELOG) | 14 exist (F-10) | Fix count |

@@ -15,7 +15,7 @@
 | F-02 | Blocker | Versioning | "v1" is defined **three incompatible ways** across CHANGELOG / v1-roadmap / README badge. |
 | F-03 | Blocker | Firmware privacy | `ENTERPRISE_READINESS_TODO` admits raw **MAC exposure** and uncoarsened **GPS** in WAP APIs — contradicts Invariants II & III. |
 | F-04 | Major | Crypto | Device key is **seed-derived from config**; DB key **coupled** to signing key → rotation blocked (acknowledged, still open). |
-| F-05 | Major | Vault | Vault **encryption unwired** (structure only) — easy to mistake for a working sealed vault. |
+| F-05 | Minor | Vault | *Corrected after code review:* vault sealing **is wired** into `witnessd` (real crypto modes); the real gap is that it's **opt-in / UX-gated**, not absent. |
 | F-06 | Major | Firmware flash | **Divergent partition tables**; canary-wap Arduino pins **no** scheme; one secure table assumes **4 MB** flash on an 8 MB board. |
 | F-07 | Major | Transports | `TRANSPORT_LORA` / `TRANSPORT_AUDIO` (+`audio_anomaly` tamper) are declared but **unimplemented**. |
 | F-08 | Major | Mesh | ESP-NOW WiFi-AP bridge & BLE fallback marked **"❌ not implemented"** in the mesh evaluation. |
@@ -79,12 +79,19 @@ key). Keys are not hardware-backed or rotated. **Impact:** no safe key rotation;
 rests on a config-stored seed. **Fix (architectural prerequisite):** decouple DB key from device
 identity key, then add hardware-backed keys (Secure Element/eFuse) — see roadmap P3.
 
-### F-05 — Vault encryption is unwired
-**Evidence.** `v1-roadmap.md`: "Vault encryption ⚠️ Placeholder, not wired"; `src/vault/` has
-`format.rs`/`crypto.rs` structure but the live event path uses the signed log, not sealed
-encryption. **Impact:** "sealed vault / break-glass to open evidence" reads as active; encryption
-isn't. **Fix:** either wire it or clearly mark it inactive everywhere it's described (README §"How
-it works" implies sealing).
+### F-05 — Vault sealing is opt-in / UX-gated (NOT "unwired") — *corrected after code review*
+**Correction.** An earlier draft of this finding (and the requirements spec) called the vault
+"structure only, not wired," trusting `v1-roadmap.md`. **That was wrong — and is itself a lesson
+in not trusting the roadmap over the code.** The vault *is* wired into the live `witnessd` path:
+`witnessd` constructs `Vault::new(VaultConfig{ crypto_mode, .. })`, reads `BREAK_GLASS_SEAL_TOKEN`,
+buffers pre-roll frames, and on boundary events calls `seal_latest_frame()` → `vault.seal_frame()`
+which drains a buffered frame and seals it (`src/bin/witnessd.rs:87-98, 111, 180, 237-255, 454-490`).
+Real encryption modes exist: `VaultCryptoMode::{Classical,Pq,Hybrid}` (`src/vault/crypto.rs`).
+**Actual remaining gap (narrowed).** Sealing is **opt-in and UX-gated**, not absent: it only runs
+when `BREAK_GLASS_SEAL_TOKEN` points at a valid token JSON and a frame is buffered; there is no
+setup UI, and the crypto-mode default/key handling still ties into the device-key story (F-04).
+**Severity downgraded Major → Minor/Doc-debt.** **Fix:** describe the vault as *wired but opt-in*,
+document the token/crypto-mode config path, and build the trustee/seal setup UX (roadmap P2).
 
 ### F-06 — Divergent firmware partition tables; risky flash assumptions
 **Evidence.** Three different layouts for the "same" device family:
@@ -98,7 +105,7 @@ it works" implies sealing).
 **Impact:** A re-implementer can't tell which is canonical; the FULL sketch is near its ceiling
 *because* it uses the unpinned default, while a 1.96 MB-app OTA table would not fit the FULL
 binary at all. **Fix:** one documented scheme per (flash size × OTA-or-not) deployment; reconcile
-the 4 MB secure table to 8/16 MB.
+the 4 MB secure table to 8/16 MB (see requirement REQ-FW-031).
 
 ### F-07 — Declared-but-unimplemented transports & tamper types
 **Evidence.** `custom_components/securacv/const.py:46-47` `TRANSPORT_LORA = "lora" # Future`,
