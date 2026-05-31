@@ -401,6 +401,7 @@ function createDeviceState(overrides = {}) {
   seedRecord('animal_detected', 'front', 'sess_demo_4');
   seedRecord('person_detected', 'front', 'sess_demo_5');
   seedRecord('motion_detected', 'front', 'sess_demo_5');
+  seedRecord('object_removed', 'front', 'sess_demo_6');
 
   return {
     device,

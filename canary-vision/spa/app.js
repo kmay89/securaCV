@@ -646,7 +646,7 @@ function setupPullToRefresh(scrollContainer, contentWrap, indicator, onRefresh) 
 var EVENT_TYPE_META = {
   person_detected:  { icon: '🚶', label: 'Person',  cssClass: 'type-person',  priority: 4 },
   vehicle_detected: { icon: '🚗', label: 'Vehicle', cssClass: 'type-vehicle', priority: 3 },
-  object_removed:   { icon: '📦', label: 'Object removed', cssClass: 'type-animal', priority: 3 },
+  object_removed:   { icon: '📦', label: 'Object removed', cssClass: 'type-object-removed', priority: 3 },
   animal_detected:  { icon: '🐾', label: 'Animal',  cssClass: 'type-animal',  priority: 2 },
   motion_detected:  { icon: '💨', label: 'Motion',  cssClass: 'type-motion',  priority: 1 },
 };
@@ -664,7 +664,7 @@ var ENVELOPE_EVENT_META = {
   PresenceInRestrictedZone:     { icon: '⛔', label: 'Presence (restricted)',  cssClass: 'type-person' },
   VehiclePresenceAfterHours:    { icon: '🚗', label: 'Vehicle (after hours)',  cssClass: 'type-vehicle' },
   ContactStateChange:           { icon: '🚪', label: 'Contact state change',   cssClass: 'type-motion' },
-  ObjectRemovedFromZone:        { icon: '📦', label: 'Object removed',          cssClass: 'type-animal' },
+  ObjectRemovedFromZone:        { icon: '📦', label: 'Object removed',          cssClass: 'type-object-removed' },
 };
 
 function envelopeEventMeta(eventType) {
@@ -899,7 +899,7 @@ function getDominantType(typesObj) {
 function countTodayByType(records) {
   var now = new Date();
   var startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  var counts = { total: 0, person_detected: 0, vehicle_detected: 0, animal_detected: 0, motion_detected: 0 };
+  var counts = { total: 0, person_detected: 0, vehicle_detected: 0, object_removed: 0, animal_detected: 0, motion_detected: 0 };
   for (var i = 0; i < records.length; i++) {
     if (records[i]._ts >= startOfDay) {
       counts.total++;
@@ -2421,6 +2421,7 @@ function renderFilterChips(contentContainer, data) {
     { key: 'all', label: 'All' },
     { key: 'person_detected', label: '🚶 Person' },
     { key: 'vehicle_detected', label: '🚗 Vehicle' },
+    { key: 'object_removed', label: '📦 Object removed' },
     { key: 'animal_detected', label: '🐾 Animal' },
     { key: 'motion_detected', label: '💨 Motion' },
   ];

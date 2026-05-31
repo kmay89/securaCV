@@ -16,6 +16,7 @@
   --color-warning: #f5a623;
   --color-error: #ff3b30;
   --color-info: #5ac8fa;
+  --color-removed: #af52de;
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 16px;
@@ -603,6 +604,7 @@ html, body {
 .density-bucket.type-person { background: var(--color-accent); }
 .density-bucket.type-vehicle { background: var(--color-info); }
 .density-bucket.type-animal { background: var(--color-success); }
+.density-bucket.type-object-removed { background: var(--color-removed); }
 .density-bucket.type-motion { background: var(--color-text-muted); }
 
 .density-now-line {
@@ -739,6 +741,10 @@ html, body {
 
 .event-card-icon.type-animal {
   background: linear-gradient(135deg, rgba(76, 217, 100, 0.35), rgba(52, 199, 89, 0.12));
+}
+
+.event-card-icon.type-object-removed {
+  background: linear-gradient(135deg, rgba(175, 82, 222, 0.35), rgba(142, 68, 173, 0.12));
 }
 
 .event-card-icon.type-motion {
@@ -889,6 +895,7 @@ html, body {
 .subevent-dot.type-person { background: var(--color-accent); }
 .subevent-dot.type-vehicle { background: var(--color-info); }
 .subevent-dot.type-animal { background: var(--color-success); }
+.subevent-dot.type-object-removed { background: var(--color-removed); }
 .subevent-dot.type-motion { background: var(--color-text-muted); }
 
 /* Animations */
@@ -1009,6 +1016,10 @@ html, body {
   background: linear-gradient(135deg, rgba(76, 217, 100, 0.35), rgba(52, 199, 89, 0.12));
 }
 
+.event-detail-hero-icon.type-object-removed {
+  background: linear-gradient(135deg, rgba(175, 82, 222, 0.35), rgba(142, 68, 173, 0.12));
+}
+
 .event-detail-hero-icon.type-motion {
   background: linear-gradient(135deg, rgba(153, 153, 153, 0.3), rgba(102, 102, 102, 0.1));
 }
@@ -1066,6 +1077,11 @@ html, body {
   stroke: var(--color-success);
 }
 
+.zone-polygon.type-object-removed {
+  fill: rgba(175, 82, 222, 0.2);
+  stroke: var(--color-removed);
+}
+
 .zone-polygon.type-motion {
   fill: rgba(153, 153, 153, 0.15);
   stroke: var(--color-text-muted);
@@ -1110,6 +1126,7 @@ html, body {
 .timeline-dot.type-person { background: var(--color-accent); }
 .timeline-dot.type-vehicle { background: var(--color-info); }
 .timeline-dot.type-animal { background: var(--color-success); }
+.timeline-dot.type-object-removed { background: var(--color-removed); }
 .timeline-dot.type-motion { background: var(--color-text-muted); }
 
 .timeline-line {
