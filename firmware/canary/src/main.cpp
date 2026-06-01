@@ -508,7 +508,7 @@ void setup() {
     const char* ap_ssid = device.ap_ssid;
 #endif
     Serial.println("[..] Starting WiFi Access Point...");
-    NetworkManager& net = network_get_instance();
+    ScvNetworkManager& net = network_get_instance();
     if (net.begin(ap_ssid, g_ap_password, device.device_id)) {
       Serial.println("[OK] WiFi AP active");
 #if FEATURE_HTTP_SERVER
@@ -996,7 +996,7 @@ void setup() {
   }
 #endif
 #if FEATURE_WIFI_AP
-  NetworkManager& network = network_get_instance();
+  ScvNetworkManager& network = network_get_instance();
   Serial.printf("║  WiFi AP    : %-45s  ║\n", device.ap_ssid);
   Serial.printf("║  Password   : %-45s  ║\n", g_ap_password);
   Serial.printf("║  Dashboard  : http://%-39s  ║\n", network.getStatus().ap_ip);
