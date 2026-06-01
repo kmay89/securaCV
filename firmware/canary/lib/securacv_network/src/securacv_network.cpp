@@ -218,11 +218,20 @@ bool ScvNetworkManager::begin(const char* ap_ssid, const char* ap_password,
   bool has_creds = loadCredentials();
 
   // Stash the AP credentials so raiseAp() can bring the SoftAP back up after a
-  // home-WiFi drop (see F4 coexistence handling in checkConnection()).
-  strncpy(m_ap_ssid, ap_ssid, sizeof(m_ap_ssid) - 1);
-  m_ap_ssid[sizeof(m_ap_ssid) - 1] = '\0';
-  strncpy(m_ap_password, ap_password, sizeof(m_ap_password) - 1);
-  m_ap_password[sizeof(m_ap_password) - 1] = '\0';
+  // home-WiFi drop (see F4 coexistence handling in checkConnection()). Guard
+  // for null like the device_id handling below — begin() is a public API.
+  if (ap_ssid) {
+    strncpy(m_ap_ssid, ap_ssid, sizeof(m_ap_ssid) - 1);
+    m_ap_ssid[sizeof(m_ap_ssid) - 1] = '\0';
+  } else {
+    m_ap_ssid[0] = '\0';
+  }
+  if (ap_password) {
+    strncpy(m_ap_password, ap_password, sizeof(m_ap_password) - 1);
+    m_ap_password[sizeof(m_ap_password) - 1] = '\0';
+  } else {
+    m_ap_password[0] = '\0';
+  }
 
   // Always use AP+STA mode
   WiFi.mode(WIFI_AP_STA);
@@ -622,6 +631,15 @@ void ScvNetworkManager::checkConnection() {
           connectToHome();
         }
       }
+      break;
+
+    case WIFI_PROV_AP_ONLY:
+      // No home WiFi configured (or just cleared via /wifi/disconnect). Ensure
+      // the management AP is up: F4's dropAp() may have torn it down while we
+      // were CONNECTED, and clearCredentials() transitions straight here —
+      // never through the CONNECTED-loss branch that would otherwise re-raise
+      // it — which would leave the device with neither STA nor AP.
+      raiseAp();  // idempotent: no-op when the AP is already up
       break;
 
     default:
