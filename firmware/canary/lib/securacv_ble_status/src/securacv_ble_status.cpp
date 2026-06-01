@@ -98,6 +98,14 @@ bool ble_status_stack_begin(void) {
     return false;
   }
   NimBLEDevice::setPower(3);  /* +3 dBm — moderate range */
+
+  /* Bump default ATT MTU to 247 (244-byte payload). The 23-byte default
+   * fragments every status read (battery/health/chain JSON) into 3+ ATT
+   * packets, ~tripling connection-event radio time; 247 is the largest a
+   * single LE Data Length Extension packet carries without fragmentation and
+   * both iOS and modern Android accept it. (Matches the canary-wap sketch's
+   * bluetooth_channel.) */
+  NimBLEDevice::setMTU(247);
   return true;
 }
 

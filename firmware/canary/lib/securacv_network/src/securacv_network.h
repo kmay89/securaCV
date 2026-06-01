@@ -145,6 +145,15 @@ public:
 private:
   void registerHttpHandlers();
 
+  // F4 (Wi-Fi/BLE coexistence): tear down the SoftAP once the STA link is
+  // healthy so the single 2.4 GHz radio runs STA + BLE (Espressif's stable Y
+  // combo) instead of AP + STA + BLE (rated C1/unstable with a client joined),
+  // and re-raise it on STA loss so the device stays reachable at canary.local.
+  // Both are idempotent. Mirrors the canary-wap sketch's wifi_drop_ap /
+  // wifi_raise_ap. See docs/esp32s3_ble_wap_audit.md.
+  void dropAp();
+  void raiseAp();
+
   WiFiCredentials m_creds;
   WiFiStatus m_status;
   httpd_handle_t m_http_server;
@@ -157,6 +166,8 @@ private:
                                   // same hostname so we MUST compare TXT.
   PeerEntry m_peers[PEER_CACHE_MAX];
   uint32_t m_peers_last_browse_ms;
+  char m_ap_ssid[33];            // stashed in begin() so raiseAp() can bring the
+  char m_ap_password[65];        // management SoftAP back up after STA loss.
 };
 
 // ════════════════════════════════════════════════════════════════════════════
