@@ -70,6 +70,18 @@
 extern "C" {
 #endif
 
+/* Bring up the NimBLE stack under this device's configured name + TX power,
+ * if it isn't already initialized. This service is the SINGLE NimBLE init
+ * owner for the modular canary build: it owns the GAP device name and TX
+ * power. Call this EARLY in setup() — before any other BLE consumer (notably
+ * the RX-only BLE Scout, which is registered inside securacv_csi_modules_init()
+ * and attaches to whatever stack is already running) — so the device always
+ * advertises under its configured name rather than the Scout's generic
+ * "securacv-scout". Idempotent; ble_status_init() also calls it. Returns true
+ * if the stack is up (NimBLE 2.x init() can fail when the radio/host stack
+ * can't come up). */
+bool ble_status_stack_begin(void);
+
 /* Initialize BLE stack, create GATT services and characteristics,
  * begin advertising. Call once from setup() after witness and
  * diagnostics are initialized. Returns true on success. */

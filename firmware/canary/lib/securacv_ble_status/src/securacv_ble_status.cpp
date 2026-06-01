@@ -69,25 +69,51 @@ static BleStatusCallbacks s_callbacks;
 /*  INIT                                                                      */
 /* ════════════════════════════════════════════════════════════════════════════ */
 
-bool ble_status_init(void) {
-  if (s_initialized) return true;
-
-  /* Determine the BLE device name. Prefer the user-configured device
-   * name from the setup wizard; fall back to the device_id. */
-  const char* ble_name = "SecuraCV";
+/* Resolve the BLE device name: prefer the user-configured setup-wizard name,
+ * fall back to the device_id. Returns a pointer to a static buffer. */
+static const char* resolve_ble_name(void) {
 #if FEATURE_SETUP_WIZARD
   static char setup_name[SETUP_DEVICE_NAME_MAX + 1];
   if (setup_get_device_name(setup_name, sizeof(setup_name)) && setup_name[0]) {
-    ble_name = setup_name;
-  } else {
-    ble_name = witness_get_device().device_id;
+    return setup_name;
   }
-#else
-  ble_name = witness_get_device().device_id;
 #endif
+  return witness_get_device().device_id;
+}
 
-  NimBLEDevice::init(ble_name);
+bool ble_status_stack_begin(void) {
+  /* Already up (an earlier caller, or ble_status_init re-entry) — the first
+   * caller owns the GAP name + TX power; don't disturb it. */
+  if (NimBLEDevice::isInitialized()) return true;
+
+  const char* ble_name = resolve_ble_name();
+
+  /* NimBLE 2.x init() returns false when the controller/host stack can't come
+   * up (BT compiled out, radio unavailable, coexistence/heap failure). Honor
+   * it instead of marching on to createServer() (which would then return null);
+   * this is the documented graceful-degradation contract. */
+  if (!NimBLEDevice::init(ble_name)) {
+    log_health(LOG_LEVEL_ERROR, LOG_CAT_BLUETOOTH,
+               "NimBLE init failed", ble_name);
+    return false;
+  }
   NimBLEDevice::setPower(3);  /* +3 dBm — moderate range */
+  return true;
+}
+
+bool ble_status_init(void) {
+  if (s_initialized) return true;
+
+  /* This service is the single NimBLE init owner — bring the stack up under
+   * the configured device name + TX power. Normally a no-op here because
+   * ble_status_stack_begin() was already called early in setup() (so the BLE
+   * Scout attaches to a stack that already carries our name); calling it again
+   * keeps this entry point self-sufficient if used standalone. */
+  if (!ble_status_stack_begin()) {
+    return false;
+  }
+
+  const char* ble_name = resolve_ble_name();
 
   s_server = NimBLEDevice::createServer();
   if (!s_server) {
