@@ -32,12 +32,29 @@ Both required for v1. CV flexibility without real crypto is just a detection pip
 
 ## v1 Definition
 
-v1 is "minimally credible," not feature complete:
+v1 means **everything documented works end-to-end** — not a reduced "minimally credible" subset.
+This matches `CHANGELOG.md` [1.0.0] and is the single canonical definition for the project.
+Concretely, to tag v1:
 
-- At least one real CV backend that can detect objects
-- At least one real crypto path that proves tamper detection
-- At least one real video source (RTSP or file)
-- Documentation that's honest about what's enforced vs auditable
+- Every feature described in the README/docs runs end-to-end on a first-try install.
+- `cargo test` passes cleanly.
+- At least one real CV backend, one real crypto/tamper path, and one real video source — **and any
+  other capability the docs claim** — actually works end-to-end, not merely compiles.
+- Documentation matches the code: honest about what is *enforced* vs *auditable*, with no claim
+  that outruns the implementation.
+
+This is a **higher** bar than the earlier "minimally credible" framing, so adopting it makes the
+remaining gaps explicit rather than waiving them. **Open blockers to this bar (must close before
+tagging v1):**
+
+- The Frigate → Home Assistant MQTT pipeline passes the release gate end-to-end —
+  `integrations/ha_frigate_mqtt/verify_pipeline.sh` exits `0` against a live stack (README release gate).
+- The "audit boundary vs security boundary" documentation item (Acceptance, below) is still open.
+- RTSP ingestion is documented, so under this definition it is **in scope** and must work
+  (moved out of "nice to have").
+- Firmware must not surface raw MAC addresses or precise GPS over its APIs — the docs and
+  `spec/invariants.md` forbid it, so documented behavior must match actual
+  (see `firmware/projects/canary-wap/ENTERPRISE_READINESS_TODO.md`).
 
 ---
 
@@ -152,9 +169,11 @@ Integration testing
 - [x] `log_verify` validates signatures and catches tampering
 - [x] Can process video from file
 - [ ] Documentation states audit boundary vs security boundary
+- [ ] RTSP ingestion works end-to-end (documented feature → required under the v1 definition)
+- [ ] Frigate → HA MQTT release gate passes (`integrations/ha_frigate_mqtt/verify_pipeline.sh` == 0)
+- [ ] Firmware APIs expose no raw MAC / precise GPS (documented invariants hold on-device)
 
 ### Nice to have:
-- [ ] RTSP ingestion
 - [ ] Performance benchmarks
 
 ### Explicitly out of scope:

@@ -4,10 +4,11 @@
 
 ### What v1.0 means
 
-This is the first minimally credible release: every documented feature works
-end-to-end, the install path succeeds on the first try, and the test suite
-passes cleanly. It is **not** feature-complete — see "Explicitly deferred"
-below.
+v1.0 means **everything documented works end-to-end**: every feature described in
+the README/docs runs end-to-end, the install path succeeds on the first try, and
+the test suite passes cleanly. This is the project's canonical definition of v1
+(see `v1-roadmap.md`). It is **not** feature-complete — see "Explicitly deferred"
+below — but nothing documented is allowed to be aspirational at the v1 tag.
 
 ### What's included
 
