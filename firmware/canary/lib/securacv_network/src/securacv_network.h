@@ -76,9 +76,15 @@ struct PeerEntry {
   bool     valid;
 };
 
-class NetworkManager {
+// Renamed from NetworkManager: Arduino-ESP32 core 3.x introduced its own
+// global `class NetworkManager` (cores/.../libraries/Network), pulled in
+// transitively via <WiFi.h> above. On core 3.x the two collide ("redefinition
+// of class NetworkManager"); the Scv-prefixed name keeps this project's
+// provisioning manager distinct. (Core 2.x had no such class, which is why the
+// clash only appears on the core 3.x BLE build envs.)
+class ScvNetworkManager {
 public:
-  NetworkManager();
+  ScvNetworkManager();
 
   // Initialize WiFi provisioning (AP + optional STA).
   //
@@ -157,7 +163,7 @@ private:
 // GLOBAL INSTANCE
 // ════════════════════════════════════════════════════════════════════════════
 
-NetworkManager& network_get_instance();
+ScvNetworkManager& network_get_instance();
 
 // Convenience functions
 bool network_init(const char* ap_ssid,

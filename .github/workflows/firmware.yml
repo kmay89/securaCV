@@ -45,6 +45,13 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install --upgrade platformio
+          # esptool 4.11.0 (bundled by the official espressif32 7.0.x platform,
+          # used by the dev/release envs) imports the `intelhex` module at
+          # startup but doesn't declare it, so bootloader.bin generation dies
+          # with "ModuleNotFoundError: No module named 'intelhex'" on a clean
+          # runner env. Install it explicitly. (The full env's pioarduino
+          # esptool 5.2.0 bundles its own deps and is unaffected.)
+          pip install intelhex
 
       - name: Build firmware (dev)
         run: |
@@ -58,6 +65,30 @@ jobs:
         env:
           PLATFORMIO_BUILD_FLAGS: -DVALIDATION_BUILD=1
 
+      - name: Build firmware (full — BLE + mesh, pioarduino core 3.x)
+        # dev/release above keep BLE off and build on the official
+        # espressif32@^7.0.0 (= Arduino 2.0.17 / IDF 4.4) just fine. [env:full]
+        # turns on FEATURE_BLE/BLE_SCAN/BLE_STATUS and pins NimBLE-Arduino 2.x,
+        # which only compiles on Arduino-ESP32 core 3.x — so it overrides the
+        # platform to the pioarduino fork. Nothing built this env before, so
+        # the BLE stack + the 3.x platform pin were never compile-verified by
+        # CI; this step closes that gap (mirrors the canary-wap BLE build and
+        # the arduino-cli esp32:esp32 3.x build).
+        #
+        # Use a SEPARATE PLATFORMIO_CORE_DIR. The official platform (dev/release)
+        # and the pioarduino fork (this env) both ship a package literally named
+        # `framework-arduinoespressif32`, at incompatible versions (2.0.17 vs
+        # 3.3.8). Sharing ~/.platformio, pioarduino sees the official 2.0.17
+        # already "installed" under that name, skips installing its own 3.3.8,
+        # and its build script then can't resolve FRAMEWORK_DIR (None) ->
+        # "TypeError: expected str ... not NoneType" before any compile. An
+        # isolated core dir keeps the two framework packages from colliding.
+        run: |
+          pio run -e full
+        env:
+          PLATFORMIO_BUILD_FLAGS: -DVALIDATION_BUILD=1
+          PLATFORMIO_CORE_DIR: ${{ github.workspace }}/.pio-core-full
+
       - name: Check binary size
         run: |
           # Report binary size for tracking
@@ -69,6 +100,50 @@ jobs:
             exit 1
           fi
           echo "Firmware size: $SIZE bytes"
+
+  build-platformio-wap:
+    name: PlatformIO Build (Canary WAP)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: firmware/projects/canary-wap
+    # Compiles the canary_wap Arduino sketch through PlatformIO — the same
+    # sketch the "Arduino CLI Build (Canary WAP)" job builds, but exercising
+    # the PlatformIO env (firmware/envs/platformio/canary-wap.ini) that no CI
+    # job built before. That env pins the pioarduino platform (core 3.x)
+    # because the sketch uses IDF5-only watchdog APIs unconditionally and links
+    # NimBLE 2.x; without this job the platform pin was never compile-verified.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+          key: ${{ runner.os }}-pio-canary-wap-${{ hashFiles('firmware/envs/platformio/canary-wap.ini', 'firmware/envs/platformio/common.ini', 'firmware/projects/canary-wap/platformio.ini') }}
+          restore-keys: |
+            ${{ runner.os }}-pio-canary-wap-
+
+      - name: Install PlatformIO
+        run: |
+          python -m pip install --upgrade pip
+          pip install --upgrade platformio
+
+      - name: Build canary-wap (FULL profile — BLE + mesh + camera)
+        # lib_deps installs NimBLE-Arduino 2.x, so <NimBLEDevice.h> IS present
+        # and ble_config.h compiles the REAL BLE stack (the -DVALIDATION_BUILD
+        # stub only triggers when NimBLE is absent). This is the PlatformIO
+        # counterpart to the green arduino-cli build, on the same core 3.x line.
+        run: |
+          pio run -e canary-wap-default
+        env:
+          PLATFORMIO_BUILD_FLAGS: -DVALIDATION_BUILD=1
 
   build-arduino-cli:
     name: Arduino CLI Build (Canary WAP)

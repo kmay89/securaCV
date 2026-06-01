@@ -83,9 +83,9 @@
 // GLOBAL INSTANCE
 // ════════════════════════════════════════════════════════════════════════════
 
-static NetworkManager s_network;
+static ScvNetworkManager s_network;
 
-NetworkManager& network_get_instance() {
+ScvNetworkManager& network_get_instance() {
   return s_network;
 }
 
@@ -113,7 +113,7 @@ esp_err_t http_send_error(httpd_req_t* req, int status_code, const char* error_c
 // NETWORK MANAGER IMPLEMENTATION
 // ════════════════════════════════════════════════════════════════════════════
 
-NetworkManager::NetworkManager()
+ScvNetworkManager::ScvNetworkManager()
   : m_http_server(nullptr),
     m_scan_in_progress(false),
     m_peers_last_browse_ms(0) {
@@ -157,7 +157,7 @@ static void sanitize_mdns_hostname(const char* in, char* out, size_t cap) {
   out[j] = '\0';
 }
 
-const char* NetworkManager::stateName(WiFiProvState s) {
+const char* ScvNetworkManager::stateName(WiFiProvState s) {
   switch (s) {
     case WIFI_PROV_IDLE:       return "idle";
     case WIFI_PROV_SCANNING:   return "scanning";
@@ -204,7 +204,7 @@ static void start_mdns(const char* device_id) {
   log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "mDNS started", fqdn);
 }
 
-bool NetworkManager::begin(const char* ap_ssid, const char* ap_password,
+bool ScvNetworkManager::begin(const char* ap_ssid, const char* ap_password,
                            const char* device_id) {
   // Load saved credentials
   bool has_creds = loadCredentials();
@@ -286,7 +286,7 @@ bool NetworkManager::begin(const char* ap_ssid, const char* ap_password,
   return true;
 }
 
-bool NetworkManager::loadCredentials() {
+bool ScvNetworkManager::loadCredentials() {
   memset(&m_creds, 0, sizeof(m_creds));
 
   NvsManager& nvs = NvsManager::instance();
@@ -311,7 +311,7 @@ bool NetworkManager::loadCredentials() {
   return m_creds.configured;
 }
 
-bool NetworkManager::saveCredentials() {
+bool ScvNetworkManager::saveCredentials() {
   NvsManager& nvs = NvsManager::instance();
   if (!nvs.beginReadWrite()) return false;
 
@@ -326,7 +326,7 @@ bool NetworkManager::saveCredentials() {
   return true;
 }
 
-bool NetworkManager::clearCredentials() {
+bool ScvNetworkManager::clearCredentials() {
   NvsManager& nvs = NvsManager::instance();
   if (!nvs.beginReadWrite()) return false;
 
@@ -343,7 +343,7 @@ bool NetworkManager::clearCredentials() {
   return true;
 }
 
-void NetworkManager::connectToHome() {
+void ScvNetworkManager::connectToHome() {
   if (!m_creds.configured || !m_creds.enabled) {
     m_status.state = WIFI_PROV_AP_ONLY;
     return;
@@ -365,7 +365,7 @@ void NetworkManager::connectToHome() {
   WiFi.begin(m_creds.ssid, m_creds.password);
 }
 
-void NetworkManager::updateStatus() {
+void ScvNetworkManager::updateStatus() {
   m_status.ap_active = (WiFi.getMode() & WIFI_AP) != 0;
   m_status.sta_connected = WiFi.isConnected();
   m_status.ap_clients = WiFi.softAPgetStationNum();
@@ -383,7 +383,7 @@ void NetworkManager::updateStatus() {
   snprintf(m_status.ap_ip, sizeof(m_status.ap_ip), "%d.%d.%d.%d", apip[0], apip[1], apip[2], apip[3]);
 }
 
-size_t NetworkManager::getPeerCount() const {
+size_t ScvNetworkManager::getPeerCount() const {
   size_t n = 0;
   for (size_t i = 0; i < PEER_CACHE_MAX; i++) {
     if (m_peers[i].valid) n++;
@@ -452,7 +452,7 @@ static void peer_upsert(PeerEntry* peers,
   p.valid = true;
 }
 
-void NetworkManager::browsePeers() {
+void ScvNetworkManager::browsePeers() {
   // Only browse when on home WiFi; in AP-only mode there's no LAN to browse.
   if (!m_status.sta_connected) return;
   if (m_mdns_hostname[0] == '\0') return;
@@ -491,7 +491,15 @@ void NetworkManager::browsePeers() {
         tx_id.length() > 0 &&
         tx_id.equalsIgnoreCase(m_mdns_device_id)) continue;
 
+    // ESPmDNS query-result accessor: Arduino-ESP32 core 3.x renamed
+    // MDNSResponder::IP(idx) to address(idx). This lib compiles on BOTH core
+    // lines — official-platform dev/release on core 2.x (IP), and the pioarduino
+    // [env:full] BLE build on core 3.x (address) — so pick by core version.
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+    IPAddress ip = MDNS.address(i);
+#else
     IPAddress ip = MDNS.IP(i);
+#endif
     char ip_str[16] = {0};
     snprintf(ip_str, sizeof(ip_str), "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
 
@@ -512,7 +520,7 @@ void NetworkManager::browsePeers() {
   }
 }
 
-void NetworkManager::checkConnection() {
+void ScvNetworkManager::checkConnection() {
   uint32_t now = millis();
   updateStatus();
 
@@ -757,7 +765,7 @@ static esp_err_t handle_mesh_pair_confirm(httpd_req_t* req);
 static esp_err_t handle_mesh_pair_cancel(httpd_req_t* req);
 #endif
 
-bool NetworkManager::startHttpServer() {
+bool ScvNetworkManager::startHttpServer() {
   httpd_config_t config = HTTPD_DEFAULT_CONFIG();
   config.server_port = 80;
   config.uri_match_fn = httpd_uri_match_wildcard;
@@ -783,14 +791,14 @@ bool NetworkManager::startHttpServer() {
   return true;
 }
 
-void NetworkManager::stopHttpServer() {
+void ScvNetworkManager::stopHttpServer() {
   if (m_http_server) {
     httpd_stop(m_http_server);
     m_http_server = nullptr;
   }
 }
 
-void NetworkManager::registerHttpHandlers() {
+void ScvNetworkManager::registerHttpHandlers() {
   // UI
   httpd_uri_t ui = { .uri = "/", .method = HTTP_GET, .handler = handle_ui };
   httpd_register_uri_handler(m_http_server, &ui);
@@ -1039,7 +1047,7 @@ static esp_err_t handle_status(httpd_req_t* req) {
 
 // GET /api/v1/peers
 // Returns the cached list of other Canaries this device has discovered via
-// mDNS (_securacv._tcp). The cache is populated by NetworkManager::browsePeers
+// mDNS (_securacv._tcp). The cache is populated by ScvNetworkManager::browsePeers
 // on a slow cadence; this handler is read-only and never blocks on the
 // network. Response shape matches canary-vision/docs/discovery.md.
 static esp_err_t handle_peers(httpd_req_t* req) {
@@ -1799,12 +1807,12 @@ static esp_err_t handle_wifi_status(httpd_req_t* req) {
   if (!auth_gate(req)) return ESP_OK;
   witness_get_health().http_requests++;
 
-  NetworkManager& net = network_get_instance();
+  ScvNetworkManager& net = network_get_instance();
   const WiFiStatus& status = net.getStatus();
 
   JsonDocument doc;
   doc["ok"] = true;
-  doc["state"] = NetworkManager::stateName(status.state);
+  doc["state"] = ScvNetworkManager::stateName(status.state);
   doc["ap_active"] = status.ap_active;
   doc["sta_connected"] = status.sta_connected;
   doc["ap_ip"] = status.ap_ip;
@@ -1868,7 +1876,7 @@ static esp_err_t handle_wifi_connect(httpd_req_t* req) {
     return http_send_error(req, 400, "missing_ssid");
   }
 
-  NetworkManager& net = network_get_instance();
+  ScvNetworkManager& net = network_get_instance();
   WiFiCredentials creds;
   memset(&creds, 0, sizeof(creds));
   strncpy(creds.ssid, ssid, sizeof(creds.ssid) - 1);
@@ -1905,7 +1913,7 @@ static esp_err_t handle_wifi_disconnect(httpd_req_t* req) {
 
   WiFi.disconnect(false);
 
-  NetworkManager& net = network_get_instance();
+  ScvNetworkManager& net = network_get_instance();
   net.clearCredentials();
 
   JsonDocument doc;

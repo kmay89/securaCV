@@ -123,10 +123,13 @@ const char* nvs_key_for(const char* full_key) {
 #if defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
 static void format_fingerprint(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
                                char out[2 * mesh_crypto::FINGERPRINT_LEN + 1]) {
-  static const char HEX[] = "0123456789abcdef";
+  // NB: not named HEX — Arduino's Print.h defines `#define HEX 16` (the
+  // numeric base constant), which is pulled in transitively on the core-3.x
+  // BLE build envs and would clobber a local identifier called HEX.
+  static const char HEX_DIGITS[] = "0123456789abcdef";
   for (size_t i = 0; i < mesh_crypto::FINGERPRINT_LEN; ++i) {
-    out[2 * i]     = HEX[(fp[i] >> 4) & 0xF];
-    out[2 * i + 1] = HEX[ fp[i]       & 0xF];
+    out[2 * i]     = HEX_DIGITS[(fp[i] >> 4) & 0xF];
+    out[2 * i + 1] = HEX_DIGITS[ fp[i]       & 0xF];
   }
   out[2 * mesh_crypto::FINGERPRINT_LEN] = '\0';
 }

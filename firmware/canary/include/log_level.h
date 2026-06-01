@@ -17,6 +17,20 @@
 // LOG SEVERITY LEVELS
 // ════════════════════════════════════════════════════════════════════════════
 
+// NimBLE-Arduino 2.x's log_common.h defines LOG_LEVEL_DEBUG/INFO/WARN/ERROR/
+// CRITICAL as object-like macros (e.g. `#define LOG_LEVEL_DEBUG (0)`). The BLE
+// translation units include <NimBLEDevice.h> before this header, so without
+// this guard those macros clobber the enumerators below — turning
+// `LOG_LEVEL_DEBUG = 0` into `(0) = 0` (a parse error) and every later use into
+// a bare int. Undef them here so this LogLevel enum is the single source of
+// truth inside our own TUs; NimBLE's own .c files never include this header, so
+// their logging macros are unaffected. (#undef of an undefined macro is a no-op.)
+#undef LOG_LEVEL_DEBUG
+#undef LOG_LEVEL_INFO
+#undef LOG_LEVEL_WARN
+#undef LOG_LEVEL_ERROR
+#undef LOG_LEVEL_CRITICAL
+
 enum LogLevel : uint8_t {
   LOG_LEVEL_DEBUG    = 0,   // Verbose debugging (not stored by default)
   LOG_LEVEL_INFO     = 1,   // Normal operational events

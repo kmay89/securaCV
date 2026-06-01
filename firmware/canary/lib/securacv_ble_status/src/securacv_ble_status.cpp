@@ -171,9 +171,11 @@ bool ble_status_init(void) {
   NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
   adv->addServiceUUID(BLE_BATTERY_SERVICE_UUID);
   adv->addServiceUUID(BLE_SCV_SERVICE_UUID);
-  adv->setScanResponse(true);
-  adv->setMinPreferred(0x06);  /* 7.5 ms connection interval hint */
-  adv->setMaxPreferred(0x12);  /* 22.5 ms */
+  // NimBLE-Arduino 2.x removed NimBLEAdvertising::setScanResponse(bool) and
+  // set{Min,Max}Preferred(); scan response and connection-interval hints are
+  // now configured via NimBLEAdvertisementData / NimBLEDevice defaults. The
+  // status service only needs basic connectable advertising, so the 2.x
+  // defaults are sufficient (mirrors the canary-wap sketch's bluetooth_channel).
   NimBLEDevice::startAdvertising();
 
   s_initialized = true;
