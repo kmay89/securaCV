@@ -74,10 +74,20 @@ jobs:
         # the BLE stack + the 3.x platform pin were never compile-verified by
         # CI; this step closes that gap (mirrors the canary-wap BLE build and
         # the arduino-cli esp32:esp32 3.x build).
+        #
+        # Use a SEPARATE PLATFORMIO_CORE_DIR. The official platform (dev/release)
+        # and the pioarduino fork (this env) both ship a package literally named
+        # `framework-arduinoespressif32`, at incompatible versions (2.0.17 vs
+        # 3.3.8). Sharing ~/.platformio, pioarduino sees the official 2.0.17
+        # already "installed" under that name, skips installing its own 3.3.8,
+        # and its build script then can't resolve FRAMEWORK_DIR (None) ->
+        # "TypeError: expected str ... not NoneType" before any compile. An
+        # isolated core dir keeps the two framework packages from colliding.
         run: |
           pio run -e full
         env:
           PLATFORMIO_BUILD_FLAGS: -DVALIDATION_BUILD=1
+          PLATFORMIO_CORE_DIR: ${{ github.workspace }}/.pio-core-full
 
       - name: Check binary size
         run: |
