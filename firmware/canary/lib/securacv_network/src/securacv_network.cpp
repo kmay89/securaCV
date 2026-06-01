@@ -491,10 +491,15 @@ void ScvNetworkManager::browsePeers() {
         tx_id.length() > 0 &&
         tx_id.equalsIgnoreCase(m_mdns_device_id)) continue;
 
-    // Arduino-ESP32 core 3.x renamed the ESPmDNS query-result accessor
-    // MDNSResponder::IP(idx) -> address(idx) (core 2.x had IP()). Use the 3.x
-    // name; this lib only builds on the core 3.x BLE envs now.
+    // ESPmDNS query-result accessor: Arduino-ESP32 core 3.x renamed
+    // MDNSResponder::IP(idx) to address(idx). This lib compiles on BOTH core
+    // lines — official-platform dev/release on core 2.x (IP), and the pioarduino
+    // [env:full] BLE build on core 3.x (address) — so pick by core version.
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
     IPAddress ip = MDNS.address(i);
+#else
+    IPAddress ip = MDNS.IP(i);
+#endif
     char ip_str[16] = {0};
     snprintf(ip_str, sizeof(ip_str), "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
 
