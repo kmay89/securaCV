@@ -3,6 +3,12 @@ Status: Draft v0.1
 Type: Conforming Module Template
 Last Updated: 2026-01-20
 
+> **Orientation:** despite its repo-root location, this file is **not** the system
+> specification — it is the `zone_crossing` *module template* (the "Hello, World" of
+> conforming witness modules). The canonical, normative specs live in
+> [`spec/`](spec/): start with [`spec/invariants.md`](spec/invariants.md) and
+> [`spec/event_contract.md`](spec/event_contract.md).
+
 ## 1. Purpose
 `zone_crossing` detects when an object crosses from outside a configured boundary into a restricted zone.
 
