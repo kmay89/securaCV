@@ -736,6 +736,20 @@ void setup() {
   Serial.println("[OK] Sensing witness chain bridge armed");
 #endif
 
+  // Bring up the NimBLE stack BEFORE the CSI pipeline below. The RX-only BLE
+  // Scout is registered inside securacv_csi_modules_init() and only ATTACHES to
+  // an already-running stack; the BLE GATT status service is the single init
+  // owner (it owns the GAP device name + TX power). Initializing it here — ahead
+  // of the Scout — guarantees the device advertises under its configured name
+  // rather than the Scout's generic "securacv-scout". (Full GATT service
+  // creation + advertising still happens later in ble_status_init(); this only
+  // owns the stack bring-up.)
+#if FEATURE_BLE_STATUS
+  if (!ble_status_stack_begin()) {
+    Serial.println("[--] NimBLE stack init failed — BLE status/scout unavailable");
+  }
+#endif
+
   // Initialize CSI sensing (motion / breathing / micro-activity)
 #if FEATURE_CSI
   Serial.println("[..] Initializing CSI environmental sensing...");

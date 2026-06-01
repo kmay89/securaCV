@@ -79,17 +79,29 @@ ScoutScanCallbacks s_callbacks;
 bool nimble_scan_init() {
   if (s_scanner) return true;
 
-  /* Bring up the NimBLE stack. NimBLEDevice::init() is documented as
-   * idempotent in NimBLE-Arduino 2.x — safe to call even if another
-   * module already initialized the stack. It returns bool in 2.x; false
-   * means the controller/host stack failed to come up (BT compiled out, no
-   * radio, or a coexistence/heap failure), so propagate that instead of
-   * marching on to getScan() and dereferencing a null scanner. The name is
-   * intentionally generic ("securacv-scout") because the Scout role never
-   * advertises; the name is only visible if a future build enables
-   * advertising, which this TU does not. */
-  if (!NimBLEDevice::init("securacv-scout")) {
+  /* Attach to — not own — the NimBLE stack. The Scout is RX-only and never
+   * advertises, so it must NOT own the GAP device name. When the BLE GATT
+   * status service (securacv_ble_status, FEATURE_BLE_STATUS) is compiled in it
+   * is the single NimBLE init owner: it brings the stack up under the
+   * configured device name + TX power EARLY in setup() (ble_status_stack_begin),
+   * before this Scout init runs. So here we only ATTACH — we must not call
+   * NimBLEDevice::init() ourselves, or a failure to set the owner's name would
+   * leave the device advertising as the generic "securacv-scout".
+   *
+   * If the stack still isn't up here with the status service present, the
+   * owner's init() failed (radio/host error) — there's nothing for the Scout
+   * to attach to, so bail. In a Scout-only build (no status service) there is
+   * no other owner, so the Scout brings the stack up itself under the generic
+   * name (not user-visible — the Scout never advertises). NimBLE 2.x init()
+   * returns false when the controller/host stack can't come up. */
+  if (!NimBLEDevice::isInitialized()) {
+#if defined(FEATURE_BLE_STATUS) && FEATURE_BLE_STATUS
     return false;
+#else
+    if (!NimBLEDevice::init("securacv-scout")) {
+      return false;
+    }
+#endif
   }
 
   s_scanner = NimBLEDevice::getScan();
