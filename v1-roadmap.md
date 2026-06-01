@@ -26,7 +26,7 @@ Both required for v1. CV flexibility without real crypto is just a detection pip
 | Signatures | ✅ Works | Ed25519 signatures on log + `log_verify` checks |
 | Vault sealing | ✅ Wired (opt-in) | `witnessd` seals buffered frames via `seal_latest_frame()` → `Vault::seal_frame()` with real `VaultCryptoMode::{Classical,Pq,Hybrid}`; gated on a valid `BREAK_GLASS_SEAL_TOKEN`. Remaining work is key management + setup UX, not the encryption. |
 | RTSP ingestion | ⚠️ Implemented but unverified | `RtspSource` does real decode via GStreamer/FFmpeg (`src/ingest/rtsp.rs`, `rtsp_ffmpeg.rs`), synthetic only for explicit `stub://` URLs. Feature-gated (`rtsp-ffmpeg`/`rtsp-gstreamer`); **not** exercised in CI or by a test — only *file* ingestion (`ingest-file-ffmpeg`/`ingest_run`) has the CI roundtrip. |
-| Sandboxing | ⚠️ Partial (by design) | Optional seccomp sandbox for adapter/module payload parsing (`with_sandbox`, `src/adapter/sandbox.rs`); detection backends remain a trusted/*audited* boundary by design (see `AGENTS.md`). |
+| Sandboxing | ⚠️ Partial (by design) | Optional seccomp sandbox: adapters opt in via `with_sandbox()` (frigate/mqtt/webhook/ble-presence); parsing then runs inside `parse_in_sandbox()` (`src/adapter/sandbox.rs`). Detection backends remain a trusted/*audited* boundary by design (see `AGENTS.md`). |
 
 ---
 
