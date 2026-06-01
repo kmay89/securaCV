@@ -11,7 +11,10 @@
 # NOTE: this is a 4 MB layout. The XIAO ESP32-S3 Sense ships 8 MB flash — when
 # targeting it, enlarge the app slots (the FULL build is near the ~3 MB ceiling)
 # and/or add a dedicated witness_log data partition. Do not use this 4 MB table
-# as-is on an 8 MB S3, or half the flash is left unused.
+# as-is on an 8 MB S3, or half the flash is left unused. Offsets below are
+# explicit, so if you enlarge app0/app1 you must also push every subsequent
+# offset (nvs_keys, spiffs, ...) forward to match, or the build fails with a
+# partition-overlap error.
 #   nvs:       20KB  (0x5000)  - Device settings, Ed25519 keys
 #   otadata:    8KB  (0x2000)  - OTA boot state
 #   app0:     1.9MB (0x1E0000) - Primary app slot
