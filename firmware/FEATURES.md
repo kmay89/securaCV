@@ -43,7 +43,7 @@ Single-row-per-capability summary across every non-archived variant. This is the
 | WiFi AP (SecuraCV-XXXX SSID, device-unique password) | ✅ | ✅ | ⚠️ | ❌ | ➖ | ✅ |
 | WiFi STA (home network dual-mode) | ✅ | ✅ | ❌ | ✅ | ➖ | ✅ |
 | Web UI (embedded PROGMEM dashboard) | ⚠️ | ✅ | ⚠️ | ❌ | ➖ | ✅ |
-| Camera peek (MJPEG stream, no frame storage) | ❌ | ✅ | ⚠️ | ➖ | ➖ | ✅ |
+| Camera peek (MJPEG stream, no frame storage) | ⚠️ | ✅ | ⚠️ | ➖ | ➖ | ✅ |
 | Mesh network (Opera / ESP-NOW) | ⚠️ | ✅ | ⚠️ | ❌ | ➖ | ✅ |
 | Mesh RSSI from ESP-NOW radio | ⚠️ | ✅ | ❌ | ❌ | ➖ | ❌ |
 | BLE discovery (Opera/Chirp/Nearby) | ❌ | ✅ | ❌ | ❌ | ➖ | ✅ |
