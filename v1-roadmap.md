@@ -11,28 +11,50 @@ Both required for v1. CV flexibility without real crypto is just a detection pip
 
 ## Current State
 
+> _Refreshed 2026-05-31 against the source tree. The earlier table predated the Stream A/B/C
+> work below and was stale (it still said detection was "Only StubDetector", the vault was "not
+> wired", and RTSP was "synthetic frames only" — all since superseded). Statuses below cite the
+> code that backs them._
+
 | Component | Status | Reality |
 |-----------|--------|---------|
 | Frame isolation | ✅ Works | Type-level enforcement is real |
 | Hash-chained log | ✅ Works | `log_verify` proves integrity |
 | Event contract | ✅ Works | Allowlist enforced |
 | Break-glass structure | ✅ Works | Policy storage + approval flow |
-| Detection | ⚠️ Hardcoded | Only `StubDetector`, no model flexibility |
+| Detection | ✅ Works (stub is the default) | `DetectorBackend` trait + `BackendRegistry`; `StubBackend`/`CpuBackend`/`TractBackend` (ONNX via `tract`). Default build registers the motion stub; `TractBackend` is feature-gated (`backend-tract`) and needs a `--model` (tests: `tests/tract_backend.rs`). |
 | Signatures | ✅ Works | Ed25519 signatures on log + `log_verify` checks |
-| Vault encryption | ⚠️ Placeholder | Structure exists, not wired |
-| RTSP ingestion | ⚠️ Stub | Synthetic frames only |
-| Backend sandboxing | ❌ Missing | Backends run with full privileges |
+| Vault sealing | ✅ Wired (opt-in) | `witnessd` seals buffered frames via `seal_latest_frame()` → `Vault::seal_frame()` with real `VaultCryptoMode::{Classical,Pq,Hybrid}`; gated on a valid `BREAK_GLASS_SEAL_TOKEN`. Remaining work is key management + setup UX, not the encryption. |
+| RTSP ingestion | ⚠️ Implemented but unverified | `RtspSource` does real decode via GStreamer/FFmpeg (`src/ingest/rtsp.rs`, `rtsp_ffmpeg.rs`), synthetic only for explicit `stub://` URLs. Feature-gated (`rtsp-ffmpeg`/`rtsp-gstreamer`); **not** exercised in CI or by a test — only *file* ingestion (`ingest-file-ffmpeg`/`ingest_run`) has the CI roundtrip. |
+| Sandboxing | ⚠️ Partial (by design) | Optional seccomp sandbox: adapters opt in via `with_sandbox()` (frigate/mqtt/webhook/ble-presence); parsing then runs inside `parse_in_sandbox()` (`src/adapter/sandbox.rs`). Detection backends remain a trusted/*audited* boundary by design (see `AGENTS.md`). |
 
 ---
 
 ## v1 Definition
 
-v1 is "minimally credible," not feature complete:
+v1 means **everything documented works end-to-end** — not a reduced "minimally credible" subset.
+This matches `CHANGELOG.md` [1.0.0] and is the single canonical definition for the project.
+Concretely, to tag v1:
 
-- At least one real CV backend that can detect objects
-- At least one real crypto path that proves tamper detection
-- At least one real video source (RTSP or file)
-- Documentation that's honest about what's enforced vs auditable
+- Every feature described in the README/docs runs end-to-end on a first-try install.
+- `cargo test` passes cleanly.
+- At least one real CV backend, one real crypto/tamper path, and one real video source — **and any
+  other capability the docs claim** — actually works end-to-end, not merely compiles.
+- Documentation matches the code: honest about what is *enforced* vs *auditable*, with no claim
+  that outruns the implementation.
+
+This is a **higher** bar than the earlier "minimally credible" framing, so adopting it makes the
+remaining gaps explicit rather than waiving them. **Open blockers to this bar (must close before
+tagging v1):**
+
+- The Frigate → Home Assistant MQTT pipeline passes the release gate end-to-end —
+  `integrations/ha_frigate_mqtt/verify_pipeline.sh` exits `0` against a live stack (README release gate).
+- The "audit boundary vs security boundary" documentation item (Acceptance, below) is still open.
+- RTSP ingestion is documented, so under this definition it is **in scope** and must work
+  (moved out of "nice to have").
+- Firmware must not surface raw MAC addresses or precise GPS over its APIs — the docs and
+  `spec/invariants.md` forbid it, so documented behavior must match actual
+  (see `firmware/projects/canary-wap/ENTERPRISE_READINESS_TODO.md`).
 
 ---
 
@@ -58,11 +80,12 @@ v1 is "minimally credible," not feature complete:
 
 **v1 choice: Ed25519 signed log** (not encrypted vault)
 
-Rationale: Signed log is easier to demonstrate end-to-end without designing envelope formats and media storage semantics. Vault structure remains present but inactive for v1.
+Rationale: Signed log is easier to demonstrate end-to-end without designing envelope formats and media storage semantics. The vault seal path is wired into `witnessd` (opt-in via `BREAK_GLASS_SEAL_TOKEN`); v1 leads with the signed log for the headline end-to-end demo, with vault sealing available as the optional sealed-evidence path.
 
 **Remaining crypto gaps to close:**
 - Device key handling is still seed-derived from config, not hardware-backed or rotated.
-- Vault encryption remains unwired (structure only).
+- Vault sealing is wired but opt-in/UX-gated; the remaining gap is key management (see the
+  device-key item above) and a trustee/seal setup UI — not the encryption itself.
 
 | Step | Deliverable | Est. Effort |
 |------|-------------|-------------|
@@ -127,10 +150,14 @@ Integration testing
 
 - **WASM sandboxing** — backends are trusted, must be audited
 - **GPU acceleration** — `ort` backend is v1.1
-- **Encrypted vault** — structure present, wiring is v1.1
+- **Encrypted-vault UX / key management** — sealing is wired (opt-in); the trustee/seal setup UI
+  and hardware-backed keys are v1.1
 - **Real-time performance guarantees** — benchmark, don't promise
-- **RTSP** — file reader first, RTSP is stretch goal
 - **Remote attestation** — future
+
+(RTSP was previously listed here as a stretch goal. Under the canonical "everything documented
+works end-to-end" definition it is a documented feature, so it is now **in scope** for v1 — see
+the v1 Definition and Acceptance Criteria.)
 
 ---
 
@@ -145,16 +172,18 @@ Integration testing
 - [x] `log_verify` validates signatures and catches tampering
 - [x] Can process video from file
 - [ ] Documentation states audit boundary vs security boundary
+- [ ] RTSP ingestion works end-to-end (documented feature → required under the v1 definition)
+- [ ] Frigate → HA MQTT release gate passes (`integrations/ha_frigate_mqtt/verify_pipeline.sh` == 0)
+- [ ] Firmware APIs expose no raw MAC / precise GPS (documented invariants hold on-device)
 
 ### Nice to have:
-- [ ] RTSP ingestion
 - [ ] Performance benchmarks
 
 ### Explicitly out of scope:
 - [ ] GPU acceleration
 - [ ] WASM sandboxing
 - [ ] Face/plate detection (forbidden by design)
-- [ ] Encrypted vault (v1.1)
+- [ ] Encrypted-vault setup UX + hardware-backed keys (v1.1) — sealing itself is already wired
 
 ---
 
