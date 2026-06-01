@@ -149,6 +149,28 @@ fn main() -> Result<()> {
         (module, module_desc, runtime, registry)
     };
 
+    // Be explicit about what the active detector actually does. The default build
+    // resolves to a frame-difference *motion* backend (stub/cpu), NOT object
+    // detection — real CV (TractBackend/ONNX) is feature-gated behind
+    // `--features backend-tract` and requires a model. Surface this so an operator
+    // reading "detection" never assumes classified objects when they are getting
+    // motion presence only. See docs/review/01-flag-report.md F-01.
+    match module.backend() {
+        InferenceBackend::Stub | InferenceBackend::Cpu => {
+            log::warn!(
+                "detection backend '{:?}' is MOTION-ONLY (frame-difference): events report \
+                 motion presence, not classified objects. To enable real object detection, \
+                 build with `--features backend-tract` and set detect.tract_model (or \
+                 detect.backend=tract). See docs/review/01-flag-report.md F-01.",
+                module.backend()
+            );
+        }
+        InferenceBackend::Tract => {
+            log::info!("detection backend: tract (ONNX object detection) active");
+        }
+        InferenceBackend::Accelerator => {}
+    }
+
     // Bucket key manager (rotates per time bucket)
     let mut token_mgr = BucketKeyManager::new();
 

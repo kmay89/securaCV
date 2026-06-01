@@ -72,6 +72,14 @@ tagging v1):**
 | A4 | **Done:** `TractBackend` produces correct boxes for test model | ✅ |
 | A5 | **Done:** Integration with `InferenceView` + registry routing | ✅ |
 
+> **Default-build caveat:** A1–A5 mean the `TractBackend` (ONNX) *exists and works when
+> compiled*. The default build does **not** enable it — `detect.backend=auto` resolves to a
+> frame-difference **motion** backend (`cpu`/`stub`), so a stock `witnessd` reports motion
+> presence, not classified objects. Real object detection requires `--features backend-tract`
+> + a model (`detect.tract_model`). `witnessd` now logs a `WARN` at startup whenever a
+> motion-only backend is active so this is never silent. (In the primary Frigate-bridge
+> deployment, object detection is Frigate's job; this caveat is about the direct-ingest path.)
+
 **Total:** ~2-3 weeks
 
 ### Stream B: Crypto Hardening
