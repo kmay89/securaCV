@@ -122,7 +122,15 @@ ScvNetworkManager::ScvNetworkManager()
   memset(m_peers, 0, sizeof(m_peers));
   m_mdns_hostname[0] = '\0';
   m_mdns_device_id[0] = '\0';
+  m_ap_ssid[0] = '\0';
+  m_ap_password[0] = '\0';
 }
+
+// F4 grace window: keep the SoftAP up this long after the STA link reports
+// connected before tearing it down, so a just-provisioned phone still on the
+// AP sees the "connected" result before its association drops. Mirrors the
+// canary-wap sketch's AP_DROP_GRACE_MS.
+static const uint32_t AP_DROP_GRACE_MS = 8000;
 
 // mDNS hostname rules (RFC 6762 §16): only [a-z0-9-], must not start/end with
 // hyphen. We lowercase the device_id and replace any other byte with '-'.
@@ -208,6 +216,13 @@ bool ScvNetworkManager::begin(const char* ap_ssid, const char* ap_password,
                            const char* device_id) {
   // Load saved credentials
   bool has_creds = loadCredentials();
+
+  // Stash the AP credentials so raiseAp() can bring the SoftAP back up after a
+  // home-WiFi drop (see F4 coexistence handling in checkConnection()).
+  strncpy(m_ap_ssid, ap_ssid, sizeof(m_ap_ssid) - 1);
+  m_ap_ssid[sizeof(m_ap_ssid) - 1] = '\0';
+  strncpy(m_ap_password, ap_password, sizeof(m_ap_password) - 1);
+  m_ap_password[sizeof(m_ap_password) - 1] = '\0';
 
   // Always use AP+STA mode
   WiFi.mode(WIFI_AP_STA);
@@ -520,6 +535,34 @@ void ScvNetworkManager::browsePeers() {
   }
 }
 
+void ScvNetworkManager::dropAp() {
+  if (!(WiFi.getMode() & WIFI_AP)) return;  // already STA-only
+  WiFi.softAPdisconnect(true);   // stop the SoftAP and release its netif
+  WiFi.mode(WIFI_STA);
+  m_status.ap_active = false;
+  // The HTTP server keeps serving on the STA interface and mDNS was already
+  // re-announced on STA at STA_GOT_IP, so canary.local stays reachable.
+  log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK,
+             "AP dropped — STA up, BLE-stable mode", m_status.sta_ip);
+}
+
+void ScvNetworkManager::raiseAp() {
+  if (WiFi.getMode() & WIFI_AP) return;  // already up
+  WiFi.mode(WIFI_AP_STA);
+  bool ap_ok = WiFi.softAP(m_ap_ssid, m_ap_password, AP_CHANNEL, false, AP_MAX_CONNECTIONS);
+  if (!ap_ok) {
+    log_health(LOG_LEVEL_ERROR, LOG_CAT_NETWORK, "AP re-raise failed", nullptr);
+    WiFi.mode(WIFI_STA);  // don't leave the radio half-configured in AP_STA with no AP up
+    return;
+  }
+  m_status.ap_active = true;
+  witness_get_health().wifi_active = true;
+  IPAddress ip = WiFi.softAPIP();
+  snprintf(m_status.ap_ip, sizeof(m_status.ap_ip), "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
+  start_mdns(s_mdns_device_id);  // re-announce on the re-raised AP interface
+  log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "AP re-raised — STA link down", m_status.ap_ip);
+}
+
 void ScvNetworkManager::checkConnection() {
   uint32_t now = millis();
   updateStatus();
@@ -543,11 +586,21 @@ void ScvNetworkManager::checkConnection() {
       if (!WiFi.isConnected()) {
         m_status.state = WIFI_PROV_FAILED;
         log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK, "WiFi connection lost", nullptr);
+        // F4: STA link gone — re-raise the management AP so the device stays
+        // reachable for reconfiguration while it retries the home network.
+        raiseAp();
       } else {
         /* Reset attempt counter on sustained connection so the next
          * disconnect starts backoff from scratch. */
         if (m_status.connect_attempts > 0) {
           m_status.connect_attempts = 0;
+        }
+        // F4: STA has held the home link past the grace window — drop the AP so
+        // the radio runs the stable STA+BLE coexistence combo (vs the unstable
+        // AP+STA+BLE) and no lingering management AP stays exposed.
+        if ((WiFi.getMode() & WIFI_AP) &&
+            now - m_status.connected_since_ms > AP_DROP_GRACE_MS) {
+          dropAp();
         }
       }
       break;
