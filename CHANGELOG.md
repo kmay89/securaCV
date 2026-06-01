@@ -15,9 +15,10 @@ below — but nothing documented is allowed to be aspirational at the v1 tag.
 - **Privacy Witness Kernel** (Rust): hash-chained, Ed25519-signed append-only
   event log with break-glass N-of-M quorum access, vault sealing, event
   contract enforcement, module sandboxing (seccomp on Linux).
-- **9 CLI binaries**: witnessd, log_verify, break_glass, export_events,
+- **CLI binaries**: 9 core — witnessd, log_verify, break_glass, export_events,
   export_verify, frigate_bridge, event_mqtt_bridge, witness_api,
-  grove_vision2_ingest.
+  grove_vision2_ingest — plus the `adapter_host` daemon and `envelope_verify`,
+  and the `demo` / `tamper_demo` / `ingest_run` helpers (14 total in `src/bin/`).
 - **Sensor Adapter framework** (`src/adapter/`): an open, vendor-neutral interface that
   generalizes the `frigate_bridge` pattern so any source (acoustic/impulse, PIR/contact,
   presence, generic MQTT/webhook sensors, Frigate) can feed coarse, privacy-preserving claims
