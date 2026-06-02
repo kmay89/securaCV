@@ -75,8 +75,9 @@ tagging v1):**
 > **Default-build caveat:** A1–A5 mean the `TractBackend` (ONNX) *exists and works when
 > compiled*. The default build does **not** enable it — `detect.backend=auto` resolves to a
 > frame-difference **motion** backend (`cpu`/`stub`), so a stock `witnessd` reports motion
-> presence, not classified objects. Real object detection requires `--features backend-tract`
-> + a model (`detect.tract_model`). `witnessd` now logs a `WARN` at startup whenever a
+> presence, not classified objects. Real object detection requires a `--features backend-tract`
+> build **and** setting both `detect.backend=tract` and `detect.tract_model` (each alone is
+> insufficient). `witnessd` now logs a `WARN` at startup whenever a
 > motion-only backend is active so this is never silent. (In the primary Frigate-bridge
 > deployment, object detection is Frigate's job; this caveat is about the direct-ingest path.)
 

@@ -160,8 +160,10 @@ fn main() -> Result<()> {
             log::warn!(
                 "detection backend '{:?}' is MOTION-ONLY (frame-difference): events report \
                  motion presence, not classified objects. To enable real object detection, \
-                 build with `--features backend-tract` and set detect.tract_model (or \
-                 detect.backend=tract). See docs/review/01-flag-report.md F-01.",
+                 build with `--features backend-tract` and set BOTH detect.backend=tract and \
+                 detect.tract_model (each alone is insufficient: tract_model is ignored unless \
+                 backend=tract, and backend=tract without a model fails validation). \
+                 See docs/review/01-flag-report.md F-01.",
                 module.backend()
             );
         }
