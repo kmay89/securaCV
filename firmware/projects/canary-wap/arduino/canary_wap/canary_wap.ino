@@ -328,19 +328,6 @@ static const uint32_t VERIFY_INTERVAL_SEC  = 60;      // Self-verify every N sec
 static const uint32_t WATCHDOG_TIMEOUT_SEC = 8;       // Watchdog timeout
 static const uint32_t SD_PERSIST_INTERVAL  = 10;      // Persist every N records
 
-// Spatial coarsening for operator-facing GPS (Invariant III): round latitude/
-// longitude to 3 decimal places (≈ 110 m) before any HTTP/serial emission so the
-// device never publishes tracking-grade precision. Internal computation (motion
-// filter, anchoring) keeps full precision; only output is coarsened.
-static inline double gps_coarsen_deg(double v) {
-  const double scale = 1000.0;  // 10^3 → 3 decimal places
-  double scaled = v * scale;
-  // round-half-away-from-zero without depending on libm rounding mode
-  double r = (scaled >= 0.0) ? (double)(long long)(scaled + 0.5)
-                             : (double)(long long)(scaled - 0.5);
-  return r / scale;
-}
-
 // ════════════════════════════════════════════════════════════════════════════
 // USB CDC & OPERATOR INTERFACE
 // ════════════════════════════════════════════════════════════════════════════
@@ -1587,6 +1574,23 @@ private:
 // ════════════════════════════════════════════════════════════════════════════
 // RECORD BUILDING
 // ════════════════════════════════════════════════════════════════════════════
+
+// Spatial coarsening for operator-facing GPS (Invariant III): round latitude/
+// longitude to 3 decimal places (≈ 110 m) before any HTTP/serial emission so the
+// device never publishes tracking-grade precision. Internal computation (motion
+// filter, anchoring) keeps full precision; only output is coarsened.
+// NOTE: defined here (after the GPS type definitions) rather than at the top —
+// a free function placed before the .ino's type defs makes it the "first function"
+// and Arduino hoists all auto-generated prototypes above those types, which breaks
+// the build.
+static inline double gps_coarsen_deg(double v) {
+  const double scale = 1000.0;  // 10^3 → 3 decimal places
+  double scaled = v * scale;
+  // round-half-away-from-zero without depending on libm rounding mode
+  double r = (scaled >= 0.0) ? (double)(long long)(scaled + 0.5)
+                             : (double)(long long)(scaled - 0.5);
+  return r / scale;
+}
 
 static bool build_witness_event(const GnssFix* fx, FixState st, uint8_t* out, size_t cap, size_t* out_len) {
   CborWriter w(out, cap);

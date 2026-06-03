@@ -4,6 +4,9 @@
 
 #if defined(ARDUINO)
   #include "mbedtls/sha256.h"
+  #include <esp_mac.h>
+  #include <esp_system.h>
+  #include "nvs_store.h"   // pulls in Arduino.h / Preferences.h
 #else
   #include <openssl/sha.h>
 #endif
@@ -56,10 +59,6 @@ bool derive(const uint8_t* mac, size_t mac_len,
 }
 
 #if defined(ARDUINO)
-
-#include <esp_mac.h>
-#include <esp_system.h>
-#include "nvs_store.h"
 
 bool device_id_hex(char* out_hex, size_t out_len) {
   if (out_hex == nullptr || out_len < HEX_LEN + 1) return false;
