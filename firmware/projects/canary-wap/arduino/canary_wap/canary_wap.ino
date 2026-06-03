@@ -868,15 +868,17 @@ static void hex_to_str(char* out, const uint8_t* d, size_t n) {
 }
 
 static void generate_device_id(char* out, size_t cap) {
-  uint8_t mac[6];
-  esp_read_mac(mac, ESP_MAC_WIFI_STA);
-  snprintf(out, cap, "%s%02X%02X", DEVICE_ID_PREFIX, mac[4], mac[5]);
+  // Identity suffix from the Ed25519 pubkey fingerprint, never the MAC
+  // (event_contract §10: device identification uses the truncated pubkey hash).
+  // Requires g_device.pubkey_fp to be populated first (see provision_device()).
+  snprintf(out, cap, "%s%02X%02X", DEVICE_ID_PREFIX,
+           g_device.pubkey_fp[0], g_device.pubkey_fp[1]);
 }
 
 static void generate_ap_ssid(char* out, size_t cap) {
-  uint8_t mac[6];
-  esp_read_mac(mac, ESP_MAC_WIFI_STA);
-  snprintf(out, cap, "SecuraCV-%02X%02X", mac[4], mac[5]);
+  // Suffix from the pubkey fingerprint, never the MAC (event_contract §10).
+  snprintf(out, cap, "SecuraCV-%02X%02X",
+           g_device.pubkey_fp[0], g_device.pubkey_fp[1]);
 }
 
 // mDNS hostname rules (RFC 6762 §16 / RFC 1123): a single DNS label may only
@@ -906,7 +908,7 @@ static void sanitize_mdns_label(const char* in, char* out, size_t cap) {
 // Build the unique, stable mDNS hostname this device advertises. A user-set
 // friendly name (captured during setup, stored in NVS "dev_name") wins and
 // yields a memorable "canary-<name>" (e.g. "canary-kitchen"); otherwise we
-// fall back to the MAC-derived "canary-aabb". This is what makes a second
+// fall back to the pubkey-fingerprint-derived "canary-aabb". This is what makes a second
 // Canary "just work": every device owns a distinct <host>.local, while the
 // bare "canary.local" stays available as a single-device catch-all (see the
 // delegated-hostname claim in wifi_init_provisioning()).
@@ -922,9 +924,9 @@ static void generate_mdns_hostname(char* out, size_t cap) {
       return;
     }
   }
-  uint8_t mac[6];
-  esp_read_mac(mac, ESP_MAC_WIFI_STA);
-  snprintf(out, cap, "canary-%02x%02x", mac[4], mac[5]);
+  // Fallback suffix from the pubkey fingerprint, never the MAC (event_contract §10).
+  snprintf(out, cap, "canary-%02x%02x",
+           g_device.pubkey_fp[0], g_device.pubkey_fp[1]);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -6541,13 +6543,12 @@ static bool start_wifi_ap() {
 static bool provision_device() {
   Serial.println("[PROV] Provisioning device identity...");
 
-  // Generate device ID from MAC
-  generate_device_id(g_device.device_id, sizeof(g_device.device_id));
-  generate_ap_ssid(g_device.ap_ssid, sizeof(g_device.ap_ssid));
-  generate_mdns_hostname(g_device.mdns_hostname, sizeof(g_device.mdns_hostname));
   g_device.first_boot = false;
 
-  // Try to load existing key
+  // ── Load or generate the Ed25519 keypair FIRST ──
+  // Device identity (device_id / AP SSID / mDNS hostname) is derived from the
+  // pubkey fingerprint, not the MAC (event_contract §10), so the keypair and its
+  // fingerprint must exist before we name anything.
   if (nvs_load_key(g_device.privkey)) {
     Serial.println("[PROV] Loaded existing keypair from NVS");
   } else {
@@ -6569,6 +6570,11 @@ static bool provision_device() {
   compute_fingerprint(g_device.pubkey, g_device.pubkey_fp);
   hex_to_str(g_device.fingerprint_hex, g_device.pubkey_fp, 8);
   Serial.printf("[PROV] Public key fingerprint: %s\n", g_device.fingerprint_hex);
+
+  // ── Derive device identity from the pubkey fingerprint (never the MAC) ──
+  generate_device_id(g_device.device_id, sizeof(g_device.device_id));
+  generate_ap_ssid(g_device.ap_ssid, sizeof(g_device.ap_ssid));
+  generate_mdns_hostname(g_device.mdns_hostname, sizeof(g_device.mdns_hostname));
 
   // ── Derive API token (HKDF-style, 2-step) ──
   Serial.println("[PROV] Deriving API token (HKDF-style, 2-step)...");
