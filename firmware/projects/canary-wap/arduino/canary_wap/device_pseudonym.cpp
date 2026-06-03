@@ -18,6 +18,13 @@ constexpr char   DOMAIN[]   = "canary:device-id:v1:";
 constexpr size_t DOMAIN_LEN = sizeof(DOMAIN) - 1;  // exclude NUL
 constexpr char   HEXD[]     = "0123456789abcdef";
 
+// Reliable scrub: a plain memset() at end-of-scope is frequently removed by the
+// compiler via dead-store elimination. The volatile pointer prevents that.
+void secure_zero(void* p, size_t n) {
+  volatile uint8_t* vp = static_cast<volatile uint8_t*>(p);
+  while (n--) *vp++ = 0;
+}
+
 void sha256_raw(const uint8_t* in, size_t len, uint8_t out[32]) {
 #if defined(ARDUINO)
   mbedtls_sha256(in, len, out, 0);  // 0 => SHA-256 (not SHA-224)
@@ -52,9 +59,9 @@ bool derive(const uint8_t* mac, size_t mac_len,
   }
   out_hex[HEX_LEN] = '\0';
 
-  // Best-effort scrub of sensitive intermediates.
-  memset(input, 0, sizeof(input));
-  memset(hash, 0, sizeof(hash));
+  // Scrub sensitive intermediates (volatile, not optimized away).
+  secure_zero(input, sizeof(input));
+  secure_zero(hash, sizeof(hash));
   return true;
 }
 
@@ -63,8 +70,20 @@ bool derive(const uint8_t* mac, size_t mac_len,
 bool device_id_hex(char* out_hex, size_t out_len) {
   if (out_hex == nullptr || out_len < HEX_LEN + 1) return false;
 
+  // The efuse MAC and NVS salt are fixed for the device's lifetime, so the
+  // pseudonym is computed once and cached in RAM. This keeps the Hardware ID
+  // stable for the whole boot session even if NVS persistence fails, and avoids
+  // an NVS read (and possible write) on every status/info request.
+  static char cached[HEX_LEN + 1] = {0};
+  static bool cached_valid = false;
+  if (cached_valid) {
+    memcpy(out_hex, cached, HEX_LEN + 1);
+    return true;
+  }
+
   // Load-or-create a per-device salt in NVS (independent of other subsystems so it
-  // works regardless of init order).
+  // works regardless of init order). If persistence fails we still derive from the
+  // freshly generated salt and cache the result, so the session stays consistent.
   uint8_t salt[SECRET_LEN];
   bool have = nvs_store::get_blob(NVS_SALT_KEY, salt, sizeof(salt));
   bool nonzero = false;
@@ -81,10 +100,17 @@ bool device_id_hex(char* out_hex, size_t out_len) {
   uint8_t mac[6];
   esp_efuse_mac_get_default(mac);
 
-  bool ok = derive(mac, sizeof(mac), salt, sizeof(salt), out_hex, out_len);
+  // Derive into a temp buffer; only publish on success so out_hex is never left partial.
+  char tmp[HEX_LEN + 1];
+  bool ok = derive(mac, sizeof(mac), salt, sizeof(salt), tmp, sizeof(tmp));
+  if (ok) {
+    memcpy(cached, tmp, HEX_LEN + 1);
+    cached_valid = true;
+    memcpy(out_hex, tmp, HEX_LEN + 1);
+  }
 
-  memset(salt, 0, sizeof(salt));
-  memset(mac, 0, sizeof(mac));
+  secure_zero(salt, sizeof(salt));
+  secure_zero(mac, sizeof(mac));
   return ok;
 }
 

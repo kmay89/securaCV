@@ -657,7 +657,7 @@ void print_status() {
     Serial.printf("  Hardware ID    : %s\n", hw_token);
   }
 
-  Serial.printf("  Chip ID        : %llX\n", ESP.getEfuseMac());
+  // Chip ID (raw efuse MAC) intentionally not printed — see device_pseudonym / Invariant III.
   Serial.printf("  Flash Mode     : %s\n",
     ESP.getFlashChipMode() == FM_QIO ? "QIO" :
     ESP.getFlashChipMode() == FM_QOUT ? "QOUT" :
@@ -835,7 +835,6 @@ size_t get_json(char* buf, size_t buf_size) {
       "\"flash_size\":%u,"
       "\"flash_speed_mhz\":%u,"
       "\"hw_token\":\"%s\","
-      "\"chip_id\":\"%llX\","
       "\"sdk_version\":\"%s\","
       "\"reset_reason\":\"%s\""
     "},"
@@ -879,7 +878,6 @@ size_t get_json(char* buf, size_t buf_size) {
     g_sys_metrics.flash_size,
     ESP.getFlashChipSpeed() / 1000000,
     hw_token,
-    (unsigned long long)ESP.getEfuseMac(),
     ESP.getSdkVersion(),
     esp_reset_reason() == ESP_RST_POWERON ? "power_on" :
     esp_reset_reason() == ESP_RST_EXT ? "external" :

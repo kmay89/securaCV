@@ -145,6 +145,11 @@ report_privacy "Device efuse MAC formatted as a raw MAC string" "$EFUSE_HITS"
 MAC_HITS=$(grep -rnE 'WiFi\.macAddress\(\)' "${SRC_DIRS[@]}" --include=*.h --include=*.cpp --include=*.ino 2>/dev/null | grep -viE 'fingerprint|device_id|ap_ssid|derive|token|hash|pseudonym|//|test' || true)
 report_privacy "WiFi.macAddress() in a payload/log context" "$MAC_HITS"
 
+# 3) ESP.getEfuseMac() is the 48-bit factory MAC — must not be emitted operator-facing
+#    (e.g. as a "chip_id"). Hashing/derivation use (device_id, fingerprint) is allowed.
+EFUSEMAC_HITS=$(grep -rnE 'getEfuseMac\(\)' "${SRC_DIRS[@]}" --include=*.h --include=*.cpp --include=*.ino 2>/dev/null | grep -viE 'fingerprint|device_id|derive|token|hash|pseudonym|//|test' || true)
+report_privacy "ESP.getEfuseMac() in a payload/log context" "$EFUSEMAC_HITS"
+
 echo ""
 
 echo "── Privacy: GPS precision coarsening (F-03) ──"
@@ -156,7 +161,8 @@ GPS_RAW=$(grep -rnE 'write_float\([^)]*(lat|lon)|\["(lat|lon)"\][[:space:]]*=' "
 report_privacy "GPS lat/lon emitted without gps_coarsen_deg()" "$GPS_RAW"
 
 # 2) No high-precision (>=4 dp) coordinate format strings in operator output.
-GPS_PREC=$(grep -rnE '%[0-9]*\.[4-9][0-9]*f' "${SRC_DIRS[@]}" --include=*.ino --include=*.cpp --include=*.h 2>/dev/null \
+# Match any precision >=4 dp: first digit 4-9, OR two-or-more digits (10, 14, 20, ...).
+GPS_PREC=$(grep -rnE '%[0-9]*\.([4-9]|[1-9][0-9]+)f' "${SRC_DIRS[@]}" --include=*.ino --include=*.cpp --include=*.h 2>/dev/null \
   | grep -iE 'lat|lon|gps|coord' | grep -viE '//|test' || true)
 report_privacy "High-precision lat/lon format string (>=4 dp)" "$GPS_PREC"
 

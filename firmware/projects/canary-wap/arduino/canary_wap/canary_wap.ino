@@ -393,6 +393,7 @@ static const char* NVS_KEY_WIFI_EN   = "wifi_en";
 static const char* NVS_KEY_API_TKN  = "api_tkn";
 static const char* NVS_KEY_TLS_CERT = "tls_cert";
 static const char* NVS_KEY_TLS_KEY  = "tls_key";
+static const char* NVS_KEY_GPS_PREC = "gps_prec";   // GPS coarsening decimals (runtime override)
 
 // ════════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -1576,15 +1577,37 @@ private:
 // ════════════════════════════════════════════════════════════════════════════
 
 // Spatial coarsening for operator-facing GPS (Invariant III): round latitude/
-// longitude to 3 decimal places (≈ 110 m) before any HTTP/serial emission so the
-// device never publishes tracking-grade precision. Internal computation (motion
-// filter, anchoring) keeps full precision; only output is coarsened.
+// longitude before any HTTP/serial emission so the device never publishes
+// tracking-grade precision. Internal computation (motion filter, anchoring) keeps
+// full precision; only output is coarsened.
+//
+// Precision is a per-deployment privacy knob (see GPS_COARSEN_DECIMALS in
+// build_config.h): the right value depends on the install's circumstances, e.g.
+// population density / how identifying a precise fix is. The build-time default
+// can be overridden at runtime via the "gps_prec" NVS key (clamped 0..7).
+//
 // NOTE: defined here (after the GPS type definitions) rather than at the top —
 // a free function placed before the .ino's type defs makes it the "first function"
 // and Arduino hoists all auto-generated prototypes above those types, which breaks
 // the build.
+static const uint8_t GPS_COARSEN_DECIMALS_MAX = 7;  // ~1 cm — full GPS precision
+
+// Effective decimals: build-time default, overridable once from NVS, then cached.
+static uint8_t gps_coarsen_decimals() {
+  static int cached = -1;  // -1 => not yet loaded
+  if (cached < 0) {
+    uint32_t v = nvs_load_u32(NVS_KEY_GPS_PREC, GPS_COARSEN_DECIMALS);
+    if (v > GPS_COARSEN_DECIMALS_MAX) v = GPS_COARSEN_DECIMALS_MAX;
+    cached = (int)v;
+  }
+  return (uint8_t)cached;
+}
+
 static inline double gps_coarsen_deg(double v) {
-  const double scale = 1000.0;  // 10^3 → 3 decimal places
+  // Pass non-finite values through unchanged — casting NaN/Inf to integer is UB.
+  if (v != v || (v - v) != (v - v)) return v;
+  double scale = 1.0;
+  for (uint8_t i = 0; i < gps_coarsen_decimals(); i++) scale *= 10.0;
   double scaled = v * scale;
   // round-half-away-from-zero without depending on libm rounding mode
   double r = (scaled >= 0.0) ? (double)(long long)(scaled + 0.5)
@@ -2953,6 +2976,7 @@ static esp_err_t handle_config_get(httpd_req_t* req) {
   doc["ok"] = true;
   doc["record_interval_ms"] = RECORD_INTERVAL_MS;
   doc["time_bucket_ms"] = TIME_BUCKET_MS;
+  doc["gps_coarsen_decimals"] = gps_coarsen_decimals();  // privacy coarsening (Invariant III)
   doc["log_level"] = 1;  // Info by default
   
   String response;
