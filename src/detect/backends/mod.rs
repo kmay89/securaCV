@@ -1,4 +1,5 @@
 pub mod cpu;
+mod motion;
 pub mod stub;
 
 #[cfg(feature = "backend-tract")]

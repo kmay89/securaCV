@@ -1,13 +1,14 @@
 use anyhow::Result;
-use sha2::{Digest, Sha256};
 
 use crate::detect::backend::{DetectionCapability, DetectorBackend};
-use crate::detect::result::{DetectionResult, SizeClass};
+use crate::detect::backends::motion::FrameHashMotion;
+use crate::detect::result::DetectionResult;
 
-/// Stub backend for testing. Uses pixel hashing to detect motion.
+/// Stub backend for testing. Uses frame-difference motion detection
+/// (see [`FrameHashMotion`]); shares its implementation with [`super::CpuBackend`].
 #[derive(Default)]
 pub struct StubBackend {
-    last_hash: Option<[u8; 32]>,
+    motion: FrameHashMotion,
 }
 
 impl StubBackend {
@@ -26,34 +27,15 @@ impl DetectorBackend for StubBackend {
     }
 
     fn detect(&mut self, pixels: &[u8], _width: u32, _height: u32) -> Result<DetectionResult> {
-        let current_hash: [u8; 32] = Sha256::digest(pixels).into();
-
-        let motion = self.last_hash.is_some_and(|prev| prev != current_hash);
-
-        self.last_hash = Some(current_hash);
-
-        if motion {
-            Ok(DetectionResult {
-                motion_detected: true,
-                detections: vec![],
-                confidence: 0.85,
-                size_class: SizeClass::Large,
-            })
-        } else {
-            Ok(DetectionResult::default())
-        }
+        Ok(self.motion.detect(pixels))
     }
 
     fn export_state(&self) -> Option<Vec<u8>> {
-        self.last_hash.map(|hash| hash.to_vec())
+        self.motion.export_state()
     }
 
     fn import_state(&mut self, state: &[u8]) -> Result<()> {
-        let hash: [u8; 32] = state
-            .try_into()
-            .map_err(|_| anyhow::anyhow!("stub backend: invalid state length"))?;
-        self.last_hash = Some(hash);
-        Ok(())
+        self.motion.import_state(state, "stub")
     }
 }
 
@@ -61,6 +43,7 @@ impl DetectorBackend for StubBackend {
 mod tests {
     use super::*;
     use crate::detect::backend::DetectorBackend;
+    use crate::detect::result::SizeClass;
 
     #[test]
     fn stub_backend_detects_motion() {
