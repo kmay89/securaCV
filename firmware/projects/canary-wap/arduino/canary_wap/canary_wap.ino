@@ -153,6 +153,7 @@ extern "C" {
 #include "ble_console.h"
 #include "ble_log_export.h"
 #include "household_api.h"
+#include "device_pseudonym.h"
 #include "sys_monitor.h"
 #include "hardware_state.h"
 #include "selftest_api.h"        // GET /api/selftest — wizard pre-flight aggregator
@@ -326,6 +327,19 @@ static const uint32_t FIX_LOST_TIMEOUT_MS  = 3000;    // GPS fix timeout
 static const uint32_t VERIFY_INTERVAL_SEC  = 60;      // Self-verify every N seconds
 static const uint32_t WATCHDOG_TIMEOUT_SEC = 8;       // Watchdog timeout
 static const uint32_t SD_PERSIST_INTERVAL  = 10;      // Persist every N records
+
+// Spatial coarsening for operator-facing GPS (Invariant III): round latitude/
+// longitude to 3 decimal places (≈ 110 m) before any HTTP/serial emission so the
+// device never publishes tracking-grade precision. Internal computation (motion
+// filter, anchoring) keeps full precision; only output is coarsened.
+static inline double gps_coarsen_deg(double v) {
+  const double scale = 1000.0;  // 10^3 → 3 decimal places
+  double scaled = v * scale;
+  // round-half-away-from-zero without depending on libm rounding mode
+  double r = (scaled >= 0.0) ? (double)(long long)(scaled + 0.5)
+                             : (double)(long long)(scaled - 0.5);
+  return r / scale;
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 // USB CDC & OPERATOR INTERFACE
@@ -1596,8 +1610,8 @@ static bool build_witness_event(const GnssFix* fx, FixState st, uint8_t* out, si
   w.write_text("gps");
   w.write_map(8);
   w.write_text("valid"); w.write_bool(fx->valid);
-  w.write_text("lat"); w.write_float(fx->lat);
-  w.write_text("lon"); w.write_float(fx->lon);
+  w.write_text("lat"); w.write_float(gps_coarsen_deg(fx->lat));
+  w.write_text("lon"); w.write_float(gps_coarsen_deg(fx->lon));
   w.write_text("alt"); w.write_float(fx->altitude_m);
   w.write_text("speed"); w.write_float(g_speed_ema);
   w.write_text("hdop"); w.write_float(fx->hdop);
@@ -2578,8 +2592,8 @@ static esp_err_t handle_status(httpd_req_t* req) {
   gps["available"] = g_hw.gps_available;
   gps["fix"] = g_fix.valid;
   if (g_hw.gps_available && g_fix.valid) {
-    gps["lat"] = g_motion.display_lat;
-    gps["lon"] = g_motion.display_lon;
+    gps["lat"] = gps_coarsen_deg(g_motion.display_lat);
+    gps["lon"] = gps_coarsen_deg(g_motion.display_lon);
     gps["alt"] = g_motion.display_alt_m;
     gps["speed"] = g_motion.display_speed_mps;
     gps["hdop"] = g_fix.hdop;
@@ -5057,6 +5071,9 @@ static esp_err_t handle_device_info(httpd_req_t* req) {
 
   const char* dev_name = setup_wizard::get_device_name();
   char json[640];
+  // Privacy (Invariant III): salted pseudonym, never the raw MAC.
+  char hw_token[device_pseudonym::HEX_LEN + 1];
+  if (!device_pseudonym::device_id_hex(hw_token, sizeof(hw_token))) hw_token[0] = '\0';
   snprintf(json, sizeof(json),
     "{"
     "\"device_id\":\"%s\","
@@ -5064,7 +5081,7 @@ static esp_err_t handle_device_info(httpd_req_t* req) {
     "\"mdns_host\":\"%s\","
     "\"firmware\":\"%s\","
     "\"pubkey_fp\":\"%s\","
-    "\"mac\":\"%s\","
+    "\"hw_token\":\"%s\","
     "\"uptime_ms\":%lu,"
     "\"chain_length\":%lu,"
     "\"auth_required\":true,"
@@ -5076,7 +5093,7 @@ static esp_err_t handle_device_info(httpd_req_t* req) {
     g_device.mdns_hostname,
     FIRMWARE_VERSION,
     g_device.fingerprint_hex,
-    WiFi.macAddress().c_str(),
+    hw_token,
     (unsigned long)millis(),
     (unsigned long)g_device.seq,
     g_tls_enabled ? "true" : "false"
@@ -5093,6 +5110,9 @@ static esp_err_t handle_device_info(httpd_req_t* req) {
 
 static esp_err_t send_provisioning_receipt(httpd_req_t* req) {
   char json[1024];
+  // Privacy (Invariant III): salted pseudonym, never the raw MAC.
+  char hw_token[device_pseudonym::HEX_LEN + 1];
+  if (!device_pseudonym::device_id_hex(hw_token, sizeof(hw_token))) hw_token[0] = '\0';
   snprintf(json, sizeof(json),
     "{\n"
     "  \"device_id\": \"%s\",\n"
@@ -5100,7 +5120,7 @@ static esp_err_t send_provisioning_receipt(httpd_req_t* req) {
     "  \"token\": \"%s\",\n"
     "  \"pubkey_fp\": \"%s\",\n"
     "  \"firmware\": \"%s\",\n"
-    "  \"mac\": \"%s\",\n"
+    "  \"hw_token\": \"%s\",\n"
     "  \"ap_ssid\": \"%s\",\n"
     "  \"ap_password\": \"%s\",\n"
     "  \"tls_cert_fp\": \"%s\",\n"
@@ -5112,7 +5132,7 @@ static esp_err_t send_provisioning_receipt(httpd_req_t* req) {
     g_device.api_token_str,
     g_device.fingerprint_hex,
     FIRMWARE_VERSION,
-    WiFi.macAddress().c_str(),
+    hw_token,
     g_device.ap_ssid,
     g_device.ap_password,
     g_tls_cert_fp_hex,
@@ -6598,13 +6618,14 @@ static void print_table_row(WitnessRecord* r, GnssFix* fx, FixState st) {
   char chain_hex[17];
   hex_to_str(chain_hex, r->chain_hash, 8);
   
-  Serial.printf("| %4u | %4s | %5s | %s | %11.7f | %12.7f | %6.1f | %d | %2d | %4.1f| %4.1f| %5.2f| %5.1f | %s... |\n",
+  // Privacy (Invariant III): coarsen lat/lon in operator-facing serial logs (3 dp ≈ 110 m).
+  Serial.printf("| %4u | %4s | %5s | %s | %11.3f | %12.3f | %6.1f | %d | %2d | %4.1f| %4.1f| %5.2f| %5.1f | %s... |\n",
     r->seq,
     record_type_name(r->type),
     state_name_short(st),
     r->verified ? "OK" : "!!",
-    fx->lat,
-    fx->lon,
+    gps_coarsen_deg(fx->lat),
+    gps_coarsen_deg(fx->lon),
     fx->altitude_m,
     fx->quality,
     fx->satellites,
@@ -6693,8 +6714,9 @@ static void print_gps_block() {
   Serial.printf("│ Fix Mode   : %s\n", fix_mode_name(g_fix.fix_mode));
   Serial.printf("│ Quality    : %d (%s)\n", g_fix.quality, quality_name(g_fix.quality));
   Serial.printf("│ Valid      : %s\n", g_fix.valid ? "YES" : "NO");
-  Serial.printf("│ Latitude   : %.7f°\n", g_fix.lat);
-  Serial.printf("│ Longitude  : %.7f°\n", g_fix.lon);
+  // Privacy (Invariant III): coarsen lat/lon in operator-facing serial output (3 dp ≈ 110 m).
+  Serial.printf("│ Latitude   : %.3f°\n", gps_coarsen_deg(g_fix.lat));
+  Serial.printf("│ Longitude  : %.3f°\n", gps_coarsen_deg(g_fix.lon));
   Serial.printf("│ Altitude   : %.2f m\n", g_fix.altitude_m);
   Serial.printf("│ Speed      : %.2f m/s (EMA)\n", g_speed_ema);
   Serial.printf("│ Satellites : %d used / %d visible\n", g_fix.satellites, g_fix.sats_in_view);
@@ -6815,7 +6837,6 @@ void setup() {
 
   // ── Canary boot banner ──────────────────────────────────────────────────
   {
-    String mac_str = WiFi.macAddress();
     boot_info_t bi = {};
     bi.product_name  = "SecuraCV Canary WAP";
     bi.fw_version    = FIRMWARE_VERSION;
@@ -6823,7 +6844,9 @@ void setup() {
     bi.build_time    = __TIME__;
     bi.device_type   = DEVICE_TYPE;
     bi.model         = "XIAO ESP32S3 Sense";
-    bi.mac_address   = mac_str.c_str();
+    // Privacy (Invariant III): do not surface the raw MAC. The device's stable
+    // identity is shown separately as "Device ID" (g_device.device_id). mac_address
+    // is left null, so boot_banner skips the line.
     bi.board_name    = "XIAO ESP32S3";
     bi.chip_model    = ESP.getChipModel();
     bi.chip_revision = (uint8_t)ESP.getChipRevision();
@@ -7302,7 +7325,11 @@ void setup() {
   Serial.printf( "║    \"token\": \"%s\",\n", g_device.api_token_str);
   Serial.printf( "║    \"pubkey_fp\": \"%s\",\n", g_device.fingerprint_hex);
   Serial.printf( "║    \"firmware\": \"%s\",\n", FIRMWARE_VERSION);
-  Serial.printf( "║    \"mac\": \"%s\",\n", WiFi.macAddress().c_str());
+  {
+    char hw_token[device_pseudonym::HEX_LEN + 1];
+    if (!device_pseudonym::device_id_hex(hw_token, sizeof(hw_token))) hw_token[0] = '\0';
+    Serial.printf( "║    \"hw_token\": \"%s\",\n", hw_token);
+  }
   Serial.printf( "║    \"ap_ssid\": \"%s\",\n", g_device.ap_ssid);
   Serial.printf( "║    \"ap_password\": \"%s\",\n", g_device.ap_password);
   if (g_tls_enabled) {

@@ -22,6 +22,7 @@
 #include <SD.h>
 #include "log_level.h"
 #include "hardware_state.h"
+#include "device_pseudonym.h"
 
 // ════════════════════════════════════════════════════════════════════════════
 // FEATURE FLAG
@@ -650,11 +651,11 @@ void print_status() {
   Serial.printf("  Sketch Size    : %s\n", format_bytes(ESP.getSketchSize(), buf1, sizeof(buf1)));
   Serial.printf("  Sketch MD5     : %s\n", ESP.getSketchMD5().c_str());
 
-  // MAC Address
-  uint8_t mac[6];
-  esp_efuse_mac_get_default(mac);
-  Serial.printf("  MAC Address    : %02X:%02X:%02X:%02X:%02X:%02X\n",
-                mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+  // Hardware token — salted pseudonym, never the raw MAC (Invariant III / event_contract §10).
+  char hw_token[device_pseudonym::HEX_LEN + 1];
+  if (device_pseudonym::device_id_hex(hw_token, sizeof(hw_token))) {
+    Serial.printf("  Hardware ID    : %s\n", hw_token);
+  }
 
   Serial.printf("  Chip ID        : %llX\n", ESP.getEfuseMac());
   Serial.printf("  Flash Mode     : %s\n",
@@ -792,12 +793,12 @@ size_t get_json(char* buf, size_t buf_size) {
     ? (float)(g_sys_metrics.heap_total - g_sys_metrics.heap_free) / g_sys_metrics.heap_total * 100.0f
     : 0.0f;
 
-  // Get MAC address
-  uint8_t mac[6];
-  esp_efuse_mac_get_default(mac);
-  char mac_str[18];
-  snprintf(mac_str, sizeof(mac_str), "%02X:%02X:%02X:%02X:%02X:%02X",
-           mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+  // Hardware token — salted pseudonym, never the raw MAC (Invariant III / event_contract §10).
+  // Distinct from g_device.device_id (the provisioned pubkey-derived identity).
+  char hw_token[device_pseudonym::HEX_LEN + 1];
+  if (!device_pseudonym::device_id_hex(hw_token, sizeof(hw_token))) {
+    hw_token[0] = '\0';
+  }
 
   // Calculate Fahrenheit values
   float temp_f = celsius_to_fahrenheit(g_sys_metrics.temp_celsius);
@@ -833,7 +834,7 @@ size_t get_json(char* buf, size_t buf_size) {
       "\"freq_mhz\":%u,"
       "\"flash_size\":%u,"
       "\"flash_speed_mhz\":%u,"
-      "\"mac\":\"%s\","
+      "\"hw_token\":\"%s\","
       "\"chip_id\":\"%llX\","
       "\"sdk_version\":\"%s\","
       "\"reset_reason\":\"%s\""
@@ -877,7 +878,7 @@ size_t get_json(char* buf, size_t buf_size) {
     g_sys_metrics.cpu_freq_mhz,
     g_sys_metrics.flash_size,
     ESP.getFlashChipSpeed() / 1000000,
-    mac_str,
+    hw_token,
     (unsigned long long)ESP.getEfuseMac(),
     ESP.getSdkVersion(),
     esp_reset_reason() == ESP_RST_POWERON ? "power_on" :

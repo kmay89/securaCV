@@ -83,6 +83,13 @@ CAPTIVE_DNS_SRC = test_captive_dns.cpp
 CAPTIVE_PROBE_BIN = test_captive_probe
 CAPTIVE_PROBE_SRC = test_captive_probe.cpp
 
+# Privacy (F-03): salted, non-reversible device pseudonym that replaces the raw
+# MAC in operator-facing diagnostics. Links device_pseudonym.cpp and uses libcrypto
+# (OpenSSL) for SHA-256 — the firmware compiles the same derive() with mbedtls.
+DEVPSEUDO_SOURCES = test_device_pseudonym.cpp \
+                    $(SRC_DIR)/device_pseudonym.cpp
+DEVPSEUDO_BIN     = test_device_pseudonym
+
 .PHONY: all run clean
 all: run
 
@@ -116,7 +123,10 @@ $(CAPTIVE_DNS_BIN): $(CAPTIVE_DNS_SRC)
 $(CAPTIVE_PROBE_BIN): $(CAPTIVE_PROBE_SRC)
 	$(CXX) $(CXXFLAGS) -o $@ $(CAPTIVE_PROBE_SRC)
 
-run: $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN)
+$(DEVPSEUDO_BIN): $(DEVPSEUDO_SOURCES)
+	$(CXX) $(CXXFLAGS) -o $@ $(DEVPSEUDO_SOURCES) -lcrypto
+
+run: $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN) $(DEVPSEUDO_BIN)
 	./$(BIN)
 	./$(CHIRP_INV_BIN)
 	./$(CHIRP_SEC_BIN)
@@ -127,6 +137,7 @@ run: $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_B
 	./$(DEVSIG_BIN)
 	./$(CAPTIVE_DNS_BIN)
 	./$(CAPTIVE_PROBE_BIN)
+	./$(DEVPSEUDO_BIN)
 
 clean:
-	rm -f $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN)
+	rm -f $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN) $(DEVPSEUDO_BIN)
