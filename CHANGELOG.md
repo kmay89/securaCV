@@ -15,6 +15,11 @@ below — but nothing documented is allowed to be aspirational at the v1 tag.
 - **Privacy Witness Kernel** (Rust): hash-chained, Ed25519-signed append-only
   event log with break-glass N-of-M quorum access, vault sealing, event
   contract enforcement, module sandboxing (seccomp on Linux).
+- **Vault sealing status is explicit at startup** (F-05): vault frame sealing is opt-in (it runs
+  only when `BREAK_GLASS_SEAL_TOKEN` supplies a valid break-glass token). `witnessd` now logs whether
+  sealing is ENABLED (with the crypto mode) or DISABLED at startup — and when disabled it states that
+  boundary events are still signed/logged but no frame is sealed into the vault, plus how to enable
+  it — so an operator is never silently led to believe evidence is being sealed when it is not.
 - **DB key decoupled from the signing key** (F-04 / Stream B2 prerequisite): set
   `SECURACV_DB_KEY_SEED` and the SQLCipher key is derived from that independent secret
   (`resolve_db_encryption_key`) instead of the Ed25519 signing key, so the database key no longer
