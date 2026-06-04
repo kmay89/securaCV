@@ -3,7 +3,7 @@
 > Single source of truth for **every feature flag in the repo**, across all four
 > layers, plus the lifecycle/naming rules that govern them. Enforced by
 > [`scripts/lint_feature_flags.sh`](../scripts/lint_feature_flags.sh) (run in CI
-> via `.github/workflows/validate.yml`). If you add, rename, or remove a flag,
+> via `.github/workflows/lint.yml`). If you add, rename, or remove a flag,
 > update this file in the same PR — the lint fails otherwise.
 >
 > Companion review: [`docs/review/03-feature-flags-and-hygiene.md`](review/03-feature-flags-and-hygiene.md).

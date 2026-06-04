@@ -20,7 +20,7 @@ set -euo pipefail
 #      the build. (The registry is the single source of truth per layer.)
 #
 # This script is the executable companion to docs/feature-flags.md. Run it
-# locally before pushing; CI runs it via .github/workflows/validate.yml.
+# locally before pushing; CI runs it via .github/workflows/lint.yml.
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
@@ -49,7 +49,9 @@ features="$(awk '
   /^\[features\]/    { in_feat = 1; next }
   /^\[/              { in_feat = 0 }
   in_feat && /^[A-Za-z0-9_-]+[[:space:]]*=/ {
-    sub(/[[:space:]]*=.*/, "", $0); print $0
+    sub(/[[:space:]]*=.*/, "", $0)
+    # the `default` key is the default-feature list, not a standalone flag.
+    if ($0 != "default") print $0
   }
 ' "$CARGO_TOML")"
 
@@ -63,9 +65,11 @@ for feat in $features; do
   feat_count=$((feat_count + 1))
 
   # A) referenced in code/tests, or by Cargo.toml itself (required-features /
-  #    feature deps). Search source trees plus Cargo.toml, excluding the bare
-  #    `name =` declaration line so a feature can't "reference itself".
-  refs="$(grep -RInE "\"${feat}\"|\b${feat}\b" src tests Cargo.toml 2>/dev/null \
+  #    feature deps). Bound the match with non-identifier chars (not \b, which
+  #    treats '-' as a boundary and would let `rtsp` match `rtsp-gstreamer`).
+  #    Exclude the bare `name =` declaration line so a feature can't "reference
+  #    itself".
+  refs="$(grep -RInE "(^|[^A-Za-z0-9_-])${feat}([^A-Za-z0-9_-]|$)" src tests Cargo.toml 2>/dev/null \
             | grep -vE "^${CARGO_TOML}:[0-9]+:[[:space:]]*${feat}[[:space:]]*=" || true)"
   if [ -z "$refs" ]; then
     fail "Cargo feature '${feat}' is declared but never referenced (orphaned). Remove it or wire it up."
@@ -94,7 +98,10 @@ future_block="$(awk '
   grab && /\]/ { exit }
 ' "$CONST_PY")"
 
-future_members="$(echo "$future_block" | grep -oE 'TRANSPORT_[A-Z_]+' | grep -v 'FUTURE_TRANSPORTS' | sort -u)"
+# `|| true` so an empty FUTURE_TRANSPORTS (every future transport promoted into
+# ALL_TRANSPORTS, which the registry tells you to do) doesn't fail the pipeline
+# under `set -euo pipefail`.
+future_members="$(echo "$future_block" | grep -oE 'TRANSPORT_[A-Z_]+' | grep -v 'FUTURE_TRANSPORTS' | sort -u || true)"
 
 for member in $future_members; do
   if echo "$all_block" | grep -qE "\b${member}\b"; then
