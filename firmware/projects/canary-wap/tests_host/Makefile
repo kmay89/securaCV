@@ -90,6 +90,17 @@ DEVPSEUDO_SOURCES = test_device_pseudonym.cpp \
                     $(SRC_DIR)/device_pseudonym.cpp
 DEVPSEUDO_BIN     = test_device_pseudonym
 
+# Privacy (F-03): shared device_pseudonym header (firmware/common/identity) adopted
+# by the canary-vision / canary-wap-src trees. Header-only; pins the same byte
+# construction as the arduino copy above. Links libcrypto for host SHA-256.
+DEVPSEUDO_COMMON_BIN = test_device_pseudonym_common
+DEVPSEUDO_COMMON_SRC = test_device_pseudonym_common.cpp
+
+# Privacy (F-03): shared gps_coarsen_deg() header (firmware/common/gnss). Pure
+# header, no Arduino glue and no crypto — asserts the exact operator-facing rounding.
+GPS_COARSEN_BIN = test_gps_coarsen
+GPS_COARSEN_SRC = test_gps_coarsen.cpp
+
 .PHONY: all run clean
 all: run
 
@@ -126,7 +137,13 @@ $(CAPTIVE_PROBE_BIN): $(CAPTIVE_PROBE_SRC)
 $(DEVPSEUDO_BIN): $(DEVPSEUDO_SOURCES)
 	$(CXX) $(CXXFLAGS) -o $@ $(DEVPSEUDO_SOURCES) -lcrypto
 
-run: $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN) $(DEVPSEUDO_BIN)
+$(DEVPSEUDO_COMMON_BIN): $(DEVPSEUDO_COMMON_SRC)
+	$(CXX) $(CXXFLAGS) -o $@ $(DEVPSEUDO_COMMON_SRC) -lcrypto
+
+$(GPS_COARSEN_BIN): $(GPS_COARSEN_SRC)
+	$(CXX) $(CXXFLAGS) -o $@ $(GPS_COARSEN_SRC)
+
+run: $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN) $(DEVPSEUDO_BIN) $(DEVPSEUDO_COMMON_BIN) $(GPS_COARSEN_BIN)
 	./$(BIN)
 	./$(CHIRP_INV_BIN)
 	./$(CHIRP_SEC_BIN)
@@ -138,6 +155,8 @@ run: $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_B
 	./$(CAPTIVE_DNS_BIN)
 	./$(CAPTIVE_PROBE_BIN)
 	./$(DEVPSEUDO_BIN)
+	./$(DEVPSEUDO_COMMON_BIN)
+	./$(GPS_COARSEN_BIN)
 
 clean:
-	rm -f $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN) $(DEVPSEUDO_BIN)
+	rm -f $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN) $(DEVPSEUDO_BIN) $(DEVPSEUDO_COMMON_BIN) $(GPS_COARSEN_BIN)

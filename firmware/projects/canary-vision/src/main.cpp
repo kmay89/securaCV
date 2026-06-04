@@ -17,6 +17,7 @@
 #include "canary/topics.h"
 #include "canary/types.h"
 #include "boot/boot_banner.h"
+#include "identity/device_pseudonym.h"  // salted, MAC-free device handle (Invariant III)
 
 #include "canary/net/wifi_mgr.h"
 #include "canary/net/mqtt_mgr.h"
@@ -121,8 +122,9 @@ void setup() {
 
   boot_set_output(vision_serial_write);
 
-  String mac_str = WiFi.macAddress();
-
+  // Privacy (Invariant III): never surface the raw MAC. The stable device handle
+  // is the salted, MAC-free pseudonym shown as "Hardware ID" below; mac_address is
+  // left null so the boot banner skips the MAC line.
   boot_info_t bi = {};
   bi.product_name  = "SecuraCV Canary Vision";
   bi.fw_version    = CANARY_FW_VERSION;
@@ -130,7 +132,6 @@ void setup() {
   bi.build_time    = __TIME__;
   bi.device_type   = DEVICE_TYPE;
   bi.model         = MODEL;
-  bi.mac_address   = mac_str.c_str();
   bi.board_name    = "ESP32-C3-DevKitM-1";
   bi.chip_model    = ESP.getChipModel();
   bi.chip_revision = (uint8_t)ESP.getChipRevision();
@@ -175,6 +176,10 @@ void setup() {
   boot_line("              | |");
   boot_separator();
   boot_kv("Device ID", DEVICE_ID);
+  char devid_hex[device_pseudonym::HEX_LEN + 1];
+  if (device_pseudonym::device_id_hex(devid_hex, sizeof(devid_hex))) {
+    boot_kv("Hardware ID", devid_hex);  // salted pseudonym, not the raw MAC
+  }
   boot_kvf("Heartbeat", "every %lu ms", (unsigned long)HEARTBEAT_MS);
   boot_kv("HA prefix", HA_DISCOVERY_PREFIX);
   boot_blank();

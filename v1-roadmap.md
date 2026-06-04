@@ -53,8 +53,11 @@ tagging v1):**
 - ~~RTSP ingestion is documented, so under this definition it is **in scope** and must work
   (moved out of "nice to have").~~ **Closed:** the ffmpeg RTSP path now has an end-to-end CI
   roundtrip (`ingest-rtsp` job + `tests/rtsp_e2e.rs`).
-- Firmware must not surface raw MAC addresses or precise GPS over its APIs — the docs and
-  `spec/invariants.md` forbid it, so documented behavior must match actual
+- ~~Firmware must not surface raw MAC addresses or precise GPS over its APIs — the docs and
+  `spec/invariants.md` forbid it, so documented behavior must match actual.~~ **Closed:** every
+  firmware tree now routes operator-facing identity through the shared salted `device_pseudonym`
+  (`firmware/common/identity/`) and GPS through `gps_coarsen_deg` (`firmware/common/gnss/`);
+  `regression_check.sh` hard-fails on raw MAC or un-coarsened lat/lon in *any* tree
   (see `firmware/projects/canary-wap/ENTERPRISE_READINESS_TODO.md`).
 
 ---
@@ -190,7 +193,8 @@ the v1 Definition and Acceptance Criteria.)
 - [ ] Documentation states audit boundary vs security boundary
 - [x] RTSP ingestion works end-to-end (ffmpeg path; `ingest-rtsp` CI job + `tests/rtsp_e2e.rs`)
 - [ ] Frigate → HA MQTT release gate passes (`integrations/ha_frigate_mqtt/verify_pipeline.sh` == 0)
-- [ ] Firmware APIs expose no raw MAC / precise GPS (documented invariants hold on-device)
+- [x] Firmware APIs expose no raw MAC / precise GPS (every tree routes identity through the salted
+  `device_pseudonym` and GPS through `gps_coarsen_deg`; `regression_check.sh` hard-fails on either)
 
 ### Nice to have:
 - [ ] Performance benchmarks

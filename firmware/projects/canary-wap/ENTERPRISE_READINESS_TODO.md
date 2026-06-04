@@ -33,16 +33,22 @@ Reference baseline inventory: [`firmware/FIRMWARE_VARIANT_AUDIT.md`](../../FIRMW
         (`Hardware ID`). Pure derivation host-tested (`tests_host/test_device_pseudonym.cpp`).
   - [x] `regression_check.sh` now **fails** if the device efuse MAC is formatted as a raw MAC string
         or if `WiFi.macAddress()` feeds a payload/log in the audited project.
-  - [ ] _Follow-up:_ other firmware variants (`firmware/canary/src`, `canary-wap/src`,
-        `canary-vision/src`) still emit raw MAC — flagged as warnings by the guardrail until they
-        adopt a shared `device_pseudonym` helper.
+  - [x] _Follow-up closed:_ all firmware trees now adopt the shared, salted, MAC-free
+        `device_pseudonym` helper (`firmware/common/identity/device_pseudonym.h`).
+        `canary-vision/src` uses it for the boot-banner "Hardware ID" and the MQTT client-ID
+        suffix (the efuse MAC no longer reaches the broker); `canary-wap/src` no longer reads the
+        MAC. `regression_check.sh` now **hard-fails** on raw MAC in *any* tree (not just the
+        audited arduino project). Host-tested via `tests_host/test_device_pseudonym_common.cpp`.
 
 - [x] **Coarsen operator-visible GPS precision** *(canary-wap arduino; F-03)*
   - [x] All operator-facing lat/lon (CBOR telemetry, `/gps` JSON, status/record serial logs) routed
         through `gps_coarsen_deg()` (3 dp ≈ 110 m); high-precision (`%.7f`) coordinate formats removed.
   - [x] `regression_check.sh` now **fails** on un-coarsened lat/lon emission and on high-precision
         (≥4 dp) coordinate format strings in the audited project.
-  - [ ] _Follow-up:_ `firmware/canary/src` GPS emission still uncoarsened — flagged as warnings.
+  - [x] _Follow-up closed:_ `firmware/canary/src` now routes all operator-facing lat/lon (CBOR
+        telemetry, status JSON, GPS/health serial logs) through the shared `gps_coarsen_deg()`
+        (`firmware/common/gnss/gps_privacy.h`, 3 dp ≈ 110 m). `regression_check.sh` now hard-fails
+        on un-coarsened lat/lon in *any* tree. Host-tested via `tests_host/test_gps_coarsen.cpp`.
 
 - [ ] **Constrain outbound behavior to explicit opt-in**
   - Keep AP-only default mode.
