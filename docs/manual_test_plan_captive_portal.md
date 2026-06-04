@@ -16,8 +16,10 @@ job; this plan covers the parts only real hardware and real OS supplicants can
 exercise.
 
 ## How the firmware behaves (reference)
-- **AP SSID** is `SecuraCV-XXXX` (last 4 hex of the MAC) in both setup and
-  steady state. The softAP is always on (AP+STA) and does **not** NAT.
+- **AP SSID** is `SecuraCV-XXXX` (a 4-char suffix derived from the device's
+  hardware identity, encoded in the unambiguous alphabet — no `0/O/o`,
+  `1/I/i/l/L`) in both setup and steady state. The softAP is always on
+  (AP+STA) and does **not** NAT.
 - **Transport**: the dashboard / setup wizard / provisioning flow is served
   over **HTTPS on port 443** (TLS, self-signed cert generated on-device).
   Plain **HTTP port 80 returns a 301 redirect to HTTPS** for everything

@@ -104,19 +104,34 @@
   pain.
 - **Root cause:** The token / AP-password encoder used a full base62 alphabet
   (`0-9 A-Z a-z`), which contains glyph-confusion classes `0/O` and `1/I/l`.
-- **Fix:** Switched both `format_api_token_string` (API tokens) and
+- **Fix (v1):** Switched `format_api_token_string` (API tokens) and
   `derive_ap_password` (`cv-XXXXX` AP password) to a 57-char unambiguous
-  alphabet that drops `0`, `O`, `1`, `I`, `l`. Rejection-sampling threshold
-  moves from `248` (`62*4`) to `228` (`57*4`) so the result remains unbiased.
-  Entropy drops from ~190 to ~187 bits across 32 chars — UX win > 3 bits.
-  Dashboard token input also pinned to a monospace font.
-- **Rule:** Any identifier a human will type, read aloud, or transcribe from
-  a sticker MUST avoid `0/O` and `1/I/l`. Machine-only IDs (chain head,
-  signatures, hex device IDs) are fine as-is.
-- **Regression check:** Grep for `BASE62` or the literal
-  `0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz` in
-  user-facing token / password paths.
-- **Date learned:** 2026-04
+  alphabet that dropped `0`, `O`, `1`, `I`, `l`.
+- **Follow-up (v2):** The 57-char set still leaked lowercase `o`/`i` and
+  uppercase `L` (also confusable with `0`/`1`/`l`), and the human-facing
+  **device_id / AP-SSID suffix** was still raw hex (`%02X%02X`), so `0` and
+  `1` reached users on `canary.local` and on the Wi-Fi list. Tightened the
+  shared `UNAMBIGUOUS_ALPHABET` to **54 chars** — dropping every case variant
+  of the confusion classes: `0/O/o` and `1/I/i/l/L` — and routed the device_id
+  / AP-SSID suffix through it via a base-54 re-encoding of the same 16 identity
+  bits (injective, so per-board uniqueness and reflash-stability are preserved).
+  Rejection-sampling threshold moves `228` (`57*4`) → `216` (`54*4`) so the
+  result stays unbiased. Entropy across 32 chars is ~184 bits — still a UX win.
+  Applied identically in both firmware trees (`firmware/canary` PlatformIO and
+  `projects/canary-wap` Arduino) so they stay byte-compatible.
+- **Note (migration):** device_id is recomputed at boot, not persisted, so a
+  device's externally-visible id (mDNS TXT, MQTT client id, HA unique_id)
+  changes format on this update. The witness chain is unaffected (genesis
+  `chain_head` is persisted in NVS). Acceptable pre-v1; HA may re-discover the
+  device under its new id.
+- **Rule:** Any identifier a human will type, read aloud, or transcribe from a
+  sticker — tokens, passwords, **and the device_id / AP-SSID** — MUST avoid all
+  of `0/O/o` and `1/I/i/l/L`. Machine-only IDs (chain head, signatures, raw
+  hex) are fine as-is.
+- **Regression check:** `regression_check.sh` greps for the full base62 string,
+  the old 57-char alphabet, and any `%02X%02X` hex device_id / AP-SSID suffix in
+  the firmware source trees.
+- **Date learned:** 2026-04 (v1), 2026-06 (v2)
 
 ---
 

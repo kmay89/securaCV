@@ -174,11 +174,16 @@ bool hmac_sha256(const uint8_t* key, size_t key_len,
   return ret == 0;
 }
 
-// Unambiguous alphabet: drops 0/O and 1/I/l so users typing tokens by hand
-// (e.g. from the serial monitor) don't trip the rate limiter on glyph
-// collisions. 32 chars × log2(57) ≈ 187 bits — UX win > 3 bits of entropy.
+// Unambiguous alphabet: drops EVERY case variant of the glyph-confusion
+// classes — 0/O/o and 1/I/i/l/L — so a value a user reads or types by hand
+// (serial monitor, sticker, phone screen) can't be mis-keyed. Shared by the
+// API token, the WiFi AP password, and the device_id / AP-SSID suffix, so the
+// "no confusing characters" rule holds everywhere a human sees an identifier.
+// 54 chars; 32 chars × log2(54) ≈ 184 bits — the few bits dropped vs a raw
+// hex/base62 encoding are a clear UX win.
 static const char UNAMBIGUOUS_ALPHABET[] =
-  "23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+  "23456789ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz";
+static const size_t UNAMBIGUOUS_LEN = sizeof(UNAMBIGUOUS_ALPHABET) - 1;  // 54
 
 void format_api_token_string(const uint8_t* input, size_t in_len,
                              char* output, size_t out_len) {
@@ -207,8 +212,8 @@ void format_api_token_string(const uint8_t* input, size_t in_len,
       i++;
     }
 
-    if (b < 228) {  // 228 = 57 * 4 → evenly divisible, unbiased
-      output[out_idx++] = UNAMBIGUOUS_ALPHABET[b % 57];
+    if (b < 216) {  // 216 = 54 * 4 → evenly divisible, unbiased
+      output[out_idx++] = UNAMBIGUOUS_ALPHABET[b % UNAMBIGUOUS_LEN];
       chars_produced++;
     }
   }
@@ -246,13 +251,14 @@ bool derive_api_token(const uint8_t privkey[32],
     return false;
   }
 
-  // Step 3: feed the full 32 bytes into base62 with "cv_" prefix. At a
-  // ~3.1% rejection rate this gives ~31 accepted bytes — comfortably
-  // more than the 32 chars we target — so the deterministic fallback in
-  // format_api_token_string() effectively never runs and full HMAC entropy
-  // is preserved. This diverges from the 24-byte canary-wap reference;
-  // existing canary-wap devices retain their previously-stored tokens via
-  // NVS load, so the divergence only affects fresh canary-PIO flashes.
+  // Step 3: feed the full 32 bytes into the unambiguous base-54 encoder with a
+  // "cv_" prefix. At a ~15.6% rejection rate (40/256) those 32 bytes yield
+  // ~27 accepted chars, so format_api_token_string()'s deterministic fallback
+  // tops up the last few — collision resistance stays anchored in the HMAC
+  // bytes already consumed (see that function's note). Feeding the full 32
+  // bytes (vs the 24-byte canary-wap reference) maximises real HMAC entropy;
+  // existing canary-wap devices keep their previously-stored tokens via NVS
+  // load, so the divergence only affects fresh canary-PIO flashes.
   format_api_token_string(token_hash, sizeof(token_hash),
                           token_str, token_str_len);
 
@@ -483,14 +489,35 @@ void hex_to_str(char* out, const uint8_t* d, size_t n) {
   out[n*2] = 0;
 }
 
-void generate_device_id(char* out, size_t cap, const char* prefix) {
+// Render the low 16 bits of the STA MAC as a 4-char suffix in the unambiguous
+// alphabet. base-54 of a 16-bit value is injective (54^4 ≫ 65536), so this is
+// a 1:1 re-encoding of the old "%02X%02X" hex suffix — same per-board
+// uniqueness, just with no 0/O/o or 1/I/i/l/L glyphs. The MAC is burned into
+// eFuse, so the suffix is identical across reflashes: this is a *hardware*
+// handle, not a per-boot token, and is meant to stay stable for the board.
+static void mac_unambiguous_suffix(char out[5]) {
   uint8_t mac[6];
   esp_read_mac(mac, ESP_MAC_WIFI_STA);
-  snprintf(out, cap, "%s%02X%02X", prefix, mac[4], mac[5]);
+  uint16_t v = (uint16_t)((mac[4] << 8) | mac[5]);
+  for (int i = 0; i < 4; i++) {
+    out[i] = UNAMBIGUOUS_ALPHABET[v % UNAMBIGUOUS_LEN];
+    v = (uint16_t)(v / UNAMBIGUOUS_LEN);
+  }
+  out[4] = '\0';
+}
+
+void generate_device_id(char* out, size_t cap, const char* prefix) {
+  if (out == nullptr || cap == 0) return;
+  char suffix[5];
+  mac_unambiguous_suffix(suffix);
+  // Defense-in-depth: never emit a truncated (and therefore ambiguous) handle
+  // if a future prefix/suffix change overflows the caller's buffer.
+  if (snprintf(out, cap, "%s%s", prefix, suffix) >= (int)cap) out[0] = '\0';
 }
 
 void generate_ap_ssid(char* out, size_t cap) {
-  uint8_t mac[6];
-  esp_read_mac(mac, ESP_MAC_WIFI_STA);
-  snprintf(out, cap, "SecuraCV-%02X%02X", mac[4], mac[5]);
+  if (out == nullptr || cap == 0) return;
+  char suffix[5];
+  mac_unambiguous_suffix(suffix);
+  if (snprintf(out, cap, "SecuraCV-%s", suffix) >= (int)cap) out[0] = '\0';
 }

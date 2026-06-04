@@ -867,18 +867,34 @@ static void hex_to_str(char* out, const uint8_t* d, size_t n) {
   out[n*2] = 0;
 }
 
+// Defined below, next to UNAMBIGUOUS_ALPHABET: renders 16 bits into a 4-char
+// suffix in the no-confusion alphabet (no 0/O/o or 1/I/i/l/L).
+static void unambiguous_suffix16(uint16_t v, char out[5]);
+
 static void generate_device_id(char* out, size_t cap) {
   // Identity suffix from the Ed25519 pubkey fingerprint, never the MAC
   // (event_contract §10: device identification uses the truncated pubkey hash).
   // Requires g_device.pubkey_fp to be populated first (see provision_device()).
-  snprintf(out, cap, "%s%02X%02X", DEVICE_ID_PREFIX,
-           g_device.pubkey_fp[0], g_device.pubkey_fp[1]);
+  // Encoded in the unambiguous alphabet (no 0/O/o, 1/I/i/l/L) so the handle a
+  // user reads off canary.local / a sticker has no confusable glyphs. base-54
+  // of 16 bits is injective, so per-device uniqueness matches the old hex form;
+  // it stays stable across reflashes because the keypair persists in NVS.
+  char suffix[5];
+  unambiguous_suffix16((uint16_t)((g_device.pubkey_fp[0] << 8) | g_device.pubkey_fp[1]),
+                       suffix);
+  // Defense-in-depth: never emit a truncated (ambiguous) handle on overflow.
+  if (cap == 0) return;
+  if (snprintf(out, cap, "%s%s", DEVICE_ID_PREFIX, suffix) >= (int)cap) out[0] = '\0';
 }
 
 static void generate_ap_ssid(char* out, size_t cap) {
-  // Suffix from the pubkey fingerprint, never the MAC (event_contract §10).
-  snprintf(out, cap, "SecuraCV-%02X%02X",
-           g_device.pubkey_fp[0], g_device.pubkey_fp[1]);
+  // Suffix from the pubkey fingerprint, never the MAC (event_contract §10),
+  // in the same no-confusion alphabet as the device_id.
+  char suffix[5];
+  unambiguous_suffix16((uint16_t)((g_device.pubkey_fp[0] << 8) | g_device.pubkey_fp[1]),
+                       suffix);
+  if (cap == 0) return;
+  if (snprintf(out, cap, "SecuraCV-%s", suffix) >= (int)cap) out[0] = '\0';
 }
 
 // mDNS hostname rules (RFC 6762 §16 / RFC 1123): a single DNS label may only
@@ -1066,13 +1082,27 @@ static void hmac_sha256(const uint8_t* key, size_t key_len,
 // UNAMBIGUOUS BASE57 ENCODING (unbiased rejection sampling)
 // ════════════════════════════════════════════════════════════════════════════
 
-// Drops the four glyph-confusion classes that bite users typing tokens by hand:
-//   '0' / 'O', '1' / 'I' / 'l'.
-// 32 chars × log2(57) ≈ 187 bits of entropy — UX win > 3 bits.
+// Drops EVERY case variant of the glyph-confusion classes that bite users
+// reading or typing a value by hand: 0/O/o and 1/I/i/l/L. Shared by the API
+// token, the WiFi AP password, and the device_id / AP-SSID suffix, so the
+// "no confusing characters" rule holds everywhere a human sees an identifier.
+// 54 chars; 32 chars × log2(54) ≈ 184 bits of entropy — a clear UX win.
 static const char UNAMBIGUOUS_ALPHABET[] =
-  "23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+  "23456789ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz";
+static const size_t UNAMBIGUOUS_LEN = sizeof(UNAMBIGUOUS_ALPHABET) - 1;  // 54
 
-// Rejection sampling: discard bytes >= 228 (228 = 57*4, evenly divisible)
+// Render 16 bits as a fixed 4-char suffix in the unambiguous alphabet. base-54
+// of a 16-bit value is injective (54^4 ≫ 65536), so it preserves the
+// uniqueness of the old 4-hex-digit suffix with no confusable glyphs.
+static void unambiguous_suffix16(uint16_t v, char out[5]) {
+  for (int i = 0; i < 4; i++) {
+    out[i] = UNAMBIGUOUS_ALPHABET[v % UNAMBIGUOUS_LEN];
+    v = (uint16_t)(v / UNAMBIGUOUS_LEN);
+  }
+  out[4] = '\0';
+}
+
+// Rejection sampling: discard bytes >= 216 (216 = 54*4, evenly divisible)
 // This eliminates modular bias entirely.
 static void format_api_token_string(const uint8_t* input, size_t in_len,
                                     char* output, size_t out_len) {
@@ -1095,8 +1125,8 @@ static void format_api_token_string(const uint8_t* input, size_t in_len,
       i++;
     }
 
-    if (b < 228) {  // 228 = 57 * 4 → evenly divisible
-      output[out_idx++] = UNAMBIGUOUS_ALPHABET[b % 57];
+    if (b < 216) {  // 216 = 54 * 4 → evenly divisible
+      output[out_idx++] = UNAMBIGUOUS_ALPHABET[b % UNAMBIGUOUS_LEN];
       chars_produced++;
     }
     // else: reject this byte (biased), try next
@@ -1158,8 +1188,8 @@ static void derive_ap_password(const uint8_t fingerprint[8], char* password, siz
   size_t chars_produced = 0;
   for (size_t i = 0; chars_produced < 5 && i < 8; i++) {
     uint8_t b = fingerprint[i];
-    if (b < 228) {  // 228 = 57 * 4, rejection sampling to avoid bias
-      encoded[chars_produced++] = UNAMBIGUOUS_ALPHABET[b % 57];
+    if (b < 216) {  // 216 = 54 * 4, rejection sampling to avoid bias
+      encoded[chars_produced++] = UNAMBIGUOUS_ALPHABET[b % UNAMBIGUOUS_LEN];
     }
   }
   // Fallback in the extremely unlikely case we don't get 5 chars from 8 bytes
