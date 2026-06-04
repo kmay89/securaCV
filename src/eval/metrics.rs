@@ -238,9 +238,9 @@ pub fn micro_counts_at_threshold(
 
 /// Count predictions tagged `Unknown` at/above the threshold. An `Unknown` detection can never
 /// match real-class ground truth, so each is an unconditional false alarm. Counting them keeps
-/// the harness honest when a model emits classes that `TractBackend::map_class_id` does not map
-/// (exactly the SSDLite/COCO case this harness exists to surface) — otherwise a frame of
-/// unmapped-but-confident detections would report perfect precision and a 0% false-alarm rate.
+/// the harness honest when a model emits classes outside the kernel's taxonomy (e.g. VOC
+/// `chair`/`tvmonitor`) — otherwise a frame of unmapped-but-confident detections would report
+/// perfect precision and a 0% false-alarm rate.
 pub fn unknown_false_positives(frames: &[FrameSample], conf_threshold: f32) -> u32 {
     frames
         .iter()

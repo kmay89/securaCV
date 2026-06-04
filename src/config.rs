@@ -29,7 +29,13 @@ const DEFAULT_DETECT_CONFIDENCE: f32 = 0.5;
 // Default location for the tract object-detection model, populated by
 // scripts/fetch_detection_model.sh. Used when detect.backend=tract and detect.tract_model is
 // unset, so operators only set the backend after fetching the model — no manual path needed.
-const DEFAULT_TRACT_MODEL: &str = "vendor/models/ssdlite_mobilenet_v2_12.onnx";
+// HOST-ONLY: this model runs in tract on a Pi/x86 host, not on the ESP32-S3 (which uses the
+// Grove Vision AI V2 board). See scripts/fetch_detection_model.sh.
+const DEFAULT_TRACT_MODEL: &str = "vendor/models/tinyyolov2-8.onnx";
+// Default post-processing format for the tract model. The bundled model is tiny-YOLOv2, whose
+// raw grid output is decoded + NMS'd on the host; set to "postnms" for models that already
+// emit final boxes.
+const DEFAULT_TRACT_FORMAT: &str = "yolov2";
 
 fn config_string(value: Option<String>, default: &str) -> String {
     value.unwrap_or_else(|| default.to_string())
@@ -108,6 +114,7 @@ struct Esp32ConfigFile {
 struct DetectConfigFile {
     backend: Option<String>,
     tract_model: Option<PathBuf>,
+    tract_format: Option<String>,
     confidence: Option<f32>,
 }
 
@@ -209,10 +216,20 @@ pub enum DetectBackendPreference {
     Tract,
 }
 
+/// How the tract model's raw output is post-processed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TractFormat {
+    /// Raw YOLOv2 grid decoded + NMS'd on the host (the bundled tiny-YOLOv2 model).
+    Yolov2,
+    /// Model already emits final boxes (`[N,6]` or separate boxes/scores/classes tensors).
+    PostNms,
+}
+
 #[derive(Debug, Clone)]
 pub struct DetectSettings {
     pub backend: DetectBackendPreference,
     pub tract_model: Option<PathBuf>,
+    pub tract_format: TractFormat,
     /// Minimum confidence [0.0, 1.0] for a detection to be reported.
     pub confidence_threshold: f32,
 }
@@ -341,6 +358,12 @@ impl WitnessdConfig {
                     .unwrap_or(DEFAULT_DETECT_BACKEND),
             )?,
             tract_model: detect_config.tract_model,
+            tract_format: TractFormat::parse(
+                detect_config
+                    .tract_format
+                    .as_deref()
+                    .unwrap_or(DEFAULT_TRACT_FORMAT),
+            )?,
             confidence_threshold: detect_config
                 .confidence
                 .unwrap_or(DEFAULT_DETECT_CONFIDENCE),
@@ -445,6 +468,11 @@ impl WitnessdConfig {
         if let Ok(path) = std::env::var("WITNESS_TRACT_MODEL") {
             if !path.trim().is_empty() {
                 self.detect.tract_model = Some(PathBuf::from(path));
+            }
+        }
+        if let Ok(format) = std::env::var("WITNESS_TRACT_FORMAT") {
+            if !format.trim().is_empty() {
+                self.detect.tract_format = TractFormat::parse(&format)?;
             }
         }
         if let Ok(conf) = std::env::var("WITNESS_DETECT_CONFIDENCE") {
@@ -571,6 +599,19 @@ impl DetectBackendPreference {
             "tract" => Ok(Self::Tract),
             other => Err(anyhow!(
                 "unsupported detect backend '{}'; expected 'auto', 'stub', 'cpu', or 'tract'",
+                other
+            )),
+        }
+    }
+}
+
+impl TractFormat {
+    pub fn parse(raw: &str) -> Result<Self> {
+        match raw.trim().to_lowercase().as_str() {
+            "yolov2" => Ok(Self::Yolov2),
+            "postnms" | "post_nms" => Ok(Self::PostNms),
+            other => Err(anyhow!(
+                "unsupported detect.tract_format '{}'; expected 'yolov2' or 'postnms'",
                 other
             )),
         }
@@ -787,6 +828,7 @@ mod tests {
             detect: Some(DetectConfigFile {
                 backend: Some("tract".to_string()),
                 tract_model: Some(PathBuf::from("/tmp/model.onnx")),
+                tract_format: None,
                 confidence: None,
             }),
             ingest: Some(IngestConfigFile {
@@ -826,6 +868,7 @@ mod tests {
             detect: Some(DetectConfigFile {
                 backend: None,
                 tract_model: None,
+                tract_format: None,
                 confidence: Some(0.8),
             }),
             rtsp: Some(RtspConfigFile {
@@ -849,6 +892,7 @@ mod tests {
             detect: Some(DetectConfigFile {
                 backend: None,
                 tract_model: None,
+                tract_format: None,
                 confidence: Some(1.5),
             }),
             ..WitnessdConfigFile::default()
@@ -879,6 +923,7 @@ mod tests {
             detect: Some(DetectConfigFile {
                 backend: Some("tract".to_string()),
                 tract_model: Some(PathBuf::from("/models/custom.onnx")),
+                tract_format: None,
                 confidence: None,
             }),
             ..WitnessdConfigFile::default()
@@ -898,6 +943,7 @@ mod tests {
             detect: Some(DetectConfigFile {
                 backend: Some("tract".to_string()),
                 tract_model: None,
+                tract_format: None,
                 confidence: None,
             }),
             rtsp: Some(RtspConfigFile {

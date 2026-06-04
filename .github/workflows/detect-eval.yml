@@ -41,6 +41,7 @@ jobs:
         run: |
           cargo run --features detect-eval --bin detect_eval -- \
             --model tests/fixtures/test_detector.onnx \
+            --format postnms \
             --dataset eval/datasets/sample \
             --width 4 --height 4 \
             --json detect_eval_report.json

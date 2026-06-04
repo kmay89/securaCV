@@ -544,13 +544,20 @@ fn register_tract_backend(
 ) -> Result<()> {
     #[cfg(feature = "backend-tract")]
     {
-        let (width, height) = tract_input_dimensions(config)?;
-        // Defaults to vendor/models/ssdlite_mobilenet_v2_12.onnx (see fetch_detection_model.sh)
-        // when detect.tract_model is unset; a missing file yields a clear load error below.
+        use witness_kernel::config::TractFormat;
+        // Defaults to vendor/models/tinyyolov2-8.onnx (see fetch_detection_model.sh) when
+        // detect.tract_model is unset; a missing file yields a clear load error below.
         let model_path = config.detect.tract_model_path();
-        let backend = TractBackend::new(&model_path, width, height)?
-            .with_threshold(config.detect.confidence_threshold);
-        registry.register(backend);
+        let backend = match config.detect.tract_format {
+            // tiny-YOLOv2 has a fixed 416×416 input and resizes frames internally, so it does
+            // not need the ingest dimensions and works with any ingest backend.
+            TractFormat::Yolov2 => TractBackend::tiny_yolov2(&model_path)?,
+            TractFormat::PostNms => {
+                let (width, height) = tract_input_dimensions(config)?;
+                TractBackend::new(&model_path, width, height)?
+            }
+        };
+        registry.register(backend.with_threshold(config.detect.confidence_threshold));
         return Ok(());
     }
     #[cfg(not(feature = "backend-tract"))]

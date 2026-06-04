@@ -28,7 +28,7 @@ cargo build --features detect-eval --bin detect_eval
 
 ```bash
 cargo run --features detect-eval --bin detect_eval -- \
-    --model tests/fixtures/test_detector.onnx \
+    --model tests/fixtures/test_detector.onnx --format postnms \
     --dataset eval/datasets/sample --width 4 --height 4 \
     --json report.json
 ```
@@ -51,18 +51,22 @@ For a meaningful number, fetch the real model and point the harness at your **ow
 locally-held** labeled dataset (kept out of the repo for privacy):
 
 ```bash
-bash scripts/fetch_detection_model.sh          # one-time, operator-initiated
+bash scripts/fetch_detection_model.sh          # one-time, operator-initiated (tiny-YOLOv2)
 cargo run --features detect-eval --bin detect_eval -- \
-    --model vendor/models/ssdlite_mobilenet_v2_12.onnx \
+    --model vendor/models/tinyyolov2-8.onnx --format yolov2 \
     --dataset /path/to/your/dataset \
     --confidence-sweep 0.1:0.9:0.1 \
     --json report.json
 ```
 
-> **Known caveat (this is exactly what the harness surfaces):** `TractBackend::map_class_id`
-> currently hardcodes `0→Person, 1→Vehicle, 2→Animal, 3→Package`, but the pinned SSDLite model
-> is COCO-trained (different class IDs and I/O layout). Use this harness to *measure* whether the
-> default model maps correctly; fixing the mapping is a separate follow-up.
+> **HOST-ONLY:** the tract detector runs in `witnessd` on a Pi/x86 host. It does **not** run on
+> the ESP32-S3 — that path uses the Grove Vision AI V2 (SSCMA) board for on-device inference
+> (`firmware/projects/canary-vision`). A 60 MB ONNX model cannot fit on an MCU, and tract does
+> not target microcontrollers.
+>
+> **Why tiny-YOLOv2:** the TF-exported SSD/SSDLite models use ONNX `Loop` ops for in-graph NMS
+> that tract does not implement, so tract cannot run them. tiny-YOLOv2 emits a raw grid that is
+> decoded + NMS'd on the host (`--format yolov2`, the default), and tract runs it cleanly.
 
 ## Dataset format
 
@@ -91,9 +95,10 @@ ground truth and predictions.
 
 | flag | default | meaning |
 |------|---------|---------|
-| `--model` | `vendor/models/ssdlite_mobilenet_v2_12.onnx` | ONNX model path |
+| `--model` | `vendor/models/tinyyolov2-8.onnx` | ONNX model path |
 | `--dataset` | (required) | dataset directory |
-| `--width` / `--height` | `300` | model input resolution (images are resized to match) |
+| `--format` | `yolov2` | `yolov2` (raw grid decoded on host) or `postnms` (model emits final boxes) |
+| `--width` / `--height` | `416` | input resolution (PostNms only; YOLOv2 has a fixed 416×416 input) |
 | `--iou-threshold` | `0.5` | IoU for matching a prediction to ground truth |
 | `--threshold` | `0.5` | operating confidence for headline metrics |
 | `--confidence-sweep` | `0.05:0.95:0.05` | `start:end:step` sweep |
