@@ -23,15 +23,23 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 MODEL_DIR="${REPO_ROOT}/vendor/models"
 MODEL_PATH="${MODEL_DIR}/ssdlite_mobilenet_v2_12.onnx"
 
+# Validate dependencies up front, before downloading anything. (sha256_of runs inside a
+# command substitution, so an exit there would only kill the subshell — check here instead.)
+if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
+  echo "error: need 'sha256sum' or 'shasum' to verify the model" >&2
+  exit 1
+fi
+if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
+  echo "error: need 'curl' or 'wget' to download the model" >&2
+  exit 1
+fi
+
 sha256_of() {
   # Print the SHA-256 of "$1", portable across sha256sum (Linux) and shasum (macOS).
   if command -v sha256sum >/dev/null 2>&1; then
     sha256sum "$1" | awk '{print $1}'
-  elif command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 "$1" | awk '{print $1}'
   else
-    echo "error: need 'sha256sum' or 'shasum' to verify the model" >&2
-    exit 1
+    shasum -a 256 "$1" | awk '{print $1}'
   fi
 }
 
@@ -47,11 +55,8 @@ trap 'rm -f "${tmp}"' EXIT
 echo "Downloading detection model -> ${MODEL_PATH}"
 if command -v curl >/dev/null 2>&1; then
   curl -fSL "${MODEL_URL}" -o "${tmp}"
-elif command -v wget >/dev/null 2>&1; then
-  wget -qO "${tmp}" "${MODEL_URL}"
 else
-  echo "error: need 'curl' or 'wget' to download the model" >&2
-  exit 1
+  wget -qO "${tmp}" "${MODEL_URL}"
 fi
 
 actual="$(sha256_of "${tmp}")"
