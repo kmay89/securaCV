@@ -266,8 +266,21 @@ a `FailureEvent` on rejection:
 
 The practical consequence: an audit-boundary component adds **breadth of producers,
 never new query surface or new privilege**. A malicious backend or adapter can
-produce *garbage claims*, but every claim still passes all three gates, and there is
-**no method that writes an event to the log bypassing the Contract Enforcer**.
+produce *garbage claims*, but as an out-of-TCB producer it reaches the log **only**
+through `append_event_checked`, so every such claim still passes all three gates —
+and the adapter host (`AdapterHost`) exposes no lower-level write that skips them.
+
+This is a property of the **producer** boundary, not an absolute property of the
+`Kernel` type. The Kernel is itself the TCB, and it does have lower-level append
+methods — e.g. `append_event_with_failure_semantics` (which `append_event_checked`
+calls as its final write step, and which the failure-event path reuses) takes an
+already-built `Event` and does **not** re-run the gates. Those are trusted-base APIs:
+reachable only by code that already holds a `&mut Kernel` and can mint arbitrary
+`Event`s — code that is *inside* the boundary by definition — never a bypass exposed
+to a producer. The three gates defend the line where untrusted input crosses into the
+kernel; they are not, and do not claim to be, a sandbox around the trusted kernel
+itself (that is what `CapabilityBoundaryRuntime` and the optional seccomp sandbox are
+for).
 
 **Hardening an audit boundary into a security one (optional).** The realistic attack
 surface in an adapter is parsing attacker-controlled bytes (MQTT payloads, webhook
