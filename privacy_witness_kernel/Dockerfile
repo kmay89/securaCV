@@ -19,7 +19,8 @@ RUN apk add --no-cache \
     curl ca-certificates \
     gstreamer-dev gst-plugins-base-dev \
     libseccomp-dev \
-    sqlite-dev
+    sqlite-dev \
+    openssl-dev
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
       | sh -s -- -y --profile minimal --default-toolchain stable
 ENV PATH="/root/.cargo/bin:${PATH}"
@@ -42,6 +43,7 @@ RUN apk add --no-cache \
     gst-plugins-ugly \
     libseccomp \
     sqlite-libs \
+    openssl \
     jq \
     curl \
     python3
