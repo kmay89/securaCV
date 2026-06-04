@@ -13,6 +13,8 @@ files. The cleanup section *flags* candidates for the maintainer to action separ
 | [05-market-and-cost-comparison.md](05-market-and-cost-comparison.md) | Competitor costs, market size, good/bad-product verdict, business model |
 | [06-feature-prioritization.md](06-feature-prioritization.md) | Must-have vs cut, justified for the 5-year horizon |
 | [07-timeline-events-privacy-design.md](07-timeline-events-privacy-design.md) | Making the timeline/events useful without breaking privacy |
+| [08-product-strategy.md](08-product-strategy.md) | **North star** — the canonical one-page strategy that sits above 01–07 |
+| [securacv_product_strategy_whitepaper.md](securacv_product_strategy_whitepaper.md) | Long-form companion: market, competition, personas, friction/satisfaction ledgers, business model, roadmap |
 
 ## TL;DR
 
@@ -30,4 +32,6 @@ tamper-evident log of *semantic* events with no faces, plates, or precise timest
 - **Recommended business model**: open-core software + sold pre-flashed Canary hardware, plus
   an *optional* court-grade verification/attestation service that never touches raw footage.
 
-See each doc for detail and sources.
+**Start with [08-product-strategy.md](08-product-strategy.md)** (the north star); read
+the [whitepaper](securacv_product_strategy_whitepaper.md) for depth. Docs 01–07 are
+the underlying analysis. See each doc for detail and sources.
