@@ -30,7 +30,7 @@
 
 Single-row-per-capability summary across every non-archived variant. This is the **authoritative at-a-glance view**; the deeper per-subsystem tables below remain as detail.
 
-> **CI contract (enforced):** a PR that regresses a ✅ → ⚠️/❌ cell in this dashboard must include an issue reference in the PR body (e.g. `Regresses FEATURES.md: <cell> (#1234)`). The `Feature-Parity Dashboard Guard` job in `.github/workflows/firmware.yml` parses this table (via `firmware/scripts/features_dashboard_guard.py`) and fails if a cell downgrades without an accompanying `#<number>` reference in the PR description.
+> **CI contract (enforced):** a PR that regresses a ✅ → ⚠️/❌ cell in this dashboard must include an issue reference in the PR body (e.g. `Regresses FEATURES.md: <cell> (#1234)`). The `.github/workflows/features-dashboard-guard.yml` workflow parses this table (via `firmware/scripts/features_dashboard_guard.py`) and fails if a cell downgrades without an accompanying `#<number>` reference in the PR description.
 
 | Capability | canary (PIO) | canary-wap (Arduino) | canary-wap (PIO) | canary-vision | canary-ota | snapshot (archived) |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|

@@ -116,12 +116,15 @@ def resolve_base(explicit: str | None) -> str:
     base_ref = os.environ.get("GITHUB_BASE_REF")
     if base_ref:
         # Best-effort fetch so the ref is present in shallow CI checkouts.
+        # Return FETCH_HEAD rather than origin/<ref>: a shallow `git fetch`
+        # updates FETCH_HEAD but doesn't reliably create the origin/<ref>
+        # tracking branch, so referencing origin/<ref> can fail.
         subprocess.run(
             ["git", "fetch", "origin", base_ref, "--depth=1"],
             capture_output=True,
             text=True,
         )
-        return f"origin/{base_ref}"
+        return "FETCH_HEAD"
     return "HEAD^"
 
 
@@ -131,6 +134,13 @@ def main() -> int:
     args = ap.parse_args()
 
     base = resolve_base(args.base)
+
+    # A missing/unfetched base ref must fail loudly, not silently skip the
+    # guard. (git_show returning None below means the file is absent at base —
+    # a legitimate "nothing to compare" case — which is different from this.)
+    if subprocess.run(["git", "rev-parse", "--verify", base], capture_output=True).returncode != 0:
+        print(f"::error::Base git ref '{base}' does not exist or wasn't fetched.")
+        return 2
 
     base_text = git_show(base, FEATURES_PATH)
     if base_text is None:
@@ -148,6 +158,20 @@ def main() -> int:
     head_cells = parse_dashboard(head_text)
     if not head_cells:
         print("::error::Could not parse the Feature-Parity Dashboard from the working tree.")
+        return 2
+
+    # A typo'd or blank cell classifies as 'unknown' and would dodge the
+    # downgrade check — reject unrecognized status symbols outright.
+    invalid = [
+        f"{cap} [{col}]: {cell!r}"
+        for (cap, col), cell in head_cells.items()
+        if classify(cell) == "unknown"
+    ]
+    if invalid:
+        print("::error::Unrecognized status symbol(s) in the Feature-Parity Dashboard "
+              "(allowed: ✅ ❌ ⚠️ ➖):")
+        for i in invalid:
+            print(f"  - {i}")
         return 2
 
     regressions: list[str] = []
