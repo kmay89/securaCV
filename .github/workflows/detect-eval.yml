@@ -1,0 +1,52 @@
+name: Detect Eval
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+# Read-only; the only output is an uploaded report artifact.
+permissions:
+  contents: read
+
+jobs:
+  perception-eval:
+    name: Perception eval harness
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install libseccomp
+        run: sudo apt-get update && sudo apt-get install -y libseccomp-dev
+
+      - name: Clippy (detect-eval)
+        run: cargo clippy --features detect-eval --bin detect_eval --lib -- -D warnings
+
+      - name: Metric unit tests (no feature)
+        run: cargo test --lib eval::
+
+      # Hermetic known-answer gate: runs the real eval runner against the deterministic
+      # test ONNX. This is the numeric correctness check for the harness.
+      - name: Known-answer integration test
+        run: cargo test --features detect-eval --test detect_eval_integration -- --nocapture
+
+      # End-to-end plumbing smoke + artifact. Uses the deterministic test model (no network,
+      # no large model download). The toy model is NOT expected to score on the synthetic
+      # frames — this step proves the binary runs end to end and emits a valid report. Real
+      # measurement is an operator step with fetch_detection_model.sh (see eval/README.md).
+      - name: Run harness on sample dataset
+        run: |
+          cargo run --features detect-eval --bin detect_eval -- \
+            --model tests/fixtures/test_detector.onnx \
+            --dataset eval/datasets/sample \
+            --width 4 --height 4 \
+            --json detect_eval_report.json
+
+      - name: Upload eval report
+        uses: actions/upload-artifact@v4
+        with:
+          name: detect-eval-report
+          path: detect_eval_report.json
