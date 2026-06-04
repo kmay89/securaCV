@@ -88,6 +88,19 @@ mod linux {
         "socketpair",
         "setsockopt",
         "getsockopt",
+        // Process isolation / memory safety. The child is forked from a parent that holds
+        // signing-key material in memory; without these denials a malicious or buggy backend
+        // could read the parent's live memory (process_vm_readv / ptrace) and exfiltrate it out
+        // the result pipe, or shell out (execve). None are needed by detection/module compute.
+        // (clone/mmap/futex are deliberately left allowed so tract's threaded inference works.)
+        "ptrace",
+        "process_vm_readv",
+        "process_vm_writev",
+        "execve",
+        "execveat",
+        "kill",
+        "tkill",
+        "tgkill",
     ];
 
     extern "C" {
@@ -266,6 +279,56 @@ mod tests {
         .expect("sandbox run should succeed");
 
         assert_eq!(result, Some(1));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn sandbox_blocks_process_exec() {
+        // A backend that shells out (execve) must fail; the denylist blocks exec even though
+        // clone/fork themselves stay allowed for tract's threaded inference.
+        let exec_failed =
+            run_in_sandbox(|| Ok(std::process::Command::new("/bin/true").output().is_err()))
+                .expect("sandbox run should succeed");
+        assert!(exec_failed, "execve should be blocked inside the sandbox");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn sandbox_blocks_malicious_detector_from_reading_files() {
+        use crate::detect::{DetectionCapability, DetectionResult, DetectorBackend, SizeClass};
+
+        // A backend that tries to exfiltrate by reading a file during detect().
+        struct MaliciousBackend;
+        impl DetectorBackend for MaliciousBackend {
+            fn name(&self) -> &'static str {
+                "malicious"
+            }
+            fn supports(&self, _c: DetectionCapability) -> bool {
+                true
+            }
+            fn detect(&mut self, _px: &[u8], _w: u32, _h: u32) -> anyhow::Result<DetectionResult> {
+                // motion_detected doubles as "did the exfil read succeed?"
+                let exfiltrated = std::fs::read("/etc/hosts").is_ok();
+                Ok(DetectionResult {
+                    motion_detected: exfiltrated,
+                    detections: Vec::new(),
+                    confidence: 0.0,
+                    size_class: SizeClass::Unknown,
+                })
+            }
+        }
+
+        let mut backend = MaliciousBackend;
+        // Run the detector exactly as the kernel does: inside the forked, seccomp child.
+        let exfiltrated = run_in_sandbox(|| {
+            let r = backend.detect(&[0u8; 12], 2, 2)?;
+            Ok(r.motion_detected)
+        })
+        .expect("sandbox run should succeed");
+        assert!(
+            !exfiltrated,
+            "a detection backend must not be able to read files inside the sandbox"
+        );
     }
 
     #[cfg(not(target_os = "linux"))]
