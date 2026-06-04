@@ -208,26 +208,31 @@ See [`docs/esp32_s3_setup.md`](esp32_s3_setup.md).
 Local ONNX inference for object detection. Feature-gated (`backend-tract`); requires a **local**
 model file and explicit width/height (RTSP or V4L2 ingest only).
 
-Recommended small model (Apache-2.0):
+Fetch the recommended small model (Apache-2.0) with one command — it downloads and
+**SHA-256-verifies** the model into `vendor/models/` (a one-time, operator-initiated step; the
+kernel itself never downloads models at runtime):
 
 ```bash
-mkdir -p vendor/models
-curl -L \
-  https://github.com/onnx/models/raw/main/vision/object_detection_segmentation/ssdlite_mobilenet_v2/model/ssdlite_mobilenet_v2_12.onnx \
-  -o vendor/models/ssdlite_mobilenet_v2_12.onnx
-echo "ad6303f1ca2c3dcc0d86a87c36892be9b97b02a0105faa5cc3cfae79a2b11a31  vendor/models/ssdlite_mobilenet_v2_12.onnx" | sha256sum -c -
+bash scripts/fetch_detection_model.sh
 ```
+
+Then enable the backend. `detect.tract_model` is **optional** — it defaults to the path the
+fetch script writes, so you only set the backend:
 
 ```toml
 [detect]
 backend = "tract"
-tract_model = "vendor/models/ssdlite_mobilenet_v2_12.onnx"
+# tract_model = "vendor/models/ssdlite_mobilenet_v2_12.onnx"  # default; only set to override
 confidence = 0.5    # minimum detection confidence, 0.0–1.0 (default 0.5)
 
 [rtsp]      # or [v4l2]
 width = 320
 height = 320
 ```
+
+Build with the feature and run: `cargo run --release --features backend-tract --bin witnessd`.
+If `backend=tract` but no model is found at the resolved path, witnessd fails fast with a clear
+load error naming the expected file.
 
 Environment overrides: `WITNESS_DETECT_BACKEND=tract`,
 `WITNESS_TRACT_MODEL=/absolute/path/to/model.onnx`,

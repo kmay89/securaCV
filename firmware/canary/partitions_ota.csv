@@ -1,4 +1,9 @@
 # SecuraCV Canary OTA Partition Table
+# 4 MB layout (of an 8 MB XIAO ESP32-S3): A/B app slots 0x1E0000 (1.9 MB) each + 192 KB spiffs.
+# Total used = 0x400000 (4 MB) — the upper 4 MB of an 8 MB chip is left unused by this table.
+# Fits the dev / release / minimal profiles WITH OTA; the FULL profile (~2.4-2.9 MB) does NOT
+# fit a 1.9 MB slot. For the canonical map of which table to use per deployment (and the
+# FULL-needs-no-OTA-on-8MB / FULL+OTA-needs-16MB rules), see ../PARTITIONS.md.
 # Name,    Type, SubType,  Offset,   Size,     Flags
 nvs,       data, nvs,      0x9000,   0x5000,
 otadata,   data, ota,      0xe000,   0x2000,

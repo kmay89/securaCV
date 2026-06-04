@@ -1,5 +1,6 @@
 # SecuraCV Canary OTA Partition Table
 # For XIAO ESP32-S3 with 8MB Flash
+# Canonical table map (which layout for which deployment): see ../../PARTITIONS.md
 #
 # Partition layout:
 #   - nvs: Device identity, chain state, WiFi credentials (survives OTA)

@@ -308,10 +308,12 @@ Source of truth: `spec/invariants.md`. A re-implementation that violates any inv
   raw 457,779 B → gz 113,931 B (saves ~336 KB / ~10–11 pts of the app partition). The raw PROGMEM
   literals are compiled out. Re-run `gen_web_assets_gz.py` after editing any HTML.
   (`firmware/projects/canary-wap/FLASH_MEMORY_ANALYSIS.md`.)
-- **REQ-FW-031 (Config — caution):** The canary-wap Arduino build does **not pin a PartitionScheme**
-  (board default ~3 MB app). Other firmware trees ship **divergent** partition tables — see flag
-  report F-06. A rebuild MUST choose one deliberate scheme per deployment (8 MB or 16 MB
-  flash) and document it.
+- **REQ-FW-031 (Documented):** The canary-wap Arduino build does **not pin a PartitionScheme**
+  (board default ~3 MB app — correct, because the FULL binary needs the full single app slot and
+  does not fit a sub-2 MB OTA slot). The previously **divergent** partition tables (flag report
+  F-06) are now reconciled by a canonical reference, [`firmware/PARTITIONS.md`](../../firmware/PARTITIONS.md),
+  which maps one deliberate scheme per deployment (flash size × OTA × profile) and states the
+  FULL-needs-no-OTA-on-8 MB / FULL+OTA-needs-16 MB rule. Each CSV cross-links it.
 - **REQ-FW-032 (Implemented):** Large CSI/scratch buffers MUST live in **PSRAM**, not DRAM (recent
   fixes moved the 90 KB CSI event ring and `/api/events/today` scratch buffer to PSRAM to clear
   DRAM overflow). A rebuild MUST keep big buffers in PSRAM.

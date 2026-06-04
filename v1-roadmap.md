@@ -49,7 +49,9 @@ tagging v1):**
 
 - The Frigate → Home Assistant MQTT pipeline passes the release gate end-to-end —
   `integrations/ha_frigate_mqtt/verify_pipeline.sh` exits `0` against a live stack (README release gate).
-- The "audit boundary vs security boundary" documentation item (Acceptance, below) is still open.
+- ~~The "audit boundary vs security boundary" documentation item (Acceptance, below) is still open.~~
+  **Closed:** stated authoritatively in [`docs/security/THREAT_MODEL.md`](docs/security/THREAT_MODEL.md)
+  under *Trust Boundaries → Audit Boundary vs Security Boundary*.
 - ~~RTSP ingestion is documented, so under this definition it is **in scope** and must work
   (moved out of "nice to have").~~ **Closed:** the ffmpeg RTSP path now has an end-to-end CI
   roundtrip (`ingest-rtsp` job + `tests/rtsp_e2e.rs`).
@@ -190,7 +192,7 @@ the v1 Definition and Acceptance Criteria.)
 - [x] Log entries are Ed25519 signed
 - [x] `log_verify` validates signatures and catches tampering
 - [x] Can process video from file
-- [ ] Documentation states audit boundary vs security boundary
+- [x] Documentation states audit boundary vs security boundary (`docs/security/THREAT_MODEL.md` → *Trust Boundaries*)
 - [x] RTSP ingestion works end-to-end (ffmpeg path; `ingest-rtsp` CI job + `tests/rtsp_e2e.rs`)
 - [ ] Frigate → HA MQTT release gate passes (`integrations/ha_frigate_mqtt/verify_pipeline.sh` == 0)
 - [x] Firmware APIs expose no raw MAC / precise GPS (every tree routes identity through the salted

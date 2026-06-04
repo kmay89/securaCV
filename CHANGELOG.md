@@ -84,6 +84,12 @@ below — but nothing documented is allowed to be aspirational at the v1 tag.
   `ingest-rtsp`, which serves the committed fixture over RTSP (MediaMTX + ffmpeg
   publisher) and drives the real `RtspSource` end-to-end through
   decode → detection → signed events → verify (`tests/rtsp_e2e.rs`).
+- **Security docs**: the **audit boundary vs security boundary** distinction is now
+  stated authoritatively in `docs/security/THREAT_MODEL.md` (*Trust Boundaries*):
+  which producer surfaces (`DetectorBackend`, `SensorAdapter`, the `InferenceView`
+  handoff) are hand-audited contracts vs. the mechanically enforced security
+  boundary (the three fail-closed gates in `Kernel::append_event_checked`). Closes
+  the corresponding v1 acceptance item.
 - **Firmware privacy hardening (no raw MAC / no precise GPS, all trees)**: the salted, MAC-free
   device pseudonym and GPS coarsening are now shared helpers in `firmware/common/`
   (`identity/device_pseudonym.h`, `gnss/gps_privacy.h`) adopted across every firmware tree.
