@@ -84,3 +84,73 @@ describe('envelope verification parity', () => {
     assert.match(report.error, /sealed_events count mismatch/);
   });
 });
+
+describe('runtime without Ed25519 support', () => {
+  // ed25519Supported() caches its probe per module instance, so each simulated-unsupported test
+  // loads a fresh module that probes under the importKey stub. Returns { V, restore }.
+  function withoutEd25519() {
+    const realImport = globalThis.crypto.subtle.importKey.bind(globalThis.crypto.subtle);
+    // Simulate an engine (Safari < 17, older Firefox) with Web Crypto but no Ed25519.
+    globalThis.crypto.subtle.importKey = (fmt, key, algo, ext, usages) =>
+      (algo && algo.name === 'Ed25519')
+        ? Promise.reject(new Error('Ed25519 unsupported (simulated)'))
+        : realImport(fmt, key, algo, ext, usages);
+    delete require.cache[require.resolve('./verify_core')];
+    const freshV = require('./verify_core');
+    return { V: freshV, restore: () => {
+      globalThis.crypto.subtle.importKey = realImport;
+      delete require.cache[require.resolve('./verify_core')];
+    } };
+  }
+
+  it('confirms Ed25519 IS available in this test runtime', async () => {
+    assert.equal(await V.ed25519Supported(), true);
+  });
+
+  it('reports "inconclusive" (never "compromised") for valid evidence when Ed25519 is unavailable', async () => {
+    const { V: noEd, restore } = withoutEd25519();
+    try {
+      const report = await noEd.verifyEnvelope(loadFixture('valid_envelope.json'));
+      assert.equal(report.status, 'inconclusive');
+      assert.equal(report.ok, false);
+      assert.equal(report.inconclusive, true);
+      assert.match(report.error, /cannot check Ed25519 signatures/i);
+      // The deterministic checks must ALL have run — incl. the artifact-hash binding (Codex #1).
+      assert.ok(report.checks.some((c) => /fingerprint recomputed/i.test(c)), 'fingerprint check should run');
+      assert.ok(report.checks.some((c) => /artifact bound/i.test(c)), 'artifact-binding check should run');
+      // ...but NOT claim any signature was verified.
+      assert.ok(!report.checks.some((c) => /signature/i.test(c)), 'no signature check should be claimed');
+    } finally {
+      restore();
+    }
+  });
+
+  it('still REJECTS a tampered artifact (recomputed digest) without Ed25519 — definitive, not inconclusive (Codex #1)', async () => {
+    const { V: noEd, restore } = withoutEd25519();
+    try {
+      // Doctor the human-readable artifact and refresh the digest so only the artifact-to-signed-hash
+      // binding (a SHA-256 check, no Ed25519) can catch it. This must NOT degrade to "inconclusive".
+      const envelope = loadFixture('valid_envelope.json');
+      envelope.artifact.batches[0].buckets[0].events[0].zone_id = 'zone:forged';
+      envelope.whole_envelope_digest = await noEd.computeWholeEnvelopeDigest(envelope);
+      const report = await noEd.verifyEnvelope(envelope);
+      assert.equal(report.status, 'compromised');
+      assert.equal(report.ok, false);
+      assert.match(report.error, /artifact hash mismatch/);
+    } finally {
+      restore();
+    }
+  });
+
+  it('still REJECTS a tampered digest without Ed25519 (caught before the signature stage)', async () => {
+    const { V: noEd, restore } = withoutEd25519();
+    try {
+      const report = await noEd.verifyEnvelope(loadFixture('tampered_digest.json'));
+      assert.equal(report.status, 'compromised');
+      assert.equal(report.ok, false);
+      assert.match(report.error, /whole_envelope_digest/);
+    } finally {
+      restore();
+    }
+  });
+});
