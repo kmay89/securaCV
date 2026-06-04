@@ -40,14 +40,6 @@ describe('D5: No Network Scanning', () => {
     const spaPath = path.join(__dirname, '..', '..', 'spa', 'app.js');
     const content = fs.readFileSync(spaPath, 'utf8');
 
-    // Must not contain subnet scanning patterns
-    const forbidden = [
-      /\.1\.\d+/,             // e.g., .1.1 through .1.254 (IP iteration patterns)
-      /subnet/i,
-      /probe/i,
-      /scan\s*\(/,
-    ];
-
     // Check for IP iteration pattern like 192.168.1.${i}
     assert.ok(!content.includes('192.168.1.${'), 'SPA must not contain IP iteration patterns');
     assert.ok(!/subnet/i.test(content), 'SPA must not contain "subnet"');

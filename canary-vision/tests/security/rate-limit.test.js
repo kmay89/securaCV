@@ -1,6 +1,6 @@
 'use strict';
 
-const { describe, it, before, after } = require('node:test');
+const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const { startServer, TEST_TOKEN } = require('../helpers/start-server');
 const { createClient, request } = require('../helpers/test-client');

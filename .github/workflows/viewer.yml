@@ -50,3 +50,18 @@ jobs:
         node-version: '22'
     - name: Pre-flight self-test UI logic (probe×status hint matrix)
       run: node --test firmware/projects/canary-wap/arduino/canary_wap/selftest_ui.test.js
+
+  canary-vision-lint:
+    name: ESLint (canary-vision)
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+    - name: Install canary-vision deps
+      working-directory: canary-vision
+      run: npm ci
+    - name: ESLint (device-api + spa + tests)
+      working-directory: canary-vision
+      run: npm run lint
