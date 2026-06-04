@@ -232,6 +232,56 @@ physically destroy the device.
 └─────────────────────────────────────────────────────────┘
 ```
 
+### Audit Boundary vs Security Boundary
+
+The hardware/firmware boundaries above describe *where data is trusted*. The
+kernel software adds a second, orthogonal distinction that auditors must keep
+straight: an **audit boundary** is a code contract you must *manually verify*,
+whereas a **security boundary** is *mechanically enforced* and fails closed even
+against a malicious actor on the wrong side of it. Conflating the two is the most
+common way to misread this codebase's privacy guarantees.
+
+**Audit boundaries** are the out-of-TCB producer surfaces. They run *outside* the
+kernel's trusted computing base and are treated by the threat model as careless or
+malicious; nothing about the trait *prevents* a misbehaving implementation from
+retaining or exporting raw bytes — conformance is established by manual review,
+not by the type system or the runtime:
+
+| Audit boundary | Where | Contract that MUST be hand-audited |
+|----------------|-------|-------------------------------------|
+| `detect::backend::DetectorBackend` | [`src/detect/backend.rs`](../../src/detect/backend.rs) | Receives raw pixels; must not store or export them beyond the `detect` call. |
+| `InferenceView` → backend handoff | [`src/frame.rs`](../../src/frame.rs) (`run_detector`) | Forwards pixels to the configured backend; the view restricts, but cannot enforce, downstream handling. |
+| `adapter::SensorAdapter` | [`src/adapter/mod.rs`](../../src/adapter/mod.rs) | Untrusted producer of vendor-neutral `Claim`s; must never retain raw media or emit identity / precise time / precise location. |
+
+**The security boundary** is, and remains, the three fail-closed gates inside
+`Kernel::append_event_checked` — the single choke point every producer (modules,
+adapters, the Frigate bridge) passes through. These are enforced in code and record
+a `FailureEvent` on rejection:
+
+1. **Event-type allowlist** — a producer (via its `ModuleDescriptor`) may emit only
+   its declared `EventType`s; anything else is rejected.
+2. **Contract Enforcer** — confidence bounds, 10-minute time-bucket coarsening,
+   strict `^zone:[a-z0-9_-]{1,64}$` zone allowlist, correlation-token constraints.
+3. **Zone policy** — operator-designated sensitive zones are rejected.
+
+The practical consequence: an audit-boundary component adds **breadth of producers,
+never new query surface or new privilege**. A malicious backend or adapter can
+produce *garbage claims*, but every claim still passes all three gates, and there is
+**no method that writes an event to the log bypassing the Contract Enforcer**.
+
+**Hardening an audit boundary into a security one (optional).** The realistic attack
+surface in an adapter is parsing attacker-controlled bytes (MQTT payloads, webhook
+bodies, NVR JSON). With the `adapter-sandbox` feature and `with_sandbox(true)`, that
+parse step runs in a forked **seccomp** sandbox that physically cannot open files or
+sockets (`adapter::sandbox::parse_in_sandbox`), upgrading the parse step from an
+audit boundary toward a real security boundary. It is opt-in for adapters; module
+sandboxing via `CapabilityBoundaryRuntime` is mandatory, not optional.
+
+> Canonical sources: [`spec/sensor_adapter_contract_v0.md`](../../spec/sensor_adapter_contract_v0.md) §4,
+> [`kernel/architecture.md`](../../kernel/architecture.md) ("the adapter trait is an audit boundary;
+> the Contract Enforcer is the security boundary"), and the per-trait `# Audit Boundary` doc comments
+> in the code referenced above.
+
 ---
 
 ## Attack Scenarios (Red Team)
