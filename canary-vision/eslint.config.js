@@ -13,12 +13,9 @@ module.exports = [
   },
   js.configs.recommended,
   {
+    // Rules apply to every file; kept separate from the env blocks below so a
+    // single broad `globals` block can't leak Node globals into the browser SPA.
     files: ['**/*.js'],
-    languageOptions: {
-      sourceType: 'commonjs',
-      ecmaVersion: 2023,
-      globals: { ...globals.node },
-    },
     rules: {
       // Unused vars are real rot; allow a leading-underscore opt-out for
       // intentionally-ignored args/catch bindings.
@@ -26,10 +23,21 @@ module.exports = [
     },
   },
   {
-    // Browser SPA.
+    // Node/CommonJS: device-api + tests (everything except the browser SPA).
+    files: ['**/*.js'],
+    ignores: ['spa/**/*.js'],
+    languageOptions: {
+      sourceType: 'commonjs',
+      ecmaVersion: 2023,
+      globals: { ...globals.node },
+    },
+  },
+  {
+    // Browser SPA — browser globals only, so accidental Node API use is caught.
     files: ['spa/**/*.js'],
     languageOptions: {
       sourceType: 'script',
+      ecmaVersion: 2023,
       globals: { ...globals.browser },
     },
   },
