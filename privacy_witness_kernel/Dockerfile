@@ -2,7 +2,7 @@
 # Multi-stage build for minimal image size
 
 ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base-rust:latest
-FROM ${BUILD_FROM} as builder
+FROM ${BUILD_FROM} AS builder
 
 # Install build dependencies
 RUN apk add --no-cache \
