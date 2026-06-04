@@ -91,6 +91,9 @@ target_fps = 10
 [detect]
 backend = "auto"
 # tract_model = "/var/lib/witness/model.onnx"
+# Minimum detection confidence (0.0–1.0). Default 0.5. Raise to suppress weak detections.
+# Env override: WITNESS_DETECT_CONFIDENCE
+# confidence = 0.5
 
 # Zone Configuration
 #

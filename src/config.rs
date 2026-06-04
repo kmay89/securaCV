@@ -23,6 +23,9 @@ const DEFAULT_ESP32_FPS: u32 = 10;
 const DEFAULT_RETENTION_SECS: u64 = 60 * 60 * 24 * 7;
 const DEFAULT_MODULE_ZONE_ID: &str = "zone:front_boundary";
 const DEFAULT_DETECT_BACKEND: &str = "auto";
+// Minimum confidence for a detection to be reported. Keep in sync with the tract backend's
+// DEFAULT_CONFIDENCE_THRESHOLD (that backend is feature-gated, so the default lives here too).
+const DEFAULT_DETECT_CONFIDENCE: f32 = 0.5;
 
 fn config_string(value: Option<String>, default: &str) -> String {
     value.unwrap_or_else(|| default.to_string())
@@ -100,6 +103,7 @@ struct Esp32ConfigFile {
 struct DetectConfigFile {
     backend: Option<String>,
     tract_model: Option<PathBuf>,
+    confidence: Option<f32>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -200,6 +204,8 @@ pub enum DetectBackendPreference {
 pub struct DetectSettings {
     pub backend: DetectBackendPreference,
     pub tract_model: Option<PathBuf>,
+    /// Minimum confidence [0.0, 1.0] for a detection to be reported.
+    pub confidence_threshold: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -310,6 +316,9 @@ impl WitnessdConfig {
                     .unwrap_or(DEFAULT_DETECT_BACKEND),
             )?,
             tract_model: detect_config.tract_model,
+            confidence_threshold: detect_config
+                .confidence
+                .unwrap_or(DEFAULT_DETECT_CONFIDENCE),
         };
         let zones = ZoneSettings {
             module_zone_id: file
@@ -409,6 +418,13 @@ impl WitnessdConfig {
                 self.detect.tract_model = Some(PathBuf::from(path));
             }
         }
+        if let Ok(conf) = std::env::var("WITNESS_DETECT_CONFIDENCE") {
+            if !conf.trim().is_empty() {
+                self.detect.confidence_threshold = conf.trim().parse().map_err(|_| {
+                    anyhow!("WITNESS_DETECT_CONFIDENCE must be a number between 0.0 and 1.0")
+                })?;
+            }
+        }
         if let Ok(zone_id) = std::env::var("WITNESS_ZONE_ID") {
             if !zone_id.trim().is_empty() {
                 self.zones.module_zone_id = zone_id;
@@ -438,6 +454,12 @@ impl WitnessdConfig {
 
         if self.retention.as_secs() == 0 {
             return Err(anyhow!("retention must be greater than zero"));
+        }
+        if !(0.0..=1.0).contains(&self.detect.confidence_threshold) {
+            return Err(anyhow!(
+                "detect.confidence must be between 0.0 and 1.0 (got {})",
+                self.detect.confidence_threshold
+            ));
         }
         if self.detect.backend == DetectBackendPreference::Tract {
             let Some(path) = &self.detect.tract_model else {
@@ -736,6 +758,7 @@ mod tests {
             detect: Some(DetectConfigFile {
                 backend: Some("tract".to_string()),
                 tract_model: Some(PathBuf::from("/tmp/model.onnx")),
+                confidence: None,
             }),
             ingest: Some(IngestConfigFile {
                 backend: Some("rtsp".to_string()),
@@ -754,6 +777,54 @@ mod tests {
         assert_eq!(
             config.detect.tract_model,
             Some(PathBuf::from("/tmp/model.onnx"))
+        );
+    }
+
+    #[test]
+    fn detect_config_defaults_confidence() {
+        let config =
+            WitnessdConfig::from_file(WitnessdConfigFile::default()).expect("config should parse");
+        assert_eq!(config.detect.confidence_threshold, DEFAULT_DETECT_CONFIDENCE);
+    }
+
+    #[test]
+    fn detect_config_accepts_in_range_confidence() {
+        let file = WitnessdConfigFile {
+            detect: Some(DetectConfigFile {
+                backend: None,
+                tract_model: None,
+                confidence: Some(0.8),
+            }),
+            rtsp: Some(RtspConfigFile {
+                url: Some("rtsp://example.com/stream".to_string()),
+                target_fps: Some(DEFAULT_RTSP_FPS),
+                width: Some(DEFAULT_RTSP_WIDTH),
+                height: Some(DEFAULT_RTSP_HEIGHT),
+                backend: Some(DEFAULT_RTSP_BACKEND.to_string()),
+            }),
+            ..WitnessdConfigFile::default()
+        };
+        let mut config = WitnessdConfig::from_file(file).expect("config should parse");
+        assert_eq!(config.detect.confidence_threshold, 0.8);
+        config.validate().expect("0.8 is a valid confidence");
+    }
+
+    #[test]
+    fn detect_confidence_out_of_range_is_rejected() {
+        let file = WitnessdConfigFile {
+            detect: Some(DetectConfigFile {
+                backend: None,
+                tract_model: None,
+                confidence: Some(1.5),
+            }),
+            ..WitnessdConfigFile::default()
+        };
+        // from_file does not range-check; validate() must reject it (covers file and env sources).
+        let mut config = WitnessdConfig::from_file(file).expect("from_file should parse");
+        let err = config.validate().expect_err("1.5 is out of range");
+        assert!(
+            err.to_string().contains("detect.confidence"),
+            "unexpected error: {err}"
         );
     }
 
