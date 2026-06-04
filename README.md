@@ -2,7 +2,7 @@
 
 [![HACS Badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
 [![Validate with HACS](https://github.com/kmay89/securaCV/actions/workflows/validate.yml/badge.svg)](https://github.com/kmay89/securaCV/actions/workflows/validate.yml)
-[![Status](https://img.shields.io/badge/status-pre--v1%20(core%20works%20end--to--end)-orange.svg)](CHANGELOG.md)
+[![Status](https://img.shields.io/badge/status-v1--rc%20(CI%20gates%20green%2C%20on--device%20validation%20pending)-yellow.svg)](CHANGELOG.md)
 
 ![SecuraCV logo animation](docs/securacv_logo_animation-2.gif)
 
@@ -172,9 +172,16 @@ Device firmware lives under [`firmware/`](firmware/):
 
 ## Release gate (v1 tagging)
 
-Before tagging a v1 release, the Home Assistant + Frigate MQTT pipeline must be verified
-end-to-end: complete the checklist in `docs/integrations/home-assistant-frigate-mqtt.md` and
-ensure `integrations/ha_frigate_mqtt/verify_pipeline.sh` exits `0` against a live stack.
+The SecuraCV-owned Frigate → MQTT pipeline is now gated **automatically in CI**:
+`cargo test --test frigate_mqtt_e2e` (a `frigate/events` payload → sealed log → real
+`log_verify` against the encrypted DB) plus the `frigate-mqtt-e2e` job, which runs the real
+`frigate_bridge` binary ingesting from a live mosquitto broker
+(`integrations/ha_frigate_mqtt/ci_smoke.sh`).
+
+Before tagging a v1 release, two manual steps remain: run the operator smoke check against a
+live 4-container stack — `integrations/ha_frigate_mqtt/verify_pipeline.sh` (see
+`docs/integrations/home-assistant-frigate-mqtt.md`) — and validate on real device hardware.
+**The CI gates are green; on-device validation and the v1 tag are still pending.**
 
 ---
 

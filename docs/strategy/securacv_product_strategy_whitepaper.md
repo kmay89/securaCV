@@ -8,7 +8,7 @@ and cites — the analysis in docs [`04`](04-user-stories.md), [`05`](05-market-
 and is bound by the seven invariants in [`spec/invariants.md`](../../spec/invariants.md).*
 
 *Status discipline: nothing here claims more than the code delivers. Where a
-capability is in progress (RTSP-in-CI, vault setup UX, the v1 tag), it is named as
+capability is in progress (vault setup UX, on-device validation, the v1 tag), it is named as
 such — matching the project's own bar in [`v1-roadmap.md`](../../v1-roadmap.md).*
 
 ---
@@ -69,10 +69,10 @@ Kernel** (`witnessd`); everything else feeds it, runs it, or displays its output
 |------|--------------|----------|
 | **Kernel (Rust, ~25k LOC)** | Frame isolation, hash-chained Ed25519-signed log, event-contract allowlist, break-glass quorum, vault sealing (opt-in), SQLCipher at rest, optional post-quantum (MLDSA/MLKEM) | **Works, demonstrable** |
 | **Detection** | Pluggable backends: motion (stub/CPU, default) + Tract ONNX (feature-gated) | Works; object detection is opt-in, default is motion-only |
-| **Ingestion** | File (CI-proven roundtrip), RTSP (GStreamer/FFmpeg), V4L2, ESP32 HTTP | File proven; RTSP implemented but **not yet exercised in CI** |
+| **Ingestion** | File (CI-proven roundtrip), RTSP (GStreamer/FFmpeg), V4L2, ESP32 HTTP | File **and** RTSP (ffmpeg path) both CI-proven end-to-end (`ingest-rtsp` job); GStreamer shares the interface |
 | **Adapters** | Vendor-neutral framework (Frigate, MQTT, webhook+auth/TLS/mTLS, BLE presence) into one privacy choke point | Works, well-tested |
 | **Home Assistant** | HACS integration (3 modes, 5 sensors, 11 binary sensors, device PKI/TOFU), add-on with setup wizard, MQTT discovery, daily digest + pattern alerts | Works |
-| **Firmware (ESP32)** | Canary Vision, Canary WAP (mesh, power, diagnostics, BLE, Beacon/Chirp), OTA | Vision works; WAP has enterprise-readiness items (MAC/GPS) open |
+| **Firmware (ESP32)** | Canary Vision, Canary WAP (mesh, power, diagnostics, BLE, Beacon/Chirp), OTA | Vision + WAP working; the no-raw-MAC / no-precise-GPS invariant now holds across all trees (guardrail-enforced). On-device hardware validation still pending. |
 | **Device API** | Node/Express + SPA timeline, security middleware | Works |
 
 **Engineering quality is high (external read: A-/A+).** 114+ test functions across
@@ -87,10 +87,11 @@ Dependency advisories are tracked with per-CVE reachability reasoning rather tha
 dismissed. There are **no hard `TODO`/`FIXME` markers in source.**
 
 **The honest caveats** (the project states these itself): the default build detects
-motion, not classified objects; RTSP lacks a CI roundtrip; vault sealing is wired
+motion, not classified objects; vault sealing is wired
 but key-management/setup UX is deferred; device keys are seed-derived, not
-hardware-backed; and v1 is not yet tagged. The maturity is *pre-v1 with documented
-gaps*, not half-finished scaffolding.
+hardware-backed; on-device hardware validation is still pending; and v1 is not yet
+tagged. The maturity is *release-candidate with documented gaps* — the CI v1 gates
+are green, but the tag waits on on-device validation — not half-finished scaffolding.
 
 ---
 
@@ -341,12 +342,12 @@ real pricing requires a BOM and channel analysis.*
 ## 11. Roadmap (sequenced for compounding trust)
 
 ### Phase 0 — Ship v1 (credibility unlock)
-Close the documented v1 gates so "rely on this for evidence" stops being hollow:
-- Frigate → HA MQTT **release gate** green ([`integrations/ha_frigate_mqtt/verify_pipeline.sh`](../../integrations/ha_frigate_mqtt/verify_pipeline.sh) exits 0 against a live stack).
-- **RTSP end-to-end** verified in CI (documented feature → in scope).
-- **"Audit boundary vs security boundary"** documentation item closed.
-- **Firmware** exposes no raw MAC / precise GPS (documented invariants hold on-device; see [`firmware/projects/canary-wap/ENTERPRISE_READINESS_TODO.md`](../../firmware/projects/canary-wap/ENTERPRISE_READINESS_TODO.md)).
-- Tag v1; align [`CHANGELOG.md`](../../CHANGELOG.md) and [`v1-roadmap.md`](../../v1-roadmap.md) so docs never outrun code.
+The documented v1 gates are now **closed in CI** so "rely on this for evidence" stops being hollow:
+- ✅ Frigate → HA MQTT **pipeline gated in CI** — `cargo test --test frigate_mqtt_e2e` (event → sealed log → real `log_verify`) + the `frigate-mqtt-e2e` job (real `frigate_bridge` ingesting from a live mosquitto broker). The 4-container operator stack ([`verify_pipeline.sh`](../../integrations/ha_frigate_mqtt/verify_pipeline.sh)) remains a manual smoke check.
+- ✅ **RTSP end-to-end** verified in CI (`ingest-rtsp` job + `tests/rtsp_e2e.rs`).
+- ✅ **"Audit boundary vs security boundary"** documentation item closed ([`docs/security/THREAT_MODEL.md`](../../docs/security/THREAT_MODEL.md)).
+- ✅ **Firmware** exposes no raw MAC / precise GPS across every tree (guardrail-enforced; see [`firmware/projects/canary-wap/ENTERPRISE_READINESS_TODO.md`](../../firmware/projects/canary-wap/ENTERPRISE_READINESS_TODO.md)).
+- ⏳ **Remaining:** on-device hardware validation, then tag v1 and align [`CHANGELOG.md`](../../CHANGELOG.md) and [`v1-roadmap.md`](../../v1-roadmap.md) so docs never outrun code.
 
 ### Phase 1 — Kill the terminal + reveal the payoff (least friction)
 - One-click HA add-on install with the **detection model bundled**.
