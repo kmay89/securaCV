@@ -25,8 +25,10 @@ Most of this list has now been actioned across two PRs:
   `docs/why_witnessing_matters.md` are **not** near-duplicates — they target
   different audiences (plain-language explainer vs. systems-level rationale).
   Both are kept, now reciprocally cross-linked instead of stubbed.
-- **Deferred:** root `spec.md` consolidation, whitepaper "derived" marker, and
-  `AGENTS.md` review remain open (low priority).
+- **Resolved (F-09):** the root `spec.md` module-template confusion is fixed — the
+  `zone_crossing` template moved to `spec/modules/zone_crossing.md`, and root `spec.md`
+  is now a pure index pointing into `spec/`.
+- **Deferred:** whitepaper "derived" marker and `AGENTS.md` review remain open (low priority).
 
 ## Flagged candidates
 
@@ -38,7 +40,7 @@ Most of this list has now been actioned across two PRs:
 | `securaCV_logo_animation.MP4` (1.4 MB, root) | Logo animation video | Large binary at repo root; a GIF already lives in `docs/` | **Medium** | Move to `brands/` or a release asset / Git LFS |
 | Root security/threat doc sprawl | `SECURITY.md`, `SECURITY_MODEL.md`, `SECURITY-AUDIT.md`, `THREAT_MODEL.md` **+** `spec/threat_model.md` | 4–5 overlapping docs; readers don't know which is canonical | **Medium** | Keep `SECURITY.md` (policy) + `spec/threat_model.md` (canonical); move the long-form ones under `docs/security/` and link |
 | `why_this_matters.md` (root) vs `docs/why_witnessing_matters.md` | Two philosophy docs (249 vs 209 lines) | Near-duplicate intent | **Medium** | Keep one canonical (`docs/why_witnessing_matters.md`); make the root a stub link |
-| `spec.md` (root) vs `spec/` | Root file overlaps the canonical spec set | Ambiguous source of truth | **Medium** | Fold into `spec/` or make it an index pointing into `spec/` |
+| `spec.md` (root) vs `spec/` | Root file overlaps the canonical spec set | Ambiguous source of truth | **Medium** | ✅ Done (F-09): `zone_crossing` template moved to `spec/modules/`; root `spec.md` is now an index into `spec/` |
 | `securaCV_whitepaper.md` (root) | Consolidates other markdown into one paper | Hand-editing risks drift from sources | **Low** | Keep, but mark as *derived* / generated so edits go to the source docs |
 | `brands/` + `brands_submission/` | Logo assets + one-time HA brands-repo PR package | Few references; submission is a one-shot artifact | **Low** | After the brands PR merges, fold `brands_submission/` under `brands/submission/` or archive |
 | `AGENTS.md` (root) | Agent harness instructions | Confirm it's still used by current tooling | **Low** | Keep if used; remove if stale |
