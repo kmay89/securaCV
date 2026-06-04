@@ -95,7 +95,7 @@ function assertRawChainIntact(records, publicKey) {
       throw new EnvelopeBridgeError(
         `raw chain has a sequence gap before seq ${r.seq}; refusing to export a gappy chain without explicit gap records`);
     }
-    let sigOk = false;
+    let sigOk;
     try { sigOk = verifySignature(r.hash, r.signature, publicKey); } catch { sigOk = false; }
     if (!sigOk) {
       throw new EnvelopeBridgeError(`raw chain broken at seq ${r.seq}: invalid device signature`);

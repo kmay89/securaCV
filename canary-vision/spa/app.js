@@ -2491,7 +2491,7 @@ function renderEventList(container) {
 
   // Group by day
   var currentDay = '';
-  var dayCount = 0;
+  var dayCount;
 
   for (var i = 0; i < clusters.length; i++) {
     var cluster = clusters[i];
