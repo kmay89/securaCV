@@ -7,25 +7,31 @@
 > **Major** (materially misleads a re-implementer or user) · **Minor** (rot/cleanup) ·
 > **Doc-debt** (documentation vs code drift).
 
+> **Re-baseline 2026-06-04.** The findings below were written 2026-06-01. They are kept verbatim as
+> a point-in-time audit; a **Status** line has been appended to each (and a Status column added to
+> the table) reflecting the tree after the 2026-06 fix wave (#660–#680). Of the 3 Blockers, all 3
+> are resolved; of the 4 Majors, 2 are resolved, 1 is partial, 1 stays open (frozen by design).
+> Verified by reading the cited code, not the merge titles.
+
 ## Summary table
 
-| ID | Severity | Area | One-line |
-|----|----------|------|----------|
-| F-01 | Blocker | Detection | Default detection is a frame-hash **stub**; real CV is feature-gated & off by default, while roadmap marks the stream "Done". |
-| F-02 | Blocker | Versioning | "v1" is defined **three incompatible ways** across CHANGELOG / v1-roadmap / README badge. |
-| F-03 | Blocker | Firmware privacy | `ENTERPRISE_READINESS_TODO` admits raw **MAC exposure** and uncoarsened **GPS** in WAP APIs — contradicts Invariants II & III. |
-| F-04 | Major | Crypto | Device key is **seed-derived from config**; DB key **coupled** to signing key → rotation blocked (acknowledged, still open). |
-| F-05 | Minor | Vault | *Corrected after code review:* vault sealing **is wired** into `witnessd` (real crypto modes); the real gap is that it's **opt-in / UX-gated**, not absent. |
-| F-06 | Major | Firmware flash | **Divergent partition tables**; canary-wap Arduino pins **no** scheme; one secure table assumes **4 MB** flash on an 8 MB board. |
-| F-07 | Major | Transports | `TRANSPORT_LORA` / `TRANSPORT_AUDIO` (+`audio_anomaly` tamper) are declared but **unimplemented**. |
-| F-08 | Major | Mesh | ESP-NOW WiFi-AP bridge & BLE fallback marked **"❌ not implemented"** in the mesh evaluation. |
-| F-09 | Minor | Repo hygiene | Root **`spec.md` is mis-titled** — it's the `zone_crossing` module spec, not a system spec. |
-| F-10 | Minor | CLI count | CHANGELOG says **"9 CLI binaries"**; tree has **14**. |
-| F-11 | Minor | Ingest dup | **Two RTSP** implementations (`rtsp.rs` vs `rtsp_ffmpeg.rs`) risk divergence. |
-| F-12 | Doc-debt | README | README has live **TODOs** (missing screenshot) and ships "core works end-to-end" beside an unshipped v1. |
-| F-13 | Doc-debt | Roadmap | `v1-roadmap.md` overclaims completion (✅) on items contradicted by code (F-01) and omits shipped work (PQC, adapters). |
-| F-14 | Minor | Spec maturity | Many normative specs are `_v0` / "Draft v0.1" but referenced as if stable contracts. |
-| F-15 | Minor | Build env | Tests need `libseccomp`; firmware needs `pio`/`arduino-cli` — none present in the audit env, so "passes cleanly" is **unverified here**. |
+| ID | Severity | Status (2026-06-04) | Area | One-line |
+|----|----------|---------------------|------|----------|
+| F-01 | Blocker | ✅ Resolved (#660/#665/#667) | Detection | Default detection is a frame-hash **stub**; real CV is feature-gated & off by default, while roadmap marks the stream "Done". |
+| F-02 | Blocker | ✅ Resolved (#673) | Versioning | "v1" is defined **three incompatible ways** across CHANGELOG / v1-roadmap / README badge. |
+| F-03 | Blocker | ✅ Resolved (#662/#669) | Firmware privacy | `ENTERPRISE_READINESS_TODO` admits raw **MAC exposure** and uncoarsened **GPS** in WAP APIs — contradicts Invariants II & III. |
+| F-04 | Major | 🟡 Partial (#674) | Crypto | Device key is **seed-derived from config**; DB key **coupled** to signing key → rotation blocked (acknowledged, still open). |
+| F-05 | Minor | 🟡 Open (UX) | Vault | *Corrected after code review:* vault sealing **is wired** into `witnessd` (real crypto modes); the real gap is that it's **opt-in / UX-gated**, not absent. |
+| F-06 | Major | ✅ Resolved (#670) | Firmware flash | **Divergent partition tables**; canary-wap Arduino pins **no** scheme; one secure table assumes **4 MB** flash on an 8 MB board. |
+| F-07 | Major | ⬜ Open (frozen) | Transports | `TRANSPORT_LORA` / `TRANSPORT_AUDIO` (+`audio_anomaly` tamper) are declared but **unimplemented**. |
+| F-08 | Major | ⬜ Open (frozen) | Mesh | ESP-NOW WiFi-AP bridge & BLE fallback marked **"❌ not implemented"** in the mesh evaluation. |
+| F-09 | Minor | ⬜ Open | Repo hygiene | Root **`spec.md` is mis-titled** — it's the `zone_crossing` module spec, not a system spec. |
+| F-10 | Minor | ⬜ Open | CLI count | CHANGELOG says **"9 CLI binaries"**; tree has **14**. |
+| F-11 | Minor | 🟡 Open | Ingest dup | **Two RTSP** implementations (`rtsp.rs` vs `rtsp_ffmpeg.rs`) risk divergence. |
+| F-12 | Doc-debt | 🟡 Partial (#673) | README | README has live **TODOs** (missing screenshot) and ships "core works end-to-end" beside an unshipped v1. |
+| F-13 | Doc-debt | ✅ Resolved (#673) | Roadmap | `v1-roadmap.md` overclaims completion (✅) on items contradicted by code (F-01) and omits shipped work (PQC, adapters). |
+| F-14 | Minor | ⬜ Open | Spec maturity | Many normative specs are `_v0` / "Draft v0.1" but referenced as if stable contracts. |
+| F-15 | Minor | ✅ Resolved (CI) | Build env | Tests need `libseccomp`; firmware needs `pio`/`arduino-cli` — none present in the audit env, so "passes cleanly" is **unverified here**. |
 
 ---
 
@@ -46,6 +52,17 @@ default build it is **frame-differencing motion only**. **Fix:** make the defaul
 detection behavior explicit in README/roadmap; ship a bundled model + enable `backend-tract` by
 default for the witnessd path, or clearly label the stub as the default.
 
+> **Status 2026-06-04 — ✅ Resolved.** The "silent + undocumented + un-tunable" core of the blocker
+> is closed: `witnessd` now emits an explicit startup **WARN** that the active backend reports
+> "motion presence, not classified objects" with the exact flags to enable real detection
+> (`src/bin/witnessd.rs:153-162`, #660); the hardcoded 0.5 is gone — the threshold is config-driven
+> via the `detect.confidence` config key (env `WITNESS_DETECT_CONFIDENCE`), applied at
+> `witnessd.rs:552` (#665); and a one-command verified
+> model fetch + default model path removes the manual ONNX hand-download
+> (`scripts/fetch_detection_model.sh`, #667). `v1-roadmap.md` Stream A now carries the default-build
+> caveat. Enabling `backend-tract` *by default* is intentionally **not** done: in the primary
+> Frigate-bridge deployment object detection is Frigate's job (documented design choice, not a gap).
+
 ### F-02 — "v1" is defined three incompatible ways
 **Evidence.**
 - `CHANGELOG.md` `[1.0.0] - Unreleased`: "every documented feature works end-to-end, the install
@@ -56,6 +73,13 @@ default for the witnessd path, or clearly label the stub as the default.
 **Why it's a blocker.** Tagging v1 against any one of these contradicts the others. **Fix:** pick a
 single v1 definition (recommended: the roadmap's minimal one), make CHANGELOG match what's
 actually verified, and gate the tag on `verify_pipeline.sh` (README release gate).
+
+> **Status 2026-06-04 — ✅ Resolved (#673).** There is now one canonical definition ("everything
+> documented works end-to-end") in `v1-roadmap.md` §"v1 Definition", and the three surfaces agree:
+> the README badge reads `status-v1-rc (CI gates green, on-device validation pending)`
+> (`README.md:5`) and `CHANGELOG.md [1.0.0]` stays `Unreleased` until on-device validation. The tag
+> is gated on CI (RTSP + Frigate→MQTT e2e) plus the remaining on-device step, not on a single
+> manual script.
 
 ### F-03 — Firmware leaks identity/precise-location (contradicts Invariants II & III)
 **Evidence.** `firmware/projects/canary-wap/ENTERPRISE_READINESS_TODO.md` §1 (unchecked):
@@ -69,6 +93,12 @@ pseudonymous presence token and GPS coarsening; add the grep guardrails the TODO
 (Note: AP-password hardening and the device-unique credential in the same file **are** done — credit
 where due — but these two remain open.)
 
+> **Status 2026-06-04 — ✅ Resolved (#662/#669).** Every firmware tree now routes operator-facing
+> identity through the shared salted `device_pseudonym` (`firmware/common/identity/`) and GPS
+> through `gps_coarsen_deg` (`firmware/common/gnss/`). The grep guardrail the TODO asked for exists
+> and is enforcing: `regression_check.sh` hard-fails if a raw `WiFi.macAddress()` or an
+> un-coarsened lat/lon appears in **any** tree's API/log surface.
+
 ---
 
 ## Major
@@ -78,6 +108,14 @@ where due — but these two remain open.)
 key). Keys are not hardware-backed or rotated. **Impact:** no safe key rotation; "tamper-proof"
 rests on a config-stored seed. **Fix (architectural prerequisite):** decouple DB key from device
 identity key, then add hardware-backed keys (Secure Element/eFuse) — see roadmap P3.
+
+> **Status 2026-06-04 — 🟡 Partial (#674).** The architectural prerequisite is **done**: the
+> SQLCipher DB key is decoupled from the Ed25519 signing key. Set `SECURACV_DB_KEY_SEED` and the
+> kernel derives the DB key independently (`resolve_db_encryption_key`); `rekey_database_file()`
+> rotates it in place (`docs/db_key_rotation.md`). **Still open:** signing-key rotation
+> end-to-end (`Kernel::open` pins the device pubkey in `device_metadata` and rejects a mismatch, so
+> identity-rotation support is needed) and the higher bar of **hardware-backed keys** (TPM/Secure
+> Element/eFuse), which needs hardware to validate — roadmap P3.
 
 ### F-05 — Vault sealing is opt-in / UX-gated (NOT "unwired") — *corrected after code review*
 **Correction.** An earlier draft of this finding (and the requirements spec) called the vault
@@ -93,6 +131,11 @@ setup UI, and the crypto-mode default/key handling still ties into the device-ke
 **Severity downgraded Major → Minor/Doc-debt.** **Fix:** describe the vault as *wired but opt-in*,
 document the token/crypto-mode config path, and build the trustee/seal setup UX (roadmap P2).
 
+> **Status 2026-06-04 — 🟡 Open (UX).** The doc-debt half is done — `v1-roadmap.md` now describes the
+> vault as "wired (opt-in)" with the `BREAK_GLASS_SEAL_TOKEN` path. The remaining open piece is the
+> product gap: there is **no non-CLI trustee/seal setup UX** (only `src/bin/break_glass.rs` + the
+> offline viewer). That is roadmap **P2 ("break-glass / trustee setup UI")** and still unbuilt.
+
 ### F-06 — Divergent firmware partition tables; risky flash assumptions
 **Evidence.** Three different layouts for the "same" device family:
 - `firmware/canary/partitions_ota.csv`: app0/app1 = `0x1E0000` (1.96 MB) each + 192 KB spiffs.
@@ -107,6 +150,12 @@ document the token/crypto-mode config path, and build the trustee/seal setup UX 
 binary at all. **Fix:** one documented scheme per (flash size × OTA-or-not) deployment; reconcile
 the 4 MB secure table to 8/16 MB (see requirement REQ-FW-031).
 
+> **Status 2026-06-04 — ✅ Resolved (#670).** `firmware/PARTITIONS.md` is now the canonical map of
+> which table to use per deployment (flash size × OTA × build profile), and every partition CSV
+> (`canary/partitions_ota.csv`, `projects/canary-ota/partitions.csv`,
+> `provisioning/partitions_secure.csv`) carries a header pointing at it and stating its flash-size
+> assumption explicitly. A re-implementer can now tell which layout is canonical for their target.
+
 ### F-07 — Declared-but-unimplemented transports & tamper types
 **Evidence.** `custom_components/securacv/const.py:46-47` `TRANSPORT_LORA = "lora" # Future`,
 `TRANSPORT_AUDIO = "audio" # Future: SCQCS`; both included in `ALL_TRANSPORTS`. `TAMPER_AUDIO =
@@ -115,11 +164,20 @@ surface advertises transports that can never report. **Fix:** drop from `ALL_*` 
 or gate behind a capability flag. (`docs/strategy/06` already lists these as "keep deferred" —
 align the code.)
 
+> **Status 2026-06-04 — ⬜ Open (frozen by design).** Still present: `const.py:46-47` keep
+> `TRANSPORT_LORA`/`TRANSPORT_AUDIO` in `ALL_TRANSPORTS` and `TAMPER_AUDIO` in the tamper list.
+> `02-roadmap.md` §"Frozen until a concrete need" deliberately parks LoRa/SCQCS-audio, so this is a
+> conscious deferral rather than an oversight — but the HA entity surface still advertises them.
+> Lowest-effort honest fix when touched: gate them behind a capability flag.
+
 ### F-08 — Mesh fallbacks not implemented
 **Evidence.** `docs/mesh_esp_now_evaluation.md:99-100`: "§2.2 WiFi-AP bridge (secondary) ❌ not
 implemented (G3)", "§2.2 BLE fallback (tertiary) ❌ not implemented (G4)". **Impact:** the
 multi-path mesh resilience story has unbuilt legs. **Fix:** scope mesh claims to what exists
 (Opera BLE primary), or build the fallbacks.
+
+> **Status 2026-06-04 — ⬜ Open (frozen by design).** Unchanged; `02-roadmap.md` freezes unbuilt
+> mesh legs until a concrete need. Treat the mesh story as "Opera BLE primary" until then.
 
 ---
 
@@ -146,6 +204,20 @@ multi-path mesh resilience story has unbuilt legs. **Fix:** scope mesh claims to
   compose` are absent. So CHANGELOG's "test suite passes cleanly" and the firmware flash figures
   are **not independently verified in this review** — they should be re-run in a provisioned CI
   before any v1 tag. (CI workflows exist: `.github/workflows/firmware*.yml`, CodeQL.)
+
+> **Status 2026-06-04 (minors).**
+> - **F-09 ⬜ Open** — root `spec.md` still reads `# Module Spec: zone_crossing`.
+> - **F-10 ⬜ Open** — `CHANGELOG.md:27` still says "9 core" CLI binaries; `src/bin/` has 14.
+> - **F-11 🟡 Open** — both `src/ingest/rtsp.rs` and `rtsp_ffmpeg.rs` remain, but divergence risk is
+>   contained: `v1-roadmap.md` Stream C designates the **ffmpeg** path canonical and it is the one
+>   exercised end-to-end in CI (`ingest-rtsp` job + `tests/rtsp_e2e.rs`, #666).
+> - **F-12 🟡 Partial (#673)** — the badge half is fixed (`README.md:5` now `v1-rc`, no longer
+>   "core works end-to-end" beside an unshipped v1); the `<!-- TODO: add a screenshot … -->` at
+>   `README.md:26` is still there (the "verified ✓ timeline" screenshot, roadmap P2).
+> - **F-14 ⬜ Open** — spec maturity column not yet added.
+> - **F-15 ✅ Resolved (CI)** — "passes cleanly" is now CI-verified, not just claimed: `rust.yml`
+>   runs `cargo test` (with `libseccomp`), plus the RTSP (#666) and Frigate→MQTT (#672) e2e gates
+>   and firmware CI, all green on `main`. The original caveat was about the *audit* environment.
 
 ## What is genuinely solid (counter-balance — not everything is unfinished)
 - Hash-chain + Ed25519 signing + `log_verify`/`tamper_demo` are real and testable (REQ-KRNL-001/004).
