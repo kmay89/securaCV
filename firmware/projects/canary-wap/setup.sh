@@ -268,6 +268,23 @@ setup_arduino() {
         print_warn "Boot banner not found at ${boot_src} — sketch will not compile until firmware/common/boot/ is restored"
     fi
 
+    # The salted device pseudonym (operator-facing diagnostic handle) is a single
+    # canonical, header-only source shared with the canary-vision tree. Stage a
+    # byte-identical copy next to the sketch so Arduino's flat include search finds
+    # it; check_csi_sync.sh guards the two against drift.
+    local identity_src="${FIRMWARE_ROOT}/common/identity"
+    if [ -f "${identity_src}/device_pseudonym.h" ]; then
+        cp "${identity_src}/device_pseudonym.h" "${arduino_dir}/" 2>/dev/null || true
+        if [ -f "${arduino_dir}/device_pseudonym.h" ]; then
+            print_success "Copied device_pseudonym header"
+        else
+            print_error "Failed to stage device_pseudonym header to ${arduino_dir}"
+            return 1
+        fi
+    else
+        print_warn "device_pseudonym not found at ${identity_src} — sketch will not compile until firmware/common/identity/ is restored"
+    fi
+
     print_success "Arduino IDE setup complete!"
     echo ""
     echo "Arduino IDE Instructions:"

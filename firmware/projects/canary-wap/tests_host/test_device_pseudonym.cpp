@@ -1,8 +1,11 @@
 // Host-side test for device_pseudonym::derive() — the salted, non-reversible
 // device identifier used in operator-facing diagnostics (replaces raw MAC).
 //
-// Uses OpenSSL SHA-256 (host) to (a) link the same derive() the firmware compiles
-// with mbedtls, and (b) independently recompute the construction to pin the bytes.
+// Uses OpenSSL SHA-256 (host) to (a) compile the same header-only derive() the
+// firmware uses (mbedtls on device), exercising the staged sketch copy via its
+// own path, and (b) independently recompute the construction to pin the bytes.
+// The sketch copy is a byte-identical staged copy of the canonical
+// firmware/common/identity header (enforced by check_csi_sync.sh).
 //
 // Build: see tests_host/Makefile (links -lcrypto).
 

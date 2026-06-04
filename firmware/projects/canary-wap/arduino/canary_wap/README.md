@@ -31,11 +31,12 @@ This is the **complete** Arduino IDE version of the Canary WAP firmware, with fu
 ### 0. Stage environment-specific sources (required before first compile)
 
 The CSI library files (`csi_*.{h,cpp}`, `core_*.{h,cpp}`,
-`anomaly_baseline.*`, `meta_daily_summary.*`) are committed alongside the
-sketch, so a fresh GitHub zip download compiles without any staging step
-for the library itself. The canonical copy lives at
-`firmware/common/csi/src/` and a CI guard
-(`firmware/scripts/check_csi_sync.sh`) keeps the two in sync.
+`anomaly_baseline.*`, `meta_daily_summary.*`) and the header-only
+`device_pseudonym.h` are committed alongside the sketch, so a fresh GitHub zip
+download compiles without any staging step for the library itself. Their
+canonical copies live at `firmware/common/csi/src/` and
+`firmware/common/identity/`; a CI guard (`firmware/scripts/check_csi_sync.sh`)
+keeps the committed copies in sync with the canonical sources.
 
 You still need to stage the environment-specific files (board pins, default
 config, secrets) once before the first build:
