@@ -1,22 +1,28 @@
 # Privacy Witness Kernel - Home Assistant Add-on
-# Multi-stage build for minimal image size
+#
+# Multi-stage build. Both stages use the SAME Home Assistant add-on base
+# (Alpine + s6-overlay + bashio, published multi-arch), so the build-time and
+# runtime musl / GStreamer ABIs match exactly and run.sh gets the
+# `with-contenv` / `bashio` it relies on. The base is selected via BUILD_FROM
+# and is the only external image this add-on depends on.
+ARG BUILD_FROM=ghcr.io/hassio-addons/base:14.1.3
 
-ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base-rust:latest
 FROM ${BUILD_FROM} AS builder
 
-# Install build dependencies
+# Rust toolchain + dev libraries to build the kernel with GStreamer RTSP support.
+# build-base/cmake/perl/linux-headers are required by the native crypto crates
+# (aws-lc-sys, ring); the rest cover GStreamer, seccomp, and SQLite.
 RUN apk add --no-cache \
-    musl-dev \
-    pkgconf \
-    gstreamer-dev \
-    gst-plugins-base-dev \
+    rust cargo \
+    build-base cmake perl pkgconf linux-headers musl-dev \
+    gstreamer-dev gst-plugins-base-dev \
     libseccomp-dev \
     sqlite-dev
 
 WORKDIR /build
 COPY . .
 
-# Build with GStreamer support for real RTSP streams
+# Build with GStreamer support for real RTSP streams.
 RUN cargo build --release --features rtsp-gstreamer
 
 # Runtime stage

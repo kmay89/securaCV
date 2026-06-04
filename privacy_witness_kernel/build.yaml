@@ -1,13 +1,14 @@
 # Home Assistant add-on build descriptor.
 #
-# Per-architecture base images consumed by the Dockerfile's `BUILD_FROM` ARG.
-# The supported arches here must match `arch:` in config.yaml, and the images
-# published by .github/workflows/addon-image.yml must match config.yaml's
-# `image:` so the Supervisor pulls a pre-built image instead of compiling the
-# Rust kernel on-device.
+# The Dockerfile builds from a single multi-arch base (ghcr.io/hassio-addons/base —
+# Alpine + s6-overlay + bashio) via its BUILD_FROM ARG, and the image is published
+# per-arch by .github/workflows/addon-image.yml to match config.yaml's `image:` so
+# the Supervisor pulls a pre-built image instead of compiling the Rust kernel
+# on-device. (The same multi-arch base is listed per arch below for tooling that
+# reads this file; the actual cross-arch selection is handled by buildx.)
 build_from:
-  amd64: ghcr.io/home-assistant/amd64-base-rust:latest
-  aarch64: ghcr.io/home-assistant/aarch64-base-rust:latest
+  amd64: ghcr.io/hassio-addons/base:14.1.3
+  aarch64: ghcr.io/hassio-addons/base:14.1.3
 labels:
   org.opencontainers.image.title: "Privacy Witness Kernel"
   org.opencontainers.image.description: "Privacy-preserving video surveillance that produces claims, not recordings"
