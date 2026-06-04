@@ -1,0 +1,25 @@
+name: Repo Lints
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+# These checks only read the repo.
+permissions:
+  contents: read
+
+jobs:
+  scripts:
+    name: scripts/lint_*.sh
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Conformance + hygiene lints that previously had no CI gate.
+      - name: CAP-mapping conformance
+        run: bash scripts/lint_cap_mapping.sh
+      - name: Non-impersonation contract
+        run: bash scripts/lint_no_impersonation.sh
+      - name: Feature-flag hygiene
+        run: bash scripts/lint_feature_flags.sh
