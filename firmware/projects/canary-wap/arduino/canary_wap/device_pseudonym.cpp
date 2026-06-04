@@ -16,7 +16,14 @@ namespace {
 
 constexpr char   DOMAIN[]   = "canary:device-id:v1:";
 constexpr size_t DOMAIN_LEN = sizeof(DOMAIN) - 1;  // exclude NUL
-constexpr char   HEXD[]     = "0123456789abcdef";
+
+// Unambiguous alphabet — drops every case variant of the glyph-confusion
+// classes (0/O/o, 1/I/i/l/L). Must stay byte-identical to the shared header
+// (firmware/common/identity/device_pseudonym.h) so both trees derive the same
+// token, and to the project-wide UNAMBIGUOUS_ALPHABET in securacv_crypto.
+constexpr char     ALPHABET[]     = "23456789ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz";
+constexpr size_t   ALPHABET_LEN   = sizeof(ALPHABET) - 1;  // 54
+constexpr unsigned ALPHABET_LIMIT = 216;                   // 54*4: rejection bound (unbiased)
 
 // Reliable scrub: a plain memset() at end-of-scope is frequently removed by the
 // compiler via dead-store elimination. The volatile pointer prevents that.
@@ -52,9 +59,19 @@ bool derive(const uint8_t* secret, size_t secret_len,
   uint8_t hash[32];
   sha256_raw(input, off, hash);
 
-  for (size_t i = 0; i < TOKEN_BYTES; i++) {
-    out_hex[i * 2]     = HEXD[(hash[i] >> 4) & 0x0F];
-    out_hex[i * 2 + 1] = HEXD[hash[i] & 0x0F];
+  // Render the hash in the unambiguous alphabet. Rejection-sample to drop
+  // modular bias (~15.6% of bytes discarded), so the 32 hash bytes comfortably
+  // yield HEX_LEN chars; the vanishingly-unlikely shortfall tops up
+  // deterministically so the token is always full-length and stable.
+  size_t produced = 0;
+  for (size_t i = 0; i < sizeof(hash) && produced < HEX_LEN; i++) {
+    if (hash[i] < ALPHABET_LIMIT) {
+      out_hex[produced++] = ALPHABET[hash[i] % ALPHABET_LEN];
+    }
+  }
+  while (produced < HEX_LEN) {
+    out_hex[produced] = ALPHABET[produced % ALPHABET_LEN];
+    produced++;
   }
   out_hex[HEX_LEN] = '\0';
 

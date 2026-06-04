@@ -41,13 +41,15 @@ int main() {
   for (size_t i = 0; i < TOKEN_BYTES; i++) snprintf(sec_lead + i * 2, 3, "%02x", secret[i]);
   CHECK(strcmp(a, sec_lead) != 0, "token is not the raw secret prefix");
 
-  // Charset: lowercase hex only.
-  bool all_hex = true;
+  // Charset: the unambiguous alphabet only — every char must be in it, and none
+  // of the confusable glyphs (0/O/o, 1/I/i/l/L) may appear.
+  const char* ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz";
+  bool all_unambiguous = true;
   for (size_t i = 0; i < strlen(a); i++) {
-    char ch = a[i];
-    if (!((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f'))) all_hex = false;
+    if (strchr(ALPHABET, a[i]) == nullptr) all_unambiguous = false;
   }
-  CHECK(all_hex, "token is lowercase hex");
+  CHECK(all_unambiguous, "token uses only the unambiguous alphabet");
+  CHECK(strpbrk(a, "0Oo1IilL") == nullptr, "token has no confusable glyphs");
 
   // Buffer guard: too-small output is rejected, not truncated.
   char tiny[4];
@@ -57,17 +59,23 @@ int main() {
   CHECK(!derive(nullptr, SECRET_LEN, a, sizeof(a)), "rejects null secret");
   CHECK(!derive(secret, 0, a, sizeof(a)), "rejects empty secret");
 
-  // Independent recomputation of SHA256("canary:device-id:v1:" || secret)[0..8].
+  // Independent recomputation of the construction: SHA256("canary:device-id:v1:"
+  // || secret), then the same rejection-sampled unambiguous-alphabet rendering
+  // the firmware uses. Pins the bytes so both tree copies must agree exactly.
   uint8_t input[20 + SECRET_LEN];
   memcpy(input, "canary:device-id:v1:", 20);
   memcpy(input + 20, secret, SECRET_LEN);
   uint8_t h[32];
   SHA256(input, 20 + SECRET_LEN, h);
   char expect[HEX_LEN + 1];
-  for (size_t i = 0; i < TOKEN_BYTES; i++) snprintf(expect + i * 2, 3, "%02x", h[i]);
+  size_t produced = 0;
+  for (size_t i = 0; i < sizeof(h) && produced < HEX_LEN; i++)
+    if (h[i] < 216) expect[produced++] = ALPHABET[h[i] % 54];
+  while (produced < HEX_LEN) { expect[produced] = ALPHABET[produced % 54]; produced++; }
+  expect[HEX_LEN] = '\0';
   // recompute `a` (it was overwritten by the null-guard checks above)
   derive(secret, SECRET_LEN, a, sizeof(a));
-  CHECK(strcmp(a, expect) == 0, "matches independent SHA-256 construction");
+  CHECK(strcmp(a, expect) == 0, "matches independent unambiguous construction");
 
   printf(g_failures == 0 ? "\nALL PASS\n" : "\n%d FAILURE(S)\n", g_failures);
   return g_failures == 0 ? 0 : 1;
