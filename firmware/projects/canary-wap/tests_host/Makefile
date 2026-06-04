@@ -84,15 +84,17 @@ CAPTIVE_PROBE_BIN = test_captive_probe
 CAPTIVE_PROBE_SRC = test_captive_probe.cpp
 
 # Privacy (F-03): salted, non-reversible device pseudonym that replaces the raw
-# MAC in operator-facing diagnostics. Links device_pseudonym.cpp and uses libcrypto
-# (OpenSSL) for SHA-256 — the firmware compiles the same derive() with mbedtls.
-DEVPSEUDO_SOURCES = test_device_pseudonym.cpp \
-                    $(SRC_DIR)/device_pseudonym.cpp
+# MAC in operator-facing diagnostics. The sketch's device_pseudonym.h is now a
+# byte-identical staged copy of the canonical firmware/common/identity header
+# (header-only, no .cpp), so this just compiles the header via the sketch path.
+# Uses libcrypto (OpenSSL) for SHA-256 — the firmware compiles the same derive()
+# with mbedtls.
+DEVPSEUDO_SOURCES = test_device_pseudonym.cpp
 DEVPSEUDO_BIN     = test_device_pseudonym
 
-# Privacy (F-03): shared device_pseudonym header (firmware/common/identity) adopted
-# by the canary-vision / canary-wap-src trees. Header-only; pins the same byte
-# construction as the arduino copy above. Links libcrypto for host SHA-256.
+# Privacy (F-03): the same canonical device_pseudonym header (firmware/common/
+# identity) via its real path — also adopted by the canary-vision tree. Pins the
+# byte construction independently of the sketch copy. Links libcrypto for host SHA-256.
 DEVPSEUDO_COMMON_BIN = test_device_pseudonym_common
 DEVPSEUDO_COMMON_SRC = test_device_pseudonym_common.cpp
 

@@ -58,11 +58,36 @@ for dst in "$STAGED"/csi_*.h "$STAGED"/csi_*.cpp \
     fi
 done
 
+# ── Identity helper: device_pseudonym follows the same single-source pattern ──
+# The canonical, header-only device_pseudonym lives at firmware/common/identity/;
+# the canary-wap sketch carries a byte-identical staged copy so a fresh zip
+# download compiles and both firmware trees derive the same pseudonym. It is
+# header-only, so the sketch must NOT carry a stale device_pseudonym.cpp.
+IDENTITY_CANONICAL="firmware/common/identity/device_pseudonym.h"
+IDENTITY_STAGED="$STAGED/device_pseudonym.h"
+if [ -f "$IDENTITY_CANONICAL" ]; then
+    if [ ! -f "$IDENTITY_STAGED" ]; then
+        echo "::error::Missing staged copy: $IDENTITY_STAGED"
+        echo "         Run: cp $IDENTITY_CANONICAL $IDENTITY_STAGED"
+        drift=1
+    elif ! cmp -s "$IDENTITY_CANONICAL" "$IDENTITY_STAGED"; then
+        echo "::error::Drift detected: $IDENTITY_STAGED differs from $IDENTITY_CANONICAL"
+        echo "--- diff ($IDENTITY_CANONICAL vs $IDENTITY_STAGED) ---"
+        diff -u "$IDENTITY_CANONICAL" "$IDENTITY_STAGED" || true
+        drift=1
+    fi
+    if [ -f "$STAGED/device_pseudonym.cpp" ]; then
+        echo "::error::Stale staged file: $STAGED/device_pseudonym.cpp"
+        echo "         device_pseudonym is header-only now — remove it."
+        drift=1
+    fi
+fi
+
 if [ "$drift" -ne 0 ]; then
     echo ""
-    echo "The committed CSI copies under $STAGED/ must match $CANONICAL/."
+    echo "The committed copies under $STAGED/ must match their canonical sources."
     echo "Re-stage with: firmware/projects/canary-wap/setup.sh arduino"
     exit 1
 fi
 
-echo "CSI library copies are in sync."
+echo "CSI + identity library copies are in sync."
