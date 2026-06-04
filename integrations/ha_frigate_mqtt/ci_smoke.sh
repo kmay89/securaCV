@@ -42,6 +42,7 @@ export DEVICE_KEY_SEED="${DEVICE_KEY_SEED:-devkey:ci_frigate_smoke:0011223344556
 cleanup() {
   [ -n "$BRIDGE_PID" ] && kill "$BRIDGE_PID" 2>/dev/null || true
   [ -n "$MOSQ_PID" ] && kill "$MOSQ_PID" 2>/dev/null || true
+  rm -rf "$WORKDIR"
 }
 trap cleanup EXIT
 

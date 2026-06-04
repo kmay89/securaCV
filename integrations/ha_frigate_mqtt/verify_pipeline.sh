@@ -60,7 +60,7 @@ step() {
 check_mqtt_publishes() {
   local output
   output=$("${compose_cmd[@]}" exec -T mosquitto \
-    sh -c "mosquitto_sub ${mqtt_auth[*]} -t 'frigate/events' -C 1 -W 15" 2>/dev/null || true)
+    mosquitto_sub "${mqtt_auth[@]}" -t 'frigate/events' -C 1 -W 15 2>/dev/null || true)
   if [[ -n "$output" ]]; then
     printf '%s\n' "$output" | head -n 1
     return 0
@@ -72,7 +72,7 @@ check_mqtt_publishes() {
 # sealed log. This works regardless of DB encryption and needs no secrets.
 check_bridge_ingests() {
   local logs
-  logs=$("${compose_cmd[@]}" logs --no-color securacv 2>/dev/null || true)
+  logs=$("${compose_cmd[@]}" logs --tail 200 --no-color securacv 2>/dev/null || true)
   if printf '%s\n' "$logs" | grep -q "Event logged"; then
     printf '%s\n' "$logs" | grep "Event logged" | tail -n 1
     return 0
