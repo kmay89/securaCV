@@ -122,9 +122,13 @@ inline bool derive(const uint8_t* secret, size_t secret_len,
 inline bool device_id_hex(char* out_hex, size_t out_len) {
   if (out_hex == nullptr || out_len < HEX_LEN + 1) return false;
 
+  // Publish the cache with release/acquire ordering so a concurrent caller on
+  // the ESP32's other core that observes cached_valid==true is guaranteed to
+  // see the fully-written `cached` bytes (no torn read). A racing first call
+  // just recomputes the same deterministic token, so a double-compute is benign.
   static char cached[HEX_LEN + 1] = {0};
   static bool cached_valid = false;
-  if (cached_valid) {
+  if (__atomic_load_n(&cached_valid, __ATOMIC_ACQUIRE)) {
     memcpy(out_hex, cached, HEX_LEN + 1);
     return true;
   }
@@ -158,7 +162,7 @@ inline bool device_id_hex(char* out_hex, size_t out_len) {
   bool ok = derive(salt, sizeof(salt), tmp, sizeof(tmp));
   if (ok) {
     memcpy(cached, tmp, HEX_LEN + 1);
-    cached_valid = true;
+    __atomic_store_n(&cached_valid, true, __ATOMIC_RELEASE);  // publishes `cached`
     memcpy(out_hex, tmp, HEX_LEN + 1);
   }
 
