@@ -21,7 +21,7 @@
 | F-02 | Blocker | ✅ Resolved (#673) | Versioning | "v1" is defined **three incompatible ways** across CHANGELOG / v1-roadmap / README badge. |
 | F-03 | Blocker | ✅ Resolved (#662/#669) | Firmware privacy | `ENTERPRISE_READINESS_TODO` admits raw **MAC exposure** and uncoarsened **GPS** in WAP APIs — contradicts Invariants II & III. |
 | F-04 | Major | 🟡 Partial (#674) | Crypto | Device key is **seed-derived from config**; DB key **coupled** to signing key → rotation blocked (acknowledged, still open). |
-| F-05 | Minor | 🟡 Open (UX) | Vault | *Corrected after code review:* vault sealing **is wired** into `witnessd` (real crypto modes); the real gap is that it's **opt-in / UX-gated**, not absent. |
+| F-05 | Minor | ✅ Resolved (#709) | Vault | *Corrected after code review:* vault sealing **is wired** into `witnessd` (real crypto modes); the real gap is that it's **opt-in / UX-gated**, not absent. |
 | F-06 | Major | ✅ Resolved (#670) | Firmware flash | **Divergent partition tables**; canary-wap Arduino pins **no** scheme; one secure table assumes **4 MB** flash on an 8 MB board. |
 | F-07 | Major | ✅ Resolved | Transports | `TRANSPORT_LORA` / `TRANSPORT_AUDIO` (+`audio_anomaly` tamper) declared but **unimplemented** — now split into `FUTURE_TRANSPORTS` / `FUTURE_TAMPER_TYPES`, out of the `ALL_*` lists, so the HA surface never advertises them. |
 | F-08 | Major | ⬜ Open (frozen) | Mesh | ESP-NOW WiFi-AP bridge & BLE fallback marked **"❌ not implemented"** in the mesh evaluation. |
@@ -131,10 +131,18 @@ setup UI, and the crypto-mode default/key handling still ties into the device-ke
 **Severity downgraded Major → Minor/Doc-debt.** **Fix:** describe the vault as *wired but opt-in*,
 document the token/crypto-mode config path, and build the trustee/seal setup UX (roadmap P2).
 
-> **Status 2026-06-04 — 🟡 Open (UX).** The doc-debt half is done — `v1-roadmap.md` now describes the
-> vault as "wired (opt-in)" with the `BREAK_GLASS_SEAL_TOKEN` path. The remaining open piece is the
-> product gap: there is **no non-CLI trustee/seal setup UX** (only `src/bin/break_glass.rs` + the
-> offline viewer). That is roadmap **P2 ("break-glass / trustee setup UI")** and still unbuilt.
+> **Status 2026-06-04 — ✅ Resolved (#709).** The flag's correctness core — sealing was **silently**
+> opt-in, so an operator could believe evidence was being sealed when it was not — is closed.
+> `witnessd` now logs an explicit startup status line covering all three real states: INFO
+> **ENABLED** (with the crypto mode) when `BREAK_GLASS_SEAL_TOKEN` is set and the token is valid in
+> the current bucket; WARN **token present but EXPIRED / out-of-window** (a seal token is honoured
+> only within the 10-minute bucket it was issued for, matching the runtime check); and WARN
+> **DISABLED** with no token, stating that boundary events are still signed/logged but **no frame is
+> sealed into the vault**, with the exact steps to enable it (`src/bin/witnessd.rs`). This mirrors
+> the F-01 fix (no silent, undocumented default) and avoids the masking-misconfig failure mode (an
+> expired token no longer reads as ENABLED). The doc-debt half was already done (`v1-roadmap.md` describes the vault as "wired,
+> opt-in"). What remains is **not a flag**: the full non-CLI **trustee/seal setup wizard** is a
+> roadmap **P2** product feature, separate from this correctness gap.
 
 ### F-06 — Divergent firmware partition tables; risky flash assumptions
 **Evidence.** Three different layouts for the "same" device family:
