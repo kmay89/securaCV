@@ -14,8 +14,9 @@
 namespace device_pseudonym {
 
 constexpr size_t SECRET_LEN   = 32;             // per-device salt length
-constexpr size_t TOKEN_BYTES  = 8;              // 64-bit pseudonym
-constexpr size_t HEX_LEN      = TOKEN_BYTES * 2; // 16 hex chars (excl. NUL)
+constexpr size_t TOKEN_BYTES  = 8;              // SHA-256 bytes compared in tests
+constexpr size_t HEX_LEN      = TOKEN_BYTES * 2; // 16-char token (excl. NUL); name
+                                                 // kept for caller-buffer compatibility
 constexpr char   NVS_SALT_KEY[] = "id_salt";    // NVS blob key for the salt
 
 // Pure, non-reversible derivation:

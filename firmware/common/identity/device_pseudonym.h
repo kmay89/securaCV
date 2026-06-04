@@ -94,8 +94,10 @@ inline bool derive(const uint8_t* secret, size_t secret_len,
       out_hex[produced++] = detail::ALPHABET[hash[i] % detail::ALPHABET_LEN];
     }
   }
+  static_assert(HEX_LEN <= detail::ALPHABET_LEN,
+                "filler indexes the alphabet directly; HEX_LEN must fit");
   while (produced < HEX_LEN) {
-    out_hex[produced] = detail::ALPHABET[produced % detail::ALPHABET_LEN];
+    out_hex[produced] = detail::ALPHABET[produced];
     produced++;
   }
   out_hex[HEX_LEN] = '\0';
