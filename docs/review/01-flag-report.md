@@ -56,7 +56,8 @@ default for the witnessd path, or clearly label the stub as the default.
 > is closed: `witnessd` now emits an explicit startup **WARN** that the active backend reports
 > "motion presence, not classified objects" with the exact flags to enable real detection
 > (`src/bin/witnessd.rs:153-162`, #660); the hardcoded 0.5 is gone — the threshold is config-driven
-> via `config.detect.confidence_threshold` (`witnessd.rs:552`, #665); and a one-command verified
+> via the `detect.confidence` config key (env `WITNESS_DETECT_CONFIDENCE`), applied at
+> `witnessd.rs:552` (#665); and a one-command verified
 > model fetch + default model path removes the manual ONNX hand-download
 > (`scripts/fetch_detection_model.sh`, #667). `v1-roadmap.md` Stream A now carries the default-build
 > caveat. Enabling `backend-tract` *by default* is intentionally **not** done: in the primary

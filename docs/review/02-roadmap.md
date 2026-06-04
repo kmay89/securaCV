@@ -50,7 +50,7 @@ near-term "nice-to-have." Treat all of those as **post-focus**.
 > `v1-roadmap.md` (F-05); RTSP ffmpeg path designated canonical and CI-verified, acceptance boxes
 > updated (F-11/#666); `v1-roadmap.md` rewritten to cite code and reflect shipped scope incl. PQC +
 > adapters (F-13, #673); single v1 definition adopted (F-02, #673). **Still pending from this
-> table:** the "9 → 14 CLI binaries" count fix (F-10) and dropping/ gating the unbuilt transports
+> table:** the "9 → 14 CLI binaries" count fix (F-10) and dropping/gating the unbuilt transports
 > (F-07).
 
 ## 3. Phased plan (invariant-checked, sequenced)
@@ -68,10 +68,16 @@ Each phase lists **deliverable → user-facing acceptance → invariant guardrai
 - Reconcile firmware **partition tables**; document the canonical scheme per flash size (F-06).
   *Guardrail:* none weakened — pure honesty/cleanup.
 
-### P1 — Make the proof usable (the moat → a feature) · ✅ DONE (2026-06)
-<!-- Model fetch + configurable confidence (#667/#665); court-grade verifier verdicts (#664);
-     Frigate→HA gate automated in CI (#672). The "live full-stack" gate is a manual smoke check
-     by design (ML on a fixture is non-deterministic). -->
+### P1 — Make the proof usable (the moat → a feature) · 🟡 MOSTLY DONE (one sub-goal descoped)
+<!-- Shipped: configurable confidence (#665); one-command verified model fetch + default model path
+     (#667); court-grade verifier verdicts (#664); Frigate→HA gate automated in CI (#672, the live
+     full-stack gate stays a manual smoke check since ML on a fixture is non-deterministic).
+     NOT shipped — deliberately descoped, not a silent miss: this phase's acceptance ("fresh install
+     detects objects with no manual model step") assumed bundling a model + enabling `backend-tract`
+     by default. That is intentionally NOT done — in the primary Frigate-bridge deployment object
+     detection is Frigate's job, so the witnessd direct-ingest path instead ships a one-command fetch
+     (#667) + a motion-only startup WARN (#660, src/bin/witnessd.rs:152-165). So the zero-step
+     default-detection acceptance is reframed (Frigate owns detection), not met as originally written. -->
 
 - **Bundled detection model** + `backend-tract` enabled on the witnessd path (kill the ONNX
   hand-download), with **configurable confidence** (replace hardcoded 0.5). *Acceptance:* fresh

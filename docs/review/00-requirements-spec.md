@@ -157,8 +157,9 @@ Source of truth: `spec/invariants.md`. A re-implementation that violates any inv
   silent.
 - **REQ-KRNL-022 (Partial/Implemented):** `TractBackend` (`src/detect/backends/tract.rs`) loads an
   ONNX model via `tract-onnx` and runs a forward pass. The confidence threshold is **configurable**
-  via `config.detect.confidence_threshold` (applied at `src/bin/witnessd.rs:552`, #665), defaulting
-  to 0.5 when unset — the earlier hardcoded 0.5 is gone. It is **feature-gated** behind
+  via the `detect.confidence` config key (env `WITNESS_DETECT_CONFIDENCE`), surfaced as
+  `DetectSettings::confidence_threshold` and applied to `TractBackend` at `src/bin/witnessd.rs:552`
+  (#665), defaulting to 0.5 when unset — the earlier hardcoded 0.5 is gone. It is **feature-gated** behind
   `backend-tract` and is **not** registered unless the feature is built AND a model is supplied; a
   one-command verified fetch + default model path (`scripts/fetch_detection_model.sh`, #667) removes
   the manual ONNX hand-download. A rebuild MUST NOT present real CV detection as the default
