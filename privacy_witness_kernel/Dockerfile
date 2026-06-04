@@ -12,7 +12,13 @@ ARG BUILD_FROM=ghcr.io/hassio-addons/base:14.1.3
 # compiled binaries link against the exact C-library sonames present at runtime.
 # Alpine 3.18's own Rust is too old (1.71) for this crate's dependencies, so we
 # install a current stable toolchain via rustup (which targets musl on Alpine).
-FROM docker.io/library/alpine:3.18 AS builder
+#
+# cargo-chef splits dependency compilation from the application build: the expensive
+# "cook" step is keyed only on Cargo.toml/Cargo.lock, so a source-only change reuses
+# the cached dependency layer (and, with the buildx GHA cache wired in
+# .github/workflows/addon-image.yml, across CI runs too) — only the crate itself is
+# then recompiled.
+FROM docker.io/library/alpine:3.18 AS chef
 
 RUN apk add --no-cache \
     build-base cmake perl pkgconf linux-headers musl-dev \
@@ -24,15 +30,28 @@ RUN apk add --no-cache \
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
       | sh -s -- -y --profile minimal --default-toolchain stable
 ENV PATH="/root/.cargo/bin:${PATH}"
-
+# Disable crt-static for the whole build: the musl target links fully static by
+# default, but Alpine ships only shared (.so) GStreamer/GLib/seccomp libraries (no
+# static archives), so link dynamically instead. The runtime stage is the same Alpine
+# release and provides all of these .so libs. Set as ENV (not only on the final build)
+# so the dependency "cook" and the crate build use identical flags — required for the
+# cached dependency artifacts to be reused by the final build.
+ENV RUSTFLAGS="-C target-feature=-crt-static"
+RUN cargo install cargo-chef --locked
 WORKDIR /build
-COPY . .
 
-# Build with GStreamer support for real RTSP streams.
-# Disable crt-static: the musl target links fully static by default, but Alpine ships only
-# shared (.so) GStreamer/GLib/seccomp libraries (no static archives), so link dynamically
-# instead. The runtime stage is the same Alpine release and provides all of these .so libs.
-RUN RUSTFLAGS="-C target-feature=-crt-static" cargo build --release --features rtsp-gstreamer
+# Planner: distil the dependency graph into a recipe from the manifests only.
+FROM chef AS planner
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+# Builder: cook dependencies (cached unless the recipe — i.e. Cargo.toml/lock —
+# changes), then build the crate against the already-compiled deps.
+FROM chef AS builder
+COPY --from=planner /build/recipe.json recipe.json
+RUN cargo chef cook --release --features rtsp-gstreamer --recipe-path recipe.json
+COPY . .
+RUN cargo build --release --features rtsp-gstreamer
 
 # Runtime stage
 FROM ${BUILD_FROM}
