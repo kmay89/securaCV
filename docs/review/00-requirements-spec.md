@@ -246,11 +246,14 @@ Source of truth: `spec/invariants.md`. A re-implementation that violates any inv
   `health`, `chain`, `counts`, `command`, `tamper`, `mesh`, `chirp`, `transport`, `presence`.
 - **REQ-HA-003 (Implemented):** **Multi-transport resilience** — a Canary uses ANY available
   transport to get witness data out before being silenced. `ALL_TRANSPORTS` =
-  wifi_ap, wifi_sta, mqtt, ble, mesh, chirp, **lora (future)**, **audio/SCQCS (future)** — the last
-  two are declared constants with **no transport implementation** (see flag report).
+  wifi_ap, wifi_sta, mqtt, ble, mesh, chirp. **lora** and **audio/SCQCS** are declared constants
+  with **no transport implementation**, held in a separate `FUTURE_TRANSPORTS` list (deliberately
+  **out of** `ALL_TRANSPORTS`) so the integration never advertises a transport no device can report
+  on (F-07).
 - **REQ-HA-004 (Implemented):** **Tamper/survivability event types** (`ALL_TAMPER_TYPES`):
   power_loss, battery_remove, sd_remove, sd_error, gps_jamming, gps_spoof, motion, enclosure,
-  capacitive, gpio, watchdog, unexpected_reboot, memory_critical, **audio_anomaly (future)**.
+  capacitive, gpio, watchdog, unexpected_reboot, memory_critical. **`audio_anomaly`** is declared but
+  unimplemented, held in `FUTURE_TAMPER_TYPES` (out of `ALL_TAMPER_TYPES`) for the same reason (F-07).
 - **REQ-HA-005 (Implemented):** Per-event-type friendly labels + icons via `EVENT_TYPE_METADATA`;
   optional adapter-stats diagnostic sensor (`CONF_ADAPTER_STATS_URL`) via a dedicated coordinator.
 - **REQ-HA-006 (Spec/Example):** Example automations + Lovelace dashboard in `homeassistant/`;

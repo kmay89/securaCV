@@ -539,10 +539,6 @@ function playNotificationFeedback(eventType) {
 
 var _unseenEventCount = 0;
 
-function getUnseenEventCount() {
-  return _unseenEventCount;
-}
-
 function incrementUnseenEvents() {
   if ((window.location.hash || '') === '#/events') return;
   _unseenEventCount++;
@@ -657,9 +653,6 @@ var EVENT_TYPE_META = {
   contact_changed:     { icon: '🚪', label: 'Contact change', cssClass: 'type-contact', priority: 2 },
   motion_detected:     { icon: '💨', label: 'Motion',  cssClass: 'type-motion',  priority: 1 },
 };
-
-var EVENT_TYPE_PRIORITY = ['person_detected', 'presence_restricted', 'vehicle_detected',
-  'object_removed', 'acoustic_impulse', 'animal_detected', 'contact_changed', 'motion_detected'];
 
 // Canonical envelope events use the kernel's EventType enum (src/lib.rs), not the raw device
 // strings. Map them back to friendly labels + the existing timeline dot classes so the in-app
@@ -1192,8 +1185,6 @@ function renderCanariesView() {
   var totalRssi = 0;
   var rssiCount = 0;
   var totalEvents = 0;
-  var completed = 0;
-
   function updateFleetSummary() {
     if (!document.body.contains(fleetCard)) return;
 
@@ -1282,7 +1273,6 @@ function renderCanariesView() {
         dc.label.textContent = err && err.status === 401 ? 'Auth Error' : 'Offline';
         dc.label.style.color = 'var(--color-error)';
 
-        completed++;
         updateFleetSummary();
       });
   });
@@ -2424,7 +2414,7 @@ function renderDensityBar(records) {
   return container;
 }
 
-function renderFilterChips(contentContainer, data) {
+function renderFilterChips(contentContainer, _data) {
   var chipsRow = el('div', { className: 'filter-chips' });
 
   // Derive the type chips from EVENT_TYPE_META (highest priority first) so any new event type is
@@ -2502,7 +2492,6 @@ function renderEventList(container) {
   // Group by day
   var currentDay = '';
   var dayCount = 0;
-  var dayLabel = null;
 
   for (var i = 0; i < clusters.length; i++) {
     var cluster = clusters[i];

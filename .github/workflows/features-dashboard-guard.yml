@@ -1,0 +1,37 @@
+name: Feature-Parity Dashboard Guard
+
+# Fails a PR that downgrades a ✅ cell in firmware/FEATURES.md's Feature-Parity
+# Dashboard to ⚠️/❌ without an issue reference in the PR body.
+#
+# Kept separate from firmware.yml (the heavy build matrix) so the `edited`
+# trigger — needed so adding the issue ref by editing the PR description
+# re-runs the guard and clears it — doesn't re-run firmware builds on every
+# title/body edit.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+    branches: [main]
+    paths:
+      - 'firmware/FEATURES.md'
+      - 'firmware/scripts/features_dashboard_guard.py'
+      - '.github/workflows/features-dashboard-guard.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    name: Feature-Parity Dashboard Guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Guard against unacknowledged capability downgrades
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: python3 firmware/scripts/features_dashboard_guard.py

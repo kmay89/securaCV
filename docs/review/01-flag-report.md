@@ -25,8 +25,8 @@
 | F-06 | Major | ✅ Resolved (#670) | Firmware flash | **Divergent partition tables**; canary-wap Arduino pins **no** scheme; one secure table assumes **4 MB** flash on an 8 MB board. |
 | F-07 | Major | ✅ Resolved | Transports | `TRANSPORT_LORA` / `TRANSPORT_AUDIO` (+`audio_anomaly` tamper) declared but **unimplemented** — now split into `FUTURE_TRANSPORTS` / `FUTURE_TAMPER_TYPES`, out of the `ALL_*` lists, so the HA surface never advertises them. |
 | F-08 | Major | ⬜ Open (frozen) | Mesh | ESP-NOW WiFi-AP bridge & BLE fallback marked **"❌ not implemented"** in the mesh evaluation. |
-| F-09 | Minor | ⬜ Open | Repo hygiene | Root **`spec.md` is mis-titled** — it's the `zone_crossing` module spec, not a system spec. |
-| F-10 | Minor | ✅ Resolved | CLI count | CHANGELOG said **"9 CLI binaries"** (14 total) while `src/bin/` had **15** — count reconciled to 15, `detect_eval` added to the list. |
+| F-09 | Minor | ✅ Resolved (#682) | Repo hygiene | Root **`spec.md` is mis-titled** — it's the `zone_crossing` module spec, not a system spec. |
+| F-10 | Minor | ✅ Resolved (#691) | CLI count | CHANGELOG said **"9 CLI binaries"** (mislabeled "14 total"); `src/bin/` has **15** — count reconciled and `detect_eval` enumerated. |
 | F-11 | Minor | ✅ Resolved (#688) | Ingest dup | **Two RTSP** implementations (`rtsp.rs` vs `rtsp_ffmpeg.rs`) risk divergence. |
 | F-12 | Doc-debt | 🟡 Partial (#673) | README | README has live **TODOs** (missing screenshot) and ships "core works end-to-end" beside an unshipped v1. |
 | F-13 | Doc-debt | ✅ Resolved (#673) | Roadmap | `v1-roadmap.md` overclaims completion (✅) on items contradicted by code (F-01) and omits shipped work (PQC, adapters). |
@@ -170,6 +170,8 @@ align the code.)
 > an explicit "NOT implemented … never advertise" comment. The transports/tamper types stay parked
 > per `02-roadmap.md` §"Frozen until a concrete need", but the HA entity surface no longer advertises
 > them (and never enumerated them at runtime — transport/tamper entities are created on-message).
+> The canonical requirements (`00-requirements-spec.md` REQ-HA-003/004) were updated to match: they
+> no longer list `lora`/`audio`/`audio_anomaly` inside `ALL_TRANSPORTS`/`ALL_TAMPER_TYPES`.
 
 ### F-08 — Mesh fallbacks not implemented
 **Evidence.** `docs/mesh_esp_now_evaluation.md:99-100`: "§2.2 WiFi-AP bridge (secondary) ❌ not
@@ -208,9 +210,11 @@ multi-path mesh resilience story has unbuilt legs. **Fix:** scope mesh claims to
   before any v1 tag. (CI workflows exist: `.github/workflows/firmware*.yml`, CodeQL.)
 
 > **Status 2026-06-04 (minors).**
-> - **F-09 ⬜ Open** — root `spec.md` still reads `# Module Spec: zone_crossing`.
-> - **F-10 ✅ Resolved** — `CHANGELOG.md` reconciled: "9 core" + helpers now totals **15** (was
->   mislabeled 14), `detect_eval` added; `src/bin/` has 15.
+> - **F-09 ✅ Resolved (#682)** — the `zone_crossing` template moved to `spec/modules/zone_crossing.md`
+>   and root `spec.md` is now an index pointing into `spec/`.
+> - **F-10 ✅ Resolved (#691)** — `CHANGELOG.md` now enumerates all binaries and gives the correct
+>   total (15 in `src/bin/`, after `detect_eval` landed in #687): 9 core + `adapter_host` +
+>   `envelope_verify` + the `demo` / `tamper_demo` / `ingest_run` / `detect_eval` helpers.
 > - **F-11 ✅ Resolved (#688)** — `rtsp.rs` is the single `RtspSource` facade; `rtsp_ffmpeg.rs` is its
 >   FFmpeg *backend*, not a rival source. The real divergence risk — each backend re-deriving the
 >   capture-time privacy steps — is closed: the RTSP (GStreamer/FFmpeg) and file (`file`/`file_ffmpeg`)

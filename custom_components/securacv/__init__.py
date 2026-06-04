@@ -39,7 +39,6 @@ from .const import (
     MANUFACTURER,
     MODEL_KERNEL,
     MODEL_CANARY,
-    SETUP_MODE_MQTT,
     SETUP_MODE_KERNEL,
     SETUP_MODE_BOTH,
 )
@@ -246,7 +245,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if has_kernel:
         session = async_get_clientsession(hass)
         api = SecuraCVApi(entry.data[CONF_URL], entry.data[CONF_TOKEN], session)
-        coordinator: SecuraCVCoordinator | None = SecuraCVCoordinator(hass, api)
+        # Type is inferred as `SecuraCVCoordinator | None` across this if/else;
+        # within this branch it's known non-None, so the refresh call is safe.
+        coordinator = SecuraCVCoordinator(hass, api)
         await coordinator.async_config_entry_first_refresh()
     else:
         api = None

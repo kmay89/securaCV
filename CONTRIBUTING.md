@@ -108,6 +108,15 @@ CI enforces formatting and linting. Before submitting, run:
 - `cargo fmt --check`
 - `cargo clippy -- -D warnings`
 - `scripts/ci/conformance.sh`
+- `scripts/lint_feature_flags.sh` (if you touched any feature flag)
+
+### Feature flags
+
+Flags select *which code is compiled* or *gate unbuilt surface* — they are **not**
+a back door for the "optional privacy modes or configuration flags" forbidden
+above. A flag may never make an invariant optional (e.g. `camera_peek_enabled`
+stays immutable). Every flag is indexed in [`docs/feature-flags.md`](docs/feature-flags.md);
+add or update its row in the same PR (the lint fails otherwise).
 
 ---
 
