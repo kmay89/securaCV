@@ -178,7 +178,7 @@ make help        # Show all targets
 
 ## Build Targets & Feature Parity
 
-See [FEATURES.md](FEATURES.md) for the complete feature audit matrix and [VARIANT_POLICY.md](VARIANT_POLICY.md) for each variant's lifecycle status.
+See [FEATURES.md](FEATURES.md) for the complete feature audit matrix and [VARIANT_POLICY.md](VARIANT_POLICY.md) for each variant's lifecycle status. For **which partition table to flash for which deployment** (flash size × OTA × build profile — and why FULL + OTA needs a 16 MB board), see [PARTITIONS.md](PARTITIONS.md).
 
 | Build Target | Location | Lifecycle | Notes |
 |-------------|----------|-----------|-------|
