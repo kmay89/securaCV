@@ -27,7 +27,7 @@ pqcrypto-mldsa = { version = "0.1", optional = true }
 pqcrypto-traits = { version = "0.3", optional = true }
 pqcrypto-mlkem = { version = "0.1", optional = true }
 ctrlc = "3.4"
-image = { version = "0.25", default-features = false, features = ["jpeg"], optional = true }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"], optional = true }
 ureq = { version = "2.9", optional = true }
 url = { version = "2.5", optional = true }
 gstreamer = { version = "0.23", optional = true }
@@ -60,6 +60,7 @@ ingest-esp32 = ["image", "ureq", "url"]
 ingest-v4l2 = ["v4l", "ouroboros"]
 stub-frame-source = []
 backend-tract = ["tract-onnx"]
+detect-eval = ["backend-tract", "image"]
 adapter-frigate = []
 adapter-mqtt-sensor = []
 adapter-webhook = ["adapter-mqtt-sensor"]
@@ -135,3 +136,8 @@ path = "src/bin/tamper_demo.rs"
 name = "ingest_run"
 path = "src/bin/ingest_run.rs"
 required-features = ["ingest-file-ffmpeg"]
+
+[[bin]]
+name = "detect_eval"
+path = "src/bin/detect_eval.rs"
+required-features = ["detect-eval"]
