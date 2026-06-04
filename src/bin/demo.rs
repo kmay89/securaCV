@@ -346,6 +346,7 @@ fn build_demo_source(args: &Args) -> Result<(DemoSource, String)> {
             width: DEMO_FRAME_WIDTH,
             height: DEMO_FRAME_HEIGHT,
             backend: witness_kernel::config::RtspBackendPreference::Auto,
+            transport: None,
         })?;
         return Ok((DemoSource::Rtsp(source), format!("rtsp: {}", url)));
     }
@@ -356,6 +357,7 @@ fn build_demo_source(args: &Args) -> Result<(DemoSource, String)> {
         width: DEMO_FRAME_WIDTH,
         height: DEMO_FRAME_HEIGHT,
         backend: witness_kernel::config::RtspBackendPreference::Auto,
+        transport: None,
     })?;
     Ok((
         DemoSource::Rtsp(source),

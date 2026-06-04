@@ -29,8 +29,19 @@ pub(crate) struct FfmpegRtspSource {
 impl FfmpegRtspSource {
     pub(crate) fn new(config: RtspConfig) -> Result<Self> {
         ffmpeg::init().context("initialize ffmpeg")?;
-        let mut input =
-            ffmpeg::format::input(&config.url).context("open RTSP input with ffmpeg")?;
+        // Optionally force the RTSP lower transport (e.g. "tcp"/"udp") from
+        // config. Many IP cameras and NVRs only stream reliably over interleaved
+        // TCP. When `transport` is None the libav default is used (UDP-first with
+        // TCP fallback), so behavior is unchanged for existing deployments.
+        let input = match config.transport.as_deref().map(str::trim) {
+            Some(transport) if !transport.is_empty() => {
+                let mut opts = ffmpeg::Dictionary::new();
+                opts.set("rtsp_transport", transport);
+                ffmpeg::format::input_with_dictionary(&config.url, opts)
+                    .context("open RTSP input with ffmpeg")?
+            }
+            _ => ffmpeg::format::input(&config.url).context("open RTSP input with ffmpeg")?,
+        };
         let input_stream = input
             .streams()
             .best(ffmpeg::media::Type::Video)
@@ -79,6 +90,15 @@ impl FfmpegRtspSource {
         let mut decoded = ffmpeg::frame::Video::empty();
         let mut rgb_frame = ffmpeg::frame::Video::empty();
 
+        // Drain any already-decoded frame before pulling new packets, so the
+        // decoder's internal output queue stays bounded — otherwise feeding a
+        // fresh packet on every call while frames sit buffered (B-frames /
+        // multi-frame packets) accumulates latency and memory on long-running
+        // live streams.
+        if self.decoder.receive_frame(&mut decoded).is_ok() {
+            return self.emit_frame(&decoded, &mut rgb_frame);
+        }
+
         for (stream, packet) in self.input.packets() {
             if stream.index() != self.stream_index {
                 continue;
@@ -88,30 +108,40 @@ impl FfmpegRtspSource {
                 .send_packet(&packet)
                 .context("send packet to ffmpeg decoder")?;
 
-            while self.decoder.receive_frame(&mut decoded).is_ok() {
-                self.scaler
-                    .run(&decoded, &mut rgb_frame)
-                    .context("scale frame to RGB")?;
-                let (pixels, width, height) = frame_to_pixels(&rgb_frame)?;
-
-                self.frame_count += 1;
-                self.last_frame_at = Some(Instant::now());
-
-                let timestamp_bucket = TimeBucket::now_10min()?;
-                let features_hash = compute_features_hash(&pixels, self.frame_count);
-
-                return Ok(RawFrame::new(
-                    pixels,
-                    width,
-                    height,
-                    timestamp_bucket,
-                    features_hash,
-                ));
+            if self.decoder.receive_frame(&mut decoded).is_ok() {
+                return self.emit_frame(&decoded, &mut rgb_frame);
             }
         }
 
         self.last_error = Some("ffmpeg stream ended without frames".to_string());
         anyhow::bail!("RTSP stream ended without frames")
+    }
+
+    /// Scale a decoded frame to RGB and wrap it as a `RawFrame`, advancing the
+    /// capture counters. `rgb_frame` is a scratch buffer reused across calls.
+    fn emit_frame(
+        &mut self,
+        decoded: &ffmpeg::frame::Video,
+        rgb_frame: &mut ffmpeg::frame::Video,
+    ) -> Result<RawFrame> {
+        self.scaler
+            .run(decoded, rgb_frame)
+            .context("scale frame to RGB")?;
+        let (pixels, width, height) = frame_to_pixels(rgb_frame)?;
+
+        self.frame_count += 1;
+        self.last_frame_at = Some(Instant::now());
+
+        let timestamp_bucket = TimeBucket::now_10min()?;
+        let features_hash = compute_features_hash(&pixels, self.frame_count);
+
+        Ok(RawFrame::new(
+            pixels,
+            width,
+            height,
+            timestamp_bucket,
+            features_hash,
+        ))
     }
 
     pub(crate) fn is_healthy(&self) -> bool {
@@ -135,20 +165,18 @@ impl FfmpegRtspSource {
     }
 
     fn frame_timeout(&self) -> Duration {
-        let base_ms = if self.config.target_fps == 0 {
-            500
-        } else {
-            (1000 / self.config.target_fps).saturating_mul(4)
-        };
+        let base_ms = 1000u32
+            .checked_div(self.config.target_fps)
+            .map(|hz| hz.saturating_mul(4))
+            .unwrap_or(500);
         Duration::from_millis(base_ms.max(500) as u64)
     }
 
     fn health_grace(&self) -> Duration {
-        let base_ms = if self.config.target_fps == 0 {
-            2_000
-        } else {
-            (1000 / self.config.target_fps).saturating_mul(6)
-        };
+        let base_ms = 1000u32
+            .checked_div(self.config.target_fps)
+            .map(|hz| hz.saturating_mul(6))
+            .unwrap_or(2_000);
         Duration::from_millis(base_ms.max(2_000) as u64)
     }
 
@@ -165,11 +193,11 @@ fn frame_to_pixels(frame: &ffmpeg::frame::Video) -> Result<(Vec<u8>, u32, u32)> 
     let width = frame.width();
     let height = frame.height();
     let row_bytes = (width as usize) * 3;
-    let stride = frame.stride(0) as usize;
+    let stride = frame.stride(0);
     let data = frame.data(0);
 
     if stride == row_bytes {
-        return Ok((data.to_vec(), width as u32, height as u32));
+        return Ok((data.to_vec(), width, height));
     }
 
     let mut pixels = Vec::with_capacity(row_bytes * height as usize);
@@ -182,5 +210,5 @@ fn frame_to_pixels(frame: &ffmpeg::frame::Video) -> Result<(Vec<u8>, u32, u32)> 
         );
     }
 
-    Ok((pixels, width as u32, height as u32))
+    Ok((pixels, width, height))
 }

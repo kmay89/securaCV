@@ -363,6 +363,7 @@ impl IngestSource {
                     width: config.rtsp.width,
                     height: config.rtsp.height,
                     backend: config.rtsp.backend,
+                    transport: config.rtsp.transport.clone(),
                 };
                 Ok(Self::Rtsp(RtspSource::new(rtsp_config)?))
             }

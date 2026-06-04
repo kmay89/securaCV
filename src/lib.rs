@@ -2398,6 +2398,7 @@ impl StubFrameSource {
             width: 640,
             height: 480,
             backend: crate::config::RtspBackendPreference::Auto,
+            transport: None,
         };
         Self {
             source: RtspSource::new(config).expect("stub RTSP source"),
