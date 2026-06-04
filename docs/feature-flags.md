@@ -75,6 +75,7 @@ Source of truth: `Cargo.toml:55-71`. Default build enables **none** of these
 | `ingest-v4l2` | off | stable | `/dev/video*` ingest | keep |
 | `stub-frame-source` | off | stable | Synthetic frames for tests/dev | keep (test affordance) |
 | `backend-tract` | off | exp | ONNX object detection (tract). Off-by-default; default build is frame-diff stub | promote to stable + bundle a model once detection is the documented default (flag-report F-01) |
+| `detect-eval` | off | exp | Perception eval harness (`detect_eval` bin: precision/recall/AP/latency); pulls in `backend-tract` + `image` | keep as a dev/CI eval tool; promote only if it becomes a shipped runtime capability |
 | `adapter-frigate` | off | stable | Frigate event adapter | keep |
 | `adapter-mqtt-sensor` | off | stable | MQTT sensor adapter | keep |
 | `adapter-webhook` | off | stable | Webhook adapter (implies `adapter-mqtt-sensor`) | keep |
