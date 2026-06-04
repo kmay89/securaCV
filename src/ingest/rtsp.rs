@@ -1,6 +1,13 @@
 //! RTSP frame source.
 //!
 //! This module provides `RtspSource` for ingesting frames from IP cameras via RTSP.
+//! `RtspSource` is the single entry point: it is a thin facade over one of three
+//! backends — a synthetic source (for `stub://` URLs / tests), an inline GStreamer
+//! decoder (`rtsp-gstreamer`, the backend the add-on ships), and the FFmpeg decoder
+//! in [`super::rtsp_ffmpeg`] (`rtsp-ffmpeg`). The two real backends are *not* rival
+//! implementations; they share this `RtspSource`/`RawFrame` interface and both emit
+//! frames through [`super::raw_frame_at_capture`], the one capture-time privacy gate,
+//! so they cannot drift apart on timestamp coarsening or feature hashing (F-11).
 //!
 //! The RTSP source is responsible for:
 //! - Connecting to camera streams
@@ -22,12 +29,10 @@ use gstreamer::prelude::*;
 #[cfg(feature = "rtsp-gstreamer")]
 use std::time::{Duration, Instant};
 
-use super::compute_features_hash;
 #[cfg(feature = "rtsp-ffmpeg")]
 use super::rtsp_ffmpeg::FfmpegRtspSource;
 use crate::config::RtspBackendPreference;
 use crate::frame::RawFrame;
-use crate::TimeBucket;
 
 /// Configuration for an RTSP source.
 #[derive(Clone, Debug)]
@@ -227,22 +232,14 @@ impl SyntheticRtspSource {
     fn next_frame(&mut self) -> Result<RawFrame> {
         self.frame_count += 1;
 
-        // Coarsen timestamp at capture time (10-minute buckets)
-        let timestamp_bucket = TimeBucket::now_10min()?;
-
-        // Generate synthetic pixel data
         let pixels = self.generate_synthetic_pixels();
-
-        // Compute non-invertible feature hash
-        let features_hash = compute_features_hash(&pixels, self.frame_count);
-
-        Ok(RawFrame::new(
+        // Coarsen timestamp + compute the feature hash via the shared capture gate.
+        super::raw_frame_at_capture(
             pixels,
             self.config.width,
             self.config.height,
-            timestamp_bucket,
-            features_hash,
-        ))
+            self.frame_count,
+        )
     }
 
     /// Generate synthetic pixel data for testing.
@@ -368,16 +365,7 @@ impl GstreamerRtspSource {
         self.frame_count += 1;
         self.last_frame_at = Some(Instant::now());
 
-        let timestamp_bucket = TimeBucket::now_10min()?;
-        let features_hash = compute_features_hash(&pixels, self.frame_count);
-
-        Ok(RawFrame::new(
-            pixels,
-            width,
-            height,
-            timestamp_bucket,
-            features_hash,
-        ))
+        super::raw_frame_at_capture(pixels, width, height, self.frame_count)
     }
 
     fn is_healthy(&self) -> bool {
