@@ -33,6 +33,7 @@ This specification defines a secure mesh network protocol for SecuraCV Canary de
 3. **Anti-Spoofing**: Cryptographic authentication prevents unauthorized devices from joining
 4. **Privacy Preservation**: Minimal metadata exposure, no raw media transmission
 5. **Resilience**: Works with WiFi, ESP-NOW, or BLE; survives partial network failures
+   *(design goal — see the implementation-status note under §2.2: v0.2 ships ESP-NOW only)*
 
 ### 1.2 Non-Goals
 
@@ -62,6 +63,12 @@ The protocol supports multiple transports, used in priority order:
 1. **ESP-NOW** (Primary): Direct peer-to-peer at 250m range, 1Mbps, encrypted
 2. **WiFi AP Bridge**: Devices on same home network can relay messages
 3. **BLE Beacon** (Fallback): Short-range emergency broadcasts
+
+> **Implementation status (v0.2): only ESP-NOW (1) is implemented.** The WiFi-AP
+> bridge (2) and BLE fallback (3) are specified here but **not yet built** — they are
+> tracked as roadmap items G3/G4 in
+> [`docs/mesh_esp_now_evaluation.md`](../docs/mesh_esp_now_evaluation.md). Until they
+> ship, mesh resilience relies on ESP-NOW alone.
 
 Each transport provides the same logical message interface.
 

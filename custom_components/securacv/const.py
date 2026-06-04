@@ -53,6 +53,13 @@ ALL_TRANSPORTS = [
     TRANSPORT_BLE,
     TRANSPORT_MESH,
     TRANSPORT_CHIRP,
+]
+
+# Declared for forward-compatibility but NOT implemented on any device firmware.
+# Kept out of ALL_TRANSPORTS so the integration never advertises a transport that
+# no device can ever report on. Move an entry up to ALL_TRANSPORTS only once it is
+# actually wired end-to-end.
+FUTURE_TRANSPORTS = [
     TRANSPORT_LORA,
     TRANSPORT_AUDIO,
 ]
@@ -90,6 +97,12 @@ ALL_TAMPER_TYPES = [
     TAMPER_WATCHDOG,
     TAMPER_REBOOT,
     TAMPER_MEMORY,
+]
+
+# Declared for forward-compatibility but NOT implemented: no firmware emits these.
+# Kept out of ALL_TAMPER_TYPES so the integration never advertises a tamper type no
+# device can raise.
+FUTURE_TAMPER_TYPES = [
     TAMPER_AUDIO,
 ]
 
