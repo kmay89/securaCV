@@ -14,6 +14,7 @@ updates:
       prefix: "deps(cargo)"
     groups:
       cargo-minor-patch:
+        patterns: ["*"]
         update-types: ["minor", "patch"]
 
   # Node fleet UI + device-API (npm workspace rooted at canary-vision/).
@@ -26,6 +27,7 @@ updates:
       prefix: "deps(npm)"
     groups:
       npm-minor-patch:
+        patterns: ["*"]
         update-types: ["minor", "patch"]
 
   # GitHub Actions used across .github/workflows/.

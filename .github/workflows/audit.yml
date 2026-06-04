@@ -11,7 +11,10 @@ on:
   pull_request:
     branches: [main]
     paths:
+      - 'Cargo.toml'
       - 'Cargo.lock'
+      - 'canary-vision/package.json'
+      - 'canary-vision/device-api/package.json'
       - 'canary-vision/package-lock.json'
       - '.github/workflows/audit.yml'
 
