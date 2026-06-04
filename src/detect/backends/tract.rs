@@ -429,7 +429,10 @@ impl DetectorBackend for TractBackend {
             .fold(0.0_f32, f32::max);
 
         Ok(DetectionResult {
-            motion_detected: confidence >= self.confidence_threshold,
+            // `detections` is already filtered to entries at/above the threshold, so the presence of
+            // any detection is the signal. Deriving this from `confidence >= threshold` would
+            // spuriously fire on an empty set when the threshold is 0.0 (the max-fold default).
+            motion_detected: !detections.is_empty(),
             detections,
             confidence,
             size_class,

@@ -421,7 +421,7 @@ impl WitnessdConfig {
         if let Ok(conf) = std::env::var("WITNESS_DETECT_CONFIDENCE") {
             if !conf.trim().is_empty() {
                 self.detect.confidence_threshold = conf.trim().parse().map_err(|_| {
-                    anyhow!("WITNESS_DETECT_CONFIDENCE must be a number between 0.0 and 1.0")
+                    anyhow!("WITNESS_DETECT_CONFIDENCE must be a valid floating-point number")
                 })?;
             }
         }
@@ -784,7 +784,10 @@ mod tests {
     fn detect_config_defaults_confidence() {
         let config =
             WitnessdConfig::from_file(WitnessdConfigFile::default()).expect("config should parse");
-        assert_eq!(config.detect.confidence_threshold, DEFAULT_DETECT_CONFIDENCE);
+        assert_eq!(
+            config.detect.confidence_threshold,
+            DEFAULT_DETECT_CONFIDENCE
+        );
     }
 
     #[test]
