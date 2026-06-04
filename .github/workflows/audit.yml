@@ -1,0 +1,42 @@
+name: Dependency Audit
+
+# Flags KNOWN vulnerabilities in the committed lockfiles (HY-06), automating
+# what SECURITY.md tracked by hand. Dependabot (.github/dependabot.yml) is the
+# companion that opens update PRs. Runs weekly, on demand, and on PRs that
+# touch a lockfile — so normal PRs aren't gated on a newly-disclosed CVE.
+on:
+  schedule:
+    - cron: '0 6 * * 1'   # Mondays 06:00 UTC
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'Cargo.lock'
+      - 'canary-vision/package-lock.json'
+      - '.github/workflows/audit.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  cargo-audit:
+    name: cargo audit (Rust)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - name: Audit Cargo.lock against the RustSec advisory DB
+        run: cargo audit
+
+  npm-audit:
+    name: npm audit (canary-vision)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Audit npm deps (fail on high/critical)
+        working-directory: canary-vision
+        run: npm audit --audit-level=high
