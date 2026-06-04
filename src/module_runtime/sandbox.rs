@@ -284,12 +284,21 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn sandbox_blocks_process_exec() {
-        // A backend that shells out (execve) must fail; the denylist blocks exec even though
-        // clone/fork themselves stay allowed for tract's threaded inference.
-        let exec_failed =
-            run_in_sandbox(|| Ok(std::process::Command::new("/bin/true").output().is_err()))
-                .expect("sandbox run should succeed");
-        assert!(exec_failed, "execve should be blocked inside the sandbox");
+        // A backend that shells out (execve) must be denied with EPERM *specifically* — asserting
+        // the errno rather than just "errored" avoids a false pass if the binary were missing.
+        // clone/fork stay allowed so tract's threaded inference is unaffected.
+        let exec_errno = run_in_sandbox(|| {
+            let err = std::process::Command::new("/bin/true")
+                .output()
+                .unwrap_err();
+            Ok(err.raw_os_error())
+        })
+        .expect("sandbox run should succeed");
+        assert_eq!(
+            exec_errno,
+            Some(libc::EPERM),
+            "execve should be denied with EPERM inside the sandbox"
+        );
     }
 
     #[cfg(target_os = "linux")]
@@ -297,8 +306,12 @@ mod tests {
     fn sandbox_blocks_malicious_detector_from_reading_files() {
         use crate::detect::{DetectionCapability, DetectionResult, DetectorBackend, SizeClass};
 
-        // A backend that tries to exfiltrate by reading a file during detect().
-        struct MaliciousBackend;
+        // A backend that tries to exfiltrate by reading a file during detect(). It records the
+        // read's errno so the test can assert the read was *denied* (EPERM), not merely that it
+        // failed — a missing file would also fail and could mask a regression.
+        struct MaliciousBackend {
+            read_errno: Option<i32>,
+        }
         impl DetectorBackend for MaliciousBackend {
             fn name(&self) -> &'static str {
                 "malicious"
@@ -307,10 +320,11 @@ mod tests {
                 true
             }
             fn detect(&mut self, _px: &[u8], _w: u32, _h: u32) -> anyhow::Result<DetectionResult> {
-                // motion_detected doubles as "did the exfil read succeed?"
-                let exfiltrated = std::fs::read("/etc/hosts").is_ok();
+                // /proc/self/cmdline always exists, so a non-EPERM failure can't hide a regression.
+                let err = std::fs::read("/proc/self/cmdline").err();
+                self.read_errno = err.as_ref().and_then(|e| e.raw_os_error());
                 Ok(DetectionResult {
-                    motion_detected: exfiltrated,
+                    motion_detected: err.is_none(), // doubles as "did the exfil read succeed?"
                     detections: Vec::new(),
                     confidence: 0.0,
                     size_class: SizeClass::Unknown,
@@ -318,16 +332,21 @@ mod tests {
             }
         }
 
-        let mut backend = MaliciousBackend;
+        let mut backend = MaliciousBackend { read_errno: None };
         // Run the detector exactly as the kernel does: inside the forked, seccomp child.
-        let exfiltrated = run_in_sandbox(|| {
+        let (exfiltrated, read_errno) = run_in_sandbox(|| {
             let r = backend.detect(&[0u8; 12], 2, 2)?;
-            Ok(r.motion_detected)
+            Ok((r.motion_detected, backend.read_errno))
         })
         .expect("sandbox run should succeed");
         assert!(
             !exfiltrated,
             "a detection backend must not be able to read files inside the sandbox"
+        );
+        assert_eq!(
+            read_errno,
+            Some(libc::EPERM),
+            "the file read must be denied with EPERM, not merely fail"
         );
     }
 
