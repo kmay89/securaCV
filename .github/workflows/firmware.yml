@@ -282,6 +282,24 @@ jobs:
           echo "::error::Add '[archive-edit]' to the PR title, body, or a commit message if this is an intentional backport."
           exit 1
 
+  features-dashboard-guard:
+    name: Feature-Parity Dashboard Guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Guard against unacknowledged capability downgrades
+        # Fails if a ✅ cell in firmware/FEATURES.md's Feature-Parity Dashboard
+        # drops to ⚠️/❌ without an issue reference in the PR body.
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: python3 firmware/scripts/features_dashboard_guard.py
+
   csi-invariants:
     name: CSI Privacy Invariants
     runs-on: ubuntu-latest
