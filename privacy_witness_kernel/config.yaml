@@ -6,6 +6,10 @@ description: "Privacy-preserving video surveillance that produces claims, not re
 version: "0.5.0"
 slug: "privacy_witness_kernel"
 url: "https://github.com/kmay89/securaCV"
+# Pre-built multi-arch image published by .github/workflows/addon-image.yml.
+# With `image:` set, the Supervisor PULLS this instead of compiling the Rust
+# kernel on-device (a slow/heavy build on a Pi). {arch} is substituted by HA.
+image: "ghcr.io/kmay89/{arch}-addon-privacy_witness_kernel"
 arch:
   - amd64
   - aarch64

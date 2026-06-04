@@ -11,6 +11,12 @@ Privacy-preserving video surveillance that produces **claims, not recordings**.
 
 2. Install "Privacy Witness Kernel"
 
+   Installation **pulls a pre-built image** (`ghcr.io/kmay89/<arch>-addon-privacy_witness_kernel`,
+   published for `amd64` and `aarch64` by the [`Add-on image`](../.github/workflows/addon-image.yml)
+   workflow) — the Supervisor does **not** compile the Rust kernel on your device, so installs are
+   fast even on a Raspberry Pi. No `curl | bash`. The image is built and verified entirely from this
+   repo on GitHub; nothing is fetched from a third party at runtime (local-only custody, Inv. IV).
+
 3. Configure:
    ```yaml
    device_key_seed: "your-64-character-hex-key"  # openssl rand -hex 32

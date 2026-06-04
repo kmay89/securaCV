@@ -18,6 +18,8 @@
 use anyhow::Context;
 use anyhow::Result;
 #[cfg(feature = "rtsp-gstreamer")]
+use gstreamer::prelude::*;
+#[cfg(feature = "rtsp-gstreamer")]
 use std::time::{Duration, Instant};
 
 use super::compute_features_hash;
@@ -310,7 +312,7 @@ impl GstreamerRtspSource {
              appsink name=appsink sync=false max-buffers=1 drop=true",
             config.url
         );
-        let pipeline = gstreamer::parse_launch(&pipeline_description)
+        let pipeline = gstreamer::parse::launch(&pipeline_description)
             .context("build RTSP pipeline")?
             .downcast::<gstreamer::Pipeline>()
             .map_err(|_| anyhow::anyhow!("RTSP pipeline is not a Pipeline"))?;
@@ -352,11 +354,13 @@ impl GstreamerRtspSource {
     fn next_frame(&mut self) -> Result<RawFrame> {
         self.poll_bus();
 
-        let timeout = self.frame_timeout();
+        // gstreamer 0.23: try_pull_sample takes an Option<ClockTime> and returns
+        // Option<Sample> (None on timeout/EOS), so convert the Duration and treat
+        // None as a stall.
+        let timeout = gstreamer::ClockTime::from_mseconds(self.frame_timeout().as_millis() as u64);
         let sample = self
             .appsink
             .try_pull_sample(timeout)
-            .context("pull RTSP sample")?
             .ok_or_else(|| anyhow::anyhow!("RTSP stream stalled"))?;
 
         let (pixels, width, height) = sample_to_pixels(&sample)?;
@@ -416,7 +420,8 @@ impl GstreamerRtspSource {
         let Some(bus) = self.pipeline.bus() else {
             return;
         };
-        while let Some(message) = bus.timed_pop(Duration::from_millis(0)) {
+        // ClockTime::ZERO = non-blocking poll (gstreamer 0.23 wants Option<ClockTime>).
+        while let Some(message) = bus.timed_pop(gstreamer::ClockTime::ZERO) {
             use gstreamer::MessageView;
             match message.view() {
                 MessageView::Error(err) => {
@@ -445,7 +450,7 @@ fn sample_to_pixels(sample: &gstreamer::Sample) -> Result<(Vec<u8>, u32, u32)> {
     let width = info.width() as u32;
     let height = info.height() as u32;
     let row_bytes = (width as usize) * 3;
-    let stride = info.stride(0) as usize;
+    let stride = info.stride()[0] as usize;
 
     let map = buffer.map_readable().context("map RTSP buffer")?;
     let data = map.as_slice();

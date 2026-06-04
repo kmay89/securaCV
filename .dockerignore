@@ -1,0 +1,9 @@
+# Shared by every Docker build that uses the repository root as context — both the
+# root Dockerfile (docs/container.md, docs/ci.md) and the HA add-on
+# (privacy_witness_kernel/Dockerfile). Only exclude large/irrelevant paths that NO
+# Dockerfile copies. In particular do NOT exclude docs/ or tests/ — the root
+# Dockerfile COPYs them. target/ alone is ~13 GB, which is the real problem here.
+target/
+**/target/
+.git/
+**/node_modules/

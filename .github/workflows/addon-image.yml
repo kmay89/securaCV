@@ -1,0 +1,106 @@
+name: Add-on image
+
+# Build (and publish) the Privacy Witness Kernel Home Assistant add-on image.
+#
+# The add-on Dockerfile builds the Rust kernel from source and must run with the
+# repository root as the build context (it does `COPY . .` for the crate and
+# `COPY privacy_witness_kernel/...` for the scripts), so we use
+# docker/build-push-action with `context: .` rather than the stock
+# home-assistant/builder action (which builds from the add-on directory).
+#
+# - On pull requests: build amd64 only, no push — validates that the image builds.
+# - On push to main / version tags: build amd64 + aarch64 and push to GHCR using
+#   the `{arch}-addon-<slug>` naming the Supervisor expects (see config.yaml `image:`).
+
+on:
+  pull_request:
+    paths:
+      - "privacy_witness_kernel/**"
+      - "src/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".dockerignore"
+      - ".github/workflows/addon-image.yml"
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths:
+      - "privacy_witness_kernel/**"
+      - "src/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".dockerignore"
+      - ".github/workflows/addon-image.yml"
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+          - arch: aarch64
+            platform: linux/arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      # The aarch64 build runs under QEMU (slow). Skip it on pull requests and
+      # validate amd64 only; the full multi-arch push happens on main / tags.
+      - name: Decide whether to build this arch
+        id: gate
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ] && [ "${{ matrix.arch }}" != "amd64" ]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Resolve image name and version
+        if: steps.gate.outputs.run == 'true'
+        id: meta
+        run: |
+          version=$(grep -E '^version:' privacy_witness_kernel/config.yaml | head -1 | sed -E 's/version:[[:space:]]*//; s/"//g' | tr -d "'")
+          owner=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "image=ghcr.io/${owner}/${{ matrix.arch }}-addon-privacy_witness_kernel" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        if: steps.gate.outputs.run == 'true' && matrix.arch != 'amd64'
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        if: steps.gate.outputs.run == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      # Authenticate to GHCR before building. This is required even on PRs (which
+      # don't push): anonymous pulls of the public home-assistant base image hit a
+      # 403 on GHCR's token endpoint, so we pull with the GITHUB_TOKEN. Pushing the
+      # result is still gated separately by build-push-action's `push:` below.
+      - name: Log in to GHCR
+        if: steps.gate.outputs.run == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build add-on image${{ github.event_name != 'pull_request' && ' (and push)' || ' (validate only)' }}
+        if: steps.gate.outputs.run == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: privacy_witness_kernel/Dockerfile
+          platforms: ${{ matrix.platform }}
+          build-args: |
+            BUILD_FROM=ghcr.io/hassio-addons/base:14.1.3
+          push: ${{ github.event_name != 'pull_request' }}
+          provenance: false
+          tags: |
+            ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }}
+            ${{ steps.meta.outputs.image }}:latest

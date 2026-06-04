@@ -1,28 +1,45 @@
 # Privacy Witness Kernel - Home Assistant Add-on
-# Multi-stage build for minimal image size
+#
+# Multi-stage build. Both stages use the SAME Home Assistant add-on base
+# (Alpine + s6-overlay + bashio, published multi-arch), so the build-time and
+# runtime musl / GStreamer ABIs match exactly and run.sh gets the
+# `with-contenv` / `bashio` it relies on. The base is selected via BUILD_FROM
+# and is the only external image this add-on depends on.
+ARG BUILD_FROM=ghcr.io/hassio-addons/base:14.1.3
 
-ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base-rust:latest
-FROM ${BUILD_FROM} as builder
+# Builder: pinned to the SAME Alpine release as the runtime add-on base
+# (hassio-addons/base 14.1.3 == Alpine 3.18, GStreamer 1.22, SQLite 3.41), so the
+# compiled binaries link against the exact C-library sonames present at runtime.
+# Alpine 3.18's own Rust is too old (1.71) for this crate's dependencies, so we
+# install a current stable toolchain via rustup (which targets musl on Alpine).
+FROM docker.io/library/alpine:3.18 AS builder
 
-# Install build dependencies
 RUN apk add --no-cache \
-    musl-dev \
-    pkgconf \
-    gstreamer-dev \
-    gst-plugins-base-dev \
+    build-base cmake perl pkgconf linux-headers musl-dev \
+    curl ca-certificates \
+    gstreamer-dev gst-plugins-base-dev \
     libseccomp-dev \
-    sqlite-dev
+    sqlite-dev \
+    openssl-dev
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+      | sh -s -- -y --profile minimal --default-toolchain stable
+ENV PATH="/root/.cargo/bin:${PATH}"
 
 WORKDIR /build
 COPY . .
 
-# Build with GStreamer support for real RTSP streams
-RUN cargo build --release --features rtsp-gstreamer
+# Build with GStreamer support for real RTSP streams.
+# Disable crt-static: the musl target links fully static by default, but Alpine ships only
+# shared (.so) GStreamer/GLib/seccomp libraries (no static archives), so link dynamically
+# instead. The runtime stage is the same Alpine release and provides all of these .so libs.
+RUN RUSTFLAGS="-C target-feature=-crt-static" cargo build --release --features rtsp-gstreamer
 
 # Runtime stage
 FROM ${BUILD_FROM}
 
-# Install runtime dependencies
+# Install runtime dependencies. Note: libcrypto.so.3 (needed by the SQLCipher-linked
+# binaries) is already provided by the base image's pinned libcrypto3/libssl3, so we must
+# NOT pull the `openssl` metapackage here — it wants a newer revision and breaks that pin.
 RUN apk add --no-cache \
     gstreamer \
     gst-plugins-base \
