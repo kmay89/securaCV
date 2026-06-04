@@ -83,7 +83,15 @@ below — but nothing documented is allowed to be aspirational at the v1 tag.
   real-decode ingest gates: `ingest-ffmpeg` (file → signed log) and
   `ingest-rtsp`, which serves the committed fixture over RTSP (MediaMTX + ffmpeg
   publisher) and drives the real `RtspSource` end-to-end through
-  decode → detection → signed events → verify (`tests/rtsp_e2e.rs`).
+  decode → detection → signed events → verify (`tests/rtsp_e2e.rs`). A third
+  end-to-end gate, **`frigate-mqtt-e2e`**, covers the Frigate → MQTT path:
+  `tests/frigate_mqtt_e2e.rs` drives a `frigate/events` payload through the bridge
+  pipeline into a SQLCipher-encrypted sealed log and verifies it with the real
+  `log_verify` binary, while the CI job runs the real `frigate_bridge` ingesting a
+  message from a live mosquitto broker (`integrations/ha_frigate_mqtt/ci_smoke.sh`).
+  `verify_pipeline.sh` was corrected (it queried the encrypted DB with plain
+  sqlite3, expected vault envelopes the bridge never creates, and a break-glass
+  export bundle nothing generates) and is now an honest manual operator smoke check.
 - **Security docs**: the **audit boundary vs security boundary** distinction is now
   stated authoritatively in `docs/security/THREAT_MODEL.md` (*Trust Boundaries*):
   which producer surfaces (`DetectorBackend`, `SensorAdapter`, the `InferenceView`

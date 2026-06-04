@@ -78,6 +78,19 @@ mosquitto_sub -h localhost -u securacv -P <password> -t 'homeassistant/#' -v
 mosquitto_sub -h localhost -u securacv -P <password> -t 'witness/#' -v
 ```
 
+## Verifying the pipeline
+
+- **Automated (no Docker needed):** the SecuraCV-owned path is gated in CI.
+  - `cargo test --test frigate_mqtt_e2e` — a `frigate/events` payload → sealed log →
+    real `log_verify` against the SQLCipher-encrypted DB.
+  - `./ci_smoke.sh` — the real `frigate_bridge` binary ingesting a `frigate/events`
+    message from a live mosquitto broker (run `BRIDGE_BIN=path/to/frigate_bridge ./ci_smoke.sh`).
+- **Manual operator smoke check:** `./verify_pipeline.sh` against the live 4-container
+  stack above. It confirms Frigate is publishing and `frigate_bridge` is ingesting; it
+  does not read the encrypted `witness.db` directly, expect vault envelopes, or build a
+  break-glass export bundle (none of which this bridge produces). Set `MQTT_USER`/`MQTT_PASS`
+  if your broker requires auth.
+
 ## Notes
 
 - This setup keeps MQTT as the shared event bus across Frigate, SecuraCV, and Home Assistant.

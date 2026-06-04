@@ -47,8 +47,13 @@ This is a **higher** bar than the earlier "minimally credible" framing, so adopt
 remaining gaps explicit rather than waiving them. **Open blockers to this bar (must close before
 tagging v1):**
 
-- The Frigate → Home Assistant MQTT pipeline passes the release gate end-to-end —
-  `integrations/ha_frigate_mqtt/verify_pipeline.sh` exits `0` against a live stack (README release gate).
+- ~~The Frigate → Home Assistant MQTT pipeline passes the release gate end-to-end —
+  `integrations/ha_frigate_mqtt/verify_pipeline.sh` exits `0` against a live stack.~~ **Automated in
+  CI:** `cargo test --test frigate_mqtt_e2e` drives a `frigate/events` payload → sealed log → real
+  `log_verify` (encrypted DB), and the `frigate-mqtt-e2e` job runs the real `frigate_bridge` binary
+  ingesting from a live mosquitto broker (`ci_smoke.sh`). The full 4-container operator stack with
+  real Frigate ML detection (`verify_pipeline.sh`, now corrected) stays a manual smoke check, since
+  ML detection on a fixture isn't deterministic.
 - ~~The "audit boundary vs security boundary" documentation item (Acceptance, below) is still open.~~
   **Closed:** stated authoritatively in [`docs/security/THREAT_MODEL.md`](docs/security/THREAT_MODEL.md)
   under *Trust Boundaries → Audit Boundary vs Security Boundary*.
@@ -191,7 +196,9 @@ the v1 Definition and Acceptance Criteria.)
 - [x] Can process video from file
 - [x] Documentation states audit boundary vs security boundary (`docs/security/THREAT_MODEL.md` → *Trust Boundaries*)
 - [x] RTSP ingestion works end-to-end (ffmpeg path; `ingest-rtsp` CI job + `tests/rtsp_e2e.rs`)
-- [ ] Frigate → HA MQTT release gate passes (`integrations/ha_frigate_mqtt/verify_pipeline.sh` == 0)
+- [x] Frigate → HA MQTT pipeline gated in CI — `frigate_mqtt_e2e` (event → sealed log → `log_verify`)
+  + `frigate-mqtt-e2e` job (real bridge ingesting from a live mosquitto broker). The 4-container
+  operator stack (`verify_pipeline.sh`) remains a manual smoke check.
 - [ ] Firmware APIs expose no raw MAC / precise GPS (documented invariants hold on-device)
 
 ### Nice to have:
