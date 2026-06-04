@@ -1,15 +1,9 @@
-# Keep the add-on Docker build context small. The add-on Dockerfile
-# (privacy_witness_kernel/Dockerfile) builds with the repository root as its
-# context — it compiles the Rust kernel from src/ + Cargo.* and copies the
-# add-on scripts under privacy_witness_kernel/. Nothing else is needed, and
-# target/ alone is ~13 GB.
+# Shared by every Docker build that uses the repository root as context — both the
+# root Dockerfile (docs/container.md, docs/ci.md) and the HA add-on
+# (privacy_witness_kernel/Dockerfile). Only exclude large/irrelevant paths that NO
+# Dockerfile copies. In particular do NOT exclude docs/ or tests/ — the root
+# Dockerfile COPYs them. target/ alone is ~13 GB, which is the real problem here.
 target/
 **/target/
 .git/
 **/node_modules/
-firmware/
-viewer/
-canary-vision/
-docs/
-tests/
-*.log

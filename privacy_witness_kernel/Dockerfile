@@ -7,17 +7,22 @@
 # and is the only external image this add-on depends on.
 ARG BUILD_FROM=ghcr.io/hassio-addons/base:14.1.3
 
-FROM ${BUILD_FROM} AS builder
+# Builder: pinned to the SAME Alpine release as the runtime add-on base
+# (hassio-addons/base 14.1.3 == Alpine 3.18, GStreamer 1.22, SQLite 3.41), so the
+# compiled binaries link against the exact C-library sonames present at runtime.
+# Alpine 3.18's own Rust is too old (1.71) for this crate's dependencies, so we
+# install a current stable toolchain via rustup (which targets musl on Alpine).
+FROM docker.io/library/alpine:3.18 AS builder
 
-# Rust toolchain + dev libraries to build the kernel with GStreamer RTSP support.
-# build-base/cmake/perl/linux-headers are required by the native crypto crates
-# (aws-lc-sys, ring); the rest cover GStreamer, seccomp, and SQLite.
 RUN apk add --no-cache \
-    rust cargo \
     build-base cmake perl pkgconf linux-headers musl-dev \
+    curl ca-certificates \
     gstreamer-dev gst-plugins-base-dev \
     libseccomp-dev \
     sqlite-dev
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+      | sh -s -- -y --profile minimal --default-toolchain stable
+ENV PATH="/root/.cargo/bin:${PATH}"
 
 WORKDIR /build
 COPY . .
