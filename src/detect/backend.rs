@@ -16,16 +16,20 @@ pub enum DetectionCapability {
 
 /// Detector backend trait.
 ///
-/// # Audit Boundary
+/// # Audit + sandbox boundary
 ///
-/// This trait defines an AUDIT BOUNDARY, not a security boundary.
-/// Implementations MUST be manually audited to ensure they:
+/// This trait defines an API contract that still MUST be manually audited to ensure
+/// implementations:
 /// - Do not store raw pixels beyond the `detect` call
-/// - Do not write to disk
-/// - Do not make network requests
 /// - Do not compute identity-linked outputs
 ///
-/// Backends execute with full process privileges until sandboxing is implemented.
+/// In the production pipeline, `detect` additionally runs inside a forked, seccomp-restricted
+/// child process (see [`crate::module_runtime::CapabilityBoundaryRuntime::execute_sandboxed`],
+/// used by `witnessd`). That child denies the filesystem, network, `execve`, `ptrace`, and
+/// `process_vm_*` syscalls, so a malicious or buggy backend cannot write to disk, make network
+/// requests, shell out, or read the parent's key material — even if the manual audit misses
+/// something. The boundary is a syscall *denylist* (defense in depth), not an airtight allowlist,
+/// and like all kernel guarantees it assumes an uncompromised host (see `docs/root_paradox.md`).
 pub trait DetectorBackend: Send {
     /// Backend identifier.
     fn name(&self) -> &'static str;

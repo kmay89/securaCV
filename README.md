@@ -14,8 +14,9 @@ tamper-proof log that proves nobody — including you — altered the record.
 - **No subscription.** It runs on your own hardware. There is no monthly fee, ever.
 - **Private by design.** No faces, no plates, no precise timestamps — the kernel turns camera
   detections into semantic events and never persists raw frames, with the privacy rules written
-  in code and spec rather than promised in a policy. (Detection backends are an *audited*
-  boundary, not a sandbox — see [`AGENTS.md`](AGENTS.md).)
+  in code and spec rather than promised in a policy. (Detection runs inside a forked,
+  seccomp-restricted sandbox that blocks disk, network, and key-exfil syscalls — see
+  [`AGENTS.md`](AGENTS.md).)
 - **Tamper-proof proof.** Every event is cryptographically signed and hash-chained. If anyone
   alters the record, the signature breaks and verification fails.
 
