@@ -30,7 +30,7 @@
 | F-11 | Minor | ✅ Resolved (#688) | Ingest dup | **Two RTSP** implementations (`rtsp.rs` vs `rtsp_ffmpeg.rs`) risk divergence. |
 | F-12 | Doc-debt | ✅ Resolved (#673/#706) | README | README has live **TODOs** (missing screenshot) and ships "core works end-to-end" beside an unshipped v1. |
 | F-13 | Doc-debt | ✅ Resolved (#673) | Roadmap | `v1-roadmap.md` overclaims completion (✅) on items contradicted by code (F-01) and omits shipped work (PQC, adapters). |
-| F-14 | Minor | ⬜ Open | Spec maturity | Many normative specs are `_v0` / "Draft v0.1" but referenced as if stable contracts. |
+| F-14 | Minor | ✅ Resolved (#707) | Spec maturity | Many normative specs are `_v0` / "Draft v0.1" but referenced as if stable contracts. |
 | F-15 | Minor | ✅ Resolved (CI) | Build env | Tests need `libseccomp`; firmware needs `pio`/`arduino-cli` — none present in the audit env, so "passes cleanly" is **unverified here**. |
 
 ---
@@ -229,7 +229,12 @@ multi-path mesh resilience story has unbuilt legs. **Fix:** scope mesh claims to
 >   honest verification badges and linking the [card guide](../lovelace_timeline.md). (A photographed
 >   dashboard screenshot remains a nice-to-have, but there is no longer a live TODO or an undocumented
 >   payoff.)
-> - **F-14 ⬜ Open** — spec maturity column not yet added.
+> - **F-14 ✅ Resolved (#707)** — `spec/README.md` now opens with a maturity legend and an index
+>   table giving every spec a maturity bucket (🟢 Stable / 🟡 Draft / ⚪ Spec-only · Positioning)
+>   alongside its self-declared `Status` and role, so re-implementers can tell the implemented,
+>   CI-exercised contracts (invariants, event_contract, evidence_envelope, sensor_adapter_contract,
+>   break_glass, threat_model) from the `_v0` drafts and the explicitly spec-only / not-yet-implemented
+>   ones (the mesh/RF set tied to F-07/F-08, `beacon_cap_gateway_v0`).
 > - **F-15 ✅ Resolved (CI)** — "passes cleanly" is now CI-verified, not just claimed: `rust.yml`
 >   runs `cargo test` (with `libseccomp`), plus the RTSP (#666) and Frigate→MQTT (#672) e2e gates
 >   and firmware CI, all green on `main`. The original caveat was about the *audit* environment.
