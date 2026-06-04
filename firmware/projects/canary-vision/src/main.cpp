@@ -176,7 +176,7 @@ void setup() {
   boot_line("              | |");
   boot_separator();
   boot_kv("Device ID", DEVICE_ID);
-  char devid_hex[device_pseudonym::HEX_LEN + 1];
+  char devid_hex[device_pseudonym::HEX_LEN + 1] = {0};
   if (device_pseudonym::device_id_hex(devid_hex, sizeof(devid_hex))) {
     boot_kv("Hardware ID", devid_hex);  // salted pseudonym, not the raw MAC
   }

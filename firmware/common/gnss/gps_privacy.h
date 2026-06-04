@@ -26,11 +26,11 @@ namespace gps {
 inline double coarsen_deg(double deg, int dp = 3) {
   if (!std::isfinite(deg)) return deg;
   if (dp < 0) dp = 0;
+  if (dp > 9) dp = 9;  // bound the scale; 9 dp is already sub-millimetre
   double scale = 1.0;
   for (int i = 0; i < dp; ++i) scale *= 10.0;
-  const double v = deg * scale;
-  const double r = (v < 0.0) ? -std::floor(-v + 0.5) : std::floor(v + 0.5);
-  return r / scale;
+  // std::round is round-half-away-from-zero, so the sign is preserved symmetrically.
+  return std::round(deg * scale) / scale;
 }
 
 }  // namespace gps

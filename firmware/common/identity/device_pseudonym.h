@@ -91,6 +91,13 @@ inline bool derive(const uint8_t* secret, size_t secret_len,
 // (Arduino Preferences, namespace "securacv_id", key "id_salt") and write the
 // pseudonym hex. Reads no hardware MAC; never exposes a trackable ID. The salt is
 // fixed for the device's lifetime, so the result is computed once and cached in RAM.
+//
+// This is a single `inline` function with external linkage, so its `cached` static
+// is ONE object shared across every translation unit that includes this header
+// (guaranteed by [dcl.fct.spec]). The first caller in a boot populates it and all
+// later callers — e.g. the boot banner and the MQTT client ID — return the same
+// value, including on the NVS-unavailable fallback path. The handle never diverges
+// by caller within a boot.
 inline bool device_id_hex(char* out_hex, size_t out_len) {
   if (out_hex == nullptr || out_len < HEX_LEN + 1) return false;
 
