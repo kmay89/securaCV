@@ -66,6 +66,10 @@ tagging v1):**
   (`firmware/common/identity/`) and GPS through `gps_coarsen_deg` (`firmware/common/gnss/`);
   `regression_check.sh` hard-fails on raw MAC or un-coarsened lat/lon in *any* tree
   (see `firmware/projects/canary-wap/ENTERPRISE_READINESS_TODO.md`).
+- **Still open:** all of the above gates are green **in CI**, but the v1 tag also waits on
+  **on-device hardware validation** (the kernel/bridge pipeline and firmware exercised on real
+  ESP32 devices, not just CI). Until that's done the README status stays `v1-rc`, the
+  `CHANGELOG.md` `[1.0.0]` entry stays `Unreleased`, and no tag is cut.
 
 ---
 
