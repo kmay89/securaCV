@@ -29,7 +29,10 @@ WORKDIR /build
 COPY . .
 
 # Build with GStreamer support for real RTSP streams.
-RUN cargo build --release --features rtsp-gstreamer
+# Disable crt-static: the musl target links fully static by default, but Alpine ships only
+# shared (.so) GStreamer/GLib/seccomp libraries (no static archives), so link dynamically
+# instead. The runtime stage is the same Alpine release and provides all of these .so libs.
+RUN RUSTFLAGS="-C target-feature=-crt-static" cargo build --release --features rtsp-gstreamer
 
 # Runtime stage
 FROM ${BUILD_FROM}
