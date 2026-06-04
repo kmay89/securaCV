@@ -1,0 +1,37 @@
+# Python tooling config for the SecuraCV Home Assistant integration.
+# Scope is deliberately the integration (custom_components/securacv); the rest
+# of the repo's Python (scripts, eval samples, firmware tooling) is not gated
+# here yet. CI runs: ruff check, mypy, and the integration pytest suite.
+# See docs/review/03-feature-flags-and-hygiene.md (HY-04/05).
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+# Conservative, high-signal set mirroring ruff's default: pyflakes (F, real
+# bugs — unused/undefined names) plus the actionable pycodestyle error groups.
+# Stylistic/churny families (import-sorting I, pyupgrade UP, bugbear B) are
+# intentionally deferred to a follow-up so this PR introduces the gate without
+# a large reformat. See docs/review/03-feature-flags-and-hygiene.md.
+select = ["E4", "E7", "E9", "F"]
+
+[tool.mypy]
+python_version = "3.11"
+# Home Assistant is not installed in CI (the tests use lightweight stubs from
+# the repo-root conftest), so treat its imports as untyped rather than erroring.
+ignore_missing_imports = true
+files = ["custom_components/securacv"]
+warn_unused_ignores = true
+
+# config_flow subclasses HA's ConfigFlow with `domain=`; without a real HA
+# install that base class is untyped and the subclass kwarg can't be checked.
+# The test package installs runtime stubs that mypy can't model. Keep both
+# checked-but-non-blocking until full HA test deps are wired in.
+# Module names are rooted at `securacv` (custom_components/ is not a package).
+[[tool.mypy.overrides]]
+module = [
+    "securacv.config_flow",
+    "securacv.tests.*",
+]
+ignore_errors = true

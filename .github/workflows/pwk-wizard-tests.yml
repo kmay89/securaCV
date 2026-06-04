@@ -1,10 +1,10 @@
 name: PWK Wizard Tests
 
 # Scoped to the Privacy Witness Kernel add-on only. Runs the pairing-
-# wizard proxy unit tests (PR-8). Intentionally does NOT run the
-# custom_components/securacv tests, which are not wired into CI and may
-# be red. Triggers only on changes under privacy_witness_kernel/** so it
-# stays off the firmware build path.
+# wizard proxy unit tests (PR-8). The custom_components/securacv tests are
+# run separately by python.yml (ruff + mypy + pytest). Triggers only on
+# changes under privacy_witness_kernel/** so it stays off the firmware
+# build path.
 
 on:
   push:

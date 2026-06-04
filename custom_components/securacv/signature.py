@@ -22,6 +22,7 @@ exception.
 from __future__ import annotations
 
 import base64
+import binascii
 import logging
 from typing import Any, Optional
 
@@ -81,7 +82,7 @@ def _verify_raw(
     payload to be treated as "trusted just because verify didn't crash"."""
     try:
         sig = _b64url_decode_nopad(sig_b64url)
-    except (ValueError, base64.binascii.Error):
+    except (ValueError, binascii.Error):
         return False
     if len(sig) != 64:
         return False

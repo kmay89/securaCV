@@ -1,0 +1,9 @@
+# Pinned dev/test dependencies for the SecuraCV Home Assistant integration (HY-05).
+# Keeps CI reproducible. Runtime deps stay declared in
+# custom_components/securacv/manifest.json (currently none beyond HA core).
+#
+# Install:  pip install -r requirements_test.txt
+cryptography==44.0.0   # tests/test_signature.py + signature.py Ed25519 verify
+pytest==8.3.4
+ruff==0.15.8
+mypy==1.19.1
