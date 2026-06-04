@@ -1,8 +1,30 @@
 #!/usr/bin/env bash
+#
+# verify_pipeline.sh — operator smoke check for the live 4-container stack
+# (mosquitto + Frigate + Home Assistant + SecuraCV) brought up via
+# docker-compose.yml in this directory.
+#
+# It confirms the parts an operator can observe without secrets: that Frigate is
+# publishing to MQTT and that `frigate_bridge` is ingesting those events into the
+# sealed log. It deliberately does NOT:
+#   • read witness.db directly — the kernel stores it SQLCipher-encrypted, so a
+#     plain sqlite3 query cannot open it;
+#   • expect vault envelopes — `frigate_bridge` sign-seals the append-only log, it
+#     does not vault-seal frames;
+#   • produce an export bundle — that requires a break-glass quorum token, which
+#     is out of scope for a smoke check.
+#
+# The deterministic, automated gate for the SecuraCV-owned pipeline lives in CI:
+#   • `cargo test --test frigate_mqtt_e2e` — a Frigate event → sealed log → real
+#     `log_verify` (against the encrypted DB), no Docker required; and
+#   • `integrations/ha_frigate_mqtt/ci_smoke.sh` — the real `frigate_bridge`
+#     binary ingesting a `frigate/events` message from a live mosquitto broker.
+#
+# If your broker requires authentication (mosquitto.conf disables anonymous
+# access), export MQTT_USER / MQTT_PASS before running.
 set -euo pipefail
 
 failures=0
-export_bundle_path=""
 
 compose_cmd=(docker compose)
 if ! docker compose version >/dev/null 2>&1; then
@@ -12,6 +34,13 @@ if ! docker compose version >/dev/null 2>&1; then
     echo "❌ docker compose is required but not available." >&2
     exit 1
   fi
+fi
+
+MQTT_USER="${MQTT_USER:-}"
+MQTT_PASS="${MQTT_PASS:-}"
+mqtt_auth=()
+if [[ -n "$MQTT_USER" ]]; then
+  mqtt_auth=(-u "$MQTT_USER" -P "$MQTT_PASS")
 fi
 
 step() {
@@ -27,9 +56,11 @@ step() {
   echo
 }
 
-mqtt_step() {
+# Frigate publishes detections to frigate/events. Wait up to 15s for one.
+check_mqtt_publishes() {
   local output
-  output=$("${compose_cmd[@]}" exec -T mosquitto sh -c "mosquitto_sub -t 'frigate/events' -C 1 -W 15" 2>/dev/null || true)
+  output=$("${compose_cmd[@]}" exec -T mosquitto \
+    mosquitto_sub "${mqtt_auth[@]}" -t 'frigate/events' -C 1 -W 15 2>/dev/null || true)
   if [[ -n "$output" ]]; then
     printf '%s\n' "$output" | head -n 1
     return 0
@@ -37,85 +68,31 @@ mqtt_step() {
   return 1
 }
 
-python_cmd() {
-  "${compose_cmd[@]}" exec -T securacv sh -c 'command -v python3 >/dev/null 2>&1 && echo python3 || command -v python >/dev/null 2>&1 && echo python'
-}
-
-query_count() {
-  local sql=$1
-  local py
-  py=$(python_cmd | tr -d '\r')
-  if [[ -z "$py" ]]; then
-    echo "python not available in securacv container" >&2
-    return 1
-  fi
-  "${compose_cmd[@]}" exec -T securacv sh -c "$py - <<'PY'
-import sqlite3
-conn = sqlite3.connect('/data/witness.db')
-count = conn.execute(\"$sql\").fetchone()[0]
-print(count)
-PY"
-}
-
-check_ingest() {
-  local count
-  count=$(query_count "SELECT COUNT(*) FROM sealed_events" 2>/dev/null || true)
-  if [[ -n "$count" && "$count" -ge 1 ]]; then
-    echo "sealed_events: $count"
+# frigate_bridge logs "Event logged: ..." on every successful append to the
+# sealed log. This works regardless of DB encryption and needs no secrets.
+check_bridge_ingests() {
+  local logs
+  logs=$("${compose_cmd[@]}" logs --tail 200 --no-color securacv 2>/dev/null || true)
+  if printf '%s\n' "$logs" | grep -q "Event logged"; then
+    printf '%s\n' "$logs" | grep "Event logged" | tail -n 1
     return 0
   fi
   return 1
 }
 
-check_db_records() {
-  if ! "${compose_cmd[@]}" exec -T securacv sh -c "test -s /data/witness.db"; then
-    return 1
-  fi
-  local count
-  count=$(query_count "SELECT COUNT(*) FROM checkpoints" 2>/dev/null || true)
-  if [[ -n "$count" && "$count" -ge 1 ]]; then
-    echo "checkpoints: $count"
-    return 0
-  fi
-  return 1
+# The encrypted sealed-log DB exists and is non-empty.
+check_db_exists() {
+  "${compose_cmd[@]}" exec -T securacv sh -c "test -s /data/witness.db"
 }
 
-check_vault_envelopes() {
-  local count
-  count=$("${compose_cmd[@]}" exec -T securacv sh -c "find /data/vault/envelopes -type f 2>/dev/null | wc -l" || true)
-  if [[ -n "$count" && "$count" -ge 1 ]]; then
-    echo "envelopes: $count"
-    return 0
-  fi
-  return 1
-}
-
-check_export_bundle() {
-  export_bundle_path=$("${compose_cmd[@]}" exec -T securacv sh -c "find /data -maxdepth 3 -type f -name '*export*bundle*.json' -print -quit" || true)
-  if [[ -n "$export_bundle_path" ]]; then
-    echo "bundle: $export_bundle_path"
-    return 0
-  fi
-  return 1
-}
-
-check_verify_cli() {
-  if [[ -n "$export_bundle_path" ]]; then
-    "${compose_cmd[@]}" exec -T securacv export_verify --db /data/witness.db "$export_bundle_path"
-    return $?
-  fi
-  "${compose_cmd[@]}" exec -T securacv log_verify --db /data/witness.db
-}
-
-step "Confirm MQTT publishes Frigate events" mqtt_step
-step "Confirm SecuraCV ingests at least one event" check_ingest
-step "Confirm SecuraCV DB exists and has records" check_db_records
-step "Confirm vault sealing created at least one envelope" check_vault_envelopes
-step "Confirm export bundle exists" check_export_bundle
-step "Confirm verification CLI succeeds" check_verify_cli
+step "Confirm MQTT publishes Frigate events" check_mqtt_publishes
+step "Confirm frigate_bridge ingests at least one event" check_bridge_ingests
+step "Confirm the sealed-log database exists" check_db_exists
 
 if [[ $failures -ne 0 ]]; then
   echo "Verification failed: ${failures} step(s) did not pass." >&2
+  echo "Tip: the deterministic pipeline gate runs in CI even without this live stack —" >&2
+  echo "     'cargo test --test frigate_mqtt_e2e' and 'ci_smoke.sh' in this directory." >&2
   exit 1
 fi
 

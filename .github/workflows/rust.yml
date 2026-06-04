@@ -85,3 +85,20 @@ jobs:
       # SECURACV_RTSP_E2E=1 makes a missing server a hard failure, so this gate
       # can never pass vacuously.
       run: SECURACV_RTSP_E2E=1 cargo test --features rtsp-ffmpeg --test rtsp_e2e -- --nocapture
+
+  frigate-mqtt-e2e:
+    name: Frigate MQTT (live broker)
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install mosquitto broker + clients
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y mosquitto mosquitto-clients libseccomp-dev
+        # We run our own anonymous broker on loopback; stop the packaged service
+        # so it can't hold port 1883.
+        sudo systemctl stop mosquitto 2>/dev/null || true
+    - name: Build frigate_bridge
+      run: cargo build --bin frigate_bridge
+    - name: Live-broker smoke (real binary ingests a frigate/events message)
+      run: BRIDGE_BIN=./target/debug/frigate_bridge integrations/ha_frigate_mqtt/ci_smoke.sh
