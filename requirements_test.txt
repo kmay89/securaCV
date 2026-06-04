@@ -3,7 +3,7 @@
 # custom_components/securacv/manifest.json (currently none beyond HA core).
 #
 # Install:  pip install -r requirements_test.txt
-cryptography==44.0.0   # tests/test_signature.py + signature.py Ed25519 verify
+cryptography==46.0.7   # tests/test_signature.py + signature.py Ed25519 verify
 pytest==8.3.4
 ruff==0.15.8
 mypy==1.19.1
