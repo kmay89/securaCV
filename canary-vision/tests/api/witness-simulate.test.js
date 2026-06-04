@@ -61,10 +61,14 @@ describe('POST /api/v1/witness/simulate', () => {
   let server, client;
 
   before(async () => {
-    server = await startServer({ devMode: true });
+    // Generous global limiter so this many functional requests don't trip the 30/60s
+    // general cap (rate-limit behavior is covered separately).
+    server = await startServer({ devMode: true, rateLimit: { generalLimit: 10000 } });
     client = createClient(server.url, TOKEN);
-    // Generous limiter so the functional tests don't trip the trigger throttle (covered separately).
+    // Generous endpoint limiters so the functional tests don't trip the trigger throttle or the
+    // envelope/verify cap (both covered separately).
     server.state.simulateRateLimit = { limit: 1000, windowMs: 1000 };
+    server.state.envelopeRateLimit = { limit: 1000, windowMs: 1000 };
   });
 
   after(async () => {
@@ -172,6 +176,27 @@ describe('POST /api/v1/witness/simulate', () => {
     assert.ok(events.some((e) => e.event_type === 'ObjectRemovedFromZone'),
       'envelope carries the canonical ObjectRemovedFromZone claim for the removed-object event');
   });
+
+  // Each device-side type must coarsen to the kernel EventType the bridge claims for it.
+  const CANONICAL_MAPPINGS = [
+    ['contact_changed', 'ContactStateChange'],
+    ['presence_restricted', 'PresenceInRestrictedZone'],
+    ['acoustic_impulse', 'AcousticImpulseInZone'],
+  ];
+  for (const [deviceType, kernelType] of CANONICAL_MAPPINGS) {
+    it(`maps ${deviceType} to the canonical ${kernelType} in the envelope`, async () => {
+      const sim = await client.post('/api/v1/witness/simulate', { event_type: deviceType, zone: 'porch', force: true });
+      assert.equal(sim.status, 201);
+      assert.equal(sim.json.record.event_type, deviceType);
+
+      const env = await client.get('/api/v1/witness/envelope');
+      assert.equal(env.status, 200);
+      const events = env.json.artifact.batches.flatMap(
+        (b) => b.buckets.flatMap((bucket) => bucket.events));
+      assert.ok(events.some((e) => e.event_type === kernelType),
+        `envelope carries the canonical ${kernelType} claim for ${deviceType}`);
+    });
+  }
 });
 
 describe('POST /api/v1/witness/simulate — disabled outside dev mode', () => {

@@ -460,8 +460,12 @@ var DEFAULT_NOTIF_PREFS = {
   sound: false,
   vibrate: true,
   person_detected: true,
+  presence_restricted: true,
   vehicle_detected: true,
+  object_removed: true,
+  acoustic_impulse: true,
   animal_detected: true,
+  contact_changed: false,
   motion_detected: false,
   quiet_hours_enabled: false,
   quiet_hours_start: '22:00',
@@ -644,14 +648,18 @@ function setupPullToRefresh(scrollContainer, contentWrap, indicator, onRefresh) 
 // --------------- Event Timeline ---------------
 
 var EVENT_TYPE_META = {
-  person_detected:  { icon: '🚶', label: 'Person',  cssClass: 'type-person',  priority: 4 },
-  vehicle_detected: { icon: '🚗', label: 'Vehicle', cssClass: 'type-vehicle', priority: 3 },
-  object_removed:   { icon: '📦', label: 'Object removed', cssClass: 'type-object-removed', priority: 3 },
-  animal_detected:  { icon: '🐾', label: 'Animal',  cssClass: 'type-animal',  priority: 2 },
-  motion_detected:  { icon: '💨', label: 'Motion',  cssClass: 'type-motion',  priority: 1 },
+  person_detected:     { icon: '🚶', label: 'Person',  cssClass: 'type-person',  priority: 4 },
+  presence_restricted: { icon: '⛔', label: 'Restricted zone', cssClass: 'type-restricted', priority: 4 },
+  vehicle_detected:    { icon: '🚗', label: 'Vehicle', cssClass: 'type-vehicle', priority: 3 },
+  object_removed:      { icon: '📦', label: 'Object removed', cssClass: 'type-object-removed', priority: 3 },
+  acoustic_impulse:    { icon: '🔊', label: 'Acoustic impulse', cssClass: 'type-acoustic', priority: 3 },
+  animal_detected:     { icon: '🐾', label: 'Animal',  cssClass: 'type-animal',  priority: 2 },
+  contact_changed:     { icon: '🚪', label: 'Contact change', cssClass: 'type-contact', priority: 2 },
+  motion_detected:     { icon: '💨', label: 'Motion',  cssClass: 'type-motion',  priority: 1 },
 };
 
-var EVENT_TYPE_PRIORITY = ['person_detected', 'vehicle_detected', 'animal_detected', 'motion_detected'];
+var EVENT_TYPE_PRIORITY = ['person_detected', 'presence_restricted', 'vehicle_detected',
+  'object_removed', 'acoustic_impulse', 'animal_detected', 'contact_changed', 'motion_detected'];
 
 // Canonical envelope events use the kernel's EventType enum (src/lib.rs), not the raw device
 // strings. Map them back to friendly labels + the existing timeline dot classes so the in-app
@@ -660,10 +668,10 @@ var EVENT_TYPE_PRIORITY = ['person_detected', 'vehicle_detected', 'animal_detect
 var ENVELOPE_EVENT_META = {
   BoundaryCrossingObjectLarge:  { icon: '🚶', label: 'Large object crossing',  cssClass: 'type-person' },
   BoundaryCrossingObjectSmall:  { icon: '💨', label: 'Small object / motion',  cssClass: 'type-motion' },
-  AcousticImpulseInZone:        { icon: '🔊', label: 'Acoustic impulse',       cssClass: 'type-motion' },
-  PresenceInRestrictedZone:     { icon: '⛔', label: 'Presence (restricted)',  cssClass: 'type-person' },
+  AcousticImpulseInZone:        { icon: '🔊', label: 'Acoustic impulse',       cssClass: 'type-acoustic' },
+  PresenceInRestrictedZone:     { icon: '⛔', label: 'Presence (restricted)',  cssClass: 'type-restricted' },
   VehiclePresenceAfterHours:    { icon: '🚗', label: 'Vehicle (after hours)',  cssClass: 'type-vehicle' },
-  ContactStateChange:           { icon: '🚪', label: 'Contact state change',   cssClass: 'type-motion' },
+  ContactStateChange:           { icon: '🚪', label: 'Contact state change',   cssClass: 'type-contact' },
   ObjectRemovedFromZone:        { icon: '📦', label: 'Object removed',          cssClass: 'type-object-removed' },
 };
 
@@ -899,7 +907,9 @@ function getDominantType(typesObj) {
 function countTodayByType(records) {
   var now = new Date();
   var startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  var counts = { total: 0, person_detected: 0, vehicle_detected: 0, object_removed: 0, animal_detected: 0, motion_detected: 0 };
+  // Build the per-type tallies from EVENT_TYPE_META so this never drifts as types are added.
+  var counts = { total: 0 };
+  Object.keys(EVENT_TYPE_META).forEach(function (key) { counts[key] = 0; });
   for (var i = 0; i < records.length; i++) {
     if (records[i]._ts >= startOfDay) {
       counts.total++;
@@ -2417,14 +2427,15 @@ function renderDensityBar(records) {
 function renderFilterChips(contentContainer, data) {
   var chipsRow = el('div', { className: 'filter-chips' });
 
-  var filters = [
-    { key: 'all', label: 'All' },
-    { key: 'person_detected', label: '🚶 Person' },
-    { key: 'vehicle_detected', label: '🚗 Vehicle' },
-    { key: 'object_removed', label: '📦 Object removed' },
-    { key: 'animal_detected', label: '🐾 Animal' },
-    { key: 'motion_detected', label: '💨 Motion' },
-  ];
+  // Derive the type chips from EVENT_TYPE_META (highest priority first) so any new event type is
+  // automatically filterable without touching this list.
+  var filters = [{ key: 'all', label: 'All' }];
+  Object.keys(EVENT_TYPE_META)
+    .sort(function (a, b) { return EVENT_TYPE_META[b].priority - EVENT_TYPE_META[a].priority; })
+    .forEach(function (key) {
+      var meta = EVENT_TYPE_META[key];
+      filters.push({ key: key, label: meta.icon + ' ' + meta.label });
+    });
 
   // Add device filters if multiple devices
   var deviceIds = {};
@@ -3039,10 +3050,14 @@ function renderSettingsView() {
     textContent: 'Notify for event types:',
     style: 'font-weight: 500; color: var(--color-text);',
   }));
-  notifCard.appendChild(makeToggle('🚶 Person', 'person_detected', prefs));
-  notifCard.appendChild(makeToggle('🚗 Vehicle', 'vehicle_detected', prefs));
-  notifCard.appendChild(makeToggle('🐾 Animal', 'animal_detected', prefs));
-  notifCard.appendChild(makeToggle('💨 Motion', 'motion_detected', prefs));
+  // Derive the per-type toggles from EVENT_TYPE_META (highest priority first) so the settings
+  // list stays in sync with the event vocabulary automatically when new types are added.
+  Object.keys(EVENT_TYPE_META)
+    .sort(function (a, b) { return EVENT_TYPE_META[b].priority - EVENT_TYPE_META[a].priority; })
+    .forEach(function (key) {
+      var meta = EVENT_TYPE_META[key];
+      notifCard.appendChild(makeToggle(meta.icon + ' ' + meta.label, key, prefs));
+    });
 
   notifCard.appendChild(el('div', {
     className: 'card-subtitle mt-12 mb-8',

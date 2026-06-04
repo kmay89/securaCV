@@ -267,6 +267,18 @@ function createDeviceState(overrides = {}) {
       // A package-sized footprint where an object used to be.
       objW = 40 + (seed % 20); objH = 35 + (seed % 15);
       objX = 70 + (seed % 70); objY = H - objH - 25;
+    } else if (eventType === 'presence_restricted') {
+      // A person-sized silhouette inside a flagged zone.
+      objW = 28 + (seed % 12); objH = 68 + (seed % 18);
+      objX = 110 + (seed % 60); objY = H - objH - 28;
+    } else if (eventType === 'acoustic_impulse') {
+      // No visual subject — a small diffuse smudge stands in for a sound source.
+      objW = 18 + (seed % 8); objH = 18 + (seed % 8);
+      objX = 60 + (seed % 120); objY = 50 + (seed % 70);
+    } else if (eventType === 'contact_changed') {
+      // A doorway-shaped vertical opening near a wall edge.
+      objW = 22 + (seed % 8); objH = 80 + (seed % 16);
+      objX = 50 + (seed % 30); objY = H - objH - 18;
     } else {
       objW = 20; objH = 20;
       objX = 100 + (seed % 50); objY = 80 + (seed % 40);
@@ -402,6 +414,9 @@ function createDeviceState(overrides = {}) {
   seedRecord('person_detected', 'front', 'sess_demo_5');
   seedRecord('motion_detected', 'front', 'sess_demo_5');
   seedRecord('object_removed', 'front', 'sess_demo_6');
+  seedRecord('contact_changed', 'front', 'sess_demo_7');
+  seedRecord('presence_restricted', 'front', 'sess_demo_8');
+  seedRecord('acoustic_impulse', 'front', 'sess_demo_9');
 
   return {
     device,
