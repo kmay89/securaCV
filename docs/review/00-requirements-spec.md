@@ -85,7 +85,7 @@ Source of truth: `spec/invariants.md`. A re-implementation that violates any inv
 ### L0.4 Repository topology (rebuild map)
 | Path | Component | Language/runtime | Entry |
 |------|-----------|------------------|-------|
-| `src/` | Privacy Witness Kernel (log/crypto/vault/ingest/detect/api/break-glass/adapter) | Rust 2021 | `src/lib.rs` + ~14 bins in `src/bin/` |
+| `src/` | Privacy Witness Kernel (log/crypto/vault/ingest/detect/api/break-glass/adapter) | Rust 2021 | `src/lib.rs` + 15 bins in `src/bin/` |
 | `custom_components/securacv/` | Home Assistant integration | Python 3 | `__init__.py` |
 | `privacy_witness_kernel/` | HA add-on wrapping `witnessd` + setup wizard | Docker/shell/Python | `run.sh`, `serve_wizard.py` |
 | `canary-vision/` | Device-hosted HTTP API + vanilla-JS SPA (timeline UI) | Node/Express + JS | `device-api/server.js`, `spa/` |
@@ -236,8 +236,8 @@ Source of truth: `spec/invariants.md`. A re-implementation that violates any inv
 - **REQ-KRNL-080 (Implemented):** Binaries in `src/bin/`: `witnessd` (daemon), `log_verify`,
   `break_glass`, `export_events`, `export_verify`, `envelope_verify`, `frigate_bridge`,
   `event_mqtt_bridge`, `witness_api`, `adapter_host`, `grove_vision2_ingest`, `ingest_run`,
-  `tamper_demo`, `demo`. (CHANGELOG advertises "9 CLI binaries"; the tree has ~14 — reconcile the
-  count, see flag report.)
+  `tamper_demo`, `demo`, `detect_eval` (15 total; `adapter_host`, `ingest_run`, `detect_eval` are
+  feature-gated). CHANGELOG count reconciled to 15 (F-10 resolved).
 
 ### L1.B Home Assistant integration (`custom_components/securacv/`)
 - **REQ-HA-001 (Implemented):** HACS-installable Python integration (HA 2024.4.1+). Connects via
@@ -246,11 +246,14 @@ Source of truth: `spec/invariants.md`. A re-implementation that violates any inv
   `health`, `chain`, `counts`, `command`, `tamper`, `mesh`, `chirp`, `transport`, `presence`.
 - **REQ-HA-003 (Implemented):** **Multi-transport resilience** — a Canary uses ANY available
   transport to get witness data out before being silenced. `ALL_TRANSPORTS` =
-  wifi_ap, wifi_sta, mqtt, ble, mesh, chirp, **lora (future)**, **audio/SCQCS (future)** — the last
-  two are declared constants with **no transport implementation** (see flag report).
+  wifi_ap, wifi_sta, mqtt, ble, mesh, chirp. **lora** and **audio/SCQCS** are declared constants
+  with **no transport implementation**, held in a separate `FUTURE_TRANSPORTS` list (deliberately
+  **out of** `ALL_TRANSPORTS`) so the integration never advertises a transport no device can report
+  on (F-07).
 - **REQ-HA-004 (Implemented):** **Tamper/survivability event types** (`ALL_TAMPER_TYPES`):
   power_loss, battery_remove, sd_remove, sd_error, gps_jamming, gps_spoof, motion, enclosure,
-  capacitive, gpio, watchdog, unexpected_reboot, memory_critical, **audio_anomaly (future)**.
+  capacitive, gpio, watchdog, unexpected_reboot, memory_critical. **`audio_anomaly`** is declared but
+  unimplemented, held in `FUTURE_TAMPER_TYPES` (out of `ALL_TAMPER_TYPES`) for the same reason (F-07).
 - **REQ-HA-005 (Implemented):** Per-event-type friendly labels + icons via `EVENT_TYPE_METADATA`;
   optional adapter-stats diagnostic sensor (`CONF_ADAPTER_STATS_URL`) via a dedicated coordinator.
 - **REQ-HA-006 (Spec/Example):** Example automations + Lovelace dashboard in `homeassistant/`;

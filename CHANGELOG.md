@@ -74,7 +74,9 @@ below — but nothing documented is allowed to be aspirational at the v1 tag.
 - **Home Assistant integration** (HACS): 3 setup modes (MQTT / Kernel HTTP /
   both), MQTT auto-discovery, device PKI trust management (TOFU + manual pin +
   rotation), 5 sensor types, 11 binary sensor types (tamper + transport),
-  Ed25519 signature verification, diagnostics.
+  Ed25519 signature verification, diagnostics, and a bundled **verified-✓
+  timeline Lovelace card** (with a pure-YAML fallback for those who prefer
+  built-in cards — see `docs/lovelace_timeline.md`).
 - **Home Assistant add-on**: first-run setup wizard with preflight checks,
   camera TCP test, Frigate config generation, post-setup health verification,
   two operating modes (Frigate integration, standalone RTSP).
@@ -128,7 +130,6 @@ below — but nothing documented is allowed to be aspirational at the v1 tag.
 - GPU-accelerated detection
 - Tract detection confidence threshold override (hardcoded at 0.5)
 - Pre-built Docker images on ghcr.io / Docker Hub
-- Custom Lovelace card (uses standard HA entities)
 
 ### Known limitations
 

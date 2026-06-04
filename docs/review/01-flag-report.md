@@ -23,10 +23,10 @@
 | F-04 | Major | 🟡 Partial (#674) | Crypto | Device key is **seed-derived from config**; DB key **coupled** to signing key → rotation blocked (acknowledged, still open). |
 | F-05 | Minor | 🟡 Open (UX) | Vault | *Corrected after code review:* vault sealing **is wired** into `witnessd` (real crypto modes); the real gap is that it's **opt-in / UX-gated**, not absent. |
 | F-06 | Major | ✅ Resolved (#670) | Firmware flash | **Divergent partition tables**; canary-wap Arduino pins **no** scheme; one secure table assumes **4 MB** flash on an 8 MB board. |
-| F-07 | Major | ⬜ Open (frozen) | Transports | `TRANSPORT_LORA` / `TRANSPORT_AUDIO` (+`audio_anomaly` tamper) are declared but **unimplemented**. |
+| F-07 | Major | ✅ Resolved | Transports | `TRANSPORT_LORA` / `TRANSPORT_AUDIO` (+`audio_anomaly` tamper) declared but **unimplemented** — now split into `FUTURE_TRANSPORTS` / `FUTURE_TAMPER_TYPES`, out of the `ALL_*` lists, so the HA surface never advertises them. |
 | F-08 | Major | ⬜ Open (frozen) | Mesh | ESP-NOW WiFi-AP bridge & BLE fallback marked **"❌ not implemented"** in the mesh evaluation. |
 | F-09 | Minor | ✅ Resolved (#682) | Repo hygiene | Root **`spec.md` is mis-titled** — it's the `zone_crossing` module spec, not a system spec. |
-| F-10 | Minor | ✅ Resolved (#691) | CLI count | CHANGELOG says **"9 CLI binaries"**; tree has **14**. |
+| F-10 | Minor | ✅ Resolved (#691) | CLI count | CHANGELOG said **"9 CLI binaries"** (mislabeled "14 total"); `src/bin/` has **15** — count reconciled and `detect_eval` enumerated. |
 | F-11 | Minor | ✅ Resolved (#688) | Ingest dup | **Two RTSP** implementations (`rtsp.rs` vs `rtsp_ffmpeg.rs`) risk divergence. |
 | F-12 | Doc-debt | ✅ Resolved (#673/#706) | README | README has live **TODOs** (missing screenshot) and ships "core works end-to-end" beside an unshipped v1. |
 | F-13 | Doc-debt | ✅ Resolved (#673) | Roadmap | `v1-roadmap.md` overclaims completion (✅) on items contradicted by code (F-01) and omits shipped work (PQC, adapters). |
@@ -164,11 +164,14 @@ surface advertises transports that can never report. **Fix:** drop from `ALL_*` 
 or gate behind a capability flag. (`docs/strategy/06` already lists these as "keep deferred" —
 align the code.)
 
-> **Status 2026-06-04 — ⬜ Open (frozen by design).** Still present: `const.py:46-47` keep
-> `TRANSPORT_LORA`/`TRANSPORT_AUDIO` in `ALL_TRANSPORTS` and `TAMPER_AUDIO` in the tamper list.
-> `02-roadmap.md` §"Frozen until a concrete need" deliberately parks LoRa/SCQCS-audio, so this is a
-> conscious deferral rather than an oversight — but the HA entity surface still advertises them.
-> Lowest-effort honest fix when touched: gate them behind a capability flag.
+> **Status 2026-06-04 — ✅ Resolved (code already split; doc reconciled).** `const.py` now keeps
+> `TRANSPORT_LORA`/`TRANSPORT_AUDIO` in a dedicated `FUTURE_TRANSPORTS` list and `TAMPER_AUDIO` in
+> `FUTURE_TAMPER_TYPES` — both **out of** the `ALL_TRANSPORTS` / `ALL_TAMPER_TYPES` lists, each with
+> an explicit "NOT implemented … never advertise" comment. The transports/tamper types stay parked
+> per `02-roadmap.md` §"Frozen until a concrete need", but the HA entity surface no longer advertises
+> them (and never enumerated them at runtime — transport/tamper entities are created on-message).
+> The canonical requirements (`00-requirements-spec.md` REQ-HA-003/004) were updated to match: they
+> no longer list `lora`/`audio`/`audio_anomaly` inside `ALL_TRANSPORTS`/`ALL_TAMPER_TYPES`.
 
 ### F-08 — Mesh fallbacks not implemented
 **Evidence.** `docs/mesh_esp_now_evaluation.md:99-100`: "§2.2 WiFi-AP bridge (secondary) ❌ not
@@ -186,9 +189,10 @@ multi-path mesh resilience story has unbuilt legs. **Fix:** scope mesh claims to
 - **F-09** Root `spec.md` is titled **"Module Spec: zone_crossing"** — a module template living at
   repo root, easily mistaken for the system spec. Move to `spec/modules/` and add a real root
   pointer. (`spec.md:1`.)
-- **F-10** CHANGELOG: "**9 CLI binaries**" but `src/bin/` has **14** (`adapter_host, break_glass,
-  demo, envelope_verify, event_mqtt_bridge, export_events, export_verify, frigate_bridge,
-  grove_vision2_ingest, ingest_run, log_verify, tamper_demo, witness_api, witnessd`). Reconcile.
+- **F-10** ✅ *Resolved.* CHANGELOG said "**9 CLI binaries**" (14 total) but `src/bin/` has **15**
+  (`adapter_host, break_glass, demo, detect_eval, envelope_verify, event_mqtt_bridge, export_events,
+  export_verify, frigate_bridge, grove_vision2_ingest, ingest_run, log_verify, tamper_demo,
+  witness_api, witnessd`). The CHANGELOG count is reconciled to 15 and `detect_eval` added.
 - **F-11** Two RTSP ingest implementations (`src/ingest/rtsp.rs`, `src/ingest/rtsp_ffmpeg.rs`)
   plus separate file/file_ffmpeg paths — confirm one is canonical and the other isn't bit-rotting.
 - **F-12** `README.md:26` ships a literal `<!-- TODO: add a screenshot … -->`; the "verified ✓
