@@ -36,8 +36,15 @@ for tool in curl python3; do
 done
 
 # --- Parse the add-on definition (single source of truth) -------------------
-version="$(grep -E '^version:' "$config" | head -1 | sed -E 's/version:[[:space:]]*//; s/["'\'']//g' | tr -d '[:space:]')"
-image_tmpl="$(grep -E '^image:' "$config" | head -1 | sed -E 's/image:[[:space:]]*//; s/["'\'']//g' | tr -d '[:space:]')"
+# Use awk (not a grep|sed|tr pipeline): under `set -e`/`pipefail` a grep that
+# matches nothing aborts the script before the friendly checks below, whereas
+# awk prints an empty string those checks then report cleanly. Quote/space
+# stripping is done with Bash parameter expansion (no extra processes).
+yaml_scalar() { awk -v key="^$1:" '$0 ~ key { sub(/^[^:]*:[[:space:]]*/, ""); print; exit }' "$config"; }
+strip_quotes() { local v="$1"; v="${v//\"/}"; v="${v//\'/}"; printf '%s' "$v"; }
+
+version="$(strip_quotes "$(yaml_scalar version)")"; version="${version//[[:space:]]/}"
+image_tmpl="$(strip_quotes "$(yaml_scalar image)")"; image_tmpl="${image_tmpl//[[:space:]]/}"
 # arch: is a YAML list of "  - <arch>" lines following the `arch:` key.
 mapfile -t arches < <(awk '/^arch:/{f=1;next} f&&/^[[:space:]]*-[[:space:]]*/{gsub(/[[:space:]-]/,"");print;next} f&&/^[^[:space:]-]/{f=0}' "$config")
 
@@ -52,7 +59,7 @@ esac
 # Tags to check: the pinned version (what the Supervisor resolves) plus latest.
 read -r -a tags <<< "${TAGS:-$version latest}"
 
-echo "Add-on:   $(grep -E '^name:' "$config" | head -1 | sed -E 's/name:[[:space:]]*//; s/"//g')"
+echo "Add-on:   $(strip_quotes "$(yaml_scalar name)")"
 echo "Version:  $version"
 echo "Image:    $image_tmpl"
 echo "Arches:   ${arches[*]}"
@@ -68,14 +75,17 @@ probe() {
   for attempt in 1 2 3 4 5; do
     token="$(curl -fsS "https://ghcr.io/token?scope=repository:${repo}:pull" 2>/dev/null \
               | python3 -c 'import sys,json;print(json.load(sys.stdin).get("token",""))' 2>/dev/null || true)"
+    # `|| echo 000`: under `set -e` a network-level curl failure (DNS, timeout)
+    # would otherwise abort the script and skip the retry loop entirely. 000 is
+    # treated as transient below so genuine blips get retried, not hard-failed.
     code="$(curl -s -o /dev/null -w '%{http_code}' \
               -H "Authorization: Bearer ${token}" \
               -H 'Accept: application/vnd.oci.image.index.v1+json' \
               -H 'Accept: application/vnd.docker.distribution.manifest.list.v2+json' \
               -H 'Accept: application/vnd.docker.distribution.manifest.v2+json' \
-              "https://ghcr.io/v2/${repo}/manifests/${tag}")"
+              "https://ghcr.io/v2/${repo}/manifests/${tag}" || echo "000")"
     case "$code" in
-      429|500|502|503|504) sleep $((attempt * 3)); continue ;;  # transient: back off and retry
+      000|429|500|502|503|504) sleep $((attempt * 3)); continue ;;  # transient: back off and retry
       *) break ;;
     esac
   done
@@ -104,7 +114,7 @@ if [ "$fail" -eq 0 ]; then
   exit 0
 fi
 
-owner="$(echo "$image_tmpl" | sed -E 's#ghcr.io/([^/]+)/.*#\1#')"
+owner="${image_tmpl#ghcr.io/}"; owner="${owner%%/*}"
 cat >&2 <<EOF
 ❌ At least one architecture is not publicly installable yet.
 
