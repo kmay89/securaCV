@@ -22,29 +22,24 @@ static int g_failures = 0;
 int main() {
   using namespace device_pseudonym;
 
-  uint8_t mac[6]  = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF};
-  uint8_t mac2[6] = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0x00};
   uint8_t secret[SECRET_LEN];  memset(secret,  0x11, sizeof(secret));
   uint8_t secret2[SECRET_LEN]; memset(secret2, 0x22, sizeof(secret2));
 
-  char a[32], b[32], c[32], d[32];
+  char a[32], b[32], d[32];
 
-  CHECK(derive(mac, 6, secret, SECRET_LEN, a, sizeof(a)), "derive succeeds");
+  CHECK(derive(secret, SECRET_LEN, a, sizeof(a)), "derive succeeds");
   CHECK(strlen(a) == HEX_LEN, "token is HEX_LEN (16) chars");
 
-  derive(mac, 6, secret, SECRET_LEN, b, sizeof(b));
-  CHECK(strcmp(a, b) == 0, "deterministic for same (mac, secret)");
+  derive(secret, SECRET_LEN, b, sizeof(b));
+  CHECK(strcmp(a, b) == 0, "deterministic for same secret");
 
-  derive(mac2, 6, secret, SECRET_LEN, c, sizeof(c));
-  CHECK(strcmp(a, c) != 0, "different mac -> different token");
-
-  derive(mac, 6, secret2, SECRET_LEN, d, sizeof(d));
+  derive(secret2, SECRET_LEN, d, sizeof(d));
   CHECK(strcmp(a, d) != 0, "different secret -> different token");
 
-  // Non-leakage: the raw MAC (as hex) must not appear in the token.
-  char machex[13];
-  for (int i = 0; i < 6; i++) snprintf(machex + i * 2, 3, "%02x", mac[i]);
-  CHECK(strstr(a, machex) == nullptr, "raw mac hex absent from token");
+  // Non-leakage: the token is a hash, not an echo of the salt's leading bytes.
+  char sec_lead[HEX_LEN + 1];
+  for (size_t i = 0; i < TOKEN_BYTES; i++) snprintf(sec_lead + i * 2, 3, "%02x", secret[i]);
+  CHECK(strcmp(a, sec_lead) != 0, "token is not the raw secret prefix");
 
   // Charset: lowercase hex only.
   bool all_hex = true;
@@ -56,23 +51,22 @@ int main() {
 
   // Buffer guard: too-small output is rejected, not truncated.
   char tiny[4];
-  CHECK(!derive(mac, 6, secret, SECRET_LEN, tiny, sizeof(tiny)), "rejects undersized buffer");
+  CHECK(!derive(secret, SECRET_LEN, tiny, sizeof(tiny)), "rejects undersized buffer");
 
   // Null/empty guards.
-  CHECK(!derive(nullptr, 6, secret, SECRET_LEN, a, sizeof(a)), "rejects null mac");
-  CHECK(!derive(mac, 0, secret, SECRET_LEN, a, sizeof(a)), "rejects empty mac");
+  CHECK(!derive(nullptr, SECRET_LEN, a, sizeof(a)), "rejects null secret");
+  CHECK(!derive(secret, 0, a, sizeof(a)), "rejects empty secret");
 
-  // Independent recomputation of SHA256("canary:device-id:v1:" || secret || mac)[0..8].
-  uint8_t input[20 + SECRET_LEN + 6];
+  // Independent recomputation of SHA256("canary:device-id:v1:" || secret)[0..8].
+  uint8_t input[20 + SECRET_LEN];
   memcpy(input, "canary:device-id:v1:", 20);
   memcpy(input + 20, secret, SECRET_LEN);
-  memcpy(input + 20 + SECRET_LEN, mac, 6);
   uint8_t h[32];
-  SHA256(input, 20 + SECRET_LEN + 6, h);
+  SHA256(input, 20 + SECRET_LEN, h);
   char expect[HEX_LEN + 1];
   for (size_t i = 0; i < TOKEN_BYTES; i++) snprintf(expect + i * 2, 3, "%02x", h[i]);
   // recompute `a` (it was overwritten by the null-guard checks above)
-  derive(mac, 6, secret, SECRET_LEN, a, sizeof(a));
+  derive(secret, SECRET_LEN, a, sizeof(a));
   CHECK(strcmp(a, expect) == 0, "matches independent SHA-256 construction");
 
   printf(g_failures == 0 ? "\nALL PASS\n" : "\n%d FAILURE(S)\n", g_failures);

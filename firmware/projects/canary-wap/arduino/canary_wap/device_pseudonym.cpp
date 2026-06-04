@@ -4,7 +4,7 @@
 
 #if defined(ARDUINO)
   #include "mbedtls/sha256.h"
-  #include <esp_mac.h>
+  #include <esp_random.h>   // esp_fill_random — note: NO esp_mac.h (see device_id_hex)
   #include <esp_system.h>
   #include "nvs_store.h"   // pulls in Arduino.h / Preferences.h
 #else
@@ -35,20 +35,19 @@ void sha256_raw(const uint8_t* in, size_t len, uint8_t out[32]) {
 
 } // namespace
 
-bool derive(const uint8_t* mac, size_t mac_len,
-            const uint8_t* secret, size_t secret_len,
+bool derive(const uint8_t* secret, size_t secret_len,
             char* out_hex, size_t out_len) {
-  if (mac == nullptr || secret == nullptr || out_hex == nullptr) return false;
-  if (mac_len == 0 || secret_len == 0) return false;
-  if (secret_len > 64 || mac_len > 16) return false;     // bound the stack buffer
+  if (secret == nullptr || out_hex == nullptr) return false;
+  if (secret_len == 0 || secret_len > 64) return false;  // bound the stack buffer
   if (out_len < HEX_LEN + 1) return false;
 
-  // input = DOMAIN || secret || mac  (domain separation + per-device salt)
-  uint8_t input[DOMAIN_LEN + 64 + 16];
+  // input = DOMAIN || secret  (domain separation + per-device random salt).
+  // No hardware MAC is mixed in: the 256-bit salt alone makes the token unique
+  // and stable, so the derivation never touches a network-trackable identifier.
+  uint8_t input[DOMAIN_LEN + 64];
   size_t off = 0;
   memcpy(input + off, DOMAIN, DOMAIN_LEN); off += DOMAIN_LEN;
   memcpy(input + off, secret, secret_len); off += secret_len;
-  memcpy(input + off, mac, mac_len);       off += mac_len;
 
   uint8_t hash[32];
   sha256_raw(input, off, hash);
@@ -70,10 +69,10 @@ bool derive(const uint8_t* mac, size_t mac_len,
 bool device_id_hex(char* out_hex, size_t out_len) {
   if (out_hex == nullptr || out_len < HEX_LEN + 1) return false;
 
-  // The efuse MAC and NVS salt are fixed for the device's lifetime, so the
-  // pseudonym is computed once and cached in RAM. This keeps the Hardware ID
-  // stable for the whole boot session even if NVS persistence fails, and avoids
-  // an NVS read (and possible write) on every status/info request.
+  // The per-device NVS salt is fixed for the device's lifetime, so the pseudonym
+  // is computed once and cached in RAM. This keeps the Hardware ID stable for the
+  // whole boot session even if NVS persistence fails, and avoids an NVS read (and
+  // possible write) on every status/info request.
   static char cached[HEX_LEN + 1] = {0};
   static bool cached_valid = false;
   if (cached_valid) {
@@ -81,9 +80,11 @@ bool device_id_hex(char* out_hex, size_t out_len) {
     return true;
   }
 
-  // Load-or-create a per-device salt in NVS (independent of other subsystems so it
-  // works regardless of init order). If persistence fails we still derive from the
-  // freshly generated salt and cache the result, so the session stays consistent.
+  // Load-or-create a per-device random salt in NVS (independent of other subsystems
+  // so it works regardless of init order). The 256-bit salt alone makes the token
+  // unique and stable; we deliberately do NOT read the hardware MAC, so no
+  // network-trackable identifier ever enters this derivation. If persistence fails we
+  // still derive from the freshly generated salt and cache it for session consistency.
   uint8_t salt[SECRET_LEN];
   bool have = nvs_store::get_blob(NVS_SALT_KEY, salt, sizeof(salt));
   bool nonzero = false;
@@ -97,12 +98,9 @@ bool device_id_hex(char* out_hex, size_t out_len) {
     nvs_store::set_blob(NVS_SALT_KEY, salt, sizeof(salt));  // best-effort persist
   }
 
-  uint8_t mac[6];
-  esp_efuse_mac_get_default(mac);
-
   // Derive into a temp buffer; only publish on success so out_hex is never left partial.
   char tmp[HEX_LEN + 1];
-  bool ok = derive(mac, sizeof(mac), salt, sizeof(salt), tmp, sizeof(tmp));
+  bool ok = derive(salt, sizeof(salt), tmp, sizeof(tmp));
   if (ok) {
     memcpy(cached, tmp, HEX_LEN + 1);
     cached_valid = true;
@@ -110,7 +108,6 @@ bool device_id_hex(char* out_hex, size_t out_len) {
   }
 
   secure_zero(salt, sizeof(salt));
-  secure_zero(mac, sizeof(mac));
   return ok;
 }
 
