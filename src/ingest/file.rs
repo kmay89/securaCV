@@ -15,11 +15,9 @@
 
 use anyhow::{anyhow, Result};
 
-use super::compute_features_hash;
 #[cfg(feature = "ingest-file-ffmpeg")]
 use super::file_ffmpeg::FfmpegFileSource;
 use crate::frame::RawFrame;
-use crate::TimeBucket;
 
 /// Configuration for a local file source.
 #[derive(Clone, Debug)]
@@ -148,17 +146,8 @@ impl SyntheticFileSource {
     fn next_frame(&mut self) -> Result<RawFrame> {
         self.frame_count += 1;
 
-        let timestamp_bucket = TimeBucket::now_10min()?;
         let pixels = self.generate_synthetic_pixels();
-        let features_hash = compute_features_hash(&pixels, self.frame_count);
-
-        Ok(RawFrame::new(
-            pixels,
-            640,
-            480,
-            timestamp_bucket,
-            features_hash,
-        ))
+        super::raw_frame_at_capture(pixels, 640, 480, self.frame_count)
     }
 
     fn generate_synthetic_pixels(&mut self) -> Vec<u8> {

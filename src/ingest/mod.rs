@@ -37,6 +37,11 @@ pub mod v4l2;
 
 #[cfg(feature = "ingest-esp32")]
 pub use esp32::Esp32Source;
+pub(crate) use features::raw_frame_at_capture;
+// Only the not-yet-migrated esp32 / v4l2 sources still call this directly; the RTSP and
+// file backends now go through `raw_frame_at_capture`. Gate the re-export so it isn't
+// flagged unused on default builds (F-11).
+#[cfg(any(feature = "ingest-esp32", feature = "ingest-v4l2"))]
 pub(crate) use features::compute_features_hash;
 pub use file::FileSource;
 pub use rtsp::RtspSource;

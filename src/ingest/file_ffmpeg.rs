@@ -8,10 +8,8 @@ use anyhow::{Context, Result};
 use ffmpeg_next as ffmpeg;
 use std::time::{Duration, Instant};
 
-use super::compute_features_hash;
 use super::file::{FileConfig, FileStats};
 use crate::frame::RawFrame;
-use crate::TimeBucket;
 
 pub(crate) struct FfmpegFileSource {
     config: FileConfig,
@@ -139,16 +137,7 @@ impl FfmpegFileSource {
         self.frame_count += 1;
         self.last_frame_at = Some(Instant::now());
 
-        let timestamp_bucket = TimeBucket::now_10min()?;
-        let features_hash = compute_features_hash(&pixels, self.frame_count);
-
-        Ok(RawFrame::new(
-            pixels,
-            width,
-            height,
-            timestamp_bucket,
-            features_hash,
-        ))
+        super::raw_frame_at_capture(pixels, width, height, self.frame_count)
     }
 
     pub(crate) fn is_healthy(&self) -> bool {
