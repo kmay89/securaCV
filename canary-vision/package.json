@@ -13,7 +13,13 @@
     "test:security": "node --test tests/security/*.test.js",
     "test:api": "node --test tests/api/*.test.js",
     "test:spa": "node --test tests/spa/*.test.js",
+    "lint": "eslint device-api spa tests",
     "dev": "node device-api/server.js"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.4",
+    "eslint": "^9.39.4",
+    "globals": "^17.6.0"
   },
   "engines": {
     "node": ">=20.0.0"

@@ -139,7 +139,7 @@ describe('Update API', () => {
 });
 
 describe('Update API — Anti-Downgrade', () => {
-  let server, client, signingKeyPair, tmpDir;
+  let server, signingKeyPair, tmpDir;
 
   before(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'downgrade-test-'));
@@ -150,7 +150,6 @@ describe('Update API — Anti-Downgrade', () => {
     process.env.CANARY_DATA_DIR = tmpDir;
 
     server = await startServer({ devMode: true });
-    client = createClient(server.url, TOKEN);
     server.state.device.firmware_version = '1.0.0';
   });
 
