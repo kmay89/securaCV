@@ -9,7 +9,7 @@
 //!
 //! ```text
 //! cargo run --features detect-eval --bin detect_eval -- \
-//!     --model vendor/models/ssdlite_mobilenet_v2_12.onnx \
+//!     --model vendor/models/tinyyolov2-8.onnx \
 //!     --dataset eval/datasets/sample --json report.json
 //! ```
 
@@ -19,11 +19,12 @@ use std::process::ExitCode;
 use anyhow::{anyhow, Result};
 use clap::Parser;
 
+use witness_kernel::config::TractFormat;
 use witness_kernel::eval::metrics::EvalReport;
 use witness_kernel::eval::{parse_sweep_spec, run_eval, EvalConfig};
 
 /// Default model path written by `scripts/fetch_detection_model.sh`.
-const DEFAULT_MODEL: &str = "vendor/models/ssdlite_mobilenet_v2_12.onnx";
+const DEFAULT_MODEL: &str = "vendor/models/tinyyolov2-8.onnx";
 
 #[derive(Parser, Debug)]
 #[command(
@@ -39,12 +40,17 @@ struct Args {
     #[arg(long)]
     dataset: PathBuf,
 
-    /// Model input width.
-    #[arg(long, default_value_t = 300)]
+    /// Output format: "yolov2" (raw grid decoded on host — the bundled tiny-YOLOv2) or "postnms"
+    /// (model already emits final boxes).
+    #[arg(long, default_value = "yolov2")]
+    format: String,
+
+    /// Model input width (PostNms only; YOLOv2 has a fixed 416×416 input).
+    #[arg(long, default_value_t = 416)]
     width: u32,
 
-    /// Model input height.
-    #[arg(long, default_value_t = 300)]
+    /// Model input height (PostNms only; YOLOv2 has a fixed 416×416 input).
+    #[arg(long, default_value_t = 416)]
     height: u32,
 
     /// IoU threshold for matching a prediction to ground truth.
@@ -175,12 +181,14 @@ fn run() -> Result<ExitCode> {
     if !(0.0..=1.0).contains(&args.iou_threshold) || !(0.0..=1.0).contains(&args.threshold) {
         return Err(anyhow!("iou-threshold and threshold must be within 0..=1"));
     }
+    let format = TractFormat::parse(&args.format)?;
 
     let cfg = EvalConfig {
         model_path: args.model,
         dataset_dir: args.dataset,
         width: args.width,
         height: args.height,
+        format,
         iou_threshold: args.iou_threshold,
         operating_threshold: args.threshold,
         sweep,

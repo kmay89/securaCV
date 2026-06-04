@@ -7,9 +7,15 @@ use tract_onnx::prelude::*;
 
 use crate::detect::backend::{DetectionCapability, DetectorBackend};
 use crate::detect::result::{Detection, DetectionResult, ObjectClass, SizeClass};
+use crate::detect::yolo::{decode_yolov2, nms, YoloV2Spec};
 
 const LARGE_AREA_THRESHOLD: f32 = 0.2;
 const ABSOLUTE_COORD_THRESHOLD: f32 = 1.5;
+
+/// tiny-YOLOv2's fixed square input dimension (416×416).
+pub const TINY_YOLOV2_INPUT: u32 = 416;
+/// IoU threshold for tiny-YOLOv2 non-max suppression.
+const YOLO_NMS_IOU: f32 = 0.45;
 
 /// Default minimum confidence for a detection to be reported. Overridable via
 /// [`TractBackend::with_threshold`]; witnessd wires this from `detect.confidence`
@@ -17,22 +23,43 @@ const ABSOLUTE_COORD_THRESHOLD: f32 = 1.5;
 /// `config`'s `DEFAULT_DETECT_CONFIDENCE`.
 pub const DEFAULT_CONFIDENCE_THRESHOLD: f32 = 0.5;
 
+/// How the raw model output is turned into detections.
+enum PostProcess {
+    /// The model already produced final boxes (`[N,6]` or separate boxes/scores/classes
+    /// tensors); see [`TractBackend::extract_detections`].
+    PostNms,
+    /// A raw YOLOv2 grid (`[1, B*(5+C), G, G]`) decoded + NMS-suppressed on the host.
+    YoloV2(YoloV2Spec),
+}
+
 /// Tract-based backend for ONNX inference.
 ///
-/// This backend loads a local model file and performs inference on RGB frames.
-/// It does not perform any network I/O or write to disk beyond model loading.
+/// Loads a local model file and runs inference on RGB frames. No network I/O and no disk writes
+/// beyond model loading.
+///
+/// HOST-ONLY: runs in `witnessd` on a Pi/x86 host. It does NOT run on the ESP32-S3 — that path
+/// uses the Grove Vision AI V2 (SSCMA) board (`firmware/projects/canary-vision`).
 pub struct TractBackend {
     model: TypedSimplePlan<TypedModel>,
     width: u32,
     height: u32,
     confidence_threshold: f32,
+    /// Per-pixel scale applied when building the input tensor (`1/255` to normalize, `1.0` for
+    /// models like tiny-YOLOv2 that expect raw 0–255 values).
+    input_scale: f32,
+    /// When true, incoming frames are resized to the model's fixed input (e.g. tiny-YOLOv2's
+    /// 416×416) instead of being required to match it exactly.
+    resize: bool,
+    post: PostProcess,
 }
 
 impl TractBackend {
-    /// Load an ONNX model from disk and prepare it for inference.
-    pub fn new<P: AsRef<Path>>(model_path: P, width: u32, height: u32) -> Result<Self> {
-        let model_path = model_path.as_ref();
-        let model = tract_onnx::onnx()
+    fn load_runnable(
+        model_path: &Path,
+        width: u32,
+        height: u32,
+    ) -> Result<TypedSimplePlan<TypedModel>> {
+        tract_onnx::onnx()
             .model_for_path(model_path)
             .with_context(|| format!("failed to load ONNX model from {}", model_path.display()))?
             .with_input_fact(
@@ -46,13 +73,38 @@ impl TractBackend {
             .into_optimized()
             .context("failed to optimize ONNX model")?
             .into_runnable()
-            .context("failed to build runnable ONNX model")?;
+            .context("failed to build runnable ONNX model")
+    }
 
+    /// Load an ONNX model whose output is already post-NMS (`[N,6]` or separate
+    /// boxes/scores/classes tensors). Frames must match `width`×`height` exactly.
+    pub fn new<P: AsRef<Path>>(model_path: P, width: u32, height: u32) -> Result<Self> {
+        let model = Self::load_runnable(model_path.as_ref(), width, height)?;
         Ok(Self {
             model,
             width,
             height,
             confidence_threshold: DEFAULT_CONFIDENCE_THRESHOLD,
+            input_scale: 1.0 / 255.0,
+            resize: false,
+            post: PostProcess::PostNms,
+        })
+    }
+
+    /// Load the tiny-YOLOv2 (VOC) detector: fixed 416×416 input, raw 0–255 pixel values, and
+    /// host-side YOLOv2 grid decode + NMS. Incoming frames of any size are resized to 416×416.
+    ///
+    /// This is the model fetched by `scripts/fetch_detection_model.sh`.
+    pub fn tiny_yolov2<P: AsRef<Path>>(model_path: P) -> Result<Self> {
+        let model = Self::load_runnable(model_path.as_ref(), TINY_YOLOV2_INPUT, TINY_YOLOV2_INPUT)?;
+        Ok(Self {
+            model,
+            width: TINY_YOLOV2_INPUT,
+            height: TINY_YOLOV2_INPUT,
+            confidence_threshold: DEFAULT_CONFIDENCE_THRESHOLD,
+            input_scale: 1.0,
+            resize: true,
+            post: PostProcess::YoloV2(YoloV2Spec::tiny_yolov2_voc()),
         })
     }
 
@@ -60,6 +112,31 @@ impl TractBackend {
     pub fn with_threshold(mut self, threshold: f32) -> Self {
         self.confidence_threshold = threshold;
         self
+    }
+
+    /// Bilinear-resize a packed RGB frame to the model's input dimensions. Used by the YOLO path
+    /// so a camera frame of any resolution can feed tiny-YOLOv2's fixed 416×416 input.
+    fn resize_to_input(&self, pixels: &[u8], width: u32, height: u32) -> Result<Vec<u8>> {
+        let expected = (width as usize)
+            .checked_mul(height as usize)
+            .and_then(|v| v.checked_mul(3))
+            .ok_or_else(|| anyhow!("frame dimensions overflow"))?;
+        if pixels.len() != expected {
+            return Err(anyhow!(
+                "expected {} RGB bytes for {}x{} frame, received {}",
+                expected,
+                width,
+                height,
+                pixels.len()
+            ));
+        }
+        Ok(resize_rgb(
+            pixels,
+            width as usize,
+            height as usize,
+            self.width as usize,
+            self.height as usize,
+        ))
     }
 
     fn build_input(&self, pixels: &[u8], width: u32, height: u32) -> Result<Tensor> {
@@ -86,16 +163,41 @@ impl TractBackend {
             ));
         }
 
+        let scale = self.input_scale;
         let width = width as usize;
         let input = tract_ndarray::Array4::from_shape_fn(
             (1, 3, height as usize, width),
             |(_, channel, y, x)| {
                 let idx = (y * width + x) * 3 + channel;
-                pixels[idx] as f32 / 255.0
+                pixels[idx] as f32 * scale
             },
         );
 
         Ok(input.into_tensor())
+    }
+
+    /// Decode a YOLOv2 grid output into final detections (decode + per-class NMS).
+    fn decode_yolo(&self, outputs: &TVec<TValue>, spec: &YoloV2Spec) -> Result<Vec<Detection>> {
+        let out = outputs
+            .first()
+            .ok_or_else(|| anyhow!("yolo model produced no output"))?;
+        let (grid_h, grid_w) = match out.shape() {
+            [1, _channels, gh, gw] => (*gh, *gw),
+            other => {
+                return Err(anyhow!(
+                    "unexpected yolo output shape {:?}, expected [1, C, H, W]",
+                    other
+                ))
+            }
+        };
+        let view = out
+            .to_array_view::<f32>()
+            .context("yolo output tensor was not f32")?;
+        let data = view
+            .as_slice()
+            .ok_or_else(|| anyhow!("yolo output tensor is not contiguous"))?;
+        let decoded = decode_yolov2(data, grid_w, grid_h, spec, self.confidence_threshold);
+        Ok(nms(decoded, YOLO_NMS_IOU))
     }
 
     fn validate_threshold(&self) -> Result<()> {
@@ -416,12 +518,22 @@ impl DetectorBackend for TractBackend {
 
     fn detect(&mut self, pixels: &[u8], width: u32, height: u32) -> Result<DetectionResult> {
         self.validate_threshold()?;
-        let input = self.build_input(pixels, width, height)?;
+        // The YOLO path resizes any camera frame to the model's fixed input; the post-NMS path
+        // keeps strict size matching.
+        let input = if self.resize {
+            let resized = self.resize_to_input(pixels, width, height)?;
+            self.build_input(&resized, self.width, self.height)?
+        } else {
+            self.build_input(pixels, width, height)?
+        };
         let outputs = self
             .model
             .run(tvec!(input.into()))
             .context("ONNX inference failed")?;
-        let detections = self.extract_detections(outputs, width, height)?;
+        let detections = match &self.post {
+            PostProcess::PostNms => self.extract_detections(outputs, width, height)?,
+            PostProcess::YoloV2(spec) => self.decode_yolo(&outputs, spec)?,
+        };
         let size_class = Self::size_class_for(&detections);
         let confidence = detections
             .iter()
@@ -437,5 +549,74 @@ impl DetectorBackend for TractBackend {
             confidence,
             size_class,
         })
+    }
+}
+
+/// Bilinear-resize a packed RGB8 image (`src`, `sw`×`sh`) to `dw`×`dh`. Pure Rust (no image
+/// crate) so the detection backend keeps a minimal dependency surface. Center-aligned sampling.
+fn resize_rgb(src: &[u8], sw: usize, sh: usize, dw: usize, dh: usize) -> Vec<u8> {
+    if (sw, sh) == (dw, dh) {
+        return src.to_vec();
+    }
+    let mut out = vec![0u8; dw * dh * 3];
+    let scale_x = sw as f32 / dw as f32;
+    let scale_y = sh as f32 / dh as f32;
+    for dy in 0..dh {
+        let fy = ((dy as f32 + 0.5) * scale_y - 0.5).max(0.0);
+        let y0 = (fy.floor() as usize).min(sh - 1);
+        let y1 = (y0 + 1).min(sh - 1);
+        let wy = fy - y0 as f32;
+        for dx in 0..dw {
+            let fx = ((dx as f32 + 0.5) * scale_x - 0.5).max(0.0);
+            let x0 = (fx.floor() as usize).min(sw - 1);
+            let x1 = (x0 + 1).min(sw - 1);
+            let wx = fx - x0 as f32;
+            for c in 0..3 {
+                let p = |x: usize, y: usize| src[(y * sw + x) * 3 + c] as f32;
+                let top = p(x0, y0) * (1.0 - wx) + p(x1, y0) * wx;
+                let bot = p(x0, y1) * (1.0 - wx) + p(x1, y1) * wx;
+                let v = top * (1.0 - wy) + bot * wy;
+                out[(dy * dw + dx) * 3 + c] = v.round().clamp(0.0, 255.0) as u8;
+            }
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resize_identity_when_same_dims() {
+        let src = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]; // 2x2 RGB
+        assert_eq!(resize_rgb(&src, 2, 2, 2, 2), src);
+    }
+
+    #[test]
+    fn resize_downscale_preserves_channels_and_size() {
+        // 4x4 solid red → 2x2 must stay solid red, correct length.
+        let src: Vec<u8> = (0..16).flat_map(|_| [200u8, 10, 5]).collect();
+        let out = resize_rgb(&src, 4, 4, 2, 2);
+        assert_eq!(out.len(), 2 * 2 * 3);
+        for px in out.chunks(3) {
+            assert_eq!(px, [200, 10, 5]);
+        }
+    }
+
+    #[test]
+    fn resize_upscale_endpoints_match_source_corners() {
+        // 2x2 with distinct corners; upscaled corners should match the source corners.
+        let src = vec![
+            10, 0, 0, /* (0,0) */ 20, 0, 0, /* (1,0) */
+            30, 0, 0, /* (0,1) */ 40, 0, 0, /* (1,1) */
+        ];
+        let out = resize_rgb(&src, 2, 2, 4, 4);
+        assert_eq!(out.len(), 4 * 4 * 3);
+        let at = |x: usize, y: usize| out[(y * 4 + x) * 3];
+        assert_eq!(at(0, 0), 10);
+        assert_eq!(at(3, 0), 20);
+        assert_eq!(at(0, 3), 30);
+        assert_eq!(at(3, 3), 40);
     }
 }

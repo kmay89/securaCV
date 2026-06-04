@@ -68,7 +68,7 @@ bash scripts/fetch_detection_model.sh
 ```bash
 cargo run --features backend-tract --bin demo -- \
   --backend tract \
-  --tract-model vendor/models/ssdlite_mobilenet_v2_12.onnx
+  --tract-model vendor/models/tinyyolov2-8.onnx
 ```
 
 **Exact CLI fields required for tract in the demo:**

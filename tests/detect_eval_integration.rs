@@ -9,6 +9,7 @@
 
 use std::path::PathBuf;
 
+use witness_kernel::config::TractFormat;
 use witness_kernel::eval::{parse_sweep_spec, run_eval, EvalConfig};
 
 fn test_model() -> PathBuf {
@@ -38,6 +39,7 @@ fn known_answer_eval_on_deterministic_model() {
         dataset_dir: dir.path().to_path_buf(),
         width: 4,
         height: 4,
+        format: TractFormat::PostNms,
         iou_threshold: 0.5,
         operating_threshold: 0.5,
         sweep: parse_sweep_spec("0.1:0.9:0.2").unwrap(),
@@ -83,6 +85,7 @@ fn higher_threshold_drops_recall_to_zero() {
         dataset_dir: dir.path().to_path_buf(),
         width: 4,
         height: 4,
+        format: TractFormat::PostNms,
         iou_threshold: 0.5,
         operating_threshold: 0.95,
         sweep: parse_sweep_spec("0.1:0.9:0.4").unwrap(),

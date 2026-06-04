@@ -222,7 +222,9 @@ fetch script writes, so you only set the backend:
 ```toml
 [detect]
 backend = "tract"
-# tract_model = "vendor/models/ssdlite_mobilenet_v2_12.onnx"  # default; only set to override
+# tract_model = "vendor/models/tinyyolov2-8.onnx"  # default (host-only; runs in tract on Pi/x86,
+#                                                  # NOT on the ESP32-S3 — that uses Grove Vision AI V2)
+# tract_format = "yolov2"  # default; "postnms" for models that already emit final boxes
 confidence = 0.5    # minimum detection confidence, 0.0–1.0 (default 0.5)
 
 [rtsp]      # or [v4l2]

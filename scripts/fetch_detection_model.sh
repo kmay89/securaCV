@@ -11,17 +11,25 @@
 #
 # Idempotent: if the model already exists and matches the pinned SHA-256, it does nothing.
 # Requires a build with `--features backend-tract` to actually run the tract backend.
+#
+# HOST-ONLY: this model runs in tract on a Raspberry Pi / x86 host (witnessd). It does NOT run
+# on the ESP32-S3 — that path uses the Grove Vision AI V2 (SSCMA) board for on-device inference
+# (see firmware/projects/canary-vision). A 60 MB ONNX model cannot fit on an MCU, and tract does
+# not target microcontrollers.
 set -euo pipefail
 
-# Pinned model: SSDLite MobileNet v2 (ONNX Model Zoo, Apache-2.0). Update both together.
-MODEL_URL="https://github.com/onnx/models/raw/main/vision/object_detection_segmentation/ssdlite_mobilenet_v2/model/ssdlite_mobilenet_v2_12.onnx"
-MODEL_SHA256="ad6303f1ca2c3dcc0d86a87c36892be9b97b02a0105faa5cc3cfae79a2b11a31"
+# Pinned model: tiny-YOLOv2 (ONNX Model Zoo, VOC, MIT). Raw-grid output is decoded + NMS'd on
+# the host (detect.tract_format = "yolov2", the default). Chosen because tract can run it — the
+# TF-exported SSD/SSDLite models use ONNX `Loop` ops for in-graph NMS that tract does not
+# implement. Update URL and SHA together.
+MODEL_URL="https://github.com/onnx/models/raw/main/validated/vision/object_detection_segmentation/tiny-yolov2/model/tinyyolov2-8.onnx"
+MODEL_SHA256="583fb7fdc948435ceac9fa82efc7708701efe8382a859a3dd46526b155f5f2ae"
 
 # Resolve the repo root from this script's location so it works from any CWD.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 MODEL_DIR="${REPO_ROOT}/vendor/models"
-MODEL_PATH="${MODEL_DIR}/ssdlite_mobilenet_v2_12.onnx"
+MODEL_PATH="${MODEL_DIR}/tinyyolov2-8.onnx"
 
 # Validate dependencies up front, before downloading anything. (sha256_of runs inside a
 # command substitution, so an exit there would only kill the subshell — check here instead.)
@@ -49,7 +57,7 @@ if [ -f "${MODEL_PATH}" ] && [ "$(sha256_of "${MODEL_PATH}")" = "${MODEL_SHA256}
 fi
 
 mkdir -p "${MODEL_DIR}"
-tmp="$(mktemp "${MODEL_DIR}/.ssdlite.XXXXXX")"
+tmp="$(mktemp "${MODEL_DIR}/.tinyyolov2.XXXXXX")"
 trap 'rm -f "${tmp}"' EXIT
 
 echo "Downloading detection model -> ${MODEL_PATH}"
