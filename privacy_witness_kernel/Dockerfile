@@ -22,7 +22,7 @@ FROM docker.io/library/alpine:3.18 AS chef
 
 RUN apk add --no-cache \
     build-base cmake perl pkgconf linux-headers musl-dev \
-    curl ca-certificates \
+    curl ca-certificates xz \
     gstreamer-dev gst-plugins-base-dev \
     libseccomp-dev \
     sqlite-dev \
@@ -37,7 +37,26 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 # so the dependency "cook" and the crate build use identical flags — required for the
 # cached dependency artifacts to be reused by the final build.
 ENV RUSTFLAGS="-C target-feature=-crt-static"
-RUN cargo install cargo-chef --locked
+# Install cargo-chef from its pinned prebuilt musl release rather than compiling it
+# from source — much faster on a cold build, and avoids compiling it under arm64 QEMU.
+# TARGETARCH is provided automatically by buildx (amd64 / arm64).
+ARG CARGO_CHEF_VERSION=0.1.77
+ARG TARGETARCH
+RUN set -eu; \
+    case "$TARGETARCH" in \
+      amd64) chef_arch=x86_64 ;; \
+      arm64) chef_arch=aarch64 ;; \
+      *) echo "unsupported TARGETARCH='$TARGETARCH' for cargo-chef download" >&2; exit 1 ;; \
+    esac; \
+    url="https://github.com/LukeMathwalker/cargo-chef/releases/download/v${CARGO_CHEF_VERSION}/cargo-chef-${chef_arch}-unknown-linux-musl.tar.xz"; \
+    curl --proto '=https' --tlsv1.2 -fsSL "$url" -o /tmp/cargo-chef.tar.xz; \
+    mkdir -p /tmp/cargo-chef; \
+    xz -dc /tmp/cargo-chef.tar.xz | tar -x -C /tmp/cargo-chef; \
+    chef_bin="$(find /tmp/cargo-chef -type f -name cargo-chef | head -n1)"; \
+    test -n "$chef_bin"; \
+    install -m 0755 "$chef_bin" /usr/local/bin/cargo-chef; \
+    rm -rf /tmp/cargo-chef /tmp/cargo-chef.tar.xz; \
+    test -x /usr/local/bin/cargo-chef
 WORKDIR /build
 
 # Planner: distil the dependency graph into a recipe from the manifests only.
