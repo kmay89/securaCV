@@ -1212,6 +1212,9 @@ static void derive_ap_password(const uint8_t privkey[32], char* password, size_t
   encoded[12] = '\0';
   snprintf(password, len, "cv-%s", encoded);
   // Result: "cv-XXXXXXXXXXXX" — 15 chars, a private-key-derived secret
+  // Wipe both transient copies of secret material (DCE-safe) — the password
+  // lives on only in the caller's buffer (g_device.ap_password) by design.
+  secure_zero(encoded, sizeof(encoded));
   secure_zero(pw_key, sizeof(pw_key));
 }
 
