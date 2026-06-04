@@ -130,6 +130,22 @@ test("historyToTimelineItems carries attributes forward, drops unavailable, de-d
   assert.match(items[1].timeBucket, /~10 min/);
 });
 
+test("historyToTimelineItems keeps same-type events in different zones (zone in de-dup key)", () => {
+  const bucket = { start_epoch_s: 600, size_s: 600 }; // same coarse 10-min window
+  const history = {
+    "sensor.securacv_last_event": [
+      { s: "boundary_crossing_object_small", a: { zone_id: "zone:driveway", time_bucket: bucket }, lu: 100 },
+      // same type + same bucket but a DIFFERENT zone → must NOT be collapsed
+      { s: "boundary_crossing_object_small", a: { zone_id: "zone:garden", time_bucket: bucket }, lu: 160 },
+      // exact repeat of the previous (same type/zone/bucket) → collapsed
+      { s: "boundary_crossing_object_small", a: { zone_id: "zone:garden", time_bucket: bucket }, lu: 200 },
+    ],
+  };
+  const items = historyToTimelineItems(history, { maxEvents: 50 });
+  assert.equal(items.length, 2, "distinct zones kept, exact repeat collapsed");
+  assert.deepEqual(items.map((i) => i.zone).sort(), ["zone:driveway", "zone:garden"]);
+});
+
 test("historyToTimelineItems respects maxEvents and tolerates junk", () => {
   const series = [];
   for (let i = 0; i < 10; i++) {

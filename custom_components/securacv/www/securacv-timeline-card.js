@@ -175,7 +175,12 @@
         const attrs = carriedAttrs || {};
         const eventType = String(entry.state);
         const bucket = attrs.time_bucket;
-        const dedupeKey = `${eventType}|${typeof bucket === "object" ? JSON.stringify(bucket) : bucket}`;
+        const zone = attrs.zone_id || attrs.zone || null;
+        // Include zone in the de-dup key: coarse (~10 min) buckets mean two
+        // genuinely distinct events of the same type in different zones can
+        // share a bucket, and zone is user-visible metadata on the row — so
+        // collapsing on type+bucket alone would hide real events.
+        const dedupeKey = `${eventType}|${zone || ""}|${typeof bucket === "object" ? JSON.stringify(bucket) : bucket}`;
         if (dedupeKey === prevKey) continue;
         prevKey = dedupeKey;
         const meta = eventMeta(eventType);
@@ -185,7 +190,7 @@
           eventType,
           label: attrs.friendly_event || meta.label,
           icon: meta.icon,
-          zone: attrs.zone_id || attrs.zone || null,
+          zone,
           confidence: confidencePct(attrs.confidence),
           timeBucket: formatTimeBucket(bucket),
           verification: resolveVerification({
@@ -291,6 +296,7 @@
       this._items = [];
       this._historyKey = null;
       this._fetching = false;
+      this._needReFetch = false;
     }
 
     setConfig(config) {
@@ -327,21 +333,31 @@
     }
 
     async _maybeFetchHistory() {
-      if (!this._hass || this._fetching) return;
+      if (!this._hass) return;
       const entities = this._resolveEntities();
       const ids = entities.eventEntities;
       if (!ids.length) {
         this._items = [];
         return;
       }
-      // Re-fetch only when the live state of an event entity changes (cheap key).
+      // Re-fetch only when an event entity changes. The key folds in
+      // last_updated (not just last_changed) because back-to-back events of
+      // the same type are an attribute-only update — HA keeps last_changed but
+      // advances last_updated — and we must not treat those as "no change".
       const key = ids.map((id) => {
         const st = this._hass.states[id];
-        return st ? `${id}=${st.state}@${st.last_changed}` : id;
+        return st ? `${id}=${st.state}@${st.last_changed}#${st.last_updated}` : id;
       }).join("|");
       if (key === this._historyKey) return;
+      // A change that arrives mid-fetch must not be dropped: remember that a
+      // refresh is due and run it once the in-flight fetch settles.
+      if (this._fetching) {
+        this._needReFetch = true;
+        return;
+      }
       this._historyKey = key;
       this._fetching = true;
+      this._needReFetch = false;
       try {
         const start = new Date(Date.now() - this._config.hours * 3600 * 1000).toISOString();
         const history = await this._hass.callWS({
@@ -359,7 +375,11 @@
         this._items = this._itemsFromCurrentStates(ids);
       } finally {
         this._fetching = false;
-        this._render();
+        if (this._needReFetch) {
+          this._maybeFetchHistory();
+        } else {
+          this._render();
+        }
       }
     }
 
@@ -410,7 +430,10 @@
       }
       const pills = this._chainStatusPills();
       const pillsHtml = pills
-        .map((p) => `<span class="pill ${p.cls}"><ha-icon icon="${p.icon}"></ha-icon>${p.text}</span>`)
+        // Escape p.text: it carries device-supplied values (chain length,
+        // latest_hash) that an untrusted local MQTT publisher controls, so it
+        // must be treated as data, not markup — same as the event rows below.
+        .map((p) => `<span class="pill ${p.cls}"><ha-icon icon="${p.icon}"></ha-icon>${escapeHtml(p.text)}</span>`)
         .join("");
 
       const eventsHtml = this._items.length
