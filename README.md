@@ -24,7 +24,13 @@ tamper-proof log that proves nobody — including you — altered the record.
 > for tamper-evident perception that records *that something happened* without building a
 > surveillance archive of *who*.
 
-<!-- TODO: add a screenshot of the verified ✓ event timeline + daily digest here -->
+> **The payoff — a verified-✓ timeline in your dashboard.** SecuraCV ships a Home Assistant
+> Lovelace card that turns the events into a newest-first timeline with a hash-chain status
+> header. Each row carries an *honest* verification badge: a green **✓ "Signature verified"**
+> appears only when the event's Ed25519 signature actually verified — weaker states
+> (signed-but-unverified, logged, verification-failed) are shown distinctly so a ✓ never
+> overclaims. Add it from **Add Card → "SecuraCV Verified Timeline"**; see the
+> [card guide](docs/lovelace_timeline.md).
 
 ---
 

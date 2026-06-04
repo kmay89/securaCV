@@ -28,7 +28,7 @@
 | F-09 | Minor | ✅ Resolved (#682) | Repo hygiene | Root **`spec.md` is mis-titled** — it's the `zone_crossing` module spec, not a system spec. |
 | F-10 | Minor | ✅ Resolved (#691) | CLI count | CHANGELOG says **"9 CLI binaries"**; tree has **14**. |
 | F-11 | Minor | ✅ Resolved (#688) | Ingest dup | **Two RTSP** implementations (`rtsp.rs` vs `rtsp_ffmpeg.rs`) risk divergence. |
-| F-12 | Doc-debt | 🟡 Partial (#673) | README | README has live **TODOs** (missing screenshot) and ships "core works end-to-end" beside an unshipped v1. |
+| F-12 | Doc-debt | ✅ Resolved (#673/#706) | README | README has live **TODOs** (missing screenshot) and ships "core works end-to-end" beside an unshipped v1. |
 | F-13 | Doc-debt | ✅ Resolved (#673) | Roadmap | `v1-roadmap.md` overclaims completion (✅) on items contradicted by code (F-01) and omits shipped work (PQC, adapters). |
 | F-14 | Minor | ⬜ Open | Spec maturity | Many normative specs are `_v0` / "Draft v0.1" but referenced as if stable contracts. |
 | F-15 | Minor | ✅ Resolved (CI) | Build env | Tests need `libseccomp`; firmware needs `pio`/`arduino-cli` — none present in the audit env, so "passes cleanly" is **unverified here**. |
@@ -218,9 +218,13 @@ multi-path mesh resilience story has unbuilt legs. **Fix:** scope mesh claims to
 >   feature hash + `RawFrame`), covered by a contract test. The `ffmpeg` path stays the CI-exercised
 >   canonical decoder (`ingest-rtsp` + `tests/rtsp_e2e.rs`, #666). *Follow-up:* the feature-gated
 >   `esp32` / `v4l2` sources still inline the equivalent sequence and should adopt the same gate.
-> - **F-12 🟡 Partial (#673)** — the badge half is fixed (`README.md:5` now `v1-rc`, no longer
->   "core works end-to-end" beside an unshipped v1); the `<!-- TODO: add a screenshot … -->` at
->   `README.md:26` is still there (the "verified ✓ timeline" screenshot, roadmap P2).
+> - **F-12 ✅ Resolved (#673/#706)** — the badge half was fixed in #673 (`README.md:5` now `v1-rc`,
+>   no longer "core works end-to-end" beside an unshipped v1). The dangling
+>   `<!-- TODO: add a screenshot … -->` at `README.md:26` is gone: the verified-✓ timeline card
+>   actually shipped (#689), so the placeholder is replaced by a real payoff callout describing the
+>   honest verification badges and linking the [card guide](../lovelace_timeline.md). (A photographed
+>   dashboard screenshot remains a nice-to-have, but there is no longer a live TODO or an undocumented
+>   payoff.)
 > - **F-14 ⬜ Open** — spec maturity column not yet added.
 > - **F-15 ✅ Resolved (CI)** — "passes cleanly" is now CI-verified, not just claimed: `rust.yml`
 >   runs `cargo test` (with `libseccomp`), plus the RTSP (#666) and Frigate→MQTT (#672) e2e gates
