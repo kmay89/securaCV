@@ -25,8 +25,8 @@
 | F-06 | Major | ✅ Resolved (#670) | Firmware flash | **Divergent partition tables**; canary-wap Arduino pins **no** scheme; one secure table assumes **4 MB** flash on an 8 MB board. |
 | F-07 | Major | ⬜ Open (frozen) | Transports | `TRANSPORT_LORA` / `TRANSPORT_AUDIO` (+`audio_anomaly` tamper) are declared but **unimplemented**. |
 | F-08 | Major | ⬜ Open (frozen) | Mesh | ESP-NOW WiFi-AP bridge & BLE fallback marked **"❌ not implemented"** in the mesh evaluation. |
-| F-09 | Minor | ⬜ Open | Repo hygiene | Root **`spec.md` is mis-titled** — it's the `zone_crossing` module spec, not a system spec. |
-| F-10 | Minor | ⬜ Open | CLI count | CHANGELOG says **"9 CLI binaries"**; tree has **14**. |
+| F-09 | Minor | ✅ Resolved (#682) | Repo hygiene | Root **`spec.md` is mis-titled** — it's the `zone_crossing` module spec, not a system spec. |
+| F-10 | Minor | ✅ Resolved (#PR10) | CLI count | CHANGELOG says **"9 CLI binaries"**; tree has **14**. |
 | F-11 | Minor | ✅ Resolved (#688) | Ingest dup | **Two RTSP** implementations (`rtsp.rs` vs `rtsp_ffmpeg.rs`) risk divergence. |
 | F-12 | Doc-debt | 🟡 Partial (#673) | README | README has live **TODOs** (missing screenshot) and ships "core works end-to-end" beside an unshipped v1. |
 | F-13 | Doc-debt | ✅ Resolved (#673) | Roadmap | `v1-roadmap.md` overclaims completion (✅) on items contradicted by code (F-01) and omits shipped work (PQC, adapters). |
@@ -206,8 +206,11 @@ multi-path mesh resilience story has unbuilt legs. **Fix:** scope mesh claims to
   before any v1 tag. (CI workflows exist: `.github/workflows/firmware*.yml`, CodeQL.)
 
 > **Status 2026-06-04 (minors).**
-> - **F-09 ⬜ Open** — root `spec.md` still reads `# Module Spec: zone_crossing`.
-> - **F-10 ⬜ Open** — `CHANGELOG.md:27` still says "9 core" CLI binaries; `src/bin/` has 14.
+> - **F-09 ✅ Resolved (#682)** — the `zone_crossing` template moved to `spec/modules/zone_crossing.md`
+>   and root `spec.md` is now an index pointing into `spec/`.
+> - **F-10 ✅ Resolved (#PR10)** — `CHANGELOG.md` now enumerates all binaries and gives the correct
+>   total (15 in `src/bin/`, after `detect_eval` landed in #687): 9 core + `adapter_host` +
+>   `envelope_verify` + the `demo` / `tamper_demo` / `ingest_run` / `detect_eval` helpers.
 > - **F-11 ✅ Resolved (#688)** — `rtsp.rs` is the single `RtspSource` facade; `rtsp_ffmpeg.rs` is its
 >   FFmpeg *backend*, not a rival source. The real divergence risk — each backend re-deriving the
 >   capture-time privacy steps — is closed: the RTSP (GStreamer/FFmpeg) and file (`file`/`file_ffmpeg`)

@@ -27,7 +27,7 @@ below — but nothing documented is allowed to be aspirational at the v1 tag.
 - **CLI binaries**: 9 core — witnessd, log_verify, break_glass, export_events,
   export_verify, frigate_bridge, event_mqtt_bridge, witness_api,
   grove_vision2_ingest — plus the `adapter_host` daemon and `envelope_verify`,
-  and the `demo` / `tamper_demo` / `ingest_run` helpers (14 total in `src/bin/`).
+  and the `demo` / `tamper_demo` / `ingest_run` / `detect_eval` helpers (15 total in `src/bin/`).
 - **Sensor Adapter framework** (`src/adapter/`): an open, vendor-neutral interface that
   generalizes the `frigate_bridge` pattern so any source (acoustic/impulse, PIR/contact,
   presence, generic MQTT/webhook sensors, Frigate) can feed coarse, privacy-preserving claims
