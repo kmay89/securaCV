@@ -16,8 +16,9 @@ use rusqlite::Connection;
 
 use witness_kernel::crypto::signatures::SignatureMode;
 use witness_kernel::{
-    derive_db_encryption_key, signing_key_from_seed, verify, verify_helpers, CandidateEvent,
-    EventType, InferenceBackend, Kernel, KernelConfig, ModuleDescriptor, TimeBucket, ZonePolicy,
+    db_key_seed_from_env, resolve_db_encryption_key, signing_key_from_seed, verify, verify_helpers,
+    CandidateEvent, EventType, InferenceBackend, Kernel, KernelConfig, ModuleDescriptor,
+    TimeBucket, ZonePolicy,
 };
 
 const RULESET_ID: &str = "ruleset:demo";
@@ -25,7 +26,7 @@ const RULESET_ID: &str = "ruleset:demo";
 /// Open the SQLCipher-encrypted demo database with the device-derived key.
 fn open_encrypted(path: &str, seed: &str) -> Result<Connection> {
     let signing_key = signing_key_from_seed(seed)?;
-    let db_key = derive_db_encryption_key(&signing_key);
+    let db_key = resolve_db_encryption_key(&signing_key, db_key_seed_from_env().as_deref());
     let conn = Connection::open(path)?;
     conn.pragma_update(None, "key", format!("x'{}'", &*db_key))?;
     Ok(conn)

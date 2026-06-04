@@ -107,7 +107,8 @@ tagging v1):**
 Rationale: Signed log is easier to demonstrate end-to-end without designing envelope formats and media storage semantics. The vault seal path is wired into `witnessd` (opt-in via `BREAK_GLASS_SEAL_TOKEN`); v1 leads with the signed log for the headline end-to-end demo, with vault sealing available as the optional sealed-evidence path.
 
 **Remaining crypto gaps to close:**
-- Device key handling is still seed-derived from config, not hardware-backed or rotated.
+- Device signing key is still seed-derived from config, not hardware-backed. (The DB key is
+  no longer coupled to it — see the B2 note below.)
 - Vault sealing is wired but opt-in/UX-gated; the remaining gap is key management (see the
   device-key item above) and a trustee/seal setup UI — not the encryption itself.
 
@@ -118,13 +119,15 @@ Rationale: Signed log is easier to demonstrate end-to-end without designing enve
 | B3 | **Done:** `log_verify` validates Ed25519 signatures | ✅ |
 | B4 | **Done:** Tampering demo (`tamper_demo` binary: modify log, verify fails) | ✅ |
 
-**B2 note:** Deferred. Software-only "encrypted at rest" key storage adds
-little on an unattended device that must auto-decrypt at boot — the real
-bar (hardware-backed keys via TPM/Secure Element) needs hardware to
-validate. The prerequisite architectural fix is decoupling the SQLCipher
-DB key from the device identity key (`derive_db_encryption_key` currently
-derives the DB key from the signing key), which is what would unblock safe
-key rotation.
+**B2 note:** The prerequisite architectural fix — **decoupling the SQLCipher DB key from the
+device identity key** — is now **done**. Set `SECURACV_DB_KEY_SEED` to an independent secret and
+the kernel derives the DB key from it (`resolve_db_encryption_key`) instead of the Ed25519
+signing key, so the signing key can be rotated without re-encrypting the database;
+`rekey_database_file()` rotates the DB key itself in place. See
+[`docs/db_key_rotation.md`](docs/db_key_rotation.md). What remains for B2 is the higher bar:
+software-only "encrypted at rest" key storage adds little on an unattended device that must
+auto-decrypt at boot, so the real target is **hardware-backed keys** (TPM/Secure Element), which
+needs hardware to validate.
 
 **Total:** ~2-3 weeks
 

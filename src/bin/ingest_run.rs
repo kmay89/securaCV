@@ -92,9 +92,11 @@ fn run(args: &Args) -> Result<Summary> {
 
     let seed_supplied = args.device_key_seed.is_some();
     let device_key_seed = args.device_key_seed.clone().unwrap_or_else(random_seed);
-    let db_key =
-        witness_kernel::derive_db_encryption_key(&signing_key_from_seed(&device_key_seed)?)
-            .to_string();
+    let db_key = witness_kernel::resolve_db_encryption_key(
+        &signing_key_from_seed(&device_key_seed)?,
+        witness_kernel::db_key_seed_from_env().as_deref(),
+    )
+    .to_string();
 
     let cfg = KernelConfig {
         db_path: args.db.clone(),

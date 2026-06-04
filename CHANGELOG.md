@@ -15,6 +15,13 @@ below — but nothing documented is allowed to be aspirational at the v1 tag.
 - **Privacy Witness Kernel** (Rust): hash-chained, Ed25519-signed append-only
   event log with break-glass N-of-M quorum access, vault sealing, event
   contract enforcement, module sandboxing (seccomp on Linux).
+- **DB key decoupled from the signing key** (F-04 / Stream B2 prerequisite): set
+  `SECURACV_DB_KEY_SEED` and the SQLCipher key is derived from that independent secret
+  (`resolve_db_encryption_key`) instead of the Ed25519 signing key, so the device identity can be
+  rotated without re-encrypting the database. `rekey_database_file()` rotates the DB key itself in
+  place (`PRAGMA rekey`). Backward compatible — without the env var, the legacy signing-key
+  derivation is byte-identical, so existing databases open unchanged. See
+  [`docs/db_key_rotation.md`](docs/db_key_rotation.md).
 - **CLI binaries**: 9 core — witnessd, log_verify, break_glass, export_events,
   export_verify, frigate_bridge, event_mqtt_bridge, witness_api,
   grove_vision2_ingest — plus the `adapter_host` daemon and `envelope_verify`,
