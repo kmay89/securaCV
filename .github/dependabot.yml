@@ -1,0 +1,43 @@
+# Automated dependency update PRs (HY-06). Replaces the manual advisory
+# tracking in SECURITY.md with scheduled, grouped update PRs. The
+# .github/workflows/audit.yml job is the companion that flags *known
+# vulnerabilities* in the current lockfiles.
+version: 2
+updates:
+  # Rust workspace (Cargo.toml / Cargo.lock at repo root).
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(cargo)"
+    groups:
+      cargo-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  # Node fleet UI + device-API (npm workspace rooted at canary-vision/).
+  - package-ecosystem: "npm"
+    directory: "/canary-vision"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(npm)"
+    groups:
+      npm-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  # GitHub Actions used across .github/workflows/.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci(actions)"
+    groups:
+      github-actions:
+        patterns: ["*"]
