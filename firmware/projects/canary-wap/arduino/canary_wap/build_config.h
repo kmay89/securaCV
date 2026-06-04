@@ -27,6 +27,19 @@
 // themselves, so the guard holds regardless of include order.
 #define CANARY_WEB_ASSETS_GZIPPED 1
 
+// ────────────────────────────────────────────────────────────────────────────
+// GPS PRECISION COARSENING (Invariant III)
+// ────────────────────────────────────────────────────────────────────────────
+// Decimal places lat/lon are rounded to before any operator-facing emission
+// (HTTP/serial). This is a PER-DEPLOYMENT privacy knob — tune it to the install's
+// circumstances (e.g. population density / how identifying a precise fix is):
+//   2 dp ≈ 1.1 km   3 dp ≈ 110 m (default)   4 dp ≈ 11 m   5 dp ≈ 1.1 m
+// Lower = more privacy / less locate precision; higher = the reverse.
+// Build-time default; can be overridden at runtime via the "gps_prec" NVS key.
+#ifndef GPS_COARSEN_DECIMALS
+#define GPS_COARSEN_DECIMALS 3
+#endif
+
 // ════════════════════════════════════════════════════════════════════════════
 // HARDWARE TARGET SELECTION — Uncomment exactly ONE
 // ════════════════════════════════════════════════════════════════════════════

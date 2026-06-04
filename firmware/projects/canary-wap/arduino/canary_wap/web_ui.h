@@ -1022,7 +1022,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
               <span class="identity-value"><span id="sysSketch">--</span> KB used</span>
             </div>
             <div class="identity-row">
-              <span class="identity-label">MAC</span>
+              <span class="identity-label">Hardware ID</span>
               <span class="identity-value" id="sysMac">--</span>
             </div>
             <div class="identity-row">
@@ -2708,7 +2708,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         document.getElementById('sysFreq').textContent = dev.freq_mhz || '--';
         document.getElementById('sysFlash').textContent = ((dev.flash_size || 0) / (1024 * 1024)).toFixed(0);
         document.getElementById('sysSketch').textContent = Math.round((data.memory?.sketch?.size || 0) / 1024);
-        document.getElementById('sysMac').textContent = dev.mac || '--';
+        document.getElementById('sysMac').textContent = dev.hw_token || '--';
         document.getElementById('sysReset').textContent = (dev.reset_reason || 'unknown').replace(/_/g, ' ');
       }
     }

@@ -9,3 +9,5 @@ test_beacon_tamper_revoke
 test_mesh_opera_security
 test_device_signature
 test_captive_dns
+test_captive_probe
+test_device_pseudonym

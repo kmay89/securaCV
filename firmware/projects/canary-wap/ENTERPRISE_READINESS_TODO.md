@@ -26,13 +26,23 @@ Reference baseline inventory: [`firmware/FIRMWARE_VARIANT_AUDIT.md`](../../FIRMW
   - [x] Ensure fallback is compile-time-disabled for release builds.
   - [x] Update docs to remove any default-password onboarding language.
 
-- [ ] **Stop exposing raw MAC addresses in WAP APIs/logs**
-  - Replace raw MAC with salted/rotating pseudonymous tokens where presence is needed.
-  - Add regression checks to fail if `WiFi.macAddress()` appears in API payloads/logging.
+- [x] **Stop exposing raw MAC addresses in WAP APIs/logs** *(canary-wap arduino; F-03)*
+  - [x] Raw efuse/`WiFi.macAddress()` MAC replaced with a salted pseudonym (`device_pseudonym` —
+        SHA-256 of a per-device NVS salt + MAC) in the diagnostics JSON/serial, device-info and
+        provisioning-receipt APIs, the provisioning + boot serial banners, and the web UI
+        (`Hardware ID`). Pure derivation host-tested (`tests_host/test_device_pseudonym.cpp`).
+  - [x] `regression_check.sh` now **fails** if the device efuse MAC is formatted as a raw MAC string
+        or if `WiFi.macAddress()` feeds a payload/log in the audited project.
+  - [ ] _Follow-up:_ other firmware variants (`firmware/canary/src`, `canary-wap/src`,
+        `canary-vision/src`) still emit raw MAC — flagged as warnings by the guardrail until they
+        adopt a shared `device_pseudonym` helper.
 
-- [ ] **Coarsen operator-visible GPS precision**
-  - Enforce policy-consistent precision in serial logs and HTTP responses.
-  - Add test/grep guardrails for high-precision latitude/longitude format strings.
+- [x] **Coarsen operator-visible GPS precision** *(canary-wap arduino; F-03)*
+  - [x] All operator-facing lat/lon (CBOR telemetry, `/gps` JSON, status/record serial logs) routed
+        through `gps_coarsen_deg()` (3 dp ≈ 110 m); high-precision (`%.7f`) coordinate formats removed.
+  - [x] `regression_check.sh` now **fails** on un-coarsened lat/lon emission and on high-precision
+        (≥4 dp) coordinate format strings in the audited project.
+  - [ ] _Follow-up:_ `firmware/canary/src` GPS emission still uncoarsened — flagged as warnings.
 
 - [ ] **Constrain outbound behavior to explicit opt-in**
   - Keep AP-only default mode.

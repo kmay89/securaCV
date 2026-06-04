@@ -103,17 +103,68 @@ fi
 
 echo ""
 
-# ── Check: No raw MAC addresses stored ─────────────────────────
-echo "── Privacy: MAC address handling ──"
+# ── Privacy guardrails (F-03): no raw MAC / no fine GPS in operator-facing output ──
+# Hard-fail in the audited canary-wap arduino project (migrated to device_pseudonym +
+# gps_coarsen_deg). The same patterns in other firmware variants are reported as
+# warnings — tracked as F-03 follow-ups until those trees adopt the shared helpers.
+AUDITED_DIR="$PROJECTS_DIR/canary-wap/arduino/canary_wap"
 
-# Presence detection should never store raw MACs
-MAC_HITS=$(grep -rn 'WiFi.macAddress()' "${SRC_DIRS[@]}" 2>/dev/null | grep -v "fingerprint\|device_id\|ap_ssid\|derive\|token\|hash\|//" | head -5 || true)
-if [ -n "$MAC_HITS" ]; then
-  check_warn "WiFi.macAddress() used outside identity/derivation context — verify not storing raw MACs"
-  echo "$MAC_HITS" | while read -r line; do blue "  $line"; done
-else
-  check_pass "MAC address usage appears safe"
-fi
+# report_privacy <subject> <newline-separated "file:line:..." hits>
+# FAILs for hits inside AUDITED_DIR, WARNs for hits elsewhere, passes if none.
+report_privacy() {
+  local subject="$1" hits="$2" aud oth
+  aud=$(printf '%s\n' "$hits" | grep -F "$AUDITED_DIR" 2>/dev/null || true)
+  oth=$(printf '%s\n' "$hits" | grep -vF "$AUDITED_DIR" 2>/dev/null | grep -vE '^[[:space:]]*$' || true)
+  if [ -n "$aud" ]; then
+    check_fail "$subject — audited canary-wap project (Invariant III)"
+    printf '%s\n' "$aud" | while IFS= read -r l; do [ -n "$l" ] && blue "  $l"; done
+  fi
+  if [ -n "$oth" ]; then
+    check_warn "$subject — other firmware variant (F-03 follow-up)"
+    printf '%s\n' "$oth" | while IFS= read -r l; do [ -n "$l" ] && blue "  $l"; done
+  fi
+  if [ -z "$aud" ] && [ -z "$oth" ]; then
+    check_pass "$subject: none found"
+  fi
+  return 0  # never trip `set -e`; failures are tallied via check_fail/ERRORS
+}
+
+echo "── Privacy: MAC address handling (F-03) ──"
+
+# 1) The device's own efuse MAC must never be formatted as a raw MAC string. A file
+#    that both reads the efuse MAC and contains a "%02X:..:%02X" format is emitting the
+#    hardware address — use device_pseudonym (salted token) instead.
+EFUSE_HITS=""
+for f in $(grep -rlE 'esp_efuse_mac_get_default' "${SRC_DIRS[@]}" --include=*.h --include=*.cpp --include=*.ino 2>/dev/null | grep -viE 'test' || true); do
+  m=$(grep -nE '%02[Xx]:%02[Xx]:%02[Xx]:%02[Xx]:%02[Xx]:%02[Xx]' "$f" 2>/dev/null | head -1 || true)
+  if [ -n "$m" ]; then EFUSE_HITS="$EFUSE_HITS$f:$m"$'\n'; fi
+done
+report_privacy "Device efuse MAC formatted as a raw MAC string" "$EFUSE_HITS"
+
+# 2) WiFi.macAddress() must not feed API payloads / logs (identity/derivation use is OK).
+MAC_HITS=$(grep -rnE 'WiFi\.macAddress\(\)' "${SRC_DIRS[@]}" --include=*.h --include=*.cpp --include=*.ino 2>/dev/null | grep -viE 'fingerprint|device_id|ap_ssid|derive|token|hash|pseudonym|//|test' || true)
+report_privacy "WiFi.macAddress() in a payload/log context" "$MAC_HITS"
+
+# 3) ESP.getEfuseMac() is the 48-bit factory MAC — must not be emitted operator-facing
+#    (e.g. as a "chip_id"). Hashing/derivation use (device_id, fingerprint) is allowed.
+EFUSEMAC_HITS=$(grep -rnE 'getEfuseMac\(\)' "${SRC_DIRS[@]}" --include=*.h --include=*.cpp --include=*.ino 2>/dev/null | grep -viE 'fingerprint|device_id|derive|token|hash|pseudonym|//|test' || true)
+report_privacy "ESP.getEfuseMac() in a payload/log context" "$EFUSEMAC_HITS"
+
+echo ""
+
+echo "── Privacy: GPS precision coarsening (F-03) ──"
+
+# 1) Structured lat/lon emission (CBOR write_float / JSON ["lat"|"lon"] =) must pass
+#    through gps_coarsen_deg(); the no-fix "= 0.0" sentinels are exempt.
+GPS_RAW=$(grep -rnE 'write_float\([^)]*(lat|lon)|\["(lat|lon)"\][[:space:]]*=' "${SRC_DIRS[@]}" --include=*.ino --include=*.cpp --include=*.h 2>/dev/null \
+  | grep -v 'gps_coarsen_deg' | grep -vE '=[[:space:]]*0\.0' | grep -viE '//|test' || true)
+report_privacy "GPS lat/lon emitted without gps_coarsen_deg()" "$GPS_RAW"
+
+# 2) No high-precision (>=4 dp) coordinate format strings in operator output.
+# Match any precision >=4 dp: first digit 4-9, OR two-or-more digits (10, 14, 20, ...).
+GPS_PREC=$(grep -rnE '%[0-9]*\.([4-9]|[1-9][0-9]+)f' "${SRC_DIRS[@]}" --include=*.ino --include=*.cpp --include=*.h 2>/dev/null \
+  | grep -iE 'lat|lon|gps|coord' | grep -viE '//|test' || true)
+report_privacy "High-precision lat/lon format string (>=4 dp)" "$GPS_PREC"
 
 echo ""
 
