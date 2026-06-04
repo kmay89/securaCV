@@ -100,16 +100,33 @@ fn main() -> Result<()> {
 
     // Be explicit about whether frame sealing into the vault is actually active.
     // Sealing is opt-in: it only runs when BREAK_GLASS_SEAL_TOKEN points at a valid
-    // break-glass token. With no token, boundary events are still signed and logged,
-    // but NO frame is sealed into the break-glass vault — surface this so an operator
-    // never assumes "sealed evidence" they are not actually capturing.
+    // break-glass token, AND that token is only honoured within the 10-minute bucket
+    // it was issued for (the seal path rejects an out-of-window token as "expired").
+    // With no usable token, boundary events are still signed and logged, but NO frame
+    // is sealed into the break-glass vault — surface this so an operator never assumes
+    // "sealed evidence" they are not actually capturing.
     // See docs/review/01-flag-report.md F-05.
     match &seal_token {
-        Some(_) => log::info!(
-            "vault frame sealing: ENABLED (crypto_mode={:?}) — boundary events seal a pre-roll \
-             frame into the break-glass vault",
-            crypto_mode
-        ),
+        Some(token) => {
+            let now_bucket = TimeBucket::now_10min()?;
+            let expires = token.expires_bucket();
+            if expires.start_epoch_s == now_bucket.start_epoch_s
+                && expires.size_s == now_bucket.size_s
+            {
+                log::info!(
+                    "vault frame sealing: ENABLED (crypto_mode={}) — boundary events seal a \
+                     pre-roll frame into the break-glass vault",
+                    crypto_mode
+                );
+            } else {
+                log::warn!(
+                    "vault frame sealing: token present but EXPIRED / outside its validity window \
+                     — a break-glass seal token is honoured only within the 10-minute bucket it was \
+                     issued for, so NO frame will be sealed until a fresh BREAK_GLASS_SEAL_TOKEN is \
+                     provided. See docs/review/01-flag-report.md F-05."
+                );
+            }
+        }
         None => log::warn!(
             "vault frame sealing: DISABLED — boundary events are signed and logged, but NO frame \
              is sealed into the break-glass vault. To enable, generate a break-glass token (see \

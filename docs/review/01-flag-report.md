@@ -133,11 +133,14 @@ document the token/crypto-mode config path, and build the trustee/seal setup UX 
 
 > **Status 2026-06-04 — ✅ Resolved (#709).** The flag's correctness core — sealing was **silently**
 > opt-in, so an operator could believe evidence was being sealed when it was not — is closed.
-> `witnessd` now logs an explicit startup status line: an INFO line (with the crypto mode) when
-> `BREAK_GLASS_SEAL_TOKEN` is set and sealing is ENABLED, and a WARN when it is DISABLED stating that
-> boundary events are still signed/logged but **no frame is sealed into the vault**, with the exact
-> steps to enable it (`src/bin/witnessd.rs`). This mirrors the F-01 fix (no silent, undocumented
-> default). The doc-debt half was already done (`v1-roadmap.md` describes the vault as "wired,
+> `witnessd` now logs an explicit startup status line covering all three real states: INFO
+> **ENABLED** (with the crypto mode) when `BREAK_GLASS_SEAL_TOKEN` is set and the token is valid in
+> the current bucket; WARN **token present but EXPIRED / out-of-window** (a seal token is honoured
+> only within the 10-minute bucket it was issued for, matching the runtime check); and WARN
+> **DISABLED** with no token, stating that boundary events are still signed/logged but **no frame is
+> sealed into the vault**, with the exact steps to enable it (`src/bin/witnessd.rs`). This mirrors
+> the F-01 fix (no silent, undocumented default) and avoids the masking-misconfig failure mode (an
+> expired token no longer reads as ENABLED). The doc-debt half was already done (`v1-roadmap.md` describes the vault as "wired,
 > opt-in"). What remains is **not a flag**: the full non-CLI **trustee/seal setup wizard** is a
 > roadmap **P2** product feature, separate from this correctness gap.
 
