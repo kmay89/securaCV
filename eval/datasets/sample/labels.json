@@ -1,0 +1,47 @@
+{
+  "frames": [
+    {
+      "image": "frame_0001.png",
+      "objects": [
+        {
+          "class": "person",
+          "x": 0.25,
+          "y": 0.2,
+          "w": 0.5,
+          "h": 0.6
+        }
+      ],
+      "expected_size_class": "large"
+    },
+    {
+      "image": "frame_0002.png",
+      "objects": [
+        {
+          "class": "package",
+          "x": 0.62,
+          "y": 0.62,
+          "w": 0.15,
+          "h": 0.15
+        }
+      ],
+      "expected_size_class": "small"
+    },
+    {
+      "image": "frame_0003.png",
+      "objects": [
+        {
+          "class": "vehicle",
+          "x": 0.1,
+          "y": 0.55,
+          "w": 0.55,
+          "h": 0.28
+        }
+      ],
+      "expected_size_class": "small"
+    },
+    {
+      "image": "frame_0004.png",
+      "objects": []
+    }
+  ]
+}

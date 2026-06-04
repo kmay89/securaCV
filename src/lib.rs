@@ -53,6 +53,7 @@ pub mod config;
 pub mod crypto;
 pub mod detect;
 pub mod envelope;
+pub mod eval;
 pub mod frame;
 pub mod ingest;
 pub mod log;

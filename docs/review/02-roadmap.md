@@ -7,6 +7,12 @@
 > requested by the owner: *independent + reconcile.* Every item is checked against the seven
 > invariants; anything needing an invariant weakened is **cut, not deferred**.
 
+> **Re-baseline 2026-06-04.** Written 2026-06-01; kept as-is with status overlaid. Since then the
+> 2026-06 fix wave (#660–#680) executed **all of P0 and P1, and the add-on-install half of P2**. The
+> §2 reconciliation actions are largely done (see the note under that table); §3 phase headings now
+> carry status. What remains for the productization arc is the rest of **P2** (HA timeline/verified-✓
+> UI, break-glass/trustee setup UI) and the hardware/key work in **P3–P4**.
+
 ## 1. Strategic verdict: **focus, then productize — do not expand**
 
 SecuraCV's moat is a *combination competitors cannot toggle on*: **tamper-evident perception +
@@ -38,11 +44,23 @@ near-term "nice-to-have." Treat all of those as **post-focus**.
 **Single source of truth going forward:** replace `v1-roadmap.md`'s status board with the
 [requirements spec](00-requirements-spec.md) Status tags; keep the roadmap for *sequencing only*.
 
+> **Status 2026-06-04 — the actions in this table are largely executed.** Detection relabeled +
+> threshold configurable + model fetch (F-01, #660/#665/#667); B-stream signing kept; B2 DB-key
+> decouple done, hardware keys still P3 (F-04, #674); vault relabeled "wired, opt-in" in
+> `v1-roadmap.md` (F-05); RTSP ffmpeg path designated canonical and CI-verified, acceptance boxes
+> updated (F-11/#666); `v1-roadmap.md` rewritten to cite code and reflect shipped scope incl. PQC +
+> adapters (F-13, #673); single v1 definition adopted (F-02, #673). **Still pending from this
+> table:** the "9 → 14 CLI binaries" count fix (F-10) and dropping/gating the unbuilt transports
+> (F-07).
+
 ## 3. Phased plan (invariant-checked, sequenced)
 
 Each phase lists **deliverable → user-facing acceptance → invariant guardrail**.
 
-### P0 — Truth & release hygiene (days, not weeks) — unblocks everything
+### P0 — Truth & release hygiene (days, not weeks) — unblocks everything · ✅ DONE (2026-06)
+<!-- v1 definition unified + audit-boundary doc + partition reconciliation + honest detection
+     labeling all shipped (#673/#668/#670/#660). Residual cleanup: CLI count F-10. -->
+
 - Adopt one **v1 definition** (recommend the roadmap's minimal one); make CHANGELOG match verified
   reality; fix the binary count (F-02, F-10). *Acceptance:* README badge, CHANGELOG, roadmap agree.
 - **Honest detection labeling** + close the "audit vs security boundary" doc box that v1 acceptance
@@ -50,7 +68,17 @@ Each phase lists **deliverable → user-facing acceptance → invariant guardrai
 - Reconcile firmware **partition tables**; document the canonical scheme per flash size (F-06).
   *Guardrail:* none weakened — pure honesty/cleanup.
 
-### P1 — Make the proof usable (the moat → a feature)
+### P1 — Make the proof usable (the moat → a feature) · 🟡 MOSTLY DONE (one sub-goal descoped)
+<!-- Shipped: configurable confidence (#665); one-command verified model fetch + default model path
+     (#667); court-grade verifier verdicts (#664); Frigate→HA gate automated in CI (#672, the live
+     full-stack gate stays a manual smoke check since ML on a fixture is non-deterministic).
+     NOT shipped — deliberately descoped, not a silent miss: this phase's acceptance ("fresh install
+     detects objects with no manual model step") assumed bundling a model + enabling `backend-tract`
+     by default. That is intentionally NOT done — in the primary Frigate-bridge deployment object
+     detection is Frigate's job, so the witnessd direct-ingest path instead ships a one-command fetch
+     (#667) + a motion-only startup WARN (#660, src/bin/witnessd.rs:152-165). So the zero-step
+     default-detection acceptance is reframed (Frigate owns detection), not met as originally written. -->
+
 - **Bundled detection model** + `backend-tract` enabled on the witnessd path (kill the ONNX
   hand-download), with **configurable confidence** (replace hardcoded 0.5). *Acceptance:* fresh
   install detects objects with no manual model step. *Guardrail:* model is an *audited* backend;
@@ -62,7 +90,11 @@ Each phase lists **deliverable → user-facing acceptance → invariant guardrai
 - **Wire the Frigate→HA release gate**: `verify_pipeline.sh` exits 0 in CI against a live stack
   (the README gate). *Acceptance:* CI green on a real stack.
 
-### P2 — Kill the terminal & deliver the daily payoff
+### P2 — Kill the terminal & deliver the daily payoff · 🟡 IN PROGRESS
+<!-- One-click HA add-on install: ✅ DONE — pre-built multi-arch image + publish workflow (#671),
+     publicly-installable release gate wired into CI (#677/#680). Remaining P2: the HA
+     timeline/verified-✓ UI (+ README screenshot, F-12) and the break-glass/trustee setup UI (F-05). -->
+
 - **One-click HA add-on install** (no `curl | bash`), pre-built Docker images. *Acceptance:*
   install from the HA add-on store. *Guardrail:* local-only; no cloud custody (Inv. IV).
 - **Timeline / verification UI in HA** (events + verified ✓ + chain status) and **mobile push

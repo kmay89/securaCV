@@ -19,11 +19,20 @@ overclaim or are stale, the flag report says so (see F-01, F-02, F-13). The seve
 recommendation.
 
 ## Top-line findings
-- The integrity core (hash-chain + Ed25519 + dual Rust↔JS envelope verifier) is **real and tested**.
-- The **default detection path is a frame-hash stub**; real ONNX detection is feature-gated and off
-  by default — yet the roadmap marks it "Done" (Blocker F-01).
-- "v1" is defined **three incompatible ways** across CHANGELOG / roadmap / README (Blocker F-02).
-- Firmware still has open **privacy conformance bugs** (raw MAC / fine GPS over WAP APIs) that
-  contradict the invariants (Blocker F-03).
-- The strategic recommendation is **focus + productize, not expand**: finish the verified-timeline,
-  one-click-install, and court-grade-export payoff; freeze unbuilt transports/mesh legs.
+> **Re-baselined 2026-06-04.** Findings below were the 2026-06-01 audit state; the 🟢/🟡 markers
+> reflect the tree after the 2026-06 fix wave (#660–#680). Per-flag detail and closing PRs live in
+> [`01-flag-report.md`](01-flag-report.md); phase status in [`02-roadmap.md`](02-roadmap.md). **All
+> three original Blockers (F-01/F-02/F-03) are now resolved.**
+
+- 🟢 The integrity core (hash-chain + Ed25519 + dual Rust↔JS envelope verifier) is **real and tested**.
+- 🟢 **F-01 resolved** — the default detection path is still motion (not ONNX) *by design*, but is now
+  **honestly labeled** (startup WARN), the confidence threshold is configurable, and a one-command
+  model fetch enables real detection (#660/#665/#667).
+- 🟢 **F-02 resolved** — "v1" now has a single canonical definition; README badge / CHANGELOG /
+  roadmap agree (`v1-rc`, on-device validation pending) (#673).
+- 🟢 **F-03 resolved** — firmware routes identity through a salted pseudonym and coarsens GPS in
+  *every* tree, with a `regression_check.sh` guardrail that hard-fails on raw MAC / fine GPS
+  (#662/#669).
+- 🟡 The strategic recommendation is **focus + productize, not expand**: P0/P1 and one-click install
+  are **done**; what remains of the payoff arc is the **HA verified-✓ timeline UI** and the
+  **break-glass/trustee setup UI** (P2). Unbuilt transports/mesh legs stay frozen.
