@@ -5,7 +5,7 @@ Last Updated: 2026-01-20
 
 > **Orientation:** this is the `zone_crossing` *module template* — the "Hello, World"
 > of conforming witness modules, **not** the system specification. The canonical,
-> normative specs live one level up in [`spec/`](../): start with
+> normative specs live one level up in [`spec/`](../README.md): start with
 > [`invariants.md`](../invariants.md) and [`event_contract.md`](../event_contract.md).
 > The repository's spec entry point is the root [`spec.md`](../../spec.md) index.
 

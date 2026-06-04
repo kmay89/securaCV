@@ -1,7 +1,7 @@
 # SecuraCV — Specification Index
 
 This file is a **pointer, not a spec**. The repository's canonical, normative
-specifications live in [`spec/`](spec/) — start here and follow the links inward.
+specifications live in [`spec/`](spec/README.md) — start here and follow the links inward.
 
 > Previously this root file held the `zone_crossing` *module template*, which was
 > easily mistaken for the system spec. That template now lives at its proper home,
@@ -22,7 +22,7 @@ channel specs).
 
 ## Module templates
 
-Per-module conformance specs live in [`spec/modules/`](spec/modules/). The reference
+Per-module conformance specs live in [`spec/modules/`](spec/modules/README.md). The reference
 example is [`spec/modules/zone_crossing.md`](spec/modules/zone_crossing.md) — the
 "Hello, World" of conforming witness modules, demonstrating the event contract and the
 forbidden outputs every module must avoid.
