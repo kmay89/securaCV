@@ -21,6 +21,8 @@ jobs:
       run: node --test viewer/verify_core.test.js
     - name: Offline viewer is up to date (no drift from verify_core.js)
       run: node viewer/build.mjs --check
+    - name: HA timeline card helper tests
+      run: node --test custom_components/securacv/www/securacv-timeline-card.test.js
 
   canary-bridge:
     runs-on: ubuntu-latest

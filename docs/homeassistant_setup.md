@@ -58,6 +58,14 @@ Within 30 seconds of the Canary connecting to MQTT:
    - **GPS Fix** — GPS fix status
    - **SD Card Healthy** — Storage health
 
+### Step 4b: Add the verified-✓ timeline card
+
+For the "single pane of glass" view, add the bundled Lovelace card: edit a
+dashboard → **Add Card** → search **"SecuraCV Verified Timeline"**. It renders a
+verified-✓ event timeline with a hash-chain status header from the entities
+above, and auto-discovers them. Full options and a no-custom-card YAML fallback:
+[`docs/lovelace_timeline.md`](lovelace_timeline.md).
+
 ### Step 5: Set Up Notifications
 
 Import the SecuraCV Alert Blueprint for one-click notification setup:

@@ -92,8 +92,10 @@ Each phase lists **deliverable → user-facing acceptance → invariant guardrai
 
 ### P2 — Kill the terminal & deliver the daily payoff · 🟡 IN PROGRESS
 <!-- One-click HA add-on install: ✅ DONE — pre-built multi-arch image + publish workflow (#671),
-     publicly-installable release gate wired into CI (#677/#680). Remaining P2: the HA
-     timeline/verified-✓ UI (+ README screenshot, F-12) and the break-glass/trustee setup UI (F-05). -->
+     publicly-installable release gate wired into CI (#677/#680). HA verified-✓ timeline + chain-status
+     Lovelace card: ✅ DONE (custom_components/securacv/www/securacv-timeline-card.js + YAML fallback;
+     helper logic unit-tested in the viewer CI job). Remaining P2: the README screenshot (F-12,
+     deferred — needs an HA+browser capture) and the break-glass/trustee setup UI (F-05). -->
 
 - **One-click HA add-on install** (no `curl | bash`), pre-built Docker images. *Acceptance:*
   install from the HA add-on store. *Guardrail:* local-only; no cloud custody (Inv. IV).

@@ -32,6 +32,7 @@ recommendation.
 - 🟢 **F-03 resolved** — firmware routes identity through a salted pseudonym and coarsens GPS in
   *every* tree, with a `regression_check.sh` guardrail that hard-fails on raw MAC / fine GPS
   (#662/#669).
-- 🟡 The strategic recommendation is **focus + productize, not expand**: P0/P1 and one-click install
-  are **done**; what remains of the payoff arc is the **HA verified-✓ timeline UI** and the
-  **break-glass/trustee setup UI** (P2). Unbuilt transports/mesh legs stay frozen.
+- 🟡 The strategic recommendation is **focus + productize, not expand**: P0/P1, one-click install, and
+  the **HA verified-✓ timeline card** are **done**; what remains of the payoff arc is the README
+  screenshot (F-12, deferred) and the **break-glass/trustee setup UI** (P2). Unbuilt transports/mesh
+  legs stay frozen.
