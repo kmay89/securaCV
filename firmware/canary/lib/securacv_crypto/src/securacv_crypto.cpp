@@ -512,6 +512,7 @@ static uint16_t fingerprint16(const uint8_t fp[2]) {
 void generate_device_id(char* out, size_t cap, const char* prefix,
                         const uint8_t fp[2]) {
   if (out == nullptr || cap == 0) return;
+  if (prefix == nullptr || fp == nullptr) { out[0] = '\0'; return; }
   char suffix[5];
   unambiguous_suffix16(fingerprint16(fp), suffix);
   // Defense-in-depth: never emit a truncated (and therefore ambiguous) handle
@@ -521,6 +522,7 @@ void generate_device_id(char* out, size_t cap, const char* prefix,
 
 void generate_ap_ssid(char* out, size_t cap, const uint8_t fp[2]) {
   if (out == nullptr || cap == 0) return;
+  if (fp == nullptr) { out[0] = '\0'; return; }
   char suffix[5];
   unambiguous_suffix16(fingerprint16(fp), suffix);
   if (snprintf(out, cap, "SecuraCV-%s", suffix) >= (int)cap) out[0] = '\0';
