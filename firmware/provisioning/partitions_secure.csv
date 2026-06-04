@@ -2,6 +2,8 @@
 # SecuraCV Canary — Secure Partition Table
 # ═══════════════════════════════════════════════════════════════
 #
+# Canonical table map (which layout for which deployment): see ../PARTITIONS.md
+#
 # This partition table is designed for production devices with:
 # - OTA A/B slots for reliable firmware updates
 # - NVS encryption key storage
