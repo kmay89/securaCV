@@ -174,15 +174,29 @@ else
   check_pass "API token not referenced in chain/witness context"
 fi
 
-# ── Check: token / AP-password alphabet drops ambiguous glyphs ─────
-# User-typed identifiers (API tokens, AP passwords) must avoid 0/O and 1/I/l.
+# ── Check: token / AP-password / device-id alphabet drops ambiguous glyphs ─
+# Every human-read identifier (API tokens, AP passwords, device_id / AP-SSID
+# suffix) must avoid ALL case variants of the confusion classes: 0/O/o and
+# 1/I/i/l/L. Flag both the full base62 alphabet and the older 57-char alphabet
+# that still leaked lowercase o/i and uppercase L.
 # See LESSONS_LEARNED.md → "User-typed identifiers must use an unambiguous alphabet".
-AMBIGUOUS_ALPHABET=$(grep -rn '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz' "${SRC_DIRS[@]}" 2>/dev/null | grep -v "_archive" || true)
+AMBIGUOUS_ALPHABET=$(grep -rnE '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz|23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz' "${SRC_DIRS[@]}" 2>/dev/null | grep -v "_archive" || true)
 if [ -n "$AMBIGUOUS_ALPHABET" ]; then
-  check_fail "Full base62 alphabet present in token/password path — ambiguous glyphs (0/O, 1/I/l) bite users"
+  check_fail "Ambiguous alphabet in token/password/device-id path — must drop 0/O/o and 1/I/i/l/L"
   echo "$AMBIGUOUS_ALPHABET" | while read -r line; do blue "  $line"; done
 else
-  check_pass "Token/password alphabet free of ambiguous glyphs"
+  check_pass "Token/password/device-id alphabet free of ambiguous glyphs"
+fi
+
+# The device_id / AP-SSID suffix must NOT be raw hex (%02X%02X) — hex carries
+# 0 and 1, which are exactly the glyphs users confuse. It has to flow through
+# the unambiguous alphabet like the token/password paths do.
+HEX_SUFFIX=$(grep -rnE 'snprintf\([^;]*"(SecuraCV-|%s)%02[Xx]%02[Xx]' "${SRC_DIRS[@]}" 2>/dev/null | grep -v "_archive" || true)
+if [ -n "$HEX_SUFFIX" ]; then
+  check_fail "device_id / AP-SSID built from raw hex — 0/1 glyphs reach users; use UNAMBIGUOUS_ALPHABET"
+  echo "$HEX_SUFFIX" | while read -r line; do blue "  $line"; done
+else
+  check_pass "device_id / AP-SSID suffix avoids raw-hex glyphs"
 fi
 
 echo ""

@@ -263,18 +263,21 @@ static void serial_wait_for_cdc(uint32_t timeout_ms) {
 
 // Derive device-unique AP password from public key fingerprint
 // Format: "cv-XXXXX" (8 chars, unique per device)
-// Drops visually ambiguous glyphs (0/O, 1/I/l) so users can read the
-// password off the serial monitor or sticker without guessing.
+// Drops every case variant of the ambiguous glyphs (0/O/o, 1/I/i/l/L) so a
+// user can read the password off the serial monitor or sticker without
+// guessing. Must stay byte-identical to UNAMBIGUOUS_ALPHABET in
+// securacv_crypto.cpp — both are the project's single no-confusion alphabet.
 static const char UNAMBIGUOUS_ALPHABET[] =
-  "23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+  "23456789ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz";
+static const size_t UNAMBIGUOUS_LEN = sizeof(UNAMBIGUOUS_ALPHABET) - 1;  // 54
 
 static void derive_ap_password(const uint8_t fingerprint[8], char* password, size_t len) {
   char encoded[6];
   size_t chars_produced = 0;
   for (size_t i = 0; chars_produced < 5 && i < 8; i++) {
     uint8_t b = fingerprint[i];
-    if (b < 228) { // 228 = 57 * 4, rejection sampling to avoid bias
-      encoded[chars_produced++] = UNAMBIGUOUS_ALPHABET[b % 57];
+    if (b < 216) { // 216 = 54 * 4, rejection sampling to avoid bias
+      encoded[chars_produced++] = UNAMBIGUOUS_ALPHABET[b % UNAMBIGUOUS_LEN];
     }
   }
   while (chars_produced < 5) {
