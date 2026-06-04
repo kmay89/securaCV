@@ -27,10 +27,11 @@ timestamp and never surfaces identity data.
 
 ### Honest verification badges
 
-A green **✓ "Signature verified"** is shown **only** when the event's Ed25519
+A **✓ "Signature verified"** badge is shown **only** when the event's Ed25519
 signature actually verified (the integration's `verified` attribute). The card
-deliberately distinguishes weaker states — by colour and label — so a *green* ✓ never
-overclaims (signed-but-unverified reuses the ✓ glyph but renders blue, as noted below):
+deliberately distinguishes weaker states by label (the source of truth, since theme
+colours can vary) so the **"Signature verified"** badge never overclaims —
+signed-but-unverified reuses the ✓ glyph with a "Signed (unverified)" label, as noted below:
 
 | Badge | Meaning |
 |-------|---------|
