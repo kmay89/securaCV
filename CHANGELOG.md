@@ -90,6 +90,16 @@ below — but nothing documented is allowed to be aspirational at the v1 tag.
   handoff) are hand-audited contracts vs. the mechanically enforced security
   boundary (the three fail-closed gates in `Kernel::append_event_checked`). Closes
   the corresponding v1 acceptance item.
+- **Firmware privacy hardening (no raw MAC / no precise GPS, all trees)**: the salted, MAC-free
+  device pseudonym and GPS coarsening are now shared helpers in `firmware/common/`
+  (`identity/device_pseudonym.h`, `gnss/gps_privacy.h`) adopted across every firmware tree.
+  `canary-vision` no longer leaks the efuse MAC in its MQTT client ID or boot banner (it shows a
+  salted "Hardware ID" instead); `canary/src` routes all operator-facing lat/lon through
+  `gps_coarsen_deg()` (3 dp ≈ 110 m); the `canary-wap/src` scaffold no longer reads the MAC. The
+  `regression_check.sh` privacy guardrail now **hard-fails** on raw MAC or un-coarsened lat/lon in
+  *any* tree (previously a per-tree warning), and both helpers are host-tested
+  (`tests_host/test_device_pseudonym_common.cpp`, `test_gps_coarsen.cpp`). Closes the v1 firmware
+  invariant gate.
 
 ### Explicitly deferred (not in v1.0)
 

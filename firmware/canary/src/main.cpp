@@ -16,6 +16,7 @@
 #include "securacv_crypto.h"
 #include "securacv_witness.h"
 #include "securacv_gps.h"
+#include "gnss/gps_privacy.h"  // gps_coarsen_deg() — operator-facing GPS coarsening (Invariant III)
 
 #if FEATURE_SD_STORAGE
 #include "securacv_storage.h"
@@ -1323,8 +1324,8 @@ void loop() {
     cbor.write_map(7);
     cbor.write_text("state"); cbor.write_text(state_name_short(state));
     cbor.write_text("fix"); cbor.write_bool(fix.valid);
-    cbor.write_text("lat"); cbor.write_float(fix.lat);
-    cbor.write_text("lon"); cbor.write_float(fix.lon);
+    cbor.write_text("lat"); cbor.write_float(gps_coarsen_deg(fix.lat));
+    cbor.write_text("lon"); cbor.write_float(gps_coarsen_deg(fix.lon));
     cbor.write_text("alt"); cbor.write_float(fix.altitude_m);
     cbor.write_text("spd"); cbor.write_float(fix.speed_kmh);
     cbor.write_text("sats"); cbor.write_uint(fix.satellites);
@@ -1396,8 +1397,8 @@ static void mqtt_publish_status_update() {
   doc["state"] = state_name_short(witness_get_state());
   doc["gps_fix"] = fix.valid;
   if (fix.valid) {
-    doc["lat"] = fix.lat;
-    doc["lon"] = fix.lon;
+    doc["lat"] = gps_coarsen_deg(fix.lat);
+    doc["lon"] = gps_coarsen_deg(fix.lon);
     doc["satellites"] = fix.satellites;
   }
   doc["sd_healthy"] = health.sd_healthy;
@@ -1638,8 +1639,8 @@ static void handle_serial_commands() {
       Serial.println("\n=== GPS ===");
       Serial.printf("  Fix: %s\n", fix.valid ? "Yes" : "No");
       if (fix.valid) {
-        Serial.printf("  Lat: %.6f\n", fix.lat);
-        Serial.printf("  Lon: %.6f\n", fix.lon);
+        Serial.printf("  Lat: %.3f\n", gps_coarsen_deg(fix.lat));
+        Serial.printf("  Lon: %.3f\n", gps_coarsen_deg(fix.lon));
         Serial.printf("  Alt: %.1f m\n", fix.altitude_m);
         Serial.printf("  Speed: %.1f km/h\n", fix.speed_kmh);
         Serial.printf("  Sats: %u\n", fix.satellites);
@@ -1835,7 +1836,7 @@ static void print_status() {
 
   Serial.printf("  GPS: %s", health.gps_healthy ? "OK" : "No fix");
   if (health.gps_healthy) {
-    Serial.printf(" (%.4f, %.4f, %u sats)", fix.lat, fix.lon, fix.satellites);
+    Serial.printf(" (%.3f, %.3f, %u sats)", gps_coarsen_deg(fix.lat), gps_coarsen_deg(fix.lon), fix.satellites);
   }
   Serial.println();
 

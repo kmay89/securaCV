@@ -10,6 +10,7 @@
 #include "canary/config.h"
 #include "canary/log.h"
 #include "canary/ha/ha_discovery.h"
+#include "identity/device_pseudonym.h"  // MAC-free client-ID suffix (Invariant III)
 
 // Prefer local dev secrets if present; otherwise use CI stub.
 // IMPORTANT: the CI header must live at: include/secrets/secrets.ci.h
@@ -136,8 +137,13 @@ void mqtt_reconnect_blocking() {
            "}",
            DEVICE_ID, DEVICE_TYPE);
 
+  // Privacy (Invariant III): the MQTT client ID reaches the broker, so its unique
+  // suffix is the salted device pseudonym — never the raw efuse MAC.
+  char devid_hex[device_pseudonym::HEX_LEN + 1] = {0};
+  device_pseudonym::device_id_hex(devid_hex, sizeof(devid_hex));
+
   while (!mqtt.connected()) {
-    String clientId = String("securacv-") + DEVICE_ID + "-" + String((uint32_t)ESP.getEfuseMac(), HEX);
+    String clientId = String("securacv-") + DEVICE_ID + "-" + devid_hex;
 
     log_header("MQTT");
     canary::dbg_serial().printf("Connecting %s:%u as %s ...\n", MQTT_HOST, MQTT_PORT, clientId.c_str());

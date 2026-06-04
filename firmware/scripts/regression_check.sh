@@ -104,26 +104,21 @@ fi
 echo ""
 
 # ── Privacy guardrails (F-03): no raw MAC / no fine GPS in operator-facing output ──
-# Hard-fail in the audited canary-wap arduino project (migrated to device_pseudonym +
-# gps_coarsen_deg). The same patterns in other firmware variants are reported as
-# warnings — tracked as F-03 follow-ups until those trees adopt the shared helpers.
-AUDITED_DIR="$PROJECTS_DIR/canary-wap/arduino/canary_wap"
+# Every firmware tree now routes operator-facing identity through the shared salted
+# device_pseudonym (firmware/common/identity/device_pseudonym.h) and GPS through
+# gps_coarsen_deg (firmware/common/gnss/gps_privacy.h). Any raw MAC or un-coarsened
+# lat/lon emission anywhere under the firmware source trees is a hard failure
+# (Invariant III) — no longer a per-tree warning.
 
 # report_privacy <subject> <newline-separated "file:line:..." hits>
-# FAILs for hits inside AUDITED_DIR, WARNs for hits elsewhere, passes if none.
+# FAILs if any hits exist, passes if none.
 report_privacy() {
-  local subject="$1" hits="$2" aud oth
-  aud=$(printf '%s\n' "$hits" | grep -F "$AUDITED_DIR" 2>/dev/null || true)
-  oth=$(printf '%s\n' "$hits" | grep -vF "$AUDITED_DIR" 2>/dev/null | grep -vE '^[[:space:]]*$' || true)
-  if [ -n "$aud" ]; then
-    check_fail "$subject — audited canary-wap project (Invariant III)"
-    printf '%s\n' "$aud" | while IFS= read -r l; do [ -n "$l" ] && blue "  $l"; done
-  fi
-  if [ -n "$oth" ]; then
-    check_warn "$subject — other firmware variant (F-03 follow-up)"
-    printf '%s\n' "$oth" | while IFS= read -r l; do [ -n "$l" ] && blue "  $l"; done
-  fi
-  if [ -z "$aud" ] && [ -z "$oth" ]; then
+  local subject="$1" hits
+  hits=$(printf '%s\n' "$2" | grep -vE '^[[:space:]]*$' 2>/dev/null || true)
+  if [ -n "$hits" ]; then
+    check_fail "$subject (Invariant III)"
+    printf '%s\n' "$hits" | while IFS= read -r l; do [ -n "$l" ] && blue "  $l"; done
+  else
     check_pass "$subject: none found"
   fi
   return 0  # never trip `set -e`; failures are tallied via check_fail/ERRORS

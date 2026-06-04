@@ -294,11 +294,11 @@ void loop() {
 // BOOT INFO COLLECTION
 // ============================================================================
 
-static String s_mac_cache;
-
 static boot_info_t app_collect_boot_info() {
-    s_mac_cache = WiFi.macAddress();
-
+    // Privacy (Invariant III): never surface the raw MAC. mac_address is left null
+    // so the boot banner skips the line; a stable handle, when needed, comes from the
+    // shared salted pseudonym (firmware/common/identity/device_pseudonym.h), exactly
+    // as the canary-wap arduino and canary-vision trees do.
     boot_info_t bi = {};
     bi.product_name  = "SecuraCV Canary WAP";
     bi.fw_version    = FW_VERSION_STRING;
@@ -306,7 +306,6 @@ static boot_info_t app_collect_boot_info() {
     bi.build_time    = FW_BUILD_TIME;
     bi.device_type   = CONFIG_DEVICE_TYPE;
     bi.model         = CONFIG_MODEL;
-    bi.mac_address   = s_mac_cache.c_str();
     bi.board_name    = BOARD_NAME;
     bi.chip_model    = ESP.getChipModel();
     bi.chip_revision = (uint8_t)ESP.getChipRevision();
