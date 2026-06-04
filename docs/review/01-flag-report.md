@@ -21,7 +21,7 @@
 | F-02 | Blocker | ✅ Resolved (#673) | Versioning | "v1" is defined **three incompatible ways** across CHANGELOG / v1-roadmap / README badge. |
 | F-03 | Blocker | ✅ Resolved (#662/#669) | Firmware privacy | `ENTERPRISE_READINESS_TODO` admits raw **MAC exposure** and uncoarsened **GPS** in WAP APIs — contradicts Invariants II & III. |
 | F-04 | Major | 🟡 Partial (#674) | Crypto | Device key is **seed-derived from config**; DB key **coupled** to signing key → rotation blocked (acknowledged, still open). |
-| F-05 | Minor | ✅ Resolved (#PR05) | Vault | *Corrected after code review:* vault sealing **is wired** into `witnessd` (real crypto modes); the real gap is that it's **opt-in / UX-gated**, not absent. |
+| F-05 | Minor | ✅ Resolved (#709) | Vault | *Corrected after code review:* vault sealing **is wired** into `witnessd` (real crypto modes); the real gap is that it's **opt-in / UX-gated**, not absent. |
 | F-06 | Major | ✅ Resolved (#670) | Firmware flash | **Divergent partition tables**; canary-wap Arduino pins **no** scheme; one secure table assumes **4 MB** flash on an 8 MB board. |
 | F-07 | Major | ✅ Resolved | Transports | `TRANSPORT_LORA` / `TRANSPORT_AUDIO` (+`audio_anomaly` tamper) declared but **unimplemented** — now split into `FUTURE_TRANSPORTS` / `FUTURE_TAMPER_TYPES`, out of the `ALL_*` lists, so the HA surface never advertises them. |
 | F-08 | Major | ⬜ Open (frozen) | Mesh | ESP-NOW WiFi-AP bridge & BLE fallback marked **"❌ not implemented"** in the mesh evaluation. |
@@ -131,7 +131,7 @@ setup UI, and the crypto-mode default/key handling still ties into the device-ke
 **Severity downgraded Major → Minor/Doc-debt.** **Fix:** describe the vault as *wired but opt-in*,
 document the token/crypto-mode config path, and build the trustee/seal setup UX (roadmap P2).
 
-> **Status 2026-06-04 — ✅ Resolved (#PR05).** The flag's correctness core — sealing was **silently**
+> **Status 2026-06-04 — ✅ Resolved (#709).** The flag's correctness core — sealing was **silently**
 > opt-in, so an operator could believe evidence was being sealed when it was not — is closed.
 > `witnessd` now logs an explicit startup status line: an INFO line (with the crypto mode) when
 > `BREAK_GLASS_SEAL_TOKEN` is set and sealing is ENABLED, and a WARN when it is DISABLED stating that
