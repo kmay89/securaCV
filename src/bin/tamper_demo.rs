@@ -26,7 +26,10 @@ const RULESET_ID: &str = "ruleset:demo";
 /// Open the SQLCipher-encrypted demo database with the device-derived key.
 fn open_encrypted(path: &str, seed: &str) -> Result<Connection> {
     let signing_key = signing_key_from_seed(seed)?;
-    let db_key = resolve_db_encryption_key(&signing_key, db_key_seed_from_env().as_deref());
+    let db_key = resolve_db_encryption_key(
+        &signing_key,
+        db_key_seed_from_env().as_ref().map(|s| s.as_str()),
+    );
     let conn = Connection::open(path)?;
     conn.pragma_update(None, "key", format!("x'{}'", &*db_key))?;
     Ok(conn)

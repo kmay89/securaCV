@@ -94,7 +94,9 @@ fn run(args: &Args) -> Result<Summary> {
     let device_key_seed = args.device_key_seed.clone().unwrap_or_else(random_seed);
     let db_key = witness_kernel::resolve_db_encryption_key(
         &signing_key_from_seed(&device_key_seed)?,
-        witness_kernel::db_key_seed_from_env().as_deref(),
+        witness_kernel::db_key_seed_from_env()
+            .as_ref()
+            .map(|s| s.as_str()),
     )
     .to_string();
 

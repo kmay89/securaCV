@@ -119,15 +119,15 @@ Rationale: Signed log is easier to demonstrate end-to-end without designing enve
 | B3 | **Done:** `log_verify` validates Ed25519 signatures | ✅ |
 | B4 | **Done:** Tampering demo (`tamper_demo` binary: modify log, verify fails) | ✅ |
 
-**B2 note:** The prerequisite architectural fix — **decoupling the SQLCipher DB key from the
-device identity key** — is now **done**. Set `SECURACV_DB_KEY_SEED` to an independent secret and
-the kernel derives the DB key from it (`resolve_db_encryption_key`) instead of the Ed25519
-signing key, so the signing key can be rotated without re-encrypting the database;
-`rekey_database_file()` rotates the DB key itself in place. See
-[`docs/db_key_rotation.md`](docs/db_key_rotation.md). What remains for B2 is the higher bar:
-software-only "encrypted at rest" key storage adds little on an unattended device that must
-auto-decrypt at boot, so the real target is **hardware-backed keys** (TPM/Secure Element), which
-needs hardware to validate.
+**B2 note:** The **storage-layer prerequisite** — decoupling the SQLCipher DB key from the device
+signing key — is now **done**. Set `SECURACV_DB_KEY_SEED` to an independent secret and the kernel
+derives the DB key from it (`resolve_db_encryption_key`) instead of the Ed25519 signing key, so the
+DB key no longer pins the identity; `rekey_database_file()` rotates the DB key itself in place. See
+[`docs/db_key_rotation.md`](docs/db_key_rotation.md). **Still open** before signing-key rotation
+works end-to-end: `Kernel::open` pins the device public key in `device_metadata` and rejects a
+mismatching identity, so rotation also needs identity-rotation support (record the new key, keep the
+log verifiable across the boundary). Beyond that, the higher bar is **hardware-backed keys**
+(TPM/Secure Element), which needs hardware to validate.
 
 **Total:** ~2-3 weeks
 

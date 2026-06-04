@@ -138,18 +138,17 @@ pub fn resolve_db_encryption_key(
     signing_key: &SigningKey,
     db_key_seed: Option<&str>,
 ) -> Zeroizing<String> {
-    match db_key_seed {
-        Some(seed) if !seed.trim().is_empty() => {
-            derive_db_encryption_key_from_secret(seed.trim().as_bytes())
-        }
+    match db_key_seed.map(str::trim) {
+        Some(seed) if !seed.is_empty() => derive_db_encryption_key_from_secret(seed.as_bytes()),
         _ => derive_db_encryption_key(signing_key),
     }
 }
 
 /// Read the independent DB-key seed from the environment, if set and non-empty.
-pub fn db_key_seed_from_env() -> Option<String> {
+/// Wrapped in `Zeroizing` so the secret seed is wiped from memory when dropped.
+pub fn db_key_seed_from_env() -> Option<Zeroizing<String>> {
     match std::env::var(DB_KEY_SEED_ENV) {
-        Ok(s) if !s.trim().is_empty() => Some(s),
+        Ok(s) if !s.trim().is_empty() => Some(Zeroizing::new(s)),
         _ => None,
     }
 }
@@ -163,8 +162,10 @@ pub fn rekey_database_file(db_path: &str, old_key_hex: &str, new_key_hex: &str) 
     let conn = Connection::open(db_path)?;
     // Authenticate with the current key (also verifies it is correct).
     apply_sqlcipher_key(&conn, old_key_hex)?;
-    // SQLCipher re-encrypts every page in place with the new key.
-    conn.pragma_update(None, "rekey", format!("x'{}'", new_key_hex))
+    // SQLCipher re-encrypts every page in place with the new key. The PRAGMA
+    // argument embeds the raw key hex, so keep it in a Zeroizing buffer.
+    let rekey_cmd = Zeroizing::new(format!("x'{}'", new_key_hex));
+    conn.pragma_update(None, "rekey", &*rekey_cmd)
         .map_err(|e| anyhow!("SQLCipher rekey failed: {}", e))?;
     // Confirm the new key now authenticates.
     conn.query_row("SELECT count(*) FROM sqlite_master", [], |_| Ok(()))
@@ -925,7 +926,10 @@ impl Kernel {
             cfg.db_path.clone()
         };
         let device_key = signing_key_from_seed(&cfg.device_key_seed)?;
-        let db_key = resolve_db_encryption_key(&device_key, db_key_seed_from_env().as_deref());
+        let db_key = resolve_db_encryption_key(
+            &device_key,
+            db_key_seed_from_env().as_ref().map(|s| s.as_str()),
+        );
         let conn = open_db_connection_with_key(&db_path, Some(&db_key))?;
         let sealed_log = Box::new(SqliteSealedLogStore::open_with_key(
             &db_path,
@@ -961,7 +965,10 @@ impl Kernel {
             )));
         }
         let device_key = signing_key_from_seed(&cfg.device_key_seed)?;
-        let db_key = resolve_db_encryption_key(&device_key, db_key_seed_from_env().as_deref());
+        let db_key = resolve_db_encryption_key(
+            &device_key,
+            db_key_seed_from_env().as_ref().map(|s| s.as_str()),
+        );
         let conn = open_db_connection_with_key(&cfg.db_path, Some(&db_key))?;
         let zone_policy = cfg.zone_policy.normalized()?;
         let mut k = Self {
@@ -3581,7 +3588,9 @@ mod tests {
         assert_ne!(sk_old.as_bytes(), sk_new.as_bytes());
 
         // The DB key (from the independent secret) is unchanged by rotation, so the
-        // database still opens after the identity changes.
+        // *encrypted database* still decrypts after the signing identity changes. This
+        // covers the storage-layer prerequisite; full identity rotation additionally
+        // needs device-metadata rotation in `Kernel::open` (see docs/db_key_rotation.md).
         let conn = open_db_connection_with_key(&db_path_str, Some(&db_key))?;
         let v: String = conn.query_row("SELECT v FROM t WHERE id = 1", [], |r| r.get(0))?;
         assert_eq!(v, "sentinel");

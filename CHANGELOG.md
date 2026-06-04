@@ -17,10 +17,12 @@ below — but nothing documented is allowed to be aspirational at the v1 tag.
   contract enforcement, module sandboxing (seccomp on Linux).
 - **DB key decoupled from the signing key** (F-04 / Stream B2 prerequisite): set
   `SECURACV_DB_KEY_SEED` and the SQLCipher key is derived from that independent secret
-  (`resolve_db_encryption_key`) instead of the Ed25519 signing key, so the device identity can be
-  rotated without re-encrypting the database. `rekey_database_file()` rotates the DB key itself in
-  place (`PRAGMA rekey`). Backward compatible — without the env var, the legacy signing-key
-  derivation is byte-identical, so existing databases open unchanged. See
+  (`resolve_db_encryption_key`) instead of the Ed25519 signing key, so the database key no longer
+  pins the device identity — the storage-layer prerequisite for signing-key rotation.
+  `rekey_database_file()` rotates the DB key itself in place (`PRAGMA rekey`). Backward compatible —
+  without the env var, the legacy signing-key derivation is byte-identical, so existing databases
+  open unchanged. (Full signing-key rotation additionally needs `device_metadata` identity-rotation
+  support, which `Kernel::open` still pins; tracked as remaining Stream B2 work.) See
   [`docs/db_key_rotation.md`](docs/db_key_rotation.md).
 - **CLI binaries**: 9 core — witnessd, log_verify, break_glass, export_events,
   export_verify, frigate_bridge, event_mqtt_bridge, witness_api,
