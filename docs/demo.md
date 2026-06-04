@@ -56,14 +56,11 @@ DEVICE_KEY_SEED=devkey:demo \
 The tract backend requires a **local** ONNX model and a build with the
 `backend-tract` feature enabled.
 
-1) Download the recommended model (Apache-2.0 licensed, small/CPU-friendly):
+1) Fetch the recommended model (Apache-2.0 licensed, small/CPU-friendly). This downloads and
+   SHA-256-verifies it into `vendor/models/`:
 
 ```bash
-mkdir -p vendor/models
-curl -L \
-  https://github.com/onnx/models/raw/main/vision/object_detection_segmentation/ssdlite_mobilenet_v2/model/ssdlite_mobilenet_v2_12.onnx \
-  -o vendor/models/ssdlite_mobilenet_v2_12.onnx
-echo "ad6303f1ca2c3dcc0d86a87c36892be9b97b02a0105faa5cc3cfae79a2b11a31  vendor/models/ssdlite_mobilenet_v2_12.onnx" | sha256sum -c -
+bash scripts/fetch_detection_model.sh
 ```
 
 2) Run the demo with the tract backend:
