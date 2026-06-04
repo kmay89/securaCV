@@ -307,6 +307,10 @@ impl SealedLogStore for SqliteSealedLogStore {
             .map(|sig| sig.scheme_id.clone());
         let created_at = now_s()? as i64;
 
+        // Record which device key signed this checkpoint so verification picks the correct
+        // key after a signing-key rotation (and can seed the chain when earlier events are pruned).
+        let signer_public_key = signature_keys.ed25519.verifying_key().to_bytes().to_vec();
+
         self.conn.execute(
             r#"
             INSERT INTO checkpoints(
@@ -315,9 +319,10 @@ impl SealedLogStore for SqliteSealedLogStore {
                 chain_head_hash,
                 signature,
                 pq_signature,
-                pq_scheme
+                pq_scheme,
+                signer_public_key
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
             "#,
             params![
                 created_at,
@@ -325,7 +330,8 @@ impl SealedLogStore for SqliteSealedLogStore {
                 head.to_vec(),
                 checkpoint_sig.ed25519_signature,
                 checkpoint_pq_signature,
-                checkpoint_pq_scheme
+                checkpoint_pq_scheme,
+                signer_public_key
             ],
         )?;
 

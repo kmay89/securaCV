@@ -26,15 +26,56 @@ When `SECURACV_DB_KEY_SEED` is set (non-empty), the kernel derives the DB key fr
 signing key. The encrypted database now decrypts regardless of the signing key, which
 is the **storage-layer prerequisite** for rotating the device identity.
 
-> ⚠️ **Signing-key rotation is not yet fully supported end-to-end.** Decoupling the DB
-> key removes the *storage* blocker, but `Kernel::open` also pins the device identity:
-> it records the device public key in `device_metadata` on first open and rejects a
-> later open whose `DEVICE_KEY_SEED` derives a different key (`device public key
-> mismatch`). So today, changing `DEVICE_KEY_SEED` on an existing database still fails
-> at that check. Completing rotation needs identity-rotation support (recording the new
-> public key and keeping the signed log verifiable across the boundary), which is
-> tracked as the remaining Stream B2 work. What *is* available now: an independent DB
-> key, and DB-key rotation via `rekey_database_file()` below.
+## Rotating the device signing identity
+
+Decoupling the DB key (above) removes the *storage* blocker. The device **signing**
+identity is rotated with [`Kernel::rotate_device_identity`], which keeps the entire
+hash-chained log verifiable across the change:
+
+```rust
+// Open under the current identity (DB key must be decoupled — see above — so the
+// encrypted database still opens once the signing key changes).
+let mut kernel = Kernel::open(&cfg)?;       // cfg.device_key_seed = current seed
+kernel.rotate_device_identity(&new_seed)?;  // appends a signed rotation record
+// Subsequent events are signed by the new key. Reopen with the new seed afterwards.
+```
+
+What happens under the hood:
+
+1. A **`KeyRotation` record** is appended to the sealed log, hash-chained like any entry
+   and **signed by the retiring (old) key** — proving the legitimate holder authorized
+   the rotation and making it tamper-evident. Its payload carries the new public key plus
+   a **possession attestation**: the *new* key's signature over `(old_pub ‖ new_pub)`, so
+   a rotation cannot announce a key the rotator does not control.
+2. The new key is recorded in an append-only `device_key_history` table (the durable
+   lineage), and checkpoints record which key signed them (`signer_public_key`).
+3. The kernel switches its active signing key; `device_metadata.public_key` stays as the
+   immutable **genesis** anchor.
+
+**Verification** (`log_verify`, `verify::verify_events_with`) starts from the genesis key
+and *follows* each rotation record — validating the old-key entry signature and the
+new-key attestation — switching its expected verifying key so the whole log verifies
+end-to-end across one or more rotations. Deleting a rotation record is **fail-closed**:
+post-rotation signatures then no longer verify.
+
+> **Prerequisite — decouple the DB key first.** Because the default DB key is derived
+> from the signing key, you must set `SECURACV_DB_KEY_SEED` (independent secret) *before*
+> rotating; otherwise the rotated signing key would derive a different DB key and the
+> encrypted database would no longer open. Reopening a rotated log with a **retired** seed
+> is rejected with `device public key mismatch`.
+
+> **Scope / limitations.** Rotation applies to the **sealed event log + checkpoints**.
+> Post-quantum (`pqc-signatures`) keys are not rotated by this operation. Across
+> retention **pruning**, the lineage anchor for a pruned-away rotation is the signed
+> checkpoint's recorded `signer_public_key` plus the `device_key_history` table (the
+> in-chain rotation record provides primary tamper-evidence only while it remains
+> un-pruned). Break-glass / export **receipts** continue to verify under the genesis key.
+
+[`Kernel::rotate_device_identity`]: ../src/lib.rs
+
+> `SECURACV_DB_KEY_SEED` is a *seed* the key is derived from. It is different from
+> `SECURACV_DB_KEY`, which the verifier CLIs accept as the already-derived 64-char
+> hex key directly.
 
 > `SECURACV_DB_KEY_SEED` is a *seed* the key is derived from. It is different from
 > `SECURACV_DB_KEY`, which the verifier CLIs accept as the already-derived 64-char
@@ -68,9 +109,9 @@ Typical migration to a decoupled key:
 2. `rekey_database_file(db, old_signing_derived_key, new_secret_derived_key)`.
 3. Start the kernel with `SECURACV_DB_KEY_SEED` set to the new secret.
 
-After this the DB key is independent of the signing key. Rotating `DEVICE_KEY_SEED`
-itself is still gated by the `device_metadata` identity pin described above and is not
-yet supported end-to-end.
+After this the DB key is independent of the signing key — the prerequisite for rotating
+`DEVICE_KEY_SEED` itself via [`Kernel::rotate_device_identity`] (see
+[Rotating the device signing identity](#rotating-the-device-signing-identity) above).
 
 ## Verifier CLIs
 

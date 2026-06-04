@@ -28,6 +28,7 @@ pub const DOMAIN_CHECKPOINT: &str = "securacv:pwk:sealed-log-checkpoint:v2";
 pub const DOMAIN_BREAK_GLASS_RECEIPT: &str = "securacv:pwk:break-glass-receipt:v2";
 pub const DOMAIN_EXPORT_RECEIPT: &str = "securacv:pwk:export-receipt:v2";
 pub const DOMAIN_BREAK_GLASS_TOKEN: &str = "securacv:pwk:break-glass-token:v2";
+pub const DOMAIN_KEY_ROTATION: &str = "securacv:pwk:device-key-rotation:v1";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SignatureMode {
@@ -262,6 +263,54 @@ pub fn verify_ed25519_only(
 /// `SHA256( le32(len(domain)) || domain_utf8 || entry_hash )`.
 /// The offline JavaScript verifier (`viewer/verify_core.js`) MUST reproduce this byte layout
 /// exactly; `tests/fixtures/envelope/domain_separation_vectors.json` pins it cross-language.
+/// Hash binding a device-key rotation's old→new identity. The new key signs this
+/// to prove possession of the new private key (an attestation), so a rotation record
+/// cannot announce a public key the rotator does not actually control.
+fn rotation_attestation_hash(prev_public_key: &[u8; 32], new_public_key: &[u8; 32]) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(prev_public_key);
+    hasher.update(new_public_key);
+    let inner: [u8; 32] = hasher.finalize().into();
+    domain_separated_hash(DOMAIN_KEY_ROTATION, &inner)
+}
+
+/// Produce the new key's possession attestation over `(prev_public_key ‖ new_public_key)`.
+pub fn sign_rotation_attestation(
+    new_signing_key: &SigningKey,
+    prev_public_key: &[u8; 32],
+    new_public_key: &[u8; 32],
+) -> [u8; 64] {
+    new_signing_key
+        .sign(&rotation_attestation_hash(prev_public_key, new_public_key))
+        .to_bytes()
+}
+
+/// Verify the new key's possession attestation. Proves the rotation's incoming key
+/// holder signed the old→new binding; combined with the rotation record's own
+/// signature (by the *old* key), this anchors the rotation to both identities.
+pub fn verify_rotation_attestation(
+    new_verifying_key: &VerifyingKey,
+    prev_public_key: &[u8; 32],
+    new_public_key: &[u8; 32],
+    attestation: &[u8],
+) -> Result<()> {
+    if attestation.len() != 64 {
+        return Err(anyhow!(
+            "rotation attestation: expected 64 bytes, got {}",
+            attestation.len()
+        ));
+    }
+    let mut sig_bytes = [0u8; 64];
+    sig_bytes.copy_from_slice(attestation);
+    let sig = ed25519_dalek::Signature::from_bytes(&sig_bytes);
+    new_verifying_key
+        .verify(
+            &rotation_attestation_hash(prev_public_key, new_public_key),
+            &sig,
+        )
+        .map_err(|e| anyhow!("rotation attestation verification failed: {}", e))
+}
+
 pub fn domain_separated_hash(domain: &str, entry_hash: &[u8; 32]) -> [u8; 32] {
     let mut hasher = Sha256::new();
     let domain_bytes = domain.as_bytes();
@@ -359,6 +408,38 @@ mod tests {
         let signing_key = SigningKey::from_bytes(&[42u8; 32]);
         let entry_hash = [1u8; 32];
         (signing_key, entry_hash)
+    }
+
+    #[test]
+    fn rotation_attestation_round_trips_and_rejects_tampering() {
+        let old = SigningKey::from_bytes(&[1u8; 32])
+            .verifying_key()
+            .to_bytes();
+        let new_sk = SigningKey::from_bytes(&[2u8; 32]);
+        let new = new_sk.verifying_key().to_bytes();
+
+        let att = sign_rotation_attestation(&new_sk, &old, &new);
+        let new_vk = new_sk.verifying_key();
+        // Valid attestation verifies.
+        verify_rotation_attestation(&new_vk, &old, &new, &att).expect("valid attestation");
+
+        // A flipped byte is rejected.
+        let mut bad = att;
+        bad[0] ^= 0xff;
+        assert!(verify_rotation_attestation(&new_vk, &old, &new, &bad).is_err());
+
+        // Wrong key is rejected (an attacker cannot attest to a key they don't control).
+        let attacker_vk = SigningKey::from_bytes(&[3u8; 32]).verifying_key();
+        assert!(verify_rotation_attestation(&attacker_vk, &old, &new, &att).is_err());
+
+        // Rebinding to a different identity pair is rejected.
+        let other = SigningKey::from_bytes(&[4u8; 32])
+            .verifying_key()
+            .to_bytes();
+        assert!(verify_rotation_attestation(&new_vk, &old, &other, &att).is_err());
+
+        // Wrong length is rejected without panicking.
+        assert!(verify_rotation_attestation(&new_vk, &old, &new, &att[..32]).is_err());
     }
 
     #[test]
