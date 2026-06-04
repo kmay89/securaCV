@@ -232,6 +232,10 @@ async function process(envelope, sourceLabel) {
   try { report = await V.verifyEnvelope(envelope); }
   catch (e) { return renderBad('The verifier hit an unexpected error.', e.message); }
 
+  // Distinct from pass/fail: the bundle was neither verified nor rejected because this browser
+  // can't run the signature check. Never show valid evidence as "rejected".
+  if (report.status === 'inconclusive') return renderInconclusive(report, sourceLabel);
+
   const cls = report.status === 'ok' ? 'ok' : report.status === 'valid_with_warnings' ? 'warn' : 'bad';
   const icon = report.ok ? (report.warnings.length ? ICONS.warn : ICONS.ok) : ICONS.bad;
   const title = report.ok ? (report.warnings.length ? 'Verified — with notes' : 'Verified — integrity intact') : 'Not verified — bundle rejected';
@@ -240,12 +244,13 @@ async function process(envelope, sourceLabel) {
     : 'A check failed. Do not trust the contents of this bundle.';
 
   let html = `<div class="banner ${cls}">${icon}<div>${title}<small>${esc(sub)}</small></div></div>`;
+  html += metaPanel(sourceLabel, title);
 
   if (!report.ok) {
     html += `<div class="panel"><h2>What failed</h2><div class="mono" style="color:var(--bad)">${esc(report.error || 'unknown error')}</div>`;
     if (report.checks.length) html += `<div class="hint">Checks that passed before the failure:</div>${checklist(report.checks)}`;
     html += `</div>`;
-    html += resetBtn();
+    html += actions(true);
     out.innerHTML = html;
     wire();
     return;
@@ -280,14 +285,44 @@ async function process(envelope, sourceLabel) {
   }
 
   html += renderTimeline(envelope);
-  html += resetBtn();
+  html += actions(true);
   out.innerHTML = html;
   wire();
 }
 
 function stat(n, label) { return `<div class="stat"><div class="n">${n}</div><div class="l">${esc(label)}</div></div>`; }
 function checklist(items) { return `<ul class="checks">${items.map((c) => `<li>${ICONS.tick}<span>${esc(c)}</span></li>`).join('')}</ul>`; }
-function resetBtn() { return `<div class="actions"><button class="btn" id="again" type="button">Verify another bundle</button></div>`; }
+
+// Action bar shown under a result. `withPrint` adds a "Save / print report" button for the
+// court-grade record (hidden in the printed output itself via the print stylesheet).
+function actions(withPrint) {
+  return `<div class="actions">${withPrint ? '<button class="btn primary" id="print" type="button">Save / print report</button>' : ''}<button class="btn" id="again" type="button">Verify another bundle</button></div>`;
+}
+
+// A dated, self-contained verification record so a printed/PDF'd page stands on its own as
+// proof of who checked what, when. Times use the reader's local clock (stated as such).
+function metaPanel(sourceLabel, resultText) {
+  const when = new Date().toLocaleString();
+  return `<div class="panel"><h2>Verification record</h2><dl class="kv">
+    <dt>Source file</dt><dd>${esc(sourceLabel)}</dd>
+    <dt>Verified at</dt><dd>${esc(when)} <span style="color:var(--muted)">· this device's local clock</span></dd>
+    <dt>Method</dt><dd>Offline, in-browser (Web Crypto) — same algorithm as the securaCV Rust verifier</dd>
+    <dt>Result</dt><dd>${esc(resultText)}</dd>
+  </dl></div>`;
+}
+
+// Browser can't run Ed25519 — neither a pass nor a failure. Must read clearly as inconclusive
+// so a valid bundle is never mistaken for forged.
+function renderInconclusive(report, sourceLabel) {
+  let html = `<div class="banner warn">${ICONS.warn}<div>Couldn't finish verifying in this browser<small>Inconclusive — this is not a pass and not a failure.</small></div></div>`;
+  html += `<div class="panel"><h2>What happened</h2><div>${esc(report.error || '')}</div>`;
+  if (report.checks && report.checks.length) html += `<div class="hint">Checks completed before signatures could be tested:</div>${checklist(report.checks)}`;
+  html += `</div>`;
+  html += metaPanel(sourceLabel, 'Inconclusive — signatures not checked in this browser');
+  html += actions(true);
+  out.innerHTML = html;
+  wire();
+}
 
 function renderTimeline(envelope) {
   const entries = (envelope.ledgers && envelope.ledgers.sealed_events && envelope.ledgers.sealed_events.entries) || [];
@@ -311,7 +346,7 @@ function renderTimeline(envelope) {
 function renderBad(msg, detail) {
   out.innerHTML = `<div class="banner bad">${ICONS.bad}<div>Could not verify<small>${esc(msg)}</small></div></div>`
     + (detail ? `<div class="panel"><h2>Details</h2><div class="mono" style="color:var(--bad)">${esc(detail)}</div></div>` : '')
-    + resetBtn();
+    + actions(false);
   wire();
 }
 
@@ -319,6 +354,8 @@ function renderBad(msg, detail) {
 function wire() {
   const again = $('again');
   if (again) again.addEventListener('click', () => { out.innerHTML = ''; window.scrollTo({ top: 0, behavior: 'smooth' }); });
+  const printBtn = $('print');
+  if (printBtn) printBtn.addEventListener('click', () => window.print());
   const copy = $('copyfp');
   if (copy) copy.addEventListener('click', async () => {
     try { await navigator.clipboard.writeText($('fp').textContent); copy.textContent = 'Copied'; setTimeout(() => (copy.textContent = 'Copy'), 1500); }

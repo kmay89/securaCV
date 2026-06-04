@@ -84,3 +84,46 @@ describe('envelope verification parity', () => {
     assert.match(report.error, /sealed_events count mismatch/);
   });
 });
+
+describe('runtime without Ed25519 support', () => {
+  it('confirms Ed25519 IS available in this test runtime', async () => {
+    assert.equal(await V.ed25519Supported(), true);
+  });
+
+  it('reports "inconclusive" (never "compromised") for valid evidence when Ed25519 is unavailable', async () => {
+    const envelope = loadFixture('valid_envelope.json');
+    const realImport = globalThis.crypto.subtle.importKey.bind(globalThis.crypto.subtle);
+    // Simulate an engine (Safari < 17, older Firefox) with Web Crypto but no Ed25519.
+    globalThis.crypto.subtle.importKey = (fmt, key, algo, ext, usages) =>
+      (algo && algo.name === 'Ed25519')
+        ? Promise.reject(new Error('Ed25519 unsupported (simulated)'))
+        : realImport(fmt, key, algo, ext, usages);
+    try {
+      const report = await V.verifyEnvelope(envelope);
+      assert.equal(report.status, 'inconclusive');
+      assert.equal(report.ok, false);
+      assert.equal(report.inconclusive, true);
+      assert.match(report.error, /cannot check Ed25519 signatures/i);
+      // The non-signature checks must run first (so tampering is still caught — see next test).
+      assert.ok(report.checks.some((c) => /fingerprint recomputed/i.test(c)), 'pre-signature checks should run');
+    } finally {
+      globalThis.crypto.subtle.importKey = realImport;
+    }
+  });
+
+  it('still REJECTS a tampered bundle even when Ed25519 is unavailable (tamper caught pre-signature)', async () => {
+    const realImport = globalThis.crypto.subtle.importKey.bind(globalThis.crypto.subtle);
+    globalThis.crypto.subtle.importKey = (fmt, key, algo, ext, usages) =>
+      (algo && algo.name === 'Ed25519')
+        ? Promise.reject(new Error('Ed25519 unsupported (simulated)'))
+        : realImport(fmt, key, algo, ext, usages);
+    try {
+      const report = await V.verifyEnvelope(loadFixture('tampered_digest.json'));
+      assert.equal(report.status, 'compromised');
+      assert.equal(report.ok, false);
+      assert.match(report.error, /whole_envelope_digest/);
+    } finally {
+      globalThis.crypto.subtle.importKey = realImport;
+    }
+  });
+});

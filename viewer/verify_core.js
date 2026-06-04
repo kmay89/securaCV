@@ -146,6 +146,20 @@ async function verifyEd25519(pubKeyBytes, signatureBytes, message) {
   return globalThis.crypto.subtle.verify('Ed25519', key, signatureBytes, message);
 }
 
+// Probe whether this runtime can verify Ed25519 at all. Older engines (Safari < 17,
+// pre-2023 Firefox) ship Web Crypto but not the Ed25519 algorithm; importKey throws there.
+// We use this to report "inconclusive" instead of falsely rejecting valid evidence.
+async function ed25519Supported() {
+  try {
+    // RFC 8032 §7.1 test-vector public key — a known-valid 32-byte Ed25519 key.
+    const probe = hexToBytes('d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a');
+    await globalThis.crypto.subtle.importKey('raw', probe, { name: 'Ed25519' }, false, ['verify']);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // ---- serde-faithful serialization (for hashing the artifact and receipt) -------------
 // These reproduce `serde_json::to_vec(...)` byte-for-byte: struct field order is fixed (NOT the
 // input JSON's key order), integers print bare, and the single float field (`confidence`, an f32)
@@ -337,6 +351,21 @@ async function verifyEnvelope(envelope) {
     }
     result.checks.push('Bundle fingerprint recomputed and matches');
 
+    // The remaining checks recompute and verify Ed25519 signatures. If this runtime can't do
+    // Ed25519 (e.g. Safari < 17, older Firefox), we must NOT call the bundle "compromised" —
+    // that would be a false accusation against potentially valid evidence. Stop here with an
+    // honest "inconclusive" verdict so the user knows the bundle was neither passed nor failed.
+    if (!(await ed25519Supported())) {
+      result.status = 'inconclusive';
+      result.ok = false;
+      result.inconclusive = true;
+      result.warnings.push('signatures not checked: this browser lacks Ed25519 Web Crypto support');
+      result.error = 'This browser cannot check Ed25519 signatures, so signature verification could not run. ' +
+        'The bundle was NOT rejected — its structure and fingerprint checked out. To complete the check, ' +
+        'reopen this page in a current Chrome, Edge, Firefox, or Safari 17+, or run the securaCV Rust verifier.';
+      return result;
+    }
+
     const pubKey = hexToBytes(envelope.provenance.device_public_key);
     const domains = envelope.manifest.signature_domains;
 
@@ -426,6 +455,7 @@ async function verifyEnvelope(envelope) {
 
 const api = {
   verifyEnvelope,
+  ed25519Supported,
   computeWholeEnvelopeDigest,
   canonicalize,
   canonicalBytes,
