@@ -302,7 +302,7 @@ function actions(withPrint) {
 // A dated, self-contained verification record so a printed/PDF'd page stands on its own as
 // proof of who checked what, when. Times use the reader's local clock (stated as such).
 function metaPanel(sourceLabel, resultText) {
-  const when = new Date().toLocaleString();
+  const when = new Date().toLocaleString(undefined, { timeZoneName: 'short' });
   return `<div class="panel"><h2>Verification record</h2><dl class="kv">
     <dt>Source file</dt><dd>${esc(sourceLabel)}</dd>
     <dt>Verified at</dt><dd>${esc(when)} <span style="color:var(--muted)">· this device's local clock</span></dd>

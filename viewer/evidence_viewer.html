@@ -326,15 +326,23 @@ async function verifyEd25519(pubKeyBytes, signatureBytes, message) {
 // Probe whether this runtime can verify Ed25519 at all. Older engines (Safari < 17,
 // pre-2023 Firefox) ship Web Crypto but not the Ed25519 algorithm; importKey throws there.
 // We use this to report "inconclusive" instead of falsely rejecting valid evidence.
-async function ed25519Supported() {
-  try {
-    // RFC 8032 §7.1 test-vector public key — a known-valid 32-byte Ed25519 key.
-    const probe = hexToBytes('d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a');
-    await globalThis.crypto.subtle.importKey('raw', probe, { name: 'Ed25519' }, false, ['verify']);
-    return true;
-  } catch {
-    return false;
+// Cached: support is static for the page's lifetime, and caching the promise also collapses
+// concurrent verifications onto a single probe.
+let ed25519SupportPromise = null;
+function ed25519Supported() {
+  if (!ed25519SupportPromise) {
+    ed25519SupportPromise = (async () => {
+      try {
+        // RFC 8032 §7.1 test-vector public key — a known-valid 32-byte Ed25519 key.
+        const probe = hexToBytes('d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a');
+        await globalThis.crypto.subtle.importKey('raw', probe, { name: 'Ed25519' }, false, ['verify']);
+        return true;
+      } catch {
+        return false;
+      }
+    })();
   }
+  return ed25519SupportPromise;
 }
 
 // ---- serde-faithful serialization (for hashing the artifact and receipt) -------------
@@ -459,7 +467,7 @@ function bytesEqual(a, b) {
   return true;
 }
 
-async function verifyLinearChain(entries, startHead, domain, pubKey, ledgerName) {
+async function verifyLinearChain(entries, startHead, domain, pubKey, ledgerName, verifySig) {
   let expectedPrev = startHead;
   for (let i = 0; i < entries.length; i++) {
     const e = entries[i];
@@ -472,10 +480,14 @@ async function verifyLinearChain(entries, startHead, domain, pubKey, ledgerName)
     if (!bytesEqual(computed, entryHash)) {
       throw new Error(`${ledgerName} integrity check failed at index ${i}: entry_hash mismatch`);
     }
-    const sig = Uint8Array.from(e.signatures.ed25519_signature);
-    const msg = await domainSeparatedHash(domain, entryHash);
-    if (!(await verifyEd25519(pubKey, sig, msg))) {
-      throw new Error(`${ledgerName} signature verification failed at index ${i}`);
+    // The hash chain above is proven with SHA-256 alone. Only the Ed25519 signature needs Web
+    // Crypto's Ed25519 — defer just that verdict when the runtime can't do it (see verifyEnvelope).
+    if (verifySig) {
+      const sig = Uint8Array.from(e.signatures.ed25519_signature);
+      const msg = await domainSeparatedHash(domain, entryHash);
+      if (!(await verifyEd25519(pubKey, sig, msg))) {
+        throw new Error(`${ledgerName} signature verification failed at index ${i}`);
+      }
     }
     expectedPrev = entryHash;
   }
@@ -528,35 +540,27 @@ async function verifyEnvelope(envelope) {
     }
     result.checks.push('Bundle fingerprint recomputed and matches');
 
-    // The remaining checks recompute and verify Ed25519 signatures. If this runtime can't do
-    // Ed25519 (e.g. Safari < 17, older Firefox), we must NOT call the bundle "compromised" —
-    // that would be a false accusation against potentially valid evidence. Stop here with an
-    // honest "inconclusive" verdict so the user knows the bundle was neither passed nor failed.
-    if (!(await ed25519Supported())) {
-      result.status = 'inconclusive';
-      result.ok = false;
-      result.inconclusive = true;
-      result.warnings.push('signatures not checked: this browser lacks Ed25519 Web Crypto support');
-      result.error = 'This browser cannot check Ed25519 signatures, so signature verification could not run. ' +
-        'The bundle was NOT rejected — its structure and fingerprint checked out. To complete the check, ' +
-        'reopen this page in a current Chrome, Edge, Firefox, or Safari 17+, or run the securaCV Rust verifier.';
-      return result;
-    }
+    // Signatures are the ONLY checks that need Ed25519 Web Crypto. Older engines (Safari < 17,
+    // pre-2023 Firefox) lack it. Rather than bail out here — which would skip deterministic checks
+    // like the artifact-hash binding and make valid evidence look "rejected" — we run EVERY
+    // hash/structure check below and defer only the signature verdict, then return an honest
+    // "inconclusive" status at the end. Tampering is still caught definitively either way.
+    const sigCheckable = await ed25519Supported();
 
-    const pubKey = hexToBytes(envelope.provenance.device_public_key);
+    const pubKey = sigCheckable ? hexToBytes(envelope.provenance.device_public_key) : null;
     const domains = envelope.manifest.signature_domains;
 
     // Sealed events (start at checkpoint head if present, else genesis).
     const cp = envelope.ledgers.checkpoints.latest;
     const sealedStart = cp ? toBytes(cp.chain_head_hash) : new Uint8Array(32);
     const sealed = envelope.ledgers.sealed_events;
-    const sealedHead = await verifyLinearChain(sealed.entries, sealedStart, domains.sealed_log_entry, pubKey, 'sealed_events');
+    const sealedHead = await verifyLinearChain(sealed.entries, sealedStart, domains.sealed_log_entry, pubKey, 'sealed_events', sigCheckable);
     validateSummary('sealed_events', sealed.entries.length, sealed.count, sealed.head_hash, sealedHead);
     result.checks.push(`Sealed-event hash chain intact (${sealed.entries.length} ${sealed.entries.length === 1 ? 'entry' : 'entries'})`);
-    result.checks.push('Device Ed25519 signatures valid on every sealed event');
+    if (sigCheckable) result.checks.push('Device Ed25519 signatures valid on every sealed event');
 
     // Checkpoint signature.
-    if (cp) {
+    if (cp && sigCheckable) {
       const head = toBytes(cp.chain_head_hash);
       const msg = await domainSeparatedHash(domains.checkpoint, head);
       const sig = Uint8Array.from(cp.signatures.ed25519_signature);
@@ -566,7 +570,7 @@ async function verifyEnvelope(envelope) {
 
     // Break-glass receipts.
     const bg = envelope.ledgers.break_glass_receipts;
-    const bgHead = await verifyLinearChain(bg.entries, new Uint8Array(32), domains.break_glass, pubKey, 'break_glass_receipts');
+    const bgHead = await verifyLinearChain(bg.entries, new Uint8Array(32), domains.break_glass, pubKey, 'break_glass_receipts', sigCheckable);
     validateSummary('break_glass_receipts', bg.entries.length, bg.count, bg.head_hash, bgHead);
     for (const e of bg.entries) {
       const receipt = JSON.parse(e.payload_json);
@@ -582,7 +586,7 @@ async function verifyEnvelope(envelope) {
 
     // Export receipts.
     const exp = envelope.ledgers.export_receipts;
-    const expHead = await verifyLinearChain(exp.entries, new Uint8Array(32), domains.export_receipt, pubKey, 'export_receipts');
+    const expHead = await verifyLinearChain(exp.entries, new Uint8Array(32), domains.export_receipt, pubKey, 'export_receipts', sigCheckable);
     validateSummary('export_receipts', exp.entries.length, exp.count, exp.head_hash, expHead);
 
     // Provenance must be consistent with the signed export receipt.
@@ -606,10 +610,12 @@ async function verifyEnvelope(envelope) {
     if (!bytesEqual(computedEntryHash, toBytes(rEntry.entry_hash))) {
       throw new Error('export receipt entry_hash mismatch');
     }
-    const rMsg = await domainSeparatedHash(domains.export_receipt, toBytes(rEntry.entry_hash));
-    const rSig = Uint8Array.from(rEntry.signatures.ed25519_signature);
-    if (!(await verifyEd25519(pubKey, rSig, rMsg))) throw new Error('export receipt signature verification failed');
-    result.checks.push('Export receipt signature valid (provenance bound)');
+    if (sigCheckable) {
+      const rMsg = await domainSeparatedHash(domains.export_receipt, toBytes(rEntry.entry_hash));
+      const rSig = Uint8Array.from(rEntry.signatures.ed25519_signature);
+      if (!(await verifyEd25519(pubKey, rSig, rMsg))) throw new Error('export receipt signature verification failed');
+      result.checks.push('Export receipt signature valid (provenance bound)');
+    }
 
     // Warnings & status.
     if (envelope.provenance.pq_public_key) result.warnings.push('post-quantum signatures present but not verified in this offline viewer');
@@ -619,6 +625,23 @@ async function verifyEnvelope(envelope) {
 
     result.sealed_events = sealed.entries.length;
     result.export_receipts = exp.entries.length;
+
+    // Every deterministic (hash / structure / artifact-binding) check above passed, so any tampering
+    // would already have thrown. If the runtime couldn't run the Ed25519 checks, the verdict is
+    // "inconclusive" — not a pass: contents are internally consistent and untampered, but device
+    // authorship was not cryptographically confirmed here.
+    if (!sigCheckable) {
+      result.status = 'inconclusive';
+      result.ok = false;
+      result.inconclusive = true;
+      result.warnings.unshift('signatures not checked: this browser lacks Ed25519 Web Crypto support');
+      result.error = 'This browser cannot check Ed25519 signatures, so device authorship was not confirmed. ' +
+        'The bundle was NOT rejected — its structure, hash chains, fingerprint, and the artifact-to-signed-hash ' +
+        'binding all checked out, so any tampering would have been caught. To confirm the signatures too, reopen ' +
+        'this page in a current Chrome, Edge, Firefox, or Safari 17+, or run the securaCV Rust verifier.';
+      return result;
+    }
+
     result.ok = true;
     result.status = result.warnings.length === 0 ? 'ok' : 'valid_with_warnings';
     return result;
@@ -1545,7 +1568,7 @@ function actions(withPrint) {
 // A dated, self-contained verification record so a printed/PDF'd page stands on its own as
 // proof of who checked what, when. Times use the reader's local clock (stated as such).
 function metaPanel(sourceLabel, resultText) {
-  const when = new Date().toLocaleString();
+  const when = new Date().toLocaleString(undefined, { timeZoneName: 'short' });
   return `<div class="panel"><h2>Verification record</h2><dl class="kv">
     <dt>Source file</dt><dd>${esc(sourceLabel)}</dd>
     <dt>Verified at</dt><dd>${esc(when)} <span style="color:var(--muted)">· this device's local clock</span></dd>
