@@ -1,6 +1,7 @@
 {
   "domain": "securacv",
   "name": "SecuraCV",
+  "after_dependencies": ["http", "frontend"],
   "codeowners": ["@kmay89"],
   "config_flow": true,
   "dependencies": ["mqtt"],
@@ -11,5 +12,5 @@
   "loggers": ["securacv"],
   "mqtt": ["securacv/#"],
   "requirements": [],
-  "version": "0.5.0"
+  "version": "0.6.0"
 }

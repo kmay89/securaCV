@@ -49,6 +49,50 @@ _LOGGER = logging.getLogger(__name__)
 PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR]
 DEFAULT_UPDATE_INTERVAL = timedelta(seconds=30)
 
+# Lovelace timeline card (custom_components/securacv/www/). Served and
+# auto-loaded best-effort so `type: custom:securacv-timeline-card` resolves
+# without the user hand-adding a frontend resource.
+TIMELINE_CARD_FILENAME = "securacv-timeline-card.js"
+TIMELINE_CARD_URL = f"/{DOMAIN}_www/{TIMELINE_CARD_FILENAME}"
+
+
+async def _async_register_frontend(hass: HomeAssistant) -> None:
+    """Serve and auto-load the timeline Lovelace card. Never fatal.
+
+    The frontend is optional — the integration is just as useful headless — so
+    any registration hiccup is logged at debug and swallowed rather than failing
+    setup. Runs once per HA instance (guarded in hass.data), and tolerates the
+    static-path API change across HA versions.
+    """
+    domain_data = hass.data.setdefault(DOMAIN, {})
+    if domain_data.get("_frontend_registered"):
+        return
+    domain_data["_frontend_registered"] = True
+    try:
+        from pathlib import Path
+
+        card_path = Path(__file__).parent / "www" / TIMELINE_CARD_FILENAME
+        if not card_path.is_file():
+            domain_data["_frontend_registered"] = False
+            return
+        try:
+            from homeassistant.components.http import StaticPathConfig
+
+            await hass.http.async_register_static_paths(
+                [StaticPathConfig(TIMELINE_CARD_URL, str(card_path), False)]
+            )
+        except (ImportError, AttributeError):
+            # Older HA without the bulk async API.
+            hass.http.register_static_path(TIMELINE_CARD_URL, str(card_path), False)
+
+        from homeassistant.components.frontend import add_extra_js_url
+
+        add_extra_js_url(hass, TIMELINE_CARD_URL)
+        _LOGGER.debug("SecuraCV timeline card registered at %s", TIMELINE_CARD_URL)
+    except Exception:  # noqa: BLE001 - frontend is optional, never block setup
+        domain_data["_frontend_registered"] = False
+        _LOGGER.debug("SecuraCV timeline card not registered", exc_info=True)
+
 
 class SecuraCVApiError(Exception):
     """Base error for the SecuraCV API client."""
@@ -187,6 +231,9 @@ class SecuraCVAdapterStatsCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up SecuraCV from a config entry."""
     hass.data.setdefault(DOMAIN, {})
+
+    # Serve + auto-load the Lovelace timeline card (best-effort, non-fatal).
+    await _async_register_frontend(hass)
 
     setup_mode = entry.data.get(CONF_SETUP_MODE, SETUP_MODE_KERNEL)
     has_kernel = setup_mode in (SETUP_MODE_KERNEL, SETUP_MODE_BOTH)
