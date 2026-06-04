@@ -329,7 +329,7 @@ static inline void cbor_write_float32(cbor_writer_t* w, float val) {
  *   uint8_t buf[256];
  *   CborWriter w(buf, sizeof(buf));
  *   w.map(3)
- *    .key("device_id").str("canary-s3-AB12")
+ *    .key("device_id").str("canary-s3-AB7K")
  *    .key("state").str("MOVING")
  *    .key("speed").flt(1.5);
  *   if (w.ok()) {

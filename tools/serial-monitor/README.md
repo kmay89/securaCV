@@ -63,7 +63,7 @@ Options:
 
 ```
  SecuraCV Canary Monitor ─────────────────────────────────────────
-  Device: canary-s3-a1b2  |  FW: 2.1.0  |  Uptime: 4h 23m 15s  |  State: stationary
+  Device: canary-s3-ab7k  |  FW: 2.1.0  |  Uptime: 4h 23m 15s  |  State: stationary
   Heap: 142,816 (min: 98,304)  |  Records: 1,247  |  Chain seq: 1,248
   Subsystems: audio camera csi datamgmt diag gps mqtt policy power sd setup watchdog wifi
   GPS:OK | SD:OK | WiFi:OK | BAT:78%/3890mV | Health:95%
@@ -73,7 +73,7 @@ Options:
     seq=1       BOOT_ATTEST    4h ago     Boot attestation record created
 ──────────────────────────────────────────────────────────────────
 [INFO ] APP: SecuraCV Canary WAP v2.1.0 starting...
-[  OK] Device ID: canary-s3-a1b2
+[  OK] Device ID: canary-s3-ab7k
 [  OK] WiFi AP active
 [  OK] SD card ready for witness records
 [  OK] Boot attestation: seq=1

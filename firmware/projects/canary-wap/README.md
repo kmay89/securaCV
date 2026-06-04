@@ -170,7 +170,7 @@ curl http://192.168.4.1/api/status
 
 ```json
 {
-  "device_id": "canary-s3-AB12",
+  "device_id": "canary-s3-AB7K",
   "firmware": "2.1.0",
   "uptime_sec": 3600,
   "sequence": 1234,

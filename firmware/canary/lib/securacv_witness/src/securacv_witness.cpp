@@ -137,11 +137,9 @@ void format_uptime(char* out, size_t cap, uint32_t secs) {
 bool witness_provision_device() {
   Serial.println("[..] Provisioning device identity...");
 
-  // Generate device ID from MAC
-  generate_device_id(g_device.device_id, sizeof(g_device.device_id), DEVICE_ID_PREFIX);
-  generate_ap_ssid(g_device.ap_ssid, sizeof(g_device.ap_ssid));
-
-  // Try to load existing key
+  // Establish the keypair FIRST: the device ID / AP SSID are derived from the
+  // pubkey fingerprint (never the MAC — event_contract §10 / privacy Invariant
+  // III), so the fingerprint must exist before we build those handles.
   if (nvs_load_key(g_device.privkey)) {
     Serial.println("[OK] Loaded existing keypair from NVS");
   } else {
@@ -157,9 +155,15 @@ bool witness_provision_device() {
     Serial.println("[OK] New keypair generated and stored");
   }
 
-  // Derive public key
+  // Derive public key + fingerprint
   Ed25519::derivePublicKey(g_device.pubkey, g_device.privkey);
   crypto_fingerprint(g_device.pubkey, g_device.pubkey_fp);
+
+  // Device ID / AP SSID from the pubkey fingerprint (no MAC read).
+  generate_device_id(g_device.device_id, sizeof(g_device.device_id),
+                     DEVICE_ID_PREFIX, g_device.pubkey_fp);
+  generate_ap_ssid(g_device.ap_ssid, sizeof(g_device.ap_ssid),
+                   g_device.pubkey_fp);
 
   // Load chain state
   g_device.seq = nvs_load_u32(NVS_KEY_SEQ, 0);

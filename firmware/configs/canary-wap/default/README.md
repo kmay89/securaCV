@@ -33,7 +33,7 @@ Standard configuration for the Canary Wireless Access Point witness device.
 
 | Setting | Value |
 |---------|-------|
-| AP SSID | SecuraCV-{MAC} |
+| AP SSID | SecuraCV-{fingerprint} |
 | AP Password | witness2026 |
 | AP Channel | 1 |
 | HTTP Port | 80 |

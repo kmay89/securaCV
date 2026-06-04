@@ -7,9 +7,10 @@ File references are to
 
 ## The onboarding flow (as traced)
 
-1. **Boot / identity** — `provision_device()` derives a stable `device_id`
-   (`canary-s3-AABB`) and AP SSID (`SecuraCV-AABB`) from the MAC, loads/creates
-   the Ed25519 keypair, and derives the API token. (`canary_wap.ino`)
+1. **Boot / identity** — `provision_device()` loads/creates the Ed25519
+   keypair, then derives a stable `device_id` (`canary-s3-AB7K`) and AP SSID
+   (`SecuraCV-AB7K`) from its public-key fingerprint (never the MAC —
+   event_contract §10), and derives the API token. (`canary_wap.ino`)
 2. **AP + captive portal** — `wifi_init_provisioning()` brings up
    `WIFI_AP_STA`, starts the SoftAP with a device-unique password, and (on first
    boot) a captive-portal DNS that redirects to `192.168.4.1`. The static

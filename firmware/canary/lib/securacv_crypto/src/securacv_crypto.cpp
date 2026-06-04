@@ -489,16 +489,10 @@ void hex_to_str(char* out, const uint8_t* d, size_t n) {
   out[n*2] = 0;
 }
 
-// Render the low 16 bits of the STA MAC as a 4-char suffix in the unambiguous
-// alphabet. base-54 of a 16-bit value is injective (54^4 ≫ 65536), so this is
-// a 1:1 re-encoding of the old "%02X%02X" hex suffix — same per-board
-// uniqueness, just with no 0/O/o or 1/I/i/l/L glyphs. The MAC is burned into
-// eFuse, so the suffix is identical across reflashes: this is a *hardware*
-// handle, not a per-boot token, and is meant to stay stable for the board.
-static void mac_unambiguous_suffix(char out[5]) {
-  uint8_t mac[6];
-  esp_read_mac(mac, ESP_MAC_WIFI_STA);
-  uint16_t v = (uint16_t)((mac[4] << 8) | mac[5]);
+// Render 16 bits as a 4-char suffix in the unambiguous alphabet. base-54 of a
+// 16-bit value is injective (54^4 ≫ 65536), so it preserves the per-device
+// uniqueness of the old hex suffix with no 0/O/o or 1/I/i/l/L glyphs.
+static void unambiguous_suffix16(uint16_t v, char out[5]) {
   for (int i = 0; i < 4; i++) {
     out[i] = UNAMBIGUOUS_ALPHABET[v % UNAMBIGUOUS_LEN];
     v = (uint16_t)(v / UNAMBIGUOUS_LEN);
@@ -506,18 +500,28 @@ static void mac_unambiguous_suffix(char out[5]) {
   out[4] = '\0';
 }
 
-void generate_device_id(char* out, size_t cap, const char* prefix) {
+// The suffix is derived from the Ed25519 public-key fingerprint, never the
+// hardware MAC (event_contract §10 / privacy Invariant III: no raw MAC in any
+// API payload, log, or advertised identifier). The keypair persists in NVS, so
+// the handle is stable for the device's lifetime — a *device* handle, not a
+// per-boot token — and matches the canary-wap tree's derivation.
+static uint16_t fingerprint16(const uint8_t fp[2]) {
+  return (uint16_t)((fp[0] << 8) | fp[1]);
+}
+
+void generate_device_id(char* out, size_t cap, const char* prefix,
+                        const uint8_t fp[2]) {
   if (out == nullptr || cap == 0) return;
   char suffix[5];
-  mac_unambiguous_suffix(suffix);
+  unambiguous_suffix16(fingerprint16(fp), suffix);
   // Defense-in-depth: never emit a truncated (and therefore ambiguous) handle
   // if a future prefix/suffix change overflows the caller's buffer.
   if (snprintf(out, cap, "%s%s", prefix, suffix) >= (int)cap) out[0] = '\0';
 }
 
-void generate_ap_ssid(char* out, size_t cap) {
+void generate_ap_ssid(char* out, size_t cap, const uint8_t fp[2]) {
   if (out == nullptr || cap == 0) return;
   char suffix[5];
-  mac_unambiguous_suffix(suffix);
+  unambiguous_suffix16(fingerprint16(fp), suffix);
   if (snprintf(out, cap, "SecuraCV-%s", suffix) >= (int)cap) out[0] = '\0';
 }
