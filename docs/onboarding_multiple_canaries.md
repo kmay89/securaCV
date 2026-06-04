@@ -26,10 +26,14 @@ what changes once a second device joins the network.
 | **USB-C cable** | For flashing |
 | microSD, GPS | Optional |
 
-Each board has a globally-unique MAC address. The firmware derives a stable
-per-device identity from it (`device_id` = `canary-s3-AABB`, AP SSID
+Each board has a globally-unique hardware identity. The firmware derives a
+stable per-device handle from it (`device_id` = `canary-s3-AABB`, AP SSID
 `SecuraCV-AABB`), so you never have to configure anything to make two devices
-distinct at the hardware level.
+distinct at the hardware level. The four-character suffix is encoded in an
+unambiguous alphabet (no `0/O/o` or `1/I/i/l/L`), so it never contains glyphs
+you might misread. Because the handle is derived from immutable hardware, it is
+**the same every time you flash** — that stability is the point: it's how
+`canary.local`, Home Assistant, and MQTT keep tracking the same board.
 
 ---
 
