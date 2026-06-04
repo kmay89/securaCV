@@ -28,8 +28,9 @@ tamper-proof log that proves nobody — including you — altered the record.
 > Lovelace card that turns the events into a newest-first timeline with a hash-chain status
 > header. Each row carries an *honest* verification badge: a green **✓ "Signature verified"**
 > appears only when the event's Ed25519 signature actually verified — weaker states
-> (signed-but-unverified, logged, verification-failed) are shown distinctly so a ✓ never
-> overclaims. Add it from **Add Card → "SecuraCV Verified Timeline"**; see the
+> (signed-but-unverified, logged, verification-failed) are shown distinctly — by colour and
+> an explicit label — so a *green* ✓ never overclaims (signed-but-unverified reuses the ✓
+> glyph but renders blue and reads "Signed (unverified)"). Add it from **Add Card → "SecuraCV Verified Timeline"**; see the
 > [card guide](docs/lovelace_timeline.md).
 
 ---

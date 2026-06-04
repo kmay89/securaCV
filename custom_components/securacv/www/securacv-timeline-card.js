@@ -105,7 +105,9 @@
    *   "signed"     — entry claims to be signed, no independent check available
    *   "logged"     — kernel HTTP path: present in the log, no per-event sig here
    *   "failed"     — verification ran and failed / trust mismatch (⚠)
-   * The card intentionally distinguishes these so a ✓ always means a real check.
+   * The card intentionally distinguishes these by colour and label so a *green* ✓ always
+   * means a real check; "signed" reuses the ✓ glyph but renders blue with a "(unverified)"
+   * label, and is never shown as the green verified badge.
    */
   function resolveVerification(signals) {
     const s = signals || {};
