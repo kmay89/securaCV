@@ -420,7 +420,8 @@ impl GstreamerRtspSource {
         let Some(bus) = self.pipeline.bus() else {
             return;
         };
-        while let Some(message) = bus.timed_pop(Duration::from_millis(0)) {
+        // ClockTime::ZERO = non-blocking poll (gstreamer 0.23 wants Option<ClockTime>).
+        while let Some(message) = bus.timed_pop(gstreamer::ClockTime::ZERO) {
             use gstreamer::MessageView;
             match message.view() {
                 MessageView::Error(err) => {
