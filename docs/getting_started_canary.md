@@ -39,7 +39,7 @@ That's the entire hardware setup.
 On your phone, open Wi-Fi settings. You'll see a new network named
 something like:
 
-> **SecuraCV-A1B2**
+> **SecuraCV-AB7K**
 
 The four characters at the end are unique to your Canary. Tap the
 network and enter the **AP password** from your card. (The password is

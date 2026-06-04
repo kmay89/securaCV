@@ -21,16 +21,16 @@
 | F-02 | Blocker | ✅ Resolved (#673) | Versioning | "v1" is defined **three incompatible ways** across CHANGELOG / v1-roadmap / README badge. |
 | F-03 | Blocker | ✅ Resolved (#662/#669) | Firmware privacy | `ENTERPRISE_READINESS_TODO` admits raw **MAC exposure** and uncoarsened **GPS** in WAP APIs — contradicts Invariants II & III. |
 | F-04 | Major | 🟡 Partial (#674) | Crypto | Device key is **seed-derived from config**; DB key **coupled** to signing key → rotation blocked (acknowledged, still open). |
-| F-05 | Minor | 🟡 Open (UX) | Vault | *Corrected after code review:* vault sealing **is wired** into `witnessd` (real crypto modes); the real gap is that it's **opt-in / UX-gated**, not absent. |
+| F-05 | Minor | ✅ Resolved (#709) | Vault | *Corrected after code review:* vault sealing **is wired** into `witnessd` (real crypto modes); the real gap is that it's **opt-in / UX-gated**, not absent. |
 | F-06 | Major | ✅ Resolved (#670) | Firmware flash | **Divergent partition tables**; canary-wap Arduino pins **no** scheme; one secure table assumes **4 MB** flash on an 8 MB board. |
 | F-07 | Major | ✅ Resolved | Transports | `TRANSPORT_LORA` / `TRANSPORT_AUDIO` (+`audio_anomaly` tamper) declared but **unimplemented** — now split into `FUTURE_TRANSPORTS` / `FUTURE_TAMPER_TYPES`, out of the `ALL_*` lists, so the HA surface never advertises them. |
 | F-08 | Major | ⬜ Open (frozen) | Mesh | ESP-NOW WiFi-AP bridge & BLE fallback marked **"❌ not implemented"** in the mesh evaluation. |
 | F-09 | Minor | ✅ Resolved (#682) | Repo hygiene | Root **`spec.md` is mis-titled** — it's the `zone_crossing` module spec, not a system spec. |
 | F-10 | Minor | ✅ Resolved (#691) | CLI count | CHANGELOG said **"9 CLI binaries"** (mislabeled "14 total"); `src/bin/` has **15** — count reconciled and `detect_eval` enumerated. |
 | F-11 | Minor | ✅ Resolved (#688) | Ingest dup | **Two RTSP** implementations (`rtsp.rs` vs `rtsp_ffmpeg.rs`) risk divergence. |
-| F-12 | Doc-debt | 🟡 Partial (#673) | README | README has live **TODOs** (missing screenshot) and ships "core works end-to-end" beside an unshipped v1. |
+| F-12 | Doc-debt | ✅ Resolved (#673/#706) | README | README has live **TODOs** (missing screenshot) and ships "core works end-to-end" beside an unshipped v1. |
 | F-13 | Doc-debt | ✅ Resolved (#673) | Roadmap | `v1-roadmap.md` overclaims completion (✅) on items contradicted by code (F-01) and omits shipped work (PQC, adapters). |
-| F-14 | Minor | ⬜ Open | Spec maturity | Many normative specs are `_v0` / "Draft v0.1" but referenced as if stable contracts. |
+| F-14 | Minor | ✅ Resolved (#707) | Spec maturity | Many normative specs are `_v0` / "Draft v0.1" but referenced as if stable contracts. |
 | F-15 | Minor | ✅ Resolved (CI) | Build env | Tests need `libseccomp`; firmware needs `pio`/`arduino-cli` — none present in the audit env, so "passes cleanly" is **unverified here**. |
 
 ---
@@ -131,10 +131,18 @@ setup UI, and the crypto-mode default/key handling still ties into the device-ke
 **Severity downgraded Major → Minor/Doc-debt.** **Fix:** describe the vault as *wired but opt-in*,
 document the token/crypto-mode config path, and build the trustee/seal setup UX (roadmap P2).
 
-> **Status 2026-06-04 — 🟡 Open (UX).** The doc-debt half is done — `v1-roadmap.md` now describes the
-> vault as "wired (opt-in)" with the `BREAK_GLASS_SEAL_TOKEN` path. The remaining open piece is the
-> product gap: there is **no non-CLI trustee/seal setup UX** (only `src/bin/break_glass.rs` + the
-> offline viewer). That is roadmap **P2 ("break-glass / trustee setup UI")** and still unbuilt.
+> **Status 2026-06-04 — ✅ Resolved (#709).** The flag's correctness core — sealing was **silently**
+> opt-in, so an operator could believe evidence was being sealed when it was not — is closed.
+> `witnessd` now logs an explicit startup status line covering all three real states: INFO
+> **ENABLED** (with the crypto mode) when `BREAK_GLASS_SEAL_TOKEN` is set and the token is valid in
+> the current bucket; WARN **token present but EXPIRED / out-of-window** (a seal token is honoured
+> only within the 10-minute bucket it was issued for, matching the runtime check); and WARN
+> **DISABLED** with no token, stating that boundary events are still signed/logged but **no frame is
+> sealed into the vault**, with the exact steps to enable it (`src/bin/witnessd.rs`). This mirrors
+> the F-01 fix (no silent, undocumented default) and avoids the masking-misconfig failure mode (an
+> expired token no longer reads as ENABLED). The doc-debt half was already done (`v1-roadmap.md` describes the vault as "wired,
+> opt-in"). What remains is **not a flag**: the full non-CLI **trustee/seal setup wizard** is a
+> roadmap **P2** product feature, separate from this correctness gap.
 
 ### F-06 — Divergent firmware partition tables; risky flash assumptions
 **Evidence.** Three different layouts for the "same" device family:
@@ -222,10 +230,19 @@ multi-path mesh resilience story has unbuilt legs. **Fix:** scope mesh claims to
 >   feature hash + `RawFrame`), covered by a contract test. The `ffmpeg` path stays the CI-exercised
 >   canonical decoder (`ingest-rtsp` + `tests/rtsp_e2e.rs`, #666). *Follow-up:* the feature-gated
 >   `esp32` / `v4l2` sources still inline the equivalent sequence and should adopt the same gate.
-> - **F-12 🟡 Partial (#673)** — the badge half is fixed (`README.md:5` now `v1-rc`, no longer
->   "core works end-to-end" beside an unshipped v1); the `<!-- TODO: add a screenshot … -->` at
->   `README.md:26` is still there (the "verified ✓ timeline" screenshot, roadmap P2).
-> - **F-14 ⬜ Open** — spec maturity column not yet added.
+> - **F-12 ✅ Resolved (#673/#706)** — the badge half was fixed in #673 (`README.md:5` now `v1-rc`,
+>   no longer "core works end-to-end" beside an unshipped v1). The dangling
+>   `<!-- TODO: add a screenshot … -->` at `README.md:26` is gone: the verified-✓ timeline card
+>   actually shipped (#689), so the placeholder is replaced by a real payoff callout describing the
+>   honest verification badges and linking the [card guide](../lovelace_timeline.md). (A photographed
+>   dashboard screenshot remains a nice-to-have, but there is no longer a live TODO or an undocumented
+>   payoff.)
+> - **F-14 ✅ Resolved (#707)** — `spec/README.md` now opens with a maturity legend and an index
+>   table giving every spec a maturity bucket (🟢 Stable / 🟡 Draft / ⚪ Spec-only · Positioning)
+>   alongside its self-declared `Status` and role, so re-implementers can tell the implemented,
+>   CI-exercised contracts (invariants, event_contract, evidence_envelope, sensor_adapter_contract,
+>   break_glass, threat_model) from the `_v0` drafts and the explicitly spec-only / not-yet-implemented
+>   ones (the mesh/RF set tied to F-07/F-08, `beacon_cap_gateway_v0`).
 > - **F-15 ✅ Resolved (CI)** — "passes cleanly" is now CI-verified, not just claimed: `rust.yml`
 >   runs `cargo test` (with `libseccomp`), plus the RTSP (#666) and Frigate→MQTT (#672) e2e gates
 >   and firmware CI, all green on `main`. The original caveat was about the *audit* environment.

@@ -62,15 +62,25 @@ No bulk search. No identity selectors.
 
 ### ⚠️ CRITICAL: Security Model
 
-**`DetectorBackend` is an AUDIT BOUNDARY, not a security boundary.**
+**`DetectorBackend` is an audit boundary backed by a process-isolation sandbox.**
 
-The trait defines an API contract. It does NOT prevent backends from:
+The trait is an API contract that still must be manually audited for what the kernel can't
+enforce in-process:
 - Cloning/caching pixel data internally
-- Making network calls
-- Writing to disk
 - Computing identity-linked data
 
-**Each backend must be manually audited.** True isolation requires WASM sandboxing or process isolation (not yet implemented).
+But in the production pipeline `detect()` runs inside a forked, seccomp-restricted child process
+(`module_runtime::execute_sandboxed`, used by `witnessd`; see `src/module_runtime/sandbox.rs`).
+The child denies the filesystem, network, `execve`, `ptrace`, and `process_vm_*` syscalls, so a
+malicious/buggy backend **cannot**:
+- Make network calls
+- Write to disk
+- Shell out (`execve`) or read the parent's key material (`process_vm_readv` / `ptrace`)
+
+Cross-frame state (e.g. motion's previous-frame hash) survives the boundary via
+`export_state`/`import_state`. The sandbox is a syscall **denylist** (defense in depth), not an
+airtight allowlist, and — like every kernel guarantee — assumes an uncompromised host
+(`docs/root_paradox.md`). WASM sandboxing remains a future hardening option for an allowlist model.
 
 ### Backend Feature-Gate Rule
 
