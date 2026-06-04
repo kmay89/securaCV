@@ -3034,7 +3034,7 @@ pollLoop(pollRawVector, 1000);
  *  Device identity badge
  *
  *  /api/device-info is the public, no-auth endpoint that exposes the
- *  canary's per-device id (e.g. "canary-s3-AB12"). /api/status carries
+ *  canary's per-device id (e.g. "canary-s3-AB7K"). /api/status carries
  *  the same field but is gated by handle_status_auth, so an
  *  un-authenticated dashboard fetch silently 401s — use /api/device-info
  *  here. Surface the id in the topbar so a user with a fleet always

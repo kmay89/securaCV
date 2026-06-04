@@ -58,7 +58,7 @@ On first boot the device starts a WiFi Access Point and a captive portal.
 ## Step 2 — Add Canary #1 to your home network
 
 1. On your phone/laptop, join the WiFi network **`SecuraCV-AABB`** (the last 4
-   hex digits are unique to this board). The AP password is device-unique and
+   characters are unique to this board). The AP password is device-unique and
    printed on the provisioning receipt / serial log.
 2. A "sign in to network" page appears. Open **`http://canary.local`** in a real
    browser (the captive page links to it; `http://192.168.4.1` also works).
