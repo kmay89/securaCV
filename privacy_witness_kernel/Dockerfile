@@ -34,7 +34,9 @@ RUN cargo build --release --features rtsp-gstreamer
 # Runtime stage
 FROM ${BUILD_FROM}
 
-# Install runtime dependencies
+# Install runtime dependencies. Note: libcrypto.so.3 (needed by the SQLCipher-linked
+# binaries) is already provided by the base image's pinned libcrypto3/libssl3, so we must
+# NOT pull the `openssl` metapackage here — it wants a newer revision and breaks that pin.
 RUN apk add --no-cache \
     gstreamer \
     gst-plugins-base \
@@ -43,7 +45,6 @@ RUN apk add --no-cache \
     gst-plugins-ugly \
     libseccomp \
     sqlite-libs \
-    openssl \
     jq \
     curl \
     python3
