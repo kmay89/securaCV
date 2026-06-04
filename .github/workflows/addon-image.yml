@@ -10,7 +10,10 @@ name: Add-on image
 #
 # - On pull requests: build amd64 only, no push — validates that the image builds.
 # - On push to main / version tags: build amd64 + aarch64 and push to GHCR using
-#   the `{arch}-addon-<slug>` naming the Supervisor expects (see config.yaml `image:`).
+#   the `{arch}-addon-<slug>` naming the Supervisor expects (see config.yaml `image:`),
+#   then run the `verify-public` gate to confirm every published arch is actually
+#   anonymously pullable (i.e. the GHCR packages are public) — a green build alone
+#   does not guarantee an installable add-on.
 
 on:
   pull_request:
@@ -110,3 +113,20 @@ jobs:
           tags: |
             ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }}
             ${{ steps.meta.outputs.image }}:latest
+
+  verify-public:
+    # After publishing, confirm every declared arch is anonymously pullable from
+    # GHCR — exactly what a fresh HA Supervisor sees when installing. A green build
+    # does NOT guarantee this: a newly created GHCR package is private until its
+    # visibility is flipped (a one-time, owner-only action). This gate turns a
+    # silent "installs on amd64 but not on a Raspberry Pi" regression into a red
+    # build. Push / tags only — pull requests don't publish, so there's nothing to
+    # verify. The script probes anonymously and needs no registry credentials.
+    name: Verify publicly installable
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify published images are publicly pullable
+        run: privacy_witness_kernel/verify_published_image.sh
