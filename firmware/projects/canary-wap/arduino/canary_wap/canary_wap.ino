@@ -514,7 +514,7 @@ struct DeviceIdentity {
   char     mdns_hostname[40];    // unique mDNS host label, e.g. "canary-kitchen" / "canary-aabb"
   // API security fields (added for SAP integration)
   char     api_token_str[36];    // "cv_" + 32 base62 chars + null
-  char     ap_password[16];      // device-unique AP password "cv-XXXXX"
+  char     ap_password[16];      // device-unique AP password "cv-" + 12 chars (privkey-derived)
   char     fingerprint_hex[17];  // hex-encoded pubkey fingerprint (8 bytes = 16 hex chars)
   bool     first_boot;           // true if keypair was just generated
 };
@@ -1181,25 +1181,38 @@ static bool derive_api_token(const uint8_t privkey[32], char* token_str, size_t 
 // DEVICE-UNIQUE AP PASSWORD (derived from pubkey fingerprint)
 // ════════════════════════════════════════════════════════════════════════════
 
-static void derive_ap_password(const uint8_t fingerprint[8], char* password, size_t len) {
-  // Use bytes 0-7 of fingerprint for password material
-  // WPA2-PSK requires 8-63 ASCII characters
-  char encoded[6];
+static void derive_ap_password(const uint8_t privkey[32], char* password, size_t len) {
+  // Derive from the PRIVATE key, not the public fingerprint. The pubkey
+  // fingerprint is published (serial banner, device_id suffix, /enroll page),
+  // so the old fingerprint-derived password was recomputable by anyone who had
+  // seen the device — its entropy was irrelevant because it wasn't secret. HMAC
+  // the private key under its own domain label (same key-separation discipline
+  // as derive_api_token) so the password is a real per-device secret.
+  uint8_t pw_key[32];
+  hmac_sha256(privkey, 32,
+              (const uint8_t*)"securacv:ap-password:v1", 23,
+              pw_key);
+
+  // 12 unambiguous chars ≈ 69 bits — far beyond offline WPA2 (PBKDF2) reach.
+  // WPA2-PSK requires 8-63 ASCII chars; "cv-" + 12 = 15 fits ap_password[16].
+  char encoded[13];
   size_t chars_produced = 0;
-  for (size_t i = 0; chars_produced < 5 && i < 8; i++) {
-    uint8_t b = fingerprint[i];
-    if (b < 216) {  // 216 = 54 * 4, rejection sampling to avoid bias
+  for (size_t i = 0; chars_produced < 12 && i < 32; i++) {
+    uint8_t b = pw_key[i];
+    if (b < 216) {  // 216 = 54 * 4, rejection sampling to avoid modulo bias
       encoded[chars_produced++] = UNAMBIGUOUS_ALPHABET[b % UNAMBIGUOUS_LEN];
     }
   }
-  // Fallback in the extremely unlikely case we don't get 5 chars from 8 bytes
-  // Use '2' (first char of unambiguous alphabet) — never '0' which we excluded.
-  while (chars_produced < 5) {
+  // 32 HMAC bytes for 12 chars (reject ~15.6%): exhausting all 32 is
+  // astronomically unlikely, but pad deterministically just in case. Use '2'
+  // (first char of the unambiguous alphabet) — never '0', which we excluded.
+  while (chars_produced < 12) {
     encoded[chars_produced++] = '2';
   }
-  encoded[5] = '\0';
+  encoded[12] = '\0';
   snprintf(password, len, "cv-%s", encoded);
-  // Result: "cv-XXXXX" — 8 chars, unique per device
+  // Result: "cv-XXXXXXXXXXXX" — 15 chars, a private-key-derived secret
+  secure_zero(pw_key, sizeof(pw_key));
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -6301,7 +6314,7 @@ static bool resolve_ap_password(char* out_password, size_t out_len) {
 
   // Derive only when no valid password is currently present.
   if (strlen(g_device.ap_password) < 8) {
-    derive_ap_password(g_device.pubkey_fp, g_device.ap_password, sizeof(g_device.ap_password));
+    derive_ap_password(g_device.privkey, g_device.ap_password, sizeof(g_device.ap_password));
   }
 
   // Use either pre-existing or freshly derived device-unique password.
@@ -6624,7 +6637,7 @@ static bool provision_device() {
 
   // ── Derive device-unique AP password ──
   Serial.println("[PROV] Deriving device-unique AP password...");
-  derive_ap_password(g_device.pubkey_fp, g_device.ap_password, sizeof(g_device.ap_password));
+  derive_ap_password(g_device.privkey, g_device.ap_password, sizeof(g_device.ap_password));
 
   // Load chain state
   g_device.seq = nvs_load_u32(NVS_KEY_SEQ, 0);
