@@ -33,11 +33,13 @@ Two forces make this the right product at the right time:
    sells *authenticatable, tamper-evident* perception to humans rather than
    enterprises.
 
-The differentiator is **architectural, not a feature**: privacy is enforced in
-code and in Rust's type system under seven non-negotiable invariants, and
-tamper-evidence is demonstrable end-to-end (Ed25519 signatures + hash chain + a
-working verifier and live tamper demo). A competitor whose business *is* retaining
-your footage cannot copy "we can't see your data."
+The differentiator is **architectural, not a feature**: the kernel's privacy
+boundaries are enforced in code and in Rust's type system under seven
+non-negotiable invariants (with detection backends an *audited* boundary rather
+than a sandbox — a caveat the project keeps visible, see §2), and tamper-evidence
+is demonstrable end-to-end (Ed25519 signatures + hash chain + a working verifier
+and live tamper demo). A competitor whose business *is* retaining your footage
+cannot copy "we can't see your data."
 
 The gap is not invention — the hard half is built and test-backed. The gap is the
 **last-mile product layer**: one-click install, a polished verification timeline,
@@ -73,7 +75,7 @@ Kernel** (`witnessd`); everything else feeds it, runs it, or displays its output
 | **Firmware (ESP32)** | Canary Vision, Canary WAP (mesh, power, diagnostics, BLE, Beacon/Chirp), OTA | Vision works; WAP has enterprise-readiness items (MAC/GPS) open |
 | **Device API** | Node/Express + SPA timeline, security middleware | Works |
 
-**Engineering quality is high (external read: A‑/A+).** 114+ test functions across
+**Engineering quality is high (external read: A-/A+).** 114+ test functions across
 ~3,087 lines of test code; trybuild compile-fail tests that prove raw frames can't
 be serialized at compile time; parser fuzz sweeps; seccomp sandboxing for untrusted
 adapters; clippy `-D warnings`, rustfmt, a feature-matrix build, CodeQL across five
@@ -340,11 +342,11 @@ real pricing requires a BOM and channel analysis.*
 
 ### Phase 0 — Ship v1 (credibility unlock)
 Close the documented v1 gates so "rely on this for evidence" stops being hollow:
-- Frigate → HA MQTT **release gate** green (`integrations/ha_frigate_mqtt/verify_pipeline.sh` exits 0 against a live stack).
+- Frigate → HA MQTT **release gate** green ([`integrations/ha_frigate_mqtt/verify_pipeline.sh`](../../integrations/ha_frigate_mqtt/verify_pipeline.sh) exits 0 against a live stack).
 - **RTSP end-to-end** verified in CI (documented feature → in scope).
 - **"Audit boundary vs security boundary"** documentation item closed.
-- **Firmware** exposes no raw MAC / precise GPS (documented invariants hold on-device).
-- Tag v1; align `CHANGELOG.md` and `v1-roadmap.md` so docs never outrun code.
+- **Firmware** exposes no raw MAC / precise GPS (documented invariants hold on-device; see [`firmware/projects/canary-wap/ENTERPRISE_READINESS_TODO.md`](../../firmware/projects/canary-wap/ENTERPRISE_READINESS_TODO.md)).
+- Tag v1; align [`CHANGELOG.md`](../../CHANGELOG.md) and [`v1-roadmap.md`](../../v1-roadmap.md) so docs never outrun code.
 
 ### Phase 1 — Kill the terminal + reveal the payoff (least friction)
 - One-click HA add-on install with the **detection model bundled**.

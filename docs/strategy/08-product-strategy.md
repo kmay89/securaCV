@@ -32,15 +32,19 @@ footage is nobody's business, and your proof is unforgeable.**
   terminal. The biggest market and the biggest gap. A 3–5 year prize, won only with
   boxed hardware and an app — never by compromising the model.
 
-(Full journeys for these and two more personas are in `04-user-stories.md` and the
-whitepaper.)
+(Full journeys for these and two more personas are in [`04-user-stories.md`](04-user-stories.md)
+and the whitepaper.)
 
 ## 4. Why we win
 
-- **A moat that's architecture, not a feature.** "We can't see your data" is true
-  by construction — enforced in code and types under the seven invariants
-  (`spec/invariants.md`), not promised in a policy. A competitor whose business
-  *is* your footage cannot follow.
+- **A moat that's architecture, not a feature.** "We can't see your data" is a
+  design goal enforced in code and types under the seven invariants
+  ([`spec/invariants.md`](../../spec/invariants.md)) — the kernel's privacy
+  boundaries are structural, not a policy promise. One honest caveat we keep
+  visible: detection backends are an *audited* boundary, not a sandbox (see the
+  [README](../../README.md) and [`AGENTS.md`](../../AGENTS.md)), so a backend must
+  be trusted/audited until process isolation lands. Even so, a competitor whose
+  business *is* your footage cannot follow this architecture.
 - **No subscription, ever**, in a market trained to resent subscriptions.
 - **Two tailwinds at our back:** rising privacy concern and the collapsing
   trustworthiness of raw video. We are one of the only players selling
@@ -84,7 +88,7 @@ Facial recognition, re-ID, plate reading, bulk/searchable archives, "follow this
 person," exact-second timestamps, retroactive reprocessing, and any cloud custody
 of footage are **permanently out** — each violates an invariant. Every "wouldn't it
 be convenient if…" that adds identity, query, or retention is a competitor's
-product. Refusing them *is* our moat made visible. (See `06-feature-prioritization.md`.)
+product. Refusing them *is* our moat made visible. (See [`06-feature-prioritization.md`](06-feature-prioritization.md).)
 
 ## 8. Make money without betraying the user
 
@@ -104,7 +108,7 @@ product. Refusing them *is* our moat made visible. (See `06-feature-prioritizati
 
 - **Now → ship v1.** Close the gates (Frigate→HA release gate green, RTSP
   end-to-end in CI, the audit-vs-security-boundary doc, firmware MAC/GPS check);
-  tag it; align `CHANGELOG.md` and `v1-roadmap.md`. *Without a shipped v1, "rely on
+  tag it; align [`CHANGELOG.md`](../../CHANGELOG.md) and [`v1-roadmap.md`](../../v1-roadmap.md). *Without a shipped v1, "rely on
   this for evidence" is hollow.*
 - **Next → kill the terminal + reveal the payoff.** One-click add-on with bundled
   detection; a polished timeline + verified badge; mobile digest/alerts out of the
