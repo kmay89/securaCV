@@ -29,8 +29,20 @@ pub(crate) struct FfmpegRtspSource {
 impl FfmpegRtspSource {
     pub(crate) fn new(config: RtspConfig) -> Result<Self> {
         ffmpeg::init().context("initialize ffmpeg")?;
-        let mut input =
-            ffmpeg::format::input(&config.url).context("open RTSP input with ffmpeg")?;
+        // Optionally force the RTSP lower transport (e.g. "tcp"/"udp"). Many IP
+        // cameras and NVRs only stream reliably over interleaved TCP, and forcing
+        // it also makes the loopback CI end-to-end test deterministic. When the
+        // env var is unset the libav default is used (UDP-first with TCP
+        // fallback), so behavior is unchanged for existing deployments.
+        let input = match std::env::var("WITNESS_RTSP_TRANSPORT") {
+            Ok(transport) if !transport.trim().is_empty() => {
+                let mut opts = ffmpeg::Dictionary::new();
+                opts.set("rtsp_transport", transport.trim());
+                ffmpeg::format::input_with_dictionary(&config.url, opts)
+                    .context("open RTSP input with ffmpeg")?
+            }
+            _ => ffmpeg::format::input(&config.url).context("open RTSP input with ffmpeg")?,
+        };
         let input_stream = input
             .streams()
             .best(ffmpeg::media::Type::Video)
@@ -88,7 +100,9 @@ impl FfmpegRtspSource {
                 .send_packet(&packet)
                 .context("send packet to ffmpeg decoder")?;
 
-            while self.decoder.receive_frame(&mut decoded).is_ok() {
+            // One decoded frame per call is enough; any frames the decoder still
+            // has buffered are returned on the next `next_frame()` invocation.
+            if self.decoder.receive_frame(&mut decoded).is_ok() {
                 self.scaler
                     .run(&decoded, &mut rgb_frame)
                     .context("scale frame to RGB")?;
@@ -165,11 +179,11 @@ fn frame_to_pixels(frame: &ffmpeg::frame::Video) -> Result<(Vec<u8>, u32, u32)> 
     let width = frame.width();
     let height = frame.height();
     let row_bytes = (width as usize) * 3;
-    let stride = frame.stride(0) as usize;
+    let stride = frame.stride(0);
     let data = frame.data(0);
 
     if stride == row_bytes {
-        return Ok((data.to_vec(), width as u32, height as u32));
+        return Ok((data.to_vec(), width, height));
     }
 
     let mut pixels = Vec::with_capacity(row_bytes * height as usize);
@@ -182,5 +196,5 @@ fn frame_to_pixels(frame: &ffmpeg::frame::Video) -> Result<(Vec<u8>, u32, u32)> 
         );
     }
 
-    Ok((pixels, width as u32, height as u32))
+    Ok((pixels, width, height))
 }

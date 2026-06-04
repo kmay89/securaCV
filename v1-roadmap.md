@@ -25,7 +25,7 @@ Both required for v1. CV flexibility without real crypto is just a detection pip
 | Detection | ✅ Works (stub is the default) | `DetectorBackend` trait + `BackendRegistry`; `StubBackend`/`CpuBackend`/`TractBackend` (ONNX via `tract`). Default build registers the motion stub; `TractBackend` is feature-gated (`backend-tract`) and needs a `--model` (tests: `tests/tract_backend.rs`). |
 | Signatures | ✅ Works | Ed25519 signatures on log + `log_verify` checks |
 | Vault sealing | ✅ Wired (opt-in) | `witnessd` seals buffered frames via `seal_latest_frame()` → `Vault::seal_frame()` with real `VaultCryptoMode::{Classical,Pq,Hybrid}`; gated on a valid `BREAK_GLASS_SEAL_TOKEN`. Remaining work is key management + setup UX, not the encryption. |
-| RTSP ingestion | ⚠️ Implemented but unverified | `RtspSource` does real decode via GStreamer/FFmpeg (`src/ingest/rtsp.rs`, `rtsp_ffmpeg.rs`), synthetic only for explicit `stub://` URLs. Feature-gated (`rtsp-ffmpeg`/`rtsp-gstreamer`); **not** exercised in CI or by a test — only *file* ingestion (`ingest-file-ffmpeg`/`ingest_run`) has the CI roundtrip. |
+| RTSP ingestion | ✅ Works (ffmpeg path, CI-verified) | `RtspSource` does real decode via GStreamer/FFmpeg (`src/ingest/rtsp.rs`, `rtsp_ffmpeg.rs`), synthetic only for explicit `stub://` URLs. Feature-gated (`rtsp-ffmpeg`/`rtsp-gstreamer`). The **ffmpeg** path now has an end-to-end CI roundtrip: the `ingest-rtsp` job serves the committed mp4 fixture over RTSP (MediaMTX + ffmpeg publisher) and `tests/rtsp_e2e.rs` drives the real `RtspSource` through decode → detection → signed events → verify. The GStreamer backend shares the same `RtspSource` interface but is not separately exercised in CI. |
 | Sandboxing | ⚠️ Partial (by design) | Optional seccomp sandbox: adapters opt in via `with_sandbox()` (frigate/mqtt/webhook/ble-presence); parsing then runs inside `parse_in_sandbox()` (`src/adapter/sandbox.rs`). Detection backends remain a trusted/*audited* boundary by design (see `AGENTS.md`). |
 
 ---
@@ -50,8 +50,9 @@ tagging v1):**
 - The Frigate → Home Assistant MQTT pipeline passes the release gate end-to-end —
   `integrations/ha_frigate_mqtt/verify_pipeline.sh` exits `0` against a live stack (README release gate).
 - The "audit boundary vs security boundary" documentation item (Acceptance, below) is still open.
-- RTSP ingestion is documented, so under this definition it is **in scope** and must work
-  (moved out of "nice to have").
+- ~~RTSP ingestion is documented, so under this definition it is **in scope** and must work
+  (moved out of "nice to have").~~ **Closed:** the ffmpeg RTSP path now has an end-to-end CI
+  roundtrip (`ingest-rtsp` job + `tests/rtsp_e2e.rs`).
 - Firmware must not surface raw MAC addresses or precise GPS over its APIs — the docs and
   `spec/invariants.md` forbid it, so documented behavior must match actual
   (see `firmware/projects/canary-wap/ENTERPRISE_READINESS_TODO.md`).
@@ -122,12 +123,18 @@ key rotation.
 | C1 | **Done:** File reader (mp4→frames) via ffmpeg `FileSource` | ✅ |
 | C2 | **Done:** Pixel format handling (NV12→RGB; ffmpeg swscale to RGB24) | ✅ |
 | C3 | **Done:** Timestamp coarsening at capture (`TimeBucket::now_10min`) | ✅ |
-| C4 | GStreamer/FFmpeg RTSP source | ✅ (implemented, feature-gated) |
+| C4 | GStreamer/FFmpeg RTSP source | ✅ (ffmpeg path CI-verified end-to-end; gstreamer shares the interface) |
 
 **Roundtrip proven:** the `ingest_run` binary processes a real mp4 end to
 end (file → frames → RGB → detection → signed events → verify), exercised
 in CI against a committed mp4 fixture. Run it with
 `cargo run --features ingest-file-ffmpeg --bin ingest_run -- --video clip.mp4`.
+
+**RTSP roundtrip proven:** `tests/rtsp_e2e.rs` (the `ingest-rtsp` CI job)
+serves the same fixture over RTSP via MediaMTX + an ffmpeg publisher and drives
+the real `RtspSource` (ffmpeg backend) through the identical
+decode → detection → signed events → verify path. Run it locally with
+`MEDIAMTX_BIN=/path/to/mediamtx SECURACV_RTSP_E2E=1 cargo test --features rtsp-ffmpeg --test rtsp_e2e`.
 
 **Total:** ~2-3 weeks
 
@@ -181,7 +188,7 @@ the v1 Definition and Acceptance Criteria.)
 - [x] `log_verify` validates signatures and catches tampering
 - [x] Can process video from file
 - [ ] Documentation states audit boundary vs security boundary
-- [ ] RTSP ingestion works end-to-end (documented feature → required under the v1 definition)
+- [x] RTSP ingestion works end-to-end (ffmpeg path; `ingest-rtsp` CI job + `tests/rtsp_e2e.rs`)
 - [ ] Frigate → HA MQTT release gate passes (`integrations/ha_frigate_mqtt/verify_pipeline.sh` == 0)
 - [ ] Firmware APIs expose no raw MAC / precise GPS (documented invariants hold on-device)
 

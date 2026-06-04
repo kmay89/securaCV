@@ -79,7 +79,11 @@ below — but nothing documented is allowed to be aspirational at the v1 tag.
 - **Frame sources**: RTSP (GStreamer/FFmpeg), V4L2, ESP32 HTTP, local files.
 - **Automations**: daily digest, pattern-break alerts, integrity failure alerts.
 - **CI**: Rust tests + clippy, firmware builds, HACS/hassfest validation,
-  SBOM generation, secrets scanning, CodeQL analysis, release workflow.
+  SBOM generation, secrets scanning, CodeQL analysis, release workflow. Two
+  real-decode ingest gates: `ingest-ffmpeg` (file → signed log) and
+  `ingest-rtsp`, which serves the committed fixture over RTSP (MediaMTX + ffmpeg
+  publisher) and drives the real `RtspSource` end-to-end through
+  decode → detection → signed events → verify (`tests/rtsp_e2e.rs`).
 
 ### Explicitly deferred (not in v1.0)
 

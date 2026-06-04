@@ -70,6 +70,10 @@ enum RtspBackend {
 }
 
 impl RtspSource {
+    // The `return`s below are required so each `#[cfg]`-gated backend block
+    // short-circuits the others; depending on which rtsp-* feature is enabled a
+    // single-feature build sees only one block and clippy flags it as needless.
+    #[allow(clippy::needless_return)]
     pub fn new(config: RtspConfig) -> Result<Self> {
         if config.url.starts_with("stub://") {
             Ok(Self {
