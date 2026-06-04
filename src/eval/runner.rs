@@ -13,7 +13,8 @@ use anyhow::{Context, Result};
 use crate::detect::{DetectorBackend, TractBackend};
 use crate::eval::dataset::load_manifest;
 use crate::eval::metrics::{
-    build_report, EvalBox, EvalReport, FrameSample, Prediction, ReportMeta,
+    build_report, size_class_for_predictions, EvalBox, EvalReport, FrameSample, Prediction,
+    ReportMeta,
 };
 
 /// Configuration for a single eval run.
@@ -68,7 +69,7 @@ pub fn run_eval(cfg: &EvalConfig) -> Result<EvalReport> {
             .with_context(|| format!("running detector on {}", image_path.display()))?;
         latencies_ms.push(start.elapsed().as_secs_f64() * 1000.0);
 
-        let preds = result
+        let preds: Vec<Prediction> = result
             .detections
             .iter()
             .map(|d| Prediction {
@@ -78,11 +79,16 @@ pub fn run_eval(cfg: &EvalConfig) -> Result<EvalReport> {
             })
             .collect();
 
+        // The backend ran at `min_threshold`, so `result.size_class` may reflect low-confidence
+        // boxes the headline metrics discard. Recompute the size class from predictions at the
+        // operating threshold so the confusion matrix matches what the kernel would emit.
+        let predicted_size = size_class_for_predictions(&preds, cfg.operating_threshold);
+
         frames.push(FrameSample {
             gts: frame.ground_truth()?,
             preds,
             expected_size: frame.expected_size()?,
-            predicted_size: Some(result.size_class),
+            predicted_size: Some(predicted_size),
         });
     }
 

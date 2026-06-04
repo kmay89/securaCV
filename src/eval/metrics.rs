@@ -24,6 +24,14 @@ pub const EVAL_CLASSES: [ObjectClass; 4] = [
     ObjectClass::Package,
 ];
 
+/// Upper bound on confidence-sweep points, guarding against a degenerate `step` that never
+/// advances (which would otherwise loop forever — see [`parse_sweep_spec`]).
+pub const MAX_SWEEP_STEPS: usize = 100_000;
+
+/// Box-area threshold above which an object is "Large". Mirrors `TractBackend`'s
+/// `LARGE_AREA_THRESHOLD` so the eval's size-class outcome matches what the kernel would emit.
+pub const LARGE_AREA_THRESHOLD: f32 = 0.2;
+
 /// Stable, lowercase name for an [`ObjectClass`] (used in reports and dataset labels).
 pub fn class_name(class: ObjectClass) -> &'static str {
     match class {
@@ -228,6 +236,53 @@ pub fn micro_counts_at_threshold(
     total
 }
 
+/// Count predictions tagged `Unknown` at/above the threshold. An `Unknown` detection can never
+/// match real-class ground truth, so each is an unconditional false alarm. Counting them keeps
+/// the harness honest when a model emits classes that `TractBackend::map_class_id` does not map
+/// (exactly the SSDLite/COCO case this harness exists to surface) — otherwise a frame of
+/// unmapped-but-confident detections would report perfect precision and a 0% false-alarm rate.
+pub fn unknown_false_positives(frames: &[FrameSample], conf_threshold: f32) -> u32 {
+    frames
+        .iter()
+        .flat_map(|f| f.preds.iter())
+        .filter(|p| p.class == ObjectClass::Unknown && p.confidence >= conf_threshold)
+        .count() as u32
+}
+
+/// Overall (micro) counts at a threshold: per-class matches over [`EVAL_CLASSES`] plus every
+/// `Unknown` prediction as a false positive.
+pub fn overall_counts_at_threshold(
+    frames: &[FrameSample],
+    conf_threshold: f32,
+    iou_threshold: f32,
+) -> Counts {
+    let mut counts =
+        micro_counts_at_threshold(frames, &EVAL_CLASSES, conf_threshold, iou_threshold);
+    counts.false_positives += unknown_false_positives(frames, conf_threshold);
+    counts
+}
+
+/// The size class the kernel would emit for these predictions at `conf_threshold`, mirroring
+/// `TractBackend::size_class_for` (max box area >= [`LARGE_AREA_THRESHOLD`] => Large). Size is
+/// class-agnostic, so all predictions (including `Unknown`) contribute. Recomputing at the
+/// operating threshold — rather than reusing the backend's `DetectionResult.size_class`, which
+/// is produced at the lower sweep threshold — ensures the size-class outcome reflects what would
+/// actually be emitted.
+pub fn size_class_for_predictions(preds: &[Prediction], conf_threshold: f32) -> SizeClass {
+    let max_area = preds
+        .iter()
+        .filter(|p| p.confidence >= conf_threshold)
+        .map(|p| p.bbox.area())
+        .fold(0.0_f32, f32::max);
+    if max_area <= 0.0 {
+        SizeClass::Unknown
+    } else if max_area >= LARGE_AREA_THRESHOLD {
+        SizeClass::Large
+    } else {
+        SizeClass::Small
+    }
+}
+
 /// A point on the precision/recall vs. confidence-threshold sweep.
 #[derive(Clone, Copy, Debug, Serialize)]
 pub struct SweepPoint {
@@ -238,18 +293,17 @@ pub struct SweepPoint {
     pub counts: Counts,
 }
 
-/// Sweep confidence thresholds, reporting micro precision/recall/F1 at each. This is the curve
-/// that turns the kernel's hardcoded `0.5` into a data-driven operating-point choice.
+/// Sweep confidence thresholds, reporting overall (micro) precision/recall/F1 at each. This is
+/// the curve that turns the kernel's hardcoded `0.5` into a data-driven operating-point choice.
 pub fn confidence_sweep(
     frames: &[FrameSample],
-    classes: &[ObjectClass],
     thresholds: &[f32],
     iou_threshold: f32,
 ) -> Vec<SweepPoint> {
     thresholds
         .iter()
         .map(|&t| {
-            let counts = micro_counts_at_threshold(frames, classes, t, iou_threshold);
+            let counts = overall_counts_at_threshold(frames, t, iou_threshold);
             let p = precision(&counts);
             let r = recall(&counts);
             SweepPoint {
@@ -525,8 +579,7 @@ pub fn build_report(
         });
     }
 
-    let overall_counts =
-        micro_counts_at_threshold(frames, &EVAL_CLASSES, operating_threshold, iou_threshold);
+    let overall_counts = overall_counts_at_threshold(frames, operating_threshold, iou_threshold);
     let op = precision(&overall_counts);
     let orr = recall(&overall_counts);
     let mean_ap = if ap_values.is_empty() {
@@ -552,7 +605,7 @@ pub fn build_report(
         },
         per_class,
         mean_average_precision: mean_ap,
-        confidence_sweep: confidence_sweep(frames, &EVAL_CLASSES, sweep_thresholds, iou_threshold),
+        confidence_sweep: confidence_sweep(frames, sweep_thresholds, iou_threshold),
         size_class_confusion: size_class_confusion(frames),
         latency: latency_stats(latencies_ms),
     }
@@ -584,6 +637,14 @@ pub fn parse_sweep_spec(spec: &str) -> Result<Vec<f32>, String> {
     while t <= end + 1e-6 {
         out.push((t.clamp(0.0, 1.0) * 1000.0).round() / 1000.0);
         t += step;
+        // A `step` far smaller than `t`'s float resolution would never advance `t`, looping
+        // forever and growing `out` without bound (a DoS via the `--confidence-sweep` CLI arg).
+        // Cap the count: across 0..=1 even a fine 0.001 step is only ~1000 points.
+        if out.len() > MAX_SWEEP_STEPS {
+            return Err(format!(
+                "sweep spec produces more than {MAX_SWEEP_STEPS} steps; use a larger step"
+            ));
+        }
     }
     Ok(out)
 }
@@ -829,5 +890,61 @@ mod tests {
         assert!(parse_sweep_spec("0.1:0.9").is_err());
         assert!(parse_sweep_spec("0.1:0.9:0").is_err());
         assert!(parse_sweep_spec("0.9:0.1:0.1").is_err());
+    }
+
+    #[test]
+    fn sweep_spec_rejects_too_many_steps() {
+        // A vanishingly small step would loop forever / exhaust memory without the cap.
+        assert!(parse_sweep_spec("0.0:1.0:0.000001").is_err());
+    }
+
+    #[test]
+    fn unknown_predictions_count_as_false_alarms() {
+        // A confident detection of an unmapped class (Unknown) on a frame with no ground truth
+        // must register as a false alarm, not vanish into a perfect score.
+        let frames = vec![FrameSample {
+            gts: vec![],
+            preds: vec![Prediction {
+                class: ObjectClass::Unknown,
+                bbox: b(0.1, 0.1, 0.2, 0.2),
+                confidence: 0.9,
+            }],
+            expected_size: None,
+            predicted_size: None,
+        }];
+        let counts = overall_counts_at_threshold(&frames, 0.5, 0.5);
+        assert_eq!(counts.false_positives, 1);
+        assert_eq!(counts.true_positives, 0);
+        assert_eq!(precision(&counts), 0.0);
+        // Below the operating threshold it is not counted.
+        assert_eq!(
+            overall_counts_at_threshold(&frames, 0.95, 0.5).false_positives,
+            0
+        );
+    }
+
+    #[test]
+    fn size_class_recomputed_at_operating_threshold() {
+        let preds = vec![
+            // Large box (area 0.36) but low confidence — discarded at the operating threshold.
+            Prediction {
+                class: ObjectClass::Person,
+                bbox: b(0.0, 0.0, 0.6, 0.6),
+                confidence: 0.3,
+            },
+            // Small box (area 0.01), high confidence.
+            Prediction {
+                class: ObjectClass::Person,
+                bbox: b(0.0, 0.0, 0.1, 0.1),
+                confidence: 0.9,
+            },
+        ];
+        // At 0.5 only the small high-confidence box survives → Small (the bug: reusing the
+        // backend's size class would report Large from the discarded low-confidence box).
+        assert_eq!(size_class_for_predictions(&preds, 0.5), SizeClass::Small);
+        // At 0.1 the large box is included → Large.
+        assert_eq!(size_class_for_predictions(&preds, 0.1), SizeClass::Large);
+        // Above all confidences → no detection → Unknown.
+        assert_eq!(size_class_for_predictions(&preds, 0.99), SizeClass::Unknown);
     }
 }
