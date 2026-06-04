@@ -1,6 +1,6 @@
 use sha2::{Digest, Sha256};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use crate::frame::RawFrame;
 use crate::TimeBucket;
@@ -54,6 +54,24 @@ pub(crate) fn raw_frame_at_capture(
     height: u32,
     frame_count: u64,
 ) -> Result<RawFrame> {
+    // Every backend hands us tightly-packed RGB24 (3 bytes/pixel). Validate that here,
+    // at the single capture gate, so a decoder that ever produces a mis-sized buffer
+    // (wrong pixel format, mishandled stride) fails cleanly instead of panicking or
+    // mis-indexing downstream in detection / `InferenceView`.
+    let expected = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|wh| wh.checked_mul(3))
+        .context("frame dimensions overflow usize")?;
+    if pixels.len() != expected {
+        anyhow::bail!(
+            "frame buffer size {} does not match {}x{} RGB24 ({} bytes)",
+            pixels.len(),
+            width,
+            height,
+            expected
+        );
+    }
+
     let timestamp_bucket = TimeBucket::now_10min()?;
     let features_hash = compute_features_hash(&pixels, frame_count);
     Ok(RawFrame::new(
@@ -89,5 +107,16 @@ mod tests {
             frame.inference_view().features_hash(),
             again.inference_view().features_hash()
         );
+    }
+
+    #[test]
+    fn raw_frame_at_capture_rejects_mismatched_buffer() {
+        // 10x10 RGB24 needs 300 bytes; a buffer of any other size is malformed and
+        // must be rejected at the gate rather than flowing downstream.
+        // `RawFrame` has no `Debug` (no byte exposure), so match rather than unwrap_err.
+        match raw_frame_at_capture(vec![0u8; 299], 10, 10, 1) {
+            Ok(_) => panic!("expected mismatched-buffer rejection"),
+            Err(e) => assert!(e.to_string().contains("does not match"), "{e}"),
+        }
     }
 }
