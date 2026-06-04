@@ -95,19 +95,84 @@ pub fn shared_memory_uri() -> String {
     )
 }
 
-/// Domain separation context for deriving the DB encryption key from the
-/// device's Ed25519 signing key via HKDF-SHA256. This ensures the DB key
-/// is cryptographically independent from signing operations.
+/// Domain separation context for deriving the DB encryption key via HKDF-SHA256.
+/// This keeps the DB key cryptographically independent from signing operations.
 const DB_ENCRYPTION_HKDF_CONTEXT: &[u8] = b"securacv-db-encryption-v1";
 
-/// Derive a hex-encoded SQLCipher key from an Ed25519 signing key using
-/// HKDF-SHA256 with domain separation.
-pub fn derive_db_encryption_key(signing_key: &SigningKey) -> Zeroizing<String> {
-    let hk = Hkdf::<Sha256>::new(None, signing_key.as_bytes());
+/// Environment variable holding an **independent** DB-encryption secret. When set
+/// (non-empty), the SQLCipher key is derived from this secret instead of the device
+/// signing key, decoupling the database key from the device identity so the signing
+/// key can be rotated without re-encrypting the database. Distinct from
+/// `SECURACV_DB_KEY`, which supplies the already-derived hex key directly.
+pub const DB_KEY_SEED_ENV: &str = "SECURACV_DB_KEY_SEED";
+
+/// Derive a hex-encoded SQLCipher key from an arbitrary independent secret using
+/// HKDF-SHA256 with domain separation. Use this to key the database from a secret
+/// that is **not** the device signing key (enables identity rotation without
+/// losing database access, and independent rotation of the DB key itself).
+pub fn derive_db_encryption_key_from_secret(secret: &[u8]) -> Zeroizing<String> {
+    let hk = Hkdf::<Sha256>::new(None, secret);
     let mut okm = Zeroizing::new([0u8; 32]);
     hk.expand(DB_ENCRYPTION_HKDF_CONTEXT, okm.as_mut())
         .expect("HKDF-SHA256 expand with 32-byte output cannot fail");
     Zeroizing::new(hex::encode(okm.as_ref()))
+}
+
+/// Derive a hex-encoded SQLCipher key from an Ed25519 signing key using
+/// HKDF-SHA256 with domain separation.
+///
+/// This is the legacy default: the DB key is a deterministic function of the
+/// signing key, so rotating the signing key changes the DB key. To decouple them,
+/// provide an independent secret via [`DB_KEY_SEED_ENV`] / [`resolve_db_encryption_key`].
+pub fn derive_db_encryption_key(signing_key: &SigningKey) -> Zeroizing<String> {
+    // Byte-identical to `derive_db_encryption_key_from_secret(signing_key.as_bytes())`,
+    // so existing databases keyed this way continue to open unchanged.
+    derive_db_encryption_key_from_secret(signing_key.as_bytes())
+}
+
+/// Resolve the SQLCipher key for opening a database: derive from the independent
+/// `db_key_seed` when one is supplied (non-empty), otherwise fall back to the
+/// signing-key derivation. Centralising this keeps the kernel and the verifier
+/// CLIs consistent about how the DB key is chosen.
+pub fn resolve_db_encryption_key(
+    signing_key: &SigningKey,
+    db_key_seed: Option<&str>,
+) -> Zeroizing<String> {
+    match db_key_seed.map(str::trim) {
+        Some(seed) if !seed.is_empty() => derive_db_encryption_key_from_secret(seed.as_bytes()),
+        _ => derive_db_encryption_key(signing_key),
+    }
+}
+
+/// Read the independent DB-key seed from the environment, if set and non-empty.
+/// Wrapped in `Zeroizing` so the secret seed is wiped from memory when dropped.
+pub fn db_key_seed_from_env() -> Option<Zeroizing<String>> {
+    match std::env::var(DB_KEY_SEED_ENV) {
+        Ok(s) if !s.trim().is_empty() => Some(Zeroizing::new(s)),
+        _ => None,
+    }
+}
+
+/// Re-encrypt a SQLCipher database file from `old_key_hex` to `new_key_hex`
+/// (offline — the database must not be open elsewhere). This is the rotation
+/// primitive: an operator can migrate a database from a signing-key-derived key
+/// to an independent secret (or rotate the independent secret) without data loss.
+/// Both keys are 64-char hex (32 raw bytes), as produced by the `derive_*` helpers.
+pub fn rekey_database_file(db_path: &str, old_key_hex: &str, new_key_hex: &str) -> Result<()> {
+    let conn = Connection::open(db_path)?;
+    // Authenticate with the current key (also verifies it is correct).
+    apply_sqlcipher_key(&conn, old_key_hex)?;
+    // SQLCipher re-encrypts every page in place with the new key. The PRAGMA
+    // argument embeds the raw key hex, so keep it in a Zeroizing buffer.
+    let rekey_cmd = Zeroizing::new(format!("x'{}'", new_key_hex));
+    conn.pragma_update(None, "rekey", &*rekey_cmd)
+        .map_err(|e| anyhow!("SQLCipher rekey failed: {}", e))?;
+    // Confirm the new key now authenticates.
+    conn.query_row("SELECT count(*) FROM sqlite_master", [], |_| Ok(()))
+        .map_err(|_| anyhow!("post-rekey verification failed"))?;
+    drop(conn);
+    enforce_db_file_permissions(db_path);
+    Ok(())
 }
 
 /// Apply the SQLCipher encryption key to an open database connection.
@@ -861,7 +926,10 @@ impl Kernel {
             cfg.db_path.clone()
         };
         let device_key = signing_key_from_seed(&cfg.device_key_seed)?;
-        let db_key = derive_db_encryption_key(&device_key);
+        let db_key = resolve_db_encryption_key(
+            &device_key,
+            db_key_seed_from_env().as_ref().map(|s| s.as_str()),
+        );
         let conn = open_db_connection_with_key(&db_path, Some(&db_key))?;
         let sealed_log = Box::new(SqliteSealedLogStore::open_with_key(
             &db_path,
@@ -897,7 +965,10 @@ impl Kernel {
             )));
         }
         let device_key = signing_key_from_seed(&cfg.device_key_seed)?;
-        let db_key = derive_db_encryption_key(&device_key);
+        let db_key = resolve_db_encryption_key(
+            &device_key,
+            db_key_seed_from_env().as_ref().map(|s| s.as_str()),
+        );
         let conn = open_db_connection_with_key(&cfg.db_path, Some(&db_key))?;
         let zone_policy = cfg.zone_policy.normalized()?;
         let mut k = Self {
@@ -3464,6 +3535,120 @@ mod tests {
             "migrated database should be encrypted"
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn db_key_from_independent_secret_is_decoupled_from_signing_key() -> Result<()> {
+        let sk = signing_key_from_seed("devkey:test:1111aaaa2222bbbb3333")?;
+        // Backward compatibility: the signing-key derivation is byte-identical to the
+        // secret derivation over the signing key's bytes, so existing databases open.
+        assert_eq!(
+            derive_db_encryption_key(&sk).as_str(),
+            derive_db_encryption_key_from_secret(sk.as_bytes()).as_str()
+        );
+        // An independent secret yields a different key from the signing key.
+        let indep = derive_db_encryption_key_from_secret(b"db-master-secret-001");
+        assert_ne!(derive_db_encryption_key(&sk).as_str(), indep.as_str());
+        // resolve(): a non-empty independent seed wins; None/blank falls back to the key.
+        assert_eq!(
+            resolve_db_encryption_key(&sk, Some("db-master-secret-001")).as_str(),
+            indep.as_str()
+        );
+        assert_eq!(
+            resolve_db_encryption_key(&sk, None).as_str(),
+            derive_db_encryption_key(&sk).as_str()
+        );
+        assert_eq!(
+            resolve_db_encryption_key(&sk, Some("   ")).as_str(),
+            derive_db_encryption_key(&sk).as_str()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn db_keyed_by_independent_secret_survives_signing_key_rotation() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let db_path = dir.path().join("decoupled.db");
+        let db_path_str = db_path.to_string_lossy().to_string();
+
+        // Key the database by an independent secret and write a sentinel row.
+        let db_key = derive_db_encryption_key_from_secret(b"independent-db-secret");
+        {
+            let conn = open_db_connection_with_key(&db_path_str, Some(&db_key))?;
+            conn.execute_batch(
+                "CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT);
+                 INSERT INTO t (v) VALUES ('sentinel');",
+            )?;
+        }
+
+        // "Rotate" the device identity: two distinct signing keys.
+        let sk_old = signing_key_from_seed("devkey:old:aaaa1111bbbb2222cccc3333dddd")?;
+        let sk_new = signing_key_from_seed("devkey:new:eeee5555ffff6666aaaa7777bbbb")?;
+        assert_ne!(sk_old.as_bytes(), sk_new.as_bytes());
+
+        // The DB key (from the independent secret) is unchanged by rotation, so the
+        // *encrypted database* still decrypts after the signing identity changes. This
+        // covers the storage-layer prerequisite; full identity rotation additionally
+        // needs device-metadata rotation in `Kernel::open` (see docs/db_key_rotation.md).
+        let conn = open_db_connection_with_key(&db_path_str, Some(&db_key))?;
+        let v: String = conn.query_row("SELECT v FROM t WHERE id = 1", [], |r| r.get(0))?;
+        assert_eq!(v, "sentinel");
+        drop(conn);
+
+        // Neither the old nor the new signing-key-derived key can open it — proof the
+        // database key is decoupled from the device identity.
+        for sk in [&sk_old, &sk_new] {
+            let legacy_key = derive_db_encryption_key(sk);
+            let conn = Connection::open(&db_path_str)?;
+            assert!(
+                apply_sqlcipher_key(&conn, &legacy_key).is_err(),
+                "a signing-key-derived key must not open a secret-keyed database"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn rekey_database_file_rotates_the_db_key() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let db_path = dir.path().join("rekey.db");
+        let db_path_str = db_path.to_string_lossy().to_string();
+
+        let key_a = derive_db_encryption_key_from_secret(b"secret-A");
+        let key_b = derive_db_encryption_key_from_secret(b"secret-B");
+
+        {
+            let conn = open_db_connection_with_key(&db_path_str, Some(&key_a))?;
+            conn.execute_batch(
+                "CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT);
+                 INSERT INTO t (v) VALUES ('rotate-me');",
+            )?;
+        }
+
+        // Rotate A -> B.
+        rekey_database_file(&db_path_str, &key_a, &key_b)?;
+
+        // Opens with B; data intact.
+        let conn = open_db_connection_with_key(&db_path_str, Some(&key_b))?;
+        let v: String = conn.query_row("SELECT v FROM t WHERE id = 1", [], |r| r.get(0))?;
+        assert_eq!(v, "rotate-me");
+        drop(conn);
+
+        // No longer opens with A.
+        let conn = Connection::open(&db_path_str)?;
+        assert!(
+            apply_sqlcipher_key(&conn, &key_a).is_err(),
+            "the old key must be rejected after rekey"
+        );
+        drop(conn);
+
+        // Rekey with the wrong current key is rejected (does not corrupt the DB).
+        assert!(rekey_database_file(&db_path_str, &key_a, &key_a).is_err());
+        // And the DB still opens with B afterwards.
+        let conn = open_db_connection_with_key(&db_path_str, Some(&key_b))?;
+        let v: String = conn.query_row("SELECT v FROM t WHERE id = 1", [], |r| r.get(0))?;
+        assert_eq!(v, "rotate-me");
         Ok(())
     }
 }
