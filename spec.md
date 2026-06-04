@@ -1,76 +1,28 @@
-# Module Spec: zone_crossing
-Status: Draft v0.1
-Type: Conforming Module Template
-Last Updated: 2026-01-20
+# SecuraCV — Specification Index
 
-> **Orientation:** despite its repo-root location, this file is **not** the system
-> specification — it is the `zone_crossing` *module template* (the "Hello, World" of
-> conforming witness modules). The canonical, normative specs live in
-> [`spec/`](spec/): start with [`spec/invariants.md`](spec/invariants.md) and
-> [`spec/event_contract.md`](spec/event_contract.md).
+This file is a **pointer, not a spec**. The repository's canonical, normative
+specifications live in [`spec/`](spec/) — start here and follow the links inward.
 
-## 1. Purpose
-`zone_crossing` detects when an object crosses from outside a configured boundary into a restricted zone.
+> Previously this root file held the `zone_crossing` *module template*, which was
+> easily mistaken for the system spec. That template now lives at its proper home,
+> [`spec/modules/zone_crossing.md`](spec/modules/zone_crossing.md), and this file is
+> the index that points into the canonical spec set.
 
-It is intentionally minimal:
-- It is the “Hello, World” of conforming witness modules.
-- It demonstrates the event contract and forbidden outputs.
+## Start here
 
-## 2. Inputs
-The module receives:
-- Frame handle (read-only)
-- Zone mask (local logical zone geometry)
-- Time bucket (coarse, supplied by kernel)
-- Sensor class (camera type, lens role; no unique IDs)
+- [`spec/invariants.md`](spec/invariants.md) — the non-negotiable privacy/security invariants
+- [`spec/event_contract.md`](spec/event_contract.md) — what a conforming module may emit
+- [`spec/threat_model.md`](spec/threat_model.md) — adversaries and mitigations
 
-The module MUST NOT receive:
-- precise timestamps
-- device identifiers usable outside the box
-- location/GPS/address
-- persistence handles
-- network access
+## Full catalog
 
-## 3. Outputs
-Permitted event types (examples):
-- `boundary_crossing_object_large`
-- `boundary_crossing_object_small`
-- `human_presence_in_restricted_zone` (only if implemented without identity)
+See [`spec/README.md`](spec/README.md) for the complete list of specification documents
+(sensor-adapter contract, evidence envelope, co-signing, and the mesh / beacon / chirp
+channel specs).
 
-Required fields:
-- `event_type`
-- `time_bucket`
-- `zone_id`
-- `confidence`
-- `kernel_version`
-- `ruleset_id`
+## Module templates
 
-Optional:
-- `correlation_token` (ephemeral, bucket-scoped; see Event Contract §6)
-
-Forbidden:
-- raw media
-- plate strings
-- face embeddings
-- stable object IDs
-- precise timestamps
-- GPS/address
-
-## 4. Detection approach (MVP)
-MVP is allowed to be simple:
-- background subtraction / frame differencing
-- zone mask intersection
-- blob size threshold (large vs small)
-
-The first goal is conformance, not accuracy.
-
-## 5. Privacy constraints
-- Never export pixel data
-- Never persist frames
-- Never emit “same object as yesterday”
-- Correlation tokens (if used) must be derived via kernel-provided bucket key and must not survive the time bucket.
-
-## 6. Conformance tests
-The module MUST be tested to prove it cannot:
-- emit forbidden fields
-- emit event types outside the allowlist
-- produce correlation tokens that compare across buckets
+Per-module conformance specs live in [`spec/modules/`](spec/modules/). The reference
+example is [`spec/modules/zone_crossing.md`](spec/modules/zone_crossing.md) — the
+"Hello, World" of conforming witness modules, demonstrating the event contract and the
+forbidden outputs every module must avoid.
