@@ -1,0 +1,15 @@
+# Keep the add-on Docker build context small. The add-on Dockerfile
+# (privacy_witness_kernel/Dockerfile) builds with the repository root as its
+# context — it compiles the Rust kernel from src/ + Cargo.* and copies the
+# add-on scripts under privacy_witness_kernel/. Nothing else is needed, and
+# target/ alone is ~13 GB.
+target/
+**/target/
+.git/
+**/node_modules/
+firmware/
+viewer/
+canary-vision/
+docs/
+tests/
+*.log

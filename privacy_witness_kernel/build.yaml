@@ -1,0 +1,16 @@
+# Home Assistant add-on build descriptor.
+#
+# Per-architecture base images consumed by the Dockerfile's `BUILD_FROM` ARG.
+# The supported arches here must match `arch:` in config.yaml, and the images
+# published by .github/workflows/addon-image.yml must match config.yaml's
+# `image:` so the Supervisor pulls a pre-built image instead of compiling the
+# Rust kernel on-device.
+build_from:
+  amd64: ghcr.io/home-assistant/amd64-base-rust:latest
+  aarch64: ghcr.io/home-assistant/aarch64-base-rust:latest
+labels:
+  org.opencontainers.image.title: "Privacy Witness Kernel"
+  org.opencontainers.image.description: "Privacy-preserving video surveillance that produces claims, not recordings"
+  org.opencontainers.image.source: "https://github.com/kmay89/securaCV"
+  org.opencontainers.image.documentation: "https://github.com/kmay89/securaCV/blob/main/privacy_witness_kernel/README.md"
+  org.opencontainers.image.licenses: "See repository LICENSE"
