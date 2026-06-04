@@ -11,6 +11,12 @@ use crate::detect::result::{Detection, DetectionResult, ObjectClass, SizeClass};
 const LARGE_AREA_THRESHOLD: f32 = 0.2;
 const ABSOLUTE_COORD_THRESHOLD: f32 = 1.5;
 
+/// Default minimum confidence for a detection to be reported. Overridable via
+/// [`TractBackend::with_threshold`]; witnessd wires this from `detect.confidence`
+/// (config file / `WITNESS_DETECT_CONFIDENCE`). Keep in sync with
+/// `config`'s `DEFAULT_DETECT_CONFIDENCE`.
+pub const DEFAULT_CONFIDENCE_THRESHOLD: f32 = 0.5;
+
 /// Tract-based backend for ONNX inference.
 ///
 /// This backend loads a local model file and performs inference on RGB frames.
@@ -46,7 +52,7 @@ impl TractBackend {
             model,
             width,
             height,
-            confidence_threshold: 0.5,
+            confidence_threshold: DEFAULT_CONFIDENCE_THRESHOLD,
         })
     }
 
@@ -423,7 +429,10 @@ impl DetectorBackend for TractBackend {
             .fold(0.0_f32, f32::max);
 
         Ok(DetectionResult {
-            motion_detected: confidence >= self.confidence_threshold,
+            // `detections` is already filtered to entries at/above the threshold, so the presence of
+            // any detection is the signal. Deriving this from `confidence >= threshold` would
+            // spuriously fire on an empty set when the threshold is 0.0 (the max-fold default).
+            motion_detected: !detections.is_empty(),
             detections,
             confidence,
             size_class,

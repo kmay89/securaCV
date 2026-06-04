@@ -222,6 +222,7 @@ echo "ad6303f1ca2c3dcc0d86a87c36892be9b97b02a0105faa5cc3cfae79a2b11a31  vendor/m
 [detect]
 backend = "tract"
 tract_model = "vendor/models/ssdlite_mobilenet_v2_12.onnx"
+confidence = 0.5    # minimum detection confidence, 0.0–1.0 (default 0.5)
 
 [rtsp]      # or [v4l2]
 width = 320
@@ -229,8 +230,11 @@ height = 320
 ```
 
 Environment overrides: `WITNESS_DETECT_BACKEND=tract`,
-`WITNESS_TRACT_MODEL=/absolute/path/to/model.onnx`. Frame dimensions must match the model input.
-The tract backend currently uses a fixed confidence threshold of `0.5` (no override yet).
+`WITNESS_TRACT_MODEL=/absolute/path/to/model.onnx`,
+`WITNESS_DETECT_CONFIDENCE=0.6`. Frame dimensions must match the model input.
+`detect.confidence` sets the minimum confidence (0.0–1.0) for a detection to be reported —
+raise it to suppress weak/false detections, lower it to catch more. Values outside the range
+are rejected at startup.
 
 ## Container deployment
 

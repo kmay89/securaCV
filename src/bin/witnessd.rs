@@ -549,7 +549,8 @@ fn register_tract_backend(
             .tract_model
             .as_ref()
             .ok_or_else(|| anyhow!("detect.tract_model must be set for tract backend"))?;
-        let backend = TractBackend::new(model_path, width, height)?;
+        let backend = TractBackend::new(model_path, width, height)?
+            .with_threshold(config.detect.confidence_threshold);
         registry.register(backend);
         return Ok(());
     }
