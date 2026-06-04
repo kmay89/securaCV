@@ -27,7 +27,8 @@ below — but nothing documented is allowed to be aspirational at the v1 tag.
 - **CLI binaries**: 9 core — witnessd, log_verify, break_glass, export_events,
   export_verify, frigate_bridge, event_mqtt_bridge, witness_api,
   grove_vision2_ingest — plus the `adapter_host` daemon and `envelope_verify`,
-  and the `demo` / `tamper_demo` / `ingest_run` helpers (14 total in `src/bin/`).
+  and the `demo` / `tamper_demo` / `ingest_run` / `detect_eval` helpers
+  (15 total in `src/bin/`).
 - **Sensor Adapter framework** (`src/adapter/`): an open, vendor-neutral interface that
   generalizes the `frigate_bridge` pattern so any source (acoustic/impulse, PIR/contact,
   presence, generic MQTT/webhook sensors, Frigate) can feed coarse, privacy-preserving claims
@@ -74,7 +75,9 @@ below — but nothing documented is allowed to be aspirational at the v1 tag.
 - **Home Assistant integration** (HACS): 3 setup modes (MQTT / Kernel HTTP /
   both), MQTT auto-discovery, device PKI trust management (TOFU + manual pin +
   rotation), 5 sensor types, 11 binary sensor types (tamper + transport),
-  Ed25519 signature verification, diagnostics.
+  Ed25519 signature verification, diagnostics, and a bundled **verified-✓
+  timeline Lovelace card** (with a pure-YAML fallback for those who prefer
+  built-in cards — see `docs/lovelace_timeline.md`).
 - **Home Assistant add-on**: first-run setup wizard with preflight checks,
   camera TCP test, Frigate config generation, post-setup health verification,
   two operating modes (Frigate integration, standalone RTSP).
@@ -128,7 +131,6 @@ below — but nothing documented is allowed to be aspirational at the v1 tag.
 - GPU-accelerated detection
 - Tract detection confidence threshold override (hardcoded at 0.5)
 - Pre-built Docker images on ghcr.io / Docker Hub
-- Custom Lovelace card (uses standard HA entities)
 
 ### Known limitations
 

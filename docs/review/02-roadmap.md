@@ -10,8 +10,9 @@
 > **Re-baseline 2026-06-04.** Written 2026-06-01; kept as-is with status overlaid. Since then the
 > 2026-06 fix wave (#660–#680) executed **all of P0 and P1, and the add-on-install half of P2**. The
 > §2 reconciliation actions are largely done (see the note under that table); §3 phase headings now
-> carry status. What remains for the productization arc is the rest of **P2** (HA timeline/verified-✓
-> UI, break-glass/trustee setup UI) and the hardware/key work in **P3–P4**.
+> carry status. The HA timeline/verified-✓ UI shipped (#689); what remains for the productization arc
+> is the **break-glass/trustee setup UI** (and the deferred README screenshot, F-12) plus the
+> hardware/key work in **P3–P4**.
 
 ## 1. Strategic verdict: **focus, then productize — do not expand**
 
@@ -38,7 +39,7 @@ near-term "nice-to-have." Treat all of those as **post-focus**.
 | Vault "Placeholder, not wired" | **Stale** — vault sealing is actually wired into `witnessd` (opt-in via `BREAK_GLASS_SEAL_TOKEN`), real crypto modes (F-05, corrected) | Update roadmap to "wired, opt-in"; build seal/trustee UX (P2) |
 | C1–C4 ingestion "Done" / RTSP "feature-gated" | File roundtrip real; **two RTSP impls** (F-11); RTSP still listed unchecked in acceptance | Pick one RTSP path; update acceptance boxes |
 | (omitted) | Post-quantum `pqc-*`, full **Sensor Adapter** framework, webhook TLS/mTLS/Prometheus all shipped but **absent from roadmap** (F-13) | Rewrite roadmap to reflect shipped scope |
-| "9 CLI binaries" (CHANGELOG) | 14 exist (F-10) | Fix count |
+| "9 CLI binaries" (CHANGELOG) | 15 exist (F-10) | ✅ Count reconciled to 15 |
 | v1 = "every feature works end-to-end" (CHANGELOG) vs "minimally credible" (roadmap) vs "pre-v1" (README) | Three definitions (F-02) | Adopt one v1 definition |
 
 **Single source of truth going forward:** replace `v1-roadmap.md`'s status board with the
@@ -49,9 +50,10 @@ near-term "nice-to-have." Treat all of those as **post-focus**.
 > decouple done, hardware keys still P3 (F-04, #674); vault relabeled "wired, opt-in" in
 > `v1-roadmap.md` (F-05); RTSP ffmpeg path designated canonical and CI-verified, acceptance boxes
 > updated (F-11/#666); `v1-roadmap.md` rewritten to cite code and reflect shipped scope incl. PQC +
-> adapters (F-13, #673); single v1 definition adopted (F-02, #673). **Still pending from this
-> table:** the "9 → 14 CLI binaries" count fix (F-10) and dropping/gating the unbuilt transports
-> (F-07).
+> adapters (F-13, #673); single v1 definition adopted (F-02, #673). The CLI-binary count is now
+> reconciled (F-10: CHANGELOG says 15, matching `src/bin/`), and the unbuilt LoRa/SCQCS-audio
+> transports + `audio_anomaly` tamper are gated out of the `ALL_*` lists into `FUTURE_*` lists
+> (F-07). **Nothing from this table remains pending.**
 
 ## 3. Phased plan (invariant-checked, sequenced)
 
@@ -99,10 +101,11 @@ Each phase lists **deliverable → user-facing acceptance → invariant guardrai
 
 - **One-click HA add-on install** (no `curl | bash`), pre-built Docker images. *Acceptance:*
   install from the HA add-on store. *Guardrail:* local-only; no cloud custody (Inv. IV).
-- **Timeline / verification UI in HA** (events + verified ✓ + chain status) and **mobile push
-  out-of-the-box** (daily digest + pattern alerts — already partly built). *Acceptance:* the
-  persuasive payoff is a product experience, not raw sensors; add the missing README screenshot
-  (F-12). *Guardrail:* coarse buckets, zone IDs only (Inv. III).
+- **Timeline / verification UI in HA** (events + verified ✓ + chain status) — ✅ DONE (#689:
+  bundled `securacv-timeline-card` + pure-YAML fallback). **Mobile push out-of-the-box** (daily
+  digest + pattern alerts) is already partly built. *Acceptance:* the persuasive payoff is a product
+  experience, not raw sensors; the missing README screenshot (F-12) is the one residual gap.
+  *Guardrail:* coarse buckets, zone IDs only (Inv. III).
 - **Break-glass / trustee setup UI** (no CLI) — the evidence flow must be usable under stress by a
   non-dev. *Guardrail:* N-of-M quorum, immutable receipts (Inv. V).
 
