@@ -54,3 +54,34 @@ jobs:
       run: cargo build --features ingest-file-ffmpeg --bin ingest_run
     - name: Test file ingestion (decodes the committed mp4 fixture)
       run: cargo test --features ingest-file-ffmpeg --bin ingest_run
+
+  ingest-rtsp:
+    name: Ingest (rtsp end-to-end)
+    runs-on: ubuntu-latest
+    env:
+      # Pinned MediaMTX (RTSP server) used to serve the fixture over RTSP.
+      MEDIAMTX_VERSION: v1.9.3
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install ffmpeg + libav dev libraries
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ffmpeg libseccomp-dev \
+          libavutil-dev libavformat-dev libavcodec-dev libavfilter-dev \
+          libavdevice-dev libswscale-dev libswresample-dev
+    - name: Install MediaMTX (RTSP server)
+      run: |
+        set -euo pipefail
+        url="https://github.com/bluenviron/mediamtx/releases/download/${MEDIAMTX_VERSION}/mediamtx_${MEDIAMTX_VERSION}_linux_amd64.tar.gz"
+        curl -fsSL --retry 3 -o /tmp/mediamtx.tgz "$url"
+        tar -xzf /tmp/mediamtx.tgz -C /tmp mediamtx
+        /tmp/mediamtx --version
+        echo "MEDIAMTX_BIN=/tmp/mediamtx" >> "$GITHUB_ENV"
+    - name: Clippy (rtsp-ffmpeg)
+      run: cargo clippy --features rtsp-ffmpeg --test rtsp_e2e -- -D warnings
+    - name: Build rtsp-ffmpeg
+      run: cargo build --features rtsp-ffmpeg --tests
+    - name: Test RTSP ingestion end-to-end (serves the fixture over RTSP)
+      # SECURACV_RTSP_E2E=1 makes a missing server a hard failure, so this gate
+      # can never pass vacuously.
+      run: SECURACV_RTSP_E2E=1 cargo test --features rtsp-ffmpeg --test rtsp_e2e -- --nocapture

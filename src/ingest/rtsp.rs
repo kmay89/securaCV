@@ -40,6 +40,10 @@ pub struct RtspConfig {
     pub height: u32,
     /// RTSP decoder backend selection.
     pub backend: RtspBackendPreference,
+    /// Optional RTSP lower transport override (e.g. "tcp"/"udp"). `None` uses the
+    /// decoder default. Honored by the ffmpeg backend; many cameras/NVRs only
+    /// stream reliably over interleaved TCP.
+    pub transport: Option<String>,
 }
 
 impl Default for RtspConfig {
@@ -50,6 +54,7 @@ impl Default for RtspConfig {
             width: 640,
             height: 480,
             backend: RtspBackendPreference::Auto,
+            transport: None,
         }
     }
 }
@@ -70,6 +75,10 @@ enum RtspBackend {
 }
 
 impl RtspSource {
+    // The `return`s below are required so each `#[cfg]`-gated backend block
+    // short-circuits the others; depending on which rtsp-* feature is enabled a
+    // single-feature build sees only one block and clippy flags it as needless.
+    #[allow(clippy::needless_return)]
     pub fn new(config: RtspConfig) -> Result<Self> {
         if config.url.starts_with("stub://") {
             Ok(Self {
@@ -388,20 +397,18 @@ impl GstreamerRtspSource {
     }
 
     fn frame_timeout(&self) -> Duration {
-        let base_ms = if self.config.target_fps == 0 {
-            500
-        } else {
-            (1000 / self.config.target_fps).saturating_mul(4)
-        };
+        let base_ms = 1000u32
+            .checked_div(self.config.target_fps)
+            .map(|hz| hz.saturating_mul(4))
+            .unwrap_or(500);
         Duration::from_millis(base_ms.max(500) as u64)
     }
 
     fn health_grace(&self) -> Duration {
-        let base_ms = if self.config.target_fps == 0 {
-            2_000
-        } else {
-            (1000 / self.config.target_fps).saturating_mul(6)
-        };
+        let base_ms = 1000u32
+            .checked_div(self.config.target_fps)
+            .map(|hz| hz.saturating_mul(6))
+            .unwrap_or(2_000);
         Duration::from_millis(base_ms.max(2_000) as u64)
     }
 
@@ -475,6 +482,7 @@ mod tests {
             width: 640,
             height: 480,
             backend: RtspBackendPreference::Auto,
+            transport: None,
         }
     }
 
