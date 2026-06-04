@@ -27,7 +27,7 @@
 | F-08 | Major | ⬜ Open (frozen) | Mesh | ESP-NOW WiFi-AP bridge & BLE fallback marked **"❌ not implemented"** in the mesh evaluation. |
 | F-09 | Minor | ⬜ Open | Repo hygiene | Root **`spec.md` is mis-titled** — it's the `zone_crossing` module spec, not a system spec. |
 | F-10 | Minor | ⬜ Open | CLI count | CHANGELOG says **"9 CLI binaries"**; tree has **14**. |
-| F-11 | Minor | ✅ Resolved (#684) | Ingest dup | **Two RTSP** implementations (`rtsp.rs` vs `rtsp_ffmpeg.rs`) risk divergence. |
+| F-11 | Minor | ✅ Resolved (#688) | Ingest dup | **Two RTSP** implementations (`rtsp.rs` vs `rtsp_ffmpeg.rs`) risk divergence. |
 | F-12 | Doc-debt | 🟡 Partial (#673) | README | README has live **TODOs** (missing screenshot) and ships "core works end-to-end" beside an unshipped v1. |
 | F-13 | Doc-debt | ✅ Resolved (#673) | Roadmap | `v1-roadmap.md` overclaims completion (✅) on items contradicted by code (F-01) and omits shipped work (PQC, adapters). |
 | F-14 | Minor | ⬜ Open | Spec maturity | Many normative specs are `_v0` / "Draft v0.1" but referenced as if stable contracts. |
@@ -208,7 +208,7 @@ multi-path mesh resilience story has unbuilt legs. **Fix:** scope mesh claims to
 > **Status 2026-06-04 (minors).**
 > - **F-09 ⬜ Open** — root `spec.md` still reads `# Module Spec: zone_crossing`.
 > - **F-10 ⬜ Open** — `CHANGELOG.md:27` still says "9 core" CLI binaries; `src/bin/` has 14.
-> - **F-11 ✅ Resolved (#684)** — `rtsp.rs` is the single `RtspSource` facade; `rtsp_ffmpeg.rs` is its
+> - **F-11 ✅ Resolved (#688)** — `rtsp.rs` is the single `RtspSource` facade; `rtsp_ffmpeg.rs` is its
 >   FFmpeg *backend*, not a rival source. The real divergence risk — each backend re-deriving the
 >   capture-time privacy steps — is closed: the RTSP (GStreamer/FFmpeg) and file (`file`/`file_ffmpeg`)
 >   backends now all emit through one shared gate, `ingest::raw_frame_at_capture` (coarsen bucket +
