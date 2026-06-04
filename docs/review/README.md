@@ -9,6 +9,7 @@ instruction: **do not assume anything is complete or finished.**
 | [`00-requirements-spec.md`](00-requirements-spec.md) | **Rebuild-from-scratch requirements.** Layered (system → component → contracts), every requirement tagged Implemented / Partial / Stub / Spec-only / Config with file evidence. Precise enough to reconstruct the feature set without injecting errors. |
 | [`01-flag-report.md`](01-flag-report.md) | **Everything inconsistent, unfinished, or poorly implemented**, by severity (Blocker / Major / Minor / Doc-debt), each with reproducible file evidence. Also lists what is genuinely solid. |
 | [`02-roadmap.md`](02-roadmap.md) | **Independent roadmap** that reconciles & critiques the existing `v1-roadmap.md` and `docs/strategy/`, with a phased invariant-checked plan, an ESP32-S3-grounded hardware plan, and a current (2026) market comparison. |
+| [`03-feature-flags-and-hygiene.md`](03-feature-flags-and-hygiene.md) | **Feature-flag practice & engineering-hygiene review.** Grades flag handling across all four layers and the repo's repeatable processes (CI/test/lint/deps/secrets), tagged Recommended-now / Keep / Follow-up. Ships a central flag registry + CI lint. |
 
 ## Relationship to existing docs
 This review is deliberately **independent** of, and cross-checks, the authored strategy material in

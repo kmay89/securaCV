@@ -1,0 +1,31 @@
+# EditorConfig — cross-language formatting baseline for securaCV.
+# https://editorconfig.org  ·  Rustfmt/Clippy remain authoritative for Rust.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+# Web + config: 2-space is the prevailing style in canary-vision and YAML.
+[*.{js,mjs,cjs,json,ts,css,html,yml,yaml}]
+indent_size = 2
+
+# Rust: matches rustfmt defaults (4-space; rustfmt is the source of truth).
+[*.rs]
+indent_size = 4
+
+# Python (HA integration): PEP 8.
+[*.py]
+indent_size = 4
+
+# Makefiles require real tabs.
+[Makefile]
+indent_style = tab
+
+# Markdown: trailing whitespace can be a hard line break; don't strip it.
+[*.md]
+trim_trailing_whitespace = false
