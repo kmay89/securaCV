@@ -170,6 +170,8 @@ fn connect_with_retry(port: u16, timeout: Duration) -> RtspSource {
         // Force the ffmpeg backend explicitly: if both rtsp features are built,
         // Auto would prefer gstreamer, but this gate targets the ffmpeg path.
         backend: RtspBackendPreference::Ffmpeg,
+        // Force interleaved TCP so loopback transport is deterministic.
+        transport: Some("tcp".to_string()),
     };
     let deadline = Instant::now() + timeout;
     let mut last_err = String::from("(no attempt completed)");
@@ -203,9 +205,6 @@ fn rtsp_ingest_produces_verified_log() {
         return;
     }
     let server_bin = server.unwrap();
-
-    // Force interleaved TCP so loopback transport is deterministic in CI.
-    std::env::set_var("WITNESS_RTSP_TRANSPORT", "tcp");
 
     let port = free_port();
     let (server_child, _cfg) = start_server(&server_bin, port);

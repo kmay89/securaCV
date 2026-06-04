@@ -29,15 +29,14 @@ pub(crate) struct FfmpegRtspSource {
 impl FfmpegRtspSource {
     pub(crate) fn new(config: RtspConfig) -> Result<Self> {
         ffmpeg::init().context("initialize ffmpeg")?;
-        // Optionally force the RTSP lower transport (e.g. "tcp"/"udp"). Many IP
-        // cameras and NVRs only stream reliably over interleaved TCP, and forcing
-        // it also makes the loopback CI end-to-end test deterministic. When the
-        // env var is unset the libav default is used (UDP-first with TCP
-        // fallback), so behavior is unchanged for existing deployments.
-        let input = match std::env::var("WITNESS_RTSP_TRANSPORT") {
-            Ok(transport) if !transport.trim().is_empty() => {
+        // Optionally force the RTSP lower transport (e.g. "tcp"/"udp") from
+        // config. Many IP cameras and NVRs only stream reliably over interleaved
+        // TCP. When `transport` is None the libav default is used (UDP-first with
+        // TCP fallback), so behavior is unchanged for existing deployments.
+        let input = match config.transport.as_deref().map(str::trim) {
+            Some(transport) if !transport.is_empty() => {
                 let mut opts = ffmpeg::Dictionary::new();
-                opts.set("rtsp_transport", transport.trim());
+                opts.set("rtsp_transport", transport);
                 ffmpeg::format::input_with_dictionary(&config.url, opts)
                     .context("open RTSP input with ffmpeg")?
             }
@@ -91,6 +90,15 @@ impl FfmpegRtspSource {
         let mut decoded = ffmpeg::frame::Video::empty();
         let mut rgb_frame = ffmpeg::frame::Video::empty();
 
+        // Drain any already-decoded frame before pulling new packets, so the
+        // decoder's internal output queue stays bounded — otherwise feeding a
+        // fresh packet on every call while frames sit buffered (B-frames /
+        // multi-frame packets) accumulates latency and memory on long-running
+        // live streams.
+        if self.decoder.receive_frame(&mut decoded).is_ok() {
+            return self.emit_frame(&decoded, &mut rgb_frame);
+        }
+
         for (stream, packet) in self.input.packets() {
             if stream.index() != self.stream_index {
                 continue;
@@ -100,32 +108,40 @@ impl FfmpegRtspSource {
                 .send_packet(&packet)
                 .context("send packet to ffmpeg decoder")?;
 
-            // One decoded frame per call is enough; any frames the decoder still
-            // has buffered are returned on the next `next_frame()` invocation.
             if self.decoder.receive_frame(&mut decoded).is_ok() {
-                self.scaler
-                    .run(&decoded, &mut rgb_frame)
-                    .context("scale frame to RGB")?;
-                let (pixels, width, height) = frame_to_pixels(&rgb_frame)?;
-
-                self.frame_count += 1;
-                self.last_frame_at = Some(Instant::now());
-
-                let timestamp_bucket = TimeBucket::now_10min()?;
-                let features_hash = compute_features_hash(&pixels, self.frame_count);
-
-                return Ok(RawFrame::new(
-                    pixels,
-                    width,
-                    height,
-                    timestamp_bucket,
-                    features_hash,
-                ));
+                return self.emit_frame(&decoded, &mut rgb_frame);
             }
         }
 
         self.last_error = Some("ffmpeg stream ended without frames".to_string());
         anyhow::bail!("RTSP stream ended without frames")
+    }
+
+    /// Scale a decoded frame to RGB and wrap it as a `RawFrame`, advancing the
+    /// capture counters. `rgb_frame` is a scratch buffer reused across calls.
+    fn emit_frame(
+        &mut self,
+        decoded: &ffmpeg::frame::Video,
+        rgb_frame: &mut ffmpeg::frame::Video,
+    ) -> Result<RawFrame> {
+        self.scaler
+            .run(decoded, rgb_frame)
+            .context("scale frame to RGB")?;
+        let (pixels, width, height) = frame_to_pixels(rgb_frame)?;
+
+        self.frame_count += 1;
+        self.last_frame_at = Some(Instant::now());
+
+        let timestamp_bucket = TimeBucket::now_10min()?;
+        let features_hash = compute_features_hash(&pixels, self.frame_count);
+
+        Ok(RawFrame::new(
+            pixels,
+            width,
+            height,
+            timestamp_bucket,
+            features_hash,
+        ))
     }
 
     pub(crate) fn is_healthy(&self) -> bool {

@@ -55,6 +55,8 @@ target_fps = 10              # Frames per second to process
 width = 640                  # Frame width
 height = 480                 # Frame height
 backend = "auto"             # "auto", "gstreamer", or "ffmpeg"
+# transport = "tcp"          # Optional RTSP lower transport ("tcp"/"udp"); omit for the
+                             # decoder default. Many cameras/NVRs need "tcp". (ffmpeg backend)
 
 # V4L2 Camera Configuration (local /dev/video* devices)
 #
@@ -126,6 +128,7 @@ seconds = 604800  # 7 days
 #   WITNESS_FILE_FPS     - Override file.target_fps
 #   WITNESS_RTSP_URL    - Override rtsp.url
 #   WITNESS_RTSP_BACKEND - Override rtsp.backend ("auto", "gstreamer", "ffmpeg")
+#   WITNESS_RTSP_TRANSPORT - Override rtsp.transport ("tcp"/"udp"; ffmpeg backend)
 #   WITNESS_V4L2_DEVICE - Override v4l2.device
 #   WITNESS_ESP32_URL   - Override esp32.url
 #   WITNESS_ESP32_FPS   - Override esp32.target_fps

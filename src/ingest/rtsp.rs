@@ -40,6 +40,10 @@ pub struct RtspConfig {
     pub height: u32,
     /// RTSP decoder backend selection.
     pub backend: RtspBackendPreference,
+    /// Optional RTSP lower transport override (e.g. "tcp"/"udp"). `None` uses the
+    /// decoder default. Honored by the ffmpeg backend; many cameras/NVRs only
+    /// stream reliably over interleaved TCP.
+    pub transport: Option<String>,
 }
 
 impl Default for RtspConfig {
@@ -50,6 +54,7 @@ impl Default for RtspConfig {
             width: 640,
             height: 480,
             backend: RtspBackendPreference::Auto,
+            transport: None,
         }
     }
 }
@@ -477,6 +482,7 @@ mod tests {
             width: 640,
             height: 480,
             backend: RtspBackendPreference::Auto,
+            transport: None,
         }
     }
 

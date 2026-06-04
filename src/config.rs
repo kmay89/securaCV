@@ -77,6 +77,7 @@ struct RtspConfigFile {
     width: Option<u32>,
     height: Option<u32>,
     backend: Option<String>,
+    transport: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -150,6 +151,10 @@ pub struct RtspSettings {
     pub width: u32,
     pub height: u32,
     pub backend: RtspBackendPreference,
+    /// Optional RTSP lower transport override (e.g. "tcp"/"udp"). `None` uses the
+    /// decoder default (libav: UDP-first with TCP fallback). Many cameras/NVRs
+    /// only stream reliably over interleaved TCP.
+    pub transport: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -268,6 +273,11 @@ impl WitnessdConfig {
                     .and_then(|rtsp| rtsp.backend.as_deref())
                     .unwrap_or(DEFAULT_RTSP_BACKEND),
             )?,
+            transport: file
+                .rtsp
+                .as_ref()
+                .and_then(|rtsp| rtsp.transport.clone())
+                .filter(|t| !t.trim().is_empty()),
         };
         let file_source = FileSettings {
             path: config_string(
@@ -389,6 +399,10 @@ impl WitnessdConfig {
             if !backend.trim().is_empty() {
                 self.rtsp.backend = RtspBackendPreference::parse(&backend)?;
             }
+        }
+        if let Ok(transport) = std::env::var("WITNESS_RTSP_TRANSPORT") {
+            let transport = transport.trim();
+            self.rtsp.transport = (!transport.is_empty()).then(|| transport.to_string());
         }
         if let Ok(device) = std::env::var("WITNESS_V4L2_DEVICE") {
             if !device.trim().is_empty() {
@@ -769,6 +783,7 @@ mod tests {
                 width: Some(DEFAULT_RTSP_WIDTH),
                 height: Some(DEFAULT_RTSP_HEIGHT),
                 backend: Some(DEFAULT_RTSP_BACKEND.to_string()),
+                transport: None,
             }),
             ..WitnessdConfigFile::default()
         };
@@ -804,6 +819,7 @@ mod tests {
                 width: Some(DEFAULT_RTSP_WIDTH),
                 height: Some(DEFAULT_RTSP_HEIGHT),
                 backend: Some(DEFAULT_RTSP_BACKEND.to_string()),
+                transport: None,
             }),
             ..WitnessdConfigFile::default()
         };
