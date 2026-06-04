@@ -507,13 +507,17 @@ static void mac_unambiguous_suffix(char out[5]) {
 }
 
 void generate_device_id(char* out, size_t cap, const char* prefix) {
+  if (out == nullptr || cap == 0) return;
   char suffix[5];
   mac_unambiguous_suffix(suffix);
-  snprintf(out, cap, "%s%s", prefix, suffix);
+  // Defense-in-depth: never emit a truncated (and therefore ambiguous) handle
+  // if a future prefix/suffix change overflows the caller's buffer.
+  if (snprintf(out, cap, "%s%s", prefix, suffix) >= (int)cap) out[0] = '\0';
 }
 
 void generate_ap_ssid(char* out, size_t cap) {
+  if (out == nullptr || cap == 0) return;
   char suffix[5];
   mac_unambiguous_suffix(suffix);
-  snprintf(out, cap, "SecuraCV-%s", suffix);
+  if (snprintf(out, cap, "SecuraCV-%s", suffix) >= (int)cap) out[0] = '\0';
 }

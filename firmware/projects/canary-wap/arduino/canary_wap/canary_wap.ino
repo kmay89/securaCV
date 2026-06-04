@@ -882,7 +882,9 @@ static void generate_device_id(char* out, size_t cap) {
   char suffix[5];
   unambiguous_suffix16((uint16_t)((g_device.pubkey_fp[0] << 8) | g_device.pubkey_fp[1]),
                        suffix);
-  snprintf(out, cap, "%s%s", DEVICE_ID_PREFIX, suffix);
+  // Defense-in-depth: never emit a truncated (ambiguous) handle on overflow.
+  if (cap == 0) return;
+  if (snprintf(out, cap, "%s%s", DEVICE_ID_PREFIX, suffix) >= (int)cap) out[0] = '\0';
 }
 
 static void generate_ap_ssid(char* out, size_t cap) {
@@ -891,7 +893,8 @@ static void generate_ap_ssid(char* out, size_t cap) {
   char suffix[5];
   unambiguous_suffix16((uint16_t)((g_device.pubkey_fp[0] << 8) | g_device.pubkey_fp[1]),
                        suffix);
-  snprintf(out, cap, "SecuraCV-%s", suffix);
+  if (cap == 0) return;
+  if (snprintf(out, cap, "SecuraCV-%s", suffix) >= (int)cap) out[0] = '\0';
 }
 
 // mDNS hostname rules (RFC 6762 §16 / RFC 1123): a single DNS label may only
