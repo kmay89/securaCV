@@ -159,10 +159,10 @@ fn main() -> Result<()> {
         InferenceBackend::Stub | InferenceBackend::Cpu => {
             log::warn!(
                 "detection backend '{:?}' is MOTION-ONLY (frame-difference): events report \
-                 motion presence, not classified objects. To enable real object detection, \
-                 build with `--features backend-tract` and set BOTH detect.backend=tract and \
-                 detect.tract_model (each alone is insufficient: tract_model is ignored unless \
-                 backend=tract, and backend=tract without a model fails validation). \
+                 motion presence, not classified objects. To enable real object detection: \
+                 build with `--features backend-tract`, run `scripts/fetch_detection_model.sh` \
+                 (downloads + verifies the model), and set detect.backend=tract. \
+                 detect.tract_model is optional — it defaults to the fetched model path. \
                  See docs/review/01-flag-report.md F-01.",
                 module.backend()
             );
@@ -544,12 +544,10 @@ fn register_tract_backend(
     #[cfg(feature = "backend-tract")]
     {
         let (width, height) = tract_input_dimensions(config)?;
-        let model_path = config
-            .detect
-            .tract_model
-            .as_ref()
-            .ok_or_else(|| anyhow!("detect.tract_model must be set for tract backend"))?;
-        let backend = TractBackend::new(model_path, width, height)?
+        // Defaults to vendor/models/ssdlite_mobilenet_v2_12.onnx (see fetch_detection_model.sh)
+        // when detect.tract_model is unset; a missing file yields a clear load error below.
+        let model_path = config.detect.tract_model_path();
+        let backend = TractBackend::new(&model_path, width, height)?
             .with_threshold(config.detect.confidence_threshold);
         registry.register(backend);
         return Ok(());

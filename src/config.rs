@@ -26,6 +26,10 @@ const DEFAULT_DETECT_BACKEND: &str = "auto";
 // Minimum confidence for a detection to be reported. Keep in sync with the tract backend's
 // DEFAULT_CONFIDENCE_THRESHOLD (that backend is feature-gated, so the default lives here too).
 const DEFAULT_DETECT_CONFIDENCE: f32 = 0.5;
+// Default location for the tract object-detection model, populated by
+// scripts/fetch_detection_model.sh. Used when detect.backend=tract and detect.tract_model is
+// unset, so operators only set the backend after fetching the model — no manual path needed.
+const DEFAULT_TRACT_MODEL: &str = "vendor/models/ssdlite_mobilenet_v2_12.onnx";
 
 fn config_string(value: Option<String>, default: &str) -> String {
     value.unwrap_or_else(|| default.to_string())
@@ -206,6 +210,17 @@ pub struct DetectSettings {
     pub tract_model: Option<PathBuf>,
     /// Minimum confidence [0.0, 1.0] for a detection to be reported.
     pub confidence_threshold: f32,
+}
+
+impl DetectSettings {
+    /// Resolved path to the tract model: the configured `tract_model`, or the default bundled
+    /// location ([`DEFAULT_TRACT_MODEL`], populated by `scripts/fetch_detection_model.sh`) when
+    /// unset. Lets operators enable object detection with just `detect.backend = "tract"`.
+    pub fn tract_model_path(&self) -> PathBuf {
+        self.tract_model
+            .clone()
+            .unwrap_or_else(|| PathBuf::from(DEFAULT_TRACT_MODEL))
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -462,15 +477,15 @@ impl WitnessdConfig {
             ));
         }
         if self.detect.backend == DetectBackendPreference::Tract {
-            let Some(path) = &self.detect.tract_model else {
-                return Err(anyhow!(
-                    "detect.backend=tract requires detect.tract_model to be set"
-                ));
-            };
-            if path.as_os_str().is_empty() {
-                return Err(anyhow!(
-                    "detect.tract_model must not be empty when detect.backend=tract"
-                ));
+            // tract_model is optional: when unset it defaults to DEFAULT_TRACT_MODEL (populated by
+            // scripts/fetch_detection_model.sh). Only an explicitly-empty path is invalid; a missing
+            // model file surfaces a clear load error from the tract backend at startup.
+            if let Some(path) = &self.detect.tract_model {
+                if path.as_os_str().is_empty() {
+                    return Err(anyhow!(
+                        "detect.tract_model must not be empty when detect.backend=tract"
+                    ));
+                }
             }
         }
         match self.ingest.backend {
@@ -829,6 +844,60 @@ mod tests {
             err.to_string().contains("detect.confidence"),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn detect_tract_model_defaults_to_bundled_path() {
+        let config =
+            WitnessdConfig::from_file(WitnessdConfigFile::default()).expect("config should parse");
+        assert!(config.detect.tract_model.is_none());
+        assert_eq!(
+            config.detect.tract_model_path(),
+            PathBuf::from(DEFAULT_TRACT_MODEL)
+        );
+    }
+
+    #[test]
+    fn detect_tract_model_path_prefers_explicit_value() {
+        let file = WitnessdConfigFile {
+            detect: Some(DetectConfigFile {
+                backend: Some("tract".to_string()),
+                tract_model: Some(PathBuf::from("/models/custom.onnx")),
+                confidence: None,
+            }),
+            ..WitnessdConfigFile::default()
+        };
+        let config = WitnessdConfig::from_file(file).expect("config should parse");
+        assert_eq!(
+            config.detect.tract_model_path(),
+            PathBuf::from("/models/custom.onnx")
+        );
+    }
+
+    #[test]
+    fn detect_tract_without_explicit_model_passes_validation() {
+        // Previously detect.backend=tract required detect.tract_model; it now defaults to the
+        // bundled path, so backend=tract alone (after fetching the model) is valid.
+        let file = WitnessdConfigFile {
+            detect: Some(DetectConfigFile {
+                backend: Some("tract".to_string()),
+                tract_model: None,
+                confidence: None,
+            }),
+            rtsp: Some(RtspConfigFile {
+                url: Some("rtsp://example.com/stream".to_string()),
+                target_fps: Some(DEFAULT_RTSP_FPS),
+                width: Some(DEFAULT_RTSP_WIDTH),
+                height: Some(DEFAULT_RTSP_HEIGHT),
+                backend: Some(DEFAULT_RTSP_BACKEND.to_string()),
+            }),
+            ..WitnessdConfigFile::default()
+        };
+        let mut config = WitnessdConfig::from_file(file).expect("config should parse");
+        config
+            .validate()
+            .expect("tract without explicit model is now valid");
+        assert_eq!(config.detect.backend, DetectBackendPreference::Tract);
     }
 
     #[test]
