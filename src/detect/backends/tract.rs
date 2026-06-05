@@ -1,6 +1,7 @@
 #![cfg(feature = "backend-tract")]
 
 use std::path::Path;
+use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
 use tract_onnx::prelude::*;
@@ -40,7 +41,7 @@ enum PostProcess {
 /// HOST-ONLY: runs in `witnessd` on a Pi/x86 host. It does NOT run on the ESP32-S3 — that path
 /// uses the Grove Vision AI V2 (SSCMA) board (`firmware/projects/canary-vision`).
 pub struct TractBackend {
-    model: TypedSimplePlan<TypedModel>,
+    model: Arc<TypedRunnableModel>,
     width: u32,
     height: u32,
     confidence_threshold: f32,
@@ -58,7 +59,7 @@ impl TractBackend {
         model_path: &Path,
         width: u32,
         height: u32,
-    ) -> Result<TypedSimplePlan<TypedModel>> {
+    ) -> Result<Arc<TypedRunnableModel>> {
         tract_onnx::onnx()
             .model_for_path(model_path)
             .with_context(|| format!("failed to load ONNX model from {}", model_path.display()))?
@@ -191,7 +192,7 @@ impl TractBackend {
             }
         };
         let view = out
-            .to_array_view::<f32>()
+            .to_plain_array_view::<f32>()
             .context("yolo output tensor was not f32")?;
         let data = view
             .as_slice()
@@ -239,7 +240,7 @@ impl TractBackend {
     ) -> Result<Vec<Detection>> {
         let shape = output.shape();
         let view = output
-            .to_array_view::<f32>()
+            .to_plain_array_view::<f32>()
             .context("combined output tensor was not f32")?;
         let data = view
             .as_slice()
@@ -342,7 +343,7 @@ impl TractBackend {
     fn extract_boxes(output: &TValue) -> Result<Vec<[f32; 4]>> {
         let shape = output.shape();
         let view = output
-            .to_array_view::<f32>()
+            .to_plain_array_view::<f32>()
             .context("boxes tensor was not f32")?;
         let data = view
             .as_slice()
@@ -374,7 +375,7 @@ impl TractBackend {
     fn extract_scores(output: &TValue) -> Result<Vec<f32>> {
         let shape = output.shape();
         let view = output
-            .to_array_view::<f32>()
+            .to_plain_array_view::<f32>()
             .context("scores tensor was not f32")?;
         let data = view
             .as_slice()
@@ -414,7 +415,7 @@ impl TractBackend {
             }
         };
 
-        if let Ok(view) = output.to_array_view::<i64>() {
+        if let Ok(view) = output.to_plain_array_view::<i64>() {
             let data = view
                 .as_slice()
                 .ok_or_else(|| anyhow!("class tensor (i64) is not contiguous"))?;
@@ -426,7 +427,7 @@ impl TractBackend {
                 ));
             }
             Ok(data.to_vec())
-        } else if let Ok(view) = output.to_array_view::<f32>() {
+        } else if let Ok(view) = output.to_plain_array_view::<f32>() {
             let data = view
                 .as_slice()
                 .ok_or_else(|| anyhow!("class tensor (f32) is not contiguous"))?;
