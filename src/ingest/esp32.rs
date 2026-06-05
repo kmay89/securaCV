@@ -465,18 +465,15 @@ fn parse_rtp_payload(packet: &[u8]) -> Result<(&[u8], bool)> {
 }
 
 fn frame_interval(target_fps: u32) -> Duration {
-    if target_fps == 0 {
-        Duration::from_millis(0)
-    } else {
-        Duration::from_millis((1000 / target_fps).max(1) as u64)
+    match 1000u32.checked_div(target_fps) {
+        None => Duration::from_millis(0),
+        Some(ms) => Duration::from_millis(ms.max(1) as u64),
     }
 }
 
 fn health_grace(target_fps: u32) -> Duration {
-    let base_ms = if target_fps == 0 {
-        2_000
-    } else {
-        (1000 / target_fps).saturating_mul(6)
-    };
+    let base_ms = 1000u32
+        .checked_div(target_fps)
+        .map_or(2_000, |ms| ms.saturating_mul(6));
     Duration::from_millis(base_ms.max(2_000) as u64)
 }
