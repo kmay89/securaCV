@@ -114,16 +114,44 @@ fn main() -> Result<()> {
     {
         let _stage = ui.stage("Verify sealed events");
         let checkpoint = verify::latest_checkpoint(&conn)?;
-        // After a signing-key rotation the checkpoint (and the post-checkpoint suffix it
-        // anchors) is signed by the key that was active at the cutoff, not the genesis key.
-        // The checkpoint records that signer; fall back to the genesis key for pre-rotation
-        // databases (where signer == genesis) or an explicit --public-key override.
-        let chain_key = match checkpoint.signer_public_key {
-            Some(bytes) => verify_helpers::verifying_key_from_hex(&verify_helpers::hex32(&bytes))?,
-            None => verifying_key,
+
+        // Reconstruct the device key lineage, anchored at the genesis key (`verifying_key` —
+        // device_metadata, or an explicit --public-key override). Each rotation epoch is
+        // cryptographically validated (predecessor authorization + successor attestation), so
+        // a tampered history table cannot forge a lineage without the genesis private key.
+        // Key selection below comes from this trusted lineage, never from the checkpoint row.
+        let genesis = verifying_key.to_bytes();
+        let lineage = witness_kernel::reconstruct_device_key_lineage_from(&conn, &genesis)?;
+
+        // Seed the (possibly pruned) suffix with the key active at the checkpoint cutoff, and
+        // verify the checkpoint signature with its recorded signer — but only after confirming
+        // that signer is itself a genesis-anchored lineage key (else a tamperer could swap the
+        // signer/key/head and self-certify a forged chain).
+        let (chain_key_bytes, checkpoint_key_bytes) = match checkpoint.cutoff_event_id {
+            Some(cutoff) => {
+                let active = witness_kernel::device_key_active_at_in(&lineage, cutoff)?;
+                let signer = match checkpoint.signer_public_key {
+                    Some(sig) => {
+                        if !lineage.iter().any(|e| e.public_key == sig) {
+                            return Err(anyhow::anyhow!(
+                                "checkpoint signer key is not part of the genesis-anchored \
+                                 device key lineage; refusing to trust it"
+                            ));
+                        }
+                        sig
+                    }
+                    None => active,
+                };
+                (active, signer)
+            }
+            None => (genesis, genesis),
         };
+        let chain_key =
+            verify_helpers::verifying_key_from_hex(&verify_helpers::hex32(&chain_key_bytes))?;
+        let checkpoint_key =
+            verify_helpers::verifying_key_from_hex(&verify_helpers::hex32(&checkpoint_key_bytes))?;
         verify::verify_checkpoint_signature(
-            &chain_key,
+            &checkpoint_key,
             &checkpoint,
             signature_mode,
             pq_verifying_key.as_ref(),

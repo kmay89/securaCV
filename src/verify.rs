@@ -3,8 +3,9 @@ use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use rusqlite::{Connection, Row};
 
 use crate::crypto::signatures::{
-    verify_rotation_attestation, PqPublicKey, SignatureMode, SignatureSet,
-    DOMAIN_BREAK_GLASS_RECEIPT, DOMAIN_CHECKPOINT, DOMAIN_EXPORT_RECEIPT, DOMAIN_SEALED_LOG_ENTRY,
+    verify_rotation_attestation, verify_rotation_authorization, PqPublicKey, SignatureMode,
+    SignatureSet, DOMAIN_BREAK_GLASS_RECEIPT, DOMAIN_CHECKPOINT, DOMAIN_EXPORT_RECEIPT,
+    DOMAIN_SEALED_LOG_ENTRY,
 };
 use crate::{
     approvals_commitment, hash_entry, verify_entry_signature, Approval, BreakGlassOutcome,
@@ -216,6 +217,16 @@ where
             }
             let new_key = VerifyingKey::from_bytes(&rotation.new_public_key)
                 .map_err(|e| anyhow!("key rotation at id {}: invalid new public key: {}", id, e))?;
+            // Retiring key authorized the successor (the entry sig already proves this, but the
+            // explicit authorization must also hold — it is what the durable lineage relies on);
+            // the new key proves possession.
+            verify_rotation_authorization(
+                &active_key,
+                &rotation.prev_public_key,
+                &rotation.new_public_key,
+                &rotation.prev_key_authorization,
+            )
+            .map_err(|e| anyhow!("key rotation at id {}: {}", id, e))?;
             verify_rotation_attestation(
                 &new_key,
                 &rotation.prev_public_key,
