@@ -23,7 +23,6 @@
 use anyhow::{anyhow, Result};
 use ed25519_dalek::{SigningKey, VerifyingKey};
 use hkdf::Hkdf;
-use rand::{Rng, RngCore};
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -89,7 +88,7 @@ pub use vault::{FilesystemVaultStore, Vault, VaultConfig, VaultStore};
 
 pub fn shared_memory_uri() -> String {
     let mut bytes = [0u8; 8];
-    rand::thread_rng().fill_bytes(&mut bytes);
+    rand::fill(&mut bytes[..]);
     format!(
         "file:witness_kernel_{:x}?mode=memory&cache=shared",
         u64::from_le_bytes(bytes)
@@ -758,7 +757,7 @@ impl BucketKeyManager {
         self.has_key = false;
 
         // Generate a new per-bucket key
-        rand::thread_rng().fill_bytes(self.key.as_mut());
+        rand::fill(&mut self.key[..]);
         self.has_key = true;
         self.current_bucket = Some(bucket);
     }
@@ -2279,8 +2278,7 @@ fn jitter_time_bucket(bucket: TimeBucket, jitter_s: u64, jitter_step_s: u64) -> 
     // Use gen_range() for rejection sampling instead of modulo to avoid bias.
     // Modulo bias is small for typical spans but this is a privacy-critical path
     // where jitter protects against timing correlation attacks.
-    let mut rng = rand::rngs::OsRng;
-    let choice = rng.gen_range(-steps..=steps);
+    let choice = rand::random_range(-steps..=steps);
     let offset = choice * jitter_step_s as i64;
     let start = if offset.is_negative() {
         let offset_abs = (-offset) as u64;

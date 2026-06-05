@@ -50,6 +50,16 @@ updates:
       cargo-minor-patch:
         patterns: ["*"]
         update-types: ["minor", "patch"]
+    ignore:
+      # rusqlite >= 0.32 pulls libsqlite3-sys >= 0.38, whose build script uses
+      # the `cfg_select!` macro that is not stable on the current stable Rust
+      # toolchain (rustc 1.94). The bump therefore cannot compile in CI (see
+      # the abandoned #719). Hold the major until the toolchain catches up;
+      # minor/patch updates within 0.31.x still flow through cargo-minor-patch.
+      - dependency-name: "rusqlite"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "libsqlite3-sys"
+        update-types: ["version-update:semver-major"]
 
   # Node fleet UI + device-API (npm workspace rooted at canary-vision/).
   - package-ecosystem: "npm"

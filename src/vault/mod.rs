@@ -4,8 +4,8 @@
 //! enforces break-glass gating for raw media export.
 
 use anyhow::{anyhow, Result};
-use rand::rngs::OsRng;
-use rand::RngCore;
+use rand::rngs::SysRng;
+use rand::TryRng;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -401,7 +401,9 @@ fn load_or_create_master_key(root: &Path) -> Result<[u8; 32]> {
         Ok(key)
     } else {
         let mut key = [0u8; 32];
-        OsRng.fill_bytes(&mut key);
+        SysRng
+            .try_fill_bytes(&mut key[..])
+            .expect("OS RNG unavailable");
         let mut options = OpenOptions::new();
         options.write(true).create_new(true);
         #[cfg(unix)]
