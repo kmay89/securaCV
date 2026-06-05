@@ -146,9 +146,13 @@ impl HttpEsp32Source {
         let response = ureq::get(&self.config.url)
             .call()
             .context("connect to esp32 http stream")?;
-        let content_type = response.header("Content-Type").unwrap_or("");
-        if content_type.to_lowercase().contains("multipart") {
-            let reader = response.into_reader();
+        let is_multipart = response
+            .headers()
+            .get("Content-Type")
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|ct| ct.to_lowercase().contains("multipart"));
+        if is_multipart {
+            let reader = Box::new(response.into_body().into_reader());
             self.stream = Some(HttpStream::Mjpeg(MjpegStream::new(reader)));
         } else {
             self.stream = Some(HttpStream::SingleJpeg);
@@ -370,10 +374,9 @@ fn fetch_single_jpeg(url: &str) -> Result<Vec<u8>> {
     let response = ureq::get(url)
         .call()
         .with_context(|| format!("fetch jpeg snapshot from {}", url))?;
-    let mut bytes = Vec::new();
-    response
-        .into_reader()
-        .read_to_end(&mut bytes)
+    let bytes = response
+        .into_body()
+        .read_to_vec()
         .context("read jpeg snapshot")?;
     if bytes.is_empty() {
         return Err(anyhow!("empty jpeg snapshot"));
