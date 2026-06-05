@@ -3,8 +3,8 @@ use chacha20poly1305::{
     aead::{AeadInPlace, KeyInit},
     ChaCha20Poly1305, Key, Nonce, Tag,
 };
-use rand::rngs::OsRng;
-use rand::RngCore;
+use rand::rngs::SysRng;
+use rand::TryRng;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use zeroize::Zeroize;
@@ -85,7 +85,9 @@ pub fn seal_v1(
     master_key: &[u8; 32],
 ) -> Result<EnvelopeV1> {
     let mut nonce = [0u8; 12];
-    OsRng.fill_bytes(&mut nonce);
+    SysRng
+        .try_fill_bytes(&mut nonce[..])
+        .expect("OS RNG unavailable");
     let mut ciphertext = clear.to_vec();
     let tag = encrypt_in_place(
         master_key,
@@ -141,7 +143,9 @@ pub fn seal_v2(
     let dek_guard = DekGuard(derived.dek);
 
     let mut nonce = vec![0u8; 12];
-    OsRng.fill_bytes(&mut nonce);
+    SysRng
+        .try_fill_bytes(&mut nonce[..])
+        .expect("OS RNG unavailable");
     let mut ciphertext = clear.to_vec();
     let tag = encrypt_payload(&dek_guard.0, &nonce, &aad, &mut ciphertext)?;
 
@@ -276,7 +280,9 @@ fn derive_dek(
                 kem_keypair.ok_or_else(|| anyhow!("vault KEM keypair missing for PQ mode"))?;
             let (kem_ct, shared_secret) = kem_encapsulate(kem_keypair)?;
             let mut kdf_info = vec![0u8; 32];
-            OsRng.fill_bytes(&mut kdf_info);
+            SysRng
+                .try_fill_bytes(&mut kdf_info[..])
+                .expect("OS RNG unavailable");
             let dek = kdf_dek(&shared_secret, &kdf_info);
             let classical_wrap = if matches!(mode, VaultCryptoMode::Hybrid) {
                 Some(wrap_dek(master_key, envelope_id, ruleset_hash, &dek)?)
@@ -296,7 +302,9 @@ fn derive_dek(
 
 fn random_dek() -> [u8; 32] {
     let mut dek = [0u8; 32];
-    OsRng.fill_bytes(&mut dek);
+    SysRng
+        .try_fill_bytes(&mut dek[..])
+        .expect("OS RNG unavailable");
     dek
 }
 
@@ -314,7 +322,9 @@ fn wrap_dek(
     dek: &[u8; 32],
 ) -> Result<Vec<u8>> {
     let mut nonce = [0u8; 12];
-    OsRng.fill_bytes(&mut nonce);
+    SysRng
+        .try_fill_bytes(&mut nonce[..])
+        .expect("OS RNG unavailable");
     let mut ciphertext = dek.to_vec();
     let aad = wrap_aad(envelope_id, ruleset_hash);
     let tag = encrypt_payload(master_key, &nonce, &aad, &mut ciphertext)?;

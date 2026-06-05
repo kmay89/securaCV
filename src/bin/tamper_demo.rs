@@ -11,7 +11,7 @@
 //! reimplementation, so a green run is real evidence of the property.
 
 use anyhow::Result;
-use rand::RngCore;
+use rand::TryRng;
 use rusqlite::Connection;
 
 use witness_kernel::crypto::signatures::SignatureMode;
@@ -86,7 +86,9 @@ fn cleanup(db_path: &str) {
 
 fn run(db_path: &str) -> Result<()> {
     let mut seed_bytes = [0u8; 32];
-    rand::rngs::OsRng.fill_bytes(&mut seed_bytes);
+    rand::rngs::SysRng
+        .try_fill_bytes(&mut seed_bytes[..])
+        .expect("OS RNG unavailable");
     let seed = format!("devkey:{}", hex::encode(seed_bytes));
 
     println!("SecuraCV tamper-evidence demo");
@@ -202,7 +204,9 @@ mod tests {
         let db = TempDb::new();
 
         let mut seed_bytes = [0u8; 32];
-        rand::rngs::OsRng.fill_bytes(&mut seed_bytes);
+        rand::rngs::SysRng
+            .try_fill_bytes(&mut seed_bytes[..])
+            .expect("OS RNG unavailable");
         let seed = format!("devkey:{}", hex::encode(seed_bytes));
 
         let pubkey_hex;
