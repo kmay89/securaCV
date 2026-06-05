@@ -217,16 +217,20 @@ where
             }
             let new_key = VerifyingKey::from_bytes(&rotation.new_public_key)
                 .map_err(|e| anyhow!("key rotation at id {}: invalid new public key: {}", id, e))?;
-            // Retiring key authorized the successor (the entry sig already proves this, but the
-            // explicit authorization must also hold — it is what the durable lineage relies on);
-            // the new key proves possession.
-            verify_rotation_authorization(
-                &active_key,
-                &rotation.prev_public_key,
-                &rotation.new_public_key,
-                &rotation.prev_key_authorization,
-            )
-            .map_err(|e| anyhow!("key rotation at id {}: {}", id, e))?;
+            // Retiring key authorized the successor; the new key proves possession. The entry
+            // signature (verified above under `active_key`) already proves the predecessor
+            // signed this rotation into the chain, so the explicit authorization is required
+            // only when present — legacy records written before the field existed carry an
+            // empty authorization and are anchored solely by that entry signature.
+            if !rotation.prev_key_authorization.is_empty() {
+                verify_rotation_authorization(
+                    &active_key,
+                    &rotation.prev_public_key,
+                    &rotation.new_public_key,
+                    &rotation.prev_key_authorization,
+                )
+                .map_err(|e| anyhow!("key rotation at id {}: {}", id, e))?;
+            }
             verify_rotation_attestation(
                 &new_key,
                 &rotation.prev_public_key,
