@@ -33,8 +33,8 @@ use zeroize::Zeroizing;
 // zeroize::Zeroizing used directly in BucketKeyManager
 
 use crate::crypto::signatures::{
-    PqPublicKey, SignatureKeys, SignatureMode, SignatureSet, DOMAIN_BREAK_GLASS_RECEIPT,
-    DOMAIN_EXPORT_RECEIPT,
+    sign_rotation_attestation, PqPublicKey, SignatureKeys, SignatureMode, SignatureSet,
+    DOMAIN_BREAK_GLASS_RECEIPT, DOMAIN_EXPORT_RECEIPT,
 };
 use crate::storage::ensure_columns;
 
@@ -489,6 +489,8 @@ pub enum SealedLogRecord {
     Event(Event),
     #[serde(rename = "failure")]
     Failure(FailureEvent),
+    #[serde(rename = "key_rotation")]
+    KeyRotation(KeyRotation),
 }
 
 /// Tagged deserialization helper (new format with `record_type` field).
@@ -499,6 +501,8 @@ enum SealedLogRecordTagged {
     Event(Event),
     #[serde(rename = "failure")]
     Failure(FailureEvent),
+    #[serde(rename = "key_rotation")]
+    KeyRotation(KeyRotation),
 }
 
 /// Untagged deserialization helper (legacy format without `record_type` field).
@@ -518,6 +522,7 @@ impl SealedLogRecord {
             return Ok(match tagged {
                 SealedLogRecordTagged::Event(e) => SealedLogRecord::Event(e),
                 SealedLogRecordTagged::Failure(f) => SealedLogRecord::Failure(f),
+                SealedLogRecordTagged::KeyRotation(r) => SealedLogRecord::KeyRotation(r),
             });
         }
         // Fall back to untagged for existing databases
@@ -535,6 +540,7 @@ impl SealedLogRecord {
         match self {
             SealedLogRecord::Event(ev) => ev.time_bucket,
             SealedLogRecord::Failure(ev) => ev.time_bucket,
+            SealedLogRecord::KeyRotation(r) => r.time_bucket,
         }
     }
 
@@ -542,8 +548,37 @@ impl SealedLogRecord {
         match self {
             SealedLogRecord::Event(ev) => ev.ruleset_hash,
             SealedLogRecord::Failure(ev) => ev.ruleset_hash,
+            // A key rotation is an identity-administration record, not ruleset-bound.
+            SealedLogRecord::KeyRotation(_) => [0u8; 32],
         }
     }
+}
+
+/// Schema discriminator for `KeyRotation` records, allowing forward-compatible evolution.
+pub const KEY_ROTATION_SCHEMA_V1: &str = "securacv/device_key_rotation/v1";
+
+/// An in-chain, signed record announcing a device signing-key rotation.
+///
+/// The record is appended to the sealed log like any other entry — hash-chained and
+/// signed by the **retiring (old)** device key, which proves the legitimate key holder
+/// authorized the rotation and makes the rotation itself tamper-evident. The payload
+/// additionally carries `new_key_attestation`: the **new** key's signature over
+/// `(prev_public_key ‖ new_public_key)`, proving possession of the incoming private key.
+/// A verifier following the chain from the genesis key can therefore validate each
+/// rotation (old-key entry signature + new-key attestation) and switch its expected
+/// verifying key, keeping the entire log verifiable across identity changes.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct KeyRotation {
+    /// Schema discriminator (`KEY_ROTATION_SCHEMA_V1`).
+    pub schema: String,
+    /// The retiring device Ed25519 public key (must equal the verifier's current key).
+    pub prev_public_key: [u8; 32],
+    /// The incoming device Ed25519 public key.
+    pub new_public_key: [u8; 32],
+    /// New key's possession attestation over `(prev_public_key ‖ new_public_key)`.
+    pub new_key_attestation: Vec<u8>,
+    /// Coarse time bucket — carries no precise time, satisfying the record contract.
+    pub time_bucket: TimeBucket,
 }
 
 /// Exported events omit correlation tokens to avoid identity-like fields.
@@ -1047,6 +1082,14 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
               message TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS device_key_history (
+              epoch INTEGER PRIMARY KEY,
+              public_key BLOB NOT NULL,
+              prev_public_key BLOB,
+              activated_at_event_id INTEGER NOT NULL,
+              attestation BLOB
+            );
+
             CREATE INDEX IF NOT EXISTS idx_events_created ON sealed_events(created_at);
             CREATE INDEX IF NOT EXISTS idx_receipts_created ON break_glass_receipts(created_at);
             CREATE INDEX IF NOT EXISTS idx_export_receipts_created ON export_receipts(created_at);
@@ -1061,7 +1104,13 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         ensure_columns(
             &self.conn,
             "checkpoints",
-            &[("pq_signature", "BLOB"), ("pq_scheme", "TEXT")],
+            &[
+                ("pq_signature", "BLOB"),
+                ("pq_scheme", "TEXT"),
+                // Records which device key signed the checkpoint, so verification picks the
+                // correct key after a signing-key rotation (NULL on pre-rotation databases).
+                ("signer_public_key", "BLOB"),
+            ],
         )?;
         ensure_columns(
             &self.conn,
@@ -1125,19 +1174,118 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
                     bytes.len()
                 ));
             }
-            if bytes.as_slice() != key_bytes.as_slice() {
+            // `device_metadata.public_key` pins the immutable *genesis* identity (the
+            // verification anchor). The *current* signing key may differ after one or more
+            // rotations; reopen must validate the seed against the current key, not genesis.
+            self.backfill_genesis_key_history(&bytes)?;
+            let current = current_device_public_key(&self.conn)?;
+            if current != key_bytes {
                 return Err(anyhow!(
-                    "device public key mismatch: existing key does not match DEVICE_KEY_SEED"
+                    "device public key mismatch: DEVICE_KEY_SEED does not derive the current \
+                     device key (a retired key cannot reopen the log; use the latest seed)"
                 ));
             }
             return Ok(());
         }
 
+        // First open: record the genesis identity as both the anchor and key-history epoch 0.
         self.conn.execute(
             "INSERT INTO device_metadata (id, public_key) VALUES (1, ?1)",
             params![key_bytes.to_vec()],
         )?;
+        self.conn.execute(
+            "INSERT OR IGNORE INTO device_key_history \
+             (epoch, public_key, prev_public_key, activated_at_event_id, attestation) \
+             VALUES (0, ?1, NULL, 0, NULL)",
+            params![key_bytes.to_vec()],
+        )?;
         Ok(())
+    }
+
+    /// Backfill the genesis key-history row for databases created before key-history
+    /// existed, so the current-key lookup and verifier seeding work uniformly.
+    fn backfill_genesis_key_history(&mut self, genesis_public_key: &[u8]) -> Result<()> {
+        let has_history: bool = self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM device_key_history)",
+            [],
+            |row| row.get(0),
+        )?;
+        if !has_history {
+            self.conn.execute(
+                "INSERT INTO device_key_history \
+                 (epoch, public_key, prev_public_key, activated_at_event_id, attestation) \
+                 VALUES (0, ?1, NULL, 0, NULL)",
+                params![genesis_public_key.to_vec()],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Rotate the device signing identity.
+    ///
+    /// Appends a hash-chained, **old-key-signed** [`KeyRotation`] record carrying the new
+    /// key's possession attestation, records the new key in the durable key history, and
+    /// switches the kernel's active signing key. Subsequent events are signed by the new
+    /// key; verifiers following the chain from genesis pick up the new key at this record.
+    /// Reopen the database afterwards with the new seed.
+    pub fn rotate_device_identity(&mut self, new_seed: &str) -> Result<()> {
+        let new_key = signing_key_from_seed(new_seed)?;
+        let prev_public_key = self.device_key.verifying_key().to_bytes();
+        let new_public_key = new_key.verifying_key().to_bytes();
+        if prev_public_key == new_public_key {
+            return Err(anyhow!(
+                "device key rotation: new seed derives the current key (nothing to rotate)"
+            ));
+        }
+
+        let attestation =
+            sign_rotation_attestation(&new_key, &prev_public_key, &new_public_key).to_vec();
+        let rotation = KeyRotation {
+            schema: KEY_ROTATION_SCHEMA_V1.to_string(),
+            prev_public_key,
+            new_public_key,
+            new_key_attestation: attestation.clone(),
+            time_bucket: Self::coarsen_or_now(TimeBucket::now_10min()?)?,
+        };
+
+        // Append signed by the CURRENT (retiring) key — proves the rotation was authorized
+        // by the legitimate holder and chains it into the tamper-evident log.
+        self.append_rotation(&rotation)?;
+
+        // The rotation record is the new chain head; capture its row id for the lineage.
+        let event_id: i64 = self.conn.query_row(
+            "SELECT COALESCE(MAX(id), 0) FROM sealed_events",
+            [],
+            |row| row.get(0),
+        )?;
+        let next_epoch: i64 = self.conn.query_row(
+            "SELECT COALESCE(MAX(epoch), -1) + 1 FROM device_key_history",
+            [],
+            |row| row.get(0),
+        )?;
+        self.conn.execute(
+            "INSERT INTO device_key_history \
+             (epoch, public_key, prev_public_key, activated_at_event_id, attestation) \
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                next_epoch,
+                new_public_key.to_vec(),
+                prev_public_key.to_vec(),
+                event_id,
+                attestation,
+            ],
+        )?;
+
+        // Switch the active signing key. Genesis (device_metadata) stays as the anchor.
+        self.device_key = new_key;
+        Ok(())
+    }
+
+    fn append_rotation(&mut self, rotation: &KeyRotation) -> Result<()> {
+        let record = SealedLogRecord::KeyRotation(rotation.clone());
+        let key_material = self.signature_key_material();
+        let signature_keys = key_material.signature_keys();
+        self.sealed_log.append_record(&record, &signature_keys)
     }
 
     #[cfg(feature = "pqc-signatures")]
@@ -1918,6 +2066,12 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         for payload in payloads {
             let record = SealedLogRecord::deserialize_compat(&payload)?;
 
+            // Key-rotation records are identity-administration entries, not exportable
+            // semantic events; they carry no ruleset binding and are skipped here.
+            if let SealedLogRecord::KeyRotation(_) = record {
+                continue;
+            }
+
             if let Err(e) =
                 ReprocessGuard::assert_same_ruleset(expected_ruleset_hash, record.ruleset_hash())
             {
@@ -1965,6 +2119,8 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
                     };
                     buckets[idx].failures.push(export_failure);
                 }
+                // Skipped above (key rotations are not exportable events).
+                SealedLogRecord::KeyRotation(_) => unreachable!(),
             }
         }
 
@@ -2147,6 +2303,67 @@ pub fn device_public_key_from_db(conn: &Connection) -> Result<VerifyingKey> {
             _ => anyhow!("failed to read device public key from database: {}", e),
         })?;
     verifying_key_from_bytes(&bytes)
+}
+
+/// The device's *genesis* public key — the immutable verification anchor for the event
+/// chain. After a rotation this differs from the current signing key; use
+/// [`current_device_public_key`] for the active key.
+pub fn genesis_device_public_key(conn: &Connection) -> Result<[u8; 32]> {
+    let bytes: Vec<u8> = conn.query_row(
+        "SELECT public_key FROM device_metadata WHERE id = 1",
+        [],
+        |row| row.get(0),
+    )?;
+    if bytes.len() != 32 {
+        return Err(anyhow!("corrupt device_metadata.public_key length"));
+    }
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&bytes);
+    Ok(out)
+}
+
+/// The device's *current* signing public key — the latest key-history epoch, falling back
+/// to genesis when no rotation has occurred.
+pub fn current_device_public_key(conn: &Connection) -> Result<[u8; 32]> {
+    let latest: Option<Vec<u8>> = conn
+        .query_row(
+            "SELECT public_key FROM device_key_history ORDER BY epoch DESC LIMIT 1",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
+    match latest {
+        Some(bytes) if bytes.len() == 32 => {
+            let mut out = [0u8; 32];
+            out.copy_from_slice(&bytes);
+            Ok(out)
+        }
+        Some(_) => Err(anyhow!("corrupt device_key_history.public_key length")),
+        None => genesis_device_public_key(conn),
+    }
+}
+
+/// The device public key that was active at (i.e., had signed entries up to) `event_id` —
+/// the highest key-history epoch whose `activated_at_event_id <= event_id`. Used to verify
+/// a checkpoint (and seed the verifier) when earlier events have been pruned.
+pub fn device_key_active_at(conn: &Connection, event_id: i64) -> Result<[u8; 32]> {
+    let row: Option<Vec<u8>> = conn
+        .query_row(
+            "SELECT public_key FROM device_key_history \
+             WHERE activated_at_event_id <= ?1 ORDER BY epoch DESC LIMIT 1",
+            params![event_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    match row {
+        Some(bytes) if bytes.len() == 32 => {
+            let mut out = [0u8; 32];
+            out.copy_from_slice(&bytes);
+            Ok(out)
+        }
+        Some(_) => Err(anyhow!("corrupt device_key_history.public_key length")),
+        None => genesis_device_public_key(conn),
+    }
 }
 
 #[cfg(feature = "pqc-signatures")]
@@ -3589,9 +3806,9 @@ mod tests {
         assert_ne!(sk_old.as_bytes(), sk_new.as_bytes());
 
         // The DB key (from the independent secret) is unchanged by rotation, so the
-        // *encrypted database* still decrypts after the signing identity changes. This
-        // covers the storage-layer prerequisite; full identity rotation additionally
-        // needs device-metadata rotation in `Kernel::open` (see docs/db_key_rotation.md).
+        // *encrypted database* still decrypts after the signing identity changes. This is
+        // the storage-layer prerequisite for `Kernel::rotate_device_identity`, which
+        // handles the signing-identity rotation itself (see docs/db_key_rotation.md).
         let conn = open_db_connection_with_key(&db_path_str, Some(&db_key))?;
         let v: String = conn.query_row("SELECT v FROM t WHERE id = 1", [], |r| r.get(0))?;
         assert_eq!(v, "sentinel");
@@ -3650,6 +3867,188 @@ mod tests {
         let conn = open_db_connection_with_key(&db_path_str, Some(&key_b))?;
         let v: String = conn.query_row("SELECT v FROM t WHERE id = 1", [], |r| r.get(0))?;
         assert_eq!(v, "rotate-me");
+        Ok(())
+    }
+
+    // ===== Device signing-key rotation (F-04) =====
+
+    fn rotation_cfg(db_path: &str, seed: &str) -> KernelConfig {
+        KernelConfig {
+            db_path: db_path.to_string(),
+            ruleset_id: "ruleset:test".to_string(),
+            ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
+            kernel_version: "0.0.0-test".to_string(),
+            retention: Duration::from_secs(600),
+            device_key_seed: seed.to_string(),
+            zone_policy: ZonePolicy::new(vec![]).unwrap(),
+        }
+    }
+
+    const ROT_OLD_SEED: &str = "devkey:rotate:old:1111111111111111111";
+    const ROT_NEW_SEED: &str = "devkey:rotate:new:2222222222222222222";
+    const ROT_THIRD_SEED: &str = "devkey:rotate:third:33333333333333333";
+
+    fn verify_chain_from_genesis(conn: &Connection, genesis_pub: &[u8; 32]) -> Result<u64> {
+        let genesis_key = ed25519_dalek::VerifyingKey::from_bytes(genesis_pub)?;
+        crate::verify::verify_events_with(
+            conn,
+            &genesis_key,
+            None,
+            crate::crypto::signatures::SignatureMode::Compat,
+            None,
+            |_, _| {},
+        )
+    }
+
+    #[test]
+    fn device_key_rotation_keeps_log_verifiable_and_pins_identity() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let db_path = dir.path().join("rotate.db").to_str().unwrap().to_string();
+
+        let genesis_pub;
+        {
+            let cfg = rotation_cfg(&db_path, ROT_OLD_SEED);
+            let mut kernel = Kernel::open(&cfg)?;
+            genesis_pub = kernel.device_key_for_verify_only();
+            seal_one_event(&mut kernel, &cfg, "zone:a")?;
+            seal_one_event(&mut kernel, &cfg, "zone:b")?;
+            kernel.rotate_device_identity(ROT_NEW_SEED)?;
+            // Post-rotation event is signed by the NEW key.
+            seal_one_event(&mut kernel, &cfg, "zone:c")?;
+
+            // The whole chain — across the rotation — verifies from the genesis key.
+            // 2 events + 1 rotation record + 1 event = 4 entries.
+            let count = verify_chain_from_genesis(&kernel.conn, &genesis_pub)?;
+            assert_eq!(count, 4, "full chain across rotation must verify");
+        }
+
+        // The retired (old) seed can no longer reopen the rotated log: the DB is still
+        // encrypted under the old-seed-derived key (so it decrypts), but the identity pin
+        // rejects it because the current device key is now the rotated one.
+        // (Reopening under the *new* identity requires a decoupled DB key — see
+        // docs/db_key_rotation.md; exercised separately by the decoupled-DB-key tests.)
+        let err = Kernel::open(&rotation_cfg(&db_path, ROT_OLD_SEED))
+            .err()
+            .expect("a retired seed must be rejected");
+        assert!(
+            err.to_string().contains("device public key mismatch"),
+            "a retired seed must be rejected, got: {err}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn device_key_rotation_supports_multiple_rotations() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let db_path = dir.path().join("rotate2.db").to_str().unwrap().to_string();
+        let cfg = rotation_cfg(&db_path, ROT_OLD_SEED);
+        let mut kernel = Kernel::open(&cfg)?;
+        let genesis_pub = kernel.device_key_for_verify_only();
+
+        seal_one_event(&mut kernel, &cfg, "zone:a")?;
+        kernel.rotate_device_identity(ROT_NEW_SEED)?;
+        seal_one_event(&mut kernel, &cfg, "zone:b")?;
+        kernel.rotate_device_identity(ROT_THIRD_SEED)?;
+        seal_one_event(&mut kernel, &cfg, "zone:c")?;
+
+        // 1 + rot + 1 + rot + 1 = 5 entries, verifiable from genesis across two rotations.
+        let count = verify_chain_from_genesis(&kernel.conn, &genesis_pub)?;
+        assert_eq!(count, 5);
+
+        // current key is the third seed's key; genesis is unchanged (the anchor).
+        assert_eq!(
+            current_device_public_key(&kernel.conn)?,
+            signing_key_from_seed(ROT_THIRD_SEED)?
+                .verifying_key()
+                .to_bytes()
+        );
+        assert_eq!(genesis_device_public_key(&kernel.conn)?, genesis_pub);
+        Ok(())
+    }
+
+    #[test]
+    fn device_key_rotation_rejects_rotating_to_same_key() -> Result<()> {
+        let cfg = rotation_cfg(":memory:", ROT_OLD_SEED);
+        let mut kernel = Kernel::open(&cfg)?;
+        let err = kernel.rotate_device_identity(ROT_OLD_SEED).unwrap_err();
+        assert!(err.to_string().contains("nothing to rotate"));
+        Ok(())
+    }
+
+    #[test]
+    fn verifier_detects_tamper_in_post_rotation_event() -> Result<()> {
+        let cfg = rotation_cfg(":memory:", ROT_OLD_SEED);
+        let mut kernel = Kernel::open(&cfg)?;
+        let genesis_pub = kernel.device_key_for_verify_only();
+        seal_one_event(&mut kernel, &cfg, "zone:a")?;
+        kernel.rotate_device_identity(ROT_NEW_SEED)?;
+        seal_one_event(&mut kernel, &cfg, "zone:c")?;
+
+        // Tamper the LAST (post-rotation) event's payload; verification must fail.
+        let last_id: i64 = kernel
+            .conn
+            .query_row("SELECT MAX(id) FROM sealed_events", [], |r| r.get(0))?;
+        kernel.conn.execute(
+            "UPDATE sealed_events SET payload_json = replace(payload_json, 'zone:c', 'zone:X') WHERE id = ?1",
+            params![last_id],
+        )?;
+        assert!(
+            verify_chain_from_genesis(&kernel.conn, &genesis_pub).is_err(),
+            "tampering a post-rotation event must be detected"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn verifier_rejects_rotation_with_forged_new_key() -> Result<()> {
+        // A rotation record whose announced new key lacks a valid possession attestation
+        // must be rejected even though the (old-key) entry signature is otherwise valid.
+        let cfg = rotation_cfg(":memory:", ROT_OLD_SEED);
+        let mut kernel = Kernel::open(&cfg)?;
+        let genesis_pub = kernel.device_key_for_verify_only();
+        seal_one_event(&mut kernel, &cfg, "zone:a")?;
+        kernel.rotate_device_identity(ROT_NEW_SEED)?;
+
+        // Corrupt the stored attestation inside the rotation record, then RE-SIGN the entry
+        // with the (still-current-at-that-point) old key so only the attestation is bad.
+        let (rot_id, payload): (i64, String) = kernel.conn.query_row(
+            "SELECT id, payload_json FROM sealed_events WHERE payload_json LIKE '%key_rotation%' LIMIT 1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        let mut record: serde_json::Value = serde_json::from_str(&payload)?;
+        // Flip one byte of the attestation array.
+        let att = record["new_key_attestation"].as_array().unwrap().clone();
+        let mut att: Vec<u8> = att.iter().map(|v| v.as_u64().unwrap() as u8).collect();
+        att[0] ^= 0xff;
+        record["new_key_attestation"] = serde_json::json!(att);
+        let new_payload = serde_json::to_string(&record)?;
+
+        let prev_hash: Vec<u8> = kernel.conn.query_row(
+            "SELECT prev_hash FROM sealed_events WHERE id = ?1",
+            params![rot_id],
+            |r| r.get(0),
+        )?;
+        let mut prev = [0u8; 32];
+        prev.copy_from_slice(&prev_hash);
+        let new_hash = hash_entry(&prev, new_payload.as_bytes());
+        // Re-sign with the OLD key (the key that legitimately signed this rotation entry).
+        let old_key = signing_key_from_seed(ROT_OLD_SEED)?;
+        let sig = crate::crypto::signatures::sign_with_domain(
+            crate::crypto::signatures::DOMAIN_SEALED_LOG_ENTRY,
+            &crate::crypto::signatures::SignatureKeys::new(&old_key),
+            &new_hash,
+        )?;
+        kernel.conn.execute(
+            "UPDATE sealed_events SET payload_json = ?1, entry_hash = ?2, signature = ?3 WHERE id = ?4",
+            params![new_payload, new_hash.to_vec(), sig.ed25519_signature.to_vec(), rot_id],
+        )?;
+
+        let err = verify_chain_from_genesis(&kernel.conn, &genesis_pub).unwrap_err();
+        assert!(
+            err.to_string().contains("rotation attestation"),
+            "a forged new-key attestation must be rejected, got: {err}"
+        );
         Ok(())
     }
 }

@@ -114,8 +114,16 @@ fn main() -> Result<()> {
     {
         let _stage = ui.stage("Verify sealed events");
         let checkpoint = verify::latest_checkpoint(&conn)?;
+        // After a signing-key rotation the checkpoint (and the post-checkpoint suffix it
+        // anchors) is signed by the key that was active at the cutoff, not the genesis key.
+        // The checkpoint records that signer; fall back to the genesis key for pre-rotation
+        // databases (where signer == genesis) or an explicit --public-key override.
+        let chain_key = match checkpoint.signer_public_key {
+            Some(bytes) => verify_helpers::verifying_key_from_hex(&verify_helpers::hex32(&bytes))?,
+            None => verifying_key,
+        };
         verify::verify_checkpoint_signature(
-            &verifying_key,
+            &chain_key,
             &checkpoint,
             signature_mode,
             pq_verifying_key.as_ref(),
@@ -149,7 +157,7 @@ fn main() -> Result<()> {
 
         let count = verify::verify_events_with(
             &conn,
-            &verifying_key,
+            &chain_key,
             checkpoint.chain_head_hash,
             signature_mode,
             pq_verifying_key.as_ref(),

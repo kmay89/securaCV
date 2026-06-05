@@ -3,12 +3,12 @@ use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use rusqlite::{Connection, Row};
 
 use crate::crypto::signatures::{
-    PqPublicKey, SignatureMode, SignatureSet, DOMAIN_BREAK_GLASS_RECEIPT, DOMAIN_CHECKPOINT,
-    DOMAIN_EXPORT_RECEIPT, DOMAIN_SEALED_LOG_ENTRY,
+    verify_rotation_attestation, PqPublicKey, SignatureMode, SignatureSet,
+    DOMAIN_BREAK_GLASS_RECEIPT, DOMAIN_CHECKPOINT, DOMAIN_EXPORT_RECEIPT, DOMAIN_SEALED_LOG_ENTRY,
 };
 use crate::{
     approvals_commitment, hash_entry, verify_entry_signature, Approval, BreakGlassOutcome,
-    BreakGlassReceipt, QuorumPolicy,
+    BreakGlassReceipt, QuorumPolicy, SealedLogRecord,
 };
 
 #[derive(Debug, Clone)]
@@ -16,6 +16,8 @@ pub struct CheckpointInfo {
     pub chain_head_hash: Option<[u8; 32]>,
     pub signatures: Option<SignatureSet>,
     pub cutoff_event_id: Option<i64>,
+    /// The device key that signed this checkpoint (NULL on pre-rotation databases).
+    pub signer_public_key: Option<[u8; 32]>,
 }
 
 #[derive(Debug, Clone)]
@@ -61,7 +63,7 @@ pub fn verify_checkpoint_signature(
 
 pub fn latest_checkpoint(conn: &Connection) -> Result<CheckpointInfo> {
     let mut stmt = conn.prepare(
-        "SELECT chain_head_hash, signature, pq_signature, pq_scheme, cutoff_event_id FROM checkpoints ORDER BY id DESC LIMIT 1",
+        "SELECT chain_head_hash, signature, pq_signature, pq_scheme, cutoff_event_id, signer_public_key FROM checkpoints ORDER BY id DESC LIMIT 1",
     )?;
     let mut rows = stmt.query([])?;
     if let Some(row) = rows.next()? {
@@ -71,16 +73,28 @@ pub fn latest_checkpoint(conn: &Connection) -> Result<CheckpointInfo> {
         let pq_scheme: Option<String> = row.get(3)?;
         let signature_set = SignatureSet::from_storage(&signature, pq_signature, pq_scheme)?;
         let cutoff_event_id: i64 = row.get(4)?;
+        let signer_public_key: Option<Vec<u8>> = row.get(5)?;
+        let signer_public_key = match signer_public_key {
+            Some(bytes) if bytes.len() == 32 => {
+                let mut out = [0u8; 32];
+                out.copy_from_slice(&bytes);
+                Some(out)
+            }
+            Some(_) => return Err(anyhow!("corrupt checkpoint signer_public_key length")),
+            None => None,
+        };
         Ok(CheckpointInfo {
             chain_head_hash: Some(head),
             signatures: Some(signature_set),
             cutoff_event_id: Some(cutoff_event_id),
+            signer_public_key,
         })
     } else {
         Ok(CheckpointInfo {
             chain_head_hash: None,
             signatures: None,
             cutoff_event_id: None,
+            signer_public_key: None,
         })
     }
 }
@@ -136,6 +150,10 @@ where
 
     let mut rows = stmt.query([])?;
     let mut expected_prev: [u8; 32] = checkpoint_head.unwrap_or([0u8; 32]);
+    // The verifying key for the *start* of the walked range. It advances as the chain
+    // crosses device-key rotation records, so the whole log stays verifiable across
+    // identity changes (anchored to the genesis key the caller seeds here).
+    let mut active_key = *verifying_key;
     let mut count = 0u64;
 
     while let Some(row) = rows.next()? {
@@ -168,7 +186,7 @@ where
         }
 
         if verify_entry_signature(
-            verifying_key,
+            &active_key,
             &entry_hash,
             &signature_set,
             mode,
@@ -182,6 +200,30 @@ where
                 id,
                 hex::encode(signature_set.ed25519_signature)
             ));
+        }
+
+        // Follow device-key rotations. A KeyRotation record is signed by the *retiring*
+        // key (verified just above as `active_key`); after validating the incoming key's
+        // possession attestation we advance the expected verifying key for later entries.
+        if let Ok(SealedLogRecord::KeyRotation(rotation)) =
+            SealedLogRecord::deserialize_compat(&payload)
+        {
+            if rotation.prev_public_key != active_key.to_bytes() {
+                return Err(anyhow!(
+                    "key rotation at id {}: prev_public_key does not match the active verifying key",
+                    id
+                ));
+            }
+            let new_key = VerifyingKey::from_bytes(&rotation.new_public_key)
+                .map_err(|e| anyhow!("key rotation at id {}: invalid new public key: {}", id, e))?;
+            verify_rotation_attestation(
+                &new_key,
+                &rotation.prev_public_key,
+                &rotation.new_public_key,
+                &rotation.new_key_attestation,
+            )
+            .map_err(|e| anyhow!("key rotation at id {}: {}", id, e))?;
+            active_key = new_key;
         }
 
         on_event(id, entry_hash);
@@ -421,6 +463,7 @@ mod tests {
             chain_head_hash: None,
             signatures: None,
             cutoff_event_id: None,
+            signer_public_key: None,
         };
 
         verify_checkpoint_signature(&verifying_key, &checkpoint, SignatureMode::Compat, None)?;
@@ -437,6 +480,7 @@ mod tests {
             chain_head_hash: Some(head),
             signatures: Some(signature),
             cutoff_event_id: Some(42),
+            signer_public_key: None,
         };
 
         verify_checkpoint_signature(&verifying_key, &checkpoint, SignatureMode::Compat, None)?;
@@ -455,6 +499,7 @@ mod tests {
             chain_head_hash: Some(head),
             signatures: Some(signature),
             cutoff_event_id: Some(7),
+            signer_public_key: None,
         };
 
         let result =
@@ -471,6 +516,7 @@ mod tests {
             chain_head_hash: Some([3u8; 32]),
             signatures: None,
             cutoff_event_id: Some(1),
+            signer_public_key: None,
         };
 
         let result =
