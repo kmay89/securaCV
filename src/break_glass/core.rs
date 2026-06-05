@@ -2,7 +2,6 @@
 
 use anyhow::{anyhow, Result};
 use ed25519_dalek::{Signature, SigningKey, Verifier, VerifyingKey};
-use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -541,7 +540,7 @@ impl BreakGlass {
         match outcome {
             BreakGlassOutcome::Granted => {
                 let mut nonce = [0u8; 32];
-                rand::thread_rng().fill_bytes(&mut nonce);
+                rand::fill(&mut nonce[..]);
                 let token = BreakGlassToken {
                     token_nonce: nonce,
                     expires_bucket: now_bucket,

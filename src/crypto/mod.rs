@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use rand::RngCore;
+use rand::TryRng;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -65,7 +65,9 @@ pub fn load_or_create_device_seed(
     }
 
     let mut seed_bytes = [0u8; 32];
-    rand::rngs::OsRng.fill_bytes(&mut seed_bytes);
+    rand::rngs::SysRng
+        .try_fill_bytes(&mut seed_bytes[..])
+        .expect("OS RNG unavailable");
     let seed_hex = hex::encode(seed_bytes);
     seed_bytes.zeroize();
     let seed = format!("devkey:{}", seed_hex);

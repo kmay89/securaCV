@@ -1,6 +1,5 @@
 use crate::{ExportOptions, Kernel, KernelConfig, TimeBucket};
 use anyhow::{anyhow, Result};
-use rand::RngCore;
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
@@ -101,7 +100,7 @@ pub struct CapabilityTokenManager {
 impl CapabilityTokenManager {
     pub fn new(bucket: TimeBucket) -> Result<Self> {
         let mut token = [0u8; 32];
-        rand::thread_rng().fill_bytes(&mut token);
+        rand::fill(&mut token[..]);
         Ok(Self {
             current_bucket: Some(bucket),
             token,
@@ -113,7 +112,7 @@ impl CapabilityTokenManager {
             return Ok(false);
         }
         let mut token = [0u8; 32];
-        rand::thread_rng().fill_bytes(&mut token);
+        rand::fill(&mut token[..]);
         self.current_bucket = Some(bucket);
         self.token = token;
         Ok(true)
