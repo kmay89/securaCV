@@ -49,7 +49,7 @@ tempfile = "3.10"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"
-libseccomp = "0.3"
+libseccomp = "0.4"
 libseccomp-sys = "0.3"
 
 [features]
