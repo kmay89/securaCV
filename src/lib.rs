@@ -32,7 +32,8 @@ use zeroize::Zeroizing;
 // zeroize::Zeroizing used directly in BucketKeyManager
 
 use crate::crypto::signatures::{
-    sign_rotation_attestation, PqPublicKey, SignatureKeys, SignatureMode, SignatureSet,
+    sign_rotation_attestation, sign_rotation_authorization, verify_rotation_attestation,
+    verify_rotation_authorization, PqPublicKey, SignatureKeys, SignatureMode, SignatureSet,
     DOMAIN_BREAK_GLASS_RECEIPT, DOMAIN_EXPORT_RECEIPT,
 };
 use crate::storage::ensure_columns;
@@ -576,8 +577,23 @@ pub struct KeyRotation {
     pub new_public_key: [u8; 32],
     /// New key's possession attestation over `(prev_public_key ‖ new_public_key)`.
     pub new_key_attestation: Vec<u8>,
+    /// Retiring (old) key's authorization over `(prev_public_key ‖ new_public_key)`. This is
+    /// the genesis-anchored proof that the predecessor approved this successor; it is what
+    /// lets the key lineage be reconstructed and trusted from the durable history table even
+    /// after the in-chain rotation records have been pruned.
+    pub prev_key_authorization: Vec<u8>,
     /// Coarse time bucket — carries no precise time, satisfying the record contract.
     pub time_bucket: TimeBucket,
+}
+
+/// One epoch in the device key lineage, reconstructed and cryptographically validated from
+/// the genesis anchor. See [`reconstruct_device_key_lineage_from`].
+#[derive(Clone, Copy, Debug)]
+pub struct DeviceKeyEpoch {
+    pub epoch: i64,
+    pub public_key: [u8; 32],
+    /// The sealed-event id at/after which this key signs entries (0 for genesis).
+    pub activated_at_event_id: i64,
 }
 
 /// Exported events omit correlation tokens to avoid identity-like fields.
@@ -1086,7 +1102,8 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
               public_key BLOB NOT NULL,
               prev_public_key BLOB,
               activated_at_event_id INTEGER NOT NULL,
-              attestation BLOB
+              attestation BLOB,
+              authorization BLOB
             );
 
             CREATE INDEX IF NOT EXISTS idx_events_created ON sealed_events(created_at);
@@ -1110,6 +1127,11 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
                 // correct key after a signing-key rotation (NULL on pre-rotation databases).
                 ("signer_public_key", "BLOB"),
             ],
+        )?;
+        ensure_columns(
+            &self.conn,
+            "device_key_history",
+            &[("authorization", "BLOB")],
         )?;
         ensure_columns(
             &self.conn,
@@ -1237,13 +1259,20 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
             ));
         }
 
+        // Possession proof by the NEW key, authorization by the retiring (CURRENT) key. The
+        // authorization is the genesis-anchored link that keeps the lineage trustworthy in the
+        // durable history table even after the in-chain record is pruned.
         let attestation =
             sign_rotation_attestation(&new_key, &prev_public_key, &new_public_key).to_vec();
+        let authorization =
+            sign_rotation_authorization(&self.device_key, &prev_public_key, &new_public_key)
+                .to_vec();
         let rotation = KeyRotation {
             schema: KEY_ROTATION_SCHEMA_V1.to_string(),
             prev_public_key,
             new_public_key,
             new_key_attestation: attestation.clone(),
+            prev_key_authorization: authorization.clone(),
             time_bucket: Self::coarsen_or_now(TimeBucket::now_10min()?)?,
         };
 
@@ -1264,14 +1293,15 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         )?;
         self.conn.execute(
             "INSERT INTO device_key_history \
-             (epoch, public_key, prev_public_key, activated_at_event_id, attestation) \
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+             (epoch, public_key, prev_public_key, activated_at_event_id, attestation, authorization) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
                 next_epoch,
                 new_public_key.to_vec(),
                 prev_public_key.to_vec(),
                 event_id,
                 attestation,
+                authorization,
             ],
         )?;
 
@@ -2321,48 +2351,129 @@ pub fn genesis_device_public_key(conn: &Connection) -> Result<[u8; 32]> {
     Ok(out)
 }
 
-/// The device's *current* signing public key — the latest key-history epoch, falling back
-/// to genesis when no rotation has occurred.
-pub fn current_device_public_key(conn: &Connection) -> Result<[u8; 32]> {
-    let latest: Option<Vec<u8>> = conn
-        .query_row(
-            "SELECT public_key FROM device_key_history ORDER BY epoch DESC LIMIT 1",
-            [],
-            |row| row.get(0),
-        )
-        .optional()?;
-    match latest {
-        Some(bytes) if bytes.len() == 32 => {
-            let mut out = [0u8; 32];
-            out.copy_from_slice(&bytes);
-            Ok(out)
-        }
-        Some(_) => Err(anyhow!("corrupt device_key_history.public_key length")),
-        None => genesis_device_public_key(conn),
-    }
+/// Reconstruct and cryptographically validate the device key lineage, anchored at the
+/// genesis key stored in `device_metadata`.
+///
+/// Walking the append-only `device_key_history` table from epoch 0 (genesis), each rotation
+/// epoch is verified: its `prev_public_key` must equal the running current key, the retiring
+/// key's **authorization** and the new key's **attestation** must both verify over the
+/// `(prev ‖ new)` binding. Because the chain is rooted at the genesis key — whose private
+/// key a tamperer does not hold — a rewritten history cannot forge a valid lineage. This is
+/// the trust anchor verification uses for key selection; it survives event pruning because
+/// the history table is never pruned.
+pub fn reconstruct_device_key_lineage(conn: &Connection) -> Result<Vec<DeviceKeyEpoch>> {
+    let genesis = genesis_device_public_key(conn)?;
+    reconstruct_device_key_lineage_from(conn, &genesis)
 }
 
-/// The device public key that was active at (i.e., had signed entries up to) `event_id` —
-/// the highest key-history epoch whose `activated_at_event_id <= event_id`. Used to verify
-/// a checkpoint (and seed the verifier) when earlier events have been pruned.
-pub fn device_key_active_at(conn: &Connection, event_id: i64) -> Result<[u8; 32]> {
-    let row: Option<Vec<u8>> = conn
-        .query_row(
-            "SELECT public_key FROM device_key_history \
-             WHERE activated_at_event_id <= ?1 ORDER BY epoch DESC LIMIT 1",
-            params![event_id],
-            |row| row.get(0),
-        )
-        .optional()?;
-    match row {
-        Some(bytes) if bytes.len() == 32 => {
-            let mut out = [0u8; 32];
-            out.copy_from_slice(&bytes);
-            Ok(out)
+/// As [`reconstruct_device_key_lineage`] but with an explicit, caller-trusted genesis anchor
+/// (e.g. a `--public-key` override supplied to an external verifier).
+pub fn reconstruct_device_key_lineage_from(
+    conn: &Connection,
+    genesis: &[u8; 32],
+) -> Result<Vec<DeviceKeyEpoch>> {
+    let mut lineage = vec![DeviceKeyEpoch {
+        epoch: 0,
+        public_key: *genesis,
+        activated_at_event_id: 0,
+    }];
+
+    let mut stmt = conn.prepare(
+        "SELECT epoch, public_key, prev_public_key, activated_at_event_id, attestation, authorization \
+         FROM device_key_history WHERE epoch >= 1 ORDER BY epoch ASC",
+    )?;
+    let mut rows = stmt.query([])?;
+    let mut expected_epoch = 1i64;
+    let mut current = verifying_key_from_bytes(genesis)?;
+    let mut current_bytes = *genesis;
+
+    while let Some(row) = rows.next()? {
+        let epoch: i64 = row.get(0)?;
+        let public_key: Vec<u8> = row.get(1)?;
+        let prev_public_key: Option<Vec<u8>> = row.get(2)?;
+        let activated_at_event_id: i64 = row.get(3)?;
+        let attestation: Option<Vec<u8>> = row.get(4)?;
+        let authorization: Option<Vec<u8>> = row.get(5)?;
+
+        if epoch != expected_epoch {
+            return Err(anyhow!(
+                "device key lineage: non-contiguous epoch (expected {}, found {})",
+                expected_epoch,
+                epoch
+            ));
         }
-        Some(_) => Err(anyhow!("corrupt device_key_history.public_key length")),
-        None => genesis_device_public_key(conn),
+        let new_bytes = key32(&public_key, "device_key_history.public_key")?;
+        let prev_bytes = key32(
+            prev_public_key.as_deref().unwrap_or_default(),
+            "device_key_history.prev_public_key",
+        )?;
+        if prev_bytes != current_bytes {
+            return Err(anyhow!(
+                "device key lineage: epoch {} prev_public_key does not chain from epoch {}",
+                epoch,
+                epoch - 1
+            ));
+        }
+        let new_key = verifying_key_from_bytes(&new_bytes)?;
+        let authorization = authorization
+            .ok_or_else(|| anyhow!("device key lineage: epoch {} missing authorization", epoch))?;
+        let attestation = attestation
+            .ok_or_else(|| anyhow!("device key lineage: epoch {} missing attestation", epoch))?;
+        // Predecessor approved this successor (anchors to genesis); successor proves possession.
+        verify_rotation_authorization(&current, &prev_bytes, &new_bytes, &authorization)
+            .map_err(|e| anyhow!("device key lineage: epoch {}: {}", epoch, e))?;
+        verify_rotation_attestation(&new_key, &prev_bytes, &new_bytes, &attestation)
+            .map_err(|e| anyhow!("device key lineage: epoch {}: {}", epoch, e))?;
+
+        lineage.push(DeviceKeyEpoch {
+            epoch,
+            public_key: new_bytes,
+            activated_at_event_id,
+        });
+        current = new_key;
+        current_bytes = new_bytes;
+        expected_epoch += 1;
     }
+
+    Ok(lineage)
+}
+
+fn key32(bytes: &[u8], what: &str) -> Result<[u8; 32]> {
+    if bytes.len() != 32 {
+        return Err(anyhow!(
+            "corrupt {}: expected 32 bytes, got {}",
+            what,
+            bytes.len()
+        ));
+    }
+    let mut out = [0u8; 32];
+    out.copy_from_slice(bytes);
+    Ok(out)
+}
+
+/// The device's *current* signing public key — the last epoch of the validated lineage.
+pub fn current_device_public_key(conn: &Connection) -> Result<[u8; 32]> {
+    Ok(reconstruct_device_key_lineage(conn)?
+        .last()
+        .expect("lineage always contains genesis")
+        .public_key)
+}
+
+/// The device public key active at (i.e., signing entries up to) `event_id` — the latest
+/// validated lineage epoch whose `activated_at_event_id <= event_id`. Used to seed the
+/// verifier and to bound the trusted checkpoint signer when earlier events were pruned.
+pub fn device_key_active_at(conn: &Connection, event_id: i64) -> Result<[u8; 32]> {
+    device_key_active_at_in(&reconstruct_device_key_lineage(conn)?, event_id)
+}
+
+/// As [`device_key_active_at`] but over an already-reconstructed lineage.
+pub fn device_key_active_at_in(lineage: &[DeviceKeyEpoch], event_id: i64) -> Result<[u8; 32]> {
+    lineage
+        .iter()
+        .filter(|e| e.activated_at_event_id <= event_id)
+        .max_by_key(|e| e.epoch)
+        .map(|e| e.public_key)
+        .ok_or_else(|| anyhow!("device key lineage: no key active at event {}", event_id))
 }
 
 #[cfg(feature = "pqc-signatures")]
@@ -4046,6 +4157,120 @@ mod tests {
         assert!(
             err.to_string().contains("rotation attestation"),
             "a forged new-key attestation must be rejected, got: {err}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn device_key_lineage_validates_and_selects_active_key() -> Result<()> {
+        let cfg = rotation_cfg(":memory:", ROT_OLD_SEED);
+        let mut kernel = Kernel::open(&cfg)?;
+        let genesis = kernel.device_key_for_verify_only();
+        seal_one_event(&mut kernel, &cfg, "zone:a")?; // id 1
+        kernel.rotate_device_identity(ROT_NEW_SEED)?; // id 2 (rotation record)
+        seal_one_event(&mut kernel, &cfg, "zone:b")?; // id 3
+
+        let lineage = reconstruct_device_key_lineage(&kernel.conn)?;
+        assert_eq!(lineage.len(), 2, "genesis + one rotation");
+        assert_eq!(lineage[0].public_key, genesis);
+        let new_pub = signing_key_from_seed(ROT_NEW_SEED)?
+            .verifying_key()
+            .to_bytes();
+        assert_eq!(lineage[1].public_key, new_pub);
+
+        // Seeding boundary (P2): the key active at a cutoff that prunes *before* the rotation
+        // record is still the genesis key; at/after that boundary it is the new key. This is
+        // exactly what seeds a pruned suffix, so a rotation straddling the cutoff verifies.
+        let rot_id = lineage[1].activated_at_event_id;
+        assert_eq!(device_key_active_at_in(&lineage, rot_id - 1)?, genesis);
+        assert_eq!(device_key_active_at_in(&lineage, rot_id)?, new_pub);
+        Ok(())
+    }
+
+    #[test]
+    fn device_key_lineage_rejects_forged_history() -> Result<()> {
+        // P1 root cause: the lineage must be unforgeable from an untrusted history table.
+        let cfg = rotation_cfg(":memory:", ROT_OLD_SEED);
+        let mut kernel = Kernel::open(&cfg)?;
+        kernel.rotate_device_identity(ROT_NEW_SEED)?;
+        assert_eq!(reconstruct_device_key_lineage(&kernel.conn)?.len(), 2);
+
+        // An attacker rewrites history to announce *their own* key with a valid self-attestation
+        // — but cannot forge the genesis key's authorization over the new binding (they lack the
+        // genesis private key). Reconstruction must therefore reject the tampered lineage.
+        let attacker = signing_key_from_seed(ROT_THIRD_SEED)?;
+        let attacker_pub = attacker.verifying_key().to_bytes();
+        let genesis = genesis_device_public_key(&kernel.conn)?;
+        let forged_attestation = crate::crypto::signatures::sign_rotation_attestation(
+            &attacker,
+            &genesis,
+            &attacker_pub,
+        )
+        .to_vec();
+        kernel.conn.execute(
+            "UPDATE device_key_history SET public_key = ?1, attestation = ?2 WHERE epoch = 1",
+            params![attacker_pub.to_vec(), forged_attestation],
+        )?;
+
+        let err = reconstruct_device_key_lineage(&kernel.conn)
+            .expect_err("forged history must be rejected");
+        assert!(
+            err.to_string().contains("authorization"),
+            "rejection must be due to the unforgeable genesis authorization, got: {err}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn end_to_end_rotation_survives_checkpoint_pruning() -> Result<()> {
+        // Exercises the full log_verify key-selection path across a checkpoint that prunes the
+        // chain after a rotation (P1 + P2): the suffix is seeded with the lineage key active at
+        // the cutoff and the checkpoint is verified with its (lineage-anchored) signer.
+        use crate::crypto::signatures::SignatureMode;
+        let cfg = rotation_cfg(":memory:", ROT_OLD_SEED);
+        let mut kernel = Kernel::open(&cfg)?;
+        let genesis = kernel.device_key_for_verify_only();
+
+        seal_one_event(&mut kernel, &cfg, "zone:a")?;
+        kernel.rotate_device_identity(ROT_NEW_SEED)?;
+        seal_one_event(&mut kernel, &cfg, "zone:b")?;
+        // Retention=0 checkpoints at the current head and prunes everything up to it (so the
+        // pruned prefix includes the rotation; the checkpoint is signed by the new key).
+        kernel.enforce_retention_with_checkpoint(Duration::from_secs(0))?;
+        seal_one_event(&mut kernel, &cfg, "zone:c")?; // post-checkpoint, new key
+
+        // Replicate log_verify's trusted key selection.
+        let lineage = reconstruct_device_key_lineage_from(&kernel.conn, &genesis)?;
+        let checkpoint = crate::verify::latest_checkpoint(&kernel.conn)?;
+        let cutoff = checkpoint
+            .cutoff_event_id
+            .expect("a checkpoint was created");
+        let chain_key_bytes = device_key_active_at_in(&lineage, cutoff)?;
+        let signer = checkpoint.signer_public_key.expect("signer recorded");
+        assert!(
+            lineage.iter().any(|e| e.public_key == signer),
+            "checkpoint signer must be a genesis-anchored lineage key"
+        );
+        let chain_key = verifying_key_from_bytes(&chain_key_bytes)?;
+        let signer_key = verifying_key_from_bytes(&signer)?;
+
+        crate::verify::verify_checkpoint_signature(
+            &signer_key,
+            &checkpoint,
+            SignatureMode::Compat,
+            None,
+        )?;
+        let count = crate::verify::verify_events_with(
+            &kernel.conn,
+            &chain_key,
+            checkpoint.chain_head_hash,
+            SignatureMode::Compat,
+            None,
+            |_, _| {},
+        )?;
+        assert_eq!(
+            count, 1,
+            "only the post-checkpoint event remains after pruning"
         );
         Ok(())
     }

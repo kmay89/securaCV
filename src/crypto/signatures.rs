@@ -29,6 +29,7 @@ pub const DOMAIN_BREAK_GLASS_RECEIPT: &str = "securacv:pwk:break-glass-receipt:v
 pub const DOMAIN_EXPORT_RECEIPT: &str = "securacv:pwk:export-receipt:v2";
 pub const DOMAIN_BREAK_GLASS_TOKEN: &str = "securacv:pwk:break-glass-token:v2";
 pub const DOMAIN_KEY_ROTATION: &str = "securacv:pwk:device-key-rotation:v1";
+pub const DOMAIN_KEY_ROTATION_AUTHZ: &str = "securacv:pwk:device-key-rotation-authz:v1";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SignatureMode {
@@ -264,51 +265,117 @@ pub fn verify_ed25519_only(
 /// The offline JavaScript verifier (`viewer/verify_core.js`) MUST reproduce this byte layout
 /// exactly; `tests/fixtures/envelope/domain_separation_vectors.json` pins it cross-language.
 /// Hash binding a device-key rotation's old→new identity. The new key signs this
-/// to prove possession of the new private key (an attestation), so a rotation record
-/// cannot announce a public key the rotator does not actually control.
-fn rotation_attestation_hash(prev_public_key: &[u8; 32], new_public_key: &[u8; 32]) -> [u8; 32] {
+/// Domain-separated hash binding a rotation's `(prev ‖ new)` identity pair, used by both
+/// the new key's *possession attestation* and the old key's *authorization* (distinct
+/// domains keep the two signatures non-interchangeable).
+fn rotation_binding_hash(
+    domain: &str,
+    prev_public_key: &[u8; 32],
+    new_public_key: &[u8; 32],
+) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(prev_public_key);
     hasher.update(new_public_key);
     let inner: [u8; 32] = hasher.finalize().into();
-    domain_separated_hash(DOMAIN_KEY_ROTATION, &inner)
+    domain_separated_hash(domain, &inner)
 }
 
-/// Produce the new key's possession attestation over `(prev_public_key ‖ new_public_key)`.
+fn verify_rotation_binding(
+    domain: &str,
+    verifying_key: &VerifyingKey,
+    prev_public_key: &[u8; 32],
+    new_public_key: &[u8; 32],
+    signature: &[u8],
+    what: &str,
+) -> Result<()> {
+    if signature.len() != 64 {
+        return Err(anyhow!(
+            "rotation {}: expected 64 bytes, got {}",
+            what,
+            signature.len()
+        ));
+    }
+    let mut sig_bytes = [0u8; 64];
+    sig_bytes.copy_from_slice(signature);
+    let sig = ed25519_dalek::Signature::from_bytes(&sig_bytes);
+    verifying_key
+        .verify(
+            &rotation_binding_hash(domain, prev_public_key, new_public_key),
+            &sig,
+        )
+        .map_err(|e| anyhow!("rotation {} verification failed: {}", what, e))
+}
+
+/// Produce the new key's possession attestation over `(prev_public_key ‖ new_public_key)`,
+/// proving the rotator controls the incoming private key.
 pub fn sign_rotation_attestation(
     new_signing_key: &SigningKey,
     prev_public_key: &[u8; 32],
     new_public_key: &[u8; 32],
 ) -> [u8; 64] {
     new_signing_key
-        .sign(&rotation_attestation_hash(prev_public_key, new_public_key))
+        .sign(&rotation_binding_hash(
+            DOMAIN_KEY_ROTATION,
+            prev_public_key,
+            new_public_key,
+        ))
         .to_bytes()
 }
 
-/// Verify the new key's possession attestation. Proves the rotation's incoming key
-/// holder signed the old→new binding; combined with the rotation record's own
-/// signature (by the *old* key), this anchors the rotation to both identities.
+/// Verify the new key's possession attestation (proves the incoming key holder signed the
+/// old→new binding).
 pub fn verify_rotation_attestation(
     new_verifying_key: &VerifyingKey,
     prev_public_key: &[u8; 32],
     new_public_key: &[u8; 32],
     attestation: &[u8],
 ) -> Result<()> {
-    if attestation.len() != 64 {
-        return Err(anyhow!(
-            "rotation attestation: expected 64 bytes, got {}",
-            attestation.len()
-        ));
-    }
-    let mut sig_bytes = [0u8; 64];
-    sig_bytes.copy_from_slice(attestation);
-    let sig = ed25519_dalek::Signature::from_bytes(&sig_bytes);
-    new_verifying_key
-        .verify(
-            &rotation_attestation_hash(prev_public_key, new_public_key),
-            &sig,
-        )
-        .map_err(|e| anyhow!("rotation attestation verification failed: {}", e))
+    verify_rotation_binding(
+        DOMAIN_KEY_ROTATION,
+        new_verifying_key,
+        prev_public_key,
+        new_public_key,
+        attestation,
+        "attestation",
+    )
+}
+
+/// Produce the retiring (old) key's authorization over `(prev_public_key ‖ new_public_key)`.
+///
+/// This is the anchor that makes a stored key-history lineage *unforgeable*: each rotation
+/// is signed by its predecessor, and the chain is rooted at the genesis key. A tamperer who
+/// rewrites the history table cannot forge the first authorization without the genesis
+/// private key, so the whole lineage remains genesis-anchored even after the in-chain
+/// rotation records are pruned.
+pub fn sign_rotation_authorization(
+    old_signing_key: &SigningKey,
+    prev_public_key: &[u8; 32],
+    new_public_key: &[u8; 32],
+) -> [u8; 64] {
+    old_signing_key
+        .sign(&rotation_binding_hash(
+            DOMAIN_KEY_ROTATION_AUTHZ,
+            prev_public_key,
+            new_public_key,
+        ))
+        .to_bytes()
+}
+
+/// Verify the retiring key's authorization (proves the predecessor approved this successor).
+pub fn verify_rotation_authorization(
+    old_verifying_key: &VerifyingKey,
+    prev_public_key: &[u8; 32],
+    new_public_key: &[u8; 32],
+    authorization: &[u8],
+) -> Result<()> {
+    verify_rotation_binding(
+        DOMAIN_KEY_ROTATION_AUTHZ,
+        old_verifying_key,
+        prev_public_key,
+        new_public_key,
+        authorization,
+        "authorization",
+    )
 }
 
 pub fn domain_separated_hash(domain: &str, entry_hash: &[u8; 32]) -> [u8; 32] {

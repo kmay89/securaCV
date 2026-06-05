@@ -48,15 +48,23 @@ What happens under the hood:
    a **possession attestation**: the *new* key's signature over `(old_pub ‖ new_pub)`, so
    a rotation cannot announce a key the rotator does not control.
 2. The new key is recorded in an append-only `device_key_history` table (the durable
-   lineage), and checkpoints record which key signed them (`signer_public_key`).
+   lineage) alongside **two** signatures over `(old_pub ‖ new_pub)`: the new key's
+   *attestation* (possession) **and** the retiring key's *authorization*. Because each
+   epoch is signed by its predecessor and the chain is rooted at the genesis key, the
+   lineage is reconstructible and **unforgeable** from an untrusted history table — a
+   tamperer cannot forge the genesis key's authorization without the genesis private key.
+   Checkpoints also record which key signed them (`signer_public_key`).
 3. The kernel switches its active signing key; `device_metadata.public_key` stays as the
    immutable **genesis** anchor.
 
-**Verification** (`log_verify`, `verify::verify_events_with`) starts from the genesis key
-and *follows* each rotation record — validating the old-key entry signature and the
-new-key attestation — switching its expected verifying key so the whole log verifies
-end-to-end across one or more rotations. Deleting a rotation record is **fail-closed**:
-post-rotation signatures then no longer verify.
+**Verification** anchors at the genesis key and reconstructs the validated key lineage
+(`reconstruct_device_key_lineage`), then *follows* each rotation record — validating the
+old-key entry signature, the retiring-key authorization, and the new-key attestation — so
+the whole log verifies end-to-end across one or more rotations. Deleting a rotation record
+is **fail-closed**: post-rotation signatures then no longer verify. Key selection (the
+suffix seed after pruning, and the trusted checkpoint signer) comes only from the
+genesis-anchored lineage — never from the unauthenticated checkpoint/history row being
+verified, so a tampered checkpoint key is rejected rather than trusted.
 
 > **Prerequisite — decouple the DB key first.** Because the default DB key is derived
 > from the signing key, you must set `SECURACV_DB_KEY_SEED` (independent secret) *before*
@@ -64,12 +72,11 @@ post-rotation signatures then no longer verify.
 > encrypted database would no longer open. Reopening a rotated log with a **retired** seed
 > is rejected with `device public key mismatch`.
 
-> **Scope / limitations.** Rotation applies to the **sealed event log + checkpoints**.
-> Post-quantum (`pqc-signatures`) keys are not rotated by this operation. Across
-> retention **pruning**, the lineage anchor for a pruned-away rotation is the signed
-> checkpoint's recorded `signer_public_key` plus the `device_key_history` table (the
-> in-chain rotation record provides primary tamper-evidence only while it remains
-> un-pruned). Break-glass / export **receipts** continue to verify under the genesis key.
+> **Scope / limitations.** Rotation applies to the **sealed event log + checkpoints**,
+> and remains verifiable across retention **pruning**: the key lineage survives pruning in
+> the genesis-anchored `device_key_history` table, so a checkpoint that prunes past a
+> rotation still verifies. Post-quantum (`pqc-signatures`) keys are not rotated by this
+> operation. Break-glass / export **receipts** continue to verify under the genesis key.
 
 [`Kernel::rotate_device_identity`]: ../src/lib.rs
 
