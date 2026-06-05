@@ -13,6 +13,13 @@ updates:
     commit-message:
       prefix: "deps(cargo)"
     groups:
+      # GStreamer bindings move in lockstep: gstreamer-app/-video track the core
+      # gstreamer crate's API, so a partial bump (e.g. only gstreamer-app) leaves
+      # the others on the old version and breaks the build (see #703). No
+      # update-types filter, so even 0.x minor (treated as breaking) bumps the
+      # whole set together in one PR.
+      gstreamer:
+        patterns: ["gstreamer", "gstreamer-*"]
       cargo-minor-patch:
         patterns: ["*"]
         update-types: ["minor", "patch"]
