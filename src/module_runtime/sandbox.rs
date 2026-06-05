@@ -122,8 +122,7 @@ mod linux {
 
         // libseccomp provides portable syscall-name mapping for aarch64/x86_64,
         // avoiding hardcoded syscall numbers while preserving the same denylist.
-        let mut ctx =
-            ScmpFilterContext::new_filter(ScmpAction::Allow).context("sandbox: seccomp init")?;
+        let mut ctx = ScmpFilterContext::new(ScmpAction::Allow).context("sandbox: seccomp init")?;
         for name in DENY_SYSCALLS {
             let syscall = ScmpSyscall::from_name(name)
                 .with_context(|| format!("sandbox: unknown syscall name {name}"))?;
