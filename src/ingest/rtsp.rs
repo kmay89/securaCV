@@ -351,7 +351,7 @@ impl GstreamerRtspSource {
     fn next_frame(&mut self) -> Result<RawFrame> {
         self.poll_bus();
 
-        // gstreamer 0.23: try_pull_sample takes an Option<ClockTime> and returns
+        // gstreamer 0.25: try_pull_sample takes an Option<ClockTime> and returns
         // Option<Sample> (None on timeout/EOS), so convert the Duration and treat
         // None as a stall.
         let timeout = gstreamer::ClockTime::from_mseconds(self.frame_timeout().as_millis() as u64);
@@ -408,7 +408,7 @@ impl GstreamerRtspSource {
         let Some(bus) = self.pipeline.bus() else {
             return;
         };
-        // ClockTime::ZERO = non-blocking poll (gstreamer 0.23 wants Option<ClockTime>).
+        // ClockTime::ZERO = non-blocking poll (gstreamer 0.25 wants Option<ClockTime>).
         while let Some(message) = bus.timed_pop(gstreamer::ClockTime::ZERO) {
             use gstreamer::MessageView;
             match message.view() {
@@ -435,8 +435,8 @@ fn sample_to_pixels(sample: &gstreamer::Sample) -> Result<(Vec<u8>, u32, u32)> {
     let info =
         gstreamer_video::VideoInfo::from_caps(caps).context("parse RTSP caps as video info")?;
 
-    let width = info.width() as u32;
-    let height = info.height() as u32;
+    let width = info.width();
+    let height = info.height();
     let row_bytes = (width as usize) * 3;
     let stride = info.stride()[0] as usize;
 
