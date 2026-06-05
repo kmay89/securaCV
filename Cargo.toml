@@ -8,7 +8,7 @@ description = "Privacy Witness Kernel (PWK) - witnessd + tools + break_glass"
 [dependencies]
 anyhow = "1.0"
 rusqlite = { version = "0.31", features = ["bundled-sqlcipher"] }
-hkdf = "0.12"
+hkdf = "0.13"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 toml = "1.1"
