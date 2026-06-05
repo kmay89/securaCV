@@ -20,6 +20,33 @@ updates:
       # whole set together in one PR.
       gstreamer:
         patterns: ["gstreamer", "gstreamer-*"]
+      # RustCrypto crates share a `digest`/`crypto-common` trait generation.
+      # Bumping one major alone (e.g. sha2 0.11 while hkdf/hmac stay on 0.12)
+      # pulls two incompatible `digest` versions into the graph and fails to
+      # compile -- Hkdf::<Sha256>::new() no longer resolves (see the split
+      # sha2 #717 / hkdf #718 PRs). Group the whole digest+AEAD stack with no
+      # update-types filter so a trait-generation bump lands as one coherent,
+      # reviewable PR instead of N individually-unmergeable ones.
+      rustcrypto:
+        patterns:
+          - "sha2"
+          - "sha3"
+          - "hkdf"
+          - "hmac"
+          - "digest"
+          - "crypto-common"
+          - "block-buffer"
+          - "chacha20poly1305"
+          - "aead"
+          - "cipher"
+          - "universal-hash"
+          - "poly1305"
+      # rand 0.9/0.10 reshuffled the entry points (thread_rng/OsRng moved or
+      # were removed), so a major bump needs source changes and rand_core must
+      # move with it. Keep the family together in one PR rather than landing
+      # rand and rand_core as separate breakages.
+      rand:
+        patterns: ["rand", "rand_*"]
       cargo-minor-patch:
         patterns: ["*"]
         update-types: ["minor", "patch"]
