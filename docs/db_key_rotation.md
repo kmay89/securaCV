@@ -66,6 +66,13 @@ suffix seed after pruning, and the trusted checkpoint signer) comes only from th
 genesis-anchored lineage — never from the unauthenticated checkpoint/history row being
 verified, so a tampered checkpoint key is rejected rather than trusted.
 
+> **Upgrade compatibility.** Rotation records and `device_key_history` rows written before
+> the explicit predecessor-authorization existed carry none. They are not rejected: the
+> lineage instead recovers the same genesis-anchored guarantee from the retained in-chain
+> rotation record, whose entry is signed by the predecessor key. Such a legacy rotation
+> only fails verification if its in-chain record was also pruned away — the one case that
+> cannot be anchored.
+
 > **Prerequisite — decouple the DB key first.** Because the default DB key is derived
 > from the signing key, you must set `SECURACV_DB_KEY_SEED` (independent secret) *before*
 > rotating; otherwise the rotated signing key would derive a different DB key and the

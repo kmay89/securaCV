@@ -34,7 +34,7 @@ use zeroize::Zeroizing;
 use crate::crypto::signatures::{
     sign_rotation_attestation, sign_rotation_authorization, verify_rotation_attestation,
     verify_rotation_authorization, PqPublicKey, SignatureKeys, SignatureMode, SignatureSet,
-    DOMAIN_BREAK_GLASS_RECEIPT, DOMAIN_EXPORT_RECEIPT,
+    DOMAIN_BREAK_GLASS_RECEIPT, DOMAIN_EXPORT_RECEIPT, DOMAIN_SEALED_LOG_ENTRY,
 };
 use crate::storage::ensure_columns;
 
@@ -581,6 +581,11 @@ pub struct KeyRotation {
     /// the genesis-anchored proof that the predecessor approved this successor; it is what
     /// lets the key lineage be reconstructed and trusted from the durable history table even
     /// after the in-chain rotation records have been pruned.
+    ///
+    /// Empty for legacy rotation records written before this field existed; those are instead
+    /// anchored by their old-key *entry* signature (see the legacy-recovery path in
+    /// [`reconstruct_device_key_lineage_from`]). `#[serde(default)]` keeps them deserializable.
+    #[serde(default)]
     pub prev_key_authorization: Vec<u8>,
     /// Coarse time bucket — carries no precise time, satisfying the record contract.
     pub time_bucket: TimeBucket,
@@ -2415,15 +2420,31 @@ pub fn reconstruct_device_key_lineage_from(
             ));
         }
         let new_key = verifying_key_from_bytes(&new_bytes)?;
-        let authorization = authorization
-            .ok_or_else(|| anyhow!("device key lineage: epoch {} missing authorization", epoch))?;
         let attestation = attestation
             .ok_or_else(|| anyhow!("device key lineage: epoch {} missing attestation", epoch))?;
-        // Predecessor approved this successor (anchors to genesis); successor proves possession.
-        verify_rotation_authorization(&current, &prev_bytes, &new_bytes, &authorization)
-            .map_err(|e| anyhow!("device key lineage: epoch {}: {}", epoch, e))?;
+        // Successor proves possession of the incoming key.
         verify_rotation_attestation(&new_key, &prev_bytes, &new_bytes, &attestation)
             .map_err(|e| anyhow!("device key lineage: epoch {}: {}", epoch, e))?;
+        // Predecessor approved this successor (anchors the lineage to genesis). Records written
+        // before the authorization field existed (legacy upgrades) carry no authorization here;
+        // recover the same genesis-anchored guarantee from the retained in-chain rotation
+        // record, whose entry is signed by the predecessor key.
+        match authorization.as_deref() {
+            Some(authz) if !authz.is_empty() => {
+                verify_rotation_authorization(&current, &prev_bytes, &new_bytes, authz)
+                    .map_err(|e| anyhow!("device key lineage: epoch {}: {}", epoch, e))?;
+            }
+            _ => {
+                recover_legacy_rotation_authorization(
+                    conn,
+                    &current,
+                    &prev_bytes,
+                    &new_bytes,
+                    activated_at_event_id,
+                )
+                .map_err(|e| anyhow!("device key lineage: epoch {}: {}", epoch, e))?;
+            }
+        }
 
         lineage.push(DeviceKeyEpoch {
             epoch,
@@ -2449,6 +2470,95 @@ fn key32(bytes: &[u8], what: &str) -> Result<[u8; 32]> {
     let mut out = [0u8; 32];
     out.copy_from_slice(bytes);
     Ok(out)
+}
+
+/// Stored columns of a sealed-event row needed to re-verify its entry signature:
+/// `(payload_json, prev_hash, entry_hash, signature, pq_signature, pq_scheme)`.
+type SealedEntryRow = (
+    String,
+    Vec<u8>,
+    Vec<u8>,
+    Vec<u8>,
+    Option<Vec<u8>>,
+    Option<String>,
+);
+
+/// Recover the predecessor-authorization guarantee for a legacy key-history epoch (one
+/// written before the explicit `authorization` field existed) from the retained in-chain
+/// rotation record. The record's entry is hash-chained and signed by the predecessor key, so
+/// validating that entry signature under `predecessor` is genesis-anchored authorization
+/// equivalent. Fails closed if the record was pruned (the only genuinely unrecoverable case).
+fn recover_legacy_rotation_authorization(
+    conn: &Connection,
+    predecessor: &VerifyingKey,
+    prev_bytes: &[u8; 32],
+    new_bytes: &[u8; 32],
+    event_id: i64,
+) -> Result<()> {
+    let row: Option<SealedEntryRow> = conn
+        .query_row(
+            "SELECT payload_json, prev_hash, entry_hash, signature, pq_signature, pq_scheme \
+             FROM sealed_events WHERE id = ?1",
+            params![event_id],
+            |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                ))
+            },
+        )
+        .optional()?;
+    let (payload, prev_hash, entry_hash, signature, pq_signature, pq_scheme) =
+        row.ok_or_else(|| {
+            anyhow!(
+            "authorization missing and the in-chain rotation record (event {}) has been pruned; \
+             cannot anchor this legacy rotation",
+            event_id
+        )
+        })?;
+
+    let record = SealedLogRecord::deserialize_compat(&payload)?;
+    let SealedLogRecord::KeyRotation(rotation) = record else {
+        return Err(anyhow!("event {} is not a rotation record", event_id));
+    };
+    if &rotation.prev_public_key != prev_bytes || &rotation.new_public_key != new_bytes {
+        return Err(anyhow!(
+            "in-chain rotation record (event {}) does not match the history epoch",
+            event_id
+        ));
+    }
+
+    let prev_hash = key32(&prev_hash, "sealed_events.prev_hash")?;
+    let entry_hash = key32(&entry_hash, "sealed_events.entry_hash")?;
+    if hash_entry(&prev_hash, payload.as_bytes()) != entry_hash {
+        return Err(anyhow!(
+            "in-chain rotation record (event {}) hash mismatch",
+            event_id
+        ));
+    }
+    let signatures = SignatureSet::from_storage(&signature, pq_signature, pq_scheme)?;
+    // The predecessor's entry signature is the authorization-equivalent (it signed this
+    // rotation into the chain). Ed25519 under the predecessor key is sufficient.
+    verify_entry_signature(
+        predecessor,
+        &entry_hash,
+        &signatures,
+        SignatureMode::Compat,
+        None,
+        DOMAIN_SEALED_LOG_ENTRY,
+    )
+    .map_err(|e| {
+        anyhow!(
+            "legacy rotation record (event {}) entry signature does not verify under the \
+             predecessor key: {}",
+            event_id,
+            e
+        )
+    })
 }
 
 /// The device's *current* signing public key — the last epoch of the validated lineage.
@@ -4272,6 +4382,103 @@ mod tests {
             count, 1,
             "only the post-checkpoint event remains after pruning"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn device_key_lineage_recovers_legacy_rows_without_authorization() -> Result<()> {
+        // Upgrade path: a database rotated under the previous release has history rows with no
+        // `authorization`. Reconstruction must recover the genesis anchor from the retained
+        // in-chain rotation record instead of locking the user out on open.
+        let cfg = rotation_cfg(":memory:", ROT_OLD_SEED);
+        let mut kernel = Kernel::open(&cfg)?;
+        seal_one_event(&mut kernel, &cfg, "zone:a")?;
+        kernel.rotate_device_identity(ROT_NEW_SEED)?;
+        // Simulate a legacy (pre-authorization) history row.
+        kernel.conn.execute(
+            "UPDATE device_key_history SET authorization = NULL WHERE epoch = 1",
+            [],
+        )?;
+
+        let new_pub = signing_key_from_seed(ROT_NEW_SEED)?
+            .verifying_key()
+            .to_bytes();
+        let lineage = reconstruct_device_key_lineage(&kernel.conn)?;
+        assert_eq!(lineage.len(), 2);
+        assert_eq!(lineage[1].public_key, new_pub);
+        // current_device_public_key is what Kernel::open consults — it must not lock out.
+        assert_eq!(current_device_public_key(&kernel.conn)?, new_pub);
+
+        // If the in-chain record is also gone (pruned), recovery fails closed.
+        let rot_id = lineage[1].activated_at_event_id;
+        kernel
+            .conn
+            .execute("DELETE FROM sealed_events WHERE id = ?1", params![rot_id])?;
+        let err = reconstruct_device_key_lineage(&kernel.conn)
+            .expect_err("a pruned legacy rotation cannot be anchored");
+        assert!(err.to_string().contains("pruned"), "got: {err}");
+        Ok(())
+    }
+
+    #[test]
+    fn verifier_accepts_legacy_rotation_record_without_authorization() -> Result<()> {
+        // A rotation record written before the authorization field existed has an empty
+        // `prev_key_authorization`; verification must accept it, anchored by its old-key entry
+        // signature alone (the field is `#[serde(default)]` so it still deserializes).
+        let cfg = rotation_cfg(":memory:", ROT_OLD_SEED);
+        let mut kernel = Kernel::open(&cfg)?;
+        let genesis = kernel.device_key_for_verify_only();
+        seal_one_event(&mut kernel, &cfg, "zone:a")?;
+        // Keep the rotation as the chain head so rewriting it does not break a successor's
+        // prev_hash linkage (legacy realism is in the record shape, not its position).
+        kernel.rotate_device_identity(ROT_NEW_SEED)?;
+
+        // Rewrite the in-chain rotation record to drop the authorization field, then re-sign the
+        // entry with the old key (exactly what a legacy record looks like).
+        let (rot_id, payload): (i64, String) = kernel.conn.query_row(
+            "SELECT id, payload_json FROM sealed_events WHERE payload_json LIKE '%key_rotation%' LIMIT 1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        let mut record: serde_json::Value = serde_json::from_str(&payload)?;
+        record
+            .as_object_mut()
+            .unwrap()
+            .remove("prev_key_authorization");
+        let new_payload = serde_json::to_string(&record)?;
+        // Confirm it round-trips through the real deserializer (serde default fills the field).
+        assert!(matches!(
+            SealedLogRecord::deserialize_compat(&new_payload)?,
+            SealedLogRecord::KeyRotation(_)
+        ));
+
+        let prev_hash: Vec<u8> = kernel.conn.query_row(
+            "SELECT prev_hash FROM sealed_events WHERE id = ?1",
+            params![rot_id],
+            |r| r.get(0),
+        )?;
+        let mut prev = [0u8; 32];
+        prev.copy_from_slice(&prev_hash);
+        let new_hash = hash_entry(&prev, new_payload.as_bytes());
+        let old_key = signing_key_from_seed(ROT_OLD_SEED)?;
+        let sig = crate::crypto::signatures::sign_with_domain(
+            DOMAIN_SEALED_LOG_ENTRY,
+            &crate::crypto::signatures::SignatureKeys::new(&old_key),
+            &new_hash,
+        )?;
+        kernel.conn.execute(
+            "UPDATE sealed_events SET payload_json = ?1, entry_hash = ?2, signature = ?3 WHERE id = ?4",
+            params![new_payload, new_hash.to_vec(), sig.ed25519_signature.to_vec(), rot_id],
+        )?;
+        // Also clear the history authorization so the lineage path takes the legacy branch.
+        kernel.conn.execute(
+            "UPDATE device_key_history SET authorization = NULL WHERE epoch = 1",
+            [],
+        )?;
+
+        let count = verify_chain_from_genesis(&kernel.conn, &genesis)?;
+        assert_eq!(count, 2, "legacy rotation record must verify on the chain");
+        assert_eq!(reconstruct_device_key_lineage(&kernel.conn)?.len(), 2);
         Ok(())
     }
 }
