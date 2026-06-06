@@ -374,7 +374,7 @@ fn register_tract_backend(registry: &mut BackendRegistry, args: &Args) -> Result
             .ok_or_else(|| anyhow!("--tract-model is required for tract backend"))?;
         let backend = TractBackend::new(model_path, DEMO_FRAME_WIDTH, DEMO_FRAME_HEIGHT)?;
         registry.register(backend);
-        return Ok(());
+        Ok(())
     }
     #[cfg(not(feature = "backend-tract"))]
     {

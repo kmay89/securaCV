@@ -109,13 +109,16 @@ jobs:
     # Compile-gates the pure-Rust optional features that have no dedicated job, so a
     # dependency bump that isn't migrated in-source (e.g. ureq for ingest-esp32, tract
     # for backend-tract) fails CI instead of silently breaking an off-by-default feature.
+    # Uses --all-targets so feature-gated code in *every* target is covered (e.g. the
+    # ingest-esp32 / backend-tract blocks in the witnessd and demo binaries and the
+    # adapter integration tests), not just one bin/lib.
     steps:
     - uses: actions/checkout@v4
     - name: Install libseccomp
       run: sudo apt-get update && sudo apt-get install -y libseccomp-dev
     - name: Clippy (ingest-esp32)
-      run: cargo clippy --features ingest-esp32 --bin grove_vision2_ingest -- -D warnings
-    - name: Clippy (adapters / adapter_host)
-      run: cargo clippy --features adapter-frigate,adapter-mqtt-sensor,adapter-webhook,adapter-webhook-tls,adapter-ble-presence,adapter-sandbox --bin adapter_host -- -D warnings
+      run: cargo clippy --all-targets --features ingest-esp32 -- -D warnings
+    - name: Clippy (adapters)
+      run: cargo clippy --all-targets --features adapter-frigate,adapter-mqtt-sensor,adapter-webhook,adapter-webhook-tls,adapter-ble-presence,adapter-sandbox -- -D warnings
     - name: Clippy (backend-tract)
-      run: cargo clippy --features backend-tract --lib -- -D warnings
+      run: cargo clippy --all-targets --features backend-tract -- -D warnings
