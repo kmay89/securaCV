@@ -180,7 +180,7 @@ impl SyntheticV4l2Source {
         let pixel_count = (self.config.width * self.config.height * 3) as usize; // RGB
 
         // Change scene state occasionally to simulate motion
-        if self.frame_count % 50 == 0 {
+        if self.frame_count.is_multiple_of(50) {
             self.scene_state = self.scene_state.wrapping_add(1);
         }
 
@@ -225,9 +225,9 @@ struct DeviceV4l2Source {
 #[self_referencing]
 struct DeviceV4l2State {
     device: v4l::Device,
-    #[borrows(mut device)]
+    #[borrows(device)]
     #[covariant]
-    stream: v4l::prelude::MmapStream<'this, v4l::Device>,
+    stream: v4l::prelude::MmapStream<'this>,
 }
 
 impl DeviceV4l2Source {
@@ -248,7 +248,7 @@ impl DeviceV4l2Source {
         use v4l::buffer::Type;
         use v4l::video::Capture;
 
-        if let Some(_) = &self.state {
+        if self.state.is_some() {
             if self.is_healthy() {
                 log::debug!(
                     "V4l2Source: already connected and healthy to {}",
@@ -270,7 +270,7 @@ impl DeviceV4l2Source {
             self.state = None;
         }
 
-        let mut device = v4l::Device::with_path(&self.config.device)
+        let device = v4l::Device::with_path(&self.config.device)
             .with_context(|| format!("open v4l2 device {}", self.config.device))?;
         let mut format = device.format().context("read v4l2 format")?;
         format.width = self.config.width;
@@ -315,7 +315,7 @@ impl DeviceV4l2Source {
         };
         self.last_error = None;
 
-        let state = DeviceV4l2StateBuilder {
+        let state = DeviceV4l2StateTryBuilder {
             device,
             stream_builder: |device| {
                 // Create the stream once during connect to avoid per-frame setup.
@@ -324,9 +324,8 @@ impl DeviceV4l2Source {
             },
         }
         .try_build()
-        .map_err(|err| {
+        .inspect_err(|err| {
             self.last_error = Some(err.to_string());
-            err
         })?;
         self.state = Some(state);
 
@@ -360,9 +359,8 @@ impl DeviceV4l2Source {
             self.active_height,
             self.active_format,
         )
-        .map_err(|err| {
+        .inspect_err(|err| {
             self.last_error = Some(err.to_string());
-            err
         })?;
         let features_hash = compute_features_hash(&rgb, self.frame_count);
 
@@ -393,17 +391,11 @@ impl DeviceV4l2Source {
     }
 
     fn health_grace(&self) -> Duration {
-        let base_ms = if self.config.target_fps == 0 {
-            2_000
-        } else {
-            (1000 / self.config.target_fps).saturating_mul(6)
-        };
+        let base_ms = 1000u32
+            .checked_div(self.config.target_fps)
+            .map_or(2_000, |ms| ms.saturating_mul(6));
         Duration::from_millis(base_ms.max(2_000) as u64)
     }
-}
-
-fn should_skip_connect(state_present: bool, is_healthy: bool) -> bool {
-    state_present && is_healthy
 }
 
 // ----------------------------------------------------------------------------

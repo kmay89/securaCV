@@ -111,7 +111,8 @@ jobs:
     # for backend-tract) fails CI instead of silently breaking an off-by-default feature.
     # Uses --all-targets so feature-gated code in *every* target is covered (e.g. the
     # ingest-esp32 / backend-tract blocks in the witnessd and demo binaries and the
-    # adapter integration tests), not just one bin/lib.
+    # adapter integration tests), not just one bin/lib. ingest-v4l2 is included here
+    # because the v4l crate builds and links without any system library.
     steps:
     - uses: actions/checkout@v4
     - name: Install libseccomp
@@ -122,3 +123,20 @@ jobs:
       run: cargo clippy --all-targets --features adapter-frigate,adapter-mqtt-sensor,adapter-webhook,adapter-webhook-tls,adapter-ble-presence,adapter-sandbox -- -D warnings
     - name: Clippy (backend-tract)
       run: cargo clippy --all-targets --features backend-tract -- -D warnings
+    - name: Clippy (ingest-v4l2)
+      run: cargo clippy --all-targets --features ingest-v4l2 -- -D warnings
+
+  ingest-gstreamer:
+    name: Ingest (gstreamer rtsp)
+    runs-on: ubuntu-latest
+    # Compile-gate for the rtsp-gstreamer feature, which needs the GStreamer dev
+    # libraries and so cannot live in the optional-features job above.
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install GStreamer + libseccomp dev libraries
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libseccomp-dev \
+          libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
+    - name: Clippy (rtsp-gstreamer)
+      run: cargo clippy --all-targets --features rtsp-gstreamer -- -D warnings

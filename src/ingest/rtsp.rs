@@ -435,8 +435,8 @@ fn sample_to_pixels(sample: &gstreamer::Sample) -> Result<(Vec<u8>, u32, u32)> {
     let info =
         gstreamer_video::VideoInfo::from_caps(caps).context("parse RTSP caps as video info")?;
 
-    let width = info.width() as u32;
-    let height = info.height() as u32;
+    let width = info.width();
+    let height = info.height();
     let row_bytes = (width as usize) * 3;
     let stride = info.stride()[0] as usize;
 
