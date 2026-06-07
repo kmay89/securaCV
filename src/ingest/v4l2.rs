@@ -262,13 +262,6 @@ impl DeviceV4l2Source {
             );
             self.state = None;
         }
-        if self.state.is_some() {
-            log::info!(
-                "V4l2Source: unhealthy connection, attempting to reconnect to {}",
-                self.config.device
-            );
-            self.state = None;
-        }
 
         let device = v4l::Device::with_path(&self.config.device)
             .with_context(|| format!("open v4l2 device {}", self.config.device))?;
