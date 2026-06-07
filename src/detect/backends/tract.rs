@@ -314,11 +314,7 @@ impl TractBackend {
         }
 
         let mut detections = Vec::new();
-        for ((raw_box, confidence), class_id) in boxes
-            .into_iter()
-            .zip(scores.into_iter())
-            .zip(classes.into_iter())
-        {
+        for ((raw_box, confidence), class_id) in boxes.into_iter().zip(scores).zip(classes) {
             if !confidence.is_finite() {
                 return Err(anyhow!("score was not finite"));
             }

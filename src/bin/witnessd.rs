@@ -595,7 +595,7 @@ fn register_tract_backend(
             }
         };
         registry.register(backend.with_threshold(config.detect.confidence_threshold));
-        return Ok(());
+        Ok(())
     }
     #[cfg(not(feature = "backend-tract"))]
     {
