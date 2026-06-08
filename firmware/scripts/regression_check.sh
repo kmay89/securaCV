@@ -520,13 +520,19 @@ fi
 
 echo ""
 
-# ── Check: Mesh activation is gated on flash encryption ────────
-# The ESP-NOW "Opera" mesh persists a long-lived shared secret (opera_secret) in
-# NVS. NVS is only confidential when flash encryption is enabled, so mesh MUST
-# fail closed on non-flash-encrypted boards. Every mesh implementation file must
-# retain its esp_flash_encryption_enabled() gate — deleting it would silently
-# ship a plaintext-secret mesh. (Tracking: issue #610.)
-echo "── Security: Mesh requires flash encryption ──"
+# ── Check: Mesh secret persistence is gated on flash encryption ────────
+# The ESP-NOW "Opera" mesh uses a long-lived shared secret (opera_secret). It must
+# NEVER be written to NVS unless flash encryption is on, or the secret sits in
+# plaintext at rest. The persistence layer (mesh_state.cpp) enforces this: its
+# save_*/load_* paths return false when !esp_flash_encryption_enabled(), so on an
+# FE-off board the secret is not persisted (the live in-RAM session is allowed for
+# the current boot by design — see firmware/canary/src/main.cpp on_pairing_succeeded
+# — but nothing confidential lands in unencrypted NVS). This guard asserts that FE
+# check is not silently removed from the mesh persistence/impl files. It does NOT,
+# and cannot statically, prove the *activation* path fails closed — see issue #610
+# C2 / the bench runbook for the on-device check, and the open design question of
+# whether live activation should also refuse on FE-off boards.
+echo "── Security: Mesh secret persistence is FE-gated ──"
 
 MESH_IMPL_FILES=$(find "$FIRMWARE_DIR" -type f \( -name "mesh_network.cpp" -o -name "mesh_state.cpp" \) \
   -not -path "*/_archive/*" 2>/dev/null)
@@ -538,9 +544,9 @@ else
     [ -z "$mf" ] && continue
     rel=${mf#"$FIRMWARE_DIR/"}
     if grep -q "esp_flash_encryption_enabled" "$mf"; then
-      check_pass "Mesh FE gate present: $rel"
+      check_pass "Mesh FE persistence gate present: $rel"
     else
-      check_fail "Mesh impl '$rel' has no esp_flash_encryption_enabled() gate — mesh must fail closed without flash encryption (#610)"
+      check_fail "Mesh impl '$rel' has no esp_flash_encryption_enabled() gate — the opera_secret must never be persisted to unencrypted NVS (#610)"
     fi
   done <<< "$MESH_IMPL_FILES"
 fi

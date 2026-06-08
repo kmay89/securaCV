@@ -38,9 +38,12 @@ are **resolved**. This capstone does not re-litigate them.
 1. **CI: fixed the long-red `Detect Eval` check** (`.github/workflows/detect-eval.yml`). It was a
    YAML startup failure (unquoted `cargo test --lib eval::` → 0 jobs) on every commit since it was
    added; now it parses and runs green. (Supersedes the still-open PR #734.)
-2. **Firmware guard: mesh requires flash encryption** (`firmware/scripts/regression_check.sh`).
-   Asserts every mesh implementation file keeps its `esp_flash_encryption_enabled()` gate, so mesh
-   can never silently ship without flash encryption — the static half of issue **#610**.
+2. **Firmware guard: mesh secret persistence is FE-gated** (`firmware/scripts/regression_check.sh`).
+   Asserts the mesh persistence layer keeps its `esp_flash_encryption_enabled()` check so the
+   `opera_secret` can never be silently persisted to unencrypted NVS — the static half of issue
+   **#610**. (Note: by design the live in-RAM session still runs for the current boot on an FE-off
+   dev board; whether activation should also refuse is an open #610 decision — see the bench
+   runbook Track C.)
 3. **Status corrections to the firmware picture** (verified against code, via PR #737 review):
    - Mesh **is wired** in the ACTIVE tree (`firmware/canary/src/main.cpp` inits
      `mesh_transport`/`mesh_session` under `FEATURE_MESH_NETWORK` and drives them from `loop()`);

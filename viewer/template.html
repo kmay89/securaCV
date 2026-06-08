@@ -244,6 +244,7 @@ async function process(envelope, sourceLabel) {
     : 'A check failed. Do not trust the contents of this bundle.';
 
   let html = `<div class="banner ${cls}">${icon}<div>${title}<small>${esc(sub)}</small></div></div>`;
+  html += whatThisMeans(report.ok ? (report.warnings.length ? 'notes' : 'verified') : 'rejected');
   html += metaPanel(sourceLabel, title);
 
   if (!report.ok) {
@@ -311,6 +312,35 @@ function metaPanel(sourceLabel, resultText) {
   </dl></div>`;
 }
 
+// Plain-language "what this means / what to do next" for a non-technical reader (tenant,
+// journalist, lawyer). Keyed by outcome so the guidance always matches the banner above it.
+function whatThisMeans(kind) {
+  const reproduce = 'Anyone can repeat this check offline with this same viewer — they don’t have to trust you, or us.';
+  const copy = {
+    verified: {
+      what: 'The record’s integrity is intact: every event was signed by the device’s key, and nothing has been added, removed, or altered since it was sealed.',
+      next: ['Keep the original <strong>.json</strong> bundle file — it is the evidence; this page is only a check of it.',
+             'Use <strong>Save / print report</strong> below for a dated record of <em>what</em> you verified and <em>when</em>.',
+             'To let someone else confirm it, send them the bundle file and this viewer. ' + reproduce] },
+    notes: {
+      what: 'The record’s integrity is intact and signed. The notes below do not affect that — they flag things a checker couldn’t fully evaluate (e.g. a post-quantum signature this browser can’t test).',
+      next: ['Read the <strong>Notes</strong> panel so you can explain each one.',
+             'Save / print the report and keep the original bundle, exactly as for a clean pass.'] },
+    rejected: {
+      what: 'At least one cryptographic check failed, so this bundle cannot be relied on as an unaltered record. That is not proof someone tampered with it — a truncated download or an incomplete export fails the same way — but as it stands it is not verifiable evidence.',
+      next: ['Re-export a fresh bundle from the source and verify that copy.',
+             'If a fresh copy still fails, preserve <em>both</em> the file and this report and treat the discrepancy as significant — do not edit the file to “fix” it.'] },
+    inconclusive: {
+      what: 'This browser finished the structural checks but cannot run the Ed25519 signature check, so the result is neither a pass nor a failure. A valid bundle is never shown as rejected for this reason.',
+      next: ['Open this same file in a current browser that supports Ed25519 (recent Chrome or Edge, or Safari 17+) to finish the check.',
+             'The checks that <em>did</em> run are listed above; a tampered fingerprint or broken chain would already have been caught here.'] },
+  };
+  const c = copy[kind]; if (!c) return '';
+  return `<div class="panel"><h2>What this means</h2><div style="font-size:14.5px">${c.what}</div>`
+    + `<div class="hint" style="margin-top:10px;font-weight:600;color:var(--fg)">What to do next</div>`
+    + `<ul class="checks">${c.next.map((n) => `<li>${ICONS.tick}<span>${n}</span></li>`).join('')}</ul></div>`;
+}
+
 // Browser can't run Ed25519 — neither a pass nor a failure. Must read clearly as inconclusive
 // so a valid bundle is never mistaken for forged.
 function renderInconclusive(report, sourceLabel) {
@@ -318,6 +348,7 @@ function renderInconclusive(report, sourceLabel) {
   html += `<div class="panel"><h2>What happened</h2><div>${esc(report.error || '')}</div>`;
   if (report.checks && report.checks.length) html += `<div class="hint">Checks completed before signatures could be tested:</div>${checklist(report.checks)}`;
   html += `</div>`;
+  html += whatThisMeans('inconclusive');
   html += metaPanel(sourceLabel, 'Inconclusive — signatures not checked in this browser');
   html += actions(true);
   out.innerHTML = html;
