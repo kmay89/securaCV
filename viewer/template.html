@@ -338,7 +338,7 @@ function whatThisMeans(kind) {
   const c = copy[kind]; if (!c) return '';
   return `<div class="panel"><h2>What this means</h2><div style="font-size:14.5px">${c.what}</div>`
     + `<div class="hint" style="margin-top:10px;font-weight:600;color:var(--fg)">What to do next</div>`
-    + `<ul class="checks">${c.next.map((n) => `${'<li>' + ICONS.tick + '<span>' + n + '</span></li>'}`).join('')}</ul></div>`;
+    + `<ul class="checks">${c.next.map((n) => `<li>${ICONS.tick}<span>${n}</span></li>`).join('')}</ul></div>`;
 }
 
 // Browser can't run Ed25519 — neither a pass nor a failure. Must read clearly as inconclusive

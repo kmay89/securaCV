@@ -72,15 +72,23 @@ Proves the flagship path end-to-end on real infrastructure. (CI already proves t
 
 ## Track C — Mesh + Chirp + Beacon (the "canaries talk without HA" proof) — closes #610
 
-Mesh requires **flash-encryption-enabled** boards built from `[env:full]`. The static guard added
-this cycle (`firmware/scripts/regression_check.sh` → "Mesh requires flash encryption") asserts the
-FE gate stays in the source; this track proves it **fails closed on hardware**.
+Mesh persists its `opera_secret` only on **flash-encryption-enabled** boards built from
+`[env:full]`. The static guard added this cycle (`firmware/scripts/regression_check.sh` → "Mesh
+secret persistence is FE-gated") asserts the FE check stays in the persistence layer; this track
+proves on hardware that **no mesh secret lands in unencrypted NVS**.
+
+> **As-built nuance / open design question.** On an FE-off board the persistence layer refuses to
+> write the secret, but `on_pairing_succeeded` (`firmware/canary/src/main.cpp`) **deliberately
+> still runs the live session in RAM for the current boot** (it just won't survive a reboot). So
+> "fail-closed" today means *no secret persisted*, **not** *no live session*. Whether live
+> activation should also refuse on FE-off boards is an open #610 decision for the maintainers — C2
+> below verifies the as-built behavior, not an assumed hard refusal.
 
 | # | Step | Command / reference | Expected | Artifact → `docs/audit/repro/` |
 |---|---|---|---|---|
 | C0 | Production-provision FE boards | `firmware/provisioning/` → `./generate_keys.sh` then `./provision_canary.sh --port … --phase 2 --dry-run` then without `--dry-run` (uses `platformio_secure.ini` / `sdkconfig.defaults.secure` / `partitions_secure.csv`) | Secure Boot v2 + Flash Encryption burned; `verify_device.py` confirms | `O2/` |
 | C1 | Build the mesh image | `pio run -e full -t upload` on ≥3 FE boards | `[OK] Mesh layer active (mesh_transport + mesh_session)` in serial | `O3/` setup log |
-| C2 | **FE fail-closed** | flash `[env:full]` onto a **non-FE** board | mesh activation **refused** (`esp_flash_encryption_enabled()==false` path) | `O2/` refusal log |
+| C2 | **FE secret-at-rest gate** | pair on a **non-FE** board, then dump NVS | serial shows `active for this boot but NVS persist failed`; **NVS contains no `opera_secret`** (O2); session does **not** survive reboot | `O2/` (NVS dump + serial) |
 | C3 | Chirp v0.2 two-device repro | `docs/audit/hardware_verification_checklist.md` → *Chirp v0.2* | findings reproduce as documented | `chirp/` |
 | C4 | Opera mesh v0.2 three-board repro (O1/O2/O3) | same checklist → *Opera mesh v0.2* | O1 counter freshness, O2 FE-gated provisioning, O3 transactional rekey all pass | `O1/ O2/ O3/` |
 | C5 | Beacon channel v0 three-board repro | same checklist → *Beacon channel v0* | beacon discovery / tamper-revoke as documented | `beacon/` |
