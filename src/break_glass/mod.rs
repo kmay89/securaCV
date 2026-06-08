@@ -2,10 +2,12 @@
 
 mod core;
 
+pub mod backend;
 pub mod cli;
 pub mod http;
 pub mod session;
 
+pub use backend::KernelVaultOps;
 pub use cli::run;
 pub use core::{
     approvals_commitment, Approval, BreakGlass, BreakGlassOutcome, BreakGlassReceipt,
