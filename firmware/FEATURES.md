@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-05-27
 **Original audit:** 2026-02-20
-**Companion docs:** [VARIANT_POLICY.md](VARIANT_POLICY.md) (lifecycle labels), [FIRMWARE_VARIANT_AUDIT.md](FIRMWARE_VARIANT_AUDIT.md) (risk analysis)
+**Companion docs:** [VARIANT_POLICY.md](VARIANT_POLICY.md) (lifecycle labels), [FIRMWARE_VARIANT_AUDIT.md](FIRMWARE_VARIANT_AUDIT.md) (risk analysis), [PARITY_PLAN.md](PARITY_PLAN.md) (ACTIVE ⇄ canary-wap parity closure program)
 
 **Variant identifiers used below:**
 

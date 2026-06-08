@@ -520,6 +520,33 @@ fi
 
 echo ""
 
+# ── Check: Mesh activation is gated on flash encryption ────────
+# The ESP-NOW "Opera" mesh persists a long-lived shared secret (opera_secret) in
+# NVS. NVS is only confidential when flash encryption is enabled, so mesh MUST
+# fail closed on non-flash-encrypted boards. Every mesh implementation file must
+# retain its esp_flash_encryption_enabled() gate — deleting it would silently
+# ship a plaintext-secret mesh. (Tracking: issue #610.)
+echo "── Security: Mesh requires flash encryption ──"
+
+MESH_IMPL_FILES=$(find "$FIRMWARE_DIR" -type f \( -name "mesh_network.cpp" -o -name "mesh_state.cpp" \) \
+  -not -path "*/_archive/*" 2>/dev/null)
+
+if [ -z "$MESH_IMPL_FILES" ]; then
+  check_warn "No mesh implementation files found (mesh_network.cpp / mesh_state.cpp)"
+else
+  while IFS= read -r mf; do
+    [ -z "$mf" ] && continue
+    rel=${mf#"$FIRMWARE_DIR/"}
+    if grep -q "esp_flash_encryption_enabled" "$mf"; then
+      check_pass "Mesh FE gate present: $rel"
+    else
+      check_fail "Mesh impl '$rel' has no esp_flash_encryption_enabled() gate — mesh must fail closed without flash encryption (#610)"
+    fi
+  done <<< "$MESH_IMPL_FILES"
+fi
+
+echo ""
+
 # ── Check: LESSONS_LEARNED.md exists ──────────────────────────
 echo "── Documentation: Lessons Learned ──"
 

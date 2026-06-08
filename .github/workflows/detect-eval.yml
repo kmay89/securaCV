@@ -26,7 +26,7 @@ jobs:
         run: cargo clippy --features detect-eval --bin detect_eval --lib -- -D warnings
 
       - name: Metric unit tests (no feature)
-        run: cargo test --lib eval::
+        run: "cargo test --lib eval::"
 
       # Hermetic known-answer gate: runs the real eval runner against the deterministic
       # test ONNX. This is the numeric correctness check for the harness.
