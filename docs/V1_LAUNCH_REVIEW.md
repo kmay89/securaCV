@@ -168,12 +168,12 @@ honest phrasing is "mesh-ready (beta), validated on hardware in v1.0."
 
 ## 3. Decisions only the founder can make (these gate the plan)
 
-1. **Which firmware tree is the v1 shipping image?** Both carry a *wired* mesh path. The
-   `canary-wap` **Arduino** tree (labeled COMPATIBILITY) is the broadest single-sketch
-   implementation (and is where HTTPS-on-443 already runs); the *architecturally-blessed* ACTIVE
-   tree (`firmware/canary/`, modular PlatformIO) wires mesh under `FEATURE_MESH_NETWORK` and turns
-   on RF/chirp in `[env:full]`. The decision is which one is the supported v1 image and which
-   `[env:*]` it ships as — not a from-scratch port. **This decision shapes Phase 2.**
+1. **~~Which firmware tree is the v1 shipping image?~~ DECIDED: bring both to full parity.** Both
+   the `canary-wap` **Arduino** tree (broadest single sketch; already runs HTTPS:443) and the
+   ACTIVE modular `firmware/canary/` tree (mesh wired under `FEATURE_MESH_NETWORK`; RF/chirp in
+   `[env:full]`) ship as supported v1 images, brought to **bidirectional feature parity**. The
+   divergences and the sequenced closure program are tracked in
+   [`firmware/PARITY_PLAN.md`](../firmware/PARITY_PLAN.md). **This shapes Phase 2.**
 2. **Hardware-backed keys: implement or defer?** v1 ships seed-derived device keys (persistent,
    0600). The threat model's institutional/coercion classes are better served by a Secure
    Element. Recommended: **defer to v1.1, state it plainly** (it already is in the roadmap) —
