@@ -15,6 +15,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Result};
+use zeroize::Zeroize;
 
 use super::http::BreakGlassOps;
 use crate::break_glass::{Approval, BreakGlass, QuorumPolicy, UnlockRequest};
@@ -86,7 +87,7 @@ impl BreakGlassOps for KernelVaultOps {
             crypto_mode: policy.vault.crypto_mode,
         })?;
         let verifying_key = self.kernel.device_verifying_key();
-        let clear = vault.unseal(
+        let mut clear = vault.unseal(
             &request.vault_envelope_id,
             &mut token,
             self.ruleset_hash,
@@ -99,7 +100,11 @@ impl BreakGlassOps for KernelVaultOps {
         let dir = Path::new(output_dir);
         std::fs::create_dir_all(dir)?;
         let path = dir.join(format!("{}.raw", sanitized));
-        write_restricted(&path, &clear)?;
+        let write_result = write_restricted(&path, &clear);
+        // Wipe the recovered cleartext from RAM regardless of whether the write
+        // succeeded — it must not linger in a heap buffer for a core dump to leak.
+        clear.zeroize();
+        write_result?;
         Ok(path)
     }
 }
@@ -109,13 +114,21 @@ fn write_restricted(path: &Path, bytes: &[u8]) -> Result<()> {
     #[cfg(unix)]
     {
         use std::io::Write;
-        use std::os::unix::fs::OpenOptionsExt;
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
         let mut file = std::fs::OpenOptions::new()
             .create(true)
             .write(true)
             .truncate(true)
             .mode(0o600)
             .open(path)?;
+        // `mode()` only takes effect when the file is newly created; if it already
+        // existed with laxer permissions, tighten it explicitly so the cleartext
+        // is never left world-readable.
+        let mut perms = file.metadata()?.permissions();
+        if perms.mode() & 0o777 != 0o600 {
+            perms.set_mode(0o600);
+            file.set_permissions(perms)?;
+        }
         file.write_all(bytes)?;
     }
     #[cfg(not(unix))]
@@ -157,6 +170,25 @@ mod tests {
             r.get(0)
         })
         .unwrap()
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn write_restricted_tightens_preexisting_lax_file() -> Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("secura_bg_perms_{}", rand::random::<u64>()));
+        std::fs::create_dir_all(&dir)?;
+        let path = dir.join("evidence.raw");
+        // Pre-create the target world-readable, as a stale unseal could have.
+        std::fs::write(&path, b"old")?;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644))?;
+
+        write_restricted(&path, b"new-cleartext")?;
+
+        let mode = std::fs::metadata(&path)?.permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "cleartext file must be restricted to 0600");
+        assert_eq!(std::fs::read(&path)?, b"new-cleartext");
+        Ok(())
     }
 
     #[test]
