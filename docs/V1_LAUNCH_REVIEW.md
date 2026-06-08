@@ -202,7 +202,9 @@ honest phrasing is "mesh-ready (beta), validated on hardware in v1.0."
 
 ### Phase 1 — The on-device hardware gauntlet *(the true v1 gate)*
 This is the **only** remaining hard blocker in the canonical v1 definition. Everything below
-needs real boards; none of it can run in the cloud.
+needs real boards; none of it can run in the cloud. **Driver sheet:**
+[`V1_BENCH_TEST_RUNBOOK.md`](V1_BENCH_TEST_RUNBOOK.md) sequences every step, command, expected
+result, and artifact, with a sign-off matrix.
 - [ ] Flash the chosen firmware image on ≥ 2 XIAO ESP32-S3 boards; run capture → on-device
       witness chain → MQTT → kernel/bridge → HA end-to-end; capture serial + chain-verify logs.
 - [ ] Run the live 4-container operator stack and `integrations/ha_frigate_mqtt/verify_pipeline.sh`
