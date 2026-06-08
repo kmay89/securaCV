@@ -142,7 +142,10 @@ impl BreakGlassSession {
 
     /// The approvals collected so far (already validated on submit).
     pub fn approvals(&self) -> &[Approval] {
-        self.pending.as_ref().map(|p| p.approvals.as_slice()).unwrap_or(&[])
+        self.pending
+            .as_ref()
+            .map(|p| p.approvals.as_slice())
+            .unwrap_or(&[])
     }
 
     /// The open request, if any.
@@ -153,8 +156,11 @@ impl BreakGlassSession {
     /// A secret-free status snapshot for display, or `None` if no request is open.
     pub fn status(&self, policy: &QuorumPolicy) -> Option<SessionStatus> {
         let pending = self.pending.as_ref()?;
-        let mut collected: Vec<String> =
-            pending.approvals.iter().map(|a| a.trustee.0.clone()).collect();
+        let mut collected: Vec<String> = pending
+            .approvals
+            .iter()
+            .map(|a| a.trustee.0.clone())
+            .collect();
         collected.sort();
         collected.dedup();
         Some(SessionStatus {
@@ -194,7 +200,11 @@ mod tests {
     }
 
     fn sign(key: &SigningKey, id: &str, request_hash: [u8; 32]) -> Approval {
-        Approval::new(TrusteeId::new(id), request_hash, key.sign(&request_hash).to_vec())
+        Approval::new(
+            TrusteeId::new(id),
+            request_hash,
+            key.sign(&request_hash).to_vec(),
+        )
     }
 
     #[test]
@@ -273,7 +283,10 @@ mod tests {
         let rh = session.open(UnlockRequest::new("vault:1", [3u8; 32], "x", bucket()).unwrap());
         assert_eq!(session.submit(&policy, sign(&alice, "alice", rh)), Ok(true));
         // Same trustee again → replaces, not a second count.
-        assert_eq!(session.submit(&policy, sign(&alice, "alice", rh)), Ok(false));
+        assert_eq!(
+            session.submit(&policy, sign(&alice, "alice", rh)),
+            Ok(false)
+        );
         assert_eq!(session.approvals().len(), 1);
         assert_eq!(session.status(&policy).unwrap().collected, vec!["alice"]);
     }
