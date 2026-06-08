@@ -115,9 +115,13 @@ hostnames + multi-canary naming/Identify, bearer-token API + rate limit, CSI sen
 and a 19-check `regression_check.sh` that hard-fails on raw MAC / un-coarsened GPS / hardcoded
 secrets. Dual-build CI (PlatformIO + Arduino) is green.
 
-🟡 / 🔴 Risk areas: firmware **HTTPS/TLS is stubbed** (cert-gen code exists, server never
-instantiated); device-to-device **mesh ships disabled by default and is hardware-unproven**
-(§2); and there is **variant fragmentation** between the ACTIVE and the most-complete tree (§3).
+🟡 / 🔴 Risk areas: device-to-device **mesh ships disabled by default and is hardware-unproven**
+(§2); firmware **HTTPS/TLS is implemented in `canary-wap` but cert-gated and variant-dependent**
+(the `canary-wap` Arduino tree starts an `httpd_ssl_start` server on port 443 with an HTTP→443
+redirect when `SECURACV_HAS_HTTPS_SERVER` and a provisioned cert are present — it is *not* absent;
+the gap is that it depends on cert provisioning and the ESP-IDF HTTPS config, and other variants
+fall back to HTTP); and there is **variant fragmentation** in which capabilities are wired/enabled
+per tree (§3).
 
 ---
 
@@ -140,38 +144,46 @@ implemented and **host-tested** in the `canary-wap` Arduino tree (~2,000-line `m
   O1, FE-gated provisioning O2, transactional rekey O3) and cross-reboot replay defense have no
   on-device repro artifacts (the `docs/audit/repro/*` dirs are empty). This is tracked as the
   open **issue #610** and is explicitly hardware-blocked.
-- The **ACTIVE** modular tree (`firmware/canary/`) carries mesh/chirp/RF as header stubs not yet
-  wired into the main loop — i.e., the *most complete* mesh lives in the *COMPATIBILITY* tree.
+- The **ACTIVE** modular tree (`firmware/canary/`) **does** wire the mesh path:
+  `firmware/canary/src/main.cpp` includes `mesh_transport.h`/`mesh_session.h` under
+  `FEATURE_MESH_NETWORK`, calls `mesh_transport::init/start` + `mesh_session::init/start` in
+  `setup()`, and drives them from `loop()` (the paired-callback fires from `mesh_session::process()`).
+  `[env:full]` additionally sets `FEATURE_RF_PRESENCE=1` and `FEATURE_CHIRP=1`. So the gap is
+  **default enablement + on-hardware proof + chirp/RF parity across envs**, *not* absent wiring —
+  the earlier "header stubs" framing was wrong (corrected per PR review).
 
 **B. canary-vision `/api/v1/peers` — passive discovery only, by design.** It lists peers and
 offers one-tap pairing in the SPA; it does **not** gossip, sync, vote, or replicate. This is the
 correct security posture for the HTTP surface, but it is **not** "canaries talking to each
 other." Don't let the two get conflated in marketing.
 
-**Bottom line:** the capability *exists as real code* and is the right design — but to advertise
-"multiple canaries talk to one another without HA" truthfully at v1, we must (a) pick the tree
-that carries it, (b) turn it on in a shippable build that meets its flash-encryption
-precondition, and (c) prove O1/O2/O3 + replay on two physical devices (#610). Until then the
+**Bottom line:** the capability *exists as real, wired code* in both the ACTIVE and Arduino trees
+and is the right design — but to advertise "multiple canaries talk to one another without HA"
+truthfully at v1, we must (a) confirm chirp/RF parity in the chosen env, (b) turn mesh on in a
+shippable build that meets its flash-encryption precondition (it's `=0` everywhere except
+`[env:full]`), and (c) prove O1/O2/O3 + replay on two physical devices (#610). Until then the
 honest phrasing is "mesh-ready (beta), validated on hardware in v1.0."
 
 ---
 
 ## 3. Decisions only the founder can make (these gate the plan)
 
-1. **Which firmware tree is the v1 shipping image?** Today the *feature-complete, mesh-capable*
-   tree is `canary-wap` **Arduino** (labeled COMPATIBILITY), while the *architecturally-blessed*
-   ACTIVE tree (`firmware/canary/`, modular PlatformIO) is ~88% there with mesh/chirp/RF stubbed.
-   Either bless the Arduino tree as the v1 image, or invest ~3–4 days porting mesh/chirp/RF into
-   ACTIVE. **This single decision shapes Phase 2.**
+1. **Which firmware tree is the v1 shipping image?** Both carry a *wired* mesh path. The
+   `canary-wap` **Arduino** tree (labeled COMPATIBILITY) is the broadest single-sketch
+   implementation (and is where HTTPS-on-443 already runs); the *architecturally-blessed* ACTIVE
+   tree (`firmware/canary/`, modular PlatformIO) wires mesh under `FEATURE_MESH_NETWORK` and turns
+   on RF/chirp in `[env:full]`. The decision is which one is the supported v1 image and which
+   `[env:*]` it ships as — not a from-scratch port. **This decision shapes Phase 2.**
 2. **Hardware-backed keys: implement or defer?** v1 ships seed-derived device keys (persistent,
    0600). The threat model's institutional/coercion classes are better served by a Secure
    Element. Recommended: **defer to v1.1, state it plainly** (it already is in the roadmap) —
    don't let perfect block the tag.
-3. **Firmware HTTPS/TLS: in or out for v1?** The threat model promises TLS against the "casual"
-   adversary, but the firmware web server is HTTP today. Either wire the existing cert-gen into
-   one variant (~½ day of integration + on-device handshake verification) or scope the claim to
-   "LAN, behind your router" for v1 and ship TLS in v1.1. Recommended: **wire it** — it's small
-   and it closes a stated-vs-actual gap.
+3. **Firmware HTTPS/TLS: confirm it's on in the v1 image.** `canary-wap` *already* serves HTTPS on
+   port 443 (with an HTTP→443 redirect) when `SECURACV_HAS_HTTPS_SERVER` and a provisioned cert are
+   present — so the work is not "build TLS" but **ensure the shipping build enables the ESP-IDF
+   HTTPS config and provisions/generates a cert as part of setup**, and verify the handshake
+   on-device (a bench-test item). Where a variant can't provide a cert it falls back to HTTP; scope
+   the threat-model TLS claim to the variants/configs that actually run 443.
 4. **Object-detection default.** Stock `witnessd` is motion-only. For the direct-ingest demo to
    "wow," bundle a small ONNX model + flip the build so first-run shows *classified* events.
    (In the primary Frigate deployment this is moot — detection is Frigate's job.)
@@ -207,7 +219,9 @@ needs real boards; none of it can run in the cloud.
 - [ ] Advance the `firmware/FEATURES.md` mesh row to ✅ and record the hardware evidence.
 
 ### Phase 3 — Close stated-vs-actual security gaps
-- [ ] Resolve Decision #3: wire firmware HTTPS/TLS in ≥ 1 variant (or scope the claim).
+- [ ] Resolve Decision #3: confirm the v1 image enables the ESP-IDF HTTPS config + cert
+      provisioning so `canary-wap`'s port-443 server actually runs (bench-verify the handshake);
+      scope the TLS claim to the configs that serve 443.
 - [ ] Resolve Decision #2: confirm hardware-backed keys are documented as v1.1 (not silently
       implied) everywhere identity is discussed.
 - [ ] Re-run the firmware `regression_check.sh` and the security-review skill over the diff.
@@ -267,7 +281,7 @@ validated before we advertise it. A host's root operator runs outside the kernel
 | On-device validation surfaces real-world bugs not seen in CI | High | Phase 1 is the gate; do it before any tag or press |
 | Mesh advertised before hardware proof (#610) | High | Phase 2 gated on #610; ship "mesh-ready (beta)" phrasing until then |
 | Firmware variant fragmentation causes "which build?" confusion | Medium | Decision #1 up front; document the one v1 image |
-| Stated-vs-actual TLS gap noticed by a security-minded buyer | Medium | Phase 3 wires TLS or scopes the claim |
+| TLS depends on per-variant cert provisioning / IDF config (HTTP fallback) | Medium | Phase 3 confirms 443 runs in the v1 image; scope the claim to those configs |
 | `v1-rc`/`Unreleased`/`0.5.0` inconsistency reads as "unshipped" | Low | Phase 4 single-source-of-truth bump |
 | No HA-in-CI means an HA regression ships silently | Low | Keep `verify_pipeline.sh` in the release checklist |
 
