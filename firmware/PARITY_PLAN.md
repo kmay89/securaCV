@@ -8,8 +8,11 @@
 > (`.github/workflows/features-dashboard-guard.yml` blocks any ✅→⚠️/❌ regression without an issue
 > ref). This plan is the *closure program* for the cells where the two trees disagree today.
 >
-> **Companion:** [`../docs/V1_LAUNCH_REVIEW.md`](../docs/V1_LAUNCH_REVIEW.md) (Decision #1) ·
-> [`../docs/V1_BENCH_TEST_RUNBOOK.md`](../docs/V1_BENCH_TEST_RUNBOOK.md) (on-device proof).
+> **Companion:** [`../docs/V1_LAUNCH_REVIEW.md`](../docs/V1_LAUNCH_REVIEW.md) (§4 decisions) ·
+> [`../docs/V1_BENCH_TEST_RUNBOOK.md`](../docs/V1_BENCH_TEST_RUNBOOK.md) (on-device proof) ·
+> [`VARIANT_POLICY.md`](VARIANT_POLICY.md) + [`FIRMWARE_VARIANT_AUDIT.md`](FIRMWARE_VARIANT_AUDIT.md)
+> (lifecycle + de-rot plan — note its item #6 recommends *convergence*, which §2 reconciles with
+> this *parity* decision).
 >
 > **Honest framing:** this is a **multi-PR program**, not a one-shot. Several gaps are behavioral
 > (mesh, BLE, RF, acoustic) and can only be *closed* — i.e. rated ✅ — once proven on hardware
@@ -58,7 +61,7 @@ is already at parity ✅) are omitted.
 - **TLS (HTTPS self-signed): ❌ / ❌ in the dashboard.** The `canary-wap` sketch *contains* an
   `httpd_ssl_start`-on-443 path, but it's gated on `SECURACV_HAS_HTTPS_SERVER` (ESP-IDF config) +
   a provisioned cert, so the dashboard honestly rates default builds ❌. Enabling it for real is
-  Phase 3 / Decision #3 in the launch review and Track D in the bench runbook — do it once and
+  the shared TLS gap (launch review §2) and Track D in the bench runbook — do it once and
   mirror into both trees.
 
 ---
@@ -108,7 +111,7 @@ Everything marked "**bench**" above (mesh, RSSI, BLE discovery, RF presence, hub
 camera peek, acoustic, OTA rollback, power save). Land the code in A1/B1; **flip the dashboard
 cell to ✅ only after the matching bench-runbook track passes** and an artifact is captured.
 
-**Shared — TLS:** execute Phase 3 / runbook Track D once; mirror the enablement into both trees.
+**Shared — TLS:** execute runbook Track D once; mirror the enablement into both trees.
 
 ---
 

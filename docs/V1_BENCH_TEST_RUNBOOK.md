@@ -13,7 +13,7 @@ Work the four tracks top to bottom. Each step lists the **command/reference**, t
 result**, and the **artifact** to capture. File artifacts under `docs/audit/repro/<track>/` (the
 dirs #610 expects to be filled). When every row in the §5 matrix is ✅ with an artifact, flip the
 README badge `v1-rc → v1.0`, date the `CHANGELOG.md [1.0.0]` entry, and bump the crate `0.5.0 →
-1.0.0` (the Phase 4 tag step).
+1.0.0` (the tag step).
 
 ---
 
@@ -53,6 +53,11 @@ Proves the flagship path end-to-end on real infrastructure. (CI already proves t
 
 ## Track B — Canary device bring-up (single, then multi)
 
+> First time touching the hardware? Do the parts/peripheral smoke in
+> [`hardware/bench_bringup.md`](hardware/bench_bringup.md) (board + buzzer + LED + BOOT button)
+> before this track — it proves the physical chirp/LED/button work in ~60 seconds. This track
+> picks up at firmware bring-up and assumes a board that already powers on.
+
 | # | Step | Command / reference | Expected | Artifact |
 |---|---|---|---|---|
 | B1 | Confirm virgin device | `firmware/provisioning/verify_device.py --port /dev/ttyACM0 --expect-virgin` | eFuses report unprovisioned | tool output |
@@ -85,7 +90,7 @@ FE gate stays in the source; this track proves it **fails closed on hardware**.
 
 ---
 
-## Track D — Firmware TLS handshake (Decision #3)
+## Track D — Firmware TLS handshake (HTTPS:443)
 
 `canary-wap` starts HTTPS on **443** (`httpd_ssl_start`) with an HTTP→443 redirect when
 `SECURACV_HAS_HTTPS_SERVER` (ESP-IDF `CONFIG_ESP_HTTPS_SERVER_ENABLE`) and a provisioned cert are
@@ -115,6 +120,6 @@ present. Confirm the v1 image actually runs it.
 | D | HTTPS:443 + redirect + cert match | ☐ | |
 
 **Exit criteria → tag v1.0:** every row ✅ with an artifact, all CI checks green, then run the
-Phase 4 tag step (badge `v1-rc → v1.0`, `CHANGELOG [1.0.0]` dated, crate `0.5.0 → 1.0.0`).
+tag step (badge `v1-rc → v1.0`, `CHANGELOG [1.0.0]` dated, crate `0.5.0 → 1.0.0`).
 Anything that fails on hardware comes back as a code fix (CI-gated) before re-running its track —
 the loop has a terminal state and this matrix is how you drive it there.
