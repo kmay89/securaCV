@@ -113,6 +113,10 @@ name = "witness_api"
 path = "src/bin/witness_api.rs"
 
 [[bin]]
+name = "break_glass_serve"
+path = "src/bin/break_glass_serve.rs"
+
+[[bin]]
 name = "grove_vision2_ingest"
 path = "src/bin/grove_vision2_ingest.rs"
 
