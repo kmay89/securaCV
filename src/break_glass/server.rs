@@ -38,6 +38,9 @@ use crate::TimeBucket;
 /// (a hex signature, a short envelope/purpose), so this is deliberately small.
 const MAX_REQUEST_BYTES: usize = 64 * 1024;
 
+/// The self-contained operator console (HTML + inline CSS/JS, no external assets).
+const BREAK_GLASS_PAGE: &str = include_str!("breakglass.html");
+
 /// Configuration for the break-glass HTTP server.
 #[derive(Clone, Debug)]
 pub struct BreakGlassServerConfig {
@@ -199,6 +202,13 @@ fn handle_conn<O: BreakGlassOps>(
             400,
             r#"{"error":"token_query_param_not_allowed"}"#,
         );
+    }
+
+    // Serve the operator console without auth: a browser cannot attach a bearer
+    // token to top-level navigation, and the page carries no secrets — every API
+    // call it makes still requires the capability token the operator pastes in.
+    if request.method == "GET" && matches!(request.path.as_str(), "/" | "/breakglass") {
+        return write_html(&mut stream, BREAK_GLASS_PAGE);
     }
 
     let now_bucket = TimeBucket::now_10min()?;
@@ -377,6 +387,29 @@ fn write_json(stream: &mut TcpStream, status: u16, body: &str) -> Result<()> {
     Ok(())
 }
 
+/// Serve the static operator console. A tight CSP confines it to inline
+/// script/style and same-origin `fetch` — no external resources, framing, or
+/// form submissions.
+fn write_html(stream: &mut TcpStream, body: &str) -> Result<()> {
+    let header = format!(
+        "HTTP/1.1 200 OK\r\n\
+         Content-Type: text/html; charset=utf-8\r\n\
+         Content-Length: {len}\r\n\
+         Cache-Control: no-store\r\n\
+         X-Content-Type-Options: nosniff\r\n\
+         X-Frame-Options: DENY\r\n\
+         Referrer-Policy: no-referrer\r\n\
+         Permissions-Policy: camera=(), microphone=(), geolocation=()\r\n\
+         Content-Security-Policy: default-src 'none'; script-src 'unsafe-inline'; \
+style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'\r\n\
+         \r\n",
+        len = body.len()
+    );
+    stream.write_all(header.as_bytes())?;
+    stream.write_all(body.as_bytes())?;
+    Ok(())
+}
+
 fn write_token_file(path: &Path, token: &str) -> Result<()> {
     #[cfg(unix)]
     {
@@ -446,6 +479,24 @@ impl Lockout {
 mod tests {
     use super::*;
     use std::io::Cursor;
+
+    #[test]
+    fn console_page_is_self_contained_and_drives_the_api() {
+        assert!(BREAK_GLASS_PAGE.starts_with("<!doctype html>"));
+        for path in [
+            "/breakglass/policy",
+            "/breakglass/request",
+            "/breakglass/approve",
+            "/breakglass/status",
+            "/breakglass/unseal",
+        ] {
+            assert!(BREAK_GLASS_PAGE.contains(path), "page should call {path}");
+        }
+        // In-browser signer is present, and nothing is loaded from the network.
+        assert!(BREAK_GLASS_PAGE.contains("Ed25519"));
+        assert!(!BREAK_GLASS_PAGE.contains("http://"));
+        assert!(!BREAK_GLASS_PAGE.contains("https://"));
+    }
 
     #[test]
     fn refuses_non_loopback_without_tls() {

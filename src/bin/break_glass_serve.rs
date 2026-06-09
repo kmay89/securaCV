@@ -81,6 +81,10 @@ fn main() -> Result<()> {
 
     let server = BreakGlassServer::bind(server_cfg)?;
     log::info!("break-glass server bound to {}", server.local_addr());
+    log::info!(
+        "operator console: http://{}/breakglass",
+        server.local_addr()
+    );
     match &args.token_path {
         Some(path) => log::info!("capability token written to {}", path.display()),
         None => log::warn!(
