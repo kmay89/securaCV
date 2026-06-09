@@ -307,7 +307,6 @@ $("btn-sign").onclick = async () => {
     const row = document.querySelector('#trustee-rows input[data-trustee="' + (window.CSS && CSS.escape ? CSS.escape(trustee) : trustee) + '"]');
     if (row) { row.value = sigHex; banner("sign-msg", "ok", "Signed. Signature placed in the " + trustee + " row — review and submit."); }
     else { banner("sign-msg", "warn", "Signed, but no row for trustee \"" + trustee + "\". Signature: " + sigHex); }
-    $("sk").value = "";
   } catch (e) {
     const m = (e && e.message) || String(e);
     if (/Ed25519|importKey|Unsupported|operation/i.test(m)) {
@@ -315,6 +314,9 @@ $("btn-sign").onclick = async () => {
     } else {
       banner("sign-msg", "bad", "Could not sign: " + m);
     }
+  } finally {
+    // Always wipe the signing key from the DOM, even on error.
+    $("sk").value = "";
   }
 };
 
@@ -354,7 +356,8 @@ $("btn-unseal").onclick = async () => {
 };
 
 $("btn-close").onclick = async () => {
-  await api("POST", "/breakglass/close");
+  // Notify the server, but always clear local state even if it's unreachable.
+  try { await api("POST", "/breakglass/close"); } catch (e) { /* ignore */ }
   $("quorum").textContent = "0 / 0";
   $("request-view").style.display = "none";
   $("trustee-rows").innerHTML = "";

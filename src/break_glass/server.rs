@@ -207,7 +207,9 @@ fn handle_conn<O: BreakGlassOps>(
     // Serve the operator console without auth: a browser cannot attach a bearer
     // token to top-level navigation, and the page carries no secrets — every API
     // call it makes still requires the capability token the operator pastes in.
-    if request.method == "GET" && matches!(request.path.as_str(), "/" | "/breakglass") {
+    if request.method == "GET"
+        && matches!(request.path.as_str(), "/" | "/breakglass" | "/breakglass/")
+    {
         return write_html(&mut stream, BREAK_GLASS_PAGE);
     }
 
