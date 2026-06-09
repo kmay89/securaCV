@@ -109,27 +109,40 @@ impl BreakGlassOps for KernelVaultOps {
     }
 }
 
-/// Write `bytes` to `path`, truncating, with `0600` permissions on Unix.
+/// Write `bytes` to `path` at mode `0600`. On Unix the cleartext is written to
+/// a fresh temp file created `O_EXCL` (`create_new`) at `0600` and then
+/// atomically renamed over the target. `OpenOptions::mode()` only applies to
+/// newly created files, so overwriting a pre-existing `<envelope>.raw` in place
+/// could leave it at a laxer mode (e.g. `0644`) or, worse, follow a planted
+/// symlink and write the evidence through it. The temp+rename approach gives a
+/// fresh `0600` regular file every time and never writes cleartext through an
+/// existing path.
 fn write_restricted(path: &Path, bytes: &[u8]) -> Result<()> {
     #[cfg(unix)]
     {
         use std::io::Write;
-        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        use std::os::unix::fs::OpenOptionsExt;
+        let dir = path.parent().unwrap_or_else(|| Path::new("."));
+        let file_name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("output");
+        let tmp = dir.join(format!(".{file_name}.{:016x}.tmp", rand::random::<u64>()));
+        // `create_new` (O_EXCL) refuses to follow or clobber an existing path,
+        // so cleartext can never be written through a planted file or symlink.
         let mut file = std::fs::OpenOptions::new()
-            .create(true)
             .write(true)
-            .truncate(true)
+            .create_new(true)
             .mode(0o600)
-            .open(path)?;
-        // `mode()` only takes effect when the file is newly created; if it already
-        // existed with laxer permissions, tighten it explicitly so the cleartext
-        // is never left world-readable.
-        let mut perms = file.metadata()?.permissions();
-        if perms.mode() & 0o777 != 0o600 {
-            perms.set_mode(0o600);
-            file.set_permissions(perms)?;
-        }
+            .open(&tmp)?;
         file.write_all(bytes)?;
+        file.sync_all()?;
+        // Atomic replace: the target becomes a fresh 0600 regular file even if it
+        // previously existed (or was a symlink).
+        if let Err(e) = std::fs::rename(&tmp, path) {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e.into());
+        }
     }
     #[cfg(not(unix))]
     {
@@ -180,6 +193,32 @@ mod tests {
         let mode = std::fs::metadata(&path)?.permissions().mode() & 0o777;
         assert_eq!(mode, 0o600, "cleartext file must be restricted to 0600");
         assert_eq!(std::fs::read(&path)?, b"new-cleartext");
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn write_restricted_does_not_follow_symlink() -> Result<()> {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let dir = std::env::temp_dir().join(format!("secura_bg_symlink_{}", rand::random::<u64>()));
+        std::fs::create_dir_all(&dir)?;
+        // An attacker plants <envelope>.raw as a symlink to a file elsewhere.
+        let outside = dir.join("attacker-target");
+        std::fs::write(&outside, b"original")?;
+        let path = dir.join("evidence.raw");
+        symlink(&outside, &path)?;
+
+        write_restricted(&path, b"secret-cleartext")?;
+
+        // The symlink target must be untouched, and the path is now a fresh
+        // 0600 regular file holding the cleartext (not written through the link).
+        assert_eq!(std::fs::read(&outside)?, b"original");
+        assert!(!std::fs::symlink_metadata(&path)?.file_type().is_symlink());
+        assert_eq!(std::fs::read(&path)?, b"secret-cleartext");
+        assert_eq!(
+            std::fs::metadata(&path)?.permissions().mode() & 0o777,
+            0o600
+        );
         Ok(())
     }
 
