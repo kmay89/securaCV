@@ -2246,6 +2246,21 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           </div>
         </div>
 
+        <!-- Pairing QR Card (scan from the Canary Vision companion app) -->
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title">Pair with the Canary Vision app</div>
+              <div class="card-subtitle">In the app: Add Canary → Other ways to pair → Scan pairing QR</div>
+            </div>
+            <button class="btn btn-primary btn-sm" onclick="togglePairingQr()" id="pairingQrBtn">Show QR</button>
+          </div>
+          <div id="pairingQrWrap" style="display:none;text-align:center;padding:0.5rem 0;">
+            <img id="pairingQrImg" alt="Pairing QR code" style="width:240px;max-width:80%;border-radius:8px;background:#fff;padding:8px;">
+            <p style="font-size:0.75rem;color:var(--muted);margin:0.5rem 0 0;">This code contains the device's API token — only show it to a phone you trust.</p>
+          </div>
+        </div>
+
         <!-- Software Update Card (signed pull updates over WiFi) -->
         <div class="card" id="otaCard" style="display:none;">
           <div class="card-header">
@@ -3652,6 +3667,39 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       const data = await api('/api/export', 'POST');
       if (data.ok && data.download_url) window.location.href = data.download_url;
       else alert('Export failed');
+    }
+
+    // ── Pairing QR (Settings → Device) ──────────────────────────────────
+    // The SVG comes from the authenticated /api/pairing-qr endpoint, so it
+    // is fetched with the session's credentials and shown via an object
+    // URL. Hidden again on toggle, and the URL revoked, so the token-
+    // bearing image doesn't linger longer than the operator wants.
+    let pairingQrUrl = null;
+    async function togglePairingQr() {
+      const wrap = document.getElementById('pairingQrWrap');
+      const btn = document.getElementById('pairingQrBtn');
+      const img = document.getElementById('pairingQrImg');
+      if (wrap.style.display !== 'none') {
+        wrap.style.display = 'none';
+        btn.textContent = 'Show QR';
+        img.removeAttribute('src');
+        if (pairingQrUrl) { URL.revokeObjectURL(pairingQrUrl); pairingQrUrl = null; }
+        return;
+      }
+      try {
+        const resp = await secureFetch('/api/pairing-qr', {});
+        if (!resp.ok) { alert('Could not load the pairing QR.'); return; }
+        const blob = await resp.blob();
+        if (pairingQrUrl) URL.revokeObjectURL(pairingQrUrl);
+        pairingQrUrl = URL.createObjectURL(blob);
+        img.src = pairingQrUrl;
+        wrap.style.display = '';
+        btn.textContent = 'Hide QR';
+      } catch (e) {
+        if (e.message !== 'auth_required' && e.message !== 'rate_limited') {
+          alert('Could not load the pairing QR.');
+        }
+      }
     }
 
     function openAckModal(seq) { pendingAckSeq = seq; document.getElementById('ackReason').value = ''; document.getElementById('ackModal').classList.add('active'); }

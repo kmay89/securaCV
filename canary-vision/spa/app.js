@@ -1652,7 +1652,7 @@ function openQrScanSheet(onReceipt) {
   video.setAttribute('playsinline', '');
   var sheet = el('div', { className: 'qr-sheet' }, [
     el('div', { className: 'qr-sheet-title', textContent: 'Scan the pairing QR' }),
-    el('div', { className: 'qr-sheet-hint', textContent: 'On the Canary dashboard, open Settings → Export to show it.' }),
+    el('div', { className: 'qr-sheet-hint', textContent: 'On the Canary dashboard, open Settings → Device → Show QR.' }),
     video,
     el('button', {
       className: 'btn btn-secondary btn-block mt-12',
