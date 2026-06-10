@@ -544,13 +544,15 @@ impl FailureEvent {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HeartbeatRecord {
     pub time_bucket: TimeBucket,
-    /// Whether the ingest source was healthy when the bucket rolled over.
+    /// Whether the ingest source was healthy when this heartbeat was sealed.
     pub ingest_healthy: bool,
-    /// Frames captured during the previous bucket (delta, not cumulative).
+    /// Frames captured since the previous heartbeat (delta, not cumulative).
+    /// Heartbeats fire on bucket rollover (plus a final one at clean
+    /// shutdown), so this covers roughly the preceding bucket.
     pub frames_captured_delta: u64,
-    /// Events appended to the sealed log during the previous bucket.
+    /// Events appended to the sealed log since the previous heartbeat.
     pub events_appended_delta: u64,
-    /// Failure records appended during the previous bucket.
+    /// Failure records appended since the previous heartbeat.
     pub failures_appended_delta: u64,
     pub kernel_version: String,
     pub ruleset_id: String,
@@ -1724,9 +1726,12 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
     /// `ShutdownClean` means the previous run died without sealing a shutdown
     /// record (power loss, crash, or kill).
     pub fn last_lifecycle_phase(&self) -> Result<Option<LifecyclePhase>> {
+        // Anchored to the start of the payload: serde serializes the tag field
+        // first, so this cannot false-positive on records whose free-form
+        // `details` text merely mentions the tag.
         let mut stmt = self.conn.prepare(
             "SELECT payload_json FROM sealed_events \
-             WHERE payload_json LIKE '%\"record_type\":\"lifecycle\"%' \
+             WHERE payload_json LIKE '{\"record_type\":\"lifecycle\"%' \
              ORDER BY id DESC LIMIT 1",
         )?;
         let mut rows = stmt.query([])?;
@@ -4037,7 +4042,9 @@ mod tests {
             ruleset_hash: [0u8; 32],
         });
         let json = serde_json::to_string(&lifecycle)?;
-        assert!(json.contains("\"record_type\":\"lifecycle\""));
+        // The tag must be the FIRST field: last_lifecycle_phase's SQL pre-filter
+        // is anchored to this prefix.
+        assert!(json.starts_with("{\"record_type\":\"lifecycle\""));
         assert!(json.contains("\"phase\":\"start\""));
         let untagged = json.replacen("\"record_type\":\"lifecycle\",", "", 1);
         assert!(SealedLogRecord::deserialize_compat(&untagged).is_err());
@@ -4066,6 +4073,21 @@ mod tests {
             &cfg.ruleset_id,
             cfg.ruleset_hash,
         )?;
+        // A later failure record whose free-form details mention the lifecycle
+        // tag must NOT shadow the real lifecycle record (the SQL pre-filter is
+        // anchored to the payload prefix).
+        kernel.append_failure_event(
+            FailureType::GapMissingData,
+            TimeBucket {
+                start_epoch_s: 0,
+                size_s: TEN_MINUTES_S,
+            },
+            Some("contains \"record_type\":\"lifecycle\" in details".to_string()),
+            &cfg.kernel_version,
+            &cfg.ruleset_id,
+            cfg.ruleset_hash,
+        )?;
+        assert_eq!(kernel.last_lifecycle_phase()?, Some(LifecyclePhase::Start));
         drop(kernel);
 
         // Reopen without a clean shutdown: the trailing Start is the

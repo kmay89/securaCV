@@ -562,9 +562,18 @@ fn main() -> Result<()> {
         std::thread::sleep(Duration::from_millis(100));
     }
 
-    // Seal the clean-shutdown record so the next boot can distinguish a
+    // Seal a final heartbeat (covering the trailing partial bucket's activity)
+    // and the clean-shutdown record, so the next boot can distinguish a
     // deliberate stop from power loss / crash.
     log::info!("shutdown signal received; sealing clean-shutdown record");
+    heartbeat.seal_final(
+        &mut kernel,
+        &source,
+        &pipeline,
+        kernel_version,
+        &cfg.ruleset_id,
+        ruleset_hash,
+    );
     if let Err(e) = kernel.append_lifecycle(
         LifecyclePhase::ShutdownClean,
         kernel_version,
@@ -849,7 +858,58 @@ impl HeartbeatScheduler {
         ruleset_id: &str,
         ruleset_hash: [u8; 32],
     ) {
-        if !self.enabled || self.last_bucket_start == Some(bucket.start_epoch_s) {
+        if self.last_bucket_start == Some(bucket.start_epoch_s) {
+            return;
+        }
+        self.seal(
+            bucket,
+            kernel,
+            source,
+            pipeline,
+            kernel_version,
+            ruleset_id,
+            ruleset_hash,
+        );
+    }
+
+    /// Seals a final heartbeat covering activity since the last one, so the
+    /// trailing partial bucket is represented in the trace at shutdown.
+    #[allow(clippy::too_many_arguments)]
+    fn seal_final(
+        &mut self,
+        kernel: &mut Kernel,
+        source: &IngestSource,
+        pipeline: &PipelineCounters,
+        kernel_version: &str,
+        ruleset_id: &str,
+        ruleset_hash: [u8; 32],
+    ) {
+        let Ok(bucket) = TimeBucket::now_10min() else {
+            return;
+        };
+        self.seal(
+            bucket,
+            kernel,
+            source,
+            pipeline,
+            kernel_version,
+            ruleset_id,
+            ruleset_hash,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn seal(
+        &mut self,
+        bucket: TimeBucket,
+        kernel: &mut Kernel,
+        source: &IngestSource,
+        pipeline: &PipelineCounters,
+        kernel_version: &str,
+        ruleset_id: &str,
+        ruleset_hash: [u8; 32],
+    ) {
+        if !self.enabled {
             return;
         }
         let frames = source.stats().frames_captured;
@@ -969,7 +1029,8 @@ impl DiskMonitor {
 }
 
 /// Free bytes on the filesystem holding the sealed-log database.
-#[cfg(target_os = "linux")]
+/// statvfs is POSIX, so the preflight works on any Unix (Linux, macOS, BSD).
+#[cfg(unix)]
 fn free_bytes_for_db(db_path: &str) -> Result<u64> {
     use std::ffi::CString;
     use std::path::Path;
@@ -989,13 +1050,13 @@ fn free_bytes_for_db(db_path: &str) -> Result<u64> {
             std::io::Error::last_os_error()
         ));
     }
-    // The casts are no-ops on 64-bit Linux but required on 32-bit targets,
-    // where statvfs fields are narrower types.
+    // The casts are no-ops on 64-bit Linux but required on other targets
+    // (32-bit, macOS), where statvfs fields are narrower types.
     #[allow(clippy::unnecessary_cast)]
     Ok((stats.f_bavail as u64).saturating_mul(stats.f_frsize as u64))
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(unix))]
 fn free_bytes_for_db(_db_path: &str) -> Result<u64> {
     Err(anyhow!("free-space check not supported on this platform"))
 }

@@ -499,10 +499,8 @@ pub fn audit_chain_timeline(conn: &Connection, now_bucket_start: u64) -> Result<
                     last_lifecycle_is_start = false;
                 }
             },
-            Ok(SealedLogRecord::Failure(f)) => {
-                if f.failure_type == crate::FailureType::ClockSkew {
-                    clock_skew_buckets.push(created_at);
-                }
+            Ok(SealedLogRecord::Failure(f)) if f.failure_type == crate::FailureType::ClockSkew => {
+                clock_skew_buckets.push(created_at);
             }
             _ => {}
         }

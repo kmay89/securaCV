@@ -47,8 +47,12 @@ subtle = "2.5"
 trybuild = "1.0.89"
 tempfile = "3.10"
 
-[target.'cfg(target_os = "linux")'.dependencies]
+# libc is needed on every Unix (statvfs free-space preflight in witnessd);
+# seccomp is Linux-only.
+[target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
 libseccomp = "0.4"
 libseccomp-sys = "0.3"
 
