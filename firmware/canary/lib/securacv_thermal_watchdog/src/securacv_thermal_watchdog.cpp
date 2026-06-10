@@ -8,10 +8,19 @@
  */
 
 #include "securacv_thermal_watchdog.h"
+
+#ifdef CSI_TEST_HOST_BUILD
+/* Host test build (g++, no Arduino/IDF): the test binary provides the
+ * clock, the die-temp source, the NVS map, and the health-log capture. */
+#include "thermal_wd_host_stubs.h"
+#define FEATURE_THERMAL_WATCHDOG 1
+#else
 #include "canary_config.h"
+#endif
 
 #if defined(FEATURE_THERMAL_WATCHDOG) && FEATURE_THERMAL_WATCHDOG
 
+#ifndef CSI_TEST_HOST_BUILD
 #include <Arduino.h>
 #include <Preferences.h>
 #include <string.h>
@@ -19,6 +28,7 @@
 
 #include "securacv_thermal.h"
 #include "securacv_witness.h"
+#endif
 
 namespace thermal_wd {
 
@@ -390,6 +400,28 @@ void thermal_wd_persist(void) {
   if (!s_initialized || !s_dirty) return;
   save_nvs();
 }
+
+#ifdef CSI_TEST_HOST_BUILD
+/* Host-test-only: wipe all module state so each test starts from a
+ * cold boot. Not declared in the public header — the test binary
+ * declares it locally. */
+void thermal_wd_test_reset(void) {
+  using namespace thermal_wd;
+  s_initialized = false;
+  s_dirty = false;
+  memset(&s_state, 0, sizeof(s_state));
+  memset(&s_history, 0, sizeof(s_history));
+  s_last_sample_ms = 0;
+  s_last_persist_ms = 0;
+  s_paused_since_ms = 0;
+  s_runtime_ms_accum = 0;
+  s_throttled_ms_accum = 0;
+  s_paused_ms_accum = 0;
+  memset(s_throttle_entry_ms, 0, sizeof(s_throttle_entry_ms));
+  s_throttle_entry_idx = 0;
+  s_throttle_entry_cnt = 0;
+}
+#endif
 
 }  /* extern "C" */
 
