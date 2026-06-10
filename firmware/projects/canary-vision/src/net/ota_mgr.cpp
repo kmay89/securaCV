@@ -54,6 +54,8 @@ void schedule_next(uint32_t delay_ms, uint32_t jitter_ms) {
  * summary comes from CHANGELOG text and is embedded in a snprintf-built
  * payload (vision house style; no ArduinoJson dependency in this TU). */
 void copy_json_safe(char* dst, size_t cap, const char* src) {
+  if (dst == nullptr || cap == 0) return;
+  if (src == nullptr) { dst[0] = '\0'; return; }
   size_t o = 0;
   for (size_t i = 0; src[i] != '\0' && o < cap - 1; i++) {
     char c = src[i];
@@ -172,9 +174,14 @@ void ota_loop(uint32_t now_ms) {
   }
   const int auto_cmd = take_pending_auto();
   if (auto_cmd >= 0) {
-    securacv_ota_set_auto_update(auto_cmd == 1);
-    publish_update_auto_retained(g_topics, auto_cmd == 1);
-    log_line("OTA", auto_cmd == 1 ? "Auto-update turned on." : "Auto-update turned off.");
+    const bool enable = (auto_cmd == 1);
+    // Skip the NVS write when nothing changed — HA may republish the same
+    // command, and flash wear is the budget that matters here.
+    if (securacv_ota_get_auto_update() != enable) {
+      securacv_ota_set_auto_update(enable);
+      log_line("OTA", enable ? "Auto-update turned on." : "Auto-update turned off.");
+    }
+    publish_update_auto_retained(g_topics, enable);
   }
 
   // Daily jittered check — the jitter spreads a fleet's checks over an

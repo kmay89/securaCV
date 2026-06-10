@@ -22,6 +22,7 @@ RuntimeConfig g_cfg{};
 bool g_loaded = false;
 
 void copy_str(char* dst, size_t cap, const char* src) {
+  if (dst == nullptr || cap == 0) return;
   if (src == nullptr) { dst[0] = '\0'; return; }
   strncpy(dst, src, cap - 1);
   dst[cap - 1] = '\0';
