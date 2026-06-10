@@ -19,6 +19,16 @@
 > (see the bench runbook). Pre-bench, we land the code so it builds CI-green; the dashboard cell
 > flips to ✅ when the bench test backs it.
 
+> **Reconciliation note (2026-06-10, signed pull-OTA):** the OTA gap closed
+> in BOTH trees at once via the shared engine at `firmware/common/ota/`
+> (HTTPS manifest pull, Ed25519 release signature, A/B rollback, HA `update`
+> entity, local-server option). canary consumes it through
+> `build_src_filter`; canary-wap carries committed copies guarded by
+> `firmware/scripts/check_ota_sync.sh` — the same committed-copy pattern as
+> CSI and the boot banner. The release public key header is part of the
+> sync set so one release signature serves pull-OTA on both trees AND the
+> WAP's BLE OTA. End-to-end flow: `docs/firmware_ota.md`.
+
 ---
 
 ## 1. Where the two trees disagree today

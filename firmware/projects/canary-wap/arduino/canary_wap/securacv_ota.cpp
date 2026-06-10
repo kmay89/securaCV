@@ -320,7 +320,6 @@ const char *securacv_ota_friendly_state(securacv_ota_state_t state)
 #include "nvs_flash.h"
 #include "nvs.h"
 #include "mbedtls/sha256.h"
-#include "mbedtls/version.h"
 #include <time.h>
 
 #include <ArduinoJson.h>
@@ -334,17 +333,10 @@ const char *securacv_ota_friendly_state(securacv_ota_state_t state)
 #define SECURACV_OTA_HAVE_CRT_BUNDLE 1
 #endif
 
-// mbedtls 2.x (IDF 4.4) spells the int-returning API with the _ret suffix;
-// mbedtls 3.x (IDF 5.x) dropped the suffix.
-#if MBEDTLS_VERSION_MAJOR >= 3
-#define scv_sha256_starts(ctx) mbedtls_sha256_starts((ctx), 0)
-#define scv_sha256_update(ctx, buf, len) mbedtls_sha256_update((ctx), (buf), (len))
-#define scv_sha256_finish(ctx, out) mbedtls_sha256_finish((ctx), (out))
-#else
-#define scv_sha256_starts(ctx) mbedtls_sha256_starts_ret((ctx), 0)
-#define scv_sha256_update(ctx, buf, len) mbedtls_sha256_update_ret((ctx), (buf), (len))
-#define scv_sha256_finish(ctx, out) mbedtls_sha256_finish_ret((ctx), (out))
-#endif
+// House rule (regression_check.sh, LESSONS_LEARNED.md): always the non-_ret
+// mbedtls names. They exist on both Arduino core lines — void-returning
+// (deprecated) on core 2.x / mbedtls 2.28, int-returning on core 3.x /
+// mbedtls 3.x — so calls must not inspect the return value.
 
 static const char *TAG = "securacv_ota";
 
@@ -1467,10 +1459,7 @@ static esp_err_t ota_verify_sha256(const esp_partition_t *partition, size_t imag
 
     mbedtls_sha256_context ctx;
     mbedtls_sha256_init(&ctx);
-    if (scv_sha256_starts(&ctx) != 0) {
-        mbedtls_sha256_free(&ctx);
-        return ESP_FAIL;
-    }
+    mbedtls_sha256_starts(&ctx, 0);  // 0 = SHA-256, not SHA-224
 
     const size_t chunk_size = 4096;
     uint8_t *buffer = (uint8_t *)malloc(chunk_size);
@@ -1494,11 +1483,7 @@ static esp_err_t ota_verify_sha256(const esp_partition_t *partition, size_t imag
             return err;
         }
 
-        if (scv_sha256_update(&ctx, buffer, to_read) != 0) {
-            free(buffer);
-            mbedtls_sha256_free(&ctx);
-            return ESP_FAIL;
-        }
+        mbedtls_sha256_update(&ctx, buffer, to_read);
 
         offset += to_read;
         remaining -= to_read;
@@ -1506,10 +1491,7 @@ static esp_err_t ota_verify_sha256(const esp_partition_t *partition, size_t imag
 
     free(buffer);
 
-    if (scv_sha256_finish(&ctx, computed_out) != 0) {
-        mbedtls_sha256_free(&ctx);
-        return ESP_FAIL;
-    }
+    mbedtls_sha256_finish(&ctx, computed_out);
     mbedtls_sha256_free(&ctx);
 
     if (memcmp(computed_out, expected, SHA256_DIGEST_LENGTH) != 0) {

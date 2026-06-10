@@ -1,5 +1,15 @@
 # SecuraCV Canary OTA Update System
 
+> **Note (2026-06):** the engine pioneered here has been promoted to the
+> shared library at **`firmware/common/ota/`** and extended with Ed25519
+> release-signature verification, certificate-bundle TLS, a URL transport
+> policy, NVS-persisted settings, and install/pre-reboot hooks. The ACTIVE
+> canary (PIO) and canary-wap (Arduino) variants consume that shared engine;
+> see **`docs/firmware_ota.md`** for the end-to-end release + update flow.
+> This project remains as the standalone ESP-IDF test/demo harness, and its
+> `tools/mock_ota_server.py` is the reference local update server (it now
+> signs manifests via `firmware/scripts/ota_release.py`).
+
 Phase 1 implementation of the Over-The-Air (OTA) firmware update system for the SecuraCV Canary privacy witness device.
 
 ## Overview

@@ -116,7 +116,35 @@ Full background, threat model, and rotation procedure: see
 | `securacv/{device_id}/chain` | Device → HA | Hash chain state |
 | `securacv/{device_id}/tamper` | Device → HA | Tamper alerts (immediate) |
 | `securacv/{device_id}/availability` | Device → HA | Online/offline (LWT, retained) |
+| `securacv/{device_id}/update/state` | Device → HA | Firmware update entity state (retained) |
+| `securacv/{device_id}/update/cmd` | HA → Device | `install` — start a firmware update |
 | `homeassistant/*/securacv_*/config` | Device → HA | HA MQTT Discovery config (retained) |
+
+---
+
+## Firmware Updates from Home Assistant
+
+Canaries with the signed pull-OTA firmware expose a native **Firmware**
+update entity (plus an **Auto Update** switch) via MQTT Discovery — no
+extra setup needed.
+
+- When a new release is published, the device's update entity shows
+  "Update available" with the release notes. Press **Install**: the device
+  downloads the update over HTTPS, verifies its SHA-256 and Ed25519
+  release signature, installs it to the inactive partition, restarts, and
+  confirms itself healthy. A live progress bar tracks the whole cycle.
+- If the update fails for any reason, the device restores its previous
+  firmware automatically and reports what happened — it cannot be bricked
+  by a bad update, and a forged image can never pass the signature check.
+- Turn on the **Auto Update** switch (per device) to install new releases
+  hands-free within a day of publication. It's off by default — a witness
+  device never restarts unattended unless you choose that.
+- Every update is signed into the device's witness chain
+  (`fw_update_started` / `fw_update_applied` / `fw_update_rolled_back`),
+  so the audit trail proves when firmware changed.
+
+See `docs/firmware_ota.md` for the release pipeline, local/air-gapped
+hosting, and the full security model.
 
 ---
 
