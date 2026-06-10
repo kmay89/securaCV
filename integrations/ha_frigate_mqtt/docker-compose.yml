@@ -44,6 +44,10 @@ services:
       FRIGATE_MQTT_HOST: mosquitto
       HA_DISCOVERY_PREFIX: homeassistant
       MQTT_TOPIC_PREFIX: witness
+      # This stack's mosquitto.conf requires authentication — set the
+      # credentials created in the README's quickstart step 2:
+      MQTT_USERNAME: securacv
+      MQTT_PASSWORD: ${SECURACV_MQTT_PASSWORD:?set in .env or the shell}
       # DEVICE_KEY_SEED is optional: when unset, the sidecar generates a key
       # on first start and persists it in the securacv_data volume. To pin
       # one instead: openssl rand -hex 32 > .device_key_seed, then uncomment

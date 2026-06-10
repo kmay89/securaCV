@@ -45,21 +45,37 @@ tamper-proof log that proves nobody — including you — altered the record.
 
 ---
 
-## Install (3 steps)
+## Install
 
-**1.** Install [Home Assistant OS](https://www.home-assistant.io/installation/) on a Raspberry Pi 4/5 or PC.
+### Home Assistant (5 minutes)
 
-**2.** Open the Terminal add-on (or SSH) and run:
+**1.** Settings → Add-ons → Add-on Store → ⋮ → Repositories → add
+`https://github.com/kmay89/securaCV` → install **Privacy Witness Kernel**.
+
+**2.** Open the add-on's Web UI and click through the setup wizard.
+Device key: auto-generated. MQTT broker: auto-discovered from the
+Mosquitto add-on (host, port, credentials — nothing to type).
+
+That's it. Your Frigate clips keep recording as usual; witness sensors, a
+daily-digest sensor, a chain-integrity sensor, and a **Verify Now** button
+appear in Home Assistant automatically. The add-on panel can generate a
+ready-made dashboard from your live zones.
+
+*(Alternative one-liner from the Terminal add-on:
+`curl -fsSL https://raw.githubusercontent.com/kmay89/securaCV/main/scripts/install.sh | bash`)*
+
+### Docker, alongside an existing Frigate (5 minutes)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/kmay89/securaCV/main/scripts/install.sh | bash
+curl -fsSLO https://raw.githubusercontent.com/kmay89/securaCV/main/docker/sidecar/quickstart.compose.yml
+# edit one line: FRIGATE_MQTT_HOST → the broker Frigate publishes to
+docker compose -f quickstart.compose.yml up -d
+docker compose -f quickstart.compose.yml run --rm securacv doctor   # checks everything end-to-end
 ```
 
-**3.** Follow the setup wizard — open the Privacy Witness Kernel add-on from
-Settings → Add-ons → Privacy Witness Kernel → Open Web UI.
-
-That's it. Your Frigate clips keep recording as usual, and each detected event shows up in
-Home Assistant with a **verified ✓** witness status (hash-chain + signature checked).
+The device key is auto-generated into the data volume (back it up). See
+[`docs/frigate_integration.md`](docs/frigate_integration.md) for details
+and the bundled-broker variant.
 
 ### What you need
 
