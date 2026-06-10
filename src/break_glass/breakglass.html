@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="referrer" content="no-referrer" />
+<title>Break-glass console — securaCV</title>
+<style>
+  :root {
+    --bg:#f6f8fa; --panel:#ffffff; --fg:#1f2328; --muted:#636c76; --line:#d0d7de;
+    --ok:#1a7f37; --ok-bg:#dafbe1; --warn:#9a6700; --warn-bg:#fff8c5; --bad:#cf222e; --bad-bg:#ffebe9;
+    --accent:#0969da; --accent-bg:#ddf4ff; --shadow:0 1px 3px rgba(31,35,40,.08),0 1px 2px rgba(31,35,40,.06);
+    --radius:12px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg:#0d1117; --panel:#161b22; --fg:#e6edf3; --muted:#9198a1; --line:#30363d;
+      --ok:#3fb950; --ok-bg:#12261e; --warn:#d29922; --warn-bg:#272115; --bad:#f85149; --bad-bg:#291415;
+      --accent:#4493f8; --accent-bg:#121d2f; --shadow:none;
+    }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif; font-size:15px; line-height:1.5; }
+  .mono { font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace; }
+  header.site { padding:22px 24px; border-bottom:1px solid var(--line); background:var(--panel); }
+  header.site h1 { margin:0; font-size:19px; }
+  header.site p { margin:2px 0 0; color:var(--muted); font-size:13px; }
+  .wrap { max-width:880px; margin:0 auto; padding:20px 16px 64px; }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:var(--radius);
+           box-shadow:var(--shadow); padding:18px 20px; margin:16px 0; }
+  .panel h2 { margin:0 0 4px; font-size:15px; }
+  .panel .sub { color:var(--muted); font-size:13px; margin:0 0 12px; }
+  label { display:block; font-size:13px; font-weight:600; margin:10px 0 4px; }
+  input[type=text], textarea { width:100%; padding:8px 10px; border:1px solid var(--line); border-radius:8px;
+           background:var(--bg); color:var(--fg); font-size:14px; }
+  textarea { resize:vertical; min-height:42px; }
+  button.btn { display:inline-flex; align-items:center; gap:6px; padding:8px 14px; border-radius:8px; font-size:14px;
+               font-weight:600; border:1px solid var(--line); background:var(--panel); color:var(--fg); cursor:pointer; }
+  button.btn:hover:not(:disabled) { border-color:var(--accent); color:var(--accent); }
+  button.btn.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  button.btn.primary:hover:not(:disabled) { filter:brightness(1.05); color:#fff; }
+  button.btn:disabled { opacity:.5; cursor:not-allowed; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; }
+  .row > div { flex:1 1 200px; }
+  .hash { word-break:break-all; padding:10px 12px; background:var(--bg); border:1px dashed var(--line);
+          border-radius:8px; font-size:13px; }
+  .banner { padding:10px 12px; border-radius:8px; font-size:13.5px; margin:10px 0; display:none; }
+  .banner.show { display:block; }
+  .banner.ok { background:var(--ok-bg); border:1px solid var(--ok); color:var(--ok); }
+  .banner.bad { background:var(--bad-bg); border:1px solid var(--bad); color:var(--bad); }
+  .banner.warn { background:var(--warn-bg); border:1px solid var(--warn); color:var(--warn); }
+  table { width:100%; border-collapse:collapse; font-size:13.5px; }
+  th, td { text-align:left; padding:7px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:600; }
+  .pill { display:inline-block; padding:1px 8px; border-radius:20px; font-size:12px; font-weight:600; border:1px solid var(--line); }
+  .pill.in { color:var(--ok); background:var(--ok-bg); border-color:var(--ok); }
+  .pill.out { color:var(--muted); }
+  .quorum { font-size:22px; font-weight:700; }
+  .trust { margin-top:8px; }
+  .trust summary { cursor:pointer; font-weight:600; color:var(--muted); font-size:13px; }
+  .trust .body { color:var(--muted); font-size:13px; padding:8px 0 2px; }
+  .muted { color:var(--muted); font-size:12.5px; }
+  .step-off { opacity:.45; pointer-events:none; }
+  code.k { font-family:ui-monospace,monospace; font-size:12.5px; }
+</style>
+</head>
+<body>
+<header class="site">
+  <h1>Break-glass console</h1>
+  <p>Quorum-gated evidence access (Invariant&nbsp;V) — operator-mediated. Trustees sign offline; you collect their signatures here.</p>
+</header>
+
+<div class="wrap">
+
+  <!-- 1. Connect -->
+  <section class="panel" id="p-connect">
+    <h2>1 · Connect</h2>
+    <p class="sub">Paste the capability token from the server's token file. It stays in this tab and is sent only to this server.</p>
+    <label for="token">Capability token</label>
+    <input type="text" id="token" class="mono" placeholder="hex token" autocomplete="off" spellcheck="false" />
+    <div class="row" style="margin-top:10px">
+      <div style="flex:0 0 auto"><button class="btn primary" id="btn-connect">Load policy</button></div>
+    </div>
+    <div class="banner" id="connect-msg"></div>
+    <div id="policy-view" style="margin-top:10px"></div>
+  </section>
+
+  <!-- 2. Request -->
+  <section class="panel step-off" id="p-request">
+    <h2>2 · Open an unlock request</h2>
+    <p class="sub">Names the sealed envelope and the reason. Produces the request hash every trustee must sign.</p>
+    <div class="row">
+      <div>
+        <label for="envelope">Vault envelope id</label>
+        <input type="text" id="envelope" class="mono" placeholder="incident-42" autocomplete="off" spellcheck="false" />
+      </div>
+      <div>
+        <label for="purpose">Purpose</label>
+        <input type="text" id="purpose" placeholder="why access is needed" autocomplete="off" />
+      </div>
+      <div style="flex:0 0 auto"><button class="btn primary" id="btn-open">Open request</button></div>
+    </div>
+    <div class="banner" id="request-msg"></div>
+    <div id="request-view" style="margin-top:12px; display:none">
+      <label>Request hash — share with trustees to sign</label>
+      <div class="row">
+        <div class="hash mono" id="request-hash"></div>
+        <div style="flex:0 0 auto"><button class="btn" id="btn-copy-hash">Copy</button></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3. Collect approvals -->
+  <section class="panel step-off" id="p-approvals">
+    <h2>3 · Collect approvals</h2>
+    <p class="sub">Each trustee signs the request hash with their own key (offline via <code class="k">break_glass approve</code>) and gives you the signature. Paste it below, or use the in-browser signer if a trustee is signing here.</p>
+    <table>
+      <thead><tr><th style="width:140px">Trustee</th><th>Signature (hex) &amp; submit</th><th style="width:70px">Status</th></tr></thead>
+      <tbody id="trustee-rows"></tbody>
+    </table>
+    <div class="banner" id="approval-msg"></div>
+
+    <details class="trust">
+      <summary>In-browser signer (optional) — for a trustee signing at this machine</summary>
+      <div class="body">
+        <strong>The signing key stays in this browser tab</strong> and is never sent to the server — only the resulting public signature is. Prefer the offline CLI for production keys.
+        <label for="sk">Trustee signing key (32-byte hex seed)</label>
+        <input type="text" id="sk" class="mono" placeholder="64 hex chars" autocomplete="off" spellcheck="false" />
+        <label for="sk-trustee">Trustee id</label>
+        <input type="text" id="sk-trustee" class="mono" placeholder="alice" autocomplete="off" />
+        <div style="margin-top:10px"><button class="btn" id="btn-sign">Sign request hash in browser</button></div>
+        <div class="banner" id="sign-msg"></div>
+      </div>
+    </details>
+  </section>
+
+  <!-- 4. Status + unseal -->
+  <section class="panel step-off" id="p-unseal">
+    <h2>4 · Quorum &amp; unseal</h2>
+    <div class="row" style="align-items:center">
+      <div style="flex:0 0 auto"><span class="quorum mono" id="quorum">0 / 0</span></div>
+      <div><span class="muted">collected / required</span></div>
+      <div style="flex:0 0 auto"><button class="btn" id="btn-refresh">Refresh status</button></div>
+      <div style="flex:0 0 auto"><button class="btn primary" id="btn-unseal" disabled>Unseal</button></div>
+      <div style="flex:0 0 auto"><button class="btn" id="btn-close">Close request</button></div>
+    </div>
+    <div class="banner" id="unseal-msg"></div>
+  </section>
+
+  <p class="muted" style="text-align:center; margin-top:20px">
+    All actions are recorded as tamper-evident break-glass receipts. Unsealed evidence is written to the server's output directory, not returned over the network.
+  </p>
+</div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const state = { token: "", requestHash: "", needed: 0, trustees: [] };
+
+function banner(id, kind, msg) {
+  const el = $(id);
+  el.className = "banner show " + kind;
+  el.textContent = msg;
+}
+function clearBanner(id) { const el = $(id); el.className = "banner"; el.textContent = ""; }
+function enableStep(id) { $(id).classList.remove("step-off"); }
+function disableStep(id) { $(id).classList.add("step-off"); }
+
+function hexToBytes(hex) {
+  const h = hex.trim().toLowerCase();
+  if (!/^[0-9a-f]*$/.test(h) || h.length % 2 !== 0) throw new Error("invalid hex");
+  const out = new Uint8Array(h.length / 2);
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(h.substr(i * 2, 2), 16);
+  return out;
+}
+function bytesToHex(bytes) {
+  return Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function api(method, path, body) {
+  const headers = { "Authorization": "Bearer " + state.token };
+  if (body !== undefined) headers["Content-Type"] = "application/json";
+  let res;
+  try {
+    res = await fetch(path, { method, headers, body: body !== undefined ? JSON.stringify(body) : undefined });
+  } catch (e) {
+    throw new Error("network error — is the server reachable?");
+  }
+  let json = {};
+  try { json = await res.json(); } catch (e) { /* empty body */ }
+  return { status: res.status, json };
+}
+
+// 1. Connect / load policy
+$("btn-connect").onclick = async () => {
+  state.token = $("token").value.trim();
+  clearBanner("connect-msg");
+  if (!state.token) { banner("connect-msg", "bad", "Enter the capability token first."); return; }
+  const { status, json } = await api("GET", "/breakglass/policy");
+  if (status === 401) { banner("connect-msg", "bad", "Token rejected (401). Check the token file."); return; }
+  if (status === 409) { banner("connect-msg", "warn", "No quorum policy is configured. Set one with `break_glass policy set`."); return; }
+  if (status !== 200) { banner("connect-msg", "bad", "Unexpected response (" + status + ")."); return; }
+  state.trustees = (json.trustees || []).map((t) => t.id);
+  renderPolicy(json);
+  banner("connect-msg", "ok", "Connected. Policy is " + json.n + "-of-" + json.m + ".");
+  enableStep("p-request");
+};
+
+function renderPolicy(p) {
+  const v = $("policy-view");
+  v.innerHTML = "";
+  const head = document.createElement("div");
+  head.innerHTML = '<strong>Quorum policy:</strong> ';
+  const q = document.createElement("span"); q.className = "mono"; q.textContent = p.n + "-of-" + p.m;
+  head.appendChild(q);
+  v.appendChild(head);
+  const tbl = document.createElement("table");
+  tbl.style.marginTop = "8px";
+  tbl.innerHTML = "<thead><tr><th style='width:140px'>Trustee</th><th>Public key</th></tr></thead>";
+  const tb = document.createElement("tbody");
+  (p.trustees || []).forEach((t) => {
+    const tr = document.createElement("tr");
+    const td1 = document.createElement("td"); td1.className = "mono"; td1.textContent = t.id;
+    const td2 = document.createElement("td"); td2.className = "mono"; td2.style.wordBreak = "break-all";
+    td2.style.color = "var(--muted)"; td2.style.fontSize = "12px"; td2.textContent = t.public_key;
+    tr.appendChild(td1); tr.appendChild(td2); tb.appendChild(tr);
+  });
+  tbl.appendChild(tb); v.appendChild(tbl);
+}
+
+// 2. Open request
+$("btn-open").onclick = async () => {
+  clearBanner("request-msg");
+  const envelope = $("envelope").value.trim();
+  const purpose = $("purpose").value.trim();
+  if (!envelope || !purpose) { banner("request-msg", "bad", "Envelope id and purpose are both required."); return; }
+  const { status, json } = await api("POST", "/breakglass/request", { envelope, purpose });
+  if (status !== 200) { banner("request-msg", "bad", "Could not open request (" + status + "): " + (json.error || "")); return; }
+  state.requestHash = json.request_hash;
+  state.needed = json.needed;
+  $("request-hash").textContent = json.request_hash;
+  $("request-view").style.display = "block";
+  banner("request-msg", "ok", "Request open. " + json.needed + " trustee signature(s) required.");
+  renderTrusteeRows();
+  enableStep("p-approvals");
+  enableStep("p-unseal");
+  refreshStatus();
+};
+
+$("btn-copy-hash").onclick = () => navigator.clipboard && navigator.clipboard.writeText(state.requestHash);
+
+function renderTrusteeRows() {
+  const tb = $("trustee-rows");
+  tb.innerHTML = "";
+  state.trustees.forEach((id) => {
+    const tr = document.createElement("tr");
+    const tdId = document.createElement("td"); tdId.className = "mono"; tdId.textContent = id;
+
+    const tdSig = document.createElement("td");
+    const inp = document.createElement("input");
+    inp.type = "text"; inp.className = "mono"; inp.placeholder = "128 hex chars"; inp.autocomplete = "off"; inp.spellcheck = false;
+    inp.dataset.trustee = id;
+    const btn = document.createElement("button"); btn.className = "btn"; btn.textContent = "Submit"; btn.style.marginTop = "6px";
+    btn.onclick = () => submitApproval(id, inp.value.trim());
+    tdSig.appendChild(inp); tdSig.appendChild(document.createElement("br")); tdSig.appendChild(btn);
+
+    const tdStat = document.createElement("td");
+    const pill = document.createElement("span"); pill.className = "pill out"; pill.textContent = "pending";
+    pill.id = "stat-" + id;
+    tdStat.appendChild(pill);
+
+    tr.appendChild(tdId); tr.appendChild(tdSig); tr.appendChild(tdStat); tb.appendChild(tr);
+  });
+}
+
+async function submitApproval(trustee, signature) {
+  clearBanner("approval-msg");
+  if (!signature) { banner("approval-msg", "bad", "Paste a signature for " + trustee + " first."); return; }
+  const { status, json } = await api("POST", "/breakglass/approve", { trustee, signature });
+  if (status === 200) {
+    banner("approval-msg", "ok", "Accepted approval from " + trustee + ".");
+    applyStatus(json);
+  } else if (status === 422) {
+    banner("approval-msg", "bad", "Rejected: " + (json.reason || "invalid") + " (" + trustee + ").");
+  } else {
+    banner("approval-msg", "bad", "Error (" + status + "): " + (json.error || ""));
+  }
+}
+
+// In-browser Ed25519 signer (WebCrypto). Key never leaves the tab.
+$("btn-sign").onclick = async () => {
+  clearBanner("sign-msg");
+  if (!state.requestHash) { banner("sign-msg", "bad", "Open a request first."); return; }
+  const trustee = $("sk-trustee").value.trim();
+  try {
+    const seed = hexToBytes($("sk").value);
+    if (seed.length !== 32) throw new Error("signing key must be 32 bytes (64 hex chars)");
+    // Wrap the raw seed in PKCS#8 so WebCrypto can import it as an Ed25519 private key.
+    const pkcs8 = new Uint8Array(48);
+    pkcs8.set([0x30,0x2e,0x02,0x01,0x00,0x30,0x05,0x06,0x03,0x2b,0x65,0x70,0x04,0x22,0x04,0x20], 0);
+    pkcs8.set(seed, 16);
+    const key = await crypto.subtle.importKey("pkcs8", pkcs8, { name: "Ed25519" }, false, ["sign"]);
+    const sig = await crypto.subtle.sign({ name: "Ed25519" }, key, hexToBytes(state.requestHash));
+    const sigHex = bytesToHex(new Uint8Array(sig));
+    // Drop the seed reference; fill the matching row if present.
+    const row = document.querySelector('#trustee-rows input[data-trustee="' + (window.CSS && CSS.escape ? CSS.escape(trustee) : trustee) + '"]');
+    if (row) { row.value = sigHex; banner("sign-msg", "ok", "Signed. Signature placed in the " + trustee + " row — review and submit."); }
+    else { banner("sign-msg", "warn", "Signed, but no row for trustee \"" + trustee + "\". Signature: " + sigHex); }
+  } catch (e) {
+    const m = (e && e.message) || String(e);
+    if (/Ed25519|importKey|Unsupported|operation/i.test(m)) {
+      banner("sign-msg", "bad", "In-browser Ed25519 isn't available in this browser. Sign offline with `break_glass approve` and paste the signature.");
+    } else {
+      banner("sign-msg", "bad", "Could not sign: " + m);
+    }
+  } finally {
+    // Always wipe the signing key from the DOM, even on error.
+    $("sk").value = "";
+  }
+};
+
+// 4. Status / unseal
+$("btn-refresh").onclick = refreshStatus;
+async function refreshStatus() {
+  const { status, json } = await api("GET", "/breakglass/status");
+  if (status === 200) applyStatus(json);
+}
+function applyStatus(s) {
+  if (!s || s.needed === undefined) return;
+  const collected = s.collected || [];
+  $("quorum").textContent = collected.length + " / " + s.needed;
+  state.trustees.forEach((id) => {
+    const pill = $("stat-" + id);
+    if (!pill) return;
+    const has = collected.indexOf(id) !== -1;
+    pill.className = "pill " + (has ? "in" : "out");
+    pill.textContent = has ? "signed" : "pending";
+  });
+  $("btn-unseal").disabled = !s.ready;
+}
+
+$("btn-unseal").onclick = async () => {
+  clearBanner("unseal-msg");
+  const { status, json } = await api("POST", "/breakglass/unseal");
+  if (status === 200) {
+    banner("unseal-msg", "ok", "Granted. Unsealed evidence written to: " + json.output_path);
+    $("btn-unseal").disabled = true;
+  } else if (status === 409) {
+    banner("unseal-msg", "warn", "Quorum not met yet (" + (json.collected ? json.collected.length : 0) + "/" + (json.needed || state.needed) + ").");
+  } else if (status === 403) {
+    banner("unseal-msg", "bad", "Denied: " + (json.reason || "authorization failed"));
+  } else {
+    banner("unseal-msg", "bad", "Error (" + status + "): " + (json.error || ""));
+  }
+};
+
+$("btn-close").onclick = async () => {
+  // Notify the server, but always clear local state even if it's unreachable.
+  try { await api("POST", "/breakglass/close"); } catch (e) { /* ignore */ }
+  $("quorum").textContent = "0 / 0";
+  $("request-view").style.display = "none";
+  $("trustee-rows").innerHTML = "";
+  $("btn-unseal").disabled = true;
+  state.requestHash = "";
+  banner("unseal-msg", "warn", "Request closed and approvals wiped.");
+  disableStep("p-approvals");
+};
+</script>
+</body>
+</html>

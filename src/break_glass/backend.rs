@@ -177,6 +177,21 @@ mod tests {
         Approval::new(TrusteeId::new(id), rh, key.sign(&rh).to_vec())
     }
 
+    /// Sleep until safely past a 10-minute bucket boundary if we're within the
+    /// last few seconds of the current bucket, so a short token-scoped flow does
+    /// not straddle two buckets.
+    fn wait_for_bucket_headroom() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let into_bucket = secs % 600;
+        if into_bucket > 594 {
+            std::thread::sleep(Duration::from_secs(600 - into_bucket + 1));
+        }
+    }
+
     #[test]
     #[cfg(unix)]
     fn write_restricted_tightens_preexisting_lax_file() -> Result<()> {
@@ -290,6 +305,12 @@ mod tests {
                 public_key: alice.verifying_key().to_bytes(),
             }],
         )?;
+        // Break-glass tokens are scoped to a 10-minute bucket, and the vault
+        // re-derives "now" when it validates them. If the wall clock rolls over a
+        // bucket boundary between authorizing and sealing/unsealing, the token
+        // looks expired. Wait out the boundary if we're near it so the whole
+        // seal→unseal flow runs inside a single bucket.
+        wait_for_bucket_headroom();
         let bucket = TimeBucket::now_10min()?;
 
         // --- Provision policy + seal an envelope using a real granted token. ---

@@ -80,7 +80,18 @@ fn main() -> Result<()> {
     };
 
     let server = BreakGlassServer::bind(server_cfg)?;
-    log::info!("break-glass server bound to {}", server.local_addr());
+    let addr = server.local_addr();
+    log::info!("break-glass server bound to {addr}");
+    // Only advertise the plaintext URL for loopback. On a routable bind the
+    // listener is plaintext behind a TLS terminator, so pointing operators at
+    // http://<addr> directly would bypass the proxy and leak the token.
+    if addr.ip().is_loopback() {
+        log::info!("operator console: http://{addr}/breakglass");
+    } else {
+        log::info!(
+            "operator console served at /breakglass — reach it via your HTTPS terminator, not http://{addr} directly"
+        );
+    }
     match &args.token_path {
         Some(path) => log::info!("capability token written to {}", path.display()),
         None => log::warn!(
