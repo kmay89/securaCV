@@ -39,6 +39,9 @@
 #ifndef FEATURE_OTA_UPDATE
   #define FEATURE_OTA_UPDATE    1
 #endif
+#ifndef FEATURE_OTA_PULL
+  #define FEATURE_OTA_PULL      0   // Signed pull-OTA engine (firmware/common/ota)
+#endif
 #ifndef FEATURE_HA_MQTT
   #define FEATURE_HA_MQTT       0
 #endif
@@ -151,6 +154,24 @@
 #define PROTOCOL_VERSION      "pwk:v0.3.0"
 #define CHAIN_ALGORITHM       "sha256-domain-sep"
 #define SIGNATURE_ALGORITHM   "ed25519"
+
+// ════════════════════════════════════════════════════════════════
+// PULL-OTA (signed firmware updates — firmware/common/ota)
+// ════════════════════════════════════════════════════════════════
+
+// Product id matched against the manifest's "product" field.
+#ifndef SECURACV_OTA_PRODUCT
+  #define SECURACV_OTA_PRODUCT  "securacv-canary"
+#endif
+
+// Compiled-in default manifest URL. The firmware-release workflow
+// publishes manifest-canary.json on every fw-v* GitHub Release; the
+// "latest" alias keeps this URL stable across releases. Users can
+// point at a local server instead via Settings (stored in NVS).
+#ifndef SECURACV_OTA_MANIFEST_URL
+  #define SECURACV_OTA_MANIFEST_URL \
+    "https://github.com/kmay89/securaCV/releases/latest/download/manifest-canary.json"
+#endif
 
 // ════════════════════════════════════════════════════════════════
 // HARDWARE PIN DEFINITIONS
