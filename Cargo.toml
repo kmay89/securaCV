@@ -66,6 +66,7 @@ adapter-mqtt-sensor = []
 adapter-webhook = ["adapter-mqtt-sensor"]
 adapter-webhook-tls = ["adapter-webhook", "rustls", "rustls-pemfile", "rustls-pki-types"]
 adapter-ble-presence = []
+adapter-meshtastic = []
 adapter-sandbox = []
 pqc-signatures = ["pqcrypto-mldsa", "pqcrypto-traits"]
 pqc-vault = ["pqcrypto-mlkem", "pqcrypto-traits"]
@@ -129,6 +130,7 @@ required-features = [
     "adapter-webhook",
     "adapter-webhook-tls",
     "adapter-ble-presence",
+    "adapter-meshtastic",
     "adapter-sandbox",
 ]
 

@@ -56,6 +56,12 @@ below — but nothing documented is allowed to be aspirational at the v1 tag.
     spawn.
   - **BLE presence adapter** (`adapter-ble-presence`): turns ESPresense-style room-presence MQTT
     feeds into coarse presence claims, deliberately discarding device identity.
+  - **Meshtastic LoRa-mesh adapter** (`adapter-meshtastic`): turns Meshtastic Detection Sensor
+    Module nodes (PIR/contact/acoustic on a GPIO, alerting over LoRa) into kilometre-scale,
+    off-grid witness sources via a gateway node's MQTT JSON uplink. Node ids are local routing
+    keys only; positions, precise timestamps, RSSI/SNR, and alert text are never retained
+    (export-scrub asserted in `tests/adapter_meshtastic.rs`). Inbound only; the outbound and
+    LoRa-transport directions are specified in `docs/meshtastic_integration.md`.
   - **Adapter observability**: per-adapter counters (polls/emitted/sealed/filtered/rejected +
     last-seal time) on the host, a periodic stats log, and an optional read-only `/stats` +
     `/healthz` HTTP endpoint (`stats_addr`) — operational counts only, never event content.
@@ -67,7 +73,7 @@ below — but nothing documented is allowed to be aspirational at the v1 tag.
     diagnostic sensor (per-adapter counters as attributes) via a dedicated coordinator — no
     hand-written YAML needed.
   - **Parser fuzz sweep** (`tests/adapter_parser_fuzz.rs`): seeded, panic-free robustness tests
-    over the untrusted webhook/mqtt/BLE/Frigate parsers.
+    over the untrusted webhook/mqtt/BLE/Frigate/Meshtastic parsers.
   - **Webhook mutual TLS**: optional client-certificate auth (`tls_client_ca`) — machine-to-machine
     sensors authenticate by certificate, with no shared secret on the wire.
   - **Prometheus metrics**: the stats endpoint serves `/metrics` (text exposition format) alongside
