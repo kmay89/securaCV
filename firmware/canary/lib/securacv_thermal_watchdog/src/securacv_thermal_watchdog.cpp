@@ -40,13 +40,13 @@ namespace thermal_wd {
  * trend + history. The camera keeps its own 5 s cadence as the actuator. */
 static const uint32_t WD_SAMPLE_MS = 30000;
 
-/* Shadow classifier thresholds. Keep in sync with THERMAL_THROTTLE_TEMP_C /
- * THERMAL_PAUSE_TEMP_C / THERMAL_RECOVER_MARGIN_C in securacv_camera.h —
- * literals here so the watchdog never depends on the camera lib (it must
- * observe even in builds without FEATURE_CAMERA_PEEK). */
-static const float WD_THROTTLE_C = 70.0f;
-static const float WD_PAUSE_C    = 80.0f;
-static const float WD_MARGIN_C   = 5.0f;
+/* Shadow classifier thresholds — single-sourced from canary_config.h
+ * (shared with the camera actuator), so the observer's history always
+ * counts the same conditions the actuator responds to. The host-test
+ * stubs header pins the same values for desktop builds. */
+static const float WD_THROTTLE_C = (float)THERMAL_THROTTLE_TEMP_C;
+static const float WD_PAUSE_C    = (float)THERMAL_PAUSE_TEMP_C;
+static const float WD_MARGIN_C   = (float)THERMAL_RECOVER_MARGIN_C;
 
 /* 5 °C above the pause threshold: the actuator's protective pause is not
  * holding — genuinely abnormal. (Espressif Tj max is 105 °C; this fires
@@ -88,9 +88,15 @@ static bool                 s_dirty       = false;
 static thermal_wd_state_t   s_state;
 static thermal_wd_history_t s_history;
 
+/* Timestamps use unsigned modular subtraction (now - then), which is
+ * millis()-rollover-safe for forward elapsed time. "Timer armed" is an
+ * explicit flag rather than a 0-sentinel so a timestamp that happens to
+ * land on 0 at the 49.7-day wrap can't disarm anything. */
+static bool     s_has_sampled      = false;
+static bool     s_paused_active    = false;
 static uint32_t s_last_sample_ms   = 0;   /* last sample attempt            */
 static uint32_t s_last_persist_ms  = 0;
-static uint32_t s_paused_since_ms  = 0;   /* 0 = not currently paused       */
+static uint32_t s_paused_since_ms  = 0;
 static uint32_t s_runtime_ms_accum   = 0; /* sub-minute accumulators        */
 static uint32_t s_throttled_ms_accum = 0;
 static uint32_t s_paused_ms_accum    = 0;
@@ -196,9 +202,10 @@ static void update_shadow(float t, uint32_t now) {
   if (s_state.shadow_state == WD_PAUSED) {
     s_history.pause_events++;
     s_dirty = true;
+    s_paused_active = true;
     s_paused_since_ms = now;
   } else if (prev == WD_PAUSED) {
-    s_paused_since_ms = 0;
+    s_paused_active = false;
     s_state.advisories &= ~THERMAL_ADV_SATURATION;
   }
 }
@@ -224,7 +231,7 @@ static void update_advisories(float t, uint32_t now) {
   }
 
   /* SATURATION — continuously paused; placement exceeds cooling capacity. */
-  if (s_paused_since_ms != 0 &&
+  if (s_paused_active &&
       !(s_state.advisories & THERMAL_ADV_SATURATION) &&
       now - s_paused_since_ms >= WD_SATURATION_MS) {
     s_state.advisories |= THERMAL_ADV_SATURATION;
@@ -233,7 +240,12 @@ static void update_advisories(float t, uint32_t now) {
                "check placement/heat sink");
   }
 
-  /* ENV_LIMITED — adapting often; the spot runs warm. Guidance only. */
+  /* ENV_LIMITED — adapting often; the spot runs warm. Guidance only.
+   * Deliberately UNSIGNED age math: entries can be arbitrarily old
+   * (days/weeks), and a signed (int32_t) delta would read anything
+   * older than ~24.8 days as negative — i.e. "recent" — and trip the
+   * advisory spuriously. Unsigned modular age is correct except for a
+   * one-sample alias exactly at the 49.7-day wrap, which self-heals. */
   bool cycling = false;
   if (s_throttle_entry_cnt >= WD_CYCLE_COUNT) {
     cycling = true;
@@ -326,9 +338,10 @@ void thermal_wd_process(void) {
   if (!s_initialized) return;
 
   uint32_t now = millis();
-  if (s_last_sample_ms != 0 && now - s_last_sample_ms < WD_SAMPLE_MS) return;
-  uint32_t elapsed = (s_last_sample_ms == 0) ? 0 : now - s_last_sample_ms;
+  if (s_has_sampled && now - s_last_sample_ms < WD_SAMPLE_MS) return;
+  uint32_t elapsed = s_has_sampled ? now - s_last_sample_ms : 0;
   s_last_sample_ms = now;
+  s_has_sampled = true;
 
   float t = 0.0f;
   if (!thermal_read_die_c(&t)) {
@@ -411,6 +424,8 @@ void thermal_wd_test_reset(void) {
   s_dirty = false;
   memset(&s_state, 0, sizeof(s_state));
   memset(&s_history, 0, sizeof(s_history));
+  s_has_sampled = false;
+  s_paused_active = false;
   s_last_sample_ms = 0;
   s_last_persist_ms = 0;
   s_paused_since_ms = 0;

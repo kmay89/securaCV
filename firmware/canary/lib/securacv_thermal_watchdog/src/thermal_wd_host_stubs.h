@@ -26,6 +26,15 @@
 #include <string>
 #include <vector>
 
+/* ── Thermal thresholds — device builds single-source these from
+ *    canary_config.h; the host harness pins the same values the tests
+ *    assert against. ── */
+#ifndef THERMAL_THROTTLE_TEMP_C
+#define THERMAL_THROTTLE_TEMP_C   70
+#define THERMAL_PAUSE_TEMP_C      80
+#define THERMAL_RECOVER_MARGIN_C   5
+#endif
+
 /* ── Arduino time ── */
 uint32_t millis();
 

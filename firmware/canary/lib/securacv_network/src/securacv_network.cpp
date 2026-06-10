@@ -71,7 +71,8 @@
 #endif
 #if FEATURE_THERMAL_WATCHDOG
 #include "securacv_thermal_watchdog.h"
-#include <math.h>   /* lroundf */
+#include <math.h>    /* lroundf */
+#include <stdarg.h>  /* thermal_json_append */
 #endif
 
 // Mesh REST API (PR-8). Gated on FEATURE_MESH_NETWORK — the dev/release
@@ -3059,6 +3060,21 @@ static esp_err_t handle_battery_history(httpd_req_t* req) {
 
 #if FEATURE_THERMAL_WATCHDOG
 
+/* Bounded JSON append: caps pos at the buffer end and turns further
+ * writes into no-ops, so an oversized payload truncates instead of
+ * underflowing `cap - pos` into a huge size for the next vsnprintf. */
+static void thermal_json_append(char* buf, size_t cap, int* pos,
+                                const char* fmt, ...) {
+  if (*pos < 0 || (size_t)*pos >= cap) return;
+  va_list ap;
+  va_start(ap, fmt);
+  int written = vsnprintf(buf + *pos, cap - (size_t)*pos, fmt, ap);
+  va_end(ap);
+  if (written <= 0) return;
+  size_t rem = cap - (size_t)*pos;
+  *pos += ((size_t)written < rem) ? written : (int)(rem - 1);
+}
+
 // GET /api/thermal — current die temp + lifetime thermal history.
 // All data comes from the passive watchdog (always-on, NVS-persisted),
 // so it stays fresh whether or not the camera is streaming.
@@ -3080,15 +3096,15 @@ static esp_err_t handle_thermal(httpd_req_t* req) {
   int pos = 0;
 
   if (st.last_sample_ms != 0) {
-    pos += snprintf(buf + pos, sizeof(buf) - pos,
+    thermal_json_append(buf, sizeof(buf), &pos,
       "{\"ok\":true,\"die_temp_c\":%.1f,\"last_sample_age_ms\":%u,",
       st.die_temp_c, (unsigned)(millis() - st.last_sample_ms));
   } else {
-    pos += snprintf(buf + pos, sizeof(buf) - pos,
+    thermal_json_append(buf, sizeof(buf), &pos,
       "{\"ok\":true,\"die_temp_c\":null,\"last_sample_age_ms\":null,");
   }
 
-  pos += snprintf(buf + pos, sizeof(buf) - pos,
+  thermal_json_append(buf, sizeof(buf), &pos,
     "\"thermal_state\":\"%s\",\"sensor_ok\":%s,\"advisories\":[",
     state_names[si], st.sensor_ok ? "true" : "false");
 
@@ -3103,25 +3119,24 @@ static esp_err_t handle_thermal(httpd_req_t* req) {
     bool first = true;
     for (size_t i = 0; i < sizeof(adv_map) / sizeof(adv_map[0]); i++) {
       if (st.advisories & adv_map[i].bit) {
-        pos += snprintf(buf + pos, sizeof(buf) - pos, "%s\"%s\"",
-                        first ? "" : ",", adv_map[i].name);
+        thermal_json_append(buf, sizeof(buf), &pos, "%s\"%s\"",
+                            first ? "" : ",", adv_map[i].name);
         first = false;
       }
     }
   }
 
   /* min=127 / max=-128 are the "never sampled" sentinels. */
-  pos += snprintf(buf + pos, sizeof(buf) - pos,
-    "],\"history\":{");
+  thermal_json_append(buf, sizeof(buf), &pos, "],\"history\":{");
   if (hist.alltime_min_c == 127 && hist.alltime_max_c == -128) {
-    pos += snprintf(buf + pos, sizeof(buf) - pos,
+    thermal_json_append(buf, sizeof(buf), &pos,
       "\"alltime_min_c\":null,\"alltime_max_c\":null,");
   } else {
-    pos += snprintf(buf + pos, sizeof(buf) - pos,
+    thermal_json_append(buf, sizeof(buf), &pos,
       "\"alltime_min_c\":%d,\"alltime_max_c\":%d,",
       (int)hist.alltime_min_c, (int)hist.alltime_max_c);
   }
-  pos += snprintf(buf + pos, sizeof(buf) - pos,
+  thermal_json_append(buf, sizeof(buf), &pos,
     "\"total_runtime_min\":%u,\"throttled_min\":%u,\"paused_min\":%u,"
     "\"throttle_events\":%u,\"pause_events\":%u,\"critical_events\":%u,"
     "\"sensor_fail_events\":%u,\"cold_events\":%u,\"max_seen_runtime_min\":%u},",
@@ -3129,9 +3144,10 @@ static esp_err_t handle_thermal(httpd_req_t* req) {
     hist.throttle_events, hist.pause_events, hist.critical_events,
     hist.sensor_fail_events, hist.cold_events, hist.max_seen_runtime_min);
 
-  pos += snprintf(buf + pos, sizeof(buf) - pos,
-    "\"thresholds\":{\"throttle_c\":70,\"pause_c\":80,"
-    "\"recover_margin_c\":5,\"critical_c\":85,\"cold_c\":5}}");
+  thermal_json_append(buf, sizeof(buf), &pos,
+    "\"thresholds\":{\"throttle_c\":%d,\"pause_c\":%d,"
+    "\"recover_margin_c\":%d,\"critical_c\":85,\"cold_c\":5}}",
+    THERMAL_THROTTLE_TEMP_C, THERMAL_PAUSE_TEMP_C, THERMAL_RECOVER_MARGIN_C);
 
   return http_send_json(req, buf);
 }
