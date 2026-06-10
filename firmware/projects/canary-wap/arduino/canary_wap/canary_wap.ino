@@ -6990,18 +6990,11 @@ static bool ota_can_install(char* reason, size_t reason_len) {
   return true;
 }
 
-/* Remember the target version before the install reboot so the next boot
- * can witness applied vs rolled-back. Witness records flush per-write, so
- * no extra chain persistence is needed here. */
+/* Pre-reboot hook. The engine records the install target itself the
+ * moment the boot partition flips (covering deferred and indirect
+ * reboots), and witness records flush per-write — nothing extra to
+ * persist here. Kept as the seam for future flush needs. */
 static void ota_before_reboot() {
-  const securacv_ota_manifest_t* m = securacv_ota_get_manifest();
-  if (m != NULL) {
-    Preferences prefs;
-    if (prefs.begin("securacv", false)) {
-      prefs.putString("ota_target", m->version);
-      prefs.end();
-    }
-  }
 }
 
 static void ota_schedule_next_check(uint32_t delay_ms, uint32_t jitter_ms) {
@@ -7702,24 +7695,20 @@ void setup() {
     // Seed the HA auto-update switch state (csi_mqtt caches + retains it).
     csi_mqtt::publish_update_auto_state(securacv_ota_get_auto_update());
 
-    // Witness the outcome of an install reboot: ota_before_reboot() stored
-    // the target version; running the old version again means rollback.
-    Preferences ota_prefs;
-    if (ota_prefs.begin("securacv", false)) {
-      String target = ota_prefs.getString("ota_target", "");
-      if (target.length() > 0) {
-        ota_prefs.remove("ota_target");
-        if (target == FIRMWARE_VERSION) {
-          ota_witness_event("fw_update_applied", FIRMWARE_VERSION);
-          log_health(SCV_LOG_NOTICE, SCV_CAT_SYSTEM,
-                     "Firmware update applied", FIRMWARE_VERSION);
-        } else {
-          ota_witness_event("fw_update_rolled_back", target.c_str());
-          log_health(SCV_LOG_WARNING, SCV_CAT_SYSTEM,
-                     "Firmware update rolled back", target.c_str());
-        }
+    // Witness the outcome of an install reboot. The engine (and the BLE
+    // OTA path) recorded the install target the moment the boot partition
+    // flipped; running the old version again means rollback.
+    char ota_target[33];
+    if (securacv_ota_take_pending_version(ota_target, sizeof(ota_target))) {
+      if (strcmp(ota_target, FIRMWARE_VERSION) == 0) {
+        ota_witness_event("fw_update_applied", FIRMWARE_VERSION);
+        log_health(SCV_LOG_NOTICE, SCV_CAT_SYSTEM,
+                   "Firmware update applied", FIRMWARE_VERSION);
+      } else {
+        ota_witness_event("fw_update_rolled_back", ota_target);
+        log_health(SCV_LOG_WARNING, SCV_CAT_SYSTEM,
+                   "Firmware update rolled back", ota_target);
       }
-      ota_prefs.end();
     }
   }
 

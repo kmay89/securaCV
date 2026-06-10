@@ -339,11 +339,21 @@ esp_err_t securacv_ota_register_selftest(const securacv_selftest_t *test);
 /**
  * @brief Run boot self-test validation
  *
- * Call early in setup() after critical subsystems are initialized. If the
- * device just booted into a new OTA image, runs all registered self-tests:
+ * Call in setup() after critical subsystems are initialized. If the device
+ * just booted into a new OTA image, runs all registered self-tests:
  * pass -> firmware marked valid (rollback cancelled); any required test
  * fails -> firmware marked invalid and the device reboots into the
  * previous version.
+ *
+ * ROLLBACK OWNERSHIP: the engine overrides the Arduino core's weak
+ * verifyRollbackLater() hook so initArduino() does NOT auto-confirm new
+ * images — the image stays PENDING_VERIFY until this function confirms it.
+ * If the new firmware crashes, hangs into a watchdog reset, or loses power
+ * at any point before confirmation, the bootloader boots the previous
+ * firmware on the next start. Consequence for integrators: every variant
+ * that links this engine MUST call securacv_ota_boot_self_test() on every
+ * boot path that can follow an install, or freshly installed images will
+ * be reverted on their second boot.
  *
  * @return ESP_OK if validation passed or wasn't needed.
  * @note May not return if rollback is triggered (device reboots).
@@ -386,6 +396,27 @@ bool securacv_ota_get_auto_update(void);
 /** @brief Persisted allow-local-http opt-in (default false). */
 esp_err_t securacv_ota_set_local_http_allowed(bool allowed);
 bool securacv_ota_get_local_http_allowed(void);
+
+/**
+ * @brief Record that an install was written and the next boot targets @p version
+ *
+ * The pull engine calls this itself the moment the boot partition flips
+ * (after esp_https_ota_finish). Alternate install channels that set the
+ * boot partition directly — e.g. BLE OTA — should call it just before
+ * their restart so the next boot's outcome bookkeeping works for them too.
+ */
+esp_err_t securacv_ota_mark_pending_install(const char *version);
+
+/**
+ * @brief Consume the pending-install marker from the previous boot
+ *
+ * Returns true exactly once after an install reboot, with the version the
+ * install targeted. Compare against the running version: equal means the
+ * update applied; different means the device rolled back to the previous
+ * firmware. Call after securacv_ota_boot_self_test() (which may itself
+ * trigger the rollback reboot).
+ */
+bool securacv_ota_take_pending_version(char *buf, size_t buf_len);
 
 // ============================================================================
 // STATE AND STATUS QUERIES

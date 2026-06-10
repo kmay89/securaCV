@@ -31,6 +31,7 @@ static const uint8_t*              g_pubkey          = nullptr;
 static uint32_t                    g_image_size      = 0;
 static uint32_t                    g_received        = 0;
 static uint8_t                     g_expected_sha[32] = {};
+static char                        g_version[33]     = {};
 static const esp_partition_t*      g_ota_partition   = nullptr;
 static esp_ota_handle_t            g_ota_handle      = 0;
 static mbedtls_sha256_context      g_sha_ctx;
@@ -168,6 +169,8 @@ class ControlCallbacks : public NimBLECharacteristicCallbacks {
     g_image_size = hdr.image_size;
     g_received   = 0;
     memcpy(g_expected_sha, hdr.sha256, 32);
+    memcpy(g_version, hdr.version, sizeof(hdr.version));
+    g_version[sizeof(g_version) - 1] = '\0';
 
     cleanup_sha();
     mbedtls_sha256_init(&g_sha_ctx);
@@ -262,6 +265,12 @@ class DataCallbacks : public NimBLECharacteristicCallbacks {
 
     g_state = OTA_REBOOTING;
     notify_status();
+
+    // Same outcome bookkeeping as the pull-OTA path: the next boot reads
+    // this marker to witness applied vs rolled-back, and the image boots
+    // PENDING_VERIFY (the engine owns rollback confirmation), so a broken
+    // BLE-pushed image also auto-reverts on its first bad boot.
+    securacv_ota_mark_pending_install(g_version);
 
     log_health(SCV_LOG_NOTICE, SCV_CAT_BLUETOOTH, "OTA complete — rebooting", nullptr);
     // Give NimBLE half a second to flush the final notification before we

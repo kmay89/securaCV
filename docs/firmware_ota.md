@@ -236,13 +236,43 @@ MQTT (Home Assistant discovers these automatically):
 The dev-only raw push endpoint (`POST /api/ota`, used by
 `firmware/canary/scripts/ota_deploy.py`) is compiled out of release builds.
 
-## Safety properties
+## Safety properties (the no-brick guarantees)
 
-- **A/B partitions:** the running firmware is never touched; power loss at
-  any point lands on a bootable slot.
-- **Health-gated commit:** the new image is only confirmed after the boot
-  self-test suite passes; a required failure triggers
-  `esp_ota_mark_app_invalid_rollback_and_reboot()`.
+The design goal is stronger than "hard to brick": **there is no sequence of
+user actions through the update system that leaves a device unrecoverable.**
+
+- **A/B partitions:** updates are written only to the inactive slot; the
+  running firmware is never touched. Power loss at any point during the
+  download or flash lands on a bootable slot.
+- **The application owns rollback confirmation.** The engine overrides the
+  Arduino core's `verifyRollbackLater()` hook (which would otherwise
+  auto-confirm a new image microseconds into its first boot, before
+  `setup()` runs — silently disabling rollback). A freshly installed image
+  stays `PENDING_VERIFY` until the variant's boot self-test confirms it.
+  Consequences:
+  - **Crash-loop protection:** if the new firmware crashes, hits a watchdog
+    reset, or loses power at ANY point before confirmation, the bootloader
+    boots the previous firmware on the very next start. One bad boot,
+    automatic recovery — no ladder.
+  - **Health-gated commit:** a required self-test failure triggers
+    `esp_ota_mark_app_invalid_rollback_and_reboot()` — back to the previous
+    firmware, with the outcome recorded.
+  - **Integrator contract:** every variant (and every install channel,
+    including the dev push endpoint and BLE OTA) must reach
+    `securacv_ota_boot_self_test()` on boot, or fresh installs revert on
+    their second start. Canary's validate block therefore compiles whenever
+    ANY install channel exists; vision validates immediately after WiFi,
+    BEFORE its blocking MQTT connect, so a broker outage can't cause a
+    spurious revert.
+- **Expected (safe) edge:** power-cycling the device during the first
+  minute after an update — before it confirms itself — reverts it to the
+  previous version. Nothing is lost; the update is simply offered again.
+- **Outcome bookkeeping survives every path:** the engine records the
+  install target the moment the boot partition flips (not at reboot), so
+  deferred reboots, battery-gated installs, and BLE-pushed images all get
+  correct applied/rolled-back records.
+- **Anti-rollback floor rises only after confirmation**, so a rolled-back
+  version can always be retried.
 - **Install gating:** the device defers installs while on a low battery
   (canary) or while a BLE OTA session is active (canary-wap); the two OTA
   channels strictly exclude each other.
@@ -250,6 +280,23 @@ The dev-only raw push endpoint (`POST /api/ota`, used by
   reboot, mirroring the manual-reboot path.
 - **Never reboots unattended by default:** auto-update is an explicit
   per-device opt-in.
+- **OTA can never touch the bootloader or partition table** — it writes app
+  slots only. The ESP32's first-stage bootloader is mask ROM. Even in an
+  unforeseeable worst case, a USB flash always recovers the device.
+
+## If something goes wrong (recovery matrix)
+
+| What happened | What the device does | What the user does |
+|---|---|---|
+| Power/WiFi lost mid-download | Old firmware keeps running; partial download discarded | Nothing — press Install again whenever |
+| Update file corrupted or forged | Refused before install (SHA-256 + Ed25519 + format checks) | Nothing — error shown in plain language |
+| New firmware crashes or hangs on first boot | Bootloader restores previous firmware on the next start | Nothing — rollback is recorded; update re-offered |
+| New firmware boots but fails its health check | Restores previous firmware automatically | Nothing — reason shown in HA / dashboard |
+| Power cycled in the first minute after an update | Returns to previous firmware (unconfirmed images don't stick) | Press Install again |
+| Wrong update server address saved | Checks fail with a clear message; firmware untouched | Clear the field (Settings) to return to the official server |
+| Wrong variant's manifest configured | Product check refuses the image | Fix the address; nothing was installed |
+| WiFi password changed at the router | canary/WAP: own AP + dashboard still up — reconfigure there. vision: needs a USB reflash (credentials seed from the build) | Reconnect via dashboard (canary/WAP) or USB (vision) |
+| Absolute worst case | Device still enters ROM download mode | USB flash — always possible, OTA cannot break it |
 
 ## Adding a new variant (the recipe)
 
