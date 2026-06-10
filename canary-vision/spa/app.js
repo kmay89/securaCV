@@ -209,14 +209,22 @@ var CanaryStorage = {
   },
 
   saveDevices: function (devices) {
-    // Strip tokens before persisting to localStorage
+    // Tokens move to sessionStorage; everything else is rebuilt from an
+    // explicit allowlist so a credential can never reach localStorage —
+    // not even via a future field. Extend this list when adding new
+    // persisted device metadata.
     var sanitized = devices.map(function (d) {
-      var copy = Object.assign({}, d);
-      if (copy.token) {
-        CanaryStorage._setToken(copy.id, copy.token);
-        delete copy.token;
+      if (d.token) {
+        CanaryStorage._setToken(d.id, d.token);
       }
-      return copy;
+      return {
+        id: d.id,
+        name: d.name,
+        base_url: d.base_url,
+        room: d.room,
+        last_info: d.last_info,
+        added_at: d.added_at,
+      };
     });
     localStorage.setItem(CanaryStorage.KEY, JSON.stringify(sanitized));
   },
@@ -258,6 +266,12 @@ var CanaryStorage = {
     CanaryStorage._removeToken(id);
     var devices = CanaryStorage.getDevices();
     CanaryStorage.saveDevices(devices.filter(function (d) { return d.id !== id; }));
+  },
+
+  // Rooms are a client-side organizational label only — devices know
+  // nothing about them (no fleet-wide state on the device, per D6).
+  setDeviceRoom: function (id, room) {
+    CanaryStorage.updateDevice(id, { room: room || '' });
   }
 };
 
@@ -308,11 +322,16 @@ var CanaryAPI = {
 
     var fetchOptions = {
       method: options.method || 'GET',
-      headers: {
-        'X-Canary-Token': token,
-      },
+      headers: {},
       signal: controller.signal,
     };
+
+    // Omit the auth header entirely when we have no token. This keeps
+    // unauthenticated calls (the pre-pairing provisioning-receipt poll)
+    // free of custom headers, so cross-origin GETs need no CORS preflight.
+    if (token) {
+      fetchOptions.headers['X-Canary-Token'] = token;
+    }
 
     if (options.body) {
       fetchOptions.headers['Content-Type'] = 'application/json';
@@ -1141,11 +1160,16 @@ function renderCanariesView() {
 
   if (devices.length === 0) {
     content.appendChild(el('div', { className: 'empty-state' }, [
-      el('h2', { textContent: 'No Canaries Yet' }),
-      el('p', { textContent: 'Add your first Canary device to get started.' }),
+      el('h2', { textContent: 'Protect every room' }),
+      el('p', { textContent: 'Canaries work best as a flock. Most homes start with one at the entry, then add coverage for living areas, bedrooms, and the garage.' }),
+      el('div', { className: 'coverage-chips' }, [
+        el('span', { className: 'coverage-chip', textContent: '🚪 Entry' }),
+        el('span', { className: 'coverage-chip', textContent: '🛋 Living Room' }),
+        el('span', { className: 'coverage-chip', textContent: '🚗 Garage' }),
+      ]),
       el('button', {
         className: 'btn btn-primary',
-        textContent: 'Add Canary',
+        textContent: 'Add your first Canary',
         onClick: function () { Router.navigate('#/canaries/add'); }
       }),
     ]));
@@ -1176,9 +1200,9 @@ function renderCanariesView() {
   fleetCard.appendChild(fleetStats);
   content.appendChild(fleetCard);
 
-  // Device cards
+  // Device cards, grouped by room when the user has assigned any
   var deviceCards = {};
-  devices.forEach(function (device) {
+  function makeDeviceCard(device) {
     var statusDot = el('span', { className: 'status-dot warning' });
     var statusLabel = el('span', {
       className: 'fleet-device-status',
@@ -1201,15 +1225,64 @@ function renderCanariesView() {
     card.appendChild(header);
     card.appendChild(statsRow);
 
-    content.appendChild(card);
     deviceCards[device.id] = { card: card, dot: statusDot, label: statusLabel, stats: statsRow };
-  });
+    return card;
+  }
+
+  var hasRooms = devices.some(function (d) { return d.room; });
+  if (hasRooms) {
+    var byRoom = {};
+    devices.forEach(function (d) {
+      var room = d.room || '';
+      if (!byRoom[room]) byRoom[room] = [];
+      byRoom[room].push(d);
+    });
+    var rooms = Object.keys(byRoom).filter(function (r) { return r !== ''; }).sort();
+    if (byRoom['']) rooms.push('');
+    rooms.forEach(function (room) {
+      content.appendChild(el('div', {
+        className: 'room-section-title',
+        textContent: room || 'Elsewhere',
+      }));
+      byRoom[room].forEach(function (device) {
+        content.appendChild(makeDeviceCard(device));
+      });
+    });
+  } else {
+    devices.forEach(function (device) {
+      content.appendChild(makeDeviceCard(device));
+    });
+  }
 
   content.appendChild(el('button', {
     className: 'btn btn-secondary btn-block mt-12',
     textContent: '+ Add Canary',
     onClick: function () { Router.navigate('#/canaries/add'); },
   }));
+
+  // One quiet nudge while the flock is small. Dismissible, and it stays
+  // dismissed — no badges, no counters.
+  var hintDismissed = false;
+  try {
+    hintDismissed = localStorage.getItem('cv_coverage_hint_dismissed') === '1';
+  } catch (e) { /* ignore */ }
+  if (devices.length < 3 && !hintDismissed) {
+    var hint = el('div', { className: 'coverage-hint' }, [
+      el('span', {
+        className: 'coverage-hint-text cursor-pointer',
+        textContent: 'Add a Canary to extend coverage ›',
+      }),
+      el('button', { className: 'coverage-hint-dismiss', textContent: '✕' }),
+    ]);
+    hint.querySelector('.coverage-hint-text').addEventListener('click', function () {
+      Router.navigate('#/canaries/add');
+    });
+    hint.querySelector('.coverage-hint-dismiss').addEventListener('click', function () {
+      try { localStorage.setItem('cv_coverage_hint_dismissed', '1'); } catch (e) { /* ignore */ }
+      if (hint.parentNode) hint.parentNode.removeChild(hint);
+    });
+    content.appendChild(hint);
+  }
 
   content.appendChild(el('div', { id: 'discovered-peers' }));
   app.appendChild(content);
@@ -1313,7 +1386,7 @@ function renderCanariesView() {
   });
 
   if (devices.length > 0) {
-    refreshDiscoveredPeers(devices);
+    refreshDiscoveredPeers();
   }
 }
 
@@ -1341,22 +1414,18 @@ function collectKnownIdentities(devices) {
   return { ids: knownIds, urls: knownUrls };
 }
 
-function refreshDiscoveredPeers(devices) {
-  var slot = document.getElementById('discovered-peers');
-  if (!slot) return;
-
-  // Query each known device's peer list in parallel. Failures are silent —
-  // a device being offline shouldn't break the discovery UI.
+// Query every known device's peer list in parallel and return the peers
+// the user hasn't paired yet. Failures are silent — a device being
+// offline shouldn't break the discovery UI.
+function fetchDiscoveredPeers() {
+  var devices = CanaryStorage.getDevices();
   var requests = devices.map(function (d) {
     return CanaryAPI.request(d.base_url, '/api/v1/peers')
       .then(function (data) { return (data && data.peers) || []; })
       .catch(function () { return []; });
   });
 
-  Promise.all(requests).then(function (results) {
-    var slotNow = document.getElementById('discovered-peers');
-    if (!slotNow) return; // user navigated away
-
+  return Promise.all(requests).then(function (results) {
     var known = collectKnownIdentities(CanaryStorage.getDevices());
     var seen = {};
     var discovered = [];
@@ -1374,6 +1443,18 @@ function refreshDiscoveredPeers(devices) {
         discovered.push(p);
       }
     }
+
+    return discovered;
+  });
+}
+
+function refreshDiscoveredPeers() {
+  var slot = document.getElementById('discovered-peers');
+  if (!slot) return;
+
+  fetchDiscoveredPeers().then(function (discovered) {
+    var slotNow = document.getElementById('discovered-peers');
+    if (!slotNow) return; // user navigated away
 
     while (slotNow.firstChild) slotNow.removeChild(slotNow.firstChild);
     if (discovered.length === 0) return;
@@ -1424,128 +1505,88 @@ function renderDiscoveredPeerSection(peers) {
   return section;
 }
 
-function renderAddCanaryView() {
-  var app = clearApp();
-  app.appendChild(renderHeader('Add Canary', true, false));
+// --------------- Add Canary Wizard ---------------
+//
+// Pairing leads with the zero-typing path: pick (or discover) a device,
+// short-tap its BOOT button, and the app captures the provisioning
+// receipt itself — the same physical gate the device's own dashboard
+// uses. Typing a token is the last resort, not the front door.
 
-  var content = el('div', { className: 'content' });
-  var alert = el('div', { id: 'add-alert' });
-  content.appendChild(alert);
+var ROOM_SUGGESTIONS = ['Entry', 'Living Room', 'Kitchen', 'Bedroom', 'Garage', 'Office'];
+var RECEIPT_POLL_INTERVAL_MS = 2000;
+var RECEIPT_POLL_TICKS = 30; // x 2 s = 60 s listening window
 
-  // If the user got here from the "Discovered" list, the host is already
-  // known — we just need their token. One-shot consume so a manual
-  // re-entry on the same view starts blank.
-  var prefillHost = '';
-  try {
-    prefillHost = sessionStorage.getItem('canary_prefill_host') || '';
-    sessionStorage.removeItem('canary_prefill_host');
-  } catch (e) { /* ignore */ }
-
-  if (prefillHost) {
-    content.appendChild(el('div', {
-      className: 'alert alert-info',
-      textContent: 'Pairing ' + prefillHost + ' — paste its API token below.',
-    }));
-  }
-
-  var form = el('div', {}, [
-    el('div', { className: 'form-group' }, [
-      el('label', { className: 'form-label', textContent: 'Device Address' }),
-      el('input', {
-        className: 'form-input',
-        id: 'add-host',
-        type: 'text',
-        placeholder: 'e.g. canary-a3f7.local or 192.168.1.47',
-        value: prefillHost,
-      }),
-    ]),
-    el('div', { className: 'form-group' }, [
-      el('label', { className: 'form-label', textContent: 'API Token' }),
-      el('input', {
-        className: 'form-input',
-        id: 'add-token',
-        type: 'text',
-        placeholder: 'cv_xxxx_...',
-      }),
-    ]),
-    el('div', { className: 'form-group' }, [
-      el('label', { className: 'form-label', textContent: 'Or paste provisioning receipt JSON' }),
-      el('textarea', {
-        className: 'form-input',
-        id: 'add-receipt',
-        rows: '4',
-        placeholder: '{"device_id": "...", "base_url": "...", "token": "..."}',
-      }),
-    ]),
-    el('button', {
-      className: 'btn btn-primary btn-block',
-      textContent: 'Add Device',
-      onClick: handleAddCanary,
-    }),
-  ]);
-  content.appendChild(form);
-  app.appendChild(content);
+// SECURITY NOTE: HTTP is used for private-network device communication.
+// isPrivateUrl() ensures only RFC 1918 / link-local addresses are
+// accepted; public addresses are rejected before any request is made.
+// The device API requires X-Canary-Token auth and CORS/PNA middleware
+// provides additional browser-level isolation.
+function normalizeBaseUrl(host) {
+  var baseUrl = (host || '').trim();
+  if (!baseUrl) return '';
+  if (baseUrl.indexOf('http') !== 0) baseUrl = 'http://' + baseUrl;
+  return baseUrl.replace(/\/+$/, '');
 }
 
-function handleAddCanary() {
-  var alertEl = document.getElementById('add-alert');
-  while (alertEl.firstChild) alertEl.removeChild(alertEl.firstChild);
+// Poll GET /api/provisioning-receipt until the user short-taps BOOT on
+// the device. The tap opens a short-lived gate (advertised in the 403
+// body's gate_ttl_seconds), so a press anywhere in our 60 s window lands.
+// Returns a handle with cancel(); callers must cancel on navigation.
+function startReceiptCapture(baseUrl, handlers) {
+  var cancelled = false;
+  var gateTtl = 30;
 
-  var receiptText = document.getElementById('add-receipt').value.trim();
-  var host, token, deviceId;
-
-  if (receiptText) {
-    try {
-      var receipt = JSON.parse(receiptText);
-      host = receipt.base_url || receipt.host;
-      token = receipt.token || receipt.api_token;
-      deviceId = receipt.device_id;
-    } catch (e) {
-      alertEl.appendChild(el('div', { className: 'alert alert-error', textContent: 'Invalid receipt JSON' }));
-      return;
-    }
-  } else {
-    host = document.getElementById('add-host').value.trim();
-    token = document.getElementById('add-token').value.trim();
+  function tick(remaining) {
+    if (cancelled) return;
+    CanaryAPI.request(baseUrl, '/api/provisioning-receipt')
+      .then(function (receipt) {
+        if (cancelled) return;
+        handlers.onReceipt(receipt);
+      })
+      .catch(function (err) {
+        if (cancelled) return;
+        if (err && err.status === 404) {
+          // Firmware predates the BOOT gate — fall back to manual entry.
+          handlers.onUnsupported();
+          return;
+        }
+        if (err && err.status === 403 && err.data && Number.isFinite(err.data.gate_ttl_seconds)) {
+          gateTtl = err.data.gate_ttl_seconds;
+        }
+        if (remaining <= 1) {
+          handlers.onTimeout();
+          return;
+        }
+        handlers.onTick(Math.round((remaining - 1) * RECEIPT_POLL_INTERVAL_MS / 1000), gateTtl);
+        setTimeout(function () { tick(remaining - 1); }, RECEIPT_POLL_INTERVAL_MS);
+      });
   }
 
-  if (!host) {
-    alertEl.appendChild(el('div', { className: 'alert alert-error', textContent: 'Device address is required' }));
-    return;
-  }
+  handlers.onTick(Math.round(RECEIPT_POLL_TICKS * RECEIPT_POLL_INTERVAL_MS / 1000), gateTtl);
+  tick(RECEIPT_POLL_TICKS);
 
-  if (!token) {
-    alertEl.appendChild(el('div', { className: 'alert alert-error', textContent: 'API token is required' }));
-    return;
-  }
+  return {
+    cancel: function () { cancelled = true; },
+  };
+}
 
-  // Normalize base_url
-  // SECURITY NOTE: HTTP is used for private-network device communication.
-  // The isPrivateUrl() check below ensures only RFC 1918 / link-local
-  // addresses are accepted. Public addresses are rejected before any
-  // request is made. The device API requires X-Canary-Token auth and
-  // CORS/PNA middleware provides additional browser-level isolation.
-  var baseUrl = host;
-  if (baseUrl.indexOf('http') !== 0) {
-    baseUrl = 'http://' + baseUrl;
-  }
-  // Remove trailing slash
-  baseUrl = baseUrl.replace(/\/+$/, '');
-
-  if (!isPrivateUrl(baseUrl)) {
-    alertEl.appendChild(el('div', { className: 'alert alert-error', textContent: 'Only private network addresses are allowed' }));
-    return;
-  }
-
-  // Test connection
-  alertEl.appendChild(el('div', { className: 'loading' }, [
-    el('div', { className: 'spinner' }),
-    'Connecting…',
-  ]));
-
-  CanaryAPI.request(baseUrl, '/api/v1/info', { token: token })
+// Validate the credentials against the device and persist it. Every
+// pairing path (BOOT-tap, QR, pasted receipt, manual token) funnels
+// through here so dedupe and storage behave identically.
+function completePairing(baseUrl, token, expectedDeviceId) {
+  return CanaryAPI.request(baseUrl, '/api/v1/info', { token: token })
     .then(function (info) {
-      var id = deviceId || info.device_id;
+      var id = expectedDeviceId || info.device_id;
+      var existing = CanaryStorage.getDevice(id);
+      if (existing) {
+        // Refresh credentials but tell the caller — likely the user
+        // tapped BOOT on a box they already paired.
+        CanaryStorage.updateDevice(id, { token: token, base_url: baseUrl, last_info: info });
+        var dup = new Error('This Canary is already paired');
+        dup.code = 'already_paired';
+        dup.device = CanaryStorage.getDevice(id);
+        throw dup;
+      }
       var device = {
         id: id,
         name: info.name || id,
@@ -1555,16 +1596,647 @@ function handleAddCanary() {
         added_at: new Date().toISOString(),
       };
       CanaryStorage.addDevice(device);
-      Router.navigate('#/device/' + id);
-    })
-    .catch(function (err) {
-      while (alertEl.firstChild) alertEl.removeChild(alertEl.firstChild);
-      var msg = 'Connection failed';
-      if (err.status === 401) msg = 'Invalid token. Check your API token and try again.';
-      else if (err.status === 429) msg = 'Rate limited. Try again in ' + (err.data ? err.data.retry_after : 60) + ' seconds.';
-      else if (err.status === 0) msg = 'Device offline or unreachable.';
-      alertEl.appendChild(el('div', { className: 'alert alert-error', textContent: msg }));
+      return CanaryStorage.getDevice(id);
     });
+}
+
+// Rename on the device when the firmware supports it, falling back to a
+// local-only label otherwise. Resolves with the stored device either way.
+function applyDeviceName(device, newName) {
+  return CanaryAPI.request(device.base_url, '/api/device-name', {
+    method: 'POST',
+    token: device.token,
+    body: { name: newName },
+  }).then(function (resp) {
+    var updates = { name: resp.device_name || newName };
+    // If we reach the device by its mDNS name, follow the rename — the
+    // old hostname stops resolving once mDNS re-announces. Preserve any
+    // explicit port (dev servers, non-standard deployments).
+    var hostMatch = device.base_url.match(/^http:\/\/canary-[a-z0-9-]+\.local(:[0-9]+)?$/);
+    if (hostMatch && resp.mdns_host) {
+      updates.base_url = 'http://' + resp.mdns_host + '.local' + (hostMatch[1] || '');
+    }
+    CanaryStorage.updateDevice(device.id, updates);
+    return CanaryStorage.getDevice(device.id);
+  }).catch(function () {
+    // Older firmware (404) or a transient error — keep the label locally
+    // so the app still shows the user's name.
+    CanaryStorage.updateDevice(device.id, { name: newName });
+    return CanaryStorage.getDevice(device.id);
+  });
+}
+
+function pairingErrorMessage(err) {
+  if (!err) return 'Connection failed';
+  if (err.code === 'already_paired') return 'This Canary is already paired';
+  if (err.status === 401) return 'Invalid token. Check your API token and try again.';
+  if (err.status === 429) return 'Rate limited. Try again in ' + ((err.data && err.data.retry_after) || 60) + ' seconds.';
+  if (err.status === 0) return 'Device offline or unreachable.';
+  return err.message || 'Connection failed';
+}
+
+// QR pairing needs a secure context for camera access, which a LAN-HTTP
+// PWA usually doesn't have — so the button only appears when it can work.
+function canScanQr() {
+  return !!(window.isSecureContext &&
+            window.BarcodeDetector &&
+            navigator.mediaDevices &&
+            navigator.mediaDevices.getUserMedia);
+}
+
+function openQrScanSheet(onReceipt) {
+  var stream = null;
+  var done = false;
+
+  var video = el('video', { className: 'qr-video' });
+  video.setAttribute('playsinline', '');
+  var sheet = el('div', { className: 'qr-sheet' }, [
+    el('div', { className: 'qr-sheet-title', textContent: 'Scan the pairing QR' }),
+    el('div', { className: 'qr-sheet-hint', textContent: 'On the Canary dashboard, open Settings → Export to show it.' }),
+    video,
+    el('button', {
+      className: 'btn btn-secondary btn-block mt-12',
+      textContent: 'Cancel',
+      onClick: close,
+    }),
+  ]);
+
+  function close() {
+    done = true;
+    if (stream) {
+      stream.getTracks().forEach(function (t) { t.stop(); });
+    }
+    if (sheet.parentNode) sheet.parentNode.removeChild(sheet);
+  }
+
+  document.body.appendChild(sheet);
+
+  navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+    .then(function (s) {
+      if (done) {
+        s.getTracks().forEach(function (t) { t.stop(); });
+        return;
+      }
+      stream = s;
+      video.srcObject = s;
+      video.play();
+
+      // Constructing BarcodeDetector can throw on platforms that expose
+      // the interface but don't support the requested format.
+      var detector;
+      try {
+        detector = new window.BarcodeDetector({ formats: ['qr_code'] });
+      } catch (e) {
+        close();
+        return;
+      }
+      function detectFrame() {
+        if (done) return;
+        detector.detect(video).then(function (codes) {
+          if (done) return;
+          for (var i = 0; i < codes.length; i++) {
+            try {
+              var receipt = JSON.parse(codes[i].rawValue);
+              if (receipt && (receipt.token || receipt.api_token)) {
+                close();
+                onReceipt(receipt);
+                return;
+              }
+            } catch (e) { /* not our QR — keep looking */ }
+          }
+          requestAnimationFrame(detectFrame);
+        }).catch(function () {
+          if (!done) requestAnimationFrame(detectFrame);
+        });
+      }
+      requestAnimationFrame(detectFrame);
+    })
+    .catch(function () {
+      close();
+    });
+}
+
+// Room chips shared by the wizard and the device detail page. Rooms are
+// purely client-side labels (see CanaryStorage.setDeviceRoom).
+function renderRoomPicker(initialRoom, onChange) {
+  var selected = initialRoom || '';
+
+  var customInput = el('input', {
+    className: 'form-input mt-12',
+    type: 'text',
+    placeholder: 'Room name',
+  });
+  customInput.style.display = 'none';
+  customInput.addEventListener('input', function () {
+    selected = customInput.value.trim();
+    onChange(selected);
+  });
+
+  var chipRow = el('div', { className: 'room-chips' });
+
+  function refreshChips() {
+    Array.prototype.forEach.call(chipRow.children, function (chip) {
+      var isActive = chip.getAttribute('data-room') === selected ||
+        (chip.getAttribute('data-room') === '__custom__' && customInput.style.display !== 'none');
+      chip.className = isActive ? 'room-chip active' : 'room-chip';
+    });
+  }
+
+  ROOM_SUGGESTIONS.forEach(function (room) {
+    var chip = el('button', { className: 'room-chip', textContent: room });
+    chip.setAttribute('data-room', room);
+    chip.addEventListener('click', function () {
+      customInput.style.display = 'none';
+      selected = (selected === room) ? '' : room;
+      onChange(selected);
+      refreshChips();
+    });
+    chipRow.appendChild(chip);
+  });
+
+  var customChip = el('button', { className: 'room-chip', textContent: 'Custom…' });
+  customChip.setAttribute('data-room', '__custom__');
+  customChip.addEventListener('click', function () {
+    customInput.style.display = '';
+    customInput.focus();
+    selected = customInput.value.trim();
+    onChange(selected);
+    refreshChips();
+  });
+  chipRow.appendChild(customChip);
+
+  if (selected && ROOM_SUGGESTIONS.indexOf(selected) === -1) {
+    customInput.style.display = '';
+    customInput.value = selected;
+  }
+  refreshChips();
+
+  return el('div', {}, [chipRow, customInput]);
+}
+
+function renderAddCanaryView() {
+  var app = clearApp();
+  app.appendChild(renderHeader('Add Canary', true, false));
+
+  var content = el('div', { className: 'content' });
+  app.appendChild(content);
+
+  var capture = null;
+
+  // One-shot prefill from "Pair this Canary" in the discovered list —
+  // the host is already known, so jump straight to the BOOT-tap step.
+  var prefillHost = '';
+  try {
+    prefillHost = sessionStorage.getItem('canary_prefill_host') || '';
+    sessionStorage.removeItem('canary_prefill_host');
+  } catch (e) { /* ignore */ }
+
+  function setStep(renderStep) {
+    if (capture) { capture.cancel(); capture = null; }
+    while (content.firstChild) content.removeChild(content.firstChild);
+    var alertSlot = el('div', { id: 'add-alert' });
+    content.appendChild(alertSlot);
+    renderStep(alertSlot);
+  }
+
+  function showError(alertSlot, err) {
+    while (alertSlot.firstChild) alertSlot.removeChild(alertSlot.firstChild);
+    alertSlot.appendChild(el('div', {
+      className: 'alert alert-error',
+      textContent: pairingErrorMessage(err),
+    }));
+  }
+
+  function handleReceipt(alertSlot, receipt, knownBaseUrl) {
+    if (!receipt || typeof receipt !== 'object') {
+      showError(alertSlot, new Error('Invalid receipt format'));
+      return;
+    }
+    var baseUrl = knownBaseUrl || normalizeBaseUrl(receipt.base_url || receipt.host);
+    var token = receipt.token || receipt.api_token;
+    if (!baseUrl || !isPrivateUrl(baseUrl)) {
+      showError(alertSlot, new Error('Only private network addresses are allowed'));
+      return;
+    }
+    if (!token) {
+      showError(alertSlot, new Error('Receipt is missing a token'));
+      return;
+    }
+    completePairing(baseUrl, token, receipt.device_id)
+      .then(function (device) { setStep(function () { stepConfirm(device); }); })
+      .catch(function (err) {
+        if (err.code === 'already_paired' && err.device) {
+          stepAlreadyPaired(err.device);
+          return;
+        }
+        showError(alertSlot, err);
+      });
+  }
+
+  // ---- Step 1: choose a device ----
+  function stepChoose(alertSlot) {
+    content.appendChild(el('div', { className: 'pair-step-title', textContent: 'Power up your Canary' }));
+    content.appendChild(el('div', {
+      className: 'pair-step-subtitle',
+      textContent: 'Plug it into USB power. Once it joins your WiFi it appears here.',
+    }));
+
+    var discoveredSlot = el('div', {});
+    content.appendChild(discoveredSlot);
+    var searching = el('div', { className: 'pair-searching' }, [
+      el('div', { className: 'spinner' }),
+      el('span', { textContent: 'Looking for Canaries on your network…' }),
+    ]);
+    if (CanaryStorage.getDevices().length > 0) {
+      discoveredSlot.appendChild(searching);
+      fetchDiscoveredPeers().then(function (peers) {
+        if (!document.body.contains(discoveredSlot)) return;
+        while (discoveredSlot.firstChild) discoveredSlot.removeChild(discoveredSlot.firstChild);
+        peers.forEach(function (peer) {
+          var baseUrl = peerBaseUrl(peer);
+          if (!baseUrl) return;
+          var row = el('div', { className: 'card cursor-pointer' }, [
+            el('div', { className: 'card-header' }, [
+              el('div', {}, [
+                el('div', { className: 'card-title', textContent: peer.name || peer.device_id }),
+                el('div', { className: 'card-subtitle', textContent: baseUrl }),
+              ]),
+              el('span', { className: 'arrow', textContent: '›' }),
+            ]),
+          ]);
+          row.addEventListener('click', function () {
+            setStep(function (slot) { stepCapture(slot, baseUrl); });
+          });
+          discoveredSlot.appendChild(row);
+        });
+        if (peers.length === 0) {
+          discoveredSlot.appendChild(el('div', {
+            className: 'pair-searching',
+            textContent: 'No new Canaries found yet — enter its address below.',
+          }));
+        }
+      });
+    }
+
+    var hostInput = el('input', {
+      className: 'form-input',
+      type: 'text',
+      placeholder: 'e.g. canary-a3f7.local or 192.168.1.47',
+    });
+    content.appendChild(el('div', { className: 'form-group mt-12' }, [
+      el('label', { className: 'form-label', textContent: 'Device address' }),
+      hostInput,
+    ]));
+    content.appendChild(el('button', {
+      className: 'btn btn-primary btn-block',
+      textContent: 'Continue',
+      onClick: function () {
+        var baseUrl = normalizeBaseUrl(hostInput.value);
+        if (!baseUrl) {
+          showError(alertSlot, new Error('Device address is required'));
+          return;
+        }
+        if (!isPrivateUrl(baseUrl)) {
+          showError(alertSlot, new Error('Only private network addresses are allowed'));
+          return;
+        }
+        setStep(function (slot) { stepCapture(slot, baseUrl); });
+      },
+    }));
+
+    content.appendChild(renderFallbackExpander(alertSlot, ''));
+  }
+
+  // ---- Step 2: BOOT-tap capture ----
+  function stepCapture(alertSlot, baseUrl) {
+    var statusLine = el('div', { className: 'pair-status', textContent: 'Listening…' });
+    var hero = el('div', { className: 'card pair-hero' }, [
+      el('div', { className: 'pair-pulse' }, [
+        el('div', { className: 'pair-pulse-core' }),
+      ]),
+      el('div', { className: 'pair-step-title', textContent: 'Short-tap the BOOT button' }),
+      el('div', {
+        className: 'pair-step-subtitle',
+        textContent: 'One tap on the small button on your Canary pairs it — no codes to type.',
+      }),
+      el('div', { className: 'card-subtitle', textContent: baseUrl }),
+      statusLine,
+    ]);
+    content.appendChild(hero);
+    content.appendChild(el('button', {
+      className: 'btn btn-secondary btn-block mt-12',
+      textContent: 'Cancel',
+      onClick: function () { setStep(stepChoose); },
+    }));
+
+    capture = startReceiptCapture(baseUrl, {
+      onTick: function (secondsLeft, gateTtl) {
+        if (!document.body.contains(hero)) {
+          if (capture) capture.cancel();
+          return;
+        }
+        statusLine.textContent = 'Listening for ' + secondsLeft + 's — the device holds a tap for ' + gateTtl + 's.';
+      },
+      onReceipt: function (receipt) {
+        statusLine.textContent = 'Pairing…';
+        handleReceipt(alertSlot, receipt, baseUrl);
+      },
+      onTimeout: function () {
+        if (!document.body.contains(hero)) return;
+        while (content.firstChild) content.removeChild(content.firstChild);
+        content.appendChild(alertSlot);
+        content.appendChild(el('div', { className: 'card pair-hero' }, [
+          el('div', { className: 'pair-step-title', textContent: "Didn't catch a tap" }),
+          el('div', {
+            className: 'pair-step-subtitle',
+            textContent: 'Make sure the Canary is powered and try again.',
+          }),
+        ]));
+        content.appendChild(el('button', {
+          className: 'btn btn-primary btn-block mt-12',
+          textContent: 'Try again',
+          onClick: function () { setStep(function (slot) { stepCapture(slot, baseUrl); }); },
+        }));
+        content.appendChild(el('button', {
+          className: 'btn btn-secondary btn-block mt-12',
+          textContent: 'Back',
+          onClick: function () { setStep(stepChoose); },
+        }));
+        content.appendChild(renderFallbackExpander(alertSlot, baseUrl));
+      },
+      onUnsupported: function () {
+        if (!document.body.contains(hero)) return;
+        while (content.firstChild) content.removeChild(content.firstChild);
+        content.appendChild(alertSlot);
+        content.appendChild(el('div', {
+          className: 'alert alert-warning',
+          textContent: "This Canary's firmware doesn't support one-tap pairing. Use its API token instead.",
+        }));
+        var fallback = renderFallbackExpander(alertSlot, baseUrl);
+        content.appendChild(fallback);
+        var toggle = fallback.querySelector('.pair-expander-toggle');
+        if (toggle) toggle.click();
+        content.appendChild(el('button', {
+          className: 'btn btn-secondary btn-block mt-12',
+          textContent: 'Back',
+          onClick: function () { setStep(stepChoose); },
+        }));
+      },
+    });
+  }
+
+  // ---- Fallbacks: QR scan, pasted receipt, manual token ----
+  function renderFallbackExpander(alertSlot, prefillBaseUrl) {
+    var body = el('div', { className: 'pair-expander-body' });
+    body.style.display = 'none';
+
+    if (canScanQr()) {
+      body.appendChild(el('button', {
+        className: 'btn btn-secondary btn-block',
+        textContent: 'Scan pairing QR',
+        onClick: function () {
+          openQrScanSheet(function (receipt) {
+            handleReceipt(alertSlot, receipt, '');
+          });
+        },
+      }));
+    }
+
+    var receiptInput = el('textarea', {
+      className: 'form-input',
+      rows: '4',
+      placeholder: '{"device_id": "...", "base_url": "...", "token": "..."}',
+    });
+    body.appendChild(el('div', { className: 'form-group mt-12' }, [
+      el('label', { className: 'form-label', textContent: 'Paste provisioning receipt JSON' }),
+      receiptInput,
+    ]));
+    body.appendChild(el('button', {
+      className: 'btn btn-secondary btn-block',
+      textContent: 'Add from receipt',
+      onClick: function () {
+        var receipt;
+        try {
+          receipt = JSON.parse(receiptInput.value.trim());
+        } catch (e) {
+          showError(alertSlot, new Error('Invalid receipt JSON'));
+          return;
+        }
+        handleReceipt(alertSlot, receipt, '');
+      },
+    }));
+
+    var hostInput = el('input', {
+      className: 'form-input',
+      type: 'text',
+      placeholder: 'e.g. canary-a3f7.local or 192.168.1.47',
+      value: prefillBaseUrl || '',
+    });
+    var tokenInput = el('input', {
+      className: 'form-input',
+      type: 'text',
+      placeholder: 'cv_xxxx_...',
+    });
+    body.appendChild(el('div', { className: 'form-group mt-20' }, [
+      el('label', { className: 'form-label', textContent: 'Device address' }),
+      hostInput,
+    ]));
+    body.appendChild(el('div', { className: 'form-group' }, [
+      el('label', { className: 'form-label', textContent: 'API token' }),
+      tokenInput,
+    ]));
+    body.appendChild(el('button', {
+      className: 'btn btn-secondary btn-block',
+      textContent: 'Add with token',
+      onClick: function () {
+        var baseUrl = normalizeBaseUrl(hostInput.value);
+        var token = tokenInput.value.trim();
+        if (!baseUrl) { showError(alertSlot, new Error('Device address is required')); return; }
+        if (!isPrivateUrl(baseUrl)) { showError(alertSlot, new Error('Only private network addresses are allowed')); return; }
+        if (!token) { showError(alertSlot, new Error('API token is required')); return; }
+        handleReceipt(alertSlot, { token: token }, baseUrl);
+      },
+    }));
+
+    var toggle = el('button', {
+      className: 'pair-expander-toggle',
+      textContent: 'Other ways to pair',
+      onClick: function () {
+        body.style.display = body.style.display === 'none' ? '' : 'none';
+      },
+    });
+
+    return el('div', { className: 'pair-expander mt-20' }, [toggle, body]);
+  }
+
+  // ---- Already paired ----
+  function stepAlreadyPaired(device) {
+    while (content.firstChild) content.removeChild(content.firstChild);
+    content.appendChild(el('div', { className: 'card pair-hero' }, [
+      el('div', { className: 'pair-step-title', textContent: 'Already paired' }),
+      el('div', {
+        className: 'pair-step-subtitle',
+        textContent: (device.name || device.id) + ' is already in your flock. Not the box you meant? Blink it to check.',
+      }),
+      el('button', {
+        className: 'btn btn-secondary btn-block mt-12',
+        textContent: 'Blink ' + (device.name || device.id),
+        onClick: function () {
+          CanaryAPI.request(device.base_url, '/api/identify', {
+            method: 'POST',
+            token: device.token,
+            body: { duration_ms: 15000 },
+          }).catch(function () { /* best effort */ });
+        },
+      }),
+    ]));
+    content.appendChild(el('button', {
+      className: 'btn btn-primary btn-block mt-12',
+      textContent: 'Pair a different Canary',
+      onClick: function () { setStep(stepChoose); },
+    }));
+    content.appendChild(el('button', {
+      className: 'btn btn-secondary btn-block mt-12',
+      textContent: 'Done',
+      onClick: function () { Router.navigate('#/canaries'); },
+    }));
+  }
+
+  // ---- Step 3: confirm, name, locate ----
+  function stepConfirm(device) {
+    var selectedRoom = device.room || '';
+    var nameTouched = false;
+
+    content.appendChild(el('div', { className: 'card pair-hero' }, [
+      el('div', { className: 'pair-check', textContent: '✓' }),
+      el('div', { className: 'pair-step-title', textContent: 'Canary paired' }),
+      el('div', {
+        className: 'card-subtitle',
+        textContent: device.id + (device.last_info && device.last_info.firmware_version
+          ? ' · v' + device.last_info.firmware_version : ''),
+      }),
+    ]));
+
+    // Blink the device so the user knows which physical box just joined —
+    // essential when unboxing several identical units.
+    var blinkBtn = el('button', {
+      className: 'btn btn-secondary btn-block mt-12',
+      textContent: 'Blink to confirm it’s this one',
+    });
+    blinkBtn.addEventListener('click', function () {
+      blinkBtn.disabled = true;
+      blinkBtn.textContent = 'Look for the blinking light…';
+      CanaryAPI.request(device.base_url, '/api/identify', {
+        method: 'POST',
+        token: device.token,
+        body: { duration_ms: 15000 },
+      }).then(function (resp) {
+        setTimeout(function () {
+          blinkBtn.disabled = false;
+          blinkBtn.textContent = 'Blink to confirm it’s this one';
+        }, (resp && resp.duration_ms) || 15000);
+      }).catch(function (err) {
+        if (err && err.status === 404) {
+          // Older firmware — hide the affordance rather than erroring.
+          if (blinkBtn.parentNode) blinkBtn.parentNode.removeChild(blinkBtn);
+          return;
+        }
+        blinkBtn.disabled = false;
+        blinkBtn.textContent = 'Blink to confirm it’s this one';
+      });
+    });
+    content.appendChild(blinkBtn);
+
+    var nameInput = el('input', {
+      className: 'form-input',
+      type: 'text',
+      placeholder: 'e.g. kitchen',
+      value: device.name !== device.id ? device.name : '',
+    });
+    nameInput.addEventListener('input', function () { nameTouched = true; });
+    content.appendChild(el('div', { className: 'form-group mt-20' }, [
+      el('label', { className: 'form-label', textContent: 'Name this Canary' }),
+      nameInput,
+    ]));
+
+    content.appendChild(el('div', { className: 'form-group' }, [
+      el('label', { className: 'form-label', textContent: 'Which room is it watching?' }),
+      renderRoomPicker(selectedRoom, function (room) {
+        selectedRoom = room;
+        // Polish: suggest the room as the device name until the user
+        // types their own.
+        if (!nameTouched && room) {
+          nameInput.value = room.toLowerCase().replace(/[^a-z0-9-]+/g, '-');
+        }
+      }),
+    ]));
+
+    content.appendChild(el('button', {
+      className: 'btn btn-primary btn-block mt-12',
+      textContent: 'Save & continue',
+      onClick: function () {
+        var newName = nameInput.value.trim();
+        CanaryStorage.setDeviceRoom(device.id, selectedRoom);
+
+        if (!newName || newName === device.name) {
+          setStep(function () { stepDone(CanaryStorage.getDevice(device.id)); });
+          return;
+        }
+
+        applyDeviceName(device, newName).then(function (updated) {
+          setStep(function () { stepDone(updated); });
+        });
+      },
+    }));
+
+    content.appendChild(el('button', {
+      className: 'btn btn-secondary btn-block mt-12',
+      textContent: 'Skip for now',
+      onClick: function () { setStep(function () { stepDone(device); }); },
+    }));
+  }
+
+  // ---- Step 4: done — invite the next one ----
+  function stepDone(device) {
+    var count = CanaryStorage.getDevices().length;
+    var flockLine;
+    if (count === 1) {
+      flockLine = '1 Canary protecting your home. Most homes use 3–5 for full coverage — one per entry and shared space.';
+    } else if (count < 3) {
+      flockLine = count + ' Canaries protecting your home. Most homes use 3–5 for full coverage.';
+    } else {
+      flockLine = count + ' Canaries protecting your home. Your flock is growing.';
+    }
+
+    content.appendChild(el('div', { className: 'card pair-hero' }, [
+      el('div', { className: 'pair-check', textContent: '✓' }),
+      el('div', {
+        className: 'pair-step-title',
+        textContent: (device.name || device.id) + ' is watching',
+      }),
+      el('div', { className: 'pair-step-subtitle', textContent: flockLine }),
+    ]));
+
+    content.appendChild(el('button', {
+      className: 'btn btn-primary btn-block mt-12',
+      textContent: '+ Add another Canary',
+      onClick: function () { setStep(stepChoose); },
+    }));
+    content.appendChild(el('button', {
+      className: 'btn btn-secondary btn-block mt-12',
+      textContent: 'Done',
+      onClick: function () { Router.navigate('#/canaries'); },
+    }));
+  }
+
+  if (prefillHost) {
+    var prefillBase = normalizeBaseUrl(prefillHost);
+    if (prefillBase && isPrivateUrl(prefillBase)) {
+      setStep(function (slot) { stepCapture(slot, prefillBase); });
+      return;
+    }
+  }
+  setStep(stepChoose);
 }
 
 function renderDeviceView(deviceId) {
@@ -1608,6 +2280,70 @@ function renderDeviceView(deviceId) {
     ]),
   ]);
   content.appendChild(statsGrid);
+
+  // Identity: room label, physical locate, rename. Same primitives the
+  // pairing wizard uses, so they're not setup-only.
+  var blinkBtn = el('button', {
+    className: 'btn btn-secondary btn-block mt-12',
+    textContent: 'Blink to find this Canary',
+  });
+  blinkBtn.addEventListener('click', function () {
+    blinkBtn.disabled = true;
+    blinkBtn.textContent = 'Look for the blinking light…';
+    CanaryAPI.request(device.base_url, '/api/identify', {
+      method: 'POST',
+      token: device.token,
+      body: { duration_ms: 15000 },
+    }).then(function (resp) {
+      setTimeout(function () {
+        blinkBtn.disabled = false;
+        blinkBtn.textContent = 'Blink to find this Canary';
+      }, (resp && resp.duration_ms) || 15000);
+    }).catch(function (err) {
+      if (err && err.status === 404 && blinkBtn.parentNode) {
+        blinkBtn.parentNode.removeChild(blinkBtn);
+        return;
+      }
+      blinkBtn.disabled = false;
+      blinkBtn.textContent = 'Blink to find this Canary';
+    });
+  });
+
+  var renameInput = el('input', {
+    className: 'form-input',
+    type: 'text',
+    placeholder: 'e.g. kitchen',
+    value: device.name || '',
+  });
+  var renameBtn = el('button', {
+    className: 'btn btn-secondary btn-block mt-12',
+    textContent: 'Rename',
+  });
+  renameBtn.addEventListener('click', function () {
+    var newName = renameInput.value.trim();
+    if (!newName || newName === device.name) return;
+    renameBtn.disabled = true;
+    renameBtn.textContent = 'Renaming…';
+    applyDeviceName(device, newName).then(function () {
+      renderDeviceView(deviceId);
+    });
+  });
+
+  content.appendChild(el('div', { className: 'card' }, [
+    el('div', { className: 'card-title mb-8', textContent: 'Identity' }),
+    el('div', { className: 'form-group' }, [
+      el('label', { className: 'form-label', textContent: 'Room' }),
+      renderRoomPicker(device.room || '', function (room) {
+        CanaryStorage.setDeviceRoom(deviceId, room);
+      }),
+    ]),
+    el('div', { className: 'form-group' }, [
+      el('label', { className: 'form-label', textContent: 'Name' }),
+      renameInput,
+    ]),
+    renameBtn,
+    blinkBtn,
+  ]));
 
   // Config sections
   var sections = el('div', { className: 'card' }, [

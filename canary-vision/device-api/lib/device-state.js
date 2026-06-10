@@ -129,6 +129,18 @@ function createDeviceState(overrides = {}) {
   // Reboot tracking
   let lastRebootTime = 0;
 
+  // BOOT-button provisioning gate (mirrors firmware: a short-tap opens a
+  // ~30 s window during which /api/provisioning-receipt returns the token)
+  const BOOT_GATE_TTL_MS = 30 * 1000;
+  let bootGateOpenedAt = 0;
+
+  // Trust-on-pair origins: when a BOOT press releases the provisioning
+  // receipt, the origin that received it is recorded as durably allowed
+  // for CORS. The physical press already authorizes handing out the API
+  // token itself, so trusting the receiving origin is strictly weaker.
+  // Firmware persists this in NVS; the reference server keeps it in memory.
+  const allowedPeerOrigins = new Set();
+
   // Update tracking
   let updateInProgress = false;
   let lastUpdateTime = 0;
@@ -443,6 +455,28 @@ function createDeviceState(overrides = {}) {
     getGpsState() { return gpsState; },
     getUptime() {
       return Math.floor((Date.now() - startTime) / 1000);
+    },
+    BOOT_GATE_TTL_SECONDS: BOOT_GATE_TTL_MS / 1000,
+    openBootGate() {
+      bootGateOpenedAt = Date.now();
+      addLog('INFO', 'BOOT button pressed — provisioning gate open');
+    },
+    isBootGateOpen() {
+      return bootGateOpenedAt > 0 && (Date.now() - bootGateOpenedAt) < BOOT_GATE_TTL_MS;
+    },
+    consumeBootGate() {
+      bootGateOpenedAt = 0;
+    },
+    addAllowedOrigin(origin) {
+      allowedPeerOrigins.add(origin);
+      addLog('INFO', `Trust-on-pair: origin allowed (${origin})`);
+    },
+    isOriginAllowed(origin) {
+      return allowedPeerOrigins.has(origin);
+    },
+    setDeviceName(name) {
+      device.name = name;
+      device.mdns_hostname = 'canary-' + name + '.local';
     },
     getRebootTime() {
       return lastRebootTime;

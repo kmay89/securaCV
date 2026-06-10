@@ -1295,3 +1295,227 @@ html, body {
   color: var(--color-text-secondary);
   margin-top: 6px;
 }
+
+/* ───────────── Pairing Wizard ───────────── */
+
+.pair-step-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 8px 0 4px;
+}
+
+.pair-step-subtitle {
+  font-size: 14px;
+  color: var(--color-text-secondary);
+  margin-bottom: 12px;
+  line-height: 1.45;
+}
+
+.pair-hero {
+  text-align: center;
+  padding: 28px 20px;
+}
+
+.pair-hero .card-subtitle {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+/* Pulsing ring shown while listening for the BOOT tap */
+.pair-pulse {
+  width: 72px;
+  height: 72px;
+  margin: 4px auto 12px;
+  border-radius: 50%;
+  background: var(--color-accent-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: pair-pulse 1.6s ease-out infinite;
+}
+
+.pair-pulse-core {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--color-accent);
+}
+
+@keyframes pair-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(245, 166, 35, 0.35); }
+  70%  { box-shadow: 0 0 0 18px rgba(245, 166, 35, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(245, 166, 35, 0); }
+}
+
+.pair-status {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  margin-top: 10px;
+}
+
+.pair-check {
+  width: 56px;
+  height: 56px;
+  margin: 4px auto 10px;
+  border-radius: 50%;
+  background: var(--color-accent-subtle);
+  color: var(--color-accent);
+  font-size: 28px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pair-searching {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 4px;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.pair-expander-toggle {
+  background: none;
+  border: none;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  padding: 8px 0;
+  width: 100%;
+  text-align: center;
+  transition: color var(--transition);
+}
+
+.pair-expander-toggle:hover {
+  color: var(--color-accent);
+}
+
+.pair-expander-body {
+  margin-top: 8px;
+}
+
+/* QR scan sheet (only reachable in secure contexts) */
+.qr-sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: var(--color-bg);
+  padding: 24px 20px;
+  display: flex;
+  flex-direction: column;
+  max-width: 480px;
+  margin: 0 auto;
+}
+
+.qr-sheet-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.qr-sheet-hint {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  margin: 4px 0 16px;
+}
+
+.qr-video {
+  width: 100%;
+  flex: 1;
+  min-height: 0;
+  object-fit: cover;
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+/* ───────────── Rooms & Coverage ───────────── */
+
+.room-chips {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.room-chip {
+  flex-shrink: 0;
+  padding: 6px 14px;
+  border-radius: 20px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  transition: all var(--transition);
+  white-space: nowrap;
+}
+
+.room-chip:active {
+  transform: scale(0.95);
+}
+
+.room-chip.active {
+  background: var(--color-accent-subtle);
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.room-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-muted);
+  margin: 16px 4px 8px;
+}
+
+.coverage-chips {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-bottom: 24px;
+}
+
+.coverage-chip {
+  padding: 6px 14px;
+  border-radius: 20px;
+  border: 1px dashed var(--color-border);
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+
+.coverage-hint {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px dashed var(--color-border);
+  font-size: 13px;
+}
+
+.coverage-hint-text {
+  color: var(--color-text-secondary);
+  transition: color var(--transition);
+}
+
+.coverage-hint-text:hover {
+  color: var(--color-accent);
+}
+
+.coverage-hint-dismiss {
+  background: none;
+  border: none;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 2px 6px;
+}
