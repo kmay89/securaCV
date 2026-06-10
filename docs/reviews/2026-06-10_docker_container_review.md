@@ -87,7 +87,8 @@ file **version 4**, which requires cargo ≥ 1.78 —
 Cargo does not understand this lock file`. The documented `docker build -t witnessd:local .`
 (`docs/container.md`) has therefore failed for everyone since the lock file was upgraded;
 with no CI building these images, nothing noticed. Fixed by bumping both build stages to
-`rust:1.90-slim-bookworm` (the `-bookworm` suffix pinned explicitly so the build-stage
+`rust:1.94-slim-bookworm` (cargo ≥ 1.78 for the lock file, and the locked gstreamer/glib
+crates declare `rust-version` 1.92; the `-bookworm` suffix pinned explicitly so the build-stage
 glibc keeps matching the `debian:bookworm-slim` runtime even after `-slim` retags to a
 newer Debian).
 
@@ -252,7 +253,7 @@ and the offline evidence viewer (static HTML).
    shell-form `curl -fsS http://127.0.0.1:8799/health` against the Event API `witnessd`
    already serves (`WITNESS_API_ADDR=0.0.0.0:8799`).
 3. **Build toolchain unblocked** — both Dockerfiles' build stages bumped from
-   `rust:1.77-slim` to `rust:1.90-slim-bookworm` so cargo can read the version-4
+   `rust:1.77-slim` to `rust:1.94-slim-bookworm` so cargo can read the version-4
    `Cargo.lock` (§2.3), with the Debian release pinned to keep build/runtime glibc
    matched.
 4. **MQTT credentials wired end-to-end** — `.env.example` added (gitignore updated to

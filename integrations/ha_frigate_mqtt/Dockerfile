@@ -9,9 +9,9 @@
 #   docker build -f integrations/ha_frigate_mqtt/Dockerfile -t securacv-ha-frigate:local .
 
 # slim-bookworm (not bare -slim) so the build-stage glibc matches the
-# debian:bookworm-slim runtime stage. Cargo >= 1.78 is required by this
-# repo's lock file (version 4).
-FROM rust:1.90-slim-bookworm AS build
+# debian:bookworm-slim runtime stage. Kept in lockstep with the root
+# Dockerfile's toolchain (locked crates there declare rust-version 1.92).
+FROM rust:1.94-slim-bookworm AS build
 
 # libssl-dev: the bundled SQLCipher (rusqlite bundled-sqlcipher) compiles
 # against OpenSSL headers and links libcrypto dynamically.
