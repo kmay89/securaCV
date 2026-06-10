@@ -3,20 +3,17 @@
 
 #include <WiFi.h>
 
-#if __has_include("secrets/secrets.h")
-  #include "secrets/secrets.h"
-#else
-  #include "secrets.ci.h"
-#endif
+#include "canary/runtime_config.h"  // NVS-backed credentials (OTA-safe)
 
 namespace canary::net {
 
 void wifi_init_or_reboot() {
+  const auto& cfg = canary::cfg::get();
   WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  WiFi.begin(cfg.wifi_ssid, cfg.wifi_pass);
 
   log_header("WIFI");
-  canary::dbg_serial().printf("Connecting SSID=\"%s\" ...\n", WIFI_SSID);
+  canary::dbg_serial().printf("Connecting SSID=\"%s\" ...\n", cfg.wifi_ssid);
 
   const uint32_t start = canary::ms_now();
   while (WiFi.status() != WL_CONNECTED) {
