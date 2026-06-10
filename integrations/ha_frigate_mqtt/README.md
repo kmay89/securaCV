@@ -24,11 +24,25 @@ chmod 600 .device_key_seed
 2) **Set up MQTT credentials** (anonymous access is disabled by default):
 
 ```bash
-# Start mosquitto first to create the password file
+# Make the credentials available to the frigate and securacv containers
+cp .env.example .env
+# Edit .env and set MQTT_PASSWORD (and MQTT_USERNAME if not "securacv")
+
+# Create the password file BEFORE starting the broker (mosquitto exits if the
+# configured password_file is missing, so it can't be created via `exec` on a
+# running broker). Use the same username/password as in .env; you'll be
+# prompted for the password.
+docker compose run --rm --no-deps --entrypoint sh mosquitto -c \
+  'mosquitto_passwd -c /mosquitto/config/passwd securacv &&
+   chown mosquitto:mosquitto /mosquitto/config/passwd &&
+   chmod 600 /mosquitto/config/passwd'
 docker compose up -d mosquitto
-docker compose exec mosquitto mosquitto_passwd -c /mosquitto/config/passwd securacv
-docker compose restart mosquitto
 ```
+
+The `.env` values are injected into Frigate (`FRIGATE_MQTT_USER`/`FRIGATE_MQTT_PASSWORD`
+placeholders in `frigate.yml`) and into the SecuraCV bridges
+(`MQTT_USERNAME`/`MQTT_PASSWORD`). When you configure Home Assistant's MQTT
+integration (step 5), give it the same credentials.
 
 3) **Review the demo camera** in `frigate.yml` and replace the RTSP URL:
 

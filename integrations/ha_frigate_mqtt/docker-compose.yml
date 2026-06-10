@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   mosquitto:
     image: eclipse-mosquitto:2
@@ -17,6 +15,10 @@ services:
     depends_on:
       - mosquitto
     shm_size: "256mb"
+    environment:
+      # Substituted into frigate.yml's mqtt user/password placeholders.
+      FRIGATE_MQTT_USER: ${MQTT_USERNAME:-securacv}
+      FRIGATE_MQTT_PASSWORD: ${MQTT_PASSWORD:?set MQTT_PASSWORD in .env (see .env.example)}
     ports:
       - "127.0.0.1:5000:5000"
     volumes:
@@ -36,7 +38,7 @@ services:
   securacv:
     build:
       context: ../..
-      dockerfile: homeassistant/Dockerfile
+      dockerfile: integrations/ha_frigate_mqtt/Dockerfile
     image: securacv-ha-frigate:local
     container_name: ha-securacv
     depends_on:
@@ -46,6 +48,8 @@ services:
     environment:
       WITNESS_API_TOKEN_PATH: /data/api_token
       MQTT_BROKER_ADDR: mosquitto:1883
+      MQTT_USERNAME: ${MQTT_USERNAME:-securacv}
+      MQTT_PASSWORD: ${MQTT_PASSWORD:?set MQTT_PASSWORD in .env (see .env.example)}
       FRIGATE_MQTT_TOPIC: frigate/events
       HA_DISCOVERY_PREFIX: homeassistant
       MQTT_TOPIC_PREFIX: witness
@@ -56,16 +60,21 @@ services:
     volumes:
       - securacv_data:/data
     entrypoint: ["/bin/sh", "-c"]
-    command: >-
-      set -eu;
-      export DEVICE_KEY_SEED=$(cat /run/secrets/device_key_seed);
-      witness_api &
-      until [ -f "$WITNESS_API_TOKEN_PATH" ]; do
-        sleep 1;
-      done;
-      frigate_bridge --db-path /data/witness.db &
-      event_mqtt_bridge --daemon --api-token-path "$WITNESS_API_TOKEN_PATH" &
-      wait
+    # NOTE: the script must be a single list element so it reaches `sh -c` as
+    # one argument, and $$ escapes compose-level interpolation so the container
+    # shell (not docker compose) expands these variables.
+    command:
+      - |
+        set -eu
+        DEVICE_KEY_SEED="$$(cat /run/secrets/device_key_seed)"
+        export DEVICE_KEY_SEED
+        witness_api &
+        until [ -f "$$WITNESS_API_TOKEN_PATH" ]; do
+          sleep 1
+        done
+        frigate_bridge --db-path /data/witness.db &
+        event_mqtt_bridge --daemon --api-token-path "$$WITNESS_API_TOKEN_PATH" &
+        wait
 
 secrets:
   device_key_seed:

@@ -28,6 +28,7 @@ FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
+    curl \
     gstreamer1.0-libav \
     gstreamer1.0-plugins-base \
     gstreamer1.0-plugins-good \
@@ -55,7 +56,8 @@ VOLUME ["/data"]
 USER 1001:1001
 
 # SECURITY: Health check for orchestrators to detect stuck processes.
+# Probes the Event API /health endpoint (witnessd serves it on WITNESS_API_ADDR).
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-  CMD ["witnessd", "--health-check"] || exit 1
+  CMD curl -fsS http://127.0.0.1:8799/health || exit 1
 
 ENTRYPOINT ["witnessd"]

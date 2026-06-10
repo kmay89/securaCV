@@ -305,11 +305,11 @@ Click **Start**. Check logs for any errors.
 git clone https://github.com/kmay89/securaCV.git
 cd securaCV
 
-# Build the add-on container
-docker build -f homeassistant/Dockerfile -t privacy-witness-kernel .
+# Build the add-on container (from the repo root)
+docker build -f privacy_witness_kernel/Dockerfile -t privacy-witness-kernel .
 
 # Copy to HA add-ons folder
-cp -r homeassistant /addons/privacy_witness_kernel
+cp -r privacy_witness_kernel /addons/privacy_witness_kernel
 ```
 
 ---
