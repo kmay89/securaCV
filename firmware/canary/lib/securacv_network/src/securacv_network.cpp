@@ -71,6 +71,7 @@
 #endif
 #if FEATURE_THERMAL_WATCHDOG
 #include "securacv_thermal_watchdog.h"
+#include <math.h>   /* lroundf */
 #endif
 
 // Mesh REST API (PR-8). Gated on FEATURE_MESH_NETWORK — the dev/release
@@ -1814,7 +1815,7 @@ static esp_err_t handle_peek_status(httpd_req_t* req) {
       uint8_t si = cam.isPeekActive() ? (uint8_t)cam.getThermalState()
                                       : (wd.shadow_state <= 2 ? wd.shadow_state : 0);
       doc["thermal_state"] = thermal_names[si];
-      doc["die_temp_c"]    = (int)(wd.die_temp_c + (wd.die_temp_c >= 0 ? 0.5f : -0.5f));
+      doc["die_temp_c"]    = (int)lroundf(wd.die_temp_c);
       doc["thermal_sensor_ok"] = wd.sensor_ok && cam.getThermalSensorOk();
     } else {
       doc["thermal_state"] = thermal_names[cam.getThermalState()];

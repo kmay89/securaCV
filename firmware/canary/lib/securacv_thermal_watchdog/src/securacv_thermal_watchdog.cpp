@@ -81,9 +81,9 @@ static thermal_wd_history_t s_history;
 static uint32_t s_last_sample_ms   = 0;   /* last sample attempt            */
 static uint32_t s_last_persist_ms  = 0;
 static uint32_t s_paused_since_ms  = 0;   /* 0 = not currently paused       */
-static uint32_t s_runtime_sec      = 0;   /* sub-minute accumulators        */
-static uint32_t s_throttled_sec    = 0;
-static uint32_t s_paused_sec       = 0;
+static uint32_t s_runtime_ms_accum   = 0; /* sub-minute accumulators        */
+static uint32_t s_throttled_ms_accum = 0;
+static uint32_t s_paused_ms_accum    = 0;
 
 /* Ring of the last WD_CYCLE_COUNT NORMAL->THROTTLED entry times. */
 static uint32_t s_throttle_entry_ms[WD_CYCLE_COUNT] = {0};
@@ -261,27 +261,29 @@ static void update_advisories(float t, uint32_t now) {
  * TIME-IN-STATE ACCOUNTING
  * ────────────────────────────────────────────────────────────────────────── */
 
+/* Accumulate raw milliseconds and only divide when carrying whole minutes
+ * into history — truncating to seconds per sample would silently drop up
+ * to ~1 s every 30 s cycle and drift the lifetime counters. */
 static void accumulate_time(uint32_t elapsed_ms) {
-  uint32_t sec = elapsed_ms / 1000;
-  if (sec == 0) return;
+  if (elapsed_ms == 0) return;
 
-  s_runtime_sec += sec;
-  if (s_state.shadow_state >= WD_THROTTLED) s_throttled_sec += sec;
-  if (s_state.shadow_state == WD_PAUSED)    s_paused_sec += sec;
+  s_runtime_ms_accum += elapsed_ms;
+  if (s_state.shadow_state >= WD_THROTTLED) s_throttled_ms_accum += elapsed_ms;
+  if (s_state.shadow_state == WD_PAUSED)    s_paused_ms_accum += elapsed_ms;
 
-  if (s_runtime_sec >= 60) {
-    s_history.total_runtime_min += s_runtime_sec / 60;
-    s_runtime_sec %= 60;
+  if (s_runtime_ms_accum >= 60000) {
+    s_history.total_runtime_min += s_runtime_ms_accum / 60000;
+    s_runtime_ms_accum %= 60000;
     s_dirty = true;
   }
-  if (s_throttled_sec >= 60) {
-    s_history.throttled_min += s_throttled_sec / 60;
-    s_throttled_sec %= 60;
+  if (s_throttled_ms_accum >= 60000) {
+    s_history.throttled_min += s_throttled_ms_accum / 60000;
+    s_throttled_ms_accum %= 60000;
     s_dirty = true;
   }
-  if (s_paused_sec >= 60) {
-    s_history.paused_min += s_paused_sec / 60;
-    s_paused_sec %= 60;
+  if (s_paused_ms_accum >= 60000) {
+    s_history.paused_min += s_paused_ms_accum / 60000;
+    s_paused_ms_accum %= 60000;
     s_dirty = true;
   }
 }
