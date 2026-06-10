@@ -23,6 +23,11 @@
     "dir": "firmware/projects/canary-vision",
     "build_envs": ["canary-vision-default"],
     "check_env": "canary-vision-default",
-    "pre_step": "secrets_header"
+    "pre_step": "secrets_header",
+    "size_guard": {
+      "bin": ".pio/build/canary-vision-default/firmware.bin",
+      "slot_bytes": 1310720,
+      "slot_name": "0x140000 OTA slot (ESP32-C3 default.csv app0/app1)"
+    }
   }
 ]

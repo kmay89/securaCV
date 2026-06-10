@@ -332,23 +332,33 @@ const char *securacv_ota_friendly_state(securacv_ota_state_t state)
 #include <ArduinoJson.h>
 #include <Ed25519.h>
 
-// Certificate bundle for public HTTPS endpoints (GitHub Releases). Available
-// on both Arduino-ESP32 core lines, but under different names: core 2.x
-// (IDF 4.4) ships its own loader as arduino_esp_crt_bundle_attach, while
-// core 3.x (IDF 5.x) exposes the standard esp_crt_bundle_attach. Fall back
-// to requiring an explicit cert_pem if a future core drops the header.
-#if __has_include("esp_crt_bundle.h")
-#include "esp_crt_bundle.h"
-#define SECURACV_OTA_HAVE_CRT_BUNDLE 1
-#if __has_include(<esp_arduino_version.h>)
-#include <esp_arduino_version.h>
-#endif
-#if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR < 3
-#define scv_crt_bundle_attach arduino_esp_crt_bundle_attach
-#else
-#define scv_crt_bundle_attach esp_crt_bundle_attach
-#endif
-#endif
+// Certificate bundle for public HTTPS endpoints (GitHub Releases). The
+// attach hook's NAME varies across Arduino-ESP32 platform packagings —
+// upstream IDF exposes esp_crt_bundle_attach, while some core builds
+// rename it to arduino_esp_crt_bundle_attach to avoid an IDF symbol clash
+// (and which name a given platform/chip combination ships is a patch-level
+// detail, not a core-version one). Declare both as weak and dispatch to
+// whichever this build's libraries actually provide — link-time feature
+// detection instead of unwinnable version pinning. If neither exists,
+// TLS setup fails closed (manifest fetch reports a network error).
+extern "C" {
+esp_err_t esp_crt_bundle_attach(void *conf) __attribute__((weak));
+esp_err_t arduino_esp_crt_bundle_attach(void *conf) __attribute__((weak));
+}
+
+static esp_err_t scv_crt_bundle_attach(void *conf)
+{
+    // Prefer the IDF entry point: it always carries the embedded default
+    // root bundle. The arduino_* variant is the fallback for the core
+    // builds that renamed it.
+    if (esp_crt_bundle_attach != NULL) {
+        return esp_crt_bundle_attach(conf);
+    }
+    if (arduino_esp_crt_bundle_attach != NULL) {
+        return arduino_esp_crt_bundle_attach(conf);
+    }
+    return ESP_FAIL;
+}
 
 // House rule (regression_check.sh, LESSONS_LEARNED.md): always the non-_ret
 // mbedtls names. They exist on both Arduino core lines — void-returning
@@ -1142,11 +1152,9 @@ static esp_err_t ota_fetch_manifest_once(const char *url, bool *not_modified)
     if (s_ctx.config.server_cert_pem != NULL) {
         http_config.cert_pem = s_ctx.config.server_cert_pem;
     }
-#if defined(SECURACV_OTA_HAVE_CRT_BUNDLE) && defined(CONFIG_MBEDTLS_CERTIFICATE_BUNDLE)
     else {
         http_config.crt_bundle_attach = scv_crt_bundle_attach;
     }
-#endif
 
 #ifdef SECURACV_OTA_SKIP_CERT_VERIFY
     http_config.skip_cert_common_name_check = true;
@@ -1358,11 +1366,9 @@ static esp_err_t ota_download_and_flash(void)
     if (s_ctx.config.server_cert_pem != NULL) {
         http_config.cert_pem = s_ctx.config.server_cert_pem;
     }
-#if defined(SECURACV_OTA_HAVE_CRT_BUNDLE) && defined(CONFIG_MBEDTLS_CERTIFICATE_BUNDLE)
     else {
         http_config.crt_bundle_attach = scv_crt_bundle_attach;
     }
-#endif
 
 #ifdef SECURACV_OTA_SKIP_CERT_VERIFY
     http_config.skip_cert_common_name_check = true;

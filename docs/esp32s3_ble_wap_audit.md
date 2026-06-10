@@ -61,8 +61,13 @@ The XIAO ESP32-S3's onboard LDO (~600 mA class) is marginal under AP+STA+BLE
 (+camera). An undersized 3.3 V rail / missing bulk decoupling causes brownout
 resets that present as "BLE init failed" or boot loops — and a boot loop trips
 this firmware's `safe_mode_check()`, which then disables BLE/WiFi entirely,
-masking the real (power) cause. The onboard antenna is fine on the S3 (external
-improves range); the C3 variant **requires** the IPEX antenna.
+masking the real (power) cause. **Antenna correction (Seeed wiki):** the XIAO
+ESP32-S3 has **no onboard antenna** — only a U.FL/IPEX connector; the bundled
+rod antenna must be installed or WiFi/BLE may not work at all ("If the antenna
+is not installed, it may not be able to connect to the WiFi network"). The same
+applies to the C3 variant. See
+[`seeed_xiao_esp32s3_wireless_review.md`](./seeed_xiao_esp32s3_wireless_review.md)
+for the full Seeed-documentation compliance review.
 
 ## Findings & resolution
 

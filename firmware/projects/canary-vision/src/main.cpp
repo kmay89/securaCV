@@ -19,8 +19,10 @@
 #include "boot/boot_banner.h"
 #include "identity/device_pseudonym.h"  // salted, MAC-free device handle (Invariant III)
 
+#include "canary/runtime_config.h"
 #include "canary/net/wifi_mgr.h"
 #include "canary/net/mqtt_mgr.h"
+#include "canary/net/ota_mgr.h"
 #include "canary/vision/vision_mgr.h"
 #include "canary/state/presence_fsm.h"
 
@@ -73,7 +75,7 @@ static void publish_event_json(
         "\"voxel\":{\"rows\":%u,\"cols\":%u,\"r\":%d,\"c\":%d},"
         "\"bbox\":{\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d}"
       "}",
-      DEVICE_ID, DEVICE_TYPE,
+      canary::cfg::get().device_id, DEVICE_TYPE,
       event_name, reason,
       (unsigned long)(++seq),
       (unsigned long)now_ms,
@@ -97,7 +99,7 @@ static void publish_event_json(
         "\"voxel\":{\"rows\":%u,\"cols\":%u,\"r\":%d,\"c\":%d},"
         "\"bbox\":{\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d}"
       "}",
-      DEVICE_ID, DEVICE_TYPE,
+      canary::cfg::get().device_id, DEVICE_TYPE,
       event_name,
       (unsigned long)(++seq),
       (unsigned long)now_ms,
@@ -162,7 +164,7 @@ void setup() {
   boot_kvf("Rate",    "every %lu ms", (unsigned long)INVOKE_PERIOD_MS);
   boot_blank();
 
-  TOPICS = build_topics();
+  TOPICS = build_topics(canary::cfg::get().device_id);
 
   fsm.reset();
 
@@ -175,7 +177,7 @@ void setup() {
   boot_line("             (o.o)  ))     Connecting to MQTT...");
   boot_line("              | |");
   boot_separator();
-  boot_kv("Device ID", DEVICE_ID);
+  boot_kv("Device ID", canary::cfg::get().device_id);
   char devid_hex[device_pseudonym::HEX_LEN + 1] = {0};
   if (device_pseudonym::device_id_hex(devid_hex, sizeof(devid_hex))) {
     boot_kv("Hardware ID", devid_hex);  // salted pseudonym, not the raw MAC
@@ -188,6 +190,11 @@ void setup() {
   canary::net::ha_discovery_publish_once(TOPICS);
 
   canary::net::publish_status_retained(TOPICS, "online");
+
+  // Signed pull-OTA: confirm/roll back a fresh image, then arm the engine
+  // (daily jittered checks; HA's Install button and auto-update switch are
+  // drained in loop()). May not return on a failed required self-test.
+  canary::net::ota_init(TOPICS);
 
   set_last_event("boot");
   publish_state_now(canary::ms_now());
@@ -217,6 +224,10 @@ void loop() {
   canary::net::mqtt_loop();
 
   const uint32_t now_ms = canary::ms_now();
+
+  // Pull-OTA: scheduler + HA command drain + update-entity publishing.
+  // Must run before the vision-rate early return below.
+  canary::net::ota_loop(now_ms);
 
   if ((now_ms - last_heartbeat_ms) > HEARTBEAT_MS) {
     last_heartbeat_ms = now_ms;
