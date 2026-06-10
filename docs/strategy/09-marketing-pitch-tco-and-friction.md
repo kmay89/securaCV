@@ -35,7 +35,7 @@ are typical mid-2026 US street prices, rounded; subscription prices verified Jun
 | **Reolink** (NVR) | ~$480 (NVR ~$200 + 4 PoE cams @ ~$70) | $0 (optional cloud) | $0 | **~$480** | 1–2 hr + wiring |
 | **UniFi Protect** (NVR) | ~$720–$900 (gateway $200–$380 + 4 cams @ ~$130) | $0 | $0 | **~$720–$900** | 1–2 hr |
 | **Frigate** (self-host) | ~$440–$520 (mini-PC/Pi ~$120–$200 + Coral ~$40 + 4 IP cams ~$280) | $0 (optional Frigate+ ~$50/yr) | $0–$250 | **~$440–$770** | 2–6 hr (Docker, YAML) |
-| **SecuraCV** (self-host) | **+$0** on an existing HA/Frigate stack · ~$440–$520 greenfield (same box as Frigate) | **$0, ever** | **$0** | **~$0 incremental / ~$520 greenfield** | **~5 min** on existing stack · 1–2 hr greenfield |
+| **SecuraCV** (self-host) | **+$0** on an existing HA/Frigate stack · ~$440–$520 greenfield (same box as Frigate) | **$0, ever** | **$0** | **~$0 incremental / ~$440–$520 greenfield** | **~5 min** on existing stack · 1–2 hr greenfield |
 
 Reading the table:
 
