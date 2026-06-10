@@ -133,8 +133,10 @@ no tokens to copy:
    one tap in the app plus one tap on the device.
 
 Fallbacks (under *Other ways to pair*): scan the pairing QR from the device
-dashboard (requires the app to be served over HTTPS), paste a provisioning
-receipt JSON, or enter the device address + API token manually.
+dashboard (**Settings → Device → Show QR** — requires the app to be served
+over HTTPS), paste a provisioning receipt JSON, or enter the device address +
+API token manually. The QR carries this device's API token, so the dashboard
+only renders it for an authenticated session.
 
 Rooms are stored in the app only — devices never hold fleet-wide state.
 
