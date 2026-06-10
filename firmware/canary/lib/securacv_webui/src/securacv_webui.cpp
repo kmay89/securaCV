@@ -2301,6 +2301,71 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         </div>
       </div>
 
+      <!-- Software Update Card (signed pull-OTA; hidden on builds without it) -->
+      <div class="card" id="otaCard" style="display:none;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Software Update</div>
+            <div class="card-subtitle">Updates are checked once a day and verified before install</div>
+          </div>
+          <div class="badge info" id="otaBadge">
+            <span class="badge-dot"></span>
+            <span id="otaBadgeText">Checking...</span>
+          </div>
+        </div>
+        <div class="stats-grid">
+          <div class="stat-item">
+            <div class="stat-label">Installed</div>
+            <div class="stat-value" style="font-size:0.9rem;" id="otaInstalled">--</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-label">Available</div>
+            <div class="stat-value" style="font-size:0.9rem;" id="otaLatest">--</div>
+          </div>
+        </div>
+        <div id="otaNotes" style="display:none;margin-top:0.75rem;padding:0.75rem;background:rgba(0,0,0,0.2);border-radius:8px;">
+          <p style="font-size:0.8rem;color:var(--muted);margin:0 0 0.25rem 0;" id="otaNotesText"></p>
+          <a id="otaNotesLink" href="#" target="_blank" rel="noopener" style="font-size:0.8rem;display:none;">Read the full release notes</a>
+        </div>
+        <div id="otaProgress" style="display:none;margin-top:0.75rem;">
+          <div class="stat-label" id="otaProgressText">Downloading update…</div>
+          <div style="display:flex;align-items:center;gap:0.5rem;">
+            <div style="flex:1;height:8px;background:rgba(0,0,0,0.3);border-radius:4px;overflow:hidden;">
+              <div id="otaProgressBar" style="height:100%;background:var(--success);width:0%;transition:width 0.3s;"></div>
+            </div>
+            <span id="otaProgressPct" style="font-size:0.75rem;color:var(--muted);">0%</span>
+          </div>
+          <p style="font-size:0.8rem;color:var(--muted);margin-top:0.5rem;">
+            Keep the device powered. If anything goes wrong, it restores the previous software on its own.
+          </p>
+        </div>
+        <div id="otaError" style="display:none;margin-top:0.75rem;padding:0.75rem;background:var(--danger-dim);border-radius:8px;">
+          <p style="font-size:0.8rem;color:var(--danger);margin:0;" id="otaErrorText"></p>
+        </div>
+        <div style="display:flex;gap:0.5rem;margin-top:1rem;flex-wrap:wrap;">
+          <button class="btn btn-secondary" onclick="otaCheck()" id="otaCheckBtn">Check for Updates</button>
+          <button class="btn btn-primary" onclick="otaInstall()" id="otaInstallBtn" style="display:none;">Install Update</button>
+        </div>
+        <div class="form-group" style="margin-top:1rem;">
+          <label style="display:flex;align-items:center;gap:0.5rem;font-size:0.85rem;cursor:pointer;">
+            <input type="checkbox" id="otaAuto" onchange="otaSaveSettings()">
+            Install updates automatically (the device restarts on its own when a new version arrives)
+          </label>
+        </div>
+        <details style="margin-top:0.5rem;">
+          <summary style="font-size:0.8rem;color:var(--muted);cursor:pointer;">Advanced: update server</summary>
+          <div class="form-group" style="margin-top:0.75rem;">
+            <label class="form-label">Update server address</label>
+            <input type="text" class="form-input" id="otaManifestUrl" placeholder="Leave empty to use the official release server">
+          </div>
+          <label style="display:flex;align-items:center;gap:0.5rem;font-size:0.85rem;cursor:pointer;margin-bottom:0.75rem;">
+            <input type="checkbox" id="otaLocalHttp" onchange="otaSaveSettings()">
+            Allow a local update server without https (home network addresses only — every update file is still signature-checked)
+          </label>
+          <button class="btn btn-secondary" onclick="otaSaveSettings()">Save Update Settings</button>
+        </details>
+      </div>
+
       <div class="card">
         <div class="card-header">
           <div>
@@ -2615,6 +2680,11 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       else if (panel === 'bluetooth') { refreshBtStatus(); loadBtPairedDevices(); }
       else if (panel === 'sensing') refreshSensing();
       else if (panel === 'status') refreshLiveSensing();
+      else if (panel === 'settings') refreshOtaStatus();
+
+      // Stop OTA status polling when leaving settings (refreshOtaStatus
+      // restarts it if an install is still running next time we look)
+      if (panel !== 'settings') stopOtaPolling();
 
       // Stop peek stream and metrics polling when leaving peek panel
       if (panel !== 'peek') {
@@ -4563,6 +4633,151 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       if (!confirm('Delete logs older than 30 days?')) return;
       const data = await api('/api/logs/rotate', 'POST', { max_age_days: 30 });
       alert(data.ok ? `Rotated ${data.deleted_count || 0} entries` : 'Rotation failed');
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // SOFTWARE UPDATE (signed pull-OTA)
+    // ══════════════════════════════════════════════════════════════════
+
+    let otaPollTimer = null;
+    let otaSupported = true;
+    const OTA_BUSY_STATES = ['Checking', 'Downloading', 'Verifying', 'Flashing', 'Rebooting'];
+
+    function startOtaPolling() {
+      if (!otaPollTimer) otaPollTimer = setInterval(refreshOtaStatus, 2000);
+    }
+
+    function stopOtaPolling() {
+      clearInterval(otaPollTimer);
+      otaPollTimer = null;
+    }
+
+    async function refreshOtaStatus() {
+      if (!otaSupported) return;
+      const card = document.getElementById('otaCard');
+      const data = await api('/api/ota/status');
+      if (!data || data.ok !== true) {
+        // Builds without pull-OTA don't serve this endpoint — hide the card.
+        if (card) card.style.display = 'none';
+        otaSupported = false;
+        stopOtaPolling();
+        return;
+      }
+      card.style.display = '';
+
+      document.getElementById('otaInstalled').textContent = data.installed_version || '--';
+      document.getElementById('otaLatest').textContent =
+        data.latest_version || data.installed_version || '--';
+
+      // Settings fields — never fight the user while they're editing.
+      const auto = document.getElementById('otaAuto');
+      if (document.activeElement !== auto) auto.checked = !!data.auto_update;
+      const localHttp = document.getElementById('otaLocalHttp');
+      if (document.activeElement !== localHttp) localHttp.checked = !!data.local_http_allowed;
+      const urlInput = document.getElementById('otaManifestUrl');
+      if (document.activeElement !== urlInput) {
+        urlInput.value = data.manifest_url_is_override ? (data.manifest_url || '') : '';
+        urlInput.placeholder = data.manifest_url_is_override
+          ? 'Leave empty to use the official release server'
+          : (data.manifest_url || 'Leave empty to use the official release server');
+      }
+
+      // Release notes for the offered version.
+      const notes = document.getElementById('otaNotes');
+      if (data.update_available && (data.release_notes || data.release_url)) {
+        notes.style.display = '';
+        document.getElementById('otaNotesText').textContent = data.release_notes || '';
+        const link = document.getElementById('otaNotesLink');
+        if (data.release_url) { link.href = data.release_url; link.style.display = ''; }
+        else { link.style.display = 'none'; }
+      } else {
+        notes.style.display = 'none';
+      }
+
+      const badge = document.getElementById('otaBadge');
+      const badgeText = document.getElementById('otaBadgeText');
+      const installBtn = document.getElementById('otaInstallBtn');
+      const checkBtn = document.getElementById('otaCheckBtn');
+      const progress = document.getElementById('otaProgress');
+      const errBox = document.getElementById('otaError');
+      const busy = OTA_BUSY_STATES.includes(data.state);
+
+      if (busy) {
+        badge.className = 'badge info';
+        badgeText.textContent = data.state_text || 'Working…';
+        checkBtn.disabled = true;
+        installBtn.style.display = 'none';
+        errBox.style.display = 'none';
+        if (data.state !== 'Checking') {
+          progress.style.display = '';
+          document.getElementById('otaProgressText').textContent = data.state_text || '';
+          const pct = data.progress || 0;
+          document.getElementById('otaProgressBar').style.width = pct + '%';
+          document.getElementById('otaProgressPct').textContent = pct + '%';
+        }
+        startOtaPolling();
+        return;
+      }
+
+      progress.style.display = 'none';
+      checkBtn.disabled = false;
+      stopOtaPolling();
+
+      if (data.update_available) {
+        badge.className = 'badge warning';
+        badgeText.textContent = 'Update available';
+        installBtn.style.display = '';
+      } else {
+        badge.className = 'badge success';
+        badgeText.textContent = 'Up to date';
+        installBtn.style.display = 'none';
+      }
+
+      // Show the last problem in plain language (suppress the two
+      // non-problems: no error yet, or simply already up to date).
+      if (data.error_text && data.error !== 'No error' && data.error !== 'No update available') {
+        errBox.style.display = '';
+        document.getElementById('otaErrorText').textContent = data.error_text;
+      } else {
+        errBox.style.display = 'none';
+      }
+    }
+
+    async function otaCheck() {
+      document.getElementById('otaCheckBtn').disabled = true;
+      const data = await api('/api/ota/check', 'POST');
+      if (!data.ok) {
+        alert('Could not start the update check: ' + (data.error || 'unknown problem'));
+        document.getElementById('otaCheckBtn').disabled = false;
+        return;
+      }
+      startOtaPolling();
+    }
+
+    async function otaInstall() {
+      const latest = document.getElementById('otaLatest').textContent;
+      if (!confirm(`Install version ${latest}? The device restarts on its own and is back within a minute. If the update fails, the previous software is restored automatically.`)) return;
+      const data = await api('/api/ota/install', 'POST');
+      if (!data.ok) {
+        alert('Could not start the install: ' + (data.error || 'unknown problem'));
+        return;
+      }
+      startOtaPolling();
+    }
+
+    async function otaSaveSettings() {
+      const body = {
+        auto_update: document.getElementById('otaAuto').checked,
+        local_http_allowed: document.getElementById('otaLocalHttp').checked,
+        manifest_url: document.getElementById('otaManifestUrl').value.trim()
+      };
+      const data = await api('/api/ota/config', 'POST', body);
+      if (!data.ok) {
+        alert(data.error === 'url_rejected'
+          ? 'That update server address was not accepted. Use https, or turn on the local server option for a home network address.'
+          : 'Could not save the update settings: ' + (data.error || 'unknown problem'));
+      }
+      refreshOtaStatus();
     }
 
     // Utilities
