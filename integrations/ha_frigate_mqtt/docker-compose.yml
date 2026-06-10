@@ -69,7 +69,12 @@ services:
         DEVICE_KEY_SEED="$$(cat /run/secrets/device_key_seed)"
         export DEVICE_KEY_SEED
         witness_api &
+        API_PID=$$!
         until [ -f "$$WITNESS_API_TOKEN_PATH" ]; do
+          if ! kill -0 "$$API_PID" 2>/dev/null; then
+            echo "witness_api exited before writing the token file" >&2
+            exit 1
+          fi
           sleep 1
         done
         frigate_bridge --db-path /data/witness.db &

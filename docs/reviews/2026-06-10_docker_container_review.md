@@ -15,8 +15,10 @@ container was verified to exist in source. Findings cite file (and line where st
 ## 1. Executive summary
 
 **The two Dockerfiles are well-engineered; the glue around them was broken.** The add-on
-image is the flagship and is internally consistent end-to-end. The standalone image builds
-and runs, but its healthcheck could never pass. The compose demo stack was broken at four
+image is the flagship and is internally consistent end-to-end. The standalone image **no
+longer built at all** (its pinned `rust:1.77` toolchain cannot read the repo's version-4
+`Cargo.lock`), and its healthcheck could never pass even when it did build. The compose
+demo stack was broken at four
 independent layers: it referenced a Dockerfile that has never existed in the repository's
 history, so it could not build; its `command` was mangled by compose interpolation and
 argv-splitting, so the bridges could never have started; no service could have
@@ -29,7 +31,7 @@ recommendations, not patches.
 
 | Artifact | Verdict before this review | Verdict after fixes |
 |---|---|---|
-| `Dockerfile` (standalone witnessd) | Builds; permanently `unhealthy` healthcheck | Healthcheck repaired; CI build gate added |
+| `Dockerfile` (standalone witnessd) | Unbuildable (rust 1.77 vs lock file v4); permanently `unhealthy` healthcheck | Toolchain bumped; healthcheck repaired; CI build gate added |
 | `privacy_witness_kernel/Dockerfile` (HA add-on) | Sound | Unchanged |
 | `integrations/ha_frigate_mqtt/` compose stack | Cannot build; cannot start bridges; cannot authenticate | Builds; pipeline + auth verified live |
 | Container docs (`docs/container.md`, `docs/homeassistant_setup.md`, integration README) | Two phantom-path commands; broker bootstrap crashes; missing credential step | Corrected |
@@ -76,7 +78,20 @@ Either defect alone makes the container permanently `unhealthy`; orchestrators k
 health status (compose `depends_on: condition: service_healthy`, swarm, k8s liveness via
 Docker health) would restart or never schedule it.
 
-### 2.3 HIGH — MQTT credentials were never wired to any client
+### 2.3 CRITICAL — `docker build` of the standalone image fails: toolchain older than the lock file
+
+Caught by the new CI gate (§5.7) on its first run: both the root `Dockerfile` and the new
+compose Dockerfile initially pinned `rust:1.77-slim`, but the repo's `Cargo.lock` is lock
+file **version 4**, which requires cargo ≥ 1.78 —
+`error: failed to parse lock file … lock file version 4 was found, but this version of
+Cargo does not understand this lock file`. The documented `docker build -t witnessd:local .`
+(`docs/container.md`) has therefore failed for everyone since the lock file was upgraded;
+with no CI building these images, nothing noticed. Fixed by bumping both build stages to
+`rust:1.90-slim-bookworm` (the `-bookworm` suffix pinned explicitly so the build-stage
+glibc keeps matching the `debian:bookworm-slim` runtime even after `-slim` retags to a
+newer Debian).
+
+### 2.4 HIGH — MQTT credentials were never wired to any client
 
 `mosquitto.conf` is correctly hardened (`allow_anonymous false`, `password_file`), and the
 integration README documents creating a `securacv` broker user. But nothing consumed those
@@ -103,7 +118,7 @@ broker and then `docker compose exec mosquitto mosquitto_passwd …`, but mosqui
 by the in-container `mosquitto` user, since `mosquitto_passwd` in a root one-off creates
 it root-owned with mode 0600 the broker can't read).
 
-### 2.4 HIGH — the compose `command` could never start the bridges
+### 2.5 HIGH — the compose `command` could never start the bridges
 
 Discovered while verifying the fixes; two layered defects in the `securacv` service's
 `command` (pre-fix):
@@ -122,7 +137,7 @@ Discovered while verifying the fixes; two layered defects in the `securacv` serv
 Fixed by making the script a **single list element** (literal block scalar) and escaping
 container-shell variables as `$$VAR` so compose leaves them for the shell.
 
-### 2.5 MEDIUM — feature parity gaps (by design; documented, not patched)
+### 2.6 MEDIUM — feature parity gaps (by design; documented, not patched)
 
 See the parity matrix in §4. Highlights:
 
@@ -137,14 +152,14 @@ See the parity matrix in §4. Highlights:
   runtime stage installs only GStreamer/seccomp libs — an ffmpeg/v4l2 variant would also
   need runtime packages.
 
-### 2.6 LOW — demo camera placeholder
+### 2.7 LOW — demo camera placeholder
 
 `frigate.yml` ships `rtsp://127.0.0.1:8554/demo`, which is loopback **inside the Frigate
 container**; nothing serves it. The README does instruct users to replace it (step 3), so
 this is acceptable for a demo config, but Frigate will sit in an ffmpeg retry loop and
 emit no detections until it is edited. Kept as-is.
 
-### 2.7 LOW — cosmetics and robustness notes
+### 2.8 LOW — cosmetics and robustness notes
 
 - `version: "3.9"` in the compose file is obsolete under Compose v2+ (warning noise).
   Removed.
@@ -220,7 +235,7 @@ and the offline evidence viewer (static HTML).
 
 ## 5. Fixes applied with this review
 
-1. **New `integrations/ha_frigate_mqtt/Dockerfile`** — multi-stage (rust:1.77-slim →
+1. **New `integrations/ha_frigate_mqtt/Dockerfile`** — multi-stage (rust slim-bookworm →
    debian:bookworm-slim) building exactly the four binaries the stack runs
    (`witness_api`, `frigate_bridge`, `event_mqtt_bridge`, `log_verify`), feature-less so
    the image carries no GStreamer; non-root UID 1001; healthcheck against
@@ -228,23 +243,28 @@ and the offline evidence viewer (static HTML).
 2. **Standalone healthcheck repaired** — `curl` added to runtime deps; probe is now
    shell-form `curl -fsS http://127.0.0.1:8799/health` against the Event API `witnessd`
    already serves (`WITNESS_API_ADDR=0.0.0.0:8799`).
-3. **MQTT credentials wired end-to-end** — `.env.example` added (gitignore updated to
+3. **Build toolchain unblocked** — both Dockerfiles' build stages bumped from
+   `rust:1.77-slim` to `rust:1.90-slim-bookworm` so cargo can read the version-4
+   `Cargo.lock` (§2.3), with the Debian release pinned to keep build/runtime glibc
+   matched.
+4. **MQTT credentials wired end-to-end** — `.env.example` added (gitignore updated to
    keep ignoring `.env` while allowing the template); compose injects
    `MQTT_USERNAME`/`MQTT_PASSWORD` into the bridges and
    `FRIGATE_MQTT_USER`/`FRIGATE_MQTT_PASSWORD` into Frigate; `frigate.yml` consumes the
    placeholders; compose fails fast with a clear message if `MQTT_PASSWORD` is unset.
-4. **Compose `command` made executable** — single-element literal block script with
-   `$$`-escaped shell variables (see §2.4), so `sh -c` receives the whole script and the
+5. **Compose `command` made executable** — single-element literal block script with
+   `$$`-escaped shell variables (see §2.5), so `sh -c` receives the whole script and the
    token-file wait gate actually gates.
-5. **Docs corrected** — `docs/homeassistant_setup.md` local-install commands now point at
+6. **Docs corrected** — `docs/homeassistant_setup.md` local-install commands now point at
    `privacy_witness_kernel/`; integration README gains the `.env` step, the working
-   one-off `mosquitto_passwd` bootstrap (§2.3), and notes that HA's MQTT integration
+   one-off `mosquitto_passwd` bootstrap (§2.4), and notes that HA's MQTT integration
    needs the same credentials. Obsolete compose `version:` key removed.
-6. **New CI gate** — `.github/workflows/container-images.yml` build-validates the root
+7. **New CI gate** — `.github/workflows/container-images.yml` build-validates the root
    and compose Dockerfiles on PRs/pushes touching them (the add-on already had its own
-   workflow; these two images previously had **no** CI build at all, which is how a
-   reference to a nonexistent Dockerfile shipped), and smoke-tests that every shipped
-   binary loads with no missing shared libraries.
+   workflow; these two images previously had **no** CI build at all, which is how both
+   the phantom-Dockerfile reference and the stale toolchain pin shipped), and smoke-tests
+   that every shipped binary loads with no missing shared libraries. It caught §2.3 on
+   its first run.
 
 ### Recommended follow-ups (not in this change)
 
@@ -261,12 +281,12 @@ and the offline evidence viewer (static HTML).
 
 The review environment's egress policy blocks `deb.debian.org`, so the Dockerfiles' apt
 layers could not run locally; everything else was exercised for real, and the full image
-builds are covered by the new CI workflow (§5.6) on this change's own PR.
+builds are covered by the new CI workflow (§5.7) on this change's own PR.
 
 - `cargo build --release --bin witness_api --bin frigate_bridge --bin event_mqtt_bridge
   --bin log_verify` — the new Dockerfile's exact build command — compiles clean with no
   features (confirming the compose image needs no GStreamer).
-- `docker compose config` validates (and surfaced the §2.4 interpolation bug via its
+- `docker compose config` validates (and surfaced the §2.5 interpolation bug via its
   "variable is not set" warning); the fixed `command` renders as a single script element.
 - Live auth chain, exactly as the compose service runs it: compose `mosquitto` service
   brought up with the repo `mosquitto.conf` (auth required); anonymous connect refused

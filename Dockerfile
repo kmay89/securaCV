@@ -1,4 +1,7 @@
-FROM rust:1.77-slim AS build
+# slim-bookworm (not bare -slim) so the build-stage glibc matches the
+# debian:bookworm-slim runtime stage. Cargo >= 1.78 is required by this
+# repo's lock file (version 4).
+FROM rust:1.90-slim-bookworm AS build
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
