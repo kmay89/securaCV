@@ -130,7 +130,11 @@ typedef enum {
     CHIRP_TPL_AUTH_HEAVY_RESPONSE = 0x01,
     CHIRP_TPL_AUTH_ROAD_BLOCKED = 0x02,
     CHIRP_TPL_AUTH_HELICOPTER = 0x03,
-    CHIRP_TPL_AUTH_FEDERAL = 0x04,
+    // 0x04 RESERVED — TPL_AUTH_FEDERAL_PRESENCE was REMOVED in v0.2: life-safety
+    // advisories about federal/agency presence are weaponizable as hoaxes in a
+    // low-trust soft-alert channel. Such alerts must originate through the
+    // higher-trust Beacon channel (two-pubkey co-signing). Do NOT reuse 0x04.
+    // See spec/chirp_channel_v0.md and spec/beacon_channel_v0.md.
 
     // Infrastructure (0x10-0x1F)
     CHIRP_TPL_INFRA_POWER_OUT = 0x10,
