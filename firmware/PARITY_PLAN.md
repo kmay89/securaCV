@@ -40,6 +40,16 @@ is already at parity ✅) are omitted.
 > flags are set but inert — `firmware/canary/src/` has no references; bodies live only in the
 > Arduino tree).
 
+> **Chirp API consolidation (2026-06-09):** the chirp **API** was consolidated as a precursor to
+> the body port. `firmware/common/chirp/chirp_channel.h` is ratified as the **single canonical
+> C-ABI chirp-channel API** (already consumed by the canary-wap PIO lane); the Arduino
+> `chirp_channel::` C++ namespace (in that lane's `mesh_network.h` + `chirp_channel.cpp`) is the
+> reference implementation to adapt, and `chirp_api.h` (HTTP layer) / `ble_chirp.h` (separate BLE
+> feature) are adjacent surfaces, not competing core APIs. The catalog + the
+> dependency-adaptation map for the future `securacv_chirp` body live in
+> [`../firmware/common/chirp/README.md`](common/chirp/README.md). **API only — no body landed
+> yet**, so the dashboard/scorecard chirp cells stay ⚠️/☐.
+
 ### Group A — Arduino has it, ACTIVE is partial/absent → **port INTO ACTIVE**
 
 | Capability | ACTIVE | Arduino | Closure is… |
