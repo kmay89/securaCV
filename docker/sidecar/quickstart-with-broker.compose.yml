@@ -1,0 +1,52 @@
+# SecuraCV sidecar quickstart WITH a bundled MQTT broker — for Frigate users
+# who don't run MQTT yet.
+#
+#   1. docker compose -f quickstart-with-broker.compose.yml up -d
+#   2. Point Frigate at the broker by adding this to your frigate config
+#      (use your docker host's IP if Frigate runs elsewhere):
+#
+#        mqtt:
+#          enabled: true
+#          host: <docker-host-ip>   # or "mosquitto" if on this network
+#          port: 1883
+#
+#   3. docker compose -f quickstart-with-broker.compose.yml run --rm securacv doctor
+#
+# The bundled broker allows anonymous local connections; restrict it with a
+# password file before exposing it beyond a trusted network.
+
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: securacv-mosquitto
+    restart: unless-stopped
+    command: >-
+      sh -c 'printf "listener 1883 0.0.0.0\nallow_anonymous true\n"
+      > /mosquitto/config/mosquitto.conf && exec mosquitto
+      -c /mosquitto/config/mosquitto.conf'
+    ports:
+      - "1883:1883"
+    volumes:
+      - mosquitto_data:/mosquitto/data
+
+  securacv:
+    image: ghcr.io/kmay89/securacv-sidecar:latest
+    # Building from source instead:
+    # build:
+    #   context: ../..
+    #   dockerfile: docker/sidecar/Dockerfile
+    container_name: securacv
+    restart: unless-stopped
+    depends_on:
+      - mosquitto
+    environment:
+      FRIGATE_MQTT_HOST: "mosquitto"
+      # FRIGATE_TOPIC_PREFIX: "frigate"
+      # FRIGATE_LABELS: "person,car,dog,cat"
+      # RETENTION_DAYS: "7"
+    volumes:
+      - securacv_data:/data
+
+volumes:
+  mosquitto_data:
+  securacv_data:

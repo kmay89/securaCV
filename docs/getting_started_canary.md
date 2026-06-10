@@ -409,6 +409,14 @@ readings. That's deliberate; an attacker with access to the
 dashboard learns nothing about the room beyond "warmer than 20 °C
 or cooler than 20 °C", because the calibration is also rounded.
 
+Don't confuse this card with **Adaptive performance**, which sits
+right below it: Thermal drift is a *tamper* detector (sudden steps),
+while Adaptive performance shows how the device paces heavy work
+like camera streaming to stay inside its thermal envelope, plus its
+lifetime heat/cold history. Placement, heat-sink, and hot/cold
+weather guidance lives in the
+[Thermal Guide](./thermal_guide.md).
+
 ---
 
 ## 9 · Power & wake
@@ -536,9 +544,18 @@ Safety, in plain terms:
   the update fails — even from a power cut mid-install — the Canary
   starts right back up on its previous software by itself.
 - After installing, the device runs a health check on itself. If anything
-  is wrong, it switches back automatically and tells you why.
+  is wrong — including new software that crashes or hangs — it switches
+  back automatically and tells you why. One bad start is all it takes to
+  recover; you never need to touch the device.
+- If power is cut during the first minute after an update, before the
+  device finishes checking itself, it simply returns to its previous
+  software. Nothing is lost — the update is offered again.
 - Every update (and any rollback) is signed into the witness chain, so
   the record shows exactly when the software changed.
+
+There is no way to break the device through an update. In the absolute
+worst case a Canary can always be re-flashed over its USB port — updates
+never touch the part of the device that makes that possible.
 
 No internet? Updates can also come from a server on your own network —
 see `docs/firmware_ota.md` for the air-gapped setup.
@@ -623,6 +640,7 @@ for evidence, **export the chain before you factory-reset** —
 | **Appliance activity** decodes few frames | Many cheap IR remotes deviate from the ISO timing standards. The lib decodes NEC, RC5, and Sony SIRC — it deliberately rejects ambiguous frames so the dashboard isn't noisy with garbage. |
 | **Thermal drift** card never leaves **Calibrating** | The internal temp sensor needs five clean samples (5 minutes by default). If the device just booted, just wait. If it persists past 10 minutes, the sensor may have failed to start — check serial. |
 | **Thermal drift** firing constantly | Your room's HVAC is cycling aggressively (5+ °C swings at the device). Tune `drift_threshold_tenths_c` upward in the build, or move the device away from a cold-air register. |
+| **Adaptive performance** card often shows **Adaptive** or **Protective pause** | The spot runs warm during streaming — not a fault, but the device would have more headroom with the heat sink fitted, some shade/ventilation, or a lower peek resolution. See the [Thermal Guide](./thermal_guide.md), especially the symptom→action table. |
 
 For anything else, **Settings → Diagnostics → Send to installer** packages
 the health log into a signed bundle you can share without leaking

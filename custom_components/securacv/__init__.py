@@ -215,6 +215,15 @@ class SecuraCVApi:
         """Fetch the latest event from the kernel."""
         return await self._async_get_json("/events/latest", none_on_404=True)
 
+    async def async_get_status(self) -> dict[str, Any] | None:
+        """Fetch the kernel's storage endurance & health report.
+
+        Returns None when the kernel predates the /status endpoint or has
+        storage-health monitoring disabled (404), so storage sensors stay
+        empty instead of erroring on older kernels.
+        """
+        return await self._async_get_json("/status", none_on_404=True)
+
     async def async_get_health(self) -> dict[str, Any]:
         """Check kernel health status."""
         url = f"{self._base_url}/health"
@@ -246,7 +255,13 @@ class SecuraCVCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             latest_event = await self.api.async_get_latest_event()
         except SecuraCVApiError as err:
             raise UpdateFailed(str(err)) from err
-        return {"latest_event": latest_event}
+        # Storage health is auxiliary: a failure here must never take down
+        # the event pipeline, so degrade to None rather than UpdateFailed.
+        try:
+            status = await self.api.async_get_status()
+        except SecuraCVApiError:
+            status = None
+        return {"latest_event": latest_event, "status": status}
 
 
 class SecuraCVAdapterStatsCoordinator(DataUpdateCoordinator[dict[str, Any]]):

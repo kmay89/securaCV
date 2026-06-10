@@ -107,9 +107,21 @@ struct Args {
     #[arg(long, env = "MQTT_TLS_BACKEND", default_value = "classic")]
     mqtt_tls_backend: String,
 
-    /// Frigate MQTT topic to subscribe to.
+    /// Frigate MQTT topic to subscribe to. Deprecated full-topic override:
+    /// when set to a non-default value it wins over --frigate-topic-prefix.
     #[arg(long, env = "FRIGATE_MQTT_TOPIC", default_value = "frigate/events")]
     frigate_topic: String,
+
+    /// Frigate's mqtt.topic_prefix. Subscribes to <prefix>/events (and
+    /// <prefix>/reviews with --enable-reviews).
+    #[arg(long, env = "FRIGATE_TOPIC_PREFIX", default_value = "frigate")]
+    frigate_topic_prefix: String,
+
+    /// Additionally subscribe to Frigate's review items (<prefix>/reviews,
+    /// Frigate 0.14+). Dedup (camera+label per bucket) prevents the same
+    /// detection from being logged twice via both topics.
+    #[arg(long, env = "FRIGATE_ENABLE_REVIEWS")]
+    enable_reviews: bool,
 
     /// MQTT client identifier.
     #[arg(long, env = "MQTT_CLIENT_ID", default_value = BRIDGE_NAME)]
@@ -141,6 +153,10 @@ struct Args {
     /// If empty, processes: person, car, dog, cat, bird, bicycle, motorcycle.
     #[arg(long, env = "FRIGATE_LABELS")]
     labels: Option<String>,
+
+    /// Sealed-event retention in seconds (default: 7 days).
+    #[arg(long, env = "WITNESS_RETENTION_SECS", default_value_t = 60 * 60 * 24 * 7)]
+    retention_secs: u64,
 }
 
 fn main() -> Result<()> {
@@ -212,7 +228,21 @@ fn main() -> Result<()> {
         mqtt_endpoint.port,
         mqtt_endpoint.use_tls
     );
-    log::info!("  Frigate topic: {}", args.frigate_topic);
+    // Topic selection: an explicitly overridden --frigate-topic (legacy,
+    // full topic) wins; otherwise topics derive from --frigate-topic-prefix.
+    let mut topics: Vec<String> = if args.frigate_topic != "frigate/events" {
+        vec![args.frigate_topic.clone()]
+    } else {
+        vec![format!("{}/events", args.frigate_topic_prefix)]
+    };
+    if args.enable_reviews {
+        let reviews_topic = format!("{}/reviews", args.frigate_topic_prefix);
+        if !topics.contains(&reviews_topic) {
+            topics.push(reviews_topic);
+        }
+    }
+
+    log::info!("  Frigate topics: {}", topics.join(", "));
     log::info!("  Database: {}", args.db_path);
     log::info!("  Min confidence: {}", args.min_confidence);
     log::info!("  Bucket size: {}s", args.bucket_size_secs);
@@ -234,7 +264,7 @@ fn main() -> Result<()> {
         ruleset_id: args.ruleset_id.clone(),
         ruleset_hash,
         kernel_version: env!("CARGO_PKG_VERSION").to_string(),
-        retention: Duration::from_secs(60 * 60 * 24 * 7), // 7 days
+        retention: Duration::from_secs(args.retention_secs),
         device_key_seed,
         zone_policy: ZonePolicy::default(),
     };
@@ -287,17 +317,24 @@ fn main() -> Result<()> {
         };
 
         // Subscribe with QoS 1 (AtLeastOnce) for reliable message delivery
-        if let Err(e) = client.subscribe(&args.frigate_topic, QoS::AtLeastOnce) {
-            log::error!(
-                "Failed to subscribe to {}: {}. Retrying in {} seconds...",
-                args.frigate_topic,
-                e,
-                backoff.current()
-            );
+        let mut subscribe_failed = false;
+        for topic in &topics {
+            if let Err(e) = client.subscribe(topic, QoS::AtLeastOnce) {
+                log::error!(
+                    "Failed to subscribe to {}: {}. Retrying in {} seconds...",
+                    topic,
+                    e,
+                    backoff.current()
+                );
+                subscribe_failed = true;
+                break;
+            }
+            log::info!("Subscribed to {} (QoS 1)", topic);
+        }
+        if subscribe_failed {
             backoff.wait_and_increment();
             continue;
         }
-        log::info!("Subscribed to {} (QoS 1)", args.frigate_topic);
 
         let mut should_reconnect = false;
         for event in connection.iter() {

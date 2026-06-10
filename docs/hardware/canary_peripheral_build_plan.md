@@ -299,7 +299,10 @@ strong pull at boot) · ADC2/GPIO5 is shared with WiFi.
   buck and no charging at all).
 - Battery sense: `VBAT → R4(100 kΩ) → GPIO1(A0) → R5(100 kΩ) → GND`
   (`VBAT_DIVIDER_RATIO = 2.0`). The firmware auto-detects whether the divider is
-  present and falls back to software estimation if not.
+  present; without it the device reports USB-only mode (no battery telemetry).
+  **Never wire VBAT directly to GPIO 1** — a full LiPo (4.2 V) exceeds the pin's
+  maximum rating. Full wiring, supply sizing, runtime, and temperature guidance:
+  [ESP32-S3 power & battery guide](./esp32s3_power_battery_guide.md).
 - Observe LiPo safety: use cells with integral protection (PCM), respect JST
   polarity, never charge unattended outside spec, and **never charge a LiPo below
   0 °C** (lithium plating) — many bare charge ICs do not enforce this, so add a

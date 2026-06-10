@@ -178,9 +178,10 @@ An adapter is conforming only if:
 
 The reference implementation lives in `src/adapter/` (`contract.rs`, `registry.rs`, `host.rs`,
 `sandbox.rs`, `observability.rs`, and the `frigate.rs`, `mqtt_sensor.rs`, `webhook.rs`,
-`ble_presence.rs` adapters) with conformance tests in `tests/adapter_contract.rs`,
+`ble_presence.rs`, `meshtastic.rs` adapters) with conformance tests in `tests/adapter_contract.rs`,
 `tests/adapter_cannot_bypass_enforcer.rs`, `tests/adapter_webhook_sandbox.rs`,
-`tests/adapter_increment4.rs`, `tests/adapter_parser_fuzz.rs`, and `tests/adapter_increment6.rs`.
+`tests/adapter_increment4.rs`, `tests/adapter_parser_fuzz.rs`, `tests/adapter_increment6.rs`,
+and `tests/adapter_meshtastic.rs`.
 The positioning and capability-mapping rationale is in `spec/witness_mesh_os_v0.md`.
 
 The webhook ingress, being the one untrusted network-facing surface, additionally supports
@@ -197,5 +198,5 @@ route/filter *attributes* (kind/zone/confidence) and `min_confidence` live on **
 restarting listeners; changing an `mqtt_sensor`'s subscribed MQTT topic still needs a restart (the
 forwarder subscribes once on connect).
 
-The untrusted parsers (`route_message`, `ble_presence`, Frigate JSON) are covered by a
-panic-free robustness sweep in `tests/adapter_parser_fuzz.rs`.
+The untrusted parsers (`route_message`, `ble_presence`, Frigate JSON, Meshtastic JSON) are
+covered by a panic-free robustness sweep in `tests/adapter_parser_fuzz.rs`.

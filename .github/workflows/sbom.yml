@@ -1,11 +1,32 @@
 name: SBOM Generation
 
+# The SBOMs only change when a dependency manifest does, so the triggers are
+# scoped to those files (plus manual dispatch for an on-demand snapshot).
 on:
   push:
     branches: [ "main" ]
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'canary-vision/**/package.json'
+      - 'canary-vision/package-lock.json'
+      - '.github/workflows/sbom.yml'
   pull_request:
     branches: [ "main" ]
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'canary-vision/**/package.json'
+      - 'canary-vision/package-lock.json'
+      - '.github/workflows/sbom.yml'
   workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sbom-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   generate-sbom:
@@ -18,10 +39,15 @@ jobs:
 
     # ---- Rust SBOM ----
     - name: Install cargo-cyclonedx
-      run: cargo install cargo-cyclonedx
+      run: cargo install cargo-cyclonedx --locked
 
     - name: Generate Rust SBOM (CycloneDX)
-      run: cargo cyclonedx --format json --output-cdx > sbom-rust.cdx.json || cargo cyclonedx --format json > sbom-rust.cdx.json
+      # cargo-cyclonedx writes <package>.cdx.json next to Cargo.toml; it does
+      # not print the BOM on stdout (the previous `>` redirect shipped an
+      # empty sbom-rust.cdx.json). The jq gate below would now catch that.
+      run: |
+        cargo cyclonedx --format json
+        mv witness-kernel.cdx.json sbom-rust.cdx.json
 
     # ---- Node.js SBOM ----
     - uses: actions/setup-node@v4
@@ -40,7 +66,9 @@ jobs:
     # ---- Firmware (C/C++) SBOM ----
     - name: Generate Firmware SBOM (CycloneDX)
       run: |
-        cat > sbom-firmware.cdx.json << 'FWEOF'
+        # Unquoted delimiter on purpose: the $(date ...) timestamp below must
+        # expand. The document contains no other shell-special characters.
+        cat > sbom-firmware.cdx.json << FWEOF
         {
           "bomFormat": "CycloneDX",
           "specVersion": "1.5",
@@ -126,6 +154,15 @@ jobs:
           ]
         }
         FWEOF
+
+    # Fail loudly if any SBOM is empty or malformed instead of silently
+    # uploading a broken artifact.
+    - name: Validate SBOMs are well-formed CycloneDX
+      run: |
+        for f in sbom-rust.cdx.json sbom-node.cdx.json sbom-firmware.cdx.json; do
+          jq -e '.bomFormat == "CycloneDX"' "$f" > /dev/null \
+            || { echo "::error::$f is missing or not a CycloneDX document"; exit 1; }
+        done
 
     # ---- Upload artifacts ----
     - name: Upload SBOM artifacts

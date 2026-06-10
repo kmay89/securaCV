@@ -215,6 +215,22 @@ extern "C" {
 #include "power_policy.h"
 #endif
 
+// PDM acoustic event detection (T3 smoke / T4 CO alarm cadences)
+#if FEATURE_ACOUSTIC_EVENTS
+#include "securacv_audio.h"
+
+// Last acoustic event, held for the MQTT /sensing snapshot. Written by
+// the audio event callback and read by the loop's MQTT cadence block —
+// both run on the main task (the callback fires synchronously from
+// audio_process() in loop()), so no atomics are needed. The loop clears
+// the event back to "none" after AUDIO_MQTT_EVENT_HOLD_MS, which flips
+// HA's smoke/CO/knock/doorbell/glass binary sensors OFF.
+static char     g_audio_mqtt_event[20] = "none";
+static uint32_t g_audio_mqtt_event_ms  = 0;
+static bool     g_audio_mqtt_dirty     = false;
+static const uint32_t AUDIO_MQTT_EVENT_HOLD_MS = 30000;
+#endif
+
 // ════════════════════════════════════════════════════════════════════════════
 // VERSION & PROTOCOL (must match PWK expectations)
 // ════════════════════════════════════════════════════════════════════════════
@@ -2838,8 +2854,10 @@ static esp_err_t handle_battery_history(httpd_req_t* req) {
   if (!power_monitor::get_state(&pwr)) {
     return http_send_json(req, "{\"ok\":false,\"error\":\"power monitor unavailable\"}");
   }
+  PowerHistory hist = {};
+  power_monitor::get_history(&hist);
 
-  char buf[512];
+  char buf[640];
   int len = snprintf(buf, sizeof(buf),
     "{"
     "\"ok\":true,"
@@ -2854,6 +2872,11 @@ static esp_err_t handle_battery_history(httpd_req_t* req) {
     "\"max_voltage_mv\":%u,"
     "\"trend_mv_per_min\":%d,"
     "\"charge_cycles\":%u,"
+    "\"health_pct\":%u,"
+    "\"est_runtime_min\":%u,"
+    "\"total_runtime_min\":%u,"
+    "\"soc_min_pct\":%u,"
+    "\"brownout_count\":%u,"
     "\"uptime_sec\":%u"
     "}",
     (unsigned)pwr.voltage_mv,
@@ -2867,12 +2890,283 @@ static esp_err_t handle_battery_history(httpd_req_t* req) {
     (unsigned)pwr.max_voltage_mv,
     (int)pwr.trend_mv_per_min,
     (unsigned)pwr.charge_cycles,
+    (unsigned)power_monitor::health_pct(),
+    (unsigned)power_monitor::estimate_runtime_min(),
+    (unsigned)hist.total_runtime_min,
+    (unsigned)hist.soc_min_pct,
+    (unsigned)hist.brownout_count,
     (unsigned)(millis() / 1000));
 
   if (len <= 0 || len >= (int)sizeof(buf)) {
     return http_send_json(req, "{\"ok\":false,\"error\":\"buffer overflow\"}");
   }
 
+  return http_send_json(req, buf);
+}
+#endif
+
+// ────────────────────────────────────────────────────────────────────────────
+// GET /api/audio/status — PDM mic state, mute info, detection counters
+// POST /api/audio/mute  — {"muted":bool}; deferred to the main loop's
+//                         audio_process() tick (audio_mute is HTTP-task-safe)
+// ────────────────────────────────────────────────────────────────────────────
+
+#if FEATURE_ACOUSTIC_EVENTS
+static esp_err_t handle_audio_status(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  audio_stats_t stats = {};
+  audio_get_stats(&stats);
+  audio_mute_info_t mute_info = {};
+  audio_get_mute_info(&mute_info);
+  uint16_t rms = 0;
+  uint32_t rms_age_ms = UINT32_MAX;
+  audio_get_live_level(&rms, &rms_age_ms);
+
+  const char* mute_source = "never";
+  if (mute_info.age_ms != UINT32_MAX) {
+    mute_source = (mute_info.source == AUDIO_MUTE_SOURCE_BOOT) ? "boot" : "dashboard";
+  }
+
+  char buf[512];
+  int len = snprintf(buf, sizeof(buf),
+    "{"
+    "\"ok\":true,"
+    "\"running\":%s,"
+    "\"muted\":%s,"
+    "\"mute_source\":\"%s\","
+    "\"mute_age_ms\":%u,"
+    "\"last_rms\":%u,"
+    "\"rms_age_ms\":%u,"
+    "\"frames_processed\":%u,"
+    "\"t3_detected\":%u,"
+    "\"t4_detected\":%u,"
+    "\"knock_detected\":%u,"
+    "\"doorbell_detected\":%u,"
+    "\"glass_break_detected\":%u,"
+    "\"i2s_read_errors\":%u"
+    "}",
+    audio_is_running() ? "true" : "false",
+    audio_is_muted() ? "true" : "false",
+    mute_source,
+    (unsigned)(mute_info.age_ms == UINT32_MAX ? 0 : mute_info.age_ms),
+    (unsigned)rms,
+    (unsigned)(rms_age_ms == UINT32_MAX ? 0 : rms_age_ms),
+    (unsigned)stats.frames_processed,
+    (unsigned)stats.t3_detected,
+    (unsigned)stats.t4_detected,
+    (unsigned)stats.knock_detected,
+    (unsigned)stats.doorbell_detected,
+    (unsigned)stats.glass_break_detected,
+    (unsigned)stats.i2s_read_errors);
+
+  if (len <= 0 || len >= (int)sizeof(buf)) {
+    return http_send_json(req, "{\"ok\":false,\"error\":\"buffer overflow\"}");
+  }
+
+  return http_send_json(req, buf);
+}
+
+static esp_err_t handle_audio_mute(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  char buf[64];
+  int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
+  if (ret <= 0) return http_send_error(req, 400, "invalid_body");
+  buf[ret] = '\0';
+
+  JsonDocument body;
+  if (deserializeJson(body, buf) != DeserializationError::Ok ||
+      !body["muted"].is<bool>()) {
+    return http_send_error(req, 400, "invalid_json");
+  }
+
+  const bool muted = body["muted"];
+  if (!audio_mute(muted, AUDIO_MUTE_SOURCE_HTTP)) {
+    return http_send_error(req, 500, "audio_not_initialized");
+  }
+  // Persist the intent so the next boot honors it via
+  // audio_mute_sync_at_boot(). The witness-chain audit record is signed
+  // from the mute callback once the toggle is actually applied. The
+  // runtime mute still applies if NVS fails, but report it honestly —
+  // a "persistent" mute that reverts on reboot would mislead the user.
+  const bool persisted = audio_save_mute_intent(muted);
+  if (!persisted) {
+    log_health(SCV_LOG_WARNING, SCV_CAT_STORAGE,
+               "Mic mute intent NOT persisted", "NVS write failed");
+  }
+
+  char resp[80];
+  snprintf(resp, sizeof(resp), "{\"ok\":true,\"muted\":%s,\"persisted\":%s}",
+           muted ? "true" : "false", persisted ? "true" : "false");
+  return http_send_json(req, resp);
+}
+
+// GET /api/audio/selftest — self-test progress/result
+// POST /api/audio/selftest — {"action":"start","duration_ms":30000} | {"action":"stop"}
+//
+// Self-test runs the T3/T4 matchers with relaxed timing tolerance so the
+// user can press their smoke/CO alarm's TEST button and watch the device
+// confirm it heard the cadence. The normal event callback is suppressed
+// while active, so a test press never flows into real alarm automations.
+static esp_err_t handle_audio_selftest_get(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  audio_selftest_status_t st;
+  if (!audio_selftest_status(&st)) {
+    return http_send_json(req, "{\"ok\":false,\"error\":\"audio not initialized\"}");
+  }
+
+  char buf[256];
+  int len = snprintf(buf, sizeof(buf),
+    "{"
+    "\"ok\":true,"
+    "\"active\":%s,"
+    "\"matched_type\":%u,"
+    "\"matched_name\":\"%s\","
+    "\"matched_conf\":%u,"
+    "\"remaining_ms\":%u,"
+    "\"transitions_seen\":%u"
+    "}",
+    st.active ? "true" : "false",
+    (unsigned)st.matched_type,
+    audio_event_name(st.matched_type),
+    (unsigned)st.matched_conf,
+    (unsigned)st.remaining_ms,
+    (unsigned)st.transitions_seen);
+
+  if (len <= 0 || len >= (int)sizeof(buf)) {
+    return http_send_json(req, "{\"ok\":false,\"error\":\"buffer overflow\"}");
+  }
+
+  return http_send_json(req, buf);
+}
+
+static esp_err_t handle_audio_selftest_post(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  char buf[96];
+  int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
+  if (ret <= 0) return http_send_error(req, 400, "invalid_body");
+  buf[ret] = '\0';
+
+  JsonDocument body;
+  if (deserializeJson(body, buf) != DeserializationError::Ok) {
+    return http_send_error(req, 400, "invalid_json");
+  }
+  const char* action = body["action"] | (const char*)nullptr;
+  if (!action) return http_send_error(req, 400, "missing_action");
+
+  if (strcmp(action, "start") == 0) {
+    const uint32_t duration_ms = body["duration_ms"] | 30000u;
+    if (!audio_selftest_start(duration_ms)) {
+      // start() refuses while muted or before init — tell the user which.
+      return http_send_error(req, 409,
+          audio_is_muted() ? "mic_muted" : "audio_not_initialized");
+    }
+    return http_send_json(req, "{\"ok\":true,\"active\":true}");
+  }
+  if (strcmp(action, "stop") == 0) {
+    audio_selftest_stop();
+    return http_send_json(req, "{\"ok\":true,\"active\":false}");
+  }
+  return http_send_error(req, 400, "unknown_action");
+}
+
+// GET /api/audio/config — current envelope thresholds
+// POST /api/audio/config — {"rms_on":N,"rms_off":N}; rms_on > rms_off > 0.
+//                          Applied immediately and persisted to NVS so the
+//                          next boot re-applies it (room-noise sensitivity).
+static esp_err_t handle_audio_config_get(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  audio_config_t cfg;
+  if (!audio_get_config(&cfg)) {
+    return http_send_json(req, "{\"ok\":false,\"error\":\"audio not initialized\"}");
+  }
+  char buf[96];
+  const int len = snprintf(buf, sizeof(buf),
+    "{\"ok\":true,\"rms_on\":%u,\"rms_off\":%u}",
+    (unsigned)cfg.rms_on_threshold, (unsigned)cfg.rms_off_threshold);
+  if (len <= 0 || len >= (int)sizeof(buf)) {
+    return http_send_json(req, "{\"ok\":false,\"error\":\"buffer overflow\"}");
+  }
+  return http_send_json(req, buf);
+}
+
+static esp_err_t handle_audio_config_post(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  char buf[96];
+  int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
+  if (ret <= 0) return http_send_error(req, 400, "invalid_body");
+  buf[ret] = '\0';
+
+  JsonDocument body;
+  if (deserializeJson(body, buf) != DeserializationError::Ok ||
+      !body["rms_on"].is<unsigned int>() || !body["rms_off"].is<unsigned int>()) {
+    return http_send_error(req, 400, "invalid_json");
+  }
+  const unsigned rms_on  = body["rms_on"];
+  const unsigned rms_off = body["rms_off"];
+  if (rms_on > 0xFFFFu || rms_off > 0xFFFFu ||
+      !audio_set_thresholds((uint16_t)rms_on, (uint16_t)rms_off)) {
+    return http_send_error(req, 400, "invalid_thresholds");
+  }
+
+  bool persisted = false;
+  {
+    Preferences sens_prefs;
+    if (sens_prefs.begin("securacv", false)) {
+      persisted = sens_prefs.putUShort("mic_rms_on", (uint16_t)rms_on) > 0 &&
+                  sens_prefs.putUShort("mic_rms_off", (uint16_t)rms_off) > 0;
+      sens_prefs.end();
+    }
+  }
+  if (!persisted) {
+    log_health(SCV_LOG_WARNING, SCV_CAT_STORAGE,
+               "Mic sensitivity NOT persisted", "NVS write failed");
+  }
+  log_health(SCV_LOG_NOTICE, SCV_CAT_USER, "Mic sensitivity changed", nullptr);
+
+  char resp[96];
+  const int rl = snprintf(resp, sizeof(resp),
+    "{\"ok\":true,\"rms_on\":%u,\"rms_off\":%u,\"persisted\":%s}",
+    rms_on, rms_off, persisted ? "true" : "false");
+  if (rl <= 0 || rl >= (int)sizeof(resp)) {
+    return http_send_json(req, "{\"ok\":true}");
+  }
+  return http_send_json(req, resp);
+}
+
+// GET /api/audio/transitions — recent envelope on/off transitions (newest
+// first). Diagnostic surface for the dashboard's "show me the cadence"
+// view: lets a user see WHY a test press did or didn't match. Carries
+// only {on, age_ms, dur_ms} per entry — same privacy-bounded fields the
+// internal matcher uses, no audio content.
+static esp_err_t handle_audio_transitions(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  audio_transition_t trans[16];
+  const size_t n = audio_get_recent_transitions(trans, 16, 0);
+
+  char buf[768];
+  size_t pos = 0;
+  pos += snprintf(buf + pos, sizeof(buf) - pos,
+                  "{\"ok\":true,\"running\":%s,\"transitions\":[",
+                  audio_is_running() ? "true" : "false");
+  for (size_t i = 0; i < n && pos < sizeof(buf) - 64; i++) {
+    pos += snprintf(buf + pos, sizeof(buf) - pos,
+                    "%s{\"on\":%u,\"age_ms\":%lu,\"dur_ms\":%lu}",
+                    i ? "," : "",
+                    (unsigned)trans[i].is_on,
+                    (unsigned long)trans[i].age_ms,
+                    (unsigned long)trans[i].dur_ms);
+  }
+  pos += snprintf(buf + pos, sizeof(buf) - pos, "]}");
+  if (pos >= sizeof(buf)) {
+    return http_send_json(req, "{\"ok\":false,\"error\":\"buffer overflow\"}");
+  }
   return http_send_json(req, buf);
 }
 #endif
@@ -4791,34 +5085,9 @@ static void url_decode_inplace(char* s) {
   *w = '\0';
 }
 
-static esp_err_t handle_fleet_qr(httpd_req_t* req) {
-  g_health.http_requests++;
-
-  char qs[256] = {};
-  char ssid[33] = {};
-  char pass[65] = {};
-
-  if (httpd_req_get_url_query_str(req, qs, sizeof(qs)) != ESP_OK) {
-    httpd_resp_set_status(req, "400 Bad Request");
-    httpd_resp_set_type(req, "text/plain");
-    return httpd_resp_send(req, "Missing query parameters", -1);
-  }
-
-  if (httpd_query_key_value(qs, "ssid", ssid, sizeof(ssid)) != ESP_OK
-      || ssid[0] == '\0') {
-    httpd_resp_set_status(req, "400 Bad Request");
-    httpd_resp_set_type(req, "text/plain");
-    return httpd_resp_send(req, "ssid is required", -1);
-  }
-  httpd_query_key_value(qs, "pass", pass, sizeof(pass));
-
-  url_decode_inplace(ssid);
-  url_decode_inplace(pass);
-
-  // Build SECURACV: payload
-  char payload[256];
-  snprintf(payload, sizeof(payload), "SECURACV:S:%s;P:%s;;", ssid, pass);
-
+// Render a text payload as an SVG QR code response. Shared by the fleet
+// WiFi-credentials QR and the pairing-receipt QR.
+static esp_err_t send_qr_svg(httpd_req_t* req, const char* payload) {
   // Use version 1-10 range (enough for short payloads, small QR)
   static constexpr int QR_MAX_VER = 10;
   uint8_t qr[qrcodegen_BUFFER_LEN_FOR_VERSION(QR_MAX_VER)];
@@ -4873,9 +5142,79 @@ static esp_err_t handle_fleet_qr(httpd_req_t* req) {
   return httpd_resp_send_chunk(req, nullptr, 0);
 }
 
+static esp_err_t handle_fleet_qr(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  char qs[256] = {};
+  char ssid[33] = {};
+  char pass[65] = {};
+
+  if (httpd_req_get_url_query_str(req, qs, sizeof(qs)) != ESP_OK) {
+    httpd_resp_set_status(req, "400 Bad Request");
+    httpd_resp_set_type(req, "text/plain");
+    return httpd_resp_send(req, "Missing query parameters", -1);
+  }
+
+  if (httpd_query_key_value(qs, "ssid", ssid, sizeof(ssid)) != ESP_OK
+      || ssid[0] == '\0') {
+    httpd_resp_set_status(req, "400 Bad Request");
+    httpd_resp_set_type(req, "text/plain");
+    return httpd_resp_send(req, "ssid is required", -1);
+  }
+  httpd_query_key_value(qs, "pass", pass, sizeof(pass));
+
+  url_decode_inplace(ssid);
+  url_decode_inplace(pass);
+
+  // Build SECURACV: payload
+  char payload[256];
+  snprintf(payload, sizeof(payload), "SECURACV:S:%s;P:%s;;", ssid, pass);
+
+  return send_qr_svg(req, payload);
+}
+
 static esp_err_t handle_fleet_qr_auth(httpd_req_t* req) {
   if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
   return handle_fleet_qr(req);
+}
+
+/* Pairing QR: SVG QR of the compact provisioning receipt, scanned by the
+ * Canary Vision companion app's "Scan pairing QR" fallback.
+ *
+ * The payload carries the API token, so this endpoint demands the same
+ * auth as the receipt's Bearer path — the QR is something an already-
+ * authenticated operator deliberately shows to their own phone, never an
+ * anonymous read. Only the three fields the app's scanner consumes are
+ * encoded ({device_id, base_url, token}); the slim payload keeps the QR
+ * at a low version so phone cameras lock on quickly.
+ */
+static esp_err_t handle_pairing_qr(httpd_req_t* req) {
+  g_health.http_requests++;
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+
+  // Prefer the home-LAN mDNS name (stable across DHCP leases); fall back
+  // to the AP address while the device is still in setup mode.
+  char base_host[56];
+  if (WiFi.isConnected() && g_device.mdns_hostname[0] != '\0') {
+    snprintf(base_host, sizeof(base_host), "%s.local", g_device.mdns_hostname);
+  } else {
+    snprintf(base_host, sizeof(base_host), "%s",
+             WiFi.softAPIP().toString().c_str());
+  }
+
+  char payload[224];
+  int n = snprintf(payload, sizeof(payload),
+    "{\"device_id\":\"%s\",\"base_url\":\"%s://%s\",\"token\":\"%s\"}",
+    g_device.device_id,
+    g_tls_enabled ? "https" : "http",
+    base_host,
+    g_device.api_token_str);
+  if (n < 0 || (size_t)n >= sizeof(payload)) {
+    return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+                               "Failed to build pairing payload");
+  }
+
+  return send_qr_svg(req, payload);
 }
 
 /* OS connectivity-probe handler (Apple / Android / Windows captive checks).
@@ -5628,6 +5967,37 @@ static esp_err_t handle_battery_history_auth(httpd_req_t* req) {
 }
 #endif
 
+#if FEATURE_ACOUSTIC_EVENTS
+static esp_err_t handle_audio_status_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_audio_status(req);
+}
+static esp_err_t handle_audio_mute_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_audio_mute(req);
+}
+static esp_err_t handle_audio_selftest_get_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_audio_selftest_get(req);
+}
+static esp_err_t handle_audio_selftest_post_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_audio_selftest_post(req);
+}
+static esp_err_t handle_audio_config_get_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_audio_config_get(req);
+}
+static esp_err_t handle_audio_config_post_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_audio_config_post(req);
+}
+static esp_err_t handle_audio_transitions_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_audio_transitions(req);
+}
+#endif
+
 // Register all route handlers on a given httpd server handle
 static void register_api_routes(httpd_handle_t server) {
   // UI — no auth required. / serves the headline Sensing dashboard;
@@ -5688,6 +6058,29 @@ static void register_api_routes(httpd_handle_t server) {
   httpd_register_uri_handler(server, &battery_history);
 #endif
 
+#if FEATURE_ACOUSTIC_EVENTS
+  httpd_uri_t audio_status = { .uri = "/api/audio/status", .method = HTTP_GET, .handler = handle_audio_status_auth };
+  httpd_register_uri_handler(server, &audio_status);
+
+  httpd_uri_t audio_mute_uri = { .uri = "/api/audio/mute", .method = HTTP_POST, .handler = handle_audio_mute_auth };
+  httpd_register_uri_handler(server, &audio_mute_uri);
+
+  httpd_uri_t audio_st_get = { .uri = "/api/audio/selftest", .method = HTTP_GET, .handler = handle_audio_selftest_get_auth };
+  httpd_register_uri_handler(server, &audio_st_get);
+
+  httpd_uri_t audio_st_post = { .uri = "/api/audio/selftest", .method = HTTP_POST, .handler = handle_audio_selftest_post_auth };
+  httpd_register_uri_handler(server, &audio_st_post);
+
+  httpd_uri_t audio_cfg_get = { .uri = "/api/audio/config", .method = HTTP_GET, .handler = handle_audio_config_get_auth };
+  httpd_register_uri_handler(server, &audio_cfg_get);
+
+  httpd_uri_t audio_cfg_post = { .uri = "/api/audio/config", .method = HTTP_POST, .handler = handle_audio_config_post_auth };
+  httpd_register_uri_handler(server, &audio_cfg_post);
+
+  httpd_uri_t audio_trans = { .uri = "/api/audio/transitions", .method = HTTP_GET, .handler = handle_audio_transitions_auth };
+  httpd_register_uri_handler(server, &audio_trans);
+#endif
+
   httpd_uri_t chain = { .uri = "/api/chain", .method = HTTP_GET, .handler = handle_chain_auth };
   httpd_register_uri_handler(server, &chain);
 
@@ -5746,14 +6139,19 @@ static void register_api_routes(httpd_handle_t server) {
 
 static void start_http_server() {
   // Calculate max URI handlers based on feature usage
-  const int base_handlers = 39;       // UI (/ + /admin + /settings), API (auth + public), WiFi provisioning, captive/connectivity probes (Apple x2, Android x2, Windows x2), /api/selftest, /api/diagnostics, /api/battery/history, /api/ota/{status,check,install,config}
+  const int base_handlers = 40;       // UI (/ + /admin + /settings), API (auth + public), WiFi provisioning, captive/connectivity probes (Apple x2, Android x2, Windows x2), /api/selftest, /api/diagnostics, /api/battery/history, /api/ota/{status,check,install,config}, /api/pairing-qr
+#if FEATURE_ACOUSTIC_EVENTS
+  const int audio_handlers = 7;       // /api/audio/{status,mute,transitions}, /api/audio/selftest + /api/audio/config (GET + POST each)
+#else
+  const int audio_handlers = 0;
+#endif
   const int camera_handlers = 9;      // Camera peek endpoints
   const int mesh_handlers = 12;       // Mesh network endpoints
   const int bluetooth_handlers = 23;  // Bluetooth API endpoints
   const int ble_discovery_handlers = 3; // BLE discovery (Opera/Chirp/Nearby) endpoints
   const int csi_handlers = 23;       // /api/csi/stream, /api/csi/window, /api/events/today, /api/events/dismiss, /api/csi/calibrate/{start,status,apply}, /sense, /api/settings (GET + POST), /api/privacy-budget, /manifest.webmanifest, /sw.js, /tune, /api/tune/coefficients (GET + POST), /api/tune/preset (GET + POST), /api/pair/token, /api/mqtt/config (GET + POST), /api/mqtt/test, /mqtt
   const int handler_headroom = 6;     // Reserve for future additions
-  const int total_handlers = base_handlers + camera_handlers + mesh_handlers + bluetooth_handlers + ble_discovery_handlers + csi_handlers + handler_headroom;
+  const int total_handlers = base_handlers + audio_handlers + camera_handlers + mesh_handlers + bluetooth_handlers + ble_discovery_handlers + csi_handlers + handler_headroom;
 
   // ── Start HTTPS server (port 443) if TLS cert is available ──
 #if SECURACV_HAS_HTTPS_SERVER
@@ -5969,6 +6367,9 @@ register_extra_routes:
   // Fleet provisioning QR code
   httpd_uri_t fleet_qr = { .uri = "/api/fleet/qr", .method = HTTP_GET, .handler = handle_fleet_qr_auth };
   httpd_register_uri_handler(active_server, &fleet_qr);
+
+  httpd_uri_t pairing_qr = { .uri = "/api/pairing-qr", .method = HTTP_GET, .handler = handle_pairing_qr };
+  httpd_register_uri_handler(active_server, &pairing_qr);
 
 #if FEATURE_MESH_NETWORK
   // Mesh network (opera) endpoints
@@ -6990,18 +7391,11 @@ static bool ota_can_install(char* reason, size_t reason_len) {
   return true;
 }
 
-/* Remember the target version before the install reboot so the next boot
- * can witness applied vs rolled-back. Witness records flush per-write, so
- * no extra chain persistence is needed here. */
+/* Pre-reboot hook. The engine records the install target itself the
+ * moment the boot partition flips (covering deferred and indirect
+ * reboots), and witness records flush per-write — nothing extra to
+ * persist here. Kept as the seam for future flush needs. */
 static void ota_before_reboot() {
-  const securacv_ota_manifest_t* m = securacv_ota_get_manifest();
-  if (m != NULL) {
-    Preferences prefs;
-    if (prefs.begin("securacv", false)) {
-      prefs.putString("ota_target", m->version);
-      prefs.end();
-    }
-  }
 }
 
 static void ota_schedule_next_check(uint32_t delay_ms, uint32_t jitter_ms) {
@@ -7387,7 +7781,120 @@ void setup() {
     Serial.println("[--] SD card init skipped (safe mode)");
   }
   #endif
-  
+
+  // Initialize PDM acoustic event detection (T3 smoke / T4 CO cadences).
+  // Must run BEFORE the HTTP server starts: audio_mute_sync_at_boot() is
+  // single-task-only (it touches the I2S driver synchronously), so it can
+  // only be called while setup() is provably the sole task in play.
+  #if FEATURE_ACOUSTIC_EVENTS
+  // Set when the device boots into the persisted-muted state; the witness
+  // record documenting it is deferred until AFTER the boot attestation is
+  // signed, so the attestation stays the first record of every boot.
+  bool mic_boot_muted = false;
+  if (!in_safe_mode) {
+    Serial.println("[..] Initializing PDM acoustic event detection...");
+    audio_config_t audio_cfg = AUDIO_CONFIG_DEFAULT;
+    // Apply the user's persisted room-noise sensitivity (set via
+    // POST /api/audio/config). Invalid/absent pairs fall back to the
+    // compiled defaults (ON=800 / OFF=400).
+    {
+      Preferences sens_prefs;
+      if (sens_prefs.begin("securacv", true /* read-only */)) {
+        const uint16_t on  = sens_prefs.getUShort("mic_rms_on", 0);
+        const uint16_t off = sens_prefs.getUShort("mic_rms_off", 0);
+        sens_prefs.end();
+        if (off > 0 && on > off) {
+          audio_cfg.rms_on_threshold  = on;
+          audio_cfg.rms_off_threshold = off;
+        }
+      }
+    }
+    if (audio_init(&audio_cfg)) {
+      audio_set_event_callback([](const audio_event_t* evt) {
+        uint8_t payload[160];
+        CborWriter cb(payload, sizeof(payload));
+        cb.write_map(5);
+        cb.write_text("event_type"); cb.write_text("acoustic");
+        cb.write_text("name"); cb.write_text(audio_event_name(evt->event_type));
+        cb.write_text("confidence"); cb.write_uint(evt->confidence);
+        cb.write_text("cycle_count"); cb.write_uint(evt->cycle_count);
+        cb.write_text("time_bucket"); cb.write_uint(evt->time_bucket);
+        if (cb.ok()) {
+          // Update g_last_record so /api/chain and /api/status report the
+          // event as the latest block, consistent with the chain head.
+          create_witness_record(payload, cb.size(), RECORD_WITNESS_EVENT, &g_last_record);
+        }
+        const bool life_safety =
+            evt->event_type == AUDIO_EVENT_T3_SMOKE_ALARM ||
+            evt->event_type == AUDIO_EVENT_T4_CO_ALARM;
+        log_health(life_safety ? SCV_LOG_ALERT : SCV_LOG_NOTICE, SCV_CAT_SENSOR,
+                   "Acoustic event detected", audio_event_name(evt->event_type));
+        #if FEATURE_AUDIBLE_CHIRP
+        if (life_safety) audible_chirp::chirp_alert();
+        #endif
+        // Hand the event to the MQTT cadence block in loop(), which
+        // publishes the /sensing snapshot HA's binary sensors watch.
+        snprintf(g_audio_mqtt_event, sizeof(g_audio_mqtt_event), "%s",
+                 audio_event_name(evt->event_type));
+        g_audio_mqtt_event_ms = millis();
+        g_audio_mqtt_dirty = true;
+      });
+      // Sign every mute / unmute toggle into the witness chain so a later
+      // operator can verify when the mic was off and which source flipped
+      // it (boot / dashboard) — "was the device listening at the time?"
+      audio_set_mute_callback([](bool muted, uint8_t source) {
+        uint8_t payload[96];
+        CborWriter cb(payload, sizeof(payload));
+        cb.write_map(3);
+        cb.write_text("event_type"); cb.write_text("mic_mute");
+        cb.write_text("muted"); cb.write_uint(muted ? 1 : 0);
+        cb.write_text("source"); cb.write_uint(source);
+        if (cb.ok()) {
+          create_witness_record(payload, cb.size(), RECORD_WITNESS_EVENT, &g_last_record);
+        }
+        const char* source_name =
+            source == AUDIO_MUTE_SOURCE_BOOT ? "boot" :
+            source == AUDIO_MUTE_SOURCE_MQTT ? "home_assistant" : "dashboard";
+        log_health(SCV_LOG_NOTICE, SCV_CAT_USER,
+                   muted ? "Microphone muted" : "Microphone unmuted",
+                   source_name);
+        // Mirror the state to HA's mic-mute switch entity (retained;
+        // cached internally for the reconnect republish).
+        csi_mqtt::publish_mic_state(muted);
+      });
+      // Honor the user's persisted mute intent. Still single-task here —
+      // the HTTP server has not started yet — so the synchronous boot
+      // helper may open / skip I2S directly. Runtime toggles after this
+      // point go through the deferred audio_mute() path instead.
+      Preferences mic_prefs;
+      bool persisted_mute = false;
+      if (mic_prefs.begin("securacv", true /* read-only */)) {
+        persisted_mute = mic_prefs.getBool("mic_muted", false);
+        mic_prefs.end();
+      }
+      const bool boot_ok = audio_mute_sync_at_boot(persisted_mute);
+      if (persisted_mute) {
+        Serial.println("[OK] Acoustic detector held MUTED by user (NVS)");
+        // The witness record documenting the muted boot is emitted after
+        // the boot attestation below — see mic_boot_muted.
+        mic_boot_muted = true;
+      } else if (boot_ok && audio_is_running()) {
+        Serial.println("[OK] Acoustic detector armed (T3 smoke / T4 CO)");
+      } else {
+        Serial.println("[WARN] Acoustic detector start failed");
+      }
+      // Seed HA's mic-mute switch with the boot state. The broker isn't
+      // connected yet; csi_mqtt caches the value and republishes it
+      // retained on MQTT_EVENT_CONNECTED.
+      csi_mqtt::publish_mic_state(audio_is_muted());
+    } else {
+      Serial.println("[WARN] Acoustic detector init failed");
+    }
+  } else {
+    Serial.println("[--] Acoustic detector init skipped (safe mode)");
+  }
+  #endif
+
   // ── TLS Certificate Initialization ──
   // Skip TLS during first-boot setup: the captive-portal flow runs over plain
   // HTTP on the AP, and a self-signed cert makes captive-portal mini-browsers
@@ -7666,6 +8173,24 @@ void setup() {
     hex_print(g_last_record.chain_hash, 8);
     Serial.println("...");
   }
+
+  #if FEATURE_ACOUSTIC_EVENTS
+  // Sign the boot-state mute record now that the boot attestation anchors
+  // the chain. It shows the device booted muted — lets investigators tell
+  // "muted before the incident" from "muted in response to it". Only on
+  // the muted path; the unmuted default would add one record per reboot.
+  if (mic_boot_muted) {
+    uint8_t mute_payload[96];
+    CborWriter cb(mute_payload, sizeof(mute_payload));
+    cb.write_map(3);
+    cb.write_text("event_type"); cb.write_text("mic_mute");
+    cb.write_text("muted"); cb.write_uint(1);
+    cb.write_text("source"); cb.write_uint(AUDIO_MUTE_SOURCE_BOOT);
+    if (cb.ok()) {
+      create_witness_record(mute_payload, cb.size(), RECORD_WITNESS_EVENT, &g_last_record);
+    }
+  }
+  #endif
   
   // Log boot event
   log_health(SCV_LOG_INFO, SCV_CAT_SYSTEM, "Device boot complete", FIRMWARE_VERSION);
@@ -7702,24 +8227,20 @@ void setup() {
     // Seed the HA auto-update switch state (csi_mqtt caches + retains it).
     csi_mqtt::publish_update_auto_state(securacv_ota_get_auto_update());
 
-    // Witness the outcome of an install reboot: ota_before_reboot() stored
-    // the target version; running the old version again means rollback.
-    Preferences ota_prefs;
-    if (ota_prefs.begin("securacv", false)) {
-      String target = ota_prefs.getString("ota_target", "");
-      if (target.length() > 0) {
-        ota_prefs.remove("ota_target");
-        if (target == FIRMWARE_VERSION) {
-          ota_witness_event("fw_update_applied", FIRMWARE_VERSION);
-          log_health(SCV_LOG_NOTICE, SCV_CAT_SYSTEM,
-                     "Firmware update applied", FIRMWARE_VERSION);
-        } else {
-          ota_witness_event("fw_update_rolled_back", target.c_str());
-          log_health(SCV_LOG_WARNING, SCV_CAT_SYSTEM,
-                     "Firmware update rolled back", target.c_str());
-        }
+    // Witness the outcome of an install reboot. The engine (and the BLE
+    // OTA path) recorded the install target the moment the boot partition
+    // flipped; running the old version again means rollback.
+    char ota_target[SECURACV_OTA_VERSION_MAX];
+    if (securacv_ota_take_pending_version(ota_target, sizeof(ota_target))) {
+      if (strcmp(ota_target, FIRMWARE_VERSION) == 0) {
+        ota_witness_event("fw_update_applied", FIRMWARE_VERSION);
+        log_health(SCV_LOG_NOTICE, SCV_CAT_SYSTEM,
+                   "Firmware update applied", FIRMWARE_VERSION);
+      } else {
+        ota_witness_event("fw_update_rolled_back", ota_target);
+        log_health(SCV_LOG_WARNING, SCV_CAT_SYSTEM,
+                   "Firmware update rolled back", ota_target);
       }
-      ota_prefs.end();
     }
   }
 
@@ -8104,11 +8625,50 @@ void loop() {
   // Update power monitor (ADC sample, SoC, charge state)
   #if FEATURE_POWER_MONITOR
   power_monitor::process();
+
+  // Persist battery health history (runtime minutes, SoC minimum,
+  // brownout count, last-full-charge) every 10 minutes so the stats
+  // survive power loss. Cheap: four NVS writes.
+  {
+    static uint32_t s_last_batt_hist_ms = 0;
+    if (now - s_last_batt_hist_ms >= 600000UL) {
+      s_last_batt_hist_ms = now;
+      power_monitor::persist_history();
+    }
+  }
   #endif
 
   // Update power policy (mode transitions, feature gating)
   #if FEATURE_POWER_POLICY
   power_policy::process();
+
+  // Consume the LOW_POWER deep-sleep request (55 s sleep / 5 s wake duty
+  // cycle below 5% SoC). Without this the policy sets the pending flag
+  // and nothing ever sleeps. Close out persistent state first; deep
+  // sleep reboots the chip, so setup() re-evaluates power mode on wake.
+  if (power_policy::should_deep_sleep() && !power_monitor::is_charging()) {
+    uint32_t sleep_sec = power_policy::get_sleep_duration_sec();
+    log_health(SCV_LOG_INFO, SCV_CAT_SYSTEM,
+               "low battery: entering timed deep sleep", nullptr);
+    persist_chain_state();
+    power_monitor::persist_history();
+    power_policy::ack_deep_sleep();
+    esp_sleep_enable_timer_wakeup((uint64_t)sleep_sec * 1000000ULL);
+    esp_deep_sleep_start();
+    // Does not return
+  } else if (power_policy::should_deep_sleep()) {
+    // Charger appeared between policy evaluation and here -- cancel.
+    power_policy::ack_deep_sleep();
+  }
+  #endif
+
+  // Pump the acoustic pipeline. Drains up to 4×20 ms PDM frames per call
+  // against a 4-deep DMA ring, so the loop must come back within ~80 ms —
+  // holds here because loop() ends in delay(1) and HTTP runs in the httpd
+  // task. Event/mute callbacks fire synchronously from this call, in the
+  // same task context as the witness-record code above.
+  #if FEATURE_ACOUSTIC_EVENTS
+  audio_process();
   #endif
 
   // Drain CSI ring, finalize 1-Hz feature windows, dispatch to v1 modules.
@@ -8122,6 +8682,19 @@ void loop() {
   // plus three cadence-gated publishers for the topics HA expects.
   // Schemas locked against custom_components/securacv/sensor.py.
   csi_mqtt::loop();
+#if FEATURE_ACOUSTIC_EVENTS
+  // Track the broker-connection edge OUTSIDE the connected gate so a
+  // reconnect (or first boot connect) forces an immediate /sensing
+  // publish below. The topic is retained: without this, a smoke/CO
+  // event published just before a reboot/disconnect would linger on
+  // the broker and HA could briefly automate on a phantom alarm when
+  // the device comes back. The forced publish reflects live state —
+  // "none" after a reboot — and overwrites the stale payload.
+  static bool s_mqtt_prev_connected = false;
+  const bool mqtt_just_connected =
+      csi_mqtt::connected() && !s_mqtt_prev_connected;
+  s_mqtt_prev_connected = csi_mqtt::connected();
+#endif
   if (csi_mqtt::connected()) {
     static uint32_t s_mqtt_status_ms = 0;
     static uint32_t s_mqtt_health_ms = 0;
@@ -8138,6 +8711,66 @@ void loop() {
       csi_mqtt::publish_health((uint32_t)ESP.getFreeHeap(),
                                (uint32_t)uptime_seconds());
     }
+
+#if FEATURE_ACOUSTIC_EVENTS
+    // Drain HA's mic-mute switch commands. audio_mute() defers the I2S
+    // toggle to the next audio_process() tick; the mute callback then
+    // signs the witness record and mirrors mic/state back to HA.
+    {
+      const int mic_cmd = csi_mqtt::take_pending_mic_mute();
+      if (mic_cmd >= 0) {
+        const bool want_mute = (mic_cmd == 1);
+        if (audio_mute(want_mute, AUDIO_MUTE_SOURCE_MQTT)) {
+          if (!audio_save_mute_intent(want_mute)) {
+            log_health(SCV_LOG_WARNING, SCV_CAT_STORAGE,
+                       "Mic mute intent NOT persisted", "NVS write failed");
+          }
+        }
+      }
+    }
+    // Acoustic /sensing snapshot: publish immediately when an event
+    // lands, once more to clear it back to "none" after the 30 s hold,
+    // and every 60 s as a counters/mute heartbeat. HA's smoke/CO/
+    // knock/doorbell/glass binary sensors template on acoustic_event.
+    {
+      static uint32_t s_mqtt_sensing_ms = 0;
+      static bool s_sensing_event_held = false;
+      const bool event_fresh = (g_audio_mqtt_event_ms != 0) &&
+          (now - g_audio_mqtt_event_ms) < AUDIO_MQTT_EVENT_HOLD_MS;
+      const bool need_clear = s_sensing_event_held && !event_fresh;
+      if (g_audio_mqtt_dirty || need_clear || mqtt_just_connected ||
+          (now - s_mqtt_sensing_ms >= 60000UL)) {
+        g_audio_mqtt_dirty = false;
+        s_mqtt_sensing_ms = now;
+        s_sensing_event_held = event_fresh;
+        audio_stats_t ast = {};
+        audio_get_stats(&ast);
+        char sensing_json[320];
+        const int sn = snprintf(sensing_json, sizeof(sensing_json),
+          "{"
+            "\"acoustic_event\":\"%s\","
+            "\"mic_muted\":%s,"
+            "\"t3_detected\":%lu,"
+            "\"t4_detected\":%lu,"
+            "\"knock_detected\":%lu,"
+            "\"doorbell_detected\":%lu,"
+            "\"glass_break_detected\":%lu,"
+            "\"i2s_read_errors\":%lu"
+          "}",
+          event_fresh ? g_audio_mqtt_event : "none",
+          audio_is_muted() ? "true" : "false",
+          (unsigned long)ast.t3_detected,
+          (unsigned long)ast.t4_detected,
+          (unsigned long)ast.knock_detected,
+          (unsigned long)ast.doorbell_detected,
+          (unsigned long)ast.glass_break_detected,
+          (unsigned long)ast.i2s_read_errors);
+        if (sn > 0 && sn < (int)sizeof(sensing_json)) {
+          csi_mqtt::publish_sensing(sensing_json);
+        }
+      }
+    }
+#endif
     // Counts + chain: publish on each increment of records_created
     // (saves bandwidth vs. heartbeating, and matches HA's expectation
     // that the topic carries the latest total, not periodic noise).

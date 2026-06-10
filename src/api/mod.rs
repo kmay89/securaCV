@@ -1,6 +1,10 @@
-use crate::{ExportOptions, Kernel, KernelConfig, TimeBucket};
+use crate::crypto::signatures::SignatureMode;
+use crate::storage_health::SharedStorageHealth;
+use crate::verify_runner::{run_full_verify, VerifyReport};
+use crate::{ExportArtifact, ExportOptions, Kernel, KernelConfig, TimeBucket};
 use anyhow::{anyhow, Result};
-use std::collections::HashMap;
+use serde::Serialize;
+use std::collections::{BTreeMap, HashMap};
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
@@ -141,11 +145,23 @@ impl CapabilityTokenManager {
 pub struct ApiServer {
     cfg: ApiConfig,
     kernel_cfg: KernelConfig,
+    storage_health: Option<SharedStorageHealth>,
 }
 
 impl ApiServer {
     pub fn new(cfg: ApiConfig, kernel_cfg: KernelConfig) -> Self {
-        Self { cfg, kernel_cfg }
+        Self {
+            cfg,
+            kernel_cfg,
+            storage_health: None,
+        }
+    }
+
+    /// Attach a storage-health snapshot shared with the witnessd main loop.
+    /// When attached, `GET /status` (token-gated) serves the latest report.
+    pub fn with_storage_health(mut self, snapshot: SharedStorageHealth) -> Self {
+        self.storage_health = Some(snapshot);
+        self
     }
 
     pub fn spawn(self) -> Result<ApiHandle> {
@@ -185,9 +201,17 @@ impl ApiServer {
         let shutdown_thread = shutdown.clone();
         let cfg = self.cfg.clone();
         let kernel_cfg = self.kernel_cfg.clone();
+        let storage_health = self.storage_health.clone();
         let token_path = cfg.token_path.clone();
         let join = std::thread::spawn(move || {
-            if let Err(err) = run_api(listener, cfg, kernel_cfg, &mut token_mgr, shutdown_thread) {
+            if let Err(err) = run_api(
+                listener,
+                cfg,
+                kernel_cfg,
+                storage_health,
+                &mut token_mgr,
+                shutdown_thread,
+            ) {
                 log::error!("event api stopped: {}", err);
             }
         });
@@ -275,12 +299,18 @@ fn run_api(
     listener: TcpListener,
     cfg: ApiConfig,
     kernel_cfg: KernelConfig,
+    storage_health: Option<SharedStorageHealth>,
     token_mgr: &mut CapabilityTokenManager,
     shutdown: Arc<AtomicBool>,
 ) -> Result<()> {
     let mut kernel = Kernel::open(&kernel_cfg)?;
     let expected_ruleset_hash = kernel_cfg.ruleset_hash;
+    let kernel_version = kernel_cfg.kernel_version.clone();
+    let retention = kernel_cfg.retention;
     let mut auth_tracker = AuthFailureTracker::new();
+    // Most recent POST /verify outcome, surfaced in /digest so consumers
+    // get chain status without re-running verification on every request.
+    let mut last_verify: Option<VerifyReport> = None;
     loop {
         if shutdown.load(Ordering::SeqCst) {
             break;
@@ -293,7 +323,11 @@ fn run_api(
                     &cfg,
                     token_mgr,
                     expected_ruleset_hash,
+                    &kernel_version,
+                    storage_health.as_ref(),
+                    retention,
                     &mut auth_tracker,
+                    &mut last_verify,
                 ) {
                     log::warn!("event api request rejected: {}", err);
                 }
@@ -308,13 +342,18 @@ fn run_api(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_connection(
     mut stream: TcpStream,
     kernel: &mut Kernel,
     cfg: &ApiConfig,
     token_mgr: &mut CapabilityTokenManager,
     expected_ruleset_hash: [u8; 32],
+    kernel_version: &str,
+    storage_health: Option<&SharedStorageHealth>,
+    retention: Duration,
     auth_tracker: &mut AuthFailureTracker,
+    last_verify: &mut Option<VerifyReport>,
 ) -> Result<()> {
     let peer = stream.peer_addr()?;
     let local = stream.local_addr()?;
@@ -331,16 +370,40 @@ fn handle_connection(
     }
 
     let request = read_request(&mut stream)?;
-    if request.method != "GET" {
-        write_json_response(&mut stream, 405, r#"{"error":"method_not_allowed"}"#)?;
-        return Ok(());
-    }
-    match request.path.as_str() {
-        "/health" => {
+    match (request.method.as_str(), request.path.as_str()) {
+        ("GET", "/health") => {
             write_json_response(&mut stream, 200, r#"{"status":"ok"}"#)?;
             return Ok(());
         }
-        "/events" | "/events/latest" => {}
+        // `/status` (storage health) is token-gated like `/events`: storage
+        // metrics are operational metadata and stay behind the capability
+        // token (Invariant III posture — only `/health` liveness is open).
+        ("GET", "/events")
+        | ("GET", "/events/latest")
+        | ("GET", "/digest")
+        | ("GET", "/status") => {}
+        // POST /verify carries no body — verification has no parameters and
+        // request parsing stays at the 8 KB header-only surface.
+        ("POST", "/verify") => {
+            if request
+                .headers
+                .get("content-length")
+                .and_then(|v| v.parse::<usize>().ok())
+                .is_some_and(|len| len > 0)
+            {
+                write_json_response(&mut stream, 400, r#"{"error":"body_not_allowed"}"#)?;
+                return Ok(());
+            }
+        }
+        (_, "/health")
+        | (_, "/events")
+        | (_, "/events/latest")
+        | (_, "/digest")
+        | (_, "/verify")
+        | (_, "/status") => {
+            write_json_response(&mut stream, 405, r#"{"error":"method_not_allowed"}"#)?;
+            return Ok(());
+        }
         _ => {
             write_json_response(&mut stream, 404, r#"{"error":"not_found"}"#)?;
             return Ok(());
@@ -389,7 +452,50 @@ fn handle_connection(
     // Successful auth — clear any failure history for this IP
     auth_tracker.clear_on_success(&peer.ip());
 
+    if request.path == "/status" {
+        let report = storage_health
+            .and_then(|shared| shared.read().ok().and_then(|guard| guard.as_ref().cloned()));
+        match report {
+            Some(report) => {
+                #[derive(serde::Serialize)]
+                struct StatusResponse<'a> {
+                    kernel_version: &'a str,
+                    #[serde(flatten)]
+                    report: crate::storage_health::StorageHealthReport,
+                }
+                let payload = serde_json::to_vec(&StatusResponse {
+                    kernel_version,
+                    report,
+                })?;
+                write_response(&mut stream, 200, "application/json", &payload)?;
+            }
+            // No snapshot yet (monitoring disabled, or first sample pending):
+            // 404 lets clients distinguish "not available" from an error.
+            None => write_json_response(&mut stream, 404, r#"{"error":"not_available"}"#)?,
+        }
+        return Ok(());
+    }
+
+    if request.path == "/verify" {
+        // Synchronous and read-only against the kernel's open connection.
+        // The log holds coarse, deduplicated events, so a full pass is
+        // cheap — but it does block this single-threaded API briefly.
+        let report = run_full_verify(&kernel.conn, None, None, SignatureMode::Compat, |_| {})?;
+        *last_verify = Some(report.clone());
+        let payload = serde_json::to_vec(&report)?;
+        write_response(&mut stream, 200, "application/json", &payload)?;
+        return Ok(());
+    }
+
     let artifact = kernel.export_events_for_api(expected_ruleset_hash, cfg.export_options)?;
+
+    if request.path == "/digest" {
+        let digest = build_digest(&artifact, retention, last_verify.clone())?;
+        let payload = serde_json::to_vec(&digest)?;
+        write_response(&mut stream, 200, "application/json", &payload)?;
+        return Ok(());
+    }
+
     if request.path == "/events/latest" {
         if let Some(event) = latest_event(&artifact) {
             let payload = serde_json::to_vec(event)?;
@@ -403,6 +509,85 @@ fn handle_connection(
     let payload = serde_json::to_vec(&artifact)?;
     write_response(&mut stream, 200, "application/json", &payload)?;
     Ok(())
+}
+
+/// Rolling 24h digest of the privacy-preserving event log.
+///
+/// Built exclusively from the already-exported artifact (privacy-filtered,
+/// bucket-coarsened by `export_events_for_api`), so it can never carry more
+/// than the export path does. Time-of-day breakdown uses four 6-hour UTC
+/// periods — strictly coarser than the 10-minute buckets it is derived from
+/// (invariants §5 metadata minimization).
+#[derive(Debug, Clone, Serialize)]
+pub struct DigestPayload {
+    pub total_events: u64,
+    pub per_zone: BTreeMap<String, u64>,
+    pub per_period: BTreeMap<String, u64>,
+    pub event_types: BTreeMap<String, u64>,
+    pub window_secs: u64,
+    pub retention_days: u64,
+    pub generated_at_bucket_start: u64,
+    pub generated_at_bucket_size: u32,
+    /// Most recent POST /verify outcome, if verification has run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_verify: Option<VerifyReport>,
+}
+
+const DIGEST_WINDOW_SECS: u64 = 24 * 60 * 60;
+
+fn build_digest(
+    artifact: &ExportArtifact,
+    retention: Duration,
+    last_verify: Option<VerifyReport>,
+) -> Result<DigestPayload> {
+    let now_bucket = TimeBucket::now_10min()?;
+    let cutoff = now_bucket
+        .start_epoch_s
+        .saturating_sub(DIGEST_WINDOW_SECS.saturating_sub(u64::from(now_bucket.size_s)));
+
+    let mut total_events = 0u64;
+    let mut per_zone: BTreeMap<String, u64> = BTreeMap::new();
+    let mut per_period: BTreeMap<String, u64> = BTreeMap::new();
+    let mut event_types: BTreeMap<String, u64> = BTreeMap::new();
+
+    for batch in &artifact.batches {
+        for bucket in &batch.buckets {
+            for event in &bucket.events {
+                if event.time_bucket.start_epoch_s < cutoff {
+                    continue;
+                }
+                total_events += 1;
+                *per_zone.entry(event.zone_id.clone()).or_default() += 1;
+                *per_period
+                    .entry(period_of_day(event.time_bucket.start_epoch_s).to_string())
+                    .or_default() += 1;
+                *event_types
+                    .entry(format!("{:?}", event.event_type))
+                    .or_default() += 1;
+            }
+        }
+    }
+
+    Ok(DigestPayload {
+        total_events,
+        per_zone,
+        per_period,
+        event_types,
+        window_secs: DIGEST_WINDOW_SECS,
+        retention_days: retention.as_secs() / 86_400,
+        generated_at_bucket_start: now_bucket.start_epoch_s,
+        generated_at_bucket_size: now_bucket.size_s,
+        last_verify,
+    })
+}
+
+fn period_of_day(epoch_s: u64) -> &'static str {
+    match (epoch_s % 86_400) / 3_600 {
+        0..=5 => "night",
+        6..=11 => "morning",
+        12..=17 => "afternoon",
+        _ => "evening",
+    }
 }
 
 fn read_request(stream: &mut TcpStream) -> Result<HttpRequest> {

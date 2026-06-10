@@ -862,7 +862,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         <div class="brand-icon">🐥</div>
         <div>
           <h1>SecuraCV Canary</h1>
-          <span id="deviceId">Loading...</span>
+          <span id="deviceId">Loading…</span>
         </div>
       </div>
       <div class="status-badges">
@@ -1044,11 +1044,11 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         <div class="identity-grid">
           <div class="identity-row">
             <span class="identity-label">Public Key</span>
-            <span class="identity-value" id="pubkey">Loading...</span>
+            <span class="identity-value" id="pubkey">Loading…</span>
           </div>
           <div class="identity-row">
             <span class="identity-label">Fingerprint (FP8)</span>
-            <span class="identity-value" id="fingerprint">Loading...</span>
+            <span class="identity-value" id="fingerprint">Loading…</span>
           </div>
           <div class="identity-row">
             <span class="identity-label">Firmware</span>
@@ -1111,12 +1111,77 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         </div>
       </div>
 
+      <!-- Microphone Card (PDM acoustic events) — hidden until
+           /api/audio/status confirms the feature is compiled in -->
+      <div class="card" id="micCard" style="display:none">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Microphone</div>
+            <div class="card-subtitle" id="micSubtitle">Smoke/CO alarm cadence detection (T3/T4)</div>
+          </div>
+          <div class="badge info" id="micBadge">
+            <span class="badge-dot"></span>
+            <span id="micBadgeText">--</span>
+          </div>
+        </div>
+        <div style="margin:0.5rem 0 1rem;">
+          <div class="stat-label" style="margin-bottom:0.3rem;">Sound level</div>
+          <div style="height:8px;border-radius:4px;background:rgba(128,128,128,0.2);overflow:hidden;">
+            <div id="micLevelBar" style="height:100%;width:0%;border-radius:4px;background:var(--success);transition:width 0.4s;"></div>
+          </div>
+        </div>
+        <div class="stats-grid">
+          <div class="stat-item">
+            <div class="stat-label">Smoke (T3)</div>
+            <div class="stat-value" id="micT3">0</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-label">CO (T4)</div>
+            <div class="stat-value" id="micT4">0</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-label">Knock</div>
+            <div class="stat-value" id="micKnock">0</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-label">Doorbell</div>
+            <div class="stat-value" id="micDoorbell">0</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-label">Glass Break</div>
+            <div class="stat-value" id="micGlass">0</div>
+          </div>
+        </div>
+        <div class="toggle-row" style="margin-top:1rem;">
+          <div class="toggle-info">
+            <div class="toggle-title">Mute microphone</div>
+            <div class="toggle-desc">Hard mute: releases the I2S driver and tri-states the mic pins. Persists across reboots.</div>
+          </div>
+          <label style="cursor:pointer;">
+            <input type="checkbox" id="micMuted" onchange="toggleMicMute()">
+          </label>
+        </div>
+        <div style="margin-top:1rem;display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;">
+          <button class="btn btn-secondary btn-sm" id="micSelftestBtn" onclick="startMicSelftest()">Test with your alarm (30 s)</button>
+          <span id="micSelftestResult" style="font-size:0.85rem;color:var(--muted);">Press your smoke/CO alarm's TEST button during the window.</span>
+        </div>
+        <div style="margin-top:1rem;display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;">
+          <label for="micSensitivity" style="font-size:0.85rem;">Sensitivity</label>
+          <select id="micSensitivity" onchange="setMicSensitivity()" style="font-size:0.85rem;">
+            <option value="high">High — quiet rooms</option>
+            <option value="default" selected>Standard</option>
+            <option value="low">Low — noisy rooms</option>
+          </select>
+          <span id="micSensitivityResult" style="font-size:0.85rem;color:var(--muted);">Raise it if alarms are missed; lower it if noise triggers it.</span>
+        </div>
+      </div>
+
       <!-- GPS Status Card -->
       <div class="card">
         <div class="card-header">
           <div>
             <div class="card-title">GPS Status</div>
-            <div class="card-subtitle" id="gpsSubtitle">Waiting for fix...</div>
+            <div class="card-subtitle" id="gpsSubtitle">Waiting for fix…</div>
           </div>
         </div>
         <div class="gps-grid">
@@ -1362,7 +1427,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           </div>
           <div class="badge info" id="wifiPresenceBadge">
             <span class="badge-dot"></span>
-            <span id="wifiPresenceState">Loading...</span>
+            <span id="wifiPresenceState">Loading…</span>
           </div>
         </div>
         <div class="stats-grid">
@@ -1415,7 +1480,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         <div id="blePresenceContent">
           <div style="padding:1rem;background:rgba(246,173,85,0.1);border-radius:8px;font-size:0.8rem;">
             <strong>BLE Status:</strong>
-            <span id="blePresenceStatus">Checking...</span>
+            <span id="blePresenceStatus">Checking…</span>
           </div>
         </div>
       </div>
@@ -1429,7 +1494,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           </div>
           <div class="badge info" id="chirpHwBadge">
             <span class="badge-dot"></span>
-            <span id="chirpHwState">Loading...</span>
+            <span id="chirpHwState">Loading…</span>
           </div>
         </div>
         <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
@@ -1441,7 +1506,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         </div>
         <div id="chirpHwResult" style="margin-top:0.5rem;font-size:0.8rem;min-height:1.2em;"></div>
         <div style="margin-top:0.75rem;font-size:0.8rem;color:var(--muted);">
-          <span id="chirpHwMode">Mode: Checking...</span><br>
+          <span id="chirpHwMode">Mode: Checking…</span><br>
           <span style="font-size:0.75rem;">Connect a passive buzzer to the configured GPIO for audio alerts.
           Without a buzzer, chirp uses LED blink patterns.</span>
         </div>
@@ -1489,7 +1554,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
             </div>
             <div class="badge info" id="bleStateBadge">
               <span class="badge-dot"></span>
-              <span id="bleStateText">Loading...</span>
+              <span id="bleStateText">Loading…</span>
             </div>
           </div>
           <div class="stats-grid">
@@ -1516,7 +1581,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           <div class="card-header">
             <div>
               <div class="card-title">Nearby Canaries</div>
-              <div class="card-subtitle" id="bleNearbySubtitle">Scanning...</div>
+              <div class="card-subtitle" id="bleNearbySubtitle">Scanning…</div>
             </div>
           </div>
           <div id="bleNearbyList">
@@ -1562,7 +1627,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
             </div>
             <div class="badge info" id="operaBadge">
               <span class="badge-dot"></span>
-              <span id="operaState">Loading...</span>
+              <span id="operaState">Loading…</span>
             </div>
           </div>
           <div class="stats-grid">
@@ -1651,7 +1716,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           <div id="operaPairing" style="display:none;">
             <div style="text-align:center;padding:1rem;">
               <div class="spinner" style="margin:0 auto 1rem;"></div>
-              <p id="pairingStatus" style="color:var(--muted);margin-bottom:1rem;">Searching...</p>
+              <p id="pairingStatus" style="color:var(--muted);margin-bottom:1rem;">Searching…</p>
               <div id="pairingCode" style="display:none;margin-bottom:1rem;">
                 <p style="font-size:0.85rem;color:var(--muted);margin-bottom:0.5rem;">Confirm code matches:</p>
                 <div style="font-family:var(--mono);font-size:2rem;font-weight:bold;color:var(--accent);letter-spacing:0.2em;" id="pairingCodeValue">------</div>
@@ -1900,7 +1965,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
             </div>
             <div class="badge info" id="wifiBadge">
               <span class="badge-dot"></span>
-              <span id="wifiState">Checking...</span>
+              <span id="wifiState">Checking…</span>
             </div>
           </div>
           <div class="stats-grid" style="margin-bottom:1rem;">
@@ -1961,7 +2026,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           <div id="wifiProgress" style="display:none;margin-top:1rem;">
             <div style="display:flex;align-items:center;gap:0.75rem;">
               <div class="spinner"></div>
-              <span id="wifiProgressText" style="color:var(--muted);">Connecting...</span>
+              <span id="wifiProgressText" style="color:var(--muted);">Connecting…</span>
             </div>
           </div>
         </div>
@@ -1977,7 +2042,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
             </div>
             <div class="badge info" id="btStateBadge">
               <span class="badge-dot"></span>
-              <span id="btStateText">Loading...</span>
+              <span id="btStateText">Loading…</span>
             </div>
           </div>
           <div class="stats-grid">
@@ -2190,6 +2255,21 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           </div>
         </div>
 
+        <!-- Pairing QR Card (scan from the Canary Vision companion app) -->
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title">Pair with the Canary Vision app</div>
+              <div class="card-subtitle">In the app: Add Canary → Other ways to pair → Scan pairing QR</div>
+            </div>
+            <button class="btn btn-primary btn-sm" onclick="togglePairingQr()" id="pairingQrBtn">Show QR</button>
+          </div>
+          <div id="pairingQrWrap" style="display:none;text-align:center;padding:0.5rem 0;">
+            <img id="pairingQrImg" alt="Pairing QR code" style="width:240px;max-width:80%;border-radius:8px;background:#fff;padding:8px;">
+            <p style="font-size:0.75rem;color:var(--muted);margin:0.5rem 0 0;">This code contains the device's API token — only show it to a phone you trust.</p>
+          </div>
+        </div>
+
         <!-- Software Update Card (signed pull updates over WiFi) -->
         <div class="card" id="otaCard" style="display:none;">
           <div class="card-header">
@@ -2199,7 +2279,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
             </div>
             <div class="badge info" id="otaBadge">
               <span class="badge-dot"></span>
-              <span id="otaBadgeText">Checking...</span>
+              <span id="otaBadgeText">Checking…</span>
             </div>
           </div>
           <div class="stats-grid">
@@ -2217,7 +2297,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
             <a id="otaNotesLink" href="#" target="_blank" rel="noopener" style="font-size:0.8rem;display:none;">Read the full release notes</a>
           </div>
           <div id="otaProgress" style="display:none;margin-top:0.75rem;">
-            <div class="stat-label" id="otaProgressText">Downloading update...</div>
+            <div class="stat-label" id="otaProgressText">Downloading update…</div>
             <div style="display:flex;align-items:center;gap:0.5rem;">
               <div style="flex:1;height:8px;background:rgba(0,0,0,0.3);border-radius:4px;overflow:hidden;">
                 <div id="otaProgressBar" style="height:100%;background:#22c55e;width:0%;transition:width 0.3s;"></div>
@@ -2422,7 +2502,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
     async function resumeExistingSession() {
       const s = document.getElementById('authStatus');
-      s.textContent = 'Checking for a saved dashboard session...';
+      s.textContent = 'Checking for a saved dashboard session…';
       s.className = 'auth-status info';
       try {
         const resp = await fetch(API_BASE + '/api/status', { cache: 'no-store' });
@@ -2527,6 +2607,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       refreshRfStatus();
       refreshWifiPresence();
       refreshAudibleChirpStatus();
+      refreshMicStatus();
     }
 
     function startDashboard() {
@@ -2714,7 +2795,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
       if (busy) {
         badge.className = 'badge info';
-        badgeText.textContent = data.state_text || 'Working...';
+        badgeText.textContent = data.state_text || 'Working…';
         checkBtn.disabled = true;
         installBtn.style.display = 'none';
         errBox.style.display = 'none';
@@ -2997,7 +3078,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       // 0 m/s reading reads as "intentionally pinned" rather than "broken".
       let subtitle;
       if (!hasFix) {
-        subtitle = 'Waiting for fix...';
+        subtitle = 'Waiting for fix…';
       } else if (stationary) {
         subtitle = `Stationary · Fix ${gps.fix_mode || '?'}D`;
       } else {
@@ -3181,7 +3262,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       btn.disabled = false;
       if (peekActive) {
         btn.textContent = '⏹ Stop'; btn.className = 'btn btn-danger btn-sm';
-        status.textContent = 'Streaming...';
+        status.textContent = 'Streaming…';
         stream.style.display = 'block'; offline.style.display = 'none';
       } else {
         btn.textContent = '▶ Start'; btn.className = 'btn btn-primary btn-sm';
@@ -3196,7 +3277,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     async function startPeek() {
       if (!cameraReady) { alert('Camera not available'); return; }
       const stream = document.getElementById('peekStream');
-      document.getElementById('peekStatus').textContent = 'Connecting...';
+      document.getElementById('peekStatus').textContent = 'Connecting…';
       stream.src = API_BASE + '/api/peek/stream?t=' + Date.now() + '&token=' + encodeURIComponent(apiToken);
       stream.onload = () => { peekActive = true; updatePeekUI(); startCamInfoPolling(); setTimeout(refreshPeekStatus, 300); };
       stream.onerror = () => { if (peekActive) setTimeout(() => { if (peekActive) stream.src = API_BASE + '/api/peek/stream?t=' + Date.now() + '&token=' + encodeURIComponent(apiToken); }, 2000); };
@@ -3421,7 +3502,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       document.getElementById('operaNoOpera').style.display = 'none';
       document.getElementById('operaHasOpera').style.display = 'none';
       document.getElementById('operaPairing').style.display = 'block';
-      document.getElementById('pairingStatus').textContent = mode === 'init' ? 'Waiting for device...' : 'Searching...';
+      document.getElementById('pairingStatus').textContent = mode === 'init' ? 'Waiting for device…' : 'Searching…';
       document.getElementById('pairingCode').style.display = 'none';
       document.getElementById('pairingConfirmBtn').style.display = 'none';
       startPairingPolling();
@@ -3446,11 +3527,11 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     }
 
     function stopPairingPolling() { if (pairingPollingInterval) { clearInterval(pairingPollingInterval); pairingPollingInterval = null; } }
-    async function confirmPairing() { await api('/api/mesh/pair/confirm', 'POST'); document.getElementById('pairingStatus').textContent = 'Completing...'; }
+    async function confirmPairing() { await api('/api/mesh/pair/confirm', 'POST'); document.getElementById('pairingStatus').textContent = 'Completing…'; }
     async function cancelPairing() { stopPairingPolling(); await api('/api/mesh/pair/cancel', 'POST'); refreshOpera(); }
     async function saveOperaName() { const name = document.getElementById('operaNameInput').value.trim(); if (name) await api('/api/mesh/name', 'POST', { name }); refreshOpera(); }
-    async function leaveOpera() { if (confirm('Leave opera?')) { await api('/api/mesh/leave', 'POST'); refreshOpera(); } }
-    async function removePeer(fp) { if (confirm('Remove device?')) { await api('/api/mesh/remove', 'POST', { fingerprint: fp }); loadPeers(); } }
+    async function leaveOpera() { if (confirm('Leave this opera? This Canary stops sharing alerts with the group. You can re-pair any time to rejoin.')) { await api('/api/mesh/leave', 'POST'); refreshOpera(); } }
+    async function removePeer(fp) { if (confirm('Remove this device from the opera? It stops sharing alerts with this Canary until it pairs again.')) { await api('/api/mesh/remove', 'POST', { fingerprint: fp }); loadPeers(); } }
     async function toggleMeshEnabled() { const enabled = document.getElementById('meshEnabled').checked; await api('/api/mesh/enable', 'POST', { enabled }); refreshOpera(); }
     async function clearOperaAlerts() { await api('/api/mesh/alerts', 'DELETE'); loadOperaAlerts(); }
 
@@ -3469,7 +3550,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       document.getElementById('chirpEnabled').checked = enabled;
 
       if (!data.presence_met) {
-        document.getElementById('chirpCooldown').textContent = 'Warming up...';
+        document.getElementById('chirpCooldown').textContent = 'Warming up…';
         document.getElementById('chirpSendBtn').disabled = true;
         document.getElementById('chirpPresenceHint').style.display = 'block';
       } else if (data.cooldown_remaining_sec > 0) {
@@ -3597,6 +3678,39 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       else alert('Export failed');
     }
 
+    // ── Pairing QR (Settings → Device) ──────────────────────────────────
+    // The SVG comes from the authenticated /api/pairing-qr endpoint, so it
+    // is fetched with the session's credentials and shown via an object
+    // URL. Hidden again on toggle, and the URL revoked, so the token-
+    // bearing image doesn't linger longer than the operator wants.
+    let pairingQrUrl = null;
+    async function togglePairingQr() {
+      const wrap = document.getElementById('pairingQrWrap');
+      const btn = document.getElementById('pairingQrBtn');
+      const img = document.getElementById('pairingQrImg');
+      if (wrap.style.display !== 'none') {
+        wrap.style.display = 'none';
+        btn.textContent = 'Show QR';
+        img.removeAttribute('src');
+        if (pairingQrUrl) { URL.revokeObjectURL(pairingQrUrl); pairingQrUrl = null; }
+        return;
+      }
+      try {
+        const resp = await secureFetch('/api/pairing-qr', {});
+        if (!resp.ok) { alert('Could not load the pairing QR.'); return; }
+        const blob = await resp.blob();
+        if (pairingQrUrl) URL.revokeObjectURL(pairingQrUrl);
+        pairingQrUrl = URL.createObjectURL(blob);
+        img.src = pairingQrUrl;
+        wrap.style.display = '';
+        btn.textContent = 'Hide QR';
+      } catch (e) {
+        if (e.message !== 'auth_required' && e.message !== 'rate_limited') {
+          alert('Could not load the pairing QR.');
+        }
+      }
+    }
+
     function openAckModal(seq) { pendingAckSeq = seq; document.getElementById('ackReason').value = ''; document.getElementById('ackModal').classList.add('active'); }
     function closeAckModal() { pendingAckSeq = null; document.getElementById('ackModal').classList.remove('active'); }
     async function submitAck() {
@@ -3604,7 +3718,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       await api(`/api/logs/${pendingAckSeq}/ack`, 'POST', { reason: document.getElementById('ackReason').value });
       closeAckModal(); loadLogs(); refreshStatus();
     }
-    async function ackAllLogs() { if (confirm('Acknowledge all?')) { await api('/api/logs/ack-all', 'POST', { level: 3 }); loadLogs(); refreshStatus(); } }
+    async function ackAllLogs() { if (confirm('Mark all alerts as seen? They stay in the log, but stop showing as new.')) { await api('/api/logs/ack-all', 'POST', { level: 3 }); loadLogs(); refreshStatus(); } }
 
     // ══════════════════════════════════════════════════════════════════
     // WIFI PRESENCE DETECTION
@@ -3808,9 +3922,139 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       }
     }
 
+    // ── Microphone (PDM acoustic events) ─────────────────────────────
+    // The card stays hidden unless /api/audio/status answers ok:true, so
+    // builds without FEATURE_ACOUSTIC_EVENTS (the endpoint 404s) never
+    // show a dead panel.
+    let micSelftestTimer = null;
+
+    async function refreshMicStatus() {
+      const card = document.getElementById('micCard');
+      if (!card) return;
+      const data = await api('/api/audio/status');
+      if (!data.ok) { card.style.display = 'none'; return; }
+      card.style.display = '';
+      if (!card.dataset.sensLoaded) {
+        card.dataset.sensLoaded = '1';
+        loadMicSensitivity();  // reflect the device's saved setting once
+      }
+
+      const badge = document.getElementById('micBadge');
+      const badgeText = document.getElementById('micBadgeText');
+      if (data.muted) {
+        badge.className = 'badge warning';
+        badgeText.textContent = 'Muted';
+      } else if (data.running) {
+        badge.className = 'badge success';
+        badgeText.textContent = 'Listening';
+      } else {
+        badge.className = 'badge info';
+        badgeText.textContent = 'Off';
+      }
+      document.getElementById('micMuted').checked = !!data.muted;
+      document.getElementById('micT3').textContent = data.t3_detected || 0;
+      document.getElementById('micT4').textContent = data.t4_detected || 0;
+      document.getElementById('micKnock').textContent = data.knock_detected || 0;
+      document.getElementById('micDoorbell').textContent = data.doorbell_detected || 0;
+      document.getElementById('micGlass').textContent = data.glass_break_detected || 0;
+      // RMS is 0..65535 but a normal room sits well under ~3000; scale so
+      // typical levels are visible and loud sounds peg the bar.
+      const pct = Math.min(100, Math.round((data.last_rms || 0) / 30));
+      document.getElementById('micLevelBar').style.width = (data.muted ? 0 : pct) + '%';
+    }
+
+    async function toggleMicMute() {
+      const box = document.getElementById('micMuted');
+      const muted = box.checked;
+      const data = await api('/api/audio/mute', 'POST', { muted });
+      if (!data.ok) {
+        box.checked = !muted;  // revert; the device refused
+        return;
+      }
+      if (muted && data.persisted === false) {
+        document.getElementById('micSubtitle').textContent =
+          'Muted now, but NOT saved (storage error) — the mic re-arms on reboot';
+      }
+      setTimeout(refreshMicStatus, 500);  // let the deferred toggle apply
+    }
+
+    // Sensitivity maps to the detector's on/off sound levels. "High" hears
+    // quieter alarms but is easier to trip; "Low" suits rooms with steady
+    // background noise. Persisted on the device and re-applied at boot.
+    const MIC_SENSITIVITY = {
+      high:    { rms_on: 600,  rms_off: 300 },
+      default: { rms_on: 800,  rms_off: 400 },
+      low:     { rms_on: 1200, rms_off: 600 },
+    };
+
+    function micSensitivityNameFor(rmsOn) {
+      for (const [name, v] of Object.entries(MIC_SENSITIVITY)) {
+        if (v.rms_on === rmsOn) return name;
+      }
+      return null;  // custom values set via the API directly
+    }
+
+    async function loadMicSensitivity() {
+      const data = await api('/api/audio/config');
+      if (!data.ok) return;
+      const name = micSensitivityNameFor(data.rms_on);
+      if (name) document.getElementById('micSensitivity').value = name;
+    }
+
+    async function setMicSensitivity() {
+      const out = document.getElementById('micSensitivityResult');
+      const v = MIC_SENSITIVITY[document.getElementById('micSensitivity').value];
+      if (!v) return;
+      const data = await api('/api/audio/config', 'POST', v);
+      if (!data.ok) {
+        out.style.color = 'var(--danger)';
+        out.textContent = 'Could not change it — try again.';
+        return;
+      }
+      out.style.color = 'var(--success)';
+      out.textContent = (data.persisted === false)
+        ? 'Applied for now, but NOT saved (storage error) — resets on reboot.'
+        : 'Saved. Applies right away and after reboots.';
+    }
+
+    async function startMicSelftest() {
+      const btn = document.getElementById('micSelftestBtn');
+      const out = document.getElementById('micSelftestResult');
+      const data = await api('/api/audio/selftest', 'POST', { action: 'start', duration_ms: 30000 });
+      if (!data.ok) {
+        out.style.color = 'var(--danger)';
+        out.textContent = (data.error === 'mic_muted')
+          ? 'Unmute the microphone first.' : 'Could not start the test.';
+        return;
+      }
+      btn.disabled = true;
+      out.style.color = 'var(--muted)';
+      out.textContent = 'Listening… press and hold your alarm\'s TEST button now.';
+      if (micSelftestTimer) clearInterval(micSelftestTimer);
+      micSelftestTimer = setInterval(async () => {
+        const st = await api('/api/audio/selftest');
+        if (!st.ok) return;
+        if (st.matched_type && st.matched_type !== 0) {
+          clearInterval(micSelftestTimer); micSelftestTimer = null;
+          btn.disabled = false;
+          out.style.color = 'var(--success)';
+          out.textContent = 'Heard it! Matched ' +
+            (st.matched_name || 'alarm') + ' at ' + st.matched_conf + '% confidence.';
+        } else if (!st.active) {
+          clearInterval(micSelftestTimer); micSelftestTimer = null;
+          btn.disabled = false;
+          out.style.color = 'var(--danger)';
+          out.textContent = 'No alarm cadence heard (' + (st.transitions_seen || 0) +
+            ' sound transitions seen). Move the device closer and retry.';
+        } else {
+          out.textContent = 'Listening… ' + Math.ceil((st.remaining_ms || 0) / 1000) + 's left.';
+        }
+      }, 2000);
+    }
+
     async function playAudibleChirp(pattern) {
       const result = document.getElementById('chirpHwResult');
-      result.textContent = 'Playing...';
+      result.textContent = 'Playing…';
       result.style.color = 'var(--muted)';
       const data = await api('/api/audible-chirp/play', 'POST', { pattern });
       if (data.success) {
@@ -3930,8 +4174,8 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     async function scanWifi() {
       const btn = document.getElementById('wifiScanBtn');
       const select = document.getElementById('wifiSsidSelect');
-      btn.disabled = true; btn.textContent = 'Scanning...';
-      select.innerHTML = '<option value="">Scanning...</option>';
+      btn.disabled = true; btn.textContent = 'Scanning…';
+      select.innerHTML = '<option value="">Scanning…</option>';
 
       let data, attempts = 0;
       while (attempts < 20) {
@@ -3987,7 +4231,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       startWifiPolling();
     }
 
-    async function disconnectWifi() { if (confirm('Disconnect?')) { await api('/api/wifi/disconnect', 'POST'); loadWifiStatus(); } }
+    async function disconnectWifi() { if (confirm('Disconnect from WiFi? The Canary keeps working on its own network, and you can reconnect from this page.')) { await api('/api/wifi/disconnect', 'POST'); loadWifiStatus(); } }
 
     function clearWifiInputs() {
       document.getElementById('wifiPassword').value = '';
@@ -4113,7 +4357,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
     async function sendBleChirp(type) {
       const result = document.getElementById('bleChirpResult');
-      result.textContent = 'Sending...';
+      result.textContent = 'Sending…';
       try {
         const resp = await secureFetch('/api/chirp/send', {
           method: 'POST',
@@ -4487,8 +4731,8 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       </div>`).join('');
     }
 
-    async function btRemovePaired(addr) { if (confirm('Remove?')) { await api('/api/bluetooth/paired', 'DELETE', { address: addr }); loadBtPairedDevices(); } }
-    async function btClearAllPaired() { if (confirm('Remove all?')) { await api('/api/bluetooth/paired/all', 'DELETE'); loadBtPairedDevices(); } }
+    async function btRemovePaired(addr) { if (confirm('Remove this paired phone? It will need to pair again before it can connect.')) { await api('/api/bluetooth/paired', 'DELETE', { address: addr }); loadBtPairedDevices(); } }
+    async function btClearAllPaired() { if (confirm('Remove all paired phones? Each one will need to pair again before it can connect.')) { await api('/api/bluetooth/paired/all', 'DELETE'); loadBtPairedDevices(); } }
 
     // ══════════════════════════════════════════════════════════════════
     // DEVICE CONFIG
@@ -4500,12 +4744,12 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         log_level: parseInt(document.getElementById('configLogLevel').value)
       };
       const data = await api('/api/config', 'POST', config);
-      alert(data.ok ? 'Saved!' : 'Failed');
+      alert(data.ok ? 'Settings saved.' : 'Could not save settings. Try again.');
     }
 
-    function confirmReboot() { if (confirm('Reboot device?')) { api('/api/reboot', 'POST'); alert('Rebooting...'); } }
-    function retryFullBoot() { if (confirm('Retry a full boot? The device will reboot and re-enable all peripherals.')) { api('/api/safe-mode/retry', 'POST'); alert('Rebooting into full operation...'); } }
-    async function rotateOldLogs() { if (confirm('Delete logs > 30 days?')) { const data = await api('/api/logs/rotate', 'POST', { max_age_days: 30 }); alert(data.ok ? `Rotated ${data.deleted_count || 0}` : 'Failed'); } }
+    async function confirmReboot() { if (confirm('Restart this Canary? It will be offline for about a minute, then come back on its own. No records are lost.')) { try { await api('/api/reboot', 'POST'); } catch (_) { /* device may drop the connection mid-reboot */ } alert('Rebooting…'); } }
+    async function retryFullBoot() { if (confirm('Retry a full boot? The device will reboot and re-enable all peripherals.')) { try { await api('/api/safe-mode/retry', 'POST'); } catch (_) { /* device may drop the connection mid-reboot */ } alert('Rebooting into full operation…'); } }
+    async function rotateOldLogs() { if (confirm('Delete log entries older than 30 days? This cannot be undone. Witness records are not affected.')) { const data = await api('/api/logs/rotate', 'POST', { max_age_days: 30 }); alert(data.ok ? `Deleted ${data.deleted_count || 0} old entries` : 'Could not delete old entries'); } }
 
     // ══════════════════════════════════════════════════════════════════
     // UTILITIES
@@ -4515,7 +4759,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       return `${h.toString().padStart(2,'0')}:${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
     }
     function formatTimestamp(ms) { return ms ? new Date(ms).toLocaleTimeString() : '--'; }
-    function truncateHash(h, len) { return (!h || h.length <= len) ? (h || '--') : h.substring(0, len) + '...'; }
+    function truncateHash(h, len) { return (!h || h.length <= len) ? (h || '--') : h.substring(0, len) + '…'; }
     function escapeHtml(str) { const d = document.createElement('div'); d.textContent = str || ''; return d.innerHTML; }
 
     // ══════════════════════════════════════════════════════════════════

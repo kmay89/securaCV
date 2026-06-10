@@ -5,23 +5,25 @@
  * and graceful brownout shutdown for the XIAO ESP32-S3 Sense with a
  * LiPo battery connected to the built-in TP4056 charging circuit.
  *
- * Dual-mode operation:
+ * Operating modes:
  *
  *   HARDWARE ADC — a 2:1 voltage divider (two 100K resistors) from
  *     VBAT to GPIO 1 (D0/A0) provides calibrated millivolt readings.
  *     The ESP32-S3's eFuse ADC calibration data produces ±20 mV
  *     accuracy, yielding ±2% SoC for a typical LiPo discharge curve.
  *
- *   SOFTWARE INFERENCE — when no divider is wired, the module watches
- *     USB-powered voltage behavior: a steadily rising ADC suggests
- *     charging (TP4056 is active), a stable high value suggests full,
- *     and any measurable drop from a settled baseline suggests battery
- *     discharge. Less accurate but works with zero hardware modification.
+ *   USB ONLY — when no divider is wired, the ADC pin floats and its
+ *     readings carry no battery information, so the module reports
+ *     USB-only and stops sampling rather than inferring charge state
+ *     from noise. (POWER_MODE_SW_INFERENCE is retained in the enum for
+ *     wire-format stability but is no longer entered.)
  *
  * Auto-detection at boot: the module reads the ADC and classifies the
  * result. A reading in the 1.2–2.3 V range (corresponds to 2.4–4.6 V
  * with a 2:1 divider) indicates a divider is present. Near-zero or
- * near-rail readings indicate no divider.
+ * near-rail readings indicate no divider. A near-rail reading also
+ * triggers a wiring warning: VBAT tied directly to the ADC pin without
+ * a divider overstresses the pin.
  *
  * Copyright (c) 2026 ERRERlabs / Karl May
  * License: Apache-2.0
@@ -183,6 +185,17 @@ bool power_is_charging(void);
  * Call power_persist_history() periodically (e.g. every 10 min). */
 bool power_get_history(power_history_t* out);
 void power_persist_history(void);
+
+/* Battery health estimate: percent of rated capacity remaining,
+ * from a simple cycle-fade model (~20% fade per 500 full cycles,
+ * clamped to 60%). Returns 100 when no battery is present. */
+uint8_t power_health_pct(void);
+
+/* Estimated minutes of battery runtime remaining, from the measured
+ * discharge slope to the 3.3 V cutoff. Coarse ("hours vs. days").
+ * Returns 0 when unknown (no battery / charging / trend not yet
+ * established) rather than guessing. Capped at 14 days. */
+uint32_t power_estimate_runtime_min(void);
 
 #ifdef __cplusplus
 }

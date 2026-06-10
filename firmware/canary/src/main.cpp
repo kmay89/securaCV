@@ -40,11 +40,12 @@
 #include <ArduinoJson.h>
 #endif
 
-#if FEATURE_OTA_PULL
+#if FEATURE_OTA_PULL || FEATURE_OTA_UPDATE
 #include "securacv_ota.h"
 #include "ota_release_key.h"
+#endif
+#if FEATURE_OTA_PULL
 #include <WiFi.h>
-#include <Preferences.h>
 #if __has_include(<esp_random.h>)
 #include <esp_random.h>
 #endif
@@ -108,6 +109,12 @@ static_assert(sizeof(csi_features_t) == 36,
 
 #if FEATURE_DIAGNOSTICS
 #include "securacv_diagnostics.h"
+#endif
+
+#include "securacv_thermal.h"
+
+#if FEATURE_THERMAL_WATCHDOG
+#include "securacv_thermal_watchdog.h"
 #endif
 
 #if FEATURE_DATA_MGMT
@@ -271,11 +278,12 @@ static void mqtt_publish_ota_update_state();
 // PULL-OTA INTEGRATION (signed firmware updates)
 // ════════════════════════════════════════════════════════════════════════════
 
-#if FEATURE_OTA_PULL
+#if FEATURE_OTA_PULL || FEATURE_OTA_UPDATE
 
 /* Sign an update lifecycle event into the witness chain. The chain is the
  * audit trail: a verifier can later prove when the firmware changed and
- * whether a rollback happened. */
+ * whether a rollback happened. Compiled whenever ANY install channel
+ * exists — the boot-outcome witness in setup() uses it too. */
 static void ota_witness_event(const char* type, const char* version) {
   uint8_t payload[96];
   CborWriter cbor(payload, sizeof(payload));
@@ -287,6 +295,10 @@ static void ota_witness_event(const char* type, const char* version) {
     log_health(LOG_LEVEL_ERROR, LOG_CAT_WITNESS, "OTA witness record failed", type);
   }
 }
+
+#endif // FEATURE_OTA_PULL || FEATURE_OTA_UPDATE
+
+#if FEATURE_OTA_PULL
 
 /* Runs on the OTA task — only flips a flag; the main loop publishes. */
 static void ota_on_progress(securacv_ota_state_t state, uint8_t percent,
@@ -314,18 +326,10 @@ static bool ota_can_install(char* reason, size_t reason_len) {
 
 /* Mirror the manual-reboot path before the post-install restart: persist
  * the chain head so the witness chain continues seamlessly on the new
- * firmware, and remember the target version so the next boot can witness
- * applied vs rolled-back. */
+ * firmware. (The engine records the install target itself the moment the
+ * boot partition flips, so deferred or indirect reboots are covered too.) */
 static void ota_before_reboot() {
   witness_persist_chain_state();
-  const securacv_ota_manifest_t* m = securacv_ota_get_manifest();
-  if (m != NULL) {
-    Preferences prefs;
-    if (prefs.begin("securacv", false)) {
-      prefs.putString("ota_target", m->version);
-      prefs.end();
-    }
-  }
 }
 
 static void ota_schedule_next_check(uint32_t delay_ms, uint32_t jitter_ms) {
@@ -1116,12 +1120,24 @@ void setup() {
   }
 #endif
 
+  // Passive thermal observer: lifetime die-temp history, advisories.
+  // Never actuates — the camera state machine stays the sole actuator.
+#if FEATURE_THERMAL_WATCHDOG
+  thermal_wd_init();
+  Serial.println("[OK] Thermal watchdog observing");
+#endif
+
   // Confirm — or roll back — a freshly applied OTA image. Reaching this
   // line at all means provisioning, storage, and network bring-up survived
   // the new firmware; the registered probes assert the parts that matter
   // for the device's job. If a required probe fails, the engine marks the
   // image invalid and reboots into the previous firmware (does not return).
-#if FEATURE_OTA_PULL
+  //
+  // Guard covers BOTH install channels: the engine owns rollback
+  // confirmation (verifyRollbackLater), so any build that can install an
+  // image — pull OTA or the dev push endpoint — must also confirm it here,
+  // or the bootloader reverts it on the second boot.
+#if FEATURE_OTA_PULL || FEATURE_OTA_UPDATE
   {
     static const securacv_selftest_t k_ota_selftests[] = {
       { "device identity", [](const char*) -> bool {
@@ -1138,25 +1154,20 @@ void setup() {
     }
     securacv_ota_boot_self_test();
 
-    // Witness the update outcome. ota_before_reboot() stored the target
-    // version before the install reboot; compare it with what actually
-    // booted. Running the old version again means the rollback fired.
-    Preferences ota_prefs;
-    if (ota_prefs.begin("securacv", false)) {
-      String target = ota_prefs.getString("ota_target", "");
-      if (target.length() > 0) {
-        ota_prefs.remove("ota_target");
-        if (target == FIRMWARE_VERSION) {
-          ota_witness_event("fw_update_applied", FIRMWARE_VERSION);
-          log_health(LOG_LEVEL_NOTICE, LOG_CAT_SYSTEM,
-                     "Firmware update applied", FIRMWARE_VERSION);
-        } else {
-          ota_witness_event("fw_update_rolled_back", target.c_str());
-          log_health(LOG_LEVEL_WARNING, LOG_CAT_SYSTEM,
-                     "Firmware update rolled back", target.c_str());
-        }
+    // Witness the update outcome. The engine recorded the install target
+    // the moment the boot partition flipped; running the old version again
+    // means the rollback fired.
+    char target[SECURACV_OTA_VERSION_MAX];
+    if (securacv_ota_take_pending_version(target, sizeof(target))) {
+      if (strcmp(target, FIRMWARE_VERSION) == 0) {
+        ota_witness_event("fw_update_applied", FIRMWARE_VERSION);
+        log_health(LOG_LEVEL_NOTICE, LOG_CAT_SYSTEM,
+                   "Firmware update applied", FIRMWARE_VERSION);
+      } else {
+        ota_witness_event("fw_update_rolled_back", target);
+        log_health(LOG_LEVEL_WARNING, LOG_CAT_SYSTEM,
+                   "Firmware update rolled back", target);
       }
-      ota_prefs.end();
     }
   }
 #endif
@@ -1440,6 +1451,10 @@ void loop() {
   }
 #endif
 
+#if FEATURE_THERMAL_WATCHDOG
+  thermal_wd_process();  /* rate-limits internally (30 s sample, 10 min persist) */
+#endif
+
 #if FEATURE_POWER_POLICY
   policy_process();
 
@@ -1459,6 +1474,9 @@ void loop() {
                             RECORD_STATE_CHANGE, &sl_rec);
     }
     witness_persist_chain_state();
+#if FEATURE_THERMAL_WATCHDOG
+    thermal_wd_persist();
+#endif
     lowpower_arm_wake_timer((uint64_t)sleep_sec * 1000000ULL);
     lowpower_arm_wake_touch();
     policy_ack_deep_sleep();
@@ -1733,6 +1751,34 @@ static void mqtt_publish_health_update() {
   doc["boot_count"] = device.boot_count;
   doc["firmware_version"] = FIRMWARE_VERSION;
   doc["tamper_detected"] = device.tamper_active;
+
+  /* SD endurance metrics: lifetime write counters (NVS-persisted), wear
+   * estimate against the configured TBW rating, and the replacement
+   * recommendation latch. HA's SD Wear / SD Replacement sensors read
+   * this object. */
+#if FEATURE_DIAGNOSTICS
+  {
+    diag_sd_t sd;
+    if (diag_get_sd(&sd)) {
+      JsonObject sdo = doc["sd"].to<JsonObject>();
+      sdo["mounted"] = sd.mounted;
+      sdo["usage_pct"] = sd.usage_pct;
+      sdo["writes"] = sd.total_writes;
+      sdo["errors"] = sd.write_errors;
+      sdo["lifetime_kb"] = (uint64_t)(sd.lifetime_bytes / 1024);
+      sdo["wear_pct"] = sd.wear_pct_x10 / 10.0;
+      sdo["replace_recommended"] = sd.replace_recommended;
+    }
+  }
+#endif
+  /* Die temperature via the shared provider (heat accelerates flash wear;
+   * HA surfaces it alongside the SD metrics). */
+  {
+    float temp_c = 0.0f;
+    if (thermal_read_die_c(&temp_c)) {
+      doc["temp_c"] = temp_c;
+    }
+  }
 #if FEATURE_POWER_MONITOR
   doc["battery_mv"] = health.battery_mv;
   doc["battery_soc"] = health.battery_soc;
@@ -2081,6 +2127,9 @@ static void handle_serial_commands() {
     case 'X':
       Serial.println("\nRebooting...");
       witness_persist_chain_state();
+#if FEATURE_THERMAL_WATCHDOG
+      thermal_wd_persist();
+#endif
 #if FEATURE_HA_MQTT
       mqtt_disconnect();
 #endif

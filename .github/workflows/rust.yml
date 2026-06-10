@@ -1,13 +1,45 @@
 name: Rust
 
+# Path-scoped to what the cargo jobs actually consume, so docs/firmware/HA
+# changes don't spin up six Rust builds. If a job below grows a new input
+# (fixtures, scripts, configs the tests read), add it here too.
 on:
   push:
     branches: [ "main" ]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'examples/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.cargo/**'
+      - 'config.example.toml'
+      - 'adapter_host.example.toml'
+      - 'integrations/ha_frigate_mqtt/**'
+      - '.github/workflows/rust.yml'
   pull_request:
     branches: [ "main" ]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'examples/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.cargo/**'
+      - 'config.example.toml'
+      - 'adapter_host.example.toml'
+      - 'integrations/ha_frigate_mqtt/**'
+      - '.github/workflows/rust.yml'
 
 env:
   CARGO_TERM_COLOR: always
+
+# Supersede stale runs: a new push to a PR branch cancels the in-flight run
+# for the previous head, so review-fix pushes don't queue duplicate full
+# builds. Pushes to main are never cancelled (full signal per main commit).
+concurrency:
+  group: rust-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # These jobs only read the repo; no write scopes needed.
 permissions:
@@ -20,6 +52,9 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+    # Cache cargo registry + target dir, keyed per job. Cuts re-runs (e.g.
+    # after a review-fix push) from full rebuilds to incremental ones.
+    - uses: Swatinem/rust-cache@v2
     - name: Install libseccomp
       run: sudo apt-get update && sudo apt-get install -y libseccomp-dev
     - name: Rustfmt
@@ -42,6 +77,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
+    # Cache cargo registry + target dir, keyed per job. Cuts re-runs (e.g.
+    # after a review-fix push) from full rebuilds to incremental ones.
+    - uses: Swatinem/rust-cache@v2
     - name: Install ffmpeg + libav dev libraries
       run: |
         sudo apt-get update
@@ -63,6 +101,9 @@ jobs:
       MEDIAMTX_VERSION: v1.9.3
     steps:
     - uses: actions/checkout@v4
+    # Cache cargo registry + target dir, keyed per job. Cuts re-runs (e.g.
+    # after a review-fix push) from full rebuilds to incremental ones.
+    - uses: Swatinem/rust-cache@v2
     - name: Install ffmpeg + libav dev libraries
       run: |
         sudo apt-get update
@@ -91,6 +132,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
+    # Cache cargo registry + target dir, keyed per job. Cuts re-runs (e.g.
+    # after a review-fix push) from full rebuilds to incremental ones.
+    - uses: Swatinem/rust-cache@v2
     - name: Install mosquitto broker + clients
       run: |
         sudo apt-get update
@@ -115,12 +159,15 @@ jobs:
     # because the v4l crate builds and links without any system library.
     steps:
     - uses: actions/checkout@v4
+    # Cache cargo registry + target dir, keyed per job. Cuts re-runs (e.g.
+    # after a review-fix push) from full rebuilds to incremental ones.
+    - uses: Swatinem/rust-cache@v2
     - name: Install libseccomp
       run: sudo apt-get update && sudo apt-get install -y libseccomp-dev
     - name: Clippy (ingest-esp32)
       run: cargo clippy --all-targets --features ingest-esp32 -- -D warnings
     - name: Clippy (adapters)
-      run: cargo clippy --all-targets --features adapter-frigate,adapter-mqtt-sensor,adapter-webhook,adapter-webhook-tls,adapter-ble-presence,adapter-sandbox -- -D warnings
+      run: cargo clippy --all-targets --features adapter-frigate,adapter-mqtt-sensor,adapter-webhook,adapter-webhook-tls,adapter-ble-presence,adapter-meshtastic,adapter-sandbox -- -D warnings
     - name: Clippy (backend-tract)
       run: cargo clippy --all-targets --features backend-tract -- -D warnings
     - name: Clippy (ingest-v4l2)
@@ -133,6 +180,9 @@ jobs:
     # libraries and so cannot live in the optional-features job above.
     steps:
     - uses: actions/checkout@v4
+    # Cache cargo registry + target dir, keyed per job. Cuts re-runs (e.g.
+    # after a review-fix push) from full rebuilds to incremental ones.
+    - uses: Swatinem/rust-cache@v2
     - name: Install GStreamer + libseccomp dev libraries
       run: |
         sudo apt-get update

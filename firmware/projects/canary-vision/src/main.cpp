@@ -169,6 +169,11 @@ void setup() {
   fsm.reset();
 
   canary::net::wifi_init_or_reboot();
+
+  // Confirm (or roll back) a freshly installed image now — before anything
+  // that can block on external services. See ota_mgr.h.
+  canary::net::ota_boot_validate();
+
   canary::net::mqtt_init(TOPICS);
   canary::vision::init();
 
@@ -191,9 +196,9 @@ void setup() {
 
   canary::net::publish_status_retained(TOPICS, "online");
 
-  // Signed pull-OTA: confirm/roll back a fresh image, then arm the engine
-  // (daily jittered checks; HA's Install button and auto-update switch are
-  // drained in loop()). May not return on a failed required self-test.
+  // Signed pull-OTA: arm the engine (validation already ran right after
+  // WiFi). Daily jittered checks; HA's Install button and auto-update
+  // switch are drained in loop().
   canary::net::ota_init(TOPICS);
 
   set_last_event("boot");

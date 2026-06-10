@@ -1,0 +1,116 @@
+name: Docker sidecar
+
+# Build, test, and publish the standalone Frigate sidecar image
+# (docker/sidecar/). The e2e job runs the REAL image against a live
+# mosquitto container and asserts the zero-config promise: only
+# FRIGATE_MQTT_HOST is set, the device key is auto-generated, a published
+# frigate/events message lands in the sealed log, log_verify passes
+# in-container, and the HA Discovery topic is retained.
+#
+# - On pull requests: lint + compose validation + build + e2e, no push.
+# - On push to main / version tags: additionally push to GHCR as
+#   ghcr.io/<owner>/securacv-sidecar.
+
+on:
+  pull_request:
+    paths:
+      - "docker/sidecar/**"
+      - "integrations/ha_frigate_mqtt/docker-compose.yml"
+      - "src/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/docker-sidecar.yml"
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths:
+      - "docker/sidecar/**"
+      - "integrations/ha_frigate_mqtt/docker-compose.yml"
+      - "src/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/docker-sidecar.yml"
+
+permissions:
+  contents: read
+  packages: write
+
+# Cancel superseded PR runs only. Main/tag runs publish to GHCR; cancelling
+# one mid-push could leave :latest and :<version> pointing at different
+# builds, so those queue instead.
+concurrency:
+  group: docker-sidecar-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  lint:
+    name: Lint scripts and compose files
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Shellcheck sidecar scripts
+        run: |
+          shellcheck --shell=bash \
+            docker/sidecar/entrypoint.sh \
+            docker/sidecar/ci_e2e.sh
+
+      - name: Validate compose files
+        env:
+          # Required-variable placeholder: the integrations compose marks the
+          # broker password as mandatory (:?), which `config` also enforces.
+          SECURACV_MQTT_PASSWORD: ci-validate-only
+        run: |
+          docker compose -f docker/sidecar/quickstart.compose.yml config -q
+          docker compose -f docker/sidecar/quickstart-with-broker.compose.yml config -q
+          docker compose -f integrations/ha_frigate_mqtt/docker-compose.yml config -q
+
+  e2e:
+    name: Build and e2e test
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run sidecar e2e
+        run: docker/sidecar/ci_e2e.sh securacv-sidecar:ci
+
+  publish:
+    name: Publish to GHCR
+    needs: e2e
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve image name and version
+        id: meta
+        run: |
+          version=$(grep -E '^version:' privacy_witness_kernel/config.yaml | head -1 | sed -E 's/version:[[:space:]]*//; s/"//g' | tr -d "'")
+          owner=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "image=ghcr.io/${owner}/securacv-sidecar" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/sidecar/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: false
+          cache-from: type=gha,scope=sidecar
+          cache-to: type=gha,scope=sidecar,mode=max
+          tags: |
+            ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }}
+            ${{ steps.meta.outputs.image }}:latest

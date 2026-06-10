@@ -10,6 +10,13 @@ on:
 permissions:
   contents: read
 
+# Cheap grep-based lints that cross-check firmware headers, spec tables, and
+# flag declarations repo-wide — kept unfiltered on purpose, but stale PR runs
+# are still cancelled when a new head arrives.
+concurrency:
+  group: repo-lints-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   scripts:
     name: scripts/lint_*.sh

@@ -30,6 +30,8 @@ pub mod sandbox;
 pub mod ble_presence;
 #[cfg(feature = "adapter-frigate")]
 pub mod frigate;
+#[cfg(feature = "adapter-meshtastic")]
+pub mod meshtastic;
 #[cfg(feature = "adapter-mqtt-sensor")]
 pub mod mqtt_sensor;
 #[cfg(feature = "adapter-webhook")]

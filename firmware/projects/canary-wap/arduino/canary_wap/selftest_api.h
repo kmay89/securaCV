@@ -13,15 +13,15 @@
  *   gps         — optional NMEA module: detected / has-fix / absent
  *   sd          — mounted + free space
  *   power       — optional battery: SoC + charge state, or USB-only ABSENT
- *   microphone  — present iff PDM mic compiled in (currently absent on
- *                 canary-wap; reports ABSENT cleanly so the UI greys it)
+ *   microphone  — PDM mic (FEATURE_ACOUSTIC_EVENTS): listening / muted
+ *                 by user / bring-up failed; ABSENT when compiled out
  *   buzzer      — audible-chirp subsystem up (FEATURE_AUDIBLE_CHIRP)
  *   tamper      — tamper input armed iff FEATURE_TAMPER_GPIO, else ABSENT
  *   gpio        — boot button readable + not stuck (sanity)
  *
- * Optional peripherals (gps/power/buzzer/tamper) only ever report
- * PASS/SKIP/ABSENT — never FAIL — so a missing optional part can never
- * gate setup. "all_passed" counts FAIL only.
+ * Optional peripherals (gps/power/buzzer/tamper/microphone) only ever
+ * report PASS/SKIP/ABSENT — never FAIL — so a missing optional part can
+ * never gate setup. "all_passed" counts FAIL only.
  *
  * Header-only on purpose, matching the *_api.h pattern already in this
  * directory (bluetooth_api.h, chirp_api.h, audible_chirp_api.h, …).
@@ -59,6 +59,10 @@
 // safe to include them here unconditionally.
 #include "power_monitor.h"
 #include "audible_chirp.h"
+#include "build_config.h"
+#if FEATURE_ACOUSTIC_EVENTS
+#include "securacv_audio.h"
+#endif
 
 // Camera state lives in the .ino (g_camera_initialized,
 // g_peek_sensor_pid, g_peek_last_init_err, g_peek_last_init_label,
@@ -277,16 +281,46 @@ inline void probe_microphone(ProbeResult* r, JsonObject metric) {
   r->name  = "microphone";
   r->label = "Microphone";
 
-  // The canary-wap firmware does not currently bring up the XIAO
-  // ESP32-S3 Sense's onboard PDM mic. Audible chirp uses a piezo
-  // OUTPUT, not a mic input. Until a mic-driven feature ships
-  // (occupancy-by-ambient-noise, anti-spoof speech detector, …),
-  // we report ABSENT cleanly so the wizard greys the row instead
-  // of failing the whole pre-flight.
+#if FEATURE_ACOUSTIC_EVENTS
+  metric["compiled_in"] = true;
+  metric["running"]     = audio_is_running();
+  metric["muted"]       = audio_is_muted();
+
+  uint16_t rms = 0;
+  uint32_t age_ms = UINT32_MAX;
+  audio_get_live_level(&rms, &age_ms);
+  metric["last_rms"] = rms;
+  if (age_ms != UINT32_MAX) metric["age_ms"] = age_ms;
+
+  if (audio_is_running()) {
+    r->status = Status::PASS;
+    r->code   = 0;
+    set_detail(r, "PDM mic armed · T3/T4 cadence detector running");
+  } else if (audio_is_muted()) {
+    // Muted-by-user is a deliberate state, not a hardware failure —
+    // the wizard greys the row rather than failing the pre-flight.
+    r->status = Status::SKIP;
+    r->code   = 0;
+    set_detail(r, "Muted by user");
+  } else {
+    // Bring-up failure: real fault worth surfacing, but the mic is an
+    // optional peripheral — per the contract above it must never FAIL
+    // (FAIL flips all_passed and would gate setup on a unit that can
+    // still witness, record, and alert). SKIP keeps the row visible
+    // with the diagnosis; code -1 distinguishes it from muted-by-user.
+    r->status = Status::SKIP;
+    r->code   = -1;
+    set_detail(r, "Mic did not start — acoustic detection unavailable");
+  }
+#else
+  // No mic in this build profile. Audible chirp uses a piezo OUTPUT,
+  // not a mic input. Report ABSENT cleanly so the wizard greys the
+  // row instead of failing the whole pre-flight.
   metric["compiled_in"] = false;
   r->status = Status::ABSENT;
   r->code   = 0;
   set_detail(r, "Not used by this firmware");
+#endif
 }
 
 inline void probe_gpio(ProbeResult* r, JsonObject metric) {
