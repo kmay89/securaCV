@@ -12,9 +12,22 @@
  *
  * Privacy is enforced structurally at every stage — see header doc.
  *
+ * VENDORED COPY — adapted from firmware/canary/lib/securacv_audio/.
+ * This copy deliberately diverges from the canonical lib in two ways:
+ *   1. log_health() enum vocabulary uses this sketch's SCV_LOG_* /
+ *      SCV_CAT_* constants (log_level.h here) instead of the core's
+ *      LOG_LEVEL_* / LOG_CAT_* names.
+ *   2. The whole implementation is gated on FEATURE_ACOUSTIC_EVENTS
+ *      from build_config.h so MINIMAL profiles compile it out.
+ * It is NOT covered by the csi-sketch sync guards — do not add it.
+ *
  * Copyright (c) 2026 ERRERlabs / Karl May
  * License: Apache-2.0
  */
+
+#include "build_config.h"
+
+#if FEATURE_ACOUSTIC_EVENTS
 
 #include "securacv_audio.h"
 
@@ -23,7 +36,7 @@
 #include <string.h>
 
 #include "log_level.h"
-#include "securacv_witness.h"   /* log_health() */
+#include "health_log.h"   /* log_health() */
 
 /* NVS namespace + key for the user's persisted mute intent. Read at
  * boot in main.cpp's audio_init block; written here from every control
@@ -622,7 +635,7 @@ static bool i2s_open() {
   esp_err_t err = i2s_driver_install(I2S_NUM_0, &cfg, 0, nullptr);
   if (err != ESP_OK) {
     char d[32]; snprintf(d, sizeof(d), "install err=0x%x", (unsigned)err);
-    log_health(LOG_LEVEL_WARNING, LOG_CAT_SENSOR,
+    log_health(SCV_LOG_WARNING, SCV_CAT_SENSOR,
                "Audio: I2S driver install failed", d);
     return false;
   }
@@ -638,7 +651,7 @@ static bool i2s_open() {
   err = i2s_set_pin(I2S_NUM_0, &pins);
   if (err != ESP_OK) {
     char d[32]; snprintf(d, sizeof(d), "set_pin err=0x%x", (unsigned)err);
-    log_health(LOG_LEVEL_WARNING, LOG_CAT_SENSOR,
+    log_health(SCV_LOG_WARNING, SCV_CAT_SENSOR,
                "Audio: I2S pin config failed", d);
     i2s_driver_uninstall(I2S_NUM_0);
     s_i2s_installed = false;
@@ -704,7 +717,7 @@ bool init(const audio_config_t& cfg) {
   s_selftest_transitions_seen = 0;
 
   s_initialized = true;
-  log_health(LOG_LEVEL_INFO, LOG_CAT_SENSOR,
+  log_health(SCV_LOG_INFO, SCV_CAT_SENSOR,
              "Audio HAL initialized",
              "PDM 16 kHz mono, T3/T4 cadence detector armed");
   return true;
@@ -836,7 +849,7 @@ bool mute_sync_at_boot(bool muted) {
       s_glass_matched = false;
       #endif
     }
-    log_health(LOG_LEVEL_INFO, LOG_CAT_SENSOR,
+    log_health(SCV_LOG_INFO, SCV_CAT_SENSOR,
                "Audio: mic muted at boot", "I2S not started");
     ok = true;
   } else {
@@ -992,7 +1005,7 @@ int process() {
       s_doorbell_matched = false;
       s_glass_matched = false;
       #endif
-      log_health(LOG_LEVEL_INFO, LOG_CAT_SENSOR,
+      log_health(SCV_LOG_INFO, SCV_CAT_SENSOR,
                  "Audio: mic muted by user", "I2S released");
       applied = true;
     } else if (!want_mute && !s_running && s_initialized) {
@@ -1009,7 +1022,7 @@ int process() {
         s_state_hpf_rms_sum = 0;
         s_state_frames = 0;
         #endif
-        log_health(LOG_LEVEL_INFO, LOG_CAT_SENSOR,
+        log_health(SCV_LOG_INFO, SCV_CAT_SENSOR,
                    "Audio: mic unmuted", "I2S re-armed");
         applied = true;
       }
@@ -1352,3 +1365,5 @@ size_t audio_get_recent_transitions(audio_transition_t* out, size_t max,
 }
 
 }  /* extern "C" */
+
+#endif  /* FEATURE_ACOUSTIC_EVENTS */
