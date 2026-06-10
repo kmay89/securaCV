@@ -1,0 +1,28 @@
+[
+  {
+    "name": "canary",
+    "dir": "firmware/canary",
+    "build_envs": ["dev", "release", "full"],
+    "check_env": "release",
+    "pip_extras": "intelhex",
+    "isolated_core_envs": ["full"],
+    "size_guard": {
+      "bin": ".pio/build/release/firmware.bin",
+      "slot_bytes": 1966080,
+      "slot_name": "0x1E0000 OTA slot (partitions_ota.csv ota_0/ota_1)"
+    }
+  },
+  {
+    "name": "canary-wap",
+    "dir": "firmware/projects/canary-wap",
+    "build_envs": ["canary-wap-default"],
+    "check_env": "canary-wap-default"
+  },
+  {
+    "name": "canary-vision",
+    "dir": "firmware/projects/canary-vision",
+    "build_envs": ["canary-vision-default"],
+    "check_env": "canary-vision-default",
+    "pre_step": "secrets_header"
+  }
+]

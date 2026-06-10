@@ -4,7 +4,7 @@ set -euo pipefail
 # Microcopy lint orchestrator
 # ═══════════════════════════════════════════════════════════════════════
 #
-# Four sub-checks that gate the device's user-facing copy:
+# Five sub-checks that gate the device's user-facing copy:
 #
 #   1. Plain-words audit       — banned technical jargon (CSI, RSSI,
 #      (headline dashboard)      NVS, ...) must not appear in the COPY
@@ -18,6 +18,9 @@ set -euo pipefail
 #                                allowed since admin's audience expects
 #                                them; this check only catches terms
 #                                that no human-facing UI should show.
+#
+#   2b. Plain-words audit      — same internal-jargon list as /admin,
+#       (companion PWA)           applied to companion_pwa.h's HTML body.
 #
 #   3. Tooltip coverage        — every data-tip="key" attribute on the
 #                                headline dashboard resolves to a defined
@@ -42,6 +45,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DASH_HTML="$(cd "$SCRIPT_DIR/../.." && pwd)/firmware/projects/canary-wap/arduino/canary_wap/csi_dashboard_html.h"
 ADMIN_HTML="$(cd "$SCRIPT_DIR/../.." && pwd)/firmware/projects/canary-wap/arduino/canary_wap/web_ui.h"
+PWA_HTML="$(cd "$SCRIPT_DIR/../.." && pwd)/firmware/projects/canary-wap/arduino/canary_wap/companion_pwa.h"
 BANNED_TERMS="$SCRIPT_DIR/microcopy_banned_terms.txt"
 BANNED_TERMS_ADMIN="$SCRIPT_DIR/microcopy_banned_terms_admin.txt"
 
@@ -63,6 +67,10 @@ if [ ! -f "$ADMIN_HTML" ]; then
 fi
 if [ ! -f "$BANNED_TERMS_ADMIN" ]; then
   red "Admin banned-terms list not found: $BANNED_TERMS_ADMIN"
+  exit 2
+fi
+if [ ! -f "$PWA_HTML" ]; then
+  red "Companion PWA HTML not found: $PWA_HTML"
   exit 2
 fi
 
@@ -182,6 +190,40 @@ if [ -n "$ADMIN_HITS" ]; then
   ERRORS=$((ERRORS + 1))
 else
   green "Admin plain-words audit OK — no internal jargon in /admin HTML body."
+fi
+
+# ─────────────────────────────────────────────────────────────────────────
+# 2b. Plain-words audit — companion PWA (companion_pwa.h)
+# ─────────────────────────────────────────────────────────────────────────
+#
+# Same internal-jargon list as /admin: the companion PWA is also a
+# power-user surface, so RSSI / threshold are fine, but NVS / FreeRTOS /
+# esp_err_t / TODO must never reach a human-facing page.
+
+echo ""
+echo "── Plain-words audit (companion PWA) ──"
+
+PWA_BODY=$(awk '
+  /^[[:space:]]*<body[^>]*>[[:space:]]*$/   { in_body=1; next }
+  /^[[:space:]]*<script[^>]*>[[:space:]]*$/ { in_body=0 }
+  in_body                                   { print }
+' "$PWA_HTML")
+
+PWA_HITS=$(echo "$PWA_BODY" \
+       | grep -wiFf <(grep -v '^#' "$BANNED_TERMS_ADMIN" \
+                      | grep -v '^[[:space:]]*$' \
+                      | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//') \
+       || true)
+
+if [ -n "$PWA_HITS" ]; then
+  red "Companion PWA plain-words audit FAILED — internal jargon found in PWA HTML body:"
+  echo "$PWA_HITS" | head -20
+  echo ""
+  echo "These terms are codebase-internal and have no business in any UI."
+  echo "Suggested replacements live at the top of $BANNED_TERMS_ADMIN."
+  ERRORS=$((ERRORS + 1))
+else
+  green "Companion PWA plain-words audit OK — no internal jargon in PWA HTML body."
 fi
 
 # ─────────────────────────────────────────────────────────────────────────
