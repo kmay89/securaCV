@@ -57,6 +57,18 @@ std::atomic<bool>        s_connected{false};
  * event callback because that fires on the MQTT task and would
  * contend with the main loop's append() path. */
 std::atomic<bool>        s_backfill_pending{false};
+/* Inbound firmware-update commands. MQTT_EVENT_DATA fires on the
+ * esp_mqtt task; flash-cycle decisions belong on the main loop, so the
+ * handler only latches these flags and the .ino drains them via
+ * take_pending_install / take_pending_auto. */
+std::atomic<bool>        s_pending_install{false};
+std::atomic<int>         s_pending_auto{-1};
+/* Cached update-entity state for the reconnect republish (same reason
+ * the retained status republish exists: HA must not sit at "unknown"
+ * after a broker restart). */
+char                     s_last_update_state[512] = {};
+std::atomic<bool>        s_update_state_set{false};
+std::atomic<int>         s_last_update_auto{-1};
 /* Highest event_id published since boot. publish_event() and the
  * backfill replay both update it; on a clean run after an HA outage
  * the next CONNECTED triggers iterate_since(this) which only emits
@@ -130,12 +142,82 @@ void mqtt_event_handler(void* /*handler_args*/, esp_event_base_t /*base*/,
       } else {
         remove_discovery();
       }
+      /* Firmware update entity: subscribe to the Install + auto-update
+       * command topics, and republish the cached states so HA reconciles
+       * after a broker restart instead of showing "unknown". */
+      {
+        char cmd_topic[192];
+        build_topic(cmd_topic, sizeof(cmd_topic), "update/cmd");
+        esp_mqtt_client_subscribe(s_client, cmd_topic, /*qos=*/1);
+        build_topic(cmd_topic, sizeof(cmd_topic), "update/auto/cmd");
+        esp_mqtt_client_subscribe(s_client, cmd_topic, /*qos=*/1);
+
+        if (s_update_state_set.load(std::memory_order_relaxed)) {
+          char state_topic[192];
+          build_topic(state_topic, sizeof(state_topic), "update/state");
+          publish_raw(state_topic, s_last_update_state,
+                      strlen(s_last_update_state), /*retain=*/true);
+        }
+        const int auto_state = s_last_update_auto.load(std::memory_order_relaxed);
+        if (auto_state >= 0) {
+          char auto_topic[192];
+          build_topic(auto_topic, sizeof(auto_topic), "update/auto");
+          const char* pl = auto_state ? "ON" : "OFF";
+          publish_raw(auto_topic, pl, strlen(pl), /*retain=*/true);
+        }
+      }
       /* Flag the main loop to walk the SD log and backfill any events
        * the broker missed during the outage. We don't drain here
        * because the MQTT event handler runs on its own task and a
        * file-system walk on this critical path would block reconnect
        * fastpath callbacks. */
       s_backfill_pending.store(true, std::memory_order_relaxed);
+      break;
+    }
+    case MQTT_EVENT_DATA: {
+      /* Inbound update commands. Match on the exact topic, trim
+       * whitespace/quotes, require token boundaries — then latch a flag
+       * for the main loop (never act on the esp_mqtt task). */
+      if (!e || !e->topic || e->topic_len <= 0) break;
+
+      char update_cmd[192];
+      char auto_cmd[192];
+      build_topic(update_cmd, sizeof(update_cmd), "update/cmd");
+      build_topic(auto_cmd, sizeof(auto_cmd), "update/auto/cmd");
+
+      const size_t tlen = (size_t)e->topic_len;
+      const bool is_install = (tlen == strlen(update_cmd) &&
+                               memcmp(e->topic, update_cmd, tlen) == 0);
+      const bool is_auto = (tlen == strlen(auto_cmd) &&
+                            memcmp(e->topic, auto_cmd, tlen) == 0);
+      if (!is_install && !is_auto) break;
+
+      const char* p = e->data;
+      int n = e->data_len;
+      while (n > 0 && (*p == ' ' || *p == '\t' || *p == '"')) { p++; n--; }
+      auto at_boundary = [](char c) -> bool {
+        return c == ' ' || c == '\t' || c == '\r' || c == '\n' ||
+               c == '"' || c == '}' || c == '\0';
+      };
+
+      if (is_install) {
+        if (n >= 7 && memcmp(p, "install", 7) == 0 &&
+            (n == 7 || at_boundary(p[7]))) {
+          s_pending_install.store(true, std::memory_order_relaxed);
+        }
+        break;
+      }
+      /* Auto switch: HA's default ON/OFF payloads. */
+      if (n >= 2 && (p[0] == 'O' || p[0] == 'o') &&
+                    (p[1] == 'N' || p[1] == 'n') &&
+          (n == 2 || at_boundary(p[2]))) {
+        s_pending_auto.store(1, std::memory_order_relaxed);
+      } else if (n >= 3 && (p[0] == 'O' || p[0] == 'o') &&
+                           (p[1] == 'F' || p[1] == 'f') &&
+                           (p[2] == 'F' || p[2] == 'f') &&
+                 (n == 3 || at_boundary(p[3]))) {
+        s_pending_auto.store(0, std::memory_order_relaxed);
+      }
       break;
     }
     case MQTT_EVENT_DISCONNECTED:
@@ -600,6 +682,36 @@ void publish_health(uint32_t free_heap_bytes, uint32_t uptime_sec) {
   publish_raw(topic, body, (size_t)n, /*retain=*/true);
 }
 
+void publish_update_state(const char* json_payload) {
+  if (!json_payload) return;
+  /* Cache first so the reconnect republish always has the latest
+   * snapshot, even if the broker is down right now. */
+  strncpy(s_last_update_state, json_payload, sizeof(s_last_update_state) - 1);
+  s_last_update_state[sizeof(s_last_update_state) - 1] = '\0';
+  s_update_state_set.store(true, std::memory_order_relaxed);
+
+  char topic[192];
+  build_topic(topic, sizeof(topic), "update/state");
+  publish_raw(topic, s_last_update_state, strlen(s_last_update_state),
+              /*retain=*/true);
+}
+
+void publish_update_auto_state(bool enabled) {
+  s_last_update_auto.store(enabled ? 1 : 0, std::memory_order_relaxed);
+  char topic[192];
+  build_topic(topic, sizeof(topic), "update/auto");
+  const char* pl = enabled ? "ON" : "OFF";
+  publish_raw(topic, pl, strlen(pl), /*retain=*/true);
+}
+
+bool take_pending_install() {
+  return s_pending_install.exchange(false, std::memory_order_relaxed);
+}
+
+int take_pending_auto() {
+  return s_pending_auto.exchange(-1, std::memory_order_relaxed);
+}
+
 void publish_counts(uint32_t total) {
   char topic[192];
   build_topic(topic, sizeof(topic), "counts");
@@ -924,6 +1036,81 @@ bool publish_one_discovery(const DiscoveryEntity& e) {
   return publish_raw(topic, body, (size_t)n, /*retain=*/true);
 }
 
+/* Emit the firmware `update` entity + the auto-update `switch`. These
+ * need command topics, which DiscoveryEntity doesn't model, so they get
+ * a dedicated builder with the same wire-shape principles (abbreviated
+ * keys, availability gate, full device block, truncation bail-out). */
+bool publish_update_discovery() {
+  const char* prefix = s_active_cfg.prefix[0] ? s_active_cfg.prefix : DEFAULT_PREFIX;
+
+  char topic[192];
+  char body[768];
+
+  /* HA `update` entity: installed/latest version with release notes and
+   * an Install button; progress reported via the JSON state payload. */
+  int tn = snprintf(topic, sizeof(topic),
+                    "%s/update/canary_%s/firmware/config",
+                    DISCOVERY_PREFIX, s_device_id);
+  if (tn <= 0 || (size_t)tn >= sizeof(topic)) return false;
+  int n = snprintf(body, sizeof(body),
+    "{"
+      "\"name\":\"Firmware\","
+      "\"uniq_id\":\"canary_%s_firmware\","
+      "\"stat_t\":\"%s/%s/update/state\","
+      "\"cmd_t\":\"%s/%s/update/cmd\","
+      "\"pl_inst\":\"install\","
+      "\"dev_cla\":\"firmware\","
+      "\"avty_t\":\"%s/%s/status\","
+      "\"avty_tpl\":\"{{ 'online' if value_json.online else 'offline' }}\","
+      "\"dev\":{"
+        "\"ids\":[\"canary_%s\"],"
+        "\"name\":\"Canary %s\","
+        "\"mf\":\"SecuraCV\","
+        "\"mdl\":\"Canary WAP\","
+        "\"sw\":\"%s\""
+      "}"
+    "}",
+    s_device_id,
+    prefix, s_device_id,
+    prefix, s_device_id,
+    prefix, s_device_id,
+    s_device_id, s_device_id, s_firmware_version);
+  if (n <= 0 || (size_t)n >= sizeof(body)) return false;
+  if (!publish_raw(topic, body, (size_t)n, /*retain=*/true)) return false;
+
+  /* Auto-update opt-in switch. Off by default — a witness device should
+   * not reboot unattended unless its owner chose that. */
+  tn = snprintf(topic, sizeof(topic),
+                "%s/switch/canary_%s/auto_update/config",
+                DISCOVERY_PREFIX, s_device_id);
+  if (tn <= 0 || (size_t)tn >= sizeof(topic)) return false;
+  n = snprintf(body, sizeof(body),
+    "{"
+      "\"name\":\"Auto Update\","
+      "\"uniq_id\":\"canary_%s_auto_update\","
+      "\"stat_t\":\"%s/%s/update/auto\","
+      "\"cmd_t\":\"%s/%s/update/auto/cmd\","
+      "\"ic\":\"mdi:update\","
+      "\"ent_cat\":\"config\","
+      "\"avty_t\":\"%s/%s/status\","
+      "\"avty_tpl\":\"{{ 'online' if value_json.online else 'offline' }}\","
+      "\"dev\":{"
+        "\"ids\":[\"canary_%s\"],"
+        "\"name\":\"Canary %s\","
+        "\"mf\":\"SecuraCV\","
+        "\"mdl\":\"Canary WAP\","
+        "\"sw\":\"%s\""
+      "}"
+    "}",
+    s_device_id,
+    prefix, s_device_id,
+    prefix, s_device_id,
+    prefix, s_device_id,
+    s_device_id, s_device_id, s_firmware_version);
+  if (n <= 0 || (size_t)n >= sizeof(body)) return false;
+  return publish_raw(topic, body, (size_t)n, /*retain=*/true);
+}
+
 }  /* namespace */
 
 /* Publish all discovery payloads. Called from MQTT_EVENT_CONNECTED
@@ -947,6 +1134,9 @@ void publish_discovery() {
   }
   Serial.printf("[MQTT] discovery: %u/%u entities announced\n",
                 (unsigned)ok, (unsigned)(sizeof(ENTITIES) / sizeof(ENTITIES[0])));
+  /* Firmware update entity + auto-update switch (command topics, so
+   * they don't fit the DiscoveryEntity table). */
+  publish_update_discovery();
   publish_triggers();
 }
 
@@ -1104,8 +1294,25 @@ void remove_discovery() {
                "%s/device_automation/canary_%s/%s/config",
                DISCOVERY_PREFIX, s_device_id, t.trigger_id);
       if (tn <= 0 || (size_t)tn >= sizeof(topic)) continue;
-      if (!publish_raw(topic, "", 0, /*retain=*/true)) break;
+      if (!publish_raw(topic, "", 0, /*retain=*/true)) { ok = false; break; }
       removed++;
+    }
+  }
+  if (ok) {
+    /* The firmware update entity + auto-update switch live outside the
+     * ENTITIES table (they carry command topics) — evict them too. */
+    char topic[192];
+    int tn = snprintf(topic, sizeof(topic), "%s/update/canary_%s/firmware/config",
+                      DISCOVERY_PREFIX, s_device_id);
+    if (tn > 0 && (size_t)tn < sizeof(topic) &&
+        publish_raw(topic, "", 0, /*retain=*/true)) {
+      removed++;
+      tn = snprintf(topic, sizeof(topic), "%s/switch/canary_%s/auto_update/config",
+                    DISCOVERY_PREFIX, s_device_id);
+      if (tn > 0 && (size_t)tn < sizeof(topic) &&
+          publish_raw(topic, "", 0, /*retain=*/true)) {
+        removed++;
+      }
     }
   }
   Serial.printf("[MQTT] discovery removal: %u entries cleared\n",
