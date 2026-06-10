@@ -4,9 +4,10 @@ name: Firmware Release
 #
 #   git tag fw-v2.2.0 && git push origin fw-v2.2.0
 #
-# Produces a GitHub Release carrying, for each supported variant:
-#   - the firmware binary           (canary-<ver>.bin, canary-wap-<ver>.bin)
-#   - a signed per-variant manifest (manifest-canary.json, manifest-canary-wap.json)
+# Produces a GitHub Release carrying, for each supported variant
+# (canary, canary-wap, canary-vision):
+#   - the firmware binary           (canary-<ver>.bin, canary-wap-<ver>.bin, canary-vision-<ver>.bin)
+#   - a signed per-variant manifest (manifest-<variant>.json)
 #   - a variant index               (manifest-index.json)
 #   - sha256 checksums              (sha256sums.txt)
 #
@@ -105,6 +106,28 @@ jobs:
         working-directory: firmware/canary
         run: pio run -e release_ha
 
+      - name: Build canary-vision (release)
+        working-directory: firmware/projects/canary-vision
+        run: |
+          # Generic release build: placeholder secrets ON PURPOSE. A unit's
+          # real identity + credentials live in NVS (canary/runtime_config),
+          # seeded by the user's first USB flash with their own secrets.h —
+          # the OTA-installed generic image inherits them. The placeholder
+          # values below MUST match include/secrets.ci.h so runtime_config
+          # treats them as placeholders and defers to NVS.
+          mkdir -p secrets
+          cat > secrets/secrets.h << 'HEADER'
+          #pragma once
+          // Generic OTA release build. Real credentials live in device NVS.
+          #define WIFI_SSID "ci-placeholder"
+          #define WIFI_PASS "ci-placeholder"
+          #define MQTT_HOST "127.0.0.1"
+          #define MQTT_PORT 1883
+          #define MQTT_USER nullptr
+          #define MQTT_PASS nullptr
+          HEADER
+          pio run -e canary-vision-default
+
       - name: Install Arduino CLI
         uses: arduino/setup-arduino-cli@v2
 
@@ -169,10 +192,24 @@ jobs:
             --out /tmp/release/manifest-canary-wap.json \
             "/tmp/release/canary-wap-${VERSION}.bin"
 
-          # Variant index (tooling + future variants, e.g. canary-vision)
+          # canary-vision (generic build — identity/credentials come from NVS)
+          cp firmware/projects/canary-vision/.pio/build/canary-vision-default/firmware.bin \
+            "/tmp/release/canary-vision-${VERSION}.bin"
+          python firmware/scripts/ota_release.py manifest \
+            --private-key /tmp/releaser.pem \
+            --product securacv-canary-vision \
+            --version "${VERSION}" \
+            --url "${DL}/canary-vision-${VERSION}.bin" \
+            --release-notes "$NOTES" \
+            --release-url "$RELURL" \
+            --out /tmp/release/manifest-canary-vision.json \
+            "/tmp/release/canary-vision-${VERSION}.bin"
+
+          # Variant index (tooling + future variants)
           python firmware/scripts/ota_release.py index \
             "securacv-canary=${DL}/manifest-canary.json" \
             "securacv-canary-wap=${DL}/manifest-canary-wap.json" \
+            "securacv-canary-vision=${DL}/manifest-canary-vision.json" \
             --out /tmp/release/manifest-index.json
 
           # Verify every signature against the COMMITTED public key before
@@ -185,6 +222,10 @@ jobs:
             --pubkey firmware/common/ota/src/ota_release_key.h \
             --manifest /tmp/release/manifest-canary-wap.json \
             "/tmp/release/canary-wap-${VERSION}.bin"
+          python firmware/scripts/ota_release.py verify \
+            --pubkey firmware/common/ota/src/ota_release_key.h \
+            --manifest /tmp/release/manifest-canary-vision.json \
+            "/tmp/release/canary-vision-${VERSION}.bin"
 
           # Guard against a forgotten version bump: the compiled-in
           # FIRMWARE_VERSION literal must match the manifest version, or
@@ -197,6 +238,10 @@ jobs:
           fi
           if ! strings "/tmp/release/canary-wap-${VERSION}.bin" | grep -qFx "${VERSION}-wap"; then
             echo "::error::canary-wap binary does not contain the version string '${VERSION}-wap'. Bump FIRMWARE_VERSION in canary_wap.ino before tagging."
+            exit 1
+          fi
+          if ! strings "/tmp/release/canary-vision-${VERSION}.bin" | grep -qFx "${VERSION}"; then
+            echo "::error::canary-vision binary does not contain the version string '${VERSION}'. Bump CANARY_FW_VERSION in firmware/projects/canary-vision/include/canary/version.h before tagging."
             exit 1
           fi
 
@@ -226,7 +271,9 @@ jobs:
           files: |
             /tmp/release/canary-${{ steps.ver.outputs.version }}.bin
             /tmp/release/canary-wap-${{ steps.ver.outputs.version }}.bin
+            /tmp/release/canary-vision-${{ steps.ver.outputs.version }}.bin
             /tmp/release/manifest-canary.json
             /tmp/release/manifest-canary-wap.json
+            /tmp/release/manifest-canary-vision.json
             /tmp/release/manifest-index.json
             /tmp/release/sha256sums.txt

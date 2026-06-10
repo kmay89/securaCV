@@ -1,0 +1,213 @@
+#include "canary/net/ota_mgr.h"
+
+#include <Arduino.h>
+#include <Preferences.h>
+#include <WiFi.h>
+#include <esp_system.h>
+#include <cstring>
+
+#include "canary/config.h"
+#include "canary/version.h"
+#include "canary/log.h"
+#include "canary/net/mqtt_mgr.h"
+
+#include "securacv_ota.h"     // shared engine (firmware/common/ota, via lib_extra_dirs)
+#include "ota_release_key.h"  // shared Ed25519 release public key
+
+namespace canary::net {
+
+namespace {
+
+Topics g_topics{};
+/* Set by the OTA progress callback (runs on the OTA task, must stay
+ * non-blocking); the main loop turns it into an MQTT publish. */
+volatile bool g_publish_pending = false;
+uint32_t g_next_check_ms = 0;
+uint32_t g_last_pub_ms = 0;
+
+void on_progress(securacv_ota_state_t state, uint8_t percent,
+                 securacv_ota_error_t error, void* user_data) {
+  (void)state; (void)percent; (void)error; (void)user_data;
+  g_publish_pending = true;
+}
+
+/* Remember the target version before the install reboot so the next boot
+ * can tell applied from rolled-back. NVS only — never MQTT from the OTA
+ * task (PubSubClient is not thread-safe). */
+void before_reboot() {
+  const securacv_ota_manifest_t* m = securacv_ota_get_manifest();
+  if (m != nullptr) {
+    Preferences prefs;
+    if (prefs.begin("securacv", false)) {
+      prefs.putString("ota_target", m->version);
+      prefs.end();
+    }
+  }
+}
+
+void schedule_next(uint32_t delay_ms, uint32_t jitter_ms) {
+  uint32_t jitter = (jitter_ms > 0) ? (esp_random() % jitter_ms) : 0;
+  g_next_check_ms = millis() + delay_ms + jitter;
+}
+
+/* Copy src into dst, replacing JSON-breaking characters — the release
+ * summary comes from CHANGELOG text and is embedded in a snprintf-built
+ * payload (vision house style; no ArduinoJson dependency in this TU). */
+void copy_json_safe(char* dst, size_t cap, const char* src) {
+  if (dst == nullptr || cap == 0) return;
+  if (src == nullptr) { dst[0] = '\0'; return; }
+  size_t o = 0;
+  for (size_t i = 0; src[i] != '\0' && o < cap - 1; i++) {
+    char c = src[i];
+    dst[o++] = (c == '"' || c == '\\' || (uint8_t)c < 0x20) ? ' ' : c;
+  }
+  dst[o] = '\0';
+}
+
+/* State payload for the HA MQTT update entity (installed_version /
+ * latest_version / in_progress / update_percentage / release_summary /
+ * release_url). Retained + reconnect-republished by mqtt_mgr. */
+void publish_update_state_now() {
+  const securacv_ota_manifest_t* m = securacv_ota_get_manifest();
+  const bool avail = (m != nullptr) && securacv_ota_update_available();
+  const char* latest = avail ? m->version : CANARY_FW_VERSION;
+
+  char summary_kv[224] = "";
+  char url_kv[160] = "";
+  if (avail && m->release_notes[0] != '\0') {
+    char summary[160];
+    copy_json_safe(summary, sizeof(summary), m->release_notes);
+    snprintf(summary_kv, sizeof(summary_kv), ",\"release_summary\":\"%s\"", summary);
+  }
+  if (avail && m->release_url[0] != '\0') {
+    snprintf(url_kv, sizeof(url_kv), ",\"release_url\":\"%s\"", m->release_url);
+  }
+
+  const securacv_ota_state_t st = securacv_ota_get_state();
+  const bool in_progress = (st == SECURACV_OTA_DOWNLOADING ||
+                            st == SECURACV_OTA_VERIFYING ||
+                            st == SECURACV_OTA_FLASHING ||
+                            st == SECURACV_OTA_REBOOTING);
+  char pct[16];
+  if (in_progress) snprintf(pct, sizeof(pct), "%u", (unsigned)securacv_ota_get_progress());
+  else snprintf(pct, sizeof(pct), "null");  // resets HA's progress bar
+
+  char msg[640];
+  snprintf(msg, sizeof(msg),
+           "{"
+           "\"installed_version\":\"%s\","
+           "\"latest_version\":\"%s\","
+           "\"in_progress\":%s,"
+           "\"update_percentage\":%s"
+           "%s%s"
+           "}",
+           CANARY_FW_VERSION, latest,
+           in_progress ? "true" : "false",
+           pct, summary_kv, url_kv);
+
+  publish_update_state_retained(g_topics, msg);
+}
+
+}  // namespace
+
+void ota_init(const Topics& topics) {
+  g_topics = topics;
+
+  // Confirm — or roll back — a freshly applied OTA image. Reaching this
+  // line means runtime config, WiFi, and MQTT bring-up all survived the
+  // new firmware; the required probe pins the connectivity this device
+  // exists to provide. A failed required probe reboots into the previous
+  // firmware (does not return).
+  static const securacv_selftest_t k_selftests[] = {
+    { "wifi connectivity", [](const char*) -> bool {
+        return WiFi.status() == WL_CONNECTED;
+      }, true },
+  };
+  securacv_ota_register_selftest(&k_selftests[0]);
+  securacv_ota_boot_self_test();
+
+  securacv_ota_config_t cfg = SECURACV_OTA_CONFIG_DEFAULT;
+  cfg.product          = OTA_PRODUCT;
+  cfg.current_version  = CANARY_FW_VERSION;
+  cfg.manifest_url     = SECURACV_OTA_MANIFEST_URL;
+  cfg.release_pubkey   = SECURACV_OTA_RELEASE_PUBKEY;
+  cfg.on_progress      = on_progress;
+  cfg.on_before_reboot = before_reboot;
+  if (securacv_ota_init(&cfg) == ESP_OK) {
+    log_line("OTA", "Pull-OTA engine ready.");
+  } else {
+    log_line("OTA", "Pull-OTA engine init FAILED.");
+  }
+
+  // Log the outcome of an install reboot: before_reboot() stored the
+  // target version; running the old version again means rollback.
+  {
+    Preferences prefs;
+    if (prefs.begin("securacv", false)) {
+      String target = prefs.getString("ota_target", "");
+      if (target.length() > 0) {
+        prefs.remove("ota_target");
+        if (target == CANARY_FW_VERSION) {
+          log_line("OTA", "Firmware update applied.");
+        } else {
+          log_line("OTA", "Firmware update rolled back — previous software restored.");
+        }
+      }
+      prefs.end();
+    }
+  }
+
+  publish_update_auto_retained(g_topics, securacv_ota_get_auto_update());
+  publish_update_state_now();
+
+  // First check a couple of minutes after boot (jittered) so a fresh
+  // install learns about updates right away; then daily.
+  schedule_next(120000UL, 60000UL);
+}
+
+void ota_loop(uint32_t now_ms) {
+  // HA pressed Install / toggled the auto switch (latched by the MQTT
+  // callback, acted on here so flash decisions stay on the main loop).
+  if (take_pending_install()) {
+    log_line("OTA", "Install requested from Home Assistant.");
+    securacv_ota_check_and_install();
+  }
+  const int auto_cmd = take_pending_auto();
+  if (auto_cmd >= 0) {
+    const bool enable = (auto_cmd == 1);
+    // Skip the NVS write when nothing changed — HA may republish the same
+    // command, and flash wear is the budget that matters here.
+    if (securacv_ota_get_auto_update() != enable) {
+      securacv_ota_set_auto_update(enable);
+      log_line("OTA", enable ? "Auto-update turned on." : "Auto-update turned off.");
+    }
+    publish_update_auto_retained(g_topics, enable);
+  }
+
+  // Daily jittered check — the jitter spreads a fleet's checks over an
+  // hour so a release never sees a thundering herd.
+  if (g_next_check_ms != 0 && (int32_t)(now_ms - g_next_check_ms) >= 0) {
+    if (securacv_ota_get_state() != SECURACV_OTA_IDLE ||
+        WiFi.status() != WL_CONNECTED) {
+      schedule_next(15UL * 60 * 1000, 60000UL);
+    } else {
+      schedule_next(24UL * 60 * 60 * 1000, 3600000UL);
+      if (securacv_ota_get_auto_update()) {
+        securacv_ota_check_and_install();
+      } else {
+        securacv_ota_check();
+      }
+    }
+  }
+
+  // Push entity changes promptly (progress %, transitions) and refresh
+  // the retained snapshot every 30 s.
+  const bool periodic = (int32_t)(now_ms - g_last_pub_ms) >= 30000;
+  if (mqtt_connected() && (g_publish_pending || periodic)) {
+    g_publish_pending = false;
+    g_last_pub_ms = now_ms;
+    publish_update_state_now();
+  }
+}
+
+} // namespace canary::net

@@ -9,16 +9,9 @@
 
 #include "canary/config.h"
 #include "canary/log.h"
+#include "canary/runtime_config.h"  // NVS-backed identity + broker credentials
 #include "canary/ha/ha_discovery.h"
 #include "identity/device_pseudonym.h"  // MAC-free client-ID suffix (Invariant III)
-
-// Prefer local dev secrets if present; otherwise use CI stub.
-// IMPORTANT: the CI header must live at: include/secrets/secrets.ci.h
-#if __has_include("secrets/secrets.h")
-  #include "secrets/secrets.h"
-#else
-  #include "secrets.ci.h"
-#endif
 
 namespace canary::net {
 
@@ -26,6 +19,65 @@ static WiFiClient wifiClient;
 static PubSubClient mqtt(wifiClient);
 static Topics g_topics{};
 static bool discovery_done = false;
+
+// Inbound firmware-update commands. The PubSubClient callback fires inside
+// mqtt.loop() on the main task, but flash-cycle decisions belong to the OTA
+// glue (ota_mgr) — the callback only latches these flags and ota_loop()
+// drains them. Same pattern as the other Canary variants.
+static volatile bool s_pending_install = false;
+static volatile int s_pending_auto = -1;
+
+// Cached retained payloads, republished on every reconnect so HA's update
+// entity and auto-update switch never sit at "unknown" after a broker
+// restart.
+static char s_update_state_cache[640] = {0};
+static bool s_update_state_set = false;
+static int s_update_auto_cache = -1;
+
+static bool token_at(const char* p, int n, const char* tok, int tok_len) {
+  auto boundary = [](char c) {
+    return c == ' ' || c == '\t' || c == '\r' || c == '\n' ||
+           c == '"' || c == '}' || c == '\0';
+  };
+  return n >= tok_len && memcmp(p, tok, tok_len) == 0 &&
+         (n == tok_len || boundary(p[tok_len]));
+}
+
+static void on_mqtt_message(char* topic, uint8_t* payload, unsigned int len) {
+  if (!topic || !payload) return;
+
+  const bool is_install = (strcmp(topic, g_topics.update_cmd) == 0);
+  const bool is_auto = (strcmp(topic, g_topics.update_auto_cmd) == 0);
+  if (!is_install && !is_auto) return;
+
+  // Trim leading whitespace/quotes; require a token boundary after the
+  // match so a mangled payload can't trigger a flash cycle.
+  const char* p = (const char*)payload;
+  int n = (int)len;
+  while (n > 0 && (*p == ' ' || *p == '\t' || *p == '"')) { p++; n--; }
+
+  if (is_install) {
+    if (token_at(p, n, "install", 7)) s_pending_install = true;
+    return;
+  }
+  if (token_at(p, n, "ON", 2) || token_at(p, n, "on", 2)) {
+    s_pending_auto = 1;
+  } else if (token_at(p, n, "OFF", 3) || token_at(p, n, "off", 3)) {
+    s_pending_auto = 0;
+  }
+}
+
+bool take_pending_install() {
+  if (!s_pending_install) return false;
+  s_pending_install = false;
+  return true;
+}
+
+int take_pending_auto() {
+  const int v = s_pending_auto;
+  s_pending_auto = -1;
+  return v;
+}
 
 static bool publish_checked(const char* tag, const char* topic, const char* payload, bool retain) {
   const bool ok = mqtt.publish(topic, payload, retain);
@@ -42,8 +94,10 @@ static bool publish_checked(const char* tag, const char* topic, const char* payl
 
 void mqtt_init(const Topics& topics) {
   g_topics = topics;
-  mqtt.setServer(MQTT_HOST, MQTT_PORT);
+  const auto& cfg = canary::cfg::get();
+  mqtt.setServer(cfg.mqtt_host, cfg.mqtt_port);
   mqtt.setBufferSize(MQTT_BUFFER_BYTES);
+  mqtt.setCallback(on_mqtt_message);
 }
 
 bool mqtt_connected() { return mqtt.connected(); }
@@ -60,7 +114,7 @@ void publish_status_retained(const Topics& topics, const char* status) {
            "\"ip\":\"%s\","
            "\"ts_ms\":%lu"
            "}",
-           DEVICE_ID, DEVICE_TYPE, status,
+           canary::cfg::get().device_id, DEVICE_TYPE, status,
            WiFi.localIP().toString().c_str(),
            (unsigned long)ms_now());
   publish_checked("STATUS", topics.status, msg, true);
@@ -77,7 +131,7 @@ void publish_heartbeat(const Topics& topics, const StateSnapshot& s) {
            "\"dwelling\":%s,"
            "\"ts_ms\":%lu"
            "}",
-           DEVICE_ID, DEVICE_TYPE,
+           canary::cfg::get().device_id, DEVICE_TYPE,
            s.presence ? "true" : "false",
            s.dwelling ? "true" : "false",
            (unsigned long)ms_now());
@@ -101,7 +155,7 @@ void publish_state_retained(const Topics& topics, const StateSnapshot& s) {
            "\"uptime_s\":%lu,"
            "\"ts_ms\":%lu"
            "}",
-           DEVICE_ID, DEVICE_TYPE,
+           canary::cfg::get().device_id, DEVICE_TYPE,
            s.presence ? "true" : "false",
            s.dwelling ? "true" : "false",
            (unsigned long)s.presence_ms,
@@ -135,22 +189,23 @@ void mqtt_reconnect_blocking() {
            "\"status\":\"offline\","
            "\"ts_ms\":0"
            "}",
-           DEVICE_ID, DEVICE_TYPE);
+           canary::cfg::get().device_id, DEVICE_TYPE);
 
   // Privacy (Invariant III): the MQTT client ID reaches the broker, so its unique
   // suffix is the salted device pseudonym — never the raw efuse MAC.
   char devid_hex[device_pseudonym::HEX_LEN + 1] = {0};
   device_pseudonym::device_id_hex(devid_hex, sizeof(devid_hex));
 
+  const auto& cfg = canary::cfg::get();
   while (!mqtt.connected()) {
-    String clientId = String("securacv-") + DEVICE_ID + "-" + devid_hex;
+    String clientId = String("securacv-") + cfg.device_id + "-" + devid_hex;
 
     log_header("MQTT");
-    canary::dbg_serial().printf("Connecting %s:%u as %s ...\n", MQTT_HOST, MQTT_PORT, clientId.c_str());
+    canary::dbg_serial().printf("Connecting %s:%u as %s ...\n", cfg.mqtt_host, cfg.mqtt_port, clientId.c_str());
 
     bool ok = false;
-    if (MQTT_USER != nullptr && MQTT_PASS != nullptr) {
-      ok = mqtt.connect(clientId.c_str(), MQTT_USER, MQTT_PASS, g_topics.status, 1, true, lwtPayload);
+    if (cfg.mqtt_user[0] != '\0') {
+      ok = mqtt.connect(clientId.c_str(), cfg.mqtt_user, cfg.mqtt_pass, g_topics.status, 1, true, lwtPayload);
     } else {
       ok = mqtt.connect(clientId.c_str(), nullptr, nullptr, g_topics.status, 1, true, lwtPayload);
     }
@@ -165,6 +220,35 @@ void mqtt_reconnect_blocking() {
   log_line("MQTT", "Connected.");
   publish_status_retained(g_topics, "online");
   ha_discovery_publish_once(g_topics);
+
+  // Firmware update entity: re-subscribe the command topics (the broker
+  // may have dropped them) and reconcile the retained states.
+  mqtt.subscribe(g_topics.update_cmd, 1);
+  mqtt.subscribe(g_topics.update_auto_cmd, 1);
+  if (s_update_state_set) {
+    publish_checked("OTA", g_topics.update_state, s_update_state_cache, true);
+  }
+  if (s_update_auto_cache >= 0) {
+    publish_checked("OTA", g_topics.update_auto,
+                    s_update_auto_cache ? "ON" : "OFF", true);
+  }
+}
+
+bool publish_update_state_retained(const Topics& topics, const char* json_payload) {
+  if (!json_payload) return false;
+  /* Cache first so the reconnect republish always has the latest snapshot,
+   * even if the broker is down right now. */
+  strncpy(s_update_state_cache, json_payload, sizeof(s_update_state_cache) - 1);
+  s_update_state_cache[sizeof(s_update_state_cache) - 1] = '\0';
+  s_update_state_set = true;
+  if (!mqtt.connected()) return false;
+  return publish_checked("OTA", topics.update_state, s_update_state_cache, true);
+}
+
+bool publish_update_auto_retained(const Topics& topics, bool enabled) {
+  s_update_auto_cache = enabled ? 1 : 0;
+  if (!mqtt.connected()) return false;
+  return publish_checked("OTA", topics.update_auto, enabled ? "ON" : "OFF", true);
 }
 
 } // namespace canary::net

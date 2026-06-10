@@ -3,9 +3,16 @@
 How a Canary that's screwed to a ceiling gets new firmware without anyone
 touching it — and why it can't be bricked or fed a forged image along the way.
 
-**Covered variants:** canary (PIO, `firmware/canary/`) and canary-wap
-(Arduino, `firmware/projects/canary-wap/arduino/canary_wap/`). Canary Vision
-and future variants reuse the same engine and manifest format.
+**Covered variants:** all of them —
+
+- **canary** (PIO, `firmware/canary/`)
+- **canary-wap** (`firmware/projects/canary-wap/` — one sketch built by both
+  arduino-cli and PlatformIO, so both toolchains ship the same OTA)
+- **canary-vision** (PIO, `firmware/projects/canary-vision/`)
+
+Every variant uses the same engine, manifest schema, signature scheme,
+release key, MQTT topic layout, and HA update-entity UX. Future variants
+follow the checklist at the end of this document.
 
 ## The user experience
 
@@ -54,8 +61,36 @@ The engine is canonical at `firmware/common/ota/` and consumed by:
 
 - **canary (PIO):** `-I` + `build_src_filter` in `firmware/canary/platformio.ini`
   (gated by `FEATURE_OTA_PULL`).
-- **canary-wap (Arduino):** committed copies next to the sketch, kept
-  identical by `firmware/scripts/check_ota_sync.sh` (CI-enforced).
+- **canary-wap (both toolchains):** committed copies next to the sketch, kept
+  identical by `firmware/scripts/check_ota_sync.sh` (CI-enforced). The
+  PlatformIO env builds the same sketch directory as arduino-cli, so one
+  codebase serves both.
+- **canary-vision (PIO):** as a PlatformIO library via `lib_extra_dirs =
+  ../../common` (glue in `src/net/ota_mgr.cpp`).
+
+### Unified versioning
+
+One `fw-v*` tag versions **every** variant: `fw-v2.2.0` publishes canary
+`2.2.0`, canary-wap `2.2.0-wap`, and canary-vision `2.2.0`. Each variant's
+compiled version string must be bumped before tagging (the workflow fails
+loudly if a binary is missing the tagged version). One tag, one changelog,
+one release page — nothing to cross-reference.
+
+### canary-vision: generic release builds + NVS identity
+
+Vision historically compiled its WiFi/MQTT credentials and device id into
+the binary — which would make an OTA-installed generic image forget the
+unit's setup. `canary/runtime_config` fixes this:
+
+- **Identity is sticky:** `device_id` lives in NVS; the compiled value only
+  seeds the very first boot. HA entities survive OTA updates and reflashes.
+- **Credentials follow the most recent real configuration:** a user-compiled
+  USB flash (real `secrets/secrets.h`) wins and is persisted to NVS; the
+  placeholder secrets baked into generic release builds defer to NVS.
+
+So vision provisioning is: first flash over USB with your own secrets
+(seeds NVS) → every OTA release afterwards inherits the unit's identity and
+credentials.
 
 ## Manifest schema (v1)
 
@@ -124,14 +159,17 @@ old key) whose firmware carries the new public key.
 
 ## Releasing firmware
 
-1. Bump the version: `FIRMWARE_VERSION` in
-   `firmware/canary/include/canary_config.h` (e.g. `2.2.0`) and in
-   `canary_wap.ino` (e.g. `2.2.0-wap` — the `-wap` suffix is part of the
-   string and must match what the workflow writes into the WAP manifest).
+1. Bump every variant's version to the release number (unified versioning):
+   - `FIRMWARE_VERSION` in `firmware/canary/include/canary_config.h` (`2.2.0`)
+   - `FIRMWARE_VERSION` in `canary_wap.ino` (`2.2.0-wap` — the `-wap` suffix
+     is part of the string and must match what the workflow writes into the
+     WAP manifest)
+   - `CANARY_FW_VERSION` in
+     `firmware/projects/canary-vision/include/canary/version.h` (`2.2.0`)
 2. Add a `## [2.2.0]` section to `CHANGELOG.md` — it becomes the release
    notes users read in Home Assistant.
 3. Tag and push: `git tag fw-v2.2.0 && git push origin fw-v2.2.0`.
-4. `.github/workflows/firmware-release.yml` builds both variants, signs
+4. `.github/workflows/firmware-release.yml` builds every variant, signs
    them, verifies every signature against the committed public key, checks
    the binaries actually contain the new version string, and publishes the
    GitHub Release.
@@ -176,7 +214,8 @@ that embeds its public half into a dev build.
 
 ## Device API
 
-All endpoints are bearer-token gated, on both variants:
+All endpoints are bearer-token gated, on canary and canary-wap
+(canary-vision has no local HTTP server — it is HA/MQTT-managed only):
 
 | Method | Endpoint | Purpose |
 |---|---|---|
@@ -211,6 +250,34 @@ The dev-only raw push endpoint (`POST /api/ota`, used by
   reboot, mirroring the manual-reboot path.
 - **Never reboots unattended by default:** auto-update is an explicit
   per-device opt-in.
+
+## Adding a new variant (the recipe)
+
+Every future firmware flavor gets the same update process with five steps:
+
+1. **Consume the engine** from `firmware/common/ota/`: PlatformIO projects
+   add it via `lib_extra_dirs`/`build_src_filter` + the shared
+   `ota_release_key.h`; Arduino-IDE-style sketches take committed copies and
+   extend `check_ota_sync.sh`'s file list.
+2. **Wire the glue** (copy `canary-vision/src/net/ota_mgr.cpp` as the
+   template): boot self-test with a required is-it-doing-its-job probe,
+   `securacv_ota_init()` with a unique `product` id (`securacv-<variant>`)
+   and default manifest URL
+   (`releases/latest/download/manifest-<variant>.json`), the daily jittered
+   scheduler, and the `ota_target` applied/rolled-back record.
+3. **Expose the HA update entity** over the variant's MQTT layer:
+   discovery for `update` + auto-update `switch`, retained state on
+   `securacv/<id>/update/state`, commands on `…/update/cmd` and
+   `…/update/auto/cmd`, reconnect republish.
+4. **Add the variant to `.github/workflows/firmware-release.yml`**: build
+   step, signed manifest, index entry, signature verification, version-string
+   guard, release asset — and an OTA-slot size budget in the variant's CI.
+5. **Keep identity out of the binary**: anything per-unit (device id,
+   credentials) must live in NVS so generic release images inherit it
+   (see canary-vision's `runtime_config` for the pattern).
+
+The signing key, manifest schema, transport policy, and anti-rollback floor
+come with the engine — don't reimplement them.
 
 ## Testing
 
