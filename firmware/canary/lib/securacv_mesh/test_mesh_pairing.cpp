@@ -220,6 +220,13 @@ bool action_to_inflight(const mesh_pairing::Action& a, InFlight* out) {
   return true;
 }
 
+/* assert() with a guaranteed-evaluated condition: action_to_inflight has a
+ * side effect (fills the InFlight), so it must run even under NDEBUG. */
+void must(bool ok) {
+  assert(ok);
+  (void)ok;
+}
+
 void test_full_handshake_succeeds() {
   /* Two contexts, two long-term keypairs, two MACs. Drive the full
    * 5-message handshake (matching canary-wap semantics: initiator
@@ -248,11 +255,11 @@ void test_full_handshake_succeeds() {
   a = mesh_pairing::start_initiator(ctx_init, pub_i, priv_i, opera_secret,
                                     "MyOpera", /*now_ms=*/100);
   assert(a.type == mesh_pairing::ActionType::BROADCAST_DISCOVER);
-  InFlight disc_i; assert(action_to_inflight(a, &disc_i));
+  InFlight disc_i; must(action_to_inflight(a, &disc_i));
 
   a = mesh_pairing::start_joiner(ctx_join, pub_j, priv_j, /*now_ms=*/100);
   assert(a.type == mesh_pairing::ActionType::BROADCAST_DISCOVER);
-  InFlight disc_j; assert(action_to_inflight(a, &disc_j));
+  InFlight disc_j; must(action_to_inflight(a, &disc_j));
 
   /* 2. Joiner receives initiator's DISCOVER (role=INIT). canary-wap
    * semantics: joiner ignores this since it's not a JOINER discover.
@@ -265,7 +272,7 @@ void test_full_handshake_succeeds() {
   a = mesh_pairing::receive(ctx_init, mac_j, disc_j.type,
                             disc_j.bytes.data(), disc_j.bytes.size(), 200);
   assert(a.type == mesh_pairing::ActionType::SEND_OFFER);
-  InFlight offer; assert(action_to_inflight(a, &offer));
+  InFlight offer; must(action_to_inflight(a, &offer));
   assert(std::memcmp(offer.to, mac_j, 6) == 0);
 
   /* 4. Joiner receives OFFER → derives session key + code, emits ACCEPT. */
@@ -274,7 +281,7 @@ void test_full_handshake_succeeds() {
   assert(a.type == mesh_pairing::ActionType::SEND_ACCEPT);
   assert(a.confirmation_code != 0);
   uint32_t code_join = a.confirmation_code;
-  InFlight accept; assert(action_to_inflight(a, &accept));
+  InFlight accept; must(action_to_inflight(a, &accept));
   assert(std::memcmp(accept.to, mac_i, 6) == 0);
 
   /* 5. Initiator receives ACCEPT → derives session key + code → NOTIFY_CODE_READY. */
@@ -287,17 +294,17 @@ void test_full_handshake_succeeds() {
   /* 6. Both users tap "confirm" → each emits SEND_CONFIRM. */
   a = mesh_pairing::confirm_code(ctx_init, 500);
   assert(a.type == mesh_pairing::ActionType::SEND_CONFIRM);
-  InFlight conf_i; assert(action_to_inflight(a, &conf_i));
+  InFlight conf_i; must(action_to_inflight(a, &conf_i));
 
   a = mesh_pairing::confirm_code(ctx_join, 500);
   assert(a.type == mesh_pairing::ActionType::SEND_CONFIRM);
-  InFlight conf_j; assert(action_to_inflight(a, &conf_j));
+  InFlight conf_j; must(action_to_inflight(a, &conf_j));
 
   /* 7. Initiator receives joiner's CONFIRM → sends COMPLETE. */
   a = mesh_pairing::receive(ctx_init, mac_j, conf_j.type,
                             conf_j.bytes.data(), conf_j.bytes.size(), 600);
   assert(a.type == mesh_pairing::ActionType::SEND_COMPLETE);
-  InFlight complete; assert(action_to_inflight(a, &complete));
+  InFlight complete; must(action_to_inflight(a, &complete));
 
   /* 8. Initiator should now be PAIRED with pending NOTIFY_PAIRED — fires
    * on the next tick(). Codex P2 fix: the integration layer was

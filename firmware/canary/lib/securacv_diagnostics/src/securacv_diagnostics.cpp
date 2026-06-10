@@ -288,7 +288,8 @@ uint8_t diag_run_selftest(void) {
 
   char detail[32];
   snprintf(detail, sizeof(detail), "%u/%u (%u%%)",
-           s_selftest.passed_count, SELFTEST_COUNT, s_selftest.health_score);
+           (unsigned)s_selftest.passed_count, (unsigned)SELFTEST_COUNT,
+           (unsigned)s_selftest.health_score);
   log_health(LOG_LEVEL_INFO, LOG_CAT_SYSTEM, "Self-test complete", detail);
 
   return s_selftest.health_score;
