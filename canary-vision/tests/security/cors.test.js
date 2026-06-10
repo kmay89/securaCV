@@ -95,3 +95,72 @@ describe('D3: Restrictive CORS', () => {
       'Unknown origin OPTIONS should not get CORS headers');
   });
 });
+
+describe('Trust-on-pair CORS', () => {
+  let server;
+  const APP_ORIGIN = 'http://canary-kitchen.local';
+
+  before(async () => {
+    server = await startServer({ devMode: true });
+  });
+
+  after(async () => {
+    await server.close();
+  });
+
+  it('provisioning-receipt answers CORS for a private origin (gate closed)', async () => {
+    const res = await request(server.url + '/api/provisioning-receipt', {
+      headers: { Host: '127.0.0.1', Origin: APP_ORIGIN },
+    });
+    assert.equal(res.status, 403);
+    assert.equal(res.headers['access-control-allow-origin'], APP_ORIGIN,
+      'Private origins must be able to read the gate-closed 403 (gate_ttl_seconds)');
+  });
+
+  it('provisioning-receipt gives no CORS to public origins', async () => {
+    const res = await request(server.url + '/api/provisioning-receipt', {
+      headers: { Host: '127.0.0.1', Origin: 'http://evil.com' },
+    });
+    assert.equal(res.headers['access-control-allow-origin'], undefined);
+  });
+
+  it('an unpaired private origin gets no CORS on authenticated endpoints', async () => {
+    const res = await request(server.url + '/api/v1/info', {
+      headers: { Host: '127.0.0.1', 'X-Canary-Token': TOKEN, Origin: APP_ORIGIN },
+    });
+    assert.equal(res.headers['access-control-allow-origin'], undefined,
+      'Lateral movement defense must hold until a BOOT press enrolls the origin');
+  });
+
+  it('a BOOT press enrolls the receiving origin for the rest of the API', async () => {
+    await request(server.url + '/api/dev/press-boot', {
+      method: 'POST',
+      headers: { Host: '127.0.0.1' },
+    });
+    const receipt = await request(server.url + '/api/provisioning-receipt', {
+      headers: { Host: '127.0.0.1', Origin: APP_ORIGIN },
+    });
+    assert.equal(receipt.status, 200);
+
+    const res = await request(server.url + '/api/v1/info', {
+      headers: { Host: '127.0.0.1', 'X-Canary-Token': TOKEN, Origin: APP_ORIGIN },
+    });
+    assert.equal(res.headers['access-control-allow-origin'], APP_ORIGIN,
+      'The origin that received the receipt must be durably allowed');
+  });
+
+  it('a public origin is never enrolled, even with the gate open', async () => {
+    await request(server.url + '/api/dev/press-boot', {
+      method: 'POST',
+      headers: { Host: '127.0.0.1' },
+    });
+    await request(server.url + '/api/provisioning-receipt', {
+      headers: { Host: '127.0.0.1', Origin: 'http://evil.com' },
+    });
+    const res = await request(server.url + '/api/v1/info', {
+      headers: { Host: '127.0.0.1', 'X-Canary-Token': TOKEN, Origin: 'http://evil.com' },
+    });
+    assert.equal(res.headers['access-control-allow-origin'], undefined,
+      'Public origins must never be enrolled by trust-on-pair');
+  });
+});

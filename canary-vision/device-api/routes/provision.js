@@ -1,6 +1,7 @@
 'use strict';
 
 const { Router } = require('express');
+const { isPrivateOrigin } = require('../lib/private-origin');
 
 // Mirrors the firmware's BOOT-button provisioning gate (wap_server.h):
 // GET /api/provisioning-receipt is unauthenticated — it is how a client
@@ -23,6 +24,15 @@ function provisionRoutes(state) {
     // the same window cannot also capture the token.
     state.consumeBootGate();
     state.addLog('INFO', 'Provisioning receipt issued');
+
+    // Trust-on-pair: the BOOT press authorized releasing the token to
+    // this client, so its (private-network) origin may make authenticated
+    // cross-origin calls from now on — this is what lets one device's
+    // companion app manage the whole fleet.
+    const origin = req.headers.origin;
+    if (origin && isPrivateOrigin(origin)) {
+      state.addAllowedOrigin(origin);
+    }
 
     res.json({
       device_id: state.device.device_id,

@@ -314,11 +314,16 @@ var CanaryAPI = {
 
     var fetchOptions = {
       method: options.method || 'GET',
-      headers: {
-        'X-Canary-Token': token,
-      },
+      headers: {},
       signal: controller.signal,
     };
+
+    // Omit the auth header entirely when we have no token. This keeps
+    // unauthenticated calls (the pre-pairing provisioning-receipt poll)
+    // free of custom headers, so cross-origin GETs need no CORS preflight.
+    if (token) {
+      fetchOptions.headers['X-Canary-Token'] = token;
+    }
 
     if (options.body) {
       fetchOptions.headers['Content-Type'] = 'application/json';
