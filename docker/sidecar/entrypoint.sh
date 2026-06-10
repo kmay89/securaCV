@@ -15,6 +15,8 @@
 #   MQTT_PASSWORD           broker auth                            (none)
 #   FRIGATE_TOPIC_PREFIX    Frigate's mqtt.topic_prefix            (frigate)
 #   FRIGATE_MQTT_TOPIC      full topic override                    (<prefix>/events)
+#   FRIGATE_ENABLE_REVIEWS  also ingest <prefix>/reviews (0.14+)   (false)
+#   VERIFY_INTERVAL_SECS    auto-verification cadence, 0 disables  (86400)
 #   FRIGATE_CAMERAS         comma-separated camera allowlist       (all)
 #   FRIGATE_LABELS          comma-separated label allowlist        (bridge default)
 #   FRIGATE_MIN_CONFIDENCE  minimum detection confidence           (0.5)
@@ -237,10 +239,14 @@ EOF
 
     local bridge_args=(
         --mqtt-broker-addr "$addr"
-        --frigate-topic "$topic"
+        --frigate-topic-prefix "$prefix"
         --db-path "$DB_PATH"
         --bucket-size-secs "$bucket_secs"
+        --retention-secs "$retention_secs"
     )
+    # Legacy full-topic override wins over the prefix when explicitly set.
+    [ -n "${FRIGATE_MQTT_TOPIC:-}" ] && bridge_args+=(--frigate-topic "$FRIGATE_MQTT_TOPIC")
+    [ "${FRIGATE_ENABLE_REVIEWS:-false}" = "true" ] && bridge_args+=(--enable-reviews)
     [ -n "${FRIGATE_MIN_CONFIDENCE:-}" ] && bridge_args+=(--min-confidence "$FRIGATE_MIN_CONFIDENCE")
     [ -n "${FRIGATE_CAMERAS:-}" ] && bridge_args+=(--cameras "$FRIGATE_CAMERAS")
     [ -n "${FRIGATE_LABELS:-}" ] && bridge_args+=(--labels "$FRIGATE_LABELS")
@@ -260,6 +266,7 @@ EOF
             --mqtt-topic-prefix "${MQTT_TOPIC_PREFIX:-witness}"
             --ha-device-id "pwk_${DEVICE_KEY_SEED:0:8}"
             --poll-interval "${POLL_INTERVAL:-30}"
+            --verify-interval-secs "${VERIFY_INTERVAL_SECS:-86400}"
         )
         [ -n "${MQTT_USERNAME:-}" ] && pub_args+=(--mqtt-username "$MQTT_USERNAME")
         [ -n "${MQTT_PASSWORD:-}" ] && pub_args+=(--mqtt-password "$MQTT_PASSWORD")

@@ -89,4 +89,21 @@ else
     exit 1
 fi
 
-echo "✅ sidecar e2e passed: zero-config start, ingest, verify, discovery"
+echo "==> Pressing the HA verify button (witness/cmd/verify)"
+docker run --rm --network "$NET" eclipse-mosquitto:2 \
+    mosquitto_pub -h "$BROKER" -t witness/cmd/verify -m PRESS
+chain_state=$(docker run --rm --network "$NET" eclipse-mosquitto:2 \
+    mosquitto_sub -h "$BROKER" -t witness/chain_problem -C 1 -W 60 || true)
+if [ "$chain_state" = "OFF" ]; then
+    echo "✓ chain integrity published: no problem (chain valid)"
+elif [ "$chain_state" = "ON" ]; then
+    echo "❌ verification ran but reported a chain problem" >&2
+    docker logs "$SIDECAR" >&2 || true
+    exit 1
+else
+    echo "❌ no retained witness/chain_problem state after button press" >&2
+    docker logs "$SIDECAR" >&2 || true
+    exit 1
+fi
+
+echo "✅ sidecar e2e passed: zero-config start, ingest, verify, discovery, button"

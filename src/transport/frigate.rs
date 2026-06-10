@@ -52,15 +52,39 @@ pub struct FrigateEventData {
     pub false_positive: bool,
 }
 
-/// Frigate review event (alternative topic for confirmations).
+/// Frigate review event (`frigate/reviews`, Frigate 0.14+).
+///
+/// Like `frigate/events`, the real payload is a change feed:
+/// `{ "type": "new"|"update"|"end", "before": {...}, "after": {...} }`
+/// where each item carries `camera`, `severity` ("alert" | "detection"),
+/// and a `data` block with `objects`/`zones`. A flat legacy shape (camera
+/// and data at the top level) is still accepted for backward compatibility.
 #[derive(Debug, Deserialize)]
 pub struct FrigateReview {
     /// Type: "new", "update", or "end"
     #[serde(rename = "type")]
     pub review_type: Option<String>,
 
+    /// The "after" state (real Frigate 0.14+ schema).
+    pub after: Option<FrigateReviewItem>,
+
+    /// Camera name (legacy flat shape).
+    #[serde(default)]
+    pub camera: Option<String>,
+
+    /// Detection data (legacy flat shape).
+    pub data: Option<FrigateReviewData>,
+}
+
+/// One review item (the "before"/"after" sections of a review message).
+#[derive(Debug, Deserialize)]
+pub struct FrigateReviewItem {
     /// Camera name
     pub camera: String,
+
+    /// Review severity: "alert" or "detection"
+    #[serde(default)]
+    pub severity: Option<String>,
 
     /// Detection data
     pub data: Option<FrigateReviewData>,
@@ -73,7 +97,7 @@ pub struct FrigateReviewData {
     #[serde(default)]
     pub objects: Vec<String>,
 
-    /// Detection score
+    /// Detection score (not present in real 0.14+ payloads; legacy only)
     #[serde(default)]
     pub score: Option<f64>,
 
@@ -146,7 +170,12 @@ pub fn parse_frigate_event(payload: &[u8]) -> Result<ParsedFrigateEvent> {
     })
 }
 
-/// Parse a Frigate review event JSON payload.
+/// Parse a Frigate review event JSON payload (real 0.14+ before/after
+/// schema, with a flat legacy fallback).
+///
+/// Only "new" reviews are processed; severity is not filtered — when the
+/// bridge subscribes to both topics, the camera+label-per-bucket dedup
+/// already collapses a review and its underlying detection event.
 pub fn parse_review_event(payload: &[u8]) -> Result<ParsedFrigateEvent> {
     let review: FrigateReview =
         serde_json::from_slice(payload).map_err(|e| anyhow!("parse error: {}", e))?;
@@ -156,7 +185,18 @@ pub fn parse_review_event(payload: &[u8]) -> Result<ParsedFrigateEvent> {
         return Err(anyhow!("not a new review"));
     }
 
-    let data = review.data.ok_or_else(|| anyhow!("no review data"))?;
+    // Real schema: camera/data nested under "after". Legacy: at top level.
+    let (camera, data) = match review.after {
+        Some(item) => (item.camera, item.data),
+        None => (
+            review
+                .camera
+                .ok_or_else(|| anyhow!("missing camera in review"))?,
+            review.data,
+        ),
+    };
+
+    let data = data.ok_or_else(|| anyhow!("no review data"))?;
     let label = data
         .objects
         .first()
@@ -165,7 +205,7 @@ pub fn parse_review_event(payload: &[u8]) -> Result<ParsedFrigateEvent> {
     let confidence = data.score.unwrap_or(0.5);
 
     Ok(ParsedFrigateEvent {
-        camera: review.camera,
+        camera,
         label,
         confidence,
         zones: data.zones,

@@ -31,6 +31,8 @@ SUPERVISOR_TOKEN = os.environ.get("SUPERVISOR_TOKEN") or os.environ.get("HASSIO_
 SUPERVISOR_URL = "http://supervisor"
 WIZARD_DIR = Path("/usr/local/share/securacv-wizard")
 DEVICE_KEY_FILE = Path("/config/.securacv/device_key")
+API_TOKEN_FILE = Path("/config/api_token")
+KERNEL_API_URL = "http://127.0.0.1:8799"
 
 
 # ---------------------------------------------------------------------------
@@ -103,6 +105,35 @@ def _canary_request(address: str, token: str, method: str, path: str,
         return {"ok": False, "error": f"Device HTTP error {exc.code}: {body_text}"}
     except Exception as exc:
         return {"ok": False, "error": f"Device unreachable: {exc}"}
+
+
+def _kernel_request(method: str, path: str) -> dict:
+    """Proxy a request to the local witness API (same container).
+
+    Re-reads the capability token file on every call — the API rotates the
+    token each 10-minute bucket, so caching it would 401 after rotation.
+    The token is never logged or returned to the browser.
+    """
+    try:
+        token = API_TOKEN_FILE.read_text().strip()
+    except OSError as exc:
+        return {"ok": False, "error": f"API token unavailable: {exc}"}
+    if not token:
+        return {"ok": False, "error": "API token file is empty"}
+    req = urllib.request.Request(
+        f"{KERNEL_API_URL}{path}",
+        method=method,
+        headers={"x-witness-token": token},
+    )
+    try:
+        # Generous timeout: POST /verify walks the whole sealed log.
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            raw = resp.read().decode()
+            return {"ok": True, "data": json.loads(raw) if raw else {}}
+    except urllib.error.HTTPError as exc:
+        return {"ok": False, "error": f"kernel API error {exc.code}"}
+    except Exception as exc:
+        return {"ok": False, "error": f"kernel API unreachable: {exc}"}
 
 
 def get_addon_options() -> dict:
@@ -211,6 +242,9 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
         if path == "/api/preflight":
             self._json_response(self._handle_preflight())
             return
+        if path == "/api/kernel/digest":
+            self._json_response(_kernel_request("GET", "/digest"))
+            return
 
         # Serve static files from wizard dir
         file_path = WIZARD_DIR / path.lstrip("/")
@@ -242,6 +276,8 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
 
         if path == "/api/save":
             self._json_response(self._handle_save(payload))
+        elif path == "/api/kernel/verify":
+            self._json_response(_kernel_request("POST", "/verify"))
         elif path == "/api/test-camera":
             self._json_response(self._handle_test_camera(payload))
         elif path == "/api/verify":

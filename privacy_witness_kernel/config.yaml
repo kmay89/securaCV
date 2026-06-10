@@ -80,6 +80,9 @@ options:
   retention_days: 7
   time_bucket_minutes: 10
   log_level: "info"
+  # Hours between automatic sealed-log verifications (0 disables).
+  # Keeps the chain-integrity sensor fresh without pressing "Verify Now".
+  verify_interval_hours: 24
 
 schema:
   mode: list(standalone|frigate)
@@ -116,6 +119,7 @@ schema:
   retention_days: int(1,365)
   time_bucket_minutes: int(5,60)
   log_level: list(debug|info|warn|error)
+  verify_interval_hours: int(0,168)?
 
 # Environment variables passed to the add-on
 environment:

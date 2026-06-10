@@ -200,6 +200,12 @@ start_mqtt_publisher() {
     local DEVICE_ID
     DEVICE_ID="pwk_${DEVICE_KEY_SEED:0:8}"
 
+    # Scheduled sealed-log verification cadence (hours; 0 disables)
+    local VERIFY_INTERVAL_HOURS=24
+    if bashio::config.has_value 'verify_interval_hours'; then
+        VERIFY_INTERVAL_HOURS=$(bashio::config 'verify_interval_hours')
+    fi
+
     # Build command using array for safe argument handling
     local MQTT_CMD_ARRAY
     MQTT_CMD_ARRAY=(
@@ -212,6 +218,7 @@ start_mqtt_publisher() {
         --ha-device-id "$DEVICE_ID"
         --api-token-path "$TOKEN_FILE"
         --poll-interval 30
+        --verify-interval-secs "$((VERIFY_INTERVAL_HOURS * 3600))"
     )
 
     if [ -n "$PUBLISH_USER" ]; then
@@ -265,6 +272,11 @@ if [ "$MODE" = "frigate" ]; then
         TOPIC_PREFIX=$(bashio::config 'frigate.topic_prefix')
     fi
 
+    ENABLE_REVIEWS="false"
+    if bashio::config.has_value 'frigate.enable_reviews'; then
+        ENABLE_REVIEWS=$(bashio::config 'frigate.enable_reviews')
+    fi
+
     MQTT_HOST=$(resolve_value "$OPT_FRIGATE_HOST" "$DISCOVERED_MQTT_HOST" "core-mosquitto")
     MQTT_PORT=$(resolve_value "$OPT_FRIGATE_PORT" "$DISCOVERED_MQTT_PORT" "1883")
     MQTT_USER=$(resolve_value "$OPT_FRIGATE_USER" "$DISCOVERED_MQTT_USER" "")
@@ -299,11 +311,21 @@ if [ "$MODE" = "frigate" ]; then
         "/usr/local/bin/frigate_bridge"
         --allow-remote-mqtt
         --mqtt-broker-addr "$MQTT_HOST:$MQTT_PORT"
-        --frigate-topic "$MQTT_TOPIC"
+        --frigate-topic-prefix "$TOPIC_PREFIX"
         --db-path "$DB_PATH"
         --bucket-size-secs "$BUCKET_SECS"
         --min-confidence "$MIN_CONFIDENCE"
+        --retention-secs "$RETENTION_SECS"
     )
+
+    # Legacy full-topic override wins over the prefix when explicitly set.
+    if [ -n "$OPT_FRIGATE_TOPIC" ]; then
+        CMD_ARRAY+=(--frigate-topic "$OPT_FRIGATE_TOPIC")
+    fi
+
+    if [ "$ENABLE_REVIEWS" = "true" ]; then
+        CMD_ARRAY+=(--enable-reviews)
+    fi
 
     if [ -n "$MQTT_USER" ]; then
         CMD_ARRAY+=(--mqtt-username "$MQTT_USER")

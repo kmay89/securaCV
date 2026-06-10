@@ -60,6 +60,7 @@ MOSQ_PID=$!
 RUST_LOG=info "$BRIDGE_BIN" \
   --db-path "$DB" \
   --mqtt-broker-addr "${MQTT_HOST}:${MQTT_PORT}" \
+  --enable-reviews \
   >"$BRIDGE_LOG" 2>&1 &
 BRIDGE_PID=$!
 
@@ -98,5 +99,22 @@ if [ ! -s "$DB" ]; then
   exit 1
 fi
 
-echo "✅ frigate_bridge ingested a frigate/events message over MQTT into a sealed log."
+# 5) A real (Frigate 0.14+) frigate/reviews payload must also land. Different
+#    camera, so the camera+label-per-bucket dedup can't fold it into step 3.
+REVIEW='{"type":"new","before":{"id":"1719000001.5-rev1","camera":"garage","severity":"detection","data":{"detections":["1719000001.4-obj1"],"objects":["person"],"sub_labels":[],"zones":[],"audio":[]}},"after":{"id":"1719000001.5-rev1","camera":"garage","severity":"alert","data":{"detections":["1719000001.4-obj1"],"objects":["person"],"sub_labels":[],"zones":["garage_zone"],"audio":[]}}}'
+mosquitto_pub -h "$MQTT_HOST" -p "$MQTT_PORT" -t frigate/reviews -r -m "$REVIEW"
+
+reviews_ingested=0
+for _ in $(seq 1 60); do
+  if [ "$(grep -c "Event logged" "$BRIDGE_LOG")" -ge 2 ]; then reviews_ingested=1; break; fi
+  if ! kill -0 "$BRIDGE_PID" 2>/dev/null; then break; fi
+  sleep 0.5
+done
+if [ "$reviews_ingested" -ne 1 ]; then
+  echo "❌ frigate_bridge did not ingest the frigate/reviews message." >&2
+  cat "$BRIDGE_LOG" >&2
+  exit 1
+fi
+
+echo "✅ frigate_bridge ingested frigate/events and frigate/reviews messages into a sealed log."
 grep "Event logged" "$BRIDGE_LOG"

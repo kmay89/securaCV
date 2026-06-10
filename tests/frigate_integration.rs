@@ -104,7 +104,7 @@ const FRIGATE_EVENT_INVALID_JSON: &str = r#"{
     "after": {not valid json}
 }"#;
 
-/// Frigate review event
+/// Frigate review event (legacy flat shape, still accepted)
 const FRIGATE_REVIEW_NEW: &str = r#"{
     "type": "new",
     "id": "review123",
@@ -114,6 +114,85 @@ const FRIGATE_REVIEW_NEW: &str = r#"{
         "score": 0.85,
         "zones": ["garage_zone"]
     }
+}"#;
+
+/// Verbatim-shaped Frigate 0.14–0.17 `frigate/reviews` payload: a change
+/// feed with before/after items carrying camera, severity, and a data
+/// block (detections/objects/sub_labels/zones/audio — and NO score).
+const FRIGATE_REVIEW_017_NEW: &str = r#"{
+    "type": "new",
+    "before": {
+        "id": "1719000000.612943-bbrpj1",
+        "camera": "front_door",
+        "start_time": 1719000000.612943,
+        "end_time": null,
+        "severity": "detection",
+        "thumb_path": "/media/frigate/clips/review/thumb-front_door-1719000000.612943-bbrpj1.webp",
+        "data": {
+            "detections": ["1719000000.580339-emqk1y"],
+            "objects": ["person"],
+            "sub_labels": [],
+            "zones": [],
+            "audio": []
+        }
+    },
+    "after": {
+        "id": "1719000000.612943-bbrpj1",
+        "camera": "front_door",
+        "start_time": 1719000000.612943,
+        "end_time": null,
+        "severity": "alert",
+        "thumb_path": "/media/frigate/clips/review/thumb-front_door-1719000000.612943-bbrpj1.webp",
+        "data": {
+            "detections": ["1719000000.580339-emqk1y"],
+            "objects": ["person"],
+            "sub_labels": [],
+            "zones": ["porch"],
+            "audio": []
+        }
+    }
+}"#;
+
+/// Verbatim-shaped Frigate 0.16/0.17 `frigate/events` "new" payload,
+/// including the 0.16+ attribute/recognition fields the bridge must ignore.
+const FRIGATE_EVENT_017_NEW: &str = r#"{
+    "before": null,
+    "after": {
+        "id": "1719000000.580339-emqk1y",
+        "camera": "front_door",
+        "frame_time": 1719000000.580339,
+        "snapshot": {
+            "frame_time": 1719000000.580339,
+            "box": [928, 326, 1124, 712],
+            "area": 75576,
+            "region": [741, 109, 1445, 813],
+            "score": 0.84,
+            "attributes": []
+        },
+        "label": "person",
+        "sub_label": null,
+        "top_score": 0.87,
+        "false_positive": false,
+        "start_time": 1719000000.580339,
+        "end_time": null,
+        "score": 0.84,
+        "box": [928, 326, 1124, 712],
+        "area": 75576,
+        "ratio": 0.51,
+        "region": [741, 109, 1445, 813],
+        "stationary": false,
+        "motionless_count": 0,
+        "position_changes": 1,
+        "current_zones": ["porch"],
+        "entered_zones": ["driveway", "porch"],
+        "has_clip": true,
+        "has_snapshot": true,
+        "attributes": {},
+        "current_attributes": [],
+        "recognized_license_plate": null,
+        "recognized_license_plate_score": null
+    },
+    "type": "new"
 }"#;
 
 fn setup_test_kernel() -> (Kernel, KernelConfig) {
@@ -527,4 +606,34 @@ fn frigate_review_event_parsing() {
     assert_eq!(event.label, "motorcycle");
     assert!((event.confidence - 0.85).abs() < 0.001);
     assert_eq!(event.zones, vec!["garage_zone"]);
+}
+
+#[test]
+fn frigate_review_017_schema_parses_from_after_section() {
+    let event = parse_review_event(FRIGATE_REVIEW_017_NEW.as_bytes())
+        .expect("real 0.14+ before/after review schema must parse");
+
+    assert_eq!(event.camera, "front_door");
+    assert_eq!(event.label, "person");
+    // Real review payloads carry no score; the parser falls back to 0.5.
+    assert!((event.confidence - 0.5).abs() < 0.001);
+    assert_eq!(event.zones, vec!["porch"]);
+}
+
+#[test]
+fn frigate_review_017_update_is_rejected() {
+    let payload = FRIGATE_REVIEW_017_NEW.replacen("\"type\": \"new\"", "\"type\": \"update\"", 1);
+    assert!(parse_review_event(payload.as_bytes()).is_err());
+}
+
+#[test]
+fn frigate_event_017_schema_parses_and_strips_extras() {
+    let event = parse_frigate_event(FRIGATE_EVENT_017_NEW.as_bytes())
+        .expect("verbatim 0.16/0.17 events payload must parse");
+
+    assert_eq!(event.camera, "front_door");
+    assert_eq!(event.label, "person");
+    assert!((event.confidence - 0.87).abs() < 0.001); // top_score wins
+    // entered_zones preferred over current_zones
+    assert_eq!(event.zones, vec!["driveway", "porch"]);
 }
