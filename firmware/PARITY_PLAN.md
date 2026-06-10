@@ -27,6 +27,19 @@ Pulled directly from the `FEATURES.md` dashboard (canary **PIO/ACTIVE** vs canar
 **Arduino**). Cells where both are equal (the entire core crypto/GPS/SD/CSI/health/battery suite
 is already at parity ✅) are omitted.
 
+> **Status reconciliation (2026-06-09):** a spot-audit against current code found that
+> **MQTT publish + HA Discovery is already present in the Arduino tree**
+> (`firmware/projects/canary-wap/arduino/canary_wap/csi_mqtt.cpp` — `publish_discovery()` for HA
+> entities + device triggers, `#include`d and called from `canary_wap.ino`, so it compiles and
+> links in the green Arduino CLI build; the HA integration it feeds is validated by `hassfest`).
+> Its closure bar is "compile + hassfest" (no bench), so the `FEATURES.md` dashboard cell and the
+> §4 scorecard row were flipped to ✅. The mesh / chirp / RF / BLE cells were re-checked and left
+> as-is — their ⚠️/❌ correctly reflect "code-present-but-bench-pending" (mesh) or "header-only /
+> absent in ACTIVE" (chirp/RF/BLE), per Step 0. The remaining genuinely-open *code* gap in ACTIVE
+> is the **chirp + RF-presence `.cpp` bodies** (the `[env:full]` `FEATURE_CHIRP`/`FEATURE_RF_PRESENCE`
+> flags are set but inert — `firmware/canary/src/` has no references; bodies live only in the
+> Arduino tree).
+
 ### Group A — Arduino has it, ACTIVE is partial/absent → **port INTO ACTIVE**
 
 | Capability | ACTIVE | Arduino | Closure is… |
@@ -44,7 +57,7 @@ is already at parity ✅) are omitted.
 
 | Capability | ACTIVE | Arduino | Closure is… |
 |---|:---:|:---:|---|
-| MQTT publish + HA Discovery | ✅ | ❌ | code (compile + hassfest) |
+| MQTT publish + HA Discovery | ✅ | ✅ | **✅ landed** (compile + hassfest) — see note above |
 | OTA A/B with rollback safety | ✅ | ❌ | code + bench (rollback) |
 | Acoustic alarm-cadence (T3 smoke / T4 CO) | ✅ | ❌ | code + **bench** (mic) |
 | Capacitive touch (panic / tamper) | ✅ | ❌ | code + bench |
@@ -102,9 +115,9 @@ under `[env:full]`). Each lands behind its `FEATURE_*` flag and must pass the Pl
 host-test jobs. Behavioral cells stay ⚠️ pending Tranche-bench.
 
 **Tranche B1 — Arduino, compile-closeable:**
-MQTT publish + HA Discovery (incl. sensing-entity discovery), WiFi auto-reconnect, sensing
-dashboard panel, capacitive touch / IR / temp-tamper / deep-sleep scaffolding. Land behind
-`#if FEATURE_*`; verify the size gate and `hassfest`/`selftest-ui` jobs.
+MQTT publish + HA Discovery **(✅ already landed — `csi_mqtt.cpp`, see the 2026-06-09 note in §1)**,
+WiFi auto-reconnect, sensing dashboard panel, capacitive touch / IR / temp-tamper / deep-sleep
+scaffolding. Land behind `#if FEATURE_*`; verify the size gate and `hassfest`/`selftest-ui` jobs.
 
 **Tranche A2 / B2 — bench-gated behavior:**
 Everything marked "**bench**" above (mesh, RSSI, BLE discovery, RF presence, hub failover, chirp,
@@ -127,7 +140,7 @@ cell to ✅ only after the matching bench-runbook track passes** and an artifact
 | →ACTIVE | RF presence | ☐ | ☐ | ☐ |
 | →ACTIVE | Hub failover | ☐ | ☐ | ☐ |
 | →ACTIVE | Chirp channel | ☐ | ☐ | ☐ |
-| →Arduino | MQTT + HA Discovery | ☐ | ☐ | ☐ |
+| →Arduino | MQTT + HA Discovery | ☑ | n/a | ☑ |
 | →Arduino | OTA A/B rollback | ☐ | ☐ | ☐ |
 | →Arduino | Acoustic T3/T4 | ☐ | ☐ | ☐ |
 | →Arduino | Capacitive touch | ☐ | ☐ | ☐ |
