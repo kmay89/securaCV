@@ -41,7 +41,9 @@ KEY_FILE="$DATA_DIR/device_key"
 TOKEN_FILE="$DATA_DIR/api_token"
 CONFIG_FILE="$DATA_DIR/witness_config.json"
 
-log() { echo "[securacv] $*"; }
+# Logs go to stderr: several helpers are called inside $(...) command
+# substitutions, where anything on stdout would pollute the captured value.
+log() { echo "[securacv] $*" >&2; }
 die() { echo "[securacv] ERROR: $*" >&2; exit 1; }
 
 # ---------------------------------------------------------------------------
