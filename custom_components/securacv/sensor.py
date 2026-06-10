@@ -425,6 +425,8 @@ class SecuraCVKernelTemperatureSensor(SecuraCVKernelStorageSensorBase):
         if thermal is None:
             return None
         temp = thermal.get("soc_temp_c")
+        if temp is None:
+            return None
         try:
             return round(float(temp), 1)
         except (TypeError, ValueError):

@@ -5,7 +5,7 @@ tests run directly under the stub conftest harness.
 """
 from __future__ import annotations
 
-from custom_components.securacv.health_metrics import (
+from ..health_metrics import (
     STORAGE_STATUS_CRITICAL,
     STORAGE_STATUS_DEGRADED,
     STORAGE_STATUS_GOOD,
