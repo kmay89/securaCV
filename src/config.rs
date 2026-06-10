@@ -49,6 +49,24 @@ const DEFAULT_TRACT_MODEL: &str = "vendor/models/tinyyolov2-8.onnx";
 // raw grid output is decoded + NMS'd on the host; set to "postnms" for models that already
 // emit final boxes.
 const DEFAULT_TRACT_FORMAT: &str = "yolov2";
+// Ingest resilience: how long the source may stay unhealthy before one
+// GapMissingData failure record is sealed for the outage, and the reconnect
+// backoff ceiling. The threshold must exceed the source's own stall timeout
+// so a single slow frame doesn't count as an outage.
+const DEFAULT_INGEST_FAILURE_THRESHOLD_S: u64 = 30;
+const DEFAULT_INGEST_RECONNECT_BACKOFF_MAX_S: u64 = 60;
+// System trace: heartbeat records are bucket-locked (one per 10-minute coarse
+// bucket); the flag only disables them. INFO counter summaries default to 60s
+// (the previous 5s dump is DEBUG-only).
+const DEFAULT_HEALTH_HEARTBEAT: bool = true;
+const DEFAULT_HEALTH_LOG_INTERVAL_S: u64 = 60;
+// Storage preflight: free-space floor below which a StorageFull failure record
+// is sealed (once per transition), and how often to check.
+const DEFAULT_STORAGE_MIN_FREE_MB: u64 = 256;
+const DEFAULT_STORAGE_CHECK_INTERVAL_S: u64 = 60;
+// Clock monitoring: monotonic-vs-wallclock drift beyond this seals one
+// ClockSkew failure record per excursion.
+const DEFAULT_CLOCK_SKEW_TOLERANCE_S: u64 = 30;
 
 fn config_string(value: Option<String>, default: &str) -> String {
     value.unwrap_or_else(|| default.to_string())
@@ -71,6 +89,9 @@ struct WitnessdConfigFile {
     detect: Option<DetectConfigFile>,
     zones: Option<ZoneConfigFile>,
     retention: Option<RetentionConfigFile>,
+    health: Option<HealthConfigFile>,
+    storage: Option<StorageConfigFile>,
+    clock: Option<ClockConfigFile>,
     storage_health: Option<StorageHealthConfigFile>,
 }
 
@@ -92,6 +113,25 @@ struct ApiConfigFile {
 #[derive(Debug, Deserialize, Default)]
 struct IngestConfigFile {
     backend: Option<String>,
+    failure_threshold_s: Option<u64>,
+    reconnect_backoff_max_s: Option<u64>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct HealthConfigFile {
+    heartbeat: Option<bool>,
+    log_interval_s: Option<u64>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct StorageConfigFile {
+    min_free_mb: Option<u64>,
+    check_interval_s: Option<u64>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct ClockConfigFile {
+    skew_tolerance_s: Option<u64>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -205,6 +245,9 @@ pub struct WitnessdConfig {
     pub detect: DetectSettings,
     pub zones: ZoneSettings,
     pub retention: Duration,
+    pub health: HealthSettings,
+    pub storage: StorageSettings,
+    pub clock: ClockSettings,
     /// How often witnessd runs retention enforcement (each pass that prunes
     /// writes a signed checkpoint transaction — see
     /// `DEFAULT_RETENTION_CHECK_INTERVAL_SECS`).
@@ -253,6 +296,33 @@ pub enum IngestBackend {
 #[derive(Debug, Clone)]
 pub struct IngestSettings {
     pub backend: IngestBackend,
+    /// How long the source may stay unhealthy before one GapMissingData
+    /// failure record is sealed for the outage.
+    pub failure_threshold: Duration,
+    /// Ceiling for the ingest reconnect backoff (starts at 1s, doubles).
+    pub reconnect_backoff_max: Duration,
+}
+
+#[derive(Debug, Clone)]
+pub struct HealthSettings {
+    /// Seal one heartbeat record per 10-minute bucket (anchors the chain tail).
+    pub heartbeat: bool,
+    /// Cadence of the INFO-level pipeline counter summary.
+    pub log_interval: Duration,
+}
+
+#[derive(Debug, Clone)]
+pub struct StorageSettings {
+    /// Free-space floor (bytes) below which a StorageFull record is sealed.
+    pub min_free_bytes: u64,
+    /// How often to run the free-space preflight check.
+    pub check_interval: Duration,
+}
+
+#[derive(Debug, Clone)]
+pub struct ClockSettings {
+    /// Monotonic-vs-wallclock drift beyond which a ClockSkew record is sealed.
+    pub skew_tolerance: Duration,
 }
 
 #[derive(Debug, Clone)]
@@ -342,12 +412,22 @@ impl WitnessdConfig {
             .and_then(|api| api.addr.clone())
             .unwrap_or_else(|| DEFAULT_API_ADDR.to_string());
         let api_token_path = file.api.and_then(|api| api.token_path);
-        let ingest_backend = file
-            .ingest
-            .and_then(|ingest| ingest.backend)
+        let ingest_config = file.ingest.unwrap_or_default();
+        let ingest_backend = ingest_config
+            .backend
             .unwrap_or_else(|| DEFAULT_INGEST_BACKEND.to_string());
         let ingest = IngestSettings {
             backend: IngestBackend::parse(&ingest_backend)?,
+            failure_threshold: Duration::from_secs(
+                ingest_config
+                    .failure_threshold_s
+                    .unwrap_or(DEFAULT_INGEST_FAILURE_THRESHOLD_S),
+            ),
+            reconnect_backoff_max: Duration::from_secs(
+                ingest_config
+                    .reconnect_backoff_max_s
+                    .unwrap_or(DEFAULT_INGEST_RECONNECT_BACKOFF_MAX_S),
+            ),
         };
         let rtsp = RtspSettings {
             url: config_string(
@@ -452,6 +532,34 @@ impl WitnessdConfig {
                 .and_then(|retention| retention.seconds)
                 .unwrap_or(DEFAULT_RETENTION_SECS),
         );
+        let health_config = file.health.unwrap_or_default();
+        let health = HealthSettings {
+            heartbeat: health_config.heartbeat.unwrap_or(DEFAULT_HEALTH_HEARTBEAT),
+            log_interval: Duration::from_secs(
+                health_config
+                    .log_interval_s
+                    .unwrap_or(DEFAULT_HEALTH_LOG_INTERVAL_S),
+            ),
+        };
+        let storage_config = file.storage.unwrap_or_default();
+        let storage = StorageSettings {
+            min_free_bytes: storage_config
+                .min_free_mb
+                .unwrap_or(DEFAULT_STORAGE_MIN_FREE_MB)
+                .saturating_mul(1024 * 1024),
+            check_interval: Duration::from_secs(
+                storage_config
+                    .check_interval_s
+                    .unwrap_or(DEFAULT_STORAGE_CHECK_INTERVAL_S),
+            ),
+        };
+        let clock = ClockSettings {
+            skew_tolerance: Duration::from_secs(
+                file.clock
+                    .and_then(|clock| clock.skew_tolerance_s)
+                    .unwrap_or(DEFAULT_CLOCK_SKEW_TOLERANCE_S),
+            ),
+        };
         let retention_check_interval = Duration::from_secs(
             file.retention
                 .and_then(|retention| retention.check_interval_seconds)
@@ -504,6 +612,9 @@ impl WitnessdConfig {
             detect,
             zones,
             retention,
+            health,
+            storage,
+            clock,
             retention_check_interval,
             storage_health,
         })
@@ -665,6 +776,27 @@ impl WitnessdConfig {
 
         if self.retention.as_secs() == 0 {
             return Err(anyhow!("retention must be greater than zero"));
+        }
+        if self.ingest.failure_threshold.as_secs() == 0 {
+            return Err(anyhow!(
+                "ingest.failure_threshold_s must be greater than zero"
+            ));
+        }
+        if self.ingest.reconnect_backoff_max.as_secs() == 0 {
+            return Err(anyhow!(
+                "ingest.reconnect_backoff_max_s must be greater than zero"
+            ));
+        }
+        if self.health.log_interval.as_secs() == 0 {
+            return Err(anyhow!("health.log_interval_s must be greater than zero"));
+        }
+        if self.storage.check_interval.as_secs() == 0 {
+            return Err(anyhow!(
+                "storage.check_interval_s must be greater than zero"
+            ));
+        }
+        if self.clock.skew_tolerance.as_secs() == 0 {
+            return Err(anyhow!("clock.skew_tolerance_s must be greater than zero"));
         }
         if self.retention_check_interval.as_secs() == 0 {
             return Err(anyhow!(
@@ -1018,6 +1150,8 @@ mod tests {
             }),
             ingest: Some(IngestConfigFile {
                 backend: Some("rtsp".to_string()),
+                failure_threshold_s: None,
+                reconnect_backoff_max_s: None,
             }),
             rtsp: Some(RtspConfigFile {
                 url: Some("rtsp://example.com/stream".to_string()),
@@ -1146,6 +1280,86 @@ mod tests {
             .validate()
             .expect("tract without explicit model is now valid");
         assert_eq!(config.detect.backend, DetectBackendPreference::Tract);
+    }
+
+    #[test]
+    fn health_storage_clock_defaults_apply() {
+        let config =
+            WitnessdConfig::from_file(WitnessdConfigFile::default()).expect("config should parse");
+        assert!(config.health.heartbeat);
+        assert_eq!(config.health.log_interval, Duration::from_secs(60));
+        assert_eq!(config.storage.min_free_bytes, 256 * 1024 * 1024);
+        assert_eq!(config.storage.check_interval, Duration::from_secs(60));
+        assert_eq!(config.clock.skew_tolerance, Duration::from_secs(30));
+        assert_eq!(config.ingest.failure_threshold, Duration::from_secs(30));
+        assert_eq!(config.ingest.reconnect_backoff_max, Duration::from_secs(60));
+    }
+
+    #[test]
+    fn health_storage_clock_keys_parse_from_toml() {
+        let dir = tempdir().expect("temp dir");
+        let path = dir.path().join("config.toml");
+        write_file(
+            &path,
+            r#"
+[ingest]
+backend = "rtsp"
+failure_threshold_s = 45
+reconnect_backoff_max_s = 120
+
+[rtsp]
+url = "rtsp://example.com/stream"
+
+[health]
+heartbeat = false
+log_interval_s = 30
+
+[storage]
+min_free_mb = 512
+check_interval_s = 90
+
+[clock]
+skew_tolerance_s = 10
+"#,
+        );
+
+        let file: WitnessdConfigFile = read_config_file(&path).expect("read config");
+        let config = WitnessdConfig::from_file(file).expect("config should parse");
+        assert_eq!(config.ingest.failure_threshold, Duration::from_secs(45));
+        assert_eq!(
+            config.ingest.reconnect_backoff_max,
+            Duration::from_secs(120)
+        );
+        assert!(!config.health.heartbeat);
+        assert_eq!(config.health.log_interval, Duration::from_secs(30));
+        assert_eq!(config.storage.min_free_bytes, 512 * 1024 * 1024);
+        assert_eq!(config.storage.check_interval, Duration::from_secs(90));
+        assert_eq!(config.clock.skew_tolerance, Duration::from_secs(10));
+    }
+
+    #[test]
+    fn zero_intervals_are_rejected() {
+        let file = WitnessdConfigFile {
+            health: Some(HealthConfigFile {
+                heartbeat: None,
+                log_interval_s: Some(0),
+            }),
+            rtsp: Some(RtspConfigFile {
+                url: Some("rtsp://example.com/stream".to_string()),
+                target_fps: None,
+                width: None,
+                height: None,
+                backend: None,
+                transport: None,
+            }),
+            ..WitnessdConfigFile::default()
+        };
+        let mut config = WitnessdConfig::from_file(file).expect("from_file should parse");
+        let err = config.validate().expect_err("zero interval is invalid");
+        assert!(
+            err.to_string().contains("health.log_interval_s"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]

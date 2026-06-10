@@ -11,13 +11,29 @@
 #
 name: "CodeQL Advanced"
 
+# Docs-only changes skip the (expensive, 5-language) analysis; the weekly
+# scheduled run still scans everything regardless of paths.
 on:
   push:
     branches: [ "main" ]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'brands/**'
+      - 'LICENSE'
   pull_request:
     branches: [ "main" ]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'brands/**'
+      - 'LICENSE'
   schedule:
     - cron: '24 4 * * 1'
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   analyze:

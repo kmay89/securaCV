@@ -520,13 +520,13 @@ jobs:
           MESH_SRC=firmware/canary/lib/securacv_mesh/src
           BLE_SRC=firmware/canary/lib/securacv_ble_scan/src
           COMMON_SRC=firmware/common/csi/src
-          CXXFLAGS="-std=c++17 -DCSI_TEST_HOST_BUILD -Wall -Wextra -Wno-unused-parameter"
+          CXXFLAGS=(-std=c++17 -DCSI_TEST_HOST_BUILD -Wall -Wextra -Wno-unused-parameter)
 
           run_test() {
             local name=$1; shift
-            g++ $CXXFLAGS "$@" -o /tmp/host_tests/test_$name
-            /tmp/host_tests/test_$name | tee /tmp/host_tests/test_$name.log
-            grep -q "ALL .* PASSED" /tmp/host_tests/test_$name.log
+            g++ "${CXXFLAGS[@]}" "$@" -o "/tmp/host_tests/test_$name"
+            "/tmp/host_tests/test_$name" | tee "/tmp/host_tests/test_$name.log"
+            grep -q "ALL .* PASSED" "/tmp/host_tests/test_$name.log"
           }
 
           # securacv_mesh suites — 7 of them now (mesh_state added with
