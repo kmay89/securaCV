@@ -129,6 +129,15 @@ describe('Device name', () => {
     assert.equal(res.json.mdns_host, 'canary-living-room');
   });
 
+  it('never leaves a trailing hyphen when truncation lands on a separator', async () => {
+    // 32 chars of 'a', then a separator + more — the slice boundary falls
+    // exactly on the hyphen that replaces the space.
+    const res = await client.post('/api/device-name', { name: 'a'.repeat(32) + ' kitchen' });
+    assert.equal(res.status, 200);
+    assert.equal(res.json.device_name, 'a'.repeat(32));
+    assert.ok(!res.json.device_name.endsWith('-'));
+  });
+
   it('rejects empty and unsalvageable names', async () => {
     const empty = await client.post('/api/device-name', { name: '   ' });
     assert.equal(empty.status, 400);

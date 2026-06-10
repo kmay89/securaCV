@@ -23,8 +23,10 @@ function deviceNameRoutes(state) {
       .trim()
       .toLowerCase()
       .replace(/[^a-z0-9-]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .slice(0, NAME_MAX_LEN);
+      .slice(0, NAME_MAX_LEN)
+      // Trim edge hyphens AFTER slicing — truncation can land on a
+      // separator, and a label ending in '-' is not valid DNS.
+      .replace(/^-+|-+$/g, '');
 
     if (name.length === 0) {
       return res.status(400).json({

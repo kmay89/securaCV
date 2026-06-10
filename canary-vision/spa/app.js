@@ -1597,10 +1597,11 @@ function applyDeviceName(device, newName) {
   }).then(function (resp) {
     var updates = { name: resp.device_name || newName };
     // If we reach the device by its mDNS name, follow the rename — the
-    // old hostname stops resolving once mDNS re-announces.
-    var hostMatch = device.base_url.match(/^http:\/\/canary-[a-z0-9-]+\.local$/);
+    // old hostname stops resolving once mDNS re-announces. Preserve any
+    // explicit port (dev servers, non-standard deployments).
+    var hostMatch = device.base_url.match(/^http:\/\/canary-[a-z0-9-]+\.local(:[0-9]+)?$/);
     if (hostMatch && resp.mdns_host) {
-      updates.base_url = 'http://' + resp.mdns_host + '.local';
+      updates.base_url = 'http://' + resp.mdns_host + '.local' + (hostMatch[1] || '');
     }
     CanaryStorage.updateDevice(device.id, updates);
     return CanaryStorage.getDevice(device.id);
@@ -1616,7 +1617,7 @@ function pairingErrorMessage(err) {
   if (!err) return 'Connection failed';
   if (err.code === 'already_paired') return 'This Canary is already paired';
   if (err.status === 401) return 'Invalid token. Check your API token and try again.';
-  if (err.status === 429) return 'Rate limited. Try again in ' + (err.data ? err.data.retry_after : 60) + ' seconds.';
+  if (err.status === 429) return 'Rate limited. Try again in ' + ((err.data && err.data.retry_after) || 60) + ' seconds.';
   if (err.status === 0) return 'Device offline or unreachable.';
   return err.message || 'Connection failed';
 }
@@ -1667,7 +1668,15 @@ function openQrScanSheet(onReceipt) {
       video.srcObject = s;
       video.play();
 
-      var detector = new window.BarcodeDetector({ formats: ['qr_code'] });
+      // Constructing BarcodeDetector can throw on platforms that expose
+      // the interface but don't support the requested format.
+      var detector;
+      try {
+        detector = new window.BarcodeDetector({ formats: ['qr_code'] });
+      } catch (e) {
+        close();
+        return;
+      }
       function detectFrame() {
         if (done) return;
         detector.detect(video).then(function (codes) {
@@ -1786,6 +1795,10 @@ function renderAddCanaryView() {
   }
 
   function handleReceipt(alertSlot, receipt, knownBaseUrl) {
+    if (!receipt || typeof receipt !== 'object') {
+      showError(alertSlot, new Error('Invalid receipt format'));
+      return;
+    }
     var baseUrl = knownBaseUrl || normalizeBaseUrl(receipt.base_url || receipt.host);
     var token = receipt.token || receipt.api_token;
     if (!baseUrl || !isPrivateUrl(baseUrl)) {
