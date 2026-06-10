@@ -409,6 +409,14 @@ readings. That's deliberate; an attacker with access to the
 dashboard learns nothing about the room beyond "warmer than 20 °C
 or cooler than 20 °C", because the calibration is also rounded.
 
+Don't confuse this card with **Adaptive performance**, which sits
+right below it: Thermal drift is a *tamper* detector (sudden steps),
+while Adaptive performance shows how the device paces heavy work
+like camera streaming to stay inside its thermal envelope, plus its
+lifetime heat/cold history. Placement, heat-sink, and hot/cold
+weather guidance lives in the
+[Thermal Guide](./thermal_guide.md).
+
 ---
 
 ## 9 · Power & wake
@@ -623,6 +631,7 @@ for evidence, **export the chain before you factory-reset** —
 | **Appliance activity** decodes few frames | Many cheap IR remotes deviate from the ISO timing standards. The lib decodes NEC, RC5, and Sony SIRC — it deliberately rejects ambiguous frames so the dashboard isn't noisy with garbage. |
 | **Thermal drift** card never leaves **Calibrating** | The internal temp sensor needs five clean samples (5 minutes by default). If the device just booted, just wait. If it persists past 10 minutes, the sensor may have failed to start — check serial. |
 | **Thermal drift** firing constantly | Your room's HVAC is cycling aggressively (5+ °C swings at the device). Tune `drift_threshold_tenths_c` upward in the build, or move the device away from a cold-air register. |
+| **Adaptive performance** card often shows **Adaptive** or **Protective pause** | The spot runs warm during streaming — not a fault, but the device would have more headroom with the heat sink fitted, some shade/ventilation, or a lower peek resolution. See the [Thermal Guide](./thermal_guide.md), especially the symptom→action table. |
 
 For anything else, **Settings → Diagnostics → Send to installer** packages
 the health log into a signed bundle you can share without leaking

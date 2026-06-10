@@ -79,7 +79,8 @@ CameraManager::CameraManager()
     m_frame_delay_ms(40), m_user_frame_delay_ms(40),
     m_metrics{}, m_metrics_mux(portMUX_INITIALIZER_UNLOCKED),
     m_thermal_state(THERMAL_NORMAL), m_die_temp_c(0),
-    m_last_thermal_check_ms(0), m_last_good_frame_ms(0), m_freeze_count(0) {}
+    m_last_thermal_check_ms(0), m_thermal_fail_count(0),
+    m_last_good_frame_ms(0), m_freeze_count(0) {}
 
 // Build a camera_config_t with all pin/clock fields populated. Critically
 // zero-initialized so newer ESP-IDF fields (sccb_i2c_port, etc.) start clean
@@ -571,27 +572,50 @@ void CameraManager::checkThermal() {
   if (now - m_last_thermal_check_ms < THERMAL_CHECK_INTERVAL_MS) return;
   m_last_thermal_check_ms = now;
 
-  float temp_c = 0.0f;
-  if (!thermal_read_die_c(&temp_c)) return;  /* keep last state on read failure */
-  m_die_temp_c = (int8_t)temp_c;
-
   ThermalState prev = m_thermal_state;
 
-  if (m_thermal_state == THERMAL_PAUSED) {
-    if (m_die_temp_c < THERMAL_PAUSE_TEMP_C - THERMAL_RECOVER_MARGIN_C) {
-      m_thermal_state = THERMAL_THROTTLED;
-    }
-  } else if (m_thermal_state == THERMAL_THROTTLED) {
-    if (m_die_temp_c >= THERMAL_PAUSE_TEMP_C) {
-      m_thermal_state = THERMAL_PAUSED;
-    } else if (m_die_temp_c < THERMAL_THROTTLE_TEMP_C - THERMAL_RECOVER_MARGIN_C) {
-      m_thermal_state = THERMAL_NORMAL;
+  float temp_c = 0.0f;
+  if (!thermal_read_die_c(&temp_c)) {
+    /* One or two misses keep the last state (transient mutex timeout).
+     * At THERMAL_FAIL_SAFE_COUNT consecutive misses the actuator is
+     * blind on the hottest peripheral — fail safe to THROTTLED (the
+     * cost is frame rate only) and surface it once per episode,
+     * never silently. Normal hysteresis resumes on the next good read. */
+    if (m_thermal_fail_count < THERMAL_FAIL_SAFE_COUNT) {
+      m_thermal_fail_count++;
+      if (m_thermal_fail_count == THERMAL_FAIL_SAFE_COUNT) {
+        Serial.println("[CAMERA] Thermal sensor read failing — fail-safe throttle");
+        log_health(LOG_LEVEL_ERROR, LOG_CAT_SENSOR,
+                   "Camera thermal sensor read failing", "fail-safe throttle");
+        if (m_thermal_state == THERMAL_NORMAL) {
+          m_thermal_state = THERMAL_THROTTLED;
+        }
+      }
     }
   } else {
-    if (m_die_temp_c >= THERMAL_PAUSE_TEMP_C) {
-      m_thermal_state = THERMAL_PAUSED;
-    } else if (m_die_temp_c >= THERMAL_THROTTLE_TEMP_C) {
-      m_thermal_state = THERMAL_THROTTLED;
+    if (m_thermal_fail_count >= THERMAL_FAIL_SAFE_COUNT) {
+      log_health(LOG_LEVEL_INFO, LOG_CAT_SENSOR,
+                 "Camera thermal sensor recovered", nullptr);
+    }
+    m_thermal_fail_count = 0;
+    m_die_temp_c = (int8_t)temp_c;
+
+    if (m_thermal_state == THERMAL_PAUSED) {
+      if (m_die_temp_c < THERMAL_PAUSE_TEMP_C - THERMAL_RECOVER_MARGIN_C) {
+        m_thermal_state = THERMAL_THROTTLED;
+      }
+    } else if (m_thermal_state == THERMAL_THROTTLED) {
+      if (m_die_temp_c >= THERMAL_PAUSE_TEMP_C) {
+        m_thermal_state = THERMAL_PAUSED;
+      } else if (m_die_temp_c < THERMAL_THROTTLE_TEMP_C - THERMAL_RECOVER_MARGIN_C) {
+        m_thermal_state = THERMAL_NORMAL;
+      }
+    } else {
+      if (m_die_temp_c >= THERMAL_PAUSE_TEMP_C) {
+        m_thermal_state = THERMAL_PAUSED;
+      } else if (m_die_temp_c >= THERMAL_THROTTLE_TEMP_C) {
+        m_thermal_state = THERMAL_THROTTLED;
+      }
     }
   }
 

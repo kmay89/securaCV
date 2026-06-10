@@ -111,6 +111,9 @@
 #ifndef FEATURE_POWER_POLICY
   #define FEATURE_POWER_POLICY     1   // Runtime power mode engine (auto sleep/throttle by battery)
 #endif
+#ifndef FEATURE_THERMAL_WATCHDOG
+  #define FEATURE_THERMAL_WATCHDOG 1   // Passive die-temp observer + NVS thermal history (never actuates)
+#endif
 #ifndef FEATURE_SETUP_WIZARD
   #define FEATURE_SETUP_WIZARD     1   // First-time setup detection, captive portal, device naming
 #endif
