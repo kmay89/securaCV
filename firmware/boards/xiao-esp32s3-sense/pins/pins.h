@@ -187,8 +187,10 @@
 // Battery monitoring via ADC1 on GPIO 1 (D0/A0).
 // Requires a 2:1 voltage divider (two 100K resistors) from VBAT to
 // this pin for accurate readings. The securacv_power library auto-
-// detects whether the divider is present and falls back to software
-// inference if not.
+// detects whether the divider is present and reports USB-only mode
+// if not (a floating pin carries no battery information).
+// NEVER wire VBAT directly to this pin: a full LiPo (4.2 V) exceeds
+// the pin's absolute maximum and can damage the SoC.
 #define VBAT_PIN                1     // GPIO 1 (D0/A0) — ADC1_CH0
 #define VBAT_DIVIDER_RATIO      2.0f  // Two 100K resistors in series
 

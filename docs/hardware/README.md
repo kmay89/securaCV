@@ -10,6 +10,7 @@ optional.
 | [`v1_bench_validation_runbook.md`](./v1_bench_validation_runbook.md) | **The v1 release gate** — flash → provision → signed MQTT → verified-✓ in HA, the kernel-pipeline smoke, and the 2–3 board mesh/chirp fleet validation, with pass/fail criteria and required artifacts. |
 | [`enclosure/`](./enclosure/) | **3D-printable enclosure** (parametric OpenSCAD + ready STLs) for the Canary WAP — light-pipe, buzzer vent, camera window, tamper-magnet pocket. |
 | [`canary_peripheral_build_plan.md`](./canary_peripheral_build_plan.md) | Master build plan & BOM: audible chirp (buzzer), status LED, button/tamper/touch inputs, battery, and enclosure — for both Canary WAP and Canary Vision. |
+| [`esp32s3_power_battery_guide.md`](./esp32s3_power_battery_guide.md) | **Power & battery guide** — supply/cable requirements, consumption estimates per firmware power mode, battery chemistry/sizing across temperatures and environments, wiring pitfalls, and the battery health/lifetime telemetry reference. |
 | [`bom_canary_wap.csv`](./bom_canary_wap.csv) | Machine-readable BOM — Canary WAP (XIAO ESP32-S3 Sense). |
 | [`bom_canary_vision.csv`](./bom_canary_vision.csv) | Machine-readable BOM — Canary Vision (ESP32-C3 + Grove Vision AI V2). |
 
