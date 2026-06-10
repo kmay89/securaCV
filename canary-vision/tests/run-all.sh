@@ -32,6 +32,7 @@ node --test tests/api/envelope-bridge.test.js
 node --test tests/api/peers.test.js
 node --test tests/api/reboot.test.js
 node --test tests/api/update.test.js
+node --test tests/api/provision.test.js
 
 # Run SPA tests
 echo ""
@@ -40,6 +41,7 @@ node --test tests/spa/csp-compliance.test.js
 node --test tests/spa/routing.test.js
 node --test tests/spa/token-storage.test.js
 node --test tests/spa/peer-discovery.test.js
+node --test tests/spa/magic-pairing.test.js
 node --test tests/spa/session-expiry.test.js
 node --test tests/spa/verified-timeline.test.js
 
