@@ -130,6 +130,31 @@ void mqtt_set_audio_test_cmd_callback(mqtt_audio_test_cmd_cb_t cb);
 // changes instantly rather than waiting for the next /sensing tick).
 bool mqtt_publish_mic_mute_state(bool muted);
 
+// ── Firmware update entity (pull-OTA) ───────────────────────────────────
+// HA's `update` entity shows installed vs latest version with release
+// notes and an Install button; the `switch` entity is the per-device
+// auto-update opt-in. Same wiring pattern as the mic mute switch: the
+// MQTT lib parses inbound commands and fires app-registered callbacks.
+#if FEATURE_OTA_PULL
+
+// HA pressed Install on the update entity.
+typedef void (*mqtt_ota_install_cmd_cb_t)(void);
+void mqtt_set_ota_install_cmd_callback(mqtt_ota_install_cmd_cb_t cb);
+
+// HA toggled the auto-update switch.
+typedef void (*mqtt_ota_auto_cmd_cb_t)(bool enabled);
+void mqtt_set_ota_auto_cmd_callback(mqtt_ota_auto_cmd_cb_t cb);
+
+// Publish the update entity's JSON state (installed_version,
+// latest_version, in_progress, update_percentage, release_summary,
+// release_url). Retained + republished on reconnect.
+bool mqtt_publish_update_state(const char* json_payload);
+
+// Publish the auto-update switch state. Retained + republished on reconnect.
+bool mqtt_publish_update_auto_state(bool enabled);
+
+#endif // FEATURE_OTA_PULL
+
 #endif // FEATURE_HA_MQTT
 
 #endif // SECURACV_MQTT_H

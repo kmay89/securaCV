@@ -29,8 +29,12 @@
 #include <netinet/tcp.h>
 #endif
 
-#if FEATURE_OTA_UPDATE
+#if FEATURE_OTA_UPDATE && !defined(SECURACV_BUILD_RELEASE)
 #include <Update.h>
+#endif
+
+#if FEATURE_OTA_PULL
+#include "securacv_ota.h"
 #endif
 
 #if FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS || FEATURE_TOUCH || FEATURE_IR_RMT || FEATURE_TEMP_TAMPER
@@ -780,8 +784,17 @@ static esp_err_t handle_mqtt_status(httpd_req_t* req);
 static esp_err_t handle_mqtt_config(httpd_req_t* req);
 #endif
 
-#if FEATURE_OTA_UPDATE
+#if FEATURE_OTA_UPDATE && !defined(SECURACV_BUILD_RELEASE)
+// Dev-only raw push endpoint (no signature). Compiled out of release
+// builds — production updates go through the signed pull-OTA flow below.
 static esp_err_t handle_ota(httpd_req_t* req);
+#endif
+
+#if FEATURE_OTA_PULL
+static esp_err_t handle_ota_status(httpd_req_t* req);
+static esp_err_t handle_ota_check(httpd_req_t* req);
+static esp_err_t handle_ota_install(httpd_req_t* req);
+static esp_err_t handle_ota_config(httpd_req_t* req);
 #endif
 
 #if FEATURE_CAMERA_PEEK
@@ -925,9 +938,23 @@ void ScvNetworkManager::registerHttpHandlers() {
   httpd_register_uri_handler(m_http_server, &mqtt_cfg);
   #endif
 
-  #if FEATURE_OTA_UPDATE
+  #if FEATURE_OTA_UPDATE && !defined(SECURACV_BUILD_RELEASE)
   httpd_uri_t ota = { .uri = "/api/ota", .method = HTTP_POST, .handler = handle_ota };
   httpd_register_uri_handler(m_http_server, &ota);
+  #endif
+
+  #if FEATURE_OTA_PULL
+  httpd_uri_t ota_status = { .uri = "/api/ota/status", .method = HTTP_GET, .handler = handle_ota_status };
+  httpd_register_uri_handler(m_http_server, &ota_status);
+
+  httpd_uri_t ota_check = { .uri = "/api/ota/check", .method = HTTP_POST, .handler = handle_ota_check };
+  httpd_register_uri_handler(m_http_server, &ota_check);
+
+  httpd_uri_t ota_install = { .uri = "/api/ota/install", .method = HTTP_POST, .handler = handle_ota_install };
+  httpd_register_uri_handler(m_http_server, &ota_install);
+
+  httpd_uri_t ota_cfg = { .uri = "/api/ota/config", .method = HTTP_POST, .handler = handle_ota_config };
+  httpd_register_uri_handler(m_http_server, &ota_cfg);
   #endif
 
   #if FEATURE_CAMERA_PEEK
@@ -1355,7 +1382,7 @@ static esp_err_t handle_reboot(httpd_req_t* req) {
   return ESP_OK;
 }
 
-#if FEATURE_OTA_UPDATE
+#if FEATURE_OTA_UPDATE && !defined(SECURACV_BUILD_RELEASE)
 static esp_err_t handle_ota(httpd_req_t* req) {
   if (!rate_limit_check(req, true)) return ESP_OK;
   if (!auth_gate(req)) return ESP_OK;
@@ -1395,6 +1422,153 @@ static esp_err_t handle_ota(httpd_req_t* req) {
   }
 }
 #endif
+
+// ════════════════════════════════════════════════════════════════════════════
+// SIGNED PULL-OTA — status / check / install / config
+// ════════════════════════════════════════════════════════════════════════════
+
+#if FEATURE_OTA_PULL
+
+// GET /api/ota/status — everything the Settings UI needs in one call.
+// `state_text` / `error_text` are the plain-language strings shown to the
+// user; the technical `state` / `error` fields feed diagnostics.
+static esp_err_t handle_ota_status(httpd_req_t* req) {
+  if (!rate_limit_check(req)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  const securacv_ota_state_t state = securacv_ota_get_state();
+  const securacv_ota_error_t error = securacv_ota_get_last_error();
+
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["installed_version"] = securacv_ota_get_version();
+  doc["state"] = securacv_ota_state_str(state);
+  doc["state_text"] = securacv_ota_friendly_state(state);
+  doc["progress"] = securacv_ota_get_progress();
+  doc["error"] = securacv_ota_error_str(error);
+  doc["error_text"] = securacv_ota_friendly_error(error);
+  doc["update_available"] = securacv_ota_update_available();
+  doc["auto_update"] = securacv_ota_get_auto_update();
+  doc["local_http_allowed"] = securacv_ota_get_local_http_allowed();
+  doc["last_check"] = securacv_ota_get_last_check_time();
+
+  char url[256];
+  if (securacv_ota_get_manifest_url(url, sizeof(url)) == ESP_OK) {
+    doc["manifest_url"] = url;
+  }
+  doc["manifest_url_is_override"] = securacv_ota_manifest_url_is_override();
+
+  const securacv_ota_manifest_t* m = securacv_ota_get_manifest();
+  if (m != NULL) {
+    doc["latest_version"] = m->version;
+    if (m->release_notes[0] != '\0') doc["release_notes"] = m->release_notes;
+    if (m->release_url[0] != '\0') doc["release_url"] = m->release_url;
+  }
+
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+// POST /api/ota/check — fetch the manifest and compare versions, without
+// installing. Results land in /api/ota/status (poll while state=Checking).
+static esp_err_t handle_ota_check(httpd_req_t* req) {
+  if (!rate_limit_check(req, true)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  esp_err_t err = securacv_ota_check();
+  if (err == ESP_ERR_INVALID_STATE) {
+    return http_send_error(req, 409, "ota_busy");
+  }
+  if (err != ESP_OK) {
+    return http_send_error(req, 500, "ota_check_failed");
+  }
+
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["message"] = "Checking for updates…";
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+// POST /api/ota/install — full signed install pipeline. The device
+// reboots into the new firmware on success; progress is visible via
+// /api/ota/status and the HA update entity.
+static esp_err_t handle_ota_install(httpd_req_t* req) {
+  if (!rate_limit_check(req, true)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  log_health(LOG_LEVEL_NOTICE, LOG_CAT_USER,
+             "Firmware install requested from dashboard", nullptr);
+
+  esp_err_t err = securacv_ota_check_and_install();
+  if (err == ESP_ERR_INVALID_STATE) {
+    return http_send_error(req, 409, "ota_busy");
+  }
+  if (err != ESP_OK) {
+    return http_send_error(req, 500, "ota_install_failed");
+  }
+
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["message"] = "Installing the update. Your Canary will restart on its own.";
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+// POST /api/ota/config — persist update settings (NVS).
+// Body (all fields optional): {"manifest_url": "...", "auto_update": bool,
+// "local_http_allowed": bool}. An empty manifest_url clears the override.
+static esp_err_t handle_ota_config(httpd_req_t* req) {
+  if (!rate_limit_check(req, true)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  char body[512];
+  int recv = httpd_req_recv(req, body, sizeof(body) - 1);
+  if (recv <= 0) {
+    return http_send_error(req, 400, "empty_body");
+  }
+  body[recv] = '\0';
+
+  JsonDocument input;
+  if (deserializeJson(input, body) != DeserializationError::Ok) {
+    return http_send_error(req, 400, "invalid_json");
+  }
+
+  // Order matters: apply the local-http opt-in first so a manifest_url
+  // pointing at a LAN server in the same request validates correctly.
+  if (input["local_http_allowed"].is<bool>()) {
+    securacv_ota_set_local_http_allowed(input["local_http_allowed"].as<bool>());
+  }
+
+  if (input["manifest_url"].is<const char*>()) {
+    const char* url = input["manifest_url"].as<const char*>();
+    if (securacv_ota_set_manifest_url(url) != ESP_OK) {
+      return http_send_error(req, 400, "url_rejected");
+    }
+    log_health(LOG_LEVEL_INFO, LOG_CAT_USER, "OTA manifest URL changed",
+               (url && url[0]) ? "override" : "default");
+  }
+
+  if (input["auto_update"].is<bool>()) {
+    securacv_ota_set_auto_update(input["auto_update"].as<bool>());
+  }
+
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["message"] = "Update settings saved.";
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+#endif // FEATURE_OTA_PULL
 
 #if FEATURE_CAMERA_PEEK
 static esp_err_t handle_peek_start(httpd_req_t* req) {

@@ -551,7 +551,14 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
 - CAP-aligned wire fields. Always `scope = Private`. Never IPAWS/WEA/EAS.
 - NFPA-72-style supervised health state surface: `Normal | Trouble | Alarm |
   Supervisory`. Daily `BEACON_MSG_SELFTEST_OK` heartbeat.
-- Append-only chain-hashed audit log of every Beacon received.
+- Append-only chain-hashed audit log of every Beacon received. Two storage
+  tiers (AGENTS.md *Beacon channel invariants* item 9): the log of record is
+  `/beacon/audit.jsonl` on SD — pure append, never pruned/truncated/rotated,
+  tamper-evident via the embedded signatures and chain hashes — with a
+  64-entry flash-encrypted NVS ring as the bounded recent-view cache. The
+  chain head spans every entry ever appended, so continuity stays provable
+  past the ring boundary; SD-less devices keep chaining and raise a one-time
+  `STORAGE` health warning.
 - CAP gateway interop (inbound and outbound) specified
   (`spec/beacon_cap_gateway_v0.md`) but not implemented in v0.
 

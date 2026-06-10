@@ -346,59 +346,78 @@ static const char* confidence_name(ConfidenceClass conf) {
   }
 }
 
-// Fusion head: combines BLE, WiFi, CSI motion, and CSI breathing into a
-// single confidence class.
+// Breathing from WiFi-CSI is not yet validated as a usable signal, so it is
+// gated OUT of the presence decision and reserved for a future dedicated
+// sensor (e.g. a paired 24 GHz mmWave heart/breath module). The breathing
+// score is still captured for introspection (see current_csi_breathing_score).
+// Flip this to true only once a real, bench-validated breathing source exists.
+static const bool    CSI_BREATHING_FUSION_ENABLED = false;
+static const uint8_t CSI_BREATHING_MIN = 25;  // gate, used only when enabled
+
+// Fusion head: combines BLE, WiFi, and CSI motion into a single confidence
+// class. (Breathing is intentionally excluded — see CSI_BREATHING_FUSION_ENABLED.)
 //
-// Backwards-compatibility: when `csi_motion` and `csi_breathing` are 0
-// (CSI not wired, or stale feed), the result matches the Phase-0 scorer
-// exactly. This keeps v0 behavior frozen until Phase 6 swaps in the
-// learned anomaly model.
+// Backwards-compatibility: when `csi_motion` is 0 (CSI not wired or stale feed),
+// the result matches the Phase-0 RF-only scorer exactly — the CSI-less path is
+// frozen.
 //
 // Weights rationale:
-//   • CSI motion is the strongest signal — it works even when a visitor
-//     has no broadcasting device (e.g. a courier with the phone in a
-//     Faraday pocket). It gets weight 0.6 at max.
-//   • Breathing is a minor positive signal for *sustained* presence; we
-//     use it as a tie-breaker, weight 0.1.
-//   • BLE and WiFi retain their original weights so a CSI-less device
-//     (ESP32-C3 without HT40 CSI, say) keeps the v0 behavior.
+//   • BLE / WiFi / RSSI keep their original v0 weights (`rf_score`), so a
+//     CSI-less device (ESP32-C3 without HT40 CSI) is unchanged.
+//   • CSI motion is the strongest *added* signal — it works even when a visitor
+//     has no broadcasting device (a courier with the phone in a Faraday pocket).
+//     It contributes up to 0.6; >= CSI_MOTION_CONFIRM is standalone-strong.
+//   • Calibration guard (C1): the additive model is NOT normalized, so without a
+//     guard weak evidence stacks to CONF_HIGH (one stray advert + HVAC air
+//     movement). Assist-range motion alone may not push a weak RF environment to
+//     HIGH. Real weight recalibration is bench-pending.
 static ConfidenceClass calc_confidence(uint8_t ble_count,
                                        uint8_t probe_bursts,
                                        int8_t  rssi_mean,
                                        uint8_t csi_motion = 0,
                                        uint8_t csi_breathing = 0) {
-  float score = 0.0f;
-
-  // BLE sustained presence (weight 1.0)
+  // v0 RF-only score (BLE + WiFi + RSSI) — frozen.
+  float rf_score = 0.0f;
   if (ble_count > 0) {
-    score += 0.5f + (ble_count > 3 ? 0.5f : ble_count * 0.15f);
+    rf_score += 0.5f + (ble_count > 3 ? 0.5f : ble_count * 0.15f);
   }
-
-  // WiFi probe bursts (weight 0.5)
   if (probe_bursts > 0) {
-    score += 0.3f + (probe_bursts > 2 ? 0.2f : probe_bursts * 0.1f);
+    rf_score += 0.3f + (probe_bursts > 2 ? 0.2f : probe_bursts * 0.1f);
   }
+  if (rssi_mean > -60) rf_score += 0.1f;
 
-  // RSSI strength bonus
-  if (rssi_mean > -60) score += 0.1f;
+  float score = rf_score;
 
-  // CSI motion bonus (weight up to 0.6). Below CSI_MOTION_ASSIST_MIN we
-  // treat it as noise; between MIN and CONFIRM it assists; above CONFIRM
-  // it is standalone evidence of presence.
+  // CSI motion bonus (up to 0.6). Below ASSIST_MIN = noise; ASSIST_MIN..CONFIRM
+  // assists; >= CONFIRM is standalone-strong.
+  bool strong_csi = false;
   if (csi_motion >= CSI_MOTION_ASSIST_MIN) {
     const float m = (float)csi_motion / 100.0f;
-    score += m >= 0.6f ? 0.6f : m;
+    score += (m >= 0.6f) ? 0.6f : m;
+    if (csi_motion >= CSI_MOTION_CONFIRM) strong_csi = true;
   }
 
-  // Breathing is a weak but valuable dwell signal.
-  if (csi_breathing > CSI_MOTION_ASSIST_MIN) {
+  // Breathing: gated out of the decision (unproven — see above).
+  if (CSI_BREATHING_FUSION_ENABLED && csi_breathing >= CSI_BREATHING_MIN) {
     score += 0.1f;
   }
 
-  if (score >= 0.8f) return CONF_HIGH;
-  if (score >= 0.5f) return CONF_MODERATE;
-  if (score >= 0.2f) return CONF_LOW;
-  return CONF_UNCERTAIN;
+  // Hygiene clamp — the additive model has no normalization.
+  if (score > 1.0f) score = 1.0f;
+
+  ConfidenceClass cls = (score >= 0.8f) ? CONF_HIGH
+                      : (score >= 0.5f) ? CONF_MODERATE
+                      : (score >= 0.2f) ? CONF_LOW
+                      : CONF_UNCERTAIN;
+
+  // C1 calibration guard: assist-range CSI motion alone must not create HIGH on
+  // a weak RF environment. Strong RF (rf_score already >= HIGH) and
+  // CONFIRM-level motion are unaffected (and the CSI-less path can't reach this
+  // branch, so v0 classification is preserved exactly).
+  if (cls == CONF_HIGH && !strong_csi && rf_score < 0.8f) {
+    cls = CONF_MODERATE;
+  }
+  return cls;
 }
 
 // Helper: returns the current CSI motion score if a recent feed is valid,
@@ -635,23 +654,35 @@ static void fsm_tick(uint32_t now_ms) {
 
   switch (s_state) {
     case RF_EMPTY:
-      if (can_transition && (device_count >= s_settings.min_presence_count || s_probe_burst_count > 0)) {
+      if (can_transition && (device_count >= s_settings.min_presence_count ||
+                             s_probe_burst_count > 0 ||
+                             active_csi_motion(now_ms) >= CSI_MOTION_CONFIRM)) {
         transition_to(RF_IMPULSE, now_ms);
         if (s_settings.emit_impulse_events) {
-          emit_event("rf_impulse", s_probe_burst_count > 0 ? SIG_WIFI : SIG_BLE, device_count);
+          // Attribute to the actual source; a CSI-only impulse is FUSED, not WiFi.
+          SignalSource src = s_probe_burst_count > 0 ? SIG_WIFI
+                           : (device_count > 0 ? SIG_BLE : SIG_FUSED);
+          emit_event("rf_impulse", src, device_count);
         }
       }
       break;
 
     case RF_IMPULSE:
-      if (device_count < s_settings.min_presence_count && s_probe_burst_count == 0) {
+      // A *fading* impulse — no devices, no probe bursts, no confirmed CSI
+      // motion — drops back to EMPTY. IMPULSE_TIMEOUT_MS (5 s) caps only such
+      // fading impulses; a signal that sustains legitimately rides to
+      // PRESENCE_THRESHOLD_MS (so it is not a universal 5 s impulse ceiling).
+      if (device_count < s_settings.min_presence_count && s_probe_burst_count == 0 &&
+          active_csi_motion(now_ms) < CSI_MOTION_CONFIRM) {
         if (can_transition) {
           transition_to(RF_EMPTY, now_ms);
         }
       } else if (state_duration >= s_settings.presence_threshold_ms) {
         transition_to(RF_PRESENCE, now_ms);
         emit_event("rf_presence_started", SIG_FUSED, device_count);
-      } else if (state_duration >= IMPULSE_TIMEOUT_MS && device_count < s_settings.min_presence_count) {
+      } else if (state_duration >= IMPULSE_TIMEOUT_MS &&
+                 device_count < s_settings.min_presence_count &&
+                 active_csi_motion(now_ms) < CSI_MOTION_CONFIRM) {
         if (can_transition) {
           transition_to(RF_EMPTY, now_ms);
         }
@@ -660,10 +691,11 @@ static void fsm_tick(uint32_t now_ms) {
 
     case RF_PRESENCE:
       if (device_count < s_settings.min_presence_count) {
-        if (state_duration >= s_settings.lost_timeout_ms) {
-          transition_to(RF_EMPTY, now_ms);
-          emit_event("rf_presence_ended", SIG_FUSED, -prev_count);
-        } else if (can_transition) {
+        // Signal dropped — enter DEPARTING, which re-stamps s_state_enter_ms so
+        // the lost-timeout grace is measured from the moment the signal was lost
+        // (not from when presence began — which previously made a long presence
+        // collapse straight to EMPTY with zero grace).
+        if (can_transition) {
           transition_to(RF_DEPARTING, now_ms);
           emit_event("rf_departing", SIG_BLE, device_count - prev_count);
         }
@@ -686,7 +718,9 @@ static void fsm_tick(uint32_t now_ms) {
         if (can_transition) {
           transition_to(RF_PRESENCE, now_ms);
         }
-      } else if (state_duration >= DEPARTING_CONFIRM_MS) {
+      } else if (state_duration >= s_settings.lost_timeout_ms) {
+        // Signal absent for the full lost-timeout (measured from when it
+        // dropped, i.e. DEPARTING entry) -> declare empty.
         transition_to(RF_EMPTY, now_ms);
         emit_event("rf_presence_ended", SIG_FUSED, -prev_count);
       }
@@ -1122,13 +1156,12 @@ void feed_csi_window(const ::csi_features_t* features) {
   s_csi_breathing_score  = (uint8_t)breath;
   s_csi_last_feed_ms     = millis();
 
-  // Boost the FSM toward IMPULSE if CSI is shouting but BLE/WiFi are quiet.
-  // This is the "courier with a Faraday pocket" case — motion is real but
-  // no device is broadcasting. We nudge but never force a transition; the
-  // FSM still requires its own state_duration threshold to confirm.
-  if (motion >= CSI_MOTION_CONFIRM && s_state == RF_EMPTY) {
-    s_probe_burst_count = (s_probe_burst_count < 2) ? 2 : s_probe_burst_count;
-  }
+  // The "courier with a Faraday pocket" case — strong CSI motion with no
+  // broadcasting device — is handled directly by the FSM, which reads
+  // active_csi_motion() at the EMPTY->IMPULSE edge (and keeps IMPULSE alive
+  // while CSI motion is confirmed). We no longer overload the WiFi probe
+  // counter, which previously mis-attributed a CSI-only event as a WiFi probe
+  // burst in the confidence score and emitted signal source.
 }
 
 // ────────────────────────────────────────────────────────────────────────────

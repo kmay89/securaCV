@@ -19,6 +19,16 @@
 > (see the bench runbook). Pre-bench, we land the code so it builds CI-green; the dashboard cell
 > flips to ✅ when the bench test backs it.
 
+> **Reconciliation note (2026-06-10, signed pull-OTA):** the OTA gap closed
+> in BOTH trees at once via the shared engine at `firmware/common/ota/`
+> (HTTPS manifest pull, Ed25519 release signature, A/B rollback, HA `update`
+> entity, local-server option). canary consumes it through
+> `build_src_filter`; canary-wap carries committed copies guarded by
+> `firmware/scripts/check_ota_sync.sh` — the same committed-copy pattern as
+> CSI and the boot banner. The release public key header is part of the
+> sync set so one release signature serves pull-OTA on both trees AND the
+> WAP's BLE OTA. End-to-end flow: `docs/firmware_ota.md`.
+
 ---
 
 ## 1. Where the two trees disagree today
@@ -39,6 +49,16 @@ is already at parity ✅) are omitted.
 > is the **chirp + RF-presence `.cpp` bodies** (the `[env:full]` `FEATURE_CHIRP`/`FEATURE_RF_PRESENCE`
 > flags are set but inert — `firmware/canary/src/` has no references; bodies live only in the
 > Arduino tree).
+
+> **Chirp API consolidation (2026-06-09):** the chirp **API** was consolidated as a precursor to
+> the body port. `firmware/common/chirp/chirp_channel.h` is ratified as the **single canonical
+> C-ABI chirp-channel API** (already consumed by the canary-wap PIO lane); the Arduino
+> `chirp_channel::` C++ namespace (in that lane's `mesh_network.h` + `chirp_channel.cpp`) is the
+> reference implementation to adapt, and `chirp_api.h` (HTTP layer) / `ble_chirp.h` (separate BLE
+> feature) are adjacent surfaces, not competing core APIs. The catalog + the
+> dependency-adaptation map for the future `securacv_chirp` body live in
+> [`../firmware/common/chirp/README.md`](common/chirp/README.md). **API only — no body landed
+> yet**, so the dashboard/scorecard chirp cells stay ⚠️/☐.
 
 ### Group A — Arduino has it, ACTIVE is partial/absent → **port INTO ACTIVE**
 

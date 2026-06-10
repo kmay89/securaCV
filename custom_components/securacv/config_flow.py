@@ -24,8 +24,10 @@ from .const import (
     CONF_ENABLE_MQTT,
     CONF_SETUP_MODE,
     CONF_ADAPTER_STATS_URL,
+    CONF_TOKEN_FILE,
     DEFAULT_KERNEL_URL,
     DEFAULT_MQTT_PREFIX,
+    DEFAULT_TOKEN_FILE,
     SETUP_MODE_MQTT,
     SETUP_MODE_KERNEL,
     SETUP_MODE_BOTH,
@@ -47,13 +49,31 @@ async def _async_validate_kernel(hass: HomeAssistant, data: dict[str, Any]) -> N
     from . import SecuraCVApi, SecuraCVApiAuthError, SecuraCVApiError
 
     session = async_get_clientsession(hass)
-    api = SecuraCVApi(data[CONF_URL], data[CONF_TOKEN], session)
+    api = SecuraCVApi(
+        data[CONF_URL],
+        data.get(CONF_TOKEN, ""),
+        session,
+        token_file=data.get(CONF_TOKEN_FILE),
+    )
     try:
         await api.async_get_events()
     except SecuraCVApiAuthError as err:
         raise InvalidAuth from err
     except SecuraCVApiError as err:
         raise CannotConnect from err
+
+
+def _kernel_auth_errors(user_input: dict[str, Any]) -> dict[str, str]:
+    """Require at least one of static token / token file.
+
+    The kernel rotates its capability token every 10 minutes, so the token
+    file (which the add-on rewrites at /config/api_token) is the resilient
+    choice; a static token alone is only useful for remote kernels whose
+    token file HA cannot read.
+    """
+    if not user_input.get(CONF_TOKEN) and not user_input.get(CONF_TOKEN_FILE):
+        return {"base": "token_required"}
+    return {}
 
 
 class SecuraCVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -133,22 +153,26 @@ class SecuraCVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            try:
-                await _async_validate_kernel(self.hass, user_input)
-            except CannotConnect:
-                errors["base"] = "cannot_connect"
-            except InvalidAuth:
-                errors["base"] = "invalid_auth"
-            else:
+            errors = _kernel_auth_errors(user_input)
+            if not errors:
+                try:
+                    await _async_validate_kernel(self.hass, user_input)
+                except CannotConnect:
+                    errors["base"] = "cannot_connect"
+                except InvalidAuth:
+                    errors["base"] = "invalid_auth"
+            if not errors:
                 await self.async_set_unique_id(user_input[CONF_URL])
                 self._abort_if_unique_id_configured()
 
                 data = {
                     CONF_URL: user_input[CONF_URL],
-                    CONF_TOKEN: user_input[CONF_TOKEN],
+                    CONF_TOKEN: user_input.get(CONF_TOKEN, ""),
                     CONF_ENABLE_MQTT: False,
                     CONF_SETUP_MODE: SETUP_MODE_KERNEL,
                 }
+                if user_input.get(CONF_TOKEN_FILE):
+                    data[CONF_TOKEN_FILE] = user_input[CONF_TOKEN_FILE]
                 if user_input.get(CONF_ADAPTER_STATS_URL):
                     data[CONF_ADAPTER_STATS_URL] = user_input[CONF_ADAPTER_STATS_URL]
                 return self.async_create_entry(title="SecuraCV", data=data)
@@ -156,7 +180,8 @@ class SecuraCVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         data_schema = vol.Schema(
             {
                 vol.Required(CONF_URL, default=DEFAULT_KERNEL_URL): str,
-                vol.Required(CONF_TOKEN): str,
+                vol.Optional(CONF_TOKEN_FILE, default=DEFAULT_TOKEN_FILE): str,
+                vol.Optional(CONF_TOKEN): str,
                 vol.Optional(CONF_ADAPTER_STATS_URL): str,
             }
         )
@@ -174,25 +199,29 @@ class SecuraCVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            try:
-                await _async_validate_kernel(self.hass, user_input)
-            except CannotConnect:
-                errors["base"] = "cannot_connect"
-            except InvalidAuth:
-                errors["base"] = "invalid_auth"
-            else:
+            errors = _kernel_auth_errors(user_input)
+            if not errors:
+                try:
+                    await _async_validate_kernel(self.hass, user_input)
+                except CannotConnect:
+                    errors["base"] = "cannot_connect"
+                except InvalidAuth:
+                    errors["base"] = "invalid_auth"
+            if not errors:
                 await self.async_set_unique_id(user_input[CONF_URL])
                 self._abort_if_unique_id_configured()
 
                 data = {
                     CONF_URL: user_input[CONF_URL],
-                    CONF_TOKEN: user_input[CONF_TOKEN],
+                    CONF_TOKEN: user_input.get(CONF_TOKEN, ""),
                     CONF_ENABLE_MQTT: True,
                     CONF_MQTT_PREFIX: user_input.get(
                         CONF_MQTT_PREFIX, DEFAULT_MQTT_PREFIX
                     ),
                     CONF_SETUP_MODE: SETUP_MODE_BOTH,
                 }
+                if user_input.get(CONF_TOKEN_FILE):
+                    data[CONF_TOKEN_FILE] = user_input[CONF_TOKEN_FILE]
                 if user_input.get(CONF_ADAPTER_STATS_URL):
                     data[CONF_ADAPTER_STATS_URL] = user_input[CONF_ADAPTER_STATS_URL]
                 return self.async_create_entry(title="SecuraCV", data=data)
@@ -200,7 +229,8 @@ class SecuraCVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         data_schema = vol.Schema(
             {
                 vol.Required(CONF_URL, default=DEFAULT_KERNEL_URL): str,
-                vol.Required(CONF_TOKEN): str,
+                vol.Optional(CONF_TOKEN_FILE, default=DEFAULT_TOKEN_FILE): str,
+                vol.Optional(CONF_TOKEN): str,
                 vol.Optional(CONF_MQTT_PREFIX, default=DEFAULT_MQTT_PREFIX): str,
                 vol.Optional(CONF_ADAPTER_STATS_URL): str,
             }

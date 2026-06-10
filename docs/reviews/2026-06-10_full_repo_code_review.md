@@ -175,7 +175,7 @@ a proper reauth flow, or an opt-in long-lived token in the kernel.
 |---|---|---|---|
 | Opera mesh (ESP-NOW) | `spec/canary_mesh_network_v0.md` | `mesh_network.cpp` (Arduino tree) + `firmware/canary/lib/securacv_mesh/` (pairing, sessions, envelopes, beacons, host tests) | **Code-complete, bench-gated.** Ed25519 challenge-response, X25519 ECDH, ChaCha20-Poly1305, opera-secret rotation on peer removal, flash-encryption requirement enforced. Never validated on ≥2 physical devices. WiFi-AP bridge relay and BLE fallback are spec-only. |
 | Chirp channel | `spec/chirp_channel_v0.md` | `chirp_channel.cpp` | **Code-complete, hardened (audits C1–C14 closed in code), bench-gated.** No two-board test yet. |
-| Beacon (life-safety) | `spec/beacon_channel_v0.md` | `beacon_channel.{h,cpp}` | **Scaffold**, `FEATURE_BEACON_CHANNEL` default OFF. Not v1 material. Two conformance gaps vs the repo's own mandates if it is ever enabled: the audit log is a 64-entry overwrite ring (`beacon_channel.cpp:82-91`) although `AGENTS.md` item 9 mandates append-only/export-only, and the self-test interval is 24 h (`beacon_channel.h:52`, used at `beacon_channel.cpp:928`) although `AGENTS.md` item 12 mandates NFPA-72 monthly waking-hours cadence. Must be fixed before the flag ships ON. |
+| Beacon (life-safety) | `spec/beacon_channel_v0.md` | `beacon_channel.{h,cpp}` | **Scaffold**, `FEATURE_BEACON_CHANNEL` default OFF. Not v1 material. *Post-review corrections:* the item-12 concern was a false positive — the **audible** self-test chirp is already monthly/waking-hours/SNTP-gated (`canary_wap.ino:7649-7706`); the 24 h `SELFTEST_INTERVAL_MS` is the **radio** supervision heartbeat that the 36 h neighbor-gap trouble detection requires. The item-9 gap (64-entry overwrite ring vs append-only mandate) was real and is now **fixed**: the log of record is an append-only SD JSONL file with the NVS ring demoted to a recent-view cache (`beacon_channel.cpp::sd_append_audit_entry`), and a `FEATURE_BEACON_CHANNEL=1` CI compile gate was added. |
 | Gossip replication | `spec/gossip_replication_v0.md` | none found | **Spec-only** (spec itself says optional, off by default). |
 | Co-signing | `spec/co_signing.md` | none found | **Spec-only** (kernel-side design doc). |
 
@@ -211,11 +211,10 @@ placeholder-seed rejection (`src/lib.rs:2271-2289`); zeroized key buffers.
 | Anonymous loopback MQTT in compose stack | `integrations/ha_frigate_mqtt/` | Fine single-host; document the LAN caveat |
 | Break-glass web UI is days old | PRs #739–741 | Design is sound; needs soak time / adversarial review |
 
-No critical vulnerabilities were found **in default builds**. Builds that enable the
-non-default `FEATURE_BEACON_CHANNEL` flag inherit the Beacon conformance gaps noted in §6
-(overwrite-ring audit log and 24 h self-test interval, both contrary to `AGENTS.md` items
-9 and 12); those are release blockers for any Beacon-enabled firmware, not for v1's
-default-OFF configuration.
+No critical vulnerabilities were found **in default builds**. *(Post-review update:
+the Beacon conformance gaps originally noted here are resolved — the audit log is now
+SD append-only per `AGENTS.md` item 9, and the item-12 self-test concern was a false
+positive; see the corrected Beacon row in §6.)*
 
 ---
 

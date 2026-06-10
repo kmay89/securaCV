@@ -43,17 +43,37 @@ static char s_topic_avail[64];
 static char s_topic_mic_state[64];   // retained state for the HA switch
 static char s_topic_mic_cmd[64];     // HA writes "mute"/"unmute" here
 static char s_topic_audio_test_cmd[64];  // HA writes "start" to kick selftest
+#if FEATURE_OTA_PULL
+static char s_topic_update_state[64];     // retained JSON for the HA update entity
+static char s_topic_update_cmd[64];       // HA writes "install" here
+static char s_topic_update_auto_state[64];// retained ON/OFF for the auto switch
+static char s_topic_update_auto_cmd[64];  // HA writes ON/OFF here
+#endif
 
 // Application-supplied callback for inbound mic mute commands.
 static mqtt_mic_mute_cmd_cb_t s_mic_mute_cmd_cb = nullptr;
 // Application-supplied callback for inbound audio self-test commands.
 static mqtt_audio_test_cmd_cb_t s_audio_test_cmd_cb = nullptr;
+#if FEATURE_OTA_PULL
+// Application-supplied callbacks for the firmware update entity.
+static mqtt_ota_install_cmd_cb_t s_ota_install_cmd_cb = nullptr;
+static mqtt_ota_auto_cmd_cb_t s_ota_auto_cmd_cb = nullptr;
+#endif
 
 // Last mic mute state the app published. Stashed so we can republish it
 // on every successful (re)connect, otherwise HA's switch entity would
 // stay "unknown" after a broker restart until the next toggle.
 static bool s_last_mic_muted = false;
 static bool s_mic_state_ever_set = false;
+
+#if FEATURE_OTA_PULL
+// Same republish-on-reconnect treatment for the update entity + auto
+// switch — without it both sit at "unknown" after a broker restart.
+static char s_last_update_state[512] = {0};
+static bool s_update_state_ever_set = false;
+static bool s_last_update_auto = false;
+static bool s_update_auto_ever_set = false;
+#endif
 
 // Reconnect backoff
 static uint32_t s_reconnect_delay_ms = MQTT_RECONNECT_MIN_MS;
@@ -85,6 +105,16 @@ static void build_topics(const char* device_id) {
   snprintf(s_topic_mic_cmd,   sizeof(s_topic_mic_cmd),   "securacv/%s/mic/cmd",   device_id);
   snprintf(s_topic_audio_test_cmd, sizeof(s_topic_audio_test_cmd),
            "securacv/%s/audio/test/cmd", device_id);
+#if FEATURE_OTA_PULL
+  snprintf(s_topic_update_state, sizeof(s_topic_update_state),
+           "securacv/%s/update/state", device_id);
+  snprintf(s_topic_update_cmd, sizeof(s_topic_update_cmd),
+           "securacv/%s/update/cmd", device_id);
+  snprintf(s_topic_update_auto_state, sizeof(s_topic_update_auto_state),
+           "securacv/%s/update/auto/state", device_id);
+  snprintf(s_topic_update_auto_cmd, sizeof(s_topic_update_auto_cmd),
+           "securacv/%s/update/auto/cmd", device_id);
+#endif
 }
 
 // Inbound MQTT message dispatcher. Currently the only subscribed topic
@@ -112,6 +142,51 @@ static void on_mqtt_message(char* topic, byte* payload, unsigned int len) {
     }
     return;
   }
+
+#if FEATURE_OTA_PULL
+  // Firmware update entity Install button — HA publishes literal
+  // "install". Same token-boundary tightness as the parsers around it
+  // so "installer" or a mangled payload can't trigger a flash cycle.
+  if (strcmp(topic, s_topic_update_cmd) == 0) {
+    const byte* p = payload;
+    unsigned int n = len;
+    while (n > 0 && (*p == ' ' || *p == '\t' || *p == '"')) { p++; n--; }
+    const bool boundary_ok = (n == 7) ||
+        (n > 7 && (p[7] == ' '  || p[7] == '\t' || p[7] == '\r' ||
+                   p[7] == '\n' || p[7] == '"'  || p[7] == '}'  ||
+                   p[7] == '\0'));
+    if (n >= 7 && memcmp(p, "install", 7) == 0 && boundary_ok &&
+        s_ota_install_cmd_cb) {
+      s_ota_install_cmd_cb();
+    }
+    return;
+  }
+
+  // Auto-update switch — HA's default ON/OFF switch payloads.
+  if (strcmp(topic, s_topic_update_auto_cmd) == 0) {
+    const byte* p = payload;
+    unsigned int n = len;
+    while (n > 0 && (*p == ' ' || *p == '\t' || *p == '"')) { p++; n--; }
+    auto at_boundary = [](byte c) -> bool {
+      return c == ' ' || c == '\t' || c == '\r' || c == '\n' ||
+             c == '"' || c == '}' || c == '\0';
+    };
+    if (n >= 2 && (p[0] == 'O' || p[0] == 'o') &&
+                  (p[1] == 'N' || p[1] == 'n') &&
+        (n == 2 || at_boundary(p[2]))) {
+      if (s_ota_auto_cmd_cb) s_ota_auto_cmd_cb(true);
+    } else if (n >= 3 && (p[0] == 'O' || p[0] == 'o') &&
+                         (p[1] == 'F' || p[1] == 'f') &&
+                         (p[2] == 'F' || p[2] == 'f') &&
+               (n == 3 || at_boundary(p[3]))) {
+      if (s_ota_auto_cmd_cb) s_ota_auto_cmd_cb(false);
+    } else {
+      log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK,
+                 "MQTT: unrecognised auto-update payload", nullptr);
+    }
+    return;
+  }
+#endif
 
   if (strcmp(topic, s_topic_mic_cmd) != 0) return;
 
@@ -216,6 +291,10 @@ static bool attempt_connect() {
     s_mqtt.setCallback(on_mqtt_message);
     s_mqtt.subscribe(s_topic_mic_cmd, 1);
     s_mqtt.subscribe(s_topic_audio_test_cmd, 1);
+#if FEATURE_OTA_PULL
+    s_mqtt.subscribe(s_topic_update_cmd, 1);
+    s_mqtt.subscribe(s_topic_update_auto_cmd, 1);
+#endif
 
     #if FEATURE_HA_DISCOVERY
     mqtt_send_ha_discovery(s_device_id, s_firmware_version);
@@ -230,6 +309,22 @@ static bool attempt_connect() {
                      s_last_mic_muted ? "muted" : "live",
                      /*retain*/ true);
     }
+
+#if FEATURE_OTA_PULL
+    // Same reconcile-after-broker-restart treatment for the firmware
+    // update entity and the auto-update switch.
+    if (s_update_state_ever_set) {
+      s_mqtt.publish(s_topic_update_state,
+                     (const uint8_t*)s_last_update_state,
+                     strlen(s_last_update_state),
+                     /*retain*/ true);
+    }
+    if (s_update_auto_ever_set) {
+      s_mqtt.publish(s_topic_update_auto_state,
+                     s_last_update_auto ? "ON" : "OFF",
+                     /*retain*/ true);
+    }
+#endif
 
     return true;
   }
@@ -456,6 +551,39 @@ void mqtt_set_mic_mute_cmd_callback(mqtt_mic_mute_cmd_cb_t cb) {
 void mqtt_set_audio_test_cmd_callback(mqtt_audio_test_cmd_cb_t cb) {
   s_audio_test_cmd_cb = cb;
 }
+
+#if FEATURE_OTA_PULL
+
+bool mqtt_publish_update_state(const char* json_payload) {
+  if (json_payload == nullptr) return false;
+  /* Cache for the reconnect republish, then publish retained so HA's
+   * update entity reflects the right state across broker restarts. */
+  strncpy(s_last_update_state, json_payload, sizeof(s_last_update_state) - 1);
+  s_last_update_state[sizeof(s_last_update_state) - 1] = '\0';
+  s_update_state_ever_set = true;
+  if (!s_mqtt.connected()) return false;
+  return s_mqtt.publish(s_topic_update_state,
+                        (const uint8_t*)s_last_update_state,
+                        strlen(s_last_update_state),
+                        /*retain*/ true);
+}
+
+bool mqtt_publish_update_auto_state(bool enabled) {
+  s_last_update_auto = enabled;
+  s_update_auto_ever_set = true;
+  if (!s_mqtt.connected()) return false;
+  return s_mqtt.publish(s_topic_update_auto_state, enabled ? "ON" : "OFF", true);
+}
+
+void mqtt_set_ota_install_cmd_callback(mqtt_ota_install_cmd_cb_t cb) {
+  s_ota_install_cmd_cb = cb;
+}
+
+void mqtt_set_ota_auto_cmd_callback(mqtt_ota_auto_cmd_cb_t cb) {
+  s_ota_auto_cmd_cb = cb;
+}
+
+#endif // FEATURE_OTA_PULL
 
 // ════════════════════════════════════════════════════════════════════════════
 // HA MQTT DISCOVERY
@@ -818,6 +946,51 @@ bool mqtt_send_ha_discovery(const char* device_id, const char* firmware_version)
     serializeJson(doc, payload);
     all_ok = all_ok && publish_discovery("switch", device_id, "mic_mute", payload.c_str());
   }
+
+#if FEATURE_OTA_PULL
+  // ── Update: firmware (signed pull-OTA) ──
+  // HA renders this as a proper update card: installed vs latest version,
+  // release notes, an Install button, and a live progress bar while the
+  // device downloads/verifies/flashes. The state JSON is published by
+  // main.cpp (mqtt_publish_ota_update_state).
+  if (all_ok) {
+    JsonDocument doc;
+    doc["name"] = "Firmware";
+    doc["stat_t"] = s_topic_update_state;
+    doc["cmd_t"] = s_topic_update_cmd;
+    doc["pl_inst"] = "install";
+    doc["dev_cla"] = "firmware";
+    char uid[64];
+    snprintf(uid, sizeof(uid), "securacv_%s_firmware", device_id);
+    doc["uniq_id"] = uid;
+    JsonObject dev = doc["dev"].to<JsonObject>();
+    add_device_info(dev, device_id, firmware_version);
+    String payload;
+    serializeJson(doc, payload);
+    all_ok = all_ok && publish_discovery("update", device_id, "firmware", payload.c_str());
+  }
+
+  // ── Switch: auto-update opt-in ──
+  // When on, the daily check installs new firmware without waiting for
+  // the Install button. Off by default — a witness device should not
+  // reboot unattended unless its owner chose that.
+  if (all_ok) {
+    JsonDocument doc;
+    doc["name"]    = "Auto Update";
+    doc["stat_t"]  = s_topic_update_auto_state;
+    doc["cmd_t"]   = s_topic_update_auto_cmd;
+    doc["ic"]      = "mdi:update";
+    doc["ent_cat"] = "config";
+    char uid[64];
+    snprintf(uid, sizeof(uid), "securacv_%s_auto_update", device_id);
+    doc["uniq_id"] = uid;
+    JsonObject dev = doc["dev"].to<JsonObject>();
+    add_device_info(dev, device_id, firmware_version);
+    String payload;
+    serializeJson(doc, payload);
+    all_ok = all_ok && publish_discovery("switch", device_id, "auto_update", payload.c_str());
+  }
+#endif // FEATURE_OTA_PULL
 
   // ── Binary Sensor: co_alarm (T4 cadence) ──
   // Same naming rationale as the smoke entity above.

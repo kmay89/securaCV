@@ -16,9 +16,11 @@ monolithic **FULL** profile (Mesh + NimBLE + camera + all radios) is **~2.4–2.
 the ~3.0–3.3 MB board‑default app ceiling — see
 [`projects/canary-wap/FLASH_MEMORY_ANALYSIS.md`](projects/canary-wap/FLASH_MEMORY_ANALYSIS.md).
 
-**Consequence:** a FULL binary does **not** fit in a 1.5–1.9 MB OTA app slot. Any A/B OTA layout
-on 8 MB flash necessarily uses sub‑2 MB slots, so **FULL + OTA does not coexist on an 8 MB
-board.** You must choose: FULL *or* OTA on 8 MB — or move FULL to a **16 MB** board to get both.
+**Consequence:** a FULL binary does **not** fit in a 1.5–1.9 MB OTA app slot, so FULL + OTA
+does not coexist with the 4 MB-style layouts below. It **does** coexist with arduino-esp32's
+`default_8MB` table (2 × 3.2 MB `app0`/`app1`, the WAP sketch's board default) — at the cost of
+having **no dedicated data partitions** beyond the stock FATFS region. A 16 MB board remains the
+comfortable answer when FULL needs A/B **plus** a `witness_log`-style partition.
 
 ## Tables shipped in this repo
 
@@ -27,7 +29,16 @@ board.** You must choose: FULL *or* OTA on 8 MB — or move FULL to a **16 MB** 
 | [`canary/partitions_ota.csv`](canary/partitions_ota.csv) | `canary/platformio.ini` (the **ACTIVE/canonical** PlatformIO build) | **4 MB** of 8 | 2 × `0x1E0000` (1.9 MB) | A/B | ❌ no (slots < FULL) |
 | [`projects/canary-ota/partitions.csv`](projects/canary-ota/partitions.csv) | `projects/canary-ota/` (SPECIALIZED OTA A/B subsystem) | 8 MB | factory + A + B, 3 × `0x180000` (1.5 MB) + `witness_log` | factory+A/B | ❌ no (slots < FULL) |
 | [`provisioning/partitions_secure.csv`](provisioning/partitions_secure.csv) | `provisioning/platformio_secure.ini` (Phase‑2 secure/encrypted) | **4 MB** of 8 | 2 × `0x1E0000` (1.9 MB) + `nvs_keys` | A/B | ❌ no (slots < FULL) |
-| _(none pinned)_ board default `default_8MB` | `projects/canary-wap/` Arduino sketch (the real **FULL** build) | 8 MB | 1 × ~3 MB | **none** | ✅ yes (no A/B) |
+| _(none pinned)_ board default `default_8MB` | `projects/canary-wap/` Arduino sketch (the real **FULL** build) | 8 MB | 2 × `0x330000` (3.2 MB) + 9.5 MB FATFS region | A/B (`app0`/`app1`) | ✅ yes (fits a 3.2 MB slot, A/B intact) |
+
+> **Correction (2026-06-10):** arduino-esp32's `default_8MB` table (the
+> XIAO_ESP32S3 board default) has always carried `app0`/`app1` OTA slots of
+> `0x330000` each — it is A/B-capable, which is what the WAP's BLE OTA
+> (`ble_ota.cpp`) and the shared signed pull-OTA engine
+> (`firmware/common/ota/`) write to. CI now enforces both slot budgets
+> (`.github/workflows/firmware.yml`): the canary release image must fit
+> `0x1E0000` and the canary-wap image must fit `0x330000` — an image that
+> exceeds its slot could never be installed over the air.
 
 Note that **two** of the tables (`canary/partitions_ota.csv` and `partitions_secure.csv`) describe
 only a **4 MB** layout — on an 8 MB board they leave half the flash unused. They are correct for
@@ -39,11 +50,11 @@ Choose by what you are shipping:
 
 | Deployment | Flash | Use this layout |
 |---|---|---|
-| **FULL, no OTA** (production WAP today) | 8 MB | Board default `default_8MB` (single ~3 MB app), as `projects/canary-wap/` does. FULL fits; updates are full‑image reflash, not A/B. |
+| **FULL with OTA A/B** (production WAP today) | 8 MB | Board default `default_8MB` (2 × 3.2 MB `app0`/`app1`), as `projects/canary-wap/` does. FULL fits the slot and updates arrive via signed pull-OTA or BLE OTA (see `docs/firmware_ota.md`). |
 | **DEV / release / minimal, with OTA A/B** | 8 MB | [`canary/partitions_ota.csv`](canary/partitions_ota.csv) — 1.9 MB A/B slots. Fits the non‑FULL profiles; **do not** select `[env:full]` against it expecting it to fit. |
 | **Factory‑recovery + A/B + on‑device log** (smaller builds) | 8 MB | [`projects/canary-ota/partitions.csv`](projects/canary-ota/partitions.csv) — adds a `witness_log` data partition that survives OTA. |
 | **Secure / flash‑encrypted** (Phase‑2 provisioning) | 8 MB | Start from [`provisioning/partitions_secure.csv`](provisioning/partitions_secure.csv) but **enlarge the app slots and push subsequent offsets** for an 8 MB target — the committed file is a 4 MB reference (see its in‑file note). |
-| **FULL *and* OTA A/B together** | **16 MB** | Not shipped on 8 MB. Per [roadmap §4.1](../docs/review/02-roadmap.md), move FULL builds to a 16 MB‑flash S3 (e.g. XIAO ESP32‑S3 "Plus") to fit two ≥3 MB app slots **plus** a `witness_log` partition. Keep MINIMAL/DEV on 8 MB. |
+| **FULL + OTA A/B + dedicated `witness_log` partition** | **16 MB** | Not shipped on 8 MB (`default_8MB` gives FULL its A/B slots but no custom data partitions). Per [roadmap §4.1](../docs/review/02-roadmap.md), a 16 MB‑flash S3 (e.g. XIAO ESP32‑S3 "Plus") fits two ≥3 MB app slots **plus** a `witness_log` partition. Keep MINIMAL/DEV on 8 MB. |
 
 ## Rules for editing a partition CSV
 

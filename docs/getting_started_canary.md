@@ -511,6 +511,40 @@ even after a restart.
 
 ---
 
+## Keeping it up to date
+
+You never need to take the Canary down off the shelf — or touch it at
+all — to update its software.
+
+The device checks for new releases once a day. When one is available:
+
+- **In Home Assistant:** the Canary's **Firmware** entity shows "Update
+  available" with the release notes. Press **Install** and watch the
+  progress bar. The device restarts on its own and is back within a
+  minute.
+- **On the device dashboard:** Settings → Device → **Software Update**
+  shows the same thing, with the same one-button install.
+- **Hands-free:** turn on the **Auto Update** switch (per device) and new
+  releases install themselves within a day. It's off by default — your
+  Canary never restarts unattended unless you choose that.
+
+Safety, in plain terms:
+
+- Every update file is checked against a cryptographic signature before
+  it's installed. A tampered or corrupted file is refused.
+- The new software is written **next to** the old one, never over it. If
+  the update fails — even from a power cut mid-install — the Canary
+  starts right back up on its previous software by itself.
+- After installing, the device runs a health check on itself. If anything
+  is wrong, it switches back automatically and tells you why.
+- Every update (and any rollback) is signed into the witness chain, so
+  the record shows exactly when the software changed.
+
+No internet? Updates can also come from a server on your own network —
+see `docs/firmware_ota.md` for the air-gapped setup.
+
+---
+
 ## Recovering the password
 
 If you've lost the printed card:

@@ -17,10 +17,12 @@
  *    surface Trouble if a known set member's selftest is absent for >36h.
  *  - All persistent state is NVS-stored behind the same flash-encryption gate
  *    used by the Opera mesh (audit O2 path).
- *  - The audit log is append-only with per-entry chain-hashing.
+ *  - The audit log is append-only with per-entry chain-hashing: the log of
+ *    record is /beacon/audit.jsonl on SD (pure append — never truncated or
+ *    rotated, per AGENTS.md Beacon invariant 9), with a 64-entry NVS ring
+ *    serving as the bounded recent-view cache for the API/UI.
  *
  * Known limitations (tracked for v0.3):
- *  - The audit log persistence layer is a stub; entries live in RAM only.
  *  - The CAP gateway path is specified in spec/beacon_cap_gateway_v0.md but
  *    not implemented; gateway pubkeys with trust_level == BCN_TRUST_GATEWAY
  *    are accepted in the beacon set but the upstream-signature path is not
@@ -43,6 +45,7 @@
 #include <esp_flash_encrypt.h>
 #include <WiFi.h>
 #include <Preferences.h>
+#include <SD.h>
 #include <mbedtls/sha256.h>
 #include <Ed25519.h>
 #include <Curve25519.h>
@@ -497,6 +500,158 @@ static void recompute_trouble_reasons() {
 // ════════════════════════════════════════════════════════════════════════════
 // AUDIT LOG
 // ════════════════════════════════════════════════════════════════════════════
+//
+// Two storage tiers (AGENTS.md "Beacon channel invariants" item 9 — the
+// audit log is append-only and chain-hashed; no rotate/delete; export-only):
+//
+//   1. SD: /beacon/audit.jsonl — the canonical append-only audit log. One
+//      self-describing JSON line per entry, never truncated or rotated
+//      (beacon traffic is rate-limited to a handful of frames per day, so
+//      unbounded append is ~100 KB/year worst-case). Best-effort: a device
+//      without an SD card keeps chaining (tier 2) and logs one health
+//      warning rather than dropping the alarm path.
+//   2. NVS: a 64-entry ring holding the most recent entries — a bounded
+//      recent-view cache for the REST/UI surface and for alarm-survival
+//      across reboots, NOT the audit log of record. The chain head spans
+//      every entry ever appended, so continuity stays provable even for
+//      entries that have aged out of the ring.
+
+static bool g_audit_sd_warned = false;
+
+// Latch one STORAGE health warning per failure streak — covering every
+// failure mode (no card, mkdir, open, short write), not just CARD_NONE,
+// since the SD file is the audit log of record (codex P2 on #748). A
+// successful append re-arms the latch so a recovered card warns again on
+// the next failure.
+static bool audit_sd_fail(const char* why) {
+  if (!g_audit_sd_warned) {
+    g_audit_sd_warned = true;
+    char msg[128];
+    snprintf(msg, sizeof(msg),
+             "beacon audit: SD log of record unavailable (%s) — "
+             "NVS ring cache only", why);
+    health_log(SCV_LOG_WARNING, SCV_CAT_STORAGE, msg);
+  }
+  return false;
+}
+
+static void audit_hex(char* out, const uint8_t* in, size_t len) {
+  static const char* H = "0123456789abcdef";
+  for (size_t i = 0; i < len; i++) {
+    out[2 * i]     = H[in[i] >> 4];
+    out[2 * i + 1] = H[in[i] & 0x0F];
+  }
+  out[2 * len] = '\0';
+}
+
+static bool audit_unhex(uint8_t* out, const char* in, size_t out_len) {
+  for (size_t i = 0; i < out_len; i++) {
+    uint8_t v = 0;
+    for (int n = 0; n < 2; n++) {
+      const char c = in[2 * i + n];
+      v <<= 4;
+      if (c >= '0' && c <= '9') v |= (uint8_t)(c - '0');
+      else if (c >= 'a' && c <= 'f') v |= (uint8_t)(c - 'a' + 10);
+      else return false;
+    }
+    out[i] = v;
+  }
+  return true;
+}
+
+// Append one entry to the SD audit file. Pure append: no truncation, no
+// rotation (AGENTS item 9). Returns false (after a latched health warning)
+// when no SD card is present or the write fails.
+static bool sd_append_audit_entry(const BeaconAuditEntry* entry,
+                                  const uint8_t* new_chain_head) {
+  if (SD.cardType() == CARD_NONE) return audit_sd_fail("no card");
+  if (!SD.exists("/beacon") && !SD.mkdir("/beacon"))
+    return audit_sd_fail("mkdir /beacon failed");
+
+  char ref_hex[2 * BEACON_NONCE_SIZE + 1];
+  char ofp_hex[2 * DEVICE_FP_SIZE + 1];
+  char cfp_hex[2 * DEVICE_FP_SIZE + 1];
+  char sigo_hex[2 * BEACON_SIGNATURE_SIZE + 1];
+  char sigc_hex[2 * BEACON_SIGNATURE_SIZE + 1];
+  char prev_hex[65];
+  char head_hex[65];
+  audit_hex(ref_hex, entry->canonical.ref_canceled_nonce, BEACON_NONCE_SIZE);
+  audit_hex(ofp_hex, entry->canonical.originator_fp, DEVICE_FP_SIZE);
+  audit_hex(cfp_hex, entry->canonical.cosigner_fp, DEVICE_FP_SIZE);
+  audit_hex(sigo_hex, entry->sig_originator, BEACON_SIGNATURE_SIZE);
+  audit_hex(sigc_hex, entry->sig_cosigner, BEACON_SIGNATURE_SIZE);
+  audit_hex(prev_hex, entry->prev_audit_hash, 32);
+  audit_hex(head_hex, new_chain_head, 32);
+
+  char line[768];
+  const int n = snprintf(
+      line, sizeof(line),
+      "{\"v\":1,\"at\":%llu,\"eff\":%llu,\"exp\":%llu,\"tpl\":%u,"
+      "\"msg\":%u,\"urg\":%u,\"sev\":%u,\"cert\":%u,\"scope\":%u,"
+      "\"detail\":%u,\"hop\":%u,\"ref\":\"%s\",\"ofp\":\"%s\","
+      "\"cfp\":\"%s\",\"sigo\":\"%s\",\"sigc\":\"%s\",\"prev\":\"%s\","
+      "\"head\":\"%s\"}\n",
+      (unsigned long long)entry->received_at,
+      (unsigned long long)entry->canonical.effective,
+      (unsigned long long)entry->canonical.expires,
+      (unsigned)entry->canonical.template_id,
+      (unsigned)entry->canonical.msg_type,
+      (unsigned)entry->canonical.urgency,
+      (unsigned)entry->canonical.severity,
+      (unsigned)entry->canonical.certainty,
+      (unsigned)entry->canonical.scope,
+      (unsigned)entry->canonical.detail_slot,
+      (unsigned)entry->hop_count,
+      ref_hex, ofp_hex, cfp_hex, sigo_hex, sigc_hex, prev_hex, head_hex);
+  if (n <= 0 || (size_t)n >= sizeof(line)) return false;
+
+  // FILE_APPEND opens for write at end-of-file; close after every write so
+  // a power cut at most loses the in-flight line, never the file structure
+  // (same crash model as csi_event_log.cpp).
+  File f = SD.open("/beacon/audit.jsonl", FILE_APPEND);
+  if (!f) return audit_sd_fail("open failed");
+  const size_t wrote = f.write((const uint8_t*)line, (size_t)n);
+  f.close();
+  if (wrote != (size_t)n) return audit_sd_fail("short write (card full?)");
+  g_audit_sd_warned = false;  // healthy again — re-arm the warning latch
+  return true;
+}
+
+// Recover the chain head from the SD log of record at boot: read the tail
+// of /beacon/audit.jsonl and parse the last line's "head" field. The NVS
+// ring is only a cache — if its persistence failed or it was wiped while
+// SD retained later entries, deriving the head from NVS alone would fork
+// the supposedly append-only chain (codex P2 on #748). SD wins on
+// disagreement.
+static bool sd_recover_chain_head(uint8_t out[32]) {
+  if (SD.cardType() == CARD_NONE) return false;
+  File f = SD.open("/beacon/audit.jsonl", FILE_READ);
+  if (!f) return false;
+  const size_t size = f.size();
+  if (size == 0) { f.close(); return false; }
+
+  // Lines are ≤768 bytes; a 1 KiB tail always contains the final line.
+  char tail[1025];
+  const size_t want = (size < 1024) ? size : 1024;
+  if (!f.seek(size - want)) { f.close(); return false; }
+  const size_t got = f.read((uint8_t*)tail, want);
+  f.close();
+  if (got == 0) return false;
+  tail[got] = '\0';
+
+  // Last occurrence of the head field within the tail belongs to the
+  // newest complete line (a torn final line simply won't contain it and
+  // we fall back to the previous line's occurrence — which is exactly the
+  // head that torn line chained from).
+  const char* marker = nullptr;
+  for (const char* p = tail; (p = strstr(p, "\"head\":\"")) != nullptr; p++) {
+    marker = p;
+  }
+  if (!marker) return false;
+  const char* hex = marker + 8;
+  if (strlen(hex) < 64) return false;
+  return audit_unhex(out, hex, 32);
+}
 
 static void chain_audit_entry(BeaconAuditEntry* entry) {
   memcpy(entry->prev_audit_hash, g_audit_chain_head, 32);
@@ -509,9 +664,13 @@ static void chain_audit_entry(BeaconAuditEntry* entry) {
   mbedtls_sha256_finish(&ctx, g_audit_chain_head);
   mbedtls_sha256_free(&ctx);
 
-  // Ring-buffer append: write at g_audit_head, advance head, persist the
-  // single touched slot + head pointer + count. No memmove → on-disk
-  // contents stay consistent with RAM after rotation
+  // Tier 1: append-only SD audit log (the log of record — AGENTS item 9).
+  // Best-effort: failure never blocks the alarm path.
+  sd_append_audit_entry(entry, g_audit_chain_head);
+
+  // Tier 2: NVS recent-view ring cache — write at g_audit_head, advance
+  // head, persist the single touched slot + head pointer + count. No
+  // memmove → on-disk contents stay consistent with RAM after rotation
   // (gemini P1 + codex P2 closure).
   const size_t written_idx = g_audit_head;
   g_audit_log[written_idx] = *entry;
@@ -895,6 +1054,24 @@ bool init(const uint8_t* device_privkey, const uint8_t* device_pubkey,
 
   load_beacon_set();
   load_audit_log();
+
+  // The SD file is the audit log of record; the NVS-derived head is only
+  // as good as the cache's last successful write. If SD has a (different)
+  // head, adopt it so the next append chains from the true tail instead
+  // of forking the chain (codex P2 on #748).
+  {
+    uint8_t sd_head[32];
+    if (sd_recover_chain_head(sd_head) &&
+        memcmp(sd_head, g_audit_chain_head, 32) != 0) {
+      const bool nvs_had_state = (g_audit_log_count > 0);
+      memcpy(g_audit_chain_head, sd_head, 32);
+      if (nvs_had_state) {
+        health_log(SCV_LOG_WARNING, SCV_CAT_STORAGE,
+                   "beacon audit: chain head recovered from SD log of record "
+                   "(NVS ring cache was stale)");
+      }
+    }
+  }
 
   g_initialized = true;
   set_state(BEACON_STATE_DISABLED);

@@ -116,7 +116,35 @@ Full background, threat model, and rotation procedure: see
 | `securacv/{device_id}/chain` | Device → HA | Hash chain state |
 | `securacv/{device_id}/tamper` | Device → HA | Tamper alerts (immediate) |
 | `securacv/{device_id}/availability` | Device → HA | Online/offline (LWT, retained) |
+| `securacv/{device_id}/update/state` | Device → HA | Firmware update entity state (retained) |
+| `securacv/{device_id}/update/cmd` | HA → Device | `install` — start a firmware update |
 | `homeassistant/*/securacv_*/config` | Device → HA | HA MQTT Discovery config (retained) |
+
+---
+
+## Firmware Updates from Home Assistant
+
+Canaries with the signed pull-OTA firmware expose a native **Firmware**
+update entity (plus an **Auto Update** switch) via MQTT Discovery — no
+extra setup needed.
+
+- When a new release is published, the device's update entity shows
+  "Update available" with the release notes. Press **Install**: the device
+  downloads the update over HTTPS, verifies its SHA-256 and Ed25519
+  release signature, installs it to the inactive partition, restarts, and
+  confirms itself healthy. A live progress bar tracks the whole cycle.
+- If the update fails for any reason, the device restores its previous
+  firmware automatically and reports what happened — it cannot be bricked
+  by a bad update, and a forged image can never pass the signature check.
+- Turn on the **Auto Update** switch (per device) to install new releases
+  hands-free within a day of publication. It's off by default — a witness
+  device never restarts unattended unless you choose that.
+- Every update is signed into the device's witness chain
+  (`fw_update_started` / `fw_update_applied` / `fw_update_rolled_back`),
+  so the audit trail proves when firmware changed.
+
+See `docs/firmware_ota.md` for the release pipeline, local/air-gapped
+hosting, and the full security model.
 
 ---
 
@@ -241,7 +269,16 @@ Click **Start**. Check logs for any errors.
 
 1. Go to **Settings → Devices & Services**
 2. Click **Add Integration** and select **SecuraCV**
-3. Provide the Event API URL and token from your kernel instance (MQTT is optional)
+3. Provide the Event API URL and authentication (MQTT is optional):
+   - **API token file (recommended):** the kernel rotates its capability token
+     every 10 minutes and rewrites the token file. When the kernel runs as the
+     add-on, that file is `/config/api_token` (the default), which Home
+     Assistant can read directly — the integration re-reads it automatically
+     whenever the token rotates.
+   - **Static token:** only for kernels on another host whose token file Home
+     Assistant cannot read. A pasted token goes stale at the next rotation
+     (≤10 minutes), so for remote kernels either share the token file (e.g. a
+     mounted volume) or expect to re-authenticate.
 
 ---
 
@@ -523,7 +560,7 @@ the hostname with the reachable IP/DNS name for that host.
 
 ### Authentication
 
-The API uses short-lived capability tokens as **Bearer** credentials. The token is written to `/config/api_token` when the add-on starts and rotates every 10 minutes; read it from the configured token file whenever you need to authenticate. If you run the kernel elsewhere, use the token path or secrets location configured for that deployment.
+The API uses short-lived capability tokens as **Bearer** credentials. The token is written to `/config/api_token` when the add-on starts and rotates every 10 minutes; read it from the configured token file whenever you need to authenticate. If you run the kernel elsewhere, use the token path or secrets location configured for that deployment. The SecuraCV integration handles rotation automatically when configured with the token-file path (its default); scripts and other clients must re-read the file on every `401`.
 The `/health` endpoint is unauthenticated and only reachable on the local loopback interface. Query-string tokens are rejected—send the token only in the `Authorization: Bearer` header.
 
 ```bash

@@ -68,7 +68,10 @@ tagging v1):**
   (see `firmware/projects/canary-wap/ENTERPRISE_READINESS_TODO.md`).
 - **Still open:** all of the above gates are green **in CI**, but the v1 tag also waits on
   **on-device hardware validation** (the kernel/bridge pipeline and firmware exercised on real
-  ESP32 devices, not just CI). Until that's done the README status stays `v1-rc`, the
+  ESP32 devices, not just CI). The concrete procedure, pass/fail criteria, and required
+  artifacts are in [`docs/hardware/v1_bench_validation_runbook.md`](docs/hardware/v1_bench_validation_runbook.md)
+  (Track A: single canary → HA verified-✓; Track B: kernel pipeline smoke; Track C: 2–3 board
+  mesh/chirp fleet). Until that's done the README status stays `v1-rc`, the
   `CHANGELOG.md` `[1.0.0]` entry stays `Unreleased`, and no tag is cut.
 
 ---
@@ -183,6 +186,10 @@ Integration testing
 
 - **WASM sandboxing** — backends are trusted, must be audited
 - **GPU acceleration** — `ort` backend is v1.1
+- **Firmware OTA updates** — `firmware/projects/canary-ota/` is a working standalone
+  engine (manifest fetch, SHA256 verify, A/B rollback) but is not integrated into the
+  canary trees and does not yet Ed25519-sign manifests. Shipping it unsigned would be a
+  security regression, so OTA lands post-v1, signing first.
 - **Encrypted-vault UX / key management** — sealing is wired (opt-in); the trustee/seal setup UI
   and hardware-backed keys are v1.1
 - **Real-time performance guarantees** — benchmark, don't promise
