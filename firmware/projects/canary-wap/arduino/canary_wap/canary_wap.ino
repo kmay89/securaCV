@@ -218,6 +218,17 @@ extern "C" {
 // PDM acoustic event detection (T3 smoke / T4 CO alarm cadences)
 #if FEATURE_ACOUSTIC_EVENTS
 #include "securacv_audio.h"
+
+// Last acoustic event, held for the MQTT /sensing snapshot. Written by
+// the audio event callback and read by the loop's MQTT cadence block —
+// both run on the main task (the callback fires synchronously from
+// audio_process() in loop()), so no atomics are needed. The loop clears
+// the event back to "none" after AUDIO_MQTT_EVENT_HOLD_MS, which flips
+// HA's smoke/CO/knock/doorbell/glass binary sensors OFF.
+static char     g_audio_mqtt_event[20] = "none";
+static uint32_t g_audio_mqtt_event_ms  = 0;
+static bool     g_audio_mqtt_dirty     = false;
+static const uint32_t AUDIO_MQTT_EVENT_HOLD_MS = 30000;
 #endif
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -2977,6 +2988,77 @@ static esp_err_t handle_audio_mute(httpd_req_t* req) {
   snprintf(resp, sizeof(resp), "{\"ok\":true,\"muted\":%s,\"persisted\":%s}",
            muted ? "true" : "false", persisted ? "true" : "false");
   return http_send_json(req, resp);
+}
+
+// GET /api/audio/selftest — self-test progress/result
+// POST /api/audio/selftest — {"action":"start","duration_ms":30000} | {"action":"stop"}
+//
+// Self-test runs the T3/T4 matchers with relaxed timing tolerance so the
+// user can press their smoke/CO alarm's TEST button and watch the device
+// confirm it heard the cadence. The normal event callback is suppressed
+// while active, so a test press never flows into real alarm automations.
+static esp_err_t handle_audio_selftest_get(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  audio_selftest_status_t st;
+  if (!audio_selftest_status(&st)) {
+    return http_send_json(req, "{\"ok\":false,\"error\":\"audio not initialized\"}");
+  }
+
+  char buf[256];
+  int len = snprintf(buf, sizeof(buf),
+    "{"
+    "\"ok\":true,"
+    "\"active\":%s,"
+    "\"matched_type\":%u,"
+    "\"matched_name\":\"%s\","
+    "\"matched_conf\":%u,"
+    "\"remaining_ms\":%u,"
+    "\"transitions_seen\":%u"
+    "}",
+    st.active ? "true" : "false",
+    (unsigned)st.matched_type,
+    audio_event_name(st.matched_type),
+    (unsigned)st.matched_conf,
+    (unsigned)st.remaining_ms,
+    (unsigned)st.transitions_seen);
+
+  if (len <= 0 || len >= (int)sizeof(buf)) {
+    return http_send_json(req, "{\"ok\":false,\"error\":\"buffer overflow\"}");
+  }
+
+  return http_send_json(req, buf);
+}
+
+static esp_err_t handle_audio_selftest_post(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  char buf[96];
+  int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
+  if (ret <= 0) return http_send_error(req, 400, "invalid_body");
+  buf[ret] = '\0';
+
+  JsonDocument body;
+  if (deserializeJson(body, buf) != DeserializationError::Ok) {
+    return http_send_error(req, 400, "invalid_json");
+  }
+  const char* action = body["action"] | (const char*)nullptr;
+  if (!action) return http_send_error(req, 400, "missing_action");
+
+  if (strcmp(action, "start") == 0) {
+    const uint32_t duration_ms = body["duration_ms"] | 30000u;
+    if (!audio_selftest_start(duration_ms)) {
+      // start() refuses while muted or before init — tell the user which.
+      return http_send_error(req, 409,
+          audio_is_muted() ? "mic_muted" : "audio_not_initialized");
+    }
+    return http_send_json(req, "{\"ok\":true,\"active\":true}");
+  }
+  if (strcmp(action, "stop") == 0) {
+    audio_selftest_stop();
+    return http_send_json(req, "{\"ok\":true,\"active\":false}");
+  }
+  return http_send_error(req, 400, "unknown_action");
 }
 #endif
 
@@ -5740,6 +5822,14 @@ static esp_err_t handle_audio_mute_auth(httpd_req_t* req) {
   if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
   return handle_audio_mute(req);
 }
+static esp_err_t handle_audio_selftest_get_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_audio_selftest_get(req);
+}
+static esp_err_t handle_audio_selftest_post_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_audio_selftest_post(req);
+}
 #endif
 
 // Register all route handlers on a given httpd server handle
@@ -5808,6 +5898,12 @@ static void register_api_routes(httpd_handle_t server) {
 
   httpd_uri_t audio_mute_uri = { .uri = "/api/audio/mute", .method = HTTP_POST, .handler = handle_audio_mute_auth };
   httpd_register_uri_handler(server, &audio_mute_uri);
+
+  httpd_uri_t audio_st_get = { .uri = "/api/audio/selftest", .method = HTTP_GET, .handler = handle_audio_selftest_get_auth };
+  httpd_register_uri_handler(server, &audio_st_get);
+
+  httpd_uri_t audio_st_post = { .uri = "/api/audio/selftest", .method = HTTP_POST, .handler = handle_audio_selftest_post_auth };
+  httpd_register_uri_handler(server, &audio_st_post);
 #endif
 
   httpd_uri_t chain = { .uri = "/api/chain", .method = HTTP_GET, .handler = handle_chain_auth };
@@ -5870,7 +5966,7 @@ static void start_http_server() {
   // Calculate max URI handlers based on feature usage
   const int base_handlers = 39;       // UI (/ + /admin + /settings), API (auth + public), WiFi provisioning, captive/connectivity probes (Apple x2, Android x2, Windows x2), /api/selftest, /api/diagnostics, /api/battery/history, /api/ota/{status,check,install,config}
 #if FEATURE_ACOUSTIC_EVENTS
-  const int audio_handlers = 2;       // /api/audio/status, /api/audio/mute
+  const int audio_handlers = 4;       // /api/audio/{status,mute}, /api/audio/selftest (GET + POST)
 #else
   const int audio_handlers = 0;
 #endif
@@ -7543,6 +7639,12 @@ void setup() {
         #if FEATURE_AUDIBLE_CHIRP
         if (life_safety) audible_chirp::chirp_alert();
         #endif
+        // Hand the event to the MQTT cadence block in loop(), which
+        // publishes the /sensing snapshot HA's binary sensors watch.
+        snprintf(g_audio_mqtt_event, sizeof(g_audio_mqtt_event), "%s",
+                 audio_event_name(evt->event_type));
+        g_audio_mqtt_event_ms = millis();
+        g_audio_mqtt_dirty = true;
       });
       // Sign every mute / unmute toggle into the witness chain so a later
       // operator can verify when the mic was off and which source flipped
@@ -7557,9 +7659,15 @@ void setup() {
         if (cb.ok()) {
           create_witness_record(payload, cb.size(), RECORD_WITNESS_EVENT, &g_last_record);
         }
+        const char* source_name =
+            source == AUDIO_MUTE_SOURCE_BOOT ? "boot" :
+            source == AUDIO_MUTE_SOURCE_MQTT ? "home_assistant" : "dashboard";
         log_health(SCV_LOG_NOTICE, SCV_CAT_USER,
                    muted ? "Microphone muted" : "Microphone unmuted",
-                   source == AUDIO_MUTE_SOURCE_BOOT ? "boot" : "dashboard");
+                   source_name);
+        // Mirror the state to HA's mic-mute switch entity (retained;
+        // cached internally for the reconnect republish).
+        csi_mqtt::publish_mic_state(muted);
       });
       // Honor the user's persisted mute intent. Still single-task here —
       // the HTTP server has not started yet — so the synchronous boot
@@ -7582,6 +7690,10 @@ void setup() {
       } else {
         Serial.println("[WARN] Acoustic detector start failed");
       }
+      // Seed HA's mic-mute switch with the boot state. The broker isn't
+      // connected yet; csi_mqtt caches the value and republishes it
+      // retained on MQTT_EVENT_CONNECTED.
+      csi_mqtt::publish_mic_state(audio_is_muted());
     } else {
       Serial.println("[WARN] Acoustic detector init failed");
     }
@@ -8363,6 +8475,66 @@ void loop() {
       csi_mqtt::publish_health((uint32_t)ESP.getFreeHeap(),
                                (uint32_t)uptime_seconds());
     }
+
+#if FEATURE_ACOUSTIC_EVENTS
+    // Drain HA's mic-mute switch commands. audio_mute() defers the I2S
+    // toggle to the next audio_process() tick; the mute callback then
+    // signs the witness record and mirrors mic/state back to HA.
+    {
+      const int mic_cmd = csi_mqtt::take_pending_mic_mute();
+      if (mic_cmd >= 0) {
+        const bool want_mute = (mic_cmd == 1);
+        if (audio_mute(want_mute, AUDIO_MUTE_SOURCE_MQTT)) {
+          if (!audio_save_mute_intent(want_mute)) {
+            log_health(SCV_LOG_WARNING, SCV_CAT_STORAGE,
+                       "Mic mute intent NOT persisted", "NVS write failed");
+          }
+        }
+      }
+    }
+    // Acoustic /sensing snapshot: publish immediately when an event
+    // lands, once more to clear it back to "none" after the 30 s hold,
+    // and every 60 s as a counters/mute heartbeat. HA's smoke/CO/
+    // knock/doorbell/glass binary sensors template on acoustic_event.
+    {
+      static uint32_t s_mqtt_sensing_ms = 0;
+      static bool s_sensing_event_held = false;
+      const bool event_fresh = (g_audio_mqtt_event_ms != 0) &&
+          (now - g_audio_mqtt_event_ms) < AUDIO_MQTT_EVENT_HOLD_MS;
+      const bool need_clear = s_sensing_event_held && !event_fresh;
+      if (g_audio_mqtt_dirty || need_clear ||
+          (now - s_mqtt_sensing_ms >= 60000UL)) {
+        g_audio_mqtt_dirty = false;
+        s_mqtt_sensing_ms = now;
+        s_sensing_event_held = event_fresh;
+        audio_stats_t ast = {};
+        audio_get_stats(&ast);
+        char sensing_json[320];
+        const int sn = snprintf(sensing_json, sizeof(sensing_json),
+          "{"
+            "\"acoustic_event\":\"%s\","
+            "\"mic_muted\":%s,"
+            "\"t3_detected\":%lu,"
+            "\"t4_detected\":%lu,"
+            "\"knock_detected\":%lu,"
+            "\"doorbell_detected\":%lu,"
+            "\"glass_break_detected\":%lu,"
+            "\"i2s_read_errors\":%lu"
+          "}",
+          event_fresh ? g_audio_mqtt_event : "none",
+          audio_is_muted() ? "true" : "false",
+          (unsigned long)ast.t3_detected,
+          (unsigned long)ast.t4_detected,
+          (unsigned long)ast.knock_detected,
+          (unsigned long)ast.doorbell_detected,
+          (unsigned long)ast.glass_break_detected,
+          (unsigned long)ast.i2s_read_errors);
+        if (sn > 0 && sn < (int)sizeof(sensing_json)) {
+          csi_mqtt::publish_sensing(sensing_json);
+        }
+      }
+    }
+#endif
     // Counts + chain: publish on each increment of records_created
     // (saves bandwidth vs. heartbeating, and matches HA's expectation
     // that the topic carries the latest total, not periodic noise).

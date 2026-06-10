@@ -35,6 +35,7 @@
 #ifndef SECURACV_CSI_MQTT_H
 #define SECURACV_CSI_MQTT_H
 
+#include "build_config.h"
 #include "esp_http_server.h"
 #include <csi_event.h>
 #include <stddef.h>
@@ -272,6 +273,36 @@ void publish_beacon_state(const char* state_name,
                           uint32_t beacon_sends,
                           uint8_t beacon_set_size,
                           uint16_t trouble_mask);
+
+#if FEATURE_ACOUSTIC_EVENTS
+/**
+ * ── Acoustic events + microphone mute (PDM mic) ──────────────────────
+ *
+ * publish_sensing pushes the acoustic snapshot to
+ * {prefix}/{device_id}/sensing — retained, caller-built JSON carrying
+ * `acoustic_event` (string enum: smoke_alarm_t3 | co_alarm_t4 | knock |
+ * doorbell | glass_break | none), `mic_muted`, and the detection
+ * counters. The HA integration's smoke/CO/knock/doorbell/glass binary
+ * sensors template against `acoustic_event`, same contract as the
+ * canary core's securacv_mqtt (custom_components/securacv). The caller
+ * owns the 30 s "event then clear back to none" cadence.
+ *
+ * publish_mic_state mirrors the hard-mute switch the same way the
+ * update/auto switch works: retained "muted"/"live" on
+ * {prefix}/{device_id}/mic/state, cached for the reconnect republish.
+ *
+ * Inbound mute commands arrive on {prefix}/{device_id}/mic/cmd
+ * ("mute"/"unmute", or HA's default "ON"/"OFF" where ON = muted) on the
+ * esp_mqtt task; csi_mqtt latches them and the main loop drains via
+ * take_pending_mic_mute — the loop owns the I2S lifecycle, matching the
+ * module's "caller owns the cadence" contract.
+ */
+void publish_sensing(const char* json_payload);
+void publish_mic_state(bool muted);
+
+/** -1 = no command pending; 0 / 1 = HA asked to unmute / mute the mic. */
+int take_pending_mic_mute();
+#endif  /* FEATURE_ACOUSTIC_EVENTS */
 
 /**
  * ── Firmware update entity (signed pull-OTA) ──────────────────────────
