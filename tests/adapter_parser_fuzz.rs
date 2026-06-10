@@ -8,17 +8,19 @@
 //! Deterministic (seeded xorshift, no external fuzzing tooling) so it runs cleanly in CI.
 //!
 //! Run with: `cargo test --test adapter_parser_fuzz \
-//!   --features adapter-webhook,adapter-mqtt-sensor,adapter-ble-presence,adapter-frigate`
+//!   --features adapter-webhook,adapter-mqtt-sensor,adapter-ble-presence,adapter-frigate,adapter-meshtastic`
 
 #![cfg(all(
     feature = "adapter-mqtt-sensor",
     feature = "adapter-webhook",
     feature = "adapter-ble-presence",
-    feature = "adapter-frigate"
+    feature = "adapter-frigate",
+    feature = "adapter-meshtastic"
 ))]
 
 use witness_kernel::adapter::ble_presence::{BlePresenceAdapter, BleRoom};
 use witness_kernel::adapter::frigate::FrigateAdapter;
+use witness_kernel::adapter::meshtastic::{MeshNode, MeshtasticAdapter};
 use witness_kernel::adapter::mqtt_sensor::{MqttSensorAdapter, SensorRoute};
 use witness_kernel::adapter::webhook::WebhookAdapter;
 use witness_kernel::adapter::ClaimKind;
@@ -113,6 +115,37 @@ fn ble_presence_parsing_never_panics_and_respects_threshold() {
         &br#"{"distance":-1e999}"#[..],
     ] {
         let _ = adapter.message_to_claim("espresense/devices/x/lobby", bad);
+    }
+}
+
+#[test]
+fn meshtastic_parsing_never_panics_and_only_maps_configured_nodes() {
+    let (adapter, _tx) = MeshtasticAdapter::new(vec![MeshNode::new(
+        0x7d3a9f7f,
+        witness_kernel::adapter::ClaimKind::PresenceInRestrictedZone,
+        "back_gate",
+    )]);
+    let topics = ["msh/US/2/json/SecuraCV/!aabbccdd", "msh", ""];
+    // A valid detection frame whose bytes get structurally mutated.
+    let fixture = br#"{"from":2100993919,"payload":{"text":"Motion detected"},"snr":11.5,"type":"detection"}"#;
+
+    let mut rng = Rng::new(0x5EC0_7A57);
+    for _ in 0..ITERS {
+        let topic = topics[rng.range(topics.len())];
+        // Alternate fully random payloads with single-byte mutations of the valid fixture, so the
+        // sweep exercises the parser's deep structure as well as its top-level error paths.
+        let payload = if rng.range(2) == 0 {
+            random_payload(&mut rng)
+        } else {
+            let mut p = fixture.to_vec();
+            let i = rng.range(p.len());
+            p[i] = rng.byte();
+            p
+        };
+        // Must not panic; a claim only ever lands in the configured zone.
+        if let Some(claim) = adapter.message_to_claim(topic, &payload) {
+            assert_eq!(claim.zone_label, "back_gate");
+        }
     }
 }
 
