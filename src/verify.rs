@@ -425,6 +425,171 @@ where
     Ok(count)
 }
 
+/// Timeline/coverage audit over an already hash-valid chain.
+///
+/// Hash-chain verification proves interior integrity but cannot see *tail
+/// truncation* (deleting the newest N rows leaves a valid chain) or clock
+/// games. This pass cross-checks the record timeline and returns warnings
+/// (never errors — the chain is still cryptographically valid):
+///
+/// 1. `created_at` regressions (softened when a ClockSkew failure record
+///    exists in the same bucket — then the daemon witnessed the jump itself);
+/// 2. checkpoint `created_at` regressions or far-future stamps;
+/// 3. missing heartbeat buckets inside lifecycle segments where the daemon
+///    was demonstrably running (skipped entirely on chains that predate
+///    heartbeat records);
+/// 4. a stale tail: last lifecycle record is `start` but the newest record is
+///    older than two buckets — possible tail truncation, crash, or a daemon
+///    stopped without a shutdown record.
+///
+/// Warning text carries coarse bucket starts only (safe for API/MQTT export).
+pub fn audit_chain_timeline(conn: &Connection, now_bucket_start: u64) -> Result<Vec<String>> {
+    const BUCKET_S: u64 = 600;
+    let mut warnings = Vec::new();
+
+    let mut stmt =
+        conn.prepare("SELECT id, created_at, payload_json FROM sealed_events ORDER BY id ASC")?;
+    let mut rows = stmt.query([])?;
+
+    let mut prev_created_at: Option<(i64, i64)> = None; // (id, created_at)
+    let mut clock_skew_buckets: Vec<i64> = Vec::new();
+    let mut created_at_regressions: Vec<(i64, i64, i64)> = Vec::new(); // (id, created_at, prev)
+    let mut heartbeat_buckets: Vec<u64> = Vec::new();
+    // Lifecycle segments: (start_bucket, last_record_bucket, closed_cleanly)
+    let mut segments: Vec<(u64, u64, bool)> = Vec::new();
+    let mut last_record_bucket: Option<u64> = None;
+    let mut last_lifecycle_is_start = false;
+
+    while let Some(row) = rows.next()? {
+        let id: i64 = row.get(0)?;
+        let created_at: i64 = row.get(1)?;
+        let payload: String = row.get(2)?;
+
+        if let Some((_, prev)) = prev_created_at {
+            if created_at < prev {
+                created_at_regressions.push((id, created_at, prev));
+            }
+        }
+        prev_created_at = Some((id, created_at));
+
+        let bucket = u64::try_from(created_at).unwrap_or(0);
+        last_record_bucket = Some(bucket);
+        if let Some((_, seg_last, closed)) = segments.last_mut() {
+            if !*closed {
+                *seg_last = bucket;
+            }
+        }
+
+        // Unknown/corrupt payloads were already accepted by hash verification;
+        // the timeline pass only inspects the records it can parse.
+        match SealedLogRecord::deserialize_compat(&payload) {
+            Ok(SealedLogRecord::Heartbeat(h)) => {
+                heartbeat_buckets.push(h.time_bucket.start_epoch_s);
+            }
+            Ok(SealedLogRecord::Lifecycle(l)) => match l.phase {
+                crate::LifecyclePhase::Start => {
+                    segments.push((bucket, bucket, false));
+                    last_lifecycle_is_start = true;
+                }
+                crate::LifecyclePhase::ShutdownClean => {
+                    if let Some((_, seg_last, closed)) = segments.last_mut() {
+                        *seg_last = bucket;
+                        *closed = true;
+                    }
+                    last_lifecycle_is_start = false;
+                }
+            },
+            Ok(SealedLogRecord::Failure(f)) => {
+                if f.failure_type == crate::FailureType::ClockSkew {
+                    clock_skew_buckets.push(created_at);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    for (id, created_at, prev) in created_at_regressions {
+        if clock_skew_buckets.contains(&created_at) || clock_skew_buckets.contains(&prev) {
+            warnings.push(format!(
+                "note: created_at regression at id {} (bucket {} after {}); a ClockSkew \
+                 failure record covers this jump",
+                id, created_at, prev
+            ));
+        } else {
+            warnings.push(format!(
+                "created_at regression at id {} (bucket {} after {}) with no ClockSkew \
+                 record: possible clock tampering or row manipulation",
+                id, created_at, prev
+            ));
+        }
+    }
+
+    // Checkpoint timestamp sanity (created_at here is wall seconds, not a bucket).
+    let mut stmt = conn.prepare("SELECT id, created_at FROM checkpoints ORDER BY id ASC")?;
+    let mut rows = stmt.query([])?;
+    let mut prev_checkpoint_at: Option<i64> = None;
+    let future_limit = now_bucket_start.saturating_add(2 * BUCKET_S) as i64;
+    while let Some(row) = rows.next()? {
+        let id: i64 = row.get(0)?;
+        let created_at: i64 = row.get(1)?;
+        if let Some(prev) = prev_checkpoint_at {
+            if created_at < prev {
+                warnings.push(format!(
+                    "checkpoint {} created_at regressed (possible back-dated checkpoint)",
+                    id
+                ));
+            }
+        }
+        if created_at > future_limit {
+            warnings.push(format!(
+                "checkpoint {} created_at is in the future (possible forged checkpoint)",
+                id
+            ));
+        }
+        prev_checkpoint_at = Some(created_at);
+    }
+
+    // Heartbeat cadence inside lifecycle segments. Skip on chains that predate
+    // heartbeats (no false alarms on old databases).
+    if !heartbeat_buckets.is_empty() {
+        for (seg_start, seg_end, _closed) in &segments {
+            let mut missing: Vec<u64> = Vec::new();
+            let mut bucket = *seg_start;
+            while bucket <= *seg_end {
+                if !heartbeat_buckets.contains(&bucket) {
+                    missing.push(bucket);
+                }
+                bucket += BUCKET_S;
+            }
+            if !missing.is_empty() {
+                warnings.push(format!(
+                    "no heartbeat for {} bucket(s) in {}..{} while the daemon was running: \
+                     possible record deletion",
+                    missing.len(),
+                    seg_start,
+                    seg_end
+                ));
+            }
+        }
+    }
+
+    // Stale tail: daemon claims to be running but the chain stopped growing.
+    if last_lifecycle_is_start {
+        if let Some(last_bucket) = last_record_bucket {
+            if last_bucket + 2 * BUCKET_S < now_bucket_start {
+                warnings.push(format!(
+                    "chain tail is stale: last record bucket {} but now {} and no clean \
+                     shutdown record — possible tail truncation, crash, or daemon stopped \
+                     without shutdown",
+                    last_bucket, now_bucket_start
+                ));
+            }
+        }
+    }
+
+    Ok(warnings)
+}
+
 fn verify_approvals_against_policy(
     policy: &QuorumPolicy,
     receipt: &BreakGlassReceipt,

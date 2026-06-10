@@ -18,6 +18,13 @@ addr = "127.0.0.1:8799"    # Loopback only by default for security
 # Ingest backend selection ("file", "rtsp", "v4l2", or "esp32")
 [ingest]
 backend = "rtsp"
+# Seconds the source may stay unhealthy before ONE GapMissingData failure
+# record is sealed for the outage (one record per outage, not per frame).
+# Keep this above the source's own stall timeout so a single slow frame
+# doesn't count as an outage.
+failure_threshold_s = 30
+# Reconnect backoff ceiling (starts at 1s and doubles per attempt).
+reconnect_backoff_max_s = 60
 
 # Local File Configuration (local-only file ingestion)
 #
@@ -113,6 +120,40 @@ sensitive = ["zone:front_boundary"]  # Zones that trigger vault sealing
 #
 [retention]
 seconds = 604800  # 7 days
+
+# System Trace & Health
+#
+# heartbeat: seal one heartbeat record per 10-minute bucket (~144/day) carrying
+# per-bucket counter deltas. This anchors the tail of the hash chain — without
+# heartbeats, deleting the newest records is undetectable — and gives auditors
+# a health timeline. The cadence is bucket-locked; the flag only disables it.
+# Disabling weakens tamper evidence and makes log_verify's timeline audit
+# flag every bucket.
+#
+# log_interval_s: cadence of the INFO-level pipeline counter summary in the
+# operational log (the detailed 5-second dump is DEBUG-only).
+#
+[health]
+heartbeat = true
+log_interval_s = 60
+
+# Storage Preflight
+#
+# When free space on the database filesystem drops below min_free_mb, one
+# StorageFull failure record is sealed (per transition; latched until space
+# recovers). Distinct from StorageWriteFailed, which marks actual write errors.
+#
+[storage]
+min_free_mb = 256
+check_interval_s = 60
+
+# Clock Monitoring
+#
+# Monotonic-vs-wallclock drift beyond skew_tolerance_s seals one ClockSkew
+# failure record per excursion (the monitor re-baselines afterwards).
+#
+[clock]
+skew_tolerance_s = 30
 
 # =============================================================================
 # ENVIRONMENT VARIABLES (alternative to config file)

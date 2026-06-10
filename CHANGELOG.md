@@ -2,6 +2,48 @@
 
 ## [Unreleased]
 
+### Logging & witnessd chain audit remediation
+
+- **New sealed record types** `heartbeat` and `lifecycle`
+  (spec/event_contract.md §12). One heartbeat per 10-minute bucket anchors
+  the chain tail — previously, deleting the newest N records passed
+  `log_verify` because checkpoints were only written when retention pruned.
+  Lifecycle records seal daemon `start`/`shutdown_clean`; a boot that finds
+  a trailing `start` seals a `PowerLoss` failure record (unclean-shutdown
+  proxy). **Compatibility**: existing databases verify and read unchanged;
+  databases written by the new witnessd still verify under older
+  `log_verify` binaries (chain checks are payload-agnostic), but older
+  `export_events` binaries will error on the new record types — upgrade
+  tooling together with witnessd.
+- **witnessd no longer dies silently on hardware faults**: a camera
+  stall/disconnect is supervised (one sealed `GapMissingData` per outage
+  after `ingest.failure_threshold_s`, reconnect with backoff, recovery
+  visible in the next heartbeat) instead of crashing the daemon with no
+  record; retention-enforcement and time-bucket errors are likewise
+  witnessed instead of fatal. SIGINT/SIGTERM now seal a clean-shutdown
+  record before exit.
+- **Previously dead failure types now emitted**: `ClockSkew`
+  (monotonic-vs-wallclock drift / bucket regression), `PowerLoss`
+  (unclean-shutdown detection), `StorageFull` (free-space preflight,
+  distinct from `StorageWriteFailed`). `SensorDisagreement` and
+  `FirmwareIntegrity` remain explicitly deferred — no consensus/attestation
+  infrastructure exists (docs/failure_semantics.md has the full mapping).
+- **`log_verify` timeline audit**: warns on stale tails (possible tail
+  truncation), missing heartbeat buckets, `created_at` regressions
+  (softened when a ClockSkew record covers the jump), and back-dated or
+  future-dated checkpoints. New `--strict` flag turns warnings into a
+  non-zero exit. `VerifyReport` gains an additive `warnings` field (omitted
+  when empty).
+- **Operational log rate fixed**: the 5-second INFO health dump (~35k
+  lines/day) is now transition-based — one WARN when ingest goes unhealthy,
+  one INFO on recovery, a single key=value summary per
+  `health.log_interval_s` (default 60s), detailed dumps at DEBUG. New
+  docs/logging.md documents levels, volume, and RUST_LOG usage.
+- New config sections (all defaulted, existing configs unchanged):
+  `[health]` heartbeat/log_interval_s, `[storage]`
+  min_free_mb/check_interval_s, `[clock]` skew_tolerance_s, and
+  `[ingest]` failure_threshold_s/reconnect_backoff_max_s.
+
 ### Frigate zero-friction release (add-on 0.6.0)
 
 - **Zero-config HA add-on**: the broker is auto-discovered from the

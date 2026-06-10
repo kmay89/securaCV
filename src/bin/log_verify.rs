@@ -43,6 +43,10 @@ struct Args {
     /// Verbose output
     #[arg(short, long)]
     verbose: bool,
+    /// Treat timeline-audit warnings (stale tail, missing heartbeats,
+    /// timestamp regressions) as failures (non-zero exit)
+    #[arg(long)]
+    strict: bool,
     /// UI mode for stderr progress (auto|plain|pretty)
     #[arg(long, default_value = "auto", value_name = "MODE")]
     ui: String,
@@ -224,6 +228,20 @@ fn main() -> Result<()> {
                 .error
                 .unwrap_or_else(|| "unknown verification error".to_string())
         ));
+    }
+
+    if !report.warnings.is_empty() {
+        println!();
+        println!("=== Timeline Audit ===");
+        for warning in &report.warnings {
+            println!("WARNING: {warning}");
+        }
+        if args.strict {
+            return Err(anyhow::anyhow!(
+                "verification passed but --strict treats {} timeline warning(s) as failure",
+                report.warnings.len()
+            ));
+        }
     }
 
     println!("OK: all chains verified.");

@@ -474,6 +474,59 @@ impl FailureEvent {
     }
 }
 
+/// A periodic system-trace record sealed once per coarse time bucket.
+///
+/// Heartbeats anchor the tail of the hash chain: without them, deleting the
+/// most recent N entries leaves a chain that still verifies (prev-hash
+/// continuity only protects interior records). A verifier that knows the
+/// cadence can flag any bucket between `lifecycle:start` and
+/// `lifecycle:shutdown_clean` that has no heartbeat.
+///
+/// Content is restricted to per-bucket aggregate deltas and a boolean health
+/// flag — no identifiers, no cumulative counters, nothing finer than the
+/// bucket (see spec/event_contract.md "System Trace Records").
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct HeartbeatRecord {
+    pub time_bucket: TimeBucket,
+    /// Whether the ingest source was healthy when the bucket rolled over.
+    pub ingest_healthy: bool,
+    /// Frames captured during the previous bucket (delta, not cumulative).
+    pub frames_captured_delta: u64,
+    /// Events appended to the sealed log during the previous bucket.
+    pub events_appended_delta: u64,
+    /// Failure records appended during the previous bucket.
+    pub failures_appended_delta: u64,
+    pub kernel_version: String,
+    pub ruleset_id: String,
+    pub ruleset_hash: [u8; 32],
+}
+
+/// Daemon lifecycle phase recorded in the sealed log.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum LifecyclePhase {
+    /// The witnessing process started and opened the kernel.
+    #[serde(rename = "start")]
+    Start,
+    /// The witnessing process shut down deliberately (signal-handled exit).
+    #[serde(rename = "shutdown_clean")]
+    ShutdownClean,
+}
+
+/// A sealed record marking daemon start / clean shutdown.
+///
+/// On boot, if the most recent lifecycle record is `start` (no intervening
+/// `shutdown_clean`), the previous run ended uncleanly and a
+/// `FailureType::PowerLoss` record is sealed — a deliberate proxy covering
+/// power loss, crash, or kill (documented in docs/failure_semantics.md).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LifecycleRecord {
+    pub phase: LifecyclePhase,
+    pub time_bucket: TimeBucket,
+    pub kernel_version: String,
+    pub ruleset_id: String,
+    pub ruleset_hash: [u8; 32],
+}
+
 /// Sealed log records include normal events and explicit failure/gap artifacts.
 ///
 /// Uses tagged serialization (`record_type` discriminator) to prevent silent
@@ -491,6 +544,10 @@ pub enum SealedLogRecord {
     Failure(FailureEvent),
     #[serde(rename = "key_rotation")]
     KeyRotation(KeyRotation),
+    #[serde(rename = "heartbeat")]
+    Heartbeat(HeartbeatRecord),
+    #[serde(rename = "lifecycle")]
+    Lifecycle(LifecycleRecord),
 }
 
 /// Tagged deserialization helper (new format with `record_type` field).
@@ -503,6 +560,10 @@ enum SealedLogRecordTagged {
     Failure(FailureEvent),
     #[serde(rename = "key_rotation")]
     KeyRotation(KeyRotation),
+    #[serde(rename = "heartbeat")]
+    Heartbeat(HeartbeatRecord),
+    #[serde(rename = "lifecycle")]
+    Lifecycle(LifecycleRecord),
 }
 
 /// Untagged deserialization helper (legacy format without `record_type` field).
@@ -523,6 +584,8 @@ impl SealedLogRecord {
                 SealedLogRecordTagged::Event(e) => SealedLogRecord::Event(e),
                 SealedLogRecordTagged::Failure(f) => SealedLogRecord::Failure(f),
                 SealedLogRecordTagged::KeyRotation(r) => SealedLogRecord::KeyRotation(r),
+                SealedLogRecordTagged::Heartbeat(h) => SealedLogRecord::Heartbeat(h),
+                SealedLogRecordTagged::Lifecycle(l) => SealedLogRecord::Lifecycle(l),
             });
         }
         // Fall back to untagged for existing databases
@@ -541,6 +604,8 @@ impl SealedLogRecord {
             SealedLogRecord::Event(ev) => ev.time_bucket,
             SealedLogRecord::Failure(ev) => ev.time_bucket,
             SealedLogRecord::KeyRotation(r) => r.time_bucket,
+            SealedLogRecord::Heartbeat(h) => h.time_bucket,
+            SealedLogRecord::Lifecycle(l) => l.time_bucket,
         }
     }
 
@@ -550,6 +615,8 @@ impl SealedLogRecord {
             SealedLogRecord::Failure(ev) => ev.ruleset_hash,
             // A key rotation is an identity-administration record, not ruleset-bound.
             SealedLogRecord::KeyRotation(_) => [0u8; 32],
+            SealedLogRecord::Heartbeat(h) => h.ruleset_hash,
+            SealedLogRecord::Lifecycle(l) => l.ruleset_hash,
         }
     }
 }
@@ -1539,6 +1606,82 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         Ok(failure)
     }
 
+    /// Seals a periodic heartbeat (system trace) record into the chain.
+    ///
+    /// Called once per coarse time bucket; anchors the chain tail so that
+    /// truncation of recent entries is detectable by verifiers.
+    #[allow(clippy::too_many_arguments)]
+    pub fn append_heartbeat(
+        &mut self,
+        time_bucket: TimeBucket,
+        ingest_healthy: bool,
+        frames_captured_delta: u64,
+        events_appended_delta: u64,
+        failures_appended_delta: u64,
+        kernel_version: &str,
+        ruleset_id: &str,
+        ruleset_hash: [u8; 32],
+    ) -> Result<()> {
+        let heartbeat = HeartbeatRecord {
+            time_bucket: time_bucket.coarsen_to(TEN_MINUTES_S)?,
+            ingest_healthy,
+            frames_captured_delta,
+            events_appended_delta,
+            failures_appended_delta,
+            kernel_version: kernel_version.to_string(),
+            ruleset_id: ruleset_id.to_string(),
+            ruleset_hash,
+        };
+        let record = SealedLogRecord::Heartbeat(heartbeat);
+        let key_material = self.signature_key_material();
+        let signature_keys = key_material.signature_keys();
+        self.sealed_log.append_record(&record, &signature_keys)
+    }
+
+    /// Seals a daemon lifecycle record (start / clean shutdown) into the chain.
+    pub fn append_lifecycle(
+        &mut self,
+        phase: LifecyclePhase,
+        kernel_version: &str,
+        ruleset_id: &str,
+        ruleset_hash: [u8; 32],
+    ) -> Result<()> {
+        let lifecycle = LifecycleRecord {
+            phase,
+            time_bucket: TimeBucket::now_10min()?,
+            kernel_version: kernel_version.to_string(),
+            ruleset_id: ruleset_id.to_string(),
+            ruleset_hash,
+        };
+        let record = SealedLogRecord::Lifecycle(lifecycle);
+        let key_material = self.signature_key_material();
+        let signature_keys = key_material.signature_keys();
+        self.sealed_log.append_record(&record, &signature_keys)
+    }
+
+    /// Returns the phase of the most recent lifecycle record, if any.
+    ///
+    /// Used at boot for unclean-shutdown detection: a trailing `Start` with no
+    /// `ShutdownClean` means the previous run died without sealing a shutdown
+    /// record (power loss, crash, or kill).
+    pub fn last_lifecycle_phase(&self) -> Result<Option<LifecyclePhase>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT payload_json FROM sealed_events \
+             WHERE payload_json LIKE '%\"record_type\":\"lifecycle\"%' \
+             ORDER BY id DESC LIMIT 1",
+        )?;
+        let mut rows = stmt.query([])?;
+        let Some(row) = rows.next()? else {
+            return Ok(None);
+        };
+        let payload: String = row.get(0)?;
+        // The LIKE filter is a coarse pre-filter; confirm via real deserialization.
+        match SealedLogRecord::deserialize_compat(&payload)? {
+            SealedLogRecord::Lifecycle(l) => Ok(Some(l.phase)),
+            _ => Ok(None),
+        }
+    }
+
     /// Attempts to record a failure event with graceful degradation.
     ///
     /// When the primary storage fails, this method:
@@ -1645,6 +1788,26 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
     ) {
         self.try_record_failure_best_effort(
             FailureType::CryptoFailure,
+            Some(details.to_string()),
+            kernel_version,
+            ruleset_id,
+            ruleset_hash,
+        );
+    }
+
+    /// Reports clock desynchronization per failure_semantics.md.
+    ///
+    /// Call this when monotonic-vs-wallclock drift exceeds tolerance or the
+    /// coarse time bucket regresses.
+    pub fn report_clock_skew(
+        &mut self,
+        details: &str,
+        kernel_version: &str,
+        ruleset_id: &str,
+        ruleset_hash: [u8; 32],
+    ) {
+        self.try_record_failure_best_effort(
+            FailureType::ClockSkew,
             Some(details.to_string()),
             kernel_version,
             ruleset_id,
@@ -2102,8 +2265,13 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
 
             // Key-rotation records are identity-administration entries, not exportable
             // semantic events; they carry no ruleset binding and are skipped here.
-            if let SealedLogRecord::KeyRotation(_) = record {
-                continue;
+            // Heartbeat/lifecycle system-trace records are likewise non-semantic and
+            // excluded from the export contract (events + failures only).
+            match record {
+                SealedLogRecord::KeyRotation(_)
+                | SealedLogRecord::Heartbeat(_)
+                | SealedLogRecord::Lifecycle(_) => continue,
+                _ => {}
             }
 
             if let Err(e) =
@@ -2153,8 +2321,10 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
                     };
                     buckets[idx].failures.push(export_failure);
                 }
-                // Skipped above (key rotations are not exportable events).
-                SealedLogRecord::KeyRotation(_) => unreachable!(),
+                // Skipped above (system-trace and key-rotation records are not exportable).
+                SealedLogRecord::KeyRotation(_)
+                | SealedLogRecord::Heartbeat(_)
+                | SealedLogRecord::Lifecycle(_) => unreachable!(),
             }
         }
 
@@ -3705,6 +3875,318 @@ mod tests {
             .collect();
         assert_eq!(failures.len(), 1);
         assert_eq!(failures[0].failure_type, FailureType::StorageFull);
+        Ok(())
+    }
+
+    fn append_test_heartbeat(kernel: &mut Kernel, cfg: &KernelConfig, bucket_start: u64) {
+        kernel
+            .append_heartbeat(
+                TimeBucket {
+                    start_epoch_s: bucket_start,
+                    size_s: TEN_MINUTES_S,
+                },
+                true,
+                100,
+                2,
+                0,
+                &cfg.kernel_version,
+                &cfg.ruleset_id,
+                cfg.ruleset_hash,
+            )
+            .expect("append heartbeat");
+    }
+
+    #[test]
+    fn heartbeat_and_lifecycle_round_trip() -> Result<()> {
+        let (mut kernel, cfg) = setup_test_kernel()?;
+        kernel.append_lifecycle(
+            LifecyclePhase::Start,
+            &cfg.kernel_version,
+            &cfg.ruleset_id,
+            cfg.ruleset_hash,
+        )?;
+        append_test_heartbeat(&mut kernel, &cfg, 0);
+        kernel.append_lifecycle(
+            LifecyclePhase::ShutdownClean,
+            &cfg.kernel_version,
+            &cfg.ruleset_id,
+            cfg.ruleset_hash,
+        )?;
+
+        let records = kernel.read_events_ruleset_bound(cfg.ruleset_hash, 100)?;
+        assert_eq!(records.len(), 3);
+        assert!(matches!(
+            records[0],
+            SealedLogRecord::Lifecycle(LifecycleRecord {
+                phase: LifecyclePhase::Start,
+                ..
+            })
+        ));
+        let SealedLogRecord::Heartbeat(hb) = &records[1] else {
+            panic!("expected heartbeat record, got {:?}", records[1]);
+        };
+        assert!(hb.ingest_healthy);
+        assert_eq!(hb.frames_captured_delta, 100);
+        assert_eq!(hb.events_appended_delta, 2);
+        assert_eq!(hb.failures_appended_delta, 0);
+        assert!(matches!(
+            records[2],
+            SealedLogRecord::Lifecycle(LifecycleRecord {
+                phase: LifecyclePhase::ShutdownClean,
+                ..
+            })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn system_records_serialize_tagged_and_reject_untagged() -> Result<()> {
+        let heartbeat = SealedLogRecord::Heartbeat(HeartbeatRecord {
+            time_bucket: TimeBucket {
+                start_epoch_s: 600,
+                size_s: TEN_MINUTES_S,
+            },
+            ingest_healthy: false,
+            frames_captured_delta: 0,
+            events_appended_delta: 0,
+            failures_appended_delta: 1,
+            kernel_version: "0.0.0-test".to_string(),
+            ruleset_id: "ruleset:test".to_string(),
+            ruleset_hash: [0u8; 32],
+        });
+        let json = serde_json::to_string(&heartbeat)?;
+        assert!(json.contains("\"record_type\":\"heartbeat\""));
+        assert!(matches!(
+            SealedLogRecord::deserialize_compat(&json)?,
+            SealedLogRecord::Heartbeat(_)
+        ));
+
+        // Without the tag, the payload must NOT fall back to a legacy
+        // Event/Failure parse (system records lack event_type/failure_type, so
+        // misclassification is structurally impossible). Pin that guarantee.
+        let untagged = json.replacen("\"record_type\":\"heartbeat\",", "", 1);
+        assert!(SealedLogRecord::deserialize_compat(&untagged).is_err());
+
+        let lifecycle = SealedLogRecord::Lifecycle(LifecycleRecord {
+            phase: LifecyclePhase::Start,
+            time_bucket: TimeBucket {
+                start_epoch_s: 600,
+                size_s: TEN_MINUTES_S,
+            },
+            kernel_version: "0.0.0-test".to_string(),
+            ruleset_id: "ruleset:test".to_string(),
+            ruleset_hash: [0u8; 32],
+        });
+        let json = serde_json::to_string(&lifecycle)?;
+        assert!(json.contains("\"record_type\":\"lifecycle\""));
+        assert!(json.contains("\"phase\":\"start\""));
+        let untagged = json.replacen("\"record_type\":\"lifecycle\",", "", 1);
+        assert!(SealedLogRecord::deserialize_compat(&untagged).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn unclean_shutdown_detected_on_reopen() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let db_path = dir.path().join("lifecycle.db");
+        let cfg = KernelConfig {
+            db_path: db_path.to_string_lossy().to_string(),
+            ruleset_id: "ruleset:test".to_string(),
+            ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
+            kernel_version: "0.0.0-test".to_string(),
+            retention: Duration::from_secs(60),
+            device_key_seed: "devkey:test:a1b2c3d4e5f6a7b8c9d0".to_string(),
+            zone_policy: ZonePolicy::default(),
+        };
+
+        let mut kernel = Kernel::open(&cfg)?;
+        assert_eq!(kernel.last_lifecycle_phase()?, None);
+        kernel.append_lifecycle(
+            LifecyclePhase::Start,
+            &cfg.kernel_version,
+            &cfg.ruleset_id,
+            cfg.ruleset_hash,
+        )?;
+        drop(kernel);
+
+        // Reopen without a clean shutdown: the trailing Start is the
+        // unclean-shutdown signal witnessd reacts to at boot.
+        let mut kernel = Kernel::open(&cfg)?;
+        assert_eq!(kernel.last_lifecycle_phase()?, Some(LifecyclePhase::Start));
+
+        kernel.append_lifecycle(
+            LifecyclePhase::ShutdownClean,
+            &cfg.kernel_version,
+            &cfg.ruleset_id,
+            cfg.ruleset_hash,
+        )?;
+        drop(kernel);
+
+        let kernel = Kernel::open(&cfg)?;
+        assert_eq!(
+            kernel.last_lifecycle_phase()?,
+            Some(LifecyclePhase::ShutdownClean)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn export_skips_system_records() -> Result<()> {
+        let (mut kernel, cfg) = setup_test_kernel()?;
+        kernel.append_lifecycle(
+            LifecyclePhase::Start,
+            &cfg.kernel_version,
+            &cfg.ruleset_id,
+            cfg.ruleset_hash,
+        )?;
+        append_test_heartbeat(&mut kernel, &cfg, 0);
+        kernel.append_failure_event(
+            FailureType::GapMissingData,
+            TimeBucket {
+                start_epoch_s: 0,
+                size_s: TEN_MINUTES_S,
+            },
+            Some("ingest_stalled backend=rtsp consecutive_errors=42".to_string()),
+            &cfg.kernel_version,
+            &cfg.ruleset_id,
+            cfg.ruleset_hash,
+        )?;
+
+        let artifact = kernel.export_events_sequential_unchecked(
+            cfg.ruleset_hash,
+            ExportOptions {
+                jitter_s: 0,
+                ..ExportOptions::default()
+            },
+        )?;
+        let (events, failures): (usize, usize) = artifact
+            .batches
+            .iter()
+            .flat_map(|batch| &batch.buckets)
+            .fold((0, 0), |(e, f), bucket| {
+                (e + bucket.events.len(), f + bucket.failures.len())
+            });
+        // Only the failure is exportable; heartbeat + lifecycle are system
+        // trace records outside the export contract.
+        assert_eq!(events, 0);
+        assert_eq!(failures, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn timeline_audit_clean_on_healthy_chain() -> Result<()> {
+        let (mut kernel, cfg) = setup_test_kernel()?;
+        let now_bucket = TimeBucket::now_10min()?.start_epoch_s;
+        kernel.append_lifecycle(
+            LifecyclePhase::Start,
+            &cfg.kernel_version,
+            &cfg.ruleset_id,
+            cfg.ruleset_hash,
+        )?;
+        append_test_heartbeat(&mut kernel, &cfg, now_bucket);
+        append_test_heartbeat(&mut kernel, &cfg, now_bucket + 600);
+
+        let warnings = crate::verify::audit_chain_timeline(&kernel.conn, now_bucket + 600)?;
+        assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
+        Ok(())
+    }
+
+    #[test]
+    fn timeline_audit_warns_on_missing_heartbeat_bucket() -> Result<()> {
+        let (mut kernel, cfg) = setup_test_kernel()?;
+        let now_bucket = TimeBucket::now_10min()?.start_epoch_s;
+        kernel.append_lifecycle(
+            LifecyclePhase::Start,
+            &cfg.kernel_version,
+            &cfg.ruleset_id,
+            cfg.ruleset_hash,
+        )?;
+        // Heartbeats for the start bucket and start+1200, nothing for
+        // start+600 — the shape mid-chain record deletion leaves behind.
+        append_test_heartbeat(&mut kernel, &cfg, now_bucket);
+        append_test_heartbeat(&mut kernel, &cfg, now_bucket + 1200);
+
+        let warnings = crate::verify::audit_chain_timeline(&kernel.conn, now_bucket + 1200)?;
+        assert!(
+            warnings.iter().any(|w| w.contains("no heartbeat")),
+            "expected missing-heartbeat warning, got: {warnings:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn timeline_audit_warns_on_stale_tail() -> Result<()> {
+        let (mut kernel, cfg) = setup_test_kernel()?;
+        let now_bucket = TimeBucket::now_10min()?.start_epoch_s;
+        kernel.append_lifecycle(
+            LifecyclePhase::Start,
+            &cfg.kernel_version,
+            &cfg.ruleset_id,
+            cfg.ruleset_hash,
+        )?;
+        append_test_heartbeat(&mut kernel, &cfg, now_bucket);
+
+        // Verifier runs "later": the daemon never sealed a shutdown record but
+        // the chain stopped growing — tail truncation or a crash.
+        let warnings = crate::verify::audit_chain_timeline(&kernel.conn, now_bucket + 3600)?;
+        assert!(
+            warnings.iter().any(|w| w.contains("chain tail is stale")),
+            "expected stale-tail warning, got: {warnings:?}"
+        );
+
+        // A clean shutdown clears the suspicion.
+        kernel.append_lifecycle(
+            LifecyclePhase::ShutdownClean,
+            &cfg.kernel_version,
+            &cfg.ruleset_id,
+            cfg.ruleset_hash,
+        )?;
+        let warnings = crate::verify::audit_chain_timeline(&kernel.conn, now_bucket + 3600)?;
+        assert!(
+            !warnings.iter().any(|w| w.contains("chain tail is stale")),
+            "stale-tail warning should clear after clean shutdown: {warnings:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn timeline_audit_flags_created_at_regression() -> Result<()> {
+        let (mut kernel, cfg) = setup_test_kernel()?;
+        let now_bucket = TimeBucket::now_10min()?.start_epoch_s;
+        // Later id with an earlier bucket = created_at regression.
+        append_test_heartbeat(&mut kernel, &cfg, now_bucket + 600);
+        append_test_heartbeat(&mut kernel, &cfg, now_bucket);
+
+        let warnings = crate::verify::audit_chain_timeline(&kernel.conn, now_bucket + 600)?;
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("created_at regression") && w.contains("no ClockSkew")),
+            "expected unexplained regression warning, got: {warnings:?}"
+        );
+
+        // The same regression accompanied by a ClockSkew failure record in the
+        // bucket is downgraded to a note: the daemon witnessed the jump.
+        let (mut kernel, cfg) = setup_test_kernel()?;
+        append_test_heartbeat(&mut kernel, &cfg, now_bucket + 600);
+        kernel.append_failure_event(
+            FailureType::ClockSkew,
+            TimeBucket {
+                start_epoch_s: now_bucket,
+                size_s: TEN_MINUTES_S,
+            },
+            Some("wallclock drift 120s vs monotonic".to_string()),
+            &cfg.kernel_version,
+            &cfg.ruleset_id,
+            cfg.ruleset_hash,
+        )?;
+        let warnings = crate::verify::audit_chain_timeline(&kernel.conn, now_bucket + 600)?;
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.starts_with("note:") && w.contains("ClockSkew")),
+            "expected softened regression note, got: {warnings:?}"
+        );
         Ok(())
     }
 
