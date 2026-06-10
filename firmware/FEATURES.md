@@ -1,6 +1,6 @@
 # SecuraCV Canary Firmware — Feature Audit Matrix
 
-**Last updated:** 2026-05-27
+**Last updated:** 2026-06-09
 **Original audit:** 2026-02-20
 **Companion docs:** [VARIANT_POLICY.md](VARIANT_POLICY.md) (lifecycle labels), [FIRMWARE_VARIANT_AUDIT.md](FIRMWARE_VARIANT_AUDIT.md) (risk analysis), [PARITY_PLAN.md](PARITY_PLAN.md) (ACTIVE ⇄ canary-wap parity closure program)
 
@@ -81,7 +81,7 @@ Single-row-per-capability summary across every non-archived variant. This is the
 | Witness record export to /EXPORT/ | ✅ | ✅ | ❌ | ❌ | ➖ | ❌ |
 | Battery health history (NVS-persisted charge cycles, voltage extremes) | ✅ | ✅ | ❌ | ❌ | ➖ | ❌ |
 | Chirp channel (broadcast beacon) | ⚠️ | ✅ | ⚠️ | ❌ | ➖ | ✅ |
-| MQTT publish + HA Discovery | ✅ | ❌ | ❌ | ✅ | ➖ | ❌ |
+| MQTT publish + HA Discovery | ✅ | ✅ | ❌ | ✅ | ➖ | ❌ |
 | OTA A/B with rollback safety | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ |
 | API authentication (bearer token + HKDF derivation) | ✅ | ✅ | ❌ | ❌ | ➖ | ✅ |
 | Rate limiting on HTTP API | ✅ | ✅ | ❌ | ➖ | ➖ | ✅ |
@@ -328,7 +328,7 @@ Single-row-per-capability summary across every non-archived variant. This is the
 
 Post-archive (2026-04), the ACTIVE canonical tree is `firmware/canary/` (PlatformIO). The WAP Snapshot tree — archived 2026-02-20 — was removed from the repository on 2026-05-29; its history remains in git and the WAP UX it captured lives on in the COMPATIBILITY tree (`firmware/projects/canary-wap/`).
 
-- **canary-wap Arduino (COMPATIBILITY)**: ~100% WAP parity; recently hardened (real ESP-NOW RSSI 2026-04, SD flush-on-unmount 2026-04).
+- **canary-wap Arduino (COMPATIBILITY)**: ~100% WAP parity; recently hardened (real ESP-NOW RSSI 2026-04, SD flush-on-unmount 2026-04). MQTT publish + HA Discovery is now present here too (`csi_mqtt.cpp`, compiled in the Arduino CLI build; HA side validated by `hassfest`) — see the 2026-06-09 reconciliation note in [PARITY_PLAN.md](PARITY_PLAN.md).
 - **canary (PIO, ACTIVE)**: ~88% feature parity — modular libs, MQTT + HA Discovery, WiFi STA, export, storage status counters (2026-04), HKDF-derived bearer token gating every SPA-driven endpoint (2026-04). Gaps: camera streaming, full GPS motion FSM, some web UI tabs.
 - **canary-wap (PIO, COMPATIBILITY)**: ~40% parity — uses common headers, many implementations still skeleton.
 
