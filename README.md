@@ -45,7 +45,7 @@ tamper-proof log that proves nobody — including you — altered the record.
 
 ---
 
-## Install (3 steps)
+## Install (4 steps)
 
 **1.** Install [Home Assistant OS](https://www.home-assistant.io/installation/) on a Raspberry Pi 4/5 or PC.
 
@@ -55,11 +55,21 @@ tamper-proof log that proves nobody — including you — altered the record.
 curl -fsSL https://raw.githubusercontent.com/kmay89/securaCV/main/scripts/install.sh | bash
 ```
 
-**3.** Follow the setup wizard — open the Privacy Witness Kernel add-on from
+**3.** **Point Frigate at your cameras** — edit `/config/frigate.yml` and replace
+`PLACEHOLDER_CAMERA_IP` with your cameras' RTSP URLs, then start Frigate
+(Settings → Add-ons → Frigate → Start). Until this is done there are no
+detections for SecuraCV to witness.
+
+**4.** Follow the setup wizard — open the Privacy Witness Kernel add-on from
 Settings → Add-ons → Privacy Witness Kernel → Open Web UI.
 
 That's it. Your Frigate clips keep recording as usual, and each detected event shows up in
 Home Assistant with a **verified ✓** witness status (hash-chain + signature checked).
+
+> **Where's the API token?** If you connect the integration in "Witness Kernel via
+> HTTP API" mode, keep the default token-file path (`/config/api_token`) — the kernel
+> rotates the token every 10 minutes and the integration follows the rotation
+> automatically. Only paste a static token for a kernel on another host.
 
 ### What you need
 

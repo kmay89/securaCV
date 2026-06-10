@@ -60,10 +60,16 @@ Reference baseline inventory: [`firmware/FIRMWARE_VARIANT_AUDIT.md`](../../FIRMW
 ## 2) Onboarding UX (router-like, nontechnical friendly)
 
 - [ ] **First-run onboarding wizard** on device captive portal
+  > **Status reconciliation (2026-06-10):** the foundation already exists in code —
+  > `setup_wizard.h` is the first-run captive portal (DNS redirect to 192.168.4.1,
+  > WiFi credential capture, 15-minute setup timeout; `#include`d by the sketch) and
+  > `wizard.h`/`wizard.cpp` is the Phase-10 orchestration module (zone tagging, pairing,
+  > training progress; wired via `rf_presence.cpp`). What remains open is the *structured
+  > multi-step flow* below, not the captive portal itself.
   - Step 1: Device identity + trust explanation (privacy witness basics)
   - Step 2: Set owner password / admin passphrase
-  - Step 3: (Optional) Connect to home WiFi
-  - Step 4: (Optional) Configure MQTT broker
+  - Step 3: (Optional) Connect to home WiFi — *captive-portal capture exists (`setup_wizard.h`); needs the guided step UX*
+  - Step 4: (Optional) Configure MQTT broker — *runtime config API exists (`/api/mqtt/config`); needs the guided step UX*
   - Step 5: Verify witness chain health and save recovery/export code
 
 - [ ] **Simple status language**
