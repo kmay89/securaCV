@@ -1,6 +1,9 @@
 # ESP32-S3 Power Resilience (Brownout) — Canary
 
 Companion to [`esp32s3_ble_wap_audit.md`](./esp32s3_ble_wap_audit.md), finding **F7**.
+For supply/cable sizing, battery selection, consumption estimates, and the
+battery-health telemetry reference, see the full
+[power & battery guide](./hardware/esp32s3_power_battery_guide.md).
 
 ## Why this matters
 

@@ -2854,8 +2854,10 @@ static esp_err_t handle_battery_history(httpd_req_t* req) {
   if (!power_monitor::get_state(&pwr)) {
     return http_send_json(req, "{\"ok\":false,\"error\":\"power monitor unavailable\"}");
   }
+  PowerHistory hist = {};
+  power_monitor::get_history(&hist);
 
-  char buf[512];
+  char buf[640];
   int len = snprintf(buf, sizeof(buf),
     "{"
     "\"ok\":true,"
@@ -2870,6 +2872,11 @@ static esp_err_t handle_battery_history(httpd_req_t* req) {
     "\"max_voltage_mv\":%u,"
     "\"trend_mv_per_min\":%d,"
     "\"charge_cycles\":%u,"
+    "\"health_pct\":%u,"
+    "\"est_runtime_min\":%u,"
+    "\"total_runtime_min\":%u,"
+    "\"soc_min_pct\":%u,"
+    "\"brownout_count\":%u,"
     "\"uptime_sec\":%u"
     "}",
     (unsigned)pwr.voltage_mv,
@@ -2883,6 +2890,11 @@ static esp_err_t handle_battery_history(httpd_req_t* req) {
     (unsigned)pwr.max_voltage_mv,
     (int)pwr.trend_mv_per_min,
     (unsigned)pwr.charge_cycles,
+    (unsigned)power_monitor::health_pct(),
+    (unsigned)power_monitor::estimate_runtime_min(),
+    (unsigned)hist.total_runtime_min,
+    (unsigned)hist.soc_min_pct,
+    (unsigned)hist.brownout_count,
     (unsigned)(millis() / 1000));
 
   if (len <= 0 || len >= (int)sizeof(buf)) {
@@ -8565,11 +8577,41 @@ void loop() {
   // Update power monitor (ADC sample, SoC, charge state)
   #if FEATURE_POWER_MONITOR
   power_monitor::process();
+
+  // Persist battery health history (runtime minutes, SoC minimum,
+  // brownout count, last-full-charge) every 10 minutes so the stats
+  // survive power loss. Cheap: four NVS writes.
+  {
+    static uint32_t s_last_batt_hist_ms = 0;
+    if (now - s_last_batt_hist_ms >= 600000UL) {
+      s_last_batt_hist_ms = now;
+      power_monitor::persist_history();
+    }
+  }
   #endif
 
   // Update power policy (mode transitions, feature gating)
   #if FEATURE_POWER_POLICY
   power_policy::process();
+
+  // Consume the LOW_POWER deep-sleep request (55 s sleep / 5 s wake duty
+  // cycle below 5% SoC). Without this the policy sets the pending flag
+  // and nothing ever sleeps. Close out persistent state first; deep
+  // sleep reboots the chip, so setup() re-evaluates power mode on wake.
+  if (power_policy::should_deep_sleep() && !power_monitor::is_charging()) {
+    uint32_t sleep_sec = power_policy::get_sleep_duration_sec();
+    log_health(SCV_LOG_INFO, SCV_CAT_SYSTEM,
+               "low battery: entering timed deep sleep", nullptr);
+    persist_chain_state();
+    power_monitor::persist_history();
+    power_policy::ack_deep_sleep();
+    esp_sleep_enable_timer_wakeup((uint64_t)sleep_sec * 1000000ULL);
+    esp_deep_sleep_start();
+    // Does not return
+  } else if (power_policy::should_deep_sleep()) {
+    // Charger appeared between policy evaluation and here -- cancel.
+    power_policy::ack_deep_sleep();
+  }
   #endif
 
   // Pump the acoustic pipeline. Drains up to 4×20 ms PDM frames per call

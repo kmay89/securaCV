@@ -59,6 +59,7 @@ pub mod ingest;
 pub mod log;
 pub mod module_runtime;
 pub mod storage;
+pub mod storage_health;
 pub mod thumbnail;
 pub mod transport;
 pub mod vault;
@@ -84,6 +85,9 @@ pub use ingest::{v4l2::V4l2Config, V4l2Source};
 pub use log::{hash_entry, sign_entry, verify_entry_signature};
 pub use module_runtime::{CapabilityBoundaryRuntime, ModuleCapability};
 pub use storage::{InMemorySealedLogStore, SealedLogStore, SqliteSealedLogStore};
+pub use storage_health::{
+    SharedStorageHealth, StorageHealthMonitor, StorageHealthReport, StorageHealthStatus,
+};
 pub use vault::crypto::VaultCryptoMode;
 pub use vault::{FilesystemVaultStore, Vault, VaultConfig, VaultStore};
 
@@ -239,8 +243,57 @@ fn migrate_unencrypted_to_encrypted(db_path: &str, hex_key: &str) -> Result<()> 
     Ok(())
 }
 
+/// SQLite `synchronous` preference for sealed-log connections.
+///
+/// `Full` (the default) syncs on every transaction commit: a power cut can
+/// never lose an acknowledged sealed event. `Normal` reduces fsync traffic —
+/// an SD-card endurance optimization — and in WAL mode can never corrupt the
+/// database or break hash-chain verifiability (a power cut merely truncates
+/// the WAL tail), but the most recent sealed events may be lost. Because a
+/// witness device's threat model includes being powered off mid-incident,
+/// `Normal` is strictly opt-in (`storage_health.sqlite_synchronous` /
+/// `WITNESS_SQLITE_SYNCHRONOUS`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SqliteSynchronous {
+    #[default]
+    Full,
+    Normal,
+}
+
+impl SqliteSynchronous {
+    pub fn parse(raw: &str) -> Result<Self> {
+        match raw.trim().to_lowercase().as_str() {
+            "full" => Ok(Self::Full),
+            "normal" => Ok(Self::Normal),
+            other => Err(anyhow!(
+                "unsupported sqlite_synchronous '{}'; expected 'full' or 'normal'",
+                other
+            )),
+        }
+    }
+}
+
+static SQLITE_SYNCHRONOUS: OnceLock<SqliteSynchronous> = OnceLock::new();
+
+/// Set the process-wide SQLite `synchronous` preference. Call once at
+/// startup, before any kernel/store is opened; later calls are ignored
+/// (every connection in the process must behave identically).
+pub fn set_sqlite_synchronous(mode: SqliteSynchronous) {
+    let _ = SQLITE_SYNCHRONOUS.set(mode);
+}
+
 pub(crate) fn open_db_connection(db_path: &str) -> Result<Connection> {
     open_db_connection_with_key(db_path, None)
+}
+
+/// Apply per-connection durability/endurance pragmas. `synchronous` is a
+/// per-connection setting, so it must be applied on every open, not in
+/// `ensure_schema`.
+fn apply_connection_pragmas(conn: &Connection) -> Result<()> {
+    if SQLITE_SYNCHRONOUS.get().copied().unwrap_or_default() == SqliteSynchronous::Normal {
+        conn.pragma_update(None, "synchronous", "NORMAL")?;
+    }
+    Ok(())
 }
 
 pub(crate) fn open_db_connection_with_key(
@@ -257,6 +310,7 @@ pub(crate) fn open_db_connection_with_key(
         if let Some(key) = encryption_key {
             apply_sqlcipher_key(&conn, key)?;
         }
+        apply_connection_pragmas(&conn)?;
         return Ok(conn);
     }
     // Pre-create the DB file with 0600 permissions before SQLite opens it.
@@ -294,6 +348,8 @@ pub(crate) fn open_db_connection_with_key(
     if let Some(key) = encryption_key {
         apply_sqlcipher_key(&conn, key)?;
     }
+
+    apply_connection_pragmas(&conn)?;
 
     // Also tighten permissions on existing files that may have been created
     // with a lax umask by an older version of the kernel.
@@ -1048,6 +1104,9 @@ impl Kernel {
         self.conn.execute_batch(
             r#"
             PRAGMA journal_mode=WAL;
+            -- SD-card endurance: truncate the WAL back to 4 MB after
+            -- checkpoints so it cannot grow unbounded and amplify rewrites.
+            PRAGMA journal_size_limit=4194304;
 
             CREATE TABLE IF NOT EXISTS sealed_events (
               id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -1,3 +1,5 @@
+use crate::storage_health::StorageHealthThresholds;
+use crate::SqliteSynchronous;
 use anyhow::{anyhow, Result};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
@@ -21,6 +23,17 @@ const DEFAULT_V4L2_HEIGHT: u32 = 480;
 const DEFAULT_ESP32_URL: &str = "http://127.0.0.1:81/stream";
 const DEFAULT_ESP32_FPS: u32 = 10;
 const DEFAULT_RETENTION_SECS: u64 = 60 * 60 * 24 * 7;
+// SD-card endurance: each retention pass that finds prunable events writes a
+// signed checkpoint transaction, so the cadence directly sets the steady-state
+// write rate. 5 minutes (288 passes/day vs 8,640 at the old 10s) keeps pruning
+// timely against a 7-day retention while minimizing flash wear.
+const DEFAULT_RETENTION_CHECK_INTERVAL_SECS: u64 = 300;
+const DEFAULT_STORAGE_HEALTH_ENABLED: bool = true;
+const DEFAULT_STORAGE_HEALTH_INTERVAL_SECS: u64 = 600;
+// Conservative endurance budget in TB written. High-endurance microSD cards
+// commonly carry ratings well above this; operators should set it to the
+// purchased card's rating (see docs/sd_card_health.md).
+const DEFAULT_STORAGE_HEALTH_TBW: f64 = 64.0;
 const DEFAULT_MODULE_ZONE_ID: &str = "zone:front_boundary";
 const DEFAULT_DETECT_BACKEND: &str = "auto";
 // Minimum confidence for a detection to be reported. Keep in sync with the tract backend's
@@ -58,6 +71,7 @@ struct WitnessdConfigFile {
     detect: Option<DetectConfigFile>,
     zones: Option<ZoneConfigFile>,
     retention: Option<RetentionConfigFile>,
+    storage_health: Option<StorageHealthConfigFile>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -127,6 +141,54 @@ struct ZoneConfigFile {
 #[derive(Debug, Deserialize, Default)]
 struct RetentionConfigFile {
     seconds: Option<u64>,
+    check_interval_seconds: Option<u64>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct StorageHealthConfigFile {
+    enabled: Option<bool>,
+    check_interval_seconds: Option<u64>,
+    endurance_tbw: Option<f64>,
+    block_device: Option<String>,
+    state_path: Option<String>,
+    free_space_warn_pct: Option<f64>,
+    free_space_critical_pct: Option<f64>,
+    wear_warn_pct: Option<f64>,
+    wear_critical_pct: Option<f64>,
+    temp_warn_c: Option<f64>,
+    temp_hot_c: Option<f64>,
+    sqlite_synchronous: Option<String>,
+}
+
+/// Storage endurance & health monitoring settings (`[storage_health]`).
+#[derive(Debug, Clone)]
+pub struct StorageHealthSettings {
+    pub enabled: bool,
+    pub check_interval: Duration,
+    /// Card endurance rating in TB written; set to the purchased card's rating.
+    pub endurance_tbw: f64,
+    /// Parent block device (e.g. "mmcblk0"); auto-detected when `None`.
+    pub block_device: Option<String>,
+    /// Wear-tracking state file; defaults to `<db_path>.health.json`.
+    pub state_path: Option<PathBuf>,
+    pub thresholds: StorageHealthThresholds,
+    /// SQLite synchronous mode for sealed-log connections (default Full;
+    /// Normal is an opt-in endurance optimization — see lib.rs docs).
+    pub sqlite_synchronous: SqliteSynchronous,
+}
+
+impl Default for StorageHealthSettings {
+    fn default() -> Self {
+        Self {
+            enabled: DEFAULT_STORAGE_HEALTH_ENABLED,
+            check_interval: Duration::from_secs(DEFAULT_STORAGE_HEALTH_INTERVAL_SECS),
+            endurance_tbw: DEFAULT_STORAGE_HEALTH_TBW,
+            block_device: None,
+            state_path: None,
+            thresholds: StorageHealthThresholds::default(),
+            sqlite_synchronous: SqliteSynchronous::default(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -143,6 +205,11 @@ pub struct WitnessdConfig {
     pub detect: DetectSettings,
     pub zones: ZoneSettings,
     pub retention: Duration,
+    /// How often witnessd runs retention enforcement (each pass that prunes
+    /// writes a signed checkpoint transaction — see
+    /// `DEFAULT_RETENTION_CHECK_INTERVAL_SECS`).
+    pub retention_check_interval: Duration,
+    pub storage_health: StorageHealthSettings,
 }
 
 #[derive(Debug, Clone)]
@@ -381,9 +448,49 @@ impl WitnessdConfig {
         };
         let retention = Duration::from_secs(
             file.retention
+                .as_ref()
                 .and_then(|retention| retention.seconds)
                 .unwrap_or(DEFAULT_RETENTION_SECS),
         );
+        let retention_check_interval = Duration::from_secs(
+            file.retention
+                .and_then(|retention| retention.check_interval_seconds)
+                .unwrap_or(DEFAULT_RETENTION_CHECK_INTERVAL_SECS),
+        );
+        let sh = file.storage_health.unwrap_or_default();
+        let defaults = StorageHealthSettings::default();
+        let default_thresholds = StorageHealthThresholds::default();
+        let storage_health = StorageHealthSettings {
+            enabled: sh.enabled.unwrap_or(defaults.enabled),
+            check_interval: sh
+                .check_interval_seconds
+                .map(Duration::from_secs)
+                .unwrap_or(defaults.check_interval),
+            endurance_tbw: sh.endurance_tbw.unwrap_or(defaults.endurance_tbw),
+            block_device: sh.block_device.filter(|d| !d.trim().is_empty()),
+            state_path: sh
+                .state_path
+                .filter(|p| !p.trim().is_empty())
+                .map(PathBuf::from),
+            thresholds: StorageHealthThresholds {
+                free_space_warn_pct: sh
+                    .free_space_warn_pct
+                    .unwrap_or(default_thresholds.free_space_warn_pct),
+                free_space_critical_pct: sh
+                    .free_space_critical_pct
+                    .unwrap_or(default_thresholds.free_space_critical_pct),
+                wear_warn_pct: sh.wear_warn_pct.unwrap_or(default_thresholds.wear_warn_pct),
+                wear_critical_pct: sh
+                    .wear_critical_pct
+                    .unwrap_or(default_thresholds.wear_critical_pct),
+                temp_warn_c: sh.temp_warn_c.unwrap_or(default_thresholds.temp_warn_c),
+                temp_hot_c: sh.temp_hot_c.unwrap_or(default_thresholds.temp_hot_c),
+            },
+            sqlite_synchronous: match sh.sqlite_synchronous {
+                Some(raw) => SqliteSynchronous::parse(&raw)?,
+                None => SqliteSynchronous::default(),
+            },
+        };
         Ok(Self {
             db_path,
             ruleset_id,
@@ -397,6 +504,8 @@ impl WitnessdConfig {
             detect,
             zones,
             retention,
+            retention_check_interval,
+            storage_health,
         })
     }
 
@@ -499,6 +608,51 @@ impl WitnessdConfig {
             })?;
             self.retention = Duration::from_secs(seconds);
         }
+        if let Ok(interval) = std::env::var("WITNESS_RETENTION_CHECK_INTERVAL_SECS") {
+            let seconds: u64 = interval.parse().map_err(|_| {
+                anyhow!(
+                    "WITNESS_RETENTION_CHECK_INTERVAL_SECS must be an integer number of seconds"
+                )
+            })?;
+            self.retention_check_interval = Duration::from_secs(seconds);
+        }
+        if let Ok(enabled) = std::env::var("WITNESS_STORAGE_HEALTH_ENABLED") {
+            let enabled = enabled.trim();
+            if !enabled.is_empty() {
+                self.storage_health.enabled = match enabled.to_lowercase().as_str() {
+                    "1" | "true" | "yes" => true,
+                    "0" | "false" | "no" => false,
+                    other => {
+                        return Err(anyhow!(
+                            "WITNESS_STORAGE_HEALTH_ENABLED must be true/false (got '{}')",
+                            other
+                        ))
+                    }
+                };
+            }
+        }
+        if let Ok(interval) = std::env::var("WITNESS_STORAGE_HEALTH_INTERVAL_SECS") {
+            let seconds: u64 = interval.parse().map_err(|_| {
+                anyhow!("WITNESS_STORAGE_HEALTH_INTERVAL_SECS must be an integer number of seconds")
+            })?;
+            self.storage_health.check_interval = Duration::from_secs(seconds);
+        }
+        if let Ok(tbw) = std::env::var("WITNESS_STORAGE_HEALTH_TBW") {
+            if !tbw.trim().is_empty() {
+                self.storage_health.endurance_tbw = tbw.trim().parse().map_err(|_| {
+                    anyhow!("WITNESS_STORAGE_HEALTH_TBW must be a number of terabytes written")
+                })?;
+            }
+        }
+        if let Ok(device) = std::env::var("WITNESS_STORAGE_HEALTH_DEVICE") {
+            let device = device.trim();
+            self.storage_health.block_device = (!device.is_empty()).then(|| device.to_string());
+        }
+        if let Ok(mode) = std::env::var("WITNESS_SQLITE_SYNCHRONOUS") {
+            if !mode.trim().is_empty() {
+                self.storage_health.sqlite_synchronous = SqliteSynchronous::parse(&mode)?;
+            }
+        }
         Ok(())
     }
 
@@ -511,6 +665,37 @@ impl WitnessdConfig {
 
         if self.retention.as_secs() == 0 {
             return Err(anyhow!("retention must be greater than zero"));
+        }
+        if self.retention_check_interval.as_secs() == 0 {
+            return Err(anyhow!(
+                "retention.check_interval_seconds must be greater than zero"
+            ));
+        }
+        if self.storage_health.check_interval.as_secs() == 0 {
+            return Err(anyhow!(
+                "storage_health.check_interval_seconds must be greater than zero"
+            ));
+        }
+        if self.storage_health.endurance_tbw <= 0.0 {
+            return Err(anyhow!(
+                "storage_health.endurance_tbw must be greater than zero (got {})",
+                self.storage_health.endurance_tbw
+            ));
+        }
+        let t = &self.storage_health.thresholds;
+        if t.free_space_critical_pct >= t.free_space_warn_pct {
+            return Err(anyhow!(
+                "storage_health.free_space_critical_pct ({}) must be below free_space_warn_pct ({})",
+                t.free_space_critical_pct,
+                t.free_space_warn_pct
+            ));
+        }
+        if t.wear_warn_pct >= t.wear_critical_pct {
+            return Err(anyhow!(
+                "storage_health.wear_warn_pct ({}) must be below wear_critical_pct ({})",
+                t.wear_warn_pct,
+                t.wear_critical_pct
+            ));
         }
         if !(0.0..=1.0).contains(&self.detect.confidence_threshold) {
             return Err(anyhow!(
