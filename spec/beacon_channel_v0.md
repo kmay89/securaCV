@@ -536,9 +536,11 @@ append-only, no rotate/delete, export-only). Beacon origination rate limits cap
 growth at roughly 100 KB/year worst-case, so SD capacity is never a practical
 constraint. *(v0.1 of this spec specified a 30-day / 64 KB cap with a daily
 `prune_audit_log()`; that contradicted the append-only invariant and was never
-implemented — superseded by this section.)* On devices without an SD card the
-NVS ring cache is the only local copy and a one-time `STORAGE` health warning
-is raised.
+implemented — superseded by this section.)* On boot the chain head is
+recovered from the tail of the SD log of record; the NVS-cache-derived head is
+only a fallback, and SD wins on disagreement so a lost cache write cannot fork
+the chain. Any SD append failure (no card, full/read-only card, open or short
+write) latches a `STORAGE` health warning until the next successful append.
 
 ## 12. Configuration
 
