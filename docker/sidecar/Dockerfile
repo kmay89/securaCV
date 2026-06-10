@@ -9,9 +9,11 @@
 # Build (repo root):  docker build -f docker/sidecar/Dockerfile -t securacv-sidecar .
 # Run:                see docker/sidecar/quickstart.compose.yml
 
-# Needs a toolchain that understands Cargo.lock v4 (1.78+); pinned to a
-# recent stable rather than the root Dockerfile's 1.77.
-FROM rust:1.85-slim AS build
+# Needs a toolchain that satisfies the workspace MSRV (Cargo.lock v4 needs
+# 1.78+, the rumqttc-next family needs 1.89+); pinned to a recent stable.
+# The -bookworm variant matters: the runtime stage below is bookworm, and
+# the binaries must link against the same glibc/libssl generation.
+FROM rust:1.93-slim-bookworm AS build
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
