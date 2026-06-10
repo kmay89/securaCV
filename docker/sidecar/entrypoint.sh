@@ -26,6 +26,7 @@
 #   HA_DISCOVERY_PREFIX     HA discovery prefix                    (homeassistant)
 #   MQTT_TOPIC_PREFIX       state topic prefix                     (witness)
 #   POLL_INTERVAL           publisher poll seconds                 (30)
+#   BROKER_WAIT_SECS        max seconds to wait for the broker     (30)
 #   DEVICE_KEY_SEED         64-hex signing seed; if unset, read from
 #                           /run/secrets/device_key_seed, then /data/device_key,
 #                           else auto-generated and persisted (0600)
@@ -200,11 +201,22 @@ run() {
 
     log "broker=$addr topic=$topic retention=${retention_days}d bucket=${bucket_min}m publish=$publish"
 
-    if ! tcp_check "$host" "$port"; then
-        die "MQTT broker $addr is not reachable.
+    # The broker may still be starting: compose `depends_on` (and the e2e
+    # harness) only order container startup, they don't wait for mosquitto
+    # to be listening. Retry briefly before giving up.
+    local broker_wait="${BROKER_WAIT_SECS:-30}" waited=0
+    until tcp_check "$host" "$port"; do
+        if [ "$waited" -ge "$broker_wait" ]; then
+            die "MQTT broker $addr is not reachable (waited ${waited}s).
   - Is the broker container running and on the same docker network?
   - Run the diagnostics:  docker compose run securacv doctor"
-    fi
+        fi
+        if [ "$waited" -eq 0 ]; then
+            log "waiting for MQTT broker $addr to accept connections (up to ${broker_wait}s)..."
+        fi
+        sleep 1
+        waited=$((waited + 1))
+    done
 
     cat > "$CONFIG_FILE" <<EOF
 {
