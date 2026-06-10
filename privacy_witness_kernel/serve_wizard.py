@@ -161,10 +161,11 @@ def restart_addon() -> None:
 def _discover_mqtt() -> dict:
     """Query the Supervisor services API for the shared MQTT broker.
 
-    Returns {found, host, port, username, password}. Requires the add-on to
-    declare `services: ["mqtt:want"]` in config.yaml. The password must
-    never be returned to the browser — callers building UI responses use
-    only `found`/`host`/`port` and an auth presence flag.
+    Returns {found, host, port, username}. Requires the add-on to declare
+    `services: ["mqtt:want"]` in config.yaml. The broker password is
+    deliberately NOT returned: the wizard never needs it (run.sh
+    re-discovers credentials at startup), so the secret never enters this
+    process's data flow, a response, or a generated file.
     """
     try:
         resp = _supervisor_request("GET", "/services/mqtt")
@@ -175,11 +176,10 @@ def _discover_mqtt() -> dict:
                 "host": str(data.get("host", "")),
                 "port": int(data.get("port") or 1883),
                 "username": str(data.get("username") or ""),
-                "password": str(data.get("password") or ""),
             }
     except Exception:
         pass
-    return {"found": False, "host": "", "port": 1883, "username": "", "password": ""}
+    return {"found": False, "host": "", "port": 1883, "username": ""}
 
 
 # ---------------------------------------------------------------------------

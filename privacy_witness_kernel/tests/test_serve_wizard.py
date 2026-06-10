@@ -277,8 +277,11 @@ def test_discover_mqtt_found(monkeypatch):
         "host": "core-mosquitto",
         "port": 1883,
         "username": "addons",
-        "password": "hunter2",
     }
+    # The broker password must never enter the wizard's data flow — it is
+    # not needed (run.sh re-discovers at startup) and returning it would
+    # taint everything derived from this dict.
+    assert "password" not in mqtt
 
 
 def test_discover_mqtt_unavailable(monkeypatch):
@@ -333,7 +336,7 @@ def save_env(monkeypatch, tmp_path):
     monkeypatch.setattr(
         serve_wizard, "_discover_mqtt",
         lambda: {"found": True, "host": "core-mosquitto", "port": 1883,
-                 "username": "addons", "password": "hunter2"},
+                 "username": "addons"},
     )
     return captured
 
