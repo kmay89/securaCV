@@ -536,9 +536,18 @@ Safety, in plain terms:
   the update fails — even from a power cut mid-install — the Canary
   starts right back up on its previous software by itself.
 - After installing, the device runs a health check on itself. If anything
-  is wrong, it switches back automatically and tells you why.
+  is wrong — including new software that crashes or hangs — it switches
+  back automatically and tells you why. One bad start is all it takes to
+  recover; you never need to touch the device.
+- If power is cut during the first minute after an update, before the
+  device finishes checking itself, it simply returns to its previous
+  software. Nothing is lost — the update is offered again.
 - Every update (and any rollback) is signed into the witness chain, so
   the record shows exactly when the software changed.
+
+There is no way to break the device through an update. In the absolute
+worst case a Canary can always be re-flashed over its USB port — updates
+never touch the part of the device that makes that possible.
 
 No internet? Updates can also come from a server on your own network —
 see `docs/firmware_ota.md` for the air-gapped setup.

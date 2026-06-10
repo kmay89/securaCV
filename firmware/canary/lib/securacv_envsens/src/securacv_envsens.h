@@ -2,9 +2,11 @@
  * SecuraCV Canary — Environmental Sensors
  *
  * Reads the ESP32-S3's internal die-temperature sensor at a slow
- * cadence (default once per 60 s) and tracks an EMA baseline. A
- * sustained step ≥ 5 °C from baseline within a short window emits a
- * `tamper_temp_drift` event — the kind of signal you'd expect when:
+ * cadence (default once per 60 s, via the shared securacv_thermal
+ * provider) and tracks a slow EMA baseline (alpha 1/16 per sample,
+ * ~16 min time constant) that absorbs gradual self-heating and HVAC
+ * drift. A step ≥ 5 °C from baseline emits a `tamper_temp_drift`
+ * event — the kind of signal you'd expect when:
  *
  *   • the case is opened (ambient air rushes in / out — usually a
  *     ~3-8 °C swing within seconds),
@@ -85,6 +87,16 @@ void envsens_stop(void);
 bool envsens_is_running(void);
 
 void envsens_set_event_callback(envsens_event_cb_t cb);
+
+/* Declare a heavy thermal load (camera-peek streaming, sustained radio
+ * bursts). While active — and for a 10-min cooldown after it ends — the
+ * baseline fast-tracks the die temperature and drift detection is
+ * suspended: a 10–20 °C self-heating ramp is indistinguishable from a
+ * heat-gun attack by temperature alone, and Seeed documents the XIAO
+ * ESP32S3 reaching ~50 °C under plain SoftAP load and ~63 °C streaming
+ * camera for an hour. Call from the main loop with the current state;
+ * edges are detected internally. */
+void envsens_set_high_load(bool active);
 
 /* Pump from the main loop. Performs at most one read per call when
  * the sample interval has elapsed; runs the drift state machine; fires

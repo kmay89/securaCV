@@ -1,5 +1,11 @@
 # SecuraCV — Daily Digest Automation
 #
+# DEPRECATED for the Frigate/add-on pipeline: import the blueprint at
+# docs/blueprints/securacv_daily_digest.yaml instead — it reads the
+# kernel-computed digest sensor (sensor.pwk_daily_digest) and needs no
+# entity-ID substitution. This template targets the HACS/Canary entity
+# universe and remains for those devices.
+#
 # Sends a daily summary notification via HA Companion App.
 # Covers: event counts per zone, integrity status.
 #

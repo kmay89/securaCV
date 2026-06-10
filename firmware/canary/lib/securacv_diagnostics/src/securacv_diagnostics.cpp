@@ -18,6 +18,7 @@
 #include "canary_config.h"
 #include "log_level.h"
 #include "securacv_witness.h"
+#include "securacv_thermal.h"
 
 #if FEATURE_SD_STORAGE
 #include <SD.h>
@@ -172,7 +173,12 @@ static bool test_wifi() {
 }
 
 static bool test_temp() {
-  float t = temperatureRead();
+  /* Shared provider, NOT Arduino's temperatureRead(): the HAL keeps its
+   * own driver handle, and IDF 5.x allows only one instance — with the
+   * envsens tamper detector holding the sensor, temperatureRead()
+   * returned NAN and this test failed forever, denting the health score. */
+  float t = 0.0f;
+  if (!thermal_read_die_c(&t)) return false;
   return (t > -20.0f && t < 85.0f);
 }
 

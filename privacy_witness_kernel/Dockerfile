@@ -102,6 +102,7 @@ COPY --from=builder /build/target/release/export_verify /usr/local/bin/
 
 # Copy add-on scripts and wizard
 COPY privacy_witness_kernel/run.sh /run.sh
+COPY privacy_witness_kernel/run_lib.sh /usr/local/bin/run_lib.sh
 COPY privacy_witness_kernel/discover_cameras.sh /usr/local/bin/
 COPY privacy_witness_kernel/serve_wizard.py /usr/local/bin/
 COPY privacy_witness_kernel/wizard/ /usr/local/share/securacv-wizard/

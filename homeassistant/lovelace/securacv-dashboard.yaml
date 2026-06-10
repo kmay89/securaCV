@@ -1,201 +1,93 @@
-# SecuraCV Lovelace Dashboard
+# SecuraCV Lovelace Dashboard — Frigate / Privacy Witness Kernel pipeline
 #
-# How to add this to Home Assistant:
-#   Settings → Dashboards → Add Dashboard → From YAML
-#   Or paste into an existing dashboard's raw YAML editor.
+# Targets the entities the add-on creates automatically via MQTT Discovery
+# (no manual entity-ID substitution needed):
+#   binary_sensor.pwk_chain_problem   sealed-log integrity (problem class)
+#   button.pwk_verify_now             one-click verification
+#   sensor.pwk_daily_digest           rolling 24h summary
+#   sensor.pwk_last_event             most recent witnessed event
+#   sensor.pwk_<zone>_events          per-zone counters (appear per zone)
+#   binary_sensor.pwk_<zone>_motion   per-zone recent activity
 #
-# Entity IDs:
-#   SecuraCV entities follow the pattern: sensor.securacv_<device_id>_<type>
-#   Replace DEVICE_ID below with your actual device ID (found in
-#   Settings → Devices & Services → SecuraCV → your device).
+# Tip: the add-on panel (open the SecuraCV add-on Web UI) can generate this
+# dashboard from your live zone list — use "Generate dashboard" there for a
+# version with your per-zone cards already filled in.
 #
-#   If you used Mosquitto/MQTT auto-discovery, the device_id is derived
-#   from your device_key_seed prefix (e.g. "pwk_a1b2c3d4").
+# For ESP32 Canary devices (HACS integration), use
+# securacv-canary-dashboard.yaml instead.
 #
-#   Frigate entities follow: camera.<camera_name>, sensor.frigate_<camera>_*
-#
-# Tip: Run this script to auto-detect entity IDs from the command line:
-#   ha states list | grep securacv
+# How to add: Settings → Dashboards → Add Dashboard → From YAML,
+# or paste into an existing dashboard's raw YAML editor.
 
 title: "SecuraCV"
 views:
 
-  # ===========================================================================
-  # Main security overview
-  # ===========================================================================
-  - title: "Overview"
+  - title: "Witness"
     icon: "mdi:shield-check"
     path: securacv
     badges: []
     cards:
 
-      # -----------------------------------------------------------------------
-      # Banner: overall integrity status
-      # -----------------------------------------------------------------------
+      # Banner: sealed-log integrity status
       - type: markdown
         content: >
-          {% set chain_sensors = states.binary_sensor
-            | selectattr('entity_id', 'match', '.*securacv.*chain_valid.*')
-            | list %}
-          {% set all_valid = chain_sensors | rejectattr('state', 'eq', 'off') | list | count == chain_sensors | count %}
-          {% if chain_sensors | count == 0 %}
-          ### ⚪ SecuraCV — No devices detected
-          Add the SecuraCV integration: Settings → Devices & Services → Add Integration → SecuraCV
-          {% elif all_valid %}
-          ### ✅ SecuraCV — All witnesses verified
-          {% else %}
+          {% if is_state('binary_sensor.pwk_chain_problem', 'off') %}
+          ### ✅ SecuraCV — Sealed log verified
+
+          Every witnessed event is hash-chained and signed; the chain checks out.
+          {% elif is_state('binary_sensor.pwk_chain_problem', 'on') %}
           ### 🔴 SecuraCV — Integrity alert
-          One or more witness chains have failed verification. Check logs immediately.
+
+          Sealed-log verification FAILED. The log may have been altered.
+          Press "Verify now" to re-check, and inspect the add-on logs.
+          {% else %}
+          ### ⚪ SecuraCV — Awaiting first verification
+
+          Press "Verify now" below, or wait for the scheduled daily check.
           {% endif %}
 
-      # -----------------------------------------------------------------------
-      # System health card
-      # -----------------------------------------------------------------------
+      # Sealed log: integrity, verification, digest
       - type: entities
-        title: "System Health"
-        icon: "mdi:heart-pulse"
+        title: "Sealed log"
+        icon: "mdi:file-lock"
         show_header_toggle: false
         entities:
-          # Kernel add-on online (binary sensor created by SecuraCV HA integration)
-          - entity: binary_sensor.securacv_kernel_online
-            name: "Witness Kernel"
-            icon: "mdi:server-network"
-          # Replace DEVICE_ID with your actual device ID
-          - entity: binary_sensor.securacv_DEVICE_ID_online
-            name: "Device Online"
-            icon: "mdi:wifi"
-          - entity: binary_sensor.securacv_DEVICE_ID_chain_valid
-            name: "Log Integrity"
-            icon: "mdi:link-lock"
-          - entity: sensor.securacv_DEVICE_ID_witness_count
-            name: "Total Events Witnessed"
-            icon: "mdi:counter"
-          - entity: sensor.securacv_DEVICE_ID_chain_length
-            name: "Chain Length"
-            icon: "mdi:database-check"
-          - entity: sensor.securacv_DEVICE_ID_health
-            name: "Device Health"
-            icon: "mdi:chip"
+          - entity: binary_sensor.pwk_chain_problem
+            name: "Log integrity"
+          - entity: button.pwk_verify_now
+            name: "Verify now"
+          - entity: sensor.pwk_daily_digest
+            name: "Events (last 24h)"
+          - entity: sensor.pwk_last_event
+            name: "Last event"
 
-      # -----------------------------------------------------------------------
-      # Tamper sensors
-      # -----------------------------------------------------------------------
-      - type: entities
-        title: "Tamper Monitoring"
-        icon: "mdi:shield-alert"
-        show_header_toggle: false
-        entities:
-          - entity: binary_sensor.securacv_DEVICE_ID_tamper
-            name: "Any Tamper Detected"
-            icon: "mdi:alert-octagon"
-          - type: section
-            label: "Specific Tamper Types"
-          - entity: binary_sensor.securacv_DEVICE_ID_tamper_power_loss
-            name: "Power Loss"
-          - entity: binary_sensor.securacv_DEVICE_ID_tamper_sd_removed
-            name: "SD Card Removed"
-          - entity: binary_sensor.securacv_DEVICE_ID_tamper_enclosure
-            name: "Enclosure Opened"
-          - entity: binary_sensor.securacv_DEVICE_ID_tamper_motion
-            name: "Unexpected Motion"
-
-      # -----------------------------------------------------------------------
-      # Latest witnessed event
-      # -----------------------------------------------------------------------
-      - type: entities
-        title: "Latest Witnessed Event"
-        icon: "mdi:clock-check"
-        show_header_toggle: false
-        entities:
-          - entity: sensor.securacv_DEVICE_ID_last_event
-            name: "Last Event"
-            icon: "mdi:motion-sensor"
-
-      # -----------------------------------------------------------------------
-      # Frigate clip thumbnails (one card per camera)
-      # Replace camera_name with your Frigate camera name(s)
-      # -----------------------------------------------------------------------
-      - type: picture-entity
-        title: "Front Door — Latest Clip"
-        entity: camera.front_door
-        camera_view: auto
-        show_state: true
-        show_name: true
-
-  # ===========================================================================
-  # Zone detail view
-  # ===========================================================================
-  - title: "Zones"
-    icon: "mdi:map-marker-radius"
-    path: securacv-zones
-    cards:
-
+      # 24h digest breakdown (attributes of the digest sensor)
       - type: markdown
+        title: "Last 24 hours"
         content: >
-          ## Zone Status
-          Each zone is a monitored area. Events from Frigate are tagged with zone IDs
-          and verified by the witness kernel before appearing here.
+          {% set d = states.sensor.pwk_daily_digest %}
+          {% if d is none or d.state in ('unknown', 'unavailable') %}
+          Digest not published yet — it refreshes every 30 seconds once the
+          add-on is running.
+          {% else %}
+          **{{ d.state }}** witnessed event(s)
 
-      # Per-zone card template — duplicate for each zone
-      - type: entities
-        title: "Zone: Front Door"
-        icon: "mdi:door-open"
-        entities:
-          - entity: sensor.securacv_DEVICE_ID_last_event
-            name: "Last Event"
-          - entity: sensor.frigate_front_door_person_count
-            name: "Person detections today"
-            icon: "mdi:account-multiple"
-          - entity: sensor.frigate_front_door_car_count
-            name: "Car detections today"
-            icon: "mdi:car"
+          {% for zone, count in (d.attributes.per_zone | default({})).items() %}
+          - {{ zone }}: {{ count }}
+          {% endfor %}
 
-      # Add more zones by duplicating the card above.
+          {% set p = d.attributes.per_period | default({}) %}
+          {% if p %}
+          _{{ p.items() | map('join', ': ') | join(' · ') }}_
+          {% endif %}
+          {% endif %}
 
-  # ===========================================================================
-  # Break-glass & audit
-  # ===========================================================================
-  - title: "Audit"
-    icon: "mdi:file-document-check"
-    path: securacv-audit
-    cards:
-
-      - type: markdown
-        content: >
-          ## Break-Glass & Audit
-
-          The witness log records every event cryptographically. You can verify
-          the log at any time using the `log_verify` CLI tool in the add-on.
-
-          **To export the witness chain:**
-          Settings → Devices & Services → SecuraCV → your device → Export Chain
-
-          **To verify integrity:**
-          Settings → Devices & Services → SecuraCV → your device → Verify Chain
-
-          **Break-glass** requires multi-party authorization (N-of-M trustee quorum).
-          See `docs/homeassistant_setup.md` for the break-glass workflow.
-
-      - type: entities
-        title: "Signing & Integrity"
-        icon: "mdi:certificate"
-        show_header_toggle: false
-        entities:
-          - entity: binary_sensor.securacv_DEVICE_ID_chain_valid
-            name: "Chain Valid"
-          - entity: sensor.securacv_DEVICE_ID_chain_length
-            name: "Chain Length"
-          - entity: sensor.securacv_DEVICE_ID_witness_count
-            name: "Total Events"
-
-      - type: entities
-        title: "Transport Health"
-        icon: "mdi:access-point-network"
-        show_header_toggle: false
-        entities:
-          - entity: binary_sensor.securacv_DEVICE_ID_transport_mqtt
-            name: "MQTT"
-          - entity: binary_sensor.securacv_DEVICE_ID_transport_wifi_sta
-            name: "WiFi Station"
-          - entity: binary_sensor.securacv_DEVICE_ID_mesh_connected
-            name: "Mesh Network"
+      # Per-zone cards: copy this block per zone, or use the add-on panel's
+      # "Generate dashboard" button to fill them in from your live zones.
+      # - type: entities
+      #   title: "front_door"
+      #   entities:
+      #     - entity: sensor.pwk_front_door_events
+      #       name: "Events"
+      #     - entity: binary_sensor.pwk_front_door_motion
+      #       name: "Recent activity"
