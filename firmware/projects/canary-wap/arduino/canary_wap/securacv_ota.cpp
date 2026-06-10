@@ -302,6 +302,13 @@ const char *securacv_ota_friendly_state(securacv_ota_state_t state)
 // DEVICE IMPLEMENTATION
 // ============================================================================
 
+// Arduino.h MUST come before any ESP-IDF networking header in this TU.
+// lwip's inet.h defines INADDR_NONE as a macro; if it lands before the
+// core's IPAddress.h (extern IPAddress INADDR_NONE), that declaration
+// macro-expands into a parse error. Including Arduino.h first pins the
+// safe order regardless of what ArduinoJson/Crypto pull in later.
+#include <Arduino.h>
+
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -326,11 +333,21 @@ const char *securacv_ota_friendly_state(securacv_ota_state_t state)
 #include <Ed25519.h>
 
 // Certificate bundle for public HTTPS endpoints (GitHub Releases). Available
-// on both Arduino-ESP32 core lines; fall back to requiring an explicit
-// cert_pem if a future core drops it.
+// on both Arduino-ESP32 core lines, but under different names: core 2.x
+// (IDF 4.4) ships its own loader as arduino_esp_crt_bundle_attach, while
+// core 3.x (IDF 5.x) exposes the standard esp_crt_bundle_attach. Fall back
+// to requiring an explicit cert_pem if a future core drops the header.
 #if __has_include("esp_crt_bundle.h")
 #include "esp_crt_bundle.h"
 #define SECURACV_OTA_HAVE_CRT_BUNDLE 1
+#if __has_include(<esp_arduino_version.h>)
+#include <esp_arduino_version.h>
+#endif
+#if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR < 3
+#define scv_crt_bundle_attach arduino_esp_crt_bundle_attach
+#else
+#define scv_crt_bundle_attach esp_crt_bundle_attach
+#endif
 #endif
 
 // House rule (regression_check.sh, LESSONS_LEARNED.md): always the non-_ret
@@ -1082,7 +1099,7 @@ static esp_err_t ota_fetch_manifest_once(const char *url, bool *not_modified)
     }
 #if defined(SECURACV_OTA_HAVE_CRT_BUNDLE) && defined(CONFIG_MBEDTLS_CERTIFICATE_BUNDLE)
     else {
-        http_config.crt_bundle_attach = esp_crt_bundle_attach;
+        http_config.crt_bundle_attach = scv_crt_bundle_attach;
     }
 #endif
 
@@ -1298,7 +1315,7 @@ static esp_err_t ota_download_and_flash(void)
     }
 #if defined(SECURACV_OTA_HAVE_CRT_BUNDLE) && defined(CONFIG_MBEDTLS_CERTIFICATE_BUNDLE)
     else {
-        http_config.crt_bundle_attach = esp_crt_bundle_attach;
+        http_config.crt_bundle_attach = scv_crt_bundle_attach;
     }
 #endif
 
