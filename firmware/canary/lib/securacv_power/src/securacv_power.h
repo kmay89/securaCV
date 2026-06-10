@@ -197,6 +197,10 @@ uint8_t power_health_pct(void);
  * established) rather than guessing. Capped at 14 days. */
 uint32_t power_estimate_runtime_min(void);
 
+/* Human-readable charge state name ("charging", "discharging", ...)
+ * for telemetry payloads. Never returns NULL. */
+const char* power_charge_state_name(uint8_t charge_state);
+
 #ifdef __cplusplus
 }
 #endif

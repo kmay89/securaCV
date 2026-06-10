@@ -324,6 +324,14 @@ catches it only when the float drifts above 4.4 V.
    "brownout_count":0,"uptime_sec":5412}
   ```
 - **BLE:** standard Battery Service (0x180F) battery level.
+- **MQTT / Home Assistant:** the retained `{prefix}/{device_id}/health`
+  topic carries `battery` (SoC, or 100 on mains), `battery_present`,
+  `charge_state`, `battery_health_pct`, and `battery_mv`. The SecuraCV
+  integration's Health sensor derives healthy/warning/critical from it —
+  battery thresholds (warning < 25%, critical < 10%) apply only while
+  *discharging*, so a charging or mains-powered device never false-alarms —
+  and exposes the battery detail as entity attributes for automations
+  (e.g. notify when `battery_health_pct` drops below 80).
 - **Self-test:** `power` metric in the self-test API reports mode, state,
   and divider detection.
 

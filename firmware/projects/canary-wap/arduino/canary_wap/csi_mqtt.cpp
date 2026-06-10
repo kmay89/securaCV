@@ -718,27 +718,53 @@ void publish_chain(uint32_t length, const uint8_t* latest_hash_32) {
   publish_raw(topic, body, (size_t)n, /*retain=*/true);
 }
 
-void publish_health(uint32_t free_heap_bytes, uint32_t uptime_sec) {
+void publish_health(uint32_t free_heap_bytes, uint32_t uptime_sec,
+                    const MqttBatteryInfo* battery) {
   char topic[192];
   build_topic(topic, sizeof(topic), "health");
-  /* battery=100 reflects mains power; future hardware that ships a
-   * battery-management IC overrides this from canary_wap.ino once the
-   * reading is available. The field is published unconditionally so
-   * the HA "healthy/warning/critical" derivation always has a number
-   * to compare. */
-  char body[256];
-  const int n = snprintf(body, sizeof(body),
-    "{"
-      "\"battery\":100,"
-      "\"memory_free\":%lu,"
-      "\"uptime\":%lu,"
-      "\"firmware_version\":\"%s\","
-      "\"public_key\":\"%s\""
-    "}",
-    (unsigned long)free_heap_bytes,
-    (unsigned long)uptime_sec,
-    s_firmware_version,
-    s_public_key_hex);
+  /* battery=100 with battery_present=false reflects mains power, so the
+   * HA "healthy/warning/critical" derivation always has a number to
+   * compare. With a battery wired (power_monitor HW ADC mode) the .ino
+   * passes the real state and HA gets SoC, charge state, and the
+   * cycle-fade health estimate. */
+  char body[384];
+  int n;
+  if (battery) {
+    n = snprintf(body, sizeof(body),
+      "{"
+        "\"battery\":%u,"
+        "\"battery_present\":true,"
+        "\"charge_state\":\"%s\","
+        "\"battery_health_pct\":%u,"
+        "\"battery_mv\":%u,"
+        "\"memory_free\":%lu,"
+        "\"uptime\":%lu,"
+        "\"firmware_version\":\"%s\","
+        "\"public_key\":\"%s\""
+      "}",
+      (unsigned)battery->soc_pct,
+      battery->charge_state ? battery->charge_state : "unknown",
+      (unsigned)battery->health_pct,
+      (unsigned)battery->battery_mv,
+      (unsigned long)free_heap_bytes,
+      (unsigned long)uptime_sec,
+      s_firmware_version,
+      s_public_key_hex);
+  } else {
+    n = snprintf(body, sizeof(body),
+      "{"
+        "\"battery\":100,"
+        "\"battery_present\":false,"
+        "\"memory_free\":%lu,"
+        "\"uptime\":%lu,"
+        "\"firmware_version\":\"%s\","
+        "\"public_key\":\"%s\""
+      "}",
+      (unsigned long)free_heap_bytes,
+      (unsigned long)uptime_sec,
+      s_firmware_version,
+      s_public_key_hex);
+  }
   if (n <= 0 || (size_t)n >= sizeof(body)) return;
   publish_raw(topic, body, (size_t)n, /*retain=*/true);
 }
