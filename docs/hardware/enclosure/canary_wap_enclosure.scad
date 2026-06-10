@@ -1,27 +1,29 @@
 // ============================================================================
-//  SecuraCV Canary WAP — 3D-printable enclosure (parametric)
+//  SecuraCV Canary WAP — 3D-printable enclosure (parametric)  v0.7
 //  Board: Seeed XIAO ESP32-S3 Sense + optional LiPo (placed beside the board)
-//  Features: light-pipe port, buzzer/pressure vent, camera/sensor window,
-//            USB-C access, board standoffs, M2 screw lid, tamper-magnet pocket.
+//  Features: light-pipe port, buzzer/pressure vent, camera/sensor window with
+//            sealed-disc seat, USB-C access, board standoffs + snap clips,
+//            M2 screw lid, tamper-magnet pocket, opt-in weather sealing
+//            (TPU gasket + drip-edge lid), opt-in wall mounting (keyholes/tabs).
 //
 //  Units: millimetres.  CAD: OpenSCAD (https://openscad.org).
 //
 //  ⚠️ VERIFY BEFORE PRINTING. Defaults are nominal for the XIAO ESP32-S3 Sense
-//     (PCB ~21.0 x 17.8 mm) plus a 503450-class LiPo. Measure YOUR board, battery,
+//     (PCB 21.0 x 17.5 mm) plus a 503450-class LiPo. Measure YOUR board, battery,
 //     camera-lens position and USB-C connector and adjust the parameters below.
-//     Test-print the lid (it carries the fiddly features) before the full box.
+//     Print the clip coupon first, then the lid (it carries the fiddly features).
 //
-//  Layout (top view):   [ board @ USB end ]  [ gap ]  [ battery ]
+//  Layout (top view):   [ board @ USB end ]  [ gap ]  [ battery ]  [ gps ]
 //                         -X  ............................  +X
 //
 //  Render a part:  set `part` then F6 (or use the CLI in the README).
 // ============================================================================
 
 /* [What to render] */
-part   = "all";       // ["base","lid","all","coupon"]   (coupon = small clip-fit test piece)
+part   = "all";       // ["base","lid","all","coupon","gasket"]   (coupon = clip-fit test; gasket = TPU seal ring, needs opt_seal)
 
 /* [Preset] — quick configs; choose "custom" to use the Peripherals checkboxes */
-preset = "custom";    // ["custom","battery_full","compact_plain"]
+preset = "custom";    // ["custom","battery_full","compact_plain","battery_weather"]
 
 /* [Peripherals you have — tick what is fitted (applied when preset = custom)] */
 opt_camera  = true;   // XIAO *Sense* camera   -> lid sensor window + taller cavity (off = plain XIAO ESP32-S3)
@@ -33,16 +35,60 @@ opt_tamper  = true;   // reed/Hall + magnet    -> lid magnet pocket
 opt_touch   = false;  // cap-touch pad         -> thinned "touch window" on the lid
 opt_antenna = false;  // external u.FL antenna -> side bulkhead hole
 
+/* [Weather sealing — opt-in; the default case stays simple/indoor] */
+opt_seal    = false;  // perimeter TPU gasket + drip-edge lid + USB plug recess (splash-resistant, NOT immersion)
+gasket_w      = 1.2;  // gasket groove width (the printed gasket is 0.1 narrower)
+gasket_groove = 1.0;  // groove depth into the base rim
+gasket_proud  = 0.6;  // uncompressed gasket stand-proud (~35 % squeeze under the lid screws)
+skirt_h       = 3.0;  // drip-edge skirt drop over the base wall (sheds water off the seam)
+skirt_t       = 1.6;  // skirt wall thickness
+usb_cover     = true; // (seal mode) shallow recess framing the USB port for a flanged silicone plug
+usb_cov_pad   = 2.0;  // recess margin around the USB opening
+usb_cov_dep   = 1.0;  // recess depth into the outer wall face
+
+/* [Mounting — opt-in; case hangs with the USB end facing DOWN] */
+opt_mount   = false;  // wall-mount features (keyholes thicken the case back by `kh_extra`)
+mount_style = "keyhole"; // ["keyhole","tabs","both"]
+// keyholes — BLIND pockets in a thickened back; they never breach the cavity (seal-safe)
+kh_extra    = 3.0;    // back thickening that hosts the keyhole pockets
+kh_head_d   = 7.0;    // screw-head pass hole (fits #6 / M3.5 pan head)
+kh_shank_d  = 4.2;    // shank slot width
+kh_slot_l   = 8.0;    // slot travel (slot runs toward +X = UP when the USB faces down)
+kh_head_h   = 3.5;    // total pocket depth (face web + head cavity)
+kh_face     = 1.0;    // face web thickness the screw head grips behind
+kh_inset    = 10.0;   // keyhole centres at x = ±(inner_l/2 − kh_inset); auto-merges to one on small cases
+// external screw tabs — four ears on the ±Y walls, fully outside the seal envelope
+tab_l       = 10.0;   // ear length along the wall
+tab_w       = 8.0;    // ear protrusion from the wall
+tab_t       = 3.0;    // ear thickness
+tab_hole_d  = 3.6;    // through-hole (M3 / #6)
+tab_cb_d    = 7.0;    // pan-head counterbore diameter
+tab_cb_h    = 1.0;    // counterbore depth
+
+/* [Aesthetics] */
+lid_edge    = 0.8;    // 45° chamfer around the lid's top edge (0 = sharp slab)  // [0:0.1:1.5]
+label_text  = "";     // debossed lid label, e.g. "CANARY" ("" = off; needs the font installed)
+label_size  = 5.0;    // text height
+label_depth = 0.5;    // deboss depth (prints as crisp first-layer voids, lid prints face-down)
+label_dx    = 0.0;    // label centre offset from the LID centre (not the board centre)
+label_dy    = -10.0;
+label_rot   = 0;      // label rotation (degrees)
+label_font  = "Liberation Sans:style=Bold";
+
 // effective flags (a preset overrides the checkboxes above)
-function _pre(c,f,p) = (preset=="battery_full") ? f : (preset=="compact_plain") ? p : c;
-e_camera  = _pre(opt_camera,  true,  false);
-e_buzzer  = _pre(opt_buzzer,  true,  true);
-e_led     = _pre(opt_led,     true,  true);
-e_battery = _pre(opt_battery, true,  false);
-e_gps     = _pre(opt_gps,     true,  false);
-e_tamper  = _pre(opt_tamper,  true,  false);
-e_touch   = _pre(opt_touch,   false, false);
-e_antenna = _pre(opt_antenna, false, false);
+function _pre(c, f, p, w) = (preset == "battery_full")    ? f
+                          : (preset == "compact_plain")   ? p
+                          : (preset == "battery_weather") ? w : c;
+e_camera  = _pre(opt_camera,  true,  false, true);
+e_buzzer  = _pre(opt_buzzer,  true,  true,  true);
+e_led     = _pre(opt_led,     true,  true,  true);
+e_battery = _pre(opt_battery, true,  false, true);
+e_gps     = _pre(opt_gps,     true,  false, true);
+e_tamper  = _pre(opt_tamper,  true,  false, true);
+e_touch   = _pre(opt_touch,   false, false, false);
+e_antenna = _pre(opt_antenna, false, false, false);
+e_seal    = _pre(opt_seal,    false, false, true);
+e_mount   = _pre(opt_mount,   false, false, true);
 
 /* [Board] — Seeed XIAO ESP32-S3 official: PCB 21.0 x 17.5 mm, 2.54 mm pitch */
 board_l        = 21.0;  // PCB length (USB end to far end, along X)
@@ -56,8 +102,9 @@ board_stack_h  = e_camera ? stack_camera : stack_plain;
 /* [Battery] (LiPo, placed beside the board) */
 batt_l         = 50.0;  // 503450 ~ 50 x 34 x 5 mm
 batt_w         = 34.0;
-batt_h         = 6.0;
+batt_h         = 6.0;   // bay height — keep >= 1 mm over the nominal cell for LiPo swelling
 batt_gap       = 2.5;   // gap between board zone and battery zone
+batt_wire_w    = 4.0;   // lead channel notched into the bay ribs, hugs the +Y wall (0 = off)
 
 /* [GPS module] (L76K, internal bay after the board/battery) */
 gps_l          = 16.0;
@@ -69,13 +116,17 @@ gps_gap        = 2.5;
 ant_d          = 6.5;
 
 /* [Shell] */
-wall_t         = 2.0;   // side wall thickness
+wall_t         = 2.0;   // side wall thickness (auto-thickened in seal mode to host the groove)
 floor_t        = 2.0;   // base floor thickness
 lid_t          = 2.0;   // lid top thickness
 lip_h          = 4.0;   // how far the lid lip drops into the base
 lip_t          = 1.2;   // lid lip wall thickness
-fit_gap        = 0.20;  // lid-to-base sliding clearance (tune for your printer)
 corner_r       = 3.0;   // outside corner radius
+
+/* [Print tolerances] — per-side clearances; tune these once for your printer */
+tol_slide      = 0.20;  // sliding fits: lid lip <-> base, drip skirt, camera-disc seat
+tol_press      = 0.10;  // press fits: tamper magnet, LED light pipe
+tol_hole       = 0.30;  // clearance holes: lid screws
 
 /* [Standoffs / screw posts] */
 standoff_h     = 3.0;   // PCB sits this high off the floor (clearance for bottom parts)
@@ -91,12 +142,14 @@ usb_h          = 6.5;   // opening height: boot clearance (connector body ~3.2 m
 usb_z          = 0.0;   // extra lift relative to PCB-top centring
 
 /* [Lid features] — offsets are measured FROM THE BOARD CENTRE (mm). Measure your board! */
-// Camera / sensor window
+// Camera / sensor window + recessed seat for a glued clear disc (12 x 1 mm PMMA/PC)
 cam_win_d      = 9.0;
+cam_disc_d     = 12.0;  // clear-disc diameter (seat = disc + 2*tol_slide; 0 = no seat, bare hole)
+cam_disc_t     = 1.0;   // clear-disc thickness (disc sits 0.2 recessed below the lid face)
 cam_dx         = 0.0;
 cam_dy         = 0.0;
-// Light-pipe / status-LED port
-lp_d           = 3.2;
+// Light-pipe / status-LED port (press fit: hole = lp_d + 2*tol_press)
+lp_d           = 3.0;   // light-pipe diameter (3 mm pipe -> 3.2 mm hole at default tol_press)
 lp_dx          = 5.0;
 lp_dy          = 5.0;
 // Buzzer + pressure vent (recess seats an adhesive GORE vent; ring of holes passes sound/pressure)
@@ -114,7 +167,7 @@ touch_dx       = -3.0;
 touch_dy       = -5.0;
 
 /* [Tamper magnet] — blind pocket on the LID underside, over the board's reed/Hall switch */
-mag_d          = 6.4;   // 6 mm magnet + fit
+mag_d          = 6.0;   // MAGNET diameter (pocket = mag_d + 2*tol_press — press fit; add a drop of glue)
 mag_h          = 3.2;
 mag_dx         = -6.0;
 mag_dy         = 5.0;
@@ -125,7 +178,7 @@ clip_w         = 6.0;   // tab width (along the board edge)
 clip_t         = 1.5;   // beam thickness — thinner = easier flex (tune to your material)
 clip_hook      = 0.8;   // how far the lip overhangs the board top
 clip_hook_h    = 1.2;   // lip + 45° lead-in height above the board top
-clip_clear     = 0.25;  // gap between tab inner face and the board edge
+clip_clear     = 0.25;  // gap between tab inner face and the board edge (a fit — tune on the coupon)
 
 /* [Quality] */
 $fn = 64;
@@ -133,40 +186,81 @@ $fn = 64;
 // ----------------------------------------------------------------------------
 //  Derived geometry
 // ----------------------------------------------------------------------------
+wall_eff     = e_seal ? max(wall_t, gasket_w + 1.6) : wall_t;   // >=0.8 mm cheek each side of the groove
+
 board_zone_l = board_l + 2*board_clear;
 batt_zone_l  = e_battery ? (batt_gap + batt_l) : 0;
 gps_zone_l   = e_gps     ? (gps_gap  + gps_l)  : 0;
 extra_l      = batt_zone_l + gps_zone_l;                 // internal bays appended after the board
-post_corner  = post_d + 1.5;                 // clearance so a screw post sits in the corner, clear of the board
+post_corner  = post_d + 1.5;                 // positioning margin so a screw post sits in the corner, clear of the board
 
-// cavity must hold the board + any bays AND leave true corners for the screw posts
-// (+post_corner on length so the far bay ends before the +X corner posts)
-inner_l = max(board_zone_l + extra_l + (extra_l > 0 ? post_corner : 0) + 1.0, board_l + 2*post_corner);
-inner_w = max(board_w + 2*board_clear, e_battery ? batt_w : 0, e_gps ? gps_w : 0, board_w + 2*post_corner) + 1.0;
-cav_h   = standoff_h + board_h + board_stack_h + 1.0;   // internal height above floor
+// cavity: board + bays along X, +X dead zone keeps true corners for the screw posts.
+// The board is ALWAYS biased to the -X (USB) wall so the connector reaches the opening
+// (v0.7 fix — centring it left the USB ~6.5 mm behind the wall on the compact case).
+clip_stack = board_clips ? (clip_clear + clip_t) : 0;
+inner_l = board_zone_l + extra_l + post_corner + 1.0;
+inner_w = max(board_w + 2*board_clear,
+              e_battery ? batt_w : 0,
+              e_gps ? gps_w : 0,
+              board_w + 2*post_corner,
+              board_w + 2*(clip_stack + 0.6 + post_d + 0.2)   // keep the clips clear of the corner posts
+             ) + 1.0;
+cav_h_min = standoff_h + board_h + board_stack_h + 1.0;        // internal height above floor
+// seal mode: guarantee >=1.5 mm of rim web above the USB opening so the gasket path is continuous
+cav_h   = e_seal ? max(cav_h_min, standoff_h + board_h + usb_h + usb_z + 2.5) : cav_h_min;
 
-out_l  = inner_l + 2*wall_t;
-out_w  = inner_w + 2*wall_t;
+out_l  = inner_l + 2*wall_eff;
+out_w  = inner_w + 2*wall_eff;
 base_h = floor_t + cav_h;
 
-pcb_z   = floor_t + standoff_h;                 // absolute z of PCB underside
-has_bay = e_battery || e_gps;
-board_cx = has_bay ? (-inner_l/2 + board_clear + board_l/2 + 0.5) : 0;  // USB-biased w/ a bay, else centred
+pcb_z    = floor_t + standoff_h;                // absolute z of PCB underside
+board_cx = -inner_l/2 + board_clear + board_l/2 + 0.5;   // USB-biased (0.5 = positioning margin, not a fit)
 board_cy = 0;
 zone0    = -inner_l/2 + board_zone_l + 0.5;     // x where the appended bays begin
 batt_cx  = zone0 + batt_gap + batt_l/2;         // battery bay centre
 gps_cx   = zone0 + batt_zone_l + gps_gap + gps_l/2;   // GPS bay centre (after battery, if any)
 
+// mounting back-thickening (keyhole pockets live below the floor, never in the cavity)
+mount_extra = (e_mount && (mount_style == "keyhole" || mount_style == "both")) ? kh_extra : 0;
+// keyhole positions: two near the ends, or one centred when the case is too short
+kh_x   = inner_l/2 - kh_inset;
+kh_xs  = (kh_x >= kh_slot_l/2 + kh_head_d/2 + 2) ? [-kh_x, kh_x] : [0];
+
+// drip-edge lid plate (seal mode: plate grows so the skirt overlaps the base wall)
+skirt_gap = tol_slide + 0.2;                    // skirt-to-wall running clearance
+plate_l   = e_seal ? out_l + 2*(skirt_gap + skirt_t) : out_l;
+plate_w   = e_seal ? out_w + 2*(skirt_gap + skirt_t) : out_w;
+plate_r   = e_seal ? corner_r + skirt_gap + skirt_t : corner_r;
+
+// sanity checks + a measurable size echo for scripted verification
+assert(!e_seal || gasket_groove <= lip_h - 0.5, "gasket_groove must stay below the lid lip depth");
+assert(cam_disc_t == 0 || cam_disc_t + 0.2 < lid_t, "cam_disc_t too thick for lid_t");
+assert(mount_extra == 0 || kh_head_h + 1.5 <= floor_t + kh_extra, "keyhole pocket too deep — raise kh_extra");
+echo(str("Canary WAP enclosure v0.7 — outer ", out_l, " x ", out_w, " x ",
+         base_h + lid_t + mount_extra, " mm  (preset=", preset, ", seal=", e_seal, ", mount=", e_mount, ")"));
+if (e_seal && wall_eff > wall_t)
+    echo(str("seal mode: walls auto-thickened ", wall_t, " -> ", wall_eff, " mm to host the gasket groove"));
+
 // ----------------------------------------------------------------------------
 //  Helpers
 // ----------------------------------------------------------------------------
-module rrect(l, w, r, h) {                       // rounded rectangular prism
-    linear_extrude(height = h)
-        offset(r = r) offset(r = -r)
-            square([l, w], center = true);
+module rrect2d(l, w, r) {                        // rounded rectangle (2D)
+    offset(r = r) offset(r = -r) square([l, w], center = true);
 }
 
-// corner screw-post centres (just inside the cavity corners)
+module rrect(l, w, r, h) {                       // rounded rectangular prism
+    linear_extrude(height = h) rrect2d(l, w, r);
+}
+
+// ring traced on the wall midline — shared by the gasket groove and the gasket part
+module rim_ring2d(w) {
+    difference() {
+        offset(r =  w/2) rrect2d(inner_l + wall_eff, inner_w + wall_eff, max(0.1, corner_r - wall_eff/2));
+        offset(r = -w/2) rrect2d(inner_l + wall_eff, inner_w + wall_eff, max(0.1, corner_r - wall_eff/2));
+    }
+}
+
+// corner screw-post centres (just inside the cavity corners; 0.2 = positioning margin)
 function post_xy() = [
     [ inner_l/2 - post_d/2 - 0.2,  inner_w/2 - post_d/2 - 0.2],
     [-inner_l/2 + post_d/2 + 0.2,  inner_w/2 - post_d/2 - 0.2],
@@ -184,25 +278,74 @@ module floorrib(a, b, w) {
     }
 }
 
-// transverse rib across the cavity floor (bounds a battery bay; walls cradle the sides)
+// transverse rib across the cavity floor (bounds a battery bay; walls cradle the sides),
+// notched near the +Y wall so the battery leads route flat instead of climbing it
 module divrib(x) {
-    translate([x - 0.6, -(inner_w - 0.6)/2, floor_t]) cube([1.2, inner_w - 0.6, 2.0]);
+    difference() {
+        translate([x - 0.6, -(inner_w - 0.6)/2, floor_t]) cube([1.2, inner_w - 0.6, 2.0]);
+        if (batt_wire_w > 0)
+            translate([x - 1.0, inner_w/2 - batt_wire_w - 1.0, floor_t - 0.1])
+                cube([2.0, batt_wire_w, 2.4]);
+    }
 }
 
 // Cantilever snap clip on a board long edge: a beam from the floor with a lip that
 // hooks over the board top. The board cams the lip out on the 45° lead-in, then it
 // snaps back. `cx` = position along the edge; `sy` = +1/-1 selects the +y/-y edge.
 //   profile (u = outward from board edge, v = z): beam + inward hook + lead-in chamfer.
+//   The retention seat over the board MUST stay flat (a sloped seat loses grip);
+//   the underside is 45°-chamfered across the clearance gap for cleaner FDM bridging.
 module boardclip(cx, sy) {
     bt = floor_t + standoff_h + board_h;   // board top surface (lip sits here)
     tp = bt + clip_hook_h;                 // top of the clip
     pts = [ [clip_clear, floor_t], [clip_clear + clip_t, floor_t],
             [clip_clear + clip_t, tp], [clip_clear, tp],
-            [-clip_hook, bt], [clip_clear, bt] ];
+            [-clip_hook, bt], [0, bt], [clip_clear, bt - clip_clear] ];
     ey = board_cy + sy * board_w/2;        // the board edge this clip guards
     translate([cx, ey, 0]) scale([1, sy, 1]) translate([-clip_w/2, 0, 0])
         rotate([0, 0, 90]) rotate([90, 0, 0])
             linear_extrude(height = clip_w) polygon(pts);
+}
+
+// blind keyhole pocket cut into the thickened back (xc = feature centre along X);
+// head circle at the -X end, slot toward +X = UP when the case hangs USB-down
+module keyhole_pocket(xc) {
+    x0 = xc - kh_slot_l/2;                 // screw-head pass hole centre
+    x1 = xc + kh_slot_l/2;                 // slot top end
+    z0 = -mount_extra;                     // outer back face
+    union() {
+        // face opening: head circle + shank slot
+        translate([0, 0, z0 - 0.1]) linear_extrude(kh_face + 0.1) {
+            translate([x0, 0]) circle(d = kh_head_d);
+            hull() {
+                translate([x0, 0]) circle(d = kh_shank_d);
+                translate([x1, 0]) circle(d = kh_shank_d);
+            }
+        }
+        // wider head cavity behind the face web (the screw head slides in here)
+        translate([0, 0, z0 + kh_face]) linear_extrude(kh_head_h - kh_face)
+            hull() {
+                translate([x0, 0]) circle(d = kh_head_d + 0.6);
+                translate([x1, 0]) circle(d = kh_head_d + 0.6);
+            }
+    }
+}
+
+// four external screw ears on the ±Y walls (counterbored for an M3/#6 pan head)
+module mount_tabs() {
+    wy = out_w/2;
+    for (sx = [1, -1], sy = [1, -1]) {
+        tx = sx * (inner_l/2 - tab_l/2 - 2);
+        hy = sy * (wy + tab_w/2);          // hole centre
+        translate([0, 0, -mount_extra]) difference() {
+            linear_extrude(tab_t) hull() {
+                translate([tx, sy * (wy - 1)]) square([tab_l, 2], center = true);  // root buried in the wall
+                translate([tx, hy]) circle(d = tab_l * 0.8);
+            }
+            translate([tx, hy, -0.1])              cylinder(d = tab_hole_d, h = tab_t + 0.2);
+            translate([tx, hy, tab_t - tab_cb_h])  cylinder(d = tab_cb_d,   h = tab_cb_h + 0.2);
+        }
+    }
 }
 
 // ----------------------------------------------------------------------------
@@ -217,17 +360,39 @@ module base() {
     gusset_h = max(2, cav_h - lip_h - 1.0);   // keep wall gussets below where the lid lip nests
 
     union() {
-        // hollow shell with the USB-C wall opening
+        // hollow shell with the USB-C wall opening (+ optional mounting/seal features)
         difference() {
-            rrect(out_l, out_w, corner_r, base_h);
+            union() {
+                rrect(out_l, out_w, corner_r, base_h);
+                if (mount_extra > 0)                       // thickened back hosts the keyhole pockets
+                    translate([0, 0, -mount_extra]) rrect(out_l, out_w, corner_r, mount_extra);
+                if (e_mount && (mount_style == "tabs" || mount_style == "both"))
+                    mount_tabs();
+            }
             translate([0, 0, floor_t])
-                rrect(inner_l, inner_w, max(0.1, corner_r - wall_t), cav_h + 1);
+                rrect(inner_l, inner_w, max(0.1, corner_r - wall_eff), cav_h + 1);
             translate([-out_l/2, board_cy, pcb_z + board_h + usb_h/2 + usb_z])
-                cube([wall_t*3, usb_w, usb_h], center = true);
+                cube([wall_eff*3, usb_w, usb_h], center = true);
             // external antenna bulkhead hole on the far (+X) wall
             if (e_antenna)
                 translate([out_l/2, board_cy, pcb_z + 2])
-                    rotate([0, 90, 0]) cylinder(d = ant_d, h = wall_t*4, center = true);
+                    rotate([0, 90, 0]) cylinder(d = ant_d, h = wall_eff*4, center = true);
+            // perimeter gasket groove in the rim top (seal mode)
+            if (e_seal)
+                translate([0, 0, base_h - gasket_groove])
+                    linear_extrude(gasket_groove + 1) rim_ring2d(gasket_w);
+            // shallow recess framing the USB opening so a flanged silicone plug seats flush;
+            // clamped below the gasket groove so the seal path keeps its outer cheek
+            if (e_seal && usb_cover) {
+                ur_bot = pcb_z + board_h + usb_z - usb_cov_pad;
+                ur_top = min(pcb_z + board_h + usb_h + usb_z + usb_cov_pad,
+                             base_h - gasket_groove - 0.5);
+                translate([-out_l/2 - 1, board_cy - (usb_w/2 + usb_cov_pad), ur_bot])
+                    cube([1 + usb_cov_dep, usb_w + 2*usb_cov_pad, ur_top - ur_bot]);
+            }
+            // blind keyhole pockets (never reach the cavity floor — seal-safe)
+            if (mount_extra > 0)
+                for (xc = kh_xs) keyhole_pocket(xc);
         }
 
         // corner screw posts — fused to BOTH adjacent walls by gussets (no free-standing towers),
@@ -303,38 +468,70 @@ module vent_cluster(x, y) {
     }
 }
 
-module lid() {
-    cam = [board_cx + cam_dx, board_cy + cam_dy];
-    lp  = [board_cx + lp_dx,  board_cy + lp_dy];
-    vnt = [board_cx + vent_dx, board_cy + vent_dy];
-    mag = [board_cx + mag_dx, board_cy + mag_dy];
+// lid plate with a 45° chamfered top edge (prints face-down: the chamfer is a
+// clean 45° outward slope off the bed — no supports)
+module lid_plate() {
+    if (lid_edge > 0) {
+        union() {
+            rrect(plate_l, plate_w, plate_r, lid_t - lid_edge);
+            hull() {
+                translate([0, 0, lid_t - lid_edge])
+                    rrect(plate_l, plate_w, plate_r, 0.01);
+                translate([0, 0, lid_t - 0.01])
+                    rrect(plate_l - 2*lid_edge, plate_w - 2*lid_edge,
+                          max(0.1, plate_r - lid_edge), 0.01);
+            }
+        }
+    } else {
+        rrect(plate_l, plate_w, plate_r, lid_t);
+    }
+}
 
+module lid() {
+    cam = [board_cx + cam_dx,   board_cy + cam_dy];
+    lp  = [board_cx + lp_dx,    board_cy + lp_dy];
+    vnt = [board_cx + vent_dx,  board_cy + vent_dy];
+    mag = [board_cx + mag_dx,   board_cy + mag_dy];
     tch = [board_cx + touch_dx, board_cy + touch_dy];
 
     union() {
         difference() {
-            rrect(out_l, out_w, corner_r, lid_t);
+            lid_plate();
 
-            if (e_camera) translate([cam[0], cam[1], -1]) cylinder(d = cam_win_d, h = lid_t + 2);  // camera window
-            if (e_led)    translate([lp[0],  lp[1],  -1]) cylinder(d = lp_d,      h = lid_t + 2);  // light pipe
-            if (e_buzzer) vent_cluster(vnt[0], vnt[1]);                                            // buzzer vent
+            if (e_camera) {
+                translate([cam[0], cam[1], -1]) cylinder(d = cam_win_d, h = lid_t + 2);  // camera window
+                // recessed seat on the outer face for a glued clear disc (sits 0.2 below the surface)
+                if (cam_disc_t > 0)
+                    translate([cam[0], cam[1], lid_t - (cam_disc_t + 0.2)])
+                        cylinder(d = cam_disc_d + 2*tol_slide, h = cam_disc_t + 1);
+            }
+            if (e_led)    translate([lp[0],  lp[1],  -1]) cylinder(d = lp_d + 2*tol_press, h = lid_t + 2);  // light pipe
+            if (e_buzzer) vent_cluster(vnt[0], vnt[1]);                                                     // buzzer vent
             if (e_touch)  translate([tch[0], tch[1], -1]) cylinder(d = touch_d, h = lid_t - touch_wall + 1); // touch window (blind thinning)
 
             // countersunk lid screws over the posts
             for (p = post_xy()) {
-                translate([p[0], p[1], -1]) cylinder(d = screw_d + 0.6, h = lid_t + 2);
+                translate([p[0], p[1], -1]) cylinder(d = screw_d + 2*tol_hole, h = lid_t + 2);
                 translate([p[0], p[1], lid_t - screw_head_h])
-                    cylinder(d1 = screw_d + 0.6, d2 = screw_head_d, h = screw_head_h + 0.1);
+                    cylinder(d1 = screw_d + 2*tol_hole, d2 = screw_head_d, h = screw_head_h + 0.1);
             }
+
+            // debossed label on the outer face (prints face-down -> crisp first-layer voids)
+            if (label_text != "")
+                translate([label_dx, label_dy, lid_t - label_depth])
+                    linear_extrude(label_depth + 1)
+                        rotate(label_rot)
+                            text(label_text, size = label_size, font = label_font,
+                                 halign = "center", valign = "center");
         }
 
-        // lid lip that nests into the base (with fit gap), cleared around the posts
+        // lid lip that nests into the base (with sliding clearance), cleared around the posts
         difference() {
             translate([0, 0, -lip_h])
                 difference() {
-                    rrect(inner_l - 2*fit_gap, inner_w - 2*fit_gap,
-                          max(0.1, corner_r - wall_t - fit_gap), lip_h);
-                    rrect(inner_l - 2*fit_gap - 2*lip_t, inner_w - 2*fit_gap - 2*lip_t,
+                    rrect(inner_l - 2*tol_slide, inner_w - 2*tol_slide,
+                          max(0.1, corner_r - wall_eff - tol_slide), lip_h);
+                    rrect(inner_l - 2*tol_slide - 2*lip_t, inner_w - 2*tol_slide - 2*lip_t,
                           0.1, lip_h + 1);
                 }
             for (p = post_xy())
@@ -345,14 +542,37 @@ module lid() {
                 cube([lip_t * 4, usb_w + 4, lip_h + 0.2], center = true);
         }
 
-        // tamper magnet pocket (blind, opens downward)
+        // drip-edge skirt (seal mode): overlaps the base wall so water can't sit on the seam
+        if (e_seal)
+            difference() {
+                translate([0, 0, -skirt_h])
+                    linear_extrude(skirt_h)
+                        difference() {
+                            rrect2d(plate_l, plate_w, plate_r);
+                            rrect2d(out_l + 2*skirt_gap, out_w + 2*skirt_gap, corner_r + skirt_gap);
+                        }
+                // notch the skirt at the USB end (mirrors the lip notch; faces DOWN when wall-mounted)
+                translate([-(out_l/2 + skirt_gap + skirt_t/2), board_cy, -skirt_h/2])
+                    cube([skirt_t*3, usb_w + 6, skirt_h + 0.4], center = true);
+            }
+
+        // tamper magnet pocket (blind, opens downward; press fit — add a drop of glue)
+        // the ring is embedded 0.1 into the plate so the export is one watertight shell
         if (e_tamper)
             translate([mag[0], mag[1], -mag_h])
                 difference() {
-                    cylinder(d = mag_d + 2.4, h = mag_h);
-                    translate([0, 0, -0.1]) cylinder(d = mag_d, h = mag_h + 0.2);
+                    cylinder(d = mag_d + 2*tol_press + 2.4, h = mag_h + 0.1);
+                    translate([0, 0, -0.1]) cylinder(d = mag_d + 2*tol_press, h = mag_h + 0.1);
                 }
     }
+}
+
+// ----------------------------------------------------------------------------
+//  GASKET — TPU seal ring matching the base groove (seal mode).
+//  Print in TPU 90–95A, 2 perimeters, 100 % infill. Squeezes ~35 % under the screws.
+// ----------------------------------------------------------------------------
+module gasket() {
+    linear_extrude(gasket_groove + gasket_proud) rim_ring2d(gasket_w - 0.1);
 }
 
 // ----------------------------------------------------------------------------
@@ -377,9 +597,14 @@ module coupon() {
 //  Layout
 // ----------------------------------------------------------------------------
 if      (part == "coupon") coupon();
+else if (part == "gasket") {
+    assert(e_seal, "the gasket needs opt_seal=true (or preset=battery_weather) so its ring matches the groove");
+    gasket();
+}
 else if (part == "base")   base();
 else if (part == "lid")    translate([0, 0, lid_t]) rotate([180, 0, 0]) lid();   // printable orientation
 else {
     base();
-    translate([0, out_w + 8, 0]) translate([0, 0, lid_t]) rotate([180, 0, 0]) lid();
+    translate([0, out_w/2 + plate_w/2 + 8, 0]) translate([0, 0, lid_t]) rotate([180, 0, 0]) lid();
+    if (e_seal) translate([0, -(out_w + 8), 0]) gasket();
 }
