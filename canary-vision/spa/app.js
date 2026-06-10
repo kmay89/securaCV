@@ -415,7 +415,7 @@ function copyFallback(text) {
   ta.style.opacity = '0';
   document.body.appendChild(ta);
   ta.select();
-  var ok = false;
+  var ok;
   try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
   document.body.removeChild(ta);
   return ok;
