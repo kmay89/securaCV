@@ -99,6 +99,7 @@
   #define HW_HAS_PSRAM          0
   #define HW_HAS_BT_CLASSIC     0   // C3 has no Classic Bluetooth radio
   #define HW_HAS_BLE            1   // C3 supports Bluetooth Low Energy 5.0
+  #define HW_HAS_PDM_MIC        0   // Plain XIAO C3 has no onboard microphone
   #define HW_CPU_CORES          1
   #define HW_MAX_GPIO           21
 #elif defined(HARDWARE_XIAO_ESP32S3)
@@ -108,6 +109,7 @@
   #define HW_HAS_PSRAM          1
   #define HW_HAS_BT_CLASSIC     0   // S3 has no Classic Bluetooth radio
   #define HW_HAS_BLE            1   // S3 supports Bluetooth Low Energy 5.0
+  #define HW_HAS_PDM_MIC        1   // XIAO ESP32-S3 Sense onboard PDM mic (GPIO 41/42)
   #define HW_CPU_CORES          2
   #define HW_MAX_GPIO           48
 #endif
@@ -140,6 +142,8 @@
   #define FEATURE_POWER_MONITOR 1   // Battery voltage + SoC monitoring (always on)
   #define FEATURE_POWER_POLICY  0   // Smart battery power modes (DEV/FULL only)
   #define FEATURE_QR_PROVISION  0   // Camera-based WiFi QR provisioning
+  #define FEATURE_ACOUSTIC_EVENTS     0   // PDM mic T3/T4 alarm cadence detection
+  #define FEATURE_ACOUSTIC_TRANSIENTS 0   // Knock/doorbell/glass-break detectors
 
   #define DEBUG_NMEA            0
   #define DEBUG_CBOR            0
@@ -177,6 +181,8 @@
   #define FEATURE_POWER_MONITOR 1   // Battery voltage + SoC monitoring
   #define FEATURE_POWER_POLICY  1   // Smart battery power modes
   #define FEATURE_QR_PROVISION  0   // Camera may not be in DEV build
+  #define FEATURE_ACOUSTIC_EVENTS     HW_HAS_PDM_MIC  // PDM mic T3/T4 alarm cadence detection
+  #define FEATURE_ACOUSTIC_TRANSIENTS 0   // Skip knock/doorbell/glass-break (FULL only)
 
   #define DEBUG_NMEA            0
   #define DEBUG_CBOR            0
@@ -212,6 +218,8 @@
   #define FEATURE_POWER_MONITOR 1   // Battery voltage + SoC monitoring
   #define FEATURE_POWER_POLICY  1   // Smart battery power modes
   #define FEATURE_QR_PROVISION  HW_HAS_CAMERA   // Camera-based WiFi QR provisioning
+  #define FEATURE_ACOUSTIC_EVENTS     HW_HAS_PDM_MIC  // PDM mic T3/T4 alarm cadence detection
+  #define FEATURE_ACOUSTIC_TRANSIENTS FEATURE_ACOUSTIC_EVENTS  // Knock/doorbell/glass-break
 
   #define DEBUG_NMEA            0
   #define DEBUG_CBOR            0

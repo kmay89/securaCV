@@ -59,6 +59,10 @@
 // safe to include them here unconditionally.
 #include "power_monitor.h"
 #include "audible_chirp.h"
+#include "build_config.h"
+#if FEATURE_ACOUSTIC_EVENTS
+#include "securacv_audio.h"
+#endif
 
 // Camera state lives in the .ino (g_camera_initialized,
 // g_peek_sensor_pid, g_peek_last_init_err, g_peek_last_init_label,
@@ -277,16 +281,41 @@ inline void probe_microphone(ProbeResult* r, JsonObject metric) {
   r->name  = "microphone";
   r->label = "Microphone";
 
-  // The canary-wap firmware does not currently bring up the XIAO
-  // ESP32-S3 Sense's onboard PDM mic. Audible chirp uses a piezo
-  // OUTPUT, not a mic input. Until a mic-driven feature ships
-  // (occupancy-by-ambient-noise, anti-spoof speech detector, …),
-  // we report ABSENT cleanly so the wizard greys the row instead
-  // of failing the whole pre-flight.
+#if FEATURE_ACOUSTIC_EVENTS
+  metric["compiled_in"] = true;
+  metric["running"]     = audio_is_running();
+  metric["muted"]       = audio_is_muted();
+
+  uint16_t rms = 0;
+  uint32_t age_ms = UINT32_MAX;
+  audio_get_live_level(&rms, &age_ms);
+  metric["last_rms"] = rms;
+  if (age_ms != UINT32_MAX) metric["age_ms"] = age_ms;
+
+  if (audio_is_running()) {
+    r->status = Status::PASS;
+    r->code   = 0;
+    set_detail(r, "PDM mic armed · T3/T4 cadence detector running");
+  } else if (audio_is_muted()) {
+    // Muted-by-user is a deliberate state, not a hardware failure —
+    // the wizard greys the row rather than failing the pre-flight.
+    r->status = Status::SKIP;
+    r->code   = 0;
+    set_detail(r, "Muted by user");
+  } else {
+    r->status = Status::FAIL;
+    r->code   = -1;
+    set_detail(r, "Compiled in but I2S not running — PDM bring-up failed");
+  }
+#else
+  // No mic in this build profile. Audible chirp uses a piezo OUTPUT,
+  // not a mic input. Report ABSENT cleanly so the wizard greys the
+  // row instead of failing the whole pre-flight.
   metric["compiled_in"] = false;
   r->status = Status::ABSENT;
   r->code   = 0;
   set_detail(r, "Not used by this firmware");
+#endif
 }
 
 inline void probe_gpio(ProbeResult* r, JsonObject metric) {
