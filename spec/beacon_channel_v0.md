@@ -517,7 +517,7 @@ All endpoints Bearer-token-gated identically to `/api/mesh/*` and `/api/bluetoot
 | `/api/beacon/cosign` | POST | Confirm a pending cosign request (originator_fp, decision) |
 | `/api/beacon/cancel` | POST | Originate a `BEACON_MSG_CANCEL` for the current active alarm |
 | `/api/beacon/active` | GET | Active alarms and active cosign requests |
-| `/api/beacon/audit` | GET | Audit log (last 30 days, signed, exportable) |
+| `/api/beacon/audit` | GET | Audit log (recent entries from the NVS ring cache; full history exportable from `/beacon/audit.jsonl` on SD) |
 | `/api/beacon/selftest` | POST | Force a `BEACON_MSG_SELFTEST_OK` emission (mostly for tests) |
 
 ## 11. Persistence
@@ -525,12 +525,20 @@ All endpoints Bearer-token-gated identically to `/api/mesh/*` and `/api/bluetoot
 | Storage | Where | Encrypted? |
 |---|---|---|
 | Beacon set (pubkeys, names, last_seen) | NVS | Yes — requires flash encryption (same gate as Opera secret) |
-| Audit log (received + originated) | Append-only flash file, chain-hashed like witness records | Yes (FE) |
+| Audit log of record (received + originated) | `/beacon/audit.jsonl` on SD — pure append-only JSONL, chain-hashed like witness records; **never pruned, truncated, or rotated** | SD (plaintext JSONL; the embedded Ed25519 signatures + chain hashes make it tamper-evident) |
+| Audit recent-view cache | 64-entry NVS ring (newest entries only; the chain head spans every entry ever appended, so continuity stays provable past the ring boundary) | Yes (FE) |
 | Per-pubkey rate-limit state | RAM only, rebuilt from audit log on boot | n/a |
 | Active alarm state | RAM only | n/a |
 | Last-selftest-seen map | RAM only | n/a |
 
-Maximum audit log: 30 days, capped at ~64 KB. Older entries pruned by `prune_audit_log()` daily.
+The audit log is unbounded by design (AGENTS.md *Beacon channel invariants* item 9:
+append-only, no rotate/delete, export-only). Beacon origination rate limits cap
+growth at roughly 100 KB/year worst-case, so SD capacity is never a practical
+constraint. *(v0.1 of this spec specified a 30-day / 64 KB cap with a daily
+`prune_audit_log()`; that contradicted the append-only invariant and was never
+implemented — superseded by this section.)* On devices without an SD card the
+NVS ring cache is the only local copy and a one-time `STORAGE` health warning
+is raised.
 
 ## 12. Configuration
 

@@ -186,6 +186,10 @@ Integration testing
 
 - **WASM sandboxing** — backends are trusted, must be audited
 - **GPU acceleration** — `ort` backend is v1.1
+- **Firmware OTA updates** — `firmware/projects/canary-ota/` is a working standalone
+  engine (manifest fetch, SHA256 verify, A/B rollback) but is not integrated into the
+  canary trees and does not yet Ed25519-sign manifests. Shipping it unsigned would be a
+  security regression, so OTA lands post-v1, signing first.
 - **Encrypted-vault UX / key management** — sealing is wired (opt-in); the trustee/seal setup UI
   and hardware-backed keys are v1.1
 - **Real-time performance guarantees** — benchmark, don't promise

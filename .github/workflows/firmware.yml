@@ -185,6 +185,20 @@ jobs:
             --build-property "build.extra_flags=-DVALIDATION_BUILD=1" \
             firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino
 
+      - name: Compile firmware (Beacon channel gate)
+        run: |
+          # FEATURE_BEACON_CHANNEL is OFF by default, which previously meant
+          # beacon_channel.cpp (and every #if FEATURE_BEACON_CHANNEL block in
+          # the sketch) was never compile-verified in CI. This second pass
+          # forces the flag ON so the Beacon scaffold — including its
+          # append-only SD audit-log path (AGENTS.md Beacon invariant 9) —
+          # can't silently rot.
+          arduino-cli compile \
+            --fqbn esp32:esp32:XIAO_ESP32S3 \
+            --libraries firmware/common \
+            --build-property "build.extra_flags=-DVALIDATION_BUILD=1 -DFEATURE_BEACON_CHANNEL=1" \
+            firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino
+
   csi-sketch-sync:
     name: CSI Sketch Copy Sync
     runs-on: ubuntu-latest
