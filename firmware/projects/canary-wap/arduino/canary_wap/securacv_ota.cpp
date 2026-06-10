@@ -566,11 +566,30 @@ bool securacv_ota_take_pending_version(char *buf, size_t buf_len)
 {
     if (buf == NULL || buf_len == 0) return false;
     buf[0] = '\0';
-    if (nvs_load_str(NVS_KEY_PENDING_VER, buf, buf_len) != ESP_OK || buf[0] == '\0') {
-        return false;
+    if (nvs_load_str(NVS_KEY_PENDING_VER, buf, buf_len) == ESP_OK && buf[0] != '\0') {
+        nvs_store_str(NVS_KEY_PENDING_VER, NULL);  // erase: consume exactly once
+        return true;
     }
-    nvs_store_str(NVS_KEY_PENDING_VER, NULL);  // erase: consume exactly once
-    return true;
+
+    // Migration: firmware released before this engine recorded the target
+    // in the Preferences "securacv" namespace as "ota_target" (written by
+    // the OLD image at reboot time). Honor it once so the very first OTA
+    // out of a pre-migration build still gets its outcome witnessed.
+    {
+        nvs_handle_t handle;
+        if (nvs_open("securacv", NVS_READWRITE, &handle) == ESP_OK) {
+            size_t len = buf_len;
+            if (nvs_get_str(handle, "ota_target", buf, &len) == ESP_OK && buf[0] != '\0') {
+                nvs_erase_key(handle, "ota_target");
+                nvs_commit(handle);
+                nvs_close(handle);
+                return true;
+            }
+            nvs_close(handle);
+        }
+    }
+    buf[0] = '\0';
+    return false;
 }
 
 /**

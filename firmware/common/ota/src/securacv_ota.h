@@ -65,6 +65,20 @@ extern "C" {
 #endif
 
 // ============================================================================
+// LIMITS
+// ============================================================================
+
+/**
+ * @brief Buffer size for firmware version strings (incl. NUL)
+ *
+ * The longest version any install channel can record: BLE OTA's wire
+ * header carries up to 32 characters. Size every buffer passed to
+ * securacv_ota_take_pending_version() with this — an undersized buffer
+ * makes the NVS read fail and silently loses the update-outcome record.
+ */
+#define SECURACV_OTA_VERSION_MAX 33
+
+// ============================================================================
 // OTA STATE AND ERROR TYPES
 // ============================================================================
 
@@ -415,6 +429,8 @@ esp_err_t securacv_ota_mark_pending_install(const char *version);
  * update applied; different means the device rolled back to the previous
  * firmware. Call after securacv_ota_boot_self_test() (which may itself
  * trigger the rollback reboot).
+ *
+ * @param buf Output buffer — size it SECURACV_OTA_VERSION_MAX.
  */
 bool securacv_ota_take_pending_version(char *buf, size_t buf_len);
 

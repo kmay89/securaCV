@@ -133,7 +133,7 @@ void ota_init(const Topics& topics) {
   // target the moment the boot partition flipped; running the old version
   // again means rollback.
   {
-    char target[16];
+    char target[SECURACV_OTA_VERSION_MAX];
     if (securacv_ota_take_pending_version(target, sizeof(target))) {
       if (strcmp(target, CANARY_FW_VERSION) == 0) {
         log_line("OTA", "Firmware update applied.");

@@ -7698,7 +7698,7 @@ void setup() {
     // Witness the outcome of an install reboot. The engine (and the BLE
     // OTA path) recorded the install target the moment the boot partition
     // flipped; running the old version again means rollback.
-    char ota_target[33];
+    char ota_target[SECURACV_OTA_VERSION_MAX];
     if (securacv_ota_take_pending_version(ota_target, sizeof(ota_target))) {
       if (strcmp(ota_target, FIRMWARE_VERSION) == 0) {
         ota_witness_event("fw_update_applied", FIRMWARE_VERSION);

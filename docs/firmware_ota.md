@@ -192,10 +192,21 @@ decision logic is host-tested (`firmware/common/ota/test_ota_logic.cpp`).
 
 Image integrity never depends on the transport — the Ed25519 signature and
 the anti-rollback floor do that work — so air-gapped installs don't need a
-certificate authority. The known residual risk: the **manifest itself is
-unsigned**, so a hostile local mirror can offer any *previously signed*
-release newer than the device's floor. Signing the manifest is the named
-follow-up that closes this.
+certificate authority. Known residual risks (named follow-ups):
+
+- The **manifest itself is unsigned**, so a hostile local mirror can offer
+  any *previously signed* release newer than the device's floor. Signing
+  the manifest closes this.
+- The **BLE OTA header's version string is outside the signed message**
+  (the signature covers `size || sha256`). The string is sanitized and
+  only labels the update-outcome record — what actually runs is exactly
+  the signed image, and the "applied" determination compares against the
+  firmware's own compiled version. Binding the version into the signed
+  message is the BLE protocol-v2 follow-up.
+- **BLE OTA deliberately has no version floor**: it is the
+  physical-proximity recovery channel (pairing + a validly signed image
+  required), so it can intentionally downgrade a device the pull path
+  would refuse.
 
 ### Hosting updates locally (air-gapped / privacy-strict)
 
