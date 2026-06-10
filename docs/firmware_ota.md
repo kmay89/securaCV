@@ -107,6 +107,7 @@ at a stable URL (`releases/latest/download/manifest-<variant>.json`):
   "sha256": "<64 hex>",
   "size": 1048576,
   "signature": "<128 hex>",
+  "manifest_signature": "<128 hex>",
   "signing_key_id": "<16 hex>",
   "release_notes": "Improved detection accuracy",
   "release_url": "https://github.com/.../releases/tag/fw-v2.2.0"
@@ -133,6 +134,21 @@ every update channel**. The device verifies against the public key compiled
 into `firmware/common/ota/src/ota_release_key.h` — and critically, it
 verifies over the digest it computed from the **actual flash contents**,
 not the manifest's claim.
+
+**The manifest itself is signed too** (`manifest_signature`, same key) over
+a canonical NUL-separated field string:
+
+```
+"scv-manifest-v1\0" product "\0" version "\0" min_version "\0" url "\0"
+sha256hex "\0" size-as-decimal "\0" release_notes "\0" release_url "\0"
+```
+
+The device rejects any manifest whose metadata doesn't verify — so a
+hostile mirror cannot forge the release notes users read in Home
+Assistant, the version offered, or the download URL. The byte layout is
+pinned by a cross-language fixture (`test_ota_release.py` ⇄
+`test_ota_logic.cpp`): if the Python signer and the C verifier ever
+drift, both test suites fail.
 
 An **all-zero public key fail-closes**: both pull-OTA installs and BLE OTA
 refuse every image until a real key is provisioned.
@@ -190,13 +206,14 @@ decision logic is host-tested (`firmware/common/ota/test_ota_logic.cpp`).
   10/8, 172.16/12, 192.168/16, 127/8, 169.254/16, `localhost`, or a name
   under `.local` / `.lan` / `.internal` / `.home.arpa`.
 
-Image integrity never depends on the transport — the Ed25519 signature and
-the anti-rollback floor do that work — so air-gapped installs don't need a
-certificate authority. Known residual risks (named follow-ups):
+Image integrity never depends on the transport — the Ed25519 signature,
+the manifest signature, and the anti-rollback floor do that work — so
+air-gapped installs don't need a certificate authority. With manifests
+signed, the worst a hostile mirror can do is **withhold updates** (serve a
+stale-but-genuine manifest or nothing) — indistinguishable from having no
+network, and recoverable the moment the device reaches a honest server.
+Known residual notes:
 
-- The **manifest itself is unsigned**, so a hostile local mirror can offer
-  any *previously signed* release newer than the device's floor. Signing
-  the manifest closes this.
 - The **BLE OTA header's version string is outside the signed message**
   (the signature covers `size || sha256`). The string is sanitized and
   only labels the update-outcome record — what actually runs is exactly

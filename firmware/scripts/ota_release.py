@@ -13,6 +13,21 @@ Signature scheme (identical to ble_ota.cpp so one key signs every channel):
               || sha256(firmware.bin)              (32 bytes)
     signature = Ed25519.sign(message)              (64 bytes)
 
+Manifest signature (closes the hostile-mirror metadata-forgery window —
+without it a local update server could forge release notes shown in Home
+Assistant, URLs, and version metadata):
+
+    msg = "scv-manifest-v1\0" + product + "\0" + version + "\0"
+        + min_version + "\0" + url + "\0" + sha256hex + "\0"
+        + str(size) + "\0" + release_notes + "\0" + release_url + "\0"
+    manifest_signature = Ed25519.sign(msg.encode())   (64 bytes, same key)
+
+Absent optional fields are empty strings. The NUL separators make the
+encoding unambiguous (JSON strings cannot contain NUL), so the device
+rebuilds the exact bytes from its parsed manifest without canonical-JSON
+machinery. Keep in sync with securacv_ota_build_manifest_message() in
+firmware/common/ota/src/securacv_ota.cpp.
+
 Manifest schema v1 (per-variant flat JSON, one file per product):
 
     {
@@ -24,6 +39,7 @@ Manifest schema v1 (per-variant flat JSON, one file per product):
       "sha256": "<64 hex>",
       "size": 1048576,
       "signature": "<128 hex>",
+      "manifest_signature": "<128 hex>",
       "signing_key_id": "<first 16 hex of sha256(pubkey)>",
       "release_notes": "...",
       "release_url": "https://.../releases/tag/fw-v2.2.0"
@@ -86,6 +102,31 @@ def verify_firmware(public_key: Ed25519PublicKey, firmware: bytes, signature: by
     public_key.verify(signature, signed_message(len(firmware), digest))
 
 
+def manifest_signed_message(
+    *,
+    product: str,
+    version: str,
+    min_version: str,
+    url: str,
+    sha256_hex: str,
+    size: int,
+    release_notes: str,
+    release_url: str,
+) -> bytes:
+    """Build the canonical byte string the manifest signature covers.
+
+    Must stay byte-identical to securacv_ota_build_manifest_message() in
+    firmware/common/ota/src/securacv_ota.cpp (cross-checked by the shared
+    fixture in test_ota_release.py / test_ota_logic.cpp).
+    """
+    fields = [product, version, min_version, url, sha256_hex.lower(),
+              str(size), release_notes, release_url]
+    for f in fields:
+        if "\0" in f:
+            raise ValueError("manifest fields must not contain NUL")
+    return b"scv-manifest-v1\0" + b"".join(f.encode() + b"\0" for f in fields)
+
+
 def signing_key_id(public_key: Ed25519PublicKey) -> str:
     """Short stable identifier for a release key: first 16 hex of sha256(pubkey)."""
     raw = public_key.public_bytes(
@@ -129,6 +170,16 @@ def build_manifest(
         parse_semver(min_version)
     digest = hashlib.sha256(firmware).hexdigest()
     signature = sign_firmware(private_key, firmware)
+    manifest_sig = private_key.sign(manifest_signed_message(
+        product=product,
+        version=version,
+        min_version=min_version or "",
+        url=url,
+        sha256_hex=digest,
+        size=len(firmware),
+        release_notes=release_notes or "",
+        release_url=release_url or "",
+    ))
     manifest = {
         "manifest_version": MANIFEST_VERSION,
         "product": product,
@@ -137,6 +188,7 @@ def build_manifest(
         "sha256": digest,
         "size": len(firmware),
         "signature": signature.hex(),
+        "manifest_signature": manifest_sig.hex(),
         "signing_key_id": signing_key_id(private_key.public_key()),
     }
     if min_version:
@@ -184,6 +236,27 @@ def verify_manifest(manifest: dict, firmware: bytes, public_key: Ed25519PublicKe
         verify_firmware(public_key, firmware, signature)
     except Exception:
         problems.append("Ed25519 signature verification failed")
+
+    # Manifest signature: covers the metadata itself (version, URL, notes…)
+    # so a hostile mirror cannot forge what users see or where devices fetch.
+    msig_hex = manifest.get("manifest_signature")
+    if not msig_hex:
+        problems.append("missing required field: manifest_signature")
+    else:
+        try:
+            msig = bytes.fromhex(msig_hex)
+            public_key.verify(msig, manifest_signed_message(
+                product=manifest["product"],
+                version=manifest["version"],
+                min_version=manifest.get("min_version", ""),
+                url=manifest["url"],
+                sha256_hex=manifest["sha256"],
+                size=manifest["size"],
+                release_notes=manifest.get("release_notes", ""),
+                release_url=manifest.get("release_url", ""),
+            ))
+        except Exception:
+            problems.append("manifest_signature verification failed")
 
     key_id = manifest.get("signing_key_id")
     if key_id and key_id != signing_key_id(public_key):

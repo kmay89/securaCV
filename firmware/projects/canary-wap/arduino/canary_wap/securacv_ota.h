@@ -78,6 +78,14 @@ extern "C" {
  */
 #define SECURACV_OTA_VERSION_MAX 33
 
+/**
+ * @brief Buffer size for the canonical manifest-signature message
+ *
+ * Upper bound of securacv_ota_build_manifest_message() output: domain
+ * prefix + every manifest field at maximum length + NUL separators.
+ */
+#define SECURACV_OTA_MANIFEST_MSG_MAX 1152
+
 // ============================================================================
 // OTA STATE AND ERROR TYPES
 // ============================================================================
@@ -124,6 +132,7 @@ typedef enum {
     SECURACV_OTA_ERR_URL_POLICY,            /**< URL rejected: https required (or enable local server option) */
     SECURACV_OTA_ERR_PUBKEY_MISSING,        /**< Release public key not provisioned (all zeros) */
     SECURACV_OTA_ERR_DEFERRED,              /**< Install deferred by the device (busy / low battery) */
+    SECURACV_OTA_ERR_MANIFEST_SIG,          /**< Manifest signature missing or invalid (forged metadata) */
 } securacv_ota_error_t;
 
 /**
@@ -152,6 +161,7 @@ typedef enum {
  *   "sha256": "a1b2c3d4...",                    (64 hex)
  *   "size": 1048576,
  *   "signature": "f00d...",                     (128 hex, Ed25519 over size_LE32||sha256)
+ *   "manifest_signature": "beef...",            (128 hex, Ed25519 over the canonical field string)
  *   "signing_key_id": "8c0f3a...",              (16 hex, sha256(pubkey) prefix)
  *   "release_notes": "Improved detection accuracy",
  *   "release_url": "https://github.com/.../releases/tag/fw-v2.2.0"
@@ -165,6 +175,7 @@ typedef struct {
     char sha256[65];            /**< Hex-encoded SHA-256 hash of firmware binary */
     uint32_t size;              /**< Firmware binary size in bytes */
     char signature[129];        /**< Hex-encoded Ed25519 signature over (size_LE32||sha256) */
+    char manifest_signature[129]; /**< Hex-encoded Ed25519 signature over the manifest fields */
     char signing_key_id[33];    /**< Release key identifier (informational) */
     char release_notes[512];    /**< Human-readable changelog text */
     char release_url[128];      /**< URL to full release notes page */
@@ -498,6 +509,26 @@ securacv_ota_decision_t securacv_ota_update_decision(
  * transport still requires TLS to protect metadata and resist tampering.
  */
 bool securacv_ota_url_allowed(const char *url, bool allow_http_local);
+
+/**
+ * @brief Build the canonical message the manifest signature covers
+ *
+ * Layout (byte-identical to ota_release.py's manifest_signed_message):
+ *   "scv-manifest-v1\0" product "\0" version "\0" min_version "\0"
+ *   url "\0" sha256hex "\0" size-as-decimal "\0" release_notes "\0"
+ *   release_url "\0"
+ * Absent optional fields are empty strings. NUL separators are
+ * unambiguous because JSON strings cannot contain NUL.
+ *
+ * @param m Parsed manifest
+ * @param out Output buffer (size with SECURACV_OTA_MANIFEST_MSG_MAX)
+ * @param cap Capacity of @p out
+ * @param out_len Receives the message length
+ * @return true on success, false if @p out is too small
+ */
+bool securacv_ota_build_manifest_message(const securacv_ota_manifest_t *m,
+                                         uint8_t *out, size_t cap,
+                                         size_t *out_len);
 
 /**
  * @brief Build the 36-byte Ed25519-signed message for a firmware image

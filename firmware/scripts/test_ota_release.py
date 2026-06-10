@@ -71,6 +71,23 @@ class TestSignatureScheme:
         with pytest.raises(InvalidSignature):
             ota_release.verify_firmware(other.public_key(), FIRMWARE, sig)
 
+    def test_manifest_message_cross_language_fixture(self):
+        # Shared with firmware/common/ota/test_ota_logic.cpp — if either
+        # implementation drifts, devices reject every release manifest.
+        msg = ota_release.manifest_signed_message(
+            product="securacv-canary",
+            version="2.2.0",
+            min_version="2.1.0",
+            url="https://example.com/fw.bin",
+            sha256_hex="AAbb" + "0" * 60,  # mixed case: must canonicalize lower
+            size=123456,
+            release_notes="Notes, with punctuation!",
+            release_url="https://example.com/notes",
+        )
+        assert msg.hex() == (
+            "7363762d6d616e69666573742d76310073656375726163762d63616e61727900322e322e3000322e312e300068747470733a2f2f6578616d706c652e636f6d2f66772e62696e006161626230303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303000313233343536004e6f7465732c20776974682070756e6374756174696f6e210068747470733a2f2f6578616d706c652e636f6d2f6e6f74657300"
+        )
+
     def test_signed_message_rejects_bad_inputs(self):
         with pytest.raises(ValueError):
             ota_release.signed_message(0, b"\x00" * 32)
@@ -153,6 +170,24 @@ class TestManifest:
             manifest, FIRMWARE, private_key.public_key()
         )
         assert any("sha256 mismatch" in p for p in problems)
+
+    def test_verify_catches_metadata_tamper(self, private_key):
+        # The manifest signature must catch edits to fields the image
+        # signature does NOT cover — release notes are what users read.
+        manifest = self.build(private_key)
+        manifest["release_notes"] = "Totally legit, please install."
+        problems = ota_release.verify_manifest(
+            manifest, FIRMWARE, private_key.public_key()
+        )
+        assert any("manifest_signature" in p for p in problems)
+
+    def test_verify_requires_manifest_signature(self, private_key):
+        manifest = self.build(private_key)
+        del manifest["manifest_signature"]
+        problems = ota_release.verify_manifest(
+            manifest, FIRMWARE, private_key.public_key()
+        )
+        assert any("manifest_signature" in p for p in problems)
 
     def test_verify_catches_signature_tamper(self, private_key):
         manifest = self.build(private_key)
