@@ -1,0 +1,19 @@
+{
+    "name": "securacv_thermal",
+    "version": "0.1.0",
+    "description": "SecuraCV shared die-temperature provider — single owner of the ESP32-S3 internal temperature-sensor driver (ESP-IDF 5.x allows exactly one instance). Serves the envsens tamper-drift detector, the camera thermal throttle, and the diagnostics self-test through one thread-safe read API.",
+    "keywords": ["securacv", "esp32-s3", "temperature", "thermal"],
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/kmay89/securaCV.git"
+    },
+    "authors": [
+        {
+            "name": "Karl May",
+            "email": "karl@errerlabs.com"
+        }
+    ],
+    "license": "Apache-2.0",
+    "frameworks": "arduino",
+    "platforms": "espressif32"
+}

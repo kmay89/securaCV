@@ -112,15 +112,16 @@ gives `60 = 15 dBm` (Seeed's weak-signal recommendation) as the worked example.
 
 ## Noted, no change required
 
-- **Thermal interaction (watch item).** Seeed warns the module can reach
-  ~50 °C under sustained WiFi load and that prolonged operation at that
-  temperature "may cause network abnormalities". The die-temp tamper detector
-  (`securacv_envsens`, ≥5 °C sustained step vs a 1-minute-cadence EMA baseline)
-  absorbs *gradual* radio self-heating, but the start/stop of a heavy radio
-  workload (camera-peek streaming over the AP) is a plausible ≥5 °C step.
-  Bench item: run 10 min of `/api/peek/stream` and confirm no
-  `tamper_temp_drift` event fires; if it does, raise
-  `drift_threshold_tenths_c` or gate the detector during streaming.
+- **Thermal interaction (RESOLVED — see
+  [`esp32s3_thermal_review.md`](./esp32s3_thermal_review.md)).** Seeed warns
+  the module can reach ~50 °C under sustained WiFi load and that prolonged
+  operation at that temperature "may cause network abnormalities". The
+  follow-up thermal review found this worse than a watch item: the drift
+  detector's baseline was frozen at boot (not the EMA its header claimed), the
+  camera's thermal throttle was inert due to an IDF5 single-instance driver
+  conflict, and streaming heat was indistinguishable from a heat-gun step.
+  All fixed: shared `securacv_thermal` provider, true EMA baseline, and a
+  camera-streaming high-load gate on the drift detector.
 - **AP password length.** 8 chars is exactly the WPA2 minimum
   (entropy ≈ 28.8 bits over the 54-char unambiguous alphabet). Acceptable for
   a provisioning AP that allows max 1 client and is torn down once the STA

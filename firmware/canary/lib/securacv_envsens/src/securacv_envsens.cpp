@@ -20,18 +20,11 @@
 #include "securacv_witness.h"   /* log_health() */
 
 #include <esp_idf_version.h>
+#include "securacv_thermal.h"
 
 #if defined(CONFIG_IDF_TARGET_ESP32S3) || defined(CONFIG_IDF_TARGET_ESP32S2) || \
     defined(CONFIG_IDF_TARGET_ESP32C3)
   #define SECURACV_HAVE_ENVSENS 1
-  #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
-    #include <driver/temperature_sensor.h>
-  #else
-    extern "C" {
-      #include <driver/temp_sensor.h>
-    }
-  #endif
-  #include <esp_err.h>
 #else
   #define SECURACV_HAVE_ENVSENS 0
 #endif
@@ -58,6 +51,16 @@ static bool     s_baseline_locked = false;
 static int16_t  s_last_t10  = 0;
 static bool     s_have_last = false;
 
+/* High-load (camera streaming etc.) gate. Heavy radio/camera work heats
+ * the die 10–20 °C — by temperature alone that's indistinguishable from
+ * the heat-gun tamper signature. While a declared high-load phase is
+ * active (plus a cooldown after it ends, so the cool-down ramp doesn't
+ * fire either), the baseline fast-tracks the temperature and detection
+ * is suspended. */
+static bool     s_high_load = false;
+static uint32_t s_high_load_until_ms = 0;   /* cooldown deadline after load ends */
+static const uint32_t HIGH_LOAD_COOLDOWN_MS = 10UL * 60UL * 1000UL;
+
 static envsens_stats_t s_stats = {0};
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -66,86 +69,34 @@ static envsens_stats_t s_stats = {0};
 
 #if SECURACV_HAVE_ENVSENS
 
-#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
-
-static temperature_sensor_handle_t s_tsens_handle = nullptr;
+/* All reads go through the shared securacv_thermal provider — ESP-IDF 5.x
+ * permits only ONE installed temperature-sensor driver instance, and the
+ * camera thermal throttle + diagnostics self-test read the same sensor.
+ * Installing our own handle here (as this lib originally did) made
+ * whichever consumer initialized second fail silently. */
 
 static bool peripheral_open() {
-  temperature_sensor_config_t cfg = TEMPERATURE_SENSOR_CONFIG_DEFAULT(-10, 80);
-  esp_err_t err = temperature_sensor_install(&cfg, &s_tsens_handle);
-  if (err != ESP_OK) {
-    char d[32]; snprintf(d, sizeof(d), "install err=0x%x", (unsigned)err);
+  float c = 0.0f;
+  if (!thermal_read_die_c(&c)) {
     log_health(LOG_LEVEL_WARNING, LOG_CAT_SENSOR,
-               "Envsens: temp install failed", d);
-    return false;
-  }
-  err = temperature_sensor_enable(s_tsens_handle);
-  if (err != ESP_OK) {
-    char d[32]; snprintf(d, sizeof(d), "enable err=0x%x", (unsigned)err);
-    log_health(LOG_LEVEL_WARNING, LOG_CAT_SENSOR,
-               "Envsens: temp enable failed", d);
-    temperature_sensor_uninstall(s_tsens_handle);
-    s_tsens_handle = nullptr;
+               "Envsens: temp sensor unavailable", nullptr);
     return false;
   }
   return true;
 }
 
 static void peripheral_close() {
-  if (s_tsens_handle) {
-    temperature_sensor_disable(s_tsens_handle);
-    temperature_sensor_uninstall(s_tsens_handle);
-    s_tsens_handle = nullptr;
-  }
-}
-
-static int16_t peripheral_read_t10() {
-  if (!s_tsens_handle) return 0x7FFF;
-  float c = 0.0f;
-  esp_err_t err = temperature_sensor_get_celsius(s_tsens_handle, &c);
-  if (err != ESP_OK) return 0x7FFF;
-  if (c > 3000.0f) c = 3000.0f;
-  if (c < -3000.0f) c = -3000.0f;
-  return (int16_t)(c * 10.0f);
-}
-
-#else /* IDF 4.x */
-
-static bool peripheral_open() {
-  temp_sensor_config_t cfg = TSENS_CONFIG_DEFAULT();
-  cfg.dac_offset = TSENS_DAC_L2;
-  cfg.clk_div    = 6;
-  esp_err_t err = temp_sensor_set_config(cfg);
-  if (err != ESP_OK) {
-    char d[32]; snprintf(d, sizeof(d), "set_config err=0x%x", (unsigned)err);
-    log_health(LOG_LEVEL_WARNING, LOG_CAT_SENSOR,
-               "Envsens: temp config failed", d);
-    return false;
-  }
-  err = temp_sensor_start();
-  if (err != ESP_OK) {
-    char d[32]; snprintf(d, sizeof(d), "start err=0x%x", (unsigned)err);
-    log_health(LOG_LEVEL_WARNING, LOG_CAT_SENSOR,
-               "Envsens: temp_sensor_start failed", d);
-    return false;
-  }
-  return true;
-}
-
-static void peripheral_close() {
-  temp_sensor_stop();
+  /* Intentionally nothing: the shared driver stays installed for the
+   * camera thermal throttle and the diagnostics self-test. */
 }
 
 static int16_t peripheral_read_t10() {
   float c = 0.0f;
-  esp_err_t err = temp_sensor_read_celsius(&c);
-  if (err != ESP_OK) return 0x7FFF;
+  if (!thermal_read_die_c(&c)) return 0x7FFF;
   if (c > 3000.0f) c = 3000.0f;
   if (c < -3000.0f) c = -3000.0f;
   return (int16_t)(c * 10.0f);
 }
-
-#endif /* ESP_IDF_VERSION */
 
 #else  /* !SECURACV_HAVE_ENVSENS */
 
@@ -192,9 +143,22 @@ static void on_sample(int16_t t10, uint32_t now_ms) {
     return;
   }
 
-  /* Drift check. */
   const int16_t delta = (int16_t)(t10 - s_baseline_t10);
-  const int16_t mag   = (int16_t)(delta < 0 ? -delta : delta);
+
+  /* High-load phase (or its cooldown): fast-track the baseline (alpha
+   * 1/2 per sample) and suspend detection — the self-heating ramp and
+   * the subsequent cool-down are expected, not tamper. */
+  if (s_high_load || (int32_t)(now_ms - s_high_load_until_ms) < 0) {
+    int16_t adj = (int16_t)(delta / 2);
+    if (adj == 0 && delta != 0) adj = (delta > 0) ? 1 : -1;
+    s_baseline_t10 = (int16_t)(s_baseline_t10 + adj);
+    s_stats.baseline_c_rounded = (int8_t)
+        ((s_baseline_t10 + (s_baseline_t10 >= 0 ? 5 : -5)) / 10);
+    return;
+  }
+
+  /* Drift check. */
+  const int16_t mag = (int16_t)(delta < 0 ? -delta : delta);
   if (mag >= (int16_t)s_cfg.drift_threshold_tenths_c) {
     /* Suppress runaway events while the drift is sustained. */
     if ((now_ms - s_last_event_ms) >= s_cfg.suppress_ms) {
@@ -205,6 +169,21 @@ static void on_sample(int16_t t10, uint32_t now_ms) {
       if (conf < 50)  conf = 50;
       emit_event((uint8_t)conf, now_ms);
     }
+  } else {
+    /* Slow EMA adaptation (alpha 1/16 per 60 s sample ≈ 16 min time
+     * constant): absorbs gradual radio self-heating and HVAC drift so a
+     * cold-boot baseline doesn't turn normal workload warm-up into a
+     * false tamper event. Sub-threshold drift adapts; a ≥ threshold
+     * step fires above instead of adapting — the tamper signature is
+     * the fast step, not the slow trend. (This makes the baseline the
+     * EMA the header always documented; it was previously frozen at
+     * the boot-time mean, which guaranteed a false positive once the
+     * die warmed ≥ 5 °C under normal load.) */
+    int16_t adj = (int16_t)(delta / 16);
+    if (adj == 0 && delta != 0) adj = (delta > 0) ? 1 : -1;
+    s_baseline_t10 = (int16_t)(s_baseline_t10 + adj);
+    s_stats.baseline_c_rounded = (int8_t)
+        ((s_baseline_t10 + (s_baseline_t10 >= 0 ? 5 : -5)) / 10);
   }
 }
 
@@ -235,6 +214,8 @@ bool envsens_init(const envsens_config_t* cfg) {
   s_have_last = false;
   s_last_sample_ms = 0;
   s_last_event_ms = 0;
+  s_high_load = false;
+  s_high_load_until_ms = 0;
   memset(&s_stats, 0, sizeof(s_stats));
 
   s_initialized = true;
@@ -273,6 +254,15 @@ bool envsens_is_running(void) { return envsens::s_running; }
 
 void envsens_set_event_callback(envsens_event_cb_t cb) {
   envsens::s_cb = cb;
+}
+
+void envsens_set_high_load(bool active) {
+  using namespace envsens;
+  if (s_high_load && !active) {
+    /* Falling edge: hold detection through the cool-down ramp too. */
+    s_high_load_until_ms = millis() + HIGH_LOAD_COOLDOWN_MS;
+  }
+  s_high_load = active;
 }
 
 bool envsens_process(void) {
