@@ -83,8 +83,9 @@ poisoned-lock fatals, not untrusted-input parsing.
 - SD append-only storage, GPS coarsened to 3 decimal places (`firmware/common/gnss/`),
   salted `device_pseudonym` instead of raw MAC (`firmware/common/identity/`), BLE
   provisioning, device-unique AP password, embedded web dashboard.
-- A setup-wizard orchestration module exists (`wizard.h`, "Phase 10", v0.1.0) — pairing,
-  zone tagging, training progress.
+- Setup-wizard code exists in two modules: `setup_wizard.h` (first-run captive portal,
+  included by the sketch at `canary_wap.ino:202`) and `wizard.h` ("Phase 10" orchestration —
+  pairing, zone tagging, training progress — used by `rf_presence.cpp` and `tests.cpp`).
 
 ### 4.2 `canary-vision` (ESP32-C3 + Grove Vision AI V2) — unsigned PoC ⚠️
 
@@ -109,7 +110,7 @@ Arduino + legacy PIO, `firmware/projects/canary-vision`) plus `firmware/{PARITY_
 FIRMWARE_VARIANT_AUDIT,VARIANT_POLICY}.md`. The parity docs are stale **in the conservative
 direction** (PARITY_PLAN lists "port MQTT to Arduino canary-wap" as open work although the code
 ships it; `ENTERPRISE_READINESS_TODO.md` calls onboarding-wizard work missing although
-`wizard.h` exists). Stale-pessimistic is better than stale-optimistic, but it misleads
+`setup_wizard.h` and `wizard.h` exist). Stale-pessimistic is better than stale-optimistic, but it misleads
 contributors and reviewers in both directions and inflates the apparent gap list.
 
 `firmware/scripts/regression_check.sh` is a genuine privacy gate: hard-fails on raw MAC
@@ -174,7 +175,7 @@ a proper reauth flow, or an opt-in long-lived token in the kernel.
 |---|---|---|---|
 | Opera mesh (ESP-NOW) | `spec/canary_mesh_network_v0.md` | `mesh_network.cpp` (Arduino tree) + `firmware/canary/lib/securacv_mesh/` (pairing, sessions, envelopes, beacons, host tests) | **Code-complete, bench-gated.** Ed25519 challenge-response, X25519 ECDH, ChaCha20-Poly1305, opera-secret rotation on peer removal, flash-encryption requirement enforced. Never validated on ≥2 physical devices. WiFi-AP bridge relay and BLE fallback are spec-only. |
 | Chirp channel | `spec/chirp_channel_v0.md` | `chirp_channel.cpp` | **Code-complete, hardened (audits C1–C14 closed in code), bench-gated.** No two-board test yet. |
-| Beacon (life-safety) | `spec/beacon_channel_v0.md` | `beacon_channel.h` | **Scaffold**, `FEATURE_BEACON_CHANNEL` default OFF. Not v1 material. |
+| Beacon (life-safety) | `spec/beacon_channel_v0.md` | `beacon_channel.{h,cpp}` | **Scaffold**, `FEATURE_BEACON_CHANNEL` default OFF. Not v1 material. Two conformance gaps vs the repo's own mandates if it is ever enabled: the audit log is a 64-entry overwrite ring (`beacon_channel.cpp:82-91`) although `AGENTS.md` item 9 mandates append-only/export-only, and the self-test interval is 24 h (`beacon_channel.h:52`, used at `beacon_channel.cpp:928`) although `AGENTS.md` item 12 mandates NFPA-72 monthly waking-hours cadence. Must be fixed before the flag ships ON. |
 | Gossip replication | `spec/gossip_replication_v0.md` | none found | **Spec-only** (spec itself says optional, off by default). |
 | Co-signing | `spec/co_signing.md` | none found | **Spec-only** (kernel-side design doc). |
 
@@ -210,7 +211,11 @@ placeholder-seed rejection (`src/lib.rs:2271-2289`); zeroized key buffers.
 | Anonymous loopback MQTT in compose stack | `integrations/ha_frigate_mqtt/` | Fine single-host; document the LAN caveat |
 | Break-glass web UI is days old | PRs #739–741 | Design is sound; needs soak time / adversarial review |
 
-No critical vulnerabilities were found.
+No critical vulnerabilities were found **in default builds**. Builds that enable the
+non-default `FEATURE_BEACON_CHANNEL` flag inherit the Beacon conformance gaps noted in §6
+(overwrite-ring audit log and 24 h self-test interval, both contrary to `AGENTS.md` items
+9 and 12); those are release blockers for any Beacon-enabled firmware, not for v1's
+default-OFF configuration.
 
 ---
 
@@ -251,7 +256,7 @@ Items 2, 3 (relabel option), 4, and 5 are achievable quickly; item 1 is the cale
 ## 9. Stale-docs fix list
 
 - `firmware/PARITY_PLAN.md` — Group-B "port MQTT to Arduino canary-wap" is done in code.
-- `firmware/projects/canary-wap/ENTERPRISE_READINESS_TODO.md` — onboarding-wizard item ignores `wizard.h`.
+- `firmware/projects/canary-wap/ENTERPRISE_READINESS_TODO.md` — onboarding-wizard item ignores `setup_wizard.h`/`wizard.h`.
 - `README.md` — Firmware section presents canary-vision as a peer of canary-wap (§4.2);
   install section omits Frigate camera config + token discovery (§5.2).
 - `custom_components/securacv/signature.py` docstring cites the canary-wap signer as the
