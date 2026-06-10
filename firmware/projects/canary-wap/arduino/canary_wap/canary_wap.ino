@@ -5085,34 +5085,9 @@ static void url_decode_inplace(char* s) {
   *w = '\0';
 }
 
-static esp_err_t handle_fleet_qr(httpd_req_t* req) {
-  g_health.http_requests++;
-
-  char qs[256] = {};
-  char ssid[33] = {};
-  char pass[65] = {};
-
-  if (httpd_req_get_url_query_str(req, qs, sizeof(qs)) != ESP_OK) {
-    httpd_resp_set_status(req, "400 Bad Request");
-    httpd_resp_set_type(req, "text/plain");
-    return httpd_resp_send(req, "Missing query parameters", -1);
-  }
-
-  if (httpd_query_key_value(qs, "ssid", ssid, sizeof(ssid)) != ESP_OK
-      || ssid[0] == '\0') {
-    httpd_resp_set_status(req, "400 Bad Request");
-    httpd_resp_set_type(req, "text/plain");
-    return httpd_resp_send(req, "ssid is required", -1);
-  }
-  httpd_query_key_value(qs, "pass", pass, sizeof(pass));
-
-  url_decode_inplace(ssid);
-  url_decode_inplace(pass);
-
-  // Build SECURACV: payload
-  char payload[256];
-  snprintf(payload, sizeof(payload), "SECURACV:S:%s;P:%s;;", ssid, pass);
-
+// Render a text payload as an SVG QR code response. Shared by the fleet
+// WiFi-credentials QR and the pairing-receipt QR.
+static esp_err_t send_qr_svg(httpd_req_t* req, const char* payload) {
   // Use version 1-10 range (enough for short payloads, small QR)
   static constexpr int QR_MAX_VER = 10;
   uint8_t qr[qrcodegen_BUFFER_LEN_FOR_VERSION(QR_MAX_VER)];
@@ -5167,9 +5142,79 @@ static esp_err_t handle_fleet_qr(httpd_req_t* req) {
   return httpd_resp_send_chunk(req, nullptr, 0);
 }
 
+static esp_err_t handle_fleet_qr(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  char qs[256] = {};
+  char ssid[33] = {};
+  char pass[65] = {};
+
+  if (httpd_req_get_url_query_str(req, qs, sizeof(qs)) != ESP_OK) {
+    httpd_resp_set_status(req, "400 Bad Request");
+    httpd_resp_set_type(req, "text/plain");
+    return httpd_resp_send(req, "Missing query parameters", -1);
+  }
+
+  if (httpd_query_key_value(qs, "ssid", ssid, sizeof(ssid)) != ESP_OK
+      || ssid[0] == '\0') {
+    httpd_resp_set_status(req, "400 Bad Request");
+    httpd_resp_set_type(req, "text/plain");
+    return httpd_resp_send(req, "ssid is required", -1);
+  }
+  httpd_query_key_value(qs, "pass", pass, sizeof(pass));
+
+  url_decode_inplace(ssid);
+  url_decode_inplace(pass);
+
+  // Build SECURACV: payload
+  char payload[256];
+  snprintf(payload, sizeof(payload), "SECURACV:S:%s;P:%s;;", ssid, pass);
+
+  return send_qr_svg(req, payload);
+}
+
 static esp_err_t handle_fleet_qr_auth(httpd_req_t* req) {
   if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
   return handle_fleet_qr(req);
+}
+
+/* Pairing QR: SVG QR of the compact provisioning receipt, scanned by the
+ * Canary Vision companion app's "Scan pairing QR" fallback.
+ *
+ * The payload carries the API token, so this endpoint demands the same
+ * auth as the receipt's Bearer path — the QR is something an already-
+ * authenticated operator deliberately shows to their own phone, never an
+ * anonymous read. Only the three fields the app's scanner consumes are
+ * encoded ({device_id, base_url, token}); the slim payload keeps the QR
+ * at a low version so phone cameras lock on quickly.
+ */
+static esp_err_t handle_pairing_qr(httpd_req_t* req) {
+  g_health.http_requests++;
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+
+  // Prefer the home-LAN mDNS name (stable across DHCP leases); fall back
+  // to the AP address while the device is still in setup mode.
+  char base_host[56];
+  if (WiFi.isConnected() && g_device.mdns_hostname[0] != '\0') {
+    snprintf(base_host, sizeof(base_host), "%s.local", g_device.mdns_hostname);
+  } else {
+    snprintf(base_host, sizeof(base_host), "%s",
+             WiFi.softAPIP().toString().c_str());
+  }
+
+  char payload[224];
+  int n = snprintf(payload, sizeof(payload),
+    "{\"device_id\":\"%s\",\"base_url\":\"%s://%s\",\"token\":\"%s\"}",
+    g_device.device_id,
+    g_tls_enabled ? "https" : "http",
+    base_host,
+    g_device.api_token_str);
+  if (n < 0 || (size_t)n >= sizeof(payload)) {
+    return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+                               "Failed to build pairing payload");
+  }
+
+  return send_qr_svg(req, payload);
 }
 
 /* OS connectivity-probe handler (Apple / Android / Windows captive checks).
@@ -6094,7 +6139,7 @@ static void register_api_routes(httpd_handle_t server) {
 
 static void start_http_server() {
   // Calculate max URI handlers based on feature usage
-  const int base_handlers = 39;       // UI (/ + /admin + /settings), API (auth + public), WiFi provisioning, captive/connectivity probes (Apple x2, Android x2, Windows x2), /api/selftest, /api/diagnostics, /api/battery/history, /api/ota/{status,check,install,config}
+  const int base_handlers = 40;       // UI (/ + /admin + /settings), API (auth + public), WiFi provisioning, captive/connectivity probes (Apple x2, Android x2, Windows x2), /api/selftest, /api/diagnostics, /api/battery/history, /api/ota/{status,check,install,config}, /api/pairing-qr
 #if FEATURE_ACOUSTIC_EVENTS
   const int audio_handlers = 7;       // /api/audio/{status,mute,transitions}, /api/audio/selftest + /api/audio/config (GET + POST each)
 #else
@@ -6322,6 +6367,9 @@ register_extra_routes:
   // Fleet provisioning QR code
   httpd_uri_t fleet_qr = { .uri = "/api/fleet/qr", .method = HTTP_GET, .handler = handle_fleet_qr_auth };
   httpd_register_uri_handler(active_server, &fleet_qr);
+
+  httpd_uri_t pairing_qr = { .uri = "/api/pairing-qr", .method = HTTP_GET, .handler = handle_pairing_qr };
+  httpd_register_uri_handler(active_server, &pairing_qr);
 
 #if FEATURE_MESH_NETWORK
   // Mesh network (opera) endpoints

@@ -103,6 +103,7 @@ struct RateLimitEntry {
  * ── Authenticated (Bearer token required) ──
  * GET  /api/status          - Device status JSON
  * GET  /api/health          - System health metrics + auth stats
+ * GET  /api/pairing-qr      - SVG QR of the pairing receipt (carries the API token)
  * GET  /api/identity        - Device identity (public key, fingerprint)
  * GET  /api/chain           - Chain state (head hash, sequence)
  *

@@ -44,6 +44,12 @@ pub struct VerifyReport {
     /// Failure detail when `chain_valid` is false.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Timeline-audit warnings (tail staleness, missing heartbeats,
+    /// timestamp regressions). The chain is still hash/signature valid;
+    /// these flag anomalies the hash chain alone cannot see. Coarse bucket
+    /// starts only. Omitted when empty so old report consumers see no change.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
 }
 
 impl VerifyReport {
@@ -61,6 +67,7 @@ impl VerifyReport {
             verified_at_bucket_start: bucket.start_epoch_s,
             verified_at_bucket_size: bucket.size_s,
             error: None,
+            warnings: Vec::new(),
         }
     }
 }
@@ -91,6 +98,13 @@ pub fn run_full_verify(
     ) {
         Ok(()) => {
             report.chain_valid = true;
+            // The timeline audit only makes sense over a hash-valid chain.
+            match verify::audit_chain_timeline(conn, bucket.start_epoch_s) {
+                Ok(warnings) => report.warnings = warnings,
+                Err(err) => report
+                    .warnings
+                    .push(format!("timeline audit could not run: {err:#}")),
+            }
         }
         Err(err) => {
             report.chain_valid = false;
@@ -345,6 +359,56 @@ mod tests {
     }
 
     #[test]
+    fn full_verify_surfaces_timeline_warnings() {
+        let db = TempDb::new();
+        let mut kernel = open_kernel(db.path());
+        let now_bucket = TimeBucket::now_10min().expect("bucket").start_epoch_s;
+        let hash = KernelConfig::ruleset_hash_from_id("ruleset:test");
+        kernel
+            .append_lifecycle(
+                crate::LifecyclePhase::Start,
+                env!("CARGO_PKG_VERSION"),
+                "ruleset:test",
+                hash,
+            )
+            .expect("lifecycle");
+        // Heartbeat for the start bucket and start+1200 with a hole at
+        // start+600 — the shape mid-chain deletion leaves behind.
+        for bucket_start in [now_bucket, now_bucket + 1200] {
+            kernel
+                .append_heartbeat(
+                    TimeBucket {
+                        start_epoch_s: bucket_start,
+                        size_s: 600,
+                    },
+                    true,
+                    1,
+                    0,
+                    0,
+                    env!("CARGO_PKG_VERSION"),
+                    "ruleset:test",
+                    hash,
+                )
+                .expect("heartbeat");
+        }
+        drop(kernel);
+
+        let conn = open_encrypted(db.path());
+        let report =
+            run_full_verify(&conn, None, None, SignatureMode::Compat, |_| {}).expect("runner runs");
+
+        // Hash/signature chain is intact — warnings flag the timeline anomaly.
+        assert!(report.chain_valid, "chain: {:?}", report.error);
+        assert!(
+            report.warnings.iter().any(|w| w.contains("no heartbeat")),
+            "expected missing-heartbeat warning, got: {:?}",
+            report.warnings
+        );
+        let json = serde_json::to_string(&report).expect("serialize");
+        assert!(json.contains("warnings"));
+    }
+
+    #[test]
     fn report_serializes_to_json() {
         let report = VerifyReport {
             chain_valid: true,
@@ -359,6 +423,7 @@ mod tests {
             verified_at_bucket_start: 1_700_000_400,
             verified_at_bucket_size: 600,
             error: None,
+            warnings: Vec::new(),
         };
         let json = serde_json::to_string(&report).expect("serialize");
         assert!(json.contains("\"chain_valid\":true"));
@@ -366,5 +431,7 @@ mod tests {
         // Optional fields are omitted, not null.
         assert!(!json.contains("checkpoint_head_hash"));
         assert!(!json.contains("error"));
+        // Empty warnings are omitted entirely (additive-field compat).
+        assert!(!json.contains("warnings"));
     }
 }

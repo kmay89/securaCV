@@ -35,9 +35,12 @@ permissions:
   contents: read
   packages: write
 
+# Cancel superseded PR runs only. Main/tag runs publish to GHCR; cancelling
+# one mid-push could leave :latest and :<version> pointing at different
+# builds, so those queue instead.
 concurrency:
   group: docker-sidecar-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   lint:

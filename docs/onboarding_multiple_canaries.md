@@ -116,6 +116,32 @@ ambiguity once you have more than one.
 
 ---
 
+## Pairing from the Canary Vision app (zero typing)
+
+The `canary-vision` companion app pairs devices with the **BOOT-tap** flow —
+no tokens to copy:
+
+1. In the app: **My Canaries → + Add Canary**. Canaries already on your WiFi
+   appear under *Discovered on your network*; tap one (or enter its address).
+2. The app listens for ~60 seconds. **Short-tap the BOOT button** on that
+   Canary — the tap opens the device's provisioning gate and the app captures
+   the receipt (address + token) itself.
+3. Confirm the pairing: tap **Blink to confirm** to make that exact box flash
+   its LED, give it a name (becomes `canary-<name>.local`), and pick the room
+   it watches.
+4. Tap **+ Add another Canary** and repeat — every device after the first is
+   one tap in the app plus one tap on the device.
+
+Fallbacks (under *Other ways to pair*): scan the pairing QR from the device
+dashboard (**Settings → Device → Show QR** — requires the app to be served
+over HTTPS), paste a provisioning receipt JSON, or enter the device address +
+API token manually. The QR carries this device's API token, so the dashboard
+only renders it for an authenticated session.
+
+Rooms are stored in the app only — devices never hold fleet-wide state.
+
+---
+
 ## How do I tell them apart?
 
 1. **By name** — the unique `canary-<name>.local` URL, and the `device_id`

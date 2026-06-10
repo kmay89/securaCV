@@ -1,0 +1,99 @@
+name: Review Threads
+
+# Makes "every review comment gets addressed" an explicit, visible check
+# instead of a convention. The check fails while the PR has unresolved
+# review threads and lists them (file, author, first line) in the job log
+# and run summary.
+#
+# Re-evaluation triggers: a review being submitted/dismissed, a reply
+# landing on a review thread, or a new push. Note that resolving a thread
+# WITHOUT replying emits no Actions event (GitHub doesn't expose
+# pull_request_review_thread to workflows) — but a reply is exactly what
+# this gate exists to encourage, and a reply re-runs it. If you resolve
+# silently, use "Re-run" on the failed check to refresh it.
+#
+# This mirrors GitHub's native "Require conversation resolution before
+# merging" branch-protection rule; enable that rule too if you want GitHub
+# itself to hard-block the merge button (Settings → Branches → main).
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  pull_request_review:
+    types: [submitted, dismissed]
+  pull_request_review_comment:
+    types: [created, edited, deleted]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+# One run per PR; only the latest state of the threads matters.
+concurrency:
+  group: review-threads-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  unresolved-threads:
+    name: All review comments addressed
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check for unresolved review threads
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const number = context.payload.pull_request.number;
+            const query = `
+              query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
+                repository(owner: $owner, name: $repo) {
+                  pullRequest(number: $number) {
+                    reviewThreads(first: 100, after: $cursor) {
+                      pageInfo { hasNextPage endCursor }
+                      nodes {
+                        isResolved
+                        isOutdated
+                        path
+                        comments(first: 1) {
+                          nodes { author { login } body url }
+                        }
+                      }
+                    }
+                  }
+                }
+              }`;
+
+            const unresolved = [];
+            let cursor = null;
+            do {
+              const res = await github.graphql(query, { owner, repo, number, cursor });
+              const threads = res.repository.pullRequest.reviewThreads;
+              unresolved.push(...threads.nodes.filter(t => !t.isResolved));
+              cursor = threads.pageInfo.hasNextPage ? threads.pageInfo.endCursor : null;
+            } while (cursor);
+
+            if (unresolved.length === 0) {
+              core.info('All review threads are resolved.');
+              return;
+            }
+
+            core.summary.addHeading(`${unresolved.length} unresolved review thread(s)`);
+            const rows = [[
+              { data: 'File', header: true },
+              { data: 'From', header: true },
+              { data: 'Comment', header: true },
+            ]];
+            for (const t of unresolved) {
+              const c = t.comments.nodes[0] ?? {};
+              const author = c.author?.login ?? 'unknown';
+              const preview = (c.body ?? '').split('\n')[0].slice(0, 120);
+              const where = (t.path ?? '(PR-level)') + (t.isOutdated ? ' (outdated)' : '');
+              core.error(`unresolved thread — ${where} — @${author}: ${preview} ${c.url ?? ''}`);
+              rows.push([where, `@${author}`, c.url ? `<a href="${c.url}">${preview}</a>` : preview]);
+            }
+            core.summary.addTable(rows);
+            await core.summary.write();
+            core.setFailed(
+              `${unresolved.length} review thread(s) still unresolved. ` +
+              'Reply in each thread and mark it resolved — replies re-run this check automatically; ' +
+              'if you resolved a thread without replying, re-run this check manually.'
+            );
