@@ -582,6 +582,18 @@ static const char CSI_DASHBOARD_HTML[] PROGMEM = R"DASHBOARD(<!doctype html>
     letter-spacing: 0.02em;
   }
   .privacy-pill.warm { color: #b87800; }
+  /* Mic pill: same quiet-pill look as .privacy-pill, but always in the
+     topbar — the mic's on/off state is privacy-relevant and must be
+     visible at a glance, not buried in a sheet. Hidden until
+     /api/audio/status confirms the mic is built into this firmware. */
+  .mic-pill {
+    font-size: 11px; color: var(--fg-mute);
+    background: var(--bg-veil);
+    border: 1px solid var(--hairline);
+    padding: 5px 10px; border-radius: 999px;
+    letter-spacing: 0.02em; cursor: pointer;
+  }
+  .mic-pill.muted { color: #b87800; }
   .sheet-body {
     flex: 1 1 auto;
     overflow-y: auto;
@@ -986,6 +998,8 @@ static const char CSI_DASHBOARD_HTML[] PROGMEM = R"DASHBOARD(<!doctype html>
 <header class="topbar">
   <div class="brand">SecuraCV<span class="device" id="device-id">canary</span></div>
   <div class="topbar-actions">
+    <button class="mic-pill" id="micPill" style="display:none"
+            aria-label="Microphone on or muted — tap to switch">Mic on</button>
     <button class="iconbtn" id="todayBtn" data-tip="todayBtn">Today</button>
     <button class="iconbtn" id="fleetBtn" data-tip="fleetBtn">Fleet</button>
     <button class="iconbtn" id="settingsBtn" data-tip="settingsBtn">Settings</button>
@@ -3029,6 +3043,42 @@ function pollLoop(fn, intervalMs) {
 }
 pollLoop(pollStream, 1000);
 pollLoop(pollRawVector, 1000);
+
+/* Mic pill — shows whether the Canary is listening for smoke/CO alarms.
+ * Stays hidden on firmware without the mic (the address answers 404/401
+ * or ok:false). Tapping it flips the hard mute after a confirm. */
+async function pollMicPill() {
+  const pill = document.getElementById('micPill');
+  if (!pill) return;
+  try {
+    const r = await cvFetch('/api/audio/status', { cache: 'no-store' });
+    if (!r.ok) { pill.style.display = 'none'; return; }
+    const j = await r.json();
+    if (!j.ok) { pill.style.display = 'none'; return; }
+    pill.style.display = '';
+    const muted = !!j.muted;
+    pill.textContent = muted ? 'Mic muted' : 'Mic on';
+    pill.classList.toggle('muted', muted);
+    pill.dataset.muted = muted ? '1' : '0';
+  } catch (_) { /* keep last rendered state */ }
+}
+document.getElementById('micPill').addEventListener('click', async () => {
+  const pill = document.getElementById('micPill');
+  const muted = pill.dataset.muted === '1';
+  const ask = muted
+    ? 'Turn the microphone back on? The Canary will listen for smoke and CO alarms again.'
+    : 'Mute the microphone? The Canary will NOT hear smoke or CO alarms until you turn it back on.';
+  if (!window.confirm(ask)) return;
+  try {
+    await cvFetch('/api/audio/mute', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ muted: !muted }),
+    });
+  } catch (_) { /* poll below re-syncs the pill either way */ }
+  setTimeout(pollMicPill, 600);
+});
+pollLoop(pollMicPill, 5000);
 
 /* ────────────────────────────────────────────────────────────────────────
  *  Device identity badge

@@ -1165,6 +1165,15 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           <button class="btn btn-secondary btn-sm" id="micSelftestBtn" onclick="startMicSelftest()">Test with your alarm (30 s)</button>
           <span id="micSelftestResult" style="font-size:0.85rem;color:var(--muted);">Press your smoke/CO alarm's TEST button during the window.</span>
         </div>
+        <div style="margin-top:1rem;display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;">
+          <label for="micSensitivity" style="font-size:0.85rem;">Sensitivity</label>
+          <select id="micSensitivity" onchange="setMicSensitivity()" style="font-size:0.85rem;">
+            <option value="high">High — quiet rooms</option>
+            <option value="default" selected>Standard</option>
+            <option value="low">Low — noisy rooms</option>
+          </select>
+          <span id="micSensitivityResult" style="font-size:0.85rem;color:var(--muted);">Raise it if alarms are missed; lower it if noise triggers it.</span>
+        </div>
       </div>
 
       <!-- GPS Status Card -->
@@ -3877,6 +3886,10 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       const data = await api('/api/audio/status');
       if (!data.ok) { card.style.display = 'none'; return; }
       card.style.display = '';
+      if (!card.dataset.sensLoaded) {
+        card.dataset.sensLoaded = '1';
+        loadMicSensitivity();  // reflect the device's saved setting once
+      }
 
       const badge = document.getElementById('micBadge');
       const badgeText = document.getElementById('micBadgeText');
@@ -3915,6 +3928,45 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           'Muted now, but NOT saved (storage error) — the mic re-arms on reboot';
       }
       setTimeout(refreshMicStatus, 500);  // let the deferred toggle apply
+    }
+
+    // Sensitivity maps to the detector's on/off sound levels. "High" hears
+    // quieter alarms but is easier to trip; "Low" suits rooms with steady
+    // background noise. Persisted on the device and re-applied at boot.
+    const MIC_SENSITIVITY = {
+      high:    { rms_on: 600,  rms_off: 300 },
+      default: { rms_on: 800,  rms_off: 400 },
+      low:     { rms_on: 1200, rms_off: 600 },
+    };
+
+    function micSensitivityNameFor(rmsOn) {
+      for (const [name, v] of Object.entries(MIC_SENSITIVITY)) {
+        if (v.rms_on === rmsOn) return name;
+      }
+      return null;  // custom values set via the API directly
+    }
+
+    async function loadMicSensitivity() {
+      const data = await api('/api/audio/config');
+      if (!data.ok) return;
+      const name = micSensitivityNameFor(data.rms_on);
+      if (name) document.getElementById('micSensitivity').value = name;
+    }
+
+    async function setMicSensitivity() {
+      const out = document.getElementById('micSensitivityResult');
+      const v = MIC_SENSITIVITY[document.getElementById('micSensitivity').value];
+      if (!v) return;
+      const data = await api('/api/audio/config', 'POST', v);
+      if (!data.ok) {
+        out.style.color = 'var(--danger)';
+        out.textContent = 'Could not change it — try again.';
+        return;
+      }
+      out.style.color = 'var(--success)';
+      out.textContent = (data.persisted === false)
+        ? 'Applied for now, but NOT saved (storage error) — resets on reboot.'
+        : 'Saved. Applies right away and after reboots.';
     }
 
     async function startMicSelftest() {

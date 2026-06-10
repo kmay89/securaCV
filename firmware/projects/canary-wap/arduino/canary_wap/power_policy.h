@@ -62,6 +62,11 @@ struct PolicyFeatures {
   bool     http_server;
   bool     camera_peek;
   bool     csi;
+  // DELIBERATE: acoustic is set true in EVERY power state below and the
+  // main loop intentionally does not gate audio_process() on it. T3
+  // smoke / T4 CO detection is life-safety — a Canary that goes deaf to
+  // a smoke alarm to save its last few percent of battery has failed at
+  // its job. Only the user's explicit hard mute stops the mic.
   bool     acoustic;
   bool     touch;
   bool     ir_rmt;
