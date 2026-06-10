@@ -41,6 +41,33 @@
 #define DIAG_HEAP_HYSTERESIS       5000
 
 /* ────────────────────────────────────────────────────────────────────────── */
+/*  SD ENDURANCE                                                             */
+/*                                                                           */
+/*  SD cards are consumables with finite write endurance and no SMART        */
+/*  reporting. Lifetime write counters are persisted in NVS (lazily, so the  */
+/*  bookkeeping never wears NVS itself) and compared against a conservative  */
+/*  endurance rating to produce a wear estimate and a one-way                */
+/*  replace_recommended latch. The estimate is exactly that — an estimate.   */
+/* ────────────────────────────────────────────────────────────────────────── */
+
+/* Card endurance rating in TB written. Override in canary_config.h to match
+ * the purchased card (32 TBW is a conservative default for the small
+ * high-endurance cards typically used in Canary builds). */
+#ifndef DIAG_SD_ENDURANCE_TBW
+#define DIAG_SD_ENDURANCE_TBW      32
+#endif
+
+/* Wear percentage at which replacement is recommended. The latch is one-way:
+ * wear only ever grows, so there is no flapping to damp. */
+#define DIAG_SD_WEAR_REPLACE_PCT   80
+
+/* Lazy NVS persistence of the lifetime counters: every N successful writes
+ * or this many ms (whichever comes first), so a crash undercounts by at
+ * most one batch — acceptable for an endurance estimate. */
+#define DIAG_SD_PERSIST_EVERY_WRITES  64
+#define DIAG_SD_PERSIST_INTERVAL_MS   600000
+
+/* ────────────────────────────────────────────────────────────────────────── */
 /*  DEGRADATION LEVEL                                                        */
 /* ────────────────────────────────────────────────────────────────────────── */
 
@@ -79,6 +106,11 @@ typedef struct {
   bool     mounted;
   bool     space_warning;
   bool     space_critical;
+  /* Endurance tracking (persisted in NVS, survives reboots). */
+  uint32_t lifetime_writes;       /* total write ops across device lifetime */
+  uint64_t lifetime_bytes;        /* total bytes written across lifetime    */
+  uint16_t wear_pct_x10;          /* estimated wear in tenths of a percent  */
+  bool     replace_recommended;   /* one-way latch at DIAG_SD_WEAR_REPLACE_PCT */
 } diag_sd_t;
 
 /* ────────────────────────────────────────────────────────────────────────── */
@@ -141,6 +173,12 @@ bool diag_get_sd(diag_sd_t* out);
 /* Notify the diagnostics module of an SD write (success or error).
  * Called by the storage layer after each write operation. */
 void diag_record_sd_write(bool success);
+
+/* Byte-aware variant for wear estimation: records the write AND adds the
+ * byte count to the NVS-persisted lifetime total. Use this wherever the
+ * write size is known; diag_record_sd_write() is the 0-byte fallback for
+ * metadata operations (deletes, renames). */
+void diag_record_sd_write_bytes(size_t bytes, bool success);
 
 /* Run the self-test suite. Blocks for ~2-5 seconds. Results cached
  * until next call. Returns the health score (0-100). */

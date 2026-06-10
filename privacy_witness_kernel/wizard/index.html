@@ -233,7 +233,7 @@
   </div>
 
   <div id="preflight-box" class="info-box blue">
-    <strong>Checking prerequisites...</strong>
+    <strong>Checking prerequisites…</strong>
     <div id="preflight-results" style="margin-top:8px;font-size:0.88rem"></div>
   </div>
 
@@ -472,7 +472,7 @@
   <div id="mesh-done" class="hidden">
     <div class="done-icon">✅</div>
     <div class="done-title">Canary added.</div>
-    <div class="done-sub">The new Canary has joined your opera.</div>
+    <div class="done-sub">The new Canary has joined your opera — the group your Canaries share alerts in.</div>
     <div class="btn-row" style="justify-content:center;margin-top:20px">
       <button class="btn btn-secondary btn-sm" onclick="closeMeshWizard()">Done</button>
     </div>
@@ -557,11 +557,21 @@ let deviceKeySeed = "";
 // Navigation
 // ---------------------------------------------------------------------------
 function goTo(step) {
+  const leavingDone = currentStep === 5 && step !== 5;
   document.getElementById(`screen-${currentStep}`).classList.add("hidden");
   currentStep = step;
   document.getElementById(`screen-${step}`).classList.remove("hidden");
   updateProgressBar();
 
+  if (leavingDone) {
+    // Reset the done screen and the start button so "Start Over" is clean.
+    document.getElementById("done-success").classList.add("hidden");
+    document.getElementById("done-error").classList.add("hidden");
+    const startBtn = document.getElementById("start-btn");
+    startBtn.disabled = false;
+    startBtn.innerHTML = "Start SecuraCV";
+    document.getElementById("start-error").classList.add("hidden");
+  }
   if (step === 2 && cameras.length === 0) addCamera();
   if (step === 4) renderSummary();
 }
@@ -643,8 +653,14 @@ function updateCamera(id, key, val) {
 
 async function testCamera(id) {
   const cam = cameras.find(c => c.id === id);
-  if (!cam || !cam.url) return;
+  if (!cam) return;
   const el = document.getElementById(`test-${id}`);
+  if (!cam.url) {
+    el.className = "test-result fail";
+    el.textContent = "Enter the RTSP URL first.";
+    el.style.display = "block";
+    return;
+  }
   el.className = "test-result";
   el.textContent = "Testing…";
   el.style.display = "block";
@@ -782,9 +798,11 @@ async function restartHA() {
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span> Restarting…';
   try {
-    await api("/api/restart-ha", {});
+    const res = await api("/api/restart-ha", {});
+    if (!res || res.ok === false) throw new Error((res && res.error) || "restart failed");
     btn.innerHTML = "✓ Restarting — page will reload shortly";
   } catch (_) {
+    btn.disabled = false;
     btn.innerHTML = "Restart manually: Settings → System → Restart";
   }
 }
@@ -1065,6 +1083,13 @@ async function runPreflight() {
       box.querySelector("strong").textContent = (c.mosquitto && c.frigate)
         ? "Prerequisites ready"
         : "Prerequisites need attention";
+    } else {
+      results.innerHTML = "";
+      const div = document.createElement("div");
+      div.style.color = "var(--text-muted)";
+      div.textContent = "Could not check prerequisites" + (data.error ? ": " + data.error : "");
+      results.appendChild(div);
+      box.className = "info-box warn";
     }
   } catch (_) {
     results.innerHTML = '<div style="color:var(--text-muted)">Could not check prerequisites (running outside HA?)</div>';

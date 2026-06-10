@@ -315,7 +315,9 @@ static void emit_event(power_event_type_t type) {
  * ────────────────────────────────────────────────────────────────────────── */
 
 static void check_battery_presence(uint16_t battery_mv) {
-  if (s_state.monitor_mode == POWER_MODE_USB_ONLY) return;
+  /* Keep running as long as a divider is wired -- monitor_mode may have
+   * flipped to USB_ONLY after a battery removal, and this is the only
+   * path that can detect the battery being reattached. */
   if (!s_state.divider_detected) return;
 
   bool out_of_range = (battery_mv < LIPO_VALID_MIN_MV ||
@@ -339,6 +341,10 @@ static void check_battery_presence(uint16_t battery_mv) {
     if (!s_state.battery_present) {
       s_state.battery_present = true;
       s_state.monitor_mode = POWER_MODE_HW_ADC;
+      /* Clear the latched NO_BATTERY state so the charge state machine
+       * re-classifies from fresh trend data instead of staying stuck. */
+      s_state.charge_state = CHARGE_STATE_UNKNOWN;
+      s_state.power_source = POWER_SOURCE_UNKNOWN;
       log_health(LOG_LEVEL_INFO, LOG_CAT_SENSOR,
                  "Power: battery detected", "HW ADC mode");
     }
@@ -353,24 +359,20 @@ static void update_charge_state(uint16_t battery_mv) {
   int16_t trend = s_state.trend_mv_per_min;
 
   if (s_state.monitor_mode == POWER_MODE_HW_ADC) {
-    if (s_state.soc_pct <= s_cfg.soc_critical_pct) {
-      next = CHARGE_STATE_CRITICAL;
-    } else if (s_state.soc_pct <= s_cfg.soc_low_pct) {
-      next = CHARGE_STATE_LOW;
-    } else if (battery_mv >= 4150 && trend >= -1 && trend <= 1) {
+    /* Charging detection runs BEFORE the low/critical SoC checks so a
+     * depleted battery on USB reports CHARGING (power source USB).
+     * Otherwise the policy engine would see CRITICAL + battery power
+     * and deep-sleep a device that is actually plugged in and charging. */
+    if (battery_mv >= 4150 && trend >= -1 && trend <= 1) {
       next = CHARGE_STATE_FULL;
     } else if (trend > 2) {
       next = CHARGE_STATE_CHARGING;
+    } else if (s_state.soc_pct <= s_cfg.soc_critical_pct) {
+      next = CHARGE_STATE_CRITICAL;
+    } else if (s_state.soc_pct <= s_cfg.soc_low_pct) {
+      next = CHARGE_STATE_LOW;
     } else {
       next = CHARGE_STATE_DISCHARGING;
-    }
-  } else if (s_state.monitor_mode == POWER_MODE_SW_INFERENCE) {
-    if (trend > 3) {
-      next = CHARGE_STATE_CHARGING;
-    } else if (trend < -3) {
-      next = CHARGE_STATE_DISCHARGING;
-    } else if (prev == CHARGE_STATE_CHARGING) {
-      next = CHARGE_STATE_FULL;
     }
   }
 
@@ -469,11 +471,18 @@ static void load_nvs_state() {
     prefs.end();
   }
 
-  /* Detect brownout reset and increment count */
+  /* Detect brownout reset and increment count. Persist immediately:
+   * a device in a brownout loop may never reach the periodic history
+   * save, and the count is the main field-diagnosis signal. */
   {
     esp_reset_reason_t rst = esp_reset_reason();
     if (rst == ESP_RST_BROWNOUT) {
       s_history.brownout_count++;
+      Preferences bo;
+      if (bo.begin("securacv", false)) {
+        bo.putUInt("batt_bo_cnt", s_history.brownout_count);
+        bo.end();
+      }
     }
   }
 }
@@ -520,7 +529,7 @@ bool power_init(const power_config_t* cfg) {
 
   s_initialized = true;
   log_health(LOG_LEVEL_INFO, LOG_CAT_SENSOR,
-             "Power HAL initialized", "dual-mode ADC + inference");
+             "Power HAL initialized", "HW ADC with USB-only fallback");
   return true;
 }
 
@@ -575,13 +584,22 @@ bool power_start(void) {
                    "Power: divider present, no battery", "USB-only mode");
       }
     } else {
-      /* No divider — fall back to software inference. We can't tell
-       * if a battery is present without hardware. Assume USB power. */
-      s_state.monitor_mode = POWER_MODE_SW_INFERENCE;
+      /* No divider: the ADC pin floats, so its readings carry no
+       * battery information. Report USB-only and stop sampling rather
+       * than inferring charge state from noise. A near-rail reading is
+       * suspicious -- VBAT wired directly to the pin overstresses it. */
+      if (avg_mv > DIVIDER_DETECT_MAX_MV) {
+        log_health(LOG_LEVEL_WARNING, LOG_CAT_SENSOR,
+                   "Power: ADC near rail without divider",
+                   "check wiring -- VBAT direct to ADC pin can damage it");
+      }
+      s_state.monitor_mode = POWER_MODE_USB_ONLY;
       s_state.divider_detected = false;
       s_state.battery_present = false;
       s_state.power_source = POWER_SOURCE_USB_ONLY;
       s_state.charge_state = CHARGE_STATE_NO_BATTERY;
+      adc_close();
+      s_adc_ready = false;
       log_health(LOG_LEVEL_INFO, LOG_CAT_SENSOR,
                  "Power: no divider detected", "USB-only (add divider for battery monitoring)");
     }
@@ -797,6 +815,33 @@ void power_persist_history(void) {
      * track_charge_cycle() and save_voltage_extremes(). */
     prefs.end();
   }
+}
+
+uint8_t power_health_pct(void) {
+  using namespace power;
+  if (!s_state.battery_present) return 100;
+  /* Cycle-fade model: a consumer LiPo loses roughly 20% of capacity
+   * over ~500 full charge cycles. Computed on demand from the persisted
+   * cycle count so it can never go stale. Clamped to 60% -- below that
+   * the linear model is meaningless and the cell should be replaced. */
+  uint32_t fade = (s_state.charge_cycles * 20) / 500;
+  if (fade > 40) fade = 40;
+  return (uint8_t)(100 - fade);
+}
+
+uint32_t power_estimate_runtime_min(void) {
+  using namespace power;
+  static const uint16_t CUTOFF_MV = 3300;
+  static const uint32_t RUNTIME_CAP_MIN = 14UL * 24UL * 60UL;
+  if (!s_state.battery_present) return 0;
+  if (s_state.charge_state != CHARGE_STATE_DISCHARGING &&
+      s_state.charge_state != CHARGE_STATE_LOW &&
+      s_state.charge_state != CHARGE_STATE_CRITICAL) return 0;
+  if (s_state.trend_mv_per_min >= 0) return 0;
+  if (s_state.voltage_mv <= CUTOFF_MV) return 0;
+  uint32_t mins = (uint32_t)(s_state.voltage_mv - CUTOFF_MV) /
+                  (uint32_t)(-s_state.trend_mv_per_min);
+  return (mins > RUNTIME_CAP_MIN) ? RUNTIME_CAP_MIN : mins;
 }
 
 }  /* extern "C" */

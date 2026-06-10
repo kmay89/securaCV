@@ -21,10 +21,11 @@ use witness_kernel::{
     break_glass::BreakGlassTokenFile,
     config::DetectBackendPreference,
     detect::{BackendRegistry, CpuBackend, StubBackend},
+    storage_health::MonitorSettings,
     BackendSelection, BucketKeyManager, CapabilityBoundaryRuntime, DeviceCapabilities, FailureType,
     FileConfig, FileSource, FrameBuffer, InferenceBackend, Kernel, KernelConfig, LifecyclePhase,
-    Module, ModuleDescriptor, RtspConfig, RtspSource, TimeBucket, Vault, VaultConfig,
-    ZoneCrossingModule, ZonePolicy,
+    Module, ModuleDescriptor, RtspConfig, RtspSource, SharedStorageHealth, StorageHealthMonitor,
+    TimeBucket, Vault, VaultConfig, ZoneCrossingModule, ZonePolicy,
 };
 #[cfg(feature = "ingest-esp32")]
 use witness_kernel::{Esp32Config, Esp32Source};
@@ -47,6 +48,9 @@ fn main() -> Result<()> {
         let _stage = ui.stage("Load configuration");
         witness_kernel::config::WitnessdConfig::load()?
     };
+    // Apply the SQLite synchronous preference before any connection is
+    // opened — it is process-wide and must be identical on every connection.
+    witness_kernel::set_sqlite_synchronous(config.storage_health.sqlite_synchronous);
     let device_key_seed = {
         let provided_seed = std::env::var("DEVICE_KEY_SEED").ok();
         let key_path = witness_kernel::crypto::device_key_path_for_db(&config.db_path)?;
@@ -113,6 +117,23 @@ fn main() -> Result<()> {
             .map_err(|e| anyhow!("failed to install shutdown signal handler: {e}"))?;
     }
 
+    // Storage endurance & health monitoring (proactive SD-card reliability:
+    // wear estimation, free space, write errors, thermal awareness).
+    let mut storage_monitor = config.storage_health.enabled.then(|| {
+        let _stage = ui.stage("Initialize storage health monitor");
+        StorageHealthMonitor::new(
+            MonitorSettings {
+                endurance_tbw: config.storage_health.endurance_tbw,
+                block_device: config.storage_health.block_device.clone(),
+                state_path: config.storage_health.state_path.clone(),
+                thresholds: config.storage_health.thresholds.clone(),
+            },
+            &config.db_path,
+        )
+    });
+    let storage_health: SharedStorageHealth = std::sync::Arc::new(std::sync::RwLock::new(None));
+    let storage_write_errors = storage_monitor.as_ref().map(|m| m.error_counter());
+
     let api_config = ApiConfig {
         addr: config.api_addr.clone(),
         token_path: config.api_token_path.clone(),
@@ -120,7 +141,9 @@ fn main() -> Result<()> {
     };
     let api_handle = {
         let _stage = ui.stage("Start event API");
-        ApiServer::new(api_config, cfg.clone()).spawn()?
+        ApiServer::new(api_config, cfg.clone())
+            .with_storage_health(storage_health.clone())
+            .spawn()?
     };
     log::info!("event api listening on {}", api_handle.addr);
     if let Some(path) = &api_handle.token_path {
@@ -268,6 +291,8 @@ fn main() -> Result<()> {
     let mut token_mgr = BucketKeyManager::new();
 
     let mut last_prune = Instant::now();
+    let mut last_storage_sample: Option<Instant> = None;
+    let mut last_storage_status = witness_kernel::StorageHealthStatus::Good;
     let mut event_count = 0u64;
     let mut pipeline = PipelineCounters::default();
     let mut supervisor = IngestSupervisor::new(
@@ -393,6 +418,14 @@ fn main() -> Result<()> {
                         // append_event_checked seals a GapMissingData record for
                         // each rejection; count it for the heartbeat delta.
                         pipeline.failures_recorded += 1;
+                        // Count genuine sealed-log write faults for the storage
+                        // health monitor; contract/allowlist rejections are
+                        // normal privacy enforcement, not a disk symptom.
+                        if witness_kernel::storage_health::is_storage_error(&e) {
+                            if let Some(counter) = &storage_write_errors {
+                                counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            }
+                        }
                         log::warn!("event rejected: {}", e);
                         continue;
                     }
@@ -440,10 +473,17 @@ fn main() -> Result<()> {
 
         health.tick(&source, &pipeline);
 
-        // Periodic retention enforcement with checkpoint. A failure here is a
-        // storage fault to witness, not a reason to exit.
-        if last_prune.elapsed() > Duration::from_secs(10) {
+        // Periodic retention enforcement with checkpoint. Each pass that
+        // prunes writes a signed checkpoint transaction, so the cadence is
+        // configurable ([retention] check_interval_seconds, default 5 min)
+        // as an SD-card endurance measure; events persist at most
+        // retention + check_interval. A failure here is a storage fault to
+        // witness (sealed record + health counter), not a reason to exit.
+        if last_prune.elapsed() > config.retention_check_interval {
             if let Err(e) = kernel.enforce_retention_with_checkpoint(cfg.retention) {
+                if let Some(counter) = &storage_write_errors {
+                    counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
                 log::error!("retention enforcement failed: {e}");
                 kernel.report_storage_failure(
                     &format!("retention enforcement failed: {e}"),
@@ -463,6 +503,8 @@ fn main() -> Result<()> {
             );
         }
 
+        // Free-space preflight: seals a StorageFull record per transition
+        // (sealed-chain evidence, distinct from the endurance monitor below).
         disk_monitor.tick(
             &cfg.db_path,
             &mut kernel,
@@ -471,6 +513,50 @@ fn main() -> Result<()> {
             &cfg.ruleset_id,
             ruleset_hash,
         );
+
+        // Periodic storage endurance & health sample, shared with /status.
+        if let Some(monitor) = storage_monitor.as_mut() {
+            let due = last_storage_sample
+                .is_none_or(|t| t.elapsed() >= config.storage_health.check_interval);
+            if due {
+                match monitor.sample() {
+                    Ok(report) => {
+                        let status = report.storage.status;
+                        if status != last_storage_status {
+                            if status > last_storage_status {
+                                log::warn!(
+                                    "storage health: {} -> {} (free={}%, wear={}%, write_errors_total={}) \
+                                     — see docs/sd_card_health.md",
+                                    last_storage_status.as_str(),
+                                    status.as_str(),
+                                    report
+                                        .storage
+                                        .free_pct
+                                        .map_or("n/a".to_string(), |v| format!("{v:.1}")),
+                                    report
+                                        .storage
+                                        .wear_pct
+                                        .map_or("n/a".to_string(), |v| format!("{v:.1}")),
+                                    report.storage.write_errors,
+                                );
+                            } else {
+                                log::info!(
+                                    "storage health: recovered {} -> {}",
+                                    last_storage_status.as_str(),
+                                    status.as_str()
+                                );
+                            }
+                            last_storage_status = status;
+                        }
+                        if let Ok(mut guard) = storage_health.write() {
+                            *guard = Some(report);
+                        }
+                    }
+                    Err(e) => log::warn!("storage health sample failed: {}", e),
+                }
+                last_storage_sample = Some(Instant::now());
+            }
+        }
 
         // Target ~10 fps (100ms between frames)
         std::thread::sleep(Duration::from_millis(100));
@@ -1259,8 +1345,8 @@ mod tests {
     use super::*;
     use witness_kernel::config::{
         ClockSettings, DetectSettings, Esp32Settings, FileSettings, HealthSettings, IngestBackend,
-        IngestSettings, RtspBackendPreference, RtspSettings, StorageSettings, TractFormat,
-        V4l2Settings, WitnessdConfig, ZoneSettings,
+        IngestSettings, RtspBackendPreference, RtspSettings, StorageHealthSettings,
+        StorageSettings, TractFormat, V4l2Settings, WitnessdConfig, ZoneSettings,
     };
     use witness_kernel::{FailureType, SealedLogRecord};
 
@@ -1319,6 +1405,8 @@ mod tests {
             clock: ClockSettings {
                 skew_tolerance: Duration::from_secs(30),
             },
+            retention_check_interval: Duration::from_secs(300),
+            storage_health: StorageHealthSettings::default(),
         }
     }
 

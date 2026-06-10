@@ -118,8 +118,50 @@ sensitive = ["zone:front_boundary"]  # Zones that trigger vault sealing
 # How long to keep sealed events before pruning.
 # Default: 7 days (604800 seconds)
 #
+# check_interval_seconds controls how often the retention pass runs. Each
+# pass that prunes writes a signed checkpoint transaction, so the cadence is
+# tuned for SD-card endurance (default 300s = 288 passes/day). Events persist
+# at most retention + check_interval.
+#
 [retention]
 seconds = 604800  # 7 days
+check_interval_seconds = 300
+
+# Storage Endurance & Health Monitoring
+#
+# Proactive SD-card reliability: tracks free space, whole-device write volume,
+# estimated wear against the card's endurance rating, SoC temperature, and
+# write errors, and computes a health status with hysteresis:
+#   good -> degraded -> replacement_recommended -> critical
+#
+# Served via the token-gated `GET /status` API endpoint and surfaced as
+# Home Assistant sensors. See docs/sd_card_health.md for card selection,
+# heat management, and the replacement runbook.
+#
+[storage_health]
+enabled = true
+check_interval_seconds = 600   # Sample every 10 minutes
+# Card endurance rating in TB written (TBW). Set this to your card's rating —
+# the 64 TBW default is deliberately conservative for high-endurance microSD
+# cards. The wear figure is an estimate, not a measurement (SD cards expose
+# no SMART data).
+endurance_tbw = 64.0
+# block_device = "mmcblk0"     # Auto-detected from the db_path mount; set to
+                               # override (required inside containers where the
+                               # host's /sys/block is not visible)
+# state_path = ""              # Wear-tracking state file; default "<db_path>.health.json"
+# free_space_warn_pct = 15.0   # Below this: degraded
+# free_space_critical_pct = 5.0  # Below this: critical
+# wear_warn_pct = 80.0         # At/above this: replacement_recommended
+# wear_critical_pct = 95.0     # At/above this: critical
+# temp_warn_c = 70.0           # SoC temp: warm (approaching Pi throttle range)
+# temp_hot_c = 80.0            # SoC temp: hot
+# SQLite synchronous mode for the sealed log: "full" (default) syncs every
+# commit — a power cut can never lose an acknowledged event. "normal" reduces
+# fsync traffic (endurance optimization) and can never corrupt the database or
+# break hash-chain verifiability, but a power cut may lose the most recent
+# events. For a witness device, keep "full" unless write volume demands it.
+# sqlite_synchronous = "full"
 
 # System Trace & Health
 #
@@ -180,6 +222,12 @@ skew_tolerance_s = 30
 #   WITNESS_API_ADDR    - Override api.addr
 #   WITNESS_API_TOKEN_PATH - Override api.token_path
 #   WITNESS_RETENTION_SECS - Override retention.seconds
+#   WITNESS_RETENTION_CHECK_INTERVAL_SECS - Override retention.check_interval_seconds
+#   WITNESS_STORAGE_HEALTH_ENABLED - Override storage_health.enabled (true/false)
+#   WITNESS_STORAGE_HEALTH_INTERVAL_SECS - Override storage_health.check_interval_seconds
+#   WITNESS_STORAGE_HEALTH_TBW - Override storage_health.endurance_tbw
+#   WITNESS_STORAGE_HEALTH_DEVICE - Override storage_health.block_device
+#   WITNESS_SQLITE_SYNCHRONOUS - Override storage_health.sqlite_synchronous ("full"/"normal")
 #
 # =============================================================================
 

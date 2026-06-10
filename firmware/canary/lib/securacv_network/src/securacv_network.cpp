@@ -69,6 +69,10 @@
 #if FEATURE_POWER_MONITOR
 #include "securacv_power.h"
 #endif
+#if FEATURE_THERMAL_WATCHDOG
+#include "securacv_thermal_watchdog.h"
+#include <math.h>   /* lroundf */
+#endif
 
 // Mesh REST API (PR-8). Gated on FEATURE_MESH_NETWORK — the dev/release
 // CI envs build with this OFF, so these handlers get no CI compile
@@ -844,6 +848,10 @@ static esp_err_t handle_selftest(httpd_req_t* req);
 static esp_err_t handle_battery_history(httpd_req_t* req);
 #endif
 
+#if FEATURE_THERMAL_WATCHDOG
+static esp_err_t handle_thermal(httpd_req_t* req);
+#endif
+
 #if defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
 // Mesh / opera REST API (PR-8). Six endpoints only — status, peers, and
 // the four pairing steps. remove/leave/name/enable/alerts-DELETE are
@@ -861,12 +869,13 @@ bool ScvNetworkManager::startHttpServer() {
   config.server_port = 80;
   config.uri_match_fn = httpd_uri_match_wildcard;
   config.stack_size = 8192;
-  // 41 base (incl. /api/witness) + 6 mesh endpoints (PR-8) when the mesh
-  // feature is compiled in. Each registered httpd_uri_t needs a slot.
+  // 42 base (incl. /api/witness + /api/thermal) + 6 mesh endpoints (PR-8)
+  // when the mesh feature is compiled in. Each registered httpd_uri_t
+  // needs a slot.
   #if defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
-  config.max_uri_handlers = 47;
+  config.max_uri_handlers = 48;
   #else
-  config.max_uri_handlers = 41;
+  config.max_uri_handlers = 42;
   #endif
   config.recv_wait_timeout = 30;
   config.send_wait_timeout = 30;
@@ -1041,6 +1050,11 @@ void ScvNetworkManager::registerHttpHandlers() {
   #if FEATURE_POWER_MONITOR
   httpd_uri_t batt_hist_ep = { .uri = "/api/battery/history", .method = HTTP_GET, .handler = handle_battery_history };
   httpd_register_uri_handler(m_http_server, &batt_hist_ep);
+  #endif
+
+  #if FEATURE_THERMAL_WATCHDOG
+  httpd_uri_t thermal_ep = { .uri = "/api/thermal", .method = HTTP_GET, .handler = handle_thermal };
+  httpd_register_uri_handler(m_http_server, &thermal_ep);
   #endif
 
   #if defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
@@ -1789,8 +1803,31 @@ static esp_err_t handle_peek_status(httpd_req_t* req) {
   }
 
   const char* thermal_names[] = {"normal", "throttled", "paused"};
+#if FEATURE_THERMAL_WATCHDOG
+  /* The camera only samples while streaming, so its reading goes stale
+   * the moment a peek stops. Source the temperature from the always-on
+   * watchdog cache (<= 30 s old); report the camera's state while it is
+   * actively streaming (it is the actuator) and the watchdog's shadow
+   * classification otherwise. */
+  {
+    thermal_wd_state_t wd;
+    if (thermal_wd_get_state(&wd)) {
+      uint8_t si = cam.isPeekActive() ? (uint8_t)cam.getThermalState()
+                                      : (wd.shadow_state <= 2 ? wd.shadow_state : 0);
+      doc["thermal_state"] = thermal_names[si];
+      doc["die_temp_c"]    = (int)lroundf(wd.die_temp_c);
+      doc["thermal_sensor_ok"] = wd.sensor_ok && cam.getThermalSensorOk();
+    } else {
+      doc["thermal_state"] = thermal_names[cam.getThermalState()];
+      doc["die_temp_c"]    = cam.getDieTempC();
+      doc["thermal_sensor_ok"] = cam.getThermalSensorOk();
+    }
+  }
+#else
   doc["thermal_state"]  = thermal_names[cam.getThermalState()];
   doc["die_temp_c"]     = cam.getDieTempC();
+  doc["thermal_sensor_ok"] = cam.getThermalSensorOk();
+#endif
   doc["freeze_count"]   = cam.getFreezeCount();
 
   String response;
@@ -3019,6 +3056,87 @@ static esp_err_t handle_battery_history(httpd_req_t* req) {
 }
 
 #endif // FEATURE_POWER_MONITOR
+
+#if FEATURE_THERMAL_WATCHDOG
+
+// GET /api/thermal — current die temp + lifetime thermal history.
+// All data comes from the passive watchdog (always-on, NVS-persisted),
+// so it stays fresh whether or not the camera is streaming.
+static esp_err_t handle_thermal(httpd_req_t* req) {
+  if (!rate_limit_check(req)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  thermal_wd_state_t st;
+  thermal_wd_history_t hist;
+  if (!thermal_wd_get_state(&st) || !thermal_wd_get_history(&hist)) {
+    return http_send_error(req, 500, "thermal_unavailable");
+  }
+
+  const char* state_names[] = {"normal", "throttled", "paused"};
+  uint8_t si = st.shadow_state <= 2 ? st.shadow_state : 0;
+
+  char buf[768];
+  int pos = 0;
+
+  if (st.last_sample_ms != 0) {
+    pos += snprintf(buf + pos, sizeof(buf) - pos,
+      "{\"ok\":true,\"die_temp_c\":%.1f,\"last_sample_age_ms\":%u,",
+      st.die_temp_c, (unsigned)(millis() - st.last_sample_ms));
+  } else {
+    pos += snprintf(buf + pos, sizeof(buf) - pos,
+      "{\"ok\":true,\"die_temp_c\":null,\"last_sample_age_ms\":null,");
+  }
+
+  pos += snprintf(buf + pos, sizeof(buf) - pos,
+    "\"thermal_state\":\"%s\",\"sensor_ok\":%s,\"advisories\":[",
+    state_names[si], st.sensor_ok ? "true" : "false");
+
+  {
+    static const struct { uint8_t bit; const char* name; } adv_map[] = {
+      { THERMAL_ADV_SENSOR_FAULT, "sensor_fault" },
+      { THERMAL_ADV_CRITICAL,     "critical" },
+      { THERMAL_ADV_SATURATION,   "saturation" },
+      { THERMAL_ADV_ENV_LIMITED,  "env_limited" },
+      { THERMAL_ADV_COLD,         "cold" },
+    };
+    bool first = true;
+    for (size_t i = 0; i < sizeof(adv_map) / sizeof(adv_map[0]); i++) {
+      if (st.advisories & adv_map[i].bit) {
+        pos += snprintf(buf + pos, sizeof(buf) - pos, "%s\"%s\"",
+                        first ? "" : ",", adv_map[i].name);
+        first = false;
+      }
+    }
+  }
+
+  /* min=127 / max=-128 are the "never sampled" sentinels. */
+  pos += snprintf(buf + pos, sizeof(buf) - pos,
+    "],\"history\":{");
+  if (hist.alltime_min_c == 127 && hist.alltime_max_c == -128) {
+    pos += snprintf(buf + pos, sizeof(buf) - pos,
+      "\"alltime_min_c\":null,\"alltime_max_c\":null,");
+  } else {
+    pos += snprintf(buf + pos, sizeof(buf) - pos,
+      "\"alltime_min_c\":%d,\"alltime_max_c\":%d,",
+      (int)hist.alltime_min_c, (int)hist.alltime_max_c);
+  }
+  pos += snprintf(buf + pos, sizeof(buf) - pos,
+    "\"total_runtime_min\":%u,\"throttled_min\":%u,\"paused_min\":%u,"
+    "\"throttle_events\":%u,\"pause_events\":%u,\"critical_events\":%u,"
+    "\"sensor_fail_events\":%u,\"cold_events\":%u,\"max_seen_runtime_min\":%u},",
+    hist.total_runtime_min, hist.throttled_min, hist.paused_min,
+    hist.throttle_events, hist.pause_events, hist.critical_events,
+    hist.sensor_fail_events, hist.cold_events, hist.max_seen_runtime_min);
+
+  pos += snprintf(buf + pos, sizeof(buf) - pos,
+    "\"thresholds\":{\"throttle_c\":70,\"pause_c\":80,"
+    "\"recover_margin_c\":5,\"critical_c\":85,\"cold_c\":5}}");
+
+  return http_send_json(req, buf);
+}
+
+#endif // FEATURE_THERMAL_WATCHDOG
 
 // ════════════════════════════════════════════════════════════════════════════
 // MESH / OPERA REST API (PR-8)

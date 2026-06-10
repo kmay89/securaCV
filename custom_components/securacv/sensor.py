@@ -7,11 +7,12 @@ from typing import Any
 
 from homeassistant.components import mqtt
 from homeassistant.components.sensor import (
+    SensorDeviceClass,
     SensorEntity,
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_URL, EntityCategory
+from homeassistant.const import CONF_URL, EntityCategory, PERCENTAGE, UnitOfTemperature
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -36,6 +37,15 @@ from .const import (
 )
 from .device_trust import TrustStore
 from . import async_record_verify
+from .health_metrics import (
+    bytes_per_day_to_mb,
+    canary_sd,
+    canary_sd_wear_pct,
+    kernel_storage,
+    kernel_thermal,
+    memory_free_bytes,
+    round_pct,
+)
 from .signature import verify_chain, verify_counts, verify_event
 
 _LOGGER = logging.getLogger(__name__)
@@ -106,6 +116,17 @@ async def async_setup_entry(
     entities: list[SensorEntity] = []
     if coordinator is not None:
         entities.append(SecuraCVKernelLastEventSensor(coordinator, entry))
+        # Storage endurance & health diagnostics (kernel GET /status).
+        # Older kernels without the endpoint simply leave these empty.
+        entities.extend(
+            [
+                SecuraCVKernelStorageHealthSensor(coordinator, entry),
+                SecuraCVKernelStorageFreeSensor(coordinator, entry),
+                SecuraCVKernelStorageWearSensor(coordinator, entry),
+                SecuraCVKernelStorageWriteRateSensor(coordinator, entry),
+                SecuraCVKernelTemperatureSensor(coordinator, entry),
+            ]
+        )
     adapter_stats_coordinator = entry_data.get("adapter_stats_coordinator")
     if adapter_stats_coordinator is not None:
         entities.append(
@@ -170,6 +191,9 @@ async def _setup_mqtt_sensors(
             )
             new_entities.append(
                 SecuraCVCanaryGPSSensor(prefix, device_id, entry)
+            )
+            new_entities.append(
+                SecuraCVCanarySDWearSensor(prefix, device_id, entry)
             )
 
         if new_entities:
@@ -237,6 +261,184 @@ class SecuraCVKernelLastEventSensor(CoordinatorEntity, SensorEntity):
         # Human-readable label for the coarse claim, for nicer dashboard display.
         attrs["friendly_event"] = event_type_metadata(event.get("event_type"))["label"]
         return attrs or None
+
+
+class SecuraCVKernelStorageSensorBase(CoordinatorEntity, SensorEntity):
+    """Base for kernel storage endurance & health diagnostics.
+
+    Data comes from the coordinator's `status` key (the kernel's token-gated
+    GET /status report). All sensors tolerate a missing report — kernels
+    that predate the endpoint, or have monitoring disabled, return None —
+    by reporting no state instead of erroring.
+    """
+
+    _attr_has_entity_name = True
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator, entry: ConfigEntry, name: str, key: str) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator)
+        self._entry = entry
+        self._attr_name = name
+        self._attr_unique_id = f"{DOMAIN}_{entry.entry_id}_{key}"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return device info for the kernel."""
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._entry.data[CONF_URL])},
+            manufacturer=MANUFACTURER,
+            model=MODEL_KERNEL,
+            name="SecuraCV Privacy Witness Kernel",
+            configuration_url=self._entry.data[CONF_URL],
+        )
+
+    def _status_payload(self) -> dict[str, Any] | None:
+        """The /status payload from the last coordinator refresh, if any."""
+        if not self.coordinator.data:
+            return None
+        return self.coordinator.data.get("status")
+
+    def _storage(self) -> dict[str, Any] | None:
+        return kernel_storage(self._status_payload())
+
+
+class SecuraCVKernelStorageHealthSensor(SecuraCVKernelStorageSensorBase):
+    """Overall SD-card / storage health status with full metrics attached."""
+
+    _attr_icon = "mdi:sd"
+
+    def __init__(self, coordinator, entry: ConfigEntry) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, entry, "Storage Health", "storage_health")
+
+    @property
+    def native_value(self) -> str | None:
+        """good / degraded / replacement_recommended / critical."""
+        storage = self._storage()
+        if storage is None:
+            return None
+        status = storage.get("status")
+        return str(status) if status is not None else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        """Full storage metrics for dashboards and automations."""
+        storage = self._storage()
+        if storage is None:
+            return None
+        return dict(storage)
+
+
+class SecuraCVKernelStorageFreeSensor(SecuraCVKernelStorageSensorBase):
+    """Free space on the filesystem holding the sealed log."""
+
+    _attr_icon = "mdi:harddisk"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = PERCENTAGE
+
+    def __init__(self, coordinator, entry: ConfigEntry) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, entry, "Storage Free", "storage_free_pct")
+
+    @property
+    def native_value(self) -> float | None:
+        """Free space percentage."""
+        storage = self._storage()
+        if storage is None:
+            return None
+        return round_pct(storage.get("free_pct"))
+
+
+class SecuraCVKernelStorageWearSensor(SecuraCVKernelStorageSensorBase):
+    """Estimated SD-card wear against its configured endurance rating.
+
+    A conservative estimate (not a measurement — SD cards expose no SMART
+    data): whole-device bytes written versus the configured TBW rating.
+    """
+
+    _attr_icon = "mdi:sd"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = PERCENTAGE
+
+    def __init__(self, coordinator, entry: ConfigEntry) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, entry, "Storage Wear Estimate", "storage_wear_pct")
+
+    @property
+    def native_value(self) -> float | None:
+        """Estimated wear percentage."""
+        storage = self._storage()
+        if storage is None:
+            return None
+        return round_pct(storage.get("wear_pct"))
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        """Endurance context for the estimate."""
+        storage = self._storage()
+        if storage is None:
+            return None
+        return {
+            "endurance_tbw": storage.get("endurance_tbw"),
+            "lifetime_bytes_written": storage.get("lifetime_bytes_written"),
+            "estimated_days_remaining": storage.get("estimated_days_remaining"),
+            "source_device": storage.get("source_device"),
+        }
+
+
+class SecuraCVKernelStorageWriteRateSensor(SecuraCVKernelStorageSensorBase):
+    """Whole-device write rate (MB/day) — the pace at which the card wears."""
+
+    _attr_icon = "mdi:database-arrow-down"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = "MB/d"
+
+    def __init__(self, coordinator, entry: ConfigEntry) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, entry, "Storage Write Rate", "storage_write_rate")
+
+    @property
+    def native_value(self) -> float | None:
+        """Write rate in MB/day."""
+        storage = self._storage()
+        if storage is None:
+            return None
+        return bytes_per_day_to_mb(storage.get("write_rate_bytes_per_day"))
+
+
+class SecuraCVKernelTemperatureSensor(SecuraCVKernelStorageSensorBase):
+    """SoC temperature on the kernel host (heat accelerates flash wear)."""
+
+    _attr_device_class = SensorDeviceClass.TEMPERATURE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
+
+    def __init__(self, coordinator, entry: ConfigEntry) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, entry, "SoC Temperature", "soc_temperature")
+
+    @property
+    def native_value(self) -> float | None:
+        """SoC temperature in °C."""
+        thermal = kernel_thermal(self._status_payload())
+        if thermal is None:
+            return None
+        temp = thermal.get("soc_temp_c")
+        if temp is None:
+            return None
+        try:
+            return round(float(temp), 1)
+        except (TypeError, ValueError):
+            return None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        """Thermal classification (ok / warm / hot)."""
+        thermal = kernel_thermal(self._status_payload())
+        if thermal is None:
+            return None
+        return {"thermal_status": thermal.get("status")}
 
 
 class SecuraCVAdapterStatsSensor(CoordinatorEntity, SensorEntity):
@@ -475,7 +677,9 @@ class SecuraCVCanaryHealthSensor(SecuraCVCanarySensorBase):
         try:
             data = json.loads(msg.payload)
             battery = data.get("battery", 100)
-            memory_free = data.get("memory_free", 0)
+            # Both firmware spellings: canary-wap "memory_free",
+            # firmware/canary "free_heap".
+            memory_free = memory_free_bytes(data)
 
             if battery < CRITICAL_BATTERY_THRESHOLD_PERCENT or memory_free < WARNING_MEMORY_THRESHOLD_BYTES:
                 self._attr_native_value = "critical"
@@ -491,8 +695,62 @@ class SecuraCVCanaryHealthSensor(SecuraCVCanarySensorBase):
                 "firmware_version": data.get("firmware_version", ""),
                 "public_key": data.get("public_key", ""),
             }
+            # SD endurance metrics, when the firmware reports them.
+            if (sd := canary_sd(data)) is not None:
+                self._attr_extra_state_attributes["sd"] = sd
+            if (temp_c := data.get("temp_c")) is not None:
+                self._attr_extra_state_attributes["temp_c"] = temp_c
         except (json.JSONDecodeError, TypeError):
             self._attr_native_value = "unknown"
+        self.async_write_ha_state()
+
+
+class SecuraCVCanarySDWearSensor(SecuraCVCanarySensorBase):
+    """Estimated SD-card wear reported by a Canary device.
+
+    Conservative estimate from NVS-persisted lifetime write counters
+    against the configured endurance rating; stays empty on firmware
+    that does not yet report the `sd` health object.
+    """
+
+    _attr_icon = "mdi:sd"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = "%"
+
+    def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
+        """Initialize."""
+        super().__init__(prefix, device_id, entry, "SD Wear Estimate", "sd_wear")
+
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to MQTT when added."""
+        await mqtt.async_subscribe(
+            self.hass,
+            f"{self._prefix}/{self._device_id}/{TOPIC_HEALTH}",
+            self._handle_message,
+        )
+
+    @callback
+    def _handle_message(self, msg: mqtt.ReceiveMessage) -> None:
+        """Handle health message for SD endurance data."""
+        try:
+            data = json.loads(msg.payload)
+        except (json.JSONDecodeError, TypeError):
+            return
+        wear = canary_sd_wear_pct(data)
+        if wear is None and canary_sd(data) is None:
+            # Firmware without SD reporting: leave the sensor untouched.
+            return
+        self._attr_native_value = wear
+        if (sd := canary_sd(data)) is not None:
+            self._attr_extra_state_attributes = {
+                "mounted": sd.get("mounted"),
+                "usage_pct": sd.get("usage_pct"),
+                "writes": sd.get("writes"),
+                "errors": sd.get("errors"),
+                "lifetime_kb": sd.get("lifetime_kb"),
+                "replace_recommended": sd.get("replace_recommended"),
+            }
         self.async_write_ha_state()
 
 

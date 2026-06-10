@@ -43,6 +43,9 @@
 #include <NimBLEDevice.h>
 #include "sys_monitor.h"
 #include "hardware_state.h"
+#if FEATURE_ACOUSTIC_EVENTS
+#include "securacv_audio.h"
+#endif
 #if FEATURE_POWER_MONITOR
 #include "power_monitor.h"
 #endif
@@ -66,6 +69,7 @@
 #define BLE_STATUS_SCV_DEGRADE_LEVEL_UUID  "5e63a1b5-7c3d-4f2e-8a91-0d1b2c3e4f5a"
 #define BLE_STATUS_SCV_UPTIME_UUID         "5e63a1b6-7c3d-4f2e-8a91-0d1b2c3e4f5a"
 #define BLE_STATUS_SCV_SD_USAGE_UUID       "5e63a1b7-7c3d-4f2e-8a91-0d1b2c3e4f5a"
+#define BLE_STATUS_SCV_MIC_MUTED_UUID      "5e63a1b8-7c3d-4f2e-8a91-0d1b2c3e4f5a"
 
 // ════════════════════════════════════════════════════════════════════════════
 // TIMING
@@ -87,6 +91,9 @@ static NimBLECharacteristic* g_health_char     = nullptr;
 static NimBLECharacteristic* g_degrade_char    = nullptr;
 static NimBLECharacteristic* g_uptime_char     = nullptr;
 static NimBLECharacteristic* g_sd_usage_char   = nullptr;
+#if FEATURE_ACOUSTIC_EVENTS
+static NimBLECharacteristic* g_mic_muted_char  = nullptr;
+#endif
 
 static bool     g_initialized    = false;
 static bool     g_connected      = false;
@@ -207,6 +214,18 @@ static bool init(NimBLEServer* server,
     g_sd_usage_char->setValue(&sd, 1);
   }
 
+#if FEATURE_ACOUSTIC_EVENTS
+  // Mic hard-mute state (1 = muted). Read-only over GATT by design:
+  // BLE-side mute would need its own audit-trail path into the witness
+  // chain; the dashboard and HA switch already cover remote control.
+  g_mic_muted_char = scv_svc->createCharacteristic(
+      BLE_STATUS_SCV_MIC_MUTED_UUID, NIMBLE_PROPERTY::READ);
+  {
+    uint8_t muted = audio_is_muted() ? 1 : 0;
+    g_mic_muted_char->setValue(&muted, 1);
+  }
+#endif
+
   scv_svc->start();
 
   // NOTE: We do NOT touch advertising here. The bluetooth_channel /
@@ -298,6 +317,14 @@ static void update() {
     }
     g_sd_usage_char->setValue(&sd_pct, 1);
   }
+
+  // ── Mic mute state ─────────────────────────────────────────────────
+#if FEATURE_ACOUSTIC_EVENTS
+  if (g_mic_muted_char) {
+    uint8_t muted = audio_is_muted() ? 1 : 0;
+    g_mic_muted_char->setValue(&muted, 1);
+  }
+#endif
 
   // ── Battery notify (only when connected) ───────────────────────────
   // If/when a battery sensor is integrated, notify here:

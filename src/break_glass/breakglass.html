@@ -192,8 +192,24 @@ async function api(method, path, body) {
   return { status: res.status, json };
 }
 
+// Wrap an async button handler: disable the button while it runs (no double
+// submits) and surface thrown errors (e.g. network) in the given banner.
+function guarded(btnId, msgId, fn) {
+  return async () => {
+    const btn = $(btnId);
+    btn.disabled = true;
+    try {
+      await fn();
+    } catch (e) {
+      banner(msgId, "bad", (e && e.message) || String(e));
+    } finally {
+      btn.disabled = false;
+    }
+  };
+}
+
 // 1. Connect / load policy
-$("btn-connect").onclick = async () => {
+$("btn-connect").onclick = guarded("btn-connect", "connect-msg", async () => {
   state.token = $("token").value.trim();
   clearBanner("connect-msg");
   if (!state.token) { banner("connect-msg", "bad", "Enter the capability token first."); return; }
@@ -205,7 +221,7 @@ $("btn-connect").onclick = async () => {
   renderPolicy(json);
   banner("connect-msg", "ok", "Connected. Policy is " + json.n + "-of-" + json.m + ".");
   enableStep("p-request");
-};
+});
 
 function renderPolicy(p) {
   const v = $("policy-view");
@@ -230,7 +246,7 @@ function renderPolicy(p) {
 }
 
 // 2. Open request
-$("btn-open").onclick = async () => {
+$("btn-open").onclick = guarded("btn-open", "request-msg", async () => {
   clearBanner("request-msg");
   const envelope = $("envelope").value.trim();
   const purpose = $("purpose").value.trim();
@@ -246,9 +262,33 @@ $("btn-open").onclick = async () => {
   enableStep("p-approvals");
   enableStep("p-unseal");
   refreshStatus();
-};
+});
 
-$("btn-copy-hash").onclick = () => navigator.clipboard && navigator.clipboard.writeText(state.requestHash);
+$("btn-copy-hash").onclick = () => {
+  const btn = $("btn-copy-hash");
+  const done = (ok) => {
+    btn.textContent = ok ? "Copied" : "Copy failed — select the hash manually";
+    setTimeout(() => { btn.textContent = "Copy"; }, 2000);
+  };
+  const fallback = () => {
+    const ta = document.createElement("textarea");
+    ta.value = state.requestHash;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    let ok = false;
+    try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+    document.body.removeChild(ta);
+    done(ok);
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(state.requestHash).then(() => done(true), fallback);
+  } else {
+    fallback();
+  }
+};
 
 function renderTrusteeRows() {
   const tb = $("trustee-rows");
@@ -323,8 +363,13 @@ $("btn-sign").onclick = async () => {
 // 4. Status / unseal
 $("btn-refresh").onclick = refreshStatus;
 async function refreshStatus() {
-  const { status, json } = await api("GET", "/breakglass/status");
-  if (status === 200) applyStatus(json);
+  let res;
+  try { res = await api("GET", "/breakglass/status"); } catch (e) { banner("unseal-msg", "warn", (e && e.message) || String(e)); return; }
+  const { status, json } = res;
+  if (status === 200) { applyStatus(json); return; }
+  if (status === 401) banner("unseal-msg", "warn", "Session token rejected (401). Reconnect in step 1.");
+  else if (status === 409) banner("unseal-msg", "warn", "No open request. Open one in step 2.");
+  else banner("unseal-msg", "warn", "Could not refresh status (" + status + ").");
 }
 function applyStatus(s) {
   if (!s || s.needed === undefined) return;
@@ -342,20 +387,28 @@ function applyStatus(s) {
 
 $("btn-unseal").onclick = async () => {
   clearBanner("unseal-msg");
-  const { status, json } = await api("POST", "/breakglass/unseal");
+  const btn = $("btn-unseal");
+  btn.disabled = true;
+  let res;
+  try { res = await api("POST", "/breakglass/unseal"); } catch (e) { banner("unseal-msg", "bad", (e && e.message) || String(e)); btn.disabled = false; return; }
+  const { status, json } = res;
   if (status === 200) {
     banner("unseal-msg", "ok", "Granted. Unsealed evidence written to: " + json.output_path);
-    $("btn-unseal").disabled = true;
+    // Stays disabled: the request is consumed.
   } else if (status === 409) {
     banner("unseal-msg", "warn", "Quorum not met yet (" + (json.collected ? json.collected.length : 0) + "/" + (json.needed || state.needed) + ").");
+    btn.disabled = false;
   } else if (status === 403) {
     banner("unseal-msg", "bad", "Denied: " + (json.reason || "authorization failed"));
+    btn.disabled = false;
   } else {
     banner("unseal-msg", "bad", "Error (" + status + "): " + (json.error || ""));
+    btn.disabled = false;
   }
 };
 
 $("btn-close").onclick = async () => {
+  if (!confirm("Close this request? All collected approvals are discarded, and trustees must sign a new request hash to start again.")) return;
   // Notify the server, but always clear local state even if it's unreachable.
   try { await api("POST", "/breakglass/close"); } catch (e) { /* ignore */ }
   $("quorum").textContent = "0 / 0";
@@ -363,8 +416,10 @@ $("btn-close").onclick = async () => {
   $("trustee-rows").innerHTML = "";
   $("btn-unseal").disabled = true;
   state.requestHash = "";
+  clearBanner("request-msg");
   banner("unseal-msg", "warn", "Request closed and approvals wiped.");
   disableStep("p-approvals");
+  disableStep("p-unseal");
 };
 </script>
 </body>

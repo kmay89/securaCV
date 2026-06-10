@@ -324,7 +324,7 @@ bool datamgmt_backup_chain(void) {
   }
 
 #if FEATURE_DIAGNOSTICS
-  diag_record_sd_write(ok);
+  diag_record_sd_write_bytes(BACKUP_SIZE, ok);
 #endif
 
   if (ok) {
@@ -599,19 +599,20 @@ uint32_t datamgmt_export_records(uint32_t from_seq, uint32_t to_seq) {
 
       File out = SD.open(dst, FILE_WRITE);
       bool ok = false;
+      size_t bytes_copied = 0;
       if (out) {
         uint8_t buf[256];
         while (entry.available()) {
           size_t n_read = entry.read(buf, sizeof(buf));
           if (n_read == 0) break;
-          out.write(buf, n_read);
+          bytes_copied += out.write(buf, n_read);
         }
         ok = true;
         out.close();
       }
 
 #if FEATURE_DIAGNOSTICS
-      diag_record_sd_write(ok);
+      diag_record_sd_write_bytes(bytes_copied, ok);
 #endif
 
       if (ok) copied++;

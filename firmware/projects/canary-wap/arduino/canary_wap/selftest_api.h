@@ -13,15 +13,15 @@
  *   gps         — optional NMEA module: detected / has-fix / absent
  *   sd          — mounted + free space
  *   power       — optional battery: SoC + charge state, or USB-only ABSENT
- *   microphone  — present iff PDM mic compiled in (currently absent on
- *                 canary-wap; reports ABSENT cleanly so the UI greys it)
+ *   microphone  — PDM mic (FEATURE_ACOUSTIC_EVENTS): listening / muted
+ *                 by user / bring-up failed; ABSENT when compiled out
  *   buzzer      — audible-chirp subsystem up (FEATURE_AUDIBLE_CHIRP)
  *   tamper      — tamper input armed iff FEATURE_TAMPER_GPIO, else ABSENT
  *   gpio        — boot button readable + not stuck (sanity)
  *
- * Optional peripherals (gps/power/buzzer/tamper) only ever report
- * PASS/SKIP/ABSENT — never FAIL — so a missing optional part can never
- * gate setup. "all_passed" counts FAIL only.
+ * Optional peripherals (gps/power/buzzer/tamper/microphone) only ever
+ * report PASS/SKIP/ABSENT — never FAIL — so a missing optional part can
+ * never gate setup. "all_passed" counts FAIL only.
  *
  * Header-only on purpose, matching the *_api.h pattern already in this
  * directory (bluetooth_api.h, chirp_api.h, audible_chirp_api.h, …).
@@ -303,9 +303,14 @@ inline void probe_microphone(ProbeResult* r, JsonObject metric) {
     r->code   = 0;
     set_detail(r, "Muted by user");
   } else {
-    r->status = Status::FAIL;
+    // Bring-up failure: real fault worth surfacing, but the mic is an
+    // optional peripheral — per the contract above it must never FAIL
+    // (FAIL flips all_passed and would gate setup on a unit that can
+    // still witness, record, and alert). SKIP keeps the row visible
+    // with the diagnosis; code -1 distinguishes it from muted-by-user.
+    r->status = Status::SKIP;
     r->code   = -1;
-    set_detail(r, "Compiled in but I2S not running — PDM bring-up failed");
+    set_detail(r, "Mic did not start — acoustic detection unavailable");
   }
 #else
   // No mic in this build profile. Audible chirp uses a piezo OUTPUT,
