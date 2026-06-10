@@ -114,12 +114,34 @@ jobs:
           #define MQTT_PASS "ci"
           HEADER
 
-      - name: Build all environments
+      - name: Build all environments (+ OTA-slot size guard)
+        # The size guard runs IMMEDIATELY after the env that produces the
+        # guarded binary, inside the loop — not as a separate step. A later
+        # env build can recreate .pio/build and drop sibling envs' artifacts
+        # (observed when canary's `full` env, on the pioarduino platform with
+        # an isolated core dir, followed `release`: release/firmware.bin was
+        # gone by the end of the job).
         env:
           PLATFORMIO_BUILD_FLAGS: -DVALIDATION_BUILD=1
           FLAVOR_JSON: ${{ toJSON(matrix.flavor) }}
         run: |
           set -euo pipefail
+          SG_BIN=$(jq -r '.size_guard.bin // empty' <<< "$FLAVOR_JSON")
+          size_guard() {
+            local SLOT SLOT_NAME SIZE
+            SLOT=$(jq -r '.size_guard.slot_bytes' <<< "$FLAVOR_JSON")
+            SLOT_NAME=$(jq -r '.size_guard.slot_name // "OTA slot"' <<< "$FLAVOR_JSON")
+            SIZE=$(stat -c%s "$SG_BIN" 2>/dev/null || echo 0)
+            if [ "$SIZE" -eq 0 ]; then
+              echo "::error::$SG_BIN not found — size guard cannot run."
+              exit 1
+            fi
+            if [ "$SIZE" -gt "$SLOT" ]; then
+              echo "::error::Firmware binary ($SIZE bytes) exceeds the $SLOT_NAME ($SLOT bytes). It could never be installed over the air — trim features or grow the slots."
+              exit 1
+            fi
+            echo "Firmware size: $SIZE / $SLOT bytes ($((SIZE * 100 / SLOT))% of $SLOT_NAME)"
+          }
           for e in $(jq -r '.build_envs[]' <<< "$FLAVOR_JSON"); do
             if jq -e --arg e "$e" '(.isolated_core_envs // []) | index($e)' <<< "$FLAVOR_JSON" > /dev/null; then
               echo "── pio run -e $e (isolated PLATFORMIO_CORE_DIR) ──"
@@ -128,27 +150,10 @@ jobs:
               echo "── pio run -e $e ──"
               pio run -e "$e"
             fi
+            case "$SG_BIN" in
+              .pio/build/$e/*) size_guard ;;
+            esac
           done
-
-      - name: Check binary size against the OTA slot
-        if: matrix.flavor.size_guard
-        env:
-          FLAVOR_JSON: ${{ toJSON(matrix.flavor) }}
-        run: |
-          set -euo pipefail
-          BIN=$(jq -r '.size_guard.bin' <<< "$FLAVOR_JSON")
-          SLOT=$(jq -r '.size_guard.slot_bytes' <<< "$FLAVOR_JSON")
-          SLOT_NAME=$(jq -r '.size_guard.slot_name // "OTA slot"' <<< "$FLAVOR_JSON")
-          SIZE=$(stat -c%s "$BIN" 2>/dev/null || echo 0)
-          if [ "$SIZE" -eq 0 ]; then
-            echo "::error::$BIN not found — size guard cannot run."
-            exit 1
-          fi
-          if [ "$SIZE" -gt "$SLOT" ]; then
-            echo "::error::Firmware binary ($SIZE bytes) exceeds the $SLOT_NAME ($SLOT bytes). It could never be installed over the air — trim features or grow the slots."
-            exit 1
-          fi
-          echo "Firmware size: $SIZE / $SLOT bytes ($((SIZE * 100 / SLOT))% of $SLOT_NAME)"
 
   pio-check:
     name: Static Analysis (${{ matrix.flavor.name }})
