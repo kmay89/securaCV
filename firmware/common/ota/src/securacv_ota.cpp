@@ -538,6 +538,38 @@ static esp_err_t nvs_load_min_version(char *buf, size_t buf_len)
     return nvs_load_str(NVS_KEY_MIN_VERSION, buf, buf_len);
 }
 
+/** True while this boot's image is still awaiting self-test confirmation. */
+static bool running_image_pending_verify(void)
+{
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    esp_ota_img_states_t state;
+    if (esp_ota_get_state_partition(running, &state) != ESP_OK) {
+        return false;
+    }
+    return state == ESP_OTA_IMG_PENDING_VERIFY;
+}
+
+/**
+ * @brief Raise the monotonic anti-rollback floor to @p version (if higher).
+ *
+ * Must only be called for a CONFIRMED image — raising the floor while the
+ * running image is still pending self-test would, after a rollback,
+ * permanently block re-offering that version.
+ */
+static void ota_raise_floor_to(const char *version)
+{
+    if (version == NULL || version[0] == '\0') return;
+
+    char stored[16] = {0};
+    esp_err_t err = nvs_load_min_version(stored, sizeof(stored));
+    if (err != ESP_OK || securacv_version_compare(version, stored) > 0) {
+        nvs_store_min_version(version);
+        ESP_LOGI(TAG, "NVS min firmware version updated to %s", version);
+    } else {
+        ESP_LOGI(TAG, "NVS min firmware version: %s", stored);
+    }
+}
+
 // ============================================================================
 // FORWARD DECLARATIONS
 // ============================================================================
@@ -607,17 +639,14 @@ esp_err_t securacv_ota_init(const securacv_ota_config_t *config)
 
     // Persist the currently-running version as the NVS minimum floor.
     // Monotonic: once v2.2 runs, NVS records 2.2 and any future OTA to
-    // <= 2.2 is rejected.
-    {
-        char stored[16] = {0};
-        esp_err_t nvs_err = nvs_load_min_version(stored, sizeof(stored));
-        if (nvs_err != ESP_OK ||
-            securacv_version_compare(s_ctx.config.current_version, stored) > 0) {
-            nvs_store_min_version(s_ctx.config.current_version);
-            ESP_LOGI(TAG, "NVS min firmware version updated to %s", s_ctx.config.current_version);
-        } else {
-            ESP_LOGI(TAG, "NVS min firmware version: %s", stored);
-        }
+    // <= 2.2 is rejected. Deferred while this boot's image is still
+    // pending self-test: if the self-test later fails and the device
+    // rolls back, a pre-raised floor would block ever retrying that
+    // version. securacv_ota_boot_self_test() raises it on confirmation.
+    if (running_image_pending_verify()) {
+        ESP_LOGI(TAG, "Image pending self-test — anti-rollback floor raise deferred");
+    } else {
+        ota_raise_floor_to(s_ctx.config.current_version);
     }
 
     if (!pubkey_provisioned(s_ctx.config.release_pubkey)) {
@@ -640,9 +669,20 @@ esp_err_t securacv_ota_deinit(void)
 
     securacv_ota_abort();
 
+    // Wait for the worker to notice the abort flag and exit (it clears
+    // task_handle on its way out). Force-deleting a task mid-TLS-handshake
+    // or mid-flash-write would leak or corrupt, and deleting the mutex
+    // under a live task is undefined behavior — so if the task doesn't
+    // exit in time (it may be blocked in a network call for up to the
+    // HTTP timeout), refuse the teardown and let the caller retry.
+    int wait_ms = 5000;
+    while (s_ctx.task_handle != NULL && wait_ms > 0) {
+        vTaskDelay(pdMS_TO_TICKS(50));
+        wait_ms -= 50;
+    }
     if (s_ctx.task_handle != NULL) {
-        // Give task time to clean up
-        vTaskDelay(pdMS_TO_TICKS(100));
+        ESP_LOGW(TAG, "OTA task still running — deinit refused, retry after it finishes");
+        return ESP_ERR_TIMEOUT;
     }
 
     if (s_ctx.mutex != NULL) {
@@ -814,6 +854,11 @@ esp_err_t securacv_ota_boot_self_test(void)
         }
 
         s_just_updated = true;
+        // The image is confirmed — NOW raise the anti-rollback floor.
+        // When init() ran first (canary order), it deferred this while
+        // we were pending verify; when init() runs after (WAP order),
+        // current_version is still NULL here and init() raises it.
+        ota_raise_floor_to(s_ctx.config.current_version);
         ESP_LOGI(TAG, "OTA validation complete - firmware confirmed");
     } else if (ota_state == ESP_OTA_IMG_VALID) {
         ESP_LOGI(TAG, "Firmware already validated");

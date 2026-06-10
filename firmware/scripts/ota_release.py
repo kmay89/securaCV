@@ -95,9 +95,20 @@ def signing_key_id(public_key: Ed25519PublicKey) -> str:
 
 
 def parse_semver(version: str) -> tuple[int, int, int]:
-    parts = version.split(".")
+    """Parse MAJOR.MINOR.PATCH, allowing a variant suffix after a hyphen.
+
+    The WAP firmware reports its version with a variant suffix (e.g.
+    "2.2.0-wap") and the manifest must carry that exact string — the
+    device compares it numerically (suffix ignored) and string-equality
+    checks it after the install reboot. Mirror the firmware's parser:
+    numeric core required, suffix tolerated.
+    """
+    core = version.split("-", 1)[0]
+    parts = core.split(".")
     if len(parts) != SEMVER_PARTS or not all(p.isdigit() for p in parts):
-        raise ValueError(f"version must be MAJOR.MINOR.PATCH, got {version!r}")
+        raise ValueError(
+            f"version must be MAJOR.MINOR.PATCH with an optional -suffix, got {version!r}"
+        )
     return tuple(int(p) for p in parts)  # type: ignore[return-value]
 
 

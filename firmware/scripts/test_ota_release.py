@@ -123,6 +123,20 @@ class TestManifest:
             self.build(private_key, version="2.2")
         with pytest.raises(ValueError):
             self.build(private_key, version="v2.2.0")
+        with pytest.raises(ValueError):
+            self.build(private_key, version="2.2-wap")
+
+    def test_accepts_variant_suffix(self, private_key):
+        # The WAP firmware versions itself "X.Y.Z-wap" — the manifest must
+        # carry that exact string (the device string-compares it after the
+        # install reboot), so the signer must accept it.
+        manifest = self.build(private_key, version="2.2.0-wap",
+                              product="securacv-canary-wap")
+        assert manifest["version"] == "2.2.0-wap"
+        problems = ota_release.verify_manifest(
+            manifest, FIRMWARE, private_key.public_key()
+        )
+        assert problems == []
 
     def test_verify_catches_size_tamper(self, private_key):
         manifest = self.build(private_key)

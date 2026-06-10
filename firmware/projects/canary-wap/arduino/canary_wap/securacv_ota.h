@@ -287,6 +287,11 @@ esp_err_t securacv_ota_init(const securacv_ota_config_t *config);
 
 /**
  * @brief Deinitialize the OTA subsystem
+ *
+ * Requests an abort and waits (bounded) for the worker task to exit.
+ * @return ESP_OK on success; ESP_ERR_TIMEOUT if the worker is still
+ *         busy (e.g. blocked in a network call) — the engine stays
+ *         initialized, retry after the operation finishes.
  */
 esp_err_t securacv_ota_deinit(void);
 
