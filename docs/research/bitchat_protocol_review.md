@@ -120,13 +120,30 @@ is still active.
 `Cancel`) whose `expires` is in the future, it re-broadcasts the *original
 dual-signed frame, byte-identical* every `BEACON_REANNOUNCE_INTERVAL_MS` (suggest
 60 s ± jitter, routed through `try_reserve_routine()` so re-announces never starve
-urgent traffic). The Bloom dedup window must therefore be keyed so that
-re-announces are recognizable-but-not-reprocessed: receivers that already hold the
-alarm drop the duplicate silently; receivers that don't, accept it through the
+urgent traffic). Receivers that don't yet hold the alarm accept it through the
 normal §7.1 pipeline (the dual signatures still verify — no new trust surface).
 Cancel frames are re-announced on the same schedule until the original alarm's
 `expires`, preserving the "cancellation as prominent as the alert" invariant for
 late joiners too.
+
+Two existing §7.1 pipeline rules need explicit carve-outs for byte-identical
+re-announces, because both stop working once the alarm outlives them:
+
+- **Dedup beyond the Bloom window.** The Bloom filter only remembers 5 minutes
+  of nonces (§8), but alarms persist until `expires`. A re-announce arriving
+  after eviction would pass step 3 and be fully reprocessed — duplicate audit
+  log entries, repeated `PATTERN_BEACON` audio, repeated UI triggers. Receivers
+  must therefore *also* dedup against the active-alarm table (RAM, keyed by
+  nonce): a frame whose nonce matches a held active alarm is treated as a
+  liveness refresh — update a `last_reannounce_seen` timestamp, write nothing
+  to the audit log, re-trigger nothing.
+- **Freshness exemption.** Step 4 drops frames whose `effective` is outside
+  `now ± 300 s`. A byte-identical re-announce carries the *original*
+  origination time, so after 5 minutes every re-announce would be rejected as
+  stale — silently defeating the whole mechanism. The freshness rule must be
+  amended to also accept frames where `effective ≤ now < expires` (the alarm
+  is simply still active); replay of long-dead alerts stays blocked because
+  `expires` has passed.
 
 **Proposal (Chirp):** same pattern, but only for validated safety-class chirps,
 re-announced by *relays that hold them* at most once per 60 s until `ttl_minutes`
@@ -197,6 +214,14 @@ fragmentation later under pressure, reserve bitchat's three-type scheme now:
 `BEACON_MSG_FRAG_START` / `FRAG_CONT` / `FRAG_END` message-type codes, with
 reassembly bounded (suggest ≤4 fragments, ≤1 s reassembly window, drop on gap).
 Costs three enum values today; saves a wire-format break later.
+
+One caveat bitchat's connection-oriented GATT transport doesn't face: ESP-NOW
+broadcasts have no MAC-layer acks or retries, so naive drop-on-gap reassembly
+compounds loss fast (at 10% per-frame loss, a 4-fragment message fails ~34% of
+the time). The eventual implementation should pair the fragment types with
+simple erasure coding (e.g. one XOR parity fragment tolerating any single loss)
+or carousel retransmission of the fragment set — a decision for the CAP-gateway
+implementation, not for the enum reservation.
 
 Amends: `spec/beacon_channel_v0.md` §5.3 enum reservation only — no v0
 implementation.
