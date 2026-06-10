@@ -189,7 +189,7 @@ fn run_inner(
 }
 
 fn verifying_key_from_bytes(bytes: &[u8; 32]) -> Result<VerifyingKey> {
-    verify_helpers::verifying_key_from_hex(&verify_helpers::hex32(bytes))
+    VerifyingKey::from_bytes(bytes).map_err(|e| anyhow::anyhow!("invalid verifying key: {}", e))
 }
 
 #[cfg(test)]

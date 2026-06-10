@@ -131,7 +131,16 @@ def _kernel_request(method: str, path: str) -> dict:
             raw = resp.read().decode()
             return {"ok": True, "data": json.loads(raw) if raw else {}}
     except urllib.error.HTTPError as exc:
-        return {"ok": False, "error": f"kernel API error {exc.code}"}
+        # The kernel API returns {"error": "..."} bodies; surface them so
+        # the panel shows an actionable message, not just a status code.
+        detail = ""
+        try:
+            err_json = json.loads(exc.read().decode(errors="replace"))
+            if isinstance(err_json, dict) and err_json.get("error"):
+                detail = f": {err_json['error']}"
+        except Exception:
+            pass
+        return {"ok": False, "error": f"kernel API error {exc.code}{detail}"}
     except Exception as exc:
         return {"ok": False, "error": f"kernel API unreachable: {exc}"}
 
@@ -362,10 +371,18 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
                 import secrets
                 device_key_seed = secrets.token_hex(32)
 
-            # Persist device key to file for the install script's backing-up message
+            # Persist device key to file for the install script's backing-up
+            # message. Created 0600 from the start — write-then-chmod would
+            # leave a umask-dependent window where the key is world-readable.
             DEVICE_KEY_FILE.parent.mkdir(parents=True, exist_ok=True)
-            DEVICE_KEY_FILE.write_text(device_key_seed + "\n")
-            DEVICE_KEY_FILE.chmod(0o600)
+            fd = os.open(
+                DEVICE_KEY_FILE,
+                os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+                0o600,
+            )
+            with os.fdopen(fd, "w") as key_file:
+                key_file.write(device_key_seed + "\n")
+            DEVICE_KEY_FILE.chmod(0o600)  # tighten pre-existing files too
 
             # Broker settings: an explicit payload override (external broker)
             # is persisted verbatim; otherwise save empty values, which mean
@@ -446,8 +463,22 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
                     discovered = _discover_mqtt()
                     broker_host = mqtt_host or discovered["host"] or "core-mosquitto"
                     broker_port = mqtt_port if mqtt_host else (discovered["port"] or 1883)
+                    # Frigate needs broker credentials too, or it can't
+                    # publish the events SecuraCV ingests. Explicit override
+                    # creds win; otherwise fall back to the discovered ones.
+                    broker_user = mqtt_username if mqtt_host else (
+                        mqtt_username or discovered["username"]
+                    )
+                    broker_pass = mqtt_password if mqtt_host else (
+                        mqtt_password or discovered["password"]
+                    )
                     self._write_frigate_config(
-                        cameras, retention_days, broker_host, broker_port
+                        cameras,
+                        retention_days,
+                        broker_host,
+                        broker_port,
+                        broker_user,
+                        broker_pass,
                     )
 
             # Restart the add-on to apply changes
@@ -470,6 +501,8 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
         retention_days: int,
         broker_host: str = "core-mosquitto",
         broker_port: int = 1883,
+        broker_user: str = "",
+        broker_pass: str = "",
     ) -> None:
         """Generate a Frigate config from wizard-collected camera data."""
         lines = [
@@ -479,6 +512,13 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
             "  enabled: true",
             f"  host: {broker_host}",
             f"  port: {broker_port}",
+        ]
+        if broker_user:
+            # Single-line sanitization mirrors the camera-URL handling below.
+            lines.append(f"  user: {broker_user.splitlines()[0]}")
+        if broker_pass:
+            lines.append(f"  password: {broker_pass.splitlines()[0]}")
+        lines += [
             "",
             "cameras:",
         ]
