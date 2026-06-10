@@ -274,6 +274,31 @@ void publish_beacon_state(const char* state_name,
                           uint16_t trouble_mask);
 
 /**
+ * ── Firmware update entity (signed pull-OTA) ──────────────────────────
+ *
+ * publish_update_state pushes the HA MQTT `update` entity's JSON state
+ * (installed_version / latest_version / in_progress / update_percentage /
+ * release_summary / release_url) to {prefix}/{device_id}/update/state —
+ * retained and republished on reconnect so HA stays in sync across
+ * broker restarts. publish_update_auto_state mirrors the auto-update
+ * switch the same way ("ON"/"OFF" on {prefix}/{device_id}/update/auto).
+ *
+ * Inbound commands arrive on the esp_mqtt task, so they are NOT
+ * delivered via callback — csi_mqtt parses them into pending flags the
+ * main loop drains with take_pending_install / take_pending_auto. That
+ * keeps flash-cycle decisions on the loop that owns the OTA engine,
+ * matching the module's "caller owns the cadence" contract.
+ */
+void publish_update_state(const char* json_payload);
+void publish_update_auto_state(bool enabled);
+
+/** True exactly once after HA pressed Install on the update entity. */
+bool take_pending_install();
+
+/** -1 = no change pending; 0 / 1 = HA set the auto-update switch off / on. */
+int take_pending_auto();
+
+/**
  * Register the Bearer-token accessor used by the /api/mqtt/* HTTP
  * handlers. csi_mqtt has no direct access to g_device.api_token_str,
  * so csi_integration::init wires this up at boot — same string the

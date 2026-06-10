@@ -39,3 +39,12 @@ static constexpr uint32_t HEARTBEAT_MS     = 5000;
 // MQTT / HA
 static constexpr const char* HA_DISCOVERY_PREFIX = "homeassistant";
 static constexpr size_t MQTT_BUFFER_BYTES        = 1536;  // discovery payloads > 256
+
+// -------------------- Software updates (signed pull-OTA) --------------------
+// Shared engine at firmware/common/ota — same manifest format, signature
+// scheme, and HA update-entity UX as canary and canary-wap.
+static constexpr const char* OTA_PRODUCT = "securacv-canary-vision";
+#ifndef SECURACV_OTA_MANIFEST_URL
+#define SECURACV_OTA_MANIFEST_URL \
+  "https://github.com/kmay89/securaCV/releases/latest/download/manifest-canary-vision.json"
+#endif

@@ -39,6 +39,9 @@
 #ifndef FEATURE_OTA_UPDATE
   #define FEATURE_OTA_UPDATE    1
 #endif
+#ifndef FEATURE_OTA_PULL
+  #define FEATURE_OTA_PULL      0   // Signed pull-OTA engine (firmware/common/ota)
+#endif
 #ifndef FEATURE_HA_MQTT
   #define FEATURE_HA_MQTT       0
 #endif
@@ -153,6 +156,24 @@
 #define SIGNATURE_ALGORITHM   "ed25519"
 
 // ════════════════════════════════════════════════════════════════
+// PULL-OTA (signed firmware updates — firmware/common/ota)
+// ════════════════════════════════════════════════════════════════
+
+// Product id matched against the manifest's "product" field.
+#ifndef SECURACV_OTA_PRODUCT
+  #define SECURACV_OTA_PRODUCT  "securacv-canary"
+#endif
+
+// Compiled-in default manifest URL. The firmware-release workflow
+// publishes manifest-canary.json on every fw-v* GitHub Release; the
+// "latest" alias keeps this URL stable across releases. Users can
+// point at a local server instead via Settings (stored in NVS).
+#ifndef SECURACV_OTA_MANIFEST_URL
+  #define SECURACV_OTA_MANIFEST_URL \
+    "https://github.com/kmay89/securaCV/releases/latest/download/manifest-canary.json"
+#endif
+
+// ════════════════════════════════════════════════════════════════
 // HARDWARE PIN DEFINITIONS
 // ════════════════════════════════════════════════════════════════
 
@@ -224,6 +245,16 @@
 #define AP_PASSWORD_DEFAULT  "witness2026"
 #define AP_CHANNEL           1
 #define AP_MAX_CONNECTIONS   1    // Hardened: max 1 client for security isolation
+
+// ════════════════════════════════════════════════════════════════
+// BLE DEFAULTS
+// ════════════════════════════════════════════════════════════════
+
+// BLE TX power in dBm (NimBLE 2.x setPower takes dBm directly, NOT an
+// ESP_PWR_LVL_* index). +9 dBm is the S3 maximum and matches canary-wap's
+// F5-audited NVS default; the XIAO ESP32S3 has no onboard antenna (U.FL +
+// external rod only), so the historically-effective +9 is the safe default.
+#define BLE_TX_POWER_DBM     9
 
 // ════════════════════════════════════════════════════════════════
 // TIMING & COARSENING

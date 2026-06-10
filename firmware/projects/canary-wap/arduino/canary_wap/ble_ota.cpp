@@ -18,6 +18,7 @@
 #include <string.h>
 
 #include "health_log.h"
+#include "securacv_ota.h"  // pull-OTA engine state — the two channels exclude each other
 
 namespace ble_ota {
 
@@ -112,6 +113,14 @@ class ControlCallbacks : public NimBLECharacteristicCallbacks {
     if (g_state == OTA_RECEIVING || g_state == OTA_VERIFYING) {
       // Don't allow a second BEGIN to corrupt an in-flight session.
       abort_ota("BEGIN while session active");
+      return;
+    }
+
+    if (securacv_ota_get_state() != SECURACV_OTA_IDLE) {
+      // The pull-OTA engine is mid-check/download/flash. Two writers on
+      // the inactive partition would corrupt both updates; the WiFi
+      // session was first, so it wins.
+      abort_ota("busy with a network update");
       return;
     }
 

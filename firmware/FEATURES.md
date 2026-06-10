@@ -1,6 +1,6 @@
 # SecuraCV Canary Firmware — Feature Audit Matrix
 
-**Last updated:** 2026-06-09
+**Last updated:** 2026-06-10 (pull-OTA extended to canary-wap (PIO) + canary-vision)
 **Original audit:** 2026-02-20
 **Companion docs:** [VARIANT_POLICY.md](VARIANT_POLICY.md) (lifecycle labels), [FIRMWARE_VARIANT_AUDIT.md](FIRMWARE_VARIANT_AUDIT.md) (risk analysis), [PARITY_PLAN.md](PARITY_PLAN.md) (ACTIVE ⇄ canary-wap parity closure program)
 
@@ -82,7 +82,10 @@ Single-row-per-capability summary across every non-archived variant. This is the
 | Battery health history (NVS-persisted charge cycles, voltage extremes) | ✅ | ✅ | ❌ | ❌ | ➖ | ❌ |
 | Chirp channel (broadcast beacon) | ⚠️ | ✅ | ⚠️ | ❌ | ➖ | ✅ |
 | MQTT publish + HA Discovery | ✅ | ✅ | ❌ | ✅ | ➖ | ❌ |
-| OTA A/B with rollback safety | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ |
+| OTA A/B with rollback safety | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
+| Signed pull-OTA (HTTPS manifest + Ed25519 release signature) | ✅ | ✅ | ✅ | ✅ | ⚠️ | ❌ |
+| HA `update` entity (MQTT discovery, Install button + auto-update switch) | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
+| Local/LAN update server option (air-gapped hosting) | ✅ | ✅ | ✅ | ✅ | ⚠️ | ❌ |
 | API authentication (bearer token + HKDF derivation) | ✅ | ✅ | ❌ | ❌ | ➖ | ✅ |
 | Rate limiting on HTTP API | ✅ | ✅ | ❌ | ➖ | ➖ | ✅ |
 | TLS (HTTPS self-signed) | ❌ | ❌ | ❌ | ❌ | ➖ | ✅ |

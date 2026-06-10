@@ -93,13 +93,16 @@ jobs:
         run: |
           # Report binary size for tracking
           pio run -e release --target size || true
-          # Fail if binary exceeds 3MB (leaves room for OTA partition)
+          # Fail if the binary exceeds the OTA A/B slot. partitions_ota.csv
+          # gives ota_0/ota_1 0x1E0000 (1,966,080 bytes) each — a release
+          # image larger than that can never be installed over the air.
+          SLOT=1966080
           SIZE=$(stat -c%s .pio/build/release/firmware.bin 2>/dev/null || echo 0)
-          if [ "$SIZE" -gt 3145728 ]; then
-            echo "::error::Firmware binary exceeds 3MB ($SIZE bytes). Check partition table."
+          if [ "$SIZE" -gt "$SLOT" ]; then
+            echo "::error::Firmware binary ($SIZE bytes) exceeds the 0x1E0000 OTA slot ($SLOT bytes). It could never be installed over the air — trim features or grow the slots in partitions_ota.csv."
             exit 1
           fi
-          echo "Firmware size: $SIZE bytes"
+          echo "Firmware size: $SIZE / $SLOT bytes ($((SIZE * 100 / SLOT))% of OTA slot)"
 
   build-platformio-wap:
     name: PlatformIO Build (Canary WAP)
@@ -183,6 +186,39 @@ jobs:
             --fqbn esp32:esp32:XIAO_ESP32S3 \
             --libraries firmware/common \
             --build-property "build.extra_flags=-DVALIDATION_BUILD=1" \
+            --output-dir /tmp/wap-build \
+            firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino
+
+      - name: Check binary size against the OTA slot
+        run: |
+          # The XIAO_ESP32S3 board default (default_8MB.csv) gives app0/app1
+          # 0x330000 (3,342,336 bytes) each. An image larger than that can
+          # never be installed over the air (pull OTA or BLE OTA).
+          SLOT=3342336
+          SIZE=$(stat -c%s /tmp/wap-build/canary_wap.ino.bin 2>/dev/null || echo 0)
+          if [ "$SIZE" -eq 0 ]; then
+            echo "::error::canary_wap.ino.bin not found in /tmp/wap-build"
+            ls -la /tmp/wap-build || true
+            exit 1
+          fi
+          if [ "$SIZE" -gt "$SLOT" ]; then
+            echo "::error::canary-wap binary ($SIZE bytes) exceeds the 0x330000 OTA slot ($SLOT bytes). It could never be installed over the air."
+            exit 1
+          fi
+          echo "canary-wap size: $SIZE / $SLOT bytes ($((SIZE * 100 / SLOT))% of OTA slot)"
+
+      - name: Compile firmware (Beacon channel gate)
+        run: |
+          # FEATURE_BEACON_CHANNEL is OFF by default, which previously meant
+          # beacon_channel.cpp (and every #if FEATURE_BEACON_CHANNEL block in
+          # the sketch) was never compile-verified in CI. This second pass
+          # forces the flag ON so the Beacon scaffold — including its
+          # append-only SD audit-log path (AGENTS.md Beacon invariant 9) —
+          # can't silently rot.
+          arduino-cli compile \
+            --fqbn esp32:esp32:XIAO_ESP32S3 \
+            --libraries firmware/common \
+            --build-property "build.extra_flags=-DVALIDATION_BUILD=1 -DFEATURE_BEACON_CHANNEL=1" \
             firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino
 
   csi-sketch-sync:
@@ -210,6 +246,16 @@ jobs:
         run: |
           chmod +x firmware/scripts/check_boot_sync.sh
           firmware/scripts/check_boot_sync.sh
+
+      - name: Verify OTA engine copies in canary-wap sketch dir match canonical source
+        # The signed pull-OTA engine is canonical at firmware/common/ota/src/
+        # and committed next to the sketch. ota_release_key.h is in the sync
+        # set on purpose: the release public key must be identical across the
+        # canary (PIO) build, the WAP pull-OTA engine, and the WAP's BLE OTA
+        # path — one release signature serves every update channel.
+        run: |
+          chmod +x firmware/scripts/check_ota_sync.sh
+          firmware/scripts/check_ota_sync.sh
 
   regression-check:
     name: Regression Guards
@@ -447,6 +493,32 @@ jobs:
             $COMMON_SRC/csi_bundler.cpp \
             $COMMON_SRC/csi_witness_payload.cpp \
             -I $BLE_SRC -I $MESH_SRC -I $COMMON_SRC
+
+      - name: Build + run pull-OTA engine logic host test
+        # The OTA engine's pure-logic subset (semantic version compare,
+        # anti-rollback update decision, URL transport policy, the
+        # Ed25519 signed-message layout shared with ble_ota.cpp and
+        # ota_release.py, hex parsing, and the plain-language UI string
+        # coverage) compiles standalone under -DSECURACV_OTA_HOST_BUILD.
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -DSECURACV_OTA_HOST_BUILD \
+              -Wall -Wextra \
+              firmware/common/ota/test_ota_logic.cpp \
+              firmware/common/ota/src/securacv_ota.cpp \
+              -I firmware/common/ota/src \
+              -o /tmp/ota_logic
+          /tmp/ota_logic | tee /tmp/ota_logic.log
+          grep -q "ALL .* PASSED" /tmp/ota_logic.log
+
+      - name: Run OTA release tool tests (signing + manifest round-trip)
+        # ota_release.py is the single source of truth for the release
+        # format (manifest schema v1 + Ed25519 signature over
+        # size_LE32||sha256). These tests pin the wire format the
+        # firmware-release workflow and both device engines rely on.
+        run: |
+          python3 -m pip install --quiet pytest cryptography
+          python3 -m pytest firmware/scripts/test_ota_release.py -q
 
       - name: Build + run canary-wap project host tests
         # The canary-wap project keeps its own host-test Makefile (mesh

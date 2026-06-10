@@ -1,0 +1,279 @@
+name: Firmware Release
+
+# Builds, signs, and publishes Canary firmware on fw-v* tags.
+#
+#   git tag fw-v2.2.0 && git push origin fw-v2.2.0
+#
+# Produces a GitHub Release carrying, for each supported variant
+# (canary, canary-wap, canary-vision):
+#   - the firmware binary           (canary-<ver>.bin, canary-wap-<ver>.bin, canary-vision-<ver>.bin)
+#   - a signed per-variant manifest (manifest-<variant>.json)
+#   - a variant index               (manifest-index.json)
+#   - sha256 checksums              (sha256sums.txt)
+#
+# Devices fetch manifest-<variant>.json from the stable
+# releases/latest/download/ URL, verify the Ed25519 signature over
+# (size_LE32 || sha256) against the public key compiled into
+# firmware/common/ota/src/ota_release_key.h, and install via the
+# pull-OTA engine (firmware/common/ota/).
+#
+# Required repository secret:
+#   OTA_SIGNING_KEY_PEM — the Ed25519 release private key (PEM, PKCS8),
+#   generated offline with:
+#     python firmware/scripts/ota_release.py keygen --private-key releaser.pem
+#   Its PUBLIC half must match ota_release_key.h — this workflow fails
+#   loudly if they drift, because devices would reject every artifact.
+
+on:
+  push:
+    tags:
+      - 'fw-v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-sign-release:
+    name: Build, sign, and publish firmware
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Derive version from tag
+        id: ver
+        run: |
+          VERSION="${GITHUB_REF_NAME#fw-v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Firmware release version: $VERSION"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install build + signing tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install --upgrade platformio cryptography
+          # esptool 4.11 (official espressif32 7.x platform) imports
+          # intelhex without declaring it — same workaround as firmware.yml.
+          pip install intelhex
+
+      - name: Verify the signing key matches the committed public key
+        # Fail BEFORE building: artifacts signed with a drifted key would
+        # be rejected by every device in the field.
+        env:
+          OTA_SIGNING_KEY_PEM: ${{ secrets.OTA_SIGNING_KEY_PEM }}
+        run: |
+          set -euo pipefail
+          if [ -z "$OTA_SIGNING_KEY_PEM" ]; then
+            echo "::error::OTA_SIGNING_KEY_PEM secret is not set. Generate a key with 'ota_release.py keygen' and add it as a repository secret."
+            exit 1
+          fi
+          printf '%s' "$OTA_SIGNING_KEY_PEM" > /tmp/releaser.pem
+          chmod 600 /tmp/releaser.pem
+          python firmware/scripts/ota_release.py pubkey-header \
+            --private-key /tmp/releaser.pem --out /tmp/expected_key.h
+          # Compare only the key bytes (the comment block carries a key id
+          # that legitimately differs from the committed header's prose).
+          extract_key_bytes() {
+            sed -n '/SECURACV_OTA_RELEASE_PUBKEY\[32\]/,/};/p' "$1" | grep -o '0x[0-9a-fA-F][0-9a-fA-F]' | tr '[:upper:]' '[:lower:]'
+          }
+          extract_key_bytes /tmp/expected_key.h > /tmp/expected_bytes
+          extract_key_bytes firmware/common/ota/src/ota_release_key.h > /tmp/committed_bytes
+          if ! cmp -s /tmp/expected_bytes /tmp/committed_bytes; then
+            echo "::error::The OTA_SIGNING_KEY_PEM secret's public key does not match firmware/common/ota/src/ota_release_key.h. Devices would reject everything this workflow signs."
+            diff /tmp/expected_bytes /tmp/committed_bytes || true
+            exit 1
+          fi
+          echo "Signing key matches the committed release public key."
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: ${{ runner.os }}-pio-canary-release-${{ hashFiles('firmware/canary/platformio.ini') }}
+          restore-keys: |
+            ${{ runner.os }}-pio-canary-release-
+            ${{ runner.os }}-pio-canary-
+
+      - name: Build canary (release)
+        working-directory: firmware/canary
+        run: pio run -e release
+
+      - name: Build canary (release + Home Assistant MQTT)
+        working-directory: firmware/canary
+        run: pio run -e release_ha
+
+      - name: Build canary-vision (release)
+        working-directory: firmware/projects/canary-vision
+        run: |
+          # Generic release build: placeholder secrets ON PURPOSE. A unit's
+          # real identity + credentials live in NVS (canary/runtime_config),
+          # seeded by the user's first USB flash with their own secrets.h —
+          # the OTA-installed generic image inherits them. The placeholder
+          # values below MUST match include/secrets.ci.h so runtime_config
+          # treats them as placeholders and defers to NVS.
+          mkdir -p secrets
+          cat > secrets/secrets.h << 'HEADER'
+          #pragma once
+          // Generic OTA release build. Real credentials live in device NVS.
+          #define WIFI_SSID "ci-placeholder"
+          #define WIFI_PASS "ci-placeholder"
+          #define MQTT_HOST "127.0.0.1"
+          #define MQTT_PORT 1883
+          #define MQTT_USER nullptr
+          #define MQTT_PASS nullptr
+          HEADER
+          pio run -e canary-vision-default
+
+      - name: Install Arduino CLI
+        uses: arduino/setup-arduino-cli@v2
+
+      - name: Configure Arduino CLI + libraries
+        run: |
+          arduino-cli config init
+          arduino-cli config add board_manager.additional_urls \
+            https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+          arduino-cli core update-index
+          arduino-cli core install esp32:esp32
+          arduino-cli lib install "Crypto"
+          arduino-cli lib install "ArduinoJson"
+          arduino-cli lib install "NimBLE-Arduino"
+
+      - name: Build canary-wap (arduino-cli)
+        run: |
+          arduino-cli compile \
+            --fqbn esp32:esp32:XIAO_ESP32S3 \
+            --libraries firmware/common \
+            --output-dir /tmp/wap-build \
+            firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino
+
+      - name: Assemble, sign, and verify release artifacts
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/release
+          DL="https://github.com/${REPO}/releases/download/${TAG}"
+          RELURL="https://github.com/${REPO}/releases/tag/${TAG}"
+
+          # Release notes for the manifests: the CHANGELOG section for this
+          # version when present, otherwise a generic line.
+          NOTES=$(awk "/^## \[${VERSION}\]/{found=1;next} /^## \[/{if(found)exit} found{print}" CHANGELOG.md | head -c 400 || true)
+          if [ -z "$NOTES" ]; then
+            NOTES="SecuraCV Canary firmware ${VERSION}."
+          fi
+
+          # canary (release_ha is the recommended image: full sensing + HA MQTT)
+          cp firmware/canary/.pio/build/release_ha/firmware.bin "/tmp/release/canary-${VERSION}.bin"
+          python firmware/scripts/ota_release.py manifest \
+            --private-key /tmp/releaser.pem \
+            --product securacv-canary \
+            --version "${VERSION}" \
+            --url "${DL}/canary-${VERSION}.bin" \
+            --release-notes "$NOTES" \
+            --release-url "$RELURL" \
+            --out /tmp/release/manifest-canary.json \
+            "/tmp/release/canary-${VERSION}.bin"
+
+          # canary-wap (the WAP sketch reports versions with a -wap suffix)
+          cp /tmp/wap-build/canary_wap.ino.bin "/tmp/release/canary-wap-${VERSION}.bin"
+          python firmware/scripts/ota_release.py manifest \
+            --private-key /tmp/releaser.pem \
+            --product securacv-canary-wap \
+            --version "${VERSION}-wap" \
+            --url "${DL}/canary-wap-${VERSION}.bin" \
+            --release-notes "$NOTES" \
+            --release-url "$RELURL" \
+            --out /tmp/release/manifest-canary-wap.json \
+            "/tmp/release/canary-wap-${VERSION}.bin"
+
+          # canary-vision (generic build — identity/credentials come from NVS)
+          cp firmware/projects/canary-vision/.pio/build/canary-vision-default/firmware.bin \
+            "/tmp/release/canary-vision-${VERSION}.bin"
+          python firmware/scripts/ota_release.py manifest \
+            --private-key /tmp/releaser.pem \
+            --product securacv-canary-vision \
+            --version "${VERSION}" \
+            --url "${DL}/canary-vision-${VERSION}.bin" \
+            --release-notes "$NOTES" \
+            --release-url "$RELURL" \
+            --out /tmp/release/manifest-canary-vision.json \
+            "/tmp/release/canary-vision-${VERSION}.bin"
+
+          # Variant index (tooling + future variants)
+          python firmware/scripts/ota_release.py index \
+            "securacv-canary=${DL}/manifest-canary.json" \
+            "securacv-canary-wap=${DL}/manifest-canary-wap.json" \
+            "securacv-canary-vision=${DL}/manifest-canary-vision.json" \
+            --out /tmp/release/manifest-index.json
+
+          # Verify every signature against the COMMITTED public key before
+          # publishing — exactly what devices in the field will do.
+          python firmware/scripts/ota_release.py verify \
+            --pubkey firmware/common/ota/src/ota_release_key.h \
+            --manifest /tmp/release/manifest-canary.json \
+            "/tmp/release/canary-${VERSION}.bin"
+          python firmware/scripts/ota_release.py verify \
+            --pubkey firmware/common/ota/src/ota_release_key.h \
+            --manifest /tmp/release/manifest-canary-wap.json \
+            "/tmp/release/canary-wap-${VERSION}.bin"
+          python firmware/scripts/ota_release.py verify \
+            --pubkey firmware/common/ota/src/ota_release_key.h \
+            --manifest /tmp/release/manifest-canary-vision.json \
+            "/tmp/release/canary-vision-${VERSION}.bin"
+
+          # Guard against a forgotten version bump: the compiled-in
+          # FIRMWARE_VERSION literal must match the manifest version, or
+          # devices would install this image, boot with the old version
+          # string, witness it as a rollback, and keep being offered the
+          # same update forever.
+          if ! strings "/tmp/release/canary-${VERSION}.bin" | grep -qFx "${VERSION}"; then
+            echo "::error::canary binary does not contain the version string '${VERSION}'. Bump FIRMWARE_VERSION in firmware/canary/include/canary_config.h before tagging."
+            exit 1
+          fi
+          if ! strings "/tmp/release/canary-wap-${VERSION}.bin" | grep -qFx "${VERSION}-wap"; then
+            echo "::error::canary-wap binary does not contain the version string '${VERSION}-wap'. Bump FIRMWARE_VERSION in canary_wap.ino before tagging."
+            exit 1
+          fi
+          if ! strings "/tmp/release/canary-vision-${VERSION}.bin" | grep -qFx "${VERSION}"; then
+            echo "::error::canary-vision binary does not contain the version string '${VERSION}'. Bump CANARY_FW_VERSION in firmware/projects/canary-vision/include/canary/version.h before tagging."
+            exit 1
+          fi
+
+          (cd /tmp/release && sha256sum *.bin *.json > sha256sums.txt)
+          ls -la /tmp/release
+
+      - name: Extract release notes from CHANGELOG
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          awk "/^## \[${VERSION}\]/{found=1;next} /^## \[/{if(found)exit} found{print}" CHANGELOG.md > /tmp/release_notes.md || true
+          if [ ! -s /tmp/release_notes.md ]; then
+            {
+              echo "SecuraCV Canary firmware ${VERSION}."
+              echo ""
+              echo "Devices with the signed pull-OTA engine pick this release up"
+              echo "automatically within 24 hours, or immediately via the Install"
+              echo "button in Home Assistant / the device dashboard."
+            } > /tmp/release_notes.md
+          fi
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Canary Firmware ${{ steps.ver.outputs.version }}
+          body_path: /tmp/release_notes.md
+          files: |
+            /tmp/release/canary-${{ steps.ver.outputs.version }}.bin
+            /tmp/release/canary-wap-${{ steps.ver.outputs.version }}.bin
+            /tmp/release/canary-vision-${{ steps.ver.outputs.version }}.bin
+            /tmp/release/manifest-canary.json
+            /tmp/release/manifest-canary-wap.json
+            /tmp/release/manifest-canary-vision.json
+            /tmp/release/manifest-index.json
+            /tmp/release/sha256sums.txt

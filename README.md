@@ -124,6 +124,13 @@ Camera → Frigate (clips, detection) → MQTT → Privacy Witness Kernel
 The result: a forensic-grade event log that proves what the cameras saw, while discarding
 everything that could enable mass surveillance.
 
+> **Two witness logs, two trust roots.** The kernel's sealed log covers the Frigate
+> pipeline above. Canary devices are independent witnesses: each keeps its **own**
+> Ed25519-signed hash chain on-device and publishes signed events over MQTT, which the
+> Home Assistant integration verifies against that device's pinned key. Canary events are
+> *not* re-sealed into the kernel's log — a "fleet" today is N independently-signed
+> canaries converging in your dashboard, each verifiable on its own.
+
 ### Canonical specifications
 
 - [`spec/invariants.md`](spec/invariants.md) — seven non-negotiable privacy constraints (enforced in code)
@@ -176,7 +183,9 @@ Device firmware lives under [`firmware/`](firmware/):
   publishes privacy-preserving semantic events and HA MQTT discovery.
 - **Canary WAP** (ESP32-S3 / XIAO ESP32-S3 Sense): `firmware/projects/canary-wap/` — WiFi CSI
   sensing, mesh networking (Opera Protocol), BLE-Scout integration.
-- **Canary OTA**: `firmware/projects/canary-ota/` — over-the-air updates for deployed devices.
+- **Canary OTA**: `firmware/projects/canary-ota/` — over-the-air update engine (manifest
+  fetch, SHA256 verify, A/B rollback). Standalone today: not yet integrated into the
+  Canary firmware trees, and Ed25519 manifest signing lands before it ships (post-v1).
 
 **Hardware build plan & BOM:** to build a Canary from parts — audible chirp (buzzer), status LED, button/tamper/touch inputs, battery, and enclosure — see [`docs/hardware/`](docs/hardware/) ([build plan & BOM](docs/hardware/canary_peripheral_build_plan.md)).
 

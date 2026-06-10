@@ -398,6 +398,14 @@ The Beacon channel is the harm-reduction layer specified in `spec/beacon_channel
 - [x] Lint script passes (no WEA tone, no forbidden phrases). `scripts/lint_no_impersonation.sh` + `scripts/lint_cap_mapping.sh`.
 - [x] HA MQTT discovery surfaces `beacon.state` four-state NFPA enum + `beacon_airtime_pct` + `beacon_active_template`.
 - [x] Bearer-token gate on `/api/beacon/*` from day one (`beacon_api.h` template-trampoline pattern).
+- [x] Audit log honors AGENTS.md Beacon invariant 9 (append-only, no
+  rotate/delete, export-only): the log of record is `/beacon/audit.jsonl` on
+  SD — pure append, never truncated — with the 64-entry flash-encrypted NVS
+  ring demoted to a recent-view cache (`beacon_channel.cpp::sd_append_audit_entry`).
+  `spec/beacon_channel_v0.md` §11's earlier 30-day/64 KB `prune_audit_log()`
+  language contradicted the invariant, was never implemented, and is
+  superseded. The `FEATURE_BEACON_CHANNEL=1` compile gate in
+  `.github/workflows/firmware.yml` now compile-verifies the Beacon body in CI.
 - [x] Self-test heartbeat (`BEACON_MSG_SELFTEST_OK`) emits daily; receivers surface `Trouble` on >36h absence.
 - [x] X25519 keypair NVS-persisted (audit follow-up: codex P1 #7 closure in PR #454).
 - [x] Audit log NVS-persisted as a ring buffer with head pointer (audit follow-up: gemini P1 #3 / codex P2 #8 closure in PR #454).
