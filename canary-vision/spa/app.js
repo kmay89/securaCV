@@ -209,14 +209,22 @@ var CanaryStorage = {
   },
 
   saveDevices: function (devices) {
-    // Strip tokens before persisting to localStorage
+    // Tokens move to sessionStorage; everything else is rebuilt from an
+    // explicit allowlist so a credential can never reach localStorage —
+    // not even via a future field. Extend this list when adding new
+    // persisted device metadata.
     var sanitized = devices.map(function (d) {
-      var copy = Object.assign({}, d);
-      if (copy.token) {
-        CanaryStorage._setToken(copy.id, copy.token);
-        delete copy.token;
+      if (d.token) {
+        CanaryStorage._setToken(d.id, d.token);
       }
-      return copy;
+      return {
+        id: d.id,
+        name: d.name,
+        base_url: d.base_url,
+        room: d.room,
+        last_info: d.last_info,
+        added_at: d.added_at,
+      };
     });
     localStorage.setItem(CanaryStorage.KEY, JSON.stringify(sanitized));
   },
