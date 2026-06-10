@@ -15,6 +15,12 @@ services:
     depends_on:
       - mosquitto
     shm_size: "256mb"
+    environment:
+      # Substituted into frigate.yml's mqtt user/password placeholders —
+      # this stack's mosquitto.conf requires authentication, so Frigate
+      # needs the same credentials as the securacv service below.
+      FRIGATE_MQTT_USER: securacv
+      FRIGATE_MQTT_PASSWORD: ${SECURACV_MQTT_PASSWORD:?set in .env or the shell}
     ports:
       - "127.0.0.1:5000:5000"
     volumes:
@@ -45,7 +51,7 @@ services:
       HA_DISCOVERY_PREFIX: homeassistant
       MQTT_TOPIC_PREFIX: witness
       # This stack's mosquitto.conf requires authentication — set the
-      # credentials created in the README's quickstart step 2:
+      # credentials created in the README's quickstart step 1:
       MQTT_USERNAME: securacv
       MQTT_PASSWORD: ${SECURACV_MQTT_PASSWORD:?set in .env or the shell}
       # DEVICE_KEY_SEED is optional: when unset, the sidecar generates a key

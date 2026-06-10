@@ -644,6 +644,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     .sensing-pill--motion   { background: rgba(90,200,250,0.18); color: #5ac8fa; }
     .sensing-pill--active   { background: rgba(255,159,10,0.20); color: #ff9f0a; }
     .sensing-pill--muted    { background: rgba(120,120,128,0.28); color: #c7c7cc; }
+    .sensing-pill--alert    { background: rgba(255,69,58,0.20);  color: #ff453a; }
     /* "Supplement, not a replacement" banner on the Acoustic card. */
     .sensing-caution {
       margin: 10px 0 0 0;
@@ -1561,6 +1562,37 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           <div class="stat-item"><div class="stat-label">Samples</div><div class="stat-value" id="thSamples">0</div></div>
           <div class="stat-item"><div class="stat-label">Drift events</div><div class="stat-value" id="thDrift">0</div></div>
         </div>
+      </div>
+
+      <!-- Adaptive performance (thermal envelope, /api/thermal) -->
+      <div class="card" id="thermalCard" style="display:none;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Adaptive performance</div>
+            <div class="card-subtitle">
+              The Canary runs its hardware at the full safe envelope and
+              paces itself automatically — heavy work like camera streaming
+              is slowed before heat ever becomes a problem, then restored
+              the moment there's headroom. Lifetime history survives
+              reboots. Nothing here needs managing.
+            </div>
+          </div>
+        </div>
+        <div id="thwHero" style="text-align:center; padding:18px 16px;">
+          <div id="thwPill" class="sensing-pill sensing-pill--quiet">Full performance</div>
+          <div id="thwExplain" class="sensing-explain">
+            Running at full speed, well inside the safe envelope.
+          </div>
+        </div>
+        <div class="stats-grid">
+          <div class="stat-item"><div class="stat-label">Die temp (°C)</div><div class="stat-value" id="thwNow">--</div></div>
+          <div class="stat-item"><div class="stat-label">Hottest seen (°C)</div><div class="stat-value" id="thwMax">--</div></div>
+          <div class="stat-item"><div class="stat-label">Coldest seen (°C)</div><div class="stat-value" id="thwMin">--</div></div>
+          <div class="stat-item"><div class="stat-label">Adaptive minutes</div><div class="stat-value" id="thwThrMin">0</div></div>
+          <div class="stat-item"><div class="stat-label">Protective pauses</div><div class="stat-value" id="thwPauses">0</div></div>
+          <div class="stat-item"><div class="stat-label">Sensor</div><div class="stat-value" id="thwSensor">OK</div></div>
+        </div>
+        <div id="thwTip" class="sensing-explain" style="display:none; padding: 0 16px 14px;"></div>
       </div>
 
       <!-- Power (boot / wake reason; sleep capability) -->
@@ -2678,7 +2710,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       else if (panel === 'opera') refreshOpera();
       else if (panel === 'community') refreshChirpStatus();
       else if (panel === 'bluetooth') { refreshBtStatus(); loadBtPairedDevices(); }
-      else if (panel === 'sensing') refreshSensing();
+      else if (panel === 'sensing') { refreshSensing(); refreshThermal(); }
       else if (panel === 'status') refreshLiveSensing();
       else if (panel === 'settings') refreshOtaStatus();
 
@@ -3562,6 +3594,69 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       } else if (lpCard) {
         lpCard.style.display = 'none';
       }
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // Adaptive performance card — /api/thermal (passive watchdog)
+    // ════════════════════════════════════════════════════════════════
+    async function refreshThermal() {
+      const card = document.getElementById('thermalCard');
+      if (!card) return;
+      const d = await api('/api/thermal');
+      if (!d || d.ok !== true) { card.style.display = 'none'; return; }
+      card.style.display = '';
+
+      const pill = document.getElementById('thwPill');
+      const exp  = document.getElementById('thwExplain');
+      const tip  = document.getElementById('thwTip');
+      const adv  = d.advisories || [];
+      let tipText = '';
+
+      // Faults first — never hidden behind the positive framing.
+      if (!d.sensor_ok || adv.includes('sensor_fault')) {
+        pill.className = 'sensing-pill sensing-pill--alert';
+        pill.textContent = 'Sensor fault';
+        exp.textContent = 'The thermal sensor is not responding — protection is running conservatively, not blind. Check the Logs panel.';
+      } else if (adv.includes('critical')) {
+        pill.className = 'sensing-pill sensing-pill--alert';
+        pill.textContent = 'Too hot';
+        exp.textContent = 'Beyond the protective-pause threshold — move the device to shade or cooler air now.';
+      } else if (d.thermal_state === 'paused') {
+        pill.className = 'sensing-pill sensing-pill--active';
+        pill.textContent = 'Protective pause';
+        exp.textContent = 'Briefly resting the camera to shed heat — streaming resumes by itself.';
+        tipText = 'If this happens often: shade, ventilation, or the heat-sink kit (worth ~10 °C) keeps it at full pace.';
+      } else if (d.thermal_state === 'throttled') {
+        pill.className = 'sensing-pill sensing-pill--active';
+        pill.textContent = 'Adaptive performance';
+        exp.textContent = 'Pacing the camera to sustain the safe envelope — the device optimizing itself, not a fault.';
+        tipText = 'Shade, ventilation, or the heat-sink kit (worth ~10 °C) restores full pace sooner.';
+      } else if (adv.includes('cold')) {
+        pill.className = 'sensing-pill sensing-pill--motion';
+        pill.textContent = 'Cold environment';
+        exp.textContent = 'Running fine, but it is near freezing — do not charge the battery below 0 °C.';
+      } else {
+        pill.className = 'sensing-pill sensing-pill--quiet';
+        pill.textContent = 'Full performance';
+        exp.textContent = 'Running at full speed, well inside the safe envelope.';
+      }
+      if (!tipText && adv.includes('env_limited')) {
+        tipText = 'This spot runs warm — the device adapts often here. Shade or the heat sink would give it more headroom.';
+      }
+      if (adv.includes('saturation')) {
+        tipText = 'The environment currently exceeds the device\'s cooling capacity — relocate it or stream less.';
+      }
+      tip.style.display = tipText ? '' : 'none';
+      tip.textContent = tipText;
+
+      const setT = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
+      const h = d.history || {};
+      setT('thwNow',    (d.die_temp_c === null || d.die_temp_c === undefined) ? '--' : Math.round(d.die_temp_c));
+      setT('thwMax',    (h.alltime_max_c === null || h.alltime_max_c === undefined) ? '--' : h.alltime_max_c);
+      setT('thwMin',    (h.alltime_min_c === null || h.alltime_min_c === undefined) ? '--' : h.alltime_min_c);
+      setT('thwThrMin', h.throttled_min || 0);
+      setT('thwPauses', h.pause_events || 0);
+      setT('thwSensor', d.sensor_ok ? 'OK' : 'FAULT');
     }
 
     // ════════════════════════════════════════════════════════════════
@@ -5962,6 +6057,11 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     setInterval(() => {
       if (currentPanel === 'sensing') refreshSensing();
     }, 1000);
+    /* The thermal watchdog samples every 30 s — polling the Adaptive
+     * performance card once a minute is plenty. */
+    setInterval(() => {
+      if (currentPanel === 'sensing') refreshThermal();
+    }, 60000);
   </script>
 </body>
 </html>

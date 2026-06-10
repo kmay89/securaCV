@@ -1,0 +1,69 @@
+name: Container images
+
+# Build-validate the standalone witnessd image (root Dockerfile, see
+# docs/container.md). The other images have their own workflows: the HA
+# add-on in addon-image.yml and the Frigate sidecar in docker-sidecar.yml.
+#
+# The image is not published; this gate exists so a change to the crate,
+# the Dockerfile, or the build context can't silently break the documented
+# `docker build -t witnessd:local .` (which happened before this gate
+# existed: the lock file moved to v4 while the build stage pinned a cargo
+# too old to read it, and nothing noticed).
+
+on:
+  pull_request:
+    paths:
+      - "Dockerfile"
+      - "src/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".dockerignore"
+      - ".github/workflows/container-images.yml"
+  push:
+    branches: [main]
+    paths:
+      - "Dockerfile"
+      - "src/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".dockerignore"
+      - ".github/workflows/container-images.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build witnessd image (validate only)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          push: false
+          load: true
+          provenance: false
+          cache-from: type=gha,scope=container-witnessd
+          cache-to: type=gha,scope=container-witnessd,mode=max
+          tags: witnessd:ci
+
+      # Smoke-test the image: the binary must load with no missing shared
+      # libraries (catches runtime-stage packaging gaps), and curl — which
+      # the HEALTHCHECK depends on — must be present.
+      - name: Smoke-test witnessd image
+        run: |
+          docker run --rm --entrypoint /bin/sh witnessd:ci -c '
+            set -e
+            command -v witnessd >/dev/null
+            if ldd /usr/local/bin/witnessd | grep -q "not found"; then
+              echo "missing shared libraries for witnessd" >&2
+              exit 1
+            fi
+            curl --version >/dev/null
+          '

@@ -23,13 +23,23 @@ repo via its entrypoint:
 1) **Set up MQTT credentials** (anonymous access is disabled by default):
 
 ```bash
-# Start mosquitto first to create the password file
+# Create the password file BEFORE starting the broker (mosquitto exits if the
+# configured password_file is missing, so it can't be created via `exec` on a
+# running broker). You'll be prompted for the password.
+docker compose run --rm --no-deps --entrypoint sh mosquitto -c \
+  'mosquitto_passwd -c /mosquitto/config/passwd securacv &&
+   chown mosquitto:mosquitto /mosquitto/config/passwd &&
+   chmod 600 /mosquitto/config/passwd'
 docker compose up -d mosquitto
-docker compose exec mosquitto mosquitto_passwd -c /mosquitto/config/passwd securacv
-docker compose restart mosquitto
-# Tell the securacv service the password you chose:
+# Tell the frigate and securacv services the password you chose:
 echo 'SECURACV_MQTT_PASSWORD=<the password>' >> .env
 ```
+
+The `.env` value is injected into the SecuraCV bridges
+(`MQTT_USERNAME`/`MQTT_PASSWORD`) and into Frigate
+(`FRIGATE_MQTT_USER`/`FRIGATE_MQTT_PASSWORD` placeholders in `frigate.yml`).
+When you configure Home Assistant's MQTT integration, give it the same
+credentials.
 
 A device key seed is generated automatically on first start (persisted in
 the `securacv_data` volume — back it up). To pin one instead, see the
