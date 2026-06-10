@@ -58,7 +58,10 @@ static bool     s_have_last = false;
  * fire either), the baseline fast-tracks the temperature and detection
  * is suspended. */
 static bool     s_high_load = false;
-static uint32_t s_high_load_until_ms = 0;   /* cooldown deadline after load ends */
+static bool     s_cooldown  = false;   /* explicit flag — a bare deadline vs
+                                        * millis() misreads uptime > 2^31 ms
+                                        * (~24.8 days) as a permanent cooldown */
+static uint32_t s_cooldown_until_ms = 0;
 static const uint32_t HIGH_LOAD_COOLDOWN_MS = 10UL * 60UL * 1000UL;
 
 static envsens_stats_t s_stats = {0};
@@ -147,8 +150,14 @@ static void on_sample(int16_t t10, uint32_t now_ms) {
 
   /* High-load phase (or its cooldown): fast-track the baseline (alpha
    * 1/2 per sample) and suspend detection — the self-heating ramp and
-   * the subsequent cool-down are expected, not tamper. */
-  if (s_high_load || (int32_t)(now_ms - s_high_load_until_ms) < 0) {
+   * the subsequent cool-down are expected, not tamper. The cooldown is
+   * an explicit flag cleared on expiry; the signed-delta idiom alone
+   * against a 0 sentinel would read all uptime past 2^31 ms (~24.8 d)
+   * as "in cooldown" and silently disable drift detection. */
+  if (s_cooldown && (int32_t)(now_ms - s_cooldown_until_ms) >= 0) {
+    s_cooldown = false;
+  }
+  if (s_high_load || s_cooldown) {
     int16_t adj = (int16_t)(delta / 2);
     if (adj == 0 && delta != 0) adj = (delta > 0) ? 1 : -1;
     s_baseline_t10 = (int16_t)(s_baseline_t10 + adj);
@@ -215,7 +224,8 @@ bool envsens_init(const envsens_config_t* cfg) {
   s_last_sample_ms = 0;
   s_last_event_ms = 0;
   s_high_load = false;
-  s_high_load_until_ms = 0;
+  s_cooldown = false;
+  s_cooldown_until_ms = 0;
   memset(&s_stats, 0, sizeof(s_stats));
 
   s_initialized = true;
@@ -260,7 +270,8 @@ void envsens_set_high_load(bool active) {
   using namespace envsens;
   if (s_high_load && !active) {
     /* Falling edge: hold detection through the cool-down ramp too. */
-    s_high_load_until_ms = millis() + HIGH_LOAD_COOLDOWN_MS;
+    s_cooldown = true;
+    s_cooldown_until_ms = millis() + HIGH_LOAD_COOLDOWN_MS;
   }
   s_high_load = active;
 }
