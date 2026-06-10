@@ -241,7 +241,16 @@ Click **Start**. Check logs for any errors.
 
 1. Go to **Settings → Devices & Services**
 2. Click **Add Integration** and select **SecuraCV**
-3. Provide the Event API URL and token from your kernel instance (MQTT is optional)
+3. Provide the Event API URL and authentication (MQTT is optional):
+   - **API token file (recommended):** the kernel rotates its capability token
+     every 10 minutes and rewrites the token file. When the kernel runs as the
+     add-on, that file is `/config/api_token` (the default), which Home
+     Assistant can read directly — the integration re-reads it automatically
+     whenever the token rotates.
+   - **Static token:** only for kernels on another host whose token file Home
+     Assistant cannot read. A pasted token goes stale at the next rotation
+     (≤10 minutes), so for remote kernels either share the token file (e.g. a
+     mounted volume) or expect to re-authenticate.
 
 ---
 
@@ -523,7 +532,7 @@ the hostname with the reachable IP/DNS name for that host.
 
 ### Authentication
 
-The API uses short-lived capability tokens as **Bearer** credentials. The token is written to `/config/api_token` when the add-on starts and rotates every 10 minutes; read it from the configured token file whenever you need to authenticate. If you run the kernel elsewhere, use the token path or secrets location configured for that deployment.
+The API uses short-lived capability tokens as **Bearer** credentials. The token is written to `/config/api_token` when the add-on starts and rotates every 10 minutes; read it from the configured token file whenever you need to authenticate. If you run the kernel elsewhere, use the token path or secrets location configured for that deployment. The SecuraCV integration handles rotation automatically when configured with the token-file path (its default); scripts and other clients must re-read the file on every `401`.
 The `/health` endpoint is unauthenticated and only reachable on the local loopback interface. Query-string tokens are rejected—send the token only in the `Authorization: Bearer` header.
 
 ```bash

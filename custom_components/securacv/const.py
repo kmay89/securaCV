@@ -12,6 +12,13 @@ CONF_ENABLE_MQTT = "enable_mqtt"
 CONF_SETUP_MODE = "setup_mode"
 # Optional URL of an adapter_host read-only stats endpoint (e.g. http://host:8799).
 CONF_ADAPTER_STATS_URL = "adapter_stats_url"
+# Optional path to the kernel's rotating capability-token file. The kernel
+# rotates the token every 10 minutes and rewrites this file; configuring the
+# path (instead of, or alongside, a static token) lets the integration re-read
+# it on 401 and survive the rotation. The Privacy Witness Kernel add-on writes
+# it to /config/api_token, which HA can read directly (shared /config volume).
+CONF_TOKEN_FILE = "token_file"
+DEFAULT_TOKEN_FILE = "/config/api_token"
 
 # Setup modes
 SETUP_MODE_MQTT = "mqtt"
