@@ -111,6 +111,10 @@ static_assert(sizeof(csi_features_t) == 36,
 #include "securacv_diagnostics.h"
 #endif
 
+#if FEATURE_THERMAL_WATCHDOG
+#include "securacv_thermal_watchdog.h"
+#endif
+
 #if FEATURE_DATA_MGMT
 #include "securacv_data_mgmt.h"
 #endif
@@ -1114,6 +1118,13 @@ void setup() {
   }
 #endif
 
+  // Passive thermal observer: lifetime die-temp history, advisories.
+  // Never actuates — the camera state machine stays the sole actuator.
+#if FEATURE_THERMAL_WATCHDOG
+  thermal_wd_init();
+  Serial.println("[OK] Thermal watchdog observing");
+#endif
+
   // Confirm — or roll back — a freshly applied OTA image. Reaching this
   // line at all means provisioning, storage, and network bring-up survived
   // the new firmware; the registered probes assert the parts that matter
@@ -1438,6 +1449,10 @@ void loop() {
   }
 #endif
 
+#if FEATURE_THERMAL_WATCHDOG
+  thermal_wd_process();  /* rate-limits internally (30 s sample, 10 min persist) */
+#endif
+
 #if FEATURE_POWER_POLICY
   policy_process();
 
@@ -1457,6 +1472,9 @@ void loop() {
                             RECORD_STATE_CHANGE, &sl_rec);
     }
     witness_persist_chain_state();
+#if FEATURE_THERMAL_WATCHDOG
+    thermal_wd_persist();
+#endif
     lowpower_arm_wake_timer((uint64_t)sleep_sec * 1000000ULL);
     lowpower_arm_wake_touch();
     policy_ack_deep_sleep();
@@ -2079,6 +2097,9 @@ static void handle_serial_commands() {
     case 'X':
       Serial.println("\nRebooting...");
       witness_persist_chain_state();
+#if FEATURE_THERMAL_WATCHDOG
+      thermal_wd_persist();
+#endif
 #if FEATURE_HA_MQTT
       mqtt_disconnect();
 #endif

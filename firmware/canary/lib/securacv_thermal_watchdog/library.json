@@ -1,0 +1,19 @@
+{
+    "name": "securacv_thermal_watchdog",
+    "version": "0.1.0",
+    "description": "SecuraCV Thermal Watchdog — always-on passive die-temperature observer. Samples the shared thermal provider, mirrors the camera's throttle/pause hysteresis as a shadow classifier, accumulates NVS-persisted lifetime thermal history (min/max, throttled/paused minutes, event counts), and surfaces advisories (sensor fault, critical heat, saturation, environment-limited, cold) through the health log. Never actuates — the camera state machine remains the sole thermal actuator.",
+    "keywords": ["securacv", "esp32-s3", "thermal", "temperature", "watchdog", "telemetry"],
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/kmay89/securaCV.git"
+    },
+    "authors": [
+        {
+            "name": "Karl May",
+            "email": "karl@errerlabs.com"
+        }
+    ],
+    "license": "Apache-2.0",
+    "frameworks": "arduino",
+    "platforms": "espressif32"
+}
