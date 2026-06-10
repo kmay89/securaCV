@@ -5,23 +5,25 @@
  * and graceful brownout shutdown for the XIAO ESP32-S3 Sense with a
  * LiPo battery connected to the built-in TP4056 charging circuit.
  *
- * Dual-mode operation:
+ * Operating modes:
  *
  *   HARDWARE ADC — a 2:1 voltage divider (two 100K resistors) from
  *     VBAT to GPIO 1 (D0/A0) provides calibrated millivolt readings.
  *     The ESP32-S3's eFuse ADC calibration data produces +/-20 mV
  *     accuracy, yielding +/-2% SoC for a typical LiPo discharge curve.
  *
- *   SOFTWARE INFERENCE — when no divider is wired, the module watches
- *     USB-powered voltage behavior: a steadily rising ADC suggests
- *     charging (TP4056 is active), a stable high value suggests full,
- *     and any measurable drop from a settled baseline suggests battery
- *     discharge. Less accurate but works with zero hardware modification.
+ *   USB ONLY — when no divider is wired, GPIO 1 floats and its readings
+ *     carry no battery information, so the module reports USB-only and
+ *     stops sampling rather than inferring charge state from noise.
+ *     (POWER_MODE_SW_INFERENCE is retained in the enum for wire-format
+ *     stability but is no longer entered.)
  *
  * Auto-detection at boot: the module reads the ADC and classifies the
  * result. A reading in the 1.2-2.3 V range (corresponds to 2.4-4.6 V
  * with a 2:1 divider) indicates a divider is present. Near-zero or
- * near-rail readings indicate no divider.
+ * near-rail readings indicate no divider. A near-rail reading also
+ * triggers a wiring warning: VBAT tied directly to GPIO 1 without a
+ * divider overstresses the pin.
  *
  * Ported from PIO securacv_power to header-only WAP form.
  *
@@ -395,10 +397,17 @@ inline void load_nvs_state() {
     prefs.end();
   }
 
-  // Detect brownout reset and increment count
+  // Detect brownout reset and increment count. Persist immediately:
+  // a device in a brownout loop may never reach the periodic history
+  // save, and the count is the main field-diagnosis signal.
   esp_reset_reason_t rst = esp_reset_reason();
   if (rst == ESP_RST_BROWNOUT) {
     s_history.brownout_count++;
+    Preferences bo;
+    if (bo.begin("securacv", false)) {
+      bo.putUInt("batt_bo_cnt", s_history.brownout_count);
+      bo.end();
+    }
   }
 }
 
@@ -419,7 +428,9 @@ inline void save_voltage_extremes() {
 // ────────────────────────────────────────────────────────────────────────────
 
 inline void check_battery_presence(uint16_t battery_mv) {
-  if (s_state.monitor_mode == POWER_MODE_USB_ONLY) return;
+  // Keep running as long as a divider is wired -- monitor_mode may have
+  // flipped to USB_ONLY after a battery removal, and this is the only
+  // path that can detect the battery being reattached.
   if (!s_state.divider_detected) return;
 
   bool out_of_range = (battery_mv < LIPO_VALID_MIN_MV ||
@@ -441,6 +452,10 @@ inline void check_battery_presence(uint16_t battery_mv) {
     if (!s_state.battery_present) {
       s_state.battery_present = true;
       s_state.monitor_mode = POWER_MODE_HW_ADC;
+      // Clear the latched NO_BATTERY state so the charge state machine
+      // re-classifies from fresh trend data instead of staying stuck.
+      s_state.charge_state = CHARGE_STATE_UNKNOWN;
+      s_state.power_source = POWER_SOURCE_UNKNOWN;
       log_msg(SCV_LOG_INFO, "Power: battery detected", "HW ADC mode");
     }
   }
@@ -458,24 +473,20 @@ inline void update_charge_state(uint16_t battery_mv) {
   int16_t trend = s_state.trend_mv_per_min;
 
   if (s_state.monitor_mode == POWER_MODE_HW_ADC) {
-    if (s_state.soc_pct <= SOC_CRITICAL_PCT) {
-      next = CHARGE_STATE_CRITICAL;
-    } else if (s_state.soc_pct <= SOC_LOW_PCT) {
-      next = CHARGE_STATE_LOW;
-    } else if (battery_mv >= 4150 && trend >= -1 && trend <= 1) {
+    // Charging detection runs BEFORE the low/critical SoC checks so a
+    // depleted battery on USB reports CHARGING (power source USB).
+    // Otherwise the policy engine would see CRITICAL + battery power
+    // and deep-sleep a device that is actually plugged in and charging.
+    if (battery_mv >= 4150 && trend >= -1 && trend <= 1) {
       next = CHARGE_STATE_FULL;
     } else if (trend > 2) {
       next = CHARGE_STATE_CHARGING;
+    } else if (s_state.soc_pct <= SOC_CRITICAL_PCT) {
+      next = CHARGE_STATE_CRITICAL;
+    } else if (s_state.soc_pct <= SOC_LOW_PCT) {
+      next = CHARGE_STATE_LOW;
     } else {
       next = CHARGE_STATE_DISCHARGING;
-    }
-  } else if (s_state.monitor_mode == POWER_MODE_SW_INFERENCE) {
-    if (trend > 3) {
-      next = CHARGE_STATE_CHARGING;
-    } else if (trend < -3) {
-      next = CHARGE_STATE_DISCHARGING;
-    } else if (prev == CHARGE_STATE_CHARGING) {
-      next = CHARGE_STATE_FULL;
     }
   }
 
@@ -602,11 +613,20 @@ inline void init(void (*log_callback)(LogLevel, LogCategory, const char*, const 
         log_msg(SCV_LOG_INFO, "Power: divider present, no battery", "USB-only mode");
       }
     } else {
-      s_state.monitor_mode     = POWER_MODE_SW_INFERENCE;
+      // No divider: GPIO 1 floats, so its readings carry no battery
+      // information. Report USB-only and stop sampling rather than
+      // inferring charge state from noise.
+      if (avg_mv > DIVIDER_DETECT_MAX_MV) {
+        log_msg(SCV_LOG_WARNING, "Power: ADC near rail without divider",
+                "check wiring -- VBAT direct to GPIO 1 can damage the pin");
+      }
+      s_state.monitor_mode     = POWER_MODE_USB_ONLY;
       s_state.divider_detected = false;
       s_state.battery_present  = false;
       s_state.power_source     = POWER_SOURCE_USB_ONLY;
       s_state.charge_state     = CHARGE_STATE_NO_BATTERY;
+      adc_close();
+      s_adc_ready = false;
       log_msg(SCV_LOG_INFO, "Power: no divider detected", "USB-only (add divider for battery monitoring)");
     }
   } else {
@@ -621,7 +641,7 @@ inline void init(void (*log_callback)(LogLevel, LogCategory, const char*, const 
   s_initialized = true;
   s_running = true;
   s_last_sample_ms = millis() - SAMPLE_INTERVAL_MS;
-  log_msg(SCV_LOG_INFO, "Power monitor initialized", "dual-mode ADC + inference");
+  log_msg(SCV_LOG_INFO, "Power monitor initialized", "HW ADC with USB-only fallback");
 }
 
 /**
@@ -771,6 +791,49 @@ inline void persist_history() {
 }
 
 /**
+ * Battery health estimate: percent of rated capacity remaining.
+ *
+ * Cycle-fade model: a consumer LiPo loses roughly 20% of its capacity
+ * over ~500 full charge cycles (datasheet-typical). Computed on demand
+ * from the persisted cycle count, so it can never go stale or disagree
+ * with stored history. Clamped to 60% -- below that the linear model is
+ * no longer meaningful and the cell should simply be replaced.
+ * Returns 100 when no battery is present (nothing to degrade).
+ */
+inline uint8_t health_pct() {
+  if (!s_state.battery_present) return 100;
+  uint32_t fade = (s_state.charge_cycles * 20) / 500;
+  if (fade > 40) fade = 40;
+  return (uint8_t)(100 - fade);
+}
+
+/**
+ * Estimated minutes of battery runtime remaining, derived from the
+ * measured discharge slope: time for the present voltage to reach the
+ * 3.3 V low-battery cutoff at the current mV/min trend. This is a
+ * coarse estimate (the LiPo curve is not linear in voltage) meant for
+ * "hours vs. days" planning, not precision.
+ *
+ * Returns 0 when unknown rather than guessing: no battery, charging,
+ * trend not yet established (needs ~10 samples), or voltage already at
+ * the cutoff. Capped at 14 days -- slower slopes are below measurement
+ * resolution.
+ */
+inline uint32_t estimate_runtime_min() {
+  static constexpr uint16_t CUTOFF_MV  = 3300;
+  static constexpr uint32_t RUNTIME_CAP_MIN = 14UL * 24UL * 60UL;
+  if (!s_state.battery_present) return 0;
+  if (s_state.charge_state != CHARGE_STATE_DISCHARGING &&
+      s_state.charge_state != CHARGE_STATE_LOW &&
+      s_state.charge_state != CHARGE_STATE_CRITICAL) return 0;
+  if (s_state.trend_mv_per_min >= 0) return 0;
+  if (s_state.voltage_mv <= CUTOFF_MV) return 0;
+  uint32_t mins = (uint32_t)(s_state.voltage_mv - CUTOFF_MV) /
+                  (uint32_t)(-s_state.trend_mv_per_min);
+  return (mins > RUNTIME_CAP_MIN) ? RUNTIME_CAP_MIN : mins;
+}
+
+/**
  * Initiate graceful shutdown: persist stats, then enter deep sleep.
  * The caller is responsible for flushing witness chain state before
  * calling this, if desired.
@@ -845,6 +908,8 @@ inline void print_status() {
                 s_state.max_voltage_mv);
   Serial.printf("│ Brownouts  : %u                      │\n", s_history.brownout_count);
   Serial.printf("│ Runtime    : %u min                  │\n", s_history.total_runtime_min);
+  Serial.printf("│ Health     : %u%%                    │\n", health_pct());
+  Serial.printf("│ Est. left  : %u min                  │\n", estimate_runtime_min());
   Serial.println("└─────────────────────────────────────┘");
 }
 
@@ -866,6 +931,9 @@ inline size_t get_json(char* buf, size_t buf_size) {
     "\"voltage_max_mv\":%u,"
     "\"brownout_count\":%u,"
     "\"total_runtime_min\":%u,"
+    "\"soc_min_pct\":%u,"
+    "\"health_pct\":%u,"
+    "\"est_runtime_min\":%u,"
     "\"samples_taken\":%u"
     "}",
     mode_name(s_state.monitor_mode),
@@ -880,6 +948,9 @@ inline size_t get_json(char* buf, size_t buf_size) {
     s_state.max_voltage_mv,
     s_history.brownout_count,
     s_history.total_runtime_min,
+    s_history.soc_min_pct,
+    health_pct(),
+    estimate_runtime_min(),
     s_state.samples_taken
   );
   return (len > 0 && len < (int)buf_size) ? (size_t)len : 0;

@@ -334,8 +334,14 @@ bool policy_process(void) {
     s_deep_sleep_pending = false;
   }
 
-  /* Shutdown mode triggers graceful shutdown. */
-  if (s_mode == PMODE_SHUTDOWN && pwr.battery_present) {
+  /* Shutdown mode triggers graceful shutdown -- but only after a 60 s
+   * boot warmup. Right after boot the voltage trend is not yet
+   * established, so a depleted battery that was just plugged into USB
+   * still classifies as CRITICAL/discharging. The warmup gives the
+   * monitor time to observe the charge slope and re-evaluate to
+   * PLUGGED_IN instead of deep-sleeping a device that is charging. */
+  if (s_mode == PMODE_SHUTDOWN && pwr.battery_present &&
+      millis() >= 60000UL) {
     power_graceful_shutdown();
   }
 
