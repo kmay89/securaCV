@@ -110,6 +110,7 @@ make monitor
 | **Bluetooth** | BLE pairing and configuration |
 | **RF Presence** | Privacy-preserving device detection |
 | **Camera Peek** | Live MJPEG preview streaming |
+| **Microphone** | PDM mic detects smoke (T3) / CO (T4) alarm cadences plus knock, doorbell, and glass-break; privacy-bounded (no audio stored), hard mute with witness-chain audit trail |
 
 ## Build Configurations
 
@@ -162,6 +163,11 @@ make help               # Show all targets
 | `/api/witness/export` | GET | Export witness records |
 | `/api/peek/start` | GET | Start camera stream |
 | `/api/peek/stop` | GET | Stop camera stream |
+| `/api/audio/status` | GET | Mic state, mute info, detection counters |
+| `/api/audio/mute` | POST | Hard mute/unmute (`{"muted":bool}`) |
+| `/api/audio/selftest` | GET/POST | Guided alarm self-test (start/stop/progress) |
+| `/api/audio/config` | GET/POST | Room-noise sensitivity (persisted) |
+| `/api/audio/transitions` | GET | Recent sound on/off pattern (diagnostics) |
 
 **Example:**
 ```bash

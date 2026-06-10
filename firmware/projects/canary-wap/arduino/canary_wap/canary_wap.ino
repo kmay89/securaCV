@@ -3072,6 +3072,103 @@ static esp_err_t handle_audio_selftest_post(httpd_req_t* req) {
   }
   return http_send_error(req, 400, "unknown_action");
 }
+
+// GET /api/audio/config — current envelope thresholds
+// POST /api/audio/config — {"rms_on":N,"rms_off":N}; rms_on > rms_off > 0.
+//                          Applied immediately and persisted to NVS so the
+//                          next boot re-applies it (room-noise sensitivity).
+static esp_err_t handle_audio_config_get(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  audio_config_t cfg;
+  if (!audio_get_config(&cfg)) {
+    return http_send_json(req, "{\"ok\":false,\"error\":\"audio not initialized\"}");
+  }
+  char buf[96];
+  const int len = snprintf(buf, sizeof(buf),
+    "{\"ok\":true,\"rms_on\":%u,\"rms_off\":%u}",
+    (unsigned)cfg.rms_on_threshold, (unsigned)cfg.rms_off_threshold);
+  if (len <= 0 || len >= (int)sizeof(buf)) {
+    return http_send_json(req, "{\"ok\":false,\"error\":\"buffer overflow\"}");
+  }
+  return http_send_json(req, buf);
+}
+
+static esp_err_t handle_audio_config_post(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  char buf[96];
+  int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
+  if (ret <= 0) return http_send_error(req, 400, "invalid_body");
+  buf[ret] = '\0';
+
+  JsonDocument body;
+  if (deserializeJson(body, buf) != DeserializationError::Ok ||
+      !body["rms_on"].is<unsigned int>() || !body["rms_off"].is<unsigned int>()) {
+    return http_send_error(req, 400, "invalid_json");
+  }
+  const unsigned rms_on  = body["rms_on"];
+  const unsigned rms_off = body["rms_off"];
+  if (rms_on > 0xFFFFu || rms_off > 0xFFFFu ||
+      !audio_set_thresholds((uint16_t)rms_on, (uint16_t)rms_off)) {
+    return http_send_error(req, 400, "invalid_thresholds");
+  }
+
+  bool persisted = false;
+  {
+    Preferences sens_prefs;
+    if (sens_prefs.begin("securacv", false)) {
+      persisted = sens_prefs.putUShort("mic_rms_on", (uint16_t)rms_on) > 0 &&
+                  sens_prefs.putUShort("mic_rms_off", (uint16_t)rms_off) > 0;
+      sens_prefs.end();
+    }
+  }
+  if (!persisted) {
+    log_health(SCV_LOG_WARNING, SCV_CAT_STORAGE,
+               "Mic sensitivity NOT persisted", "NVS write failed");
+  }
+  log_health(SCV_LOG_NOTICE, SCV_CAT_USER, "Mic sensitivity changed", nullptr);
+
+  char resp[96];
+  const int rl = snprintf(resp, sizeof(resp),
+    "{\"ok\":true,\"rms_on\":%u,\"rms_off\":%u,\"persisted\":%s}",
+    rms_on, rms_off, persisted ? "true" : "false");
+  if (rl <= 0 || rl >= (int)sizeof(resp)) {
+    return http_send_json(req, "{\"ok\":true}");
+  }
+  return http_send_json(req, resp);
+}
+
+// GET /api/audio/transitions — recent envelope on/off transitions (newest
+// first). Diagnostic surface for the dashboard's "show me the cadence"
+// view: lets a user see WHY a test press did or didn't match. Carries
+// only {on, age_ms, dur_ms} per entry — same privacy-bounded fields the
+// internal matcher uses, no audio content.
+static esp_err_t handle_audio_transitions(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  audio_transition_t trans[16];
+  const size_t n = audio_get_recent_transitions(trans, 16, 0);
+
+  char buf[768];
+  size_t pos = 0;
+  pos += snprintf(buf + pos, sizeof(buf) - pos,
+                  "{\"ok\":true,\"running\":%s,\"transitions\":[",
+                  audio_is_running() ? "true" : "false");
+  for (size_t i = 0; i < n && pos < sizeof(buf) - 64; i++) {
+    pos += snprintf(buf + pos, sizeof(buf) - pos,
+                    "%s{\"on\":%u,\"age_ms\":%lu,\"dur_ms\":%lu}",
+                    i ? "," : "",
+                    (unsigned)trans[i].is_on,
+                    (unsigned long)trans[i].age_ms,
+                    (unsigned long)trans[i].dur_ms);
+  }
+  pos += snprintf(buf + pos, sizeof(buf) - pos, "]}");
+  if (pos >= sizeof(buf)) {
+    return http_send_json(req, "{\"ok\":false,\"error\":\"buffer overflow\"}");
+  }
+  return http_send_json(req, buf);
+}
 #endif
 
 static esp_err_t handle_chain(httpd_req_t* req) {
@@ -5842,6 +5939,18 @@ static esp_err_t handle_audio_selftest_post_auth(httpd_req_t* req) {
   if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
   return handle_audio_selftest_post(req);
 }
+static esp_err_t handle_audio_config_get_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_audio_config_get(req);
+}
+static esp_err_t handle_audio_config_post_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_audio_config_post(req);
+}
+static esp_err_t handle_audio_transitions_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_audio_transitions(req);
+}
 #endif
 
 // Register all route handlers on a given httpd server handle
@@ -5916,6 +6025,15 @@ static void register_api_routes(httpd_handle_t server) {
 
   httpd_uri_t audio_st_post = { .uri = "/api/audio/selftest", .method = HTTP_POST, .handler = handle_audio_selftest_post_auth };
   httpd_register_uri_handler(server, &audio_st_post);
+
+  httpd_uri_t audio_cfg_get = { .uri = "/api/audio/config", .method = HTTP_GET, .handler = handle_audio_config_get_auth };
+  httpd_register_uri_handler(server, &audio_cfg_get);
+
+  httpd_uri_t audio_cfg_post = { .uri = "/api/audio/config", .method = HTTP_POST, .handler = handle_audio_config_post_auth };
+  httpd_register_uri_handler(server, &audio_cfg_post);
+
+  httpd_uri_t audio_trans = { .uri = "/api/audio/transitions", .method = HTTP_GET, .handler = handle_audio_transitions_auth };
+  httpd_register_uri_handler(server, &audio_trans);
 #endif
 
   httpd_uri_t chain = { .uri = "/api/chain", .method = HTTP_GET, .handler = handle_chain_auth };
@@ -5978,7 +6096,7 @@ static void start_http_server() {
   // Calculate max URI handlers based on feature usage
   const int base_handlers = 39;       // UI (/ + /admin + /settings), API (auth + public), WiFi provisioning, captive/connectivity probes (Apple x2, Android x2, Windows x2), /api/selftest, /api/diagnostics, /api/battery/history, /api/ota/{status,check,install,config}
 #if FEATURE_ACOUSTIC_EVENTS
-  const int audio_handlers = 4;       // /api/audio/{status,mute}, /api/audio/selftest (GET + POST)
+  const int audio_handlers = 7;       // /api/audio/{status,mute,transitions}, /api/audio/selftest + /api/audio/config (GET + POST each)
 #else
   const int audio_handlers = 0;
 #endif
@@ -7628,6 +7746,21 @@ void setup() {
   if (!in_safe_mode) {
     Serial.println("[..] Initializing PDM acoustic event detection...");
     audio_config_t audio_cfg = AUDIO_CONFIG_DEFAULT;
+    // Apply the user's persisted room-noise sensitivity (set via
+    // POST /api/audio/config). Invalid/absent pairs fall back to the
+    // compiled defaults (ON=800 / OFF=400).
+    {
+      Preferences sens_prefs;
+      if (sens_prefs.begin("securacv", true /* read-only */)) {
+        const uint16_t on  = sens_prefs.getUShort("mic_rms_on", 0);
+        const uint16_t off = sens_prefs.getUShort("mic_rms_off", 0);
+        sens_prefs.end();
+        if (off > 0 && on > off) {
+          audio_cfg.rms_on_threshold  = on;
+          audio_cfg.rms_off_threshold = off;
+        }
+      }
+    }
     if (audio_init(&audio_cfg)) {
       audio_set_event_callback([](const audio_event_t* evt) {
         uint8_t payload[160];
