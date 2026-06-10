@@ -75,6 +75,9 @@ adapter-sandbox = []
 pqc-signatures = ["pqcrypto-mldsa", "pqcrypto-traits"]
 pqc-vault = ["pqcrypto-mlkem", "pqcrypto-traits"]
 pqc-tls = ["rustls", "webpki-roots", "rustls-pki-types"]
+# RFC 3161 trusted timestamping: enables log_anchor's online `request`
+# subcommand (the offline query/import flow needs no feature).
+tsa = ["ureq"]
 
 [[bin]]
 name = "witnessd"
@@ -83,6 +86,10 @@ path = "src/bin/witnessd.rs"
 [[bin]]
 name = "log_verify"
 path = "src/bin/log_verify.rs"
+
+[[bin]]
+name = "log_anchor"
+path = "src/bin/log_anchor.rs"
 
 
 [[bin]]
