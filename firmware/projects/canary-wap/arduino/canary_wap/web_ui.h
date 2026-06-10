@@ -1111,6 +1111,62 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         </div>
       </div>
 
+      <!-- Microphone Card (PDM acoustic events) — hidden until
+           /api/audio/status confirms the feature is compiled in -->
+      <div class="card" id="micCard" style="display:none">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Microphone</div>
+            <div class="card-subtitle" id="micSubtitle">Smoke/CO alarm cadence detection (T3/T4)</div>
+          </div>
+          <div class="badge info" id="micBadge">
+            <span class="badge-dot"></span>
+            <span id="micBadgeText">--</span>
+          </div>
+        </div>
+        <div style="margin:0.5rem 0 1rem;">
+          <div class="stat-label" style="margin-bottom:0.3rem;">Sound level</div>
+          <div style="height:8px;border-radius:4px;background:rgba(128,128,128,0.2);overflow:hidden;">
+            <div id="micLevelBar" style="height:100%;width:0%;border-radius:4px;background:var(--success);transition:width 0.4s;"></div>
+          </div>
+        </div>
+        <div class="stats-grid">
+          <div class="stat-item">
+            <div class="stat-label">Smoke (T3)</div>
+            <div class="stat-value" id="micT3">0</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-label">CO (T4)</div>
+            <div class="stat-value" id="micT4">0</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-label">Knock</div>
+            <div class="stat-value" id="micKnock">0</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-label">Doorbell</div>
+            <div class="stat-value" id="micDoorbell">0</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-label">Glass Break</div>
+            <div class="stat-value" id="micGlass">0</div>
+          </div>
+        </div>
+        <div class="toggle-row" style="margin-top:1rem;">
+          <div class="toggle-info">
+            <div class="toggle-title">Mute microphone</div>
+            <div class="toggle-desc">Hard mute: releases the I2S driver and tri-states the mic pins. Persists across reboots.</div>
+          </div>
+          <label style="cursor:pointer;">
+            <input type="checkbox" id="micMuted" onchange="toggleMicMute()">
+          </label>
+        </div>
+        <div style="margin-top:1rem;display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;">
+          <button class="btn btn-secondary btn-sm" id="micSelftestBtn" onclick="startMicSelftest()">Test with your alarm (30 s)</button>
+          <span id="micSelftestResult" style="font-size:0.85rem;color:var(--muted);">Press your smoke/CO alarm's TEST button during the window.</span>
+        </div>
+      </div>
+
       <!-- GPS Status Card -->
       <div class="card">
         <div class="card-header">
@@ -2527,6 +2583,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       refreshRfStatus();
       refreshWifiPresence();
       refreshAudibleChirpStatus();
+      refreshMicStatus();
     }
 
     function startDashboard() {
@@ -3806,6 +3863,93 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         state.textContent = 'Unavailable';
         mode.textContent = 'Mode: Not compiled (FEATURE_AUDIBLE_CHIRP=0)';
       }
+    }
+
+    // ── Microphone (PDM acoustic events) ─────────────────────────────
+    // The card stays hidden unless /api/audio/status answers ok:true, so
+    // builds without FEATURE_ACOUSTIC_EVENTS (the endpoint 404s) never
+    // show a dead panel.
+    let micSelftestTimer = null;
+
+    async function refreshMicStatus() {
+      const card = document.getElementById('micCard');
+      if (!card) return;
+      const data = await api('/api/audio/status');
+      if (!data.ok) { card.style.display = 'none'; return; }
+      card.style.display = '';
+
+      const badge = document.getElementById('micBadge');
+      const badgeText = document.getElementById('micBadgeText');
+      if (data.muted) {
+        badge.className = 'badge warning';
+        badgeText.textContent = 'Muted';
+      } else if (data.running) {
+        badge.className = 'badge success';
+        badgeText.textContent = 'Listening';
+      } else {
+        badge.className = 'badge info';
+        badgeText.textContent = 'Off';
+      }
+      document.getElementById('micMuted').checked = !!data.muted;
+      document.getElementById('micT3').textContent = data.t3_detected || 0;
+      document.getElementById('micT4').textContent = data.t4_detected || 0;
+      document.getElementById('micKnock').textContent = data.knock_detected || 0;
+      document.getElementById('micDoorbell').textContent = data.doorbell_detected || 0;
+      document.getElementById('micGlass').textContent = data.glass_break_detected || 0;
+      // RMS is 0..65535 but a normal room sits well under ~3000; scale so
+      // typical levels are visible and loud sounds peg the bar.
+      const pct = Math.min(100, Math.round((data.last_rms || 0) / 30));
+      document.getElementById('micLevelBar').style.width = (data.muted ? 0 : pct) + '%';
+    }
+
+    async function toggleMicMute() {
+      const box = document.getElementById('micMuted');
+      const muted = box.checked;
+      const data = await api('/api/audio/mute', 'POST', { muted });
+      if (!data.ok) {
+        box.checked = !muted;  // revert; the device refused
+        return;
+      }
+      if (muted && data.persisted === false) {
+        document.getElementById('micSubtitle').textContent =
+          'Muted now, but NOT saved (storage error) — the mic re-arms on reboot';
+      }
+      setTimeout(refreshMicStatus, 500);  // let the deferred toggle apply
+    }
+
+    async function startMicSelftest() {
+      const btn = document.getElementById('micSelftestBtn');
+      const out = document.getElementById('micSelftestResult');
+      const data = await api('/api/audio/selftest', 'POST', { action: 'start', duration_ms: 30000 });
+      if (!data.ok) {
+        out.style.color = 'var(--danger)';
+        out.textContent = (data.error === 'mic_muted')
+          ? 'Unmute the microphone first.' : 'Could not start the test.';
+        return;
+      }
+      btn.disabled = true;
+      out.style.color = 'var(--muted)';
+      out.textContent = 'Listening… press and hold your alarm\'s TEST button now.';
+      if (micSelftestTimer) clearInterval(micSelftestTimer);
+      micSelftestTimer = setInterval(async () => {
+        const st = await api('/api/audio/selftest');
+        if (!st.ok) return;
+        if (st.matched_type && st.matched_type !== 0) {
+          clearInterval(micSelftestTimer); micSelftestTimer = null;
+          btn.disabled = false;
+          out.style.color = 'var(--success)';
+          out.textContent = 'Heard it! Matched ' +
+            (st.matched_name || 'alarm') + ' at ' + st.matched_conf + '% confidence.';
+        } else if (!st.active) {
+          clearInterval(micSelftestTimer); micSelftestTimer = null;
+          btn.disabled = false;
+          out.style.color = 'var(--danger)';
+          out.textContent = 'No alarm cadence heard (' + (st.transitions_seen || 0) +
+            ' sound transitions seen). Move the device closer and retry.';
+        } else {
+          out.textContent = 'Listening… ' + Math.ceil((st.remaining_ms || 0) / 1000) + 's left.';
+        }
+      }, 2000);
     }
 
     async function playAudibleChirp(pattern) {

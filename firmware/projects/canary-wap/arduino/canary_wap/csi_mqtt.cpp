@@ -63,6 +63,15 @@ std::atomic<bool>        s_backfill_pending{false};
  * take_pending_install / take_pending_auto. */
 std::atomic<bool>        s_pending_install{false};
 std::atomic<int>         s_pending_auto{-1};
+#if FEATURE_ACOUSTIC_EVENTS
+/* Inbound mic-mute commands follow the same latch-and-drain pattern:
+ * the I2S lifecycle belongs to the main loop (audio_mute defers the
+ * driver teardown to audio_process), so the handler only records the
+ * request. Cached state mirrors s_last_update_auto for the reconnect
+ * republish. */
+std::atomic<int>         s_pending_mic{-1};
+std::atomic<int>         s_last_mic_state{-1};
+#endif
 /* Cached update-entity state for the reconnect republish (same reason
  * the retained status republish exists: HA must not sit at "unknown"
  * after a broker restart). */
@@ -166,6 +175,24 @@ void mqtt_event_handler(void* /*handler_args*/, esp_event_base_t /*base*/,
           publish_raw(auto_topic, pl, strlen(pl), /*retain=*/true);
         }
       }
+#if FEATURE_ACOUSTIC_EVENTS
+      /* Mic-mute switch: subscribe to the command topic and republish
+       * the cached state, same reconnect-reconcile dance as the
+       * update entity above. */
+      {
+        char mic_cmd_topic[192];
+        build_topic(mic_cmd_topic, sizeof(mic_cmd_topic), "mic/cmd");
+        esp_mqtt_client_subscribe(s_client, mic_cmd_topic, /*qos=*/1);
+
+        const int mic_state = s_last_mic_state.load(std::memory_order_relaxed);
+        if (mic_state >= 0) {
+          char mic_state_topic[192];
+          build_topic(mic_state_topic, sizeof(mic_state_topic), "mic/state");
+          const char* pl = mic_state ? "muted" : "live";
+          publish_raw(mic_state_topic, pl, strlen(pl), /*retain=*/true);
+        }
+      }
+#endif
       /* Flag the main loop to walk the SD log and backfill any events
        * the broker missed during the outage. We don't drain here
        * because the MQTT event handler runs on its own task and a
@@ -190,7 +217,15 @@ void mqtt_event_handler(void* /*handler_args*/, esp_event_base_t /*base*/,
                                memcmp(e->topic, update_cmd, tlen) == 0);
       const bool is_auto = (tlen == strlen(auto_cmd) &&
                             memcmp(e->topic, auto_cmd, tlen) == 0);
-      if (!is_install && !is_auto) break;
+#if FEATURE_ACOUSTIC_EVENTS
+      char mic_cmd[192];
+      build_topic(mic_cmd, sizeof(mic_cmd), "mic/cmd");
+      const bool is_mic = (tlen == strlen(mic_cmd) &&
+                           memcmp(e->topic, mic_cmd, tlen) == 0);
+#else
+      const bool is_mic = false;
+#endif
+      if (!is_install && !is_auto && !is_mic) break;
 
       const char* p = e->data;
       int n = e->data_len;
@@ -199,6 +234,32 @@ void mqtt_event_handler(void* /*handler_args*/, esp_event_base_t /*base*/,
         return c == ' ' || c == '\t' || c == '\r' || c == '\n' ||
                c == '"' || c == '}' || c == '\0';
       };
+
+#if FEATURE_ACOUSTIC_EVENTS
+      if (is_mic) {
+        /* Accept the core securacv_mqtt vocabulary ("mute"/"unmute")
+         * plus HA's default switch payloads (ON = muted, OFF = live)
+         * so the discovery payload below and hand-rolled automations
+         * both work. */
+        if (n >= 6 && memcmp(p, "unmute", 6) == 0 &&
+            (n == 6 || at_boundary(p[6]))) {
+          s_pending_mic.store(0, std::memory_order_relaxed);
+        } else if (n >= 4 && memcmp(p, "mute", 4) == 0 &&
+                   (n == 4 || at_boundary(p[4]))) {
+          s_pending_mic.store(1, std::memory_order_relaxed);
+        } else if (n >= 2 && (p[0] == 'O' || p[0] == 'o') &&
+                             (p[1] == 'N' || p[1] == 'n') &&
+                   (n == 2 || at_boundary(p[2]))) {
+          s_pending_mic.store(1, std::memory_order_relaxed);
+        } else if (n >= 3 && (p[0] == 'O' || p[0] == 'o') &&
+                             (p[1] == 'F' || p[1] == 'f') &&
+                             (p[2] == 'F' || p[2] == 'f') &&
+                   (n == 3 || at_boundary(p[3]))) {
+          s_pending_mic.store(0, std::memory_order_relaxed);
+        }
+        break;
+      }
+#endif
 
       if (is_install) {
         if (n >= 7 && memcmp(p, "install", 7) == 0 &&
@@ -712,6 +773,33 @@ int take_pending_auto() {
   return s_pending_auto.exchange(-1, std::memory_order_relaxed);
 }
 
+#if FEATURE_ACOUSTIC_EVENTS
+void publish_sensing(const char* json_payload) {
+  if (!json_payload) return;
+  char topic[192];
+  build_topic(topic, sizeof(topic), "sensing");
+  /* Retained so a Home Assistant restart re-acquires the latest
+   * acoustic snapshot immediately rather than sitting at "Unknown"
+   * until the next publish. */
+  publish_raw(topic, json_payload, strlen(json_payload), /*retain=*/true);
+}
+
+void publish_mic_state(bool muted) {
+  /* Cache first so the CONNECTED republish reflects the latest state
+   * even when this publish happens while disconnected (e.g. the boot
+   * state is recorded before the broker session is up). */
+  s_last_mic_state.store(muted ? 1 : 0, std::memory_order_relaxed);
+  char topic[192];
+  build_topic(topic, sizeof(topic), "mic/state");
+  const char* pl = muted ? "muted" : "live";
+  publish_raw(topic, pl, strlen(pl), /*retain=*/true);
+}
+
+int take_pending_mic_mute() {
+  return s_pending_mic.exchange(-1, std::memory_order_relaxed);
+}
+#endif  /* FEATURE_ACOUSTIC_EVENTS */
+
 void publish_counts(uint32_t total) {
   char topic[192];
   build_topic(topic, sizeof(topic), "counts");
@@ -971,6 +1059,30 @@ const DiscoveryEntity ENTITIES[] = {
   { "sensor", "beacon_active_template", "Beacon Active Alarm", "beacon",
     "{{ value_json.active_template | default('') }}",
     nullptr, nullptr, nullptr, "mdi:alarm-light-outline" },
+
+#if FEATURE_ACOUSTIC_EVENTS
+  /* Acoustic events — ride the retained /sensing topic, edge-triggered
+   * via the `acoustic_event` string. The main loop clears the string
+   * back to "none" after a 30 s hold, which flips these binary sensors
+   * OFF — same contract as the canary core's securacv_mqtt. */
+  { "binary_sensor", "smoke_alarm", "Smoke Alarm Heard", "sensing",
+    "{{ 'ON' if value_json.acoustic_event == 'smoke_alarm_t3' else 'OFF' }}",
+    nullptr, "smoke", nullptr, nullptr },
+  { "binary_sensor", "co_alarm", "CO Alarm Heard", "sensing",
+    "{{ 'ON' if value_json.acoustic_event == 'co_alarm_t4' else 'OFF' }}",
+    nullptr, "carbon_monoxide", nullptr, nullptr },
+#if FEATURE_ACOUSTIC_TRANSIENTS
+  { "binary_sensor", "knock", "Knock Detected", "sensing",
+    "{{ 'ON' if value_json.acoustic_event == 'knock' else 'OFF' }}",
+    nullptr, "sound", nullptr, "mdi:door" },
+  { "binary_sensor", "doorbell", "Doorbell Detected", "sensing",
+    "{{ 'ON' if value_json.acoustic_event == 'doorbell' else 'OFF' }}",
+    nullptr, "sound", nullptr, "mdi:bell-ring" },
+  { "binary_sensor", "glass_break", "Glass Break Detected", "sensing",
+    "{{ 'ON' if value_json.acoustic_event == 'glass_break' else 'OFF' }}",
+    nullptr, "sound", nullptr, "mdi:image-broken-variant" },
+#endif
+#endif
 };
 
 /* Emit one entity's config payload. Returns true on enqueue success.
@@ -1111,6 +1223,53 @@ bool publish_update_discovery() {
   return publish_raw(topic, body, (size_t)n, /*retain=*/true);
 }
 
+#if FEATURE_ACOUSTIC_EVENTS
+/* Mic hard-mute switch. Same command-topic shape as the auto-update
+ * switch; payload vocabulary matches the canary core's securacv_mqtt
+ * (HA "switch ON" = muted, state strings "muted"/"live") so existing
+ * automations written against the core firmware carry over. */
+bool publish_mic_discovery() {
+  const char* prefix = s_active_cfg.prefix[0] ? s_active_cfg.prefix : DEFAULT_PREFIX;
+
+  char topic[192];
+  const int tn = snprintf(topic, sizeof(topic),
+                          "%s/switch/canary_%s/mic_mute/config",
+                          DISCOVERY_PREFIX, s_device_id);
+  if (tn <= 0 || (size_t)tn >= sizeof(topic)) return false;
+
+  char body[768];
+  const int n = snprintf(body, sizeof(body),
+    "{"
+      "\"name\":\"Microphone Mute\","
+      "\"uniq_id\":\"canary_%s_mic_mute\","
+      "\"stat_t\":\"%s/%s/mic/state\","
+      "\"cmd_t\":\"%s/%s/mic/cmd\","
+      "\"pl_on\":\"mute\","
+      "\"pl_off\":\"unmute\","
+      "\"stat_on\":\"muted\","
+      "\"stat_off\":\"live\","
+      "\"ic\":\"mdi:microphone-off\","
+      "\"ent_cat\":\"config\","
+      "\"avty_t\":\"%s/%s/status\","
+      "\"avty_tpl\":\"{{ 'online' if value_json.online else 'offline' }}\","
+      "\"dev\":{"
+        "\"ids\":[\"canary_%s\"],"
+        "\"name\":\"Canary %s\","
+        "\"mf\":\"SecuraCV\","
+        "\"mdl\":\"Canary WAP\","
+        "\"sw\":\"%s\""
+      "}"
+    "}",
+    s_device_id,
+    prefix, s_device_id,
+    prefix, s_device_id,
+    prefix, s_device_id,
+    s_device_id, s_device_id, s_firmware_version);
+  if (n <= 0 || (size_t)n >= sizeof(body)) return false;
+  return publish_raw(topic, body, (size_t)n, /*retain=*/true);
+}
+#endif  /* FEATURE_ACOUSTIC_EVENTS */
+
 }  /* namespace */
 
 /* Publish all discovery payloads. Called from MQTT_EVENT_CONNECTED
@@ -1137,6 +1296,10 @@ void publish_discovery() {
   /* Firmware update entity + auto-update switch (command topics, so
    * they don't fit the DiscoveryEntity table). */
   publish_update_discovery();
+#if FEATURE_ACOUSTIC_EVENTS
+  /* Mic hard-mute switch — command topic, same exception. */
+  publish_mic_discovery();
+#endif
   publish_triggers();
 }
 
@@ -1313,6 +1476,14 @@ void remove_discovery() {
           publish_raw(topic, "", 0, /*retain=*/true)) {
         removed++;
       }
+#if FEATURE_ACOUSTIC_EVENTS
+      tn = snprintf(topic, sizeof(topic), "%s/switch/canary_%s/mic_mute/config",
+                    DISCOVERY_PREFIX, s_device_id);
+      if (tn > 0 && (size_t)tn < sizeof(topic) &&
+          publish_raw(topic, "", 0, /*retain=*/true)) {
+        removed++;
+      }
+#endif
     }
   }
   Serial.printf("[MQTT] discovery removal: %u entries cleared\n",

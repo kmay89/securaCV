@@ -257,6 +257,16 @@ jobs:
           chmod +x firmware/scripts/check_ota_sync.sh
           firmware/scripts/check_ota_sync.sh
 
+      - name: Verify acoustic module copy in canary-wap sketch dir matches canonical source
+        # securacv_audio is canonical at firmware/canary/lib/securacv_audio/src/
+        # and vendored next to the sketch. Unlike the other copies it carries
+        # four documented adaptations (log-enum vocabulary, build_config
+        # feature gate), so the script normalizes both sides before diffing —
+        # any change beyond those adaptations must land in BOTH copies.
+        run: |
+          chmod +x firmware/scripts/check_audio_sync.sh
+          firmware/scripts/check_audio_sync.sh
+
   regression-check:
     name: Regression Guards
     runs-on: ubuntu-latest
