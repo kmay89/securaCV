@@ -378,7 +378,9 @@ fn handle_connection(
         // `/status` (storage health) is token-gated like `/events`: storage
         // metrics are operational metadata and stay behind the capability
         // token (Invariant III posture — only `/health` liveness is open).
-        ("GET", "/events") | ("GET", "/events/latest") | ("GET", "/digest")
+        ("GET", "/events")
+        | ("GET", "/events/latest")
+        | ("GET", "/digest")
         | ("GET", "/status") => {}
         // POST /verify carries no body — verification has no parameters and
         // request parsing stays at the 8 KB header-only surface.

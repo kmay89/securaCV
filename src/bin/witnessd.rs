@@ -302,6 +302,14 @@ fn main() -> Result<()> {
                 Ok(ev) => ev,
                 Err(e) => {
                     pipeline.events_rejected += 1;
+                    // Count genuine sealed-log write faults for the storage
+                    // health monitor; contract/allowlist rejections are
+                    // normal privacy enforcement, not a disk symptom.
+                    if witness_kernel::storage_health::is_storage_error(&e) {
+                        if let Some(counter) = &storage_write_errors {
+                            counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        }
+                    }
                     log::warn!("event rejected: {}", e);
                     continue;
                 }

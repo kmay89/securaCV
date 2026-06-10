@@ -166,9 +166,11 @@ static void persist_sd_counters() {
 }
 
 static void update_wear() {
-  /* Snapshot the 64-bit counter under the same lock the writers take. */
+  /* Snapshot the counters under the same lock the writers take —
+   * s_sd_writes_since_persist is also mutated in diag_record_sd_write_bytes. */
   portENTER_CRITICAL(&s_sd_mux);
   const uint64_t lifetime_bytes = s_sd.lifetime_bytes;
+  const uint32_t writes_since_persist = s_sd_writes_since_persist;
   portEXIT_CRITICAL(&s_sd_mux);
 
   /* Wear estimate against the configured endurance rating. Conservative
@@ -196,12 +198,16 @@ static void update_wear() {
    * never becomes its own NVS-wear source. Worst case a crash undercounts
    * by one batch. */
   uint32_t now = millis();
-  bool due = (s_sd_writes_since_persist >= DIAG_SD_PERSIST_EVERY_WRITES) ||
-             (s_sd_writes_since_persist > 0 &&
+  bool due = (writes_since_persist >= DIAG_SD_PERSIST_EVERY_WRITES) ||
+             (writes_since_persist > 0 &&
               (int32_t)(now - s_sd_last_persist_ms) >= (int32_t)DIAG_SD_PERSIST_INTERVAL_MS);
   if (due) {
     persist_sd_counters();
-    s_sd_writes_since_persist = 0;
+    /* Subtract the snapshot rather than zeroing: writes recorded between
+     * the snapshot and here stay pending for the next persist batch. */
+    portENTER_CRITICAL(&s_sd_mux);
+    s_sd_writes_since_persist -= writes_since_persist;
+    portEXIT_CRITICAL(&s_sd_mux);
     s_sd_last_persist_ms = now;
   }
 }

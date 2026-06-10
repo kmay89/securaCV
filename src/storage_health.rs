@@ -179,6 +179,15 @@ pub struct Observation {
     pub write_errors_24h: u64,
 }
 
+/// True when an error chain bottoms out in the SQLite layer — a genuine
+/// storage-side failure. Lets callers distinguish sealed-log write faults
+/// (which the health monitor must count) from contract/allowlist rejections
+/// (normal privacy enforcement, not a disk symptom) on the same `Result`.
+pub fn is_storage_error(err: &anyhow::Error) -> bool {
+    err.chain()
+        .any(|cause| cause.downcast_ref::<rusqlite::Error>().is_some())
+}
+
 /// Worst-of classification across free space, wear, and recent write errors.
 pub fn classify(obs: &Observation, t: &StorageHealthThresholds) -> StorageHealthStatus {
     let mut status = StorageHealthStatus::Good;
@@ -363,13 +372,31 @@ struct HealthState {
 
 fn load_state(path: &Path) -> HealthState {
     match std::fs::read_to_string(path) {
-        Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),
+        Ok(raw) => match serde_json::from_str(&raw) {
+            Ok(state) => state,
+            Err(err) => {
+                // Fail loud, not fatal: a corrupt state file means the wear
+                // history restarts at zero, which an operator must know about
+                // — but it must not take down health monitoring itself.
+                log::error!(
+                    "storage health: state file {} is corrupt ({}); lifetime \
+                     wear history resets to zero",
+                    path.display(),
+                    err
+                );
+                HealthState::default()
+            }
+        },
+        // Missing file is the normal first-boot case.
         Err(_) => HealthState::default(),
     }
 }
 
 fn store_state(path: &Path, state: &HealthState) -> Result<()> {
     let raw = serde_json::to_string(state)?;
+    // Write-to-temp + rename so a power cut mid-write can never leave a
+    // truncated state file behind (rename is atomic on POSIX filesystems).
+    let tmp_path = path.with_extension("json.tmp");
     #[cfg(unix)]
     {
         use std::io::Write;
@@ -379,11 +406,13 @@ fn store_state(path: &Path, state: &HealthState) -> Result<()> {
             .create(true)
             .truncate(true)
             .mode(0o600)
-            .open(path)?;
+            .open(&tmp_path)?;
         f.write_all(raw.as_bytes())?;
+        f.sync_all()?;
     }
     #[cfg(not(unix))]
-    std::fs::write(path, raw)?;
+    std::fs::write(&tmp_path, raw)?;
+    std::fs::rename(&tmp_path, path)?;
     Ok(())
 }
 
@@ -469,7 +498,7 @@ impl StorageHealthMonitor {
             .unwrap_or_default()
             .as_secs();
 
-        let space = read_fs_space(self.db_path.parent().unwrap_or(Path::new(".")));
+        let space = read_fs_space(parent_dir(&self.db_path));
         let (free_bytes, total_bytes) = match space {
             Some((free, total)) => (Some(free), Some(total)),
             None => (None, None),
@@ -575,6 +604,16 @@ fn file_size(path: &Path) -> u64 {
     std::fs::metadata(path).map(|m| m.len()).unwrap_or(0)
 }
 
+/// Directory containing `path`, for filesystem probes. A bare relative
+/// filename like `"witness.db"` (the default `db_path`) has `parent() ==
+/// Some("")`, which `statvfs`/`canonicalize` reject — map it to `"."`.
+fn parent_dir(path: &Path) -> &Path {
+    match path.parent() {
+        Some(dir) if !dir.as_os_str().is_empty() => dir,
+        _ => Path::new("."),
+    }
+}
+
 // -------------------- Linux probes --------------------
 
 #[cfg(target_os = "linux")]
@@ -635,8 +674,7 @@ fn read_soc_temp_c() -> Option<f32> {
 /// device via `/sys/block`.
 #[cfg(target_os = "linux")]
 fn detect_block_device(db_path: &Path) -> Option<String> {
-    let dir = db_path.parent().unwrap_or(Path::new("."));
-    let canon = dir.canonicalize().ok()?;
+    let canon = parent_dir(db_path).canonicalize().ok()?;
     let mounts = std::fs::read_to_string("/proc/self/mounts").ok()?;
     let mut best: Option<(usize, String)> = None;
     for line in mounts.lines() {
@@ -917,6 +955,45 @@ mod tests {
             load_state(&dir.path().join("missing.json")).lifetime_bytes_written,
             0
         );
+    }
+
+    #[test]
+    fn parent_dir_handles_bare_relative_paths() {
+        // Default config db_path is a bare filename; parent() yields Some("")
+        // which statvfs/canonicalize reject.
+        assert_eq!(parent_dir(Path::new("witness.db")), Path::new("."));
+        assert_eq!(
+            parent_dir(Path::new("/var/lib/witness.db")),
+            Path::new("/var/lib")
+        );
+        assert_eq!(parent_dir(Path::new("data/witness.db")), Path::new("data"));
+        assert_eq!(parent_dir(Path::new("/")), Path::new("."));
+    }
+
+    #[test]
+    fn storage_errors_distinguished_from_contract_rejections() {
+        let sqlite_err = anyhow::Error::from(rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_IOERR),
+            Some("disk I/O error".to_string()),
+        ))
+        .context("appending sealed event");
+        assert!(is_storage_error(&sqlite_err));
+
+        let contract_err = anyhow::anyhow!("event type not allowed for module");
+        assert!(!is_storage_error(&contract_err));
+    }
+
+    #[test]
+    fn corrupt_state_file_resets_loudly_but_does_not_fail() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.json");
+        std::fs::write(&path, "{truncated").unwrap();
+        let state = load_state(&path);
+        assert_eq!(state.lifetime_bytes_written, 0);
+        // The atomic store leaves no temp file behind.
+        store_state(&path, &state).unwrap();
+        assert!(!path.with_extension("json.tmp").exists());
+        assert_eq!(load_state(&path).lifetime_bytes_written, 0);
     }
 
     #[test]
