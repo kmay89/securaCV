@@ -26,7 +26,7 @@ ed25519-dalek = "2.1"
 pqcrypto-mldsa = { version = "0.1", optional = true }
 pqcrypto-traits = { version = "0.3", optional = true }
 pqcrypto-mlkem = { version = "0.1", optional = true }
-ctrlc = "3.4"
+ctrlc = { version = "3.4", features = ["termination"] }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"], optional = true }
 ureq = { version = "3.0", optional = true }
 url = { version = "2.5", optional = true }
@@ -47,8 +47,12 @@ subtle = "2.5"
 trybuild = "1.0.89"
 tempfile = "3.10"
 
-[target.'cfg(target_os = "linux")'.dependencies]
+# libc is needed on every Unix (statvfs free-space preflight in witnessd);
+# seccomp is Linux-only.
+[target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
 libseccomp = "0.4"
 libseccomp-sys = "0.3"
 
