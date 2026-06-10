@@ -3,6 +3,10 @@ mqtt:
   port: 1883
   topic_prefix: frigate
   client_id: frigate
+  # Frigate substitutes FRIGATE_-prefixed environment variables (set in
+  # docker-compose.yml) into these placeholders at startup.
+  user: "{FRIGATE_MQTT_USER}"
+  password: "{FRIGATE_MQTT_PASSWORD}"
 
 record:
   enabled: false

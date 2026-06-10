@@ -2,6 +2,20 @@
 
 This guide explains how to integrate the Privacy Witness Kernel with [Frigate NVR](https://frigate.video) for Home Assistant users.
 
+## Frigate Compatibility
+
+Tested against the Frigate 0.14–0.17 MQTT schema:
+
+| Topic | Supported | Notes |
+|-------|-----------|-------|
+| `<prefix>/events` | All versions | Default. "new" events only; updates/ends/false-positives skipped |
+| `<prefix>/reviews` | Frigate 0.14+ | Opt-in (`enable_reviews`). Real before/after schema with `severity` |
+
+The topic prefix follows Frigate's `mqtt.topic_prefix` (default `frigate`) —
+set `frigate.topic_prefix` (add-on) or `FRIGATE_TOPIC_PREFIX` (Docker
+sidecar) if you changed it. The camera+label-per-bucket dedup means
+enabling reviews on top of events never double-logs a detection.
+
 ## Why Use Both?
 
 | System | Strengths | Limitations |
@@ -23,39 +37,99 @@ This guide explains how to integrate the Privacy Witness Kernel with [Frigate NV
 
 ### 2. Configure for Frigate
 
+Open the add-on Web UI and click through the setup wizard — that's the
+whole configuration for most installs:
+
+- The **device key is generated automatically** (and persisted to
+  `/config/.securacv/device_key`; back it up — HA backups include it).
+- The **MQTT broker is auto-discovered** from the Supervisor when you run
+  the Mosquitto add-on: host, port, and credentials, nothing to type.
+- **HA sensors are on by default** (`mqtt_publish.enabled: true`).
+
+Manual YAML is only needed for an external broker or non-default Frigate
+topics:
+
 ```yaml
 # Mode: Use Frigate's detection instead of processing RTSP directly
 mode: "frigate"
 
-# Your unique device key (generate with: openssl rand -hex 32)
-device_key_seed: "your-64-character-hex-key-here"
+# Optional — auto-generated when left empty
+device_key_seed: ""
 
-# Frigate MQTT settings (defaults work for most HA setups)
+# Frigate MQTT settings. Empty host/credentials = auto-discover from the
+# Supervisor MQTT service (Mosquitto add-on).
 frigate:
-  mqtt_host: "core-mosquitto"   # HA's built-in broker
+  mqtt_host: ""                 # set only for an external broker
   mqtt_port: 1883
-  mqtt_topic: "frigate/events"
-  mqtt_username: ""             # Optional: MQTT authentication
+  topic_prefix: "frigate"       # match Frigate's mqtt.topic_prefix
+  enable_reviews: false         # also ingest <prefix>/reviews (0.14+)
+  mqtt_username: ""
   mqtt_password: ""
   min_confidence: 0.5           # Ignore low-confidence detections
   cameras: []                   # Empty = all cameras
   labels: ["person", "car", "dog", "cat"]
 
-# Enable MQTT publishing for automatic HA sensor creation
+# HA sensor creation via MQTT Discovery (on by default)
 mqtt_publish:
   enabled: true
 
 # How long to keep privacy-preserving events
 retention_days: 30
+
+# Hours between automatic sealed-log verifications (0 disables)
+verify_interval_hours: 24
 ```
 
 ### 3. Start the Add-on
 
 That's it! The add-on will:
-1. Subscribe to Frigate's MQTT events
+1. Subscribe to Frigate's MQTT events (and reviews, if enabled)
 2. Strip identity data (object IDs, coordinates, thumbnails)
 3. Coarsen timestamps to 10-minute buckets
 4. Write sanitized events to the sealed log
+5. Create HA entities automatically, including:
+   - `sensor.pwk_daily_digest` — rolling 24h summary (counts per zone,
+     coarse day periods)
+   - `binary_sensor.pwk_chain_problem` — sealed-log integrity (verified
+     automatically every `verify_interval_hours`)
+   - `button.pwk_verify_now` — one-click verification from any dashboard
+
+The add-on Web UI doubles as a status panel after setup: chain-integrity
+badge, 24h digest, a Verify Now button, and a **dashboard generator** that
+emits Lovelace YAML for your actual zones. For the morning summary on your
+phone, import the
+[daily digest blueprint](blueprints/securacv_daily_digest.yaml).
+
+---
+
+## Quick Start (Docker, no Home Assistant)
+
+Already running Frigate under Docker without HA? The sidecar image wraps
+witness_api + frigate_bridge + event_mqtt_bridge in one container:
+
+```bash
+# 1. Grab the quickstart compose file
+curl -fsSLO https://raw.githubusercontent.com/kmay89/securaCV/main/docker/sidecar/quickstart.compose.yml
+
+# 2. Set FRIGATE_MQTT_HOST in it to the broker Frigate publishes to, then:
+docker compose -f quickstart.compose.yml up -d
+
+# 3. Diagnose the integration end-to-end (broker, auth, Frigate traffic,
+#    sealed-log verification):
+docker compose -f quickstart.compose.yml run --rm securacv doctor
+```
+
+The device key is generated on first start into the `securacv_data` volume
+(back it up). No broker yet? Use
+`docker/sidecar/quickstart-with-broker.compose.yml`, which bundles
+Mosquitto. The full environment-variable contract is documented at the top
+of [`docker/sidecar/entrypoint.sh`](../docker/sidecar/entrypoint.sh).
+
+Verify the sealed log from the host at any time:
+
+```bash
+docker compose exec securacv sh -c 'DEVICE_KEY_SEED=$(cat /data/device_key) log_verify --db /data/witness.db'
+```
 
 ---
 

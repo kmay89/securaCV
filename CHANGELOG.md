@@ -1,5 +1,46 @@
 # Changelog
 
+## [Unreleased]
+
+### Frigate zero-friction release (add-on 0.6.0)
+
+- **Zero-config HA add-on**: the broker is auto-discovered from the
+  Supervisor MQTT service (`services: mqtt:want`; explicit options still
+  win), the device key is auto-generated and persisted (0600) when absent,
+  `mqtt_publish.enabled` defaults to `true`, and the ingress Web UI is now
+  a persistent status panel (chain badge, 24h digest, Verify Now, Lovelace
+  dashboard generator) instead of a first-run-only wizard.
+- **Docker sidecar** (`docker/sidecar/`, published as
+  `ghcr.io/kmay89/securacv-sidecar`): one container (witness_api +
+  frigate_bridge + event_mqtt_bridge + log_verify) for standalone Frigate
+  users; only `FRIGATE_MQTT_HOST` is required. Includes an
+  `entrypoint.sh doctor` diagnostic (broker reachability/auth, live
+  Frigate traffic, sealed-log verification) and quickstart compose files.
+  Repairs `integrations/ha_frigate_mqtt/docker-compose.yml`, which built a
+  nonexistent Dockerfile.
+- **One-click verification**: new `POST /verify` on the event API runs the
+  full sealed-log check via the shared `verify_runner` (also the new core
+  of `log_verify`); exposed in HA as `button.pwk_verify_now` +
+  `binary_sensor.pwk_chain_problem`, with scheduled re-verification
+  (`verify_interval_hours`, default 24).
+- **Daily digest**: new `GET /digest` (rolling 24h, per-zone counts, 6-hour
+  day periods, cached verify outcome — built solely from the
+  privacy-filtered export path); exposed as `sensor.pwk_daily_digest` and
+  deliverable via the new `docs/blueprints/securacv_daily_digest.yaml`
+  blueprint (no entity-ID surgery).
+- **Frigate reviews + topic prefix**: `frigate_bridge` can subscribe to
+  `<prefix>/events` and `<prefix>/reviews` (`--frigate-topic-prefix`,
+  `--enable-reviews`); the reviews parser now handles the real Frigate
+  0.14+ before/after schema (the previous flat shape never matched live
+  payloads). Compatibility statement: tested against the Frigate 0.14–0.17
+  MQTT schema, with verbatim 0.17 fixtures in the test suite.
+- **Fixes**: `event_mqtt_bridge` daemon no longer 401s after the
+  10-minute capability-token rotation (token file re-read per request);
+  `frigate_bridge` honors retention via `--retention-secs` instead of a
+  hardcoded 7 days; `log_verify --device-key-seed` (env `DEVICE_KEY_SEED`)
+  derives both the SQLCipher and verifying keys for operator-friendly
+  verification of bridge-produced logs.
+
 ## [1.0.0] - Unreleased
 
 ### What v1.0 means
@@ -56,6 +97,12 @@ below — but nothing documented is allowed to be aspirational at the v1 tag.
     spawn.
   - **BLE presence adapter** (`adapter-ble-presence`): turns ESPresense-style room-presence MQTT
     feeds into coarse presence claims, deliberately discarding device identity.
+  - **Meshtastic LoRa-mesh adapter** (`adapter-meshtastic`): turns Meshtastic Detection Sensor
+    Module nodes (PIR/contact/acoustic on a GPIO, alerting over LoRa) into kilometre-scale,
+    off-grid witness sources via a gateway node's MQTT JSON uplink. Node ids are local routing
+    keys only; positions, precise timestamps, RSSI/SNR, and alert text are never retained
+    (export-scrub asserted in `tests/adapter_meshtastic.rs`). Inbound only; the outbound and
+    LoRa-transport directions are specified in `docs/meshtastic_integration.md`.
   - **Adapter observability**: per-adapter counters (polls/emitted/sealed/filtered/rejected +
     last-seal time) on the host, a periodic stats log, and an optional read-only `/stats` +
     `/healthz` HTTP endpoint (`stats_addr`) — operational counts only, never event content.
@@ -67,7 +114,7 @@ below — but nothing documented is allowed to be aspirational at the v1 tag.
     diagnostic sensor (per-adapter counters as attributes) via a dedicated coordinator — no
     hand-written YAML needed.
   - **Parser fuzz sweep** (`tests/adapter_parser_fuzz.rs`): seeded, panic-free robustness tests
-    over the untrusted webhook/mqtt/BLE/Frigate parsers.
+    over the untrusted webhook/mqtt/BLE/Frigate/Meshtastic parsers.
   - **Webhook mutual TLS**: optional client-certificate auth (`tls_client_ca`) — machine-to-machine
     sensors authenticate by certificate, with no shared secret on the wire.
   - **Prometheus metrics**: the stats endpoint serves `/metrics` (text exposition format) alongside

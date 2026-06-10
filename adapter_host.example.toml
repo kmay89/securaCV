@@ -3,7 +3,7 @@
 # Run with:
 #   DEVICE_KEY_SEED=$(openssl rand -hex 32) \
 #     cargo run --bin adapter_host \
-#     --features adapter-frigate,adapter-mqtt-sensor,adapter-webhook,adapter-webhook-tls,adapter-ble-presence,adapter-sandbox \
+#     --features adapter-frigate,adapter-mqtt-sensor,adapter-webhook,adapter-webhook-tls,adapter-ble-presence,adapter-meshtastic,adapter-sandbox \
 #     -- --config adapter_host.toml
 #
 # The adapter host runs many vendor-neutral sensor adapters behind one daemon. Every claim flows
@@ -149,6 +149,35 @@ topic = "espresense/devices/#"   # room is taken from the last topic segment
 room = "lobby"          # matched (case-insensitively) against the last topic segment
 zone = "lobby"          # logical zone the presence claim is attributed to
 max_distance = 4.0      # metres; present when reported distance <= this
+
+# ---------------------------------------------------------------------------
+# Adapter: Meshtastic LoRa mesh (Detection Sensor Module nodes)
+# Kilometre-scale, off-grid witness sources: a Meshtastic node with the Detection Sensor
+# Module (PIR / contact switch on a GPIO) alerts over LoRa; a gateway node uplinks to this
+# broker. Gateway config: MQTT module enabled=true AND json_enabled=true. Use a PRIVATE
+# channel with a non-default PSK — the default LongFast key is public, and the mesh is an
+# unauthenticated producer either way. Node ids are routing keys only; they never reach the
+# sealed log (positions, timestamps, and RSSI/SNR are never retained either).
+# See docs/meshtastic_integration.md.
+# ---------------------------------------------------------------------------
+[[adapter]]
+type = "meshtastic"
+mqtt_broker_addr = "127.0.0.1:1883"
+topic = "msh/+/2/json/+/+"      # JSON-mode uplinks; changing it needs a restart
+# mqtt_username = ""
+# mqtt_password = ""
+# sandbox = true
+
+# Each node maps an originating sensor node (the packet's `from`, NOT the gateway) to a
+# coarse claim kind in a logical zone. kind must be one of:
+#   presence_in_restricted_zone, contact_state_change, acoustic_impulse_in_zone
+[[adapter.node]]
+node_id = "!7d3a9f7f"           # !hex, bare hex, or decimal node number
+kind = "presence_in_restricted_zone"
+zone = "back_gate"
+# detection_name = "PIR"        # require the alert text to contain the sensor's configured
+#                               # name (also lets detection alerts ride plain text packets)
+# min_snr = -15.0               # optional RF quality floor; the value is never logged
 
 # ---------------------------------------------------------------------------
 # Optional hardening: set `sandbox = true` on ANY adapter above to run its
