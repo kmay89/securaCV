@@ -2964,11 +2964,19 @@ static esp_err_t handle_audio_mute(httpd_req_t* req) {
   }
   // Persist the intent so the next boot honors it via
   // audio_mute_sync_at_boot(). The witness-chain audit record is signed
-  // from the mute callback once the toggle is actually applied.
-  audio_save_mute_intent(muted);
+  // from the mute callback once the toggle is actually applied. The
+  // runtime mute still applies if NVS fails, but report it honestly —
+  // a "persistent" mute that reverts on reboot would mislead the user.
+  const bool persisted = audio_save_mute_intent(muted);
+  if (!persisted) {
+    log_health(SCV_LOG_WARNING, SCV_CAT_STORAGE,
+               "Mic mute intent NOT persisted", "NVS write failed");
+  }
 
-  return http_send_json(req, muted ? "{\"ok\":true,\"muted\":true}"
-                                   : "{\"ok\":true,\"muted\":false}");
+  char resp[80];
+  snprintf(resp, sizeof(resp), "{\"ok\":true,\"muted\":%s,\"persisted\":%s}",
+           muted ? "true" : "false", persisted ? "true" : "false");
+  return http_send_json(req, resp);
 }
 #endif
 
@@ -7512,6 +7520,10 @@ void setup() {
   // single-task-only (it touches the I2S driver synchronously), so it can
   // only be called while setup() is provably the sole task in play.
   #if FEATURE_ACOUSTIC_EVENTS
+  // Set when the device boots into the persisted-muted state; the witness
+  // record documenting it is deferred until AFTER the boot attestation is
+  // signed, so the attestation stays the first record of every boot.
+  bool mic_boot_muted = false;
   if (!in_safe_mode) {
     Serial.println("[..] Initializing PDM acoustic event detection...");
     audio_config_t audio_cfg = AUDIO_CONFIG_DEFAULT;
@@ -7526,8 +7538,9 @@ void setup() {
         cb.write_text("cycle_count"); cb.write_uint(evt->cycle_count);
         cb.write_text("time_bucket"); cb.write_uint(evt->time_bucket);
         if (cb.ok()) {
-          WitnessRecord rec;
-          create_witness_record(payload, cb.size(), RECORD_WITNESS_EVENT, &rec);
+          // Update g_last_record so /api/chain and /api/status report the
+          // event as the latest block, consistent with the chain head.
+          create_witness_record(payload, cb.size(), RECORD_WITNESS_EVENT, &g_last_record);
         }
         const bool life_safety =
             evt->event_type == AUDIO_EVENT_T3_SMOKE_ALARM ||
@@ -7549,8 +7562,7 @@ void setup() {
         cb.write_text("muted"); cb.write_uint(muted ? 1 : 0);
         cb.write_text("source"); cb.write_uint(source);
         if (cb.ok()) {
-          WitnessRecord rec;
-          create_witness_record(payload, cb.size(), RECORD_WITNESS_EVENT, &rec);
+          create_witness_record(payload, cb.size(), RECORD_WITNESS_EVENT, &g_last_record);
         }
         log_health(SCV_LOG_NOTICE, SCV_CAT_USER,
                    muted ? "Microphone muted" : "Microphone unmuted",
@@ -7569,20 +7581,9 @@ void setup() {
       const bool boot_ok = audio_mute_sync_at_boot(persisted_mute);
       if (persisted_mute) {
         Serial.println("[OK] Acoustic detector held MUTED by user (NVS)");
-        // Emit a boot-state mute record so the chain shows the device
-        // booted muted — lets investigators tell "muted before the
-        // incident" from "muted in response to it". Only on the muted
-        // path; the unmuted default would add one record per reboot.
-        uint8_t payload[96];
-        CborWriter cb(payload, sizeof(payload));
-        cb.write_map(3);
-        cb.write_text("event_type"); cb.write_text("mic_mute");
-        cb.write_text("muted"); cb.write_uint(1);
-        cb.write_text("source"); cb.write_uint(AUDIO_MUTE_SOURCE_BOOT);
-        if (cb.ok()) {
-          WitnessRecord rec;
-          create_witness_record(payload, cb.size(), RECORD_WITNESS_EVENT, &rec);
-        }
+        // The witness record documenting the muted boot is emitted after
+        // the boot attestation below — see mic_boot_muted.
+        mic_boot_muted = true;
       } else if (boot_ok && audio_is_running()) {
         Serial.println("[OK] Acoustic detector armed (T3 smoke / T4 CO)");
       } else {
@@ -7874,6 +7875,24 @@ void setup() {
     hex_print(g_last_record.chain_hash, 8);
     Serial.println("...");
   }
+
+  #if FEATURE_ACOUSTIC_EVENTS
+  // Sign the boot-state mute record now that the boot attestation anchors
+  // the chain. It shows the device booted muted — lets investigators tell
+  // "muted before the incident" from "muted in response to it". Only on
+  // the muted path; the unmuted default would add one record per reboot.
+  if (mic_boot_muted) {
+    uint8_t mute_payload[96];
+    CborWriter cb(mute_payload, sizeof(mute_payload));
+    cb.write_map(3);
+    cb.write_text("event_type"); cb.write_text("mic_mute");
+    cb.write_text("muted"); cb.write_uint(1);
+    cb.write_text("source"); cb.write_uint(AUDIO_MUTE_SOURCE_BOOT);
+    if (cb.ok()) {
+      create_witness_record(mute_payload, cb.size(), RECORD_WITNESS_EVENT, &g_last_record);
+    }
+  }
+  #endif
   
   // Log boot event
   log_health(SCV_LOG_INFO, SCV_CAT_SYSTEM, "Device boot complete", FIRMWARE_VERSION);

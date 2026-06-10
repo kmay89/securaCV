@@ -1110,9 +1110,10 @@ int process() {
     #if FEATURE_ACOUSTIC_TRANSIENTS
     /* Accumulate per-state band-ratio so we can summarize the just-
      * ended state into one byte at the next transition. Saturate the
-     * sum at 32 bits — at 16 kHz × 20 ms × 65535 max RMS we'd take
-     * thousands of seconds to overflow, but be safe. */
-    if (s_state_rms_sum < 0xF0000000UL) {
+     * sums with 2^31 headroom on the full-band gate — the HPF sum can
+     * grow up to ~2x the full-band sum, so gating at 0x7FFFFFFF keeps
+     * BOTH accumulators below uint32 range. */
+    if (s_state_rms_sum < 0x7FFFFFFFUL) {
       s_state_rms_sum     += rms;
       s_state_hpf_rms_sum += hpf_rms;
       s_state_frames++;
@@ -1154,7 +1155,7 @@ int process() {
        * fired immediately at boot) or full_avg==0 (silent state — the
        * ratio is undefined; report 100 = "no opinion"). */
       if (s_state_frames > 0 && s_state_rms_sum > 0) {
-        const uint32_t r = (s_state_hpf_rms_sum * 100u) / s_state_rms_sum;
+        const uint32_t r = (uint32_t)(((uint64_t)s_state_hpf_rms_sum * 100u) / s_state_rms_sum);
         prev_band_ratio = (uint8_t)(r > 200u ? 200u : r);
       }
       s_state_rms_sum = 0;
