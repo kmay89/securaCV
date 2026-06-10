@@ -285,7 +285,7 @@ bool witness_create_record_gps(const uint8_t* payload, size_t len, RecordType ty
   #if FEATURE_SD_STORAGE
   g_health.sd_writes++;
   #if FEATURE_DIAGNOSTICS
-  diag_record_sd_write(true);
+  diag_record_sd_write_bytes(sizeof(WitnessRecord), true);
   #endif
   #endif
 
