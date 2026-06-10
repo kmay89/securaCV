@@ -247,6 +247,16 @@
 #define AP_MAX_CONNECTIONS   1    // Hardened: max 1 client for security isolation
 
 // ════════════════════════════════════════════════════════════════
+// BLE DEFAULTS
+// ════════════════════════════════════════════════════════════════
+
+// BLE TX power in dBm (NimBLE 2.x setPower takes dBm directly, NOT an
+// ESP_PWR_LVL_* index). +9 dBm is the S3 maximum and matches canary-wap's
+// F5-audited NVS default; the XIAO ESP32S3 has no onboard antenna (U.FL +
+// external rod only), so the historically-effective +9 is the safe default.
+#define BLE_TX_POWER_DBM     9
+
+// ════════════════════════════════════════════════════════════════
 // TIMING & COARSENING
 // ════════════════════════════════════════════════════════════════
 
