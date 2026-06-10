@@ -1,3 +1,4 @@
+use crate::storage_health::SharedStorageHealth;
 use crate::{ExportOptions, Kernel, KernelConfig, TimeBucket};
 use anyhow::{anyhow, Result};
 use std::collections::HashMap;
@@ -141,11 +142,23 @@ impl CapabilityTokenManager {
 pub struct ApiServer {
     cfg: ApiConfig,
     kernel_cfg: KernelConfig,
+    storage_health: Option<SharedStorageHealth>,
 }
 
 impl ApiServer {
     pub fn new(cfg: ApiConfig, kernel_cfg: KernelConfig) -> Self {
-        Self { cfg, kernel_cfg }
+        Self {
+            cfg,
+            kernel_cfg,
+            storage_health: None,
+        }
+    }
+
+    /// Attach a storage-health snapshot shared with the witnessd main loop.
+    /// When attached, `GET /status` (token-gated) serves the latest report.
+    pub fn with_storage_health(mut self, snapshot: SharedStorageHealth) -> Self {
+        self.storage_health = Some(snapshot);
+        self
     }
 
     pub fn spawn(self) -> Result<ApiHandle> {
@@ -185,9 +198,17 @@ impl ApiServer {
         let shutdown_thread = shutdown.clone();
         let cfg = self.cfg.clone();
         let kernel_cfg = self.kernel_cfg.clone();
+        let storage_health = self.storage_health.clone();
         let token_path = cfg.token_path.clone();
         let join = std::thread::spawn(move || {
-            if let Err(err) = run_api(listener, cfg, kernel_cfg, &mut token_mgr, shutdown_thread) {
+            if let Err(err) = run_api(
+                listener,
+                cfg,
+                kernel_cfg,
+                storage_health,
+                &mut token_mgr,
+                shutdown_thread,
+            ) {
                 log::error!("event api stopped: {}", err);
             }
         });
@@ -275,11 +296,13 @@ fn run_api(
     listener: TcpListener,
     cfg: ApiConfig,
     kernel_cfg: KernelConfig,
+    storage_health: Option<SharedStorageHealth>,
     token_mgr: &mut CapabilityTokenManager,
     shutdown: Arc<AtomicBool>,
 ) -> Result<()> {
     let mut kernel = Kernel::open(&kernel_cfg)?;
     let expected_ruleset_hash = kernel_cfg.ruleset_hash;
+    let kernel_version = kernel_cfg.kernel_version.clone();
     let mut auth_tracker = AuthFailureTracker::new();
     loop {
         if shutdown.load(Ordering::SeqCst) {
@@ -293,6 +316,8 @@ fn run_api(
                     &cfg,
                     token_mgr,
                     expected_ruleset_hash,
+                    &kernel_version,
+                    storage_health.as_ref(),
                     &mut auth_tracker,
                 ) {
                     log::warn!("event api request rejected: {}", err);
@@ -308,12 +333,15 @@ fn run_api(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_connection(
     mut stream: TcpStream,
     kernel: &mut Kernel,
     cfg: &ApiConfig,
     token_mgr: &mut CapabilityTokenManager,
     expected_ruleset_hash: [u8; 32],
+    kernel_version: &str,
+    storage_health: Option<&SharedStorageHealth>,
     auth_tracker: &mut AuthFailureTracker,
 ) -> Result<()> {
     let peer = stream.peer_addr()?;
@@ -340,7 +368,10 @@ fn handle_connection(
             write_json_response(&mut stream, 200, r#"{"status":"ok"}"#)?;
             return Ok(());
         }
-        "/events" | "/events/latest" => {}
+        // `/status` is token-gated like `/events`: storage metrics are
+        // operational metadata and stay behind the capability token
+        // (Invariant III posture — only `/health` liveness is open).
+        "/events" | "/events/latest" | "/status" => {}
         _ => {
             write_json_response(&mut stream, 404, r#"{"error":"not_found"}"#)?;
             return Ok(());
@@ -388,6 +419,30 @@ fn handle_connection(
 
     // Successful auth — clear any failure history for this IP
     auth_tracker.clear_on_success(&peer.ip());
+
+    if request.path == "/status" {
+        let report = storage_health
+            .and_then(|shared| shared.read().ok().and_then(|guard| guard.as_ref().cloned()));
+        match report {
+            Some(report) => {
+                #[derive(serde::Serialize)]
+                struct StatusResponse<'a> {
+                    kernel_version: &'a str,
+                    #[serde(flatten)]
+                    report: crate::storage_health::StorageHealthReport,
+                }
+                let payload = serde_json::to_vec(&StatusResponse {
+                    kernel_version,
+                    report,
+                })?;
+                write_response(&mut stream, 200, "application/json", &payload)?;
+            }
+            // No snapshot yet (monitoring disabled, or first sample pending):
+            // 404 lets clients distinguish "not available" from an error.
+            None => write_json_response(&mut stream, 404, r#"{"error":"not_available"}"#)?,
+        }
+        return Ok(());
+    }
 
     let artifact = kernel.export_events_for_api(expected_ruleset_hash, cfg.export_options)?;
     if request.path == "/events/latest" {
