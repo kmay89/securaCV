@@ -243,7 +243,7 @@ class ServerCallbacks : public NimBLEServerCallbacks {
     if (g_settings.notify_on_connect) {
       char detail[80];
       snprintf(detail, sizeof(detail), "Duration: %lus, Reason: %d",
-               connected_duration / 1000, reason);
+               (unsigned long)(connected_duration / 1000), reason);
       log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "BLE device disconnected", detail);
     }
 

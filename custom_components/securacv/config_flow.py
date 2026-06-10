@@ -135,9 +135,11 @@ class SecuraCVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 },
             )
 
+        # Pre-fill with the prefix seen by MQTT discovery, if any.
+        default_prefix = self.context.get("mqtt_prefix", DEFAULT_MQTT_PREFIX)
         data_schema = vol.Schema(
             {
-                vol.Optional(CONF_MQTT_PREFIX, default=DEFAULT_MQTT_PREFIX): str,
+                vol.Optional(CONF_MQTT_PREFIX, default=default_prefix): str,
             }
         )
 
