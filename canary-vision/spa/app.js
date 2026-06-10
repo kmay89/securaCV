@@ -285,7 +285,13 @@ function isPrivateUrl(url) {
     if (hostname.match(/^192\.168\./)) return true;
     if (hostname.match(/^10\./)) return true;
     if (hostname.match(/^172\.(1[6-9]|2[0-9]|3[01])\./)) return true;
+    if (hostname.match(/^169\.254\./)) return true; // IPv4 link-local
     if (hostname === 'localhost' || hostname === '127.0.0.1') return true;
+    // IPv6 (URL.hostname keeps the brackets): loopback, link-local
+    // (fe80::/10), and Unique Local Addresses (fc00::/7).
+    if (hostname === '[::1]') return true;
+    if (hostname.match(/^\[fe80:/i)) return true;
+    if (hostname.match(/^\[f[cd]/i)) return true;
     return false;
   } catch (e) {
     return false;
@@ -1522,7 +1528,9 @@ var RECEIPT_POLL_TICKS = 30; // x 2 s = 60 s listening window
 // The device API requires X-Canary-Token auth and CORS/PNA middleware
 // provides additional browser-level isolation.
 function normalizeBaseUrl(host) {
-  var baseUrl = (host || '').trim();
+  // Receipts arrive from QR codes and pasted JSON — host may be any type.
+  if (typeof host !== 'string') return '';
+  var baseUrl = host.trim();
   if (!baseUrl) return '';
   if (baseUrl.indexOf('http') !== 0) baseUrl = 'http://' + baseUrl;
   return baseUrl.replace(/\/+$/, '');
@@ -1610,11 +1618,11 @@ function applyDeviceName(device, newName) {
   }).then(function (resp) {
     var updates = { name: resp.device_name || newName };
     // If we reach the device by its mDNS name, follow the rename — the
-    // old hostname stops resolving once mDNS re-announces. Preserve any
-    // explicit port (dev servers, non-standard deployments).
-    var hostMatch = device.base_url.match(/^http:\/\/canary-[a-z0-9-]+\.local(:[0-9]+)?$/);
+    // old hostname stops resolving once mDNS re-announces. Preserve the
+    // scheme (TLS-enabled devices use https) and any explicit port.
+    var hostMatch = device.base_url.match(/^(https?:\/\/)canary-[a-z0-9-]+\.local(:[0-9]+)?$/);
     if (hostMatch && resp.mdns_host) {
-      updates.base_url = 'http://' + resp.mdns_host + '.local' + (hostMatch[1] || '');
+      updates.base_url = hostMatch[1] + resp.mdns_host + '.local' + (hostMatch[2] || '');
     }
     CanaryStorage.updateDevice(device.id, updates);
     return CanaryStorage.getDevice(device.id);

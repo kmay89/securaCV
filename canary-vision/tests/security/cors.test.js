@@ -117,6 +117,16 @@ describe('Trust-on-pair CORS', () => {
       'Private origins must be able to read the gate-closed 403 (gate_ttl_seconds)');
   });
 
+  it('provisioning-receipt answers CORS for IPv6 ULA and link-local origins', async () => {
+    for (const origin of ['http://[fd12:3456::1]', 'http://[fe80::1]', 'http://169.254.10.20']) {
+      const res = await request(server.url + '/api/provisioning-receipt', {
+        headers: { Host: '127.0.0.1', Origin: origin },
+      });
+      assert.equal(res.headers['access-control-allow-origin'], origin,
+        origin + ' is a private-network scope and must be able to pair');
+    }
+  });
+
   it('provisioning-receipt gives no CORS to public origins', async () => {
     const res = await request(server.url + '/api/provisioning-receipt', {
       headers: { Host: '127.0.0.1', Origin: 'http://evil.com' },
