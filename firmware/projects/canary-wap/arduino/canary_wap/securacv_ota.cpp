@@ -365,6 +365,30 @@ static esp_err_t scv_crt_bundle_attach(void *conf)
 // (deprecated) on core 2.x / mbedtls 2.28, int-returning on core 3.x /
 // mbedtls 3.x — so calls must not inspect the return value.
 
+// ============================================================================
+// ROLLBACK OWNERSHIP — keep the Arduino core from auto-confirming images
+// ============================================================================
+// The Arduino core's initArduino() runs BEFORE setup() and, by default,
+// marks a pending OTA image valid immediately (weak verifyRollbackLater()
+// returns false → esp_ota_mark_app_valid_cancel_rollback() fires microseconds
+// into the first boot). That silently defeats both protections this engine
+// promises:
+//   - our boot self-tests would run after the image is already confirmed,
+//     so a failed required probe could never trigger a rollback, and
+//   - a crash-looping image would never revert, because the bootloader's
+//     PENDING_VERIFY safety net only acts on unconfirmed images.
+// Overriding the weak hook tells the core: the application owns validation.
+// The image then stays PENDING_VERIFY until securacv_ota_boot_self_test()
+// confirms it — and if the new firmware crashes (or hangs into a watchdog
+// reset) at ANY point before that confirmation, the bootloader boots the
+// previous firmware on the very next start. One bad boot, automatic recovery.
+#if defined(CONFIG_APP_ROLLBACK_ENABLE) || defined(CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE)
+extern "C" bool verifyRollbackLater(void)
+{
+    return true;
+}
+#endif
+
 static const char *TAG = "securacv_ota";
 
 #define OTA_TASK_STACK_SIZE     8192
@@ -426,6 +450,7 @@ static bool s_just_updated = false;
 #define NVS_KEY_MANIFEST_URL "manifest_url"
 #define NVS_KEY_AUTO_UPDATE  "auto_upd"
 #define NVS_KEY_HTTP_LOCAL   "http_local"
+#define NVS_KEY_PENDING_VER  "pend_ver"
 
 static esp_err_t nvs_store_str(const char *key, const char *value)
 {
@@ -529,6 +554,42 @@ esp_err_t securacv_ota_set_local_http_allowed(bool allowed)
 bool securacv_ota_get_local_http_allowed(void)
 {
     return nvs_load_u8(NVS_KEY_HTTP_LOCAL, 0) != 0;
+}
+
+esp_err_t securacv_ota_mark_pending_install(const char *version)
+{
+    if (version == NULL || version[0] == '\0') return ESP_ERR_INVALID_ARG;
+    return nvs_store_str(NVS_KEY_PENDING_VER, version);
+}
+
+bool securacv_ota_take_pending_version(char *buf, size_t buf_len)
+{
+    if (buf == NULL || buf_len == 0) return false;
+    buf[0] = '\0';
+    if (nvs_load_str(NVS_KEY_PENDING_VER, buf, buf_len) == ESP_OK && buf[0] != '\0') {
+        nvs_store_str(NVS_KEY_PENDING_VER, NULL);  // erase: consume exactly once
+        return true;
+    }
+
+    // Migration: firmware released before this engine recorded the target
+    // in the Preferences "securacv" namespace as "ota_target" (written by
+    // the OLD image at reboot time). Honor it once so the very first OTA
+    // out of a pre-migration build still gets its outcome witnessed.
+    {
+        nvs_handle_t handle;
+        if (nvs_open("securacv", NVS_READWRITE, &handle) == ESP_OK) {
+            size_t len = buf_len;
+            if (nvs_get_str(handle, "ota_target", buf, &len) == ESP_OK && buf[0] != '\0') {
+                nvs_erase_key(handle, "ota_target");
+                nvs_commit(handle);
+                nvs_close(handle);
+                return true;
+            }
+            nvs_close(handle);
+        }
+    }
+    buf[0] = '\0';
+    return false;
 }
 
 /**
@@ -1505,6 +1566,12 @@ static esp_err_t ota_download_and_flash(void)
         ota_set_error(SECURACV_OTA_ERR_FLASH_WRITE);
         return err;
     }
+
+    // The boot partition is flipped from this point on — even if the reboot
+    // is deferred (battery gate) or comes later for an unrelated reason, the
+    // next start boots the new image. Record the target version NOW so the
+    // next boot can always tell applied from rolled-back.
+    securacv_ota_mark_pending_install(s_ctx.manifest.version);
 
     ESP_LOGI(TAG, "OTA update written successfully");
     return ESP_OK;

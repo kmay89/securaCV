@@ -41,6 +41,7 @@ use serde::Deserialize;
 
 use witness_kernel::adapter::ble_presence::{BlePresenceAdapter, BleRoom};
 use witness_kernel::adapter::frigate::{FrigateAdapter, FrigateFilter};
+use witness_kernel::adapter::meshtastic::{self, MeshNode, MeshtasticAdapter};
 use witness_kernel::adapter::mqtt_sensor::{MqttSensorAdapter, SensorRoute};
 
 /// Set by the SIGHUP handler; the run loop drains it to reload the config.
@@ -152,6 +153,10 @@ fn default_espresense_topic() -> String {
     "espresense/devices/#".to_string()
 }
 
+fn default_meshtastic_topic() -> String {
+    "msh/+/2/json/+/+".to_string()
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum AdapterCfg {
@@ -159,6 +164,7 @@ enum AdapterCfg {
     MqttSensor(MqttSensorCfg),
     Webhook(WebhookCfg),
     BlePresence(BleCfg),
+    Meshtastic(MeshtasticCfg),
 }
 
 #[derive(Debug, Deserialize)]
@@ -258,6 +264,35 @@ struct BleRoomCfg {
 }
 
 #[derive(Debug, Deserialize)]
+struct MeshtasticCfg {
+    #[serde(default = "default_broker")]
+    mqtt_broker_addr: String,
+    /// Meshtastic JSON-mode uplink topic (gateway node: mqtt.enabled + mqtt.json_enabled).
+    #[serde(default = "default_meshtastic_topic")]
+    topic: String,
+    #[serde(default)]
+    node: Vec<MeshNodeCfg>,
+    #[serde(default)]
+    mqtt_username: Option<String>,
+    #[serde(default)]
+    mqtt_password: Option<String>,
+    #[serde(default)]
+    sandbox: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct MeshNodeCfg {
+    /// Node id as `!hex`, bare hex, or decimal (the originating sensor node, not the gateway).
+    node_id: String,
+    kind: String,
+    zone: String,
+    #[serde(default)]
+    detection_name: Option<String>,
+    #[serde(default)]
+    min_snr: Option<f32>,
+}
+
+#[derive(Debug, Deserialize)]
 struct RouteCfg {
     topic: String,
     kind: String,
@@ -289,6 +324,35 @@ fn build_webhook_options(wc: &WebhookCfg) -> WebhookOptions {
         rate_limit,
         workers: wc.workers.unwrap_or(0),
     }
+}
+
+/// Build a `MeshNode` list from config, validating node ids and claim kinds against the
+/// adapter's deliberately narrow allowlist.
+fn build_mesh_nodes(nodes: &[MeshNodeCfg]) -> Result<Vec<MeshNode>> {
+    nodes
+        .iter()
+        .map(|n| {
+            let node_num = meshtastic::parse_node_id(&n.node_id)
+                .ok_or_else(|| anyhow!("invalid meshtastic node_id '{}'", n.node_id))?;
+            let kind = ClaimKind::from_str_opt(&n.kind)
+                .ok_or_else(|| anyhow!("unknown claim kind '{}'", n.kind))?;
+            if !meshtastic::allowed_kinds().contains(&kind) {
+                return Err(anyhow!(
+                    "claim kind '{}' is not in the meshtastic adapter allowlist ({})",
+                    n.kind,
+                    meshtastic::allowed_kinds()
+                        .iter()
+                        .map(|k| k.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
+            let mut node = MeshNode::new(node_num, kind, n.zone.clone());
+            node.detection_name = n.detection_name.clone();
+            node.min_snr = n.min_snr;
+            Ok(node)
+        })
+        .collect()
 }
 
 /// Build a `SensorRoute` list from config, validating claim kinds.
@@ -532,6 +596,32 @@ fn main() -> Result<()> {
                 log::info!(
                     "registered ble_presence adapter #{idx} (sandbox={})",
                     bc.sandbox
+                );
+            }
+            AdapterCfg::Meshtastic(mc) => {
+                let nodes = build_mesh_nodes(&mc.node)?;
+                let (adapter, tx) = MeshtasticAdapter::new(nodes);
+                let adapter = adapter.with_sandbox(mc.sandbox);
+                let handle = adapter.nodes_handle();
+                reloaders.push(Box::new(move |c| {
+                    let AdapterCfg::Meshtastic(mc) = c else {
+                        return Err(anyhow!("adapter type changed at this position"));
+                    };
+                    *handle.lock().expect("nodes mutex") = build_mesh_nodes(&mc.node)?;
+                    Ok(())
+                }));
+                spawn_mqtt_forwarder(
+                    format!("adapter_host_meshtastic_{idx}"),
+                    mc.mqtt_broker_addr,
+                    mc.mqtt_username,
+                    mc.mqtt_password,
+                    vec![mc.topic],
+                    tx,
+                );
+                host.register(adapter);
+                log::info!(
+                    "registered meshtastic adapter #{idx} (sandbox={})",
+                    mc.sandbox
                 );
             }
         }

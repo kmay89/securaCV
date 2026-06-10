@@ -9,18 +9,22 @@
 //! Entities created in Home Assistant:
 //! - `sensor.pwk_<zone>_events`: Event count per zone
 //! - `binary_sensor.pwk_<zone>_motion`: Motion state per zone
-//! - sensor.pwk_last_event: Most recent event details
+//! - `sensor.pwk_last_event`: Most recent event details
+//! - `sensor.pwk_daily_digest`: Rolling 24h summary (daemon mode)
+//! - `binary_sensor.pwk_chain_problem`: Sealed-log integrity (daemon mode)
+//! - `button.pwk_verify_now`: One-click verification (daemon mode)
 
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
-use rumqttc::{Client, Connection, MqttOptions, QoS};
+use rumqttc::{Client, Connection, Event, Incoming, MqttOptions, QoS};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::io::IsTerminal;
 use std::io::{Read, Write};
 use std::net::{IpAddr, TcpStream};
 use std::path::PathBuf;
-use std::time::Duration;
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
 use witness_kernel::transport::{
     parse_mqtt_endpoint, validate_loopback_addr, MqttEndpoint, TlsBackend, TlsConfig, TlsMaterials,
 };
@@ -31,6 +35,8 @@ mod ui;
 
 const BRIDGE_NAME: &str = "event_mqtt_bridge";
 const EVENTS_PATH: &str = "/events";
+const DIGEST_PATH: &str = "/digest";
+const VERIFY_PATH: &str = "/verify";
 const DEFAULT_DISCOVERY_PREFIX: &str = "homeassistant";
 const DEFAULT_STATE_PREFIX: &str = "witness";
 const AVAILABILITY_TOPIC_SUFFIX: &str = "status";
@@ -118,6 +124,12 @@ struct Args {
     #[arg(long, env = "POLL_INTERVAL", default_value_t = 30)]
     poll_interval: u64,
 
+    /// Interval between automatic full sealed-log verifications in daemon
+    /// mode (seconds; 0 disables). One verification also runs at daemon
+    /// start so the chain-integrity sensor is populated immediately.
+    #[arg(long, env = "VERIFY_INTERVAL_SECS", default_value_t = 86_400)]
+    verify_interval_secs: u64,
+
     /// Disable Home Assistant discovery (publish raw events only).
     #[arg(long, env = "NO_DISCOVERY")]
     no_discovery: bool,
@@ -170,6 +182,21 @@ struct HaBinarySensorConfig {
     device: HaDeviceInfo,
 }
 
+/// Home Assistant MQTT Discovery config for a button.
+#[derive(Serialize)]
+struct HaButtonConfig {
+    name: String,
+    unique_id: String,
+    command_topic: String,
+    payload_press: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    icon: Option<String>,
+    availability_topic: String,
+    payload_available: String,
+    payload_not_available: String,
+    device: HaDeviceInfo,
+}
+
 /// Home Assistant device info for entity grouping.
 #[derive(Clone, Serialize)]
 struct HaDeviceInfo {
@@ -178,6 +205,21 @@ struct HaDeviceInfo {
     manufacturer: String,
     model: String,
     sw_version: String,
+}
+
+/// Capability token source. The witness API rotates its token every
+/// 10-minute bucket (rewriting the token file), so daemon-mode consumers
+/// must re-read the file before each request rather than caching the value
+/// loaded at startup.
+struct TokenSource {
+    path: Option<PathBuf>,
+    fixed: Option<String>,
+}
+
+impl TokenSource {
+    fn current(&self) -> Result<String> {
+        load_token(self.path.clone(), self.fixed.clone())
+    }
 }
 
 /// Event state payload for Home Assistant.
@@ -205,10 +247,29 @@ struct MqttRuntime {
 }
 
 impl MqttRuntime {
-    fn new(client: Client, mut connection: Connection) -> Self {
+    /// Drive the MQTT event loop on a background thread. When `incoming` is
+    /// set, received publishes (e.g. on the subscribed `<prefix>/cmd/#`
+    /// command topics) are forwarded as `(topic, payload)` to the daemon's
+    /// poll loop; everything else is drained as before.
+    fn new(
+        client: Client,
+        mut connection: Connection,
+        incoming: Option<mpsc::Sender<(String, Vec<u8>)>>,
+    ) -> Self {
         let handle = std::thread::spawn(move || {
             for event in connection.iter() {
                 match event {
+                    Ok(Event::Incoming(Incoming::Publish(publish))) => {
+                        if let Some(tx) = &incoming {
+                            let topic = match std::str::from_utf8(&publish.topic) {
+                                Ok(topic) => topic.to_string(),
+                                Err(_) => continue,
+                            };
+                            if tx.send((topic, publish.payload.to_vec())).is_err() {
+                                break;
+                            }
+                        }
+                    }
                     Ok(_) => {}
                     Err(e) => {
                         log::warn!("MQTT connection error: {}", e);
@@ -262,10 +323,16 @@ fn main() -> Result<()> {
         log::warn!("Remote MQTT enabled - ensure broker is in a trusted network");
     }
 
-    let token = {
-        let _stage = ui.stage("Load capability token");
-        load_token(args.api_token_path.clone(), args.api_token.clone())?
+    let tokens = TokenSource {
+        path: args.api_token_path.clone(),
+        fixed: args.api_token.clone(),
     };
+    {
+        // Fail fast on a missing/empty token at startup; the daemon re-reads
+        // the file per request because the API rotates it every 10 minutes.
+        let _stage = ui.stage("Load capability token");
+        tokens.current()?;
+    }
 
     // Generate device ID from environment or use provided
     let device_id = args.ha_device_id.clone().unwrap_or_else(|| {
@@ -289,7 +356,7 @@ fn main() -> Result<()> {
         api_addr,
         mqtt_endpoint: &mqtt_endpoint,
         tls_config: &tls_config,
-        token: &token,
+        tokens: &tokens,
         device_id: &device_id,
         device_info: &device_info,
         availability_topic: &availability_topic,
@@ -308,7 +375,7 @@ struct RunContext<'a> {
     api_addr: std::net::SocketAddr,
     mqtt_endpoint: &'a MqttEndpoint,
     tls_config: &'a TlsConfig,
-    token: &'a str,
+    tokens: &'a TokenSource,
     device_id: &'a str,
     device_info: &'a HaDeviceInfo,
     availability_topic: &'a str,
@@ -318,7 +385,8 @@ struct RunContext<'a> {
 fn run_oneshot(ctx: &RunContext<'_>) -> Result<()> {
     let artifact = {
         let _stage = ctx.ui.stage("Fetch export artifact");
-        fetch_export_artifact(ctx.api_addr, ctx.token)?
+        let token = ctx.tokens.current()?;
+        fetch_export_artifact(ctx.api_addr, &token)?
     };
 
     let events = flatten_export_events(&artifact);
@@ -336,6 +404,7 @@ fn run_oneshot(ctx: &RunContext<'_>) -> Result<()> {
             ctx.args.mqtt_username.as_deref(),
             ctx.args.mqtt_password.as_deref(),
             ctx.availability_topic,
+            None,
         )?
     };
 
@@ -372,10 +441,12 @@ fn run_oneshot(ctx: &RunContext<'_>) -> Result<()> {
 
 fn run_daemon(ctx: &RunContext<'_>) -> Result<()> {
     log::info!(
-        "Starting daemon mode (poll interval: {}s)",
-        ctx.args.poll_interval
+        "Starting daemon mode (poll interval: {}s, verify interval: {}s)",
+        ctx.args.poll_interval,
+        ctx.args.verify_interval_secs
     );
 
+    let (cmd_tx, cmd_rx) = mpsc::channel::<(String, Vec<u8>)>();
     let conn = {
         let _stage = ctx.ui.stage("Connect to MQTT broker");
         connect_mqtt(
@@ -385,8 +456,15 @@ fn run_daemon(ctx: &RunContext<'_>) -> Result<()> {
             ctx.args.mqtt_username.as_deref(),
             ctx.args.mqtt_password.as_deref(),
             ctx.availability_topic,
+            Some(cmd_tx),
         )?
     };
+
+    // Listen for HA button presses. Scoped to the command subtree only —
+    // this daemon must never consume event or sensor traffic.
+    let cmd_filter = format!("{}/cmd/#", ctx.args.mqtt_topic_prefix);
+    conn.client.subscribe(&cmd_filter, QoS::AtLeastOnce)?;
+    let verify_cmd_topic = format!("{}/cmd/verify", ctx.args.mqtt_topic_prefix);
 
     // Publish availability online (retained)
     mqtt_publish_qos1(
@@ -397,12 +475,38 @@ fn run_daemon(ctx: &RunContext<'_>) -> Result<()> {
     )?;
     log::info!("Published online status to {}", ctx.availability_topic);
 
+    // Publish the zone-independent entities up front so the device appears
+    // in HA immediately, not only after the first event fires.
+    if !ctx.args.no_discovery {
+        publish_static_discovery(
+            &conn.client,
+            &ctx.args.ha_discovery_prefix,
+            &ctx.args.mqtt_topic_prefix,
+            ctx.availability_topic,
+            ctx.device_id,
+            ctx.device_info,
+        )?;
+    }
+
+    // Initial verification populates the chain-integrity sensor right away.
+    let verify_interval = ctx.args.verify_interval_secs;
+    let mut last_auto_verify = Instant::now();
+    if verify_interval > 0 {
+        if let Err(e) = run_verify_and_publish(ctx, &conn.client) {
+            log::warn!("Initial verification failed to run: {}", e);
+        }
+    }
+
     let mut discovered_zones: HashSet<String> = HashSet::new();
     let mut zone_states: HashMap<String, ZoneState> = HashMap::new();
     let mut last_bucket_seen: Option<TimeBucket> = None;
 
     loop {
-        match fetch_export_artifact(ctx.api_addr, ctx.token) {
+        match ctx
+            .tokens
+            .current()
+            .and_then(|token| fetch_export_artifact(ctx.api_addr, &token))
+        {
             Ok(artifact) => {
                 let events = flatten_export_events(&artifact);
 
@@ -495,8 +599,182 @@ fn run_daemon(ctx: &RunContext<'_>) -> Result<()> {
             }
         }
 
-        std::thread::sleep(Duration::from_secs(ctx.args.poll_interval));
+        // Refresh the retained 24h digest each cycle.
+        match ctx
+            .tokens
+            .current()
+            .and_then(|token| fetch_digest(ctx.api_addr, &token))
+        {
+            Ok(digest) => {
+                let digest_topic = format!("{}/digest", ctx.args.mqtt_topic_prefix);
+                mqtt_publish_qos1(&conn.client, &digest_topic, &digest, true)?;
+            }
+            Err(e) => {
+                log::warn!("Failed to fetch digest: {}", e);
+            }
+        }
+
+        // Scheduled re-verification keeps the integrity sensor fresh.
+        if verify_interval > 0 && last_auto_verify.elapsed() >= Duration::from_secs(verify_interval)
+        {
+            last_auto_verify = Instant::now();
+            if let Err(e) = run_verify_and_publish(ctx, &conn.client) {
+                log::warn!("Scheduled verification failed to run: {}", e);
+            }
+        }
+
+        // Sleep until the next poll, waking early for button presses.
+        let deadline = Instant::now() + Duration::from_secs(ctx.args.poll_interval);
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            match cmd_rx.recv_timeout(remaining) {
+                Ok((topic, _payload)) if topic == verify_cmd_topic => {
+                    log::info!("Verify command received via {}", topic);
+                    if let Err(e) = run_verify_and_publish(ctx, &conn.client) {
+                        log::warn!("Verification failed to run: {}", e);
+                    }
+                    last_auto_verify = Instant::now();
+                }
+                Ok((topic, _)) => {
+                    log::debug!("Ignoring unknown command topic {}", topic);
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => break,
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    // MQTT event-loop thread is gone; keep polling on a
+                    // plain sleep so event publishing still works.
+                    std::thread::sleep(remaining);
+                    break;
+                }
+            }
+        }
     }
+}
+
+/// POST /verify on the witness API and publish the outcome:
+/// `<prefix>/chain_problem` (retained ON/OFF for the `problem`-class binary
+/// sensor — ON means verification failed) and the full report JSON on
+/// `<prefix>/chain_problem/attrs` (retained, surfaced as HA attributes).
+fn run_verify_and_publish(ctx: &RunContext<'_>, client: &Client) -> Result<()> {
+    let token = ctx.tokens.current()?;
+    let report = post_verify(ctx.api_addr, &token)?;
+    let chain_valid = serde_json::from_slice::<serde_json::Value>(&report)
+        .ok()
+        .and_then(|v| v.get("chain_valid").and_then(|b| b.as_bool()))
+        .unwrap_or(false);
+
+    let state_topic = format!("{}/chain_problem", ctx.args.mqtt_topic_prefix);
+    let attrs_topic = format!("{}/chain_problem/attrs", ctx.args.mqtt_topic_prefix);
+    mqtt_publish_qos1(
+        client,
+        &state_topic,
+        if chain_valid { b"OFF" } else { b"ON" },
+        true,
+    )?;
+    mqtt_publish_qos1(client, &attrs_topic, &report, true)?;
+    log::info!(
+        "Sealed-log verification published: chain_valid={}",
+        chain_valid
+    );
+    Ok(())
+}
+
+/// Discovery configs for the entities that exist regardless of which zones
+/// have produced events: last-event sensor, daily digest, chain integrity,
+/// and the verify button.
+fn publish_static_discovery(
+    client: &Client,
+    discovery_prefix: &str,
+    state_prefix: &str,
+    availability_topic: &str,
+    device_id: &str,
+    device_info: &HaDeviceInfo,
+) -> Result<()> {
+    publish_last_event_discovery(
+        client,
+        discovery_prefix,
+        state_prefix,
+        availability_topic,
+        device_id,
+        device_info,
+    )?;
+
+    let digest_config = HaSensorConfig {
+        name: "PWK Daily Digest".to_string(),
+        unique_id: format!("{}_daily_digest", device_id),
+        state_topic: format!("{}/digest", state_prefix),
+        json_attributes_topic: Some(format!("{}/digest", state_prefix)),
+        value_template: Some("{{ value_json.total_events }}".to_string()),
+        unit_of_measurement: Some("events".to_string()),
+        device_class: None,
+        state_class: None,
+        icon: Some("mdi:calendar-today".to_string()),
+        availability_topic: availability_topic.to_string(),
+        payload_available: PAYLOAD_ONLINE.to_string(),
+        payload_not_available: PAYLOAD_OFFLINE.to_string(),
+        device: device_info.clone(),
+    };
+    let config_topic = format!(
+        "{}/sensor/{}/daily_digest/config",
+        discovery_prefix, device_id
+    );
+    mqtt_publish_qos1(
+        client,
+        &config_topic,
+        &serde_json::to_vec(&digest_config)?,
+        true,
+    )?;
+
+    let chain_config = HaBinarySensorConfig {
+        name: "PWK Chain Problem".to_string(),
+        unique_id: format!("{}_chain_problem", device_id),
+        state_topic: format!("{}/chain_problem", state_prefix),
+        json_attributes_topic: Some(format!("{}/chain_problem/attrs", state_prefix)),
+        value_template: None,
+        device_class: "problem".to_string(),
+        off_delay: None,
+        availability_topic: availability_topic.to_string(),
+        payload_available: PAYLOAD_ONLINE.to_string(),
+        payload_not_available: PAYLOAD_OFFLINE.to_string(),
+        device: device_info.clone(),
+    };
+    let config_topic = format!(
+        "{}/binary_sensor/{}/chain_problem/config",
+        discovery_prefix, device_id
+    );
+    mqtt_publish_qos1(
+        client,
+        &config_topic,
+        &serde_json::to_vec(&chain_config)?,
+        true,
+    )?;
+
+    let button_config = HaButtonConfig {
+        name: "PWK Verify Now".to_string(),
+        unique_id: format!("{}_verify_now", device_id),
+        command_topic: format!("{}/cmd/verify", state_prefix),
+        payload_press: "PRESS".to_string(),
+        icon: Some("mdi:shield-search".to_string()),
+        availability_topic: availability_topic.to_string(),
+        payload_available: PAYLOAD_ONLINE.to_string(),
+        payload_not_available: PAYLOAD_OFFLINE.to_string(),
+        device: device_info.clone(),
+    };
+    let config_topic = format!(
+        "{}/button/{}/verify_now/config",
+        discovery_prefix, device_id
+    );
+    mqtt_publish_qos1(
+        client,
+        &config_topic,
+        &serde_json::to_vec(&button_config)?,
+        true,
+    )?;
+
+    log::info!("Published HA discovery for digest, chain integrity, and verify button");
+    Ok(())
 }
 
 fn publish_discovery_configs(
@@ -528,6 +806,30 @@ fn publish_discovery_configs(
     }
 
     // Publish last_event sensor discovery
+    publish_last_event_discovery(
+        client,
+        discovery_prefix,
+        state_prefix,
+        availability_topic,
+        device_id,
+        device_info,
+    )?;
+
+    log::info!(
+        "Published HA discovery for {} zones + last_event sensor",
+        zones.len()
+    );
+    Ok(())
+}
+
+fn publish_last_event_discovery(
+    client: &Client,
+    discovery_prefix: &str,
+    state_prefix: &str,
+    availability_topic: &str,
+    device_id: &str,
+    device_info: &HaDeviceInfo,
+) -> Result<()> {
     let last_event_config = HaSensorConfig {
         name: "PWK Last Event".to_string(),
         unique_id: format!("{}_last_event", device_id),
@@ -550,11 +852,6 @@ fn publish_discovery_configs(
     );
     let config_json = serde_json::to_vec(&last_event_config)?;
     mqtt_publish_qos1(client, &config_topic, &config_json, true)?;
-
-    log::info!(
-        "Published HA discovery for {} zones + last_event sensor",
-        zones.len()
-    );
     Ok(())
 }
 
@@ -711,14 +1008,34 @@ fn load_token(path: Option<PathBuf>, token: Option<String>) -> Result<String> {
 }
 
 fn fetch_export_artifact(addr: std::net::SocketAddr, token: &str) -> Result<ExportArtifact> {
+    let body = api_request(addr, token, "GET", EVENTS_PATH)?;
+    let artifact: ExportArtifact =
+        serde_json::from_slice(&body).context("failed to parse /events response")?;
+    Ok(artifact)
+}
+
+/// Fetch the rolling 24h digest as raw JSON (republished verbatim to MQTT).
+fn fetch_digest(addr: std::net::SocketAddr, token: &str) -> Result<Vec<u8>> {
+    api_request(addr, token, "GET", DIGEST_PATH)
+}
+
+/// Trigger a full sealed-log verification; returns the VerifyReport JSON.
+fn post_verify(addr: std::net::SocketAddr, token: &str) -> Result<Vec<u8>> {
+    api_request(addr, token, "POST", VERIFY_PATH)
+}
+
+fn api_request(
+    addr: std::net::SocketAddr,
+    token: &str,
+    method: &str,
+    path: &str,
+) -> Result<Vec<u8>> {
     let mut stream = TcpStream::connect_timeout(&addr, Duration::from_secs(5))?;
-    stream.set_read_timeout(Some(Duration::from_secs(10)))?;
+    stream.set_read_timeout(Some(Duration::from_secs(30)))?;
 
     let request = format!(
-        "GET {path} HTTP/1.1\r\nHost: {host}\r\nx-witness-token: {token}\r\nConnection: close\r\n\r\n",
-        path = EVENTS_PATH,
+        "{method} {path} HTTP/1.1\r\nHost: {host}\r\nx-witness-token: {token}\r\nConnection: close\r\n\r\n",
         host = addr,
-        token = token
     );
     stream.write_all(request.as_bytes())?;
 
@@ -737,12 +1054,14 @@ fn fetch_export_artifact(addr: std::net::SocketAddr, token: &str) -> Result<Expo
         .nth(1)
         .ok_or_else(|| anyhow!("missing status code"))?;
     if status_code != "200" {
-        return Err(anyhow!("event api returned status {}", status_code));
+        return Err(anyhow!(
+            "event api returned status {} for {}",
+            status_code,
+            path
+        ));
     }
 
-    let artifact: ExportArtifact =
-        serde_json::from_slice(body).context("failed to parse /events response")?;
-    Ok(artifact)
+    Ok(body.to_vec())
 }
 
 fn flatten_export_events(artifact: &ExportArtifact) -> Vec<ExportEvent> {
@@ -781,6 +1100,7 @@ fn connect_mqtt(
     username: Option<&str>,
     password: Option<&str>,
     will_topic: &str,
+    incoming: Option<mpsc::Sender<(String, Vec<u8>)>>,
 ) -> Result<MqttRuntime> {
     let mut options = MqttOptions::new(client_id, (endpoint.host.as_str(), endpoint.port));
     options.set_keep_alive(60);
@@ -807,7 +1127,7 @@ fn connect_mqtt(
         tls_config.backend,
         username.is_some()
     );
-    Ok(MqttRuntime::new(client, connection))
+    Ok(MqttRuntime::new(client, connection, incoming))
 }
 
 fn mqtt_publish_qos1(client: &Client, topic: &str, payload: &[u8], retain: bool) -> Result<()> {
@@ -880,6 +1200,62 @@ mod tests {
         assert!(json.contains("state_topic"));
         assert!(json.contains("availability_topic"));
         assert!(json.contains("device"));
+    }
+
+    #[test]
+    fn token_source_rereads_rotated_file() {
+        let mut path = std::env::temp_dir();
+        path.push(format!("event_mqtt_bridge_token_{}", rand::random::<u64>()));
+        std::fs::write(&path, "token-one\n").expect("write token");
+
+        let tokens = TokenSource {
+            path: Some(path.clone()),
+            fixed: None,
+        };
+        assert_eq!(tokens.current().expect("first read"), "token-one");
+
+        // The witness API rotates the token every 10-minute bucket by
+        // rewriting this file; the source must pick the new value up.
+        std::fs::write(&path, "token-two\n").expect("rotate token");
+        assert_eq!(tokens.current().expect("second read"), "token-two");
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn token_source_fixed_value_wins() {
+        let tokens = TokenSource {
+            path: Some(PathBuf::from("/nonexistent/token")),
+            fixed: Some("fixed-token".to_string()),
+        };
+        assert_eq!(tokens.current().expect("fixed"), "fixed-token");
+    }
+
+    #[test]
+    fn ha_button_config_serializes_correctly() {
+        let device = HaDeviceInfo {
+            identifiers: vec!["pwk_test".to_string()],
+            name: "PWK Test".to_string(),
+            manufacturer: "securaCV".to_string(),
+            model: "PWK".to_string(),
+            sw_version: "0.5.0".to_string(),
+        };
+        let config = HaButtonConfig {
+            name: "PWK Verify Now".to_string(),
+            unique_id: "pwk_test_verify_now".to_string(),
+            command_topic: "witness/cmd/verify".to_string(),
+            payload_press: "PRESS".to_string(),
+            icon: Some("mdi:shield-search".to_string()),
+            availability_topic: "witness/status".to_string(),
+            payload_available: "online".to_string(),
+            payload_not_available: "offline".to_string(),
+            device,
+        };
+
+        let json = serde_json::to_string(&config).expect("serialize");
+        assert!(json.contains("command_topic"));
+        assert!(json.contains("witness/cmd/verify"));
+        assert!(json.contains("payload_press"));
     }
 
     #[test]

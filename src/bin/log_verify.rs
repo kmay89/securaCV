@@ -16,6 +16,7 @@ use rusqlite::Connection;
 use std::io::IsTerminal;
 
 use witness_kernel::crypto::signatures::SignatureMode;
+use witness_kernel::verify_runner::{run_full_verify, VerifiedItem};
 use witness_kernel::{verify, verify_helpers};
 
 #[path = "../ui.rs"]
@@ -57,6 +58,14 @@ struct Args {
     /// SQLCipher database encryption key (hex-encoded, 32 bytes)
     #[arg(long, value_name = "HEX", env = "SECURACV_DB_KEY")]
     db_key: Option<String>,
+
+    /// Device key seed (as used by the kernel/bridges). Convenience for
+    /// operators: derives the SQLCipher key (when --db-key is not given)
+    /// and the verifying key (when no --public-key/--public-key-file is
+    /// given), so `DEVICE_KEY_SEED=... log_verify --db witness.db` works
+    /// against a bridge-produced encrypted log.
+    #[arg(long, value_name = "SEED", env = "DEVICE_KEY_SEED")]
+    device_key_seed: Option<String>,
 }
 
 #[derive(ValueEnum, Clone, Debug)]
@@ -80,177 +89,141 @@ fn main() -> Result<()> {
     let is_tty = std::io::stderr().is_terminal();
     let stdout_is_tty = std::io::stdout().is_terminal();
     let ui = ui::Ui::from_args(Some(&args.ui), is_tty, !stdout_is_tty);
+
+    // SQLCipher key: explicit --db-key wins; otherwise derive it from the
+    // device key seed exactly as the kernel/bridges do.
+    let db_key: Option<String> = match (&args.db_key, &args.device_key_seed) {
+        (Some(key), _) => Some(key.clone()),
+        (None, Some(seed)) => {
+            let signing_key = witness_kernel::signing_key_from_seed(seed)?;
+            let seed_env = witness_kernel::db_key_seed_from_env();
+            Some(
+                witness_kernel::resolve_db_encryption_key(
+                    &signing_key,
+                    seed_env.as_ref().map(|s| s.as_str()),
+                )
+                .to_string(),
+            )
+        }
+        (None, None) => None,
+    };
+
     let conn = {
         let _stage = ui.stage("Open database");
         let conn = Connection::open(&args.db)?;
-        if let Some(ref key) = args.db_key {
+        if let Some(ref key) = db_key {
             conn.pragma_update(None, "key", format!("x'{}'", key))?;
         }
         conn
     };
-    let verifying_key = {
-        let _stage = ui.stage("Load verifying key");
-        verify_helpers::load_verifying_key(
-            &conn,
-            args.public_key.as_deref(),
-            args.public_key_file.as_deref(),
-        )?
+
+    // Verifying key precedence: explicit hex > key file > device key seed >
+    // the DB-stored device public key (resolved inside the runner).
+    let public_key_hex: Option<String> = match (&args.public_key, &args.public_key_file) {
+        (Some(hex), _) => Some(hex.clone()),
+        (None, Some(path)) => Some(
+            std::fs::read_to_string(path)
+                .map_err(|e| anyhow::anyhow!("failed to read public key file {}: {}", path, e))?
+                .trim()
+                .to_string(),
+        ),
+        (None, None) => args
+            .device_key_seed
+            .as_deref()
+            .map(|seed| {
+                witness_kernel::verifying_key_from_seed(seed).map(|key| hex::encode(key.to_bytes()))
+            })
+            .transpose()?,
     };
-    let pq_verifying_key = {
-        let _stage = ui.stage("Load PQ verifying key (optional)");
-        verify_helpers::load_pq_verifying_key(
-            &conn,
-            args.pq_public_key.as_deref(),
-            args.pq_public_key_file.as_deref(),
-        )?
+    let pq_public_key_hex: Option<String> = match (&args.pq_public_key, &args.pq_public_key_file) {
+        (Some(hex), _) => Some(hex.clone()),
+        (None, Some(path)) => Some(
+            std::fs::read_to_string(path)
+                .map_err(|e| anyhow::anyhow!("failed to read pq public key file {}: {}", path, e))?
+                .trim()
+                .to_string(),
+        ),
+        (None, None) => None,
     };
 
     println!("log_verify: checking {}", args.db);
     println!();
 
-    // === Sealed Events ===
-    println!("=== Sealed Events ===");
-
-    {
-        let _stage = ui.stage("Verify sealed events");
-        let checkpoint = verify::latest_checkpoint(&conn)?;
-
-        // Reconstruct the device key lineage, anchored at the genesis key (`verifying_key` —
-        // device_metadata, or an explicit --public-key override). Each rotation epoch is
-        // cryptographically validated (predecessor authorization + successor attestation), so
-        // a tampered history table cannot forge a lineage without the genesis private key.
-        // Key selection below comes from this trusted lineage, never from the checkpoint row.
-        let genesis = verifying_key.to_bytes();
-        let lineage = witness_kernel::reconstruct_device_key_lineage_from(&conn, &genesis)?;
-
-        // Seed the (possibly pruned) suffix with the key active at the checkpoint cutoff, and
-        // verify the checkpoint signature with its recorded signer — but only after confirming
-        // that signer is itself a genesis-anchored lineage key (else a tamperer could swap the
-        // signer/key/head and self-certify a forged chain).
-        let (chain_key_bytes, checkpoint_key_bytes) = match checkpoint.cutoff_event_id {
-            Some(cutoff) => {
-                let active = witness_kernel::device_key_active_at_in(&lineage, cutoff)?;
-                let signer = match checkpoint.signer_public_key {
-                    Some(sig) => {
-                        if !lineage.iter().any(|e| e.public_key == sig) {
-                            return Err(anyhow::anyhow!(
-                                "checkpoint signer key is not part of the genesis-anchored \
-                                 device key lineage; refusing to trust it"
-                            ));
-                        }
-                        sig
+    let report = {
+        let _stage = ui.stage("Verify sealed log");
+        run_full_verify(
+            &conn,
+            public_key_hex.as_deref(),
+            pq_public_key_hex.as_deref(),
+            signature_mode,
+            |item| {
+                if args.verbose {
+                    match item {
+                        VerifiedItem::Event { id, entry_hash } => println!(
+                            "  event {}: hash={} OK",
+                            id,
+                            &verify_helpers::hex32(&entry_hash)[..16]
+                        ),
+                        VerifiedItem::BreakGlassReceipt { id, entry_hash }
+                        | VerifiedItem::ExportReceipt { id, entry_hash } => println!(
+                            "  receipt {}: hash={} OK",
+                            id,
+                            &verify_helpers::hex32(&entry_hash)[..16]
+                        ),
                     }
-                    None => active,
-                };
-                (active, signer)
-            }
-            None => (genesis, genesis),
-        };
-        let chain_key =
-            verify_helpers::verifying_key_from_hex(&verify_helpers::hex32(&chain_key_bytes))?;
-        let checkpoint_key =
-            verify_helpers::verifying_key_from_hex(&verify_helpers::hex32(&checkpoint_key_bytes))?;
-        verify::verify_checkpoint_signature(
-            &checkpoint_key,
-            &checkpoint,
-            signature_mode,
-            pq_verifying_key.as_ref(),
-        )?;
-        if let (Some(head), Some(_sig), Some(cutoff_id)) = (
-            checkpoint.chain_head_hash,
-            checkpoint.signatures.as_ref(),
-            checkpoint.cutoff_event_id,
-        ) {
-            println!(
-                "checkpoint: cutoff_event_id={}, chain_head_hash={}",
-                cutoff_id,
-                verify_helpers::hex32(&head)
-            );
-        } else {
-            println!("checkpoint: none (genesis chain)");
-        }
-
-        let alarm_count = verify::count_alarms(&conn)?;
-        if alarm_count > 0 {
-            println!("WARNING: {} conformance alarms recorded", alarm_count);
-            if args.verbose {
-                for alarm in verify::load_alarms(&conn)? {
-                    println!(
-                        "  ALARM @{}: {} - {}",
-                        alarm.created_at, alarm.code, alarm.message
-                    );
-                }
-            }
-        }
-
-        let count = verify::verify_events_with(
-            &conn,
-            &chain_key,
-            checkpoint.chain_head_hash,
-            signature_mode,
-            pq_verifying_key.as_ref(),
-            |id, entry_hash| {
-                if args.verbose {
-                    println!(
-                        "  event {}: hash={} OK",
-                        id,
-                        &verify_helpers::hex32(&entry_hash)[..16]
-                    );
                 }
             },
-        )?;
-        println!("verified {} event entries", count);
+        )?
     };
-    println!();
 
-    // === Break-Glass Receipts ===
-    {
-        let _stage = ui.stage("Verify break-glass receipts");
-        println!("=== Break-Glass Receipts ===");
-        let policy = verify::load_break_glass_policy(&conn)?;
-        let counts = verify::verify_break_glass_receipts_with(
-            &conn,
-            &verifying_key,
-            policy.as_ref(),
-            signature_mode,
-            pq_verifying_key.as_ref(),
-            |id, entry_hash| {
-                if args.verbose {
-                    println!(
-                        "  receipt {}: hash={} OK",
-                        id,
-                        &verify_helpers::hex32(&entry_hash)[..16]
-                    );
-                }
-            },
-        )?;
-        println!(
-            "verified {} receipt entries ({} granted, {} denied)",
-            counts.total, counts.granted, counts.denied
-        );
+    println!("=== Sealed Events ===");
+    match (
+        &report.checkpoint_head_hash,
+        report.checkpoint_cutoff_event_id,
+    ) {
+        (Some(head), Some(cutoff_id)) => println!(
+            "checkpoint: cutoff_event_id={}, chain_head_hash={}",
+            cutoff_id, head
+        ),
+        _ => println!("checkpoint: none (genesis chain)"),
     }
+    if report.alarm_count > 0 {
+        println!(
+            "WARNING: {} conformance alarms recorded",
+            report.alarm_count
+        );
+        if args.verbose {
+            for alarm in verify::load_alarms(&conn)? {
+                println!(
+                    "  ALARM @{}: {} - {}",
+                    alarm.created_at, alarm.code, alarm.message
+                );
+            }
+        }
+    }
+    println!("verified {} event entries", report.events_verified);
     println!();
 
-    // === Export Receipts ===
-    {
-        let _stage = ui.stage("Verify export receipts");
-        println!("=== Export Receipts ===");
-        let count = verify::verify_export_receipts_with(
-            &conn,
-            &verifying_key,
-            signature_mode,
-            pq_verifying_key.as_ref(),
-            |id, entry_hash| {
-                if args.verbose {
-                    println!(
-                        "  receipt {}: hash={} OK",
-                        id,
-                        &verify_helpers::hex32(&entry_hash)[..16]
-                    );
-                }
-            },
-        )?;
-        println!("verified {} export receipt entries", count);
+    println!("=== Break-Glass Receipts ===");
+    println!(
+        "verified {} receipt entries ({} granted, {} denied)",
+        report.break_glass_receipts_verified, report.break_glass_granted, report.break_glass_denied
+    );
+    println!();
+
+    println!("=== Export Receipts ===");
+    println!(
+        "verified {} export receipt entries",
+        report.export_receipts_verified
+    );
+
+    if !report.chain_valid {
+        return Err(anyhow::anyhow!(
+            "verification FAILED: {}",
+            report
+                .error
+                .unwrap_or_else(|| "unknown verification error".to_string())
+        ));
     }
 
     println!("OK: all chains verified.");

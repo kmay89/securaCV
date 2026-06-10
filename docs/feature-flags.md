@@ -81,6 +81,7 @@ Source of truth: `Cargo.toml:55-71`. Default build enables **none** of these
 | `adapter-webhook` | off | stable | Webhook adapter (implies `adapter-mqtt-sensor`) | keep |
 | `adapter-webhook-tls` | off | stable | Webhook adapter + rustls TLS/mTLS | keep |
 | `adapter-ble-presence` | off | stable | BLE presence adapter | keep |
+| `adapter-meshtastic` | off | stable | Meshtastic LoRa-mesh detection-sensor adapter | keep |
 | `adapter-sandbox` | off | stable | Sandbox/test adapter | keep |
 | `pqc-signatures` | off | exp | ML-DSA post-quantum signatures | promote once PQC signing is a supported deployment mode |
 | `pqc-vault` | off | exp | ML-KEM post-quantum vault sealing | promote once PQC vault is supported |

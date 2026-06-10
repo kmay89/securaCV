@@ -13,47 +13,96 @@ CONFIG_FILE="/config/witness_config.json"
 DB_PATH="/config/witness.db"
 VAULT_PATH="/share/witness_vault"
 TOKEN_FILE="/config/api_token"
+DEVICE_KEY_FILE="/config/.securacv/device_key"
 INGRESS_PORT="${INGRESS_PORT:-8788}"
+
+# shellcheck source=privacy_witness_kernel/run_lib.sh disable=SC1091
+source /usr/local/bin/run_lib.sh
 
 # Log startup
 bashio::log.info "Starting Privacy Witness Kernel add-on..."
 
+export SUPERVISOR_TOKEN="${HASSIO_TOKEN:-}"
+export INGRESS_PATH="${SUPERVISOR_INGRESS_PATH:-}"
+
 # ============================================================================
-# First-run detection: if device_key_seed is not set, serve the setup wizard
-# instead of erroring out immediately. The wizard lets the user configure
-# everything through a browser UI and then saves options via the Supervisor API.
+# First-run detection: the device key is auto-generated, so its absence no
+# longer marks a fresh install. The add-on is considered configured when the
+# user has made any deliberate choice: a key (option or wizard-written file),
+# frigate mode, or manually configured cameras. Otherwise serve the setup
+# wizard exclusively so the kernel doesn't crash-loop on factory defaults.
 # ============================================================================
 DEVICE_KEY_SEED=$(bashio::config 'device_key_seed' || echo "")
+MODE=$(bashio::config 'mode')
 
-if [ -z "$DEVICE_KEY_SEED" ] || [ "$DEVICE_KEY_SEED" = "devkey:mvp" ]; then
+CONFIGURED="false"
+if [ -n "$DEVICE_KEY_SEED" ] && [ "$DEVICE_KEY_SEED" != "devkey:mvp" ]; then
+    CONFIGURED="true"
+elif [ -s "$DEVICE_KEY_FILE" ]; then
+    CONFIGURED="true"
+elif [ "$MODE" = "frigate" ]; then
+    CONFIGURED="true"
+elif bashio::config.has_value 'cameras' && [ "$(bashio::config 'cameras' | jq length)" -gt 0 ]; then
+    CONFIGURED="true"
+fi
+
+if [ "$CONFIGURED" != "true" ]; then
     bashio::log.info "=== First-run detected: serving setup wizard on port ${INGRESS_PORT} ==="
-    bashio::log.info "Open the add-on Web UI to complete setup, then restart this add-on."
-
-    export SUPERVISOR_TOKEN="${HASSIO_TOKEN:-}"
-    export INGRESS_PATH="${SUPERVISOR_INGRESS_PATH:-}"
+    bashio::log.info "Open the add-on Web UI to complete setup."
 
     exec /usr/bin/python3 /usr/local/bin/serve_wizard.py
 fi
 
+# Configured: keep the panel available alongside the kernel (status view,
+# reconfiguration, health checks). It is a stdlib-only Python process.
+/usr/bin/python3 /usr/local/bin/serve_wizard.py &
+bashio::log.info "Status panel started on port ${INGRESS_PORT} (PID: $!)"
+
+# Resolve the device key: option → wizard-written key file → auto-generate
+# and persist (0600). /config is captured by HA backups; the panel reminds
+# the user to back the key up.
+DEVICE_KEY_SEED=$(resolve_device_key_seed "$DEVICE_KEY_SEED" "$DEVICE_KEY_FILE")
+if [ -z "$DEVICE_KEY_SEED" ]; then
+    bashio::log.error "Failed to resolve or generate a device key seed."
+    exit 1
+fi
+
 # Read common configuration
-DEVICE_KEY_SEED=$(bashio::config 'device_key_seed')
 RETENTION_DAYS=$(bashio::config 'retention_days')
 TIME_BUCKET_MIN=$(bashio::config 'time_bucket_minutes')
 LOG_LEVEL=$(bashio::config 'log_level')
-MODE=$(bashio::config 'mode')
 
-# MQTT publishing configuration
-MQTT_PUBLISH_ENABLED="false"
+# MQTT publishing configuration: default ON in frigate mode (events are
+# invisible in HA without it), OFF in standalone unless explicitly enabled.
+MQTT_PUBLISH_ENABLED=""
 if bashio::config.has_value 'mqtt_publish.enabled'; then
     MQTT_PUBLISH_ENABLED=$(bashio::config 'mqtt_publish.enabled')
 fi
+if [ -z "$MQTT_PUBLISH_ENABLED" ] || [ "$MQTT_PUBLISH_ENABLED" = "null" ]; then
+    if [ "$MODE" = "frigate" ]; then
+        MQTT_PUBLISH_ENABLED="true"
+    else
+        MQTT_PUBLISH_ENABLED="false"
+    fi
+fi
 
-# Validate device key seed
-if [ -z "$DEVICE_KEY_SEED" ] || [ "$DEVICE_KEY_SEED" = "devkey:mvp" ]; then
-    bashio::log.error "CRITICAL: device_key_seed must be set to a unique, secret value!"
-    bashio::log.error "Generate one with: openssl rand -hex 32"
-    bashio::log.error "This key protects the cryptographic identity of your device."
-    exit 1
+# ============================================================================
+# Supervisor MQTT service discovery (requires `services: mqtt:want` in
+# config.yaml). Explicit option values always win; discovery fills the gaps
+# so Mosquitto add-on users never type broker credentials.
+# ============================================================================
+DISCOVERED_MQTT_HOST=""
+DISCOVERED_MQTT_PORT=""
+DISCOVERED_MQTT_USER=""
+DISCOVERED_MQTT_PASS=""
+if bashio::services.available "mqtt" 2>/dev/null; then
+    DISCOVERED_MQTT_HOST=$(bashio::services "mqtt" "host" 2>/dev/null || echo "")
+    DISCOVERED_MQTT_PORT=$(bashio::services "mqtt" "port" 2>/dev/null || echo "")
+    DISCOVERED_MQTT_USER=$(bashio::services "mqtt" "username" 2>/dev/null || echo "")
+    DISCOVERED_MQTT_PASS=$(bashio::services "mqtt" "password" 2>/dev/null || echo "")
+    bashio::log.info "MQTT broker auto-discovered via Supervisor: ${DISCOVERED_MQTT_HOST}:${DISCOVERED_MQTT_PORT}"
+else
+    bashio::log.info "No Supervisor MQTT service available; using configured/default broker settings."
 fi
 
 # Calculate retention in seconds
@@ -103,29 +152,28 @@ start_mqtt_publisher() {
 
     bashio::log.info "Starting MQTT event publisher with HA Discovery..."
 
-    # Read MQTT publish configuration
+    # Read MQTT publish configuration: explicit option → discovered → default
     local PUBLISH_HOST PUBLISH_PORT PUBLISH_PREFIX DISCOVERY_PREFIX
     local PUBLISH_USER="" PUBLISH_PASS=""
+    local OPT_HOST="" OPT_PORT="" OPT_USER="" OPT_PASS=""
 
     if bashio::config.has_value 'mqtt_publish.host'; then
-        PUBLISH_HOST=$(bashio::config 'mqtt_publish.host')
-    else
-        PUBLISH_HOST="core-mosquitto"
+        OPT_HOST=$(bashio::config 'mqtt_publish.host')
     fi
-
     if bashio::config.has_value 'mqtt_publish.port'; then
-        PUBLISH_PORT=$(bashio::config 'mqtt_publish.port')
-    else
-        PUBLISH_PORT="1883"
+        OPT_PORT=$(bashio::config 'mqtt_publish.port')
     fi
-
     if bashio::config.has_value 'mqtt_publish.username'; then
-        PUBLISH_USER=$(bashio::config 'mqtt_publish.username')
+        OPT_USER=$(bashio::config 'mqtt_publish.username')
+    fi
+    if bashio::config.has_value 'mqtt_publish.password'; then
+        OPT_PASS=$(bashio::config 'mqtt_publish.password')
     fi
 
-    if bashio::config.has_value 'mqtt_publish.password'; then
-        PUBLISH_PASS=$(bashio::config 'mqtt_publish.password')
-    fi
+    PUBLISH_HOST=$(resolve_value "$OPT_HOST" "$DISCOVERED_MQTT_HOST" "core-mosquitto")
+    PUBLISH_PORT=$(resolve_value "$OPT_PORT" "$DISCOVERED_MQTT_PORT" "1883")
+    PUBLISH_USER=$(resolve_value "$OPT_USER" "$DISCOVERED_MQTT_USER" "")
+    PUBLISH_PASS=$(resolve_value "$OPT_PASS" "$DISCOVERED_MQTT_PASS" "")
 
     if bashio::config.has_value 'mqtt_publish.topic_prefix'; then
         PUBLISH_PREFIX=$(bashio::config 'mqtt_publish.topic_prefix')
@@ -141,7 +189,7 @@ start_mqtt_publisher() {
 
     # Wait for API to be ready
     bashio::log.info "Waiting for witness API..."
-    for i in $(seq 1 30); do
+    for _ in $(seq 1 30); do
         if curl -sf http://127.0.0.1:8799/health > /dev/null 2>&1; then
             break
         fi
@@ -151,6 +199,12 @@ start_mqtt_publisher() {
     # Generate device ID from key seed
     local DEVICE_ID
     DEVICE_ID="pwk_${DEVICE_KEY_SEED:0:8}"
+
+    # Scheduled sealed-log verification cadence (hours; 0 disables)
+    local VERIFY_INTERVAL_HOURS=24
+    if bashio::config.has_value 'verify_interval_hours'; then
+        VERIFY_INTERVAL_HOURS=$(bashio::config 'verify_interval_hours')
+    fi
 
     # Build command using array for safe argument handling
     local MQTT_CMD_ARRAY
@@ -164,6 +218,7 @@ start_mqtt_publisher() {
         --ha-device-id "$DEVICE_ID"
         --api-token-path "$TOKEN_FILE"
         --poll-interval 30
+        --verify-interval-secs "$((VERIFY_INTERVAL_HOURS * 3600))"
     )
 
     if [ -n "$PUBLISH_USER" ]; then
@@ -190,21 +245,44 @@ start_mqtt_publisher() {
 if [ "$MODE" = "frigate" ]; then
     bashio::log.info "=== Frigate Integration Mode ==="
 
-    # Read Frigate configuration
-    MQTT_HOST=$(bashio::config 'frigate.mqtt_host')
-    MQTT_PORT=$(bashio::config 'frigate.mqtt_port')
-    MQTT_TOPIC=$(bashio::config 'frigate.mqtt_topic')
-    MIN_CONFIDENCE=$(bashio::config 'frigate.min_confidence')
-
-    # MQTT authentication (optional)
-    MQTT_USER=""
-    MQTT_PASS=""
+    # Read Frigate configuration: explicit option → discovered → default
+    OPT_FRIGATE_HOST=""
+    OPT_FRIGATE_PORT=""
+    OPT_FRIGATE_USER=""
+    OPT_FRIGATE_PASS=""
+    OPT_FRIGATE_TOPIC=""
+    if bashio::config.has_value 'frigate.mqtt_host'; then
+        OPT_FRIGATE_HOST=$(bashio::config 'frigate.mqtt_host')
+    fi
+    if bashio::config.has_value 'frigate.mqtt_port'; then
+        OPT_FRIGATE_PORT=$(bashio::config 'frigate.mqtt_port')
+    fi
     if bashio::config.has_value 'frigate.mqtt_username'; then
-        MQTT_USER=$(bashio::config 'frigate.mqtt_username')
+        OPT_FRIGATE_USER=$(bashio::config 'frigate.mqtt_username')
     fi
     if bashio::config.has_value 'frigate.mqtt_password'; then
-        MQTT_PASS=$(bashio::config 'frigate.mqtt_password')
+        OPT_FRIGATE_PASS=$(bashio::config 'frigate.mqtt_password')
     fi
+    if bashio::config.has_value 'frigate.mqtt_topic'; then
+        OPT_FRIGATE_TOPIC=$(bashio::config 'frigate.mqtt_topic')
+    fi
+
+    TOPIC_PREFIX="frigate"
+    if bashio::config.has_value 'frigate.topic_prefix'; then
+        TOPIC_PREFIX=$(bashio::config 'frigate.topic_prefix')
+    fi
+
+    ENABLE_REVIEWS="false"
+    if bashio::config.has_value 'frigate.enable_reviews'; then
+        ENABLE_REVIEWS=$(bashio::config 'frigate.enable_reviews')
+    fi
+
+    MQTT_HOST=$(resolve_value "$OPT_FRIGATE_HOST" "$DISCOVERED_MQTT_HOST" "core-mosquitto")
+    MQTT_PORT=$(resolve_value "$OPT_FRIGATE_PORT" "$DISCOVERED_MQTT_PORT" "1883")
+    MQTT_USER=$(resolve_value "$OPT_FRIGATE_USER" "$DISCOVERED_MQTT_USER" "")
+    MQTT_PASS=$(resolve_value "$OPT_FRIGATE_PASS" "$DISCOVERED_MQTT_PASS" "")
+    MQTT_TOPIC=$(resolve_frigate_topic "$OPT_FRIGATE_TOPIC" "$TOPIC_PREFIX")
+    MIN_CONFIDENCE=$(bashio::config 'frigate.min_confidence')
 
     # Get cameras and labels as comma-separated strings
     FRIGATE_CAMERAS=""
@@ -233,11 +311,21 @@ if [ "$MODE" = "frigate" ]; then
         "/usr/local/bin/frigate_bridge"
         --allow-remote-mqtt
         --mqtt-broker-addr "$MQTT_HOST:$MQTT_PORT"
-        --frigate-topic "$MQTT_TOPIC"
+        --frigate-topic-prefix "$TOPIC_PREFIX"
         --db-path "$DB_PATH"
         --bucket-size-secs "$BUCKET_SECS"
         --min-confidence "$MIN_CONFIDENCE"
+        --retention-secs "$RETENTION_SECS"
     )
+
+    # Legacy full-topic override wins over the prefix when explicitly set.
+    if [ -n "$OPT_FRIGATE_TOPIC" ]; then
+        CMD_ARRAY+=(--frigate-topic "$OPT_FRIGATE_TOPIC")
+    fi
+
+    if [ "$ENABLE_REVIEWS" = "true" ]; then
+        CMD_ARRAY+=(--enable-reviews)
+    fi
 
     if [ -n "$MQTT_USER" ]; then
         CMD_ARRAY+=(--mqtt-username "$MQTT_USER")
