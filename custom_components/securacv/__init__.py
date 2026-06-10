@@ -125,6 +125,7 @@ class SecuraCVApi:
         self._token = token
         self._session = session
         self._token_file = token_file
+        self._refresh_lock = asyncio.Lock()
 
     def _read_token_file(self) -> str | None:
         """Blocking read of the token file (run in executor)."""
@@ -132,14 +133,18 @@ class SecuraCVApi:
             return None
         try:
             with open(self._token_file, encoding="utf-8") as fh:
-                token = fh.read().strip()
+                # The token is 64 hex chars; cap the read so a misconfigured
+                # path (device node, huge file) can't balloon memory.
+                token = fh.read(4096).strip()
         except OSError as err:
             _LOGGER.debug("could not read token file %s: %s", self._token_file, err)
             return None
         return token or None
 
-    async def _async_refresh_token(self) -> bool:
-        """Re-read the token file; True if a different token was loaded.
+    async def _async_refresh_token(self, current_token: str) -> bool:
+        """Re-read the token file; True if a token differing from
+        `current_token` is now in place (whether loaded here or by a
+        concurrent task that refreshed first).
 
         The kernel rotates its capability token every 10-minute bucket and
         rewrites the token file (src/api/mod.rs, privacy_witness_kernel/run.sh
@@ -149,26 +154,40 @@ class SecuraCVApi:
         """
         if not self._token_file:
             return False
-        loop = asyncio.get_running_loop()
-        token = await loop.run_in_executor(None, self._read_token_file)
-        if token is None or token == self._token:
-            return False
-        self._token = token
-        return True
+        async with self._refresh_lock:
+            if self._token != current_token:
+                # Another task already refreshed while we waited; retry
+                # with what it loaded instead of re-reading the file.
+                return True
+            loop = asyncio.get_running_loop()
+            token = await loop.run_in_executor(None, self._read_token_file)
+            if token is None or token == current_token:
+                return False
+            self._token = token
+            return True
 
     async def _async_get_json(
         self, path: str, *, none_on_404: bool = False
     ) -> dict[str, Any] | None:
         """GET a kernel endpoint, retrying once with a re-read token on 401."""
+        # Token-file-only setups start with an empty token; prime it from the
+        # file so the first request isn't a guaranteed 401 round-trip (and so
+        # a restart across a rotation boundary still has the one 401-retry in
+        # reserve for a stale file).
+        if not self._token and self._token_file:
+            await self._async_refresh_token("")
         url = f"{self._base_url}{path}"
         for attempt in (0, 1):
-            headers = {"Authorization": f"Bearer {self._token}"}
+            current_token = self._token
+            headers = {"Authorization": f"Bearer {current_token}"}
             try:
                 async with self._session.get(
                     url, headers=headers, timeout=10
                 ) as resp:
                     if resp.status == 401:
-                        if attempt == 0 and await self._async_refresh_token():
+                        if attempt == 0 and await self._async_refresh_token(
+                            current_token
+                        ):
                             continue
                         raise SecuraCVApiAuthError("unauthorized")
                     if none_on_404 and resp.status == 404:

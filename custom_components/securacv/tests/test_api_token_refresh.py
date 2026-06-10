@@ -138,6 +138,79 @@ def test_latest_event_404_maps_to_none():
     assert run(api.async_get_latest_event()) is None
 
 
+def test_empty_token_primed_from_file_before_first_request(tmp_path):
+    """Token-file-only setups must not burn a guaranteed 401 on startup."""
+    token_file = tmp_path / "api_token"
+    token_file.write_text("primed-token")
+
+    session = _FakeSession([_FakeResponse(200, {"events": []})])
+    api = SecuraCVApi(
+        "http://kernel:8799", "", session, token_file=str(token_file)
+    )
+
+    assert run(api.async_get_events()) == {"events": []}
+    assert session.auth_headers == ["Bearer primed-token"]
+
+
+def test_stale_file_at_boot_recovers_after_kernel_rotates(tmp_path):
+    """Restart across a rotation boundary: the primed token is stale, the
+    kernel rotates + rewrites the file while rejecting it, and the single
+    401-retry must pick up the fresh token."""
+    token_file = tmp_path / "api_token"
+    token_file.write_text("stale-from-last-bucket")
+
+    class _RotatingSession(_FakeSession):
+        def get(self, url, headers=None, timeout=None):
+            resp = super().get(url, headers=headers, timeout=timeout)
+            # Mimic the kernel rotating its bucket on the first request:
+            # rejects the stale token but rewrites the token file.
+            token_file.write_text("fresh-after-rotation")
+            return resp
+
+    session = _RotatingSession(
+        [_FakeResponse(401), _FakeResponse(200, {"events": []})]
+    )
+    api = SecuraCVApi(
+        "http://kernel:8799", "", session, token_file=str(token_file)
+    )
+
+    assert run(api.async_get_events()) == {"events": []}
+    assert session.auth_headers == [
+        "Bearer stale-from-last-bucket",
+        "Bearer fresh-after-rotation",
+    ]
+
+
+def test_concurrent_refresh_waiter_reuses_already_loaded_token(tmp_path):
+    """If another task already swapped the token while we waited on the
+    lock, the waiter must retry with it instead of re-reading the file or
+    raising."""
+    api = SecuraCVApi(
+        "http://kernel:8799",
+        "old-token",
+        _FakeSession([]),
+        token_file=str(tmp_path / "unreadable-does-not-matter"),
+    )
+
+    async def scenario():
+        # Simulate a concurrent task having refreshed first.
+        api._token = "refreshed-by-peer"
+        return await api._async_refresh_token("old-token")
+
+    assert run(scenario()) is True
+
+
+def test_oversized_token_file_is_capped(tmp_path):
+    token_file = tmp_path / "api_token"
+    token_file.write_text("x" * 100_000)
+
+    api = SecuraCVApi(
+        "http://kernel:8799", "", _FakeSession([]), token_file=str(token_file)
+    )
+    token = api._read_token_file()
+    assert token is not None and len(token) == 4096
+
+
 def test_latest_event_survives_rotation(tmp_path):
     token_file = tmp_path / "api_token"
     token_file.write_text("fresh")
