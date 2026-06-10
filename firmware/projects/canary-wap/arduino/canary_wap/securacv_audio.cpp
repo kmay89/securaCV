@@ -19,7 +19,8 @@
  *      LOG_LEVEL_* / LOG_CAT_* names.
  *   2. The whole implementation is gated on FEATURE_ACOUSTIC_EVENTS
  *      from build_config.h so MINIMAL profiles compile it out.
- * It is NOT covered by the csi-sketch sync guards — do not add it.
+ * Drift beyond these adaptations is caught by the normalizing CI guard
+ * firmware/scripts/check_audio_sync.sh — fix BOTH copies when it fires.
  *
  * Copyright (c) 2026 ERRERlabs / Karl May
  * License: Apache-2.0

@@ -111,6 +111,12 @@ static_assert(sizeof(csi_features_t) == 36,
 #include "securacv_diagnostics.h"
 #endif
 
+#include "securacv_thermal.h"
+
+#if FEATURE_THERMAL_WATCHDOG
+#include "securacv_thermal_watchdog.h"
+#endif
+
 #if FEATURE_DATA_MGMT
 #include "securacv_data_mgmt.h"
 #endif
@@ -1114,6 +1120,13 @@ void setup() {
   }
 #endif
 
+  // Passive thermal observer: lifetime die-temp history, advisories.
+  // Never actuates — the camera state machine stays the sole actuator.
+#if FEATURE_THERMAL_WATCHDOG
+  thermal_wd_init();
+  Serial.println("[OK] Thermal watchdog observing");
+#endif
+
   // Confirm — or roll back — a freshly applied OTA image. Reaching this
   // line at all means provisioning, storage, and network bring-up survived
   // the new firmware; the registered probes assert the parts that matter
@@ -1438,6 +1451,10 @@ void loop() {
   }
 #endif
 
+#if FEATURE_THERMAL_WATCHDOG
+  thermal_wd_process();  /* rate-limits internally (30 s sample, 10 min persist) */
+#endif
+
 #if FEATURE_POWER_POLICY
   policy_process();
 
@@ -1457,6 +1474,9 @@ void loop() {
                             RECORD_STATE_CHANGE, &sl_rec);
     }
     witness_persist_chain_state();
+#if FEATURE_THERMAL_WATCHDOG
+    thermal_wd_persist();
+#endif
     lowpower_arm_wake_timer((uint64_t)sleep_sec * 1000000ULL);
     lowpower_arm_wake_touch();
     policy_ack_deep_sleep();
@@ -1731,6 +1751,34 @@ static void mqtt_publish_health_update() {
   doc["boot_count"] = device.boot_count;
   doc["firmware_version"] = FIRMWARE_VERSION;
   doc["tamper_detected"] = device.tamper_active;
+
+  /* SD endurance metrics: lifetime write counters (NVS-persisted), wear
+   * estimate against the configured TBW rating, and the replacement
+   * recommendation latch. HA's SD Wear / SD Replacement sensors read
+   * this object. */
+#if FEATURE_DIAGNOSTICS
+  {
+    diag_sd_t sd;
+    if (diag_get_sd(&sd)) {
+      JsonObject sdo = doc["sd"].to<JsonObject>();
+      sdo["mounted"] = sd.mounted;
+      sdo["usage_pct"] = sd.usage_pct;
+      sdo["writes"] = sd.total_writes;
+      sdo["errors"] = sd.write_errors;
+      sdo["lifetime_kb"] = (uint64_t)(sd.lifetime_bytes / 1024);
+      sdo["wear_pct"] = sd.wear_pct_x10 / 10.0;
+      sdo["replace_recommended"] = sd.replace_recommended;
+    }
+  }
+#endif
+  /* Die temperature via the shared provider (heat accelerates flash wear;
+   * HA surfaces it alongside the SD metrics). */
+  {
+    float temp_c = 0.0f;
+    if (thermal_read_die_c(&temp_c)) {
+      doc["temp_c"] = temp_c;
+    }
+  }
 #if FEATURE_POWER_MONITOR
   doc["battery_mv"] = health.battery_mv;
   doc["battery_soc"] = health.battery_soc;
@@ -2079,6 +2127,9 @@ static void handle_serial_commands() {
     case 'X':
       Serial.println("\nRebooting...");
       witness_persist_chain_state();
+#if FEATURE_THERMAL_WATCHDOG
+      thermal_wd_persist();
+#endif
 #if FEATURE_HA_MQTT
       mqtt_disconnect();
 #endif

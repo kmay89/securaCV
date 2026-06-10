@@ -53,6 +53,9 @@ impl SqliteSealedLogStore {
         self.conn.execute_batch(
             r#"
             PRAGMA journal_mode=WAL;
+            -- SD-card endurance: truncate the WAL back to 4 MB after
+            -- checkpoints so it cannot grow unbounded and amplify rewrites.
+            PRAGMA journal_size_limit=4194304;
 
             CREATE TABLE IF NOT EXISTS sealed_events (
               id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -71,6 +71,7 @@ Single-row-per-capability summary across every non-archived variant. This is the
 | First-time setup wizard (captive portal, device naming, NVS flag) | ✅ | ✅ | ❌ | ❌ | ➖ | ❌ |
 | Heap monitoring + automatic feature degradation (3-level with hysteresis) | ✅ | ✅ | ❌ | ❌ | ➖ | ❌ |
 | SD card health tracking (write/error counters, space warnings) | ✅ | ✅ | ❌ | ❌ | ➖ | ❌ |
+| SD endurance wear estimate (NVS lifetime counters, TBW wear %, replace-recommended latch on MQTT health) | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
 | Boot self-test suite (10 subsystem probes, 0-100% health score) | ✅ | ✅ | ❌ | ❌ | ➖ | ❌ |
 | BLE GATT status service (battery + health + chain over BLE) | ✅ | ✅ | ❌ | ❌ | ➖ | ❌ |
 | WiFi power save (modem sleep on battery, TX power control) | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |

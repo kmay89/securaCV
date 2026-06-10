@@ -31,6 +31,26 @@ docker network create "$NET" >/dev/null
 docker run -d --name "$BROKER" --network "$NET" eclipse-mosquitto:2 \
     sh -c 'printf "listener 1883 0.0.0.0\nallow_anonymous true\n" > /mosquitto/config/mosquitto.conf && exec mosquitto -c /mosquitto/config/mosquitto.conf' >/dev/null
 
+echo "==> Waiting for the broker to accept connections"
+# The sidecar entrypoint fail-fasts (with a doctor hint) when the broker is
+# unreachable, so start it only once mosquitto is actually listening.
+# Without this, a cold runner that has to pull eclipse-mosquitto:2 loses
+# the race and the whole e2e dies in its first 100ms.
+broker_ready=0
+for _ in $(seq 1 30); do
+    if docker run --rm --network "$NET" eclipse-mosquitto:2 \
+        mosquitto_pub -h "$BROKER" -t ci/ping -m ping >/dev/null 2>&1; then
+        broker_ready=1
+        break
+    fi
+    sleep 1
+done
+if [ "$broker_ready" -ne 1 ]; then
+    echo "❌ broker never accepted connections" >&2
+    docker logs "$BROKER" >&2 || true
+    exit 1
+fi
+
 echo "==> Starting sidecar (zero config beyond FRIGATE_MQTT_HOST)"
 docker run -d --name "$SIDECAR" --network "$NET" \
     -e FRIGATE_MQTT_HOST="$BROKER" "$IMG" >/dev/null

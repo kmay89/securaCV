@@ -16,14 +16,70 @@ concurrency:
   group: firmware-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
+  # ──────────────────────────────────────────────────────────────────
+  # Flavor manifest
+  #
+  # firmware/flavors.json is the single source of truth for every
+  # PlatformIO-built firmware flavor. Adding a future flavor means
+  # adding one manifest entry (plus its envs/ ini + configs/ dir per
+  # firmware/ARCHITECTURE.md) — no new CI jobs. Each entry drives one
+  # matrix leg of `build-platformio` and one of `pio-check` below.
+  #
+  # Manifest fields:
+  #   name               — display name + cache-key component
+  #   dir                — project dir holding platformio.ini
+  #   build_envs         — envs compiled by the build job, in order
+  #   check_env          — env analyzed by the pio-check job
+  #   pip_extras         — extra pip packages (e.g. canary needs
+  #                        intelhex: esptool 4.11.0 bundled by the
+  #                        official espressif32 7.x platform imports it
+  #                        without declaring it, so bootloader.bin
+  #                        generation dies on a clean runner without it)
+  #   isolated_core_envs — envs that get their own PLATFORMIO_CORE_DIR.
+  #                        Needed when one project mixes the official
+  #                        espressif32 platform with the pioarduino fork:
+  #                        both ship a package literally named
+  #                        `framework-arduinoespressif32` at incompatible
+  #                        versions (2.0.17 vs 3.3.8). Sharing
+  #                        ~/.platformio, pioarduino sees 2.0.17 already
+  #                        "installed", skips its own 3.3.8, and its build
+  #                        script fails with FRAMEWORK_DIR=None before any
+  #                        compile. (canary's `full` env hits this; a
+  #                        project that is pioarduino-only, like
+  #                        canary-wap, runs alone in its leg and needs no
+  #                        isolation.)
+  #   pre_step           — named setup hook; "secrets_header" writes a
+  #                        CI-only secrets/secrets.h (build verification,
+  #                        not deployment)
+  #   size_guard         — fail if `bin` exceeds `slot_bytes` (an image
+  #                        bigger than its OTA A/B slot can never be
+  #                        installed over the air)
+  # ──────────────────────────────────────────────────────────────────
+  flavors:
+    name: Load flavor manifest
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.load.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: load
+        run: echo "matrix=$(jq -c . firmware/flavors.json)" >> "$GITHUB_OUTPUT"
+
   build-platformio:
-    name: PlatformIO Build (Canary)
+    name: PlatformIO Build (${{ matrix.flavor.name }})
+    needs: flavors
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        flavor: ${{ fromJSON(needs.flavors.outputs.matrix) }}
     defaults:
       run:
-        working-directory: firmware/canary
-
+        working-directory: ${{ matrix.flavor.dir }}
     steps:
       - uses: actions/checkout@v4
 
@@ -37,85 +93,89 @@ jobs:
         with:
           path: |
             ~/.platformio
-          key: ${{ runner.os }}-pio-canary-${{ hashFiles('firmware/canary/platformio.ini') }}
+          key: ${{ runner.os }}-pio-${{ matrix.flavor.name }}-${{ hashFiles(format('{0}/platformio.ini', matrix.flavor.dir), 'firmware/envs/platformio/*.ini') }}
           restore-keys: |
-            ${{ runner.os }}-pio-canary-
+            ${{ runner.os }}-pio-${{ matrix.flavor.name }}-
 
       - name: Install PlatformIO
         run: |
           python -m pip install --upgrade pip
-          pip install --upgrade platformio
-          # esptool 4.11.0 (bundled by the official espressif32 7.0.x platform,
-          # used by the dev/release envs) imports the `intelhex` module at
-          # startup but doesn't declare it, so bootloader.bin generation dies
-          # with "ModuleNotFoundError: No module named 'intelhex'" on a clean
-          # runner env. Install it explicitly. (The full env's pioarduino
-          # esptool 5.2.0 bundles its own deps and is unaffected.)
-          pip install intelhex
+          pip install --upgrade platformio ${{ matrix.flavor.pip_extras }}
 
-      - name: Build firmware (dev)
+      - name: Generate CI secrets header (build-only, not from committed file)
+        if: matrix.flavor.pre_step == 'secrets_header'
         run: |
-          pio run -e dev
+          mkdir -p secrets
+          cat > secrets/secrets.h << 'HEADER'
+          #pragma once
+          // Auto-generated for CI build verification only. Not for deployment.
+          #define WIFI_SSID "ci"
+          #define WIFI_PASS "ci"
+          #define MQTT_HOST "127.0.0.1"
+          #define MQTT_PORT 1883
+          #define MQTT_USER "ci"
+          #define MQTT_PASS "ci"
+          HEADER
+
+      - name: Build all environments (+ OTA-slot size guard)
+        # The size guard runs IMMEDIATELY after the env that produces the
+        # guarded binary, inside the loop — not as a separate step. A later
+        # env build can recreate .pio/build and drop sibling envs' artifacts
+        # (observed when canary's `full` env, on the pioarduino platform with
+        # an isolated core dir, followed `release`: release/firmware.bin was
+        # gone by the end of the job).
         env:
           PLATFORMIO_BUILD_FLAGS: -DVALIDATION_BUILD=1
-
-      - name: Build firmware (release)
+          FLAVOR_JSON: ${{ toJSON(matrix.flavor) }}
         run: |
-          pio run -e release
-        env:
-          PLATFORMIO_BUILD_FLAGS: -DVALIDATION_BUILD=1
+          set -euo pipefail
+          SG_BIN=$(jq -r '.size_guard.bin // empty' <<< "$FLAVOR_JSON")
+          size_guard() {
+            local SLOT SLOT_NAME SIZE
+            SLOT=$(jq -r '.size_guard.slot_bytes' <<< "$FLAVOR_JSON")
+            SLOT_NAME=$(jq -r '.size_guard.slot_name // "OTA slot"' <<< "$FLAVOR_JSON")
+            SIZE=$(stat -c%s "$SG_BIN" 2>/dev/null || echo 0)
+            if [ "$SIZE" -eq 0 ]; then
+              echo "::error::$SG_BIN not found — size guard cannot run."
+              exit 1
+            fi
+            if [ "$SIZE" -gt "$SLOT" ]; then
+              echo "::error::Firmware binary ($SIZE bytes) exceeds the $SLOT_NAME ($SLOT bytes). It could never be installed over the air — trim features or grow the slots."
+              exit 1
+            fi
+            echo "Firmware size: $SIZE / $SLOT bytes ($((SIZE * 100 / SLOT))% of $SLOT_NAME)"
+          }
+          for e in $(jq -r '.build_envs[]' <<< "$FLAVOR_JSON"); do
+            if jq -e --arg e "$e" '(.isolated_core_envs // []) | index($e)' <<< "$FLAVOR_JSON" > /dev/null; then
+              echo "── pio run -e $e (isolated PLATFORMIO_CORE_DIR) ──"
+              PLATFORMIO_CORE_DIR="$GITHUB_WORKSPACE/.pio-core-$e" pio run -e "$e"
+            else
+              echo "── pio run -e $e ──"
+              pio run -e "$e"
+            fi
+            case "$SG_BIN" in
+              .pio/build/$e/*) size_guard ;;
+            esac
+          done
 
-      - name: Build firmware (full — BLE + mesh, pioarduino core 3.x)
-        # dev/release above keep BLE off and build on the official
-        # espressif32@^7.0.0 (= Arduino 2.0.17 / IDF 4.4) just fine. [env:full]
-        # turns on FEATURE_BLE/BLE_SCAN/BLE_STATUS and pins NimBLE-Arduino 2.x,
-        # which only compiles on Arduino-ESP32 core 3.x — so it overrides the
-        # platform to the pioarduino fork. Nothing built this env before, so
-        # the BLE stack + the 3.x platform pin were never compile-verified by
-        # CI; this step closes that gap (mirrors the canary-wap BLE build and
-        # the arduino-cli esp32:esp32 3.x build).
-        #
-        # Use a SEPARATE PLATFORMIO_CORE_DIR. The official platform (dev/release)
-        # and the pioarduino fork (this env) both ship a package literally named
-        # `framework-arduinoespressif32`, at incompatible versions (2.0.17 vs
-        # 3.3.8). Sharing ~/.platformio, pioarduino sees the official 2.0.17
-        # already "installed" under that name, skips installing its own 3.3.8,
-        # and its build script then can't resolve FRAMEWORK_DIR (None) ->
-        # "TypeError: expected str ... not NoneType" before any compile. An
-        # isolated core dir keeps the two framework packages from colliding.
-        run: |
-          pio run -e full
-        env:
-          PLATFORMIO_BUILD_FLAGS: -DVALIDATION_BUILD=1
-          PLATFORMIO_CORE_DIR: ${{ github.workspace }}/.pio-core-full
-
-      - name: Check binary size
-        run: |
-          # Report binary size for tracking
-          pio run -e release --target size || true
-          # Fail if the binary exceeds the OTA A/B slot. partitions_ota.csv
-          # gives ota_0/ota_1 0x1E0000 (1,966,080 bytes) each — a release
-          # image larger than that can never be installed over the air.
-          SLOT=1966080
-          SIZE=$(stat -c%s .pio/build/release/firmware.bin 2>/dev/null || echo 0)
-          if [ "$SIZE" -gt "$SLOT" ]; then
-            echo "::error::Firmware binary ($SIZE bytes) exceeds the 0x1E0000 OTA slot ($SLOT bytes). It could never be installed over the air — trim features or grow the slots in partitions_ota.csv."
-            exit 1
-          fi
-          echo "Firmware size: $SIZE / $SLOT bytes ($((SIZE * 100 / SLOT))% of OTA slot)"
-
-  build-platformio-wap:
-    name: PlatformIO Build (Canary WAP)
+  pio-check:
+    name: Static Analysis (${{ matrix.flavor.name }})
+    needs: flavors
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        flavor: ${{ fromJSON(needs.flavors.outputs.matrix) }}
     defaults:
       run:
-        working-directory: firmware/projects/canary-wap
-    # Compiles the canary_wap Arduino sketch through PlatformIO — the same
-    # sketch the "Arduino CLI Build (Canary WAP)" job builds, but exercising
-    # the PlatformIO env (firmware/envs/platformio/canary-wap.ini) that no CI
-    # job built before. That env pins the pioarduino platform (core 3.x)
-    # because the sketch uses IDF5-only watchdog APIs unconditionally and links
-    # NimBLE 2.x; without this job the platform pin was never compile-verified.
+        working-directory: ${{ matrix.flavor.dir }}
+    # cppcheck has been configured via check_tool/check_flags in the
+    # PlatformIO inis (firmware/envs/platformio/common.ini) since the
+    # envs were created, but nothing ever ran it. This job closes that
+    # gap per flavor. `pio check` exits 0 on findings unless
+    # --fail-on-defect is given; medium catches cppcheck warning-severity
+    # defects (real bug classes: format-string mismatches, uninitialized
+    # members, side effects in assert) without drowning in style nits.
     steps:
       - uses: actions/checkout@v4
 
@@ -129,24 +189,33 @@ jobs:
         with:
           path: |
             ~/.platformio
-          key: ${{ runner.os }}-pio-canary-wap-${{ hashFiles('firmware/envs/platformio/canary-wap.ini', 'firmware/envs/platformio/common.ini', 'firmware/projects/canary-wap/platformio.ini') }}
+          key: ${{ runner.os }}-pio-${{ matrix.flavor.name }}-${{ hashFiles(format('{0}/platformio.ini', matrix.flavor.dir), 'firmware/envs/platformio/*.ini') }}
           restore-keys: |
-            ${{ runner.os }}-pio-canary-wap-
+            ${{ runner.os }}-pio-${{ matrix.flavor.name }}-
 
       - name: Install PlatformIO
         run: |
           python -m pip install --upgrade pip
-          pip install --upgrade platformio
+          pip install --upgrade platformio ${{ matrix.flavor.pip_extras }}
 
-      - name: Build canary-wap (FULL profile — BLE + mesh + camera)
-        # lib_deps installs NimBLE-Arduino 2.x, so <NimBLEDevice.h> IS present
-        # and ble_config.h compiles the REAL BLE stack (the -DVALIDATION_BUILD
-        # stub only triggers when NimBLE is absent). This is the PlatformIO
-        # counterpart to the green arduino-cli build, on the same core 3.x line.
+      - name: Generate CI secrets header (build-only, not from committed file)
+        if: matrix.flavor.pre_step == 'secrets_header'
         run: |
-          pio run -e canary-wap-default
-        env:
-          PLATFORMIO_BUILD_FLAGS: -DVALIDATION_BUILD=1
+          mkdir -p secrets
+          cat > secrets/secrets.h << 'HEADER'
+          #pragma once
+          // Auto-generated for CI build verification only. Not for deployment.
+          #define WIFI_SSID "ci"
+          #define WIFI_PASS "ci"
+          #define MQTT_HOST "127.0.0.1"
+          #define MQTT_PORT 1883
+          #define MQTT_USER "ci"
+          #define MQTT_PASS "ci"
+          HEADER
+
+      - name: Run pio check
+        run: |
+          pio check -e ${{ matrix.flavor.check_env }} --fail-on-defect=medium --fail-on-defect=high --skip-packages
 
   build-arduino-cli:
     name: Arduino CLI Build (Canary WAP)
@@ -256,6 +325,16 @@ jobs:
         run: |
           chmod +x firmware/scripts/check_ota_sync.sh
           firmware/scripts/check_ota_sync.sh
+
+      - name: Verify acoustic module copy in canary-wap sketch dir matches canonical source
+        # securacv_audio is canonical at firmware/canary/lib/securacv_audio/src/
+        # and vendored next to the sketch. Unlike the other copies it carries
+        # four documented adaptations (log-enum vocabulary, build_config
+        # feature gate), so the script normalizes both sides before diffing —
+        # any change beyond those adaptations must land in BOTH copies.
+        run: |
+          chmod +x firmware/scripts/check_audio_sync.sh
+          firmware/scripts/check_audio_sync.sh
 
   regression-check:
     name: Regression Guards

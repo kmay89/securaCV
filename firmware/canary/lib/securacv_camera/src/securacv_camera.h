@@ -47,6 +47,7 @@ enum ThermalState : uint8_t {
 #define THERMAL_PAUSE_TEMP_C      80
 #define THERMAL_RECOVER_MARGIN_C   5
 #define THERMAL_CHECK_INTERVAL_MS  5000
+#define THERMAL_FAIL_SAFE_COUNT    3     // consecutive read failures before fail-safe throttle
 #define FREEZE_TIMEOUT_MS          10000
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -92,6 +93,7 @@ public:
   void checkThermal();
   ThermalState getThermalState() const { return m_thermal_state; }
   int8_t getDieTempC() const { return m_die_temp_c; }
+  bool getThermalSensorOk() const { return m_thermal_fail_count < THERMAL_FAIL_SAFE_COUNT; }
 
   // Freeze detection — call when frame capture fails
   bool checkFreeze(uint32_t now_ms);
@@ -125,6 +127,7 @@ private:
   ThermalState m_thermal_state;
   int8_t m_die_temp_c;
   uint32_t m_last_thermal_check_ms;
+  uint8_t m_thermal_fail_count;
 
   // Freeze detection
   uint32_t m_last_good_frame_ms;

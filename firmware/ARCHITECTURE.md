@@ -131,6 +131,28 @@ to `common/` and reference it.
    - If behavior diverges by configuration, express it as a configuration input
      (data), not a code fork.
 
+## CI Flavor Manifest
+
+`firmware/flavors.json` is the single source of truth for every
+PlatformIO-built firmware flavor in CI. The `Firmware Build` workflow
+(`.github/workflows/firmware.yml`) reads it into a job matrix: each entry gets
+one build leg (`pio run` per listed env, plus an optional OTA-slot size guard)
+and one static-analysis leg (`pio check --fail-on-defect=medium`).
+
+**Adding a future flavor requires no new CI jobs.** The full recipe:
+
+1. Add the board pins under `boards/` and the configuration under `configs/`
+   (if new hardware/behavior), per the layout above.
+2. Add a `[env:<env_id>]` section in `envs/platformio/<app_id>.ini`.
+3. Add one entry to `firmware/flavors.json` naming the project dir, the envs
+   to build, and the env to analyze. See the field reference in the manifest
+   comment block at the top of `firmware.yml`.
+
+The manifest fields (`pip_extras`, `isolated_core_envs`, `pre_step`,
+`size_guard`) cover the per-flavor quirks that previously required hand-written
+jobs; extend the workflow's named `pre_step` hooks rather than adding
+flavor-specific jobs.
+
 ## Naming Conventions
 
 - `<board_id>`: lowercase, dash-separated (e.g., `esp32-c3`, `stm32f4`)

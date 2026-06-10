@@ -58,6 +58,8 @@ GpsManager::GpsManager()
   m_fix.fix_mode = FIX_MODE_NONE;
   memset(&m_utc, 0, sizeof(m_utc));
   memset(&m_motion, 0, sizeof(m_motion));
+  memset(m_rb, 0, sizeof(m_rb));
+  memset(m_line_buf, 0, sizeof(m_line_buf));
 }
 
 void GpsManager::begin(HardwareSerial& serial, uint32_t baud, int rx_pin, int tx_pin) {
