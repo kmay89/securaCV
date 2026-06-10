@@ -54,6 +54,16 @@ RUN groupadd --system --gid 1001 witness && \
 WORKDIR /data
 
 COPY --from=build /app/target/release/witnessd /usr/local/bin/witnessd
+# Operator tooling: verify, export, and manage break-glass on the sealed
+# log/vault this container owns under /data, without copying the encrypted
+# database out of the volume. Already compiled by the build above (none of
+# these are feature-gated); adds binaries only, no extra runtime deps and
+# no new listening ports.
+COPY --from=build /app/target/release/log_verify /usr/local/bin/log_verify
+COPY --from=build /app/target/release/export_events /usr/local/bin/export_events
+COPY --from=build /app/target/release/export_verify /usr/local/bin/export_verify
+COPY --from=build /app/target/release/envelope_verify /usr/local/bin/envelope_verify
+COPY --from=build /app/target/release/break_glass /usr/local/bin/break_glass
 
 ENV WITNESS_API_ADDR=0.0.0.0:8799
 ENV RUST_LOG=info
