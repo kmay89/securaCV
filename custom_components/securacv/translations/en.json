@@ -6,7 +6,7 @@
         "title": "SecuraCV Setup",
         "description": "Choose how to connect to your SecuraCV devices.",
         "data": {
-          "setup_mode": "Setup Mode"
+          "setup_mode": "Setup mode"
         },
         "data_description": {
           "setup_mode": "Most users should choose 'Canary devices via MQTT' — devices auto-discover via MQTT Discovery."
@@ -16,7 +16,7 @@
         "title": "MQTT Configuration",
         "description": "Configure MQTT for Canary device auto-discovery.\n\nCanary devices publish to topics under this prefix. Devices will appear automatically in Home Assistant.",
         "data": {
-          "mqtt_prefix": "MQTT Topic Prefix"
+          "mqtt_prefix": "MQTT topic prefix"
         },
         "data_description": {
           "mqtt_prefix": "MQTT topic prefix for Canary devices (default: securacv)"
@@ -29,7 +29,7 @@
           "url": "Kernel URL",
           "token_file": "API token file (recommended)",
           "token": "Static API token (remote kernels only)",
-          "adapter_stats_url": "Adapter Host stats URL (optional)"
+          "adapter_stats_url": "Adapter host stats URL (optional)"
         },
         "data_description": {
           "url": "URL of the Privacy Witness Kernel Event API (e.g., http://privacy_witness_kernel:8799)",
@@ -45,8 +45,8 @@
           "url": "Kernel URL",
           "token_file": "API token file (recommended)",
           "token": "Static API token (remote kernels only)",
-          "mqtt_prefix": "MQTT Topic Prefix",
-          "adapter_stats_url": "Adapter Host stats URL (optional)"
+          "mqtt_prefix": "MQTT topic prefix",
+          "adapter_stats_url": "Adapter host stats URL (optional)"
         },
         "data_description": {
           "url": "URL of the Privacy Witness Kernel Event API",
