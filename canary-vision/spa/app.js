@@ -405,6 +405,41 @@ function clearApp() {
   return app;
 }
 
+// Clipboard fallback for plain-HTTP device contexts where navigator.clipboard
+// is unavailable. Returns true if the copy command succeeded.
+function copyFallback(text) {
+  var ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.style.position = 'fixed';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.select();
+  var ok = false;
+  try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
+  document.body.removeChild(ta);
+  return ok;
+}
+
+// Humanize API config keys for display: snake_case -> sentence case,
+// with overrides for keys whose words aren't plain English.
+var FIELD_LABELS = {
+  ssid: 'WiFi network (SSID)',
+  mdns_hostname: 'Local hostname (mDNS)',
+  mqtt_broker: 'MQTT broker',
+  mqtt_port: 'MQTT port',
+  mqtt_topic_prefix: 'MQTT topic prefix',
+  webhook_url: 'Webhook URL',
+  dwell_start_ms: 'Dwell start (ms)',
+  lost_timeout_ms: 'Lost timeout (ms)',
+  static_ip: 'Static IP address'
+};
+function labelFor(key) {
+  if (FIELD_LABELS[key]) return FIELD_LABELS[key];
+  var words = key.replace(/_/g, ' ').trim();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
 // --------------- Router ---------------
 
 var Router = {
@@ -1505,7 +1540,7 @@ function handleAddCanary() {
   // Test connection
   alertEl.appendChild(el('div', { className: 'loading' }, [
     el('div', { className: 'spinner' }),
-    'Connecting...',
+    'Connecting…',
   ]));
 
   CanaryAPI.request(baseUrl, '/api/v1/info', { token: token })
@@ -1672,7 +1707,7 @@ function renderConfigView(deviceId, section) {
   var formArea = el('div', { id: 'config-form' });
   formArea.appendChild(el('div', { className: 'loading' }, [
     el('div', { className: 'spinner' }),
-    'Loading configuration...',
+    'Loading configuration…',
   ]));
   content.appendChild(formArea);
   app.appendChild(content);
@@ -1698,7 +1733,7 @@ function renderConfigForm(container, device, section, config) {
 
     if (typeof value === 'boolean') {
       var row = el('div', { className: 'toggle-row' });
-      row.appendChild(el('span', { className: 'toggle-label', textContent: key }));
+      row.appendChild(el('span', { className: 'toggle-label', textContent: labelFor(key) }));
       var toggle = el('label', { className: 'toggle' });
       var checkbox = el('input', { type: 'checkbox' });
       checkbox.checked = value;
@@ -1708,18 +1743,18 @@ function renderConfigForm(container, device, section, config) {
       group.appendChild(row);
       inputs[key] = { type: 'boolean', el: checkbox };
     } else if (typeof value === 'number') {
-      group.appendChild(el('label', { className: 'form-label', textContent: key }));
+      group.appendChild(el('label', { className: 'form-label', textContent: labelFor(key) }));
       var numInput = el('input', { className: 'form-input', type: 'number', value: String(value) });
       group.appendChild(numInput);
       inputs[key] = { type: 'number', el: numInput };
     } else if (typeof value === 'string') {
-      group.appendChild(el('label', { className: 'form-label', textContent: key }));
+      group.appendChild(el('label', { className: 'form-label', textContent: labelFor(key) }));
       var textInput = el('input', { className: 'form-input', type: 'text', value: value });
       group.appendChild(textInput);
       inputs[key] = { type: 'string', el: textInput };
     } else {
       // Arrays/objects — show as read-only JSON
-      group.appendChild(el('label', { className: 'form-label', textContent: key }));
+      group.appendChild(el('label', { className: 'form-label', textContent: labelFor(key) }));
       group.appendChild(el('div', { className: 'token-display', textContent: JSON.stringify(value) }));
       return;
     }
@@ -1770,7 +1805,7 @@ function renderConfigForm(container, device, section, config) {
       onClick: function () {
         var alertArea = document.getElementById('config-alert');
         while (alertArea.firstChild) alertArea.removeChild(alertArea.firstChild);
-        alertArea.appendChild(el('div', { className: 'alert', textContent: 'Sending test webhook...' }));
+        alertArea.appendChild(el('div', { className: 'alert', textContent: 'Sending test webhook…' }));
 
         CanaryAPI.request(device.base_url, '/api/v1/webhook/test', { method: 'POST' })
           .then(function (res) {
@@ -1806,7 +1841,7 @@ function renderLogsView(deviceId) {
   var logContainer = el('div', { id: 'log-list' });
   logContainer.appendChild(el('div', { className: 'loading' }, [
     el('div', { className: 'spinner' }),
-    'Loading logs...',
+    'Loading logs…',
   ]));
   content.appendChild(logContainer);
   app.appendChild(content);
@@ -1993,7 +2028,7 @@ function renderWitnessView(deviceId) {
     textContent: 'Verify Chain Integrity',
     onClick: function () {
       while (alertArea.firstChild) alertArea.removeChild(alertArea.firstChild);
-      alertArea.appendChild(el('div', { className: 'alert', textContent: 'Verifying...' }));
+      alertArea.appendChild(el('div', { className: 'alert', textContent: 'Verifying…' }));
       CanaryAPI.request(device.base_url, '/api/v1/witness/verify', { method: 'POST' })
         .then(function (res) {
           while (alertArea.firstChild) alertArea.removeChild(alertArea.firstChild);
@@ -2075,7 +2110,7 @@ function renderWitnessView(deviceId) {
       timelineBtn.disabled = true;
       while (timelineSection.firstChild) timelineSection.removeChild(timelineSection.firstChild);
       timelineSection.appendChild(el('div', { className: 'loading' }, [
-        el('div', { className: 'spinner' }), 'Building and verifying evidence envelope...',
+        el('div', { className: 'spinner' }), 'Building and verifying evidence envelope…',
       ]));
       // Fetch the envelope and its integrity report together; the device builds + signs the
       // envelope and runs the shared verifier (viewer/verify_core.js) server-side.
@@ -2102,7 +2137,7 @@ function renderWitnessView(deviceId) {
   var recordList = el('div', { id: 'witness-records' });
   recordList.appendChild(el('div', { className: 'loading' }, [
     el('div', { className: 'spinner' }),
-    'Loading records...',
+    'Loading records…',
   ]));
   content.appendChild(el('div', { className: 'card-title mb-8', style: 'margin-top: 1rem',
     textContent: 'Raw chain records' }));
@@ -2941,11 +2976,20 @@ function renderEventDetailView(eventId) {
       className: 'btn btn-secondary btn-block mt-12',
       textContent: 'Copy Link',
       onClick: function () {
-        if (navigator.clipboard) {
-          navigator.clipboard.writeText(deepLink).then(function () {
-            copyBtn.textContent = '✓ Copied';
-            setTimeout(function () { copyBtn.textContent = 'Copy Link'; }, 2000);
+        function copied() {
+          copyBtn.textContent = '✓ Copied';
+          setTimeout(function () { copyBtn.textContent = 'Copy Link'; }, 2000);
+        }
+        function failed() {
+          copyBtn.textContent = 'Copy failed — long-press the link to copy';
+          setTimeout(function () { copyBtn.textContent = 'Copy Link'; }, 3000);
+        }
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(deepLink).then(copied, function () {
+            copyFallback(deepLink) ? copied() : failed();
           });
+        } else {
+          copyFallback(deepLink) ? copied() : failed();
         }
       }
     });
