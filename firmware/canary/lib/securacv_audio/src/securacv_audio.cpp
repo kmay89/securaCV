@@ -956,6 +956,17 @@ bool get_config(audio_config_t* out) {
   return true;
 }
 
+/* Runtime threshold update. Each field is one aligned uint16 store —
+ * individually atomic on this architecture — and the hysteresis FSM
+ * tolerates a single frame seeing a mixed old/new pair, so no lock is
+ * needed against the main-loop reader in process(). */
+bool set_thresholds(uint16_t rms_on, uint16_t rms_off) {
+  if (rms_off == 0 || rms_on <= rms_off) return false;
+  s_cfg.rms_on_threshold  = rms_on;
+  s_cfg.rms_off_threshold = rms_off;
+  return true;
+}
+
 /* ──────────────────────────────────────────────────────────────────────────
  * MAIN-LOOP PUMP
  * ────────────────────────────────────────────────────────────────────────── */
@@ -1341,6 +1352,10 @@ bool audio_selftest_status(audio_selftest_status_t* out) {
 }
 
 bool audio_get_config(audio_config_t* out) { return audio::get_config(out); }
+
+bool audio_set_thresholds(uint16_t rms_on, uint16_t rms_off) {
+  return audio::set_thresholds(rms_on, rms_off);
+}
 
 bool audio_get_live_level(uint16_t* rms_out, uint32_t* age_ms_out) {
   return audio::get_live_level(rms_out, age_ms_out);

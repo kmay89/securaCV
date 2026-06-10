@@ -13,11 +13,21 @@
  * Topic schema (locked against custom_components/securacv/const.py +
  * docs/homeassistant_setup.md):
  *
- *   {prefix}/{device_id}/status   — JSON, retained, LWT "offline"
- *   {prefix}/{device_id}/health   — JSON, every 60 s
- *   {prefix}/{device_id}/events   — JSON, on each csi_event commit
- *   {prefix}/{device_id}/chain    — JSON, on hash-chain advance
- *   {prefix}/{device_id}/counts   — JSON, every 30 s
+ *   {prefix}/{device_id}/status       — JSON, retained, LWT "offline"
+ *   {prefix}/{device_id}/health       — JSON, every 60 s
+ *   {prefix}/{device_id}/events       — JSON, on each csi_event commit
+ *   {prefix}/{device_id}/chain        — JSON, on hash-chain advance
+ *   {prefix}/{device_id}/counts       — JSON, on each new witness record
+ *   {prefix}/{device_id}/mesh         — JSON, retained, every 30 s (mesh builds)
+ *   {prefix}/{device_id}/chirp        — JSON, retained, with mesh snapshot
+ *   {prefix}/{device_id}/beacon       — JSON, retained, every 30 s (beacon builds)
+ *   {prefix}/{device_id}/update/state — JSON, retained (signed pull-OTA)
+ *   {prefix}/{device_id}/update/auto  — "ON"/"OFF", retained; cmd on …/auto/cmd
+ *   {prefix}/{device_id}/sensing      — JSON, retained: acoustic_event +
+ *                                       detection counters + mic_muted
+ *                                       (FEATURE_ACOUSTIC_EVENTS builds)
+ *   {prefix}/{device_id}/mic/state    — "muted"/"live", retained; commands
+ *                                       arrive on …/mic/cmd (mute/unmute/ON/OFF)
  *
  * Privacy contract: every publish wraps
  * csi_integration::add_outbound_bytes(payload_len) so the dashboard's

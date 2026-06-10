@@ -1173,7 +1173,15 @@ footer a{color:var(--accent);text-decoration:none}
         if (p.status === 'pass' && soc != null && soc <= 15) return 'Battery is low — connect the USB-C cable to charge it.';
         return '';
       },
-      microphone: () => '',
+      microphone: (p) => {
+        if (p.status === 'absent') return 'Listening isn\'t built into this firmware. You can continue — smoke and CO alarm detection just stays off.';
+        if (p.status === 'skip') {
+          if (p && p.metric && p.metric.muted === true) return 'The microphone is muted, so the Canary can\'t hear smoke or CO alarms. Turn it back on from the Status page when you\'re ready.';
+          return 'The microphone didn\'t start. Unplug the Canary for five seconds and power it back on, then tap Run again. Everything else still works without it.';
+        }
+        if (p.status === 'pass') return 'Later, hold your smoke alarm\'s TEST button near the Canary to confirm it can hear it — the Status page has a guided test for this.';
+        return '';
+      },
       buzzer: (p) => {
         if (p.status === 'pass') return 'We can\'t detect a physical buzzer from here. Play a test tone from the dashboard to confirm you can hear alerts; if you can\'t, alerts fall back to blinking the LED.';
         if (p.status === 'skip') return 'Alert tones haven\'t started. To get an audible chirp, wire a passive buzzer to the chirp pin and re-run; otherwise alerts blink the LED.';

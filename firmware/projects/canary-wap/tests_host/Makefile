@@ -103,6 +103,14 @@ DEVPSEUDO_COMMON_SRC = test_device_pseudonym_common.cpp
 GPS_COARSEN_BIN = test_gps_coarsen
 GPS_COARSEN_SRC = test_gps_coarsen.cpp
 
+# Acoustic pipeline: compiles the REAL vendored securacv_audio.cpp against
+# stub Arduino/ESP-IDF headers (stubs/audio/) and drives synthetic alarm
+# cadences through a scripted i2s_read. Covers T3 detection, knock, the
+# deferred hard mute, and threshold validation.
+AUDIO_BIN     = test_audio_cadence
+AUDIO_SOURCES = test_audio_cadence.cpp \
+                $(SRC_DIR)/securacv_audio.cpp
+
 .PHONY: all run clean
 all: run
 
@@ -145,7 +153,10 @@ $(DEVPSEUDO_COMMON_BIN): $(DEVPSEUDO_COMMON_SRC)
 $(GPS_COARSEN_BIN): $(GPS_COARSEN_SRC)
 	$(CXX) $(CXXFLAGS) -o $@ $(GPS_COARSEN_SRC)
 
-run: $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN) $(DEVPSEUDO_BIN) $(DEVPSEUDO_COMMON_BIN) $(GPS_COARSEN_BIN)
+$(AUDIO_BIN): $(AUDIO_SOURCES)
+	$(CXX) $(CXXFLAGS) -I stubs/audio -I $(SRC_DIR) -o $@ $(AUDIO_SOURCES)
+
+run: $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN) $(DEVPSEUDO_BIN) $(DEVPSEUDO_COMMON_BIN) $(GPS_COARSEN_BIN) $(AUDIO_BIN)
 	./$(BIN)
 	./$(CHIRP_INV_BIN)
 	./$(CHIRP_SEC_BIN)
@@ -159,6 +170,7 @@ run: $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_B
 	./$(DEVPSEUDO_BIN)
 	./$(DEVPSEUDO_COMMON_BIN)
 	./$(GPS_COARSEN_BIN)
+	./$(AUDIO_BIN)
 
 clean:
-	rm -f $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN) $(DEVPSEUDO_BIN) $(DEVPSEUDO_COMMON_BIN) $(GPS_COARSEN_BIN)
+	rm -f $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN) $(DEVPSEUDO_BIN) $(DEVPSEUDO_COMMON_BIN) $(GPS_COARSEN_BIN) $(AUDIO_BIN) $(AUDIO_BIN)
