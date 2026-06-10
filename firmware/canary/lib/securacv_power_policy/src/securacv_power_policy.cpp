@@ -19,6 +19,7 @@
 #include "securacv_power.h"
 
 #include <esp_pm.h>
+#include <esp_system.h>
 #include <esp_wifi.h>
 
 namespace policy {
@@ -334,14 +335,23 @@ bool policy_process(void) {
     s_deep_sleep_pending = false;
   }
 
-  /* Shutdown mode triggers graceful shutdown -- but only after a 60 s
-   * boot warmup. Right after boot the voltage trend is not yet
-   * established, so a depleted battery that was just plugged into USB
-   * still classifies as CRITICAL/discharging. The warmup gives the
-   * monitor time to observe the charge slope and re-evaluate to
-   * PLUGGED_IN instead of deep-sleeping a device that is charging. */
+  /* Shutdown mode triggers graceful shutdown. A 60 s warmup applies to
+   * cold/USB-plug boots only: right after such a boot the voltage trend
+   * is not yet established, so a depleted battery that was just plugged
+   * into USB still classifies as CRITICAL/discharging, and shutting
+   * down would deep-sleep a device that is actually charging. A
+   * deep-sleep wake skips the warmup -- had charging started during the
+   * sleep, SoC would have risen out of the shutdown band by wake time,
+   * so a still-critical battery is genuinely dying and must not burn
+   * another 60 s of runtime. The latch keeps the check rollover-safe
+   * (millis() wraps after ~49 days). */
+  static bool s_shutdown_warmup_done = false;
+  if (!s_shutdown_warmup_done &&
+      (esp_reset_reason() == ESP_RST_DEEPSLEEP || millis() >= 60000UL)) {
+    s_shutdown_warmup_done = true;
+  }
   if (s_mode == PMODE_SHUTDOWN && pwr.battery_present &&
-      millis() >= 60000UL) {
+      s_shutdown_warmup_done) {
     power_graceful_shutdown();
   }
 
