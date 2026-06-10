@@ -13,10 +13,13 @@
 # repo's lock file (version 4).
 FROM rust:1.90-slim-bookworm AS build
 
+# libssl-dev: the bundled SQLCipher (rusqlite bundled-sqlcipher) compiles
+# against OpenSSL headers and links libcrypto dynamically.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     ca-certificates \
     libseccomp-dev \
+    libssl-dev \
     pkg-config \
   && rm -rf /var/lib/apt/lists/*
 
@@ -40,10 +43,13 @@ RUN cargo build --release \
 
 FROM debian:bookworm-slim
 
+# libssl3 provides the libcrypto.so.3 the SQLCipher-linked binaries load at
+# runtime (listed explicitly rather than relying on transitive dependencies).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
     libseccomp2 \
+    libssl3 \
   && rm -rf /var/lib/apt/lists/*
 
 RUN groupadd --system --gid 1001 witness && \

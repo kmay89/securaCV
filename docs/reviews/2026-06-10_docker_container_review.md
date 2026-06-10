@@ -91,6 +91,14 @@ with no CI building these images, nothing noticed. Fixed by bumping both build s
 glibc keeps matching the `debian:bookworm-slim` runtime even after `-slim` retags to a
 newer Debian).
 
+One layer deeper, also CI-caught: the build stage was missing `libssl-dev` — the bundled
+SQLCipher (`rusqlite` `bundled-sqlcipher`) compiles against OpenSSL headers
+(`fatal error: openssl/crypto.h: No such file or directory`) and links `libcrypto`
+dynamically. The add-on Dockerfile already handled this on Alpine (it installs
+`openssl-dev` and documents the runtime `libcrypto3` pin); the Debian Dockerfiles never
+did. Fixed: `libssl-dev` added to both build stages, and `libssl3` listed explicitly in
+both runtime stages instead of arriving as a transitive dependency of curl.
+
 ### 2.4 HIGH — MQTT credentials were never wired to any client
 
 `mosquitto.conf` is correctly hardened (`allow_anonymous false`, `password_file`), and the
