@@ -1,13 +1,32 @@
 name: Evidence Viewer
 
+# Scoped to the JS surfaces these jobs actually test: the offline viewer,
+# the canary-vision workspace, the HA timeline card, and the canary-wap
+# self-test UI logic.
 on:
   push:
     branches: [ "main" ]
+    paths:
+      - 'viewer/**'
+      - 'canary-vision/**'
+      - 'custom_components/securacv/www/**'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/**'
+      - '.github/workflows/viewer.yml'
   pull_request:
     branches: [ "main" ]
+    paths:
+      - 'viewer/**'
+      - 'canary-vision/**'
+      - 'custom_components/securacv/www/**'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/**'
+      - '.github/workflows/viewer.yml'
 
 permissions:
   contents: read
+
+concurrency:
+  group: viewer-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   viewer:

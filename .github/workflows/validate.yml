@@ -1,12 +1,33 @@
 name: HACS Validation
 
+# Validates the HACS/hassfest contract for the HA integration. Path-scoped
+# to the integration surface; the weekly schedule still catches upstream
+# requirement changes (new hassfest rules) with no repo change at all.
 on:
   push:
     branches: [main]
+    paths:
+      - 'custom_components/**'
+      - 'hacs.json'
+      - 'repository.yaml'
+      - '.github/workflows/validate.yml'
   pull_request:
     branches: [main]
+    paths:
+      - 'custom_components/**'
+      - 'hacs.json'
+      - 'repository.yaml'
+      - '.github/workflows/validate.yml'
   schedule:
-    - cron: "0 0 * * *"
+    - cron: "0 0 * * 1"   # Mondays 00:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hacs-validate-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   validate-hacs:

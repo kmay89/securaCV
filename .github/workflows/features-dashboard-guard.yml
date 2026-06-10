@@ -19,6 +19,12 @@ on:
 permissions:
   contents: read
 
+# PR-only workflow (incl. rapid-fire `edited` events on body tweaks); only
+# the latest run matters.
+concurrency:
+  group: features-guard-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   guard:
     name: Feature-Parity Dashboard Guard
