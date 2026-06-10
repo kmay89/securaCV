@@ -181,6 +181,16 @@ class TestManifest:
         )
         assert any("manifest_signature" in p for p in problems)
 
+    def test_verify_tolerates_explicit_null_optionals(self, private_key):
+        # An explicit JSON null in an optional field must degrade to a
+        # signature mismatch report, not a crash in the verifier.
+        manifest = self.build(private_key)
+        manifest["release_url"] = None
+        problems = ota_release.verify_manifest(
+            manifest, FIRMWARE, private_key.public_key()
+        )
+        assert any("manifest_signature" in p for p in problems)
+
     def test_verify_requires_manifest_signature(self, private_key):
         manifest = self.build(private_key)
         del manifest["manifest_signature"]

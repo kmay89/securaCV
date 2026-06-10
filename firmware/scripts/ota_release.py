@@ -245,15 +245,17 @@ def verify_manifest(manifest: dict, firmware: bytes, public_key: Ed25519PublicKe
     else:
         try:
             msig = bytes.fromhex(msig_hex)
+            # `or ""` (not a .get default): an explicit JSON null parses to
+            # None and would crash manifest_signed_message.
             public_key.verify(msig, manifest_signed_message(
                 product=manifest["product"],
                 version=manifest["version"],
-                min_version=manifest.get("min_version", ""),
+                min_version=manifest.get("min_version") or "",
                 url=manifest["url"],
                 sha256_hex=manifest["sha256"],
                 size=manifest["size"],
-                release_notes=manifest.get("release_notes", ""),
-                release_url=manifest.get("release_url", ""),
+                release_notes=manifest.get("release_notes") or "",
+                release_url=manifest.get("release_url") or "",
             ))
         except Exception:
             problems.append("manifest_signature verification failed")
