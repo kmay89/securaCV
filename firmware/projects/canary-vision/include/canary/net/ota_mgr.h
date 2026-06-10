@@ -9,10 +9,15 @@
 
 namespace canary::net {
 
-// Call once in setup(), AFTER WiFi + MQTT are up (the boot self-test's
-// required probe asserts connectivity; reaching it on a fresh image means
-// the new firmware can still do its job). May not return: a failed
-// required probe rolls back into the previous firmware.
+// Call once in setup(), right AFTER WiFi is up and BEFORE the blocking
+// MQTT connect. Confirms — or rolls back — a freshly installed image; the
+// required probe asserts WiFi connectivity. May not return: a failed
+// required probe reboots into the previous firmware. The engine owns
+// rollback confirmation, so skipping this call would revert every fresh
+// install on its second boot.
+void ota_boot_validate();
+
+// Call once in setup(), after MQTT is connected.
 void ota_init(const Topics& topics);
 
 // Call every loop() pass.

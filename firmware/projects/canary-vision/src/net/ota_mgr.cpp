@@ -1,7 +1,6 @@
 #include "canary/net/ota_mgr.h"
 
 #include <Arduino.h>
-#include <Preferences.h>
 #include <WiFi.h>
 #include <esp_system.h>
 #include <cstring>
@@ -29,20 +28,6 @@ void on_progress(securacv_ota_state_t state, uint8_t percent,
                  securacv_ota_error_t error, void* user_data) {
   (void)state; (void)percent; (void)error; (void)user_data;
   g_publish_pending = true;
-}
-
-/* Remember the target version before the install reboot so the next boot
- * can tell applied from rolled-back. NVS only — never MQTT from the OTA
- * task (PubSubClient is not thread-safe). */
-void before_reboot() {
-  const securacv_ota_manifest_t* m = securacv_ota_get_manifest();
-  if (m != nullptr) {
-    Preferences prefs;
-    if (prefs.begin("securacv", false)) {
-      prefs.putString("ota_target", m->version);
-      prefs.end();
-    }
-  }
 }
 
 void schedule_next(uint32_t delay_ms, uint32_t jitter_ms) {
@@ -110,14 +95,16 @@ void publish_update_state_now() {
 
 }  // namespace
 
-void ota_init(const Topics& topics) {
-  g_topics = topics;
-
-  // Confirm — or roll back — a freshly applied OTA image. Reaching this
-  // line means runtime config, WiFi, and MQTT bring-up all survived the
-  // new firmware; the required probe pins the connectivity this device
-  // exists to provide. A failed required probe reboots into the previous
-  // firmware (does not return).
+void ota_boot_validate() {
+  // Confirm — or roll back — a freshly applied OTA image. Called right
+  // after WiFi comes up and BEFORE the blocking MQTT connect: confirming
+  // must not depend on the broker being reachable, or a broker outage
+  // during a device's first post-update boot would let any reboot revert
+  // a perfectly good image (the engine owns rollback confirmation via
+  // verifyRollbackLater — unconfirmed images revert on the next start).
+  // The required probe pins the connectivity this device exists to
+  // provide. A failed required probe reboots into the previous firmware
+  // (does not return).
   static const securacv_selftest_t k_selftests[] = {
     { "wifi connectivity", [](const char*) -> bool {
         return WiFi.status() == WL_CONNECTED;
@@ -125,6 +112,10 @@ void ota_init(const Topics& topics) {
   };
   securacv_ota_register_selftest(&k_selftests[0]);
   securacv_ota_boot_self_test();
+}
+
+void ota_init(const Topics& topics) {
+  g_topics = topics;
 
   securacv_ota_config_t cfg = SECURACV_OTA_CONFIG_DEFAULT;
   cfg.product          = OTA_PRODUCT;
@@ -132,28 +123,23 @@ void ota_init(const Topics& topics) {
   cfg.manifest_url     = SECURACV_OTA_MANIFEST_URL;
   cfg.release_pubkey   = SECURACV_OTA_RELEASE_PUBKEY;
   cfg.on_progress      = on_progress;
-  cfg.on_before_reboot = before_reboot;
   if (securacv_ota_init(&cfg) == ESP_OK) {
     log_line("OTA", "Pull-OTA engine ready.");
   } else {
     log_line("OTA", "Pull-OTA engine init FAILED.");
   }
 
-  // Log the outcome of an install reboot: before_reboot() stored the
-  // target version; running the old version again means rollback.
+  // Log the outcome of an install reboot. The engine recorded the install
+  // target the moment the boot partition flipped; running the old version
+  // again means rollback.
   {
-    Preferences prefs;
-    if (prefs.begin("securacv", false)) {
-      String target = prefs.getString("ota_target", "");
-      if (target.length() > 0) {
-        prefs.remove("ota_target");
-        if (target == CANARY_FW_VERSION) {
-          log_line("OTA", "Firmware update applied.");
-        } else {
-          log_line("OTA", "Firmware update rolled back — previous software restored.");
-        }
+    char target[SECURACV_OTA_VERSION_MAX];
+    if (securacv_ota_take_pending_version(target, sizeof(target))) {
+      if (strcmp(target, CANARY_FW_VERSION) == 0) {
+        log_line("OTA", "Firmware update applied.");
+      } else {
+        log_line("OTA", "Firmware update rolled back — previous software restored.");
       }
-      prefs.end();
     }
   }
 
