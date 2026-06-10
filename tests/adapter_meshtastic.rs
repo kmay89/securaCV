@@ -121,8 +121,9 @@ fn export_carries_no_node_id_or_rf_metadata() {
     // The stable Meshtastic node id, in any display form, must not survive into the export…
     assert!(!json.contains(NODE_DECIMAL), "decimal node id leaked");
     assert!(!json.contains(NODE_HEX), "hex node id leaked");
-    // …and neither may RF metadata or the alert text.
-    for forbidden in ["snr", "rssi", "Motion detected", "meshtastic"] {
+    // …and neither may RF metadata or the alert text (the haystack is lowercased, so the
+    // needles must be lowercase too).
+    for forbidden in ["snr", "rssi", "motion detected", "meshtastic"] {
         assert!(
             !json.to_lowercase().contains(forbidden),
             "{forbidden} leaked"

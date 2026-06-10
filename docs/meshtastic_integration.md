@@ -111,7 +111,9 @@ trust level as any unauthenticated PIR publishing to MQTT. `sandbox = true` is r
    - Detection Sensor Module: `enabled = true`, `monitor_pin = <GPIO>`,
      `detection_triggered_high` per your sensor, `name = "PIR"` (or similar),
      `minimum_broadcast_interval` ≥ 45 s (spam guard), `state_broadcast_interval = 0`
-     (change-only; a heartbeat would just be deduped away on our side).
+     (change-only is recommended; if heartbeats are enabled, the adapter recognizes the
+     `"<name> state: <0|1>"` form and only an *active* state can assert a claim — an
+     inactive heartbeat never seals an event).
    - Join the private channel.
 2. **Gateway node** (mains-powered, Wi-Fi in range of the broker):
    - MQTT module: `enabled = true`, `json_enabled = true`, server = your broker,

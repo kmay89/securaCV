@@ -113,11 +113,15 @@ impl MeshNode {
 }
 
 /// Parse a Meshtastic node id in any of its display forms: `!7d3a9f7f` (canonical hex),
-/// bare hex with at least one letter (`7d3a9f7f`), or decimal (`2101321343`). Bare all-digit
-/// strings are read as decimal — use the `!` prefix for hex ids that happen to be all digits.
+/// `0x`-prefixed hex, bare hex with at least one letter (`7d3a9f7f`), or decimal
+/// (`2100993919`). Bare all-digit strings are read as decimal — use the `!` or `0x` prefix
+/// for hex ids that happen to be all digits.
 pub fn parse_node_id(s: &str) -> Option<u32> {
     let s = s.trim();
     if let Some(hex) = s.strip_prefix('!') {
+        return u32::from_str_radix(hex, 16).ok();
+    }
+    if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
         return u32::from_str_radix(hex, 16).ok();
     }
     if s.is_empty() {
@@ -235,20 +239,38 @@ fn json_frame_to_claim(nodes: &[MeshNode], payload: &[u8]) -> Option<Claim> {
             return None;
         }
     }
+    let text = env.payload.as_ref().and_then(|p| p.text.as_deref());
+    // Detection Sensor state-broadcast heartbeats ("<name> state: <0|1>", sent when
+    // state_broadcast_interval > 0) report the *current* pin state on the same portnum as
+    // trigger alerts. Only an active state may assert a claim — an inactive heartbeat must
+    // never seal an event, and it would otherwise even pass a detection_name gate (the text
+    // contains the sensor name).
+    if let Some(active) = text.and_then(state_broadcast_state) {
+        if !active {
+            return None;
+        }
+    }
     match (&node.detection_name, text_gated) {
         // Plain text frames map only through an explicit detection_name gate; otherwise an
         // operator chatting on the channel would assert presence.
         (None, true) => None,
         (None, false) => Some(claim_for(node)),
         (Some(name), _) => {
-            let text = env.payload.as_ref()?.text.as_deref()?;
-            if text.to_lowercase().contains(&name.to_lowercase()) {
+            if text?.to_lowercase().contains(&name.to_lowercase()) {
                 Some(claim_for(node))
             } else {
                 None
             }
         }
     }
+}
+
+/// Recognize a Detection Sensor state-broadcast ("<name> state: <n>", firmware
+/// `DetectionSensorModule.cpp`) and return whether the reported state is active.
+/// Returns `None` for anything else (e.g. a "<name> detected" trigger alert).
+fn state_broadcast_state(text: &str) -> Option<bool> {
+    let (_, state) = text.rsplit_once(" state: ")?;
+    state.trim().parse::<i64>().ok().map(|n| n != 0)
 }
 
 fn claim_for(node: &MeshNode) -> Claim {
@@ -387,6 +409,36 @@ mod tests {
     }
 
     #[test]
+    fn inactive_state_broadcasts_never_assert_a_claim() {
+        // state_broadcast_interval > 0 sends "<name> state: <0|1>" heartbeats on the same
+        // portnum as trigger alerts; only an active state may map.
+        let (adapter, _tx) = MeshtasticAdapter::new(nodes());
+        assert!(adapter
+            .message_to_claim(TOPIC, &detection_frame("PIR state: 0"))
+            .is_none());
+        assert!(adapter
+            .message_to_claim(TOPIC, &detection_frame("PIR state: 1"))
+            .is_some());
+
+        // The inactive heartbeat must drop even through a detection_name gate — the text
+        // contains the sensor name.
+        let mut gated = nodes();
+        gated[0].detection_name = Some("PIR".to_string());
+        let (gated_adapter, _tx) = MeshtasticAdapter::new(gated);
+        assert!(gated_adapter
+            .message_to_claim(TOPIC, &detection_frame("PIR state: 0"))
+            .is_none());
+        assert!(gated_adapter
+            .message_to_claim(TOPIC, &detection_frame("PIR state: 1"))
+            .is_some());
+
+        // Non-numeric "state:" text is not a recognized heartbeat — treated as trigger text.
+        assert!(adapter
+            .message_to_claim(TOPIC, &detection_frame("strange state: open"))
+            .is_some());
+    }
+
+    #[test]
     fn snr_floor_drops_marginal_and_snr_less_frames() {
         let mut floored = nodes();
         floored[0].min_snr = Some(-10.0);
@@ -423,12 +475,15 @@ mod tests {
         assert_eq!(parse_node_id("7d3a9f7f"), Some(0x7d3a9f7f));
         assert_eq!(parse_node_id("2100993919"), Some(0x7d3a9f7f));
         assert_eq!(parse_node_id(" !7d3a9f7f "), Some(0x7d3a9f7f));
-        // All-digit strings are decimal; force hex with the `!` prefix.
+        // All-digit strings are decimal; force hex with the `!` or `0x` prefix.
         assert_eq!(parse_node_id("12345678"), Some(12_345_678));
         assert_eq!(parse_node_id("!12345678"), Some(0x12345678));
+        assert_eq!(parse_node_id("0x7d3a9f7f"), Some(0x7d3a9f7f));
+        assert_eq!(parse_node_id("0X12345678"), Some(0x12345678));
         assert_eq!(parse_node_id(""), None);
         assert_eq!(parse_node_id("not-a-node"), None);
         assert_eq!(parse_node_id("!zzzz"), None);
+        assert_eq!(parse_node_id("0xzzzz"), None);
     }
 
     #[test]
