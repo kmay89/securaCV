@@ -36,7 +36,7 @@ platforms=("linux/amd64" "linux/arm64")
 
 version=""
 if [ -f "$config" ]; then
-  version="$(awk '/^version:/ { sub(/^[^:]*:[[:space:]]*/, ""); gsub(/["'\'' ]/, ""); print; exit }' "$config")"
+  version="$(awk '/^version:/ { sub(/^[^:]*:[[:space:]]*/, ""); gsub(/["'\'' \r]/, ""); print; exit }' "$config")"
 fi
 read -r -a tags <<< "${TAGS:-${version:+$version }latest}"
 
@@ -50,9 +50,17 @@ echo
 # failures (GHCR briefly 503s while a just-pushed manifest materialises).
 fetch_manifest() {
   local tag="$1" token code body attempt
+  body=$'\n000'
   for attempt in 1 2 3 4 5; do
     token="$(curl -fsS "https://ghcr.io/token?scope=repository:${repo}:pull" 2>/dev/null \
               | python3 -c 'import sys,json;print(json.load(sys.stdin).get("token",""))' 2>/dev/null || true)"
+    if [ -z "$token" ]; then
+      # Token endpoint blip: without a bearer the manifest GET would 401 and
+      # be misreported as "not public". Treat as transient and retry.
+      body=$'\n000'
+      sleep $((attempt * 3))
+      continue
+    fi
     body="$(curl -s -w '\n%{http_code}' \
               -H "Authorization: Bearer ${token}" \
               -H 'Accept: application/vnd.oci.image.index.v1+json' \
