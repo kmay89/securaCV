@@ -1402,6 +1402,13 @@ void loop() {
 #endif
 
 #if FEATURE_TEMP_TAMPER
+  #if FEATURE_CAMERA_PEEK
+  /* Camera streaming heats the die 10–20 °C — by temperature alone
+   * that's the heat-gun tamper signature. Tell the drift detector to
+   * fast-track its baseline (and hold detection) while peek is active,
+   * plus its internal cooldown after it stops. */
+  envsens_set_high_load(camera_get_instance().isPeekActive());
+  #endif
   #if FEATURE_POWER_POLICY
   if (pf->temp_tamper)
   #endif
