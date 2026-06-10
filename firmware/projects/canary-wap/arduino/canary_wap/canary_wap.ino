@@ -70,6 +70,12 @@
 #include "esp_random.h"
 #include "esp_task_wdt.h"
 #include "esp_http_server.h"
+
+// Signed pull-OTA engine — committed copy of firmware/common/ota (kept in
+// sync by firmware/scripts/check_ota_sync.sh). ota_release_key.h carries
+// the shared Ed25519 release public key, the same one ble_ota verifies.
+#include "securacv_ota.h"
+#include "ota_release_key.h"
 // Needed for SO_KEEPALIVE / TCP_KEEP* socket options applied to the
 // long-lived MJPEG peek stream so half-open TCP sockets get torn down
 // at the kernel layer instead of waiting on a doomed application send.
@@ -219,6 +225,24 @@ static const char* RULESET_ID         = "securacv:canary:v1.0";
 static const char* PROTOCOL_VERSION   = "pwk:v0.3.0";
 static const char* CHAIN_ALGORITHM    = "sha256-domain-sep";
 static const char* SIGNATURE_ALGORITHM = "ed25519";
+
+// ── Signed pull-OTA ─────────────────────────────────────────────────────────
+// Product id matched against the manifest's "product" field, and the
+// compiled-in default manifest URL (the firmware-release workflow publishes
+// manifest-canary-wap.json on every fw-v* GitHub Release; the "latest"
+// alias keeps this URL stable). Users can point at a local server instead
+// via Settings (stored in NVS by the engine).
+static const char* OTA_PRODUCT = "securacv-canary-wap";
+#ifndef SECURACV_OTA_MANIFEST_URL
+#define SECURACV_OTA_MANIFEST_URL \
+  "https://github.com/kmay89/securaCV/releases/latest/download/manifest-canary-wap.json"
+#endif
+
+/* Set by the OTA progress callback (runs on the OTA task, must stay
+ * non-blocking); the main loop turns it into an MQTT publish. */
+static volatile bool g_ota_publish_pending = false;
+static securacv_ota_state_t g_ota_last_seen_state = SECURACV_OTA_IDLE;
+static uint32_t g_ota_next_check_ms = 0;
 
 // ════════════════════════════════════════════════════════════════════════════
 // DEVICE CONFIG
@@ -5722,7 +5746,7 @@ static void register_api_routes(httpd_handle_t server) {
 
 static void start_http_server() {
   // Calculate max URI handlers based on feature usage
-  const int base_handlers = 35;       // UI (/ + /admin + /settings), API (auth + public), WiFi provisioning, captive/connectivity probes (Apple x2, Android x2, Windows x2), /api/selftest, /api/diagnostics, /api/battery/history
+  const int base_handlers = 39;       // UI (/ + /admin + /settings), API (auth + public), WiFi provisioning, captive/connectivity probes (Apple x2, Android x2, Windows x2), /api/selftest, /api/diagnostics, /api/battery/history, /api/ota/{status,check,install,config}
   const int camera_handlers = 9;      // Camera peek endpoints
   const int mesh_handlers = 12;       // Mesh network endpoints
   const int bluetooth_handlers = 23;  // Bluetooth API endpoints
@@ -5837,6 +5861,19 @@ register_extra_routes:
   // WiFi provisioning endpoints (auth required)
   httpd_uri_t wifi_status = { .uri = "/api/wifi", .method = HTTP_GET, .handler = handle_wifi_status };
   httpd_register_uri_handler(active_server, &wifi_status);
+
+  // Signed pull-OTA (status poll + check / install / settings)
+  httpd_uri_t ota_status = { .uri = "/api/ota/status", .method = HTTP_GET, .handler = handle_ota_status };
+  httpd_register_uri_handler(active_server, &ota_status);
+
+  httpd_uri_t ota_check = { .uri = "/api/ota/check", .method = HTTP_POST, .handler = handle_ota_check };
+  httpd_register_uri_handler(active_server, &ota_check);
+
+  httpd_uri_t ota_install = { .uri = "/api/ota/install", .method = HTTP_POST, .handler = handle_ota_install };
+  httpd_register_uri_handler(active_server, &ota_install);
+
+  httpd_uri_t ota_cfg = { .uri = "/api/ota/config", .method = HTTP_POST, .handler = handle_ota_config };
+  httpd_register_uri_handler(active_server, &ota_cfg);
 
   httpd_uri_t wifi_scan = { .uri = "/api/wifi/scan", .method = HTTP_GET, .handler = handle_wifi_scan };
   httpd_register_uri_handler(active_server, &wifi_scan);
@@ -6911,6 +6948,251 @@ static void handle_serial_commands() {
 // SETUP
 // ════════════════════════════════════════════════════════════════════════════
 
+// ════════════════════════════════════════════════════════════════════════════
+// PULL-OTA INTEGRATION (signed firmware updates)
+// ════════════════════════════════════════════════════════════════════════════
+
+/* Sign an update lifecycle event into the witness chain — the audit trail
+ * proves when the firmware changed and whether a rollback happened. */
+static void ota_witness_event(const char* type, const char* version) {
+  uint8_t payload[160];
+  CborWriter w(payload, sizeof(payload));
+  w.write_map(3);
+  w.write_text("device_id"); w.write_text(g_device.device_id);
+  w.write_text("type");      w.write_text(type);
+  w.write_text("ver");       w.write_text(version);
+  if (w.ok()) {
+    create_witness_record(payload, w.size(), RECORD_STATE_CHANGE, &g_last_record);
+  }
+}
+
+/* Runs on the OTA task — only flips a flag; the main loop publishes. */
+static void ota_on_progress(securacv_ota_state_t state, uint8_t percent,
+                            securacv_ota_error_t error, void* user_data) {
+  (void)state; (void)percent; (void)error; (void)user_data;
+  g_ota_publish_pending = true;
+}
+
+/* Install-permission gate. The BLE OTA channel and the pull engine write
+ * to the same inactive partition, so they strictly exclude each other
+ * (ble_ota.cpp holds the mirror-image check). */
+static bool ota_can_install(char* reason, size_t reason_len) {
+#if FEATURE_BLUETOOTH && __has_include(<NimBLEDevice.h>)
+  const ble_ota::OtaState b = ble_ota::get_state();
+  if (b == ble_ota::OTA_RECEIVING || b == ble_ota::OTA_VERIFYING ||
+      b == ble_ota::OTA_REBOOTING) {
+    snprintf(reason, reason_len, "a Bluetooth update is in progress");
+    return false;
+  }
+#else
+  (void)reason; (void)reason_len;
+#endif
+  return true;
+}
+
+/* Remember the target version before the install reboot so the next boot
+ * can witness applied vs rolled-back. Witness records flush per-write, so
+ * no extra chain persistence is needed here. */
+static void ota_before_reboot() {
+  const securacv_ota_manifest_t* m = securacv_ota_get_manifest();
+  if (m != NULL) {
+    Preferences prefs;
+    if (prefs.begin("securacv", false)) {
+      prefs.putString("ota_target", m->version);
+      prefs.end();
+    }
+  }
+}
+
+static void ota_schedule_next_check(uint32_t delay_ms, uint32_t jitter_ms) {
+  uint32_t jitter = (jitter_ms > 0) ? (esp_random() % jitter_ms) : 0;
+  g_ota_next_check_ms = millis() + delay_ms + jitter;
+}
+
+/* Daily jittered update check — the jitter spreads a fleet's checks over
+ * an hour so a release never sees a thundering herd; the first check lands
+ * a couple of minutes after boot. */
+static void ota_scheduler_process(uint32_t now) {
+  if (g_ota_next_check_ms == 0) {
+    ota_schedule_next_check(120000UL, 60000UL);
+    return;
+  }
+  if ((int32_t)(now - g_ota_next_check_ms) < 0) return;
+
+  if (securacv_ota_get_state() != SECURACV_OTA_IDLE ||
+      WiFi.status() != WL_CONNECTED) {
+    // Busy or no route to the update server yet — try again in 15 min.
+    ota_schedule_next_check(15UL * 60 * 1000, 60000UL);
+    return;
+  }
+
+  ota_schedule_next_check(24UL * 60 * 60 * 1000, 3600000UL);
+  if (securacv_ota_get_auto_update()) {
+    securacv_ota_check_and_install();
+  } else {
+    securacv_ota_check();
+  }
+}
+
+/* State payload for the HA MQTT `update` entity (installed_version /
+ * latest_version / in_progress / update_percentage / release_summary /
+ * release_url). csi_mqtt caches + retains it so HA survives broker
+ * restarts. */
+static void ota_publish_update_state() {
+  JsonDocument doc;
+  doc["installed_version"] = FIRMWARE_VERSION;
+
+  const securacv_ota_manifest_t* m = securacv_ota_get_manifest();
+  if (m != NULL && securacv_ota_update_available()) {
+    doc["latest_version"] = m->version;
+    if (m->release_url[0] != '\0') {
+      doc["release_url"] = m->release_url;
+    }
+    if (m->release_notes[0] != '\0') {
+      char summary[161];  // keep the whole payload inside csi_mqtt's 512-byte cache
+      strncpy(summary, m->release_notes, sizeof(summary) - 1);
+      summary[sizeof(summary) - 1] = '\0';
+      doc["release_summary"] = summary;
+    }
+  } else {
+    doc["latest_version"] = FIRMWARE_VERSION;
+  }
+
+  const securacv_ota_state_t st = securacv_ota_get_state();
+  const bool in_progress = (st == SECURACV_OTA_DOWNLOADING ||
+                            st == SECURACV_OTA_VERIFYING ||
+                            st == SECURACV_OTA_FLASHING ||
+                            st == SECURACV_OTA_REBOOTING);
+  doc["in_progress"] = in_progress;
+  if (in_progress) {
+    doc["update_percentage"] = securacv_ota_get_progress();
+  } else {
+    doc["update_percentage"] = nullptr;  // resets HA's progress bar
+  }
+
+  String payload;
+  serializeJson(doc, payload);
+  csi_mqtt::publish_update_state(payload.c_str());
+}
+
+// GET /api/ota/status — everything the Settings UI needs in one call.
+// `state_text` / `error_text` are the plain-language strings shown to the
+// user; the technical `state` / `error` fields feed diagnostics.
+static esp_err_t handle_ota_status(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  g_health.http_requests++;
+
+  const securacv_ota_state_t state = securacv_ota_get_state();
+  const securacv_ota_error_t error = securacv_ota_get_last_error();
+
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["installed_version"] = securacv_ota_get_version();
+  doc["state"] = securacv_ota_state_str(state);
+  doc["state_text"] = securacv_ota_friendly_state(state);
+  doc["progress"] = securacv_ota_get_progress();
+  doc["error"] = securacv_ota_error_str(error);
+  doc["error_text"] = securacv_ota_friendly_error(error);
+  doc["update_available"] = securacv_ota_update_available();
+  doc["auto_update"] = securacv_ota_get_auto_update();
+  doc["local_http_allowed"] = securacv_ota_get_local_http_allowed();
+  doc["last_check"] = securacv_ota_get_last_check_time();
+
+  char url[256];
+  if (securacv_ota_get_manifest_url(url, sizeof(url)) == ESP_OK) {
+    doc["manifest_url"] = url;
+  }
+  doc["manifest_url_is_override"] = securacv_ota_manifest_url_is_override();
+
+  const securacv_ota_manifest_t* m = securacv_ota_get_manifest();
+  if (m != NULL) {
+    doc["latest_version"] = m->version;
+    if (m->release_notes[0] != '\0') doc["release_notes"] = m->release_notes;
+    if (m->release_url[0] != '\0') doc["release_url"] = m->release_url;
+  }
+
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+// POST /api/ota/check — fetch the manifest and compare versions, without
+// installing. Results land in /api/ota/status (poll while state=Checking).
+static esp_err_t handle_ota_check(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  g_health.http_requests++;
+
+  esp_err_t err = securacv_ota_check();
+  if (err == ESP_ERR_INVALID_STATE) {
+    return http_send_error(req, 400, "ota_busy");
+  }
+  if (err != ESP_OK) {
+    return http_send_error(req, 500, "ota_check_failed");
+  }
+  return http_send_json(req, "{\"ok\":true,\"message\":\"Checking for updates…\"}");
+}
+
+// POST /api/ota/install — full signed install pipeline (download, verify
+// SHA-256 + Ed25519, flash inactive slot, reboot, self-test or roll back).
+static esp_err_t handle_ota_install(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  g_health.http_requests++;
+
+  log_health(SCV_LOG_NOTICE, SCV_CAT_SYSTEM,
+             "Firmware install requested from dashboard", nullptr);
+
+  esp_err_t err = securacv_ota_check_and_install();
+  if (err == ESP_ERR_INVALID_STATE) {
+    return http_send_error(req, 400, "ota_busy");
+  }
+  if (err != ESP_OK) {
+    return http_send_error(req, 500, "ota_install_failed");
+  }
+  return http_send_json(req,
+      "{\"ok\":true,\"message\":\"Installing the update. The device will restart on its own.\"}");
+}
+
+// POST /api/ota/config — persist update settings (NVS). Body (all fields
+// optional): {"manifest_url": "...", "auto_update": bool,
+// "local_http_allowed": bool}. An empty manifest_url clears the override.
+static esp_err_t handle_ota_config(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  g_health.http_requests++;
+
+  char body[512];
+  int recv = httpd_req_recv(req, body, sizeof(body) - 1);
+  if (recv <= 0) {
+    return http_send_error(req, 400, "empty_body");
+  }
+  body[recv] = '\0';
+
+  JsonDocument input;
+  if (deserializeJson(input, body) != DeserializationError::Ok) {
+    return http_send_error(req, 400, "invalid_json");
+  }
+
+  // Order matters: apply the local-http opt-in first so a manifest_url
+  // pointing at a LAN server in the same request validates correctly.
+  if (input["local_http_allowed"].is<bool>()) {
+    securacv_ota_set_local_http_allowed(input["local_http_allowed"].as<bool>());
+  }
+
+  if (input["manifest_url"].is<const char*>()) {
+    const char* url = input["manifest_url"].as<const char*>();
+    if (securacv_ota_set_manifest_url(url) != ESP_OK) {
+      return http_send_error(req, 400, "url_rejected");
+    }
+  }
+
+  if (input["auto_update"].is<bool>()) {
+    const bool enabled = input["auto_update"].as<bool>();
+    securacv_ota_set_auto_update(enabled);
+    csi_mqtt::publish_update_auto_state(enabled);
+  }
+
+  return http_send_json(req, "{\"ok\":true,\"message\":\"Update settings saved.\"}");
+}
+
 void setup() {
   Serial.begin(115200);
   serial_wait_for_cdc(SERIAL_CDC_WAIT_MS);
@@ -7387,7 +7669,60 @@ void setup() {
   
   // Log boot event
   log_health(SCV_LOG_INFO, SCV_CAT_SYSTEM, "Device boot complete", FIRMWARE_VERSION);
-  
+
+  // ── Signed pull-OTA: confirm or roll back a fresh image, then arm the
+  // engine. Reaching this line means identity, storage, WiFi, and the HTTP
+  // server all survived the new firmware; the required probe asserts the
+  // identity that the witness chain depends on. A failed required probe
+  // reboots into the previous firmware (does not return).
+  {
+    static const securacv_selftest_t k_ota_selftests[] = {
+      { "device identity", [](const char*) -> bool {
+          return g_device.initialized && g_device.device_id[0] != '\0';
+        }, true },
+    };
+    securacv_ota_register_selftest(&k_ota_selftests[0]);
+    securacv_ota_boot_self_test();
+
+    securacv_ota_config_t ota_cfg = SECURACV_OTA_CONFIG_DEFAULT;
+    ota_cfg.product          = OTA_PRODUCT;
+    ota_cfg.current_version  = FIRMWARE_VERSION;
+    ota_cfg.manifest_url     = SECURACV_OTA_MANIFEST_URL;
+    ota_cfg.release_pubkey   = SECURACV_OTA_RELEASE_PUBKEY;
+    ota_cfg.on_progress      = ota_on_progress;
+    ota_cfg.can_install      = ota_can_install;
+    ota_cfg.on_before_reboot = ota_before_reboot;
+    if (securacv_ota_init(&ota_cfg) == ESP_OK) {
+      Serial.printf("[OK] Pull-OTA engine ready (product=%s, version=%s)\n",
+                    OTA_PRODUCT, FIRMWARE_VERSION);
+    } else {
+      Serial.println("[WARN] Pull-OTA engine init failed");
+    }
+
+    // Seed the HA auto-update switch state (csi_mqtt caches + retains it).
+    csi_mqtt::publish_update_auto_state(securacv_ota_get_auto_update());
+
+    // Witness the outcome of an install reboot: ota_before_reboot() stored
+    // the target version; running the old version again means rollback.
+    Preferences ota_prefs;
+    if (ota_prefs.begin("securacv", false)) {
+      String target = ota_prefs.getString("ota_target", "");
+      if (target.length() > 0) {
+        ota_prefs.remove("ota_target");
+        if (target == FIRMWARE_VERSION) {
+          ota_witness_event("fw_update_applied", FIRMWARE_VERSION);
+          log_health(SCV_LOG_NOTICE, SCV_CAT_SYSTEM,
+                     "Firmware update applied", FIRMWARE_VERSION);
+        } else {
+          ota_witness_event("fw_update_rolled_back", target.c_str());
+          log_health(SCV_LOG_WARNING, SCV_CAT_SYSTEM,
+                     "Firmware update rolled back", target.c_str());
+        }
+      }
+      ota_prefs.end();
+    }
+  }
+
   // Print full provisioning receipt on every boot.
   // Serial output requires local physical access and removes first-boot friction.
   Serial.println();
@@ -7471,6 +7806,48 @@ void loop() {
   // HARDWARE STATE MANAGEMENT — Update safe mode, track stability
   // ════════════════════════════════════════════════════════════════════════════
   safe_mode_update();
+
+  // ── Signed pull-OTA: daily jittered check, HA command drain, state publish ──
+  {
+    const uint32_t ota_now = millis();
+    ota_scheduler_process(ota_now);
+
+    // HA pressed Install on the update entity (latched on the esp_mqtt
+    // task, acted on here so flash decisions stay on the main loop).
+    if (csi_mqtt::take_pending_install()) {
+      log_health(SCV_LOG_NOTICE, SCV_CAT_SYSTEM,
+                 "Firmware install requested from Home Assistant", nullptr);
+      securacv_ota_check_and_install();
+    }
+    const int ota_auto_cmd = csi_mqtt::take_pending_auto();
+    if (ota_auto_cmd >= 0) {
+      securacv_ota_set_auto_update(ota_auto_cmd == 1);
+      csi_mqtt::publish_update_auto_state(ota_auto_cmd == 1);
+      log_health(SCV_LOG_INFO, SCV_CAT_SYSTEM,
+                 ota_auto_cmd == 1 ? "Auto-update turned on"
+                                   : "Auto-update turned off", nullptr);
+    }
+
+    // Witness the moment a download starts — the chain should show every
+    // install attempt, not just outcomes.
+    const securacv_ota_state_t ota_st = securacv_ota_get_state();
+    if (ota_st == SECURACV_OTA_DOWNLOADING &&
+        g_ota_last_seen_state != SECURACV_OTA_DOWNLOADING) {
+      const securacv_ota_manifest_t* m = securacv_ota_get_manifest();
+      ota_witness_event("fw_update_started", (m != NULL) ? m->version : "?");
+    }
+    g_ota_last_seen_state = ota_st;
+
+    // Push entity changes promptly (progress %, transitions) and refresh
+    // the retained snapshot every 30 s.
+    static uint32_t s_last_ota_pub_ms = 0;
+    const bool periodic = (int32_t)(ota_now - s_last_ota_pub_ms) >= 30000;
+    if (csi_mqtt::connected() && (g_ota_publish_pending || periodic)) {
+      g_ota_publish_pending = false;
+      s_last_ota_pub_ms = ota_now;
+      ota_publish_update_state();
+    }
+  }
 
   // Handle serial commands
   handle_serial_commands();

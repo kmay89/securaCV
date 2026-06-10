@@ -43,6 +43,16 @@ import argparse
 import functools
 from datetime import datetime
 
+# The release signing/manifest tool is the single source of truth for the
+# manifest schema + Ed25519 signature format. The mock server reuses it so
+# local testing exercises exactly what production releases ship.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                "..", "..", "..", "scripts"))
+try:
+    import ota_release  # noqa: E402
+except ImportError:  # cryptography not installed — unsigned manifests only
+    ota_release = None
+
 # Default settings
 DEFAULT_PORT = 8443
 DEFAULT_PRODUCT = "securacv-canary"
@@ -80,18 +90,49 @@ def calculate_sha256(filepath: str) -> str:
     return sha256_hash.hexdigest()
 
 
+def load_or_create_dev_key(key_path: str = "releaser-dev.pem"):
+    """Load (or generate on first use) the local development signing key.
+
+    The signed pull-OTA engine refuses to install unsigned images, so even
+    local testing needs a real Ed25519 signature. The matching public key
+    must be compiled into the device under test — print the command that
+    does that whenever a new key is created.
+    """
+    if ota_release is None:
+        return None
+    from pathlib import Path
+
+    if not os.path.exists(key_path):
+        # Delegate creation to the release tool so the dev key has exactly
+        # the production format (and never appears in any output here).
+        ota_release.cmd_keygen(argparse.Namespace(private_key=key_path, force=False))
+        print(f"{Colors.YELLOW}Created development signing key: {key_path}{Colors.END}")
+        print(f"{Colors.YELLOW}Embed its public half in the device under test:{Colors.END}")
+        print(f"  python firmware/scripts/ota_release.py pubkey-header \\")
+        print(f"    --private-key {key_path} --out firmware/common/ota/src/ota_release_key.h")
+        print(f"  (then re-stage the canary-wap copies and rebuild — do NOT commit a dev key header)")
+    return ota_release.load_private_key(Path(key_path))
+
+
 def generate_manifest(bin_path: str, version: str = DEFAULT_VERSION,
                       product: str = DEFAULT_PRODUCT, port: int = DEFAULT_PORT,
-                      output_path: str = "manifest.json") -> dict:
+                      output_path: str = "manifest.json",
+                      key_path: str = "releaser-dev.pem") -> dict:
     """
-    Generate a manifest.json for a firmware binary.
+    Generate a signed manifest for a firmware binary.
+
+    Delegates schema + signature to firmware/scripts/ota_release.py so the
+    mock server serves exactly the format production releases ship. Falls
+    back to an unsigned manifest (check/version-compare testing only) when
+    the `cryptography` package is unavailable.
 
     Args:
         bin_path: Path to the firmware .bin file
         version: Version string (e.g., "1.1.0")
         product: Product identifier
         port: Server port for URL generation
-        output_path: Where to write manifest.json
+        output_path: Where to write the manifest
+        key_path: Development Ed25519 signing key (auto-created)
 
     Returns:
         Manifest dictionary
@@ -100,32 +141,52 @@ def generate_manifest(bin_path: str, version: str = DEFAULT_VERSION,
         print(f"{Colors.RED}Error: Firmware file not found: {bin_path}{Colors.END}")
         sys.exit(1)
 
-    file_size = os.path.getsize(bin_path)
-    sha256 = calculate_sha256(bin_path)
     filename = os.path.basename(bin_path)
+    url = f"https://localhost:{port}/{filename}"
+    release_url = f"https://localhost:{port}/changelog.html"
+    release_notes = f"OTA test update to version {version}"
 
-    manifest = {
-        "product": product,
-        "version": version,
-        "min_version": "1.0.0",
-        "url": f"https://localhost:{port}/{filename}",
-        "sha256": sha256,
-        "size": file_size,
-        "release_notes": f"OTA test update to version {version}",
-        "release_url": f"https://localhost:{port}/changelog.html",
-        "timestamp": datetime.utcnow().isoformat() + "Z"
-    }
+    private_key = load_or_create_dev_key(key_path)
+    if private_key is not None:
+        with open(bin_path, "rb") as f:
+            firmware = f.read()
+        manifest = ota_release.build_manifest(
+            private_key=private_key,
+            firmware=firmware,
+            product=product,
+            version=version,
+            url=url,
+            release_notes=release_notes,
+            release_url=release_url,
+        )
+        signed = True
+    else:
+        print(f"{Colors.YELLOW}cryptography not installed — generating an UNSIGNED "
+              f"manifest. Devices will refuse to install it (pip install cryptography).{Colors.END}")
+        manifest = {
+            "manifest_version": 1,
+            "product": product,
+            "version": version,
+            "url": url,
+            "sha256": calculate_sha256(bin_path),
+            "size": os.path.getsize(bin_path),
+            "release_notes": release_notes,
+            "release_url": release_url,
+        }
+        signed = False
+
+    manifest["timestamp"] = datetime.utcnow().isoformat() + "Z"
 
     with open(output_path, 'w') as f:
         json.dump(manifest, f, indent=2)
 
-    print(f"{Colors.GREEN}Generated manifest.json:{Colors.END}")
+    print(f"{Colors.GREEN}Generated {output_path}:{Colors.END}")
     print(f"  Product:  {manifest['product']}")
     print(f"  Version:  {manifest['version']}")
     print(f"  Size:     {manifest['size']:,} bytes")
     print(f"  SHA256:   {manifest['sha256'][:16]}...{manifest['sha256'][-16:]}")
+    print(f"  Signed:   {'yes (key ' + manifest['signing_key_id'] + ')' if signed else 'NO'}")
     print(f"  URL:      {manifest['url']}")
-    print(f"  Saved to: {output_path}")
 
     return manifest
 
@@ -343,9 +404,15 @@ Examples:
     gen_parser.add_argument('-p', '--port', type=int, default=DEFAULT_PORT,
                            help=f'Server port for URL (default: {DEFAULT_PORT})')
     gen_parser.add_argument('--product', default=DEFAULT_PRODUCT,
-                           help=f'Product name (default: {DEFAULT_PRODUCT})')
+                           help=f'Product name (default: {DEFAULT_PRODUCT}; use '
+                                f'securacv-canary-wap for the WAP variant)')
     gen_parser.add_argument('-o', '--output', default='manifest.json',
-                           help='Output manifest file (default: manifest.json)')
+                           help='Output manifest file (default: manifest.json; '
+                                'use manifest-canary.json / manifest-canary-wap.json '
+                                'to serve multiple variants side by side)')
+    gen_parser.add_argument('--private-key', default='releaser-dev.pem',
+                           help='Development Ed25519 signing key PEM '
+                                '(default: releaser-dev.pem, auto-created)')
 
     # cert command
     cert_parser = subparsers.add_parser('cert', help='Generate self-signed certificate')
@@ -371,7 +438,7 @@ Examples:
         run_server(args.port, args.cert, args.key, args.directory)
     elif args.command == 'generate':
         generate_manifest(args.firmware, args.version, args.product,
-                         args.port, args.output)
+                         args.port, args.output, args.private_key)
     elif args.command == 'cert':
         generate_self_signed_cert(args.cert, args.key)
     elif args.command == 'init':

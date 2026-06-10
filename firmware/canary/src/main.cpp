@@ -40,6 +40,16 @@
 #include <ArduinoJson.h>
 #endif
 
+#if FEATURE_OTA_PULL
+#include "securacv_ota.h"
+#include "ota_release_key.h"
+#include <WiFi.h>
+#include <Preferences.h>
+#if __has_include(<esp_random.h>)
+#include <esp_random.h>
+#endif
+#endif
+
 #if FEATURE_CSI
 #include "securacv_csi.h"
 #include "csi_modules_integration.h"
@@ -134,6 +144,14 @@ static uint32_t g_last_record_ms = 0;
 static uint32_t g_last_mqtt_status_ms = 0;
 static uint32_t g_last_mqtt_health_ms = 0;
 static uint32_t g_last_mqtt_sensing_ms = 0;
+#endif
+
+#if FEATURE_OTA_PULL
+/* Set by the OTA progress callback (which runs on the OTA task and must
+ * stay non-blocking); the main loop turns it into an MQTT publish. */
+static volatile bool g_ota_publish_pending = false;
+static securacv_ota_state_t g_ota_last_seen_state = SECURACV_OTA_IDLE;
+static uint32_t g_ota_next_check_ms = 0;
 #endif
 
 // Device-unique AP password (derived from pubkey fingerprint)
@@ -244,7 +262,103 @@ static void mqtt_publish_health_update();
 #if FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS || FEATURE_TOUCH || FEATURE_IR_RMT || FEATURE_TEMP_TAMPER
 static void mqtt_publish_sensing_update();
 #endif
+#if FEATURE_OTA_PULL
+static void mqtt_publish_ota_update_state();
 #endif
+#endif
+
+// ════════════════════════════════════════════════════════════════════════════
+// PULL-OTA INTEGRATION (signed firmware updates)
+// ════════════════════════════════════════════════════════════════════════════
+
+#if FEATURE_OTA_PULL
+
+/* Sign an update lifecycle event into the witness chain. The chain is the
+ * audit trail: a verifier can later prove when the firmware changed and
+ * whether a rollback happened. */
+static void ota_witness_event(const char* type, const char* version) {
+  uint8_t payload[96];
+  CborWriter cbor(payload, sizeof(payload));
+  cbor.write_map(2);
+  cbor.write_text("type"); cbor.write_text(type);
+  cbor.write_text("ver");  cbor.write_text(version);
+  WitnessRecord rec;
+  if (!witness_create_record(payload, cbor.size(), RECORD_STATE_CHANGE, &rec)) {
+    log_health(LOG_LEVEL_ERROR, LOG_CAT_WITNESS, "OTA witness record failed", type);
+  }
+}
+
+/* Runs on the OTA task — only flips a flag; the main loop publishes. */
+static void ota_on_progress(securacv_ota_state_t state, uint8_t percent,
+                            securacv_ota_error_t error, void* user_data) {
+  (void)state; (void)percent; (void)error; (void)user_data;
+  g_ota_publish_pending = true;
+}
+
+/* Install-permission gate: never start (or finish) an update the device
+ * might not survive. Checked before the download and again before the
+ * reboot. */
+static bool ota_can_install(char* reason, size_t reason_len) {
+#if FEATURE_POWER_MONITOR
+  power_state_t pwr;
+  if (power_get_state(&pwr) &&
+      pwr.power_source == POWER_SOURCE_BATTERY && pwr.soc_pct < 30) {
+    snprintf(reason, reason_len, "battery too low (%u%%)", pwr.soc_pct);
+    return false;
+  }
+#else
+  (void)reason; (void)reason_len;
+#endif
+  return true;
+}
+
+/* Mirror the manual-reboot path before the post-install restart: persist
+ * the chain head so the witness chain continues seamlessly on the new
+ * firmware, and remember the target version so the next boot can witness
+ * applied vs rolled-back. */
+static void ota_before_reboot() {
+  witness_persist_chain_state();
+  const securacv_ota_manifest_t* m = securacv_ota_get_manifest();
+  if (m != NULL) {
+    Preferences prefs;
+    if (prefs.begin("securacv", false)) {
+      prefs.putString("ota_target", m->version);
+      prefs.end();
+    }
+  }
+}
+
+static void ota_schedule_next_check(uint32_t delay_ms, uint32_t jitter_ms) {
+  uint32_t jitter = (jitter_ms > 0) ? (esp_random() % jitter_ms) : 0;
+  g_ota_next_check_ms = millis() + delay_ms + jitter;
+}
+
+/* Daily jittered update check. The jitter spreads a fleet's checks over
+ * an hour so a release never sees a thundering herd, and the first check
+ * lands a couple of minutes after boot so a fresh install learns about
+ * updates right away. */
+static void ota_scheduler_process(uint32_t now) {
+  if (g_ota_next_check_ms == 0) {
+    ota_schedule_next_check(120000UL, 60000UL);
+    return;
+  }
+  if ((int32_t)(now - g_ota_next_check_ms) < 0) return;
+
+  if (securacv_ota_get_state() != SECURACV_OTA_IDLE || !WiFi.isConnected()) {
+    // Busy or no route to the update server yet — try again in 15 min.
+    ota_schedule_next_check(15UL * 60 * 1000, 60000UL);
+    return;
+  }
+
+  ota_schedule_next_check(24UL * 60 * 60 * 1000, 3600000UL);
+  if (securacv_ota_get_auto_update()) {
+    securacv_ota_check_and_install();
+  } else {
+    securacv_ota_check();
+  }
+}
+
+#endif // FEATURE_OTA_PULL
 
 // ════════════════════════════════════════════════════════════════════════════
 // UTILITY FUNCTIONS
@@ -696,6 +810,48 @@ void setup() {
     }
   });
   #endif
+
+  #if FEATURE_OTA_PULL
+  /* HA update entity "Install" button + auto-update switch. Both
+   * callbacks run on the main task (PubSubClient pumps from mqtt_loop),
+   * so calling into the OTA engine is safe — it only spawns its task. */
+  mqtt_set_ota_install_cmd_callback([]() {
+    log_health(LOG_LEVEL_NOTICE, LOG_CAT_USER,
+               "Firmware install requested from Home Assistant", nullptr);
+    securacv_ota_check_and_install();
+  });
+  mqtt_set_ota_auto_cmd_callback([](bool enabled) {
+    securacv_ota_set_auto_update(enabled);
+    mqtt_publish_update_auto_state(enabled);
+    log_health(LOG_LEVEL_INFO, LOG_CAT_USER,
+               enabled ? "Auto-update turned on" : "Auto-update turned off",
+               nullptr);
+  });
+  /* Seed the cached states so the first broker connect publishes them
+   * (same pattern as the mic mute switch above). */
+  mqtt_publish_update_auto_state(securacv_ota_get_auto_update());
+  #endif
+#endif
+
+  // Initialize the signed pull-OTA engine (manifest checks run on the
+  // daily scheduler in loop(); installs are user- or auto-triggered).
+#if FEATURE_OTA_PULL
+  {
+    securacv_ota_config_t ota_cfg = SECURACV_OTA_CONFIG_DEFAULT;
+    ota_cfg.product          = SECURACV_OTA_PRODUCT;
+    ota_cfg.current_version  = FIRMWARE_VERSION;
+    ota_cfg.manifest_url     = SECURACV_OTA_MANIFEST_URL;
+    ota_cfg.release_pubkey   = SECURACV_OTA_RELEASE_PUBKEY;
+    ota_cfg.on_progress      = ota_on_progress;
+    ota_cfg.can_install      = ota_can_install;
+    ota_cfg.on_before_reboot = ota_before_reboot;
+    if (securacv_ota_init(&ota_cfg) == ESP_OK) {
+      Serial.printf("[OK] Pull-OTA engine ready (product=%s, version=%s)\n",
+                    SECURACV_OTA_PRODUCT, FIRMWARE_VERSION);
+    } else {
+      Serial.println("[WARN] Pull-OTA engine init failed");
+    }
+  }
 #endif
 
   // Wire emergency / security sensing events into the Ed25519 witness
@@ -956,6 +1112,51 @@ void setup() {
     if (score < 70) {
       log_health(LOG_LEVEL_WARNING, LOG_CAT_SYSTEM,
                  "Low self-test score", nullptr);
+    }
+  }
+#endif
+
+  // Confirm — or roll back — a freshly applied OTA image. Reaching this
+  // line at all means provisioning, storage, and network bring-up survived
+  // the new firmware; the registered probes assert the parts that matter
+  // for the device's job. If a required probe fails, the engine marks the
+  // image invalid and reboots into the previous firmware (does not return).
+#if FEATURE_OTA_PULL
+  {
+    static const securacv_selftest_t k_ota_selftests[] = {
+      { "device identity", [](const char*) -> bool {
+          return witness_get_device().device_id[0] != '\0';
+        }, true },
+#if FEATURE_DIAGNOSTICS
+      { "diagnostics suite", [](const char*) -> bool {
+          return diag_run_selftest() >= 50;
+        }, true },
+#endif
+    };
+    for (size_t i = 0; i < sizeof(k_ota_selftests) / sizeof(k_ota_selftests[0]); i++) {
+      securacv_ota_register_selftest(&k_ota_selftests[i]);
+    }
+    securacv_ota_boot_self_test();
+
+    // Witness the update outcome. ota_before_reboot() stored the target
+    // version before the install reboot; compare it with what actually
+    // booted. Running the old version again means the rollback fired.
+    Preferences ota_prefs;
+    if (ota_prefs.begin("securacv", false)) {
+      String target = ota_prefs.getString("ota_target", "");
+      if (target.length() > 0) {
+        ota_prefs.remove("ota_target");
+        if (target == FIRMWARE_VERSION) {
+          ota_witness_event("fw_update_applied", FIRMWARE_VERSION);
+          log_health(LOG_LEVEL_NOTICE, LOG_CAT_SYSTEM,
+                     "Firmware update applied", FIRMWARE_VERSION);
+        } else {
+          ota_witness_event("fw_update_rolled_back", target.c_str());
+          log_health(LOG_LEVEL_WARNING, LOG_CAT_SYSTEM,
+                     "Firmware update rolled back", target.c_str());
+        }
+      }
+      ota_prefs.end();
     }
   }
 #endif
@@ -1280,6 +1481,23 @@ void loop() {
   sensing_tick();
 #endif
 
+#if FEATURE_OTA_PULL
+  // Daily jittered update check (auto-installs only when the user opted in).
+  ota_scheduler_process(now);
+
+  // Witness the moment a download actually starts — the chain should show
+  // every install attempt, not just the outcomes.
+  {
+    const securacv_ota_state_t ota_st = securacv_ota_get_state();
+    if (ota_st == SECURACV_OTA_DOWNLOADING &&
+        g_ota_last_seen_state != SECURACV_OTA_DOWNLOADING) {
+      const securacv_ota_manifest_t* m = securacv_ota_get_manifest();
+      ota_witness_event("fw_update_started", (m != NULL) ? m->version : "?");
+    }
+    g_ota_last_seen_state = ota_st;
+  }
+#endif
+
 #if FEATURE_HA_MQTT
   // MQTT loop — handles reconnect and keepalive
   mqtt_loop();
@@ -1288,7 +1506,19 @@ void loop() {
   if (mqtt_connected() && now - g_last_mqtt_status_ms >= MQTT_STATUS_INTERVAL_MS) {
     g_last_mqtt_status_ms = now;
     mqtt_publish_status_update();
+#if FEATURE_OTA_PULL
+    mqtt_publish_ota_update_state();
+#endif
   }
+
+#if FEATURE_OTA_PULL
+  // Push update-entity changes promptly (progress %, state transitions)
+  // — the flag is set from the OTA task callback, published here.
+  if (g_ota_publish_pending && mqtt_connected()) {
+    g_ota_publish_pending = false;
+    mqtt_publish_ota_update_state();
+  }
+#endif
 
   // Publish health periodically
   if (mqtt_connected() && now - g_last_mqtt_health_ms >= MQTT_HEALTH_INTERVAL_MS) {
@@ -1428,6 +1658,51 @@ static void mqtt_publish_status_update() {
   serializeJson(doc, payload);
   mqtt_publish_status(payload.c_str());
 }
+
+#if FEATURE_OTA_PULL
+/* State payload for the HA MQTT `update` entity. Keys follow the
+ * documented schema (installed_version / latest_version / in_progress /
+ * update_percentage / release_summary / release_url). The retained topic
+ * plus the reconnect republish in the MQTT lib keep HA in sync across
+ * broker restarts. Kept well under the 1 KB PubSubClient buffer. */
+static void mqtt_publish_ota_update_state() {
+  JsonDocument doc;
+  doc["installed_version"] = FIRMWARE_VERSION;
+
+  const securacv_ota_manifest_t* m = securacv_ota_get_manifest();
+  if (m != NULL && securacv_ota_update_available()) {
+    doc["latest_version"] = m->version;
+    if (m->release_url[0] != '\0') {
+      doc["release_url"] = m->release_url;
+    }
+    if (m->release_notes[0] != '\0') {
+      // Truncate to keep the whole payload comfortably inside the buffer.
+      char summary[201];
+      strncpy(summary, m->release_notes, sizeof(summary) - 1);
+      summary[sizeof(summary) - 1] = '\0';
+      doc["release_summary"] = summary;
+    }
+  } else {
+    doc["latest_version"] = FIRMWARE_VERSION;
+  }
+
+  const securacv_ota_state_t st = securacv_ota_get_state();
+  const bool in_progress = (st == SECURACV_OTA_DOWNLOADING ||
+                            st == SECURACV_OTA_VERIFYING ||
+                            st == SECURACV_OTA_FLASHING ||
+                            st == SECURACV_OTA_REBOOTING);
+  doc["in_progress"] = in_progress;
+  if (in_progress) {
+    doc["update_percentage"] = securacv_ota_get_progress();
+  } else {
+    doc["update_percentage"] = nullptr;  // resets HA's progress bar
+  }
+
+  String payload;
+  serializeJson(doc, payload);
+  mqtt_publish_update_state(payload.c_str());
+}
+#endif // FEATURE_OTA_PULL
 
 static void mqtt_publish_health_update() {
   SystemHealth& health = witness_get_health();
