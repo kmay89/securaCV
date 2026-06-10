@@ -6,31 +6,36 @@ This folder provides a local Docker Compose setup for running **Home Assistant**
 Frigate → MQTT (frigate/events) → frigate_bridge → SecuraCV log → event_mqtt_bridge → MQTT → Home Assistant
 ```
 
-The SecuraCV container runs three binaries from this repo:
+The SecuraCV container is the [sidecar image](../../docker/sidecar/)
+(`docker/sidecar/Dockerfile`), which supervises three binaries from this
+repo via its entrypoint:
 
 - `witness_api` (Event API only, no RTSP ingestion)
 - `frigate_bridge` (Frigate MQTT → privacy-preserving events)
 - `event_mqtt_bridge` (SecuraCV events → MQTT discovery/state)
 
+> Just want SecuraCV next to an **existing** Frigate? Skip this full stack
+> and use `docker/sidecar/quickstart.compose.yml` instead — one service,
+> one env var.
+
 ## Quickstart
 
-1) **Create a device key seed** (stored as a Docker secret, never in environment):
-
-```bash
-openssl rand -hex 32 > .device_key_seed
-chmod 600 .device_key_seed
-```
-
-2) **Set up MQTT credentials** (anonymous access is disabled by default):
+1) **Set up MQTT credentials** (anonymous access is disabled by default):
 
 ```bash
 # Start mosquitto first to create the password file
 docker compose up -d mosquitto
 docker compose exec mosquitto mosquitto_passwd -c /mosquitto/config/passwd securacv
 docker compose restart mosquitto
+# Tell the securacv service the password you chose:
+echo 'SECURACV_MQTT_PASSWORD=<the password>' >> .env
 ```
 
-3) **Review the demo camera** in `frigate.yml` and replace the RTSP URL:
+A device key seed is generated automatically on first start (persisted in
+the `securacv_data` volume — back it up). To pin one instead, see the
+commented `secrets` block in `docker-compose.yml`.
+
+2) **Review the demo camera** in `frigate.yml` and replace the RTSP URL:
 
 ```yaml
 cameras:
@@ -42,22 +47,29 @@ cameras:
 
 Use a real RTSP source (camera, go2rtc, etc.) so Frigate can emit detections.
 
-4) **Start the stack**:
+3) **Start the stack**:
 
 ```bash
 docker compose up -d --build
 ```
 
-5) **Open the UIs**:
+4) **Open the UIs**:
 
 - Home Assistant: http://localhost:8123
 - Frigate: http://localhost:5000
+
+Diagnose the pipeline at any time (broker reachability, auth, live Frigate
+traffic, sealed-log verification):
+
+```bash
+docker compose run --rm securacv doctor
+```
 
 ## Security Notes
 
 - **MQTT authentication** is required. Anonymous access is disabled in `mosquitto.conf`.
 - **Ports are bound to localhost** (`127.0.0.1`) by default to prevent network exposure.
-- **DEVICE_KEY_SEED** is loaded via Docker secrets (`/run/secrets/`), not environment variables.
+- **DEVICE_KEY_SEED** is auto-generated into the data volume (0600), or supplied via a Docker secret (`/run/secrets/`) — never required in the environment.
 - For production, enable TLS on the MQTT broker (see comments in `mosquitto.conf`).
 
 ## What to expect

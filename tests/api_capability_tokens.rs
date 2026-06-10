@@ -192,3 +192,167 @@ fn api_latest_event_endpoint_returns_not_found_when_empty() -> Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn api_verify_requires_token() -> Result<()> {
+    let api = TestApi::new(add_test_event)?;
+
+    let mut stream = TcpStream::connect(api.handle().addr)?;
+    let request = "POST /verify HTTP/1.1\r\nHost: localhost\r\n\r\n";
+    stream.write_all(request.as_bytes())?;
+    let (headers, _body) = read_response(&mut stream)?;
+    assert!(headers.contains("401 Unauthorized"));
+
+    Ok(())
+}
+
+#[test]
+fn api_verify_rejects_invalid_token() -> Result<()> {
+    let api = TestApi::new(add_test_event)?;
+
+    let mut stream = TcpStream::connect(api.handle().addr)?;
+    let bogus = "0".repeat(64);
+    let request =
+        format!("POST /verify HTTP/1.1\r\nHost: localhost\r\nX-Witness-Token: {bogus}\r\n\r\n");
+    stream.write_all(request.as_bytes())?;
+    let (headers, _body) = read_response(&mut stream)?;
+    assert!(headers.contains("401 Unauthorized"));
+
+    Ok(())
+}
+
+#[test]
+fn api_verify_returns_report_for_valid_chain() -> Result<()> {
+    let api = TestApi::new(add_test_event)?;
+    let token = api.handle().token.clone();
+
+    let mut stream = TcpStream::connect(api.handle().addr)?;
+    let request =
+        format!("POST /verify HTTP/1.1\r\nHost: localhost\r\nX-Witness-Token: {token}\r\n\r\n");
+    stream.write_all(request.as_bytes())?;
+    let (headers, body) = read_response(&mut stream)?;
+    assert!(headers.contains("200 OK"), "headers: {headers}");
+
+    let value: Value = serde_json::from_str(&body)?;
+    assert_eq!(value["chain_valid"], true, "report: {value}");
+    assert!(value["events_verified"].as_u64().unwrap_or(0) >= 1);
+    // Privacy: only bucketed timestamps in the report.
+    assert!(value.get("verified_at_bucket_start").is_some());
+    assert!(value.get("verified_at").is_none());
+
+    Ok(())
+}
+
+#[test]
+fn api_verify_rejects_get_method() -> Result<()> {
+    let api = TestApi::new(add_test_event)?;
+    let token = api.handle().token.clone();
+
+    let mut stream = TcpStream::connect(api.handle().addr)?;
+    let request =
+        format!("GET /verify HTTP/1.1\r\nHost: localhost\r\nX-Witness-Token: {token}\r\n\r\n");
+    stream.write_all(request.as_bytes())?;
+    let (headers, _body) = read_response(&mut stream)?;
+    assert!(headers.contains("405"));
+
+    Ok(())
+}
+
+#[test]
+fn api_verify_rejects_request_body() -> Result<()> {
+    let api = TestApi::new(add_test_event)?;
+    let token = api.handle().token.clone();
+
+    let mut stream = TcpStream::connect(api.handle().addr)?;
+    let request = format!(
+        "POST /verify HTTP/1.1\r\nHost: localhost\r\nX-Witness-Token: {token}\r\nContent-Length: 2\r\n\r\n{{}}"
+    );
+    stream.write_all(request.as_bytes())?;
+    let (headers, body) = read_response(&mut stream)?;
+    assert!(headers.contains("400"), "headers: {headers} body: {body}");
+
+    Ok(())
+}
+
+#[test]
+fn api_digest_aggregates_events_with_coarse_metadata() -> Result<()> {
+    let api = TestApi::new(|kernel, cfg| {
+        // Two recent events (current bucket) land inside the 24h window.
+        for _ in 0..2 {
+            let desc = ModuleDescriptor {
+                id: "test_module",
+                allowed_event_types: &[EventType::BoundaryCrossingObjectLarge],
+                requested_capabilities: &[],
+                supported_backends: &[InferenceBackend::Stub],
+            };
+            let cand = CandidateEvent {
+                event_type: EventType::BoundaryCrossingObjectLarge,
+                time_bucket: TimeBucket::now(600)?,
+                zone_id: "zone:porch".to_string(),
+                confidence: 0.8,
+                correlation_token: None,
+            };
+            kernel.append_event_checked(
+                &desc,
+                cand,
+                &cfg.kernel_version,
+                &cfg.ruleset_id,
+                cfg.ruleset_hash,
+            )?;
+        }
+        Ok(())
+    })?;
+    let token = api.handle().token.clone();
+
+    let mut stream = TcpStream::connect(api.handle().addr)?;
+    let request =
+        format!("GET /digest HTTP/1.1\r\nHost: localhost\r\nX-Witness-Token: {token}\r\n\r\n");
+    stream.write_all(request.as_bytes())?;
+    let (headers, body) = read_response(&mut stream)?;
+    assert!(headers.contains("200 OK"), "headers: {headers}");
+
+    let value: Value = serde_json::from_str(&body)?;
+    // Dedup may fold same-bucket events; at least one must be counted.
+    assert!(value["total_events"].as_u64().unwrap_or(0) >= 1);
+    assert!(value["per_zone"]["zone:porch"].as_u64().unwrap_or(0) >= 1);
+    assert_eq!(value["window_secs"], 24 * 60 * 60);
+    // Period buckets are the only time-of-day signal — 6h granularity.
+    let periods = value["per_period"].as_object().expect("per_period object");
+    for key in periods.keys() {
+        assert!(["night", "morning", "afternoon", "evening"].contains(&key.as_str()));
+    }
+    // No verification has run yet, so the report is absent (not null).
+    assert!(value.get("last_verify").is_none());
+    // Privacy: no precise timestamps anywhere in the digest.
+    assert!(!contains_key(&value, "created_at"));
+    assert!(!contains_key(&value, "correlation_token"));
+
+    Ok(())
+}
+
+#[test]
+fn api_digest_includes_last_verify_after_post() -> Result<()> {
+    let api = TestApi::new(add_test_event)?;
+    let token = api.handle().token.clone();
+
+    // Run a verification first...
+    let mut stream = TcpStream::connect(api.handle().addr)?;
+    let request =
+        format!("POST /verify HTTP/1.1\r\nHost: localhost\r\nX-Witness-Token: {token}\r\n\r\n");
+    stream.write_all(request.as_bytes())?;
+    let (headers, _body) = read_response(&mut stream)?;
+    assert!(headers.contains("200 OK"));
+
+    // ...then the digest must carry its cached outcome.
+    let mut stream = TcpStream::connect(api.handle().addr)?;
+    let request =
+        format!("GET /digest HTTP/1.1\r\nHost: localhost\r\nX-Witness-Token: {token}\r\n\r\n");
+    stream.write_all(request.as_bytes())?;
+    let (headers, body) = read_response(&mut stream)?;
+    assert!(headers.contains("200 OK"));
+
+    let value: Value = serde_json::from_str(&body)?;
+    assert_eq!(value["last_verify"]["chain_valid"], true);
+
+    Ok(())
+}
