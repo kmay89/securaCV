@@ -1,0 +1,68 @@
+name: Enclosure CAD
+
+# Render the parametric OpenSCAD enclosures and verify the meshes whenever the
+# CAD sources change, so a PR can't silently break the geometry. Catches what
+# bit v0.6: configs that stop rendering, CGAL/manifold warnings, and STLs that
+# export as multiple shells.
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - "docs/hardware/enclosure/**"
+      - ".github/workflows/enclosure.yml"
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - "docs/hardware/enclosure/**"
+      - ".github/workflows/enclosure.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  render:
+    name: Render + mesh check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: docs/hardware/enclosure
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install OpenSCAD + admesh
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq openscad admesh
+
+      - name: Render all presets and parts
+        run: |
+          ./render.sh --no-png 2>&1 | tee render.log
+          # OpenSCAD exits 0 on geometry warnings — treat them as failures.
+          # (Benign CGAL cache statistics lines are not matched by these patterns.)
+          ! grep -E 'ERROR|WARNING|Object isn.t a valid 2-manifold' render.log
+
+      - name: Verify STLs are watertight single parts
+        run: |
+          status=0
+          for f in *.stl; do
+            out=$(admesh "$f")
+            parts=$(echo "$out" | sed -n 's/.*Number of parts *: *\([0-9]*\).*/\1/p')
+            bad=$(echo "$out"   | sed -n 's/^Total disconnected facets *: *\([0-9]*\).*/\1/p')
+            echo "$f: parts=$parts disconnected=$bad"
+            [ "$parts" = "1" ] && [ "$bad" = "0" ] || { echo "::error file=docs/hardware/enclosure/$f::bad mesh (parts=$parts, disconnected=$bad)"; status=1; }
+          done
+          exit $status
+
+      - name: Invalid configs must fail their assertions
+        run: |
+          set -e
+          must_fail() {
+            if openscad --export-format binstl -o /tmp/x.stl "$@" canary_wap_enclosure.scad 2>/dev/null; then
+              echo "::error::expected assertion failure for: $*"; exit 1
+            fi
+          }
+          must_fail -D 'part="gasket"'                          # gasket without opt_seal
+          must_fail -D 'lid_edge=5' -D 'part="lid"'             # chamfer thicker than the lid
+          must_fail -D 'wall_t=0' -D 'part="base"'              # zero wall
+          echo "all guarded configs failed as expected"
