@@ -17,6 +17,9 @@ const peersRoutes = require('./routes/peers');
 const rebootRoutes = require('./routes/reboot');
 const updateRoutes = require('./routes/update');
 const webhookRoutes = require('./routes/webhook');
+const provisionRoutes = require('./routes/provision');
+const identifyRoutes = require('./routes/identify');
+const deviceNameRoutes = require('./routes/device-name');
 const { createWebhookDispatcher } = require('./lib/webhook');
 
 function createApp(options = {}) {
@@ -59,7 +62,11 @@ function createApp(options = {}) {
   // 7. JSON body parsing for API routes
   app.use('/api', express.json());
 
-  // 8. Auth (401) — applies to all /api/* routes
+  // 8a. Provisioning receipt (NO token auth — it is how a client obtains
+  // the token; gated by the physical BOOT button instead)
+  app.use(provisionRoutes(state));
+
+  // 8b. Auth (401) — applies to all other /api/* routes
   app.use('/api', authMiddleware(state));
 
   // 9. Webhook dispatcher
@@ -77,6 +84,8 @@ function createApp(options = {}) {
   app.use(rebootRoutes(state));
   app.use(updateRoutes(state));
   app.use(webhookRoutes(state, webhookDispatcher));
+  app.use(identifyRoutes(state));
+  app.use(deviceNameRoutes(state));
 
   // 404 for unmatched API routes
   app.use('/api', (req, res) => {

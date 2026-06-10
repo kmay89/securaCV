@@ -39,6 +39,18 @@ static selftest_report_t s_selftest = {};
 
 static degrade_level_t s_degrade = DEGRADE_NONE;
 
+/* SD endurance bookkeeping. The 64-bit lifetime counter is guarded by a
+ * critical section (same pattern as the witness record ring) because
+ * 64-bit atomics are not lock-free on Xtensa. */
+static portMUX_TYPE s_sd_mux = portMUX_INITIALIZER_UNLOCKED;
+static uint32_t s_sd_writes_since_persist = 0;
+static uint32_t s_sd_last_persist_ms = 0;
+
+/* NVS namespace/keys for the persisted lifetime counters. */
+static const char* DIAG_NVS_NAMESPACE  = "diag";
+static const char* DIAG_NVS_KEY_WRITES = "sd_lw";
+static const char* DIAG_NVS_KEY_BYTES  = "sd_lb";
+
 /* ──────────────────────────────────────────────────────────────────────────
  * HEAP MONITORING
  * ────────────────────────────────────────────────────────────────────────── */
@@ -127,6 +139,77 @@ static void update_sd() {
     }
   }
 #endif
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * SD ENDURANCE — lifetime counters, wear estimate, replacement latch
+ * ────────────────────────────────────────────────────────────────────────── */
+
+static void load_sd_counters() {
+  Preferences prefs;
+  if (!prefs.begin(DIAG_NVS_NAMESPACE, false)) return;
+  s_sd.lifetime_writes = prefs.getULong(DIAG_NVS_KEY_WRITES, 0);
+  s_sd.lifetime_bytes  = prefs.getULong64(DIAG_NVS_KEY_BYTES, 0);
+  prefs.end();
+}
+
+static void persist_sd_counters() {
+  portENTER_CRITICAL(&s_sd_mux);
+  const uint32_t writes = s_sd.lifetime_writes;
+  const uint64_t bytes  = s_sd.lifetime_bytes;
+  portEXIT_CRITICAL(&s_sd_mux);
+  Preferences prefs;
+  if (!prefs.begin(DIAG_NVS_NAMESPACE, false)) return;
+  prefs.putULong(DIAG_NVS_KEY_WRITES, writes);
+  prefs.putULong64(DIAG_NVS_KEY_BYTES, bytes);
+  prefs.end();
+}
+
+static void update_wear() {
+  /* Snapshot the counters under the same lock the writers take —
+   * s_sd_writes_since_persist is also mutated in diag_record_sd_write_bytes. */
+  portENTER_CRITICAL(&s_sd_mux);
+  const uint64_t lifetime_bytes = s_sd.lifetime_bytes;
+  const uint32_t writes_since_persist = s_sd_writes_since_persist;
+  portEXIT_CRITICAL(&s_sd_mux);
+
+  /* Wear estimate against the configured endurance rating. Conservative
+   * by design: SD cards expose no SMART data, so this tracks our own
+   * write volume against the card's TBW class. */
+  const double endurance_bytes = (double)DIAG_SD_ENDURANCE_TBW * 1e12;
+  double wear = ((double)lifetime_bytes / endurance_bytes) * 100.0;
+  if (wear > 100.0) wear = 100.0;
+  s_sd.wear_pct_x10 = (uint16_t)(wear * 10.0);
+
+  if (!s_sd.replace_recommended && wear >= (double)DIAG_SD_WEAR_REPLACE_PCT) {
+    /* One-way latch: wear only grows, so no hysteresis is needed. */
+    s_sd.replace_recommended = true;
+    char detail[48];
+    snprintf(detail, sizeof(detail), "wear %u.%u%% of %u TBW",
+             (unsigned)(s_sd.wear_pct_x10 / 10),
+             (unsigned)(s_sd.wear_pct_x10 % 10),
+             (unsigned)DIAG_SD_ENDURANCE_TBW);
+    log_health(LOG_LEVEL_WARNING, LOG_CAT_STORAGE,
+               "SD endurance threshold reached - replacement recommended",
+               detail);
+  }
+
+  /* Lazy persistence: batch counter updates so the endurance bookkeeping
+   * never becomes its own NVS-wear source. Worst case a crash undercounts
+   * by one batch. */
+  uint32_t now = millis();
+  bool due = (writes_since_persist >= DIAG_SD_PERSIST_EVERY_WRITES) ||
+             (writes_since_persist > 0 &&
+              (int32_t)(now - s_sd_last_persist_ms) >= (int32_t)DIAG_SD_PERSIST_INTERVAL_MS);
+  if (due) {
+    persist_sd_counters();
+    /* Subtract the snapshot rather than zeroing: writes recorded between
+     * the snapshot and here stay pending for the next persist batch. */
+    portENTER_CRITICAL(&s_sd_mux);
+    s_sd_writes_since_persist -= writes_since_persist;
+    portEXIT_CRITICAL(&s_sd_mux);
+    s_sd_last_persist_ms = now;
+  }
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -233,6 +316,10 @@ bool diag_init(void) {
   memset(&s_sd, 0, sizeof(s_sd));
   memset(&s_selftest, 0, sizeof(s_selftest));
   s_degrade = DEGRADE_NONE;
+  /* Restore lifetime endurance counters; they survive reboots so the wear
+   * estimate reflects the card's whole service life, not just this boot. */
+  load_sd_counters();
+  s_sd_last_persist_ms = millis();
   s_initialized = true;
   log_health(LOG_LEVEL_INFO, LOG_CAT_SYSTEM,
              "Diagnostics engine initialized", nullptr);
@@ -249,6 +336,7 @@ bool diag_process(void) {
   update_heap();
   check_degradation();
   update_sd();
+  update_wear();
   return true;
 }
 
@@ -269,9 +357,23 @@ bool diag_get_sd(diag_sd_t* out) {
 }
 
 void diag_record_sd_write(bool success) {
+  diag_record_sd_write_bytes(0, success);
+}
+
+void diag_record_sd_write_bytes(size_t bytes, bool success) {
   using namespace diag;
   __atomic_fetch_add(&s_sd.total_writes, 1, __ATOMIC_RELAXED);
-  if (!success) __atomic_fetch_add(&s_sd.write_errors, 1, __ATOMIC_RELAXED);
+  if (!success) {
+    __atomic_fetch_add(&s_sd.write_errors, 1, __ATOMIC_RELAXED);
+    return;
+  }
+  /* 64-bit counter is not lock-free on Xtensa — critical section, same
+   * pattern as the witness record ring. */
+  portENTER_CRITICAL(&s_sd_mux);
+  s_sd.lifetime_writes++;
+  s_sd.lifetime_bytes += (uint64_t)bytes;
+  s_sd_writes_since_persist++;
+  portEXIT_CRITICAL(&s_sd_mux);
 }
 
 uint8_t diag_run_selftest(void) {

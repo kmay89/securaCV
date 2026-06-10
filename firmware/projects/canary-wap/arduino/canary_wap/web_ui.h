@@ -1165,6 +1165,15 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           <button class="btn btn-secondary btn-sm" id="micSelftestBtn" onclick="startMicSelftest()">Test with your alarm (30 s)</button>
           <span id="micSelftestResult" style="font-size:0.85rem;color:var(--muted);">Press your smoke/CO alarm's TEST button during the window.</span>
         </div>
+        <div style="margin-top:1rem;display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;">
+          <label for="micSensitivity" style="font-size:0.85rem;">Sensitivity</label>
+          <select id="micSensitivity" onchange="setMicSensitivity()" style="font-size:0.85rem;">
+            <option value="high">High — quiet rooms</option>
+            <option value="default" selected>Standard</option>
+            <option value="low">Low — noisy rooms</option>
+          </select>
+          <span id="micSensitivityResult" style="font-size:0.85rem;color:var(--muted);">Raise it if alarms are missed; lower it if noise triggers it.</span>
+        </div>
       </div>
 
       <!-- GPS Status Card -->
@@ -2243,6 +2252,21 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           <div style="display:flex;gap:0.5rem;margin-top:1rem;flex-wrap:wrap;">
             <button class="btn btn-primary" onclick="saveConfig()" title="Save current settings to the canary's flash so they survive a reboot">Save Configuration</button>
             <button class="btn btn-danger" onclick="confirmReboot()" title="Restart the device (witness chain preserved)">Reboot Device</button>
+          </div>
+        </div>
+
+        <!-- Pairing QR Card (scan from the Canary Vision companion app) -->
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title">Pair with the Canary Vision app</div>
+              <div class="card-subtitle">In the app: Add Canary → Other ways to pair → Scan pairing QR</div>
+            </div>
+            <button class="btn btn-primary btn-sm" onclick="togglePairingQr()" id="pairingQrBtn">Show QR</button>
+          </div>
+          <div id="pairingQrWrap" style="display:none;text-align:center;padding:0.5rem 0;">
+            <img id="pairingQrImg" alt="Pairing QR code" style="width:240px;max-width:80%;border-radius:8px;background:#fff;padding:8px;">
+            <p style="font-size:0.75rem;color:var(--muted);margin:0.5rem 0 0;">This code contains the device's API token — only show it to a phone you trust.</p>
           </div>
         </div>
 
@@ -3654,6 +3678,39 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       else alert('Export failed');
     }
 
+    // ── Pairing QR (Settings → Device) ──────────────────────────────────
+    // The SVG comes from the authenticated /api/pairing-qr endpoint, so it
+    // is fetched with the session's credentials and shown via an object
+    // URL. Hidden again on toggle, and the URL revoked, so the token-
+    // bearing image doesn't linger longer than the operator wants.
+    let pairingQrUrl = null;
+    async function togglePairingQr() {
+      const wrap = document.getElementById('pairingQrWrap');
+      const btn = document.getElementById('pairingQrBtn');
+      const img = document.getElementById('pairingQrImg');
+      if (wrap.style.display !== 'none') {
+        wrap.style.display = 'none';
+        btn.textContent = 'Show QR';
+        img.removeAttribute('src');
+        if (pairingQrUrl) { URL.revokeObjectURL(pairingQrUrl); pairingQrUrl = null; }
+        return;
+      }
+      try {
+        const resp = await secureFetch('/api/pairing-qr', {});
+        if (!resp.ok) { alert('Could not load the pairing QR.'); return; }
+        const blob = await resp.blob();
+        if (pairingQrUrl) URL.revokeObjectURL(pairingQrUrl);
+        pairingQrUrl = URL.createObjectURL(blob);
+        img.src = pairingQrUrl;
+        wrap.style.display = '';
+        btn.textContent = 'Hide QR';
+      } catch (e) {
+        if (e.message !== 'auth_required' && e.message !== 'rate_limited') {
+          alert('Could not load the pairing QR.');
+        }
+      }
+    }
+
     function openAckModal(seq) { pendingAckSeq = seq; document.getElementById('ackReason').value = ''; document.getElementById('ackModal').classList.add('active'); }
     function closeAckModal() { pendingAckSeq = null; document.getElementById('ackModal').classList.remove('active'); }
     async function submitAck() {
@@ -3877,6 +3934,10 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       const data = await api('/api/audio/status');
       if (!data.ok) { card.style.display = 'none'; return; }
       card.style.display = '';
+      if (!card.dataset.sensLoaded) {
+        card.dataset.sensLoaded = '1';
+        loadMicSensitivity();  // reflect the device's saved setting once
+      }
 
       const badge = document.getElementById('micBadge');
       const badgeText = document.getElementById('micBadgeText');
@@ -3915,6 +3976,45 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           'Muted now, but NOT saved (storage error) — the mic re-arms on reboot';
       }
       setTimeout(refreshMicStatus, 500);  // let the deferred toggle apply
+    }
+
+    // Sensitivity maps to the detector's on/off sound levels. "High" hears
+    // quieter alarms but is easier to trip; "Low" suits rooms with steady
+    // background noise. Persisted on the device and re-applied at boot.
+    const MIC_SENSITIVITY = {
+      high:    { rms_on: 600,  rms_off: 300 },
+      default: { rms_on: 800,  rms_off: 400 },
+      low:     { rms_on: 1200, rms_off: 600 },
+    };
+
+    function micSensitivityNameFor(rmsOn) {
+      for (const [name, v] of Object.entries(MIC_SENSITIVITY)) {
+        if (v.rms_on === rmsOn) return name;
+      }
+      return null;  // custom values set via the API directly
+    }
+
+    async function loadMicSensitivity() {
+      const data = await api('/api/audio/config');
+      if (!data.ok) return;
+      const name = micSensitivityNameFor(data.rms_on);
+      if (name) document.getElementById('micSensitivity').value = name;
+    }
+
+    async function setMicSensitivity() {
+      const out = document.getElementById('micSensitivityResult');
+      const v = MIC_SENSITIVITY[document.getElementById('micSensitivity').value];
+      if (!v) return;
+      const data = await api('/api/audio/config', 'POST', v);
+      if (!data.ok) {
+        out.style.color = 'var(--danger)';
+        out.textContent = 'Could not change it — try again.';
+        return;
+      }
+      out.style.color = 'var(--success)';
+      out.textContent = (data.persisted === false)
+        ? 'Applied for now, but NOT saved (storage error) — resets on reboot.'
+        : 'Saved. Applies right away and after reboots.';
     }
 
     async function startMicSelftest() {

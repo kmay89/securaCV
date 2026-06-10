@@ -39,6 +39,13 @@ permissions:
   contents: read
   packages: write
 
+# Cancel superseded PR validation builds only. Never cancel main/tag runs:
+# those push multi-tag images to GHCR, and killing one mid-publish could
+# leave :latest and :<version> pointing at different builds.
+concurrency:
+  group: addon-image-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   build:
     runs-on: ubuntu-latest

@@ -245,7 +245,7 @@ jobs:
             exit 1
           fi
 
-          (cd /tmp/release && sha256sum *.bin *.json > sha256sums.txt)
+          (cd /tmp/release && sha256sum ./*.bin ./*.json > sha256sums.txt)
           ls -la /tmp/release
 
       - name: Extract release notes from CHANGELOG

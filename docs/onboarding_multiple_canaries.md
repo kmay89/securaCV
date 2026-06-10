@@ -12,9 +12,9 @@ what changes once a second device joins the network.
 > - Each Canary is reachable at a **unique** name: `canary-<name>.local`
 >   (e.g. `canary-kitchen.local`) — or `canary-aabb.local` if you don't name it.
 > - `canary.local` still works as a **catch-all** for your first/primary device.
-> - Use the **Identify** button (device dashboard or fleet manager) to blink a
->   specific device's LED + chirp so you can find it — like Philips Hue's
->   "identify this light".
+> - Use the **Identify** button (device dashboard or the Canary Vision app) to
+>   blink a specific device's LED + chirp so you can find it — like Philips
+>   Hue's "identify this light".
 
 ---
 
@@ -116,13 +116,39 @@ ambiguity once you have more than one.
 
 ---
 
+## Pairing from the Canary Vision app (zero typing)
+
+The `canary-vision` companion app pairs devices with the **BOOT-tap** flow —
+no tokens to copy:
+
+1. In the app: **My Canaries → + Add Canary**. Canaries already on your WiFi
+   appear under *Discovered on your network*; tap one (or enter its address).
+2. The app listens for ~60 seconds. **Short-tap the BOOT button** on that
+   Canary — the tap opens the device's provisioning gate and the app captures
+   the receipt (address + token) itself.
+3. Confirm the pairing: tap **Blink to confirm** to make that exact box flash
+   its LED, give it a name (becomes `canary-<name>.local`), and pick the room
+   it watches.
+4. Tap **+ Add another Canary** and repeat — every device after the first is
+   one tap in the app plus one tap on the device.
+
+Fallbacks (under *Other ways to pair*): scan the pairing QR from the device
+dashboard (**Settings → Device → Show QR** — requires the app to be served
+over HTTPS), paste a provisioning receipt JSON, or enter the device address +
+API token manually. The QR carries this device's API token, so the dashboard
+only renders it for an authenticated session.
+
+Rooms are stored in the app only — devices never hold fleet-wide state.
+
+---
+
 ## How do I tell them apart?
 
 1. **By name** — the unique `canary-<name>.local` URL, and the `device_id`
    shown on each dashboard's Status tab.
-2. **In a list** — open `firmware/fleet-manager.html` in a browser (or the
-   `canary-vision` SPA). It discovers/lists every Canary with its label,
-   device_id, firmware, and health.
+2. **In a list** — open the `canary-vision` companion app. Its My Canaries
+   dashboard lists every paired Canary with its name, room, firmware, and
+   health, and surfaces unpaired ones under *Discovered on your network*.
 3. **Physically — the Identify feature** (below).
 
 ---
@@ -137,14 +163,13 @@ serving while it blinks.
 **From a device's own dashboard:** open `http://canary-kitchen.local`, go to the
 **Canary Chirp** card, and click **Identify**.
 
-**From the fleet manager** (best when onboarding several at once):
-1. Open `firmware/fleet-manager.html`.
-2. Add each device by IP/hostname. Optionally paste that device's **API token**
-   in the "API token (optional, for Identify)" field — Identify is an
-   authenticated action, so a token (or an already-open authenticated session
-   to that device) is required.
-3. Hover a device card and click the 🔍 **Identify** button (also in each
-   device's detail view). Watch your shelf — the matching Canary blinks.
+**From the Canary Vision app** (best when onboarding several at once):
+1. Open the app's **My Canaries** dashboard.
+2. Tap a device, then **Blink to find this Canary** (under Identity). The
+   pairing wizard also offers **Blink to confirm** right after a device
+   joins, so you never lose track of which box is which.
+3. Watch your shelf — the matching Canary blinks (and chirps if a buzzer is
+   attached).
 
 **From the API directly:**
 ```bash
@@ -187,7 +212,7 @@ no reboot needed). Names are sanitized to `[a-z0-9-]` per DNS label rules.
 | `canary.local` opens the "wrong" Canary | Expected with multiple devices — use the unique `canary-<name>.local` instead. |
 | `.local` names don't resolve | Your OS/network may lack mDNS. Use the device IP from your router's client list. |
 | Two devices show the same name | One was never named — name it in setup or via `/api/device-name`. |
-| Identify returns `401` | Provide the device's API token (Bearer header, fleet-manager token field, or an open authenticated session). |
+| Identify returns `401` | Provide the device's API token (Bearer header, a paired Canary Vision app, or an open authenticated session). |
 | Identify blinks but is silent | No buzzer attached — that's the LED-only fallback (`visual_only:true`). |
 
 See also: [`getting_started_canary.md`](getting_started_canary.md) for

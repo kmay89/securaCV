@@ -1,0 +1,39 @@
+name: Workflow Lint
+
+# Lints .github/workflows/** with actionlint (incl. shellcheck on every
+# run: block), so a broken expression, an impossible `if:`, or an unquoted
+# shell variable in CI config fails the PR that introduces it instead of
+# silently mis-running later. With ~20 workflows in this repo, the CI
+# config is code too.
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/**'
+      - '.github/actionlint.yaml'
+      - '.github/actionlint.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/**'
+      - '.github/actionlint.yaml'
+      - '.github/actionlint.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: workflows-lint-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  actionlint:
+    name: actionlint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Pinned image; bundles shellcheck + pyflakes for run: block linting.
+      - name: Run actionlint
+        uses: docker://rhysd/actionlint:1.7.7
+        with:
+          args: -color
