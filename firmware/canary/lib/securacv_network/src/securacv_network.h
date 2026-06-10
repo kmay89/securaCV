@@ -198,9 +198,10 @@ esp_err_t http_send_error(httpd_req_t* req, int status_code, const char* error_c
 // disabled, the radio stays fully powered (WIFI_PS_NONE).
 void network_set_wifi_power_save(bool enable);
 
-// Set the maximum WiFi TX power in quarter-dBm units (e.g. 34 = 8.5 dBm).
+// Set the maximum WiFi TX power in quarter-dBm units (e.g. 34 = 8.5 dBm,
+// 60 = 15 dBm — Seeed's weak-signal recommendation for the XIAO ESP32S3).
 // Clamped internally to the ESP32-S3 valid range (8..84, i.e. 2..21 dBm).
-void network_set_tx_power(int8_t dbm);
+void network_set_tx_power(int8_t quarter_dbm);
 
 // Returns true when the STA interface has an IP from the home WiFi router.
 bool network_is_sta_connected(void);

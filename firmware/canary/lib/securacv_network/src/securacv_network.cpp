@@ -237,6 +237,13 @@ bool ScvNetworkManager::begin(const char* ap_ssid, const char* ap_password,
     m_ap_password[0] = '\0';
   }
 
+  // Credentials live in our own NVS keys (NVS_KEY_WIFI_*); stop the Arduino
+  // core from ALSO writing them into the SDK's wifi NVS namespace on every
+  // WiFi.begin() (default persistent=true). That double-write wears flash and
+  // can auto-rejoin a network from stale SDK creds after clearCredentials().
+  // Mirrors the canary-wap sketch.
+  WiFi.persistent(false);
+
   // Always use AP+STA mode
   WiFi.mode(WIFI_AP_STA);
 
@@ -670,15 +677,15 @@ void network_set_wifi_power_save(bool enable) {
   }
 }
 
-void network_set_tx_power(int8_t dbm) {
+void network_set_tx_power(int8_t quarter_dbm) {
   /* esp_wifi_set_max_tx_power() takes quarter-dBm units (int8_t).
    * Valid range for ESP32-S3: 8 (2 dBm) .. 84 (21 dBm). */
-  if (dbm < 8)  dbm = 8;
-  if (dbm > 84) dbm = 84;
-  esp_err_t err = esp_wifi_set_max_tx_power(dbm);
+  if (quarter_dbm < 8)  quarter_dbm = 8;
+  if (quarter_dbm > 84) quarter_dbm = 84;
+  esp_err_t err = esp_wifi_set_max_tx_power(quarter_dbm);
   if (err == ESP_OK) {
     char msg[40];
-    snprintf(msg, sizeof(msg), "WiFi TX power set to %d (x0.25 dBm)", dbm);
+    snprintf(msg, sizeof(msg), "WiFi TX power set to %d (x0.25 dBm)", quarter_dbm);
     log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, msg, nullptr);
   } else {
     log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK,
