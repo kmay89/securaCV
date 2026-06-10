@@ -8459,6 +8459,19 @@ void loop() {
   // plus three cadence-gated publishers for the topics HA expects.
   // Schemas locked against custom_components/securacv/sensor.py.
   csi_mqtt::loop();
+#if FEATURE_ACOUSTIC_EVENTS
+  // Track the broker-connection edge OUTSIDE the connected gate so a
+  // reconnect (or first boot connect) forces an immediate /sensing
+  // publish below. The topic is retained: without this, a smoke/CO
+  // event published just before a reboot/disconnect would linger on
+  // the broker and HA could briefly automate on a phantom alarm when
+  // the device comes back. The forced publish reflects live state —
+  // "none" after a reboot — and overwrites the stale payload.
+  static bool s_mqtt_prev_connected = false;
+  const bool mqtt_just_connected =
+      csi_mqtt::connected() && !s_mqtt_prev_connected;
+  s_mqtt_prev_connected = csi_mqtt::connected();
+#endif
   if (csi_mqtt::connected()) {
     static uint32_t s_mqtt_status_ms = 0;
     static uint32_t s_mqtt_health_ms = 0;
@@ -8502,7 +8515,7 @@ void loop() {
       const bool event_fresh = (g_audio_mqtt_event_ms != 0) &&
           (now - g_audio_mqtt_event_ms) < AUDIO_MQTT_EVENT_HOLD_MS;
       const bool need_clear = s_sensing_event_held && !event_fresh;
-      if (g_audio_mqtt_dirty || need_clear ||
+      if (g_audio_mqtt_dirty || need_clear || mqtt_just_connected ||
           (now - s_mqtt_sensing_ms >= 60000UL)) {
         g_audio_mqtt_dirty = false;
         s_mqtt_sensing_ms = now;

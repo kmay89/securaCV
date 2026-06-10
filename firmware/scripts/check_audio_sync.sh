@@ -53,16 +53,19 @@ if ! cmp -s "$CANONICAL_DIR/securacv_audio.h" "$STAGED_DIR/securacv_audio.h"; th
     drift=1
 fi
 
-# Implementation: normalized comparison.
+# Implementation: normalized comparison. POSIX sed/awk only — no GNU
+# extensions (\b, \s) — so the script behaves the same under BSD sed on
+# macOS as under GNU sed in CI. The SCV_ prefixes are unique strings, so
+# no word-boundary anchor is needed.
 normalize() {
     sed \
         -e '1,/^#include "securacv_audio.h"$/d' \
         -e '/^#endif  \/\* FEATURE_ACOUSTIC_EVENTS \*\/$/d' \
         -e 's/#include "health_log.h"/#include "securacv_witness.h"/' \
-        -e 's/\bSCV_LOG_/LOG_LEVEL_/g' \
-        -e 's/\bSCV_CAT_/LOG_CAT_/g' \
+        -e 's/SCV_LOG_/LOG_LEVEL_/g' \
+        -e 's/SCV_CAT_/LOG_CAT_/g' \
         "$1" \
-    | sed -e :a -e '/^\s*$/{$d;N;ba' -e '}'   # strip trailing blank lines
+    | awk '/^[[:space:]]*$/ {blank=blank $0 "\n"; next} {printf "%s", blank; blank=""; print}'
 }
 
 norm_canonical="$(mktemp)"
