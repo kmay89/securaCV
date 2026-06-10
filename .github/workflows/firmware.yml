@@ -16,6 +16,9 @@ concurrency:
   group: firmware-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   # ──────────────────────────────────────────────────────────────────
   # Flavor manifest

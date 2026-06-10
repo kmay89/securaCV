@@ -220,11 +220,14 @@ bool action_to_inflight(const mesh_pairing::Action& a, InFlight* out) {
   return true;
 }
 
-/* assert() with a guaranteed-evaluated condition: action_to_inflight has a
- * side effect (fills the InFlight), so it must run even under NDEBUG. */
+/* Hard assert with a guaranteed-evaluated condition: action_to_inflight has
+ * a side effect (fills the InFlight), so it must run — and the check must
+ * still abort — even when compiled under NDEBUG. */
 void must(bool ok) {
-  assert(ok);
-  (void)ok;
+  if (!ok) {
+    std::fprintf(stderr, "FATAL: must() condition failed\n");
+    std::abort();
+  }
 }
 
 void test_full_handshake_succeeds() {

@@ -4503,8 +4503,8 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       alert(data.ok ? 'Settings saved.' : 'Could not save settings. Try again.');
     }
 
-    function confirmReboot() { if (confirm('Restart this Canary? It will be offline for about a minute, then come back on its own. No records are lost.')) { api('/api/reboot', 'POST'); alert('Rebooting…'); } }
-    function retryFullBoot() { if (confirm('Retry a full boot? The device will reboot and re-enable all peripherals.')) { api('/api/safe-mode/retry', 'POST'); alert('Rebooting into full operation…'); } }
+    async function confirmReboot() { if (confirm('Restart this Canary? It will be offline for about a minute, then come back on its own. No records are lost.')) { try { await api('/api/reboot', 'POST'); } catch (_) { /* device may drop the connection mid-reboot */ } alert('Rebooting…'); } }
+    async function retryFullBoot() { if (confirm('Retry a full boot? The device will reboot and re-enable all peripherals.')) { try { await api('/api/safe-mode/retry', 'POST'); } catch (_) { /* device may drop the connection mid-reboot */ } alert('Rebooting into full operation…'); } }
     async function rotateOldLogs() { if (confirm('Delete log entries older than 30 days? This cannot be undone. Witness records are not affected.')) { const data = await api('/api/logs/rotate', 'POST', { max_age_days: 30 }); alert(data.ok ? `Deleted ${data.deleted_count || 0} old entries` : 'Could not delete old entries'); } }
 
     // ══════════════════════════════════════════════════════════════════
