@@ -233,9 +233,28 @@ plate_w   = e_seal ? out_w + 2*(skirt_gap + skirt_t) : out_w;
 plate_r   = e_seal ? corner_r + skirt_gap + skirt_t : corner_r;
 
 // sanity checks + a measurable size echo for scripted verification
+assert(wall_t > 0 && floor_t > 0 && lid_t > 0, "shell thicknesses must be positive");
+assert(standoff_h > 0, "standoff_h must be positive");
+assert(lip_h < cav_h, "lip_h must be less than the cavity height or the lid bottoms out");
+assert(screw_head_d > screw_d, "screw_head_d must be larger than screw_d");
 assert(!e_seal || gasket_groove <= lip_h - 0.5, "gasket_groove must stay below the lid lip depth");
+assert(!e_seal || skirt_h < base_h, "skirt_h must be shorter than the base");
 assert(cam_disc_t == 0 || cam_disc_t + 0.2 < lid_t, "cam_disc_t too thick for lid_t");
+assert(cam_disc_t == 0 || cam_disc_d == 0 || cam_disc_d > cam_win_d,
+       "cam_disc_d must be larger than cam_win_d or the disc falls through");
 assert(mount_extra == 0 || kh_head_h + 1.5 <= floor_t + kh_extra, "keyhole pocket too deep — raise kh_extra");
+assert(mount_extra == 0 || kh_head_h > kh_face, "kh_head_h must exceed kh_face (it includes the face web)");
+assert(mount_extra == 0 || kh_head_d > kh_shank_d, "kh_head_d must be larger than kh_shank_d");
+assert(mount_extra == 0 || kh_slot_l > 0, "kh_slot_l must be positive");
+assert(!e_mount || mount_style == "keyhole" || (tab_cb_h >= 0 && tab_cb_h < tab_t),
+       "tab_cb_h must be between 0 and tab_t");
+assert(!e_mount || mount_style == "keyhole" || tab_cb_h == 0 || tab_cb_d > tab_hole_d,
+       "tab_cb_d must be larger than tab_hole_d when counterbored");
+assert(lid_edge == 0 || (lid_edge >= 0.01 && lid_edge < lid_t),
+       "lid_edge must be 0, or between 0.01 and lid_t");
+assert(label_text == "" || (label_depth > 0 && label_depth < lid_t),
+       "label_depth must be between 0 and lid_t");
+assert(batt_wire_w >= 0, "batt_wire_w must be non-negative");
 echo(str("Canary WAP enclosure v0.7 — outer ", out_l, " x ", out_w, " x ",
          base_h + lid_t + mount_extra, " mm  (preset=", preset, ", seal=", e_seal, ", mount=", e_mount, ")"));
 if (e_seal && wall_eff > wall_t)
@@ -501,7 +520,7 @@ module lid() {
             if (e_camera) {
                 translate([cam[0], cam[1], -1]) cylinder(d = cam_win_d, h = lid_t + 2);  // camera window
                 // recessed seat on the outer face for a glued clear disc (sits 0.2 below the surface)
-                if (cam_disc_t > 0)
+                if (cam_disc_t > 0 && cam_disc_d > 0)
                     translate([cam[0], cam[1], lid_t - (cam_disc_t + 0.2)])
                         cylinder(d = cam_disc_d + 2*tol_slide, h = cam_disc_t + 1);
             }
