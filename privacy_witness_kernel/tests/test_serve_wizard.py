@@ -253,5 +253,144 @@ def test_token_not_logged(monkeypatch, capsys):
     assert secret not in json.dumps(err_result)
 
 
+# ---------------------------------------------------------------------------
+# MQTT service discovery (Supervisor /services/mqtt)
+# ---------------------------------------------------------------------------
+
+def test_discover_mqtt_found(monkeypatch):
+    def _fake_supervisor(method, path, data=None):
+        assert method == "GET"
+        assert path == "/services/mqtt"
+        return {
+            "data": {
+                "host": "core-mosquitto",
+                "port": 1883,
+                "username": "addons",
+                "password": "hunter2",
+            }
+        }
+
+    monkeypatch.setattr(serve_wizard, "_supervisor_request", _fake_supervisor)
+    mqtt = serve_wizard._discover_mqtt()
+    assert mqtt == {
+        "found": True,
+        "host": "core-mosquitto",
+        "port": 1883,
+        "username": "addons",
+        "password": "hunter2",
+    }
+
+
+def test_discover_mqtt_unavailable(monkeypatch):
+    def _boom(method, path, data=None):
+        raise RuntimeError("Supervisor API error 400: no mqtt service")
+
+    monkeypatch.setattr(serve_wizard, "_supervisor_request", _boom)
+    mqtt = serve_wizard._discover_mqtt()
+    assert mqtt["found"] is False
+    assert mqtt["host"] == ""
+
+
+def test_preflight_reports_mqtt_service_without_password(monkeypatch):
+    """The preflight response must surface discovery status but NEVER the
+    broker password (it would end up in the browser)."""
+
+    def _fake_supervisor(method, path, data=None):
+        if path == "/services/mqtt":
+            return {"data": {"host": "core-mosquitto", "port": 1883,
+                             "username": "addons", "password": "hunter2"}}
+        if path == "/addons/core_mosquitto/info":
+            return {"data": {"state": "started"}}
+        raise RuntimeError("not installed")
+
+    monkeypatch.setattr(serve_wizard, "_supervisor_request", _fake_supervisor)
+    handler = _bare_handler()
+    result = handler._handle_preflight()
+
+    assert result["ok"] is True
+    checks = result["checks"]
+    assert checks["mosquitto"] is True
+    assert checks["mqtt_service"] is True
+    assert checks["mqtt_host"] == "core-mosquitto"
+    assert checks["mqtt_auth"] is True
+    assert "hunter2" not in json.dumps(result)
+
+
+# ---------------------------------------------------------------------------
+# _handle_save broker resolution
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def save_env(monkeypatch, tmp_path):
+    """Sandbox _handle_save: capture saved options, no Supervisor, no restart,
+    device key file under tmp_path."""
+    captured: dict = {}
+    monkeypatch.setattr(serve_wizard, "DEVICE_KEY_FILE", tmp_path / "device_key")
+    monkeypatch.setattr(
+        serve_wizard, "set_addon_options", lambda opts: captured.update(options=opts)
+    )
+    monkeypatch.setattr(serve_wizard, "restart_addon", lambda: None)
+    monkeypatch.setattr(
+        serve_wizard, "_discover_mqtt",
+        lambda: {"found": True, "host": "core-mosquitto", "port": 1883,
+                 "username": "addons", "password": "hunter2"},
+    )
+    return captured
+
+
+def test_save_defaults_to_auto_broker(save_env):
+    """Without an explicit override the saved broker host must be empty,
+    meaning 'auto-discover at startup' — credentials are never persisted."""
+    handler = _bare_handler()
+    result = handler._handle_save({"mode": "frigate", "cameras": []})
+
+    assert result["ok"] is True
+    opts = save_env["options"]
+    assert opts["frigate"]["mqtt_host"] == ""
+    assert opts["frigate"]["mqtt_password"] == ""
+    assert opts["frigate"]["mqtt_topic"] == ""
+    assert opts["frigate"]["topic_prefix"] == "frigate"
+    assert opts["frigate"]["enable_reviews"] is False
+    assert opts["mqtt_publish"]["enabled"] is True
+    assert opts["mqtt_publish"]["host"] == ""
+    # The discovered password must not leak into the saved options.
+    assert "hunter2" not in json.dumps(opts)
+
+
+def test_save_honors_explicit_broker_override(save_env):
+    handler = _bare_handler()
+    result = handler._handle_save({
+        "mode": "frigate",
+        "cameras": [],
+        "mqtt": {"host": "10.0.0.7", "port": 8883,
+                 "username": "ext", "password": "extpass"},
+        "frigate_topic_prefix": "frigate_house",
+        "enable_reviews": True,
+    })
+
+    assert result["ok"] is True
+    opts = save_env["options"]
+    assert opts["frigate"]["mqtt_host"] == "10.0.0.7"
+    assert opts["frigate"]["mqtt_port"] == 8883
+    assert opts["frigate"]["mqtt_username"] == "ext"
+    assert opts["frigate"]["mqtt_password"] == "extpass"
+    assert opts["frigate"]["topic_prefix"] == "frigate_house"
+    assert opts["frigate"]["enable_reviews"] is True
+    assert opts["mqtt_publish"]["host"] == "10.0.0.7"
+
+
+def test_save_generates_and_persists_device_key(save_env, monkeypatch, tmp_path):
+    handler = _bare_handler()
+    result = handler._handle_save({"mode": "frigate", "cameras": []})
+
+    assert result["ok"] is True
+    key_file = serve_wizard.DEVICE_KEY_FILE
+    assert key_file.exists()
+    seed = key_file.read_text().strip()
+    assert len(seed) == 64
+    assert seed == save_env["options"]["device_key_seed"]
+    assert (key_file.stat().st_mode & 0o777) == 0o600
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))

@@ -480,6 +480,40 @@
 </div>
 
 <!-- ================================================================
+     Status panel (shown instead of the wizard once configured)
+     ================================================================ -->
+<div class="card hidden" id="screen-status">
+  <div class="card-header">
+    <span class="card-icon">🛡</span>
+    <h1>SecuraCV</h1>
+  </div>
+  <p class="subtitle">Privacy Witness Kernel is configured and running.</p>
+
+  <div id="status-health" class="info-box blue">
+    <strong>Checking kernel health…</strong>
+  </div>
+
+  <div id="status-summary" class="info-box blue hidden">
+    <strong>Configuration</strong>
+    <div id="status-summary-items" style="margin-top:8px;font-size:0.88rem"></div>
+  </div>
+
+  <div class="info-box warn">
+    <strong>Back up your device key.</strong>
+    It is stored in <code>/config/.securacv/device_key</code> (included in
+    Home Assistant backups). Without it, sealed-log signatures cannot be
+    re-derived on a replacement device.
+  </div>
+
+  <div class="btn-row">
+    <button class="btn btn-secondary" onclick="statusRefresh()">Refresh</button>
+    <div class="right">
+      <button class="btn btn-secondary" onclick="startReconfigure()">Re-run setup wizard</button>
+    </div>
+  </div>
+</div>
+
+<!-- ================================================================
      JavaScript
      ================================================================ -->
 <script>
@@ -994,6 +1028,9 @@ async function runPreflight() {
             ? '<div style="color:#2e7d32">✓ Frigate NVR is running</div>'
             : '<div style="color:#fb8c00">! Frigate is installed but not running — start it after setup</div>')
         : '<div style="color:#c62828">✗ Frigate not installed — install from Settings → Add-ons</div>';
+      html += c.mqtt_service
+        ? `<div style="color:#2e7d32">✓ MQTT credentials auto-discovered (${escHtml(c.mqtt_host)}:${escHtml(c.mqtt_port)}${c.mqtt_auth ? ", authenticated" : ""}) — nothing to type</div>`
+        : '<div style="color:#fb8c00">! No shared MQTT service found — broker defaults will be used</div>';
       results.innerHTML = html;
       box.className = (c.mosquitto && c.frigate) ? "info-box green" : "info-box warn";
       box.querySelector("strong").textContent = (c.mosquitto && c.frigate)
@@ -1006,21 +1043,81 @@ async function runPreflight() {
 }
 
 // ---------------------------------------------------------------------------
-// Init: check if already configured + run preflight
+// Status panel (configured installs)
 // ---------------------------------------------------------------------------
-(async function init() {
+function showStatusPanel() {
+  document.getElementById("progress-bar").classList.add("hidden");
+  document.getElementById(`screen-${currentStep}`).classList.add("hidden");
+  document.getElementById("screen-status").classList.remove("hidden");
+  statusRefresh();
+}
+
+function startReconfigure() {
+  document.getElementById("screen-status").classList.add("hidden");
+  document.getElementById("progress-bar").classList.remove("hidden");
+  document.getElementById(`screen-${currentStep}`).classList.remove("hidden");
+  const card = document.getElementById("screen-1");
+  if (!document.getElementById("reconfigure-note")) {
+    const note = document.createElement("div");
+    note.id = "reconfigure-note";
+    note.className = "info-box warn";
+    note.innerHTML = "<strong>Already configured.</strong> Completing the wizard again will overwrite your current settings (the existing device key is kept).";
+    card.insertBefore(note, card.querySelector(".btn-row"));
+  }
   runPreflight();
+}
+
+async function statusRefresh() {
+  const health = document.getElementById("status-health");
+  try {
+    const res = await api("/api/verify", {});
+    if (res.ok) {
+      health.className = "info-box green";
+      health.innerHTML = "<strong>✓ Witness kernel is healthy</strong><div style='margin-top:6px;font-size:0.88rem'>Event API responded on port 8799.</div>";
+    } else {
+      health.className = "info-box warn";
+      health.innerHTML = `<strong>! Kernel not reachable yet</strong><div style='margin-top:6px;font-size:0.88rem'>${escHtml(res.error || "The kernel may still be starting.")}</div>`;
+    }
+  } catch (e) {
+    health.className = "info-box red";
+    health.innerHTML = "<strong>✗ Health check failed</strong>";
+  }
   try {
     const res = await fetch((window.hassioIngress || "") + "/api/status");
     const data = await res.json();
-    if (data.ok && data.configured) {
-      const card = document.getElementById("screen-1");
-      const note = document.createElement("div");
-      note.className = "info-box green";
-      note.innerHTML = "<strong>Already configured!</strong> Running the wizard again will overwrite your current settings.";
-      card.insertBefore(note, card.querySelector(".btn-row"));
+    if (data.ok && data.options) {
+      const o = data.options;
+      const summary = document.getElementById("status-summary");
+      const items = document.getElementById("status-summary-items");
+      const rows = [
+        ["Mode", o.mode || "—"],
+        ["MQTT broker", (o.frigate && o.frigate.mqtt_host) ? o.frigate.mqtt_host : "auto-discovered"],
+        ["Frigate topic prefix", (o.frigate && o.frigate.topic_prefix) || "frigate"],
+        ["Retention", (o.retention_days || "—") + " days"],
+        ["HA sensors", (o.mqtt_publish && o.mqtt_publish.enabled === false) ? "disabled" : "enabled"],
+      ];
+      items.innerHTML = rows.map(([k, v]) =>
+        `<div><strong>${escHtml(k)}:</strong> ${escHtml(v)}</div>`).join("");
+      summary.classList.remove("hidden");
     }
   } catch (_) { /* ignore */ }
+}
+
+// ---------------------------------------------------------------------------
+// Init: show status panel if configured, otherwise run the wizard
+// ---------------------------------------------------------------------------
+(async function init() {
+  let configured = false;
+  try {
+    const res = await fetch((window.hassioIngress || "") + "/api/status");
+    const data = await res.json();
+    configured = !!(data.ok && data.configured);
+  } catch (_) { /* ignore */ }
+  if (configured) {
+    showStatusPanel();
+  } else {
+    runPreflight();
+  }
 })();
 </script>
 </body>

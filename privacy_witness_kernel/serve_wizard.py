@@ -118,6 +118,30 @@ def restart_addon() -> None:
     _supervisor_request("POST", "/addons/self/restart")
 
 
+def _discover_mqtt() -> dict:
+    """Query the Supervisor services API for the shared MQTT broker.
+
+    Returns {found, host, port, username, password}. Requires the add-on to
+    declare `services: ["mqtt:want"]` in config.yaml. The password must
+    never be returned to the browser — callers building UI responses use
+    only `found`/`host`/`port` and an auth presence flag.
+    """
+    try:
+        resp = _supervisor_request("GET", "/services/mqtt")
+        data = resp.get("data", {})
+        if data.get("host"):
+            return {
+                "found": True,
+                "host": str(data.get("host", "")),
+                "port": int(data.get("port") or 1883),
+                "username": str(data.get("username") or ""),
+                "password": str(data.get("password") or ""),
+            }
+    except Exception:
+        pass
+    return {"found": False, "host": "", "port": 1883, "username": "", "password": ""}
+
+
 # ---------------------------------------------------------------------------
 # Camera connectivity test (TCP)
 # ---------------------------------------------------------------------------
@@ -307,6 +331,16 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
             DEVICE_KEY_FILE.write_text(device_key_seed + "\n")
             DEVICE_KEY_FILE.chmod(0o600)
 
+            # Broker settings: an explicit payload override (external broker)
+            # is persisted verbatim; otherwise save empty values, which mean
+            # "auto-discover from the Supervisor MQTT service at startup" in
+            # run.sh — credentials are then always fresh and never stored.
+            mqtt_override = payload.get("mqtt") or {}
+            mqtt_host = str(mqtt_override.get("host", "") or "").strip()
+            mqtt_port = int(mqtt_override.get("port") or 1883)
+            mqtt_username = str(mqtt_override.get("username", "") or "")
+            mqtt_password = str(mqtt_override.get("password", "") or "")
+
             # Build add-on options
             options: dict = {
                 "mode": mode,
@@ -318,10 +352,10 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
                 "go2rtc_url": "http://homeassistant.local:1984",
                 "mqtt_publish": {
                     "enabled": True,
-                    "host": "core-mosquitto",
-                    "port": 1883,
-                    "username": "",
-                    "password": "",
+                    "host": mqtt_host,
+                    "port": mqtt_port,
+                    "username": mqtt_username,
+                    "password": mqtt_password,
                     "topic_prefix": "witness",
                     "discovery_prefix": "homeassistant",
                 },
@@ -329,11 +363,13 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
 
             if mode == "frigate":
                 options["frigate"] = {
-                    "mqtt_host": "core-mosquitto",
-                    "mqtt_port": 1883,
-                    "mqtt_topic": "frigate/events",
-                    "mqtt_username": "",
-                    "mqtt_password": "",
+                    "mqtt_host": mqtt_host,
+                    "mqtt_port": mqtt_port,
+                    "mqtt_topic": "",
+                    "topic_prefix": str(payload.get("frigate_topic_prefix", "") or "frigate"),
+                    "enable_reviews": bool(payload.get("enable_reviews", False)),
+                    "mqtt_username": mqtt_username,
+                    "mqtt_password": mqtt_password,
                     "min_confidence": 0.5,
                     "cameras": [c["name"] for c in cameras if c.get("name")],
                     "labels": ["person", "car", "dog", "cat"],
@@ -353,11 +389,13 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
                     for i, c in enumerate(cameras)
                 ]
                 options["frigate"] = {
-                    "mqtt_host": "core-mosquitto",
-                    "mqtt_port": 1883,
-                    "mqtt_topic": "frigate/events",
-                    "mqtt_username": "",
-                    "mqtt_password": "",
+                    "mqtt_host": mqtt_host,
+                    "mqtt_port": mqtt_port,
+                    "mqtt_topic": "",
+                    "topic_prefix": "frigate",
+                    "enable_reviews": False,
+                    "mqtt_username": mqtt_username,
+                    "mqtt_password": mqtt_password,
                     "min_confidence": 0.5,
                     "cameras": [],
                     "labels": [],
@@ -369,7 +407,12 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
             if mode == "frigate" and cameras:
                 frigate_conf = Path("/config/frigate.yml")
                 if not frigate_conf.exists() or "PLACEHOLDER" in frigate_conf.read_text():
-                    self._write_frigate_config(cameras, retention_days)
+                    discovered = _discover_mqtt()
+                    broker_host = mqtt_host or discovered["host"] or "core-mosquitto"
+                    broker_port = mqtt_port if mqtt_host else (discovered["port"] or 1883)
+                    self._write_frigate_config(
+                        cameras, retention_days, broker_host, broker_port
+                    )
 
             # Restart the add-on to apply changes
             try:
@@ -385,15 +428,21 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
 
-    def _write_frigate_config(self, cameras: list, retention_days: int) -> None:
+    def _write_frigate_config(
+        self,
+        cameras: list,
+        retention_days: int,
+        broker_host: str = "core-mosquitto",
+        broker_port: int = 1883,
+    ) -> None:
         """Generate a Frigate config from wizard-collected camera data."""
         lines = [
             "# Frigate NVR configuration — generated by SecuraCV setup wizard",
             "",
             "mqtt:",
             "  enabled: true",
-            "  host: core-mosquitto",
-            "  port: 1883",
+            f"  host: {broker_host}",
+            f"  port: {broker_port}",
             "",
             "cameras:",
         ]
@@ -450,7 +499,7 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
             return {"ok": False, "error": str(exc)}
 
     def _handle_preflight(self) -> dict:
-        """Check that Mosquitto and Frigate are installed before setup."""
+        """Check Mosquitto/Frigate prerequisites and MQTT auto-discovery."""
         checks = {}
         try:
             resp = _supervisor_request("GET", "/addons/core_mosquitto/info")
@@ -465,6 +514,13 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
         except Exception:
             checks["frigate"] = False
             checks["frigate_running"] = False
+        # MQTT service discovery: report presence + non-secret details only
+        # (the password stays server-side; run.sh re-discovers it at startup).
+        mqtt = _discover_mqtt()
+        checks["mqtt_service"] = mqtt["found"]
+        checks["mqtt_host"] = mqtt["host"]
+        checks["mqtt_port"] = mqtt["port"]
+        checks["mqtt_auth"] = bool(mqtt["username"])
         return {"ok": True, "checks": checks}
 
     def _handle_restart_ha(self) -> dict:
