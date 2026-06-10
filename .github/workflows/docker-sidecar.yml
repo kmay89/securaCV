@@ -53,6 +53,10 @@ jobs:
             docker/sidecar/ci_e2e.sh
 
       - name: Validate compose files
+        env:
+          # Required-variable placeholder: the integrations compose marks the
+          # broker password as mandatory (:?), which `config` also enforces.
+          SECURACV_MQTT_PASSWORD: ci-validate-only
         run: |
           docker compose -f docker/sidecar/quickstart.compose.yml config -q
           docker compose -f docker/sidecar/quickstart-with-broker.compose.yml config -q
