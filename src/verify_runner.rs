@@ -151,7 +151,9 @@ fn run_inner(
         pq_verifying_key.as_ref(),
     )?;
     report.checkpoint_cutoff_event_id = checkpoint.cutoff_event_id;
-    report.checkpoint_head_hash = checkpoint.chain_head_hash.map(|h| verify_helpers::hex32(&h));
+    report.checkpoint_head_hash = checkpoint
+        .chain_head_hash
+        .map(|h| verify_helpers::hex32(&h));
 
     report.alarm_count = verify::count_alarms(conn)?;
 
@@ -290,7 +292,11 @@ mod tests {
         })
         .expect("runner runs");
 
-        assert!(report.chain_valid, "expected valid chain: {:?}", report.error);
+        assert!(
+            report.chain_valid,
+            "expected valid chain: {:?}",
+            report.error
+        );
         assert!(report.events_verified >= 1);
         assert_eq!(seen_events, report.events_verified);
         assert!(report.error.is_none());
@@ -332,14 +338,8 @@ mod tests {
         let wrong_hex = hex::encode(wrong_key.verifying_key().to_bytes());
 
         let conn = open_encrypted(db.path());
-        let report = run_full_verify(
-            &conn,
-            Some(&wrong_hex),
-            None,
-            SignatureMode::Compat,
-            |_| {},
-        )
-        .expect("runner runs");
+        let report = run_full_verify(&conn, Some(&wrong_hex), None, SignatureMode::Compat, |_| {})
+            .expect("runner runs");
 
         assert!(!report.chain_valid);
     }

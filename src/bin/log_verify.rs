@@ -131,8 +131,7 @@ fn main() -> Result<()> {
             .device_key_seed
             .as_deref()
             .map(|seed| {
-                witness_kernel::verifying_key_from_seed(seed)
-                    .map(|key| hex::encode(key.to_bytes()))
+                witness_kernel::verifying_key_from_seed(seed).map(|key| hex::encode(key.to_bytes()))
             })
             .transpose()?,
     };
@@ -140,9 +139,7 @@ fn main() -> Result<()> {
         (Some(hex), _) => Some(hex.clone()),
         (None, Some(path)) => Some(
             std::fs::read_to_string(path)
-                .map_err(|e| {
-                    anyhow::anyhow!("failed to read pq public key file {}: {}", path, e)
-                })?
+                .map_err(|e| anyhow::anyhow!("failed to read pq public key file {}: {}", path, e))?
                 .trim()
                 .to_string(),
         ),
@@ -180,7 +177,10 @@ fn main() -> Result<()> {
     };
 
     println!("=== Sealed Events ===");
-    match (&report.checkpoint_head_hash, report.checkpoint_cutoff_event_id) {
+    match (
+        &report.checkpoint_head_hash,
+        report.checkpoint_cutoff_event_id,
+    ) {
         (Some(head), Some(cutoff_id)) => println!(
             "checkpoint: cutoff_event_id={}, chain_head_hash={}",
             cutoff_id, head

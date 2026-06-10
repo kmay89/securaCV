@@ -716,8 +716,16 @@ fn publish_static_discovery(
         payload_not_available: PAYLOAD_OFFLINE.to_string(),
         device: device_info.clone(),
     };
-    let config_topic = format!("{}/sensor/{}/daily_digest/config", discovery_prefix, device_id);
-    mqtt_publish_qos1(client, &config_topic, &serde_json::to_vec(&digest_config)?, true)?;
+    let config_topic = format!(
+        "{}/sensor/{}/daily_digest/config",
+        discovery_prefix, device_id
+    );
+    mqtt_publish_qos1(
+        client,
+        &config_topic,
+        &serde_json::to_vec(&digest_config)?,
+        true,
+    )?;
 
     let chain_config = HaBinarySensorConfig {
         name: "PWK Chain Problem".to_string(),
@@ -736,7 +744,12 @@ fn publish_static_discovery(
         "{}/binary_sensor/{}/chain_problem/config",
         discovery_prefix, device_id
     );
-    mqtt_publish_qos1(client, &config_topic, &serde_json::to_vec(&chain_config)?, true)?;
+    mqtt_publish_qos1(
+        client,
+        &config_topic,
+        &serde_json::to_vec(&chain_config)?,
+        true,
+    )?;
 
     let button_config = HaButtonConfig {
         name: "PWK Verify Now".to_string(),
@@ -749,8 +762,16 @@ fn publish_static_discovery(
         payload_not_available: PAYLOAD_OFFLINE.to_string(),
         device: device_info.clone(),
     };
-    let config_topic = format!("{}/button/{}/verify_now/config", discovery_prefix, device_id);
-    mqtt_publish_qos1(client, &config_topic, &serde_json::to_vec(&button_config)?, true)?;
+    let config_topic = format!(
+        "{}/button/{}/verify_now/config",
+        discovery_prefix, device_id
+    );
+    mqtt_publish_qos1(
+        client,
+        &config_topic,
+        &serde_json::to_vec(&button_config)?,
+        true,
+    )?;
 
     log::info!("Published HA discovery for digest, chain integrity, and verify button");
     Ok(())
@@ -1033,7 +1054,11 @@ fn api_request(
         .nth(1)
         .ok_or_else(|| anyhow!("missing status code"))?;
     if status_code != "200" {
-        return Err(anyhow!("event api returned status {} for {}", status_code, path));
+        return Err(anyhow!(
+            "event api returned status {} for {}",
+            status_code,
+            path
+        ));
     }
 
     Ok(body.to_vec())

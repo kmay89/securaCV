@@ -9,7 +9,9 @@
 # Build (repo root):  docker build -f docker/sidecar/Dockerfile -t securacv-sidecar .
 # Run:                see docker/sidecar/quickstart.compose.yml
 
-FROM rust:1.77-slim AS build
+# Needs a toolchain that understands Cargo.lock v4 (1.78+); pinned to a
+# recent stable rather than the root Dockerfile's 1.77.
+FROM rust:1.85-slim AS build
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \

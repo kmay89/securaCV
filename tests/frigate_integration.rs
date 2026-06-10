@@ -634,6 +634,6 @@ fn frigate_event_017_schema_parses_and_strips_extras() {
     assert_eq!(event.camera, "front_door");
     assert_eq!(event.label, "person");
     assert!((event.confidence - 0.87).abs() < 0.001); // top_score wins
-    // entered_zones preferred over current_zones
+                                                      // entered_zones preferred over current_zones
     assert_eq!(event.zones, vec!["driveway", "porch"]);
 }

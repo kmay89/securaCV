@@ -362,7 +362,10 @@ fn handle_connection(
                 return Ok(());
             }
         }
-        (_, "/health") | (_, "/events") | (_, "/events/latest") | (_, "/digest")
+        (_, "/health")
+        | (_, "/events")
+        | (_, "/events/latest")
+        | (_, "/digest")
         | (_, "/verify") => {
             write_json_response(&mut stream, 405, r#"{"error":"method_not_allowed"}"#)?;
             return Ok(());
