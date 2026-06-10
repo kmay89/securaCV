@@ -43,3 +43,13 @@ jobs:
 
       - name: Run wizard tests
         run: pytest privacy_witness_kernel/tests/ -v
+
+      - name: Shellcheck add-on scripts
+        run: |
+          shellcheck --shell=bash --exclude=SC1091 \
+            privacy_witness_kernel/run.sh \
+            privacy_witness_kernel/run_lib.sh \
+            privacy_witness_kernel/tests/test_run_lib.sh
+
+      - name: Run run_lib tests
+        run: bash privacy_witness_kernel/tests/test_run_lib.sh

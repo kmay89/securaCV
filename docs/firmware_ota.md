@@ -3,9 +3,16 @@
 How a Canary that's screwed to a ceiling gets new firmware without anyone
 touching it — and why it can't be bricked or fed a forged image along the way.
 
-**Covered variants:** canary (PIO, `firmware/canary/`) and canary-wap
-(Arduino, `firmware/projects/canary-wap/arduino/canary_wap/`). Canary Vision
-and future variants reuse the same engine and manifest format.
+**Covered variants:** all of them —
+
+- **canary** (PIO, `firmware/canary/`)
+- **canary-wap** (`firmware/projects/canary-wap/` — one sketch built by both
+  arduino-cli and PlatformIO, so both toolchains ship the same OTA)
+- **canary-vision** (PIO, `firmware/projects/canary-vision/`)
+
+Every variant uses the same engine, manifest schema, signature scheme,
+release key, MQTT topic layout, and HA update-entity UX. Future variants
+follow the checklist at the end of this document.
 
 ## The user experience
 
@@ -54,8 +61,36 @@ The engine is canonical at `firmware/common/ota/` and consumed by:
 
 - **canary (PIO):** `-I` + `build_src_filter` in `firmware/canary/platformio.ini`
   (gated by `FEATURE_OTA_PULL`).
-- **canary-wap (Arduino):** committed copies next to the sketch, kept
-  identical by `firmware/scripts/check_ota_sync.sh` (CI-enforced).
+- **canary-wap (both toolchains):** committed copies next to the sketch, kept
+  identical by `firmware/scripts/check_ota_sync.sh` (CI-enforced). The
+  PlatformIO env builds the same sketch directory as arduino-cli, so one
+  codebase serves both.
+- **canary-vision (PIO):** as a PlatformIO library via `lib_extra_dirs =
+  ../../common` (glue in `src/net/ota_mgr.cpp`).
+
+### Unified versioning
+
+One `fw-v*` tag versions **every** variant: `fw-v2.2.0` publishes canary
+`2.2.0`, canary-wap `2.2.0-wap`, and canary-vision `2.2.0`. Each variant's
+compiled version string must be bumped before tagging (the workflow fails
+loudly if a binary is missing the tagged version). One tag, one changelog,
+one release page — nothing to cross-reference.
+
+### canary-vision: generic release builds + NVS identity
+
+Vision historically compiled its WiFi/MQTT credentials and device id into
+the binary — which would make an OTA-installed generic image forget the
+unit's setup. `canary/runtime_config` fixes this:
+
+- **Identity is sticky:** `device_id` lives in NVS; the compiled value only
+  seeds the very first boot. HA entities survive OTA updates and reflashes.
+- **Credentials follow the most recent real configuration:** a user-compiled
+  USB flash (real `secrets/secrets.h`) wins and is persisted to NVS; the
+  placeholder secrets baked into generic release builds defer to NVS.
+
+So vision provisioning is: first flash over USB with your own secrets
+(seeds NVS) → every OTA release afterwards inherits the unit's identity and
+credentials.
 
 ## Manifest schema (v1)
 
@@ -124,14 +159,17 @@ old key) whose firmware carries the new public key.
 
 ## Releasing firmware
 
-1. Bump the version: `FIRMWARE_VERSION` in
-   `firmware/canary/include/canary_config.h` (e.g. `2.2.0`) and in
-   `canary_wap.ino` (e.g. `2.2.0-wap` — the `-wap` suffix is part of the
-   string and must match what the workflow writes into the WAP manifest).
+1. Bump every variant's version to the release number (unified versioning):
+   - `FIRMWARE_VERSION` in `firmware/canary/include/canary_config.h` (`2.2.0`)
+   - `FIRMWARE_VERSION` in `canary_wap.ino` (`2.2.0-wap` — the `-wap` suffix
+     is part of the string and must match what the workflow writes into the
+     WAP manifest)
+   - `CANARY_FW_VERSION` in
+     `firmware/projects/canary-vision/include/canary/version.h` (`2.2.0`)
 2. Add a `## [2.2.0]` section to `CHANGELOG.md` — it becomes the release
    notes users read in Home Assistant.
 3. Tag and push: `git tag fw-v2.2.0 && git push origin fw-v2.2.0`.
-4. `.github/workflows/firmware-release.yml` builds both variants, signs
+4. `.github/workflows/firmware-release.yml` builds every variant, signs
    them, verifies every signature against the committed public key, checks
    the binaries actually contain the new version string, and publishes the
    GitHub Release.
@@ -154,10 +192,21 @@ decision logic is host-tested (`firmware/common/ota/test_ota_logic.cpp`).
 
 Image integrity never depends on the transport — the Ed25519 signature and
 the anti-rollback floor do that work — so air-gapped installs don't need a
-certificate authority. The known residual risk: the **manifest itself is
-unsigned**, so a hostile local mirror can offer any *previously signed*
-release newer than the device's floor. Signing the manifest is the named
-follow-up that closes this.
+certificate authority. Known residual risks (named follow-ups):
+
+- The **manifest itself is unsigned**, so a hostile local mirror can offer
+  any *previously signed* release newer than the device's floor. Signing
+  the manifest closes this.
+- The **BLE OTA header's version string is outside the signed message**
+  (the signature covers `size || sha256`). The string is sanitized and
+  only labels the update-outcome record — what actually runs is exactly
+  the signed image, and the "applied" determination compares against the
+  firmware's own compiled version. Binding the version into the signed
+  message is the BLE protocol-v2 follow-up.
+- **BLE OTA deliberately has no version floor**: it is the
+  physical-proximity recovery channel (pairing + a validly signed image
+  required), so it can intentionally downgrade a device the pull path
+  would refuse.
 
 ### Hosting updates locally (air-gapped / privacy-strict)
 
@@ -176,7 +225,8 @@ that embeds its public half into a dev build.
 
 ## Device API
 
-All endpoints are bearer-token gated, on both variants:
+All endpoints are bearer-token gated, on canary and canary-wap
+(canary-vision has no local HTTP server — it is HA/MQTT-managed only):
 
 | Method | Endpoint | Purpose |
 |---|---|---|
@@ -197,13 +247,43 @@ MQTT (Home Assistant discovers these automatically):
 The dev-only raw push endpoint (`POST /api/ota`, used by
 `firmware/canary/scripts/ota_deploy.py`) is compiled out of release builds.
 
-## Safety properties
+## Safety properties (the no-brick guarantees)
 
-- **A/B partitions:** the running firmware is never touched; power loss at
-  any point lands on a bootable slot.
-- **Health-gated commit:** the new image is only confirmed after the boot
-  self-test suite passes; a required failure triggers
-  `esp_ota_mark_app_invalid_rollback_and_reboot()`.
+The design goal is stronger than "hard to brick": **there is no sequence of
+user actions through the update system that leaves a device unrecoverable.**
+
+- **A/B partitions:** updates are written only to the inactive slot; the
+  running firmware is never touched. Power loss at any point during the
+  download or flash lands on a bootable slot.
+- **The application owns rollback confirmation.** The engine overrides the
+  Arduino core's `verifyRollbackLater()` hook (which would otherwise
+  auto-confirm a new image microseconds into its first boot, before
+  `setup()` runs — silently disabling rollback). A freshly installed image
+  stays `PENDING_VERIFY` until the variant's boot self-test confirms it.
+  Consequences:
+  - **Crash-loop protection:** if the new firmware crashes, hits a watchdog
+    reset, or loses power at ANY point before confirmation, the bootloader
+    boots the previous firmware on the very next start. One bad boot,
+    automatic recovery — no ladder.
+  - **Health-gated commit:** a required self-test failure triggers
+    `esp_ota_mark_app_invalid_rollback_and_reboot()` — back to the previous
+    firmware, with the outcome recorded.
+  - **Integrator contract:** every variant (and every install channel,
+    including the dev push endpoint and BLE OTA) must reach
+    `securacv_ota_boot_self_test()` on boot, or fresh installs revert on
+    their second start. Canary's validate block therefore compiles whenever
+    ANY install channel exists; vision validates immediately after WiFi,
+    BEFORE its blocking MQTT connect, so a broker outage can't cause a
+    spurious revert.
+- **Expected (safe) edge:** power-cycling the device during the first
+  minute after an update — before it confirms itself — reverts it to the
+  previous version. Nothing is lost; the update is simply offered again.
+- **Outcome bookkeeping survives every path:** the engine records the
+  install target the moment the boot partition flips (not at reboot), so
+  deferred reboots, battery-gated installs, and BLE-pushed images all get
+  correct applied/rolled-back records.
+- **Anti-rollback floor rises only after confirmation**, so a rolled-back
+  version can always be retried.
 - **Install gating:** the device defers installs while on a low battery
   (canary) or while a BLE OTA session is active (canary-wap); the two OTA
   channels strictly exclude each other.
@@ -211,6 +291,51 @@ The dev-only raw push endpoint (`POST /api/ota`, used by
   reboot, mirroring the manual-reboot path.
 - **Never reboots unattended by default:** auto-update is an explicit
   per-device opt-in.
+- **OTA can never touch the bootloader or partition table** — it writes app
+  slots only. The ESP32's first-stage bootloader is mask ROM. Even in an
+  unforeseeable worst case, a USB flash always recovers the device.
+
+## If something goes wrong (recovery matrix)
+
+| What happened | What the device does | What the user does |
+|---|---|---|
+| Power/WiFi lost mid-download | Old firmware keeps running; partial download discarded | Nothing — press Install again whenever |
+| Update file corrupted or forged | Refused before install (SHA-256 + Ed25519 + format checks) | Nothing — error shown in plain language |
+| New firmware crashes or hangs on first boot | Bootloader restores previous firmware on the next start | Nothing — rollback is recorded; update re-offered |
+| New firmware boots but fails its health check | Restores previous firmware automatically | Nothing — reason shown in HA / dashboard |
+| Power cycled in the first minute after an update | Returns to previous firmware (unconfirmed images don't stick) | Press Install again |
+| Wrong update server address saved | Checks fail with a clear message; firmware untouched | Clear the field (Settings) to return to the official server |
+| Wrong variant's manifest configured | Product check refuses the image | Fix the address; nothing was installed |
+| WiFi password changed at the router | canary/WAP: own AP + dashboard still up — reconfigure there. vision: needs a USB reflash (credentials seed from the build) | Reconnect via dashboard (canary/WAP) or USB (vision) |
+| Absolute worst case | Device still enters ROM download mode | USB flash — always possible, OTA cannot break it |
+
+## Adding a new variant (the recipe)
+
+Every future firmware flavor gets the same update process with five steps:
+
+1. **Consume the engine** from `firmware/common/ota/`: PlatformIO projects
+   add it via `lib_extra_dirs`/`build_src_filter` + the shared
+   `ota_release_key.h`; Arduino-IDE-style sketches take committed copies and
+   extend `check_ota_sync.sh`'s file list.
+2. **Wire the glue** (copy `canary-vision/src/net/ota_mgr.cpp` as the
+   template): boot self-test with a required is-it-doing-its-job probe,
+   `securacv_ota_init()` with a unique `product` id (`securacv-<variant>`)
+   and default manifest URL
+   (`releases/latest/download/manifest-<variant>.json`), the daily jittered
+   scheduler, and the `ota_target` applied/rolled-back record.
+3. **Expose the HA update entity** over the variant's MQTT layer:
+   discovery for `update` + auto-update `switch`, retained state on
+   `securacv/<id>/update/state`, commands on `…/update/cmd` and
+   `…/update/auto/cmd`, reconnect republish.
+4. **Add the variant to `.github/workflows/firmware-release.yml`**: build
+   step, signed manifest, index entry, signature verification, version-string
+   guard, release asset — and an OTA-slot size budget in the variant's CI.
+5. **Keep identity out of the binary**: anything per-unit (device id,
+   credentials) must live in NVS so generic release images inherit it
+   (see canary-vision's `runtime_config` for the pattern).
+
+The signing key, manifest schema, transport policy, and anti-rollback floor
+come with the engine — don't reimplement them.
 
 ## Testing
 

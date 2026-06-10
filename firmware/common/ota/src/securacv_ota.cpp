@@ -332,28 +332,62 @@ const char *securacv_ota_friendly_state(securacv_ota_state_t state)
 #include <ArduinoJson.h>
 #include <Ed25519.h>
 
-// Certificate bundle for public HTTPS endpoints (GitHub Releases). Available
-// on both Arduino-ESP32 core lines, but under different names: core 2.x
-// (IDF 4.4) ships its own loader as arduino_esp_crt_bundle_attach, while
-// core 3.x (IDF 5.x) exposes the standard esp_crt_bundle_attach. Fall back
-// to requiring an explicit cert_pem if a future core drops the header.
-#if __has_include("esp_crt_bundle.h")
-#include "esp_crt_bundle.h"
-#define SECURACV_OTA_HAVE_CRT_BUNDLE 1
-#if __has_include(<esp_arduino_version.h>)
-#include <esp_arduino_version.h>
-#endif
-#if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR < 3
-#define scv_crt_bundle_attach arduino_esp_crt_bundle_attach
-#else
-#define scv_crt_bundle_attach esp_crt_bundle_attach
-#endif
-#endif
+// Certificate bundle for public HTTPS endpoints (GitHub Releases). The
+// attach hook's NAME varies across Arduino-ESP32 platform packagings —
+// upstream IDF exposes esp_crt_bundle_attach, while some core builds
+// rename it to arduino_esp_crt_bundle_attach to avoid an IDF symbol clash
+// (and which name a given platform/chip combination ships is a patch-level
+// detail, not a core-version one). Declare both as weak and dispatch to
+// whichever this build's libraries actually provide — link-time feature
+// detection instead of unwinnable version pinning. If neither exists,
+// TLS setup fails closed (manifest fetch reports a network error).
+extern "C" {
+esp_err_t esp_crt_bundle_attach(void *conf) __attribute__((weak));
+esp_err_t arduino_esp_crt_bundle_attach(void *conf) __attribute__((weak));
+}
+
+static esp_err_t scv_crt_bundle_attach(void *conf)
+{
+    // Prefer the IDF entry point: it always carries the embedded default
+    // root bundle. The arduino_* variant is the fallback for the core
+    // builds that renamed it.
+    if (esp_crt_bundle_attach != NULL) {
+        return esp_crt_bundle_attach(conf);
+    }
+    if (arduino_esp_crt_bundle_attach != NULL) {
+        return arduino_esp_crt_bundle_attach(conf);
+    }
+    return ESP_FAIL;
+}
 
 // House rule (regression_check.sh, LESSONS_LEARNED.md): always the non-_ret
 // mbedtls names. They exist on both Arduino core lines — void-returning
 // (deprecated) on core 2.x / mbedtls 2.28, int-returning on core 3.x /
 // mbedtls 3.x — so calls must not inspect the return value.
+
+// ============================================================================
+// ROLLBACK OWNERSHIP — keep the Arduino core from auto-confirming images
+// ============================================================================
+// The Arduino core's initArduino() runs BEFORE setup() and, by default,
+// marks a pending OTA image valid immediately (weak verifyRollbackLater()
+// returns false → esp_ota_mark_app_valid_cancel_rollback() fires microseconds
+// into the first boot). That silently defeats both protections this engine
+// promises:
+//   - our boot self-tests would run after the image is already confirmed,
+//     so a failed required probe could never trigger a rollback, and
+//   - a crash-looping image would never revert, because the bootloader's
+//     PENDING_VERIFY safety net only acts on unconfirmed images.
+// Overriding the weak hook tells the core: the application owns validation.
+// The image then stays PENDING_VERIFY until securacv_ota_boot_self_test()
+// confirms it — and if the new firmware crashes (or hangs into a watchdog
+// reset) at ANY point before that confirmation, the bootloader boots the
+// previous firmware on the very next start. One bad boot, automatic recovery.
+#if defined(CONFIG_APP_ROLLBACK_ENABLE) || defined(CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE)
+extern "C" bool verifyRollbackLater(void)
+{
+    return true;
+}
+#endif
 
 static const char *TAG = "securacv_ota";
 
@@ -416,6 +450,7 @@ static bool s_just_updated = false;
 #define NVS_KEY_MANIFEST_URL "manifest_url"
 #define NVS_KEY_AUTO_UPDATE  "auto_upd"
 #define NVS_KEY_HTTP_LOCAL   "http_local"
+#define NVS_KEY_PENDING_VER  "pend_ver"
 
 static esp_err_t nvs_store_str(const char *key, const char *value)
 {
@@ -519,6 +554,42 @@ esp_err_t securacv_ota_set_local_http_allowed(bool allowed)
 bool securacv_ota_get_local_http_allowed(void)
 {
     return nvs_load_u8(NVS_KEY_HTTP_LOCAL, 0) != 0;
+}
+
+esp_err_t securacv_ota_mark_pending_install(const char *version)
+{
+    if (version == NULL || version[0] == '\0') return ESP_ERR_INVALID_ARG;
+    return nvs_store_str(NVS_KEY_PENDING_VER, version);
+}
+
+bool securacv_ota_take_pending_version(char *buf, size_t buf_len)
+{
+    if (buf == NULL || buf_len == 0) return false;
+    buf[0] = '\0';
+    if (nvs_load_str(NVS_KEY_PENDING_VER, buf, buf_len) == ESP_OK && buf[0] != '\0') {
+        nvs_store_str(NVS_KEY_PENDING_VER, NULL);  // erase: consume exactly once
+        return true;
+    }
+
+    // Migration: firmware released before this engine recorded the target
+    // in the Preferences "securacv" namespace as "ota_target" (written by
+    // the OLD image at reboot time). Honor it once so the very first OTA
+    // out of a pre-migration build still gets its outcome witnessed.
+    {
+        nvs_handle_t handle;
+        if (nvs_open("securacv", NVS_READWRITE, &handle) == ESP_OK) {
+            size_t len = buf_len;
+            if (nvs_get_str(handle, "ota_target", buf, &len) == ESP_OK && buf[0] != '\0') {
+                nvs_erase_key(handle, "ota_target");
+                nvs_commit(handle);
+                nvs_close(handle);
+                return true;
+            }
+            nvs_close(handle);
+        }
+    }
+    buf[0] = '\0';
+    return false;
 }
 
 /**
@@ -1142,11 +1213,9 @@ static esp_err_t ota_fetch_manifest_once(const char *url, bool *not_modified)
     if (s_ctx.config.server_cert_pem != NULL) {
         http_config.cert_pem = s_ctx.config.server_cert_pem;
     }
-#if defined(SECURACV_OTA_HAVE_CRT_BUNDLE) && defined(CONFIG_MBEDTLS_CERTIFICATE_BUNDLE)
     else {
         http_config.crt_bundle_attach = scv_crt_bundle_attach;
     }
-#endif
 
 #ifdef SECURACV_OTA_SKIP_CERT_VERIFY
     http_config.skip_cert_common_name_check = true;
@@ -1358,11 +1427,9 @@ static esp_err_t ota_download_and_flash(void)
     if (s_ctx.config.server_cert_pem != NULL) {
         http_config.cert_pem = s_ctx.config.server_cert_pem;
     }
-#if defined(SECURACV_OTA_HAVE_CRT_BUNDLE) && defined(CONFIG_MBEDTLS_CERTIFICATE_BUNDLE)
     else {
         http_config.crt_bundle_attach = scv_crt_bundle_attach;
     }
-#endif
 
 #ifdef SECURACV_OTA_SKIP_CERT_VERIFY
     http_config.skip_cert_common_name_check = true;
@@ -1499,6 +1566,12 @@ static esp_err_t ota_download_and_flash(void)
         ota_set_error(SECURACV_OTA_ERR_FLASH_WRITE);
         return err;
     }
+
+    // The boot partition is flipped from this point on — even if the reboot
+    // is deferred (battery gate) or comes later for an unrelated reason, the
+    // next start boots the new image. Record the target version NOW so the
+    // next boot can always tell applied from rolled-back.
+    securacv_ota_mark_pending_install(s_ctx.manifest.version);
 
     ESP_LOGI(TAG, "OTA update written successfully");
     return ESP_OK;

@@ -1,0 +1,38 @@
+# SecuraCV sidecar quickstart — for Frigate users who ALREADY run an MQTT
+# broker (most do: Frigate needs one for its own MQTT features).
+#
+#   1. Set FRIGATE_MQTT_HOST below to the broker host Frigate publishes to
+#      (the `mqtt: host:` value in your frigate config). If the broker runs
+#      in another compose project, join its network or use the host's IP.
+#   2. docker compose -f quickstart.compose.yml up -d
+#   3. docker compose -f quickstart.compose.yml run --rm securacv doctor
+#
+# That's it. A device signing key is generated on first start and persisted
+# in the securacv_data volume (back it up!). Sanitized witness events appear
+# as Home Assistant MQTT Discovery sensors if HA shares the same broker.
+#
+# No broker yet? Use quickstart-with-broker.compose.yml instead.
+
+services:
+  securacv:
+    image: ghcr.io/kmay89/securacv-sidecar:latest
+    # Building from source instead:
+    # build:
+    #   context: ../..
+    #   dockerfile: docker/sidecar/Dockerfile
+    container_name: securacv
+    restart: unless-stopped
+    environment:
+      FRIGATE_MQTT_HOST: "mosquitto"   # ← your broker's hostname or IP
+      # FRIGATE_MQTT_PORT: "1883"
+      # MQTT_USERNAME: ""
+      # MQTT_PASSWORD: ""
+      # FRIGATE_TOPIC_PREFIX: "frigate"   # match Frigate's mqtt.topic_prefix
+      # FRIGATE_LABELS: "person,car,dog,cat"
+      # FRIGATE_MIN_CONFIDENCE: "0.5"
+      # RETENTION_DAYS: "7"
+    volumes:
+      - securacv_data:/data
+
+volumes:
+  securacv_data:

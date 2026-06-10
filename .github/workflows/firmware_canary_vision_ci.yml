@@ -63,3 +63,20 @@ jobs:
         run: |
           pio run -e canary-vision-default
 
+      - name: Check binary size against the OTA slot
+        run: |
+          # The ESP32-C3 DevKitM-1 board default (default.csv, 4 MB) gives
+          # app0/app1 0x140000 (1,310,720 bytes) each. An image larger than
+          # that can never be installed over the air.
+          SLOT=1310720
+          SIZE=$(stat -c%s .pio/build/canary-vision-default/firmware.bin 2>/dev/null || echo 0)
+          if [ "$SIZE" -eq 0 ]; then
+            echo "::error::firmware.bin not found"
+            exit 1
+          fi
+          if [ "$SIZE" -gt "$SLOT" ]; then
+            echo "::error::canary-vision binary ($SIZE bytes) exceeds the 0x140000 OTA slot ($SLOT bytes). It could never be installed over the air."
+            exit 1
+          fi
+          echo "canary-vision size: $SIZE / $SLOT bytes ($((SIZE * 100 / SLOT))% of OTA slot)"
+

@@ -1,0 +1,85 @@
+# SecuraCV Daily Digest Blueprint for Home Assistant
+#
+# Import this blueprint via:
+#   Settings > Automations > Blueprints > Import Blueprint
+#   URL: https://github.com/kmay89/securaCV/blob/main/docs/blueprints/securacv_daily_digest.yaml
+#
+# Sends a morning push notification summarizing the last 24 hours of
+# privacy-preserving witness events: total count, per-zone breakdown, and
+# sealed-log integrity status. The numbers come from the kernel-computed
+# digest sensor (sensor.pwk_daily_digest), so no template surgery or
+# entity-ID substitution is needed — pick your entities and notify service.
+
+blueprint:
+  name: "SecuraCV Daily Digest"
+  description: >-
+    Every morning, send a summary of the last 24 hours of SecuraCV witness
+    activity: how many events were sealed, in which zones, and whether the
+    tamper-evident log still verifies. Privacy by design — counts and coarse
+    periods only, never video or precise timestamps.
+  domain: automation
+  author: "ERRERlabs"
+  source_url: "https://github.com/kmay89/securaCV/blob/main/docs/blueprints/securacv_daily_digest.yaml"
+
+  input:
+    digest_sensor:
+      name: "Daily digest sensor"
+      description: "The SecuraCV digest sensor (created automatically by the add-on)"
+      selector:
+        entity:
+          domain: sensor
+      default: sensor.pwk_daily_digest
+
+    chain_sensor:
+      name: "Chain integrity sensor"
+      description: "The sealed-log integrity sensor (problem class; 'on' means verification failed)"
+      selector:
+        entity:
+          domain: binary_sensor
+      default: binary_sensor.pwk_chain_problem
+
+    notify_service:
+      name: "Notification service"
+      description: "Where to send the digest (e.g. notify.mobile_app_your_phone)"
+      selector:
+        text:
+      default: "notify.mobile_app"
+
+    digest_time:
+      name: "Delivery time"
+      description: "When to send the daily digest"
+      selector:
+        time:
+      default: "08:00:00"
+
+mode: single
+
+trigger:
+  - platform: time
+    at: !input digest_time
+
+variables:
+  digest_sensor: !input digest_sensor
+  chain_sensor: !input chain_sensor
+  notify_service: !input notify_service
+  event_count: "{{ states(digest_sensor) | int(0) }}"
+  per_zone: "{{ state_attr(digest_sensor, 'per_zone') or {} }}"
+  per_period: "{{ state_attr(digest_sensor, 'per_period') or {} }}"
+  chain_failed: "{{ is_state(chain_sensor, 'on') }}"
+  chain_unknown: "{{ states(chain_sensor) in ('unknown', 'unavailable') }}"
+
+action:
+  - service: "{{ notify_service }}"
+    data:
+      title: >-
+        {% if chain_failed %}🔴 SecuraCV: INTEGRITY ALERT{% else %}🛡 SecuraCV daily digest{% endif %}
+      message: >-
+        {% if chain_failed %}
+        Sealed-log verification FAILED — the witness log may have been
+        altered. Check the SecuraCV add-on immediately.
+        {% else %}
+        {{ event_count }} event(s) witnessed in the last 24h
+        {%- if per_zone %} ({% for zone, count in per_zone.items() %}{{ zone }}: {{ count }}{% if not loop.last %}, {% endif %}{% endfor %}){% endif %}.
+        {%- if per_period %} Activity: {% for period, count in per_period.items() %}{{ period }} {{ count }}{% if not loop.last %}, {% endif %}{% endfor %}.{% endif %}
+        {%- if chain_unknown %} Integrity: not yet verified today.{% else %} Sealed log verified ✓.{% endif %}
+        {% endif %}

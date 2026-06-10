@@ -97,7 +97,11 @@ bool ble_status_stack_begin(void) {
                "NimBLE init failed", ble_name);
     return false;
   }
-  NimBLEDevice::setPower(3);  /* +3 dBm — moderate range */
+  /* Single TX-power owner (mirrors canary-wap's F5 fix): set once at stack
+   * bring-up. BLE_TX_POWER_DBM defaults to +9 dBm — the S3 max, aligned with
+   * canary-wap's NVS default and sized for the XIAO's external-antenna-only
+   * RF path. */
+  NimBLEDevice::setPower(BLE_TX_POWER_DBM);
 
   /* Bump default ATT MTU to 247 (244-byte payload). The 23-byte default
    * fragments every status read (battery/health/chain JSON) into 3+ ATT

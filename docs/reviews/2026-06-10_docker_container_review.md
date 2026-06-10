@@ -87,7 +87,7 @@ file **version 4**, which requires cargo ≥ 1.78 —
 Cargo does not understand this lock file`. The documented `docker build -t witnessd:local .`
 (`docs/container.md`) has therefore failed for everyone since the lock file was upgraded;
 with no CI building these images, nothing noticed. Fixed by bumping both build stages to
-`rust:1.94-slim-bookworm` (cargo ≥ 1.78 for the lock file, and the locked gstreamer/glib
+`rust:1.93-slim-bookworm` (cargo ≥ 1.78 for the lock file, and the locked gstreamer/glib
 crates declare `rust-version` 1.92; the `-bookworm` suffix pinned explicitly so the build-stage
 glibc keeps matching the `debian:bookworm-slim` runtime even after `-slim` retags to a
 newer Debian).
@@ -244,36 +244,41 @@ and the offline evidence viewer (static HTML).
 
 ## 5. Fixes applied with this review
 
-1. **New `integrations/ha_frigate_mqtt/Dockerfile`** — multi-stage (rust slim-bookworm →
-   debian:bookworm-slim) building exactly the four binaries the stack runs
-   (`witness_api`, `frigate_bridge`, `event_mqtt_bridge`, `log_verify`), feature-less so
-   the image carries no GStreamer; non-root UID 1001; healthcheck against
-   `/health`. Compose now points at it (`dockerfile: integrations/ha_frigate_mqtt/Dockerfile`).
+1. **Compose now builds a real image.** An interim
+   `integrations/ha_frigate_mqtt/Dockerfile` was written for this review (the four
+   pipeline binaries, no GStreamer, non-root, `/health` healthcheck), but while the
+   review was in flight, main's PR #749 introduced `docker/sidecar/Dockerfile` — the
+   same shape plus entrypoint supervision, automatic device-key generation, and a
+   `doctor` diagnostic — so this branch adopts the sidecar (compose points at
+   `docker/sidecar/Dockerfile`) and the interim Dockerfile was dropped.
 2. **Standalone healthcheck repaired** — `curl` added to runtime deps; probe is now
    shell-form `curl -fsS http://127.0.0.1:8799/health` against the Event API `witnessd`
    already serves (`WITNESS_API_ADDR=0.0.0.0:8799`).
 3. **Build toolchain unblocked** — both Dockerfiles' build stages bumped from
-   `rust:1.77-slim` to `rust:1.94-slim-bookworm` so cargo can read the version-4
+   `rust:1.77-slim` to `rust:1.93-slim-bookworm` so cargo can read the version-4
    `Cargo.lock` (§2.3), with the Debian release pinned to keep build/runtime glibc
    matched.
 4. **MQTT credentials wired end-to-end** — `.env.example` added (gitignore updated to
    keep ignoring `.env` while allowing the template); compose injects
-   `MQTT_USERNAME`/`MQTT_PASSWORD` into the bridges and
-   `FRIGATE_MQTT_USER`/`FRIGATE_MQTT_PASSWORD` into Frigate; `frigate.yml` consumes the
-   placeholders; compose fails fast with a clear message if `MQTT_PASSWORD` is unset.
-5. **Compose `command` made executable** — single-element literal block script with
-   `$$`-escaped shell variables (see §2.5), so `sh -c` receives the whole script and the
-   token-file wait gate actually gates.
+   `MQTT_USERNAME`/`MQTT_PASSWORD` into the sidecar and
+   `FRIGATE_MQTT_USER`/`FRIGATE_MQTT_PASSWORD` into Frigate (both from
+   `SECURACV_MQTT_PASSWORD`); `frigate.yml` consumes the placeholders; compose fails
+   fast with a clear message if the password is unset.
+5. **Compose `command` eliminated** — the §2.5 fix initially rewrote the inline script
+   as a single `$$`-escaped list element; with the sidecar adoption (§5.1) the inline
+   `command` is gone entirely — process supervision lives in the image's
+   `entrypoint.sh`, which is the production-grade shape §2.8 asked for.
 6. **Docs corrected** — `docs/homeassistant_setup.md` local-install commands now point at
    `privacy_witness_kernel/`; integration README gains the `.env` step, the working
    one-off `mosquitto_passwd` bootstrap (§2.4), and notes that HA's MQTT integration
    needs the same credentials. Obsolete compose `version:` key removed.
 7. **New CI gate** — `.github/workflows/container-images.yml` build-validates the root
-   and compose Dockerfiles on PRs/pushes touching them (the add-on already had its own
-   workflow; these two images previously had **no** CI build at all, which is how both
-   the phantom-Dockerfile reference and the stale toolchain pin shipped), and smoke-tests
-   that every shipped binary loads with no missing shared libraries. It caught §2.3 on
-   its first run.
+   `Dockerfile` on PRs/pushes touching it (it previously had **no** CI build at all,
+   which is how both the phantom-Dockerfile reference and the stale toolchain pin
+   shipped) and smoke-tests that the binary loads with no missing shared libraries and
+   that curl — which the healthcheck depends on — is present. It caught §2.3 on its
+   first run. The sidecar and add-on images are gated by their own workflows
+   (`docker-sidecar.yml`, including a live e2e, and `addon-image.yml`).
 
 ### Recommended follow-ups (not in this change)
 
@@ -281,8 +286,6 @@ and the offline evidence viewer (static HTML).
   matching runtime packages, if those backends are meant to be deployable by container.
 - Add operator tooling (`log_verify`, `export_*`) to the standalone image, or document the
   bind-mount workaround.
-- Consider per-process services (or s6/supervisord) instead of `sh -c '… & … & wait'` for
-  the compose `securacv` service.
 
 ---
 

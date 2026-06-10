@@ -1,21 +1,19 @@
 name: Container images
 
-# Build-validate the non-add-on container images (the add-on image has its own
-# workflow in addon-image.yml):
+# Build-validate the standalone witnessd image (root Dockerfile, see
+# docs/container.md). The other images have their own workflows: the HA
+# add-on in addon-image.yml and the Frigate sidecar in docker-sidecar.yml.
 #
-# - the standalone witnessd image (root Dockerfile, see docs/container.md)
-# - the Frigate/MQTT compose stack image (integrations/ha_frigate_mqtt/Dockerfile)
-#
-# Neither image is published; this gate exists so a change to the crate, the
-# Dockerfiles, or the build context can't silently break `docker build` for
-# users following the documented commands (which happened once before: the
-# compose file shipped pointing at a Dockerfile that didn't exist).
+# The image is not published; this gate exists so a change to the crate,
+# the Dockerfile, or the build context can't silently break the documented
+# `docker build -t witnessd:local .` (which happened before this gate
+# existed: the lock file moved to v4 while the build stage pinned a cargo
+# too old to read it, and nothing noticed).
 
 on:
   pull_request:
     paths:
       - "Dockerfile"
-      - "integrations/ha_frigate_mqtt/**"
       - "src/**"
       - "Cargo.toml"
       - "Cargo.lock"
@@ -25,7 +23,6 @@ on:
     branches: [main]
     paths:
       - "Dockerfile"
-      - "integrations/ha_frigate_mqtt/**"
       - "src/**"
       - "Cargo.toml"
       - "Cargo.lock"
@@ -38,59 +35,35 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: witnessd
-            file: Dockerfile
-            tag: witnessd:ci
-          - name: ha-frigate-mqtt
-            file: integrations/ha_frigate_mqtt/Dockerfile
-            tag: securacv-ha-frigate:ci
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build ${{ matrix.name }} image (validate only)
+      - name: Build witnessd image (validate only)
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ${{ matrix.file }}
+          file: Dockerfile
           push: false
           load: true
           provenance: false
-          cache-from: type=gha,scope=container-${{ matrix.name }}
-          cache-to: type=gha,scope=container-${{ matrix.name }},mode=max
-          tags: ${{ matrix.tag }}
+          cache-from: type=gha,scope=container-witnessd
+          cache-to: type=gha,scope=container-witnessd,mode=max
+          tags: witnessd:ci
 
-      # Smoke-test the image: every shipped binary must execute (catches
-      # missing shared libraries in the runtime stage), and the compose image
-      # must contain all four pipeline binaries.
+      # Smoke-test the image: the binary must load with no missing shared
+      # libraries (catches runtime-stage packaging gaps), and curl — which
+      # the HEALTHCHECK depends on — must be present.
       - name: Smoke-test witnessd image
-        if: matrix.name == 'witnessd'
         run: |
-          docker run --rm --entrypoint witnessd witnessd:ci --help >/dev/null 2>&1 || true
-          # witnessd has no --help; assert the binary loads (exit from config
-          # error, not from a linker error).
-          docker run --rm --entrypoint /bin/sh witnessd:ci -c 'witnessd --version 2>&1 || true; ldd /usr/local/bin/witnessd | grep -q "not found" && exit 1; curl --version >/dev/null'
-
-      - name: Smoke-test compose image
-        if: matrix.name == 'ha-frigate-mqtt'
-        run: |
-          docker run --rm --entrypoint /bin/sh securacv-ha-frigate:ci -c '
+          docker run --rm --entrypoint /bin/sh witnessd:ci -c '
             set -e
-            for bin in witness_api frigate_bridge event_mqtt_bridge log_verify; do
-              command -v "$bin" >/dev/null
-              if ldd "/usr/local/bin/$bin" | grep -q "not found"; then
-                echo "missing shared libraries for $bin" >&2
-                exit 1
-              fi
-            done
-            frigate_bridge --help >/dev/null
-            event_mqtt_bridge --help >/dev/null
-            log_verify --help >/dev/null
+            command -v witnessd >/dev/null
+            if ldd /usr/local/bin/witnessd | grep -q "not found"; then
+              echo "missing shared libraries for witnessd" >&2
+              exit 1
+            fi
             curl --version >/dev/null
           '

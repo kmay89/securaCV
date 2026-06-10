@@ -16,9 +16,11 @@ services:
       - mosquitto
     shm_size: "256mb"
     environment:
-      # Substituted into frigate.yml's mqtt user/password placeholders.
-      FRIGATE_MQTT_USER: ${MQTT_USERNAME:-securacv}
-      FRIGATE_MQTT_PASSWORD: ${MQTT_PASSWORD:?set MQTT_PASSWORD in .env (see .env.example)}
+      # Substituted into frigate.yml's mqtt user/password placeholders —
+      # this stack's mosquitto.conf requires authentication, so Frigate
+      # needs the same credentials as the securacv service below.
+      FRIGATE_MQTT_USER: securacv
+      FRIGATE_MQTT_PASSWORD: ${SECURACV_MQTT_PASSWORD:?set in .env or the shell}
     ports:
       - "127.0.0.1:5000:5000"
     volumes:
@@ -38,53 +40,32 @@ services:
   securacv:
     build:
       context: ../..
-      dockerfile: integrations/ha_frigate_mqtt/Dockerfile
-    image: securacv-ha-frigate:local
+      dockerfile: docker/sidecar/Dockerfile
+    image: securacv-sidecar:local
     container_name: ha-securacv
     depends_on:
       - mosquitto
       - frigate
-    working_dir: /data
     environment:
-      WITNESS_API_TOKEN_PATH: /data/api_token
-      MQTT_BROKER_ADDR: mosquitto:1883
-      MQTT_USERNAME: ${MQTT_USERNAME:-securacv}
-      MQTT_PASSWORD: ${MQTT_PASSWORD:?set MQTT_PASSWORD in .env (see .env.example)}
-      FRIGATE_MQTT_TOPIC: frigate/events
+      FRIGATE_MQTT_HOST: mosquitto
       HA_DISCOVERY_PREFIX: homeassistant
       MQTT_TOPIC_PREFIX: witness
-      ALLOW_REMOTE_MQTT: "true"
-      DAEMON_MODE: "true"
-    secrets:
-      - device_key_seed
+      # This stack's mosquitto.conf requires authentication — set the
+      # credentials created in the README's quickstart step 1:
+      MQTT_USERNAME: securacv
+      MQTT_PASSWORD: ${SECURACV_MQTT_PASSWORD:?set in .env or the shell}
+      # DEVICE_KEY_SEED is optional: when unset, the sidecar generates a key
+      # on first start and persists it in the securacv_data volume. To pin
+      # one instead: openssl rand -hex 32 > .device_key_seed, then uncomment
+      # the secrets blocks below.
+    # secrets:
+    #   - device_key_seed
     volumes:
       - securacv_data:/data
-    entrypoint: ["/bin/sh", "-c"]
-    # NOTE: the script must be a single list element so it reaches `sh -c` as
-    # one argument, and $$ escapes compose-level interpolation so the container
-    # shell (not docker compose) expands these variables.
-    command:
-      - |
-        set -eu
-        DEVICE_KEY_SEED="$$(cat /run/secrets/device_key_seed)"
-        export DEVICE_KEY_SEED
-        witness_api &
-        API_PID=$$!
-        until [ -f "$$WITNESS_API_TOKEN_PATH" ]; do
-          if ! kill -0 "$$API_PID" 2>/dev/null; then
-            echo "witness_api exited before writing the token file" >&2
-            exit 1
-          fi
-          sleep 1
-        done
-        frigate_bridge --db-path /data/witness.db &
-        event_mqtt_bridge --daemon --api-token-path "$$WITNESS_API_TOKEN_PATH" &
-        wait
 
-secrets:
-  device_key_seed:
-    # Generate with: openssl rand -hex 32 > .device_key_seed
-    file: .device_key_seed
+# secrets:
+#   device_key_seed:
+#     file: .device_key_seed
 
 volumes:
   mosquitto_data:

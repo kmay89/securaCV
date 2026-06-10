@@ -3,7 +3,7 @@
 
 name: "Privacy Witness Kernel"
 description: "Privacy-preserving video surveillance that produces claims, not recordings"
-version: "0.5.0"
+version: "0.6.0"
 slug: "privacy_witness_kernel"
 url: "https://github.com/kmay89/securaCV"
 # Pre-built multi-arch image published by .github/workflows/addon-image.yml.
@@ -16,6 +16,12 @@ arch:
 init: false
 homeassistant_api: true
 hassio_api: true
+
+# Ask the Supervisor for the shared MQTT service (Mosquitto add-on) so the
+# broker host/credentials can be auto-discovered at startup. `want` (not
+# `need`): users with an external broker can still start the add-on.
+services:
+  - "mqtt:want"
 
 # Network configuration
 ports:
@@ -34,11 +40,17 @@ options:
   # Mode: "standalone" (process RTSP directly) or "frigate" (subscribe to Frigate events)
   mode: "standalone"
 
-  # Frigate integration settings (used when mode=frigate)
+  # Frigate integration settings (used when mode=frigate).
+  # Broker settings left empty are auto-discovered from the Supervisor MQTT
+  # service (Mosquitto add-on); set them only for an external broker.
+  # topic_prefix matches Frigate's mqtt.topic_prefix (default "frigate");
+  # mqtt_topic is a legacy full-topic override that wins when set.
   frigate:
-    mqtt_host: "core-mosquitto"
+    mqtt_host: ""
     mqtt_port: 1883
-    mqtt_topic: "frigate/events"
+    mqtt_topic: ""
+    topic_prefix: "frigate"
+    enable_reviews: false
     mqtt_username: ""
     mqtt_password: ""
     min_confidence: 0.5
@@ -51,10 +63,12 @@ options:
   go2rtc_url: "http://homeassistant.local:1984"
 
   # MQTT event publishing with Home Assistant Discovery
-  # When enabled, PWK automatically creates sensors in Home Assistant
+  # When enabled, PWK automatically creates sensors in Home Assistant.
+  # Enabled by default so events are visible in HA out of the box; broker
+  # settings left empty are auto-discovered like the frigate ones above.
   mqtt_publish:
-    enabled: false
-    host: "core-mosquitto"
+    enabled: true
+    host: ""
     port: 1883
     username: ""
     password: ""
@@ -66,6 +80,9 @@ options:
   retention_days: 7
   time_bucket_minutes: 10
   log_level: "info"
+  # Hours between automatic sealed-log verifications (0 disables).
+  # Keeps the chain-integrity sensor fresh without pressing "Verify Now".
+  verify_interval_hours: 24
 
 schema:
   mode: list(standalone|frigate)
@@ -73,6 +90,8 @@ schema:
     mqtt_host: str?
     mqtt_port: int(1,65535)?
     mqtt_topic: str?
+    topic_prefix: str?
+    enable_reviews: bool?
     mqtt_username: str?
     mqtt_password: password?
     min_confidence: float(0,1)?
@@ -100,6 +119,7 @@ schema:
   retention_days: int(1,365)
   time_bucket_minutes: int(5,60)
   log_level: list(debug|info|warn|error)
+  verify_interval_hours: int(0,168)?
 
 # Environment variables passed to the add-on
 environment:

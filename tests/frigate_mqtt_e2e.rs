@@ -12,9 +12,12 @@
 //! (`.github/workflows/frigate_mqtt_e2e.yml`); this test pins the logic so a
 //! regression is caught by `cargo test`, with no broker or container required.
 
+use std::io::{Read, Write};
+use std::net::TcpStream;
 use std::process::Command;
 use std::time::Duration;
 
+use witness_kernel::api::{ApiConfig, ApiServer};
 use witness_kernel::transport::{map_label_to_event_type, parse_frigate_event, sanitize_zone_name};
 use witness_kernel::{
     derive_db_encryption_key, signing_key_from_seed, verifying_key_from_seed, CandidateEvent,
@@ -138,4 +141,51 @@ fn frigate_event_flows_to_a_verifiable_sealed_log() {
         output.status.success(),
         "log_verify must succeed on the bridge-produced log\n--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}"
     );
+
+    // ── Stage 2b: `log_verify --device-key-seed` (the sidecar/doctor path)
+    // derives both the SQLCipher key and the verifying key from the seed ──
+    let output = Command::new(env!("CARGO_BIN_EXE_log_verify"))
+        .args(["--db", &db_path_str])
+        .env("DEVICE_KEY_SEED", SEED)
+        .env_remove("SECURACV_DB_KEY")
+        .output()
+        .expect("spawn log_verify with seed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "log_verify must succeed via DEVICE_KEY_SEED alone\n--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}"
+    );
+
+    // ── Stage 3: the event API's POST /verify reports the same outcome
+    // (this is what the HA "Verify Now" button drives) ──
+    let api = ApiServer::new(
+        ApiConfig {
+            addr: "127.0.0.1:0".to_string(),
+            ..ApiConfig::default()
+        },
+        cfg.clone(),
+    )
+    .spawn()
+    .expect("spawn api");
+
+    let mut stream = TcpStream::connect(api.addr).expect("connect api");
+    let request = format!(
+        "POST /verify HTTP/1.1\r\nHost: localhost\r\nX-Witness-Token: {}\r\n\r\n",
+        api.token
+    );
+    stream.write_all(request.as_bytes()).expect("send request");
+    let mut response = String::new();
+    stream.read_to_string(&mut response).expect("read response");
+    let body = response
+        .split_once("\r\n\r\n")
+        .map(|(_, body)| body)
+        .expect("response body");
+    let report: serde_json::Value = serde_json::from_str(body).expect("verify report json");
+    assert_eq!(
+        report["chain_valid"], true,
+        "API verification must pass on the bridge-produced log: {report}"
+    );
+    assert!(report["events_verified"].as_u64().unwrap_or(0) >= 1);
+    api.stop().expect("stop api");
 }

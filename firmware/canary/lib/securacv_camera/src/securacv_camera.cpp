@@ -8,20 +8,12 @@
 #include "securacv_camera.h"
 #include <Preferences.h>
 #include "securacv_witness.h"
-
-#if defined(CONFIG_IDF_TARGET_ESP32S3)
-#include "esp_idf_version.h"
-#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
-#include <driver/temperature_sensor.h>
-#else
-extern "C" {
-  #include <driver/temp_sensor.h>
-}
-#endif
-#define HAVE_TEMP_SENSOR 1
-#else
-#define HAVE_TEMP_SENSOR 0
-#endif
+/* Die temp comes from the shared securacv_thermal provider — IDF 5.x
+ * allows only one temperature-sensor driver instance, and the envsens
+ * tamper detector + diagnostics self-test read the same sensor.
+ * Installing our own handle here silently failed whenever envsens
+ * initialized first, leaving this thermal protection inert. */
+#include "securacv_thermal.h"
 
 #if FEATURE_CAMERA_PEEK
 
@@ -579,34 +571,9 @@ void CameraManager::checkThermal() {
   if (now - m_last_thermal_check_ms < THERMAL_CHECK_INTERVAL_MS) return;
   m_last_thermal_check_ms = now;
 
-#if HAVE_TEMP_SENSOR
-#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
-  static temperature_sensor_handle_t s_tsens = nullptr;
-  if (!s_tsens) {
-    temperature_sensor_config_t cfg = TEMPERATURE_SENSOR_CONFIG_DEFAULT(10, 95);
-    if (temperature_sensor_install(&cfg, &s_tsens) == ESP_OK) {
-      temperature_sensor_enable(s_tsens);
-    }
-  }
   float temp_c = 0.0f;
-  if (!s_tsens || temperature_sensor_get_celsius(s_tsens, &temp_c) != ESP_OK) return;
+  if (!thermal_read_die_c(&temp_c)) return;  /* keep last state on read failure */
   m_die_temp_c = (int8_t)temp_c;
-#else
-  static bool s_tsens_started = false;
-  if (!s_tsens_started) {
-    temp_sensor_config_t cfg = TSENS_CONFIG_DEFAULT();
-    cfg.dac_offset = TSENS_DAC_L2;
-    if (temp_sensor_set_config(cfg) == ESP_OK && temp_sensor_start() == ESP_OK) {
-      s_tsens_started = true;
-    }
-  }
-  float temp_c = 0.0f;
-  if (!s_tsens_started || temp_sensor_read_celsius(&temp_c) != ESP_OK) return;
-  m_die_temp_c = (int8_t)temp_c;
-#endif
-#else
-  return;
-#endif
 
   ThermalState prev = m_thermal_state;
 
