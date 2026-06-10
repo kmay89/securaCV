@@ -123,14 +123,15 @@ invariants doc rather than adjectives.
 > https://github.com/kmay89/securaCV
 
 (Fits with room for one screenshot — use the verified-✓ timeline once it exists; until
-then, the social preview image in `docs/social_preview.png`.)
+then, the [social preview image](../social_preview.png).)
 
 ---
 
 ## 5. Directory listings (one-time, compounding)
 
 - **HACS default repository** — submit once stable; HACS users discover integrations
-  in-app far more often than via GitHub search. (`brands/submission/` is already prepared.)
+  in-app far more often than via GitHub search. ([`brands/submission/`](../../brands/submission/)
+  is already prepared.)
 - **awesome-selfhosted** (PR under *Video Surveillance*), **awesome-home-assistant** — one
   PR each, evergreen traffic.
 - **Frigate community discussions** — a "works with Frigate" post; Frigate's user base is
