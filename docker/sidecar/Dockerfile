@@ -18,6 +18,7 @@ FROM rust:1.93-slim-bookworm AS build
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     ca-certificates \
+    libseccomp-dev \
     libssl-dev \
     pkg-config \
   && rm -rf /var/lib/apt/lists/*
@@ -45,6 +46,7 @@ FROM debian:bookworm-slim
 # mosquitto-clients powers the `doctor` subcommand's broker checks.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
+    libseccomp2 \
     libssl3 \
     mosquitto-clients \
   && rm -rf /var/lib/apt/lists/*
