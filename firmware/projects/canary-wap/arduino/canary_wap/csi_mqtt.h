@@ -198,14 +198,30 @@ void remove_discovery();
 void publish_chain(uint32_t length, const uint8_t* latest_hash_32);
 
 /**
- * Push the canonical health snapshot to {prefix}/{device_id}/health.
- * Schema (matches custom_components/securacv/sensor.py:328-345):
- *   battery, memory_free, uptime, firmware_version, public_key
- * Battery is reserved for future hardware revisions; the canary-wap
- * reference board is mains-powered, so we publish 100. The HA sensor
- * derives "healthy/warning/critical" from battery + memory_free.
+ * Battery snapshot for the health publish. Filled from power_monitor
+ * by the .ino. Pass nullptr when no battery is present (or the build
+ * has no power monitor): the publish then carries the mains semantics
+ * HA expects (battery=100, battery_present=false).
  */
-void publish_health(uint32_t free_heap_bytes, uint32_t uptime_sec);
+struct MqttBatteryInfo {
+  uint8_t     soc_pct;       // state of charge, 0-100
+  uint8_t     health_pct;    // cycle-fade capacity estimate, 60-100
+  uint16_t    battery_mv;    // cell voltage in millivolts
+  const char* charge_state;  // power_monitor::charge_state_name()
+};
+
+/**
+ * Push the canonical health snapshot to {prefix}/{device_id}/health.
+ * Schema (matches custom_components/securacv/sensor.py health handler):
+ *   battery, battery_present, memory_free, uptime, firmware_version,
+ *   public_key — plus charge_state, battery_health_pct, battery_mv
+ *   when a battery is present.
+ * The HA sensor derives "healthy/warning/critical" from battery +
+ * memory_free; charging devices and mains-powered devices (battery
+ * nullptr → battery=100) never trip the battery thresholds.
+ */
+void publish_health(uint32_t free_heap_bytes, uint32_t uptime_sec,
+                    const MqttBatteryInfo* battery = nullptr);
 
 /**
  * Push the witness count to {prefix}/{device_id}/counts. Used by the

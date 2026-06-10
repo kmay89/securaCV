@@ -1784,10 +1784,20 @@ static void mqtt_publish_health_update() {
   doc["battery_soc"] = health.battery_soc;
   doc["battery_trend"] = health.battery_trend;
   doc["charge_cycles"] = 0;
+  /* battery_present gates HA's battery-threshold derivation: without it
+   * a USB-only device's battery_soc=0 would read as a critical battery.
+   * The HA integration only trusts battery_soc when presence is
+   * explicitly true. */
+  doc["battery_present"] = false;
   {
     power_state_t pwr;
     if (power_get_state(&pwr)) {
       doc["charge_cycles"] = pwr.charge_cycles;
+      doc["battery_present"] = pwr.battery_present;
+      if (pwr.battery_present) {
+        doc["charge_state"] = power_charge_state_name(pwr.charge_state);
+        doc["battery_health_pct"] = power_health_pct();
+      }
     }
   }
 #endif

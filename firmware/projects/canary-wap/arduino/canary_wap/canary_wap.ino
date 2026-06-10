@@ -8708,8 +8708,23 @@ void loop() {
     }
     if (now - s_mqtt_health_ms >= 60000UL) {
       s_mqtt_health_ms = now;
+      // Attach the real battery state when one is wired (HW ADC mode);
+      // nullptr keeps the mains semantics (battery=100) for USB-only
+      // devices so HA never sees a false low-battery state.
+      const csi_mqtt::MqttBatteryInfo* batt_ptr = nullptr;
+      #if FEATURE_POWER_MONITOR
+      csi_mqtt::MqttBatteryInfo batt;
+      PowerState pwr_mqtt;
+      if (power_monitor::get_state(&pwr_mqtt) && pwr_mqtt.battery_present) {
+        batt.soc_pct      = pwr_mqtt.soc_pct;
+        batt.health_pct   = power_monitor::health_pct();
+        batt.battery_mv   = pwr_mqtt.voltage_mv;
+        batt.charge_state = power_monitor::charge_state_name(pwr_mqtt.charge_state);
+        batt_ptr = &batt;
+      }
+      #endif
       csi_mqtt::publish_health((uint32_t)ESP.getFreeHeap(),
-                               (uint32_t)uptime_seconds());
+                               (uint32_t)uptime_seconds(), batt_ptr);
     }
 
 #if FEATURE_ACOUSTIC_EVENTS
