@@ -1,13 +1,35 @@
 name: Detect Eval
 
+# Scoped to the eval harness inputs: the crate, the eval datasets, and the
+# committed test ONNX fixture. Docs/firmware/HA changes don't re-run it.
 on:
   push:
     branches: [ "main" ]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'eval/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.cargo/**'
+      - '.github/workflows/detect-eval.yml'
   pull_request:
     branches: [ "main" ]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'eval/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.cargo/**'
+      - '.github/workflows/detect-eval.yml'
 
 env:
   CARGO_TERM_COLOR: always
+
+concurrency:
+  group: detect-eval-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Read-only; the only output is an uploaded report artifact.
 permissions:
@@ -19,6 +41,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
       - name: Install libseccomp
         run: sudo apt-get update && sudo apt-get install -y libseccomp-dev
 

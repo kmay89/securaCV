@@ -168,8 +168,17 @@ describe('hintFor — guidance matrix', () => {
     none('power', 'fail');
   });
 
-  it('Microphone: never guides (intentionally unused)', () => {
-    for (const s of STATUSES) none('microphone', s);
+  it('Microphone: muted vs not-started guide differently; pass teaches the alarm test', () => {
+    has('microphone', 'pass');
+    assert.match(hint('microphone', 'pass'), /TEST button/);
+    has('microphone', 'skip', { muted: true });
+    assert.match(hint('microphone', 'skip', { muted: true }), /muted/i);
+    has('microphone', 'skip');                      // bring-up failure path
+    assert.match(hint('microphone', 'skip'), /didn't start/i);
+    assert.match(hint('microphone', 'skip'), /Run again/);
+    has('microphone', 'absent');
+    none('microphone', 'fail');                     // contract: mic never FAILs
+    none('microphone', 'unknown');
   });
 
   it('Buzzer: pass/skip/absent all carry a note; fail is silent', () => {
@@ -210,7 +219,7 @@ describe('whole-report scenarios', () => {
     const probes = [
       probe('wifi', 'pass'), probe('camera', 'pass'), probe('bluetooth', 'pass'),
       probe('gps', 'absent'), probe('sd', 'pass'), probe('power', 'absent'),
-      probe('microphone', 'absent'), probe('buzzer', 'pass'),
+      probe('microphone', 'pass'), probe('buzzer', 'pass'),
       probe('tamper', 'absent'), probe('gpio', 'pass'),
     ];
     const fails = probes.filter(p => p.status === 'fail');

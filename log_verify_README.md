@@ -51,6 +51,27 @@ For export receipts, `log_verify`:
    - verify the Ed25519 signature over `entry_hash`
 2) Report success/failure.
 
+## Timeline audit (warnings)
+
+Hash-chain verification proves interior integrity but cannot see **tail
+truncation**: deleting the newest N rows leaves a chain that still verifies.
+After the chains pass, `log_verify` runs a timeline audit over the (now
+trusted) records and prints warnings for:
+
+- **Stale tail** — the last lifecycle record is `start` but the newest record
+  is more than two buckets old: possible tail truncation, crash, or a daemon
+  stopped without a shutdown record.
+- **Missing heartbeats** — buckets inside a `start`..`shutdown_clean` segment
+  with no heartbeat record (the daemon seals one per 10-minute bucket):
+  possible mid-chain deletion. Skipped on databases that predate heartbeats.
+- **`created_at` regressions** — softened to a note when a `ClockSkew`
+  failure record covers the jump (the daemon witnessed it itself).
+- **Checkpoint anomalies** — back-dated or future-dated checkpoint
+  timestamps.
+
+Warnings do not fail verification by default; pass `--strict` to exit
+non-zero when any are present.
+
 ## Future work
 - Support key rotation and explicit public-key rollover rules.
 - Support multiple checkpoints and archived compacted segments.

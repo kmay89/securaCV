@@ -58,6 +58,11 @@ from .const import (
     # Thresholds
     CRITICAL_MEMORY_THRESHOLD_BYTES,
 )
+from .health_metrics import (
+    canary_sd_replace_recommended,
+    replacement_recommended,
+    storage_status,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -103,6 +108,7 @@ async def async_setup_entry(
     entities: list[BinarySensorEntity] = []
     if coordinator is not None:
         entities.append(SecuraCVKernelOnlineSensor(coordinator, entry))
+        entities.append(SecuraCVKernelStorageReplaceSensor(coordinator, entry))
     async_add_entities(entities)
 
     # Optionally set up MQTT-based Canary binary sensors
@@ -156,6 +162,13 @@ async def _setup_mqtt_binary_sensors(
             entities_added[device_id].add("tamper")
             new_entities.append(
                 SecuraCVCanaryTamperSensor(prefix, device_id, entry)
+            )
+
+        # SD card replacement recommendation (storage endurance)
+        if topic_type == TOPIC_HEALTH and "sd_replace" not in entities_added[device_id]:
+            entities_added[device_id].add("sd_replace")
+            new_entities.append(
+                SecuraCVCanarySDReplaceSensor(prefix, device_id, entry)
             )
 
         # Individual tamper type sensors (created on first tamper message)
@@ -245,6 +258,56 @@ class SecuraCVKernelOnlineSensor(CoordinatorEntity, BinarySensorEntity):
     def is_on(self) -> bool:
         """Return True if the kernel is reachable."""
         return self.coordinator.last_update_success
+
+
+class SecuraCVKernelStorageReplaceSensor(CoordinatorEntity, BinarySensorEntity):
+    """Problem sensor: the kernel recommends replacing its SD card.
+
+    Turns on when the storage health status reaches replacement_recommended
+    or critical (wear estimate at/over threshold, persistent write errors,
+    or critically low space). Driven by the same hysteresis-filtered status
+    as the Storage Health sensor, so it never flaps on transient readings.
+    """
+
+    _attr_name = "SecuraCV Storage Replacement Recommended"
+    _attr_device_class = BinarySensorDeviceClass.PROBLEM
+    _attr_icon = "mdi:sd-alert"
+    _attr_has_entity_name = True
+
+    def __init__(self, coordinator, entry: ConfigEntry) -> None:
+        """Initialize."""
+        super().__init__(coordinator)
+        self._entry = entry
+        self._attr_unique_id = f"{DOMAIN}_{entry.entry_id}_storage_replace"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return device info for the kernel."""
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._entry.data[CONF_URL])},
+            manufacturer=MANUFACTURER,
+            model=MODEL_KERNEL,
+            name="SecuraCV Privacy Witness Kernel",
+            configuration_url=self._entry.data[CONF_URL],
+        )
+
+    def _status(self) -> str | None:
+        if not self.coordinator.data:
+            return None
+        return storage_status(self.coordinator.data.get("status"))
+
+    @property
+    def is_on(self) -> bool:
+        """True when the card should be replaced."""
+        return replacement_recommended(self._status())
+
+    @property
+    def extra_state_attributes(self) -> dict[str, _Any] | None:
+        """Surface the underlying status for automations."""
+        status = self._status()
+        if status is None:
+            return None
+        return {"storage_status": status}
 
 
 # =============================================================================
@@ -502,6 +565,41 @@ class SecuraCVCanaryTamperTypeSensor(SecuraCVCanaryBinarySensorBase):
             self.async_write_ha_state()
         except (json.JSONDecodeError, TypeError):
             pass
+
+
+class SecuraCVCanarySDReplaceSensor(SecuraCVCanaryBinarySensorBase):
+    """Problem sensor: a Canary device recommends replacing its SD card.
+
+    Driven by the firmware's NVS-persisted lifetime write counters and
+    wear estimate, published in the `sd` object of the health payload.
+    Firmware without SD endurance reporting simply never turns this on.
+    """
+
+    _attr_device_class = BinarySensorDeviceClass.PROBLEM
+    _attr_icon = "mdi:sd-alert"
+
+    def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
+        """Initialize."""
+        super().__init__(prefix, device_id, entry, "SD Replacement Recommended", "sd_replace")
+        self._attr_is_on = False
+
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to MQTT health topic."""
+        await mqtt.async_subscribe(
+            self.hass,
+            f"{self._prefix}/{self._device_id}/{TOPIC_HEALTH}",
+            self._handle_message,
+        )
+
+    @callback
+    def _handle_message(self, msg: mqtt.ReceiveMessage) -> None:
+        """Handle health message for the SD replacement flag."""
+        try:
+            data = json.loads(msg.payload)
+        except (json.JSONDecodeError, TypeError):
+            return
+        self._attr_is_on = canary_sd_replace_recommended(data)
+        self.async_write_ha_state()
 
 
 class SecuraCVCanaryTransportSensor(SecuraCVCanaryBinarySensorBase):

@@ -58,6 +58,23 @@ Within 30 seconds of the Canary connecting to MQTT:
    - **GPS Fix** — GPS fix status
    - **SD Card Healthy** — Storage health
 
+On canary-wap builds with the microphone enabled (XIAO ESP32-S3 Sense), the
+device also announces acoustic entities via MQTT discovery:
+
+   - **Smoke Alarm Heard** / **CO Alarm Heard** — binary sensors that latch ON
+     when the mic matches an NFPA 72 T3 smoke or UL 2034 CO cadence, and clear
+     about 30 seconds after the alarm stops. State rides the retained
+     `securacv/<device_id>/sensing` topic (`acoustic_event` field plus
+     detection counters and `mic_muted`).
+   - **Knock / Doorbell / Glass Break Detected** — additional binary sensors on
+     FULL builds with the transient detectors compiled in.
+   - **Microphone Mute** — a switch entity for the hard mute. State is retained
+     on `securacv/<device_id>/mic/state` (`muted`/`live`); commands go to
+     `securacv/<device_id>/mic/cmd` (`mute`/`unmute`, or HA's default `ON` =
+     muted / `OFF` = live). Every toggle — including ones from HA — is signed
+     into the device's witness chain with its source, so an investigator can
+     later verify when the mic was off and who turned it off.
+
 ### Step 4b: Add the verified-✓ timeline card
 
 For the "single pane of glass" view, add the bundled Lovelace card: edit a

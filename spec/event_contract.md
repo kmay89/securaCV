@@ -248,6 +248,41 @@ producer. The kernel's contract enforcement is authoritative; an adapter cannot 
 New adapter event types MAY be added only via a ruleset change and only if they remain coarse and
 non-identifying. Forbidden claims (§5) remain forbidden regardless of source.
 
+---
+
+## 12. System Trace Records (Normative)
+
+The sealed log additionally carries two **system trace** record types. They are
+NOT Events: they describe the witnessing system itself, never the observed
+scene, and they are excluded from event exports.
+
+| `record_type` | Cadence | Purpose |
+|---|---|---|
+| `heartbeat` | One per 10-minute time bucket while the daemon runs | Anchors the tail of the hash chain (tail truncation becomes a detectable missing-heartbeat gap) and records coarse system health |
+| `lifecycle` | One `start` per daemon boot; one `shutdown_clean` per deliberate stop | Makes restarts auditable; a boot that finds a trailing `start` seals a `PowerLoss` failure record (unclean-shutdown proxy) |
+
+### Permitted content
+
+- Coarse `time_bucket` (same granularity rules as §3).
+- Kernel version, ruleset identifier, ruleset hash (same binding as Events).
+- `heartbeat` only: a boolean ingest-health flag and **per-bucket aggregate
+  deltas** (frames captured, events appended, failure records appended).
+- `lifecycle` only: the phase (`start` / `shutdown_clean`).
+
+### Forbidden content
+
+Everything §7 forbids, plus:
+
+- Cumulative counters or sequence numbers spanning buckets (deltas only —
+  cumulative values imply continuity across the retention boundary).
+- Source URLs, device paths, or any network identifier (failure details may
+  name the backend kind, e.g. `rtsp`, never the endpoint).
+
+Retention and pruning apply to system trace records exactly as to Events.
+Verifiers MAY use heartbeat cadence and lifecycle pairing to flag missing
+buckets, stale tails, and timestamp regressions; such findings are warnings
+about coverage, not hash-chain failures.
+
 ### On-Device Vision Contributions
 
 The Canary firmware's on-device vision cascade (`securacv_vision`) contributes coarse witness

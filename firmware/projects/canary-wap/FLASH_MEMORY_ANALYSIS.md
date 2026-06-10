@@ -10,6 +10,12 @@ from source bytes except the web-asset gzip numbers, which are measured._
 The Arduino build was reported near the program-storage ceiling. This documents where the
 flash goes, what was trimmed, and how much headroom remains for new features.
 
+> **Measured update (2026-06, post-microphone):** with the PDM acoustic module, its
+> HTTP/MQTT/BLE surfaces, and the OTA engine all in, the PlatformIO FULL build measures
+> **63.7% of a 3.34 MB app partition** (`pio run -e canary-wap-default`) — comfortably
+> below the ceiling this document was written against. The estimates below predate
+> those features; trust the build output's `Flash:` line over the table for totals.
+
 ## Where the flash goes (estimate)
 
 App partition (program storage) on XIAO_ESP32S3 with no `PartitionScheme` pinned is the

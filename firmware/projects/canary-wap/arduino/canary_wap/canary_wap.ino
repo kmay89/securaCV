@@ -218,6 +218,17 @@ extern "C" {
 // PDM acoustic event detection (T3 smoke / T4 CO alarm cadences)
 #if FEATURE_ACOUSTIC_EVENTS
 #include "securacv_audio.h"
+
+// Last acoustic event, held for the MQTT /sensing snapshot. Written by
+// the audio event callback and read by the loop's MQTT cadence block —
+// both run on the main task (the callback fires synchronously from
+// audio_process() in loop()), so no atomics are needed. The loop clears
+// the event back to "none" after AUDIO_MQTT_EVENT_HOLD_MS, which flips
+// HA's smoke/CO/knock/doorbell/glass binary sensors OFF.
+static char     g_audio_mqtt_event[20] = "none";
+static uint32_t g_audio_mqtt_event_ms  = 0;
+static bool     g_audio_mqtt_dirty     = false;
+static const uint32_t AUDIO_MQTT_EVENT_HOLD_MS = 30000;
 #endif
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -2990,6 +3001,174 @@ static esp_err_t handle_audio_mute(httpd_req_t* req) {
            muted ? "true" : "false", persisted ? "true" : "false");
   return http_send_json(req, resp);
 }
+
+// GET /api/audio/selftest — self-test progress/result
+// POST /api/audio/selftest — {"action":"start","duration_ms":30000} | {"action":"stop"}
+//
+// Self-test runs the T3/T4 matchers with relaxed timing tolerance so the
+// user can press their smoke/CO alarm's TEST button and watch the device
+// confirm it heard the cadence. The normal event callback is suppressed
+// while active, so a test press never flows into real alarm automations.
+static esp_err_t handle_audio_selftest_get(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  audio_selftest_status_t st;
+  if (!audio_selftest_status(&st)) {
+    return http_send_json(req, "{\"ok\":false,\"error\":\"audio not initialized\"}");
+  }
+
+  char buf[256];
+  int len = snprintf(buf, sizeof(buf),
+    "{"
+    "\"ok\":true,"
+    "\"active\":%s,"
+    "\"matched_type\":%u,"
+    "\"matched_name\":\"%s\","
+    "\"matched_conf\":%u,"
+    "\"remaining_ms\":%u,"
+    "\"transitions_seen\":%u"
+    "}",
+    st.active ? "true" : "false",
+    (unsigned)st.matched_type,
+    audio_event_name(st.matched_type),
+    (unsigned)st.matched_conf,
+    (unsigned)st.remaining_ms,
+    (unsigned)st.transitions_seen);
+
+  if (len <= 0 || len >= (int)sizeof(buf)) {
+    return http_send_json(req, "{\"ok\":false,\"error\":\"buffer overflow\"}");
+  }
+
+  return http_send_json(req, buf);
+}
+
+static esp_err_t handle_audio_selftest_post(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  char buf[96];
+  int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
+  if (ret <= 0) return http_send_error(req, 400, "invalid_body");
+  buf[ret] = '\0';
+
+  JsonDocument body;
+  if (deserializeJson(body, buf) != DeserializationError::Ok) {
+    return http_send_error(req, 400, "invalid_json");
+  }
+  const char* action = body["action"] | (const char*)nullptr;
+  if (!action) return http_send_error(req, 400, "missing_action");
+
+  if (strcmp(action, "start") == 0) {
+    const uint32_t duration_ms = body["duration_ms"] | 30000u;
+    if (!audio_selftest_start(duration_ms)) {
+      // start() refuses while muted or before init — tell the user which.
+      return http_send_error(req, 409,
+          audio_is_muted() ? "mic_muted" : "audio_not_initialized");
+    }
+    return http_send_json(req, "{\"ok\":true,\"active\":true}");
+  }
+  if (strcmp(action, "stop") == 0) {
+    audio_selftest_stop();
+    return http_send_json(req, "{\"ok\":true,\"active\":false}");
+  }
+  return http_send_error(req, 400, "unknown_action");
+}
+
+// GET /api/audio/config — current envelope thresholds
+// POST /api/audio/config — {"rms_on":N,"rms_off":N}; rms_on > rms_off > 0.
+//                          Applied immediately and persisted to NVS so the
+//                          next boot re-applies it (room-noise sensitivity).
+static esp_err_t handle_audio_config_get(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  audio_config_t cfg;
+  if (!audio_get_config(&cfg)) {
+    return http_send_json(req, "{\"ok\":false,\"error\":\"audio not initialized\"}");
+  }
+  char buf[96];
+  const int len = snprintf(buf, sizeof(buf),
+    "{\"ok\":true,\"rms_on\":%u,\"rms_off\":%u}",
+    (unsigned)cfg.rms_on_threshold, (unsigned)cfg.rms_off_threshold);
+  if (len <= 0 || len >= (int)sizeof(buf)) {
+    return http_send_json(req, "{\"ok\":false,\"error\":\"buffer overflow\"}");
+  }
+  return http_send_json(req, buf);
+}
+
+static esp_err_t handle_audio_config_post(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  char buf[96];
+  int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
+  if (ret <= 0) return http_send_error(req, 400, "invalid_body");
+  buf[ret] = '\0';
+
+  JsonDocument body;
+  if (deserializeJson(body, buf) != DeserializationError::Ok ||
+      !body["rms_on"].is<unsigned int>() || !body["rms_off"].is<unsigned int>()) {
+    return http_send_error(req, 400, "invalid_json");
+  }
+  const unsigned rms_on  = body["rms_on"];
+  const unsigned rms_off = body["rms_off"];
+  if (rms_on > 0xFFFFu || rms_off > 0xFFFFu ||
+      !audio_set_thresholds((uint16_t)rms_on, (uint16_t)rms_off)) {
+    return http_send_error(req, 400, "invalid_thresholds");
+  }
+
+  bool persisted = false;
+  {
+    Preferences sens_prefs;
+    if (sens_prefs.begin("securacv", false)) {
+      persisted = sens_prefs.putUShort("mic_rms_on", (uint16_t)rms_on) > 0 &&
+                  sens_prefs.putUShort("mic_rms_off", (uint16_t)rms_off) > 0;
+      sens_prefs.end();
+    }
+  }
+  if (!persisted) {
+    log_health(SCV_LOG_WARNING, SCV_CAT_STORAGE,
+               "Mic sensitivity NOT persisted", "NVS write failed");
+  }
+  log_health(SCV_LOG_NOTICE, SCV_CAT_USER, "Mic sensitivity changed", nullptr);
+
+  char resp[96];
+  const int rl = snprintf(resp, sizeof(resp),
+    "{\"ok\":true,\"rms_on\":%u,\"rms_off\":%u,\"persisted\":%s}",
+    rms_on, rms_off, persisted ? "true" : "false");
+  if (rl <= 0 || rl >= (int)sizeof(resp)) {
+    return http_send_json(req, "{\"ok\":true}");
+  }
+  return http_send_json(req, resp);
+}
+
+// GET /api/audio/transitions — recent envelope on/off transitions (newest
+// first). Diagnostic surface for the dashboard's "show me the cadence"
+// view: lets a user see WHY a test press did or didn't match. Carries
+// only {on, age_ms, dur_ms} per entry — same privacy-bounded fields the
+// internal matcher uses, no audio content.
+static esp_err_t handle_audio_transitions(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  audio_transition_t trans[16];
+  const size_t n = audio_get_recent_transitions(trans, 16, 0);
+
+  char buf[768];
+  size_t pos = 0;
+  pos += snprintf(buf + pos, sizeof(buf) - pos,
+                  "{\"ok\":true,\"running\":%s,\"transitions\":[",
+                  audio_is_running() ? "true" : "false");
+  for (size_t i = 0; i < n && pos < sizeof(buf) - 64; i++) {
+    pos += snprintf(buf + pos, sizeof(buf) - pos,
+                    "%s{\"on\":%u,\"age_ms\":%lu,\"dur_ms\":%lu}",
+                    i ? "," : "",
+                    (unsigned)trans[i].is_on,
+                    (unsigned long)trans[i].age_ms,
+                    (unsigned long)trans[i].dur_ms);
+  }
+  pos += snprintf(buf + pos, sizeof(buf) - pos, "]}");
+  if (pos >= sizeof(buf)) {
+    return http_send_json(req, "{\"ok\":false,\"error\":\"buffer overflow\"}");
+  }
+  return http_send_json(req, buf);
+}
 #endif
 
 static esp_err_t handle_chain(httpd_req_t* req) {
@@ -4906,34 +5085,9 @@ static void url_decode_inplace(char* s) {
   *w = '\0';
 }
 
-static esp_err_t handle_fleet_qr(httpd_req_t* req) {
-  g_health.http_requests++;
-
-  char qs[256] = {};
-  char ssid[33] = {};
-  char pass[65] = {};
-
-  if (httpd_req_get_url_query_str(req, qs, sizeof(qs)) != ESP_OK) {
-    httpd_resp_set_status(req, "400 Bad Request");
-    httpd_resp_set_type(req, "text/plain");
-    return httpd_resp_send(req, "Missing query parameters", -1);
-  }
-
-  if (httpd_query_key_value(qs, "ssid", ssid, sizeof(ssid)) != ESP_OK
-      || ssid[0] == '\0') {
-    httpd_resp_set_status(req, "400 Bad Request");
-    httpd_resp_set_type(req, "text/plain");
-    return httpd_resp_send(req, "ssid is required", -1);
-  }
-  httpd_query_key_value(qs, "pass", pass, sizeof(pass));
-
-  url_decode_inplace(ssid);
-  url_decode_inplace(pass);
-
-  // Build SECURACV: payload
-  char payload[256];
-  snprintf(payload, sizeof(payload), "SECURACV:S:%s;P:%s;;", ssid, pass);
-
+// Render a text payload as an SVG QR code response. Shared by the fleet
+// WiFi-credentials QR and the pairing-receipt QR.
+static esp_err_t send_qr_svg(httpd_req_t* req, const char* payload) {
   // Use version 1-10 range (enough for short payloads, small QR)
   static constexpr int QR_MAX_VER = 10;
   uint8_t qr[qrcodegen_BUFFER_LEN_FOR_VERSION(QR_MAX_VER)];
@@ -4988,9 +5142,79 @@ static esp_err_t handle_fleet_qr(httpd_req_t* req) {
   return httpd_resp_send_chunk(req, nullptr, 0);
 }
 
+static esp_err_t handle_fleet_qr(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  char qs[256] = {};
+  char ssid[33] = {};
+  char pass[65] = {};
+
+  if (httpd_req_get_url_query_str(req, qs, sizeof(qs)) != ESP_OK) {
+    httpd_resp_set_status(req, "400 Bad Request");
+    httpd_resp_set_type(req, "text/plain");
+    return httpd_resp_send(req, "Missing query parameters", -1);
+  }
+
+  if (httpd_query_key_value(qs, "ssid", ssid, sizeof(ssid)) != ESP_OK
+      || ssid[0] == '\0') {
+    httpd_resp_set_status(req, "400 Bad Request");
+    httpd_resp_set_type(req, "text/plain");
+    return httpd_resp_send(req, "ssid is required", -1);
+  }
+  httpd_query_key_value(qs, "pass", pass, sizeof(pass));
+
+  url_decode_inplace(ssid);
+  url_decode_inplace(pass);
+
+  // Build SECURACV: payload
+  char payload[256];
+  snprintf(payload, sizeof(payload), "SECURACV:S:%s;P:%s;;", ssid, pass);
+
+  return send_qr_svg(req, payload);
+}
+
 static esp_err_t handle_fleet_qr_auth(httpd_req_t* req) {
   if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
   return handle_fleet_qr(req);
+}
+
+/* Pairing QR: SVG QR of the compact provisioning receipt, scanned by the
+ * Canary Vision companion app's "Scan pairing QR" fallback.
+ *
+ * The payload carries the API token, so this endpoint demands the same
+ * auth as the receipt's Bearer path — the QR is something an already-
+ * authenticated operator deliberately shows to their own phone, never an
+ * anonymous read. Only the three fields the app's scanner consumes are
+ * encoded ({device_id, base_url, token}); the slim payload keeps the QR
+ * at a low version so phone cameras lock on quickly.
+ */
+static esp_err_t handle_pairing_qr(httpd_req_t* req) {
+  g_health.http_requests++;
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+
+  // Prefer the home-LAN mDNS name (stable across DHCP leases); fall back
+  // to the AP address while the device is still in setup mode.
+  char base_host[56];
+  if (WiFi.isConnected() && g_device.mdns_hostname[0] != '\0') {
+    snprintf(base_host, sizeof(base_host), "%s.local", g_device.mdns_hostname);
+  } else {
+    snprintf(base_host, sizeof(base_host), "%s",
+             WiFi.softAPIP().toString().c_str());
+  }
+
+  char payload[224];
+  int n = snprintf(payload, sizeof(payload),
+    "{\"device_id\":\"%s\",\"base_url\":\"%s://%s\",\"token\":\"%s\"}",
+    g_device.device_id,
+    g_tls_enabled ? "https" : "http",
+    base_host,
+    g_device.api_token_str);
+  if (n < 0 || (size_t)n >= sizeof(payload)) {
+    return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+                               "Failed to build pairing payload");
+  }
+
+  return send_qr_svg(req, payload);
 }
 
 /* OS connectivity-probe handler (Apple / Android / Windows captive checks).
@@ -5752,6 +5976,26 @@ static esp_err_t handle_audio_mute_auth(httpd_req_t* req) {
   if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
   return handle_audio_mute(req);
 }
+static esp_err_t handle_audio_selftest_get_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_audio_selftest_get(req);
+}
+static esp_err_t handle_audio_selftest_post_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_audio_selftest_post(req);
+}
+static esp_err_t handle_audio_config_get_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_audio_config_get(req);
+}
+static esp_err_t handle_audio_config_post_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_audio_config_post(req);
+}
+static esp_err_t handle_audio_transitions_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_audio_transitions(req);
+}
 #endif
 
 // Register all route handlers on a given httpd server handle
@@ -5820,6 +6064,21 @@ static void register_api_routes(httpd_handle_t server) {
 
   httpd_uri_t audio_mute_uri = { .uri = "/api/audio/mute", .method = HTTP_POST, .handler = handle_audio_mute_auth };
   httpd_register_uri_handler(server, &audio_mute_uri);
+
+  httpd_uri_t audio_st_get = { .uri = "/api/audio/selftest", .method = HTTP_GET, .handler = handle_audio_selftest_get_auth };
+  httpd_register_uri_handler(server, &audio_st_get);
+
+  httpd_uri_t audio_st_post = { .uri = "/api/audio/selftest", .method = HTTP_POST, .handler = handle_audio_selftest_post_auth };
+  httpd_register_uri_handler(server, &audio_st_post);
+
+  httpd_uri_t audio_cfg_get = { .uri = "/api/audio/config", .method = HTTP_GET, .handler = handle_audio_config_get_auth };
+  httpd_register_uri_handler(server, &audio_cfg_get);
+
+  httpd_uri_t audio_cfg_post = { .uri = "/api/audio/config", .method = HTTP_POST, .handler = handle_audio_config_post_auth };
+  httpd_register_uri_handler(server, &audio_cfg_post);
+
+  httpd_uri_t audio_trans = { .uri = "/api/audio/transitions", .method = HTTP_GET, .handler = handle_audio_transitions_auth };
+  httpd_register_uri_handler(server, &audio_trans);
 #endif
 
   httpd_uri_t chain = { .uri = "/api/chain", .method = HTTP_GET, .handler = handle_chain_auth };
@@ -5880,9 +6139,9 @@ static void register_api_routes(httpd_handle_t server) {
 
 static void start_http_server() {
   // Calculate max URI handlers based on feature usage
-  const int base_handlers = 39;       // UI (/ + /admin + /settings), API (auth + public), WiFi provisioning, captive/connectivity probes (Apple x2, Android x2, Windows x2), /api/selftest, /api/diagnostics, /api/battery/history, /api/ota/{status,check,install,config}
+  const int base_handlers = 40;       // UI (/ + /admin + /settings), API (auth + public), WiFi provisioning, captive/connectivity probes (Apple x2, Android x2, Windows x2), /api/selftest, /api/diagnostics, /api/battery/history, /api/ota/{status,check,install,config}, /api/pairing-qr
 #if FEATURE_ACOUSTIC_EVENTS
-  const int audio_handlers = 2;       // /api/audio/status, /api/audio/mute
+  const int audio_handlers = 7;       // /api/audio/{status,mute,transitions}, /api/audio/selftest + /api/audio/config (GET + POST each)
 #else
   const int audio_handlers = 0;
 #endif
@@ -6108,6 +6367,9 @@ register_extra_routes:
   // Fleet provisioning QR code
   httpd_uri_t fleet_qr = { .uri = "/api/fleet/qr", .method = HTTP_GET, .handler = handle_fleet_qr_auth };
   httpd_register_uri_handler(active_server, &fleet_qr);
+
+  httpd_uri_t pairing_qr = { .uri = "/api/pairing-qr", .method = HTTP_GET, .handler = handle_pairing_qr };
+  httpd_register_uri_handler(active_server, &pairing_qr);
 
 #if FEATURE_MESH_NETWORK
   // Mesh network (opera) endpoints
@@ -7532,6 +7794,21 @@ void setup() {
   if (!in_safe_mode) {
     Serial.println("[..] Initializing PDM acoustic event detection...");
     audio_config_t audio_cfg = AUDIO_CONFIG_DEFAULT;
+    // Apply the user's persisted room-noise sensitivity (set via
+    // POST /api/audio/config). Invalid/absent pairs fall back to the
+    // compiled defaults (ON=800 / OFF=400).
+    {
+      Preferences sens_prefs;
+      if (sens_prefs.begin("securacv", true /* read-only */)) {
+        const uint16_t on  = sens_prefs.getUShort("mic_rms_on", 0);
+        const uint16_t off = sens_prefs.getUShort("mic_rms_off", 0);
+        sens_prefs.end();
+        if (off > 0 && on > off) {
+          audio_cfg.rms_on_threshold  = on;
+          audio_cfg.rms_off_threshold = off;
+        }
+      }
+    }
     if (audio_init(&audio_cfg)) {
       audio_set_event_callback([](const audio_event_t* evt) {
         uint8_t payload[160];
@@ -7555,6 +7832,12 @@ void setup() {
         #if FEATURE_AUDIBLE_CHIRP
         if (life_safety) audible_chirp::chirp_alert();
         #endif
+        // Hand the event to the MQTT cadence block in loop(), which
+        // publishes the /sensing snapshot HA's binary sensors watch.
+        snprintf(g_audio_mqtt_event, sizeof(g_audio_mqtt_event), "%s",
+                 audio_event_name(evt->event_type));
+        g_audio_mqtt_event_ms = millis();
+        g_audio_mqtt_dirty = true;
       });
       // Sign every mute / unmute toggle into the witness chain so a later
       // operator can verify when the mic was off and which source flipped
@@ -7569,9 +7852,15 @@ void setup() {
         if (cb.ok()) {
           create_witness_record(payload, cb.size(), RECORD_WITNESS_EVENT, &g_last_record);
         }
+        const char* source_name =
+            source == AUDIO_MUTE_SOURCE_BOOT ? "boot" :
+            source == AUDIO_MUTE_SOURCE_MQTT ? "home_assistant" : "dashboard";
         log_health(SCV_LOG_NOTICE, SCV_CAT_USER,
                    muted ? "Microphone muted" : "Microphone unmuted",
-                   source == AUDIO_MUTE_SOURCE_BOOT ? "boot" : "dashboard");
+                   source_name);
+        // Mirror the state to HA's mic-mute switch entity (retained;
+        // cached internally for the reconnect republish).
+        csi_mqtt::publish_mic_state(muted);
       });
       // Honor the user's persisted mute intent. Still single-task here —
       // the HTTP server has not started yet — so the synchronous boot
@@ -7594,6 +7883,10 @@ void setup() {
       } else {
         Serial.println("[WARN] Acoustic detector start failed");
       }
+      // Seed HA's mic-mute switch with the boot state. The broker isn't
+      // connected yet; csi_mqtt caches the value and republishes it
+      // retained on MQTT_EVENT_CONNECTED.
+      csi_mqtt::publish_mic_state(audio_is_muted());
     } else {
       Serial.println("[WARN] Acoustic detector init failed");
     }
@@ -8389,6 +8682,19 @@ void loop() {
   // plus three cadence-gated publishers for the topics HA expects.
   // Schemas locked against custom_components/securacv/sensor.py.
   csi_mqtt::loop();
+#if FEATURE_ACOUSTIC_EVENTS
+  // Track the broker-connection edge OUTSIDE the connected gate so a
+  // reconnect (or first boot connect) forces an immediate /sensing
+  // publish below. The topic is retained: without this, a smoke/CO
+  // event published just before a reboot/disconnect would linger on
+  // the broker and HA could briefly automate on a phantom alarm when
+  // the device comes back. The forced publish reflects live state —
+  // "none" after a reboot — and overwrites the stale payload.
+  static bool s_mqtt_prev_connected = false;
+  const bool mqtt_just_connected =
+      csi_mqtt::connected() && !s_mqtt_prev_connected;
+  s_mqtt_prev_connected = csi_mqtt::connected();
+#endif
   if (csi_mqtt::connected()) {
     static uint32_t s_mqtt_status_ms = 0;
     static uint32_t s_mqtt_health_ms = 0;
@@ -8405,6 +8711,66 @@ void loop() {
       csi_mqtt::publish_health((uint32_t)ESP.getFreeHeap(),
                                (uint32_t)uptime_seconds());
     }
+
+#if FEATURE_ACOUSTIC_EVENTS
+    // Drain HA's mic-mute switch commands. audio_mute() defers the I2S
+    // toggle to the next audio_process() tick; the mute callback then
+    // signs the witness record and mirrors mic/state back to HA.
+    {
+      const int mic_cmd = csi_mqtt::take_pending_mic_mute();
+      if (mic_cmd >= 0) {
+        const bool want_mute = (mic_cmd == 1);
+        if (audio_mute(want_mute, AUDIO_MUTE_SOURCE_MQTT)) {
+          if (!audio_save_mute_intent(want_mute)) {
+            log_health(SCV_LOG_WARNING, SCV_CAT_STORAGE,
+                       "Mic mute intent NOT persisted", "NVS write failed");
+          }
+        }
+      }
+    }
+    // Acoustic /sensing snapshot: publish immediately when an event
+    // lands, once more to clear it back to "none" after the 30 s hold,
+    // and every 60 s as a counters/mute heartbeat. HA's smoke/CO/
+    // knock/doorbell/glass binary sensors template on acoustic_event.
+    {
+      static uint32_t s_mqtt_sensing_ms = 0;
+      static bool s_sensing_event_held = false;
+      const bool event_fresh = (g_audio_mqtt_event_ms != 0) &&
+          (now - g_audio_mqtt_event_ms) < AUDIO_MQTT_EVENT_HOLD_MS;
+      const bool need_clear = s_sensing_event_held && !event_fresh;
+      if (g_audio_mqtt_dirty || need_clear || mqtt_just_connected ||
+          (now - s_mqtt_sensing_ms >= 60000UL)) {
+        g_audio_mqtt_dirty = false;
+        s_mqtt_sensing_ms = now;
+        s_sensing_event_held = event_fresh;
+        audio_stats_t ast = {};
+        audio_get_stats(&ast);
+        char sensing_json[320];
+        const int sn = snprintf(sensing_json, sizeof(sensing_json),
+          "{"
+            "\"acoustic_event\":\"%s\","
+            "\"mic_muted\":%s,"
+            "\"t3_detected\":%lu,"
+            "\"t4_detected\":%lu,"
+            "\"knock_detected\":%lu,"
+            "\"doorbell_detected\":%lu,"
+            "\"glass_break_detected\":%lu,"
+            "\"i2s_read_errors\":%lu"
+          "}",
+          event_fresh ? g_audio_mqtt_event : "none",
+          audio_is_muted() ? "true" : "false",
+          (unsigned long)ast.t3_detected,
+          (unsigned long)ast.t4_detected,
+          (unsigned long)ast.knock_detected,
+          (unsigned long)ast.doorbell_detected,
+          (unsigned long)ast.glass_break_detected,
+          (unsigned long)ast.i2s_read_errors);
+        if (sn > 0 && sn < (int)sizeof(sensing_json)) {
+          csi_mqtt::publish_sensing(sensing_json);
+        }
+      }
+    }
+#endif
     // Counts + chain: publish on each increment of records_created
     // (saves bandwidth vs. heartbeating, and matches HA's expectation
     // that the topic carries the latest total, not periodic noise).
