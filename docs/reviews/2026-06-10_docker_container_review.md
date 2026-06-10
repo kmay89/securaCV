@@ -272,7 +272,13 @@ and the offline evidence viewer (static HTML).
    `privacy_witness_kernel/`; integration README gains the `.env` step, the working
    one-off `mosquitto_passwd` bootstrap (§2.4), and notes that HA's MQTT integration
    needs the same credentials. Obsolete compose `version:` key removed.
-7. **New CI gate** — `.github/workflows/container-images.yml` build-validates the root
+7. **Sidecar broker race fixed** — the sidecar entrypoint's broker preflight was a
+   single-shot TCP probe; if mosquitto wasn't listening yet at sidecar start (compose
+   `depends_on` and the e2e harness only order container *startup*, not readiness),
+   the container died with "broker not reachable". Caught when the sidecar e2e flaked
+   on this PR (it had passed on identical code with luckier timing). The probe now
+   retries for up to `BROKER_WAIT_SECS` (default 30s) before giving up.
+8. **New CI gate** — `.github/workflows/container-images.yml` build-validates the root
    `Dockerfile` on PRs/pushes touching it (it previously had **no** CI build at all,
    which is how both the phantom-Dockerfile reference and the stale toolchain pin
    shipped) and smoke-tests that the binary loads with no missing shared libraries and
