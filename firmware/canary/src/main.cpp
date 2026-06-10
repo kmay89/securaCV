@@ -161,6 +161,19 @@ static securacv_ota_state_t g_ota_last_seen_state = SECURACV_OTA_IDLE;
 static uint32_t g_ota_next_check_ms = 0;
 #endif
 
+#if FEATURE_HA_MQTT && FEATURE_SENSING_WITNESS
+/* Pending tamper alert for the dedicated securacv/{id}/tamper topic.
+ * Set from the sensing witness callback (must stay non-blocking, same
+ * rule as the OTA flag above); the main loop turns it into an MQTT
+ * publish that the host's mqtt_sensor adapter routes into the sealed
+ * witness log as a TamperDetected event. Single-slot: if a second
+ * tamper fires before the loop drains the first, the newest wins —
+ * the host dedups per 10-minute bucket anyway. */
+static volatile bool g_tamper_publish_pending = false;
+static volatile uint8_t g_tamper_pending_kind = 0;       /* sensing_witness_kind_t */
+static volatile uint8_t g_tamper_pending_confidence = 0; /* 0..100 */
+#endif
+
 // Device-unique AP password (derived from pubkey fingerprint)
 static char g_ap_password[16];
 
@@ -888,6 +901,17 @@ void setup() {
             ? RECORD_TAMPER_ALERT
             : RECORD_WITNESS_EVENT;
 
+#if FEATURE_HA_MQTT
+    /* Tamper must ALSO reach the host kernel's sealed log, not just the
+     * device-side chain: queue a publish on the dedicated tamper topic
+     * (drained by the main loop; this callback must stay non-blocking). */
+    if (rt == RECORD_TAMPER_ALERT) {
+      g_tamper_pending_kind = we->kind;
+      g_tamper_pending_confidence = we->confidence;
+      g_tamper_publish_pending = true;
+    }
+#endif
+
     WitnessRecord rec;
     /* witness_create_record() already increments records_created on
      * success internally (securacv_witness.cpp); we only log on the
@@ -1542,6 +1566,30 @@ void loop() {
   if (g_ota_publish_pending && mqtt_connected()) {
     g_ota_publish_pending = false;
     mqtt_publish_ota_update_state();
+  }
+#endif
+
+#if FEATURE_HA_MQTT && FEATURE_SENSING_WITNESS
+  // Drain a pending tamper alert onto securacv/{id}/tamper. Payload shape
+  // matches the host mqtt_sensor adapter contract ({state, confidence,
+  // kind}); the adapter routes it into the sealed log as TamperDetected.
+  // Confidence is rescaled 0..100 -> 0..1 for the kernel's bounds check.
+  if (g_tamper_publish_pending && mqtt_connected()) {
+    g_tamper_publish_pending = false;
+    const uint8_t kind = g_tamper_pending_kind;
+    const char* kind_str =
+        (kind == SENSING_WITNESS_TOUCH_TAMPER)  ? "enclosure_tamper" :
+        (kind == SENSING_WITNESS_TEMP_DRIFT)    ? "temp_drift"
+                                                : "camera_tamper";
+    char payload[96];
+    snprintf(payload, sizeof(payload),
+             "{\"state\":\"on\",\"confidence\":%.2f,\"kind\":\"%s\"}",
+             (double)g_tamper_pending_confidence / 100.0, kind_str);
+    if (!mqtt_publish_tamper(payload)) {
+      // Re-arm so the alert survives a transient broker drop; the
+      // device-side chain already holds the signed record either way.
+      g_tamper_publish_pending = true;
+    }
   }
 #endif
 
