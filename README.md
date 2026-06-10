@@ -13,9 +13,10 @@ Clips stay on your hardware. They auto-delete. The only thing that persists is a
 tamper-proof log that proves nobody — including you — altered the record.
 
 - **No subscription.** It runs on your own hardware. There is no monthly fee, ever.
-- **Private by design.** No faces, no plates, no precise timestamps — detections become
-  semantic events ("a large object crossed the boundary"), and raw frames are never persisted.
-  The privacy rules are [enforced in code](spec/invariants.md), not promised in a policy.
+- **Private by design.** No faces, no plates, no precise timestamps — the witness kernel turns
+  detections into semantic events ("a large object crossed the boundary") and never persists
+  raw frames. The privacy rules are [enforced in code](spec/invariants.md), not promised in a
+  policy.
 - **Tamper-proof proof.** Every event is cryptographically signed and hash-chained. If anyone
   alters the record, the signature breaks and verification fails.
 
@@ -43,7 +44,7 @@ tamper-proof log that proves nobody — including you — altered the record.
 
 ## How it compares
 
-| | Cloud cameras (Ring, Nest) | DIY NVR (Frigate, UniFi) | **SecuraCV** |
+| What matters | Cloud cameras (Ring, Nest) | DIY NVR (Frigate, UniFi) | **SecuraCV** |
 |---|---|---|---|
 | Recurring fees | $5–20/month per setup | None | **None** |
 | Footage lives | Their cloud | Your disk | **Your disk, auto-deleting** |
@@ -221,6 +222,7 @@ Device firmware lives under [`firmware/`](firmware/):
 
 - **[docs/strategy/](docs/strategy/)** — codebase map, product strategy, market & cost analysis.
 - Contribution rules: [`CONTRIBUTING.md`](CONTRIBUTING.md) · Security policy: [`SECURITY.md`](SECURITY.md)
+  · Detection sandbox & engineering invariants: [`AGENTS.md`](AGENTS.md)
 - Release notes: [`CHANGELOG.md`](CHANGELOG.md) · Host-compromise limits: [`docs/root_paradox.md`](docs/root_paradox.md)
 
 ## Status
