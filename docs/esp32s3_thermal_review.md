@@ -152,7 +152,38 @@ reflect T2/T3 as fixed and point here.
      observe THROTTLED log + frame-rate drop, then recovery after cooling
      (graceful degradation end-to-end).
 
+## Follow-up: thermal watchdog (closes the remaining gaps)
+
+Three gaps remained after this review and are now closed by the passive
+thermal watchdog (`lib/securacv_thermal_watchdog/`, `FEATURE_THERMAL_WATCHDOG`,
+default on):
+
+1. **Blind when idle** — `checkThermal()` only ran inside the peek-streaming
+   loop; the watchdog samples the shared provider every 30 s regardless, and
+   `/api/peek/status` now reports its fresh cache instead of a stale reading.
+2. **Silent sensor failure** — a failed `thermal_read_die_c()` kept the last
+   state forever with no trace. The watchdog surfaces an ERROR health-log
+   entry after 4 consecutive misses (~2 min), and the camera now fails safe
+   to THROTTLED after 3 misses at its 5 s cadence instead of streaming the
+   hottest peripheral blind at full rate.
+3. **No persistence** — lifetime history (all-time min/max, throttled/paused
+   minutes, throttle/pause/critical/cold/sensor-fail event counts) is
+   NVS-persisted on a 10-min dirty-flag cadence (same pattern as the battery
+   history) and served at `GET /api/thermal`, plus an "Adaptive performance"
+   dashboard card.
+
+The watchdog is strictly an observer — the camera state machine above remains
+the sole actuator. It mirrors the same 70/80/5 hysteresis as a *shadow*
+classifier so history counts the same conditions the actuator responds to,
+and raises advisories (critical ≥ 85 °C, saturation = 10 min continuous
+shadow-pause, env-limited = ≥4 throttle entries/30 min, cold < 5 °C die)
+through the health log only — never the witness chain.
+
 ## Operational guidance (user-facing, from Seeed)
+
+User-facing placement, heat-sink, hot/cold-weather, and history-reading
+guidance now lives in [`thermal_guide.md`](./thermal_guide.md). The short
+version:
 
 - Install the bundled heat sink on Sense units — on the thermal pad directly
   over the ESP32-S3 first. It's worth ~10 °C under sustained streaming.
