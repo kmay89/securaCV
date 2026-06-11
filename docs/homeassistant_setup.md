@@ -94,7 +94,7 @@ Import the SecuraCV Alert Blueprint for one-click notification setup:
 2. Enter URL: `https://github.com/kmay89/securaCV/blob/main/docs/blueprints/securacv_alerts.yaml`
 3. Create an automation from the blueprint
 4. Select your Canary device and notification service
-5. Enable the alert types you want (tamper, chain failure, offline, GPS loss)
+5. Enable the alert types you want (smoke/CO alarm heard — critical pushes that bypass silent mode, tamper, chain failure, offline, GPS loss)
 
 Or copy automations from `docs/homeassistant_automations.yaml` for manual setup.
 

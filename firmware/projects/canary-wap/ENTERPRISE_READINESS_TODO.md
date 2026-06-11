@@ -50,10 +50,17 @@ Reference baseline inventory: [`firmware/FIRMWARE_VARIANT_AUDIT.md`](../../FIRMW
         (`firmware/common/gnss/gps_privacy.h`, 3 dp ≈ 110 m). `regression_check.sh` now hard-fails
         on un-coarsened lat/lon in *any* tree. Host-tested via `tests_host/test_gps_coarsen.cpp`.
 
-- [ ] **Constrain outbound behavior to explicit opt-in**
-  - Keep AP-only default mode.
-  - Require explicit user action to enable STA + MQTT.
-  - Make outbound state highly visible in UI (“Disconnected by default”, “Connected to broker X”).
+- [x] **Constrain outbound behavior to explicit opt-in**
+  - [x] AP-only default mode kept: the MQTT bridge's NVS `enabled` flag
+        defaults to `false` (`csi_mqtt::config_load`) — a fresh device
+        publishes nothing.
+  - [x] Explicit user action required: STA credentials and the broker
+        config each arrive only via authenticated POSTs from the owner.
+  - [x] Outbound state highly visible: the headline dashboard's Today
+        sheet carries a sharing pill — "Sharing: off — nothing leaves
+        unless you turn it on" vs "Sharing: on — connected to <host>"
+        (warm-tinted whenever a sharing path is enabled), backed by
+        `/api/mqtt/config`'s `enabled`/`connected`/`host` fields.
 
 ---
 
