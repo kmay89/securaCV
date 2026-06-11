@@ -63,10 +63,40 @@ describe('envelope verification parity', () => {
     assert.match(report.error, /artifact hash mismatch/);
   });
 
+  it('verifies the legacy (pre-auth_mode) envelope — old bundles stay valid forever', async () => {
+    const envelope = loadFixture('valid_envelope_legacy.json');
+    const digest = await V.computeWholeEnvelopeDigest(envelope);
+    assert.equal(digest, envelope.whole_envelope_digest, 'cross-language digest mismatch');
+
+    const report = await V.verifyEnvelope(envelope);
+    assert.equal(report.ok, true, report.error);
+    assert.equal(report.sealed_events, 3);
+    assert.equal(report.export_receipts, 1);
+    assert.equal(envelope.export_receipt_entry.receipt.auth_mode, undefined);
+  });
+
+  it('verifies the owner self-export envelope (auth_mode + disclosure window on the receipt)', async () => {
+    const envelope = loadFixture('valid_envelope_self_export.json');
+    const digest = await V.computeWholeEnvelopeDigest(envelope);
+    assert.equal(digest, envelope.whole_envelope_digest, 'cross-language digest mismatch');
+
+    const report = await V.verifyEnvelope(envelope);
+    assert.equal(report.ok, true, report.error);
+    assert.equal(report.sealed_events, 3);
+    assert.equal(report.export_receipts, 2);
+    assert.equal(envelope.export_receipt_entry.receipt.auth_mode, 'self_export');
+    assert.deepEqual(envelope.export_receipt_entry.receipt.window,
+      { start_epoch_s: 600, end_epoch_s: 2400 });
+  });
+
   it('rejects a tampered payload (chain break)', async () => {
     const report = await V.verifyEnvelope(loadFixture('tampered_payload.json'));
     assert.equal(report.ok, false);
     assert.match(report.error, /sealed_events/);
+    // Structured-failure parity pin: tests/envelope_fixtures.rs asserts this
+    // exact triple for the same fixture via VerifyFailure.
+    assert.deepEqual(report.failure,
+      { ledger: 'sealed_events', entry_id: 0, kind: 'entry_hash_mismatch' });
   });
 
   it('rejects a corrupted digest', async () => {

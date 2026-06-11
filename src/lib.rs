@@ -65,6 +65,7 @@ pub mod transport;
 pub mod tsa;
 pub mod vault;
 pub mod verify;
+pub mod verify_explain;
 
 pub use adapter::{
     claim_kind_to_event_type, AdapterDescriptor, AdapterHost, AdapterRegistry, Claim, ClaimKind,
@@ -774,12 +775,45 @@ pub struct ExportArtifact {
     pub jitter_step_s: u64,
 }
 
+/// How an export was authorized. Recorded on the signed export receipt so a
+/// verifier can distinguish owner-authorized disclosure from trustee-quorum
+/// disclosure. Absent on receipts written before this field existed.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExportAuthMode {
+    /// Trustee-quorum break-glass token (`export:events` envelope).
+    BreakGlass,
+    /// Owner self-export, authenticated by possession of the device key seed.
+    SelfExport,
+    /// Local capability-token API access.
+    Api,
+}
+
+/// Half-open time window `[start_epoch_s, end_epoch_s)` restricting an export
+/// to records whose true (pre-jitter) bucket start falls inside it. Both
+/// bounds MUST be aligned to the 600 s bucket grid so the window itself never
+/// discloses finer-than-bucket timing.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ExportWindow {
+    pub start_epoch_s: u64,
+    pub end_epoch_s: u64,
+}
+
+// New receipt fields must be `Option` + `default` + `skip_serializing_if` and
+// stay LAST: the envelope verifiers (Rust `envelope.rs` and JS
+// `viewer/verify_core.js`) re-serialize this struct byte-for-byte to recompute
+// the receipt entry hash, so field order and absence semantics are part of the
+// signed format. Absent => legacy receipt.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ExportReceipt {
     pub time_bucket: TimeBucket,
     pub ruleset_hash: [u8; 32],
     pub batch_size: usize,
     pub artifact_hash: [u8; 32],
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_mode: Option<ExportAuthMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window: Option<ExportWindow>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -804,6 +838,9 @@ pub struct ExportOptions {
     pub max_events_per_batch: usize,
     pub jitter_s: u64,
     pub jitter_step_s: u64,
+    /// Optional bucket-aligned time window restricting which records are
+    /// exported. `None` exports the full retained history.
+    pub window: Option<ExportWindow>,
 }
 
 impl Default for ExportOptions {
@@ -812,6 +849,7 @@ impl Default for ExportOptions {
             max_events_per_batch: 50,
             jitter_s: 120,
             jitter_step_s: 60,
+            window: None,
         }
     }
 }
@@ -2175,6 +2213,19 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         if options.jitter_s > 0 && options.jitter_step_s > options.jitter_s {
             return Err(anyhow!("export jitter_step_s cannot exceed jitter_s"));
         }
+        if let Some(window) = &options.window {
+            if window.start_epoch_s % u64::from(TEN_MINUTES_S) != 0
+                || window.end_epoch_s % u64::from(TEN_MINUTES_S) != 0
+            {
+                return Err(anyhow!(
+                    "export window bounds must be aligned to {}s bucket boundaries",
+                    TEN_MINUTES_S
+                ));
+            }
+            if window.start_epoch_s >= window.end_epoch_s {
+                return Err(anyhow!("export window start must be before end"));
+            }
+        }
         Ok(())
     }
 
@@ -2195,7 +2246,11 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
             &self.device_verifying_key(),
             |hash| self.break_glass_receipt_outcome(hash),
         )?;
-        let artifact = self.export_events_sequential_unchecked(expected_ruleset_hash, options)?;
+        let artifact = self.export_events_sequential_unchecked(
+            expected_ruleset_hash,
+            options,
+            ExportAuthMode::BreakGlass,
+        )?;
         token.consume()?;
         Ok(artifact)
     }
@@ -2208,7 +2263,27 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         options: ExportOptions,
     ) -> Result<ExportArtifact> {
         Self::validate_export_options(&options)?;
-        self.export_events_sequential_unchecked(expected_ruleset_hash, options)
+        self.export_events_sequential_unchecked(expected_ruleset_hash, options, ExportAuthMode::Api)
+    }
+
+    /// Owner self-export of the privacy-filtered event artifact (no break-glass).
+    ///
+    /// The caller is authenticated by possession of the device key seed, which
+    /// is required to open/decrypt the database and to sign the export receipt
+    /// — the same artifact the capability-token API already serves. A signed,
+    /// hash-chained receipt labeled `self_export` is always appended
+    /// (Invariant IV). Sealed-vault evidence and unsealing remain quorum-only.
+    pub fn export_events_self(
+        &mut self,
+        expected_ruleset_hash: [u8; 32],
+        options: ExportOptions,
+    ) -> Result<ExportArtifact> {
+        Self::validate_export_options(&options)?;
+        self.export_events_sequential_unchecked(
+            expected_ruleset_hash,
+            options,
+            ExportAuthMode::SelfExport,
+        )
     }
 
     pub fn export_events_bundle_authorized(
@@ -2218,6 +2293,22 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         token: &mut break_glass::BreakGlassToken,
     ) -> Result<ExportBundle> {
         let artifact = self.export_events_authorized(expected_ruleset_hash, options, token)?;
+        self.bundle_from_artifact(artifact)
+    }
+
+    /// Owner self-export bundle (artifact + signed receipt + verifying keys).
+    /// Mirrors [`Self::export_events_bundle_authorized`] without the quorum gate;
+    /// see [`Self::export_events_self`] for the authorization rationale.
+    pub fn export_events_bundle_self(
+        &mut self,
+        expected_ruleset_hash: [u8; 32],
+        options: ExportOptions,
+    ) -> Result<ExportBundle> {
+        let artifact = self.export_events_self(expected_ruleset_hash, options)?;
+        self.bundle_from_artifact(artifact)
+    }
+
+    fn bundle_from_artifact(&self, artifact: ExportArtifact) -> Result<ExportBundle> {
         let receipt_entry = self.latest_export_receipt_entry()?;
         let artifact_bytes = serde_json::to_vec(&artifact)?;
         let artifact_hash: [u8; 32] = Sha256::digest(&artifact_bytes).into();
@@ -2303,11 +2394,30 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         )
     }
 
+    /// Build a canonical evidence envelope via owner self-export (no break-glass).
+    /// See [`Self::export_events_self`] for the authorization rationale.
+    pub fn build_evidence_envelope_self(
+        &mut self,
+        expected_ruleset_hash: [u8; 32],
+        options: ExportOptions,
+        ruleset_id: &str,
+        kernel_version: &str,
+    ) -> Result<EvidenceEnvelope> {
+        let bundle = self.export_events_bundle_self(expected_ruleset_hash, options)?;
+        self.evidence_envelope_from_bundle(
+            bundle,
+            ruleset_id,
+            kernel_version,
+            expected_ruleset_hash,
+        )
+    }
+
     /// Export events sequentially, grouped into coarse time buckets with batching and jitter.
     fn export_events_sequential_unchecked(
         &mut self,
         expected_ruleset_hash: [u8; 32],
         options: ExportOptions,
+        auth_mode: ExportAuthMode,
     ) -> Result<ExportArtifact> {
         Self::validate_export_options(&options)?;
 
@@ -2352,6 +2462,16 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
             }
 
             let record_bucket = record.time_bucket();
+            // Window filtering uses the true (pre-jitter) bucket start so the
+            // selection is exact; only bucket-aligned bounds are accepted, so
+            // the window discloses nothing finer than the buckets themselves.
+            if let Some(window) = &options.window {
+                if record_bucket.start_epoch_s < window.start_epoch_s
+                    || record_bucket.start_epoch_s >= window.end_epoch_s
+                {
+                    continue;
+                }
+            }
             let key = (record_bucket.start_epoch_s, record_bucket.size_s);
             let idx = if let Some(existing) = bucket_index.get(&key) {
                 *existing
@@ -2437,6 +2557,8 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
             ruleset_hash: expected_ruleset_hash,
             batch_size: options.max_events_per_batch,
             artifact_hash,
+            auth_mode: Some(auth_mode),
+            window: options.window,
         };
         self.log_export_receipt(&receipt)?;
 
@@ -3358,6 +3480,7 @@ mod tests {
                 jitter_s: 0,
                 ..ExportOptions::default()
             },
+            ExportAuthMode::SelfExport,
         )?;
         let value = serde_json::to_value(&artifact)?;
 
@@ -3936,6 +4059,7 @@ mod tests {
                 jitter_s: 0,
                 ..ExportOptions::default()
             },
+            ExportAuthMode::SelfExport,
         )?;
         let failures: Vec<&ExportFailureEvent> = artifact
             .batches
@@ -4145,6 +4269,7 @@ mod tests {
                 jitter_s: 0,
                 ..ExportOptions::default()
             },
+            ExportAuthMode::SelfExport,
         )?;
         let (events, failures): (usize, usize) = artifact
             .batches
@@ -4408,6 +4533,7 @@ mod tests {
                 jitter_s: 0,
                 ..ExportOptions::default()
             },
+            ExportAuthMode::SelfExport,
         )?;
         let failures: Vec<&ExportFailureEvent> = artifact
             .batches
@@ -4445,6 +4571,7 @@ mod tests {
                 jitter_s: 0,
                 ..ExportOptions::default()
             },
+            ExportAuthMode::SelfExport,
         )?;
         let failures: Vec<&ExportFailureEvent> = artifact
             .batches

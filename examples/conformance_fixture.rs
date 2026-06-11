@@ -49,6 +49,7 @@ fn main() -> Result<()> {
             max_events_per_batch: 1,
             jitter_s: 0,
             jitter_step_s: 1,
+            ..ExportOptions::default()
         },
         &mut token,
     )?;

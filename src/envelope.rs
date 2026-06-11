@@ -19,6 +19,7 @@ use crate::crypto::signatures::{
     PqPublicKey, SignatureMode, SignatureSet, DOMAIN_BREAK_GLASS_RECEIPT, DOMAIN_CHECKPOINT,
     DOMAIN_EXPORT_RECEIPT, DOMAIN_SEALED_LOG_ENTRY, ED25519_SCHEME_ID, PQ_SCHEME_MLDSA44,
 };
+use crate::verify;
 use crate::{
     approvals_commitment, hash_entry, verify_entry_signature, Approval, BreakGlassReceipt,
     ExportArtifact, ExportReceiptEntry,
@@ -431,7 +432,14 @@ pub fn verify_envelope(envelope: &EvidenceEnvelope, mode: SignatureMode) -> Resu
             pq_key.as_ref(),
             DOMAIN_CHECKPOINT,
         )
-        .map_err(|e| anyhow!("checkpoint signature verification failed: {}", e))?;
+        .map_err(|e| {
+            anyhow::Error::new(verify::VerifyFailure {
+                ledger: verify::FailedLedger::Checkpoint,
+                entry_id: None,
+                kind: verify::FailureKind::CheckpointInvalid,
+                detail: format!("checkpoint signature verification failed: {}", e),
+            })
+        })?;
     }
 
     // 5. Break-glass receipts: chain + signatures + approvals commitment + tally.
@@ -466,15 +474,26 @@ pub fn verify_envelope(envelope: &EvidenceEnvelope, mode: SignatureMode) -> Resu
         bg_head,
     )?;
     let (mut granted, mut denied) = (0u64, 0u64);
-    for entry in &envelope.ledgers.break_glass_receipts.entries {
+    for (idx, entry) in envelope
+        .ledgers
+        .break_glass_receipts
+        .entries
+        .iter()
+        .enumerate()
+    {
         let receipt: BreakGlassReceipt = serde_json::from_str(&entry.payload_json)?;
         let approvals: Vec<Approval> = serde_json::from_str(&entry.approvals_json)?;
         let commitment = approvals_commitment(&approvals);
         if commitment != receipt.approvals_commitment {
-            return Err(anyhow!(
-                "break-glass approvals commitment mismatch: stored={}, computed={}",
-                hex::encode(receipt.approvals_commitment),
-                hex::encode(commitment)
+            return Err(chain_fail(
+                "break_glass_receipts",
+                idx,
+                verify::FailureKind::ApprovalsCommitmentMismatch,
+                format!(
+                    "break-glass approvals commitment mismatch: stored={}, computed={}",
+                    hex::encode(receipt.approvals_commitment),
+                    hex::encode(commitment)
+                ),
             ));
         }
         match receipt.outcome {
@@ -607,6 +626,35 @@ fn validate_ledger_summary(
 }
 
 #[allow(clippy::too_many_arguments)]
+// Map a ledger's wire name onto the structured failure location. The wire
+// names are fixed by the envelope format; the message strings keep using them
+// verbatim so existing consumers (and the parity fixtures) see unchanged text.
+fn failed_ledger_from_name(name: &str) -> verify::FailedLedger {
+    match name {
+        "break_glass_receipts" => verify::FailedLedger::BreakGlassReceipts,
+        "export_receipts" => verify::FailedLedger::ExportReceipts,
+        _ => verify::FailedLedger::SealedEvents,
+    }
+}
+
+fn chain_fail(
+    ledger_name: &str,
+    idx: usize,
+    kind: verify::FailureKind,
+    detail: String,
+) -> anyhow::Error {
+    anyhow::Error::new(verify::VerifyFailure {
+        ledger: failed_ledger_from_name(ledger_name),
+        entry_id: Some(idx as i64),
+        kind,
+        detail,
+    })
+}
+
+// The argument list mirrors the verification context (chain start, domain,
+// keys, mode, ledger identity) — bundling them into a struct would obscure
+// the 1:1 mapping with the Rust/JS parity algorithm for no reuse benefit.
+#[allow(clippy::too_many_arguments)]
 fn verify_linear_chain<'a, I>(
     entries: I,
     mut expected_prev: [u8; 32],
@@ -622,22 +670,32 @@ where
 {
     for (idx, (payload, prev_hash, entry_hash, signatures)) in entries.into_iter().enumerate() {
         if *prev_hash != expected_prev {
-            return Err(anyhow!(
-                "{} integrity check failed at index {}: prev_hash={}, expected={}",
+            return Err(chain_fail(
                 ledger_name,
                 idx,
-                hex::encode(prev_hash),
-                hex::encode(expected_prev)
+                verify::FailureKind::PrevHashMismatch,
+                format!(
+                    "{} integrity check failed at index {}: prev_hash={}, expected={}",
+                    ledger_name,
+                    idx,
+                    hex::encode(prev_hash),
+                    hex::encode(expected_prev)
+                ),
             ));
         }
         let computed = hash_entry(&expected_prev, payload.as_bytes());
         if computed != *entry_hash {
-            return Err(anyhow!(
-                "{} integrity check failed at index {}: computed_hash={}, stored_hash={}",
+            return Err(chain_fail(
                 ledger_name,
                 idx,
-                hex::encode(computed),
-                hex::encode(entry_hash)
+                verify::FailureKind::EntryHashMismatch,
+                format!(
+                    "{} integrity check failed at index {}: computed_hash={}, stored_hash={}",
+                    ledger_name,
+                    idx,
+                    hex::encode(computed),
+                    hex::encode(entry_hash)
+                ),
             ));
         }
         verify_entry_signature(
@@ -649,11 +707,14 @@ where
             domain,
         )
         .map_err(|e| {
-            anyhow!(
-                "{} signature verification failed at index {}: {}",
+            chain_fail(
                 ledger_name,
                 idx,
-                e
+                verify::FailureKind::SignatureMismatch,
+                format!(
+                    "{} signature verification failed at index {}: {}",
+                    ledger_name, idx, e
+                ),
             )
         })?;
         if pq_public_key.is_some() && signatures.pq_signature.is_some() {

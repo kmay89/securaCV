@@ -14,7 +14,7 @@ use sha2::{Digest, Sha256};
 use std::io::IsTerminal;
 
 use witness_kernel::crypto::signatures::SignatureMode;
-use witness_kernel::{verify, verify_helpers, ExportReceipt};
+use witness_kernel::{verify, verify_export_bundle, verify_helpers, ExportBundle, ExportReceipt};
 
 #[path = "../ui.rs"]
 mod ui;
@@ -59,11 +59,11 @@ struct Args {
     /// SQLCipher database encryption key (hex-encoded, 32 bytes)
     #[arg(long, value_name = "HEX", env = "SECURACV_DB_KEY")]
     db_key: Option<String>,
-
-    /// Device key seed (as used by the kernel/bridges). Convenience for
-    /// operators: derives the SQLCipher key (when --db-key is not given),
-    /// so `DEVICE_KEY_SEED=... export_verify --db witness.db --bundle ...`
-    /// works against a kernel-produced encrypted log.
+    /// Device key seed (as used by the kernel/bridges). Derives the SQLCipher
+    /// key (when --db-key is not given) and the verifying key (when no
+    /// --public-key/--public-key-file is given) — same semantics as
+    /// log_verify, so `DEVICE_KEY_SEED=... export_verify --db witness.db
+    /// --bundle ...` verifies an owner self-export with the seed alone.
     #[arg(long, value_name = "SEED", env = "DEVICE_KEY_SEED")]
     device_key_seed: Option<String>,
 }
@@ -117,11 +117,18 @@ fn main() -> Result<()> {
         }
         conn
     };
+    let public_key_hex: Option<String> = match (&args.public_key, args.device_key_seed.as_deref()) {
+        (Some(hex), _) => Some(hex.clone()),
+        (None, Some(seed)) if args.public_key_file.is_none() => Some(hex::encode(
+            witness_kernel::verifying_key_from_seed(seed)?.to_bytes(),
+        )),
+        _ => None,
+    };
     let verifying_key = {
         let _stage = ui.stage("Load verifying key");
         verify_helpers::load_verifying_key(
             &conn,
-            args.public_key.as_deref(),
+            public_key_hex.as_deref(),
             args.public_key_file.as_deref(),
         )?
     };
@@ -137,6 +144,10 @@ fn main() -> Result<()> {
     println!("export_verify: checking {}", args.bundle);
     println!();
 
+    // Entry hashes verified below against the TRUSTED key (from DB/CLI/seed).
+    // Bundle files are later required to reference one of these entries, so a
+    // bundle re-signed under an attacker-chosen key can never pass.
+    let mut verified_entry_hashes: Vec<[u8; 32]> = Vec::new();
     {
         let _stage = ui.stage("Verify export receipts");
         let count = verify::verify_export_receipts_with(
@@ -145,6 +156,7 @@ fn main() -> Result<()> {
             signature_mode,
             pq_verifying_key.as_ref(),
             |id, entry_hash| {
+                verified_entry_hashes.push(entry_hash);
                 if args.verbose {
                     println!(
                         "  receipt {}: hash={} OK",
@@ -163,14 +175,40 @@ fn main() -> Result<()> {
         std::fs::read(&args.bundle)
             .map_err(|e| anyhow!("failed to read bundle {}: {}", args.bundle, e))?
     };
-    let bundle_hash: [u8; 32] = Sha256::digest(&bundle_bytes).into();
+
+    // The file is normally an ExportBundle as written by `export_events`
+    // (artifact + signed receipt + keys). The bundle carries its own device
+    // key, which an attacker could swap alongside a re-signed receipt, so
+    // bundle-internal checks (verify_export_bundle: artifact binding + receipt
+    // signature) prove only internal consistency. Trust comes from requiring
+    // the bundled receipt entry to be one of the entries verified above under
+    // the trusted key — that entry hash commits to the full receipt payload,
+    // including auth_mode and window, so none of it can be rewritten.
+    // A bare-artifact file (no receipt wrapper) is matched by its whole-file
+    // hash against the trusted chain, as older exports produced.
+    let artifact_hash: [u8; 32] = match serde_json::from_slice::<ExportBundle>(&bundle_bytes) {
+        Ok(bundle) => {
+            let _stage = ui.stage("Verify bundle receipt + artifact binding");
+            verify_export_bundle(&bundle)?;
+            if !verified_entry_hashes.contains(&bundle.receipt_entry.entry_hash) {
+                return Err(anyhow!(
+                    "TAMPER: bundle receipt entry not found in the verified export-receipt chain"
+                ));
+            }
+            if let Some(mode) = bundle.receipt_entry.receipt.auth_mode {
+                println!("bundle authorization: {:?}", mode);
+            }
+            bundle.receipt_entry.receipt.artifact_hash
+        }
+        Err(_) => Sha256::digest(&bundle_bytes).into(),
+    };
     if args.verbose {
-        println!("bundle hash: {}", verify_helpers::hex32(&bundle_hash));
+        println!("artifact hash: {}", verify_helpers::hex32(&artifact_hash));
     }
 
     let found = {
         let _stage = ui.stage("Match bundle hash");
-        bundle_hash_in_export_receipts(&conn, &bundle_hash)?
+        bundle_hash_in_export_receipts(&conn, &artifact_hash)?
     };
     if !found {
         return Err(anyhow!("TAMPER: bundle hash not found in export receipts"));

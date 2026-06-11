@@ -99,10 +99,27 @@ cargo run --bin break_glass -- unseal \
 ## Event export
 
 Write a local artifact with coarse time buckets and batched events (no precise timestamps or
-identity selectors):
+identity selectors). There are two authorization modes; **every export, in either mode, appends
+a signed, hash-chained receipt** to the tamper-evident log, labeled with its `auth_mode` — so
+disclosures are always auditable.
 
-Export is gated on a break-glass authorization: `--break-glass-token` is required and takes the
-token file produced by the break-glass `authorize` step above (`--output-token`).
+**Owner self-export** — your everyday "download my events". Possession of the device key seed is
+the credential (the seed both decrypts the database and signs the receipt; without it the export
+cannot run at all). This exports the same privacy-filtered artifact the local API serves:
+
+```bash
+DEVICE_KEY_SEED=devkey:your-seed \
+  cargo run --bin export_events -- \
+  --db-path witness.db \
+  --self-export \
+  --output witness_export.json
+```
+
+**Break-glass export** — trustee-quorum authorization for the same artifact, when you want a
+disclosure countersigned by your trustees (e.g. handing evidence to a third party).
+`--break-glass-token` takes the token file produced by the break-glass `authorize` step above
+(`--output-token`). Sealed-vault evidence and unsealing always require break-glass — self-export
+never touches the vault.
 
 ```bash
 DEVICE_KEY_SEED=devkey:your-seed \
@@ -112,8 +129,15 @@ DEVICE_KEY_SEED=devkey:your-seed \
   --output witness_export.json
 ```
 
+**Time windows** — restrict the export to a range with `--last 24h` (also `7d`, `90m`) or
+`--start <epoch_s> --end <epoch_s>`. Windows are aligned outward to 600 s bucket boundaries
+(start floored, end ceiled) and the aligned window is printed and recorded on the signed
+receipt, so a window can never disclose finer-than-bucket timing.
+
 `export_events` emits a single JSON artifact with batched buckets, applying default jitter and
-batching unless overridden by CLI flags.
+batching unless overridden by CLI flags. Exported times are intentionally coarse: 10-minute
+buckets with ±120 s jitter by default (see `spec/event_contract.md` and `docs/why_secure.md`
+for why) — don't be surprised that bucket labels differ slightly from wall-clock time.
 
 ---
 

@@ -198,7 +198,9 @@ cargo run --bin log_verify -- --db demo_witness.db
 
 For real cameras (RTSP / V4L2 / ESP32), local ONNX detection, container deployment, the
 break-glass and event-export CLIs, and the full Home Assistant entity reference, see the
-**[Operator Guide](docs/operator_guide.md)**.
+**[Operator Guide](docs/operator_guide.md)**. For a plain-language explanation of why exports
+and verification work the way they do (vs. "download the clip"), see
+**[Why securaCV exports work this way](docs/why_secure.md)**.
 
 ---
 

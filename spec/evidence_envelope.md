@@ -154,6 +154,25 @@ The existing signed `ExportReceiptEntry` (`{ receipt, prev_hash, entry_hash, sig
 `receipt.artifact_hash` MUST equal `SHA256(serde_json_bytes(artifact))` (the artifact digest the
 device committed to at export time). This is verified end-to-end.
 
+The receipt carries two OPTIONAL trailing fields (added after v1 shipped; both are part of the
+signed receipt bytes when present):
+
+- `auth_mode`: how the export was authorized — `"break_glass"` (trustee quorum),
+  `"self_export"` (owner, authenticated by possession of the device key seed), or `"api"`
+  (local capability-token API). Lets a verifier distinguish owner-authorized disclosure from
+  quorum disclosure.
+- `window`: `{ start_epoch_s, end_epoch_s }`, the half-open, bucket-aligned time window the
+  export was restricted to. Both bounds MUST be multiples of the 600 s bucket size, so the
+  window discloses nothing finer than the buckets themselves.
+
+Compatibility rule: a receipt with neither field is a **legacy receipt** and remains valid
+forever (pinned by the `valid_envelope_legacy.json` fixture in both verifiers). Verifiers MUST
+serialize these fields only when present and in this order, after `artifact_hash` — the receipt
+entry hash is computed over the exact serialized bytes, so field order and absence semantics are
+part of the signed format. Verifiers predating these fields will reject bundles that carry them
+(re-serialization drops the unknown fields and the entry hash no longer matches); verify such
+bundles with a current verifier.
+
 ## 9. `whole_envelope_digest` — Tier 2, canonical
 
 The single fingerprint a custodian cites (e.g. in court). Computed as:

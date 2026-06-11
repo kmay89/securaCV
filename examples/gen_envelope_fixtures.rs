@@ -8,9 +8,14 @@
 //! Fixtures produced (Ed25519-only so the browser/WebCrypto verifier can fully
 //! check them — no PQ key is present):
 //!   valid_envelope.json              a well-formed, fully verifiable envelope
+//!   valid_envelope_self_export.json  envelope produced by owner self-export
 //!   tampered_payload.json            a sealed-event payload mutated (chain break)
 //!   tampered_digest.json             whole_envelope_digest corrupted
 //!   domain_separation_vectors.json   inputs/outputs of domain_separated_hash
+//!
+//! `valid_envelope_legacy.json` is NOT regenerated: it pins the pre-`auth_mode`
+//! receipt format (no auth_mode/window fields) so both verifiers keep accepting
+//! bundles exported before those fields existed.
 //!
 //! NOTE: this example uses the default (non-PQ) build on purpose.
 
@@ -95,6 +100,26 @@ fn main() -> anyhow::Result<()> {
     let mut td = envelope.clone();
     td.whole_envelope_digest = "0".repeat(64);
     write_json(out_dir.join("tampered_digest.json"), &td)?;
+
+    // owner self-export: same kernel, no quorum — exercises the `self_export`
+    // auth_mode and a bucket-aligned disclosure window on the signed receipt.
+    let self_envelope = kernel.build_evidence_envelope_self(
+        cfg.ruleset_hash,
+        ExportOptions {
+            jitter_s: 0,
+            window: Some(witness_kernel::ExportWindow {
+                start_epoch_s: 600,
+                end_epoch_s: 2400,
+            }),
+            ..ExportOptions::default()
+        },
+        &cfg.ruleset_id,
+        &cfg.kernel_version,
+    )?;
+    write_json(
+        out_dir.join("valid_envelope_self_export.json"),
+        &self_envelope,
+    )?;
 
     // domain separation vectors
     let domains = [

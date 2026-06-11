@@ -4,6 +4,10 @@
 > the device does, what it can prove, and what its limitations are.
 > It is written for a technically literate non-engineer: a journalist,
 > a lawyer, a policy maker, or anyone evaluating evidence from this device.
+>
+> For a shorter companion focused on exports — why there is no "download
+> the clip", why times are coarse, and how to handle a failed verification —
+> see [Why securaCV exports work this way](../why_secure.md).
 
 ---
 

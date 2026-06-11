@@ -225,9 +225,18 @@ function serExportArtifact(a) {
     `"jitter_s":${serInt(a.jitter_s)},"jitter_step_s":${serInt(a.jitter_step_s)}}`;
 }
 
+const serExportWindow = (w) =>
+  `{"start_epoch_s":${serInt(w.start_epoch_s)},"end_epoch_s":${serInt(w.end_epoch_s)}}`;
+
+// `auth_mode` and `window` are optional trailing fields the Rust side skips when
+// absent (legacy receipts); serialize them only when present so both receipt
+// generations hash to the bytes the device signed.
 function serExportReceipt(r) {
-  return `{"time_bucket":${serTimeBucket(r.time_bucket)},"ruleset_hash":${serBytes(r.ruleset_hash)},` +
-    `"batch_size":${serInt(r.batch_size)},"artifact_hash":${serBytes(r.artifact_hash)}}`;
+  let s = `{"time_bucket":${serTimeBucket(r.time_bucket)},"ruleset_hash":${serBytes(r.ruleset_hash)},` +
+    `"batch_size":${serInt(r.batch_size)},"artifact_hash":${serBytes(r.artifact_hash)}`;
+  if (r.auth_mode != null) s += `,"auth_mode":${serEnum(r.auth_mode)}`;
+  if (r.window != null) s += `,"window":${serExportWindow(r.window)}`;
+  return s + '}';
 }
 
 // Sealed-log records are stored as the literal `payload_json` string and hashed verbatim by both
@@ -290,6 +299,15 @@ function bytesEqual(a, b) {
   return true;
 }
 
+// Throw with a structured `failure` attached: {ledger, entry_id, kind} mirrors the Rust
+// verifier's VerifyFailure (same serde wire values), pinned cross-language by the
+// tampered_payload fixture in both test suites. The message text is unchanged.
+function chainFail(message, ledger, entryId, kind) {
+  const err = new Error(message);
+  err.failure = { ledger, entry_id: entryId, kind };
+  return err;
+}
+
 async function verifyLinearChain(entries, startHead, domain, pubKey, ledgerName, verifySig) {
   let expectedPrev = startHead;
   for (let i = 0; i < entries.length; i++) {
@@ -297,11 +315,13 @@ async function verifyLinearChain(entries, startHead, domain, pubKey, ledgerName,
     const prev = toBytes(e.prev_hash);
     const entryHash = toBytes(e.entry_hash);
     if (!bytesEqual(prev, expectedPrev)) {
-      throw new Error(`${ledgerName} integrity check failed at index ${i}: prev_hash mismatch`);
+      throw chainFail(`${ledgerName} integrity check failed at index ${i}: prev_hash mismatch`,
+        ledgerName, i, 'prev_hash_mismatch');
     }
     const computed = await hashEntry(expectedPrev, e.payload_json);
     if (!bytesEqual(computed, entryHash)) {
-      throw new Error(`${ledgerName} integrity check failed at index ${i}: entry_hash mismatch`);
+      throw chainFail(`${ledgerName} integrity check failed at index ${i}: entry_hash mismatch`,
+        ledgerName, i, 'entry_hash_mismatch');
     }
     // The hash chain above is proven with SHA-256 alone. Only the Ed25519 signature needs Web
     // Crypto's Ed25519 — defer just that verdict when the runtime can't do it (see verifyEnvelope).
@@ -309,7 +329,8 @@ async function verifyLinearChain(entries, startHead, domain, pubKey, ledgerName,
       const sig = Uint8Array.from(e.signatures.ed25519_signature);
       const msg = await domainSeparatedHash(domain, entryHash);
       if (!(await verifyEd25519(pubKey, sig, msg))) {
-        throw new Error(`${ledgerName} signature verification failed at index ${i}`);
+        throw chainFail(`${ledgerName} signature verification failed at index ${i}`,
+          ledgerName, i, 'signature_mismatch');
       }
     }
     expectedPrev = entryHash;
@@ -387,7 +408,9 @@ async function verifyEnvelope(envelope) {
       const head = toBytes(cp.chain_head_hash);
       const msg = await domainSeparatedHash(domains.checkpoint, head);
       const sig = Uint8Array.from(cp.signatures.ed25519_signature);
-      if (!(await verifyEd25519(pubKey, sig, msg))) throw new Error('checkpoint signature verification failed');
+      if (!(await verifyEd25519(pubKey, sig, msg))) {
+        throw chainFail('checkpoint signature verification failed', 'checkpoint', null, 'checkpoint_invalid');
+      }
       result.checks.push('Checkpoint signature valid (chain continuity across pruning)');
     }
 
@@ -395,12 +418,14 @@ async function verifyEnvelope(envelope) {
     const bg = envelope.ledgers.break_glass_receipts;
     const bgHead = await verifyLinearChain(bg.entries, new Uint8Array(32), domains.break_glass, pubKey, 'break_glass_receipts', sigCheckable);
     validateSummary('break_glass_receipts', bg.entries.length, bg.count, bg.head_hash, bgHead);
-    for (const e of bg.entries) {
+    for (let i = 0; i < bg.entries.length; i++) {
+      const e = bg.entries[i];
       const receipt = JSON.parse(e.payload_json);
       const approvals = JSON.parse(e.approvals_json);
       const commitment = bytesToHex(await approvalsCommitment(approvals));
       if (commitment !== bytesToHex(toBytes(receipt.approvals_commitment))) {
-        throw new Error('break-glass approvals commitment mismatch');
+        throw chainFail('break-glass approvals commitment mismatch',
+          'break_glass_receipts', i, 'approvals_commitment_mismatch');
       }
       if (receipt.outcome === 'Granted' || (receipt.outcome && receipt.outcome.Granted !== undefined)) result.break_glass_granted++;
       else result.break_glass_denied++;
@@ -472,6 +497,7 @@ async function verifyEnvelope(envelope) {
     result.ok = false;
     result.status = 'compromised';
     result.error = err.message || String(err);
+    result.failure = err.failure || null;
     return result;
   }
 }

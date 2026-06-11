@@ -248,9 +248,12 @@ async function process(envelope, sourceLabel) {
   html += metaPanel(sourceLabel, title);
 
   if (!report.ok) {
-    html += `<div class="panel"><h2>What failed</h2><div class="mono" style="color:var(--bad)">${esc(report.error || 'unknown error')}</div>`;
+    html += `<div class="panel"><h2>What failed</h2>`;
+    if (report.failure) html += failureDiagnosis(report.failure);
+    html += `<div class="hint">Raw error:</div><div class="mono" style="color:var(--bad)">${esc(report.error || 'unknown error')}</div>`;
     if (report.checks.length) html += `<div class="hint">Checks that passed before the failure:</div>${checklist(report.checks)}`;
     html += `</div>`;
+    html += provesPanel();
     html += actions(true);
     out.innerHTML = html;
     wire();
@@ -282,13 +285,120 @@ async function process(envelope, sourceLabel) {
   </dl></div>`;
 
   if (report.warnings.length) {
-    html += `<div class="panel"><h2>Notes</h2><ul class="warns">${report.warnings.map((w) => `<li>${esc(w)}</li>`).join('')}</ul></div>`;
+    html += `<div class="panel"><h2>Notes</h2><ul class="warns">${report.warnings.map((w) => {
+      const hint = warningHint(w);
+      return `<li>${esc(w)}${hint ? `<div class="hint">${esc(hint)}</div>` : ''}</li>`;
+    }).join('')}</ul></div>`;
   }
 
   html += renderTimeline(envelope);
+  html += provesPanel();
   html += actions(true);
   out.innerHTML = html;
   wire();
+}
+
+// Plain-language diagnosis for a structured chain failure. Mirrors the Rust
+// hint table in src/verify_explain.rs (presentation-only — the structured
+// {ledger, entry_id, kind} triple is what stays in cross-language parity).
+function failureDiagnosis(f) {
+  const ledgers = {
+    sealed_events: 'sealed event log',
+    break_glass_receipts: 'break-glass receipt chain',
+    export_receipts: 'export receipt chain',
+    checkpoint: 'retention checkpoint',
+    key_lineage: 'device key lineage',
+  };
+  const kinds = {
+    prev_hash_mismatch: {
+      what: 'This entry no longer links to the previous entry’s hash — the chain is broken here. Everything before this point still verified.',
+      causes: 'Entries were deleted or reordered, or the bundle mixes data from different exports (e.g. a truncated download).',
+      next: 'Re-export a fresh bundle from the device and verify that copy. If a fresh copy still fails, preserve both files — do not edit them.',
+    },
+    entry_hash_mismatch: {
+      what: 'The recorded data at this entry no longer matches the hash that was sealed into the chain when it was written.',
+      causes: 'The entry was altered after sealing, or the file was corrupted in transit.',
+      next: 'Re-download or re-export the bundle and verify the fresh copy. If it still fails, the alteration happened at or before export.',
+    },
+    signature_mismatch: {
+      what: 'The hashes are consistent, but the signature on this entry does not verify under the device key named in the bundle.',
+      causes: 'The bundle’s device key was replaced, or the entry was re-signed by a different key.',
+      next: 'Compare the device key fingerprint in Provenance against the key published by the device owner.',
+    },
+    key_rotation_invalid: {
+      what: 'A device-key rotation record failed validation, so later entries can’t be tied back to the device’s original identity.',
+      causes: 'The rotation record was tampered with, or recorded without the previous key’s authorization.',
+      next: 'Treat entries after this point as unattributed; entries before it still verify under the original key.',
+    },
+    checkpoint_invalid: {
+      what: 'The retention checkpoint — the signed head that older, pruned history was collapsed into — failed validation.',
+      causes: 'The checkpoint was edited or forged, or signed by a key the device never authorized.',
+      next: 'Do not rely on history from before the checkpoint; events after it may still verify.',
+    },
+    approvals_commitment_mismatch: {
+      what: 'The trustee approvals stored with a break-glass receipt do not match the commitment sealed into the signed receipt.',
+      causes: 'The approvals were altered after the unseal decision was recorded.',
+      next: 'Treat the unseal audit trail as tampered; ask the trustees for their own copies of what they signed.',
+    },
+    policy_violation: {
+      what: 'A break-glass receipt does not satisfy the quorum policy it claims (or required approvals are missing).',
+      causes: 'The policy was changed or removed after receipts were written, or a receipt was recorded without the required approvals.',
+      next: 'Compare the trustee keys in the policy against the approvals; ask the trustees what they actually signed.',
+    },
+    untrusted_signer: {
+      what: 'The checkpoint names a signer key that is not part of the device’s genesis-anchored key lineage.',
+      causes: 'A forged checkpoint signed by a key the device never authorized, or a bundle assembled from mismatched sources.',
+      next: 'Do not trust the checkpoint or the pruned history behind it; check where this bundle came from.',
+    },
+  };
+  const k = kinds[f.kind];
+  const where = `${ledgers[f.ledger] || f.ledger}${f.entry_id != null ? ` — entry #${f.entry_id}` : ''}`;
+  let html = `<dl class="kv"><dt>Where</dt><dd>${esc(where)}</dd>`;
+  if (k) {
+    html += `<dt>What this means</dt><dd>${esc(k.what)}</dd>
+      <dt>Likely causes</dt><dd>${esc(k.causes)}</dd>
+      <dt>Next steps</dt><dd>${esc(k.next)}</dd>`;
+  }
+  return html + `</dl>`;
+}
+
+// One-line context per envelope warning so a note never reads as an alarm
+// (or worse, gets ignored) for lack of explanation.
+function warningHint(w) {
+  if (/post-quantum signatures present/.test(w)) {
+    return 'The classical Ed25519 signatures above were fully checked; the extra post-quantum layer needs the Rust verifier (envelope_verify --sig-mode strict).';
+  }
+  if (/no post-quantum public key/.test(w)) {
+    return 'Normal for most devices. Integrity rests on the Ed25519 signatures, which were fully checked.';
+  }
+  if (/failure record\(s\) present/.test(w)) {
+    return 'The device sealed explicit records of when it could not observe (power loss, storage full, clock jumps). Gaps are declared, not hidden — see the timeline below.';
+  }
+  if (/redactions/.test(w)) {
+    return 'Parts were deliberately withheld under the disclosure profile. What remains still verifies; the redaction list states what was removed.';
+  }
+  return null;
+}
+
+// What a green check actually proves — and the honest limits. Shown with every
+// result so the security story explains itself instead of relying on trust.
+function provesPanel() {
+  return `<details class="trust"><summary>What verification proves — and what it can’t</summary><div class="body">
+    <p><strong>A passing check proves:</strong></p>
+    <ul>
+      <li>Every event was signed by the device key shown in Provenance, in the recorded order.</li>
+      <li>Nothing was added, removed, or altered since the events were sealed — changing any entry breaks every later link.</li>
+      <li>Every export (including this bundle) left behind a signed receipt in the chain, so disclosures are themselves auditable.</li>
+    </ul>
+    <p><strong>It cannot prove:</strong></p>
+    <ul>
+      <li>That the detector interpreted the scene correctly — only that this is what the device recorded at the time.</li>
+      <li>That nothing happened outside the device’s coverage or while it was off (though such gaps are recorded as explicit failure records).</li>
+      <li>Exact times — events are deliberately grouped into 10-minute buckets with added jitter to protect bystanders’ privacy.</li>
+      <li>Who physically operated or had access to the device.</li>
+    </ul>
+    <p>These limits are by design: the device records less so it can prove what it does record. See <code>docs/why_secure.md</code> in the securaCV repository.</p>
+  </div></details>`;
 }
 
 function stat(n, label) { return `<div class="stat"><div class="n">${n}</div><div class="l">${esc(label)}</div></div>`; }
