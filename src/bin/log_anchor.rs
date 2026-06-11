@@ -282,9 +282,13 @@ fn verify(conn: &Connection, ca: Option<&str>) -> Result<()> {
 /// Run `openssl ts -verify` on a stored token — an independent second
 /// implementation for the trust-critical signature check.
 fn openssl_ts_verify(token_der: &[u8], digest: &[u8; 32], ca_path: &str) -> Result<()> {
-    let dir = std::env::temp_dir();
-    let path = dir.join(format!("securacv_anchor_{}.der", std::process::id()));
-    std::fs::write(&path, token_der)?;
+    // NamedTempFile: unpredictable name, 0600, O_EXCL creation (no symlink
+    // following), removed on drop even when openssl fails.
+    let mut token_file = tempfile::Builder::new()
+        .prefix("securacv_anchor_")
+        .suffix(".der")
+        .tempfile()?;
+    std::io::Write::write_all(&mut token_file, token_der)?;
     let output = std::process::Command::new("openssl")
         .args([
             "ts",
@@ -292,15 +296,16 @@ fn openssl_ts_verify(token_der: &[u8], digest: &[u8; 32], ca_path: &str) -> Resu
             "-digest",
             &hex::encode(digest),
             "-in",
-            path.to_str()
+            token_file
+                .path()
+                .to_str()
                 .ok_or_else(|| anyhow!("temp path not UTF-8"))?,
             "-token_in",
             "-CAfile",
             ca_path,
         ])
-        .output();
-    let _ = std::fs::remove_file(&path);
-    let output = output.context("running openssl (is it installed?)")?;
+        .output()
+        .context("running openssl (is it installed?)")?;
     if !output.status.success() {
         bail!("{}", String::from_utf8_lossy(&output.stderr).trim());
     }

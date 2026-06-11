@@ -558,7 +558,14 @@ pub fn fetch_timestamp(url: &str, query_der: &[u8], allow_http: bool) -> Result<
     if !scheme_ok {
         bail!("TSA URL must be https:// (pass --allow-http to override)");
     }
-    let mut response = ureq::post(url)
+    // Bounded timeout so a hung TSA fails the run instead of accumulating
+    // stuck processes under cron.
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_global(Some(std::time::Duration::from_secs(30)))
+        .build()
+        .into();
+    let mut response = agent
+        .post(url)
         .header("Content-Type", "application/timestamp-query")
         .send(query_der)
         .map_err(|e| anyhow!("TSA request to {url} failed: {e}"))?;
