@@ -59,18 +59,27 @@ Reference baseline inventory: [`firmware/FIRMWARE_VARIANT_AUDIT.md`](../../FIRMW
 
 ## 2) Onboarding UX (router-like, nontechnical friendly)
 
-- [ ] **First-run onboarding wizard** on device captive portal
-  > **Status reconciliation (2026-06-10):** the foundation already exists in code —
-  > `setup_wizard.h` is the first-run captive portal (DNS redirect to 192.168.4.1,
-  > WiFi credential capture, 15-minute setup timeout; `#include`d by the sketch) and
-  > `wizard.h`/`wizard.cpp` is the Phase-10 orchestration module (zone tagging, pairing,
-  > training progress; wired via `rf_presence.cpp`). What remains open is the *structured
-  > multi-step flow* below, not the captive portal itself.
-  - Step 1: Device identity + trust explanation (privacy witness basics)
-  - Step 2: Set owner password / admin passphrase
-  - Step 3: (Optional) Connect to home WiFi — *captive-portal capture exists (`setup_wizard.h`); needs the guided step UX*
-  - Step 4: (Optional) Configure MQTT broker — *runtime config API exists (`/api/mqtt/config`); needs the guided step UX*
-  - Step 5: Verify witness chain health and save recovery/export code
+- [x] **First-run onboarding wizard** on device captive portal
+  > **Status reconciliation (2026-06-10, second pass):** the structured flow now
+  > lives in the `/companion` PWA wizard (`companion_pwa.h`), which the captive
+  > portal hands every first-run user to.
+  - [x] Step 1: Device identity + trust explanation — collapsed "What your Canary
+        does" primer on the wizard welcome step (three plain-language promises).
+  - [x] Step 2: ~~Set owner password / admin passphrase~~ **Decided against a
+        separate owner password.** The device already has three layers that fill
+        this role: the AP password (unique per device, in the recovery kit), the
+        per-device Bearer API token, and the physical BOOT-tap gate for the
+        receipt. A fourth credential would add a storage/verification/reset
+        surface to a security product without a designed reset path — if this
+        is revisited, it needs its own security review first.
+  - [x] Step 3: Connect to home WiFi — the wizard's original steps 2–4 (scan →
+        password → connect), plus QR-code capture fallback.
+  - [x] Step 4: Configure MQTT broker — optional "Use Home Assistant?" block in
+        the wizard close-out chain (`/api/mqtt/config` + `/api/mqtt/test`,
+        unlocked by the recovery-kit session cookie).
+  - [x] Step 5: Verify health and save recovery kit — pre-flight checks
+        (`/api/selftest`) plus the "Save your recovery kit" block, which walks
+        the BOOT-tap gate and downloads the provisioning receipt JSON.
 
 - [ ] **Simple status language**
   - Replace technical-only labels with plain-language status text + “Advanced details” expanders.
@@ -80,9 +89,11 @@ Reference baseline inventory: [`firmware/FIRMWARE_VARIANT_AUDIT.md`](../../FIRMW
   - Guided factory-reset confirmation UX (with explicit data-loss warning).
   - Credential reset path without requiring serial monitor for normal users.
 
-- [ ] **Provisioning confirmation artifacts**
-  - Generate downloadable setup receipt (device ID, firmware version, setup timestamp, public key fingerprint).
-  - Add QR code for local dashboard URL and mDNS name.
+- [x] **Provisioning confirmation artifacts**
+  - [x] Downloadable setup receipt — `/api/provisioning-receipt` (BOOT-tap gated),
+        downloaded as `canary-recovery-kit.json` from the wizard close-out.
+  - [x] QR code — `/api/pairing-qr` (device id, base URL, token; PR #768) shown
+        via Settings › Device "Show QR".
 
 ---
 
