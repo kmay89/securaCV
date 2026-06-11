@@ -67,7 +67,8 @@ mqtt_broker_addr = "127.0.0.1:1883"
 # kind must be one of:
 #   large_object_boundary_crossing, small_object_boundary_crossing,
 #   acoustic_impulse_in_zone, presence_in_restricted_zone,
-#   vehicle_presence_after_hours, contact_state_change, object_removed_from_zone
+#   vehicle_presence_after_hours, contact_state_change, object_removed_from_zone,
+#   tamper_detected
 [[adapter.route]]
 topic = "sensors/garage/acoustic"
 kind = "acoustic_impulse_in_zone"
@@ -84,6 +85,18 @@ topic = "sensors/server_room/door"
 kind = "contact_state_change"
 zone = "server_room"
 require_truthy_state = true   # only emit on ON/open/true payloads
+
+# Canary firmware tamper alerts (enclosure opened, camera covered/blinded,
+# thermal-attack temp drift). The firmware publishes
+#   {"state":"on","confidence":0.93,"kind":"enclosure_tamper"}
+# on securacv/<device_id>/tamper; this seals it into the witness log as a
+# TamperDetected event. One route per device (exact topic match).
+[[adapter.route]]
+topic = "securacv/canary-1/tamper"
+kind = "tamper_detected"
+zone = "canary_1"
+require_truthy_state = true
+min_confidence = 0.5
 
 # ---------------------------------------------------------------------------
 # Adapter: HTTP webhook ingress

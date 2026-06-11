@@ -236,6 +236,7 @@ They are coarse, non-identifying claims and obey every constraint above.
 | `vehicle_presence_after_hours` | A vehicle-sized presence during operator-configured "after hours" (no plate/make/model) |
 | `contact_state_change` | A binary contact/open-close change (door, gate, window, enclosure) |
 | `object_removed_from_zone` | An object previously present in a zone is no longer present |
+| `tamper_detected` | Tampering with the witnessing device itself: enclosure opened, camera covered/blinded, or thermal-attack temperature drift. The zone names the device location, never the actor |
 
 ### Claim → Event Flow
 
@@ -289,7 +290,8 @@ The Canary firmware's on-device vision cascade (`securacv_vision`) contributes c
 records for camera **motion**, **person presence**, **camera tamper/blinding**, and
 **object removal** — each carrying only a coarse `time_bucket` and a local zone, never frames,
 boxes, or identity. These reuse existing semantics: object removal corresponds to
-`object_removed_from_zone` (already listed above) and camera tamper is recorded under the existing
-tamper-alert record class — **no new canonical event types are introduced**. The vision module
-emits at most one record per detected transition (single-fire latches), so it cannot flood the
-chain.
+`object_removed_from_zone` (already listed above); camera tamper is recorded device-side under
+the firmware's tamper-alert record class and bridged to the kernel's sealed log as
+`tamper_detected` (listed above) via the MQTT adapter route on `securacv/<device_id>/tamper`.
+The vision module emits at most one record per detected transition (single-fire latches), so it
+cannot flood the chain.

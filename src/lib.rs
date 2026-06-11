@@ -461,6 +461,11 @@ pub enum EventType {
     ContactStateChange,
     /// An object previously present in a zone is no longer present (removal).
     ObjectRemovedFromZone,
+    /// Tampering with the witnessing device itself was detected: enclosure
+    /// opened, camera covered/blinded, or thermal-attack temperature drift.
+    /// Carries no detail beyond the coarse claim — the zone names the device
+    /// location, never the attacker.
+    TamperDetected,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
