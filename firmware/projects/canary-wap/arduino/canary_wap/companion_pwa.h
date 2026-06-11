@@ -324,6 +324,22 @@ footer a{color:var(--accent);text-decoration:none}
     <div id="wiz-welcome-view">
       <h2 class="wiz-h" tabindex="-1">Connect your Canary to WiFi</h2>
       <p class="wiz-sub">Have your home WiFi password ready. Stay on this network until setup finishes.</p>
+      <!-- First-run trust primer (ENTERPRISE_READINESS step 1). Collapsed by
+           default so returning users aren't slowed down; pure copy, no
+           network dependency, so it renders even before any API works. -->
+      <details class="wiz-check-row" style="margin:0 0 .85rem">
+        <summary style="font-size:.9rem;font-weight:500;display:flex;align-items:center;cursor:pointer">
+          <span style="flex:1">New here? What your Canary does</span>
+          <span aria-hidden="true" style="color:var(--muted);font-size:.75rem;margin-left:.5rem">▾</span>
+        </summary>
+        <div class="wiz-check-meta" style="font-family:inherit;font-size:.8rem;line-height:1.5;background:var(--surface-2);color:var(--text);white-space:normal">
+          <ul style="margin:0;padding-left:1.1rem">
+            <li>It notices movement and presence in the room, and remembers <em>that</em> it happened &mdash; not who.</li>
+            <li>It keeps its record on the device itself. Every entry is signed, so nobody can quietly change it &mdash; not even you.</li>
+            <li>Nothing leaves your home unless you connect it to something yourself.</li>
+          </ul>
+        </div>
+      </details>
       <div class="wiz-btnrow">
         <button class="btn btn-primary" id="wiz-go-2">Let's go</button>
       </div>
@@ -419,6 +435,48 @@ footer a{color:var(--accent);text-decoration:none}
         Fix anything marked in red and tap <strong>Run again</strong>, or <strong>Continue anyway</strong> to open your Canary now.
         You can re-run these checks any time from the dashboard.
       </p>
+
+      <!-- Recovery kit (ENTERPRISE_READINESS step 5b). Shown FIRST on
+           all_passed, before the multi-Canary branch. Uses the existing
+           BOOT-tap provisioning gate: a short press opens a 30s window in
+           which /api/provisioning-receipt serves the full receipt JSON
+           (device id, keys, AP password) and issues a session cookie. The
+           cookie is what unlocks the optional Home Assistant block below —
+           /api/mqtt/* accepts session-cookie auth. No new endpoints. -->
+      <div id="wiz-recovery-block" style="display:none;margin-top:.85rem">
+        <h3 class="wiz-h" style="font-size:1rem;margin:0 0 .25rem" tabindex="-1">Save your recovery kit</h3>
+        <p class="wiz-sub" style="margin:0 0 .6rem">One small file proves this Canary is yours: its name, its keys, and the password for its own network. Keep it somewhere safe &mdash; you'll want it if you ever change phones or routers.</p>
+        <ol class="intro" style="margin:0 0 .6rem;padding-left:1.2rem;line-height:1.65">
+          <li>Short-press the <strong>BOOT</strong> button on your Canary.</li>
+          <li>Within 30 seconds, tap <strong>Save my recovery kit</strong> below.</li>
+        </ol>
+        <div class="err" id="wiz-recovery-err" role="alert"></div>
+        <p class="wiz-sub" id="wiz-recovery-done" style="display:none;margin:0 0 .6rem">✓ Saved to your downloads as <strong>canary-recovery-kit.json</strong>. You can get it again any time: press BOOT, then reload the dashboard.</p>
+        <div class="wiz-btnrow">
+          <button class="btn btn-secondary" id="wiz-recovery-skip">Do this later</button>
+          <button class="btn btn-primary" id="wiz-recovery-save">Save my recovery kit</button>
+        </div>
+      </div>
+
+      <!-- Optional Home Assistant hookup (ENTERPRISE_READINESS step 4).
+           Revealed only after the recovery kit is saved, because saving it
+           issues the session cookie that /api/mqtt/config + /api/mqtt/test
+           require. Skipping is always available; the same form lives in
+           the dashboard at /mqtt. -->
+      <div id="wiz-ha-block" style="display:none;margin-top:.85rem">
+        <h3 class="wiz-h" style="font-size:1rem;margin:0 0 .25rem" tabindex="-1">Use Home Assistant? (optional)</h3>
+        <p class="wiz-sub" style="margin:0 0 .6rem">Your Canary can send its alerts to Home Assistant over MQTT. Type your broker's address and it appears there on its own. You can also do this later from the dashboard.</p>
+        <input type="text" class="wiz-input" id="wiz-ha-host" placeholder="Broker address (like 192.168.1.10)" autocomplete="off" spellcheck="false" aria-describedby="wiz-ha-err">
+        <input type="number" class="wiz-input" id="wiz-ha-port" placeholder="Port (1883)" min="1" max="65535" style="margin-top:.4rem">
+        <input type="text" class="wiz-input" id="wiz-ha-user" placeholder="Username (optional)" autocomplete="off" spellcheck="false" style="margin-top:.4rem">
+        <input type="password" class="wiz-input" id="wiz-ha-pass" placeholder="Password (optional)" autocomplete="new-password" style="margin-top:.4rem">
+        <div class="err" id="wiz-ha-err" role="alert"></div>
+        <p class="wiz-sub" id="wiz-ha-done" style="display:none;margin:.4rem 0 .6rem">✓ Connected. Your Canary will show up in Home Assistant on its own.</p>
+        <div class="wiz-btnrow">
+          <button class="btn btn-secondary" id="wiz-ha-skip">Skip</button>
+          <button class="btn btn-primary" id="wiz-ha-save">Test &amp; save</button>
+        </div>
+      </div>
 
       <!-- Multi-Canary branch (shown only on all_passed). Two paths:
            "Set up another" reveals a quick how-to (#wiz-another-block);
@@ -1336,9 +1394,11 @@ footer a{color:var(--accent);text-decoration:none}
     const cont      = $w('wiz-st-continue');
     if (j.all_passed) {
       prepareFinishLinks();
-      // Default reveal: the "another room?" pane. The user picks the
-      // close-out path from there.
-      multi.style.display    = 'block';
+      // Close-out chain: recovery kit → optional Home Assistant →
+      // "another room?" pane. Each block hands off to the next; the
+      // user can skip any of them.
+      $w('wiz-recovery-block').style.display = 'block';
+      multi.style.display    = 'none';
       another.style.display  = 'none';
       links.style.display    = 'none';
       failnote.style.display = 'none';
@@ -1352,6 +1412,8 @@ footer a{color:var(--accent);text-decoration:none}
     } else {
       // Keep the close-out panes hidden until the user explicitly opts to
       // continue, but DO offer the escape hatch + guidance up front.
+      $w('wiz-recovery-block').style.display = 'none';
+      $w('wiz-ha-block').style.display = 'none';
       multi.style.display    = 'none';
       another.style.display  = 'none';
       links.style.display    = 'none';
@@ -1415,6 +1477,8 @@ footer a{color:var(--accent);text-decoration:none}
   // and "Open this one's dashboard" paths both end at the same place
   // (the mDNS/IP link-row + Finish), so factor that out.
   function showFinishLinks() {
+    $w('wiz-recovery-block').style.display = 'none';
+    $w('wiz-ha-block').style.display      = 'none';
     $w('wiz-multi-block').style.display   = 'none';
     $w('wiz-another-block').style.display = 'none';
     $w('wiz-st-failnote').style.display   = 'none';
@@ -1425,6 +1489,98 @@ footer a{color:var(--accent);text-decoration:none}
   }
   $w('wiz-done-here').addEventListener('click', showFinishLinks);
   $w('wiz-another-open').addEventListener('click', showFinishLinks);
+
+  // ── Recovery kit + optional Home Assistant (close-out chain) ──────────
+  // Recovery uses the BOOT-tap provisioning gate: 403 means the gate is
+  // closed (no tap, or the 30s window lapsed) — that's guidance, not an
+  // error state. A successful fetch downloads the receipt JSON and issues
+  // the session cookie that the MQTT endpoints accept, which is why the
+  // Home Assistant block is only revealed after a save.
+  function showMultiBlock() {
+    $w('wiz-recovery-block').style.display = 'none';
+    $w('wiz-ha-block').style.display       = 'none';
+    $w('wiz-multi-block').style.display    = 'block';
+    requestAnimationFrame(() => focusActiveStepHeading());
+  }
+  $w('wiz-recovery-skip').addEventListener('click', showMultiBlock);
+  $w('wiz-recovery-save').addEventListener('click', async () => {
+    const err  = $w('wiz-recovery-err');
+    const save = $w('wiz-recovery-save');
+    err.textContent = '';
+    save.disabled = true;
+    try {
+      const r = await fetch('/api/provisioning-receipt', { cache: 'no-store' });
+      if (r.status === 403) {
+        err.textContent = 'Press the BOOT button on your Canary first, then tap Save again within 30 seconds.';
+        return;
+      }
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const text = await r.text();
+      const blob = new Blob([text], { type: 'application/json' });
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      a.href = url;
+      a.download = 'canary-recovery-kit.json';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+      $w('wiz-recovery-done').style.display = 'block';
+      save.style.display = 'none';
+      $w('wiz-recovery-skip').textContent = 'Continue';
+      $w('wiz-ha-block').style.display = 'block';
+      requestAnimationFrame(() => focusActiveStepHeading());
+    } catch (e) {
+      err.textContent = 'Could not fetch the recovery kit: ' + (e && e.message ? e.message : 'unknown') + '. Try again, or save it later from the dashboard.';
+    } finally {
+      save.disabled = false;
+    }
+  });
+
+  $w('wiz-ha-skip').addEventListener('click', showMultiBlock);
+  $w('wiz-ha-save').addEventListener('click', async () => {
+    const err  = $w('wiz-ha-err');
+    const save = $w('wiz-ha-save');
+    const host = $w('wiz-ha-host').value.trim();
+    err.textContent = '';
+    if (!host) { err.textContent = 'Type the broker address first.'; return; }
+    const port = parseInt($w('wiz-ha-port').value, 10);
+    const body = {
+      enabled: true,
+      host: host,
+      port: (port > 0 && port <= 65535) ? port : 1883,
+      user: $w('wiz-ha-user').value.trim(),
+      password: $w('wiz-ha-pass').value,
+    };
+    save.disabled = true;
+    save.textContent = 'Testing…';
+    try {
+      const cfg = await fetch('/api/mqtt/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (cfg.status === 401) {
+        err.textContent = 'This needs the recovery-kit step first — go back, press BOOT, and save the kit.';
+        return;
+      }
+      if (!cfg.ok) throw new Error('HTTP ' + cfg.status);
+      const t = await fetch('/api/mqtt/test', { method: 'POST' });
+      const tj = t.ok ? await t.json() : { ok: false };
+      if (tj.ok) {
+        $w('wiz-ha-done').style.display = 'block';
+        save.style.display = 'none';
+        $w('wiz-ha-skip').textContent = 'Continue';
+      } else {
+        err.textContent = "Saved, but couldn't reach the broker yet. Check the address and port, or finish setup and test again from the dashboard.";
+      }
+    } catch (e) {
+      err.textContent = 'Could not save: ' + (e && e.message ? e.message : 'unknown');
+    } finally {
+      save.disabled = false;
+      save.textContent = 'Test & save';
+    }
+  });
   $w('wiz-add-another').addEventListener('click', () => {
     $w('wiz-multi-block').style.display   = 'none';
     $w('wiz-another-block').style.display = 'block';

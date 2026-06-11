@@ -10,6 +10,8 @@ from ..health_metrics import (
     STORAGE_STATUS_DEGRADED,
     STORAGE_STATUS_GOOD,
     STORAGE_STATUS_REPLACEMENT_RECOMMENDED,
+    battery_charging,
+    battery_percent,
     bytes_per_day_to_mb,
     canary_sd,
     canary_sd_replace_recommended,
@@ -123,3 +125,28 @@ def test_memory_free_reads_both_firmware_spellings():
     assert memory_free_bytes({"memory_free": 1000, "free_heap": 2000}) == 1000
     assert memory_free_bytes({"memory_free": "junk", "free_heap": 2000}) == 2000
     assert memory_free_bytes({}) == 0
+
+
+def test_battery_percent_reads_both_firmware_spellings():
+    # canary-wap spelling: trusted with or without presence info.
+    assert battery_percent({"battery": 88}) == 88
+    assert battery_percent({"battery": 42, "battery_present": True}) == 42
+    # Explicit mains power reads as "no battery to alert on".
+    assert battery_percent({"battery": 100, "battery_present": False}) is None
+    # firmware/canary spelling: only trusted with explicit presence —
+    # older builds report battery_soc=0 on USB-only devices, which must
+    # not surface as a critical battery.
+    assert battery_percent({"battery_soc": 61, "battery_present": True}) == 61
+    assert battery_percent({"battery_soc": 0}) is None
+    assert battery_percent({"battery_soc": 0, "battery_present": False}) is None
+    # Missing or junk values degrade to None, never to a false reading.
+    assert battery_percent({}) is None
+    assert battery_percent({"battery": "junk"}) is None
+
+
+def test_battery_charging_states():
+    assert battery_charging({"charge_state": "charging"})
+    assert battery_charging({"charge_state": "full"})
+    assert not battery_charging({"charge_state": "discharging"})
+    assert not battery_charging({"charge_state": "critical"})
+    assert not battery_charging({})

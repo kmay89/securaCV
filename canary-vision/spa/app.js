@@ -426,6 +426,8 @@ function el(tag, attrs, children) {
 
 function clearApp() {
   var app = document.getElementById('app');
+  // Views opt back in per render; only the fleet dashboard widens on desktop.
+  app.classList.remove('app-wide');
   while (app.firstChild) app.removeChild(app.firstChild);
   return app;
 }
@@ -1158,6 +1160,9 @@ function renderNav(active) {
 
 function renderCanariesView() {
   var app = clearApp();
+  // The fleet view is the one screen that benefits from desktop width:
+  // device cards flow into a multi-column grid above 768px.
+  app.classList.add('app-wide');
   app.appendChild(renderHeader('Canary Vision', false, true));
   app.appendChild(renderNav('#/canaries'));
 
@@ -1250,14 +1255,18 @@ function renderCanariesView() {
         className: 'room-section-title',
         textContent: room || 'Elsewhere',
       }));
+      var roomGrid = el('div', { className: 'fleet-grid' });
       byRoom[room].forEach(function (device) {
-        content.appendChild(makeDeviceCard(device));
+        roomGrid.appendChild(makeDeviceCard(device));
       });
+      content.appendChild(roomGrid);
     });
   } else {
+    var grid = el('div', { className: 'fleet-grid' });
     devices.forEach(function (device) {
-      content.appendChild(makeDeviceCard(device));
+      grid.appendChild(makeDeviceCard(device));
     });
+    content.appendChild(grid);
   }
 
   content.appendChild(el('button', {
@@ -1394,6 +1403,19 @@ function renderCanariesView() {
   if (devices.length > 0) {
     refreshDiscoveredPeers();
   }
+
+  // Keep the fleet view live: re-render every 30 s while it's on screen,
+  // so a dashboard left open on a desk stays current. The interval clears
+  // itself once the user navigates away (content leaves the DOM).
+  if (window._fleetRefreshTimer) clearInterval(window._fleetRefreshTimer);
+  window._fleetRefreshTimer = setInterval(function () {
+    if (!document.body.contains(content)) {
+      clearInterval(window._fleetRefreshTimer);
+      window._fleetRefreshTimer = null;
+      return;
+    }
+    renderCanariesView();
+  }, 30000);
 }
 
 // --------------- Peer Discovery ---------------

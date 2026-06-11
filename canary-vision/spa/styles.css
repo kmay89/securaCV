@@ -1519,3 +1519,33 @@ html, body {
   cursor: pointer;
   padding: 2px 6px;
 }
+
+/* ───────────── Desktop Fleet Grid ───────────── */
+/* The fleet dashboard is the one view that earns desktop width: cards
+   flow into an auto-fill grid (pattern carried over from the retired
+   firmware/fleet-manager.html). Every other view stays at 480px. */
+
+.fleet-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.fleet-grid .card {
+  margin-bottom: 0;
+}
+
+@media (min-width: 768px) {
+  #app.app-wide {
+    max-width: 1080px;
+  }
+
+  #app.app-wide .fleet-grid {
+    grid-template-columns: repeat(auto-fill, minmax(310px, 1fr));
+  }
+
+  #app.app-wide .fleet-health-card .stats-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}

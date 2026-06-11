@@ -35,6 +35,7 @@ static MQTT_SENSOR_DESCRIPTOR: AdapterDescriptor = AdapterDescriptor {
         ClaimKind::VehiclePresenceAfterHours,
         ClaimKind::ContactStateChange,
         ClaimKind::ObjectRemovedFromZone,
+        ClaimKind::TamperDetected,
     ],
     allowed_event_types: &[
         EventType::BoundaryCrossingObjectLarge,
@@ -44,6 +45,7 @@ static MQTT_SENSOR_DESCRIPTOR: AdapterDescriptor = AdapterDescriptor {
         EventType::VehiclePresenceAfterHours,
         EventType::ContactStateChange,
         EventType::ObjectRemovedFromZone,
+        EventType::TamperDetected,
     ],
     requested_capabilities: &[],
 };
@@ -243,6 +245,37 @@ mod tests {
         assert_eq!(claim.kind, ClaimKind::AcousticImpulseInZone);
         assert_eq!(claim.zone_label, "garage");
         assert!((claim.confidence - 0.8).abs() < 1e-6);
+    }
+
+    #[test]
+    fn canary_tamper_payload_maps_to_tamper_claim() {
+        // The exact payload shape the Canary firmware publishes on
+        // securacv/<id>/tamper (the extra "kind" field is informational
+        // for HA subscribers and ignored here).
+        let mut route = SensorRoute::new(
+            "securacv/canary-1/tamper",
+            ClaimKind::TamperDetected,
+            "canary_1",
+        );
+        route.require_truthy_state = true;
+        route.min_confidence = 0.5;
+        let (adapter, _tx) = MqttSensorAdapter::new(vec![route]);
+        let claim = adapter
+            .message_to_claim(
+                "securacv/canary-1/tamper",
+                br#"{"state":"on","confidence":0.93,"kind":"enclosure_tamper"}"#,
+            )
+            .expect("claim");
+        assert_eq!(claim.kind, ClaimKind::TamperDetected);
+        assert_eq!(claim.zone_label, "canary_1");
+        assert!((claim.confidence - 0.93).abs() < 1e-6);
+        // Below the confidence floor: dropped.
+        assert!(adapter
+            .message_to_claim(
+                "securacv/canary-1/tamper",
+                br#"{"state":"on","confidence":0.2,"kind":"camera_tamper"}"#,
+            )
+            .is_none());
     }
 
     #[test]

@@ -38,6 +38,8 @@ from .const import (
 from .device_trust import TrustStore
 from . import async_record_verify
 from .health_metrics import (
+    battery_charging,
+    battery_percent,
     bytes_per_day_to_mb,
     canary_sd,
     canary_sd_wear_pct,
@@ -676,25 +678,45 @@ class SecuraCVCanaryHealthSensor(SecuraCVCanarySensorBase):
         """Handle health message."""
         try:
             data = json.loads(msg.payload)
-            battery = data.get("battery", 100)
-            # Both firmware spellings: canary-wap "memory_free",
-            # firmware/canary "free_heap".
+            # Both firmware spellings for battery ("battery" /
+            # "battery_soc") and memory ("memory_free" / "free_heap").
+            battery = battery_percent(data)
             memory_free = memory_free_bytes(data)
 
-            if battery < CRITICAL_BATTERY_THRESHOLD_PERCENT or memory_free < WARNING_MEMORY_THRESHOLD_BYTES:
+            # Battery thresholds apply only to a discharging battery:
+            # mains-powered devices (battery is None) and charging
+            # devices are not at power-loss risk, and alerting on them
+            # would be a false alarm.
+            battery_for_status = (
+                100 if battery is None or battery_charging(data) else battery
+            )
+
+            if (
+                battery_for_status < CRITICAL_BATTERY_THRESHOLD_PERCENT
+                or memory_free < WARNING_MEMORY_THRESHOLD_BYTES
+            ):
                 self._attr_native_value = "critical"
-            elif battery < WARNING_BATTERY_THRESHOLD_PERCENT:
+            elif battery_for_status < WARNING_BATTERY_THRESHOLD_PERCENT:
                 self._attr_native_value = "warning"
             else:
                 self._attr_native_value = "healthy"
 
             self._attr_extra_state_attributes = {
-                "battery_percent": battery,
+                "battery_percent": 100 if battery is None else battery,
                 "memory_free_bytes": memory_free,
                 "uptime_seconds": data.get("uptime", 0),
                 "firmware_version": data.get("firmware_version", ""),
                 "public_key": data.get("public_key", ""),
             }
+            # Battery detail, when the firmware reports it.
+            for key in (
+                "battery_present",
+                "charge_state",
+                "battery_health_pct",
+                "battery_mv",
+            ):
+                if (val := data.get(key)) is not None:
+                    self._attr_extra_state_attributes[key] = val
             # SD endurance metrics, when the firmware reports them.
             if (sd := canary_sd(data)) is not None:
                 self._attr_extra_state_attributes["sd"] = sd

@@ -152,3 +152,61 @@ automation:
           data:
             tag: securacv-offline
     mode: single
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # THERMAL ADVISORY — Placement needs attention
+  # Fires when the thermal watchdog raises any advisory: critical heat,
+  # sustained saturation, sensor fault, frequent adaptation, or cold.
+  # Routine adaptive throttling during streaming does NOT trip this —
+  # only conditions worth acting on do. See docs/thermal_guide.md.
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - alias: "SecuraCV Thermal Advisory"
+    description: "Notify when a Canary raises a thermal advisory (heat, cold, or sensor)"
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.securacv_canary_XXXX_thermal_advisory
+        to: "on"
+        for: "00:02:00"
+    condition: []
+    action:
+      - service: notify.mobile_app_your_phone
+        data:
+          title: "SecuraCV Thermal Advisory"
+          message: >-
+            {{ trigger.entity_id }} raised a thermal advisory
+            (die temp {{ states('sensor.securacv_canary_XXXX_die_temperature') }} °C,
+            mode {{ states('sensor.securacv_canary_XXXX_thermal_performance') }}).
+            Check shade/ventilation/heat sink — see the Thermal Guide.
+          data:
+            tag: securacv-thermal
+            channel: securacv_alerts
+    mode: single
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # SUSTAINED PROTECTIVE PAUSE — Environment exceeds cooling capacity
+  # The device pauses streaming by design when very hot; 10+ minutes of
+  # continuous pause means the placement itself needs fixing.
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - alias: "SecuraCV Sustained Thermal Pause"
+    description: "Notify when a Canary stays in protective pause for 10 minutes"
+    trigger:
+      - platform: state
+        entity_id: sensor.securacv_canary_XXXX_thermal_performance
+        to: "paused"
+        for: "00:10:00"
+    condition: []
+    action:
+      - service: notify.mobile_app_your_phone
+        data:
+          title: "SecuraCV Running Hot"
+          message: >-
+            Canary has been in protective pause for 10 minutes — the spot
+            exceeds its cooling capacity. Move it out of direct sun or an
+            enclosed space, or fit the heat-sink kit (~10 °C).
+          data:
+            tag: securacv-thermal
+            importance: high
+            channel: securacv_alerts
+    mode: single

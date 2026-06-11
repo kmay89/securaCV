@@ -1,5 +1,10 @@
 # 05 — Market, Cost Comparison & Product Verdict
 
+> **Pricing note (June 2026):** Ring and Google have since renamed and repriced their plans
+> (Ring Solo/Multi/AI Pro; Nest Aware → Google Home Premium at $10/$20 per month). For the
+> refreshed numbers, the full TCO/setup-time math, and the friction scorecard, see
+> [09-marketing-pitch-tco-and-friction.md](09-marketing-pitch-tco-and-friction.md).
+
 ## Cost comparison (2026)
 
 The dominant consumer brands monetize via **subscription**. SecuraCV's local-first model has
