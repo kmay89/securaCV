@@ -1,0 +1,189 @@
+# SecuraCV — Battery Health & Low-Battery Automations
+#
+# Alerts for battery-backed Canary devices (XIAO ESP32-S3 with a LiPo on
+# the battery pads and the sense divider wired — see
+# docs/hardware/esp32s3_power_battery_guide.md).
+#
+# Three automations:
+#   1. Low battery   — the device's Health sensor turned warning/critical
+#                      because of the battery (charging devices never
+#                      trigger this; the integration skips battery
+#                      thresholds while charging or on mains).
+#   2. Worn-out cell — battery_health_pct (cycle-fade estimate) dropped
+#                      below 80%: plan a replacement cell.
+#   3. Recovered     — battery back above the warning threshold or
+#                      charging again: clears the persistent notification.
+#
+# The Health sensor publishes these attributes (firmware ≥ the PR #776
+# schema): battery_percent, battery_present, charge_state,
+# battery_health_pct, battery_mv.
+#
+# Setup:
+#   1. Copy this file to /config/automations/
+#   2. Replace DEVICE_ID with your Canary's id and YOUR_PHONE with your
+#      mobile_app notify service. Verify the Health sensor's entity id
+#      in Developer Tools → States (it follows your device name).
+#   3. Restart HA (or reload automations).
+
+- id: securacv_battery_low
+  alias: "SecuraCV — Canary Battery Low"
+  description: >
+    Fires when a battery-backed Canary's Health sensor degrades to
+    warning (<25% while discharging) or critical (<10% while
+    discharging). Mains-powered and charging devices never trip these
+    thresholds, so every trigger is a real "this device will go dark"
+    signal.
+  mode: queued
+  max: 3
+
+  trigger:
+    - platform: state
+      entity_id: sensor.securacv_DEVICE_ID_health
+      to: "warning"
+    - platform: state
+      entity_id: sensor.securacv_DEVICE_ID_health
+      to: "critical"
+
+  condition:
+    # Only act on battery-caused degradation — the Health sensor can
+    # also go critical on low memory, which is a different runbook.
+    - condition: template
+      value_template: >
+        {{ state_attr('sensor.securacv_DEVICE_ID_health', 'battery_present') == true
+           and (state_attr('sensor.securacv_DEVICE_ID_health', 'battery_percent') | int(100)) < 25 }}
+
+  action:
+    - variables:
+        battery_pct: >
+          {{ state_attr('sensor.securacv_DEVICE_ID_health', 'battery_percent') | int(0) }}
+        charge_state: >
+          {{ state_attr('sensor.securacv_DEVICE_ID_health', 'charge_state') | default('unknown') }}
+        battery_mv: >
+          {{ state_attr('sensor.securacv_DEVICE_ID_health', 'battery_mv') | int(0) }}
+        is_critical: "{{ trigger.to_state.state == 'critical' }}"
+
+    - service: notify.mobile_app_YOUR_PHONE
+      data:
+        title: >
+          {% if is_critical %}
+          🪫 SecuraCV — Canary battery CRITICAL ({{ battery_pct }}%)
+          {% else %}
+          🔋 SecuraCV — Canary battery low ({{ battery_pct }}%)
+          {% endif %}
+        message: >
+          {% if is_critical %}
+          The Canary is below 10% and will shut down gracefully soon
+          (witness chain is preserved). Restore power to keep witnessing.
+          {% else %}
+          The Canary is discharging ({{ battery_pct }}%, {{ battery_mv }} mV).
+          It will progressively shed features to extend runtime.
+          Check the charger, cable, and supply.
+          {% endif %}
+
+          State: {{ charge_state }} · {{ now().strftime('%Y-%m-%d %H:%M') }}
+        data:
+          push:
+            sound: "{{ 'alarm' if is_critical else 'default' }}"
+          tag: "securacv-battery-low"
+          group: "securacv-power"
+
+    - service: persistent_notification.create
+      data:
+        notification_id: "securacv_battery_low"
+        title: >
+          {% if is_critical %}
+          🪫 SecuraCV: Canary battery critical
+          {% else %}
+          🔋 SecuraCV: Canary battery low
+          {% endif %}
+        message: >
+          **Battery {{ battery_pct }}% ({{ battery_mv }} mV), {{ charge_state }}.**
+
+          The device sheds features as the battery drains (camera first,
+          then mesh/GNSS, then WiFi AP) and shuts down gracefully below
+          3% — the witness chain is persisted before every sleep.
+
+          Most likely causes: charger unplugged, failed USB supply or
+          cable, or a worn-out cell. See the
+          [power & battery guide](https://github.com/kmay89/securaCV/blob/main/docs/hardware/esp32s3_power_battery_guide.md)
+          troubleshooting table.
+
+# ---------------------------------------------------------------------------
+# Worn-out cell — the cycle-fade health estimate says plan a replacement
+# ---------------------------------------------------------------------------
+- id: securacv_battery_worn
+  alias: "SecuraCV — Canary Battery Wearing Out"
+  description: >
+    Fires once when the battery's cycle-fade health estimate drops below
+    80% of rated capacity — the recommended replacement point for
+    outage-bridging duty. This is a calendar reminder, not an emergency.
+  mode: single
+
+  trigger:
+    - platform: numeric_state
+      entity_id: sensor.securacv_DEVICE_ID_health
+      attribute: battery_health_pct
+      below: 80
+
+  condition: []
+
+  action:
+    - service: persistent_notification.create
+      data:
+        notification_id: "securacv_battery_worn"
+        title: "🔧 SecuraCV: Canary battery is wearing out"
+        message: >
+          **Estimated battery health:
+          {{ state_attr('sensor.securacv_DEVICE_ID_health', 'battery_health_pct') }}%
+          of rated capacity.**
+
+          The cell has accumulated enough charge cycles that its outage
+          bridge time is meaningfully reduced. Plan a replacement —
+          a protected single-cell LiPo, sized per §4 of the
+          [power & battery guide](https://github.com/kmay89/securaCV/blob/main/docs/hardware/esp32s3_power_battery_guide.md).
+
+          Health is estimated from counted charge cycles (~20% fade per
+          500 full cycles), so it only moves on real usage and never
+          resets on reboot.
+
+# ---------------------------------------------------------------------------
+# Recovery — clears the low-battery notification once power is back
+# ---------------------------------------------------------------------------
+- id: securacv_battery_recovered
+  alias: "SecuraCV — Canary Battery Recovered"
+  description: >
+    Clears the low-battery persistent notification when the device
+    reports healthy again (recharged past the threshold, or back on
+    USB/charging).
+  mode: single
+
+  trigger:
+    - platform: state
+      entity_id: sensor.securacv_DEVICE_ID_health
+      to: "healthy"
+      from: "warning"
+    - platform: state
+      entity_id: sensor.securacv_DEVICE_ID_health
+      to: "healthy"
+      from: "critical"
+
+  condition: []
+
+  action:
+    - service: persistent_notification.dismiss
+      data:
+        notification_id: "securacv_battery_low"
+
+    - service: notify.mobile_app_YOUR_PHONE
+      data:
+        title: "✅ SecuraCV — Canary battery recovered"
+        message: >
+          Battery back to
+          {{ state_attr('sensor.securacv_DEVICE_ID_health', 'battery_percent') }}%
+          ({{ state_attr('sensor.securacv_DEVICE_ID_health', 'charge_state') | default('unknown') }})
+          at {{ now().strftime('%H:%M') }}.
+        data:
+          push:
+            sound: "default"
+          tag: "securacv-battery-low"
+          group: "securacv-power"

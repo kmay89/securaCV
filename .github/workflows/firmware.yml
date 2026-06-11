@@ -306,6 +306,14 @@ jobs:
           chmod +x firmware/scripts/check_csi_sync.sh
           firmware/scripts/check_csi_sync.sh
 
+      - name: Verify power-logic copy in canary-wap sketch dir matches canonical source
+        # Same committed-copy pattern: the battery decision logic lives
+        # at firmware/common/power/power_logic.h (canonical, host-tested)
+        # and is copied next to the sketch for Arduino IDE builds.
+        run: |
+          chmod +x firmware/scripts/check_power_sync.sh
+          firmware/scripts/check_power_sync.sh
+
       - name: Verify boot banner copies in canary-wap sketch dir match canonical source
         # Same committed-copy pattern as the CSI library: the boot banner lives
         # at firmware/common/boot/ (canonical) and is copied next to the sketch
@@ -589,6 +597,24 @@ jobs:
               -o /tmp/ota_logic
           /tmp/ota_logic | tee /tmp/ota_logic.log
           grep -q "ALL .* PASSED" /tmp/ota_logic.log
+
+      - name: Build + run battery power-logic host test
+        # The battery decision logic (SoC curve, charge-state
+        # classification, cycle-fade health, runtime estimate) is pure
+        # and shared by both firmware trees via power_logic.h. This
+        # suite pins the false-state fixes from PR #762 — above all
+        # that charging detection outranks the low/critical SoC bands,
+        # so a depleted battery on USB can never deep-sleep a device
+        # that is plugged in and charging.
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -DCSI_TEST_HOST_BUILD \
+              -Wall -Wextra \
+              firmware/common/power/test_power_logic.cpp \
+              -I firmware/common/power \
+              -o /tmp/power_logic
+          /tmp/power_logic | tee /tmp/power_logic.log
+          grep -q "ALL .* PASSED" /tmp/power_logic.log
 
       - name: Run OTA release tool tests (signing + manifest round-trip)
         # ota_release.py is the single source of truth for the release

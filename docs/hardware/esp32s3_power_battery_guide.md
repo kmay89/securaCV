@@ -330,8 +330,10 @@ catches it only when the float drifts above 4.4 V.
   integration's Health sensor derives healthy/warning/critical from it —
   battery thresholds (warning < 25%, critical < 10%) apply only while
   *discharging*, so a charging or mains-powered device never false-alarms —
-  and exposes the battery detail as entity attributes for automations
-  (e.g. notify when `battery_health_pct` drops below 80).
+  and exposes the battery detail as entity attributes for automations.
+  Ready-made automations (low-battery push alert, worn-cell replacement
+  reminder, recovery notice) ship in
+  [`homeassistant/automations/securacv_battery_health.yaml`](../../homeassistant/automations/securacv_battery_health.yaml).
 - **Self-test:** `power` metric in the self-test API reports mode, state,
   and divider detection.
 

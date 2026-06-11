@@ -52,6 +52,11 @@
 
 #include "build_config.h"
 #include "log_level.h"
+// Pure battery decision logic (SoC curve, charge-state classification,
+// health/runtime estimates). Sketch-local copy of the canonical
+// firmware/common/power/power_logic.h; CI's check_power_sync.sh guards
+// against drift. Host-tested in firmware/common/power/test_power_logic.cpp.
+#include "power_logic.h"
 
 // ════════════════════════════════════════════════════════════════════════════
 // ENUMS
@@ -135,21 +140,12 @@ static constexpr uint32_t TREND_WINDOW_MS     = 60000;
 
 static constexpr uint16_t DIVIDER_DETECT_MIN_MV = 1200;
 static constexpr uint16_t DIVIDER_DETECT_MAX_MV = 2300;
-static constexpr uint16_t LIPO_VALID_MIN_MV     = 2800;
+static constexpr uint16_t LIPO_VALID_MIN_MV     = power_logic::LIPO_VALID_MIN_MV;
 static constexpr uint16_t LIPO_VALID_MAX_MV     = 4350;
-static constexpr uint16_t VBUS_BLEED_THRESHOLD_MV = 4400;
 static constexpr uint8_t  NO_BATTERY_CONFIRM_COUNT = 5;
 static constexpr uint8_t  MEDIAN_WINDOW         = 16;
 
-// LiPo discharge curve: voltage (mV) -> SoC (%)
-struct SocPoint { uint16_t mv; uint8_t pct; };
-static constexpr SocPoint SOC_TABLE[] = {
-  {4200, 100}, {4150,  95}, {4110,  90}, {4080,  85},
-  {4020,  80}, {3980,  70}, {3920,  60}, {3870,  50},
-  {3830,  40}, {3790,  30}, {3750,  20}, {3700,  15},
-  {3630,  10}, {3500,   5}, {3300,   2}, {3000,   0},
-};
-static constexpr size_t SOC_TABLE_LEN = sizeof(SOC_TABLE) / sizeof(SOC_TABLE[0]);
+// LiPo discharge curve lives in power_logic.h (power_logic::SOC_TABLE).
 
 static constexpr uint8_t  TREND_SAMPLES = 60;
 static constexpr uint16_t CYCLE_LOW_MV  = 3800;
@@ -349,22 +345,6 @@ inline uint16_t compute_median(const uint16_t* buf, uint8_t count) {
   return sorted[count / 2];
 }
 
-inline uint8_t voltage_to_soc(uint16_t mv) {
-  if (mv >= SOC_TABLE[0].mv) return 100;
-  if (mv <= SOC_TABLE[SOC_TABLE_LEN - 1].mv) return 0;
-  for (size_t i = 0; i < SOC_TABLE_LEN - 1; i++) {
-    if (mv >= SOC_TABLE[i + 1].mv) {
-      uint16_t v_range = SOC_TABLE[i].mv - SOC_TABLE[i + 1].mv;
-      uint8_t  p_range = SOC_TABLE[i].pct - SOC_TABLE[i + 1].pct;
-      if (v_range == 0) return SOC_TABLE[i].pct;
-      uint16_t v_offset = mv - SOC_TABLE[i + 1].mv;
-      return SOC_TABLE[i + 1].pct +
-             (uint8_t)((uint32_t)v_offset * p_range / v_range);
-    }
-  }
-  return 0;
-}
-
 inline int16_t compute_trend_mv_per_min() {
   if (s_trend_count < 10) return 0;
   uint8_t oldest_idx = (s_trend_idx + TREND_SAMPLES - s_trend_count) % TREND_SAMPLES;
@@ -433,8 +413,7 @@ inline void check_battery_presence(uint16_t battery_mv) {
   // path that can detect the battery being reattached.
   if (!s_state.divider_detected) return;
 
-  bool out_of_range = (battery_mv < LIPO_VALID_MIN_MV ||
-                       battery_mv > VBUS_BLEED_THRESHOLD_MV);
+  bool out_of_range = !power_logic::battery_voltage_in_range(battery_mv);
   if (out_of_range) {
     if (s_no_battery_count < NO_BATTERY_CONFIRM_COUNT) {
       s_no_battery_count++;
@@ -474,20 +453,10 @@ inline void update_charge_state(uint16_t battery_mv) {
 
   if (s_state.monitor_mode == POWER_MODE_HW_ADC) {
     // Charging detection runs BEFORE the low/critical SoC checks so a
-    // depleted battery on USB reports CHARGING (power source USB).
-    // Otherwise the policy engine would see CRITICAL + battery power
-    // and deep-sleep a device that is actually plugged in and charging.
-    if (battery_mv >= 4150 && trend >= -1 && trend <= 1) {
-      next = CHARGE_STATE_FULL;
-    } else if (trend > 2) {
-      next = CHARGE_STATE_CHARGING;
-    } else if (s_state.soc_pct <= SOC_CRITICAL_PCT) {
-      next = CHARGE_STATE_CRITICAL;
-    } else if (s_state.soc_pct <= SOC_LOW_PCT) {
-      next = CHARGE_STATE_LOW;
-    } else {
-      next = CHARGE_STATE_DISCHARGING;
-    }
+    // depleted battery on USB reports CHARGING (power source USB) --
+    // ordering pinned by firmware/common/power/test_power_logic.cpp.
+    next = (ChargeState)power_logic::classify_hw_charge_state(
+        battery_mv, s_state.soc_pct, trend, SOC_LOW_PCT, SOC_CRITICAL_PCT);
   }
 
   // Hysteresis: require consecutive readings in the same state
@@ -690,7 +659,7 @@ inline bool process() {
 
   // SoC calculation (HW ADC only)
   if (s_state.monitor_mode == POWER_MODE_HW_ADC) {
-    s_state.soc_pct = voltage_to_soc(battery_mv);
+    s_state.soc_pct = power_logic::voltage_to_soc(battery_mv);
   }
 
   // Track voltage trend
@@ -801,10 +770,8 @@ inline void persist_history() {
  * Returns 100 when no battery is present (nothing to degrade).
  */
 inline uint8_t health_pct() {
-  if (!s_state.battery_present) return 100;
-  uint32_t fade = (s_state.charge_cycles * 20) / 500;
-  if (fade > 40) fade = 40;
-  return (uint8_t)(100 - fade);
+  return power_logic::health_pct_from_cycles(s_state.charge_cycles,
+                                             s_state.battery_present);
 }
 
 /**
@@ -820,17 +787,9 @@ inline uint8_t health_pct() {
  * resolution.
  */
 inline uint32_t estimate_runtime_min() {
-  static constexpr uint16_t CUTOFF_MV  = 3300;
-  static constexpr uint32_t RUNTIME_CAP_MIN = 14UL * 24UL * 60UL;
-  if (!s_state.battery_present) return 0;
-  if (s_state.charge_state != CHARGE_STATE_DISCHARGING &&
-      s_state.charge_state != CHARGE_STATE_LOW &&
-      s_state.charge_state != CHARGE_STATE_CRITICAL) return 0;
-  if (s_state.trend_mv_per_min >= 0) return 0;
-  if (s_state.voltage_mv <= CUTOFF_MV) return 0;
-  uint32_t mins = (uint32_t)(s_state.voltage_mv - CUTOFF_MV) /
-                  (uint32_t)(-s_state.trend_mv_per_min);
-  return (mins > RUNTIME_CAP_MIN) ? RUNTIME_CAP_MIN : mins;
+  return power_logic::estimate_runtime_min(
+      s_state.battery_present, s_state.charge_state,
+      s_state.trend_mv_per_min, s_state.voltage_mv);
 }
 
 /**
