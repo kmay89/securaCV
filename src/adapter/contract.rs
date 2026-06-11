@@ -41,6 +41,9 @@ pub enum ClaimKind {
     ContactStateChange,
     /// An object previously present in a zone is no longer present.
     ObjectRemovedFromZone,
+    /// Tampering with the witnessing device itself (enclosure opened, camera
+    /// covered/blinded, thermal-attack temperature drift). Coarse claim only.
+    TamperDetected,
 }
 
 impl ClaimKind {
@@ -54,6 +57,7 @@ impl ClaimKind {
             ClaimKind::VehiclePresenceAfterHours => "vehicle_presence_after_hours",
             ClaimKind::ContactStateChange => "contact_state_change",
             ClaimKind::ObjectRemovedFromZone => "object_removed_from_zone",
+            ClaimKind::TamperDetected => "tamper_detected",
         }
     }
 
@@ -67,6 +71,7 @@ impl ClaimKind {
             "vehicle_presence_after_hours" => Some(ClaimKind::VehiclePresenceAfterHours),
             "contact_state_change" => Some(ClaimKind::ContactStateChange),
             "object_removed_from_zone" => Some(ClaimKind::ObjectRemovedFromZone),
+            "tamper_detected" => Some(ClaimKind::TamperDetected),
             _ => None,
         }
     }
@@ -85,6 +90,7 @@ pub fn claim_kind_to_event_type(kind: ClaimKind) -> EventType {
         ClaimKind::VehiclePresenceAfterHours => EventType::VehiclePresenceAfterHours,
         ClaimKind::ContactStateChange => EventType::ContactStateChange,
         ClaimKind::ObjectRemovedFromZone => EventType::ObjectRemovedFromZone,
+        ClaimKind::TamperDetected => EventType::TamperDetected,
     }
 }
 
@@ -182,6 +188,7 @@ mod tests {
             ClaimKind::VehiclePresenceAfterHours,
             ClaimKind::ContactStateChange,
             ClaimKind::ObjectRemovedFromZone,
+            ClaimKind::TamperDetected,
         ] {
             assert_eq!(ClaimKind::from_str_opt(kind.as_str()), Some(kind));
         }

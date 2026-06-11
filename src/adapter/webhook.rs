@@ -290,6 +290,7 @@ static WEBHOOK_DESCRIPTOR: AdapterDescriptor = AdapterDescriptor {
         ClaimKind::VehiclePresenceAfterHours,
         ClaimKind::ContactStateChange,
         ClaimKind::ObjectRemovedFromZone,
+        ClaimKind::TamperDetected,
     ],
     allowed_event_types: &[
         EventType::BoundaryCrossingObjectLarge,
@@ -299,6 +300,7 @@ static WEBHOOK_DESCRIPTOR: AdapterDescriptor = AdapterDescriptor {
         EventType::VehiclePresenceAfterHours,
         EventType::ContactStateChange,
         EventType::ObjectRemovedFromZone,
+        EventType::TamperDetected,
     ],
     requested_capabilities: &[],
 };

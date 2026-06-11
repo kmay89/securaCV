@@ -115,6 +115,7 @@ static_assert(sizeof(csi_features_t) == 36,
 
 #if FEATURE_THERMAL_WATCHDOG
 #include "securacv_thermal_watchdog.h"
+#include <math.h>   /* lroundf for MQTT whole-degree rounding */
 #endif
 
 #if FEATURE_DATA_MGMT
@@ -159,6 +160,19 @@ static uint32_t g_last_mqtt_sensing_ms = 0;
 static volatile bool g_ota_publish_pending = false;
 static securacv_ota_state_t g_ota_last_seen_state = SECURACV_OTA_IDLE;
 static uint32_t g_ota_next_check_ms = 0;
+#endif
+
+#if FEATURE_HA_MQTT && FEATURE_SENSING_WITNESS
+/* Pending tamper alert for the dedicated securacv/{id}/tamper topic.
+ * Set from the sensing witness callback (must stay non-blocking, same
+ * rule as the OTA flag above); the main loop turns it into an MQTT
+ * publish that the host's mqtt_sensor adapter routes into the sealed
+ * witness log as a TamperDetected event. Single-slot: if a second
+ * tamper fires before the loop drains the first, the newest wins —
+ * the host dedups per 10-minute bucket anyway. */
+static volatile bool g_tamper_publish_pending = false;
+static volatile uint8_t g_tamper_pending_kind = 0;       /* sensing_witness_kind_t */
+static volatile uint8_t g_tamper_pending_confidence = 0; /* 0..100 */
 #endif
 
 // Device-unique AP password (derived from pubkey fingerprint)
@@ -888,6 +902,17 @@ void setup() {
             ? RECORD_TAMPER_ALERT
             : RECORD_WITNESS_EVENT;
 
+#if FEATURE_HA_MQTT
+    /* Tamper must ALSO reach the host kernel's sealed log, not just the
+     * device-side chain: queue a publish on the dedicated tamper topic
+     * (drained by the main loop; this callback must stay non-blocking). */
+    if (rt == RECORD_TAMPER_ALERT) {
+      g_tamper_pending_kind = we->kind;
+      g_tamper_pending_confidence = we->confidence;
+      g_tamper_publish_pending = true;
+    }
+#endif
+
     WitnessRecord rec;
     /* witness_create_record() already increments records_created on
      * success internally (securacv_witness.cpp); we only log on the
@@ -1545,6 +1570,34 @@ void loop() {
   }
 #endif
 
+#if FEATURE_HA_MQTT && FEATURE_SENSING_WITNESS
+  // Drain a pending tamper alert onto securacv/{id}/tamper. Payload shape
+  // matches the host mqtt_sensor adapter contract ({state, confidence,
+  // kind}); the adapter routes it into the sealed log as TamperDetected.
+  // Confidence is rescaled 0..100 -> 0..1 for the kernel's bounds check.
+  if (g_tamper_publish_pending && mqtt_connected()) {
+    g_tamper_publish_pending = false;
+    /* Copy BOTH volatile fields back-to-back before formatting: a tamper
+     * callback firing mid-publish may overwrite them, and a torn read
+     * would pair one event's kind with another's confidence. */
+    const uint8_t kind = g_tamper_pending_kind;
+    const uint8_t confidence = g_tamper_pending_confidence;
+    const char* kind_str =
+        (kind == SENSING_WITNESS_TOUCH_TAMPER)  ? "enclosure_tamper" :
+        (kind == SENSING_WITNESS_TEMP_DRIFT)    ? "temp_drift"
+                                                : "camera_tamper";
+    char payload[96];
+    snprintf(payload, sizeof(payload),
+             "{\"state\":\"on\",\"confidence\":%.2f,\"kind\":\"%s\"}",
+             (double)confidence / 100.0, kind_str);
+    if (!mqtt_publish_tamper(payload)) {
+      // Re-arm so the alert survives a transient broker drop; the
+      // device-side chain already holds the signed record either way.
+      g_tamper_publish_pending = true;
+    }
+  }
+#endif
+
   // Publish health periodically
   if (mqtt_connected() && now - g_last_mqtt_health_ms >= MQTT_HEALTH_INTERVAL_MS) {
     g_last_mqtt_health_ms = now;
@@ -1798,6 +1851,24 @@ static void mqtt_publish_health_update() {
         doc["charge_state"] = power_charge_state_name(pwr.charge_state);
         doc["battery_health_pct"] = power_health_pct();
       }
+    }
+  }
+#endif
+
+#if FEATURE_THERMAL_WATCHDOG
+  /* Whole degrees only — same display rounding the dashboard uses. */
+  {
+    thermal_wd_state_t tw;
+    thermal_wd_history_t th;
+    if (thermal_wd_get_state(&tw) && thermal_wd_get_history(&th) &&
+        tw.last_sample_ms != 0) {
+      static const char* tnames[] = {"normal", "throttled", "paused"};
+      doc["die_temp_c"]    = (int)lroundf(tw.die_temp_c);
+      doc["thermal_state"] = tnames[tw.shadow_state <= 2 ? tw.shadow_state : 0];
+      doc["thermal_sensor_ok"] = tw.sensor_ok;
+      doc["thermal_advisory"]  = tw.advisories != 0;
+      doc["thermal_throttled_min"] = th.throttled_min;
+      doc["thermal_pause_events"]  = th.pause_events;
     }
   }
 #endif

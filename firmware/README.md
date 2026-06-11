@@ -203,21 +203,21 @@ See [FEATURES.md](FEATURES.md) for the complete feature audit matrix and [VARIAN
 
 ## Fleet Management
 
-A standalone fleet management dashboard is available at `fleet-manager.html`:
+Fleet management lives in the **Canary Vision** companion app
+([`canary-vision/`](../canary-vision/)) — the single supported multi-device
+dashboard. It pairs devices with the zero-typing BOOT-tap flow, shows fleet
+health (online/offline, events, uptime, signal), groups devices by room,
+and offers per-device **Identify** (blink LED + chirp), rename, logs, and
+witness-chain views. On desktop widths the dashboard lays device cards out
+in a multi-column grid.
 
 ```bash
-# Open in your browser (no build tools required)
-open firmware/fleet-manager.html
+cd canary-vision && npm install && npm run dev
+# open http://localhost:3000
 ```
 
-Features:
-- Add/remove Canary devices by IP address
-- Fleet health overview (online/offline, chain integrity)
-- Individual device drill-down (status, logs, chain, camera peek)
-- **Identify** a device (blink its LED + chirp) to physically locate it
-- Pagination for 50+ device fleets
-- Persistent device list via localStorage
-- Works offline (no cloud dependencies)
+Everything runs on your local network — no cloud dependencies. The former
+standalone `fleet-manager.html` has been retired in favor of the app.
 
 For the end-to-end multi-device wizard (naming devices, `canary.local`
 catch-all behaviour, Identify), see

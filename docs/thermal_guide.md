@@ -129,7 +129,15 @@ things warm up.
 ## 7. Checking in after a week — or a month
 
 The watchdog keeps lifetime history precisely so you *don't* have to watch
-the device. Whenever you do check in, two places show the story:
+the device — and if you use Home Assistant, you don't even have to check in:
+the device publishes **Die Temperature**, **Thermal Performance**, and a
+**Thermal Advisory** problem sensor over MQTT (see
+[homeassistant_setup.md](./homeassistant_setup.md)), and
+[homeassistant_automations.yaml](./homeassistant_automations.yaml) includes
+ready-made notifications for thermal advisories and sustained protective
+pauses. Routine adaptation never pages you; conditions worth acting on do.
+
+Whenever you do check in manually, two places show the story:
 
 - **Dashboard → Sensing → "Adaptive performance" card** — current mode,
   die temperature, hottest/coldest ever seen, cumulative adaptive minutes,

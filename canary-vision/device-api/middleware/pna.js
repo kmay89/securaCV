@@ -30,6 +30,15 @@ function pnaMiddleware(state) {
       res.setHeader('Access-Control-Allow-Private-Network', 'true');
       res.setHeader('Private-Network-Access-Name', `Canary Vision (${state.device.name})`);
       res.setHeader('Private-Network-Access-ID', hashedId);
+
+      // Chrome's PNA preflight is still a CORS preflight: without the
+      // Access-Control-Allow-* grants the browser rejects it even when
+      // the PNA header is present. When the request carries an Origin,
+      // fall through to the CORS middleware so allowed origins get both
+      // sets of headers in one response.
+      if (req.headers.origin) {
+        return next();
+      }
       return res.status(204).end();
     }
 
