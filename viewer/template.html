@@ -340,6 +340,16 @@ function failureDiagnosis(f) {
       causes: 'The approvals were altered after the unseal decision was recorded.',
       next: 'Treat the unseal audit trail as tampered; ask the trustees for their own copies of what they signed.',
     },
+    policy_violation: {
+      what: 'A break-glass receipt does not satisfy the quorum policy it claims (or required approvals are missing).',
+      causes: 'The policy was changed or removed after receipts were written, or a receipt was recorded without the required approvals.',
+      next: 'Compare the trustee keys in the policy against the approvals; ask the trustees what they actually signed.',
+    },
+    untrusted_signer: {
+      what: 'The checkpoint names a signer key that is not part of the device’s genesis-anchored key lineage.',
+      causes: 'A forged checkpoint signed by a key the device never authorized, or a bundle assembled from mismatched sources.',
+      next: 'Do not trust the checkpoint or the pruned history behind it; check where this bundle came from.',
+    },
   };
   const k = kinds[f.kind];
   const where = `${ledgers[f.ledger] || f.ledger}${f.entry_id != null ? ` — entry #${f.entry_id}` : ''}`;

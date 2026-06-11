@@ -144,6 +144,10 @@ fn main() -> Result<()> {
     println!("export_verify: checking {}", args.bundle);
     println!();
 
+    // Entry hashes verified below against the TRUSTED key (from DB/CLI/seed).
+    // Bundle files are later required to reference one of these entries, so a
+    // bundle re-signed under an attacker-chosen key can never pass.
+    let mut verified_entry_hashes: Vec<[u8; 32]> = Vec::new();
     {
         let _stage = ui.stage("Verify export receipts");
         let count = verify::verify_export_receipts_with(
@@ -152,6 +156,7 @@ fn main() -> Result<()> {
             signature_mode,
             pq_verifying_key.as_ref(),
             |id, entry_hash| {
+                verified_entry_hashes.push(entry_hash);
                 if args.verbose {
                     println!(
                         "  receipt {}: hash={} OK",
@@ -172,14 +177,24 @@ fn main() -> Result<()> {
     };
 
     // The file is normally an ExportBundle as written by `export_events`
-    // (artifact + signed receipt + keys): verify the receipt signature and
-    // the artifact binding, then match the receipt's artifact hash against
-    // the database's receipt chain. A bare-artifact file (no receipt wrapper)
-    // is matched by its whole-file hash, as older exports produced.
+    // (artifact + signed receipt + keys). The bundle carries its own device
+    // key, which an attacker could swap alongside a re-signed receipt, so
+    // bundle-internal checks (verify_export_bundle: artifact binding + receipt
+    // signature) prove only internal consistency. Trust comes from requiring
+    // the bundled receipt entry to be one of the entries verified above under
+    // the trusted key — that entry hash commits to the full receipt payload,
+    // including auth_mode and window, so none of it can be rewritten.
+    // A bare-artifact file (no receipt wrapper) is matched by its whole-file
+    // hash against the trusted chain, as older exports produced.
     let artifact_hash: [u8; 32] = match serde_json::from_slice::<ExportBundle>(&bundle_bytes) {
         Ok(bundle) => {
             let _stage = ui.stage("Verify bundle receipt + artifact binding");
             verify_export_bundle(&bundle)?;
+            if !verified_entry_hashes.contains(&bundle.receipt_entry.entry_hash) {
+                return Err(anyhow!(
+                    "TAMPER: bundle receipt entry not found in the verified export-receipt chain"
+                ));
+            }
             if let Some(mode) = bundle.receipt_entry.receipt.auth_mode {
                 println!("bundle authorization: {:?}", mode);
             }

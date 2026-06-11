@@ -110,9 +110,13 @@ fn resolve_window(args: &Args) -> Result<Option<ExportWindow>> {
     if raw_start >= raw_end {
         return Err(anyhow!("export window start must be before end"));
     }
+    let end_epoch_s = raw_end
+        .div_ceil(BUCKET_S)
+        .checked_mul(BUCKET_S)
+        .ok_or_else(|| anyhow!("export window end is too large"))?;
     Ok(Some(ExportWindow {
         start_epoch_s: raw_start / BUCKET_S * BUCKET_S,
-        end_epoch_s: raw_end.div_ceil(BUCKET_S) * BUCKET_S,
+        end_epoch_s,
     }))
 }
 
@@ -228,7 +232,34 @@ fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_duration_s;
+    use super::{parse_duration_s, resolve_window, Args, BUCKET_S};
+    use clap::Parser;
+
+    #[test]
+    fn windows_align_outward_and_reject_overflow() {
+        let args = |start: &str, end: &str| {
+            Args::parse_from([
+                "export_events",
+                "--device-key-seed",
+                "devkey:test:seed",
+                "--self-export",
+                "--start",
+                start,
+                "--end",
+                end,
+            ])
+        };
+        let w = resolve_window(&args("601", "1799")).unwrap().unwrap();
+        assert_eq!(w.start_epoch_s, 600);
+        assert_eq!(w.end_epoch_s, 1800);
+        // End near u64::MAX must error instead of overflowing on bucket ceil.
+        let max = u64::MAX.to_string();
+        assert!(resolve_window(&args("600", &max)).is_err());
+        // Exact multiple of the bucket stays put.
+        let w = resolve_window(&args("1200", "2400")).unwrap().unwrap();
+        assert_eq!((w.start_epoch_s, w.end_epoch_s), (1200, 2400));
+        assert_eq!(w.end_epoch_s % BUCKET_S, 0);
+    }
 
     #[test]
     fn durations_parse() {
