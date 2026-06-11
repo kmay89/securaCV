@@ -2,6 +2,34 @@
 
 ## [Unreleased]
 
+### Export UX, owner self-export, and verification diagnosis
+
+- **Owner self-export** (`export_events --self-export`): export the
+  privacy-filtered event artifact with the device key seed alone — no trustee
+  quorum. A signed, chained receipt is still always written; receipts now
+  carry an optional `auth_mode` (`break_glass` / `self_export` / `api`) so
+  owner-authorized and quorum disclosures stay distinguishable. Sealed-vault
+  evidence and unsealing remain quorum-only.
+- **Export time windows**: `--last 24h` / `--start`/`--end` on
+  `export_events`. Windows are aligned outward to 600 s bucket boundaries,
+  filtered on true (pre-jitter) buckets, and recorded on the signed receipt
+  (optional `window` field).
+- **Actionable verification failures**: `log_verify` and `envelope_verify`
+  now print a plain-language diagnosis (where the chain broke, what kind of
+  check failed, likely causes, next steps); timeline warnings carry one-line
+  hints. `log_verify` gains `--json`. `VerifyReport` (also `POST /verify`)
+  gains an additive structured `failure` object; the `error` string is
+  unchanged.
+- **Offline viewer**: shows where the chain broke with the same guidance,
+  explains each note inline, and adds a "What verification proves — and what
+  it can't" panel. New `docs/why_secure.md` plain-language explainer.
+- **Compatibility**: legacy bundles (receipts without `auth_mode`/`window`)
+  verify forever — pinned by a new `valid_envelope_legacy.json` fixture in
+  both the Rust and JS suites. The one caveat: verifiers older than this
+  release reject *new* bundles whose receipts carry the new fields (their
+  receipt re-serialization drops unknown fields); verify new bundles with a
+  current viewer/`envelope_verify`.
+
 ### Logging & witnessd chain audit remediation
 
 - **New sealed record types** `heartbeat` and `lifecycle`

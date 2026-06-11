@@ -44,6 +44,11 @@ pub struct VerifyReport {
     /// Failure detail when `chain_valid` is false.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Structured failure location/kind when `chain_valid` is false and the
+    /// failure originated in a chain/checkpoint check (additive — the `error`
+    /// string above is unchanged and remains the compatibility surface).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure: Option<verify::VerifyFailure>,
     /// Timeline-audit warnings (tail staleness, missing heartbeats,
     /// timestamp regressions). The chain is still hash/signature valid;
     /// these flag anomalies the hash chain alone cannot see. Coarse bucket
@@ -67,6 +72,7 @@ impl VerifyReport {
             verified_at_bucket_start: bucket.start_epoch_s,
             verified_at_bucket_size: bucket.size_s,
             error: None,
+            failure: None,
             warnings: Vec::new(),
         }
     }
@@ -109,6 +115,7 @@ pub fn run_full_verify(
         Err(err) => {
             report.chain_valid = false;
             report.error = Some(format!("{err:#}"));
+            report.failure = err.downcast_ref::<verify::VerifyFailure>().cloned();
         }
     }
     Ok(report)
@@ -143,10 +150,15 @@ fn run_inner(
             let signer = match checkpoint.signer_public_key {
                 Some(sig) => {
                     if !lineage.iter().any(|e| e.public_key == sig) {
-                        return Err(anyhow::anyhow!(
-                            "checkpoint signer key is not part of the genesis-anchored \
-                             device key lineage; refusing to trust it"
-                        ));
+                        return Err(anyhow::Error::new(verify::VerifyFailure {
+                            ledger: verify::FailedLedger::KeyLineage,
+                            entry_id: checkpoint.cutoff_event_id,
+                            kind: verify::FailureKind::UntrustedSigner,
+                            detail: "checkpoint signer key is not part of the \
+                                     genesis-anchored device key lineage; refusing to \
+                                     trust it"
+                                .to_string(),
+                        }));
                     }
                     sig
                 }
@@ -339,6 +351,16 @@ mod tests {
 
         assert!(!report.chain_valid);
         assert!(report.error.is_some());
+        // The structured failure serializes additively next to the unchanged
+        // error string...
+        let json = serde_json::to_string(&report).expect("serialize");
+        assert!(json.contains("\"failure\""));
+        assert!(json.contains("\"kind\":\"entry_hash_mismatch\""));
+        // ...and pinpoints the break for the diagnosis output.
+        let failure = report.failure.expect("chain failure carries location/kind");
+        assert_eq!(failure.ledger, verify::FailedLedger::SealedEvents);
+        assert_eq!(failure.entry_id, Some(1));
+        assert_eq!(failure.kind, verify::FailureKind::EntryHashMismatch);
     }
 
     #[test]
@@ -423,6 +445,7 @@ mod tests {
             verified_at_bucket_start: 1_700_000_400,
             verified_at_bucket_size: 600,
             error: None,
+            failure: None,
             warnings: Vec::new(),
         };
         let json = serde_json::to_string(&report).expect("serialize");

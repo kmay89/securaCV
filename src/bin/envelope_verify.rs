@@ -12,7 +12,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, ValueEnum};
 
 use witness_kernel::crypto::signatures::SignatureMode;
-use witness_kernel::{verify_envelope, EvidenceEnvelope, IntegrityStatus};
+use witness_kernel::{verify_envelope, verify_explain, EvidenceEnvelope, IntegrityStatus};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -92,11 +92,19 @@ fn main() -> Result<()> {
             Ok(())
         }
         Err(e) => {
+            let failure = e.downcast_ref::<witness_kernel::verify::VerifyFailure>();
             if args.json {
-                let out = serde_json::json!({ "status": "compromised", "error": e.to_string() });
+                let mut out = serde_json::json!({ "status": "compromised", "error": e.to_string() });
+                if let Some(failure) = failure {
+                    out["failure"] = serde_json::to_value(failure)?;
+                }
                 println!("{}", serde_json::to_string_pretty(&out)?);
             } else {
                 eprintln!("COMPROMISED: {e}");
+                if let Some(failure) = failure {
+                    eprintln!();
+                    eprintln!("{}", verify_explain::format_failure_diagnosis(failure));
+                }
             }
             // Exit non-zero without re-printing via anyhow (avoids a redundant backtrace).
             std::process::exit(1);

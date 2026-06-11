@@ -7,7 +7,8 @@ use std::fs;
 use std::path::Path;
 
 use witness_kernel::crypto::signatures::SignatureMode;
-use witness_kernel::{verify_envelope, EvidenceEnvelope};
+use witness_kernel::verify::{FailedLedger, FailureKind, VerifyFailure};
+use witness_kernel::{verify_envelope, EvidenceEnvelope, ExportAuthMode};
 
 fn load(name: &str) -> EvidenceEnvelope {
     let path = Path::new("tests/fixtures/envelope").join(name);
@@ -22,6 +23,45 @@ fn valid_fixture_verifies() {
         verify_envelope(&envelope, SignatureMode::Compat).expect("valid fixture must verify");
     assert_eq!(report.sealed_events, 3);
     assert_eq!(report.export_receipts, 1);
+    assert_eq!(
+        envelope.export_receipt_entry.receipt.auth_mode,
+        Some(ExportAuthMode::Api)
+    );
+}
+
+/// Pins the pre-`auth_mode` receipt format: bundles exported before the field
+/// existed must keep verifying forever. This fixture is never regenerated.
+#[test]
+fn legacy_fixture_without_auth_mode_verifies() {
+    let envelope = load("valid_envelope_legacy.json");
+    let report =
+        verify_envelope(&envelope, SignatureMode::Compat).expect("legacy fixture must verify");
+    assert_eq!(report.sealed_events, 3);
+    assert_eq!(report.export_receipts, 1);
+    assert_eq!(envelope.export_receipt_entry.receipt.auth_mode, None);
+    assert_eq!(envelope.export_receipt_entry.receipt.window, None);
+}
+
+#[test]
+fn self_export_fixture_verifies() {
+    let envelope = load("valid_envelope_self_export.json");
+    let report = verify_envelope(&envelope, SignatureMode::Compat)
+        .expect("self-export fixture must verify");
+    assert_eq!(report.sealed_events, 3);
+    // The same kernel produced an API export first, so the receipts ledger
+    // carries both generations chained together.
+    assert_eq!(report.export_receipts, 2);
+    assert_eq!(
+        envelope.export_receipt_entry.receipt.auth_mode,
+        Some(ExportAuthMode::SelfExport)
+    );
+    let window = envelope
+        .export_receipt_entry
+        .receipt
+        .window
+        .expect("self-export fixture records its disclosure window");
+    assert_eq!(window.start_epoch_s, 600);
+    assert_eq!(window.end_epoch_s, 2400);
 }
 
 #[test]
@@ -32,6 +72,14 @@ fn tampered_payload_fixture_is_rejected() {
         format!("{err}").contains("sealed_events"),
         "unexpected error: {err}"
     );
+    // Structured-failure parity pin: the JS verifier asserts the identical
+    // {ledger, entry_id, kind} triple for this fixture (verify_core.test.js).
+    let failure = err
+        .downcast_ref::<VerifyFailure>()
+        .expect("chain failure carries a structured VerifyFailure");
+    assert_eq!(failure.ledger, FailedLedger::SealedEvents);
+    assert_eq!(failure.entry_id, Some(0));
+    assert_eq!(failure.kind, FailureKind::EntryHashMismatch);
 }
 
 #[test]

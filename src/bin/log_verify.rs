@@ -17,7 +17,7 @@ use std::io::IsTerminal;
 
 use witness_kernel::crypto::signatures::SignatureMode;
 use witness_kernel::verify_runner::{run_full_verify, VerifiedItem};
-use witness_kernel::{verify, verify_helpers};
+use witness_kernel::{verify, verify_explain, verify_helpers};
 
 #[path = "../ui.rs"]
 mod ui;
@@ -43,6 +43,10 @@ struct Args {
     /// Verbose output
     #[arg(short, long)]
     verbose: bool,
+    /// Print the full machine-readable VerifyReport as JSON instead of the
+    /// human report (exit 1 on chain failure, 2 on --strict warnings)
+    #[arg(long)]
+    json: bool,
     /// Treat timeline-audit warnings (stale tail, missing heartbeats,
     /// timestamp regressions) as failures (non-zero exit)
     #[arg(long)]
@@ -150,8 +154,10 @@ fn main() -> Result<()> {
         (None, None) => None,
     };
 
-    println!("log_verify: checking {}", args.db);
-    println!();
+    if !args.json {
+        println!("log_verify: checking {}", args.db);
+        println!();
+    }
 
     let report = {
         let _stage = ui.stage("Verify sealed log");
@@ -179,6 +185,17 @@ fn main() -> Result<()> {
             },
         )?
     };
+
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        if !report.chain_valid {
+            std::process::exit(1);
+        }
+        if args.strict && !report.warnings.is_empty() {
+            std::process::exit(2);
+        }
+        return Ok(());
+    }
 
     println!("=== Sealed Events ===");
     match (
@@ -222,6 +239,11 @@ fn main() -> Result<()> {
     );
 
     if !report.chain_valid {
+        if let Some(failure) = &report.failure {
+            println!();
+            println!("=== Diagnosis ===");
+            println!("{}", verify_explain::format_failure_diagnosis(failure));
+        }
         return Err(anyhow::anyhow!(
             "verification FAILED: {}",
             report
@@ -233,8 +255,12 @@ fn main() -> Result<()> {
     if !report.warnings.is_empty() {
         println!();
         println!("=== Timeline Audit ===");
+        println!("The hash chain itself is valid; these flag anomalies the chain cannot see:");
         for warning in &report.warnings {
             println!("WARNING: {warning}");
+            if let Some(hint) = verify_explain::warning_hint(verify::classify_warning(warning)) {
+                println!("         hint: {hint}");
+            }
         }
         if args.strict {
             return Err(anyhow::anyhow!(

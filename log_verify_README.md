@@ -24,6 +24,8 @@ Options:
 - `--db <path>`: path to SQLite DB (default `witness.db`)
 - `--public-key <hex>`: hex-encoded device Ed25519 verifying key
 - `--public-key-file <path>`: path to file containing the hex-encoded device public key
+- `--json`: print the machine-readable `VerifyReport` instead of the human
+  report (exit 1 on chain failure, 2 on `--strict` warnings)
 
 If neither `--public-key` nor `--public-key-file` is provided, `log_verify` will read the
 device public key from the local database metadata table (`device_metadata.public_key`).
@@ -70,9 +72,45 @@ trusted) records and prints warnings for:
   timestamps.
 
 Warnings do not fail verification by default; pass `--strict` to exit
-non-zero when any are present.
+non-zero when any are present. Each warning is printed with a one-line
+actionable hint (e.g. for missing heartbeats: check for PowerLoss/StorageFull
+failure records near the gap before suspecting deletion).
+
+## Diagnosing failures
+
+When verification fails, `log_verify` prints a diagnosis block before exiting:
+**where** the chain broke (ledger + entry id), **what kind** of check failed,
+the likely causes in plain language, and concrete next steps. Example:
+
+```
+=== Diagnosis ===
+Where:           sealed event log at entry id 42
+What this means: the stored payload at this entry no longer matches the hash
+                 that was sealed into the chain when it was written.
+Likely causes:   the row was edited in place; disk corruption; a partial
+                 restore mixed rows from different database generations.
+Next steps:      do NOT edit the database to "fix" it. Check disk health,
+                 compare against backups, and run with --verbose to see how
+                 far the chain verifies.
+Error: verification FAILED: integrity check failed at id 42: computed_hash=…
+```
+
+Failure kinds and the gist of their guidance:
+
+| Kind | Meaning | First thing to try |
+|------|---------|--------------------|
+| `prev_hash_mismatch` | entry doesn't link to its predecessor — rows deleted/reordered, or DB older than its checkpoint | compare against backups; `--verbose` shows the last good entry |
+| `entry_hash_mismatch` | stored payload no longer matches its sealed hash | check disk health; never edit the DB |
+| `signature_mismatch` | hashes fine, signature doesn't verify under the expected key | retry with `--device-key-seed`, or drop `--public-key` |
+| `key_rotation_invalid` | a device-key rotation record failed validation | treat later entries as unattributed; see `docs/db_key_rotation.md` |
+| `checkpoint_invalid` | retention checkpoint signature/shape failed | retry with the device seed; if it still fails, pruned history is unverifiable |
+| `approvals_commitment_mismatch` | break-glass approvals altered after the fact | compare against trustees' own records |
+| `policy_violation` | receipt doesn't satisfy the quorum policy (or no policy configured) | restore the original policy configuration |
+| `untrusted_signer` | checkpoint signed by a key outside the device lineage | do not trust the checkpoint or this database's origin |
+
+With `--json`, the same information is machine-readable: the report gains a
+`failure` object (`{ledger, entry_id, kind, detail}`) next to the unchanged
+`error` string. The HTTP API's `POST /verify` returns the same report.
 
 ## Future work
-- Support key rotation and explicit public-key rollover rules.
 - Support multiple checkpoints and archived compacted segments.
-- Provide a JSON report suitable for audits and city procurement verification.

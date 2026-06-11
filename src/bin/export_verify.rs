@@ -14,7 +14,7 @@ use sha2::{Digest, Sha256};
 use std::io::IsTerminal;
 
 use witness_kernel::crypto::signatures::SignatureMode;
-use witness_kernel::{verify, verify_helpers, ExportReceipt};
+use witness_kernel::{verify, verify_export_bundle, verify_helpers, ExportBundle, ExportReceipt};
 
 #[path = "../ui.rs"]
 mod ui;
@@ -56,6 +56,15 @@ struct Args {
     /// Path to file containing PQ public key (hex-encoded)
     #[arg(long, value_name = "PATH", conflicts_with = "pq_public_key")]
     pq_public_key_file: Option<String>,
+    /// SQLCipher database encryption key (hex-encoded, 32 bytes)
+    #[arg(long, value_name = "HEX", env = "SECURACV_DB_KEY")]
+    db_key: Option<String>,
+    /// Device key seed (as used by the kernel). Derives the SQLCipher key
+    /// (when --db-key is not given) and the verifying key (when no
+    /// --public-key/--public-key-file is given) — same semantics as
+    /// log_verify, so the owner self-export flow verifies with the seed alone.
+    #[arg(long, value_name = "SEED", env = "DEVICE_KEY_SEED")]
+    device_key_seed: Option<String>,
 }
 
 #[derive(ValueEnum, Clone, Debug)]
@@ -80,15 +89,44 @@ fn main() -> Result<()> {
     let stdout_is_tty = std::io::stdout().is_terminal();
     let ui = ui::Ui::from_args(Some(&args.ui), is_tty, !stdout_is_tty);
 
+    // SQLCipher key: explicit --db-key wins; otherwise derive it from the
+    // device key seed exactly as the kernel does (mirrors log_verify).
+    let db_key: Option<String> = match (&args.db_key, &args.device_key_seed) {
+        (Some(key), _) => Some(key.clone()),
+        (None, Some(seed)) => {
+            let signing_key = witness_kernel::signing_key_from_seed(seed)?;
+            let seed_env = witness_kernel::db_key_seed_from_env();
+            Some(
+                witness_kernel::resolve_db_encryption_key(
+                    &signing_key,
+                    seed_env.as_ref().map(|s| s.as_str()),
+                )
+                .to_string(),
+            )
+        }
+        (None, None) => None,
+    };
+
     let conn = {
         let _stage = ui.stage("Open database");
-        Connection::open(&args.db)?
+        let conn = Connection::open(&args.db)?;
+        if let Some(ref key) = db_key {
+            conn.pragma_update(None, "key", format!("x'{}'", key))?;
+        }
+        conn
+    };
+    let public_key_hex: Option<String> = match (&args.public_key, args.device_key_seed.as_deref()) {
+        (Some(hex), _) => Some(hex.clone()),
+        (None, Some(seed)) if args.public_key_file.is_none() => Some(hex::encode(
+            witness_kernel::verifying_key_from_seed(seed)?.to_bytes(),
+        )),
+        _ => None,
     };
     let verifying_key = {
         let _stage = ui.stage("Load verifying key");
         verify_helpers::load_verifying_key(
             &conn,
-            args.public_key.as_deref(),
+            public_key_hex.as_deref(),
             args.public_key_file.as_deref(),
         )?
     };
@@ -130,14 +168,30 @@ fn main() -> Result<()> {
         std::fs::read(&args.bundle)
             .map_err(|e| anyhow!("failed to read bundle {}: {}", args.bundle, e))?
     };
-    let bundle_hash: [u8; 32] = Sha256::digest(&bundle_bytes).into();
+
+    // The file is normally an ExportBundle as written by `export_events`
+    // (artifact + signed receipt + keys): verify the receipt signature and
+    // the artifact binding, then match the receipt's artifact hash against
+    // the database's receipt chain. A bare-artifact file (no receipt wrapper)
+    // is matched by its whole-file hash, as older exports produced.
+    let artifact_hash: [u8; 32] = match serde_json::from_slice::<ExportBundle>(&bundle_bytes) {
+        Ok(bundle) => {
+            let _stage = ui.stage("Verify bundle receipt + artifact binding");
+            verify_export_bundle(&bundle)?;
+            if let Some(mode) = bundle.receipt_entry.receipt.auth_mode {
+                println!("bundle authorization: {:?}", mode);
+            }
+            bundle.receipt_entry.receipt.artifact_hash
+        }
+        Err(_) => Sha256::digest(&bundle_bytes).into(),
+    };
     if args.verbose {
-        println!("bundle hash: {}", verify_helpers::hex32(&bundle_hash));
+        println!("artifact hash: {}", verify_helpers::hex32(&artifact_hash));
     }
 
     let found = {
         let _stage = ui.stage("Match bundle hash");
-        bundle_hash_in_export_receipts(&conn, &bundle_hash)?
+        bundle_hash_in_export_receipts(&conn, &artifact_hash)?
     };
     if !found {
         return Err(anyhow!("TAMPER: bundle hash not found in export receipts"));

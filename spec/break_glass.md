@@ -21,6 +21,14 @@ The break-glass flow has four phases:
 Every authorization attempt logs an immutable receipt (granted or denied), and
 tokens are only valid for a specific envelope + ruleset + time bucket.
 
+**Scope note — event exports.** The quorum gate is mandatory for sealed vault
+envelopes and unsealing. For the privacy-filtered *event artifact*
+(`export:events`), break-glass is one of two authorization modes: the owner may
+also self-export it with the device key seed alone
+(`export_events --self-export`), in which case the signed export receipt is
+labeled `auth_mode: "self_export"` instead of `"break_glass"` (see
+`spec/evidence_envelope.md` §8). Vault access never has a self-service path.
+
 ## Policy configuration
 
 The quorum policy is stored in the kernel database and must be configured

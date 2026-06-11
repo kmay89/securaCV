@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Result};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use rusqlite::{Connection, Row};
+use serde::Serialize;
 
 use crate::crypto::signatures::{
     verify_rotation_attestation, verify_rotation_authorization, PqPublicKey, SignatureMode,
@@ -11,6 +12,66 @@ use crate::{
     approvals_commitment, hash_entry, verify_entry_signature, Approval, BreakGlassOutcome,
     BreakGlassReceipt, QuorumPolicy, SealedLogRecord,
 };
+
+/// Which tamper-evident structure a verification failure occurred in.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FailedLedger {
+    SealedEvents,
+    BreakGlassReceipts,
+    ExportReceipts,
+    Checkpoint,
+    KeyLineage,
+}
+
+/// What kind of check failed. Drives the plain-language diagnosis the CLIs
+/// and the offline viewer print alongside the raw error.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FailureKind {
+    PrevHashMismatch,
+    EntryHashMismatch,
+    SignatureMismatch,
+    KeyRotationInvalid,
+    CheckpointInvalid,
+    ApprovalsCommitmentMismatch,
+    PolicyViolation,
+    UntrustedSigner,
+}
+
+/// Structured verification failure. `Display` reproduces the exact legacy
+/// error string (`detail`), so `VerifyReport.error` and existing consumers
+/// see unchanged text while new consumers can read the typed location/kind.
+#[derive(Debug, Clone, Serialize)]
+pub struct VerifyFailure {
+    pub ledger: FailedLedger,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub entry_id: Option<i64>,
+    pub kind: FailureKind,
+    pub detail: String,
+}
+
+impl std::fmt::Display for VerifyFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.detail)
+    }
+}
+
+impl std::error::Error for VerifyFailure {}
+
+fn fail(
+    ledger: FailedLedger,
+    entry_id: Option<i64>,
+    kind: FailureKind,
+    detail: String,
+) -> anyhow::Error {
+    anyhow::Error::new(VerifyFailure {
+        ledger,
+        entry_id,
+        kind,
+        detail,
+    })
+}
 
 #[derive(Debug, Clone)]
 pub struct CheckpointInfo {
@@ -55,9 +116,19 @@ pub fn verify_checkpoint_signature(
             pq_public_key,
             DOMAIN_CHECKPOINT,
         )
-        .map_err(|e| anyhow!("checkpoint signature verification failed: {}", e)),
-        _ => Err(anyhow!(
-            "checkpoint is partially populated; integrity verification cannot proceed"
+        .map_err(|e| {
+            fail(
+                FailedLedger::Checkpoint,
+                None,
+                FailureKind::CheckpointInvalid,
+                format!("checkpoint signature verification failed: {}", e),
+            )
+        }),
+        _ => Err(fail(
+            FailedLedger::Checkpoint,
+            None,
+            FailureKind::CheckpointInvalid,
+            "checkpoint is partially populated; integrity verification cannot proceed".to_string(),
         )),
     }
 }
@@ -168,21 +239,31 @@ where
         let signature_set = SignatureSet::from_storage(&signature, pq_signature, pq_scheme)?;
 
         if prev_hash != expected_prev {
-            return Err(anyhow!(
-                "integrity check failed at id {}: prev_hash={}, expected_prev={}",
-                id,
-                hex::encode(prev_hash),
-                hex::encode(expected_prev)
+            return Err(fail(
+                FailedLedger::SealedEvents,
+                Some(id),
+                FailureKind::PrevHashMismatch,
+                format!(
+                    "integrity check failed at id {}: prev_hash={}, expected_prev={}",
+                    id,
+                    hex::encode(prev_hash),
+                    hex::encode(expected_prev)
+                ),
             ));
         }
 
         let computed = hash_entry(&expected_prev, payload.as_bytes());
         if computed != entry_hash {
-            return Err(anyhow!(
-                "integrity check failed at id {}: computed_hash={}, stored_hash={}",
-                id,
-                hex::encode(computed),
-                hex::encode(entry_hash)
+            return Err(fail(
+                FailedLedger::SealedEvents,
+                Some(id),
+                FailureKind::EntryHashMismatch,
+                format!(
+                    "integrity check failed at id {}: computed_hash={}, stored_hash={}",
+                    id,
+                    hex::encode(computed),
+                    hex::encode(entry_hash)
+                ),
             ));
         }
 
@@ -196,10 +277,15 @@ where
         )
         .is_err()
         {
-            return Err(anyhow!(
-                "integrity check failed at id {}: signature mismatch (stored={})",
-                id,
-                hex::encode(signature_set.ed25519_signature)
+            return Err(fail(
+                FailedLedger::SealedEvents,
+                Some(id),
+                FailureKind::SignatureMismatch,
+                format!(
+                    "integrity check failed at id {}: signature mismatch (stored={})",
+                    id,
+                    hex::encode(signature_set.ed25519_signature)
+                ),
             ));
         }
 
@@ -210,13 +296,24 @@ where
             SealedLogRecord::deserialize_compat(&payload)
         {
             if rotation.prev_public_key != active_key.to_bytes() {
-                return Err(anyhow!(
-                    "key rotation at id {}: prev_public_key does not match the active verifying key",
-                    id
+                return Err(fail(
+                    FailedLedger::SealedEvents,
+                    Some(id),
+                    FailureKind::KeyRotationInvalid,
+                    format!(
+                        "key rotation at id {}: prev_public_key does not match the active verifying key",
+                        id
+                    ),
                 ));
             }
-            let new_key = VerifyingKey::from_bytes(&rotation.new_public_key)
-                .map_err(|e| anyhow!("key rotation at id {}: invalid new public key: {}", id, e))?;
+            let new_key = VerifyingKey::from_bytes(&rotation.new_public_key).map_err(|e| {
+                fail(
+                    FailedLedger::SealedEvents,
+                    Some(id),
+                    FailureKind::KeyRotationInvalid,
+                    format!("key rotation at id {}: invalid new public key: {}", id, e),
+                )
+            })?;
             // Retiring key authorized the successor; the new key proves possession. The entry
             // signature (verified above under `active_key`) already proves the predecessor
             // signed this rotation into the chain, so the explicit authorization is required
@@ -229,7 +326,14 @@ where
                     &rotation.new_public_key,
                     &rotation.prev_key_authorization,
                 )
-                .map_err(|e| anyhow!("key rotation at id {}: {}", id, e))?;
+                .map_err(|e| {
+                    fail(
+                        FailedLedger::SealedEvents,
+                        Some(id),
+                        FailureKind::KeyRotationInvalid,
+                        format!("key rotation at id {}: {}", id, e),
+                    )
+                })?;
             }
             verify_rotation_attestation(
                 &new_key,
@@ -237,7 +341,14 @@ where
                 &rotation.new_public_key,
                 &rotation.new_key_attestation,
             )
-            .map_err(|e| anyhow!("key rotation at id {}: {}", id, e))?;
+            .map_err(|e| {
+                fail(
+                    FailedLedger::SealedEvents,
+                    Some(id),
+                    FailureKind::KeyRotationInvalid,
+                    format!("key rotation at id {}: {}", id, e),
+                )
+            })?;
             active_key = new_key;
         }
 
@@ -272,8 +383,14 @@ where
     let mut denied = 0u64;
 
     while let Some(row) = rows.next()? {
-        let policy =
-            policy.ok_or_else(|| anyhow!("break-glass quorum policy is not configured"))?;
+        let policy = policy.ok_or_else(|| {
+            fail(
+                FailedLedger::BreakGlassReceipts,
+                None,
+                FailureKind::PolicyViolation,
+                "break-glass quorum policy is not configured".to_string(),
+            )
+        })?;
         let id: i64 = row.get(0)?;
         let _created_at: i64 = row.get(1)?;
         let payload: String = row.get(2)?;
@@ -286,21 +403,31 @@ where
         let signature_set = SignatureSet::from_storage(&signature, pq_signature, pq_scheme)?;
 
         if prev_hash != expected_prev {
-            return Err(anyhow!(
-                "integrity check failed at receipt id {}: prev_hash={}, expected_prev={}",
-                id,
-                hex::encode(prev_hash),
-                hex::encode(expected_prev)
+            return Err(fail(
+                FailedLedger::BreakGlassReceipts,
+                Some(id),
+                FailureKind::PrevHashMismatch,
+                format!(
+                    "integrity check failed at receipt id {}: prev_hash={}, expected_prev={}",
+                    id,
+                    hex::encode(prev_hash),
+                    hex::encode(expected_prev)
+                ),
             ));
         }
 
         let computed = hash_entry(&expected_prev, payload.as_bytes());
         if computed != entry_hash {
-            return Err(anyhow!(
-                "integrity check failed at receipt id {}: computed_hash={}, stored_hash={}",
-                id,
-                hex::encode(computed),
-                hex::encode(entry_hash)
+            return Err(fail(
+                FailedLedger::BreakGlassReceipts,
+                Some(id),
+                FailureKind::EntryHashMismatch,
+                format!(
+                    "integrity check failed at receipt id {}: computed_hash={}, stored_hash={}",
+                    id,
+                    hex::encode(computed),
+                    hex::encode(entry_hash)
+                ),
             ));
         }
 
@@ -314,10 +441,15 @@ where
         )
         .is_err()
         {
-            return Err(anyhow!(
-                "integrity check failed at receipt id {}: signature mismatch (stored={})",
-                id,
-                hex::encode(signature_set.ed25519_signature)
+            return Err(fail(
+                FailedLedger::BreakGlassReceipts,
+                Some(id),
+                FailureKind::SignatureMismatch,
+                format!(
+                    "integrity check failed at receipt id {}: signature mismatch (stored={})",
+                    id,
+                    hex::encode(signature_set.ed25519_signature)
+                ),
             ));
         }
 
@@ -329,14 +461,26 @@ where
         let approvals: Vec<Approval> = serde_json::from_str(&approvals_json)?;
         let commitment = approvals_commitment(&approvals);
         if commitment != receipt.approvals_commitment {
-            return Err(anyhow!(
-                "integrity check failed at receipt id {}: stored_commitment={}, expected_commitment={}",
-                id,
-                hex::encode(receipt.approvals_commitment),
-                hex::encode(commitment)
+            return Err(fail(
+                FailedLedger::BreakGlassReceipts,
+                Some(id),
+                FailureKind::ApprovalsCommitmentMismatch,
+                format!(
+                    "integrity check failed at receipt id {}: stored_commitment={}, expected_commitment={}",
+                    id,
+                    hex::encode(receipt.approvals_commitment),
+                    hex::encode(commitment)
+                ),
             ));
         }
-        verify_approvals_against_policy(policy, &receipt, &approvals)?;
+        verify_approvals_against_policy(policy, &receipt, &approvals).map_err(|e| {
+            fail(
+                FailedLedger::BreakGlassReceipts,
+                Some(id),
+                FailureKind::PolicyViolation,
+                format!("{}", e),
+            )
+        })?;
 
         on_receipt(id, entry_hash);
 
@@ -381,21 +525,31 @@ where
         let signature_set = SignatureSet::from_storage(&signature, pq_signature, pq_scheme)?;
 
         if prev_hash != expected_prev {
-            return Err(anyhow!(
-                "integrity check failed at receipt id {}: prev_hash={}, expected_prev={}",
-                id,
-                hex::encode(prev_hash),
-                hex::encode(expected_prev)
+            return Err(fail(
+                FailedLedger::ExportReceipts,
+                Some(id),
+                FailureKind::PrevHashMismatch,
+                format!(
+                    "integrity check failed at receipt id {}: prev_hash={}, expected_prev={}",
+                    id,
+                    hex::encode(prev_hash),
+                    hex::encode(expected_prev)
+                ),
             ));
         }
 
         let computed = hash_entry(&expected_prev, payload.as_bytes());
         if computed != entry_hash {
-            return Err(anyhow!(
-                "integrity check failed at receipt id {}: computed_hash={}, stored_hash={}",
-                id,
-                hex::encode(computed),
-                hex::encode(entry_hash)
+            return Err(fail(
+                FailedLedger::ExportReceipts,
+                Some(id),
+                FailureKind::EntryHashMismatch,
+                format!(
+                    "integrity check failed at receipt id {}: computed_hash={}, stored_hash={}",
+                    id,
+                    hex::encode(computed),
+                    hex::encode(entry_hash)
+                ),
             ));
         }
 
@@ -409,10 +563,15 @@ where
         )
         .is_err()
         {
-            return Err(anyhow!(
-                "integrity check failed at receipt id {}: signature mismatch (stored={})",
-                id,
-                hex::encode(signature_set.ed25519_signature)
+            return Err(fail(
+                FailedLedger::ExportReceipts,
+                Some(id),
+                FailureKind::SignatureMismatch,
+                format!(
+                    "integrity check failed at receipt id {}: signature mismatch (stored={})",
+                    id,
+                    hex::encode(signature_set.ed25519_signature)
+                ),
             ));
         }
 
@@ -588,6 +747,47 @@ pub fn audit_chain_timeline(conn: &Connection, now_bucket_start: u64) -> Result<
     Ok(warnings)
 }
 
+/// Coarse classification of a timeline-audit warning string, used to attach
+/// plain-language hints in the CLIs and the offline viewer. Classification is
+/// substring-based against the exact `format!` literals in
+/// [`audit_chain_timeline`] (unit-tested below) so the warning text itself —
+/// which flows out over API/MQTT — never has to change. A miss degrades to
+/// [`WarningKind::Other`] (no hint), never a wrong verdict.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WarningKind {
+    /// created_at regression covered by a ClockSkew failure record.
+    ClockSkewNoted,
+    /// created_at regression with no covering ClockSkew record.
+    CreatedAtRegression,
+    /// Checkpoint created_at regressed or sits in the future.
+    CheckpointAnomaly,
+    /// Heartbeat buckets missing inside a running segment.
+    MissingHeartbeats,
+    /// Chain tail stale while the daemon claimed to be running.
+    StaleTail,
+    /// Timeline audit itself could not run.
+    AuditUnavailable,
+    Other,
+}
+
+pub fn classify_warning(warning: &str) -> WarningKind {
+    if warning.starts_with("note: created_at regression") {
+        WarningKind::ClockSkewNoted
+    } else if warning.starts_with("created_at regression") {
+        WarningKind::CreatedAtRegression
+    } else if warning.starts_with("checkpoint") {
+        WarningKind::CheckpointAnomaly
+    } else if warning.starts_with("no heartbeat") {
+        WarningKind::MissingHeartbeats
+    } else if warning.starts_with("chain tail is stale") {
+        WarningKind::StaleTail
+    } else if warning.starts_with("timeline audit could not run") {
+        WarningKind::AuditUnavailable
+    } else {
+        WarningKind::Other
+    }
+}
+
 fn verify_approvals_against_policy(
     policy: &QuorumPolicy,
     receipt: &BreakGlassReceipt,
@@ -632,6 +832,55 @@ mod tests {
     use crate::crypto::signatures::SignatureKeys;
     use crate::sign_entry;
     use ed25519_dalek::SigningKey;
+
+    #[test]
+    fn classify_warning_matches_audit_literals() {
+        // These mirror the exact `format!` literals in `audit_chain_timeline`
+        // (and the runner's audit-unavailable wrapper). If a literal changes,
+        // this test fails before the hint mapping silently goes dead.
+        assert_eq!(
+            classify_warning(
+                "note: created_at regression at id 4 (bucket 100 after 200); a ClockSkew \
+                 failure record covers this jump"
+            ),
+            WarningKind::ClockSkewNoted
+        );
+        assert_eq!(
+            classify_warning(
+                "created_at regression at id 4 (bucket 100 after 200) with no ClockSkew \
+                 record: possible clock tampering or row manipulation"
+            ),
+            WarningKind::CreatedAtRegression
+        );
+        assert_eq!(
+            classify_warning("checkpoint 2 created_at regressed (possible back-dated checkpoint)"),
+            WarningKind::CheckpointAnomaly
+        );
+        assert_eq!(
+            classify_warning("checkpoint 2 created_at is in the future (possible forged checkpoint)"),
+            WarningKind::CheckpointAnomaly
+        );
+        assert_eq!(
+            classify_warning(
+                "no heartbeat for 3 bucket(s) in 600..2400 while the daemon was running: \
+                 possible record deletion"
+            ),
+            WarningKind::MissingHeartbeats
+        );
+        assert_eq!(
+            classify_warning(
+                "chain tail is stale: last record bucket 600 but now 3000 and no clean \
+                 shutdown record — possible tail truncation, crash, or daemon stopped \
+                 without shutdown"
+            ),
+            WarningKind::StaleTail
+        );
+        assert_eq!(
+            classify_warning("timeline audit could not run: boom"),
+            WarningKind::AuditUnavailable
+        );
+        assert_eq!(classify_warning("something else"), WarningKind::Other);
+    }
 
     #[test]
     fn verify_checkpoint_signature_accepts_genesis() -> Result<()> {

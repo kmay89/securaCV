@@ -402,9 +402,18 @@ function serExportArtifact(a) {
     `"jitter_s":${serInt(a.jitter_s)},"jitter_step_s":${serInt(a.jitter_step_s)}}`;
 }
 
+const serExportWindow = (w) =>
+  `{"start_epoch_s":${serInt(w.start_epoch_s)},"end_epoch_s":${serInt(w.end_epoch_s)}}`;
+
+// `auth_mode` and `window` are optional trailing fields the Rust side skips when
+// absent (legacy receipts); serialize them only when present so both receipt
+// generations hash to the bytes the device signed.
 function serExportReceipt(r) {
-  return `{"time_bucket":${serTimeBucket(r.time_bucket)},"ruleset_hash":${serBytes(r.ruleset_hash)},` +
-    `"batch_size":${serInt(r.batch_size)},"artifact_hash":${serBytes(r.artifact_hash)}}`;
+  let s = `{"time_bucket":${serTimeBucket(r.time_bucket)},"ruleset_hash":${serBytes(r.ruleset_hash)},` +
+    `"batch_size":${serInt(r.batch_size)},"artifact_hash":${serBytes(r.artifact_hash)}`;
+  if (r.auth_mode != null) s += `,"auth_mode":${serEnum(r.auth_mode)}`;
+  if (r.window != null) s += `,"window":${serExportWindow(r.window)}`;
+  return s + '}';
 }
 
 // Sealed-log records are stored as the literal `payload_json` string and hashed verbatim by both
@@ -467,6 +476,15 @@ function bytesEqual(a, b) {
   return true;
 }
 
+// Throw with a structured `failure` attached: {ledger, entry_id, kind} mirrors the Rust
+// verifier's VerifyFailure (same serde wire values), pinned cross-language by the
+// tampered_payload fixture in both test suites. The message text is unchanged.
+function chainFail(message, ledger, entryId, kind) {
+  const err = new Error(message);
+  err.failure = { ledger, entry_id: entryId, kind };
+  return err;
+}
+
 async function verifyLinearChain(entries, startHead, domain, pubKey, ledgerName, verifySig) {
   let expectedPrev = startHead;
   for (let i = 0; i < entries.length; i++) {
@@ -474,11 +492,13 @@ async function verifyLinearChain(entries, startHead, domain, pubKey, ledgerName,
     const prev = toBytes(e.prev_hash);
     const entryHash = toBytes(e.entry_hash);
     if (!bytesEqual(prev, expectedPrev)) {
-      throw new Error(`${ledgerName} integrity check failed at index ${i}: prev_hash mismatch`);
+      throw chainFail(`${ledgerName} integrity check failed at index ${i}: prev_hash mismatch`,
+        ledgerName, i, 'prev_hash_mismatch');
     }
     const computed = await hashEntry(expectedPrev, e.payload_json);
     if (!bytesEqual(computed, entryHash)) {
-      throw new Error(`${ledgerName} integrity check failed at index ${i}: entry_hash mismatch`);
+      throw chainFail(`${ledgerName} integrity check failed at index ${i}: entry_hash mismatch`,
+        ledgerName, i, 'entry_hash_mismatch');
     }
     // The hash chain above is proven with SHA-256 alone. Only the Ed25519 signature needs Web
     // Crypto's Ed25519 — defer just that verdict when the runtime can't do it (see verifyEnvelope).
@@ -486,7 +506,8 @@ async function verifyLinearChain(entries, startHead, domain, pubKey, ledgerName,
       const sig = Uint8Array.from(e.signatures.ed25519_signature);
       const msg = await domainSeparatedHash(domain, entryHash);
       if (!(await verifyEd25519(pubKey, sig, msg))) {
-        throw new Error(`${ledgerName} signature verification failed at index ${i}`);
+        throw chainFail(`${ledgerName} signature verification failed at index ${i}`,
+          ledgerName, i, 'signature_mismatch');
       }
     }
     expectedPrev = entryHash;
@@ -564,7 +585,9 @@ async function verifyEnvelope(envelope) {
       const head = toBytes(cp.chain_head_hash);
       const msg = await domainSeparatedHash(domains.checkpoint, head);
       const sig = Uint8Array.from(cp.signatures.ed25519_signature);
-      if (!(await verifyEd25519(pubKey, sig, msg))) throw new Error('checkpoint signature verification failed');
+      if (!(await verifyEd25519(pubKey, sig, msg))) {
+        throw chainFail('checkpoint signature verification failed', 'checkpoint', null, 'checkpoint_invalid');
+      }
       result.checks.push('Checkpoint signature valid (chain continuity across pruning)');
     }
 
@@ -572,12 +595,14 @@ async function verifyEnvelope(envelope) {
     const bg = envelope.ledgers.break_glass_receipts;
     const bgHead = await verifyLinearChain(bg.entries, new Uint8Array(32), domains.break_glass, pubKey, 'break_glass_receipts', sigCheckable);
     validateSummary('break_glass_receipts', bg.entries.length, bg.count, bg.head_hash, bgHead);
-    for (const e of bg.entries) {
+    for (let i = 0; i < bg.entries.length; i++) {
+      const e = bg.entries[i];
       const receipt = JSON.parse(e.payload_json);
       const approvals = JSON.parse(e.approvals_json);
       const commitment = bytesToHex(await approvalsCommitment(approvals));
       if (commitment !== bytesToHex(toBytes(receipt.approvals_commitment))) {
-        throw new Error('break-glass approvals commitment mismatch');
+        throw chainFail('break-glass approvals commitment mismatch',
+          'break_glass_receipts', i, 'approvals_commitment_mismatch');
       }
       if (receipt.outcome === 'Granted' || (receipt.outcome && receipt.outcome.Granted !== undefined)) result.break_glass_granted++;
       else result.break_glass_denied++;
@@ -649,6 +674,7 @@ async function verifyEnvelope(envelope) {
     result.ok = false;
     result.status = 'compromised';
     result.error = err.message || String(err);
+    result.failure = err.failure || null;
     return result;
   }
 }
@@ -965,80 +991,80 @@ const SAMPLE_ENVELOPE = {
       "entries": []
     },
     "export_receipts": {
-      "head_hash": "c73706bfe4e769b574717dd0826474569568ae82671496bf2b5731ae550ea609",
+      "head_hash": "0e6049c58eca8f397ea0e069d27c64d0ed251b6eed7aed79e2a27d808ca25a4e",
       "count": 1,
       "entries": [
         {
-          "payload_json": "{\"time_bucket\":{\"start_epoch_s\":1780024800,\"size_s\":600},\"ruleset_hash\":[45,16,147,155,48,1,124,155,46,224,30,69,59,240,139,120,230,181,59,185,144,28,64,211,27,188,18,159,147,107,182,233],\"batch_size\":50,\"artifact_hash\":[26,209,92,4,53,3,101,36,44,86,207,80,63,125,85,201,80,214,17,144,192,119,60,223,185,54,85,38,238,202,35,17]}",
+          "payload_json": "{\"time_bucket\":{\"start_epoch_s\":1781143200,\"size_s\":600},\"ruleset_hash\":[45,16,147,155,48,1,124,155,46,224,30,69,59,240,139,120,230,181,59,185,144,28,64,211,27,188,18,159,147,107,182,233],\"batch_size\":50,\"artifact_hash\":[26,209,92,4,53,3,101,36,44,86,207,80,63,125,85,201,80,214,17,144,192,119,60,223,185,54,85,38,238,202,35,17],\"auth_mode\":\"api\"}",
           "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
-          "entry_hash": "c73706bfe4e769b574717dd0826474569568ae82671496bf2b5731ae550ea609",
+          "entry_hash": "0e6049c58eca8f397ea0e069d27c64d0ed251b6eed7aed79e2a27d808ca25a4e",
           "signatures": {
             "ed25519_scheme": "ed25519",
             "ed25519_signature": [
-              120,
-              195,
-              90,
-              172,
-              81,
-              15,
-              239,
-              239,
-              105,
-              228,
-              21,
-              230,
-              48,
-              104,
-              48,
-              61,
-              248,
-              47,
-              123,
-              55,
-              199,
-              2,
-              4,
-              234,
-              238,
-              106,
-              198,
-              10,
-              232,
-              11,
-              145,
-              196,
-              17,
-              30,
-              107,
-              134,
-              122,
-              93,
-              184,
+              241,
+              164,
+              95,
+              102,
+              209,
+              79,
               125,
-              206,
-              210,
-              76,
               135,
-              184,
-              204,
-              151,
-              128,
-              220,
-              197,
-              18,
-              183,
               37,
-              100,
-              118,
-              24,
-              47,
-              44,
+              110,
+              52,
+              138,
+              122,
+              219,
               66,
-              195,
-              221,
-              199,
-              78,
-              8
+              88,
+              173,
+              216,
+              45,
+              22,
+              241,
+              213,
+              162,
+              200,
+              28,
+              187,
+              145,
+              212,
+              122,
+              31,
+              226,
+              131,
+              169,
+              107,
+              68,
+              128,
+              29,
+              82,
+              10,
+              174,
+              2,
+              128,
+              239,
+              73,
+              108,
+              183,
+              64,
+              214,
+              132,
+              203,
+              122,
+              122,
+              11,
+              248,
+              39,
+              157,
+              204,
+              53,
+              124,
+              248,
+              27,
+              201,
+              169,
+              2
             ]
           }
         }
@@ -1234,7 +1260,7 @@ const SAMPLE_ENVELOPE = {
   "export_receipt_entry": {
     "receipt": {
       "time_bucket": {
-        "start_epoch_s": 1780024800,
+        "start_epoch_s": 1781143200,
         "size_s": 600
       },
       "ruleset_hash": [
@@ -1305,7 +1331,8 @@ const SAMPLE_ENVELOPE = {
         202,
         35,
         17
-      ]
+      ],
+      "auth_mode": "api"
     },
     "prev_hash": [
       0,
@@ -1342,110 +1369,110 @@ const SAMPLE_ENVELOPE = {
       0
     ],
     "entry_hash": [
-      199,
-      55,
-      6,
-      191,
-      228,
-      231,
-      105,
-      181,
-      116,
-      113,
-      125,
-      208,
-      130,
-      100,
-      116,
-      86,
-      149,
-      104,
-      174,
-      130,
-      103,
-      20,
-      150,
-      191,
-      43,
-      87,
-      49,
-      174,
-      85,
       14,
-      166,
-      9
+      96,
+      73,
+      197,
+      142,
+      202,
+      143,
+      57,
+      126,
+      160,
+      224,
+      105,
+      210,
+      124,
+      100,
+      208,
+      237,
+      37,
+      27,
+      110,
+      237,
+      122,
+      237,
+      121,
+      226,
+      162,
+      125,
+      128,
+      140,
+      162,
+      90,
+      78
     ],
     "signatures": {
       "ed25519_scheme": "ed25519",
       "ed25519_signature": [
-        120,
-        195,
-        90,
-        172,
-        81,
-        15,
-        239,
-        239,
-        105,
-        228,
-        21,
-        230,
-        48,
-        104,
-        48,
-        61,
-        248,
-        47,
-        123,
-        55,
-        199,
-        2,
-        4,
-        234,
-        238,
-        106,
-        198,
-        10,
-        232,
-        11,
-        145,
-        196,
-        17,
-        30,
-        107,
-        134,
-        122,
-        93,
-        184,
+        241,
+        164,
+        95,
+        102,
+        209,
+        79,
         125,
-        206,
-        210,
-        76,
         135,
-        184,
-        204,
-        151,
-        128,
-        220,
-        197,
-        18,
-        183,
         37,
-        100,
-        118,
-        24,
-        47,
-        44,
+        110,
+        52,
+        138,
+        122,
+        219,
         66,
-        195,
-        221,
-        199,
-        78,
-        8
+        88,
+        173,
+        216,
+        45,
+        22,
+        241,
+        213,
+        162,
+        200,
+        28,
+        187,
+        145,
+        212,
+        122,
+        31,
+        226,
+        131,
+        169,
+        107,
+        68,
+        128,
+        29,
+        82,
+        10,
+        174,
+        2,
+        128,
+        239,
+        73,
+        108,
+        183,
+        64,
+        214,
+        132,
+        203,
+        122,
+        122,
+        11,
+        248,
+        39,
+        157,
+        204,
+        53,
+        124,
+        248,
+        27,
+        201,
+        169,
+        2
       ]
     }
   },
-  "whole_envelope_digest": "4ac77e0d285e7ece3421ed704ed38308c47cc8bc86a4139d51db14360dd07bf9"
+  "whole_envelope_digest": "fd9ab7b974e60aa3d16bcc23a5d2e64fd4197aac8c5cbf3bad99e116c58fdd4d"
 };
 const V = globalThis.SecuraCVVerify;
 const $ = (id) => document.getElementById(id);
@@ -1514,9 +1541,12 @@ async function process(envelope, sourceLabel) {
   html += metaPanel(sourceLabel, title);
 
   if (!report.ok) {
-    html += `<div class="panel"><h2>What failed</h2><div class="mono" style="color:var(--bad)">${esc(report.error || 'unknown error')}</div>`;
+    html += `<div class="panel"><h2>What failed</h2>`;
+    if (report.failure) html += failureDiagnosis(report.failure);
+    html += `<div class="hint">Raw error:</div><div class="mono" style="color:var(--bad)">${esc(report.error || 'unknown error')}</div>`;
     if (report.checks.length) html += `<div class="hint">Checks that passed before the failure:</div>${checklist(report.checks)}`;
     html += `</div>`;
+    html += provesPanel();
     html += actions(true);
     out.innerHTML = html;
     wire();
@@ -1548,13 +1578,110 @@ async function process(envelope, sourceLabel) {
   </dl></div>`;
 
   if (report.warnings.length) {
-    html += `<div class="panel"><h2>Notes</h2><ul class="warns">${report.warnings.map((w) => `<li>${esc(w)}</li>`).join('')}</ul></div>`;
+    html += `<div class="panel"><h2>Notes</h2><ul class="warns">${report.warnings.map((w) => {
+      const hint = warningHint(w);
+      return `<li>${esc(w)}${hint ? `<div class="hint">${esc(hint)}</div>` : ''}</li>`;
+    }).join('')}</ul></div>`;
   }
 
   html += renderTimeline(envelope);
+  html += provesPanel();
   html += actions(true);
   out.innerHTML = html;
   wire();
+}
+
+// Plain-language diagnosis for a structured chain failure. Mirrors the Rust
+// hint table in src/verify_explain.rs (presentation-only — the structured
+// {ledger, entry_id, kind} triple is what stays in cross-language parity).
+function failureDiagnosis(f) {
+  const ledgers = {
+    sealed_events: 'sealed event log',
+    break_glass_receipts: 'break-glass receipt chain',
+    export_receipts: 'export receipt chain',
+    checkpoint: 'retention checkpoint',
+    key_lineage: 'device key lineage',
+  };
+  const kinds = {
+    prev_hash_mismatch: {
+      what: 'This entry no longer links to the previous entry’s hash — the chain is broken here. Everything before this point still verified.',
+      causes: 'Entries were deleted or reordered, or the bundle mixes data from different exports (e.g. a truncated download).',
+      next: 'Re-export a fresh bundle from the device and verify that copy. If a fresh copy still fails, preserve both files — do not edit them.',
+    },
+    entry_hash_mismatch: {
+      what: 'The recorded data at this entry no longer matches the hash that was sealed into the chain when it was written.',
+      causes: 'The entry was altered after sealing, or the file was corrupted in transit.',
+      next: 'Re-download or re-export the bundle and verify the fresh copy. If it still fails, the alteration happened at or before export.',
+    },
+    signature_mismatch: {
+      what: 'The hashes are consistent, but the signature on this entry does not verify under the device key named in the bundle.',
+      causes: 'The bundle’s device key was replaced, or the entry was re-signed by a different key.',
+      next: 'Compare the device key fingerprint in Provenance against the key published by the device owner.',
+    },
+    key_rotation_invalid: {
+      what: 'A device-key rotation record failed validation, so later entries can’t be tied back to the device’s original identity.',
+      causes: 'The rotation record was tampered with, or recorded without the previous key’s authorization.',
+      next: 'Treat entries after this point as unattributed; entries before it still verify under the original key.',
+    },
+    checkpoint_invalid: {
+      what: 'The retention checkpoint — the signed head that older, pruned history was collapsed into — failed validation.',
+      causes: 'The checkpoint was edited or forged, or signed by a key the device never authorized.',
+      next: 'Do not rely on history from before the checkpoint; events after it may still verify.',
+    },
+    approvals_commitment_mismatch: {
+      what: 'The trustee approvals stored with a break-glass receipt do not match the commitment sealed into the signed receipt.',
+      causes: 'The approvals were altered after the unseal decision was recorded.',
+      next: 'Treat the unseal audit trail as tampered; ask the trustees for their own copies of what they signed.',
+    },
+  };
+  const k = kinds[f.kind];
+  const where = `${ledgers[f.ledger] || f.ledger}${f.entry_id != null ? ` — entry #${f.entry_id}` : ''}`;
+  let html = `<dl class="kv"><dt>Where</dt><dd>${esc(where)}</dd>`;
+  if (k) {
+    html += `<dt>What this means</dt><dd>${esc(k.what)}</dd>
+      <dt>Likely causes</dt><dd>${esc(k.causes)}</dd>
+      <dt>Next steps</dt><dd>${esc(k.next)}</dd>`;
+  }
+  return html + `</dl>`;
+}
+
+// One-line context per envelope warning so a note never reads as an alarm
+// (or worse, gets ignored) for lack of explanation.
+function warningHint(w) {
+  if (/post-quantum signatures present/.test(w)) {
+    return 'The classical Ed25519 signatures above were fully checked; the extra post-quantum layer needs the Rust verifier (envelope_verify --sig-mode strict).';
+  }
+  if (/no post-quantum public key/.test(w)) {
+    return 'Normal for most devices. Integrity rests on the Ed25519 signatures, which were fully checked.';
+  }
+  if (/failure record\(s\) present/.test(w)) {
+    return 'The device sealed explicit records of when it could not observe (power loss, storage full, clock jumps). Gaps are declared, not hidden — see the timeline below.';
+  }
+  if (/redactions/.test(w)) {
+    return 'Parts were deliberately withheld under the disclosure profile. What remains still verifies; the redaction list states what was removed.';
+  }
+  return null;
+}
+
+// What a green check actually proves — and the honest limits. Shown with every
+// result so the security story explains itself instead of relying on trust.
+function provesPanel() {
+  return `<details class="trust"><summary>What verification proves — and what it can’t</summary><div class="body">
+    <p><strong>A passing check proves:</strong></p>
+    <ul>
+      <li>Every event was signed by the device key shown in Provenance, in the recorded order.</li>
+      <li>Nothing was added, removed, or altered since the events were sealed — changing any entry breaks every later link.</li>
+      <li>Every export (including this bundle) left behind a signed receipt in the chain, so disclosures are themselves auditable.</li>
+    </ul>
+    <p><strong>It cannot prove:</strong></p>
+    <ul>
+      <li>That the detector interpreted the scene correctly — only that this is what the device recorded at the time.</li>
+      <li>That nothing happened outside the device’s coverage or while it was off (though such gaps are recorded as explicit failure records).</li>
+      <li>Exact times — events are deliberately grouped into 10-minute buckets with added jitter to protect bystanders’ privacy.</li>
+      <li>Who physically operated or had access to the device.</li>
+    </ul>
+    <p>These limits are by design: the device records less so it can prove what it does record. See <code>docs/why_secure.md</code> in the securaCV repository.</p>
+  </div></details>`;
 }
 
 function stat(n, label) { return `<div class="stat"><div class="n">${n}</div><div class="l">${esc(label)}</div></div>`; }
