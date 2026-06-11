@@ -129,8 +129,10 @@ inline uint8_t classify_hw_charge_state(uint16_t battery_mv,
 inline uint8_t health_pct_from_cycles(uint32_t charge_cycles,
                                       bool battery_present) {
   if (!battery_present) return 100;
-  uint32_t fade =
-      (charge_cycles * HEALTH_FADE_PCT_PER_RATED_LIFE) / HEALTH_RATED_CYCLES;
+  /* 64-bit intermediate: a corrupted NVS cycle count near UINT32_MAX
+   * must clamp to the floor, not wrap past the cap back to "healthy". */
+  uint64_t fade = ((uint64_t)charge_cycles * HEALTH_FADE_PCT_PER_RATED_LIFE) /
+                  HEALTH_RATED_CYCLES;
   if (fade > HEALTH_FADE_CAP_PCT) fade = HEALTH_FADE_CAP_PCT;
   return (uint8_t)(100 - fade);
 }

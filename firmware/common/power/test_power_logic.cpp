@@ -103,6 +103,10 @@ void test_health_cycle_fade() {
   assert(health_pct_from_cycles(500, true) == 80);   /* rated life: -20% */
   assert(health_pct_from_cycles(1000, true) == 60);  /* clamp floor */
   assert(health_pct_from_cycles(100000, true) == 60);
+  /* A corrupted NVS cycle count near UINT32_MAX must clamp to the
+   * floor, not wrap the multiplication back to "healthy". */
+  assert(health_pct_from_cycles(0xFFFFFFFFu, true) == 60);
+  assert(health_pct_from_cycles(214748365u, true) == 60);
   /* No battery: nothing to degrade, never a false "worn out". */
   assert(health_pct_from_cycles(100000, false) == 100);
   std::printf("PASS test_health_cycle_fade\n");
