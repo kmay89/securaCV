@@ -835,6 +835,69 @@ bool mqtt_send_ha_discovery(const char* device_id, const char* firmware_version)
     all_ok = all_ok && publish_discovery("binary_sensor", device_id, "sd_healthy", payload.c_str());
   }
 
+  // ── Thermal watchdog entities — sourced from the health topic. Like the
+  // sensing entities below, emitted unconditionally: firmware built without
+  // FEATURE_THERMAL_WATCHDOG simply never populates the fields and the
+  // entities stay "Unknown" in HA. ──
+
+  // ── Sensor: die_temp (whole degrees — same display rounding as the dashboard) ──
+  if (all_ok) {
+    JsonDocument doc;
+    doc["name"] = "Die Temperature";
+    doc["stat_t"] = s_topic_health;
+    doc["val_tpl"] = "{{ value_json.die_temp_c }}";
+    doc["unit_of_meas"] = "°C";
+    doc["dev_cla"] = "temperature";
+    doc["stat_cla"] = "measurement";
+    doc["ent_cat"] = "diagnostic";
+    char uid[64];
+    snprintf(uid, sizeof(uid), "securacv_%s_die_temp", device_id);
+    doc["uniq_id"] = uid;
+    JsonObject dev = doc["dev"].to<JsonObject>();
+    add_device_info(dev, device_id, firmware_version);
+    String payload;
+    serializeJson(doc, payload);
+    all_ok = all_ok && publish_discovery("sensor", device_id, "die_temp", payload.c_str());
+  }
+
+  // ── Sensor: thermal_state (normal / throttled / paused) ──
+  if (all_ok) {
+    JsonDocument doc;
+    doc["name"] = "Thermal Performance";
+    doc["stat_t"] = s_topic_health;
+    doc["val_tpl"] = "{{ value_json.thermal_state | default('unknown') }}";
+    doc["ic"] = "mdi:speedometer";
+    doc["ent_cat"] = "diagnostic";
+    char uid[64];
+    snprintf(uid, sizeof(uid), "securacv_%s_thermal_state", device_id);
+    doc["uniq_id"] = uid;
+    JsonObject dev = doc["dev"].to<JsonObject>();
+    add_device_info(dev, device_id, firmware_version);
+    String payload;
+    serializeJson(doc, payload);
+    all_ok = all_ok && publish_discovery("sensor", device_id, "thermal_state", payload.c_str());
+  }
+
+  // ── Binary Sensor: thermal_advisory (any active advisory: critical heat,
+  //     saturation, sensor fault, env-limited, cold) ──
+  if (all_ok) {
+    JsonDocument doc;
+    doc["name"] = "Thermal Advisory";
+    doc["stat_t"] = s_topic_health;
+    doc["val_tpl"] = "{{ 'ON' if value_json.thermal_advisory else 'OFF' }}";
+    doc["dev_cla"] = "problem";
+    doc["ic"] = "mdi:thermometer-alert";
+    doc["ent_cat"] = "diagnostic";
+    char uid[64];
+    snprintf(uid, sizeof(uid), "securacv_%s_thermal_advisory", device_id);
+    doc["uniq_id"] = uid;
+    JsonObject dev = doc["dev"].to<JsonObject>();
+    add_device_info(dev, device_id, firmware_version);
+    String payload;
+    serializeJson(doc, payload);
+    all_ok = all_ok && publish_discovery("binary_sensor", device_id, "thermal_advisory", payload.c_str());
+  }
+
   // ════════════════════════════════════════════════════════════════════
   // SENSING entities (Phase 1–5) — sourced from the retained
   // securacv/{id}/sensing topic. All entities are emitted regardless

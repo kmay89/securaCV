@@ -115,6 +115,7 @@ static_assert(sizeof(csi_features_t) == 36,
 
 #if FEATURE_THERMAL_WATCHDOG
 #include "securacv_thermal_watchdog.h"
+#include <math.h>   /* lroundf for MQTT whole-degree rounding */
 #endif
 
 #if FEATURE_DATA_MGMT
@@ -1850,6 +1851,24 @@ static void mqtt_publish_health_update() {
         doc["charge_state"] = power_charge_state_name(pwr.charge_state);
         doc["battery_health_pct"] = power_health_pct();
       }
+    }
+  }
+#endif
+
+#if FEATURE_THERMAL_WATCHDOG
+  /* Whole degrees only — same display rounding the dashboard uses. */
+  {
+    thermal_wd_state_t tw;
+    thermal_wd_history_t th;
+    if (thermal_wd_get_state(&tw) && thermal_wd_get_history(&th) &&
+        tw.last_sample_ms != 0) {
+      static const char* tnames[] = {"normal", "throttled", "paused"};
+      doc["die_temp_c"]    = (int)lroundf(tw.die_temp_c);
+      doc["thermal_state"] = tnames[tw.shadow_state <= 2 ? tw.shadow_state : 0];
+      doc["thermal_sensor_ok"] = tw.sensor_ok;
+      doc["thermal_advisory"]  = tw.advisories != 0;
+      doc["thermal_throttled_min"] = th.throttled_min;
+      doc["thermal_pause_events"]  = th.pause_events;
     }
   }
 #endif
