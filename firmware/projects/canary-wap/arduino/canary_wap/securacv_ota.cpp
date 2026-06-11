@@ -180,6 +180,54 @@ void securacv_ota_build_signed_message(uint32_t image_size,
     memcpy(out + 4, sha256, 32);
 }
 
+// Append one field + NUL separator to the canonical manifest message.
+static bool manifest_msg_append(uint8_t *out, size_t cap, size_t *pos, const char *field)
+{
+    size_t len = strlen(field);
+    if (*pos + len + 1 > cap) return false;
+    memcpy(out + *pos, field, len);
+    *pos += len;
+    out[(*pos)++] = '\0';
+    return true;
+}
+
+bool securacv_ota_build_manifest_message(const securacv_ota_manifest_t *m,
+                                         uint8_t *out, size_t cap,
+                                         size_t *out_len)
+{
+    // Byte-identical to ota_release.py's manifest_signed_message():
+    // "scv-manifest-v1\0" then every field (lowercased sha, decimal size)
+    // followed by a NUL separator. Absent optional fields are empty.
+    if (m == NULL || out == NULL || out_len == NULL) return false;
+
+    static const char prefix[] = "scv-manifest-v1";
+    size_t pos = 0;
+    if (!manifest_msg_append(out, cap, &pos, prefix)) return false;
+    if (!manifest_msg_append(out, cap, &pos, m->product)) return false;
+    if (!manifest_msg_append(out, cap, &pos, m->version)) return false;
+    if (!manifest_msg_append(out, cap, &pos, m->min_version)) return false;
+    if (!manifest_msg_append(out, cap, &pos, m->url)) return false;
+
+    char sha_lower[65];
+    for (size_t i = 0; i < sizeof(sha_lower) - 1 && m->sha256[i] != '\0'; i++) {
+        char c = m->sha256[i];
+        sha_lower[i] = (c >= 'A' && c <= 'F') ? (char)(c - 'A' + 'a') : c;
+        sha_lower[i + 1] = '\0';
+    }
+    if (m->sha256[0] == '\0') sha_lower[0] = '\0';
+    if (!manifest_msg_append(out, cap, &pos, sha_lower)) return false;
+
+    char size_dec[12];
+    snprintf(size_dec, sizeof(size_dec), "%lu", (unsigned long)m->size);
+    if (!manifest_msg_append(out, cap, &pos, size_dec)) return false;
+
+    if (!manifest_msg_append(out, cap, &pos, m->release_notes)) return false;
+    if (!manifest_msg_append(out, cap, &pos, m->release_url)) return false;
+
+    *out_len = pos;
+    return true;
+}
+
 bool securacv_ota_hex_to_bytes(const char *hex, uint8_t *bytes, size_t byte_len)
 {
     if (hex == NULL || strlen(hex) != byte_len * 2) return false;
@@ -222,6 +270,7 @@ const char *securacv_ota_error_str(securacv_ota_error_t error)
         case SECURACV_OTA_ERR_URL_POLICY:        return "URL rejected by transport policy";
         case SECURACV_OTA_ERR_PUBKEY_MISSING:    return "Release public key not provisioned";
         case SECURACV_OTA_ERR_DEFERRED:          return "Install deferred by device";
+        case SECURACV_OTA_ERR_MANIFEST_SIG:      return "Manifest signature missing or invalid";
         default:                                 return "Unknown error";
     }
 }
@@ -278,6 +327,8 @@ const char *securacv_ota_friendly_error(securacv_ota_error_t error)
             return "Updates are turned off on this build because no release key is set.";
         case SECURACV_OTA_ERR_DEFERRED:
             return "The update was postponed. It will be offered again later.";
+        case SECURACV_OTA_ERR_MANIFEST_SIG:
+            return "The update info failed its security check, so it was ignored.";
         default:
             return "Something went wrong with the update. Your Canary is still on its current software.";
     }
@@ -1361,6 +1412,12 @@ static esp_err_t ota_parse_manifest(const char *json_data)
         strncpy(s_ctx.manifest.signature, signature, sizeof(s_ctx.manifest.signature) - 1);
     }
 
+    const char *manifest_signature = doc["manifest_signature"];
+    if (manifest_signature != NULL) {
+        strncpy(s_ctx.manifest.manifest_signature, manifest_signature,
+                sizeof(s_ctx.manifest.manifest_signature) - 1);
+    }
+
     const char *signing_key_id = doc["signing_key_id"];
     if (signing_key_id != NULL) {
         strncpy(s_ctx.manifest.signing_key_id, signing_key_id,
@@ -1377,6 +1434,26 @@ static esp_err_t ota_parse_manifest(const char *json_data)
     if (release_url != NULL) {
         strncpy(s_ctx.manifest.release_url, release_url,
                 sizeof(s_ctx.manifest.release_url) - 1);
+    }
+
+    // Manifest signature: nothing in this manifest — not the version shown
+    // in Home Assistant, not the release notes, not the download URL — is
+    // trusted until the metadata itself verifies against the release key.
+    // Without this, a hostile local mirror could forge what users read or
+    // where the device fetches. Skipped only on unprovisioned (all-zero
+    // key) dev builds, which cannot install anything anyway.
+    if (pubkey_provisioned(s_ctx.config.release_pubkey)) {
+        uint8_t msig[64];
+        uint8_t msg[SECURACV_OTA_MANIFEST_MSG_MAX];
+        size_t msg_len = 0;
+        if (!securacv_ota_hex_to_bytes(s_ctx.manifest.manifest_signature, msig, sizeof(msig)) ||
+            !securacv_ota_build_manifest_message(&s_ctx.manifest, msg, sizeof(msg), &msg_len) ||
+            !Ed25519::verify(msig, s_ctx.config.release_pubkey, msg, msg_len)) {
+            ESP_LOGE(TAG, "SECURITY: manifest signature missing or invalid — manifest rejected");
+            memset(&s_ctx.manifest, 0, sizeof(s_ctx.manifest));
+            ota_set_error(SECURACV_OTA_ERR_MANIFEST_SIG);
+            return ESP_FAIL;
+        }
     }
 
     s_ctx.manifest_valid = true;

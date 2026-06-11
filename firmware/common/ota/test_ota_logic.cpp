@@ -16,6 +16,8 @@
  *   5. Hex parsing strictness
  *   6. Friendly UI strings exist for every state/error (no raw jargon
  *      leaks into the primary UI when new codes are added)
+ *   7. Canonical manifest-signature message — byte-identical to
+ *      ota_release.py (shared fixture in test_ota_release.py)
  */
 
 #include "securacv_ota.h"
@@ -149,6 +151,42 @@ static int test_hex_to_bytes()
     return 0;
 }
 
+static int test_manifest_message_cross_language_fixture()
+{
+    // Shared with firmware/scripts/test_ota_release.py — if either
+    // implementation drifts, devices reject every release manifest.
+    securacv_ota_manifest_t m;
+    memset(&m, 0, sizeof(m));
+    strcpy(m.product, "securacv-canary");
+    strcpy(m.version, "2.2.0");
+    strcpy(m.min_version, "2.1.0");
+    strcpy(m.url, "https://example.com/fw.bin");
+    strcpy(m.sha256, "AAbb");  // mixed case: builder must canonicalize lower
+    for (int i = 4; i < 64; i++) m.sha256[i] = '0';
+    m.sha256[64] = '\0';
+    m.size = 123456;
+    strcpy(m.release_notes, "Notes, with punctuation!");
+    strcpy(m.release_url, "https://example.com/notes");
+
+    static const char expected_hex[] =
+        "7363762d6d616e69666573742d76310073656375726163762d63616e61727900322e322e3000322e312e300068747470733a2f2f6578616d706c652e636f6d2f66772e62696e006161626230303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303000313233343536004e6f7465732c20776974682070756e6374756174696f6e210068747470733a2f2f6578616d706c652e636f6d2f6e6f74657300";
+
+    uint8_t msg[SECURACV_OTA_MANIFEST_MSG_MAX];
+    size_t msg_len = 0;
+    CHECK(securacv_ota_build_manifest_message(&m, msg, sizeof(msg), &msg_len));
+    CHECK(msg_len == strlen(expected_hex) / 2);
+
+    uint8_t expected[sizeof(msg)];
+    CHECK(securacv_ota_hex_to_bytes(expected_hex, expected, msg_len));
+    CHECK(memcmp(msg, expected, msg_len) == 0);
+
+    // Too-small buffer must fail cleanly, never truncate-and-sign.
+    uint8_t tiny[16];
+    size_t tiny_len = 0;
+    CHECK(!securacv_ota_build_manifest_message(&m, tiny, sizeof(tiny), &tiny_len));
+    return 0;
+}
+
 static int test_friendly_strings()
 {
     // Every error code needs a usable primary-UI sentence; raw enum names
@@ -197,6 +235,7 @@ int main()
     if (test_url_policy()) return 1;
     if (test_signed_message_layout()) return 1;
     if (test_hex_to_bytes()) return 1;
+    if (test_manifest_message_cross_language_fixture()) return 1;
     if (test_friendly_strings()) return 1;
 
     printf("ALL %d OTA LOGIC CHECKS PASSED\n", tests_run);
