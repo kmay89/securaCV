@@ -14,6 +14,7 @@ files. The cleanup section *flags* candidates for the maintainer to action separ
 | [06-feature-prioritization.md](06-feature-prioritization.md) | Must-have vs cut, justified for the 5-year horizon |
 | [07-timeline-events-privacy-design.md](07-timeline-events-privacy-design.md) | Making the timeline/events useful without breaking privacy |
 | [08-product-strategy.md](08-product-strategy.md) | **North star** — the canonical one-page strategy that sits above 01–07 |
+| [09-marketing-pitch-tco-and-friction.md](09-marketing-pitch-tco-and-friction.md) | The customer-facing cost pitch: lifetime/recurring/initial cost + setup time vs. competitors (June 2026 pricing), friction-reduction scorecard, ranked next steps |
 | [securacv_product_strategy_whitepaper.md](securacv_product_strategy_whitepaper.md) | Long-form companion: market, competition, personas, friction/satisfaction ledgers, business model, roadmap |
 
 ## TL;DR
