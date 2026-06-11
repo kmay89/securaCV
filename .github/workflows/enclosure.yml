@@ -50,7 +50,10 @@ jobs:
             parts=$(echo "$out" | sed -n 's/.*Number of parts *: *\([0-9]*\).*/\1/p')
             bad=$(echo "$out"   | sed -n 's/^Total disconnected facets *: *\([0-9]*\).*/\1/p')
             echo "$f: parts=$parts disconnected=$bad"
-            [ "$parts" = "1" ] && [ "$bad" = "0" ] || { echo "::error file=docs/hardware/enclosure/$f::bad mesh (parts=$parts, disconnected=$bad)"; status=1; }
+            if [ "$parts" != "1" ] || [ "$bad" != "0" ]; then
+              echo "::error file=docs/hardware/enclosure/$f::bad mesh (parts=$parts, disconnected=$bad)"
+              status=1
+            fi
           done
           exit $status
 

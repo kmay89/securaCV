@@ -62,12 +62,7 @@ if [[ "${1:-}" != "--no-png" ]]; then
   png "preview_compact.png" -D 'preset="compact_plain"'   -D 'part="all"'
   png "preview_weather.png" -D 'preset="battery_weather"' -D 'part="all"'
   png "preview_coupon.png"  -D 'part="coupon"'
-  echo "Rendering preview_vision.png ..."
-  "$OPENSCAD" --render -o preview_vision.png --imgsize 1200,800 --autocenter --viewall \
-      --colorscheme Tomorrow -D 'preset="vision_weather"' -D 'part="all"' "$VSRC" 2>/dev/null \
-    || xvfb-run -a "$OPENSCAD" --render -o preview_vision.png --imgsize 1200,800 --autocenter --viewall \
-          --colorscheme Tomorrow -D 'preset="vision_weather"' -D 'part="all"' "$VSRC" 2>/dev/null \
-    || echo "WARNING: could not render preview_vision.png — STLs are unaffected"
+  (SRC="$VSRC"; png "preview_vision.png" -D 'preset="vision_weather"' -D 'part="all"')
 fi
 
 echo "Done: WAP (6 STLs + gasket + coupon) + Vision (4 STLs + gasket + bracket + knob)."
