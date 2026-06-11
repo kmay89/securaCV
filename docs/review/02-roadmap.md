@@ -118,7 +118,11 @@ Each phase lists **deliverable → user-facing acceptance → invariant guardrai
   coarsening; grep guardrails. *Guardrail:* Inv. II/III — these are conformance bugs, fix before
   selling hardware.
 
-### P4 — Optional paid tier (margin, never required)
+### P4 — Optional paid tier (margin, never required) · 🟡 RFC-3161 SHIPPED
+<!-- RFC-3161 anchoring shipped as `log_anchor` + src/tsa.rs (online + air-gapped
+     offline flows; openssl as the independent countersignature verifier) — see
+     docs/timestamping.md. C2PA / Content-Credentials interop remains open. -->
+
 - **Third-party cryptographic timestamping (RFC-3161) + C2PA / Content-Credentials interop** so a
   sealed export self-authenticates against deepfake challenges. *Guardrail:* operates on
   signatures/hashes only — **never** raw footage off-device (Inv. I/IV). This is the

@@ -30,6 +30,22 @@
   receipt re-serialization drops unknown fields); verify new bundles with a
   current viewer/`envelope_verify`.
 
+### RFC 3161 trusted timestamping (chain anchors)
+
+- **New `log_anchor` CLI** anchors the witness chain head (or any export
+  digest) at a public Time Stamping Authority: independent third-party
+  proof of *when* the chain existed, removing the device clock — and even
+  the device key — from the trust base for back-dating attacks. Online
+  flow behind `--features tsa`; a query/import offline flow works
+  air-gapped with no special build. `log_anchor verify` checks imprint
+  consistency and chain membership in-tree and delegates the CMS
+  countersignature to an independent implementation (`openssl ts
+  -verify`). Anchors live in a new additive `tsa_anchors` table; the
+  sealed-log schema and existing verifiers are untouched. Requests carry
+  only a 32-byte digest plus a random nonce, and nothing in witnessd ever
+  calls a TSA on its own (anchoring is operator/cron-initiated). See
+  docs/timestamping.md.
+
 ### Physical tamper sealed into the witness chain
 
 - **New `EventType::TamperDetected` / `ClaimKind::TamperDetected`**

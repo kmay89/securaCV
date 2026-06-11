@@ -7,7 +7,8 @@ ingest setup that used to live inline in the README.
 See also: [`docs/rtsp_setup.md`](rtsp_setup.md), [`docs/v4l2_setup.md`](v4l2_setup.md),
 [`docs/esp32_s3_setup.md`](esp32_s3_setup.md), [`docs/container.md`](container.md),
 [`docs/homeassistant_setup.md`](homeassistant_setup.md), [`docs/frigate_integration.md`](frigate_integration.md),
-[`docs/sd_card_health.md`](sd_card_health.md) (card selection, endurance monitoring, replacement runbook).
+[`docs/sd_card_health.md`](sd_card_health.md) (card selection, endurance monitoring, replacement runbook),
+[`docs/timestamping.md`](timestamping.md) (RFC 3161 anchors: third-party proof of when the chain existed).
 
 ---
 
