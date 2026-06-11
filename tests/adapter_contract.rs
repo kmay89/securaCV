@@ -77,6 +77,7 @@ fn every_claim_kind_maps_into_the_generic_allowlist() {
         ClaimKind::VehiclePresenceAfterHours,
         ClaimKind::ContactStateChange,
         ClaimKind::ObjectRemovedFromZone,
+        ClaimKind::TamperDetected,
     ] {
         let et = claim_kind_to_event_type(kind);
         assert!(
@@ -86,6 +87,28 @@ fn every_claim_kind_maps_into_the_generic_allowlist() {
             et
         );
     }
+}
+
+#[test]
+fn tamper_claim_round_trips_into_sealed_log() {
+    // The Canary firmware publishes enclosure/camera/temp-drift tamper on
+    // securacv/<id>/tamper; the mqtt_sensor route turns it into this claim.
+    // It must seal as a TamperDetected event through the standard gates.
+    let mut host = setup_host(0.0);
+    let desc = permissive_descriptor();
+    let claim = Claim::new(ClaimKind::TamperDetected, "Canary 1", 0.93);
+
+    let event = host
+        .process_claim(desc, &claim)
+        .expect("process")
+        .expect("event written");
+
+    assert_eq!(event.event_type, EventType::TamperDetected);
+    assert_eq!(event.zone_id, "zone:canary_1");
+    assert_eq!(event.time_bucket.size_s, 600);
+    assert!(event.correlation_token.is_none());
+
+    assert_eq!(exported_event_count(&mut host), 1);
 }
 
 #[test]

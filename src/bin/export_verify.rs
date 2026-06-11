@@ -59,10 +59,11 @@ struct Args {
     /// SQLCipher database encryption key (hex-encoded, 32 bytes)
     #[arg(long, value_name = "HEX", env = "SECURACV_DB_KEY")]
     db_key: Option<String>,
-    /// Device key seed (as used by the kernel). Derives the SQLCipher key
-    /// (when --db-key is not given) and the verifying key (when no
+    /// Device key seed (as used by the kernel/bridges). Derives the SQLCipher
+    /// key (when --db-key is not given) and the verifying key (when no
     /// --public-key/--public-key-file is given) — same semantics as
-    /// log_verify, so the owner self-export flow verifies with the seed alone.
+    /// log_verify, so `DEVICE_KEY_SEED=... export_verify --db witness.db
+    /// --bundle ...` verifies an owner self-export with the seed alone.
     #[arg(long, value_name = "SEED", env = "DEVICE_KEY_SEED")]
     device_key_seed: Option<String>,
 }
@@ -90,7 +91,8 @@ fn main() -> Result<()> {
     let ui = ui::Ui::from_args(Some(&args.ui), is_tty, !stdout_is_tty);
 
     // SQLCipher key: explicit --db-key wins; otherwise derive it from the
-    // device key seed exactly as the kernel does (mirrors log_verify).
+    // device key seed exactly as the kernel/bridges do (same logic as
+    // log_verify).
     let db_key: Option<String> = match (&args.db_key, &args.device_key_seed) {
         (Some(key), _) => Some(key.clone()),
         (None, Some(seed)) => {

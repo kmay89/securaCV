@@ -48,11 +48,23 @@ per frame/loop iteration.
 timestamp regressions, checkpoint back-dating) and reports warnings;
 `--strict` makes warnings fail verification.
 
+### Physical tamper (bridged)
+
+ESP32 Canary firmware detects enclosure tamper (touch pad), thermal-attack
+temperature drift, and camera tamper/blinding. Each is signed into the
+device-side witness chain (`RECORD_TAMPER_ALERT`) **and** published once per
+event to `securacv/<device_id>/tamper`
+(`{"state":"on","confidence":0..1,"kind":"enclosure_tamper"|"temp_drift"|"camera_tamper"}`).
+A `tamper_detected` route on the host's `mqtt_sensor` adapter (see
+`adapter_host.example.toml`) seals it into the kernel's log as an
+`EventType::TamperDetected` event through the standard
+`Kernel::append_event_checked` gates. Tamper is an *event* (something the
+device witnessed happening to itself), not a `FailureType` — the device is
+still functioning when it reports it.
+
 ### Known gap (tracked follow-up)
 
-ESP32 Canary firmware tracks physical-tamper counters, battery, and subsystem
-health (`SystemHealth` in `securacv_witness.h`) and publishes BLE lifecycle
-events over MQTT — none of which reach a sealed chain. Bridging device-side
-tamper/health claims through the adapter contract into the kernel's sealed log
-is a planned follow-up; until then, firmware health is observable on MQTT but
-not cryptographically witnessed.
+Firmware bulk health counters (battery, heap, subsystem flags in
+`SystemHealth`) and BLE lifecycle events remain MQTT-only and are not sealed
+into any chain. They are operational telemetry rather than evidence; sealing
+them is deliberately deferred until a concrete audit need emerges.

@@ -63,6 +63,7 @@
 #include <meta_empty_room_baseline.h>
 #include <anomaly_baseline.h>
 #include <ble_events_module.h>
+#include "acoustic_events_module.h"
 
 #include "build_config.h"
 #if FEATURE_BLE_SCAN
@@ -2250,6 +2251,15 @@ void register_v1_modules() {
    * disable matrix today — the BLE stack itself is a feature flag
    * (FEATURE_BLE_DISCOVERY) controlled at a higher layer. */
   csi_module_register(ble_events_module());
+
+#if FEATURE_ACOUSTIC_EVENTS
+  /* PDM-microphone acoustic detections (smoke/CO/knock/doorbell/glass
+   * + mic mute toggles). Same chokepoint rationale as ble.events: the
+   * per-event allow-list constrains every emit to a state tag, a
+   * confidence word, and the time bucket — no audio content exists to
+   * leak. Gated on the same flag that compiles the detector itself. */
+  csi_module_register(acoustic_events_module());
+#endif
 
 #if FEATURE_BLE_SCAN
   /* BLE Scout — paired-beacon room-attribution (PR 5b ported to

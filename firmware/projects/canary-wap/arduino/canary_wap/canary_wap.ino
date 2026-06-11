@@ -218,6 +218,7 @@ extern "C" {
 // PDM acoustic event detection (T3 smoke / T4 CO alarm cadences)
 #if FEATURE_ACOUSTIC_EVENTS
 #include "securacv_audio.h"
+#include "acoustic_events_module.h"
 
 // Last acoustic event, held for the MQTT /sensing snapshot. Written by
 // the audio event callback and read by the loop's MQTT cadence block —
@@ -7838,6 +7839,9 @@ void setup() {
                  audio_event_name(evt->event_type));
         g_audio_mqtt_event_ms = millis();
         g_audio_mqtt_dirty = true;
+        // And into the csi_event chokepoint, which lands it in the Today
+        // timeline, the SD event log, and the MQTT /events stream.
+        acoustic_events_emit_detection(evt->event_type, evt->confidence);
       });
       // Sign every mute / unmute toggle into the witness chain so a later
       // operator can verify when the mic was off and which source flipped
@@ -7859,8 +7863,11 @@ void setup() {
                    muted ? "Microphone muted" : "Microphone unmuted",
                    source_name);
         // Mirror the state to HA's mic-mute switch entity (retained;
-        // cached internally for the reconnect republish).
+        // cached internally for the reconnect republish), and into the
+        // Today timeline so "was it listening?" is visible where users
+        // actually look.
         csi_mqtt::publish_mic_state(muted);
+        acoustic_events_emit_mute(muted);
       });
       // Honor the user's persisted mute intent. Still single-task here —
       // the HTTP server has not started yet — so the synchronous boot
@@ -8708,8 +8715,23 @@ void loop() {
     }
     if (now - s_mqtt_health_ms >= 60000UL) {
       s_mqtt_health_ms = now;
+      // Attach the real battery state when one is wired (HW ADC mode);
+      // nullptr keeps the mains semantics (battery=100) for USB-only
+      // devices so HA never sees a false low-battery state.
+      const csi_mqtt::MqttBatteryInfo* batt_ptr = nullptr;
+      #if FEATURE_POWER_MONITOR
+      csi_mqtt::MqttBatteryInfo batt;
+      PowerState pwr_mqtt;
+      if (power_monitor::get_state(&pwr_mqtt) && pwr_mqtt.battery_present) {
+        batt.soc_pct      = pwr_mqtt.soc_pct;
+        batt.health_pct   = power_monitor::health_pct();
+        batt.battery_mv   = pwr_mqtt.voltage_mv;
+        batt.charge_state = power_monitor::charge_state_name(pwr_mqtt.charge_state);
+        batt_ptr = &batt;
+      }
+      #endif
       csi_mqtt::publish_health((uint32_t)ESP.getFreeHeap(),
-                               (uint32_t)uptime_seconds());
+                               (uint32_t)uptime_seconds(), batt_ptr);
     }
 
 #if FEATURE_ACOUSTIC_EVENTS

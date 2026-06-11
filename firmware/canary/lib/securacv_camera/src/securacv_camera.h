@@ -43,9 +43,9 @@ enum ThermalState : uint8_t {
   THERMAL_PAUSED    = 2
 };
 
-#define THERMAL_THROTTLE_TEMP_C   70
-#define THERMAL_PAUSE_TEMP_C      80
-#define THERMAL_RECOVER_MARGIN_C   5
+/* THERMAL_THROTTLE_TEMP_C / THERMAL_PAUSE_TEMP_C / THERMAL_RECOVER_MARGIN_C
+ * come from canary_config.h (single source, shared with the thermal
+ * watchdog's shadow classifier). */
 #define THERMAL_CHECK_INTERVAL_MS  5000
 #define THERMAL_FAIL_SAFE_COUNT    3     // consecutive read failures before fail-safe throttle
 #define FREEZE_TIMEOUT_MS          10000

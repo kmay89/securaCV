@@ -57,6 +57,9 @@ Within 30 seconds of the Canary connecting to MQTT:
    - **Tamper Detected** — Tamper event status
    - **GPS Fix** — GPS fix status
    - **SD Card Healthy** — Storage health
+   - **Die Temperature** — Chip die temperature, whole degrees (silicon, not room)
+   - **Thermal Performance** — `normal` / `throttled` / `paused` (the adaptive-performance ladder)
+   - **Thermal Advisory** — ON when any thermal advisory is active (too hot, saturation, sensor fault, cold)
 
 On canary-wap builds with the microphone enabled (XIAO ESP32-S3 Sense), the
 device also announces acoustic entities via MQTT discovery:
@@ -91,7 +94,7 @@ Import the SecuraCV Alert Blueprint for one-click notification setup:
 2. Enter URL: `https://github.com/kmay89/securaCV/blob/main/docs/blueprints/securacv_alerts.yaml`
 3. Create an automation from the blueprint
 4. Select your Canary device and notification service
-5. Enable the alert types you want (tamper, chain failure, offline, GPS loss)
+5. Enable the alert types you want (smoke/CO alarm heard — critical pushes that bypass silent mode, tamper, chain failure, offline, GPS loss)
 
 Or copy automations from `docs/homeassistant_automations.yaml` for manual setup.
 

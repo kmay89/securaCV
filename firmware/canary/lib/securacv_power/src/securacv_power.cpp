@@ -844,4 +844,16 @@ uint32_t power_estimate_runtime_min(void) {
   return (mins > RUNTIME_CAP_MIN) ? RUNTIME_CAP_MIN : mins;
 }
 
+const char* power_charge_state_name(uint8_t charge_state) {
+  switch (charge_state) {
+    case CHARGE_STATE_CHARGING:    return "charging";
+    case CHARGE_STATE_FULL:        return "full";
+    case CHARGE_STATE_DISCHARGING: return "discharging";
+    case CHARGE_STATE_LOW:         return "low";
+    case CHARGE_STATE_CRITICAL:    return "critical";
+    case CHARGE_STATE_NO_BATTERY:  return "no_battery";
+    default:                       return "unknown";
+  }
+}
+
 }  /* extern "C" */

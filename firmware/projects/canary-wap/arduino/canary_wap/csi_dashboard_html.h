@@ -1145,6 +1145,7 @@ static const char CSI_DASHBOARD_HTML[] PROGMEM = R"DASHBOARD(<!doctype html>
   <div class="sheet-head">
     <h2 id="todayTitle">Today</h2>
     <span class="privacy-pill" id="privacyPill">Today: 0 bytes left the device</span>
+    <span class="privacy-pill" id="sharePill">Sharing: off — nothing leaves unless you turn it on</span>
     <button class="iconbtn sheet-close" data-sheet="today" aria-label="Close Today">×</button>
   </div>
   <div class="sheet-body" id="todayBody">
@@ -2009,6 +2010,10 @@ async function fetchToday() {
       const stateLabel = ({
         empty: 'Empty', subtle: 'Subtle motion', quiet: 'Quiet', active: 'Active',
         together: 'Together', breathing_nearby: 'Quiet', breathing_lost: 'Subtle motion',
+        smoke_alarm: 'Smoke alarm heard', co_alarm: 'CO alarm heard',
+        knock: 'Knock heard', doorbell: 'Doorbell heard',
+        glass_break: 'Glass break heard',
+        mic_muted: 'Mic muted', mic_on: 'Mic turned on',
       })[e.state] || e.state;
       if (e.state === 'active') activeCount++;
       if (e.state === 'empty')  quietCount++;
@@ -2121,6 +2126,31 @@ async function fetchPrivacyBudget() {
   } catch {}
 }
 
+/* Outbound opt-in visibility: the device is local-only by default and
+ * only the user can change that (Enterprise TODO §1). This pill says,
+ * in one glance, which side of that line the device is on right now —
+ * and to where. Warm tint whenever a sharing path is on, so "connected
+ * somewhere" is never the visually quiet state. */
+async function fetchShareState() {
+  const pill = document.getElementById('sharePill');
+  if (!pill) return;
+  try {
+    const r = await cvFetch('/api/mqtt/config', {cache: 'no-store'});
+    if (!r.ok) return;
+    const j = await r.json();
+    if (!j.enabled) {
+      pill.textContent = 'Sharing: off — nothing leaves unless you turn it on';
+      pill.classList.remove('warm');
+    } else if (j.connected) {
+      pill.textContent = 'Sharing: on — connected to ' + (j.host || 'your home system');
+      pill.classList.add('warm');
+    } else {
+      pill.textContent = 'Sharing: on — trying to reach ' + (j.host || 'your home system');
+      pill.classList.add('warm');
+    }
+  } catch {}
+}
+
 /* ────────────────────────────────────────────────────────────────────────
  *  Sheets
  * ──────────────────────────────────────────────────────────────────────── */
@@ -2192,6 +2222,7 @@ const todayScrim = document.getElementById('todayScrim');
 document.getElementById('todayBtn').addEventListener('click', () => {
   fetchToday();
   fetchPrivacyBudget();
+  fetchShareState();
   openSheet(todaySheet, todayScrim);
 });
 todayScrim.addEventListener('click', () => closeSheet(todaySheet, todayScrim));

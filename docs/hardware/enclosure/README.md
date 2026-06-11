@@ -1,4 +1,19 @@
-# Canary WAP — 3D-Printable Enclosure (v0.7)
+# Canary — 3D-Printable Enclosures
+
+Two parametric OpenSCAD configurators live here:
+
+| Device | Source | What it is |
+|--------|--------|------------|
+| **Canary WAP** (XIAO ESP32-S3 Sense) | [`canary_wap_enclosure.scad`](./canary_wap_enclosure.scad) | box enclosure with peripheral bays — [section below](#canary-wap--enclosure-v07) |
+| **Canary Vision** (ESP32-C3 + Grove Vision AI V2 + OV5647) | [`canary_vision_enclosure.scad`](./canary_vision_enclosure.scad) | camera unit with a GoPro-compatible adjustable hinge — [section below](#canary-vision--enclosure-v01) |
+
+Both share the same print-tolerance system, weather-sealing approach (printed
+TPU gasket + drip-edge lid) and CI gate (every change re-renders all presets and
+mesh-checks the STLs).
+
+---
+
+# Canary WAP — Enclosure (v0.7)
 
 Parametric, printable case for the Canary WAP (XIAO ESP32-S3 Sense), referenced
 as a "future add" in the [Peripheral Build Plan](../canary_peripheral_build_plan.md)
@@ -281,6 +296,105 @@ plug/overmold can't jam it.
 > board and check the lid** before the full box. A printed case is **not
 > IP-rated** — weather mode is splash resistance, not immersion; see climate/IP
 > guidance in build plan §9.
+
+---
+
+# Canary Vision — Enclosure (v0.1)
+
+Parametric camera unit for the Canary Vision stack — **OV5647 camera**
+(Pi-cam v1.3 form factor) + **Grove Vision AI V2** (25 × 25 mm) +
+**ESP32-C3-DevKitM-1**, joined by the Grove I2C cable. The front face carries
+the lens aperture (recessed clear-disc seat + optional rain hood) and the LED
+light pipe; the back shell carries the boards and the mounts.
+
+![vision_weather preset — back, front, gasket, bracket and knob](./preview_vision.png)
+
+## Why not Seeed's foldable holder?
+
+Seeed's official XIAO Vision AI Camera case uses a fold-out **friction hinge**:
+fine on a desk, but the angle sags over time, there's no lock, no enclosure
+sealing, and no real wall-mount story. This design replaces it with a
+**GoPro-compatible two-prong hinge** on the top wall (3.0 mm fins, 6.35 mm
+pitch, M5 axis):
+
+- **Sag-proof**: optional radial **detent teeth** (`hinge_teeth`, on by
+  default) interlock the mating faces in 15° steps — the set angle cannot
+  drift. Set `hinge_teeth = false` for smooth faces and full compatibility
+  with off-the-shelf GoPro accessories (arms, clamps, suction mounts…).
+- **Locked, not rubbed**: the angle clamps with an **M5 thumbscrew** (buy a
+  GoPro-style knurled screw, or print the included `knob` over an M5 × 25
+  bolt + nut).
+- **Typical mounting scenarios** out of the box:
+  - **wall / eave** — print the `bracket` (three prongs + 4 countersunk #8/M4
+    screws *or* two keyhole slots), click the case in, set the pitch, tighten;
+  - **tripod / clamp** — the bracket has a captive **1/4-20 nut pocket**
+    (`bracket_tripod`) behind the centre fin;
+  - **flush wall** — `mount_style = "keyhole"` puts blind, seal-safe keyhole
+    pockets in the case back instead of (or as well as) the hinge;
+  - the whole **GoPro ecosystem**, with `hinge_teeth = false`.
+
+## Water ingress
+
+Same opt-in system as the WAP case (`opt_seal`): perimeter **TPU gasket** in a
+groove on the back-shell rim, **drip-edge skirt** on the front so water sheds
+off the seam, **flanged USB plug recess** on the bottom wall, plus two
+camera-specific items:
+
+- **Rain/glare hood** (`opt_hood`): a ~220° collar over the lens window, open
+  at the bottom — keeps rain and skylight off the glass.
+- **Lens window**: bond a **14 × 1 mm clear PMMA/PC disc** into the recessed
+  seat with **neutral-cure** silicone (full-circle bead in weather mode).
+
+Mount it **USB-down** (the hinge makes this natural) so the only wall opening
+faces the ground, fit a **GORE vent** over the `opt_vent` cluster for
+pressure equalisation, and treat the result as **rain/splash-resistant
+(~IP54)** — for harsh exposure use the Hammond ENC1 path (build plan §9).
+
+## Presets & parts
+
+| Preset | What you get |
+|--------|--------------|
+| **vision_indoor** | hinge mount, LED port, no seal — desk/shelf unit |
+| **vision_weather** | seal + hood + GORE vent + hinge **and** keyholes |
+
+`part` = `back` / `front` / `all` / `gasket` / `bracket` / `knob`.
+Outer size ≈ **80 × 61 × 18 mm** (+20 mm prongs); weather ≈ 81 × 63 × 21 mm.
+
+## Assembly
+
+1. Screw the **OV5647** to the four posts inside the front face (M2
+   self-tappers, lens through the aperture); bond the clear disc into the seat.
+2. Click the **Vision AI V2** and the **DevKitM-1** into their snap-clip
+   cradles in the back (DevKit USB-C down, aligned to the wall opening). The
+   module's own USB-C faces the middle gap — open the case to reflash models.
+3. Route the camera FPC to the module's CSI connector and the Grove cable
+   across the middle gap to the DevKit pins.
+4. (weather) Seat the TPU gasket in the rim groove.
+5. Close the front (lip nests into the back) and drive the 4 × M2 corner
+   screws — snug diagonally, then final quarter-turns.
+6. Screw the **bracket** to the wall (or a tripod plate via the 1/4-20 nut),
+   slot the case prongs into it, set the angle, tighten the M5 thumbscrew.
+
+## Key parameters
+
+| Param | Default | Why you'd change it |
+|-------|--------:|---------------------|
+| `dk_l/dk_w`, `vm_l/vm_w`, `cam_w/cam_h` | 39×25.4 / 25×25 / 25×24 | **Measure your boards** — DevKit revisions differ |
+| `standoff_h` | 3.0 | **Raise to ~10 if your DevKit has soldered pin headers** |
+| `lens_dx/dy` | 0 / 2.5 | Lens centre offset from the camera-board centre — measure |
+| `cam_hole_x/y` | 21 / 12.5 | Pi-cam v1.3 mounting grid |
+| `hinge_teeth` | true | `false` = smooth GoPro-compatible faces |
+| `tol_slide/press/hole` | 0.20/0.10/0.30 | Same per-printer tolerance trio as the WAP case |
+| `mount_style` | hinge | `keyhole` / `both` |
+| `bracket_tripod` | true | captive 1/4-20 nut in the bracket |
+
+**Print settings:** as the WAP case (PETG/ASA, 0.2 mm, 3 perimeters, no
+supports — every part prints flat; the prongs print as part of the shell with
+the fin round-overs self-supporting). Gasket in TPU 90–95A.
+
+> ⚠️ **v0.1 — verify before printing.** Board dimensions are nominal and the
+> hinge dimensions target GoPro compatibility but are printed parts: print the
+> `bracket` + `knob` first and check the prong fit, then the shells.
 
 ## Links
 - [Peripheral Build Plan & BOM](../canary_peripheral_build_plan.md) — parts, wiring, climate/IP guidance

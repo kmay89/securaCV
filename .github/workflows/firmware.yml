@@ -573,6 +573,16 @@ jobs:
             $COMMON_SRC/csi_witness_payload.cpp \
             -I $BLE_SRC -I $MESH_SRC -I $COMMON_SRC
 
+          # thermal_wd — standalone: the module compiles against
+          # thermal_wd_host_stubs.h under CSI_TEST_HOST_BUILD and the
+          # test provides the clock, sensor, NVS map, and log capture.
+          # Pins the hysteresis ladder, episode-once advisories,
+          # ms-accurate time accounting, and the NVS wear cadence.
+          run_test thermal_wd \
+            firmware/canary/lib/securacv_thermal_watchdog/test_thermal_wd.cpp \
+            firmware/canary/lib/securacv_thermal_watchdog/src/securacv_thermal_watchdog.cpp \
+            -I firmware/canary/lib/securacv_thermal_watchdog/src
+
       - name: Build + run pull-OTA engine logic host test
         # The OTA engine's pure-logic subset (semantic version compare,
         # anti-rollback update decision, URL transport policy, the

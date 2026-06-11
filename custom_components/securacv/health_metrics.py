@@ -112,3 +112,40 @@ def memory_free_bytes(health_payload: dict[str, Any]) -> int:
             except (TypeError, ValueError):
                 continue
     return 0
+
+
+def battery_percent(health_payload: dict[str, Any]) -> int | None:
+    """Battery state of charge across firmware spellings.
+
+    Returns None for mains-powered devices (no battery to alert on).
+
+    canary-wap publishes `battery` (100 with `battery_present: false`
+    on mains, real SoC otherwise). firmware/canary publishes
+    `battery_soc`, but older builds report battery_soc=0 on USB-only
+    devices, so that spelling is only trusted when `battery_present`
+    is explicitly true.
+    """
+    present = health_payload.get("battery_present")
+    if present is False:
+        return None
+    value = health_payload.get("battery")
+    if value is None and present is True:
+        value = health_payload.get("battery_soc")
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def battery_charging(health_payload: dict[str, Any]) -> bool:
+    """True when the device reports its battery as charging or full.
+
+    A charging battery is not a power-loss risk, so the health sensor
+    skips the low-battery thresholds for it.
+    """
+    return str(health_payload.get("charge_state", "")).lower() in (
+        "charging",
+        "full",
+    )

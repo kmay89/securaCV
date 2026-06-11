@@ -30,6 +30,27 @@
   receipt re-serialization drops unknown fields); verify new bundles with a
   current viewer/`envelope_verify`.
 
+### Physical tamper sealed into the witness chain
+
+- **New `EventType::TamperDetected` / `ClaimKind::TamperDetected`**
+  (`tamper_detected` in routes): tampering with the witnessing device itself
+  — enclosure opened, camera covered/blinded, thermal-attack temp drift.
+  Previously the Canary firmware signed tamper into its device-side chain
+  but the kernel's sealed log never saw it (and the dedicated
+  `securacv/<id>/tamper` MQTT topic had **zero publishers**).
+- **Firmware**: the sensing witness callback now queues tamper alerts and
+  the main loop publishes `{"state":"on","confidence":0..1,"kind":...}` on
+  `securacv/<id>/tamper` (pending-flag pattern; re-arms on publish failure).
+- **Adapter path**: `mqtt_sensor` / `webhook` allowlists include the new
+  kind; example route in `adapter_host.example.toml`. Everything flows
+  through the existing `Kernel::append_event_checked` gates — no new kernel
+  surface.
+- Specs updated (normative): `spec/event_contract.md` §11 vocabulary,
+  `spec/sensor_adapter_contract_v0.md` §6 mapping.
+- Compatibility: same statement as the heartbeat/lifecycle records — old
+  DBs verify unchanged; old `log_verify` accepts new DBs; old
+  `export_events` binaries error on records carrying the new event type.
+
 ### Logging & witnessd chain audit remediation
 
 - **New sealed record types** `heartbeat` and `lifecycle`

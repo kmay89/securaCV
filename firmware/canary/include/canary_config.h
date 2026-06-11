@@ -280,6 +280,18 @@
 #define STATE_HYSTERESIS_MS      2000
 
 // ════════════════════════════════════════════════════════════════
+// THERMAL THRESHOLDS (die temperature, °C)
+// Single source for the camera actuator (securacv_camera) and the
+// thermal watchdog's shadow classifier (securacv_thermal_watchdog)
+// so the two can never silently drift apart. Rationale and Seeed
+// source data: docs/esp32s3_thermal_review.md.
+// ════════════════════════════════════════════════════════════════
+
+#define THERMAL_THROTTLE_TEMP_C   70     // enter adaptive (throttled) mode
+#define THERMAL_PAUSE_TEMP_C      80     // enter protective pause
+#define THERMAL_RECOVER_MARGIN_C   5     // recover this far below entry
+
+// ════════════════════════════════════════════════════════════════
 // USB CDC & OPERATOR INTERFACE
 // ════════════════════════════════════════════════════════════════
 

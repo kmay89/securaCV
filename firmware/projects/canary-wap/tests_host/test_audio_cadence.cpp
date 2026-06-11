@@ -9,10 +9,14 @@
 // Covered:
 //   1. NFPA 72 T3 smoke cadence (3×0.5 s beeps + 1.5 s pause) fires the
 //      event callback with AUDIO_EVENT_T3_SMOKE_ALARM and conf ≥ 50.
-//   2. A knock pattern (3 short low-band impulses) fires AUDIO_EVENT_KNOCK.
-//   3. Hard mute is applied on the next process() tick, stops the stream,
+//   2. UL 2034 T4 CO cadence (4×0.1 s beeps + 5 s pause) fires
+//      AUDIO_EVENT_T4_CO_ALARM.
+//   3. A knock pattern (3 short low-band impulses) fires AUDIO_EVENT_KNOCK.
+//   4. A two-tone mid-band chime fires AUDIO_EVENT_DOORBELL.
+//   5. A sustained high-band burst fires AUDIO_EVENT_GLASS_BREAK.
+//   6. Hard mute is applied on the next process() tick, stops the stream,
 //      fires the mute callback, and suppresses further events.
-//   4. audio_set_thresholds() validates its arguments.
+//   7. audio_set_thresholds() validates its arguments.
 //
 // Build/run: make (this dir). No Arduino runtime needed.
 
@@ -36,11 +40,18 @@ unsigned long millis() { return g_now_ms; }
 void log_health(LogLevel, LogCategory, const char*, const char*) {}
 
 // ── Scripted I2S timeline ───────────────────────────────────────────────
-// The script is a list of (duration_ms, amplitude) segments. Each i2s_read
-// call delivers one 20 ms frame of constant-amplitude samples from the
-// script head and advances the fake clock by 20 ms; an exhausted script
-// returns 0 bytes (the driver's "no DMA buffer ready" path).
-struct Segment { uint32_t dur_ms; int16_t amplitude; };
+// The script is a list of (duration_ms, amplitude[, flip_every]) segments.
+// Each i2s_read call delivers one 20 ms frame from the script head and
+// advances the fake clock by 20 ms; an exhausted script returns 0 bytes
+// (the driver's "no DMA buffer ready" path).
+//
+// flip_every shapes the band ratio the pipeline's one-tap-difference HPF
+// sees. 0 = constant amplitude (DC: ratio ≈ 0, "low band" — knocks/slams).
+// k > 0 = square wave flipping sign every k samples: the difference signal
+// is ±2A at each flip, so hpf_rms ≈ 2A/√k and the ratio ≈ 200/√k —
+// k=4 (2 kHz at 16 kHz) lands ≈100, the doorbell's mid band; k=1 (8 kHz)
+// lands ≈200, above the glass-break detector's ≥130 high-band gate.
+struct Segment { uint32_t dur_ms; int16_t amplitude; uint16_t flip_every = 0; };
 static std::vector<Segment> g_script;
 static size_t g_seg_idx = 0;
 static uint32_t g_seg_consumed_ms = 0;
@@ -75,9 +86,12 @@ esp_err_t i2s_read(i2s_port_t, void* dest, size_t size, size_t* bytes_read,
   if (g_seg_idx >= g_script.size()) return ESP_OK;  // script exhausted
 
   const int16_t amp = g_script[g_seg_idx].amplitude;
+  const uint16_t flip = g_script[g_seg_idx].flip_every;
   const size_t n = size / sizeof(int16_t);  // one full frame (320 samples)
   int16_t* out = static_cast<int16_t*>(dest);
-  for (size_t i = 0; i < n; i++) out[i] = amp;
+  for (size_t i = 0; i < n; i++) {
+    out[i] = (flip && ((i / flip) & 1)) ? (int16_t)-amp : amp;
+  }
   *bytes_read = n * sizeof(int16_t);
   g_seg_consumed_ms += 20;
   g_now_ms += 20;  // the frame "took" 20 ms of real time
@@ -169,6 +183,76 @@ static void test_knock() {
   printf("ok  knock pattern detected\n");
 }
 
+
+static void test_t4_co_cadence() {
+  reset_pipeline();
+  const int16_t LOUD = 2000;
+  // UL 2034: 4 beeps of 100 ms with 100 ms gaps, then a 5 s pause. The
+  // matcher declares once 3.5 s of the pause has elapsed.
+  script_load({
+      {2000, 0},
+      {100, LOUD}, {100, 0},
+      {100, LOUD}, {100, 0},
+      {100, LOUD}, {100, 0},
+      {100, LOUD},
+      {4000, 0},
+  });
+  pump(/*tail_ms=*/0);
+
+  bool saw_t4 = false;
+  for (const auto& e : g_events) {
+    if (e.event_type == AUDIO_EVENT_T4_CO_ALARM) {
+      saw_t4 = true;
+      assert(e.confidence >= 50);
+    }
+  }
+  assert(saw_t4 && "T4 CO cadence must fire the event callback");
+  printf("ok  T4 CO cadence detected\n");
+}
+
+static void test_doorbell() {
+  reset_pipeline();
+  // Two ~500 ms mid-band tones (flip_every=4 -> band ratio ~100, inside
+  // the doorbell's 60..130 window) with a 200 ms gap, then quiet.
+  const int16_t LOUD = 2000;
+  script_load({
+      {2000, 0},
+      {500, LOUD, 4}, {200, 0},
+      {500, LOUD, 4},
+      // Trailing quiet: the global matcher gate needs >= 1 s of silence
+      // before ANY matcher runs, then doorbell adds its own >= 600 ms.
+      {1500, 0},
+  });
+  pump(/*tail_ms=*/0);
+
+  bool saw_doorbell = false;
+  for (const auto& e : g_events) {
+    if (e.event_type == AUDIO_EVENT_DOORBELL) saw_doorbell = true;
+  }
+  assert(saw_doorbell && "two-tone mid-band chime must read as a doorbell");
+  printf("ok  doorbell chime detected\n");
+}
+
+static void test_glass_break() {
+  reset_pipeline();
+  // One sustained ~1 s high-band burst (flip_every=1 -> ratio ~200, above
+  // the >=130 high-band gate; duration inside the 800..3000 ms window).
+  const int16_t LOUD = 2000;
+  script_load({
+      {2000, 0},
+      {1000, LOUD, 1},
+      {1500, 0},   // >= 1 s global matcher gate, then glass's own >= 500 ms
+  });
+  pump(/*tail_ms=*/0);
+
+  bool saw_glass = false;
+  for (const auto& e : g_events) {
+    if (e.event_type == AUDIO_EVENT_GLASS_BREAK) saw_glass = true;
+  }
+  assert(saw_glass && "sustained high-band burst must read as glass break");
+  printf("ok  glass-break burst detected\n");
+}
+
 static void test_mute_stops_events() {
   reset_pipeline();
   // Request mute from "another task": applied on the next process() tick.
@@ -209,7 +293,10 @@ static void test_threshold_validation() {
 
 int main() {
   test_t3_smoke_cadence();
+  test_t4_co_cadence();
   test_knock();
+  test_doorbell();
+  test_glass_break();
   test_mute_stops_events();
   test_threshold_validation();
   printf("test_audio_cadence: all tests passed\n");
