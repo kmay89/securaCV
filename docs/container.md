@@ -59,7 +59,7 @@ docker exec -e DEVICE_KEY_SEED=devkey:your-seed <container> \
 docker exec -e DEVICE_KEY_SEED=devkey:your-seed <container> \
   export_events --db-path /data/witness.db --output /data/export.json \
   --break-glass-token /data/<token-file>
-docker exec <container> \
+docker exec -e DEVICE_KEY_SEED=devkey:your-seed <container> \
   export_verify --db /data/witness.db --bundle /data/export.json
 
 # Verify a sealed evidence envelope
