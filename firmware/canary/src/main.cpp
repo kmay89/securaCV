@@ -1576,7 +1576,11 @@ void loop() {
   // Confidence is rescaled 0..100 -> 0..1 for the kernel's bounds check.
   if (g_tamper_publish_pending && mqtt_connected()) {
     g_tamper_publish_pending = false;
+    /* Copy BOTH volatile fields back-to-back before formatting: a tamper
+     * callback firing mid-publish may overwrite them, and a torn read
+     * would pair one event's kind with another's confidence. */
     const uint8_t kind = g_tamper_pending_kind;
+    const uint8_t confidence = g_tamper_pending_confidence;
     const char* kind_str =
         (kind == SENSING_WITNESS_TOUCH_TAMPER)  ? "enclosure_tamper" :
         (kind == SENSING_WITNESS_TEMP_DRIFT)    ? "temp_drift"
@@ -1584,7 +1588,7 @@ void loop() {
     char payload[96];
     snprintf(payload, sizeof(payload),
              "{\"state\":\"on\",\"confidence\":%.2f,\"kind\":\"%s\"}",
-             (double)g_tamper_pending_confidence / 100.0, kind_str);
+             (double)confidence / 100.0, kind_str);
     if (!mqtt_publish_tamper(payload)) {
       // Re-arm so the alert survives a transient broker drop; the
       // device-side chain already holds the signed record either way.
