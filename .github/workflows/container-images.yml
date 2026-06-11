@@ -57,17 +57,22 @@ jobs:
           cache-to: type=gha,scope=container-witnessd,mode=max
           tags: witnessd:ci
 
-      # Smoke-test the image: the binary must load with no missing shared
-      # libraries (catches runtime-stage packaging gaps), and curl — which
-      # the HEALTHCHECK depends on — must be present.
+      # Smoke-test the image: every shipped binary must load with no missing
+      # shared libraries (catches runtime-stage packaging gaps), and curl —
+      # which the HEALTHCHECK depends on — must be present.
       - name: Smoke-test witnessd image
         run: |
           docker run --rm --entrypoint /bin/sh witnessd:ci -c '
             set -e
-            command -v witnessd >/dev/null
-            if ldd /usr/local/bin/witnessd | grep -q "not found"; then
-              echo "missing shared libraries for witnessd" >&2
-              exit 1
-            fi
+            for bin in witnessd log_verify export_events export_verify envelope_verify break_glass; do
+              command -v "$bin" >/dev/null
+              if ldd "/usr/local/bin/$bin" | grep -q "not found"; then
+                echo "missing shared libraries for $bin" >&2
+                exit 1
+              fi
+            done
+            log_verify --help >/dev/null
+            export_events --help >/dev/null
+            export_verify --help >/dev/null
             curl --version >/dev/null
           '

@@ -56,6 +56,16 @@ struct Args {
     /// Path to file containing PQ public key (hex-encoded)
     #[arg(long, value_name = "PATH", conflicts_with = "pq_public_key")]
     pq_public_key_file: Option<String>,
+    /// SQLCipher database encryption key (hex-encoded, 32 bytes)
+    #[arg(long, value_name = "HEX", env = "SECURACV_DB_KEY")]
+    db_key: Option<String>,
+
+    /// Device key seed (as used by the kernel/bridges). Convenience for
+    /// operators: derives the SQLCipher key (when --db-key is not given),
+    /// so `DEVICE_KEY_SEED=... export_verify --db witness.db --bundle ...`
+    /// works against a kernel-produced encrypted log.
+    #[arg(long, value_name = "SEED", env = "DEVICE_KEY_SEED")]
+    device_key_seed: Option<String>,
 }
 
 #[derive(ValueEnum, Clone, Debug)]
@@ -80,9 +90,32 @@ fn main() -> Result<()> {
     let stdout_is_tty = std::io::stdout().is_terminal();
     let ui = ui::Ui::from_args(Some(&args.ui), is_tty, !stdout_is_tty);
 
+    // SQLCipher key: explicit --db-key wins; otherwise derive it from the
+    // device key seed exactly as the kernel/bridges do (same logic as
+    // log_verify).
+    let db_key: Option<String> = match (&args.db_key, &args.device_key_seed) {
+        (Some(key), _) => Some(key.clone()),
+        (None, Some(seed)) => {
+            let signing_key = witness_kernel::signing_key_from_seed(seed)?;
+            let seed_env = witness_kernel::db_key_seed_from_env();
+            Some(
+                witness_kernel::resolve_db_encryption_key(
+                    &signing_key,
+                    seed_env.as_ref().map(|s| s.as_str()),
+                )
+                .to_string(),
+            )
+        }
+        (None, None) => None,
+    };
+
     let conn = {
         let _stage = ui.stage("Open database");
-        Connection::open(&args.db)?
+        let conn = Connection::open(&args.db)?;
+        if let Some(ref key) = db_key {
+            conn.pragma_update(None, "key", format!("x'{}'", key))?;
+        }
+        conn
     };
     let verifying_key = {
         let _stage = ui.stage("Load verifying key");
