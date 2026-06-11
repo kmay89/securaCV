@@ -678,6 +678,10 @@ class SecuraCVCanaryHealthSensor(SecuraCVCanarySensorBase):
         """Handle health message."""
         try:
             data = json.loads(msg.payload)
+            if not isinstance(data, dict):
+                # Valid JSON that isn't an object (array/number/...) would
+                # crash the helpers below; route it to the except block.
+                raise TypeError("health payload is not a JSON object")
             # Both firmware spellings for battery ("battery" /
             # "battery_soc") and memory ("memory_free" / "free_heap").
             battery = battery_percent(data)

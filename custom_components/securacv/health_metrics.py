@@ -145,7 +145,7 @@ def battery_charging(health_payload: dict[str, Any]) -> bool:
     A charging battery is not a power-loss risk, so the health sensor
     skips the low-battery thresholds for it.
     """
-    return str(health_payload.get("charge_state", "")).lower() in (
+    return str(health_payload.get("charge_state") or "").lower() in (
         "charging",
         "full",
     )
