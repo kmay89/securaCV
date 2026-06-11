@@ -3,8 +3,8 @@ use ed25519_dalek::{Signer, SigningKey};
 use witness_kernel::{
     verify_export_bundle, Approval, BreakGlass, CandidateEvent, EventType, ExportAuthMode,
     ExportOptions, ExportReceipt, ExportWindow, InferenceBackend, Kernel, KernelConfig,
-    ModuleDescriptor, QuorumPolicy, TimeBucket, TrusteeEntry, TrusteeId, UnlockRequest,
-    ZonePolicy, EXPORT_EVENTS_ENVELOPE_ID,
+    ModuleDescriptor, QuorumPolicy, TimeBucket, TrusteeEntry, TrusteeId, UnlockRequest, ZonePolicy,
+    EXPORT_EVENTS_ENVELOPE_ID,
 };
 
 fn add_test_event(kernel: &mut Kernel, cfg: &KernelConfig) -> Result<()> {
@@ -311,7 +311,12 @@ fn unaligned_or_inverted_windows_are_rejected() -> Result<()> {
                 ..ExportOptions::default()
             },
         );
-        assert!(result.is_err(), "window {}..{} must be rejected", start, end);
+        assert!(
+            result.is_err(),
+            "window {}..{} must be rejected",
+            start,
+            end
+        );
     }
     Ok(())
 }
@@ -338,7 +343,9 @@ fn export_receipt_serde_round_trips_both_generations() -> Result<()> {
     };
     let json = serde_json::to_string(&modern)?;
     assert!(
-        json.ends_with(r#""auth_mode":"self_export","window":{"start_epoch_s":600,"end_epoch_s":1200}}"#),
+        json.ends_with(
+            r#""auth_mode":"self_export","window":{"start_epoch_s":600,"end_epoch_s":1200}}"#
+        ),
         "optional receipt fields must stay last: {json}"
     );
     let reparsed: ExportReceipt = serde_json::from_str(&json)?;

@@ -857,7 +857,9 @@ mod tests {
             WarningKind::CheckpointAnomaly
         );
         assert_eq!(
-            classify_warning("checkpoint 2 created_at is in the future (possible forged checkpoint)"),
+            classify_warning(
+                "checkpoint 2 created_at is in the future (possible forged checkpoint)"
+            ),
             WarningKind::CheckpointAnomaly
         );
         assert_eq!(

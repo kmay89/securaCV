@@ -15,11 +15,11 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::canonical_json::{self, CANONICALIZATION_ID};
-use crate::verify;
 use crate::crypto::signatures::{
     PqPublicKey, SignatureMode, SignatureSet, DOMAIN_BREAK_GLASS_RECEIPT, DOMAIN_CHECKPOINT,
     DOMAIN_EXPORT_RECEIPT, DOMAIN_SEALED_LOG_ENTRY, ED25519_SCHEME_ID, PQ_SCHEME_MLDSA44,
 };
+use crate::verify;
 use crate::{
     approvals_commitment, hash_entry, verify_entry_signature, Approval, BreakGlassReceipt,
     ExportArtifact, ExportReceiptEntry,
@@ -474,7 +474,13 @@ pub fn verify_envelope(envelope: &EvidenceEnvelope, mode: SignatureMode) -> Resu
         bg_head,
     )?;
     let (mut granted, mut denied) = (0u64, 0u64);
-    for (idx, entry) in envelope.ledgers.break_glass_receipts.entries.iter().enumerate() {
+    for (idx, entry) in envelope
+        .ledgers
+        .break_glass_receipts
+        .entries
+        .iter()
+        .enumerate()
+    {
         let receipt: BreakGlassReceipt = serde_json::from_str(&entry.payload_json)?;
         let approvals: Vec<Approval> = serde_json::from_str(&entry.approvals_json)?;
         let commitment = approvals_commitment(&approvals);
@@ -645,6 +651,10 @@ fn chain_fail(
     })
 }
 
+// The argument list mirrors the verification context (chain start, domain,
+// keys, mode, ledger identity) — bundling them into a struct would obscure
+// the 1:1 mapping with the Rust/JS parity algorithm for no reuse benefit.
+#[allow(clippy::too_many_arguments)]
 fn verify_linear_chain<'a, I>(
     entries: I,
     mut expected_prev: [u8; 32],

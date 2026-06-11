@@ -45,8 +45,8 @@ fn legacy_fixture_without_auth_mode_verifies() {
 #[test]
 fn self_export_fixture_verifies() {
     let envelope = load("valid_envelope_self_export.json");
-    let report = verify_envelope(&envelope, SignatureMode::Compat)
-        .expect("self-export fixture must verify");
+    let report =
+        verify_envelope(&envelope, SignatureMode::Compat).expect("self-export fixture must verify");
     assert_eq!(report.sealed_events, 3);
     // The same kernel produced an API export first, so the receipts ledger
     // carries both generations chained together.

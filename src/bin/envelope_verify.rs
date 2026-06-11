@@ -94,7 +94,8 @@ fn main() -> Result<()> {
         Err(e) => {
             let failure = e.downcast_ref::<witness_kernel::verify::VerifyFailure>();
             if args.json {
-                let mut out = serde_json::json!({ "status": "compromised", "error": e.to_string() });
+                let mut out =
+                    serde_json::json!({ "status": "compromised", "error": e.to_string() });
                 if let Some(failure) = failure {
                     out["failure"] = serde_json::to_value(failure)?;
                 }
