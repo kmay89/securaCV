@@ -64,10 +64,11 @@ views:
       # -----------------------------------------------------------------------
       # Confidence gauge — live score of the best person box
       # -----------------------------------------------------------------------
+      # (The % unit comes from the entity itself — the gauge card has no
+      # unit option of its own.)
       - type: gauge
         title: "Detection confidence"
         entity: sensor.securacv_canary_vision_DEVICE_ID_confidence
-        unit: "%"
         min: 0
         max: 100
         severity:

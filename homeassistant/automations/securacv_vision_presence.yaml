@@ -34,9 +34,14 @@
       topic: "securacv/DEVICE_ID/events"
 
   condition:
+    # Guard against non-JSON / malformed payloads on the topic: anything
+    # without a parsed JSON body and an event field is silently skipped.
     - condition: template
       value_template: >
-        {{ trigger.payload_json.event in ['dwell_started', 'interaction_likely'] }}
+        {{ trigger.payload_json is defined
+           and trigger.payload_json is mapping
+           and 'event' in trigger.payload_json
+           and trigger.payload_json.event in ['dwell_started', 'interaction_likely'] }}
 
   action:
     - service: notify.mobile_app_your_phone
@@ -45,42 +50,72 @@
           {{ '👀 Lingering detected' if trigger.payload_json.event == 'dwell_started'
              else '⚠️ Interaction likely' }}
         message: >-
-          {{ trigger.payload_json.device_id }}:
+          {{ trigger.payload_json.device_id | default('canary-vision') }}:
           {{ trigger.payload_json.event }}
           {%- if trigger.payload_json.reason is defined %}
           ({{ trigger.payload_json.reason }})
           {%- endif %}
-          — confidence {{ trigger.payload_json.confidence }}%,
-          dwell {{ (trigger.payload_json.dwell_ms / 1000) | round(0) }}s
+          — confidence {{ trigger.payload_json.confidence | default(0) }}%,
+          dwell {{ ((trigger.payload_json.dwell_ms | default(0)) / 1000) | round(0) }}s
         data:
           tag: "securacv-vision-DEVICE_ID"
           group: "SecuraCV"
 
 # ---------------------------------------------------------------------------
-# B) Device offline alert
+# B) Device offline alert — two distinct failure shapes:
+#    B1: clean disconnect — the broker fires the LWT, HA marks the entity
+#        unavailable.
+#    B2: silent stall — the retained status still says "online" but the
+#        5-second heartbeat stopped (device loop hung, WiFi jammed without
+#        a TCP close). The uptime sensor changes on every heartbeat, so its
+#        last_updated age is the liveness signal.
 # ---------------------------------------------------------------------------
 - id: securacv_vision_offline_alert
   alias: "SecuraCV Vision — Witness Offline"
   description: >
-    The Canary Vision stopped reporting (LWT fired or no heartbeat). A silent
-    witness is itself a signal — power cut, WiFi jammed, or tampering.
+    The Canary Vision stopped reporting (LWT fired, or the heartbeat went
+    stale while the retained status still reads online). A silent witness is
+    itself a signal — power cut, WiFi jammed, or tampering.
   mode: single
   max_exceeded: silent
 
   trigger:
+    # B1: LWT / availability path
     - platform: state
       entity_id: binary_sensor.securacv_canary_vision_DEVICE_ID_presence
       to: "unavailable"
       for:
         minutes: 5
+      id: lwt
+    # B2: stale-heartbeat path — evaluated every 5 minutes
+    - platform: time_pattern
+      minutes: "/5"
+      id: stale_check
+
+  condition:
+    - condition: or
+      conditions:
+        - condition: trigger
+          id: lwt
+        # Heartbeat stale: the uptime sensor (refreshed every heartbeat)
+        # hasn't updated in 5+ minutes, yet HA still considers it available
+        # (the unavailable case is B1's job — avoids double alerts).
+        - condition: template
+          value_template: >
+            {{ trigger.id == 'stale_check'
+               and states('sensor.securacv_canary_vision_DEVICE_ID_uptime')
+                   not in ['unavailable', 'unknown']
+               and (now() - states.sensor.securacv_canary_vision_DEVICE_ID_uptime.last_updated).total_seconds() > 300 }}
 
   action:
     - service: notify.mobile_app_your_phone
       data:
         title: "🔴 SecuraCV witness offline"
         message: >-
-          Canary Vision DEVICE_ID has been unreachable for 5 minutes.
-          Check power, WiFi, and the device's physical state.
+          Canary Vision DEVICE_ID has been
+          {{ 'unreachable (broker reported it offline)' if trigger.id == 'lwt'
+             else 'silent — status still reads online but the heartbeat stopped' }}
+          for 5+ minutes. Check power, WiFi, and the device's physical state.
         data:
           tag: "securacv-vision-offline-DEVICE_ID"
           group: "SecuraCV"
