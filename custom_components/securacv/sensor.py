@@ -26,6 +26,7 @@ from .const import (
     TOPIC_CHAIN,
     TOPIC_EVENTS,
     TOPIC_HEALTH,
+    TOPIC_STATUS,
     MANUFACTURER,
     MODEL_KERNEL,
     MODEL_CANARY,
@@ -33,7 +34,12 @@ from .const import (
     WARNING_BATTERY_THRESHOLD_PERCENT,
     WARNING_MEMORY_THRESHOLD_BYTES,
     DEFAULT_EVENT_ICON,
+    DEVICE_TYPE_CANARY_SENSE,
+    MODALITY_UNKNOWN,
     event_type_metadata,
+    modality_for,
+    modality_metadata,
+    normalize_attestation,
 )
 from .device_trust import TrustStore
 from . import async_record_verify
@@ -99,6 +105,37 @@ def _trust_attrs(
         "pinned_fingerprint": verify.get("pinned_fingerprint"),
         "received_fingerprint": verify.get("received_fingerprint"),
     }
+
+
+def _device_type_for(
+    hass: HomeAssistant, entry: ConfigEntry, device_id: str
+) -> str | None:
+    """Best-effort device_type for a Canary, from its cached status payload.
+
+    __init__.py's status handler stores the raw `{prefix}/{id}/status` payload
+    in entry_data["devices"][device_id]["status"]; the device advertises its
+    `device_type` (e.g. "canary-sense") there. Used to (a) derive a sensing
+    modality when an individual event omits it and (b) gate device-type-specific
+    entities like the radar-link diagnostic. Returns None when the device hasn't
+    published a parseable status with a device_type yet.
+    """
+    entry_data = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
+    device = entry_data.get("devices", {}).get(device_id)
+    if not device:
+        return None
+    status = device.get("status")
+    if isinstance(status, dict):
+        dtype = status.get("device_type")
+        return dtype if isinstance(dtype, str) else None
+    if isinstance(status, str):
+        try:
+            data = json.loads(status)
+        except (json.JSONDecodeError, TypeError):
+            return None
+        if isinstance(data, dict):
+            dtype = data.get("device_type")
+            return dtype if isinstance(dtype, str) else None
+    return None
 
 
 async def async_setup_entry(
@@ -198,11 +235,30 @@ async def _setup_mqtt_sensors(
                 SecuraCVCanarySDWearSensor(prefix, device_id, entry)
             )
 
+        # Radar-link diagnostic (Phase 3): only for radar witnesses. Created
+        # when the device advertises device_type "canary-sense" in its status
+        # payload — mirrors the conditional, device-type-aware creation the
+        # design asks for so non-radar canaries never grow a phantom sensor.
+        # Discovery fires on STATUS (carries device_type) and HEALTH (carries
+        # the radar-link metrics) so the sensor appears regardless of which
+        # topic arrives first, as long as a status has identified the device.
+        if (
+            topic_type in (TOPIC_STATUS, TOPIC_HEALTH)
+            and "radar_link" not in entities_added[device_id]
+            and _device_type_for(hass, entry, device_id) == DEVICE_TYPE_CANARY_SENSE
+        ):
+            entities_added[device_id].add("radar_link")
+            new_entities.append(
+                SecuraCVCanaryRadarLinkSensor(prefix, device_id, entry)
+            )
+
         if new_entities:
             async_add_entities(new_entities)
 
-    # Subscribe to all device topics for sensor discovery
-    for topic_suffix in [TOPIC_COUNTS, TOPIC_CHAIN, TOPIC_EVENTS, TOPIC_HEALTH]:
+    # Subscribe to all device topics for sensor discovery. STATUS is included
+    # so the device_type-gated radar-link sensor can be created once the device
+    # identifies itself, independent of health-topic timing.
+    for topic_suffix in [TOPIC_COUNTS, TOPIC_CHAIN, TOPIC_EVENTS, TOPIC_HEALTH, TOPIC_STATUS]:
         await mqtt.async_subscribe(
             hass,
             f"{prefix}/+/{topic_suffix}",
@@ -643,13 +699,34 @@ class SecuraCVCanaryLastEventSensor(SecuraCVCanarySensorBase):
             self._attr_native_value = data.get("event_type", data.get("type", "unknown"))
             _verify_and_record(self.hass, self._entry, self._device_id,
                                data, verify_event)
-            self._attr_extra_state_attributes = {
+            attrs: dict[str, Any] = {
                 "timestamp": data.get("timestamp", ""),
                 "zone": data.get("zone", ""),
                 "confidence": data.get("confidence", ""),
                 "signed": data.get("signed", False),
                 **_trust_attrs(self.hass, self._entry, self._device_id),
             }
+            # Sensing-modality awareness (Phase 3): surface what *kind* of
+            # sensor produced the claim so the timeline can show a glyph.
+            # Derive from the event payload, falling back to the device's
+            # advertised device_type. Only attach attributes when a modality
+            # actually resolves, so pre-Phase-3 events render exactly as before.
+            modality = modality_for(
+                data,
+                _device_type_for(self.hass, self._entry, self._device_id),
+            )
+            if modality != MODALITY_UNKNOWN:
+                attrs["modality"] = modality
+                meta = modality_metadata(modality)
+                if meta:
+                    attrs["modality_label"] = meta["label"]
+            # Attestation provenance (Phase 3): default "device" so device-
+            # signed events are unchanged; Track B payloads that mark
+            # adapter/ha-bridged surface the weaker provenance for an honest
+            # badge. Only emit the attribute when the payload is explicit.
+            if data.get("attestation") is not None:
+                attrs["attestation"] = normalize_attestation(data.get("attestation"))
+            self._attr_extra_state_attributes = attrs
         except (json.JSONDecodeError, TypeError):
             payload = msg.payload.decode(errors="ignore") if isinstance(msg.payload, bytes) else str(msg.payload)
             self._attr_native_value = payload[:255]
@@ -816,4 +893,112 @@ class SecuraCVCanaryGPSSensor(SecuraCVCanarySensorBase):
                 self._attr_native_value = str(gps) if gps else "no_fix"
         except (json.JSONDecodeError, TypeError):
             return
+        self.async_write_ha_state()
+
+
+class SecuraCVCanaryRadarLinkSensor(SecuraCVCanarySensorBase):
+    """Radar-link health diagnostic for canary-sense (MR60BHA2) devices.
+
+    Surfaces the UART link between the ESP32-C6 host and the 60GHz radar
+    module: the link state (ok / stale / down) plus the age of the last
+    radar frame. A silent radar (UART timeout / frame CRC storm) is the
+    canary-sense failure mode the firmware health log flags under
+    HEALTH_CAT_SENSOR; this diagnostic gives the dashboard the same signal.
+
+    Reads from the `radar` object of the health payload (Track A native
+    firmware). Tolerant of older/partial payloads: stays empty until the
+    device reports a radar object, so it never invents a state.
+
+    Wire contract (firmware health payload, `radar` object):
+        {
+          "radar": {
+            "link_ok":         bool,   # host<->radar UART healthy
+            "last_frame_ms":   int,    # millis() of last good frame (device clock)
+            "last_frame_age_ms": int,  # age of last good frame (preferred; ms)
+            "frames":          int,    # total good frames since boot (optional)
+            "frame_errors":    int,    # CRC/parse errors since boot (optional)
+            "reboots":         int     # radar-module reboots detected (optional)
+          }
+        }
+    """
+
+    _attr_icon = "mdi:radar"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    # Treat the link as stale (vs. down) past this frame age. The radar streams
+    # presence frames continuously; a few seconds without one is the early
+    # warning before a hard UART-timeout "down".
+    STALE_FRAME_AGE_MS = 5000
+
+    def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
+        """Initialize."""
+        super().__init__(prefix, device_id, entry, "Radar Link", "radar_link")
+
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to MQTT when added."""
+        await mqtt.async_subscribe(
+            self.hass,
+            f"{self._prefix}/{self._device_id}/{TOPIC_HEALTH}",
+            self._handle_message,
+        )
+
+    @staticmethod
+    def _frame_age_ms(radar: dict[str, Any]) -> int | None:
+        """Last-frame age in ms: prefer an explicit age, else derive from
+        the device-clock timestamps if both are present."""
+        age = radar.get("last_frame_age_ms")
+        if isinstance(age, (int, float)):
+            return int(age)
+        now = radar.get("now_ms")
+        last = radar.get("last_frame_ms")
+        if isinstance(now, (int, float)) and isinstance(last, (int, float)):
+            # Wrap-safe signed delta, matching the firmware millis() idiom.
+            delta = (int(now) - int(last)) & 0xFFFFFFFF
+            if delta >= 0x80000000:
+                delta -= 0x100000000
+            return max(delta, 0)
+        return None
+
+    @classmethod
+    def _link_state(cls, radar: dict[str, Any]) -> str:
+        """down / stale / ok / unknown from the radar object.
+
+        An explicit ``link_ok: false`` is a hard down (UART silent). Otherwise
+        a frame older than STALE_FRAME_AGE_MS is "stale" (early warning); a
+        recent frame or ``link_ok: true`` is "ok"; nothing to judge → unknown.
+        """
+        age_ms = cls._frame_age_ms(radar)
+        link_ok = radar.get("link_ok")
+        if link_ok is False:
+            return "down"
+        if age_ms is not None and age_ms > cls.STALE_FRAME_AGE_MS:
+            return "stale"
+        if link_ok is True or age_ms is not None:
+            return "ok"
+        return "unknown"
+
+    @callback
+    def _handle_message(self, msg: mqtt.ReceiveMessage) -> None:
+        """Handle health message for radar-link data."""
+        try:
+            data = json.loads(msg.payload)
+        except (json.JSONDecodeError, TypeError):
+            return
+        if not isinstance(data, dict):
+            return
+        radar = data.get("radar")
+        if not isinstance(radar, dict):
+            # Firmware without radar-link reporting: leave the sensor untouched.
+            return
+
+        age_ms = self._frame_age_ms(radar)
+        self._attr_native_value = self._link_state(radar)
+
+        attrs: dict[str, Any] = {}
+        if age_ms is not None:
+            attrs["last_frame_age_ms"] = age_ms
+        for key in ("frames", "frame_errors", "reboots"):
+            if (val := radar.get(key)) is not None:
+                attrs[key] = val
+        self._attr_extra_state_attributes = attrs or None
         self.async_write_ha_state()

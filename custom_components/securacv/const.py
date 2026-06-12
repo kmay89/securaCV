@@ -312,6 +312,146 @@ EVENT_TYPE_METADATA = {
 
 DEFAULT_EVENT_ICON = "mdi:shield-eye"
 
+# =============================================================================
+# Sensing modality (Phase 3 — canary-sense / mixed-fleet timeline)
+# =============================================================================
+# A witness event carries an optional `modality` so the dashboard can show, at
+# a glance, *what kind of sensor* produced a claim — radar presence reads very
+# differently from a camera person-detection even when both map to the same
+# coarse `PresenceInRestrictedZone` event_type. The field is advisory metadata
+# only (never an identity surface); when absent the timeline renders exactly as
+# it did before (no indicator).
+#
+# Wire contract (firmware + Rust adapter must match these literals):
+#   - Preferred: an explicit `modality` string on the event payload, one of the
+#     MODALITY_* values below.
+#   - Fallback: the device's `device_type` (status/discovery payload) maps via
+#     DEVICE_TYPE_MODALITY — so a device that only advertises device_type still
+#     gets a correct glyph without changing every event publish.
+MODALITY_CAMERA = "camera"        # on-module image inference (canary-vision)
+MODALITY_WIFI_CSI = "wifi-csi"    # WiFi channel-state distortion (canary-wap)
+MODALITY_RADAR = "radar"          # 60GHz FMCW mmWave (canary-sense / MR60BHA2)
+MODALITY_CONTACT = "contact"      # reed/contact switch, door/window
+MODALITY_OTHER = "other"          # a known-but-uncategorized sensing medium
+MODALITY_UNKNOWN = "unknown"      # no modality info — render as before
+
+# device_type (status payload) -> modality. The canary-sense design (§5) keys
+# radar device awareness off `device_type: "canary-sense"`; the sibling vision
+# and WiFi-CSI projects use the same status field, so they map here too.
+DEVICE_TYPE_MODALITY = {
+    "canary-sense": MODALITY_RADAR,
+    "canary-vision": MODALITY_CAMERA,
+    "canary-wap": MODALITY_WIFI_CSI,
+    "canary-contact": MODALITY_CONTACT,
+}
+
+# {label, icon} per modality, for HA entity attrs and (mirrored) the JS card.
+MODALITY_METADATA = {
+    MODALITY_CAMERA: {"label": "Camera", "icon": "mdi:camera"},
+    MODALITY_WIFI_CSI: {"label": "WiFi CSI", "icon": "mdi:wifi"},
+    MODALITY_RADAR: {"label": "Radar", "icon": "mdi:radar"},
+    MODALITY_CONTACT: {"label": "Contact", "icon": "mdi:electric-switch"},
+    MODALITY_OTHER: {"label": "Other sensor", "icon": "mdi:access-point"},
+}
+
+# Canonical device_type literal for the MR60BHA2 radar witness (Track A + B).
+DEVICE_TYPE_CANARY_SENSE = "canary-sense"
+
+
+def normalize_modality(value: str | None) -> str:
+    """Coerce a free-form modality string to a known MODALITY_* literal.
+
+    Accepts a few common spellings (``wifi_csi``/``csi`` → ``wifi-csi``,
+    ``mmwave``/``mmwave_radar`` → ``radar``) so the adapter and firmware sides
+    have a little latitude, but anything unrecognized degrades to
+    ``MODALITY_UNKNOWN`` rather than inventing a glyph. Unknown is the
+    backward-compatible "render as before" sentinel.
+    """
+    if not value or not isinstance(value, str):
+        return MODALITY_UNKNOWN
+    key = value.strip().lower().replace("_", "-")
+    if key in MODALITY_METADATA:
+        return key
+    aliases = {
+        "csi": MODALITY_WIFI_CSI,
+        "wifi": MODALITY_WIFI_CSI,
+        "mmwave": MODALITY_RADAR,
+        "mmwave-radar": MODALITY_RADAR,
+        "60ghz": MODALITY_RADAR,
+        "reed": MODALITY_CONTACT,
+        "door": MODALITY_CONTACT,
+    }
+    return aliases.get(key, MODALITY_UNKNOWN)
+
+
+def modality_for(event: dict | None, device_type: str | None = None) -> str:
+    """Resolve the sensing modality for an event.
+
+    Priority: explicit ``event['modality']`` → the event's own ``device_type``
+    → the supplied (device-level) ``device_type``. Returns ``MODALITY_UNKNOWN``
+    when nothing resolves, so callers can omit the indicator entirely and keep
+    pre-Phase-3 rendering for events that carry no modality hint.
+    """
+    if isinstance(event, dict):
+        explicit = normalize_modality(event.get("modality"))
+        if explicit != MODALITY_UNKNOWN:
+            return explicit
+        ev_dtype = event.get("device_type")
+        if isinstance(ev_dtype, str) and ev_dtype in DEVICE_TYPE_MODALITY:
+            return DEVICE_TYPE_MODALITY[ev_dtype]
+    if isinstance(device_type, str) and device_type in DEVICE_TYPE_MODALITY:
+        return DEVICE_TYPE_MODALITY[device_type]
+    return MODALITY_UNKNOWN
+
+
+def modality_metadata(modality: str | None) -> dict[str, str] | None:
+    """{label, icon} for a modality, or None for unknown/unset (no indicator)."""
+    if not modality:
+        return None
+    return MODALITY_METADATA.get(normalize_modality(modality))
+
+
+# =============================================================================
+# Attestation provenance (Phase 3 — honest trust-badge differentiation)
+# =============================================================================
+# The trust badge already distinguishes verified / unverified / failed. The
+# canary-sense design (§3 Track B) adds a fourth, orthogonal axis: *who signed
+# the claim*. Track A devices sign on-device (Ed25519, device-attested); Track B
+# kit deployments are signed by the kernel/adapter at ingest, and the
+# statestream path transits Home Assistant first. The badge must say so rather
+# than implying a device cryptographically vouched for the claim.
+#
+# Wire contract: an optional `attestation` string on the event payload, one of:
+ATTESTATION_DEVICE = "device"          # device-signed at source (Track A) — default
+ATTESTATION_ADAPTER = "adapter"        # kernel/adapter-signed at ingest (Track B)
+ATTESTATION_HA_BRIDGED = "ha-bridged"  # claim transited HA before ingest (statestream)
+
+ATTESTATION_METADATA = {
+    ATTESTATION_DEVICE: {"label": "Device-attested", "icon": "mdi:chip"},
+    ATTESTATION_ADAPTER: {"label": "Adapter-attested", "icon": "mdi:hub"},
+    ATTESTATION_HA_BRIDGED: {"label": "HA-bridged", "icon": "mdi:home-assistant"},
+}
+
+
+def normalize_attestation(value: str | None) -> str:
+    """Coerce an attestation string to a known literal; default ``device``.
+
+    Absent / unrecognized values resolve to ``ATTESTATION_DEVICE`` so existing
+    device-signed events keep their current (green ✓) behavior unchanged — only
+    a payload that *explicitly* says ``adapter``/``ha-bridged`` gets the
+    distinct, weaker provenance.
+    """
+    if not value or not isinstance(value, str):
+        return ATTESTATION_DEVICE
+    key = value.strip().lower().replace("_", "-")
+    if key in ATTESTATION_METADATA:
+        return key
+    if key in ("kernel", "ingest", "adapter-attested"):
+        return ATTESTATION_ADAPTER
+    if key in ("ha", "bridged", "statestream"):
+        return ATTESTATION_HA_BRIDGED
+    return ATTESTATION_DEVICE
+
 
 def event_type_metadata(event_type: str | None) -> dict[str, str]:
     """Return {'label', 'icon'} for an event_type, with a sensible default.

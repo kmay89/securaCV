@@ -166,9 +166,12 @@ subscribed topic needs a restart — see the header of
    log shows a sealed claim; `cargo run --bin log_verify -- --db witness.db`
    confirms chain integrity.
 3. In Home Assistant, the SecuraCV timeline card shows a
-   `PresenceInRestrictedZone` event in the current 10-minute bucket with the
-   **adapter-attested** badge (not the green device-verified badge — that is
-   correct and expected for Track B).
+   `PresenceInRestrictedZone` event in the current 10-minute bucket. It will
+   NOT carry the green device-verified badge — correct and expected for
+   Track B. The card additionally renders an explicit `adapter` /
+   `ha-bridged` attestation chip when the event payload carries the
+   `attestation` field (stamped by the kernel export once the Phase 4
+   backend wiring in the design doc lands).
 4. Negative check: leave the room, confirm presence claims stop after the
    FSM clears, and confirm NO breath/heart entities appear anywhere in
    `witness.db` (`sqlite3 witness.db 'select distinct event_type from

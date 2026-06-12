@@ -22,8 +22,31 @@ timestamp and never surfaces identity data.
   (`binary_sensor … Tamper`).
 - **Event timeline** — newest-first list of recent witness events from the
   recorder history of your last-event sensor(s). Each row shows the event icon +
-  friendly label, zone, coarse time-bucket window, confidence, and a verification
-  badge.
+  friendly label, a **sensing-modality chip** (when known), zone, coarse
+  time-bucket window, confidence, a verification badge, and — for Track B
+  claims — an **attestation chip**.
+
+### Sensing modality at a glance
+
+Different canaries witness with different physics: a camera person-detection and
+a 60GHz radar presence claim can map to the *same* coarse `event_type`
+(`presence_in_restricted_zone`) yet mean very different things. When an event
+carries modality metadata, the card shows a small chip beside the label so a
+mixed fleet reads clearly:
+
+| Chip | Modality | Typical source |
+|------|----------|----------------|
+| 📷 Camera | `camera` | canary-vision (on-module image inference) |
+| 📶 WiFi CSI | `wifi-csi` | canary-wap (WiFi channel-state distortion) |
+| 📡 Radar | `radar` | canary-sense / MR60BHA2 (60GHz mmWave) |
+| ⌷ Contact | `contact` | reed/contact switch (door/window) |
+| · Other sensor | `other` | a known-but-uncategorized medium |
+
+Modality is resolved from the event's `modality` attribute, falling back to the
+device's advertised `device_type` (`canary-sense` → radar, `canary-vision` →
+camera, `canary-wap` → wifi-csi, `canary-contact` → contact). **Events with no
+resolvable modality render exactly as before — no chip is shown** — so this is
+fully backward compatible with existing canaries.
 
 ### Honest verification badges
 
@@ -39,6 +62,27 @@ signed-but-unverified reuses the ✓ glyph with a "Signed (unverified)" label, a
 | ✓ Signed (unverified) | Entry is marked signed, but no independent check was available |
 | · Logged | Present via the kernel HTTP API; no per-event signature surfaced here |
 | ⚠ Verification failed | A check ran and failed (e.g. fingerprint mismatch) |
+
+### Attestation provenance (Track A vs Track B)
+
+The verification badge answers *did the signature check out*; the **attestation
+chip** answers the orthogonal question *who signed the claim*. Native canary
+firmware (Track A) signs on-device, so claims are **device-attested** — that is
+the default, and such events show **no extra chip** (their green ✓ already means
+"a device cryptographically vouched for this"). Stock-kit deployments (Track B,
+e.g. an MR60BHA2 bridged via HA `mqtt_statestream`) are signed by the
+kernel/adapter at ingest, *not* by the device — so the card renders a distinct,
+honest chip rather than implying a device signature it never had:
+
+| Chip | `attestation` value | Meaning |
+|------|---------------------|---------|
+| *(none)* | `device` (default) | Device-signed at source (Track A) |
+| ⬡ Adapter-attested | `adapter` | Kernel/adapter-signed at ingest (Track B) |
+| ⌂ HA-bridged | `ha-bridged` | Claim transited Home Assistant before ingest (statestream path) |
+
+Only an event that *explicitly* carries `attestation: adapter` or
+`attestation: ha-bridged` gets a chip; everything else stays device-attested and
+unchanged.
 
 ## Add the card
 
@@ -119,9 +163,10 @@ can switch between them freely.
 
 ## Testing
 
-The card's pure data-shaping helpers (event metadata, verification-badge
-resolution, recorder-history de-duplication, entity discovery) are unit-tested
-without a browser, alongside the evidence-viewer parity tests:
+The card's pure data-shaping helpers (event metadata, modality + attestation
+resolution, verification-badge resolution, recorder-history de-duplication,
+entity discovery) are unit-tested without a browser, alongside the
+evidence-viewer parity tests:
 
 ```bash
 node --test custom_components/securacv/www/securacv-timeline-card.test.js
