@@ -110,4 +110,3 @@
 #define HAS_AMBIENT_LIGHT       1     // BH1750 over I2C
 #define HAS_RGB_LED             1     // WS2812
 
-#endif // BOARD_XIAO_ESP32C6_MR60

@@ -49,11 +49,11 @@ static FrameParser g_parser;
 
 static PresenceConfig make_presence_config() {
   PresenceConfig c;
-  c.present_debounce_ms = CONFIG_PRESENT_DEBOUNCE_MS;
-  c.clear_timeout_ms    = CONFIG_CLEAR_TIMEOUT_MS;
-  c.stall_timeout_ms    = CONFIG_RADAR_STALL_MS;
-  c.near_cm             = CONFIG_RANGE_NEAR_CM;
-  c.mid_cm              = CONFIG_RANGE_MID_CM;
+  c.present_debounce_ms = CS_PRESENT_DEBOUNCE_MS;
+  c.clear_timeout_ms    = CS_CLEAR_TIMEOUT_MS;
+  c.stall_timeout_ms    = CS_RADAR_STALL_MS;
+  c.near_cm             = CS_RANGE_NEAR_CM;
+  c.mid_cm              = CS_RANGE_MID_CM;
   return c;
 }
 
@@ -65,12 +65,12 @@ using securacv::mmwave::VitalsFSM;
 
 static VitalsConfig make_vitals_config() {
   VitalsConfig c;
-  c.lock_confirm_ms = CONFIG_VITALS_LOCK_MS;
-  c.lock_lost_ms    = CONFIG_VITALS_LOST_MS;
-  c.breath_min_bpm  = CONFIG_BREATH_MIN_BPM;
-  c.breath_max_bpm  = CONFIG_BREATH_MAX_BPM;
-  c.heart_min_bpm   = CONFIG_HEART_MIN_BPM;
-  c.heart_max_bpm   = CONFIG_HEART_MAX_BPM;
+  c.lock_confirm_ms = CS_VITALS_LOCK_MS;
+  c.lock_lost_ms    = CS_VITALS_LOST_MS;
+  c.breath_min_bpm  = CS_BREATH_MIN_BPM;
+  c.breath_max_bpm  = CS_BREATH_MAX_BPM;
+  c.heart_min_bpm   = CS_HEART_MIN_BPM;
+  c.heart_max_bpm   = CS_HEART_MAX_BPM;
   return c;
 }
 
@@ -86,9 +86,9 @@ static uint32_t g_last_heartbeat_ms = 0;
 
 static void led_show(uint8_t r, uint8_t g, uint8_t b) {
 #if defined(FEATURE_STATUS_LED) && FEATURE_STATUS_LED
-  // rmtWrite-free single-pixel path via the core's neopixelWrite() helper,
-  // available on Arduino-ESP32 3.x for boards with an addressable LED.
-  neopixelWrite(LED_WS2812_PIN, r, g, b);
+  // rmtWrite-free single-pixel path via the core's rgbLedWrite() helper
+  // (Arduino-ESP32 3.x name; neopixelWrite() is its deprecated alias).
+  rgbLedWrite(LED_WS2812_PIN, r, g, b);
 #else
   (void)r; (void)g; (void)b;
 #endif
@@ -122,8 +122,8 @@ void setup() {
   bi.fw_version    = "0.0.0-phase0";
   bi.build_date    = __DATE__;
   bi.build_time    = __TIME__;
-  bi.device_type   = CONFIG_DEVICE_TYPE;
-  bi.model         = CONFIG_MODEL;
+  bi.device_type   = CS_DEVICE_TYPE;
+  bi.model         = CS_MODEL;
   bi.board_name    = BOARD_NAME;
   bi.chip_model    = ESP.getChipModel();
   bi.chip_revision = (uint8_t)ESP.getChipRevision();
@@ -154,9 +154,9 @@ void setup() {
   boot_kv("Vitals",  "disabled (presence-only build)");
 #endif
   boot_kvf("Present", "%lu ms debounce, %lu ms clear, %lu ms stall",
-           (unsigned long)CONFIG_PRESENT_DEBOUNCE_MS,
-           (unsigned long)CONFIG_CLEAR_TIMEOUT_MS,
-           (unsigned long)CONFIG_RADAR_STALL_MS);
+           (unsigned long)CS_PRESENT_DEBOUNCE_MS,
+           (unsigned long)CS_CLEAR_TIMEOUT_MS,
+           (unsigned long)CS_RADAR_STALL_MS);
   boot_blank();
 
   // Bring up the radar UART (host TX16 / RX17 per the kit reference wiring).
@@ -215,7 +215,7 @@ void loop() {
 
   // Health heartbeat (HEALTH_CAT_SENSOR territory in Phase 2; a serial line for
   // now so CI/bench can see the loop is alive).
-  if ((int32_t)(now - g_last_heartbeat_ms) >= (int32_t)CONFIG_HEARTBEAT_MS) {
+  if ((int32_t)(now - g_last_heartbeat_ms) >= (int32_t)CS_HEARTBEAT_MS) {
     g_last_heartbeat_ms = now;
     boot_linef("[health] up %lus  heap %luKB  frame_errs %lu",
                (unsigned long)(now / 1000),

@@ -21,10 +21,10 @@
 // DEVICE IDENTITY
 // ============================================================================
 
-#define CONFIG_DEVICE_TYPE          "canary_sense"
-#define CONFIG_DEVICE_ID            "canary_sense_001"
-#define CONFIG_MANUFACTURER         "SecuraCV"
-#define CONFIG_MODEL                "Canary Sense Wellbeing (XIAO ESP32-C6 + MR60BHA2)"
+#define CS_DEVICE_TYPE          "canary_sense"
+#define CS_DEVICE_ID            "canary_sense_001"
+#define CS_MANUFACTURER         "SecuraCV"
+#define CS_MODEL                "Canary Sense Wellbeing (XIAO ESP32-C6 + MR60BHA2)"
 
 // ============================================================================
 // FEATURE FLAGS
@@ -60,37 +60,37 @@
 // RADAR PRESENCE FSM (maps onto securacv::mmwave::PresenceConfig)
 // ============================================================================
 
-#define CONFIG_PRESENT_DEBOUNCE_MS  300     // sustained target before "present"
-#define CONFIG_CLEAR_TIMEOUT_MS     1500    // no target before "clear"
-#define CONFIG_RADAR_STALL_MS       5000    // no frame at all before "unknown"
+#define CS_PRESENT_DEBOUNCE_MS  300     // sustained target before "present"
+#define CS_CLEAR_TIMEOUT_MS     1500    // no target before "clear"
+#define CS_RADAR_STALL_MS       5000    // no frame at all before "unknown"
 
-#define CONFIG_RANGE_NEAR_CM        150     // <= -> near
-#define CONFIG_RANGE_MID_CM         350     // <= -> mid, else far
+#define CS_RANGE_NEAR_CM        150     // <= -> near
+#define CS_RANGE_MID_CM         350     // <= -> mid, else far
 
 // ============================================================================
 // VITALS LOCK FSM (maps onto securacv::mmwave::VitalsConfig)
 // ============================================================================
 
-#define CONFIG_VITALS_LOCK_MS       4000    // sustained vitals before "locked"
-#define CONFIG_VITALS_LOST_MS       6000    // no vitals before "lost"
-#define CONFIG_BREATH_MIN_BPM       6       // plausible breathing band
-#define CONFIG_BREATH_MAX_BPM       30
-#define CONFIG_HEART_MIN_BPM        40      // plausible heart-rate band
-#define CONFIG_HEART_MAX_BPM        130
+#define CS_VITALS_LOCK_MS       4000    // sustained vitals before "locked"
+#define CS_VITALS_LOST_MS       6000    // no vitals before "lost"
+#define CS_BREATH_MIN_BPM       6       // plausible breathing band
+#define CS_BREATH_MAX_BPM       30
+#define CS_HEART_MIN_BPM        40      // plausible heart-rate band
+#define CS_HEART_MAX_BPM        130
 
 // ============================================================================
 // TIMING
 // ============================================================================
 
-#define CONFIG_HEARTBEAT_MS         5000    // Status heartbeat interval
+#define CS_HEARTBEAT_MS         5000    // Status heartbeat interval
 
 // ============================================================================
 // MQTT CONFIGURATION
 // ============================================================================
 
-#define CONFIG_MQTT_BUFFER_BYTES    1536
-#define CONFIG_HA_DISCOVERY_PREFIX  "homeassistant"
+#define CS_MQTT_BUFFER_BYTES    1536
+#define CS_HA_DISCOVERY_PREFIX  "homeassistant"
 
-#define CONFIG_TOPIC_EVENTS         "securacv/%s/events"
-#define CONFIG_TOPIC_STATE          "securacv/%s/state"
-#define CONFIG_TOPIC_STATUS         "securacv/%s/status"
+#define CS_TOPIC_EVENTS         "securacv/%s/events"
+#define CS_TOPIC_STATE          "securacv/%s/state"
+#define CS_TOPIC_STATUS         "securacv/%s/status"

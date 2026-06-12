@@ -16,10 +16,10 @@
 // DEVICE IDENTITY
 // ============================================================================
 
-#define CONFIG_DEVICE_TYPE          "canary_sense"
-#define CONFIG_DEVICE_ID            "canary_sense_001"
-#define CONFIG_MANUFACTURER         "SecuraCV"
-#define CONFIG_MODEL                "Canary Sense (XIAO ESP32-C6 + MR60BHA2)"
+#define CS_DEVICE_TYPE          "canary_sense"
+#define CS_DEVICE_ID            "canary_sense_001"
+#define CS_MANUFACTURER         "SecuraCV"
+#define CS_MODEL                "Canary Sense (XIAO ESP32-C6 + MR60BHA2)"
 
 // ============================================================================
 // FEATURE FLAGS
@@ -51,28 +51,28 @@
 // RADAR PRESENCE FSM (maps onto securacv::mmwave::PresenceConfig)
 // ============================================================================
 
-#define CONFIG_PRESENT_DEBOUNCE_MS  300     // sustained target before "present"
-#define CONFIG_CLEAR_TIMEOUT_MS     1500    // no target before "clear"
-#define CONFIG_RADAR_STALL_MS       5000    // no frame at all before "unknown"
+#define CS_PRESENT_DEBOUNCE_MS  300     // sustained target before "present"
+#define CS_CLEAR_TIMEOUT_MS     1500    // no target before "clear"
+#define CS_RADAR_STALL_MS       5000    // no frame at all before "unknown"
 
 // Coarse range bands (privacy-safe; raw distance never exported)
-#define CONFIG_RANGE_NEAR_CM        150     // <= -> near
-#define CONFIG_RANGE_MID_CM         350     // <= -> mid, else far
+#define CS_RANGE_NEAR_CM        150     // <= -> near
+#define CS_RANGE_MID_CM         350     // <= -> mid, else far
 
 // ============================================================================
 // TIMING
 // ============================================================================
 
-#define CONFIG_HEARTBEAT_MS         5000    // Status heartbeat interval
+#define CS_HEARTBEAT_MS         5000    // Status heartbeat interval
 
 // ============================================================================
 // MQTT CONFIGURATION
 // ============================================================================
 
-#define CONFIG_MQTT_BUFFER_BYTES    1536
-#define CONFIG_HA_DISCOVERY_PREFIX  "homeassistant"
+#define CS_MQTT_BUFFER_BYTES    1536
+#define CS_HA_DISCOVERY_PREFIX  "homeassistant"
 
 // Topic patterns (device_id substituted at runtime)
-#define CONFIG_TOPIC_EVENTS         "securacv/%s/events"
-#define CONFIG_TOPIC_STATE          "securacv/%s/state"
-#define CONFIG_TOPIC_STATUS         "securacv/%s/status"
+#define CS_TOPIC_EVENTS         "securacv/%s/events"
+#define CS_TOPIC_STATE          "securacv/%s/state"
+#define CS_TOPIC_STATUS         "securacv/%s/status"
