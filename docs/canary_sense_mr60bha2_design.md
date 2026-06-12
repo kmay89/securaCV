@@ -157,12 +157,33 @@ Reuse from `common/`: `witness/` (chain + signing), `encoding/` (CBOR),
 `ota/`, `storage/` (NVS). The only genuinely new firmware code is the UART
 frame parser + the two FSMs (~comparable to canary-vision's `vision_mgr`).
 
+Implementation notes for the new module (design constraints, not code):
+
+- **Flag propagation respects layering**: `common/sensors/mmwave_mr60/` never
+  includes `configs/canary-sense/config.h`. The vitals switch reaches the
+  library translation units as a build flag (`-DCANARY_SENSE_VITALS=1`) set
+  in `envs/platformio/canary-sense.ini` per environment, mirroring how other
+  feature flags cross the config→common boundary today.
+- **Stall-safe FSMs**: in `mr60_uart` / `mr60_vitals`, deadline checks run
+  *before* data-presence guards, so a silent radar UART still drives the FSM
+  to its timeout state (presence→unknown, vitals-lock→lost, health-log
+  `HEALTH_CAT_SENSOR` event) instead of freezing on the last good frame.
+  All timestamp math is wrap-safe signed-delta (`(int32_t)(now - then)`),
+  per the existing firmware idiom for `millis()` arithmetic.
+
 **ESP32-C6 platform risk (the one real unknown):** our PlatformIO envs build
 on `espressif32` for S3/C3 (Xtensa/RISC-V). The C6 needs arduino-esp32 3.x;
 official PlatformIO `espressif32` lags on C6 support, so the env will likely
-pin the community `pioarduino` platform fork. Phase 0 below is a 1–2 day
+pin the community `pioarduino` platform fork. That also means **arduino-esp32
+core API drift**: the C6 env runs core 3.x while S3/C3 envs stay on 2.0.x, and
+several shared-`common/` touchpoints changed signatures between the two (e.g.
+`mbedtls_sha256()` returns `void` on 2.0.x but `int` on 3.x; LEDC, ADC and
+WiFi event APIs also moved). Any `common/` code compiled into canary-sense
+must be audited for 2.x/3.x compatibility (version-gated shims where needed)
+rather than assuming one signature. Phase 0 below is a 1–2 day
 spike to validate: C6 toolchain in CI, NimBLE on C6, hardware RNG + Ed25519
-(our `Crypto` dep) on RISC-V, and OTA partition layout for the C6's 4 MB
+(our `Crypto` dep) on RISC-V, core 2.x/3.x API audit of the `common/` modules
+we link, and OTA partition layout for the C6's 4 MB
 flash. Fallback if the spike fails ugly: wire the bare MR60BHA2 module
 (sold standalone) to a XIAO ESP32-S3 over UART and keep our proven board
 support — the kit's C6 becomes optional rather than blocking.
@@ -174,23 +195,44 @@ canary-vision pins SSCMA. Library stays the reference implementation.
 
 ### Track B (on-ramp, near-zero effort): stock ESPHome firmware + backend adapter
 
-Customers can deploy a kit **unmodified** (pre-flashed ESPHome) and the
-kernel ingests it through the existing generic `mqtt_sensor` adapter route
-(`src/adapter/mqtt_sensor.rs`): ESPHome → Home Assistant MQTT →
-`PresenceInRestrictedZone` claims. We ship:
+One wrinkle the plan must be honest about: the **stock kit firmware speaks
+the ESPHome native API to Home Assistant, not MQTT** — Seeed's reference YAML
+enables `api:` with no `mqtt:` block (see `ha_with_mr60bha2` wiki page). Our
+generic `mqtt_sensor` adapter (`src/adapter/mqtt_sensor.rs`) only consumes
+MQTT topics, so a kit deployed as-shipped never reaches the kernel on its
+own. Two supported bridge paths, both config-only on the device side:
 
-- an `adapter_host.example.toml` recipe + `docs/integrations` page mapping the
-  ESPHome entities (`has_target`, `breath_rate`, `heart_rate`, `distance`,
-  target count, illuminance) into claims with the same privacy table as §2,
+1. **HA MQTT Statestream (preferred, kit stays unmodified).** Enable HA's
+   built-in `mqtt_statestream` for the kit's entities; HA republishes their
+   states to MQTT and the `mqtt_sensor` adapter's `mr60bha2` profile maps
+   those statestream topics into claims. Zero device changes — the
+   "10-minute on-ramp" is an HA YAML snippet we ship verbatim in the
+   integration doc. Caveat: claims now transit HA, so the adapter profile
+   marks provenance as `ha-bridged` in the claim metadata.
+2. **ESPHome `mqtt:` overlay (one OTA, no custom firmware).** Add an
+   `mqtt:` block to the kit's ESPHome config and push it over the air with
+   ESPHome Web/Dashboard. Still vendor firmware, but the device then
+   publishes to the broker directly, skipping the HA hop. We publish the
+   known-good YAML diff alongside the adapter recipe.
+
+We ship:
+
+- an `adapter_host.example.toml` recipe + `docs/integrations` page covering
+  both bridge paths and mapping the ESPHome entities (`has_target`,
+  `breath_rate`, `heart_rate`, `distance`, target count, illuminance) into
+  claims with the same privacy table as §2,
 - a documented caveat: Track B claims are **kernel-signed at ingest, not
   device-signed** — the HA trust badge must render these as
   "adapter-attested" (yellow) not "device-verified ✓" (green). This
   distinction already exists in the trust model; we make the UI honest
   about it.
 
-Track B is the demo/eval funnel ("buy kit, works in 10 minutes"); Track A is
-the product. Both speak the same claim vocabulary, so dashboards, logging and
-verification are shared.
+Track B is the demo/eval funnel ("buy kit, claims flowing in ~10 minutes of
+HA configuration"); Track A is the product. Both speak the same claim
+vocabulary, so dashboards, logging and verification are shared. A native
+ESPHome-API adapter in the kernel (speaking the aioesphomeapi protocol
+directly, no HA in the loop) stays on the shelf as a Phase 4+ option if
+Track B uptake justifies it.
 
 ---
 
@@ -286,9 +328,11 @@ S3-fallback wiring. Exit: `envs/platformio/canary-sense.ini` compiling a
 hello-witness binary, bench notes in `docs/hardware/`.
 
 **Phase 1 — Track B on-ramp (2–3 days, parallelizable with Phase 0)**
-ESPHome-kit → `mqtt_sensor` adapter profile + `adapter_host.example.toml`
-recipe + `docs/integrations/mr60bha2_esphome.md` + "adapter-attested" badge
-rendering check. Exit: stock kit produces verified-ingest
+ESPHome-kit → HA `mqtt_statestream` bridge snippet + `mqtt_sensor` adapter
+`mr60bha2` profile + `adapter_host.example.toml` recipe +
+`docs/integrations/mr60bha2_esphome.md` (covering both the statestream and
+ESPHome-`mqtt:`-overlay paths) + "adapter-attested" badge rendering check.
+Exit: stock kit (unmodified, statestream-bridged) produces verified-ingest
 `PresenceInRestrictedZone` events on the timeline card with honest trust
 badge.
 
@@ -327,6 +371,7 @@ Track B funnel live in week 1.
 | Multi-person vitals ambiguity | wrong BPM attribution | suppress vitals entities whenever target count ≠ 1 (firmware FSM rule) |
 | Seeed library supply chain / size | bloat, drift | vendor minimal frame parser, pin versions, CI size guard like canary-vision |
 | Track B unsigned-at-device claims mistaken for device-verified | trust dilution | distinct "adapter-attested" badge; docs call it out |
+| Stock kit speaks ESPHome native API, not MQTT | Track B silently produces no claims | HA `mqtt_statestream` bridge (config-only) or ESPHome `mqtt:` overlay; both documented in Phase 1, provenance marked `ha-bridged` |
 
 ## 9. Decision summary
 
