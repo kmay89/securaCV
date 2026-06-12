@@ -139,6 +139,13 @@ batching unless overridden by CLI flags. Exported times are intentionally coarse
 buckets with ±120 s jitter by default (see `spec/event_contract.md` and `docs/why_secure.md`
 for why) — don't be surprised that bucket labels differ slightly from wall-clock time.
 
+**Scheduled exports** — `--output-dir DIR --keep N` writes rotating
+`securacv-events-<bucket>.json` files for cron/systemd timers; see
+[`docs/scheduled_exports.md`](scheduled_exports.md) for ready-made units. The event API offers
+the same as a one-click download: token-gated `GET /export/bundle[?last=24h|?start=&end=]`
+returns the signed bundle as a file (surfaced as the **Download my events** button in the
+Home Assistant add-on panel).
+
 ---
 
 ## RTSP camera setup

@@ -45,6 +45,15 @@ struct Args {
     /// Output file path for the export artifact.
     #[arg(long, default_value = "witness_export.json")]
     output: String,
+    /// Scheduled-export mode: write `securacv-events-<bucket>.json` into this
+    /// directory instead of --output (cron/systemd-timer friendly; the
+    /// filename carries only the coarse bucket start, never a precise time).
+    #[arg(long, conflicts_with = "output", value_name = "DIR")]
+    output_dir: Option<std::path::PathBuf>,
+    /// With --output-dir: keep only the newest N export files there, pruning
+    /// older `securacv-events-*.json` (at least 1 is always kept).
+    #[arg(long, requires = "output_dir", value_name = "N")]
+    keep: Option<usize>,
     /// Path to a break-glass token file authorizing export (trustee quorum).
     #[arg(long, conflicts_with = "self_export")]
     break_glass_token: Option<String>,
@@ -90,6 +99,33 @@ fn resolve_window(args: &Args) -> Result<Option<ExportWindow>> {
         // clap's `requires`/`conflicts_with` make the remaining combinations unreachable.
         _ => Err(anyhow!("--start/--end must be given together")),
     }
+}
+
+/// Delete the oldest `securacv-events-<bucket>.json` files beyond `keep`
+/// (sorted by the bucket number in the filename; at least 1 is always kept).
+/// Only files matching the scheduled-export pattern are ever touched.
+fn prune_exports(dir: &std::path::Path, keep: usize) -> Result<usize> {
+    let mut exports: Vec<(u64, std::path::PathBuf)> = Vec::new();
+    for entry in std::fs::read_dir(dir)? {
+        let path = entry?.path();
+        let name = match path.file_name().and_then(|n| n.to_str()) {
+            Some(name) => name,
+            None => continue,
+        };
+        if let Some(bucket) = name
+            .strip_prefix("securacv-events-")
+            .and_then(|rest| rest.strip_suffix(".json"))
+            .and_then(|num| num.parse::<u64>().ok())
+        {
+            exports.push((bucket, path));
+        }
+    }
+    exports.sort_by_key(|(bucket, _)| *bucket);
+    let excess = exports.len().saturating_sub(keep.max(1));
+    for (_, path) in exports.iter().take(excess) {
+        std::fs::remove_file(path)?;
+    }
+    Ok(excess)
 }
 
 fn main() -> Result<()> {
@@ -154,18 +190,35 @@ fn main() -> Result<()> {
         )
     };
     let json = serde_json::to_vec(&bundle)?;
+    let output_path: std::path::PathBuf = match &args.output_dir {
+        Some(dir) => {
+            std::fs::create_dir_all(dir)?;
+            dir.join(format!(
+                "securacv-events-{}.json",
+                witness_kernel::TimeBucket::now_10min()?.start_epoch_s
+            ))
+        }
+        None => std::path::PathBuf::from(&args.output),
+    };
     {
         let _stage = ui.stage("Write export bundle");
-        std::fs::write(&args.output, json)?;
+        std::fs::write(&output_path, json)?;
     }
+    let pruned = match (&args.output_dir, args.keep) {
+        (Some(dir), Some(keep)) => prune_exports(dir, keep)?,
+        _ => 0,
+    };
     let bucket_count: usize = bundle
         .artifact
         .batches
         .iter()
         .map(|b| b.buckets.len())
         .sum();
-    println!("export bundle written to {}", args.output);
+    println!("export bundle written to {}", output_path.display());
     println!("  authorization: {}", mode);
+    if pruned > 0 {
+        println!("  rotation: pruned {} older export file(s)", pruned);
+    }
     match window {
         Some(w) => println!(
             "  window (bucket-aligned): {}..{} ({} bucket(s) in {} batch(es))",
@@ -232,6 +285,33 @@ mod tests {
         let w = resolve_window(&args("1200", "2400")).unwrap().unwrap();
         assert_eq!((w.start_epoch_s, w.end_epoch_s), (1200, 2400));
         assert_eq!(w.end_epoch_s % BUCKET_S, 0);
+    }
+
+    #[test]
+    fn prune_keeps_newest_and_ignores_other_files() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        for bucket in [600u64, 1200, 1800, 2400] {
+            std::fs::write(
+                dir.path().join(format!("securacv-events-{bucket}.json")),
+                b"{}",
+            )
+            .expect("write");
+        }
+        std::fs::write(dir.path().join("unrelated.json"), b"{}").expect("write");
+
+        let pruned = super::prune_exports(dir.path(), 2).expect("prune");
+        assert_eq!(pruned, 2);
+        assert!(!dir.path().join("securacv-events-600.json").exists());
+        assert!(!dir.path().join("securacv-events-1200.json").exists());
+        assert!(dir.path().join("securacv-events-1800.json").exists());
+        assert!(dir.path().join("securacv-events-2400.json").exists());
+        assert!(dir.path().join("unrelated.json").exists());
+
+        // keep=0 still keeps the newest file — a rotation misconfiguration
+        // must never delete the export that was just written.
+        let pruned = super::prune_exports(dir.path(), 0).expect("prune");
+        assert_eq!(pruned, 1);
+        assert!(dir.path().join("securacv-events-2400.json").exists());
     }
 
     #[test]
