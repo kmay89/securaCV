@@ -3,6 +3,12 @@
 This guide covers connecting a Seeed XIAO Vision AI device to the Privacy Witness Kernel
 using the supported ESP32 ingestion backends.
 
+> **Looking for the Grove Vision AI V2 module itself?** Hardware anatomy (the
+> two USB-C ports), Grove I2C port pinouts, loading the AI model via
+> SenseCraft, and the `canary-vision` firmware live in
+> [`docs/hardware/grove_vision_ai_v2_guide.md`](hardware/grove_vision_ai_v2_guide.md).
+> This page is about the *kernel ingestion* path, not the MQTT Canary firmware.
+
 ## Supported ingestion modes
 
 The ESP32 ingestion backend supports only the following modes:

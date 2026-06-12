@@ -7,7 +7,9 @@ static constexpr const char* DEVICE_TYPE = "canary_vision";
 static constexpr const char* DEVICE_ID   = "canary_vision_001";  // change per unit
 
 static constexpr const char* MANUFACTURER = "SecuraCV";
-static constexpr const char* MODEL        = "Canary Vision (ESP32-C3 + Grove Vision AI V2)";
+// Board-neutral: the same app ships on ESP32-C3 DevKit, XIAO ESP32-C3,
+// and XIAO ESP32-S3 hosts (see firmware/envs/platformio/canary-vision.ini).
+static constexpr const char* MODEL        = "Canary Vision (Grove Vision AI V2)";
 
 // -------------------- Vision semantics --------------------
 // NOTE: PERSON_TARGET is model-dependent in SSCMA.

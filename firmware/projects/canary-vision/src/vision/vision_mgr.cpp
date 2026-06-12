@@ -5,6 +5,8 @@
 #include <Wire.h>
 #include <Seeed_Arduino_SSCMA.h>
 
+#include "pins.h"
+
 namespace canary::vision {
 
 static SSCMA AI;
@@ -54,7 +56,10 @@ static void bbox_to_voxel(const BBox& bb, Voxel& v) {
 }
 
 void init() {
-  Wire.begin();
+  // Explicit pins from the board's pins.h: the Arduino variant defaults
+  // differ per board (ESP32-C3 DevKit: 8/9, XIAO C3: 6/7, XIAO S3: 5/6)
+  // and the DevKit default does NOT match our documented Grove wiring.
+  Wire.begin(I2C_PIN_SDA, I2C_PIN_SCL);
   AI.begin();
   delay(250);
 

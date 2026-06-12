@@ -7,6 +7,8 @@ Pin maps and board-specific wiring live here.
 | Board ID | MCU | Description |
 |----------|-----|-------------|
 | `xiao-esp32s3-sense` | ESP32-S3 | Seeed XIAO with camera, mic, SD slot |
+| `xiao-esp32s3` | ESP32-S3 | Seeed XIAO (plain, non-Sense) — Vision AI host (the "Grove Vision AI V2 Kit" pairing) |
+| `xiao-esp32c3` | ESP32-C3 | Seeed XIAO C3 — Vision AI host (stacks on the module's XIAO socket) |
 | `esp32-c3` | ESP32-C3 | Generic C3 dev board for Vision AI |
 
 ## Directory Structure
