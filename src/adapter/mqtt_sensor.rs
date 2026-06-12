@@ -92,11 +92,13 @@ struct SensorPayload {
 
 impl SensorPayload {
     /// The `state` field as a string, for truthy parsing ("on", "open", ...).
+    /// An explicit `"state": null` is treated as absent, matching the previous
+    /// `Option<String>` deserialization (object-without-state => triggered).
     fn state_str(&self) -> Option<String> {
         match &self.state {
+            Some(serde_json::Value::Null) | None => None,
             Some(serde_json::Value::String(s)) => Some(s.clone()),
             Some(v) => Some(v.to_string()),
-            None => None,
         }
     }
 
@@ -358,6 +360,22 @@ mod tests {
         assert!(adapter
             .message_to_claim("sensors/door/contact", br#"{"state":"off"#)
             .is_none());
+    }
+
+    #[test]
+    fn explicit_null_state_behaves_like_absent_state() {
+        // {"state": null} must keep the pre-Option<Value> behavior: a valid
+        // JSON object without a usable state counts as triggered.
+        let mut route = SensorRoute::new(
+            "sensors/lobby/pir",
+            ClaimKind::PresenceInRestrictedZone,
+            "lobby",
+        );
+        route.require_truthy_state = true;
+        let (adapter, _tx) = MqttSensorAdapter::new(vec![route]);
+        assert!(adapter
+            .message_to_claim("sensors/lobby/pir", br#"{"state":null,"confidence":0.9}"#)
+            .is_some());
     }
 
     #[test]

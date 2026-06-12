@@ -16,7 +16,7 @@
 // DEVICE IDENTITY
 // ============================================================================
 
-#define CS_DEVICE_TYPE          "canary_sense"
+#define CS_DEVICE_TYPE          "canary-sense"  // canonical; must match HA DEVICE_TYPE_CANARY_SENSE
 #define CS_DEVICE_ID            "canary_sense_001"
 #define CS_MANUFACTURER         "SecuraCV"
 #define CS_MODEL                "Canary Sense (XIAO ESP32-C6 + MR60BHA2)"

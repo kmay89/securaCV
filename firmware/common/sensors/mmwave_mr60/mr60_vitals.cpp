@@ -84,7 +84,10 @@ VitalsEvent VitalsFSM::tick(const Frame& frame, bool single_target, uint32_t now
 
     ev.lock_changed = (lock_ != prev);
     ev.lock = lock_;
-    ev.bpm_valid  = (lock_ == VitalsLock::Locked);
+    // bpm_valid additionally requires single_target RIGHT NOW: the moment a
+    // second person appears, BPM reporting stops immediately rather than
+    // riding out the lock-loss window on the last single-target values.
+    ev.bpm_valid  = (lock_ == VitalsLock::Locked) && single_target;
     ev.breath_bpm = ev.bpm_valid ? breath_bpm_ : 0;
     ev.heart_bpm  = ev.bpm_valid ? heart_bpm_  : 0;
     return ev;

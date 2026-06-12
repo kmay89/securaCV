@@ -51,6 +51,7 @@ PresenceEvent PresenceFSM::tick(const Frame& frame, uint32_t now_ms) {
     // freeze us on the last good frame.
     if (state_ != Presence::Unknown &&
         elapsed(now_ms, last_frame_ms_, cfg_.stall_timeout_ms)) {
+        ev.count_changed = (count_ != CountBucket::Zero);
         state_ = Presence::Unknown;
         count_ = CountBucket::Zero;
         range_ = RangeBand::Unknown;

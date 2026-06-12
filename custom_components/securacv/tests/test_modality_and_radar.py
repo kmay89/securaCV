@@ -196,3 +196,48 @@ def test_device_type_for_reads_cached_status():
     assert f(hass, entry, "cam1") == "canary-vision"
     assert f(hass, entry, "old1") is None
     assert f(hass, entry, "missing") is None
+
+
+def test_device_type_for_canonicalizes_underscore_spelling():
+    # Firmware configs shipped "canary_sense" (underscore) before the canonical
+    # hyphen spelling; both must gate the radar-link sensor and modality.
+    hass = sensor_mod.HomeAssistant()
+    entry = types.SimpleNamespace(entry_id="e1")
+    hass.data = {
+        sensor_mod.DOMAIN: {
+            "e1": {
+                "devices": {
+                    "radar1": {"status": '{"device_type": "canary_sense"}'},
+                    "radar2": {"status": {"device_type": " Canary-Sense "}},
+                }
+            }
+        }
+    }
+    f = sensor_mod._device_type_for
+    assert f(hass, entry, "radar1") == "canary-sense"
+    assert f(hass, entry, "radar2") == "canary-sense"
+    assert modality_for(None, "canary_sense") == MODALITY_RADAR
+    assert modality_for({"device_type": "canary_sense"}, None) == MODALITY_RADAR
+
+
+def test_device_type_for_degrades_on_malformed_entry_data():
+    # None / wrong-typed containers anywhere along the lookup path must yield
+    # None, never raise (regression for defensive isinstance guards).
+    entry = types.SimpleNamespace(entry_id="e1")
+    f = sensor_mod._device_type_for
+    for data in (
+        {},
+        {sensor_mod.DOMAIN: None},
+        {sensor_mod.DOMAIN: []},
+        {sensor_mod.DOMAIN: {"e1": None}},
+        {sensor_mod.DOMAIN: {"e1": {"devices": None}}},
+        {sensor_mod.DOMAIN: {"e1": {"devices": ["radar1"]}}},
+        {sensor_mod.DOMAIN: {"e1": {"devices": {"radar1": None}}}},
+        {sensor_mod.DOMAIN: {"e1": {"devices": {"radar1": {"status": None}}}}},
+        {sensor_mod.DOMAIN: {"e1": {"devices": {"radar1": {"status": 42}}}}},
+        {sensor_mod.DOMAIN: {"e1": {"devices": {"radar1": {"status": "not json"}}}}},
+        {sensor_mod.DOMAIN: {"e1": {"devices": {"radar1": {"status": '["a"]'}}}}},
+    ):
+        hass = sensor_mod.HomeAssistant()
+        hass.data = data
+        assert f(hass, entry, "radar1") is None

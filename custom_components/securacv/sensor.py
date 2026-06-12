@@ -36,6 +36,7 @@ from .const import (
     DEFAULT_EVENT_ICON,
     DEVICE_TYPE_CANARY_SENSE,
     MODALITY_UNKNOWN,
+    canonical_device_type,
     event_type_metadata,
     modality_for,
     modality_metadata,
@@ -119,22 +120,28 @@ def _device_type_for(
     entities like the radar-link diagnostic. Returns None when the device hasn't
     published a parseable status with a device_type yet.
     """
-    entry_data = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
-    device = entry_data.get("devices", {}).get(device_id)
-    if not device:
+    domain_data = hass.data.get(DOMAIN)
+    if not isinstance(domain_data, dict):
+        return None
+    entry_data = domain_data.get(entry.entry_id)
+    if not isinstance(entry_data, dict):
+        return None
+    devices = entry_data.get("devices")
+    if not isinstance(devices, dict):
+        return None
+    device = devices.get(device_id)
+    if not isinstance(device, dict):
         return None
     status = device.get("status")
     if isinstance(status, dict):
-        dtype = status.get("device_type")
-        return dtype if isinstance(dtype, str) else None
+        return canonical_device_type(status.get("device_type"))
     if isinstance(status, str):
         try:
             data = json.loads(status)
         except (json.JSONDecodeError, TypeError):
             return None
         if isinstance(data, dict):
-            dtype = data.get("device_type")
-            return dtype if isinstance(dtype, str) else None
+            return canonical_device_type(data.get("device_type"))
     return None
 
 

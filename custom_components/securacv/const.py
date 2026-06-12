@@ -384,6 +384,15 @@ def normalize_modality(value: str | None) -> str:
     return aliases.get(key, MODALITY_UNKNOWN)
 
 
+def canonical_device_type(value) -> str | None:
+    """Canonical device_type: lowercase, hyphenated. Firmware configs have
+    shipped both "canary-sense" and "canary_sense" spellings; treat them as
+    one so modality fallback and type-gated entities never miss on a dash."""
+    if not isinstance(value, str):
+        return None
+    return value.strip().lower().replace("_", "-") or None
+
+
 def modality_for(event: dict | None, device_type: str | None = None) -> str:
     """Resolve the sensing modality for an event.
 
@@ -396,11 +405,12 @@ def modality_for(event: dict | None, device_type: str | None = None) -> str:
         explicit = normalize_modality(event.get("modality"))
         if explicit != MODALITY_UNKNOWN:
             return explicit
-        ev_dtype = event.get("device_type")
-        if isinstance(ev_dtype, str) and ev_dtype in DEVICE_TYPE_MODALITY:
+        ev_dtype = canonical_device_type(event.get("device_type"))
+        if ev_dtype in DEVICE_TYPE_MODALITY:
             return DEVICE_TYPE_MODALITY[ev_dtype]
-    if isinstance(device_type, str) and device_type in DEVICE_TYPE_MODALITY:
-        return DEVICE_TYPE_MODALITY[device_type]
+    dtype = canonical_device_type(device_type)
+    if dtype in DEVICE_TYPE_MODALITY:
+        return DEVICE_TYPE_MODALITY[dtype]
     return MODALITY_UNKNOWN
 
 
