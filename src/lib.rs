@@ -56,6 +56,7 @@ pub mod envelope;
 pub mod eval;
 pub mod frame;
 pub mod ingest;
+pub mod inspect;
 pub mod log;
 pub mod module_runtime;
 pub mod storage;
@@ -2661,7 +2662,7 @@ pub fn verifying_key_from_seed(seed: &str) -> Result<VerifyingKey> {
     Ok(signing_key_from_seed(seed)?.verifying_key())
 }
 
-fn verifying_key_from_bytes(bytes: &[u8]) -> Result<VerifyingKey> {
+pub(crate) fn verifying_key_from_bytes(bytes: &[u8]) -> Result<VerifyingKey> {
     if bytes.len() != 32 {
         return Err(anyhow!(
             "invalid verifying key bytes: expected 32 bytes, got {}",
@@ -2821,7 +2822,7 @@ pub fn reconstruct_device_key_lineage_from(
     Ok(lineage)
 }
 
-fn key32(bytes: &[u8], what: &str) -> Result<[u8; 32]> {
+pub(crate) fn key32(bytes: &[u8], what: &str) -> Result<[u8; 32]> {
     if bytes.len() != 32 {
         return Err(anyhow!(
             "corrupt {}: expected 32 bytes, got {}",
@@ -2850,7 +2851,7 @@ type SealedEntryRow = (
 /// rotation record. The record's entry is hash-chained and signed by the predecessor key, so
 /// validating that entry signature under `predecessor` is genesis-anchored authorization
 /// equivalent. Fails closed if the record was pruned (the only genuinely unrecoverable case).
-fn recover_legacy_rotation_authorization(
+pub(crate) fn recover_legacy_rotation_authorization(
     conn: &Connection,
     predecessor: &VerifyingKey,
     prev_bytes: &[u8; 32],

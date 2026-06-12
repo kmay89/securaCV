@@ -51,6 +51,16 @@ struct Args {
     /// timestamp regressions) as failures (non-zero exit)
     #[arg(long)]
     strict: bool,
+    /// Inspect the device key lineage instead of running full verification:
+    /// every epoch is reported (valid / invalid with reason / unverifiable),
+    /// continuing past failures. Exit 1 if the lineage is broken.
+    #[arg(long)]
+    lineage: bool,
+    /// Inspect every retention checkpoint instead of running full
+    /// verification: signer resolution against the lineage, signature check,
+    /// timestamp/cutoff regressions. Exit 1 if any checkpoint has problems.
+    #[arg(long)]
+    checkpoints: bool,
     /// UI mode for stderr progress (auto|plain|pretty)
     #[arg(long, default_value = "auto", value_name = "MODE")]
     ui: String,
@@ -93,7 +103,7 @@ impl From<SignatureModeArg> for SignatureMode {
 
 fn main() -> Result<()> {
     let args = Args::parse();
-    let signature_mode: SignatureMode = args.sig_mode.into();
+    let signature_mode: SignatureMode = args.sig_mode.clone().into();
     let is_tty = std::io::stderr().is_terminal();
     let stdout_is_tty = std::io::stdout().is_terminal();
     let ui = ui::Ui::from_args(Some(&args.ui), is_tty, !stdout_is_tty);
@@ -153,6 +163,16 @@ fn main() -> Result<()> {
         ),
         (None, None) => None,
     };
+
+    if args.lineage || args.checkpoints {
+        return run_inspections(
+            &conn,
+            &args,
+            public_key_hex.as_deref(),
+            pq_public_key_hex.as_deref(),
+            signature_mode,
+        );
+    }
 
     if !args.json {
         println!("log_verify: checking {}", args.db);
@@ -272,6 +292,166 @@ fn main() -> Result<()> {
 
     println!("OK: all chains verified.");
     Ok(())
+}
+
+/// `--lineage` / `--checkpoints` inspection mode: per-item reports that keep
+/// going past failures (the full verifier fails closed at the first problem;
+/// these answer "where exactly, and what is still trustworthy?").
+fn run_inspections(
+    conn: &Connection,
+    args: &Args,
+    public_key_hex: Option<&str>,
+    pq_public_key_hex: Option<&str>,
+    mode: SignatureMode,
+) -> Result<()> {
+    use witness_kernel::verify::FailureKind;
+    use witness_kernel::{inspect, DeviceKeyEpoch};
+
+    // The lineage anchor: an explicit key override is trusted as genesis,
+    // otherwise the genesis key recorded in device_metadata.
+    let genesis: [u8; 32] = match public_key_hex {
+        Some(hex_key) => hex::decode(hex_key.trim())?
+            .as_slice()
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("public key must be 32 bytes"))?,
+        None => witness_kernel::genesis_device_public_key(conn)?,
+    };
+
+    // Checkpoints are judged against the genesis-anchored portion of the
+    // lineage, so the lineage inspection always runs (it is cheap).
+    let lineage = inspect::inspect_key_lineage(conn, &genesis)?;
+    let trusted_epochs: Vec<DeviceKeyEpoch> = lineage
+        .epochs
+        .iter()
+        .filter(|e| matches!(e.status, inspect::EpochStatus::Valid))
+        .filter_map(|e| {
+            let bytes = hex::decode(&e.public_key).ok()?;
+            Some(DeviceKeyEpoch {
+                epoch: e.epoch,
+                public_key: bytes.as_slice().try_into().ok()?,
+                activated_at_event_id: e.activated_at_event_id,
+            })
+        })
+        .collect();
+
+    let checkpoint_reports = if args.checkpoints {
+        let pq_key = verify_helpers::load_pq_verifying_key(conn, pq_public_key_hex, None)?;
+        Some(inspect::inspect_checkpoints(
+            conn,
+            &trusted_epochs,
+            mode,
+            pq_key.as_ref(),
+        )?)
+    } else {
+        None
+    };
+
+    let checkpoints_healthy = checkpoint_reports
+        .as_ref()
+        .map(|reports| {
+            reports
+                .iter()
+                .all(|c| c.signature_valid && c.problems.is_empty())
+        })
+        .unwrap_or(true);
+    let healthy = (lineage.lineage_valid || !args.lineage) && checkpoints_healthy;
+
+    if args.json {
+        let mut out = serde_json::Map::new();
+        if args.lineage {
+            out.insert("lineage".into(), serde_json::to_value(&lineage)?);
+        }
+        if let Some(reports) = &checkpoint_reports {
+            out.insert("checkpoints".into(), serde_json::to_value(reports)?);
+        }
+        println!("{}", serde_json::to_string_pretty(&out)?);
+        if !healthy {
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
+
+    if args.lineage {
+        println!("=== Device Key Lineage ===");
+        println!("genesis: {}", lineage.genesis_public_key);
+        for epoch in &lineage.epochs {
+            let status = match &epoch.status {
+                inspect::EpochStatus::Valid => "OK".to_string(),
+                inspect::EpochStatus::Invalid { reason } => format!("INVALID: {}", reason),
+                inspect::EpochStatus::Unverifiable { depends_on_epoch } => {
+                    format!("unverifiable (depends on epoch {})", depends_on_epoch)
+                }
+            };
+            println!(
+                "  epoch {}: {}…  active from event {}  {}",
+                epoch.epoch,
+                &epoch.public_key[..16],
+                epoch.activated_at_event_id,
+                status
+            );
+        }
+        if lineage.lineage_valid {
+            println!(
+                "lineage: OK ({} epoch(s)); trusted key {}…",
+                lineage.epochs.len(),
+                &lineage.trusted_public_key[..16]
+            );
+        } else {
+            println!(
+                "lineage: BROKEN — entries signed after the first invalid epoch cannot be \
+                 attributed to this device. Last trusted key: {}…",
+                &lineage.trusted_public_key[..16]
+            );
+            let explanation = verify_explain::explain_failure(FailureKind::KeyRotationInvalid);
+            println!("  What this means: {}", explanation.what);
+            println!("  Next steps:      {}", explanation.next_steps);
+        }
+        println!();
+    }
+
+    if let Some(reports) = &checkpoint_reports {
+        println!("=== Checkpoints ===");
+        if reports.is_empty() {
+            println!("no checkpoints recorded (genesis chain; nothing has been pruned)");
+        }
+        for checkpoint in reports {
+            let signer = match (checkpoint.signer_epoch, &checkpoint.recorded_signer) {
+                (Some(epoch), _) => format!("lineage epoch {}", epoch),
+                (None, Some(recorded)) => format!("UNTRUSTED key {}…", &recorded[..16]),
+                (None, None) => "unresolvable".to_string(),
+            };
+            println!(
+                "  checkpoint {}: cutoff_event_id={}, created_at={}, signer={}, signature {}",
+                checkpoint.id,
+                checkpoint.cutoff_event_id,
+                checkpoint.created_at,
+                signer,
+                if checkpoint.signature_valid {
+                    "OK"
+                } else {
+                    "INVALID"
+                }
+            );
+            for problem in &checkpoint.problems {
+                println!("    problem: {}", problem);
+            }
+        }
+        if !checkpoints_healthy {
+            let explanation = verify_explain::explain_failure(FailureKind::CheckpointInvalid);
+            println!("  What this means: {}", explanation.what);
+            println!("  Next steps:      {}", explanation.next_steps);
+        }
+        println!();
+    }
+
+    if healthy {
+        println!("OK: inspection found no problems.");
+        Ok(())
+    } else {
+        // Reports are already printed; exit non-zero without an anyhow backtrace.
+        eprintln!("inspection found problems (see report above)");
+        std::process::exit(1);
+    }
 }
 
 #[cfg(test)]
