@@ -398,6 +398,7 @@ render via the Customizer or CLI. Outer sizes: xiao ≈ **47 × 59 × 24 mm**
 | `host` | `"xiao"` | `"devkit"` for the Grove-cabled DevKitM-1 build |
 | `stack_sock_h` | 11.5 | *(xiao)* module underside → XIAO underside when seated — **measure the stack** |
 | `xiao_usb_drop` | 10.0 | *(xiao)* XIAO port centre below the module port centre — **measure** |
+| `usb_dx` / `xiao_usb_dx` | 0 / 0 | Port offsets along the bottom wall — measure if either port is off-centre |
 | `dk_l/dk_w`, `vm_l/vm_w`, `cam_w/cam_h` | 39×25.4 / 25×25 / 25×24 | **Measure your boards** — DevKit revisions differ |
 | `standoff_h` | 3.0 | *(devkit)* **raise to ~10 if your DevKit has soldered pin headers** |
 | `lens_dx/dy` | 0 / 2.5 | Lens centre offset from the camera-board centre — measure |
@@ -412,9 +413,12 @@ render via the Customizer or CLI. Outer sizes: xiao ≈ **47 × 59 × 24 mm**
 supports — every part prints flat; the prongs print as part of the shell with
 the fin round-overs self-supporting). Gasket in TPU 90–95A.
 
-> ⚠️ **v0.1 — verify before printing.** Board dimensions are nominal and the
+> ⚠️ **v0.2 — verify before printing.** Board dimensions are nominal and the
 > hinge dimensions target GoPro compatibility but are printed parts: print the
-> `bracket` + `knob` first and check the prong fit, then the shells.
+> `bracket` + `knob` first and check the prong fit, then the shells. For the
+> xiao host, **measure your seated stack first** (`stack_sock_h`,
+> `xiao_usb_drop`, `xiao_usb_dx`) — socket and header heights vary between
+> suppliers, and the two USB openings must land on your actual ports.
 
 ## Links
 - [Peripheral Build Plan & BOM](../canary_peripheral_build_plan.md) — parts, wiring, climate/IP guidance

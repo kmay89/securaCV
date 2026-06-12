@@ -404,12 +404,15 @@ module back() {
                 translate([0, 0, base_d - gasket_groove])
                     linear_extrude(gasket_groove + 1) rim_ring2d(gasket_w);
             // recess framing the USB opening(s) for flanged silicone plugs
-            // (xiao host: one tall recess spans both stacked ports)
+            // (xiao host: one tall recess spans both stacked ports, including
+            // any measured X offset between them)
             if (e_seal && usb_cover) {
                 uz0 = (has_dk ? usb_zc : usb_zc - xiao_usb_drop) - usb_h/2 - usb_cov_pad;
                 uz1 = min(usb_zc + usb_h/2 + usb_cov_pad, base_d - gasket_groove - 0.5);
-                translate([usb_cx - (usb_w/2 + usb_cov_pad), -out_y/2 - 1, uz0])
-                    cube([usb_w + 2*usb_cov_pad, 1 + usb_cov_dep, uz1 - uz0]);
+                ux0 = min(usb_cx, has_dk ? usb_cx : vm_cx + xiao_usb_dx) - (usb_w/2 + usb_cov_pad);
+                ux1 = max(usb_cx, has_dk ? usb_cx : vm_cx + xiao_usb_dx) + (usb_w/2 + usb_cov_pad);
+                translate([ux0, -out_y/2 - 1, uz0])
+                    cube([ux1 - ux0, 1 + usb_cov_dep, uz1 - uz0]);
             }
             // blind keyhole pockets (never reach the cavity — seal-safe)
             if (mount_extra > 0)
@@ -448,9 +451,15 @@ module back() {
                 edgeclip(vm_cx + s*vm_w/2, vm_cy, s > 0 ? 0 : 180);
             }
         } else {
+            // tall side rails, NOTCHED at the clip so the clip can flex
+            // (a continuous rail sits only clip_clear behind the beam and would fuse to it)
             for (s = [1, -1]) {
-                translate([vm_cx + s*(vm_w/2 - 1.5) - 1.5, vm_cy - (vm_l - 1)/2, floor_t])
-                    cube([3, vm_l - 1, vm_standoff]);
+                difference() {
+                    translate([vm_cx + s*(vm_w/2 - 1.5) - 1.5, vm_cy - (vm_l - 1)/2, floor_t])
+                        cube([3, vm_l - 1, vm_standoff]);
+                    translate([vm_cx + s*(vm_w/2 - 1.5), vm_cy, floor_t + vm_standoff/2])
+                        cube([5, clip_w + 2, vm_standoff + 1], center = true);
+                }
                 edgeclip(vm_cx + s*vm_w/2, vm_cy, s > 0 ? 0 : 180, vm_standoff);
             }
         }
