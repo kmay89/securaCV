@@ -53,18 +53,23 @@ static bool token_at(const char* p, int n, const char* tok, int tok_len) {
 }
 
 // Parse a small non-negative integer from an MQTT payload (HA number
-// entities send plain decimals, possibly as "12.0"). Returns -1 on junk
-// or out-of-range input so a mangled payload can never latch a value.
+// entities send plain decimals, possibly as "12.0", possibly quoted).
+// Returns -1 on junk, non-finite ("nan"/"inf" — NaN bypasses range
+// comparisons and casting it to long is UB), or out-of-range input so a
+// mangled payload can never latch a value.
 static long parse_cfg_number(const uint8_t* payload, unsigned int len, long max_value) {
   if (payload == nullptr || len == 0 || len > 24) return -1;
   char buf[25];
   memcpy(buf, payload, len);
   buf[len] = '\0';
 
+  const char* start = buf;
+  while (*start == ' ' || *start == '\t' || *start == '\r' || *start == '\n' || *start == '"') start++;
+
   char* end = nullptr;
-  const double d = strtod(buf, &end);
-  if (end == buf) return -1;
-  while (end && (*end == ' ' || *end == '\t' || *end == '\r' || *end == '\n')) end++;
+  const double d = strtod(start, &end);
+  if (end == start || !isfinite(d)) return -1;
+  while (end && (*end == ' ' || *end == '\t' || *end == '\r' || *end == '\n' || *end == '"')) end++;
   if (end && *end != '\0') return -1;
   if (d < 0 || d > (double)max_value) return -1;
   return (long)(d + 0.5);

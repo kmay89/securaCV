@@ -207,12 +207,12 @@ void publish_discovery(PubSubClient& mqtt, const Topics& topics) {
      (long)canary::cfg::DETECT_DWELL_MS_LO, (long)canary::cfg::DETECT_DWELL_MS_HI, 500},
   };
   for (const auto& n : numbers) {
-    char t[192], p[1024], unitField[64] = "";
+    char t[192], p[1280], unitField[64] = "";
     if (n.unit) {
       snprintf(unitField, sizeof(unitField), "\"unit_of_measurement\":\"%s\",", n.unit);
     }
     topic_for("number", n.objectId, t, sizeof(t));
-    snprintf(p, sizeof(p),
+    const int written = snprintf(p, sizeof(p),
              "{"
              "\"name\":\"%s\","
              "\"unique_id\":\"%s_%s\","
@@ -230,6 +230,11 @@ void publish_discovery(PubSubClient& mqtt, const Topics& topics) {
              topics.cfg_state, n.json_key, n.cmd_topic,
              n.min, n.max, n.step, n.mode,
              unitField, n.icon, availObj, devObj);
+    if (written < 0 || written >= (int)sizeof(p)) {
+      // Truncated JSON would be silently ignored by HA — fail loud instead.
+      log_line("DISC", "number entity payload truncated — skipped (device_id too long?)");
+      continue;
+    }
     publish_cfg(mqtt, t, p);
   }
 

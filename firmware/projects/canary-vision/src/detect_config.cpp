@@ -32,8 +32,14 @@ void load() {
   g_det.lost_timeout_ms = LOST_TIMEOUT_MS;
   g_det.dwell_start_ms  = DWELL_START_MS;
 
+  // Read-only open avoids write-locking on the hot boot path — but it
+  // fails on a factory-fresh unit where the namespace doesn't exist yet
+  // (and detect() can run before runtime_config creates it), so fall back
+  // to a read/write open that creates the namespace.
   Preferences prefs;
-  if (!prefs.begin(NVS_NS, /*readOnly=*/false)) {
+  bool opened = prefs.begin(NVS_NS, /*readOnly=*/true);
+  if (!opened) opened = prefs.begin(NVS_NS, /*readOnly=*/false);
+  if (!opened) {
     g_det_loaded = true;
     log_line("CFG", "NVS unavailable — using compiled detection defaults.");
     return;
