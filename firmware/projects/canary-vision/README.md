@@ -41,6 +41,22 @@ The compiled constants in `include/canary/config.h` seed the first boot
 only; live values persist across reboots and OTA installs (see
 `include/canary/detect_config.h`).
 
+Bench test from any MQTT client (no HA needed):
+
+```bash
+mosquitto_sub -h <broker> -t 'securacv/<device_id>/cfg/state' -v &
+mosquitto_pub -h <broker> -t 'securacv/<device_id>/cfg/score/set' -m '85'
+# expect the retained cfg/state to echo {"target":0,"score":85,...}
+# junk is rejected without effect:
+mosquitto_pub -h <broker> -t 'securacv/<device_id>/cfg/score/set' -m 'nan'
+```
+
+A ready-made dashboard for these entities ships at
+[`homeassistant/lovelace/securacv-vision-dashboard.yaml`](../../../homeassistant/lovelace/securacv-vision-dashboard.yaml)
+(voxel heat grid, tuning view, firmware view) with companion alert
+automations at
+[`homeassistant/automations/securacv_vision_presence.yaml`](../../../homeassistant/automations/securacv_vision_presence.yaml).
+
 ## MQTT Topics
 
 Base:

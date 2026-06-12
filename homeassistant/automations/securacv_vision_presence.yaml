@@ -1,0 +1,88 @@
+# SecuraCV — Canary Vision Presence Automations
+#
+# For Canary Vision devices (ESP32 host + Grove Vision AI V2) running
+# firmware/projects/canary-vision.
+#
+# Included:
+#   A) Dwell / interaction alert — someone lingered (dwell_started) or the
+#      leave-after-dwell heuristic fired (interaction_likely)
+#   B) Device offline alert — the witness stopped reporting
+#
+# Setup:
+#   1. Copy this file to /config/automations/
+#   2. Replace DEVICE_ID with your device id (default: canary_vision_001)
+#   3. Replace notify.mobile_app_your_phone with your notify service
+#   4. Reload automations (Developer Tools → YAML → Automations)
+#
+# These trigger on the firmware's raw MQTT event stream
+# (securacv/<device_id>/events), so they carry the event's reason field —
+# richer than watching the last_event sensor flip.
+
+# ---------------------------------------------------------------------------
+# A) Dwell / interaction alert
+# ---------------------------------------------------------------------------
+- id: securacv_vision_dwell_alert
+  alias: "SecuraCV Vision — Lingering / Interaction"
+  description: >
+    Someone stayed in view past the dwell threshold, or left right after a
+    qualified dwell/zone interaction (interaction_likely).
+  mode: queued
+  max_exceeded: silent
+
+  trigger:
+    - platform: mqtt
+      topic: "securacv/DEVICE_ID/events"
+
+  condition:
+    - condition: template
+      value_template: >
+        {{ trigger.payload_json.event in ['dwell_started', 'interaction_likely'] }}
+
+  action:
+    - service: notify.mobile_app_your_phone
+      data:
+        title: >-
+          {{ '👀 Lingering detected' if trigger.payload_json.event == 'dwell_started'
+             else '⚠️ Interaction likely' }}
+        message: >-
+          {{ trigger.payload_json.device_id }}:
+          {{ trigger.payload_json.event }}
+          {%- if trigger.payload_json.reason is defined %}
+          ({{ trigger.payload_json.reason }})
+          {%- endif %}
+          — confidence {{ trigger.payload_json.confidence }}%,
+          dwell {{ (trigger.payload_json.dwell_ms / 1000) | round(0) }}s
+        data:
+          tag: "securacv-vision-DEVICE_ID"
+          group: "SecuraCV"
+
+# ---------------------------------------------------------------------------
+# B) Device offline alert
+# ---------------------------------------------------------------------------
+- id: securacv_vision_offline_alert
+  alias: "SecuraCV Vision — Witness Offline"
+  description: >
+    The Canary Vision stopped reporting (LWT fired or no heartbeat). A silent
+    witness is itself a signal — power cut, WiFi jammed, or tampering.
+  mode: single
+  max_exceeded: silent
+
+  trigger:
+    - platform: state
+      entity_id: binary_sensor.securacv_canary_vision_DEVICE_ID_presence
+      to: "unavailable"
+      for:
+        minutes: 5
+
+  action:
+    - service: notify.mobile_app_your_phone
+      data:
+        title: "🔴 SecuraCV witness offline"
+        message: >-
+          Canary Vision DEVICE_ID has been unreachable for 5 minutes.
+          Check power, WiFi, and the device's physical state.
+        data:
+          tag: "securacv-vision-offline-DEVICE_ID"
+          group: "SecuraCV"
+          push:
+            interruption-level: time-sensitive
