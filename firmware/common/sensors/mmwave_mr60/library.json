@@ -1,0 +1,25 @@
+{
+    "name": "mmwave_mr60",
+    "version": "0.1.0",
+    "description": "Board-agnostic skeleton for the Seeed MR60BHA2 60GHz mmWave radar: a minimal UART frame parser plus presence/count and (optional) vitals FSMs. Reads only pre-digested scalar claims from the radar module; no raw IQ. Vitals translation unit compiles only under -DCANARY_SENSE_VITALS=1.",
+    "keywords": ["mmwave", "radar", "mr60bha2", "presence", "vitals", "esp32-c6", "privacy"],
+    "authors": [
+        {
+            "name": "SecuraCV Contributors",
+            "url": "https://github.com/kmay89/securaCV"
+        }
+    ],
+    "license": "Apache-2.0",
+    "frameworks": ["arduino"],
+    "platforms": ["espressif32"],
+    "headers": [
+        "mr60_uart.h",
+        "mr60_presence.h",
+        "mr60_vitals.h"
+    ],
+    "build": {
+        "includeDir": ".",
+        "srcDir": ".",
+        "srcFilter": ["+<*.cpp>"]
+    }
+}
