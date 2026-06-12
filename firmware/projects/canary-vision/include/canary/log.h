@@ -4,9 +4,11 @@
 namespace canary {
 
 // Board-dependent console type: UART0 HardwareSerial on C3 (CDC_ON_BOOT
-// disabled, see common_esp32c3), HWCDC on S3 (native USB CDC). auto&
-// deduces the right one; callers only use the shared Print interface.
-static inline auto& dbg_serial() {
+// disabled, see common_esp32c3), HWCDC on S3 (native USB CDC).
+// decltype picks the right one (C++11-safe — the framework compiles some
+// TUs below C++14, so a deduced `auto&` return is not available here);
+// callers only use the shared Print interface.
+static inline decltype(Serial)& dbg_serial() {
   return Serial;
 }
 
