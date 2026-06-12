@@ -21,7 +21,7 @@
   {
     "name": "canary-vision",
     "dir": "firmware/projects/canary-vision",
-    "build_envs": ["canary-vision-default"],
+    "build_envs": ["canary-vision-default", "canary-vision-xiao-c3", "canary-vision-xiao-s3"],
     "check_env": "canary-vision-default",
     "pre_step": "secrets_header",
     "size_guard": {

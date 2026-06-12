@@ -126,7 +126,7 @@ jobs:
           #define MQTT_USER nullptr
           #define MQTT_PASS nullptr
           HEADER
-          pio run -e canary-vision-default
+          pio run -e canary-vision-default -e canary-vision-xiao-c3 -e canary-vision-xiao-s3
 
       - name: Install Arduino CLI
         uses: arduino/setup-arduino-cli@v2
@@ -192,24 +192,32 @@ jobs:
             --out /tmp/release/manifest-canary-wap.json \
             "/tmp/release/canary-wap-${VERSION}.bin"
 
-          # canary-vision (generic build — identity/credentials come from NVS)
-          cp firmware/projects/canary-vision/.pio/build/canary-vision-default/firmware.bin \
-            "/tmp/release/canary-vision-${VERSION}.bin"
-          python firmware/scripts/ota_release.py manifest \
-            --private-key /tmp/releaser.pem \
-            --product securacv-canary-vision \
-            --version "${VERSION}" \
-            --url "${DL}/canary-vision-${VERSION}.bin" \
-            --release-notes "$NOTES" \
-            --release-url "$RELURL" \
-            --out /tmp/release/manifest-canary-vision.json \
-            "/tmp/release/canary-vision-${VERSION}.bin"
+          # canary-vision (generic builds — identity/credentials come from NVS).
+          # One OTA product per host board: the engine's product check makes
+          # a manifest for one board un-installable on another (the boards
+          # differ in I2C pins or MCU entirely).
+          for B in default xiao-c3 xiao-s3; do
+            if [ "$B" = default ]; then SUFFIX=""; else SUFFIX="-$B"; fi
+            cp "firmware/projects/canary-vision/.pio/build/canary-vision-${B}/firmware.bin" \
+              "/tmp/release/canary-vision${SUFFIX}-${VERSION}.bin"
+            python firmware/scripts/ota_release.py manifest \
+              --private-key /tmp/releaser.pem \
+              --product "securacv-canary-vision${SUFFIX}" \
+              --version "${VERSION}" \
+              --url "${DL}/canary-vision${SUFFIX}-${VERSION}.bin" \
+              --release-notes "$NOTES" \
+              --release-url "$RELURL" \
+              --out "/tmp/release/manifest-canary-vision${SUFFIX}.json" \
+              "/tmp/release/canary-vision${SUFFIX}-${VERSION}.bin"
+          done
 
           # Variant index (tooling + future variants)
           python firmware/scripts/ota_release.py index \
             "securacv-canary=${DL}/manifest-canary.json" \
             "securacv-canary-wap=${DL}/manifest-canary-wap.json" \
             "securacv-canary-vision=${DL}/manifest-canary-vision.json" \
+            "securacv-canary-vision-xiao-c3=${DL}/manifest-canary-vision-xiao-c3.json" \
+            "securacv-canary-vision-xiao-s3=${DL}/manifest-canary-vision-xiao-s3.json" \
             --out /tmp/release/manifest-index.json
 
           # Verify every signature against the COMMITTED public key before
@@ -222,10 +230,12 @@ jobs:
             --pubkey firmware/common/ota/src/ota_release_key.h \
             --manifest /tmp/release/manifest-canary-wap.json \
             "/tmp/release/canary-wap-${VERSION}.bin"
-          python firmware/scripts/ota_release.py verify \
-            --pubkey firmware/common/ota/src/ota_release_key.h \
-            --manifest /tmp/release/manifest-canary-vision.json \
-            "/tmp/release/canary-vision-${VERSION}.bin"
+          for B in "" "-xiao-c3" "-xiao-s3"; do
+            python firmware/scripts/ota_release.py verify \
+              --pubkey firmware/common/ota/src/ota_release_key.h \
+              --manifest "/tmp/release/manifest-canary-vision${B}.json" \
+              "/tmp/release/canary-vision${B}-${VERSION}.bin"
+          done
 
           # Guard against a forgotten version bump: the compiled-in
           # FIRMWARE_VERSION literal must match the manifest version, or
@@ -240,10 +250,12 @@ jobs:
             echo "::error::canary-wap binary does not contain the version string '${VERSION}-wap'. Bump FIRMWARE_VERSION in canary_wap.ino before tagging."
             exit 1
           fi
-          if ! strings "/tmp/release/canary-vision-${VERSION}.bin" | grep -qFx "${VERSION}"; then
-            echo "::error::canary-vision binary does not contain the version string '${VERSION}'. Bump CANARY_FW_VERSION in firmware/projects/canary-vision/include/canary/version.h before tagging."
-            exit 1
-          fi
+          for B in "" "-xiao-c3" "-xiao-s3"; do
+            if ! strings "/tmp/release/canary-vision${B}-${VERSION}.bin" | grep -qFx "${VERSION}"; then
+              echo "::error::canary-vision${B} binary does not contain the version string '${VERSION}'. Bump CANARY_FW_VERSION in firmware/projects/canary-vision/include/canary/version.h before tagging."
+              exit 1
+            fi
+          done
 
           (cd /tmp/release && sha256sum ./*.bin ./*.json > sha256sums.txt)
           ls -la /tmp/release
@@ -272,8 +284,12 @@ jobs:
             /tmp/release/canary-${{ steps.ver.outputs.version }}.bin
             /tmp/release/canary-wap-${{ steps.ver.outputs.version }}.bin
             /tmp/release/canary-vision-${{ steps.ver.outputs.version }}.bin
+            /tmp/release/canary-vision-xiao-c3-${{ steps.ver.outputs.version }}.bin
+            /tmp/release/canary-vision-xiao-s3-${{ steps.ver.outputs.version }}.bin
             /tmp/release/manifest-canary.json
             /tmp/release/manifest-canary-wap.json
             /tmp/release/manifest-canary-vision.json
+            /tmp/release/manifest-canary-vision-xiao-c3.json
+            /tmp/release/manifest-canary-vision-xiao-s3.json
             /tmp/release/manifest-index.json
             /tmp/release/sha256sums.txt

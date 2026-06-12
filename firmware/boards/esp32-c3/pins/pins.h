@@ -110,8 +110,11 @@
 // ONBOARD PERIPHERALS
 // ============================================================================
 
-// Built-in RGB LED (active high)
+// Built-in RGB LED (active high). The Arduino variant header also
+// defines LED_BUILTIN (same pin), so only define it when missing.
+#ifndef LED_BUILTIN
 #define LED_BUILTIN             8     // WS2812 or standard LED
+#endif
 #define LED_ACTIVE_HIGH         1
 
 // Boot button
@@ -151,5 +154,3 @@
 #define HAS_GNSS_UART           0     // Not typically used
 #define HAS_TAMPER_INPUT        0     // Not typically used
 #define HAS_VISION_AI           1     // Grove Vision AI V2 support
-
-#endif // BOARD_ESP32_C3
