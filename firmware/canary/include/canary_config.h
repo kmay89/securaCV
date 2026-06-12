@@ -152,7 +152,7 @@
 // ════════════════════════════════════════════════════════════════
 
 #define DEVICE_TYPE           "canary"
-#define FIRMWARE_VERSION      "2.1.0"
+#define FIRMWARE_VERSION      "2.2.0"
 #define RULESET_ID            "securacv:canary:v1.0"
 #define PROTOCOL_VERSION      "pwk:v0.3.0"
 #define CHAIN_ALGORITHM       "sha256-domain-sep"

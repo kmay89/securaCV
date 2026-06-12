@@ -1,5 +1,6 @@
 #include "canary/state/presence_fsm.h"
 #include "canary/config.h"
+#include "canary/detect_config.h"
 
 namespace canary::state {
 
@@ -51,7 +52,7 @@ bool PresenceFSM::tick(const VisionSample& vs, uint32_t now_ms, EventMsg& out_ev
       return emit(out_event, "presence_started");
     }
 
-    if (!dwelling_ && (now_ms - presence_start_ms_) >= DWELL_START_MS) {
+    if (!dwelling_ && (now_ms - presence_start_ms_) >= canary::cfg::detect().dwell_start_ms) {
       dwelling_ = true;
       dwell_start_ms_ = now_ms;
       return emit(out_event, "dwell_started");
@@ -67,7 +68,7 @@ bool PresenceFSM::tick(const VisionSample& vs, uint32_t now_ms, EventMsg& out_ev
     return false;
   }
 
-  if (presence_ && (now_ms - last_seen_ms_) > LOST_TIMEOUT_MS) {
+  if (presence_ && (now_ms - last_seen_ms_) > canary::cfg::detect().lost_timeout_ms) {
     if (dwelling_) {
       if (DWELL_END_GRACE_MS == 0 || (now_ms - last_seen_ms_) >= DWELL_END_GRACE_MS) {
         dwelling_ = false;
