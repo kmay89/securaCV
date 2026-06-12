@@ -14,9 +14,11 @@
 use anyhow::{anyhow, Result};
 use clap::Parser;
 use std::io::IsTerminal;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 use witness_kernel::break_glass::BreakGlassTokenFile;
-use witness_kernel::{ExportOptions, ExportWindow, Kernel, KernelConfig, ZonePolicy};
+use witness_kernel::{
+    parse_duration_s, ExportOptions, ExportWindow, Kernel, KernelConfig, ZonePolicy,
+};
 
 #[path = "../ui.rs"]
 mod ui;
@@ -75,49 +77,19 @@ struct Args {
     ui: String,
 }
 
-/// Parse `24h` / `7d` / `90m` / `3600s` / `3600` into seconds.
-fn parse_duration_s(s: &str) -> Result<u64> {
-    let s = s.trim();
-    let (num, mult) = match s.chars().last() {
-        Some('s') => (&s[..s.len() - 1], 1),
-        Some('m') => (&s[..s.len() - 1], 60),
-        Some('h') => (&s[..s.len() - 1], 3600),
-        Some('d') => (&s[..s.len() - 1], 86_400),
-        Some(c) if c.is_ascii_digit() => (s, 1),
-        _ => return Err(anyhow!("invalid duration '{}': use e.g. 24h, 7d, 90m", s)),
-    };
-    let n: u64 = num
-        .parse()
-        .map_err(|_| anyhow!("invalid duration '{}': use e.g. 24h, 7d, 90m", s))?;
-    n.checked_mul(mult)
-        .ok_or_else(|| anyhow!("duration '{}' overflows", s))
-}
-
 /// Resolve --start/--end/--last into a bucket-aligned window (floor start,
 /// ceil end) so the window itself never encodes finer-than-bucket timing.
+/// Parsing and alignment live in the library (`parse_duration_s`,
+/// `ExportWindow::aligned`/`::last`) and are shared with the event API's
+/// `GET /export/bundle?last=` query.
 fn resolve_window(args: &Args) -> Result<Option<ExportWindow>> {
-    let (raw_start, raw_end) = match (&args.last, args.start, args.end) {
-        (Some(last), None, None) => {
-            let dur = parse_duration_s(last)?;
-            let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-            (now.saturating_sub(dur), now)
-        }
-        (None, Some(start), Some(end)) => (start, end),
-        (None, None, None) => return Ok(None),
+    match (&args.last, args.start, args.end) {
+        (Some(last), None, None) => Ok(Some(ExportWindow::last(parse_duration_s(last)?)?)),
+        (None, Some(start), Some(end)) => Ok(Some(ExportWindow::aligned(start, end)?)),
+        (None, None, None) => Ok(None),
         // clap's `requires`/`conflicts_with` make the remaining combinations unreachable.
-        _ => return Err(anyhow!("--start/--end must be given together")),
-    };
-    if raw_start >= raw_end {
-        return Err(anyhow!("export window start must be before end"));
+        _ => Err(anyhow!("--start/--end must be given together")),
     }
-    let end_epoch_s = raw_end
-        .div_ceil(BUCKET_S)
-        .checked_mul(BUCKET_S)
-        .ok_or_else(|| anyhow!("export window end is too large"))?;
-    Ok(Some(ExportWindow {
-        start_epoch_s: raw_start / BUCKET_S * BUCKET_S,
-        end_epoch_s,
-    }))
 }
 
 fn main() -> Result<()> {
@@ -232,8 +204,9 @@ fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_duration_s, resolve_window, Args, BUCKET_S};
+    use super::{resolve_window, Args, BUCKET_S};
     use clap::Parser;
+    use witness_kernel::parse_duration_s;
 
     #[test]
     fn windows_align_outward_and_reject_overflow() {

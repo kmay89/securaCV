@@ -145,6 +145,42 @@ def _kernel_request(method: str, path: str) -> dict:
         return {"ok": False, "error": f"kernel API unreachable: {exc}"}
 
 
+def _kernel_download(path: str):
+    """Proxy a raw download from the witness API (same container).
+
+    Returns ((body_bytes, content_disposition), None) on success or
+    (None, error_message) on failure. Same token handling as
+    `_kernel_request`: re-read per call, never logged, never sent to the
+    browser — the browser only ever sees the wizard's own endpoint.
+    """
+    try:
+        token = API_TOKEN_FILE.read_text().strip()
+    except OSError as exc:
+        return None, f"API token unavailable: {exc}"
+    if not token:
+        return None, "API token file is empty"
+    req = urllib.request.Request(
+        f"{KERNEL_API_URL}{path}",
+        method="GET",
+        headers={"x-witness-token": token},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            disposition = resp.headers.get("Content-Disposition", "")
+            return (resp.read(), disposition), None
+    except urllib.error.HTTPError as exc:
+        detail = ""
+        try:
+            err_json = json.loads(exc.read().decode(errors="replace"))
+            if isinstance(err_json, dict) and err_json.get("error"):
+                detail = f": {err_json['error']}"
+        except Exception:
+            pass
+        return None, f"kernel API error {exc.code}{detail}"
+    except Exception as exc:
+        return None, f"kernel API unreachable: {exc}"
+
+
 def get_addon_options() -> dict:
     resp = _supervisor_request("GET", "/addons/self/options/config")
     return resp.get("data", {})
@@ -253,6 +289,34 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
             return
         if path == "/api/kernel/digest":
             self._json_response(_kernel_request("GET", "/digest"))
+            return
+
+        # One-click "Download my events": proxy the kernel's signed export
+        # bundle through to the browser as a file download. Only the window
+        # parameters pass through; everything else is dropped.
+        base, _, query = path.partition("?")
+        if base == "/api/kernel/export":
+            allowed = [
+                pair
+                for pair in (query.split("&") if query else [])
+                if pair.split("=", 1)[0] in ("last", "start", "end")
+            ]
+            suffix = ("?" + "&".join(allowed)) if allowed else ""
+            payload, err = _kernel_download(f"/export/bundle{suffix}")
+            if err:
+                self._json_response({"ok": False, "error": err}, status=502)
+                return
+            body, disposition = payload
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header(
+                "Content-Disposition",
+                disposition or 'attachment; filename="securacv-events.json"',
+            )
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
             return
 
         # Serve static files from wizard dir

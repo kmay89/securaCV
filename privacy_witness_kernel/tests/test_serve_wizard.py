@@ -395,5 +395,67 @@ def test_save_generates_and_persists_device_key(save_env, monkeypatch, tmp_path)
     assert (key_file.stat().st_mode & 0o777) == 0o600
 
 
+# ---------------------------------------------------------------------------
+# _kernel_download (Download my events proxy)
+# ---------------------------------------------------------------------------
+
+
+class _FakeDownloadResponse(_FakeResponse):
+    """Adds the headers attribute `_kernel_download` reads for the filename."""
+
+    def __init__(self, payload: bytes, disposition: str):
+        super().__init__(payload)
+        self.headers = {"Content-Disposition": disposition}
+
+
+def test_kernel_download_sets_token_header_and_passes_disposition(monkeypatch, tmp_path):
+    token_file = tmp_path / "api_token"
+    token_file.write_text("tok-123\n")
+    monkeypatch.setattr(serve_wizard, "API_TOKEN_FILE", token_file)
+
+    captured = {}
+
+    def _fake(req, timeout=None):
+        captured["req"] = req
+        return _FakeDownloadResponse(
+            b'{"artifact":{}}', 'attachment; filename="securacv-events-600.json"'
+        )
+
+    monkeypatch.setattr(serve_wizard.urllib.request, "urlopen", _fake)
+
+    payload, err = serve_wizard._kernel_download("/export/bundle?last=24h")
+    assert err is None
+    body, disposition = payload
+    assert body == b'{"artifact":{}}'
+    assert disposition == 'attachment; filename="securacv-events-600.json"'
+    req = captured["req"]
+    assert req.get_full_url().endswith("/export/bundle?last=24h")
+    # Token forwarded to the kernel, never anywhere else.
+    assert req.get_header("X-witness-token") == "tok-123"
+
+
+def test_kernel_download_reports_missing_token(monkeypatch, tmp_path):
+    monkeypatch.setattr(serve_wizard, "API_TOKEN_FILE", tmp_path / "missing")
+    payload, err = serve_wizard._kernel_download("/export/bundle")
+    assert payload is None
+    assert "token unavailable" in err
+
+
+def test_kernel_download_surfaces_kernel_error(monkeypatch, tmp_path):
+    token_file = tmp_path / "api_token"
+    token_file.write_text("tok-123\n")
+    monkeypatch.setattr(serve_wizard, "API_TOKEN_FILE", token_file)
+
+    def _fake(req, timeout=None):
+        raise urllib.error.HTTPError(
+            req.get_full_url(), 400, "Bad Request", None, io.BytesIO(b'{"error":"bad_window"}')
+        )
+
+    monkeypatch.setattr(serve_wizard.urllib.request, "urlopen", _fake)
+    payload, err = serve_wizard._kernel_download("/export/bundle?last=nope")
+    assert payload is None
+    assert "400" in err and "bad_window" in err
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))
