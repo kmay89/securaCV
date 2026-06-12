@@ -5,7 +5,7 @@ Two parametric OpenSCAD configurators live here:
 | Device | Source | What it is |
 |--------|--------|------------|
 | **Canary WAP** (XIAO ESP32-S3 Sense) | [`canary_wap_enclosure.scad`](./canary_wap_enclosure.scad) | box enclosure with peripheral bays — [section below](#canary-wap--enclosure-v07) |
-| **Canary Vision** (ESP32-C3 + Grove Vision AI V2 + OV5647) | [`canary_vision_enclosure.scad`](./canary_vision_enclosure.scad) | camera unit with a GoPro-compatible adjustable hinge — [section below](#canary-vision--enclosure-v01) |
+| **Canary Vision** (Grove Vision AI V2 + OV5647 + stacked-XIAO or DevKit host) | [`canary_vision_enclosure.scad`](./canary_vision_enclosure.scad) | camera unit with a GoPro-compatible adjustable hinge — [section below](#canary-vision--enclosure-v02) |
 
 Both share the same print-tolerance system, weather-sealing approach (printed
 TPU gasket + drip-edge lid) and CI gate (every change re-renders all presets and
@@ -299,13 +299,21 @@ plug/overmold can't jam it.
 
 ---
 
-# Canary Vision — Enclosure (v0.1)
+# Canary Vision — Enclosure (v0.2)
 
 Parametric camera unit for the Canary Vision stack — **OV5647 camera**
-(Pi-cam v1.3 form factor) + **Grove Vision AI V2** (25 × 25 mm) +
-**ESP32-C3-DevKitM-1**, joined by the Grove I2C cable. The front face carries
-the lens aperture (recessed clear-disc seat + optional rain hood) and the LED
-light pipe; the back shell carries the boards and the mounts.
+(Pi-cam v1.3 form factor) + **Grove Vision AI V2** (25 × 25 mm) + a selectable
+**host** (the `host` parameter, matching the
+[device guide](../grove_vision_ai_v2_guide.md) §3 options):
+
+| `host` | Build | Case |
+|--------|-------|------|
+| **`xiao`** (default) | XIAO ESP32-C3/S3 **seated in the module's stacking socket** — recommended, zero wiring | compact single column, ≈ **47 × 59 × 24 mm**; the bottom wall carries **both USB-C ports** (module *model port* above, XIAO *firmware port* below) |
+| `devkit` | ESP32-C3-DevKitM-1 joined by the **Grove I2C cable** | two columns, ≈ 80 × 61 × 18 mm |
+
+The front face carries the lens aperture (recessed clear-disc seat + optional
+rain hood) and the LED light pipe; the back shell carries the boards and the
+mounts.
 
 ![vision_weather preset — back, front, gasket, bracket and knob](./preview_vision.png)
 
@@ -357,18 +365,26 @@ pressure equalisation, and treat the result as **rain/splash-resistant
 | **vision_indoor** | hinge mount, LED port, no seal — desk/shelf unit |
 | **vision_weather** | seal + hood + GORE vent + hinge **and** keyholes |
 
-`part` = `back` / `front` / `all` / `gasket` / `bracket` / `knob`.
-Outer size ≈ **80 × 61 × 18 mm** (+20 mm prongs); weather ≈ 81 × 63 × 21 mm.
+`host` is independent of the preset — any combination works. `part` = `back` /
+`front` / `all` / `gasket` / `bracket` / `knob`. Committed STLs:
+`xiao_indoor`, `xiao_weather` (+ gasket) and `devkit_indoor`; other combos
+render via the Customizer or CLI. Outer sizes: xiao ≈ **47 × 59 × 24 mm**
+(weather ≈ 49 × 60 × 30), devkit ≈ 80 × 61 × 18 (+20 mm prongs on all).
 
 ## Assembly
 
 1. Screw the **OV5647** to the four posts inside the front face (M2
    self-tappers, lens through the aperture); bond the clear disc into the seat.
-2. Click the **Vision AI V2** and the **DevKitM-1** into their snap-clip
-   cradles in the back (DevKit USB-C down, aligned to the wall opening). The
+2. *(xiao host)* Seat the **XIAO** in the module's socket — **both USB-C ports
+   must face the same direction; backwards seating feeds power into GPIO and
+   can kill either board** (device guide §3). Click the stack into the tall
+   side rails, module up, both ports aligned to the two bottom-wall openings
+   (model port above, firmware port below).
+   *(devkit host)* Click the **Vision AI V2** and the **DevKitM-1** into their
+   snap-clip cradles (DevKit USB-C down, aligned to the wall opening); the
    module's own USB-C faces the middle gap — open the case to reflash models.
-3. Route the camera FPC to the module's CSI connector and the Grove cable
-   across the middle gap to the DevKit pins.
+3. Route the camera FPC to the module's CSI connector (and, devkit host, the
+   Grove cable across the middle gap to the DevKit pins).
 4. (weather) Seat the TPU gasket in the rim groove.
 5. Close the front (lip nests into the back) and drive the 4 × M2 corner
    screws — snug diagonally, then final quarter-turns.
@@ -379,10 +395,14 @@ Outer size ≈ **80 × 61 × 18 mm** (+20 mm prongs); weather ≈ 81 × 63 × 21
 
 | Param | Default | Why you'd change it |
 |-------|--------:|---------------------|
+| `host` | `"xiao"` | `"devkit"` for the Grove-cabled DevKitM-1 build |
+| `stack_sock_h` | 11.5 | *(xiao)* module underside → XIAO underside when seated — **measure the stack** |
+| `xiao_usb_drop` | 10.0 | *(xiao)* XIAO port centre below the module port centre — **measure** |
 | `dk_l/dk_w`, `vm_l/vm_w`, `cam_w/cam_h` | 39×25.4 / 25×25 / 25×24 | **Measure your boards** — DevKit revisions differ |
-| `standoff_h` | 3.0 | **Raise to ~10 if your DevKit has soldered pin headers** |
+| `standoff_h` | 3.0 | *(devkit)* **raise to ~10 if your DevKit has soldered pin headers** |
 | `lens_dx/dy` | 0 / 2.5 | Lens centre offset from the camera-board centre — measure |
 | `cam_hole_x/y` | 21 / 12.5 | Pi-cam v1.3 mounting grid |
+| `lp/vent/mag_dx/dy` | — | Front-face feature offsets **from the module centre** (valid for both hosts) |
 | `hinge_teeth` | true | `false` = smooth GoPro-compatible faces |
 | `tol_slide/press/hole` | 0.20/0.10/0.30 | Same per-printer tolerance trio as the WAP case |
 | `mount_style` | hinge | `keyhole` / `both` |

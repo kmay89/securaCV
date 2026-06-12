@@ -8,7 +8,7 @@ optional.
 |----------|-------------|
 | [`bench_bringup.md`](./bench_bringup.md) | **Start here to test it** — minimum shopping list and steps to make a bare XIAO chirp/blink on the bench. |
 | [`v1_bench_validation_runbook.md`](./v1_bench_validation_runbook.md) | **The v1 release gate** — flash → provision → signed MQTT → verified-✓ in HA, the kernel-pipeline smoke, and the 2–3 board mesh/chirp fleet validation, with pass/fail criteria and required artifacts. |
-| [`enclosure/`](./enclosure/) | **3D-printable enclosure** (parametric OpenSCAD + ready STLs) for the Canary WAP — light-pipe, buzzer vent, camera window, tamper-magnet pocket. |
+| [`enclosure/`](./enclosure/) | **3D-printable enclosures** (parametric OpenSCAD + ready STLs): Canary WAP box (peripheral bays, opt-in TPU-gasket weather mode + wall mounts) and Canary Vision camera unit (stacked-XIAO or DevKit host, GoPro-compatible adjustable hinge, rain hood). |
 | [`canary_peripheral_build_plan.md`](./canary_peripheral_build_plan.md) | Master build plan & BOM: audible chirp (buzzer), status LED, button/tamper/touch inputs, battery, and enclosure — for both Canary WAP and Canary Vision. |
 | [`esp32s3_power_battery_guide.md`](./esp32s3_power_battery_guide.md) | **Power & battery guide** — supply/cable requirements, consumption estimates per firmware power mode, battery chemistry/sizing across temperatures and environments, wiring pitfalls, and the battery health/lifetime telemetry reference. |
 | [`grove_vision_ai_v2_guide.md`](./grove_vision_ai_v2_guide.md) | **Grove Vision AI V2 device guide** — the two USB-C ports explained, Grove I2C port pinouts per host board, loading the initial AI model via SenseCraft, bootloader recovery, and the SSCMA protocol reference. |
