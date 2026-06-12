@@ -2,6 +2,29 @@
 
 ## [Unreleased]
 
+### Export & diagnosis follow-ups: one-click download, scheduling, inspectors, break-glass UX
+
+- **One-click "Download my events"**: token-gated `GET /export/bundle` on the
+  event API returns the full signed ExportBundle as a browser download, with
+  optional `?last=24h` / `?start=&end=` windows (bucket-aligned; recorded on
+  the `api`-labeled receipt). Surfaced as a window-picker download button in
+  the HA add-on ingress panel (token never reaches the browser).
+- **Scheduled exports**: `export_events --output-dir DIR --keep N` writes
+  rotating `securacv-events-<bucket>.json` files; docs/scheduled_exports.md
+  ships systemd timer/cron units and the add-on curl recipe.
+  `ExportWindow::aligned`/`::last` + `parse_duration_s` move into the library
+  (one alignment rule for CLI and API).
+- **Lineage & checkpoint inspectors**: `log_verify --lineage` /
+  `--checkpoints` walk everything instead of failing closed — per-epoch
+  valid/invalid/unverifiable with reasons, per-checkpoint signer resolution
+  against the genesis-anchored lineage, signature checks, and
+  timestamp/cutoff regressions, with plain-language guidance (`--json`
+  supported).
+- **Break-glass console UX**: shareable trustee signing links
+  (`#sign&hash=…` — signer-only page, no token, no server calls), live
+  auto-refreshing quorum status with per-trustee pills and a progress bar.
+  No backend changes; operator guide now documents the console.
+
 ### Export UX, owner self-export, and verification diagnosis
 
 - **Owner self-export** (`export_events --self-export`): export the
