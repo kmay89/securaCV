@@ -45,7 +45,14 @@ static constexpr size_t MQTT_BUFFER_BYTES        = 1536;  // discovery payloads 
 // -------------------- Software updates (signed pull-OTA) --------------------
 // Shared engine at firmware/common/ota — same manifest format, signature
 // scheme, and HA update-entity UX as canary and canary-wap.
-static constexpr const char* OTA_PRODUCT = "securacv-canary-vision";
+// Each host board is a distinct OTA product with its own manifest (the
+// XIAO envs override both via build flags), so a manifest for one board
+// can never install another board's image — the engine refuses on
+// product mismatch.
+#ifndef SECURACV_OTA_PRODUCT
+#define SECURACV_OTA_PRODUCT "securacv-canary-vision"
+#endif
+static constexpr const char* OTA_PRODUCT = SECURACV_OTA_PRODUCT;
 #ifndef SECURACV_OTA_MANIFEST_URL
 #define SECURACV_OTA_MANIFEST_URL \
   "https://github.com/kmay89/securaCV/releases/latest/download/manifest-canary-vision.json"

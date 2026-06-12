@@ -3,9 +3,10 @@
 
 namespace canary {
 
-// With ARDUINO_USB_CDC_ON_BOOT disabled for C3 (see common_esp32c3),
-// Serial is UART0 on both C3 and S3 — no special case needed.
-static inline HardwareSerial& dbg_serial() {
+// Board-dependent console type: UART0 HardwareSerial on C3 (CDC_ON_BOOT
+// disabled, see common_esp32c3), HWCDC on S3 (native USB CDC). auto&
+// deduces the right one; callers only use the shared Print interface.
+static inline auto& dbg_serial() {
   return Serial;
 }
 

@@ -60,10 +60,13 @@ void init() {
   // differ per board (ESP32-C3 DevKit: 8/9, XIAO C3: 6/7, XIAO S3: 5/6)
   // and the DevKit default does NOT match our documented Grove wiring.
   Wire.begin(I2C_PIN_SDA, I2C_PIN_SCL);
-  AI.begin();
+  const bool ok = AI.begin();
   delay(250);
 
   log_header("I2C");
+  if (!ok) {
+    canary::dbg_serial().println("ERROR: Grove Vision AI V2 not responding — check wiring/model (see docs/hardware/grove_vision_ai_v2_guide.md)");
+  }
   canary::dbg_serial().printf("Grove Vision AI ID=%d\n", (int)AI.ID());
 
   g_inited = true;
