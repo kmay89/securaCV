@@ -10,6 +10,7 @@
 #include "canary/config.h"
 #include "canary/log.h"
 #include "canary/runtime_config.h"  // NVS-backed identity + broker credentials
+#include "canary/detect_config.h"   // NVS-backed runtime detection settings
 #include "canary/ha/ha_discovery.h"
 #include "identity/device_pseudonym.h"  // MAC-free client-ID suffix (Invariant III)
 
@@ -34,6 +35,14 @@ static char s_update_state_cache[640] = {0};
 static bool s_update_state_set = false;
 static int s_update_auto_cache = -1;
 
+// Inbound runtime detection settings (HA number entities). Latched by the
+// callback, drained from the main loop — same pattern as the OTA commands.
+// -1 = nothing pending.
+static volatile long s_pending_cfg_target = -1;
+static volatile long s_pending_cfg_score = -1;
+static volatile long s_pending_cfg_lost = -1;
+static volatile long s_pending_cfg_dwell = -1;
+
 static bool token_at(const char* p, int n, const char* tok, int tok_len) {
   auto boundary = [](char c) {
     return c == ' ' || c == '\t' || c == '\r' || c == '\n' ||
@@ -43,8 +52,43 @@ static bool token_at(const char* p, int n, const char* tok, int tok_len) {
          (n == tok_len || boundary(p[tok_len]));
 }
 
+// Parse a small non-negative integer from an MQTT payload (HA number
+// entities send plain decimals, possibly as "12.0"). Returns -1 on junk
+// or out-of-range input so a mangled payload can never latch a value.
+static long parse_cfg_number(const uint8_t* payload, unsigned int len, long max_value) {
+  if (payload == nullptr || len == 0 || len > 24) return -1;
+  char buf[25];
+  memcpy(buf, payload, len);
+  buf[len] = '\0';
+
+  char* end = nullptr;
+  const double d = strtod(buf, &end);
+  if (end == buf) return -1;
+  while (end && (*end == ' ' || *end == '\t' || *end == '\r' || *end == '\n')) end++;
+  if (end && *end != '\0') return -1;
+  if (d < 0 || d > (double)max_value) return -1;
+  return (long)(d + 0.5);
+}
+
 static void on_mqtt_message(char* topic, uint8_t* payload, unsigned int len) {
   if (!topic || !payload) return;
+
+  if (strcmp(topic, g_topics.cfg_target_cmd) == 0) {
+    s_pending_cfg_target = parse_cfg_number(payload, len, 255);
+    return;
+  }
+  if (strcmp(topic, g_topics.cfg_score_cmd) == 0) {
+    s_pending_cfg_score = parse_cfg_number(payload, len, 100);
+    return;
+  }
+  if (strcmp(topic, g_topics.cfg_lost_cmd) == 0) {
+    s_pending_cfg_lost = parse_cfg_number(payload, len, 60000);
+    return;
+  }
+  if (strcmp(topic, g_topics.cfg_dwell_cmd) == 0) {
+    s_pending_cfg_dwell = parse_cfg_number(payload, len, 600000);
+    return;
+  }
 
   const bool is_install = (strcmp(topic, g_topics.update_cmd) == 0);
   const bool is_auto = (strcmp(topic, g_topics.update_auto_cmd) == 0);
@@ -78,6 +122,17 @@ int take_pending_auto() {
   s_pending_auto = -1;
   return v;
 }
+
+static long take_pending(volatile long& slot) {
+  const long v = slot;
+  slot = -1;
+  return v;
+}
+
+long take_pending_cfg_target() { return take_pending(s_pending_cfg_target); }
+long take_pending_cfg_score()  { return take_pending(s_pending_cfg_score); }
+long take_pending_cfg_lost()   { return take_pending(s_pending_cfg_lost); }
+long take_pending_cfg_dwell()  { return take_pending(s_pending_cfg_dwell); }
 
 static bool publish_checked(const char* tag, const char* topic, const char* payload, bool retain) {
   const bool ok = mqtt.publish(topic, payload, retain);
@@ -232,6 +287,32 @@ void mqtt_reconnect_blocking() {
     publish_checked("OTA", g_topics.update_auto,
                     s_update_auto_cache ? "ON" : "OFF", true);
   }
+
+  // Runtime detection settings: re-subscribe the command topics and
+  // reconcile the retained state from the NVS-backed values.
+  mqtt.subscribe(g_topics.cfg_target_cmd, 1);
+  mqtt.subscribe(g_topics.cfg_score_cmd, 1);
+  mqtt.subscribe(g_topics.cfg_lost_cmd, 1);
+  mqtt.subscribe(g_topics.cfg_dwell_cmd, 1);
+  publish_detect_cfg_retained(g_topics);
+}
+
+bool publish_detect_cfg_retained(const Topics& topics) {
+  if (!mqtt.connected()) return false;
+  const auto& d = canary::cfg::detect();
+  char msg[192];
+  snprintf(msg, sizeof(msg),
+           "{"
+           "\"target\":%u,"
+           "\"score\":%u,"
+           "\"lost_ms\":%lu,"
+           "\"dwell_ms\":%lu"
+           "}",
+           (unsigned)d.person_target,
+           (unsigned)d.score_min,
+           (unsigned long)d.lost_timeout_ms,
+           (unsigned long)d.dwell_start_ms);
+  return publish_checked("CFG", topics.cfg_state, msg, true);
 }
 
 bool publish_update_state_retained(const Topics& topics, const char* json_payload) {

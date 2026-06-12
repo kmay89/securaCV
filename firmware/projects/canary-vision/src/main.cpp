@@ -20,6 +20,8 @@
 #include "identity/device_pseudonym.h"  // salted, MAC-free device handle (Invariant III)
 
 #include "canary/runtime_config.h"
+#include "canary/detect_config.h"
+#include "pins.h"  // board identity (BOARD_NAME) from firmware/boards/<id>/pins
 #include "canary/net/wifi_mgr.h"
 #include "canary/net/mqtt_mgr.h"
 #include "canary/net/ota_mgr.h"
@@ -118,6 +120,45 @@ static void vision_serial_write(const char* str) {
   canary::dbg_serial().print(str);
 }
 
+// Apply runtime detection settings written by HA's number entities. The
+// MQTT callback only latches the parsed values; this drains them on the
+// main task, persists via detect_config, and mirrors the retained state.
+static void drain_detect_cfg_commands() {
+  bool changed = false;
+  bool any_cmd = false;
+  long v;
+
+  if ((v = canary::net::take_pending_cfg_target()) >= 0) {
+    any_cmd = true;
+    changed |= canary::cfg::detect_set_person_target((uint8_t)v);
+  }
+  if ((v = canary::net::take_pending_cfg_score()) >= 0) {
+    any_cmd = true;
+    changed |= canary::cfg::detect_set_score_min((uint8_t)v);
+  }
+  if ((v = canary::net::take_pending_cfg_lost()) >= 0) {
+    any_cmd = true;
+    changed |= canary::cfg::detect_set_lost_timeout_ms((uint32_t)v);
+  }
+  if ((v = canary::net::take_pending_cfg_dwell()) >= 0) {
+    any_cmd = true;
+    changed |= canary::cfg::detect_set_dwell_start_ms((uint32_t)v);
+  }
+
+  if (changed) {
+    const auto& det = canary::cfg::detect();
+    canary::log_header("CFG");
+    canary::dbg_serial().printf(
+        "Detection settings: target=%u score>=%u lost=%lums dwell=%lums\n",
+        (unsigned)det.person_target, (unsigned)det.score_min,
+        (unsigned long)det.lost_timeout_ms, (unsigned long)det.dwell_start_ms);
+  }
+  // Republish on every inbound command, even a clamped-to-same one: HA's
+  // number entity optimistically shows what the user typed until the
+  // retained state corrects it.
+  if (any_cmd) canary::net::publish_detect_cfg_retained(TOPICS);
+}
+
 void setup() {
   canary::dbg_serial().begin(115200);
   delay(600);
@@ -134,7 +175,7 @@ void setup() {
   bi.build_time    = __TIME__;
   bi.device_type   = DEVICE_TYPE;
   bi.model         = MODEL;
-  bi.board_name    = "ESP32-C3-DevKitM-1";
+  bi.board_name    = BOARD_NAME;  // from the board's pins.h
   bi.chip_model    = ESP.getChipModel();
   bi.chip_revision = (uint8_t)ESP.getChipRevision();
   bi.cpu_freq_mhz  = (uint16_t)ESP.getCpuFreqMHz();
@@ -156,10 +197,13 @@ void setup() {
   boot_line("             [###]");
   boot_separator();
   boot_kv("Sensor",  "Grove Vision AI V2 (SSCMA)");
-  boot_kvf("Target",  "class %d  (person detection)", PERSON_TARGET);
-  boot_kvf("Score",   ">= %d%%  (confidence threshold)", SCORE_MIN);
-  boot_kvf("Lost",    "%lu ms  (timeout before 'person left')", (unsigned long)LOST_TIMEOUT_MS);
-  boot_kvf("Dwell",   "%lu ms  (lingering detection)", (unsigned long)DWELL_START_MS);
+  // NVS-backed runtime settings (adjustable from HA; compiled values seed
+  // the first boot only — see canary/detect_config.h).
+  const auto& det = canary::cfg::detect();
+  boot_kvf("Target",  "class %u  (person detection)", (unsigned)det.person_target);
+  boot_kvf("Score",   ">= %u%%  (confidence threshold)", (unsigned)det.score_min);
+  boot_kvf("Lost",    "%lu ms  (timeout before 'person left')", (unsigned long)det.lost_timeout_ms);
+  boot_kvf("Dwell",   "%lu ms  (lingering detection)", (unsigned long)det.dwell_start_ms);
   boot_kvf("Voxel",   "%ux%u grid (%dx%d frame)", VOXEL_COLS, VOXEL_ROWS, FRAME_W, FRAME_H);
   boot_kvf("Rate",    "every %lu ms", (unsigned long)INVOKE_PERIOD_MS);
   boot_blank();
@@ -233,6 +277,10 @@ void loop() {
   // Pull-OTA: scheduler + HA command drain + update-entity publishing.
   // Must run before the vision-rate early return below.
   canary::net::ota_loop(now_ms);
+
+  // Runtime detection settings written from HA. Also before the early
+  // return so slider changes apply at MQTT speed, not vision-tick speed.
+  drain_detect_cfg_commands();
 
   if ((now_ms - last_heartbeat_ms) > HEARTBEAT_MS) {
     last_heartbeat_ms = now_ms;

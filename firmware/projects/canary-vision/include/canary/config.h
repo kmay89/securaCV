@@ -14,6 +14,10 @@ static constexpr const char* MODEL        = "Canary Vision (Grove Vision AI V2)"
 // -------------------- Vision semantics --------------------
 // NOTE: PERSON_TARGET is model-dependent in SSCMA.
 // Keep as 0 if your loaded model uses class 0 for "person".
+//
+// These four constants are FIRST-BOOT SEEDS only: the live values are
+// NVS-backed and adjustable from Home Assistant (number entities) — see
+// canary/detect_config.h. Changing the loaded model never needs a rebuild.
 static constexpr int PERSON_TARGET = 0;
 static constexpr int SCORE_MIN     = 70;       // 0–100
 static constexpr uint32_t LOST_TIMEOUT_MS = 1500;

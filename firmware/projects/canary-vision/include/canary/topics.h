@@ -12,6 +12,13 @@ struct Topics {
   char update_cmd[96];
   char update_auto[96];
   char update_auto_cmd[96];
+  // Runtime detection settings (NVS-backed; HA number entities write the
+  // /set topics, the retained state mirrors canary::cfg::detect()).
+  char cfg_state[96];
+  char cfg_target_cmd[96];
+  char cfg_score_cmd[96];
+  char cfg_lost_cmd[96];
+  char cfg_dwell_cmd[96];
 };
 
 // device_id comes from canary::cfg::get() — NVS-backed, so topics stay
@@ -25,5 +32,10 @@ static inline Topics build_topics(const char* device_id) {
   snprintf(t.update_cmd,      sizeof(t.update_cmd),      "securacv/%s/update/cmd",      device_id);
   snprintf(t.update_auto,     sizeof(t.update_auto),     "securacv/%s/update/auto",     device_id);
   snprintf(t.update_auto_cmd, sizeof(t.update_auto_cmd), "securacv/%s/update/auto/cmd", device_id);
+  snprintf(t.cfg_state,      sizeof(t.cfg_state),      "securacv/%s/cfg/state",      device_id);
+  snprintf(t.cfg_target_cmd, sizeof(t.cfg_target_cmd), "securacv/%s/cfg/target/set", device_id);
+  snprintf(t.cfg_score_cmd,  sizeof(t.cfg_score_cmd),  "securacv/%s/cfg/score/set",  device_id);
+  snprintf(t.cfg_lost_cmd,   sizeof(t.cfg_lost_cmd),   "securacv/%s/cfg/lost/set",   device_id);
+  snprintf(t.cfg_dwell_cmd,  sizeof(t.cfg_dwell_cmd),  "securacv/%s/cfg/dwell/set",  device_id);
   return t;
 }

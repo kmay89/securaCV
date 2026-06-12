@@ -237,7 +237,7 @@ static const uint32_t AUDIO_MQTT_EVENT_HOLD_MS = 30000;
 // ════════════════════════════════════════════════════════════════════════════
 
 static const char* DEVICE_TYPE        = "canary";
-static const char* FIRMWARE_VERSION   = "2.1.0-wap";  // TLS + API auth hardening
+static const char* FIRMWARE_VERSION   = "2.2.0-wap";  // Vision runtime config release train
 static const char* RULESET_ID         = "securacv:canary:v1.0";
 static const char* PROTOCOL_VERSION   = "pwk:v0.3.0";
 static const char* CHAIN_ALGORITHM    = "sha256-domain-sep";
