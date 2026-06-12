@@ -102,6 +102,16 @@ tol_slide = 0.20;  // sliding fits: front lip, drip skirt, disc seat
 tol_press = 0.10;  // press fits: magnet, light pipe
 tol_hole  = 0.30;  // clearance holes: front screws, hinge bolt
 
+/* [Engineering — durability/rigidity options (see README "Engineering & materials")] */
+screw_insert = false;   // M2 brass heat-set inserts in the corner posts (service-grade threads)
+insert_d     = 3.5;     // insert nominal OD (M2 short series: 3.5 x 4.0)
+insert_h     = 4.0;     // insert length
+lid_ribs     = true;    // perimeter rib ring under the front face (t³ stiffening against pry)
+lid_rib_w    = 2.5;     // rib ring width
+lid_rib_h    = 1.0;     // rib depth — keep <= cav_extra (the component headroom) or raise it
+foot_cham    = 0.5;     // 45° chamfer on the back's bottom edge: elephant-foot + delamination guard (0 = off)
+kh_lock      = true;    // (keyhole mounts) anti-lift knockouts: 0.6 mm web, pierce with #4/M3 on install
+
 /* [Screw posts] (front screws into the back shell corners) */
 post_d       = 5.0;
 screw_d      = 1.6;   // M2 self-tapping pilot
@@ -199,7 +209,8 @@ $fn = 64;
 // ----------------------------------------------------------------------------
 wall_eff   = e_seal ? max(wall_t, gasket_w + 1.6) : wall_t;
 clip_stack = clip_clear + clip_t;
-post_corner = post_d + 1.5;
+pd = screw_insert ? max(post_d, insert_d + 2.4) : post_d;  // effective post dia (>=1.2 mm wall around an insert)
+post_corner = pd + 1.5;
 has_dk = (host == "devkit");
 
 // xiao host: the module rides tall rails so the stacked XIAO hangs beneath it
@@ -286,10 +297,10 @@ module rim_ring2d(w) {
 }
 
 function post_xy() = [
-    [ inner_x/2 - post_d/2 - 0.2,  inner_y/2 - post_d/2 - 0.2],
-    [-inner_x/2 + post_d/2 + 0.2,  inner_y/2 - post_d/2 - 0.2],
-    [ inner_x/2 - post_d/2 - 0.2, -inner_y/2 + post_d/2 + 0.2],
-    [-inner_x/2 + post_d/2 + 0.2, -inner_y/2 + post_d/2 + 0.2],
+    [ inner_x/2 - pd/2 - 0.2,  inner_y/2 - pd/2 - 0.2],
+    [-inner_x/2 + pd/2 + 0.2,  inner_y/2 - pd/2 - 0.2],
+    [ inner_x/2 - pd/2 - 0.2, -inner_y/2 + pd/2 + 0.2],
+    [-inner_x/2 + pd/2 + 0.2, -inner_y/2 + pd/2 + 0.2],
 ];
 
 // ring pedestal that supports a PCB's underside along its perimeter
@@ -328,6 +339,20 @@ module keyhole_pocket(yc) {           // blind pocket; slot runs toward +Y (up)
         translate([0, 0, z0 + kh_face]) linear_extrude(kh_head_h - kh_face)
             hull() { translate([0, y0]) circle(d = kh_head_d + 0.6);
                      translate([0, y1]) circle(d = kh_head_d + 0.6); }
+    }
+}
+
+// peripheral wedge that 45°-chamfers the back's bottom edge (subtract from the
+// shell); bounded to the footprint, so the hinge-fin roots lose only a 0.5 mm nick
+module foot_chamfer_cut() {
+    z0 = -mount_extra;
+    difference() {
+        translate([0, 0, z0 - 0.01]) rrect(out_x + 0.04, out_y + 0.04, corner_r, foot_cham + 0.01);
+        hull() {
+            translate([0, 0, z0])
+                rrect(out_x - 2*foot_cham, out_y - 2*foot_cham, max(0.1, corner_r - foot_cham), 0.01);
+            translate([0, 0, z0 + foot_cham]) rrect(out_x, out_y, corner_r, 0.01);
+        }
     }
 }
 
@@ -417,25 +442,39 @@ module back() {
             // blind keyhole pockets (never reach the cavity — seal-safe)
             if (mount_extra > 0)
                 for (yc = kh_ys) keyhole_pocket(yc);
+            // anti-lift knockouts (0.6 mm web at the back face): after hanging, pierce
+            // with #4/M3 screws into the wall so the case can't be lifted off the
+            // keyholes. Placed in the empty top region, clear of pockets and cradles.
+            if (mount_extra > 0 && kh_lock)
+                for (sx = [1, -1]) translate([sx*10, inner_y/2 - 5, 0]) {
+                    translate([0, 0, -mount_extra + 0.6]) cylinder(d = 3.2, h = mount_extra + floor_t);
+                    translate([0, 0, floor_t - 1.2]) cylinder(d1 = 3.2, d2 = 6.0, h = 1.21);  // head seat, inside
+                }
+            // 45° bottom-edge chamfer (elephant-foot + first-layer delamination guard)
+            if (foot_cham > 0) foot_chamfer_cut();
         }
 
         // corner screw posts, gusseted to both walls (same pattern as the WAP case)
         difference() {
             union() {
-                for (p = posts) translate([p[0], p[1], floor_t]) cylinder(d = post_d, h = cav_d);
+                for (p = posts) translate([p[0], p[1], floor_t]) cylinder(d = pd, h = cav_d);
                 for (p = posts) {
                     sx = sign(p[0]); sy = sign(p[1]);
                     hull() {
-                        translate([p[0], p[1], floor_t]) cylinder(d = post_d, h = gusset_h);
+                        translate([p[0], p[1], floor_t]) cylinder(d = pd, h = gusset_h);
                         translate([sx*(inner_x/2 - 0.3), p[1], floor_t]) cylinder(d = 2, h = gusset_h);
                     }
                     hull() {
-                        translate([p[0], p[1], floor_t]) cylinder(d = post_d, h = gusset_h);
+                        translate([p[0], p[1], floor_t]) cylinder(d = pd, h = gusset_h);
                         translate([p[0], sy*(inner_y/2 - 0.3), floor_t]) cylinder(d = 2, h = gusset_h);
                     }
                 }
             }
             for (p = posts) translate([p[0], p[1], floor_t + 2.0]) cylinder(d = screw_d, h = cav_d);
+            // heat-set insert bore at the post top (light interference; melt in flush)
+            if (screw_insert)
+                for (p = posts) translate([p[0], p[1], floor_t + cav_d - insert_h - 0.5])
+                    cylinder(d = insert_d - 0.1, h = insert_h + 1);
         }
 
         // board cradles + snap clips on the X edges.
@@ -530,6 +569,36 @@ module front() {
                     translate([0, 0, -0.1]) cylinder(d = cam_screw_d, h = cam_post_h - 0.8);
                 }
 
+        // perimeter rib ring under the front face: t³ stiffening against pry/flex,
+        // cleared around every feature and the screw posts (≈1 g of material)
+        if (lid_ribs) {
+            ro_x = inner_x - 2*tol_slide - 2*lip_t - 0.8;
+            ro_y = inner_y - 2*tol_slide - 2*lip_t - 0.8;
+            difference() {
+                translate([0, 0, -lid_rib_h]) linear_extrude(lid_rib_h + 0.1)
+                    difference() {
+                        rrect2d(ro_x, ro_y, max(0.1, corner_r - wall_eff - lip_t));
+                        rrect2d(ro_x - 2*lid_rib_w, ro_y - 2*lid_rib_w, 0.1);
+                    }
+                for (p = post_xy())
+                    translate([p[0], p[1], -lid_rib_h - 0.1]) cylinder(d = pd + 1.6, h = lid_rib_h + 0.2);
+                // keep-outs: lens/disc seat, camera posts, LED, vent, magnet
+                translate([lens_x, lens_y, -lid_rib_h - 0.1])
+                    cylinder(d = max(cam_ap_d, cam_disc_d) + 3, h = lid_rib_h + 0.2);
+                for (sx = [1, -1], sy = [1, -1])
+                    translate([cam_cx + sx*cam_hole_x/2, cam_cy + sy*cam_hole_y/2, -lid_rib_h - 0.1])
+                        cylinder(d = cam_post_d + 2, h = lid_rib_h + 0.2);
+                if (e_led) translate([vm_cx + lp_dx, vm_cy + lp_dy, -lid_rib_h - 0.1])
+                    cylinder(d = lp_d + 4, h = lid_rib_h + 0.2);
+                if (e_vent || e_buzzer) translate([vm_cx + vent_dx, vm_cy + vent_dy, -lid_rib_h - 0.1])
+                    cylinder(d = vent_pad_d + 3, h = lid_rib_h + 0.2);
+                if (e_tamper) translate([vm_cx + mag_dx, vm_cy + mag_dy, -lid_rib_h - 0.1])
+                    cylinder(d = mag_d + 2*tol_press + 4.8, h = lid_rib_h + 0.2);
+                // keep the USB cable path over the lip notch clear
+                translate([usb_cx, -inner_y/2, 0]) cube([usb_w + 4, 14, 3*lid_rib_h], center = true);
+            }
+        }
+
         // front lip nesting into the back shell, cleared at posts + USB notch
         difference() {
             translate([0, 0, -lip_h])
@@ -540,7 +609,7 @@ module front() {
                           0.1, lip_h + 1);
                 }
             for (p = post_xy())
-                translate([p[0], p[1], -lip_h - 0.1]) cylinder(d = post_d + 1.2, h = lip_h + 0.2);
+                translate([p[0], p[1], -lip_h - 0.1]) cylinder(d = pd + 1.2, h = lip_h + 0.2);
             translate([usb_cx, -inner_y/2, -lip_h/2])
                 cube([usb_w + 4, lip_t*4, lip_h + 0.2], center = true);
         }

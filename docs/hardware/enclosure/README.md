@@ -8,8 +8,65 @@ Two parametric OpenSCAD configurators live here:
 | **Canary Vision** (Grove Vision AI V2 + OV5647 + stacked-XIAO or DevKit host) | [`canary_vision_enclosure.scad`](./canary_vision_enclosure.scad) | camera unit with a GoPro-compatible adjustable hinge — [section below](#canary-vision--enclosure-v02) |
 
 Both share the same print-tolerance system, weather-sealing approach (printed
-TPU gasket + drip-edge lid) and CI gate (every change re-renders all presets and
-mesh-checks the STLs).
+TPU gasket + drip-edge lid), engineering options and CI gate (every change
+re-renders all presets and mesh-checks the STLs).
+
+## Engineering & materials (security build)
+
+These are housings for a *security* device — the enclosure is the first
+physical attack surface — so the designs follow FDM packaging-engineering
+practice for **durability, rigidity and low mass**:
+
+- **Stiffness from geometry, not bulk.** Plate stiffness scales with t³: the
+  lids/fronts carry a perimeter **rib ring** (`lid_ribs`, on by default) just
+  inside the lip, auto-routed around every feature — roughly trebling the flat
+  face's bending stiffness against prying for ~1 g of material. Walls stay at
+  2.0 mm (= 5 extrusion widths), with the corner posts gusseted into both walls.
+- **Layup-aware loading.** FDM interlayer (Z) strength is only ~50–70 % of
+  in-plane. Both shells print so the service loads — lid pry, wall impact,
+  screw clamp — act *in-plane*; the bottom edge (the classic delamination
+  initiation site) gets a 45° **`foot_cham`** chamfer that also removes
+  elephant-foot.
+- **Service-grade fastening.** The M2 self-tappers are fine for ~10 open/close
+  cycles at ≤0.3 N·m. For a serviced fleet, set **`screw_insert = true`**: the
+  corner posts auto-fatten (≥1.2 mm wall around the bore) for **M2 brass
+  heat-set inserts** (3.5 × 4.0 short series; install at 220–240 °C for PETG,
+  240–260 °C for ASA, flush to the post top) and use M2 machine screws.
+  Plastic creeps under gasket preload — **re-torque sealed builds after 24 h**,
+  or fit inserts and be done with it.
+- **Anti-lift security.** Keyhole mounts can be defeated by lifting the unit
+  off the wall screws. `kh_lock` (default on with keyholes) adds two blind
+  **knockout bosses** (0.6 mm web — the seal stays intact until used): after
+  hanging, drive #4/M3 screws through them into the wall from *inside* the
+  case, so removal requires opening the lid first. Pair with the tamper
+  magnet/reed option and, if you want tool-only access, security-drive (Torx
+  pin) M2 screws. On the Vision hinge, swap the thumbscrew for an **M5 button
+  head + nyloc** to make the angle tool-only and vibration-proof.
+
+**Material selection** (the housings are unfilled-polymer friendly; the Vision
+*bracket and prongs* are the highest-stressed parts):
+
+| Material | Use for | Why / limits |
+|----------|---------|--------------|
+| **PETG** | default, indoor + sheltered outdoor | tough, easy, low moisture pickup; creeps under sustained clamp — use inserts for sealed builds |
+| **ASA** | outdoor, sun-exposed | UV-stable, HDT ~95 °C; print hot and draft-free |
+| **PC / PC-blend** | maximum impact + heat (vandal-prone spots) | highest toughness/HDT; needs an enclosed printer; pair with neutral-cure silicone only |
+| **CF-PETG / CF-Nylon** | Vision **bracket + knob** | ~2× stiffness for the cantilevered hinge; hardened nozzle required |
+| **TPU 90–95 A** | gaskets | 2 perimeters, 100 % infill, slow |
+| PLA | clip coupon / fit checks **only** | creeps and softens ~55 °C — not for deployed housings |
+
+**Security-build slicing spec:** 0.4 mm nozzle, 0.2 mm layers, **4 perimeters**,
+5 top/bottom layers, **30 % gyroid** infill, ~30 % infill/perimeter overlap,
++5–10 °C over the material's default for interlayer adhesion, minimal cooling
+on ASA/PC. Anneal PETG/PC parts (65 °C / 90 °C, 1 h, supported flat) for a
+further ~20 % creep and stiffness margin if you have an oven.
+
+**Mass budget** (solid-volume upper bounds from the rendered STLs; PETG at
+1.27 g/cm³ — multiply by 0.84 for ASA): WAP compact ≈ 12 g/pair, WAP battery
+≈ 34 g/pair, WAP weather ≈ 57 g/pair + 0.6 g gasket; Vision xiao ≈ 31 g/pair
+(weather ≈ 51 g), Vision devkit ≈ 42 g/pair, bracket ≈ 10 g, knob ≈ 3 g.
+Even the heaviest full kit stays under ~75 g — wall anchors, not weight,
+size the mounting.
 
 ---
 
@@ -210,7 +267,8 @@ openscad --export-format binstl -o coupon.stl -D 'part="coupon"' canary_wap_encl
 ## Suggested print settings
 
 - **Material:** PETG or ASA for heat/UV exposure (PLA only for indoor/bench).
-  **Gasket:** TPU 90–95A, 2 perimeters, 100 % infill, slow.
+  **Gasket:** TPU 90–95A, 2 perimeters, 100 % infill, slow. Deployed units:
+  use the hardened spec in [Engineering & materials](#engineering--materials-security-build).
 - **Layer height:** 0.2 mm. **Walls:** 3 perimeters. **Infill:** 20–30 %.
 - **Orientation:** both parts flat, open side up — no supports. The lid prints
   **face-down**: the edge chamfer, disc seat and debossed label all land on the
@@ -262,6 +320,13 @@ cutout or bay and **resizes the box**. Added the **clip test coupon**.
 `2.0 → 1.6 mm` so threads actually bite; broken battery cradle rim replaced with
 **two transverse ribs**; **lid lip notched at the USB end** so the cable
 plug/overmold can't jam it.
+
+**v0.7.1 — engineering hardening:** perimeter **rib ring** under the lid
+(`lid_ribs`, t³ stiffening, feature-aware routing), **45° bottom-edge chamfer**
+(`foot_cham`), **M2 heat-set insert option** (`screw_insert`, posts auto-fatten),
+and **anti-lift knockouts** beside the keyholes (`kh_lock`, 0.6 mm sealed web).
+See the shared [Engineering & materials](#engineering--materials-security-build)
+section for the material table, security-build slicing spec and mass budget.
 
 **v0.7 — fit, weather & mounting (this release):**
 

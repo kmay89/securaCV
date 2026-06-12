@@ -18,6 +18,7 @@ Item,RefDes,Qty,Required,Category,Description,Manufacturer,MPN,Mouser,DigiKey,LC
 15,SCR7,4,Optional,Mechanical,"#8 / M4 countersunk screw + wall anchor (bracket fixing)",Generic,M4-CSK-ANCHOR,,,,0.30,1.20,Active,Yes,"Bracket wall mounting; or hang on the bracket's keyhole slots"
 16,NUT1,1,Optional,Mechanical,"1/4-20 hex nut (tripod mount, captive in bracket)",Generic,NUT-1/4-20,,,,0.15,0.15,Active,Yes,"Drops into the bracket's rear pocket; any standard tripod stud threads in"
 17,CW2,1,Optional,Optomechanical,"Clear disc 14 x 1 mm, PMMA or polycarbonate (lens window)",Generic,DISC-PMMA-14X1,,,,0.60,0.60,Active,Yes,"Bond into the front-face seat with NEUTRAL-CURE silicone (acid-cure attacks PC). For sealing also see WAP BOM items 23-26 (silicone, USB plug, TPU, GORE vent)"
+18,INS1,4,Optional,Mechanical,"M2 brass heat-set insert, short series 3.5mm OD x 4.0mm",Generic,M2-HSI-3.5X4,,,,0.10,0.40,Active,Yes,"Service-grade front threads: set screw_insert=true (posts auto-fatten), install at 220-240C (PETG) / 240-260C (ASA), use M2 machine screws for the front corners"
 "# SUMMARY (subtotals are indicative; verify live pricing)",,,,,,,,,,,,,,,
 "# Required-only (U1+U2+CBL2+CBL1)",,,,,,,,,,,,41.70,,,"Core Vision device"
 "# Full build (req + LED + button + battery + PC enclosure)",,,,,,,,,,,,71.00,,,"Approx; buzzer unpopulated"
