@@ -138,8 +138,11 @@
 // ONBOARD PERIPHERALS
 // ============================================================================
 
-// Built-in LED (active low on some variants)
+// Built-in LED (active low on some variants). The Arduino variant header
+// also defines LED_BUILTIN (same pin), so only define it when missing.
+#ifndef LED_BUILTIN
 #define LED_BUILTIN             21
+#endif
 #define LED_ACTIVE_LOW          0
 
 // Boot button (directly connected)
@@ -211,5 +214,3 @@
 #define HAS_BLE                 1
 #define HAS_GNSS_UART           1
 #define HAS_TAMPER_INPUT        1
-
-#endif // BOARD_XIAO_ESP32S3_SENSE

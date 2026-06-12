@@ -158,5 +158,3 @@
 #define HAS_GNSS_UART           0     // Not typically used
 #define HAS_TAMPER_INPUT        0     // Not typically used
 #define HAS_VISION_AI           1     // Grove Vision AI V2 support
-
-#endif // BOARD_XIAO_ESP32S3
