@@ -96,6 +96,23 @@ cargo run --bin break_glass -- unseal \
   --output-dir vault/unsealed
 ```
 
+### Break-glass web console
+
+`break_glass_serve` hosts a single-page console (default `http://127.0.0.1:8800/breakglass`)
+that walks the same four phases without file shuffling:
+
+1. **Connect** with the capability token from the server's token file.
+2. **Open a request** — the server computes the request hash; the page now also produces a
+   **trustee signing link** (`…/breakglass#sign&hash=…`) to send to each trustee.
+3. **Collect approvals** — each trustee opens their link, which shows a signer-only page
+   (no token needed; it makes no server calls — the fragment never leaves their browser),
+   signs the request hash in-browser with their key seed, and sends you back the signature
+   to paste. Offline trustees can keep using `break_glass approve`.
+4. **Quorum & unseal** — status now auto-refreshes every few seconds with a per-trustee
+   signed/pending table and a progress bar; **Unseal** enables when quorum is met.
+
+Every attempt, granted or denied, is recorded as a tamper-evident receipt either way.
+
 ## Event export
 
 Write a local artifact with coarse time buckets and batched events (no precise timestamps or
