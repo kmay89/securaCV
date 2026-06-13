@@ -30,7 +30,7 @@ jobs:
     name: cargo audit (Rust)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
       - name: Audit Cargo.lock against the RustSec advisory DB
@@ -40,8 +40,8 @@ jobs:
     name: npm audit (canary-vision)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: '22'
       - name: Audit npm deps (fail on high/critical)

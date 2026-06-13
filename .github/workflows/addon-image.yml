@@ -58,7 +58,7 @@ jobs:
           - arch: aarch64
             platform: linux/arm64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # The aarch64 build runs under QEMU (slow). Skip it on pull requests and
       # validate amd64 only; the full multi-arch push happens on main / tags.
@@ -82,11 +82,11 @@ jobs:
 
       - name: Set up QEMU
         if: steps.gate.outputs.run == 'true' && matrix.arch != 'amd64'
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
 
       - name: Set up Docker Buildx
         if: steps.gate.outputs.run == 'true'
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       # Authenticate to GHCR before building. This is required even on PRs (which
       # don't push): anonymous pulls of the public home-assistant base image hit a
@@ -94,7 +94,7 @@ jobs:
       # result is still gated separately by build-push-action's `push:` below.
       - name: Log in to GHCR
         if: steps.gate.outputs.run == 'true'
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -102,7 +102,7 @@ jobs:
 
       - name: Build add-on image${{ github.event_name != 'pull_request' && ' (and push)' || ' (validate only)' }}
         if: steps.gate.outputs.run == 'true'
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: privacy_witness_kernel/Dockerfile
@@ -134,6 +134,6 @@ jobs:
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Verify published images are publicly pullable
         run: privacy_witness_kernel/verify_published_image.sh

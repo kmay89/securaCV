@@ -22,7 +22,7 @@ jobs:
     name: scripts/lint_*.sh
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       # Conformance + hygiene lints that previously had no CI gate.
       - name: CAP-mapping conformance
         run: bash scripts/lint_cap_mapping.sh
