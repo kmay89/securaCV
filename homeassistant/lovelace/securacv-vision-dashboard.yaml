@@ -1,0 +1,155 @@
+# SecuraCV Canary Vision Lovelace Dashboard
+#
+# For Canary Vision devices (ESP32 host + Grove Vision AI V2) running
+# firmware/projects/canary-vision. The firmware self-registers every entity
+# below via MQTT Discovery — no manual MQTT configuration needed.
+#
+# How to add this to Home Assistant:
+#   Settings → Dashboards → Add Dashboard → From YAML
+#   Or paste into an existing dashboard's raw YAML editor.
+#
+# Entity IDs:
+#   Replace DEVICE_ID below with your device id (default: canary_vision_001,
+#   set in firmware secrets or NVS). The discovery device is named
+#   "SecuraCV Canary Vision <device_id>", so HA generates entity ids like:
+#     binary_sensor.securacv_canary_vision_DEVICE_ID_presence
+#   Confirm yours under Settings → Devices & Services → MQTT → the device,
+#   or from the CLI:  ha states list | grep canary_vision
+
+title: "Canary Vision"
+views:
+
+  # ===========================================================================
+  # Live view — presence, voxel position, confidence
+  # ===========================================================================
+  - title: "Live"
+    icon: "mdi:shield-eye"
+    path: canary-vision
+    badges: []
+    cards:
+
+      # -----------------------------------------------------------------------
+      # Presence / dwell at a glance
+      # -----------------------------------------------------------------------
+      - type: glance
+        title: "Presence"
+        show_state: true
+        entities:
+          - entity: binary_sensor.securacv_canary_vision_DEVICE_ID_presence
+            name: "Person"
+          - entity: binary_sensor.securacv_canary_vision_DEVICE_ID_dwelling
+            name: "Dwelling"
+          - entity: sensor.securacv_canary_vision_DEVICE_ID_last_event
+            name: "Last event"
+
+      # -----------------------------------------------------------------------
+      # Voxel heat grid — where in the frame the person is (3×3 default).
+      # The voxel sensor reports "row,col" ("-1,-1" when nobody is present).
+      # The grid renders top row first, matching the camera's view.
+      # -----------------------------------------------------------------------
+      - type: markdown
+        title: "Position (voxel grid)"
+        content: >
+          {% set v = states('sensor.securacv_canary_vision_DEVICE_ID_voxel') %}
+          {% set p = v.split(',') %}
+          {% set r = p[0] | int(-1) if p | count == 2 else -1 %}
+          {% set c = p[1] | int(-1) if p | count == 2 else -1 %}
+          {% for row in range(3) -%}
+          {% for col in range(3) -%}
+          {{ '🟧' if (row == r and col == c) else '▫️' }}
+          {%- endfor %}{{ '\n\n' }}
+          {%- endfor %}
+          {% if r < 0 %}_No person in frame._{% endif %}
+
+      # -----------------------------------------------------------------------
+      # Confidence gauge — live score of the best person box
+      # -----------------------------------------------------------------------
+      # (The % unit comes from the entity itself — the gauge card has no
+      # unit option of its own.)
+      - type: gauge
+        title: "Detection confidence"
+        entity: sensor.securacv_canary_vision_DEVICE_ID_confidence
+        min: 0
+        max: 100
+        severity:
+          green: 70
+          yellow: 50
+          red: 0
+
+      # -----------------------------------------------------------------------
+      # Recent history — presence and confidence over the last 12 h
+      # -----------------------------------------------------------------------
+      - type: history-graph
+        title: "Last 12 hours"
+        hours_to_show: 12
+        entities:
+          - entity: binary_sensor.securacv_canary_vision_DEVICE_ID_presence
+            name: "Presence"
+          - entity: binary_sensor.securacv_canary_vision_DEVICE_ID_dwelling
+            name: "Dwelling"
+          - entity: sensor.securacv_canary_vision_DEVICE_ID_confidence
+            name: "Confidence"
+
+  # ===========================================================================
+  # Tuning — runtime detection settings (NVS-backed, applied live)
+  # ===========================================================================
+  - title: "Tuning"
+    icon: "mdi:tune"
+    path: canary-vision-tuning
+    cards:
+
+      - type: markdown
+        content: >
+          ## Detection settings
+
+          These apply **live** and persist on the device (NVS) across reboots
+          and firmware updates. After loading a different model in SenseCraft,
+          set **Person class index** to the model's "person" class — no
+          rebuild needed. See
+          `docs/hardware/grove_vision_ai_v2_guide.md` for the model-loading
+          walkthrough.
+
+      - type: entities
+        title: "Runtime detection settings"
+        icon: "mdi:tune-variant"
+        show_header_toggle: false
+        entities:
+          - entity: number.securacv_canary_vision_DEVICE_ID_person_class_index
+            name: "Person class index"
+          - entity: number.securacv_canary_vision_DEVICE_ID_score_threshold
+            name: "Score threshold (%)"
+          - entity: number.securacv_canary_vision_DEVICE_ID_lost_timeout
+            name: "Lost timeout (ms)"
+          - entity: number.securacv_canary_vision_DEVICE_ID_dwell_start
+            name: "Dwell start (ms)"
+
+  # ===========================================================================
+  # Device — firmware, updates, uptime
+  # ===========================================================================
+  - title: "Device"
+    icon: "mdi:chip"
+    path: canary-vision-device
+    cards:
+
+      - type: entities
+        title: "Firmware & health"
+        icon: "mdi:heart-pulse"
+        show_header_toggle: false
+        entities:
+          - entity: update.securacv_canary_vision_DEVICE_ID_firmware
+            name: "Firmware"
+          - entity: switch.securacv_canary_vision_DEVICE_ID_auto_update
+            name: "Auto update"
+          - entity: sensor.securacv_canary_vision_DEVICE_ID_uptime
+            name: "Uptime"
+
+      - type: markdown
+        content: >
+          ## Hardware notes
+
+          - **Model loading** (changing what the sensor detects) happens over
+            the **module's own USB-C port** via SenseCraft — never through HA.
+          - **Firmware updates** (this page) go to the **ESP32 host** over
+            signed pull-OTA; the module's model is untouched by them.
+          - Full port disambiguation and troubleshooting:
+            `docs/hardware/grove_vision_ai_v2_guide.md`.

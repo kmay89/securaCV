@@ -1,6 +1,9 @@
 # Grove Vision AI V2 Program — from specialized flavor to first-class Canary
 
-**Status:** adopted roadmap (Phase 0 landed with this doc)
+**Status:** adopted roadmap — Phase 0 shipped (#786), runtime detection
+config from Phase 1 shipped (#788), HA dashboard + alert automations from
+Phase 2 shipped; remaining: provisioning + health logging (Phase 1), SPA
+fleet card + logging parity (Phase 2), model lifecycle (Phase 3)
 **Owner:** firmware maintainers + dashboard maintainers
 **Companions:**
 [`docs/hardware/grove_vision_ai_v2_guide.md`](../hardware/grove_vision_ai_v2_guide.md) (device guide) ·
@@ -83,9 +86,10 @@ load the model, flash, and see HA entities using only repo docs.
 - Runtime provisioning: bring the ACTIVE tree's AP + captive-portal
   onboarding to canary-vision so WiFi/MQTT/device-ID are set on-device, not
   in `secrets.h`. Reuse `firmware/common/network` + the canary onboarding UI.
-- Runtime detection config: `PERSON_TARGET`, `SCORE_MIN`, dwell windows as
-  NVS-backed settings (exposed via HA number/select entities), so changing
-  the loaded model never requires a rebuild.
+- ~~Runtime detection config~~ **shipped (#788)**: `PERSON_TARGET`,
+  `SCORE_MIN`, lost/dwell windows are NVS-backed settings exposed as HA
+  number entities (`canary/detect_config`), so changing the loaded model
+  never requires a rebuild.
 - Health logging: emit `HEALTH_CAT_SENSOR` records (module unreachable, ID
   mismatch, invoke timeouts, inference perf drift) through
   `firmware/common/health`, surfaced like other flavors.
@@ -95,10 +99,11 @@ move ❌→✅; FEATURES gains a "runtime detection config" row.
 
 ### Phase 2 — Dashboard UX/UI + logging surfaces
 
-- **HA Lovelace:** vision-canary card in `homeassistant/lovelace/` — voxel
-  heat grid (3×3 presence map from the `voxel` sensor), presence/dwell
-  timeline, confidence gauge, model + module-ID info row, OTA status.
-  Ship as a blueprint like the existing timeline card.
+- ~~HA Lovelace~~ **shipped**: `securacv-vision-dashboard.yaml` — voxel
+  heat grid (3×3 from the `voxel` sensor), presence/dwell glance + history,
+  confidence gauge, runtime-tuning view, firmware/OTA view; companion alert
+  automations in `securacv_vision_presence.yaml` (dwell/interaction +
+  witness-offline).
 - **SPA fleet manager (`canary-vision/spa`):** device card template for
   vision canaries (presence state, events-today, voxel mini-grid), a config
   page for the Phase 1 runtime settings, and witness-chain status chip.
