@@ -524,6 +524,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "crossbeam-deque"
+version = "0.8.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9dd111b7b7f7d55b72c0a6ae361660ee5853c9af73f70c3c2ef6858b950e2e51"
+dependencies = [
+ "crossbeam-epoch",
+ "crossbeam-utils",
+]
+
+[[package]]
+name = "crossbeam-epoch"
+version = "0.9.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5b82ac4a3c2ca9c3460964f020e1402edd5753411d7737aa39c3714ad1b5420e"
+dependencies = [
+ "crossbeam-utils",
+]
+
+[[package]]
+name = "crossbeam-utils"
+version = "0.8.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d0a5c400df2834b80a4c3327b3aad3a4c4cd4de0629063962b03235697506a28"
+
+[[package]]
 name = "crunchy"
 version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2295,6 +2320,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "60a357793950651c4ed0f3f52338f53b2f809f32d83a07f72909fa13e4c6c1e3"
 
 [[package]]
+name = "rayon"
+version = "1.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fb39b166781f92d482534ef4b4b1b2568f42613b53e5b6c160e24cfbfa30926d"
+dependencies = [
+ "either",
+ "rayon-core",
+]
+
+[[package]]
+name = "rayon-core"
+version = "1.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "22e18b0f0062d30d4230b2e85ff77fdfe4326feb054b9783a3460d8435c8ab91"
+dependencies = [
+ "crossbeam-deque",
+ "crossbeam-utils",
+]
+
+[[package]]
 name = "redox_syscall"
 version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2992,9 +3037,9 @@ checksum = "756daf9b1013ebe47a8776667b466417e2d4c5679d441c26230efd9ef78692db"
 
 [[package]]
 name = "tract-core"
-version = "0.23.0"
+version = "0.23.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d5f279712ddd97c72a910ad8df0095c9e1de1df02feb5c0ab27d1c798f70dbee"
+checksum = "422015c415e86e73ecf4cafcacb68e98ed3b72a6d8df410398fe1208db61df5e"
 dependencies = [
  "anyhow",
  "anymap3",
@@ -3022,9 +3067,9 @@ dependencies = [
 
 [[package]]
 name = "tract-data"
-version = "0.23.0"
+version = "0.23.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c67b4e3956d3ac679775f9696ca30b488b6f9a2b87e867dceb7e44a3d59f087c"
+checksum = "72bb8d458786c307552cdefd5066b0eb74377be784dee40ae2d7f95fab989b26"
 dependencies = [
  "anyhow",
  "downcast-rs",
@@ -3049,9 +3094,9 @@ dependencies = [
 
 [[package]]
 name = "tract-extra"
-version = "0.23.0"
+version = "0.23.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9e1943b46901d8c56a21e837fd617d0aa1fa3939cb1ee02da2671d94df88efb0"
+checksum = "845805f6e805c657278552ecee8d9def14321f9e55287757fab2e254bca5eaa3"
 dependencies = [
  "tract-nnef",
  "tract-pulse",
@@ -3059,9 +3104,9 @@ dependencies = [
 
 [[package]]
 name = "tract-hir"
-version = "0.23.0"
+version = "0.23.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d7b6de9f37fce071636b0021201e50e580270b4cf35bfaf02f39747c7ec7d253"
+checksum = "bb7798e15db131c94a7f4b028292e6bc79cc179282db9a94bd720f8f27801b4a"
 dependencies = [
  "derive-new",
  "log",
@@ -3070,9 +3115,9 @@ dependencies = [
 
 [[package]]
 name = "tract-linalg"
-version = "0.23.0"
+version = "0.23.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b9b62c33f06c11aa179c4f2d3d7774ee399bdb2f682441d61f25045da6f75096"
+checksum = "0ae79096246037bd70a2ae4e6296390573537e41e65af4cdd948fc9445f665ac"
 dependencies = [
  "byteorder",
  "cc",
@@ -3094,9 +3139,9 @@ dependencies = [
 
 [[package]]
 name = "tract-nnef"
-version = "0.23.0"
+version = "0.23.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5d211d77f640feae72c84e980fd9f83c1613054f93bd8163cb8b2f39864e6f74"
+checksum = "50f462e640678851fcf50b0ae2421e5a08a036c0abb3d06e0858262c46aab58f"
 dependencies = [
  "byteorder",
  "erased-serde",
@@ -3116,9 +3161,9 @@ dependencies = [
 
 [[package]]
 name = "tract-onnx"
-version = "0.23.0"
+version = "0.23.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc7113a76468378f5e0ad6c6fcfb75c36c03761cf7561a1c35a1047eef3f0c86"
+checksum = "a021a92e720b596047a3772f18c5878c310629c251aa996be546531d6d338212"
 dependencies = [
  "bytes",
  "derive-new",
@@ -3137,9 +3182,9 @@ dependencies = [
 
 [[package]]
 name = "tract-onnx-opl"
-version = "0.23.0"
+version = "0.23.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fd5004ba96b12e372a4c7a5b35e664549980be4e258076a452ad39c1d0993a69"
+checksum = "bd7ed40ba5ab96b512dbe3aecc50b156e8759ddba018a99d2bd1ed8c3c518f32"
 dependencies = [
  "dyn-eq",
  "getrandom 0.4.2",
@@ -3153,9 +3198,9 @@ dependencies = [
 
 [[package]]
 name = "tract-pulse"
-version = "0.23.0"
+version = "0.23.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4407005adcdb45c4edb4f37bc5dc75125c212bb499e6a67a5013c53c6093f5b8"
+checksum = "6e460dadde3d22f6726e18efac6b26ec661df9c7bca5766a1e76c4bd5dcd7022"
 dependencies = [
  "downcast-rs",
  "dyn-eq",
@@ -3169,9 +3214,9 @@ dependencies = [
 
 [[package]]
 name = "tract-pulse-opl"
-version = "0.23.0"
+version = "0.23.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "946214c9bd9f801f3c3e448808f5fa0405829ba7bf8fe73cd7f0df54aeb1d3c0"
+checksum = "c0414347d7b855b4476855150a4171529d5d3e28261b6de1d6ac6bb12fd70215"
 dependencies = [
  "downcast-rs",
  "dyn-eq",
@@ -3181,11 +3226,12 @@ dependencies = [
 
 [[package]]
 name = "tract-transformers"
-version = "0.23.0"
+version = "0.23.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9c6b4c22125bd5c653e57df2cc6db754878515dffd9232fc1aff5d0ded2dd9e5"
+checksum = "563374b490441196bdc7b4e33f16b2827a92aed6e5be0067ab9a2da56e7ead5f"
 dependencies = [
  "float-ord",
+ "rayon",
  "tract-nnef",
 ]
 
