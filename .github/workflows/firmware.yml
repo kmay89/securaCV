@@ -65,7 +65,7 @@ jobs:
     outputs:
       matrix: ${{ steps.load.outputs.matrix }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - id: load
         run: echo "matrix=$(jq -c . firmware/flavors.json)" >> "$GITHUB_OUTPUT"
 
@@ -81,15 +81,15 @@ jobs:
       run:
         working-directory: ${{ matrix.flavor.dir }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
 
       - name: Cache PlatformIO
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.platformio
@@ -177,15 +177,15 @@ jobs:
     # defects (real bug classes: format-string mismatches, uninitialized
     # members, side effects in assert) without drowning in style nits.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
 
       - name: Cache PlatformIO
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.platformio
@@ -221,7 +221,7 @@ jobs:
     name: Arduino CLI Build (Canary WAP)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Arduino CLI
         uses: arduino/setup-arduino-cli@v2
@@ -294,7 +294,7 @@ jobs:
     name: CSI Sketch Copy Sync
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Verify CSI library copies in canary-wap sketch dir match canonical source
         # The Arduino IDE only sees files inside the sketch folder and globally
@@ -348,7 +348,7 @@ jobs:
     name: Regression Guards
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Run regression checks
         run: |
@@ -372,7 +372,7 @@ jobs:
     name: Archive Edit Guard
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -419,7 +419,7 @@ jobs:
     name: CSI Privacy Invariants
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Build host invariants test
         # The fuzzer compiles standalone against the CSI library's portable
@@ -511,7 +511,7 @@ jobs:
     name: Mesh + Scout Host Tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Build + run all mesh + ble_scan host tests
         # Each test links the minimum source set it needs. ble_scout.cpp
@@ -648,10 +648,10 @@ jobs:
     name: Dashboard Microcopy Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
 

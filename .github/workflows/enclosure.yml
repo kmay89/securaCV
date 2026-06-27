@@ -28,7 +28,7 @@ jobs:
       run:
         working-directory: docs/hardware/enclosure
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install OpenSCAD + admesh
         run: |

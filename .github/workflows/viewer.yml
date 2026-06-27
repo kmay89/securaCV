@@ -32,8 +32,8 @@ jobs:
   viewer:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
-    - uses: actions/setup-node@v4
+    - uses: actions/checkout@v7
+    - uses: actions/setup-node@v6
       with:
         node-version: '22'
     - name: Cross-language verifier parity tests
@@ -46,8 +46,8 @@ jobs:
   canary-bridge:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
-    - uses: actions/setup-node@v4
+    - uses: actions/checkout@v7
+    - uses: actions/setup-node@v6
       with:
         node-version: '22'
     - name: Install canary-vision deps
@@ -63,8 +63,8 @@ jobs:
   selftest-ui:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
-    - uses: actions/setup-node@v4
+    - uses: actions/checkout@v7
+    - uses: actions/setup-node@v6
       with:
         node-version: '22'
     - name: Pre-flight self-test UI logic (probe×status hint matrix)
@@ -74,8 +74,8 @@ jobs:
     name: ESLint (canary-vision)
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
-    - uses: actions/setup-node@v4
+    - uses: actions/checkout@v7
+    - uses: actions/setup-node@v6
       with:
         node-version: '22'
     - name: Install canary-vision deps

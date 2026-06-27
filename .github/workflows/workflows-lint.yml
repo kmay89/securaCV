@@ -31,7 +31,7 @@ jobs:
     name: actionlint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Pinned image; bundles shellcheck + pyflakes for run: block linting.
       - name: Run actionlint
         uses: docker://rhysd/actionlint:1.7.7
