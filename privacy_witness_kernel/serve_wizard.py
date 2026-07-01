@@ -33,6 +33,9 @@ WIZARD_DIR = Path("/usr/local/share/securacv-wizard")
 DEVICE_KEY_FILE = Path("/config/.securacv/device_key")
 API_TOKEN_FILE = Path("/config/api_token")
 KERNEL_API_URL = "http://127.0.0.1:8799"
+# Largest POST body the wizard accepts. Every wizard payload is a small JSON
+# object; the cap only exists to fail closed on absurd declared lengths.
+MAX_POST_BODY_BYTES = 1024 * 1024
 
 
 # ---------------------------------------------------------------------------
@@ -274,7 +277,26 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
         if ingress_path and path.startswith(ingress_path):
             path = path[len(ingress_path):]
 
-        length = int(self.headers.get("Content-Length", 0))
+        # Content-Length is attacker-controlled: reject junk and negatives
+        # with a clean 400 (not an unhandled ValueError), and cap the body so
+        # a huge declared length can't balloon memory. Wizard bodies are tiny.
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+        except ValueError:
+            self._json_response(
+                {"ok": False, "error": "invalid Content-Length"}, status=400
+            )
+            return
+        if length < 0:
+            self._json_response(
+                {"ok": False, "error": "invalid Content-Length"}, status=400
+            )
+            return
+        if length > MAX_POST_BODY_BYTES:
+            self._json_response(
+                {"ok": False, "error": "request body too large"}, status=413
+            )
+            return
         body = self.rfile.read(length) if length else b""
 
         try:
