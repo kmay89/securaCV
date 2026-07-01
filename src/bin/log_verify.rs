@@ -385,7 +385,7 @@ fn run_inspections(
             println!(
                 "  epoch {}: {}…  active from event {}  {}",
                 epoch.epoch,
-                &epoch.public_key[..16],
+                verify_helpers::key_prefix(&epoch.public_key),
                 epoch.activated_at_event_id,
                 status
             );
@@ -394,13 +394,13 @@ fn run_inspections(
             println!(
                 "lineage: OK ({} epoch(s)); trusted key {}…",
                 lineage.epochs.len(),
-                &lineage.trusted_public_key[..16]
+                verify_helpers::key_prefix(&lineage.trusted_public_key)
             );
         } else {
             println!(
                 "lineage: BROKEN — entries signed after the first invalid epoch cannot be \
                  attributed to this device. Last trusted key: {}…",
-                &lineage.trusted_public_key[..16]
+                verify_helpers::key_prefix(&lineage.trusted_public_key)
             );
             let explanation = verify_explain::explain_failure(FailureKind::KeyRotationInvalid);
             println!("  What this means: {}", explanation.what);
@@ -417,7 +417,9 @@ fn run_inspections(
         for checkpoint in reports {
             let signer = match (checkpoint.signer_epoch, &checkpoint.recorded_signer) {
                 (Some(epoch), _) => format!("lineage epoch {}", epoch),
-                (None, Some(recorded)) => format!("UNTRUSTED key {}…", &recorded[..16]),
+                (None, Some(recorded)) => {
+                    format!("UNTRUSTED key {}…", verify_helpers::key_prefix(recorded))
+                }
                 (None, None) => "unresolvable".to_string(),
             };
             println!(
