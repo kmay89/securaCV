@@ -597,7 +597,10 @@ curl -H "Authorization: Bearer $TOKEN" http://privacy_witness_kernel:8799/events
 |----------|--------|-------------|
 | `/events` | GET | Export events as batched buckets |
 | `/events/latest` | GET | Get the most recent event (single event JSON) |
-| `/health` | GET | Check daemon health |
+| `/digest` | GET | Coarse activity digest for dashboards (bucketed counts, no per-event detail) |
+| `/status` | GET | Daemon status snapshot (retention, verify state) |
+| `/verify` | POST | Run sealed-log verification and return the `VerifyReport` |
+| `/health` | GET | Check daemon health (unauthenticated) |
 
 ### `/events/latest` Response (Event)
 
