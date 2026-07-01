@@ -81,6 +81,43 @@ function validateConfigValues(section, data) {
   return errors;
 }
 
+// Unknown keys are rejected, not merged: a typo'd key would otherwise be
+// stored verbatim while the real setting silently kept its (weaker) default
+// — e.g. {"privacy":{"auto_purge_hour":1}} left auto-purge on the longer
+// window. The known-key set for each section is the shape of the live
+// config itself; nested plain objects (detection.suppression) are checked
+// one level deeper the same way.
+function unknownKeyErrors(config, section, data) {
+  const errors = [];
+
+  const isPlainObject = (v) =>
+    v !== null && typeof v === 'object' && !Array.isArray(v);
+
+  const checkKeys = (known, candidate, prefix) => {
+    if (!isPlainObject(candidate)) return;
+    for (const key of Object.keys(candidate)) {
+      if (!(key in known)) {
+        errors.push(`unknown key: ${prefix}${key}`);
+      } else if (isPlainObject(known[key]) && isPlainObject(candidate[key])) {
+        checkKeys(known[key], candidate[key], `${prefix}${key}.`);
+      }
+    }
+  };
+
+  if (section) {
+    checkKeys(config[section], data, `${section}.`);
+  } else {
+    for (const name of Object.keys(data)) {
+      if (!VALID_SECTIONS.includes(name)) {
+        errors.push(`unknown config section: ${name}`);
+      } else {
+        checkKeys(config[name], data[name], `${name}.`);
+      }
+    }
+  }
+  return errors;
+}
+
 // Strip immutable keys from a privacy config update and return rejected keys.
 function stripImmutableKeys(data, section) {
   const rejected = [];
@@ -114,8 +151,11 @@ function configRoutes(state) {
       });
     }
 
-    // Validate across all sections
-    const errors = validateConfigValues(null, body);
+    // Validate across all sections; unknown sections/keys fail closed.
+    const errors = [
+      ...unknownKeyErrors(state.config, null, body),
+      ...validateConfigValues(null, body),
+    ];
     if (errors.length > 0) {
       return res.status(400).json({
         error: 'invalid_config',
@@ -171,7 +211,10 @@ function configRoutes(state) {
       });
     }
 
-    const errors = validateConfigValues(section, body);
+    const errors = [
+      ...unknownKeyErrors(state.config, section, body),
+      ...validateConfigValues(section, body),
+    ];
     if (errors.length > 0) {
       return res.status(400).json({
         error: 'invalid_config',
