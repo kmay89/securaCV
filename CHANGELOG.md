@@ -8,7 +8,10 @@
   event API returns the full signed ExportBundle as a browser download, with
   optional `?last=24h` / `?start=&end=` windows (bucket-aligned; recorded on
   the `api`-labeled receipt). Surfaced as a window-picker download button in
-  the HA add-on ingress panel (token never reaches the browser).
+  the HA add-on ingress panel (token never reaches the browser). The add-on
+  proxy fails closed: an unknown or misspelled window parameter is rejected
+  with 400 `bad_window` instead of silently widening the export to
+  everything retained.
 - **Scheduled exports**: `export_events --output-dir DIR --keep N` writes
   rotating `securacv-events-<bucket>.json` files; docs/scheduled_exports.md
   ships systemd timer/cron units and the add-on curl recipe.
@@ -19,11 +22,14 @@
   valid/invalid/unverifiable with reasons, per-checkpoint signer resolution
   against the genesis-anchored lineage, signature checks, and
   timestamp/cutoff regressions, with plain-language guidance (`--json`
-  supported).
+  supported). The inspectors never panic on truncated/tampered key blobs —
+  they exist to diagnose exactly that database.
 - **Break-glass console UX**: shareable trustee signing links
   (`#sign&hash=…` — signer-only page, no token, no server calls), live
-  auto-refreshing quorum status with per-trustee pills and a progress bar.
-  No backend changes; operator guide now documents the console.
+  auto-refreshing quorum status with per-trustee pills and a progress bar;
+  the console resumes live polling by itself when it connects to an
+  already-open request. No backend changes; operator guide now documents
+  the console.
 
 ### Canary Vision: runtime detection settings (no-rebuild model swaps)
 
