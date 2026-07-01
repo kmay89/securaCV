@@ -1,5 +1,6 @@
 #include "canary/vision/vision_mgr.h"
 #include "canary/config.h"
+#include "canary/detect_config.h"
 #include "canary/log.h"
 
 #include <Wire.h>
@@ -16,11 +17,15 @@ static bool pick_best_person_box(BBox& out) {
   bool found = false;
   int best = -1;
 
+  // Runtime settings (NVS-backed, adjustable from HA) — the loaded SSCMA
+  // model decides the class index and score calibration.
+  const auto& det = canary::cfg::detect();
+
   auto& boxes = AI.boxes();
   for (int i = 0; i < boxes.size(); i++) {
     const auto& b = boxes[i];
-    if (b.target != PERSON_TARGET) continue;
-    if (b.score < SCORE_MIN) continue;
+    if (b.target != det.person_target) continue;
+    if (b.score < det.score_min) continue;
     if (b.score > best) {
       best = b.score;
       out.x = b.x;

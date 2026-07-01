@@ -25,6 +25,25 @@
   auto-refreshing quorum status with per-trustee pills and a progress bar.
   No backend changes; operator guide now documents the console.
 
+### Canary Vision: runtime detection settings (no-rebuild model swaps)
+
+- **Runtime detection config** (`firmware/projects/canary-vision`): the
+  person class index, score threshold, lost timeout, and dwell-start window
+  are now NVS-backed and exposed as Home Assistant **number entities**
+  (device Configuration section, MQTT Discovery). Swapping the SSCMA model
+  on the Grove Vision AI V2 via SenseCraft no longer requires a firmware
+  rebuild — adjust the class index from HA. Compiled constants in
+  `config.h` seed the first boot only; values persist across reboots and
+  OTA installs. New retained topic `securacv/<id>/cfg/state` mirrors the
+  live values; `securacv/<id>/cfg/{target,score,lost,dwell}/set` accept
+  writes (clamped, junk-rejected).
+- **Boot banner** now reports the live (NVS) detection settings and the
+  actual host board name (was hardcoded to the DevKit).
+- **Unified firmware version bumped to 2.2.0** across canary, canary-wap,
+  and canary-vision — the first release train that publishes the per-board
+  canary-vision OTA images (`-xiao-c3`, `-xiao-s3`) introduced in #786.
+  Tag `fw-v2.2.0` to ship.
+
 ### Export UX, owner self-export, and verification diagnosis
 
 - **Owner self-export** (`export_events --self-export`): export the

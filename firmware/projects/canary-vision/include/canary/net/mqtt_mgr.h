@@ -28,4 +28,14 @@ namespace canary::net {
   bool take_pending_install();   // true exactly once after HA pressed Install
   int take_pending_auto();       // -1 none; 0/1 = switch set off/on
 
+  // ── Runtime detection settings ─────────────────────────────────────────
+  // Same latch-and-drain pattern as the update commands: the callback only
+  // parses and latches inbound numbers; main.cpp drains them, applies via
+  // canary::cfg::detect_set_*(), and republishes the retained cfg state.
+  bool publish_detect_cfg_retained(const Topics& topics);
+  long take_pending_cfg_target();  // -1 none; else 0..255
+  long take_pending_cfg_score();   // -1 none; else 0..100
+  long take_pending_cfg_lost();    // -1 none; else ms
+  long take_pending_cfg_dwell();   // -1 none; else ms
+
 } // namespace

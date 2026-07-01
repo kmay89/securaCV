@@ -25,12 +25,46 @@ Pins come from `firmware/boards/<board-id>/pins/pins.h` and are passed to `Wire.
 5. Monitor:
    - `pio device monitor` — a non-zero `Grove Vision AI ID=...` line confirms the I2C link
 
+## Runtime detection settings (no rebuild for model swaps)
+
+The detection semantics are NVS-backed and adjustable from Home Assistant —
+four `number` entities appear in the device's Configuration section:
+
+| Setting | JSON key | Range | Why you'd change it |
+|---|---|---|---|
+| Person class index | `target` | 0–255 | The loaded SSCMA model decides which class is "person" — set this after swapping models in SenseCraft |
+| Score threshold | `score` | 0–100 % | Per-model confidence calibration / false-positive tuning |
+| Lost timeout | `lost_ms` | 250–60000 ms | How long silence means "person left" |
+| Dwell start | `dwell_ms` | 1000–600000 ms | Sustained presence before "dwelling" |
+
+The compiled constants in `include/canary/config.h` seed the first boot
+only; live values persist across reboots and OTA installs (see
+`include/canary/detect_config.h`).
+
+Bench test from any MQTT client (no HA needed):
+
+```bash
+mosquitto_sub -h <broker> -t 'securacv/<device_id>/cfg/state' -v &
+mosquitto_pub -h <broker> -t 'securacv/<device_id>/cfg/score/set' -m '85'
+# expect the retained cfg/state to echo {"target":0,"score":85,...}
+# junk is rejected without effect:
+mosquitto_pub -h <broker> -t 'securacv/<device_id>/cfg/score/set' -m 'nan'
+```
+
+A ready-made dashboard for these entities ships at
+[`homeassistant/lovelace/securacv-vision-dashboard.yaml`](../../../homeassistant/lovelace/securacv-vision-dashboard.yaml)
+(voxel heat grid, tuning view, firmware view) with companion alert
+automations at
+[`homeassistant/automations/securacv_vision_presence.yaml`](../../../homeassistant/automations/securacv_vision_presence.yaml).
+
 ## MQTT Topics
 
 Base:
 - `securacv/<device_id>/events` (non-retained)
 - `securacv/<device_id>/state`  (retained)
 - `securacv/<device_id>/status` (retained; availability: online/offline)
+- `securacv/<device_id>/cfg/state` (retained; live detection settings)
+- `securacv/<device_id>/cfg/{target,score,lost,dwell}/set` (commands)
 
 Discovery (retained):
 - `homeassistant/binary_sensor/<device_id>/presence/config`
