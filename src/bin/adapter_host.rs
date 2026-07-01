@@ -129,6 +129,7 @@ fn default_broker() -> String {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct FileConfig {
     db_path: String,
     ruleset_id: String,
@@ -168,6 +169,7 @@ enum AdapterCfg {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct FrigateCfg {
     #[serde(default = "default_broker")]
     mqtt_broker_addr: String,
@@ -188,6 +190,7 @@ struct FrigateCfg {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct MqttSensorCfg {
     #[serde(default = "default_broker")]
     mqtt_broker_addr: String,
@@ -202,6 +205,7 @@ struct MqttSensorCfg {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct WebhookCfg {
     #[serde(default = "default_webhook_addr")]
     listen_addr: String,
@@ -241,6 +245,7 @@ struct WebhookCfg {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct BleCfg {
     #[serde(default = "default_broker")]
     mqtt_broker_addr: String,
@@ -257,6 +262,7 @@ struct BleCfg {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct BleRoomCfg {
     room: String,
     zone: String,
@@ -264,6 +270,7 @@ struct BleRoomCfg {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct MeshtasticCfg {
     #[serde(default = "default_broker")]
     mqtt_broker_addr: String,
@@ -281,6 +288,7 @@ struct MeshtasticCfg {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct MeshNodeCfg {
     /// Node id as `!hex`, bare hex, or decimal (the originating sensor node, not the gateway).
     node_id: String,
@@ -293,6 +301,7 @@ struct MeshNodeCfg {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RouteCfg {
     topic: String,
     kind: String,
@@ -751,4 +760,104 @@ fn connect(
     }
     let (client, connection) = rumqttc::ClientBuilder::new(options).capacity(10).build();
     Ok((client, connection))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::FileConfig;
+
+    // Every gate field in this config defaults permissive when absent
+    // (auth off, TLS off, all cameras, floor 0.0). A misspelled key must
+    // therefore be a parse error, not a silent gate-disable: the config
+    // parser is itself a privacy/auth chokepoint and fails closed.
+
+    fn parse(toml_str: &str) -> Result<FileConfig, toml::de::Error> {
+        toml::from_str::<FileConfig>(toml_str)
+    }
+
+    const BASE: &str = "db_path = \"witness.db\"\nruleset_id = \"ruleset:test\"\n";
+
+    #[test]
+    fn shipped_example_config_parses() {
+        let raw = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/adapter_host.example.toml"
+        ))
+        .expect("read adapter_host.example.toml");
+        parse(&raw).expect("shipped example config must parse under deny_unknown_fields");
+    }
+
+    #[test]
+    fn valid_config_still_parses() {
+        let cfg = parse(&format!(
+            "{BASE}\
+             [[adapter]]\n type = \"webhook\"\n auth_token = \"secret\"\n\
+             [[adapter.route]]\n topic = \"/t\"\n kind = \"motion_detected\"\n zone = \"z\"\n min_confidence = 0.8\n"
+        ))
+        .expect("valid config must parse");
+        assert_eq!(cfg.adapter.len(), 1);
+    }
+
+    #[test]
+    fn unknown_root_key_is_rejected() {
+        let err = parse(&format!("{BASE}min_confidnce = 0.9\n")).unwrap_err();
+        assert!(err.to_string().contains("min_confidnce"), "{err}");
+    }
+
+    #[test]
+    fn webhook_auth_token_typo_is_rejected_not_unauthenticated() {
+        let err = parse(&format!(
+            "{BASE}[[adapter]]\n type = \"webhook\"\n auth_toke = \"secret\"\n"
+        ))
+        .unwrap_err();
+        assert!(err.to_string().contains("auth_toke"), "{err}");
+    }
+
+    #[test]
+    fn webhook_tls_key_typo_is_rejected_not_plaintext() {
+        let err = parse(&format!(
+            "{BASE}[[adapter]]\n type = \"webhook\"\n tls_cert = \"c.pem\"\n tls_kee = \"k.pem\"\n"
+        ))
+        .unwrap_err();
+        assert!(err.to_string().contains("tls_kee"), "{err}");
+    }
+
+    #[test]
+    fn frigate_cameras_typo_is_rejected_not_all_cameras() {
+        let err = parse(&format!(
+            "{BASE}[[adapter]]\n type = \"frigate\"\n camera = [\"front\"]\n"
+        ))
+        .unwrap_err();
+        assert!(err.to_string().contains("camera"), "{err}");
+    }
+
+    #[test]
+    fn route_min_confidence_typo_is_rejected_not_floor_zero() {
+        let err = parse(&format!(
+            "{BASE}[[adapter]]\n type = \"mqtt_sensor\"\n\
+             [[adapter.route]]\n topic = \"/t\"\n kind = \"motion_detected\"\n zone = \"z\"\n min_confidnce = 0.8\n"
+        ))
+        .unwrap_err();
+        assert!(err.to_string().contains("min_confidnce"), "{err}");
+    }
+
+    #[test]
+    fn meshtastic_min_snr_typo_is_rejected() {
+        let err = parse(&format!(
+            "{BASE}[[adapter]]\n type = \"meshtastic\"\n\
+             [[adapter.node]]\n node_id = \"!aabbccdd\"\n kind = \"motion_detected\"\n zone = \"z\"\n min_snr_db = 5.0\n"
+        ))
+        .unwrap_err();
+        assert!(err.to_string().contains("min_snr_db"), "{err}");
+    }
+
+    #[test]
+    fn ble_room_unknown_key_is_rejected() {
+        let err = parse(&format!(
+            "{BASE}[[adapter]]\n type = \"ble_presence\"\n\
+             [[adapter.room]]\n room = \"r\"\n zone = \"z\"\n max_distance = 2.0\n max_distence = 3.0\n"
+        ))
+        .unwrap_err();
+        assert!(err.to_string().contains("max_distence"), "{err}");
+    }
 }
