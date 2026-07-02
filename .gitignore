@@ -62,3 +62,4 @@ firmware/projects/canary-wap/tests_host/test_mesh_coexistence
 
 # Fetched detection models (scripts/fetch_detection_model.sh) — not committed
 vendor/models/*.onnx
+docs/hardware/enclosure/dev_*.stl

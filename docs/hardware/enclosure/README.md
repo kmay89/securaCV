@@ -1,6 +1,6 @@
 # Canary — 3D-Printable Enclosures
 
-Four parametric OpenSCAD configurators live here:
+Four released configurators live here (plus seven in-development designs — see the gallery):
 
 | Device | Source | What it is |
 |--------|--------|------------|
@@ -9,7 +9,7 @@ Four parametric OpenSCAD configurators live here:
 | **Canary Vision · Doorbell** (stacked-XIAO build + 12 mm button) | [`canary_vision_doorbell.scad`](./canary_vision_doorbell.scad) | Wyze/Ring-style doorbell: wall plate + T-studs + hidden security screw — [section below](#canary-vision--doorbell-v01) |
 | **Canary Sense** (MR60BHA2 60 GHz radar + stacked XIAO C6) | [`canary_sense_enclosure.scad`](./canary_sense_enclosure.scad) | RADOME enclosure — thin uniform window the radar sees through — [section below](#canary-sense--radome-enclosure-v01) |
 
-Both share the same print-tolerance system, weather-sealing approach (printed
+All share the same print-tolerance system, weather-sealing approach (printed
 TPU gasket + drip-edge lid), engineering options and CI gate (every change
 re-renders all presets and mesh-checks the STLs).
 
@@ -34,6 +34,23 @@ minutes.
 | **Vision · DOORBELL** | Wyze/Ring form factor: camera + button, plate-mounted with a hidden security screw, sealed by default | <img src="./preview_doorbell.png" width="260"> | [body](./canary_vision_doorbell_body.stl) · [face](./canary_vision_doorbell_face.stl) · [plate](./canary_vision_doorbell_plate.stl) · [wedge 15°](./canary_vision_doorbell_plate_wedge15.stl) · [gasket](./canary_vision_doorbell_gasket.stl) |
 | **Sense · radome** | MR60BHA2 mmWave witness: thin radar window, hinge + keyholes (shares the Vision bracket/knob) | <img src="./preview_sense.png" width="260"> | [back](./canary_sense_back.stl) · [front](./canary_sense_front.stl) |
 | **Thermal / outdoor kit** | solar radiation shield (weather WAP) + universal desiccant tray | — | [shield](./canary_wap_enclosure_weather_shield.stl) · [tray](./canary_wap_enclosure_tray.stl) |
+
+### In development
+
+These designs are **render- and mesh-verified but not print-validated** — no
+committed STLs yet (CI still renders and checks them on every change).
+Open the `.scad`, measure your hardware, and render locally; feedback and
+measurements welcome.
+
+| Design | Status | Preview | Source |
+|--------|--------|---------|--------|
+| **Watch station** — SenseCAP-Watcher-style desk puck: XIAO ESP32-S3 + Round Display (see [display research](../display_research.md)) | drum + bezel + 25° stand | <img src="./preview_dev_station.png" width="230"> | [`canary_watch_station.scad`](./canary_watch_station.scad) |
+| **Sense bedside stand** — weighted base + tilted stalk with the three-prong hinge head (wellbeing channel, ≤1.5 m) | ballast pockets, GoPro-compatible head | <img src="./preview_dev_stand.png" width="230"> | [`canary_sense_stand.scad`](./canary_sense_stand.scad) |
+| **Sense in-wall plate** — single-gang flush mount; the faceplate IS the radome (check local code; low-voltage box only) | one-piece plate, 6-32 slots | <img src="./preview_dev_gang.png" width="230"> | [`canary_sense_gang.scad`](./canary_sense_gang.scad) |
+| **Outlet cradle** — collar grips a USB wall wart; T-studs hang any keyhole-pocket Canary | measure your adapter | <img src="./preview_dev_cradle.png" width="230"> | [`canary_outlet_cradle.scad`](./canary_outlet_cradle.scad) |
+| **Solar LoRa relay pod** — off-grid mesh backhaul: LoRa board + 18650, SMA top, solar roof bracket, pole straps | sealed body + roof | <img src="./preview_dev_relay.png" width="230"> | [`canary_relay_solar.scad`](./canary_relay_solar.scad) |
+| **Combo witness** — Vision + Sense stacks in one face (lens + radome); radar-confirmed camera events | dual column, 3 USB ports | <img src="./preview_dev_combo.png" width="230"> | [`canary_combo.scad`](./canary_combo.scad) |
+| **Hub (Pi 5, DIN rail)** — vented tray + cover for the server side; printed DIN spring clip | chimney vents, HAT headroom | <img src="./preview_dev_hub.png" width="230"> | [`canary_hub_din.scad`](./canary_hub_din.scad) |
 
 ## Engineering & materials (security build)
 
