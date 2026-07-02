@@ -76,6 +76,16 @@ practice for **durability, rigidity and low mass**:
 | **TPU 90–95 A** | gaskets | 2 perimeters, 100 % infill, slow |
 | PLA | clip coupon / fit checks **only** | creeps and softens ~55 °C — not for deployed housings |
 
+**Finish & printability details** (built into the models): curve quality is
+driven by `$fa/$fs`, so large radii (the doorbell pill, the hood) come out
+smooth instead of visibly faceted; horizontal hinge bores are **teardropped**
+so their crowns print without sag; visible faces support a **two-stage soft
+edge** (`lid_edge` + `lid_edge2` — default on for the doorbell face) that
+approximates a roundover while still printing face-down without support.
+For the nicest faces, print them on a **textured PEI plate** (the visible
+surface is the first layer) and set the slicer's **seam position to the rear
+edge** of each part.
+
 **Security-build slicing spec:** 0.4 mm nozzle, 0.2 mm layers, **4 perimeters**,
 5 top/bottom layers, **30 % gyroid** infill, ~30 % infill/perimeter overlap,
 +5–10 °C over the material's default for interlayer adhesion, minimal cooling
@@ -341,6 +351,12 @@ cutout or bay and **resizes the box**. Added the **clip test coupon**.
 `2.0 → 1.6 mm` so threads actually bite; broken battery cradle rim replaced with
 **two transverse ribs**; **lid lip notched at the USB end** so the cable
 plug/overmold can't jam it.
+
+**v0.7.2 — finish & printability (family-wide):** `$fa/$fs` curve quality
+(smooth large radii), teardropped hinge bores on the Vision mounts, two-stage
+soft face edges (`lid_edge2`), cosmetic lead-in rims on the doorbell seats,
+and finish guidance (textured plate, seam placement) in
+[Engineering & materials](#engineering--materials-security-build).
 
 **v0.7.1 — engineering hardening:** perimeter **rib ring** under the lid
 (`lid_ribs`, t³ stiffening, feature-aware routing), **45° bottom-edge chamfer**

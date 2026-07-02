@@ -67,6 +67,7 @@ tab_cb_h    = 1.0;    // counterbore depth
 
 /* [Aesthetics] */
 lid_edge    = 0.8;    // 45° chamfer around the lid's top edge (0 = sharp slab)  // [0:0.1:1.5]
+lid_edge2   = 0.0;    // optional second, steeper stage (~66°) that softens the chamfer toward a roundover  // [0:0.1:1.5]
 label_text  = "";     // debossed lid label, e.g. "CANARY" ("" = off; needs the font installed)
 label_size  = 5.0;    // text height
 label_depth = 0.5;    // deboss depth (prints as crisp first-layer voids, lid prints face-down)
@@ -194,7 +195,9 @@ clip_hook_h    = 1.2;   // lip + 45° lead-in height above the board top
 clip_clear     = 0.25;  // gap between tab inner face and the board edge (a fit — tune on the coupon)
 
 /* [Quality] */
-$fn = 64;
+// curve quality: $fa/$fs give smooth big arcs (pill corners, hood) without
+// exploding tiny holes into thousands of facets like a large $fn would
+$fa = 3; $fs = 0.4;
 
 // ----------------------------------------------------------------------------
 //  Derived geometry
@@ -266,6 +269,7 @@ assert(!e_mount || mount_style == "keyhole" || tab_cb_h == 0 || tab_cb_d > tab_h
        "tab_cb_d must be larger than tab_hole_d when counterbored");
 assert(lid_edge == 0 || (lid_edge >= 0.01 && lid_edge < lid_t),
        "lid_edge must be 0, or between 0.01 and lid_t");
+assert(lid_edge2 >= 0 && lid_edge + lid_edge2 < lid_t, "lid_edge + lid_edge2 must stay below lid_t");
 assert(label_text == "" || (label_depth > 0 && label_depth < lid_t),
        "label_depth must be between 0 and lid_t");
 assert(batt_wire_w >= 0, "batt_wire_w must be non-negative");
@@ -533,20 +537,23 @@ module vent_cluster(x, y) {
 // lid plate with a 45° chamfered top edge (prints face-down: the chamfer is a
 // clean 45° outward slope off the bed — no supports)
 module lid_plate() {
-    if (lid_edge > 0) {
-        union() {
-            rrect(plate_l, plate_w, plate_r, lid_t - lid_edge);
-            hull() {
-                translate([0, 0, lid_t - lid_edge])
-                    rrect(plate_l, plate_w, plate_r, 0.01);
-                translate([0, 0, lid_t - 0.01])
-                    rrect(plate_l - 2*lid_edge, plate_w - 2*lid_edge,
-                          max(0.1, plate_r - lid_edge), 0.01);
-            }
+    // one 45° stage, plus an optional steeper cap stage (~66°) that softens the
+    // edge toward a roundover — both print face-down without support
+    if (lid_edge > 0) union() {
+        rrect(plate_l, plate_w, plate_r, lid_t - lid_edge - lid_edge2);
+        hull() {
+            translate([0, 0, lid_t - lid_edge - lid_edge2]) rrect(plate_l, plate_w, plate_r, 0.01);
+            translate([0, 0, lid_t - lid_edge2 - 0.01])
+                rrect(plate_l - 2*lid_edge, plate_w - 2*lid_edge, max(0.1, plate_r - lid_edge), 0.01);
         }
-    } else {
-        rrect(plate_l, plate_w, plate_r, lid_t);
-    }
+        if (lid_edge2 > 0) hull() {
+            translate([0, 0, lid_t - lid_edge2])
+                rrect(plate_l - 2*lid_edge, plate_w - 2*lid_edge, max(0.1, plate_r - lid_edge), 0.01);
+            translate([0, 0, lid_t - 0.01])
+                rrect(plate_l - 2*lid_edge - 0.9*lid_edge2, plate_w - 2*lid_edge - 0.9*lid_edge2,
+                      max(0.1, plate_r - lid_edge - 0.45*lid_edge2), 0.01);
+        }
+    } else rrect(plate_l, plate_w, plate_r, lid_t);
 }
 
 module lid() {
