@@ -71,6 +71,8 @@ jobs:
         node-version: '22'
     - name: Pre-flight self-test UI logic (probe×status hint matrix)
       run: node --test firmware/projects/canary-wap/arduino/canary_wap/selftest_ui.test.js
+    - name: Onboarding wizard logic tests
+      run: node --test firmware/projects/canary-wap/arduino/canary_wap/wizard_logic.test.js
 
   canary-vision-lint:
     name: ESLint (canary-vision)

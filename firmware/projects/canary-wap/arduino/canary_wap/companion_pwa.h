@@ -707,10 +707,61 @@ footer a{color:var(--accent);text-decoration:none}
  *  /api/wifi/scan + /api/wifi/connect + /api/wifi while the phone is on
  *  the device's AP. Activated when the URL contains ?token=<hex>.
  * ────────────────────────────────────────────────────────────────────────── */
+/* WIZARD_LOGIC:BEGIN — pure, DOM-free decision logic for the onboarding
+   wizard. Extracted verbatim and evaluated under Node by
+   wizard_logic.test.js (same pattern as SELFTEST_LOGIC above), so it must
+   not touch the DOM, window, navigator, or fetch — plain values in, plain
+   values out. */
+const WizardLogic = (function () {
+  // 64-hex pairing token as minted by the device (RAM-backed, 10-min TTL).
+  function isPairToken(t) {
+    return typeof t === 'string' && /^[0-9a-fA-F]{64}$/.test(t);
+  }
+
+  // What should the connect submit do with a /api/wifi/connect response?
+  //   'proceed'       — credentials accepted, start polling
+  //   'refresh-retry' — stale token and we haven't retried yet: fetch a
+  //                     fresh one and resend the same credentials
+  //   'fail'          — show the failure (isTokenErr selects raw rendering)
+  function connectOutcome(httpOk, body, alreadyRetried) {
+    if (httpOk && body && body.ok !== false) {
+      return { action: 'proceed', isTokenErr: false };
+    }
+    const isTokenErr = !!(body && body.code === 'invalid_token');
+    if (isTokenErr && !alreadyRetried) {
+      return { action: 'refresh-retry', isTokenErr: isTokenErr };
+    }
+    return { action: 'fail', isTokenErr: isTokenErr };
+  }
+
+  return { isPairToken, connectOutcome };
+})();
+if (typeof module !== 'undefined' && module.exports) { module.exports = WizardLogic; }
+/* WIZARD_LOGIC:END */
+
 (function onboardWizard() {
   const params = new URLSearchParams(window.location.search);
-  const token = params.get('token');
-  if (!token || !/^[0-9a-fA-F]{64}$/.test(token)) return;  // BLE flow stays default
+  let token = params.get('token');
+  if (!WizardLogic.isPairToken(token)) return;  // BLE flow stays default
+
+  // The URL token is RAM-backed on the device (10-min TTL, wiped by any
+  // reboot). Rather than dead-ending the user on "setup link expired",
+  // ask the device for a fresh one — the endpoint answers only while the
+  // first-boot wizard is active and only to a browser that reached it by
+  // its real name (same Host gate as the / redirect that minted the
+  // original token; the AP itself remains the security boundary).
+  async function refreshToken() {
+    try {
+      const r = await fetch('/api/wifi/pair-token', { cache: 'no-store' });
+      if (!r.ok) return false;
+      const j = await r.json();
+      if (j && j.ok && WizardLogic.isPairToken(j.token)) {
+        token = j.token;
+        return true;
+      }
+    } catch (_) { /* device unreachable — caller shows its own failure */ }
+    return false;
+  }
 
   const $w = id => document.getElementById(id);
   const card = $w('onboard-card');
@@ -1015,21 +1066,30 @@ footer a{color:var(--accent);text-decoration:none}
     }
     setStep(4);
     showProgress('Sending credentials to your Canary.');
+    const postConnect = () => fetch('/api/wifi/connect', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ssid: pickedSsid, password: pw, token: token }),
+    });
     try {
-      const r = await fetch('/api/wifi/connect', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ ssid: pickedSsid, password: pw, token: token }),
-      });
-      const j = await r.json();
-      if (!r.ok || j.ok === false) {
+      let r = await postConnect();
+      let j = await r.json();
+      let out = WizardLogic.connectOutcome(r.ok, j, false);
+      // A stale token (device rebooted, 10-min TTL elapsed, slot evicted)
+      // is recoverable while the setup wizard is live: refresh once and
+      // resend the same credentials before bothering the user.
+      if (out.action === 'refresh-retry' && await refreshToken()) {
+        r = await postConnect();
+        j = await r.json();
+        out = WizardLogic.connectOutcome(r.ok, j, true);
+      }
+      if (out.action !== 'proceed') {
         // Token-rejection errors are pre-credential, not a connection
         // failure — render them raw so the user reads them as
         // "your setup link is broken" rather than as the awkward
         // "We couldn't connect: <…link broken sentence…>".
-        const isTokenErr = j && j.code === 'invalid_token';
         showFailure((j && j.error) ? j.error : ('HTTP ' + r.status),
-                    isTokenErr ? { raw: true } : undefined);
+                    out.isTokenErr ? { raw: true } : undefined);
         return;
       }
       pollWifiUntilConnected();

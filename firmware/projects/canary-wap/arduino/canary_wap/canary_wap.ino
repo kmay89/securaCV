@@ -4657,6 +4657,47 @@ static esp_err_t handle_wifi_status(httpd_req_t* req) {
   return http_send_json(req, response.c_str());
 }
 
+// A request that asked for the device by its real name (vs a captive-portal
+// assistant probing a hijacked foreign domain). Same gate the "/" redirect
+// uses before minting a pairing token into the wizard URL.
+static bool request_host_is_direct(httpd_req_t* req) {
+  char host[64] = {0};
+  if (httpd_req_get_hdr_value_str(req, "Host", host, sizeof(host)) != ESP_OK) {
+    return false;
+  }
+  return (strstr(host, "canary.local") != nullptr) ||
+         (strstr(host, "192.168.4.1") != nullptr);
+}
+
+// Re-issue a pairing token to the live wizard. The URL token is RAM-backed
+// (10-min TTL, wiped on reboot, 4-slot eviction); without this, a stale
+// token dead-ends the user at "setup link expired" even with a correct
+// password. Answers ONLY while the first-boot wizard is active and only to
+// a direct-Host browser — the same posture as the "/" redirect that minted
+// the original token. The AP itself remains the security boundary
+// (companion_pwa.h wizard doc block); the token stays a UX gate.
+static esp_err_t handle_wifi_pair_token(httpd_req_t* req) {
+  g_health.http_requests++;
+  if (!setup_wizard::is_active() || !request_host_is_direct(req)) {
+    httpd_resp_set_status(req, "404 Not Found");
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, "{\"ok\":false}", HTTPD_RESP_USE_STRLEN);
+  }
+  setup_wizard::touch();
+  char tok_hex[csi_integration::PAIR_TOKEN_HEX_LEN + 1];
+  if (!csi_integration::pair_token_issue(tok_hex, sizeof(tok_hex))) {
+    httpd_resp_set_status(req, "503 Service Unavailable");
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, "{\"ok\":false}", HTTPD_RESP_USE_STRLEN);
+  }
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["token"] = tok_hex;
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
 static esp_err_t handle_wifi_scan(httpd_req_t* req) {
   g_health.http_requests++;
   // A human is actively driving the wizard — don't reboot the portal
@@ -6289,6 +6330,11 @@ register_extra_routes:
 
   httpd_uri_t wifi_scan = { .uri = "/api/wifi/scan", .method = HTTP_GET, .handler = handle_wifi_scan };
   httpd_register_uri_handler(active_server, &wifi_scan);
+
+  // Setup-wizard-only token re-issue (404s outside first-boot setup; see
+  // handler doc block for the security posture).
+  httpd_uri_t wifi_pair_token = { .uri = "/api/wifi/pair-token", .method = HTTP_GET, .handler = handle_wifi_pair_token };
+  httpd_register_uri_handler(active_server, &wifi_pair_token);
 
   httpd_uri_t wifi_connect = { .uri = "/api/wifi/connect", .method = HTTP_POST, .handler = handle_wifi_connect };
   httpd_register_uri_handler(active_server, &wifi_connect);
