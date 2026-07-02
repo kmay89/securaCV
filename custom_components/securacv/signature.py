@@ -71,6 +71,27 @@ def build_counts_canonical(device_id: str, total: int) -> bytes:
     return f"{SIG_PREFIX}|v{SCHEMA_V}|counts|{device_id}|{total}".encode("utf-8")
 
 
+def build_sense_event_canonical(
+    device_id: str,
+    seq: int,
+    event: str,
+    presence: str,
+    occupants: str,
+    range_band: str,
+    bucket_uptime_s: int,
+) -> bytes:
+    """canary-sense radar-witness event canonical (v1 `sense` kind).
+
+    Locked against `firmware/common/identity/device_signature.cpp`
+    (build_sense_canonical). Carries only the chokepoint's coarse
+    vocabulary — event name, presence state, 0/1/2+ occupant bucket,
+    near/mid/far range band, 10-minute uptime bucket."""
+    return (
+        f"{SIG_PREFIX}|v{SCHEMA_V}|sense|{device_id}|{seq}|{event}|"
+        f"{presence}|{occupants}|{range_band}|{bucket_uptime_s}"
+    ).encode("utf-8")
+
+
 def _verify_raw(
     pubkey_bytes: bytes, canonical: bytes, sig_b64url: str
 ) -> bool:
@@ -246,6 +267,38 @@ def verify_event(
         return TrustVerdict(
             trusted=False, reason="unsigned",
             detail=f"Event payload has non-numeric scalar field: {err}",
+        )
+    return _verify_with_kind(trust_store, device_id, payload, canonical)
+
+
+def verify_sense_event(
+    trust_store: TrustStore, device_id: str, payload: dict[str, Any]
+) -> TrustVerdict:
+    """Verify a canary-sense radar-witness event publish. Required fields
+    on the canonical: seq, event, presence, occupants, range,
+    bucket_uptime_s. Missing fields degrade to unsigned (graceful),
+    same policy as the CSI event verifier."""
+    required = ("seq", "event", "presence", "occupants", "range", "bucket_uptime_s")
+    if not all(k in payload for k in required):
+        return TrustVerdict(
+            trusted=False,
+            reason="unsigned",
+            detail=f"Sense event payload missing required fields: {required}",
+        )
+    try:
+        canonical = build_sense_event_canonical(
+            device_id=device_id,
+            seq=int(payload["seq"]),
+            event=str(payload["event"]),
+            presence=str(payload["presence"]),
+            occupants=str(payload["occupants"]),
+            range_band=str(payload["range"]),
+            bucket_uptime_s=int(payload["bucket_uptime_s"]),
+        )
+    except (TypeError, ValueError) as err:
+        return TrustVerdict(
+            trusted=False, reason="unsigned",
+            detail=f"Sense event payload has non-numeric scalar field: {err}",
         )
     return _verify_with_kind(trust_store, device_id, payload, canonical)
 

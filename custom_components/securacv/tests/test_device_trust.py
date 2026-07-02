@@ -36,9 +36,12 @@ SAMPLE_PUBKEY_B = "22" * 32
 
 
 def _expected_fingerprint(pubkey_hex: str) -> str:
+    # Firmware's sha256_domain construction: domain || 0x00 || payload.
+    # The NUL separator is load-bearing — omitting it was the derivation
+    # bug that made every pinned device read "fingerprint changed".
     domain = b"securacv:pubkey:fingerprint"
     pubkey = bytes.fromhex(pubkey_hex)
-    return hashlib.sha256(domain + pubkey).digest()[:8].hex()
+    return hashlib.sha256(domain + b"\x00" + pubkey).digest()[:8].hex()
 
 
 def test_fingerprint_matches_firmware_formula():
@@ -116,6 +119,30 @@ def test_unpin_removes_entry():
     assert not ts.is_pinned("canary-1")
     # Unpinning a never-pinned device is a no-op returning False.
     assert run(ts.async_unpin("canary-1")) is False
+
+
+def test_load_heals_pre_fix_fingerprints():
+    """Pins recorded under the old (no-0x00-separator) derivation are
+    healed on load: the pubkey is the identity, the fp is derived."""
+    hass = HomeAssistant()
+    ts = TrustStore(hass, entry_id="abc")
+    run(ts.async_load())
+    run(ts.async_pin("canary-1", SAMPLE_PUBKEY_A, source=PIN_SOURCE_MANUAL))
+    raw = ts._store._payload
+
+    # Simulate a store written by the pre-fix derivation.
+    legacy_fp = hashlib.sha256(
+        b"securacv:pubkey:fingerprint" + bytes.fromhex(SAMPLE_PUBKEY_A)
+    ).digest()[:8].hex()
+    raw["devices"]["canary-1"]["fingerprint_hex"] = legacy_fp
+
+    ts2 = TrustStore(hass, entry_id="abc")
+    ts2._store._payload = raw
+    run(ts2.async_load())
+    healed = ts2.get("canary-1")
+    assert healed is not None
+    assert healed.fingerprint_hex == _expected_fingerprint(SAMPLE_PUBKEY_A)
+    assert healed.fingerprint_hex != legacy_fp
 
 
 def test_storage_roundtrip():

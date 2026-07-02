@@ -171,6 +171,32 @@ def test_radar_link_state_decision():
     assert cls._link_state({}) == "unknown"
 
 
+def test_last_event_handler_survives_non_dict_payloads():
+    """Regression: a bare JSON scalar/list on the events topic must degrade
+    to the raw-payload fallback, not AttributeError out of the @callback
+    (which would stall the entity for all later, well-formed events)."""
+    cls = sensor_mod.SecuraCVCanaryLastEventSensor
+    inst = cls.__new__(cls)
+    inst._prefix = "securacv"
+    inst._device_id = "sense01"
+    inst._entry = types.SimpleNamespace(entry_id="e1")
+    inst.hass = sensor_mod.HomeAssistant()
+    inst.hass.data = {sensor_mod.DOMAIN: {}}
+    inst.async_write_ha_state = lambda: None
+
+    for raw in ('["a", "b"]', '"just-a-string"', "42", "null"):
+        msg = types.SimpleNamespace(payload=raw)
+        inst._handle_message(msg)  # must not raise
+        assert inst._attr_native_value == raw[:255]
+
+    # And a well-formed radar event still routes through normally.
+    msg = types.SimpleNamespace(
+        payload='{"event": "presence_detected", "occupants": "1"}'
+    )
+    inst._handle_message(msg)
+    assert inst._attr_native_value == "presence_detected"
+
+
 def test_device_type_for_reads_cached_status():
     hass = sensor_mod.HomeAssistant()
     entry = types.SimpleNamespace(entry_id="e1")

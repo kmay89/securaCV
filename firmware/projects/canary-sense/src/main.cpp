@@ -35,9 +35,14 @@
 #include "canary/types.h"
 #include "canary/runtime_config.h"
 #include "canary/diagnostics.h"
+#include "canary/witness.h"
 #include "canary/net/wifi_mgr.h"
 #include "canary/net/mqtt_mgr.h"
 #include "canary/net/ota_mgr.h"
+
+#if defined(FEATURE_WATCHDOG) && FEATURE_WATCHDOG
+#include <esp_task_wdt.h>
+#endif
 
 // Shared, board-agnostic modules (reached via -I .../common).
 #include "boot/boot_banner.h"
@@ -108,6 +113,7 @@ static SenseSnapshot g_snap;
 
 static char g_last_event[32] = "boot";
 static uint32_t g_last_heartbeat_ms = 0;
+static uint32_t g_last_health_ms = 0;
 static uint32_t g_last_lux_ms = 0;
 static bool g_state_dirty = false;
 
@@ -128,6 +134,11 @@ static bool mqtt_supervise(uint32_t now) {
   if (canary::net::mqtt_connect_attempt()) {
     g_mqtt_attempts = 0;
     canary::net::publish_status_retained(TOPICS, "online");
+    // Trust surface: health carries the pubkey HA TOFU-pins on; the
+    // retained chain head lets HA verify continuity immediately.
+    canary::net::publish_health_retained(TOPICS);
+    canary::net::publish_chain_retained(TOPICS);
+    g_last_health_ms = now;
     return true;
   }
 
@@ -234,14 +245,37 @@ static void publish_state_now(uint32_t now_ms) {
 // field is uptime coarsened to the project's 10-minute buckets — a precise
 // per-event timestamp would hand the event stream exact activity timing,
 // against the metadata-minimization invariant; `seq` preserves ordering.
-static void publish_event_now(const char* event_name, uint32_t now_ms) {
-  static uint32_t seq = 0;
+//
+// Every witnessed transition advances the Ed25519-anchored hash chain and
+// is signed over the v1 `sense` canonical (canary/witness.h) — with or
+// without a broker. The MQTT publish (event + refreshed retained chain
+// head) happens only while connected; an offline gap shows up as a jump
+// in seq/chain length rather than lost tamper evidence.
+static void record_event_now(const char* event_name, uint32_t now_ms) {
+  static uint32_t fallback_seq = 0;
   refresh_snapshot(now_ms);
 
   const uint32_t bucket_uptime_s = (now_ms / 1000UL / 600UL) * 600UL;
+  // seq rides the NVS-persisted chain length so it stays monotonic across
+  // reboots (a keyless boot falls back to a session counter).
+  const uint32_t seq = canary::witness::ready()
+                           ? canary::witness::chain_length() + 1
+                           : ++fallback_seq;
 
-  char msg[384];
-  snprintf(msg, sizeof(msg),
+  // Chain first: the witness record exists regardless of connectivity.
+  canary::witness::chain_advance(seq, event_name, g_snap.presence,
+                                 g_snap.occupants, g_snap.range,
+                                 bucket_uptime_s);
+
+  if (!canary::net::mqtt_connected()) return;
+
+  char sig_env[144] = "";
+  const bool signed_ok = canary::witness::sign_event_envelope(
+      seq, event_name, g_snap.presence, g_snap.occupants, g_snap.range,
+      bucket_uptime_s, sig_env, sizeof(sig_env));
+
+  char msg[640];
+  const int n = snprintf(msg, sizeof(msg),
            "{"
            "\"device_id\":\"%s\","
            "\"device_type\":\"%s\","
@@ -250,17 +284,23 @@ static void publish_event_now(const char* event_name, uint32_t now_ms) {
            "\"bucket_uptime_s\":%lu,"
            "\"presence\":\"%s\","
            "\"occupants\":\"%s\","
-           "\"range\":\"%s\""
+           "\"range\":\"%s\","
+           "\"signed\":%s"
+           "%s"
            "}",
            canary::cfg::get().device_id, DEVICE_TYPE,
            event_name,
-           (unsigned long)(++seq),
+           (unsigned long)seq,
            (unsigned long)bucket_uptime_s,
            g_snap.presence,
            g_snap.occupants,
-           g_snap.range);
+           g_snap.range,
+           signed_ok ? "true" : "false",
+           sig_env);
+  if (n <= 0 || (size_t)n >= sizeof(msg)) return;
 
   canary::net::publish_event(TOPICS, msg);
+  canary::net::publish_chain_retained(TOPICS);
 }
 
 // ----------------------------------------------------------------------------
@@ -279,10 +319,10 @@ static void drive_fsms(const Frame& frame, uint32_t now) {
 
     if (pev.state == Presence::Present) {
       set_last_event("presence_detected");
-      if (canary::net::mqtt_connected()) publish_event_now("presence_detected", now);
+      record_event_now("presence_detected", now);
     } else if (pev.state == Presence::Clear) {
       set_last_event("presence_cleared");
-      if (canary::net::mqtt_connected()) publish_event_now("presence_cleared", now);
+      record_event_now("presence_cleared", now);
     }
     // Unknown (stall) is radar-link health, not a witness event: it surfaces
     // through the radar_link problem sensor + health heartbeat instead.
@@ -293,7 +333,7 @@ static void drive_fsms(const Frame& frame, uint32_t now) {
     // Occupancy bucket moved (0/1/2+). Only newsworthy while someone is here.
     if (g_presence.state() == Presence::Present) {
       set_last_event("occupancy_changed");
-      if (canary::net::mqtt_connected()) publish_event_now("occupancy_changed", now);
+      record_event_now("occupancy_changed", now);
     }
     g_state_dirty = true;
   }
@@ -397,6 +437,11 @@ void setup() {
 
   TOPICS = build_topics(canary::cfg::get().device_id);
 
+  // Witness identity + hash chain (NVS-backed Ed25519; see witness.h).
+  // Before the network: a keyless boot must be loud in the boot log, and
+  // the chain must be ready before the first presence transition.
+  canary::witness::init();
+
   canary::net::wifi_init_or_reboot();
 
   // Seed the heap-health snapshot so the first status publish carries real
@@ -438,13 +483,37 @@ void setup() {
   set_last_event("boot");
   publish_state_now(canary::ms_now());
 
+#if defined(FEATURE_WATCHDOG) && FEATURE_WATCHDOG
+  // Task watchdog — same IDF5 config canary-wap uses, armed LAST so the
+  // blocking boot phases above (WiFi connect up to 30 s) can't trip it.
+  // The timeout must exceed loop()'s worst bounded block (one MQTT
+  // connect attempt against a dead broker).
+  {
+    esp_task_wdt_config_t wdt_config = {
+      .timeout_ms = CS_WATCHDOG_TIMEOUT_SEC * 1000,
+      .idle_core_mask = (1 << 0),   // ESP32-C6: single core
+      .trigger_panic = true
+    };
+    esp_err_t wdt_err = esp_task_wdt_reconfigure(&wdt_config);
+    if (wdt_err == ESP_ERR_INVALID_STATE) {
+      esp_task_wdt_init(&wdt_config);
+    }
+    esp_task_wdt_add(NULL);
+    boot_kvf("Watchdog", "%lu s timeout", (unsigned long)CS_WATCHDOG_TIMEOUT_SEC);
+  }
+#endif
+
   boot_scene_ready(
       "It will witness presence over 60GHz radar",
-      "and publish coarse claims via MQTT to Home Assistant.",
+      "and publish signed coarse claims via MQTT to Home Assistant.",
       NULL);
 }
 
 void loop() {
+#if defined(FEATURE_WATCHDOG) && FEATURE_WATCHDOG
+  esp_task_wdt_reset();
+#endif
+
   const uint32_t now = canary::ms_now();
 
   // ── Sensing first: the witness keeps observing with or without a network ──
@@ -504,6 +573,13 @@ void loop() {
 
   if (g_state_dirty) {
     publish_state_now(now);
+  }
+
+  // Periodic health refresh (retained pubkey/uptime/heap for HA's trust
+  // store and diagnostics).
+  if ((int32_t)(now - g_last_health_ms) >= (int32_t)HEALTH_PUBLISH_MS) {
+    g_last_health_ms = now;
+    canary::net::publish_health_retained(TOPICS);
   }
 
   // Health heartbeat. Under heap pressure the diagnostics ladder stretches

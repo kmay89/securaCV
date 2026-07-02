@@ -84,6 +84,11 @@
 
 #define CS_HEARTBEAT_MS         5000    // Status heartbeat interval
 
+// Task watchdog timeout. Wider than canary-wap's 8 s because this loop's
+// worst bounded block (one MQTT connect attempt against a dead broker,
+// TCP timeout) can run into double digits; must stay above that.
+#define CS_WATCHDOG_TIMEOUT_SEC 30
+
 // ============================================================================
 // MQTT CONFIGURATION
 // ============================================================================

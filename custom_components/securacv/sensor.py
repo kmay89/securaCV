@@ -55,7 +55,7 @@ from .health_metrics import (
     memory_free_bytes,
     round_pct,
 )
-from .signature import verify_chain, verify_counts, verify_event
+from .signature import verify_chain, verify_counts, verify_event, verify_sense_event
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -713,9 +713,26 @@ class SecuraCVCanaryLastEventSensor(SecuraCVCanarySensorBase):
         """Handle event message."""
         try:
             data = json.loads(msg.payload)
-            self._attr_native_value = data.get("event_type", data.get("type", "unknown"))
-            _verify_and_record(self.hass, self._entry, self._device_id,
-                               data, verify_event)
+            if not isinstance(data, dict):
+                # A bare JSON scalar/list would AttributeError out of the
+                # @callback on data.get() and stall the entity; route it
+                # into the except arm like the health handler does.
+                raise TypeError("Event payload is not a JSON object")
+            self._attr_native_value = data.get(
+                "event_type", data.get("type", data.get("event", "unknown"))
+            )
+            # Two event dialects share the events topic: the CSI canary's
+            # (event_id/state/category/...) and the radar witness's
+            # canary-sense shape (event/seq/occupants/range). Dispatch on
+            # the payload shape so each verifies against its own canonical —
+            # the wrong verifier would mark a validly signed payload
+            # "unsigned".
+            if "event_id" not in data and "occupants" in data:
+                _verify_and_record(self.hass, self._entry, self._device_id,
+                                   data, verify_sense_event)
+            else:
+                _verify_and_record(self.hass, self._entry, self._device_id,
+                                   data, verify_event)
             attrs: dict[str, Any] = {
                 "timestamp": data.get("timestamp", ""),
                 "zone": data.get("zone", ""),

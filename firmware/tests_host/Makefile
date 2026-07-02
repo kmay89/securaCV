@@ -29,6 +29,14 @@ MR60_HDRS       = $(wildcard $(MR60_DIR)/*.h)
 MR60_BIN        = $(BUILD_DIR)/test_mr60_uart
 MR60_VITALS_BIN = $(BUILD_DIR)/test_mr60_uart_vitals
 
+# Shared device_signature module (common/identity): canonical-message
+# builders + b64url encoder compile hosted (the Ed25519 sign path is
+# ARDUINO-gated). Locks the wire format the canary-sense witness signs
+# and HA's signature.py verifies.
+DEVSIG_DIR = ../common/identity
+DEVSIG_SRC = $(DEVSIG_DIR)/device_signature.cpp
+DEVSIG_BIN = $(BUILD_DIR)/test_device_signature_common
+
 .PHONY: all run clean
 all: run
 
@@ -41,9 +49,13 @@ $(MR60_BIN): $(MR60_TEST_SRC) $(MR60_SRC) $(MR60_HDRS) Makefile | $(BUILD_DIR)
 $(MR60_VITALS_BIN): $(MR60_TEST_SRC) $(MR60_SRC) $(MR60_HDRS) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -DCANARY_SENSE_VITALS=1 -I $(MR60_DIR) $(MR60_TEST_SRC) $(MR60_SRC) -o $@
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN)
+$(DEVSIG_BIN): test_device_signature_common.cpp $(DEVSIG_SRC) $(DEVSIG_DIR)/device_signature.h Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I $(DEVSIG_DIR) test_device_signature_common.cpp $(DEVSIG_SRC) -o $@
+
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
+	./$(DEVSIG_BIN)
 
 clean:
 	rm -rf $(BUILD_DIR)
