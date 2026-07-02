@@ -28,6 +28,7 @@ AUTH_MARKERS = (
     "api_auth_check_optional(",   # silent variant (caller enforces)
     "CSI_AUTH_OR_RETURN",         # csi_integration session/Bearer macro
     "pair_token_valid(",          # 10-min wizard pair token
+    "wifi_change_authorize(",     # pair token OR lockout-throttled admin cred
     "qr_scan_request_allowed(",   # pair token OR admin credential
     "provisioning_gate_is_open(", # physical BOOT-press gate
     "session_validate_cookie(",   # cv_session cookie (self-gating pages)
@@ -145,23 +146,112 @@ def strip_comments(text: str) -> str:
     return "".join(out)
 
 
+def blank_string_contents(text: str) -> str:
+    """Replace the *contents* of string/char literals with spaces, keeping
+    the quotes and the original length so byte offsets still align with
+    `text`. Used only for brace matching: a `{` or `}` inside a JSON literal
+    or log message (e.g. `"{\\"ok\\":true}"`, `"}"`) must not shift the
+    depth counter. We can't just drop string bodies globally in
+    strip_comments — the route parser needs `.uri = "/api/…"` intact — so
+    this length-preserving blank is a matching-only view.
+
+    Assumption: no C++ raw string literal (R"delim(...)delim") precedes an
+    `esp_err_t` handler in the SAME file — this walker treats a raw block's
+    embedded quotes as ordinary delimiters. The current tree satisfies this
+    (the raw-string HTML blobs live in header files with no handlers, and
+    csi_mqtt.cpp's block has even quote parity so state resyncs before its
+    handlers); a verify pass confirmed every handler body extracts correctly.
+    If a future edit adds a handler after a raw block in the same file, teach
+    this walker the R"..." form.
+    """
+    out = []
+    i, n = 0, len(text)
+    state = "code"  # code | string | char
+    while i < n:
+        c = text[i]
+        nxt = text[i + 1] if i + 1 < n else ""
+        if state == "code":
+            out.append(c)
+            if c == '"':
+                state = "string"
+            elif c == "'":
+                state = "char"
+            i += 1
+        else:  # inside a string or char literal
+            if c == "\\":
+                out.append("  " if nxt else " ")  # blank the escape pair
+                i += 2 if nxt else 1
+                continue
+            if (state == "string" and c == '"') or (state == "char" and c == "'"):
+                out.append(c)  # keep the closing quote
+                state = "code"
+            else:
+                out.append("\n" if c == "\n" else " ")  # blank the body
+            i += 1
+    return "".join(out)
+
+
 def function_body(source: str, name: str):
-    """Return the brace-matched body of `esp_err_t <name>(...)` if present."""
+    """Return the brace-matched body of `esp_err_t <name>(...)` if present.
+
+    Brace matching runs over a string-blanked view so literal braces inside
+    strings can't truncate or over-extend the body, but the returned slice
+    comes from the real `source` (offsets align — blanking is length-
+    preserving) so the auth-marker scan sees the true handler text.
+    """
+    blanked = blank_string_contents(source)
     m = re.search(
-        r"esp_err_t\s+" + re.escape(name) + r"\s*\([^)]*\)\s*\{", source)
+        r"esp_err_t\s+" + re.escape(name) + r"\s*\([^)]*\)\s*\{", blanked)
     if not m:
         return None
     depth, i = 1, m.end()
-    while i < len(source) and depth:
-        if source[i] == "{":
+    while i < len(blanked) and depth:
+        if blanked[i] == "{":
             depth += 1
-        elif source[i] == "}":
+        elif blanked[i] == "}":
             depth -= 1
         i += 1
     return source[m.start():i]
 
 
+def _assert_parser_robust() -> None:
+    """Guard the string-aware brace matcher on every run. A handler whose
+    body carries an UNBALANCED brace inside a string literal before its auth
+    call must still extract fully — the naive matcher truncated it there and
+    would mis-report the route's gating (a silent false pass/negative)."""
+    # An extra '}' inside a JSON string ("bad_}") would, under naive
+    # counting, close the function early — before the api_auth_check line.
+    fixture = (
+        'esp_err_t handle_demo(httpd_req_t* req) {\n'
+        '  httpd_resp_sendstr(req, "{\\"code\\":\\"bad_}\\"}");\n'
+        '  if (!api_auth_check(req, tok)) return ESP_OK;\n'
+        '  return http_send_json(req, "ok");\n'
+        '}\n'
+        'esp_err_t handle_other(httpd_req_t* req) { return ESP_OK; }\n'
+    )
+    body = function_body(fixture, "handle_demo")
+    assert body is not None, "fixture handler not found"
+    assert "api_auth_check(" in body, (
+        "brace matcher truncated the body at a string-literal brace — the "
+        "auth call was lost (this is the bug this guard prevents)")
+    assert "handle_other" not in body, "body over-extended into the next fn"
+    # A char literal brace must not desync either. Use '}' so this genuinely
+    # discriminates: under the naive matcher the literal '}' decrements depth
+    # to 0 and closes the body BEFORE the api_auth_check line (fails); the
+    # blanked matcher ignores it (passes).
+    fixture2 = (
+        "esp_err_t handle_c(httpd_req_t* req) {\n"
+        "  char close = '}';\n"
+        "  if (!api_auth_check(req, tok)) return ESP_OK;\n"
+        "  return ESP_OK;\n"
+        "}\n"
+    )
+    b2 = function_body(fixture2, "handle_c")
+    assert b2 is not None and "api_auth_check(" in b2, "char-literal brace desync"
+
+
 def main() -> int:
+    _assert_parser_robust()
     sources = {}
     for path in sorted(SKETCH.glob("*.h")) + sorted(SKETCH.glob("*.cpp")) + sorted(
             SKETCH.glob("*.ino")):

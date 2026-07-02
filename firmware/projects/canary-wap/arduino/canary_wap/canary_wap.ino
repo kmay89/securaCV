@@ -4854,8 +4854,46 @@ static esp_err_t handle_wifi_scan(httpd_req_t* req) {
   return send_scan_cache_json(req, false, now);
 }
 
+// Credential gate shared by /api/wifi/connect and /api/wifi/ap-only. The
+// wizard carries a live pair token; the settings panel carries an admin
+// credential (session cookie / Bearer) instead. A *presented* admin
+// credential is validated through the lockout-aware `api_auth_check` so
+// Bearer guessing is throttled exactly like every other admin route —
+// `api_auth_check_optional` (used before) skipped the 429 backoff and never
+// recorded a failure, turning this fallback into an unthrottled token
+// oracle: an on-AP/LAN client could spray Authorization guesses and tell a
+// valid token from the handler proceeding. A bare pair-token miss (no
+// admin credential presented at all) stays a friendly `invalid_token` so
+// the wizard can silently re-issue its RAM-backed token and retry.
+enum class WifiChangeAuth { PROCEED, INVALID_TOKEN, RESPONDED };
+static WifiChangeAuth wifi_change_authorize(httpd_req_t* req,
+                                            const char* pair_token) {
+  if (csi_integration::pair_token_valid(pair_token)) return WifiChangeAuth::PROCEED;
+  const bool has_bearer = httpd_req_get_hdr_value_len(req, "Authorization") > 0;
+  const bool has_cookie = (cv_session_validate && cv_session_validate(req));
+  if (has_bearer || has_cookie) {
+    // api_auth_check enforces the lockout, records failures for
+    // presented-but-wrong tokens, and sends its own 401/403/429 response,
+    // so on failure the caller just returns ESP_OK.
+    return api_auth_check(req, g_device.api_token_str)
+               ? WifiChangeAuth::PROCEED
+               : WifiChangeAuth::RESPONDED;
+  }
+  return WifiChangeAuth::INVALID_TOKEN;  // wizard self-heal path
+}
+
+static esp_err_t wifi_change_send_invalid_token(httpd_req_t* req) {
+  JsonDocument doc;
+  doc["ok"] = false;
+  doc["code"] = "invalid_token";
+  doc["error"] = "This setup link has expired. Reconnect to the SecuraCV network to start over.";
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
 // "Use without home WiFi": the explicit standalone exit from the setup
-// wizard. Same pairing-token gate as /api/wifi/connect (the choice changes
+// wizard. Same credential gate as /api/wifi/connect (the choice changes
 // how the device runs, so it deserves the same posture as a credential
 // save). Persists the AP-only preference, completes first-boot setup — no
 // more 15-minute reboot loop — and leaves the SoftAP up as the product.
@@ -4869,21 +4907,14 @@ static esp_err_t handle_wifi_ap_only(httpd_req_t* req) {
   if (ret <= 0 || deserializeJson(body, content) != DeserializationError::Ok) {
     return http_send_json(req, "{\"ok\":false,\"error\":\"Invalid JSON\"}");
   }
-  // A live pair token (wizard path) or an authenticated admin credential
-  // (session cookie / Bearer — strictly stronger than a 10-minute pair
-  // token) may switch the device to standalone. The settings panel holds
-  // the latter and no pair token, so without this alternative its controls
-  // could never work post-setup.
+  // Pair token (wizard) OR a lockout-throttled admin credential (settings
+  // panel). See wifi_change_authorize — the admin fallback must go through
+  // the throttled path so it can't be used as a token-guessing oracle.
   const char* token = body["token"] | "";
-  if (!csi_integration::pair_token_valid(token) &&
-      !api_auth_check_optional(req, g_device.api_token_str)) {
-    JsonDocument doc;
-    doc["ok"] = false;
-    doc["code"] = "invalid_token";
-    doc["error"] = "This setup link has expired. Reconnect to the SecuraCV network to start over.";
-    String response;
-    serializeJson(doc, response);
-    return http_send_json(req, response.c_str());
+  switch (wifi_change_authorize(req, token)) {
+    case WifiChangeAuth::PROCEED: break;
+    case WifiChangeAuth::RESPONDED: return ESP_OK;  // auth helper already replied
+    case WifiChangeAuth::INVALID_TOKEN: return wifi_change_send_invalid_token(req);
   }
 
   NvsManager& nvs = NvsManager::instance();
@@ -4943,31 +4974,23 @@ static esp_err_t handle_wifi_connect(httpd_req_t* req) {
     return http_send_json(req, response.c_str());
   }
 
-  // Pairing-token gate. The captive-portal QR + manual fallback link
-  // both bake a fresh pairing token into /companion?token=<hex>, and
-  // the wizard JS forwards that token in the body of every POST here.
-  // We accept credentials only when the token is still in the live slot
-  // table — i.e. it was issued by THIS device within the last 10 minutes
-  // (see pair_token_valid + the PAIRING TOKENS doc block in
-  // csi_integration.h). pair_token_valid() rejects empty/short/wrong-hex
-  // input too, so a single call covers missing, malformed, and expired.
-  // We validate without consuming so the wizard can retry within the TTL
-  // (e.g. user mistyped the password); the token ages out on its own.
-  // Wizard path: live pair token in the body. Settings-panel path: an
-  // authenticated admin credential (session cookie / Bearer) — strictly
-  // stronger than a 10-minute pair token. Without the alternative, the
-  // panel's Connect button could never succeed (it holds no pair token)
-  // and always reported "This setup link has expired".
+  // Pairing-token gate. The captive-portal QR + manual fallback link both
+  // bake a fresh pairing token into /companion?token=<hex>, and the wizard
+  // JS forwards that token in the body of every POST here. pair_token_valid
+  // rejects empty/short/wrong-hex too, and validates WITHOUT consuming so
+  // the wizard can retry within the TTL (e.g. mistyped password).
+  //
+  // Settings-panel path: no pair token, but an admin credential (session
+  // cookie / Bearer). wifi_change_authorize routes that through the
+  // lockout-aware api_auth_check so it can't become a token-guessing oracle;
+  // a bare pair-token miss still returns invalid_token so the wizard
+  // self-heals. (Without any admin fallback the panel's Connect could never
+  // succeed post-setup — it holds no pair token.)
   const char* token = body["token"] | "";
-  if (!csi_integration::pair_token_valid(token) &&
-      !api_auth_check_optional(req, g_device.api_token_str)) {
-    JsonDocument doc;
-    doc["ok"] = false;
-    doc["code"] = "invalid_token";
-    doc["error"] = "This setup link has expired. Reconnect to the SecuraCV network to start over.";
-    String response;
-    serializeJson(doc, response);
-    return http_send_json(req, response.c_str());
+  switch (wifi_change_authorize(req, token)) {
+    case WifiChangeAuth::PROCEED: break;
+    case WifiChangeAuth::RESPONDED: return ESP_OK;  // auth helper already replied
+    case WifiChangeAuth::INVALID_TOKEN: return wifi_change_send_invalid_token(req);
   }
 
   const char* ssid = body["ssid"] | "";
@@ -6389,11 +6412,24 @@ static void register_api_routes(httpd_handle_t server) {
 // endpoint itself stays unauthenticated (the AP is its boundary, like
 // /api/wifi/scan) — this wrapper adds no data path.
 static esp_err_t handle_selftest_wrap(httpd_req_t* req) {
+  // Compare-and-swap so this read-modify-write can't clobber a concurrent
+  // update from loop() — critically, if loop() disarms the deadline (stores
+  // 0) between our load and store, the CAS fails, reloads dl == 0, and the
+  // guard drops out WITHOUT re-arming a reboot loop() just cancelled. Only
+  // extends an already-armed deadline; reboot_deadline_extend never pulls it
+  // sooner, so a lost race can at worst leave a slightly longer window.
   uint32_t dl = __atomic_load_n(&g_setup_grace_reboot_at_ms, __ATOMIC_ACQUIRE);
-  if (dl != 0) {
+  while (dl != 0) {
     uint32_t extended = provisioning_logic::reboot_deadline_extend(
         dl, millis(), SELFTEST_REBOOT_MIN_MS);
-    __atomic_store_n(&g_setup_grace_reboot_at_ms, extended, __ATOMIC_RELEASE);
+    if (extended == dl) break;  // already far enough out
+    // desired is passed BY VALUE; on failure dl is reloaded to the current
+    // value and we recompute against it.
+    if (__atomic_compare_exchange_n(&g_setup_grace_reboot_at_ms, &dl, extended,
+                                    /*weak=*/false, __ATOMIC_RELEASE,
+                                    __ATOMIC_ACQUIRE)) {
+      break;
+    }
   }
   return selftest::handle_selftest(req);
 }
