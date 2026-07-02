@@ -375,7 +375,7 @@ module teeth2d() {
 // horizontal bore along +X with a 45° teardrop roof + small flat cap: the bore
 // top prints without sagging (a plain horizontal cylinder droops at its crown)
 module tearbore_x(x0, y, z, l, d) {
-    r = d/2; cy = min(r + 0.75, r*1.4142 - 0.1);   // clamp: keeps the cap valid for small bores
+    r = d/2; cy = min(r + 0.75, r*1.38);   // proportional clamp: cap stays valid at ANY bore size
     translate([x0, y, z]) rotate([90, 0, 0]) rotate([0, 90, 0])
         linear_extrude(l) union() {
             circle(d = d);
