@@ -14,7 +14,9 @@
 - **Privacy chokepoint enforced at the publish layer**: events carry only
   `presence_detected` / `presence_cleared` / `occupancy_changed` with the
   coarse vocabulary (presence state, 0/1/2+ occupant bucket, near/mid/far
-  range band). Raw distance and vitals never leave the device via events;
+  range band) and a 10-minute-coarsened uptime bucket instead of a precise
+  timestamp (metadata minimization; `seq` preserves ordering). Raw distance
+  and vitals never leave the device via events;
   wellbeing builds publish the P0 breathing lock and P1-gated BPM numerics
   on the state channel only, suppressed unless exactly one target is present.
 - **HA entity set** per the design doc: presence, occupants, range band,

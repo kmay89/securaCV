@@ -111,6 +111,36 @@ static uint32_t g_last_heartbeat_ms = 0;
 static uint32_t g_last_lux_ms = 0;
 static bool g_state_dirty = false;
 
+// Broker reconnect schedule (mirrors the WiFi supervisor's backoff): a broker
+// outage must never pin the loop — the radar witness keeps sensing and each
+// bounded connect attempt happens at most once per backoff window.
+static uint32_t g_mqtt_next_attempt_ms = 0;
+static uint32_t g_mqtt_attempts = 0;
+
+static bool mqtt_supervise(uint32_t now) {
+  if (canary::net::mqtt_connected()) {
+    g_mqtt_attempts = 0;
+    return true;
+  }
+  if (!canary::net::wifi_connected()) return false;  // wifi_loop owns this
+  if ((int32_t)(now - g_mqtt_next_attempt_ms) < 0) return false;
+
+  if (canary::net::mqtt_connect_attempt()) {
+    g_mqtt_attempts = 0;
+    canary::net::publish_status_retained(TOPICS, "online");
+    return true;
+  }
+
+  // Exponential backoff: 2 s -> 4 s -> 8 s -> 16 s -> 30 s cap.
+  uint32_t attempt = g_mqtt_attempts;
+  if (attempt > 4) attempt = 4;
+  uint32_t backoff_ms = 2000UL << attempt;
+  if (backoff_ms > 30000UL) backoff_ms = 30000UL;
+  g_mqtt_attempts++;
+  g_mqtt_next_attempt_ms = now + backoff_ms;
+  return false;
+}
+
 // ----------------------------------------------------------------------------
 // Privacy chokepoint: enum -> coarse wire strings. This is the FULL vocabulary
 // that ever leaves the device about what the radar saw.
@@ -200,10 +230,15 @@ static void publish_state_now(uint32_t now_ms) {
 }
 
 // Witness events: presence transitions and occupancy changes only, with the
-// coarse bucket/band vocabulary. No distance, no vitals, ever.
+// coarse bucket/band vocabulary. No distance, no vitals, ever. The only time
+// field is uptime coarsened to the project's 10-minute buckets — a precise
+// per-event timestamp would hand the event stream exact activity timing,
+// against the metadata-minimization invariant; `seq` preserves ordering.
 static void publish_event_now(const char* event_name, uint32_t now_ms) {
   static uint32_t seq = 0;
   refresh_snapshot(now_ms);
+
+  const uint32_t bucket_uptime_s = (now_ms / 1000UL / 600UL) * 600UL;
 
   char msg[384];
   snprintf(msg, sizeof(msg),
@@ -212,7 +247,7 @@ static void publish_event_now(const char* event_name, uint32_t now_ms) {
            "\"device_type\":\"%s\","
            "\"event\":\"%s\","
            "\"seq\":%lu,"
-           "\"ts_ms\":%lu,"
+           "\"bucket_uptime_s\":%lu,"
            "\"presence\":\"%s\","
            "\"occupants\":\"%s\","
            "\"range\":\"%s\""
@@ -220,7 +255,7 @@ static void publish_event_now(const char* event_name, uint32_t now_ms) {
            canary::cfg::get().device_id, DEVICE_TYPE,
            event_name,
            (unsigned long)(++seq),
-           (unsigned long)now_ms,
+           (unsigned long)bucket_uptime_s,
            g_snap.presence,
            g_snap.occupants,
            g_snap.range);
@@ -388,9 +423,12 @@ void setup() {
   boot_kv("HA prefix", HA_DISCOVERY_PREFIX);
   boot_blank();
 
-  canary::net::mqtt_reconnect_blocking();
-  canary::net::ha_discovery_publish_once(TOPICS);
-  canary::net::publish_status_retained(TOPICS, "online");
+  // ONE bounded connect attempt (it publishes status + HA discovery on
+  // success). A broker that is down at boot must not block the witness:
+  // sensing starts regardless and loop()'s backoff supervisor keeps trying.
+  if (!mqtt_supervise(canary::ms_now())) {
+    canary::log_line("MQTT", "Broker unreachable — sensing starts anyway; retrying in loop().");
+  }
 
   // Signed pull-OTA: arm the engine (validation already ran right after
   // WiFi). Daily jittered checks; HA's Install button and auto-update
@@ -453,17 +491,12 @@ void loop() {
   canary::net::wifi_loop(now);
   canary::diag::loop(now);
 
-  if (!canary::net::mqtt_connected()) {
-    if (!canary::net::wifi_connected()) {
-      // No link, no broker — keep witnessing; wifi_loop() drives recovery.
-      delay(5);
-      return;
-    }
-    canary::log_line("MQTT", "Disconnected. Reconnecting...");
-    canary::net::mqtt_reconnect_blocking();
-    if (!canary::net::mqtt_connected()) return;  // WiFi dropped mid-attempt
-    canary::net::publish_status_retained(TOPICS, "online");
-    publish_state_now(now);
+  // Bounded, backoff-scheduled broker supervision: while the broker is
+  // unreachable the witness keeps sensing (we already drove the FSMs above)
+  // and simply skips the publish phase.
+  if (!mqtt_supervise(now)) {
+    delay(5);
+    return;
   }
 
   canary::net::mqtt_loop();

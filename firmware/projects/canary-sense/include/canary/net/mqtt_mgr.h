@@ -8,7 +8,14 @@ namespace canary::net {
   void mqtt_init(const Topics& topics);
   void mqtt_loop();
   bool mqtt_connected();
-  void mqtt_reconnect_blocking();
+
+  // ONE bounded connect attempt (TCP connect + MQTT CONNECT). On success it
+  // publishes the retained online status, HA discovery, and reconciles the
+  // update-entity subscriptions/state, then returns true. On failure it
+  // returns false immediately — the caller owns the retry schedule, so a
+  // broker outage can never pin the main loop and stop the radar witness
+  // from sensing (unlike a spin-until-connected loop).
+  bool mqtt_connect_attempt();
 
   // Publishing
   void publish_status_retained(const Topics& topics, const char* status);   // online/offline
