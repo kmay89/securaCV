@@ -2,6 +2,33 @@
 
 ## [Unreleased]
 
+### canary-wap admin console: the last dead controls now work
+
+Follow-up to the panel revival — the three controls that were honestly
+labeled "not available on this build" are now functional:
+
+- **RF Presence tab**: `rf_presence` is wired up — `init()` in setup
+  (privacy-preserving session/token state; no radio started), `update()`
+  in loop, and the seven `/api/rf/*` routes registered behind the
+  Bearer/session `auth_gated` trampoline the module's header mandated.
+  Sensing stays opt-in (enable from the tab, persisted in NVS); BLE already
+  feeds the fusion scorer. The v0 scoring FSM is unchanged.
+- **Storage cleanup** ("Clean up old export bundles"): a real, auth-gated
+  `POST /api/logs/rotate` trims `/sd/EXPORT` (witness-export bundles that
+  otherwise accumulate unbounded) to the newest 20 via the tested
+  count-based `datamgmt::rotate_dir`. It never touches `/sd/WITNESS` or
+  `/sd/CHAIN` — the sealed evidence is untouchable (Invariant IV).
+- **Device "Save Configuration"**: record interval, time bucket, and log
+  level are now real NVS-persisted runtime settings via `POST /api/config`.
+  The time bucket coarsens event timing (Invariant III) and is clamped so
+  it can only be widened past its 5000 ms floor, never narrowed — privacy
+  is monotonic. The log threshold is clamped to ≤ WARNING so ERROR/CRITICAL
+  are always stored.
+
+All clamps live in Arduino-free logic headers with host tests
+(`config_logic.h`), the route-security/budget CI guards extend to the new
+routes, and `web_assets_gz.h` is regenerated.
+
 ### canary-wap dashboard/settings: revive the whole panel
 
 - **The settings panel is functional again.** On the default Arduino-IDE
