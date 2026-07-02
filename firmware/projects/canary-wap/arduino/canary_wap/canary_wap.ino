@@ -384,7 +384,8 @@ static const uint32_t FIX_LOST_TIMEOUT_MS  = 3000;    // GPS fix timeout
 // ── Operator-configurable runtime settings (Device tab "Save Configuration",
 // NVS-persisted). The compile-time constants above are the defaults; the time
 // bucket constant is additionally the privacy FLOOR — g_time_bucket_ms may be
-// clamped coarser but NEVER finer (see config_logic.h, Invariant III). ──
+// clamped to at least the floor, so event timing is NEVER finer than the
+// compile-time minimum (see config_logic.h, Invariant III). ──
 static const uint32_t RECORD_INTERVAL_MIN_MS = 250;
 static const uint32_t RECORD_INTERVAL_MAX_MS = 60000;
 static const uint8_t  LOG_LEVEL_STORE_MAX    = SCV_LOG_WARNING;  // never drop ERROR/CRITICAL
@@ -3415,8 +3416,10 @@ static void config_load_runtime() {
 // POST /api/config — persist the three Device-tab settings. Each field is
 // optional; only provided fields change. All values are clamped before use
 // AND before persistence, so NVS never holds an out-of-envelope value. The
-// time bucket can only be widened past its floor, never narrowed — coarsening
-// (privacy) is monotonic (Invariant III).
+// time bucket is clamped to at least its compile-time floor — event timing is
+// never finer than the Invariant III minimum (5000 ms). The operator owns the
+// device and may retune it above that floor in either direction (Invariant
+// IV/sovereignty); the floor is the privacy guarantee, not a one-way ratchet.
 static esp_err_t handle_config_post(httpd_req_t* req) {
   g_health.http_requests++;
 

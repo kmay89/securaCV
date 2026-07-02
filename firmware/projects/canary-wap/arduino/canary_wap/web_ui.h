@@ -2255,7 +2255,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           <div class="form-group">
             <label class="form-label">Time Bucket (ms)</label>
             <input type="number" class="form-input" id="configTimeBucket" value="5000" min="5000" max="60000">
-            <p style="font-size:0.7rem;color:var(--muted);margin-top:0.25rem;">Coarsens event timing for privacy. Can only be made larger (coarser) than the 5000 ms minimum, never smaller.</p>
+            <p style="font-size:0.7rem;color:var(--muted);margin-top:0.25rem;">Coarsens event timing for privacy. Minimum 5000 ms — finer (more precise) timing than this is never allowed.</p>
           </div>
           <div class="form-group">
             <label class="form-label">Log Level (min stored)</label>
@@ -4877,7 +4877,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       document.getElementById('configTimeBucket').value = data.time_bucket_ms;
       document.getElementById('configLogLevel').value = data.log_level;
       alert(data.clamped
-        ? 'Saved — some values were adjusted to their safe range (the time bucket can only be made coarser than the ' + (data.time_bucket_floor_ms || 5000) + ' ms privacy floor).'
+        ? 'Saved — some values were adjusted to their safe range (the time bucket must be at least the ' + (data.time_bucket_floor_ms || 5000) + ' ms privacy floor).'
         : 'Configuration saved and will persist across reboots.');
     }
 
