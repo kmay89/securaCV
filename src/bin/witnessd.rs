@@ -137,6 +137,7 @@ fn main() -> Result<()> {
     let api_config = ApiConfig {
         addr: config.api_addr.clone(),
         token_path: config.api_token_path.clone(),
+        rate_limit_per_minute: config.api_rate_limit_per_minute,
         ..ApiConfig::default()
     };
     let api_handle = {
@@ -1417,6 +1418,7 @@ mod tests {
             ruleset_id: "ruleset:test".to_string(),
             api_addr: "127.0.0.1:0".to_string(),
             api_token_path: None,
+            api_rate_limit_per_minute: witness_kernel::api::DEFAULT_API_RATE_LIMIT_PER_MINUTE,
             ingest: IngestSettings {
                 backend: IngestBackend::Rtsp,
                 failure_threshold: Duration::ZERO,

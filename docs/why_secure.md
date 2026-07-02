@@ -93,6 +93,8 @@ when you want the disclosure itself countersigned by your trustees.
 
 The seed (the `DEVICE_KEY_SEED` value, e.g. `devkey:...`) is the root of
 everything: it derives both the database encryption key and the signing key.
+The event database is **encrypted at rest by default** (SQLCipher) — a stolen
+device or SD card yields ciphertext, not your event history.
 
 - **Generate** it once, randomly (e.g. `openssl rand -hex 32`), when you set
   the device up.

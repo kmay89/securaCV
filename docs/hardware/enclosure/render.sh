@@ -82,6 +82,39 @@ sstl "canary_sense_front.stl" -D 'part="front"'
 stl "canary_wap_enclosure_weather_shield.stl" -D 'preset="battery_weather"' -D 'part="shield"'
 stl "canary_wap_enclosure_tray.stl" -D 'part="tray"' 
 
+# --- IN DEVELOPMENT designs: rendered + mesh-checked in CI, STLs NOT committed
+# (dev_*.stl is gitignored; print from the .scad while these mature)
+devstl() { local out=$1 src=$2; shift 2; echo "Rendering $out (dev) ..."
+  "$OPENSCAD" --export-format binstl -o "$out" "$@" "$src"; }
+devstl dev_watch_drum.stl    canary_watch_station.scad -D 'part="drum"'
+devstl dev_watch_bezel.stl   canary_watch_station.scad -D 'part="bezel"'
+devstl dev_watch_stand.stl   canary_watch_station.scad -D 'part="stand"'
+devstl dev_sense_stand.stl   canary_sense_stand.scad   -D 'part="base"'
+devstl dev_sense_gang.stl    canary_sense_gang.scad    -D 'part="plate"'
+devstl dev_outlet_cradle.stl canary_outlet_cradle.scad -D 'part="cradle"'
+devstl dev_relay_body.stl    canary_relay_solar.scad   -D 'part="body"'
+devstl dev_relay_lid.stl     canary_relay_solar.scad   -D 'part="lid"'
+devstl dev_relay_roof.stl    canary_relay_solar.scad   -D 'part="roof"'
+devstl dev_combo_back.stl    canary_combo.scad         -D 'part="back"'
+devstl dev_combo_front.stl   canary_combo.scad         -D 'part="front"'
+devstl dev_hub_tray.stl      canary_hub_din.scad       -D 'part="tray"'
+devstl dev_hub_cover.stl     canary_hub_din.scad       -D 'part="cover"' 
+devstl dev_hammond_wap.stl    canary_hammond_chassis.scad -D 'stack="wap"'
+devstl dev_hammond_vision.stl canary_hammond_chassis.scad -D 'stack="vision"'
+devstl dev_hammond_sense.stl  canary_hammond_chassis.scad -D 'stack="sense"'
+devstl dev_adapter_corner.stl   canary_mount_adapters.scad -D 'part="corner"'
+devstl dev_adapter_magnet.stl   canary_mount_adapters.scad -D 'part="magnet"'
+devstl dev_adapter_pole.stl     canary_mount_adapters.scad -D 'part="pole"'
+devstl dev_adapter_template.stl canary_mount_adapters.scad -D 'part="template"'
+devstl dev_insert_horn.stl   canary_inserts.scad -D 'part="horn"'
+devstl dev_insert_glare.stl  canary_inserts.scad -D 'part="glare_ring"'
+devstl dev_gland_body.stl    canary_inserts.scad -D 'part="gland_body"'
+devstl dev_gland_bush.stl    canary_inserts.scad -D 'part="gland_bush"'
+devstl dev_gland_cap.stl     canary_inserts.scad -D 'part="gland_cap"'
+devstl dev_jbox_body.stl     canary_jbox.scad -D 'part="body"'
+devstl dev_jbox_lid.stl      canary_jbox.scad -D 'part="lid"'
+devstl dev_sign.stl          canary_sign.scad -D 'part="sign"' 
+
 if [[ "${1:-}" != "--no-png" ]]; then
   # one preview per printable variant — these drive the README's variant-picker gallery
   png "preview_all.png"     -D 'preset="battery_full"'    -D 'part="all"'
@@ -96,6 +129,18 @@ if [[ "${1:-}" != "--no-png" ]]; then
    png "preview_vision_knob.png"         -D 'part="knob"')
   (SRC="$DSRC"; png "preview_doorbell.png" -D 'part="all"')
   (SRC="$SSRC"; png "preview_sense.png" -D 'part="all"')
+  (SRC="canary_watch_station.scad"; png "preview_dev_station.png" -D 'part="all"')
+  (SRC="canary_sense_stand.scad";   png "preview_dev_stand.png"   -D 'part="all"')
+  (SRC="canary_sense_gang.scad";    png "preview_dev_gang.png"    -D 'part="plate"')
+  (SRC="canary_outlet_cradle.scad"; png "preview_dev_cradle.png"  -D 'part="cradle"')
+  (SRC="canary_relay_solar.scad";   png "preview_dev_relay.png"   -D 'part="all"')
+  (SRC="canary_combo.scad";         png "preview_dev_combo.png"   -D 'part="all"')
+  (SRC="canary_hub_din.scad";       png "preview_dev_hub.png"     -D 'part="all"')
+  (SRC="canary_hammond_chassis.scad"; png "preview_dev_hammond.png"  -D 'stack="vision"')
+  (SRC="canary_mount_adapters.scad";  png "preview_dev_adapters.png" -D 'part="corner"')
+  (SRC="canary_inserts.scad";         png "preview_dev_inserts.png"  -D 'part="horn"')
+  (SRC="canary_jbox.scad";            png "preview_dev_jbox.png"     -D 'part="all"')
+  (SRC="canary_sign.scad";            png "preview_dev_sign.png"     -D 'part="sign"')
 fi
 
-echo "Done: WAP (10 incl shield/tray) + Vision (9) + Doorbell (5) + Sense (2) STLs + previews."
+echo "Done: released STLs (WAP 10 / Vision 9 / Doorbell 5 / Sense 2) + 28 dev renders + previews."
