@@ -111,6 +111,7 @@ struct WitnessApiConfigFile {
 struct ApiConfigFile {
     addr: Option<String>,
     token_path: Option<PathBuf>,
+    rate_limit_per_minute: Option<u32>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -252,6 +253,9 @@ pub struct WitnessdConfig {
     pub ruleset_id: String,
     pub api_addr: String,
     pub api_token_path: Option<PathBuf>,
+    /// Per-IP request cap for the event API (0 disables). See
+    /// [`crate::api::DEFAULT_API_RATE_LIMIT_PER_MINUTE`].
+    pub api_rate_limit_per_minute: u32,
     pub ingest: IngestSettings,
     pub rtsp: RtspSettings,
     pub file: FileSettings,
@@ -276,6 +280,9 @@ pub struct WitnessApiConfig {
     pub ruleset_id: String,
     pub api_addr: String,
     pub api_token_path: Option<PathBuf>,
+    /// Per-IP request cap for the event API (0 disables). See
+    /// [`crate::api::DEFAULT_API_RATE_LIMIT_PER_MINUTE`].
+    pub api_rate_limit_per_minute: u32,
     pub sensitive_zones: Vec<String>,
     pub retention: Duration,
 }
@@ -426,6 +433,11 @@ impl WitnessdConfig {
             .as_ref()
             .and_then(|api| api.addr.clone())
             .unwrap_or_else(|| DEFAULT_API_ADDR.to_string());
+        let api_rate_limit_per_minute = file
+            .api
+            .as_ref()
+            .and_then(|api| api.rate_limit_per_minute)
+            .unwrap_or(crate::api::DEFAULT_API_RATE_LIMIT_PER_MINUTE);
         let api_token_path = file.api.and_then(|api| api.token_path);
         let ingest_config = file.ingest.unwrap_or_default();
         let ingest_backend = ingest_config
@@ -619,6 +631,7 @@ impl WitnessdConfig {
             ruleset_id,
             api_addr,
             api_token_path,
+            api_rate_limit_per_minute,
             ingest,
             rtsp,
             file: file_source,
@@ -644,6 +657,13 @@ impl WitnessdConfig {
         if let Ok(path) = std::env::var("WITNESS_API_TOKEN_PATH") {
             if !path.trim().is_empty() {
                 self.api_token_path = Some(PathBuf::from(path));
+            }
+        }
+        if let Ok(raw) = std::env::var("WITNESS_API_RATE_LIMIT_PER_MINUTE") {
+            if !raw.trim().is_empty() {
+                self.api_rate_limit_per_minute = raw.trim().parse().map_err(|_| {
+                    anyhow!("WITNESS_API_RATE_LIMIT_PER_MINUTE must be a non-negative integer")
+                })?;
             }
         }
         if let Ok(backend) = std::env::var("WITNESS_INGEST_BACKEND") {
@@ -987,6 +1007,11 @@ impl WitnessApiConfig {
             .as_ref()
             .and_then(|api| api.addr.clone())
             .unwrap_or_else(|| DEFAULT_API_ADDR.to_string());
+        let api_rate_limit_per_minute = file
+            .api
+            .as_ref()
+            .and_then(|api| api.rate_limit_per_minute)
+            .unwrap_or(crate::api::DEFAULT_API_RATE_LIMIT_PER_MINUTE);
         let api_token_path = file.api.and_then(|api| api.token_path);
         let sensitive_zones = file
             .zones
@@ -1002,6 +1027,7 @@ impl WitnessApiConfig {
             ruleset_id,
             api_addr,
             api_token_path,
+            api_rate_limit_per_minute,
             sensitive_zones,
             retention,
         })
@@ -1016,6 +1042,13 @@ impl WitnessApiConfig {
         if let Ok(path) = std::env::var("WITNESS_API_TOKEN_PATH") {
             if !path.trim().is_empty() {
                 self.api_token_path = Some(PathBuf::from(path));
+            }
+        }
+        if let Ok(raw) = std::env::var("WITNESS_API_RATE_LIMIT_PER_MINUTE") {
+            if !raw.trim().is_empty() {
+                self.api_rate_limit_per_minute = raw.trim().parse().map_err(|_| {
+                    anyhow!("WITNESS_API_RATE_LIMIT_PER_MINUTE must be a non-negative integer")
+                })?;
             }
         }
         if let Ok(zones) = std::env::var("WITNESS_SENSITIVE_ZONES") {

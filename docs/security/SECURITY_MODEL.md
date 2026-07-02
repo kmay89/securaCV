@@ -154,6 +154,7 @@ The device uses well-vetted, standard cryptographic primitives:
 | Chain integrity & domain separation | SHA-256 | mbedTLS (ESP-IDF) |
 | API token derivation | HMAC-SHA256 / HKDF | mbedTLS (ESP-IDF) |
 | Transport encryption | TLS 1.2+ (RSA-2048) | mbedTLS (ESP-IDF) |
+| At-rest event database (kernel) | SQLCipher (AES-256), key derived from the device seed | SQLCipher via rusqlite |
 
 No custom cryptographic implementations are used. All primitives come
 from established, audited libraries.
