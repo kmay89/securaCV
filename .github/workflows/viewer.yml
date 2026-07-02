@@ -42,6 +42,8 @@ jobs:
       run: node viewer/build.mjs --check
     - name: HA timeline card helper tests
       run: node --test custom_components/securacv/www/securacv-timeline-card.test.js
+    - name: Break-glass console polling tests
+      run: node --test src/break_glass/breakglass.test.js
 
   canary-bridge:
     runs-on: ubuntu-latest

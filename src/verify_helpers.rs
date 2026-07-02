@@ -100,3 +100,33 @@ fn load_pq_key_from_db_optional(conn: &Connection) -> Result<Option<PqPublicKey>
 pub fn hex32(b: &[u8; 32]) -> String {
     b.iter().map(|x| format!("{:02x}", x)).collect()
 }
+
+/// Display prefix (up to 16 chars) of a key string that may be short or
+/// garbage. Diagnostic printers (`log_verify --lineage`/`--checkpoints`)
+/// format keys reconstructed from possibly-tampered database rows — the tools
+/// exist to inspect exactly that data, so truncation must never panic, and it
+/// must stay safe on non-ASCII bytes that survived a lossy decode.
+pub fn key_prefix(s: &str) -> &str {
+    match s.char_indices().nth(16) {
+        Some((idx, _)) => &s[..idx],
+        None => s,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::key_prefix;
+
+    #[test]
+    fn key_prefix_never_panics_and_clamps() {
+        assert_eq!(key_prefix(""), "");
+        assert_eq!(key_prefix("aabb"), "aabb"); // short tampered key
+        assert_eq!(key_prefix("0123456789abcdef"), "0123456789abcdef");
+        assert_eq!(key_prefix("0123456789abcdef0123"), "0123456789abcdef");
+        assert_eq!(key_prefix("not hex at all — garbage"), "not hex at all —");
+        // Multibyte chars straddling the cut must not split a boundary.
+        let s = "ééééééééééééééééé";
+        assert_eq!(key_prefix(s), &s[..key_prefix(s).len()]);
+        assert_eq!(key_prefix(s).chars().count(), 16);
+    }
+}

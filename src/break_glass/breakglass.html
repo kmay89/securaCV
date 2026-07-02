@@ -63,6 +63,11 @@
   .muted { color:var(--muted); font-size:12.5px; }
   .step-off { opacity:.45; pointer-events:none; }
   code.k { font-family:ui-monospace,monospace; font-size:12.5px; }
+  .progress { height:8px; background:var(--bg); border:1px solid var(--line); border-radius:6px;
+              overflow:hidden; flex:1 1 160px; align-self:center; }
+  .progress > div { height:100%; width:0; background:var(--accent); transition:width .3s; }
+  .progress.ready > div { background:var(--ok); }
+  body.trustee-mode .operator-only { display:none; }
 </style>
 </head>
 <body>
@@ -73,8 +78,35 @@
 
 <div class="wrap">
 
+  <!-- Trustee signer view: shown instead of the operator console when the
+       page is opened via a share link (#sign&hash=...). The fragment never
+       reaches the server, and this view makes NO network requests — the
+       trustee's key stays in the tab; only the signature they copy back to
+       the operator leaves it. -->
+  <section class="panel" id="p-trustee-sign" style="display:none">
+    <h2>Sign an unlock request</h2>
+    <p class="sub">The operator asked you to approve break-glass access to sealed evidence.
+      Signing happens entirely in this tab — your key is never sent anywhere.</p>
+    <div><strong>Envelope:</strong> <span class="mono" id="ts-envelope"></span></div>
+    <label>Request hash you are signing</label>
+    <div class="hash mono" id="ts-hash"></div>
+    <p class="muted" style="margin:8px 0 0">Confirm this hash with the operator over a channel you
+      trust (read it aloud, compare the first and last 8 characters) before signing.</p>
+    <label for="ts-sk">Your signing key (32-byte hex seed)</label>
+    <input type="text" id="ts-sk" class="mono" placeholder="64 hex chars" autocomplete="off" spellcheck="false" />
+    <div style="margin-top:10px"><button class="btn primary" id="ts-btn-sign">Sign in this browser</button></div>
+    <div class="banner" id="ts-msg"></div>
+    <div id="ts-result" style="display:none; margin-top:10px">
+      <label>Your signature — send this back to the operator</label>
+      <div class="row">
+        <div class="hash mono" id="ts-sig"></div>
+        <div style="flex:0 0 auto"><button class="btn" id="ts-btn-copy">Copy</button></div>
+      </div>
+    </div>
+  </section>
+
   <!-- 1. Connect -->
-  <section class="panel" id="p-connect">
+  <section class="panel operator-only" id="p-connect">
     <h2>1 · Connect</h2>
     <p class="sub">Paste the capability token from the server's token file. It stays in this tab and is sent only to this server.</p>
     <label for="token">Capability token</label>
@@ -87,7 +119,7 @@
   </section>
 
   <!-- 2. Request -->
-  <section class="panel step-off" id="p-request">
+  <section class="panel step-off operator-only" id="p-request">
     <h2>2 · Open an unlock request</h2>
     <p class="sub">Names the sealed envelope and the reason. Produces the request hash every trustee must sign.</p>
     <div class="row">
@@ -108,11 +140,19 @@
         <div class="hash mono" id="request-hash"></div>
         <div style="flex:0 0 auto"><button class="btn" id="btn-copy-hash">Copy</button></div>
       </div>
+      <label style="margin-top:12px">Trustee signing link — send one to each trustee</label>
+      <div class="row">
+        <div class="hash mono" id="share-link"></div>
+        <div style="flex:0 0 auto"><button class="btn" id="btn-copy-link">Copy</button></div>
+      </div>
+      <p class="muted" style="margin:6px 0 0">Opens a signer-only page (no token needed, makes no
+        server calls): the trustee signs in their own browser and sends you back the signature to
+        paste in step 3. Works even if the trustee can't reach this server.</p>
     </div>
   </section>
 
   <!-- 3. Collect approvals -->
-  <section class="panel step-off" id="p-approvals">
+  <section class="panel step-off operator-only" id="p-approvals">
     <h2>3 · Collect approvals</h2>
     <p class="sub">Each trustee signs the request hash with their own key (offline via <code class="k">break_glass approve</code>) and gives you the signature. Paste it below, or use the in-browser signer if a trustee is signing here.</p>
     <table>
@@ -136,19 +176,21 @@
   </section>
 
   <!-- 4. Status + unseal -->
-  <section class="panel step-off" id="p-unseal">
+  <section class="panel step-off operator-only" id="p-unseal">
     <h2>4 · Quorum &amp; unseal</h2>
     <div class="row" style="align-items:center">
       <div style="flex:0 0 auto"><span class="quorum mono" id="quorum">0 / 0</span></div>
-      <div><span class="muted">collected / required</span></div>
+      <div class="progress" id="quorum-bar"><div></div></div>
       <div style="flex:0 0 auto"><button class="btn" id="btn-refresh">Refresh status</button></div>
       <div style="flex:0 0 auto"><button class="btn primary" id="btn-unseal" disabled>Unseal</button></div>
       <div style="flex:0 0 auto"><button class="btn" id="btn-close">Close request</button></div>
     </div>
+    <p class="muted" id="poll-note" style="margin:6px 0 0; display:none">Status refreshes
+      automatically every few seconds while the request is open.</p>
     <div class="banner" id="unseal-msg"></div>
   </section>
 
-  <p class="muted" style="text-align:center; margin-top:20px">
+  <p class="muted operator-only" style="text-align:center; margin-top:20px">
     All actions are recorded as tamper-evident break-glass receipts. Unsealed evidence is written to the server's output directory, not returned over the network.
   </p>
 </div>
@@ -256,39 +298,48 @@ $("btn-open").onclick = guarded("btn-open", "request-msg", async () => {
   state.requestHash = json.request_hash;
   state.needed = json.needed;
   $("request-hash").textContent = json.request_hash;
+  $("share-link").textContent = window.location.origin + window.location.pathname +
+    "#sign&hash=" + json.request_hash + "&envelope=" + encodeURIComponent(envelope);
   $("request-view").style.display = "block";
   banner("request-msg", "ok", "Request open. " + json.needed + " trustee signature(s) required.");
   renderTrusteeRows();
   enableStep("p-approvals");
   enableStep("p-unseal");
   refreshStatus();
+  startPolling();
 });
 
-$("btn-copy-hash").onclick = () => {
-  const btn = $("btn-copy-hash");
-  const done = (ok) => {
-    btn.textContent = ok ? "Copied" : "Copy failed — select the hash manually";
-    setTimeout(() => { btn.textContent = "Copy"; }, 2000);
+// Copy-to-clipboard with execCommand fallback, shared by every Copy button.
+function wireCopy(btnId, getText) {
+  $(btnId).onclick = () => {
+    const btn = $(btnId);
+    const text = getText();
+    const done = (ok) => {
+      btn.textContent = ok ? "Copied" : "Copy failed — select manually";
+      setTimeout(() => { btn.textContent = "Copy"; }, 2000);
+    };
+    const fallback = () => {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      let ok = false;
+      try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+      document.body.removeChild(ta);
+      done(ok);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(() => done(true), fallback);
+    } else {
+      fallback();
+    }
   };
-  const fallback = () => {
-    const ta = document.createElement("textarea");
-    ta.value = state.requestHash;
-    ta.setAttribute("readonly", "");
-    ta.style.position = "fixed";
-    ta.style.opacity = "0";
-    document.body.appendChild(ta);
-    ta.select();
-    let ok = false;
-    try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
-    document.body.removeChild(ta);
-    done(ok);
-  };
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(state.requestHash).then(() => done(true), fallback);
-  } else {
-    fallback();
-  }
-};
+}
+wireCopy("btn-copy-hash", () => state.requestHash);
+wireCopy("btn-copy-link", () => $("share-link").textContent);
 
 function renderTrusteeRows() {
   const tb = $("trustee-rows");
@@ -328,53 +379,127 @@ async function submitApproval(trustee, signature) {
   }
 }
 
-// In-browser Ed25519 signer (WebCrypto). Key never leaves the tab.
+// In-browser Ed25519 signing (WebCrypto). The seed never leaves the tab; the
+// same routine backs the operator-side signer and the trustee share-link view.
+async function ed25519SignSeed(seedHex, messageHex) {
+  const seed = hexToBytes(seedHex);
+  if (seed.length !== 32) throw new Error("signing key must be 32 bytes (64 hex chars)");
+  // Wrap the raw seed in PKCS#8 so WebCrypto can import it as an Ed25519 private key.
+  const pkcs8 = new Uint8Array(48);
+  pkcs8.set([0x30,0x2e,0x02,0x01,0x00,0x30,0x05,0x06,0x03,0x2b,0x65,0x70,0x04,0x22,0x04,0x20], 0);
+  pkcs8.set(seed, 16);
+  const key = await crypto.subtle.importKey("pkcs8", pkcs8, { name: "Ed25519" }, false, ["sign"]);
+  const sig = await crypto.subtle.sign({ name: "Ed25519" }, key, hexToBytes(messageHex));
+  return bytesToHex(new Uint8Array(sig));
+}
+
+function signErrorMessage(e) {
+  const m = (e && e.message) || String(e);
+  if (/Ed25519|importKey|Unsupported|operation/i.test(m)) {
+    return "In-browser Ed25519 isn't available in this browser. Sign offline with `break_glass approve` and paste the signature.";
+  }
+  return "Could not sign: " + m;
+}
+
 $("btn-sign").onclick = async () => {
   clearBanner("sign-msg");
   if (!state.requestHash) { banner("sign-msg", "bad", "Open a request first."); return; }
   const trustee = $("sk-trustee").value.trim();
   try {
-    const seed = hexToBytes($("sk").value);
-    if (seed.length !== 32) throw new Error("signing key must be 32 bytes (64 hex chars)");
-    // Wrap the raw seed in PKCS#8 so WebCrypto can import it as an Ed25519 private key.
-    const pkcs8 = new Uint8Array(48);
-    pkcs8.set([0x30,0x2e,0x02,0x01,0x00,0x30,0x05,0x06,0x03,0x2b,0x65,0x70,0x04,0x22,0x04,0x20], 0);
-    pkcs8.set(seed, 16);
-    const key = await crypto.subtle.importKey("pkcs8", pkcs8, { name: "Ed25519" }, false, ["sign"]);
-    const sig = await crypto.subtle.sign({ name: "Ed25519" }, key, hexToBytes(state.requestHash));
-    const sigHex = bytesToHex(new Uint8Array(sig));
-    // Drop the seed reference; fill the matching row if present.
+    const sigHex = await ed25519SignSeed($("sk").value, state.requestHash);
     const row = document.querySelector('#trustee-rows input[data-trustee="' + (window.CSS && CSS.escape ? CSS.escape(trustee) : trustee) + '"]');
     if (row) { row.value = sigHex; banner("sign-msg", "ok", "Signed. Signature placed in the " + trustee + " row — review and submit."); }
     else { banner("sign-msg", "warn", "Signed, but no row for trustee \"" + trustee + "\". Signature: " + sigHex); }
   } catch (e) {
-    const m = (e && e.message) || String(e);
-    if (/Ed25519|importKey|Unsupported|operation/i.test(m)) {
-      banner("sign-msg", "bad", "In-browser Ed25519 isn't available in this browser. Sign offline with `break_glass approve` and paste the signature.");
-    } else {
-      banner("sign-msg", "bad", "Could not sign: " + m);
-    }
+    banner("sign-msg", "bad", signErrorMessage(e));
   } finally {
     // Always wipe the signing key from the DOM, even on error.
     $("sk").value = "";
   }
 };
 
-// 4. Status / unseal
+// ---- Trustee share-link view ----------------------------------------------
+// Link format: #sign&hash=<request_hash>&envelope=<id>. Everything after `#`
+// stays in the browser (fragments are never sent in HTTP requests), and this
+// view performs no fetches at all, so it is safe to open without the
+// capability token: the request hash and envelope id are exactly what the
+// operator already shares with trustees out of band.
+function parseSignFragment() {
+  const fragment = window.location.hash.replace(/^#/, "");
+  if (!fragment.startsWith("sign")) return null;
+  const params = {};
+  fragment.split("&").slice(1).forEach((pair) => {
+    const eq = pair.indexOf("=");
+    if (eq > 0) params[pair.slice(0, eq)] = decodeURIComponent(pair.slice(eq + 1));
+  });
+  if (!/^[0-9a-f]{64}$/.test(params.hash || "")) return null;
+  return params;
+}
+
+const signParams = parseSignFragment();
+if (signParams) {
+  document.body.classList.add("trustee-mode");
+  document.querySelector("header.site p").textContent =
+    "Trustee signing page — your key stays in this tab; only the signature you copy leaves it.";
+  $("p-trustee-sign").style.display = "";
+  $("ts-hash").textContent = signParams.hash;
+  $("ts-envelope").textContent = signParams.envelope || "(not stated — ask the operator)";
+  $("ts-btn-sign").onclick = async () => {
+    clearBanner("ts-msg");
+    try {
+      const sigHex = await ed25519SignSeed($("ts-sk").value, signParams.hash);
+      $("ts-sig").textContent = sigHex;
+      $("ts-result").style.display = "";
+      banner("ts-msg", "ok", "Signed. Copy the signature below and send it to the operator.");
+    } catch (e) {
+      banner("ts-msg", "bad", signErrorMessage(e));
+    } finally {
+      $("ts-sk").value = "";
+    }
+  };
+  wireCopy("ts-btn-copy", () => $("ts-sig").textContent);
+}
+
+// 4. Status / unseal. While a request is open the console polls status every
+// few seconds, so approvals arriving from other machines show up by
+// themselves — the Refresh button stays as a manual nudge.
+let pollTimer = null;
+function startPolling() {
+  stopPolling();
+  pollTimer = setInterval(refreshStatus, 4000);
+  $("poll-note").style.display = "";
+}
+function stopPolling() {
+  if (pollTimer !== null) { clearInterval(pollTimer); pollTimer = null; }
+  $("poll-note").style.display = "none";
+}
+
 $("btn-refresh").onclick = refreshStatus;
 async function refreshStatus() {
   let res;
   try { res = await api("GET", "/breakglass/status"); } catch (e) { banner("unseal-msg", "warn", (e && e.message) || String(e)); return; }
   const { status, json } = res;
-  if (status === 200) { applyStatus(json); return; }
+  if (status === 200) {
+    applyStatus(json);
+    // A request is open (e.g. the console just connected or reloaded onto an
+    // in-flight request): make sure the live poll is running, without
+    // re-registering over one that already is.
+    if (pollTimer === null) startPolling();
+    return;
+  }
+  stopPolling();
   if (status === 401) banner("unseal-msg", "warn", "Session token rejected (401). Reconnect in step 1.");
-  else if (status === 409) banner("unseal-msg", "warn", "No open request. Open one in step 2.");
+  else if (status === 409 || status === 404) banner("unseal-msg", "warn", "No open request. Open one in step 2.");
   else banner("unseal-msg", "warn", "Could not refresh status (" + status + ").");
 }
 function applyStatus(s) {
   if (!s || s.needed === undefined) return;
   const collected = s.collected || [];
   $("quorum").textContent = collected.length + " / " + s.needed;
+  const bar = $("quorum-bar");
+  const pct = s.needed > 0 ? Math.min(100, Math.round((collected.length / s.needed) * 100)) : 0;
+  bar.firstElementChild.style.width = pct + "%";
+  bar.className = "progress" + (s.ready ? " ready" : "");
   state.trustees.forEach((id) => {
     const pill = $("stat-" + id);
     if (!pill) return;
@@ -395,6 +520,7 @@ $("btn-unseal").onclick = async () => {
   if (status === 200) {
     banner("unseal-msg", "ok", "Granted. Unsealed evidence written to: " + json.output_path);
     // Stays disabled: the request is consumed.
+    stopPolling();
   } else if (status === 409) {
     banner("unseal-msg", "warn", "Quorum not met yet (" + (json.collected ? json.collected.length : 0) + "/" + (json.needed || state.needed) + ").");
     btn.disabled = false;
@@ -411,7 +537,10 @@ $("btn-close").onclick = async () => {
   if (!confirm("Close this request? All collected approvals are discarded, and trustees must sign a new request hash to start again.")) return;
   // Notify the server, but always clear local state even if it's unreachable.
   try { await api("POST", "/breakglass/close"); } catch (e) { /* ignore */ }
+  stopPolling();
   $("quorum").textContent = "0 / 0";
+  $("quorum-bar").firstElementChild.style.width = "0";
+  $("quorum-bar").className = "progress";
   $("request-view").style.display = "none";
   $("trustee-rows").innerHTML = "";
   $("btn-unseal").disabled = true;

@@ -56,6 +56,7 @@ pub mod envelope;
 pub mod eval;
 pub mod frame;
 pub mod ingest;
+pub mod inspect;
 pub mod log;
 pub mod module_runtime;
 pub mod storage;
@@ -797,6 +798,54 @@ pub enum ExportAuthMode {
 pub struct ExportWindow {
     pub start_epoch_s: u64,
     pub end_epoch_s: u64,
+}
+
+impl ExportWindow {
+    /// Build a bucket-aligned window from raw epoch bounds: start floored,
+    /// end ceiled to the 600 s grid, so callers can pass arbitrary times and
+    /// the window still discloses nothing finer than the buckets.
+    pub fn aligned(raw_start: u64, raw_end: u64) -> Result<Self> {
+        if raw_start >= raw_end {
+            return Err(anyhow!("export window start must be before end"));
+        }
+        let bucket = u64::from(TEN_MINUTES_S);
+        let end_epoch_s = raw_end
+            .div_ceil(bucket)
+            .checked_mul(bucket)
+            .ok_or_else(|| anyhow!("export window end is too large"))?;
+        Ok(Self {
+            start_epoch_s: raw_start / bucket * bucket,
+            end_epoch_s,
+        })
+    }
+
+    /// The trailing window covering the last `duration_s` seconds from now,
+    /// bucket-aligned outward.
+    pub fn last(duration_s: u64) -> Result<Self> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs();
+        Self::aligned(now.saturating_sub(duration_s), now)
+    }
+}
+
+/// Parse `24h` / `7d` / `90m` / `3600s` / `3600` into seconds (shared by the
+/// export CLI's `--last` and the event API's `?last=` query parameter).
+pub fn parse_duration_s(s: &str) -> Result<u64> {
+    let s = s.trim();
+    let (num, mult) = match s.chars().last() {
+        Some('s') => (&s[..s.len() - 1], 1),
+        Some('m') => (&s[..s.len() - 1], 60),
+        Some('h') => (&s[..s.len() - 1], 3600),
+        Some('d') => (&s[..s.len() - 1], 86_400),
+        Some(c) if c.is_ascii_digit() => (s, 1),
+        _ => return Err(anyhow!("invalid duration '{}': use e.g. 24h, 7d, 90m", s)),
+    };
+    let n: u64 = num
+        .parse()
+        .map_err(|_| anyhow!("invalid duration '{}': use e.g. 24h, 7d, 90m", s))?;
+    n.checked_mul(mult)
+        .ok_or_else(|| anyhow!("duration '{}' overflows", s))
 }
 
 // New receipt fields must be `Option` + `default` + `skip_serializing_if` and
@@ -2308,6 +2357,18 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         self.bundle_from_artifact(artifact)
     }
 
+    /// Bundle for local-only API access (no break-glass): same shape as the
+    /// other bundles, receipt labeled `api` because the caller's credential is
+    /// the capability token. The caller MUST enforce token access control.
+    pub fn export_events_bundle_for_api(
+        &mut self,
+        expected_ruleset_hash: [u8; 32],
+        options: ExportOptions,
+    ) -> Result<ExportBundle> {
+        let artifact = self.export_events_for_api(expected_ruleset_hash, options)?;
+        self.bundle_from_artifact(artifact)
+    }
+
     fn bundle_from_artifact(&self, artifact: ExportArtifact) -> Result<ExportBundle> {
         let receipt_entry = self.latest_export_receipt_entry()?;
         let artifact_bytes = serde_json::to_vec(&artifact)?;
@@ -2661,7 +2722,7 @@ pub fn verifying_key_from_seed(seed: &str) -> Result<VerifyingKey> {
     Ok(signing_key_from_seed(seed)?.verifying_key())
 }
 
-fn verifying_key_from_bytes(bytes: &[u8]) -> Result<VerifyingKey> {
+pub(crate) fn verifying_key_from_bytes(bytes: &[u8]) -> Result<VerifyingKey> {
     if bytes.len() != 32 {
         return Err(anyhow!(
             "invalid verifying key bytes: expected 32 bytes, got {}",
@@ -2821,7 +2882,7 @@ pub fn reconstruct_device_key_lineage_from(
     Ok(lineage)
 }
 
-fn key32(bytes: &[u8], what: &str) -> Result<[u8; 32]> {
+pub(crate) fn key32(bytes: &[u8], what: &str) -> Result<[u8; 32]> {
     if bytes.len() != 32 {
         return Err(anyhow!(
             "corrupt {}: expected 32 bytes, got {}",
@@ -2850,7 +2911,7 @@ type SealedEntryRow = (
 /// rotation record. The record's entry is hash-chained and signed by the predecessor key, so
 /// validating that entry signature under `predecessor` is genesis-anchored authorization
 /// equivalent. Fails closed if the record was pruned (the only genuinely unrecoverable case).
-fn recover_legacy_rotation_authorization(
+pub(crate) fn recover_legacy_rotation_authorization(
     conn: &Connection,
     predecessor: &VerifyingKey,
     prev_bytes: &[u8; 32],
