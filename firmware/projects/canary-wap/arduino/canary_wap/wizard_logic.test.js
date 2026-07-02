@@ -78,6 +78,12 @@ describe('connectOutcome', () => {
     assert.equal(out.action, 'fail');
     assert.equal(out.isTokenErr, false);
   });
+  it('a malformed 200 body is NOT success — ok must be explicitly true', () => {
+    for (const body of [{}, { ok: 'yes' }, [1, 2], 'ok', { message: 'hi' }]) {
+      const out = L.connectOutcome(true, body, false);
+      assert.equal(out.action, 'fail', JSON.stringify(body));
+    }
+  });
 });
 
 describe('capabilityNotice', () => {

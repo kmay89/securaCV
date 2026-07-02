@@ -4867,6 +4867,10 @@ static esp_err_t handle_wifi_ap_only(httpd_req_t* req) {
   }
   g_wifi_ap_only = true;
   g_wifi_creds.enabled = false;
+  // Kill any in-flight or auto-reconnect STA attempt (the user may have
+  // tried a network, backed out, then chosen standalone) — the radio is
+  // the SoftAP's alone from here. false = leave WiFi (and the AP) up.
+  WiFi.disconnect(false);
   g_wifi_status.state = WIFI_PROV_AP_ONLY;
   setup_wizard::mark_complete();
   // mark_complete() stops the captive DNS as part of closing the first-boot

@@ -753,7 +753,9 @@ const WizardLogic = (function () {
   //                     fresh one and resend the same credentials
   //   'fail'          — show the failure (isTokenErr selects raw rendering)
   function connectOutcome(httpOk, body, alreadyRetried) {
-    if (httpOk && body && body.ok !== false) {
+    // Strict: only an explicit ok:true proceeds — a malformed body (array,
+    // primitive, missing field) must not read as success.
+    if (httpOk && body && body.ok === true) {
       return { action: 'proceed', isTokenErr: false };
     }
     const isTokenErr = !!(body && body.code === 'invalid_token');

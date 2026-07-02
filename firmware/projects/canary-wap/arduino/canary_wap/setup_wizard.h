@@ -66,9 +66,13 @@ inline bool is_active() { return s_active; }
 // The 15-minute window exists to close an *abandoned* portal, not to reboot
 // the device under a slow human. Any wizard-driven API activity (scan,
 // connect, token refresh) calls touch() so the countdown restarts from the
-// most recent sign of life.
+// most recent sign of life. touch() runs on the HTTP server task while
+// check_timeout() reads from the main loop task, so the stamp goes through
+// atomic builtins (same pattern as g_provisioning_gate_opened_at).
 inline void touch() {
-  if (s_active) s_started_ms = millis();
+  if (s_active) {
+    __atomic_store_n(&s_started_ms, millis(), __ATOMIC_RELEASE);
+  }
 }
 
 inline void mark_complete() {
@@ -122,7 +126,8 @@ inline void dns_process() {
 }
 
 inline void check_timeout() {
-  if (provisioning_logic::setup_timeout_due(s_active, millis(), s_started_ms,
+  uint32_t started = __atomic_load_n(&s_started_ms, __ATOMIC_ACQUIRE);
+  if (provisioning_logic::setup_timeout_due(s_active, millis(), started,
                                             SETUP_TIMEOUT_MS)) {
     s_active = false;
     stop_captive_portal();
