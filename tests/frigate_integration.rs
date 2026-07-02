@@ -518,6 +518,59 @@ fn kernel_strips_correlation_tokens_from_frigate_events() {
 }
 
 #[test]
+fn export_carries_no_frigate_object_id_or_precise_timestamp() {
+    // The Frigate object id ("1234567890.abc123") embeds a precise unix
+    // timestamp. FrigateEventData structurally never deserializes it — this
+    // pins that guarantee at the export boundary, the way adapter_meshtastic
+    // pins the node id.
+    let (mut kernel, cfg) = setup_test_kernel();
+    let desc = make_module_descriptor();
+
+    let parsed = parse_frigate_event(FRIGATE_EVENT_NEW.as_bytes()).expect("parse event");
+    let zone_id = format!(
+        "zone:{}",
+        sanitize_zone_name(parsed.zones.first().expect("zone"))
+    );
+    let candidate = CandidateEvent {
+        event_type: map_label_to_event_type(&parsed.label),
+        time_bucket: TimeBucket::now(600).expect("time bucket"),
+        zone_id: zone_id.clone(),
+        confidence: parsed.confidence as f32,
+        correlation_token: None,
+    };
+    kernel
+        .append_event_checked(
+            &desc,
+            candidate,
+            &cfg.kernel_version,
+            &cfg.ruleset_id,
+            cfg.ruleset_hash,
+        )
+        .expect("append event");
+
+    let artifact = kernel
+        .export_events_for_api(cfg.ruleset_hash, ExportOptions::default())
+        .expect("export");
+    let json = serde_json::to_string(&artifact).expect("serialize");
+
+    // The precise-timestamp id, in either half, must not survive into the export…
+    assert!(
+        !json.contains("1234567890"),
+        "precise Frigate timestamp id leaked into export"
+    );
+    assert!(
+        !json.contains("abc123"),
+        "Frigate object id leaked into export"
+    );
+    // …and the raw camera name must not appear when a zone attribution exists.
+    assert!(
+        !json.contains("front_door"),
+        "raw camera name leaked into export"
+    );
+    assert!(json.contains(&zone_id), "coarse zone must remain");
+}
+
+#[test]
 fn multiple_frigate_events_create_hash_chain() {
     let (mut kernel, cfg) = setup_test_kernel();
     let desc = make_module_descriptor();
