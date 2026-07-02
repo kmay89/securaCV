@@ -374,6 +374,7 @@ mod tests {
                     zone_id: zone.to_string(),
                     confidence: 0.5,
                     correlation_token: None,
+                    attestation: None,
                 },
                 &cfg.kernel_version,
                 &cfg.ruleset_id,

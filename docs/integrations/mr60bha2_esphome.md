@@ -127,9 +127,12 @@ topic = "securacv_statestream/binary_sensor/mr60bha2_person_information/state"
 kind = "presence_in_restricted_zone"
 zone = "bedroom"
 require_truthy_state = true
+attestation = "ha-bridged"    # this route's claims transit HA first
 ```
 
-Path (b) differs only in the topic:
+Path (b) differs in the topic and drops the `attestation` override (the
+device publishes straight to the broker, so the default `"adapter"`
+provenance is accurate):
 
 ```toml
 [[adapter.route]]
@@ -168,10 +171,10 @@ subscribed topic needs a restart — see the header of
 3. In Home Assistant, the SecuraCV timeline card shows a
    `PresenceInRestrictedZone` event in the current 10-minute bucket. It will
    NOT carry the green device-verified badge — correct and expected for
-   Track B. The card additionally renders an explicit `adapter` /
-   `ha-bridged` attestation chip when the event payload carries the
-   `attestation` field (stamped by the kernel export once the Phase 4
-   backend wiring in the design doc lands).
+   Track B. Instead it carries a provenance chip: **HA-bridged** for path (a)
+   routes declaring `attestation = "ha-bridged"`, **Adapter-attested** for
+   path (b) (the default for every adapter_host route). The value is stamped
+   into the sealed event at ingest and travels signed with it.
 4. Negative check: leave the room, confirm presence claims stop after the
    FSM clears, and confirm NO breath/heart entities appear anywhere in
    `witness.db` (`sqlite3 witness.db 'select distinct event_type from

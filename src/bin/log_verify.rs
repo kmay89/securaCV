@@ -516,6 +516,7 @@ mod tests {
             zone_id: "zone:test".to_string(),
             confidence: 0.9,
             correlation_token: None,
+            attestation: None,
         };
         kernel.append_event_checked(
             &module,

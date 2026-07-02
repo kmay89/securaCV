@@ -17,7 +17,8 @@
 
 use crate::transport::sanitize_zone_name;
 use crate::{
-    CandidateEvent, EventType, InferenceBackend, ModuleCapability, ModuleDescriptor, TimeBucket,
+    Attestation, CandidateEvent, EventType, InferenceBackend, ModuleCapability, ModuleDescriptor,
+    TimeBucket,
 };
 use serde::{Deserialize, Serialize};
 
@@ -108,6 +109,12 @@ pub struct Claim {
     pub confidence: f32,
     /// Optional hint used only for in-bucket deduplication. **Never logged or exported.**
     pub dedup_hint: Option<String>,
+    /// Provenance override. `None` means plain adapter provenance — every claim
+    /// on this path is kernel-signed at ingest, so the mapped event is stamped
+    /// [`Attestation::Adapter`] unless the route declares it transited Home
+    /// Assistant first ([`Attestation::HaBridged`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attestation: Option<Attestation>,
 }
 
 impl Claim {
@@ -118,12 +125,19 @@ impl Claim {
             zone_label: zone_label.into(),
             confidence,
             dedup_hint: None,
+            attestation: None,
         }
     }
 
     /// Attach a dedup hint (consumed by the host, never logged).
     pub fn with_dedup_hint(mut self, hint: impl Into<String>) -> Self {
         self.dedup_hint = Some(hint.into());
+        self
+    }
+
+    /// Declare non-default provenance (e.g. HA-statestream-bridged routes).
+    pub fn with_attestation(mut self, attestation: Attestation) -> Self {
+        self.attestation = Some(attestation);
         self
     }
 }
@@ -171,12 +185,39 @@ pub fn claim_to_candidate(claim: &Claim, bucket: TimeBucket) -> CandidateEvent {
         zone_id: format!("zone:{}", sanitize_zone_name(&claim.zone_label)),
         confidence: claim.confidence,
         correlation_token: None,
+        // Everything on the adapter path is kernel-signed at ingest, never
+        // device-signed: stamp Adapter unless the claim declared it also
+        // transited Home Assistant. A claim cannot opt UP to device-attested —
+        // Attestation has no such variant by construction.
+        attestation: Some(claim.attestation.unwrap_or(Attestation::Adapter)),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn adapter_claims_default_to_adapter_attestation() {
+        let bucket = TimeBucket {
+            start_epoch_s: 0,
+            size_s: 600,
+        };
+        // The adapter path is never device-signed: an undeclared claim maps
+        // to Adapter provenance, and a declared HA hop is preserved.
+        let plain = claim_to_candidate(
+            &Claim::new(ClaimKind::PresenceInRestrictedZone, "bedroom", 0.9),
+            bucket,
+        );
+        assert_eq!(plain.attestation, Some(Attestation::Adapter));
+
+        let bridged = claim_to_candidate(
+            &Claim::new(ClaimKind::PresenceInRestrictedZone, "bedroom", 0.9)
+                .with_attestation(Attestation::HaBridged),
+            bucket,
+        );
+        assert_eq!(bridged.attestation, Some(Attestation::HaBridged));
+    }
 
     #[test]
     fn every_claim_kind_round_trips_to_string() {

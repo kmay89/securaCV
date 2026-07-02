@@ -45,6 +45,7 @@ fn add_events(kernel: &mut Kernel, cfg: &KernelConfig, count: usize) {
             zone_id: format!("zone:camera_{}", i % 10),
             confidence: 0.5 + ((i % 500) as f32 * 0.001), // stays in valid 0..=1 range
             correlation_token: None,
+            attestation: None,
         };
         kernel
             .append_event_checked(
@@ -108,6 +109,7 @@ fn hash_chain_survives_rapid_event_ingestion() {
             zone_id: format!("zone:rapid_{}", i % 20),
             confidence: 0.5 + ((i % 50) as f32) * 0.01,
             correlation_token: None,
+            attestation: None,
         };
         kernel
             .append_event_checked(
@@ -280,6 +282,7 @@ fn export_omits_forbidden_fields() {
         zone_id: "zone:test".to_string(),
         confidence: 0.9,
         correlation_token: Some([42u8; 32]), // This should be stripped on export
+        attestation: None,
     };
 
     kernel
@@ -359,6 +362,7 @@ fn kernel_rejects_invalid_zone_id_format() {
         zone_id: "lat=41.5,lon=-81.6".to_string(), // GPS coordinates - forbidden!
         confidence: 0.9,
         correlation_token: None,
+        attestation: None,
     };
 
     let result = kernel.append_event_checked(
@@ -389,6 +393,7 @@ fn kernel_rejects_confidence_out_of_bounds() {
         zone_id: "zone:test".to_string(),
         confidence: 1.5, // Invalid: > 1.0
         correlation_token: None,
+        attestation: None,
     };
 
     let result = kernel.append_event_checked(
@@ -415,6 +420,7 @@ fn kernel_rejects_negative_confidence() {
         zone_id: "zone:test".to_string(),
         confidence: -0.5, // Invalid: < 0.0
         correlation_token: None,
+        attestation: None,
     };
 
     let result = kernel.append_event_checked(
@@ -451,6 +457,7 @@ fn module_can_only_emit_allowed_event_types() {
         zone_id: "zone:test".to_string(),
         confidence: 0.9,
         correlation_token: None,
+        attestation: None,
     };
 
     let result = kernel.append_event_checked(
@@ -481,6 +488,7 @@ fn events_are_bound_to_ruleset_at_creation() {
         zone_id: "zone:test".to_string(),
         confidence: 0.9,
         correlation_token: None,
+        attestation: None,
     };
 
     let event = kernel
@@ -608,6 +616,7 @@ fn zone_id_rejects_gps_coordinates() {
             zone_id: zone_id.to_string(),
             confidence: 0.8,
             correlation_token: None,
+            attestation: None,
         };
         let result = kernel.append_event_checked(
             &desc,

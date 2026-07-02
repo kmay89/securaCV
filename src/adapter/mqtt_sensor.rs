@@ -23,7 +23,7 @@ use serde::Deserialize;
 
 use crate::adapter::contract::{AdapterDescriptor, Claim, ClaimKind};
 use crate::adapter::SensorAdapter;
-use crate::EventType;
+use crate::{Attestation, EventType};
 
 static MQTT_SENSOR_DESCRIPTOR: AdapterDescriptor = AdapterDescriptor {
     id: "mqtt_sensor_adapter",
@@ -68,6 +68,10 @@ pub struct SensorRoute {
     /// gate for numeric sensors: occupant counters, HA statestream sensor states, lux values.
     /// The reading itself is gating-only — it never reaches the claim.
     pub numeric_min: Option<f32>,
+    /// Provenance declared for this route. `None` → plain adapter attestation;
+    /// set to [`Attestation::HaBridged`] on routes fed by an HA
+    /// `mqtt_statestream` bridge so the dashboard renders the extra hop honestly.
+    pub attestation: Option<Attestation>,
 }
 
 impl SensorRoute {
@@ -79,6 +83,7 @@ impl SensorRoute {
             min_confidence: 0.0,
             require_truthy_state: false,
             numeric_min: None,
+            attestation: None,
         }
     }
 }
@@ -167,7 +172,11 @@ pub fn route_message(routes: &[SensorRoute], topic: &str, payload: &[u8]) -> Opt
         .zone
         .clone()
         .unwrap_or_else(|| route.zone_label.clone());
-    Some(Claim::new(route.kind, zone_label, confidence))
+    let mut claim = Claim::new(route.kind, zone_label, confidence);
+    if let Some(att) = route.attestation {
+        claim = claim.with_attestation(att);
+    }
+    Some(claim)
 }
 
 /// Parse a batch of messages, optionally inside the seccomp sandbox. Shared by both adapters.
@@ -360,6 +369,38 @@ mod tests {
         assert!(adapter
             .message_to_claim("sensors/door/contact", br#"{"state":"off"#)
             .is_none());
+    }
+
+    #[test]
+    fn route_attestation_reaches_the_claim() {
+        let mut route = SensorRoute::new(
+            "securacv_statestream/binary_sensor/mr60_person/state",
+            ClaimKind::PresenceInRestrictedZone,
+            "bedroom",
+        );
+        route.require_truthy_state = true;
+        route.attestation = Some(Attestation::HaBridged);
+        let (adapter, _tx) = MqttSensorAdapter::new(vec![route]);
+        let claim = adapter
+            .message_to_claim(
+                "securacv_statestream/binary_sensor/mr60_person/state",
+                b"on",
+            )
+            .expect("claim");
+        assert_eq!(claim.attestation, Some(Attestation::HaBridged));
+        // Routes without a declaration leave it to the contract default.
+        let (plain, _tx) = MqttSensorAdapter::new(vec![SensorRoute::new(
+            "s/pir",
+            ClaimKind::PresenceInRestrictedZone,
+            "lobby",
+        )]);
+        assert_eq!(
+            plain
+                .message_to_claim("s/pir", b"ON")
+                .expect("claim")
+                .attestation,
+            None
+        );
     }
 
     #[test]
