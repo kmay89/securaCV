@@ -435,8 +435,15 @@ void loop() {
     // Publish on meaningful change only (>= 5 lx or presence of a reading
     // where there was none) — the lux channel corroborates tamper, it isn't
     // a light meter.
-    if (lux >= 0 && (g_snap.lux < 0 || fabsf(lux - g_snap.lux) >= 5.0f)) {
-      g_snap.lux = lux;
+    if (lux >= 0) {
+      if (g_snap.lux < 0 || fabsf(lux - g_snap.lux) >= 5.0f) {
+        g_snap.lux = lux;
+        g_state_dirty = true;
+      }
+    } else if (g_snap.lux >= 0) {
+      // Read failure on a tamper-corroboration channel must be visible:
+      // revert to null in HA rather than freezing the last good reading.
+      g_snap.lux = -1.0f;
       g_state_dirty = true;
     }
   }

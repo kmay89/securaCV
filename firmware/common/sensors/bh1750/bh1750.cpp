@@ -37,7 +37,11 @@ float BH1750::read_lux() {
     if (wire_->requestFrom((int)addr_, 2) != 2) {
         return -1.0f;
     }
-    const uint16_t raw = ((uint16_t)wire_->read() << 8) | (uint16_t)wire_->read();
+    // Two sequenced statements on purpose: operands of `|` are unsequenced,
+    // and read() mutates the Wire buffer — one expression could swap bytes.
+    const uint8_t msb = (uint8_t)wire_->read();
+    const uint8_t lsb = (uint8_t)wire_->read();
+    const uint16_t raw = ((uint16_t)msb << 8) | (uint16_t)lsb;
     // Typical sensitivity: 1.2 counts per lux (datasheet).
     return (float)raw / 1.2f;
 }

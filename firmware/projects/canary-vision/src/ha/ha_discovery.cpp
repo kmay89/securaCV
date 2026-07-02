@@ -161,7 +161,7 @@ void publish_discovery(PubSubClient& mqtt, const Topics& topics) {
 
   // WiFi RSSI (diagnostic) — published in the status heartbeat.
   {
-    char t[192], p[768];
+    char t[192], p[1024];
     topic_for("sensor", "rssi", t, sizeof(t));
     snprintf(p, sizeof(p),
              "{"
@@ -182,7 +182,7 @@ void publish_discovery(PubSubClient& mqtt, const Topics& topics) {
   // Free heap (diagnostic) — heap-health monitor, published in the status
   // heartbeat alongside the degradation level.
   {
-    char t[192], p[768];
+    char t[192], p[1024];
     topic_for("sensor", "heap_free", t, sizeof(t));
     snprintf(p, sizeof(p),
              "{"

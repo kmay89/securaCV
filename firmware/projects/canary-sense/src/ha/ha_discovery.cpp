@@ -56,7 +56,7 @@ void publish_discovery(PubSubClient& mqtt, const Topics& topics) {
 
   // Presence (debounced radar occupancy)
   {
-    char t[192], p[768];
+    char t[192], p[1024];
     topic_for("binary_sensor", "presence", t, sizeof(t));
     snprintf(p, sizeof(p),
              "{"
@@ -76,7 +76,7 @@ void publish_discovery(PubSubClient& mqtt, const Topics& topics) {
 
   // Occupants (bucketed count — 0 / 1 / 2+, never a track log)
   {
-    char t[192], p[768];
+    char t[192], p[1024];
     topic_for("sensor", "occupants", t, sizeof(t));
     snprintf(p, sizeof(p),
              "{"
@@ -94,7 +94,7 @@ void publish_discovery(PubSubClient& mqtt, const Topics& topics) {
   // Range band (diagnostic; coarse near/mid/far only — raw distance never
   // leaves the device, per the privacy chokepoint)
   {
-    char t[192], p[768];
+    char t[192], p[1024];
     topic_for("sensor", "range_band", t, sizeof(t));
     snprintf(p, sizeof(p),
              "{"
@@ -112,7 +112,7 @@ void publish_discovery(PubSubClient& mqtt, const Topics& topics) {
 
   // Radar link problem sensor (diagnostic; ON while the UART is stalled)
   {
-    char t[192], p[768];
+    char t[192], p[1024];
     topic_for("binary_sensor", "radar_link", t, sizeof(t));
     snprintf(p, sizeof(p),
              "{"
@@ -133,7 +133,7 @@ void publish_discovery(PubSubClient& mqtt, const Topics& topics) {
 
   // Radar frame errors (diagnostic; checksum/oversize drops, monotonic)
   {
-    char t[192], p[768];
+    char t[192], p[1024];
     topic_for("sensor", "frame_errors", t, sizeof(t));
     snprintf(p, sizeof(p),
              "{"
@@ -152,7 +152,7 @@ void publish_discovery(PubSubClient& mqtt, const Topics& topics) {
 
   // Illuminance (BH1750 — tamper corroboration: lights-out + presence)
   {
-    char t[192], p[768];
+    char t[192], p[1024];
     topic_for("sensor", "illuminance", t, sizeof(t));
     snprintf(p, sizeof(p),
              "{"
@@ -170,7 +170,7 @@ void publish_discovery(PubSubClient& mqtt, const Topics& topics) {
 
   // Last event
   {
-    char t[192], p[768];
+    char t[192], p[1024];
     topic_for("sensor", "last_event", t, sizeof(t));
     snprintf(p, sizeof(p),
              "{"
@@ -187,7 +187,7 @@ void publish_discovery(PubSubClient& mqtt, const Topics& topics) {
 
   // Uptime
   {
-    char t[192], p[768];
+    char t[192], p[1024];
     topic_for("sensor", "uptime", t, sizeof(t));
     snprintf(p, sizeof(p),
              "{"
@@ -206,7 +206,7 @@ void publish_discovery(PubSubClient& mqtt, const Topics& topics) {
 
   // WiFi RSSI (diagnostic) — published in the status heartbeat.
   {
-    char t[192], p[768];
+    char t[192], p[1024];
     topic_for("sensor", "rssi", t, sizeof(t));
     snprintf(p, sizeof(p),
              "{"
@@ -227,7 +227,7 @@ void publish_discovery(PubSubClient& mqtt, const Topics& topics) {
   // Free heap (diagnostic) — heap-health monitor, published in the status
   // heartbeat alongside the degradation level.
   {
-    char t[192], p[768];
+    char t[192], p[1024];
     topic_for("sensor", "heap_free", t, sizeof(t));
     snprintf(p, sizeof(p),
              "{"
@@ -248,7 +248,7 @@ void publish_discovery(PubSubClient& mqtt, const Topics& topics) {
   // Breathing confirmed (P0 binary lock — the only always-on vitals signal;
   // wellbeing channel, never sealed-logged)
   {
-    char t[192], p[768];
+    char t[192], p[1024];
     topic_for("binary_sensor", "breathing", t, sizeof(t));
     snprintf(p, sizeof(p),
              "{"
@@ -269,7 +269,7 @@ void publish_discovery(PubSubClient& mqtt, const Topics& topics) {
   // P1 opt-in BPM numerics. Non-diagnostic radar estimates (85–90% accuracy,
   // <=1.5 m, single target) — wellbeing signals, not medical data.
   {
-    char t[192], p[768];
+    char t[192], p[1024];
     topic_for("sensor", "breath_rate", t, sizeof(t));
     snprintf(p, sizeof(p),
              "{"
@@ -285,7 +285,7 @@ void publish_discovery(PubSubClient& mqtt, const Topics& topics) {
     publish_cfg(mqtt, t, p);
   }
   {
-    char t[192], p[768];
+    char t[192], p[1024];
     topic_for("sensor", "heart_rate", t, sizeof(t));
     snprintf(p, sizeof(p),
              "{"
