@@ -83,7 +83,7 @@ sm_cy  = -inner_y/2 + board_clear + sm_l/2;
 lens_x = v_cx + lens_dx;  lens_y = cam_cy + lens_dy;
 rad_cx = s_cx + rad_dx;   rad_cy = sm_cy + rad_dy;
 v_usb_zc = floor_t + v_standoff + pcb_t + usb_h/2;
-rad_gap = (s_front_h - ant_h) + cav_extra + (lid_t - radome_t);
+rad_gap = cav_d - s_standoff - pcb_t - ant_h + (lid_t - radome_t);  // true gap even when the Vision stack sets cav_d
 
 mount_extra = opt_mount ? kh_extra : 0;
 skirt_gap = tol_slide + 0.2;

@@ -117,7 +117,11 @@ module body() {
     posts = post_xy();
     union() {
         difference() {
-            rrect(out_x, out_y, corner_r, base_d);
+            union() {
+                rrect(out_x, out_y, corner_r, base_d);
+                // thickened back hosts the strap channels WITHOUT breaching the floor
+                translate([0, 0, -strap_t]) rrect(out_x, out_y, corner_r, strap_t + 0.01);
+            }
             translate([0, 0, floor_t]) rrect(inner_x, inner_y, max(0.1, corner_r - wall_eff), cav_d + 1);
             // SMA bulkhead, top wall, over the LoRa column
             translate([lb_cx, out_y/2, floor_t + cav_d/2])
@@ -127,15 +131,15 @@ module body() {
             if (e_seal)
                 translate([0, 0, base_d - gasket_groove])
                     linear_extrude(gasket_groove + 1) rim_ring2d(gasket_w);
-            // pole strap channels across the back
-            for (sy = [1, -1]) translate([-out_x/2 - 1, sy*inner_y/4 - strap_w/2, -0.1])
+            // pole strap channels, cut only within the added back slab (seal-safe)
+            for (sy = [1, -1]) translate([-out_x/2 - 1, sy*inner_y/4 - strap_w/2, -strap_t - 0.1])
                 cube([out_x + 2, strap_w, strap_t + 0.1]);
             // bottom-edge chamfer
             if (foot_cham > 0) difference() {
-                translate([0, 0, -0.01]) rrect(out_x + 0.1, out_y + 0.1, corner_r, foot_cham + 0.01);
+                translate([0, 0, -strap_t - 0.01]) rrect(out_x + 0.1, out_y + 0.1, corner_r, foot_cham + 0.01);
                 hull() {
-                    rrect(out_x - 2*foot_cham, out_y - 2*foot_cham, max(0.1, corner_r - foot_cham), 0.01);
-                    translate([0, 0, foot_cham]) rrect(out_x, out_y, corner_r, 0.01);
+                    translate([0, 0, -strap_t]) rrect(out_x - 2*foot_cham, out_y - 2*foot_cham, max(0.1, corner_r - foot_cham), 0.01);
+                    translate([0, 0, -strap_t + foot_cham]) rrect(out_x, out_y, corner_r, 0.01);
                 }
             }
         }
@@ -222,8 +226,6 @@ module roof() {
                 translate([-pan_w/2 - 3, 0, 0]) cube([pan_w + 6, pan_l * 0.75, 2]);       // bed
                 for (s = [1, -1]) translate([s*(pan_w/2 + tol_slide) + (s < 0 ? -3 : 0), 0, 2 - 0.01])
                     cube([3, pan_l * 0.75, pan_t + 2]);                                     // side rails
-                for (s = [1, -1]) translate([s*(pan_w/2 + tol_slide) + (s < 0 ? -3 : 0), 0, 2 + pan_t + 2 - 0.01])
-                    cube([3 + (s < 0 ? 0 : 0), pan_l * 0.75, 0]);                           // (rail caps via lip below)
                 for (s = [1, -1]) translate([s*(pan_w/2 + 1.5) + (s < 0 ? -1.5 - 1.2 : 1.5 - 1.8), 0, 2 + pan_t + 0.2])
                     cube([1.8, pan_l * 0.75, 1.4]);                                         // retaining lips
                 translate([-pan_w/2 - 3, -2, 0]) cube([pan_w + 6, 2, 8]);                   // lower stop

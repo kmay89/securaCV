@@ -69,9 +69,10 @@ module cradle() {
             // side split so the collar can flex over the wart (print PETG/TPU)
             translate([iw/2 - 2, -1.25, face_t + 2]) cube([collar_t + 4, 2.5, collar_d]);
         }
-        // hanging studs on the face
-        tstud( stud_gap/2, -0.01);
-        tstud(-stud_gap/2, -0.01);
+        // hanging studs on the FRONT face (-Z, opposite the wart) — mirrored so
+        // they protrude instead of burying in the plate (review catch).
+        // Print: collar-down (the plate bridges the collar) or support the studs.
+        mirror([0, 0, 1]) { tstud( stud_gap/2, -0.01); tstud(-stud_gap/2, -0.01); }
     }
 }
 

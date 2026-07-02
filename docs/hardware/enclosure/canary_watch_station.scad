@@ -21,12 +21,12 @@ part = "all";        // ["drum","bezel","stand","all"]
 disc_d   = 39.0;     // display PCB disc diameter
 disc_t   = 6.2;      // display module thickness (glass to socket face)
 stack_t  = 14.0;     // full stack: glass front to XIAO back (incl. USB boot room)
-usb_ang  = 180;      // XIAO USB direction, degrees (0 = +X; 180 = rear when stand-mounted)
+usb_ang  = 270;      // XIAO USB direction, degrees (0 = +X; 270 = -Y = rear/down on the stand)
 usb_w    = 10.5;
 usb_h    = 6.5;
 
 /* [Puck] */
-drum_d   = 50.0;     // drum outer diameter
+drum_d   = 52.0;     // drum outer diameter (posts fully clear of the 39 mm disc)
 wall_t   = 2.5;
 back_t   = 2.5;
 bez_t    = 7.0;      // bezel thickness (holds the display seat)
@@ -62,7 +62,9 @@ $fa = 3; $fs = 0.4;
 cav_d   = drum_d - 2*wall_t;                 // internal bore
 drum_h  = back_t + kh_extra + (stack_t - seat_dep) + 1.0;   // depth behind the bezel
 seat_d  = disc_d + 2*tol_slide;
-post_r  = cav_d/2 - 2.6;                     // bezel screw posts radius position
+post_r  = cav_d/2 - 1.0;                     // bezel screw posts: outboard of the 39 mm disc
+post_h  = drum_h - back_t - kh_extra - 1.5;  // posts stop short of the rim (the display's
+                                             // back protrudes ~1 mm past the bezel seat)
 
 assert(seat_d < cav_d - 1, "display disc too large for the drum bore — grow drum_d");
 assert(bez_ap_d < disc_d - 3, "aperture must land on the display bezel ring");
@@ -84,35 +86,34 @@ module keyhole_pocket_r(ang) {                // radial blind pocket, slot towar
     }
 }
 module drum() {
-    difference() {
-        union() {
-            cylinder(d = drum_d, h = drum_h);
-            // two bezel screw posts, fused to the wall
-            for (a = [90, 270]) rotate([0, 0, a])
-                translate([post_r, 0, back_t + kh_extra])
-                    hull() {
-                        cylinder(d = 5, h = drum_h - back_t - kh_extra);
-                        translate([2.2, 0, 0]) cylinder(d = 2, h = drum_h - back_t - kh_extra);
-                    }
-        }
-        translate([0, 0, back_t + kh_extra]) cylinder(d = cav_d, h = drum_h);
-        // XIAO USB slot through the wall (drum sits stack-first; slot at the rim)
-        rotate([0, 0, usb_ang]) translate([drum_d/2 - wall_t/2, 0, drum_h - usb_h/2])
-            cube([wall_t*3, usb_w, usb_h + 1], center = true);
-        // blind keyhole pocket (single, centred) for stand-less wall mount
-        keyhole_pocket_r(0);
-        // bottom-edge chamfer
+    union() {
         difference() {
-            translate([0, 0, -0.01]) cylinder(d = drum_d + 0.1, h = 0.5);
-            translate([0, 0, -0.02]) cylinder(d1 = drum_d - 1.0, d2 = drum_d + 0.12, h = 0.53);
+            cylinder(d = drum_d, h = drum_h);
+            translate([0, 0, back_t + kh_extra]) cylinder(d = cav_d, h = drum_h);
+            // XIAO USB slot through the wall (drum sits stack-first; slot at the rim)
+            rotate([0, 0, usb_ang]) translate([drum_d/2 - wall_t/2, 0, drum_h - usb_h/2])
+                cube([wall_t*3, usb_w, usb_h + 1], center = true);
+            // blind keyhole pocket (single, centred) for stand-less wall mount
+            keyhole_pocket_r(0);
+            // bottom-edge chamfer
+            difference() {
+                translate([0, 0, -0.01]) cylinder(d = drum_d + 0.1, h = 0.5);
+                translate([0, 0, -0.02]) cylinder(d1 = drum_d - 1.0, d2 = drum_d + 0.12, h = 0.53);
+            }
         }
+        // bezel screw posts INSIDE the bore, fused to the wall — added AFTER the
+        // cavity cut so the bore cannot carve them away (review catch)
+        for (a = [0, 180]) rotate([0, 0, a])
+            translate([0, 0, back_t + kh_extra]) hull() {
+                translate([post_r, 0, 0]) cylinder(d = 5, h = post_h);
+                translate([cav_d/2 - 0.3, 0, 0]) cylinder(d = 2, h = post_h);
+            }
     }
-    // re-add screw pilots
 }
 module drum_final() {
     difference() {
         drum();
-        for (a = [90, 270]) rotate([0, 0, a])
+        for (a = [0, 180]) rotate([0, 0, a])
             translate([post_r, 0, back_t + kh_extra + 1.5]) cylinder(d = screw_d, h = drum_h);
     }
 }
@@ -133,7 +134,7 @@ module bezel() {
         // aperture lead-in on the face
         translate([0, 0, bez_t - 0.5]) cylinder(d1 = bez_ap_d, d2 = bez_ap_d + 1.2, h = 0.51);
         // bezel screws into the drum posts
-        for (a = [90, 270]) rotate([0, 0, a]) translate([post_r, 0, 0]) {
+        for (a = [0, 180]) rotate([0, 0, a]) translate([post_r, 0, 0]) {
             translate([0, 0, -0.1]) cylinder(d = screw_d + 2*tol_hole, h = bez_t + 1);
             translate([0, 0, bez_t - screw_head_h]) cylinder(d1 = screw_d + 2*tol_hole, d2 = screw_head_d, h = screw_head_h + 0.1);
         }
@@ -154,14 +155,14 @@ module stand() {
         // wedge body
         hull() {
             translate([-sw/2, -sd/2, 0]) cube([sw, sd, 4]);
-            translate([-sw/2, -sd/2, 0]) cube([sw, 10, sh]);
+            translate([-sw/2, sd/2 - 10, 0]) cube([sw, 10, sh]);
         }
-        // tilted drum pocket
+        // tilted drum pocket (leans back against the tall rear wall)
         translate([0, 6, sh - 4]) rotate([tilt + 90, 0, 0])
             cylinder(d = drum_d + 2*tol_slide + 0.2, h = drum_d);
         // rear cable channel down the back face
-        translate([0, -sd/2 + 3, -0.1]) rotate([tilt, 0, 0])
-            translate([-6, -14, 0]) cube([12, 20, sh + 10]);
+        translate([0, sd/2 - 3, -0.1]) rotate([-tilt, 0, 0])
+            translate([-6, -6, 0]) cube([12, 20, sh + 10]);
     }
 }
 

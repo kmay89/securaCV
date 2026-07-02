@@ -101,7 +101,7 @@ module base() {
             // ballast pockets, from below, with a retaining rim for the lid
             for (i = [0 : bal_n - 1]) rotate([0, 0, i * 360 / bal_n])
                 translate([bal_r, 0, -0.1]) cylinder(d = bal_d, h = bal_t + 0.1);
-            translate([0, 0, -0.1]) cylinder(d = 2*(bal_r) + 6, h = 1.31);  // 1.2 lid recess
+            translate([0, 0, -0.1]) cylinder(d = 2*bal_r + bal_d + 2, h = 1.31);  // 1.2 lid recess covers the pockets fully
         }
         // tilted stalk + hinge head (fins rise off the stalk top; bolt axis along X)
         translate([0, base_d*0.05, base_t - 2]) rotate([-stalk_tilt, 0, 0]) {
@@ -112,7 +112,7 @@ module base() {
 }
 
 module ballast_lid() {
-    cylinder(d = 2*bal_r + 6 - 2*tol_slide, h = 1.2);
+    cylinder(d = 2*bal_r + bal_d + 2 - 2*tol_slide, h = 1.2);
 }
 
 if      (part == "base")        base();

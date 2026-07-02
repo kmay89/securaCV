@@ -73,8 +73,8 @@ module din_clip() {
     translate([-cw/2, 0, 0]) {
         // riser pad
         translate([0, -din_w/2 - 8, -6]) cube([cw, din_w + 16, 6.01]);
-        // fixed hook over the top flange
-        translate([0, din_w/2 + din_t, -6]) cube([cw, 4, 3]);
+        // fixed hook over the top flange (lip points INWARD over the rail)
+        translate([0, din_w/2 + din_t - 4, -6]) cube([cw, 4 + 1.6, 3]);
         translate([0, din_w/2 + din_t, -6]) cube([cw, 1.6, 6.01]);
         // spring arm + hook under the bottom flange (flexes -Y to snap on)
         translate([0, -din_w/2 - din_t - 1.6, -6]) cube([cw, 1.6, 6.01]);
@@ -142,7 +142,7 @@ module cover() {
             for (sx = [1, -1], sy = [1, -1])
                 translate([sx*(inner_l/2 - post_d/2 - 0.2), sy*(inner_w/2 - post_d/2 - 0.2), -0.1]) {
                     cylinder(d = lid_screw_d + 2*tol_hole, h = lid_t + ch + 1);
-                    translate([0, 0, 0.1]) cylinder(d1 = screw_head_d + 1, d2 = lid_screw_d + 2*tol_hole, h = 2.2);
+                    translate([0, 0, 0.1]) cylinder(d1 = screw_head_d + 1, d2 = lid_screw_d + 2*tol_hole, h = 1.2);
                 }
         }
         // internal screw tubes guiding the long M3s down to the posts
