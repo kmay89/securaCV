@@ -43,7 +43,8 @@ vm_w     = 36.0;   // carrier width (X)
 xiao_l   = 21.0;
 xiao_w   = 17.5;
 stack_sock_h = 11.5; // carrier underside -> XIAO underside when seated — MEASURE
-vm_front_h   = 3.5;  // carrier front-side height (patch antenna + parts are low)
+vm_front_h   = 3.5;  // carrier front-side TALLEST part (connectors etc.) — MEASURE
+ant_h        = 1.2;  // antenna (AiP package) top above the PCB — MEASURE; sets the radome air gap
 pcb_t    = 1.0;
 board_clear = 0.6;
 xiao_usb_z  = 4.0;   // XIAO USB-C centre above the back floor — MEASURE the seated stack
@@ -54,7 +55,8 @@ rad_win_x = 24.0;    // window size (X) — cover the antenna array generously
 rad_win_y = 24.0;    // window size (Y)
 rad_dx    = 0.0;     // antenna-zone centre offset from the BOARD centre — MEASURE
 rad_dy    = 6.0;     //   (the array usually sits toward the top half of the carrier)
-rad_gap_note = 0;    // (info) board-to-radome air gap = cav_extra + front headroom; keep >= 3 mm
+// antenna-to-radome air gap is COMPUTED below (rad_gap) and asserted >= 2.5;
+// raise cav_extra for more gap. Keep >= 3 mm for clean radar performance.
 
 /* [Front-face features] — offsets from the BOARD centre; keep them OUT of the window */
 lp_d   = 3.0;        // WS2812 light pipe (press fit)
@@ -181,6 +183,9 @@ inner_y = board_clear + vm_l + 2 + 6;      // board at the USB wall + wire room 
 cav_d_min = vm_standoff + pcb_t + vm_front_h + cav_extra;
 usb_zc  = floor_t + xiao_usb_z;
 cav_d   = e_seal ? max(cav_d_min, xiao_usb_z + usb_h/2 + 2.5) : cav_d_min;
+// actual antenna-to-radome air gap: from the AiP top to the thinned window's
+// inner face (cavity headroom above the tallest part + the window recess)
+rad_gap = (vm_front_h - ant_h) + (cav_d - cav_d_min + cav_extra) + (lid_t - radome_t);
 
 out_x  = inner_x + 2*wall_eff;
 out_y  = inner_y + 2*wall_eff;
@@ -210,6 +215,7 @@ function post_xy() = [
 ];
 
 assert(radome_t >= 0.6 && radome_t < lid_t, "radome_t must be printable (>=0.6) and thinner than lid_t");
+assert(rad_gap >= 2.5, "antenna-to-radome gap < 2.5 mm — raise cav_extra (>= 3 mm recommended)");
 assert(rad_win_x + 2*abs(rad_dx) <= inner_x - 4 && rad_win_y <= vm_l,
        "radome window exceeds the face — shrink rad_win or grow the board zone");
 assert(lip_h < cav_d, "lip_h must be less than the cavity depth");
@@ -223,7 +229,8 @@ assert(lid_edge2 >= 0 && (lid_edge > 0 || lid_edge2 == 0) && lid_edge + lid_edge
 assert(2*fin_r <= base_d + 0.01, "fin_r too large — prongs must not exceed the shell depth");
 echo(str("Canary Sense RADOME enclosure v0.1 — outer ", out_x, " x ", out_y, " x ",
          base_d + lid_t + mount_extra, " mm (+", hinge_off + fin_r, " mm prongs)  (radome ",
-         radome_t, " mm, ", rad_win_x, "x", rad_win_y, " window; seal=", e_seal, ", mount=", m_style, ")"));
+         radome_t, " mm, ", rad_win_x, "x", rad_win_y, " window, antenna air gap ",
+         rad_gap, " mm; seal=", e_seal, ", mount=", m_style, ")"));
 
 // ----------------------------------------------------------------------------
 //  Helpers (shared idiom with the other Canary enclosures)

@@ -609,9 +609,11 @@ the antenna zone is a **thin, flat, uniform membrane** (`radome_t`, default
 1.0 mm; ~1.5 mm ≈ a half-wave in plastic, also low-loss) with nothing
 crossing it: the rib ring, label, gasket path and all features auto-clear it.
 Use **unfilled PETG/ASA only** — carbon-filled filament, foil labels or paint
-with metallic pigment in front of the antenna will blind the radar. Mount the
-board parallel to the window at the built-in air gap (≥ 3 mm) and MEASURE
-the antenna-zone position (`rad_dx/dy`) on your carrier revision.
+with metallic pigment in front of the antenna will blind the radar. The
+**antenna-to-radome air gap is computed and asserted** (`rad_gap`, echoed at
+render; ≈ 4.3 mm at defaults, ≥ 2.5 enforced — raise `cav_extra` for more)
+from your measured `ant_h` (the AiP package top above the PCB). MEASURE the
+antenna-zone position (`rad_dx/dy`) on your carrier revision.
 
 Also on the face, outside the window: a **light pipe** for the onboard WS2812
 and a small **aperture for the BH1750 lux sensor** (it needs to see room
