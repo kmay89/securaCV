@@ -301,6 +301,8 @@ struct RouteCfg {
     min_confidence: f32,
     #[serde(default)]
     require_truthy_state: bool,
+    #[serde(default)]
+    numeric_min: Option<f32>,
 }
 
 /// Translate webhook config into runtime [`WebhookOptions`].
@@ -365,6 +367,7 @@ fn build_routes(routes: &[RouteCfg]) -> Result<Vec<SensorRoute>> {
             let mut route = SensorRoute::new(r.topic.clone(), kind, r.zone.clone());
             route.min_confidence = r.min_confidence;
             route.require_truthy_state = r.require_truthy_state;
+            route.numeric_min = r.numeric_min;
             Ok(route)
         })
         .collect()

@@ -38,8 +38,86 @@
   };
   const DEFAULT_EVENT_ICON = "mdi:shield-eye";
 
+  // Mirror of const.py MODALITY_METADATA + DEVICE_TYPE_MODALITY. A small
+  // glyph distinguishes the sensing medium that produced a claim (radar reads
+  // very differently from a camera even for the same coarse event_type). Kept
+  // backward compatible: events with no resolvable modality get no indicator.
+  const MODALITY_METADATA = {
+    camera: { label: "Camera", icon: "mdi:camera" },
+    "wifi-csi": { label: "WiFi CSI", icon: "mdi:wifi" },
+    radar: { label: "Radar", icon: "mdi:radar" },
+    contact: { label: "Contact", icon: "mdi:electric-switch" },
+    other: { label: "Other sensor", icon: "mdi:access-point" },
+  };
+  const DEVICE_TYPE_MODALITY = {
+    "canary-sense": "radar",
+    "canary-vision": "camera",
+    "canary-wap": "wifi-csi",
+    "canary-contact": "contact",
+  };
+  const MODALITY_ALIASES = {
+    csi: "wifi-csi",
+    wifi: "wifi-csi",
+    mmwave: "radar",
+    "mmwave-radar": "radar",
+    "60ghz": "radar",
+    reed: "contact",
+    door: "contact",
+  };
+
+  // Mirror of const.py ATTESTATION_METADATA. Orthogonal to the verify badge:
+  // *who* signed the claim. Default "device" keeps device-signed events
+  // unchanged; Track B (kit) claims render a distinct, honest provenance.
+  const ATTESTATION_DEVICE = "device";
+  const ATTESTATION_METADATA = {
+    device: { label: "Device-attested", icon: "mdi:chip" },
+    adapter: { label: "Adapter-attested", icon: "mdi:hub" },
+    "ha-bridged": { label: "HA-bridged", icon: "mdi:home-assistant" },
+  };
+
   // States the recorder uses for "no real value" — never rendered as events.
   const NON_EVENT_STATES = new Set(["unavailable", "unknown", "none", "", null, undefined]);
+
+  /** Coerce a free-form modality to a known key, or null when unresolved. */
+  function normalizeModality(value) {
+    if (!value || typeof value !== "string") return null;
+    const key = value.trim().toLowerCase().replace(/_/g, "-");
+    if (Object.prototype.hasOwnProperty.call(MODALITY_METADATA, key)) return key;
+    return MODALITY_ALIASES[key] || null;
+  }
+
+  /**
+   * Resolve a sensing modality for an event from its attributes. Priority:
+   * explicit `modality` attribute → the event's own `device_type`. Returns a
+   * { key, label, icon } descriptor, or null when nothing resolves (the
+   * backward-compatible "no indicator" case).
+   */
+  function resolveModality(attrs) {
+    const a = attrs || {};
+    const explicit = normalizeModality(a.modality);
+    if (explicit) return { key: explicit, ...MODALITY_METADATA[explicit] };
+    const dtype = a.device_type;
+    if (typeof dtype === "string" && DEVICE_TYPE_MODALITY[dtype]) {
+      const key = DEVICE_TYPE_MODALITY[dtype];
+      return { key, ...MODALITY_METADATA[key] };
+    }
+    return null;
+  }
+
+  /**
+   * Resolve attestation provenance from an event's attributes. Returns a
+   * { key, label, icon } descriptor only when the event explicitly carries a
+   * non-device attestation — device-attested (the default) renders no extra
+   * provenance chip so existing events look exactly as before.
+   */
+  function resolveAttestation(attrs) {
+    const a = attrs || {};
+    const raw = a.attestation;
+    if (!raw || typeof raw !== "string") return null;
+    const key = raw.trim().toLowerCase().replace(/_/g, "-");
+    if (key === ATTESTATION_DEVICE || !ATTESTATION_METADATA[key]) return null;
+    return { key, ...ATTESTATION_METADATA[key] };
+  }
 
   /** snake_case-normalize an event_type, accepting CamelCase enum names too. */
   function normalizeEventType(eventType) {
@@ -196,6 +274,8 @@
           zone,
           confidence: confidencePct(attrs.confidence),
           timeBucket: formatTimeBucket(bucket),
+          modality: resolveModality(attrs),
+          attestation: resolveAttestation(attrs),
           verification: resolveVerification({
             verified: attrs.verified,
             signed: attrs.signed,
@@ -244,8 +324,14 @@
   const helpers = {
     EVENT_TYPE_METADATA,
     DEFAULT_EVENT_ICON,
+    MODALITY_METADATA,
+    DEVICE_TYPE_MODALITY,
+    ATTESTATION_METADATA,
     normalizeEventType,
     eventMeta,
+    normalizeModality,
+    resolveModality,
+    resolveAttestation,
     confidencePct,
     formatTimeBucket,
     resolveVerification,
@@ -279,7 +365,15 @@
              gap: 10px; padding: 10px 2px; border-bottom: 1px solid var(--divider-color); }
     .event ha-icon { color: var(--state-icon-color, var(--primary-text-color)); }
     .event .label { font-weight: 500; color: var(--primary-text-color); }
+    .event .labelrow { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
     .event .meta { font-size: 0.8rem; color: var(--secondary-text-color); }
+    .chip { display: inline-flex; align-items: center; gap: 3px; padding: 1px 7px;
+            border-radius: 10px; font-size: 0.7rem; line-height: 1.5;
+            background: var(--secondary-background-color); color: var(--secondary-text-color); }
+    .chip ha-icon { --mdc-icon-size: 13px; width: 13px; height: 13px; }
+    .chip.modality { color: var(--primary-text-color); }
+    .chip.attest { color: var(--warning-color, #fb8c00);
+                   background: rgba(251,140,0,0.14); }
     .event .right { text-align: right; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
     .badge { font-size: 0.8rem; font-weight: 600; }
     .badge.verified { color: var(--success-color, #43a047); }
@@ -445,15 +539,28 @@
             const where = it.zone ? `${it.zone}` : "";
             const when = it.timeBucket || "";
             const sep = where && when ? " · " : "";
+            // Modality chip beside the label: a glyph for the sensing medium
+            // (radar / camera / WiFi-CSI / contact). Omitted when unresolved
+            // so events with no modality info render exactly as before.
+            const modality = it.modality
+              ? `<span class="chip modality" title="${escapeHtml(it.modality.label)}"><ha-icon icon="${it.modality.icon}"></ha-icon>${escapeHtml(it.modality.label)}</span>`
+              : "";
+            // Attestation chip under the badge: honest provenance for Track B
+            // (kit) claims signed at ingest, not on-device. Only shown when the
+            // event is explicitly adapter/ha-bridged attested.
+            const attest = it.attestation
+              ? `<span class="chip attest" title="${escapeHtml(it.attestation.label)}"><ha-icon icon="${it.attestation.icon}"></ha-icon>${escapeHtml(it.attestation.label)}</span>`
+              : "";
             return `
               <div class="event">
                 <ha-icon icon="${it.icon}"></ha-icon>
                 <div>
-                  <div class="label">${escapeHtml(it.label)}</div>
+                  <div class="labelrow"><span class="label">${escapeHtml(it.label)}</span>${modality}</div>
                   <div class="meta">${escapeHtml(where)}${sep}${escapeHtml(when)}</div>
                 </div>
                 <div class="right">
                   <span class="badge ${it.verification.level}" title="${escapeHtml(it.verification.reason)}">${it.verification.symbol} ${escapeHtml(it.verification.label)}</span>
+                  ${attest}
                   ${conf}
                 </div>
               </div>`;
