@@ -1,6 +1,6 @@
 # SecuraCV Canary Firmware — Feature Audit Matrix
 
-**Last updated:** 2026-07-02 (canary-sense Phase 2 — MQTT + HA discovery + signed pull-OTA on the MR60 radar witness; canary-vision robustness parity: WiFi auto-reconnect backoff, WiFi power save, heap monitor + degradation)
+**Last updated:** 2026-07-02 (canary-sense witness signing — Ed25519 events + NVS hash chain + wap-schema chain/health trust surface + task watchdog; earlier same day: Phase 2 network stack + canary-vision robustness parity)
 **Original audit:** 2026-02-20
 **Companion docs:** [VARIANT_POLICY.md](VARIANT_POLICY.md) (lifecycle labels), [FIRMWARE_VARIANT_AUDIT.md](FIRMWARE_VARIANT_AUDIT.md) (risk analysis), [PARITY_PLAN.md](PARITY_PLAN.md) (ACTIVE ⇄ canary-wap parity closure program)
 
@@ -35,8 +35,8 @@ Single-row-per-capability summary across every non-archived variant. This is the
 
 | Capability | canary (PIO) | canary-wap (Arduino) | canary-wap (PIO) | canary-vision | canary-sense | canary-ota | snapshot (archived) |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| Ed25519 signing of witness records | ✅ | ✅ | ⚠️ | ✅ | ❌ | ➖ | ✅ |
-| SHA-256 hash-chain continuity (domain-separated, NVS-persisted) | ✅ | ✅ | ⚠️ | ✅ | ❌ | ➖ | ✅ |
+| Ed25519 signing of witness records | ✅ | ✅ | ⚠️ | ✅ | ✅ | ➖ | ✅ |
+| SHA-256 hash-chain continuity (domain-separated, NVS-persisted) | ✅ | ✅ | ⚠️ | ✅ | ✅ | ➖ | ✅ |
 | GPS (NMEA parse + fix FSM + motion hysteresis) | ✅ | ✅ | ⚠️ | ❌ | ➖ | ➖ | ✅ |
 | SD storage (append-only, `/WITNESS` `/HEALTH` `/CHAIN` `/EXPORT`) | ✅ | ✅ | ⚠️ | ❌ | ➖ | ➖ | ✅ |
 | SD graceful shutdown flush | ✅ | ✅ | ⚠️ | ➖ | ➖ | ➖ | ⚠️ |
@@ -94,7 +94,7 @@ Single-row-per-capability summary across every non-archived variant. This is the
 | API authentication (bearer token + HKDF derivation) | ✅ | ✅ | ❌ | ❌ | ➖ | ➖ | ✅ |
 | Rate limiting on HTTP API | ✅ | ✅ | ❌ | ➖ | ➖ | ➖ | ✅ |
 | TLS (HTTPS self-signed) | ❌ | ❌ | ❌ | ❌ | ❌ | ➖ | ✅ |
-| Watchdog timer | ✅ | ✅ | ⚠️ | ✅ | ❌ | ✅ | ✅ |
+| Watchdog timer | ✅ | ✅ | ⚠️ | ✅ | ✅ | ✅ | ✅ |
 | Provisioning gate (BOOT button) | ✅ | ✅ | ❌ | ❌ | ❌ | ➖ | ✅ |
 | `SECURACV_RELEASE_BUILD` fail-closed guards | ✅ | ✅ | ⚠️ | ✅ | ❌ | ✅ | ✅ (archive-only) |
 

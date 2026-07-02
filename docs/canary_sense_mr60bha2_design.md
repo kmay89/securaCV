@@ -1,8 +1,9 @@
 # Canary Sense — MR60BHA2 60GHz mmWave Witness Design & Development Plan
 
-Status: **in progress** — Phase 0 (toolchain + sensing core) and the Phase 2
-network stack (MQTT + HA discovery + signed pull-OTA + runtime config) are in
-the tree; witness-chain signing and the hardware bench passes remain (see
+Status: **in progress** — Phase 0 (toolchain + sensing core) and Phase 2
+(MQTT + HA discovery + signed pull-OTA + runtime config + Ed25519 witness
+signing with NVS hash chain and HA-verified trust surface) are in the tree;
+the hardware bench passes remain (see
 `firmware/projects/canary-sense/README.md` for live status)
 Hardware: Seeed Studio MR60BHA2 60GHz mmWave Kit (radar module + XIAO ESP32-C6)
 Firmware project (new): `firmware/projects/canary-sense`

@@ -5,6 +5,11 @@ struct Topics {
   char events[96];
   char state[96];
   char status[96];
+  // Witness trust surface — same wire schema as canary-wap: HA TOFU-pins
+  // the pubkey from the retained health payload and verifies the signed
+  // chain head with its existing verify_chain path.
+  char chain[96];
+  char health[96];
   // Firmware update entity (signed pull-OTA) — same topic schema as the
   // other Canary variants: retained state, HA writes "install" / ON / OFF.
   char update_state[96];
@@ -20,6 +25,8 @@ static inline Topics build_topics(const char* device_id) {
   snprintf(t.events, sizeof(t.events), "securacv/%s/events", device_id);
   snprintf(t.state,  sizeof(t.state),  "securacv/%s/state",  device_id);
   snprintf(t.status, sizeof(t.status), "securacv/%s/status", device_id);
+  snprintf(t.chain,  sizeof(t.chain),  "securacv/%s/chain",  device_id);
+  snprintf(t.health, sizeof(t.health), "securacv/%s/health", device_id);
   snprintf(t.update_state,    sizeof(t.update_state),    "securacv/%s/update/state",    device_id);
   snprintf(t.update_cmd,      sizeof(t.update_cmd),      "securacv/%s/update/cmd",      device_id);
   snprintf(t.update_auto,     sizeof(t.update_auto),     "securacv/%s/update/auto",     device_id);

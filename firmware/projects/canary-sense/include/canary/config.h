@@ -26,6 +26,10 @@ static constexpr uint32_t HEARTBEAT_MS = CS_HEARTBEAT_MS;
 // ("lights-out + presence"), not a high-rate channel.
 static constexpr uint32_t LUX_SAMPLE_MS = 5000;
 
+// Health publish cadence (retained; carries the pubkey HA TOFU-pins on,
+// plus heap/uptime/firmware). Also published on every broker reconnect.
+static constexpr uint32_t HEALTH_PUBLISH_MS = 60000;
+
 // -------------------- MQTT / HA --------------------
 static constexpr const char* HA_DISCOVERY_PREFIX = CS_HA_DISCOVERY_PREFIX;
 static constexpr size_t MQTT_BUFFER_BYTES        = CS_MQTT_BUFFER_BYTES;

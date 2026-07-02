@@ -25,9 +25,11 @@ from ..signature import (
     build_chain_canonical,
     build_counts_canonical,
     build_event_canonical,
+    build_sense_event_canonical,
     verify_chain,
     verify_counts,
     verify_event,
+    verify_sense_event,
 )
 from homeassistant.core import HomeAssistant
 
@@ -79,6 +81,90 @@ def test_counts_canonical_matches_firmware_reference():
 
 
 # ─── verify_chain ─────────────────────────────────────────────────────
+
+def test_sense_canonical_matches_firmware_reference():
+    """Byte-identical to the firmware host test vector
+    (firmware/tests_host/test_device_signature_common.cpp)."""
+    got = build_sense_event_canonical(
+        "sense01", 3, "presence_detected", "present", "1", "near", 1200
+    )
+    assert got == (
+        b"securacv-canary-sig|v1|sense|sense01|3|"
+        b"presence_detected|present|1|near|1200"
+    )
+
+
+def test_verify_sense_event_happy_path():
+    priv, pub = _make_keypair()
+    hass = HomeAssistant()
+    ts = TrustStore(hass, entry_id="abc")
+    run(ts.async_load())
+    _pin(ts, "sense01", pub)
+
+    canonical = build_sense_event_canonical(
+        "sense01", 3, "presence_detected", "present", "1", "near", 1200
+    )
+    sig = _b64url_nopad(priv.sign(canonical))
+    payload = {
+        "v": 1,
+        "event": "presence_detected",
+        "seq": 3,
+        "bucket_uptime_s": 1200,
+        "presence": "present",
+        "occupants": "1",
+        "range": "near",
+        "signed": True,
+        "alg": "ed25519",
+        "fp": ts.get("sense01").fingerprint_hex,
+        "sig": sig,
+    }
+    verdict = verify_sense_event(ts, "sense01", payload)
+    assert verdict.trusted is True
+
+
+def test_verify_sense_event_missing_required_field():
+    hass = HomeAssistant()
+    ts = TrustStore(hass, entry_id="abc")
+    run(ts.async_load())
+    payload = {
+        "event": "presence_detected",
+        "seq": 3,
+        # presence, occupants, range, bucket_uptime_s missing
+    }
+    verdict = verify_sense_event(ts, "sense01", payload)
+    assert verdict.trusted is False
+    assert verdict.reason == "unsigned"
+
+
+def test_verify_sense_event_tampered_payload():
+    """Flipping the occupant bucket after signing must fail verification —
+    the canonical no longer matches the signed bytes."""
+    priv, pub = _make_keypair()
+    hass = HomeAssistant()
+    ts = TrustStore(hass, entry_id="abc")
+    run(ts.async_load())
+    _pin(ts, "sense01", pub)
+
+    canonical = build_sense_event_canonical(
+        "sense01", 3, "presence_detected", "present", "1", "near", 1200
+    )
+    sig = _b64url_nopad(priv.sign(canonical))
+    payload = {
+        "v": 1,
+        "event": "presence_detected",
+        "seq": 3,
+        "bucket_uptime_s": 1200,
+        "presence": "present",
+        "occupants": "2+",  # tampered after signing
+        "range": "near",
+        "alg": "ed25519",
+        "fp": ts.get("sense01").fingerprint_hex,
+        "sig": sig,
+    }
+    verdict = verify_sense_event(ts, "sense01", payload)
+    assert verdict.trusted is False
+    assert verdict.reason == "mismatch"
+
 
 def test_verify_chain_happy_path():
     priv, pub = _make_keypair()

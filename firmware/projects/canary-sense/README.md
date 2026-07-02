@@ -7,17 +7,23 @@ own DSP; the host MCU only ever sees pre-digested scalar claims over UART.
 
 Design + roadmap: [`docs/canary_sense_mr60bha2_design.md`](../../../docs/canary_sense_mr60bha2_design.md).
 
-> **Status: Phase 2 (publishing witness).** On top of the Phase 0 sensing core
-> (UART frame decoder + stall-safe presence/vitals FSMs, host-tested in
-> `firmware/tests_host/`) the firmware now carries the same network stack as
-> canary-vision: NVS-backed runtime config, supervised WiFi STA (exponential
-> backoff + outage reboot), MQTT with LWT + Home Assistant discovery, heap
-> diagnostics with load-shedding, BH1750 illuminance, and the shared signed
-> pull-OTA engine (`firmware/common/ota`) with an HA `update` entity.
-> Remaining Phase 2 design-doc item: Ed25519 witness-chain signing of presence
-> events (today the events are plain MQTT JSON, like canary-vision's).
-> Bench-pending: OTA A/B on real C6 hardware, `[BENCH]` protocol assumptions
-> in `mr60_uart.h`.
+> **Status: Phase 2 complete (signing witness).** On top of the Phase 0
+> sensing core (UART frame decoder + stall-safe presence/vitals FSMs,
+> host-tested in `firmware/tests_host/`) the firmware carries the same
+> network stack as canary-vision — NVS-backed runtime config, supervised
+> WiFi STA (exponential backoff + outage reboot), non-blocking broker
+> supervision, MQTT with LWT + Home Assistant discovery, heap diagnostics
+> with load-shedding, BH1750 illuminance, the shared signed pull-OTA
+> engine (`firmware/common/ota`) with an HA `update` entity — **plus the
+> witness trust surface**: an NVS-persisted Ed25519 identity signs every
+> event over the v1 `sense` canonical (`common/identity/device_signature`,
+> the same proven signer as canary-wap), every witnessed transition
+> advances a domain-separated SHA-256 hash chain (NVS-persisted, survives
+> broker outages and reboots), and the wap-schema `chain`/`health` topics
+> let Home Assistant TOFU-pin the pubkey and render the green
+> "device-verified ✓" badge. An IDF5 task watchdog guards the loop.
+> Bench-pending: OTA A/B on real C6 hardware, `[BENCH]` protocol
+> assumptions in `mr60_uart.h`.
 
 ## Quickstart (PlatformIO)
 
@@ -45,12 +51,18 @@ Base:
 - `securacv/<device_id>/events` (non-retained; presence transitions only)
 - `securacv/<device_id>/state`  (retained; full coarse snapshot)
 - `securacv/<device_id>/status` (retained; availability + health heartbeat)
+- `securacv/<device_id>/chain`  (retained; signed hash-chain head + length)
+- `securacv/<device_id>/health` (retained; pubkey for HA TOFU-pin + heap/uptime/fw)
 - `securacv/<device_id>/update/{state,cmd,auto,auto/cmd}` (signed pull-OTA)
 
 Events are `presence_detected` / `presence_cleared` / `occupancy_changed`,
 carrying only the coarse vocabulary: presence state, 0/1/2+ occupant bucket,
-near/mid/far range band. **No raw distance, no per-target data, no vitals —
-ever** (privacy chokepoint, design doc §2).
+near/mid/far range band, 10-minute uptime bucket. **No raw distance, no
+per-target data, no vitals — ever** (privacy chokepoint, design doc §2).
+Each event carries an Ed25519 signature (`v`/`alg`/`fp`/`sig`) over the v1
+`sense` canonical; HA verifies it against the pubkey TOFU-pinned from the
+health topic, and the retained chain publish reuses the generic `chain`
+canonical so HA's existing verifier covers it with zero changes.
 
 ## Home Assistant entities (MQTT discovery, retained)
 

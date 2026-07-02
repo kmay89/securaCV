@@ -123,11 +123,21 @@ class DeviceTrustEntry:
 def fingerprint_from_pubkey_hex(pubkey_hex: str) -> str:
     """Mirror firmware's domain-separated SHA256 fingerprint.
 
-    `compute_fingerprint` in canary_wap.ino hashes the 32-byte pubkey
-    with domain string "securacv:pubkey:fingerprint" and takes the
-    first 8 bytes hex-encoded. We replicate it byte-for-byte so HA
-    can derive the fp from a pubkey supplied via the /enroll endpoint
-    or manual paste without needing the firmware to also publish it.
+    `compute_fingerprint` in canary_wap.ino (and canary-sense's witness
+    module) hashes via `sha256_domain`, which is
+    SHA256(domain || 0x00 || pubkey) — note the single NUL separator
+    between the domain string and the payload — and takes the first
+    8 bytes hex-encoded. We replicate it byte-for-byte so HA can derive
+    the fp from a pubkey supplied via the /enroll endpoint, the health
+    topic, or manual paste without needing the firmware to also publish
+    it.
+
+    Historical note: this function originally omitted the 0x00
+    separator, so every HA-derived fp disagreed with the fp the
+    firmware publishes in its sig envelopes — pinned devices could
+    never verify green ("Fingerprint changed without rotation").
+    TrustStore.async_load() heals stored pins recorded under the old
+    derivation.
     """
     domain = b"securacv:pubkey:fingerprint"
     pubkey = bytes.fromhex(pubkey_hex)
@@ -135,6 +145,7 @@ def fingerprint_from_pubkey_hex(pubkey_hex: str) -> str:
         raise ValueError(f"Expected 32-byte pubkey, got {len(pubkey)} bytes")
     h = hashlib.sha256()
     h.update(domain)
+    h.update(b"\x00")
     h.update(pubkey)
     return h.digest()[:8].hex()
 
@@ -164,14 +175,35 @@ class TrustStore:
         if not raw:
             self._loaded = True
             return
+        healed = False
         for device_id, payload in raw.get("devices", {}).items():
             try:
-                self._devices[device_id] = DeviceTrustEntry.from_storage(payload)
+                entry = DeviceTrustEntry.from_storage(payload)
             except (KeyError, ValueError) as err:
                 _LOGGER.warning(
                     "Dropping malformed trust entry for %s: %s", device_id, err
                 )
+                continue
+            # Heal pins recorded under the pre-fix fingerprint derivation
+            # (missing 0x00 domain separator): the pubkey is the identity;
+            # the fp is derived, so recompute and overwrite when stale.
+            try:
+                expected_fp = fingerprint_from_pubkey_hex(entry.pubkey_hex)
+            except ValueError:
+                expected_fp = entry.fingerprint_hex
+            if expected_fp != entry.fingerprint_hex:
+                _LOGGER.info(
+                    "Healing trust pin for %s: fp %s -> %s (derivation fix)",
+                    device_id,
+                    entry.fingerprint_hex,
+                    expected_fp,
+                )
+                entry.fingerprint_hex = expected_fp
+                healed = True
+            self._devices[device_id] = entry
         self._loaded = True
+        if healed:
+            await self.async_save()
 
     async def async_save(self) -> None:
         await self._store.async_save(

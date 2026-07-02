@@ -2,6 +2,41 @@
 
 ## [Unreleased]
 
+### canary-sense witness signing: Ed25519 events, hash chain, verified-green in HA
+
+Completes the canary-sense design doc's Phase 2 trust items, reusing the
+signing surface field-proven in the recent canary-wap PRs:
+
+- **Device identity**: Ed25519 keypair generated from the hardware RNG on
+  first boot, NVS-persisted (`securacv/privkey` — the wap storage
+  contract), fingerprint via the wap `sha256_domain` formula. The signer
+  itself is now a shared module (`firmware/common/identity/
+  device_signature.{h,cpp}`, host-tested) with a new v1 `sense` canonical
+  kind alongside the locked chain/event/counts formats.
+- **Every witnessed transition advances a domain-separated SHA-256 hash
+  chain** (`securacv:fw:chain:v1`, genesis bound to the device key),
+  NVS-persisted — offline gaps show up as seq/length jumps, never lost
+  tamper evidence. Events publish with `v`/`alg`/`fp`/`sig` over the
+  `sense` canonical; the retained `chain` topic reuses canary-wap's exact
+  wire schema, and the retained `health` topic carries `public_key` so
+  Home Assistant TOFU-pins the device with its existing subscription.
+- **HA integration verifies radar events**: `signature.py` gains the
+  `sense` canonical + `verify_sense_event`, and the events handler
+  dispatches by payload dialect (CSI vs radar) so each verifies against
+  its own canonical.
+- **Fingerprint derivation bug fixed (wap ⇄ HA)**: firmware fingerprints
+  are `SHA256(domain || 0x00 || pubkey)` but HA's
+  `fingerprint_from_pubkey_hex` omitted the NUL separator, so every
+  pinned device rendered "Fingerprint changed without rotation" instead
+  of the green badge. HA now matches the deployed firmware byte-for-byte
+  and heals previously stored pins on load.
+- **Task watchdog wired on canary-sense** (IDF5 `esp_task_wdt_reconfigure`,
+  the canary-wap pattern; 30 s to clear the bounded broker-connect block).
+- Host tests lock the canonical bytes + b64url encoding
+  (`firmware/tests_host/test_device_signature_common.cpp`); HA pytest
+  covers sense-event verify (happy path, missing fields, tampered
+  payload) and the fingerprint healing migration.
+
 ### canary-wap admin console: the last dead controls now work
 
 Follow-up to the panel revival — the three controls that were honestly
