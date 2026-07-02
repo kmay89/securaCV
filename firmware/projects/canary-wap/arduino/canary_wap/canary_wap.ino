@@ -6369,20 +6369,66 @@ static void register_api_routes(httpd_handle_t server) {
 }
 
 static void start_http_server() {
-  // Calculate max URI handlers based on feature usage
-  const int base_handlers = 40;       // UI (/ + /admin + /settings), API (auth + public), WiFi provisioning, captive/connectivity probes (Apple x2, Android x2, Windows x2), /api/selftest, /api/diagnostics, /api/battery/history, /api/ota/{status,check,install,config}, /api/pairing-qr
+  // Max URI handlers, itemized to match what the active server actually
+  // registers. esp_http_server SILENTLY drops every registration past this
+  // budget (ESP_ERR_HTTPD_HANDLERS_FULL, and none of the register call
+  // sites check the return), so an under-count 404s whole API families —
+  // which is exactly how the Presence, Household, Bluetooth-clear, Chirp
+  // and BLE routes disappeared: 154 registrations against an old 123-slot
+  // budget dropped the last 31. Each category is gated on the SAME feature
+  // flag its registrations are, so the budget tracks the build.
+  //
+  // The exact per-config counts are enforced by
+  //   tests_host/check_route_budget.py  (CI: firmware.yml)
+  // which emulates the preprocessor for FULL/S3, DEV/S3 and FULL/C3 and
+  // asserts >= 8 free slots. If it fails, RAISE a number here — never lower.
+  const int base_handlers = 46;       // register_api_routes core + the always-on
+                                       // register_extra_routes singles (WiFi
+                                       // provisioning, OTA x4, identify,
+                                       // device-name, selftest, fleet/pairing QR,
+                                       // sys-monitor, battery) + captive probes
+  const int csi_handlers = 23;        // csi_integration::init (stream/window/events/
+                                       // calibrate/settings/mqtt/tune/pair-token/…)
+  const int wifi_presence_handlers = 4;   // /api/presence/{combined,wifi,wifi/start,wifi/stop}
+  const int household_handlers = 6;       // /api/household* + /api/presence override
+  const int audible_chirp_handlers = 4;   // /api/audible-chirp{,/play,/test,/config}
 #if FEATURE_ACOUSTIC_EVENTS
-  const int audio_handlers = 7;       // /api/audio/{status,mute,transitions}, /api/audio/selftest + /api/audio/config (GET + POST each)
+  const int audio_handlers = 7;       // /api/audio/{status,mute,transitions,selftest,config x2}
 #else
   const int audio_handlers = 0;
 #endif
+#if FEATURE_CAMERA_PEEK
   const int camera_handlers = 9;      // Camera peek endpoints
-  const int mesh_handlers = 12;       // Mesh network endpoints
-  const int bluetooth_handlers = 23;  // Bluetooth API endpoints
-  const int ble_discovery_handlers = 3; // BLE discovery (Opera/Chirp/Nearby) endpoints
-  const int csi_handlers = 23;       // /api/csi/stream, /api/csi/window, /api/events/today, /api/events/dismiss, /api/csi/calibrate/{start,status,apply}, /sense, /api/settings (GET + POST), /api/privacy-budget, /manifest.webmanifest, /sw.js, /tune, /api/tune/coefficients (GET + POST), /api/tune/preset (GET + POST), /api/pair/token, /api/mqtt/config (GET + POST), /api/mqtt/test, /mqtt
-  const int handler_headroom = 6;     // Reserve for future additions
-  const int total_handlers = base_handlers + audio_handlers + camera_handlers + mesh_handlers + bluetooth_handlers + ble_discovery_handlers + csi_handlers + handler_headroom;
+#else
+  const int camera_handlers = 0;
+#endif
+#if FEATURE_QR_PROVISION
+  const int qr_handlers = 3;          // /api/wifi/qr-scan POST/GET/DELETE
+#else
+  const int qr_handlers = 0;
+#endif
+#if FEATURE_MESH_NETWORK
+  const int mesh_handlers = 12;       // Mesh network (opera) endpoints
+  const int chirp_handlers = 13;      // chirp_api::register_routes (/api/chirp/*)
+#else
+  const int mesh_handlers = 0;
+  const int chirp_handlers = 0;
+#endif
+#if FEATURE_BLUETOOTH
+  const int bluetooth_handlers = 24;  // bluetooth_api::register_routes
+#else
+  const int bluetooth_handlers = 0;
+#endif
+#if FEATURE_BLE
+  const int ble_discovery_handlers = 3; // /api/ble/status, /api/nearby, /api/ble/chirp/send
+#else
+  const int ble_discovery_handlers = 0;
+#endif
+  const int handler_headroom = 24;    // Reserve for future additions
+  const int total_handlers = base_handlers + csi_handlers + wifi_presence_handlers
+      + household_handlers + audible_chirp_handlers + audio_handlers
+      + camera_handlers + qr_handlers + mesh_handlers + chirp_handlers
+      + bluetooth_handlers + ble_discovery_handlers + handler_headroom;
 
   // ── Start HTTPS server (port 443) if TLS cert is available ──
 #if SECURACV_HAS_HTTPS_SERVER
