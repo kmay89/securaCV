@@ -279,6 +279,7 @@ fn main() -> Result<()> {
                 zone_id: DEFAULT_ZONE_ID.to_string(),
                 confidence: 0.5,
                 correlation_token: None,
+                attestation: None,
             };
             let _ev = kernel.append_event_checked(
                 &module_desc,

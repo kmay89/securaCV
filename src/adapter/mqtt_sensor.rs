@@ -23,7 +23,7 @@ use serde::Deserialize;
 
 use crate::adapter::contract::{AdapterDescriptor, Claim, ClaimKind};
 use crate::adapter::SensorAdapter;
-use crate::EventType;
+use crate::{Attestation, EventType};
 
 static MQTT_SENSOR_DESCRIPTOR: AdapterDescriptor = AdapterDescriptor {
     id: "mqtt_sensor_adapter",
@@ -63,6 +63,15 @@ pub struct SensorRoute {
     pub min_confidence: f32,
     /// When true, only `state: on`/truthy payloads emit a claim (e.g. contact "opened").
     pub require_truthy_state: bool,
+    /// When set, the payload must carry a numeric reading >= this threshold to emit a claim
+    /// (bare numeric string, or a numeric/numeric-string `state` field). Replaces the truthy
+    /// gate for numeric sensors: occupant counters, HA statestream sensor states, lux values.
+    /// The reading itself is gating-only — it never reaches the claim.
+    pub numeric_min: Option<f32>,
+    /// Provenance declared for this route. `None` → plain adapter attestation;
+    /// set to [`Attestation::HaBridged`] on routes fed by an HA
+    /// `mqtt_statestream` bridge so the dashboard renders the extra hop honestly.
+    pub attestation: Option<Attestation>,
 }
 
 impl SensorRoute {
@@ -73,6 +82,8 @@ impl SensorRoute {
             zone_label: zone_label.into(),
             min_confidence: 0.0,
             require_truthy_state: false,
+            numeric_min: None,
+            attestation: None,
         }
     }
 }
@@ -81,7 +92,29 @@ impl SensorRoute {
 struct SensorPayload {
     confidence: Option<f32>,
     zone: Option<String>,
-    state: Option<String>,
+    state: Option<serde_json::Value>,
+}
+
+impl SensorPayload {
+    /// The `state` field as a string, for truthy parsing ("on", "open", ...).
+    /// An explicit `"state": null` is treated as absent, matching the previous
+    /// `Option<String>` deserialization (object-without-state => triggered).
+    fn state_str(&self) -> Option<String> {
+        match &self.state {
+            Some(serde_json::Value::Null) | None => None,
+            Some(serde_json::Value::String(s)) => Some(s.clone()),
+            Some(v) => Some(v.to_string()),
+        }
+    }
+
+    /// The `state` field as a number (numeric JSON value or numeric string).
+    fn state_num(&self) -> Option<f32> {
+        match &self.state {
+            Some(serde_json::Value::Number(n)) => n.as_f64().map(|v| v as f32),
+            Some(serde_json::Value::String(s)) => s.trim().parse::<f32>().ok(),
+            _ => None,
+        }
+    }
 }
 
 /// A `(topic, payload)` message fed to the adapter.
@@ -106,14 +139,28 @@ pub fn route_message(routes: &[SensorRoute], topic: &str, payload: &[u8]) -> Opt
         .map(|p| (p, true))
         .unwrap_or((SensorPayload::default(), false));
 
-    let state_truthy = match (&parsed.state, is_json_object) {
-        (Some(s), _) => parse_truthy(s),
-        (None, true) => true, // valid JSON object without explicit state => triggered
-        (None, false) => parse_truthy(raw),
-    };
+    // Numeric gate: when configured, it replaces the truthy gate entirely. A payload that
+    // doesn't parse as a number (bare or in `state`) emits nothing — silence over guessing.
+    if let Some(threshold) = route.numeric_min {
+        let reading = if is_json_object {
+            parsed.state_num()
+        } else {
+            raw.trim().parse::<f32>().ok()
+        };
+        match reading {
+            Some(v) if v >= threshold => {}
+            _ => return None,
+        }
+    } else {
+        let state_truthy = match (parsed.state_str(), is_json_object) {
+            (Some(s), _) => parse_truthy(&s),
+            (None, true) => true, // valid JSON object without explicit state => triggered
+            (None, false) => parse_truthy(raw),
+        };
 
-    if route.require_truthy_state && !state_truthy {
-        return None;
+        if route.require_truthy_state && !state_truthy {
+            return None;
+        }
     }
 
     // Fail closed on a gated route: a payload that omits (or misspells)
@@ -132,7 +179,11 @@ pub fn route_message(routes: &[SensorRoute], topic: &str, payload: &[u8]) -> Opt
         .zone
         .clone()
         .unwrap_or_else(|| route.zone_label.clone());
-    Some(Claim::new(route.kind, zone_label, confidence))
+    let mut claim = Claim::new(route.kind, zone_label, confidence);
+    if let Some(att) = route.attestation {
+        claim = claim.with_attestation(att);
+    }
+    Some(claim)
 }
 
 /// Parse a batch of messages, optionally inside the seccomp sandbox. Shared by both adapters.
@@ -363,6 +414,95 @@ mod tests {
         // Truncated/invalid JSON that starts with '{' must NOT be treated as a triggered object.
         assert!(adapter
             .message_to_claim("sensors/door/contact", br#"{"state":"off"#)
+            .is_none());
+    }
+
+    #[test]
+    fn route_attestation_reaches_the_claim() {
+        let mut route = SensorRoute::new(
+            "securacv_statestream/binary_sensor/mr60_person/state",
+            ClaimKind::PresenceInRestrictedZone,
+            "bedroom",
+        );
+        route.require_truthy_state = true;
+        route.attestation = Some(Attestation::HaBridged);
+        let (adapter, _tx) = MqttSensorAdapter::new(vec![route]);
+        let claim = adapter
+            .message_to_claim(
+                "securacv_statestream/binary_sensor/mr60_person/state",
+                b"on",
+            )
+            .expect("claim");
+        assert_eq!(claim.attestation, Some(Attestation::HaBridged));
+        // Routes without a declaration leave it to the contract default.
+        let (plain, _tx) = MqttSensorAdapter::new(vec![SensorRoute::new(
+            "s/pir",
+            ClaimKind::PresenceInRestrictedZone,
+            "lobby",
+        )]);
+        assert_eq!(
+            plain
+                .message_to_claim("s/pir", b"ON")
+                .expect("claim")
+                .attestation,
+            None
+        );
+    }
+
+    #[test]
+    fn explicit_null_state_behaves_like_absent_state() {
+        // {"state": null} must keep the pre-Option<Value> behavior: a valid
+        // JSON object without a usable state counts as triggered.
+        let mut route = SensorRoute::new(
+            "sensors/lobby/pir",
+            ClaimKind::PresenceInRestrictedZone,
+            "lobby",
+        );
+        route.require_truthy_state = true;
+        let (adapter, _tx) = MqttSensorAdapter::new(vec![route]);
+        assert!(adapter
+            .message_to_claim("sensors/lobby/pir", br#"{"state":null,"confidence":0.9}"#)
+            .is_some());
+    }
+
+    #[test]
+    fn numeric_min_gates_bare_numeric_payloads() {
+        // HA statestream / ESPHome publish bare states; an mmWave target counter
+        // publishes "0".."N". Presence claim only when the count clears the floor.
+        let mut route = SensorRoute::new(
+            "ha/statestream/sensor/mr60_target_number/state",
+            ClaimKind::PresenceInRestrictedZone,
+            "bedroom",
+        );
+        route.numeric_min = Some(1.0);
+        let (adapter, _tx) = MqttSensorAdapter::new(vec![route]);
+        let topic = "ha/statestream/sensor/mr60_target_number/state";
+        assert!(adapter.message_to_claim(topic, b"0").is_none());
+        assert!(adapter.message_to_claim(topic, b"1").is_some());
+        assert!(adapter.message_to_claim(topic, b"2").is_some());
+        // Non-numeric payloads emit nothing when the numeric gate is configured.
+        assert!(adapter.message_to_claim(topic, b"unavailable").is_none());
+        assert!(adapter.message_to_claim(topic, b"on").is_none());
+    }
+
+    #[test]
+    fn numeric_min_reads_json_state_field() {
+        let mut route = SensorRoute::new("s/occupancy", ClaimKind::PresenceInRestrictedZone, "lab");
+        route.numeric_min = Some(2.0);
+        let (adapter, _tx) = MqttSensorAdapter::new(vec![route]);
+        // Numeric JSON state and numeric-string state both gate correctly.
+        assert!(adapter
+            .message_to_claim("s/occupancy", br#"{"state":2}"#)
+            .is_some());
+        assert!(adapter
+            .message_to_claim("s/occupancy", br#"{"state":"3","confidence":0.9}"#)
+            .is_some());
+        assert!(adapter
+            .message_to_claim("s/occupancy", br#"{"state":1}"#)
+            .is_none());
+        // JSON object without a numeric state emits nothing under the numeric gate.
+        assert!(adapter
+            .message_to_claim("s/occupancy", br#"{"confidence":0.9}"#)
             .is_none());
     }
 

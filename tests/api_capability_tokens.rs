@@ -25,6 +25,7 @@ fn add_test_event(kernel: &mut Kernel, cfg: &KernelConfig) -> Result<()> {
         zone_id: "zone:test".to_string(),
         confidence: 0.5,
         correlation_token: None,
+        attestation: None,
     };
     kernel.append_event_checked(
         &desc,
@@ -291,6 +292,7 @@ fn api_digest_aggregates_events_with_coarse_metadata() -> Result<()> {
                 zone_id: "zone:porch".to_string(),
                 confidence: 0.8,
                 correlation_token: None,
+                attestation: None,
             };
             kernel.append_event_checked(
                 &desc,

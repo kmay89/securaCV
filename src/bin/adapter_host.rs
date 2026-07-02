@@ -43,6 +43,7 @@ use witness_kernel::adapter::ble_presence::{BlePresenceAdapter, BleRoom};
 use witness_kernel::adapter::frigate::{FrigateAdapter, FrigateFilter};
 use witness_kernel::adapter::meshtastic::{self, MeshNode, MeshtasticAdapter};
 use witness_kernel::adapter::mqtt_sensor::{MqttSensorAdapter, SensorRoute};
+use witness_kernel::Attestation;
 
 /// Set by the SIGHUP handler; the run loop drains it to reload the config.
 static RELOAD_REQUESTED: AtomicBool = AtomicBool::new(false);
@@ -310,6 +311,12 @@ struct RouteCfg {
     min_confidence: f32,
     #[serde(default)]
     require_truthy_state: bool,
+    #[serde(default)]
+    numeric_min: Option<f32>,
+    /// "adapter" (default when omitted) or "ha-bridged" for routes fed by an
+    /// HA mqtt_statestream bridge.
+    #[serde(default)]
+    attestation: Option<String>,
 }
 
 /// Translate webhook config into runtime [`WebhookOptions`].
@@ -374,6 +381,17 @@ fn build_routes(routes: &[RouteCfg]) -> Result<Vec<SensorRoute>> {
             let mut route = SensorRoute::new(r.topic.clone(), kind, r.zone.clone());
             route.min_confidence = r.min_confidence;
             route.require_truthy_state = r.require_truthy_state;
+            route.numeric_min = r.numeric_min;
+            route.attestation = match r.attestation.as_deref() {
+                None | Some("adapter") => None, // adapter provenance is the path default
+                Some("ha-bridged") => Some(Attestation::HaBridged),
+                Some(other) => {
+                    return Err(anyhow!(
+                        "unknown attestation '{}' (expected 'adapter' or 'ha-bridged')",
+                        other
+                    ))
+                }
+            };
             Ok(route)
         })
         .collect()

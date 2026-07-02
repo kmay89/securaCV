@@ -102,6 +102,7 @@ fn frigate_event_flows_to_a_verifiable_sealed_log() {
             zone_id: zone_id.clone(),
             confidence: parsed.confidence as f32,
             correlation_token: None, // Frigate object ids are never carried through
+            attestation: None,
         };
 
         let event = kernel

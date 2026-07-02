@@ -396,6 +396,160 @@ def test_save_generates_and_persists_device_key(save_env, monkeypatch, tmp_path)
 
 
 # ---------------------------------------------------------------------------
+# _kernel_download (Download my events proxy)
+# ---------------------------------------------------------------------------
+
+
+class _FakeDownloadResponse(_FakeResponse):
+    """Adds the headers attribute `_kernel_download` reads for the filename."""
+
+    def __init__(self, payload: bytes, disposition: str):
+        super().__init__(payload)
+        self.headers = {"Content-Disposition": disposition}
+
+
+def test_kernel_download_sets_token_header_and_passes_disposition(monkeypatch, tmp_path):
+    token_file = tmp_path / "api_token"
+    token_file.write_text("tok-123\n")
+    monkeypatch.setattr(serve_wizard, "API_TOKEN_FILE", token_file)
+
+    captured = {}
+
+    def _fake(req, timeout=None):
+        captured["req"] = req
+        return _FakeDownloadResponse(
+            b'{"artifact":{}}', 'attachment; filename="securacv-events-600.json"'
+        )
+
+    monkeypatch.setattr(serve_wizard.urllib.request, "urlopen", _fake)
+
+    payload, err = serve_wizard._kernel_download("/export/bundle?last=24h")
+    assert err is None
+    body, disposition = payload
+    assert body == b'{"artifact":{}}'
+    assert disposition == 'attachment; filename="securacv-events-600.json"'
+    req = captured["req"]
+    assert req.get_full_url().endswith("/export/bundle?last=24h")
+    # Token forwarded to the kernel, never anywhere else.
+    assert req.get_header("X-witness-token") == "tok-123"
+
+
+def test_kernel_download_reports_missing_token(monkeypatch, tmp_path):
+    monkeypatch.setattr(serve_wizard, "API_TOKEN_FILE", tmp_path / "missing")
+    payload, err = serve_wizard._kernel_download("/export/bundle")
+    assert payload is None
+    assert "token unavailable" in err
+
+
+def test_kernel_download_surfaces_kernel_error(monkeypatch, tmp_path):
+    token_file = tmp_path / "api_token"
+    token_file.write_text("tok-123\n")
+    monkeypatch.setattr(serve_wizard, "API_TOKEN_FILE", token_file)
+
+    def _fake(req, timeout=None):
+        raise urllib.error.HTTPError(
+            req.get_full_url(), 400, "Bad Request", None, io.BytesIO(b'{"error":"bad_window"}')
+        )
+
+    monkeypatch.setattr(serve_wizard.urllib.request, "urlopen", _fake)
+    payload, err = serve_wizard._kernel_download("/export/bundle?last=nope")
+    assert payload is None
+    assert "400" in err and "bad_window" in err
+
+
+# ---------------------------------------------------------------------------
+# /api/kernel/export proxy — the window is the user's privacy scope, so the
+# proxy must fail closed: unknown parameters reject the request instead of
+# being dropped (a dropped window silently broadens the export to everything).
+# ---------------------------------------------------------------------------
+
+
+def _run_export_get(monkeypatch, path):
+    """Drive do_GET through the export route with all socket IO stubbed."""
+    handler = _bare_handler()
+    handler.path = path
+    monkeypatch.delenv("INGRESS_PATH", raising=False)
+
+    sent = {"json": None, "status": None}
+
+    def _fake_json(data, status=200):
+        sent["json"] = data
+        sent["status"] = status
+
+    handler._json_response = _fake_json
+
+    forwarded = []
+
+    def _fake_download(kernel_path):
+        forwarded.append(kernel_path)
+        return (b"{}", 'attachment; filename="x.json"'), None
+
+    monkeypatch.setattr(serve_wizard, "_kernel_download", _fake_download)
+    # The success path writes raw headers/body; stub the socket surface.
+    handler.send_response = lambda *a, **k: None
+    handler.send_header = lambda *a, **k: None
+    handler.end_headers = lambda: None
+    handler.wfile = io.BytesIO()
+
+    handler.do_GET()
+    return sent, forwarded
+
+
+def test_export_proxy_rejects_misspelled_window_param(monkeypatch):
+    sent, forwarded = _run_export_get(monkeypatch, "/api/kernel/export?las=24h")
+    assert forwarded == []  # nothing may reach the kernel
+    assert sent["status"] == 400
+    assert sent["json"]["ok"] is False
+    assert sent["json"]["error"] == "bad_window"
+    assert "las" in sent["json"]["detail"]
+
+
+def test_export_proxy_rejects_unknown_param(monkeypatch):
+    sent, forwarded = _run_export_get(monkeypatch, "/api/kernel/export?unknown=1")
+    assert forwarded == []
+    assert sent["status"] == 400
+    assert sent["json"]["error"] == "bad_window"
+
+
+def test_export_proxy_rejects_mixed_known_and_unknown(monkeypatch):
+    sent, forwarded = _run_export_get(
+        monkeypatch, "/api/kernel/export?last=24h&unknown=1"
+    )
+    assert forwarded == []
+    assert sent["status"] == 400
+    assert sent["json"]["error"] == "bad_window"
+
+
+def test_export_proxy_forwards_window_intact(monkeypatch):
+    sent, forwarded = _run_export_get(monkeypatch, "/api/kernel/export?last=24h")
+    assert forwarded == ["/export/bundle?last=24h"]
+    assert sent["json"] is None  # no error response
+
+
+def test_export_proxy_forwards_start_end_verbatim(monkeypatch):
+    # Conflicting/malformed combos stay the kernel's call: the proxy forwards
+    # allowlisted names verbatim and relays the kernel's bad_window verdict.
+    sent, forwarded = _run_export_get(
+        monkeypatch, "/api/kernel/export?start=600&end=1200"
+    )
+    assert forwarded == ["/export/bundle?start=600&end=1200"]
+    assert sent["json"] is None
+
+
+def test_export_proxy_no_query_is_full_export(monkeypatch):
+    # Documented operator path: no window at all = full export.
+    sent, forwarded = _run_export_get(monkeypatch, "/api/kernel/export")
+    assert forwarded == ["/export/bundle"]
+    assert sent["json"] is None
+
+
+def test_export_query_suffix_rejects_empty_param_name():
+    suffix, err = serve_wizard._export_query_suffix("&last=24h")
+    assert suffix is None
+    assert err is not None
+
+
+# ---------------------------------------------------------------------------
 # do_POST body-length parsing — a malformed Content-Length header is fully
 # attacker-controlled input and must produce a clean 400, not an unhandled
 # ValueError traceback.

@@ -15,6 +15,9 @@ const assert = require("node:assert/strict");
 const {
   normalizeEventType,
   eventMeta,
+  normalizeModality,
+  resolveModality,
+  resolveAttestation,
   confidencePct,
   formatTimeBucket,
   resolveVerification,
@@ -42,6 +45,69 @@ test("eventMeta resolves known types and falls back for unknown", () => {
   assert.equal(unknown.icon, "mdi:shield-eye");
   assert.equal(unknown.label, "some_future_claim");
   assert.equal(eventMeta(null).label, "Unknown");
+});
+
+test("normalizeModality maps known values and aliases, rejects junk", () => {
+  assert.equal(normalizeModality("radar"), "radar");
+  assert.equal(normalizeModality("wifi-csi"), "wifi-csi");
+  assert.equal(normalizeModality("wifi_csi"), "wifi-csi"); // underscore form
+  assert.equal(normalizeModality("CSI"), "wifi-csi");      // alias + case
+  assert.equal(normalizeModality("mmwave"), "radar");      // alias
+  assert.equal(normalizeModality("camera"), "camera");
+  assert.equal(normalizeModality("contact"), "contact");
+  assert.equal(normalizeModality("teleportation"), null);  // unknown → no glyph
+  assert.equal(normalizeModality(""), null);
+  assert.equal(normalizeModality(undefined), null);
+});
+
+test("resolveModality prefers explicit modality, falls back to device_type", () => {
+  // explicit modality wins
+  assert.deepEqual(resolveModality({ modality: "radar" }), {
+    key: "radar", label: "Radar", icon: "mdi:radar",
+  });
+  // device_type fallback maps canary-sense → radar
+  assert.equal(resolveModality({ device_type: "canary-sense" }).key, "radar");
+  assert.equal(resolveModality({ device_type: "canary-vision" }).key, "camera");
+  // explicit modality takes precedence over a conflicting device_type
+  assert.equal(resolveModality({ modality: "camera", device_type: "canary-sense" }).key, "camera");
+  // nothing resolvable → null (backward-compatible "no indicator")
+  assert.equal(resolveModality({}), null);
+  assert.equal(resolveModality({ device_type: "unknown-thing" }), null);
+  assert.equal(resolveModality(null), null);
+});
+
+test("resolveAttestation only chips non-device provenance", () => {
+  // device-attested (the default) renders no chip
+  assert.equal(resolveAttestation({ attestation: "device" }), null);
+  assert.equal(resolveAttestation({}), null);
+  // Track B provenance surfaces a distinct chip
+  assert.deepEqual(resolveAttestation({ attestation: "adapter" }), {
+    key: "adapter", label: "Adapter-attested", icon: "mdi:hub",
+  });
+  assert.equal(resolveAttestation({ attestation: "ha-bridged" }).label, "HA-bridged");
+  assert.equal(resolveAttestation({ attestation: "ha_bridged" }).key, "ha-bridged"); // underscore form
+  // junk → no chip (never invent provenance)
+  assert.equal(resolveAttestation({ attestation: "made-up" }), null);
+});
+
+test("historyToTimelineItems attaches modality + attestation, omits when absent", () => {
+  const bucket = { start_epoch_s: 600, size_s: 600 };
+  const history = {
+    "sensor.securacv_last_event": [
+      // radar event, Track B adapter-attested
+      { s: "presence_in_restricted_zone", a: { zone_id: "zone:closet", modality: "radar", attestation: "adapter", time_bucket: bucket }, lu: 300 },
+      // legacy event with no modality/attestation → both null (renders as before)
+      { s: "boundary_crossing_object_large", a: { zone_id: "zone:gate", time_bucket: bucket }, lu: 100 },
+    ],
+  };
+  const items = historyToTimelineItems(history, { maxEvents: 50 });
+  assert.equal(items.length, 2);
+  // newest first: the radar/adapter event
+  assert.equal(items[0].modality.key, "radar");
+  assert.equal(items[0].attestation.key, "adapter");
+  // legacy event carries no indicators
+  assert.equal(items[1].modality, null);
+  assert.equal(items[1].attestation, null);
 });
 
 test("confidencePct clamps, rounds, and rejects junk", () => {

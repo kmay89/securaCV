@@ -67,6 +67,7 @@ tab_cb_h    = 1.0;    // counterbore depth
 
 /* [Aesthetics] */
 lid_edge    = 0.8;    // 45° chamfer around the lid's top edge (0 = sharp slab)  // [0:0.1:1.5]
+lid_edge2   = 0.0;    // optional second, steeper stage (~66°) that softens the chamfer toward a roundover  // [0:0.1:1.5]
 label_text  = "";     // debossed lid label, e.g. "CANARY" ("" = off; needs the font installed)
 label_size  = 5.0;    // text height
 label_depth = 0.5;    // deboss depth (prints as crisp first-layer voids, lid prints face-down)
@@ -128,6 +129,19 @@ tol_slide      = 0.20;  // sliding fits: lid lip <-> base, drip skirt, camera-di
 tol_press      = 0.10;  // press fits: tamper magnet, LED light pipe
 tol_hole       = 0.30;  // clearance holes: lid screws
 
+/* [Engineering — durability/rigidity options (see README "Engineering & materials")] */
+screw_insert = false;   // M2 brass heat-set inserts in the corner posts (service-grade threads;
+                        // posts auto-fatten, M2 machine screws replace the self-tappers)
+insert_d     = 3.5;     // insert nominal OD (M2 short series: 3.5 x 4.0)
+insert_h     = 4.0;     // insert length
+lid_ribs     = true;    // perimeter rib ring under the lid — stiffens the flat face (t³) against pry/flex
+lid_rib_w    = 2.5;     // rib ring width
+lid_rib_h    = 1.0;     // rib depth below the lid underside — keep <= the 1.0 mm component
+                        // headroom built into cav_h, or raise stack_camera/stack_plain to suit
+foot_cham    = 0.5;     // 45° chamfer on the bottom edge: elephant-foot + first-layer delamination guard (0 = off)
+kh_lock      = true;    // (keyhole mounts) two anti-lift knockout bosses: 0.6 mm web, pierce with
+                        // #4/M3 screws on install so the case can't be lifted off the wall screws
+
 /* [Standoffs / screw posts] */
 standoff_h     = 3.0;   // PCB sits this high off the floor (clearance for bottom parts)
 standoff_d     = 4.0;
@@ -181,18 +195,21 @@ clip_hook_h    = 1.2;   // lip + 45° lead-in height above the board top
 clip_clear     = 0.25;  // gap between tab inner face and the board edge (a fit — tune on the coupon)
 
 /* [Quality] */
-$fn = 64;
+// curve quality: $fa/$fs give smooth big arcs (pill corners, hood) without
+// exploding tiny holes into thousands of facets like a large $fn would
+$fa = 3; $fs = 0.4;
 
 // ----------------------------------------------------------------------------
 //  Derived geometry
 // ----------------------------------------------------------------------------
 wall_eff     = e_seal ? max(wall_t, gasket_w + 1.6) : wall_t;   // >=0.8 mm cheek each side of the groove
+pd           = screw_insert ? max(post_d, insert_d + 2.4) : post_d;  // effective post dia (>=1.2 mm wall around an insert)
 
 board_zone_l = board_l + 2*board_clear;
 batt_zone_l  = e_battery ? (batt_gap + batt_l) : 0;
 gps_zone_l   = e_gps     ? (gps_gap  + gps_l)  : 0;
 extra_l      = batt_zone_l + gps_zone_l;                 // internal bays appended after the board
-post_corner  = post_d + 1.5;                 // positioning margin so a screw post sits in the corner, clear of the board
+post_corner  = pd + 1.5;                 // positioning margin so a screw post sits in the corner, clear of the board
 
 // cavity: board + bays along X, +X dead zone keeps true corners for the screw posts.
 // The board is ALWAYS biased to the -X (USB) wall so the connector reaches the opening
@@ -203,7 +220,7 @@ inner_w = max(board_w + 2*board_clear,
               e_battery ? batt_w : 0,
               e_gps ? gps_w : 0,
               board_w + 2*post_corner,
-              board_w + 2*(clip_stack + 0.6 + post_d + 0.2)   // keep the clips clear of the corner posts
+              board_w + 2*(clip_stack + 0.6 + pd + 0.2)   // keep the clips clear of the corner posts
              ) + 1.0;
 cav_h_min = standoff_h + board_h + board_stack_h + 1.0;        // internal height above floor
 // seal mode: guarantee >=1.5 mm of rim web above the USB opening so the gasket path is continuous
@@ -252,6 +269,8 @@ assert(!e_mount || mount_style == "keyhole" || tab_cb_h == 0 || tab_cb_d > tab_h
        "tab_cb_d must be larger than tab_hole_d when counterbored");
 assert(lid_edge == 0 || (lid_edge >= 0.01 && lid_edge < lid_t),
        "lid_edge must be 0, or between 0.01 and lid_t");
+assert(lid_edge2 >= 0 && (lid_edge > 0 || lid_edge2 == 0) && lid_edge + lid_edge2 < lid_t,
+       "lid_edge2 requires lid_edge > 0, and their sum must stay below lid_t");
 assert(label_text == "" || (label_depth > 0 && label_depth < lid_t),
        "label_depth must be between 0 and lid_t");
 assert(batt_wire_w >= 0, "batt_wire_w must be non-negative");
@@ -281,10 +300,10 @@ module rim_ring2d(w) {
 
 // corner screw-post centres (just inside the cavity corners; 0.2 = positioning margin)
 function post_xy() = [
-    [ inner_l/2 - post_d/2 - 0.2,  inner_w/2 - post_d/2 - 0.2],
-    [-inner_l/2 + post_d/2 + 0.2,  inner_w/2 - post_d/2 - 0.2],
-    [ inner_l/2 - post_d/2 - 0.2, -inner_w/2 + post_d/2 + 0.2],
-    [-inner_l/2 + post_d/2 + 0.2, -inner_w/2 + post_d/2 + 0.2],
+    [ inner_l/2 - pd/2 - 0.2,  inner_w/2 - pd/2 - 0.2],
+    [-inner_l/2 + pd/2 + 0.2,  inner_w/2 - pd/2 - 0.2],
+    [ inner_l/2 - pd/2 - 0.2, -inner_w/2 + pd/2 + 0.2],
+    [-inner_l/2 + pd/2 + 0.2, -inner_w/2 + pd/2 + 0.2],
 ];
 
 function _d2(a, b) = pow(a[0]-b[0], 2) + pow(a[1]-b[1], 2);
@@ -350,6 +369,20 @@ module keyhole_pocket(xc) {
     }
 }
 
+// peripheral wedge that 45°-chamfers the bottom edge (subtract from the shell);
+// bounded to the footprint so external features (tabs) lose only a root nick
+module foot_chamfer_cut() {
+    z0 = -mount_extra;
+    difference() {
+        translate([0, 0, z0 - 0.01]) rrect(out_l + 0.04, out_w + 0.04, corner_r, foot_cham + 0.01);
+        hull() {
+            translate([0, 0, z0])
+                rrect(out_l - 2*foot_cham, out_w - 2*foot_cham, max(0.1, corner_r - foot_cham), 0.01);
+            translate([0, 0, z0 + foot_cham]) rrect(out_l, out_w, corner_r, 0.01);
+        }
+    }
+}
+
 // four external screw ears on the ±Y walls (counterbored for an M3/#6 pan head)
 module mount_tabs() {
     wy = out_w/2;
@@ -412,26 +445,41 @@ module base() {
             // blind keyhole pockets (never reach the cavity floor — seal-safe)
             if (mount_extra > 0)
                 for (xc = kh_xs) keyhole_pocket(xc);
+            // anti-lift knockouts: blind bores leaving a 0.6 mm web at the back face —
+            // after hanging, pierce with #4/M3 screws into the wall so the case cannot
+            // be lifted off the keyholes. The web stays sealed until deliberately used.
+            if (mount_extra > 0 && kh_lock)
+                for (sx = [1, -1]) translate([sx*10, -inner_w/2 + 5, 0]) {
+                    translate([0, 0, -mount_extra + 0.6]) cylinder(d = 3.2, h = mount_extra + floor_t);
+                    translate([0, 0, floor_t - 1.2]) cylinder(d1 = 3.2, d2 = 6.0, h = 1.21);  // head seat, inside
+                }
+            // 45° bottom-edge chamfer: kills elephant-foot and the sharp first-layer
+            // edge where impact delamination starts
+            if (foot_cham > 0) foot_chamfer_cut();
         }
 
         // corner screw posts — fused to BOTH adjacent walls by gussets (no free-standing towers),
         // with self-tapping pilots
         difference() {
             union() {
-                for (p = posts) translate([p[0], p[1], floor_t]) cylinder(d = post_d, h = cav_h);
+                for (p = posts) translate([p[0], p[1], floor_t]) cylinder(d = pd, h = cav_h);
                 for (p = posts) {
                     sx = sign(p[0]); sy = sign(p[1]);
                     hull() {  // web to the X wall
-                        translate([p[0], p[1], floor_t]) cylinder(d = post_d, h = gusset_h);
+                        translate([p[0], p[1], floor_t]) cylinder(d = pd, h = gusset_h);
                         translate([sx*(inner_l/2 - 0.3), p[1], floor_t]) cylinder(d = 2, h = gusset_h);
                     }
                     hull() {  // web to the Y wall
-                        translate([p[0], p[1], floor_t]) cylinder(d = post_d, h = gusset_h);
+                        translate([p[0], p[1], floor_t]) cylinder(d = pd, h = gusset_h);
                         translate([p[0], sy*(inner_w/2 - 0.3), floor_t]) cylinder(d = 2, h = gusset_h);
                     }
                 }
             }
             for (p = posts) translate([p[0], p[1], floor_t + 2.0]) cylinder(d = screw_d, h = cav_h);
+            // heat-set insert bore at the post top (light interference; melt in flush)
+            if (screw_insert)
+                for (p = posts) translate([p[0], p[1], floor_t + cav_h - insert_h - 0.5])
+                    cylinder(d = insert_d - 0.1, h = insert_h + 1);
         }
 
         // board support: standoffs + a perimeter frame + ribs that tie it into the screw posts
@@ -439,8 +487,8 @@ module base() {
         for (i = [0:3]) floorrib(corners[i], corners[(i+1) % 4], 2.6);          // perimeter cradle frame
         for (c = corners) {
             // connect each standoff to the screw post in its quadrant, when reasonably close
-            np = [ sign(c[0]) * (inner_l/2 - post_d/2 - 0.2),
-                   sign(c[1]) * (inner_w/2 - post_d/2 - 0.2) ];
+            np = [ sign(c[0]) * (inner_l/2 - pd/2 - 0.2),
+                   sign(c[1]) * (inner_w/2 - pd/2 - 0.2) ];
             if (_d2(c, np) <= 196) floorrib(c, np, 2.6);                        // tie to post (<=14 mm)
             // short anchor ribs to nearby walls (helps mid-board standoffs in the battery variant)
             if (inner_l/2 - abs(c[0]) < 6) floorrib(c, [sign(c[0])*(inner_l/2-0.3), c[1]], 2.6);
@@ -490,20 +538,23 @@ module vent_cluster(x, y) {
 // lid plate with a 45° chamfered top edge (prints face-down: the chamfer is a
 // clean 45° outward slope off the bed — no supports)
 module lid_plate() {
-    if (lid_edge > 0) {
-        union() {
-            rrect(plate_l, plate_w, plate_r, lid_t - lid_edge);
-            hull() {
-                translate([0, 0, lid_t - lid_edge])
-                    rrect(plate_l, plate_w, plate_r, 0.01);
-                translate([0, 0, lid_t - 0.01])
-                    rrect(plate_l - 2*lid_edge, plate_w - 2*lid_edge,
-                          max(0.1, plate_r - lid_edge), 0.01);
-            }
+    // one 45° stage, plus an optional steeper cap stage (~66°) that softens the
+    // edge toward a roundover — both print face-down without support
+    if (lid_edge > 0) union() {
+        rrect(plate_l, plate_w, plate_r, lid_t - lid_edge - lid_edge2);
+        hull() {
+            translate([0, 0, lid_t - lid_edge - lid_edge2]) rrect(plate_l, plate_w, plate_r, 0.01);
+            translate([0, 0, lid_t - lid_edge2 - 0.01])
+                rrect(plate_l - 2*lid_edge, plate_w - 2*lid_edge, max(0.1, plate_r - lid_edge), 0.01);
         }
-    } else {
-        rrect(plate_l, plate_w, plate_r, lid_t);
-    }
+        if (lid_edge2 > 0) hull() {
+            translate([0, 0, lid_t - lid_edge2])
+                rrect(plate_l - 2*lid_edge, plate_w - 2*lid_edge, max(0.1, plate_r - lid_edge), 0.01);
+            translate([0, 0, lid_t - 0.01])
+                rrect(plate_l - 2*lid_edge - 0.9*lid_edge2, plate_w - 2*lid_edge - 0.9*lid_edge2,
+                      max(0.1, plate_r - lid_edge - 0.45*lid_edge2), 0.01);
+        }
+    } else rrect(plate_l, plate_w, plate_r, lid_t);
 }
 
 module lid() {
@@ -544,6 +595,33 @@ module lid() {
                                  halign = "center", valign = "center");
         }
 
+        // perimeter rib ring under the lid: raises the flat face's bending stiffness
+        // (stiffness ~ t³) against pry/oil-canning for ~1 g of material. Routed just
+        // inside the lip and cleared around every lid feature and the screw posts.
+        if (lid_ribs) {
+            ro_l = inner_l - 2*tol_slide - 2*lip_t - 0.8;
+            ro_w = inner_w - 2*tol_slide - 2*lip_t - 0.8;
+            difference() {
+                translate([0, 0, -lid_rib_h]) linear_extrude(lid_rib_h + 0.1)
+                    difference() {
+                        rrect2d(ro_l, ro_w, max(0.1, corner_r - wall_eff - lip_t));
+                        rrect2d(ro_l - 2*lid_rib_w, ro_w - 2*lid_rib_w, 0.1);
+                    }
+                for (p = post_xy())
+                    translate([p[0], p[1], -lid_rib_h - 0.1]) cylinder(d = pd + 1.6, h = lid_rib_h + 0.2);
+                // keep-outs so the ring never blocks a lid feature, wherever it is placed
+                kos = [ [cam[0], cam[1], e_camera ? max(cam_win_d, cam_disc_d) + 3 : 0],
+                        [lp[0],  lp[1],  e_led    ? lp_d + 4                     : 0],
+                        [vnt[0], vnt[1], e_buzzer ? vent_pad_d + 3               : 0],
+                        [tch[0], tch[1], e_touch  ? touch_d + 3                  : 0],
+                        [mag[0], mag[1], e_tamper ? mag_d + 2*tol_press + 4.8    : 0] ];
+                for (k = kos) if (k[2] > 0)
+                    translate([k[0], k[1], -lid_rib_h - 0.1]) cylinder(d = k[2], h = lid_rib_h + 0.2);
+                // keep the USB cable path over the lip notch clear
+                translate([-inner_l/2, board_cy, 0]) cube([14, usb_w + 4, 3*lid_rib_h], center = true);
+            }
+        }
+
         // lid lip that nests into the base (with sliding clearance), cleared around the posts
         difference() {
             translate([0, 0, -lip_h])
@@ -555,7 +633,7 @@ module lid() {
                 }
             for (p = post_xy())
                 translate([p[0], p[1], -lip_h - 0.1])
-                    cylinder(d = post_d + 1.2, h = lip_h + 0.2);
+                    cylinder(d = pd + 1.2, h = lip_h + 0.2);
             // notch the lip at the USB end so the cable plug/overmold clears it
             translate([-inner_l/2, board_cy, -lip_h/2])
                 cube([lip_t * 4, usb_w + 4, lip_h + 0.2], center = true);

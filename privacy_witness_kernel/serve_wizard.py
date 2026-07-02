@@ -148,6 +148,66 @@ def _kernel_request(method: str, path: str) -> dict:
         return {"ok": False, "error": f"kernel API unreachable: {exc}"}
 
 
+def _kernel_download(path: str):
+    """Proxy a raw download from the witness API (same container).
+
+    Returns ((body_bytes, content_disposition), None) on success or
+    (None, error_message) on failure. Same token handling as
+    `_kernel_request`: re-read per call, never logged, never sent to the
+    browser — the browser only ever sees the wizard's own endpoint.
+    """
+    try:
+        token = API_TOKEN_FILE.read_text().strip()
+    except OSError as exc:
+        return None, f"API token unavailable: {exc}"
+    if not token:
+        return None, "API token file is empty"
+    req = urllib.request.Request(
+        f"{KERNEL_API_URL}{path}",
+        method="GET",
+        headers={"x-witness-token": token},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            disposition = resp.headers.get("Content-Disposition", "")
+            return (resp.read(), disposition), None
+    except urllib.error.HTTPError as exc:
+        detail = ""
+        try:
+            err_json = json.loads(exc.read().decode(errors="replace"))
+            if isinstance(err_json, dict) and err_json.get("error"):
+                detail = f": {err_json['error']}"
+        except Exception:
+            pass
+        return None, f"kernel API error {exc.code}{detail}"
+    except Exception as exc:
+        return None, f"kernel API unreachable: {exc}"
+
+
+def _export_query_suffix(query: str):
+    """Validate the export window query string, failing closed.
+
+    Returns ``(suffix, error)``. Only the exact window parameters ``last``,
+    ``start`` and ``end`` may pass through to the kernel; any other name (a
+    typo like ``las=24h``, an empty name, or an unknown key) rejects the whole
+    request. Silently dropping the stray pair would forward a windowless
+    ``/export/bundle`` and broaden the export to everything retained — the
+    window is the user's privacy scope for the download.
+
+    Allowlisted pairs are forwarded verbatim: the kernel stays the final
+    validator (it rejects conflicting or malformed windows with 400
+    ``bad_window``). An empty query forwards the bare path — the full export
+    is the documented operator path.
+    """
+    if not query:
+        return "", None
+    for pair in query.split("&"):
+        name = pair.split("=", 1)[0]
+        if name not in ("last", "start", "end"):
+            return None, f"unknown query parameter: {name or '(empty)'}"
+    return f"?{query}", None
+
+
 def get_addon_options() -> dict:
     resp = _supervisor_request("GET", "/addons/self/options/config")
     return resp.get("data", {})
@@ -256,6 +316,37 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
             return
         if path == "/api/kernel/digest":
             self._json_response(_kernel_request("GET", "/digest"))
+            return
+
+        # One-click "Download my events": proxy the kernel's signed export
+        # bundle through to the browser as a file download. The window is the
+        # user's privacy scope, so the proxy fails closed: anything outside
+        # the exact {last, start, end} allowlist rejects the request instead
+        # of silently broadening the export.
+        base, _, query = path.partition("?")
+        if base == "/api/kernel/export":
+            suffix, query_err = _export_query_suffix(query)
+            if query_err is not None:
+                self._json_response(
+                    {"ok": False, "error": "bad_window", "detail": query_err},
+                    status=400,
+                )
+                return
+            payload, err = _kernel_download(f"/export/bundle{suffix}")
+            if err:
+                self._json_response({"ok": False, "error": err}, status=502)
+                return
+            body, disposition = payload
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header(
+                "Content-Disposition",
+                disposition or 'attachment; filename="securacv-events.json"',
+            )
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
             return
 
         # Serve static files from wizard dir

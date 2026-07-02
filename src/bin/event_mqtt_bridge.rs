@@ -230,6 +230,8 @@ struct EventStatePayload {
     time_bucket_start: u64,
     time_bucket_size: u32,
     confidence: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    attestation: Option<String>,
     published_bucket_start: u64,
     published_bucket_size: u32,
 }
@@ -973,6 +975,12 @@ fn build_event_state_payload(event: &ExportEvent) -> Result<EventStatePayload> {
         time_bucket_start: event.time_bucket.start_epoch_s,
         time_bucket_size: event.time_bucket.size_s,
         confidence: event.confidence,
+        // serde renames carry the HA attestation contract values
+        // ("adapter" / "ha-bridged"); absent means device/kernel-attested.
+        attestation: event
+            .attestation
+            .and_then(|a| serde_json::to_value(a).ok())
+            .and_then(|v| v.as_str().map(str::to_string)),
         published_bucket_start: published_bucket.start_epoch_s,
         published_bucket_size: published_bucket.size_s,
     })
@@ -1144,6 +1152,7 @@ mod tests {
         let payload = EventStatePayload {
             event_type: "BoundaryCrossingObjectLarge".to_string(),
             zone_id: "zone:front_door".to_string(),
+            attestation: None,
             time_bucket_start: 1_700_000_000,
             time_bucket_size: 600,
             confidence: 0.9,

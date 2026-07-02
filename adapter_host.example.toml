@@ -69,6 +69,12 @@ mqtt_broker_addr = "127.0.0.1:1883"
 #   acoustic_impulse_in_zone, presence_in_restricted_zone,
 #   vehicle_presence_after_hours, contact_state_change, object_removed_from_zone,
 #   tamper_detected
+# Optional per-route gates: min_confidence (float), require_truthy_state (bool),
+# numeric_min (float — payload must carry a numeric reading >= this; replaces the
+# truthy gate for counters/numeric sensor states; the reading is never logged).
+# Optional provenance: attestation = "adapter" (default) or "ha-bridged" for
+# routes fed by an HA mqtt_statestream bridge — stamped into the sealed event
+# and rendered as a provenance chip on the timeline.
 [[adapter.route]]
 topic = "sensors/garage/acoustic"
 kind = "acoustic_impulse_in_zone"
@@ -97,6 +103,46 @@ kind = "tamper_detected"
 zone = "canary_1"
 require_truthy_state = true
 min_confidence = 0.5
+
+# Seeed MR60BHA2 mmWave kit running its STOCK ESPHome firmware (Track B in
+# docs/canary_sense_mr60bha2_design.md). The stock firmware speaks the ESPHome
+# native API, not MQTT, so it needs one of two config-only bridges — full
+# walkthrough in docs/integrations/mr60bha2_esphome.md:
+#
+#  (a) Home Assistant `mqtt_statestream` (kit stays unmodified). HA republishes
+#      entity states to <base_topic>/<domain>/<entity_id>/state with the bare
+#      state as payload ("on"/"off", "0".."N"):
+[[adapter.route]]
+topic = "securacv_statestream/binary_sensor/mr60bha2_person_information/state"
+kind = "presence_in_restricted_zone"
+zone = "bedroom"
+require_truthy_state = true   # statestream publishes bare "on"/"off"
+attestation = "ha-bridged"    # claim transits HA before ingest; the timeline
+                              # renders the extra hop honestly ("adapter" is
+                              # the default for all adapter_host routes)
+
+#      Occupant counter variant: `numeric_min` gates on a numeric payload (bare
+#      number or numeric `state` field) instead of the truthy gate. The reading
+#      is gating-only — it never reaches the sealed log.
+# [[adapter.route]]
+# topic = "securacv_statestream/sensor/mr60bha2_target_number/state"
+# kind = "presence_in_restricted_zone"
+# zone = "bedroom"
+# numeric_min = 1.0
+#
+#  (b) ESPHome `mqtt:` overlay (one OTA, device publishes directly; no HA hop).
+#      ESPHome publishes <topic_prefix>/binary_sensor/<object_id>/state as
+#      "ON"/"OFF":
+# [[adapter.route]]
+# topic = "mr60bha2/binary_sensor/person_information/state"
+# kind = "presence_in_restricted_zone"
+# zone = "bedroom"
+# require_truthy_state = true
+#
+# Privacy note: route ONLY the presence/occupancy entities. Vitals entities
+# (breath rate, heart rate) are P1 wellbeing signals that stay in Home
+# Assistant and must never be routed into the sealed log — see the privacy
+# table in docs/canary_sense_mr60bha2_design.md §2.
 
 # ---------------------------------------------------------------------------
 # Adapter: HTTP webhook ingress

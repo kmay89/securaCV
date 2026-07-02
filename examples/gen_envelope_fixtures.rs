@@ -66,6 +66,7 @@ fn main() -> anyhow::Result<()> {
             zone_id: zone.to_string(),
             confidence: *confidence,
             correlation_token: None,
+            attestation: None,
         };
         kernel.append_event_checked(
             &desc,

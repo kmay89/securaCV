@@ -1,0 +1,158 @@
+# Canary Sense — Welfare Check (No Breathing Lock in Sleep Window) Blueprint
+#
+# Import this blueprint via:
+#   Settings > Automations > Blueprints > Import Blueprint
+#   URL: https://github.com/kmay89/securaCV/blob/main/docs/blueprints/canary_sense_welfare_check.yaml
+#
+# ============================ SAFETY FRAMING ============================
+# This is a WELFARE PROMPT, NOT A MEDICAL ALARM.
+#
+# Radar vitals from the MR60BHA2 are NON-DIAGNOSTIC wellbeing signals:
+# breathing detection is ~90% accurate, works only at <=1.5 m, and only for a
+# SINGLE occupant. It is mounting-sensitive and can lose the breathing lock for
+# entirely benign reasons — the person rolled over, sat up, left frame, or a
+# second person entered. A missing breathing lock means "the radar can no
+# longer confirm breathing", NOT "the person has stopped breathing".
+#
+# Use this to prompt a human to LOOK IN, never as a substitute for a medical
+# alert system, a nurse call, or emergency monitoring. Do not deploy it as
+# life-safety equipment.
+# =======================================================================
+#
+# Works on the P0 breathing-lock binary alone. The numeric BPM sensors
+# (breath_rate / heart_rate) are P1 OPT-IN and may not exist on your device;
+# this blueprint deliberately does not require them.
+
+blueprint:
+  name: "Canary Sense — Welfare Check (No Breathing Lock in Sleep Window)"
+  description: >-
+    WELFARE PROMPT, NOT A MEDICAL ALARM. During a configured sleep window,
+    notify when a canary-sense radar still reports presence but its breathing
+    binary_sensor has been off for N consecutive minutes — a prompt for a human
+    to look in on a sleeping person. Radar breathing detection is a
+    NON-DIAGNOSTIC wellbeing signal (~90% accuracy, <=1.5 m, single occupant)
+    and drops out for benign reasons (rolling over, sitting up, a second person
+    entering). A lost lock means "can't confirm breathing", not "not breathing".
+    Never use this as life-safety or medical monitoring. Uses only the P0
+    breathing-lock binary — the P1 opt-in BPM sensors are not required.
+  domain: automation
+  author: "ERRERlabs"
+  homeassistant:
+    min_version: "2024.6.0"
+  source_url: "https://github.com/kmay89/securaCV/blob/main/docs/blueprints/canary_sense_welfare_check.yaml"
+
+  input:
+    presence_entity:
+      name: "Radar presence sensor"
+      description: >-
+        The canary-sense presence binary_sensor
+        (e.g. binary_sensor.securacv_canary_<id>_presence). The occupant must
+        still be present for the welfare prompt to make sense.
+      selector:
+        entity:
+          domain: binary_sensor
+          integration: securacv
+
+    breathing_entity:
+      name: "Breathing-lock sensor (P0)"
+      description: >-
+        The canary-sense breathing binary_sensor
+        (e.g. binary_sensor.securacv_canary_<id>_breathing). 'on' = breathing
+        confirmed; 'off' = breathing not currently confirmed (non-diagnostic).
+      selector:
+        entity:
+          domain: binary_sensor
+          integration: securacv
+
+    sleep_start:
+      name: "Sleep window start"
+      description: "Start of the sleep window (local time)."
+      selector:
+        time:
+      default: "23:00:00"
+
+    sleep_end:
+      name: "Sleep window end"
+      description: >-
+        End of the sleep window (local time). May be earlier than the start —
+        the window then wraps past midnight (e.g. 23:00 -> 07:00).
+      selector:
+        time:
+      default: "07:00:00"
+
+    minutes_without_lock:
+      name: "Minutes without breathing lock"
+      description: >-
+        Notify after the breathing lock has been off this many consecutive
+        minutes while presence stays on. Set generously — brief drop-outs are
+        normal and expected.
+      selector:
+        number:
+          min: 1
+          max: 120
+          step: 1
+          unit_of_measurement: "min"
+          mode: box
+      default: 15
+
+    notify_service:
+      name: "Notification service"
+      description: "Where to send the welfare prompt (e.g. notify.mobile_app_your_phone)."
+      selector:
+        text:
+      default: "notify.mobile_app"
+
+mode: single
+max_exceeded: silent
+
+variables:
+  presence_entity: !input presence_entity
+  breathing_entity: !input breathing_entity
+  minutes_without_lock: !input minutes_without_lock
+  sleep_start: !input sleep_start
+  sleep_end: !input sleep_end
+  now_hms: "{{ now().strftime('%H:%M:%S') }}"
+  # Lexicographic HH:MM:SS compare handles sleep windows that wrap past midnight.
+  in_window: >-
+    {% set s = sleep_start %}
+    {% set e = sleep_end %}
+    {% set n = now_hms %}
+    {% if s <= e %}
+    {{ s <= n <= e }}
+    {% else %}
+    {{ n >= s or n <= e }}
+    {% endif %}
+
+trigger:
+  - platform: state
+    entity_id: !input breathing_entity
+    to: "off"
+    for:
+      minutes: !input minutes_without_lock
+
+condition:
+  # Still inside the configured sleep window.
+  - condition: template
+    value_template: "{{ in_window | bool }}"
+  # Occupant is present, and has been throughout the no-lock stretch — so this
+  # is "present but breathing unconfirmed", not "room is simply empty".
+  - condition: state
+    entity_id: !input presence_entity
+    state: "on"
+    for:
+      minutes: !input minutes_without_lock
+
+action:
+  - service: !input notify_service
+    data:
+      title: "SecuraCV Welfare Check"
+      message: >-
+        Welfare prompt (not a medical alarm): {{ presence_entity }} still reads
+        occupied but breathing has not been confirmed for
+        {{ minutes_without_lock }} min on {{ breathing_entity }}. Radar
+        breathing is a non-diagnostic estimate and drops out for benign reasons
+        — consider looking in.
+      data:
+        tag: securacv-sense-welfare
+        importance: high
+        channel: securacv_alerts

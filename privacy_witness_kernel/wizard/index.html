@@ -510,6 +510,26 @@
     <div id="status-summary-items" style="margin-top:8px;font-size:0.88rem"></div>
   </div>
 
+  <div id="status-export" class="info-box blue">
+    <strong>Download my events</strong>
+    <div style="margin-top:6px;font-size:0.88rem">
+      A signed, self-verifying bundle of your privacy-filtered event log
+      (coarse 10-minute buckets — never video). Verify it anywhere with the
+      offline evidence viewer. Every download is itself recorded in the
+      tamper-evident log.
+    </div>
+    <div style="margin-top:10px;display:flex;gap:10px;align-items:center">
+      <select id="export-window"
+        style="padding:8px;border:1.5px solid var(--border);border-radius:6px;font-size:0.88rem">
+        <option value="24h">Last 24 hours</option>
+        <option value="7d" selected>Last 7 days</option>
+        <option value="30d">Last 30 days</option>
+        <option value="">Everything retained</option>
+      </select>
+      <button class="btn btn-primary btn-sm" onclick="downloadEvents()">Download</button>
+    </div>
+  </div>
+
   <div class="info-box warn">
     <strong>Back up your device key.</strong>
     It is stored in <code>/config/.securacv/device_key</code> (included in
@@ -1218,6 +1238,14 @@ async function verifyNow() {
     btn.disabled = false;
     btn.textContent = "Verify now";
   }
+}
+
+function downloadEvents() {
+  const windowSel = document.getElementById("export-window").value;
+  const query = windowSel ? "?last=" + encodeURIComponent(windowSel) : "";
+  // Plain navigation: the wizard proxy marks the response as an attachment,
+  // so the browser saves the signed bundle without leaving the panel.
+  window.location.href = (window.hassioIngress || "") + "/api/kernel/export" + query;
 }
 
 function generateDashboard() {

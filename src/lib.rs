@@ -56,6 +56,7 @@ pub mod envelope;
 pub mod eval;
 pub mod frame;
 pub mod ingest;
+pub mod inspect;
 pub mod log;
 pub mod module_runtime;
 pub mod storage;
@@ -493,6 +494,27 @@ pub struct CandidateEvent {
     pub zone_id: String, // local-only semantic, not GPS/address
     pub confidence: f32, // 0..=1
     pub correlation_token: Option<[u8; 32]>,
+    /// How the underlying claim was attested before reaching the kernel.
+    /// `None` (the default, and the only value the in-process camera pipeline
+    /// produces) renders as device-attested downstream. A closed enum — not a
+    /// free string — so this field can never smuggle identity or free text
+    /// into the sealed log.
+    pub attestation: Option<Attestation>,
+}
+
+/// Provenance of a claim relative to the kernel signature that seals it.
+/// Serialized values match the Home Assistant integration's attestation
+/// contract (`custom_components/securacv/const.py`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Attestation {
+    /// Claim was produced by an out-of-process adapter and is only
+    /// kernel-signed at ingest (Track B), not device-signed at source.
+    #[serde(rename = "adapter")]
+    Adapter,
+    /// Claim additionally transited Home Assistant (e.g. an
+    /// `mqtt_statestream` bridge) before reaching the adapter.
+    #[serde(rename = "ha-bridged")]
+    HaBridged,
 }
 
 /// Events are trusted, kernel-bound claims written to the sealed log.
@@ -503,6 +525,11 @@ pub struct Event {
     pub zone_id: String,
     pub confidence: f32,
     pub correlation_token: Option<[u8; 32]>,
+    /// Optional provenance marker (see [`Attestation`]). Skipped when absent
+    /// so records sealed before this field existed round-trip byte-identically
+    /// and their signatures keep verifying.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attestation: Option<Attestation>,
     pub kernel_version: String,
     pub ruleset_id: String,
     pub ruleset_hash: [u8; 32],
@@ -740,6 +767,8 @@ pub struct ExportEvent {
     pub time_bucket: TimeBucket,
     pub zone_id: String,
     pub confidence: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attestation: Option<Attestation>,
     pub kernel_version: String,
     pub ruleset_id: String,
     pub ruleset_hash: [u8; 32],
@@ -797,6 +826,54 @@ pub enum ExportAuthMode {
 pub struct ExportWindow {
     pub start_epoch_s: u64,
     pub end_epoch_s: u64,
+}
+
+impl ExportWindow {
+    /// Build a bucket-aligned window from raw epoch bounds: start floored,
+    /// end ceiled to the 600 s grid, so callers can pass arbitrary times and
+    /// the window still discloses nothing finer than the buckets.
+    pub fn aligned(raw_start: u64, raw_end: u64) -> Result<Self> {
+        if raw_start >= raw_end {
+            return Err(anyhow!("export window start must be before end"));
+        }
+        let bucket = u64::from(TEN_MINUTES_S);
+        let end_epoch_s = raw_end
+            .div_ceil(bucket)
+            .checked_mul(bucket)
+            .ok_or_else(|| anyhow!("export window end is too large"))?;
+        Ok(Self {
+            start_epoch_s: raw_start / bucket * bucket,
+            end_epoch_s,
+        })
+    }
+
+    /// The trailing window covering the last `duration_s` seconds from now,
+    /// bucket-aligned outward.
+    pub fn last(duration_s: u64) -> Result<Self> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs();
+        Self::aligned(now.saturating_sub(duration_s), now)
+    }
+}
+
+/// Parse `24h` / `7d` / `90m` / `3600s` / `3600` into seconds (shared by the
+/// export CLI's `--last` and the event API's `?last=` query parameter).
+pub fn parse_duration_s(s: &str) -> Result<u64> {
+    let s = s.trim();
+    let (num, mult) = match s.chars().last() {
+        Some('s') => (&s[..s.len() - 1], 1),
+        Some('m') => (&s[..s.len() - 1], 60),
+        Some('h') => (&s[..s.len() - 1], 3600),
+        Some('d') => (&s[..s.len() - 1], 86_400),
+        Some(c) if c.is_ascii_digit() => (s, 1),
+        _ => return Err(anyhow!("invalid duration '{}': use e.g. 24h, 7d, 90m", s)),
+    };
+    let n: u64 = num
+        .parse()
+        .map_err(|_| anyhow!("invalid duration '{}': use e.g. 24h, 7d, 90m", s))?;
+    n.checked_mul(mult)
+        .ok_or_else(|| anyhow!("duration '{}' overflows", s))
 }
 
 // New receipt fields must be `Option` + `default` + `skip_serializing_if` and
@@ -941,6 +1018,7 @@ impl ContractEnforcer {
             zone_id: c.zone_id,
             confidence: c.confidence,
             correlation_token: c.correlation_token,
+            attestation: c.attestation,
             kernel_version: "UNBOUND".to_string(),
             ruleset_id: "UNBOUND".to_string(),
             ruleset_hash: [0u8; 32],
@@ -2308,6 +2386,18 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         self.bundle_from_artifact(artifact)
     }
 
+    /// Bundle for local-only API access (no break-glass): same shape as the
+    /// other bundles, receipt labeled `api` because the caller's credential is
+    /// the capability token. The caller MUST enforce token access control.
+    pub fn export_events_bundle_for_api(
+        &mut self,
+        expected_ruleset_hash: [u8; 32],
+        options: ExportOptions,
+    ) -> Result<ExportBundle> {
+        let artifact = self.export_events_for_api(expected_ruleset_hash, options)?;
+        self.bundle_from_artifact(artifact)
+    }
+
     fn bundle_from_artifact(&self, artifact: ExportArtifact) -> Result<ExportBundle> {
         let receipt_entry = self.latest_export_receipt_entry()?;
         let artifact_bytes = serde_json::to_vec(&artifact)?;
@@ -2494,6 +2584,7 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
                         time_bucket: buckets[idx].time_bucket,
                         zone_id: ev.zone_id,
                         confidence: ev.confidence,
+                        attestation: ev.attestation,
                         kernel_version: ev.kernel_version,
                         ruleset_id: ev.ruleset_id,
                         ruleset_hash: ev.ruleset_hash,
@@ -2661,7 +2752,7 @@ pub fn verifying_key_from_seed(seed: &str) -> Result<VerifyingKey> {
     Ok(signing_key_from_seed(seed)?.verifying_key())
 }
 
-fn verifying_key_from_bytes(bytes: &[u8]) -> Result<VerifyingKey> {
+pub(crate) fn verifying_key_from_bytes(bytes: &[u8]) -> Result<VerifyingKey> {
     if bytes.len() != 32 {
         return Err(anyhow!(
             "invalid verifying key bytes: expected 32 bytes, got {}",
@@ -2821,7 +2912,7 @@ pub fn reconstruct_device_key_lineage_from(
     Ok(lineage)
 }
 
-fn key32(bytes: &[u8], what: &str) -> Result<[u8; 32]> {
+pub(crate) fn key32(bytes: &[u8], what: &str) -> Result<[u8; 32]> {
     if bytes.len() != 32 {
         return Err(anyhow!(
             "corrupt {}: expected 32 bytes, got {}",
@@ -2850,7 +2941,7 @@ type SealedEntryRow = (
 /// rotation record. The record's entry is hash-chained and signed by the predecessor key, so
 /// validating that entry signature under `predecessor` is genesis-anchored authorization
 /// equivalent. Fails closed if the record was pruned (the only genuinely unrecoverable case).
-fn recover_legacy_rotation_authorization(
+pub(crate) fn recover_legacy_rotation_authorization(
     conn: &Connection,
     predecessor: &VerifyingKey,
     prev_bytes: &[u8; 32],
@@ -3245,6 +3336,9 @@ impl Module for ZoneCrossingModule {
                 zone_id: self.zone_id.clone(),
                 confidence: result.confidence,
                 correlation_token: token,
+                // In-process camera pipeline: the kernel itself is the sensor,
+                // rendered downstream as device-attested (field absent).
+                attestation: None,
             }])
         } else {
             Ok(vec![])
@@ -3366,6 +3460,7 @@ mod tests {
             zone_id: "zone:test".to_string(),
             confidence: 0.5,
             correlation_token: None,
+            attestation: None,
         };
         let ev = ContractEnforcer::enforce(cand).expect("coarsened event");
         assert_eq!(ev.time_bucket.size_s, TEN_MINUTES_S);
@@ -3383,6 +3478,7 @@ mod tests {
             zone_id: "lat=41.5,lon=-81.6".to_string(),
             confidence: 0.5,
             correlation_token: None,
+            attestation: None,
         };
         assert!(ContractEnforcer::enforce(cand).is_err());
     }
@@ -3398,6 +3494,7 @@ mod tests {
             zone_id: "zone:test".to_string(),
             confidence: 1.5,
             correlation_token: None,
+            attestation: None,
         };
         assert!(ContractEnforcer::enforce(cand).is_err());
     }
@@ -3413,6 +3510,7 @@ mod tests {
             zone_id: "zone:test".to_string(),
             confidence: 0.5,
             correlation_token: Some([0u8; 32]),
+            attestation: None,
         };
         assert!(ContractEnforcer::enforce(cand).is_err());
     }
@@ -3465,6 +3563,7 @@ mod tests {
             zone_id: "zone:test".to_string(),
             confidence: 0.5,
             correlation_token: Some([1u8; 32]),
+            attestation: None,
         };
         kernel.append_event_checked(
             &desc,
@@ -3516,6 +3615,7 @@ mod tests {
             zone_id: zone.to_string(),
             confidence: 0.5,
             correlation_token: None,
+            attestation: None,
         };
         kernel.append_event_checked(
             &desc,
@@ -3714,6 +3814,7 @@ mod tests {
             zone_id: "zone:test".to_string(),
             confidence: 0.5,
             correlation_token: None,
+            attestation: None,
         };
         kernel.append_event_checked(
             &desc,
@@ -3730,6 +3831,39 @@ mod tests {
                     row.get(0)
                 })?;
         assert_eq!(created_at, i64::try_from(bucket_start).unwrap());
+        Ok(())
+    }
+
+    #[test]
+    fn event_attestation_is_optional_and_backward_compatible() -> Result<()> {
+        // Records sealed before the attestation field existed must keep
+        // deserializing (and, since the field is skip-when-none, an event
+        // without provenance serializes byte-identically to the old shape).
+        let legacy = r#"{
+            "event_type": "PresenceInRestrictedZone",
+            "time_bucket": {"start_epoch_s": 600, "size_s": 600},
+            "zone_id": "zone:bedroom",
+            "confidence": 0.9,
+            "correlation_token": null,
+            "kernel_version": "0.5.0",
+            "ruleset_id": "ruleset:v1",
+            "ruleset_hash": [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
+        }"#;
+        let ev: Event = serde_json::from_str(legacy)?;
+        assert_eq!(ev.attestation, None);
+        assert!(!serde_json::to_string(&ev)?.contains("attestation"));
+
+        // Provenance round-trips using the HA contract's wire values.
+        let mut stamped = ev.clone();
+        stamped.attestation = Some(Attestation::HaBridged);
+        let json = serde_json::to_string(&stamped)?;
+        assert!(json.contains(r#""attestation":"ha-bridged""#));
+        let back: Event = serde_json::from_str(&json)?;
+        assert_eq!(back.attestation, Some(Attestation::HaBridged));
+        assert_eq!(
+            serde_json::to_string(&Attestation::Adapter)?,
+            r#""adapter""#
+        );
         Ok(())
     }
 
@@ -3751,6 +3885,7 @@ mod tests {
             zone_id: "zone:test".to_string(),
             confidence: 0.5,
             correlation_token: None,
+            attestation: None,
         };
         kernel.append_event_checked(
             &desc,
@@ -3790,6 +3925,7 @@ mod tests {
             zone_id: "zone:test".to_string(),
             confidence: 0.5,
             correlation_token: None,
+            attestation: None,
         };
         assert!(enforce_module_event_allowlist(&desc, &cand).is_ok());
     }
@@ -3812,6 +3948,7 @@ mod tests {
             zone_id: "zone:test".to_string(),
             confidence: 0.5,
             correlation_token: None,
+            attestation: None,
         };
 
         assert!(enforce_module_event_allowlist(&desc, &cand).is_err());
@@ -3901,6 +4038,7 @@ mod tests {
             zone_id: "zone:test".to_string(),
             confidence: 0.5,
             correlation_token: None,
+            attestation: None,
         };
 
         assert!(kernel
@@ -3962,6 +4100,7 @@ mod tests {
             zone_id: "zone:private".to_string(),
             confidence: 0.5,
             correlation_token: None,
+            attestation: None,
         };
 
         assert!(kernel
@@ -4014,6 +4153,7 @@ mod tests {
             zone_id: "zone:public".to_string(),
             confidence: 0.5,
             correlation_token: None,
+            attestation: None,
         };
 
         kernel.append_event_checked(

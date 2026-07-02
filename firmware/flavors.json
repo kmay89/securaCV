@@ -29,5 +29,11 @@
       "slot_bytes": 1310720,
       "slot_name": "0x140000 OTA slot (ESP32-C3 default.csv app0/app1)"
     }
+  },
+  {
+    "name": "canary-sense",
+    "dir": "firmware/projects/canary-sense",
+    "build_envs": ["canary-sense-default"],
+    "check_env": "canary-sense-default"
   }
 ]

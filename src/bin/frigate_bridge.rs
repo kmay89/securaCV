@@ -473,6 +473,8 @@ fn process_message(
         zone_id: zone_id.clone(),
         confidence: confidence as f32,
         correlation_token: None, // Never include Frigate's object IDs
+        // Frigate claims are kernel-signed at ingest, like all adapter paths.
+        attestation: Some(witness_kernel::Attestation::Adapter),
     };
 
     // Write to sealed log

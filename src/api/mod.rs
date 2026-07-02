@@ -381,7 +381,8 @@ fn handle_connection(
         ("GET", "/events")
         | ("GET", "/events/latest")
         | ("GET", "/digest")
-        | ("GET", "/status") => {}
+        | ("GET", "/status")
+        | ("GET", "/export/bundle") => {}
         // POST /verify carries no body — verification has no parameters and
         // request parsing stays at the 8 KB header-only surface.
         ("POST", "/verify") => {
@@ -400,7 +401,8 @@ fn handle_connection(
         | (_, "/events/latest")
         | (_, "/digest")
         | (_, "/verify")
-        | (_, "/status") => {
+        | (_, "/status")
+        | (_, "/export/bundle") => {
             write_json_response(&mut stream, 405, r#"{"error":"method_not_allowed"}"#)?;
             return Ok(());
         }
@@ -484,6 +486,37 @@ fn handle_connection(
         *last_verify = Some(report.clone());
         let payload = serde_json::to_vec(&report)?;
         write_response(&mut stream, 200, "application/json", &payload)?;
+        return Ok(());
+    }
+
+    if request.path == "/export/bundle" {
+        // One-click "download my events": the full signed ExportBundle
+        // (artifact + chained receipt + verifying keys) so the file is
+        // self-verifying offline. Optional window: ?last=24h or
+        // ?start=<epoch_s>&end=<epoch_s>, aligned outward to bucket
+        // boundaries. Receipt is labeled `api` (credential = capability
+        // token) and records the window — same audit posture as /events.
+        let window = match parse_window_query(&request.raw_path) {
+            Ok(window) => window,
+            Err(e) => {
+                let body = serde_json::json!({"error": "bad_window", "detail": e.to_string()});
+                write_json_response(&mut stream, 400, &body.to_string())?;
+                return Ok(());
+            }
+        };
+        let bundle = kernel.export_events_bundle_for_api(
+            expected_ruleset_hash,
+            ExportOptions {
+                window,
+                ..cfg.export_options
+            },
+        )?;
+        let payload = serde_json::to_vec(&bundle)?;
+        let filename = format!(
+            "securacv-events-{}.json",
+            TimeBucket::now_10min()?.start_epoch_s
+        );
+        write_download_response(&mut stream, "application/json", &payload, &filename)?;
         return Ok(());
     }
 
@@ -633,6 +666,68 @@ fn read_request(stream: &mut TcpStream) -> Result<HttpRequest> {
 
 fn write_json_response(stream: &mut TcpStream, status: u16, body: &str) -> Result<()> {
     write_response(stream, status, "application/json", body.as_bytes())
+}
+
+/// Parse the optional export window from `/export/bundle` query parameters:
+/// `?last=24h` (trailing duration) or `?start=<epoch_s>&end=<epoch_s>`.
+/// Bounds are aligned outward to bucket boundaries; the filename-safe
+/// duration grammar is the same one `export_events --last` accepts.
+fn parse_window_query(raw_path: &str) -> Result<Option<crate::ExportWindow>> {
+    let query = match raw_path.split('?').nth(1) {
+        Some(query) if !query.is_empty() => query,
+        _ => return Ok(None),
+    };
+    let mut last: Option<&str> = None;
+    let mut start: Option<&str> = None;
+    let mut end: Option<&str> = None;
+    for pair in query.split('&') {
+        match pair.split_once('=') {
+            Some(("last", value)) => last = Some(value),
+            Some(("start", value)) => start = Some(value),
+            Some(("end", value)) => end = Some(value),
+            _ => return Err(anyhow!("unknown query parameter (expected last|start&end)")),
+        }
+    }
+    match (last, start, end) {
+        (Some(last), None, None) => Ok(Some(crate::ExportWindow::last(crate::parse_duration_s(
+            last,
+        )?)?)),
+        (None, Some(start), Some(end)) => {
+            let start: u64 = start.parse().map_err(|_| anyhow!("invalid start"))?;
+            let end: u64 = end.parse().map_err(|_| anyhow!("invalid end"))?;
+            Ok(Some(crate::ExportWindow::aligned(start, end)?))
+        }
+        (None, None, None) => Ok(None),
+        _ => Err(anyhow!("use either ?last=<dur> or ?start=&end=, not both")),
+    }
+}
+
+/// As [`write_response`] but marked as a browser download. `filename` is
+/// produced internally (timestamp pattern) — never derived from request input.
+fn write_download_response(
+    stream: &mut TcpStream,
+    content_type: &str,
+    body: &[u8],
+    filename: &str,
+) -> Result<()> {
+    let header = format!(
+        "HTTP/1.1 200 OK\r\n\
+         Content-Type: {content_type}\r\n\
+         Content-Length: {len}\r\n\
+         Content-Disposition: attachment; filename=\"{filename}\"\r\n\
+         Cache-Control: no-store\r\n\
+         X-Content-Type-Options: nosniff\r\n\
+         X-Frame-Options: DENY\r\n\
+         Referrer-Policy: no-referrer\r\n\
+         Permissions-Policy: camera=(), microphone=(), geolocation=()\r\n\
+         \r\n",
+        content_type = content_type,
+        len = body.len(),
+        filename = filename
+    );
+    stream.write_all(header.as_bytes())?;
+    stream.write_all(body)?;
+    Ok(())
 }
 
 fn write_response(
