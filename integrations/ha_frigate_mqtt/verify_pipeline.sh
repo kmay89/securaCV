@@ -115,10 +115,13 @@ check_bridge_ingests_live() {
 # 3) The sealed-log database was WRITTEN during this run — `test -s` alone
 #    passes on a freshly initialized, event-less database. The marker file is
 #    created before the ingest check, so this also cross-checks step 2's event
-#    actually reached storage.
+#    actually reached storage. The kernel opens SQLite in WAL mode
+#    (PRAGMA journal_mode=WAL), so a fresh append advances witness.db-wal
+#    while the main file can stay older until a checkpoint — freshness on
+#    either file counts.
 check_db_written_this_run() {
   "${compose_cmd[@]}" exec -T securacv sh -c \
-    "test -s /data/witness.db && find /data/witness.db -newer $MARKER | grep -q ."
+    "test -s /data/witness.db && find /data/witness.db /data/witness.db-wal -newer $MARKER 2>/dev/null | grep -q ."
 }
 
 # Drop the freshness marker before any activity we want to attribute to this

@@ -44,13 +44,19 @@ case "${1:-}" in
       mosquitto:mosquitto_pub)
         if [ -f "$SCENARIO_DIR/bridge_alive" ]; then
           # A live bridge ingests the published event: log its zone (the
-          # nonce rides in the camera field) and write the database.
+          # nonce rides in the camera field) and write the database. In
+          # wal_mode scenarios only the -wal side file advances (SQLite WAL
+          # journaling: the main db mtime waits for a checkpoint).
           msg=""
           for arg in "$@"; do msg="$arg"; done
           zone=$(printf '%s' "$msg" | sed -n 's/.*"camera":"\([^"]*\)".*/\1/p')
           echo "Event logged: BoundaryCrossingObjectLarge zone=zone:$zone conf=0.92" \
             >> "$SCENARIO_DIR/logs"
-          touch "$SCENARIO_DIR/db_mtime"
+          if [ -f "$SCENARIO_DIR/wal_mode" ]; then
+            touch "$SCENARIO_DIR/db_wal_mtime"
+          else
+            touch "$SCENARIO_DIR/db_mtime"
+          fi
         fi
         exit 0 ;;
       securacv:sh)
@@ -61,10 +67,18 @@ case "${1:-}" in
             touch "$SCENARIO_DIR/marker"
             exit 0 ;;
           *find*)
+            # Freshness on the main db always counts; the WAL side file
+            # counts only when the script actually asks about it.
             if [ -f "$SCENARIO_DIR/db_mtime" ] && \
                [ "$SCENARIO_DIR/db_mtime" -nt "$SCENARIO_DIR/marker" ]; then
               exit 0
             fi
+            case "$cmd" in *witness.db-wal*)
+              if [ -f "$SCENARIO_DIR/db_wal_mtime" ] && \
+                 [ "$SCENARIO_DIR/db_wal_mtime" -nt "$SCENARIO_DIR/marker" ]; then
+                exit 0
+              fi ;;
+            esac
             exit 1 ;;
           *"test -s"*)
             # A bare existence check (the old script's semantics): passes on
@@ -131,5 +145,14 @@ if run_scenario silent; then
   fail "a silent broker must not pass"
 fi
 echo "ok: silent broker fails"
+
+# 4. WAL-mode stack: the append advances only witness.db-wal (the kernel
+#    runs journal_mode=WAL; the main db mtime waits for a checkpoint). A
+#    healthy WAL-mode pipeline must still pass the freshness check.
+mkdir -p "$TMP/wal"
+echo '{"after":{"camera":"front_door"}}' > "$TMP/wal/sub_output"
+touch "$TMP/wal/bridge_alive" "$TMP/wal/db_exists" "$TMP/wal/wal_mode"
+run_scenario wal || fail "a healthy WAL-mode stack must pass"
+echo "ok: WAL-only freshness passes"
 
 echo "all verify_pipeline tests passed"
