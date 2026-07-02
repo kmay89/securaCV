@@ -20,7 +20,7 @@
 // ============================================================================
 
 /* [What to render] */
-part   = "all";       // ["base","lid","all","coupon","gasket"]   (coupon = clip-fit test; gasket = TPU seal ring, needs opt_seal)
+part   = "all";       // ["base","lid","all","coupon","gasket","shield","tray"]   (coupon = clip-fit test; gasket = TPU seal ring; shield = solar radiation shield; tray = desiccant tray)
 
 /* [Preset] — quick configs; choose "custom" to use the Peripherals checkboxes */
 preset = "custom";    // ["custom","battery_full","compact_plain","battery_weather"]
@@ -141,6 +141,19 @@ lid_rib_h    = 1.0;     // rib depth below the lid underside — keep <= the 1.0
 foot_cham    = 0.5;     // 45° chamfer on the bottom edge: elephant-foot + first-layer delamination guard (0 = off)
 kh_lock      = true;    // (keyhole mounts) two anti-lift knockout bosses: 0.6 mm web, pierce with
                         // #4/M3 screws on install so the case can't be lifted off the wall screws
+
+/* [Thermal / outdoor kit] — part="shield" is a Stevenson-screen style solar
+   radiation shield: a second roof standing sh_gap above the lid on hollow
+   standoffs, fastened by the existing corner screws (swap in M2 x 16-18).
+   It shades the case and vents the gap; apertures open automatically over
+   the camera / light pipe / touch window. part="tray" is a slotted clip-in
+   desiccant tray for a 1 g silica pack (VHB or friction fit). */
+sh_gap   = 6.0;    // shield air gap above the lid
+sh_over  = 6.0;    // shield overhang beyond the case walls (shade + rain shadow)
+sh_t     = 1.6;    // shield panel thickness
+tray_l   = 24.0;   // desiccant tray footprint
+tray_w   = 18.0;
+tray_h   = 8.0;
 
 /* [Standoffs / screw posts] */
 standoff_h     = 3.0;   // PCB sits this high off the floor (clearance for bottom parts)
@@ -693,7 +706,53 @@ module coupon() {
 // ----------------------------------------------------------------------------
 //  Layout
 // ----------------------------------------------------------------------------
+// ----------------------------------------------------------------------------
+//  SOLAR RADIATION SHIELD — second roof on hollow standoffs over the lid.
+//  Prints panel-on-bed, tubes up; installs FLIPPED (about X), so aperture
+//  positions are mirrored in y here to land over the real lid features.
+//  Fasten with the corner screws lengthened to M2 x 16-18.
+// ----------------------------------------------------------------------------
+module shield() {
+    difference() {
+        union() {
+            rrect(out_l + 2*sh_over, out_w + 2*sh_over, corner_r + sh_over, sh_t);
+            for (p = post_xy()) translate([p[0], p[1], 0]) cylinder(d = 7, h = sh_t + sh_gap);
+        }
+        for (p = post_xy()) {
+            translate([p[0], p[1], -0.1]) cylinder(d = screw_d + 0.8, h = sh_t + sh_gap + 0.2);
+            // head seat on the bed face = the installed top (first-layer void)
+            translate([p[0], p[1], -0.01])
+                cylinder(d1 = screw_head_d + 0.6, d2 = screw_d + 0.8, h = screw_head_h);
+        }
+        // apertures over lid features (y mirrored for the installation flip)
+        if (e_camera)
+            translate([board_cx + cam_dx, -(board_cy + cam_dy), -1])
+                cylinder(d = max(cam_win_d, cam_disc_d) + 4, h = sh_t + 2);
+        if (e_led)
+            translate([board_cx + lp_dx, -(board_cy + lp_dy), -1])
+                cylinder(d = lp_d + 5, h = sh_t + 2);
+        if (e_touch)
+            translate([board_cx + touch_dx, -(board_cy + touch_dy), -1])
+                cylinder(d = touch_d + 4, h = sh_t + 2);
+    }
+}
+
+// ----------------------------------------------------------------------------
+//  DESICCANT TRAY — slotted open box for a 1 g silica pack; friction-fit or
+//  VHB it into any Canary cavity (battery bay, cable well). Universal part.
+// ----------------------------------------------------------------------------
+module tray() {
+    difference() {
+        rrect(tray_l, tray_w, 2, tray_h);
+        translate([0, 0, 1.2]) rrect(tray_l - 2.4, tray_w - 2.4, 1.4, tray_h);
+        for (i = [-1, 0, 1])                       // floor slots — moisture path
+            translate([i*6, 0, -0.1]) linear_extrude(1.5) square([2.5, tray_w - 6], center = true);
+    }
+}
+
 if      (part == "coupon") coupon();
+else if (part == "shield") shield();
+else if (part == "tray")   tray();
 else if (part == "gasket") {
     assert(e_seal, "the gasket needs opt_seal=true (or preset=battery_weather) so its ring matches the groove");
     gasket();

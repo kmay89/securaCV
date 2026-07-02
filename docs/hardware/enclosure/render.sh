@@ -70,6 +70,18 @@ for part in body face plate gasket; do
 done
 dstl "canary_vision_doorbell_plate_wedge15.stl" -D 'plate_wedge=15' -D 'part="plate"'
 
+# --- Canary Sense (MR60BHA2 radar + stacked XIAO C6; RADOME front) ----------
+SSRC="canary_sense_enclosure.scad"
+sstl() { local out=$1; shift; echo "Rendering $out ..."
+  "$OPENSCAD" --export-format binstl -o "$out" "$@" "$SSRC"; }
+sstl "canary_sense_back.stl"  -D 'part="back"'
+sstl "canary_sense_front.stl" -D 'part="front"'
+# (bracket/knob are identical to the Vision case parts — reuse those STLs)
+
+# --- Thermal / outdoor kit (WAP): solar shield + desiccant tray -------------
+stl "canary_wap_enclosure_weather_shield.stl" -D 'preset="battery_weather"' -D 'part="shield"'
+stl "canary_wap_enclosure_tray.stl" -D 'part="tray"' 
+
 if [[ "${1:-}" != "--no-png" ]]; then
   # one preview per printable variant — these drive the README's variant-picker gallery
   png "preview_all.png"     -D 'preset="battery_full"'    -D 'part="all"'
@@ -83,6 +95,7 @@ if [[ "${1:-}" != "--no-png" ]]; then
    png "preview_vision_bracket.png"      -D 'part="bracket"'
    png "preview_vision_knob.png"         -D 'part="knob"')
   (SRC="$DSRC"; png "preview_doorbell.png" -D 'part="all"')
+  (SRC="$SSRC"; png "preview_sense.png" -D 'part="all"')
 fi
 
-echo "Done: WAP (8) + Vision (9) + Doorbell (5) STLs + previews."
+echo "Done: WAP (10 incl shield/tray) + Vision (9) + Doorbell (5) + Sense (2) STLs + previews."

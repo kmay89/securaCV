@@ -1,0 +1,563 @@
+// ============================================================================
+//  SecuraCV Canary Sense — 3D-printable RADOME enclosure (parametric)  v0.1
+//  Hardware: Seeed MR60BHA2 60 GHz mmWave kit — radar carrier board with a
+//  XIAO ESP32-C6 seated in its stacking socket (design doc:
+//  docs/canary_sense_mr60bha2_design.md). Ceiling or wall mounted; bedside
+//  (<=1.5 m) for the wellbeing/breathing channel.
+//
+//  THE RADOME RULE: 60 GHz must pass through the front face. The window over
+//  the antenna zone is a THIN (radome_t), FLAT, UNIFORM membrane — no ribs,
+//  no label, no seams and no gasket path crossing it, and the board mounts
+//  parallel to it at a small air gap. ~1.0 mm PETG/ASA is a good default;
+//  ~1.5 mm is close to a half-wave in plastic (also low-loss). Never put
+//  metal, foil labels or CF-filled filament in front of the antenna.
+//
+//  Everything else reuses the proven Canary patterns: snap-clip rails with
+//  the stacked XIAO hanging beneath, GoPro-compatible hinge + blind keyholes,
+//  opt-in TPU gasket sealing, and the engineering kit (ribs/chamfer/inserts).
+//
+//  ⚠️ VERIFY BEFORE PRINTING. Board dimensions are nominal — MEASURE your
+//     carrier, the seated stack height, and the antenna-zone position.
+//  Orientation: +Y up on the wall, USB opening on the BOTTOM (-Y) wall,
+//  prongs on the TOP wall, +Z = toward the radome face.
+// ============================================================================
+
+/* [What to render] */
+part   = "all";       // ["back","front","all","gasket","bracket","knob"]
+
+/* [Options] */
+opt_led    = true;    // onboard WS2812 -> light-pipe port (outside the radome zone)
+opt_lux    = true;    // BH1750 lux sensor -> small light aperture (outside the radome zone)
+opt_vent   = false;   // GORE vent cluster (recommended with opt_seal)
+opt_tamper = false;   // reed/Hall magnet pocket
+opt_seal   = false;   // perimeter TPU gasket + drip-edge front (indoor ceilings rarely need it)
+opt_mount  = true;
+mount_style = "hinge"; // ["hinge","keyhole","both"]
+e_seal  = opt_seal;
+e_mount = opt_mount;
+m_style = mount_style;
+
+/* [Boards] — Seeed MR60BHA2 kit carrier + stacked XIAO ESP32-C6. MEASURE YOURS */
+vm_l     = 44.0;   // carrier length (Y; XIAO/USB edge down)
+vm_w     = 36.0;   // carrier width (X)
+xiao_l   = 21.0;
+xiao_w   = 17.5;
+stack_sock_h = 11.5; // carrier underside -> XIAO underside when seated — MEASURE
+vm_front_h   = 3.5;  // carrier front-side TALLEST part (connectors etc.) — MEASURE
+ant_h        = 1.2;  // antenna (AiP package) top above the PCB — MEASURE; sets the radome air gap
+pcb_t    = 1.0;
+board_clear = 0.6;
+xiao_usb_z  = 4.0;   // XIAO USB-C centre above the back floor — MEASURE the seated stack
+
+/* [Radome window] — thin flat membrane over the antenna zone */
+radome_t  = 1.0;     // membrane thickness (~1.0, or ~1.5 for a half-wave wall)  // [0.8:0.1:2.0]
+rad_win_x = 24.0;    // window size (X) — cover the antenna array generously
+rad_win_y = 24.0;    // window size (Y)
+rad_dx    = 0.0;     // antenna-zone centre offset from the BOARD centre — MEASURE
+rad_dy    = 6.0;     //   (the array usually sits toward the top half of the carrier)
+// antenna-to-radome air gap is COMPUTED below (rad_gap) and asserted >= 2.5;
+// raise cav_extra for more gap. Keep >= 3 mm for clean radar performance.
+
+/* [Front-face features] — offsets from the BOARD centre; keep them OUT of the window */
+lp_d   = 3.0;        // WS2812 light pipe (press fit)
+lp_dx  = 13.0;
+lp_dy  = -14.0;
+lux_d  = 3.5;        // BH1750 light aperture (open hole; glue a clear disc behind it when sealing)
+lux_dx = -13.0;
+lux_dy = -14.0;
+vent_pad_d     = 12.0;
+vent_pad_depth = 0.8;
+vent_hole_d    = 1.0;   // fine holes — insect-resistant (see README thermal/outdoor kit)
+vent_ring_d    = 6.0;
+vent_holes     = 10;
+vent_dx        = 0.0;
+vent_dy        = -17.0;
+mag_d  = 6.0;
+mag_h  = 3.2;
+mag_dx = 13.0;
+mag_dy = 14.0;
+
+/* [Shell] */
+wall_t   = 2.0;
+floor_t  = 2.0;
+lid_t    = 2.0;      // face thickness OUTSIDE the radome window
+lip_h    = 4.0;
+lip_t    = 1.2;
+corner_r = 3.0;
+cav_extra = 1.0;
+
+/* [Print tolerances] */
+tol_slide = 0.20;
+tol_press = 0.10;
+tol_hole  = 0.30;
+
+/* [Engineering] (see README "Engineering & materials") */
+screw_insert = false;
+insert_d     = 3.5;
+insert_h     = 4.0;
+lid_ribs     = true;   // rib ring auto-clears the radome window
+lid_rib_w    = 2.5;
+lid_rib_h    = 1.0;
+foot_cham    = 0.5;
+kh_lock      = true;
+
+/* [Screw posts] */
+post_d       = 5.0;
+screw_d      = 1.6;
+screw_head_d = 4.0;
+screw_head_h = 2.0;
+
+/* [USB-C port] — the stacked XIAO's port, bottom (-Y) wall */
+usb_w  = 10.5;
+usb_h  = 6.5;
+usb_dx = 0.0;
+
+/* [Hinge — GoPro-compatible, top wall (aim the beam; ceiling->bed for wellbeing)] */
+prong_t     = 3.0;
+prong_pitch = 6.35;
+fin_r       = 7.5;
+hinge_off   = 13.0;
+hinge_bolt_d = 5.0;
+hinge_teeth = true;
+teeth_n     = 24;
+teeth_h     = 0.6;
+
+/* [Bracket] */
+br_x        = 46.0;
+br_y        = 34.0;
+br_t        = 4.0;
+br_screw_d  = 4.2;
+bracket_tripod = true;
+
+/* [Keyholes] — blind, seal-safe (flush ceiling/wall mount) */
+kh_extra   = 3.0;
+kh_head_d  = 7.0;
+kh_shank_d = 4.2;
+kh_slot_l  = 8.0;
+kh_head_h  = 3.5;
+kh_face    = 1.0;
+kh_inset   = 12.0;
+
+/* [Weather sealing] */
+gasket_w      = 1.2;
+gasket_groove = 1.0;
+gasket_proud  = 0.6;
+skirt_h       = 3.0;
+skirt_t       = 1.6;
+usb_cover     = true;
+usb_cov_pad   = 2.0;
+usb_cov_dep   = 1.0;
+
+/* [Aesthetics] */
+lid_edge    = 0.8;
+lid_edge2   = 0.0;
+label_text  = "";    // debossed label — placed at label_dx/dy; keep it OUT of the radome window
+label_size  = 4.5;
+label_depth = 0.5;
+label_dx    = 0.0;
+label_dy    = -24.0;
+label_rot   = 0;
+label_font  = "Liberation Sans:style=Bold";
+
+/* [Board snap clips] */
+clip_w      = 6.0;
+clip_t      = 1.5;
+clip_hook   = 0.8;
+clip_hook_h = 1.2;
+clip_clear  = 0.25;
+
+/* [Quality] */
+$fa = 3; $fs = 0.4;
+
+// ----------------------------------------------------------------------------
+//  Derived geometry
+// ----------------------------------------------------------------------------
+wall_eff   = e_seal ? max(wall_t, gasket_w + 1.6) : wall_t;
+pd = screw_insert ? max(post_d, insert_d + 2.4) : post_d;
+clip_stack  = clip_clear + clip_t;
+vm_standoff = stack_sock_h + 1.5;
+post_corner = pd + 1.5;
+
+inner_x = vm_w + 2*(clip_stack + board_clear) + 0.5 + 2*post_corner;
+inner_y = board_clear + vm_l + 2 + 6;      // board at the USB wall + wire room + top margin
+cav_d_min = vm_standoff + pcb_t + vm_front_h + cav_extra;
+usb_zc  = floor_t + xiao_usb_z;
+cav_d   = e_seal ? max(cav_d_min, xiao_usb_z + usb_h/2 + 2.5) : cav_d_min;
+// actual antenna-to-radome air gap: from the AiP top to the thinned window's
+// inner face (cavity headroom above the tallest part + the window recess)
+rad_gap = (vm_front_h - ant_h) + (cav_d - cav_d_min + cav_extra) + (lid_t - radome_t);
+
+out_x  = inner_x + 2*wall_eff;
+out_y  = inner_y + 2*wall_eff;
+base_d = floor_t + cav_d;
+
+vm_cx  = 0;
+vm_cy  = -inner_y/2 + board_clear + vm_l/2;
+rad_cx = vm_cx + rad_dx;                    // radome window centre
+rad_cy = vm_cy + rad_dy;
+usb_cx = vm_cx + usb_dx;
+
+mount_extra = (e_mount && (m_style == "keyhole" || m_style == "both")) ? kh_extra : 0;
+kh_y  = inner_y/2 - kh_inset;
+kh_ys = (kh_y >= kh_slot_l/2 + kh_head_d/2 + 2) ? [-kh_y, kh_y] : [0];
+hinge_hole = hinge_bolt_d + 0.4;
+
+skirt_gap = tol_slide + 0.2;
+plate_x   = e_seal ? out_x + 2*(skirt_gap + skirt_t) : out_x;
+plate_y   = e_seal ? out_y + 2*(skirt_gap + skirt_t) : out_y;
+plate_r   = e_seal ? corner_r + skirt_gap + skirt_t : corner_r;
+
+function post_xy() = [
+    [ inner_x/2 - pd/2 - 0.2,  inner_y/2 - pd/2 - 0.2],
+    [-inner_x/2 + pd/2 + 0.2,  inner_y/2 - pd/2 - 0.2],
+    [ inner_x/2 - pd/2 - 0.2, -inner_y/2 + pd/2 + 0.2],
+    [-inner_x/2 + pd/2 + 0.2, -inner_y/2 + pd/2 + 0.2],
+];
+
+assert(radome_t >= 0.6 && radome_t < lid_t, "radome_t must be printable (>=0.6) and thinner than lid_t");
+assert(rad_gap >= 2.5, "antenna-to-radome gap < 2.5 mm — raise cav_extra (>= 3 mm recommended)");
+assert(rad_win_x + 2*abs(rad_dx) <= inner_x - 4 && rad_win_y <= vm_l,
+       "radome window exceeds the face — shrink rad_win or grow the board zone");
+assert(lip_h < cav_d, "lip_h must be less than the cavity depth");
+assert(screw_head_d > screw_d, "screw_head_d must be larger than screw_d");
+assert(!e_seal || gasket_groove <= lip_h - 0.5, "gasket_groove must stay below the lip");
+assert(!e_seal || skirt_h < base_d, "skirt_h must be shorter than the back shell");
+assert(mount_extra == 0 || kh_head_h + 1.5 <= floor_t + kh_extra, "keyhole pocket too deep");
+assert(lid_edge == 0 || (lid_edge >= 0.01 && lid_edge < lid_t), "lid_edge out of range");
+assert(lid_edge2 >= 0 && (lid_edge > 0 || lid_edge2 == 0) && lid_edge + lid_edge2 < lid_t,
+       "lid_edge2 requires lid_edge > 0, and their sum must stay below lid_t");
+assert(2*fin_r <= base_d + 0.01, "fin_r too large — prongs must not exceed the shell depth");
+echo(str("Canary Sense RADOME enclosure v0.1 — outer ", out_x, " x ", out_y, " x ",
+         base_d + lid_t + mount_extra, " mm (+", hinge_off + fin_r, " mm prongs)  (radome ",
+         radome_t, " mm, ", rad_win_x, "x", rad_win_y, " window, antenna air gap ",
+         rad_gap, " mm; seal=", e_seal, ", mount=", m_style, ")"));
+
+// ----------------------------------------------------------------------------
+//  Helpers (shared idiom with the other Canary enclosures)
+// ----------------------------------------------------------------------------
+module rrect2d(l, w, r) { offset(r = r) offset(r = -r) square([l, w], center = true); }
+module rrect(l, w, r, h) { linear_extrude(height = h) rrect2d(l, w, r); }
+module rim_ring2d(w) {
+    difference() {
+        offset(r =  w/2) rrect2d(inner_x + wall_eff, inner_y + wall_eff, max(0.1, corner_r - wall_eff/2));
+        offset(r = -w/2) rrect2d(inner_x + wall_eff, inner_y + wall_eff, max(0.1, corner_r - wall_eff/2));
+    }
+}
+module edgeclip(px, py, ang, soff) {
+    bt = floor_t + soff + pcb_t;  tp = bt + clip_hook_h;
+    pts = [ [clip_clear, floor_t], [clip_clear + clip_t, floor_t],
+            [clip_clear + clip_t, tp], [clip_clear, tp],
+            [-clip_hook, bt], [0, bt], [clip_clear, bt - clip_clear] ];
+    translate([px, py, 0]) rotate([0, 0, ang - 90])
+        translate([-clip_w/2, 0, 0]) rotate([0, 0, 90]) rotate([90, 0, 0])
+            linear_extrude(clip_w) polygon(pts);
+}
+module keyhole_pocket(yc) {
+    y0 = yc - kh_slot_l/2;  y1 = yc + kh_slot_l/2;  z0 = -mount_extra;
+    union() {
+        translate([0, 0, z0 - 0.1]) linear_extrude(kh_face + 0.1) {
+            translate([0, y0]) circle(d = kh_head_d);
+            hull() { translate([0, y0]) circle(d = kh_shank_d);
+                     translate([0, y1]) circle(d = kh_shank_d); }
+        }
+        translate([0, 0, z0 + kh_face]) linear_extrude(kh_head_h - kh_face)
+            hull() { translate([0, y0]) circle(d = kh_head_d + 0.6);
+                     translate([0, y1]) circle(d = kh_head_d + 0.6); }
+    }
+}
+module tearbore_x(x0, y, z, l, d) {
+    r = d/2; cy = min(r + 0.75, r*1.38);
+    translate([x0, y, z]) rotate([90, 0, 0]) rotate([0, 90, 0])
+        linear_extrude(l) union() {
+            circle(d = d);
+            polygon([[-r*0.7071, r*0.7071], [-(r*1.4142 - cy), cy],
+                     [ r*1.4142 - cy, cy], [ r*0.7071, r*0.7071]]);
+        }
+}
+module teeth2d() {
+    step = 360 / teeth_n;
+    for (i = [0 : 2 : teeth_n - 1]) rotate([0, 0, i * step])
+        intersection() {
+            difference() { circle(r = fin_r - 0.5); circle(r = 3.5); }
+            polygon([[0, 0], [2*fin_r, 0], [2*fin_r*cos(step), 2*fin_r*sin(step)]]);
+        }
+}
+module case_fin(xc) {
+    hull() {
+        translate([xc - prong_t/2, out_y/2 - 1, 0]) cube([prong_t, 1, 2*fin_r]);
+        translate([xc - prong_t/2, out_y/2 + hinge_off, fin_r])
+            rotate([0, 90, 0]) cylinder(r = fin_r, h = prong_t);
+    }
+}
+module case_hinge() {
+    ax = [0, out_y/2 + hinge_off, fin_r];
+    difference() {
+        union() {
+            case_fin(-prong_pitch/2);
+            case_fin( prong_pitch/2);
+            translate([-(prong_pitch/2 + prong_t/2), out_y/2 - 1, 0])
+                cube([prong_pitch + prong_t, 1 + max(1, hinge_off - fin_r - 0.5), 2*fin_r]);
+            if (hinge_teeth) {
+                xo = prong_pitch/2 + prong_t/2;
+                translate([ xo, ax[1], ax[2]]) rotate([0,  90, 0]) linear_extrude(teeth_h) teeth2d();
+                translate([-xo, ax[1], ax[2]]) rotate([0, -90, 0]) linear_extrude(teeth_h) teeth2d();
+            }
+        }
+        tearbore_x(-out_x/2, ax[1], ax[2], out_x, hinge_hole);
+    }
+}
+module foot_chamfer_cut() {
+    z0 = -mount_extra;
+    difference() {
+        translate([0, 0, z0 - 0.01]) rrect(out_x + 0.04, out_y + 0.04, corner_r, foot_cham + 0.01);
+        hull() {
+            translate([0, 0, z0]) rrect(out_x - 2*foot_cham, out_y - 2*foot_cham, max(0.1, corner_r - foot_cham), 0.01);
+            translate([0, 0, z0 + foot_cham]) rrect(out_x, out_y, corner_r, 0.01);
+        }
+    }
+}
+
+// ----------------------------------------------------------------------------
+//  BACK shell
+// ----------------------------------------------------------------------------
+module back() {
+    posts = post_xy();
+    gusset_h = max(2, cav_d - lip_h - 1.0);
+    union() {
+        difference() {
+            union() {
+                rrect(out_x, out_y, corner_r, base_d);
+                if (mount_extra > 0)
+                    translate([0, 0, -mount_extra]) rrect(out_x, out_y, corner_r, mount_extra);
+                if (e_mount && (m_style == "hinge" || m_style == "both"))
+                    case_hinge();
+            }
+            translate([0, 0, floor_t]) rrect(inner_x, inner_y, max(0.1, corner_r - wall_eff), cav_d + 1);
+            // XIAO USB-C opening, bottom wall
+            translate([usb_cx, -out_y/2, usb_zc])
+                cube([usb_w, wall_eff*3, usb_h], center = true);
+            if (e_seal)
+                translate([0, 0, base_d - gasket_groove])
+                    linear_extrude(gasket_groove + 1) rim_ring2d(gasket_w);
+            if (e_seal && usb_cover) {
+                uz0 = usb_zc - usb_h/2 - usb_cov_pad;
+                uz1 = min(usb_zc + usb_h/2 + usb_cov_pad, base_d - gasket_groove - 0.5);
+                translate([usb_cx - (usb_w/2 + usb_cov_pad), -out_y/2 - 1, uz0])
+                    cube([usb_w + 2*usb_cov_pad, 1 + usb_cov_dep, uz1 - uz0]);
+            }
+            if (mount_extra > 0)
+                for (yc = kh_ys) keyhole_pocket(yc);
+            if (mount_extra > 0 && kh_lock)
+                for (sx = [1, -1]) translate([sx*12, inner_y/2 - 5, 0]) {
+                    translate([0, 0, -mount_extra + 0.6]) cylinder(d = 3.2, h = mount_extra + floor_t);
+                    translate([0, 0, floor_t - 1.2]) cylinder(d1 = 3.2, d2 = 6.0, h = 1.21);
+                }
+            if (foot_cham > 0) foot_chamfer_cut();
+        }
+        // corner screw posts, gusseted
+        difference() {
+            union() {
+                for (p = posts) translate([p[0], p[1], floor_t]) cylinder(d = pd, h = cav_d);
+                for (p = posts) {
+                    sx = sign(p[0]); sy = sign(p[1]);
+                    hull() {
+                        translate([p[0], p[1], floor_t]) cylinder(d = pd, h = gusset_h);
+                        translate([sx*(inner_x/2 - 0.3), p[1], floor_t]) cylinder(d = 2, h = gusset_h);
+                    }
+                    hull() {
+                        translate([p[0], p[1], floor_t]) cylinder(d = pd, h = gusset_h);
+                        translate([p[0], sy*(inner_y/2 - 0.3), floor_t]) cylinder(d = 2, h = gusset_h);
+                    }
+                }
+            }
+            for (p = posts) translate([p[0], p[1], floor_t + 2.0]) cylinder(d = screw_d, h = cav_d);
+            if (screw_insert)
+                for (p = posts) translate([p[0], p[1], floor_t + cav_d - insert_h - 0.5])
+                    cylinder(d = insert_d - 0.1, h = insert_h + 1);
+        }
+        // carrier rails (notched at the clips); the stacked XIAO hangs beneath
+        for (s = [1, -1]) {
+            difference() {
+                translate([vm_cx + s*(vm_w/2 - 1.5) - 1.5, vm_cy - (vm_l - 1)/2, floor_t])
+                    cube([3, vm_l - 1, vm_standoff]);
+                translate([vm_cx + s*(vm_w/2 - 1.5), vm_cy, floor_t + vm_standoff/2])
+                    cube([5, clip_w + 2, vm_standoff + 1], center = true);
+            }
+            edgeclip(vm_cx + s*vm_w/2, vm_cy, s > 0 ? 0 : 180, vm_standoff);
+        }
+    }
+}
+
+// ----------------------------------------------------------------------------
+//  FRONT face — the RADOME: thinned window over the antenna, features outside it
+// ----------------------------------------------------------------------------
+module vent_cluster(x, y) {
+    translate([x, y, 0]) {
+        translate([0, 0, lid_t - vent_pad_depth]) cylinder(d = vent_pad_d, h = vent_pad_depth + 1);
+        for (i = [0 : vent_holes - 1]) rotate([0, 0, i * 360 / vent_holes])
+            translate([vent_ring_d/2, 0, -1]) cylinder(d = vent_hole_d, h = lid_t + 2);
+    }
+}
+module front_plate() {
+    if (lid_edge > 0) union() {
+        rrect(plate_x, plate_y, plate_r, lid_t - lid_edge - lid_edge2);
+        hull() {
+            translate([0, 0, lid_t - lid_edge - lid_edge2]) rrect(plate_x, plate_y, plate_r, 0.01);
+            translate([0, 0, lid_t - lid_edge2 - 0.01])
+                rrect(plate_x - 2*lid_edge, plate_y - 2*lid_edge, max(0.1, plate_r - lid_edge), 0.01);
+        }
+        if (lid_edge2 > 0) hull() {
+            translate([0, 0, lid_t - lid_edge2])
+                rrect(plate_x - 2*lid_edge, plate_y - 2*lid_edge, max(0.1, plate_r - lid_edge), 0.01);
+            translate([0, 0, lid_t - 0.01])
+                rrect(plate_x - 2*lid_edge - 0.9*lid_edge2, plate_y - 2*lid_edge - 0.9*lid_edge2,
+                      max(0.1, plate_r - lid_edge - 0.45*lid_edge2), 0.01);
+        }
+    } else rrect(plate_x, plate_y, plate_r, lid_t);
+}
+module front() {
+    union() {
+        difference() {
+            front_plate();
+            // RADOME window: blind thinning from the INSIDE, leaving a flat
+            // uniform radome_t membrane. Rounded corners avoid stress risers.
+            translate([rad_cx, rad_cy, -1])
+                linear_extrude(lid_t - radome_t + 1)
+                    rrect2d(rad_win_x, rad_win_y, 3);
+            if (opt_led) translate([vm_cx + lp_dx, vm_cy + lp_dy, -1]) cylinder(d = lp_d + 2*tol_press, h = lid_t + 2);
+            if (opt_lux) translate([vm_cx + lux_dx, vm_cy + lux_dy, -1]) cylinder(d = lux_d, h = lid_t + 2);
+            if (opt_vent) vent_cluster(vm_cx + vent_dx, vm_cy + vent_dy);
+            for (p = post_xy()) {
+                translate([p[0], p[1], -1]) cylinder(d = screw_d + 2*tol_hole, h = lid_t + 2);
+                translate([p[0], p[1], lid_t - screw_head_h])
+                    cylinder(d1 = screw_d + 2*tol_hole, d2 = screw_head_d, h = screw_head_h + 0.1);
+            }
+            if (label_text != "")
+                translate([label_dx, label_dy, lid_t - label_depth])
+                    linear_extrude(label_depth + 1) rotate(label_rot)
+                        text(label_text, size = label_size, font = label_font,
+                             halign = "center", valign = "center");
+        }
+        // rib ring, auto-cleared around the RADOME window and every feature
+        if (lid_ribs) {
+            ro_x = inner_x - 2*tol_slide - 2*lip_t - 0.8;
+            ro_y = inner_y - 2*tol_slide - 2*lip_t - 0.8;
+            difference() {
+                translate([0, 0, -lid_rib_h]) linear_extrude(lid_rib_h + 0.1)
+                    difference() {
+                        rrect2d(ro_x, ro_y, max(0.1, corner_r - wall_eff - lip_t));
+                        rrect2d(ro_x - 2*lid_rib_w, ro_y - 2*lid_rib_w, 0.1);
+                    }
+                for (p = post_xy())
+                    translate([p[0], p[1], -lid_rib_h - 0.1]) cylinder(d = pd + 1.6, h = lid_rib_h + 0.2);
+                translate([rad_cx, rad_cy, -lid_rib_h - 0.1])
+                    linear_extrude(lid_rib_h + 0.2) rrect2d(rad_win_x + 3, rad_win_y + 3, 3);
+                if (opt_led) translate([vm_cx + lp_dx, vm_cy + lp_dy, -lid_rib_h - 0.1])
+                    cylinder(d = lp_d + 4, h = lid_rib_h + 0.2);
+                if (opt_lux) translate([vm_cx + lux_dx, vm_cy + lux_dy, -lid_rib_h - 0.1])
+                    cylinder(d = lux_d + 3, h = lid_rib_h + 0.2);
+                if (opt_vent) translate([vm_cx + vent_dx, vm_cy + vent_dy, -lid_rib_h - 0.1])
+                    cylinder(d = vent_pad_d + 3, h = lid_rib_h + 0.2);
+                if (opt_tamper) translate([vm_cx + mag_dx, vm_cy + mag_dy, -lid_rib_h - 0.1])
+                    cylinder(d = mag_d + 2*tol_press + 4.8, h = lid_rib_h + 0.2);
+                translate([usb_cx, -inner_y/2, 0]) cube([usb_w + 4, 14, 3*lid_rib_h], center = true);
+            }
+        }
+        // lip, cleared at posts + USB notch
+        difference() {
+            translate([0, 0, -lip_h])
+                difference() {
+                    rrect(inner_x - 2*tol_slide, inner_y - 2*tol_slide,
+                          max(0.1, corner_r - wall_eff - tol_slide), lip_h);
+                    rrect(inner_x - 2*tol_slide - 2*lip_t, inner_y - 2*tol_slide - 2*lip_t, 0.1, lip_h + 1);
+                }
+            for (p = post_xy())
+                translate([p[0], p[1], -lip_h - 0.1]) cylinder(d = pd + 1.2, h = lip_h + 0.2);
+            translate([usb_cx, -inner_y/2, -lip_h/2])
+                cube([usb_w + 4, lip_t*4, lip_h + 0.2], center = true);
+        }
+        // drip-edge skirt (seal mode), notched over the USB opening
+        if (e_seal)
+            difference() {
+                translate([0, 0, -skirt_h]) linear_extrude(skirt_h)
+                    difference() {
+                        rrect2d(plate_x, plate_y, plate_r);
+                        rrect2d(out_x + 2*skirt_gap, out_y + 2*skirt_gap, corner_r + skirt_gap);
+                    }
+                translate([usb_cx, -(out_y/2 + skirt_gap + skirt_t/2), -skirt_h/2])
+                    cube([usb_w + 6, skirt_t*3, skirt_h + 0.4], center = true);
+            }
+        if (opt_tamper)
+            translate([vm_cx + mag_dx, vm_cy + mag_dy, -mag_h]) difference() {
+                cylinder(d = mag_d + 2*tol_press + 2.4, h = mag_h + 0.1);
+                translate([0, 0, -0.1]) cylinder(d = mag_d + 2*tol_press, h = mag_h + 0.1);
+            }
+    }
+}
+
+// ----------------------------------------------------------------------------
+//  GASKET / BRACKET / KNOB (same system as the Vision case)
+// ----------------------------------------------------------------------------
+module gasket() { linear_extrude(gasket_groove + gasket_proud) rim_ring2d(gasket_w - 0.1); }
+module bracket_fin(xc) {
+    hull() {
+        translate([xc - prong_t/2, -fin_r, br_t - 0.5]) cube([prong_t, 2*fin_r, 0.5]);
+        translate([xc - prong_t/2, 0, br_t + hinge_off])
+            rotate([0, 90, 0]) cylinder(r = fin_r, h = prong_t);
+    }
+}
+module bracket() {
+    az = br_t + hinge_off;
+    difference() {
+        union() {
+            rrect(br_x, br_y, 3, br_t);
+            bracket_fin(0);  bracket_fin(-prong_pitch);  bracket_fin(prong_pitch);
+            if (bracket_tripod) translate([0, 0, br_t - 0.1]) rrect(18, 18, 2, 2.6);
+            if (hinge_teeth) {
+                xi = prong_pitch - prong_t/2;
+                translate([ xi, 0, az]) rotate([0, -90, 0]) linear_extrude(teeth_h) teeth2d();
+                translate([-xi, 0, az]) rotate([0,  90, 0]) linear_extrude(teeth_h) teeth2d();
+            }
+        }
+        tearbore_x(-br_x/2, 0, az, br_x, hinge_hole);
+        for (sx = [1, -1], sy = [1, -1]) {
+            translate([sx*(br_x/2 - 5), sy*(br_y/2 - 5), -0.1]) cylinder(d = br_screw_d, h = br_t + 0.2);
+            translate([sx*(br_x/2 - 5), sy*(br_y/2 - 5), br_t - 2])
+                cylinder(d1 = br_screw_d, d2 = br_screw_d + 4, h = 2.1);
+        }
+        for (sx = [1, -1]) translate([sx*14, 0, 0]) {
+            translate([0, -3, -0.1]) cylinder(d = 7.5, h = br_t + 0.2);
+            translate([-2.1, -3, -0.1]) cube([4.2, 9, br_t + 0.2]);
+            translate([0, 6, -0.1]) cylinder(d = 4.2, h = br_t + 0.2);
+        }
+        if (bracket_tripod) {
+            translate([0, 0, -0.1]) rotate([0, 0, 30]) cylinder(d = 11.4/cos(30), h = 5.2, $fn = 6);
+            translate([0, 0, -0.1]) cylinder(d = 6.8, h = br_t + 3);
+        }
+    }
+}
+module knob() {
+    difference() {
+        cylinder(d = 22, h = 8);
+        for (i = [0 : 11]) rotate([0, 0, i*30]) translate([12.6, 0, -1]) cylinder(d = 5, h = 10);
+        translate([0, 0, -0.1]) rotate([0, 0, 30]) cylinder(d = 8.1/cos(30), h = 4.3, $fn = 6);
+        translate([0, 0, -0.1]) cylinder(d = hinge_bolt_d + 0.4, h = 10);
+    }
+}
+
+// ----------------------------------------------------------------------------
+//  Layout
+// ----------------------------------------------------------------------------
+if      (part == "back")    back();
+else if (part == "front")   translate([0, 0, lid_t]) rotate([180, 0, 0]) front();
+else if (part == "gasket") { assert(e_seal, "gasket needs opt_seal=true"); gasket(); }
+else if (part == "bracket") bracket();
+else if (part == "knob")    knob();
+else {
+    back();
+    translate([0, -(out_y/2 + plate_y/2 + hinge_off + fin_r + 10), 0])
+        translate([0, 0, lid_t]) rotate([180, 0, 0]) front();
+    translate([out_x/2 + br_x/2 + 14, 0, 0]) bracket();
+    translate([out_x/2 + br_x/2 + 14, br_y/2 + 22, 0]) knob();
+    if (e_seal) translate([-(out_x/2 + br_x/2 + 16), 0, 0]) gasket();
+}
