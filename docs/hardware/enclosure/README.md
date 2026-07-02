@@ -1,14 +1,15 @@
 # Canary — 3D-Printable Enclosures
 
-Two parametric OpenSCAD configurators live here:
+Four released configurators live here (plus seven in-development designs — see the gallery):
 
 | Device | Source | What it is |
 |--------|--------|------------|
 | **Canary WAP** (XIAO ESP32-S3 Sense) | [`canary_wap_enclosure.scad`](./canary_wap_enclosure.scad) | box enclosure with peripheral bays — [section below](#canary-wap--enclosure-v07) |
 | **Canary Vision** (Grove Vision AI V2 + OV5647 + stacked-XIAO or DevKit host) | [`canary_vision_enclosure.scad`](./canary_vision_enclosure.scad) | camera unit with a GoPro-compatible adjustable hinge — [section below](#canary-vision--enclosure-v02) |
 | **Canary Vision · Doorbell** (stacked-XIAO build + 12 mm button) | [`canary_vision_doorbell.scad`](./canary_vision_doorbell.scad) | Wyze/Ring-style doorbell: wall plate + T-studs + hidden security screw — [section below](#canary-vision--doorbell-v01) |
+| **Canary Sense** (MR60BHA2 60 GHz radar + stacked XIAO C6) | [`canary_sense_enclosure.scad`](./canary_sense_enclosure.scad) | RADOME enclosure — thin uniform window the radar sees through — [section below](#canary-sense--radome-enclosure-v01) |
 
-Both share the same print-tolerance system, weather-sealing approach (printed
+All share the same print-tolerance system, weather-sealing approach (printed
 TPU gasket + drip-edge lid), engineering options and CI gate (every change
 re-renders all presets and mesh-checks the STLs).
 
@@ -31,6 +32,25 @@ minutes.
 | **Vision · devkit indoor** | Grove-cabled ESP32-C3-DevKitM-1 host | <img src="./preview_vision_devkit.png" width="260"> | [back](./canary_vision_enclosure_devkit_indoor_back.stl) · [front](./canary_vision_enclosure_devkit_indoor_front.stl) |
 | **Vision · mount kit** | wall bracket (GoPro-prong, tripod nut) + M5 thumbscrew knob | <img src="./preview_vision_bracket.png" width="180"> <img src="./preview_vision_knob.png" width="120"> | [bracket](./canary_vision_enclosure_bracket.stl) · [knob](./canary_vision_enclosure_knob.stl) |
 | **Vision · DOORBELL** | Wyze/Ring form factor: camera + button, plate-mounted with a hidden security screw, sealed by default | <img src="./preview_doorbell.png" width="260"> | [body](./canary_vision_doorbell_body.stl) · [face](./canary_vision_doorbell_face.stl) · [plate](./canary_vision_doorbell_plate.stl) · [wedge 15°](./canary_vision_doorbell_plate_wedge15.stl) · [gasket](./canary_vision_doorbell_gasket.stl) |
+| **Sense · radome** | MR60BHA2 mmWave witness: thin radar window, hinge + keyholes (shares the Vision bracket/knob) | <img src="./preview_sense.png" width="260"> | [back](./canary_sense_back.stl) · [front](./canary_sense_front.stl) |
+| **Thermal / outdoor kit** | solar radiation shield (weather WAP) + universal desiccant tray | — | [shield](./canary_wap_enclosure_weather_shield.stl) · [tray](./canary_wap_enclosure_tray.stl) |
+
+### In development
+
+These designs are **render- and mesh-verified but not print-validated** — no
+committed STLs yet (CI still renders and checks them on every change).
+Open the `.scad`, measure your hardware, and render locally; feedback and
+measurements welcome.
+
+| Design | Status | Preview | Source |
+|--------|--------|---------|--------|
+| **Watch station** — SenseCAP-Watcher-style desk puck: XIAO ESP32-S3 + Round Display (see [display research](../display_research.md)) | drum + bezel + 25° stand | <img src="./preview_dev_station.png" width="230"> | [`canary_watch_station.scad`](./canary_watch_station.scad) |
+| **Sense bedside stand** — weighted base + tilted stalk with the three-prong hinge head (wellbeing channel, ≤1.5 m) | ballast pockets, GoPro-compatible head | <img src="./preview_dev_stand.png" width="230"> | [`canary_sense_stand.scad`](./canary_sense_stand.scad) |
+| **Sense in-wall plate** — single-gang flush mount; the faceplate IS the radome (check local code; low-voltage box only) | one-piece plate, 6-32 slots | <img src="./preview_dev_gang.png" width="230"> | [`canary_sense_gang.scad`](./canary_sense_gang.scad) |
+| **Outlet cradle** — collar grips a USB wall wart; T-studs hang any keyhole-pocket Canary | measure your adapter | <img src="./preview_dev_cradle.png" width="230"> | [`canary_outlet_cradle.scad`](./canary_outlet_cradle.scad) |
+| **Solar LoRa relay pod** — off-grid mesh backhaul: LoRa board + 18650, SMA top, solar roof bracket, pole straps | sealed body + roof | <img src="./preview_dev_relay.png" width="230"> | [`canary_relay_solar.scad`](./canary_relay_solar.scad) |
+| **Combo witness** — Vision + Sense stacks in one face (lens + radome); radar-confirmed camera events | dual column, 3 USB ports | <img src="./preview_dev_combo.png" width="230"> | [`canary_combo.scad`](./canary_combo.scad) |
+| **Hub (Pi 5, DIN rail)** — vented tray + cover for the server side; printed DIN spring clip | chimney vents, HAT headroom | <img src="./preview_dev_hub.png" width="230"> | [`canary_hub_din.scad`](./canary_hub_din.scad) |
 
 ## Engineering & materials (security build)
 
@@ -75,6 +95,18 @@ practice for **durability, rigidity and low mass**:
 | **CF-PETG / CF-Nylon** | Vision **bracket + knob** | ~2× stiffness for the cantilevered hinge; hardened nozzle required |
 | **TPU 90–95 A** | gaskets | 2 perimeters, 100 % infill, slow |
 | PLA | clip coupon / fit checks **only** | creeps and softens ~55 °C — not for deployed housings |
+
+**Thermal / outdoor kit** — the enemy outdoors is solar heat as much as
+water: a dark case in sun can exceed the LiPo's comfort zone (build plan
+§9.2). `part="shield"` prints a Stevenson-screen style **solar radiation
+shield**: a second roof standing 6 mm above the lid on hollow standoffs,
+fastened by the existing corner screws (swap in M2 × 16–18), with apertures
+auto-opened over the camera/LED/touch. Print it in **white or light ASA**.
+`part="tray"` is a slotted **desiccant tray** for a 1 g silica pack — clip or
+VHB it into any Canary cavity to keep condensation off the boards. For insect
+resistance, keep vent holes ≤ 1.0 mm (the Sense case defaults to 1.0 × 10;
+on the others set `vent_hole_d = 1.0; vent_holes = 10`) or stick fine mesh
+behind the GORE seat.
 
 **Finish & printability details** (built into the models): curve quality is
 driven by `$fa/$fs`, so large radii (the doorbell pill, the hood) come out
@@ -576,6 +608,48 @@ cable through, hang the body on the studs, drive the security screw.
 > the seated stack and your button before printing; print the face first and
 > test-fit the button and disc.
 
+---
+
+# Canary Sense — RADOME enclosure (v0.1)
+
+Housing for the **canary-sense mmWave witness**
+([design doc](../../canary_sense_mr60bha2_design.md)): the Seeed **MR60BHA2**
+60 GHz radar carrier with a **stacked XIAO ESP32-C6**, ceiling- or
+wall-mounted (bedside ≤ 1.5 m for the wellbeing/breathing channel). Outer
+≈ **58 × 57 × 22.5 mm** + prongs; reuses the Vision case's GoPro hinge,
+blind keyholes, bracket and knob (print those from the Vision file).
+
+![canary-sense — back, radome front, bracket and knob](./preview_sense.png)
+
+**The radome rule** — 60 GHz must pass through the front, so the window over
+the antenna zone is a **thin, flat, uniform membrane** (`radome_t`, default
+1.0 mm; ~1.5 mm ≈ a half-wave in plastic, also low-loss) with nothing
+crossing it: the rib ring, label, gasket path and all features auto-clear it.
+Use **unfilled PETG/ASA only** — carbon-filled filament, foil labels or paint
+with metallic pigment in front of the antenna will blind the radar. The
+**antenna-to-radome air gap is computed and asserted** (`rad_gap`, echoed at
+render; ≈ 4.3 mm at defaults, ≥ 2.5 enforced — raise `cav_extra` for more)
+from your measured `ant_h` (the AiP package top above the PCB). MEASURE the
+antenna-zone position (`rad_dx/dy`) on your carrier revision.
+
+Also on the face, outside the window: a **light pipe** for the onboard WS2812
+and a small **aperture for the BH1750 lux sensor** (it needs to see room
+light; glue a clear disc behind it when sealing). The stacked XIAO's USB-C
+exits the bottom wall (`xiao_usb_z` — measure the seated stack).
+
+| Param | Default | Why you'd change it |
+|-------|--------:|---------------------|
+| `radome_t` | 1.0 | radar window thickness; 1.5 ≈ half-wave alternative |
+| `rad_win_x/y`, `rad_dx/dy` | 24×24 / 0, 6 | window size/position over the antenna — **measure** |
+| `vm_l/vm_w`, `stack_sock_h`, `xiao_usb_z` | 44×36 / 11.5 / 4.0 | carrier + seated-stack dimensions — **measure** |
+| `lux_dx/dy`, `lp_dx/dy` | — | sensor/LED positions from the board centre |
+| `opt_seal`, `mount_style` | off / hinge | same systems as the Vision case |
+
+> ⚠️ **v0.1 — verify before printing.** Carrier dimensions and the antenna
+> zone are nominal; measure your kit revision. Print the front first and
+> check the radome window lands over the antenna array.
+
 ## Links
 - [Peripheral Build Plan & BOM](../canary_peripheral_build_plan.md) — parts, wiring, climate/IP guidance
+- [Canary Sense design doc](../../canary_sense_mr60bha2_design.md) — the radar witness this houses
 - [Bench bring-up](../bench_bringup.md) — get it chirping before you box it up

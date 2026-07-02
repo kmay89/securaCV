@@ -198,6 +198,50 @@ fn multiple_adapters_of_same_type_all_register() {
 }
 
 #[test]
+fn below_floor_confidence_never_reaches_the_export() {
+    // The numeric gates reject silently; this pins that a below-floor raw
+    // value is ABSENT from the serialized export (the adapter_meshtastic
+    // absence pattern), not merely that no event object was returned.
+    let mut host = setup_host(0.8);
+    let desc = permissive_descriptor();
+
+    let mut route = SensorRoute::new(
+        "sensors/garage/acoustic",
+        ClaimKind::AcousticImpulseInZone,
+        "garage",
+    );
+    route.min_confidence = 0.8;
+    let (adapter, _tx) = MqttSensorAdapter::new(vec![route]);
+    assert!(
+        adapter
+            .message_to_claim("sensors/garage/acoustic", br#"{"confidence":0.123}"#)
+            .is_none(),
+        "below-floor payload must be dropped at the adapter gate"
+    );
+
+    // A claim that reaches the host below ITS floor must not seal either.
+    let sneaky = Claim::new(ClaimKind::AcousticImpulseInZone, "garage", 0.123);
+    assert!(
+        host.process_claim(desc, &sneaky)
+            .expect("process")
+            .is_none(),
+        "host confidence floor must drop the claim"
+    );
+
+    assert_eq!(exported_event_count(&mut host), 0);
+    let hash = KernelConfig::ruleset_hash_from_id("ruleset:adapter_test");
+    let artifact = host
+        .kernel_mut()
+        .export_events_for_api(hash, ExportOptions::default())
+        .expect("export");
+    let json = serde_json::to_string(&artifact).expect("serialize");
+    assert!(
+        !json.contains("0.123"),
+        "raw below-floor confidence leaked into the export"
+    );
+}
+
+#[test]
 fn duplicate_claim_in_same_bucket_is_deduplicated() {
     let mut host = setup_host(0.0);
     let desc = permissive_descriptor();

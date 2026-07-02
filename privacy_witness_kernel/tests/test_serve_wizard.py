@@ -549,5 +549,57 @@ def test_export_query_suffix_rejects_empty_param_name():
     assert err is not None
 
 
+# ---------------------------------------------------------------------------
+# do_POST body-length parsing — a malformed Content-Length header is fully
+# attacker-controlled input and must produce a clean 400, not an unhandled
+# ValueError traceback.
+# ---------------------------------------------------------------------------
+
+
+def _run_post(monkeypatch, content_length, body=b""):
+    handler = serve_wizard.WizardHandler.__new__(serve_wizard.WizardHandler)
+    handler.path = "/api/verify"
+    monkeypatch.delenv("INGRESS_PATH", raising=False)
+    handler.headers = {"Content-Length": content_length}
+    handler.rfile = io.BytesIO(body)
+
+    sent = {"json": None, "status": None}
+
+    def _fake_json(data, status=200):
+        sent["json"] = data
+        sent["status"] = status
+
+    handler._json_response = _fake_json
+    monkeypatch.setattr(
+        serve_wizard.WizardHandler, "_handle_verify", lambda self: {"ok": True}
+    )
+    handler.do_POST()
+    return sent
+
+
+def test_post_rejects_non_numeric_content_length(monkeypatch):
+    sent = _run_post(monkeypatch, "abc")
+    assert sent["status"] == 400
+    assert sent["json"]["ok"] is False
+
+
+def test_post_rejects_negative_content_length(monkeypatch):
+    sent = _run_post(monkeypatch, "-5")
+    assert sent["status"] == 400
+    assert sent["json"]["ok"] is False
+
+
+def test_post_rejects_oversized_content_length(monkeypatch):
+    sent = _run_post(monkeypatch, str(64 * 1024 * 1024))
+    assert sent["status"] == 413
+    assert sent["json"]["ok"] is False
+
+
+def test_post_with_valid_length_still_works(monkeypatch):
+    sent = _run_post(monkeypatch, "2", body=b"{}")
+    assert sent["status"] == 200
+    assert sent["json"] == {"ok": True}
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))

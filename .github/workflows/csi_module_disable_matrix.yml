@@ -54,7 +54,7 @@ jobs:
           - module: anomaly_baseline
             flag: CSI_DISABLE_MODULE_ANOMALY_BASELINE
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Arduino CLI
         uses: arduino/setup-arduino-cli@v2

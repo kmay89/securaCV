@@ -77,6 +77,7 @@ fn config_u32(value: Option<u32>, default: u32) -> u32 {
 }
 
 #[derive(Debug, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 struct WitnessdConfigFile {
     db_path: Option<String>,
     ruleset_id: Option<String>,
@@ -96,6 +97,7 @@ struct WitnessdConfigFile {
 }
 
 #[derive(Debug, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 struct WitnessApiConfigFile {
     db_path: Option<String>,
     ruleset_id: Option<String>,
@@ -105,6 +107,7 @@ struct WitnessApiConfigFile {
 }
 
 #[derive(Debug, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 struct ApiConfigFile {
     addr: Option<String>,
     token_path: Option<PathBuf>,
@@ -112,6 +115,7 @@ struct ApiConfigFile {
 }
 
 #[derive(Debug, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 struct IngestConfigFile {
     backend: Option<String>,
     failure_threshold_s: Option<u64>,
@@ -119,23 +123,27 @@ struct IngestConfigFile {
 }
 
 #[derive(Debug, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 struct HealthConfigFile {
     heartbeat: Option<bool>,
     log_interval_s: Option<u64>,
 }
 
 #[derive(Debug, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 struct StorageConfigFile {
     min_free_mb: Option<u64>,
     check_interval_s: Option<u64>,
 }
 
 #[derive(Debug, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 struct ClockConfigFile {
     skew_tolerance_s: Option<u64>,
 }
 
 #[derive(Debug, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 struct RtspConfigFile {
     url: Option<String>,
     target_fps: Option<u32>,
@@ -146,12 +154,14 @@ struct RtspConfigFile {
 }
 
 #[derive(Debug, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 struct FileConfigFile {
     path: Option<String>,
     target_fps: Option<u32>,
 }
 
 #[derive(Debug, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 struct V4l2ConfigFile {
     device: Option<String>,
     target_fps: Option<u32>,
@@ -160,12 +170,14 @@ struct V4l2ConfigFile {
 }
 
 #[derive(Debug, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 struct Esp32ConfigFile {
     url: Option<String>,
     target_fps: Option<u32>,
 }
 
 #[derive(Debug, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 struct DetectConfigFile {
     backend: Option<String>,
     tract_model: Option<PathBuf>,
@@ -174,18 +186,21 @@ struct DetectConfigFile {
 }
 
 #[derive(Debug, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 struct ZoneConfigFile {
     module_zone_id: Option<String>,
     sensitive: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 struct RetentionConfigFile {
     seconds: Option<u64>,
     check_interval_seconds: Option<u64>,
 }
 
 #[derive(Debug, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 struct StorageHealthConfigFile {
     enabled: Option<bool>,
     check_interval_seconds: Option<u64>,
@@ -1418,5 +1433,57 @@ skew_tolerance_s = 10
         assert!(message.contains("invalid config file"));
         assert!(message.contains("json error"));
         assert!(message.contains("toml error"));
+    }
+
+    // A misspelled key in the witnessd config must be a parse error, not a
+    // silent fallback to the (weaker) default — `sensitive` zones and
+    // `retention.seconds` are privacy controls, and a typo that quietly
+    // disables them is a fail-open.
+
+    fn parse_witnessd(toml_str: &str) -> Result<WitnessdConfigFile> {
+        let dir = tempdir().expect("temp dir");
+        let path = dir.path().join("witness.toml");
+        write_file(&path, toml_str);
+        read_config_file::<WitnessdConfigFile>(&path)
+    }
+
+    #[test]
+    fn zones_sensitive_typo_is_rejected_not_unprotected() {
+        let err = parse_witnessd("[zones]\nsensitve = [\"front_door\"]\n")
+            .expect_err("typo'd sensitive key must fail");
+        assert!(err.to_string().contains("sensitve"), "{err}");
+    }
+
+    #[test]
+    fn retention_seconds_typo_is_rejected_not_default_retention() {
+        let err = parse_witnessd("[retention]\nsecond = 3600\n")
+            .expect_err("typo'd retention key must fail");
+        assert!(err.to_string().contains("second"), "{err}");
+    }
+
+    #[test]
+    fn root_unknown_key_is_rejected() {
+        let err =
+            parse_witnessd("db_pth = \"witness.db\"\n").expect_err("typo'd root key must fail");
+        assert!(err.to_string().contains("db_pth"), "{err}");
+    }
+
+    #[test]
+    fn detect_confidence_typo_is_rejected() {
+        let err =
+            parse_witnessd("[detect]\nconfidnce = 0.9\n").expect_err("typo'd detect key must fail");
+        assert!(err.to_string().contains("confidnce"), "{err}");
+    }
+
+    #[test]
+    fn shipped_example_config_parses() {
+        let raw =
+            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/config.example.toml"))
+                .expect("read config.example.toml");
+        let dir = tempdir().expect("temp dir");
+        let path = dir.path().join("witness.toml");
+        write_file(&path, &raw);
+        read_config_file::<WitnessdConfigFile>(&path)
+            .expect("shipped example config must parse under deny_unknown_fields");
     }
 }

@@ -81,6 +81,10 @@ h1 .sub{display:block;font-size:.75rem;color:var(--muted);font-weight:400;margin
 .badge-disconnected{background:rgba(139,149,168,.15);color:var(--muted)}
 .err{color:var(--danger);font-size:.8rem;margin-top:.5rem;padding:.5rem;background:rgba(245,101,101,.05);border:1px solid rgba(245,101,101,.2);border-radius:8px;display:none}
 .err.show{display:block}
+/* Informational variant of the same banner slot: expected, permanent
+   states (e.g. "no HTTPS here, Bluetooth console unavailable") that are
+   not the user's problem and must not read as an alarm. */
+.err.note{color:var(--muted);background:rgba(139,149,168,.08);border-color:rgba(139,149,168,.25)}
 .hidden{display:none!important}
 .card-title{font-size:.75rem;font-weight:700;color:var(--muted);letter-spacing:.08em;text-transform:uppercase;margin-bottom:.5rem;display:flex;justify-content:space-between;align-items:center}
 .dot{width:8px;height:8px;border-radius:50%;display:inline-block;background:var(--muted);margin-right:.4rem;vertical-align:middle}
@@ -347,6 +351,10 @@ footer a{color:var(--accent);text-decoration:none}
         <p style="color:var(--muted);font-size:.8rem;margin:0 0 .4rem">or</p>
         <button class="btn btn-secondary" id="wiz-qr-start" style="font-size:.85rem">I have a WiFi QR code</button>
       </div>
+      <div style="text-align:center;margin-top:.75rem">
+        <button class="btn btn-secondary" id="wiz-ap-only" style="font-size:.85rem">Use without home WiFi</button>
+        <p style="color:var(--muted);font-size:.72rem;margin:.4rem 0 0;line-height:1.4">Your Canary keeps its own SecuraCV network and works fully offline. You can add home WiFi later.</p>
+      </div>
     </div>
     <div id="wiz-qr-mode" class="hidden">
       <h2 class="wiz-h" tabindex="-1">Show the QR code</h2>
@@ -396,6 +404,13 @@ footer a{color:var(--accent);text-decoration:none}
       <div class="wiz-tick">✓</div>
       <h2 class="wiz-h" tabindex="-1">Your Canary is online.</h2>
       <p class="wiz-sub">Joined <strong id="wiz-success-ssid">your home WiFi</strong>. Running one quick check that the sensors are awake.</p>
+      <p class="wiz-sub">The SecuraCV setup network turns itself off in about two minutes — reconnect this phone to your home WiFi and find your Canary at <strong>canary.local</strong>.</p>
+    </div>
+    <div id="wiz-step-4-standalone" class="hidden">
+      <div class="wiz-tick">✓</div>
+      <h2 class="wiz-h" tabindex="-1">Running standalone.</h2>
+      <p class="wiz-sub">Your Canary keeps its own <strong>SecuraCV</strong> network &mdash; no home WiFi needed, nothing leaves the device. Join that network anytime and open <strong>canary.local</strong> for the dashboard.</p>
+      <p class="wiz-sub">Change your mind later? Settings &rsaquo; WiFi lets you join a home network.</p>
     </div>
     <div id="wiz-step-4-failure" class="hidden">
       <div class="wiz-cross">!</div>
@@ -706,10 +721,78 @@ footer a{color:var(--accent);text-decoration:none}
  *  /api/wifi/scan + /api/wifi/connect + /api/wifi while the phone is on
  *  the device's AP. Activated when the URL contains ?token=<hex>.
  * ────────────────────────────────────────────────────────────────────────── */
+/* WIZARD_LOGIC:BEGIN — pure, DOM-free decision logic for the onboarding
+   wizard. Extracted verbatim and evaluated under Node by
+   wizard_logic.test.js (same pattern as SELFTEST_LOGIC above), so it must
+   not touch the DOM, window, navigator, or fetch — plain values in, plain
+   values out. */
+const WizardLogic = (function () {
+  // 64-hex pairing token as minted by the device (RAM-backed, 10-min TTL).
+  function isPairToken(t) {
+    return typeof t === 'string' && /^[0-9a-fA-F]{64}$/.test(t);
+  }
+
+  // The capability banner under the BLE console. Web Bluetooth is
+  // irrelevant to the HTTP setup wizard (wizardMode), and over plain
+  // http:// served from the device's own AP the missing-HTTPS state is
+  // permanent and expected — an informational note, never an alarm.
+  function capabilityNotice(wizardMode, isSecureContext, hasWebBluetooth) {
+    if (wizardMode) return { show: false, text: '' };
+    if (!isSecureContext) {
+      return { show: true, text: 'Bluetooth features are off on this connection: Web Bluetooth needs HTTPS, and this page is served over plain http:// from the Canary itself. WiFi setup and the dashboard work fine without it.' };
+    }
+    if (!hasWebBluetooth) {
+      return { show: true, text: 'This browser has no Web Bluetooth. On iOS, install Bluefy from the App Store to use the Bluetooth console.' };
+    }
+    return { show: false, text: '' };
+  }
+
+  // What should the connect submit do with a /api/wifi/connect response?
+  //   'proceed'       — credentials accepted, start polling
+  //   'refresh-retry' — stale token and we haven't retried yet: fetch a
+  //                     fresh one and resend the same credentials
+  //   'fail'          — show the failure (isTokenErr selects raw rendering)
+  function connectOutcome(httpOk, body, alreadyRetried) {
+    // Strict: only an explicit ok:true proceeds — a malformed body (array,
+    // primitive, missing field) must not read as success.
+    if (httpOk && body && body.ok === true) {
+      return { action: 'proceed', isTokenErr: false };
+    }
+    const isTokenErr = !!(body && body.code === 'invalid_token');
+    if (isTokenErr && !alreadyRetried) {
+      return { action: 'refresh-retry', isTokenErr: isTokenErr };
+    }
+    return { action: 'fail', isTokenErr: isTokenErr };
+  }
+
+  return { isPairToken, connectOutcome, capabilityNotice };
+})();
+if (typeof module !== 'undefined' && module.exports) { module.exports = WizardLogic; }
+/* WIZARD_LOGIC:END */
+
 (function onboardWizard() {
   const params = new URLSearchParams(window.location.search);
-  const token = params.get('token');
-  if (!token || !/^[0-9a-fA-F]{64}$/.test(token)) return;  // BLE flow stays default
+  let token = params.get('token');
+  if (!WizardLogic.isPairToken(token)) return;  // BLE flow stays default
+
+  // The URL token is RAM-backed on the device (10-min TTL, wiped by any
+  // reboot). Rather than dead-ending the user on "setup link expired",
+  // ask the device for a fresh one — the endpoint answers only while the
+  // first-boot wizard is active and only to a browser that reached it by
+  // its real name (same Host gate as the / redirect that minted the
+  // original token; the AP itself remains the security boundary).
+  async function refreshToken() {
+    try {
+      const r = await fetch('/api/wifi/pair-token', { cache: 'no-store' });
+      if (!r.ok) return false;
+      const j = await r.json();
+      if (j && j.ok && WizardLogic.isPairToken(j.token)) {
+        token = j.token;
+        return true;
+      }
+    } catch (_) { /* device unreachable — caller shows its own failure */ }
+    return false;
+  }
 
   const $w = id => document.getElementById(id);
   const card = $w('onboard-card');
@@ -722,6 +805,51 @@ footer a{color:var(--accent);text-decoration:none}
   // The BLE flow's tab nav and action card are also irrelevant here.
   ['tab-nav','actions-card'].forEach(k => {
     const el = $w(k); if (el) el.classList.add('hidden');
+  });
+
+  // "Use without home WiFi": persists the standalone preference, completes
+  // first-boot setup, and leaves the device living on its own SoftAP. Same
+  // token gate (and silent one-shot refresh) as the credential save.
+  $w('wiz-ap-only').addEventListener('click', async () => {
+    setStep(4);
+    showProgress('Setting up standalone mode.');
+    const post = () => fetch('/api/wifi/ap-only', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token: token }),
+    });
+    try {
+      let r = await post();
+      let j = await r.json();
+      let out = WizardLogic.connectOutcome(r.ok, j, false);
+      if (out.action === 'refresh-retry' && await refreshToken()) {
+        r = await post();
+        j = await r.json();
+        out = WizardLogic.connectOutcome(r.ok, j, true);
+      }
+      if (out.action !== 'proceed') {
+        showFailure((j && j.error) ? j.error : ('HTTP ' + r.status),
+                    out.isTokenErr ? { raw: true } : undefined);
+        return;
+      }
+      showStandalone();
+    } catch (e) {
+      showFailure(e.message);
+    }
+  });
+
+  // Never let the typed WiFi password linger for the next person who picks
+  // up the phone: wipe the field whenever the page is backgrounded or
+  // navigated away. (The app never stores it — Safari's page cache is what
+  // restores form values on return, and this defeats that for the one
+  // field that matters.)
+  const wipePassword = () => {
+    const el = $w('wiz-pw');
+    if (el) el.value = '';
+  };
+  window.addEventListener('pagehide', wipePassword);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') wipePassword();
   });
 
   let pickedSsid = '';
@@ -956,13 +1084,19 @@ footer a{color:var(--accent);text-decoration:none}
     });
   }
 
-  async function pollScan() {
+  async function pollScan(force) {
     try {
-      const r = await fetch('/api/wifi/scan', { cache: 'no-store' });
+      // force=1 only on an explicit "Scan again": a live sweep hops the
+      // radio and can briefly stall the AP this phone is attached to, so
+      // the default path prefers the device's pre-scanned cache.
+      const r = await fetch('/api/wifi/scan' + (force ? '?force=1' : ''),
+                            { cache: 'no-store' });
       if (!r.ok) throw new Error('scan HTTP ' + r.status);
       const j = await r.json();
       if (j.scanning) {
-        scanTimer = setTimeout(pollScan, 800);
+        // Keep the force flag across follow-up polls so a "Scan again"
+        // can't be short-circuited back to the cached list mid-sweep.
+        scanTimer = setTimeout(() => pollScan(force), 800);
         return;
       }
       // Server returns either {ok,scanning:false,networks:[...]} or just
@@ -986,16 +1120,16 @@ footer a{color:var(--accent);text-decoration:none}
     }
   }
 
-  function startScan() {
+  function startScan(force) {
     setErr(2, '');
     const list = $w('wiz-nets');
     list.setAttribute('aria-busy', 'true');
     list.innerHTML = '<div class="wiz-spin">Looking for networks…</div>';
     if (scanTimer) clearTimeout(scanTimer);
-    pollScan();
+    pollScan(!!force);
   }
 
-  $w('wiz-rescan').addEventListener('click', startScan);
+  $w('wiz-rescan').addEventListener('click', () => startScan(true));
 
   // ── Card 3: password + connect ─────────────────────────────────────────
   $w('wiz-back-2').addEventListener('click', () => setStep(2));
@@ -1014,21 +1148,30 @@ footer a{color:var(--accent);text-decoration:none}
     }
     setStep(4);
     showProgress('Sending credentials to your Canary.');
+    const postConnect = () => fetch('/api/wifi/connect', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ssid: pickedSsid, password: pw, token: token }),
+    });
     try {
-      const r = await fetch('/api/wifi/connect', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ ssid: pickedSsid, password: pw, token: token }),
-      });
-      const j = await r.json();
-      if (!r.ok || j.ok === false) {
+      let r = await postConnect();
+      let j = await r.json();
+      let out = WizardLogic.connectOutcome(r.ok, j, false);
+      // A stale token (device rebooted, 10-min TTL elapsed, slot evicted)
+      // is recoverable while the setup wizard is live: refresh once and
+      // resend the same credentials before bothering the user.
+      if (out.action === 'refresh-retry' && await refreshToken()) {
+        r = await postConnect();
+        j = await r.json();
+        out = WizardLogic.connectOutcome(r.ok, j, true);
+      }
+      if (out.action !== 'proceed') {
         // Token-rejection errors are pre-credential, not a connection
         // failure — render them raw so the user reads them as
         // "your setup link is broken" rather than as the awkward
         // "We couldn't connect: <…link broken sentence…>".
-        const isTokenErr = j && j.code === 'invalid_token';
         showFailure((j && j.error) ? j.error : ('HTTP ' + r.status),
-                    isTokenErr ? { raw: true } : undefined);
+                    out.isTokenErr ? { raw: true } : undefined);
         return;
       }
       pollWifiUntilConnected();
@@ -1057,9 +1200,23 @@ footer a{color:var(--accent);text-decoration:none}
     const wasHidden = prog.classList.contains('hidden');
     prog.classList.remove('hidden');
     $w('wiz-step-4-success').classList.add('hidden');
+    $w('wiz-step-4-standalone').classList.add('hidden');
     $w('wiz-step-4-failure').classList.add('hidden');
     if (msg) $w('wiz-progress-text').textContent = msg;
     if (wasHidden) requestAnimationFrame(() => focusActiveStepHeading());
+  }
+
+  function showStandalone() {
+    $w('wiz-step-4-progress').classList.add('hidden');
+    $w('wiz-step-4-success').classList.add('hidden');
+    $w('wiz-step-4-failure').classList.add('hidden');
+    $w('wiz-step-4-standalone').classList.remove('hidden');
+    [4].forEach(i => {
+      const dot = $w('wiz-prog-' + i);
+      dot.classList.remove('now');
+      dot.classList.add('done');
+    });
+    requestAnimationFrame(() => focusActiveStepHeading());
   }
   // staIp captured here is reused on step 5 for the IP fallback link
   // — the device may not be reachable as canary.local on networks
@@ -1094,6 +1251,7 @@ footer a{color:var(--accent);text-decoration:none}
   function showFailure(reason, opts) {
     $w('wiz-step-4-progress').classList.add('hidden');
     $w('wiz-step-4-success').classList.add('hidden');
+    $w('wiz-step-4-standalone').classList.add('hidden');
     $w('wiz-step-4-failure').classList.remove('hidden');
     const raw = opts && opts.raw === true;
     let text;
@@ -1163,10 +1321,13 @@ footer a{color:var(--accent);text-decoration:none}
       } catch (_) { /* the AP may briefly drop while STA bring-up runs */ }
       await new Promise(res => setTimeout(res, STEP_MS));
     }
-    // 90 s elapsed without a definitive answer — most likely the
-    // Canary fell off the AP we were polling on. Tell the user how to
-    // recover rather than blaming WiFi range.
-    showFailure('The Canary stopped answering. Connect to its setup network again and start over.', { raw: true });
+    // 90 s elapsed without a definitive answer. The most common reason is
+    // a GOOD one: the Canary joined a home network on a different channel,
+    // the single radio dragged the setup network along, and this phone
+    // never re-joined in time to see the success. Say so — sending the
+    // user to "start over" after a successful join was the old flow's
+    // worst lie.
+    showFailure('Lost contact while the Canary was switching networks — this usually means it joined successfully. Rejoin your home WiFi, then open canary.local: if the dashboard loads, setup is done. If not, reconnect to the SecuraCV network and try again.', { raw: true });
   }
 
   // ── Card 5: pre-flight self-test ───────────────────────────────────────
@@ -1702,7 +1863,7 @@ let otaInProgress = false;
 let lastOtaState = 'idle';
 
 const $ = (id) => document.getElementById(id);
-function showErr(msg){const e=$('err-msg');e.textContent=msg;e.classList.add('show');}
+function showErr(msg){const e=$('err-msg');e.classList.remove('note');e.textContent=msg;e.classList.add('show');}
 function clearErr(){$('err-msg').classList.remove('show');}
 
 function fmtUptime(sec){
@@ -2720,17 +2881,25 @@ document.querySelectorAll('.tab-btn').forEach(b => {
 // (1) insecure context → tell them to use HTTPS; (2) no Web Bluetooth
 // API → tell iOS users to install Bluefy.
 (function checkCapabilities(){
-  const btn = $('connect-btn');
-  const disable = (msg) => {
-    btn.disabled = true;
-    btn.style.opacity = '0.5';
-    showErr(msg);
-  };
-  if (!window.isSecureContext) {
-    disable('This page is loaded over an insecure origin. Web Bluetooth requires HTTPS or localhost — open over https:// to connect.');
-  } else if (!navigator.bluetooth) {
-    disable('Web Bluetooth is not available in this browser. On iOS, install Bluefy from the App Store and reopen this page in it.');
+  const wizardMode = WizardLogic.isPairToken(
+    new URLSearchParams(window.location.search).get('token'));
+  if (wizardMode) {
+    // The WiFi wizard neither needs Web Bluetooth nor should it show
+    // BLE-console chrome — hide the Bluefy footer along with the banner.
+    const f = document.querySelector('footer');
+    if (f) f.classList.add('hidden');
+    return;
   }
+  const n = WizardLogic.capabilityNotice(wizardMode, window.isSecureContext,
+                                         !!navigator.bluetooth);
+  if (!n.show) return;
+  const btn = $('connect-btn');
+  btn.disabled = true;
+  btn.style.opacity = '0.5';
+  const e = $('err-msg');
+  e.textContent = n.text;
+  e.classList.add('note');   // informational styling, not an alarm
+  e.classList.add('show');
 })();
 
 if ('serviceWorker' in navigator) {

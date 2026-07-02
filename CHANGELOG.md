@@ -17,6 +17,83 @@
   SECURITY_MODEL.md and docs/why_secure.md, and pinned by regression tests
   (kernel DBs are never plaintext SQLite; opening without the key fails).
 
+### canary-wap first-run wizard: truthful joins, standalone mode, calm portal
+
+- **A successful WiFi join no longer looks like a failure.** Joining a home
+  network on a channel other than the SoftAP's dragged the single radio —
+  and the setup network — to that channel, kicking the provisioning phone;
+  the AP was then torn down 8 s after connect, so the wizard timed out and
+  reported "Couldn't connect" on a join that succeeded. The AP now survives
+  120 s after connect (long enough to re-associate and see the success
+  card), wizard activity resets the 15-minute setup window instead of the
+  device rebooting mid-setup, and the timeout copy explains the network
+  handoff honestly.
+- **Standalone (AP-only) mode**: "Use without home WiFi" in the wizard.
+  The device completes setup and lives permanently on its own
+  `SecuraCV-XXXX` network (`canary.local` dashboard, captive DNS stays up,
+  the AP is never torn down, no STA join attempts). Persisted via
+  `wifi_ap_only` in NVS; saving real credentials later exits the mode.
+  New pairing-token-gated `POST /api/wifi/ap-only`; `/api/wifi` reports
+  `ap_only`.
+- **Stale setup links self-heal**: the wizard's pairing token (RAM-backed,
+  10-minute TTL, wiped by reboot) is silently re-issued via the new
+  setup-only `GET /api/wifi/pair-token` and the credentials resent once —
+  "This setup link has expired" now only appears when the wizard truly
+  can't recover. Same Host-gated posture as the `/` redirect that mints
+  the original token.
+- **Scan without kicking the phone off**: the device pre-scans at boot
+  (before anything joins the AP) and serves a cached list (5-min TTL,
+  `cached`/`age_s` in the response); only an explicit "Scan again" sweeps
+  the radio under a live client — the sweep is what used to drop the
+  wizard's scan fetch ("Scan failed: Load failed").
+- **Calm capability note**: the red "insecure origin / Web Bluetooth"
+  banner is now an informational note ("WiFi setup and the dashboard work
+  fine without it") and is gone entirely — along with the Bluefy footer —
+  inside the WiFi wizard, where Web Bluetooth is irrelevant. Real errors
+  still render red.
+- **Password field hygiene**: the typed WiFi password is wiped on
+  page-hide/tab-background (the app never stored it — Safari's page cache
+  restored the form value; verified no credential ever touches
+  localStorage/sessionStorage).
+- **Compatibility**: no wire or NVS breakage — new NVS key and endpoints
+  only; provisioned devices behave as before apart from the longer
+  post-join AP grace.
+
+### Fail-closed configuration and verification hardening
+
+- **Unknown config keys are now parse errors.** A misspelled key in
+  `adapter_host.toml` or `witness.toml`/`witness_config.json` used to fall
+  back silently to the permissive default — `auth_toke` left the webhook
+  listener unauthenticated, a `tls_key` typo fell back to plaintext, a
+  `cameras` typo processed every camera, and `sensitve` under `[zones]`
+  removed the sensitive-zone policy. All config-file structs now reject
+  unknown keys with an error naming the key, at startup and on SIGHUP
+  reload (reload keeps the running config).
+- **Confidence-gated routes require stated confidence** (`mqtt_sensor` +
+  webhook shared routing): a payload that omits or misspells `confidence`
+  no longer sails past a `min_confidence` floor as 1.0. Routes without a
+  floor keep accepting bare trigger payloads unchanged.
+- **canary-vision config API fails closed**: `PUT /api/v1/config` (and
+  `/:section`) rejects unknown sections/keys with 400 `invalid_config`
+  instead of merging typo'd keys while the real setting kept its default
+  (e.g. `auto_purge_hour` leaving auto-purge on the longer window).
+- **Wizard POST hardening**: a malformed or negative `Content-Length` is a
+  clean 400 (previously an unhandled traceback), and bodies over 1 MiB are
+  refused with 413.
+- **`verify_pipeline.sh` can no longer false-pass**: the live-stack smoke
+  check now excludes retained MQTT messages, publishes a nonce-tagged
+  event and requires the bridge to ingest *that* event, and requires
+  `witness.db` to have been written during the run — stale logs, retained
+  payloads, and schema-only databases all fail. A docker-shim regression
+  suite replays the old false-pass scenarios in CI.
+- New export-boundary absence tests pin that the Frigate object id
+  (embedded precise timestamp) and below-floor confidence values never
+  appear in a serialized export.
+- **Compatibility**: configs carrying stray or misspelled keys now refuse
+  to load, and sensors that never publish `confidence` no longer pass
+  confidence-gated routes — both deliberate fail-closed breaks; correct
+  existing configs and payloads are unaffected.
+
 ### Export & diagnosis follow-ups: one-click download, scheduling, inspectors, break-glass UX
 
 - **One-click "Download my events"**: token-gated `GET /export/bundle` on the

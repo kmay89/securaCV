@@ -22,7 +22,7 @@ jobs:
     name: scripts/lint_*.sh
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Conformance + hygiene lints that previously had no CI gate.
       - name: CAP-mapping conformance
         run: bash scripts/lint_cap_mapping.sh
@@ -30,3 +30,5 @@ jobs:
         run: bash scripts/lint_no_impersonation.sh
       - name: Feature-flag hygiene
         run: bash scripts/lint_feature_flags.sh
+      - name: verify_pipeline.sh false-pass regression tests
+        run: bash integrations/ha_frigate_mqtt/tests/test_verify_pipeline.sh
