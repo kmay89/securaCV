@@ -11,6 +11,7 @@
 #if FEATURE_BLUETOOTH && __has_include(<NimBLEDevice.h>)
 
 #include "bluetooth_channel.h"
+#include "bt_defaults.h"
 #include "nvs_store.h"
 
 // NimBLE headers must come before health_log.h to allow #undef of conflicting macros
@@ -81,10 +82,13 @@ static NimBLEScan* g_scanner = nullptr;
 
 // Settings (persisted to NVS)
 static BluetoothSettings g_settings = {
-  .enabled = false,
-  .auto_advertise = true,
-  .allow_pairing = true,
-  .require_pin = true,
+  // Radio on out of the box — see bt_defaults.h. Pairing still needs an
+  // explicit on-device PIN confirmation (require_pin), so this is not
+  // "open by default", just "reachable by default".
+  .enabled = bt_defaults::ENABLED,
+  .auto_advertise = bt_defaults::AUTO_ADVERTISE,
+  .allow_pairing = bt_defaults::ALLOW_PAIRING,
+  .require_pin = bt_defaults::REQUIRE_PIN,
   .device_name = "SecuraCV-Canary",
   // +9 dBm: the radio max valid on ESP32-S3/C3. This is now the single source
   // of BLE TX power for the whole firmware. It defaults to +9 to preserve the
@@ -470,13 +474,15 @@ static void load_settings() {
   NvsManager& nvs = NvsManager::instance();
   if (!nvs.beginReadOnly()) return;
 
-  g_settings.enabled = nvs.getBool(NVS_KEY_BT_ENABLED, false);
-  g_settings.auto_advertise = nvs.getBool(NVS_KEY_BT_AUTO_ADV, true);
-  g_settings.allow_pairing = nvs.getBool(NVS_KEY_BT_ALLOW_PAIR, true);
-  g_settings.require_pin = nvs.getBool(NVS_KEY_BT_REQ_PIN, true);
+  // Defaults (used when the device has never saved BT settings) come from
+  // bt_defaults.h so the first-boot state matches the struct initializer.
+  g_settings.enabled = nvs.getBool(NVS_KEY_BT_ENABLED, bt_defaults::ENABLED);
+  g_settings.auto_advertise = nvs.getBool(NVS_KEY_BT_AUTO_ADV, bt_defaults::AUTO_ADVERTISE);
+  g_settings.allow_pairing = nvs.getBool(NVS_KEY_BT_ALLOW_PAIR, bt_defaults::ALLOW_PAIRING);
+  g_settings.require_pin = nvs.getBool(NVS_KEY_BT_REQ_PIN, bt_defaults::REQUIRE_PIN);
   g_settings.tx_power = clamp_tx_power(nvs.getChar(NVS_KEY_BT_TX_PWR, 3));
   g_settings.inactivity_timeout_ms = nvs.getULong(NVS_KEY_BT_TIMEOUT, INACTIVITY_TIMEOUT_MS);
-  g_settings.long_range_mode = nvs.getBool(NVS_KEY_BT_LONG_RANGE, false);
+  g_settings.long_range_mode = nvs.getBool(NVS_KEY_BT_LONG_RANGE, bt_defaults::LONG_RANGE);
 
   size_t name_len = nvs.getBytesLength(NVS_KEY_BT_NAME);
   if (name_len > 0 && name_len <= MAX_DEVICE_NAME_LEN) {

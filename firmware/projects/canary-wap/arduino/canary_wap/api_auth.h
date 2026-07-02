@@ -21,6 +21,8 @@
 #include <Arduino.h>
 #include "esp_http_server.h"
 
+#include "auth_logic.h"
+
 // Optional bridge supplied by csi_integration.cpp. A valid HttpOnly
 // cv_session cookie is an API credential for browser UI calls, so users
 // who already opened the paired dashboard do not have to reveal or retype
@@ -175,7 +177,13 @@ static bool api_auth_check(httpd_req_t* req, const char* expected_token) {
   // ── Extract Authorization header ──
   size_t auth_len = httpd_req_get_hdr_value_len(req, "Authorization");
   if (auth_len == 0) {
-    auth_record_failure();
+    // No credential presented at all — a plain 401, NOT a lockout strike.
+    // Counting these let any credential-less client (a dashboard tab whose
+    // session cookie died, captive-portal probes) arm the global backoff
+    // and 429 the operator's correct token (see auth_logic.h).
+    if (auth_logic::counts_toward_lockout(auth_logic::Attempt::NO_CREDENTIAL)) {
+      auth_record_failure();
+    }
     httpd_resp_set_status(req, "401 Unauthorized");
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "WWW-Authenticate", "Bearer realm=\"securacv\"");
@@ -304,11 +312,15 @@ static bool api_auth_check_or_query(httpd_req_t* req, const char* expected_token
     return true;
   }
 
+  bool presented_credential =
+      httpd_req_get_hdr_value_len(req, "Authorization") > 0;
+
   char qs[192];
   esp_err_t qerr = httpd_req_get_url_query_str(req, qs, sizeof(qs));
   if (qerr == ESP_OK) {
     char token[128];
     if (httpd_query_key_value(qs, query_key, token, sizeof(token)) == ESP_OK) {
+      presented_credential = true;
       size_t token_len = strlen(token);
       size_t expected_len = strlen(expected_token);
       if (token_len == expected_len && constant_time_compare(token, expected_token, expected_len)) {
@@ -318,7 +330,13 @@ static bool api_auth_check_or_query(httpd_req_t* req, const char* expected_token
     }
   }
 
-  auth_record_failure();
+  // Only an actual guess (header or query token presented) advances the
+  // brute-force lockout; a bare request is a plain 401 (see auth_logic.h).
+  if (auth_logic::counts_toward_lockout(
+          presented_credential ? auth_logic::Attempt::WRONG_TOKEN
+                               : auth_logic::Attempt::NO_CREDENTIAL)) {
+    auth_record_failure();
+  }
   httpd_resp_set_status(req, "401 Unauthorized");
   httpd_resp_set_type(req, "application/json");
   httpd_resp_set_hdr(req, "WWW-Authenticate", "Bearer realm=\"securacv\"");

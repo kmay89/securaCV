@@ -92,8 +92,9 @@ Install via **Tools > Manage Libraries**:
 |---------|--------|---------|
 | Crypto | Rhys Weatherley | ^0.4.0 |
 | ArduinoJson | Benoit Blanchon | ^7.0.0 |
+| NimBLE-Arduino | h2zero | ^2.3.8 |
 
-**Note:** `esp_camera` and `NimBLE` are built into the ESP32 Arduino Core — no separate install needed.
+**Note:** `esp_camera` is built into the ESP32 Arduino Core, but **`NimBLE-Arduino` (2.x) must be installed separately**. The default (FULL) profile enables Bluetooth, and `ble_config.h` now *errors* at compile time if `<NimBLEDevice.h>` is missing rather than silently shipping a build with BLE disabled — so install NimBLE-Arduino (by h2zero) before your first build. CI installs the same library (`arduino-cli lib install "NimBLE-Arduino"`).
 
 ### 4. Hardware Target Selection
 

@@ -88,6 +88,20 @@ describe('verdict', () => {
   });
 });
 
+describe('safeModeNote', () => {
+  it('shows a recovery banner only when the report flags safe_mode', () => {
+    assert.equal(L.safeModeNote({ safe_mode: false }), '');
+    assert.equal(L.safeModeNote({}), '');
+    assert.equal(L.safeModeNote(undefined), '');
+    const note = L.safeModeNote({ safe_mode: true });
+    assert.ok(note.length > 0);
+    // Explains grey rows as paused-not-broken and how to clear it.
+    assert.match(note, /recovery/i);
+    assert.match(note, /paused/i);
+    assert.doesNotMatch(note, /faulty/i);
+  });
+});
+
 describe('hintFor — robustness', () => {
   it('never throws and returns a string for any input', () => {
     const inputs = [null, undefined, {}, { name: 'nope', status: 'fail' }, probe('', 'fail')];
@@ -133,11 +147,18 @@ describe('hintFor — guidance matrix', () => {
     for (const s of ['pass', 'skip', 'unknown']) none('camera', s);
   });
 
-  it('Bluetooth: fail + absent are actionable', () => {
+  it('Bluetooth: fail + absent + skip are actionable; skip explains starting/safe-mode', () => {
     has('bluetooth', 'fail');
     assert.match(hint('bluetooth', 'fail'), /continue/i); // tells user they can proceed
     has('bluetooth', 'absent');
-    for (const s of ['pass', 'skip', 'unknown']) none('bluetooth', s);
+    // Skip is now a common, non-alarming state (radio on but idle, still
+    // starting up, or paused in safe mode) — each variant reassures rather
+    // than telling the user their Bluetooth is faulty.
+    has('bluetooth', 'skip');                                   // idle default
+    assert.match(hint('bluetooth', 'skip', { safe_mode: true }), /recovery/i);
+    assert.match(hint('bluetooth', 'skip', { init_attempted: false }), /starting/i);
+    assert.doesNotMatch(hint('bluetooth', 'skip'), /faulty/i);
+    for (const s of ['pass', 'unknown']) none('bluetooth', s);
   });
 
   it('GPS: fail, skip (no fix yet) and absent all guide; pass is silent', () => {

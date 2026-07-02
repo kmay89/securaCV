@@ -62,6 +62,19 @@ inline bool deferred_reboot_due(uint32_t now_ms, uint32_t deadline_ms) {
   return deadline_ms != 0 && (int32_t)(now_ms - deadline_ms) >= 0;
 }
 
+// Keep an armed post-provisioning reboot from firing while the user is
+// still actively working the wizard's final step (running the self-test,
+// reading the recovery-kit card). Given an armed deadline, returns a
+// deadline at least `min_remaining_ms` in the future — but never pulls a
+// later deadline in, and never arms a disarmed (0) one. Wrap-safe.
+inline uint32_t reboot_deadline_extend(uint32_t deadline_ms, uint32_t now_ms,
+                                       uint32_t min_remaining_ms) {
+  if (deadline_ms == 0) return 0;  // disarmed stays disarmed
+  const uint32_t floor = now_ms + min_remaining_ms;
+  // Push out only if the current deadline is sooner than the floor.
+  return ((int32_t)(deadline_ms - floor) < 0) ? floor : deadline_ms;
+}
+
 }  // namespace provisioning_logic
 
 #endif  // SECURACV_PROVISIONING_LOGIC_H
