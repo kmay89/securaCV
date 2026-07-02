@@ -344,6 +344,22 @@ impl RateLimiter {
         if self.windows.len() >= RATE_MAX_TRACKED_IPS {
             self.windows
                 .retain(|_, w| now.saturating_sub(w.window_start_ms) < RATE_WINDOW_MS);
+            // Mass IP rotation can keep every tracked window active, so the
+            // stale sweep alone doesn't bound the map. Evict the oldest
+            // window to make the cap hard: the evicted client merely starts
+            // a fresh count, which beats unbounded memory growth or turning
+            // a full map into a lockout for new legitimate clients.
+            while self.windows.len() >= RATE_MAX_TRACKED_IPS {
+                let oldest = self
+                    .windows
+                    .iter()
+                    .min_by_key(|(_, w)| w.window_start_ms)
+                    .map(|(ip, _)| *ip);
+                match oldest {
+                    Some(ip) => self.windows.remove(&ip),
+                    None => break,
+                };
+            }
         }
         let window = self.windows.entry(ip).or_insert(RateWindow {
             window_start_ms: now,
@@ -928,6 +944,21 @@ fn latest_event(artifact: &crate::ExportArtifact) -> Option<&crate::ExportEvent>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rate_limiter_map_is_hard_bounded_under_ip_rotation() {
+        // Every request from a distinct IP inside one window: the stale sweep
+        // frees nothing, so the oldest-entry eviction must hold the line.
+        let mut limiter = RateLimiter::new(10);
+        for i in 0..(RATE_MAX_TRACKED_IPS as u128 + 500) {
+            let ip = std::net::IpAddr::V6(std::net::Ipv6Addr::from(0xfd00_0000_0000_0000_u128 + i));
+            let _ = limiter.check(ip);
+            assert!(
+                limiter.windows.len() <= RATE_MAX_TRACKED_IPS,
+                "tracked-IP map exceeded its cap at request {i}"
+            );
+        }
+    }
 
     #[test]
     #[cfg(unix)]
