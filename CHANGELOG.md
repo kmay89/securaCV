@@ -2,6 +2,49 @@
 
 ## [Unreleased]
 
+### canary-sense Phase 2: the mmWave radar witness publishes
+
+- **Full network stack on the MR60BHA2 kit** (XIAO ESP32-C6), mirroring
+  canary-vision: NVS-backed runtime config (OTA-safe identity/credentials),
+  supervised WiFi STA, MQTT with LWT + Home Assistant discovery, heap-health
+  diagnostics, and the shared signed pull-OTA engine with an HA `update`
+  entity + auto-update switch. Presence-only and wellbeing flavors are
+  distinct OTA products with separate signed manifests, so images can never
+  cross-install between privacy surfaces.
+- **Privacy chokepoint enforced at the publish layer**: events carry only
+  `presence_detected` / `presence_cleared` / `occupancy_changed` with the
+  coarse vocabulary (presence state, 0/1/2+ occupant bucket, near/mid/far
+  range band) and a 10-minute-coarsened uptime bucket instead of a precise
+  timestamp (metadata minimization; `seq` preserves ordering). Raw distance
+  and vitals never leave the device via events;
+  wellbeing builds publish the P0 breathing lock and P1-gated BPM numerics
+  on the state channel only, suppressed unless exactly one target is present.
+- **HA entity set** per the design doc: presence, occupants, range band,
+  radar-link problem sensor, frame-error counter, BH1750 illuminance
+  (new minimal vendored driver in `firmware/common/sensors/bh1750/`),
+  uptime, RSSI + free-heap diagnostics, firmware update card.
+- **CI + release wiring**: the wellbeing env joins the build matrix with a
+  secrets pre-step and an OTA-slot size guard; `firmware-release.yml` now
+  builds, signs, verifies, and publishes `canary-sense` +
+  `canary-sense-wellbeing` binaries and manifests.
+
+### canary-vision robustness parity with the ESP32-S3 tree
+
+- **WiFi auto-reconnect with exponential backoff** (2 s → 30 s cap) replaces
+  the reconnect-or-hang loop; a sustained 5-minute outage reboots as the
+  recovery of last resort, and the blocking MQTT reconnect now defers to the
+  WiFi supervisor instead of spinning while the link is down.
+- **WiFi power policy**: optional modem sleep + TX power cap (config.h).
+- **Heap monitor with 3-level degradation** (S3 thresholds + hysteresis):
+  inference cadence stretches 2×/5× under critical/emergency pressure;
+  heap + degradation level + RSSI ride the status heartbeat and surface as
+  HA diagnostic entities.
+- **Dev secrets actually compile in again**: the `-I secrets` include path
+  lived in a project-level `[env]` block that PlatformIO overrides, so a
+  user's `secrets/secrets.h` silently fell back to the CI stub; the path now
+  lives in the effective env definitions and `runtime_config` accepts both
+  include spellings (canary-sense inherits the fixed pattern).
+
 ### canary-wap dashboard/settings: revive the whole panel
 
 - **The settings panel is functional again.** On the default Arduino-IDE

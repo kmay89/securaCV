@@ -8,7 +8,12 @@
 #include "canary/version.h"
 #include "canary/log.h"
 #include "canary/runtime_config.h"  // NVS-backed device id (OTA-safe)
-#include "canary/detect_config.h"   // bounds for the settings number entities
+
+// Entity set per the canary-sense design doc §5: presence / occupants /
+// range-band / radar-link / illuminance on the P0 path; the wellbeing build
+// adds the P0 "breathing confirmed" binary and — only with the P1 opt-in
+// flag — the BPM numerics. BPM entities are provably absent from a
+// presence-only build: the discovery payloads below are compiled out.
 
 namespace canary::ha {
 
@@ -30,7 +35,7 @@ void publish_discovery(PubSubClient& mqtt, const Topics& topics) {
   snprintf(devObj, sizeof(devObj),
            "\"device\":{"
            "\"identifiers\":[\"securacv_%s\"],"
-           "\"name\":\"SecuraCV Canary Vision %s\","
+           "\"name\":\"SecuraCV Canary Sense %s\","
            "\"manufacturer\":\"%s\","
            "\"model\":\"%s\","
            "\"sw_version\":\"%s\""
@@ -49,9 +54,9 @@ void publish_discovery(PubSubClient& mqtt, const Topics& topics) {
     snprintf(out, n, "%s/%s/%s/%s/config", HA_DISCOVERY_PREFIX, component, DEVICE_ID, objectId);
   };
 
-  // Presence
+  // Presence (debounced radar occupancy)
   {
-    char t[192], p[768];
+    char t[192], p[1024];
     topic_for("binary_sensor", "presence", t, sizeof(t));
     snprintf(p, sizeof(p),
              "{"
@@ -62,61 +67,101 @@ void publish_discovery(PubSubClient& mqtt, const Topics& topics) {
              "\"payload_on\":\"true\","
              "\"payload_off\":\"false\","
              "\"device_class\":\"occupancy\","
-             "\"icon\":\"mdi:shield-eye\","
+             "\"icon\":\"mdi:radar\","
              "%s,%s"
              "}",
              DEVICE_ID, topics.state, availObj, devObj);
     publish_cfg(mqtt, t, p);
   }
 
-  // Dwelling
+  // Occupants (bucketed count — 0 / 1 / 2+, never a track log)
   {
-    char t[192], p[768];
-    topic_for("binary_sensor", "dwelling", t, sizeof(t));
+    char t[192], p[1024];
+    topic_for("sensor", "occupants", t, sizeof(t));
     snprintf(p, sizeof(p),
              "{"
-             "\"name\":\"Dwelling\","
-             "\"unique_id\":\"%s_dwelling\","
+             "\"name\":\"Occupants\","
+             "\"unique_id\":\"%s_occupants\","
              "\"state_topic\":\"%s\","
-             "\"value_template\":\"{{ value_json.dwelling | default(false) }}\","
+             "\"value_template\":\"{{ value_json.occupants }}\","
+             "\"icon\":\"mdi:account-group\","
+             "%s,%s"
+             "}",
+             DEVICE_ID, topics.state, availObj, devObj);
+    publish_cfg(mqtt, t, p);
+  }
+
+  // Range band (diagnostic; coarse near/mid/far only — raw distance never
+  // leaves the device, per the privacy chokepoint)
+  {
+    char t[192], p[1024];
+    topic_for("sensor", "range_band", t, sizeof(t));
+    snprintf(p, sizeof(p),
+             "{"
+             "\"name\":\"Range band\","
+             "\"unique_id\":\"%s_range_band\","
+             "\"state_topic\":\"%s\","
+             "\"value_template\":\"{{ value_json.range }}\","
+             "\"icon\":\"mdi:ruler\","
+             "\"entity_category\":\"diagnostic\","
+             "%s,%s"
+             "}",
+             DEVICE_ID, topics.state, availObj, devObj);
+    publish_cfg(mqtt, t, p);
+  }
+
+  // Radar link problem sensor (diagnostic; ON while the UART is stalled)
+  {
+    char t[192], p[1024];
+    topic_for("binary_sensor", "radar_link", t, sizeof(t));
+    snprintf(p, sizeof(p),
+             "{"
+             "\"name\":\"Radar link problem\","
+             "\"unique_id\":\"%s_radar_link\","
+             "\"state_topic\":\"%s\","
+             "\"value_template\":\"{{ 'true' if not value_json.radar_ok else 'false' }}\","
              "\"payload_on\":\"true\","
              "\"payload_off\":\"false\","
-             "\"icon\":\"mdi:timer-sand\","
+             "\"device_class\":\"problem\","
+             "\"entity_category\":\"diagnostic\","
+             "\"icon\":\"mdi:radar\","
              "%s,%s"
              "}",
              DEVICE_ID, topics.state, availObj, devObj);
     publish_cfg(mqtt, t, p);
   }
 
-  // Confidence
+  // Radar frame errors (diagnostic; checksum/oversize drops, monotonic)
   {
-    char t[192], p[768];
-    topic_for("sensor", "confidence", t, sizeof(t));
+    char t[192], p[1024];
+    topic_for("sensor", "frame_errors", t, sizeof(t));
     snprintf(p, sizeof(p),
              "{"
-             "\"name\":\"Confidence\","
-             "\"unique_id\":\"%s_confidence\","
+             "\"name\":\"Radar frame errors\","
+             "\"unique_id\":\"%s_frame_errors\","
              "\"state_topic\":\"%s\","
-             "\"value_template\":\"{{ value_json.confidence }}\","
-             "\"unit_of_measurement\":\"%%\","
-             "\"icon\":\"mdi:chart-bell-curve\","
+             "\"value_template\":\"{{ value_json.frame_errors }}\","
+             "\"state_class\":\"total_increasing\","
+             "\"entity_category\":\"diagnostic\","
+             "\"icon\":\"mdi:alert-circle-outline\","
              "%s,%s"
              "}",
              DEVICE_ID, topics.state, availObj, devObj);
     publish_cfg(mqtt, t, p);
   }
 
-  // Voxel
+  // Illuminance (BH1750 — tamper corroboration: lights-out + presence)
   {
-    char t[192], p[768];
-    topic_for("sensor", "voxel", t, sizeof(t));
+    char t[192], p[1024];
+    topic_for("sensor", "illuminance", t, sizeof(t));
     snprintf(p, sizeof(p),
              "{"
-             "\"name\":\"Voxel\","
-             "\"unique_id\":\"%s_voxel\","
+             "\"name\":\"Illuminance\","
+             "\"unique_id\":\"%s_illuminance\","
              "\"state_topic\":\"%s\","
-             "\"value_template\":\"{{ value_json.voxel.r }},{{ value_json.voxel.c }}\","
-             "\"icon\":\"mdi:grid\","
+             "\"value_template\":\"{{ value_json.lux }}\","
+             "\"unit_of_measurement\":\"lx\","
+             "\"device_class\":\"illuminance\","
              "%s,%s"
              "}",
              DEVICE_ID, topics.state, availObj, devObj);
@@ -125,7 +170,7 @@ void publish_discovery(PubSubClient& mqtt, const Topics& topics) {
 
   // Last event
   {
-    char t[192], p[768];
+    char t[192], p[1024];
     topic_for("sensor", "last_event", t, sizeof(t));
     snprintf(p, sizeof(p),
              "{"
@@ -142,7 +187,7 @@ void publish_discovery(PubSubClient& mqtt, const Topics& topics) {
 
   // Uptime
   {
-    char t[192], p[768];
+    char t[192], p[1024];
     topic_for("sensor", "uptime", t, sizeof(t));
     snprintf(p, sizeof(p),
              "{"
@@ -199,6 +244,65 @@ void publish_discovery(PubSubClient& mqtt, const Topics& topics) {
     publish_cfg(mqtt, t, p);
   }
 
+#ifdef CANARY_SENSE_VITALS
+  // Breathing confirmed (P0 binary lock — the only always-on vitals signal;
+  // wellbeing channel, never sealed-logged)
+  {
+    char t[192], p[1024];
+    topic_for("binary_sensor", "breathing", t, sizeof(t));
+    snprintf(p, sizeof(p),
+             "{"
+             "\"name\":\"Breathing confirmed\","
+             "\"unique_id\":\"%s_breathing\","
+             "\"state_topic\":\"%s\","
+             "\"value_template\":\"{{ value_json.breathing_locked | default(false) }}\","
+             "\"payload_on\":\"true\","
+             "\"payload_off\":\"false\","
+             "\"icon\":\"mdi:lungs\","
+             "%s,%s"
+             "}",
+             DEVICE_ID, topics.state, availObj, devObj);
+    publish_cfg(mqtt, t, p);
+  }
+
+#if defined(FEATURE_VITALS_BPM_P1) && FEATURE_VITALS_BPM_P1
+  // P1 opt-in BPM numerics. Non-diagnostic radar estimates (85–90% accuracy,
+  // <=1.5 m, single target) — wellbeing signals, not medical data.
+  {
+    char t[192], p[1024];
+    topic_for("sensor", "breath_rate", t, sizeof(t));
+    snprintf(p, sizeof(p),
+             "{"
+             "\"name\":\"Breathing rate\","
+             "\"unique_id\":\"%s_breath_rate\","
+             "\"state_topic\":\"%s\","
+             "\"value_template\":\"{{ value_json.breath_bpm }}\","
+             "\"unit_of_measurement\":\"bpm\","
+             "\"icon\":\"mdi:lungs\","
+             "%s,%s"
+             "}",
+             DEVICE_ID, topics.state, availObj, devObj);
+    publish_cfg(mqtt, t, p);
+  }
+  {
+    char t[192], p[1024];
+    topic_for("sensor", "heart_rate", t, sizeof(t));
+    snprintf(p, sizeof(p),
+             "{"
+             "\"name\":\"Heart rate\","
+             "\"unique_id\":\"%s_heart_rate\","
+             "\"state_topic\":\"%s\","
+             "\"value_template\":\"{{ value_json.heart_bpm }}\","
+             "\"unit_of_measurement\":\"bpm\","
+             "\"icon\":\"mdi:heart-pulse\","
+             "%s,%s"
+             "}",
+             DEVICE_ID, topics.state, availObj, devObj);
+    publish_cfg(mqtt, t, p);
+  }
+#endif  // FEATURE_VITALS_BPM_P1
+#endif  // CANARY_SENSE_VITALS
+
   // Firmware update entity (signed pull-OTA). HA renders a proper update
   // card: installed vs latest version, release notes, Install button, and
   // a live progress bar while the device downloads/verifies/installs.
@@ -216,65 +320,6 @@ void publish_discovery(PubSubClient& mqtt, const Topics& topics) {
              "%s,%s"
              "}",
              DEVICE_ID, topics.update_state, topics.update_cmd, availObj, devObj);
-    publish_cfg(mqtt, t, p);
-  }
-
-  // Runtime detection settings (NVS-backed, see canary/detect_config.h).
-  // Number entities under the device's Configuration section: the loaded
-  // SSCMA model decides class indices and score calibration, so these must
-  // be adjustable without a rebuild when the model is swapped in SenseCraft.
-  struct NumberEnt {
-    const char* objectId;
-    const char* name;
-    const char* json_key;
-    const char* cmd_topic;
-    const char* unit;       // nullptr = unitless
-    const char* icon;
-    const char* mode;       // "slider" or "box"
-    long min, max, step;
-  };
-  const NumberEnt numbers[] = {
-    {"cfg_target", "Person class index", "target", topics.cfg_target_cmd,
-     nullptr, "mdi:tag-outline", "box", 0, 255, 1},
-    {"cfg_score", "Score threshold", "score", topics.cfg_score_cmd,
-     "%", "mdi:chart-bell-curve", "slider",
-     canary::cfg::DETECT_SCORE_MIN_LO, canary::cfg::DETECT_SCORE_MIN_HI, 1},
-    {"cfg_lost", "Lost timeout", "lost_ms", topics.cfg_lost_cmd,
-     "ms", "mdi:timer-off-outline", "box",
-     (long)canary::cfg::DETECT_LOST_MS_LO, (long)canary::cfg::DETECT_LOST_MS_HI, 250},
-    {"cfg_dwell", "Dwell start", "dwell_ms", topics.cfg_dwell_cmd,
-     "ms", "mdi:timer-sand", "box",
-     (long)canary::cfg::DETECT_DWELL_MS_LO, (long)canary::cfg::DETECT_DWELL_MS_HI, 500},
-  };
-  for (const auto& n : numbers) {
-    char t[192], p[1280], unitField[64] = "";
-    if (n.unit) {
-      snprintf(unitField, sizeof(unitField), "\"unit_of_measurement\":\"%s\",", n.unit);
-    }
-    topic_for("number", n.objectId, t, sizeof(t));
-    const int written = snprintf(p, sizeof(p),
-             "{"
-             "\"name\":\"%s\","
-             "\"unique_id\":\"%s_%s\","
-             "\"state_topic\":\"%s\","
-             "\"value_template\":\"{{ value_json.%s }}\","
-             "\"command_topic\":\"%s\","
-             "\"min\":%ld,\"max\":%ld,\"step\":%ld,"
-             "\"mode\":\"%s\","
-             "%s"
-             "\"icon\":\"%s\","
-             "\"entity_category\":\"config\","
-             "%s,%s"
-             "}",
-             n.name, DEVICE_ID, n.objectId,
-             topics.cfg_state, n.json_key, n.cmd_topic,
-             n.min, n.max, n.step, n.mode,
-             unitField, n.icon, availObj, devObj);
-    if (written < 0 || written >= (int)sizeof(p)) {
-      // Truncated JSON would be silently ignored by HA — fail loud instead.
-      log_line("DISC", "number entity payload truncated — skipped (device_id too long?)");
-      continue;
-    }
     publish_cfg(mqtt, t, p);
   }
 

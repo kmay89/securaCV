@@ -1,6 +1,6 @@
 # SecuraCV Canary Firmware — Feature Audit Matrix
 
-**Last updated:** 2026-06-10 (pull-OTA extended to canary-wap (PIO) + canary-vision)
+**Last updated:** 2026-07-02 (canary-sense Phase 2 — MQTT + HA discovery + signed pull-OTA on the MR60 radar witness; canary-vision robustness parity: WiFi auto-reconnect backoff, WiFi power save, heap monitor + degradation)
 **Original audit:** 2026-02-20
 **Companion docs:** [VARIANT_POLICY.md](VARIANT_POLICY.md) (lifecycle labels), [FIRMWARE_VARIANT_AUDIT.md](FIRMWARE_VARIANT_AUDIT.md) (risk analysis), [PARITY_PLAN.md](PARITY_PLAN.md) (ACTIVE ⇄ canary-wap parity closure program)
 
@@ -12,6 +12,7 @@
 | **canary-wap (Arduino)** | `firmware/projects/canary-wap/arduino/canary_wap/` | COMPATIBILITY |
 | **canary-wap (PIO)** | `firmware/projects/canary-wap/` | COMPATIBILITY |
 | **canary-vision** | `firmware/projects/canary-vision/` | SPECIALIZED |
+| **canary-sense** | `firmware/projects/canary-sense/` | SPECIALIZED |
 | **canary-ota** | `firmware/projects/canary-ota/` | SPECIALIZED |
 | **snapshot (removed)** | _(deleted 2026-05-29; history in git)_ | REMOVED (was ARCHIVED 2026-02-20) |
 
@@ -32,67 +33,70 @@ Single-row-per-capability summary across every non-archived variant. This is the
 
 > **CI contract (enforced):** a PR that regresses a ✅ → ⚠️/❌ cell in this dashboard must include an issue reference in the PR body (e.g. `Regresses FEATURES.md: <cell> (#1234)`). The `.github/workflows/features-dashboard-guard.yml` workflow parses this table (via `firmware/scripts/features_dashboard_guard.py`) and fails if a cell downgrades without an accompanying `#<number>` reference in the PR description.
 
-| Capability | canary (PIO) | canary-wap (Arduino) | canary-wap (PIO) | canary-vision | canary-ota | snapshot (archived) |
-|---|:---:|:---:|:---:|:---:|:---:|:---:|
-| Ed25519 signing of witness records | ✅ | ✅ | ⚠️ | ✅ | ➖ | ✅ |
-| SHA-256 hash-chain continuity (domain-separated, NVS-persisted) | ✅ | ✅ | ⚠️ | ✅ | ➖ | ✅ |
-| GPS (NMEA parse + fix FSM + motion hysteresis) | ✅ | ✅ | ⚠️ | ❌ | ➖ | ✅ |
-| SD storage (append-only, `/WITNESS` `/HEALTH` `/CHAIN` `/EXPORT`) | ✅ | ✅ | ⚠️ | ❌ | ➖ | ✅ |
-| SD graceful shutdown flush | ✅ | ✅ | ⚠️ | ➖ | ➖ | ⚠️ |
-| SD status counters (`witness_count` / `health_count` / `unacked_count`) | ✅ | ✅ | ⚠️ | ➖ | ➖ | ⚠️ |
-| WiFi AP (SecuraCV-XXXX SSID, device-unique password) | ✅ | ✅ | ⚠️ | ❌ | ➖ | ✅ |
-| WiFi STA (home network dual-mode) | ✅ | ✅ | ❌ | ✅ | ➖ | ✅ |
-| Web UI (embedded PROGMEM dashboard) | ⚠️ | ✅ | ⚠️ | ❌ | ➖ | ✅ |
-| Camera peek (MJPEG stream, no frame storage) | ⚠️ | ✅ | ⚠️ | ➖ | ➖ | ✅ |
-| Mesh network (Opera / ESP-NOW) | ⚠️ | ✅ | ⚠️ | ❌ | ➖ | ✅ |
-| Mesh RSSI from ESP-NOW radio | ⚠️ | ✅ | ❌ | ❌ | ➖ | ❌ |
-| BLE discovery (Opera/Chirp/Nearby) | ❌ | ✅ | ❌ | ❌ | ➖ | ✅ |
-| BLE Scout (paired-beacon room attribution, hashed MAC, Kalman RSSI) | ✅ | ✅ | ❌ | ❌ | ➖ | ❌ |
-| RF presence detection | ❌ | ✅ | ⚠️ | ❌ | ➖ | ✅ |
-| WiFi CSI sensing (motion / breathing / micro-activity) | ✅ | ✅ | ❌ | ❌ | ➖ | ❌ |
-| CSI module pipeline + privacy chokepoint + 10-min bundler (v1: presence, breathing, ribbon, daily summary, anomaly) | ✅ | ✅ | ❌ | ❌ | ➖ | ❌ |
-| CSI active probe (50 Hz ESP-NOW unicast, deterministic frame rate) | ✅ | ✅ | ❌ | ❌ | ➖ | ❌ |
-| Multi-link fusion (2-link confirmation gate, motion direction, breathing median) | ✅ | ✅ | ❌ | ❌ | ➖ | ❌ |
-| Multipath shimmer filter (RSSI swing >8 dB without Doppler → reject) | ✅ | ✅ | ❌ | ❌ | ➖ | ❌ |
-| CSI watchdog (5 s silence → rx toggle; 3× escalation → WiFi restart) | ✅ | ✅ | ❌ | ❌ | ➖ | ❌ |
-| Coordinated channel-hop (Hub proposes, peers follow, 50% util × 60 s trigger) | ✅ | ✅ | ❌ | ❌ | ➖ | ❌ |
-| Hub failover election (lowest fingerprint wins, deterministic, no voting) | ⚠️ | ✅ | ❌ | ❌ | ➖ | ❌ |
-| Empty-room auto-calibration (10-min baseline, NVS-persisted) | ✅ | ✅ | ❌ | ❌ | ➖ | ❌ |
-| Acoustic alarm-cadence detection (T3 smoke / T4 CO) | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
-| Capacitive touch (silent panic / enclosure tamper) | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
-| Native deep-sleep HAL (esp_sleep_* abstraction; ULP-RISC-V capable) | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
-| IR appliance activity (RMT NEC/RC5/Sony, salted-hash buckets) | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
-| Internal temp drift tamper (ESP32-S3 die sensor) | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
-| Sensing events signed into Ed25519 witness chain (T3/T4/panic/tamper/temp) | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
-| Home Assistant MQTT auto-discovery for sensing entities (11 entities) | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
-| Sensing dashboard panel (gauges + acoustic + touch + IR + temp + power) | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
-| Battery power monitor (ADC + software inference, SoC, charge state) | ✅ | ✅ | ❌ | ❌ | ➖ | ❌ |
-| Power policy engine (6-mode battery-driven feature gating) | ✅ | ✅ | ❌ | ❌ | ➖ | ❌ |
-| First-time setup wizard (captive portal, device naming, NVS flag) | ✅ | ✅ | ❌ | ❌ | ➖ | ❌ |
-| Heap monitoring + automatic feature degradation (3-level with hysteresis) | ✅ | ✅ | ❌ | ❌ | ➖ | ❌ |
-| SD card health tracking (write/error counters, space warnings) | ✅ | ✅ | ❌ | ❌ | ➖ | ❌ |
-| SD endurance wear estimate (NVS lifetime counters, TBW wear %, replace-recommended latch on MQTT health) | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
-| Boot self-test suite (10 subsystem probes, 0-100% health score) | ✅ | ✅ | ❌ | ❌ | ➖ | ❌ |
-| BLE GATT status service (battery + health + chain over BLE) | ✅ | ✅ | ❌ | ❌ | ➖ | ❌ |
-| WiFi power save (modem sleep on battery, TX power control) | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
-| WiFi auto-reconnect with exponential backoff | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
-| SD log rotation (witness 500, health 200, auto-rotate at 85% SD) | ✅ | ✅ | ❌ | ❌ | ➖ | ❌ |
-| Chain backup/restore (NVS ↔ SD, HMAC-SHA256 integrity) | ✅ | ✅ | ❌ | ❌ | ➖ | ❌ |
-| Chain integrity verification (Ed25519 sig + hash continuity walk) | ✅ | ✅ | ❌ | ❌ | ➖ | ❌ |
-| Witness record export to /EXPORT/ | ✅ | ✅ | ❌ | ❌ | ➖ | ❌ |
-| Battery health history (NVS-persisted charge cycles, voltage extremes) | ✅ | ✅ | ❌ | ❌ | ➖ | ❌ |
-| Chirp channel (broadcast beacon) | ⚠️ | ✅ | ⚠️ | ❌ | ➖ | ✅ |
-| MQTT publish + HA Discovery | ✅ | ✅ | ❌ | ✅ | ➖ | ❌ |
-| OTA A/B with rollback safety | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
-| Signed pull-OTA (HTTPS manifest + Ed25519 release signature) | ✅ | ✅ | ✅ | ✅ | ⚠️ | ❌ |
-| HA `update` entity (MQTT discovery, Install button + auto-update switch) | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
-| Local/LAN update server option (air-gapped hosting) | ✅ | ✅ | ✅ | ✅ | ⚠️ | ❌ |
-| API authentication (bearer token + HKDF derivation) | ✅ | ✅ | ❌ | ❌ | ➖ | ✅ |
-| Rate limiting on HTTP API | ✅ | ✅ | ❌ | ➖ | ➖ | ✅ |
-| TLS (HTTPS self-signed) | ❌ | ❌ | ❌ | ❌ | ➖ | ✅ |
-| Watchdog timer | ✅ | ✅ | ⚠️ | ✅ | ✅ | ✅ |
-| Provisioning gate (BOOT button) | ✅ | ✅ | ❌ | ❌ | ➖ | ✅ |
-| `SECURACV_RELEASE_BUILD` fail-closed guards | ✅ | ✅ | ⚠️ | ✅ | ✅ | ✅ (archive-only) |
+| Capability | canary (PIO) | canary-wap (Arduino) | canary-wap (PIO) | canary-vision | canary-sense | canary-ota | snapshot (archived) |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| Ed25519 signing of witness records | ✅ | ✅ | ⚠️ | ✅ | ❌ | ➖ | ✅ |
+| SHA-256 hash-chain continuity (domain-separated, NVS-persisted) | ✅ | ✅ | ⚠️ | ✅ | ❌ | ➖ | ✅ |
+| GPS (NMEA parse + fix FSM + motion hysteresis) | ✅ | ✅ | ⚠️ | ❌ | ➖ | ➖ | ✅ |
+| SD storage (append-only, `/WITNESS` `/HEALTH` `/CHAIN` `/EXPORT`) | ✅ | ✅ | ⚠️ | ❌ | ➖ | ➖ | ✅ |
+| SD graceful shutdown flush | ✅ | ✅ | ⚠️ | ➖ | ➖ | ➖ | ⚠️ |
+| SD status counters (`witness_count` / `health_count` / `unacked_count`) | ✅ | ✅ | ⚠️ | ➖ | ➖ | ➖ | ⚠️ |
+| WiFi AP (SecuraCV-XXXX SSID, device-unique password) | ✅ | ✅ | ⚠️ | ❌ | ❌ | ➖ | ✅ |
+| WiFi STA (home network dual-mode) | ✅ | ✅ | ❌ | ✅ | ✅ | ➖ | ✅ |
+| Web UI (embedded PROGMEM dashboard) | ⚠️ | ✅ | ⚠️ | ❌ | ❌ | ➖ | ✅ |
+| Camera peek (MJPEG stream, no frame storage) | ⚠️ | ✅ | ⚠️ | ➖ | ➖ | ➖ | ✅ |
+| Mesh network (Opera / ESP-NOW) | ⚠️ | ✅ | ⚠️ | ❌ | ❌ | ➖ | ✅ |
+| Mesh RSSI from ESP-NOW radio | ⚠️ | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
+| BLE discovery (Opera/Chirp/Nearby) | ❌ | ✅ | ❌ | ❌ | ❌ | ➖ | ✅ |
+| BLE Scout (paired-beacon room attribution, hashed MAC, Kalman RSSI) | ✅ | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
+| RF presence detection | ❌ | ✅ | ⚠️ | ❌ | ❌ | ➖ | ✅ |
+| WiFi CSI sensing (motion / breathing / micro-activity) | ✅ | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
+| CSI module pipeline + privacy chokepoint + 10-min bundler (v1: presence, breathing, ribbon, daily summary, anomaly) | ✅ | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
+| CSI active probe (50 Hz ESP-NOW unicast, deterministic frame rate) | ✅ | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
+| Multi-link fusion (2-link confirmation gate, motion direction, breathing median) | ✅ | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
+| Multipath shimmer filter (RSSI swing >8 dB without Doppler → reject) | ✅ | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
+| CSI watchdog (5 s silence → rx toggle; 3× escalation → WiFi restart) | ✅ | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
+| Coordinated channel-hop (Hub proposes, peers follow, 50% util × 60 s trigger) | ✅ | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
+| Hub failover election (lowest fingerprint wins, deterministic, no voting) | ⚠️ | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
+| Empty-room auto-calibration (10-min baseline, NVS-persisted) | ✅ | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
+| mmWave radar presence (MR60 frame parser + stall-safe FSM, 0/1/2+ bucket, range band) | ➖ | ➖ | ➖ | ➖ | ✅ | ➖ | ➖ |
+| Radar vitals wellbeing channel (P1-gated breathing/heart lock, single-target suppression) | ➖ | ➖ | ➖ | ➖ | ⚠️ | ➖ | ➖ |
+| Ambient light (BH1750) tamper-corroboration channel | ➖ | ➖ | ➖ | ➖ | ⚠️ | ➖ | ➖ |
+| Acoustic alarm-cadence detection (T3 smoke / T4 CO) | ✅ | ❌ | ❌ | ❌ | ➖ | ➖ | ❌ |
+| Capacitive touch (silent panic / enclosure tamper) | ✅ | ❌ | ❌ | ❌ | ❌ | ➖ | ❌ |
+| Native deep-sleep HAL (esp_sleep_* abstraction; ULP-RISC-V capable) | ✅ | ❌ | ❌ | ❌ | ❌ | ➖ | ❌ |
+| IR appliance activity (RMT NEC/RC5/Sony, salted-hash buckets) | ✅ | ❌ | ❌ | ❌ | ❌ | ➖ | ❌ |
+| Internal temp drift tamper (ESP32-S3 die sensor) | ✅ | ❌ | ❌ | ❌ | ➖ | ➖ | ❌ |
+| Sensing events signed into Ed25519 witness chain (T3/T4/panic/tamper/temp) | ✅ | ❌ | ❌ | ❌ | ❌ | ➖ | ❌ |
+| Home Assistant MQTT auto-discovery for sensing entities (11 entities) | ✅ | ❌ | ❌ | ❌ | ❌ | ➖ | ❌ |
+| Sensing dashboard panel (gauges + acoustic + touch + IR + temp + power) | ✅ | ❌ | ❌ | ❌ | ❌ | ➖ | ❌ |
+| Battery power monitor (ADC + software inference, SoC, charge state) | ✅ | ✅ | ❌ | ❌ | ➖ | ➖ | ❌ |
+| Power policy engine (6-mode battery-driven feature gating) | ✅ | ✅ | ❌ | ❌ | ➖ | ➖ | ❌ |
+| First-time setup wizard (captive portal, device naming, NVS flag) | ✅ | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
+| Heap monitoring + automatic feature degradation (3-level with hysteresis) | ✅ | ✅ | ❌ | ✅ | ✅ | ➖ | ❌ |
+| SD card health tracking (write/error counters, space warnings) | ✅ | ✅ | ❌ | ❌ | ➖ | ➖ | ❌ |
+| SD endurance wear estimate (NVS lifetime counters, TBW wear %, replace-recommended latch on MQTT health) | ✅ | ❌ | ❌ | ❌ | ➖ | ➖ | ❌ |
+| Boot self-test suite (10 subsystem probes, 0-100% health score) | ✅ | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
+| BLE GATT status service (battery + health + chain over BLE) | ✅ | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
+| WiFi power save (modem sleep on battery, TX power control) | ✅ | ❌ | ❌ | ⚠️ | ⚠️ | ➖ | ❌ |
+| WiFi auto-reconnect with exponential backoff | ✅ | ❌ | ❌ | ✅ | ✅ | ➖ | ❌ |
+| SD log rotation (witness 500, health 200, auto-rotate at 85% SD) | ✅ | ✅ | ❌ | ❌ | ➖ | ➖ | ❌ |
+| Chain backup/restore (NVS ↔ SD, HMAC-SHA256 integrity) | ✅ | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
+| Chain integrity verification (Ed25519 sig + hash continuity walk) | ✅ | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
+| Witness record export to /EXPORT/ | ✅ | ✅ | ❌ | ❌ | ➖ | ➖ | ❌ |
+| Battery health history (NVS-persisted charge cycles, voltage extremes) | ✅ | ✅ | ❌ | ❌ | ➖ | ➖ | ❌ |
+| Chirp channel (broadcast beacon) | ⚠️ | ✅ | ⚠️ | ❌ | ❌ | ➖ | ✅ |
+| MQTT publish + HA Discovery | ✅ | ✅ | ❌ | ✅ | ✅ | ➖ | ❌ |
+| OTA A/B with rollback safety | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ❌ |
+| Signed pull-OTA (HTTPS manifest + Ed25519 release signature) | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | ❌ |
+| HA `update` entity (MQTT discovery, Install button + auto-update switch) | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
+| Local/LAN update server option (air-gapped hosting) | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | ❌ |
+| API authentication (bearer token + HKDF derivation) | ✅ | ✅ | ❌ | ❌ | ➖ | ➖ | ✅ |
+| Rate limiting on HTTP API | ✅ | ✅ | ❌ | ➖ | ➖ | ➖ | ✅ |
+| TLS (HTTPS self-signed) | ❌ | ❌ | ❌ | ❌ | ❌ | ➖ | ✅ |
+| Watchdog timer | ✅ | ✅ | ⚠️ | ✅ | ❌ | ✅ | ✅ |
+| Provisioning gate (BOOT button) | ✅ | ✅ | ❌ | ❌ | ❌ | ➖ | ✅ |
+| `SECURACV_RELEASE_BUILD` fail-closed guards | ✅ | ✅ | ⚠️ | ✅ | ❌ | ✅ | ✅ (archive-only) |
 
 ---
 
@@ -334,6 +338,8 @@ Post-archive (2026-04), the ACTIVE canonical tree is `firmware/canary/` (Platfor
 
 - **canary-wap Arduino (COMPATIBILITY)**: ~100% WAP parity; recently hardened (real ESP-NOW RSSI 2026-04, SD flush-on-unmount 2026-04). MQTT publish + HA Discovery is now present here too (`csi_mqtt.cpp`, compiled in the Arduino CLI build; HA side validated by `hassfest`) — see the 2026-06-09 reconciliation note in [PARITY_PLAN.md](PARITY_PLAN.md).
 - **canary (PIO, ACTIVE)**: ~88% feature parity — modular libs, MQTT + HA Discovery, WiFi STA, export, storage status counters (2026-04), HKDF-derived bearer token gating every SPA-driven endpoint (2026-04). Gaps: camera streaming, full GPS motion FSM, some web UI tabs.
+- **canary-vision (SPECIALIZED)**: 2026-07 robustness parity with the S3 tree — supervised WiFi STA (exponential-backoff reconnect + outage reboot), WiFi power-save policy (⚠️ pending bench), heap monitor with 3-level degradation that stretches the inference cadence under pressure, and RSSI/heap HA diagnostic entities.
+- **canary-sense (SPECIALIZED)**: Phase 2 landed 2026-07 — the MR60 radar witness now publishes: supervised WiFi STA, MQTT with LWT + HA discovery (presence / occupants / range band / radar-link health / illuminance; wellbeing builds add the P0 breathing lock and P1-gated BPM entities), NVS-backed runtime config, heap diagnostics, and the shared signed pull-OTA engine with HA update entity. OTA cells sit at ⚠️ until the engine is bench-proven on the ESP32-C6 (new MCU for the A/B flow); Ed25519 witness-chain signing is the remaining Phase 2 design-doc item and stays ❌.
 - **canary-wap (PIO, COMPATIBILITY)**: ~40% parity — uses common headers, many implementations still skeleton.
 
 ### Priority Actions

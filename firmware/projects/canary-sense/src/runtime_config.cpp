@@ -79,7 +79,7 @@ const RuntimeConfig& get() {
     return g_cfg;
   }
 
-  // Identity is sticky: NVS always wins; compiled DEVICE_ID seeds first boot.
+  // Identity is sticky: NVS always wins; compiled CS_DEVICE_ID seeds first boot.
   {
     String stored = prefs.getString("dev_id", "");
     if (stored.length() > 0) {
