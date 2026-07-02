@@ -3094,26 +3094,76 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       }).join('');
     }
 
-    function refreshRfStatus() {
-      // RF sensing is not wired into this build; show the static
-      // "not available" state instead of polling a route that 404s.
+    async function refreshRfStatus() {
+      const data = await api('/api/rf/status');
+      if (!data.state) return;   // unauth/disabled: leave placeholders
+
+      document.getElementById('rfEnabled').checked = data.enabled;
+      document.getElementById('rfState').textContent = data.state;
+      document.getElementById('rfConfidence').textContent = data.confidence;
+      document.getElementById('rfDeviceCount').textContent = data.device_count;
+      document.getElementById('rfDwellClass').textContent = data.dwell_class;
+
       const badge = document.getElementById('rfStateBadge');
       const text = document.getElementById('rfStateText');
-      if (badge && text) { badge.className = 'badge info'; text.textContent = 'Not on this build'; }
+      if (data.state === 'present' || data.state === 'dwelling') {
+        badge.className = 'badge success';
+        text.textContent = data.state;
+      } else if (data.state === 'absent') {
+        badge.className = 'badge info';
+        text.textContent = 'Absent';
+      } else {
+        badge.className = 'badge info';
+        text.textContent = data.enabled ? data.state : 'Disabled';
+      }
+
       const rfBadge = document.getElementById('rfBadge');
       const rfStatus = document.getElementById('rfStatus');
-      if (rfBadge && rfStatus) { rfBadge.className = 'badge info'; rfStatus.textContent = 'RF'; }
+      if (data.enabled && data.device_count > 0) {
+        rfBadge.className = 'badge success';
+        rfStatus.textContent = data.device_count + ' RF';
+      } else {
+        rfBadge.className = 'badge info';
+        rfStatus.textContent = 'RF';
+      }
     }
 
-    function toggleRfEnabled() {
-      const el = document.getElementById('rfEnabled');
-      if (el) el.checked = false;  // stays off — the subsystem isn't wired
-      featureNotWired('RF signal presence');
+    async function toggleRfEnabled() {
+      const enabled = document.getElementById('rfEnabled').checked;
+      const data = await api(enabled ? '/api/rf/enable' : '/api/rf/disable', 'POST');
+      if (data.success === false) {
+        document.getElementById('rfEnabled').checked = !enabled;  // revert on failure
+        alert('Failed: ' + (data.error || 'could not change RF sensing'));
+      }
+      refreshRfStatus();
     }
 
-    function loadRfSettings() { /* no-op: RF sensing not wired on this build */ }
-    function saveRfSettings() { featureNotWired('RF signal presence'); }
-    function rotateRfSession() { featureNotWired('RF signal presence'); }
+    async function loadRfSettings() {
+      const data = await api('/api/rf/settings');
+      if (data.presence_threshold_sec) {
+        document.getElementById('rfPresenceThreshold').value = data.presence_threshold_sec;
+        document.getElementById('rfDwellThreshold').value = data.dwell_threshold_sec;
+        document.getElementById('rfLostTimeout').value = data.lost_timeout_sec;
+        document.getElementById('rfEmitImpulse').checked = data.emit_impulse_events;
+      }
+    }
+
+    async function saveRfSettings() {
+      const settings = {
+        presence_threshold_sec: parseInt(document.getElementById('rfPresenceThreshold').value),
+        dwell_threshold_sec: parseInt(document.getElementById('rfDwellThreshold').value),
+        lost_timeout_sec: parseInt(document.getElementById('rfLostTimeout').value),
+        emit_impulse_events: document.getElementById('rfEmitImpulse').checked
+      };
+      const data = await api('/api/rf/settings', 'POST', settings);
+      alert(data.success ? 'RF settings saved.' : 'Failed: ' + (data.error || 'Unknown'));
+    }
+
+    async function rotateRfSession() {
+      const data = await api('/api/rf/rotate', 'POST');
+      alert(data.success ? 'Session rotated — presence tokens re-keyed.' : 'Failed');
+      refreshRfStatus();
+    }
 
     function updateGps(gps) {
       // Backend emits gps.fix (bool) — gps.valid never existed; the previous

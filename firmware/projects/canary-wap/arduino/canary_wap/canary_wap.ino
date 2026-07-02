@@ -193,6 +193,8 @@ extern "C" {
 // WiFi Presence Detection (probe request monitoring)
 #include "wifi_presence.h"
 #include "wifi_presence_api.h"
+#include "rf_presence.h"
+#include "rf_presence_api.h"
 
 // Audible Chirp (local alert tones — PWM buzzer / LED blink)
 #include "audible_chirp.h"
@@ -6460,6 +6462,7 @@ static void start_http_server() {
   const int csi_handlers = 23;        // csi_integration::init (stream/window/events/
                                        // calibrate/settings/mqtt/tune/pair-token/…)
   const int wifi_presence_handlers = 4;   // /api/presence/{combined,wifi,wifi/start,wifi/stop}
+  const int rf_presence_handlers = 7;     // /api/rf/{status,settings GET/POST,conformance,enable,disable,rotate}
   const int household_handlers = 6;       // /api/household* + /api/presence override
   const int audible_chirp_handlers = 4;   // /api/audible-chirp{,/play,/test,/config}
 #if FEATURE_ACOUSTIC_EVENTS
@@ -6496,9 +6499,10 @@ static void start_http_server() {
 #endif
   const int handler_headroom = 24;    // Reserve for future additions
   const int total_handlers = base_handlers + csi_handlers + wifi_presence_handlers
-      + household_handlers + audible_chirp_handlers + audio_handlers
-      + camera_handlers + qr_handlers + mesh_handlers + chirp_handlers
-      + bluetooth_handlers + ble_discovery_handlers + handler_headroom;
+      + rf_presence_handlers + household_handlers + audible_chirp_handlers
+      + audio_handlers + camera_handlers + qr_handlers + mesh_handlers
+      + chirp_handlers + bluetooth_handlers + ble_discovery_handlers
+      + handler_headroom;
 
   // ── Start HTTPS server (port 443) if TLS cert is available ──
 #if SECURACV_HAS_HTTPS_SERVER
@@ -6791,6 +6795,10 @@ register_extra_routes:
 
   // WiFi Presence Detection endpoints
   wifi_presence_api::register_routes(active_server, g_device.api_token_str);
+
+  // RF Presence fusion endpoints (/api/rf/*). Every route Bearer/session
+  // gated via rf_presence_api's auth_gated trampoline.
+  rf_presence_api::register_routes(active_server, g_device.api_token_str);
 
   // Household roles + auto-context (Owner/Family/Guest tagging, presence)
   household_api::register_routes(active_server, g_device.api_token_str);
@@ -8465,6 +8473,25 @@ void setup() {
   }
   #endif
 
+  // RF Presence fusion (BLE + WiFi-probe + CSI scoring FSM). init() only
+  // sets up the privacy-preserving session/token state and loads persisted
+  // settings — it does NOT start any radio; enable() (user-driven via the
+  // RF tab, persisted in NVS) is what makes it score. ble_presence already
+  // feeds feed_ble_scan(), which is a no-op until this init runs. Skipped in
+  // safe mode like every other optional subsystem.
+  if (!in_safe_mode) {
+    if (rf_presence::init()) {
+      Serial.println(rf_presence::is_enabled()
+          ? "[OK] RF presence ready (enabled)"
+          : "[OK] RF presence ready (disabled — enable from the RF tab)");
+    } else {
+      Serial.println("[--] RF presence init failed");
+      log_health(SCV_LOG_WARNING, SCV_CAT_SYSTEM, "RF presence init failed", nullptr);
+    }
+  } else {
+    Serial.println("[--] RF presence skipped (safe mode)");
+  }
+
   // Initialize Audible Chirp
   #if FEATURE_AUDIBLE_CHIRP
   if (!in_safe_mode) {
@@ -8892,6 +8919,11 @@ void loop() {
   g_sd_mounted = sd_is_available();
   g_health.sd_healthy = sd_is_available();
   #endif
+
+  // Advance the RF-presence fusion FSM (session/token rotation, decay,
+  // baseline bookkeeping). Self-guards on init state and is cheap when the
+  // feature is disabled — the time-based housekeeping still needs to run.
+  rf_presence::update();
 
   // Yield to prevent watchdog issues
   yield();
