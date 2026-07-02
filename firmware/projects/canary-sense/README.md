@@ -61,9 +61,11 @@ The exit criterion for Phase 0 is this env compiling a hello-witness binary in
 CI plus bench notes in `docs/hardware/`. Items to validate during the spike:
 
 - [ ] **C6 PlatformIO env builds in CI** (this scaffold; pinned pioarduino fork).
-- [ ] **UART frames parse on bench** — implement the real decode in
-      `mr60_uart.cpp::try_decode` against `Seeed_Arduino_mmWave`; confirm the
-      frame header / length / CRC layout.
+- [ ] **UART frames parse on bench** — the real decoder is implemented in
+      `mr60_uart.cpp` (incremental state machine, protocol constants from the
+      ESPHome `seeed_mr60bha2` reference; host tests in
+      `firmware/tests_host/`). Bench work: confirm the `[BENCH]`-marked
+      assumptions in `mr60_uart.h` (distance units, BPM units, frame cadence).
 - [ ] **Ed25519 + hardware RNG** on RISC-V C6 (our `Crypto` dep) — Phase 2 link.
 - [ ] **NVS** read/write on C6.
 - [ ] **NimBLE on C6** (if BLE is used downstream).
