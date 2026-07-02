@@ -259,6 +259,7 @@ module foot_chamfer_cut() {
 module body() {
     posts = post_xy();
     gusset_h = max(2, cav_d - lip_h - 1.0);
+    difference() {
     union() {
         difference() {
             union() {
@@ -275,9 +276,6 @@ module body() {
                 translate([0, 0, base_d - gasket_groove])
                     linear_extrude(gasket_groove + 1) rim_ring2d(gasket_w);
             for (yc = [-stud_y, stud_y]) stud_pocket(yc);
-            // security-screw pilot: up from the plate's foot, BLIND inside the boss
-            // below (never reaches the cavity — the seal envelope stays intact)
-            translate([0, -out_y/2 - 0.1, 3.0]) rotate([-90, 0, 0]) cylinder(d = sec_screw_d - 0.5, h = 6.5);
             if (foot_cham > 0) foot_chamfer_cut();
         }
         // internal boss backing the security screw (~7 mm thread engagement);
@@ -314,6 +312,10 @@ module body() {
             }
             edgeclip(vm_cx + s*vm_w/2, vm_cy, s > 0 ? 0 : 180, vm_standoff);
         }
+    }
+    // security-screw pilot, drilled LAST so it passes through wall AND boss,
+    // ending blind inside the boss (the seal envelope stays intact)
+    translate([0, -out_y/2 - 0.1, 3.0]) rotate([-90, 0, 0]) cylinder(d = sec_screw_d - 0.5, h = 6.5);
     }
 }
 
@@ -354,8 +356,9 @@ module face() {
             if (opt_vent) vent_cluster(vm_cx + vent_dx, vm_cy + vent_dy);
             for (p = post_xy()) {
                 translate([p[0], p[1], -1]) cylinder(d = screw_d + 2*tol_hole, h = lid_t + 2);
+                // flat counterbore — the BOM's PAN-head M2 screws seat flush
                 translate([p[0], p[1], lid_t - screw_head_h])
-                    cylinder(d1 = screw_d + 2*tol_hole, d2 = screw_head_d, h = screw_head_h + 0.1);
+                    cylinder(d = screw_head_d + 2*tol_hole, h = screw_head_h + 0.1);
             }
             if (label_text != "")
                 translate([label_dx, label_dy, lid_t - label_depth])
@@ -456,25 +459,31 @@ module plate() {
                 translate([0, -out_y/2, plate_t]) rotate([plate_wedge, 0, 0])
                     translate([-out_x/2 - 1, -1, 0]) cube([out_x + 2, out_y + rr + 2, hmax + out_y]);
             }
-            tstud(-stud_y, plate_z(-stud_y) - 0.2);
-            tstud( stud_y, plate_z( stud_y) - 0.2);
-            // bottom L-foot: sits under the body's bottom wall, carries the security screw
-            translate([-6, -out_y/2 - 4, 0]) cube([12, 4.5, foot_z + 4]);
+            // studs, L-foot and (below) the security bore all live in the TILTED
+            // frame so they stay aligned with the body resting on the wedge face
+            translate([0, -out_y/2, plate_t]) rotate([plate_wedge, 0, 0]) {
+                tstud(out_y/2 - stud_y, -0.2);
+                tstud(out_y/2 + stud_y, -0.2);
+                // bottom L-foot: sits under the body's bottom wall, carries the security screw
+                translate([-6, -4, -plate_t]) cube([12, 4.5, foot_z + 4]);
+            }
         }
-        // wall screws: through-holes + flat counterbores (pan heads work on the wedge too)
+        // wall screws: through-holes + flat counterbores at a CONSTANT 3 mm from
+        // the wall side, so standard-length screws work at any wedge angle
         for (sy = [1, -1], sx = [1, -1]) {
             translate([sx*(out_x/2 - 8), sy*(out_y/2 - 14), -0.1])
                 cylinder(d = plate_screw_d, h = hmax + 1);
-            translate([sx*(out_x/2 - 8), sy*(out_y/2 - 14), plate_z(sy*(out_y/2 - 14)) - 2.2])
+            translate([sx*(out_x/2 - 8), sy*(out_y/2 - 14), 3.0])
                 cylinder(d = plate_screw_d + 4.4, h = hmax + 1);
         }
         // cable pass (a roomier match for the body's oval exit)
         translate([usb_exit_dx, well_cy + usb_exit_dy, -0.1]) hull()
             for (s = [1, -1]) translate([s*(usb_exit_w - usb_exit_h)/2, 0, 0])
                 cylinder(d = usb_exit_h + 4, h = hmax + 1);
-        // security-screw bore: vertically up through the foot into the body's pilot
-        translate([0, -out_y/2 - 4.1, foot_z]) rotate([-90, 0, 0])
-            cylinder(d = sec_screw_d + 0.4, h = 5);
+        // security-screw bore: up through the foot into the body's pilot (tilted frame)
+        translate([0, -out_y/2, plate_t]) rotate([plate_wedge, 0, 0])
+            translate([0, -4.1, foot_z - plate_t]) rotate([-90, 0, 0])
+                cylinder(d = sec_screw_d + 0.4, h = 5);
     }
 }
 
